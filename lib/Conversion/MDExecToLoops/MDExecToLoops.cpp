@@ -582,7 +582,7 @@ static bool isDeviceType(Type type) {
 /// structure that the storage form does not have.
 static bool isValueFormType(Type type) {
   return isa<md::FieldType, md::RelationType, mdrt::CellsType,
-             mdrt::PermutationType, mdrt::IncidenceType>(type);
+             mdrt::PermutationType, mdrt::IncidenceType, md::TableType>(type);
 }
 
 LogicalResult Lowering::lowerOp(Operation *op) {
@@ -756,6 +756,9 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
     op->erase();
   lowered.clear();
   neighbors.clear();
+
+  // The kernels read tables from their buffers.
+  lowerLookups(function);
   return success();
 }
 

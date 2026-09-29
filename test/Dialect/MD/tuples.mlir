@@ -116,3 +116,26 @@ md.function @excluding(%x: !vec, %cell: !md.cell, %bonds: !bonds)
 md.function @declared(%r: !restraints) {
   md.return
 }
+
+// Tables of pairs of types, read in a kernel.
+//
+// CHECK-LABEL: md.function @tables(
+// CHECK-SAME: !md.table<2, f64, symmetric>
+// CHECK-SAME: !md.table<1, f64>
+md.function @tables(%x: !vec, %cell: !md.cell, %type: !md.field<@atoms, i32>,
+                    %sigma: !md.table<2, f64, symmetric>,
+                    %mass: !md.table<1, f64>) -> f64 {
+  %n = md.neighborhood %x, %cell cutoff(1.0)
+         : !vec -> !md.relation<@atoms, 2, unordered>
+  // CHECK: md.lookup %{{[a-z0-9]+}}[%{{[a-z0-9]+}}, %{{[a-z0-9]+}}] : !md.table<2, f64, symmetric>, i32, i32 -> f64
+  // CHECK: md.lookup %{{[a-z0-9]+}}[%{{[a-z0-9]+}}] : !md.table<1, f64>, i32 -> f64
+  %u = md.sum_relation %n, %x, %cell gather(%type : !md.field<@atoms, i32>)
+         exchange(symmetric, asserted) {
+  ^bb0(%r: f64, %d: vector<3xf64>, %t_i: i32, %t_j: i32):
+    %s = md.lookup %sigma[%t_i, %t_j] : !md.table<2, f64, symmetric>, i32, i32 -> f64
+    %m = md.lookup %mass[%t_i] : !md.table<1, f64>, i32 -> f64
+    %k = arith.mulf %s, %m : f64
+    md.yield %k : f64
+  } : !md.relation<@atoms, 2, unordered>, !vec -> f64
+  md.return %u : f64
+}

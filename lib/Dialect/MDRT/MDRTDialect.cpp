@@ -43,6 +43,11 @@ MemRefType mdir::mdrt::getBufferType(FieldType field) {
                          field.getElementType());
 }
 
+MemRefType mdir::mdrt::getTableBufferType(md::TableType table) {
+  SmallVector<int64_t, 2> shape(table.getRank(), ShapedType::kDynamic);
+  return MemRefType::get(shape, table.getElementType());
+}
+
 MemRefType mdir::mdrt::getMembersType(md::RelationType relation) {
   return MemRefType::get(
       {ShapedType::kDynamic, static_cast<int64_t>(relation.getArity())},
@@ -72,6 +77,13 @@ static LogicalResult verifyBufferType(Operation *op, Type buffer, Type field) {
 }
 
 LogicalResult FromBufferOp::verify() {
+  if (auto table = dyn_cast<md::TableType>(getResult().getType())) {
+    if (getBuffer().getType() != getTableBufferType(table))
+      return emitOpError() << "expected the buffer of " << table
+                           << " to have type " << getTableBufferType(table)
+                           << ", got " << getBuffer().getType();
+    return success();
+  }
   auto relation = dyn_cast<md::RelationType>(getResult().getType());
   if (!relation)
     return verifyBufferType(getOperation(), getBuffer().getType(),

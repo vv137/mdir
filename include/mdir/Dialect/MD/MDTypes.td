@@ -94,4 +94,31 @@ def MD_RelationType : MD_Type<"Relation", "relation"> {
   let genVerifyDecl = 1;
 }
 
+def MD_TableType : MD_Type<"Table", "table"> {
+  let summary = "A table of parameters, indexed by types";
+  let description = [{
+    A table of rank 1 has a value for each type of particle, and a table of
+    rank 2 one for each pair of types: σ and ε of Lennard-Jones, for
+    example, with the pairs that a force field sets apart from its mixing
+    rule. The number of types is a run-time value.
+
+    ```mlir
+    !md.table<2, f64, symmetric>
+    !md.table<1, f64>
+    ```
+
+    `symmetric` states that a table of rank 2 has the same value for
+    `(a, b)` and `(b, a)`, which the proof of exchange uses.
+  }];
+  let parameters = (ins
+    "unsigned":$rank,
+    "::mlir::Type":$elementType,
+    "bool":$symmetric
+  );
+  let assemblyFormat = [{
+    `<` $rank `,` $elementType ``custom<Symmetry>($symmetric) `>`
+  }];
+  let genVerifyDecl = 1;
+}
+
 #endif // MDIR_DIALECT_MD_MDTYPES_TD

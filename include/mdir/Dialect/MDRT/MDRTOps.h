@@ -30,6 +30,10 @@ bool canHold(mlir::Type buffer, md::FieldType field);
 /// `k` members.
 mlir::MemRefType getMembersType(md::RelationType relation);
 
+/// The type of the buffer that holds a table: of its rank, with a dynamic
+/// size in each dimension.
+mlir::MemRefType getTableBufferType(md::TableType table);
+
 /// The attribute that marks a loop whose iterations are segments of a run:
 /// stretches between two checkpoints.
 inline llvm::StringRef getSegmentAttrName() { return "mdrt.segment"; }

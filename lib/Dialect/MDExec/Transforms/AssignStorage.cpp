@@ -951,6 +951,33 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
   OpBuilder &builder = scope.builder;
 
   if (auto from = dyn_cast<mdrt::FromBufferOp>(op)) {
+    // A table is where the loops are that read it.
+    if (isa<md::TableType>(from.getResult().getType())) {
+      Value buffer = mapping.lookup(from.getBuffer());
+      if (!onDevice) {
+        mapping.map(from.getResult(), buffer);
+        return success();
+      }
+      auto host = cast<MemRefType>(buffer.getType());
+      MemRefType type = MemRefType::get(
+          host.getShape(), host.getElementType(), MemRefLayoutAttrInterface(),
+          IntegerAttr::get(IntegerType::get(context, 64), deviceSpace));
+      SmallVector<Value, 2> sizes;
+      for (int64_t d = 0, e = host.getRank(); d != e; ++d)
+        sizes.push_back(memref::DimOp::create(
+            builder, op->getLoc(), buffer,
+            arith::ConstantIndexOp::create(builder, op->getLoc(), d)));
+      Value device =
+          gpu::AllocOp::create(builder, op->getLoc(), type,
+                               /*asyncToken=*/Type(),
+                               /*asyncDependencies=*/ValueRange(), sizes,
+                               /*symbolOperands=*/ValueRange())
+              .getMemref();
+      createTransfer(builder, op->getLoc(), device, buffer);
+      mapping.map(from.getResult(), device);
+      return success();
+    }
+
     // The members of tuples stay on the host, where the incidence
     // structures are built from them.
     if (auto relation = dyn_cast<md::RelationType>(from.getResult().getType())) {
@@ -1256,6 +1283,9 @@ LogicalResult Assignment::convertFunction(func::FuncOp function) {
   auto convertType = [&](Type type) -> Type {
     if (isa<md::FieldType>(type))
       return getStorageType(type);
+    // A table argument is held by a buffer of the host.
+    if (auto table = dyn_cast<md::TableType>(type))
+      return mdrt::getTableBufferType(table);
     // The members of tuples are on the host.
     if (auto relation = dyn_cast<md::RelationType>(type))
       if (relation.getTupleSet())
@@ -1264,6 +1294,10 @@ LogicalResult Assignment::convertFunction(func::FuncOp function) {
   };
   SmallVector<Type> inputs, results;
   for (Type input : type.getInputs()) {
+    if (onDevice && isa<md::TableType>(input))
+      return function.emitOpError()
+             << "cannot take a table as an argument on a device; take it "
+                "from a buffer with 'mdrt.from_buffer'";
     if (isUnsupported(input) || isa<mdrt::NeighborsType>(input))
       return function.emitOpError()
              << "cannot give storage to an argument of type " << input;

@@ -2,6 +2,8 @@
 
 #include "mdir/Conversion/MDExecKernels.h"
 
+#include "mdir/Dialect/MD/MDOps.h"
+
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -459,6 +461,27 @@ void kernels::emitExclusionFilter(OpBuilder &builder, Location loc,
         counts, ValueRange{particle});
     scf::YieldOp::create(b, loc);
   });
+}
+
+void kernels::lowerLookups(Operation *root) {
+  SmallVector<md::LookupOp> lookups;
+  root->walk([&](md::LookupOp op) { lookups.push_back(op); });
+  for (md::LookupOp op : lookups) {
+    OpBuilder builder(op);
+    Location loc = op.getLoc();
+    SmallVector<Value, 2> indices;
+    for (Value index : op.getIndices())
+      indices.push_back(index.getType().isIndex()
+                            ? index
+                            : arith::IndexCastOp::create(
+                                  builder, loc, builder.getIndexType(), index)
+                                  .getResult());
+    Value value =
+        memref::LoadOp::create(builder, loc, op.getTable(), indices);
+    op.getResult().replaceAllUsesWith(
+        convertReal(builder, loc, value, op.getResult().getType()));
+    op.erase();
+  }
 }
 
 Value kernels::emitBuildIncidence(OpBuilder &builder, Location loc,

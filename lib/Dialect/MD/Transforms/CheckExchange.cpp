@@ -90,6 +90,17 @@ int ExchangeProof::compute(Value a, Value b) {
           cast<OpResult>(b).getResultNumber())
     return 0;
 
+  // A lookup in a symmetric table of pairs gives the same value with its
+  // two indices swapped.
+  if (auto lookup = dyn_cast<LookupOp>(opA)) {
+    auto table = dyn_cast<TableType>(lookup.getTable().getType());
+    if (table && table.getSymmetric() &&
+        compare(opA->getOperand(0), opB->getOperand(0)) == 1 &&
+        compare(opA->getOperand(1), opB->getOperand(2)) == 1 &&
+        compare(opA->getOperand(2), opB->getOperand(1)) == 1)
+      return 1;
+  }
+
   SmallVector<int> signs;
   if (compareOperands(opA, opB, /*swapped=*/false, signs))
     if (int sign = combine(opA, signs))

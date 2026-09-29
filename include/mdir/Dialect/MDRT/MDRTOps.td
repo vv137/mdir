@@ -11,7 +11,8 @@ include "mdir/Dialect/MDRT/MDRTTypes.td"
 class MDRT_Op<string mnemonic, list<Trait> traits = []>
     : Op<MDRT_Dialect, mnemonic, traits>;
 
-def MDRT_FieldOrRelation : AnyTypeOf<[MD_FieldType, MD_RelationType]>;
+def MDRT_FieldOrRelation
+    : AnyTypeOf<[MD_FieldType, MD_RelationType, MD_TableType]>;
 
 def MDRT_FromBufferOp : MDRT_Op<"from_buffer", [Pure]> {
   let summary = "The field or the tuples that a buffer holds";
@@ -44,6 +45,14 @@ def MDRT_FromBufferOp : MDRT_Op<"from_buffer", [Pure]> {
     ```mlir
     %angles = mdrt.from_buffer %members
                 : memref<?x3xi32> to !md.relation<@atoms, 3, reversal, @angles>
+    ```
+
+    A table of rank `k` enters from a buffer of rank `k` with its element
+    type, `memref<?x?xf64>` for a table of pairs of types.
+
+    ```mlir
+    %sigma = mdrt.from_buffer %buffer
+               : memref<?x?xf64> to !md.table<2, f64, symmetric>
     ```
   }];
   let arguments = (ins AnyMemRef:$buffer);

@@ -318,6 +318,76 @@ def check_nonbonded(x, tuples):
     return worst
 
 
+#===------------------------------------------------------------------------===
+# Tables of pairs of types
+#===------------------------------------------------------------------------===
+
+COULOMB = 138.935457644  # kJ mol^-1 nm e^-2, from CODATA 2018
+TYPE_SIGMA = [0.22, 0.25, 0.28]
+TYPE_EPSILON = [0.3, 0.5, 0.8]
+TYPE_CHARGE = [0.4, -0.3, -0.1]
+# A pair of types whose parameters the mixing rule does not give (NBFIX).
+NBFIX = {(0, 2): (0.3, 0.1)}
+
+
+def particle_types():
+    return [i % 3 for i in range(COUNT)]
+
+
+def charges():
+    return [TYPE_CHARGE[t] for t in particle_types()]
+
+
+def pair_tables():
+    """sigma and epsilon for each pair of types: Lorentz-Berthelot, with
+    the pairs of NBFIX set apart."""
+    n = len(TYPE_SIGMA)
+    sigma = [[0.0] * n for _ in range(n)]
+    epsilon = [[0.0] * n for _ in range(n)]
+    for a in range(n):
+        for b in range(n):
+            sigma[a][b] = 0.5 * (TYPE_SIGMA[a] + TYPE_SIGMA[b])
+            epsilon[a][b] = (TYPE_EPSILON[a] * TYPE_EPSILON[b]) ** 0.5
+    for (a, b), (s, e) in NBFIX.items():
+        sigma[a][b] = sigma[b][a] = s
+        epsilon[a][b] = epsilon[b][a] = e
+    return sigma, epsilon
+
+
+def tabulated(x):
+    """Lennard-Jones from the tables and Coulomb, both cut at CUTOFF with
+    no shift, over all pairs. Returns the two energies, the forces, and the
+    virial."""
+    sigma, epsilon = pair_tables()
+    types = particle_types()
+    q = charges()
+    energy = [0.0, 0.0]
+    forces = [[0.0, 0.0, 0.0] for _ in x]
+    virial = [[0.0, 0.0, 0.0] for _ in range(3)]
+    for i in range(COUNT):
+        for j in range(i + 1, COUNT):
+            d = displacement(x[i], x[j])
+            r = norm(d)
+            if r >= CUTOFF:
+                continue
+            s = sigma[types[i]][types[j]]
+            e = epsilon[types[i]][types[j]]
+            s6 = (s / r) ** 6
+            lj = 4.0 * e * (s6 * s6 - s6)
+            lj_slope = -24.0 * e * (2.0 * s6 * s6 - s6) / r
+            c = COULOMB * q[i] * q[j] / r
+            c_slope = -c / r
+            energy[0] += lj
+            energy[1] += c
+            force = [-(lj_slope + c_slope) / r * k for k in d]
+            forces[i] = add(forces[i], force)
+            forces[j] = sub(forces[j], force)
+            for a in range(3):
+                for b in range(3):
+                    virial[a][b] += d[a] * force[b]
+    return energy, forces, virial
+
+
 def masses():
     """The masses of the particles: 1, 1.5, and 2 in turn."""
     return [1.0 + 0.5 * (i % 3) for i in range(COUNT)]
@@ -407,6 +477,26 @@ def main():
     print("force on 0         ", [repr(c) for c in forces[0]])
     print("virial, trace      ",
           repr(virial[0][0] + virial[1][1] + virial[2][2]))
+
+    worst = 0.0
+    _, forces, _ = tabulated(x)
+    h = 1.0e-6
+    for i in range(COUNT):
+        for k in range(3):
+            saved = x[i][k]
+            x[i][k] = saved + h
+            above = sum(tabulated(x)[0])
+            x[i][k] = saved - h
+            below = sum(tabulated(x)[0])
+            x[i][k] = saved
+            worst = max(worst, abs(-(above - below) / (2.0 * h) - forces[i][k])
+                        / max(1.0, abs(forces[i][k])))
+    assert worst < 1.0e-5, worst
+    energy, forces, virial = tabulated(x)
+    print("tables, largest relative difference from finite differences",
+          "%.2e" % worst)
+    print("tables: Lennard-Jones", repr(energy[0]), "Coulomb", repr(energy[1]))
+    print("force on 0         ", [repr(c) for c in forces[0]])
 
     x, v, u, k, start, worst = integrate(STEPS, DT)
     print("after", STEPS, "steps of", DT)

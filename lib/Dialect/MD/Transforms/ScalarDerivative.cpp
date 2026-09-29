@@ -4,6 +4,8 @@
 
 #include "mdir/Dialect/MD/Transforms/ScalarDerivative.h"
 
+#include "mdir/Dialect/MD/MDOps.h"
+
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
@@ -155,6 +157,10 @@ LogicalResult ScalarDerivative::compute(Value value, Value &tangent) {
   };
 
   if (matchPattern(op, m_Constant()))
+    return success();
+
+  // A value of a table depends on the types only.
+  if (isa<LookupOp>(op))
     return success();
 
   //===--------------------------------------------------------------------===//

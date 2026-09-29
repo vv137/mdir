@@ -17,6 +17,19 @@ using namespace mdir::md;
 // Field element: `f64` or `3 x f64`
 //===----------------------------------------------------------------------===//
 
+/// Parses and prints `, symmetric`, which a table of rank 2 may have.
+static ParseResult parseSymmetry(AsmParser &parser, bool &symmetric) {
+  symmetric = succeeded(parser.parseOptionalComma());
+  if (symmetric && parser.parseKeyword("symmetric"))
+    return failure();
+  return success();
+}
+
+static void printSymmetry(AsmPrinter &printer, bool symmetric) {
+  if (symmetric)
+    printer << ", symmetric";
+}
+
 static ParseResult parseFieldElement(AsmParser &parser,
                                      unsigned &numComponents,
                                      Type &elementType) {
@@ -88,6 +101,19 @@ LogicalResult mdir::md::verifyReferencePrecision(Operation *op,
 //===----------------------------------------------------------------------===//
 // RelationType
 //===----------------------------------------------------------------------===//
+
+LogicalResult TableType::verify(function_ref<InFlightDiagnostic()> emitError,
+                                unsigned rank, Type elementType,
+                                bool symmetric) {
+  if (rank != 1 && rank != 2)
+    return emitError() << "expected a table of rank 1 or 2, got " << rank;
+  if (!elementType.isF64() && !elementType.isF32())
+    return emitError() << "expected element type f64 or f32, got "
+                       << elementType;
+  if (symmetric && rank != 2)
+    return emitError() << "only a table of rank 2 can be symmetric";
+  return success();
+}
 
 LogicalResult
 RelationType::verify(function_ref<InFlightDiagnostic()> emitError,

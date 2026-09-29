@@ -98,6 +98,10 @@ void emitExclusionFilter(mlir::OpBuilder &builder, mlir::Location loc,
                          mlir::Value counts, mlir::Value index,
                          mlir::Value excluded, mlir::Value particle);
 
+/// Replaces every `md.lookup` in `root` by a load from the buffer that holds
+/// the table, converted to the type of the result.
+void lowerLookups(mlir::Operation *root);
+
 /// The text of the templates `text` for positions of the type `real`. The
 /// templates are written for `f64`; the functions of the instance for `f32`
 /// have names that end in `_f32`.

@@ -370,12 +370,12 @@ the mixing rule, with the pairs that the topology sets overriding it. The
 kernel makes one lookup. No mixing rule is left at run time.
 
 ```mlir
-%a = mdrt.from_buffer %a_buffer
-       : memref<?x?xf64> to !md.table<2, f64, symmetric>
+%sigma = mdrt.from_buffer %sigma_buffer
+           : memref<?x?xf64> to !md.table<2, f64, symmetric>
 
 %u = md.sum_relation %n, %x, %cell gather(%type : !kinds) ... {
 ^bb0(%r: f64, %d: vector<3xf64>, %t_i: i32, %t_j: i32):
-  %a_ij = md.lookup %a[%t_i, %t_j] : f64
+  %s = md.lookup %sigma[%t_i, %t_j] : !md.table<2, f64, symmetric>, i32, i32 -> f64
   ...
 }
 ```
@@ -671,7 +671,7 @@ into the home directory.
 | M1a | Tuple sets, internal coordinates, differentiation, loops over tuples on the CPU and on a GPU | Chains of particles with bonds, angles, and dihedrals, at constant energy | Done: energy, forces, and virial agree with a reference in double and mixed precision, on the CPU, with OpenMP, and on a GPU; 200 steps of velocity Verlet agree to 1e-9. Loops over tuples are not fused with each other yet. |
 | M1b | The command line (Section 14) | The runs of M0 through `mdir run` | Done |
 | M1c | Exclusions in the neighbor build; pairs three bonds apart | Chains with Lennard-Jones | Done: energy, forces, and virial agree with a reference on the CPU, with OpenMP, and on a GPU |
-| M1d | Tables, NBFIX, the rule `product`, a Coulomb cutoff, the correction for the dispersion | A mixture of charged types | |
+| M1d | Tables, NBFIX, the rule `product`, a Coulomb cutoff, the correction for the dispersion | A mixture of charged types | In the IR: `!md.table` and `md.lookup`, with NBFIX and Coulomb, agree with a reference in double and mixed precision, on the CPU and on a GPU. The driver has none of it yet. |
 | M1e | The readers of both formats; renumbering of the members with the order | Alanine dipeptide in flexible water, at constant energy with 0.5 fs | |
 | M1f | Comparison of the intermediate stage with AmberTools and GROMACS | | This completes the intermediate stage |
 | M1g | Removal of the motion of the center of mass, random numbers, the thermostat | At constant temperature | |

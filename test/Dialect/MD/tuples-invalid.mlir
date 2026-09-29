@@ -225,3 +225,33 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
          : !md.field<@atoms, 3 x f64> -> !md.relation<@atoms, 2, unordered>
   md.return
 }
+
+// -----
+
+// expected-error@+1 {{only a table of rank 2 can be symmetric}}
+md.function @f(%t: !md.table<1, f64, symmetric>) {
+  md.return
+}
+
+// -----
+
+// expected-error@+1 {{expected a table of rank 1 or 2, got 3}}
+md.function @f(%t: !md.table<3, f64>) {
+  md.return
+}
+
+// -----
+
+md.function @f(%t: !md.table<2, f64, symmetric>, %i: i32) -> f64 {
+  // expected-error@+1 {{expected 2 indices, one for each dimension of the table, got 1}}
+  %v = md.lookup %t[%i] : !md.table<2, f64, symmetric>, i32 -> f64
+  md.return %v : f64
+}
+
+// -----
+
+func.func @f(%b: memref<?xf64>) {
+  // expected-error@+1 {{expected the buffer of '!md.table<2, f64, symmetric>' to have type 'memref<?x?xf64>', got 'memref<?xf64>'}}
+  %t = mdrt.from_buffer %b : memref<?xf64> to !md.table<2, f64, symmetric>
+  return
+}

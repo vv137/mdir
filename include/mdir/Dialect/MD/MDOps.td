@@ -190,6 +190,34 @@ def MD_NeighborhoodOp : MD_Op<"neighborhood", [Pure]> {
   let hasVerifier = 1;
 }
 
+def MD_LookupOp : MD_Op<"lookup", [Pure]> {
+  let summary = "Reads a value of a table";
+  let description = [{
+    Reads the value of a table for the types `indices`, one for each
+    dimension of the table. In a kernel the indices are usually the types
+    of the particles, gathered as fields of `i32`.
+
+    ```mlir
+    %eps = md.lookup %table[%t_i, %t_j]
+             : !md.table<2, f64, symmetric>, i32, i32 -> f64
+    ```
+
+    The result is a floating-point number: that of the table, or the type
+    that the kernel computes in once precision is assigned. After storage
+    is assigned, the table is the buffer that holds it.
+  }];
+  let arguments = (ins
+    AnyType:$table,
+    Variadic<AnyTypeOf<[Index, AnySignlessInteger]>>:$indices
+  );
+  let results = (outs AnyFloat:$result);
+  let assemblyFormat = [{
+    $table `[` $indices `]` attr-dict `:` qualified(type($table)) `,`
+    type($indices) `->` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
 def MD_YieldOp : MD_Op<"yield", [
     Pure, Terminator, ReturnLike,
     ParentOneOf<["SumRelationOp", "GatherRelationOp", "SumTuplesOp",

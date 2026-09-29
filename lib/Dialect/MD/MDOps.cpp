@@ -474,6 +474,33 @@ LogicalResult GatherRelationOp::verifyRegions() {
 }
 
 //===----------------------------------------------------------------------===//
+// Tables
+//===----------------------------------------------------------------------===//
+
+LogicalResult LookupOp::verify() {
+  Type type = getTable().getType();
+  unsigned rank;
+  if (auto table = dyn_cast<TableType>(type)) {
+    rank = table.getRank();
+  } else if (auto buffer = dyn_cast<MemRefType>(type)) {
+    if (!isa<FloatType>(buffer.getElementType()))
+      return emitOpError() << "expected a buffer of floating-point numbers, "
+                              "got "
+                           << type;
+    rank = buffer.getRank();
+  } else {
+    return emitOpError() << "expected a table or the buffer that holds one, "
+                            "got "
+                         << type;
+  }
+  if (getIndices().size() != rank)
+    return emitOpError() << "expected " << rank << " indices, one for each "
+                         << "dimension of the table, got "
+                         << getIndices().size();
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // Tuples of a topology
 //===----------------------------------------------------------------------===//
 
