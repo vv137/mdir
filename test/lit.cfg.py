@@ -48,6 +48,32 @@ config.substitutions.append(
     )
 )
 
+# Tests that run on a GPU need the runtime for NVIDIA GPUs and a device.
+# The kernels find the device math library through CUDA_ROOT.
+if config.mdir_cuda:
+    import subprocess
+
+    try:
+        devices = subprocess.run(
+            ["nvidia-smi", "--query-gpu=index", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if devices.returncode == 0 and devices.stdout.strip():
+            config.available_features.add("cuda")
+    except (OSError, subprocess.SubprocessError):
+        pass
+    config.environment["CUDA_ROOT"] = config.mdir_cuda_root
+config.substitutions.append(
+    (
+        "%mdrt_cuda",
+        os.path.join(
+            config.mdir_obj_root, "lib", "libmdrt_cuda" + config.llvm_shlib_ext
+        ),
+    )
+)
+
 # The passes of the semantic level, up to code in ordinary functions.
 config.substitutions.append(
     (
