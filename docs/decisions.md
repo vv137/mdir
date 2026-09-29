@@ -2,7 +2,8 @@
 
 Last updated: 2026-09-29.
 
-This log records what has been decided. Every entry below is accepted.
+This log records what has been decided. Every entry is accepted unless it
+is marked otherwise.
 [architecture.md](architecture.md) describes the design that results.
 [design-review.md](design-review.md) and [prior-art.md](prior-art.md) hold
 the analysis that led to the decisions.
@@ -275,20 +276,88 @@ P11 to P18 follow from the review of PPMD (Saunders et al. 2018). See
 | Q5. Form of energy expressions | D16 |
 | Q6. Where value semantics ends | D17 |
 
-## 5. Not yet designed
+## 5. Decisions made with the M0 specification
 
-These items follow from the decisions above but have no design yet. They are
-work to do, not open decisions.
-
-| Item | Needed for |
+| # | Decision |
 |---|---|
-| LLVM release to pin, and the out-of-tree build | M0 |
-| Op-level specification of `md`, `md_exec`, and minimal `dyn` | M0 |
-| Grammar of energy expressions | M0 |
-| `mdrt` ABI: storage, neighbor structures, events | M0 |
-| Reference interpreter for the semantic dialects | M0 |
-| Schema of the declarative input format | M0 |
-| Storage assignment pass | M0 |
-| Syntax for combining relations | M1 |
-| Scatter strategy for bonded terms | M1 |
-| Distributed fields and grids | M2 |
+| D20 | **LLVM 23.1.2 is the pinned release.** It was the latest stable release on 2026-09-29. `scripts/build-llvm.sh` builds it. |
+| D21 | **M0 integrators are velocity Verlet and leapfrog.** |
+| D22 | **Energy expressions use the syntax of OpenMM custom forces.** This makes D16 concrete. |
+| D23 | **Three precision modes are supported: single, mixed, and double.** The reference interpreter computes in double precision. |
+| D24 | **The input format is TOML.** Its schema starts small and is expected to change. |
+| D25 | **Trajectories are written as XTC.** XTC holds positions only, in reduced precision, so it does not serve as a checkpoint. |
+| D26 | **Checkpoints are written as H5MD, in 64-bit floating point.** A checkpoint holds positions and velocities, together with everything else an exact restart needs. H5MD is an HDF5-based format with standard places for positions, velocities, periodic images, particle IDs, and the box, and it allows application-specific groups. |
+
+### 5.1 Amendments to earlier decisions
+
+A1 to A10 come from an external review of revision 3 of the architecture.
+
+| # | Amendment | Amends |
+|---|---|---|
+| A1 | **`md` expresses the potential energy `U(x; θ)`, not a Hamiltonian.** The op is `md.potential`. "Hamiltonian" means `K + U` and is used only where that is meant, as in Hamiltonian replica exchange. | Architecture wording |
+| A2 | **A relation is a set of tuples with an arity and an orientation.** The logical relation is distinct from its physical traversal. A directed traversal of an unordered relation sums with weight one half. | New |
+| A3 | **`LocalityInterface` is renamed `ParticleDependencyInterface`.** Any semantic computation that needs data of other particles implements it: potentials, `mlff`, pairwise thermostats, constraints, virtual sites, collective variables. | D4 |
+| A4 | **The plan is split in two.** `ExecutionPlan` holds structural decisions; it is immutable, hashable, and cacheable. `ExecutionTuningState` holds numeric parameters and measured costs; it is updated only at segment boundaries or other declared safe points. A structural change means replanning and possibly compiling a new variant. | D9, P7 |
+| A5 | **The random number key is seed, step, stream ID, and entity key.** The entity key is a particle global ID, a canonical pair of global IDs, a fixed key for global moves, or a replica ID. | P5 |
+| A6 | **Decomposition-independent reproducibility is a future mode.** It is not required for M0 to M3. | P6 |
+| A7 | **`ensemble.state` replaces `thermo.state`.** There is one dialect. | Architecture examples |
+| A8 | **`md_dist` and `md_exec` are peer dialects.** Distributed lowering is performed first, so that `md_exec` lowering can specialize the regions that distribution creates. | Architecture wording |
+| A9 | **`!mdrt.event` is an opaque runtime completion object.** It is not tied one-to-one to a transport primitive. Its implementation may be one or more MPI requests, a CUDA event, or an NVSHMEM signal. | D10 |
+| A10 | **M2 has three parts.** M2a: constraints and virtual sites. M2b: PME on one node. M2c: distributed PME. | P3 |
+| A11 | **Rebuilds are checked after the fact.** With the fixed-interval policy, the maximum displacement since the previous rebuild is measured at each rebuild. Violations of the validity condition are counted and reported. | P15 |
+
+### 5.2 Choices made in the M0 specification
+
+S3 was withdrawn; B2 replaces it.
+
+| # | Choice | Section of ops-m0.md |
+|---|---|---|
+| S1 | There is no aggregate state type. The state is the set of loop-carried SSA values. | 2.3 |
+| S2 | The state holds velocities, not momenta. | 2.4 |
+| S4 | The IR carries plain numbers in one internal unit system, declared per module. | 2.6 |
+| S5 | The cutoff of a neighborhood is a compile-time constant in M0. | 4.4 |
+| S6 | Reductions and accumulation are clauses of the loop ops, not separate ops. | 8.1 |
+| S7 | Parameter binding is not an attribute. A parameter is static when the caller passes a constant. | 4.3 |
+| S8 | Precision is assigned per role. A mode is a default assignment of types to roles. | 7 |
+
+### 5.3 Amendments made with draft 2 of the M0 specification
+
+B1 to B3 and B5 to B10 come from an external review of draft 1.
+
+| # | Item | Amends |
+|---|---|---|
+| B1 | **The default rebuild policy checks validity every step.** A fixed interval with no check must be selected explicitly, because a violation found at the next rebuild cannot be repaired. | P15, A11 |
+| B2 | **`f64` is the reference precision of the semantic program.** It is ordinary floating point, not an abstract real. Lowering to single or mixed precision deliberately relaxes the numerical semantics. No separate real type is introduced. | S3 |
+| B3 | **`exchange` is a semantic contract.** It applies to `md.sum_relation` and `md.gather_relation`. The compiler verifies it when it can prove it; otherwise the front end must assert it. | New |
+| B4 | **Truncation is an attribute of a relation sum.** The kinds are `none`, `shift`, `force_shift`, and `switch`. A pass expands it into the kernel before differentiation. Energy conservation is validated with `force_shift` or `switch`. | New |
+| B5 | **Derivatives of functions that are not smooth have fixed conventions**, including the branch taken at a tie. | New |
+| B6 | **Comparing velocity Verlet with leapfrog maps the initial velocities**: `v(−dt/2) = v(0) − (dt/2) · F(0) / m`. | New |
+| B7 | **Both relation kernels receive the distance and the displacement vector.** | New |
+| B8 | **The virial is `W = Σ d_ij ⊗ K(i, j)`**, positive for repulsion, with `P = (2 E_kin + tr W) / (3V)`. | New |
+| B9 | **Integrators declare `symplectic` and `time_reversible`.** They do not declare energy conservation. | D6 examples |
+| B10 | **A value that is live across an overwrite gets its own buffer.** The criterion is liveness, not the number of consumers. D18 covers extra buffers as well as copies. | D18 |
+
+## 6. Awaiting confirmation
+
+| # | Item |
+|---|---|
+| R1 | **Neighbor structures are rebuilt at the start of every segment.** A run that is restarted from a checkpoint then performs the same rebuilds as a run that was not interrupted, provided both use the same segment schedule. Without this rule the two runs sum forces in different orders. |
+
+## 7. Not yet designed
+
+These items follow from the decisions above but have no design yet.
+
+| Item | Needed for | Status |
+|---|---|---|
+| TableGen definitions of the M0 types and ops | M0 | Next step |
+| `mdrt` ABI: storage, neighbor structures, events | M0 | Under discussion; requirements in ops-m0.md, Section 11 |
+| Reference interpreter for the semantic dialects | M0 | |
+| Schema of the TOML input | M0 | |
+| Layout of the MDIR group inside an H5MD checkpoint | M0 | |
+| HDF5 development files | M0 | The machine has the HDF5 runtime library but not its headers |
+| Storage assignment pass | M0 | Specified in ops-m0.md, Section 10 |
+| Lowering of transcendental functions on GPU targets | M1 | See ops-m0.md, Section 3.3 |
+| Syntax for combining relations | M1 | |
+| Scatter strategy for bonded terms | M1 | |
+| Long-range dispersion correction | M1 | |
+| Distributed fields and grids | M2c | |

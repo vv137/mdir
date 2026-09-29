@@ -1,12 +1,13 @@
 # MDIR Architecture
 
-Status: draft, revision 3 (2026-09-29). Nothing described here is implemented
+Status: draft, revision 4 (2026-09-29). Nothing described here is implemented
 yet. All IR snippets are illustrative; the syntax is not final.
 
 Related documents:
 
 - [decisions.md](decisions.md): the decisions this document follows.
   References such as D3 or P4 point there.
+- [ops-m0.md](ops-m0.md): types and ops for milestone M0.
 - [prior-art.md](prior-art.md): earlier work and what is taken from it.
 - [design-review.md](design-review.md): review of revision 1.
 
@@ -26,7 +27,7 @@ The design favors a small number of components with sharply separated roles.
 
 | Component | Kind | Question it answers |
 |---|---|---|
-| `md` (MDIR-H) | Semantic dialect | What is computed? |
+| `md` | Semantic dialect | What is computed? |
 | `mlff` | Semantic dialect | How is a learned energy model expressed? |
 | `dyn` | Semantic dialect | How is the state advanced in time? |
 | `ensemble` | Semantic dialect | Which thermodynamic states are sampled, and by what protocol? |
@@ -90,8 +91,10 @@ ops reference each other. Lowering starts only below them, in the
        LLVM (CPU)       NVVM / ROCDL
 ```
 
-`md_dist` lowers before `md_exec`. On a single rank `md_dist` is the
-identity, and the pipeline reduces to `md → md_exec`.
+`md_dist` and `md_exec` are peer dialects (A8). Distributed lowering is
+performed first, so that `md_exec` lowering can specialize the regions that
+distribution creates. On a single rank distributed lowering is the identity,
+and the pipeline reduces to `md → md_exec`.
 
 How the semantic objects reference each other:
 
@@ -100,7 +103,7 @@ ensemble state
       │
       ├─────────┐
       ▼         ▼
- Hamiltonian   dynamics program
+ potential     dynamics program
       │         │
       └────┬────┘
            ▼
@@ -114,13 +117,14 @@ and what stays a run-time value (P1):
 
 | Compile-time constant | Run-time value |
 |---|---|
-| Terms of the Hamiltonian and their functional forms | Particle count |
+| Terms of the potential and their functional forms | Particle count |
 | Structure of the dynamics program | Simulation cell |
 | Precision | Time step, temperature, λ |
 | Target hardware | Force-field parameter tables, by default |
 | Structural plan parameters | Numeric plan parameters |
 
-A force-field parameter may be bound statically, per parameter, when the
+Binding is not an attribute in the IR. A parameter is static when the front
+end passes it as a constant, which it may do per parameter when the
 specialization pays off. Temperature and λ are always run-time values, so
 that all replicas share one compiled kernel.
 
@@ -131,14 +135,15 @@ cached under a hash of the IR and the target.
 
 ### 4.1 State
 
-State has value semantics (D3). Every op that changes the simulation state
-takes the old state and returns a new one. The state has components
-`(x, p, h, ξ, ...)`: positions, momenta, simulation cell, and auxiliary
-thermostat and barostat variables.
+State has value semantics (D3). The state is not an aggregate type (S1). It
+is the set of SSA values carried from one step to the next: positions,
+velocities, forces, the simulation cell, and auxiliary thermostat and
+barostat variables. The state holds velocities, not momenta (S2).
 
-This lets analyses read invalidation off the use-def graph: an op that
-redefines positions invalidates neighbor structures, and an op that redefines
-the cell invalidates the partition.
+An op that changes part of the state takes the old value and returns a new
+one. Analyses read invalidation off the use-def graph: an op that returns new
+positions invalidates neighbor structures, and an op that returns a new cell
+invalidates the partition.
 
 The state and its per-particle fields are custom types, not builtin tensors
 (D15). Value semantics does not mean copying; see Section 8.3.
@@ -147,34 +152,54 @@ The state and its per-particle fields are custom types, not builtin tensors
 exclusions, and random number streams refer to global IDs. The storage order
 of particles may change whenever neighbor structures are rebuilt.
 
-### 4.2 `md` — Hamiltonian IR (MDIR-H)
+### 4.2 `md` — particles, relations, and potentials
+
+Earlier documents call this dialect MDIR-H.
 
 `md` has a generic relational core (P14): particles, fields, relations,
-neighborhoods, and reductions. A Hamiltonian is one kind of region built from
-that core. Analyses and collective variables are others. Whether a region can
-be differentiated depends on the ops it contains.
+neighborhoods, and reductions. A potential is one kind of function built from
+that core. Analyses and collective variables are others. Whether a function
+can be differentiated depends on the ops it contains.
 
-A Hamiltonian expresses the energy of a configuration, `H(x; θ)`, and nothing
-about how or where it is computed.
+A potential expresses the potential energy of a configuration, `U(x; θ)`, and
+nothing about how or where it is computed (A1). Kinetic energy is not part of
+it. "Hamiltonian" means `K + U` and is used only where that is meant, as in
+Hamiltonian replica exchange.
 
 ```mlir
-%n = md.neighborhood %s {
-    support = #md.radius<1.0 nm>
+md.potential @lj(%x: !vec, %cell: !md.cell, %eps: f64, %sigma: f64) -> f64 {
+  %n = md.neighborhood %x, %cell { cutoff = 1.0 } : !pairs
+  %u = md.sum_relation %n, %x, %cell { ... } : f64
+  md.return %u : f64
 }
 
-%e = md.sum_relation %n {
-    ...
-}
-
-%f = md.evaluate @H(%s) request [#md.forces]
+%f = md.evaluate @lj(%x, %cell, %eps, %sigma) request [forces] : !vec
 ```
 
-Evaluation requests are energy, forces, virial, and `dH/dλ`.
+Evaluation requests are energy, forces, virial, and derivatives with respect
+to parameters.
+
+**A relation is a set of tuples** with an arity and an orientation (A2). The
+logical relation is distinct from its physical traversal. A potential sums
+over each unordered pair once; an execution policy may traverse both
+directions and weight the sum by one half.
+
+**Exchange behavior is a contract** (B3). A kernel over pairs states whether
+it is symmetric or antisymmetric under exchange of the two particles. The
+compiler verifies the statement when it can prove it; otherwise the front end
+must assert it.
+
+**Truncation is an attribute** of a sum over a relation (B4): none, shift,
+force shift, or switch. A pass expands it into the kernel before
+differentiation.
+
+**Quantities are plain numbers** in one internal unit system, declared per
+module (S4). Front ends convert.
 
 Concepts that must not appear here: MPI, GPU, neighbor-list implementation,
 ghost atoms, thermostats, integrators, replica exchange. Whether a pair is
-computed once or twice is also not an `md` concern; `md` records only that an
-interaction is symmetric under exchange of the two particles.
+computed once or twice is also not an `md` concern; `md` records only how a
+kernel behaves under exchange of the two particles.
 
 **Exclusions are a first-class relation** (D14, P8).
 
@@ -187,8 +212,8 @@ interaction is symmetric under exchange of the two particles.
 The last row exists because Ewald methods compute a correction term over
 excluded pairs. Exclusion is therefore not the same as removal.
 
-**Neighborhoods are not exclusive to Hamiltonians.** Pairwise thermostats
-such as DPD are velocity-dependent and not part of the Hamiltonian, yet they
+**Neighborhoods are not exclusive to potentials.** Pairwise thermostats
+such as DPD are velocity-dependent and not part of the potential, yet they
 need a neighborhood. `dyn` ops may consume neighborhoods too.
 
 ### 4.3 `mlff` — machine-learned force fields
@@ -200,7 +225,7 @@ Planned op families: embedding, radial basis, spherical harmonics, message,
 tensor product, readout.
 
 ```mlir
-%n  = md.neighborhood %s { support = #md.radius<5.0 angstrom> }
+%n  = md.neighborhood %x, %cell { cutoff = 0.5 } : !pairs
 %h0 = mlff.embed %species
 %h1 = mlff.message %n, %h0
 %h2 = mlff.message %n, %h1
@@ -213,7 +238,7 @@ so its halo must cover the full receptive field.
 
 ### 4.4 `dyn` — Dynamics IR
 
-Expresses how one time step advances the state given a Hamiltonian.
+Expresses how one time step advances the state given a potential.
 
 Ops: `dyn.kick`, `dyn.drift`, `dyn.thermostat`, `dyn.barostat`,
 `dyn.constraint_position`, `dyn.constraint_velocity`, `dyn.random`,
@@ -222,14 +247,22 @@ Ops: `dyn.kick`, `dyn.drift`, `dyn.thermostat`, `dyn.barostat`,
 Velocity Verlet:
 
 ```mlir
-%s1 = dyn.kick  %s0, %f0, %half_dt
-%s2 = dyn.drift %s1, %dt
-%f1 = md.evaluate @H(%s2) request [#md.forces]
-%s3 = dyn.kick  %s2, %f1, %half_dt
+%v1 = dyn.kick  %v,  %f,  %m, %half_dt
+%x1 = dyn.drift %x,  %v1, %dt
+%f1 = md.evaluate @lj(%x1, %cell, %eps, %sigma) request [forces]
+%v2 = dyn.kick  %v1, %f1, %m, %half_dt
 ```
 
-**Random numbers are counter-based** (P5). `dyn.random` is a pure function of
-seed, step, particle global ID, and stream ID. The state carries no generator.
+**Random numbers are counter-based** (P5, A5). `dyn.random` is a pure
+function of seed, step, stream ID, and an entity key. The state carries no
+generator.
+
+| Entity | Key |
+|---|---|
+| Particle | Global ID |
+| Pair | Canonical pair of global IDs |
+| Global move | A fixed key |
+| Replica | Replica ID |
 
 **Requirements and capabilities** (D6). A `dyn` program declares what it
 requires and what it provides. It does not claim to sample a named ensemble.
@@ -252,7 +285,7 @@ NPT, temperature and Hamiltonian replica exchange, REST2, expanded ensembles,
 alchemical schedules.
 
 ```mlir
-thermo.state @s0 {
+ensemble.state @s0 {
     temperature = 300 K
     parameters = { lambda_vdw = 0.0 }
 }
@@ -286,16 +319,19 @@ Inside a segment, halo exchange placement is decided statically. Host code
 may modify the state between segments, which the compiler cannot see. That
 case is detected with run-time version counters on the state (P16).
 
+Segment boundaries are also where the tuning state is updated (Section 7.1).
+
 ## 5. Semantic differentiation
 
-Forces, virial, and `dH/dλ` are derivatives of the energy. They are produced
+Forces, the virial, and parameter derivatives are derivatives of the
+potential energy. They are produced
 by an `md`-to-`md` transformation (D2):
 
 ```text
 md / mlff forward graph
         ↓  semantic differentiation
 md / mlff derivative graph
-        ↓  locality analysis
+        ↓  dependency analysis
 distributed planning
 ```
 
@@ -307,13 +343,16 @@ reverse mode transposes communication: where the forward pass exchanges halo
 features before a message stage, the backward pass accumulates adjoints on
 ghosts and returns them to their owners.
 
-## 6. Locality interface
+## 6. Particle dependency interface
 
-Interaction ops implement `LocalityInterface` (D4), which returns an ordered
-list of stages. Each stage reports `support`, `reads`, `writes`,
-`accumulation`, and `freshness_requirement`.
+Any semantic computation that needs data of other particles implements
+`ParticleDependencyInterface` (D4, A3). That covers potentials, `mlff`
+stages, pairwise thermostats, constraints, virtual sites, and collective
+variables. The interface returns an ordered list of stages. Each stage
+reports `support`, `reads`, `writes`, `accumulation`, and
+`freshness_requirement`.
 
-| Interaction | Stages |
+| Computation | Stages |
 |---|---|
 | Lennard-Jones | One stage: reads position and species within the cutoff, writes force. |
 | EAM | Three stages: neighbors to electron density; density to embedding; neighbors and density to force. |
@@ -328,26 +367,33 @@ Distribution and execution decisions are coupled, so one planner makes them
 together (D9). For example, a larger skin widens the halo and raises
 communication cost, but lowers the neighbor rebuild frequency.
 
-The planner is a compiler component. Its result is an `ExecutionPlan`:
+The planner is a compiler component. Its result has two parts (A4).
+
+### 7.1 Plan and tuning state
+
+| | `ExecutionPlan` | `ExecutionTuningState` |
+|---|---|---|
+| Contents | Structural decisions | Numeric parameters and measured costs |
+| Examples | Neighbor strategy, cluster shape, conflict strategy, precision | Skin, rebuild interval, domain boundaries |
+| Mutability | Immutable; hashable and cacheable | Updated at segment boundaries and other declared safe points |
+| Changing it | Replanning, and possibly compiling a new variant | No recompilation |
 
 ```text
-partition          = regular(4, 4, 2)
-skin               = 0.15 nm
-neighbor           = cluster(8x4)
-newton3            = false
-force_accumulation = owner_only
-halo_mode          = ...
+ExecutionPlan                         ExecutionTuningState
+  partition_kind     = regular          partition = (4, 4, 2)
+  neighbor           = cluster(8x4)     skin      = 0.15
+  newton3            = false            rebuild_interval = 20
+  force_accumulation = owner_only
 ```
 
-### 7.1 The plan is part of the IR
+The run alternates between segments and retuning:
+
+```text
+run_segment → profiling feedback → retune numeric parameters → run_segment
+```
 
 The plan is serializable, can be overridden by the user, and is attached to
 the IR (P7). Each lowering can then be tested against a fixed plan.
-
-| Kind of parameter | Examples | Changing it |
-|---|---|---|
-| Structural | Cluster size, conflict strategy | Requires recompilation |
-| Numeric | Skin, rebuild interval, domain boundaries | Tuned during the run |
 
 ### 7.2 Pair execution policy
 
@@ -379,7 +425,25 @@ Determinism is an opt-in execution mode (C6). The plan selects one level
 | Deterministic | Same binary, hardware, and decomposition give the same bits |
 | Decomposition-independent | The same bits for any rank count |
 
-Bitwise agreement between different hardware is a non-goal.
+The decomposition-independent level is a future mode and is not required for
+M0 to M3 (A6). It needs fixed-point or exact accumulation. Bitwise agreement
+between different hardware is a non-goal.
+
+### 7.4 Precision
+
+Three modes are supported: single, mixed, and double (D23). Precision is a
+structural plan parameter, assigned per role (S8).
+
+| Mode | Positions, velocities, integration | Forces, kernel arithmetic | Global sums |
+|---|---|---|---|
+| Single | `f32` | `f32` | `f64` |
+| Mixed | `f64` | `f32` | `f64` |
+| Double | `f64` | `f64` | `f64` |
+
+The semantic program is a floating-point program in `f64`, and that is the
+reference (B2). The reference interpreter executes it as written. Lowering to
+single or mixed precision deliberately relaxes the numerical semantics, and
+its result agrees with the reference only within a tolerance.
 
 ## 8. Execution dialects
 
@@ -391,7 +455,7 @@ forward halo exchange, reverse accumulation, interior and boundary
 computation, replica communicators.
 
 ```mlir
-%x_h   = md_dist.forward_halo %x { radius = 5.0 angstrom }
+%x_h   = md_dist.forward_halo %x { radius = 0.5 }
 
 %f_int = md_dist.compute_interior %x   { ... }
 %f_bnd = md_dist.compute_boundary %x_h { ... }
@@ -429,11 +493,13 @@ Initial op set:
 
 ```text
 md_exec.build_cells        md_exec.build_neighbors
+md_exec.spatial_order      md_exec.permute
 md_exec.particle_for       md_exec.pair_for
-md_exec.reduce             md_exec.accumulate
 md_exec.pack               md_exec.unpack
 md_exec.launch
 ```
+
+Reductions and accumulation are clauses of the two loop ops (S6).
 
 **Access modes are the op signature.**
 
@@ -458,8 +524,13 @@ value built from a reference configuration, with a validity condition.
 
 | Rebuild policy | Property |
 |---|---|
-| Fixed interval, buffer sized for that interval | Default. No per-step global reduction. |
-| Displacement check | Optional. Needs a global reduction each step when distributed. |
+| Check every step | Default (B1). Exact. Needs a global reduction each step when distributed. |
+| Fixed interval | Must be selected explicitly. No check between rebuilds. |
+
+With the fixed interval, the maximum displacement since the previous rebuild
+is measured at each rebuild. Violations of the validity condition are counted
+and reported (A11). A violation cannot be repaired afterward, which is why
+the fixed interval is not the default.
 
 Particles are spatially reordered when neighbor structures are rebuilt.
 
@@ -487,10 +558,12 @@ A storage assignment pass inside `md_exec` then decides in-place updates and
 the data layout. `md_exec` ops have a value form and a storage form, in the
 manner of upstream `linalg`.
 
-The pass must not silently copy a per-particle field inside the step loop
-(D18). A required copy is reported with its reason. A copy is legitimate only
-when one version of a field has more than one consumer, as in a Metropolis
-rejection.
+A value needs a buffer of its own when it is still live after the point where
+its buffer would be overwritten (B10). In a Metropolis step, the proposed
+positions go to a second buffer while the old positions stay in place.
+
+The pass introduces neither a copy nor an extra buffer inside the step loop
+silently (D18). It reports the value, the overwrite, and the later consumer.
 
 ### 8.4 Dependency token
 
@@ -505,7 +578,13 @@ md_exec.launch depends_on [%halo_done] ...
 ```
 
 The token also expresses ordering constraints that never had a data
-dependency. It lowers to an MPI request, a CUDA event, or an NVSHMEM signal.
+dependency.
+
+`!mdrt.event` is an opaque runtime completion object (A9). It is not tied
+one-to-one to a transport primitive: one halo exchange may involve several
+sends and receives. Its implementation may be one or more MPI requests, a
+CUDA event, or an NVSHMEM signal.
+
 The schedule the IR must be able to express:
 
 ```text
@@ -565,7 +644,33 @@ a generated kernel that fills it.
 | Target metadata | `dlti` | MD-specific tuning comes from the planner. |
 | Distributed grids | — | Not in v0. The upstream `shard` dialect is a reference. |
 
-## 11. Roadmap
+## 11. Input and output
+
+| Purpose | Format | Contents |
+|---|---|---|
+| Input | TOML (D24) | System, potential, dynamics, and run settings. The schema is not designed yet. |
+| Trajectory | XTC (D25) | Positions, in reduced precision |
+| Checkpoint | H5MD, 64-bit floating point (D26) | Everything an exact restart needs |
+
+A checkpoint holds:
+
+| Item | Place in H5MD |
+|---|---|
+| Positions | `position` |
+| Velocities | `velocity` |
+| Periodic image counters | `image` |
+| Particle global IDs | `id` |
+| Cell | `box` |
+| Step and time | `step`, `time` |
+| Velocity time offset, precision mode, unit system, random seed | MDIR group |
+| Thermostat and barostat variables | MDIR group |
+
+Random number generators have no state to save, because random numbers are
+a function of seed, step, and entity (P5).
+
+Forces are not saved. They are recomputed from the positions at restart.
+
+## 12. Roadmap
 
 Development order (D1):
 
@@ -592,7 +697,9 @@ Milestones (P3) and what each one adds:
 |---|---|---|
 | M0 | Lennard-Jones fluid, NVE | Whole pipeline on CPU and GPU, JIT, validation |
 | M1 | Martini CG membrane and water | Bonded terms with a scatter strategy, exclusions, reaction field, thermostat, barostat |
-| M2 | AA protein and water | PME, constraints, virtual sites |
+| M2a | AA protein and water | Constraints, virtual sites |
+| M2b | AA protein and water | PME on one node |
+| M2c | AA protein and water | Distributed PME: a mesh decomposition beside the particle decomposition |
 | M3 | MLFF | Reverse mode, reverse accumulation, feature halo exchange |
 
 The v0 performance target is homogeneous systems at finite density (C7).
