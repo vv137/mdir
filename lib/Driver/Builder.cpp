@@ -138,6 +138,13 @@ private:
   /// parts along the bonds of the groups of `set` (RATTLE [Andersen1983]),
   /// and returns the virial `virial` with that of the constraints added, as
   /// `emitSettleVelocities` does.
+  /// Returns the virial `virial` with that of the forces of the constraints
+  /// of `set` over the first half of the step added, from `change`, what
+  /// the constraints added to the positions `old` moved by the drift.
+  std::string emitConstraintVirial(StringRef indent,
+                                   const Program::TupleSet &set,
+                                   StringRef old, StringRef change,
+                                   StringRef virial, StringRef virialResult);
   std::string emitShakeVelocities(StringRef indent, StringRef x, StringRef v,
                                   const Program::TupleSet &set,
                                   StringRef result, StringRef virial,
@@ -761,10 +768,14 @@ llvm::Error Builder::collectTopology() {
   return llvm::Error::success();
 }
 
-/// The smallest number of points, at least `least`, whose prime factors are
-/// 2, 3, 5, and 7, which the FFT handles fast.
+/// The smallest even number of points, at least `least`, whose prime
+/// factors are 2, 3, 5, and 7, which the FFT handles fast. On an even grid
+/// the influence function of sander agrees with MDIR's (docs/pme-m1.md,
+/// Section 1.1).
 static int64_t getSmoothSize(int64_t least) {
   for (int64_t size = least;; ++size) {
+    if (size % 2 != 0)
+      continue;
     int64_t rest = size;
     for (int64_t factor : {2, 3, 5, 7})
       while (rest % factor == 0)
@@ -898,6 +909,16 @@ llvm::Error Builder::collectPME() {
             moduli[0][a] * moduli[1][b] * moduli[2][c];
       }
   program.tables.push_back(std::move(table));
+
+  // The grid holds charges in fixed point at the scale 2^40, up to about
+  // 8e6 e at a point (D70); a charge beyond 100 e is not of a molecule.
+  for (auto [index, q] : llvm::enumerate(topology.charges))
+    if (!(std::fabs(q) < 100.0))
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "the charge of the atom %zu is %g e; particle mesh Ewald holds "
+          "charges of less than 100 e",
+          index + 1, q);
 
   // The self term, and the background that neutralizes a net charge,
   // whose virial is its energy on the diagonal.
@@ -1352,6 +1373,7 @@ void Builder::emitPrograms() {
     // The constraints back to their lengths, and the velocities that take
     // the atoms there over the step (the first half of RATTLE).
     std::string velocities = "%v1";
+    std::vector<std::pair<const Program::TupleSet *, std::string>> changes;
     if (constraints) {
       std::string current = "%x1d";
       std::string constrained = sites ? "%x1s" : "%x1";
@@ -1364,11 +1386,16 @@ void Builder::emitPrograms() {
       if (settles) {
         std::string result = next();
         emitSettlePositions("  ", "%x", current, "%dx1", result);
+        changes.push_back({program.tupleSets.data(), "%dx1"});
+        for (const Program::TupleSet &set : program.tupleSets)
+          if (set.name == "settles")
+            changes.back().first = &set;
         current = result;
       }
       for (const Program::TupleSet *set : shakeSets) {
         std::string result = next();
         emitShakePositions("  ", "%x", current, *set, result);
+        changes.push_back({set, result + "_change"});
         current = result;
       }
       os << "  %one = arith.constant 1.0 : f64\n"
@@ -1401,6 +1428,13 @@ void Builder::emitPrograms() {
                                withEnergy ? "%w1e" : "", "%w1");
     os << "  %v2" << (constraints ? "u" : "") << " = dyn.kick " << velocities
        << ", %f1, %m, %half : !vec\n";
+    // The virial of the constraints over the first half of the step.
+    if (constraints && withEnergy) {
+      unsigned index = 0;
+      for (auto [set, change] : changes)
+        virial = emitConstraintVirial("  ", *set, "%x", change, virial,
+                                      "%w1x" + std::to_string(index++));
+    }
     // No velocity along a constrained bond (the second half of RATTLE).
     if (constraints) {
       std::string current = "%v2u";
@@ -1848,6 +1882,64 @@ void Builder::emitSettlePositions(StringRef indent, StringRef old,
      << indent << "} : !vec\n";
 }
 
+std::string Builder::emitConstraintVirial(StringRef indent,
+                                          const Program::TupleSet &set,
+                                          StringRef old, StringRef change,
+                                          StringRef virial,
+                                          StringRef virialResult) {
+  // The forces of the constraints over the first half of the step: the
+  // drift took x + dt v + dt² F / 2m to x + Δ, so G = 2 m Δ / dt², along
+  // the bonds before the drift. Their virial Σ (x_j − x_0) ⊗ G_j, taken at
+  // those positions, with the weight ½: with that of the second half, the
+  // virial of the constraints is the mean of the two, as the kinetic
+  // energy of the pressure is (D45).
+  unsigned count = set.arity - 1;
+  std::string inner = (indent + "  ").str();
+  std::string coordinates, arguments;
+  for (unsigned k = 1; k <= count; ++k) {
+    coordinates += (k == 1 ? "" : ", ") +
+                   ("displacement(" + std::to_string(k) + ", 0)");
+    arguments += "%vs_r" + std::to_string(k) + ": vector<3xf64>, ";
+  }
+  for (unsigned k = 0; k <= count; ++k)
+    arguments += "%vs_c" + std::to_string(k) + ": vector<3xf64>, ";
+  for (unsigned k = 0; k <= count; ++k)
+    arguments += "%vs_m" + std::to_string(k) + ": f64" +
+                 (k == count ? "" : ", ");
+  std::string sum = (virialResult + "_first").str();
+  os << indent << sum << " = md.sum_tuples %r_" << set.name << ", " << old
+     << ", %cell\n"
+     << indent << "    coordinates(" << coordinates << ")\n"
+     << indent << "    gather(" << change << ", %m : !vec, !real) {\n"
+     << indent << "^bb0(" << arguments << "):\n";
+  SiteKernel w(os, inner);
+  std::string rate = w.real("divf", w.constant(1.0),
+                            w.real("mulf", "%dt", "%dt"));
+  std::vector<std::string> forces;
+  for (unsigned j = 1; j <= count; ++j)
+    forces.push_back(w.scale(
+        w.real("mulf", "%vs_m" + std::to_string(j), rate),
+        "%vs_c" + std::to_string(j)));
+  std::string elements;
+  for (int a = 0; a != 3; ++a) {
+    std::string row;
+    for (unsigned j = 1; j <= count; ++j) {
+      std::string term = w.scale(w.component("%vs_r" + std::to_string(j), a),
+                                 forces[j - 1]);
+      row = row.empty() ? term : w.vector("addf", row, term);
+    }
+    for (int b = 0; b != 3; ++b)
+      elements += (elements.empty() ? "" : ", ") + w.component(row, b);
+  }
+  os << inner << "%vs_w = vector.from_elements " << elements
+     << " : vector<9xf64>\n"
+     << inner << "md.yield %vs_w : vector<9xf64>\n"
+     << indent << "} : !rel_" << set.name << ", !vec -> vector<9xf64>\n";
+  os << indent << virialResult << " = arith.addf " << virial << ", " << sum
+     << " : vector<9xf64>\n";
+  return virialResult.str();
+}
+
 void Builder::emitShakePositions(StringRef indent, StringRef old,
                                  StringRef x, const Program::TupleSet &set,
                                  StringRef result) {
@@ -2043,12 +2135,14 @@ std::string Builder::emitShakeVelocities(StringRef indent, StringRef x,
   std::string virialName = virial.str();
   if (!virial.empty()) {
     // The forces of the constraints over the second half of the step,
-    // G = 2 m Δv / dt, and their virial Σ (x_j − x_0) ⊗ G_j.
+    // G = 2 m Δv / dt, and their virial Σ (x_j − x_0) ⊗ G_j, with the
+    // weight ½: the virial of the constraints is the mean of those of the
+    // two halves (emitConstraintVirial).
     std::string sum = (virialResult + "_sum").str();
     header(sum, "sum_tuples");
     SiteKernel w(os, inner);
     std::vector<std::string> dv = solve(w);
-    std::string two = w.constant(2.0);
+    std::string two = w.constant(1.0);
     std::string elements;
     std::vector<std::string> forces;
     for (unsigned j = 1; j <= count; ++j)
@@ -2163,14 +2257,14 @@ std::string Builder::emitSettleVelocities(StringRef indent, StringRef x,
   std::string virialName = virial.str();
   if (!virial.empty()) {
     // The forces of the constraints over the second half of the step,
-    // G = 2 m Δv / dt, and their virial Σ (x_i − x_O) ⊗ G_i.
+    // G = 2 m Δv / dt, and their virial Σ (x_i − x_O) ⊗ G_i, with the
+    // weight ½ (emitConstraintVirial).
     std::string sum = (virialResult + "_settle").str();
     os << indent << sum;
     header("sum_tuples", "vector<9xf64>");
     SiteKernel w(os, inner);
     std::array<std::string, 3> change = emitKernel(w);
-    std::string factor = w.real(
-        "divf", w.real("mulf", w.constant(2.0), "%vs_m1"), "%dt");
+    std::string factor = w.real("divf", "%vs_m1", "%dt");
     std::array<std::string, 2> arms = {"%vs_d10", "%vs_d20"};
     std::array<std::string, 2> forces = {w.scale(factor, change[1]),
                                          w.scale(factor, change[2])};

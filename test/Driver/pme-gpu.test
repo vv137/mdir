@@ -19,6 +19,6 @@
 # RUN: diff %t/first.row %t/second.row
 # RUN: mdir run %t/mixed.toml | FileCheck %s --check-prefix=MIXED
 
-# DOUBLE: INFO:       500         0.5000 {{ *}}-2812.0331 {{ *}}-3784.7113 {{ *}}972.6782
+# DOUBLE: INFO:       500         0.5000 {{ *}}-2811.6418 {{ *}}-3754.0064 {{ *}}942.3645
 # DOUBLE: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
 # MIXED:  MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value

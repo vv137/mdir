@@ -107,7 +107,7 @@ order. The grid is converted to floating point before the FFT.
 
 | Item | Value |
 |---|---|
-| Scale | 2⁴⁰: a contribution is resolved to 10⁻¹² e, and a point holds up to 2⁶³ / 2⁴⁰ ≈ 8 × 10⁶ e, far beyond any point of a real system |
+| Scale | 2⁴⁰: a contribution is resolved to 10⁻¹² e, and a point holds up to 2⁶³ / 2⁴⁰ ≈ 8 × 10⁶ e, far beyond any point of a real system. A charge of 100 e or more is rejected. A position that is not a number converts to an undefined integer; the run has failed by then, but the grid does not say so. |
 | Host | The same fixed point, with atomics of the threads of OpenMP |
 | Mixed precision | The positions, the charges, and the forces as they are stored; the B-splines, the grid, and the FFT in f64 on the host and on a device for now, which is to be measured against f32; the energy and the virial summed in f64 |
 | The sums of a device | Each thread sums a row of the grid; the host adds the rows in their order, so the energy and the virial do not depend on the order of the threads either |
@@ -120,7 +120,7 @@ order. The grid is converted to floating point before the FFT.
 | `pme_alpha` | β, in Å⁻¹ | From `pme_alpha_tol` |
 | `pme_alpha_tol` | β such that `erfc(β rc) = pme_alpha_tol`, by bisection, as both engines find it | 10⁻⁵ |
 | `pme_ngrid_x`, `_y`, `_z` | The numbers of points of the grid | From `pme_max_spacing` |
-| `pme_max_spacing` | The largest spacing of the grid, in Å; each number of points is the smallest product of 2, 3, 5, and 7 that gives no wider spacing | 1.2 |
+| `pme_max_spacing` | The largest spacing of the grid, in Å; each number of points is the smallest even product of 2, 3, 5, and 7 that gives no wider spacing | 1.2 |
 | `pme_nspline` | The order of the B-splines, 4 to 8 | 4 |
 | `pme_shift` | Shift the direct sum to 0 at the cutoff, as GROMACS does by default | false, as sander |
 | `pme_influence` | `"SPME"` or `"OPTIMAL"` (Section 1.1) | `"SPME"` |

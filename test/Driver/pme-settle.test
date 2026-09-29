@@ -16,7 +16,7 @@
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
 # RUN: mdir run %t/run.toml | FileCheck %s
 
-# CHECK: INFO:         0         0.0000 {{ *}}-2811.8668 {{ *}}-3522.7891
+# CHECK: INFO:         0         0.0000 {{ *}}-2811.4253 {{ *}}-3522.3477
 # CHECK: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
 
 #--- run.toml
