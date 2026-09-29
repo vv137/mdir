@@ -101,12 +101,15 @@ struct Control {
       DispersionCorrection::EnergyPressure;
 
   // [constraints]
-  /// Whether the bonds of hydrogen and the rigid waters are constrained.
-  /// Constraints come later in M1; a run takes them only as false, which a
-  /// topology with SETTLE needs to be stated.
+  /// Whether the bonds of hydrogen are constrained (SHAKE, later in M1),
+  /// and whether rigid waters are, by SETTLE. `statesFlexible` tells that
+  /// the control file says `fast_water = false`, which a topology of
+  /// GROMACS with SETTLE needs to run flexible.
   bool rigidBonds = false;
   bool fastWater = false;
   bool statesFlexible = false;
+  /// The residues of an Amber topology that SETTLE constrains (D63).
+  std::vector<std::string> settleResidues = {"WAT"};
 
   // [dynamics]
   Integrator integrator = Integrator::VelocityVerlet;

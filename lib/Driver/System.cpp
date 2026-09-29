@@ -7,11 +7,16 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/MemoryBuffer.h"
 
+#include <array>
 #include <cmath>
 #include <cstdlib>
+#include <map>
 
 using namespace mdir::driver;
 using llvm::StringRef;
+
+static llvm::Error findSettles(const Control &control, Topology &topology);
+static llvm::Error checkSettles(Topology &topology);
 
 /// The system of a topology and a file of coordinates.
 static llvm::Expected<System> readTopologySystem(const Control &control) {
@@ -30,15 +35,25 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
               : readAmberCoordinates(control.amberCoordinateFile, *topology))
     return std::move(error);
 
-  // SETTLE comes with the constraints of M1. A run may leave it out only
-  // when it says that it runs flexible, and the waters then need bonds.
-  if (!topology->settles.empty() && !control.statesFlexible)
-    return llvm::createStringError(
-        llvm::inconvertibleErrorCode(),
-        "the topology has %zu waters with SETTLE, and constraints are not "
-        "supported yet; set 'fast_water = false' in [constraints] to run "
-        "them flexible, with their bonds",
-        topology->settles.size());
+  // The waters that SETTLE constrains (D63): those of [ settles ] of
+  // GROMACS, and the residues of Amber named in 'settle_residues'. A run
+  // leaves them flexible only when it says so, and they then need bonds.
+  if (control.fastWater) {
+    if (!control.prmtopFile.empty())
+      if (llvm::Error error = findSettles(control, *topology))
+        return std::move(error);
+  } else if (!topology->settles.empty()) {
+    if (!control.statesFlexible)
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "the topology has %zu waters with SETTLE; set 'fast_water = true' "
+          "in [constraints] to constrain them, or 'fast_water = false' to "
+          "run them flexible, with their bonds",
+          topology->settles.size());
+    topology->settles.clear();
+  }
+  if (llvm::Error error = checkSettles(*topology))
+    return std::move(error);
 
   System system;
   system.types = topology->types;
@@ -46,12 +61,95 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
   system.positions = topology->positions;
   system.velocities = topology->velocities;
   system.givenVelocities = !system.velocities.empty();
+  system.numConstraints = 3 * topology->settles.size();
   if (system.velocities.empty())
     system.velocities.assign(system.positions.size(), 0.0);
   for (int i = 0; i != 3; ++i)
     system.box[i] = topology->box[i];
   system.topology = std::make_shared<Topology>(std::move(*topology));
   return std::move(system);
+}
+
+/// The settled waters of an Amber topology: every residue that
+/// 'settle_residues' names, with an oxygen and two hydrogens first, and
+/// the distances of the bonds among them, as sander takes them.
+static llvm::Error findSettles(const Control &control, Topology &topology) {
+  auto fail = [&](const llvm::Twine &message) {
+    return llvm::createStringError(llvm::inconvertibleErrorCode(), "%s: %s",
+                                   control.prmtopFile.c_str(),
+                                   message.str().c_str());
+  };
+  std::map<std::pair<unsigned, unsigned>, double> lengths;
+  for (const Topology::Bond &bond : topology.bonds)
+    lengths[{std::min(bond.i, bond.j), std::max(bond.i, bond.j)}] = bond.r0;
+  std::vector<bool> site(topology.getNumParticles(), false);
+  for (const Topology::VirtualSite &s : topology.virtualSites)
+    site[s.site] = true;
+  size_t count = topology.getNumParticles();
+  for (size_t r = 0, e = topology.residueNames.size(); r != e; ++r) {
+    StringRef name = StringRef(topology.residueNames[r]).trim();
+    if (!llvm::is_contained(control.settleResidues, name))
+      continue;
+    unsigned first = topology.residueStarts[r];
+    unsigned end = r + 1 < e ? topology.residueStarts[r + 1] : count;
+    auto where = "the residue " + llvm::Twine(r + 1) + " (" + name + ")";
+    bool water = end - first >= 3 && topology.atomicNumbers[first] == 8 &&
+                 topology.atomicNumbers[first + 1] == 1 &&
+                 topology.atomicNumbers[first + 2] == 1;
+    for (unsigned i = first + 3; i < end; ++i)
+      water = water && site[i];
+    if (!water)
+      return fail(where + " is named in 'settle_residues', but it is not "
+                          "an oxygen and two hydrogens, with at most virtual "
+                          "sites after them");
+    unsigned o = first, h1 = first + 1, h2 = first + 2;
+    auto length = [&](unsigned a, unsigned b) {
+      auto found = lengths.find({a, b});
+      return found == lengths.end() ? -1.0 : found->second;
+    };
+    double oh1 = length(o, h1), oh2 = length(o, h2), hh = length(h1, h2);
+    if (oh1 < 0.0 || oh2 < 0.0 || hh < 0.0)
+      return fail(where + " lacks one of the bonds O-H1, O-H2, and H1-H2, "
+                          "whose lengths SETTLE keeps");
+    // sander stops if the two O-H differ by more than 1e-4 Å.
+    if (std::fabs(oh1 - oh2) > 1.0e-5)
+      return fail(where + " has two different lengths of O-H");
+    topology.settles.push_back({o, oh1, hh});
+  }
+  return llvm::Error::success();
+}
+
+/// Checks the settled waters, and drops their bonds and angles, which the
+/// constraints keep at their lengths.
+static llvm::Error checkSettles(Topology &topology) {
+  std::vector<int> water(topology.getNumParticles(), -1);
+  for (auto [index, settle] : llvm::enumerate(topology.settles)) {
+    unsigned o = settle.oxygen;
+    if (o + 2 >= topology.getNumParticles())
+      return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                     "a water of SETTLE is out of range");
+    if (topology.masses[o + 1] != topology.masses[o + 2])
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "the hydrogens of the water of SETTLE at atom %u have different "
+          "masses",
+          o + 1);
+    for (unsigned k = 0; k != 3; ++k)
+      water[o + k] = index;
+  }
+  auto inside = [&](std::initializer_list<unsigned> members) {
+    int w = water[*members.begin()];
+    return w >= 0 && llvm::all_of(members, [&](unsigned m) {
+             return water[m] == w;
+           });
+  };
+  llvm::erase_if(topology.bonds, [&](const Topology::Bond &bond) {
+    return inside({bond.i, bond.j});
+  });
+  llvm::erase_if(topology.angles, [&](const Topology::Angle &angle) {
+    return inside({angle.i, angle.j, angle.k});
+  });
+  return llvm::Error::success();
 }
 
 llvm::Expected<System> mdir::driver::readSystem(const Control &control) {
@@ -165,6 +263,73 @@ double mdir::driver::getKineticEnergy(const System &system) {
   return 0.5 * twice;
 }
 
+/// Removes from the velocities of the rigid water at `oxygen` their parts
+/// along its three bonds, by the impulses along the bonds that solve the
+/// three linear equations of the constraints.
+static void constrainVelocities(System &system, unsigned oxygen) {
+  auto x = [&](unsigned atom, int c) {
+    return system.positions[3 * atom + c];
+  };
+  auto v = [&](unsigned atom, int c) -> double & {
+    return system.velocities[3 * atom + c];
+  };
+  const std::array<std::array<unsigned, 2>, 3> pairs = {
+      {{oxygen, oxygen + 1}, {oxygen, oxygen + 2}, {oxygen + 1, oxygen + 2}}};
+  std::array<std::array<double, 3>, 3> unit;
+  std::array<double, 3> rhs;
+  for (int c = 0; c != 3; ++c) {
+    auto [p, q] = pairs[c];
+    double norm = 0.0;
+    for (int k = 0; k != 3; ++k) {
+      unit[c][k] = x(q, k) - x(p, k);
+      norm += unit[c][k] * unit[c][k];
+    }
+    norm = std::sqrt(norm);
+    rhs[c] = 0.0;
+    for (int k = 0; k != 3; ++k) {
+      unit[c][k] /= norm;
+      rhs[c] -= unit[c][k] * (v(q, k) - v(p, k));
+    }
+  }
+  // A[c][d] = e_c · (the change of v_q − v_p of c by a unit impulse of d).
+  auto inverseMass = [&](unsigned atom) { return 1.0 / system.masses[atom]; };
+  double A[3][3];
+  for (int c = 0; c != 3; ++c)
+    for (int d = 0; d != 3; ++d) {
+      double dot = 0.0;
+      for (int k = 0; k != 3; ++k)
+        dot += unit[c][k] * unit[d][k];
+      auto [p, q] = pairs[c];
+      auto [r, s] = pairs[d];
+      double weight = (q == s ? inverseMass(q) : 0.0) -
+                      (q == r ? inverseMass(q) : 0.0) -
+                      (p == s ? inverseMass(p) : 0.0) +
+                      (p == r ? inverseMass(p) : 0.0);
+      A[c][d] = dot * weight;
+    }
+  double det = A[0][0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1]) -
+               A[0][1] * (A[1][0] * A[2][2] - A[1][2] * A[2][0]) +
+               A[0][2] * (A[1][0] * A[2][1] - A[1][1] * A[2][0]);
+  std::array<double, 3> impulse;
+  for (int d = 0; d != 3; ++d) {
+    double M[3][3];
+    for (int c = 0; c != 3; ++c)
+      for (int e = 0; e != 3; ++e)
+        M[c][e] = e == d ? rhs[c] : A[c][e];
+    impulse[d] = (M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) -
+                  M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) +
+                  M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0])) /
+                 det;
+  }
+  for (int c = 0; c != 3; ++c) {
+    auto [p, q] = pairs[c];
+    for (int k = 0; k != 3; ++k) {
+      v(q, k) += impulse[c] * unit[c][k] * inverseMass(q);
+      v(p, k) -= impulse[c] * unit[c][k] * inverseMass(p);
+    }
+  }
+}
+
 void mdir::driver::assignVelocities(const Control &control, System &system) {
   size_t count = system.getNumParticles();
   Generator generator(control.seed);
@@ -180,6 +345,11 @@ void mdir::driver::assignVelocities(const Control &control, System &system) {
   }
   if (count < 2)
     return;
+
+  // Velocities that the constraints allow: none along a rigid bond.
+  if (system.topology)
+    for (const Topology::Settle &settle : system.topology->settles)
+      constrainVelocities(system, settle.oxygen);
 
   // Bring the center of mass to rest.
   double total = 0.0, momentum[3] = {0.0, 0.0, 0.0};

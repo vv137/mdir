@@ -776,20 +776,38 @@ Error Reader::read(const toml::table &root) {
     return error;
   if (table) {
     if (Error error = checkKeywords(*table, "constraints",
-                                    {"rigid_bond", "fast_water"},
+                                    {"rigid_bond", "fast_water",
+                                     "settle_residues"},
                                     {{"shake_tolerance", "M1"},
-                                     {"shake_iterations", "M1"},
-                                     {"settle_residues", "M1"}}))
+                                     {"shake_iterations", "M1"}}))
       return error;
     if (Error error = readBool(*table, "rigid_bond", control.rigidBonds))
       return error;
     if (Error error = readBool(*table, "fast_water", control.fastWater))
       return error;
-    if (control.rigidBonds || control.fastWater)
-      return fail(*table, "constraints are not supported yet; they are "
-                          "planned for M1. Set 'rigid_bond' and "
-                          "'fast_water' to false to run flexible");
-    control.statesFlexible = table->contains("fast_water");
+    if (control.rigidBonds)
+      return fail(*table->get("rigid_bond"),
+                  "constraints of the bonds of hydrogen (SHAKE) are not "
+                  "supported yet; they are planned for M1");
+    if (control.fastWater && control.integrator != Integrator::VelocityVerlet)
+      return fail(*table->get("fast_water"),
+                  "SETTLE needs 'integrator = \"VVER\"'; with leapfrog it "
+                  "is planned for M1");
+    if (const toml::node *node = table->get("settle_residues")) {
+      const toml::array *array = node->as_array();
+      if (!array)
+        return fail(*node, "expected a list of residue names for "
+                           "'settle_residues'");
+      control.settleResidues.clear();
+      for (const toml::node &element : *array) {
+        if (!element.is_string())
+          return fail(element, "expected a list of residue names for "
+                               "'settle_residues'");
+        control.settleResidues.push_back(*element.value<std::string>());
+      }
+    }
+    control.statesFlexible =
+        table->contains("fast_water") && !control.fastWater;
   }
 
   if (Error error = getTable("boundary", /*required=*/true, table))

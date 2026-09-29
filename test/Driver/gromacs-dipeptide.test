@@ -23,7 +23,14 @@
 #
 # RUN: sed -e '/^\[constraints\]/,/^fast_water/d' -e '/^grodefine/d' %t/run.toml > %t/rigid.toml
 # RUN: not mdir check %t/rigid.toml 2>&1 | FileCheck %s --check-prefix=SETTLE
-# SETTLE: the topology has 382 waters with SETTLE, and constraints are not supported yet; set 'fast_water = false' in [constraints] to run them flexible, with their bonds
+# SETTLE: the topology has 382 waters with SETTLE; set 'fast_water = true' in [constraints] to constrain them, or 'fast_water = false' to run them flexible, with their bonds
+
+# With 'fast_water = true' SETTLE keeps them rigid: three degrees of freedom
+# fewer for each, 3 × 1168 − 3 × 382 − 3.
+#
+# RUN: printf '[constraints]\nfast_water = true\n' >> %t/rigid.toml
+# RUN: mdir check %t/rigid.toml | FileCheck %s --check-prefix=RIGID
+# RIGID: degrees of freedom: 2355
 
 #--- run.toml
 [input]

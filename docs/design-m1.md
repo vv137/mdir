@@ -515,6 +515,20 @@ stage begins.
 | The bonds of hydrogen | SHAKE [[Ryckaert1977]](references.md#ryckaert1977), with RATTLE [[Andersen1983]](references.md#andersen1983) for the velocities under velocity Verlet |
 | Execution | The constrained bonds fall into clusters with no particle in common: a heavy atom with its hydrogens, a water. A thread takes a cluster and writes to its particles only, so no two threads write to one particle. A loop over clusters is a new kind of loop. |
 
+### 9.1 SETTLE
+
+| Item | Rule |
+|---|---|
+| Positions | After the drift, each water is brought back to its shape by the closed form of Miyamoto and Kollman [[Miyamoto1992]](references.md#miyamoto1992): the new triangle, about its center of mass, is the rigid one turned by three angles in the frame of the old plane. It is the solution of SHAKE with the constraint forces along the old bonds (checked against SHAKE converged to 10⁻¹⁵: 2 × 10⁻¹⁴ nm). The velocities take the change over the step, `Δx / dt`, as the first half of RATTLE [[Andersen1983]](references.md#andersen1983). |
+| Velocities | After the second kick, the impulses along the three bonds that leave no velocity along them: three linear equations, solved in closed form |
+| Old positions | Taken in the periods of the cell of the new ones: the bonds before the drift are moved by the same lattice vectors as the new bonds in the minimum image |
+| Virial | That of the forces of the velocity constraint over the second half of the step, `G_i = 2 m_i Δv_i / dt`: `Σ (x_i − x_O) ⊗ G_i` |
+| At the start | The drawn velocities have their parts along the bonds removed before they are scaled to the temperature. The positions are not constrained, as sander does not. |
+| Degrees of freedom | Three fewer for each water |
+| Temperature of the log | That of the velocities of the step: the forces do not give the kinetic energies of the half steps once the constraints act (D45) |
+| In the IR | An `md.gather_tuples` over a tuple set `settles` of arity 3, the oxygen first, for each of the two halves, in the program of the step; the virial an `md.sum_tuples` |
+| Which waters | Those of `[ settles ]` of GROMACS; from Amber the residues of `settle_residues`, `["WAT"]` by default, which are an oxygen and two hydrogens with at most virtual sites after them. Their bonds and angles are dropped. |
+
 Three consequences reach other stages, and are recorded now:
 
 | Consequence | Where |
@@ -770,7 +784,7 @@ into the home directory.
 | M1f | Comparison of the intermediate stage with AmberTools and GROMACS | | This completes the intermediate stage |
 | M1g | Removal of the motion of the center of mass, random numbers, the thermostat | At constant temperature | Done (D67). Philox 4×32-10 agrees with the known answers of Random123, and the factor of the thermostat samples the canonical distribution of the kinetic energy. On a mixture of Lennard-Jones, the conserved energy changes by 2.5 × 10⁻⁵ over 20000 steps at constant temperature, on the CPU and on a GPU; a trajectory is the same for any grouping of steps into loops and across a restart. A drift of every particle is removed to a momentum of 10⁻¹³ amu nm/ps. The schedule uses the driver's own loops and `func.call`s, not yet the `dyn` ops of Section 11.2. |
 | M1h | Particle mesh Ewald | With particle mesh Ewald | |
-| M1i | Constraints: SETTLE, SHAKE, RATTLE | With 2 fs | |
+| M1i | Constraints: SETTLE, SHAKE, RATTLE | With 2 fs | SETTLE done, with velocity Verlet (Section 9.1): rigid OPC water runs at 2 fs, keeps its shape to the precision of the trajectory, and conserves the energy as the square of the step. SHAKE of the bonds of hydrogen, and SETTLE with leapfrog, are to come. |
 | M1j | The barostat, a cell that changes | At constant temperature and pressure | |
 | M1k | Comparison with AmberTools and GROMACS; run times of the JAC benchmark | | |
 | M1l | CMAP (D65) | ff19SB | Done (Section 20). The terms of ACE-ALA-GLY-SER-NME with ff19SB in OPC agree with sander, and CMAP with an independent model to 12 digits; a peptide with amber19sb agrees with GROMACS. The energy of the peptide alone is conserved as the square of the time step. |

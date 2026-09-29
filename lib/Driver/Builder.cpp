@@ -107,6 +107,25 @@ private:
                               StringRef virial = "",
                               StringRef virialResult = "");
 
+  /// Whether the topology has waters that SETTLE constrains.
+  bool hasSettles() const {
+    return llvm::any_of(program.tupleSets, [](const Program::TupleSet &set) {
+      return set.name == "settles";
+    });
+  }
+  /// Emits `result`, the positions `x` with the rigid waters brought back
+  /// to their shape from `old`, the positions before the drift, and
+  /// `change`, what that adds to the positions [Miyamoto1992].
+  void emitSettlePositions(StringRef indent, StringRef old, StringRef x,
+                           StringRef change, StringRef result);
+  /// Emits `result`, the velocities `v` at the positions `x` without their
+  /// parts along the bonds of the rigid waters. If `virial` is given,
+  /// returns the name of that virial with that of the constraints added,
+  /// `virialResult`.
+  std::string emitSettleVelocities(StringRef indent, StringRef x, StringRef v,
+                                   StringRef result, StringRef virial = "",
+                                   StringRef virialResult = "");
+
   /// Emits the coupling of the velocities `velocities` at the end of the
   /// step `step`: the removal of the motion of the center of mass and the
   /// thermostat. Returns the name of the velocities after it.
@@ -618,6 +637,18 @@ llvm::Error Builder::collectTopology() {
       set.fields[b].values.push_back(site.b);
     }
   }
+  if (!topology.settles.empty()) {
+    // The oxygen and the two hydrogens of each rigid water.
+    Program::TupleSet &set = addSet("settles", 3);
+    set.reversible = false;
+    size_t oh = addField(set, "doh"), hh = addField(set, "dhh");
+    for (const Topology::Settle &settle : topology.settles) {
+      for (unsigned k = 0; k != 3; ++k)
+        set.members.push_back(settle.oxygen + k);
+      set.fields[oh].values.push_back(settle.distanceOH);
+      set.fields[hh].values.push_back(settle.distanceHH);
+    }
+  }
   if (!topology.cmaps.empty()) {
     // The map of each term, and the bicubic patches of every map: a row
     // of 16 coefficients for each cell.
@@ -1014,8 +1045,10 @@ void Builder::emitPrograms() {
                          ")";
   std::string signature = "(!vec, !md.cell" + getFieldTypes() + ")";
   // Virtual sites are placed after the positions move, and the forces on
-  // them are moved to their atoms before the velocities do.
+  // them are moved to their atoms before the velocities do. Rigid waters
+  // are constrained before the sites are placed.
   bool sites = hasSites();
+  bool settles = hasSettles();
 
   if (isLeapfrog()) {
     // The stored velocities are half a step behind the positions.
@@ -1051,9 +1084,26 @@ void Builder::emitPrograms() {
        << "  %c = arith.constant 5.0e-01 : f64\n"
        << "  %half = arith.mulf %c, %dt : f64\n"
        << "  %v1 = dyn.kick %v, %f, %m, %half : !vec\n"
-       << "  %x1" << (sites ? "d" : "") << " = dyn.drift %x, %v1, %dt : !vec\n";
+       << "  %x1" << (sites || settles ? "d" : "")
+       << " = dyn.drift %x, %v1, %dt : !vec\n";
+    // The rigid waters back in shape, and the velocities that take them
+    // there over the step (the first half of RATTLE).
+    std::string velocities = "%v1";
+    if (settles) {
+      emitSettlePositions("  ", "%x", "%x1d", "%dx1", sites ? "%x1s" : "%x1");
+      os << "  %one = arith.constant 1.0 : f64\n"
+         << "  %rate = arith.divf %one, %dt : f64\n"
+         << "  %v1c = md.map_particles gather(%v1, %dx1 : !vec, !vec) {\n"
+         << "  ^bb0(%vs_v: vector<3xf64>, %vs_d: vector<3xf64>):\n"
+         << "    %vs_r = vector.broadcast %rate : f64 to vector<3xf64>\n"
+         << "    %vs_dv = arith.mulf %vs_r, %vs_d : vector<3xf64>\n"
+         << "    %vs_sum = arith.addf %vs_v, %vs_dv : vector<3xf64>\n"
+         << "    md.yield %vs_sum : vector<3xf64>\n"
+         << "  } : !vec\n";
+      velocities = "%v1c";
+    }
     if (sites)
-      emitPlaceSites("  ", "%x1d", "%x1", "%r_");
+      emitPlaceSites("  ", settles ? "%x1s" : "%x1d", "%x1", "%r_");
     StringRef raw = sites ? "e" : "";
     if (withEnergy)
       os << "  %u1, %f1" << raw << ", %w1" << raw << " = " << evaluate
@@ -1066,7 +1116,12 @@ void Builder::emitPrograms() {
     if (sites)
       virial = emitSpreadSites("  ", "%x1", "%f1e", "%f1", "%r_",
                                withEnergy ? "%w1e" : "", "%w1");
-    os << "  %v2 = dyn.kick %v1, %f1, %m, %half : !vec\n";
+    os << "  %v2" << (settles ? "u" : "") << " = dyn.kick " << velocities
+       << ", %f1, %m, %half : !vec\n";
+    // No velocity along a rigid bond (the second half of RATTLE).
+    if (settles)
+      virial = emitSettleVelocities("  ", "%x1", "%v2u", "%v2",
+                                    withEnergy ? virial : "", "%w1c");
     if (withEnergy)
       os << "  dyn.return %x1, %v2, %f1, %u1, " << virial << "\n"
          << "      : !vec, !vec, !vec, f64, vector<9xf64>\n";
@@ -1132,6 +1187,40 @@ public:
     os << indent << name
        << " = arith.constant dense<0.0> : vector<3xf64>\n";
     return name;
+  }
+  std::string constant(double value) {
+    std::string name = fresh();
+    os << indent << name << " = arith.constant " << formatReal(value)
+       << " : f64\n";
+    return name;
+  }
+  std::string root(StringRef a) {
+    std::string name = fresh();
+    os << indent << name << " = math.sqrt " << a << " : f64\n";
+    return name;
+  }
+  std::string compose(StringRef x, StringRef y, StringRef z) {
+    std::string name = fresh();
+    os << indent << name << " = vector.from_elements " << x << ", " << y
+       << ", " << z << " : vector<3xf64>\n";
+    return name;
+  }
+  std::string cross(StringRef a, StringRef b) {
+    std::string a0 = component(a, 0), a1 = component(a, 1),
+                a2 = component(a, 2), b0 = component(b, 0),
+                b1 = component(b, 1), b2 = component(b, 2);
+    auto term = [&](StringRef p, StringRef q, StringRef r, StringRef t) {
+      return real("subf", real("mulf", p, q), real("mulf", r, t));
+    };
+    return compose(term(a1, b2, a2, b1), term(a2, b0, a0, b2),
+                   term(a0, b1, a1, b0));
+  }
+  std::string unit(StringRef a) { return vector("divf", a, splat(norm(a))); }
+  /// `a x + b y + c z`.
+  std::string combine(StringRef a, StringRef x, StringRef b, StringRef y,
+                      StringRef c, StringRef z) {
+    return vector("addf", vector("addf", scale(a, x), scale(b, y)),
+                  scale(c, z));
   }
 
 private:
@@ -1323,6 +1412,253 @@ std::string Builder::emitSpreadSites(StringRef indent, StringRef x,
     current = next;
   }
   return currentVirial;
+}
+
+void Builder::emitSettlePositions(StringRef indent, StringRef old,
+                                  StringRef x, StringRef change,
+                                  StringRef result) {
+  std::string inner = (indent + "  ").str();
+  // In the frame of the old plane of the water, with the origin at the new
+  // center of mass, the new triangle is the rigid one turned by three
+  // angles (Miyamoto and Kollman 1992, Appendix A). The positions are
+  // taken relative to the new oxygen, in the minimum image; the old ones
+  // are moved by the same periods of the cell.
+  os << indent << change << " = md.gather_tuples %r_settles, " << x
+     << ", %cell\n"
+     << indent << "    coordinates(displacement(1, 0), displacement(2, 0))\n"
+     << indent << "    gather(" << old << ", " << x
+     << ", %m : !vec, !vec, !real)\n"
+     << indent << "    tuple(%f_settles_doh, %f_settles_dhh : !of_settles, "
+                  "!of_settles) {\n"
+     << indent << "^bb0(%vs_b1: vector<3xf64>, %vs_c1: vector<3xf64>, "
+                  "%vs_o0: vector<3xf64>, %vs_o1: vector<3xf64>, "
+                  "%vs_o2: vector<3xf64>, %vs_n0: vector<3xf64>, "
+                  "%vs_n1: vector<3xf64>, %vs_n2: vector<3xf64>, "
+                  "%vs_m0: f64, %vs_m1: f64, %vs_m2: f64, %vs_doh: f64, "
+                  "%vs_dhh: f64):\n";
+  SiteKernel k(os, inner);
+  // The old bonds, in the periods of the new ones.
+  auto oldBond = [&](StringRef bond, StringRef o, StringRef n) {
+    std::string raw = k.vector("subf", n, "%vs_n0");
+    std::string shift = k.vector("subf", bond, raw);
+    return k.vector("addf", k.vector("subf", o, "%vs_o0"), shift);
+  };
+  std::string b0 = oldBond("%vs_b1", "%vs_o1", "%vs_n1");
+  std::string c0 = oldBond("%vs_c1", "%vs_o2", "%vs_n2");
+  // The rigid triangle: the oxygen at ra from the center of mass along the
+  // bisector, the hydrogens at rb behind it and rc to each side.
+  std::string two = k.constant(2.0), half = k.constant(0.5),
+              one = k.constant(1.0);
+  std::string total =
+      k.real("addf", "%vs_m0", k.real("mulf", two, "%vs_m1"));
+  std::string rc = k.real("mulf", half, "%vs_dhh");
+  std::string height = k.root(k.real(
+      "subf", k.real("mulf", "%vs_doh", "%vs_doh"), k.real("mulf", rc, rc)));
+  std::string ra = k.real(
+      "divf", k.real("mulf", k.real("mulf", two, "%vs_m1"), height), total);
+  std::string rb = k.real("subf", height, ra);
+  // The new positions about their center of mass.
+  std::string center = k.scale(k.real("divf", "%vs_m1", total),
+                               k.vector("addf", "%vs_b1", "%vs_c1"));
+  std::string a1 = k.negate(center);
+  std::string b1 = k.vector("subf", "%vs_b1", center);
+  std::string c1 = k.vector("subf", "%vs_c1", center);
+  std::string z = k.unit(k.cross(b0, c0));
+  std::string xAxis = k.unit(k.cross(a1, z));
+  std::string y = k.cross(z, xAxis);
+  std::string xb0 = k.dot(b0, xAxis), yb0 = k.dot(b0, y);
+  std::string xc0 = k.dot(c0, xAxis), yc0 = k.dot(c0, y);
+  std::string za1 = k.dot(a1, z);
+  std::string xb1 = k.dot(b1, xAxis), yb1 = k.dot(b1, y), zb1 = k.dot(b1, z);
+  std::string xc1 = k.dot(c1, xAxis), yc1 = k.dot(c1, y), zc1 = k.dot(c1, z);
+  auto complement = [&](StringRef sine) {
+    return k.root(k.real("subf", one, k.real("mulf", sine, sine)));
+  };
+  std::string sinPhi = k.real("divf", za1, ra);
+  std::string cosPhi = complement(sinPhi);
+  std::string sinPsi =
+      k.real("divf", k.real("subf", zb1, zc1),
+             k.real("mulf", k.real("mulf", two, rc), cosPhi));
+  std::string cosPsi = complement(sinPsi);
+  std::string ya2 = k.real("mulf", ra, cosPhi);
+  std::string xb2 = k.real("mulf", k.real("subf", k.constant(0.0), rc),
+                           cosPsi);
+  std::string t1 = k.real("mulf", k.real("subf", k.constant(0.0), rb),
+                          cosPhi);
+  std::string t2 = k.real("mulf", k.real("mulf", rc, sinPsi), sinPhi);
+  std::string yb2 = k.real("subf", t1, t2), yc2 = k.real("addf", t1, t2);
+  auto sum3 = [&](StringRef a, StringRef b, StringRef c) {
+    return k.real("addf", k.real("addf", a, b), c);
+  };
+  std::string alpha = sum3(k.real("mulf", xb2, k.real("subf", xb0, xc0)),
+                           k.real("mulf", yb0, yb2),
+                           k.real("mulf", yc0, yc2));
+  std::string beta = sum3(k.real("mulf", xb2, k.real("subf", yc0, yb0)),
+                          k.real("mulf", xb0, yb2),
+                          k.real("mulf", xc0, yc2));
+  std::string gamma = k.real(
+      "addf",
+      k.real("subf", k.real("mulf", xb0, yb1), k.real("mulf", xb1, yb0)),
+      k.real("subf", k.real("mulf", xc0, yc1), k.real("mulf", xc1, yc0)));
+  std::string both = k.real("addf", k.real("mulf", alpha, alpha),
+                            k.real("mulf", beta, beta));
+  std::string sinTheta = k.real(
+      "divf",
+      k.real("subf", k.real("mulf", alpha, gamma),
+             k.real("mulf", beta,
+                    k.root(k.real("subf", both,
+                                  k.real("mulf", gamma, gamma))))),
+      both);
+  std::string cosTheta = complement(sinTheta);
+  std::string zero = k.constant(0.0);
+  std::string xa3 = k.real("subf", zero, k.real("mulf", ya2, sinTheta));
+  std::string ya3 = k.real("mulf", ya2, cosTheta);
+  std::string xb3 = k.real("subf", k.real("mulf", xb2, cosTheta),
+                           k.real("mulf", yb2, sinTheta));
+  std::string yb3 = k.real("addf", k.real("mulf", xb2, sinTheta),
+                           k.real("mulf", yb2, cosTheta));
+  std::string xc3 = k.real("subf", k.real("subf", zero,
+                                          k.real("mulf", xb2, cosTheta)),
+                           k.real("mulf", yc2, sinTheta));
+  std::string yc3 = k.real("addf", k.real("subf", zero,
+                                          k.real("mulf", xb2, sinTheta)),
+                           k.real("mulf", yc2, cosTheta));
+  // Back to the cell, relative to the new oxygen.
+  auto back = [&](StringRef px, StringRef py, StringRef pz) {
+    return k.vector("addf", k.combine(px, xAxis, py, y, pz, z), center);
+  };
+  std::string a3 = back(xa3, ya3, za1);
+  std::string b3 = back(xb3, yb3, zb1);
+  std::string c3 = back(xc3, yc3, zc1);
+  std::string db = k.vector("subf", b3, "%vs_b1");
+  std::string dc = k.vector("subf", c3, "%vs_c1");
+  os << inner << "md.yield " << a3 << ", " << db << ", " << dc
+     << " : vector<3xf64>, vector<3xf64>, vector<3xf64>\n"
+     << indent << "} : !rel_settles, !vec -> !vec\n";
+  os << indent << result << " = md.map_particles gather(" << x << ", "
+     << change << " : !vec, !vec) {\n"
+     << indent << "^bb0(%vs_x: vector<3xf64>, %vs_d: vector<3xf64>):\n"
+     << inner << "%vs_sum = arith.addf %vs_x, %vs_d : vector<3xf64>\n"
+     << inner << "md.yield %vs_sum : vector<3xf64>\n"
+     << indent << "} : !vec\n";
+}
+
+std::string Builder::emitSettleVelocities(StringRef indent, StringRef x,
+                                          StringRef v, StringRef result,
+                                          StringRef virial,
+                                          StringRef virialResult) {
+  std::string inner = (indent + "  ").str();
+  // The impulses along the three bonds that leave no velocity along them:
+  // A τ = −b, with b the velocities along the bonds and A what a unit
+  // impulse along one bond does to the velocity along another.
+  auto emitKernel = [&](SiteKernel &k) {
+    std::string e0 = k.unit("%vs_d10"), e1 = k.unit("%vs_d20"),
+                e2 = k.unit("%vs_d21");
+    std::string one = k.constant(1.0);
+    std::string io = k.real("divf", one, "%vs_m0");
+    std::string ih = k.real("divf", one, "%vs_m1");
+    std::string zero = k.constant(0.0);
+    auto minus = [&](StringRef a) { return k.real("subf", zero, a); };
+    std::string r0 =
+        minus(k.dot(e0, k.vector("subf", "%vs_v1", "%vs_v0")));
+    std::string r1 =
+        minus(k.dot(e1, k.vector("subf", "%vs_v2", "%vs_v0")));
+    std::string r2 =
+        minus(k.dot(e2, k.vector("subf", "%vs_v2", "%vs_v1")));
+    std::string a00 = k.real("addf", io, ih), a11 = a00;
+    std::string a22 = k.real("addf", ih, ih);
+    std::string a01 = k.real("mulf", k.dot(e0, e1), io);
+    std::string a02 = minus(k.real("mulf", k.dot(e0, e2), ih));
+    std::string a12 = k.real("mulf", k.dot(e1, e2), ih);
+    auto det3 = [&](StringRef m00, StringRef m01, StringRef m02,
+                    StringRef m10, StringRef m11, StringRef m12,
+                    StringRef m20, StringRef m21, StringRef m22) {
+      auto minor = [&](StringRef p, StringRef q, StringRef r, StringRef s) {
+        return k.real("subf", k.real("mulf", p, q), k.real("mulf", r, s));
+      };
+      return k.real(
+          "addf",
+          k.real("subf", k.real("mulf", m00, minor(m11, m22, m12, m21)),
+                 k.real("mulf", m01, minor(m10, m22, m12, m20))),
+          k.real("mulf", m02, minor(m10, m21, m11, m20)));
+    };
+    std::string det = det3(a00, a01, a02, a01, a11, a12, a02, a12, a22);
+    std::string t0 = k.real(
+        "divf", det3(r0, a01, a02, r1, a11, a12, r2, a12, a22), det);
+    std::string t1 = k.real(
+        "divf", det3(a00, r0, a02, a01, r1, a12, a02, r2, a22), det);
+    std::string t2 = k.real(
+        "divf", det3(a00, a01, r0, a01, a11, r1, a02, a12, r2), det);
+    // Impulse c along e_c from p to q: +τ e / m_q on q, −τ e / m_p on p.
+    std::string i0 = k.scale(t0, e0), i1 = k.scale(t1, e1),
+                i2 = k.scale(t2, e2);
+    std::string dv0 = k.negate(k.scale(io, k.vector("addf", i0, i1)));
+    std::string dv1 = k.scale(ih, k.vector("subf", i0, i2));
+    std::string dv2 = k.scale(ih, k.vector("addf", i1, i2));
+    return std::array<std::string, 3>{dv0, dv1, dv2};
+  };
+  auto header = [&](StringRef op, StringRef type) {
+    os << indent << " = md." << op << " %r_settles, " << x << ", %cell\n"
+       << indent << "    coordinates(displacement(1, 0), displacement(2, 0), "
+                    "displacement(2, 1))\n"
+       << indent << "    gather(" << v << ", %m : !vec, !real)\n"
+       << indent << "    tuple(%f_settles_doh, %f_settles_dhh : !of_settles, "
+                    "!of_settles) {\n"
+       << indent << "^bb0(%vs_d10: vector<3xf64>, %vs_d20: vector<3xf64>, "
+                    "%vs_d21: vector<3xf64>, %vs_v0: vector<3xf64>, "
+                    "%vs_v1: vector<3xf64>, %vs_v2: vector<3xf64>, "
+                    "%vs_m0: f64, %vs_m1: f64, %vs_m2: f64, %vs_doh: f64, "
+                    "%vs_dhh: f64):\n";
+    (void)type;
+  };
+  std::string change = (result + "_settle").str();
+  os << indent << change;
+  header("gather_tuples", "!vec");
+  SiteKernel k(os, inner);
+  std::array<std::string, 3> dv = emitKernel(k);
+  os << inner << "md.yield " << dv[0] << ", " << dv[1] << ", " << dv[2]
+     << " : vector<3xf64>, vector<3xf64>, vector<3xf64>\n"
+     << indent << "} : !rel_settles, !vec -> !vec\n";
+
+  std::string virialName = virial.str();
+  if (!virial.empty()) {
+    // The forces of the constraints over the second half of the step,
+    // G = 2 m Δv / dt, and their virial Σ (x_i − x_O) ⊗ G_i.
+    std::string sum = (virialResult + "_settle").str();
+    os << indent << sum;
+    header("sum_tuples", "vector<9xf64>");
+    SiteKernel w(os, inner);
+    std::array<std::string, 3> change = emitKernel(w);
+    std::string factor = w.real(
+        "divf", w.real("mulf", w.constant(2.0), "%vs_m1"), "%dt");
+    std::array<std::string, 2> arms = {"%vs_d10", "%vs_d20"};
+    std::array<std::string, 2> forces = {w.scale(factor, change[1]),
+                                         w.scale(factor, change[2])};
+    std::string elements;
+    for (int a = 0; a != 3; ++a) {
+      std::string row;
+      for (int m = 0; m != 2; ++m) {
+        std::string term = w.scale(w.component(arms[m], a), forces[m]);
+        row = row.empty() ? term : w.vector("addf", row, term);
+      }
+      for (int b = 0; b != 3; ++b)
+        elements += (elements.empty() ? "" : ", ") + w.component(row, b);
+    }
+    os << inner << "%vs_w = vector.from_elements " << elements
+       << " : vector<9xf64>\n"
+       << inner << "md.yield %vs_w : vector<9xf64>\n"
+       << indent << "} : !rel_settles, !vec -> vector<9xf64>\n";
+    os << indent << virialResult << " = arith.addf " << virial << ", "
+       << sum << " : vector<9xf64>\n";
+    virialName = virialResult.str();
+  }
+  os << indent << result << " = md.map_particles gather(" << v << ", "
+     << change << " : !vec, !vec) {\n"
+     << indent << "^bb0(%vs_x: vector<3xf64>, %vs_d: vector<3xf64>):\n"
+     << inner << "%vs_sum = arith.addf %vs_x, %vs_d : vector<3xf64>\n"
+     << inner << "md.yield %vs_sum : vector<3xf64>\n"
+     << indent << "} : !vec\n";
+  return virialName;
 }
 
 /// The trace of the virial `virial`, which enters the pressure.
@@ -1608,7 +1944,13 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       }
       emitKineticEnergy(os, "%k", isLeapfrog() ? "%vn" : "%vl", massName,
                         inner);
-      emitForceSquare(os, "%g", "%fl", massName, inner);
+      // With constraints the forces do not give the kinetic energies of
+      // the half steps (Section 9 of design-m1.md); the log takes that of
+      // the step.
+      if (hasSettles())
+        os << inner << "%g = arith.constant 0.0 : f64\n";
+      else
+        emitForceSquare(os, "%g", "%fl", massName, inner);
       emitTrace(os, "%tr", virialName, inner);
       emitStep();
       os << inner << "func.call @mdrtWriteEnergies(%step" << here
@@ -1909,7 +2251,10 @@ void Builder::emitEntry() {
          << "  call @mdrtWriteTerms(%terms_cast) : (memref<?xf64>) -> ()\n";
     }
     emitKineticEnergy(os, "%k0", velocities, "%m", "  ");
-    emitForceSquare(os, "%g0", "%f0", "%m", "  ");
+    if (hasSettles())
+      os << "  %g0 = arith.constant 0.0 : f64\n";
+    else
+      emitForceSquare(os, "%g0", "%f0", "%m", "  ");
     emitTrace(os, "%tr0", virial, "  ");
     os << "  call @mdrtWriteEnergies(%start, %u0, %k0, %g0, %tr0)\n"
        << "      : (i64, f64, f64, f64, f64) -> ()\n";

@@ -1,0 +1,14 @@
+# The run of settle.test on a GPU, in mixed precision.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/three.prmtop %S/Inputs/opc/three.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/settle.test | sed '1d;$d' > %t/run.toml
+# RUN: printf '[execution]\ntarget = "gpu"\nprecision = "mixed"\n' >> %t/run.toml
+# RUN: mdir run %t/run.toml | FileCheck %s
+# RUN: %python %S/Inputs/check_rigid.py %t/rigid.dcd 0.87243313 1.37120510 0 4 8 \
+# RUN: | FileCheck %s --check-prefix=RIGID
+
+# CHECK: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[3-9]}} of its value
+# RIGID: rigid ok

@@ -1,0 +1,60 @@
+# SETTLE: the three OPC waters of virtual-sites.test, rigid, at a step of
+# 2 fs. The waters are the residues WAT, which 'settle_residues' names by
+# default; their bonds are dropped, and each has three degrees of freedom
+# fewer: 9 × 3 − 9 − 3.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/three.prmtop %S/Inputs/opc/three.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: mdir check %t/run.toml | FileCheck %s --check-prefix=INPUT
+# RUN: mdir run %t/run.toml | FileCheck %s
+# RUN: %python %S/Inputs/check_rigid.py %t/rigid.dcd 0.87243313 1.37120510 0 4 8 \
+# RUN: | FileCheck %s --check-prefix=RIGID
+
+# INPUT: bonds:              0, 0 with hydrogen
+# INPUT: degrees of freedom: 15
+
+# The velocities drawn at the start have none along the bonds, so the
+# temperature is that of the control file. The total energy stays within
+# about 0.06 kcal/mol over 1 ps; its largest change shrinks with the time
+# step, 0.056, 0.016, and 0.003 kcal/mol at 2, 1, and 0.5 fs.
+#
+# CHECK: INFO:         0         0.0000 {{ *-[0-9.]+}} {{ *-[0-9.]+}} {{ *[0-9.]+}} {{ *}}300.0000
+# CHECK: MDIR: the momentum at the end is {{[0-9.]+}}e-1{{[0-9]}} amu nm/ps
+# CHECK: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[3-9]}} of its value
+
+# The distances O-H and H-H are those of the bonds in every frame, to the
+# precision of the trajectory.
+#
+# RIGID: rigid ok
+
+#--- run.toml
+[input]
+prmtopfile = "three.prmtop"
+ambcrdfile = "three.inpcrd"
+
+[output]
+dcdfile = "rigid.dcd"
+
+[energy]
+cutoffdist    = 18.0
+pairlistdist  = 19.0
+electrostatic = "CUTOFF"
+
+[dynamics]
+integrator    = "VVER"
+timestep      = 0.002
+nsteps        = 500
+eneout_period = 100
+crdout_period = 100
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[constraints]
+fast_water = true
+
+[boundary]
+type = "PBC"
+#--- end
