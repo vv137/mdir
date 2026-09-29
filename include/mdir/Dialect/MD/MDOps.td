@@ -231,19 +231,21 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
     ```
 
     The sum of smooth particle mesh Ewald over a grid of `grid` points with
-    B-splines of the order `order` (docs/pme-m1.md). `influence` holds the
-    product of the Euler exponential splines and the Gaussian of each wave
-    vector, `f / (π V) · B(m) exp(−π² m² / β²) / m²`, for each point of the
-    half-complex grid: a row for each of the first two indices, `k_1 K_2 +
-    k_2`, and a column for the third, from 0 to `K_3 / 2`.
+    B-splines of the order `order` (docs/pme-m1.md), with `coulomb` the
+    Coulomb constant f. `moduli` holds the factors of the influence function
+    along each edge, which do not depend on the cell: row `a` holds
+    `|b_a(k)|²` for each index `k` of edge `a`, times the factor of the
+    aliasing if it is taken. The influence function is
+    `f / (π V) · B(m) exp(−π² m² / β²) / m²` with `B` the product of the
+    three, computed from the cell where it is used.
 
     The op yields the energy, the forces, and the virial `Σ d ⊗ F` of the
     sum. Differentiation takes the forces and the virial from the op; it
     does not differentiate through it.
 
     ```mlir
-    %u, %f, %w = md.reciprocal %x, %q, %cell, %influence
-                   grid([32, 32, 32]) order(4) beta(3.12)
+    %u, %f, %w = md.reciprocal %x, %q, %cell, %moduli
+                   grid([32, 32, 32]) order(4) beta(3.12) coulomb(138.935)
                    : !md.field<@atoms, 3 x f64>, !md.field<@atoms, f64>,
                      !md.table<2, f64>
                    -> f64, !md.field<@atoms, 3 x f64>, vector<9xf64>
@@ -253,10 +255,11 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
     MD_ReferenceFieldType:$positions,
     MD_ReferenceFieldType:$charges,
     MD_CellType:$cell,
-    MD_TableType:$influence,
+    MD_TableType:$moduli,
     DenseI64ArrayAttr:$grid,
     I64Attr:$order,
-    F64Attr:$beta
+    F64Attr:$beta,
+    F64Attr:$coulomb
   );
   let results = (outs
     F64:$energy,
@@ -264,10 +267,11 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
     VectorOfLengthAndType<[9], [F64]>:$virial
   );
   let assemblyFormat = [{
-    $positions `,` $charges `,` $cell `,` $influence
+    $positions `,` $charges `,` $cell `,` $moduli
     `grid` `(` $grid `)` `order` `(` $order `)` `beta` `(` $beta `)`
+    `coulomb` `(` $coulomb `)`
     attr-dict `:` qualified(type($positions)) `,` qualified(type($charges))
-    `,` qualified(type($influence)) `->` type($energy) `,`
+    `,` qualified(type($moduli)) `->` type($energy) `,`
     qualified(type($forces)) `,` type($virial)
   }];
   let hasVerifier = 1;

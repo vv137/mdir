@@ -226,15 +226,19 @@ func.func private @mdrt.pme_wave(%k: index, %count: index, %length: f64) -> f64 
   return %m : f64
 }
 
-// Multiplies the half-complex transform `c` by the influence function, and
-// returns the energy and the virial
+// Multiplies the half-complex transform `c` by the influence function
+//
+//   B C(m) = f / (π V) · exp(−π² m² / β²) / m² · B_1(k_1) B_2(k_2) B_3(k_3)
+//
+// with the factors B_a of each edge in the rows of `moduli`, and returns the
+// energy and the virial
 //
 //   E = ½ Σ_m w(m) B C(m) |G(m)|²
 //   W_ab = Σ_m E_m (δ_ab − 2 (1 / m² + π² / β²) m_a m_b)
 //
 // with w(m) = 2 for the points whose conjugate is not stored.
-func.func private @mdrt.pme_convolve(%c: memref<?xf64>, %influence: memref<?x?xf64>,
-                                     %box: vector<3xf64>, %beta: f64,
+func.func private @mdrt.pme_convolve(%c: memref<?xf64>, %moduli: memref<?x?xf64>,
+                                     %box: vector<3xf64>, %beta: f64, %coulomb: f64,
                                      %k1: index, %k2: index, %k3: index)
     -> (f64, vector<9xf64>) {
   %c0 = arith.constant 0 : index
@@ -252,6 +256,11 @@ func.func private @mdrt.pme_convolve(%c: memref<?xf64>, %influence: memref<?x?xf
   %lz = vector.extract %box[2] : f64 from vector<3xf64>
   %beta2 = arith.mulf %beta, %beta : f64
   %gauss = arith.divf %pi2, %beta2 : f64
+  %pi = arith.constant 3.141592653589793 : f64
+  %lxy = arith.mulf %lx, %ly : f64
+  %volume = arith.mulf %lxy, %lz : f64
+  %piv = arith.mulf %pi, %volume : f64
+  %prefactor = arith.divf %coulomb, %piv : f64
   %h = arith.divui %k3, %c2 : index
   %h1 = arith.addi %h, %c1 : index
   %odd = arith.remui %k3, %c2 : index
@@ -259,9 +268,12 @@ func.func private @mdrt.pme_convolve(%c: memref<?xf64>, %influence: memref<?x?xf
   %energy, %virial = scf.for %a = %c0 to %k1 step %c1
       iter_args(%ea = %zero, %wa = %none) -> (f64, vector<9xf64>) {
     %m1 = func.call @mdrt.pme_wave(%a, %k1, %lx) : (index, index, f64) -> f64
+    %mod1 = memref.load %moduli[%c0, %a] : memref<?x?xf64>
     %eb, %wb = scf.for %b = %c0 to %k2 step %c1
         iter_args(%e2 = %ea, %w2 = %wa) -> (f64, vector<9xf64>) {
       %m2 = func.call @mdrt.pme_wave(%b, %k2, %ly) : (index, index, f64) -> f64
+      %mod2 = memref.load %moduli[%c1, %b] : memref<?x?xf64>
+      %mod12 = arith.mulf %mod1, %mod2 : f64
       %row1 = arith.muli %a, %k2 : index
       %row = arith.addi %row1, %b : index
       %ec, %wc = scf.for %z = %c0 to %h1 step %c1
@@ -269,7 +281,23 @@ func.func private @mdrt.pme_convolve(%c: memref<?xf64>, %influence: memref<?x?xf
         %zi = arith.index_cast %z : index to i64
         %zf = arith.sitofp %zi : i64 to f64
         %m3 = arith.divf %zf, %lz : f64
-        %bc = memref.load %influence[%row, %z] : memref<?x?xf64>
+        %mod3 = memref.load %moduli[%c2, %z] : memref<?x?xf64>
+        %m1s = arith.mulf %m1, %m1 : f64
+        %m2s = arith.mulf %m2, %m2 : f64
+        %m3s = arith.mulf %m3, %m3 : f64
+        %m12 = arith.addf %m1s, %m2s : f64
+        %msq = arith.addf %m12, %m3s : f64
+        %origin = arith.cmpf oeq, %msq, %zero : f64
+        %safe = arith.select %origin, %one, %msq : f64
+        %inverse = arith.divf %one, %safe : f64
+        %gm = arith.mulf %gauss, %msq : f64
+        %ngm = arith.negf %gm : f64
+        %ex = math.exp %ngm : f64
+        %exm = arith.mulf %ex, %inverse : f64
+        %pexm = arith.mulf %prefactor, %exm : f64
+        %mods = arith.mulf %mod12, %mod3 : f64
+        %bc0 = arith.mulf %pexm, %mods : f64
+        %bc = arith.select %origin, %zero, %bc0 : f64
         %base1 = arith.muli %row, %h1 : index
         %base2 = arith.addi %base1, %z : index
         %re_at = arith.muli %base2, %c2 : index
@@ -289,14 +317,6 @@ func.func private @mdrt.pme_convolve(%c: memref<?xf64>, %influence: memref<?x?xf
         %hwb = arith.mulf %hw, %bc : f64
         %em = arith.mulf %hwb, %g2 : f64
         // The virial of the point; nothing at m = 0, whose influence is 0.
-        %m1s = arith.mulf %m1, %m1 : f64
-        %m2s = arith.mulf %m2, %m2 : f64
-        %m3s = arith.mulf %m3, %m3 : f64
-        %m12 = arith.addf %m1s, %m2s : f64
-        %msq = arith.addf %m12, %m3s : f64
-        %origin = arith.cmpf oeq, %msq, %zero : f64
-        %safe = arith.select %origin, %one, %msq : f64
-        %inverse = arith.divf %one, %safe : f64
         %sum = arith.addf %inverse, %gauss : f64
         %factor0 = arith.mulf %two, %sum : f64
         %factor = arith.select %origin, %zero, %factor0 : f64

@@ -297,7 +297,7 @@ void ReciprocalOp::getEffects(
     return;
   addEffect<MemoryEffects::Read>(effects, getPositionsMutable());
   addEffect<MemoryEffects::Read>(effects, getChargesMutable());
-  addEffect<MemoryEffects::Read>(effects, getInfluenceMutable());
+  addEffect<MemoryEffects::Read>(effects, getModuliMutable());
   for (OpOperand &operand : getOutMutable())
     addEffect<MemoryEffects::Write>(effects, operand);
   for (OpOperand &operand : getScratchMutable()) {

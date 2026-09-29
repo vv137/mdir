@@ -429,9 +429,10 @@ LogicalResult Converter::convert(Operation *op) {
         builder, op->getLoc(), builder.getF64Type(),
         reciprocal.getVirial().getType(), reciprocal.getForces().getType(),
         reciprocal.getPositions(), reciprocal.getCharges(),
-        reciprocal.getCell(), reciprocal.getInfluence(), /*out=*/Value(),
+        reciprocal.getCell(), reciprocal.getModuli(), /*out=*/Value(),
         /*scratch=*/ValueRange(), reciprocal.getGridAttr(),
-        reciprocal.getOrderAttr(), reciprocal.getBetaAttr());
+        reciprocal.getOrderAttr(), reciprocal.getBetaAttr(),
+        reciprocal.getCoulombAttr());
     reciprocal.getEnergy().replaceAllUsesWith(converted.getEnergy());
     reciprocal.getVirial().replaceAllUsesWith(converted.getVirial());
     reciprocal.getForces().replaceAllUsesWith(converted.getForces());

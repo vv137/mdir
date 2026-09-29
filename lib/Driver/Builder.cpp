@@ -874,40 +874,25 @@ llvm::Error Builder::collectPME() {
           static_cast<long long>(control.pmeOrder));
   }
 
-  // The influence function B C for each point of the half-complex grid.
-  double volume = system.box[0] * system.box[1] * system.box[2];
-  std::vector<double> moduli[3];
+  // The factors of the influence function along each edge, which do not
+  // depend on the cell: |b(k)|² of the B-splines, times the factor of the
+  // aliasing if it is taken. The program computes the rest from the cell.
+  int64_t longest = std::max({grid[0], grid[1], grid[2]});
+  Program::Table table;
+  table.name = "pme_moduli";
+  table.count = 3;
+  table.columns = longest;
+  table.values.assign(3 * longest, 0.0);
   for (int k = 0; k != 3; ++k) {
-    moduli[k] = getSplineModuli(grid[k], control.pmeOrder);
+    std::vector<double> moduli = getSplineModuli(grid[k], control.pmeOrder);
     if (control.pmeOptimal) {
       std::vector<double> factors = getAliasFactors(grid[k], control.pmeOrder);
       for (int64_t i = 0; i != grid[k]; ++i)
-        moduli[k][i] *= factors[i];
+        moduli[i] *= factors[i];
     }
+    std::copy(moduli.begin(), moduli.end(),
+              table.values.begin() + k * longest);
   }
-  int64_t half = grid[2] / 2 + 1;
-  Program::Table table;
-  table.name = "pme_influence";
-  table.count = grid[0] * grid[1];
-  table.columns = half;
-  table.values.assign(table.count * half, 0.0);
-  auto wave = [&](int64_t k, int axis) {
-    int64_t signed_ = k <= grid[axis] / 2 ? k : k - grid[axis];
-    return static_cast<double>(signed_) / system.box[axis];
-  };
-  for (int64_t a = 0; a != grid[0]; ++a)
-    for (int64_t b = 0; b != grid[1]; ++b)
-      for (int64_t c = 0; c != half; ++c) {
-        if (a == 0 && b == 0 && c == 0)
-          continue;
-        double m1 = wave(a, 0), m2 = wave(b, 1),
-               m3 = static_cast<double>(c) / system.box[2];
-        double m2sum = m1 * m1 + m2 * m2 + m3 * m3;
-        table.values[(a * grid[1] + b) * half + c] =
-            coulombInternal / (M_PI * volume) *
-            std::exp(-M_PI * M_PI * m2sum / (beta * beta)) / m2sum *
-            moduli[0][a] * moduli[1][b] * moduli[2][c];
-      }
   program.tables.push_back(std::move(table));
 
   // The grid holds charges in fixed point at the scale 2^40, up to about
@@ -928,6 +913,7 @@ llvm::Error Builder::collectPME() {
     net += q;
   }
   double self = -coulombInternal * beta / std::sqrt(M_PI) * squares;
+  double volume = system.box[0] * system.box[1] * system.box[2];
   double background =
       -coulombInternal * M_PI * net * net / (2.0 * volume * beta * beta);
   program.pme = true;
@@ -1055,10 +1041,11 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms) {
   }
   if (program.pme && (terms & CoulombReciprocal)) {
     os << "  %u_reciprocal, %f_reciprocal, %w_reciprocal = md.reciprocal %x, "
-          "%p_q, %cell, %t_pme_influence\n"
+          "%p_q, %cell, %t_pme_moduli\n"
        << "      grid([" << program.pmeGrid[0] << ", " << program.pmeGrid[1]
        << ", " << program.pmeGrid[2] << "]) order(" << control.pmeOrder
-       << ") beta(" << formatReal(program.pmeBeta) << ")\n"
+       << ") beta(" << formatReal(program.pmeBeta) << ") coulomb("
+       << formatReal(coulombInternal) << ")\n"
        << "      : !vec, !real, !grid -> f64, !vec, vector<9xf64>\n";
     add("reciprocal");
   }

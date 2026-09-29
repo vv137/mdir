@@ -413,13 +413,15 @@ func.func private @mdrt_gpu_pme_real(%grid: memref<?xi64, 1>, %real: memref<?xf6
   return
 }
 
-// Multiplies the half-complex transform `c` by the influence function, and
+// Multiplies the half-complex transform `c` by the influence function, which
+// it computes from the factors of the edges in `moduli` and the cell, and
 // returns the energy and the virial, as @mdrt.pme_convolve does. A thread
 // takes a row of the grid, (k1, k2), and writes its sums to `rows`: the
 // energy, then the virial xx, xy, xz, yy, yz, zz.
-func.func private @mdrt_gpu_pme_convolve(%c: memref<?xf64, 1>, %influence: memref<?x?xf64, 1>,
+func.func private @mdrt_gpu_pme_convolve(%c: memref<?xf64, 1>, %moduli: memref<?x?xf64, 1>,
                                          %rows: memref<?xf64, 1>, %box: vector<3xf64>,
-                                         %beta: f64, %k1: index, %k2: index, %k3: index)
+                                         %beta: f64, %coulomb: f64,
+                                         %k1: index, %k2: index, %k3: index)
     -> (f64, vector<9xf64>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
@@ -432,6 +434,11 @@ func.func private @mdrt_gpu_pme_convolve(%c: memref<?xf64, 1>, %influence: memre
   %lz = vector.extract %box[2] : f64 from vector<3xf64>
   %beta2 = arith.mulf %beta, %beta : f64
   %gauss = arith.divf %pi2, %beta2 : f64
+  %pi = arith.constant 3.141592653589793 : f64
+  %lxy = arith.mulf %lx, %ly : f64
+  %volume = arith.mulf %lxy, %lz : f64
+  %piv = arith.mulf %pi, %volume : f64
+  %prefactor = arith.divf %coulomb, %piv : f64
   %count = arith.muli %k1, %k2 : index
   %blocks_count = func.call @mdrt_gpu_pme_blocks(%count) : (index) -> index
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_count, %gy = %c1, %gz = %c1)
@@ -472,6 +479,9 @@ func.func private @mdrt_gpu_pme_convolve(%c: memref<?xf64, 1>, %influence: memre
       %m1s = arith.mulf %w1_m, %w1_m : f64
       %m2s = arith.mulf %w2_m, %w2_m : f64
       %m12 = arith.addf %m1s, %m2s : f64
+      %mod1 = memref.load %moduli[%cc0, %a] : memref<?x?xf64, 1>
+      %mod2 = memref.load %moduli[%cc1, %b] : memref<?x?xf64, 1>
+      %mod12 = arith.mulf %mod1, %mod2 : f64
       %ke, %kw00, %kw01, %kw02, %kw11, %kw12, %kw22 = scf.for %z = %cc0 to %h1 step %cc1
           iter_args(%e0 = %kzero, %a00 = %kzero, %a01 = %kzero, %a02 = %kzero,
                     %a11 = %kzero, %a12 = %kzero, %a22 = %kzero)
@@ -479,7 +489,20 @@ func.func private @mdrt_gpu_pme_convolve(%c: memref<?xf64, 1>, %influence: memre
         %zi = arith.index_cast %z : index to i64
         %zf = arith.sitofp %zi : i64 to f64
         %m3 = arith.divf %zf, %lz : f64
-        %bc = memref.load %influence[%item, %z] : memref<?x?xf64, 1>
+        %mod3 = memref.load %moduli[%cc2, %z] : memref<?x?xf64, 1>
+        %m3s = arith.mulf %m3, %m3 : f64
+        %msq = arith.addf %m12, %m3s : f64
+        %origin = arith.cmpf oeq, %msq, %kzero : f64
+        %safe = arith.select %origin, %kone, %msq : f64
+        %inverse = arith.divf %kone, %safe : f64
+        %gm = arith.mulf %gauss, %msq : f64
+        %ngm = arith.negf %gm : f64
+        %ex = math.exp %ngm : f64
+        %exm = arith.mulf %ex, %inverse : f64
+        %pexm = arith.mulf %prefactor, %exm : f64
+        %mods = arith.mulf %mod12, %mod3 : f64
+        %bc0 = arith.mulf %pexm, %mods : f64
+        %bc = arith.select %origin, %kzero, %bc0 : f64
         %base1 = arith.muli %item, %h1 : index
         %base2 = arith.addi %base1, %z : index
         %re_at = arith.muli %base2, %cc2 : index
@@ -497,11 +520,6 @@ func.func private @mdrt_gpu_pme_convolve(%c: memref<?xf64, 1>, %influence: memre
         %hw = arith.mulf %khalf, %weight : f64
         %hwb = arith.mulf %hw, %bc : f64
         %em = arith.mulf %hwb, %g2 : f64
-        %m3s = arith.mulf %m3, %m3 : f64
-        %msq = arith.addf %m12, %m3s : f64
-        %origin = arith.cmpf oeq, %msq, %kzero : f64
-        %safe = arith.select %origin, %kone, %msq : f64
-        %inverse = arith.divf %kone, %safe : f64
         %sum = arith.addf %inverse, %gauss : f64
         %factor0 = arith.mulf %ktwo, %sum : f64
         %factor = arith.select %origin, %kzero, %factor0 : f64

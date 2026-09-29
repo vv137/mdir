@@ -501,7 +501,7 @@ LogicalResult ReciprocalOp::verify() {
     return emitOpError() << "expected an order from 3 to 8";
   if (!(getBeta().convertToDouble() > 0.0))
     return emitOpError() << "expected a positive beta";
-  if (cast<TableType>(getInfluence().getType()).getRank() != 2)
+  if (cast<TableType>(getModuli().getType()).getRank() != 2)
     return emitOpError() << "expected a table of rank 2";
   return success();
 }

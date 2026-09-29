@@ -705,8 +705,8 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
   if (failed(getBuffer(op.getPositions(), scope, positions)) ||
       failed(getBuffer(op.getCharges(), scope, charges)))
     return failure();
-  Value influence = mapping.lookupOrNull(op.getInfluence());
-  if (!influence)
+  Value moduli = mapping.lookupOrNull(op.getModuli());
+  if (!moduli)
     return op->emitOpError() << "the table has no buffer";
 
   Type forces = op.getForces().getType();
@@ -750,8 +750,8 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
   auto created = ReciprocalOp::create(
       scope.builder, loc, op.getEnergy().getType(), op.getVirial().getType(),
       /*forces=*/Type(), positions, charges, mapping.lookup(op.getCell()),
-      influence, out, scratch, op.getGridAttr(), op.getOrderAttr(),
-      op.getBetaAttr());
+      moduli, out, scratch, op.getGridAttr(), op.getOrderAttr(),
+      op.getBetaAttr(), op.getCoulombAttr());
   mapping.map(op.getEnergy(), created.getEnergy());
   mapping.map(op.getVirial(), created.getVirial());
   buffers[op.getForces()] = out;

@@ -171,8 +171,8 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     of the reciprocal sum of smooth particle mesh Ewald (docs/pme-m1.md).
 
     ```mlir
-    %u, %w, %f = md_exec.reciprocal %x, %q, %cell, %influence
-                   grid([32, 32, 32]) order(4) beta(3.12)
+    %u, %w, %f = md_exec.reciprocal %x, %q, %cell, %moduli
+                   grid([32, 32, 32]) order(4) beta(3.12) coulomb(138.935)
                    : !md.field<@atoms, 3 x f64>, !md.field<@atoms, f64>,
                      !md.table<2, f64>
                    -> f64, vector<9xf64>, !md.field<@atoms, 3 x f64>
@@ -187,12 +187,13 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     MDExec_FieldOrBuffer:$positions,
     MDExec_FieldOrBuffer:$charges,
     MD_CellType:$cell,
-    AnyType:$influence,
+    AnyType:$moduli,
     Optional<MDExec_Buffer>:$out,
     Variadic<MDExec_Buffer>:$scratch,
     DenseI64ArrayAttr:$grid,
     I64Attr:$order,
-    F64Attr:$beta
+    F64Attr:$beta,
+    F64Attr:$coulomb
   );
   let results = (outs
     F64:$energy,
@@ -200,12 +201,13 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     Optional<MD_FieldType>:$forces
   );
   let assemblyFormat = [{
-    $positions `,` $charges `,` $cell `,` $influence
+    $positions `,` $charges `,` $cell `,` $moduli
     (`outs` `(` $out^ `:` type($out) `)`)?
     (`scratch` `(` $scratch^ `:` type($scratch) `)`)?
     `grid` `(` $grid `)` `order` `(` $order `)` `beta` `(` $beta `)`
+    `coulomb` `(` $coulomb `)`
     attr-dict `:` qualified(type($positions)) `,` qualified(type($charges))
-    `,` qualified(type($influence)) `->` type($energy) `,` type($virial)
+    `,` qualified(type($moduli)) `->` type($energy) `,` type($virial)
     (`,` qualified(type($forces))^)?
   }];
   let extraClassDeclaration = [{
