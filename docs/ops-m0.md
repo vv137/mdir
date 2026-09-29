@@ -979,6 +979,16 @@ power of `r`. It carries that form through sums, differences, products,
 quotients, and integer powers. Code is emitted only where a value is needed:
 for the operands of any other op, and for what the kernel yields.
 
+A product of two sums is not multiplied out. Each of the two is computed
+and enters the product as a value. Multiplying out would write a polynomial
+in `r − a`, such as a switching function, in powers of `r`. The terms of
+that form are much larger than the value of the polynomial, and their sum
+loses the digits that the polynomial had: four digits in `f64` for the
+switching function of Section 4.8, and nearly all of them in `f32`.
+
+The product of a sum with a single term is multiplied out. It scales every
+term of the sum by the same factor and loses nothing.
+
 | Power | Computed from |
 |---|---|
 | Even and positive | `r²` |

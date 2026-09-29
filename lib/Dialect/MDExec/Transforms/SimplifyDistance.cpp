@@ -324,12 +324,19 @@ bool Rewriter::carry(Operation *oldOp) {
   if (isa<arith::MulFOp>(oldOp)) {
     Form lhs = *getForm(oldOp->getOperand(0));
     Form rhs = *getForm(oldOp->getOperand(1));
-    // Keep products of long sums from growing without bound.
-    const size_t limit = 32;
-    if (lhs.size() * rhs.size() > limit) {
+    // A product of two sums is not multiplied out. The terms of the
+    // expanded product can be much larger than the product itself, as in a
+    // polynomial in `r - a` that is written in powers of `r`, and their sum
+    // then loses the digits that the product had.
+    if (lhs.size() > 1 && rhs.size() > 1) {
       lhs = Form{asSingleTerm(oldOp->getOperand(0))};
       rhs = Form{asSingleTerm(oldOp->getOperand(1))};
     }
+    // A sum that has been computed is used as it is.
+    if (lhs.size() > 1 && emitted.count(oldOp->getOperand(0)))
+      lhs = Form{asSingleTerm(oldOp->getOperand(0))};
+    if (rhs.size() > 1 && emitted.count(oldOp->getOperand(1)))
+      rhs = Form{asSingleTerm(oldOp->getOperand(1))};
     forms[result] = multiply(lhs, rhs);
     return true;
   }

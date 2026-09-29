@@ -106,3 +106,29 @@ func.func @exponential(%x: !vec, %cell: !md.cell, %nl: !nl) -> f64 {
   } : !nl, !vec -> f64
   return %u : f64
 }
+
+// A product of two sums is not multiplied out. Written in powers of the
+// distance, a polynomial in `r - a` has terms that are much larger than its
+// value, and their sum loses digits.
+//
+// CHECK-LABEL: func.func @polynomial(
+func.func @polynomial(%x: !vec, %cell: !md.cell, %nl: !nl) -> f64 {
+  %zero = arith.constant 0.0 : f64
+  // CHECK:      md_exec.pair_for
+  // CHECK-NEXT: ^bb0(%[[R2:[a-z0-9]+]]: f64,
+  // CHECK-NEXT:   %[[R:[0-9]+]] = math.sqrt %[[R2]]
+  // CHECK-NEXT:   %[[T:[0-9]+]] = arith.subf %[[R]], %{{[a-z0-9_]+}}
+  // CHECK-NEXT:   %[[K:[0-9]+]] = math.fpowi %[[T]], %c3
+  // CHECK-NEXT:   md_exec.yield %[[K]]
+  %u = md_exec.pair_for %nl, %x, %cell reduce(%zero : f64) cutoff(2.5)
+      weights [0.5] policy(directed, owner_only) {
+  ^bb0(%r2: f64, %d: vector<3xf64>):
+    %r  = math.sqrt %r2 : f64
+    %a  = arith.constant 2.0 : f64
+    %t  = arith.subf %r, %a : f64
+    %t2 = arith.mulf %t, %t : f64
+    %k  = arith.mulf %t2, %t : f64
+    md_exec.yield %k : f64
+  } : !nl, !vec -> f64
+  return %u : f64
+}
