@@ -723,10 +723,10 @@ Milestones (P3) and what each one adds:
 | Milestone | System | Adds |
 |---|---|---|
 | M0 | Lennard-Jones fluid, NVE | Whole pipeline on CPU and GPU, JIT, validation |
-| M1 | Martini CG membrane and water | Bonded terms with a scatter strategy, exclusions, reaction field, thermostat, barostat |
-| M2a | AA protein and water | Constraints, virtual sites |
-| M2b | AA protein and water | PME on one node |
+| M1 | AA protein and water with an Amber force field | Bonded terms executed by the particles, exclusions and scaled pairs, tables of pairs of types, PME on one node, constraints, removal of the motion of the center of mass, thermostat, barostat, readers of Amber and GROMACS topologies, the `mdir` command (D53) |
+| M2a | AA protein and water | Virtual sites |
 | M2c | AA protein and water | Distributed PME: a mesh decomposition beside the particle decomposition |
+| Later | Martini CG membrane and water | Deferred (D53) |
 | M3 | MLFF | Reverse mode, reverse accumulation, feature halo exchange |
 
 The v0 performance target is homogeneous systems at finite density (C7).
