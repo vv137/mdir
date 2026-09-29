@@ -46,16 +46,12 @@ static const char *const buildNeighborsName =
 static const char *const reportOverflowName = "mdrtReportNeighborOverflow";
 static const char *const countBuildName = "mdrtCountBuild";
 
-/// The number of particles whose contributions one thread adds up.
-/// The least and the most particles that one thread adds up.
-static const int64_t smallestChunk = 32;
 /// The threads that share the row of one particle in a loop over pairs or
 /// tuples. A particle has hundreds of neighbors, and a thread for each
 /// particle leaves most of a device idle for a system of thousands; the
 /// tuples of a few particles, such as the dihedrals of a protein, would
 /// make those threads the longest.
 static const int64_t rowLanes = 16;
-static const int64_t largestChunk = 1024;
 
 namespace {
 
@@ -144,9 +140,6 @@ private:
       OpBuilder &builder, Location loc, Value count,
       function_ref<void(OpBuilder &, Value, const RowLanes &)> body);
 
-  /// Launches a kernel with one thread.
-  void launchOne(OpBuilder &builder, Location loc,
-                 function_ref<void(OpBuilder &)> body);
 
   /// Gives the kernel of `launch` the values from outside as it can take
   /// them. A kernel takes numbers and buffers as arguments: a vector enters
@@ -159,10 +152,23 @@ private:
   ///
   /// All of them are reduced by one pair of kernels, and the results
   /// reach the host in one copy for each type of number.
+  /// The runs of loops that are lowered together, by their last loop, and
+  /// the loops of the runs.
+  DenseMap<Operation *, SmallVector<Operation *>> rows;
+  DenseSet<Operation *> inRows;
+
   SmallVector<Value> emitReductions(OpBuilder &builder, Location loc,
                                     ArrayRef<Value> contributions,
                                     ArrayRef<Value> partials, Value size,
                                     bool isSum);
+
+  /// Finds the runs of loops over pairs and tuples in `function` that one
+  /// kernel can do (lowerRows), and records them in `rows`.
+  void findRows(func::FuncOp function);
+  /// Lowers the loops over pairs and tuples of `run` to one kernel, in
+  /// which the group of threads of a particle does each loop in turn, and
+  /// their global sums to one reduction.
+  LogicalResult lowerRows(ArrayRef<Operation *> run);
 
   /// Stores the contributions of a particle and returns, for each global
   /// sum of a loop, its result.
@@ -322,17 +328,6 @@ void Lowering::launchOver(OpBuilder &builder, Location loc, Value count,
   bringIn(launch);
 }
 
-void Lowering::launchOne(OpBuilder &builder, Location loc,
-                         function_ref<void(OpBuilder &)> body) {
-  Value one = createIndex(builder, loc, 1);
-  auto launch =
-      gpu::LaunchOp::create(builder, loc, one, one, one, one, one, one);
-  OpBuilder kernel = OpBuilder::atBlockEnd(&launch.getBody().front());
-  body(kernel);
-  gpu::TerminatorOp::create(kernel, loc);
-  bringIn(launch);
-}
-
 Cell Lowering::getCell(Type element, int64_t count, Location loc) {
   SmallVector<Cell, 2> &known = cells[element];
   for (const Cell &cell : known)
@@ -417,51 +412,69 @@ Lowering::emitReductions(OpBuilder &builder, Location loc,
       zeros.push_back(createZero(b, loc, type));
     return zeros;
   };
-  // Adds up what `buffers` hold from `begin` to `end`.
-  auto reduce = [&](OpBuilder &b, ArrayRef<Value> buffers, Value begin,
-                    Value end) {
-    return scf::ForOp::create(
-        b, loc, begin, end, createIndex(b, loc, 1), createZeros(b),
+
+  // A block of threads for each part of the particles, and one block for
+  // the results of the parts. A thread adds up the particles that it takes,
+  // every so manyth, and the block adds up its threads by a tree
+  // (`gpu.all_reduce`), so that the order of the sum, and the sum, depend
+  // only on the number of particles. A block takes at least four
+  // particles per thread, and there are no more parts than threads in a
+  // block.
+  auto reduceBlock = [&](OpBuilder &b, Value value) -> Value {
+    auto operation = gpu::AllReduceOperationAttr::get(
+        b.getContext(), isSum ? gpu::AllReduceOperation::ADD
+                              : gpu::AllReduceOperation::MAXNUMF);
+    auto reduceNumber = [&](Value number) -> Value {
+      return gpu::AllReduceOp::create(b, loc, number, operation,
+                                      b.getUnitAttr());
+    };
+    if (auto vector = dyn_cast<VectorType>(value.getType())) {
+      SmallVector<Value> elements;
+      for (int64_t i = 0, e = vector.getNumElements(); i != e; ++i)
+        elements.push_back(reduceNumber(
+            vector::ExtractOp::create(b, loc, value, i)));
+      return vector::FromElementsOp::create(b, loc, vector, elements);
+    }
+    return reduceNumber(value);
+  };
+  auto launchBlocks = [&](Value blocks,
+                          function_ref<void(OpBuilder &, Value, Value)> body) {
+    Value one = createIndex(builder, loc, 1);
+    Value threads = createIndex(builder, loc, blockSize);
+    auto launch = gpu::LaunchOp::create(builder, loc, blocks, one, one,
+                                        threads, one, one);
+    OpBuilder kernel = OpBuilder::atBlockEnd(&launch.getBody().front());
+    body(kernel, launch.getBlockIds().x, launch.getThreadIds().x);
+    gpu::TerminatorOp::create(kernel, loc);
+    bringIn(launch);
+  };
+  Value parts = arith::MinSIOp::create(
+      builder, loc, createIndex(builder, loc, blockSize),
+      createGroups(builder, loc, size, 4 * blockSize));
+  launchBlocks(parts, [&](OpBuilder &b, Value block, Value thread) {
+    Value threads = createIndex(b, loc, blockSize);
+    Value first = arith::AddIOp::create(
+        b, loc, arith::MulIOp::create(b, loc, block, threads), thread);
+    Value stride = arith::MulIOp::create(b, loc, parts, threads);
+    auto loop = scf::ForOp::create(
+        b, loc, first, size, stride, createZeros(b),
         [&](OpBuilder &inner, Location, Value i, ValueRange sums) {
           SmallVector<Value> next;
-          for (auto [buffer, sum] : llvm::zip(buffers, sums))
+          for (auto [buffer, sum] : llvm::zip(contributions, sums))
             next.push_back(
                 combine(inner, sum, loadElement(inner, loc, buffer, i)));
           scf::YieldOp::create(inner, loc, next);
         });
-  };
-
-  // One thread for each chunk of particles. A thread adds up its chunk,
-  // and one thread adds up the chunks, one after the other: the two take
-  // the least time with chunks of the square root of the number of
-  // particles.
-  Type wide = builder.getI64Type();
-  Type real = builder.getF64Type();
-  Value count = arith::SIToFPOp::create(
-      builder, loc, real,
-      arith::IndexCastOp::create(builder, loc, wide, size));
-  Value root = arith::IndexCastOp::create(
-      builder, loc, builder.getIndexType(),
-      arith::FPToSIOp::create(builder, loc, wide,
-                              math::SqrtOp::create(builder, loc, count)));
-  Value length = arith::MinSIOp::create(
-      builder, loc, createIndex(builder, loc, largestChunk),
-      arith::MaxSIOp::create(builder, loc, root,
-                             createIndex(builder, loc, smallestChunk)));
-  Value padded = arith::AddIOp::create(
-      builder, loc, size,
-      arith::SubIOp::create(builder, loc, length,
-                            createIndex(builder, loc, 1)));
-  Value chunks = arith::DivUIOp::create(builder, loc, padded, length);
-  launchOver(builder, loc, chunks, [&](OpBuilder &b, Value chunk) {
-    Value begin = arith::MulIOp::create(b, loc, chunk, length);
-    Value full = arith::AddIOp::create(b, loc, begin, length);
-    Value isShort =
-        arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult, size, full);
-    Value end = arith::SelectOp::create(b, loc, isShort, size, full);
-    auto loop = reduce(b, contributions, begin, end);
-    for (auto [index, partial] : llvm::enumerate(partials))
-      storeElement(b, loc, loop.getResult(index), partial, chunk);
+    SmallVector<Value> totals;
+    for (Value value : loop.getResults())
+      totals.push_back(reduceBlock(b, value));
+    Value leader = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq,
+                                         thread, createIndex(b, loc, 0));
+    scf::IfOp::create(b, loc, leader, [&](OpBuilder &then, Location) {
+      for (auto [total, partial] : llvm::zip(totals, partials))
+        storeElement(then, loc, total, partial, block);
+      scf::YieldOp::create(then, loc);
+    });
   });
 
   // Where the results arrive. Numbers of one type are next to one another,
@@ -485,21 +498,37 @@ Lowering::emitReductions(OpBuilder &builder, Location loc,
     places[index].cell = getCell(element, totals[element], loc);
   }
 
-  // One thread for the results of the chunks.
-  launchOne(builder, loc, [&](OpBuilder &b) {
-    auto loop = reduce(b, partials, createIndex(b, loc, 0), chunks);
-    for (auto [index, place] : llvm::enumerate(places)) {
-      Value result = loop.getResult(index);
-      for (int64_t c = 0; c != place.count; ++c) {
-        Value number = isa<VectorType>(result.getType())
-                           ? Value(vector::ExtractOp::create(b, loc, result,
-                                                             c))
-                           : result;
-        memref::StoreOp::create(
-            b, loc, number, place.cell.device,
-            ValueRange{createIndex(b, loc, place.offset + c)});
-      }
+  // One block for the results of the parts.
+  launchBlocks(createIndex(builder, loc, 1), [&](OpBuilder &b, Value,
+                                                 Value thread) {
+    Value inside = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult,
+                                         thread, parts);
+    Value slot = arith::SelectOp::create(b, loc, inside, thread,
+                                         createIndex(b, loc, 0));
+    SmallVector<Value> totals;
+    for (auto [partial, type] : llvm::zip(partials, types)) {
+      Value value = loadElement(b, loc, partial, slot);
+      Value nothing = createZero(b, loc, type);
+      value = arith::SelectOp::create(b, loc, inside, value, nothing);
+      totals.push_back(reduceBlock(b, value));
     }
+    Value leader = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq,
+                                         thread, createIndex(b, loc, 0));
+    scf::IfOp::create(b, loc, leader, [&](OpBuilder &then, Location) {
+      for (auto [index, place] : llvm::enumerate(places)) {
+        Value result = totals[index];
+        for (int64_t c = 0; c != place.count; ++c) {
+          Value number = isa<VectorType>(result.getType())
+                             ? Value(vector::ExtractOp::create(then, loc,
+                                                               result, c))
+                             : result;
+          memref::StoreOp::create(
+              then, loc, number, place.cell.device,
+              ValueRange{createIndex(then, loc, place.offset + c)});
+        }
+      }
+      scf::YieldOp::create(then, loc);
+    });
   });
 
   for (auto &[element, total] : totals) {
@@ -551,6 +580,167 @@ LogicalResult Lowering::finishSums(Operation *op, OpBuilder &builder,
   for (unsigned i = 0, e = reduce.size(); i != e; ++i) {
     Value total = arith::AddFOp::create(builder, loc, reduce[i], sums[i]);
     op->getResult(i).replaceAllUsesWith(total);
+  }
+  return success();
+}
+
+static void storeContributions(OpBuilder &builder, Location loc,
+                               ArrayRef<Value> contributions,
+                               ValueRange scratch, Value particle,
+                               const RowLanes &sharing);
+
+void Lowering::findRows(func::FuncOp function) {
+  auto isRowLoop = [](Operation *op) {
+    return isa<md_exec::PairForOp, md_exec::TupleForOp>(op);
+  };
+  auto getPositions = [](Operation *op) -> Value {
+    if (auto pair = dyn_cast<md_exec::PairForOp>(op))
+      return pair.getPositions();
+    return cast<md_exec::TupleForOp>(op).getPositions();
+  };
+  auto getOuts = [](Operation *op) -> ValueRange {
+    if (auto pair = dyn_cast<md_exec::PairForOp>(op))
+      return pair.getOuts();
+    return cast<md_exec::TupleForOp>(op).getOuts();
+  };
+  auto finish = [&](SmallVector<Operation *> &run) {
+    if (run.size() >= 2) {
+      rows[run.back()] = run;
+      inRows.insert(run.begin(), run.end());
+    }
+    run.clear();
+  };
+  function.walk([&](Block *block) {
+    SmallVector<Operation *> run;
+    DenseSet<Value> written, sums;
+    for (Operation &op : *block) {
+      if (!isRowLoop(&op)) {
+        // Constants may lie between the loops of a run; they are not
+        // loops, and are lowered where they are.
+        if (isa<arith::ConstantOp>(op))
+          continue;
+        finish(run);
+        written.clear();
+        sums.clear();
+        continue;
+      }
+      // A loop joins the run if it takes the same positions, reads nothing
+      // that a loop of the run writes, so that the order of the loops
+      // within a thread is the only order that matters, and has buffers
+      // for its global sums of its own: storage may give loops that ran
+      // one after the other the same buffers, which one kernel would
+      // write at once.
+      ValueRange scratch = isa<md_exec::PairForOp>(op)
+                               ? cast<md_exec::PairForOp>(op).getScratch()
+                               : cast<md_exec::TupleForOp>(op).getScratch();
+      bool joins = !run.empty() && getPositions(&op) == getPositions(run[0]);
+      if (joins)
+        for (Value operand : op.getOperands())
+          if ((written.contains(operand) &&
+               !llvm::is_contained(getOuts(&op), operand)) ||
+              sums.contains(operand))
+            joins = false;
+      if (!joins) {
+        finish(run);
+        written.clear();
+        sums.clear();
+      }
+      run.push_back(&op);
+      for (Value out : getOuts(&op))
+        written.insert(out);
+      for (Value buffer : scratch)
+        sums.insert(buffer);
+    }
+    finish(run);
+  });
+}
+
+LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
+  Operation *last = run.back();
+  Location loc = last->getLoc();
+  OpBuilder builder(last);
+
+  // What each loop needs from the host: its structure of neighbors, and
+  // the cell as the vector of its edge lengths.
+  struct Loop {
+    Operation *op;
+    Neighbors structure;
+    Value box, inverse;
+  };
+  SmallVector<Loop> loops;
+  Value positions;
+  for (Operation *op : run) {
+    Loop loop;
+    loop.op = op;
+    Value cell;
+    if (auto pair = dyn_cast<md_exec::PairForOp>(op)) {
+      if (failed(checkScratch(op, pair.getReduce().size(),
+                              pair.getScratch().size())) ||
+          failed(getNeighbors(op, pair.getNeighbors(), loop.structure)))
+        return failure();
+      positions = pair.getPositions();
+      cell = pair.getCellMutable().get();
+    } else {
+      auto tuple = cast<md_exec::TupleForOp>(op);
+      if (failed(checkScratch(op, tuple.getReduce().size(),
+                              tuple.getScratch().size())))
+        return failure();
+      positions = tuple.getPositions();
+      cell = tuple.getCellMutable().get();
+    }
+    Type real = cast<MemRefType>(positions.getType()).getElementType();
+    loop.box = convertReal(builder, loc, cell, real);
+    loop.inverse = createInverse(builder, loc, loop.box);
+    loops.push_back(loop);
+  }
+  Value size = createSize(builder, loc, positions);
+
+  launchRows(builder, loc, size, [&](OpBuilder &body, Value particle,
+                                     const RowLanes &sharing) {
+    for (Loop &loop : loops) {
+      IRMapping local;
+      SmallVector<Value> contributions;
+      ValueRange scratch;
+      if (auto pair = dyn_cast<md_exec::PairForOp>(loop.op)) {
+        contributions = emitPairKernel(
+            body, pair, loop.structure.counts, loop.structure.index,
+            loop.box, loop.inverse, particle, local, &sharing);
+        scratch = pair.getScratch();
+      } else {
+        auto tuple = cast<md_exec::TupleForOp>(loop.op);
+        contributions =
+            emitTupleKernel(body, tuple, tuple.getIncidence(), loop.box,
+                            loop.inverse, particle, local, &sharing);
+        scratch = tuple.getScratch();
+      }
+      storeContributions(body, loc, contributions, scratch, particle,
+                         sharing);
+    }
+  });
+
+  // One reduction for the global sums of all the loops.
+  SmallVector<Value> contributions, partials;
+  for (Loop &loop : loops) {
+    ValueRange scratch = isa<md_exec::PairForOp>(loop.op)
+                             ? cast<md_exec::PairForOp>(loop.op).getScratch()
+                             : cast<md_exec::TupleForOp>(loop.op).getScratch();
+    for (unsigned i = 0, e = loop.op->getNumResults(); i != e; ++i) {
+      contributions.push_back(scratch[2 * i]);
+      partials.push_back(scratch[2 * i + 1]);
+    }
+  }
+  SmallVector<Value> sums = emitReductions(builder, loc, contributions,
+                                           partials, size, /*isSum=*/true);
+  unsigned next = 0;
+  for (Loop &loop : loops) {
+    ValueRange reduce = isa<md_exec::PairForOp>(loop.op)
+                            ? cast<md_exec::PairForOp>(loop.op).getReduce()
+                            : cast<md_exec::TupleForOp>(loop.op).getReduce();
+    for (unsigned i = 0, e = loop.op->getNumResults(); i != e; ++i) {
+      Value total =
+          arith::AddFOp::create(builder, loc, reduce[i], sums[next++]);
+      loop.op->getResult(i).replaceAllUsesWith(total);
+    }
   }
   return success();
 }
@@ -1403,15 +1593,28 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   }
 
   // The kernels are copied into the loops, so the ops inside them are not
-  // lowered where they are.
+  // lowered where they are. A run of loops is lowered at its last loop.
+  findRows(function);
   for (Operation *op : ops) {
     Operation *parent = op->getParentOp();
     if (isa<md_exec::ParticleForOp, md_exec::PairForOp, md_exec::TupleForOp>(
             parent))
       continue;
+    if (inRows.contains(op)) {
+      auto run = rows.find(op);
+      if (run != rows.end()) {
+        if (failed(lowerRows(run->second)))
+          return failure();
+        for (Operation *loop : run->second)
+          lowered.push_back(loop);
+      }
+      continue;
+    }
     if (failed(lowerOp(op)))
       return failure();
   }
+  rows.clear();
+  inRows.clear();
 
   // Users come after what they use, so erase from the back.
   for (Operation *op : llvm::reverse(lowered))

@@ -95,16 +95,22 @@ func.func @forces(%x: memref<?x3xf64, 1>, %f: memref<?x3xf64, 1>,
   // CHECK:          memref.store %{{[0-9]+}}, %[[A]][
   // CHECK:        gpu.terminator
   //
+  // The sums: a block for each part of the particles adds up its threads
+  // by a tree, and one block the parts.
+  //
   // CHECK:      gpu.launch
-  // CHECK:          scf.for
-  // CHECK:            memref.load %[[A]][
+  // CHECK:        scf.for
+  // CHECK:          memref.load %[[A]][
+  // CHECK:        gpu.all_reduce add
+  // CHECK:        scf.if
   // CHECK:          memref.store %{{[0-9]+}}, %[[B]][
   // CHECK:        gpu.terminator
   //
   // CHECK:      gpu.launch
-  // CHECK:        scf.for
-  // CHECK:          memref.load %[[B]][
-  // CHECK:        memref.store %{{[0-9]+}}, %[[CELL]][
+  // CHECK:        memref.load %[[B]][
+  // CHECK:        gpu.all_reduce add
+  // CHECK:        scf.if
+  // CHECK:          memref.store %{{[0-9]+}}, %[[CELL]][
   // CHECK:        gpu.terminator
   //
   // CHECK:      gpu.memcpy async [%{{[0-9]+}}] %[[HOST]], %[[CELL]]
@@ -254,10 +260,11 @@ func.func @ordered(%x: memref<?x3xf64, 1>, %ids: memref<?xi32, 1>,
 // CHECK:           scf.for
 // CHECK:             memref.load %[[A]][
 // CHECK:             arith.addf %{{[a-z0-9]+}}, %{{[0-9]+}} : vector<3xf64>
+// CHECK:           gpu.all_reduce add
 // CHECK:           memref.store %{{[0-9]+}}, %[[B]][
 // CHECK:         gpu.launch
-// CHECK:           scf.for
-// CHECK:             memref.load %[[B]][
+// CHECK:           memref.load %[[B]][
+// CHECK:           gpu.all_reduce add
 // CHECK:           memref.store %{{[0-9]+}}, %[[CELL]][
 // CHECK:         gpu.memcpy async [%{{[0-9]+}}] %[[HOST]], %[[CELL]]
 // CHECK:         memref.load %[[HOST]][
@@ -292,13 +299,14 @@ func.func @momentum(%v: memref<?x3xf64, 1>, %a: memref<?x3xf64, 1>,
 // CHECK:           scf.for
 // CHECK:             memref.load %[[A]][
 // CHECK:             memref.load %[[C]][
+// CHECK:           gpu.all_reduce add
 // CHECK:           memref.store %{{[0-9#]+}}, %[[B]][
 // CHECK:           memref.store %{{[0-9]+}}, %[[D]][
 // CHECK:           gpu.terminator
 // CHECK:         gpu.launch
-// CHECK:           scf.for
-// CHECK:             memref.load %[[B]][
-// CHECK:             memref.load %[[D]][
+// CHECK:           memref.load %[[B]][
+// CHECK:           memref.load %[[D]][
+// CHECK:           gpu.all_reduce add
 // CHECK:           memref.store %{{[0-9#]+}}, %[[CELL]][
 // CHECK:           gpu.terminator
 // CHECK-NOT:     gpu.launch
