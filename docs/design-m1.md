@@ -964,3 +964,21 @@ constrained forces from 8.7 to 2.1 kcal/mol/Å (`test/Driver/minimize.test`
 takes 100). Without the masses in the direction, the steps that SHAKE and
 SETTLE correct went uphill after 50 steps, and h fell to 0.
 
+## 22. Restraints
+
+`[[restraints]]`, any number of them, hold particles to their positions in
+the file of coordinates (D74):
+
+| Item | Rule |
+|---|---|
+| Energy | `k |x − x_ref|²` for each selected particle with mass, k in kcal/mol/Å² (`force_constant`), as Amber's `restraint_wt`; the constants of restraints that select the same particle add |
+| Reference | The positions of the file of coordinates of `[input]`, also when the run begins from a checkpoint. Under a barostat, those positions times L/L₀, the edge of the cell over that of the file, so that the reference follows the cell as the positions do |
+| Forces, energy, virial | After the evaluation of the potential and the spreading of the forces of virtual sites, in every step, at the start, and in a minimization: `F −= 2k d` with `d = x − x_ref`, `U += Σ k |d|²`, and `W += diag(Σ −2k d⊙d)`, whose trace, −2U, is exact; the off-diagonal elements are left out. The log lists the energy of the restraints among the terms |
+| Selection | `selection`, a mask of Amber in part: `:` residues by numbers (from 1) or names, `@` atoms by numbers or names, `:res@atoms`, `*`, with `!`, `&`, `|` and parentheses, in that order of precedence, and `*` and `?` in names. `!:WAT & !@H*` is every heavy atom but those of the waters. A mask that selects no particle with mass is an error; a run from `pdbfile` has no names to select by |
+
+On the target of D65, a run at constant energy with the heavy atoms of the
+peptide restrained at 10 kcal/mol/Å² keeps the total energy to 4 × 10⁻⁴
+over 2 ps at 1 fs, as the same run without them does; at constant
+pressure the conserved energy drifts as it does without them, by the term
+of Section 11.4.
+

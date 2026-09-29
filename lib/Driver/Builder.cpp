@@ -111,6 +111,30 @@ private:
   void emitLevel(unsigned level, StringRef indent);
   /// Whether the cell changes in the run, which a barostat does.
   bool changesCell() const { return control.barostat; }
+  /// Whether particles are restrained to reference positions.
+  bool hasRestraints() const { return !system.restraintConstants.empty(); }
+  /// Whether the reference positions of the restraints follow the cell,
+  /// which a barostat changes: they are those of the file times
+  /// `scaleName`, the edge of the cell over that of the file.
+  bool scalesReference() const { return hasRestraints() && changesCell(); }
+  std::string getScaleValue() const {
+    return scalesReference() ? ", " + scaleName : "";
+  }
+  std::string getScaleType() const {
+    return scalesReference() ? ", f64" : "";
+  }
+  std::string getScaleParameter() const {
+    return scalesReference() ? ", %rest_scale: f64" : "";
+  }
+  /// Emits the restraints at the positions `x`, with the fields of the
+  /// prefix `prefix`: `fResult`, the forces `f` with theirs added, and, if
+  /// `u` is given, `uResult` and `wResult`, the energy `u` and the virial
+  /// `w` with theirs added. The virial of a restraint, Σ d ⊗ F with
+  /// d = x − x_ref, has its diagonal only; its trace, −2 U, is whole.
+  void emitRestraints(StringRef indent, StringRef x, StringRef prefix,
+                      StringRef f, StringRef fResult, StringRef u = "",
+                      StringRef uResult = "", StringRef w = "",
+                      StringRef wResult = "");
 
   /// Whether the topology has virtual sites.
   bool hasSites() const { return !getSiteSets().empty(); }
@@ -230,6 +254,9 @@ private:
   std::string massName = "%m";
   std::string fieldPrefix = "%p_";
   std::string idName = "%id";
+  /// The factor of the reference positions of the restraints, which
+  /// follows the cell (scalesReference).
+  std::string scaleName = "%rest_scale";
   /// The name of the cell, which changes with a barostat.
   std::string cellName = "%cell";
 
@@ -611,6 +638,21 @@ llvm::Error Builder::collectTopology() {
     types.values.push_back(type);
   program.fields.push_back(std::move(types));
   (void)count;
+  // The restraints: the constant of each particle, 0 for one that is not
+  // restrained, and its reference position, in nm.
+  if (hasRestraints()) {
+    Program::Field constants;
+    constants.name = "rest_k";
+    constants.values = system.restraintConstants;
+    program.fields.push_back(std::move(constants));
+    for (int c = 0; c != 3; ++c) {
+      Program::Field reference;
+      reference.name = std::string("rest_") + "xyz"[c];
+      for (size_t i = 0, e = system.getNumParticles(); i != e; ++i)
+        reference.values.push_back(system.referencePositions[3 * i + c]);
+      program.fields.push_back(std::move(reference));
+    }
+  }
 
   // Lennard-Jones for each pair of types.
   unsigned numTypes = topology.getNumTypes();
@@ -1357,19 +1399,24 @@ void Builder::emitPrograms() {
   std::vector<const Program::TupleSet *> shakeSets = getShakeSets();
   bool constraints = settles || !shakeSets.empty();
 
+  // With restraints the names of an evaluation have `p`, and the
+  // restraints give those that the step goes on with.
+  std::string held = hasRestraints() ? "p" : "";
   if (isLeapfrog()) {
     // The stored velocities are half a step behind the positions.
     os << "dyn.program @step(%x: !vec, %v: !vec, %m: !real, %cell: !md.cell, "
           "%dt: f64"
-       << getFieldParameters() << ")\n    -> (!vec, !vec)\n"
+       << getScaleParameter() << getFieldParameters() << ")\n    -> (!vec, !vec)\n"
        << "    attributes {velocity_offset = -0.5,\n"
        << "                provides = [\"symplectic\", "
           "\"time_reversible\"]} {\n"
-       << "  %f" << (sites ? "e" : "") << " = md.evaluate @energy(%x, %cell"
-       << getFieldValues() << ") request [forces]\n      : " << signature
-       << " -> !vec\n";
+       << "  %f" << held << (sites ? "e" : "")
+       << " = md.evaluate @energy(%x, %cell" << getFieldValues()
+       << ") request [forces]\n      : " << signature << " -> !vec\n";
     if (sites)
-      emitSpreadSites("  ", "%x", "%fe", "%f", "%r_");
+      emitSpreadSites("  ", "%x", "%f" + held + "e", "%f" + held, "%r_");
+    if (hasRestraints())
+      emitRestraints("  ", "%x", "%p_", "%fp", "%f");
     os << "  %v1 = dyn.kick %v, %f, %m, %dt : !vec\n"
        << "  %x1" << (sites ? "d" : "") << " = dyn.drift %x, %v1, %dt : !vec\n";
     if (sites)
@@ -1383,7 +1430,8 @@ void Builder::emitPrograms() {
   for (bool withEnergy : {false, true}) {
     os << "dyn.program @" << (withEnergy ? "step_energy" : "step")
        << "(%x: !vec, %v: !vec, %f: !vec, %m: !real,\n"
-       << "    %cell: !md.cell, %dt: f64" << getFieldParameters() << ")\n"
+       << "    %cell: !md.cell, %dt: f64" << getScaleParameter()
+       << getFieldParameters() << ")\n"
        << "    -> (!vec, !vec, !vec"
        << (withEnergy ? ", f64, vector<9xf64>" : "") << ")\n"
        << "    attributes {provides = [\"symplectic\", "
@@ -1437,18 +1485,28 @@ void Builder::emitPrograms() {
     }
     if (sites)
       emitPlaceSites("  ", constraints ? "%x1s" : "%x1d", "%x1", "%r_");
-    StringRef raw = sites ? "e" : "";
+    std::string raw = sites ? "e" : "";
     if (withEnergy)
-      os << "  %u1, %f1" << raw << ", %w1" << raw << " = " << evaluate
+      os << "  %u1" << held << ", %f1" << held << raw << ", %w1" << held
+         << raw << " = " << evaluate
          << "\n      request [energy, forces, virial]\n"
          << "      : " << signature << " -> (f64, !vec, vector<9xf64>)\n";
     else
-      os << "  %f1" << raw << " = " << evaluate << " request [forces]\n"
+      os << "  %f1" << held << raw << " = " << evaluate << " request [forces]\n"
          << "      : " << signature << " -> !vec\n";
-    std::string virial = "%w1";
+    std::string virial = "%w1" + held;
     if (sites)
-      virial = emitSpreadSites("  ", "%x1", "%f1e", "%f1", "%r_",
-                               withEnergy ? "%w1e" : "", "%w1");
+      virial = emitSpreadSites("  ", "%x1", "%f1" + held + "e", "%f1" + held,
+                               "%r_", withEnergy ? "%w1" + held + "e" : "",
+                               "%w1" + held);
+    if (hasRestraints()) {
+      if (withEnergy)
+        emitRestraints("  ", "%x1", "%p_", "%f1p", "%f1", "%u1p", "%u1",
+                       virial, "%w1");
+      else
+        emitRestraints("  ", "%x1", "%p_", "%f1p", "%f1");
+      virial = "%w1";
+    }
     os << "  %v2" << (constraints ? "u" : "") << " = dyn.kick " << velocities
        << ", %f1, %m, %half : !vec\n";
     // The virial of the constraints over the first half of the step.
@@ -2432,7 +2490,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
 
   // With a barostat the cell changes: each iteration takes it from where
   // the barostat keeps it.
-  std::string outerCell = cellName;
+  std::string outerCell = cellName, outerScale = scaleName;
   if (changesCell()) {
     cellName = "%cell" + here;
     for (int k = 0; k != 3; ++k)
@@ -2440,6 +2498,11 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
          << "%box_memory[%c_edge" << k << "] : memref<3xf64>\n";
     os << inner << cellName << " = md.orthorhombic_cell %edge" << here
        << "_0, %edge" << here << "_1, %edge" << here << "_2\n";
+    if (scalesReference()) {
+      scaleName = "%rest_scale" + here;
+      os << inner << scaleName << " = arith.divf %edge" << here
+         << "_0, %rest_edge : f64\n";
+    }
   }
 
   std::string outerMass = massName, outerPrefix = fieldPrefix,
@@ -2456,14 +2519,14 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
     os << inner << getValues("b" + here) << " = dyn.step @step(";
     if (isLeapfrog())
       os << "%xa" << here << ", %va" << here << ", " << massName
-         << ", " << cellName << ", %dt" << getFieldValues(fieldPrefix) << ")\n"
-         << inner << "    : (!vec, !vec, !real, !md.cell, f64"
+         << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << ")\n"
+         << inner << "    : (!vec, !vec, !real, !md.cell, f64" << getScaleType()
          << getFieldTypes() << ") -> (!vec, !vec)\n";
     else
       os << "%xa" << here << ", %va" << here << ", %fa" << here << ", "
-         << massName << ", " << cellName << ", %dt" << getFieldValues(fieldPrefix)
+         << massName << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix)
          << ")\n"
-         << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
+         << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
          << getFieldTypes() << ") -> (!vec, !vec, !vec)\n";
     os << inner << "scf.yield " << getValues("b" + here) << " : " << state
        << "\n";
@@ -2480,6 +2543,11 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
            << "%box_memory[%c_edge" << k << "] : memref<3xf64>\n";
       os << inner << cellName << " = md.orthorhombic_cell %edger" << here
          << "_0, %edger" << here << "_1, %edger" << here << "_2\n";
+      if (scalesReference()) {
+        scaleName = "%rest_scaler" + here;
+        os << inner << scaleName << " = arith.divf %edger" << here
+           << "_0, %rest_edge : f64\n";
+      }
     }
 
     // The iteration of the loop of `upto` that is under way, counted over
@@ -2549,8 +2617,8 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         os << inner << getValues("k" + here) << ", %uk" << here << ", %wk"
            << here << " = dyn.step @step_energy(%x" << last << ", %v" << last
            << ", %f" << last << ", " << massName << ", " << cellName
-           << ", %dt" << getFieldValues(fieldPrefix) << ")\n"
-           << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
+           << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << ")\n"
+           << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
            << getFieldTypes()
            << ") -> (!vec, !vec, !vec, f64, vector<9xf64>)\n";
         trace = "%trk" + here;
@@ -2561,19 +2629,20 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         os << inner << "scf.yield " << coupled << " : " << state << "\n";
         os << indent << "}\n";
         cellName = outerCell;
+        scaleName = outerScale;
         return;
       }
       os << inner << getValues("k" + here) << " = dyn.step @step(";
       if (isLeapfrog())
         os << "%x" << last << ", %v" << last << ", " << massName
-           << ", " << cellName << ", %dt" << getFieldValues(fieldPrefix) << ")\n"
-           << inner << "    : (!vec, !vec, !real, !md.cell, f64"
+           << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << ")\n"
+           << inner << "    : (!vec, !vec, !real, !md.cell, f64" << getScaleType()
            << getFieldTypes() << ") -> (!vec, !vec)\n";
       else
         os << "%x" << last << ", %v" << last << ", %f" << last << ", "
-           << massName << ", " << cellName << ", %dt" << getFieldValues(fieldPrefix)
+           << massName << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix)
            << ")\n"
-           << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
+           << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
            << getFieldTypes() << ") -> (!vec, !vec, !vec)\n";
       emitStep();
       std::string coupled =
@@ -2581,6 +2650,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       os << inner << "scf.yield " << coupled << " : " << state << "\n";
       os << indent << "}\n";
       cellName = outerCell;
+      scaleName = outerScale;
       return;
     }
 
@@ -2595,14 +2665,14 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       os << inner << "  " << getValues("r" + here) << " = dyn.step @step(";
       if (isLeapfrog())
         os << "%xp" << here << ", %vp" << here << ", " << massName
-           << ", " << cellName << ", %dt" << getFieldValues(fieldPrefix) << ")\n"
-           << inner << "      : (!vec, !vec, !real, !md.cell, f64"
+           << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << ")\n"
+           << inner << "      : (!vec, !vec, !real, !md.cell, f64" << getScaleType()
            << getFieldTypes() << ") -> (!vec, !vec)\n";
       else
         os << "%xp" << here << ", %vp" << here << ", %fp" << here << ", "
-           << massName << ", " << cellName << ", %dt" << getFieldValues(fieldPrefix)
+           << massName << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix)
            << ")\n"
-           << inner << "      : (!vec, !vec, !vec, !real, !md.cell, f64"
+           << inner << "      : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
            << getFieldTypes() << ") -> (!vec, !vec, !vec)\n";
       os << inner << "  scf.yield " << getValues("r" + here) << " : "
          << state << "\n"
@@ -2615,22 +2685,30 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       std::string virialName = "%w";
       if (isLeapfrog()) {
         os << inner << "%xl, %vl = dyn.step @step(%x" << last << ", %v"
-           << last << ", " << massName << ", " << cellName << ", %dt"
+           << last << ", " << massName << ", " << cellName << ", %dt" << getScaleValue()
            << getFieldValues(fieldPrefix) << ")\n"
-           << inner << "    : (!vec, !vec, !real, !md.cell, f64"
+           << inner << "    : (!vec, !vec, !real, !md.cell, f64" << getScaleType()
            << getFieldTypes() << ") -> (!vec, !vec)\n";
-        StringRef raw = hasSites() ? "e" : "";
-        os << inner << "%u, %fl" << raw << ", %w" << raw
+        std::string raw = hasSites() ? "e" : "";
+        std::string held = hasRestraints() ? "p" : "";
+        os << inner << "%u" << held << ", %fl" << held << raw << ", %w"
+           << held << raw
            << " = md.evaluate @energy(%xl, " << cellName
            << getFieldValues(fieldPrefix) << ")\n"
            << inner << "    request [energy, forces, virial]\n"
            << inner << "    : (!vec, !md.cell" << getFieldTypes()
            << ") -> (f64, !vec, vector<9xf64>)\n";
+        virialName = "%w" + held;
         if (hasSites())
           virialName = emitSpreadSites(
-              inner, "%xl", "%fle", "%fl",
-              ("%r" + StringRef(fieldPrefix).drop_front(2)).str(), "%we",
-              "%w");
+              inner, "%xl", "%fl" + held + "e", "%fl" + held,
+              ("%r" + StringRef(fieldPrefix).drop_front(2)).str(),
+              "%w" + held + "e", "%w" + held);
+        if (hasRestraints()) {
+          emitRestraints(inner, "%xl", fieldPrefix, "%flp", "%fl", "%up",
+                         "%u", virialName, "%w");
+          virialName = "%w";
+        }
         // The stored velocities are half a step behind. Those of the time
         // of the positions are half a kick ahead of them.
         os << inner << "%vn = dyn.kick %vl, %fl, " << massName
@@ -2639,8 +2717,8 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         os << inner << "%xl, %vl, %fl, %u, %w = dyn.step @step_energy(%x"
            << last
            << ", %v" << last << ", %f" << last << ", " << massName
-           << ", " << cellName << ", %dt" << getFieldValues(fieldPrefix) << ")\n"
-           << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
+           << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << ")\n"
+           << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
            << getFieldTypes()
            << ") -> (!vec, !vec, !vec, f64, vector<9xf64>)\n";
       }
@@ -2688,6 +2766,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
   fieldPrefix = outerPrefix;
   idName = outerId;
   cellName = outerCell;
+  scaleName = outerScale;
   // What the loop has left is in the order of its last iteration.
   if (reorders) {
     massName = "%me" + here;
@@ -2958,6 +3037,77 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
   return {newPositions, "%vc" + t};
 }
 
+void Builder::emitRestraints(StringRef indent, StringRef x,
+                             StringRef prefix, StringRef f,
+                             StringRef fResult, StringRef u,
+                             StringRef uResult, StringRef w,
+                             StringRef wResult) {
+  std::string fields = (prefix + "rest_k, " + prefix + "rest_x, " + prefix +
+                        "rest_y, " + prefix + "rest_z")
+                           .str();
+  std::string arguments = "%k_i: f64, %rx_i: f64, %ry_i: f64, %rz_i: f64";
+  // d = x − x_ref, and k d; the reference follows the cell.
+  auto emitOffset = [&](StringRef inner) {
+    std::string reference = "%ref_i";
+    os << inner << reference << " = vector.from_elements %rx_i, %ry_i, %rz_i "
+                   ": vector<3xf64>\n";
+    if (scalesReference()) {
+      os << inner << "%sb_i = vector.broadcast " << scaleName
+         << " : f64 to vector<3xf64>\n"
+         << inner << "%refs_i = arith.mulf %sb_i, %ref_i : vector<3xf64>\n";
+      reference = "%refs_i";
+    }
+    os << inner << "%d_i = arith.subf %x_i, " << reference
+       << " : vector<3xf64>\n"
+       << inner << "%kb_i = vector.broadcast %k_i : f64 to vector<3xf64>\n"
+       << inner << "%kd_i = arith.mulf %kb_i, %d_i : vector<3xf64>\n";
+  };
+  std::string inner = (indent + "  ").str();
+  os << indent << fResult << " = md.map_particles gather(" << x << ", " << f
+     << ", " << fields << " : !vec, !vec, !real, !real, !real, !real) {\n"
+     << indent << "^bb0(%x_i: vector<3xf64>, %f_i: vector<3xf64>, "
+     << arguments << "):\n";
+  emitOffset(inner);
+  os << inner << "%two_i = arith.constant dense<2.0> : vector<3xf64>\n"
+     << inner << "%pull_i = arith.mulf %two_i, %kd_i : vector<3xf64>\n"
+     << inner << "%fr_i = arith.subf %f_i, %pull_i : vector<3xf64>\n"
+     << inner << "md.yield %fr_i : vector<3xf64>\n"
+     << indent << "} : !vec\n";
+  if (u.empty())
+    return;
+  // Σ k d ⊙ d, whose sum is the energy and whose elements times −2 are the
+  // diagonal of the virial.
+  std::string sum = (uResult + "_parts").str();
+  os << indent << sum << " = md.sum_particles gather(" << x << ", " << fields
+     << " : !vec, !real, !real, !real, !real) {\n"
+     << indent << "^bb0(%x_i: vector<3xf64>, " << arguments << "):\n";
+  emitOffset(inner);
+  os << inner << "%kdd_i = arith.mulf %kd_i, %d_i : vector<3xf64>\n"
+     << inner << "md.yield %kdd_i : vector<3xf64>\n"
+     << indent << "} : vector<3xf64>\n"
+     << indent << uResult << "_r = vector.reduction <add>, " << sum
+     << " : vector<3xf64> into f64\n"
+     << indent << uResult << " = arith.addf " << u << ", " << uResult
+     << "_r : f64\n";
+  std::string zero = (wResult + "_zero").str();
+  os << indent << zero << " = arith.constant 0.0 : f64\n"
+     << indent << wResult << "_m2 = arith.constant -2.0 : f64\n";
+  std::string diagonal[3];
+  for (int c = 0; c != 3; ++c) {
+    diagonal[c] = (wResult + "_d" + std::to_string(c)).str();
+    os << indent << diagonal[c] << "_s = vector.extract " << sum << "[" << c
+       << "] : f64 from vector<3xf64>\n"
+       << indent << diagonal[c] << " = arith.mulf " << diagonal[c] << "_s, "
+       << wResult << "_m2 : f64\n";
+  }
+  os << indent << wResult << "_r = vector.from_elements " << diagonal[0]
+     << ", " << zero << ", " << zero << ", " << zero << ", " << diagonal[1]
+     << ", " << zero << ", " << zero << ", " << zero << ", " << diagonal[2]
+     << " : vector<9xf64>\n"
+     << indent << wResult << " = arith.addf " << w << ", " << wResult
+     << "_r : vector<9xf64>\n";
+}
+
 void Builder::emitConstrainedDescent(StringRef indent, StringRef x,
                                      StringRef f, StringRef result) {
   bool settles = hasSettles();
@@ -3147,24 +3297,36 @@ void Builder::emitDescend() {
   }
   if (sites)
     emitPlaceSites("  ", constraints ? "%x1s" : "%x1d", "%x1", "%r_");
-  StringRef raw = sites ? "e" : "";
-  os << "  %u1, %f1" << raw << " = " << evaluate
+  std::string raw = sites ? "e" : "";
+  std::string held = hasRestraints() ? "p" : "";
+  os << "  %u1" << held << ", %f1" << held << raw << " = " << evaluate
      << "\n      request [energy, forces]\n"
      << "      : " << signature << " -> (f64, !vec)\n";
   if (sites)
-    emitSpreadSites("  ", "%x1", "%f1e", "%f1", "%r_");
+    emitSpreadSites("  ", "%x1", "%f1" + held + "e", "%f1" + held, "%r_");
+  if (hasRestraints()) {
+    os << "  %w1z = arith.constant dense<0.0> : vector<9xf64>\n";
+    emitRestraints("  ", "%x1", "%p_", "%f1p", "%f1", "%u1p", "%u1", "%w1z",
+                   "%w1r");
+  }
   os << "  dyn.return %x1, %f1, %u1 : !vec, !vec, f64\n}\n\n";
 }
 
 void Builder::emitMinimization() {
   // The energy and the forces at the start, and the terms.
-  StringRef raw = hasSites() ? "e" : "";
-  os << "  %u0, %f0" << raw << " = md.evaluate @energy(%x0, %cell"
-     << getFieldValues() << ")\n"
+  std::string raw = hasSites() ? "e" : "";
+  std::string held = hasRestraints() ? "p" : "";
+  os << "  %u0" << held << ", %f0" << held << raw
+     << " = md.evaluate @energy(%x0, %cell" << getFieldValues() << ")\n"
      << "      request [energy, forces]\n"
      << "      : (!vec, !md.cell" << getFieldTypes() << ") -> (f64, !vec)\n";
   if (hasSites())
-    emitSpreadSites("  ", "%x0", "%f0e", "%f0", "%r_");
+    emitSpreadSites("  ", "%x0", "%f0" + held + "e", "%f0" + held, "%r_");
+  if (hasRestraints()) {
+    os << "  %w0z = arith.constant dense<0.0> : vector<9xf64>\n";
+    emitRestraints("  ", "%x0", "%p_", "%f0p", "%f0", "%u0p", "%u0", "%w0z",
+                   "%w0r");
+  }
   emitTerms();
   os << "  %h0 = arith.constant "
      << formatReal(control.minimizeStep * units::length) << " : f64\n"
@@ -3279,7 +3441,11 @@ void Builder::emitMinimization() {
 void Builder::emitTerms() {
   if (!system.topology)
     return;
-  os << "  %terms = memref.alloca() : memref<10xf64>\n";
+  // The restraints, if any, last: their energy at the start is that of the
+  // evaluation before the terms.
+  int size = hasRestraints() ? 11 : 10;
+  std::string type = "memref<" + std::to_string(size) + "xf64>";
+  os << "  %terms = memref.alloca() : " << type << "\n";
   int index = 0;
   for (StringRef name :
        {"term_lj", "term_coulomb", "term_bonds", "term_angles",
@@ -3291,9 +3457,12 @@ void Builder::emitTerms() {
        << "  %i_" << name << " = arith.constant " << index++
        << " : index\n"
        << "  memref.store %" << name << ", %terms[%i_" << name
-       << "] : memref<10xf64>\n";
+       << "] : " << type << "\n";
   }
-  os << "  %terms_cast = memref.cast %terms : memref<10xf64> to "
+  if (hasRestraints())
+    os << "  %i_restraints = arith.constant 10 : index\n"
+       << "  memref.store %u0_r, %terms[%i_restraints] : " << type << "\n";
+  os << "  %terms_cast = memref.cast %terms : " << type << " to "
         "memref<?xf64>\n"
      << "  call @mdrtWriteTerms(%terms_cast) : (memref<?xf64>) -> ()\n";
 }
@@ -3391,6 +3560,14 @@ void Builder::emitEntry() {
       os << "  %c_edge" << k << " = arith.constant " << k << " : index\n"
          << "  memref.store %l" << "xyz"[k] << ", %box_memory[%c_edge" << k
          << "] : memref<3xf64>\n";
+  }
+  if (scalesReference()) {
+    // The edge of the cell of the file, which the reference positions of
+    // the restraints are for.
+    double edge = system.inputBox[0] > 0.0 ? system.inputBox[0]
+                                           : system.box[0];
+    os << "  %rest_edge = arith.constant " << formatReal(edge) << " : f64\n"
+       << "  %rest_scale = arith.divf %lx, %rest_edge : f64\n";
   }
   os << "  %cell = md.orthorhombic_cell %lx, %ly, %lz\n"
      << "  %x" << (program.reorders ? "_in" : "0") << (hasSites() ? "u" : "")
@@ -3504,15 +3681,21 @@ void Builder::emitEntry() {
   if (!isRestart()) {
     // The energies at the start.
     StringRef raw = hasSites() ? "e" : "";
-    os << "  %u0, %f0" << raw << ", %w0" << raw
+    std::string held = hasRestraints() ? "p" : "";
+    os << "  %u0" << held << ", %f0" << held << raw << ", %w0" << held << raw
        << " = md.evaluate @energy(%x0, %cell" << getFieldValues() << ")\n"
        << "      request [energy, forces, virial]\n"
        << "      : (!vec, !md.cell" << getFieldTypes()
        << ") -> (f64, !vec, vector<9xf64>)\n";
-    std::string virial = "%w0";
+    std::string virial = "%w0" + held;
     if (hasSites())
-      virial = emitSpreadSites("  ", "%x0", "%f0e", "%f0", "%r_", "%w0e",
-                               "%w0");
+      virial = emitSpreadSites("  ", "%x0", "%f0" + held + "e", "%f0" + held,
+                               "%r_", "%w0" + held + "e", "%w0" + held);
+    if (hasRestraints()) {
+      emitRestraints("  ", "%x0", "%p_", "%f0p", "%f0", "%u0p", "%u0",
+                     virial, "%w0");
+      virial = "%w0";
+    }
     emitTerms();
     emitKineticEnergy(os, "%k0", velocities, "%m", "  ");
     if (hasConstraints())

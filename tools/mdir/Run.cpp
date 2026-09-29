@@ -157,6 +157,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   if (!system)
     return fail(system.takeError());
 
+  system->referencePositions = system->positions;
   bool writesCheckpoints = control->checkpointPeriod > 0;
   bool isRestart = !control->restartInput.empty();
   if ((writesCheckpoints || isRestart) && !hasCheckpointSupport())

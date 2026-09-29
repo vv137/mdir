@@ -80,6 +80,12 @@ static int describeTopology(const Control &control, const System &system) {
   std::printf("velocities:         %s\n",
               topology.velocities.empty() ? "no" : "yes");
   std::printf("degrees of freedom: %g\n", system.getDegreesOfFreedom());
+  if (!system.restraintConstants.empty()) {
+    size_t restrained = 0;
+    for (double k : system.restraintConstants)
+      restrained += k > 0.0;
+    std::printf("restrained:         %zu particles\n", restrained);
+  }
   return 0;
 }
 

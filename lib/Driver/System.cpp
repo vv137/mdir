@@ -2,6 +2,8 @@
 
 #include "mdir/Driver/System.h"
 
+#include "mdir/Driver/Selection.h"
+
 #include <algorithm>
 
 #include "llvm/ADT/StringExtras.h"
@@ -72,6 +74,31 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
     system.velocities.assign(system.positions.size(), 0.0);
   for (int i = 0; i != 3; ++i)
     system.box[i] = topology->box[i];
+
+  // The restraints: their constants add where their selections overlap.
+  // Particles without mass, the virtual sites, are placed, not restrained.
+  if (!control.restraints.empty())
+    system.restraintConstants.assign(system.masses.size(), 0.0);
+  for (const Control::Restraint &restraint : control.restraints) {
+    auto selected = selectParticles(restraint.selection, *topology);
+    if (!selected)
+      return selected.takeError();
+    size_t count = 0;
+    for (size_t i = 0, e = system.masses.size(); i != e; ++i) {
+      if (!(*selected)[i] || system.masses[i] == 0.0)
+        continue;
+      system.restraintConstants[i] += restraint.forceConstant *
+                                      units::energy /
+                                      (units::length * units::length);
+      ++count;
+    }
+    if (count == 0)
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "the restraint of '%s' selects no particle with mass",
+          restraint.selection.c_str());
+  }
+
   system.topology = std::make_shared<Topology>(std::move(*topology));
   return std::move(system);
 }
@@ -263,6 +290,11 @@ llvm::Expected<System> mdir::driver::readSystem(const Control &control) {
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                    "%s: the file holds no atoms",
                                    control.pdbFile.c_str());
+  if (!control.restraints.empty())
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "restraints select particles by the names of a topology; a run from "
+        "'pdbfile' has none");
   system.velocities.assign(system.positions.size(), 0.0);
   return std::move(system);
 }

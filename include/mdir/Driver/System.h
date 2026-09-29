@@ -48,6 +48,13 @@ struct System {
   /// Three numbers per particle.
   std::vector<double> positions;
   std::vector<double> velocities;
+  /// The positions of the file of coordinates, which restraints hold the
+  /// particles to; a checkpoint that the run begins from does not change
+  /// them.
+  std::vector<double> referencePositions;
+  /// The constant k of the restraint of each particle, `k |x − x_ref|²`,
+  /// in kJ/mol/nm², or nothing if no particle is restrained.
+  std::vector<double> restraintConstants;
   /// Whether the file of coordinates gave the velocities. If not, they are
   /// drawn at the temperature of the control file.
   bool givenVelocities = false;

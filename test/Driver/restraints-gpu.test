@@ -1,0 +1,74 @@
+# The target of barostat-ff19sb-gpu.test at constant pressure with the
+# heavy atoms of the peptide restrained, as in the equilibration of a
+# solvated molecule. The reference positions follow the cell, so that the
+# barostat scales them with the positions.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/ff19sb/ff19.prmtop %S/Inputs/ff19sb/ff19.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: mdir run %t/run.toml | FileCheck %s
+# RUN: mdir emit %t/run.toml | FileCheck %s --check-prefix=MODULE
+# RUN: %python %S/Inputs/check_bonds.py %t/ff19.prmtop %t/run.dcd | FileCheck %s --check-prefix=BONDS
+
+# CHECK:      MDIR:   restraints                     0.000000
+# CHECK:      INFO:      2000 {{.*}} {{2[4-8][0-9]{3}\.[0-9]+$}}
+# CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[3-9]}} of its value
+
+# The factor of the reference, the edge of the cell over that of the file,
+# is taken with the cell in each loop and passed to the steps.
+#
+# MODULE:     dyn.program @step(%x: !vec, %v: !vec, %f: !vec, %m: !real,
+# MODULE-NEXT:    %cell: !md.cell, %dt: f64, %rest_scale: f64,
+# MODULE:     %rest_edge = arith.constant
+# MODULE:     %rest_scale{{[0-9]+}} = arith.divf %edge{{[0-9]+}}_0, %rest_edge : f64
+
+# BONDS: bonds ok
+
+#--- run.toml
+[input]
+prmtopfile = "ff19.prmtop"
+ambcrdfile = "ff19.inpcrd"
+
+[output]
+dcdfile = "run.dcd"
+
+[energy]
+cutoffdist    = 9.0
+pairlistdist  = 10.0
+electrostatic = "PME"
+pme_shift     = true
+
+[dynamics]
+integrator        = "VVER"
+timestep          = 0.002
+nsteps            = 2000
+eneout_period     = 1000
+crdout_period     = 1000
+thermostat_period = 10
+
+[ensemble]
+ensemble    = "NPT"
+thermostat  = "BUSSI"
+temperature = 300.0
+tau_t       = 0.5
+barostat    = "BERNETTI-BUSSI"
+pressure    = 1.0
+tau_p       = 8.0
+
+[constraints]
+rigid_bond = true
+fast_water = true
+
+[boundary]
+type = "PBC"
+
+[execution]
+target    = "gpu"
+precision = "mixed"
+
+[[restraints]]
+selection      = "!:WAT & !@H*"
+force_constant = 10.0
+#--- end

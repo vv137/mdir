@@ -174,6 +174,16 @@ struct Control {
     return thermostatPeriod ? thermostatPeriod : comPeriod;
   }
 
+  // [[restraints]]
+  /// A harmonic restraint of the particles that `selection` selects (a mask
+  /// of Amber, selectParticles) to their positions in the file of
+  /// coordinates: `k |x − x_ref|²` each, with k in kcal/mol/Å².
+  struct Restraint {
+    std::string selection;
+    double forceConstant = 0.0;
+  };
+  std::vector<Restraint> restraints;
+
   // [boundary]
   double box[3] = {0.0, 0.0, 0.0};
 

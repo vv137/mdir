@@ -27,6 +27,7 @@ add_mlir_library(MDIRDriver
   Expression.cpp
   Gromacs.cpp
   Output.cpp
+  Selection.cpp
   System.cpp
 
   ADDITIONAL_HEADER_DIRS

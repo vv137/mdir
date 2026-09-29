@@ -137,15 +137,15 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
   static const char *names[] = {
       "Lennard-Jones", "Coulomb", "bonds", "angles", "dihedrals",
       "Lennard-Jones 1-4", "Coulomb 1-4", "CMAP", "Coulomb excluded",
-      "Coulomb reciprocal"};
+      "Coulomb reciprocal", "restraints"};
   // CMAP only where the topology has it, and the terms of particle mesh
   // Ewald only with it; with it "Coulomb" is the direct sum.
   bool cmap = output.system && output.system->topology &&
               !output.system->topology->cmaps.empty();
   std::fprintf(output.log, "MDIR: the terms at the start, in kcal/mol:\n");
   double total = output.getDispersionEnergy() + output.getPMEConstantEnergy();
-  for (int i = 0; i != 10; ++i) {
-    if ((i == 7 && !cmap) || (i >= 8 && !output.pme))
+  for (int i = 0, e = static_cast<int>(values->sizes[0]); i != e; ++i) {
+    if ((i == 7 && !cmap) || ((i == 8 || i == 9) && !output.pme))
       continue;
     double value = values->data[i * values->strides[0]];
     total += value;

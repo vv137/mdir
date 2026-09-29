@@ -768,10 +768,8 @@ Error Reader::read(const toml::table &root) {
   if (Error error = checkKeywords(
           root, "the control file",
           {"input", "output", "energy", "dynamics", "minimize", "ensemble",
-           "boundary", "execution", "constraints"},
-          {{"selection", "M1"},
-           {"restraints", "M1"},
-           {"remd", "M3"}}))
+           "boundary", "execution", "constraints", "restraints"},
+          {{"selection", "M1"}, {"remd", "M3"}}))
     return error;
 
   auto getTable = [&](StringRef name, bool required,
@@ -930,6 +928,32 @@ Error Reader::read(const toml::table &root) {
     }
     control.statesFlexible =
         table->contains("fast_water") && !control.fastWater;
+  }
+
+  if (const toml::node *node = root.get("restraints")) {
+    const toml::array *array = node->as_array();
+    if (!array)
+      return fail(*node, "expected [[restraints]]");
+    for (const toml::node &element : *array) {
+      const toml::table *entry = element.as_table();
+      if (!entry)
+        return fail(element, "expected [[restraints]]");
+      if (Error error = checkKeywords(*entry, "restraints",
+                                      {"selection", "force_constant"},
+                                      {{"reffile", "M1"}}))
+        return error;
+      Control::Restraint restraint;
+      if (Error error = readString(*entry, "selection", restraint.selection))
+        return error;
+      if (restraint.selection.empty())
+        return fail(*entry, "expected a 'selection' in [[restraints]]");
+      if (Error error =
+              readPositive(*entry, "force_constant", restraint.forceConstant))
+        return error;
+      if (restraint.forceConstant == 0.0)
+        return fail(*entry, "expected a 'force_constant' in [[restraints]]");
+      control.restraints.push_back(restraint);
+    }
   }
 
   if (Error error = getTable("boundary", /*required=*/true, table))

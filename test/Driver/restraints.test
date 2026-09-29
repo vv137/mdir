@@ -1,0 +1,139 @@
+# Harmonic restraints to the positions of the file of coordinates, on the
+# target of D65 (ff19SB in OPC), with the particles that masks of Amber
+# select.
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/ff19sb/ff19.prmtop %S/Inputs/ff19sb/ff19.inpcrd %t
+# RUN: sed -n '/^#--- min.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/min.toml
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+
+# The masks. The peptide is ACE-ALA-GLY-SER-NME, whose carbon of NME is C;
+# the extra points of the waters have no mass and are not restrained.
+#
+# RUN: rm -f %t/masks.txt
+# RUN: sed -e 's/SELECTION/:1-5@CA/' %t/min.toml > %t/mask0.toml
+# RUN: mdir check %t/mask0.toml | grep restrained >> %t/masks.txt
+# RUN: sed -e 's/SELECTION/!:WAT \& !@H*/' %t/min.toml > %t/mask1.toml
+# RUN: mdir check %t/mask1.toml | grep restrained >> %t/masks.txt
+# RUN: sed -e 's/SELECTION/:ALA,SER/' %t/min.toml > %t/mask2.toml
+# RUN: mdir check %t/mask2.toml | grep restrained >> %t/masks.txt
+# RUN: sed -e 's/SELECTION/@1-10/' %t/min.toml > %t/mask3.toml
+# RUN: mdir check %t/mask3.toml | grep restrained >> %t/masks.txt
+# RUN: sed -e 's/SELECTION/:WAT@O/' %t/min.toml > %t/mask4.toml
+# RUN: mdir check %t/mask4.toml | grep restrained >> %t/masks.txt
+# RUN: sed -e 's/SELECTION/(:1|:5)\&@C*/' %t/min.toml > %t/mask5.toml
+# RUN: mdir check %t/mask5.toml | grep restrained >> %t/masks.txt
+# RUN: sed -e 's/SELECTION/*/' %t/min.toml > %t/mask6.toml
+# RUN: mdir check %t/mask6.toml | grep restrained >> %t/masks.txt
+# RUN: sed -e 's/SELECTION/:1-3@N,CA,C,O/' %t/min.toml > %t/mask7.toml
+# RUN: mdir check %t/mask7.toml | grep restrained >> %t/masks.txt
+# RUN: sed -e 's/SELECTION/:1-2 | @CH3/' %t/min.toml > %t/mask8.toml
+# RUN: mdir check %t/mask8.toml | grep restrained >> %t/masks.txt
+# RUN: FileCheck %s --check-prefix=MASK < %t/masks.txt
+#
+# MASK:      restrained: 3 particles
+# MASK-NEXT: restrained: 20 particles
+# MASK-NEXT: restrained: 21 particles
+# MASK-NEXT: restrained: 10 particles
+# MASK-NEXT: restrained: 573 particles
+# MASK-NEXT: restrained: 3 particles
+# MASK-NEXT: restrained: 1759 particles
+# MASK-NEXT: restrained: 10 particles
+# MASK-NEXT: restrained: 16 particles
+
+# RUN: rm -f %t/wrong.txt
+# RUN: sed -e 's/SELECTION/:1-/' %t/min.toml > %t/wrong0.toml
+# RUN: not mdir check %t/wrong0.toml 2>> %t/wrong.txt
+# RUN: sed -e 's/SELECTION/@CA)/' %t/min.toml > %t/wrong1.toml
+# RUN: not mdir check %t/wrong1.toml 2>> %t/wrong.txt
+# RUN: sed -e 's/SELECTION/:XYZ/' %t/min.toml > %t/wrong2.toml
+# RUN: not mdir check %t/wrong2.toml 2>> %t/wrong.txt
+# RUN: sed -e 's/SELECTION/(:1/' %t/min.toml > %t/wrong3.toml
+# RUN: not mdir check %t/wrong3.toml 2>> %t/wrong.txt
+# RUN: sed -e 's/SELECTION/@/' %t/min.toml > %t/wrong4.toml
+# RUN: not mdir check %t/wrong4.toml 2>> %t/wrong.txt
+# RUN: FileCheck %s --check-prefix=WRONG < %t/wrong.txt
+#
+# WRONG:      mdir: in the mask ':1-', at 4: expected a number or a range such as 1-10, not '1-'
+# WRONG-NEXT: mdir: in the mask '@CA)', at 4: unexpected ')'
+# WRONG-NEXT: mdir: the restraint of ':XYZ' selects no particle with mass
+# WRONG-NEXT: mdir: in the mask '(:1', at 4: expected ')'
+# WRONG-NEXT: mdir: in the mask '@', at 2: expected a number, a range, or a name
+
+# A minimization with the heavy atoms of the peptide restrained, and a run
+# at constant energy from where it ends, which keeps the total energy with
+# that of the restraints as well as a run without them does.
+#
+# RUN: sed -e 's/SELECTION/!:WAT \& !@H*/' %t/min.toml > %t/heavy.toml
+# RUN: mdir run %t/heavy.toml > %t/both.log
+# RUN: mdir run %t/run.toml >> %t/both.log
+# RUN: FileCheck %s < %t/both.log
+#
+# CHECK:      MDIR:   restraints                     0.000000
+# CHECK:      MDIR: the potential energy went from -5348.4328 to [[LAST:-[0-9.]+]] kcal/mol
+# CHECK:      MDIR:   restraints {{ *}}[[REST:[0-9.]+]]
+# CHECK:      INFO:         0         0.0000 {{ *}}{{-[0-9.]+}} {{ *}}[[LAST]]{{[0-9]*}}
+# CHECK:      MDIR: the total energy changed by {{[0-9.]+}}e-0{{[4-9]}} of its value
+
+#--- min.toml
+[input]
+prmtopfile = "ff19.prmtop"
+ambcrdfile = "ff19.inpcrd"
+
+[output]
+rstfile = "min.h5"
+
+[energy]
+cutoffdist    = 9.0
+pairlistdist  = 10.0
+electrostatic = "PME"
+pme_shift     = true
+
+[minimize]
+nsteps        = 100
+eneout_period = 50
+
+[constraints]
+rigid_bond = true
+fast_water = true
+
+[boundary]
+type = "PBC"
+
+[[restraints]]
+selection      = "SELECTION"
+force_constant = 10.0
+#--- end
+#--- run.toml
+[input]
+prmtopfile = "ff19.prmtop"
+ambcrdfile = "ff19.inpcrd"
+rstfile    = "min.h5"
+
+[energy]
+cutoffdist    = 9.0
+pairlistdist  = 10.0
+electrostatic = "PME"
+pme_shift     = true
+
+[dynamics]
+timestep      = 0.001
+nsteps        = 500
+eneout_period = 250
+
+[ensemble]
+temperature = 300.0
+
+[constraints]
+rigid_bond = true
+fast_water = true
+
+[boundary]
+type = "PBC"
+
+[[restraints]]
+selection      = "!:WAT & !@H*"
+force_constant = 10.0
+#--- end
