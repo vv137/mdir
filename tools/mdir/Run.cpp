@@ -486,9 +486,14 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   output.pmeConstantVirial = program->pmeConstantVirial;
   output.system = &*system;
   if (control->framePeriod > 0) {
+    // The cell in Å, from the system: a topology gives it with the
+    // coordinates, not the control file.
+    double cell[3];
+    for (int k = 0; k != 3; ++k)
+      cell[k] = system->box[k] / units::length;
     if (llvm::Error error = output.trajectory.open(
             control->dcdFile, count, firstStep + control->framePeriod,
-            control->framePeriod, control->timestep, control->box))
+            control->framePeriod, control->timestep, cell))
       return fail(std::move(error));
     output.hasTrajectory = true;
   }

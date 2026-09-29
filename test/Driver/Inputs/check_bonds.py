@@ -54,3 +54,5 @@ for start in range(0, len(frames), step):
         worst = max(worst, abs(r - length))
 print(f"bonds {len(pairs)}, frames {len(frames) // step}, largest deviation {worst:.1e} Å")
 print("bonds " + ("ok" if worst < 1e-4 else "FAILED"))
+cell = [struct.unpack("<6d", frames[0])[k] for k in (0, 2, 5)] if has_cell else None
+print("cell " + " ".join(f"{edge:.4f}" for edge in cell) if cell else "no cell")

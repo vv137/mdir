@@ -204,6 +204,8 @@ private:
   std::string massName = "%m";
   std::string fieldPrefix = "%p_";
   std::string idName = "%id";
+  /// The name of the cell, which changes with a barostat.
+  std::string cellName = "%cell";
 
   std::vector<Expression> expressions;
   std::vector<Parameter> parameters;
@@ -278,7 +280,7 @@ void Builder::emitReorder(StringRef indent, StringRef from,
                           bool withForces, StringRef velocities) {
   StringRef order = "!mdrt.permutation<@atoms>";
   os << indent << "%order" << stateTo << " = md_exec.spatial_order %x"
-     << from << ", %cell, %id" << from << " width("
+     << from << ", " << cellName << ", %id" << from << " width("
      << formatReal(program.orderWidth) << ")\n"
      << indent << "    : !vec, !ids -> " << order << "\n";
   auto permute = [&](const llvm::Twine &result, const llvm::Twine &field,
@@ -2408,12 +2410,12 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
     os << inner << getValues("b" + here) << " = dyn.step @step(";
     if (isLeapfrog())
       os << "%xa" << here << ", %va" << here << ", " << massName
-         << ", %cell, %dt" << getFieldValues(fieldPrefix) << ")\n"
+         << ", " << cellName << ", %dt" << getFieldValues(fieldPrefix) << ")\n"
          << inner << "    : (!vec, !vec, !real, !md.cell, f64"
          << getFieldTypes() << ") -> (!vec, !vec)\n";
     else
       os << "%xa" << here << ", %va" << here << ", %fa" << here << ", "
-         << massName << ", %cell, %dt" << getFieldValues(fieldPrefix)
+         << massName << ", " << cellName << ", %dt" << getFieldValues(fieldPrefix)
          << ")\n"
          << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
          << getFieldTypes() << ") -> (!vec, !vec, !vec)\n";
@@ -2486,12 +2488,12 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       os << inner << getValues("k" + here) << " = dyn.step @step(";
       if (isLeapfrog())
         os << "%x" << last << ", %v" << last << ", " << massName
-           << ", %cell, %dt" << getFieldValues(fieldPrefix) << ")\n"
+           << ", " << cellName << ", %dt" << getFieldValues(fieldPrefix) << ")\n"
            << inner << "    : (!vec, !vec, !real, !md.cell, f64"
            << getFieldTypes() << ") -> (!vec, !vec)\n";
       else
         os << "%x" << last << ", %v" << last << ", %f" << last << ", "
-           << massName << ", %cell, %dt" << getFieldValues(fieldPrefix)
+           << massName << ", " << cellName << ", %dt" << getFieldValues(fieldPrefix)
            << ")\n"
            << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
            << getFieldTypes() << ") -> (!vec, !vec, !vec)\n";
@@ -2514,12 +2516,12 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       os << inner << "  " << getValues("r" + here) << " = dyn.step @step(";
       if (isLeapfrog())
         os << "%xp" << here << ", %vp" << here << ", " << massName
-           << ", %cell, %dt" << getFieldValues(fieldPrefix) << ")\n"
+           << ", " << cellName << ", %dt" << getFieldValues(fieldPrefix) << ")\n"
            << inner << "      : (!vec, !vec, !real, !md.cell, f64"
            << getFieldTypes() << ") -> (!vec, !vec)\n";
       else
         os << "%xp" << here << ", %vp" << here << ", %fp" << here << ", "
-           << massName << ", %cell, %dt" << getFieldValues(fieldPrefix)
+           << massName << ", " << cellName << ", %dt" << getFieldValues(fieldPrefix)
            << ")\n"
            << inner << "      : (!vec, !vec, !vec, !real, !md.cell, f64"
            << getFieldTypes() << ") -> (!vec, !vec, !vec)\n";
@@ -2534,13 +2536,13 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       std::string virialName = "%w";
       if (isLeapfrog()) {
         os << inner << "%xl, %vl = dyn.step @step(%x" << last << ", %v"
-           << last << ", " << massName << ", %cell, %dt"
+           << last << ", " << massName << ", " << cellName << ", %dt"
            << getFieldValues(fieldPrefix) << ")\n"
            << inner << "    : (!vec, !vec, !real, !md.cell, f64"
            << getFieldTypes() << ") -> (!vec, !vec)\n";
         StringRef raw = hasSites() ? "e" : "";
         os << inner << "%u, %fl" << raw << ", %w" << raw
-           << " = md.evaluate @energy(%xl, %cell"
+           << " = md.evaluate @energy(%xl, " << cellName
            << getFieldValues(fieldPrefix) << ")\n"
            << inner << "    request [energy, forces, virial]\n"
            << inner << "    : (!vec, !md.cell" << getFieldTypes()
@@ -2558,7 +2560,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         os << inner << "%xl, %vl, %fl, %u, %w = dyn.step @step_energy(%x"
            << last
            << ", %v" << last << ", %f" << last << ", " << massName
-           << ", %cell, %dt" << getFieldValues(fieldPrefix) << ")\n"
+           << ", " << cellName << ", %dt" << getFieldValues(fieldPrefix) << ")\n"
            << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
            << getFieldTypes()
            << ") -> (!vec, !vec, !vec, f64, vector<9xf64>)\n";

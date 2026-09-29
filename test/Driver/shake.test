@@ -25,6 +25,10 @@
 #
 # BONDS: bonds 20, frames 5
 # BONDS: bonds ok
+#
+# The frames carry the cell of the file of coordinates, 60 Å.
+#
+# BONDS: cell 60.0000 60.0000 60.0000
 
 #--- run.toml
 [input]
