@@ -54,18 +54,27 @@ on the z axis, and `a` on the x axis, `d` on the y axis gives +90°.
 | Harmonic bond | `½ k (r − r0)²` | `k` in kJ mol⁻¹ nm⁻², `r0` in nm |
 | Harmonic angle | `½ k (θ − θ0)²` | `k` in kJ mol⁻¹ rad⁻², `θ0` in rad |
 | Periodic dihedral, proper or improper | `k (1 + cos(n φ − φ0))` | `k` in kJ/mol, `n` a whole number, `φ0` in rad |
-| Lennard-Jones | `C12 / r¹² − C6 / r⁶` | `C12` in kJ mol⁻¹ nm¹², `C6` in kJ mol⁻¹ nm⁶, for each pair of types (D57) |
+| Lennard-Jones | `4 ε ((σ / r)¹² − (σ / r)⁶)` | `σ` in nm and `ε` in kJ/mol, for each pair of types (D57) |
 | Coulomb | `f q_i q_j / (ε_r r)` | `q` in e, `ε_r` the relative permittivity |
-| Pair three bonds apart | `s_LJ (C12 / r¹² − C6 / r⁶) + s_C f q_i q_j / (ε_r r)` | the factors `s_LJ` and `s_C` for each pair, and the coefficients of the pair |
+| Pair three bonds apart | `s_LJ · 4 ε ((σ / r)¹² − (σ / r)⁶) + s_C f q_i q_j / (ε_r r)` | the factors `s_LJ` and `s_C` for each pair, and `σ` and `ε` of the pair |
 
 A dihedral with several terms is several tuples on the same members, one
 for each `n`.
 
-Lennard-Jones is stored as `C6` and `C12` because a table of pairs of
-types (NBFIX) and the coefficients of Amber (`ACOEF`, `BCOEF`) give them
-directly. With a mixing rule the front end computes them:
-`C6 = 4 ε σ⁶`, `C12 = 4 ε σ¹²`, with `σ` and `ε` of the pair from the
-rule.
+Lennard-Jones is stored as `σ` and `ε` of each pair of types, the
+parameters that force fields are written in. A mixing rule gives them from
+those of the two types; a table of pairs of types (NBFIX) sets them for
+some pairs. Where a file gives the coefficients `A = 4 ε σ¹²` and
+`B = 4 ε σ⁶` (`ACOEF` and `BCOEF` of Amber, `C12` and `C6` of GROMACS),
+the reader converts:
+
+```text
+σ = (A / B)^(1/6)        ε = B² / (4 A)
+```
+
+A pair with `A = B = 0` has `σ = ε = 0` and no interaction. A pair with
+only one of the two coefficients is not a Lennard-Jones pair; the reader
+rejects it.
 
 ## 4. What the readers convert
 
@@ -74,7 +83,7 @@ rule.
 | Bond | `k = 2 k_file`: the file has `k (r − r0)²` | As in the file (function 1) |
 | Angle | `k = 2 k_file` | As in the file (function 1), with `θ0` from degrees |
 | Dihedral | As in the file; the file has divided `k` by the number of paths already | Functions 1, 4, and 9 as in the file, with `φ0` from degrees |
-| Lennard-Jones | `C12 = ACOEF`, `C6 = BCOEF`, in the units of MDIR | `C6`, `C12` as in the file, or from `σ`, `ε` by the combination rule of `[ defaults ]`, with `[ nonbond_params ]` overriding |
+| Lennard-Jones | `σ`, `ε` from `ACOEF` and `BCOEF` of each pair of types (Section 3), in the units of MDIR | `σ`, `ε` as in the file with the combination rule 2 or 3, or from `C6` and `C12` with the rule 1; `[ nonbond_params ]` overrides the pairs it names |
 | Charge | `q = CHARGE / 18.2223` | As in the file |
 | Pairs three bonds apart | `s_LJ = 1 / SCNB`, `s_C = 1 / SCEE`, for each dihedral; 0 stays 0 | `fudgeLJ` and `fudgeQQ`, or the parameters of `[ pairs ]` |
 
