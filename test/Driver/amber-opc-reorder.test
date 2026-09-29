@@ -17,6 +17,16 @@
 # RUN: mdir run %t/off.toml | FileCheck %s
 # RUN: not mdir checkpoint %t/on.h5 %t/off.h5 | FileCheck %s --check-prefix=STATES
 
+# The same with the waters rigid: the members of SETTLE are renumbered too.
+#
+# RUN: printf '[constraints]\nfast_water = true\n' >> %t/on.toml
+# RUN: printf '[constraints]\nfast_water = true\n' >> %t/off.toml
+# RUN: mdir run %t/on.toml | FileCheck %s --check-prefix=RIGID
+# RUN: mdir run %t/off.toml | FileCheck %s --check-prefix=RIGID
+# RUN: not mdir checkpoint %t/on.h5 %t/off.h5 | FileCheck %s --check-prefix=STATES
+
+# RIGID: INFO:        40
+
 # CHECK: INFO:         0         0.0000 {{ *-?[0-9.]+}} {{ *}}-12.0706
 # CHECK: INFO:        40
 
