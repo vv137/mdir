@@ -411,10 +411,14 @@ changes with the cell. It is on by default, as in Amber.
 
 ### 8.1 A cutoff
 
-For the intermediate stage (Section 1.4). The form is the one that both
-reference engines can produce for a periodic system; which that is is
-settled from the specifications of their formats before the stage
-begins.
+For the intermediate stage (Section 1.4). sander of AmberTools computes a
+plain `q_i q_j / r`, cut at the cutoff with no shift, in a periodic system
+with `eedmeth = 4` of `&ewald`; it then leaves out the self term, the
+reciprocal sum, and the correction of the excluded pairs. The stage takes
+that form, and the comparison with sander is of the energy of each term.
+Whether GROMACS has the same form for a periodic system is settled before
+the stage begins; otherwise the comparison with GROMACS covers every term
+but the Coulomb one.
 
 ### 8.2 Particle mesh Ewald
 
@@ -620,9 +624,12 @@ own right after the execution of terms over tuples (Section 18).
 | The JAC benchmark: run times | The engines on the same device | |
 
 The two readers can be compared with each other when the same system is
-in both formats. Whether a tool of AmberTools converts a topology of Amber
-to the format of GROMACS, and with which options, is settled from the
-specification of the format.
+in both formats. ParmEd converts a topology of Amber to the format of
+GROMACS: the factors of the pairs three bonds apart become `fudgeQQ` and
+`fudgeLJ`, and NBFIX pairs go to `[ nonbond_params ]`. A system with more
+than one value of the factors does not convert faithfully, and whether
+GROMACS applies the NBFIX pairs to the pairs three bonds apart, as Amber
+does, is to be checked.
 
 Neither engine is installed on the development machine. Both are built
 into the home directory.
