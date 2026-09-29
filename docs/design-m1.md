@@ -368,6 +368,8 @@ the particles (D44) and the incidence structures do not depend on it.
 | Functions | Bonds 1; angles 1, 2, and 10; dihedrals 1, 2, and 9 |
 | What is an error | `constraints`, `settles`, `virtual_sites`, `pairs`, and a function that is not listed, each with the milestone that brings it |
 | Units | The files are in nm, kJ/mol, and ps, which are the units inside MDIR. The control file stays in Å and kcal/mol (D36). |
+| The readers | MDIR has readers of its own for both formats. They accept what GROMACS accepts and share no code with it. |
+| Formats of other engines | Planned. A reader hands the builder a description of the system that does not depend on the format, so a format is a reader more. |
 
 | Keywords of the control file | Table |
 |---|---|
