@@ -14,6 +14,8 @@ EDGE = 6.0
 CHAINS = 8
 LENGTH = 6
 COUNT = CHAINS * LENGTH
+STEPS = 200
+DT = 0.002
 
 
 def sub(a, b):
@@ -232,6 +234,58 @@ def single():
     EDGE = saved
 
 
+def masses():
+    """The masses of the particles: 1, 1.5, and 2 in turn."""
+    return [1.0 + 0.5 * (i % 3) for i in range(COUNT)]
+
+
+def velocities():
+    """Velocities from a linear congruential generator, from -0.5 to 0.5
+    along each axis, with the momentum of the whole removed."""
+    state = 7
+    m = masses()
+    v = []
+    for _ in range(COUNT):
+        row = []
+        for _ in range(3):
+            state = (state * 1103515245 + 12345) % 2147483648
+            row.append(state / 2147483648.0 - 0.5)
+        v.append(row)
+    total = sum(m)
+    for k in range(3):
+        p = sum(m[i] * v[i][k] for i in range(COUNT))
+        for i in range(COUNT):
+            v[i][k] -= p / total
+    return v
+
+
+def integrate(steps, dt):
+    """Velocity Verlet from the positions of place() and the velocities of
+    velocities(). Returns the positions, the velocities, and the potential
+    and kinetic energies after `steps` steps, and the largest deviation of
+    the total energy from its start along the way."""
+    x = place()
+    v = velocities()
+    m = masses()
+    tuples = topology()
+    energy, f, _ = evaluate(x, tuples)
+
+    def kinetic():
+        return sum(0.5 * m[i] * dot(v[i], v[i]) for i in range(COUNT))
+
+    start = sum(energy) + kinetic()
+    worst = 0.0
+    for _ in range(steps):
+        for i in range(COUNT):
+            v[i] = add(v[i], scale(0.5 * dt / m[i], f[i]))
+            x[i] = add(x[i], scale(dt, v[i]))
+        energy, f, _ = evaluate(x, tuples)
+        for i in range(COUNT):
+            v[i] = add(v[i], scale(0.5 * dt / m[i], f[i]))
+        worst = max(worst, abs(sum(energy) + kinetic() - start))
+    return x, v, sum(energy), kinetic(), start, worst
+
+
 def main():
     single()
     x = place()
@@ -255,6 +309,15 @@ def main():
           repr(virial[0][0] + virial[1][1] + virial[2][2]))
     for a in range(3):
         print("virial, row %d      " % a, [repr(c) for c in virial[a]])
+
+    x, v, u, k, start, worst = integrate(STEPS, DT)
+    print("after", STEPS, "steps of", DT)
+    print("potential energy   ", repr(u))
+    print("kinetic energy     ", repr(k))
+    print("position of 0      ", [repr(c) for c in x[0]])
+    print("velocity of 20     ", [repr(c) for c in v[20]])
+    print("total energy, start", repr(start))
+    print("largest deviation  ", "%.2e" % worst)
 
 
 if __name__ == "__main__":
