@@ -22,6 +22,12 @@ def MDExec_Buffer : Type<
 
 def MDExec_FieldOrBuffer : AnyTypeOf<[MD_FieldType, MDExec_Buffer]>;
 
+// A buffer that an op may use as it likes: one number per particle, or a
+// fixed number of them.
+def MDExec_Scratch : Type<
+    CPred<"::mdir::md_exec::isScratchType($_self)">,
+    "buffer with one value per particle", "::mlir::MemRefType">;
+
 //===----------------------------------------------------------------------===//
 // Destinations
 //===----------------------------------------------------------------------===//
@@ -323,7 +329,7 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
     MDRT_NeighborsType:$neighbors,
     MDExec_FieldOrBuffer:$positions,
     MD_CellType:$cell,
-    Variadic<MDExec_Buffer>:$scratch,
+    Variadic<MDExec_Scratch>:$scratch,
     Optional<I1>:$moved,
     F64Attr:$cutoff,
     F64Attr:$skin,
@@ -514,7 +520,7 @@ def MDExec_PairForOp : MDExec_Op<"pair_for", [
     Variadic<MDExec_FieldOrBuffer>:$ins,
     Variadic<MDExec_FieldOrBuffer>:$outs,
     Variadic<AnyType>:$reduce,
-    Variadic<MDExec_Buffer>:$scratch,
+    Variadic<MDExec_Scratch>:$scratch,
     F64Attr:$cutoff,
     OptionalAttr<DenseF64ArrayAttr>:$weights,
     OptionalAttr<DenseBoolArrayAttr>:$overwrite,
@@ -611,7 +617,7 @@ def MDExec_ParticleForOp : MDExec_Op<"particle_for", [
     Variadic<MDExec_FieldOrBuffer>:$ins,
     Variadic<MDExec_FieldOrBuffer>:$outs,
     Variadic<AnyType>:$reduce,
-    Variadic<MDExec_Buffer>:$scratch
+    Variadic<MDExec_Scratch>:$scratch
   );
   let regions = (region SizedRegion<1>:$kernel);
   let results = (outs Variadic<AnyType>:$results);

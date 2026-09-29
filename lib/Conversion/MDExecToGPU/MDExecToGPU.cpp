@@ -302,13 +302,21 @@ Cell Lowering::getCell(Type type, Location loc) {
   if (cell.device)
     return cell;
 
-  // One value, allocated once, where the function begins.
+  // One value, a number or a vector, allocated once, where the function
+  // begins.
+  SmallVector<int64_t, 2> shape = {1};
+  Type element = type;
+  if (auto vector = dyn_cast<VectorType>(type)) {
+    shape.push_back(vector.getNumElements());
+    element = vector.getElementType();
+  }
   Block &entry = current.getBody().front();
   OpBuilder builder(&entry, entry.begin());
-  cell.device = createDeviceBuffer(builder, loc, getDeviceType({1}, type),
+  cell.device = createDeviceBuffer(builder, loc,
+                                   getDeviceType(shape, element),
                                    ValueRange());
   cell.host = memref::AllocaOp::create(builder, loc,
-                                       MemRefType::get({1}, type));
+                                       MemRefType::get(shape, element));
   return cell;
 }
 
@@ -355,7 +363,8 @@ Value Lowering::readFlag(OpBuilder &builder, Location loc,
 Value Lowering::emitReduction(OpBuilder &builder, Location loc,
                               Value contributions, Value partial, Value size,
                               bool isSum) {
-  Type type = cast<MemRefType>(contributions.getType()).getElementType();
+  // A number, or a vector of numbers.
+  Type type = md_exec::getKernelValueType(contributions.getType());
   auto combine = [&](OpBuilder &b, Value lhs, Value rhs) -> Value {
     if (isSum)
       return arith::AddFOp::create(b, loc, lhs, rhs);
@@ -377,12 +386,10 @@ Value Lowering::emitReduction(OpBuilder &builder, Location loc,
     auto loop = scf::ForOp::create(
         b, loc, begin, end, one, ValueRange{createZero(b, loc, type)},
         [&](OpBuilder &inner, Location, Value i, ValueRange sums) {
-          Value value = memref::LoadOp::create(inner, loc, contributions,
-                                               ValueRange{i});
+          Value value = loadElement(inner, loc, contributions, i);
           scf::YieldOp::create(inner, loc, combine(inner, sums[0], value));
         });
-    memref::StoreOp::create(b, loc, loop.getResult(0), partial,
-                            ValueRange{chunk});
+    storeElement(b, loc, loop.getResult(0), partial, chunk);
   });
 
   // One thread for the results of the chunks.
@@ -393,17 +400,14 @@ Value Lowering::emitReduction(OpBuilder &builder, Location loc,
     auto loop = scf::ForOp::create(
         b, loc, zero, chunks, one, ValueRange{createZero(b, loc, type)},
         [&](OpBuilder &inner, Location, Value i, ValueRange sums) {
-          Value value =
-              memref::LoadOp::create(inner, loc, partial, ValueRange{i});
+          Value value = loadElement(inner, loc, partial, i);
           scf::YieldOp::create(inner, loc, combine(inner, sums[0], value));
         });
-    memref::StoreOp::create(b, loc, loop.getResult(0), cell.device,
-                            ValueRange{zero});
+    storeElement(b, loc, loop.getResult(0), cell.device, zero);
   });
 
   createTransfer(builder, loc, cell.host, cell.device);
-  return memref::LoadOp::create(builder, loc, cell.host,
-                                ValueRange{createIndex(builder, loc, 0)});
+  return loadElement(builder, loc, cell.host, createIndex(builder, loc, 0));
 }
 
 //===----------------------------------------------------------------------===//
@@ -460,8 +464,7 @@ LogicalResult Lowering::lowerParticleFor(md_exec::ParticleForOp op) {
     for (auto [index, value] : llvm::enumerate(contributions)) {
       int place = places[index];
       if (place >= 0) {
-        memref::StoreOp::create(body, loc, value, op.getScratch()[2 * place],
-                                ValueRange{particle});
+        storeElement(body, loc, value, op.getScratch()[2 * place], particle);
         continue;
       }
       // Every thread that writes the flag writes the same value, so the
@@ -518,8 +521,7 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
         emitPairKernel(body, op, structure.counts, structure.index, box,
                        inverse, central, local);
     for (auto [index, value] : llvm::enumerate(contributions))
-      memref::StoreOp::create(body, loc, value, op.getScratch()[2 * index],
-                              ValueRange{central});
+      storeElement(body, loc, value, op.getScratch()[2 * index], central);
   });
   return finishSums(op, builder, op.getReduce(), op.getScratch(), size);
 }

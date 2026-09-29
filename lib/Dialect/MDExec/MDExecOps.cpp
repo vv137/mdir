@@ -33,6 +33,29 @@ bool mdir::md_exec::isBufferType(Type type) {
          element.isSignlessInteger(64);
 }
 
+bool mdir::md_exec::isScratchType(Type type) {
+  auto buffer = dyn_cast<MemRefType>(type);
+  if (!buffer || buffer.getRank() < 1 || buffer.getRank() > 2 ||
+      !buffer.isDynamicDim(0))
+    return false;
+  if (buffer.getRank() == 2 && buffer.isDynamicDim(1))
+    return false;
+  Type element = buffer.getElementType();
+  return isReal(element) || element.isSignlessInteger(32) ||
+         element.isSignlessInteger(64);
+}
+
+MemRefType mdir::md_exec::getScratchType(Type value, MemRefType like) {
+  SmallVector<int64_t, 2> shape = {ShapedType::kDynamic};
+  Type element = value;
+  if (auto vector = dyn_cast<VectorType>(value)) {
+    shape.push_back(vector.getNumElements());
+    element = vector.getElementType();
+  }
+  return MemRefType::get(shape, element, MemRefLayoutAttrInterface(),
+                         like.getMemorySpace());
+}
+
 Type mdir::md_exec::getKernelValueType(Type fieldOrBuffer) {
   if (auto field = dyn_cast<FieldType>(fieldOrBuffer))
     return field.getKernelValueType();
@@ -105,7 +128,7 @@ static LogicalResult verifyScratch(Operation *op, bool isStorage,
   for (unsigned i = 0, e = scratch.size(); i != e; ++i) {
     auto buffer = cast<MemRefType>(scratch[i].getType());
     Type expected = types[i / perValue];
-    if (buffer.getRank() != 1 || buffer.getElementType() != expected)
+    if (buffer != mdir::md_exec::getScratchType(expected, buffer))
       return op->emitOpError()
              << "expected buffer " << i << " in 'scratch' to hold one "
              << expected << " per particle, got " << buffer;

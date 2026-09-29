@@ -267,14 +267,13 @@ LogicalResult Assignment::getScratch(Operation *op, ArrayRef<Type> sums,
   Value size;
   if (failed(getSize(op, field, size)))
     return failure();
+  MemRefType device = MemRefType::get(
+      {ShapedType::kDynamic}, Float64Type::get(context),
+      MemRefLayoutAttrInterface(),
+      IntegerAttr::get(IntegerType::get(context, 64), deviceSpace));
   for (Type sum : sums) {
-    if (!isa<FloatType>(sum))
-      return op->emitOpError()
-             << "has a global sum of the type " << sum
-             << "; on a device only sums of single numbers are supported";
-    MemRefType type = MemRefType::get(
-        {ShapedType::kDynamic}, sum, MemRefLayoutAttrInterface(),
-        IntegerAttr::get(IntegerType::get(context, 64), deviceSpace));
+    // A number, or a vector of numbers: the virial has nine.
+    MemRefType type = getScratchType(sum, device);
     scratch.push_back(scope.request(type, size, op->getLoc()));
     scratch.push_back(scope.request(type, size, op->getLoc()));
   }

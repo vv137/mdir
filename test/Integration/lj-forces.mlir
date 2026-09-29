@@ -1,5 +1,5 @@
-// Energy and forces of a Lennard-Jones system, compiled and run, compared
-// with a brute-force evaluation over all pairs.
+// Energy, forces, and virial of a Lennard-Jones system, compiled and run,
+// compared with a brute-force evaluation over all pairs.
 //
 // RUN: mdir-opt %s %md_passes \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
@@ -74,6 +74,24 @@ func.func @check(%value: f64, %reference: f64) {
   return
 }
 
+// Prints `value` and then 1 if it agrees with the reference to the
+// tolerance, relative to `magnitude`: a component of a tensor is compared
+// on the scale of the tensor, not on its own.
+func.func @check_part(%value: f64, %reference: f64, %magnitude: f64) {
+  %tolerance = arith.constant 1.0e-10 : f64
+  %difference = arith.subf %value, %reference : f64
+  %error = math.absf %difference : f64
+  %scale = math.absf %magnitude : f64
+  %bound = arith.mulf %tolerance, %scale : f64
+  %agrees = arith.cmpf ole, %error, %bound : f64
+  %flag = arith.uitofp %agrees : i1 to f64
+  call @printF64(%value) : (f64) -> ()
+  call @printNewline() : () -> ()
+  call @printF64(%flag) : (f64) -> ()
+  call @printNewline() : () -> ()
+  return
+}
+
 // Places the particles. The displacements come from a linear congruential
 // generator, which the reference script repeats.
 func.func @place(%x: memref<?x3xf64>) {
@@ -135,8 +153,9 @@ func.func @main() {
   %x = mdrt.from_buffer %buffer : memref<?x3xf64> to !vec
   %cell = md.orthorhombic_cell %edge, %edge, %edge
 
-  %u, %f = md.evaluate @lj(%x, %cell, %eps, %sigma) request [energy, forces]
-      : (!vec, !md.cell, f64, f64) -> (f64, !vec)
+  %u, %f, %w = md.evaluate @lj(%x, %cell, %eps, %sigma)
+      request [energy, forces, virial]
+      : (!vec, !md.cell, f64, f64) -> (f64, !vec, vector<9xf64>)
   %forces = mdrt.to_buffer %f : !vec to memref<?x3xf64>
 
   // Energy.
@@ -187,5 +206,39 @@ func.func @main() {
   }
   %f2_ref = arith.constant 3245.683825884532 : f64
   call @check(%f2, %f2_ref) : (f64, f64) -> ()
+
+  // The virial W = sum of d (x) K over the pairs, in row-major order: its
+  // trace, and the components xx, xy, yx, zy, and zz. It is symmetric.
+  // CHECK-NEXT: -824.343
+  // CHECK-NEXT: 1
+  // CHECK-NEXT: -288.834
+  // CHECK-NEXT: 1
+  // CHECK-NEXT: 0.309016
+  // CHECK-NEXT: 1
+  // CHECK-NEXT: 0.309016
+  // CHECK-NEXT: 1
+  // CHECK-NEXT: -3.34056
+  // CHECK-NEXT: 1
+  // CHECK-NEXT: -260.594
+  // CHECK-NEXT: 1
+  %wxx = vector.extract %w[0] : f64 from vector<9xf64>
+  %wxy = vector.extract %w[1] : f64 from vector<9xf64>
+  %wyx = vector.extract %w[3] : f64 from vector<9xf64>
+  %wyy = vector.extract %w[4] : f64 from vector<9xf64>
+  %wzy = vector.extract %w[7] : f64 from vector<9xf64>
+  %wzz = vector.extract %w[8] : f64 from vector<9xf64>
+  %wxy2 = arith.addf %wxx, %wyy : f64
+  %trace = arith.addf %wxy2, %wzz : f64
+  %trace_ref = arith.constant -824.3434216893514 : f64
+  %wxx_ref = arith.constant -288.8338417578268 : f64
+  %wxy_ref = arith.constant 0.30901564195084846 : f64
+  %wzy_ref = arith.constant -3.3405645305666933 : f64
+  %wzz_ref = arith.constant -260.59408124952495 : f64
+  call @check(%trace, %trace_ref) : (f64, f64) -> ()
+  call @check_part(%wxx, %wxx_ref, %trace_ref) : (f64, f64, f64) -> ()
+  call @check_part(%wxy, %wxy_ref, %trace_ref) : (f64, f64, f64) -> ()
+  call @check_part(%wyx, %wxy_ref, %trace_ref) : (f64, f64, f64) -> ()
+  call @check_part(%wzy, %wzy_ref, %trace_ref) : (f64, f64, f64) -> ()
+  call @check_part(%wzz, %wzz_ref, %trace_ref) : (f64, f64, f64) -> ()
   return
 }

@@ -204,3 +204,23 @@ func.func @ordered(%xb: memref<?x3xf64>, %mb: memref<?xf64>,
   } {mdrt.segment}
   return
 }
+
+// A global sum of vectors, as the virial is one: its buffers in `scratch`
+// hold one vector per particle.
+//
+// CHECK-LABEL: func.func @momentum(
+// CHECK-DAG:     %[[A:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?x3xf64, 1>
+// CHECK-DAG:     %[[B:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?x3xf64, 1>
+// CHECK-DAG:     %[[C:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?x3xf64, 1>
+// CHECK:         md_exec.particle_for ins(%{{[a-z0-9_]+}} : memref<?x3xf64, 1>)
+// CHECK-SAME:      reduce(%{{[a-z0-9_]+}} : vector<3xf64>)
+// CHECK-SAME:      scratch(%{{[a-z0-9_]+}}, %{{[a-z0-9_]+}} : memref<?x3xf64, 1>, memref<?x3xf64, 1>)
+func.func @momentum(%vb: memref<?x3xf64>) -> vector<3xf64> {
+  %v = mdrt.from_buffer %vb : memref<?x3xf64> to !vec
+  %zero = arith.constant dense<0.0> : vector<3xf64>
+  %p = md_exec.particle_for ins(%v : !vec) reduce(%zero : vector<3xf64>) {
+  ^bb0(%v_i: vector<3xf64>):
+    md_exec.yield %v_i : vector<3xf64>
+  } -> vector<3xf64>
+  return %p : vector<3xf64>
+}

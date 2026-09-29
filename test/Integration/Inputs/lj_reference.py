@@ -54,6 +54,28 @@ def pair(r):
     return u * s, du * s + u * ds
 
 
+def virial(positions):
+    """The virial W = sum over the pairs of d (x) K, with the displacement d
+    from j to i and the force K on i due to j. Row a, column b is
+    d_a K_b."""
+    total = [[0.0, 0.0, 0.0] for _ in range(3)]
+    for i in range(COUNT):
+        for j in range(i + 1, COUNT):
+            d = []
+            for k in range(3):
+                component = positions[i][k] - positions[j][k]
+                component -= EDGE * round(component / EDGE)
+                d.append(component)
+            r = math.sqrt(d[0] ** 2 + d[1] ** 2 + d[2] ** 2)
+            if r >= CUTOFF:
+                continue
+            _, du = pair(r)
+            for a in range(3):
+                for b in range(3):
+                    total[a][b] += d[a] * (-du * d[b] / r)
+    return total
+
+
 def evaluate(positions):
     """The energy and the forces, over all pairs."""
     energy = 0.0
@@ -114,6 +136,10 @@ def main():
     print("  force on 0      ", [repr(c) for c in forces[0]])
     print("  force on 17, x  ", repr(forces[17][0]))
     print("  sum of |F|^2    ", repr(sum(c * c for f in forces for c in f)))
+    w = virial(positions)
+    print("  virial, trace   ", repr(w[0][0] + w[1][1] + w[2][2]))
+    for a in range(3):
+        print("  virial, row %d   " % a, [repr(c) for c in w[a]])
 
     mass, dt, steps = 1.0, 0.004, 200
 

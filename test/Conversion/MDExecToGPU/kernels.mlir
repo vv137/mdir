@@ -232,6 +232,43 @@ func.func @ordered(%x: memref<?x3xf64, 1>, %ids: memref<?xi32, 1>,
   return
 }
 
+// A global sum of vectors: the kernel stores the vector of each particle,
+// the kernels that add up read and write vectors, and the host reads the
+// vector that results.
+//
+// CHECK-LABEL: func.func @momentum(
+// CHECK-SAME:    %[[V:[a-z0-9]+]]: memref<?x3xf64, 1>, %[[A:[a-z0-9]+]]: memref<?x3xf64, 1>, %[[B:[a-z0-9]+]]: memref<?x3xf64, 1>)
+// CHECK:         %[[CELL:[a-z0-9_]+]] = gpu.alloc () : memref<1x3xf64, 1>
+// CHECK:         %[[HOST:[a-z0-9_]+]] = memref.alloca() : memref<1x3xf64>
+// CHECK:         gpu.launch
+// CHECK:           memref.load %[[V]][
+// CHECK:           memref.store %{{[0-9]+}}, %[[A]][%{{[0-9]+}}, %{{[a-z0-9_]+}}]
+// CHECK:         gpu.launch
+// CHECK:           scf.for
+// CHECK:             memref.load %[[A]][
+// CHECK:             arith.addf %{{[a-z0-9]+}}, %{{[0-9]+}} : vector<3xf64>
+// CHECK:           memref.store %{{[0-9]+}}, %[[B]][
+// CHECK:         gpu.launch
+// CHECK:           scf.for
+// CHECK:             memref.load %[[B]][
+// CHECK:           memref.store %{{[0-9]+}}, %[[CELL]][
+// CHECK:         gpu.memcpy async [%{{[0-9]+}}] %[[HOST]], %[[CELL]]
+// CHECK:         memref.load %[[HOST]][
+// CHECK:         %[[SUM:[0-9]+]] = vector.from_elements
+// CHECK:         %[[TOTAL:[0-9]+]] = arith.addf %{{[a-z0-9_]+}}, %[[SUM]] : vector<3xf64>
+// CHECK:         return %[[TOTAL]]
+func.func @momentum(%v: memref<?x3xf64, 1>, %a: memref<?x3xf64, 1>,
+                    %b: memref<?x3xf64, 1>) -> vector<3xf64> {
+  %zero = arith.constant dense<0.0> : vector<3xf64>
+  %p = md_exec.particle_for ins(%v : memref<?x3xf64, 1>)
+      reduce(%zero : vector<3xf64>)
+      scratch(%a, %b : memref<?x3xf64, 1>, memref<?x3xf64, 1>) {
+  ^bb0(%v_i: vector<3xf64>):
+    md_exec.yield %v_i : vector<3xf64>
+  } -> vector<3xf64>
+  return %p : vector<3xf64>
+}
+
 // The template for devices is in the module.
 //
 // CHECK: func.func private @mdrt_gpu_build_neighbors_matrix(

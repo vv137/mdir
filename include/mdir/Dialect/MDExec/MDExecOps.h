@@ -22,6 +22,15 @@ namespace md_exec {
 /// `memref<?x3xT>` or `memref<?xT>`.
 bool isBufferType(mlir::Type type);
 
+/// Returns true if `type` is the type of a buffer in `scratch`: a buffer
+/// with one value per particle, a number or a fixed number of them.
+bool isScratchType(mlir::Type type);
+
+/// The type of the buffer in `scratch` that holds one value of the type
+/// `value`, a number or a vector, per particle. `like` is a buffer of the
+/// same particles: the buffer is where that one is.
+mlir::MemRefType getScratchType(mlir::Type value, mlir::MemRefType like);
+
 /// The type of one value of a field inside a kernel, for the type of the
 /// field or of the buffer that holds it.
 mlir::Type getKernelValueType(mlir::Type fieldOrBuffer);
