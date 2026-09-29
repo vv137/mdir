@@ -148,6 +148,44 @@ driver compiles PTX when the module is loaded.
 Proposal: the upstream `gpu` dialect and its lowering, with the runtime
 functions provided by `mdrt`.
 
+### 5.1 What was tried
+
+On this machine: four RTX 3090, driver 595.84, CUDA toolkit 11.2, and LLVM
+23.1.2 built without any knowledge of CUDA.
+
+| Step | Result |
+|---|---|
+| `gpu.launch` to a kernel in PTX text, with `gpu-lower-to-nvvm-pipeline` and the format `isa` | Works. The toolkit is not needed for this step unless the kernel calls a math function. |
+| Math functions in a kernel | Work once `CUDA_ROOT` names the toolkit: `libdevice` is linked as bitcode. |
+| Loading and launching | The driver compiles the PTX text when the module is loaded. |
+| The upstream wrapper library over the CUDA driver API | Its sparse part needs a newer toolkit. Without that part it builds against toolkit 11.2 and works. It is about 300 lines. |
+| `gpu.alloc`, `gpu.memcpy` | Lower only in their asynchronous form, with tokens. |
+| A kernel of the shape of a loop over pairs: one thread per particle, a loop over the others, vectors of `f64`, `roundeven`, `fpowi`, `exp`, `erfc` | Ran on a GPU. The sum over 1000 particles agrees with the host. |
+
+So the proposal is feasible as it stands.
+
+### 5.2 Plan
+
+The GPU back end is a second lowering of the storage form
+(ops-m0.md, Section 10.7), next to `convert-md-exec-to-loops`.
+
+| Part | Plan |
+|---|---|
+| Loop over particles or pairs | One `gpu.launch`, with one thread per particle. With the policy `owner_only` a thread writes only to its own particle, so no atomic operation is needed. |
+| Buffers | Device memory, from `gpu.alloc`. The state is copied to the device before the first step of a segment and back after the last. |
+| Global sums | The kernel writes the contribution of each particle to a device buffer. A second kernel adds them up in blocks, and the host adds up the blocks. The order is fixed, so the sum is reproducible. |
+| Neighbor build | First on the host: the positions are copied to the host, the structure is built with the template, and the matrix is copied to the device. Then on the device. |
+| Test of validity | On the device: the largest displacement is a global maximum, computed like a global sum. |
+| Runtime functions | The ones the upstream lowering calls, in `libmdrt`, built only if the CUDA toolkit is found. |
+
+Open questions:
+
+| # | Question | Proposal |
+|---|---|---|
+| 1 | Neighbor build on the host first | Yes. It is correct at once and costs a transfer per rebuild, not per step. The build on the device follows. |
+| 2 | Size of a block of threads | 128, a numeric plan parameter |
+| 3 | Which GPU | The first one that `CUDA_VISIBLE_DEVICES` leaves visible |
+
 ## 6. Reference interpreter
 
 V1 decided against an interpreter. The options that were considered:

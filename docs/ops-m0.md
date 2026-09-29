@@ -190,13 +190,12 @@ Checked with LLVM 23.1.2 by lowering each op and running the code generator.
 | Target | Result |
 |---|---|
 | x86-64 | All ops in Section 3.2 lower. `erf` and `erfc` become calls to the C math library; the rest become LLVM intrinsics. |
-| NVPTX | Arithmetic, `math.fpowi`, and `math.sqrt` lower. `exp`, `log`, `sin`, `cos`, `tanh`, `powf`, `asin`, `acos`, `atan2`, `erf`, and `erfc` do not: the target has no library to call. |
+| NVPTX, through the code generator alone | Arithmetic, `math.fpowi`, and `math.sqrt` lower. `exp`, `log`, `sin`, `cos`, `tanh`, `powf`, `asin`, `acos`, `atan2`, `erf`, and `erfc` do not: the target has no library to call. |
+| NVPTX, through the `gpu` dialect | The conversion to `nvvm` turns the functions into calls to the device math library of the CUDA toolkit, `libdevice`, which is linked as bitcode. A kernel with `sqrt`, `exp`, `erfc`, `fpowi`, and `roundeven` on `f64` and on vectors of `f64` ran on a GPU and agreed with the host. |
 
-The Lennard-Jones kernel uses only arithmetic and integer powers, so M0 is
-not affected. Any potential that uses a transcendental function on a GPU
-needs a project-owned lowering for it. The candidates are polynomial
-approximations generated in the IR, or a device math library linked as
-bitcode.
+The device math library is found through the environment variable
+`CUDA_ROOT`, `CUDA_HOME`, or `CUDA_PATH`, which names the CUDA toolkit. It
+is needed when the kernels are compiled, not when LLVM is built.
 
 ## 4. `md` ops
 

@@ -386,7 +386,7 @@ These items follow from the decisions above but have no design yet.
 | Layout of the MDIR group inside an H5MD checkpoint | M0 | |
 | HDF5 development files | M0 | The machine has the HDF5 runtime library but not its headers |
 | Storage assignment pass | M0 | Specified in ops-m0.md, Section 10 |
-| Lowering of transcendental functions on GPU targets | M1 | See ops-m0.md, Section 3.3 |
+| Lowering of transcendental functions on GPU targets | M1 | Works on NVIDIA through `libdevice`; see ops-m0.md, Section 3.3. Open for AMD. |
 | Syntax for combining relations | M1 | |
 | Scatter strategy for bonded terms | M1 | |
 | Long-range dispersion correction | M1 | |
