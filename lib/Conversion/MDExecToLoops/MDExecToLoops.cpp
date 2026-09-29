@@ -75,6 +75,7 @@ private:
   LogicalResult lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op);
   void lowerParticleFor(md_exec::ParticleForOp op);
   LogicalResult lowerPairFor(md_exec::PairForOp op);
+  void lowerTupleFor(md_exec::TupleForOp op);
 
   /// The storage of the neighbor structure `structure`.
   LogicalResult getNeighbors(Operation *op, Value structure,
@@ -228,6 +229,39 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   for (unsigned i = 0, e = op.getNumResults(); i != e; ++i)
     op.getResult(i).replaceAllUsesWith(loop.getResult(i));
   return success();
+}
+
+//===----------------------------------------------------------------------===//
+// Loops over tuples
+//===----------------------------------------------------------------------===//
+
+void Lowering::lowerTupleFor(md_exec::TupleForOp op) {
+  Location loc = op.getLoc();
+  OpBuilder builder(op);
+
+  Value positions = op.getPositions();
+  SmallVector<Value> inits(op.getReduce().begin(), op.getReduce().end());
+  Value size = createSize(builder, loc, positions);
+
+  // The cell has become the vector of its edge lengths.
+  Type real = cast<MemRefType>(positions.getType()).getElementType();
+  Value box = convertReal(builder, loc, op.getCellMutable().get(), real);
+  Value inverse = createInverse(builder, loc, box);
+
+  Value zero = createIndex(builder, loc, 0);
+  Value one = createIndex(builder, loc, 1);
+  auto loop = scf::ParallelOp::create(
+      builder, loc, ValueRange{zero}, ValueRange{size}, ValueRange{one},
+      inits, [&](OpBuilder &body, Location, ValueRange ivs, ValueRange) {
+        IRMapping local;
+        SmallVector<Value> contributions = emitTupleKernel(
+            body, op, op.getIncidence(), box, inverse, ivs[0], local);
+        if (!contributions.empty())
+          createReduction(body, loc, contributions, /*isSum=*/true);
+      });
+
+  for (unsigned i = 0, e = op.getNumResults(); i != e; ++i)
+    op.getResult(i).replaceAllUsesWith(loop.getResult(i));
 }
 
 //===----------------------------------------------------------------------===//
@@ -534,7 +568,7 @@ static bool isDeviceType(Type type) {
 /// structure that the storage form does not have.
 static bool isValueFormType(Type type) {
   return isa<md::FieldType, md::RelationType, mdrt::CellsType,
-             mdrt::PermutationType>(type);
+             mdrt::PermutationType, mdrt::IncidenceType>(type);
 }
 
 LogicalResult Lowering::lowerOp(Operation *op) {
@@ -604,6 +638,19 @@ LogicalResult Lowering::lowerOp(Operation *op) {
   } else if (auto loop = dyn_cast<md_exec::PairForOp>(op)) {
     if (failed(lowerPairFor(loop)))
       return failure();
+  } else if (auto loop = dyn_cast<md_exec::TupleForOp>(op)) {
+    lowerTupleFor(loop);
+  } else if (auto build = dyn_cast<md_exec::BuildIncidenceOp>(op)) {
+    if (!build.isStorageForm())
+      return op->emitOpError()
+             << "is not in the storage form; run 'md-exec-assign-storage' "
+                "first";
+    if (isDeviceType(build.getResult().getType()))
+      return op->emitOpError() << "builds on a device; use "
+                                  "'convert-md-exec-to-gpu'";
+    OpBuilder builder(op);
+    build.getResult().replaceAllUsesWith(emitBuildIncidence(
+        builder, op->getLoc(), build.getRelation(), build.getSize()));
   } else if (auto cell = dyn_cast<md::OrthorhombicCellOp>(op)) {
     OpBuilder builder(op);
     Type real = builder.getF64Type();
@@ -683,7 +730,8 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   // lowered where they are.
   for (Operation *op : ops) {
     Operation *parent = op->getParentOp();
-    if (isa<md_exec::ParticleForOp, md_exec::PairForOp>(parent))
+    if (isa<md_exec::ParticleForOp, md_exec::PairForOp, md_exec::TupleForOp>(
+            parent))
       continue;
     if (failed(lowerOp(op)))
       return failure();
@@ -711,7 +759,12 @@ LogicalResult Lowering::run() {
   for (Operation &op : llvm::make_early_inc_range(module)) {
     if (isa<func::FuncOp>(op))
       continue;
-    if (isa<md::ParticleSetOp>(op)) {
+    // Ops of other dialects, such as globals, stay.
+    if (!isa<md::MDDialect, md_exec::MDExecDialect, mdrt::MDRTDialect>(
+            op.getDialect()) &&
+        op.getName().getDialectNamespace() != "dyn")
+      continue;
+    if (isa<md::ParticleSetOp, md::TupleSetOp>(op)) {
       op.erase();
       continue;
     }

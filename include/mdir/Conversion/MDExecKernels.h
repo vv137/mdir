@@ -67,6 +67,28 @@ emitPairKernel(mlir::OpBuilder &builder, md_exec::PairForOp op,
                mlir::Value inverse, mlir::Value central,
                mlir::IRMapping &local);
 
+/// Emits what a loop over tuples does for the particle `particle`: the loop
+/// over the tuples in its row of `incidence`, with the displacements in the
+/// minimum image, the kernel, and the update of the destinations with the
+/// values that the kernel yields for the place of the particle. Returns the
+/// contributions to the global sums, which only the tuples where the
+/// particle is at place 0 make.
+///
+/// `box` and `inverse` are as for `emitPairKernel`.
+llvm::SmallVector<mlir::Value>
+emitTupleKernel(mlir::OpBuilder &builder, md_exec::TupleForOp op,
+                mlir::Value incidence, mlir::Value box, mlir::Value inverse,
+                mlir::Value particle, mlir::IRMapping &local);
+
+/// Emits, on the host, the build of the incidence structure of the tuples
+/// that `members` holds, for `size` particles, and returns it in a new
+/// buffer of the host. A row holds the number of tuples of the particle,
+/// then for each tuple its number, the place of the particle in it, and
+/// its members. The tuples of a row are in the order of their numbers, and
+/// a row is as wide as the particle with the most tuples needs.
+mlir::Value emitBuildIncidence(mlir::OpBuilder &builder, mlir::Location loc,
+                               mlir::Value members, mlir::Value size);
+
 /// The text of the templates `text` for positions of the type `real`. The
 /// templates are written for `f64`; the functions of the instance for `f32`
 /// have names that end in `_f32`.

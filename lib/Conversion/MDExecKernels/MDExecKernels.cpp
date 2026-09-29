@@ -238,6 +238,249 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
 }
 
 //===----------------------------------------------------------------------===//
+// Loops over tuples
+//===----------------------------------------------------------------------===//
+
+/// The value of `buffer`, a buffer of i32, at `row` and `column`, as an
+/// index.
+static Value loadIndex(OpBuilder &builder, Location loc, Value buffer,
+                       Value row, Value column) {
+  Value narrow =
+      memref::LoadOp::create(builder, loc, buffer, ValueRange{row, column});
+  return arith::IndexCastOp::create(builder, loc, builder.getIndexType(),
+                                    narrow);
+}
+
+SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
+                                            md_exec::TupleForOp op,
+                                            Value incidence, Value box,
+                                            Value inverse, Value particle,
+                                            IRMapping &local) {
+  Location loc = op.getLoc();
+  Value positions = op.getPositions();
+  Block &kernel = op.getKernel().front();
+  Operation *yield = kernel.getTerminator();
+  int64_t arity = op.getArity();
+  unsigned numCoordinates = op.getCoordinateKinds().size();
+  unsigned numOuts = op.getOuts().size();
+  unsigned numYields = yield->getNumOperands();
+  int64_t entry = md_exec::getIncidenceEntrySize(arity);
+
+  // As for pairs, the displacements are computed in the type of the
+  // positions and converted to the type that the kernel computes in.
+  Type computed =
+      cast<VectorType>(kernel.getArgument(0).getType()).getElementType();
+  SmallVector<md::Coordinate, 2> coordinates = op.getCoordinates();
+  Value zero = createIndex(builder, loc, 0);
+  Value one = createIndex(builder, loc, 1);
+
+  // What the particle accumulates: one value for each destination, then
+  // one for each global sum.
+  SmallVector<Value> sums;
+  for (unsigned i = 0; i != numOuts; ++i)
+    sums.push_back(createZero(builder, loc, yield->getOperand(i * arity).getType()));
+  for (unsigned i = numOuts * arity; i != numYields; ++i)
+    sums.push_back(createZero(builder, loc, yield->getOperand(i).getType()));
+
+  Value count = loadIndex(builder, loc, incidence, particle, zero);
+  auto loop = scf::ForOp::create(
+      builder, loc, zero, count, one, sums,
+      [&](OpBuilder &b, Location, Value number, ValueRange partial) {
+        Value offset = arith::MulIOp::create(
+            b, loc, number, createIndex(b, loc, entry));
+        Value base = arith::AddIOp::create(b, loc, offset, one);
+        auto column = [&](int64_t c) -> Value {
+          return arith::AddIOp::create(b, loc, base, createIndex(b, loc, c));
+        };
+        Value tuple = loadIndex(b, loc, incidence, particle, column(0));
+        Value place = loadIndex(b, loc, incidence, particle, column(1));
+        SmallVector<Value, 4> members;
+        for (int64_t q = 0; q != arity; ++q)
+          members.push_back(
+              loadIndex(b, loc, incidence, particle, column(2 + q)));
+
+        IRMapping inside = local;
+        SmallVector<Value, 4> memberPositions(arity);
+        auto positionOf = [&](int64_t q) {
+          if (!memberPositions[q])
+            memberPositions[q] = loadElement(b, loc, positions, members[q]);
+          return memberPositions[q];
+        };
+        for (auto [index, coordinate] : llvm::enumerate(coordinates)) {
+          Value raw = arith::SubFOp::create(b, loc,
+                                            positionOf(coordinate.members[0]),
+                                            positionOf(coordinate.members[1]));
+          Value images = arith::MulFOp::create(b, loc, raw, inverse);
+          Value nearest = math::RoundEvenOp::create(b, loc, images);
+          Value shift = arith::MulFOp::create(b, loc, nearest, box);
+          Value d = arith::SubFOp::create(b, loc, raw, shift);
+          inside.map(kernel.getArgument(index),
+                     convertReal(b, loc, d, computed));
+        }
+        unsigned argument = numCoordinates;
+        for (Value buffer : op.getIns())
+          for (int64_t q = 0; q != arity; ++q)
+            inside.map(kernel.getArgument(argument++),
+                       loadElement(b, loc, buffer, members[q]));
+        for (Value buffer : op.getParameters())
+          inside.map(kernel.getArgument(argument++),
+                     loadElement(b, loc, buffer, tuple));
+        for (Operation &nested : kernel.without_terminator())
+          b.clone(nested, inside);
+
+        // The value for the place of the particle, of each destination.
+        SmallVector<Value> updated;
+        for (unsigned i = 0; i != numOuts; ++i) {
+          Value value = inside.lookupOrDefault(yield->getOperand(i * arity));
+          for (int64_t q = 1; q != arity; ++q) {
+            Value here = arith::CmpIOp::create(
+                b, loc, arith::CmpIPredicate::eq, place,
+                createIndex(b, loc, q));
+            value = arith::SelectOp::create(
+                b, loc, here,
+                inside.lookupOrDefault(yield->getOperand(i * arity + q)),
+                value);
+          }
+          updated.push_back(arith::AddFOp::create(b, loc, partial[i], value));
+        }
+
+        // A tuple adds to a sum once, through its member at place 0.
+        Value first = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq,
+                                            place, zero);
+        for (unsigned i = numOuts * arity, j = numOuts; i != numYields;
+             ++i, ++j) {
+          Value contribution = inside.lookupOrDefault(yield->getOperand(i));
+          Value nothing = createZero(b, loc, contribution.getType());
+          Value masked =
+              arith::SelectOp::create(b, loc, first, contribution, nothing);
+          updated.push_back(arith::AddFOp::create(b, loc, partial[j], masked));
+        }
+        scf::YieldOp::create(b, loc, updated);
+      });
+
+  for (unsigned i = 0; i != numOuts; ++i) {
+    Value destination = op.getOuts()[i];
+    Value total = loop.getResult(i);
+    if (!op.overwrites(i))
+      total = arith::AddFOp::create(
+          builder, loc, loadElement(builder, loc, destination, particle),
+          total);
+    storeElement(builder, loc, total, destination, particle);
+  }
+
+  SmallVector<Value> contributions;
+  for (unsigned i = numOuts, e = loop.getNumResults(); i != e; ++i)
+    contributions.push_back(loop.getResult(i));
+  return contributions;
+}
+
+Value kernels::emitBuildIncidence(OpBuilder &builder, Location loc,
+                                  Value members, Value size) {
+  Type narrow = builder.getI32Type();
+  auto membersType = cast<MemRefType>(members.getType());
+  int64_t arity = membersType.getDimSize(1);
+  int64_t entry = md_exec::getIncidenceEntrySize(arity);
+  Value zero = createIndex(builder, loc, 0);
+  Value one = createIndex(builder, loc, 1);
+  Value numTuples = memref::DimOp::create(builder, loc, members, zero);
+  auto toIndex = [&](OpBuilder &b, Value value) -> Value {
+    return arith::IndexCastOp::create(b, loc, b.getIndexType(), value);
+  };
+  auto toNarrow = [&](OpBuilder &b, Value value) -> Value {
+    return arith::IndexCastOp::create(b, loc, narrow, value);
+  };
+
+  // The number of tuples of each particle.
+  Value counts = memref::AllocOp::create(
+      builder, loc, MemRefType::get({ShapedType::kDynamic}, narrow),
+      ValueRange{size});
+  Value none = arith::ConstantOp::create(builder, loc, narrow,
+                                         builder.getI32IntegerAttr(0));
+  Value increment = arith::ConstantOp::create(builder, loc, narrow,
+                                              builder.getI32IntegerAttr(1));
+  scf::ForOp::create(builder, loc, zero, size, one, ValueRange(),
+                     [&](OpBuilder &b, Location, Value i, ValueRange) {
+                       memref::StoreOp::create(b, loc, none, counts,
+                                               ValueRange{i});
+                       scf::YieldOp::create(b, loc);
+                     });
+  scf::ForOp::create(
+      builder, loc, zero, numTuples, one, ValueRange(),
+      [&](OpBuilder &b, Location, Value t, ValueRange) {
+        for (int64_t q = 0; q != arity; ++q) {
+          Value member = toIndex(
+              b, memref::LoadOp::create(b, loc, members,
+                                        ValueRange{t, createIndex(b, loc, q)}));
+          Value count =
+              memref::LoadOp::create(b, loc, counts, ValueRange{member});
+          Value more = arith::AddIOp::create(b, loc, count, increment);
+          memref::StoreOp::create(b, loc, more, counts, ValueRange{member});
+        }
+        scf::YieldOp::create(b, loc);
+      });
+
+  // The width of a row.
+  auto widest = scf::ForOp::create(
+      builder, loc, zero, size, one, ValueRange{zero},
+      [&](OpBuilder &b, Location, Value i, ValueRange largest) {
+        Value count =
+            toIndex(b, memref::LoadOp::create(b, loc, counts, ValueRange{i}));
+        Value larger = arith::MaxUIOp::create(b, loc, count, largest[0]);
+        scf::YieldOp::create(b, loc, larger);
+      });
+  Value slots = arith::MulIOp::create(builder, loc, widest.getResult(0),
+                                      createIndex(builder, loc, entry));
+  Value width = arith::AddIOp::create(builder, loc, slots, one);
+  Value incidence = memref::AllocOp::create(
+      builder, loc,
+      MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, narrow),
+      ValueRange{size, width});
+
+  // The rows, in the order of the tuples.
+  scf::ForOp::create(builder, loc, zero, size, one, ValueRange(),
+                     [&](OpBuilder &b, Location, Value i, ValueRange) {
+                       memref::StoreOp::create(b, loc, none, incidence,
+                                               ValueRange{i, zero});
+                       scf::YieldOp::create(b, loc);
+                     });
+  scf::ForOp::create(
+      builder, loc, zero, numTuples, one, ValueRange(),
+      [&](OpBuilder &b, Location, Value t, ValueRange) {
+        SmallVector<Value, 4> tupleMembers;
+        for (int64_t q = 0; q != arity; ++q)
+          tupleMembers.push_back(memref::LoadOp::create(
+              b, loc, members, ValueRange{t, createIndex(b, loc, q)}));
+        for (int64_t s = 0; s != arity; ++s) {
+          Value particle = toIndex(b, tupleMembers[s]);
+          Value filled = memref::LoadOp::create(b, loc, incidence,
+                                                ValueRange{particle, zero});
+          Value offset = arith::MulIOp::create(
+              b, loc, toIndex(b, filled), createIndex(b, loc, entry));
+          Value base = arith::AddIOp::create(b, loc, offset, one);
+          auto store = [&](Value value, int64_t c) {
+            Value column =
+                arith::AddIOp::create(b, loc, base, createIndex(b, loc, c));
+            memref::StoreOp::create(b, loc, value, incidence,
+                                    ValueRange{particle, column});
+          };
+          store(toNarrow(b, t), 0);
+          store(arith::ConstantOp::create(b, loc, narrow,
+                                          b.getI32IntegerAttr(s)),
+                1);
+          for (int64_t q = 0; q != arity; ++q)
+            store(tupleMembers[q], 2 + q);
+          Value more = arith::AddIOp::create(b, loc, filled, increment);
+          memref::StoreOp::create(b, loc, more, incidence,
+                                  ValueRange{particle, zero});
+        }
+        scf::YieldOp::create(b, loc);
+      });
+
+  memref::DeallocOp::create(builder, loc, counts);
+  return incidence;
+}
+
+//===----------------------------------------------------------------------===//
 // Templates
 //===----------------------------------------------------------------------===//
 

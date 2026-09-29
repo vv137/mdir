@@ -5,6 +5,7 @@
 #include "mdir/Conversion/Passes.h"
 
 #include "mdir/Dialect/Dyn/DynOps.h"
+#include "mdir/Dialect/MD/MDCoordinates.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
@@ -39,6 +40,8 @@ private:
   LogicalResult convertPairOp(OpTy op, bool isSum);
   template <typename OpTy>
   LogicalResult convertParticleOp(OpTy op, bool isSum);
+  template <typename OpTy>
+  LogicalResult convertTupleOp(OpTy op, bool isSum);
   LogicalResult convertKick(dyn::KickOp op);
   LogicalResult convertDrift(dyn::DriftOp op);
 
@@ -80,6 +83,8 @@ private:
 
   /// The neighbor structure that was built for a relation.
   llvm::DenseMap<Value, Value> neighbors;
+  /// The incidence structure that was built for a relation of a tuple set.
+  llvm::DenseMap<Value, Value> incidences;
   SmallVector<Operation *> converted;
 };
 
@@ -207,6 +212,101 @@ LogicalResult Converter::convertParticleOp(OpTy op, bool isSum) {
   return success();
 }
 
+//===----------------------------------------------------------------------===//
+// Loops over tuples
+//===----------------------------------------------------------------------===//
+
+template <typename OpTy>
+LogicalResult Converter::convertTupleOp(OpTy op, bool isSum) {
+  Location loc = op.getLoc();
+  MLIRContext *context = builder.getContext();
+  auto relation = cast<md::RelationType>(op.getRelation().getType());
+  unsigned arity = relation.getArity();
+
+  // One incidence structure for each relation, where the relation is
+  // defined, so that the loops over it share it.
+  Value &incidence = incidences[op.getRelation()];
+  if (!incidence) {
+    Value members = op.getRelation();
+    if (Operation *definition = members.getDefiningOp())
+      builder.setInsertionPointAfter(definition);
+    else
+      builder.setInsertionPointToStart(members.getParentBlock());
+    incidence = md_exec::BuildIncidenceOp::create(
+        builder, loc,
+        mdrt::IncidenceType::get(context, relation.getParticleSet(),
+                                 relation.getTupleSet(), arity),
+        members, /*size=*/Value());
+  }
+
+  // The loop takes displacements only; the kernel computes the other
+  // coordinates from them. A displacement that the op names is taken once.
+  SmallVector<md::Coordinate, 2> coordinates = op.getCoordinates();
+  SmallVector<md::Coordinate, 4> displacements;
+  auto findDisplacement = [&](const md::Coordinate &wanted) -> unsigned {
+    for (auto [index, known] : llvm::enumerate(displacements))
+      if (known.members == wanted.members)
+        return index;
+    displacements.push_back(wanted);
+    return displacements.size() - 1;
+  };
+  SmallVector<SmallVector<unsigned, 3>> sources;
+  for (const md::Coordinate &coordinate : coordinates) {
+    SmallVector<unsigned, 3> indices;
+    for (const md::Coordinate &displacement :
+         md::getDisplacements(coordinate))
+      indices.push_back(findDisplacement(displacement));
+    sources.push_back(indices);
+  }
+
+  builder.setInsertionPoint(op);
+  Type resultType = op.getResult().getType();
+  SmallVector<Value, 1> outs, reduce;
+  if (isSum)
+    reduce.push_back(createZero(loc, resultType));
+  else
+    outs.push_back(md_exec::ZerosOp::create(builder, loc, resultType));
+
+  DenseI32ArrayAttr kinds;
+  DenseI64ArrayAttr members;
+  md::getCoordinateAttrs(builder, displacements, kinds, members);
+  auto loop = md_exec::TupleForOp::create(
+      builder, loc, TypeRange(resultType), incidence, op.getPositions(),
+      op.getCell(), op.getGathered(), op.getParameters(), outs, reduce,
+      /*scratch=*/ValueRange(), kinds, members,
+      builder.getI64IntegerAttr(arity), /*overwrite=*/DenseBoolArrayAttr());
+
+  Block &source = op.getKernel().front();
+  Type vector = VectorType::get({3}, builder.getF64Type());
+  SmallVector<Type> arguments(displacements.size(), vector);
+  for (BlockArgument argument :
+       source.getArguments().drop_front(coordinates.size()))
+    arguments.push_back(argument.getType());
+  Block *target = addKernel(loop, arguments);
+
+  IRMapping mapping;
+  OpBuilder kernel = OpBuilder::atBlockEnd(target);
+  for (auto [index, coordinate] : llvm::enumerate(coordinates)) {
+    if (source.getArgument(index).use_empty())
+      continue;
+    SmallVector<Value, 3> values;
+    for (unsigned i : sources[index])
+      values.push_back(target->getArgument(i));
+    mapping.map(source.getArgument(index),
+                md::emitCoordinate(kernel, loc, coordinate.kind, values));
+  }
+  for (unsigned i = coordinates.size(), e = source.getNumArguments(); i != e;
+       ++i)
+    mapping.map(source.getArgument(i),
+                target->getArgument(displacements.size() + i -
+                                    coordinates.size()));
+  copyKernel(source, target, mapping);
+
+  op.getResult().replaceAllUsesWith(loop.getResult(0));
+  converted.push_back(op);
+  return success();
+}
+
 /// v' = v + dt · f / m
 LogicalResult Converter::convertKick(dyn::KickOp op) {
   Location loc = op.getLoc();
@@ -289,6 +389,11 @@ LogicalResult Converter::convert(Operation *op) {
   }
   if (auto gather = dyn_cast<md::GatherRelationOp>(op))
     return convertPairOp(gather, /*isSum=*/false);
+
+  if (auto sum = dyn_cast<md::SumTuplesOp>(op))
+    return convertTupleOp(sum, /*isSum=*/true);
+  if (auto gather = dyn_cast<md::GatherTuplesOp>(op))
+    return convertTupleOp(gather, /*isSum=*/false);
 
   if (auto sum = dyn_cast<md::SumParticlesOp>(op))
     return convertParticleOp(sum, /*isSum=*/true);

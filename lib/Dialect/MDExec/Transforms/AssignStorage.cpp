@@ -98,6 +98,9 @@ private:
                                    unsigned position);
   LogicalResult convertPairFor(PairForOp op, Scope &scope,
                                unsigned position);
+  LogicalResult convertTupleFor(TupleForOp op, Scope &scope,
+                                unsigned position);
+  LogicalResult convertBuildIncidence(BuildIncidenceOp op, Scope &scope);
   LogicalResult convertGeneric(Operation *op, Scope &scope);
 
   /// Chooses the buffer that a loop writes the field `destination` to.
@@ -182,6 +185,10 @@ static bool isUnsupported(Type type) {
 static FlatSymbolRefAttr getParticleSet(Type type) {
   if (auto field = dyn_cast<md::FieldType>(type))
     return field.getParticleSet();
+  if (auto relation = dyn_cast<md::RelationType>(type))
+    return relation.getParticleSet();
+  if (auto incidence = dyn_cast<mdrt::IncidenceType>(type))
+    return incidence.getParticleSet();
   return cast<mdrt::NeighborsType>(type).getParticleSet();
 }
 
@@ -569,6 +576,112 @@ LogicalResult Assignment::convertPairFor(PairForOp op, Scope &scope,
   return success();
 }
 
+LogicalResult Assignment::convertTupleFor(TupleForOp op, Scope &scope,
+                                          unsigned position) {
+  Value incidence = mapping.lookupOrNull(op.getIncidence());
+  if (!incidence)
+    return op.emitOpError() << "the incidence structure has no storage";
+
+  Value positions;
+  if (failed(getBuffer(op.getPositions(), scope, positions)))
+    return failure();
+
+  SmallVector<Value> ins, parameters;
+  for (Value field : op.getIns()) {
+    Value buffer;
+    if (failed(getBuffer(field, scope, buffer)))
+      return failure();
+    ins.push_back(buffer);
+  }
+  for (Value field : op.getParameters()) {
+    Value buffer;
+    if (failed(getBuffer(field, scope, buffer)))
+      return failure();
+    parameters.push_back(buffer);
+  }
+
+  // The loop reads the positions and the fields in `ins` of the other
+  // members, so it cannot write to any of their buffers.
+  SmallVector<Value> readFields(op.getIns().begin(), op.getIns().end());
+  readFields.push_back(op.getPositions());
+
+  SmallVector<Value> outs;
+  SmallVector<bool> overwrite;
+  for (Value destination : op.getOuts()) {
+    Value buffer;
+    bool accumulates;
+    if (failed(chooseDestination(op, destination, readFields,
+                                 /*inPlace=*/false, scope, position, buffer,
+                                 accumulates)))
+      return failure();
+    outs.push_back(buffer);
+    overwrite.push_back(!accumulates);
+  }
+
+  SmallVector<Value> reduce;
+  SmallVector<Type> resultTypes;
+  for (Value value : op.getReduce()) {
+    reduce.push_back(mapping.lookup(value));
+    resultTypes.push_back(value.getType());
+  }
+
+  OpBuilder &builder = scope.builder;
+  DenseBoolArrayAttr overwriteAttr;
+  if (llvm::is_contained(overwrite, true))
+    overwriteAttr = builder.getDenseBoolArrayAttr(overwrite);
+
+  SmallVector<Value> scratch;
+  if (failed(getScratch(op, resultTypes, op.getPositions().getType(), scope,
+                        scratch)))
+    return failure();
+
+  auto loop = TupleForOp::create(
+      builder, op.getLoc(), resultTypes, incidence, positions,
+      mapping.lookup(op.getCell()), ins, parameters, outs, reduce, scratch,
+      op.getCoordinateKindsAttr(), op.getCoordinateMembersAttr(),
+      op.getArityAttr(), overwriteAttr);
+  copyKernel(loop, op.getKernel().front());
+  for (Value buffer : scratch)
+    scope.release(buffer);
+
+  unsigned numOuts = outs.size();
+  for (unsigned i = 0; i != numOuts; ++i) {
+    buffers[op.getResult(i)] = outs[i];
+    scope.owned.insert(outs[i]);
+  }
+  for (unsigned i = numOuts, e = op.getNumResults(); i != e; ++i)
+    mapping.map(op.getResult(i), loop.getResult(i - numOuts));
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// Incidence structures
+//===----------------------------------------------------------------------===//
+
+LogicalResult Assignment::convertBuildIncidence(BuildIncidenceOp op,
+                                                Scope &scope) {
+  if (op.isStorageForm())
+    return op.emitOpError() << "is in the storage form already";
+  Value members = mapping.lookupOrNull(op.getRelation());
+  if (!members)
+    return op.emitOpError() << "the relation has no buffer";
+  Value size;
+  if (failed(getSize(op, op.getResult().getType(), size)))
+    return failure();
+
+  // The structure is built on the host from the members, which stay there,
+  // and lives where the loops are. It lasts as long as the function: the
+  // members do not change in M1.
+  Attribute space;
+  if (onDevice)
+    space = IntegerAttr::get(IntegerType::get(context, 64), deviceSpace);
+  Value incidence = BuildIncidenceOp::create(
+      scope.builder, op.getLoc(), getIncidenceBufferType(context, space),
+      members, size);
+  mapping.map(op.getResult(), incidence);
+  return success();
+}
+
 //===----------------------------------------------------------------------===//
 // Neighbor structures
 //===----------------------------------------------------------------------===//
@@ -825,6 +938,18 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
   OpBuilder &builder = scope.builder;
 
   if (auto from = dyn_cast<mdrt::FromBufferOp>(op)) {
+    // The members of tuples stay on the host, where the incidence
+    // structures are built from them.
+    if (auto relation = dyn_cast<md::RelationType>(from.getResult().getType())) {
+      Value buffer = mapping.lookup(from.getBuffer());
+      mapping.map(from.getResult(), buffer);
+      Attribute set = relation.getTupleSet();
+      if (!sizes.count(set))
+        sizes[set] = memref::DimOp::create(
+            builder, op->getLoc(), buffer,
+            arith::ConstantIndexOp::create(builder, op->getLoc(), 0));
+      return success();
+    }
     if (failed(checkStored(op, from.getResult().getType(),
                            from.getBuffer().getType())))
       return failure();
@@ -1012,6 +1137,10 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     return convertParticleFor(loop, scope, position);
   if (auto loop = dyn_cast<PairForOp>(op))
     return convertPairFor(loop, scope, position);
+  if (auto loop = dyn_cast<TupleForOp>(op))
+    return convertTupleFor(loop, scope, position);
+  if (auto build = dyn_cast<BuildIncidenceOp>(op))
+    return convertBuildIncidence(build, scope);
 
   if (auto loop = dyn_cast<scf::ForOp>(op))
     return convertFor(loop, scope, position);
@@ -1114,6 +1243,10 @@ LogicalResult Assignment::convertFunction(func::FuncOp function) {
   auto convertType = [&](Type type) -> Type {
     if (isa<md::FieldType>(type))
       return getStorageType(type);
+    // The members of tuples are on the host.
+    if (auto relation = dyn_cast<md::RelationType>(type))
+      if (relation.getTupleSet())
+        return mdrt::getMembersType(relation);
     return type;
   };
   SmallVector<Type> inputs, results;

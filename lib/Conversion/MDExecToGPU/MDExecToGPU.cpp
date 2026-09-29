@@ -105,6 +105,8 @@ private:
   LogicalResult lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op);
   LogicalResult lowerParticleFor(md_exec::ParticleForOp op);
   LogicalResult lowerPairFor(md_exec::PairForOp op);
+  LogicalResult lowerTupleFor(md_exec::TupleForOp op);
+  void lowerBuildIncidence(md_exec::BuildIncidenceOp op);
 
   /// The storage of the neighbor structure `structure`.
   LogicalResult getNeighbors(Operation *op, Value structure,
@@ -623,6 +625,49 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   return finishSums(op, builder, op.getReduce(), op.getScratch(), size);
 }
 
+LogicalResult Lowering::lowerTupleFor(md_exec::TupleForOp op) {
+  Location loc = op.getLoc();
+  OpBuilder builder(op);
+  if (failed(checkScratch(op, op.getReduce().size(), op.getScratch().size())))
+    return failure();
+
+  Value positions = op.getPositions();
+  Value size = createSize(builder, loc, positions);
+
+  // The cell has become the vector of its edge lengths.
+  Type real = cast<MemRefType>(positions.getType()).getElementType();
+  Value box = convertReal(builder, loc, op.getCellMutable().get(), real);
+  Value inverse = createInverse(builder, loc, box);
+
+  launchOver(builder, loc, size, [&](OpBuilder &body, Value particle) {
+    IRMapping local;
+    SmallVector<Value> contributions = emitTupleKernel(
+        body, op, op.getIncidence(), box, inverse, particle, local);
+    for (auto [index, value] : llvm::enumerate(contributions))
+      storeElement(body, loc, value, op.getScratch()[2 * index], particle);
+  });
+  return finishSums(op, builder, op.getReduce(), op.getScratch(), size);
+}
+
+/// The structure is built on the host, where the members are, and copied to
+/// the device.
+void Lowering::lowerBuildIncidence(md_exec::BuildIncidenceOp op) {
+  Location loc = op.getLoc();
+  OpBuilder builder(op);
+  Value host =
+      emitBuildIncidence(builder, loc, op.getRelation(), op.getSize());
+  auto type = cast<MemRefType>(op.getResult().getType());
+  Value zero = createIndex(builder, loc, 0);
+  Value one = createIndex(builder, loc, 1);
+  Value device = createDeviceBuffer(
+      builder, loc, type,
+      ValueRange{memref::DimOp::create(builder, loc, host, zero),
+                 memref::DimOp::create(builder, loc, host, one)});
+  createTransfer(builder, loc, device, host);
+  memref::DeallocOp::create(builder, loc, host);
+  op.getResult().replaceAllUsesWith(device);
+}
+
 //===----------------------------------------------------------------------===//
 // Neighbor structures
 //===----------------------------------------------------------------------===//
@@ -923,7 +968,7 @@ void Lowering::lowerPermute(md_exec::PermuteOp op) {
 /// structure that the storage form does not have.
 static bool isValueFormType(Type type) {
   return isa<md::FieldType, md::RelationType, mdrt::CellsType,
-             mdrt::PermutationType>(type);
+             mdrt::PermutationType, mdrt::IncidenceType>(type);
 }
 
 LogicalResult Lowering::lowerOp(Operation *op) {
@@ -933,7 +978,10 @@ LogicalResult Lowering::lowerOp(Operation *op) {
            << "is not in the storage form; run 'md-exec-assign-storage' "
               "first";
 
-  if (isa<md_exec::MDExecDialect>(op->getDialect())) {
+  // The members of tuples are on the host, and the incidence structure is
+  // built there.
+  if (isa<md_exec::MDExecDialect>(op->getDialect()) &&
+      !isa<md_exec::BuildIncidenceOp>(op)) {
     bool onHost = llvm::any_of(op->getOperandTypes(), [](Type type) {
       return isa<MemRefType>(type) && !isDeviceType(type);
     });
@@ -997,6 +1045,16 @@ LogicalResult Lowering::lowerOp(Operation *op) {
   } else if (auto loop = dyn_cast<md_exec::PairForOp>(op)) {
     if (failed(lowerPairFor(loop)))
       return failure();
+  } else if (auto loop = dyn_cast<md_exec::TupleForOp>(op)) {
+    if (failed(lowerTupleFor(loop)))
+      return failure();
+  } else if (auto build = dyn_cast<md_exec::BuildIncidenceOp>(op)) {
+    if (!build.isStorageForm() ||
+        !isDeviceType(build.getResult().getType()))
+      return op->emitOpError()
+             << "expected the storage form with the structure on the device; "
+                "run 'md-exec-assign-storage' with 'memory=device'";
+    lowerBuildIncidence(build);
   } else if (auto cell = dyn_cast<md::OrthorhombicCellOp>(op)) {
     OpBuilder builder(op);
     Type real = builder.getF64Type();
@@ -1080,7 +1138,8 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   // lowered where they are.
   for (Operation *op : ops) {
     Operation *parent = op->getParentOp();
-    if (isa<md_exec::ParticleForOp, md_exec::PairForOp>(parent))
+    if (isa<md_exec::ParticleForOp, md_exec::PairForOp, md_exec::TupleForOp>(
+            parent))
       continue;
     if (failed(lowerOp(op)))
       return failure();
@@ -1142,7 +1201,12 @@ LogicalResult Lowering::run() {
   for (Operation &op : llvm::make_early_inc_range(module)) {
     if (isa<func::FuncOp>(op))
       continue;
-    if (isa<md::ParticleSetOp>(op)) {
+    // Ops of other dialects, such as globals, stay.
+    if (!isa<md::MDDialect, md_exec::MDExecDialect, mdrt::MDRTDialect>(
+            op.getDialect()) &&
+        op.getName().getDialectNamespace() != "dyn")
+      continue;
+    if (isa<md::ParticleSetOp, md::TupleSetOp>(op)) {
       op.erase();
       continue;
     }
