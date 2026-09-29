@@ -109,6 +109,11 @@ struct Control {
   double pmeMaxSpacing = 1.2;
   int64_t pmeOrder = 4;
   bool pmeShift = false;
+  /// The influence function: that of Essmann et al. times a factor for
+  /// each edge that the aliasing of the B-splines sets, as sander has it,
+  /// or that of Essmann et al. alone, as GROMACS has it
+  /// (docs/pme-m1.md, Section 1.1).
+  bool pmeOptimal = false;
 
   DispersionCorrection topologyDispersion =
       DispersionCorrection::EnergyPressure;

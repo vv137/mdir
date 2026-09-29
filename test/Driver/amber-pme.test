@@ -1,0 +1,55 @@
+# Particle mesh Ewald on the dipeptide in OPC of amber-opc.test, against
+# sander of AmberTools 26 with the same β, grid, and order
+# (Inputs/opc/sander-pme.in).
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: mdir run %t/run.toml | FileCheck %s
+
+# sander gives EEL = -4136.0005 kcal/mol: the direct sum, the reciprocal
+# sum, the self term, and the excluded pairs, but not the pairs three bonds
+# apart. MDIR gives, with the Coulomb constant of CODATA 2018, which is
+# larger by 1.0000346,
+#
+#   −3741.809551 + 69096.758451 + 280.458965 − 69771.551485 = −4136.14362,
+#
+# and sander times the ratio is −4136.14360. sander scales the influence
+# function by a factor that the aliasing of the B-splines sets
+# (docs/pme-m1.md, Section 1.1); 'pme_influence = "OPTIMAL"' does the same.
+# sander takes grids of 2, 3, and 5 only.
+#
+# CHECK:      MDIR:   Coulomb                    -3741.8095
+# CHECK:      MDIR:   Coulomb excluded           69096.7584
+# CHECK-NEXT: MDIR:   Coulomb reciprocal           280.4589
+# CHECK-NEXT: MDIR:   Coulomb self              -69771.5514
+
+#--- run.toml
+[input]
+prmtopfile = "opc.prmtop"
+ambcrdfile = "opc.inpcrd"
+
+[energy]
+cutoffdist    = 9.0
+pairlistdist  = 10.0
+electrostatic = "PME"
+pme_alpha     = 0.347045919371208278
+pme_ngrid_x   = 30
+pme_ngrid_y   = 30
+pme_ngrid_z   = 24
+pme_nspline   = 4
+pme_influence = "OPTIMAL"
+
+[dynamics]
+integrator    = "VVER"
+timestep      = 0.0005
+nsteps        = 0
+eneout_period = 0
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PBC"
+#--- end

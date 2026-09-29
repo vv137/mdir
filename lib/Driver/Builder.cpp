@@ -754,6 +754,32 @@ static std::vector<double> getSplineModuli(int64_t count, int64_t order) {
   return moduli;
 }
 
+/// The square of the factor λ(m) of each index of a grid of `count` points
+/// for B-splines of order `order`: the ratio of the sums over the aliases
+/// of m, S_n(x) / S_2n(x) with S_p(x) = Σ_j (x / (x + π j))^p and
+/// x = π m / K, for m from −K/2 to K/2 (docs/pme-m1.md, Section 1.1). It
+/// scales the influence function so that the energy that the grid gives
+/// comes closer to the Ewald sum.
+static std::vector<double> getAliasFactors(int64_t count, int64_t order) {
+  std::vector<double> factors(count, 1.0);
+  for (int64_t k = 0; k != count; ++k) {
+    int64_t m = k <= count / 2 ? k : k - count;
+    if (m == 0)
+      continue;
+    double x = M_PI * static_cast<double>(m) / static_cast<double>(count);
+    double single = 1.0, twice = 1.0;
+    for (int64_t j = 1; j <= 50; ++j)
+      for (double sign : {1.0, -1.0}) {
+        double s = x / (x + sign * M_PI * j);
+        single += std::pow(s, order);
+        twice += std::pow(s, 2 * order);
+      }
+    double lambda = single / twice;
+    factors[k] = lambda * lambda;
+  }
+  return factors;
+}
+
 llvm::Error Builder::collectPME() {
   const Topology &topology = *system.topology;
   double rc = control.cutoffDistance * units::length;
@@ -793,8 +819,14 @@ llvm::Error Builder::collectPME() {
   // The influence function B C for each point of the half-complex grid.
   double volume = system.box[0] * system.box[1] * system.box[2];
   std::vector<double> moduli[3];
-  for (int k = 0; k != 3; ++k)
+  for (int k = 0; k != 3; ++k) {
     moduli[k] = getSplineModuli(grid[k], control.pmeOrder);
+    if (control.pmeOptimal) {
+      std::vector<double> factors = getAliasFactors(grid[k], control.pmeOrder);
+      for (int64_t i = 0; i != grid[k]; ++i)
+        moduli[k][i] *= factors[i];
+    }
+  }
   int64_t half = grid[2] / 2 + 1;
   Program::Table table;
   table.name = "pme_influence";

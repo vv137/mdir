@@ -376,3 +376,97 @@ void mgpuMemset16(void *destination, unsigned short value, size_t count,
         "cuMemsetD16Async");
   isPending = 1;
 }
+
+/*===----------------------------------------------------------------------===
+  FFT of particle mesh Ewald
+  ===----------------------------------------------------------------------===
+
+  The transforms of the template of particle mesh Ewald on a device, by
+  cuFFT, on the stream that the kernels run on, so that they run in the
+  order of the program without a wait. A plan is kept for each grid. */
+
+#include <cufft.h>
+
+/* The descriptor of a buffer of one dimension of f64 on the device. */
+typedef struct {
+  double *allocated;
+  double *aligned;
+  int64_t offset;
+  int64_t sizes[1];
+  int64_t strides[1];
+} DeviceBuffer1D;
+
+enum { NUM_FFT_PLANS = 8 };
+static struct {
+  int64_t k1, k2, k3;
+  int forward;
+  cufftHandle plan;
+} fftPlans[NUM_FFT_PLANS];
+static int numFFTPlans = 0;
+
+static void checkFFT(cufftResult result, const char *what) {
+  if (result == CUFFT_SUCCESS)
+    return;
+  fprintf(stderr, "mdrt: %s failed with the cuFFT error %d\n", what,
+          (int)result);
+  fflush(stderr);
+  abort();
+}
+
+static cufftHandle getFFTPlan(int64_t k1, int64_t k2, int64_t k3,
+                              int forward) {
+  for (int i = 0; i != numFFTPlans; ++i)
+    if (fftPlans[i].k1 == k1 && fftPlans[i].k2 == k2 &&
+        fftPlans[i].k3 == k3 && fftPlans[i].forward == forward)
+      return fftPlans[i].plan;
+  if (numFFTPlans == NUM_FFT_PLANS) {
+    fprintf(stderr, "mdrt: too many grids of FFT\n");
+    abort();
+  }
+  cufftHandle plan;
+  checkFFT(cufftPlan3d(&plan, (int)k1, (int)k2, (int)k3,
+                       forward ? CUFFT_D2Z : CUFFT_Z2D),
+           "cufftPlan3d");
+  checkFFT(cufftSetStream(plan, (cudaStream_t)mgpuStreamCreate()),
+           "cufftSetStream");
+  fftPlans[numFFTPlans].k1 = k1;
+  fftPlans[numFFTPlans].k2 = k2;
+  fftPlans[numFFTPlans].k3 = k3;
+  fftPlans[numFFTPlans].forward = forward;
+  fftPlans[numFFTPlans].plan = plan;
+  ++numFFTPlans;
+  return plan;
+}
+
+/* The forward transform of the real grid of k1 x k2 x k3 points into the
+   half-complex grid of k1 x k2 x (k3 / 2 + 1) numbers, interleaved, as
+   mdrtFFTForward3D of the host computes it. */
+void _mlir_ciface_mdrtCudaFFTForward3D(DeviceBuffer1D *real,
+                                       DeviceBuffer1D *complex, int64_t k1,
+                                       int64_t k2, int64_t k3) {
+  enter();
+  double start = begin();
+  checkFFT(cufftExecD2Z(getFFTPlan(k1, k2, k3, 1),
+                        (cufftDoubleReal *)(real->aligned + real->offset),
+                        (cufftDoubleComplex *)(complex->aligned +
+                                               complex->offset)),
+           "cufftExecD2Z");
+  isPending = 1;
+  end(LAUNCH, start);
+}
+
+/* The backward transform, not normalized, which overwrites the
+   half-complex grid. */
+void _mlir_ciface_mdrtCudaFFTBackward3D(DeviceBuffer1D *complex,
+                                        DeviceBuffer1D *real, int64_t k1,
+                                        int64_t k2, int64_t k3) {
+  enter();
+  double start = begin();
+  checkFFT(cufftExecZ2D(getFFTPlan(k1, k2, k3, 0),
+                        (cufftDoubleComplex *)(complex->aligned +
+                                               complex->offset),
+                        (cufftDoubleReal *)(real->aligned + real->offset)),
+           "cufftExecZ2D");
+  isPending = 1;
+  end(LAUNCH, start);
+}

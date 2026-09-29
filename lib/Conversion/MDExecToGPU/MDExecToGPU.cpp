@@ -35,6 +35,8 @@ using namespace mdir::kernels;
 namespace mdir {
 /// The text of the template that builds a neighbor matrix on a device.
 extern const char *const neighborsMatrixGPUTemplate;
+/// The text of the template of particle mesh Ewald on a device.
+extern const char *const pmeGPUTemplate;
 } // namespace mdir
 
 static const char *const spatialOrderName = "mdrt_gpu_spatial_order";
@@ -184,6 +186,8 @@ private:
   /// Adds the templates for positions of the type `real` to the module.
   LogicalResult addTemplates(Type real);
   func::FuncOp getOrDeclare(StringRef name, FunctionType type);
+  LogicalResult addPMETemplates(Type position, Type charge, Type force);
+  LogicalResult lowerReciprocal(md_exec::ReciprocalOp op);
 
   ModuleOp module;
   MLIRContext *context;
@@ -738,6 +742,91 @@ LogicalResult Lowering::addTemplates(Type real) {
   return success();
 }
 
+LogicalResult Lowering::addPMETemplates(Type position, Type charge,
+                                        Type force) {
+  if (SymbolTable::lookupSymbolIn(
+          module, getPMEInstanceName("mdrt_gpu_pme_spread", position, charge,
+                                     force)))
+    return success();
+  ParserConfig config(context);
+  OwningOpRef<ModuleOp> templates = parseSourceString<ModuleOp>(
+      instantiatePMETemplates(pmeGPUTemplate, position, charge, force),
+      config);
+  if (!templates)
+    return module.emitError()
+           << "cannot parse the template of particle mesh Ewald for devices";
+  for (Operation &op : llvm::make_early_inc_range(*templates)) {
+    op.remove();
+    module.push_back(&op);
+  }
+  return success();
+}
+
+LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
+  if (!op.isStorageForm() || !isDeviceType(op.getPositions().getType()))
+    return op->emitOpError()
+           << "expected the storage form with the buffers on the device; "
+              "run 'md-exec-assign-storage' with 'memory=device'";
+  Location loc = op.getLoc();
+  OpBuilder builder(op);
+  Value positions = op.getPositions(), charges = op.getCharges();
+  Value forces = op.getOut();
+  auto elementOf = [](Value buffer) {
+    return cast<MemRefType>(buffer.getType()).getElementType();
+  };
+  Type position = elementOf(positions), charge = elementOf(charges),
+       force = elementOf(forces);
+  if (failed(addPMETemplates(position, charge, force)))
+    return failure();
+  auto instance = [&](StringRef name) {
+    return cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
+        module, getPMEInstanceName(name, position, charge, force)));
+  };
+
+  ArrayRef<int64_t> grid = op.getGrid();
+  Value k1 = createIndex(builder, loc, grid[0]);
+  Value k2 = createIndex(builder, loc, grid[1]);
+  Value k3 = createIndex(builder, loc, grid[2]);
+  Value order = createIndex(builder, loc, op.getOrder());
+  Value beta = arith::ConstantOp::create(
+      builder, loc, builder.getF64FloatAttr(op.getBeta().convertToDouble()));
+  // The cell is the vector of its edge lengths by now.
+  Value box = op.getCellMutable().get();
+  Value fixed = op.getScratch()[0], real = op.getScratch()[1],
+        complex = op.getScratch()[2], rows = op.getScratch()[3];
+
+  func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_spread"),
+                       ValueRange{positions, charges, box, fixed, k1, k2, k3,
+                                  order});
+  func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_real"),
+                       ValueRange{fixed, real});
+  Type wide = builder.getI64Type();
+  SmallVector<Value> sizes;
+  for (int64_t points : grid)
+    sizes.push_back(arith::ConstantOp::create(
+        builder, loc, wide, builder.getI64IntegerAttr(points)));
+  Type buffer = real.getType();
+  FunctionType transform =
+      builder.getFunctionType({buffer, buffer, wide, wide, wide}, {});
+  func::FuncOp forward = getOrDeclare("mdrtCudaFFTForward3D", transform);
+  func::FuncOp backward = getOrDeclare("mdrtCudaFFTBackward3D", transform);
+  for (func::FuncOp function : {forward, backward})
+    function->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+  func::CallOp::create(builder, loc, forward,
+                       ValueRange{real, complex, sizes[0], sizes[1], sizes[2]});
+  auto convolve = func::CallOp::create(
+      builder, loc, instance("mdrt_gpu_pme_convolve"),
+      ValueRange{complex, op.getInfluence(), rows, box, beta, k1, k2, k3});
+  func::CallOp::create(builder, loc, backward,
+                       ValueRange{complex, real, sizes[0], sizes[1], sizes[2]});
+  func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_gather"),
+                       ValueRange{positions, charges, real, box, k1, k2, k3,
+                                  order, forces});
+  op.getEnergy().replaceAllUsesWith(convolve.getResult(0));
+  op.getVirial().replaceAllUsesWith(convolve.getResult(1));
+  return success();
+}
+
 LogicalResult Lowering::getNeighbors(Operation *op, Value structure,
                                      Neighbors &storage) {
   auto found = neighbors.find(structure);
@@ -1105,6 +1194,9 @@ LogicalResult Lowering::lowerOp(Operation *op) {
     lowerBuildIncidence(build);
   } else if (auto renumber = dyn_cast<md_exec::RenumberOp>(op)) {
     lowerRenumber(renumber);
+  } else if (auto reciprocal = dyn_cast<md_exec::ReciprocalOp>(op)) {
+    if (failed(lowerReciprocal(reciprocal)))
+      return failure();
   } else if (auto cell = dyn_cast<md::OrthorhombicCellOp>(op)) {
     OpBuilder builder(op);
     Type real = builder.getF64Type();

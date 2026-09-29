@@ -62,6 +62,17 @@ simulations," *Comput. Mater. Sci.* **173**, 109363 (2020).
 Used for: identifying HOOMD-blue, a system discussed in
 [prior-art.md](prior-art.md).
 
+### Ballenegger2012
+
+V. Ballenegger, J. J. Cerdà, C. Holm, "How to convert SPME to P3M:
+influence functions and error estimates," *J. Chem. Theory Comput.* **8**,
+936–947 (2012).
+[doi:10.1021/ct2001792](https://doi.org/10.1021/ct2001792)
+
+Used for: influence functions of mesh Ewald other than that of smooth
+particle mesh Ewald, of which `pme_influence = "OPTIMAL"` takes a factor
+for each edge (pme-m1.md, Section 1.1).
+
 ### Berendsen1984
 
 H. J. C. Berendsen, J. P. M. Postma, W. F. van Gunsteren, A. DiNola,

@@ -330,7 +330,7 @@ Error Reader::readEnergy(const toml::table &table) {
            "vdw_shift", "pair", "type", "nbfix", "dispersion_corr",
            "electrostatic", "pme_alpha", "pme_alpha_tol", "pme_ngrid_x",
            "pme_ngrid_y", "pme_ngrid_z", "pme_max_spacing", "pme_nspline",
-           "pme_shift"},
+           "pme_shift", "pme_influence"},
           {{"forcefield", "M1"},
            {"dielec_const", "M1"}}))
     return error;
@@ -402,7 +402,7 @@ Error Reader::readEnergy(const toml::table &table) {
   for (StringRef key : {"dispersion_corr", "electrostatic", "pme_alpha",
                         "pme_alpha_tol", "pme_ngrid_x", "pme_ngrid_y",
                         "pme_ngrid_z", "pme_max_spacing", "pme_nspline",
-                        "pme_shift"})
+                        "pme_shift", "pme_influence"})
     if (!hasTopology && table.contains(std::string_view(key)))
       return fail(*table.get(std::string_view(key)),
                   "'" + key + "' in [energy] is for a run from a topology; "
@@ -419,7 +419,7 @@ Error Reader::readEnergy(const toml::table &table) {
   control.pme = electrostatic == 1;
   for (StringRef key : {"pme_alpha", "pme_alpha_tol", "pme_ngrid_x",
                         "pme_ngrid_y", "pme_ngrid_z", "pme_max_spacing",
-                        "pme_nspline", "pme_shift"})
+                        "pme_nspline", "pme_shift", "pme_influence"})
     if (!control.pme && table.contains(std::string_view(key)))
       return fail(*table.get(std::string_view(key)),
                   "'" + key + "' is for 'electrostatic = \"PME\"'");
@@ -446,6 +446,10 @@ Error Reader::readEnergy(const toml::table &table) {
     return fail(*table.get("pme_nspline"),
                 "expected 4, 6, or 8 for 'pme_nspline'");
   if (Error error = readBool(table, "pme_shift", control.pmeShift))
+    return error;
+  if (Error error = readChoice<bool>(table, "pme_influence",
+                                     control.pmeOptimal,
+                                     {{"OPTIMAL", true}, {"SPME", false}}))
     return error;
   if (hasTopology && control.truncation != Truncation::None)
     return fail(table, "a run from a topology takes a plain cutoff: "

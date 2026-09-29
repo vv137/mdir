@@ -31,7 +31,8 @@ endif()
 if(MDIR_CUDA_FOUND)
   message(STATUS "CUDA toolkit: ${CUDAToolkit_TARGET_DIR}")
   add_library(mdrt_cuda SHARED mdrt_cuda.c)
-  target_link_libraries(mdrt_cuda PRIVATE CUDA::cuda_driver)
+  # The FFT of particle mesh Ewald takes cuFFT of the toolkit.
+  target_link_libraries(mdrt_cuda PRIVATE CUDA::cuda_driver CUDA::cufft)
   set_target_properties(mdrt_cuda PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
     C_VISIBILITY_PRESET default

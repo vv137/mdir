@@ -1,0 +1,24 @@
+# The run of pme-settle.test on a GPU, over 0.5 ps: in double precision it
+# gives the energies of the CPU to the digits of the log, and in mixed
+# precision it conserves the energy as well. The charges are spread in
+# fixed point, so a run on the device is the same from run to run.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/pme-settle.test | sed '1d;$d' \
+# RUN:     | sed -e 's|nsteps        = 100|nsteps = 500|' -e 's|eneout_period = 50|eneout_period = 500|' > %t/run.toml
+# RUN: sed -e 's|^type = "PBC"|type = "PBC"\n[execution]\ntarget = "gpu"|' %t/run.toml > %t/double.toml
+# RUN: sed -e 's|^type = "PBC"|type = "PBC"\n[execution]\ntarget = "gpu"\nprecision = "mixed"|' %t/run.toml > %t/mixed.toml
+# RUN: mdir run %t/double.toml > %t/first.log
+# RUN: mdir run %t/double.toml > %t/second.log
+# RUN: FileCheck %s --check-prefix=DOUBLE < %t/first.log
+# RUN: grep 'INFO: *500 ' %t/first.log > %t/first.row
+# RUN: grep 'INFO: *500 ' %t/second.log > %t/second.row
+# RUN: diff %t/first.row %t/second.row
+# RUN: mdir run %t/mixed.toml | FileCheck %s --check-prefix=MIXED
+
+# DOUBLE: INFO:       500         0.5000 {{ *}}-2812.0331 {{ *}}-3784.7113 {{ *}}972.6782
+# DOUBLE: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
+# MIXED:  MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value

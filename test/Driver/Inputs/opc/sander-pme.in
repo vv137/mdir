@@ -1,0 +1,8 @@
+Single point, particle mesh Ewald
+ &cntrl
+  imin=1, maxcyc=0, ntb=1, cut=9.0, ntc=1, ntf=1, ntpr=1,
+ /
+ &ewald
+  nfft1=30, nfft2=30, nfft3=24, order=4, ew_coeff=0.347045919371208278,
+  vdwmeth=1,
+ /

@@ -47,6 +47,30 @@ C(m)    = f / (π V) · exp(−π² m² / β²) / m²,  C(0) = 0
 
 with `u_ai` the fractional coordinates of particle `i` along edge `a`.
 
+### 1.1 The influence function
+
+Two influence functions are in use, and `pme_influence` chooses:
+
+| `pme_influence` | Influence function | Engine |
+|---|---|---|
+| `"SPME"`, the default | `B C` as above [[Essmann1995]](references.md#essmann1995) | GROMACS |
+| `"OPTIMAL"` | `B C` times `λ_1(m_1)² λ_2(m_2)² λ_3(m_3)²`, with `λ(m) = S_n(x) / S_2n(x)`, `S_p(x) = Σ_{j=−50}^{50} (x / (x + π j))^p`, `x = π m / K`, and `λ(0) = 1`: a factor for each edge from the sums over the aliases of `m` of the B-splines of order n and 2n, which brings the energy of the grid toward that of the Ewald sum in the mean (on influence functions of mesh Ewald, [[Ballenegger2012]](references.md#ballenegger2012)) | sander, by default |
+
+Neither is more accurate for every system. On the dipeptide in OPC with
+ff19SB and a grid of 30 × 36 × 25 points of order 4 the reciprocal sum of
+`"SPME"` is below the Ewald sum by 1.8 × 10⁻³ of it, that of `"OPTIMAL"` by
+2 × 10⁻⁴; on the three waters of `test/Driver/pme.test` with 35³ points,
+`"SPME"` is off by −7 × 10⁻⁴ and `"OPTIMAL"` by +2 × 10⁻³. Both approach
+the Ewald sum as the grid and the order grow. MDIR takes the one of the
+literature by default.
+
+For a number of points K that is odd, MDIR takes `m` from `−(K − 1)/2` to
+`(K − 1)/2`; sander takes the index `(K − 1)/2` as `m = −(K + 1)/2` in
+the factor λ, so that the two differ on odd grids. On even grids they
+agree.
+
+### 1.2 The virial
+
 The virial of the reciprocal sum, in the convention of
 [conventions.md](conventions.md) (`W = Σ d ⊗ F`, the pressure
 `(2K + tr W) / (3V)`), is the derivative under a strain of the cell:
@@ -85,7 +109,8 @@ order. The grid is converted to floating point before the FFT.
 |---|---|
 | Scale | 2⁴⁰: a contribution is resolved to 10⁻¹² e, and a point holds up to 2⁶³ / 2⁴⁰ ≈ 8 × 10⁶ e, far beyond any point of a real system |
 | Host | The same fixed point, with atomics of the threads of OpenMP |
-| Mixed precision | The B-splines in f32, the accumulation in fixed point, the FFT in f32 on a device and in f64 on the host; the energy and the virial summed in f64 |
+| Mixed precision | The positions, the charges, and the forces as they are stored; the B-splines, the grid, and the FFT in f64 on the host and on a device for now, which is to be measured against f32; the energy and the virial summed in f64 |
+| The sums of a device | Each thread sums a row of the grid; the host adds the rows in their order, so the energy and the virial do not depend on the order of the threads either |
 
 ## 4. Parameters (D71)
 
@@ -98,6 +123,11 @@ order. The grid is converted to floating point before the FFT.
 | `pme_max_spacing` | The largest spacing of the grid, in Å; each number of points is the smallest product of 2, 3, 5, and 7 that gives no wider spacing | 1.2 |
 | `pme_nspline` | The order of the B-splines, 4 to 8 | 4 |
 | `pme_shift` | Shift the direct sum to 0 at the cutoff, as GROMACS does by default | false, as sander |
+| `pme_influence` | `"SPME"` or `"OPTIMAL"` (Section 1.1) | `"SPME"` |
+
+The tolerance of sander, `dsum_tol`, is `erfc(β rc) / rc` with `rc` in Å,
+not `erfc(β rc)`: its default of 10⁻⁵ gives a larger β than
+`pme_alpha_tol` of 10⁻⁵ does. A comparison gives β itself.
 
 β, the grid, and the order can each be given, so that a run can take those
 of sander (`ew_coeff`, `nfft1` to `nfft3`, `order`) or of GROMACS
@@ -110,6 +140,9 @@ of sander (`ew_coeff`, `nfft1` to `nfft3`, `order`) or of GROMACS
 | The direct sum at the cutoff | Not shifted | Shifted (`coulomb-modifier = Potential-shift`) | `pme_shift` |
 | The terms of the log | `EEL`: all but the pairs three bonds apart | `Coulomb (SR)` and `Coul. recip.`; which of E_self, E_excl, and the shift of excluded pairs goes into which is found by comparison before the terms are compared one by one | The five terms apart, and their sum |
 | A net charge | The background, with a warning | The background, with a warning | E_Q |
+| The influence function | With the factor λ (`opt_infl`) | Without | `pme_influence` |
+| The grid | Products of 2, 3, and 5 | Products of 2, 3, 5, and 7 | Products of 2, 3, 5, and 7 when chosen |
+| The net force of the reciprocal sum, which is not 0 on a grid | Removed at every step (`netfrc`) | Left; the motion of the center of mass is removed | Left; `comm_period` removes the motion |
 
 ## 6. Validation
 
@@ -121,3 +154,13 @@ of sander (`ew_coeff`, `nfft1` to `nfft3`, `order`) or of GROMACS
 | A peptide in water | GROMACS with the same β, grid, and order, with the shift | 10⁻⁶ (mixed precision) |
 | Rigid OPC with SETTLE at 2 fs, at constant energy | The change of the total energy against the square of the time step | |
 | CPU, OpenMP, GPU, mixed precision | Each other; a GPU in double equals the CPU where spreading is deterministic | |
+
+Results (2026-09-30):
+
+| Test | Result |
+|---|---|
+| Three waters, 64³ points of order 8 (`test/Driver/pme.test`) | The direct sum, the excluded pairs, and the self term equal those of the Ewald sum to the digits of the log; the reciprocal sum to 6 digits |
+| The ff19SB system of D65, against an Ewald sum with numpy | The direct sum, the excluded pairs, and the self term to 10⁻⁹; the reciprocal sum reaches the Ewald sum as the grid grows, as sander's does |
+| The virial of each term | Against its analytic value, and the reciprocal sum against `Σ_m E_m (1 − 2π² m² / β²)` of a script: to 10⁻⁵ |
+| Dipeptide in OPC against sander, `"OPTIMAL"`, 30 × 30 × 24 points (`test/Driver/amber-pme.test`) | The electrostatic energy agrees to 2 × 10⁻⁵ kcal/mol, the precision of sander's log |
+| The same with rigid water and the shift, 0.5 ps at constant energy (`test/Driver/pme-settle.test`, `pme-gpu.test`) | The total energy stays within 0.3 kcal/mol; its largest change is 5.9 × 10⁻⁵ of it at 1 fs and 7.8 × 10⁻⁶ at 0.5 fs. A GPU in double gives the energies of the CPU to the digits of the log, and the same from run to run. |
