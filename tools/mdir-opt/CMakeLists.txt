@@ -2,6 +2,7 @@ set(LIBS
   MDIRDyn
   MDIRMD
   MDIRMDExec
+  MDIRMDExecTransforms
   MDIRMDRT
   MDIRMDExecToLoops
   MDIRMDToMDExec

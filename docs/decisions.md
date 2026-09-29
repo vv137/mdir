@@ -347,7 +347,13 @@ B1 to B3 and B5 to B10 come from an external review of draft 1.
 |---|---|
 | R1 | **Neighbor structures are rebuilt at the start of every segment.** A run that is restarted from a checkpoint then performs the same rebuilds as a run that was not interrupted, provided both use the same segment schedule. Without this rule the two runs sum forces in different orders. |
 
-## 6. Not yet designed
+## 6. Awaiting confirmation
+
+| # | Item |
+|---|---|
+| V1 | **No reference interpreter.** Validation rests on three things instead: tests that run single kernels against closed-form values; tests that run whole programs against scripts that evaluate all pairs; and, from M1 on, comparison of energies and forces with an established MD engine. An interpreter is reconsidered if a class of errors shows up that these do not catch. This withdraws the interpreter from D23 and from the validation plan of the M0 specification. |
+
+## 7. Not yet designed
 
 These items follow from the decisions above but have no design yet.
 
@@ -357,7 +363,9 @@ These items follow from the decisions above but have no design yet.
 | `dyn` dialect | M0 | Implemented |
 | `md_exec` dialect in the value form, and the conversion into it | M0 | Implemented |
 | Lowering of `md_exec` to executable code on the CPU | M0 | Implemented, in double precision |
-| Reuse of neighbor structures across steps | M0 | |
+| Reuse of neighbor structures across steps, with the policy `check` | M0 | Implemented |
+| Rebuild policy `interval`, with the diagnostic of A11 | M0 | |
+| Storage form of the `md_exec` ops, as D17 decided | M0 | The lowering is direct for now; to be done before the GPU back end |
 | Precision policy | M0 | |
 | Fusion of loops over the same neighbor structure | M0 | |
 | Freeing of buffers | M0 | |
@@ -366,7 +374,7 @@ These items follow from the decisions above but have no design yet.
 | Check that particle set symbols in types are declared | M0 | |
 | Regression test for the numerical values of derivatives | M0 | Implemented with a kernel runner |
 | `mdrt` ABI: storage, neighbor structures, events | M0 | Proposal in [mdrt-m0.md](mdrt-m0.md) |
-| Reference interpreter for the semantic dialects | M0 | |
+| Reference interpreter for the semantic dialects | M0 | Proposed to be dropped; see V1 |
 | Schema of the TOML input | M0 | |
 | Layout of the MDIR group inside an H5MD checkpoint | M0 | |
 | HDF5 development files | M0 | The machine has the HDF5 runtime library but not its headers |

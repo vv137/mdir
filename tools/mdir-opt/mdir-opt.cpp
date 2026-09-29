@@ -4,6 +4,7 @@
 #include "mdir/Dialect/Dyn/DynDialect.h"
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
+#include "mdir/Dialect/MDExec/Transforms/Passes.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
 #include "mdir/Dialect/MD/Transforms/Passes.h"
 
@@ -27,6 +28,7 @@ int main(int argc, char **argv) {
   mlir::registerTransformsPasses();
   mdir::md::registerMDPasses();
   mdir::registerMDIRConversionPasses();
+  mdir::md_exec::registerMDExecPasses();
   mdir::test::registerTestOutlineKernels();
 
   mlir::DialectRegistry registry;

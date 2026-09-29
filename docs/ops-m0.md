@@ -1,6 +1,6 @@
 # MDIR Op Specification, Milestone M0
 
-Status: draft 6 (2026-09-29). Everything in this document is implemented for
+Status: draft 7 (2026-09-29). Everything in this document is implemented for
 the CPU in double precision, except where a section says otherwise. A
 Lennard-Jones system runs end to end, sequentially and with OpenMP.
 
@@ -724,6 +724,10 @@ precision, so it is done before narrowing.
 | `md_exec.spatial_order` | Computes a permutation that orders particles by cell. |
 | `md_exec.permute` | Applies a permutation to a field. |
 | `md_exec.build_neighbors` | Builds a physical neighbor structure. |
+| `md_exec.empty_neighbors` | A neighbor structure that is valid for no configuration. |
+| `md_exec.refresh_neighbors` | Returns a neighbor structure that is valid for a configuration, building one only if the one given is not. |
+| `md_exec.rebuild_count` | The number of times a neighbor structure has been built. |
+| `md_exec.zeros`, `md_exec.empty` | Destinations of loops. |
 | `md_exec.pair_for` | Runs a kernel over the pairs of a neighbor structure. |
 | `md_exec.particle_for` | Runs a kernel over particles. |
 | `md_exec.yield` | Terminator of kernels. |
@@ -763,12 +767,39 @@ max_i |x_i − x_ref,i| ≤ skin / 2
 
 Under that condition `L ⊇ D(N(x))`: no pair within the cutoff is missing.
 
+A structure also becomes invalid when the cell changes.
+
+**Refresh.** A loop carries its neighbor structure and refreshes it before
+it is used:
+
+```mlir
+%nl0 = md_exec.empty_neighbors kind(matrix) width(96)
+         : !mdrt.neighbors<@atoms>
+
+scf.for ... iter_args(..., %nl = %nl0) {
+  ...
+  %nl1 = md_exec.refresh_neighbors %nl, %x1, %cell
+           cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
+           : !mdrt.neighbors<@atoms>, !vec
+  ...
+  scf.yield ..., %nl1
+}
+```
+
+The refresh returns the structure it was given if that is valid for the
+configuration, and a structure built at the configuration otherwise. The
+structure is empty when the loop begins, so the first iteration builds it
+(R1).
+
+The pass `md-exec-reuse-neighbors` produces this form from a build in the
+body of a loop.
+
 **Rebuild policy (B1).**
 
-| Policy | Behavior | Exact |
-|---|---|---|
-| `check` | The validity condition is evaluated every step, before the forces. The structure is rebuilt when it fails. | Yes |
-| `interval(n)` | The structure is rebuilt every `n` steps with no check in between. | Only if the condition happened to hold |
+| Policy | Behavior | Exact | State |
+|---|---|---|---|
+| `check` | The validity condition is evaluated at every refresh. The structure is rebuilt when it fails. | Yes | Implemented |
+| `interval(n)` | The structure is rebuilt every `n` steps with no check in between. | Only if the condition happened to hold | Not implemented |
 
 `check` is the default. `interval` must be selected explicitly.
 
@@ -861,10 +892,10 @@ Each loop op has two forms (D17).
 | `md.map_particles` | `md_exec.particle_for` with an `outs` clause |
 | `dyn.kick`, `dyn.drift` | `md_exec.particle_for` with an `outs` clause |
 
-The conversion builds the neighbor structure where the neighborhood was, so
-the structure is rebuilt at every evaluation. That is exact and slow. Moving
-the build out of the evaluation and reusing the structure across steps, under
-the rebuild policy of Section 8.2, is the task of a later pass.
+The conversion builds the neighbor structure where the neighborhood was. In
+the body of a loop that would be a build in every iteration; the pass
+`md-exec-reuse-neighbors`, run after the conversion, replaces it with a
+refresh (Section 8.2).
 
 The semantic kernel is written in terms of the distance `r`, and the loop
 provides `r²`. The conversion inserts a square root at the start of the
@@ -1014,7 +1045,7 @@ it is needed.
 |---|---|
 | Buffers are never freed. | A function that allocates leaks when it is called repeatedly. The tests run everything from one `main`. |
 | Marking a field so that a copy is accepted is not implemented. | A program that needs a copy, such as a Metropolis step, cannot be lowered. |
-| The storage of a neighbor structure is allocated once per build site. | Carrying a neighbor structure through a loop is not supported. |
+| A neighbor structure is refreshed where it is. | A loop cannot carry two structures and exchange them. |
 
 ## 11. Requirements on `mdrt`
 
@@ -1041,11 +1072,12 @@ values from independent sources.
 |---|---|---|
 | Kernels that differentiation generates | Closed-form derivatives; for `force_switch`, the formulas of the GROMACS manual | 1e-12 |
 | Neighbor build template | A search over all pairs | Exact |
+| A neighbor structure that a loop refreshes, 100 steps | Pairs within the cutoff at every step, by a search over all pairs; the number of builds | Exact |
 | Energy and forces of 64 particles | A script that evaluates all pairs | 1e-10 |
 | 200 steps of velocity Verlet and of leapfrog | The same script, integrating with all pairs | 1e-9 |
 
-The last three run sequentially and with OpenMP on 4 threads. The script is
-`test/Integration/Inputs/lj_reference.py`.
+The last four run sequentially and with OpenMP on 4 threads. The scripts are
+in `test/Integration/Inputs`.
 
 The checks that were planned:
 

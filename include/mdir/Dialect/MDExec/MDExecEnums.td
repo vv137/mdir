@@ -36,4 +36,14 @@ def MDExec_Conflict : I32EnumAttr<"Conflict",
   let cppNamespace = "::mdir::md_exec";
 }
 
+// When a neighbor structure is rebuilt.
+def MDExec_RebuildPolicy : I32EnumAttr<"RebuildPolicy",
+    "when a neighbor structure is rebuilt", [
+    // Whenever the validity condition fails. The condition is evaluated at
+    // every refresh.
+    I32EnumAttrCase<"Check", 0, "check">
+  ]> {
+  let cppNamespace = "::mdir::md_exec";
+}
+
 #endif // MDIR_DIALECT_MDEXEC_MDEXECENUMS_TD

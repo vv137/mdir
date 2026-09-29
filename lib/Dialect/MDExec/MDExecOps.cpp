@@ -119,6 +119,34 @@ LogicalResult BuildNeighborsOp::verify() {
   return success();
 }
 
+LogicalResult EmptyNeighborsOp::verify() {
+  if (getWidth() <= 0)
+    return emitOpError() << "expected a positive width, got " << getWidth();
+  return success();
+}
+
+LogicalResult RefreshNeighborsOp::verify() {
+  auto neighbors = cast<NeighborsType>(getNeighbors().getType());
+  if (failed(verifyPositions(getOperation(), getPositions(),
+                             neighbors.getParticleSet())))
+    return failure();
+
+  double cutoff = getCutoff().convertToDouble();
+  double skin = getSkin().convertToDouble();
+  double width = getCellWidth().convertToDouble();
+  if (!(cutoff > 0.0))
+    return emitOpError() << "expected a positive cutoff, got " << cutoff;
+  if (!(skin >= 0.0))
+    return emitOpError() << "expected a skin that is not negative, got "
+                         << skin;
+  if (width < cutoff + skin)
+    return emitOpError()
+           << "the cells are " << width
+           << " wide, which is less than the cutoff plus the skin, "
+           << cutoff + skin;
+  return success();
+}
+
 //===----------------------------------------------------------------------===//
 // Loops
 //===----------------------------------------------------------------------===//
@@ -238,15 +266,17 @@ LogicalResult PairForOp::verify() {
            << "only the policy (directed, owner_only) is supported";
 
   // The list must contain every pair within the cutoff of this loop.
-  if (auto build = getNeighbors().getDefiningOp<BuildNeighborsOp>()) {
-    double built = build.getCutoff().convertToDouble();
-    if (cutoff > built)
-      return emitOpError()
-             << "the cutoff, " << cutoff
-             << ", exceeds the cutoff that the neighbor structure was "
-                "built with, "
-             << built;
-  }
+  std::optional<double> built;
+  if (auto build = getNeighbors().getDefiningOp<BuildNeighborsOp>())
+    built = build.getCutoff().convertToDouble();
+  else if (auto refresh = getNeighbors().getDefiningOp<RefreshNeighborsOp>())
+    built = refresh.getCutoff().convertToDouble();
+  if (built && cutoff > *built)
+    return emitOpError()
+           << "the cutoff, " << cutoff
+           << ", exceeds the cutoff that the neighbor structure was "
+              "built with, "
+           << *built;
 
   return verifyLoop(*this, neighbors.getParticleSet(),
                     getPairGeometryTypes(getContext()), 2);

@@ -115,3 +115,23 @@ md.function @kick(%v: !vec, %f: !vec, %m: !real, %dt: f64) -> (!vec, f64) {
   // CHECK: md.return %[[V1]], %[[KE]]
   md.return %v1, %ke : !vec, f64
 }
+
+// A neighbor structure that is refreshed.
+//
+// CHECK-LABEL: md.function @refresh(
+md.function @refresh(%x: !vec, %cell: !md.cell) -> i64 {
+  // CHECK: %[[NL0:[0-9]+]] = md_exec.empty_neighbors kind(matrix) width(96) : !mdrt.neighbors<@atoms>
+  %nl0 = md_exec.empty_neighbors kind(matrix) width(96)
+      : !mdrt.neighbors<@atoms>
+
+  // CHECK: %[[NL1:[0-9]+]] = md_exec.refresh_neighbors %[[NL0]], %{{[a-z0-9]+}}, %{{[a-z0-9]+}}
+  // CHECK-SAME: cutoff(2.500000e+00) skin(3.000000e-01) cell_width(2.800000e+00) policy(check)
+  // CHECK-SAME: : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+  %nl1 = md_exec.refresh_neighbors %nl0, %x, %cell
+      cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
+      : !mdrt.neighbors<@atoms>, !vec
+
+  // CHECK: %[[BUILDS:[0-9]+]] = md_exec.rebuild_count %[[NL1]] : !mdrt.neighbors<@atoms>
+  %builds = md_exec.rebuild_count %nl1 : !mdrt.neighbors<@atoms>
+  md.return %builds : i64
+}

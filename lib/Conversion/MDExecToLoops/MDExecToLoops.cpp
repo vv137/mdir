@@ -39,8 +39,17 @@ namespace {
 
 /// The storage of a neighbor matrix.
 struct Neighbors {
+  /// The number of neighbors of each particle, and their indices.
   Value counts;
   Value index;
+  /// The number of neighbors that a row holds.
+  Value width;
+  /// The configuration and the cell that the structure was built at.
+  Value reference;
+  Value box;
+  /// Whether the structure has been built, and how often.
+  Value valid;
+  Value builds;
 };
 
 /// The buffers of one region: the body of a function or of a loop.
@@ -103,6 +112,18 @@ private:
   LogicalResult lowerYield(scf::YieldOp op, Scope &scope);
   LogicalResult lowerBuildNeighbors(md_exec::BuildNeighborsOp op,
                                     Scope &scope);
+  LogicalResult lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op,
+                                      Scope &scope);
+
+  /// Allocates the storage of a neighbor structure that holds `width`
+  /// neighbors for each of `size` particles.
+  Neighbors allocateNeighbors(Location loc, Value size, int64_t width);
+
+  /// Builds `structure` at the configuration `positions`.
+  LogicalResult emitBuild(OpBuilder &builder, Location loc,
+                          const Neighbors &structure, Value positions,
+                          Value box, Value size, double reach,
+                          double cellWidth);
   LogicalResult lowerParticleFor(md_exec::ParticleForOp op, Scope &scope,
                                  unsigned position);
   LogicalResult lowerPairFor(md_exec::PairForOp op, Scope &scope,
@@ -143,9 +164,14 @@ private:
         builder, loc, type, cast<TypedAttr>(builder.getZeroAttr(type)));
   }
 
-  /// Ends the body of a parallel loop with a reduction that adds `values`.
+  /// Ends the body of a parallel loop with a reduction of `values`: their
+  /// sum, or their maximum.
+  void createReduction(OpBuilder &builder, Location loc,
+                       ArrayRef<Value> values, bool isSum);
   void createSumReduction(OpBuilder &builder, Location loc,
-                          ArrayRef<Value> values);
+                          ArrayRef<Value> values) {
+    createReduction(builder, loc, values, /*isSum=*/true);
+  }
 
   LogicalResult addTemplates();
   func::FuncOp getOrDeclare(StringRef name, FunctionType type);
@@ -290,16 +316,26 @@ void Lowering::storeElement(OpBuilder &builder, Location loc, Value value,
   }
 }
 
-void Lowering::createSumReduction(OpBuilder &builder, Location loc,
-                                  ArrayRef<Value> values) {
+void Lowering::createReduction(OpBuilder &builder, Location loc,
+                               ArrayRef<Value> values, bool isSum) {
   auto reduce = scf::ReduceOp::create(builder, loc, values);
   for (Region &region : reduce->getRegions()) {
     Block &block = region.front();
     OpBuilder combiner(context);
     combiner.setInsertionPointToEnd(&block);
-    Value sum = arith::AddFOp::create(combiner, loc, block.getArgument(0),
-                                      block.getArgument(1));
-    scf::ReduceReturnOp::create(combiner, loc, sum);
+    Value lhs = block.getArgument(0);
+    Value rhs = block.getArgument(1);
+    Value result;
+    if (isSum) {
+      result = arith::AddFOp::create(combiner, loc, lhs, rhs);
+    } else {
+      // A comparison and a selection: the form of a maximum that the
+      // lowering to OpenMP recognizes.
+      Value larger = arith::CmpFOp::create(
+          combiner, loc, arith::CmpFPredicate::OGT, lhs, rhs);
+      result = arith::SelectOp::create(combiner, loc, larger, lhs, rhs);
+    }
+    scf::ReduceReturnOp::create(combiner, loc, result);
   }
 }
 
@@ -639,17 +675,144 @@ LogicalResult Lowering::addTemplates() {
   return success();
 }
 
+Neighbors Lowering::allocateNeighbors(Location loc, Value size,
+                                      int64_t width) {
+  // The storage outlives the iterations of any loop around the structure,
+  // so it is allocated in the body of the function.
+  OpBuilder &builder = root->builder;
+  Type narrow = builder.getI32Type();
+  Type real = builder.getF64Type();
+
+  Neighbors structure;
+  structure.width = createIndex(builder, loc, width);
+  structure.counts = memref::AllocOp::create(
+      builder, loc, MemRefType::get({ShapedType::kDynamic}, narrow),
+      ValueRange{size});
+  structure.index = memref::AllocOp::create(
+      builder, loc,
+      MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, narrow),
+      ValueRange{size, structure.width});
+  structure.reference = memref::AllocOp::create(
+      builder, loc, MemRefType::get({ShapedType::kDynamic, 3}, real),
+      ValueRange{size});
+  structure.box =
+      memref::AllocOp::create(builder, loc, MemRefType::get({3}, real));
+  structure.valid = memref::AllocOp::create(
+      builder, loc, MemRefType::get({}, builder.getI1Type()));
+  structure.builds = memref::AllocOp::create(
+      builder, loc, MemRefType::get({}, builder.getI64Type()));
+
+  Value no = arith::ConstantOp::create(builder, loc, builder.getI1Type(),
+                                       builder.getBoolAttr(false));
+  Value none = arith::ConstantOp::create(builder, loc, builder.getI64Type(),
+                                         builder.getI64IntegerAttr(0));
+  memref::StoreOp::create(builder, loc, no, structure.valid, ValueRange{});
+  memref::StoreOp::create(builder, loc, none, structure.builds, ValueRange{});
+  return structure;
+}
+
+LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
+                                  const Neighbors &structure, Value positions,
+                                  Value box, Value size, double reach,
+                                  double cellWidth) {
+  if (failed(addTemplates()))
+    return failure();
+
+  Type real = builder.getF64Type();
+  Value reachValue = arith::ConstantOp::create(
+      builder, loc, real, builder.getF64FloatAttr(reach));
+  Value widthValue = arith::ConstantOp::create(
+      builder, loc, real, builder.getF64FloatAttr(cellWidth));
+
+  auto build = cast<func::FuncOp>(
+      SymbolTable::lookupSymbolIn(module, buildNeighborsName));
+  auto call = func::CallOp::create(
+      builder, loc, build,
+      ValueRange{positions, box, reachValue, widthValue, structure.counts,
+                 structure.index});
+  Value largest = call.getResult(0);
+
+  // A row that is too narrow loses pairs. Stop.
+  Type wide = builder.getI64Type();
+  auto report = getOrDeclare(
+      reportOverflowName, builder.getFunctionType({wide, wide}, {}));
+  Value tooMany = arith::CmpIOp::create(
+      builder, loc, arith::CmpIPredicate::ugt, largest, structure.width);
+  scf::IfOp::create(
+      builder, loc, tooMany, [&](OpBuilder &then, Location) {
+        Value needed = arith::IndexCastOp::create(then, loc, wide, largest);
+        Value available =
+            arith::IndexCastOp::create(then, loc, wide, structure.width);
+        func::CallOp::create(then, loc, report,
+                             ValueRange{needed, available});
+        scf::YieldOp::create(then, loc);
+      });
+
+  // Remember the configuration that the structure was built at.
+  Value zero = createIndex(builder, loc, 0);
+  Value one = createIndex(builder, loc, 1);
+  scf::ParallelOp::create(
+      builder, loc, ValueRange{zero}, ValueRange{size}, ValueRange{one},
+      [&](OpBuilder &body, Location, ValueRange ivs) {
+        storeElement(body, loc, loadElement(body, loc, positions, ivs[0]),
+                     structure.reference, ivs[0]);
+      });
+  for (int64_t c = 0; c < 3; ++c) {
+    Value edge = vector::ExtractOp::create(builder, loc, box, c);
+    memref::StoreOp::create(builder, loc, edge, structure.box,
+                            ValueRange{createIndex(builder, loc, c)});
+  }
+
+  Value yes = arith::ConstantOp::create(builder, loc, builder.getI1Type(),
+                                        builder.getBoolAttr(true));
+  memref::StoreOp::create(builder, loc, yes, structure.valid, ValueRange{});
+
+  Value builds =
+      memref::LoadOp::create(builder, loc, structure.builds, ValueRange{});
+  Value increment = arith::ConstantOp::create(
+      builder, loc, wide, builder.getI64IntegerAttr(1));
+  Value more = arith::AddIOp::create(builder, loc, builds, increment);
+  memref::StoreOp::create(builder, loc, more, structure.builds, ValueRange{});
+  return success();
+}
+
 LogicalResult Lowering::lowerBuildNeighbors(md_exec::BuildNeighborsOp op,
                                             Scope &scope) {
   Location loc = op.getLoc();
-  OpBuilder &builder = scope.builder;
-
   auto cells = op.getCells().getDefiningOp<md_exec::BuildCellsOp>();
   if (!cells)
     return op.emitOpError() << "expected cells that are the result of "
                                "'md_exec.build_cells'";
-  if (failed(addTemplates()))
+
+  Value positions;
+  if (failed(getBuffer(op.getPositions(), scope, positions)))
     return failure();
+  Value size;
+  if (failed(getSize(op, op.getPositions().getType(), size)))
+    return failure();
+
+  Neighbors structure = allocateNeighbors(loc, size, op.getWidth());
+  neighbors[op.getResult()] = structure;
+
+  double cutoff = op.getCutoff().convertToDouble();
+  double skin = op.getSkin().convertToDouble();
+  return emitBuild(scope.builder, loc, structure, positions,
+                   mapping.lookup(op.getCell()), size, cutoff + skin,
+                   cells.getWidth().convertToDouble());
+}
+
+LogicalResult
+Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op,
+                                Scope &scope) {
+  Location loc = op.getLoc();
+  OpBuilder &builder = scope.builder;
+
+  auto found = neighbors.find(op.getNeighbors());
+  if (found == neighbors.end())
+    return op.emitOpError() << "the neighbor structure has no storage";
+  Neighbors structure = found->second;
+  // The structure is refreshed where it is.
+  neighbors[op.getResult()] = structure;
 
   Value positions;
   if (failed(getBuffer(op.getPositions(), scope, positions)))
@@ -659,53 +822,58 @@ LogicalResult Lowering::lowerBuildNeighbors(md_exec::BuildNeighborsOp op,
   if (failed(getSize(op, op.getPositions().getType(), size)))
     return failure();
 
-  // The storage outlives the iterations of any loop around the build, so it
-  // is allocated in the body of the function.
-  OpBuilder &outer = root->builder;
-  Type narrow = builder.getI32Type();
-  Value width = createIndex(outer, loc, op.getWidth());
-  Neighbors structure;
-  structure.counts = memref::AllocOp::create(
-      outer, loc, MemRefType::get({ShapedType::kDynamic}, narrow),
-      ValueRange{size});
-  structure.index = memref::AllocOp::create(
-      outer, loc,
-      MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, narrow),
-      ValueRange{size, width});
-  neighbors[op.getResult()] = structure;
-
   Type real = builder.getF64Type();
   double cutoff = op.getCutoff().convertToDouble();
   double skin = op.getSkin().convertToDouble();
-  Value reach = arith::ConstantOp::create(
-      builder, loc, real, builder.getF64FloatAttr(cutoff + skin));
-  Value cellWidth = arith::ConstantOp::create(
-      builder, loc, real,
-      builder.getF64FloatAttr(cells.getWidth().convertToDouble()));
 
-  auto build = cast<func::FuncOp>(
-      SymbolTable::lookupSymbolIn(module, buildNeighborsName));
-  auto call = func::CallOp::create(
-      builder, loc, build,
-      ValueRange{positions, box, reach, cellWidth, structure.counts,
-                 structure.index});
-  Value largest = call.getResult(0);
+  // The structure is valid if it has been built, in this cell, and no
+  // particle has moved more than half the skin since.
+  Value valid =
+      memref::LoadOp::create(builder, loc, structure.valid, ValueRange{});
+  for (int64_t c = 0; c < 3; ++c) {
+    Value edge = vector::ExtractOp::create(builder, loc, box, c);
+    Value built = memref::LoadOp::create(
+        builder, loc, structure.box,
+        ValueRange{createIndex(builder, loc, c)});
+    Value same = arith::CmpFOp::create(builder, loc,
+                                       arith::CmpFPredicate::OEQ, edge, built);
+    valid = arith::AndIOp::create(builder, loc, valid, same);
+  }
 
-  // A row that is too narrow loses pairs. Stop.
-  Type wide = builder.getI64Type();
-  auto report = getOrDeclare(
-      reportOverflowName, builder.getFunctionType({wide, wide}, {}));
-  Value tooMany = arith::CmpIOp::create(
-      builder, loc, arith::CmpIPredicate::ugt, largest, width);
+  Value zero = createIndex(builder, loc, 0);
+  Value one = createIndex(builder, loc, 1);
+  Value none = createZero(builder, loc, real);
+  auto farthest = scf::ParallelOp::create(
+      builder, loc, ValueRange{zero}, ValueRange{size}, ValueRange{one},
+      ValueRange{none},
+      [&](OpBuilder &body, Location, ValueRange ivs, ValueRange) {
+        Value now = loadElement(body, loc, positions, ivs[0]);
+        Value then = loadElement(body, loc, structure.reference, ivs[0]);
+        Value moved = arith::SubFOp::create(body, loc, now, then);
+        Value squares = arith::MulFOp::create(body, loc, moved, moved);
+        Value distance2 = vector::ReductionOp::create(
+            body, loc, vector::CombiningKind::ADD, squares);
+        createReduction(body, loc, {distance2}, /*isSum=*/false);
+      });
+  Value limit = arith::ConstantOp::create(
+      builder, loc, real, builder.getF64FloatAttr(0.25 * skin * skin));
+  Value near = arith::CmpFOp::create(
+      builder, loc, arith::CmpFPredicate::OLE, farthest.getResult(0), limit);
+  valid = arith::AndIOp::create(builder, loc, valid, near);
+
+  Value yes = arith::ConstantOp::create(builder, loc, builder.getI1Type(),
+                                        builder.getBoolAttr(true));
+  Value stale = arith::XOrIOp::create(builder, loc, valid, yes);
+
+  LogicalResult status = success();
   scf::IfOp::create(
-      builder, loc, tooMany, [&](OpBuilder &then, Location) {
-        Value needed = arith::IndexCastOp::create(then, loc, wide, largest);
-        Value available = arith::IndexCastOp::create(then, loc, wide, width);
-        func::CallOp::create(then, loc, report,
-                             ValueRange{needed, available});
+      builder, loc, stale, [&](OpBuilder &then, Location) {
+        status = emitBuild(then, loc, structure, positions, box, size,
+                           cutoff + skin,
+                           op.getCellWidth().convertToDouble());
         scf::YieldOp::create(then, loc);
       });
-  return success();
+  return status;
 }
 
 //===----------------------------------------------------------------------===//
@@ -724,9 +892,22 @@ LogicalResult Lowering::lowerFor(scf::ForOp op, Scope &scope,
   mapping.map(op.getInductionVar(),
               inner.body->addArgument(op.getInductionVar().getType(), loc));
 
+  // A neighbor structure is refreshed where it is, so the loop need not
+  // carry its storage. `carried[i]` is the position of loop-carried value
+  // `i` among the values that the new loop carries, or -1.
+  SmallVector<int> carried;
   SmallVector<Value> inits;
   for (auto [init, argument] :
        llvm::zip(op.getInitArgs(), op.getRegionIterArgs())) {
+    if (isa<mdrt::NeighborsType>(init.getType())) {
+      auto found = neighbors.find(init);
+      if (found == neighbors.end())
+        return op.emitOpError() << "a neighbor structure has no storage";
+      neighbors[argument] = found->second;
+      carried.push_back(-1);
+      continue;
+    }
+    carried.push_back(inits.size());
     if (!isa<md::FieldType>(init.getType())) {
       if (needsLowering(init.getType()))
         return op.emitOpError()
@@ -747,9 +928,9 @@ LogicalResult Lowering::lowerFor(scf::ForOp op, Scope &scope,
     scope.owned.erase(buffer);
     inits.push_back(buffer);
 
-    Value carried = inner.body->addArgument(buffer.getType(), loc);
-    buffers[argument] = carried;
-    inner.owned.insert(carried);
+    Value inside = inner.body->addArgument(buffer.getType(), loc);
+    buffers[argument] = inside;
+    inner.owned.insert(inside);
   }
 
   if (failed(lowerBlock(oldBody, inner)))
@@ -768,10 +949,14 @@ LogicalResult Lowering::lowerFor(scf::ForOp op, Scope &scope,
   state.addRegion()->push_back(inner.body);
   Operation *loop = scope.builder.create(state);
 
-  unsigned numCarried = op.getNumResults();
-  for (unsigned i = 0; i != numCarried; ++i) {
+  unsigned numCarried = inits.size();
+  for (unsigned i = 0, e = op.getNumResults(); i != e; ++i) {
     Value oldResult = op.getResult(i);
-    Value newResult = loop->getResult(i);
+    if (carried[i] < 0) {
+      neighbors[oldResult] = neighbors.lookup(op.getInitArgs()[i]);
+      continue;
+    }
+    Value newResult = loop->getResult(carried[i]);
     if (isa<md::FieldType>(oldResult.getType())) {
       buffers[oldResult] = newResult;
       scope.owned.insert(newResult);
@@ -793,6 +978,11 @@ LogicalResult Lowering::lowerYield(scf::YieldOp op, Scope &scope) {
   llvm::DenseSet<Value> held;
 
   for (Value value : op.getOperands()) {
+    if (isa<mdrt::NeighborsType>(value.getType())) {
+      if (!neighbors.count(value))
+        return op.emitOpError() << "a neighbor structure has no storage";
+      continue;
+    }
     if (!isa<md::FieldType>(value.getType())) {
       values.push_back(mapping.lookup(value));
       continue;
@@ -880,6 +1070,28 @@ LogicalResult Lowering::lowerOp(Operation *op, Scope &scope,
 
   if (auto build = dyn_cast<md_exec::BuildNeighborsOp>(op))
     return lowerBuildNeighbors(build, scope);
+  if (auto refresh = dyn_cast<md_exec::RefreshNeighborsOp>(op))
+    return lowerRefreshNeighbors(refresh, scope);
+  if (auto empty = dyn_cast<md_exec::EmptyNeighborsOp>(op)) {
+    auto type = cast<mdrt::NeighborsType>(empty.getResult().getType());
+    Value size = sizes.lookup(type.getParticleSet());
+    if (!size)
+      return op->emitOpError()
+             << "the number of particles of " << type.getParticleSet()
+             << " is not known here: no field of the set has a buffer yet";
+    neighbors[empty.getResult()] =
+        allocateNeighbors(loc, size, empty.getWidth());
+    return success();
+  }
+  if (auto count = dyn_cast<md_exec::RebuildCountOp>(op)) {
+    auto found = neighbors.find(count.getNeighbors());
+    if (found == neighbors.end())
+      return op->emitOpError() << "the neighbor structure has no storage";
+    mapping.map(count.getResult(),
+                memref::LoadOp::create(builder, loc, found->second.builds,
+                                       ValueRange{}));
+    return success();
+  }
   if (auto loop = dyn_cast<md_exec::ParticleForOp>(op))
     return lowerParticleFor(loop, scope, position);
   if (auto loop = dyn_cast<md_exec::PairForOp>(op))

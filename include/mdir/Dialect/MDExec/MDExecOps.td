@@ -154,6 +154,91 @@ def MDExec_BuildNeighborsOp : MDExec_Op<"build_neighbors", [Pure]> {
   let hasVerifier = 1;
 }
 
+def MDExec_EmptyNeighborsOp : MDExec_Op<"empty_neighbors", [Pure]> {
+  let summary = "A neighbor structure that is valid for no configuration";
+  let description = [{
+    The first refresh of the structure builds it.
+
+    ```mlir
+    %nl0 = md_exec.empty_neighbors kind(matrix) width(96)
+             : !mdrt.neighbors<@atoms>
+    ```
+  }];
+  let arguments = (ins
+    MDExec_NeighborKind:$kind,
+    I64Attr:$width
+  );
+  let results = (outs MDRT_NeighborsType:$result);
+  let assemblyFormat = [{
+    `kind` `(` $kind `)` `width` `(` $width `)` attr-dict
+    `:` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+
+def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
+    Pure, AllTypesMatch<["neighbors", "result"]>
+  ]> {
+  let summary = "A neighbor structure that is valid for a configuration";
+  let description = [{
+    Returns `neighbors` if it is valid for the configuration `positions` in
+    the cell `cell`, and a structure built at that configuration otherwise.
+
+    A structure that was built at the configuration `x_ref` is valid when
+    the cell is the one it was built in and
+
+    ```text
+    max_i |x_i − x_ref,i| ≤ skin / 2
+    ```
+
+    Under that condition it contains every pair within the cutoff.
+
+    `cell_width` is the width of the cells that a rebuild bins the particles
+    into.
+
+    ```mlir
+    %nl1 = md_exec.refresh_neighbors %nl, %x, %cell
+             cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
+             : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+    ```
+  }];
+  let arguments = (ins
+    MDRT_NeighborsType:$neighbors,
+    MD_FieldType:$positions,
+    MD_CellType:$cell,
+    F64Attr:$cutoff,
+    F64Attr:$skin,
+    F64Attr:$cell_width,
+    DefaultValuedAttr<MDExec_RebuildPolicy,
+                      "::mdir::md_exec::RebuildPolicy::Check">:$policy
+  );
+  let results = (outs MDRT_NeighborsType:$result);
+  let assemblyFormat = [{
+    $neighbors `,` $positions `,` $cell
+    `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
+    `cell_width` `(` $cell_width `)` `policy` `(` $policy `)` attr-dict
+    `:` qualified(type($neighbors)) `,` qualified(type($positions))
+  }];
+  let hasVerifier = 1;
+}
+
+def MDExec_RebuildCountOp : MDExec_Op<"rebuild_count", [Pure]> {
+  let summary = "The number of times a neighbor structure has been built";
+  let description = [{
+    Counts the builds of the structure since it was created, the first one
+    included.
+
+    ```mlir
+    %builds = md_exec.rebuild_count %nl : !mdrt.neighbors<@atoms>
+    ```
+  }];
+  let arguments = (ins MDRT_NeighborsType:$neighbors);
+  let results = (outs I64:$result);
+  let assemblyFormat = [{
+    $neighbors attr-dict `:` qualified(type($neighbors))
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Loops
 //===----------------------------------------------------------------------===//

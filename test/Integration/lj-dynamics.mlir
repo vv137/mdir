@@ -4,7 +4,7 @@
 //
 // RUN: mdir-opt %s %md_passes \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" \
-// RUN:     --convert-md-exec-to-loops \
+// RUN:     --md-exec-reuse-neighbors --convert-md-exec-to-loops \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
@@ -12,14 +12,15 @@
 
 // RUN: mdir-opt %s %md_passes \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" \
-// RUN:     --convert-md-exec-to-loops \
+// RUN:     --md-exec-reuse-neighbors --convert-md-exec-to-loops \
 // RUN: | mlir-opt %lower_loops_to_openmp \
 // RUN: | env OMP_NUM_THREADS=4 mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%openmp \
 // RUN: | FileCheck %s
 
 // The system is that of lj-forces.mlir, with unit masses, at rest at the
-// start. The time step is 0.004.
+// start. The time step is 0.004. The neighbor structure has the skin 0.2
+// and is carried through the steps.
 //
 // The reference values come from Inputs/lj_reference.py. Each check prints
 // the value and then 1 if it agrees with the reference to a relative
