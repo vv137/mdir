@@ -216,6 +216,12 @@ void RefreshNeighborsOp::getEffects(
     addEffect<MemoryEffects::Write>(effects, operand);
 }
 
+LogicalResult ReferencePositionsOp::verify() {
+  auto neighbors = cast<NeighborsType>(getNeighbors().getType());
+  return verifyPositions(getOperation(), getResult(),
+                         neighbors.getParticleSet());
+}
+
 LogicalResult RefreshNeighborsOp::verify() {
   auto neighbors = cast<NeighborsType>(getNeighbors().getType());
   if (failed(verifyPositions(getOperation(), getPositions(),
@@ -236,6 +242,17 @@ LogicalResult RefreshNeighborsOp::verify() {
            << " wide, which is less than the cutoff plus the skin, "
            << cutoff + skin;
 
+  if (getMoved()) {
+    if (getPolicy() != RebuildPolicy::Check)
+      return emitOpError()
+             << "'moved' belongs to the policy 'check': with the policy "
+                "'always' the structure is built whatever has moved";
+    if (!getScratch().empty())
+      return emitOpError()
+             << "expected no buffers in 'scratch': with 'moved' the op "
+                "does not test the displacements";
+  }
+
   Type real = isStorageForm()
                   ? cast<MemRefType>(getPositions().getType())
                         .getElementType()
@@ -248,9 +265,11 @@ LogicalResult RefreshNeighborsOp::verify() {
 // Loops
 //===----------------------------------------------------------------------===//
 
-/// Verifies what the two loops have in common.
+/// Verifies what the two loops have in common. `allowsFlags` tells whether
+/// a value in `reduce` may have the type i1.
 template <typename OpTy>
-static LogicalResult verifyLoop(OpTy op, FlatSymbolRefAttr particleSet) {
+static LogicalResult verifyLoop(OpTy op, FlatSymbolRefAttr particleSet,
+                                bool allowsFlags) {
   bool isStorage = op.isStorageForm();
   for (Value field : llvm::concat<Value>(op.getIns(), op.getOuts())) {
     if (isa<MemRefType>(field.getType()) != isStorage)
@@ -263,19 +282,25 @@ static LogicalResult verifyLoop(OpTy op, FlatSymbolRefAttr particleSet) {
                               << particleSet << ", but one belongs to "
                               << type.getParticleSet();
   }
-  for (Value value : op.getReduce())
-    if (!isRealOrRealVector(value.getType()))
-      return op.emitOpError() << "expected a value in 'reduce' to be f32, "
-                                 "f64, or a fixed-size vector of one of "
-                                 "them, got "
-                              << value.getType();
+  for (Value value : op.getReduce()) {
+    Type type = value.getType();
+    if (isRealOrRealVector(type) || (allowsFlags && type.isInteger(1)))
+      continue;
+    return op.emitOpError()
+           << "expected a value in 'reduce' to be f32, f64, "
+           << (allowsFlags ? "" : "or ")
+           << "a fixed-size vector of one of them"
+           << (allowsFlags ? ", or i1" : "") << ", got " << type;
+  }
   if (op.getOuts().empty() && op.getReduce().empty())
     return op.emitOpError()
            << "expected at least 1 field in 'outs' or value in 'reduce'";
 
+  // Only a sum needs buffers.
   SmallVector<Type> sums;
   for (Value value : op.getReduce())
-    sums.push_back(value.getType());
+    if (!value.getType().isInteger(1))
+      sums.push_back(value.getType());
   if (failed(verifyScratch(op.getOperation(), isStorage, op.getScratch(),
                            sums, 2)))
     return failure();
@@ -425,7 +450,8 @@ LogicalResult PairForOp::verify() {
               "built with, "
            << *built;
 
-  return verifyLoop(*this, neighbors.getParticleSet());
+  return verifyLoop(*this, neighbors.getParticleSet(),
+                    /*allowsFlags=*/false);
 }
 
 LogicalResult PairForOp::verifyRegions() {
@@ -450,7 +476,7 @@ LogicalResult ParticleForOp::verify() {
   FlatSymbolRefAttr particleSet;
   if (auto field = dyn_cast<FieldType>(any.getType()))
     particleSet = field.getParticleSet();
-  return verifyLoop(*this, particleSet);
+  return verifyLoop(*this, particleSet, /*allowsFlags=*/true);
 }
 
 LogicalResult ParticleForOp::verifyRegions() {

@@ -100,9 +100,9 @@ config.substitutions.append(
 
 # The transformations of the execution level. The second set reassociates
 # floating-point arithmetic.
-md_exec_transforms = "--md-exec-reuse-neighbors --md-exec-fuse-loops --cse"
+md_exec_transforms = "--md-exec-reuse-neighbors --md-exec-expose-validity --md-exec-fuse-loops --cse"
 md_exec_fast_transforms = (
-    "--md-exec-reuse-neighbors --md-exec-fuse-loops"
+    "--md-exec-reuse-neighbors --md-exec-expose-validity --md-exec-fuse-loops"
     " --md-exec-simplify-distance --canonicalize --cse"
 )
 md_exec_lowering = " --md-exec-assign-storage --convert-md-exec-to-loops"

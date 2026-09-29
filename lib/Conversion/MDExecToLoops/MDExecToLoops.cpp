@@ -88,7 +88,7 @@ private:
   }
 
   /// Ends the body of a parallel loop with a reduction of `values`: their
-  /// sum, or their maximum.
+  /// sum, or their maximum. Of integers it tells whether any is not zero.
   void createReduction(OpBuilder &builder, Location loc,
                        ArrayRef<Value> values, bool isSum);
 
@@ -122,7 +122,9 @@ void Lowering::createReduction(OpBuilder &builder, Location loc,
     Value lhs = block.getArgument(0);
     Value rhs = block.getArgument(1);
     Value result;
-    if (isSum) {
+    if (lhs.getType().isInteger()) {
+      result = arith::OrIOp::create(combiner, loc, lhs, rhs);
+    } else if (isSum) {
       result = arith::AddFOp::create(combiner, loc, lhs, rhs);
     } else {
       // A comparison and a selection: the form of a maximum that the
@@ -143,7 +145,19 @@ void Lowering::lowerParticleFor(md_exec::ParticleForOp op) {
   Location loc = op.getLoc();
   OpBuilder builder(op);
 
-  SmallVector<Value> inits(op.getReduce().begin(), op.getReduce().end());
+  // A value of the type i1 is reduced as an integer of 32 bits: threads
+  // combine their results with atomic operations, which take no integer
+  // of one bit.
+  Type wide = builder.getI32Type();
+  auto widen = [&](OpBuilder &b, Value value) -> Value {
+    if (!value.getType().isInteger(1))
+      return value;
+    return arith::ExtUIOp::create(b, loc, wide, value);
+  };
+
+  SmallVector<Value> inits;
+  for (Value value : op.getReduce())
+    inits.push_back(widen(builder, value));
   Value size = createSize(builder, loc, op.getIns().empty()
                                             ? op.getOuts().front()
                                             : op.getIns().front());
@@ -156,12 +170,21 @@ void Lowering::lowerParticleFor(md_exec::ParticleForOp op) {
         IRMapping local;
         SmallVector<Value> contributions =
             emitParticleKernel(body, op, ivs[0], local);
+        for (Value &value : contributions)
+          value = widen(body, value);
         if (!contributions.empty())
           createReduction(body, loc, contributions, /*isSum=*/true);
       });
 
-  for (unsigned i = 0, e = op.getNumResults(); i != e; ++i)
-    op.getResult(i).replaceAllUsesWith(loop.getResult(i));
+  for (unsigned i = 0, e = op.getNumResults(); i != e; ++i) {
+    Value result = loop.getResult(i);
+    if (op.getResult(i).getType().isInteger(1))
+      result = arith::CmpIOp::create(
+          builder, loc, arith::CmpIPredicate::ne, result,
+          arith::ConstantOp::create(builder, loc, wide,
+                                    builder.getI32IntegerAttr(0)));
+    op.getResult(i).replaceAllUsesWith(result);
+  }
 }
 
 //===----------------------------------------------------------------------===//
@@ -397,28 +420,34 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
     valid = arith::AndIOp::create(builder, loc, valid, same);
   }
 
-  Value zero = createIndex(builder, loc, 0);
-  Value one = createIndex(builder, loc, 1);
-  Value none = createZero(builder, loc, real);
-  auto farthest = scf::ParallelOp::create(
-      builder, loc, ValueRange{zero}, ValueRange{structure.size},
-      ValueRange{one}, ValueRange{none},
-      [&](OpBuilder &body, Location, ValueRange ivs, ValueRange) {
-        Value now = loadElement(body, loc, positions, ivs[0]);
-        Value then = loadElement(body, loc, structure.reference, ivs[0]);
-        Value moved = arith::SubFOp::create(body, loc, now, then);
-        Value squares = arith::MulFOp::create(body, loc, moved, moved);
-        Value distance2 = vector::ReductionOp::create(
-            body, loc, vector::CombiningKind::ADD, squares);
-        createReduction(body, loc, {distance2}, /*isSum=*/false);
-      });
-  Value limit = createReal(builder, loc, real, 0.25 * skin * skin);
-  Value near = arith::CmpFOp::create(
-      builder, loc, arith::CmpFPredicate::OLE, farthest.getResult(0), limit);
-  valid = arith::AndIOp::create(builder, loc, valid, near);
-
   Value yes = arith::ConstantOp::create(builder, loc, builder.getI1Type(),
                                         builder.getBoolAttr(true));
+  Value near;
+  if (Value moved = op.getMoved()) {
+    // A loop has made the test.
+    near = arith::XOrIOp::create(builder, loc, moved, yes);
+  } else {
+    Value zero = createIndex(builder, loc, 0);
+    Value one = createIndex(builder, loc, 1);
+    Value none = createZero(builder, loc, real);
+    auto farthest = scf::ParallelOp::create(
+        builder, loc, ValueRange{zero}, ValueRange{structure.size},
+        ValueRange{one}, ValueRange{none},
+        [&](OpBuilder &body, Location, ValueRange ivs, ValueRange) {
+          Value now = loadElement(body, loc, positions, ivs[0]);
+          Value then = loadElement(body, loc, structure.reference, ivs[0]);
+          Value moved = arith::SubFOp::create(body, loc, now, then);
+          Value squares = arith::MulFOp::create(body, loc, moved, moved);
+          Value distance2 = vector::ReductionOp::create(
+              body, loc, vector::CombiningKind::ADD, squares);
+          createReduction(body, loc, {distance2}, /*isSum=*/false);
+        });
+    Value limit = createReal(builder, loc, real, 0.25 * skin * skin);
+    near = arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::OLE,
+                                 farthest.getResult(0), limit);
+  }
+  valid = arith::AndIOp::create(builder, loc, valid, near);
+
   Value stale = arith::XOrIOp::create(builder, loc, valid, yes);
 
   LogicalResult status = success();
@@ -475,6 +504,16 @@ LogicalResult Lowering::lowerOp(Operation *op) {
   } else if (auto refresh = dyn_cast<md_exec::RefreshNeighborsOp>(op)) {
     if (failed(lowerRefreshNeighbors(refresh)))
       return failure();
+  } else if (auto reference = dyn_cast<md_exec::ReferencePositionsOp>(op)) {
+    Neighbors structure;
+    if (failed(getNeighbors(op, reference.getNeighbors(), structure)))
+      return failure();
+    if (reference.getResult().getType() != structure.reference.getType())
+      return op->emitOpError()
+             << "the structure holds the positions in "
+             << structure.reference.getType() << ", not in "
+             << reference.getResult().getType();
+    reference.getResult().replaceAllUsesWith(structure.reference);
   } else if (auto reset = dyn_cast<md_exec::ResetNeighborsOp>(op)) {
     Neighbors structure;
     if (failed(getNeighbors(op, reset.getNeighbors(), structure)))

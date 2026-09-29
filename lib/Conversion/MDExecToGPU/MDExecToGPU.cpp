@@ -71,6 +71,15 @@ struct Cell {
   Value host;
 };
 
+/// A flag that the threads of a kernel set: one value on the device, the
+/// buffer of the host that it is copied to, and a buffer of the host that
+/// holds the value of a flag that is not set.
+struct Flag {
+  Value device;
+  Value host;
+  Value clear;
+};
+
 class Lowering {
 public:
   Lowering(ModuleOp module, int64_t blockSize)
@@ -124,6 +133,13 @@ private:
 
   Cell getCell(Type type, Location loc);
 
+  /// Flag number `number` of the function. It is not set where a kernel
+  /// begins that sets it: `readFlag` sees to that.
+  Flag getFlag(unsigned number, Location loc);
+
+  /// Returns whether `flag` is set, on the host, and leaves it not set.
+  Value readFlag(OpBuilder &builder, Location loc, const Flag &flag);
+
   /// Copies what `source` holds to `destination`.
   void createTransfer(OpBuilder &builder, Location loc, Value destination,
                       Value source);
@@ -155,6 +171,7 @@ private:
 
   llvm::DenseMap<Value, Neighbors> neighbors;
   llvm::DenseMap<Type, Cell> cells;
+  SmallVector<Flag, 2> flags;
   llvm::DenseSet<Type> templatesAdded;
 
   /// The ops that have been lowered, in the order of the program.
@@ -289,6 +306,46 @@ Cell Lowering::getCell(Type type, Location loc) {
   return cell;
 }
 
+Flag Lowering::getFlag(unsigned number, Location loc) {
+  Block &entry = current.getBody().front();
+  OpBuilder builder(&entry, entry.begin());
+  Type narrow = builder.getI32Type();
+  while (flags.size() <= number) {
+    // Allocated once, where the function begins, and not set.
+    Flag flag;
+    flag.device = createDeviceBuffer(builder, loc,
+                                     getDeviceType({1}, narrow), ValueRange());
+    flag.host =
+        memref::AllocaOp::create(builder, loc, MemRefType::get({1}, narrow));
+    flag.clear =
+        memref::AllocaOp::create(builder, loc, MemRefType::get({1}, narrow));
+    Value zero = arith::ConstantOp::create(builder, loc, narrow,
+                                           builder.getI32IntegerAttr(0));
+    memref::StoreOp::create(builder, loc, zero, flag.clear,
+                            ValueRange{createIndex(builder, loc, 0)});
+    createTransfer(builder, loc, flag.device, flag.clear);
+    flags.push_back(flag);
+  }
+  return flags[number];
+}
+
+Value Lowering::readFlag(OpBuilder &builder, Location loc,
+                         const Flag &flag) {
+  createTransfer(builder, loc, flag.host, flag.device);
+  Value value = memref::LoadOp::create(
+      builder, loc, flag.host, ValueRange{createIndex(builder, loc, 0)});
+  Value zero = arith::ConstantOp::create(builder, loc, value.getType(),
+                                         builder.getI32IntegerAttr(0));
+  Value isSet = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ne,
+                                      value, zero);
+  // Few kernels set the flag, so it is cleared only where it was set.
+  scf::IfOp::create(builder, loc, isSet, [&](OpBuilder &then, Location) {
+    createTransfer(then, loc, flag.device, flag.clear);
+    scf::YieldOp::create(then, loc);
+  });
+  return isSet;
+}
+
 Value Lowering::emitReduction(OpBuilder &builder, Location loc,
                               Value contributions, Value partial, Value size,
                               bool isSum) {
@@ -373,8 +430,19 @@ LogicalResult Lowering::finishSums(Operation *op, OpBuilder &builder,
 LogicalResult Lowering::lowerParticleFor(md_exec::ParticleForOp op) {
   Location loc = op.getLoc();
   OpBuilder builder(op);
-  if (failed(checkScratch(op, op.getReduce().size(), op.getScratch().size())))
+
+  // A value in `reduce` is a sum, which takes two buffers, or tells whether
+  // the kernel yields true for any particle, which takes a flag.
+  SmallVector<int> places;
+  unsigned numSums = 0, numFlags = 0;
+  for (Value value : op.getReduce())
+    places.push_back(value.getType().isInteger(1) ? -int(++numFlags)
+                                                  : int(numSums++));
+  if (failed(checkScratch(op, numSums, op.getScratch().size())))
     return failure();
+  SmallVector<Flag, 2> used;
+  for (unsigned i = 0; i != numFlags; ++i)
+    used.push_back(getFlag(i, loc));
 
   Value size = createSize(builder, loc, op.getIns().empty()
                                             ? op.getOuts().front()
@@ -383,11 +451,41 @@ LogicalResult Lowering::lowerParticleFor(md_exec::ParticleForOp op) {
     IRMapping local;
     SmallVector<Value> contributions =
         emitParticleKernel(body, op, particle, local);
-    for (auto [index, value] : llvm::enumerate(contributions))
-      memref::StoreOp::create(body, loc, value, op.getScratch()[2 * index],
-                              ValueRange{particle});
+    for (auto [index, value] : llvm::enumerate(contributions)) {
+      int place = places[index];
+      if (place >= 0) {
+        memref::StoreOp::create(body, loc, value, op.getScratch()[2 * place],
+                                ValueRange{particle});
+        continue;
+      }
+      // Every thread that writes the flag writes the same value, so the
+      // threads need not take turns.
+      Value device = used[-place - 1].device;
+      scf::IfOp::create(body, loc, value, [&](OpBuilder &then, Location) {
+        Value set = arith::ConstantOp::create(then, loc, then.getI32Type(),
+                                              then.getI32IntegerAttr(1));
+        memref::StoreOp::create(then, loc, set, device,
+                                ValueRange{createIndex(then, loc, 0)});
+        scf::YieldOp::create(then, loc);
+      });
+    }
   });
-  return finishSums(op, builder, op.getReduce(), op.getScratch(), size);
+
+  for (auto [index, start] : llvm::enumerate(op.getReduce())) {
+    int place = places[index];
+    Value total;
+    if (place >= 0) {
+      Value sum =
+          emitReduction(builder, loc, op.getScratch()[2 * place],
+                        op.getScratch()[2 * place + 1], size, /*isSum=*/true);
+      total = arith::AddFOp::create(builder, loc, start, sum);
+    } else {
+      Value isSet = readFlag(builder, loc, used[-place - 1]);
+      total = arith::OrIOp::create(builder, loc, start, isSet);
+    }
+    op.getResult(index).replaceAllUsesWith(total);
+  }
+  return success();
 }
 
 LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
@@ -594,7 +692,8 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
     return emitBuild(builder, loc, structure, positions, box, reach,
                      cellWidth);
 
-  if (op.getScratch().size() != 2)
+  Value moved = op.getMoved();
+  if (!moved && op.getScratch().size() != 2)
     return op.emitOpError()
            << "needs 2 buffers in 'scratch' for the test of validity; run "
               "'md-exec-assign-storage' with 'memory=device'";
@@ -615,28 +714,35 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
 
   // Before the first build the configuration that the test compares with
   // holds nothing. The result of the test then does not count.
-  Value moved2 = op.getScratch()[0];
-  launchOver(builder, loc, structure.size,
-             [&](OpBuilder &body, Value particle) {
-               Value now = loadElement(body, loc, positions, particle);
-               Value then =
-                   loadElement(body, loc, structure.reference, particle);
-               Value moved = arith::SubFOp::create(body, loc, now, then);
-               Value squares = arith::MulFOp::create(body, loc, moved, moved);
-               Value distance2 = vector::ReductionOp::create(
-                   body, loc, vector::CombiningKind::ADD, squares);
-               memref::StoreOp::create(body, loc, distance2, moved2,
-                                       ValueRange{particle});
-             });
-  Value farthest = emitReduction(builder, loc, moved2, op.getScratch()[1],
-                                 structure.size, /*isSum=*/false);
-  Value limit = createReal(builder, loc, real, 0.25 * skin * skin);
-  Value near = arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::OLE,
-                                     farthest, limit);
-  valid = arith::AndIOp::create(builder, loc, valid, near);
-
   Value yes = arith::ConstantOp::create(builder, loc, builder.getI1Type(),
                                         builder.getBoolAttr(true));
+  Value near;
+  if (moved) {
+    // A loop has made the test.
+    near = arith::XOrIOp::create(builder, loc, moved, yes);
+  } else {
+    Value moved2 = op.getScratch()[0];
+    launchOver(builder, loc, structure.size,
+               [&](OpBuilder &body, Value particle) {
+                 Value now = loadElement(body, loc, positions, particle);
+                 Value then =
+                     loadElement(body, loc, structure.reference, particle);
+                 Value change = arith::SubFOp::create(body, loc, now, then);
+                 Value squares =
+                     arith::MulFOp::create(body, loc, change, change);
+                 Value distance2 = vector::ReductionOp::create(
+                     body, loc, vector::CombiningKind::ADD, squares);
+                 memref::StoreOp::create(body, loc, distance2, moved2,
+                                         ValueRange{particle});
+               });
+    Value farthest = emitReduction(builder, loc, moved2, op.getScratch()[1],
+                                   structure.size, /*isSum=*/false);
+    Value limit = createReal(builder, loc, real, 0.25 * skin * skin);
+    near = arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::OLE,
+                                 farthest, limit);
+  }
+  valid = arith::AndIOp::create(builder, loc, valid, near);
+
   Value stale = arith::XOrIOp::create(builder, loc, valid, yes);
 
   LogicalResult status = success();
@@ -690,6 +796,16 @@ LogicalResult Lowering::lowerOp(Operation *op) {
   } else if (auto refresh = dyn_cast<md_exec::RefreshNeighborsOp>(op)) {
     if (failed(lowerRefreshNeighbors(refresh)))
       return failure();
+  } else if (auto reference = dyn_cast<md_exec::ReferencePositionsOp>(op)) {
+    Neighbors structure;
+    if (failed(getNeighbors(op, reference.getNeighbors(), structure)))
+      return failure();
+    if (reference.getResult().getType() != structure.reference.getType())
+      return op->emitOpError()
+             << "the structure holds the positions in "
+             << structure.reference.getType() << ", not in "
+             << reference.getResult().getType();
+    reference.getResult().replaceAllUsesWith(structure.reference);
   } else if (auto reset = dyn_cast<md_exec::ResetNeighborsOp>(op)) {
     Neighbors structure;
     if (failed(getNeighbors(op, reset.getNeighbors(), structure)))
@@ -772,6 +888,7 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
 
   current = function;
   cells.clear();
+  flags.clear();
 
   SmallVector<Operation *> ops;
   function.walk<WalkOrder::PreOrder>([&](Operation *op) {

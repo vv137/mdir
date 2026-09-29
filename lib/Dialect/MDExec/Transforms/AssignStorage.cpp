@@ -462,17 +462,21 @@ LogicalResult Assignment::convertParticleFor(ParticleForOp op, Scope &scope,
     outs.push_back(buffer);
   }
 
+  // A sum needs buffers on a device. A value that tells whether the kernel
+  // yields true for any particle does not.
   SmallVector<Value> reduce;
-  SmallVector<Type> resultTypes;
+  SmallVector<Type> resultTypes, sums;
   for (Value value : op.getReduce()) {
     reduce.push_back(mapping.lookup(value));
     resultTypes.push_back(value.getType());
+    if (!value.getType().isInteger(1))
+      sums.push_back(value.getType());
   }
 
   Type anyField = op.getIns().empty() ? op.getOuts().front().getType()
                                       : op.getIns().front().getType();
   SmallVector<Value> scratch;
-  if (failed(getScratch(op, resultTypes, anyField, scope, scratch)))
+  if (failed(getScratch(op, sums, anyField, scope, scratch)))
     return failure();
 
   auto loop = ParticleForOp::create(scope.builder, op.getLoc(), resultTypes,
@@ -594,7 +598,8 @@ LogicalResult Assignment::convertBuildNeighbors(BuildNeighborsOp op,
   auto refresh = RefreshNeighborsOp::create(
       scope.builder, loc, storage.getType(), storage, positions,
       mapping.lookup(op.getCell()), /*scratch=*/ValueRange(),
-      op.getCutoffAttr(), op.getSkinAttr(), cells.getWidthAttr());
+      /*moved=*/Value(), op.getCutoffAttr(), op.getSkinAttr(),
+      cells.getWidthAttr());
   refresh.setPolicy(RebuildPolicy::Always);
   neighbors[op.getResult()] = refresh.getResult();
   return success();
@@ -620,9 +625,11 @@ LogicalResult Assignment::convertRefreshNeighbors(RefreshNeighborsOp op,
   if (failed(getBuffer(op.getPositions(), scope, positions)))
     return failure();
 
-  // The test of validity is a global maximum.
+  // The test of validity is a global maximum, unless a loop has made the
+  // test already.
+  Value moved = op.getMoved() ? mapping.lookup(op.getMoved()) : Value();
   SmallVector<Value> scratch;
-  if (op.getPolicy() == RebuildPolicy::Check) {
+  if (op.getPolicy() == RebuildPolicy::Check && !moved) {
     auto field = cast<md::FieldType>(op.getPositions().getType());
     if (failed(getScratch(op, {field.getElementType()}, field, scope,
                           scratch)))
@@ -631,7 +638,7 @@ LogicalResult Assignment::convertRefreshNeighbors(RefreshNeighborsOp op,
 
   auto refresh = RefreshNeighborsOp::create(
       scope.builder, op.getLoc(), storage.getType(), storage, positions,
-      mapping.lookup(op.getCell()), scratch, op.getCutoffAttr(),
+      mapping.lookup(op.getCell()), scratch, moved, op.getCutoffAttr(),
       op.getSkinAttr(), op.getCellWidthAttr(), op.getPolicyAttr());
   neighbors[op.getResult()] = refresh.getResult();
   for (Value buffer : scratch)
@@ -930,6 +937,21 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
   if (auto empty = dyn_cast<EmptyNeighborsOp>(op)) {
     if (empty.isStorageForm())
       return op->emitOpError() << "is in the storage form already";
+    return success();
+  }
+
+  if (auto reference = dyn_cast<ReferencePositionsOp>(op)) {
+    if (reference.isStorageForm())
+      return op->emitOpError() << "is in the storage form already";
+    // The buffer belongs to the structure, not to the region: no loop may
+    // take it over for what it writes.
+    Type field = reference.getResult().getType();
+    Value storage;
+    if (failed(getNeighbors(op, reference.getNeighbors(), field, scope,
+                            storage)))
+      return failure();
+    buffers[reference.getResult()] = ReferencePositionsOp::create(
+        builder, op->getLoc(), getStorageType(field), storage);
     return success();
   }
 

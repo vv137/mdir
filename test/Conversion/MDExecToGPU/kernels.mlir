@@ -149,6 +149,64 @@ func.func @steps(%v: memref<?x3xf64, 1>, %steps: index) {
   return
 }
 
+// A loop that tells whether the kernel yields true for any particle: a
+// thread that yields true sets a flag on the device, and the others write
+// nothing. The flag is not set when the function begins, and the host
+// clears it where it finds it set. The refresh launches no kernel for its
+// test.
+//
+// CHECK-LABEL: func.func @validity(
+// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64, 1>, %[[V:[a-z0-9]+]]: memref<?x3xf64, 1>,
+// CHECK:         %[[FLAG:[a-z0-9_]+]] = gpu.alloc () : memref<1xi32, 1>
+// CHECK:         %[[HOST:[a-z0-9_]+]] = memref.alloca() : memref<1xi32>
+// CHECK:         %[[CLEAR:[a-z0-9_]+]] = memref.alloca() : memref<1xi32>
+// CHECK:         memref.store %{{[a-z0-9_]+}}, %[[CLEAR]][
+// CHECK:         gpu.memcpy async [%{{[0-9]+}}] %[[FLAG]], %[[CLEAR]]
+// CHECK:         %[[REFERENCE:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?x3xf64, 1>
+// CHECK:         gpu.launch
+// CHECK:           memref.load %[[REFERENCE]][
+// CHECK:           %[[FAR:[0-9]+]] = arith.cmpf ugt,
+// CHECK:           memref.store %{{[0-9]+}}, %[[X]][
+// CHECK:           scf.if %[[FAR]] {
+// CHECK:             memref.store %{{[a-z0-9_]+}}, %[[FLAG]][
+// CHECK:           gpu.terminator
+// CHECK:         gpu.memcpy async [%{{[0-9]+}}] %[[HOST]], %[[FLAG]]
+// CHECK:         %[[VALUE:[0-9]+]] = memref.load %[[HOST]][
+// CHECK:         %[[SET:[0-9]+]] = arith.cmpi ne, %[[VALUE]],
+// CHECK:         scf.if %[[SET]] {
+// CHECK:           gpu.memcpy async [%{{[0-9]+}}] %[[FLAG]], %[[CLEAR]]
+// CHECK:         %[[MOVED:[0-9]+]] = arith.ori %{{[a-z0-9_]+}}, %[[SET]]
+// CHECK-NOT:     gpu.launch
+// CHECK:         %[[NEAR:[0-9]+]] = arith.xori %[[MOVED]],
+// CHECK:         scf.if
+// CHECK:           call @mdrt_gpu_build_neighbors_matrix(
+
+func.func @validity(%x: memref<?x3xf64, 1>, %v: memref<?x3xf64, 1>,
+                    %cell: !md.cell, %n: index) {
+  %nl = md_exec.empty_neighbors size(%n) positions(memref<?x3xf64, 1>)
+      kind(matrix) width(48) : !mdrt.neighbors<@atoms>
+  %ref = md_exec.reference_positions %nl
+      : !mdrt.neighbors<@atoms> -> memref<?x3xf64, 1>
+  %no = arith.constant false
+  %moved = md_exec.particle_for
+      ins(%x, %v, %ref
+          : memref<?x3xf64, 1>, memref<?x3xf64, 1>, memref<?x3xf64, 1>)
+      outs(%x : memref<?x3xf64, 1>) reduce(%no : i1) {
+  ^bb0(%x_i: vector<3xf64>, %v_i: vector<3xf64>, %r_i: vector<3xf64>):
+    %xn = arith.addf %x_i, %v_i : vector<3xf64>
+    %d = arith.subf %xn, %r_i : vector<3xf64>
+    %sq = arith.mulf %d, %d : vector<3xf64>
+    %d2 = vector.reduction <add>, %sq : vector<3xf64> into f64
+    %limit = arith.constant 0.015625 : f64
+    %far = arith.cmpf ugt, %d2, %limit : f64
+    md_exec.yield %xn, %far : vector<3xf64>, i1
+  } -> i1
+  %nl1 = md_exec.refresh_neighbors %nl, %x, %cell moved(%moved)
+      cutoff(1.5) skin(0.25) cell_width(1.75) policy(check)
+      : !mdrt.neighbors<@atoms>, memref<?x3xf64, 1>
+  return
+}
+
 // The template for devices is in the module.
 //
 // CHECK: func.func private @mdrt_gpu_build_neighbors_matrix(

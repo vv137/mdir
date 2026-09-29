@@ -209,7 +209,8 @@ static Value continueIn(Source source, Value current) {
     Value refreshed = RefreshNeighborsOp::create(
         builder, build.getLoc(), current.getType(), current,
         build.getPositions(), build.getCell(), /*scratch=*/ValueRange(),
-        build.getCutoffAttr(), build.getSkinAttr(), cells.getWidthAttr());
+        /*moved=*/Value(), build.getCutoffAttr(), build.getSkinAttr(),
+        cells.getWidthAttr());
     build.getResult().replaceAllUsesWith(refreshed);
     build.erase();
     if (cells.use_empty())

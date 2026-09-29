@@ -1,6 +1,6 @@
 # MDIR Op Specification, Milestone M0
 
-Status: draft 13 (2026-09-29). Everything in this document is implemented,
+Status: draft 14 (2026-09-29). Everything in this document is implemented,
 except where a section says otherwise. A Lennard-Jones system runs end to
 end in single, mixed, and double precision, on the CPU sequentially and
 with OpenMP, and on NVIDIA GPUs.
@@ -23,6 +23,7 @@ Operand lists, result lists, and the mathematical definitions are normative.
 | Lowering of the storage form to GPU kernels (Section 10.8) | Implemented as the pass `convert-md-exec-to-gpu`, for NVIDIA |
 | Fusion of loops over pairs and of loops over particles (Section 9.4) | Implemented as the pass `md-exec-fuse-loops` |
 | Powers of the squared distance (Section 9.5) | Implemented as the pass `md-exec-simplify-distance` |
+| The test of validity as a loop over particles (Section 9.6) | Implemented as the pass `md-exec-expose-validity` |
 | Precision policy (Section 7) | Implemented as the pass `md-exec-assign-precision` |
 
 It follows the accepted decisions in [decisions.md](decisions.md). Tags such
@@ -885,6 +886,7 @@ double mode (Section 10.9).
 | `md_exec.build_neighbors` | Builds a physical neighbor structure. |
 | `md_exec.empty_neighbors` | A neighbor structure that is valid for no configuration. |
 | `md_exec.refresh_neighbors` | Returns a neighbor structure that is valid for a configuration, building one only if the one given is not. |
+| `md_exec.reference_positions` | The configuration that a neighbor structure was built at. |
 | `md_exec.rebuild_count` | The number of times a neighbor structure has been built. |
 | `md_exec.zeros`, `md_exec.empty` | Destinations of loops. |
 | `md_exec.pair_for` | Runs a kernel over the pairs of a neighbor structure. |
@@ -972,6 +974,26 @@ of the cells, and the kind and width of the structure.
 
 `check` is the default. `interval` must be selected explicitly.
 
+**Who makes the test.** A refresh with the policy `check` makes the test
+itself, unless it is given the result as `moved`:
+
+```mlir
+%ref   = md_exec.reference_positions %nl : !mdrt.neighbors<@atoms> -> !vec
+%moved = md_exec.particle_for ins(%x1, %ref : !vec, !vec)
+           reduce(%false : i1) {
+^bb0(%x_i: vector<3xf64>, %ref_i: vector<3xf64>):
+  ...   // |x_i − ref_i|² > (skin / 2)²
+  md_exec.yield %far : i1
+} -> i1
+%nl1   = md_exec.refresh_neighbors %nl, %x1, %cell moved(%moved)
+           cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
+           : !mdrt.neighbors<@atoms>, !vec
+```
+
+`md_exec.reference_positions` returns `x_ref`. For a structure that has not
+been built its values are unspecified; the refresh builds such a structure
+whatever `moved` says. Section 9.6 has the reasons for this form.
+
 With `interval`, the maximum displacement since the previous rebuild is
 measured at each rebuild, and violations are counted and reported (A11). A
 violation means that pairs may have been missed in earlier steps. That cannot
@@ -1035,8 +1057,12 @@ with one difference: a field in `outs` is written, not accumulated into.
 
 ```text
 b_i = k_b(i)                 for every field in outs
-S   = S0 + Σ_i k_S(i)        for every value in reduce
+S   = S0 + Σ_i k_S(i)        for every number or vector in reduce
+A   = A0 or any_i k_A(i)     for every value of the type i1 in reduce
 ```
+
+A value of the type `i1` in `reduce` tells whether the kernel yields true
+for any particle. `md_exec.pair_for` has sums only.
 
 `md_exec.zeros` and `md_exec.empty` provide destinations: a field of zeros
 for a loop that accumulates, and a field with unspecified values for a loop
@@ -1245,6 +1271,38 @@ The pass reassociates floating-point arithmetic. Results change in their
 last bits, so the pass is not part of the reference semantics (B2) and must
 not be run in the deterministic mode.
 
+### 9.6 The test of validity (D41)
+
+A neighbor structure is valid while no particle has moved more than half
+the skin since the structure was built (Section 8.2). The test is needed in
+every step.
+
+As a global maximum of the displacements the test is a loop of its own
+and, on a device, three kernels: the displacements, the maxima of chunks,
+and the maximum of those. Nothing needs the maximum. The refresh needs to
+know whether one particle is beyond the limit.
+
+The pass `md-exec-expose-validity` makes the test a loop over particles
+that yields, for each particle, whether it is beyond the limit
+(Section 8.2). `md-exec-fuse-loops` then fuses it with the loop that writes
+the positions, the drift. The thread that moves a particle tests it.
+
+| | Global maximum | Test in the drift |
+|---|---|---|
+| Work for a particle | The displacement, in a loop of its own | The displacement, where the position is written |
+| Combining | A reduction over all particles | None. A thread whose particle is beyond the limit sets a flag; the others write nothing. |
+| Kernels in a step of velocity Verlet on a device | 6 | 3: kick, drift, and test; forces; kick |
+| What the host reads in a step | One number | One flag |
+| Steps in which the structure is built | | The same |
+
+The host still reads one value in every step, because it decides whether
+to build. The read is a copy of four bytes. The host waits there for the
+device, but the device does not wait for the host: the kernels of the
+step are queued behind one another.
+
+A refresh of a structure that is empty where the refresh is builds it
+whatever has moved. The pass gives it the policy `always`.
+
 ## 10. Storage assignment
 
 Storage assignment gives every field a buffer. The pass
@@ -1397,8 +1455,10 @@ of the upstream `gpu` dialect.
 |---|---|
 | `md_exec.particle_for`, `md_exec.pair_for` | One kernel with one thread per particle, in blocks of 128 threads. With the policy `owner_only` a thread writes only to its own particle, so the kernel needs no atomic operation. |
 | A global sum | The kernel stores the contribution of each particle. A second kernel adds up chunks of 256 particles, a third adds up the results of the chunks, and the host reads the one number that results. |
+| A value that tells whether the kernel yields true for any particle | A flag on the device. A thread that yields true sets it. Every thread that writes it writes the same value, so the threads need not take turns. The host reads the flag after the kernel and clears it where it was set. |
+| `md_exec.reference_positions` | The buffer of the structure that holds the positions |
 | `md_exec.empty_neighbors` | The buffers of a neighbor matrix on the device. The flag and the count of builds are on the host. |
-| `md_exec.refresh_neighbors` | The test of validity, with the largest displacement as a global maximum, and where it fails a call to the neighbor build template for devices |
+| `md_exec.refresh_neighbors` | Where the structure is not valid, a call to the neighbor build template for devices. Without `moved`, the test of validity before it, with the largest displacement as a global maximum. |
 | A cell | `vector<3xf64>`. A kernel takes numbers and buffers as arguments, so a vector from outside enters a kernel as its elements. |
 | A constant | A constant of the kernel, not an argument. A power whose exponent is an argument would be a loop. |
 | A loop of the host | The loop releases, at the end of every iteration, the stack that the iteration has taken. The lowering of a launch puts the arguments on the stack where the launch is; in a loop over steps the stack would grow until it overflows. |
@@ -1455,13 +1515,23 @@ rebuilds and excludes the start of the program.
 
 | Particles | 1 thread | 16 threads | GPU, double | GPU, mixed |
 |---|---|---|---|---|
-| 4096 | 3.20 | 0.21 | 0.23 | 0.14 |
-| 32768 | 20.6 | 1.61 | 0.64 | 0.33 |
-| 110592 | 70.6 | 5.22 | 1.72 | 0.89 |
+| 216 | 0.128 | 0.0278 | 0.157 | 0.0661 |
+| 512 | 0.351 | 0.0387 | 0.156 | 0.0664 |
+| 1728 | 1.2 | 0.0873 | 0.16 | 0.0705 |
+| 4096 | 2.85 | 0.178 | 0.163 | 0.0726 |
+| 13824 | 8.6 | 0.614 | 0.296 | 0.115 |
+| 32768 | 20.2 | 1.41 | 0.53 | 0.209 |
+| 110592 | 69.6 | 4.67 | 1.36 | 0.57 |
+| 262144 |  | 10.4 | 3.01 | 1.06 |
 
 The host is a machine with 128 cores, the GPU an RTX 3090. The numbers are
 the least of three runs. On the GPU the precision matters: the mixed mode
-takes half the time of the double mode.
+takes less than half the time of the double mode.
+
+Below some thousand particles the time on the GPU does not depend on the
+number of particles: it is the time of the kernels of a step, each of
+which takes as long as its slowest thread. Below a thousand particles the
+host with 16 threads is faster.
 
 Starting the program on a GPU takes about one second, for the context of
 the driver and the compilation of the kernels.
@@ -1471,24 +1541,36 @@ the driver and the compilation of the kernels.
 With `MDRT_PROFILE` set, the runtime library for devices reports the
 number and the time of its calls when the program ends; with `MDRT_WAIT`
 set as well, the time of each kernel. For `examples/argon.toml` on the
-GPU in the mixed mode, 864 particles with 74 neighbors each, a step takes
-0.28 ms:
+GPU in the mixed mode, 864 particles with 74 neighbors each:
 
-| Kernel | Microseconds | Per step |
+| Kernel | Microseconds, before | Now |
 |---|---|---|
-| Kick and drift | 7 | 7 |
-| Test of validity: displacements, chunks, the maximum | 7, 24, 6 | 37 |
-| Forces | 156 | 156 |
+| Kick and drift | 7 | 8, with the test of validity |
+| Test of validity: displacements, chunks, the maximum | 7, 24, 6 | |
+| Forces | 165 | 95 |
 | Kick | 7 | 7 |
-| Neighbor build, all kernels | 1700 | 95, with a build every 18 steps |
-| Of these, kernel 6, the search | 1600 | |
+| Neighbor build, all kernels, for each step | 97 | 54 |
+| Of a build, kernel 6, the search | 1600 | 860 |
+| A step | 330 | 150 |
+
+A structure is built every 18 steps. "Before" is the state in which the
+loops over particles were fused already.
+
+| Change | Time of a step, in microseconds |
+|---|---|
+| | 330 |
+| The kick and the drift are one loop (Section 9.4). | 320 |
+| The host does not wait for every kernel, and a constant is a constant of the kernel (Section 10.8). | 280 |
+| The minimum image is found with a multiplication (D42). | 170 |
+| The test of validity is made in the drift (Section 9.6). | 150 |
 
 | Observation | Consequence |
 |---|---|
-| A kernel that does next to nothing takes 6 to 7 microseconds. | Every kernel that is saved saves that much. Fusion of the kick and the drift saved one. |
-| The time of a small system is the time of one thread, not of all. The kernel of the forces runs 864 threads at once; each visits its neighbors one after another, at 1.4 microseconds for a neighbor. | The time per step hardly depends on the number of particles until the device is full. A small system would need more than one thread per particle. |
-| The search of the build tests every particle of 27 cells. With 27 cells in all, that is every particle. | Cells of half the width, or a test in single precision, would shorten the build. |
-| The minimum image divides by the edge lengths, in double precision, three times for each neighbor. | A multiplication with the inverse, computed once, gives the same image for every pair within the cutoff. |
+| A kernel that does next to nothing takes 6 to 7 microseconds. | Every kernel that is saved saves that much. |
+| The time of a small system is the time of one thread, not of all. The kernel of the forces runs 864 threads at once; each visits its neighbors one after another, at 0.9 microseconds for a neighbor. | The time per step hardly depends on the number of particles until the device is full. A small system would need more than one thread per particle. |
+| The search of the build tests every particle of 27 cells. With 27 cells in all, that is every particle. | Cells of half the width would shorten the build. |
+| A division in double precision costs a thread of a device much more than a multiplication. | The minimum image took three divisions for each neighbor, and nearly half the time of the forces. |
+| The kick after the forces writes to the particle that the thread of the forces has. | The two can be one kernel. A step then has two. |
 
 ## 11. Requirements on `mdrt`
 

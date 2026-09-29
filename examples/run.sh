@@ -55,7 +55,8 @@ fi
 "$MDIR_BUILD/bin/mdir-opt" "$INPUT" \
     --md-check-exchange --md-differentiate --md-expand-truncation \
     --md-inline --convert-md-to-md-exec="skin=$SKIN width=$WIDTH" \
-    --md-exec-reuse-neighbors --md-exec-fuse-loops --canonicalize --cse \
+    --md-exec-reuse-neighbors --md-exec-expose-validity \
+    --md-exec-fuse-loops --canonicalize --cse \
     --md-exec-assign-precision="mode=$MODE" $STORAGE \
   | "$LLVM_PREFIX/bin/mlir-opt" $LOWER \
   | "$LLVM_PREFIX/bin/mlir-runner" -O3 -e main --entry-point-result=void \

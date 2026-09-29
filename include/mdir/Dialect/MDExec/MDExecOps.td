@@ -204,7 +204,7 @@ def MDExec_EmptyNeighborsOp : MDExec_Op<"empty_neighbors", [
 }
 
 def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
-    AllTypesMatch<["neighbors", "result"]>,
+    AllTypesMatch<["neighbors", "result"]>, AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let summary = "A neighbor structure that is valid for a configuration";
@@ -243,12 +243,25 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
     `scratch` holds buffers that the op may use as it likes. What they hold
     before and after is unspecified. On a device the test of validity needs
     two, with one value of the type of the positions per particle.
+
+    With `moved`, the op does not test the displacements: `moved` tells
+    whether a particle has moved more than half the skin since the
+    structure was built. A loop over particles computes it from the
+    positions and from `md_exec.reference_positions`. The op then needs
+    nothing in `scratch`.
+
+    ```mlir
+    %nl1 = md_exec.refresh_neighbors %nl, %x, %cell moved(%moved)
+             cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
+             : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+    ```
   }];
   let arguments = (ins
     MDRT_NeighborsType:$neighbors,
     MDExec_FieldOrBuffer:$positions,
     MD_CellType:$cell,
     Variadic<MDExec_Buffer>:$scratch,
+    Optional<I1>:$moved,
     F64Attr:$cutoff,
     F64Attr:$skin,
     F64Attr:$cell_width,
@@ -259,6 +272,7 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
   let assemblyFormat = [{
     $neighbors `,` $positions `,` $cell
     (`scratch` `(` $scratch^ `:` type($scratch) `)`)?
+    (`moved` `(` $moved^ `)`)?
     `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
     `cell_width` `(` $cell_width `)` `policy` `(` $policy `)` attr-dict
     `:` qualified(type($neighbors)) `,` qualified(type($positions))
@@ -266,6 +280,53 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
   let extraClassDeclaration = [{
     bool isStorageForm() {
       return ::llvm::isa<::mlir::MemRefType>(getPositions().getType());
+    }
+  }];
+  let hasVerifier = 1;
+}
+
+def MDExec_ReferencePositionsOp : MDExec_Op<"reference_positions", [Pure]> {
+  let summary = "The configuration that a neighbor structure was built at";
+  let description = [{
+    Returns the positions `x_ref` that `neighbors` was built at. For a
+    structure that has not been built, the values are unspecified.
+
+    ```mlir
+    %ref = md_exec.reference_positions %nl
+             : !mdrt.neighbors<@atoms> -> !md.field<@atoms, 3 x f64>
+    ```
+
+    A loop over particles tests with them whether the structure is still
+    valid, and hands the result to `md_exec.refresh_neighbors` as `moved`:
+
+    ```mlir
+    %moved = md_exec.particle_for ins(%x, %ref : ...) reduce(%false : i1) {
+    ^bb0(%x_i: vector<3xf64>, %ref_i: vector<3xf64>):
+      ...   // |x_i − ref_i|² > (skin / 2)²
+      md_exec.yield %far : i1
+    } -> i1
+    ```
+
+    Such a loop can be fused with the loop that writes the positions. The
+    test then costs no loop of its own.
+
+    In the storage form the result is the buffer of the structure that
+    holds the positions. A refresh that builds the structure writes to it.
+
+    ```mlir
+    %ref = md_exec.reference_positions %nl
+             : !mdrt.neighbors<@atoms> -> memref<?x3xf64>
+    ```
+  }];
+  let arguments = (ins MDRT_NeighborsType:$neighbors);
+  let results = (outs MDExec_FieldOrBuffer:$result);
+  let assemblyFormat = [{
+    $neighbors attr-dict
+    `:` qualified(type($neighbors)) `->` qualified(type($result))
+  }];
+  let extraClassDeclaration = [{
+    bool isStorageForm() {
+      return ::llvm::isa<::mlir::MemRefType>(getResult().getType());
     }
   }];
   let hasVerifier = 1;
@@ -439,11 +500,16 @@ def MDExec_ParticleForOp : MDExec_Op<"particle_for", [
 
     ```text
     b_i = k_b(i)                 for every field in `outs`
-    S   = S0 + Σ_i k_S(i)        for every value in `reduce`
+    S   = S0 + Σ_i k_S(i)        for every number or vector in `reduce`
+    A   = A0 or any_i k_A(i)     for every value of the type i1 in `reduce`
     ```
 
     A field in `outs` is written, not accumulated into. Its old values are
     not read.
+
+    A value of the type `i1` in `reduce` tells whether the kernel yields
+    true for any particle. It needs nothing in `scratch`: on a device, a
+    thread that yields true sets a flag, and the others do nothing.
 
     The kernel receives one value for each field in `ins`. It yields one
     value for each field in `outs`, then one contribution for each value in

@@ -136,6 +136,73 @@ md.function @refresh(%x: !vec, %cell: !md.cell) -> i64 {
   md.return %builds : i64
 }
 
+// The test of validity as a loop over particles, which hands its result to
+// the refresh.
+//
+// CHECK-LABEL: func.func @moved(
+func.func @moved(%x: !vec, %cell: !md.cell, %nl: !mdrt.neighbors<@atoms>)
+    -> !mdrt.neighbors<@atoms> {
+  // CHECK: %[[REF:[0-9]+]] = md_exec.reference_positions %{{[a-z0-9]+}} : !mdrt.neighbors<@atoms> -> !md.field<@atoms, 3 x f64>
+  %ref = md_exec.reference_positions %nl
+      : !mdrt.neighbors<@atoms> -> !vec
+
+  %no = arith.constant false
+  // CHECK: %[[MOVED:[0-9]+]] = md_exec.particle_for
+  // CHECK-SAME: ins(%{{[a-z0-9]+}}, %[[REF]] : !md.field<@atoms, 3 x f64>, !md.field<@atoms, 3 x f64>)
+  // CHECK-SAME: reduce(%{{[a-z0-9_]+}} : i1) {
+  %moved = md_exec.particle_for ins(%x, %ref : !vec, !vec)
+      reduce(%no : i1) {
+  ^bb0(%x_i: vector<3xf64>, %ref_i: vector<3xf64>):
+    %limit = arith.constant 0.0225 : f64
+    %d = arith.subf %x_i, %ref_i : vector<3xf64>
+    %sq = arith.mulf %d, %d : vector<3xf64>
+    %d2 = vector.reduction <add>, %sq : vector<3xf64> into f64
+    %far = arith.cmpf ugt, %d2, %limit : f64
+    md_exec.yield %far : i1
+  // CHECK: } -> i1
+  } -> i1
+
+  // CHECK: md_exec.refresh_neighbors %{{[a-z0-9]+}}, %{{[a-z0-9]+}}, %{{[a-z0-9]+}} moved(%[[MOVED]])
+  // CHECK-SAME: cutoff(2.500000e+00) skin(3.000000e-01) cell_width(2.800000e+00) policy(check)
+  %nl1 = md_exec.refresh_neighbors %nl, %x, %cell moved(%moved)
+      cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
+      : !mdrt.neighbors<@atoms>, !vec
+  return %nl1 : !mdrt.neighbors<@atoms>
+}
+
+// The same in the storage form.
+//
+// CHECK-LABEL: func.func @moved_storage(
+func.func @moved_storage(%x: memref<?x3xf32>, %cell: !md.cell, %n: index) {
+  %nl = md_exec.empty_neighbors size(%n) positions(memref<?x3xf32>)
+      kind(matrix) width(96) : !mdrt.neighbors<@atoms>
+  // CHECK: %[[REF:[0-9]+]] = md_exec.reference_positions %{{[0-9]+}} : !mdrt.neighbors<@atoms> -> memref<?x3xf32>
+  %ref = md_exec.reference_positions %nl
+      : !mdrt.neighbors<@atoms> -> memref<?x3xf32>
+
+  %no = arith.constant false
+  // CHECK: %[[MOVED:[0-9]+]] = md_exec.particle_for
+  // CHECK-SAME: ins(%{{[a-z0-9]+}}, %[[REF]] : memref<?x3xf32>, memref<?x3xf32>)
+  // CHECK-SAME: reduce(%{{[a-z0-9_]+}} : i1) {
+  %moved = md_exec.particle_for
+      ins(%x, %ref : memref<?x3xf32>, memref<?x3xf32>) reduce(%no : i1) {
+  ^bb0(%x_i: vector<3xf32>, %ref_i: vector<3xf32>):
+    %limit = arith.constant 0.0225 : f32
+    %d = arith.subf %x_i, %ref_i : vector<3xf32>
+    %sq = arith.mulf %d, %d : vector<3xf32>
+    %d2 = vector.reduction <add>, %sq : vector<3xf32> into f32
+    %far = arith.cmpf ugt, %d2, %limit : f32
+    md_exec.yield %far : i1
+  } -> i1
+
+  // CHECK: md_exec.refresh_neighbors %{{[0-9]+}}, %{{[a-z0-9]+}}, %{{[a-z0-9]+}} moved(%[[MOVED]])
+  // CHECK-SAME: policy(check) : !mdrt.neighbors<@atoms>, memref<?x3xf32>
+  %nl1 = md_exec.refresh_neighbors %nl, %x, %cell moved(%moved)
+      cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
+      : !mdrt.neighbors<@atoms>, memref<?x3xf32>
+  return
+}
+
 // Fields and kernels in f32, as the precision policy assigns them. A buffer
 // states the type that a field is stored in.
 //

@@ -267,3 +267,52 @@ func.func @frames(%x: !vec, %step: i64) -> !vec {
   } -> !vec
   return %y : !vec
 }
+
+// The positions that a neighbor structure was built at are a buffer of the
+// structure. The loop that tests them writes the new positions where the
+// old ones were, not there.
+//
+// CHECK-LABEL: func.func @validity(
+// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64>, %[[V:[a-z0-9]+]]: memref<?x3xf64>,
+// CHECK:         %[[NL:[0-9]+]] = md_exec.empty_neighbors size(%{{[a-z0-9_]+}}) positions(memref<?x3xf64>)
+// CHECK:         scf.for
+// CHECK:           %[[REF:[0-9]+]] = md_exec.reference_positions %[[NL]] : !mdrt.neighbors<@atoms> -> memref<?x3xf64>
+// CHECK:           %[[MOVED:[0-9]+]] = md_exec.particle_for ins(%[[XA:[a-z0-9]+]], %[[V]], %[[REF]] :
+// CHECK-SAME:        outs(%[[XA]] : memref<?x3xf64>) reduce(%{{[a-z0-9_]+}} : i1) {
+// CHECK:           } -> i1
+// CHECK:           md_exec.refresh_neighbors %[[NL]], %[[XA]], %{{[a-z0-9]+}} moved(%[[MOVED]])
+// CHECK-SAME:        policy(check)
+
+func.func @validity(%xb: memref<?x3xf64>, %vb: memref<?x3xf64>,
+                  %cell: !md.cell, %n: index) -> memref<?x3xf64> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %x = mdrt.from_buffer %xb : memref<?x3xf64> to !vec
+  %v = mdrt.from_buffer %vb : memref<?x3xf64> to !vec
+  %nl0 = md_exec.empty_neighbors kind(matrix) width(48)
+      : !mdrt.neighbors<@atoms>
+  %xe, %nle = scf.for %step = %c0 to %n step %c1
+      iter_args(%xa = %x, %na = %nl0) -> (!vec, !mdrt.neighbors<@atoms>) {
+    %ref = md_exec.reference_positions %na
+        : !mdrt.neighbors<@atoms> -> !vec
+    %e = md_exec.empty : !vec
+    %no = arith.constant false
+    %x1, %moved = md_exec.particle_for ins(%xa, %v, %ref : !vec, !vec, !vec)
+        outs(%e : !vec) reduce(%no : i1) {
+    ^bb0(%x_i: vector<3xf64>, %v_i: vector<3xf64>, %r_i: vector<3xf64>):
+      %xn = arith.addf %x_i, %v_i : vector<3xf64>
+      %d = arith.subf %xn, %r_i : vector<3xf64>
+      %sq = arith.mulf %d, %d : vector<3xf64>
+      %d2 = vector.reduction <add>, %sq : vector<3xf64> into f64
+      %limit = arith.constant 0.015625 : f64
+      %far = arith.cmpf ugt, %d2, %limit : f64
+      md_exec.yield %xn, %far : vector<3xf64>, i1
+    } -> !vec, i1
+    %nb = md_exec.refresh_neighbors %na, %x1, %cell moved(%moved)
+        cutoff(1.5) skin(0.25) cell_width(1.75) policy(check)
+        : !mdrt.neighbors<@atoms>, !vec
+    scf.yield %x1, %nb : !vec, !mdrt.neighbors<@atoms>
+  }
+  %out = mdrt.to_buffer %xe : !vec to memref<?x3xf64>
+  return %out : memref<?x3xf64>
+}

@@ -176,3 +176,53 @@ func.func @carried(%x0: !vec, %v0: !vec, %kinds: !kinds, %cell: !md.cell,
   }
   return %x, %v : !vec, !vec
 }
+
+// A neighbor structure holds the positions that it was built at as the
+// positions are stored: here in f32, in every mode, because the buffer
+// says so. The result of the test has no floating-point type.
+//
+// CHECK-LABEL: func.func @validity(
+// CHECK:         %[[REF:[0-9]+]] = md_exec.reference_positions %{{[a-z0-9]+}} : !mdrt.neighbors<@atoms> -> !md.field<@atoms, 3 x f32>
+// CHECK:         md_exec.particle_for ins(%{{[a-z0-9]+}}, %{{[0-9]+}}, %[[REF]] :
+// CHECK-SAME:      reduce(%{{[a-z0-9_]+}} : i1)
+// CHECK-NEXT:    ^bb0(%{{[a-z0-9]+}}: vector<3xf32>, %{{[a-z0-9]+}}: vector<3xf32>, %{{[a-z0-9]+}}: vector<3xf32>):
+// SINGLE:          arith.cmpf ugt, %{{[0-9]+}}, %{{[a-z0-9_]+}} : f32
+// MIXED:           arith.cmpf ugt, %{{[0-9]+}}, %{{[a-z0-9_]+}} : f64
+// CHECK:         } -> !md.field<@atoms, 3 x f32>, i1
+// CHECK:         md_exec.refresh_neighbors %{{[a-z0-9]+}}, %{{[0-9]+}}#0, %{{[a-z0-9]+}} moved(%{{[0-9]+}}#1)
+// ACCUMULATOR-LABEL: func.func @validity(
+// ACCUMULATOR:   reduce(%{{[a-z0-9_]+}} : i1)
+
+func.func @validity(%xb: memref<?x3xf32>, %vb: memref<?x3xf32>,
+                  %cell: !md.cell, %n: index) -> memref<?x3xf32> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %x = mdrt.from_buffer %xb : memref<?x3xf32> to !vec
+  %v = mdrt.from_buffer %vb : memref<?x3xf32> to !vec
+  %nl0 = md_exec.empty_neighbors kind(matrix) width(48)
+      : !mdrt.neighbors<@atoms>
+  %xe, %nle = scf.for %step = %c0 to %n step %c1
+      iter_args(%xa = %x, %na = %nl0) -> (!vec, !mdrt.neighbors<@atoms>) {
+    %ref = md_exec.reference_positions %na
+        : !mdrt.neighbors<@atoms> -> !vec
+    %e = md_exec.empty : !vec
+    %no = arith.constant false
+    %x1, %moved = md_exec.particle_for ins(%xa, %v, %ref : !vec, !vec, !vec)
+        outs(%e : !vec) reduce(%no : i1) {
+    ^bb0(%x_i: vector<3xf64>, %v_i: vector<3xf64>, %r_i: vector<3xf64>):
+      %xn = arith.addf %x_i, %v_i : vector<3xf64>
+      %d = arith.subf %xn, %r_i : vector<3xf64>
+      %sq = arith.mulf %d, %d : vector<3xf64>
+      %d2 = vector.reduction <add>, %sq : vector<3xf64> into f64
+      %limit = arith.constant 0.015625 : f64
+      %far = arith.cmpf ugt, %d2, %limit : f64
+      md_exec.yield %xn, %far : vector<3xf64>, i1
+    } -> !vec, i1
+    %nb = md_exec.refresh_neighbors %na, %x1, %cell moved(%moved)
+        cutoff(1.5) skin(0.25) cell_width(1.75) policy(check)
+        : !mdrt.neighbors<@atoms>, !vec
+    scf.yield %x1, %nb : !vec, !mdrt.neighbors<@atoms>
+  }
+  %out = mdrt.to_buffer %xe : !vec to memref<?x3xf32>
+  return %out : memref<?x3xf32>
+}

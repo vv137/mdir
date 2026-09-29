@@ -80,4 +80,55 @@ func.func @forces(%x: memref<?x3xf64>, %f: memref<?x3xf64>, %cell: !md.cell,
   return %u, %builds : f64, i64
 }
 
+// A loop that tests the validity of a neighbor structure reads the
+// positions that the structure was built at from the buffer of the
+// structure. Threads combine what they find as integers of 32 bits. The
+// refresh makes no test of its own.
+//
+// CHECK-LABEL: func.func @validity(
+// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64>, %[[V:[a-z0-9]+]]: memref<?x3xf64>,
+// CHECK:         %[[REFERENCE:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?x3xf64>
+// CHECK:         %[[BOX:[a-z0-9_]+]] = memref.alloc() : memref<3xf64>
+// CHECK:         %[[START:[0-9]+]] = arith.extui %{{[a-z0-9_]+}} : i1 to i32
+// CHECK:         %[[ANY:[0-9]+]] = scf.parallel (%[[I:[a-z0-9]+]]) = (%{{[a-z0-9_]+}}) to (%{{[a-z0-9_]+}}) step (%{{[a-z0-9_]+}}) init (%[[START]]) -> i32 {
+// CHECK:           memref.load %[[REFERENCE]][%[[I]],
+// CHECK:           %[[FAR:[0-9]+]] = arith.cmpf ugt,
+// CHECK:           memref.store %{{[0-9]+}}, %[[X]][%[[I]],
+// CHECK:           %[[WIDE:[0-9]+]] = arith.extui %[[FAR]] : i1 to i32
+// CHECK:           scf.reduce(%[[WIDE]] : i32) {
+// CHECK:             arith.ori
+// CHECK:         %[[MOVED:[0-9]+]] = arith.cmpi ne, %[[ANY]], %{{[a-z0-9_]+}} : i32
+// CHECK-NOT:     scf.parallel
+// CHECK:         %[[NEAR:[0-9]+]] = arith.xori %[[MOVED]], %{{[a-z0-9_]+}} : i1
+// CHECK:         %[[VALID:[0-9]+]] = arith.andi %{{[0-9]+}}, %[[NEAR]]
+// CHECK:         %[[STALE:[0-9]+]] = arith.xori %[[VALID]],
+// CHECK:         scf.if %[[STALE]] {
+// CHECK:           call @mdrt.build_neighbors_matrix(
+
+func.func @validity(%x: memref<?x3xf64>, %v: memref<?x3xf64>,
+                    %cell: !md.cell, %n: index) {
+  %nl = md_exec.empty_neighbors size(%n) positions(memref<?x3xf64>)
+      kind(matrix) width(48) : !mdrt.neighbors<@atoms>
+  %ref = md_exec.reference_positions %nl
+      : !mdrt.neighbors<@atoms> -> memref<?x3xf64>
+  %no = arith.constant false
+  %moved = md_exec.particle_for
+      ins(%x, %v, %ref
+          : memref<?x3xf64>, memref<?x3xf64>, memref<?x3xf64>)
+      outs(%x : memref<?x3xf64>) reduce(%no : i1) {
+  ^bb0(%x_i: vector<3xf64>, %v_i: vector<3xf64>, %r_i: vector<3xf64>):
+    %xn = arith.addf %x_i, %v_i : vector<3xf64>
+    %d = arith.subf %xn, %r_i : vector<3xf64>
+    %sq = arith.mulf %d, %d : vector<3xf64>
+    %d2 = vector.reduction <add>, %sq : vector<3xf64> into f64
+    %limit = arith.constant 0.015625 : f64
+    %far = arith.cmpf ugt, %d2, %limit : f64
+    md_exec.yield %xn, %far : vector<3xf64>, i1
+  } -> i1
+  %nl1 = md_exec.refresh_neighbors %nl, %x, %cell moved(%moved)
+      cutoff(1.5) skin(0.25) cell_width(1.75) policy(check)
+      : !mdrt.neighbors<@atoms>, memref<?x3xf64>
+  return
+}
+
 // CHECK-NOT: md.particle_set

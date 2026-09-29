@@ -301,6 +301,8 @@ P11 to P18 follow from the review of PPMD (Saunders et al. 2018). See
 | D38 | **The control file is parsed with toml++**, which is added to the repository under `third_party`. |
 | D39 | **The schedule of a run is compiled.** The driver builds one function with a loop for each period of output, and the code calls the host to write. A field that the host reads is passed with `mdrt.host_call`; it stays where it is. The loop over checkpoint intervals is marked as a segment, and neighbor structures start empty in each of its iterations (R1). |
 | D40 | **A checkpoint holds the state as the next step needs it**: positions and velocities, and with velocity Verlet the forces. What MDIR needs beside the state is in the group `/parameters/mdir`. HDF5 1.14.6 is the pinned release; the releases from 2.0 on need a newer CMake than the machine has. |
+| D41 | **The test of validity of a neighbor structure is made where the positions are written.** Each thread of the drift tests the particle that it has moved, and a thread whose particle has moved more than half the skin sets a flag. There is no global maximum of the displacements: the refresh needs to know whether one particle is beyond the limit, not how far the farthest has moved. The criterion is unchanged, so the structure is built in the same steps. See Section 5.6 for what else was considered. |
+| D42 | **The minimum image is found with a multiplication** by one over the edge lengths, which is computed once. The number of images is a whole number, so the displacement of a pair differs from that of a division only if the pair is within rounding of half an edge apart, which is beyond every cutoff. |
 
 ### 5.1 Amendments to earlier decisions
 
@@ -364,6 +366,23 @@ B1 to B3 and B5 to B10 come from an external review of draft 1.
 |---|---|
 | V1 | **No reference interpreter.** Validation rests on three things instead: tests that run single kernels against closed-form values; tests that run whole programs against scripts that evaluate all pairs; and, from M1 on, comparison of energies and forces with an established MD engine. An interpreter is reconsidered if a class of errors shows up that these do not catch. This withdraws the interpreter from D23 and from the validation plan of the M0 specification. |
 
+### 5.6 Keeping neighbor structures valid
+
+D41 keeps one structure for the whole system and the criterion of
+Section 8.2 of the M0 specification. These schemes were considered with
+it.
+
+| Scheme | Assessment | State |
+|---|---|---|
+| A flag that the threads of the integrator set, in place of a global maximum | No reduction, and no kernel for the test. The result is the same. | Adopted (D41) |
+| The decision to build on the device, so that the host reads nothing in a step | The host reads four bytes in a step and waits for the device there. The device does not wait for the host, because the kernels of the step are queued. What could be saved is the copy, a few microseconds. | Not planned |
+| A test every n steps, with a reserve in the skin | The reserve is an assumption about velocities. It is the policy `interval` with the diagnostic of A11. | The policy is planned; it stays off by default |
+| Lists for pairs of cells, each with a test of its own, rebuilt where they fail | In a liquid the displacements are alike everywhere, and the gain is that of a maximum over fewer particles. By an estimate from the statistics of the largest of n displacements, which was not measured, that is nothing for a small system and at most a factor of two in the time between builds for a million particles. A row of a list is then valid since a time of its own, which a checkpoint would have to hold for a run to continue exactly (R1). Of interest for systems with a fast region, and with domain decomposition. | Open, for M2 |
+| A second list that is built while the first is in use | On one device the build and the forces compete for the same device. The list in use needs a reserve in the skin. | Not planned |
+| A prediction of the step in which the structure fails, from bounds on velocities | With the test in the drift, a step without a test saves nothing. | Not needed |
+| A skin that is tuned during the run for the shortest time per step | The skin is a plan parameter that decides correctness in no way and speed much. The driver can measure the time of the forces and of the builds. | Open, for M1 |
+| No list: a search of the cells in every evaluation of the forces | A search visits 27 cells, which hold 6 times the particles that a list holds for the same reach. Of interest for cutoffs that differ much between particles. | Not planned |
+
 ## 7. Not yet designed
 
 These items follow from the decisions above but have no design yet.
@@ -382,6 +401,9 @@ These items follow from the decisions above but have no design yet.
 | Vectorization of loops over pairs across pairs | M0 | Without it, single precision is no faster than double on the CPU |
 | Fusion of loops over the same neighbor structure | M0 | Implemented |
 | Fusion of loops over particles | M0 | Implemented |
+| The test of validity in the loop that writes the positions (D41) | M0 | Implemented: `md-exec-expose-validity` |
+| Fusion of the loop over pairs with the kick that follows it | M0 | |
+| A skin that is tuned during the run | M1 | |
 | Removal of the square root from kernels that do not need it | M0 | Implemented |
 | Freeing of buffers | M0 | |
 | Driver, TOML input, XTC and H5MD output | M0 | Driver, TOML input, and DCD output are implemented; see [driver-m0.md](driver-m0.md), Section 4 |

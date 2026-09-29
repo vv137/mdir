@@ -322,6 +322,16 @@ LogicalResult Assigner::collect(Operation *op) {
     positions.push_back(refresh.getPositions());
     return success();
   }
+  if (auto reference = dyn_cast<ReferencePositionsOp>(op)) {
+    // The structure holds the positions as the positions are stored that
+    // it is built at.
+    Value result = reference.getResult();
+    positions.push_back(result);
+    for (Operation *user : reference.getNeighbors().getUsers())
+      if (auto refresh = dyn_cast<RefreshNeighborsOp>(user))
+        unite(result, refresh.getPositions());
+    return success();
+  }
   if (auto permute = dyn_cast<PermuteOp>(op)) {
     if (isRealField(permute.getResult().getType()))
       unite(permute.getResult(), permute.getField());

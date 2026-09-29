@@ -41,6 +41,44 @@ def ReuseNeighbors : Pass<"md-exec-reuse-neighbors", "::mlir::ModuleOp"> {
                            "::mdir::mdrt::MDRTDialect"];
 }
 
+def ExposeValidity
+    : Pass<"md-exec-expose-validity", "::mlir::ModuleOp"> {
+  let summary = "Makes the test of validity of a neighbor structure a loop";
+  let description = [{
+    A refresh with the policy `check` tests whether a particle has moved
+    more than half the skin since the structure was built. The pass makes
+    the test a loop over particles and hands its result to the refresh:
+
+    ```mlir
+    %nl1 = md_exec.refresh_neighbors %nl, %x, %cell ... policy(check)
+    ```
+
+    ```mlir
+    %ref   = md_exec.reference_positions %nl
+    %moved = md_exec.particle_for ins(%x, %ref) reduce(%false : i1) {
+    ^bb0(%x_i: vector<3xf64>, %ref_i: vector<3xf64>):
+      ...   // |x_i − ref_i|² > (skin / 2)²
+    }
+    %nl1 = md_exec.refresh_neighbors %nl, %x, %cell moved(%moved) ...
+             policy(check)
+    ```
+
+    `md-exec-fuse-loops`, run afterward, fuses the loop with the loop that
+    writes the positions: the thread that moves a particle tests it as
+    well. The test is not a global maximum any more, which on a device
+    takes three kernels. No thread computes more than the displacement of
+    its own particle, and a thread writes only if its particle has moved
+    too far.
+
+    The structure is rebuilt in the same steps as before.
+
+    A refresh of an empty structure builds it whatever has moved. The pass
+    gives it the policy `always`.
+  }];
+  let dependentDialects = ["::mlir::arith::ArithDialect",
+                           "::mlir::vector::VectorDialect"];
+}
+
 def FuseLoops : Pass<"md-exec-fuse-loops", "::mlir::ModuleOp"> {
   let summary = "Fuses loops over pairs, and loops over particles";
   let description = [{

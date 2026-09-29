@@ -95,7 +95,8 @@ build/bin/mdir-opt test/Dialect/MD/ops.mlir
 | `--md-inline` | Inlines potentials, functions, and programs into the code that calls them. |
 | `--convert-md-to-md-exec` | Converts `md` and `dyn` ops to loops over particles and pairs. |
 | `--md-exec-reuse-neighbors` | Makes a neighbor structure that is built in a loop a value that the loop carries and refreshes. |
-| `--md-exec-fuse-loops` | Fuses loops over the pairs of one neighbor structure. Run `--cse` after it. |
+| `--md-exec-expose-validity` | Makes the test of validity of a neighbor structure a loop over particles, which `--md-exec-fuse-loops` fuses with the loop that writes the positions. |
+| `--md-exec-fuse-loops` | Fuses loops over the pairs of one neighbor structure, and loops over the particles of one set. Run `--cse` after it. |
 | `--md-exec-simplify-distance` | Rewrites pair kernels in powers of the squared distance. Changes rounding. Run `--canonicalize --cse` after it. |
 | `--md-exec-assign-precision` | Assigns `f32` or `f64` to fields and kernels. Options: `mode=single`, `mixed`, or `double`, and a type per role. Run it last before the lowering. |
 | `--md-exec-assign-storage` | Gives every field a buffer and converts the loops to the storage form, in which they update buffers where they are. With `memory=device` the buffers are on a GPU. |
@@ -109,7 +110,8 @@ lowers it to LLVM and `mlir-runner` runs it:
 build/bin/mdir-opt input.mlir \
     --md-check-exchange --md-differentiate --md-expand-truncation \
     --md-inline --convert-md-to-md-exec="skin=0.3 width=96" \
-    --md-exec-reuse-neighbors --md-exec-fuse-loops --cse \
+    --md-exec-reuse-neighbors --md-exec-expose-validity \
+    --md-exec-fuse-loops --cse \
     --md-exec-assign-precision="mode=mixed" \
     --md-exec-assign-storage --convert-md-exec-to-loops \
   | mlir-opt --convert-scf-to-openmp --canonicalize \

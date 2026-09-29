@@ -290,3 +290,75 @@ func.func @f(%x: !md.field<@atoms, 3 x f64>, %step: i64) {
       : (i64, !md.field<@atoms, 3 x f64>)
   return
 }
+
+// -----
+
+md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
+               %nl: !mdrt.neighbors<@atoms>, %moved: i1) {
+  // expected-error@+1 {{'moved' belongs to the policy 'check': with the policy 'always' the structure is built whatever has moved}}
+  %nl1 = md_exec.refresh_neighbors %nl, %x, %cell moved(%moved)
+      cutoff(2.5) skin(0.3) cell_width(2.8) policy(always)
+      : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+  md.return
+}
+
+// -----
+
+md.particle_set @atoms
+
+func.func @f(%x: memref<?x3xf64>, %a: memref<?xf64>, %cell: !md.cell,
+             %nl: !mdrt.neighbors<@atoms>, %moved: i1) {
+  // expected-error@+1 {{expected no buffers in 'scratch': with 'moved' the op does not test the displacements}}
+  %nl1 = md_exec.refresh_neighbors %nl, %x, %cell
+      scratch(%a, %a : memref<?xf64>, memref<?xf64>) moved(%moved)
+      cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
+      : !mdrt.neighbors<@atoms>, memref<?x3xf64>
+  return
+}
+
+// -----
+
+md.function @f(%nl: !mdrt.neighbors<@atoms>) {
+  // expected-error@+1 {{the structure is on @atoms, but the positions belong to @ions}}
+  %ref = md_exec.reference_positions %nl
+      : !mdrt.neighbors<@atoms> -> !md.field<@ions, 3 x f64>
+  md.return
+}
+
+// -----
+
+md.function @f(%nl: !mdrt.neighbors<@atoms>) {
+  // expected-error@+1 {{expected a position field with 3 components of f32 or f64, got '!md.field<@atoms, f64>'}}
+  %ref = md_exec.reference_positions %nl
+      : !mdrt.neighbors<@atoms> -> !md.field<@atoms, f64>
+  md.return
+}
+
+// -----
+
+md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
+               %nl: !mdrt.neighbors<@atoms>) {
+  %no = arith.constant false
+  // expected-error@+1 {{expected a value in 'reduce' to be f32, f64, or a fixed-size vector of one of them, got 'i1'}}
+  %any = md_exec.pair_for %nl, %x, %cell reduce(%no : i1) cutoff(2.5)
+      policy(directed, owner_only) {
+  ^bb0(%r2: f64, %d: vector<3xf64>):
+    %yes = arith.constant true
+    md_exec.yield %yes : i1
+  } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> i1
+  md.return
+}
+
+// -----
+
+md.function @f(%x: !md.field<@atoms, 3 x f64>) {
+  %none = arith.constant 0 : i32
+  // expected-error@+1 {{expected a value in 'reduce' to be f32, f64, a fixed-size vector of one of them, or i1, got 'i32'}}
+  %count = md_exec.particle_for ins(%x : !md.field<@atoms, 3 x f64>)
+      reduce(%none : i32) {
+  ^bb0(%x_i: vector<3xf64>):
+    %one = arith.constant 1 : i32
+    md_exec.yield %one : i32
+  } -> i32
+  md.return
+}
