@@ -448,6 +448,7 @@ stage begins.
 | Item | Decision |
 |---|---|
 | Water | SETTLE [[Miyamoto1992]](references.md#miyamoto1992), which solves the three distances of a rigid water in closed form |
+| Which molecules | Chosen (D63): from a GROMACS topology, those with `[ settles ]`; from an Amber topology, the residues named in `settle_residues`, `["WAT"]` by default as in sander. A named residue that is not one heavy atom and two hydrogens with the three distances given is an error. `fast_water = false` constrains the same water with SHAKE, and `rigid_bond = false` leaves it flexible. |
 | The bonds of hydrogen | SHAKE [[Ryckaert1977]](references.md#ryckaert1977), with RATTLE [[Andersen1983]](references.md#andersen1983) for the velocities under velocity Verlet |
 | Execution | The constrained bonds fall into clusters with no particle in common: a heavy atom with its hydrogens, a water. A thread takes a cluster and writes to its particles only, so no two threads write to one particle. A loop over clusters is a new kind of loop. |
 
@@ -570,7 +571,7 @@ for the dispersion follows the volume.
 |---|---|
 | The readers | MDIR has readers of its own. They accept what the engines accept and share no code with them. The engines and their tools are under the GPL and the LGPL; their behavior is learned from their documentation and their code, and written down as a specification, from which the readers are written. |
 | What a reader hands on | A description of the system that does not depend on the format: particles, types, tuple sets with their parameters, the table of pairs of types, exclusions, pairs three bonds apart, constraints, the cell. A format is a reader more. |
-| Units | A reader converts to the units inside MDIR: nm, kJ/mol, ps. Amber files are in Å and kcal/mol, and the charges of `prmtop` carry a factor; the specification of the format gives the constants. The control file stays in Å and kcal/mol (D36). |
+| Units and forms | A reader converts to the units and the forms of [conventions.md](conventions.md) (D62): for Amber, twice the force constants of bonds and angles, the charges divided by 18.2223, and the coefficients of Lennard-Jones as `C12` and `C6`. The control file stays in Å and kcal/mol (D36). |
 | What is an error | What M1 cannot run: CMAP, 10-12 terms, 12-6-4 terms, polarizability, virtual sites and extra points, cells that are not orthorhombic. Each with the milestone that brings it. |
 | Formats of other engines | Planned |
 
@@ -586,7 +587,7 @@ GROMACS needs: `defaults`, `atomtypes`, `nonbond_params`, `pairtypes`,
 | Keywords | Table |
 |---|---|
 | `electrostatic = "CUTOFF"` or `"PME"`, `pme_ngrid_x`, `pme_ngrid_y`, `pme_ngrid_z` or `pme_spacing`, `pme_order`, `ewald_tolerance`, `dispersion_correction` | `[energy]` |
-| `rigid_bond`, `fast_water`, `shake_tolerance`, `shake_iterations` | `[constraints]` |
+| `rigid_bond`, `fast_water`, `settle_residues`, `shake_tolerance`, `shake_iterations` | `[constraints]` |
 | `ensemble = "NVT"` or `"NPT"`, `thermostat = "BUSSI"`, `barostat = "BERNETTI-BUSSI"`, `temperature`, `pressure`, `tau_t`, `tau_p`, `compressibility`, `isotropy = "ISO"` or `"SEMI-ISO"` | `[ensemble]` |
 | `thermostat_period`, `barostat_period`, `comm_period` | `[dynamics]` |
 
@@ -653,6 +654,8 @@ into the home directory.
 | 13 | An intermediate stage | Flexible water, a Coulomb cutoff, 0.5 fs, validated before particle mesh Ewald and constraints (Section 1.4) | D54 |
 | 14 | The motion of the center of mass | Removed every `comm_period` steps (Section 10) | D60 |
 | 15 | The command line | One program with subcommands (Section 14) | D59 |
+| 16 | The forms of the terms and the meaning of their parameters | One convention, [conventions.md](conventions.md), which the readers convert into: `½ k` for bonds and angles, `C6` and `C12` for Lennard-Jones | D62 |
+| 17 | The molecules that SETTLE constrains | Chosen by `[ settles ]` or by `settle_residues` (Section 9) | D63 |
 
 ## 17. Open questions
 

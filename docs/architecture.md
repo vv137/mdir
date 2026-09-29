@@ -18,6 +18,8 @@ Related documents:
 - [prior-art.md](prior-art.md): earlier work and what is taken from it.
 - [design-review.md](design-review.md): review of revision 1.
 - [references.md](references.md): the literature that the documents cite.
+- [conventions.md](conventions.md): the forms of the terms of the potential,
+  the meaning of their parameters, and the units.
 
 ## 1. Goal
 
