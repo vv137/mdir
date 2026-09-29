@@ -316,3 +316,61 @@ func.func @validity(%xb: memref<?x3xf64>, %vb: memref<?x3xf64>,
   %out = mdrt.to_buffer %xe : !vec to memref<?x3xf64>
   return %out : memref<?x3xf64>
 }
+
+// A field in another order takes a buffer of its own, and the order takes
+// one. The loop borrows them and hands back as many: the buffers of the
+// fields as they were before.
+//
+// CHECK-LABEL: func.func @ordered(
+// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64>, %[[M:[a-z0-9]+]]: memref<?xf64>, %[[ID:[a-z0-9]+]]: memref<?xi32>,
+// CHECK-DAG:     %[[B0:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?xi32>
+// CHECK-DAG:     %[[B1:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?x3xf64>
+// CHECK-DAG:     %[[B2:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?xf64>
+// CHECK-DAG:     %[[B3:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?xi32>
+// CHECK:         scf.for
+// CHECK-SAME:      iter_args(%[[XA:[a-z0-9]+]] = %[[X]], %[[MA:[a-z0-9]+]] = %[[M]], %[[IDA:[a-z0-9]+]] = %[[ID]], %[[ORDER:[a-z0-9]+]] = %[[B0]], %[[XS:[a-z0-9]+]] = %[[B1]], %[[MS:[a-z0-9]+]] = %[[B2]], %[[IDS:[a-z0-9]+]] = %[[B3]])
+// CHECK:           md_exec.spatial_order %[[XA]], %{{[a-z0-9]+}}, %[[IDA]] outs(%[[ORDER]] : memref<?xi32>) width(1.100000e+00)
+// CHECK:           md_exec.permute %[[XA]], %[[ORDER]] outs(%[[XS]] : memref<?x3xf64>)
+// CHECK:           md_exec.permute %[[MA]], %[[ORDER]] outs(%[[MS]] : memref<?xf64>)
+// CHECK:           md_exec.permute %[[IDA]], %[[ORDER]] outs(%[[IDS]] : memref<?xi32>)
+// CHECK:           md_exec.particle_for ins(%[[XS]], %[[MS]] :
+// CHECK-SAME:        outs(%[[XS]] : memref<?x3xf64>)
+// CHECK:           call @write_ordered(%{{[a-z0-9_]+}}, %[[XS]], %[[IDS]])
+// CHECK:           scf.yield %[[XS]], %[[MS]], %[[IDS]], %[[ORDER]], %[[XA]], %[[MA]], %[[IDA]]
+
+func.func private @write_ordered(i64, memref<?x3xf64>, memref<?xi32>)
+
+func.func @ordered(%xb: memref<?x3xf64>, %mb: memref<?xf64>,
+                   %ib: memref<?xi32>, %cell: !md.cell, %n: index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %step = arith.constant 0 : i64
+  %x0 = mdrt.from_buffer %xb : memref<?x3xf64> to !vec
+  %m0 = mdrt.from_buffer %mb : memref<?xf64> to !real
+  %id0 = mdrt.from_buffer %ib
+      : memref<?xi32> to !md.field<@atoms, i32>
+  %xe, %me, %ide = scf.for %i = %c0 to %n step %c1
+      iter_args(%xa = %x0, %ma = %m0, %ida = %id0)
+      -> (!vec, !real, !md.field<@atoms, i32>) {
+    %order = md_exec.spatial_order %xa, %cell, %ida width(1.1)
+        : !vec, !md.field<@atoms, i32> -> !mdrt.permutation<@atoms>
+    %xs = md_exec.permute %xa, %order
+        : !vec, !mdrt.permutation<@atoms> -> !vec
+    %ms = md_exec.permute %ma, %order
+        : !real, !mdrt.permutation<@atoms> -> !real
+    %ids = md_exec.permute %ida, %order
+        : !md.field<@atoms, i32>, !mdrt.permutation<@atoms>
+        -> !md.field<@atoms, i32>
+    %e = md_exec.empty : !vec
+    %x1 = md_exec.particle_for ins(%xs, %ms : !vec, !real) outs(%e : !vec) {
+    ^bb0(%x_i: vector<3xf64>, %m_i: f64):
+      %s = vector.broadcast %m_i : f64 to vector<3xf64>
+      %xn = arith.addf %x_i, %s : vector<3xf64>
+      md_exec.yield %xn : vector<3xf64>
+    } -> !vec
+    mdrt.host_call @write_ordered(%step, %x1, %ids)
+        : (i64, !vec, !md.field<@atoms, i32>)
+    scf.yield %x1, %ms, %ids : !vec, !real, !md.field<@atoms, i32>
+  } {mdrt.segment}
+  return
+}

@@ -36,6 +36,7 @@ namespace mdir {
 extern const char *const neighborsMatrixGPUTemplate;
 } // namespace mdir
 
+static const char *const spatialOrderName = "mdrt_gpu_spatial_order";
 static const char *const cellWidthName = "mdrt_gpu_cell_width";
 static const char *const buildNeighborsName =
     "mdrt_gpu_build_neighbors_matrix";
@@ -95,6 +96,8 @@ private:
   LogicalResult lowerOp(Operation *op);
 
   void lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op);
+  LogicalResult lowerSpatialOrder(md_exec::SpatialOrderOp op);
+  void lowerPermute(md_exec::PermuteOp op);
   LogicalResult lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op);
   LogicalResult lowerParticleFor(md_exec::ParticleForOp op);
   LogicalResult lowerPairFor(md_exec::PairForOp op);
@@ -771,6 +774,47 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
 }
 
 //===----------------------------------------------------------------------===//
+// The order of the particles
+//===----------------------------------------------------------------------===//
+
+LogicalResult Lowering::lowerSpatialOrder(md_exec::SpatialOrderOp op) {
+  Location loc = op.getLoc();
+  OpBuilder builder(op);
+  Value positions = op.getPositions();
+  Type real = cast<MemRefType>(positions.getType()).getElementType();
+  if (failed(addTemplates(real)))
+    return failure();
+
+  // The cell has become the vector of its edge lengths.
+  Value box = convertReal(builder, loc, op.getCellMutable().get(), real);
+  Value width =
+      createReal(builder, loc, real, op.getWidth().convertToDouble());
+  auto order = cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
+      module, getInstanceName(spatialOrderName, real)));
+  func::CallOp::create(
+      builder, loc, order,
+      ValueRange{positions, box, width, op.getIds(), op.getOrder()});
+  return success();
+}
+
+void Lowering::lowerPermute(md_exec::PermuteOp op) {
+  Location loc = op.getLoc();
+  OpBuilder builder(op);
+  Value field = op.getField();
+  Value order = op.getOrder();
+  Value out = op.getOut();
+  Value size = createSize(builder, loc, field);
+  launchOver(builder, loc, size, [&](OpBuilder &body, Value place) {
+    Value from =
+        memref::LoadOp::create(body, loc, order, ValueRange{place});
+    Value particle =
+        arith::IndexCastOp::create(body, loc, body.getIndexType(), from);
+    storeElement(body, loc, loadElement(body, loc, field, particle), out,
+                 place);
+  });
+}
+
+//===----------------------------------------------------------------------===//
 // Ops and functions
 //===----------------------------------------------------------------------===//
 
@@ -811,6 +855,11 @@ LogicalResult Lowering::lowerOp(Operation *op) {
   } else if (auto refresh = dyn_cast<md_exec::RefreshNeighborsOp>(op)) {
     if (failed(lowerRefreshNeighbors(refresh)))
       return failure();
+  } else if (auto order = dyn_cast<md_exec::SpatialOrderOp>(op)) {
+    if (failed(lowerSpatialOrder(order)))
+      return failure();
+  } else if (auto permute = dyn_cast<md_exec::PermuteOp>(op)) {
+    lowerPermute(permute);
   } else if (auto reference = dyn_cast<md_exec::ReferencePositionsOp>(op)) {
     Neighbors structure;
     if (failed(getNeighbors(op, reference.getNeighbors(), structure)))

@@ -1,0 +1,55 @@
+# A run keeps its particles in the order of their positions. The files of
+# the run are in the order of the input all the same, and the results are
+# those of a run that leaves the particles as they are, up to rounding: the
+# forces on a particle are added up in another order.
+#
+# The input has the particles of mixture.pdb in a scattered order.
+#
+# REQUIRES: hdf5
+#
+# RUN: sed -e 's|Inputs/mixture.pdb|%S/Inputs/mixture-scattered.pdb|' \
+# RUN:     -e 's|nsteps        = 200|nsteps = 200\nrstout_period = 100|' \
+# RUN:     %S/mixture.toml > %t.on.toml
+# RUN: echo '[output]' >> %t.on.toml
+# RUN: echo 'rstfile = "%t.on.h5"' >> %t.on.toml
+# RUN: echo '[execution]' >> %t.on.toml
+# RUN: echo 'threads = 4' >> %t.on.toml
+# RUN: echo 'reorder = true' >> %t.on.toml
+# RUN: sed -e 's|reorder = true|reorder = false|' -e 's|%t.on.h5|%t.off.h5|' \
+# RUN:     %t.on.toml > %t.off.toml
+#
+# RUN: mdir-run %t.on.toml | FileCheck %s
+# RUN: mdir-run %t.off.toml | FileCheck %s
+# RUN: not mdir-checkpoint %t.on.h5 %t.off.h5 \
+# RUN: | FileCheck %s --check-prefix=STATES
+# RUN: mdir-run %t.on.toml --emit=mlir | FileCheck %s --check-prefix=ON
+# RUN: mdir-run %t.off.toml --emit=mlir | FileCheck %s --check-prefix=OFF
+
+# The potential energy at the start is that of mixture.toml.
+#
+# CHECK:      INFO:         0         0.0000 {{ *-[0-9.]+}} {{ *}}-497.7298 {{ *[0-9.]+}} {{ *}}120.0000
+# CHECK:      INFO:       200         0.8000 {{ *}}-406.51{{[0-9]+}} {{ *}}-460.3205 {{ *}}53.8046
+
+# STATES: values of the positions differ, by up to {{[0-9.]+}}e-1{{[0-9]}}
+
+# The particles are ordered where the run begins and where a segment
+# begins. The segments carry the fields that do not change otherwise.
+#
+# ON:      %id_in = mdrt.from_buffer %identities : memref<?xi32> to !ids
+# ON-NEXT: %order0 = md_exec.spatial_order %x_in, %cell, %id_in width(5.0{{0*}}e-01)
+# ON:      %x0 = md_exec.permute %x_in, %order0
+# ON:      %p_sigma = md_exec.permute %p_in_sigma, %order0
+# ON:      %id = md_exec.permute %id_in, %order0
+# ON:      %xe0, %ve0, %fe0, %me0, %pe0_epsilon, %pe0_sigma, %ide0 = scf.for %i0
+# ON-NEXT:     iter_args(%xa0 = %x0, %va0 = %v0, %fa0 = %f0, %ma0 = %m, %pa0_epsilon = %p_epsilon, %pa0_sigma = %p_sigma, %ida0 = %id)
+# ON:        %orders = md_exec.spatial_order %xa0, %cell, %ida0
+# ON:        %ids = md_exec.permute %ida0, %orders
+# ON:            dyn.step @step(%xa2, %va2, %fa2, %ms, %cell, %dt, %ps_epsilon, %ps_sigma)
+# ON:        mdrt.host_call @mdrtWriteCheckpoint(%step0, %xe1, %ve1, %fe1, %ids)
+# ON:        scf.yield %xe1, %ve1, %fe1, %ms, %ps_epsilon, %ps_sigma, %ids
+# ON:      } {mdrt.segment}
+# ON:      mdrt.host_call @mdrtFinish(%xe0, %ve0, %ide0)
+
+# OFF-NOT: md_exec.spatial_order
+# OFF:     %id = mdrt.from_buffer %identities : memref<?xi32> to !ids
+# OFF:     mdrt.host_call @mdrtFinish(%xe0, %ve0, %id)

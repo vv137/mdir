@@ -89,6 +89,8 @@ struct Control {
   int64_t neighborWidth = 0;
   /// Whether kernels are rewritten in ways that change rounding.
   bool fastMath = true;
+  /// Whether the particles are put in the order of their positions.
+  bool reorder = true;
 };
 
 /// Reads the control file `path`. Paths of files in it are relative to the

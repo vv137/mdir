@@ -36,6 +36,7 @@ md.function @f(%q: !md.field<@ions, f64>,
   // expected-error@+1 {{the order is on @atoms, but the field belongs to @ions}}
   %p = md_exec.permute %q, %order
       : !md.field<@ions, f64>, !mdrt.permutation<@atoms>
+      -> !md.field<@ions, f64>
   md.return
 }
 
@@ -347,5 +348,37 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>) {
     %one = arith.constant 1 : i32
     md_exec.yield %one : i32
   } -> i32
+  md.return
+}
+
+// -----
+
+md.particle_set @atoms
+
+func.func @f(%x: memref<?x3xf64>, %order: memref<?xi32>) {
+  // expected-error@+1 {{expected the buffer in 'outs' to be another buffer than that of the field}}
+  md_exec.permute %x, %order outs(%x : memref<?x3xf64>)
+      : memref<?x3xf64>, memref<?xi32>
+  return
+}
+
+// -----
+
+md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
+               %ids: !md.field<@atoms, f64>) {
+  // expected-error@+1 {{expected 'ids' to hold one i32 per particle, got '!md.field<@atoms, f64>'}}
+  %order = md_exec.spatial_order %x, %cell, %ids width(1.4)
+      : !md.field<@atoms, 3 x f64>, !md.field<@atoms, f64>
+      -> !mdrt.permutation<@atoms>
+  md.return
+}
+
+// -----
+
+md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
+               %ids: !md.field<@atoms, i32>) {
+  // expected-error@+1 {{expected a result in the value form, and a buffer in 'outs' in the storage form}}
+  md_exec.spatial_order %x, %cell, %ids width(1.4)
+      : !md.field<@atoms, 3 x f64>, !md.field<@atoms, i32>
   md.return
 }

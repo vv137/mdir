@@ -1,8 +1,8 @@
-"""Reference values for neighbors-matrix.mlir and neighbors-matrix-gpu.mlir.
+"""Reference values for the tests of the templates in this directory.
 
 Counts, by testing all pairs, the entries of a neighbor matrix: the pairs
 within the reach, and the pairs that the search takes as well because they
-are within its margin.
+are within its margin. Orders the particles of spatial-order.mlir by cell.
 
 Usage: python3 neighbors_reference.py
 """
@@ -47,7 +47,35 @@ def distance(a, b, edge):
     return math.sqrt(total)
 
 
+def order():
+    """The order of the particles of spatial-order.mlir."""
+    count, edge, width = 2000, 12.0, 1.4
+    positions = generate(count, edge)
+    for i in range(count):
+        for k in range(3):
+            positions[i][k] += (i % 5 - 2.0) * edge
+    ids = [i * 7919 % count for i in range(count)]
+
+    cells = max(int(math.floor(edge / (width * 1.0001))), 1)
+    inverse = 1.0 / edge
+
+    def cell(position):
+        coordinates = []
+        for x in position:
+            wrapped = x - math.floor(x * inverse) * edge
+            coordinate = int(wrapped * inverse * cells)
+            coordinates.append(min(max(coordinate, 0), cells - 1))
+        return (coordinates[2] * cells + coordinates[1]) * cells \
+            + coordinates[0]
+
+    places = sorted(range(count), key=lambda i: (cell(positions[i]), ids[i]))
+    total = sum((k + 1) * (i + 1) for k, i in enumerate(places))
+    print(f"{count} particles, edge {edge}, cells of {width}: "
+          f"{cells} cells along an edge, sum {total}")
+
+
 def main():
+    order()
     for count, edge, reach in CASES:
         positions = generate(count, edge)
         limit = reach + MARGIN * 3.0 * edge

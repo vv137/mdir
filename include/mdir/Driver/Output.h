@@ -91,17 +91,21 @@ void writeLogHeader(Output &output);
 
 /// The functions that compiled code calls. Buffers arrive as pointers to
 /// descriptors, as the C interface of MLIR passes them.
+///
+/// The particles of a buffer are in the order that the run keeps them in.
+/// `ids` holds the number of each: the place of the particle in the files
+/// of the run. What is written is in the order of these numbers.
 extern "C" {
 void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
                                     double kinetic);
-void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions);
+void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids);
 void _mlir_ciface_mdrtWriteCheckpoint(int64_t step, void *positions,
-                                      void *velocities);
+                                      void *velocities, void *ids);
 void _mlir_ciface_mdrtWriteCheckpointWithForces(int64_t step,
                                                 void *positions,
                                                 void *velocities,
-                                                void *forces);
-void _mlir_ciface_mdrtFinish(void *positions, void *velocities);
+                                                void *forces, void *ids);
+void _mlir_ciface_mdrtFinish(void *positions, void *velocities, void *ids);
 }
 
 #endif // MDIR_DRIVER_OUTPUT_H

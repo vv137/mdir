@@ -469,7 +469,8 @@ Error Reader::readBoundary(const toml::table &table) {
 Error Reader::readExecution(const toml::table &table) {
   if (Error error = checkKeywords(table, "execution",
                                   {"target", "threads", "precision",
-                                   "neighbor_width", "fast_math"}))
+                                   "neighbor_width", "fast_math",
+                                   "reorder"}))
     return error;
   if (Error error = readChoice<Target>(
           table, "target", control.target,
@@ -486,7 +487,9 @@ Error Reader::readExecution(const toml::table &table) {
   if (Error error =
           readCount(table, "neighbor_width", control.neighborWidth, 1))
     return error;
-  return readBool(table, "fast_math", control.fastMath);
+  if (Error error = readBool(table, "fast_math", control.fastMath))
+    return error;
+  return readBool(table, "reorder", control.reorder);
 }
 
 Error Reader::read(const toml::table &root) {
@@ -659,6 +662,7 @@ target    = "cpu"               # cpu, gpu
 threads   = 1                   # for the target cpu
 precision = "double"            # single, mixed, double
 fast_math = true                # allow rewrites that change rounding
+reorder   = true                # keep the particles in the order of their positions
 # neighbor_width = 160          # neighbors per particle; default: estimated
 )TOML";
 }

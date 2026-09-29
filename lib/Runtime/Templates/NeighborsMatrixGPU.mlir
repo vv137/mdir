@@ -841,3 +841,261 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
   gpu.dealloc %result0 : memref<1xi32>
   return %largest : index
 }
+
+// The order of the particles by cell: `order[k]` is the particle that comes
+// to place `k`. See the template for the host.
+func.func private @mdrt_gpu_spatial_order(
+    %x: memref<?x3xf64, 1>, %box: vector<3xf64>, %width: f64,
+    %ids: memref<?xi32, 1>, %order: memref<?xi32, 1>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %block = arith.constant 128 : index
+  %chunk = arith.constant 256 : index
+
+  %n = memref.dim %x, %c0 : memref<?x3xf64, 1>
+  %lx = vector.extract %box[0] : f64 from vector<3xf64>
+  %ly = vector.extract %box[1] : f64 from vector<3xf64>
+  %lz = vector.extract %box[2] : f64 from vector<3xf64>
+  %unit = arith.constant 1.0 : f64
+  %ilx = arith.divf %unit, %lx : f64
+  %ily = arith.divf %unit, %ly : f64
+  %ilz = arith.divf %unit, %lz : f64
+  %nx = call @mdrt_gpu_cell_count(%lx, %width) : (f64, f64) -> index
+  %ny = call @mdrt_gpu_cell_count(%ly, %width) : (f64, f64) -> index
+  %nz = call @mdrt_gpu_cell_count(%lz, %width) : (f64, f64) -> index
+  %nxy = arith.muli %nx, %ny : index
+  %cells = arith.muli %nxy, %nz : index
+  %cells1 = arith.addi %cells, %c1 : index
+  %cell_chunks = call @mdrt_gpu_grid(%cells, %chunk)
+      : (index, index) -> index
+
+  %grid_n = call @mdrt_gpu_grid(%n, %block) : (index, index) -> index
+  %grid_cells = call @mdrt_gpu_grid(%cells, %block) : (index, index) -> index
+  %grid_cell_chunks = call @mdrt_gpu_grid(%cell_chunks, %block)
+      : (index, index) -> index
+
+  %key = gpu.alloc (%n) : memref<?xi32, 1>
+  %held = gpu.alloc (%cells) : memref<?xi32, 1>
+  %start = gpu.alloc (%cells1) : memref<?xi32, 1>
+  %cursor = gpu.alloc (%cells) : memref<?xi32, 1>
+  %cell_sums = gpu.alloc (%cell_chunks) : memref<?xi32, 1>
+
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_cells, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %block : index
+    %c = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %c, %cells : index
+    scf.if %inside {
+      %none = arith.constant 0 : i32
+      memref.store %none, %held[%c] : memref<?xi32, 1>
+    }
+    gpu.terminator
+  }
+
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_n, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %block : index
+    %i = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %i, %n : index
+    scf.if %inside {
+      %i0 = arith.constant 0 : index
+      %i1 = arith.constant 1 : index
+      %i2 = arith.constant 2 : index
+      %one = arith.constant 1 : i32
+      %xi = memref.load %x[%i, %i0] : memref<?x3xf64, 1>
+      %yi = memref.load %x[%i, %i1] : memref<?x3xf64, 1>
+      %zi = memref.load %x[%i, %i2] : memref<?x3xf64, 1>
+
+      %x0 = arith.mulf %xi, %ilx : f64
+      %x1 = math.floor %x0 : f64
+      %x2 = arith.mulf %x1, %lx : f64
+      %wx = arith.subf %xi, %x2 : f64
+      %x3 = arith.mulf %wx, %ilx : f64
+      %x4 = arith.index_cast %nx : index to i64
+      %x5 = arith.sitofp %x4 : i64 to f64
+      %x6 = arith.mulf %x3, %x5 : f64
+      %x7 = arith.fptosi %x6 : f64 to i64
+      %x8 = arith.index_cast %x7 : i64 to index
+      %xl = arith.subi %nx, %i1 : index
+      %xb = arith.minsi %x8, %xl : index
+      %cx = arith.maxsi %xb, %i0 : index
+
+      %y0 = arith.mulf %yi, %ily : f64
+      %y1 = math.floor %y0 : f64
+      %y2 = arith.mulf %y1, %ly : f64
+      %wy = arith.subf %yi, %y2 : f64
+      %y3 = arith.mulf %wy, %ily : f64
+      %y4 = arith.index_cast %ny : index to i64
+      %y5 = arith.sitofp %y4 : i64 to f64
+      %y6 = arith.mulf %y3, %y5 : f64
+      %y7 = arith.fptosi %y6 : f64 to i64
+      %y8 = arith.index_cast %y7 : i64 to index
+      %yl = arith.subi %ny, %i1 : index
+      %yb = arith.minsi %y8, %yl : index
+      %cy = arith.maxsi %yb, %i0 : index
+
+      %z0 = arith.mulf %zi, %ilz : f64
+      %z1 = math.floor %z0 : f64
+      %z2 = arith.mulf %z1, %lz : f64
+      %wz = arith.subf %zi, %z2 : f64
+      %z3 = arith.mulf %wz, %ilz : f64
+      %z4 = arith.index_cast %nz : index to i64
+      %z5 = arith.sitofp %z4 : i64 to f64
+      %z6 = arith.mulf %z3, %z5 : f64
+      %z7 = arith.fptosi %z6 : f64 to i64
+      %z8 = arith.index_cast %z7 : i64 to index
+      %zl = arith.subi %nz, %i1 : index
+      %zb = arith.minsi %z8, %zl : index
+      %cz = arith.maxsi %zb, %i0 : index
+
+      %zy = arith.muli %cz, %ny : index
+      %row = arith.addi %zy, %cy : index
+      %rows = arith.muli %row, %nx : index
+      %k = arith.addi %rows, %cx : index
+      %k32 = arith.index_cast %k : index to i32
+      memref.store %k32, %key[%i] : memref<?xi32, 1>
+      %old = memref.atomic_rmw addi %one, %held[%k]
+          : (i32, memref<?xi32, 1>) -> i32
+    }
+    gpu.terminator
+  }
+
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_cell_chunks, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %block : index
+    %b = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %b, %cell_chunks : index
+    scf.if %inside {
+      %i1 = arith.constant 1 : index
+      %none = arith.constant 0 : i32
+      %begin = arith.muli %b, %chunk : index
+      %full = arith.addi %begin, %chunk : index
+      %short = arith.cmpi ult, %cells, %full : index
+      %end = arith.select %short, %cells, %full : index
+      %sum = scf.for %c = %begin to %end step %i1
+          iter_args(%partial_sum = %none) -> (i32) {
+        %count = memref.load %held[%c] : memref<?xi32, 1>
+        %next = arith.addi %partial_sum, %count : i32
+        scf.yield %next : i32
+      }
+      memref.store %sum, %cell_sums[%b] : memref<?xi32, 1>
+    }
+    gpu.terminator
+  }
+
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %none = arith.constant 0 : i32
+    %total = scf.for %b = %i0 to %cell_chunks step %i1
+        iter_args(%before = %none) -> (i32) {
+      %sum = memref.load %cell_sums[%b] : memref<?xi32, 1>
+      memref.store %before, %cell_sums[%b] : memref<?xi32, 1>
+      %next = arith.addi %before, %sum : i32
+      scf.yield %next : i32
+    }
+    memref.store %total, %start[%cells] : memref<?xi32, 1>
+    gpu.terminator
+  }
+
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_cell_chunks, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %block : index
+    %b = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %b, %cell_chunks : index
+    scf.if %inside {
+      %i1 = arith.constant 1 : index
+      %begin = arith.muli %b, %chunk : index
+      %full = arith.addi %begin, %chunk : index
+      %short = arith.cmpi ult, %cells, %full : index
+      %end = arith.select %short, %cells, %full : index
+      %first = memref.load %cell_sums[%b] : memref<?xi32, 1>
+      %last = scf.for %c = %begin to %end step %i1
+          iter_args(%before = %first) -> (i32) {
+        %count = memref.load %held[%c] : memref<?xi32, 1>
+        memref.store %before, %start[%c] : memref<?xi32, 1>
+        memref.store %before, %cursor[%c] : memref<?xi32, 1>
+        %next = arith.addi %before, %count : i32
+        scf.yield %next : i32
+      }
+    }
+    gpu.terminator
+  }
+
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_n, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %block : index
+    %i = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %i, %n : index
+    scf.if %inside {
+      %one = arith.constant 1 : i32
+      %k32 = memref.load %key[%i] : memref<?xi32, 1>
+      %k = arith.index_cast %k32 : i32 to index
+      %slot32 = memref.atomic_rmw addi %one, %cursor[%k]
+          : (i32, memref<?xi32, 1>) -> i32
+      %slot = arith.index_cast %slot32 : i32 to index
+      %narrow = arith.index_cast %i : index to i32
+      memref.store %narrow, %order[%slot] : memref<?xi32, 1>
+    }
+    gpu.terminator
+  }
+
+  // The particles of each cell in the order of `ids`, by insertion.
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_cells, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %block : index
+    %c = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %c, %cells : index
+    scf.if %inside {
+      %i1 = arith.constant 1 : index
+      %next = arith.addi %c, %i1 : index
+      %begin32 = memref.load %start[%c] : memref<?xi32, 1>
+      %end32 = memref.load %start[%next] : memref<?xi32, 1>
+      %begin = arith.index_cast %begin32 : i32 to index
+      %end = arith.index_cast %end32 : i32 to index
+      %first = arith.addi %begin, %i1 : index
+      scf.for %p = %first to %end step %i1 {
+        %value = memref.load %order[%p] : memref<?xi32, 1>
+        %particle = arith.index_cast %value : i32 to index
+        %id = memref.load %ids[%particle] : memref<?xi32, 1>
+        %hole = scf.while (%q = %p) : (index) -> index {
+          %more = arith.cmpi ugt, %q, %begin : index
+          %before = arith.subi %q, %i1 : index
+          %safe = arith.select %more, %before, %begin : index
+          %left = memref.load %order[%safe] : memref<?xi32, 1>
+          %left_particle = arith.index_cast %left : i32 to index
+          %left_id = memref.load %ids[%left_particle] : memref<?xi32, 1>
+          %larger = arith.cmpi sgt, %left_id, %id : i32
+          %go = arith.andi %more, %larger : i1
+          scf.condition(%go) %q : index
+        } do {
+        ^bb0(%q: index):
+          %before = arith.subi %q, %i1 : index
+          %left = memref.load %order[%before] : memref<?xi32, 1>
+          memref.store %left, %order[%q] : memref<?xi32, 1>
+          scf.yield %before : index
+        }
+        memref.store %value, %order[%hole] : memref<?xi32, 1>
+      }
+    }
+    gpu.terminator
+  }
+
+  %key0 = memref.memory_space_cast %key
+      : memref<?xi32, 1> to memref<?xi32>
+  gpu.dealloc %key0 : memref<?xi32>
+  %held0 = memref.memory_space_cast %held
+      : memref<?xi32, 1> to memref<?xi32>
+  gpu.dealloc %held0 : memref<?xi32>
+  %start0 = memref.memory_space_cast %start
+      : memref<?xi32, 1> to memref<?xi32>
+  gpu.dealloc %start0 : memref<?xi32>
+  %cursor0 = memref.memory_space_cast %cursor
+      : memref<?xi32, 1> to memref<?xi32>
+  gpu.dealloc %cursor0 : memref<?xi32>
+  %cell_sums0 = memref.memory_space_cast %cell_sums
+      : memref<?xi32, 1> to memref<?xi32>
+  gpu.dealloc %cell_sums0 : memref<?xi32>
+  return
+}

@@ -8,19 +8,20 @@ md.particle_set @atoms
 // Forces and energy of a pair potential in one loop.
 //
 // CHECK-LABEL: md.function @forces(
-md.function @forces(%x: !vec, %cell: !md.cell, %a: f64) -> (!vec, f64) {
+md.function @forces(%x: !vec, %cell: !md.cell, %a: f64,
+                    %ids: !md.field<@atoms, i32>) -> (!vec, f64) {
   // CHECK: %[[CELLS:[0-9]+]] = md_exec.build_cells %{{[a-z0-9]+}}, %{{[a-z0-9]+}} width(2.800000e+00)
   // CHECK-SAME: : !md.field<@atoms, 3 x f64> -> !mdrt.cells<@atoms>
   %cells = md_exec.build_cells %x, %cell width(2.8) : !vec -> !mdrt.cells<@atoms>
 
-  // CHECK: %[[ORDER:[0-9]+]] = md_exec.spatial_order %[[CELLS]]
-  // CHECK-SAME: : !mdrt.cells<@atoms> -> !mdrt.permutation<@atoms>
-  %order = md_exec.spatial_order %cells
-      : !mdrt.cells<@atoms> -> !mdrt.permutation<@atoms>
+  // CHECK: %[[ORDER:[0-9]+]] = md_exec.spatial_order %{{[a-z0-9]+}}, %{{[a-z0-9]+}}, %{{[a-z0-9]+}} width(1.400000e+00)
+  // CHECK-SAME: : !md.field<@atoms, 3 x f64>, !md.field<@atoms, i32> -> !mdrt.permutation<@atoms>
+  %order = md_exec.spatial_order %x, %cell, %ids width(1.4)
+      : !vec, !md.field<@atoms, i32> -> !mdrt.permutation<@atoms>
 
   // CHECK: %[[XS:[0-9]+]] = md_exec.permute %{{[a-z0-9]+}}, %[[ORDER]]
-  // CHECK-SAME: : !md.field<@atoms, 3 x f64>, !mdrt.permutation<@atoms>
-  %xs = md_exec.permute %x, %order : !vec, !mdrt.permutation<@atoms>
+  // CHECK-SAME: : !md.field<@atoms, 3 x f64>, !mdrt.permutation<@atoms> -> !md.field<@atoms, 3 x f64>
+  %xs = md_exec.permute %x, %order : !vec, !mdrt.permutation<@atoms> -> !vec
 
   // CHECK: %[[NL:[0-9]+]] = md_exec.build_neighbors %[[CELLS]], %[[XS]], %{{[a-z0-9]+}}
   // CHECK-SAME: cutoff(2.500000e+00) skin(3.000000e-01) kind(matrix) width(96)
@@ -134,6 +135,25 @@ md.function @refresh(%x: !vec, %cell: !md.cell) -> i64 {
   // CHECK: %[[BUILDS:[0-9]+]] = md_exec.rebuild_count %[[NL1]] : !mdrt.neighbors<@atoms>
   %builds = md_exec.rebuild_count %nl1 : !mdrt.neighbors<@atoms>
   md.return %builds : i64
+}
+
+// The order of the particles and a field in that order, in the storage
+// form.
+//
+// CHECK-LABEL: func.func @order_storage(
+func.func @order_storage(%x: memref<?x3xf32>, %cell: !md.cell,
+                         %ids: memref<?xi32>, %order: memref<?xi32>,
+                         %xs: memref<?x3xf32>) {
+  // CHECK: md_exec.spatial_order %{{[a-z0-9]+}}, %{{[a-z0-9]+}}, %{{[a-z0-9]+}} outs(%{{[a-z0-9]+}} : memref<?xi32>) width(1.400000e+00)
+  // CHECK-SAME: : memref<?x3xf32>, memref<?xi32>
+  md_exec.spatial_order %x, %cell, %ids outs(%order : memref<?xi32>)
+      width(1.4) : memref<?x3xf32>, memref<?xi32>
+
+  // CHECK: md_exec.permute %{{[a-z0-9]+}}, %{{[a-z0-9]+}} outs(%{{[a-z0-9]+}} : memref<?x3xf32>)
+  // CHECK-SAME: : memref<?x3xf32>, memref<?xi32>
+  md_exec.permute %x, %order outs(%xs : memref<?x3xf32>)
+      : memref<?x3xf32>, memref<?xi32>
+  return
 }
 
 // The test of validity as a loop over particles, which hands its result to

@@ -207,6 +207,31 @@ func.func @validity(%x: memref<?x3xf64, 1>, %v: memref<?x3xf64, 1>,
   return
 }
 
+// The order of the particles is a call to the template for devices. A
+// field in that order is a kernel with one thread for each place.
+//
+// CHECK-LABEL: func.func @ordered(
+// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64, 1>, %[[IDS:[a-z0-9]+]]: memref<?xi32, 1>, %[[ORDER:[a-z0-9]+]]: memref<?xi32, 1>, %[[XS:[a-z0-9]+]]: memref<?x3xf64, 1>, %[[BOX:[a-z0-9]+]]: vector<3xf64>)
+// CHECK:         call @mdrt_gpu_spatial_order(%[[X]], %[[BOX]], %{{[a-z0-9_]+}}, %[[IDS]], %[[ORDER]])
+// CHECK:         gpu.launch
+// CHECK:           scf.if
+// CHECK:             %[[FROM:[0-9]+]] = memref.load %[[ORDER]][%[[K:[0-9]+]]]
+// CHECK:             %[[J:[0-9]+]] = arith.index_cast %[[FROM]] : i32 to index
+// CHECK:             memref.load %[[X]][%[[J]],
+// CHECK:             memref.store %{{[0-9]+}}, %[[XS]][%[[K]],
+// CHECK:           gpu.terminator
+// CHECK-NOT:     md_exec
+
+func.func @ordered(%x: memref<?x3xf64, 1>, %ids: memref<?xi32, 1>,
+                   %order: memref<?xi32, 1>, %xs: memref<?x3xf64, 1>,
+                   %cell: !md.cell) {
+  md_exec.spatial_order %x, %cell, %ids outs(%order : memref<?xi32, 1>)
+      width(1.1) : memref<?x3xf64, 1>, memref<?xi32, 1>
+  md_exec.permute %x, %order outs(%xs : memref<?x3xf64, 1>)
+      : memref<?x3xf64, 1>, memref<?xi32, 1>
+  return
+}
+
 // The template for devices is in the module.
 //
 // CHECK: func.func private @mdrt_gpu_build_neighbors_matrix(

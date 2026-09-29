@@ -2,8 +2,10 @@
 
 Status: implemented (2026-09-29).
 
-This document describes how MDIR builds a neighbor structure and keeps it
-valid, why it does so in this way, and how the times in it were measured.
+This document describes how MDIR builds a neighbor structure, keeps it
+valid, and keeps the particles in an order in which a loop over pairs
+reads little memory; why it does so in this way; and how the times in it
+were measured.
 The ops are specified in [ops-m0.md](ops-m0.md), Section 8.2.
 
 ## 1. The structure
@@ -272,3 +274,99 @@ the cells and the threads of the search set by hand.
 | For a small system narrow cells are better even at this density: the cell has few cells along an edge, and they are wider than they need to be. | The cost counts the cells that there are in this cell. |
 | A split search is faster up to 4096 particles and slower from 13824 on. | The limit of Section 2.5 |
 | Before the cells of a row were read as one run, cells of half the reach took 1097 microseconds at 262144 particles, and cells of the reach 854. | Section 2.4 |
+
+## 5. The order of the particles
+
+### 5.1 Why the order matters
+
+A loop over pairs reads, for each particle, the positions of its
+neighbors. If particles that are near one another in space are near one
+another in memory, these are few places in memory. If not, every neighbor
+is a place of its own, and for a large system most of them are not in the
+cache.
+
+The order of the input is what it is: that of a file, of molecules, of a
+lattice. It also decays, because the particles of a liquid move away from
+where they were.
+
+### 5.2 Method
+
+The particles are put in the order of their positions (P17, D44):
+
+```mlir
+%order = md_exec.spatial_order %x, %cell, %ids width(0.5)
+%xs    = md_exec.permute %x, %order       // and every other field
+```
+
+| Item | Choice | Reason |
+|---|---|---|
+| The order | By cell, the cells numbered along x first, then y and z. Within a cell by the number of the particle. | A row of cells is a run in memory, as the search of a build reads it (Section 2.4). |
+| The width of the cells | Half the reach | The neighbors of a particle are in 25 runs. |
+| What is put in order | Every field of the particle set: the state, the masses, the parameters, the numbers of the particles | A loop reads the fields of a particle at one index. |
+| When | Where the run begins, and where a segment begins | A segment begins with empty neighbor structures (R1), so no structure holds indices of the order before. |
+| The number of a particle | Its place in the input. The run carries the numbers as a field and puts them in order with the others. | The files of a run are in the order of the input: a function of the host reads a field together with the numbers. |
+
+The order is computed as a build computes the order of the cells
+(Section 2.1, steps 2 to 5), with the sort of step 5 by the numbers of the
+particles. A field in the order is written to a buffer of its own; the
+buffer that held the field holds the next field that needs one.
+
+**Exact restart.** The order is a function of the positions and of the
+numbers of the particles. It does not depend on the order that the
+particles are in. A run that continues from a checkpoint, whose particles
+are in the order of the input, therefore arrives at the order of the run
+that was not interrupted, and at its results, bit for bit. The tests
+compare the states.
+
+**Between two orders** the particles move. With the diffusion
+coefficient of liquid argon, about 2e-3 nm²/ps, a particle moves 0.35 nm
+in 10 ps, less than the width of a cell, and 1.1 nm in 100 ps. This is an
+estimate; how the time of a step grows between two orders was not
+measured. A run without checkpoints keeps the order of its start.
+
+| Alternative | Why not |
+|---|---|
+| A new order with every build of a neighbor structure | The build happens inside a step, where it is decided by a test. Every field that the loops carry would have to pass through the refresh. Every 18 steps is more often than the order decays. |
+| A copy of the positions in the order of the cells, inside the neighbor structure, renewed in every step | One kernel more in every step, and the fields of the parameters would need copies as well. The state stays as it is, which is simpler for the files. |
+| The order of a space-filling curve | Better for the rows of cells along z and y. Not measured. |
+
+The control file has the keyword `reorder` in `[execution]`. The default
+is `true`.
+
+### 5.3 Measurements
+
+The Lennard-Jones liquid of Section 4.1, with the particles on the
+lattice in three ways:
+
+| Order | Meaning |
+|---|---|
+| Lattice | Particle `i` is on site `i`. The order follows the positions. |
+| Scattered | Particle `i` is on site `i · p mod N`, with a number `p` that has no divisor in common with `N`. Neighbors in space are far apart in memory. |
+| Scattered, put in order | The scattered particles, put in the order of their positions before the first step |
+
+Milliseconds per step on the GPU in the mixed mode:
+
+| Particles | Lattice | Scattered | Scattered, put in order |
+|---|---|---|---|
+| 4096 | 0.0609 | 0.0616 | 0.0636 |
+| 32768 | 0.175 | 0.175 | 0.165 |
+| 110592 | 0.421 | 0.407 | 0.416 |
+| 262144 | 0.819 | 1 | 0.828 |
+| 1000000 | 2.95 | 4.11 | 2.97 |
+
+On the host with 16 threads, in double precision:
+
+| Particles | Lattice | Scattered | Scattered, put in order |
+|---|---|---|---|
+| 4096 | 0.175 | 0.193 | 0.184 |
+| 32768 | 1.41 | 1.49 | 1.41 |
+| 110592 | 4.7 | 5.17 | 4.69 |
+| 262144 | 10.7 | 11.7 | 10.6 |
+| 1000000 | 39.5 | 44.7 | 39.9 |
+
+| Observation | Consequence |
+|---|---|
+| On the GPU in the mixed mode, a scattered order costs nothing up to 110592 particles, 22 percent at 262144, and 39 percent at a million. | The order matters for large systems. |
+| Put in order, the scattered particles take the time of the lattice. | The order of the cells is as good as that of the lattice. |
+| On the GPU in double precision the order changes the time by less than 1 percent. | There the arithmetic takes the time, not the memory. |
+| On the host a scattered order costs 6 to 13 percent at every size. | |

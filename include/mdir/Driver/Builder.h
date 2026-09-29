@@ -54,6 +54,11 @@ struct Program {
   /// neighbors that they hold per particle.
   double skin;
   int64_t neighborWidth;
+
+  /// Whether the program puts the particles in the order of their
+  /// positions, and the width of the cells that it orders them by, in nm.
+  bool reorders = false;
+  double orderWidth = 0.0;
 };
 
 llvm::Expected<Program> buildProgram(const Control &control,

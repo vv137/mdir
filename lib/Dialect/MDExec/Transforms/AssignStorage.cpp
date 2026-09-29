@@ -160,6 +160,8 @@ private:
   llvm::DenseMap<Value, Value> buffers;
   /// Neighbor structures: their storage.
   llvm::DenseMap<Value, Value> neighbors;
+  /// Orders of the particles: the buffer that holds the order.
+  llvm::DenseMap<Value, Value> orders;
   /// Particle sets: the number of particles.
   llvm::DenseMap<Attribute, Value> sizes;
 
@@ -940,6 +942,43 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     return success();
   }
 
+  if (auto order = dyn_cast<SpatialOrderOp>(op)) {
+    if (order.isStorageForm())
+      return op->emitOpError() << "is in the storage form already";
+    Value positions, ids, size;
+    if (failed(getBuffer(order.getPositions(), scope, positions)) ||
+        failed(getBuffer(order.getIds(), scope, ids)) ||
+        failed(getSize(op, order.getPositions().getType(), size)))
+      return failure();
+    auto type = cast<MemRefType>(ids.getType());
+    Value buffer = scope.request(type, size, op->getLoc());
+    SpatialOrderOp::create(builder, op->getLoc(), Type(), positions,
+                           mapping.lookup(order.getCell()), ids, buffer,
+                           order.getWidthAttr());
+    orders[order.getResult()] = buffer;
+    scope.owned.insert(buffer);
+    return success();
+  }
+  if (auto permute = dyn_cast<PermuteOp>(op)) {
+    if (permute.isStorageForm())
+      return op->emitOpError() << "is in the storage form already";
+    // The result takes a buffer of its own: a place of the result is
+    // another place of the field.
+    Value field, size;
+    if (failed(getBuffer(permute.getField(), scope, field)) ||
+        failed(getSize(op, permute.getField().getType(), size)))
+      return failure();
+    Value buffer = scope.request(cast<MemRefType>(field.getType()), size,
+                                 op->getLoc());
+    Value order = orders.lookup(permute.getOrder());
+    if (!order)
+      return op->emitOpError() << "the order has no buffer";
+    PermuteOp::create(builder, op->getLoc(), Type(), field, order, buffer);
+    buffers[permute.getResult()] = buffer;
+    scope.owned.insert(buffer);
+    return success();
+  }
+
   if (auto reference = dyn_cast<ReferencePositionsOp>(op)) {
     if (reference.isStorageForm())
       return op->emitOpError() << "is in the storage form already";
@@ -1026,18 +1065,22 @@ LogicalResult Assignment::convertBlock(Block &block, Scope &scope) {
     if (failed(convertOp(&op, scope, position)))
       return failure();
 
-    // The buffers of the fields that die here hold nothing from now on.
+    // The buffers of the fields and of the orders that die here hold
+    // nothing from now on.
     op.walk([&](Operation *nested) {
       for (Value operand : nested->getOperands()) {
-        if (!isField(operand.getType()) ||
-            operand.getParentBlock() != &block ||
+        if (operand.getParentBlock() != &block ||
             scope.lastUse.lookup(operand) != position)
           continue;
-        auto found = buffers.find(operand);
-        if (found == buffers.end())
+        llvm::DenseMap<Value, Value> &held =
+            isa<mdrt::PermutationType>(operand.getType()) ? orders : buffers;
+        if (&held == &buffers && !isField(operand.getType()))
+          continue;
+        auto found = held.find(operand);
+        if (found == held.end())
           continue;
         Value buffer = found->second;
-        buffers.erase(found);
+        held.erase(found);
         if (scope.owns(buffer))
           scope.release(buffer);
       }

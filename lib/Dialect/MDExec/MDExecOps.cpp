@@ -128,24 +128,118 @@ LogicalResult BuildCellsOp::verify() {
   return success();
 }
 
+/// Returns true if `type` is a buffer with one `i32` per particle.
+static bool isIndexBuffer(Type type) {
+  auto buffer = dyn_cast<MemRefType>(type);
+  return buffer && buffer.getRank() == 1 &&
+         buffer.getElementType().isInteger(32);
+}
+
+/// Returns true if `type` is a field or a buffer with one `i32` per
+/// particle.
+static bool isIdsType(Type type) {
+  if (auto field = dyn_cast<FieldType>(type))
+    return field.getNumComponents() == 1 &&
+           field.getElementType().isInteger(32);
+  return isIndexBuffer(type);
+}
+
 LogicalResult SpatialOrderOp::verify() {
-  auto cells = cast<CellsType>(getCells().getType());
-  auto order = cast<PermutationType>(getResult().getType());
-  if (cells.getParticleSet() != order.getParticleSet())
-    return emitOpError() << "the cells are on " << cells.getParticleSet()
-                         << ", but the result is on "
-                         << order.getParticleSet();
+  bool isStorage = isStorageForm();
+  if (isa<MemRefType>(getIds().getType()) != isStorage)
+    return emitOpError()
+           << "expected fields only, as in the value form, or buffers "
+              "only, as in the storage form";
+  if (static_cast<bool>(getOrder()) != isStorage ||
+      static_cast<bool>(getResult()) == isStorage)
+    return emitOpError() << "expected a result in the value form, and a "
+                            "buffer in 'outs' in the storage form";
+
+  FlatSymbolRefAttr particleSet;
+  if (auto order = getResult())
+    particleSet = cast<PermutationType>(order.getType()).getParticleSet();
+  if (failed(verifyPositions(getOperation(), getPositions(), particleSet)))
+    return failure();
+  if (!isIdsType(getIds().getType()))
+    return emitOpError() << "expected 'ids' to hold one i32 per particle, "
+                            "got "
+                         << getIds().getType();
+  if (auto ids = dyn_cast<FieldType>(getIds().getType()))
+    if (ids.getParticleSet() != particleSet)
+      return emitOpError() << "the order is on " << particleSet
+                           << ", but 'ids' belongs to "
+                           << ids.getParticleSet();
+  if (getOrder() && !isIndexBuffer(getOrder().getType()))
+    return emitOpError() << "expected the buffer in 'outs' to hold one i32 "
+                            "per particle, got "
+                         << getOrder().getType();
+
+  double width = getWidth().convertToDouble();
+  if (!(width > 0.0))
+    return emitOpError() << "expected a positive width, got " << width;
   return success();
 }
 
+void SpatialOrderOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  if (!isStorageForm())
+    return;
+  addEffect<MemoryEffects::Read>(effects, getPositionsMutable());
+  addEffect<MemoryEffects::Read>(effects, getIdsMutable());
+  for (OpOperand &operand : getOrderMutable())
+    addEffect<MemoryEffects::Write>(effects, operand);
+}
+
 LogicalResult PermuteOp::verify() {
+  bool isStorage = isStorageForm();
+  if (isa<MemRefType>(getOrder().getType()) != isStorage)
+    return emitOpError()
+           << "expected a field and an order, as in the value form, or "
+              "buffers only, as in the storage form";
+  if (static_cast<bool>(getOut()) != isStorage ||
+      static_cast<bool>(getResult()) == isStorage)
+    return emitOpError() << "expected a result in the value form, and a "
+                            "buffer in 'outs' in the storage form";
+
+  if (isStorage) {
+    if (!isIndexBuffer(getOrder().getType()))
+      return emitOpError() << "expected the order to hold one i32 per "
+                              "particle, got "
+                           << getOrder().getType();
+    if (getOut().getType() != getField().getType())
+      return emitOpError()
+             << "expected the buffer in 'outs' to have the type of the "
+                "field, "
+             << getField().getType() << ", got " << getOut().getType();
+    if (getOut() == getField())
+      return emitOpError() << "expected the buffer in 'outs' to be another "
+                              "buffer than that of the field";
+    return success();
+  }
+
   auto field = cast<FieldType>(getField().getType());
   auto order = cast<PermutationType>(getOrder().getType());
   if (field.getParticleSet() != order.getParticleSet())
     return emitOpError() << "the order is on " << order.getParticleSet()
                          << ", but the field belongs to "
                          << field.getParticleSet();
+  if (getResult().getType() != field)
+    return emitOpError() << "expected the result to have the type of the "
+                            "field, "
+                         << field << ", got " << getResult().getType();
   return success();
+}
+
+void PermuteOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  if (!isStorageForm())
+    return;
+  addEffect<MemoryEffects::Read>(effects, getFieldMutable());
+  addEffect<MemoryEffects::Read>(effects, getOrderMutable());
+  for (OpOperand &operand : getOutMutable())
+    addEffect<MemoryEffects::Write>(effects, operand);
 }
 
 LogicalResult BuildNeighborsOp::verify() {

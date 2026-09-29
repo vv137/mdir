@@ -1,6 +1,6 @@
 # MDIR Op Specification, Milestone M0
 
-Status: draft 15 (2026-09-29). Everything in this document is implemented,
+Status: draft 16 (2026-09-29). Everything in this document is implemented,
 except where a section says otherwise. A Lennard-Jones system runs end to
 end in single, mixed, and double precision, on the CPU sequentially and
 with OpenMP, and on NVIDIA GPUs.
@@ -24,6 +24,7 @@ Operand lists, result lists, and the mathematical definitions are normative.
 | Fusion of loops over pairs and of loops over particles (Section 9.4) | Implemented as the pass `md-exec-fuse-loops` |
 | Powers of the squared distance (Section 9.5) | Implemented as the pass `md-exec-simplify-distance` |
 | The test of validity as a loop over particles (Section 9.6) | Implemented as the pass `md-exec-expose-validity` |
+| The order of the particles (Section 8.6) | Implemented; the driver emits the ops |
 | Precision policy (Section 7) | Implemented as the pass `md-exec-assign-precision` |
 
 It follows the accepted decisions in [decisions.md](decisions.md). Tags such
@@ -881,8 +882,8 @@ double mode (Section 10.9).
 | Op | Purpose |
 |---|---|
 | `md_exec.build_cells` | Bins particles into cells. |
-| `md_exec.spatial_order` | Computes a permutation that orders particles by cell. |
-| `md_exec.permute` | Applies a permutation to a field. |
+| `md_exec.spatial_order` | Computes the order of the particles by cell, and within a cell by their numbers. |
+| `md_exec.permute` | Returns a field in an order. |
 | `md_exec.build_neighbors` | Builds a physical neighbor structure. |
 | `md_exec.empty_neighbors` | A neighbor structure that is valid for no configuration. |
 | `md_exec.refresh_neighbors` | Returns a neighbor structure that is valid for a configuration, building one only if the one given is not. |
@@ -1118,6 +1119,47 @@ is stored is a pass over ops that still are loops over particles and pairs.
 The layout of a vector field, the device that holds a buffer, the transfers
 between host and device, and whether a loop becomes a CPU loop or a GPU
 kernel are such decisions.
+
+### 8.6 `md_exec.spatial_order` and `md_exec.permute`
+
+```mlir
+%order = md_exec.spatial_order %x, %cell, %ids width(1.4)
+           : !vec, !md.field<@atoms, i32> -> !mdrt.permutation<@atoms>
+%xs    = md_exec.permute %x, %order
+           : !vec, !mdrt.permutation<@atoms> -> !vec
+```
+
+`order[k]` is the particle that comes to place `k`: the particles follow
+one another by the cell that they are in, and within a cell by `ids`. The
+cells are `width` wide or wider and numbered along x first.
+
+```text
+xs_k = x_order[k]
+```
+
+| Rule | Reason |
+|---|---|
+| `ids` holds a number for each particle that no other particle has. | The order is then a function of the positions and of `ids` alone. It does not depend on the order that the particles are in, which a run that continues from a checkpoint does not share with the run before (R1). |
+| Every field of the particle set is put in the order, `ids` included. | A loop reads the fields of a particle at one index. |
+| A neighbor structure that was built before is not valid for the fields in the order. | It holds indices. The driver orders the particles where a segment begins, and a segment begins with empty structures. |
+
+In the storage form the order is a buffer with one `i32` per particle,
+and both ops write to a buffer in `outs`:
+
+```mlir
+md_exec.spatial_order %x, %cell, %ids outs(%order : memref<?xi32>)
+    width(1.4) : memref<?x3xf64>, memref<?xi32>
+md_exec.permute %x, %order outs(%xs : memref<?x3xf64>)
+    : memref<?x3xf64>, memref<?xi32>
+```
+
+Storage assignment gives a field in the order a buffer of its own. In a
+loop, the buffer that held the field before is handed back with the
+buffers that the loop borrowed (Section 10.4), so the two change places
+from one iteration to the next.
+
+[neighbors-m0.md](neighbors-m0.md), Section 5, has the method and the
+measurements.
 
 ## 9. Lowering `md` and `dyn` to `md_exec`
 

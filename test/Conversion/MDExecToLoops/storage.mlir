@@ -131,4 +131,29 @@ func.func @validity(%x: memref<?x3xf64>, %v: memref<?x3xf64>,
   return
 }
 
+// The order of the particles is a call to the template, which is in the
+// module. A field in that order is a loop that reads place `order[k]` and
+// writes place `k`.
+//
+// CHECK-LABEL: func.func @ordered(
+// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64>, %[[IDS:[a-z0-9]+]]: memref<?xi32>, %[[ORDER:[a-z0-9]+]]: memref<?xi32>, %[[XS:[a-z0-9]+]]: memref<?x3xf64>, %[[BOX:[a-z0-9]+]]: vector<3xf64>)
+// CHECK:         %[[WIDTH:[a-z0-9_]+]] = arith.constant 1.100000e+00 : f64
+// CHECK:         call @mdrt.spatial_order(%[[X]], %[[BOX]], %[[WIDTH]], %[[IDS]], %[[ORDER]])
+// CHECK:         scf.parallel (%[[K:[a-z0-9]+]]) =
+// CHECK:           %[[FROM:[0-9]+]] = memref.load %[[ORDER]][%[[K]]]
+// CHECK:           %[[J:[0-9]+]] = arith.index_cast %[[FROM]] : i32 to index
+// CHECK:           memref.load %[[X]][%[[J]],
+// CHECK:           memref.store %{{[0-9]+}}, %[[XS]][%[[K]],
+// CHECK-NOT:     md_exec
+
+func.func @ordered(%x: memref<?x3xf64>, %ids: memref<?xi32>,
+                   %order: memref<?xi32>, %xs: memref<?x3xf64>,
+                   %cell: !md.cell) {
+  md_exec.spatial_order %x, %cell, %ids outs(%order : memref<?xi32>)
+      width(1.1) : memref<?x3xf64>, memref<?xi32>
+  md_exec.permute %x, %order outs(%xs : memref<?x3xf64>)
+      : memref<?x3xf64>, memref<?xi32>
+  return
+}
+
 // CHECK-NOT: md.particle_set

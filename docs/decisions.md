@@ -304,6 +304,7 @@ P11 to P18 follow from the review of PPMD (Saunders et al. 2018). See
 | D41 | **The test of validity of a neighbor structure is made where the positions are written.** Each thread of the drift tests the particle that it has moved, and a thread whose particle has moved more than half the skin sets a flag. There is no global maximum of the displacements: the refresh needs to know whether one particle is beyond the limit, not how far the farthest has moved. The criterion is unchanged, so the structure is built in the same steps. See Section 5.6 for what else was considered. |
 | D42 | **The minimum image is found with a multiplication** by one over the edge lengths, which is computed once. The number of images is a whole number, so the displacement of a pair differs from that of a division only if the pair is within rounding of half an edge apart, which is beyond every cutoff. |
 | D43 | **A neighbor build searches a copy of the positions that is made for it**: the positions in the cell, in f32, in the order of the cells. It takes a pair that is within the cutoff plus the skin plus a margin for the rounding, so a row may hold pairs that are a little beyond. The width of the cells is chosen when the structure is built, from the density. On a device the search of a small system has one thread for each row of cells of a particle. See [neighbors-m0.md](neighbors-m0.md). |
+| D44 | **The particles are put in the order of their positions where a run begins and where a segment begins**, not with every build of a neighbor structure as P17 has it. The order is by cell and, within a cell, by the number of the particle, which is its place in the input. The run carries the numbers as a field, and the files of a run are in the order of the input. The order does not depend on the order that the particles are in, so a run that continues from a checkpoint is exact. See [neighbors-m0.md](neighbors-m0.md), Section 5. |
 
 ### 5.1 Amendments to earlier decisions
 
@@ -404,6 +405,7 @@ These items follow from the decisions above but have no design yet.
 | Fusion of loops over particles | M0 | Implemented |
 | The test of validity in the loop that writes the positions (D41) | M0 | Implemented: `md-exec-expose-validity` |
 | Fusion of the loop over pairs with the kick that follows it | M0 | |
+| The particles in the order of their positions (P17, D44) | M0 | Implemented: `md_exec.spatial_order`, `md_exec.permute`, and the keyword `reorder` |
 | A skin that is tuned during the run | M1 | |
 | Removal of the square root from kernels that do not need it | M0 | Implemented |
 | Freeing of buffers | M0 | |

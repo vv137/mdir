@@ -1,0 +1,34 @@
+# The test of reorder.test on a GPU.
+#
+# A run keeps its particles in the order of their positions. The files of
+# the run are in the order of the input all the same, and the results are
+# those of a run that leaves the particles as they are, up to rounding: the
+# forces on a particle are added up in another order.
+#
+# The input has the particles of mixture.pdb in a scattered order.
+#
+# REQUIRES: hdf5, cuda
+#
+# RUN: sed -e 's|Inputs/mixture.pdb|%S/Inputs/mixture-scattered.pdb|' \
+# RUN:     -e 's|nsteps        = 200|nsteps = 200\nrstout_period = 100|' \
+# RUN:     %S/mixture.toml > %t.on.toml
+# RUN: echo '[output]' >> %t.on.toml
+# RUN: echo 'rstfile = "%t.on.h5"' >> %t.on.toml
+# RUN: echo '[execution]' >> %t.on.toml
+# RUN: echo 'target = "gpu"' >> %t.on.toml
+# RUN: echo 'reorder = true' >> %t.on.toml
+# RUN: sed -e 's|reorder = true|reorder = false|' -e 's|%t.on.h5|%t.off.h5|' \
+# RUN:     %t.on.toml > %t.off.toml
+#
+# RUN: mdir-run %t.on.toml | FileCheck %s
+# RUN: mdir-run %t.off.toml | FileCheck %s
+# RUN: not mdir-checkpoint %t.on.h5 %t.off.h5 \
+# RUN: | FileCheck %s --check-prefix=STATES
+
+# The potential energy at the start is that of mixture.toml.
+#
+# CHECK:      INFO:         0         0.0000 {{ *-[0-9.]+}} {{ *}}-497.7298 {{ *[0-9.]+}} {{ *}}120.0000
+# CHECK:      INFO:       200         0.8000 {{ *}}-406.51{{[0-9]+}} {{ *}}-460.3205 {{ *}}53.8046
+
+# STATES: values of the positions differ, by up to {{[0-9.]+}}e-1{{[0-9]}}
+

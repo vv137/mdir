@@ -373,6 +373,15 @@ int main(int argc, char **argv) {
                                        : std::vector<double>(3 * count),
                   program->force, count);
   Buffer<1> masses(system->masses, program->mass, count);
+  // The numbers of the particles: their places in the files of the run.
+  std::vector<int32_t> numbers(count);
+  for (size_t i = 0; i != count; ++i)
+    numbers[i] = static_cast<int32_t>(i);
+  StridedMemRefType<int32_t, 1> identities;
+  identities.basePtr = identities.data = numbers.data();
+  identities.offset = 0;
+  identities.sizes[0] = count;
+  identities.strides[0] = 1;
   std::vector<std::unique_ptr<Buffer<1>>> fields;
   for (const Program::Field &field : program->fields)
     fields.push_back(std::make_unique<Buffer<1>>(field.values,
@@ -388,6 +397,11 @@ int main(int argc, char **argv) {
   masses.addTo(arguments);
   for (auto &field : fields)
     field->addTo(arguments);
+  arguments.push_back(&identities.basePtr);
+  arguments.push_back(&identities.data);
+  arguments.push_back(&identities.offset);
+  arguments.push_back(&identities.sizes[0]);
+  arguments.push_back(&identities.strides[0]);
   for (double &edge : box)
     arguments.push_back(&edge);
   arguments.push_back(&timestep);

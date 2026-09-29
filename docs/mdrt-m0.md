@@ -76,9 +76,10 @@ GPUs.
 ### 2.3 In the IR
 
 ```mlir
-%cells = md_exec.build_cells %x, %cell { width = 2.8 } : !mdrt.cells
-%order = md_exec.spatial_order %cells : !mdrt.permutation
+%order = md_exec.spatial_order %x, %cell, %ids { width = 1.4 }
+           : !mdrt.permutation
 %xs    = md_exec.permute %x, %order : !vec
+%cells = md_exec.build_cells %xs, %cell { width = 2.8 } : !mdrt.cells
 %nl    = md_exec.build_neighbors %cells, %xs, %cell
            { cutoff = 2.5, skin = 0.3, kind = matrix, width = 96 }
            : !mdrt.neighbors
@@ -222,7 +223,7 @@ Proposal: the C++ tool.
 | Storage form of the loops | Implemented |
 | Threading as a plan parameter | Not implemented. The choice is made by the passes that are run after lowering. |
 | Runtime library `libmdrt` | One function, the overflow report |
-| Spatial reordering (step 5) | Not implemented |
+| Spatial reordering (step 5) | Implemented, where a run and where a segment begins (D44); see [neighbors-m0.md](neighbors-m0.md), Section 5 |
 | GPU | Implemented for NVIDIA. See [ops-m0.md](ops-m0.md), Section 10.8. |
 | Runtime library `libmdrt_cuda` | The functions that the lowering of the `gpu` dialect calls, on the CUDA driver API. One stream serves all launches. The host waits only where it reads what the device has computed. |
 

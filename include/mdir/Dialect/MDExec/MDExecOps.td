@@ -81,41 +81,103 @@ def MDExec_BuildCellsOp : MDExec_Op<"build_cells", [Pure]> {
   let hasVerifier = 1;
 }
 
-def MDExec_SpatialOrderOp : MDExec_Op<"spatial_order", [Pure]> {
+def MDExec_Order : AnyTypeOf<[MDRT_PermutationType, MDExec_Buffer]>;
+
+def MDExec_SpatialOrderOp : MDExec_Op<"spatial_order", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
   let summary = "Computes the order of the particles by cell";
   let description = [{
+    Returns the order in which the particles follow one another in space:
+    by the cell that they are in, in cells that are `width` wide or wider,
+    and within a cell by `ids`. Entry `k` of the order is the particle that
+    comes to place `k`.
+
+    The cells are numbered along x first, then along y and z. Particles
+    that are near one another in space are then near one another in
+    memory, and a loop over pairs reads the neighbors of a particle from
+    few places.
+
+    `ids` holds a number for each particle that no other particle has. The
+    order depends on the positions and on these numbers only, not on the
+    order that the particles are in. A run that continues from a
+    checkpoint therefore arrives at the order of the run that was not
+    interrupted.
+
     ```mlir
-    %order = md_exec.spatial_order %cells
-               : !mdrt.cells<@atoms> -> !mdrt.permutation<@atoms>
+    %order = md_exec.spatial_order %x, %cell, %ids width(1.4)
+               : !md.field<@atoms, 3 x f64>, !md.field<@atoms, i32>
+               -> !mdrt.permutation<@atoms>
+    ```
+
+    In the storage form the fields are buffers, and the order is written
+    to the buffer in `outs`, which holds one `i32` per particle.
+
+    ```mlir
+    md_exec.spatial_order %x, %cell, %ids outs(%order : memref<?xi32>)
+        width(1.4) : memref<?x3xf64>, memref<?xi32>
     ```
   }];
-  let arguments = (ins MDRT_CellsType:$cells);
-  let results = (outs MDRT_PermutationType:$result);
+  let arguments = (ins
+    MDExec_FieldOrBuffer:$positions,
+    MD_CellType:$cell,
+    MDExec_FieldOrBuffer:$ids,
+    Optional<MDExec_Buffer>:$order,
+    F64Attr:$width
+  );
+  let results = (outs Optional<MDRT_PermutationType>:$result);
   let assemblyFormat = [{
-    $cells attr-dict
-    `:` qualified(type($cells)) `->` qualified(type($result))
+    $positions `,` $cell `,` $ids
+    (`outs` `(` $order^ `:` type($order) `)`)?
+    `width` `(` $width `)` attr-dict
+    `:` qualified(type($positions)) `,` qualified(type($ids))
+    (`->` qualified(type($result))^)?
+  }];
+  let extraClassDeclaration = [{
+    bool isStorageForm() {
+      return ::llvm::isa<::mlir::MemRefType>(getPositions().getType());
+    }
   }];
   let hasVerifier = 1;
 }
 
 def MDExec_PermuteOp : MDExec_Op<"permute", [
-    Pure, AllTypesMatch<["field", "result"]>
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let summary = "Applies an order to a field";
   let description = [{
+    Returns the field with the value of particle `order[k]` at place `k`.
+
     ```mlir
     %xs = md_exec.permute %x, %order
             : !md.field<@atoms, 3 x f64>, !mdrt.permutation<@atoms>
+            -> !md.field<@atoms, 3 x f64>
+    ```
+
+    In the storage form the field and the order are buffers, and the
+    result is written to the buffer in `outs`, which is not the buffer of
+    the field.
+
+    ```mlir
+    md_exec.permute %x, %order outs(%xs : memref<?x3xf64>)
+        : memref<?x3xf64>, memref<?xi32>
     ```
   }];
   let arguments = (ins
-    MD_FieldType:$field,
-    MDRT_PermutationType:$order
+    MDExec_FieldOrBuffer:$field,
+    MDExec_Order:$order,
+    Optional<MDExec_Buffer>:$out
   );
-  let results = (outs MD_FieldType:$result);
+  let results = (outs Optional<MD_FieldType>:$result);
   let assemblyFormat = [{
-    $field `,` $order attr-dict
+    $field `,` $order (`outs` `(` $out^ `:` type($out) `)`)? attr-dict
     `:` qualified(type($field)) `,` qualified(type($order))
+    (`->` qualified(type($result))^)?
+  }];
+  let extraClassDeclaration = [{
+    bool isStorageForm() {
+      return ::llvm::isa<::mlir::MemRefType>(getField().getType());
+    }
   }];
   let hasVerifier = 1;
 }

@@ -48,8 +48,17 @@ private:
   /// The arguments that pass the fields of the parameters on: their
   /// declarations, their values, and their types, each after a comma.
   std::string getFieldParameters() const;
-  std::string getFieldValues() const;
+  /// The fields of the parameters, as arguments that follow others.
+  /// `prefix` comes before the name of each.
+  std::string getFieldValues(StringRef prefix = "%p_") const;
   std::string getFieldTypes() const;
+
+  /// Emits the order of the particles at the positions `positions`, and
+  /// the fields in that order. `from` and `to` are the ends of the names
+  /// of the fields before and after.
+  void emitReorder(StringRef indent, StringRef from, StringRef stateTo,
+                   StringRef otherTo, bool withForces,
+                   StringRef velocities);
 
   bool isLeapfrog() const {
     return control.integrator == Integrator::Leapfrog;
@@ -60,6 +69,13 @@ private:
   const System &system;
   Program &program;
   llvm::raw_string_ostream os;
+
+  /// The names of the masses, of the fields of the parameters, and of the
+  /// numbers of the particles, where the code is that is being emitted.
+  /// Inside a segment they are those of the order of the segment.
+  std::string massName = "%m";
+  std::string fieldPrefix = "%p_";
+  std::string idName = "%id";
 
   std::vector<Expression> expressions;
   std::vector<Parameter> parameters;
@@ -84,11 +100,37 @@ std::string Builder::getFieldParameters() const {
   return text;
 }
 
-std::string Builder::getFieldValues() const {
+std::string Builder::getFieldValues(StringRef prefix) const {
   std::string text;
   for (const Program::Field &field : program.fields)
-    text += ", %p_" + field.name;
+    text += (", " + prefix + field.name).str();
   return text;
+}
+
+void Builder::emitReorder(StringRef indent, StringRef from,
+                          StringRef stateTo, StringRef otherTo,
+                          bool withForces, StringRef velocities) {
+  StringRef order = "!mdrt.permutation<@atoms>";
+  os << indent << "%order" << stateTo << " = md_exec.spatial_order %x"
+     << from << ", %cell, %id" << from << " width("
+     << formatReal(program.orderWidth) << ")\n"
+     << indent << "    : !vec, !ids -> " << order << "\n";
+  auto permute = [&](const llvm::Twine &result, const llvm::Twine &field,
+                     StringRef type) {
+    os << indent << result << " = md_exec.permute " << field << ", %order"
+       << stateTo << "\n"
+       << indent << "    : " << type << ", " << order << " -> " << type
+       << "\n";
+  };
+  permute("%x" + stateTo, "%x" + from, "!vec");
+  permute(velocities, "%v" + from, "!vec");
+  if (withForces)
+    permute("%f" + stateTo, "%f" + from, "!vec");
+  permute("%m" + otherTo, "%m" + from, "!real");
+  for (const Program::Field &field : program.fields)
+    permute("%p" + otherTo + "_" + field.name,
+            "%p" + from + "_" + field.name, "!real");
+  permute("%id" + otherTo, "%id" + from, "!ids");
 }
 
 std::string Builder::getFieldTypes() const {
@@ -307,9 +349,10 @@ void Builder::emitPrograms() {
 
 /// The kernel of the kinetic energy of one particle.
 static void emitKineticEnergy(llvm::raw_ostream &os, StringRef result,
-                              StringRef velocities, StringRef indent) {
+                              StringRef velocities, StringRef masses,
+                              StringRef indent) {
   os << indent << result << " = md.sum_particles gather(" << velocities
-     << ", %m : !vec, !real) {\n"
+     << ", " << masses << " : !vec, !real) {\n"
      << indent << "^bb0(%v_i: vector<3xf64>, %m_i: f64):\n"
      << indent << "  %half = arith.constant 5.0e-01 : f64\n"
      << indent << "  %sq = arith.mulf %v_i, %v_i : vector<3xf64>\n"
@@ -340,29 +383,70 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
     }
     return text;
   };
+  // A segment begins with the particles in the order of their positions.
+  auto isReordered = [&](unsigned index) {
+    return program.reorders && levels[index].name == "segment";
+  };
 
   std::string inner = (indent + "  ").str();
   std::string here = std::to_string(level);
-  std::string outside = level == 0 ? "0" : "a" + std::to_string(level - 1);
+  std::string outside = level == 0
+                            ? "0"
+                            : isReordered(level - 1)
+                                  ? "s"
+                                  : "a" + std::to_string(level - 1);
   const Level &current = levels[level];
   bool isStepLoop = level + 1 == levels.size();
+  bool reorders = isReordered(level);
 
-  os << indent << getValues("e" + here) << " = scf.for %i" << here
-     << " = %c0 to %n" << here << " step %c1\n"
+  // With a new order in every iteration, the loop carries the fields that
+  // do not change otherwise as well.
+  std::string moreResults, moreInits, moreTypes, moreYielded;
+  if (reorders) {
+    moreResults = ", %me" + here;
+    moreInits = ", %ma" + here + " = " + massName;
+    moreTypes = ", !real";
+    moreYielded = ", %ms";
+    for (const Program::Field &field : program.fields) {
+      moreResults += ", %pe" + here + "_" + field.name;
+      moreInits +=
+          ", %pa" + here + "_" + field.name + " = " + fieldPrefix + field.name;
+      moreTypes += ", !real";
+      moreYielded += ", %ps_" + field.name;
+    }
+    moreResults += ", %ide" + here;
+    moreInits += ", %ida" + here + " = " + idName;
+    moreTypes += ", !ids";
+    moreYielded += ", %ids";
+  }
+
+  os << indent << getValues("e" + here) << moreResults << " = scf.for %i"
+     << here << " = %c0 to %n" << here << " step %c1\n"
      << indent << "    iter_args(" << getInits("a" + here, outside)
-     << ")\n"
-     << indent << "    -> (" << state << ") {\n";
+     << moreInits << ")\n"
+     << indent << "    -> (" << state << moreTypes << ") {\n";
+
+  std::string outerMass = massName, outerPrefix = fieldPrefix,
+              outerId = idName;
+  if (reorders) {
+    emitReorder(inner, "a" + here, "s", "s", /*withForces=*/!isLeapfrog(),
+                "%vs");
+    massName = "%ms";
+    fieldPrefix = "%ps_";
+    idName = "%ids";
+  }
 
   if (isStepLoop) {
     os << inner << getValues("b" + here) << " = dyn.step @step(";
     if (isLeapfrog())
-      os << "%xa" << here << ", %va" << here << ", %m, %cell, %dt"
-         << getFieldValues() << ")\n"
+      os << "%xa" << here << ", %va" << here << ", " << massName
+         << ", %cell, %dt" << getFieldValues(fieldPrefix) << ")\n"
          << inner << "    : (!vec, !vec, !real, !md.cell, f64"
          << getFieldTypes() << ") -> (!vec, !vec)\n";
     else
-      os << "%xa" << here << ", %va" << here << ", %fa" << here
-         << ", %m, %cell, %dt" << getFieldValues() << ")\n"
+      os << "%xa" << here << ", %va" << here << ", %fa" << here << ", "
+         << massName << ", %cell, %dt" << getFieldValues(fieldPrefix)
+         << ")\n"
          << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
          << getFieldTypes() << ") -> (!vec, !vec, !vec)\n";
     os << inner << "scf.yield " << getValues("b" + here) << " : " << state
@@ -402,21 +486,22 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       // The last step of the interval, and the energies after it.
       if (isLeapfrog()) {
         os << inner << "%xl, %vl = dyn.step @step(%x" << last << ", %v"
-           << last << ", %m, %cell, %dt" << getFieldValues() << ")\n"
+           << last << ", " << massName << ", %cell, %dt"
+           << getFieldValues(fieldPrefix) << ")\n"
            << inner << "    : (!vec, !vec, !real, !md.cell, f64"
            << getFieldTypes() << ") -> (!vec, !vec)\n";
         os << inner << "%u = md.evaluate @energy(%xl, %cell"
-           << getFieldValues() << ") request [energy]\n"
+           << getFieldValues(fieldPrefix) << ") request [energy]\n"
            << inner << "    : (!vec, !md.cell" << getFieldTypes()
            << ") -> f64\n";
       } else {
         os << inner << "%xl, %vl, %fl, %u = dyn.step @step_energy(%x" << last
-           << ", %v" << last << ", %f" << last << ", %m, %cell, %dt"
-           << getFieldValues() << ")\n"
+           << ", %v" << last << ", %f" << last << ", " << massName
+           << ", %cell, %dt" << getFieldValues(fieldPrefix) << ")\n"
            << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
            << getFieldTypes() << ") -> (!vec, !vec, !vec, f64)\n";
       }
-      emitKineticEnergy(os, "%k", "%vl", inner);
+      emitKineticEnergy(os, "%k", "%vl", massName, inner);
       emitStep();
       os << inner << "func.call @mdrtWriteEnergies(%step" << here
          << ", %u, %k) : (i64, f64, f64) -> ()\n";
@@ -425,17 +510,17 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       if (current.name == "frame") {
         emitStep();
         os << inner << "mdrt.host_call @mdrtWriteFrame(%step" << here
-           << ", %x" << last << ") : (i64, !vec)\n";
+           << ", %x" << last << ", " << idName << ") : (i64, !vec, !ids)\n";
       }
       if (current.name == "segment") {
         // The state as the next step needs it.
         emitStep();
         os << inner << "mdrt.host_call @mdrtWriteCheckpoint(%step" << here
-           << ", " << getValues(last) << ")\n"
-           << inner << "    : (i64, " << state << ")\n";
+           << ", " << getValues(last) << ", " << idName << ")\n"
+           << inner << "    : (i64, " << state << ", !ids)\n";
       }
-      os << inner << "scf.yield " << getValues(last) << " : " << state
-         << "\n";
+      os << inner << "scf.yield " << getValues(last) << moreYielded << " : "
+         << state << moreTypes << "\n";
     }
   }
 
@@ -443,6 +528,16 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
   if (current.name == "segment")
     os << " {mdrt.segment}";
   os << "\n";
+
+  massName = outerMass;
+  fieldPrefix = outerPrefix;
+  idName = outerId;
+  // What the loop has left is in the order of its last iteration.
+  if (reorders) {
+    massName = "%me" + here;
+    fieldPrefix = "%pe" + here + "_";
+    idName = "%ide" + here;
+  }
 }
 
 void Builder::emitEntry() {
@@ -454,16 +549,16 @@ void Builder::emitEntry() {
   os << "func.func private @mdrtWriteEnergies(i64, f64, f64)\n"
      << "    attributes {llvm.emit_c_interface}\n"
      << "func.func private @mdrtWriteFrame(i64, memref<?x3x" << state
-     << ">)\n    attributes {llvm.emit_c_interface}\n"
+     << ">, memref<?xi32>)\n    attributes {llvm.emit_c_interface}\n"
      << "func.func private @mdrtFinish(memref<?x3x" << state
-     << ">, memref<?x3x" << state << ">)\n"
+     << ">, memref<?x3x" << state << ">, memref<?xi32>)\n"
      << "    attributes {llvm.emit_c_interface}\n";
   if (control.checkpointPeriod > 0) {
     os << "func.func private @mdrtWriteCheckpoint(i64, memref<?x3x" << state
        << ">, memref<?x3x" << state << ">";
     if (program.writesForces)
       os << ", memref<?x3x" << force << ">";
-    os << ")\n    attributes {llvm.emit_c_interface}\n";
+    os << ", memref<?xi32>)\n    attributes {llvm.emit_c_interface}\n";
   }
   os << "\n";
 
@@ -475,7 +570,8 @@ void Builder::emitEntry() {
   os << "    %masses: memref<?x" << mass << ">";
   for (const Program::Field &field : program.fields)
     os << ", %b_" << field.name << ": memref<?x" << parameter << ">";
-  os << ",\n    %lx: f64, %ly: f64, %lz: f64, %dt: f64, %start: i64) {\n";
+  os << ",\n    %identities: memref<?xi32>,\n"
+     << "    %lx: f64, %ly: f64, %lz: f64, %dt: f64, %start: i64) {\n";
 
   os << "  %c0 = arith.constant 0 : index\n"
      << "  %c1 = arith.constant 1 : index\n";
@@ -493,30 +589,39 @@ void Builder::emitEntry() {
       steps += 1;
   }
 
+  // The fields as the buffers hold them, and in the order of the positions
+  // if the run keeps that order.
+  bool givenForces = isRestart() && program.takesForces;
+  std::string velocities = isLeapfrog() && !isRestart() ? "%vg" : "%v0";
+  std::string given = program.reorders ? "_in" : "";
   os << "  %cell = md.orthorhombic_cell %lx, %ly, %lz\n"
-     << "  %x0 = mdrt.from_buffer %positions : memref<?x3x" << state
+     << "  %x" << (program.reorders ? "_in" : "0")
+     << " = mdrt.from_buffer %positions : memref<?x3x" << state
      << "> to !vec\n"
-     << "  " << (isLeapfrog() && !isRestart() ? "%vg" : "%v0")
+     << "  " << (program.reorders ? "%v_in" : velocities)
      << " = mdrt.from_buffer %velocities : memref<?x3x" << state
      << "> to !vec\n"
-     << "  %m = mdrt.from_buffer %masses : memref<?x" << mass
+     << "  %m" << given << " = mdrt.from_buffer %masses : memref<?x" << mass
      << "> to !real\n";
   for (const Program::Field &field : program.fields)
-    os << "  %p_" << field.name << " = mdrt.from_buffer %b_" << field.name
-       << " : memref<?x" << parameter << "> to !real\n";
+    os << "  %p" << given << "_" << field.name << " = mdrt.from_buffer %b_"
+       << field.name << " : memref<?x" << parameter << "> to !real\n";
+  os << "  %id" << given
+     << " = mdrt.from_buffer %identities : memref<?xi32> to !ids\n";
+  // A run that continues an earlier one has the forces of the step before.
+  if (givenForces)
+    os << "  %f" << (program.reorders ? "_in" : "0")
+       << " = mdrt.from_buffer %forces : memref<?x3x" << force
+       << "> to !vec\n";
+  if (program.reorders)
+    emitReorder("  ", "_in", "0", "", givenForces, velocities);
 
-  if (isRestart()) {
-    // The run continues an earlier one: the state is as the next step
-    // needs it, and the log has the energies of the step before.
-    if (program.takesForces)
-      os << "  %f0 = mdrt.from_buffer %forces : memref<?x3x" << force
-         << "> to !vec\n";
-  } else {
+  if (!isRestart()) {
     // The energies at the start.
     os << "  %u0, %f0 = md.evaluate @energy(%x0, %cell" << getFieldValues()
        << ")\n      request [energy, forces]\n      : (!vec, !md.cell"
        << getFieldTypes() << ") -> (f64, !vec)\n";
-    emitKineticEnergy(os, "%k0", isLeapfrog() ? "%vg" : "%v0", "  ");
+    emitKineticEnergy(os, "%k0", velocities, "%m", "  ");
     os << "  call @mdrtWriteEnergies(%start, %u0, %k0) : (i64, f64, f64) "
           "-> ()\n";
 
@@ -529,7 +634,8 @@ void Builder::emitEntry() {
   }
 
   emitLevel(0, "  ");
-  os << "  mdrt.host_call @mdrtFinish(%xe0, %ve0) : (!vec, !vec)\n"
+  os << "  mdrt.host_call @mdrtFinish(%xe0, %ve0, " << idName
+     << ") : (!vec, !vec, !ids)\n"
      << "  return\n}\n";
 }
 
@@ -555,6 +661,10 @@ llvm::Error Builder::build() {
 
   program.skin =
       (control.pairlistDistance - control.cutoffDistance) * units::length;
+  // Cells of half the reach of a neighbor structure: particles that are
+  // neighbors are then a few cells apart in memory.
+  program.reorders = control.reorder;
+  program.orderWidth = 0.5 * control.pairlistDistance * units::length;
   program.neighborWidth = control.neighborWidth;
   if (program.neighborWidth == 0) {
     // Half as many again as a uniform density gives, and a few more.
@@ -592,6 +702,7 @@ llvm::Error Builder::build() {
 
   os << "!vec   = !md.field<@atoms, 3 x f64>\n"
      << "!real  = !md.field<@atoms, f64>\n"
+     << "!ids   = !md.field<@atoms, i32>\n"
      << "!pairs = !md.relation<@atoms, 2, unordered>\n\n"
      << "md.particle_set @atoms\n\n";
   if (llvm::Error error = emitPotential())

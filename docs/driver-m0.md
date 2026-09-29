@@ -104,6 +104,7 @@ Keywords are in lower case. Values that name a choice, such as `VVER` and
 | `execution` | `target`, `threads`, `precision` | Structural plan parameters |
 | | `neighbor_width` | The number of neighbors that a neighbor structure holds per particle. Absent: half as many again as a uniform density gives. |
 | | `fast_math` | Whether kernels are rewritten in ways that change rounding. The default is `true`. |
+| | `reorder` | Whether the run keeps the particles in the order of their positions (D44). The default is `true`. The files of the run are in the order of the input either way. |
 
 A keyword of a pair term or of a type that is not listed here names a
 number: a parameter of the type, or a constant of the term, that the
@@ -166,7 +167,9 @@ The periods of output are known before the run, so the driver compiles the
 whole run as one function with nested loops:
 
 ```text
+the particles are put in the order of their positions      (D44)
 for each checkpoint interval           rstout_period steps
+    the particles are put in order again
     neighbor structures start empty      (R1)
     for each frame interval            crdout_period steps
         for each energy interval       eneout_period steps
@@ -183,6 +186,8 @@ for each checkpoint interval           rstout_period steps
 | A neighbor structure outlives a frame and an energy output | The loop over checkpoint intervals carries it. |
 | A restarted run rebuilds where the first run did | R1: the structure starts empty in every checkpoint interval. |
 | Energies are computed only when they are written | The step of an energy interval that is written requests the energy; the others request forces only. |
+| A loop over pairs reads the neighbors of a particle from few places in memory | The particles are in the order of their positions. The loop over checkpoint intervals carries the masses, the parameters, and the numbers of the particles as well, because they change places with every new order. |
+| The files are in the order of the input | A call that writes takes the numbers of the particles with the field, and the driver writes the value of a particle at the place of its number. |
 
 `examples/argon.mlir` has this form already, with two levels of loops.
 
@@ -225,8 +230,8 @@ builds, and `--emit=lowered` the module that is executed.
 | `func.func @mdir_run` | The schedule: the loops, the calls that write, and the buffers of the state |
 
 The entry function takes the buffers of the positions, the velocities, the
-masses, and the fields of the parameters, then the edge lengths of the cell
-and the time step. The cell and the time step are values of the run, not of
+masses, the fields of the parameters, and the numbers of the particles,
+then the edge lengths of the cell and the time step. The cell and the time step are values of the run, not of
 the program (P1).
 
 With leapfrog, the stored velocities are half a step behind the positions.
@@ -261,6 +266,7 @@ and kJ/mol.
 | With leapfrog the time of the velocities is half a step before that of the positions. | The file says what it holds. |
 | Neighbor structures start empty after every checkpoint (R1). | The run that continues builds its structure at the first step. The run that was not interrupted must build there too. |
 | The file appears under its name only when it is complete. | A run that ends while it writes leaves the checkpoint before. |
+| The particles are in the order of the input, whatever order the run keeps them in. | The file does not depend on the plan of the run. The run that continues puts the particles in order where it begins, and arrives at the order of the run that was not interrupted (D44). |
 
 A run that continues from a checkpoint arrives at the state of the run that
 was not interrupted, bit for bit. This holds on the CPU and on a GPU, in
@@ -297,6 +303,7 @@ first.h5 second.h5` compares the states of two.
 | Initial velocities | Implemented. The sequence of random numbers is fixed by the seed and does not depend on a library. |
 | Checkpoints in H5MD, and runs that continue from one | Implemented |
 | The number of builds of the neighbor structures, in the log | Implemented |
+| The particles in the order of their positions, `reorder` | Implemented |
 | `nbupdate_period` | Not implemented; the keyword is an error |
 | Trajectory in the XTC format | Not implemented |
 | Velocities in the trajectory, `dcdvelfile` | Not implemented |

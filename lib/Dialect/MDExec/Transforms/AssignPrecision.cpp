@@ -332,7 +332,17 @@ LogicalResult Assigner::collect(Operation *op) {
         unite(result, refresh.getPositions());
     return success();
   }
+  if (auto order = dyn_cast<SpatialOrderOp>(op)) {
+    if (order.isStorageForm())
+      return op->emitOpError() << "is in the storage form; precision is "
+                                  "assigned before storage";
+    positions.push_back(order.getPositions());
+    return success();
+  }
   if (auto permute = dyn_cast<PermuteOp>(op)) {
+    if (permute.isStorageForm())
+      return op->emitOpError() << "is in the storage form; precision is "
+                                  "assigned before storage";
     if (isRealField(permute.getResult().getType()))
       unite(permute.getResult(), permute.getField());
     return success();

@@ -439,3 +439,121 @@ func.func private @mdrt.build_neighbors_matrix(
   }
   return %largest : index
 }
+
+// The order of the particles by cell: `order[k]` is the particle that comes
+// to place `k`. The cells are `width` wide or a little wider and numbered
+// along x first. The particles of a cell are in the order of `ids`.
+//
+// The order depends on the positions and on `ids` only, not on the order
+// that the particles are in.
+func.func private @mdrt.spatial_order(
+    %x: memref<?x3xf64>, %box: vector<3xf64>, %width: f64,
+    %ids: memref<?xi32>, %order: memref<?xi32>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+
+  %n = memref.dim %x, %c0 : memref<?x3xf64>
+  %lx = vector.extract %box[0] : f64 from vector<3xf64>
+  %ly = vector.extract %box[1] : f64 from vector<3xf64>
+  %lz = vector.extract %box[2] : f64 from vector<3xf64>
+  %unit = arith.constant 1.0 : f64
+  %ilx = arith.divf %unit, %lx : f64
+  %ily = arith.divf %unit, %ly : f64
+  %ilz = arith.divf %unit, %lz : f64
+  %nx = call @mdrt.cell_count(%lx, %width) : (f64, f64) -> index
+  %ny = call @mdrt.cell_count(%ly, %width) : (f64, f64) -> index
+  %nz = call @mdrt.cell_count(%lz, %width) : (f64, f64) -> index
+  %nxy = arith.muli %nx, %ny : index
+  %cells = arith.muli %nxy, %nz : index
+  %cells1 = arith.addi %cells, %c1 : index
+
+  %key = memref.alloc(%n) : memref<?xindex>
+  %start = memref.alloc(%cells1) : memref<?xindex>
+  %cursor = memref.alloc(%cells) : memref<?xindex>
+
+  scf.for %c = %c0 to %cells1 step %c1 {
+    memref.store %c0, %start[%c] : memref<?xindex>
+  }
+
+  scf.for %i = %c0 to %n step %c1 {
+    %xi = memref.load %x[%i, %c0] : memref<?x3xf64>
+    %yi = memref.load %x[%i, %c1] : memref<?x3xf64>
+    %zi = memref.load %x[%i, %c2] : memref<?x3xf64>
+    %wx = func.call @mdrt.wrap(%xi, %lx, %ilx) : (f64, f64, f64) -> f64
+    %wy = func.call @mdrt.wrap(%yi, %ly, %ily) : (f64, f64, f64) -> f64
+    %wz = func.call @mdrt.wrap(%zi, %lz, %ilz) : (f64, f64, f64) -> f64
+    %cx = func.call @mdrt.cell_coordinate(%wx, %ilx, %nx)
+        : (f64, f64, index) -> index
+    %cy = func.call @mdrt.cell_coordinate(%wy, %ily, %ny)
+        : (f64, f64, index) -> index
+    %cz = func.call @mdrt.cell_coordinate(%wz, %ilz, %nz)
+        : (f64, f64, index) -> index
+    %zy = arith.muli %cz, %ny : index
+    %row = arith.addi %zy, %cy : index
+    %rows = arith.muli %row, %nx : index
+    %k = arith.addi %rows, %cx : index
+    memref.store %k, %key[%i] : memref<?xindex>
+
+    %next = arith.addi %k, %c1 : index
+    %old = memref.load %start[%next] : memref<?xindex>
+    %new = arith.addi %old, %c1 : index
+    memref.store %new, %start[%next] : memref<?xindex>
+  }
+
+  scf.for %c = %c0 to %cells step %c1 {
+    %next = arith.addi %c, %c1 : index
+    %before = memref.load %start[%c] : memref<?xindex>
+    %here = memref.load %start[%next] : memref<?xindex>
+    %sum = arith.addi %before, %here : index
+    memref.store %sum, %start[%next] : memref<?xindex>
+    memref.store %before, %cursor[%c] : memref<?xindex>
+  }
+
+  scf.for %i = %c0 to %n step %c1 {
+    %k = memref.load %key[%i] : memref<?xindex>
+    %p = memref.load %cursor[%k] : memref<?xindex>
+    %wide = arith.index_cast %i : index to i64
+    %narrow = arith.trunci %wide : i64 to i32
+    memref.store %narrow, %order[%p] : memref<?xi32>
+    %q = arith.addi %p, %c1 : index
+    memref.store %q, %cursor[%k] : memref<?xindex>
+  }
+
+  // The particles of each cell in the order of `ids`, by insertion.
+  scf.parallel (%c) = (%c0) to (%cells) step (%c1) {
+    %next = arith.addi %c, %c1 : index
+    %begin = memref.load %start[%c] : memref<?xindex>
+    %end = memref.load %start[%next] : memref<?xindex>
+    %first = arith.addi %begin, %c1 : index
+    scf.for %p = %first to %end step %c1 {
+      %value = memref.load %order[%p] : memref<?xi32>
+      %particle = arith.index_cast %value : i32 to index
+      %id = memref.load %ids[%particle] : memref<?xi32>
+      // Move the entries before p with a larger number up by one.
+      %hole = scf.while (%q = %p) : (index) -> index {
+        %more = arith.cmpi ugt, %q, %begin : index
+        %before = arith.subi %q, %c1 : index
+        %safe = arith.select %more, %before, %begin : index
+        %left = memref.load %order[%safe] : memref<?xi32>
+        %left_particle = arith.index_cast %left : i32 to index
+        %left_id = memref.load %ids[%left_particle] : memref<?xi32>
+        %larger = arith.cmpi sgt, %left_id, %id : i32
+        %go = arith.andi %more, %larger : i1
+        scf.condition(%go) %q : index
+      } do {
+      ^bb0(%q: index):
+        %before = arith.subi %q, %c1 : index
+        %left = memref.load %order[%before] : memref<?xi32>
+        memref.store %left, %order[%q] : memref<?xi32>
+        scf.yield %before : index
+      }
+      memref.store %value, %order[%hole] : memref<?xi32>
+    }
+  }
+
+  memref.dealloc %key : memref<?xindex>
+  memref.dealloc %start : memref<?xindex>
+  memref.dealloc %cursor : memref<?xindex>
+  return
+}

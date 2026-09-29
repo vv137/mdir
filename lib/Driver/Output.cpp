@@ -138,14 +138,18 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
   output.lastTotal = total;
 }
 
-/// The values of a buffer with three numbers per particle, scaled.
-/// `element` is the type that the buffer holds.
-static std::vector<double> readVectors(void *descriptor, Element element,
-                                       double scale = 1.0) {
+/// The values of a buffer with three numbers per particle, scaled, in the
+/// order of the numbers of the particles, which `ids` holds. `element` is
+/// the type that the buffer holds.
+static std::vector<double> readVectors(void *descriptor, void *ids,
+                                       Element element, double scale = 1.0) {
   auto *buffer = static_cast<StridedMemRefType<char, 2> *>(descriptor);
+  auto *numbers = static_cast<StridedMemRefType<int32_t, 1> *>(ids);
   int64_t count = buffer->sizes[0];
   std::vector<double> values(3 * count);
-  for (int64_t i = 0; i != count; ++i)
+  for (int64_t i = 0; i != count; ++i) {
+    int64_t place =
+        numbers->data[numbers->offset + i * numbers->strides[0]];
     for (int64_t c = 0; c != 3; ++c) {
       int64_t index =
           buffer->offset + i * buffer->strides[0] + c * buffer->strides[1];
@@ -154,44 +158,46 @@ static std::vector<double> readVectors(void *descriptor, Element element,
         value = reinterpret_cast<float *>(buffer->data)[index];
       else
         value = reinterpret_cast<double *>(buffer->data)[index];
-      values[3 * i + c] = scale * value;
+      values[3 * place + c] = scale * value;
     }
+  }
   return values;
 }
 
-void _mlir_ciface_mdrtWriteFrame(int64_t, void *positions) {
+void _mlir_ciface_mdrtWriteFrame(int64_t, void *positions, void *ids) {
   Output &output = *current;
   if (!output.hasTrajectory)
     return;
   std::vector<double> values =
-      readVectors(positions, output.state, 1.0 / units::length);
+      readVectors(positions, ids, output.state, 1.0 / units::length);
   std::vector<float> narrow(values.begin(), values.end());
   output.trajectory.writeFrame(narrow.data());
 }
 
-void _mlir_ciface_mdrtFinish(void *positions, void *velocities) {
+void _mlir_ciface_mdrtFinish(void *positions, void *velocities,
+                             void *ids) {
   Output &output = *current;
   if (!output.system)
     return;
-  output.system->positions = readVectors(positions, output.state);
-  output.system->velocities = readVectors(velocities, output.state);
+  output.system->positions = readVectors(positions, ids, output.state);
+  output.system->velocities = readVectors(velocities, ids, output.state);
 }
 
 /// Writes the state as a checkpoint. `forces` is null if the state has
 /// none.
 static void writeState(int64_t step, void *positions, void *velocities,
-                       void *forces) {
+                       void *forces, void *ids) {
   Output &output = *current;
   if (output.checkpointPath.empty())
     return;
   Checkpoint &checkpoint = output.checkpoint;
   checkpoint.step = step;
   checkpoint.time = output.getTime(step);
-  checkpoint.positions = readVectors(positions, output.state);
-  checkpoint.velocities = readVectors(velocities, output.state);
+  checkpoint.positions = readVectors(positions, ids, output.state);
+  checkpoint.velocities = readVectors(velocities, ids, output.state);
   checkpoint.forces.clear();
   if (forces)
-    checkpoint.forces = readVectors(forces, output.force);
+    checkpoint.forces = readVectors(forces, ids, output.force);
 
   if (llvm::Error error =
           writeCheckpoint(output.checkpointPath, checkpoint)) {
@@ -203,13 +209,13 @@ static void writeState(int64_t step, void *positions, void *velocities,
 }
 
 void _mlir_ciface_mdrtWriteCheckpoint(int64_t step, void *positions,
-                                      void *velocities) {
-  writeState(step, positions, velocities, nullptr);
+                                      void *velocities, void *ids) {
+  writeState(step, positions, velocities, nullptr, ids);
 }
 
 void _mlir_ciface_mdrtWriteCheckpointWithForces(int64_t step,
                                                 void *positions,
                                                 void *velocities,
-                                                void *forces) {
-  writeState(step, positions, velocities, forces);
+                                                void *forces, void *ids) {
+  writeState(step, positions, velocities, forces, ids);
 }

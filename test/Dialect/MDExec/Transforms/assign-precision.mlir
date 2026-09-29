@@ -226,3 +226,51 @@ func.func @validity(%xb: memref<?x3xf32>, %vb: memref<?x3xf32>,
   %out = mdrt.to_buffer %xe : !vec to memref<?x3xf32>
   return %out : memref<?x3xf32>
 }
+
+// A field in another order is stored as the field is. The numbers of the
+// particles have no floating-point type.
+//
+// CHECK-LABEL: func.func @ordered(
+// CHECK:         %[[ORDER:[0-9]+]] = md_exec.spatial_order %[[XA:[a-z0-9]+]], %{{[a-z0-9]+}}, %[[IDA:[a-z0-9]+]] width(1.100000e+00)
+// CHECK-SAME:      : !md.field<@atoms, 3 x f32>, !md.field<@atoms, i32> -> !mdrt.permutation<@atoms>
+// CHECK:         md_exec.permute %[[XA]], %[[ORDER]] : !md.field<@atoms, 3 x f32>, !mdrt.permutation<@atoms> -> !md.field<@atoms, 3 x f32>
+// CHECK:         md_exec.permute %{{[a-z0-9]+}}, %[[ORDER]] : !md.field<@atoms, f64>, !mdrt.permutation<@atoms> -> !md.field<@atoms, f64>
+// CHECK:         md_exec.permute %[[IDA]], %[[ORDER]] : !md.field<@atoms, i32>, !mdrt.permutation<@atoms> -> !md.field<@atoms, i32>
+// ACCUMULATOR-LABEL: func.func @ordered(
+
+func.func private @write_ordered(i64, memref<?x3xf32>, memref<?xi32>)
+
+func.func @ordered(%xb: memref<?x3xf32>, %mb: memref<?xf64>,
+                   %ib: memref<?xi32>, %cell: !md.cell, %n: index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %step = arith.constant 0 : i64
+  %x0 = mdrt.from_buffer %xb : memref<?x3xf32> to !vec
+  %m0 = mdrt.from_buffer %mb : memref<?xf64> to !real
+  %id0 = mdrt.from_buffer %ib
+      : memref<?xi32> to !md.field<@atoms, i32>
+  %xe, %me, %ide = scf.for %i = %c0 to %n step %c1
+      iter_args(%xa = %x0, %ma = %m0, %ida = %id0)
+      -> (!vec, !real, !md.field<@atoms, i32>) {
+    %order = md_exec.spatial_order %xa, %cell, %ida width(1.1)
+        : !vec, !md.field<@atoms, i32> -> !mdrt.permutation<@atoms>
+    %xs = md_exec.permute %xa, %order
+        : !vec, !mdrt.permutation<@atoms> -> !vec
+    %ms = md_exec.permute %ma, %order
+        : !real, !mdrt.permutation<@atoms> -> !real
+    %ids = md_exec.permute %ida, %order
+        : !md.field<@atoms, i32>, !mdrt.permutation<@atoms>
+        -> !md.field<@atoms, i32>
+    %e = md_exec.empty : !vec
+    %x1 = md_exec.particle_for ins(%xs, %ms : !vec, !real) outs(%e : !vec) {
+    ^bb0(%x_i: vector<3xf64>, %m_i: f64):
+      %s = vector.broadcast %m_i : f64 to vector<3xf64>
+      %xn = arith.addf %x_i, %s : vector<3xf64>
+      md_exec.yield %xn : vector<3xf64>
+    } -> !vec
+    mdrt.host_call @write_ordered(%step, %x1, %ids)
+        : (i64, !vec, !md.field<@atoms, i32>)
+    scf.yield %x1, %ms, %ids : !vec, !real, !md.field<@atoms, i32>
+  } {mdrt.segment}
+  return
+}
