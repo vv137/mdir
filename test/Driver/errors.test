@@ -1,17 +1,17 @@
 # What is wrong with a control file is reported with its line.
 #
 # RUN: split-file %s %t
-# RUN: not mdir-run %t/keyword.toml 2>&1 | FileCheck %s --check-prefix=KEYWORD
-# RUN: not mdir-run %t/planned.toml 2>&1 | FileCheck %s --check-prefix=PLANNED
-# RUN: not mdir-run %t/table.toml 2>&1 | FileCheck %s --check-prefix=TABLE
-# RUN: not mdir-run %t/choice.toml 2>&1 | FileCheck %s --check-prefix=CHOICE
-# RUN: not mdir-run %t/period.toml 2>&1 | FileCheck %s --check-prefix=PERIOD
-# RUN: not mdir-run %t/syntax.toml 2>&1 | FileCheck %s --check-prefix=SYNTAX
-# RUN: not mdir-run %t/name.toml 2>&1 | FileCheck %s --check-prefix=NAME
-# RUN: not mdir-run %t/mixing.toml 2>&1 | FileCheck %s --check-prefix=MIXING
-# RUN: not mdir-run %t/expression.toml 2>&1 \
+# RUN: not mdir run %t/keyword.toml 2>&1 | FileCheck %s --check-prefix=KEYWORD
+# RUN: not mdir run %t/planned.toml 2>&1 | FileCheck %s --check-prefix=PLANNED
+# RUN: not mdir run %t/table.toml 2>&1 | FileCheck %s --check-prefix=TABLE
+# RUN: not mdir run %t/choice.toml 2>&1 | FileCheck %s --check-prefix=CHOICE
+# RUN: not mdir run %t/period.toml 2>&1 | FileCheck %s --check-prefix=PERIOD
+# RUN: not mdir run %t/syntax.toml 2>&1 | FileCheck %s --check-prefix=SYNTAX
+# RUN: not mdir run %t/name.toml 2>&1 | FileCheck %s --check-prefix=NAME
+# RUN: not mdir run %t/mixing.toml 2>&1 | FileCheck %s --check-prefix=MIXING
+# RUN: not mdir run %t/expression.toml 2>&1 \
 # RUN: | FileCheck %s --check-prefix=EXPRESSION
-# RUN: not mdir-run %t/atom.toml 2>&1 | FileCheck %s --check-prefix=ATOM
+# RUN: not mdir run %t/atom.toml 2>&1 | FileCheck %s --check-prefix=ATOM
 
 # KEYWORD: keyword.toml:3: unknown keyword 'cutoff' in [energy]
 # PLANNED: planned.toml:3: 'electrostatic' in [energy] is not supported yet; it is planned for M2

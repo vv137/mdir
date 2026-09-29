@@ -8,9 +8,14 @@ set(LLVM_LINK_COMPONENTS
   native
   )
 
-add_llvm_executable(mdir-run mdir-run.cpp)
-llvm_update_compile_flags(mdir-run)
-target_link_libraries(mdir-run PRIVATE
+add_llvm_executable(mdir
+  mdir.cpp
+  Check.cpp
+  Checkpoint.cpp
+  Run.cpp
+  )
+llvm_update_compile_flags(mdir)
+target_link_libraries(mdir PRIVATE
   MDIRDriver
   MDIRDyn
   MDIRMD
@@ -28,9 +33,10 @@ target_link_libraries(mdir-run PRIVATE
   MLIRToLLVMIRTranslationRegistration
   )
 # Compiled code calls functions of the driver.
-set_target_properties(mdir-run PROPERTIES ENABLE_EXPORTS ON)
+set_target_properties(mdir PROPERTIES ENABLE_EXPORTS ON)
 
-target_compile_definitions(mdir-run PRIVATE
+target_compile_definitions(mdir PRIVATE
   MDIR_LLVM_LIBRARY_DIR="${LLVM_LIBRARY_DIR}"
   MDIR_CUDA_ROOT="${MDIR_CUDA_ROOT}"
+  MDIR_VERSION="${PROJECT_VERSION}"
   )

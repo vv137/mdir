@@ -5,7 +5,7 @@
 # RUN:     %S/mixture.toml > %t.toml
 # RUN: echo '[output]' >> %t.toml
 # RUN: echo 'dcdfile = "%t.dcd"' >> %t.toml
-# RUN: mdir-run %t.toml | FileCheck %s
+# RUN: mdir run %t.toml | FileCheck %s
 # RUN: od -A d -t d4 -N 24 %t.dcd | FileCheck %s --check-prefix=HEADER
 # RUN: od -A d -c -j 4 -N 4 %t.dcd | FileCheck %s --check-prefix=TAG
 # RUN: wc -c < %t.dcd | FileCheck %s --check-prefix=SIZE

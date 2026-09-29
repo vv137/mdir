@@ -19,9 +19,8 @@ llvm_config.with_environment("PATH", config.llvm_tools_dir, append_path=True)
 
 tool_dirs = [config.mdir_tools_dir, config.llvm_tools_dir]
 tools = [
-    "mdir-checkpoint",
+    "mdir",
     "mdir-opt",
-    "mdir-run",
     "mlir-opt",
     "mlir-runner",
     "FileCheck",

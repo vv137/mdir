@@ -217,7 +217,7 @@ static void writeState(int64_t step, void *positions, void *velocities,
 
   if (llvm::Error error =
           writeCheckpoint(output.checkpointPath, checkpoint)) {
-    std::fprintf(stderr, "mdir-run: %s\n",
+    std::fprintf(stderr, "mdir: %s\n",
                  llvm::toString(std::move(error)).c_str());
     std::exit(1);
   }

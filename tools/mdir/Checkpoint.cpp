@@ -1,32 +1,23 @@
-// mdir-checkpoint: describes and compares checkpoints.
+// `mdir checkpoint`: describes and compares checkpoints.
+
+#include "Commands.h"
 
 #include "mdir/Driver/Checkpoint.h"
 
-#include "llvm/Support/CommandLine.h"
-#include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdio>
 
 using namespace mdir::driver;
 
-static llvm::cl::list<std::string>
-    files(llvm::cl::Positional, llvm::cl::desc("<checkpoint> [<checkpoint>]"),
-          llvm::cl::OneOrMore);
-
 static int fail(llvm::Error error) {
-  llvm::errs() << "mdir-checkpoint: " << llvm::toString(std::move(error))
-               << "\n";
+  llvm::errs() << "mdir: " << llvm::toString(std::move(error)) << "\n";
   return 2;
 }
 
-int main(int argc, char **argv) {
-  llvm::InitLLVM init(argc, argv);
-  llvm::cl::ParseCommandLineOptions(
-      argc, argv,
-      "MDIR: describes a checkpoint, or compares the states of two\n");
-  if (files.size() > 2) {
-    llvm::errs() << "mdir-checkpoint: expected one checkpoint or two\n";
+int mdir::tool::describeCheckpoints(llvm::ArrayRef<std::string> files) {
+  if (files.empty() || files.size() > 2) {
+    llvm::errs() << "mdir: expected one checkpoint or two\n";
     return 2;
   }
 

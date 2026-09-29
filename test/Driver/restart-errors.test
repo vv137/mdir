@@ -8,7 +8,7 @@
 # RUN:     %S/mixture.toml > %t.first.toml
 # RUN: echo '[output]' >> %t.first.toml
 # RUN: echo 'rstfile = "%t.first.h5"' >> %t.first.toml
-# RUN: mdir-run %t.first.toml
+# RUN: mdir run %t.first.toml
 
 # The velocities of leapfrog are half a step behind those of velocity
 # Verlet.
@@ -16,7 +16,7 @@
 # RUN: sed -e 's|"VVER"|"LEAP"|' -e 's|%t.first.h5|%t.other.h5|' \
 # RUN:     -e 's|^pdbfile = \(.*\)|pdbfile = \1\nrstfile = "%t.first.h5"|' \
 # RUN:     %t.first.toml > %t.integrator.toml
-# RUN: not mdir-run %t.integrator.toml 2>&1 \
+# RUN: not mdir run %t.integrator.toml 2>&1 \
 # RUN: | FileCheck %s --check-prefix=INTEGRATOR
 # INTEGRATOR: was written with the integrator VVER, and the run uses LEAP
 
@@ -24,19 +24,19 @@
 # RUN:     -e 's|%t.first.h5|%t.other.h5|' \
 # RUN:     -e 's|^pdbfile = \(.*\)|pdbfile = \1\nrstfile = "%t.first.h5"|' \
 # RUN:     %t.first.toml > %t.box.toml
-# RUN: not mdir-run %t.box.toml 2>&1 | FileCheck %s --check-prefix=BOX
+# RUN: not mdir run %t.box.toml 2>&1 | FileCheck %s --check-prefix=BOX
 # BOX: the box of '{{.*}}.first.h5' differs from that of [boundary]
 
 # RUN: sed -e 's|%t.first.h5|%t.other.h5|' \
 # RUN:     -e 's|^pdbfile = \(.*\)|pdbfile = \1\nrstfile = "%t.missing.h5"|' \
 # RUN:     %t.first.toml > %t.missing.toml
-# RUN: not mdir-run %t.missing.toml 2>&1 | FileCheck %s --check-prefix=MISSING
+# RUN: not mdir run %t.missing.toml 2>&1 | FileCheck %s --check-prefix=MISSING
 # MISSING: cannot read '{{.*}}.missing.h5' as an HDF5 file
 
 # RUN: sed -e 's|rstout_period = 100||' %t.first.toml > %t.period.toml
-# RUN: not mdir-run %t.period.toml 2>&1 | FileCheck %s --check-prefix=PERIOD
+# RUN: not mdir run %t.period.toml 2>&1 | FileCheck %s --check-prefix=PERIOD
 # PERIOD: [output] names an 'rstfile', but 'rstout_period' is not given
 
-# RUN: not mdir-checkpoint %S/Inputs/mixture.pdb 2>&1 \
+# RUN: not mdir checkpoint %S/Inputs/mixture.pdb 2>&1 \
 # RUN: | FileCheck %s --check-prefix=FORMAT
 # FORMAT: cannot read '{{.*}}mixture.pdb' as an HDF5 file

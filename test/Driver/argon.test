@@ -2,7 +2,7 @@
 #
 # RUN: sed -e 's|"argon.pdb"|"%S/../../examples/argon.pdb"|' \
 # RUN:     -e 's|"argon.dcd"|"%t.dcd"|' %S/../../examples/argon.toml > %t.toml
-# RUN: mdir-run %t.toml | FileCheck %s
+# RUN: mdir run %t.toml | FileCheck %s
 
 # The potential energy of the lattice is that of examples/argon.mlir,
 # -5459.64 kJ/mol.

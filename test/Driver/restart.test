@@ -19,12 +19,12 @@
 # RUN:     -e 's|^pdbfile = \(.*\)|pdbfile = \1\nrstfile = "%t.first.h5"|' \
 # RUN:     %t.first.toml > %t.second.toml
 #
-# RUN: mdir-run %t.whole.toml | FileCheck %s --check-prefix=WHOLE
-# RUN: mdir-run %t.first.toml
-# RUN: mdir-run %t.second.toml | FileCheck %s --check-prefix=SECOND
-# RUN: mdir-checkpoint %t.whole.h5 %t.second.h5 | FileCheck %s
-# RUN: mdir-checkpoint %t.whole.h5 | FileCheck %s --check-prefix=ABOUT
-# RUN: not mdir-checkpoint %t.whole.h5 %t.first.h5 \
+# RUN: mdir run %t.whole.toml | FileCheck %s --check-prefix=WHOLE
+# RUN: mdir run %t.first.toml
+# RUN: mdir run %t.second.toml | FileCheck %s --check-prefix=SECOND
+# RUN: mdir checkpoint %t.whole.h5 %t.second.h5 | FileCheck %s
+# RUN: mdir checkpoint %t.whole.h5 | FileCheck %s --check-prefix=ABOUT
+# RUN: not mdir checkpoint %t.whole.h5 %t.first.h5 \
 # RUN: | FileCheck %s --check-prefix=DIFFERENT
 
 # CHECK: the states are identical

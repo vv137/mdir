@@ -1,0 +1,22 @@
+# The subcommands of mdir that do not run anything.
+#
+# RUN: mdir version | FileCheck %s --check-prefix=VERSION
+# VERSION: MDIR {{[0-9]+\.[0-9]+\.[0-9]+}}
+# VERSION-NEXT: LLVM {{[0-9]+}}
+# VERSION-NEXT: targets: cpu
+# VERSION-NEXT: checkpoints:
+
+# RUN: sed -e 's|"argon.pdb"|"%S/../../examples/argon.pdb"|' \
+# RUN:     %S/../../examples/argon.toml > %t.toml
+# RUN: mdir check %t.toml | FileCheck %s --check-prefix=CHECK-INPUT
+# CHECK-INPUT: particles: {{ *}}864
+# CHECK-INPUT-NEXT: of type AR {{ *}}864
+# CHECK-INPUT: box:
+# CHECK-INPUT: degrees of freedom: 2589
+# CHECK-INPUT: integrator: {{ *}}VVER
+
+# RUN: not mdir 2>&1 | FileCheck %s --check-prefix=NONE
+# NONE: mdir: expected a subcommand
+
+# RUN: not mdir template gro 2>&1 | FileCheck %s --check-prefix=TEMPLATE
+# TEMPLATE: mdir: expected the template 'md', got 'gro'

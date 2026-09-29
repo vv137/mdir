@@ -20,9 +20,9 @@
 # RUN: sed -e 's|reorder = true|reorder = false|' -e 's|%t.on.h5|%t.off.h5|' \
 # RUN:     %t.on.toml > %t.off.toml
 #
-# RUN: mdir-run %t.on.toml | FileCheck %s
-# RUN: mdir-run %t.off.toml | FileCheck %s
-# RUN: not mdir-checkpoint %t.on.h5 %t.off.h5 \
+# RUN: mdir run %t.on.toml | FileCheck %s
+# RUN: mdir run %t.off.toml | FileCheck %s
+# RUN: not mdir checkpoint %t.on.h5 %t.off.h5 \
 # RUN: | FileCheck %s --check-prefix=STATES
 
 # The potential energy at the start is that of mixture.toml.

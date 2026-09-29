@@ -1,6 +1,9 @@
-// mdir-run: reads a control file, compiles the run, and executes it.
+// `mdir run` and `mdir emit`: read a control file, compile the run, and
+// execute it or print it.
 //
 // See docs/driver-m0.md.
+
+#include "Commands.h"
 
 #include "mdir/Conversion/Passes.h"
 #include "mdir/Dialect/Dyn/DynDialect.h"
@@ -27,9 +30,7 @@
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Target/LLVMIR/Dialect/All.h"
-#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
-#include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/raw_ostream.h"
@@ -44,27 +45,6 @@ using namespace mdir::driver;
 using llvm::SmallVector;
 using llvm::SmallVectorImpl;
 using llvm::StringRef;
-
-namespace {
-enum class Emit { Module, Lowered, Run };
-} // namespace
-
-static llvm::cl::opt<std::string>
-    controlFile(llvm::cl::Positional, llvm::cl::desc("<control file>"));
-
-static llvm::cl::opt<std::string> templateName(
-    "template",
-    llvm::cl::desc("Print a control file with every keyword: md"),
-    llvm::cl::value_desc("kind"));
-
-static llvm::cl::opt<Emit> emit(
-    "emit", llvm::cl::desc("What to do with the program of the run"),
-    llvm::cl::values(
-        clEnumValN(Emit::Module, "mlir", "Print it as it is built"),
-        clEnumValN(Emit::Lowered, "lowered",
-                   "Print it as it is executed, in the LLVM dialect"),
-        clEnumValN(Emit::Run, "run", "Execute it (default)")),
-    llvm::cl::init(Emit::Run));
 
 /// The passes that compile the program of a run.
 static std::string getPipeline(const Control &control,
@@ -151,29 +131,20 @@ struct Buffer {
 };
 
 static int fail(llvm::Error error) {
-  llvm::errs() << "mdir-run: " << llvm::toString(std::move(error)) << "\n";
+  llvm::errs() << "mdir: " << llvm::toString(std::move(error)) << "\n";
   return 1;
 }
 
 static int fail(const llvm::Twine &message) {
-  llvm::errs() << "mdir-run: " << message << "\n";
+  llvm::errs() << "mdir: " << message << "\n";
   return 1;
 }
 
-int main(int argc, char **argv) {
-  llvm::InitLLVM init(argc, argv);
-  llvm::cl::ParseCommandLineOptions(
-      argc, argv, "MDIR: compiles and runs a molecular dynamics run\n");
+/// A function of this program, whose address tells where the program is.
+static void anchor() {}
 
-  if (!templateName.empty()) {
-    if (templateName != "md")
-      return fail("expected the template 'md', got '" + templateName + "'");
-    llvm::outs() << getControlTemplate();
-    return 0;
-  }
-  if (controlFile.empty())
-    return fail("expected a control file; see --help");
-
+int mdir::tool::runControl(StringRef controlFile, Emit emit,
+                           const char *argv0) {
   //===--------------------------------------------------------------------===//
   // Read
   //===--------------------------------------------------------------------===//
@@ -277,7 +248,7 @@ int main(int argc, char **argv) {
       mlir::parseSourceString<mlir::ModuleOp>(program->module, &context);
   if (!module)
     return fail("the program of the run does not parse; this is a defect "
-                "of mdir-run");
+                "of mdir");
 
   // Passes on functions are nested where they occur, as on the command
   // line of mlir-opt.
@@ -301,7 +272,7 @@ int main(int argc, char **argv) {
 
   // The runtime is next to the driver: <prefix>/bin and <prefix>/lib.
   std::string executable =
-      llvm::sys::fs::getMainExecutable(argv[0], (void *)(intptr_t)&main);
+      llvm::sys::fs::getMainExecutable(argv0, (void *)(intptr_t)&anchor);
   llvm::SmallString<256> libraries(llvm::sys::path::parent_path(
       llvm::sys::path::parent_path(executable)));
   llvm::sys::path::append(libraries, "lib");
@@ -368,7 +339,7 @@ int main(int argc, char **argv) {
   Buffer<2> velocities(system->velocities, program->state, count);
   if (program->takesForces && forces.size() != 3 * count)
     return fail("the run takes forces, but has none; this is a defect of "
-                "mdir-run");
+                "mdir");
   Buffer<2> given(program->takesForces ? forces
                                        : std::vector<double>(3 * count),
                   program->force, count);
