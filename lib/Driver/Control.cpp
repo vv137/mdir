@@ -525,13 +525,20 @@ Error Reader::readDynamics(const toml::table &table) {
                 "'nbupdate_period' is not supported yet; without it, a "
                 "neighbor structure is rebuilt when it is no longer valid");
 
-  // Each period is a multiple of the one inside it.
+  // Each period is a multiple of the one inside it: the loops of the run
+  // nest, and a frame or a checkpoint is written where an interval between
+  // energies ends.
   auto checkMultiple = [&](StringRef outer, int64_t large, StringRef inner,
                            int64_t small) -> Error {
     if (large == 0 || small == 0 || large % small == 0)
       return Error::success();
+    std::string hint;
+    if (outer != "nsteps")
+      hint = "; the output of '" + outer.str() +
+             "' is written where an interval of '" + inner.str() +
+             "' ends, so '" + inner.str() + "' must divide it";
     return fail(table, "'" + outer + "' is not a multiple of '" + inner +
-                           "'");
+                           "'" + hint);
   };
   if (Error error = checkMultiple("crdout_period", control.framePeriod,
                                   "eneout_period", control.energyPeriod))
