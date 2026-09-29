@@ -11,8 +11,10 @@ include "mdir/Dialect/MDRT/MDRTTypes.td"
 class MDRT_Op<string mnemonic, list<Trait> traits = []>
     : Op<MDRT_Dialect, mnemonic, traits>;
 
+def MDRT_FieldOrRelation : AnyTypeOf<[MD_FieldType, MD_RelationType]>;
+
 def MDRT_FromBufferOp : MDRT_Op<"from_buffer", [Pure]> {
-  let summary = "The field that a buffer holds";
+  let summary = "The field or the tuples that a buffer holds";
   let description = [{
     Hands the contents of a buffer to the compiled program as a field. The
     program may overwrite the buffer afterward, so the buffer must not be
@@ -34,9 +36,18 @@ def MDRT_FromBufferOp : MDRT_Op<"from_buffer", [Pure]> {
     %x = mdrt.from_buffer %buffer
            : memref<?x3xf32> to !md.field<@atoms, 3 x f64>
     ```
+
+    The tuples of a tuple set enter the program in the same way. The buffer
+    holds, for each tuple, its members: the places of the particles in
+    their fields. The program does not write to the buffer.
+
+    ```mlir
+    %angles = mdrt.from_buffer %members
+                : memref<?x3xi32> to !md.relation<@atoms, 3, reversal, @angles>
+    ```
   }];
   let arguments = (ins AnyMemRef:$buffer);
-  let results = (outs MD_FieldType:$result);
+  let results = (outs MDRT_FieldOrRelation:$result);
   let assemblyFormat = [{
     $buffer attr-dict `:` type($buffer) `to` qualified(type($result))
   }];

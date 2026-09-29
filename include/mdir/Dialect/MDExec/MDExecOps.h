@@ -10,6 +10,7 @@
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
+#include "mdir/Dialect/MD/MDCoordinates.h"
 #include "mdir/Dialect/MD/MDTypes.h"
 #include "mdir/Dialect/MDRT/MDRTTypes.h"
 
@@ -30,6 +31,24 @@ bool isScratchType(mlir::Type type);
 /// `value`, a number or a vector, per particle. `like` is a buffer of the
 /// same particles: the buffer is where that one is.
 mlir::MemRefType getScratchType(mlir::Type value, mlir::MemRefType like);
+
+/// Returns true if `type` is the type of a buffer that holds the members
+/// of tuples: `memref<?xkxi32>`.
+bool isMembersType(mlir::Type type);
+
+/// Returns true if `type` is the type of a buffer that holds the tuples of
+/// each particle: `memref<?x?xi32>`.
+bool isIncidenceBufferType(mlir::Type type);
+
+/// The type of the buffer that holds the tuples of each particle, on the
+/// host or on the device.
+mlir::MemRefType getIncidenceBufferType(mlir::MLIRContext *context,
+                                        mlir::Attribute memorySpace);
+
+/// The number of values that the buffer of the tuples of each particle
+/// holds for one tuple of `arity` members: the number of the tuple, the
+/// place of the particle, and the members.
+inline int64_t getIncidenceEntrySize(int64_t arity) { return arity + 2; }
 
 /// The type of one value of a field inside a kernel, for the type of the
 /// field or of the buffer that holds it.

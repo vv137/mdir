@@ -9,11 +9,26 @@
 using namespace mlir;
 using namespace mdir::md_exec;
 using mdir::md::FieldType;
+using mdir::md::RelationType;
 using mdir::mdrt::CellsType;
+using mdir::mdrt::IncidenceType;
 using mdir::mdrt::NeighborsType;
 using mdir::mdrt::PermutationType;
 
 #include "mdir/Dialect/MDExec/MDExecEnums.cpp.inc"
+
+// The custom directive `coordinates(<kind>(<members>), ...)`.
+static ParseResult parseCoordinates(OpAsmParser &parser,
+                                    DenseI32ArrayAttr &kinds,
+                                    DenseI64ArrayAttr &members) {
+  return mdir::md::parseCoordinateList(parser, kinds, members);
+}
+
+static void printCoordinates(OpAsmPrinter &printer, Operation *,
+                             DenseI32ArrayAttr kinds,
+                             DenseI64ArrayAttr members) {
+  mdir::md::printCoordinateList(printer, kinds, members);
+}
 
 #define GET_OP_CLASSES
 #include "mdir/Dialect/MDExec/MDExecOps.cpp.inc"
@@ -43,6 +58,27 @@ bool mdir::md_exec::isScratchType(Type type) {
   Type element = buffer.getElementType();
   return isReal(element) || element.isSignlessInteger(32) ||
          element.isSignlessInteger(64);
+}
+
+bool mdir::md_exec::isMembersType(Type type) {
+  auto buffer = dyn_cast<MemRefType>(type);
+  return buffer && buffer.getRank() == 2 && buffer.isDynamicDim(0) &&
+         !buffer.isDynamicDim(1) && buffer.getDimSize(1) >= 1 &&
+         buffer.getElementType().isSignlessInteger(32);
+}
+
+bool mdir::md_exec::isIncidenceBufferType(Type type) {
+  auto buffer = dyn_cast<MemRefType>(type);
+  return buffer && buffer.getRank() == 2 && buffer.isDynamicDim(0) &&
+         buffer.isDynamicDim(1) &&
+         buffer.getElementType().isSignlessInteger(32);
+}
+
+MemRefType mdir::md_exec::getIncidenceBufferType(MLIRContext *context,
+                                                 Attribute memorySpace) {
+  return MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic},
+                         IntegerType::get(context, 32),
+                         MemRefLayoutAttrInterface(), memorySpace);
 }
 
 MemRefType mdir::md_exec::getScratchType(Type value, MemRefType like) {
@@ -591,4 +627,180 @@ void ParticleForOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {
   getLoopEffects(*this, effects, [](unsigned) { return false; });
+}
+
+//===----------------------------------------------------------------------===//
+// Tuples of a topology
+//===----------------------------------------------------------------------===//
+
+LogicalResult BuildIncidenceOp::verify() {
+  bool isStorage = isStorageForm();
+  if (isStorage != isa<MemRefType>(getResult().getType()))
+    return emitOpError()
+           << "expected a relation and a structure, as in the value form, or "
+              "buffers only, as in the storage form";
+  if (isStorage) {
+    if (!getSize())
+      return emitOpError() << "expected the number of particles in 'size': "
+                              "the buffer of the members does not tell it";
+    if (cast<MemRefType>(getRelation().getType()).getMemorySpace())
+      return emitOpError()
+             << "expected the buffer of the members on the host";
+    return success();
+  }
+
+  if (getSize())
+    return emitOpError() << "'size' belongs to the storage form";
+  auto relation = cast<RelationType>(getRelation().getType());
+  auto incidence = cast<IncidenceType>(getResult().getType());
+  if (!relation.getTupleSet())
+    return emitOpError() << "expected the relation of a tuple set, got "
+                         << relation;
+  if (relation.getParticleSet() != incidence.getParticleSet() ||
+      relation.getTupleSet() != incidence.getTupleSet() ||
+      relation.getArity() != incidence.getArity())
+    return emitOpError()
+           << "expected the result to have type "
+           << IncidenceType::get(getContext(), relation.getParticleSet(),
+                                 relation.getTupleSet(), relation.getArity())
+           << ", got " << incidence;
+  return success();
+}
+
+void BuildIncidenceOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  if (!isStorageForm())
+    return;
+  addEffect<MemoryEffects::Read>(effects, getRelationMutable());
+  effects.emplace_back(MemoryEffects::Allocate::get(),
+                       getOperation()->getOpResults().front(), /*stage=*/0,
+                       /*effectOnFullRegion=*/true,
+                       SideEffects::DefaultResource::get());
+}
+
+/// The floating-point type that the kernel of a loop over tuples computes
+/// in, which its first argument states.
+static Type getTupleKernelReal(TupleForOp op) {
+  Block &block = op.getKernel().front();
+  if (block.getNumArguments() != 0)
+    if (auto vector = dyn_cast<VectorType>(block.getArgument(0).getType()))
+      if (vector.getElementType().isF32())
+        return vector.getElementType();
+  return Float64Type::get(op.getContext());
+}
+
+LogicalResult TupleForOp::verify() {
+  int64_t arity = getArity();
+  if (arity < 1)
+    return emitOpError() << "expected an arity of at least 1, got " << arity;
+
+  FlatSymbolRefAttr particleSet, tupleSet;
+  if (auto incidence = dyn_cast<IncidenceType>(getIncidence().getType())) {
+    particleSet = incidence.getParticleSet();
+    tupleSet = incidence.getTupleSet();
+    if (incidence.getArity() != arity)
+      return emitOpError() << "the tuples have " << incidence.getArity()
+                           << " members, but the arity is " << arity;
+  }
+  if (isStorageForm() != isa<MemRefType>(getIncidence().getType()))
+    return emitOpError()
+           << "expected a structure and fields, as in the value form, or "
+              "buffers only, as in the storage form";
+  if (failed(verifyPositions(getOperation(), getPositions(), particleSet)))
+    return failure();
+
+  for (Value parameter : getParameters()) {
+    if (isa<MemRefType>(parameter.getType()) != isStorageForm())
+      return emitOpError()
+             << "expected fields only, as in the value form, or buffers "
+                "only, as in the storage form";
+    auto field = dyn_cast<FieldType>(parameter.getType());
+    if (field && field.getParticleSet() != tupleSet)
+      return emitOpError() << "the tuples are those of " << tupleSet
+                           << ", but a field in 'tuple' belongs to "
+                           << field.getParticleSet();
+  }
+
+  if (failed(mdir::md::verifyCoordinates(getOperation(),
+                                         getCoordinateKinds(),
+                                         getCoordinateMembers(), arity)))
+    return failure();
+  for (const mdir::md::Coordinate &coordinate : getCoordinates())
+    if (coordinate.kind != mdir::md::CoordinateKind::Displacement)
+      return emitOpError()
+             << "expected displacements only, got '"
+             << mdir::md::stringifyCoordinateKind(coordinate.kind)
+             << "': the kernel computes the other coordinates from them";
+
+  if (auto overwrite = getOverwrite()) {
+    if (!isStorageForm())
+      return emitOpError() << "'overwrite' belongs to the storage form; in "
+                              "the value form the destination tells what "
+                              "the loop adds to";
+    if (overwrite->size() != getOuts().size())
+      return emitOpError() << "expected " << getOuts().size()
+                           << " flags in 'overwrite', one per buffer in "
+                              "'outs', got "
+                           << overwrite->size();
+  }
+  return verifyLoop(*this, particleSet, /*allowsFlags=*/false);
+}
+
+LogicalResult TupleForOp::verifyRegions() {
+  Block &block = getKernel().front();
+  unsigned arity = getArity();
+
+  SmallVector<Type> arguments(getCoordinateKinds().size(),
+                              VectorType::get({3}, getTupleKernelReal(*this)));
+  for (Value field : getIns())
+    arguments.append(arity, getKernelValueType(field.getType()));
+  for (Value field : getParameters())
+    arguments.push_back(getKernelValueType(field.getType()));
+  if (block.getNumArguments() != arguments.size())
+    return emitOpError()
+           << "expected the kernel to have " << arguments.size()
+           << " arguments (one per displacement, one per member for each "
+              "field in 'ins', and one per field in 'tuple'), got "
+           << block.getNumArguments();
+  for (unsigned i = 0, e = arguments.size(); i != e; ++i)
+    if (block.getArgument(i).getType() != arguments[i])
+      return emitOpError()
+             << "expected kernel argument " << i << " to have type "
+             << arguments[i] << ", got " << block.getArgument(i).getType();
+
+  SmallVector<Type> yielded;
+  for (Value field : getOuts())
+    yielded.append(arity, getKernelValueType(field.getType()));
+  for (Value value : getReduce())
+    yielded.push_back(value.getType());
+
+  auto yield = dyn_cast<YieldOp>(block.getTerminator());
+  if (!yield)
+    return emitOpError() << "expected the kernel to end with 'md_exec.yield'";
+  if (yield.getNumOperands() != yielded.size())
+    return yield.emitOpError()
+           << "expected " << yielded.size()
+           << " values (one per member for each field in 'outs', and one "
+              "per value in 'reduce'), got "
+           << yield.getNumOperands();
+  for (unsigned i = 0, e = yielded.size(); i != e; ++i)
+    if (yield.getOperand(i).getType() != yielded[i])
+      return yield.emitOpError()
+             << "expected value " << i << " to have type " << yielded[i]
+             << ", got " << yield.getOperand(i).getType();
+  return success();
+}
+
+void TupleForOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  if (!isStorageForm())
+    return;
+  addEffect<MemoryEffects::Read>(effects, getIncidenceMutable());
+  addEffect<MemoryEffects::Read>(effects, getPositionsMutable());
+  for (OpOperand &operand : getParametersMutable())
+    addEffect<MemoryEffects::Read>(effects, operand);
+  getLoopEffects(*this, effects,
+                 [&](unsigned index) { return !overwrites(index); });
 }

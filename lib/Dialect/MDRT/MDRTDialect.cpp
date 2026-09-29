@@ -43,6 +43,12 @@ MemRefType mdir::mdrt::getBufferType(FieldType field) {
                          field.getElementType());
 }
 
+MemRefType mdir::mdrt::getMembersType(md::RelationType relation) {
+  return MemRefType::get(
+      {ShapedType::kDynamic, static_cast<int64_t>(relation.getArity())},
+      IntegerType::get(relation.getContext(), 32));
+}
+
 bool mdir::mdrt::canHold(Type buffer, FieldType field) {
   MemRefType expected = getBufferType(field);
   if (buffer == expected)
@@ -66,8 +72,21 @@ static LogicalResult verifyBufferType(Operation *op, Type buffer, Type field) {
 }
 
 LogicalResult FromBufferOp::verify() {
-  return verifyBufferType(getOperation(), getBuffer().getType(),
-                          getResult().getType());
+  auto relation = dyn_cast<md::RelationType>(getResult().getType());
+  if (!relation)
+    return verifyBufferType(getOperation(), getBuffer().getType(),
+                            getResult().getType());
+
+  if (!relation.getTupleSet())
+    return emitOpError() << "expected the relation of a tuple set, got "
+                         << relation
+                         << ": the pairs of a neighborhood are found, not "
+                            "given";
+  if (getBuffer().getType() != getMembersType(relation))
+    return emitOpError() << "expected the buffer of " << relation
+                         << " to have type " << getMembersType(relation)
+                         << ", got " << getBuffer().getType();
+  return success();
 }
 
 LogicalResult ToBufferOp::verify() {

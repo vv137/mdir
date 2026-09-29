@@ -52,6 +52,25 @@ def MDRT_NeighborsType : MDRT_ParticleSetType<"Neighbors", "neighbors"> {
   }];
 }
 
+def MDRT_IncidenceType : MDRT_Type<"Incidence", "incidence"> {
+  let summary = "For every particle, the tuples that it is a member of";
+  let description = [{
+    The tuples of a tuple set, by particle. For every particle it holds the
+    tuples that the particle is a member of, with the place of the particle
+    in each and the other members.
+
+    ```mlir
+    !mdrt.incidence<@atoms, @angles, 3>
+    ```
+  }];
+  let parameters = (ins
+    "::mlir::FlatSymbolRefAttr":$particleSet,
+    "::mlir::FlatSymbolRefAttr":$tupleSet,
+    "unsigned":$arity
+  );
+  let assemblyFormat = "`<` $particleSet `,` $tupleSet `,` $arity `>`";
+}
+
 def MDRT_EventType : MDRT_Type<"Event", "event"> {
   let summary = "An opaque runtime completion object";
   let description = [{

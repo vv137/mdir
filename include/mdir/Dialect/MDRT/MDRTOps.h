@@ -25,6 +25,11 @@ mlir::MemRefType getBufferType(md::FieldType field);
 /// types: the buffer then states the type that the field is stored in.
 bool canHold(mlir::Type buffer, md::FieldType field);
 
+/// The type of the buffer that holds the members of the tuples of
+/// `relation`, the relation of a tuple set: `memref<?xkxi32>` for tuples of
+/// `k` members.
+mlir::MemRefType getMembersType(md::RelationType relation);
+
 /// The attribute that marks a loop whose iterations are segments of a run:
 /// stretches between two checkpoints.
 inline llvm::StringRef getSegmentAttrName() { return "mdrt.segment"; }

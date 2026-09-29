@@ -452,7 +452,7 @@ def MDExec_RebuildCountOp : MDExec_Op<"rebuild_count"> {
 
 def MDExec_YieldOp : MDExec_Op<"yield", [
     Pure, Terminator, ReturnLike,
-    ParentOneOf<["PairForOp", "ParticleForOp"]>
+    ParentOneOf<["PairForOp", "ParticleForOp", "TupleForOp"]>
   ]> {
   let summary = "Yields the contributions of a kernel";
   let arguments = (ins Variadic<AnyType>:$values);
@@ -634,6 +634,165 @@ def MDExec_ParticleForOp : MDExec_Op<"particle_for", [
       ::mlir::Value field =
           getIns().empty() ? getOuts().front() : getIns().front();
       return ::llvm::isa<::mlir::MemRefType>(field.getType());
+    }
+  }];
+  let hasVerifier = 1;
+  let hasRegionVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Tuples of a topology
+//===----------------------------------------------------------------------===//
+
+// The members of the tuples of a tuple set: `memref<?xkxi32>`.
+def MDExec_Members : Type<
+    CPred<"::mdir::md_exec::isMembersType($_self)">,
+    "buffer of the members of tuples", "::mlir::MemRefType">;
+
+// The tuples by particle: `memref<?x?xi32>`.
+def MDExec_IncidenceBuffer : Type<
+    CPred<"::mdir::md_exec::isIncidenceBufferType($_self)">,
+    "buffer of the tuples of each particle", "::mlir::MemRefType">;
+
+def MDExec_RelationOrMembers : AnyTypeOf<[MD_RelationType, MDExec_Members]>;
+def MDExec_Incidence
+    : AnyTypeOf<[MDRT_IncidenceType, MDExec_IncidenceBuffer]>;
+
+def MDExec_BuildIncidenceOp : MDExec_Op<"build_incidence", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "Finds, for every particle, the tuples it is a member of";
+  let description = [{
+    A loop over tuples visits, for every particle, the tuples that the
+    particle is a member of. This op finds them.
+
+    ```mlir
+    %incidence = md_exec.build_incidence %angles
+        : !md.relation<@atoms, 3, reversal, @angles>
+          -> !mdrt.incidence<@atoms, @angles, 3>
+    ```
+
+    The members of a tuple are places in the fields of the particles. The
+    result holds as long as the particles keep their places.
+
+    In the storage form the op takes the buffer of the members and the
+    number of particles, and it returns a new buffer. For every particle
+    the buffer has a row: the number of tuples of the particle, then for
+    each tuple its number, the place of the particle in it, and its
+    members. A row holds as many tuples as the particle with the most
+    tuples has.
+
+    ```mlir
+    %incidence = md_exec.build_incidence %members size(%n)
+        : memref<?x3xi32> -> memref<?x?xi32>
+    ```
+
+    The buffer of the members is on the host. The result is where its type
+    says: on the host, or on a device.
+  }];
+  let arguments = (ins
+    MDExec_RelationOrMembers:$relation,
+    Optional<Index>:$size
+  );
+  let results = (outs MDExec_Incidence:$result);
+  let assemblyFormat = [{
+    $relation (`size` `(` $size^ `)`)? attr-dict
+    `:` qualified(type($relation)) `->` qualified(type($result))
+  }];
+  let extraClassDeclaration = [{
+    bool isStorageForm() {
+      return ::llvm::isa<::mlir::MemRefType>(getRelation().getType());
+    }
+  }];
+  let hasVerifier = 1;
+}
+
+def MDExec_TupleForOp : MDExec_Op<"tuple_for", [
+    AttrSizedOperandSegments, RecursiveMemoryEffects, SingleBlock,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "Runs a kernel over the tuples of each particle";
+  let description = [{
+    For every particle `i` and every tuple `t` that it is a member of, at
+    the place `s`:
+
+    ```text
+    a_i = a0_i + Σ_t k_a(t)[s]          for every field in `outs`
+    S   = S0   + Σ_{t : s = 0} k_S(t)   for every value in `reduce`
+    ```
+
+    A tuple of `k` members is evaluated `k` times, once by each of its
+    members, and every member takes its own part. A sum takes the
+    contribution of a tuple from the member at place 0, so that a tuple
+    counts once.
+
+    The loop computes the displacements that `coordinates` names, each in
+    the minimum image, from the positions and the cell. The kernel receives
+    them, then one value for each member for each field in `ins`, then one
+    value for each field in `tuple`. It yields one value for each member
+    for each field in `outs`, then one contribution for each value in
+    `reduce`.
+
+    ```mlir
+    %f, %u = md_exec.tuple_for %incidence, %x, %cell
+               coordinates(displacement(0, 1), displacement(2, 1))
+               tuple(%k : !md.field<@angles, f64>)
+               outs(%f0 : !md.field<@atoms, 3 x f64>) reduce(%u0 : f64)
+               arity(3) {
+    ^bb0(%u: vector<3xf64>, %v: vector<3xf64>, %k_t: f64):
+      ...
+      md_exec.yield %f_0, %f_1, %f_2, %e
+          : vector<3xf64>, vector<3xf64>, vector<3xf64>, f64
+    } : !mdrt.incidence<@atoms, @angles, 3>, !md.field<@atoms, 3 x f64>
+        -> !md.field<@atoms, 3 x f64>, f64
+    ```
+
+    The storage form is as that of `md_exec.pair_for`, with `overwrite` and
+    `scratch`.
+  }];
+  let arguments = (ins
+    MDExec_Incidence:$incidence,
+    MDExec_FieldOrBuffer:$positions,
+    MD_CellType:$cell,
+    Variadic<MDExec_FieldOrBuffer>:$ins,
+    Variadic<MDExec_FieldOrBuffer>:$parameters,
+    Variadic<MDExec_FieldOrBuffer>:$outs,
+    Variadic<AnyType>:$reduce,
+    Variadic<MDExec_Scratch>:$scratch,
+    DenseI32ArrayAttr:$coordinate_kinds,
+    DenseI64ArrayAttr:$coordinate_members,
+    I64Attr:$arity,
+    OptionalAttr<DenseBoolArrayAttr>:$overwrite
+  );
+  let regions = (region SizedRegion<1>:$kernel);
+  let results = (outs Variadic<AnyType>:$results);
+  let assemblyFormat = [{
+    $incidence `,` $positions `,` $cell
+    custom<Coordinates>($coordinate_kinds, $coordinate_members)
+    (`ins` `(` $ins^ `:` qualified(type($ins)) `)`)?
+    (`tuple` `(` $parameters^ `:` qualified(type($parameters)) `)`)?
+    (`outs` `(` $outs^ `:` qualified(type($outs)) `)`)?
+    (`reduce` `(` $reduce^ `:` type($reduce) `)`)?
+    (`scratch` `(` $scratch^ `:` type($scratch) `)`)?
+    `arity` `(` $arity `)`
+    (`overwrite` $overwrite^)?
+    $kernel attr-dict
+    `:` qualified(type($incidence)) `,` qualified(type($positions))
+    (`->` qualified(type($results))^)?
+  }];
+  let extraClassDeclaration = [{
+    bool isStorageForm() {
+      return ::llvm::isa<::mlir::MemRefType>(getPositions().getType());
+    }
+    /// Returns true if the loop ignores what destination `index` holds.
+    bool overwrites(unsigned index) {
+      auto flags = getOverwrite();
+      return flags && (*flags)[index];
+    }
+    /// The displacements that the kernel takes.
+    ::llvm::SmallVector<::mdir::md::Coordinate, 2> getCoordinates() {
+      return ::mdir::md::getCoordinates(getCoordinateKinds(),
+                                        getCoordinateMembers());
     }
   }];
   let hasVerifier = 1;
