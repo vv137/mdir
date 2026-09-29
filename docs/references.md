@@ -293,7 +293,8 @@ S. Izadi, R. Anandakrishnan, A. V. Onufriev, "Building water models: A
 different approach," *J. Phys. Chem. Lett.* **5**, 3863–3871 (2014).
 [doi:10.1021/jz501780a](https://doi.org/10.1021/jz501780a)
 
-Used for: OPC, a water model with four sites that M1 cannot run.
+Used for: OPC, a water model with four sites, whose extra point is a
+virtual site (design-m1.md, Section 19).
 
 ### Jones1924
 

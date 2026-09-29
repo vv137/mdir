@@ -22,13 +22,17 @@ mkdir -p "$work" && cd "$work"
 tleap -f "$here/peptide.leap" > leap.log 2>&1
 
 for spec in amber99sb-ildn:tip3p amber99sb:tip3p amber03:tip3p amber14sb:tip3p \
-            amber19sb:tip3p charmm27:tip3p oplsaa:tip3p gromos54a7:spc; do
+            amber99sb-ildn:tip4pew amber19sb:tip3p charmm27:tip3p \
+            oplsaa:tip3p gromos54a7:spc; do
   ff=${spec%%:*}; water=${spec##*:}
+  # Water of four sites takes the configuration of four sites.
+  box=spc216.gro
+  case $water in tip4p*) box=tip4p.gro; ff=$ff-$water ;; esac
   rm -rf "$ff" && mkdir "$ff" && pushd "$ff" > /dev/null
-  gmx pdb2gmx -f ../peptide.pdb -o conf.gro -p topol.top -ff "$ff" \
+  gmx pdb2gmx -f ../peptide.pdb -o conf.gro -p topol.top -ff "${spec%%:*}" \
       -water "$water" -ignh > pdb2gmx.log 2>&1
   gmx editconf -f conf.gro -o box.gro -c -d 0.7 -bt cubic > editconf.log 2>&1
-  gmx solvate -cp box.gro -cs spc216.gro -o solv.gro -p topol.top \
+  gmx solvate -cp box.gro -cs "$box" -o solv.gro -p topol.top \
       > solvate.log 2>&1
   gmx grompp -f "$here/single.mdp" -c solv.gro -p topol.top -o run.tpr \
       -maxwarn 5 > grompp.log 2>&1

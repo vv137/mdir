@@ -709,6 +709,7 @@ ships (`scripts/validation/gromacs/run.sh`):
 | Force field | Bonds, angles, dihedrals, pairs 1-4, Lennard-Jones, dispersion |
 |---|---|
 | amber99sb-ildn, amber99sb, amber03, amber14sb | Agree to 5 × 10⁻⁶ or better, each term |
+| amber99sb-ildn with TIP4P-Ew, whose sites are virtual (Section 19) | Agree to 4 × 10⁻⁶ or better, each term; the correction for the dispersion counts the sites among the particles in both |
 | amber19sb, charmm27 | Rejected: CMAP |
 | oplsaa | Rejected: Ryckaert-Bellemans dihedrals |
 | gromos54a7 | Rejected: bonds of function 2 |
@@ -772,4 +773,80 @@ into the home directory.
 | M1j | The barostat, a cell that changes | At constant temperature and pressure | |
 | M1k | Comparison with AmberTools and GROMACS; run times of the JAC benchmark | | |
 | M1l | CMAP (D65) | ff19SB | |
-| M1m | Virtual sites: extra points of Amber, virtual sites of GROMACS (D65) | OPC | |
+| M1m | Virtual sites: extra points of Amber, virtual sites of GROMACS (D65) | OPC | Done for water of four sites (Section 19, D68): the extra point of Amber and `[ virtual_sites3 ]` of function 1. The terms of alanine dipeptide in OPC agree with sander, and those of a peptide in TIP4P-Ew with GROMACS. The forces are the derivatives of the energy, and the virial that of a uniform scaling. Other frames of Amber and other kinds of GROMACS are rejected. |
+
+## 19. Virtual sites
+
+A virtual site is a point with a charge and no mass whose position follows
+from those of a few atoms. OPC [[Izadi2014]](references.md#izadi2014) and
+TIP4P-Ew put the negative charge of water on one, an extra point in Amber.
+M1 has the site of water of four sites in both formats (D65, D68).
+
+### 19.1 Placement
+
+For a site `s` built from `i`, `j`, and `k`, with `d_ji = x_j − x_i` and
+`d_ki = x_k − x_i` in the minimum image:
+
+| Kind | Position | Parameters |
+|---|---|---|
+| Extra point of Amber | `x_s = x_i + a (û + v̂) / \|û + v̂\|`, with `û = d_ji / \|d_ji\|` and `v̂ = d_ki / \|d_ki\|` | `a`, the length of the bond from the oxygen to the extra point in the `prmtop` |
+| `[ virtual_sites3 ]`, function 1, of GROMACS | `x_s = x_i + a d_ji + b d_ki` | `a`, `b` |
+
+The extra point of Amber depends only on the directions of the two bonds
+to the hydrogens. It lies where the linear rule puts it only when the two
+bonds have the lengths that `a` of GROMACS was computed for:
+`a = b = d / (2 r_OH cos(θ/2))`.
+
+### 19.2 Forces and virial
+
+The force on a site goes to its atoms by the transpose of the derivative of
+its position, `F_k += (∂x_s/∂x_k)ᵀ F_s`, and the site keeps none. For the
+linear rule the atoms take `(1 − a − b) F_s`, `a F_s`, and `b F_s`. For the
+extra point of Amber, with `b̂ = (û + v̂) / |û + v̂|` and `P(n) = I − n nᵀ`:
+
+```text
+F_j = a / (|d_ji| |û + v̂|) · P(û) P(b̂) F_s
+F_k = a / (|d_ki| |û + v̂|) · P(v̂) P(b̂) F_s
+F_i = F_s − F_j − F_k
+```
+
+A hydrogen takes no force along its own bond: stretching the bond does
+not move the site.
+
+The virial of the pair terms is summed with the site as a particle. The
+sum over the atoms after the move differs by `Σ_k (x_k − x_s) ⊗ F_k` over
+the three atoms of each site, which is 0 for the linear rule, since the
+weights sum to 1, and is added for the extra point of Amber.
+
+### 19.3 In a step
+
+| Item | Rule |
+|---|---|
+| Placement | After every drift, and once where the run begins, whatever the file of coordinates says. The positions that a step returns have their sites placed, so frames and checkpoints need nothing more. |
+| Forces | Moved after every evaluation of the forces, before the kick |
+| Mass and velocity | A site has mass 0. A kick leaves a particle of mass 0 alone, and the velocities drawn at the start give it none. |
+| Degrees of freedom | Three for each particle with a mass, less three |
+| Exclusions | Amber: a site is excluded from its oxygen and from what its oxygen is excluded from, as sander rebuilds them; the list of the file must not exclude more. GROMACS: those of `[ exclusions ]`; no bond reaches a site. |
+| Bonded terms | Amber: the bond from the oxygen to the extra point gives its length and is dropped, with every term that has an extra point. |
+| In the IR | The placement and the move of the forces are `md.gather_tuples` over a tuple set `sites_amber` or `sites_linear` of arity 4, the site first, in the programs of the step; the change of the virial is an `md.sum_tuples` |
+
+### 19.4 What sander and GROMACS do otherwise
+
+| Item | sander | GROMACS |
+|---|---|---|
+| Constraints before the first step | None: the energies at the start are those of the file | SETTLE, with `continuation = no` |
+| Velocity of a site in its output | 0 | That of the placement |
+| Which atoms are sites | The atoms of type `EP`, with a frame chosen from the neighbors of the owner; MDIR takes the frame of water only | Those of particle type V or D, placed by a section of virtual sites |
+
+Frames of lone pairs and of TIP5P in Amber, and the other kinds of
+virtual sites of GROMACS, are rejected.
+
+### 19.5 Validation
+
+| Test | Result |
+|---|---|
+| Dipeptide in OPC, the terms at the start, against sander (`test/Driver/amber-opc.test`) | Agree but for the conventions of amber.test |
+| A peptide in TIP4P-Ew, against GROMACS (Section 15) | Agree to 4 × 10⁻⁶ |
+| Three OPC waters: the change of the total energy with the time step (`test/Driver/virtual-sites.test`) | Shrinks as its square, 6.8 × 10⁻⁴ at 0.1 fs and 1.7 × 10⁻⁴ at 0.05 fs |
+| The same: the trace of the virial against `−dU/dλ` under a uniform scaling of the atoms and the cell | Agree to 6 × 10⁻⁶; without the change of Section 19.2, 35.84 instead of 43.57 kcal/mol |
+| The order of the positions, against that of the files (`test/Driver/amber-opc-reorder.test`) | The same states to 2 × 10⁻¹⁵ |
