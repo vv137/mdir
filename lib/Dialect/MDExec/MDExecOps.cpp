@@ -301,6 +301,25 @@ void PermuteOp::getEffects(
     addEffect<MemoryEffects::Write>(effects, operand);
 }
 
+/// Verifies the incidence structure of the pairs that a neighbor structure
+/// on `particleSet` leaves out, if there is one.
+static LogicalResult verifyExcluded(Operation *op, Value excluded,
+                                    FlatSymbolRefAttr particleSet) {
+  if (!excluded)
+    return success();
+  if (auto incidence = dyn_cast<IncidenceType>(excluded.getType())) {
+    if (incidence.getArity() != 2)
+      return op->emitOpError()
+             << "expected the excluded pairs to have 2 members, got "
+             << incidence.getArity();
+    if (incidence.getParticleSet() != particleSet)
+      return op->emitOpError()
+             << "the excluded pairs are on " << incidence.getParticleSet()
+             << ", but the structure is on " << particleSet;
+  }
+  return success();
+}
+
 LogicalResult BuildNeighborsOp::verify() {
   auto cells = cast<CellsType>(getCells().getType());
   auto neighbors = cast<NeighborsType>(getResult().getType());
@@ -321,12 +340,17 @@ LogicalResult BuildNeighborsOp::verify() {
                          << skin;
   if (getWidth() <= 0)
     return emitOpError() << "expected a positive width, got " << getWidth();
-  return success();
+  return verifyExcluded(getOperation(), getExcluded(),
+                        neighbors.getParticleSet());
 }
 
 LogicalResult EmptyNeighborsOp::verify() {
   if (getWidth() <= 0)
     return emitOpError() << "expected a positive width, got " << getWidth();
+  if (failed(verifyExcluded(
+          getOperation(), getExcluded(),
+          cast<NeighborsType>(getResult().getType()).getParticleSet())))
+    return failure();
   if (static_cast<bool>(getSize()) != static_cast<bool>(getPositions()))
     return emitOpError() << "expected 'size' and 'positions' together";
   if (getPositions() && !isPositionType(*getPositions()))

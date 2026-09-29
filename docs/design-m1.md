@@ -333,7 +333,8 @@ N(x, h) = { {i, j} : i ≠ j, r_ij < r_c } \ E
 | Item | Proposal |
 |---|---|
 | The relation | `E` is a relation of arity 2 of a tuple set, as the bonds are. The reader derives it: pairs one, two, and three bonds apart (`nrexcl = 3`), and those that the topology lists. |
-| Where a pair is excluded | In the build of the neighbor structure. The search skips the particles in the row of exclusions of a particle. A loop over pairs tests nothing. |
+| Where a pair is excluded | In the build of the neighbor structure. After the search, every particle removes from its row the particles in its row of exclusions and keeps the others in their order. A loop over pairs tests nothing. The neighbor structure carries the exclusions (`exclude` of `md_exec.build_neighbors` and `md_exec.empty_neighbors`), so every build applies them. |
+| The width of a row | A row holds the neighbors before the excluded ones are removed. The search itself is not changed, and a filter after it serves all three searches of a device. |
 | The row of exclusions | An incidence structure of `E` (Section 5.2). It is built with the others. |
 | A term over the excluded pairs | `md.sum_tuples` over `E`, with `coordinates(distance(0, 1))`. Particle mesh Ewald has one: the reciprocal sum includes every pair, and the excluded pairs are taken out again (Section 8). |
 
@@ -659,7 +660,7 @@ into the home directory.
 |---|---|---|---|
 | M1a | Tuple sets, internal coordinates, differentiation, loops over tuples on the CPU and on a GPU | Chains of particles with bonds, angles, and dihedrals, at constant energy | Done: energy, forces, and virial agree with a reference in double and mixed precision, on the CPU, with OpenMP, and on a GPU; 200 steps of velocity Verlet agree to 1e-9. Loops over tuples are not fused with each other yet. |
 | M1b | The command line (Section 14) | The runs of M0 through `mdir run` | Done |
-| M1c | Exclusions in the neighbor build; pairs three bonds apart | Chains with Lennard-Jones | |
+| M1c | Exclusions in the neighbor build; pairs three bonds apart | Chains with Lennard-Jones | Done: energy, forces, and virial agree with a reference on the CPU, with OpenMP, and on a GPU |
 | M1d | Tables, NBFIX, the rule `product`, a Coulomb cutoff, the correction for the dispersion | A mixture of charged types | |
 | M1e | The readers of both formats; renumbering of the members with the order | Alanine dipeptide in flexible water, at constant energy with 0.5 fs | |
 | M1f | Comparison of the intermediate stage with AmberTools and GROMACS | | This completes the intermediate stage |

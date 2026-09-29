@@ -375,6 +375,92 @@ SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
   return contributions;
 }
 
+void kernels::emitExclusionFilter(OpBuilder &builder, Location loc,
+                                  Value counts, Value index, Value excluded,
+                                  Value particle) {
+  Type narrow = builder.getI32Type();
+  Value zero = createIndex(builder, loc, 0);
+  Value one = createIndex(builder, loc, 1);
+  Value width = memref::DimOp::create(builder, loc, index, one);
+  int64_t entry = md_exec::getIncidenceEntrySize(2);
+
+  Value found = arith::IndexCastOp::create(
+      builder, loc, builder.getIndexType(),
+      memref::LoadOp::create(builder, loc, counts, ValueRange{particle}));
+  Value fits =
+      arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ule, found,
+                            width);
+  Value numExcluded = arith::IndexCastOp::create(
+      builder, loc, builder.getIndexType(),
+      memref::LoadOp::create(builder, loc, excluded,
+                             ValueRange{particle, zero}));
+  Value any = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ne,
+                                    numExcluded, zero);
+  Value filter = arith::AndIOp::create(builder, loc, fits, any);
+
+  scf::IfOp::create(builder, loc, filter, [&](OpBuilder &b, Location) {
+    // The other member of each excluded pair of the particle: the member at
+    // place 1 − s, for the place s of the particle.
+    auto partnerOf = [&](OpBuilder &c, Value k) -> Value {
+      Value offset =
+          arith::MulIOp::create(c, loc, k, createIndex(c, loc, entry));
+      Value base = arith::AddIOp::create(c, loc, offset, one);
+      Value placeColumn =
+          arith::AddIOp::create(c, loc, base, createIndex(c, loc, 1));
+      Value place = memref::LoadOp::create(c, loc, excluded,
+                                           ValueRange{particle, placeColumn});
+      Value isFirst = arith::CmpIOp::create(
+          c, loc, arith::CmpIPredicate::eq, place,
+          arith::ConstantOp::create(c, loc, narrow, c.getI32IntegerAttr(0)));
+      Value first =
+          arith::AddIOp::create(c, loc, base, createIndex(c, loc, 2));
+      Value second =
+          arith::AddIOp::create(c, loc, base, createIndex(c, loc, 3));
+      Value column = arith::SelectOp::create(c, loc, isFirst, second, first);
+      return memref::LoadOp::create(c, loc, excluded,
+                                    ValueRange{particle, column});
+    };
+
+    auto kept = scf::ForOp::create(
+        b, loc, zero, found, one, ValueRange{zero},
+        [&](OpBuilder &c, Location, Value r, ValueRange written) {
+          Value neighbor =
+              memref::LoadOp::create(c, loc, index, ValueRange{particle, r});
+          auto search = scf::ForOp::create(
+              c, loc, zero, numExcluded, one,
+              ValueRange{arith::ConstantOp::create(c, loc, c.getI1Type(),
+                                                   c.getBoolAttr(false))},
+              [&](OpBuilder &d, Location, Value k, ValueRange isExcluded) {
+                Value same =
+                    arith::CmpIOp::create(d, loc, arith::CmpIPredicate::eq,
+                                          partnerOf(d, k), neighbor);
+                scf::YieldOp::create(
+                    d, loc,
+                    ValueRange{arith::OrIOp::create(d, loc, isExcluded[0],
+                                                    same)});
+              });
+          Value keep = arith::XOrIOp::create(
+              c, loc, search.getResult(0),
+              arith::ConstantOp::create(c, loc, c.getI1Type(),
+                                        c.getBoolAttr(true)));
+          scf::IfOp::create(c, loc, keep, [&](OpBuilder &d, Location) {
+            memref::StoreOp::create(d, loc, neighbor, index,
+                                    ValueRange{particle, written[0]});
+            scf::YieldOp::create(d, loc);
+          });
+          Value more = arith::AddIOp::create(c, loc, written[0], one);
+          scf::YieldOp::create(
+              c, loc,
+              ValueRange{arith::SelectOp::create(c, loc, keep, more,
+                                                 written[0])});
+        });
+    memref::StoreOp::create(
+        b, loc, arith::IndexCastOp::create(b, loc, narrow, kept.getResult(0)),
+        counts, ValueRange{particle});
+    scf::YieldOp::create(b, loc);
+  });
+}
+
 Value kernels::emitBuildIncidence(OpBuilder &builder, Location loc,
                                   Value members, Value size) {
   Type narrow = builder.getI32Type();

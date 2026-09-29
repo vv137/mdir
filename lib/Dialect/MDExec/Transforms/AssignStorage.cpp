@@ -365,8 +365,15 @@ LogicalResult Assignment::getNeighbors(Operation *op, Value structure,
 
   // The storage outlives the iterations of any loop around the structure,
   // so it is allocated in the body of the function.
+  Value excluded;
+  if (Value pairs = empty.getExcluded()) {
+    excluded = mapping.lookupOrNull(pairs);
+    if (!excluded)
+      return op->emitOpError()
+             << "the excluded pairs of the neighbor structure have no storage";
+  }
   storage = EmptyNeighborsOp::create(
-      root->builder, empty.getLoc(), structure.getType(), size,
+      root->builder, empty.getLoc(), structure.getType(), size, excluded,
       TypeAttr::get(getStorageType(positions)), empty.getKindAttr(),
       empty.getWidthAttr());
   // Inside a loop, every iteration begins with an empty structure.
@@ -703,8 +710,14 @@ LogicalResult Assignment::convertBuildNeighbors(BuildNeighborsOp op,
 
   // Storage, and a refresh that builds whatever the storage holds. The
   // count of builds is that of a structure that was built once.
+  Value excluded;
+  if (Value pairs = op.getExcluded()) {
+    excluded = mapping.lookupOrNull(pairs);
+    if (!excluded)
+      return op.emitOpError() << "the excluded pairs have no storage";
+  }
   Value storage = EmptyNeighborsOp::create(
-      root->builder, loc, op.getResult().getType(), size,
+      root->builder, loc, op.getResult().getType(), size, excluded,
       TypeAttr::get(getStorageType(op.getPositions().getType())),
       op.getKindAttr(), op.getWidthAttr());
   if (&scope != root)

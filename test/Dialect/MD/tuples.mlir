@@ -97,6 +97,17 @@ md.function @pull(%x: !vec, %cell: !md.cell, %bonds: !bonds, %k: !of_bond)
   md.return %f : !vec
 }
 
+// A neighborhood that leaves out pairs of a tuple set.
+//
+// CHECK-LABEL: md.function @excluding(
+// CHECK: md.neighborhood %{{[a-z0-9]+}}, %{{[a-z0-9]+}} cutoff(1.000000e+00) exclude(%{{[a-z0-9]+}} : !md.relation<@atoms, 2, unordered, @bonds>)
+md.function @excluding(%x: !vec, %cell: !md.cell, %bonds: !bonds)
+    -> !md.relation<@atoms, 2, unordered> {
+  %n = md.neighborhood %x, %cell cutoff(1.0) exclude(%bonds : !bonds)
+         : !vec -> !md.relation<@atoms, 2, unordered>
+  md.return %n : !md.relation<@atoms, 2, unordered>
+}
+
 // A tuple of one member, as a restraint of a position has. No coordinate
 // takes fewer than two members, so that no op takes such a relation yet.
 //

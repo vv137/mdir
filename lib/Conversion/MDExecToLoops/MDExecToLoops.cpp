@@ -56,6 +56,9 @@ struct Neighbors {
   /// Whether the structure has been built, and how often.
   Value valid;
   Value builds;
+  /// The incidence structure of the pairs that the structure leaves out,
+  /// or null.
+  Value excluded;
 };
 
 class Lowering {
@@ -341,6 +344,7 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
                                          builder.getI64IntegerAttr(0));
   memref::StoreOp::create(builder, loc, no, structure.valid, ValueRange{});
   memref::StoreOp::create(builder, loc, none, structure.builds, ValueRange{});
+  structure.excluded = op.getExcluded();
   neighbors[op.getResult()] = structure;
 }
 
@@ -395,6 +399,16 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
                              ValueRange{needed, available});
         scf::YieldOp::create(then, loc);
       });
+
+  // Leave the excluded pairs out.
+  if (structure.excluded)
+    scf::ParallelOp::create(
+        builder, loc, ValueRange{createIndex(builder, loc, 0)},
+        ValueRange{structure.size}, ValueRange{createIndex(builder, loc, 1)},
+        [&](OpBuilder &body, Location, ValueRange ivs) {
+          emitExclusionFilter(body, loc, structure.counts, structure.index,
+                              structure.excluded, ivs[0]);
+        });
 
   // Remember the configuration that the structure was built at.
   Value zero = createIndex(builder, loc, 0);

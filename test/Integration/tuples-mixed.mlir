@@ -1,7 +1,7 @@
 // The test of tuples.mlir in mixed precision: the positions and the
 // parameters are held in f64, and the kernels compute in f32. The reference
 // values are those of tuples.mlir. This file is generated from
-// Inputs/tuples_reference.py, as tuples.mlir is.
+// Inputs/tuples_reference.py by Inputs/generate_tuples_tests.py.
 //
 // RUN: mdir-opt %s %md_passes \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \

@@ -234,6 +234,90 @@ def single():
     EDGE = saved
 
 
+#===------------------------------------------------------------------------===
+# Nonbonded terms with exclusions
+#===------------------------------------------------------------------------===
+
+EPSILON = 0.5
+SIGMA = 0.25
+CUTOFF = 1.5
+SCALE14 = 0.5
+
+
+def excluded_pairs(tuples):
+    """The pairs that the neighborhood leaves out: those one, two, and three
+    bonds apart. The last come back, scaled, as pairs14()."""
+    bonds, angles, dihedrals = tuples
+    pairs = set()
+    for members, _ in bonds:
+        pairs.add(tuple(sorted(members)))
+    for members, _ in angles:
+        pairs.add(tuple(sorted((members[0], members[2]))))
+    for members, _ in dihedrals:
+        pairs.add(tuple(sorted((members[0], members[3]))))
+    return sorted(pairs)
+
+
+def pairs14(tuples):
+    """The pairs three bonds apart: the ends of the dihedrals."""
+    return sorted(set(tuple(sorted((m[0], m[3]))) for m, _ in tuples[2]))
+
+
+def lennard_jones(r):
+    s6 = (SIGMA / r) ** 6
+    return 4.0 * EPSILON * (s6 * s6 - s6), -24.0 * EPSILON * (2.0 * s6 * s6 - s6) / r
+
+
+def nonbonded(x, tuples):
+    """Lennard-Jones between the pairs within CUTOFF that are not excluded,
+    and the pairs three bonds apart, scaled by SCALE14, at any distance.
+    Returns the energies of the two, the forces, and the virial."""
+    excluded = set(excluded_pairs(tuples))
+    energy = [0.0, 0.0]
+    forces = [[0.0, 0.0, 0.0] for _ in x]
+    virial = [[0.0, 0.0, 0.0] for _ in range(3)]
+
+    def add_pair(i, j, weight, kind):
+        d = displacement(x[i], x[j])
+        r = norm(d)
+        u, slope = lennard_jones(r)
+        energy[kind] += weight * u
+        force = [-weight * slope / r * c for c in d]
+        forces[i] = add(forces[i], force)
+        forces[j] = sub(forces[j], force)
+        for a in range(3):
+            for b in range(3):
+                virial[a][b] += d[a] * force[b]
+
+    for i in range(COUNT):
+        for j in range(i + 1, COUNT):
+            if (i, j) in excluded:
+                continue
+            if norm(displacement(x[i], x[j])) < CUTOFF:
+                add_pair(i, j, 1.0, 0)
+    for i, j in pairs14(tuples):
+        add_pair(i, j, SCALE14, 1)
+    return energy, forces, virial
+
+
+def check_nonbonded(x, tuples):
+    """Compares the forces with finite differences of the energy."""
+    _, forces, _ = nonbonded(x, tuples)
+    worst = 0.0
+    h = 1.0e-6
+    for i in range(COUNT):
+        for k in range(3):
+            saved = x[i][k]
+            x[i][k] = saved + h
+            above = sum(nonbonded(x, tuples)[0])
+            x[i][k] = saved - h
+            below = sum(nonbonded(x, tuples)[0])
+            x[i][k] = saved
+            worst = max(worst, abs(-(above - below) / (2.0 * h) - forces[i][k])
+                        / max(1.0, abs(forces[i][k])))
+    return worst
+
+
 def masses():
     """The masses of the particles: 1, 1.5, and 2 in turn."""
     return [1.0 + 0.5 * (i % 3) for i in range(COUNT)]
@@ -309,6 +393,20 @@ def main():
           repr(virial[0][0] + virial[1][1] + virial[2][2]))
     for a in range(3):
         print("virial, row %d      " % a, [repr(c) for c in virial[a]])
+
+    x = place()
+    worst = check_nonbonded(x, tuples)
+    assert worst < 1.0e-6, worst
+    energy, forces, virial = nonbonded(x, tuples)
+    print("nonbonded, largest relative difference from finite differences",
+          "%.2e" % worst)
+    print("excluded pairs     ", len(excluded_pairs(tuples)),
+          "pairs 1-4", len(pairs14(tuples)))
+    print("Lennard-Jones      ", repr(energy[0]))
+    print("pairs 1-4          ", repr(energy[1]))
+    print("force on 0         ", [repr(c) for c in forces[0]])
+    print("virial, trace      ",
+          repr(virial[0][0] + virial[1][1] + virial[2][2]))
 
     x, v, u, k, start, worst = integrate(STEPS, DT)
     print("after", STEPS, "steps of", DT)

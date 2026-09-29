@@ -89,6 +89,15 @@ emitTupleKernel(mlir::OpBuilder &builder, md_exec::TupleForOp op,
 mlir::Value emitBuildIncidence(mlir::OpBuilder &builder, mlir::Location loc,
                                mlir::Value members, mlir::Value size);
 
+/// Emits what the particle `particle` does to leave the pairs of the
+/// incidence structure `excluded`, a structure of pairs, out of its row of
+/// the neighbor matrix `counts`, `index`: it keeps the other neighbors, in
+/// their order, and stores their number. A row whose count exceeds its
+/// width has been reported as too narrow and is left alone.
+void emitExclusionFilter(mlir::OpBuilder &builder, mlir::Location loc,
+                         mlir::Value counts, mlir::Value index,
+                         mlir::Value excluded, mlir::Value particle);
+
 /// The text of the templates `text` for positions of the type `real`. The
 /// templates are written for `f64`; the functions of the instance for `f32`
 /// have names that end in `_f32`.

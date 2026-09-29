@@ -115,3 +115,13 @@ func.func @f(%inc: !mdrt.incidence<@atoms, @angles, 3>,
   } : !mdrt.incidence<@atoms, @angles, 3>, !md.field<@atoms, 3 x f64> -> f64
   return %u : f64
 }
+
+// -----
+
+func.func @f(%e: !mdrt.incidence<@atoms, @angles, 3>) {
+  // expected-error@+1 {{expected the excluded pairs to have 2 members, got 3}}
+  %nl = md_exec.empty_neighbors kind(matrix) width(32)
+      exclude(%e : !mdrt.incidence<@atoms, @angles, 3>)
+      : !mdrt.neighbors<@atoms>
+  return
+}

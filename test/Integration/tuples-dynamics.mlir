@@ -1,7 +1,7 @@
 // Chains of particles with bonds, angles, and dihedrals integrated for 200
 // steps of 0.002 with velocity Verlet, compiled and run, compared with the
 // same integration in Inputs/tuples_reference.py. This file is generated
-// from that script.
+// from that script by Inputs/generate_tuples_tests.py.
 //
 // RUN: mdir-opt %s %md_passes \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \

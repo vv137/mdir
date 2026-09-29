@@ -161,15 +161,30 @@ def MD_NeighborhoodOp : MD_Op<"neighborhood", [Pure]> {
     %n = md.neighborhood %x, %cell cutoff(2.5)
            : !md.field<@atoms, 3 x f64> -> !md.relation<@atoms, 2, unordered>
     ```
+
+    With `exclude`, the pairs of a relation of a tuple set of arity 2 are
+    left out:
+
+    ```text
+    N(x, h) = { {i, j} : i ≠ j, r_ij < r_c } \ E
+    ```
+
+    ```mlir
+    %n = md.neighborhood %x, %cell cutoff(1.0)
+           exclude(%e : !md.relation<@atoms, 2, unordered, @excluded>)
+           : !md.field<@atoms, 3 x f64> -> !md.relation<@atoms, 2, unordered>
+    ```
   }];
   let arguments = (ins
     MD_ReferenceFieldType:$positions,
     MD_CellType:$cell,
+    Optional<MD_RelationType>:$excluded,
     F64Attr:$cutoff
   );
   let results = (outs MD_RelationType:$result);
   let assemblyFormat = [{
-    $positions `,` $cell `cutoff` `(` $cutoff `)` attr-dict
+    $positions `,` $cell `cutoff` `(` $cutoff `)`
+    (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)? attr-dict
     `:` qualified(type($positions)) `->` qualified(type($result))
   }];
   let hasVerifier = 1;

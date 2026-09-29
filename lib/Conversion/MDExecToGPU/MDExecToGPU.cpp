@@ -67,6 +67,9 @@ struct Neighbors {
   /// Whether the structure has been built, and how often.
   Value valid;
   Value builds;
+  /// The incidence structure of the pairs that the structure leaves out,
+  /// or null.
+  Value excluded;
 };
 
 /// Where the global sums and maxima of a loop arrive: numbers on the
@@ -747,6 +750,7 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
                                          builder.getI64IntegerAttr(0));
   memref::StoreOp::create(builder, loc, no, structure.valid, ValueRange{});
   memref::StoreOp::create(builder, loc, none, structure.builds, ValueRange{});
+  structure.excluded = op.getExcluded();
   neighbors[op.getResult()] = structure;
 }
 
@@ -802,6 +806,15 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
                              ValueRange{needed, available});
         scf::YieldOp::create(then, loc);
       });
+
+  // Leave the excluded pairs out.
+  if (structure.excluded)
+    launchOver(builder, loc, structure.size,
+               [&](OpBuilder &body, Value particle) {
+                 emitExclusionFilter(body, loc, structure.counts,
+                                     structure.index, structure.excluded,
+                                     particle);
+               });
 
   // Remember the configuration that the structure was built at.
   createTransfer(builder, loc, structure.reference, positions);

@@ -203,3 +203,25 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
       -> !md.field<@ions, 3 x f64>
   md.return %f : !md.field<@ions, 3 x f64>
 }
+
+// -----
+
+md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
+               %e: !md.relation<@atoms, 3, reversal, @angles>) {
+  // expected-error@+1 {{expected the excluded pairs to be the unordered relation of arity 2 of a tuple set, got '!md.relation<@atoms, 3, reversal, @angles>'}}
+  %n = md.neighborhood %x, %cell cutoff(1.0)
+         exclude(%e : !md.relation<@atoms, 3, reversal, @angles>)
+         : !md.field<@atoms, 3 x f64> -> !md.relation<@atoms, 2, unordered>
+  md.return
+}
+
+// -----
+
+md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
+               %e: !md.relation<@ions, 2, unordered, @excluded>) {
+  // expected-error@+1 {{the excluded pairs are on @ions, but the positions belong to @atoms}}
+  %n = md.neighborhood %x, %cell cutoff(1.0)
+         exclude(%e : !md.relation<@ions, 2, unordered, @excluded>)
+         : !md.field<@atoms, 3 x f64> -> !md.relation<@atoms, 2, unordered>
+  md.return
+}

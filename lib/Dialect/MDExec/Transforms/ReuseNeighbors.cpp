@@ -23,11 +23,14 @@ struct Parameters {
   bool isKnown = false;
   Type type;
   Value cell;
+  /// The pairs that the structure leaves out.
+  Value excluded;
   Attribute kind, width, cutoff, skin, cellWidth;
 
   bool operator==(const Parameters &other) const {
     return isKnown && other.isKnown && type == other.type &&
-           cell == other.cell && kind == other.kind &&
+           cell == other.cell && excluded == other.excluded &&
+           kind == other.kind &&
            width == other.width && cutoff == other.cutoff &&
            skin == other.skin && cellWidth == other.cellWidth;
   }
@@ -106,6 +109,7 @@ static SmallVector<Source, 4> findSources(Block &block) {
       source.parameters.isKnown = true;
       source.parameters.type = build.getResult().getType();
       source.parameters.cell = build.getCell();
+      source.parameters.excluded = build.getExcluded();
       source.parameters.kind = build.getKindAttr();
       source.parameters.width = build.getWidthAttr();
       source.parameters.cutoff = build.getCutoffAttr();
@@ -144,6 +148,7 @@ static SmallVector<Source, 4> findSources(Block &block) {
                    other.cellWidth == found.front().cellWidth;
           })) {
         source.parameters = found.front();
+        source.parameters.excluded = empty.getExcluded();
         source.parameters.kind = empty.getKindAttr();
         source.parameters.width = empty.getWidthAttr();
       }
@@ -249,8 +254,9 @@ static void reuseNeighbors(scf::ForOp loop) {
     if (first.build)
       inits.push_back(EmptyNeighborsOp::create(
           builder, first.build.getLoc(), first.build.getResult().getType(),
-          /*size=*/Value(), /*positions=*/TypeAttr(),
-          first.build.getKindAttr(), first.build.getWidthAttr()));
+          /*size=*/Value(), first.build.getExcluded(),
+          /*positions=*/TypeAttr(), first.build.getKindAttr(),
+          first.build.getWidthAttr()));
     else
       inits.push_back(builder.clone(*first.empty)->getResult(0));
   }

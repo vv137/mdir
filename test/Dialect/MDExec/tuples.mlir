@@ -63,3 +63,23 @@ func.func @storage_form(%members: memref<?x3xi32>, %n: index,
   } : memref<?x?xi32>, memref<?x3xf64> -> f64
   return %u : f64
 }
+
+// A neighbor structure that leaves out the pairs of an incidence structure.
+//
+// CHECK-LABEL: func.func @excluding(
+func.func @excluding(%x: !vec, %cell: !md.cell,
+                     %e: !mdrt.incidence<@atoms, @bonds, 2>,
+                     %m: memref<?x?xi32>, %n: index) {
+  %cells = md_exec.build_cells %x, %cell width(1.0) : !vec -> !mdrt.cells<@atoms>
+  // CHECK: md_exec.build_neighbors
+  // CHECK-SAME: kind(matrix) width(32) exclude(%{{[a-z0-9]+}} : !mdrt.incidence<@atoms, @bonds, 2>)
+  %nl = md_exec.build_neighbors %cells, %x, %cell
+      cutoff(1.0) skin(0.2) kind(matrix) width(32)
+      exclude(%e : !mdrt.incidence<@atoms, @bonds, 2>)
+      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+  // CHECK: md_exec.empty_neighbors size(%{{[a-z0-9]+}}) positions(memref<?x3xf64>) kind(matrix) width(32) exclude(%{{[a-z0-9]+}} : memref<?x?xi32>)
+  %nl0 = md_exec.empty_neighbors size(%n) positions(memref<?x3xf64>)
+      kind(matrix) width(32) exclude(%m : memref<?x?xi32>)
+      : !mdrt.neighbors<@atoms>
+  return
+}

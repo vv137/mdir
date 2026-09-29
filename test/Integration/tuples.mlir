@@ -1,7 +1,8 @@
 // Energy, forces, and virial of bonds, angles, and dihedrals, compiled and
 // run on the CPU, compared with Inputs/tuples_reference.py, which evaluates the
 // same terms from their definitions and checks its forces against finite
-// differences. This file is generated from that script.
+// differences. This file is generated from that script by
+// Inputs/generate_tuples_tests.py.
 //
 // RUN: mdir-opt %s %md_passes \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \

@@ -43,6 +43,10 @@ private:
   template <typename OpTy>
   LogicalResult convertTupleOp(OpTy op, bool isSum);
   LogicalResult convertKick(dyn::KickOp op);
+
+  /// The incidence structure of `relation`, a relation of a tuple set. It
+  /// is built once, where the relation is defined.
+  Value getIncidence(Value relation, Location loc);
   LogicalResult convertDrift(dyn::DriftOp op);
 
   /// A zero of type `type`, which is f64 or a vector of f64.
@@ -106,10 +110,16 @@ LogicalResult Converter::convertNeighborhood(md::NeighborhoodOp op) {
       builder, loc, mdrt::CellsType::get(context, particleSet),
       op.getPositions(), op.getCell(),
       APFloat((cutoff + skin) / static_cast<double>(cellsPerReach)));
+  Value excluded;
+  if (Value pairs = op.getExcluded()) {
+    excluded = getIncidence(pairs, loc);
+    builder.setInsertionPoint(op);
+  }
   Value structure = md_exec::BuildNeighborsOp::create(
       builder, loc, mdrt::NeighborsType::get(context, particleSet), cells,
-      op.getPositions(), op.getCell(), APFloat(cutoff), APFloat(skin),
-      md_exec::NeighborKind::Matrix, static_cast<uint64_t>(width));
+      op.getPositions(), op.getCell(), excluded, APFloat(cutoff),
+      APFloat(skin), md_exec::NeighborKind::Matrix,
+      static_cast<uint64_t>(width));
 
   neighbors[op.getResult()] = structure;
   converted.push_back(op);
@@ -223,21 +233,7 @@ LogicalResult Converter::convertTupleOp(OpTy op, bool isSum) {
   auto relation = cast<md::RelationType>(op.getRelation().getType());
   unsigned arity = relation.getArity();
 
-  // One incidence structure for each relation, where the relation is
-  // defined, so that the loops over it share it.
-  Value &incidence = incidences[op.getRelation()];
-  if (!incidence) {
-    Value members = op.getRelation();
-    if (Operation *definition = members.getDefiningOp())
-      builder.setInsertionPointAfter(definition);
-    else
-      builder.setInsertionPointToStart(members.getParentBlock());
-    incidence = md_exec::BuildIncidenceOp::create(
-        builder, loc,
-        mdrt::IncidenceType::get(context, relation.getParticleSet(),
-                                 relation.getTupleSet(), arity),
-        members, /*size=*/Value());
-  }
+  Value incidence = getIncidence(op.getRelation(), loc);
 
   // The loop takes displacements only; the kernel computes the other
   // coordinates from them. A displacement that the op names is taken once.
@@ -305,6 +301,26 @@ LogicalResult Converter::convertTupleOp(OpTy op, bool isSum) {
   op.getResult().replaceAllUsesWith(loop.getResult(0));
   converted.push_back(op);
   return success();
+}
+
+Value Converter::getIncidence(Value relation, Location loc) {
+  // One incidence structure for each relation, where the relation is
+  // defined, so that the loops over it share it.
+  Value &incidence = incidences[relation];
+  if (incidence)
+    return incidence;
+  auto type = cast<md::RelationType>(relation.getType());
+  OpBuilder::InsertionGuard guard(builder);
+  if (Operation *definition = relation.getDefiningOp())
+    builder.setInsertionPointAfter(definition);
+  else
+    builder.setInsertionPointToStart(relation.getParentBlock());
+  incidence = md_exec::BuildIncidenceOp::create(
+      builder, loc,
+      mdrt::IncidenceType::get(builder.getContext(), type.getParticleSet(),
+                               type.getTupleSet(), type.getArity()),
+      relation, /*size=*/Value());
+  return incidence;
 }
 
 /// v' = v + dt · f / m

@@ -288,6 +288,21 @@ LogicalResult NeighborhoodOp::verify() {
       relation.getOrientation() != Orientation::Unordered)
     return emitOpError()
            << "expected the result to be an unordered relation of arity 2";
+
+  if (Value excluded = getExcluded()) {
+    auto pairs = cast<RelationType>(excluded.getType());
+    if (!pairs.getTupleSet() || pairs.getArity() != 2 ||
+        pairs.getOrientation() != Orientation::Unordered)
+      return emitOpError() << "expected the excluded pairs to be the "
+                              "unordered relation of arity 2 of a tuple set, "
+                              "got "
+                           << pairs;
+    if (pairs.getParticleSet() != positions.getParticleSet())
+      return emitOpError() << "the excluded pairs are on "
+                           << pairs.getParticleSet()
+                           << ", but the positions belong to "
+                           << positions.getParticleSet();
+  }
   return success();
 }
 

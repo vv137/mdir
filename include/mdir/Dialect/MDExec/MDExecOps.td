@@ -28,6 +28,20 @@ def MDExec_Scratch : Type<
     CPred<"::mdir::md_exec::isScratchType($_self)">,
     "buffer with one value per particle", "::mlir::MemRefType">;
 
+// The members of the tuples of a tuple set: `memref<?xkxi32>`.
+def MDExec_Members : Type<
+    CPred<"::mdir::md_exec::isMembersType($_self)">,
+    "buffer of the members of tuples", "::mlir::MemRefType">;
+
+// The tuples by particle: `memref<?x?xi32>`.
+def MDExec_IncidenceBuffer : Type<
+    CPred<"::mdir::md_exec::isIncidenceBufferType($_self)">,
+    "buffer of the tuples of each particle", "::mlir::MemRefType">;
+
+def MDExec_RelationOrMembers : AnyTypeOf<[MD_RelationType, MDExec_Members]>;
+def MDExec_Incidence
+    : AnyTypeOf<[MDRT_IncidenceType, MDExec_IncidenceBuffer]>;
+
 //===----------------------------------------------------------------------===//
 // Destinations
 //===----------------------------------------------------------------------===//
@@ -210,11 +224,16 @@ def MDExec_BuildNeighborsOp : MDExec_Op<"build_neighbors", [Pure]> {
             : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64>
             -> !mdrt.neighbors<@atoms>
     ```
+
+    With `exclude`, the structure leaves out the pairs of an incidence
+    structure of a tuple set of arity 2. A row must be wide enough for the
+    neighbors of a particle before those are left out.
   }];
   let arguments = (ins
     MDRT_CellsType:$cells,
     MD_FieldType:$positions,
     MD_CellType:$cell,
+    Optional<MDExec_Incidence>:$excluded,
     F64Attr:$cutoff,
     F64Attr:$skin,
     MDExec_NeighborKind:$kind,
@@ -224,7 +243,8 @@ def MDExec_BuildNeighborsOp : MDExec_Op<"build_neighbors", [Pure]> {
   let assemblyFormat = [{
     $cells `,` $positions `,` $cell
     `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
-    `kind` `(` $kind `)` `width` `(` $width `)` attr-dict
+    `kind` `(` $kind `)` `width` `(` $width `)`
+    (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)? attr-dict
     `:` qualified(type($cells)) `,` qualified(type($positions))
     `->` qualified(type($result))
   }];
@@ -232,6 +252,7 @@ def MDExec_BuildNeighborsOp : MDExec_Op<"build_neighbors", [Pure]> {
 }
 
 def MDExec_EmptyNeighborsOp : MDExec_Op<"empty_neighbors", [
+    AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let summary = "A neighbor structure that is valid for no configuration";
@@ -252,9 +273,13 @@ def MDExec_EmptyNeighborsOp : MDExec_Op<"empty_neighbors", [
     %nl = md_exec.empty_neighbors size(%n) positions(memref<?x3xf32>)
             kind(matrix) width(96) : !mdrt.neighbors<@atoms>
     ```
+
+    `exclude` is as for `md_exec.build_neighbors`: every build of the
+    structure leaves out those pairs.
   }];
   let arguments = (ins
     Optional<Index>:$size,
+    Optional<MDExec_Incidence>:$excluded,
     OptionalAttr<TypeAttr>:$positions,
     MDExec_NeighborKind:$kind,
     I64Attr:$width
@@ -262,7 +287,8 @@ def MDExec_EmptyNeighborsOp : MDExec_Op<"empty_neighbors", [
   let results = (outs MDRT_NeighborsType:$result);
   let assemblyFormat = [{
     (`size` `(` $size^ `)` `positions` `(` $positions `)`)?
-    `kind` `(` $kind `)` `width` `(` $width `)` attr-dict
+    `kind` `(` $kind `)` `width` `(` $width `)`
+    (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)? attr-dict
     `:` qualified(type($result))
   }];
   let extraClassDeclaration = [{
@@ -643,20 +669,6 @@ def MDExec_ParticleForOp : MDExec_Op<"particle_for", [
 //===----------------------------------------------------------------------===//
 // Tuples of a topology
 //===----------------------------------------------------------------------===//
-
-// The members of the tuples of a tuple set: `memref<?xkxi32>`.
-def MDExec_Members : Type<
-    CPred<"::mdir::md_exec::isMembersType($_self)">,
-    "buffer of the members of tuples", "::mlir::MemRefType">;
-
-// The tuples by particle: `memref<?x?xi32>`.
-def MDExec_IncidenceBuffer : Type<
-    CPred<"::mdir::md_exec::isIncidenceBufferType($_self)">,
-    "buffer of the tuples of each particle", "::mlir::MemRefType">;
-
-def MDExec_RelationOrMembers : AnyTypeOf<[MD_RelationType, MDExec_Members]>;
-def MDExec_Incidence
-    : AnyTypeOf<[MDRT_IncidenceType, MDExec_IncidenceBuffer]>;
 
 def MDExec_BuildIncidenceOp : MDExec_Op<"build_incidence", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
