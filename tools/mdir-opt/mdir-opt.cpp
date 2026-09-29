@@ -1,5 +1,6 @@
 // mdir-opt: parses, verifies, transforms, and prints MDIR modules.
 
+#include "mdir/Conversion/Passes.h"
 #include "mdir/Dialect/Dyn/DynDialect.h"
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
@@ -24,6 +25,7 @@ void registerTestOutlineKernels();
 int main(int argc, char **argv) {
   mlir::registerTransformsPasses();
   mdir::md::registerMDPasses();
+  mdir::registerMDIRConversionPasses();
   mdir::test::registerTestOutlineKernels();
 
   mlir::DialectRegistry registry;

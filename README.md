@@ -70,7 +70,9 @@ build/bin/mdir-opt test/Dialect/MD/ops.mlir
 | `--md-check-exchange` | Proves the exchange contracts of pair kernels. |
 | `--md-expand-truncation` | Expands truncation attributes into kernels. |
 | `--md-differentiate` | Replaces `md.evaluate` with calls to generated derivative functions. |
+| `--convert-md-to-md-exec` | Converts `md` and `dyn` ops to loops over particles and pairs. |
 
 ```sh
-build/bin/mdir-opt input.mlir --md-check-exchange --md-differentiate
+build/bin/mdir-opt input.mlir --md-check-exchange --md-differentiate \
+    --md-expand-truncation --convert-md-to-md-exec="skin=0.3 width=96"
 ```

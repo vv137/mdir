@@ -353,7 +353,9 @@ These items follow from the decisions above but have no design yet.
 |---|---|---|
 | `md` dialect: types, ops, truncation, differentiation, exchange check | M0 | Implemented |
 | `dyn` dialect | M0 | Implemented |
-| `md_exec` dialect and the lowering into it | M0 | Next step |
+| `md_exec` dialect in the value form, and the conversion into it | M0 | Implemented |
+| Reuse of neighbor structures across steps | M0 | |
+| Lowering of `md_exec` to executable code | M0 | Next step; depends on the `mdrt` proposal |
 | Check that particle set symbols in types are declared | M0 | |
 | Regression test for the numerical values of derivatives | M0 | Implemented with a kernel runner |
 | `mdrt` ABI: storage, neighbor structures, events | M0 | Proposal in [mdrt-m0.md](mdrt-m0.md) |

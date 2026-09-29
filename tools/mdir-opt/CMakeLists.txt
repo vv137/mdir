@@ -3,6 +3,7 @@ set(LIBS
   MDIRMD
   MDIRMDExec
   MDIRMDRT
+  MDIRMDToMDExec
   MDIRMDTransforms
   MDIRTestPasses
   MLIRArithDialect

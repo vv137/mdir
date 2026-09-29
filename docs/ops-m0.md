@@ -1,7 +1,8 @@
 # MDIR Op Specification, Milestone M0
 
-Status: draft 4 (2026-09-29). The `md` and `dyn` dialects are implemented;
-`md_exec` is not.
+Status: draft 5 (2026-09-29). The `md` and `dyn` dialects are implemented,
+and so are the value form of `md_exec` and the conversion into it. Storage
+assignment and the lowering of `md_exec` to executable code are not.
 
 This document specifies the types and ops needed for milestone M0: a
 Lennard-Jones fluid integrated with velocity Verlet or leapfrog, on one node,
@@ -14,7 +15,9 @@ Operand lists, result lists, and the mathematical definitions are normative.
 | `md` types and ops (Section 4) | Implemented. The examples show the actual syntax. |
 | Truncation, differentiation, exchange check (Sections 4.7, 4.8, 5) | Implemented as passes; see Section 5.6 |
 | `dyn` ops (Section 6) | Implemented. The examples show the actual syntax. |
-| `md_exec`, storage assignment (Sections 8 to 10) | Not implemented. The syntax is illustrative. |
+| `md_exec` ops in the value form (Section 8) | Implemented. The examples show the actual syntax. |
+| Conversion of `md` and `dyn` to `md_exec` (Section 9.1) | Implemented as the pass `convert-md-to-md-exec` |
+| Storage form, storage assignment, fusion (Sections 8.5, 9.4, 10) | Not implemented |
 
 It follows the accepted decisions in [decisions.md](decisions.md). Tags such
 as (S1) or (B4) name the decision behind a section.
@@ -733,11 +736,15 @@ placeholders here, pending the `mdrt` ABI.
 ### 8.2 `md_exec.build_neighbors`
 
 ```mlir
-%cells = md_exec.build_cells %x, %cell { width = 2.8 } : !mdrt.cells
+%cells = md_exec.build_cells %x, %cell width(2.8)
+           : !vec -> !mdrt.cells<@atoms>
 %nl    = md_exec.build_neighbors %cells, %x, %cell
-           { cutoff = 2.5, skin = 0.3, kind = verlet, traversal = directed }
-           : !mdrt.neighbors
+           cutoff(2.5) skin(0.3) kind(matrix) width(96)
+           : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
 ```
+
+`width` is the number of neighbors that the structure holds per particle.
+The only kind so far is `matrix`, a row of fixed width per particle.
 
 The structure is built at a reference configuration `x_ref` with the extended
 cutoff `r_c + skin`. It holds the list
@@ -772,21 +779,25 @@ be repaired afterward, which is why `interval` is not the default.
 ### 8.3 `md_exec.pair_for`
 
 ```mlir
+%f0 = md_exec.zeros : !vec
+%u0 = arith.constant 0.0 : f64
+
 %f, %u = md_exec.pair_for %nl, %x, %cell
-           outs(%f0 : !vec) reduce(%u0 : f64, weight = 0.5)
-           cutoff(2.5)
-           policy(traversal = directed, conflict = owner_only, order = list) {
+           outs(%f0 : !vec) reduce(%u0 : f64)
+           cutoff(2.5) weights [0.5]
+           policy(directed, owner_only) {
 ^bb0(%r2: f64, %d: vector<3xf64>):
   ...
   md_exec.yield %k_f, %k_u : vector<3xf64>, f64
-} : !vec, f64
+} : !mdrt.neighbors<@atoms>, !vec -> !vec, f64
 ```
 
 | Clause | Meaning |
 |---|---|
 | `ins` | Fields that are read. The kernel receives two values per field. |
 | `outs` | Destination fields. The kernel yields a contribution to the central particle. |
-| `reduce` | Global sums, each with a weight. |
+| `reduce` | Global sums. |
+| `weights` | One weight per global sum. All 1 if absent. |
 | `cutoff` | The predicate `r² < r_c²`. The loop evaluates it, not the kernel. |
 | `policy` | The pair execution policy from the plan. |
 
@@ -804,14 +815,27 @@ S   = S0   + w · Σ_{(i,j) ∈ L, r_ij < r_c} k_S(i, j)
 ### 8.4 `md_exec.particle_for`
 
 ```mlir
-%v1 = md_exec.particle_for ins(%v, %f, %m : !vec, !vec, !real) outs(%v0 : !vec) {
+%v0 = md_exec.empty : !vec
+
+%v1 = md_exec.particle_for ins(%v, %f, %m : !vec, !vec, !real)
+        outs(%v0 : !vec) {
 ^bb0(%v_i: vector<3xf64>, %f_i: vector<3xf64>, %m_i: f64):
   ...
   md_exec.yield %v_new : vector<3xf64>
-} : !vec
+} -> !vec
 ```
 
-It has the same `ins`, `outs`, and `reduce` clauses as `md_exec.pair_for`.
+It has the same `ins`, `outs`, and `reduce` clauses as `md_exec.pair_for`,
+with one difference: a field in `outs` is written, not accumulated into.
+
+```text
+b_i = k_b(i)                 for every field in outs
+S   = S0 + Σ_i k_S(i)        for every value in reduce
+```
+
+`md_exec.zeros` and `md_exec.empty` provide destinations: a field of zeros
+for a loop that accumulates, and a field with unspecified values for a loop
+that writes every value.
 
 ### 8.5 Value form and storage form
 
@@ -829,12 +853,21 @@ Each loop op has two forms (D17).
 
 | Semantic op | `md_exec` |
 |---|---|
-| `md.neighborhood` | `md_exec.build_cells` and `md_exec.build_neighbors`, placed by the rebuild policy |
+| `md.neighborhood` | `md_exec.build_cells` and `md_exec.build_neighbors` |
 | `md.sum_relation` | `md_exec.pair_for` with a `reduce` clause |
 | `md.gather_relation` | `md_exec.pair_for` with an `outs` clause |
 | `md.sum_particles` | `md_exec.particle_for` with a `reduce` clause |
 | `md.map_particles` | `md_exec.particle_for` with an `outs` clause |
 | `dyn.kick`, `dyn.drift` | `md_exec.particle_for` with an `outs` clause |
+
+The conversion builds the neighbor structure where the neighborhood was, so
+the structure is rebuilt at every evaluation. That is exact and slow. Moving
+the build out of the evaluation and reusing the structure across steps, under
+the rebuild policy of Section 8.2, is the task of a later pass.
+
+The semantic kernel is written in terms of the distance `r`, and the loop
+provides `r²`. The conversion inserts a square root at the start of the
+kernel when the kernel uses `r`.
 
 ### 9.2 Correctness of the directed traversal
 
