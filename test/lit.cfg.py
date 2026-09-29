@@ -66,6 +66,17 @@ config.substitutions.append(
     )
 )
 
+# The same, with the transformations that reassociate floating-point
+# arithmetic.
+config.substitutions.append(
+    (
+        "%md_exec_fast_passes",
+        "--md-exec-reuse-neighbors --md-exec-fuse-loops"
+        " --md-exec-simplify-distance --canonicalize --cse"
+        " --convert-md-exec-to-loops",
+    )
+)
+
 # Lowers loops over buffers to the LLVM dialect: sequentially, or with the
 # parallel loops run by OpenMP.
 loops_to_llvm = (

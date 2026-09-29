@@ -1,6 +1,6 @@
 # MDIR Op Specification, Milestone M0
 
-Status: draft 7 (2026-09-29). Everything in this document is implemented for
+Status: draft 8 (2026-09-29). Everything in this document is implemented for
 the CPU in double precision, except where a section says otherwise. A
 Lennard-Jones system runs end to end, sequentially and with OpenMP.
 
@@ -19,6 +19,7 @@ Operand lists, result lists, and the mathematical definitions are normative.
 | Conversion of `md` and `dyn` to `md_exec` (Section 9.1) | Implemented as the pass `convert-md-to-md-exec` |
 | Storage assignment and lowering to loops (Section 10) | Implemented as the pass `convert-md-exec-to-loops` |
 | Fusion of loops over pairs (Section 9.4) | Implemented as the pass `md-exec-fuse-loops` |
+| Powers of the squared distance (Section 9.5) | Implemented as the pass `md-exec-simplify-distance` |
 | Storage form as a stage of its own, precision policy (Sections 7, 8.5) | Not implemented |
 
 It follows the accepted decisions in [decisions.md](decisions.md). Tags such
@@ -900,7 +901,8 @@ refresh (Section 8.2).
 
 The semantic kernel is written in terms of the distance `r`, and the loop
 provides `r²`. The conversion inserts a square root at the start of the
-kernel when the kernel uses `r`.
+kernel when the kernel uses `r`. Section 9.5 describes how it is removed
+again.
 
 ### 9.2 Correctness of the directed traversal
 
@@ -959,6 +961,38 @@ Fusion does not change any result: every sum receives the same
 contributions in the same order.
 
 Loops over particles are not fused yet.
+
+### 9.5 Powers of the squared distance
+
+The loop provides `r²`, and a kernel that was written in terms of `r` starts
+with a square root. The pass `md-exec-simplify-distance` removes the square
+root where the kernel does not need it.
+
+The pass writes every `f64` value of a kernel as a sum of terms
+
+```text
+c · r^p
+```
+
+where `c` is a product of a number and of values that carry no explicit
+power of `r`. It carries that form through sums, differences, products,
+quotients, and integer powers. Code is emitted only where a value is needed:
+for the operands of any other op, and for what the kernel yields.
+
+| Power | Computed from |
+|---|---|
+| Even and positive | `r²` |
+| Even and negative | `1 / r²`, which is computed once |
+| Odd | The even power below it, times `sqrt(r²)`, which is computed once |
+
+For the Lennard-Jones potential without truncation, or with `shift`, energy
+and force contain only even powers, and the kernel has no square root. With
+`switch`, `force_shift`, or `force_switch`, the truncation itself is a
+function of `r`, and the square root stays.
+
+The pass reassociates floating-point arithmetic. Results change in their
+last bits, so the pass is not part of the reference semantics (B2) and must
+not be run in the deterministic mode.
 
 ## 10. Storage assignment
 

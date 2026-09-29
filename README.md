@@ -75,6 +75,7 @@ build/bin/mdir-opt test/Dialect/MD/ops.mlir
 | `--convert-md-to-md-exec` | Converts `md` and `dyn` ops to loops over particles and pairs. |
 | `--md-exec-reuse-neighbors` | Makes a neighbor structure that is built in a loop a value that the loop carries and refreshes. |
 | `--md-exec-fuse-loops` | Fuses loops over the pairs of one neighbor structure. Run `--cse` after it. |
+| `--md-exec-simplify-distance` | Rewrites pair kernels in powers of the squared distance. Changes rounding. Run `--canonicalize --cse` after it. |
 | `--convert-md-exec-to-loops` | Assigns buffers and converts the loops to `scf` loops over `memref`s. |
 
 After the last pass the module holds only upstream dialects, so `mlir-opt`

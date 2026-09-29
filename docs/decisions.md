@@ -369,7 +369,7 @@ These items follow from the decisions above but have no design yet.
 | Precision policy | M0 | |
 | Fusion of loops over the same neighbor structure | M0 | Implemented |
 | Fusion of loops over particles | M0 | |
-| Removal of the square root from kernels that do not need it | M0 | |
+| Removal of the square root from kernels that do not need it | M0 | Implemented |
 | Freeing of buffers | M0 | |
 | Driver, TOML input, XTC and H5MD output | M0 | |
 | GPU back end | M0 | |
