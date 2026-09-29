@@ -6,12 +6,16 @@
 
 # The potential energy, the virial, and the pressure at the start agree
 # with the sums over all pairs of Inputs/mixture_reference.py:
-# -497.729755 kcal/mol, -1117.778154 kcal/mol, and -1712.041957 atm. The
+# -497.729755 kcal/mol, -1117.778154 kcal/mol, and -1712.033551 atm. The
 # total energy is conserved.
+#
+# The initial velocities have 120 K in their kinetic energy. The
+# temperature of the log is estimated from the kinetic energies half a
+# step before and after as well: 120.002014 K.
 #
 # CHECK:      MDIR: 256 particles, 200 steps of 0.004 ps
 # CHECK:      INFO:      STEP           TIME      TOTAL_ENE  POTENTIAL_ENE    KINETIC_ENE    TEMPERATURE         VIRIAL       PRESSURE
-# CHECK-NEXT: INFO:         0         0.0000 {{ *-[0-9.]+}} {{ *}}-497.7298 {{ *[0-9.]+}} {{ *}}120.0000 {{ *}}-1117.7782 {{ *}}-1712.0420
+# CHECK-NEXT: INFO:         0         0.0000 {{ *-[0-9.]+}} {{ *}}-497.7298 {{ *[0-9.]+}} {{ *}}120.0020 {{ *}}-1117.7782 {{ *}}-1712.0336
 # CHECK-NEXT: INFO:        50         0.2000
 # CHECK-NEXT: INFO:       100         0.4000
 # CHECK-NEXT: INFO:       150         0.6000

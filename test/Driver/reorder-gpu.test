@@ -27,7 +27,7 @@
 
 # The potential energy at the start is that of mixture.toml.
 #
-# CHECK:      INFO:         0         0.0000 {{ *-[0-9.]+}} {{ *}}-497.7298 {{ *[0-9.]+}} {{ *}}120.0000
+# CHECK:      INFO:         0         0.0000 {{ *-[0-9.]+}} {{ *}}-497.7298 {{ *[0-9.]+}} {{ *}}120.0020
 # CHECK:      INFO:       200         0.8000 {{ *}}-406.51{{[0-9]+}} {{ *}}-460.3205 {{ *}}53.8046
 
 # STATES: values of the positions differ, by up to {{[0-9.]+}}e-1{{[0-9]}}

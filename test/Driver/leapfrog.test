@@ -1,0 +1,24 @@
+# Leapfrog and velocity Verlet take the same steps: the two differ in what
+# they store. The log is the same, row by row, although the stored
+# velocities of leapfrog are half a step behind the positions.
+#
+# RUN: sed -e 's|Inputs/|%S/Inputs/|' %S/mixture.toml > %t.verlet.toml
+# RUN: sed -e 's|"VVER"|"LEAP"|' %t.verlet.toml > %t.leapfrog.toml
+# RUN: mdir-run %t.verlet.toml | grep "^INFO" > %t.verlet.log
+# RUN: mdir-run %t.leapfrog.toml | grep "^INFO" > %t.leapfrog.log
+# RUN: diff %t.verlet.log %t.leapfrog.log
+# RUN: FileCheck %s < %t.leapfrog.log
+# RUN: mdir-run %t.leapfrog.toml --emit=mlir | FileCheck %s --check-prefix=MODULE
+
+# CHECK:      INFO:         0         0.0000
+# CHECK:      INFO:       200         0.8000 {{ *}}-406.5155 {{ *}}-460.4736 {{ *}}53.9581
+
+# Where energies are written, the forces at the new positions give the
+# velocities of their time.
+#
+# MODULE:      %xl, %vl = dyn.step @step(
+# MODULE:      %u, %fl, %w = md.evaluate @energy(%xl, %cell, %p_epsilon, %p_sigma)
+# MODULE-NEXT:     request [energy, forces, virial]
+# MODULE:      %vn = dyn.kick %vl, %fl, %m, %half_dt : !vec
+# MODULE:      %k = md.sum_particles gather(%vn, %m : !vec, !real)
+# MODULE:      %g = md.sum_particles gather(%fl, %m : !vec, !real)

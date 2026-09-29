@@ -121,13 +121,24 @@ void mdir::driver::writeLogHeader(Output &output) {
 }
 
 void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
-                                    double kinetic, double virial) {
+                                    double kinetic, double forceSquare,
+                                    double virial) {
   Output &output = *current;
+  // `kinetic` is that of the velocities at the step. The total energy has
+  // it, because that sum varies least.
   double total = potential + kinetic;
+
+  // The mean of the kinetic energies half a step before and after exceeds
+  // `kinetic` by (dt^2 / 8) sum F^2 / m. The pressure takes that mean, and
+  // the temperature the mean of all three (D45).
+  double excess =
+      0.125 * output.timestep * output.timestep * forceSquare;
+  double half = kinetic + excess;
+  double optimal = kinetic + 2.0 * excess / 3.0;
   double temperature =
-      2.0 * kinetic / (output.degreesOfFreedom * units::boltzmann);
+      2.0 * optimal / (output.degreesOfFreedom * units::boltzmann);
   // `virial` is the trace of W, the sum of d (x) K over the pairs (B8).
-  double pressure = (2.0 * kinetic + virial) / (3.0 * output.volume);
+  double pressure = (2.0 * half + virial) / (3.0 * output.volume);
   std::fprintf(output.log,
                "INFO: %9lld %14.4f %14.4f %14.4f %14.4f %14.4f %14.4f "
                "%14.4f\n",

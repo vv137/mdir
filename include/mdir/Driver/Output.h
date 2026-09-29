@@ -99,7 +99,8 @@ void writeLogHeader(Output &output);
 /// of the run. What is written is in the order of these numbers.
 extern "C" {
 void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
-                                    double kinetic, double virial);
+                                    double kinetic, double forceSquare,
+                                    double virial);
 void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids);
 void _mlir_ciface_mdrtWriteCheckpoint(int64_t step, void *positions,
                                       void *velocities, void *ids);

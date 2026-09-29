@@ -1,8 +1,16 @@
 """Reference values for mixture.toml.
 
-Evaluates the energy and the virial of the particles of mixture.pdb over
-all pairs, in the units of the control file, and the pressure at the
-temperature of the initial velocities.
+Evaluates the energy, the forces, and the virial of the particles of
+mixture.pdb over all pairs, in the units of the control file, and the
+temperature and the pressure that the log has at the start.
+
+The initial velocities have the temperature of the control file in the
+kinetic energy of the velocities, K. The log estimates the temperature
+and the pressure from the kinetic energies half a step before and after
+as well, whose mean exceeds K by (dt^2 / 8) sum F^2 / m:
+
+    temperature   from K + 2/3 of the excess
+    pressure      from K + the excess
 
 Usage: python3 mixture_reference.py
 """
@@ -14,12 +22,17 @@ EDGE = 23.2
 CUTOFF = 9.0
 SWITCH_FROM = 7.5
 TEMPERATURE = 120.0
+TIMESTEP = 0.004
+# amu, as the types of the control file have them.
+MASSES = {"AR": 39.95, "KR": 83.80}
 # epsilon in kcal/mol, sigma in Å.
 TYPES = {"AR": (0.238465, 3.4), "KR": (0.3253, 3.65)}
 
 # kcal/(mol K), and atm in one kcal/(mol Å^3).
 BOLTZMANN = 0.0083144626181532 / 4.184
 ATM = 4.184 * 1000.0 * 16.6053906717 / 1.01325
+# kcal/mol in one amu Å^2 / ps^2.
+KINETIC = 0.01 / 4.184
 
 
 def read():
@@ -50,6 +63,7 @@ def main():
     count = len(particles)
     energy = 0.0
     trace = 0.0
+    forces = [[0.0, 0.0, 0.0] for _ in range(count)]
     for i in range(count):
         for j in range(i + 1, count):
             d = []
@@ -72,12 +86,27 @@ def main():
             energy += u * s
             # d . K, with the force K on i due to j.
             trace += -(du * s + u * ds) * r
+            for k in range(3):
+                force = -(du * s + u * ds) * d[k] / r
+                forces[i][k] += force
+                forces[j][k] -= force
 
-    kinetic = 0.5 * (3 * count - 3) * BOLTZMANN * TEMPERATURE
-    pressure = (2.0 * kinetic + trace) / (3.0 * EDGE**3) * ATM
+    # sum F^2 / m in (kcal/mol)^2 / (Å^2 amu), and with dt^2 in kcal/mol.
+    square = sum(sum(c * c for c in force) / MASSES[particle[0]]
+                 for force, particle in zip(forces, particles))
+    excess = 0.125 * TIMESTEP**2 * square / KINETIC
+
+    freedom = 3 * count - 3
+    kinetic = 0.5 * freedom * BOLTZMANN * TEMPERATURE
+    half = kinetic + excess
+    optimal = kinetic + 2.0 * excess / 3.0
+    temperature = 2.0 * optimal / (freedom * BOLTZMANN)
+    pressure = (2.0 * half + trace) / (3.0 * EDGE**3) * ATM
     print("particles        ", count)
     print("potential energy ", repr(energy), "kcal/mol")
     print("kinetic energy   ", repr(kinetic), "kcal/mol")
+    print("  at half steps  ", repr(half), "kcal/mol")
+    print("temperature      ", repr(temperature), "K")
     print("virial, trace    ", repr(trace), "kcal/mol")
     print("pressure         ", repr(pressure), "atm")
 

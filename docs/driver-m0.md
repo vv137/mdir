@@ -198,7 +198,7 @@ are multiples of `eneout_period`.
 
 ```text
 INFO:      STEP           TIME      TOTAL_ENE  POTENTIAL_ENE    KINETIC_ENE    TEMPERATURE         VIRIAL       PRESSURE
-INFO:      2000        10.0000      -834.1467     -1083.2389       249.0922        96.8312       -70.6513       232.2931
+INFO:      2000        10.0000      -834.1467     -1083.2389       249.0922        96.8538       -70.6513       232.3875
 ```
 
 The line shows the last row of `examples/argon.toml`.
@@ -206,14 +206,56 @@ The line shows the last row of `examples/argon.toml`.
 | Column | Unit | Meaning |
 |---|---|---|
 | `TIME` | ps | |
-| `TOTAL_ENE`, `POTENTIAL_ENE`, `KINETIC_ENE` | kcal/mol | |
-| `TEMPERATURE` | K | `2 E_kin / (f k_B)`, with `f = 3 N − 3` degrees of freedom |
+| `POTENTIAL_ENE` | kcal/mol | |
+| `KINETIC_ENE` | kcal/mol | `K`, the kinetic energy of the velocities at the time of the row |
+| `TOTAL_ENE` | kcal/mol | `POTENTIAL_ENE + KINETIC_ENE` |
+| `TEMPERATURE` | K | `2 K_T / (f k_B)`, with `f = 3 N − 3` degrees of freedom and `K_T` as below |
 | `VIRIAL` | kcal/mol | The trace of the MDIR virial `W = Σ d_ij ⊗ K(i, j)`, which is positive for repulsion (B8). Other packages print other quantities under this name: the GROMACS virial is `−W / 2`. |
-| `PRESSURE` | atm | `(2 E_kin + tr W) / (3 V)` |
+| `PRESSURE` | atm | `(2 K_P + tr W) / (3 V)`, with `K_P` as below |
 
 The pressure has no correction for the dispersion beyond the cutoff; that
-correction comes with M1. With leapfrog, the kinetic energy of a row is
-that of the stored velocities, and so is the pressure.
+correction comes with M1.
+
+**Three kinetic energies (D45).** The velocities of a step are those of a
+finite difference of the positions, not those of the trajectory, so their
+kinetic energy `K` is off by a term of the order `Δt²`. The kinetic
+energy of the velocities half a step before and after is off as well, by
+half as much and in the other direction. The mean of the two half steps
+is
+
+```text
+K_half = K + (Δt² / 8) Σ_i F_i² / m_i
+```
+
+which holds exactly without constraints and thermostats.
+
+| Quantity | Kinetic energy | Reason |
+|---|---|---|
+| Total energy | `K` | The sum with the potential energy varies least: for argon with a step of 20 fs, by 0.05 kcal/mol, against 0.10 and 0.12 with the other two. |
+| Temperature | `K_T = (K + 2 K_half) / 3`, the mean of the three times | The terms of the order `Δt²` cancel. |
+| Pressure | `K_P = K_half` | The positions of the steps satisfy the virial theorem with this kinetic energy. |
+
+The estimators are those of Jung, Kobayashi, and Sugita
+(J. Chem. Phys. 148, 164109 (2018); J. Chem. Theory Comput. 15, 84
+(2019)). For liquid argon they were compared with runs at a step of 1 fs,
+through the potential energy and the heat capacity:
+
+| Step | Error of the temperature from `K` | From `K_half` | From `K_T` | Error of the pressure from `K` | From `K_P` |
+|---|---|---|---|---|---|
+| 10 fs | −0.04 K | +0.09 K | +0.05 K | −1.4 atm | −1.0 atm |
+| 20 fs | −0.35 K | +0.19 K | +0.01 K | −1.5 atm | +0.1 atm |
+| 30 fs | −0.89 K | +0.34 K | −0.07 K | −3.5 atm | −0.1 atm |
+
+The averages have an uncertainty of 0.05 K and 1.3 atm.
+
+The initial velocities have the temperature of the control file in `K`.
+The first row of the log therefore shows a temperature that is a little
+higher, unless the forces are zero.
+
+With leapfrog, the stored velocities are half a step behind the
+positions. Where energies are written, the driver computes the forces at
+the positions and from them the velocities of their time, so the log is
+that of velocity Verlet, row by row.
 
 The virial is computed in the steps whose energies are written, in the
 loop over pairs that computes the energy and the forces. Columns for
@@ -249,8 +291,8 @@ then the edge lengths of the cell and the time step. The cell and the time step 
 the program (P1).
 
 With leapfrog, the stored velocities are half a step behind the positions.
-The kinetic energy of a row of the log is that of the stored velocities,
-not that of the time of the row.
+The log has the kinetic energy of the time of a row all the same
+(Section 2.3).
 
 ### 2.6 Checkpoints
 

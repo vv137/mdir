@@ -362,6 +362,23 @@ static void emitTrace(llvm::raw_ostream &os, StringRef result,
      << "_8 : f64\n";
 }
 
+/// The sum over the particles of F^2 / m. With the time step it gives the
+/// kinetic energy at the half steps before and after a step, from which
+/// the temperature and the pressure are estimated.
+static void emitForceSquare(llvm::raw_ostream &os, StringRef result,
+                            StringRef forces, StringRef masses,
+                            StringRef indent) {
+  os << indent << result << " = md.sum_particles gather(" << forces << ", "
+     << masses << " : !vec, !real) {\n"
+     << indent << "^bb0(%f_i: vector<3xf64>, %m_i: f64):\n"
+     << indent << "  %sq = arith.mulf %f_i, %f_i : vector<3xf64>\n"
+     << indent
+     << "  %f2 = vector.reduction <add>, %sq : vector<3xf64> into f64\n"
+     << indent << "  %g = arith.divf %f2, %m_i : f64\n"
+     << indent << "  md.yield %g : f64\n"
+     << indent << "} : f64\n";
+}
+
 /// The kernel of the kinetic energy of one particle.
 static void emitKineticEnergy(llvm::raw_ostream &os, StringRef result,
                               StringRef velocities, StringRef masses,
@@ -505,11 +522,15 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
            << getFieldValues(fieldPrefix) << ")\n"
            << inner << "    : (!vec, !vec, !real, !md.cell, f64"
            << getFieldTypes() << ") -> (!vec, !vec)\n";
-        os << inner << "%u, %w = md.evaluate @energy(%xl, %cell"
+        os << inner << "%u, %fl, %w = md.evaluate @energy(%xl, %cell"
            << getFieldValues(fieldPrefix) << ")\n"
-           << inner << "    request [energy, virial]\n"
+           << inner << "    request [energy, forces, virial]\n"
            << inner << "    : (!vec, !md.cell" << getFieldTypes()
-           << ") -> (f64, vector<9xf64>)\n";
+           << ") -> (f64, !vec, vector<9xf64>)\n";
+        // The stored velocities are half a step behind. Those of the time
+        // of the positions are half a kick ahead of them.
+        os << inner << "%vn = dyn.kick %vl, %fl, " << massName
+           << ", %half_dt : !vec\n";
       } else {
         os << inner << "%xl, %vl, %fl, %u, %w = dyn.step @step_energy(%x"
            << last
@@ -519,11 +540,13 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
            << getFieldTypes()
            << ") -> (!vec, !vec, !vec, f64, vector<9xf64>)\n";
       }
-      emitKineticEnergy(os, "%k", "%vl", massName, inner);
+      emitKineticEnergy(os, "%k", isLeapfrog() ? "%vn" : "%vl", massName,
+                        inner);
+      emitForceSquare(os, "%g", "%fl", massName, inner);
       emitTrace(os, "%tr", "%w", inner);
       emitStep();
       os << inner << "func.call @mdrtWriteEnergies(%step" << here
-         << ", %u, %k, %tr) : (i64, f64, f64, f64) -> ()\n";
+         << ", %u, %k, %g, %tr) : (i64, f64, f64, f64, f64) -> ()\n";
       os << inner << "scf.yield " << getValues("l") << " : " << state << "\n";
     } else {
       if (current.name == "frame") {
@@ -565,7 +588,7 @@ void Builder::emitEntry() {
   StringRef mass = getName(program.mass);
   StringRef parameter = getName(program.parameter);
 
-  os << "func.func private @mdrtWriteEnergies(i64, f64, f64, f64)\n"
+  os << "func.func private @mdrtWriteEnergies(i64, f64, f64, f64, f64)\n"
      << "    attributes {llvm.emit_c_interface}\n"
      << "func.func private @mdrtWriteFrame(i64, memref<?x3x" << state
      << ">, memref<?xi32>)\n    attributes {llvm.emit_c_interface}\n"
@@ -635,6 +658,10 @@ void Builder::emitEntry() {
   if (program.reorders)
     emitReorder("  ", "_in", "0", "", givenForces, velocities);
 
+  if (isLeapfrog())
+    os << "  %c_half = arith.constant 5.0e-01 : f64\n"
+       << "  %half_dt = arith.mulf %c_half, %dt : f64\n";
+
   if (!isRestart()) {
     // The energies at the start.
     os << "  %u0, %f0, %w0 = md.evaluate @energy(%x0, %cell"
@@ -643,9 +670,10 @@ void Builder::emitEntry() {
        << "      : (!vec, !md.cell" << getFieldTypes()
        << ") -> (f64, !vec, vector<9xf64>)\n";
     emitKineticEnergy(os, "%k0", velocities, "%m", "  ");
+    emitForceSquare(os, "%g0", "%f0", "%m", "  ");
     emitTrace(os, "%tr0", "%w0", "  ");
-    os << "  call @mdrtWriteEnergies(%start, %u0, %k0, %tr0)\n"
-       << "      : (i64, f64, f64, f64) -> ()\n";
+    os << "  call @mdrtWriteEnergies(%start, %u0, %k0, %g0, %tr0)\n"
+       << "      : (i64, f64, f64, f64, f64) -> ()\n";
 
     if (isLeapfrog()) {
       // v(-dt/2) = v(0) - (dt/2) F(0) / m.
