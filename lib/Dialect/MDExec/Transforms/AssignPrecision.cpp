@@ -11,6 +11,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
 #include <cassert>
 
@@ -240,6 +241,17 @@ LogicalResult Assigner::collect(Operation *op) {
       markBoundary(
           from.getResult(),
           cast<MemRefType>(from.getBuffer().getType()).getElementType(), op);
+    return success();
+  }
+  if (auto call = dyn_cast<mdrt::HostCallOp>(op)) {
+    auto callee = dyn_cast_or_null<func::FuncOp>(SymbolTable::lookupNearestSymbolFrom(
+        op, call.getCalleeAttr()));
+    if (!callee)
+      return op->emitOpError() << "calls a function that is not declared";
+    for (auto [operand, type] :
+         llvm::zip(call.getOperands(), callee.getArgumentTypes()))
+      if (isRealField(operand.getType()))
+        markBoundary(operand, cast<MemRefType>(type).getElementType(), op);
     return success();
   }
   if (auto to = dyn_cast<mdrt::ToBufferOp>(op)) {

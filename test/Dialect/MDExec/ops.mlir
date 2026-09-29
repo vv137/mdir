@@ -219,3 +219,15 @@ func.func @storage(%x: memref<?x3xf32>, %v: memref<?x3xf32>,
   }
   return %u : f64
 }
+
+// A function of the host that reads a field.
+//
+// CHECK-LABEL: func.func @host(
+func.func private @write_frame(i64, memref<?x3xf32>)
+
+func.func @host(%x: !md.field<@atoms, 3 x f64>, %step: i64) {
+  // CHECK: mdrt.host_call @write_frame(%{{[a-z0-9]+}}, %{{[a-z0-9]+}}) : (i64, !md.field<@atoms, 3 x f64>)
+  mdrt.host_call @write_frame(%step, %x)
+      : (i64, !md.field<@atoms, 3 x f64>)
+  return
+}

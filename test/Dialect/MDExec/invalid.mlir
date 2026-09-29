@@ -277,3 +277,16 @@ func.func @f(%v: memref<?x2xf64>) {
   }
   return
 }
+
+// -----
+
+md.particle_set @atoms
+
+func.func private @write_frame(i64, memref<?xf64>)
+
+func.func @f(%x: !md.field<@atoms, 3 x f64>, %step: i64) {
+  // expected-error@+1 {{argument 1 of 'write_frame' has type 'memref<?xf64>', which does not take '!md.field<@atoms, 3 x f64>'}}
+  mdrt.host_call @write_frame(%step, %x)
+      : (i64, !md.field<@atoms, 3 x f64>)
+  return
+}

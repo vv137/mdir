@@ -18,6 +18,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
@@ -872,6 +873,49 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     }
     createTransfer(builder, op->getLoc(), host, buffer);
     mapping.map(to.getResult(), host);
+    return success();
+  }
+
+  if (auto call = dyn_cast<mdrt::HostCallOp>(op)) {
+    auto callee = dyn_cast_or_null<func::FuncOp>(
+        SymbolTable::lookupNearestSymbolFrom(op, call.getCalleeAttr()));
+    if (!callee)
+      return op->emitOpError() << "calls a function that is not declared";
+
+    SmallVector<Value> arguments;
+    for (auto [operand, type] :
+         llvm::zip(call.getOperands(), callee.getArgumentTypes())) {
+      if (!isField(operand.getType())) {
+        arguments.push_back(mapping.lookup(operand));
+        continue;
+      }
+      if (failed(checkStored(op, operand.getType(), type)))
+        return failure();
+      Value buffer;
+      if (failed(getBuffer(operand, scope, buffer)))
+        return failure();
+      if (!onDevice) {
+        // The host reads the buffer where it is.
+        arguments.push_back(buffer);
+        continue;
+      }
+
+      // The host reads a copy. The buffer that takes it is free again when
+      // the call returns.
+      SmallVector<Value, 2> &available = hostBuffers[type];
+      if (available.empty()) {
+        Value size;
+        if (failed(getSize(op, operand.getType(), size)))
+          return failure();
+        available.push_back(memref::AllocOp::create(
+            root->builder, op->getLoc(), cast<MemRefType>(type),
+            ValueRange{size}));
+      }
+      Value host = available.back();
+      createTransfer(builder, op->getLoc(), host, buffer);
+      arguments.push_back(host);
+    }
+    func::CallOp::create(builder, op->getLoc(), callee, arguments);
     return success();
   }
 

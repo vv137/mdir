@@ -66,3 +66,87 @@ func.func @once(%x: !vec, %cell: !md.cell) -> f64 {
   } : !nl, !vec -> f64
   return %pairs : f64
 }
+
+// A structure moves outward through the loops around it, so that it lives
+// on from one output to the next.
+//
+// CHECK-LABEL: func.func @nested(
+func.func @nested(%x0: !vec, %cell: !md.cell, %frames: index, %steps: index)
+    -> !vec {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  // CHECK:      %[[EMPTY:[0-9]+]] = md_exec.empty_neighbors kind(matrix) width(96)
+  // CHECK:      scf.for {{.*}} iter_args(%{{[a-z0-9]+}} = %{{[a-z0-9]+}}, %[[OUTER:[a-z0-9]+]] = %[[EMPTY]])
+  // CHECK-NOT:    md_exec.empty_neighbors
+  // CHECK:        %[[INNER:[0-9]+]]:2 = scf.for {{.*}} iter_args(%{{[a-z0-9]+}} = %{{[a-z0-9]+}}, %[[NL:[a-z0-9]+]] = %[[OUTER]])
+  // CHECK:          md_exec.refresh_neighbors %[[NL]],
+  // CHECK:        scf.yield %[[INNER]]#0, %[[INNER]]#1
+  %x = scf.for %frame = %c0 to %frames step %c1
+      iter_args(%xf = %x0) -> (!vec) {
+    %xs = scf.for %step = %c0 to %steps step %c1
+        iter_args(%xa = %xf) -> (!vec) {
+      %cells = md_exec.build_cells %xa, %cell width(2.8)
+          : !vec -> !mdrt.cells<@atoms>
+      %nl = md_exec.build_neighbors %cells, %xa, %cell
+          cutoff(2.5) skin(0.3) kind(matrix) width(96)
+          : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+      %f0 = md_exec.zeros : !vec
+      %f = md_exec.pair_for %nl, %xa, %cell outs(%f0 : !vec) cutoff(2.5)
+          policy(directed, owner_only) {
+      ^bb0(%r2: f64, %d: vector<3xf64>):
+        md_exec.yield %d : vector<3xf64>
+      } : !mdrt.neighbors<@atoms>, !vec -> !vec
+      %e = md_exec.empty : !vec
+      %xb = md_exec.particle_for ins(%xa, %f : !vec, !vec) outs(%e : !vec) {
+      ^bb0(%x_i: vector<3xf64>, %f_i: vector<3xf64>):
+        %s = arith.addf %x_i, %f_i : vector<3xf64>
+        md_exec.yield %s : vector<3xf64>
+      } -> !vec
+      scf.yield %xb : !vec
+    }
+    scf.yield %xs : !vec
+  }
+  return %x : !vec
+}
+
+// The iterations of a loop that is marked are segments of the run: a
+// structure starts empty in each, so it does not move beyond the body of
+// that loop.
+//
+// CHECK-LABEL: func.func @segments(
+func.func @segments(%x0: !vec, %cell: !md.cell, %segments: index,
+                    %steps: index) -> !vec {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  // CHECK-NOT:  md_exec.empty_neighbors
+  // CHECK:      scf.for {{.*}} iter_args(%{{[a-z0-9]+}} = %{{[a-z0-9]+}}) -> (!md.field<@atoms, 3 x f64>) {
+  // CHECK-NEXT:   %[[EMPTY:[0-9]+]] = md_exec.empty_neighbors kind(matrix) width(96)
+  // CHECK-NEXT:   scf.for {{.*}} iter_args(%{{[a-z0-9]+}} = %{{[a-z0-9]+}}, %{{[a-z0-9]+}} = %[[EMPTY]])
+  // CHECK:      } {mdrt.segment}
+  %x = scf.for %segment = %c0 to %segments step %c1
+      iter_args(%xf = %x0) -> (!vec) {
+    %xs = scf.for %step = %c0 to %steps step %c1
+        iter_args(%xa = %xf) -> (!vec) {
+      %cells = md_exec.build_cells %xa, %cell width(2.8)
+          : !vec -> !mdrt.cells<@atoms>
+      %nl = md_exec.build_neighbors %cells, %xa, %cell
+          cutoff(2.5) skin(0.3) kind(matrix) width(96)
+          : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+      %f0 = md_exec.zeros : !vec
+      %f = md_exec.pair_for %nl, %xa, %cell outs(%f0 : !vec) cutoff(2.5)
+          policy(directed, owner_only) {
+      ^bb0(%r2: f64, %d: vector<3xf64>):
+        md_exec.yield %d : vector<3xf64>
+      } : !mdrt.neighbors<@atoms>, !vec -> !vec
+      %e = md_exec.empty : !vec
+      %xb = md_exec.particle_for ins(%xa, %f : !vec, !vec) outs(%e : !vec) {
+      ^bb0(%x_i: vector<3xf64>, %f_i: vector<3xf64>):
+        %s = arith.addf %x_i, %f_i : vector<3xf64>
+        md_exec.yield %s : vector<3xf64>
+      } -> !vec
+      scf.yield %xb : !vec
+    }
+    scf.yield %xs : !vec
+  } {mdrt.segment}
+  return %x : !vec
+}

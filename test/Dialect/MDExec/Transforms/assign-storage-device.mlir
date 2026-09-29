@@ -87,3 +87,24 @@ func.func @refresh(%x: !md.field<@atoms, 3 x f32>, %cell: !md.cell) -> i64 {
   %builds = md_exec.rebuild_count %nl : !mdrt.neighbors<@atoms>
   return %builds : i64
 }
+
+// The host reads a copy of a field that is on the device. One buffer of the
+// host takes the copies.
+//
+// CHECK-LABEL: func.func @frames(
+// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64, 1>, %[[STEP:[a-z0-9]+]]: i64, %{{[a-z0-9]+}}: index)
+func.func private @write_frame(i64, memref<?x3xf64>)
+
+func.func @frames(%x: !vec, %step: i64, %frames: index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  // CHECK:      %[[HOST:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?x3xf64>
+  // CHECK:      scf.for
+  // CHECK-NOT:    memref.alloc
+  // CHECK:        gpu.memcpy async [%{{[0-9]+}}] %[[HOST]], %[[X]] : memref<?x3xf64>, memref<?x3xf64, 1>
+  // CHECK:        call @write_frame(%[[STEP]], %[[HOST]])
+  scf.for %frame = %c0 to %frames step %c1 {
+    mdrt.host_call @write_frame(%step, %x) : (i64, !vec)
+  }
+  return
+}

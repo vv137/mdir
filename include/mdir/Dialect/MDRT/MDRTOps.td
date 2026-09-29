@@ -3,6 +3,7 @@
 #ifndef MDIR_DIALECT_MDRT_MDRTOPS_TD
 #define MDIR_DIALECT_MDRT_MDRTOPS_TD
 
+include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mdir/Dialect/MD/MDTypes.td"
 include "mdir/Dialect/MDRT/MDRTTypes.td"
@@ -62,6 +63,39 @@ def MDRT_ToBufferOp : MDRT_Op<"to_buffer", [Pure]> {
     $field attr-dict `:` qualified(type($field)) `to` type($result)
   }];
   let hasVerifier = 1;
+}
+
+def MDRT_HostCallOp : MDRT_Op<"host_call", [
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>
+  ]> {
+  let summary = "Calls a function of the host that reads fields";
+  let description = [{
+    Calls the function `callee`, which the host provides: to write a frame
+    of a trajectory, for example. The function reads the fields that it is
+    given while it runs and keeps nothing of them. The fields stay where
+    they are, and the program goes on using them.
+
+    `callee` is declared with a buffer where the op has a field. On a
+    device, the field is copied to a buffer of the host for the call.
+
+    ```mlir
+    func.func private @write_frame(i64, memref<?x3xf32>)
+
+    mdrt.host_call @write_frame(%step, %x)
+        : (i64, !md.field<@atoms, 3 x f64>)
+    ```
+
+    As for `mdrt.from_buffer`, the element type of the buffer states the
+    type that the field is stored in.
+  }];
+  let arguments = (ins
+    FlatSymbolRefAttr:$callee,
+    Variadic<AnyType>:$operands
+  );
+  let assemblyFormat = [{
+    $callee `(` $operands `)` attr-dict
+    `:` `(` qualified(type($operands)) `)`
+  }];
 }
 
 #endif // MDIR_DIALECT_MDRT_MDRTOPS_TD

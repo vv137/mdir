@@ -7,6 +7,7 @@
 #include "mlir/IR/Dialect.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/OpImplementation.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
 #include "mdir/Dialect/MD/MDTypes.h"
@@ -18,6 +19,15 @@ namespace mdrt {
 /// The type of the buffer that holds a field: `memref<?x3xT>` for a field
 /// with 3 components, `memref<?xT>` for a field with 1.
 mlir::MemRefType getBufferType(md::FieldType field);
+
+/// Returns true if a buffer of the type `buffer` can hold a field of the
+/// type `field`. The element types may differ if both are floating-point
+/// types: the buffer then states the type that the field is stored in.
+bool canHold(mlir::Type buffer, md::FieldType field);
+
+/// The attribute that marks a loop whose iterations are segments of a run:
+/// stretches between two checkpoints.
+inline llvm::StringRef getSegmentAttrName() { return "mdrt.segment"; }
 
 } // namespace mdrt
 } // namespace mdir

@@ -247,3 +247,23 @@ func.func @segments(%x: !vec, %cell: !md.cell, %segments: index,
   }
   return %xe : !vec
 }
+
+// The host reads a field where it is. The program goes on using the
+// buffer.
+//
+// CHECK-LABEL: func.func @frames(
+// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64>, %[[STEP:[a-z0-9]+]]: i64)
+func.func private @write_frame(i64, memref<?x3xf64>)
+
+func.func @frames(%x: !vec, %step: i64) -> !vec {
+  // CHECK:      call @write_frame(%[[STEP]], %[[X]])
+  // CHECK:      md_exec.particle_for ins(%[[X]] : memref<?x3xf64>) outs(%[[X]] : memref<?x3xf64>)
+  mdrt.host_call @write_frame(%step, %x) : (i64, !vec)
+  %e = md_exec.empty : !vec
+  %y = md_exec.particle_for ins(%x : !vec) outs(%e : !vec) {
+  ^bb0(%x_i: vector<3xf64>):
+    %s = arith.addf %x_i, %x_i : vector<3xf64>
+    md_exec.yield %s : vector<3xf64>
+  } -> !vec
+  return %y : !vec
+}

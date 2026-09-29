@@ -6,6 +6,7 @@
 
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
+#include "mlir/Interfaces/FunctionInterfaces.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 using namespace mlir;
@@ -42,26 +43,26 @@ MemRefType mdir::mdrt::getBufferType(FieldType field) {
                          field.getElementType());
 }
 
+bool mdir::mdrt::canHold(Type buffer, FieldType field) {
+  MemRefType expected = getBufferType(field);
+  if (buffer == expected)
+    return true;
+  auto actual = dyn_cast<MemRefType>(buffer);
+  return actual && isa<FloatType>(field.getElementType()) &&
+         (actual.getElementType().isF32() ||
+          actual.getElementType().isF64()) &&
+         actual == MemRefType::get(expected.getShape(),
+                                   actual.getElementType());
+}
+
 /// Verifies that `buffer` is the type of a buffer that can hold `field`.
-///
-/// The element types may differ if both are floating-point types: the field
-/// then has the values of the buffer in another precision, and the precision
-/// policy decides which of the two types is stored.
 static LogicalResult verifyBufferType(Operation *op, Type buffer, Type field) {
   auto fieldType = cast<FieldType>(field);
-  MemRefType expected = getBufferType(fieldType);
-  if (buffer == expected)
+  if (canHold(buffer, fieldType))
     return success();
-
-  auto actual = dyn_cast<MemRefType>(buffer);
-  if (actual && isa<FloatType>(fieldType.getElementType()) &&
-      (actual.getElementType().isF32() || actual.getElementType().isF64()) &&
-      actual == MemRefType::get(expected.getShape(), actual.getElementType()))
-    return success();
-
   return op->emitOpError() << "expected the buffer of " << field
-                           << " to have type " << expected << ", got "
-                           << buffer;
+                           << " to have type " << getBufferType(fieldType)
+                           << ", got " << buffer;
 }
 
 LogicalResult FromBufferOp::verify() {
@@ -72,4 +73,34 @@ LogicalResult FromBufferOp::verify() {
 LogicalResult ToBufferOp::verify() {
   return verifyBufferType(getOperation(), getResult().getType(),
                           getField().getType());
+}
+
+LogicalResult
+HostCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  auto callee = symbolTable.lookupNearestSymbolFrom<FunctionOpInterface>(
+      getOperation(), getCalleeAttr());
+  if (!callee)
+    return emitOpError() << "'" << getCallee()
+                         << "' does not name a function";
+
+  ArrayRef<Type> expected = callee.getArgumentTypes();
+  if (expected.size() != getNumOperands())
+    return emitOpError() << "'" << getCallee() << "' takes "
+                         << expected.size() << " arguments, got "
+                         << getNumOperands();
+  if (!callee.getResultTypes().empty())
+    return emitOpError() << "'" << getCallee()
+                         << "' returns a value; a function of the host "
+                            "that reads fields returns none";
+
+  for (unsigned i = 0, e = expected.size(); i != e; ++i) {
+    Type type = getOperand(i).getType();
+    auto field = dyn_cast<FieldType>(type);
+    bool fits = field ? canHold(expected[i], field) : type == expected[i];
+    if (!fits)
+      return emitOpError()
+             << "argument " << i << " of '" << getCallee() << "' has type "
+             << expected[i] << ", which does not take " << type;
+  }
+  return success();
 }
