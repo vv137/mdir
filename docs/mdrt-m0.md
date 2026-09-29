@@ -161,6 +161,9 @@ On this machine: four RTX 3090, driver 595.84, CUDA toolkit 11.2, and LLVM
 | The upstream wrapper library over the CUDA driver API | Its sparse part needs a newer toolkit. Without that part it builds against toolkit 11.2 and works. It is about 300 lines. |
 | `gpu.alloc`, `gpu.memcpy` | Lower only in their asynchronous form, with tokens. |
 | A kernel of the shape of a loop over pairs: one thread per particle, a loop over the others, vectors of `f64`, `roundeven`, `fpowi`, `exp`, `erfc` | Ran on a GPU. The sum over 1000 particles agrees with the host. |
+| Atomic operations: `memref.atomic_rmw` in a kernel | Work. |
+| A counting sort of 100000 keys on the device: a histogram and a fill with atomic operations, a scan, and a sort of each cell by index | The order is the one that the host computes, and the same in every run. |
+| A buffer of the type `memref<?xf32, 1>`, with a memory space | Works through the whole lowering. Device buffers can differ in type from host buffers. |
 
 So the proposal is feasible as it stands.
 
@@ -174,7 +177,9 @@ The GPU back end is a second lowering of the storage form
 | Loop over particles or pairs | One `gpu.launch`, with one thread per particle. With the policy `owner_only` a thread writes only to its own particle, so no atomic operation is needed. |
 | Buffers | Device memory, from `gpu.alloc`. The state is copied to the device before the first step of a segment and back after the last. |
 | Global sums | The kernel writes the contribution of each particle to a device buffer. A second kernel adds them up in blocks, and the host adds up the blocks. The order is fixed, so the sum is reproducible. |
-| Neighbor build | First on the host: the positions are copied to the host, the structure is built with the template, and the matrix is copied to the device. Then on the device. |
+| Neighbor build | On the device, binning included. The particles of a cell are sorted by index after the fill, because the order in which threads take their slots is not fixed. |
+| Where a buffer is | Decided by `md-exec-assign-storage`. A device buffer has a memory space in its type, so that host code cannot use it by mistake. `mdrt.from_buffer` uploads and `mdrt.to_buffer` downloads. |
+| Buffers that a lowering needs for itself | Given to the loop by `md-exec-assign-storage`, from the pool of its region. A lowering does not allocate in the step loop (D18, B10). |
 | Test of validity | On the device: the largest displacement is a global maximum, computed like a global sum. |
 | Runtime functions | The ones the upstream lowering calls, in `libmdrt`, built only if the CUDA toolkit is found. |
 
@@ -182,7 +187,7 @@ Open questions:
 
 | # | Question | Proposal |
 |---|---|---|
-| 1 | Neighbor build on the host first | Yes. It is correct at once and costs a transfer per rebuild, not per step. The build on the device follows. |
+| 1 | Neighbor build on the host first | Decided: no. The build runs on the device from the start. A build on the host would cost about as much per step as the forces. |
 | 2 | Size of a block of threads | 128, a numeric plan parameter |
 | 3 | Which GPU | The first one that `CUDA_VISIBLE_DEVICES` leaves visible |
 
