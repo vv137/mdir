@@ -26,6 +26,7 @@
 #include "mlir/Parser/Parser.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/MapVector.h"
 
 using namespace mlir;
 using namespace mdir;
@@ -44,7 +45,9 @@ static const char *const reportOverflowName = "mdrtReportNeighborOverflow";
 static const char *const countBuildName = "mdrtCountBuild";
 
 /// The number of particles whose contributions one thread adds up.
-static const int64_t chunkSize = 256;
+/// The least and the most particles that one thread adds up.
+static const int64_t smallestChunk = 32;
+static const int64_t largestChunk = 1024;
 
 namespace {
 
@@ -66,11 +69,12 @@ struct Neighbors {
   Value builds;
 };
 
-/// Where a global sum or maximum arrives: one value on the device, and the
-/// buffer of the host that it is copied to.
+/// Where the global sums and maxima of a loop arrive: numbers on the
+/// device, and the buffer of the host that they are copied to.
 struct Cell {
   Value device;
   Value host;
+  int64_t capacity = 0;
 };
 
 /// A flag that the threads of a kernel set: one value on the device, the
@@ -125,18 +129,24 @@ private:
   /// as its elements. A constant becomes a constant of the kernel.
   void bringIn(gpu::LaunchOp launch);
 
-  /// Adds up what `contributions` holds for `size` particles, or takes the
-  /// maximum, and returns the result on the host. `partial` takes the
-  /// results of the chunks.
-  Value emitReduction(OpBuilder &builder, Location loc, Value contributions,
-                      Value partial, Value size, bool isSum);
+  /// Adds up what each of `contributions` holds for `size` particles, or
+  /// takes the maximum, and returns the results on the host. `partials`
+  /// take the results of the chunks.
+  ///
+  /// All of them are reduced by one pair of kernels, and the results
+  /// reach the host in one copy for each type of number.
+  SmallVector<Value> emitReductions(OpBuilder &builder, Location loc,
+                                    ArrayRef<Value> contributions,
+                                    ArrayRef<Value> partials, Value size,
+                                    bool isSum);
 
   /// Stores the contributions of a particle and returns, for each global
   /// sum of a loop, its result.
   LogicalResult finishSums(Operation *op, OpBuilder &builder,
                            ValueRange reduce, ValueRange scratch, Value size);
 
-  Cell getCell(Type type, Location loc);
+  /// A place for `count` numbers of the type `element`.
+  Cell getCell(Type element, int64_t count, Location loc);
 
   /// Flag number `number` of the function. It is not set where a kernel
   /// begins that sets it: `readFlag` sees to that.
@@ -176,7 +186,7 @@ private:
   func::FuncOp current;
 
   llvm::DenseMap<Value, Neighbors> neighbors;
-  llvm::DenseMap<Type, Cell> cells;
+  llvm::DenseMap<Type, SmallVector<Cell, 2>> cells;
   SmallVector<Flag, 2> flags;
   llvm::DenseSet<Type> templatesAdded;
 
@@ -297,26 +307,23 @@ void Lowering::launchOne(OpBuilder &builder, Location loc,
   bringIn(launch);
 }
 
-Cell Lowering::getCell(Type type, Location loc) {
-  Cell &cell = cells[type];
-  if (cell.device)
-    return cell;
+Cell Lowering::getCell(Type element, int64_t count, Location loc) {
+  SmallVector<Cell, 2> &known = cells[element];
+  for (const Cell &cell : known)
+    if (cell.capacity >= count)
+      return cell;
 
-  // One value, a number or a vector, allocated once, where the function
-  // begins.
-  SmallVector<int64_t, 2> shape = {1};
-  Type element = type;
-  if (auto vector = dyn_cast<VectorType>(type)) {
-    shape.push_back(vector.getNumElements());
-    element = vector.getElementType();
-  }
+  // Allocated once, where the function begins.
   Block &entry = current.getBody().front();
   OpBuilder builder(&entry, entry.begin());
+  Cell cell;
+  cell.capacity = count;
   cell.device = createDeviceBuffer(builder, loc,
-                                   getDeviceType(shape, element),
+                                   getDeviceType({count}, element),
                                    ValueRange());
   cell.host = memref::AllocaOp::create(builder, loc,
-                                       MemRefType::get(shape, element));
+                                       MemRefType::get({count}, element));
+  known.push_back(cell);
   return cell;
 }
 
@@ -360,11 +367,17 @@ Value Lowering::readFlag(OpBuilder &builder, Location loc,
   return isSet;
 }
 
-Value Lowering::emitReduction(OpBuilder &builder, Location loc,
-                              Value contributions, Value partial, Value size,
-                              bool isSum) {
+SmallVector<Value>
+Lowering::emitReductions(OpBuilder &builder, Location loc,
+                         ArrayRef<Value> contributions,
+                         ArrayRef<Value> partials, Value size, bool isSum) {
+  if (contributions.empty())
+    return {};
+
   // A number, or a vector of numbers.
-  Type type = md_exec::getKernelValueType(contributions.getType());
+  SmallVector<Type> types;
+  for (Value buffer : contributions)
+    types.push_back(md_exec::getKernelValueType(buffer.getType()));
   auto combine = [&](OpBuilder &b, Value lhs, Value rhs) -> Value {
     if (isSum)
       return arith::AddFOp::create(b, loc, lhs, rhs);
@@ -372,42 +385,116 @@ Value Lowering::emitReduction(OpBuilder &builder, Location loc,
         arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OGT, lhs, rhs);
     return arith::SelectOp::create(b, loc, larger, lhs, rhs);
   };
+  auto createZeros = [&](OpBuilder &b) {
+    SmallVector<Value> zeros;
+    for (Type type : types)
+      zeros.push_back(createZero(b, loc, type));
+    return zeros;
+  };
+  // Adds up what `buffers` hold from `begin` to `end`.
+  auto reduce = [&](OpBuilder &b, ArrayRef<Value> buffers, Value begin,
+                    Value end) {
+    return scf::ForOp::create(
+        b, loc, begin, end, createIndex(b, loc, 1), createZeros(b),
+        [&](OpBuilder &inner, Location, Value i, ValueRange sums) {
+          SmallVector<Value> next;
+          for (auto [buffer, sum] : llvm::zip(buffers, sums))
+            next.push_back(
+                combine(inner, sum, loadElement(inner, loc, buffer, i)));
+          scf::YieldOp::create(inner, loc, next);
+        });
+  };
 
-  // One thread for each chunk of particles.
-  Value chunks = createGroups(builder, loc, size, chunkSize);
+  // One thread for each chunk of particles. A thread adds up its chunk,
+  // and one thread adds up the chunks, one after the other: the two take
+  // the least time with chunks of the square root of the number of
+  // particles.
+  Type wide = builder.getI64Type();
+  Type real = builder.getF64Type();
+  Value count = arith::SIToFPOp::create(
+      builder, loc, real,
+      arith::IndexCastOp::create(builder, loc, wide, size));
+  Value root = arith::IndexCastOp::create(
+      builder, loc, builder.getIndexType(),
+      arith::FPToSIOp::create(builder, loc, wide,
+                              math::SqrtOp::create(builder, loc, count)));
+  Value length = arith::MinSIOp::create(
+      builder, loc, createIndex(builder, loc, largestChunk),
+      arith::MaxSIOp::create(builder, loc, root,
+                             createIndex(builder, loc, smallestChunk)));
+  Value padded = arith::AddIOp::create(
+      builder, loc, size,
+      arith::SubIOp::create(builder, loc, length,
+                            createIndex(builder, loc, 1)));
+  Value chunks = arith::DivUIOp::create(builder, loc, padded, length);
   launchOver(builder, loc, chunks, [&](OpBuilder &b, Value chunk) {
-    Value one = createIndex(b, loc, 1);
-    Value length = createIndex(b, loc, chunkSize);
     Value begin = arith::MulIOp::create(b, loc, chunk, length);
     Value full = arith::AddIOp::create(b, loc, begin, length);
     Value isShort =
         arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult, size, full);
     Value end = arith::SelectOp::create(b, loc, isShort, size, full);
-    auto loop = scf::ForOp::create(
-        b, loc, begin, end, one, ValueRange{createZero(b, loc, type)},
-        [&](OpBuilder &inner, Location, Value i, ValueRange sums) {
-          Value value = loadElement(inner, loc, contributions, i);
-          scf::YieldOp::create(inner, loc, combine(inner, sums[0], value));
-        });
-    storeElement(b, loc, loop.getResult(0), partial, chunk);
+    auto loop = reduce(b, contributions, begin, end);
+    for (auto [index, partial] : llvm::enumerate(partials))
+      storeElement(b, loc, loop.getResult(index), partial, chunk);
   });
+
+  // Where the results arrive. Numbers of one type are next to one another,
+  // so that one copy brings them to the host.
+  struct Place {
+    Cell cell;
+    int64_t offset;
+    int64_t count;
+  };
+  llvm::MapVector<Type, int64_t> totals;
+  SmallVector<Place> places;
+  for (Type type : types) {
+    Type element = getElementTypeOrSelf(type);
+    auto vector = dyn_cast<VectorType>(type);
+    int64_t count = vector ? vector.getNumElements() : 1;
+    places.push_back({Cell(), totals[element], count});
+    totals[element] += count;
+  }
+  for (auto [index, type] : llvm::enumerate(types)) {
+    Type element = getElementTypeOrSelf(type);
+    places[index].cell = getCell(element, totals[element], loc);
+  }
 
   // One thread for the results of the chunks.
-  Cell cell = getCell(type, loc);
   launchOne(builder, loc, [&](OpBuilder &b) {
-    Value zero = createIndex(b, loc, 0);
-    Value one = createIndex(b, loc, 1);
-    auto loop = scf::ForOp::create(
-        b, loc, zero, chunks, one, ValueRange{createZero(b, loc, type)},
-        [&](OpBuilder &inner, Location, Value i, ValueRange sums) {
-          Value value = loadElement(inner, loc, partial, i);
-          scf::YieldOp::create(inner, loc, combine(inner, sums[0], value));
-        });
-    storeElement(b, loc, loop.getResult(0), cell.device, zero);
+    auto loop = reduce(b, partials, createIndex(b, loc, 0), chunks);
+    for (auto [index, place] : llvm::enumerate(places)) {
+      Value result = loop.getResult(index);
+      for (int64_t c = 0; c != place.count; ++c) {
+        Value number = isa<VectorType>(result.getType())
+                           ? Value(vector::ExtractOp::create(b, loc, result,
+                                                             c))
+                           : result;
+        memref::StoreOp::create(
+            b, loc, number, place.cell.device,
+            ValueRange{createIndex(b, loc, place.offset + c)});
+      }
+    }
   });
 
-  createTransfer(builder, loc, cell.host, cell.device);
-  return loadElement(builder, loc, cell.host, createIndex(builder, loc, 0));
+  for (auto &[element, total] : totals) {
+    Cell cell = getCell(element, total, loc);
+    createTransfer(builder, loc, cell.host, cell.device);
+  }
+
+  SmallVector<Value> results;
+  for (auto [place, type] : llvm::zip(places, types)) {
+    SmallVector<Value, 9> numbers;
+    for (int64_t c = 0; c != place.count; ++c)
+      numbers.push_back(memref::LoadOp::create(
+          builder, loc, place.cell.host,
+          ValueRange{createIndex(builder, loc, place.offset + c)}));
+    if (isa<VectorType>(type))
+      results.push_back(
+          vector::FromElementsOp::create(builder, loc, type, numbers));
+    else
+      results.push_back(numbers.front());
+  }
+  return results;
 }
 
 //===----------------------------------------------------------------------===//
@@ -428,10 +515,15 @@ LogicalResult Lowering::finishSums(Operation *op, OpBuilder &builder,
                                    ValueRange reduce, ValueRange scratch,
                                    Value size) {
   Location loc = op->getLoc();
+  SmallVector<Value> contributions, partials;
   for (unsigned i = 0, e = reduce.size(); i != e; ++i) {
-    Value sum = emitReduction(builder, loc, scratch[2 * i],
-                              scratch[2 * i + 1], size, /*isSum=*/true);
-    Value total = arith::AddFOp::create(builder, loc, reduce[i], sum);
+    contributions.push_back(scratch[2 * i]);
+    partials.push_back(scratch[2 * i + 1]);
+  }
+  SmallVector<Value> sums = emitReductions(builder, loc, contributions,
+                                           partials, size, /*isSum=*/true);
+  for (unsigned i = 0, e = reduce.size(); i != e; ++i) {
+    Value total = arith::AddFOp::create(builder, loc, reduce[i], sums[i]);
     op->getResult(i).replaceAllUsesWith(total);
   }
   return success();
@@ -480,14 +572,19 @@ LogicalResult Lowering::lowerParticleFor(md_exec::ParticleForOp op) {
     }
   });
 
+  SmallVector<Value> contributions, partials;
+  for (unsigned i = 0; i != numSums; ++i) {
+    contributions.push_back(op.getScratch()[2 * i]);
+    partials.push_back(op.getScratch()[2 * i + 1]);
+  }
+  SmallVector<Value> sums = emitReductions(builder, loc, contributions,
+                                           partials, size, /*isSum=*/true);
+
   for (auto [index, start] : llvm::enumerate(op.getReduce())) {
     int place = places[index];
     Value total;
     if (place >= 0) {
-      Value sum =
-          emitReduction(builder, loc, op.getScratch()[2 * place],
-                        op.getScratch()[2 * place + 1], size, /*isSum=*/true);
-      total = arith::AddFOp::create(builder, loc, start, sum);
+      total = arith::AddFOp::create(builder, loc, start, sums[place]);
     } else {
       Value isSet = readFlag(builder, loc, used[-place - 1]);
       total = arith::OrIOp::create(builder, loc, start, isSet);
@@ -755,8 +852,10 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
                  memref::StoreOp::create(body, loc, distance2, moved2,
                                          ValueRange{particle});
                });
-    Value farthest = emitReduction(builder, loc, moved2, op.getScratch()[1],
-                                   structure.size, /*isSum=*/false);
+    Value farthest = emitReductions(builder, loc, {moved2},
+                                    {op.getScratch()[1]}, structure.size,
+                                    /*isSum=*/false)
+                         .front();
     Value limit = createReal(builder, loc, real, 0.25 * skin * skin);
     near = arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::OLE,
                                  farthest, limit);

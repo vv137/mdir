@@ -1,6 +1,6 @@
 # MDIR Op Specification, Milestone M0
 
-Status: draft 17 (2026-09-29). Everything in this document is implemented,
+Status: draft 18 (2026-09-29). Everything in this document is implemented,
 except where a section says otherwise. A Lennard-Jones system runs end to
 end in single, mixed, and double precision, on the CPU sequentially and
 with OpenMP, and on NVIDIA GPUs.
@@ -1496,7 +1496,7 @@ of the upstream `gpu` dialect.
 | Storage form | Kernels |
 |---|---|
 | `md_exec.particle_for`, `md_exec.pair_for` | One kernel with one thread per particle, in blocks of 128 threads. With the policy `owner_only` a thread writes only to its own particle, so the kernel needs no atomic operation. |
-| A global sum | The kernel stores the contribution of each particle. A second kernel adds up chunks of 256 particles, a third adds up the results of the chunks, and the host reads the result. A contribution is a number or a vector: the virial is a vector of nine numbers, and its buffers in `scratch` hold nine numbers per particle. |
+| The global sums of a loop | The kernel stores the contributions of each particle. A second kernel adds up chunks of particles, a third adds up the results of the chunks, and the host reads the results with one copy. All sums of the loop share the two kernels and the copy. A contribution is a number or a vector: the virial is a vector of nine numbers, and its buffers in `scratch` hold nine numbers per particle. |
 | A value that tells whether the kernel yields true for any particle | A flag on the device. A thread that yields true sets it. Every thread that writes it writes the same value, so the threads need not take turns. The host reads the flag after the kernel and clears it where it was set. |
 | `md_exec.reference_positions` | The buffer of the structure that holds the positions |
 | `md_exec.empty_neighbors` | The buffers of a neighbor matrix on the device. The flag and the count of builds are on the host. |
@@ -1509,6 +1509,21 @@ The order in which a global sum is added up is fixed: by particle within a
 chunk, then by chunk. The sum is the same in every run. It differs from
 the sum on the host in its last bits, because the host adds up in another
 order.
+
+A chunk has as many particles as the square root of their number, and
+between 32 and 1024. One thread adds up a chunk and one thread the
+chunks, so both take the time of that many additions: with 864 particles
+29, where chunks of 256 took nine times as long.
+
+| A step of `examples/argon.toml` that computes energies | Kernels | Copies | Milliseconds |
+|---|---|---|---|
+| A pair of kernels and a copy for each sum, chunks of 256 | 11 | 5 | 0.33 |
+| A pair of kernels and a copy for each loop | 7 | 3 | 0.27 |
+| Chunks of the square root | 7 | 3 | 0.22 |
+| A step that computes forces only | 3 | 1 | 0.11 |
+
+A thermostat needs the kinetic energy in every step, so this is what a
+step of a run at constant temperature costs on a device.
 
 The neighbor build template for devices,
 `lib/Runtime/Templates/NeighborsMatrixGPU.mlir`, builds the matrix in 10

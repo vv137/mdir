@@ -44,7 +44,7 @@ func.func @kick(%v: memref<?x3xf64, 1>, %f: memref<?x3xf32, 1>, %dt: f64) {
 }
 
 // A global sum: the kernel stores the contribution of each particle, a
-// second kernel adds up chunks of 256 particles, a third adds up the
+// second kernel adds up chunks of particles, a third adds up the
 // chunks, and the host reads the result. The value on the device and the
 // buffer of the host that takes it are allocated where the function begins.
 // A vector from outside the kernel enters it as its elements.
@@ -238,8 +238,8 @@ func.func @ordered(%x: memref<?x3xf64, 1>, %ids: memref<?xi32, 1>,
 //
 // CHECK-LABEL: func.func @momentum(
 // CHECK-SAME:    %[[V:[a-z0-9]+]]: memref<?x3xf64, 1>, %[[A:[a-z0-9]+]]: memref<?x3xf64, 1>, %[[B:[a-z0-9]+]]: memref<?x3xf64, 1>)
-// CHECK:         %[[CELL:[a-z0-9_]+]] = gpu.alloc () : memref<1x3xf64, 1>
-// CHECK:         %[[HOST:[a-z0-9_]+]] = memref.alloca() : memref<1x3xf64>
+// CHECK:         %[[CELL:[a-z0-9_]+]] = gpu.alloc () : memref<3xf64, 1>
+// CHECK:         %[[HOST:[a-z0-9_]+]] = memref.alloca() : memref<3xf64>
 // CHECK:         gpu.launch
 // CHECK:           memref.load %[[V]][
 // CHECK:           memref.store %{{[0-9]+}}, %[[A]][%{{[0-9]+}}, %{{[a-z0-9_]+}}]
@@ -267,6 +267,55 @@ func.func @momentum(%v: memref<?x3xf64, 1>, %a: memref<?x3xf64, 1>,
     md_exec.yield %v_i : vector<3xf64>
   } -> vector<3xf64>
   return %p : vector<3xf64>
+}
+
+// The sums of one loop are added up together: one kernel for the chunks,
+// one for the results of the chunks, and one copy to the host, which takes
+// the ten numbers of a number and a vector of nine.
+//
+// CHECK-LABEL: func.func @together(
+// CHECK-SAME:    %[[V:[a-z0-9]+]]: memref<?x3xf64, 1>, %[[A:[a-z0-9]+]]: memref<?xf64, 1>, %[[B:[a-z0-9]+]]: memref<?xf64, 1>, %[[C:[a-z0-9]+]]: memref<?x9xf64, 1>, %[[D:[a-z0-9]+]]: memref<?x9xf64, 1>)
+// CHECK:         %[[CELL:[a-z0-9_]+]] = gpu.alloc () : memref<10xf64, 1>
+// CHECK:         %[[HOST:[a-z0-9_]+]] = memref.alloca() : memref<10xf64>
+// CHECK:         gpu.launch
+// CHECK:           memref.store %{{[0-9]+}}, %[[A]][
+// CHECK:           memref.store %{{[0-9]+}}, %[[C]][
+// CHECK:           gpu.terminator
+// CHECK:         gpu.launch
+// CHECK:           scf.for
+// CHECK:             memref.load %[[A]][
+// CHECK:             memref.load %[[C]][
+// CHECK:           memref.store %{{[0-9#]+}}, %[[B]][
+// CHECK:           memref.store %{{[0-9]+}}, %[[D]][
+// CHECK:           gpu.terminator
+// CHECK:         gpu.launch
+// CHECK:           scf.for
+// CHECK:             memref.load %[[B]][
+// CHECK:             memref.load %[[D]][
+// CHECK:           memref.store %{{[0-9#]+}}, %[[CELL]][
+// CHECK:           gpu.terminator
+// CHECK-NOT:     gpu.launch
+// CHECK:         gpu.memcpy async [%{{[0-9]+}}] %[[HOST]], %[[CELL]]
+// CHECK-NOT:     gpu.memcpy
+// CHECK:         memref.load %[[HOST]][%{{[a-z0-9_]+}}]
+// CHECK:         vector.from_elements
+// CHECK:         return
+func.func @together(%v: memref<?x3xf64, 1>, %a: memref<?xf64, 1>,
+                    %b: memref<?xf64, 1>, %c: memref<?x9xf64, 1>,
+                    %d: memref<?x9xf64, 1>) -> (f64, vector<9xf64>) {
+  %none = arith.constant 0.0 : f64
+  %zero = arith.constant dense<0.0> : vector<9xf64>
+  %k, %w = md_exec.particle_for ins(%v : memref<?x3xf64, 1>)
+      reduce(%none, %zero : f64, vector<9xf64>)
+      scratch(%a, %b, %c, %d : memref<?xf64, 1>, memref<?xf64, 1>,
+                               memref<?x9xf64, 1>, memref<?x9xf64, 1>) {
+  ^bb0(%v_i: vector<3xf64>):
+    %sq = arith.mulf %v_i, %v_i : vector<3xf64>
+    %v2 = vector.reduction <add>, %sq : vector<3xf64> into f64
+    %nine = vector.broadcast %v2 : f64 to vector<9xf64>
+    md_exec.yield %v2, %nine : f64, vector<9xf64>
+  } -> f64, vector<9xf64>
+  return %k, %w : f64, vector<9xf64>
 }
 
 // The template for devices is in the module.

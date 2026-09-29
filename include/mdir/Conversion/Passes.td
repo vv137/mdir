@@ -83,7 +83,7 @@ def ConvertMDExecToGPU
     | Before | After |
     |---|---|
     | `md_exec.particle_for`, `md_exec.pair_for` | One `gpu.launch` with one thread per particle. A thread writes only to its own particle. |
-    | A global sum | The kernel writes the contribution of each particle to a buffer in `scratch`. A second kernel adds up chunks of 256 particles, a third adds up the chunks, and the host reads the result. The order is fixed. |
+    | The global sums of a loop | The kernel writes the contributions of each particle to buffers in `scratch`. A second kernel adds up chunks of particles, a third adds up the chunks, and the host reads the results with one copy. The order is fixed. |
     | `md_exec.empty_neighbors` | The buffers of a neighbor matrix, on the device |
     | `md_exec.refresh_neighbors` | The test of validity, as a global maximum, and a call to the neighbor build template for devices, which the pass adds to the module |
     | A cell | `vector<3xf64>`, the edge lengths of an orthorhombic cell |
