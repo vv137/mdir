@@ -1,6 +1,6 @@
 # MDIR Op Specification, Milestone M0
 
-Status: draft 12 (2026-09-29). Everything in this document is implemented,
+Status: draft 13 (2026-09-29). Everything in this document is implemented,
 except where a section says otherwise. A Lennard-Jones system runs end to
 end in single, mixed, and double precision, on the CPU sequentially and
 with OpenMP, and on NVIDIA GPUs.
@@ -21,7 +21,7 @@ Operand lists, result lists, and the mathematical definitions are normative.
 | Storage assignment (Section 10) | Implemented as the pass `md-exec-assign-storage` |
 | Lowering of the storage form to loops (Section 10.7) | Implemented as the pass `convert-md-exec-to-loops` |
 | Lowering of the storage form to GPU kernels (Section 10.8) | Implemented as the pass `convert-md-exec-to-gpu`, for NVIDIA |
-| Fusion of loops over pairs (Section 9.4) | Implemented as the pass `md-exec-fuse-loops` |
+| Fusion of loops over pairs and of loops over particles (Section 9.4) | Implemented as the pass `md-exec-fuse-loops` |
 | Powers of the squared distance (Section 9.5) | Implemented as the pass `md-exec-simplify-distance` |
 | Precision policy (Section 7) | Implemented as the pass `md-exec-assign-precision` |
 
@@ -1172,7 +1172,32 @@ removes what the two compute twice.
 Fusion does not change any result: every sum receives the same
 contributions in the same order.
 
-Loops over particles are not fused yet.
+The pass fuses two `md_exec.particle_for` ops as well, when they run over
+the particles of one set. Here the second may read a field that the first
+writes. A loop over particles computes the values of a particle from the
+values of that particle alone, so the second kernel reads what the first
+has yielded:
+
+```mlir
+%v1 = md_exec.particle_for ins(%v, %f, %m) outs(%e0) { ... }   // kick
+%x1 = md_exec.particle_for ins(%x, %v1) outs(%e1) { ... }      // drift
+```
+
+```mlir
+%v1, %x1 = md_exec.particle_for ins(%v, %f, %m, %x) outs(%e0, %e1) {
+  ...   // the kick, then the drift with the velocity of the kick
+}
+```
+
+| Rule | Reason |
+|---|---|
+| The second loop uses a result of the first only as a field that it reads. | A global sum of the first loop is complete only when the loop is. |
+| The fused loop is where the second loop was, if every other user of the first comes after it; else where the first was, if everything that the second uses is there. | With a loop over pairs between a drift and a kick, neither holds: the forces need the positions of all particles. |
+| A field that only the second loop reads is not stored. | It is a value inside the kernel. |
+
+With velocity Verlet, the kick and the drift of a step become one loop. In
+a step that computes energies, the second kick and the kinetic energy
+become one loop.
 
 ### 9.5 Powers of the squared distance
 
@@ -1375,6 +1400,8 @@ of the upstream `gpu` dialect.
 | `md_exec.empty_neighbors` | The buffers of a neighbor matrix on the device. The flag and the count of builds are on the host. |
 | `md_exec.refresh_neighbors` | The test of validity, with the largest displacement as a global maximum, and where it fails a call to the neighbor build template for devices |
 | A cell | `vector<3xf64>`. A kernel takes numbers and buffers as arguments, so a vector from outside enters a kernel as its elements. |
+| A constant | A constant of the kernel, not an argument. A power whose exponent is an argument would be a loop. |
+| A loop of the host | The loop releases, at the end of every iteration, the stack that the iteration has taken. The lowering of a launch puts the arguments on the stack where the launch is; in a loop over steps the stack would grow until it overflows. |
 
 The order in which a global sum is added up is fixed: by particle within a
 chunk, then by chunk. The sum is the same in every run. It differs from
@@ -1405,6 +1432,13 @@ The result is lowered by the upstream pipeline
 program, and the driver compiles them when the program starts. Math
 functions come from the device math library of the CUDA toolkit.
 
+The lowering waits after every launch. The runtime library does not: all
+launches and copies go to one stream, which runs them in the order in
+which they were issued, and the host waits only where it reads what the
+device has computed, that is, at a copy to the host. The results are the
+same, bit for bit. With `MDRT_WAIT` set, the library waits wherever the
+lowering does.
+
 | Limitation | Consequence |
 |---|---|
 | A global sum is a single number. | The virial, a sum of vectors, cannot be computed on a device yet. |
@@ -1421,9 +1455,9 @@ rebuilds and excludes the start of the program.
 
 | Particles | 1 thread | 16 threads | GPU, double | GPU, mixed |
 |---|---|---|---|---|
-| 4096 | 3.20 | 0.21 | 0.28 | 0.18 |
-| 32768 | 20.6 | 1.61 | 0.75 | 0.37 |
-| 110592 | 70.6 | 5.22 | 1.97 | 0.94 |
+| 4096 | 3.20 | 0.21 | 0.23 | 0.14 |
+| 32768 | 20.6 | 1.61 | 0.64 | 0.33 |
+| 110592 | 70.6 | 5.22 | 1.72 | 0.89 |
 
 The host is a machine with 128 cores, the GPU an RTX 3090. The numbers are
 the least of three runs. On the GPU the precision matters: the mixed mode
@@ -1431,6 +1465,30 @@ takes half the time of the double mode.
 
 Starting the program on a GPU takes about one second, for the context of
 the driver and the compilation of the kernels.
+
+#### Where the time goes on a GPU
+
+With `MDRT_PROFILE` set, the runtime library for devices reports the
+number and the time of its calls when the program ends; with `MDRT_WAIT`
+set as well, the time of each kernel. For `examples/argon.toml` on the
+GPU in the mixed mode, 864 particles with 74 neighbors each, a step takes
+0.28 ms:
+
+| Kernel | Microseconds | Per step |
+|---|---|---|
+| Kick and drift | 7 | 7 |
+| Test of validity: displacements, chunks, the maximum | 7, 24, 6 | 37 |
+| Forces | 156 | 156 |
+| Kick | 7 | 7 |
+| Neighbor build, all kernels | 1700 | 95, with a build every 18 steps |
+| Of these, kernel 6, the search | 1600 | |
+
+| Observation | Consequence |
+|---|---|
+| A kernel that does next to nothing takes 6 to 7 microseconds. | Every kernel that is saved saves that much. Fusion of the kick and the drift saved one. |
+| The time of a small system is the time of one thread, not of all. The kernel of the forces runs 864 threads at once; each visits its neighbors one after another, at 1.4 microseconds for a neighbor. | The time per step hardly depends on the number of particles until the device is full. A small system would need more than one thread per particle. |
+| The search of the build tests every particle of 27 cells. With 27 cells in all, that is every particle. | Cells of half the width, or a test in single precision, would shorten the build. |
+| The minimum image divides by the edge lengths, in double precision, three times for each neighbor. | A multiplication with the inverse, computed once, gives the same image for every pair within the cutoff. |
 
 ## 11. Requirements on `mdrt`
 

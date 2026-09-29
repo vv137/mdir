@@ -42,7 +42,7 @@ def ReuseNeighbors : Pass<"md-exec-reuse-neighbors", "::mlir::ModuleOp"> {
 }
 
 def FuseLoops : Pass<"md-exec-fuse-loops", "::mlir::ModuleOp"> {
-  let summary = "Fuses loops over the pairs of one neighbor structure";
+  let summary = "Fuses loops over pairs, and loops over particles";
   let description = [{
     Two `md_exec.pair_for` ops are fused into one when they run over the
     same neighbor structure, positions, and cell, with the same cutoff and
@@ -55,6 +55,25 @@ def FuseLoops : Pass<"md-exec-fuse-loops", "::mlir::ModuleOp"> {
 
     The results are the same as before, bit for bit: every sum receives the
     same contributions in the same order.
+
+    Two `md_exec.particle_for` ops on the particles of one set are fused as
+    well. The second may read a field that the first writes: a loop over
+    particles computes the value of a particle from the values of that
+    particle, so the second kernel reads what the first has yielded. A kick
+    and the drift that follows it become one loop:
+
+    ```mlir
+    %v1 = md_exec.particle_for ins(%v, %f, %m) outs(%e0) { ... }
+    %x1 = md_exec.particle_for ins(%x, %v1) outs(%e1) { ... }
+    ```
+
+    ```mlir
+    %v1, %x1 = md_exec.particle_for ins(%v, %f, %m, %x) outs(%e0, %e1) {
+      ...   // the kick, then the drift with the velocity of the kick
+    }
+    ```
+
+    A field that only the second loop reads is not stored at all.
   }];
   let dependentDialects = ["::mdir::md_exec::MDExecDialect"];
 }

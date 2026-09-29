@@ -109,6 +109,40 @@ func.func @forces(%x: memref<?x3xf64, 1>, %f: memref<?x3xf64, 1>,
   return %u : f64
 }
 
+// A constant from outside the kernel is a constant of the kernel: the
+// kernel knows the exponent of the power. A loop of the host that launches
+// kernels releases the stack at the end of every iteration, because the
+// arguments of a launch are put on the stack.
+//
+// CHECK-LABEL: func.func @steps(
+func.func @steps(%v: memref<?x3xf64, 1>, %steps: index) {
+  // CHECK:      scf.for
+  // CHECK-NEXT:   %[[STACK:[0-9]+]] = llvm.intr.stacksave : !llvm.ptr
+  // CHECK:        gpu.launch
+  // CHECK-DAG:      %[[SCALE:[a-z0-9_]+]] = arith.constant 5.000000e-01 : f64
+  // CHECK-DAG:      %[[POWER:[a-z0-9_]+]] = arith.constant 3 : i32
+  // CHECK:          scf.if
+  // CHECK:            math.fpowi %[[SCALE]], %[[POWER]]
+  // CHECK:          gpu.terminator
+  // CHECK:        llvm.intr.stackrestore %[[STACK]] : !llvm.ptr
+  // CHECK-NEXT: }
+  %zero = arith.constant 0 : index
+  %one = arith.constant 1 : index
+  %scale = arith.constant 0.5 : f64
+  %power = arith.constant 3 : i32
+  scf.for %step = %zero to %steps step %one {
+    md_exec.particle_for ins(%v : memref<?x3xf64, 1>)
+        outs(%v : memref<?x3xf64, 1>) {
+    ^bb0(%v_i: vector<3xf64>):
+      %cube = math.fpowi %scale, %power : f64, i32
+      %s = vector.broadcast %cube : f64 to vector<3xf64>
+      %new = arith.mulf %s, %v_i : vector<3xf64>
+      md_exec.yield %new : vector<3xf64>
+    }
+  }
+  return
+}
+
 // The template for devices is in the module.
 //
 // CHECK: func.func private @mdrt_gpu_build_neighbors_matrix(

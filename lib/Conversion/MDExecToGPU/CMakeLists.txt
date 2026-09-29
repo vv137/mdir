@@ -29,6 +29,7 @@ add_mlir_conversion_library(MDIRMDExecToGPU
   MLIRFuncDialect
   MLIRGPUDialect
   MLIRIR
+  MLIRLLVMDialect
   MLIRMathDialect
   MLIRMemRefDialect
   MLIRParser

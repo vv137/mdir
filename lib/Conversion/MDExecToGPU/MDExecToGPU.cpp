@@ -15,6 +15,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -79,6 +80,7 @@ public:
 
 private:
   LogicalResult lowerFunction(func::FuncOp function);
+  void releaseStack(func::FuncOp function);
   LogicalResult lowerOp(Operation *op);
 
   void lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op);
@@ -104,8 +106,9 @@ private:
   void launchOne(OpBuilder &builder, Location loc,
                  function_ref<void(OpBuilder &)> body);
 
-  /// Gives the kernel of `launch` the vectors from outside as it can take
-  /// them: a kernel takes numbers and buffers as arguments.
+  /// Gives the kernel of `launch` the values from outside as it can take
+  /// them. A kernel takes numbers and buffers as arguments: a vector enters
+  /// as its elements. A constant becomes a constant of the kernel.
   void bringIn(gpu::LaunchOp launch);
 
   /// Adds up what `contributions` holds for `size` particles, or takes the
@@ -204,15 +207,22 @@ void Lowering::bringIn(gpu::LaunchOp launch) {
   region.walk([&](Operation *op) {
     for (OpOperand &operand : op->getOpOperands()) {
       Value value = operand.get();
+      if (region.isAncestor(value.getParentRegion()))
+        continue;
+
+      // A constant is a constant of the kernel. As an argument it would be
+      // a value that the kernel does not know: a power with that exponent
+      // would be a loop.
+      Operation *definition = value.getDefiningOp();
+      bool isConstant = definition && matchPattern(definition, m_Constant());
       auto type = dyn_cast<VectorType>(value.getType());
-      if (!type || region.isAncestor(value.getParentRegion()))
+      if (!isConstant && !type)
         continue;
 
       Value &replacement = brought[value];
       if (!replacement) {
         Location loc = value.getLoc();
-        Operation *definition = value.getDefiningOp();
-        if (definition && matchPattern(definition, m_Constant())) {
+        if (isConstant) {
           replacement = inside.clone(*definition)->getResult(0);
         } else {
           SmallVector<Value, 4> elements;
@@ -797,7 +807,38 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
     op->erase();
   lowered.clear();
   neighbors.clear();
+
+  releaseStack(function);
   return success();
+}
+
+/// Makes every loop of the host in `function` that launches kernels or calls
+/// functions release, at the end of an iteration, the stack that the
+/// iteration has taken. The arguments of a launch and of a call are put on
+/// the stack where the launch or the call is. In a loop, the stack would
+/// grow with every iteration until the function returns.
+void Lowering::releaseStack(func::FuncOp function) {
+  SmallVector<scf::ForOp> loops;
+  function.walk([&](scf::ForOp loop) {
+    if (loop->getParentOfType<gpu::LaunchOp>())
+      return;
+    bool takesStack = false;
+    loop.getBody()->walk([&](Operation *op) {
+      takesStack |=
+          isa<gpu::LaunchOp, func::CallOp, mdrt::HostCallOp>(op);
+    });
+    if (takesStack)
+      loops.push_back(loop);
+  });
+
+  Type pointer = LLVM::LLVMPointerType::get(context);
+  for (scf::ForOp loop : loops) {
+    Block &body = *loop.getBody();
+    OpBuilder builder(&body, body.begin());
+    Value stack = LLVM::StackSaveOp::create(builder, loop.getLoc(), pointer);
+    builder.setInsertionPoint(body.getTerminator());
+    LLVM::StackRestoreOp::create(builder, loop.getLoc(), stack);
+  }
 }
 
 LogicalResult Lowering::run() {

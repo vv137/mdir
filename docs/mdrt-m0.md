@@ -223,7 +223,15 @@ Proposal: the C++ tool.
 | Runtime library `libmdrt` | One function, the overflow report |
 | Spatial reordering (step 5) | Not implemented |
 | GPU | Implemented for NVIDIA. See [ops-m0.md](ops-m0.md), Section 10.8. |
-| Runtime library `libmdrt_cuda` | The functions that the lowering of the `gpu` dialect calls, on the CUDA driver API. One stream serves all launches. |
+| Runtime library `libmdrt_cuda` | The functions that the lowering of the `gpu` dialect calls, on the CUDA driver API. One stream serves all launches. The host waits only where it reads what the device has computed. |
+
+The runtime library for devices reads these variables of the environment:
+
+| Variable | Meaning |
+|---|---|
+| `MDRT_DEVICE` | The device to run on, among those that `CUDA_VISIBLE_DEVICES` leaves. The default is 0. |
+| `MDRT_PROFILE` | If set, the library reports the number and the time of its calls when the program ends. |
+| `MDRT_WAIT` | If set, the host waits after every launch. With `MDRT_PROFILE`, the report has the time of each kernel. |
 
 The template is sequential in its counting sort and parallel in its search
 for neighbors.

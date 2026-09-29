@@ -1,8 +1,10 @@
-// Fusion of loops over the pairs of one neighbor structure.
+// Fusion of loops: of loops over the pairs of one neighbor structure, and
+// of loops over the particles of one set.
 
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
 
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
+#include "mdir/Dialect/MD/MDTypes.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mlir/IR/IRMapping.h"
 #include "llvm/ADT/DenseMap.h"
@@ -160,6 +162,230 @@ static void fuse(PairForOp first, PairForOp second) {
   second.erase();
 }
 
+//===----------------------------------------------------------------------===//
+// Loops over particles
+//===----------------------------------------------------------------------===//
+
+/// The particle set of the fields of `loop`.
+static Attribute getParticleSet(ParticleForOp loop) {
+  Value field = loop.getIns().empty() ? loop.getOuts().front()
+                                      : loop.getIns().front();
+  return cast<md::FieldType>(field.getType()).getParticleSet();
+}
+
+/// Returns true if `value` is the result of `loop` for one of its
+/// destinations.
+static bool isFieldOf(Value value, ParticleForOp loop) {
+  auto result = dyn_cast<OpResult>(value);
+  return result && result.getOwner() == loop.getOperation() &&
+         result.getResultNumber() < loop.getOuts().size();
+}
+
+/// Returns true if `second` can read what `first` writes within one loop:
+/// it uses the results of `first` as fields that it reads, and in no other
+/// way.
+static bool canFollow(ParticleForOp first, ParticleForOp second) {
+  if (first.isStorageForm() || second.isStorageForm() ||
+      getParticleSet(first) != getParticleSet(second))
+    return false;
+
+  bool follows = true;
+  auto isOf = [&](Value value) {
+    return value.getDefiningOp() == first.getOperation();
+  };
+  // A destination or the start of a global sum.
+  for (Value value :
+       llvm::concat<Value>(second.getOuts(), second.getReduce()))
+    follows &= !isOf(value);
+  // A global sum of the first loop is complete only when the loop is.
+  for (Value value : second.getIns())
+    follows &= !isOf(value) || isFieldOf(value, first);
+  second.getKernel().walk([&](Operation *nested) {
+    for (Value operand : nested->getOperands())
+      follows &= !isOf(operand);
+  });
+  return follows;
+}
+
+/// Returns true if every user of a result of `first` other than `second`
+/// comes after `second`. The two are in one block.
+static bool canMoveDown(ParticleForOp first, ParticleForOp second) {
+  for (Value result : first->getResults()) {
+    for (Operation *user : result.getUsers()) {
+      while (user->getBlock() != first->getBlock())
+        user = user->getParentOp();
+      if (user != second.getOperation() && !second->isBeforeInBlock(user))
+        return false;
+    }
+  }
+  return true;
+}
+
+/// Returns true if everything that `second` uses, apart from the results of
+/// `first`, is there where `first` is. The two are in one block.
+static bool canMoveUp(ParticleForOp first, ParticleForOp second) {
+  bool available = true;
+  second->walk([&](Operation *nested) {
+    for (Value operand : nested->getOperands()) {
+      Operation *definition = operand.getDefiningOp();
+      if (!definition || definition == first.getOperation() ||
+          definition->getBlock() != first->getBlock())
+        continue;
+      available &= definition->isBeforeInBlock(first);
+    }
+  });
+  return available;
+}
+
+/// Replaces `first` and `second` with one loop, placed at `point`, which
+/// is one of the two. The kernel of a particle runs the first kernel and
+/// then the second, which reads what the first has yielded for that
+/// particle.
+static void fuse(ParticleForOp first, ParticleForOp second,
+                 Operation *point) {
+  OpBuilder builder(point);
+  Location loc = second.getLoc();
+  unsigned firstOuts = first.getOuts().size();
+
+  // A field that only the second loop reads is not stored.
+  SmallVector<bool> isKept;
+  for (unsigned i = 0; i != firstOuts; ++i)
+    isKept.push_back(llvm::any_of(
+        first.getResult(i).getUsers(),
+        [&](Operation *user) { return user != second.getOperation(); }));
+
+  // The fields that the kernels read. A field that both read is read once.
+  SmallVector<Value> ins;
+  llvm::DenseMap<Value, unsigned> position;
+  auto addFields = [&](ParticleForOp op) {
+    for (Value field : op.getIns())
+      if (!isFieldOf(field, first) &&
+          position.try_emplace(field, ins.size()).second)
+        ins.push_back(field);
+  };
+  addFields(first);
+  addFields(second);
+
+  SmallVector<Value> outs;
+  for (unsigned i = 0; i != firstOuts; ++i)
+    if (isKept[i])
+      outs.push_back(first.getOuts()[i]);
+  unsigned keptOuts = outs.size();
+  outs.append(second.getOuts().begin(), second.getOuts().end());
+  SmallVector<Value> reduce(first.getReduce().begin(),
+                            first.getReduce().end());
+  reduce.append(second.getReduce().begin(), second.getReduce().end());
+
+  SmallVector<Type> resultTypes;
+  for (Value value : llvm::concat<Value>(outs, reduce))
+    resultTypes.push_back(value.getType());
+  auto fused = ParticleForOp::create(builder, loc, resultTypes, ins, outs,
+                                     reduce, /*scratch=*/ValueRange());
+
+  Block *block = new Block();
+  fused.getKernel().push_back(block);
+  for (Value field : ins)
+    block->addArgument(
+        cast<md::FieldType>(field.getType()).getKernelValueType(), loc);
+
+  OpBuilder kernel(builder.getContext());
+  kernel.setInsertionPointToEnd(block);
+
+  // What the first kernel yields for its destinations, in the fused kernel.
+  SmallVector<Value> firstYielded;
+  SmallVector<Value> yieldedOuts, yieldedSums;
+  auto addKernel = [&](ParticleForOp op, bool isFirst) {
+    Block &source = op.getKernel().front();
+    IRMapping mapping;
+    for (auto [index, field] : llvm::enumerate(op.getIns())) {
+      Value value;
+      if (isFieldOf(field, first))
+        value = firstYielded[cast<OpResult>(field).getResultNumber()];
+      else
+        value = block->getArgument(position.lookup(field));
+      mapping.map(source.getArgument(index), value);
+    }
+    for (Operation &nested : source.without_terminator())
+      kernel.clone(nested, mapping);
+
+    Operation *yield = source.getTerminator();
+    unsigned numOuts = op.getOuts().size();
+    for (unsigned i = 0, e = yield->getNumOperands(); i != e; ++i) {
+      Value value = mapping.lookupOrDefault(yield->getOperand(i));
+      if (i >= numOuts) {
+        yieldedSums.push_back(value);
+        continue;
+      }
+      if (isFirst)
+        firstYielded.push_back(value);
+      if (!isFirst || isKept[i])
+        yieldedOuts.push_back(value);
+    }
+  };
+  addKernel(first, /*isFirst=*/true);
+  addKernel(second, /*isFirst=*/false);
+
+  SmallVector<Value> yielded(yieldedOuts);
+  yielded.append(yieldedSums);
+  YieldOp::create(kernel, loc, yielded);
+
+  // Results: the destinations of the first that are kept, those of the
+  // second, the sums of the first, those of the second.
+  unsigned secondOuts = second.getOuts().size();
+  unsigned allOuts = keptOuts + secondOuts;
+  unsigned firstSums = first.getReduce().size();
+  unsigned kept = 0;
+  for (unsigned i = 0, e = first.getNumResults(); i != e; ++i) {
+    if (i >= firstOuts) {
+      first.getResult(i).replaceAllUsesWith(
+          fused.getResult(allOuts + (i - firstOuts)));
+      continue;
+    }
+    if (isKept[i])
+      first.getResult(i).replaceAllUsesWith(fused.getResult(kept++));
+  }
+  for (unsigned i = 0, e = second.getNumResults(); i != e; ++i) {
+    unsigned target = i < secondOuts
+                          ? keptOuts + i
+                          : allOuts + firstSums + (i - secondOuts);
+    second.getResult(i).replaceAllUsesWith(fused.getResult(target));
+  }
+  // The second loop uses the first, so it goes first.
+  second.erase();
+  first.erase();
+}
+
+/// Fuses two loops over particles of `block`, if two can be fused. Returns
+/// true if it did.
+static bool fuseParticleLoopsOnce(Block &block) {
+  SmallVector<ParticleForOp> loops;
+  for (Operation &op : block)
+    if (auto loop = dyn_cast<ParticleForOp>(&op))
+      loops.push_back(loop);
+
+  for (unsigned i = 0, e = loops.size(); i != e; ++i) {
+    for (unsigned j = i + 1; j != e; ++j) {
+      ParticleForOp first = loops[i];
+      ParticleForOp second = loops[j];
+      if (!canFollow(first, second))
+        continue;
+      if (canMoveDown(first, second)) {
+        fuse(first, second, second);
+        return true;
+      }
+      if (canMoveUp(first, second)) {
+        fuse(first, second, first);
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+//===----------------------------------------------------------------------===//
+// Pass
+//===----------------------------------------------------------------------===//
+
 /// Fuses two loops of `block`, if two can be fused. Returns true if it did.
 static bool fuseOnce(Block &block) {
   SmallVector<PairForOp> loops;
@@ -202,9 +428,12 @@ public:
         for (Block &block : region)
           blocks.push_back(&block);
     });
-    for (Block *block : blocks)
+    for (Block *block : blocks) {
       while (fuseOnce(*block))
         ;
+      while (fuseParticleLoopsOnce(*block))
+        ;
+    }
   }
 };
 } // namespace

@@ -381,7 +381,7 @@ These items follow from the decisions above but have no design yet.
 | Declaring the role of a field that a function takes | M0 | |
 | Vectorization of loops over pairs across pairs | M0 | Without it, single precision is no faster than double on the CPU |
 | Fusion of loops over the same neighbor structure | M0 | Implemented |
-| Fusion of loops over particles | M0 | |
+| Fusion of loops over particles | M0 | Implemented |
 | Removal of the square root from kernels that do not need it | M0 | Implemented |
 | Freeing of buffers | M0 | |
 | Driver, TOML input, XTC and H5MD output | M0 | Driver, TOML input, and DCD output are implemented; see [driver-m0.md](driver-m0.md), Section 4 |

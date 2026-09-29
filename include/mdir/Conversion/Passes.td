@@ -84,6 +84,13 @@ def ConvertMDExecToGPU
     | `md_exec.refresh_neighbors` | The test of validity, as a global maximum, and a call to the neighbor build template for devices, which the pass adds to the module |
     | A cell | `vector<3xf64>`, the edge lengths of an orthorhombic cell |
 
+    A constant that a kernel uses is a constant of the kernel, not an
+    argument.
+
+    A loop of the host that launches kernels releases, at the end of every
+    iteration, the stack that the iteration has taken: the lowering of a
+    launch puts the arguments on the stack.
+
     The result is lowered further by the upstream pipeline
     `gpu-lower-to-nvvm-pipeline`.
   }];
@@ -94,6 +101,7 @@ def ConvertMDExecToGPU
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",
                            "::mlir::gpu::GPUDialect",
+                           "::mlir::LLVM::LLVMDialect",
                            "::mlir::math::MathDialect",
                            "::mlir::memref::MemRefDialect",
                            "::mlir::scf::SCFDialect",
