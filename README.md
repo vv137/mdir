@@ -102,3 +102,7 @@ build/bin/mdir-opt input.mlir \
 Without `--convert-scf-to-openmp --canonicalize` and
 `--convert-openmp-to-llvm`, the loops run sequentially and `libomp.so` is
 not needed. `test/Integration` holds complete programs.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
