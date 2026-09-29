@@ -21,12 +21,46 @@ using mdir::mdrt::PermutationType;
 /// Returns true if `type` is a floating-point type of the execution level.
 static bool isReal(Type type) { return type.isF32() || type.isF64(); }
 
-/// Returns true if `type` is a position field: three components of f32 or
-/// f64.
-static bool isPositionField(Type type) {
+bool mdir::md_exec::isBufferType(Type type) {
+  auto buffer = dyn_cast<MemRefType>(type);
+  if (!buffer || buffer.getRank() < 1 || buffer.getRank() > 2 ||
+      !buffer.isDynamicDim(0))
+    return false;
+  Type element = buffer.getElementType();
+  if (buffer.getRank() == 2)
+    return buffer.getDimSize(1) == 3 && isReal(element);
+  return isReal(element) || element.isSignlessInteger(32) ||
+         element.isSignlessInteger(64);
+}
+
+Type mdir::md_exec::getKernelValueType(Type fieldOrBuffer) {
+  if (auto field = dyn_cast<FieldType>(fieldOrBuffer))
+    return field.getKernelValueType();
+  auto buffer = cast<MemRefType>(fieldOrBuffer);
+  if (buffer.getRank() == 1)
+    return buffer.getElementType();
+  return VectorType::get({buffer.getDimSize(1)}, buffer.getElementType());
+}
+
+/// Returns true if `type` is the type of positions: a field with three
+/// components of f32 or f64, or a buffer that holds one.
+static bool isPositionType(Type type) {
+  if (auto buffer = dyn_cast<MemRefType>(type))
+    return mdir::md_exec::isBufferType(type) && buffer.getRank() == 2;
   auto field = dyn_cast<FieldType>(type);
   return field && field.getNumComponents() == 3 &&
          isReal(field.getElementType());
+}
+
+/// The memory effect `effect` on `operand`.
+template <typename EffectTy>
+static void addEffect(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects,
+    OpOperand &operand) {
+  effects.emplace_back(EffectTy::get(), &operand, /*stage=*/0,
+                       /*effectOnFullRegion=*/true,
+                       SideEffects::DefaultResource::get());
 }
 
 /// Returns true if `type` is f32, f64, or a fixed-size one-dimensional
@@ -39,15 +73,16 @@ static bool isRealOrRealVector(Type type) {
          isReal(vector.getElementType());
 }
 
-/// Verifies that `positions` is a position field on `particleSet`.
+/// Verifies that `positions` is a position field on `particleSet`, or a
+/// buffer that holds a position field.
 static LogicalResult verifyPositions(Operation *op, Value positions,
                                      FlatSymbolRefAttr particleSet) {
-  if (!isPositionField(positions.getType()))
+  if (!isPositionType(positions.getType()))
     return op->emitOpError() << "expected a position field with 3 "
                                 "components of f32 or f64, got "
                              << positions.getType();
-  auto field = cast<FieldType>(positions.getType());
-  if (field.getParticleSet() != particleSet)
+  auto field = dyn_cast<FieldType>(positions.getType());
+  if (field && field.getParticleSet() != particleSet)
     return op->emitOpError()
            << "the structure is on " << particleSet
            << ", but the positions belong to " << field.getParticleSet();
@@ -126,7 +161,32 @@ LogicalResult BuildNeighborsOp::verify() {
 LogicalResult EmptyNeighborsOp::verify() {
   if (getWidth() <= 0)
     return emitOpError() << "expected a positive width, got " << getWidth();
+  if (static_cast<bool>(getSize()) != static_cast<bool>(getElement()))
+    return emitOpError() << "expected 'size' and 'element' together";
+  if (getElement() && !isReal(*getElement()))
+    return emitOpError() << "expected the element type f32 or f64, got "
+                         << *getElement();
   return success();
+}
+
+void EmptyNeighborsOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  if (isStorageForm())
+    effects.emplace_back(MemoryEffects::Allocate::get(),
+                         getOperation()->getOpResult(0), /*stage=*/0,
+                         /*effectOnFullRegion=*/true,
+                         SideEffects::DefaultResource::get());
+}
+
+void RefreshNeighborsOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  if (!isStorageForm())
+    return;
+  addEffect<MemoryEffects::Read>(effects, getNeighborsMutable());
+  addEffect<MemoryEffects::Write>(effects, getNeighborsMutable());
+  addEffect<MemoryEffects::Read>(effects, getPositionsMutable());
 }
 
 LogicalResult RefreshNeighborsOp::verify() {
@@ -158,10 +218,14 @@ LogicalResult RefreshNeighborsOp::verify() {
 /// Verifies what the two loops have in common.
 template <typename OpTy>
 static LogicalResult verifyLoop(OpTy op, FlatSymbolRefAttr particleSet) {
-  // Fields.
+  bool isStorage = op.isStorageForm();
   for (Value field : llvm::concat<Value>(op.getIns(), op.getOuts())) {
-    auto type = cast<FieldType>(field.getType());
-    if (type.getParticleSet() != particleSet)
+    if (isa<MemRefType>(field.getType()) != isStorage)
+      return op.emitOpError()
+             << "expected fields only, as in the value form, or buffers "
+                "only, as in the storage form";
+    auto type = dyn_cast<FieldType>(field.getType());
+    if (type && type.getParticleSet() != particleSet)
       return op.emitOpError() << "expected all fields to belong to "
                               << particleSet << ", but one belongs to "
                               << type.getParticleSet();
@@ -172,27 +236,49 @@ static LogicalResult verifyLoop(OpTy op, FlatSymbolRefAttr particleSet) {
                                  "f64, or a fixed-size vector of one of "
                                  "them, got "
                               << value.getType();
-
-  // Results: one per field in `outs`, then one per value in `reduce`.
-  SmallVector<Type> expected;
-  for (Value field : op.getOuts())
-    expected.push_back(field.getType());
-  for (Value value : op.getReduce())
-    expected.push_back(value.getType());
-  if (expected.empty())
+  if (op.getOuts().empty() && op.getReduce().empty())
     return op.emitOpError()
            << "expected at least 1 field in 'outs' or value in 'reduce'";
+
+  // Results: one per field in `outs`, then one per value in `reduce`. A
+  // buffer in `outs` is updated where it is and has no result.
+  SmallVector<Type> expected;
+  if (!isStorage)
+    for (Value field : op.getOuts())
+      expected.push_back(field.getType());
+  for (Value value : op.getReduce())
+    expected.push_back(value.getType());
   if (op.getNumResults() != expected.size())
     return op.emitOpError()
-           << "expected " << expected.size()
-           << " results, one per field in 'outs' and value in 'reduce', got "
-           << op.getNumResults();
+           << "expected " << expected.size() << " results, "
+           << (isStorage ? "one per value in 'reduce'"
+                         : "one per field in 'outs' and value in 'reduce'")
+           << ", got " << op.getNumResults();
   for (unsigned i = 0, e = expected.size(); i != e; ++i)
     if (op.getResult(i).getType() != expected[i])
       return op.emitOpError()
              << "expected result " << i << " to have type " << expected[i]
              << ", got " << op.getResult(i).getType();
   return success();
+}
+
+/// The memory effects of a loop in the storage form. `readsOuts` tells
+/// whether the loop reads what destination `index` holds.
+template <typename OpTy>
+static void getLoopEffects(
+    OpTy op,
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects,
+    function_ref<bool(unsigned)> readsOuts) {
+  if (!op.isStorageForm())
+    return;
+  for (OpOperand &operand : op.getInsMutable())
+    addEffect<MemoryEffects::Read>(effects, operand);
+  for (auto [index, operand] : llvm::enumerate(op.getOutsMutable())) {
+    if (readsOuts(index))
+      addEffect<MemoryEffects::Read>(effects, operand);
+    addEffect<MemoryEffects::Write>(effects, operand);
+  }
 }
 
 /// Verifies the kernel of a loop.
@@ -206,10 +292,9 @@ static LogicalResult verifyKernel(OpTy op, ArrayRef<Type> leading,
   Block &block = op.getKernel().front();
 
   SmallVector<Type> arguments(leading.begin(), leading.end());
-  for (Value field : op.getIns()) {
-    Type value = cast<FieldType>(field.getType()).getKernelValueType();
-    arguments.append(perField, value);
-  }
+  for (Value field : op.getIns())
+    arguments.append(perField,
+                     mdir::md_exec::getKernelValueType(field.getType()));
   if (block.getNumArguments() != arguments.size())
     return op.emitOpError() << "expected the kernel to have "
                             << arguments.size() << " arguments, got "
@@ -222,8 +307,7 @@ static LogicalResult verifyKernel(OpTy op, ArrayRef<Type> leading,
 
   SmallVector<Type> yielded;
   for (Value field : op.getOuts())
-    yielded.push_back(
-        cast<FieldType>(field.getType()).getKernelValueType());
+    yielded.push_back(mdir::md_exec::getKernelValueType(field.getType()));
   for (Value value : op.getReduce())
     yielded.push_back(value.getType());
 
@@ -274,6 +358,18 @@ LogicalResult PairForOp::verify() {
     return emitOpError()
            << "only the policy (directed, owner_only) is supported";
 
+  if (auto overwrite = getOverwrite()) {
+    if (!isStorageForm())
+      return emitOpError() << "'overwrite' belongs to the storage form; in "
+                              "the value form the destination tells what "
+                              "the loop adds to";
+    if (overwrite->size() != getOuts().size())
+      return emitOpError() << "expected " << getOuts().size()
+                           << " flags in 'overwrite', one per buffer in "
+                              "'outs', got "
+                           << overwrite->size();
+  }
+
   // The list must contain every pair within the cutoff of this loop.
   std::optional<double> built;
   if (auto build = getNeighbors().getDefiningOp<BuildNeighborsOp>())
@@ -294,19 +390,33 @@ LogicalResult PairForOp::verifyRegions() {
   return verifyKernel(*this, getPairGeometryTypes(*this), 2);
 }
 
+void PairForOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  if (!isStorageForm())
+    return;
+  addEffect<MemoryEffects::Read>(effects, getNeighborsMutable());
+  addEffect<MemoryEffects::Read>(effects, getPositionsMutable());
+  getLoopEffects(*this, effects,
+                 [&](unsigned index) { return !overwrites(index); });
+}
+
 LogicalResult ParticleForOp::verify() {
-  FlatSymbolRefAttr particleSet;
-  if (!getIns().empty())
-    particleSet =
-        cast<FieldType>(getIns().front().getType()).getParticleSet();
-  else if (!getOuts().empty())
-    particleSet =
-        cast<FieldType>(getOuts().front().getType()).getParticleSet();
-  else
+  if (getIns().empty() && getOuts().empty())
     return emitOpError() << "expected at least 1 field in 'ins' or 'outs'";
+  Value any = getIns().empty() ? getOuts().front() : getIns().front();
+  FlatSymbolRefAttr particleSet;
+  if (auto field = dyn_cast<FieldType>(any.getType()))
+    particleSet = field.getParticleSet();
   return verifyLoop(*this, particleSet);
 }
 
 LogicalResult ParticleForOp::verifyRegions() {
   return verifyKernel(*this, {}, 1);
+}
+
+void ParticleForOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  getLoopEffects(*this, effects, [](unsigned) { return false; });
 }

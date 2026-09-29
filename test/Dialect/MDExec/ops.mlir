@@ -181,3 +181,41 @@ func.func @stored_in_single(%buffer: memref<?x3xf32>) -> memref<?x3xf32> {
       : !md.field<@atoms, 3 x f64> to memref<?x3xf32>
   return %out : memref<?x3xf32>
 }
+
+// The storage form: the loops take buffers and update them where they are.
+//
+// CHECK-LABEL: func.func @storage(
+func.func @storage(%x: memref<?x3xf32>, %v: memref<?x3xf32>,
+                   %f: memref<?x3xf32>, %cell: !md.cell, %n: index) -> f64 {
+  // CHECK: %[[NL0:[0-9]+]] = md_exec.empty_neighbors size(%{{[a-z0-9]+}}) element(f32) kind(matrix) width(96) : !mdrt.neighbors<@atoms>
+  %nl0 = md_exec.empty_neighbors size(%n) element(f32)
+      kind(matrix) width(96) : !mdrt.neighbors<@atoms>
+
+  // CHECK: %[[NL:[0-9]+]] = md_exec.refresh_neighbors %[[NL0]], %{{[a-z0-9]+}}, %{{[a-z0-9]+}}
+  // CHECK-SAME: policy(always) : !mdrt.neighbors<@atoms>, memref<?x3xf32>
+  %nl = md_exec.refresh_neighbors %nl0, %x, %cell
+      cutoff(2.5) skin(0.3) cell_width(2.8) policy(always)
+      : !mdrt.neighbors<@atoms>, memref<?x3xf32>
+
+  // CHECK: %[[U:[0-9]+]] = md_exec.pair_for %[[NL]], %{{[a-z0-9]+}}, %{{[a-z0-9]+}}
+  // CHECK-SAME: outs(%{{[a-z0-9]+}} : memref<?x3xf32>) reduce(%{{[a-z0-9_]+}} : f64)
+  // CHECK-SAME: cutoff(2.500000e+00) weights [5.000000e-01] overwrite [true] policy(directed, owner_only) {
+  // CHECK: } : !mdrt.neighbors<@atoms>, memref<?x3xf32> -> f64
+  %u0 = arith.constant 0.0 : f64
+  %u = md_exec.pair_for %nl, %x, %cell outs(%f : memref<?x3xf32>)
+      reduce(%u0 : f64) cutoff(2.5) weights [0.5] overwrite [true]
+      policy(directed, owner_only) {
+  ^bb0(%r2: f32, %d: vector<3xf32>):
+    %e = arith.extf %r2 : f32 to f64
+    md_exec.yield %d, %e : vector<3xf32>, f64
+  } : !mdrt.neighbors<@atoms>, memref<?x3xf32> -> f64
+
+  // CHECK: md_exec.particle_for ins(%{{[a-z0-9]+}}, %{{[a-z0-9]+}} : memref<?x3xf32>, memref<?x3xf32>) outs(%{{[a-z0-9]+}} : memref<?x3xf32>) {
+  md_exec.particle_for ins(%v, %f : memref<?x3xf32>, memref<?x3xf32>)
+      outs(%v : memref<?x3xf32>) {
+  ^bb0(%v_i: vector<3xf32>, %f_i: vector<3xf32>):
+    %new = arith.addf %v_i, %f_i : vector<3xf32>
+    md_exec.yield %new : vector<3xf32>
+  }
+  return %u : f64
+}

@@ -1,6 +1,6 @@
 # MDIR Op Specification, Milestone M0
 
-Status: draft 9 (2026-09-29). Everything in this document is implemented for
+Status: draft 10 (2026-09-29). Everything in this document is implemented for
 the CPU, except where a section says otherwise. A Lennard-Jones system runs
 end to end in single, mixed, and double precision, sequentially and with
 OpenMP.
@@ -16,13 +16,13 @@ Operand lists, result lists, and the mathematical definitions are normative.
 | `md` types and ops (Section 4) | Implemented. The examples show the actual syntax. |
 | Truncation, differentiation, exchange check (Sections 4.7, 4.8, 5) | Implemented as passes; see Section 5.6 |
 | `dyn` ops (Section 6) | Implemented. The examples show the actual syntax. |
-| `md_exec` ops in the value form (Section 8) | Implemented. The examples show the actual syntax. |
+| `md_exec` ops in the value form and in the storage form (Section 8) | Implemented. The examples show the actual syntax. |
 | Conversion of `md` and `dyn` to `md_exec` (Section 9.1) | Implemented as the pass `convert-md-to-md-exec` |
-| Storage assignment and lowering to loops (Section 10) | Implemented as the pass `convert-md-exec-to-loops` |
+| Storage assignment (Section 10) | Implemented as the pass `md-exec-assign-storage` |
+| Lowering of the storage form to loops (Section 10.7) | Implemented as the pass `convert-md-exec-to-loops` |
 | Fusion of loops over pairs (Section 9.4) | Implemented as the pass `md-exec-fuse-loops` |
 | Powers of the squared distance (Section 9.5) | Implemented as the pass `md-exec-simplify-distance` |
 | Precision policy (Section 7) | Implemented as the pass `md-exec-assign-precision` |
-| Storage form as a stage of its own (Section 8.5) | Not implemented |
 
 It follows the accepted decisions in [decisions.md](decisions.md). Tags such
 as (S1) or (B4) name the decision behind a section.
@@ -726,6 +726,8 @@ md_exec                          f64 only
   ↓ reuse, fusion, powers of the squared distance
   ↓ md-exec-assign-precision
 md_exec                          f32 and f64
+  ↓ md-exec-assign-storage
+md_exec in the storage form
   ↓ convert-md-exec-to-loops
 ```
 
@@ -1031,13 +1033,52 @@ that writes every value.
 
 ### 8.5 Value form and storage form
 
-Each loop op has two forms (D17).
+The ops that touch fields are one set with two forms (D17), in the manner
+of upstream `linalg`. An op is in the storage form if its fields are
+buffers. An op takes fields only or buffers only.
 
 | | Value form | Storage form |
 |---|---|---|
-| Operands | Field values | Storage handles |
-| Results | One per `outs` and `reduce` operand | None for `outs`; the destination is updated |
-| Ordering | By data dependency | By data dependency and `!mdrt.event` |
+| Operands | Fields | The buffers that hold the fields, of type `memref` (D33) |
+| Results | One per `outs` and `reduce` operand | One per `reduce` operand; a buffer in `outs` is updated where it is |
+| Effects | None. The op can be removed, moved, and merged like any pure op. | Reads and writes of the buffers, declared to the upstream analyses |
+| Ordering | By data dependency | By the order of the ops in their block (A12) |
+
+```mlir
+// Value form
+%f, %u = md_exec.pair_for %nl, %x, %cell
+           outs(%f0 : !vec) reduce(%u0 : f64)
+           cutoff(2.5) weights [0.5] policy(directed, owner_only) { ... }
+         : !mdrt.neighbors<@atoms>, !vec -> !vec, f64
+
+// Storage form
+%u = md_exec.pair_for %nl, %x, %cell
+       outs(%f : memref<?x3xf64>) reduce(%u0 : f64)
+       cutoff(2.5) weights [0.5] overwrite [true]
+       policy(directed, owner_only) { ... }
+     : !mdrt.neighbors<@atoms>, memref<?x3xf64> -> f64
+```
+
+| Op | In the storage form |
+|---|---|
+| `md_exec.pair_for` | `overwrite` has one flag per buffer in `outs`. With the flag, the loop ignores what the buffer holds, as if it held zeros. Without it, the loop adds to what the buffer holds. |
+| `md_exec.particle_for` | A buffer may be in `ins` and in `outs`: the kernel of a particle reads and writes the values of that particle only. |
+| `md_exec.empty_neighbors` | Takes `size` and `element` and allocates the storage of a structure for that many particles, with positions of that type. |
+| `md_exec.refresh_neighbors` | Rebuilds the structure where it is. The result is the structure that was given. |
+| `md_exec.zeros`, `md_exec.empty`, `md_exec.build_cells`, `md_exec.build_neighbors` | Do not occur. A build is storage and a refresh with the policy `always`. |
+
+The kernels are the same in both forms.
+
+The types `!md.cell` and `!mdrt.neighbors` occur in both forms. A cell is a
+small value. A neighbor structure is a value in the value form and a handle
+to storage in the storage form; the type does not tell which. For that
+reason `md_exec.rebuild_count` always counts as reading the structure.
+
+What the storage form is for: every decision that depends on where a field
+is stored is a pass over ops that still are loops over particles and pairs.
+The layout of a vector field, the device that holds a buffer, the transfers
+between host and device, and whether a loop becomes a CPU loop or a GPU
+kernel are such decisions.
 
 ## 9. Lowering `md` and `dyn` to `md_exec`
 
@@ -1164,27 +1205,31 @@ not be run in the deterministic mode.
 
 ## 10. Storage assignment
 
-Storage assignment gives every field value a buffer. It is part of the pass
-`convert-md-exec-to-loops`, which emits loops over buffers directly.
+Storage assignment gives every field a buffer. The pass
+`md-exec-assign-storage` converts the ops from the value form to the
+storage form (Section 8.5). The pass `convert-md-exec-to-loops` then turns
+the storage form into loops (Section 10.7).
 
-The pass does not produce the storage form of the `md_exec` ops as a stage
-of its own (Section 8.5). Whether that stage is needed is open; see
-[mdrt-m0.md](mdrt-m0.md), Section 8.
+### 10.1 What becomes what
 
-### 10.1 What is lowered to what
-
-| Before | After |
+| Value form | Storage form |
 |---|---|
 | A field | `memref<?x3xT>` or `memref<?xT>`, with the element type of the field |
-| A cell | `vector<3xf64>`, the edge lengths of an orthorhombic cell |
-| `md_exec.particle_for` | `scf.parallel` over the particles |
-| `md_exec.pair_for` | `scf.parallel` over the particles, with an `scf.for` over the neighbors of each |
-| `md_exec.build_neighbors` | A call to the neighbor build template |
+| A field in the signature of a function | A buffer |
+| `mdrt.from_buffer`, `mdrt.to_buffer` | Nothing: the buffer is the field |
+| `md_exec.zeros`, `md_exec.empty` | A buffer from the pool, or `memref.alloc` |
+| `md_exec.particle_for`, `md_exec.pair_for` | The same op on buffers |
+| `md_exec.build_cells` and `md_exec.build_neighbors` | `md_exec.empty_neighbors` with storage, in the body of the function, and `md_exec.refresh_neighbors` with the policy `always` |
+| `md_exec.empty_neighbors` | The same op with storage, in the body of the function; one for each use of the empty structure |
 | `scf.for` that carries fields | `scf.for` that carries buffers |
+| `scf.for` that carries a neighbor structure | The loop does not carry it: the structure is refreshed where it is |
+| A cell | Unchanged |
 
-The lowering follows the types that the precision policy assigned
-(Section 7). A field whose type differs from that of the buffer that holds
-it is rejected.
+The pass follows the types that the precision policy assigned (Section 7).
+A field whose type differs from that of the buffer that holds it is
+rejected.
+
+A function without fields is left as it is.
 
 ### 10.2 Regions, ownership, and the pool
 
@@ -1256,6 +1301,10 @@ A field that is merely read after an op keeps its buffer, and the result of
 the op goes to another buffer. Outside loops that buffer is allocated where
 it is needed.
 
+A neighbor structure is refreshed where it is. If the structure that a
+refresh takes is used after the refresh, the pass fails: the structure would
+need storage of its own.
+
 ### 10.6 Limitations
 
 | Limitation | Consequence |
@@ -1263,6 +1312,24 @@ it is needed.
 | Buffers are never freed. | A function that allocates leaks when it is called repeatedly. The tests run everything from one `main`. |
 | Marking a field so that a copy is accepted is not implemented. | A program that needs a copy, such as a Metropolis step, cannot be lowered. |
 | A neighbor structure is refreshed where it is. | A loop cannot carry two structures and exchange them. |
+| Ops run in the order of their block. | Nothing runs asynchronously. Event tokens come with asynchronous execution (A12). |
+
+### 10.7 From the storage form to loops
+
+The pass `convert-md-exec-to-loops` replaces every op where it is. It
+decides nothing about buffers.
+
+| Storage form | Loops |
+|---|---|
+| `md_exec.particle_for` | `scf.parallel` over the particles |
+| `md_exec.pair_for` | `scf.parallel` over the particles, with an `scf.for` over the neighbors of each |
+| `md_exec.empty_neighbors` | The buffers of a neighbor matrix: counts, indices, the configuration and the cell of the last build, a flag, and a count of builds |
+| `md_exec.refresh_neighbors` | The test of validity and, where it fails, a call to the neighbor build template |
+| `md_exec.rebuild_count` | A load |
+| A cell | `vector<3xf64>`, the edge lengths of an orthorhombic cell |
+
+The lowering to a GPU is a second pass of this kind, from the same storage
+form.
 
 ## 11. Requirements on `mdrt`
 

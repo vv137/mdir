@@ -173,6 +173,7 @@ Proposal: the C++ tool.
 | Neighbor build for positions of `f32` | Implemented, as an instance of the template with the type replaced |
 | `mdrt.from_buffer`, `mdrt.to_buffer` | Implemented. They connect code that works on buffers with code that works on fields. |
 | OpenMP | Works through the upstream lowering of `scf.parallel`. Reductions work. |
+| Storage form of the loops | Implemented |
 | Threading as a plan parameter | Not implemented. The choice is made by the passes that are run after lowering. |
 | Runtime library `libmdrt` | One function, the overflow report |
 | Spatial reordering (step 5) | Not implemented |
@@ -181,19 +182,19 @@ Proposal: the C++ tool.
 The template is sequential in its counting sort and parallel in its search
 for neighbors.
 
-## 8. Open point: the storage form
+## 8. The storage form
 
-D17 decided that `md_exec` ops have a value form and a storage form. The
-implementation lowers the value form directly to `scf` loops and `memref`s,
-and the storage form does not exist as IR.
+D17 decided that `md_exec` ops have a value form and a storage form. Both
+exist. The pass `md-exec-assign-storage` converts the value form to the
+storage form, and `convert-md-exec-to-loops` turns the storage form into
+loops on the CPU. See [ops-m0.md](ops-m0.md), Sections 8.5 and 10.
 
-| Option | For | Against |
-|---|---|---|
-| Keep the direct lowering | Less code. Buffer assignment and loop emission share what they know. | No IR in which loops still are `md_exec` loops but operate on buffers. |
-| Add the storage form | Policies that depend on storage, such as layout or mapping to a GPU, can be passes over `md_exec` ops. | A second form of every loop op, and a pass between the two. |
+The first implementation lowered the value form directly to loops. The two
+steps were separated before the GPU back end, so that the back ends share
+the assignment of buffers and differ only in how they turn a loop over
+particles or pairs into code.
 
-The direct lowering was chosen to reach running code. The GPU back end is
-the point at which the storage form may be needed.
+The generated code did not change: the run times are the same as before.
 
 ## 9. Questions
 
@@ -204,4 +205,4 @@ the point at which the storage form may be needed.
 | 3 | GPU execution | Upstream `gpu` dialect; runtime functions in `mdrt` |
 | 4 | Reference interpreter | Decided: none (V1) |
 | 5 | Vector field layout for M0 | Decided: `memref<?x3xT>` first (D30) |
-| 6 | Storage form of `md_exec` | Keep the direct lowering until the GPU back end needs more |
+| 6 | Storage form of `md_exec` | Decided and implemented (D17, D33, A12) |

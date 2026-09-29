@@ -124,3 +124,24 @@ func.func @different_cutoffs(%x: !vec, %cell: !md.cell, %nl: !nl)
   } : !nl, !vec -> f64
   return %a, %b : f64, f64
 }
+
+// Loops in the storage form are left alone.
+//
+// CHECK-LABEL: func.func @storage(
+// CHECK:         md_exec.pair_for
+// CHECK:         md_exec.pair_for
+func.func @storage(%x: memref<?x3xf64>, %f: memref<?x3xf64>,
+                   %g: memref<?x3xf64>, %cell: !md.cell,
+                   %nl: !mdrt.neighbors<@atoms>) {
+  md_exec.pair_for %nl, %x, %cell outs(%f : memref<?x3xf64>)
+      cutoff(2.5) overwrite [true] policy(directed, owner_only) {
+  ^bb0(%r2: f64, %d: vector<3xf64>):
+    md_exec.yield %d : vector<3xf64>
+  } : !mdrt.neighbors<@atoms>, memref<?x3xf64>
+  md_exec.pair_for %nl, %x, %cell outs(%g : memref<?x3xf64>)
+      cutoff(2.5) overwrite [true] policy(directed, owner_only) {
+  ^bb0(%r2: f64, %d: vector<3xf64>):
+    md_exec.yield %d : vector<3xf64>
+  } : !mdrt.neighbors<@atoms>, memref<?x3xf64>
+  return
+}

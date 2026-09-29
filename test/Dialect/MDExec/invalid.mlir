@@ -203,3 +203,77 @@ func.func @f(%buffer: memref<?xi32>) {
   %q = mdrt.from_buffer %buffer : memref<?xi32> to !md.field<@atoms, f64>
   return
 }
+
+// -----
+
+md.particle_set @atoms
+
+// A loop has one form.
+func.func @f(%v: !md.field<@atoms, 3 x f64>, %buffer: memref<?x3xf64>) {
+  // expected-error@+1 {{expected fields only, as in the value form, or buffers only, as in the storage form}}
+  md_exec.particle_for ins(%v : !md.field<@atoms, 3 x f64>)
+      outs(%buffer : memref<?x3xf64>) {
+  ^bb0(%v_i: vector<3xf64>):
+    md_exec.yield %v_i : vector<3xf64>
+  }
+  return
+}
+
+// -----
+
+md.particle_set @atoms
+
+// In the storage form a destination has no result.
+func.func @f(%v: memref<?x3xf64>) {
+  // expected-error@+1 {{expected 0 results, one per value in 'reduce', got 1}}
+  %w = md_exec.particle_for ins(%v : memref<?x3xf64>)
+      outs(%v : memref<?x3xf64>) {
+  ^bb0(%v_i: vector<3xf64>):
+    md_exec.yield %v_i : vector<3xf64>
+  } -> memref<?x3xf64>
+  return
+}
+
+// -----
+
+md.particle_set @atoms
+
+func.func @f(%nl: !mdrt.neighbors<@atoms>, %x: !md.field<@atoms, 3 x f64>,
+             %cell: !md.cell) -> !md.field<@atoms, 3 x f64> {
+  %f0 = md_exec.zeros : !md.field<@atoms, 3 x f64>
+  // expected-error@+1 {{'overwrite' belongs to the storage form; in the value form the destination tells what the loop adds to}}
+  %f = md_exec.pair_for %nl, %x, %cell
+      outs(%f0 : !md.field<@atoms, 3 x f64>) cutoff(2.5) overwrite [true]
+      policy(directed, owner_only) {
+  ^bb0(%r2: f64, %d: vector<3xf64>):
+    md_exec.yield %d : vector<3xf64>
+  } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+      -> !md.field<@atoms, 3 x f64>
+  return %f : !md.field<@atoms, 3 x f64>
+}
+
+// -----
+
+md.particle_set @atoms
+
+func.func @f(%n: index) {
+  // expected-error@+1 {{expected the element type f32 or f64, got 'i32'}}
+  %nl = md_exec.empty_neighbors size(%n) element(i32)
+      kind(matrix) width(48) : !mdrt.neighbors<@atoms>
+  return
+}
+
+// -----
+
+md.particle_set @atoms
+
+// A buffer holds one value or three per particle.
+func.func @f(%v: memref<?x2xf64>) {
+  // expected-error@+1 {{operand #0 must be variadic of A per-particle field or buffer of a field, but got 'memref<?x2xf64>'}}
+  md_exec.particle_for ins(%v : memref<?x2xf64>)
+      outs(%v : memref<?x2xf64>) {
+  ^bb0(%v_i: vector<2xf64>):
+    md_exec.yield %v_i : vector<2xf64>
+  }
+  return
+}

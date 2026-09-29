@@ -573,8 +573,10 @@ silently (D18). It reports the value, the overwrite, and the later consumer.
 ### 8.4 Dependency token
 
 In value form, ordering follows from data dependencies between field values.
-Once storage is assigned, operations act on buffers and those dependencies
-are carried by one SSA token type, `!mdrt.event` (D10):
+Once storage is assigned, operations act on buffers. While they run one
+after another, the order of the ops in their block carries the dependencies
+(A12). For asynchronous execution the dependencies are carried by one SSA
+token type, `!mdrt.event` (D10):
 
 ```mlir
 %halo_done     = mdrt.halo_exchange %x_buf ...

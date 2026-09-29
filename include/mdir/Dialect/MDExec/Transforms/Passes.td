@@ -150,4 +150,43 @@ def AssignPrecision
                            "::mlir::arith::ArithDialect"];
 }
 
+def AssignStorage : Pass<"md-exec-assign-storage", "::mlir::ModuleOp"> {
+  let summary = "Gives every field a buffer";
+  let description = [{
+    Converts the ops of `md_exec` from the value form to the storage form.
+    Before the pass, a loop takes fields and returns fields. After it, a
+    loop takes the buffers that hold the fields and updates them where they
+    are.
+
+    Before:
+
+    ```mlir
+    %v0 = md_exec.empty : !md.field<@atoms, 3 x f64>
+    %v1 = md_exec.particle_for ins(%v, %f, %m : ...) outs(%v0 : ...) { ... }
+            -> !md.field<@atoms, 3 x f64>
+    ```
+
+    After, if `%v` is not used afterward:
+
+    ```mlir
+    md_exec.particle_for
+        ins(%v, %f, %m : memref<?x3xf64>, memref<?x3xf64>, memref<?xf64>)
+        outs(%v : memref<?x3xf64>) { ... }
+    ```
+
+    The pass decides which buffer holds which field, which loops write to
+    the buffer of a field that they read, and which buffers a loop carries.
+    It never copies a field: where a field needs a buffer of its own and
+    none is free, the pass fails and names the reason.
+
+    A neighbor structure gets storage, which is refreshed where it is.
+
+    Everything that depends on where a field is stored, such as its layout
+    or the device that holds it, is decided on the result of this pass.
+  }];
+  let dependentDialects = ["::mdir::md_exec::MDExecDialect",
+                           "::mlir::arith::ArithDialect",
+                           "::mlir::memref::MemRefDialect"];
+}
+
 #endif // MDIR_DIALECT_MDEXEC_TRANSFORMS_PASSES_TD

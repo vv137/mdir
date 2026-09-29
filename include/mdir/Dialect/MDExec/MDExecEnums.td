@@ -41,7 +41,9 @@ def MDExec_RebuildPolicy : I32EnumAttr<"RebuildPolicy",
     "when a neighbor structure is rebuilt", [
     // Whenever the validity condition fails. The condition is evaluated at
     // every refresh.
-    I32EnumAttrCase<"Check", 0, "check">
+    I32EnumAttrCase<"Check", 0, "check">,
+    // At every refresh.
+    I32EnumAttrCase<"Always", 1, "always">
   ]> {
   let cppNamespace = "::mdir::md_exec";
 }

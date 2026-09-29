@@ -33,8 +33,8 @@ static scf::ForOp reuseNeighbors(scf::ForOp loop) {
                            loop.getInitArgs().end());
   for (BuildNeighborsOp build : builds)
     inits.push_back(EmptyNeighborsOp::create(
-        builder, build.getLoc(), build.getResult().getType(),
-        build.getKind(), build.getWidth()));
+        builder, build.getLoc(), build.getResult().getType(), /*size=*/Value(),
+        /*element=*/TypeAttr(), build.getKindAttr(), build.getWidthAttr()));
 
   OperationState state(loc, scf::ForOp::getOperationName());
   state.addOperands(

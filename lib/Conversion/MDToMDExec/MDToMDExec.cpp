@@ -140,7 +140,8 @@ LogicalResult Converter::convertPairOp(OpTy op, bool isSum) {
   auto loop = md_exec::PairForOp::create(
       builder, loc, TypeRange(resultType), structure, op.getPositions(),
       op.getCell(), op.getGathered(), outs, reduce,
-      builder.getF64FloatAttr(cutoff), weights);
+      builder.getF64FloatAttr(cutoff), weights,
+      /*overwrite=*/DenseBoolArrayAttr());
 
   // The kernel receives the squared distance; the semantic kernel is
   // written in terms of the distance.

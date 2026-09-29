@@ -1,4 +1,9 @@
-// RUN: mdir-opt %s --convert-md-exec-to-loops | FileCheck %s
+// The two passes that take the value form to loops over buffers, together.
+// The storage form between them is tested in
+// test/Dialect/MDExec/Transforms/assign-storage.mlir.
+//
+// RUN: mdir-opt %s --md-exec-assign-storage --convert-md-exec-to-loops \
+// RUN: | FileCheck %s
 
 !vec   = !md.field<@atoms, 3 x f64>
 !real  = !md.field<@atoms, f64>
@@ -14,7 +19,7 @@ md.particle_set @atoms
 func.func @kick(%v: !vec, %f: !vec, %m: !real, %dt: f64) -> !vec {
   // CHECK:      %[[N:[a-z0-9_]+]] = memref.dim %[[V]],
   // CHECK-NOT:  memref.alloc
-  // CHECK:      scf.parallel (%[[I:[a-z0-9]+]]) = (%{{[a-z0-9_]+}}) to (%[[N]])
+  // CHECK:      scf.parallel (%[[I:[a-z0-9]+]]) = (%{{[a-z0-9_]+}}) to (%{{[a-z0-9_]+}})
   // CHECK:        memref.load %[[V]][%[[I]],
   // CHECK:        memref.load %[[F]][%[[I]],
   // CHECK:        memref.load %[[M]][%[[I]]]

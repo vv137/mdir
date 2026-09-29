@@ -1,4 +1,5 @@
-// RUN: mdir-opt %s --convert-md-exec-to-loops | FileCheck %s
+// RUN: mdir-opt %s --md-exec-assign-storage --convert-md-exec-to-loops \
+// RUN: | FileCheck %s
 
 !positions = !md.field<@atoms, 3 x f64>
 !forces    = !md.field<@atoms, 3 x f32>

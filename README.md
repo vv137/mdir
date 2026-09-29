@@ -77,7 +77,8 @@ build/bin/mdir-opt test/Dialect/MD/ops.mlir
 | `--md-exec-fuse-loops` | Fuses loops over the pairs of one neighbor structure. Run `--cse` after it. |
 | `--md-exec-simplify-distance` | Rewrites pair kernels in powers of the squared distance. Changes rounding. Run `--canonicalize --cse` after it. |
 | `--md-exec-assign-precision` | Assigns `f32` or `f64` to fields and kernels. Options: `mode=single`, `mixed`, or `double`, and a type per role. Run it last before the lowering. |
-| `--convert-md-exec-to-loops` | Assigns buffers and converts the loops to `scf` loops over `memref`s. |
+| `--md-exec-assign-storage` | Gives every field a buffer and converts the loops to the storage form, in which they update buffers where they are. |
+| `--convert-md-exec-to-loops` | Converts the loops in the storage form to `scf` loops over `memref`s. |
 
 After the last pass the module holds only upstream dialects, so `mlir-opt`
 lowers it to LLVM and `mlir-runner` runs it:
@@ -88,7 +89,7 @@ build/bin/mdir-opt input.mlir \
     --md-inline --convert-md-to-md-exec="skin=0.3 width=96" \
     --md-exec-reuse-neighbors --md-exec-fuse-loops --cse \
     --md-exec-assign-precision="mode=mixed" \
-    --convert-md-exec-to-loops \
+    --md-exec-assign-storage --convert-md-exec-to-loops \
   | mlir-opt --convert-scf-to-openmp --canonicalize \
       --convert-scf-to-cf --convert-math-to-llvm --convert-math-to-libm \
       --convert-vector-to-llvm --expand-strided-metadata \

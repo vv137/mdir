@@ -37,3 +37,17 @@ func.func @unused(%a: !md.field<@atoms, 3 x f64>)
     -> !md.field<@atoms, 3 x f64> {
   return %a : !md.field<@atoms, 3 x f64>
 }
+
+// -----
+
+md.particle_set @atoms
+
+func.func @storage(%v: memref<?x3xf64>) {
+  // expected-error@+1 {{is in the storage form; precision is assigned before storage}}
+  md_exec.particle_for ins(%v : memref<?x3xf64>)
+      outs(%v : memref<?x3xf64>) {
+  ^bb0(%v_i: vector<3xf64>):
+    md_exec.yield %v_i : vector<3xf64>
+  }
+  return
+}

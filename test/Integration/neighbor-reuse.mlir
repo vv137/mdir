@@ -1,13 +1,13 @@
 // A neighbor structure that a loop carries and refreshes: it is rebuilt only
 // when it is no longer valid, and it never misses a pair.
 //
-// RUN: mdir-opt %s --convert-md-exec-to-loops \
+// RUN: mdir-opt %s --md-exec-assign-storage --convert-md-exec-to-loops \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
 // RUN: | FileCheck %s
 
-// RUN: mdir-opt %s --convert-md-exec-to-loops \
+// RUN: mdir-opt %s --md-exec-assign-storage --convert-md-exec-to-loops \
 // RUN: | mlir-opt %lower_loops_to_openmp \
 // RUN: | env OMP_NUM_THREADS=4 mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%openmp \

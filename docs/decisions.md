@@ -292,6 +292,7 @@ P11 to P18 follow from the review of PPMD (Saunders et al. 2018). See
 | D29 | **The neighbor structure of M0 is the neighbor matrix.** |
 | D30 | **Vector fields are stored as `memref<?x3xT>` first.** The other layout comes later. |
 | D31 | **Precision is assigned by a pass on `md_exec`.** `md-exec-assign-precision` runs on the value form, after the transformations of that level and before storage assignment. Everything before it works on the reference program in `f64`. The type `!md.field` admits `f32` for this; the ops of `md` and `dyn` reject it (B2). |
+| D33 | **The storage handle of a field is a `memref`.** The storage form of the `md_exec` ops takes `memref<?x3xT>` and `memref<?xT>`. No storage type of its own is introduced: upstream passes and the upstream `gpu` dialect work on `memref`s, and the memory space of a `memref` can tell the device. This narrows D19, which placed a storage type in `mdrt`. |
 | D32 | **Buffers state the type that the state is stored in.** `mdrt.from_buffer` and `mdrt.to_buffer` accept a buffer of `f32` for a field of `f64`. Whoever allocates the state applies the roles `position` and `velocity`; the compiled program follows the buffers and never converts one (D18). For fields that no buffer holds, the pass derives the role from how the field is used. |
 
 ### 5.1 Amendments to earlier decisions
@@ -310,6 +311,7 @@ A1 to A10 come from an external review of revision 3 of the architecture.
 | A8 | **`md_dist` and `md_exec` are peer dialects.** Distributed lowering is performed first, so that `md_exec` lowering can specialize the regions that distribution creates. | Architecture wording |
 | A9 | **`!mdrt.event` is an opaque runtime completion object.** It is not tied one-to-one to a transport primitive. Its implementation may be one or more MPI requests, a CUDA event, or an NVSHMEM signal. | D10 |
 | A10 | **M2 has three parts.** M2a: constraints and virtual sites. M2b: PME on one node. M2c: distributed PME. | P3 |
+| A12 | **In the storage form, the ops of a block run in the order of the block.** The ops declare which buffers they read and write, so the upstream analyses keep that order where it matters. Event tokens (D10) are added when ops run asynchronously; until then nothing needs them. | D17 |
 | A11 | **Rebuilds are checked after the fact.** With the fixed-interval policy, the maximum displacement since the previous rebuild is measured at each rebuild. Violations of the validity condition are counted and reported. | P15 |
 
 ### 5.2 Choices made in the M0 specification
@@ -367,7 +369,7 @@ These items follow from the decisions above but have no design yet.
 | Lowering of `md_exec` to executable code on the CPU | M0 | Implemented |
 | Reuse of neighbor structures across steps, with the policy `check` | M0 | Implemented |
 | Rebuild policy `interval`, with the diagnostic of A11 | M0 | |
-| Storage form of the `md_exec` ops, as D17 decided | M0 | The lowering is direct for now; to be done before the GPU back end |
+| Storage form of the `md_exec` ops, as D17 decided | M0 | Implemented: `md-exec-assign-storage` |
 | Precision policy | M0 | Implemented for the CPU: single, mixed, and double |
 | Declaring the role of a field that a function takes | M0 | |
 | Vectorization of loops over pairs across pairs | M0 | Without it, single precision is no faster than double on the CPU |

@@ -5,7 +5,7 @@
 // RUN: mdir-opt %s %md_passes \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 // RUN:     --md-exec-assign-precision="mode=single" \
-// RUN:     --convert-md-exec-to-loops \
+// RUN:     --md-exec-assign-storage --convert-md-exec-to-loops \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
@@ -17,7 +17,7 @@
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" \
 // RUN:     %md_exec_fast_transforms \
 // RUN:     --md-exec-assign-precision="mode=single" \
-// RUN:     --convert-md-exec-to-loops \
+// RUN:     --md-exec-assign-storage --convert-md-exec-to-loops \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
@@ -26,7 +26,7 @@
 // RUN: mdir-opt %s %md_passes \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 // RUN:     --md-exec-assign-precision="mode=single" \
-// RUN:     --convert-md-exec-to-loops \
+// RUN:     --md-exec-assign-storage --convert-md-exec-to-loops \
 // RUN: | mlir-opt %lower_loops_to_openmp \
 // RUN: | env OMP_NUM_THREADS=4 mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%openmp \

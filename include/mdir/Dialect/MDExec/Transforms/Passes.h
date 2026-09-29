@@ -13,6 +13,9 @@ class ArithDialect;
 namespace math {
 class MathDialect;
 } // namespace math
+namespace memref {
+class MemRefDialect;
+} // namespace memref
 } // namespace mlir
 
 namespace mdir {

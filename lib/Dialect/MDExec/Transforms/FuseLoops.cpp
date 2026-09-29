@@ -92,7 +92,8 @@ static void fuse(PairForOp first, PairForOp second) {
   auto fused = PairForOp::create(
       builder, loc, resultTypes, first.getNeighbors(), first.getPositions(),
       first.getCell(), ins, outs, reduce, first.getCutoffAttr(), weightsAttr,
-      first.getTraversalAttr(), first.getConflictAttr());
+      /*overwrite=*/DenseBoolArrayAttr(), first.getTraversalAttr(),
+      first.getConflictAttr());
 
   // The kernel: the first kernel, then the second.
   Block *block = new Block();
@@ -161,9 +162,12 @@ static void fuse(PairForOp first, PairForOp second) {
 /// Fuses two loops of `block`, if two can be fused. Returns true if it did.
 static bool fuseOnce(Block &block) {
   SmallVector<PairForOp> loops;
+  // Fusion relies on the value form: in the storage form, what a loop
+  // depends on is not visible in its operands.
   for (Operation &op : block)
     if (auto loop = dyn_cast<PairForOp>(&op))
-      loops.push_back(loop);
+      if (!loop.isStorageForm())
+        loops.push_back(loop);
 
   for (unsigned i = 0, e = loops.size(); i != e; ++i) {
     for (unsigned j = i + 1; j != e; ++j) {

@@ -1,6 +1,9 @@
-// Ops of the md_exec dialect, in the value form.
+// Ops of the md_exec dialect.
 //
-// See docs/ops-m0.md, Section 8, for the specification.
+// The ops that touch fields have two forms. In the value form they take
+// fields and return fields. In the storage form they take the buffers that
+// hold the fields and update them where they are. See docs/ops-m0.md,
+// Section 8, for the specification.
 
 #ifndef MDIR_DIALECT_MDEXEC_MDEXECOPS_TD
 #define MDIR_DIALECT_MDEXEC_MDEXECOPS_TD
@@ -12,6 +15,12 @@ include "mdir/Dialect/MD/MDTypes.td"
 include "mdir/Dialect/MDExec/MDExecDialect.td"
 include "mdir/Dialect/MDExec/MDExecEnums.td"
 include "mdir/Dialect/MDRT/MDRTTypes.td"
+
+def MDExec_Buffer : Type<
+    CPred<"::mdir::md_exec::isBufferType($_self)">,
+    "buffer of a field", "::mlir::MemRefType">;
+
+def MDExec_FieldOrBuffer : AnyTypeOf<[MD_FieldType, MDExec_Buffer]>;
 
 //===----------------------------------------------------------------------===//
 // Destinations
@@ -154,7 +163,9 @@ def MDExec_BuildNeighborsOp : MDExec_Op<"build_neighbors", [Pure]> {
   let hasVerifier = 1;
 }
 
-def MDExec_EmptyNeighborsOp : MDExec_Op<"empty_neighbors", [Pure]> {
+def MDExec_EmptyNeighborsOp : MDExec_Op<"empty_neighbors", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
   let summary = "A neighbor structure that is valid for no configuration";
   let description = [{
     The first refresh of the structure builds it.
@@ -163,21 +174,36 @@ def MDExec_EmptyNeighborsOp : MDExec_Op<"empty_neighbors", [Pure]> {
     %nl0 = md_exec.empty_neighbors kind(matrix) width(96)
              : !mdrt.neighbors<@atoms>
     ```
+
+    In the storage form the op allocates the storage of a structure for
+    `size` particles whose positions have the type `element`.
+
+    ```mlir
+    %nl = md_exec.empty_neighbors size(%n) element(f32)
+            kind(matrix) width(96) : !mdrt.neighbors<@atoms>
+    ```
   }];
   let arguments = (ins
+    Optional<Index>:$size,
+    OptionalAttr<TypeAttr>:$element,
     MDExec_NeighborKind:$kind,
     I64Attr:$width
   );
   let results = (outs MDRT_NeighborsType:$result);
   let assemblyFormat = [{
+    (`size` `(` $size^ `)` `element` `(` $element `)`)?
     `kind` `(` $kind `)` `width` `(` $width `)` attr-dict
     `:` qualified(type($result))
+  }];
+  let extraClassDeclaration = [{
+    bool isStorageForm() { return static_cast<bool>(getSize()); }
   }];
   let hasVerifier = 1;
 }
 
 def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
-    Pure, AllTypesMatch<["neighbors", "result"]>
+    AllTypesMatch<["neighbors", "result"]>,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let summary = "A neighbor structure that is valid for a configuration";
   let description = [{
@@ -191,7 +217,8 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
     max_i |x_i − x_ref,i| ≤ skin / 2
     ```
 
-    Under that condition it contains every pair within the cutoff.
+    Under that condition it contains every pair within the cutoff. With the
+    policy `always` the structure is built whether it is valid or not.
 
     `cell_width` is the width of the cells that a rebuild bins the particles
     into.
@@ -201,10 +228,19 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
              cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
              : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
     ```
+
+    In the storage form `positions` is a buffer. The structure is rebuilt
+    where it is, and the result is `neighbors` itself.
+
+    ```mlir
+    %nl1 = md_exec.refresh_neighbors %nl, %x, %cell
+             cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
+             : !mdrt.neighbors<@atoms>, memref<?x3xf64>
+    ```
   }];
   let arguments = (ins
     MDRT_NeighborsType:$neighbors,
-    MD_FieldType:$positions,
+    MDExec_FieldOrBuffer:$positions,
     MD_CellType:$cell,
     F64Attr:$cutoff,
     F64Attr:$skin,
@@ -219,20 +255,31 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
     `cell_width` `(` $cell_width `)` `policy` `(` $policy `)` attr-dict
     `:` qualified(type($neighbors)) `,` qualified(type($positions))
   }];
+  let extraClassDeclaration = [{
+    bool isStorageForm() {
+      return ::llvm::isa<::mlir::MemRefType>(getPositions().getType());
+    }
+  }];
   let hasVerifier = 1;
 }
 
-def MDExec_RebuildCountOp : MDExec_Op<"rebuild_count", [Pure]> {
+def MDExec_RebuildCountOp : MDExec_Op<"rebuild_count"> {
   let summary = "The number of times a neighbor structure has been built";
   let description = [{
     Counts the builds of the structure since it was created, the first one
     included.
 
+    The type of a neighbor structure is the same in both forms, so the op
+    cannot tell them apart. It reads the structure, which in the storage
+    form changes where it is.
+
     ```mlir
     %builds = md_exec.rebuild_count %nl : !mdrt.neighbors<@atoms>
     ```
   }];
-  let arguments = (ins MDRT_NeighborsType:$neighbors);
+  let arguments = (ins
+    Arg<MDRT_NeighborsType, "the structure", [MemRead]>:$neighbors
+  );
   let results = (outs I64:$result);
   let assemblyFormat = [{
     $neighbors attr-dict `:` qualified(type($neighbors))
@@ -253,7 +300,8 @@ def MDExec_YieldOp : MDExec_Op<"yield", [
 }
 
 def MDExec_PairForOp : MDExec_Op<"pair_for", [
-    AttrSizedOperandSegments, RecursiveMemoryEffects, SingleBlock
+    AttrSizedOperandSegments, RecursiveMemoryEffects, SingleBlock,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let summary = "Runs a kernel over the pairs of a neighbor structure";
   let description = [{
@@ -282,16 +330,34 @@ def MDExec_PairForOp : MDExec_Op<"pair_for", [
     } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
         -> !md.field<@atoms, 3 x f64>, f64
     ```
+
+    In the storage form the positions and the fields are buffers. A buffer
+    in `outs` is updated where it is, and the op has results for the values
+    in `reduce` only. `overwrite` has one flag per buffer in `outs`: if it
+    is set, the loop ignores what the buffer holds, as if it held zeros. If
+    it is absent, no flag is set.
+
+    ```mlir
+    %u = md_exec.pair_for %nl, %x, %cell
+           outs(%f : memref<?x3xf64>) reduce(%u0 : f64)
+           cutoff(2.5) weights [0.5] overwrite [true]
+           policy(directed, owner_only) {
+    ^bb0(%r2: f64, %d: vector<3xf64>):
+      ...
+      md_exec.yield %k_f, %k_u : vector<3xf64>, f64
+    } : !mdrt.neighbors<@atoms>, memref<?x3xf64> -> f64
+    ```
   }];
   let arguments = (ins
     MDRT_NeighborsType:$neighbors,
-    MD_FieldType:$positions,
+    MDExec_FieldOrBuffer:$positions,
     MD_CellType:$cell,
-    Variadic<MD_FieldType>:$ins,
-    Variadic<MD_FieldType>:$outs,
+    Variadic<MDExec_FieldOrBuffer>:$ins,
+    Variadic<MDExec_FieldOrBuffer>:$outs,
     Variadic<AnyType>:$reduce,
     F64Attr:$cutoff,
     OptionalAttr<DenseF64ArrayAttr>:$weights,
+    OptionalAttr<DenseBoolArrayAttr>:$overwrite,
     DefaultValuedAttr<MDExec_Traversal,
                       "::mdir::md_exec::Traversal::Directed">:$traversal,
     DefaultValuedAttr<MDExec_Conflict,
@@ -306,17 +372,29 @@ def MDExec_PairForOp : MDExec_Op<"pair_for", [
     (`reduce` `(` $reduce^ `:` type($reduce) `)`)?
     `cutoff` `(` $cutoff `)`
     (`weights` $weights^)?
+    (`overwrite` $overwrite^)?
     `policy` `(` $traversal `,` $conflict `)`
     $kernel attr-dict
     `:` qualified(type($neighbors)) `,` qualified(type($positions))
     (`->` qualified(type($results))^)?
+  }];
+  let extraClassDeclaration = [{
+    bool isStorageForm() {
+      return ::llvm::isa<::mlir::MemRefType>(getPositions().getType());
+    }
+    /// Returns true if the loop ignores what destination `index` holds.
+    bool overwrites(unsigned index) {
+      auto flags = getOverwrite();
+      return flags && (*flags)[index];
+    }
   }];
   let hasVerifier = 1;
   let hasRegionVerifier = 1;
 }
 
 def MDExec_ParticleForOp : MDExec_Op<"particle_for", [
-    AttrSizedOperandSegments, RecursiveMemoryEffects, SingleBlock
+    AttrSizedOperandSegments, RecursiveMemoryEffects, SingleBlock,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let summary = "Runs a kernel over particles";
   let description = [{
@@ -345,10 +423,25 @@ def MDExec_ParticleForOp : MDExec_Op<"particle_for", [
       md_exec.yield %v_new : vector<3xf64>
     } -> !md.field<@atoms, 3 x f64>
     ```
+
+    In the storage form the fields are buffers. A buffer in `outs` is
+    written where it is, and the op has results for the values in `reduce`
+    only. A buffer may be in `ins` and in `outs`: the kernel of a particle
+    reads and writes the values of that particle only.
+
+    ```mlir
+    md_exec.particle_for
+        ins(%v, %f, %m : memref<?x3xf64>, memref<?x3xf64>, memref<?xf64>)
+        outs(%v : memref<?x3xf64>) {
+    ^bb0(%v_i: vector<3xf64>, %f_i: vector<3xf64>, %m_i: f64):
+      ...
+      md_exec.yield %v_new : vector<3xf64>
+    }
+    ```
   }];
   let arguments = (ins
-    Variadic<MD_FieldType>:$ins,
-    Variadic<MD_FieldType>:$outs,
+    Variadic<MDExec_FieldOrBuffer>:$ins,
+    Variadic<MDExec_FieldOrBuffer>:$outs,
     Variadic<AnyType>:$reduce
   );
   let regions = (region SizedRegion<1>:$kernel);
@@ -359,6 +452,13 @@ def MDExec_ParticleForOp : MDExec_Op<"particle_for", [
     (`reduce` `(` $reduce^ `:` type($reduce) `)`)?
     $kernel attr-dict
     (`->` qualified(type($results))^)?
+  }];
+  let extraClassDeclaration = [{
+    bool isStorageForm() {
+      ::mlir::Value field =
+          getIns().empty() ? getOuts().front() : getIns().front();
+      return ::llvm::isa<::mlir::MemRefType>(field.getType());
+    }
   }];
   let hasVerifier = 1;
   let hasRegionVerifier = 1;

@@ -1,5 +1,6 @@
 add_mlir_dialect_library(MDIRMDExecTransforms
   AssignPrecision.cpp
+  AssignStorage.cpp
   FuseLoops.cpp
   ReuseNeighbors.cpp
   SimplifyDistance.cpp
@@ -11,12 +12,14 @@ add_mlir_dialect_library(MDIRMDExecTransforms
   MDIRMDExecPassIncGen
 
   LINK_LIBS PUBLIC
+  MDIRMD
   MDIRMDExec
   MDIRMDRT
   MLIRArithDialect
   MLIRFuncDialect
   MLIRIR
   MLIRMathDialect
+  MLIRMemRefDialect
   MLIRPass
   MLIRSCFDialect
   )

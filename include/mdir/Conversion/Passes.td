@@ -43,30 +43,22 @@ def ConvertMDToMDExec : Pass<"convert-md-to-md-exec", "::mlir::ModuleOp"> {
 
 def ConvertMDExecToLoops
     : Pass<"convert-md-exec-to-loops", "::mlir::ModuleOp"> {
-  let summary = "Converts md_exec loops to loops over buffers";
+  let summary = "Converts md_exec loops in the storage form to loops";
   let description = [{
-    Assigns a buffer to every field and emits `scf` loops that load from and
-    store to `memref`s.
+    Replaces every op of `md_exec` in the storage form, where it is, with
+    `scf` loops that load from and store to `memref`s.
 
     | Before | After |
     |---|---|
-    | A field | `memref<?x3xf64>` or `memref<?xT>` |
-    | A cell | `vector<3xf64>`, the edge lengths of an orthorhombic cell |
     | `md_exec.particle_for` | `scf.parallel` over the particles |
     | `md_exec.pair_for` | `scf.parallel` over the particles, with an `scf.for` over the neighbors of each |
-    | `md_exec.build_neighbors` | A call to the neighbor build template, which the pass adds to the module |
-    | `scf.for` that carries fields | `scf.for` that carries buffers |
+    | `md_exec.empty_neighbors` | The buffers of a neighbor matrix |
+    | `md_exec.refresh_neighbors` | The test of validity and a call to the neighbor build template, which the pass adds to the module |
+    | `md_exec.rebuild_count` | A load |
+    | A cell | `vector<3xf64>`, the edge lengths of an orthorhombic cell |
 
-    A loop over particles writes to the buffer of a field it reads when that
-    field is dead afterward. A loop over pairs writes to a buffer that holds
-    no live field. A loop that carries fields carries their buffers, together
-    with the buffers that its body needs beyond them; the body never
-    allocates.
-
-    The pass fails when it would have to copy a field.
-
-    The pass expects code in `func.func`s, as `md-inline` leaves it, and
-    lowers everything in double precision.
+    The pass decides nothing about buffers; `md-exec-assign-storage` has
+    done that. It rejects ops in the value form.
   }];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",

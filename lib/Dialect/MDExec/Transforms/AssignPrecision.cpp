@@ -275,13 +275,24 @@ LogicalResult Assigner::collect(Operation *op) {
         unite(result, destination);
     }
   };
+  auto checkForm = [&](auto loop) -> LogicalResult {
+    if (loop.isStorageForm())
+      return op->emitOpError()
+             << "is in the storage form; precision is assigned before "
+                "storage";
+    return success();
+  };
   if (auto loop = dyn_cast<PairForOp>(op)) {
+    if (failed(checkForm(loop)))
+      return failure();
     positions.push_back(loop.getPositions());
     collectLoop(loop, forces);
     pairLoops.push_back(loop);
     return success();
   }
   if (auto loop = dyn_cast<ParticleForOp>(op)) {
+    if (failed(checkForm(loop)))
+      return failure();
     collectLoop(loop, integrated);
     particleLoops.push_back(loop);
     return success();
