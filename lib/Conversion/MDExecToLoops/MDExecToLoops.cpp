@@ -35,6 +35,7 @@ extern const char *const neighborsMatrixTemplate;
 
 static const char *const buildNeighborsName = "mdrt.build_neighbors_matrix";
 static const char *const reportOverflowName = "mdrtReportNeighborOverflow";
+static const char *const countBuildName = "mdrtCountBuild";
 
 namespace {
 
@@ -298,6 +299,12 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
       ValueRange{positions, convertReal(builder, loc, box, real), reachValue,
                  widthValue, structure.counts, structure.index});
   Value largest = call.getResult(0);
+
+  // The runtime counts the builds, for the log of the run.
+  func::CallOp::create(
+      builder, loc,
+      getOrDeclare(countBuildName, builder.getFunctionType({}, {})),
+      ValueRange());
 
   // A row that is too narrow loses pairs. Stop.
   Type wide = builder.getI64Type();

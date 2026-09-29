@@ -19,6 +19,7 @@ llvm_config.with_environment("PATH", config.llvm_tools_dir, append_path=True)
 
 tool_dirs = [config.mdir_tools_dir, config.llvm_tools_dir]
 tools = [
+    "mdir-checkpoint",
     "mdir-opt",
     "mdir-run",
     "mlir-opt",
@@ -55,6 +56,10 @@ config.substitutions.append(
         os.path.join(config.llvm_lib_dir, "libomp" + config.llvm_shlib_ext),
     )
 )
+
+# Checkpoints need HDF5.
+if config.mdir_hdf5:
+    config.available_features.add("hdf5")
 
 # Tests that run on a GPU need the runtime for NVIDIA GPUs and a device.
 # The kernels find the device math library through CUDA_ROOT.

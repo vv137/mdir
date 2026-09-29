@@ -883,6 +883,8 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
       return op->emitOpError() << "calls a function that is not declared";
 
     SmallVector<Value> arguments;
+    // The buffers of the host that this call has taken, by type.
+    llvm::DenseMap<Type, unsigned> taken;
     for (auto [operand, type] :
          llvm::zip(call.getOperands(), callee.getArgumentTypes())) {
       if (!isField(operand.getType())) {
@@ -903,7 +905,8 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
       // The host reads a copy. The buffer that takes it is free again when
       // the call returns.
       SmallVector<Value, 2> &available = hostBuffers[type];
-      if (available.empty()) {
+      unsigned index = taken[type]++;
+      while (available.size() <= index) {
         Value size;
         if (failed(getSize(op, operand.getType(), size)))
           return failure();
@@ -911,7 +914,7 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
             root->builder, op->getLoc(), cast<MemRefType>(type),
             ValueRange{size}));
       }
-      Value host = available.back();
+      Value host = available[index];
       createTransfer(builder, op->getLoc(), host, buffer);
       arguments.push_back(host);
     }

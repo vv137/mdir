@@ -10,6 +10,7 @@
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
 #include "mdir/Driver/Builder.h"
+#include "mdir/Driver/Checkpoint.h"
 #include "mdir/Driver/Control.h"
 #include "mdir/Driver/Output.h"
 #include "mdir/Driver/System.h"
@@ -182,7 +183,58 @@ int main(int argc, char **argv) {
   auto system = readSystem(*control);
   if (!system)
     return fail(system.takeError());
-  assignVelocities(*control, *system);
+
+  bool writesCheckpoints = control->checkpointPeriod > 0;
+  bool isRestart = !control->restartInput.empty();
+  if ((writesCheckpoints || isRestart) && !hasCheckpointSupport())
+    return fail("this build of MDIR has no HDF5, which checkpoints need");
+
+  StringRef integrator =
+      control->integrator == Integrator::Leapfrog ? "LEAP" : "VVER";
+  double velocityOffset =
+      control->integrator == Integrator::Leapfrog ? -0.5 : 0.0;
+
+  // A run that continues an earlier one takes its state from the
+  // checkpoint. The file of the positions gives the types.
+  int64_t firstStep = 0;
+  double firstTime = 0.0;
+  std::vector<double> forces;
+  if (isRestart) {
+    auto checkpoint = readCheckpoint(control->restartInput);
+    if (!checkpoint)
+      return fail(checkpoint.takeError());
+    const std::string &path = control->restartInput;
+    if (checkpoint->getNumParticles() != system->getNumParticles())
+      return fail("'" + path + "' holds " +
+                  llvm::Twine(checkpoint->getNumParticles()) +
+                  " particles, but '" + control->pdbFile + "' holds " +
+                  llvm::Twine(system->getNumParticles()));
+    for (size_t i = 0, e = system->getNumParticles(); i != e; ++i)
+      if (checkpoint->species[i] != static_cast<int32_t>(system->types[i]))
+        return fail("particle " + llvm::Twine(i + 1) + " has another type "
+                    "in '" + path + "' than in '" + control->pdbFile + "'");
+    if (checkpoint->integrator != integrator)
+      return fail("'" + path + "' was written with the integrator " +
+                  checkpoint->integrator + ", and the run uses " +
+                  integrator + "; the velocities of the two are not of the "
+                  "same time");
+    for (int i = 0; i != 3; ++i)
+      if (checkpoint->box[i] != system->box[i])
+        return fail("the box of '" + path + "' differs from that of "
+                    "[boundary]");
+    if (control->integrator == Integrator::VelocityVerlet &&
+        checkpoint->forces.empty())
+      return fail("'" + path + "' holds no forces, which velocity Verlet "
+                  "begins a step with");
+
+    system->positions = checkpoint->positions;
+    system->velocities = checkpoint->velocities;
+    forces = checkpoint->forces;
+    firstStep = checkpoint->step;
+    firstTime = checkpoint->time;
+  } else {
+    assignVelocities(*control, *system);
+  }
 
   auto program = buildProgram(*control, *system);
   if (!program)
@@ -278,7 +330,6 @@ int main(int argc, char **argv) {
   if (!engine)
     return fail(engine.takeError());
 
-  bool single = program->state == Element::F32;
   (*engine)->registerSymbols([&](llvm::orc::MangleAndInterner interner) {
     llvm::orc::SymbolMap symbols;
     auto add = [&](StringRef name, void *function) {
@@ -287,12 +338,12 @@ int main(int argc, char **argv) {
     };
     add("_mlir_ciface_mdrtWriteEnergies",
         (void *)&_mlir_ciface_mdrtWriteEnergies);
-    add("_mlir_ciface_mdrtWriteFrame",
-        single ? (void *)&_mlir_ciface_mdrtWriteFrame_f32
-               : (void *)&_mlir_ciface_mdrtWriteFrame_f64);
-    add("_mlir_ciface_mdrtFinish",
-        single ? (void *)&_mlir_ciface_mdrtFinish_f32
-               : (void *)&_mlir_ciface_mdrtFinish_f64);
+    add("_mlir_ciface_mdrtWriteFrame", (void *)&_mlir_ciface_mdrtWriteFrame);
+    add("_mlir_ciface_mdrtFinish", (void *)&_mlir_ciface_mdrtFinish);
+    add("_mlir_ciface_mdrtWriteCheckpoint",
+        program->writesForces
+            ? (void *)&_mlir_ciface_mdrtWriteCheckpointWithForces
+            : (void *)&_mlir_ciface_mdrtWriteCheckpoint);
     return symbols;
   });
 
@@ -314,6 +365,12 @@ int main(int argc, char **argv) {
   size_t count = system->getNumParticles();
   Buffer<2> positions(system->positions, program->state, count);
   Buffer<2> velocities(system->velocities, program->state, count);
+  if (program->takesForces && forces.size() != 3 * count)
+    return fail("the run takes forces, but has none; this is a defect of "
+                "mdir-run");
+  Buffer<2> given(program->takesForces ? forces
+                                       : std::vector<double>(3 * count),
+                  program->force, count);
   Buffer<1> masses(system->masses, program->mass, count);
   std::vector<std::unique_ptr<Buffer<1>>> fields;
   for (const Program::Field &field : program->fields)
@@ -325,29 +382,56 @@ int main(int argc, char **argv) {
   SmallVector<void *> arguments;
   positions.addTo(arguments);
   velocities.addTo(arguments);
+  if (program->takesForces)
+    given.addTo(arguments);
   masses.addTo(arguments);
   for (auto &field : fields)
     field->addTo(arguments);
   for (double &edge : box)
     arguments.push_back(&edge);
   arguments.push_back(&timestep);
+  arguments.push_back(&firstStep);
 
   Output output;
+  output.state = program->state;
+  output.force = program->force;
+  output.firstStep = firstStep;
+  output.firstTime = firstTime;
   output.timestep = control->timestep;
   output.degreesOfFreedom = system->getDegreesOfFreedom();
   output.system = &*system;
   if (control->framePeriod > 0) {
     if (llvm::Error error = output.trajectory.open(
-            control->dcdFile, count, control->framePeriod, control->timestep,
-            control->box))
+            control->dcdFile, count, firstStep + control->framePeriod,
+            control->framePeriod, control->timestep, control->box))
       return fail(std::move(error));
     output.hasTrajectory = true;
+  }
+  if (writesCheckpoints) {
+    output.checkpointPath = control->restartOutput;
+    Checkpoint &checkpoint = output.checkpoint;
+    checkpoint.masses = system->masses;
+    checkpoint.species.assign(system->types.begin(), system->types.end());
+    for (int i = 0; i != 3; ++i)
+      checkpoint.box[i] = system->box[i];
+    checkpoint.integrator = integrator.str();
+    checkpoint.velocityOffset = velocityOffset;
+    checkpoint.precision =
+        control->precision == Precision::Single
+            ? "single"
+            : control->precision == Precision::Mixed ? "mixed" : "double";
+    checkpoint.timestep = control->timestep;
+    checkpoint.seed = control->seed;
   }
   setOutput(&output);
 
   std::fprintf(output.log, "MDIR: %zu particles, %lld steps of %g ps\n",
                count, static_cast<long long>(control->numSteps),
                control->timestep);
+  if (isRestart)
+    std::fprintf(output.log, "MDIR: continues after step %lld, from '%s'\n",
+                 static_cast<long long>(firstStep),
+                 control->restartInput.c_str());
   std::fprintf(output.log, "MDIR: compiled in %.2f s\n", compileTime);
   writeLogHeader(output);
 
@@ -366,6 +450,26 @@ int main(int argc, char **argv) {
                  simulated * 86400.0 / runTime);
   }
   std::fprintf(output.log, "\n");
+  if (writesCheckpoints)
+    std::fprintf(output.log, "MDIR: wrote %lld checkpoints to '%s'\n",
+                 static_cast<long long>(output.numCheckpoints),
+                 output.checkpointPath.c_str());
+
+  // The runtime has counted the builds of the neighbor structures.
+  if (auto count = (*engine)->lookup("mdrtGetBuildCount")) {
+    auto getCount = reinterpret_cast<int64_t (*)()>(*count);
+    int64_t builds = getCount();
+    std::fprintf(output.log, "MDIR: neighbor structures were built %lld "
+                             "times",
+                 static_cast<long long>(builds));
+    if (builds > 1 && control->numSteps > 0)
+      std::fprintf(output.log, ", every %.1f steps on average",
+                   static_cast<double>(control->numSteps) /
+                       static_cast<double>(builds - 1));
+    std::fprintf(output.log, "\n");
+  } else {
+    llvm::consumeError(count.takeError());
+  }
   if (output.hasEnergies && output.firstTotal != 0.0)
     std::fprintf(output.log,
                  "MDIR: the total energy changed by %.3e of its value\n",

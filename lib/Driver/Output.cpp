@@ -1,10 +1,11 @@
-// What a run writes: the log and the trajectory.
+// What a run writes: the log, the trajectory, and checkpoints.
 
 #include "mdir/Driver/Output.h"
 
 #include "mlir/ExecutionEngine/CRunnerUtils.h"
 
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -32,7 +33,7 @@ void DCDWriter::writeHeader() {
   std::memcpy(head.tag, "CORD", 4);
   std::memset(head.numbers, 0, sizeof(head.numbers));
   head.numbers[0] = numFrames;
-  head.numbers[1] = static_cast<int32_t>(period);
+  head.numbers[1] = static_cast<int32_t>(first);
   head.numbers[2] = static_cast<int32_t>(period);
   head.numbers[3] = numFrames * static_cast<int32_t>(period);
   // The time step, in units of 48.88821 fs.
@@ -59,13 +60,14 @@ void DCDWriter::writeHeader() {
 }
 
 llvm::Error DCDWriter::open(const std::string &path, size_t numParticles,
-                            int64_t period, double timestep,
+                            int64_t first, int64_t period, double timestep,
                             const double box[3]) {
   file = std::fopen(path.c_str(), "wb");
   if (!file)
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                    "cannot write '%s'", path.c_str());
   this->numParticles = numParticles;
+  this->first = first;
   this->period = period;
   this->timestep = timestep;
   for (int i = 0; i != 3; ++i)
@@ -125,8 +127,7 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
   double temperature =
       2.0 * kinetic / (output.degreesOfFreedom * units::boltzmann);
   std::fprintf(output.log, "INFO: %9lld %14.4f %14.4f %14.4f %14.4f %14.4f\n",
-               static_cast<long long>(step),
-               static_cast<double>(step) * output.timestep,
+               static_cast<long long>(step), output.getTime(step),
                total / units::energy, potential / units::energy,
                kinetic / units::energy, temperature);
   std::fflush(output.log);
@@ -137,49 +138,78 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
   output.lastTotal = total;
 }
 
-/// The values of a buffer with three numbers per particle, converted to
-/// the type `To` and scaled.
-template <typename From, typename To>
-static std::vector<To> readVectors(void *descriptor, double scale) {
-  auto *buffer = static_cast<StridedMemRefType<From, 2> *>(descriptor);
+/// The values of a buffer with three numbers per particle, scaled.
+/// `element` is the type that the buffer holds.
+static std::vector<double> readVectors(void *descriptor, Element element,
+                                       double scale = 1.0) {
+  auto *buffer = static_cast<StridedMemRefType<char, 2> *>(descriptor);
   int64_t count = buffer->sizes[0];
-  std::vector<To> values(3 * count);
+  std::vector<double> values(3 * count);
   for (int64_t i = 0; i != count; ++i)
-    for (int64_t c = 0; c != 3; ++c)
-      values[3 * i + c] = static_cast<To>(
-          scale * buffer->data[buffer->offset + i * buffer->strides[0] +
-                               c * buffer->strides[1]]);
+    for (int64_t c = 0; c != 3; ++c) {
+      int64_t index =
+          buffer->offset + i * buffer->strides[0] + c * buffer->strides[1];
+      double value;
+      if (element == Element::F32)
+        value = reinterpret_cast<float *>(buffer->data)[index];
+      else
+        value = reinterpret_cast<double *>(buffer->data)[index];
+      values[3 * i + c] = scale * value;
+    }
   return values;
 }
 
-template <typename From>
-static void writeFrame(void *positions) {
+void _mlir_ciface_mdrtWriteFrame(int64_t, void *positions) {
   Output &output = *current;
   if (!output.hasTrajectory)
     return;
-  std::vector<float> values =
-      readVectors<From, float>(positions, 1.0 / units::length);
-  output.trajectory.writeFrame(values.data());
+  std::vector<double> values =
+      readVectors(positions, output.state, 1.0 / units::length);
+  std::vector<float> narrow(values.begin(), values.end());
+  output.trajectory.writeFrame(narrow.data());
 }
 
-template <typename From>
-static void finish(void *positions, void *velocities) {
+void _mlir_ciface_mdrtFinish(void *positions, void *velocities) {
   Output &output = *current;
   if (!output.system)
     return;
-  output.system->positions = readVectors<From, double>(positions, 1.0);
-  output.system->velocities = readVectors<From, double>(velocities, 1.0);
+  output.system->positions = readVectors(positions, output.state);
+  output.system->velocities = readVectors(velocities, output.state);
 }
 
-void _mlir_ciface_mdrtWriteFrame_f32(int64_t, void *positions) {
-  writeFrame<float>(positions);
+/// Writes the state as a checkpoint. `forces` is null if the state has
+/// none.
+static void writeState(int64_t step, void *positions, void *velocities,
+                       void *forces) {
+  Output &output = *current;
+  if (output.checkpointPath.empty())
+    return;
+  Checkpoint &checkpoint = output.checkpoint;
+  checkpoint.step = step;
+  checkpoint.time = output.getTime(step);
+  checkpoint.positions = readVectors(positions, output.state);
+  checkpoint.velocities = readVectors(velocities, output.state);
+  checkpoint.forces.clear();
+  if (forces)
+    checkpoint.forces = readVectors(forces, output.force);
+
+  if (llvm::Error error =
+          writeCheckpoint(output.checkpointPath, checkpoint)) {
+    std::fprintf(stderr, "mdir-run: %s\n",
+                 llvm::toString(std::move(error)).c_str());
+    std::exit(1);
+  }
+  ++output.numCheckpoints;
 }
-void _mlir_ciface_mdrtWriteFrame_f64(int64_t, void *positions) {
-  writeFrame<double>(positions);
+
+void _mlir_ciface_mdrtWriteCheckpoint(int64_t step, void *positions,
+                                      void *velocities) {
+  writeState(step, positions, velocities, nullptr);
 }
-void _mlir_ciface_mdrtFinish_f32(void *positions, void *velocities) {
-  finish<float>(positions, velocities);
-}
-void _mlir_ciface_mdrtFinish_f64(void *positions, void *velocities) {
-  finish<double>(positions, velocities);
+
+void _mlir_ciface_mdrtWriteCheckpointWithForces(int64_t step,
+                                                void *positions,
+                                                void *velocities,
+                                                void *forces) {
+  writeState(step, positions, velocities, forces);
 }

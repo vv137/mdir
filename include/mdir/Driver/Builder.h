@@ -19,10 +19,11 @@ enum class Element { F32, F64 };
 
 /// The program of a run, and what the host must pass to it.
 ///
-/// The entry function takes, in this order: the buffers of the positions,
-/// of the velocities, and of the masses; one buffer for each field in
-/// `fields`; the three edge lengths of the cell, in nm; and the time step,
-/// in ps.
+/// The entry function takes, in this order: the buffers of the positions
+/// and of the velocities; the buffer of the forces, if `takesForces` is
+/// set; the buffer of the masses; one buffer for each field in `fields`;
+/// the three edge lengths of the cell, in nm; the time step, in ps; and the
+/// number of the step that the run begins after.
 struct Program {
   /// The module, as text.
   std::string module;
@@ -31,8 +32,15 @@ struct Program {
 
   /// The types that the buffers hold.
   Element state;
+  Element force;
   Element mass;
   Element parameter;
+
+  /// Whether the run begins with forces that it is given: a run that
+  /// continues an earlier one, with an integrator that carries forces.
+  bool takesForces = false;
+  /// Whether the state that a checkpoint holds has forces.
+  bool writesForces = false;
 
   /// The parameters that differ between the types, one value per particle,
   /// in the units of the control file.

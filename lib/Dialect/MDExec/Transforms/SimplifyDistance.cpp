@@ -49,8 +49,15 @@ private:
   /// ops that a form can be carried through. Returns false otherwise.
   bool carry(Operation *oldOp);
 
-  static void normalize(Form &form);
-  static Form multiply(const Form &lhs, const Form &rhs);
+  void normalize(Form &form);
+  Form multiply(const Form &lhs, const Form &rhs);
+
+  /// The place of `value` in the order in which the factors of a term are
+  /// multiplied: the order in which the values were first seen. It is the
+  /// same in every run of the compiler, unlike the order of addresses.
+  unsigned getPlace(Value value) {
+    return places.try_emplace(value, places.size()).first->second;
+  }
   static Form negate(Form form);
 
   /// A form with a single term that stands for the value `value`.
@@ -97,6 +104,7 @@ private:
   IRMapping mapping;
   llvm::DenseMap<Value, Form> forms;
   llvm::DenseMap<Value, Value> emitted;
+  llvm::DenseMap<Value, unsigned> places;
 
   /// The squared distance, and what is derived from it on demand.
   Value r2;
@@ -111,9 +119,9 @@ private:
 //===----------------------------------------------------------------------===//
 
 void Rewriter::normalize(Form &form) {
-  auto order = [](const std::pair<Value, int> &lhs,
-                  const std::pair<Value, int> &rhs) {
-    return lhs.first.getAsOpaquePointer() < rhs.first.getAsOpaquePointer();
+  auto order = [&](const std::pair<Value, int> &lhs,
+                   const std::pair<Value, int> &rhs) {
+    return getPlace(lhs.first) < getPlace(rhs.first);
   };
 
   for (Term &term : form) {

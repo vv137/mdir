@@ -300,6 +300,7 @@ P11 to P18 follow from the review of PPMD (Saunders et al. 2018). See
 | D37 | **Trajectories are written as DCD first.** XTC (D25) follows. |
 | D38 | **The control file is parsed with toml++**, which is added to the repository under `third_party`. |
 | D39 | **The schedule of a run is compiled.** The driver builds one function with a loop for each period of output, and the code calls the host to write. A field that the host reads is passed with `mdrt.host_call`; it stays where it is. The loop over checkpoint intervals is marked as a segment, and neighbor structures start empty in each of its iterations (R1). |
+| D40 | **A checkpoint holds the state as the next step needs it**: positions and velocities, and with velocity Verlet the forces. What MDIR needs beside the state is in the group `/parameters/mdir`. HDF5 1.14.6 is the pinned release; the releases from 2.0 on need a newer CMake than the machine has. |
 
 ### 5.1 Amendments to earlier decisions
 
@@ -384,7 +385,7 @@ These items follow from the decisions above but have no design yet.
 | Removal of the square root from kernels that do not need it | M0 | Implemented |
 | Freeing of buffers | M0 | |
 | Driver, TOML input, XTC and H5MD output | M0 | Driver, TOML input, and DCD output are implemented; see [driver-m0.md](driver-m0.md), Section 4 |
-| Checkpoints in H5MD, restart from a checkpoint | M0 | |
+| Checkpoints in H5MD, restart from a checkpoint | M0 | Implemented; a run that continues is exact |
 | Trajectory in XTC | M0 | |
 | GPU back end | M0 | Implemented for NVIDIA: `convert-md-exec-to-gpu`, `libmdrt_cuda` |
 | Global sums of vectors on a device, for the virial | M0 | |
@@ -393,8 +394,8 @@ These items follow from the decisions above but have no design yet.
 | Regression test for the numerical values of derivatives | M0 | Implemented with a kernel runner |
 | `mdrt` ABI: storage, neighbor structures, events | M0 | Proposal in [mdrt-m0.md](mdrt-m0.md) |
 | Schema of the TOML input | M0 | |
-| Layout of the MDIR group inside an H5MD checkpoint | M0 | |
-| HDF5 development files | M0 | The machine has the HDF5 runtime library but not its headers |
+| Layout of the MDIR group inside an H5MD checkpoint | M0 | Decided (D40); see driver-m0.md, Section 2.6 |
+| HDF5 development files | M0 | Installed by `scripts/build-hdf5.sh` |
 | Storage assignment pass | M0 | Specified in ops-m0.md, Section 10 |
 | Lowering of transcendental functions on GPU targets | M1 | Works on NVIDIA through `libdevice`; see ops-m0.md, Section 3.3. Open for AMD. |
 | Syntax for combining relations | M1 | |

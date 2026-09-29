@@ -5,6 +5,7 @@ config.llvm_lib_dir = lit_config.substitute("@LLVM_LIBRARY_DIR@")
 config.llvm_shlib_ext = "@SHLIBEXT@"
 config.mdir_obj_root = "@MDIR_BINARY_DIR@"
 config.mdir_cuda = @MDIR_TEST_CUDA@
+config.mdir_hdf5 = @MDIR_TEST_HDF5@
 config.mdir_cuda_root = "@MDIR_CUDA_ROOT@"
 
 import lit.llvm

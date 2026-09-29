@@ -1,0 +1,56 @@
+# A run that is continued from a checkpoint arrives at the state of the run
+# that was not interrupted, bit for bit: 200 steps at once, and 100 steps
+# followed by 100 steps from the checkpoint.
+#
+# REQUIRES: hdf5
+#
+# RUN: sed -e 's|Inputs/|%S/Inputs/|' \
+# RUN:     -e 's|nsteps        = 200|nsteps = 200\nrstout_period = 100|' \
+# RUN:     %S/mixture.toml > %t.whole.toml
+# RUN: echo '[output]' >> %t.whole.toml
+# RUN: echo 'rstfile = "%t.whole.h5"' >> %t.whole.toml
+# RUN: echo '[execution]' >> %t.whole.toml
+# RUN: echo 'threads = 4' >> %t.whole.toml
+# RUN: echo 'precision = "mixed"' >> %t.whole.toml
+#
+# RUN: sed -e 's|nsteps = 200|nsteps = 100|' -e 's|%t.whole.h5|%t.first.h5|' \
+# RUN:     %t.whole.toml > %t.first.toml
+# RUN: sed -e 's|%t.first.h5|%t.second.h5|' \
+# RUN:     -e 's|^pdbfile = \(.*\)|pdbfile = \1\nrstfile = "%t.first.h5"|' \
+# RUN:     %t.first.toml > %t.second.toml
+#
+# RUN: mdir-run %t.whole.toml | FileCheck %s --check-prefix=WHOLE
+# RUN: mdir-run %t.first.toml
+# RUN: mdir-run %t.second.toml | FileCheck %s --check-prefix=SECOND
+# RUN: mdir-checkpoint %t.whole.h5 %t.second.h5 | FileCheck %s
+# RUN: mdir-checkpoint %t.whole.h5 | FileCheck %s --check-prefix=ABOUT
+# RUN: not mdir-checkpoint %t.whole.h5 %t.first.h5 \
+# RUN: | FileCheck %s --check-prefix=DIFFERENT
+
+# CHECK: the states are identical
+
+# WHOLE:      INFO:         0         0.0000
+# WHOLE:      INFO:       150         0.6000 {{ *}}[[ROW150:-[0-9.]+ .*]]
+# WHOLE-NEXT: INFO:       200         0.8000 {{ *}}[[ROW200:-[0-9.]+ .*]]
+# WHOLE:      MDIR: wrote 2 checkpoints to
+
+# The log of the run that continues begins after the step of the
+# checkpoint, and its times continue.
+#
+# SECOND:      MDIR: continues after step 100, from
+# SECOND:      INFO:      STEP
+# SECOND-NEXT: INFO:       150         0.6000
+# SECOND-NEXT: INFO:       200         0.8000
+# SECOND:      MDIR: wrote 1 checkpoints to
+
+# ABOUT:      particles:       256
+# ABOUT-NEXT: step:            200
+# ABOUT-NEXT: time:            0.8 ps
+# ABOUT-NEXT: box:             2.32 2.32 2.32 nm
+# ABOUT-NEXT: forces:          yes
+# ABOUT-NEXT: integrator:      VVER
+# ABOUT-NEXT: velocity offset: 0 time steps
+# ABOUT-NEXT: precision:       mixed
+# ABOUT-NEXT: time step:       0.004 ps
+
+# DIFFERENT: the steps differ: 200 and 100

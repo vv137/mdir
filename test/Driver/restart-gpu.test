@@ -1,0 +1,32 @@
+# The test of restart.test on a GPU, with leapfrog, whose state has no
+# forces.
+#
+# REQUIRES: hdf5, cuda
+#
+# RUN: sed -e 's|Inputs/|%S/Inputs/|' -e 's|"VVER"|"LEAP"|' \
+# RUN:     -e 's|nsteps        = 200|nsteps = 200\nrstout_period = 100|' \
+# RUN:     %S/mixture.toml > %t.whole.toml
+# RUN: echo '[output]' >> %t.whole.toml
+# RUN: echo 'rstfile = "%t.whole.h5"' >> %t.whole.toml
+# RUN: echo '[execution]' >> %t.whole.toml
+# RUN: echo 'target = "gpu"' >> %t.whole.toml
+# RUN: echo 'precision = "single"' >> %t.whole.toml
+#
+# RUN: sed -e 's|nsteps = 200|nsteps = 100|' -e 's|%t.whole.h5|%t.first.h5|' \
+# RUN:     %t.whole.toml > %t.first.toml
+# RUN: sed -e 's|%t.first.h5|%t.second.h5|' \
+# RUN:     -e 's|^pdbfile = \(.*\)|pdbfile = \1\nrstfile = "%t.first.h5"|' \
+# RUN:     %t.first.toml > %t.second.toml
+#
+# RUN: mdir-run %t.whole.toml
+# RUN: mdir-run %t.first.toml
+# RUN: mdir-run %t.second.toml
+# RUN: mdir-checkpoint %t.whole.h5 %t.second.h5 | FileCheck %s
+# RUN: mdir-checkpoint %t.whole.h5 | FileCheck %s --check-prefix=ABOUT
+
+# CHECK: the states are identical
+
+# ABOUT: forces:          no
+# ABOUT: integrator:      LEAP
+# ABOUT: velocity offset: -0.5 time steps
+# ABOUT: precision:       single

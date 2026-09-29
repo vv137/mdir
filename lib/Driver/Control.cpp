@@ -532,9 +532,6 @@ Error Reader::read(const toml::table &root) {
     return error;
   if (control.pdbFile.empty())
     return fail(*table, "expected a 'pdbfile' in [input]");
-  if (!control.restartInput.empty())
-    return fail(*table->get("rstfile"),
-                "'rstfile' in [input] is not supported yet");
 
   if (Error error = getTable("output", /*required=*/false, table))
     return error;
@@ -547,9 +544,6 @@ Error Reader::read(const toml::table &root) {
       return error;
     if (Error error = readPath(*table, "rstfile", control.restartOutput))
       return error;
-    if (!control.restartOutput.empty())
-      return fail(*table->get("rstfile"),
-                  "'rstfile' in [output] is not supported yet");
   }
 
   if (Error error = getTable("energy", /*required=*/true, table))
@@ -579,6 +573,16 @@ Error Reader::read(const toml::table &root) {
     if (Error error = readExecution(*table))
       return error;
 
+  if (control.checkpointPeriod != 0 && control.restartOutput.empty())
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "%s: 'rstout_period' is given, but [output] names no 'rstfile'",
+        path.str().c_str());
+  if (control.checkpointPeriod == 0 && !control.restartOutput.empty())
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "%s: [output] names an 'rstfile', but 'rstout_period' is not given",
+        path.str().c_str());
   if (control.framePeriod != 0 && control.dcdFile.empty())
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
@@ -607,9 +611,11 @@ llvm::Expected<Control> mdir::driver::readControl(StringRef path) {
 std::string mdir::driver::getControlTemplate() {
   return R"TOML([input]
 pdbfile = "system.pdb"          # positions; the name of an atom is its type
+# rstfile = "earlier.h5"        # the state that the run continues from
 
 [output]
 dcdfile = "run.dcd"             # trajectory of positions
+# rstfile = "run.h5"            # checkpoint, with rstout_period
 
 [energy]
 cutoffdist       = 12.0         # cutoff (Å)
@@ -635,6 +641,7 @@ timestep      = 0.001           # ps
 nsteps        = 100
 eneout_period = 10              # steps between energies in the log; 0: none
 crdout_period = 0               # steps between frames; 0: none
+rstout_period = 0               # steps between checkpoints; 0: none
 iseed         = 314159          # seed of the initial velocities
 
 [ensemble]

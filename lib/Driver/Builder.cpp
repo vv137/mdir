@@ -54,6 +54,7 @@ private:
   bool isLeapfrog() const {
     return control.integrator == Integrator::Leapfrog;
   }
+  bool isRestart() const { return !control.restartInput.empty(); }
 
   const Control &control;
   const System &system;
@@ -391,8 +392,10 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
          << ", %c1 : index\n";
       os << inner << "%steps" << here << " = arith.muli %done" << here
          << ", %per" << here << " : index\n";
-      os << inner << "%step" << here << " = arith.index_cast %steps" << here
-         << " : index to i64\n";
+      os << inner << "%since" << here << " = arith.index_cast %steps"
+         << here << " : index to i64\n";
+      os << inner << "%step" << here << " = arith.addi %since" << here
+         << ", %start : i64\n";
     };
 
     if (current.name == "energy") {
@@ -424,6 +427,13 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         os << inner << "mdrt.host_call @mdrtWriteFrame(%step" << here
            << ", %x" << last << ") : (i64, !vec)\n";
       }
+      if (current.name == "segment") {
+        // The state as the next step needs it.
+        emitStep();
+        os << inner << "mdrt.host_call @mdrtWriteCheckpoint(%step" << here
+           << ", " << getValues(last) << ")\n"
+           << inner << "    : (i64, " << state << ")\n";
+      }
       os << inner << "scf.yield " << getValues(last) << " : " << state
          << "\n";
     }
@@ -437,6 +447,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
 
 void Builder::emitEntry() {
   StringRef state = getName(program.state);
+  StringRef force = getName(program.force);
   StringRef mass = getName(program.mass);
   StringRef parameter = getName(program.parameter);
 
@@ -446,14 +457,25 @@ void Builder::emitEntry() {
      << ">)\n    attributes {llvm.emit_c_interface}\n"
      << "func.func private @mdrtFinish(memref<?x3x" << state
      << ">, memref<?x3x" << state << ">)\n"
-     << "    attributes {llvm.emit_c_interface}\n\n";
+     << "    attributes {llvm.emit_c_interface}\n";
+  if (control.checkpointPeriod > 0) {
+    os << "func.func private @mdrtWriteCheckpoint(i64, memref<?x3x" << state
+       << ">, memref<?x3x" << state << ">";
+    if (program.writesForces)
+      os << ", memref<?x3x" << force << ">";
+    os << ")\n    attributes {llvm.emit_c_interface}\n";
+  }
+  os << "\n";
 
   os << "func.func @" << program.entry << "(\n"
      << "    %positions: memref<?x3x" << state << ">, %velocities: memref<?x3x"
-     << state << ">,\n    %masses: memref<?x" << mass << ">";
+     << state << ">,\n";
+  if (program.takesForces)
+    os << "    %forces: memref<?x3x" << force << ">,\n";
+  os << "    %masses: memref<?x" << mass << ">";
   for (const Program::Field &field : program.fields)
     os << ", %b_" << field.name << ": memref<?x" << parameter << ">";
-  os << ",\n    %lx: f64, %ly: f64, %lz: f64, %dt: f64) {\n";
+  os << ",\n    %lx: f64, %ly: f64, %lz: f64, %dt: f64, %start: i64) {\n";
 
   os << "  %c0 = arith.constant 0 : index\n"
      << "  %c1 = arith.constant 1 : index\n";
@@ -474,7 +496,7 @@ void Builder::emitEntry() {
   os << "  %cell = md.orthorhombic_cell %lx, %ly, %lz\n"
      << "  %x0 = mdrt.from_buffer %positions : memref<?x3x" << state
      << "> to !vec\n"
-     << "  " << (isLeapfrog() ? "%vg" : "%v0")
+     << "  " << (isLeapfrog() && !isRestart() ? "%vg" : "%v0")
      << " = mdrt.from_buffer %velocities : memref<?x3x" << state
      << "> to !vec\n"
      << "  %m = mdrt.from_buffer %masses : memref<?x" << mass
@@ -483,20 +505,27 @@ void Builder::emitEntry() {
     os << "  %p_" << field.name << " = mdrt.from_buffer %b_" << field.name
        << " : memref<?x" << parameter << "> to !real\n";
 
-  // The energies at the start.
-  os << "  %u0, %f0 = md.evaluate @energy(%x0, %cell" << getFieldValues()
-     << ")\n      request [energy, forces]\n      : (!vec, !md.cell"
-     << getFieldTypes() << ") -> (f64, !vec)\n";
-  emitKineticEnergy(os, "%k0", isLeapfrog() ? "%vg" : "%v0", "  ");
-  os << "  %first = arith.constant 0 : i64\n"
-     << "  call @mdrtWriteEnergies(%first, %u0, %k0) : (i64, f64, f64) -> "
-        "()\n";
+  if (isRestart()) {
+    // The run continues an earlier one: the state is as the next step
+    // needs it, and the log has the energies of the step before.
+    if (program.takesForces)
+      os << "  %f0 = mdrt.from_buffer %forces : memref<?x3x" << force
+         << "> to !vec\n";
+  } else {
+    // The energies at the start.
+    os << "  %u0, %f0 = md.evaluate @energy(%x0, %cell" << getFieldValues()
+       << ")\n      request [energy, forces]\n      : (!vec, !md.cell"
+       << getFieldTypes() << ") -> (f64, !vec)\n";
+    emitKineticEnergy(os, "%k0", isLeapfrog() ? "%vg" : "%v0", "  ");
+    os << "  call @mdrtWriteEnergies(%start, %u0, %k0) : (i64, f64, f64) "
+          "-> ()\n";
 
-  if (isLeapfrog()) {
-    // v(-dt/2) = v(0) - (dt/2) F(0) / m.
-    os << "  %back = arith.constant -5.0e-01 : f64\n"
-       << "  %behind = arith.mulf %back, %dt : f64\n"
-       << "  %v0 = dyn.kick %vg, %f0, %m, %behind : !vec\n";
+    if (isLeapfrog()) {
+      // v(-dt/2) = v(0) - (dt/2) F(0) / m.
+      os << "  %back = arith.constant -5.0e-01 : f64\n"
+         << "  %behind = arith.mulf %back, %dt : f64\n"
+         << "  %v0 = dyn.kick %vg, %f0, %m, %behind : !vec\n";
+    }
   }
 
   emitLevel(0, "  ");
@@ -508,16 +537,21 @@ llvm::Error Builder::build() {
   program.entry = "mdir_run";
   switch (control.precision) {
   case Precision::Single:
-    program.state = program.mass = program.parameter = Element::F32;
+    program.state = program.mass = Element::F32;
+    program.force = program.parameter = Element::F32;
     break;
   case Precision::Mixed:
     program.state = program.mass = Element::F64;
-    program.parameter = Element::F32;
+    program.force = program.parameter = Element::F32;
     break;
   case Precision::Double:
-    program.state = program.mass = program.parameter = Element::F64;
+    program.state = program.mass = Element::F64;
+    program.force = program.parameter = Element::F64;
     break;
   }
+  // Velocity Verlet begins a step with the forces of the step before.
+  program.writesForces = !isLeapfrog();
+  program.takesForces = isRestart() && !isLeapfrog();
 
   program.skin =
       (control.pairlistDistance - control.cutoffDistance) * units::length;

@@ -4,7 +4,8 @@ MDIR is an MLIR-based compiler stack for general-purpose molecular dynamics.
 It is at an early stage. A Lennard-Jones system compiles and runs on the
 CPU, sequentially or with OpenMP, and on NVIDIA GPUs, in single, mixed, or
 double precision, and reproduces reference values. A driver reads a control
-file and writes a log and a trajectory; checkpoints are not written yet.
+file and writes a log, a trajectory, and checkpoints, from which a run
+continues exactly.
 
 ## Documents
 
@@ -26,6 +27,7 @@ file and writes a log and a trajectory; checkpoints are not written yet.
 - `lit`, for the tests (`pip install lit`)
 - For NVIDIA GPUs: the driver, and the CUDA toolkit for its header and its
   device math library. Version 11.2 is known to work.
+- For checkpoints: HDF5, built with `scripts/build-hdf5.sh`
 
 ## Building LLVM
 
@@ -37,6 +39,15 @@ The script clones the release, builds it with MLIR and the X86, NVPTX, and
 AMDGPU targets, and installs it to `$LLVM_ROOT/23.1.2`. It then builds the
 OpenMP runtime from the same source and installs it to the same place.
 
+## Building HDF5
+
+```sh
+HDF5_ROOT=$HOME/opt/hdf5 scripts/build-hdf5.sh
+```
+
+The script installs HDF5 1.14.6 to `$HDF5_ROOT/1.14.6`. Without HDF5, MDIR
+is built all the same and writes no checkpoints.
+
 ## Building MDIR
 
 ```sh
@@ -47,7 +58,8 @@ cmake -G Ninja -S . -B build \
     -DLLVM_ENABLE_ASSERTIONS=ON \
     -DMLIR_DIR=$LLVM_PREFIX/lib/cmake/mlir \
     -DLLVM_DIR=$LLVM_PREFIX/lib/cmake/llvm \
-    -DLLVM_EXTERNAL_LIT=$(command -v lit)
+    -DLLVM_EXTERNAL_LIT=$(command -v lit) \
+    -DHDF5_ROOT=$HOME/opt/hdf5/1.14.6
 
 cmake --build build
 ```

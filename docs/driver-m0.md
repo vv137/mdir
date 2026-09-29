@@ -1,7 +1,7 @@
 # Driver and Control File for Milestone M0
 
-Status: decided (2026-09-29). Implemented except for the checkpoint; see
-Section 4.
+Status: decided (2026-09-29) and implemented; see Section 4 for what is
+left.
 
 This document describes the driver of MDIR and its input, the control file.
 
@@ -82,9 +82,9 @@ Keywords are in lower case. Values that name a choice, such as `VVER` and
 | Table | Keyword | Meaning in MDIR |
 |---|---|---|
 | `input` | `pdbfile` | Positions. The name of an atom selects its type. |
-| | `rstfile` | The state of an earlier run (D26) |
+| | `rstfile` | The checkpoint of an earlier run, which the run continues. It replaces the positions of `pdbfile`; the types still come from there. |
 | `output` | `dcdfile`, `xtcfile` | Trajectory of positions |
-| | `rstfile` | Checkpoint (D26) |
+| | `rstfile` | The checkpoint (D26). It is written every `rstout_period` steps, each time in place of the one before. |
 | `energy` | `cutoffdist` | The cutoff of `md.neighborhood` |
 | | `switchdist` | `truncation(switch, from = ...)`. Equal to `cutoffdist`: no switching. |
 | | `vdw_force_switch` | `truncation(force_switch, from = ...)` |
@@ -233,6 +233,46 @@ With leapfrog, the stored velocities are half a step behind the positions.
 The kinetic energy of a row of the log is that of the stored velocities,
 not that of the time of the row.
 
+### 2.6 Checkpoints
+
+A checkpoint is a file in the H5MD format, version 1.1, with all numbers in
+64 bits (D26). It holds the state as the next step needs it.
+
+```text
+/h5md                         version, author, creator
+/particles/all/box            dimension, boundary, edges
+/particles/all/position       step, time, value
+/particles/all/velocity       step, time, value
+/particles/all/force          step, time, value     with velocity Verlet
+/particles/all/id             the numbers of the particles
+/particles/all/species        the types of the particles
+/particles/all/mass
+/parameters/mdir              format, integrator, velocity_offset,
+                              precision, timestep, seed
+```
+
+The units are those inside MDIR and are written with the data: nm, ps, u,
+and kJ/mol.
+
+| Rule | Reason |
+|---|---|
+| A value of 32 bits is stored in 64. | The conversion is exact in both directions, so a run in single precision continues without loss. |
+| With velocity Verlet the checkpoint holds the forces. | A step begins with the forces of the step before. Forces that are computed again from the positions differ in their last bits, because a neighbor structure that is built again has another order. |
+| With leapfrog the time of the velocities is half a step before that of the positions. | The file says what it holds. |
+| Neighbor structures start empty after every checkpoint (R1). | The run that continues builds its structure at the first step. The run that was not interrupted must build there too. |
+| The file appears under its name only when it is complete. | A run that ends while it writes leaves the checkpoint before. |
+
+A run that continues from a checkpoint arrives at the state of the run that
+was not interrupted, bit for bit. This holds on the CPU and on a GPU, in
+every precision mode, and for both integrators; the tests compare the
+states. The two runs must have the same `rstout_period`.
+
+A run cannot continue with another integrator: the velocities of the two
+are not of the same time. It cannot continue in another box.
+
+`mdir-checkpoint file.h5` describes a checkpoint, and `mdir-checkpoint
+first.h5 second.h5` compares the states of two.
+
 ## 3. Decided
 
 | # | Question | Decision |
@@ -240,7 +280,7 @@ not that of the time of the row.
 | 1 | The tables and keywords of the control file | As in Section 1 (D35) |
 | 2 | The units of the control file | Å, kcal/mol, ps (D36) |
 | 3 | The trajectory format | DCD first; XTC follows (D37) |
-| 4 | The checkpoint | H5MD (D26). HDF5 is installed in the home directory. |
+| 4 | The checkpoint | H5MD (D26, D40), with HDF5 1.14.6, which `scripts/build-hdf5.sh` installs |
 | 5 | The TOML library | toml++, in the repository (D38) |
 | 6 | The schedule | Compiled (D39) |
 
@@ -255,6 +295,8 @@ not that of the time of the row.
 | Log | Implemented |
 | Trajectory in the DCD format | Implemented |
 | Initial velocities | Implemented. The sequence of random numbers is fixed by the seed and does not depend on a library. |
+| Checkpoints in H5MD, and runs that continue from one | Implemented |
+| The number of builds of the neighbor structures, in the log | Implemented |
 | `nbupdate_period` | Not implemented; the keyword is an error |
-| Checkpoint, `rstfile` | Not implemented; the keyword is an error |
 | Trajectory in the XTC format | Not implemented |
+| Velocities in the trajectory, `dcdvelfile` | Not implemented |

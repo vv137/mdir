@@ -1201,6 +1201,10 @@ switching function of Section 4.8, and nearly all of them in `f32`.
 The product of a sum with a single term is multiplied out. It scales every
 term of the sum by the same factor and loses nothing.
 
+The factors of a term are multiplied in the order in which the kernel first
+uses them. The code that the pass emits is the same in every run of the
+compiler, so a program that is compiled twice computes the same bits.
+
 | Power | Computed from |
 |---|---|
 | Even and positive | `r²` |

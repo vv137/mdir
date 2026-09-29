@@ -7,6 +7,13 @@ else()
   set(MDIR_TEST_CUDA 0)
 endif()
 
+get_property(MDIR_HDF5_FOUND GLOBAL PROPERTY MDIR_HDF5_FOUND)
+if(MDIR_HDF5_FOUND)
+  set(MDIR_TEST_HDF5 1)
+else()
+  set(MDIR_TEST_HDF5 0)
+endif()
+
 configure_lit_site_cfg(
   ${CMAKE_CURRENT_SOURCE_DIR}/lit.site.cfg.py.in
   ${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg.py
@@ -15,6 +22,7 @@ configure_lit_site_cfg(
   )
 
 set(MDIR_TEST_DEPENDS
+  mdir-checkpoint
   mdir-opt
   mdir-run
   mdrt
