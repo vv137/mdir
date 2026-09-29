@@ -5,6 +5,7 @@
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
+#include "mlir/IR/Operation.h"
 #include "llvm/ADT/TypeSwitch.h"
 
 using namespace mlir;
@@ -50,15 +51,15 @@ LogicalResult FieldType::verify(function_ref<InFlightDiagnostic()> emitError,
   if (numComponents != 1 && numComponents != 3)
     return emitError() << "expected 1 or 3 components, got " << numComponents;
 
-  bool isReal = elementType.isF64();
+  bool isReal = elementType.isF64() || elementType.isF32();
   bool isInteger =
       elementType.isSignlessInteger(32) || elementType.isSignlessInteger(64);
   if (!isReal && !isInteger)
-    return emitError() << "expected element type f64, i32, or i64, got "
+    return emitError() << "expected element type f64, f32, i32, or i64, got "
                        << elementType;
   if (numComponents == 3 && !isReal)
     return emitError() << "a field with 3 components must have element type "
-                          "f64, got "
+                          "f64 or f32, got "
                        << elementType;
   return success();
 }
@@ -68,6 +69,20 @@ Type FieldType::getKernelValueType() const {
     return getElementType();
   return VectorType::get({static_cast<int64_t>(getNumComponents())},
                          getElementType());
+}
+
+LogicalResult mdir::md::verifyReferencePrecision(Operation *op,
+                                                 FunctionType type) {
+  for (Type part : llvm::concat<const Type>(type.getInputs(),
+                                            type.getResults())) {
+    auto field = dyn_cast<FieldType>(part);
+    if (field && field.getElementType().isF32())
+      return op->emitOpError()
+             << "expected fields at the reference precision, with elements "
+                "of type f64, got "
+             << part;
+  }
+  return success();
 }
 
 //===----------------------------------------------------------------------===//

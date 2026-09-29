@@ -441,9 +441,14 @@ structural plan parameter, assigned per role (S8).
 | Double | `f64` | `f64` | `f64` |
 
 The semantic program is a floating-point program in `f64`, and that is the
-reference (B2). The reference interpreter executes it as written. Lowering to
-single or mixed precision deliberately relaxes the numerical semantics, and
-its result agrees with the reference only within a tolerance.
+reference (B2). Lowering to single or mixed precision deliberately relaxes
+the numerical semantics, and its result agrees with the reference only
+within a tolerance.
+
+Precision is assigned by a pass on `md_exec`, after the transformations of
+that level and before storage assignment (D31). The buffers that hold the
+state state the type it is stored in; the driver allocates them according
+to the policy, and the compiled program follows them (D32).
 
 ## 8. Execution dialects
 

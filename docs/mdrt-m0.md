@@ -91,7 +91,7 @@ None lowers to a single opaque runtime call.
 |---|---|
 | Field storage | A contiguous buffer, lowered to `memref` |
 | Vector fields | `memref<?x3xT>` or `memref<3x?xT>`, chosen by the plan |
-| Element type | From the precision policy |
+| Element type | From the precision policy. Decided (D32): the driver allocates the state in the types of the policy, and the buffers state those types to the compiled program. |
 | Owner | The runtime allocates and frees; compiled code receives the buffers |
 | Host access | The driver reads and writes buffers between segments and increments the version counter of what it writes (P16) |
 
@@ -169,7 +169,8 @@ Proposal: the C++ tool.
 | Neighbor build as a template in IR, `lib/Runtime/Templates/NeighborsMatrix.mlir` | Implemented. The compiler adds it to the module, where it is lowered with the rest of the code. |
 | Neighbor matrix | Implemented |
 | Overflow of a row | The runtime reports it and stops the run. Rebuilding with wider rows is not implemented. |
-| Storage in `memref<?x3xf64>` | Implemented, in double precision |
+| Storage in `memref<?x3xT>` | Implemented, for `f32` and `f64` |
+| Neighbor build for positions of `f32` | Implemented, as an instance of the template with the type replaced |
 | `mdrt.from_buffer`, `mdrt.to_buffer` | Implemented. They connect code that works on buffers with code that works on fields. |
 | OpenMP | Works through the upstream lowering of `scf.parallel`. Reductions work. |
 | Threading as a plan parameter | Not implemented. The choice is made by the passes that are run after lowering. |

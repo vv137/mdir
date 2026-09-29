@@ -1,8 +1,9 @@
 # MDIR Op Specification, Milestone M0
 
-Status: draft 8 (2026-09-29). Everything in this document is implemented for
-the CPU in double precision, except where a section says otherwise. A
-Lennard-Jones system runs end to end, sequentially and with OpenMP.
+Status: draft 9 (2026-09-29). Everything in this document is implemented for
+the CPU, except where a section says otherwise. A Lennard-Jones system runs
+end to end in single, mixed, and double precision, sequentially and with
+OpenMP.
 
 This document specifies the types and ops needed for milestone M0: a
 Lennard-Jones fluid integrated with velocity Verlet or leapfrog, on one node,
@@ -20,7 +21,8 @@ Operand lists, result lists, and the mathematical definitions are normative.
 | Storage assignment and lowering to loops (Section 10) | Implemented as the pass `convert-md-exec-to-loops` |
 | Fusion of loops over pairs (Section 9.4) | Implemented as the pass `md-exec-fuse-loops` |
 | Powers of the squared distance (Section 9.5) | Implemented as the pass `md-exec-simplify-distance` |
-| Storage form as a stage of its own, precision policy (Sections 7, 8.5) | Not implemented |
+| Precision policy (Section 7) | Implemented as the pass `md-exec-assign-precision` |
+| Storage form as a stage of its own (Section 8.5) | Not implemented |
 
 It follows the accepted decisions in [decisions.md](decisions.md). Tags such
 as (S1) or (B4) name the decision behind a section.
@@ -106,9 +108,11 @@ formats are all defined on velocities.
 
 The semantic program is a floating-point program in `f64`, with the
 semantics that the upstream `arith` and `math` ops define. It is the
-reference: the reference interpreter executes it as written.
+reference.
 
-`f64` is the only floating-point type allowed at the semantic level.
+`f64` is the only floating-point type allowed at the semantic level. The
+ops of `md` and `dyn` reject fields of `f32`, and so do the signatures of
+potentials, functions, and programs.
 
 Lowering to single or mixed precision is a transformation that deliberately
 relaxes the numerical semantics. It is governed by the precision policy
@@ -350,9 +354,6 @@ For the basis `proof`, a checking pass attempts the proof by swapping the
 kernel arguments and comparing the two kernels structurally, treating
 commutative ops as unordered. If the proof fails, the op is rejected. The
 pass is not implemented yet.
-
-The reference interpreter checks asserted contracts numerically on the pairs
-it evaluates.
 
 ### 4.8 Truncation (B4)
 
@@ -690,19 +691,19 @@ func.func @run_segment(%x0: !vec, %v0: !vec, %f0: !vec, %m: !real,
 }
 ```
 
-## 7. Precision (S8)
+## 7. Precision (S8, D31, D32)
 
-Precision is a structural plan parameter. The plan assigns a type to each
-role.
+Precision is a structural plan parameter. The plan assigns a floating-point
+type to each role.
 
-| Role | Covers |
-|---|---|
-| `position` | Stored positions |
-| `velocity` | Stored velocities |
-| `force` | Stored forces |
-| `kernel` | Arithmetic inside pair kernels |
-| `integrator` | Arithmetic in kick and drift |
-| `accumulator` | Energy, virial, and other global sums |
+| Role | Covers | Applied by |
+|---|---|---|
+| `position` | Stored positions | Whoever allocates the state; the pass, for positions that no buffer holds |
+| `velocity` | Stored velocities | Whoever allocates the state |
+| `force` | Fields that loops over pairs write | The pass |
+| `kernel` | Arithmetic in loops over pairs | The pass |
+| `integrator` | Arithmetic in loops over particles | The pass |
+| `accumulator` | Energy, virial, and other global sums | The pass |
 
 | Mode | `position` | `velocity` | `force` | `kernel` | `integrator` | `accumulator` |
 |---|---|---|---|---|---|---|
@@ -712,9 +713,162 @@ role.
 
 A mode is a default assignment. Each role can be overridden.
 
-In `mixed` mode the displacement `d_ij` is computed in the position type and
-then narrowed to the kernel type. The subtraction is the step that loses
-precision, so it is done before narrowing.
+### 7.1 Where precision is assigned (D31)
+
+The pass `md-exec-assign-precision` assigns the types. It runs on the value
+form of `md_exec`, after the transformations of Section 9 and before
+storage assignment.
+
+```text
+md, dyn                          f64 only
+  ↓ convert-md-to-md-exec
+md_exec                          f64 only
+  ↓ reuse, fusion, powers of the squared distance
+  ↓ md-exec-assign-precision
+md_exec                          f32 and f64
+  ↓ convert-md-exec-to-loops
+```
+
+Everything before the pass works on the reference program and needs no
+knowledge of precision.
+
+```text
+--md-exec-assign-precision="mode=mixed"
+--md-exec-assign-precision="mode=single accumulator=f32"
+```
+
+### 7.2 Buffers state the type of the state (D32)
+
+The state enters and leaves the compiled program through buffers. The
+element type of a buffer is the type that the field is stored in. At the
+semantic level the field has `f64` whatever the buffer holds:
+
+```mlir
+%x = mdrt.from_buffer %positions : memref<?x3xf32> to !md.field<@atoms, 3 x f64>
+```
+
+The field has the values of the buffer. The pass gives the field the type
+of the buffer:
+
+```mlir
+%x = mdrt.from_buffer %positions : memref<?x3xf32> to !md.field<@atoms, 3 x f32>
+```
+
+Whoever allocates the state, which is the driver, applies the roles
+`position` and `velocity`, and the type of any other stored field such as
+masses or charges. The compiled program follows the buffers. It does not
+convert a buffer to another type, which would be a copy that nothing asked
+for (D18).
+
+### 7.3 The type of a field
+
+Fields that must have one type are **stored together**:
+
+| Stored together | Reason |
+|---|---|
+| A loop-carried field, the field it is initialized with, the field it is updated with, and the result of the loop | One buffer is carried |
+| The field that a loop accumulates into, and the result of the loop | The loop continues in the buffer |
+| The values that the `return` ops of a function return in one position | One result type |
+
+A destination from `md_exec.zeros` or `md_exec.empty` holds no field yet. It
+takes the type of the result of the loop that writes to it.
+
+The type of the fields that are stored together is the first of these that
+applies:
+
+| # | Condition | Type |
+|---|---|---|
+| 1 | A buffer holds one of them | The element type of the buffer |
+| 2 | One of them is used as positions | `position` |
+| 3 | A loop over pairs writes one of them | `force` |
+| 4 | A loop over particles writes one of them | `integrator` |
+| 5 | The three roles above have one type | That type |
+
+If none applies, the pass fails: nothing tells how the field is stored. If
+two buffers that disagree hold fields that are stored together, the pass
+fails as well.
+
+The signature of a function follows its arguments and the values it
+returns. Fields of integers keep their type.
+
+### 7.4 The type of a kernel
+
+| Loop | Computes in |
+|---|---|
+| `md_exec.pair_for` | `kernel` |
+| `md_exec.particle_for` | `integrator` |
+
+Every floating-point value inside the kernel gets that type, constants
+included. Values are converted where they cross the boundary of the kernel.
+
+| Value | Converted |
+|---|---|
+| The value of a field in `ins` | At the start of the kernel, from the type that the field is stored in |
+| A value from outside the kernel | Before the loop, once. A constant is replaced by a constant of the new type. |
+| A contribution to a field in `outs` | At the end of the kernel, to the type that the field is stored in |
+| A contribution to a global sum | At the end of the kernel, to `accumulator` |
+
+The squared distance and the displacement arrive in the type of the kernel.
+The loop computes them in the type of the positions and converts the
+results. The subtraction is the step that loses precision, so it is done
+before narrowing. The cutoff is tested in the type of the positions.
+
+In the mixed mode, a kick reads forces of `f32` and velocities of `f64`:
+
+```mlir
+%v1 = md_exec.particle_for
+        ins(%v, %f, %m : !md.field<@atoms, 3 x f64>,
+                         !md.field<@atoms, 3 x f32>,
+                         !md.field<@atoms, f64>)
+        outs(%v0 : !md.field<@atoms, 3 x f64>) {
+^bb0(%v_i: vector<3xf64>, %f_i: vector<3xf32>, %m_i: f64):
+  %wide = arith.extf %f_i : vector<3xf32> to vector<3xf64>
+  ...
+  md_exec.yield %v_new : vector<3xf64>
+} -> !md.field<@atoms, 3 x f64>
+```
+
+### 7.5 Global sums and scalars
+
+Scalars outside the loops keep the type `f64`: parameters, the time step,
+the cell, and the results of global sums. If `accumulator` is `f32`, the
+initial value is converted before the loop and the result after it.
+
+Inside a loop over pairs, the contributions of the neighbors of one particle
+are added up in the type of what they are added to: `force` for a field,
+`accumulator` for a global sum.
+
+### 7.6 Neighbor structures
+
+A neighbor structure is built and tested in the type of the positions. The
+template of Section 8.2 is written for `f64`; for positions of `f32` the
+compiler adds an instance in which the type is replaced, under names that
+end in `_f32`.
+
+### 7.7 Agreement with the reference
+
+Lowering to single or mixed precision relaxes the numerical semantics
+(B2). The integration tests compare runs of 200 steps with the values of
+the reference precision.
+
+| Mode | Relative tolerance of the test | Agreement found |
+|---|---|---|
+| `double` | 1e-9 | 1e-13 |
+| `mixed` | 1e-6 | 1e-7 |
+| `single` | 1e-5 | 1e-6; 1e-5 for the kinetic energy |
+
+On the CPU the modes differ little in speed so far: 0.83 s, 0.82 s, and
+0.78 s for 4096 particles and 200 steps, sequentially. The loops over pairs
+are not vectorized across pairs, so narrower values do not yet mean more
+values per instruction.
+
+### 7.8 Limitations
+
+| Limitation | Consequence |
+|---|---|
+| A call of a function that takes or returns fields is not supported. | The pass fails. The lowering does not support such calls either. |
+| The role `velocity` is not visible to the pass. | A velocity field that no buffer holds gets the type of `integrator`, by rule 4. |
+| A role cannot be declared for an argument of a function. | A function that takes a field and does nothing that reveals its role cannot be assigned a precision in the mixed mode. |
 
 ## 8. `md_exec` ops
 
@@ -838,6 +992,10 @@ be repaired afterward, which is why `interval` is not the default.
 The loop computes `d` and `r²` from the position field and the cell. The
 kernel receives `r²`, not `r`, so that a kernel with only even powers needs
 no square root.
+
+`r²` has the type `f32` or `f64`, and `d` is a vector of the same type: the
+type that the kernel computes in (Section 7.4). The values of a field
+arrive in the type that the field is stored in.
 
 Semantics with `traversal = directed`:
 
@@ -1017,15 +1175,16 @@ of its own (Section 8.5). Whether that stage is needed is open; see
 
 | Before | After |
 |---|---|
-| A field | `memref<?x3xf64>` or `memref<?xT>` |
+| A field | `memref<?x3xT>` or `memref<?xT>`, with the element type of the field |
 | A cell | `vector<3xf64>`, the edge lengths of an orthorhombic cell |
 | `md_exec.particle_for` | `scf.parallel` over the particles |
 | `md_exec.pair_for` | `scf.parallel` over the particles, with an `scf.for` over the neighbors of each |
 | `md_exec.build_neighbors` | A call to the neighbor build template |
 | `scf.for` that carries fields | `scf.for` that carries buffers |
 
-Everything is lowered in double precision. The precision policy of Section 7
-is not implemented.
+The lowering follows the types that the precision policy assigned
+(Section 7). A field whose type differs from that of the buffer that holds
+it is rejected.
 
 ### 10.2 Regions, ownership, and the pool
 
@@ -1131,16 +1290,17 @@ and, from M1 on, on comparison with an established MD engine.
 | A neighbor structure that a loop refreshes, 100 steps | Pairs within the cutoff at every step, by a search over all pairs; the number of builds | Exact |
 | Energy and forces of 64 particles | A script that evaluates all pairs | 1e-10 |
 | 200 steps of velocity Verlet and of leapfrog | The same script, integrating with all pairs | 1e-9 |
+| The same in the mixed mode | The same values | 1e-6 |
+| 200 steps of velocity Verlet in the single mode | The same values | 1e-5 |
 
-The last four run sequentially and with OpenMP on 4 threads. The scripts are
+All but the first run sequentially and with OpenMP on 4 threads, except the
+mixed mode, which runs sequentially. The scripts are
 in `test/Integration/Inputs`.
 
 The checks that were planned:
 
 | Check | Compared against | Tolerance depends on |
 |---|---|---|
-| Energy and forces of one configuration | Reference interpreter | Precision mode |
-| Forces | Finite differences of the energy, in the interpreter | Step size |
 | Energy and forces | A reference MD engine | Precision mode |
 | Energy conservation over a run | Drift bound | Time step, precision mode |
 | Velocity Verlet against leapfrog | Positions of the two runs, with initial velocities mapped as in Section 6.4 | Precision mode |

@@ -79,11 +79,75 @@ def SimplifyDistance
     A kernel whose results contain only even powers of the distance, such
     as the Lennard-Jones energy and force, ends up with no square root.
 
+    A product of two sums is not multiplied out: the terms of the expanded
+    product can be much larger than the product, and their sum then loses
+    digits.
+
     The pass reassociates floating-point arithmetic, so results change in
     their last bits. It must not be run in the deterministic mode.
   }];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::math::MathDialect"];
+}
+
+def AssignPrecision
+    : Pass<"md-exec-assign-precision", "::mlir::ModuleOp"> {
+  let summary = "Assigns floating-point types to fields and kernels";
+  let description = [{
+    Before the pass, every field and every kernel has the reference
+    precision, `f64`. The pass gives each field the type it is stored in
+    and each kernel the type it computes in, according to the precision
+    policy.
+
+    A mode assigns a type to each role:
+
+    | Mode | `position` | `force` | `kernel` | `integrator` | `accumulator` |
+    |---|---|---|---|---|---|
+    | `single` | `f32` | `f32` | `f32` | `f32` | `f64` |
+    | `mixed` | `f64` | `f32` | `f32` | `f64` | `f64` |
+    | `double` | `f64` | `f64` | `f64` | `f64` | `f64` |
+
+    An option that is named after a role replaces the type of that role.
+
+    Fields that must have one type are stored together: a loop-carried
+    field with the fields it is initialized and updated with, and the field
+    that a loop accumulates into with the result of the loop. The type that
+    fields are stored in is, in this order:
+
+    1. the element type of a buffer that holds one of them, as
+       `mdrt.from_buffer` and `mdrt.to_buffer` state it;
+    2. the type of `position`, if one of them is used as positions;
+    3. the type of `force`, if a loop over pairs writes one of them;
+    4. the type of `integrator`, if a loop over particles writes one of
+       them.
+
+    A loop over pairs computes in the type of `kernel` and a loop over
+    particles in the type of `integrator`. Values are converted where they
+    enter and leave a kernel. Global sums are accumulated in the type of
+    `accumulator`.
+
+    Scalars outside the loops keep the type `f64`.
+
+    The results agree with those of the reference precision within a
+    tolerance only.
+  }];
+  let options = [
+    Option<"mode", "mode", "std::string", /*default=*/"\"double\"",
+           "The precision mode: single, mixed, or double">,
+    Option<"position", "position", "std::string", /*default=*/"\"\"",
+           "The type of positions that no buffer holds: f32 or f64">,
+    Option<"force", "force", "std::string", /*default=*/"\"\"",
+           "The type of fields that loops over pairs write: f32 or f64">,
+    Option<"kernel", "kernel", "std::string", /*default=*/"\"\"",
+           "The type that loops over pairs compute in: f32 or f64">,
+    Option<"integrator", "integrator", "std::string", /*default=*/"\"\"",
+           "The type that loops over particles compute in: f32 or f64">,
+    Option<"accumulator", "accumulator", "std::string",
+           /*default=*/"\"\"",
+           "The type that global sums are accumulated in: f32 or f64">
+  ];
+  let dependentDialects = ["::mdir::md_exec::MDExecDialect",
+                           "::mlir::arith::ArithDialect"];
 }
 
 #endif // MDIR_DIALECT_MDEXEC_TRANSFORMS_PASSES_TD

@@ -135,3 +135,49 @@ md.function @refresh(%x: !vec, %cell: !md.cell) -> i64 {
   %builds = md_exec.rebuild_count %nl1 : !mdrt.neighbors<@atoms>
   md.return %builds : i64
 }
+
+// Fields and kernels in f32, as the precision policy assigns them. A buffer
+// states the type that a field is stored in.
+//
+// CHECK-LABEL: func.func @single(
+func.func @single(%buffer: memref<?x3xf32>, %cell: !md.cell)
+    -> (!md.field<@atoms, 3 x f32>, f64) {
+  // CHECK: %[[X:[0-9]+]] = mdrt.from_buffer %{{[a-z0-9]+}} : memref<?x3xf32> to !md.field<@atoms, 3 x f32>
+  %x = mdrt.from_buffer %buffer
+      : memref<?x3xf32> to !md.field<@atoms, 3 x f32>
+  %nl0 = md_exec.empty_neighbors kind(matrix) width(96)
+      : !mdrt.neighbors<@atoms>
+  %nl = md_exec.refresh_neighbors %nl0, %x, %cell
+      cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
+      : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f32>
+  %f0 = md_exec.zeros : !md.field<@atoms, 3 x f32>
+  %u0 = arith.constant 0.0 : f64
+
+  // CHECK: md_exec.pair_for %{{[0-9]+}}, %[[X]], %{{[a-z0-9]+}}
+  // CHECK-SAME: outs(%{{[0-9]+}} : !md.field<@atoms, 3 x f32>) reduce(%{{[a-z0-9_]+}} : f64)
+  // CHECK-NEXT: ^bb0(%{{[a-z0-9]+}}: f32, %{{[a-z0-9]+}}: vector<3xf32>):
+  // CHECK: } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f32> -> !md.field<@atoms, 3 x f32>, f64
+  %f, %u = md_exec.pair_for %nl, %x, %cell
+      outs(%f0 : !md.field<@atoms, 3 x f32>) reduce(%u0 : f64)
+      cutoff(2.5) weights [0.5] policy(directed, owner_only) {
+  ^bb0(%r2: f32, %d: vector<3xf32>):
+    %e = arith.extf %r2 : f32 to f64
+    md_exec.yield %d, %e : vector<3xf32>, f64
+  } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f32>
+      -> !md.field<@atoms, 3 x f32>, f64
+  return %f, %u : !md.field<@atoms, 3 x f32>, f64
+}
+
+// At the semantic level the field has the reference precision, whatever
+// the buffer holds.
+//
+// CHECK-LABEL: func.func @stored_in_single(
+func.func @stored_in_single(%buffer: memref<?x3xf32>) -> memref<?x3xf32> {
+  // CHECK: %[[X:[0-9]+]] = mdrt.from_buffer %{{[a-z0-9]+}} : memref<?x3xf32> to !md.field<@atoms, 3 x f64>
+  // CHECK: mdrt.to_buffer %[[X]] : !md.field<@atoms, 3 x f64> to memref<?x3xf32>
+  %x = mdrt.from_buffer %buffer
+      : memref<?x3xf32> to !md.field<@atoms, 3 x f64>
+  %out = mdrt.to_buffer %x
+      : !md.field<@atoms, 3 x f64> to memref<?x3xf32>
+  return %out : memref<?x3xf32>
+}

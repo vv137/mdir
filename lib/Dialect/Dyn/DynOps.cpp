@@ -81,6 +81,9 @@ static LogicalResult verifyNames(Operation *op, StringRef attribute,
 }
 
 LogicalResult ProgramOp::verify() {
+  if (failed(mdir::md::verifyReferencePrecision(getOperation(),
+                                                 getFunctionType())))
+    return failure();
   if (failed(verifyNames(getOperation(), "requires", getRequires(),
                          {"temperature", "pressure"})))
     return failure();

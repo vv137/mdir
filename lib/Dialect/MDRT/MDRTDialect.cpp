@@ -42,14 +42,26 @@ MemRefType mdir::mdrt::getBufferType(FieldType field) {
                          field.getElementType());
 }
 
-/// Verifies that `buffer` is the type of the buffer that holds `field`.
+/// Verifies that `buffer` is the type of a buffer that can hold `field`.
+///
+/// The element types may differ if both are floating-point types: the field
+/// then has the values of the buffer in another precision, and the precision
+/// policy decides which of the two types is stored.
 static LogicalResult verifyBufferType(Operation *op, Type buffer, Type field) {
-  MemRefType expected = getBufferType(cast<FieldType>(field));
-  if (buffer != expected)
-    return op->emitOpError() << "expected the buffer of " << field
-                             << " to have type " << expected << ", got "
-                             << buffer;
-  return success();
+  auto fieldType = cast<FieldType>(field);
+  MemRefType expected = getBufferType(fieldType);
+  if (buffer == expected)
+    return success();
+
+  auto actual = dyn_cast<MemRefType>(buffer);
+  if (actual && isa<FloatType>(fieldType.getElementType()) &&
+      (actual.getElementType().isF32() || actual.getElementType().isF64()) &&
+      actual == MemRefType::get(expected.getShape(), actual.getElementType()))
+    return success();
+
+  return op->emitOpError() << "expected the buffer of " << field
+                           << " to have type " << expected << ", got "
+                           << buffer;
 }
 
 LogicalResult FromBufferOp::verify() {

@@ -7,14 +7,21 @@ md.function @f(%a: !md.field<@atoms, 2 x f64>) {
 
 // -----
 
-// expected-error@+1 {{expected element type f64, i32, or i64, got 'f32'}}
+// expected-error@+1 {{expected element type f64, f32, i32, or i64, got 'f16'}}
+md.function @f(%a: !md.field<@atoms, f16>) {
+  md.return
+}
+
+// -----
+
+// expected-error@+1 {{expected fields at the reference precision, with elements of type f64, got '!md.field<@atoms, f32>'}}
 md.function @f(%a: !md.field<@atoms, f32>) {
   md.return
 }
 
 // -----
 
-// expected-error@+1 {{a field with 3 components must have element type f64, got 'i32'}}
+// expected-error@+1 {{a field with 3 components must have element type f64 or f32, got 'i32'}}
 md.function @f(%a: !md.field<@atoms, 3 x i32>) {
   md.return
 }
@@ -296,4 +303,19 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>) -> f64 {
   // expected-error@+1 {{expected operand 0 to have type 'f64', got '!md.field<@atoms, 3 x f64>'}}
   %d = md.call @g(%x) : (!md.field<@atoms, 3 x f64>) -> f64
   md.return %d : f64
+}
+
+// -----
+
+md.particle_set @atoms
+
+// f64 is the only floating-point type at the semantic level.
+func.func @f(%v: !md.field<@atoms, 3 x f32>) -> f64 {
+  // expected-error@+1 {{operand #0 must be variadic of field at the reference precision, with elements of type f64, i32, or i64, but got '!md.field<@atoms, 3 x f32>'}}
+  %k = md.sum_particles gather(%v : !md.field<@atoms, 3 x f32>) {
+  ^bb0(%v_i: vector<3xf32>):
+    %one = arith.constant 1.0 : f64
+    md.yield %one : f64
+  } : f64
+  return %k : f64
 }

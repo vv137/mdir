@@ -67,3 +67,15 @@ func.func @f() -> !md.field<@atoms, 3 x f64> {
   %x = md_exec.zeros : !md.field<@atoms, 3 x f64>
   return %x : !md.field<@atoms, 3 x f64>
 }
+
+// -----
+
+md.particle_set @atoms
+
+// The buffer holds f32 and the field has f64: converting would be a copy.
+func.func @f(%buffer: memref<?x3xf32>) {
+  // expected-error@+1 {{the field has the type '!md.field<@atoms, 3 x f64>', which is not the type that the buffer stores; run 'md-exec-assign-precision' first}}
+  %x = mdrt.from_buffer %buffer
+      : memref<?x3xf32> to !md.field<@atoms, 3 x f64>
+  return
+}

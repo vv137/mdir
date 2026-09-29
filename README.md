@@ -76,6 +76,7 @@ build/bin/mdir-opt test/Dialect/MD/ops.mlir
 | `--md-exec-reuse-neighbors` | Makes a neighbor structure that is built in a loop a value that the loop carries and refreshes. |
 | `--md-exec-fuse-loops` | Fuses loops over the pairs of one neighbor structure. Run `--cse` after it. |
 | `--md-exec-simplify-distance` | Rewrites pair kernels in powers of the squared distance. Changes rounding. Run `--canonicalize --cse` after it. |
+| `--md-exec-assign-precision` | Assigns `f32` or `f64` to fields and kernels. Options: `mode=single`, `mixed`, or `double`, and a type per role. Run it last before the lowering. |
 | `--convert-md-exec-to-loops` | Assigns buffers and converts the loops to `scf` loops over `memref`s. |
 
 After the last pass the module holds only upstream dialects, so `mlir-opt`
@@ -86,6 +87,7 @@ build/bin/mdir-opt input.mlir \
     --md-check-exchange --md-differentiate --md-expand-truncation \
     --md-inline --convert-md-to-md-exec="skin=0.3 width=96" \
     --md-exec-reuse-neighbors --md-exec-fuse-loops --cse \
+    --md-exec-assign-precision="mode=mixed" \
     --convert-md-exec-to-loops \
   | mlir-opt --convert-scf-to-openmp --canonicalize \
       --convert-scf-to-cf --convert-math-to-llvm --convert-math-to-libm \

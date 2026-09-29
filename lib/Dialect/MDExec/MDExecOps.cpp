@@ -18,21 +18,25 @@ using mdir::mdrt::PermutationType;
 #define GET_OP_CLASSES
 #include "mdir/Dialect/MDExec/MDExecOps.cpp.inc"
 
-/// Returns true if `type` is a position field: three components of f64.
+/// Returns true if `type` is a floating-point type of the execution level.
+static bool isReal(Type type) { return type.isF32() || type.isF64(); }
+
+/// Returns true if `type` is a position field: three components of f32 or
+/// f64.
 static bool isPositionField(Type type) {
   auto field = dyn_cast<FieldType>(type);
   return field && field.getNumComponents() == 3 &&
-         field.getElementType().isF64();
+         isReal(field.getElementType());
 }
 
-/// Returns true if `type` is f64 or a fixed-size one-dimensional vector of
-/// f64.
+/// Returns true if `type` is f32, f64, or a fixed-size one-dimensional
+/// vector of one of them.
 static bool isRealOrRealVector(Type type) {
-  if (type.isF64())
+  if (isReal(type))
     return true;
   auto vector = dyn_cast<VectorType>(type);
   return vector && !vector.isScalable() && vector.getRank() == 1 &&
-         vector.getElementType().isF64();
+         isReal(vector.getElementType());
 }
 
 /// Verifies that `positions` is a position field on `particleSet`.
@@ -40,7 +44,7 @@ static LogicalResult verifyPositions(Operation *op, Value positions,
                                      FlatSymbolRefAttr particleSet) {
   if (!isPositionField(positions.getType()))
     return op->emitOpError() << "expected a position field with 3 "
-                                "components of f64, got "
+                                "components of f32 or f64, got "
                              << positions.getType();
   auto field = cast<FieldType>(positions.getType());
   if (field.getParticleSet() != particleSet)
@@ -152,13 +156,8 @@ LogicalResult RefreshNeighborsOp::verify() {
 //===----------------------------------------------------------------------===//
 
 /// Verifies what the two loops have in common.
-///
-/// `leading` holds the types of the kernel arguments that come before those
-/// of the fields in `ins`. `perField` is the number of kernel arguments for
-/// each field in `ins`.
 template <typename OpTy>
-static LogicalResult verifyLoop(OpTy op, FlatSymbolRefAttr particleSet,
-                                ArrayRef<Type> leading, unsigned perField) {
+static LogicalResult verifyLoop(OpTy op, FlatSymbolRefAttr particleSet) {
   // Fields.
   for (Value field : llvm::concat<Value>(op.getIns(), op.getOuts())) {
     auto type = cast<FieldType>(field.getType());
@@ -169,8 +168,9 @@ static LogicalResult verifyLoop(OpTy op, FlatSymbolRefAttr particleSet,
   }
   for (Value value : op.getReduce())
     if (!isRealOrRealVector(value.getType()))
-      return op.emitOpError() << "expected a value in 'reduce' to be f64 or "
-                                 "a fixed-size vector of f64, got "
+      return op.emitOpError() << "expected a value in 'reduce' to be f32, "
+                                 "f64, or a fixed-size vector of one of "
+                                 "them, got "
                               << value.getType();
 
   // Results: one per field in `outs`, then one per value in `reduce`.
@@ -195,6 +195,11 @@ static LogicalResult verifyLoop(OpTy op, FlatSymbolRefAttr particleSet,
   return success();
 }
 
+/// Verifies the kernel of a loop.
+///
+/// `leading` holds the types of the kernel arguments that come before those
+/// of the fields in `ins`. `perField` is the number of kernel arguments for
+/// each field in `ins`.
 template <typename OpTy>
 static LogicalResult verifyKernel(OpTy op, ArrayRef<Type> leading,
                                   unsigned perField) {
@@ -238,9 +243,13 @@ static LogicalResult verifyKernel(OpTy op, ArrayRef<Type> leading,
 }
 
 /// The types of the kernel arguments that a pair loop provides itself: the
-/// squared distance and the displacement.
-static SmallVector<Type, 2> getPairGeometryTypes(MLIRContext *context) {
-  Type real = Float64Type::get(context);
+/// squared distance and the displacement. They have the type that the
+/// kernel computes in, which the first argument states.
+static SmallVector<Type, 2> getPairGeometryTypes(PairForOp op) {
+  Type real = Float64Type::get(op.getContext());
+  Block &block = op.getKernel().front();
+  if (block.getNumArguments() != 0 && block.getArgument(0).getType().isF32())
+    real = block.getArgument(0).getType();
   return {real, VectorType::get({3}, real)};
 }
 
@@ -278,12 +287,11 @@ LogicalResult PairForOp::verify() {
               "built with, "
            << *built;
 
-  return verifyLoop(*this, neighbors.getParticleSet(),
-                    getPairGeometryTypes(getContext()), 2);
+  return verifyLoop(*this, neighbors.getParticleSet());
 }
 
 LogicalResult PairForOp::verifyRegions() {
-  return verifyKernel(*this, getPairGeometryTypes(getContext()), 2);
+  return verifyKernel(*this, getPairGeometryTypes(*this), 2);
 }
 
 LogicalResult ParticleForOp::verify() {
@@ -296,7 +304,7 @@ LogicalResult ParticleForOp::verify() {
         cast<FieldType>(getOuts().front().getType()).getParticleSet();
   else
     return emitOpError() << "expected at least 1 field in 'ins' or 'outs'";
-  return verifyLoop(*this, particleSet, {}, 1);
+  return verifyLoop(*this, particleSet);
 }
 
 LogicalResult ParticleForOp::verifyRegions() {

@@ -57,23 +57,27 @@ config.substitutions.append(
     )
 )
 
-# The passes of the execution level, up to loops over buffers.
+# The transformations of the execution level. The second set reassociates
+# floating-point arithmetic.
+md_exec_transforms = "--md-exec-reuse-neighbors --md-exec-fuse-loops --cse"
+md_exec_fast_transforms = (
+    "--md-exec-reuse-neighbors --md-exec-fuse-loops"
+    " --md-exec-simplify-distance --canonicalize --cse"
+)
+config.substitutions.append(("%md_exec_transforms", md_exec_transforms))
 config.substitutions.append(
-    (
-        "%md_exec_passes",
-        "--md-exec-reuse-neighbors --md-exec-fuse-loops --cse"
-        " --convert-md-exec-to-loops",
-    )
+    ("%md_exec_fast_transforms", md_exec_fast_transforms)
 )
 
-# The same, with the transformations that reassociate floating-point
-# arithmetic.
+# The passes of the execution level, up to loops over buffers, in double
+# precision.
+config.substitutions.append(
+    ("%md_exec_passes", md_exec_transforms + " --convert-md-exec-to-loops")
+)
 config.substitutions.append(
     (
         "%md_exec_fast_passes",
-        "--md-exec-reuse-neighbors --md-exec-fuse-loops"
-        " --md-exec-simplify-distance --canonicalize --cse"
-        " --convert-md-exec-to-loops",
+        md_exec_fast_transforms + " --convert-md-exec-to-loops",
     )
 )
 

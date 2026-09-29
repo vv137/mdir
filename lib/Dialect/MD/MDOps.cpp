@@ -201,9 +201,15 @@ static bool isPositionField(Type type) {
          field.getElementType().isF64();
 }
 
+LogicalResult FunctionOp::verify() {
+  return verifyReferencePrecision(getOperation(), getFunctionType());
+}
+
 LogicalResult PotentialOp::verify() {
   ArrayRef<Type> arguments = getArgumentTypes();
   ArrayRef<Type> results = getResultTypes();
+  if (failed(verifyReferencePrecision(getOperation(), getFunctionType())))
+    return failure();
 
   if (arguments.size() < 2)
     return emitOpError()

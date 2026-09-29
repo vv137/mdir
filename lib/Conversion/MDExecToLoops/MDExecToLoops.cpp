@@ -44,8 +44,7 @@ struct Neighbors {
   Value index;
   /// The number of neighbors that a row holds.
   Value width;
-  /// The configuration and the cell that the structure was built at.
-  Value reference;
+  /// The cell that the structure was built in.
   Value box;
   /// Whether the structure has been built, and how often.
   Value valid;
@@ -119,8 +118,22 @@ private:
   /// neighbors for each of `size` particles.
   Neighbors allocateNeighbors(Location loc, Value size, int64_t width);
 
+  /// The buffer that holds the configuration that `structure` was built
+  /// at. It has the type of `positions`.
+  LogicalResult getReference(Operation *op, const Neighbors &structure,
+                             Value positions, Value size, Value &reference);
+
+  /// `value`, a floating-point value or a vector of them, converted to the
+  /// floating-point type `real`.
+  Value convertReal(OpBuilder &builder, Location loc, Value value, Type real);
+  Value createReal(OpBuilder &builder, Location loc, Type real,
+                   double value) {
+    return arith::ConstantOp::create(builder, loc, real,
+                                     builder.getFloatAttr(real, value));
+  }
+
   /// Builds `structure` at the configuration `positions`.
-  LogicalResult emitBuild(OpBuilder &builder, Location loc,
+  LogicalResult emitBuild(Operation *op, OpBuilder &builder, Location loc,
                           const Neighbors &structure, Value positions,
                           Value box, Value size, double reach,
                           double cellWidth);
@@ -173,7 +186,8 @@ private:
     createReduction(builder, loc, values, /*isSum=*/true);
   }
 
-  LogicalResult addTemplates();
+  /// Adds the templates for positions of the type `real` to the module.
+  LogicalResult addTemplates(Type real);
   func::FuncOp getOrDeclare(StringRef name, FunctionType type);
 
   ModuleOp module;
@@ -184,12 +198,15 @@ private:
   /// Fields: the buffer that holds the field.
   llvm::DenseMap<Value, Value> buffers;
   llvm::DenseMap<Value, Neighbors> neighbors;
+  /// Neighbor structures, by the buffer of their flag: the buffer that
+  /// holds the configuration that the structure was built at.
+  llvm::DenseMap<Value, Value> references;
   /// Particle sets: the number of particles.
   llvm::DenseMap<Attribute, Value> sizes;
 
   /// The scope of the body of the function that is being lowered.
   Scope *root = nullptr;
-  bool templatesAdded = false;
+  llvm::DenseSet<Type> templatesAdded;
 };
 
 } // namespace
@@ -529,11 +546,16 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op, Scope &scope,
   unsigned numOuts = outs.size();
   unsigned numYields = yield->getNumOperands();
 
-  Type real = builder.getF64Type();
+  // The displacement is computed in the type of the positions and then
+  // converted to the type that the kernel computes in: the subtraction is
+  // the step that loses precision.
+  Type real =
+      cast<md::FieldType>(op.getPositions().getType()).getElementType();
+  Type computed = kernel.getArgument(0).getType();
+  box = convertReal(builder, loc, box, real);
   Value zero = createIndex(builder, loc, 0);
   Value one = createIndex(builder, loc, 1);
-  Value cutoff2 = arith::ConstantOp::create(
-      builder, loc, real, builder.getF64FloatAttr(cutoff * cutoff));
+  Value cutoff2 = createReal(builder, loc, real, cutoff * cutoff);
 
   auto loop = scf::ParallelOp::create(
       builder, loc, ValueRange{zero}, ValueRange{size}, ValueRange{one},
@@ -578,8 +600,10 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op, Scope &scope,
                   pair, loc, vector::CombiningKind::ADD, squares);
 
               IRMapping local = mapping;
-              local.map(kernel.getArgument(0), r2);
-              local.map(kernel.getArgument(1), d);
+              local.map(kernel.getArgument(0),
+                        convertReal(pair, loc, r2, computed));
+              local.map(kernel.getArgument(1),
+                        convertReal(pair, loc, d, computed));
               for (unsigned i = 0, e = ins.size(); i != e; ++i) {
                 local.map(kernel.getArgument(2 + 2 * i), centralValues[i]);
                 local.map(kernel.getArgument(3 + 2 * i),
@@ -658,14 +682,43 @@ func::FuncOp Lowering::getOrDeclare(StringRef name, FunctionType type) {
   return function;
 }
 
-LogicalResult Lowering::addTemplates() {
-  if (templatesAdded)
+/// The name of the instance of the template function `name` for positions
+/// of the type `real`.
+static std::string getInstanceName(StringRef name, Type real) {
+  return real.isF64() ? name.str() : (name + "_f32").str();
+}
+
+/// The text of the templates for positions of the type `real`. The
+/// templates are written for `f64`.
+static std::string instantiateTemplates(StringRef text, Type real) {
+  if (real.isF64())
+    return text.str();
+
+  std::string instance;
+  StringRef prefix = "@mdrt.";
+  while (!text.empty()) {
+    if (text.consume_front("f64")) {
+      instance += "f32";
+    } else if (text.consume_front(prefix)) {
+      StringRef name = text.take_while(
+          [](char c) { return llvm::isAlnum(c) || c == '_'; });
+      text = text.drop_front(name.size());
+      instance += getInstanceName((prefix + name).str(), real);
+    } else {
+      instance += text.front();
+      text = text.drop_front();
+    }
+  }
+  return instance;
+}
+
+LogicalResult Lowering::addTemplates(Type real) {
+  if (!templatesAdded.insert(real).second)
     return success();
-  templatesAdded = true;
 
   ParserConfig config(context);
-  OwningOpRef<ModuleOp> templates =
-      parseSourceString<ModuleOp>(neighborsMatrixTemplate, config);
+  OwningOpRef<ModuleOp> templates = parseSourceString<ModuleOp>(
+      instantiateTemplates(neighborsMatrixTemplate, real), config);
   if (!templates)
     return module.emitError() << "cannot parse the neighbor build template";
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
@@ -692,9 +745,6 @@ Neighbors Lowering::allocateNeighbors(Location loc, Value size,
       builder, loc,
       MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, narrow),
       ValueRange{size, structure.width});
-  structure.reference = memref::AllocOp::create(
-      builder, loc, MemRefType::get({ShapedType::kDynamic, 3}, real),
-      ValueRange{size});
   structure.box =
       memref::AllocOp::create(builder, loc, MemRefType::get({3}, real));
   structure.valid = memref::AllocOp::create(
@@ -711,25 +761,59 @@ Neighbors Lowering::allocateNeighbors(Location loc, Value size,
   return structure;
 }
 
-LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
-                                  const Neighbors &structure, Value positions,
-                                  Value box, Value size, double reach,
-                                  double cellWidth) {
-  if (failed(addTemplates()))
+Value Lowering::convertReal(OpBuilder &builder, Location loc, Value value,
+                            Type real) {
+  Type source = value.getType();
+  Type target = real;
+  if (auto vector = dyn_cast<VectorType>(source))
+    target = VectorType::get(vector.getShape(), real);
+  if (source == target)
+    return value;
+  if (getElementTypeOrSelf(source).getIntOrFloatBitWidth() <
+      real.getIntOrFloatBitWidth())
+    return arith::ExtFOp::create(builder, loc, target, value);
+  return arith::TruncFOp::create(builder, loc, target, value);
+}
+
+LogicalResult Lowering::getReference(Operation *op,
+                                     const Neighbors &structure,
+                                     Value positions, Value size,
+                                     Value &reference) {
+  Value &known = references[structure.valid];
+  if (!known)
+    known = memref::AllocOp::create(root->builder, op->getLoc(),
+                                    cast<MemRefType>(positions.getType()),
+                                    ValueRange{size});
+  if (known.getType() != positions.getType())
+    return op->emitOpError()
+           << "the neighbor structure was built at positions that are stored "
+              "in "
+           << known.getType() << ", but these are stored in "
+           << positions.getType();
+  reference = known;
+  return success();
+}
+
+LogicalResult Lowering::emitBuild(Operation *op, OpBuilder &builder,
+                                  Location loc, const Neighbors &structure,
+                                  Value positions, Value box, Value size,
+                                  double reach, double cellWidth) {
+  Type real = cast<MemRefType>(positions.getType()).getElementType();
+  if (failed(addTemplates(real)))
+    return failure();
+  Value reference;
+  if (failed(getReference(op, structure, positions, size, reference)))
     return failure();
 
-  Type real = builder.getF64Type();
-  Value reachValue = arith::ConstantOp::create(
-      builder, loc, real, builder.getF64FloatAttr(reach));
-  Value widthValue = arith::ConstantOp::create(
-      builder, loc, real, builder.getF64FloatAttr(cellWidth));
+  Value reachValue = createReal(builder, loc, real, reach);
+  Value widthValue = createReal(builder, loc, real, cellWidth);
 
-  auto build = cast<func::FuncOp>(
-      SymbolTable::lookupSymbolIn(module, buildNeighborsName));
+  auto build = cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
+      module, getInstanceName(buildNeighborsName, real)));
   auto call = func::CallOp::create(
       builder, loc, build,
-      ValueRange{positions, box, reachValue, widthValue, structure.counts,
-                 structure.index});
+      ValueRange{positions, convertReal(builder, loc, box, real), reachValue,
+                 widthValue, structure.counts, structure.index});
   Value largest = call.getResult(0);
 
   // A row that is too narrow loses pairs. Stop.
@@ -755,7 +839,7 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
       builder, loc, ValueRange{zero}, ValueRange{size}, ValueRange{one},
       [&](OpBuilder &body, Location, ValueRange ivs) {
         storeElement(body, loc, loadElement(body, loc, positions, ivs[0]),
-                     structure.reference, ivs[0]);
+                     reference, ivs[0]);
       });
   for (int64_t c = 0; c < 3; ++c) {
     Value edge = vector::ExtractOp::create(builder, loc, box, c);
@@ -796,7 +880,7 @@ LogicalResult Lowering::lowerBuildNeighbors(md_exec::BuildNeighborsOp op,
 
   double cutoff = op.getCutoff().convertToDouble();
   double skin = op.getSkin().convertToDouble();
-  return emitBuild(scope.builder, loc, structure, positions,
+  return emitBuild(op, scope.builder, loc, structure, positions,
                    mapping.lookup(op.getCell()), size, cutoff + skin,
                    cells.getWidth().convertToDouble());
 }
@@ -822,9 +906,12 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op,
   if (failed(getSize(op, op.getPositions().getType(), size)))
     return failure();
 
-  Type real = builder.getF64Type();
+  Type real = cast<MemRefType>(positions.getType()).getElementType();
   double cutoff = op.getCutoff().convertToDouble();
   double skin = op.getSkin().convertToDouble();
+  Value reference;
+  if (failed(getReference(op, structure, positions, size, reference)))
+    return failure();
 
   // The structure is valid if it has been built, in this cell, and no
   // particle has moved more than half the skin since.
@@ -848,15 +935,14 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op,
       ValueRange{none},
       [&](OpBuilder &body, Location, ValueRange ivs, ValueRange) {
         Value now = loadElement(body, loc, positions, ivs[0]);
-        Value then = loadElement(body, loc, structure.reference, ivs[0]);
+        Value then = loadElement(body, loc, reference, ivs[0]);
         Value moved = arith::SubFOp::create(body, loc, now, then);
         Value squares = arith::MulFOp::create(body, loc, moved, moved);
         Value distance2 = vector::ReductionOp::create(
             body, loc, vector::CombiningKind::ADD, squares);
         createReduction(body, loc, {distance2}, /*isSum=*/false);
       });
-  Value limit = arith::ConstantOp::create(
-      builder, loc, real, builder.getF64FloatAttr(0.25 * skin * skin));
+  Value limit = createReal(builder, loc, real, 0.25 * skin * skin);
   Value near = arith::CmpFOp::create(
       builder, loc, arith::CmpFPredicate::OLE, farthest.getResult(0), limit);
   valid = arith::AndIOp::create(builder, loc, valid, near);
@@ -868,7 +954,7 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op,
   LogicalResult status = success();
   scf::IfOp::create(
       builder, loc, stale, [&](OpBuilder &then, Location) {
-        status = emitBuild(then, loc, structure, positions, box, size,
+        status = emitBuild(op, then, loc, structure, positions, box, size,
                            cutoff + skin,
                            op.getCellWidth().convertToDouble());
         scf::YieldOp::create(then, loc);
@@ -1015,6 +1101,18 @@ LogicalResult Lowering::lowerYield(scf::YieldOp op, Scope &scope) {
 // Other ops
 //===----------------------------------------------------------------------===//
 
+/// Verifies that the field type `field` is stored in the buffer type
+/// `buffer`. Converting between the two would be a copy that nothing asked
+/// for.
+static LogicalResult checkStored(Operation *op, Type field, Type buffer) {
+  if (mdrt::getBufferType(cast<md::FieldType>(field)) == buffer)
+    return success();
+  return op->emitOpError()
+         << "the field has the type " << field
+         << ", which is not the type that the buffer stores; run "
+            "'md-exec-assign-precision' first";
+}
+
 LogicalResult Lowering::lowerGeneric(Operation *op, Scope &scope) {
   bool touchesFields = false;
   op->walk([&](Operation *nested) {
@@ -1037,12 +1135,18 @@ LogicalResult Lowering::lowerOp(Operation *op, Scope &scope,
   OpBuilder &builder = scope.builder;
 
   if (auto from = dyn_cast<mdrt::FromBufferOp>(op)) {
+    if (failed(checkStored(op, from.getResult().getType(),
+                           from.getBuffer().getType())))
+      return failure();
     Value buffer = mapping.lookup(from.getBuffer());
     bind(from.getResult(), buffer, scope);
     scope.owned.insert(buffer);
     return success();
   }
   if (auto to = dyn_cast<mdrt::ToBufferOp>(op)) {
+    if (failed(checkStored(op, to.getField().getType(),
+                           to.getResult().getType())))
+      return failure();
     Value buffer;
     if (failed(getBuffer(to.getField(), scope, buffer)))
       return failure();

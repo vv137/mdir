@@ -24,6 +24,15 @@ def MDRT_FromBufferOp : MDRT_Op<"from_buffer", [Pure]> {
     %x = mdrt.from_buffer %buffer
            : memref<?x3xf64> to !md.field<@atoms, 3 x f64>
     ```
+
+    The buffer may hold `f32` where the field has `f64`. The field then has
+    the values of the buffer, and the buffer states the type that the field
+    is stored in. `md-exec-assign-precision` gives the field that type.
+
+    ```mlir
+    %x = mdrt.from_buffer %buffer
+           : memref<?x3xf32> to !md.field<@atoms, 3 x f64>
+    ```
   }];
   let arguments = (ins AnyMemRef:$buffer);
   let results = (outs MD_FieldType:$result);
@@ -38,6 +47,9 @@ def MDRT_ToBufferOp : MDRT_Op<"to_buffer", [Pure]> {
   let description = [{
     The buffer is the one that holds the field when the op is reached. It
     need not be a buffer that was passed to `mdrt.from_buffer`.
+
+    As for `mdrt.from_buffer`, the element type of the buffer states the
+    type that the field is stored in.
 
     ```mlir
     %buffer = mdrt.to_buffer %x

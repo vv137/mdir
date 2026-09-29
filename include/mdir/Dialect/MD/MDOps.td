@@ -83,6 +83,7 @@ def MD_FunctionOp : MD_FunctionLikeOp<"function"> {
     Has the form of `md.potential`, with any number of results of any type.
     Derivative programs and observables are `md.function`s.
   }];
+  let hasVerifier = 1;
 }
 
 def MD_ReturnOp : MD_Op<"return", [
@@ -133,7 +134,7 @@ def MD_NeighborhoodOp : MD_Op<"neighborhood", [Pure]> {
     ```
   }];
   let arguments = (ins
-    MD_FieldType:$positions,
+    MD_ReferenceFieldType:$positions,
     MD_CellType:$cell,
     F64Attr:$cutoff
   );
@@ -181,9 +182,9 @@ def MD_SumRelationOp : MD_Op<"sum_relation", [
   }];
   let arguments = (ins
     MD_RelationType:$relation,
-    MD_FieldType:$positions,
+    MD_ReferenceFieldType:$positions,
     MD_CellType:$cell,
-    Variadic<MD_FieldType>:$gathered,
+    Variadic<MD_ReferenceFieldType>:$gathered,
     MD_Exchange:$exchange,
     DefaultValuedAttr<MD_ExchangeBasis,
                       "::mdir::md::ExchangeBasis::Proof">:$exchange_basis,
@@ -231,15 +232,15 @@ def MD_GatherRelationOp : MD_Op<"gather_relation", [
   }];
   let arguments = (ins
     MD_RelationType:$relation,
-    MD_FieldType:$positions,
+    MD_ReferenceFieldType:$positions,
     MD_CellType:$cell,
-    Variadic<MD_FieldType>:$gathered,
+    Variadic<MD_ReferenceFieldType>:$gathered,
     MD_Exchange:$exchange,
     DefaultValuedAttr<MD_ExchangeBasis,
                       "::mdir::md::ExchangeBasis::Proof">:$exchange_basis
   );
   let regions = (region SizedRegion<1>:$kernel);
-  let results = (outs MD_FieldType:$result);
+  let results = (outs MD_ReferenceFieldType:$result);
   let assemblyFormat = [{
     $relation `,` $positions `,` $cell
     (`gather` `(` $gathered^ `:` qualified(type($gathered)) `)`)?
@@ -275,7 +276,7 @@ def MD_SumParticlesOp : MD_Op<"sum_particles", [
     } : f64
     ```
   }];
-  let arguments = (ins Variadic<MD_FieldType>:$gathered);
+  let arguments = (ins Variadic<MD_ReferenceFieldType>:$gathered);
   let regions = (region SizedRegion<1>:$kernel);
   let results = (outs AnyType:$result);
   let assemblyFormat = [{
@@ -304,9 +305,9 @@ def MD_MapParticlesOp : MD_Op<"map_particles", [
     } : !md.field<@atoms, 3 x f64>
     ```
   }];
-  let arguments = (ins Variadic<MD_FieldType>:$gathered);
+  let arguments = (ins Variadic<MD_ReferenceFieldType>:$gathered);
   let regions = (region SizedRegion<1>:$kernel);
-  let results = (outs MD_FieldType:$result);
+  let results = (outs MD_ReferenceFieldType:$result);
   let assemblyFormat = [{
     `gather` `(` $gathered `:` qualified(type($gathered)) `)`
     $kernel attr-dict `:` qualified(type($result))

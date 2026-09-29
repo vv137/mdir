@@ -174,3 +174,32 @@ md.function @f() {
       : !mdrt.neighbors<@atoms>
   md.return
 }
+
+// -----
+
+md.particle_set @atoms
+
+// The squared distance and the displacement have one type.
+func.func @f(%nl: !mdrt.neighbors<@atoms>, %x: !md.field<@atoms, 3 x f64>,
+             %cell: !md.cell) -> f64 {
+  %u0 = arith.constant 0.0 : f64
+  // expected-error@+1 {{expected kernel argument 1 to have type 'vector<3xf32>', got 'vector<3xf64>'}}
+  %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64)
+      cutoff(2.5) policy(directed, owner_only) {
+  ^bb0(%r2: f32, %d: vector<3xf64>):
+    %e = arith.extf %r2 : f32 to f64
+    md_exec.yield %e : f64
+  } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> f64
+  return %u : f64
+}
+
+// -----
+
+md.particle_set @atoms
+
+// A buffer of integers does not hold a field of floating-point values.
+func.func @f(%buffer: memref<?xi32>) {
+  // expected-error@+1 {{expected the buffer of '!md.field<@atoms, f64>' to have type 'memref<?xf64>', got 'memref<?xi32>'}}
+  %q = mdrt.from_buffer %buffer : memref<?xi32> to !md.field<@atoms, f64>
+  return
+}

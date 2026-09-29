@@ -41,12 +41,12 @@ def Dyn_KickOp : Dyn_Op<"kick", [
     ```
   }];
   let arguments = (ins
-    MD_FieldType:$velocities,
-    MD_FieldType:$forces,
-    MD_FieldType:$masses,
+    MD_ReferenceFieldType:$velocities,
+    MD_ReferenceFieldType:$forces,
+    MD_ReferenceFieldType:$masses,
     F64:$dt
   );
-  let results = (outs MD_FieldType:$result);
+  let results = (outs MD_ReferenceFieldType:$result);
   let assemblyFormat = [{
     $velocities `,` $forces `,` $masses `,` $dt attr-dict
     `:` qualified(type($result))
@@ -72,11 +72,11 @@ def Dyn_DriftOp : Dyn_Op<"drift", [
     ```
   }];
   let arguments = (ins
-    MD_FieldType:$positions,
-    MD_FieldType:$velocities,
+    MD_ReferenceFieldType:$positions,
+    MD_ReferenceFieldType:$velocities,
     F64:$dt
   );
-  let results = (outs MD_FieldType:$result);
+  let results = (outs MD_ReferenceFieldType:$result);
   let assemblyFormat = [{
     $positions `,` $velocities `,` $dt attr-dict `:` qualified(type($result))
   }];

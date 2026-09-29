@@ -291,6 +291,8 @@ P11 to P18 follow from the review of PPMD (Saunders et al. 2018). See
 | D28 | **CPU threading uses OpenMP in M0.** Threading is a structural plan parameter with the values `openmp` and `none`. With `none`, loops are lowered sequentially and the OpenMP runtime is not loaded. |
 | D29 | **The neighbor structure of M0 is the neighbor matrix.** |
 | D30 | **Vector fields are stored as `memref<?x3xT>` first.** The other layout comes later. |
+| D31 | **Precision is assigned by a pass on `md_exec`.** `md-exec-assign-precision` runs on the value form, after the transformations of that level and before storage assignment. Everything before it works on the reference program in `f64`. The type `!md.field` admits `f32` for this; the ops of `md` and `dyn` reject it (B2). |
+| D32 | **Buffers state the type that the state is stored in.** `mdrt.from_buffer` and `mdrt.to_buffer` accept a buffer of `f32` for a field of `f64`. Whoever allocates the state applies the roles `position` and `velocity`; the compiled program follows the buffers and never converts one (D18). For fields that no buffer holds, the pass derives the role from how the field is used. |
 
 ### 5.1 Amendments to earlier decisions
 
@@ -362,11 +364,13 @@ These items follow from the decisions above but have no design yet.
 | `md` dialect: types, ops, truncation, differentiation, exchange check | M0 | Implemented |
 | `dyn` dialect | M0 | Implemented |
 | `md_exec` dialect in the value form, and the conversion into it | M0 | Implemented |
-| Lowering of `md_exec` to executable code on the CPU | M0 | Implemented, in double precision |
+| Lowering of `md_exec` to executable code on the CPU | M0 | Implemented |
 | Reuse of neighbor structures across steps, with the policy `check` | M0 | Implemented |
 | Rebuild policy `interval`, with the diagnostic of A11 | M0 | |
 | Storage form of the `md_exec` ops, as D17 decided | M0 | The lowering is direct for now; to be done before the GPU back end |
-| Precision policy | M0 | |
+| Precision policy | M0 | Implemented for the CPU: single, mixed, and double |
+| Declaring the role of a field that a function takes | M0 | |
+| Vectorization of loops over pairs across pairs | M0 | Without it, single precision is no faster than double on the CPU |
 | Fusion of loops over the same neighbor structure | M0 | Implemented |
 | Fusion of loops over particles | M0 | |
 | Removal of the square root from kernels that do not need it | M0 | Implemented |

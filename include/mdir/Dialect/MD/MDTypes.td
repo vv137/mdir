@@ -26,8 +26,12 @@ def MD_FieldType : MD_Type<"Field", "field"> {
     ```
 
     At the semantic level `f64` is the only floating-point element type. It
-    is the reference precision; storage precision is assigned during
-    lowering.
+    is the reference precision. The element type `f32` appears at the
+    execution level, where the precision policy assigns it.
+
+    ```mlir
+    !md.field<@atoms, 3 x f32>
+    ```
   }];
   let parameters = (ins
     "::mlir::FlatSymbolRefAttr":$particleSet,
@@ -44,6 +48,14 @@ def MD_FieldType : MD_Type<"Field", "field"> {
     ::mlir::Type getKernelValueType() const;
   }];
 }
+
+def MD_ReferenceFieldType : Type<
+    And<[MD_FieldType.predicate,
+         CPred<"!::llvm::cast<::mdir::md::FieldType>($_self)"
+               ".getElementType().isF32()">]>,
+    "field at the reference precision, with elements of type f64, i32, or "
+    "i64",
+    "::mdir::md::FieldType">;
 
 def MD_CellType : MD_Type<"Cell", "cell"> {
   let summary = "A simulation cell";
