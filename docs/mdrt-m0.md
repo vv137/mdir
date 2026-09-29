@@ -114,8 +114,21 @@ expected result.
 The conflict matters for the Python library (C5): NumPy and PyTorch load
 OpenMP runtimes of their own.
 
-Proposal: OpenMP for M0, because it works today. The choice is confined to
-the lowering of parallel loops, so it can be replaced.
+Decided (D28): OpenMP for M0. The choice is confined to the lowering of
+parallel loops, so it can be replaced.
+
+Threading is a structural plan parameter.
+
+| Value | Lowering | OpenMP runtime |
+|---|---|---|
+| `openmp` | Parallel loops through the `omp` dialect | Loaded |
+| `none` | Sequential loops | Not loaded |
+
+Because compilation happens before each run, the value is chosen per run.
+`none` is the way to avoid a conflict when the process hosts a framework
+with an OpenMP runtime of its own, as a learned potential evaluated by an
+external framework does. It is also the natural value for a GPU target,
+where compiled CPU loops do little work.
 
 ## 5. GPU execution
 
@@ -152,7 +165,7 @@ Proposal: the C++ tool.
 | # | Question | Proposal |
 |---|---|---|
 | 1 | Neighbor structure for M0 | Neighbor matrix on both targets |
-| 2 | CPU threading | OpenMP for M0 |
+| 2 | CPU threading | Decided: OpenMP for M0 (D28) |
 | 3 | GPU execution | Upstream `gpu` dialect; runtime functions in `mdrt` |
 | 4 | Reference interpreter | C++ tool |
 | 5 | Vector field layout for M0 | `memref<?x3xT>`; the other layout later |

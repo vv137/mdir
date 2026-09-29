@@ -288,6 +288,7 @@ P11 to P18 follow from the review of PPMD (Saunders et al. 2018). See
 | D25 | **Trajectories are written as XTC.** XTC holds positions only, in reduced precision, so it does not serve as a checkpoint. |
 | D26 | **Checkpoints are written as H5MD, in 64-bit floating point.** A checkpoint holds positions and velocities, together with everything else an exact restart needs. H5MD is an HDF5-based format with standard places for positions, velocities, periodic images, particle IDs, and the box, and it allows application-specific groups. |
 | D27 | **D8 applies from M0.** The kernels that build cells and neighbor structures are generated from the first milestone. The runtime provides only generic primitives. |
+| D28 | **CPU threading uses OpenMP in M0.** Threading is a structural plan parameter with the values `openmp` and `none`. With `none`, loops are lowered sequentially and the OpenMP runtime is not loaded. |
 
 ### 5.1 Amendments to earlier decisions
 

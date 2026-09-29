@@ -29,7 +29,8 @@ LLVM_ROOT=$HOME/opt/llvm scripts/build-llvm.sh
 ```
 
 The script clones the release, builds it with MLIR and the X86, NVPTX, and
-AMDGPU targets, and installs it to `$LLVM_ROOT/23.1.2`.
+AMDGPU targets, and installs it to `$LLVM_ROOT/23.1.2`. It then builds the
+OpenMP runtime from the same source and installs it to the same place.
 
 ## Building MDIR
 
