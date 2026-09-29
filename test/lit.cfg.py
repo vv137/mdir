@@ -65,13 +65,15 @@ if config.mdir_cuda:
     except (OSError, subprocess.SubprocessError):
         pass
     config.environment["CUDA_ROOT"] = config.mdir_cuda_root
-config.substitutions.append(
+# It goes before "%mdrt", which is the beginning of its name.
+config.substitutions.insert(
+    0,
     (
         "%mdrt_cuda",
         os.path.join(
             config.mdir_obj_root, "lib", "libmdrt_cuda" + config.llvm_shlib_ext
         ),
-    )
+    ),
 )
 
 # The passes of the semantic level, up to code in ordinary functions.
@@ -105,6 +107,23 @@ config.substitutions.append(
     (
         "%md_exec_fast_passes",
         md_exec_fast_transforms + md_exec_lowering,
+    )
+)
+
+# The same for a device, up to ops of the gpu dialect, and the upstream
+# pipeline that lowers those. The kernels are embedded as PTX text, which
+# the driver compiles when the program starts.
+md_exec_gpu_lowering = (
+    " --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu"
+)
+config.substitutions.append(
+    ("%md_exec_gpu_passes", md_exec_transforms + md_exec_gpu_lowering)
+)
+config.substitutions.append(
+    (
+        "%lower_gpu_to_llvm",
+        '--gpu-lower-to-nvvm-pipeline="cubin-format=isa"'
+        " --reconcile-unrealized-casts",
     )
 )
 

@@ -4,6 +4,7 @@ set(LIBS
   MDIRMDExec
   MDIRMDExecTransforms
   MDIRMDRT
+  MDIRMDExecToGPU
   MDIRMDExecToLoops
   MDIRMDToMDExec
   MLIRMemRefDialect
@@ -11,6 +12,7 @@ set(LIBS
   MDIRTestPasses
   MLIRArithDialect
   MLIRFuncDialect
+  MLIRGPUDialect
   MLIRMathDialect
   MLIROptLib
   MLIRSCFDialect

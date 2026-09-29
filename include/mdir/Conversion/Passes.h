@@ -13,6 +13,9 @@ class ArithDialect;
 namespace func {
 class FuncDialect;
 } // namespace func
+namespace gpu {
+class GPUDialect;
+} // namespace gpu
 namespace memref {
 class MemRefDialect;
 } // namespace memref

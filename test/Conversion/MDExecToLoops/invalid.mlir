@@ -45,3 +45,17 @@ func.func @f(%x: memref<?x3xf32>, %cell: !md.cell, %n: index) {
       : !mdrt.neighbors<@atoms>, memref<?x3xf32>
   return
 }
+
+// -----
+
+md.particle_set @atoms
+
+func.func @f(%v: memref<?x3xf64, 1>) {
+  // expected-error@+1 {{has its buffers on a device; use 'convert-md-exec-to-gpu'}}
+  md_exec.particle_for ins(%v : memref<?x3xf64, 1>)
+      outs(%v : memref<?x3xf64, 1>) {
+  ^bb0(%v_i: vector<3xf64>):
+    md_exec.yield %v_i : vector<3xf64>
+  }
+  return
+}

@@ -1,9 +1,9 @@
 # MDIR Op Specification, Milestone M0
 
-Status: draft 10 (2026-09-29). Everything in this document is implemented for
-the CPU, except where a section says otherwise. A Lennard-Jones system runs
-end to end in single, mixed, and double precision, sequentially and with
-OpenMP.
+Status: draft 11 (2026-09-29). Everything in this document is implemented,
+except where a section says otherwise. A Lennard-Jones system runs end to
+end in single, mixed, and double precision, on the CPU sequentially and
+with OpenMP, and on NVIDIA GPUs.
 
 This document specifies the types and ops needed for milestone M0: a
 Lennard-Jones fluid integrated with velocity Verlet or leapfrog, on one node,
@@ -20,6 +20,7 @@ Operand lists, result lists, and the mathematical definitions are normative.
 | Conversion of `md` and `dyn` to `md_exec` (Section 9.1) | Implemented as the pass `convert-md-to-md-exec` |
 | Storage assignment (Section 10) | Implemented as the pass `md-exec-assign-storage` |
 | Lowering of the storage form to loops (Section 10.7) | Implemented as the pass `convert-md-exec-to-loops` |
+| Lowering of the storage form to GPU kernels (Section 10.8) | Implemented as the pass `convert-md-exec-to-gpu`, for NVIDIA |
 | Fusion of loops over pairs (Section 9.4) | Implemented as the pass `md-exec-fuse-loops` |
 | Powers of the squared distance (Section 9.5) | Implemented as the pass `md-exec-simplify-distance` |
 | Precision policy (Section 7) | Implemented as the pass `md-exec-assign-precision` |
@@ -861,7 +862,8 @@ the reference precision.
 On the CPU the modes differ little in speed so far: 0.83 s, 0.82 s, and
 0.78 s for 4096 particles and 200 steps, sequentially. The loops over pairs
 are not vectorized across pairs, so narrower values do not yet mean more
-values per instruction.
+values per instruction. On a GPU the mixed mode takes half the time of the
+double mode (Section 10.9).
 
 ### 7.8 Limitations
 
@@ -1038,7 +1040,7 @@ buffers. An op takes fields only or buffers only.
 
 | | Value form | Storage form |
 |---|---|---|
-| Operands | Fields | The buffers that hold the fields, of type `memref` (D33) |
+| Operands | Fields | The buffers that hold the fields, of type `memref` (D33). A buffer on a device has a memory space in its type: `memref<?x3xf64, 1>`. |
 | Results | One per `outs` and `reduce` operand | One per `reduce` operand; a buffer in `outs` is updated where it is |
 | Effects | None. The op can be removed, moved, and merged like any pure op. | Reads and writes of the buffers, declared to the upstream analyses |
 | Ordering | By data dependency | By the order of the ops in their block (A12) |
@@ -1062,7 +1064,8 @@ buffers. An op takes fields only or buffers only.
 |---|---|
 | `md_exec.pair_for` | `overwrite` has one flag per buffer in `outs`. With the flag, the loop ignores what the buffer holds, as if it held zeros. Without it, the loop adds to what the buffer holds. |
 | `md_exec.particle_for` | A buffer may be in `ins` and in `outs`: the kernel of a particle reads and writes the values of that particle only. |
-| `md_exec.empty_neighbors` | Takes `size` and `element` and allocates the storage of a structure for that many particles, with positions of that type. |
+| `md_exec.empty_neighbors` | Takes `size` and `positions` and allocates the storage of a structure for that many particles. `positions` is the type of the buffers that hold the positions; the storage is where they are. |
+| Every op | `scratch` holds buffers that the op may use as it likes. A lowering to a device needs them for global sums and maxima. |
 | `md_exec.refresh_neighbors` | Rebuilds the structure where it is. The result is the structure that was given. |
 | `md_exec.reset_neighbors` | Storage form only. Makes the structure valid for no configuration. It stands where the value form has an empty structure inside a loop. |
 | `md_exec.zeros`, `md_exec.empty`, `md_exec.build_cells`, `md_exec.build_neighbors` | Do not occur. A build is storage and a refresh with the policy `always`. |
@@ -1329,8 +1332,91 @@ decides nothing about buffers.
 | `md_exec.rebuild_count` | A load |
 | A cell | `vector<3xf64>`, the edge lengths of an orthorhombic cell |
 
-The lowering to a GPU is a second pass of this kind, from the same storage
-form.
+### 10.8 From the storage form to GPU kernels
+
+With `memory=device`, storage assignment puts the buffers on a device.
+
+| Value form | Storage form on a device |
+|---|---|
+| `mdrt.from_buffer` | A buffer on the device, and a copy from the host to it. The buffer of the host is kept for what is copied back. |
+| `mdrt.to_buffer` | A copy from the device to a buffer of the host. The field stays on the device. |
+| A loop with global sums | The loop with two buffers in `scratch` for each sum |
+| A refresh that tests validity | The refresh with two buffers in `scratch` |
+
+Everything between the two copies stays on the device. A loop over steps
+moves nothing between host and device, except one number for each global
+sum and each test of validity.
+
+The buffers in `scratch` come from the pool of the region, like any other
+buffer. A loop around the op carries them, so the lowering allocates
+nothing inside a loop over steps (D18, B10).
+
+The pass `convert-md-exec-to-gpu` replaces every op where it is, with ops
+of the upstream `gpu` dialect.
+
+| Storage form | Kernels |
+|---|---|
+| `md_exec.particle_for`, `md_exec.pair_for` | One kernel with one thread per particle, in blocks of 128 threads. With the policy `owner_only` a thread writes only to its own particle, so the kernel needs no atomic operation. |
+| A global sum | The kernel stores the contribution of each particle. A second kernel adds up chunks of 256 particles, a third adds up the results of the chunks, and the host reads the one number that results. |
+| `md_exec.empty_neighbors` | The buffers of a neighbor matrix on the device. The flag and the count of builds are on the host. |
+| `md_exec.refresh_neighbors` | The test of validity, with the largest displacement as a global maximum, and where it fails a call to the neighbor build template for devices |
+| A cell | `vector<3xf64>`. A kernel takes numbers and buffers as arguments, so a vector from outside enters a kernel as its elements. |
+
+The order in which a global sum is added up is fixed: by particle within a
+chunk, then by chunk. The sum is the same in every run. It differs from
+the sum on the host in its last bits, because the host adds up in another
+order.
+
+The neighbor build template for devices,
+`lib/Runtime/Templates/NeighborsMatrixGPU.mlir`, builds the matrix in eight
+kernels:
+
+| Kernel | Threads | Work |
+|---|---|---|
+| 1 | One per cell | Sets the counts of the cells to zero |
+| 2 | One per particle | Computes the cell of the particle and counts it, with an atomic addition |
+| 3 | One | Turns the counts into the offsets of the cells |
+| 4 | One per particle | Takes the next slot of the cell, with an atomic addition |
+| 5 | One per cell | Sorts the particles of the cell by index |
+| 6 | One per particle | Tests the particles of the surrounding cells and fills the row |
+| 7 | One per chunk | Limits the counts to the width of a row and finds the largest count of the chunk |
+| 8 | One | Finds the largest count |
+
+Kernel 5 makes the result independent of which thread took its slot first.
+The matrix is the one that the template for the host builds, entry by
+entry.
+
+The result is lowered by the upstream pipeline
+`gpu-lower-to-nvvm-pipeline`. The kernels become PTX text inside the
+program, and the driver compiles them when the program starts. Math
+functions come from the device math library of the CUDA toolkit.
+
+| Limitation | Consequence |
+|---|---|
+| A global sum is a single number. | The virial, a sum of vectors, cannot be computed on a device yet. |
+| The build allocates its work buffers at every build and frees them. | The cost is per build, not per step. |
+| One device | |
+| NVIDIA only | The storage form does not depend on the vendor; the lowering to `rocdl` is not written. |
+
+### 10.9 Run times
+
+Milliseconds per step, for the Lennard-Jones system of the tests at the
+density 0.58, with velocity Verlet, a cutoff of 2.0, and a skin of 0.2. The
+time is measured inside the program, around 200 steps; it includes the
+rebuilds and excludes the start of the program.
+
+| Particles | 1 thread | 16 threads | GPU, double | GPU, mixed |
+|---|---|---|---|---|
+| 4096 | 3.20 | 0.21 | 0.28 | 0.18 |
+| 32768 | 20.6 | 1.61 | 0.75 | 0.37 |
+| 110592 | 70.6 | 5.22 | 1.97 | 0.94 |
+
+The host is a machine with 128 cores, the GPU an RTX 3090. The numbers are
+the least of three runs. On the GPU the precision matters: the mixed mode
+takes half the time of the double mode.
+
+Starting the program on a GPU takes about one second, for the context of
+the driver and the compilation of the kernels.
 
 ## 11. Requirements on `mdrt`
 
@@ -1360,6 +1446,8 @@ and, from M1 on, on comparison with an established MD engine.
 | 200 steps of velocity Verlet and of leapfrog | The same script, integrating with all pairs | 1e-9 |
 | The same in the mixed mode | The same values | 1e-6 |
 | 200 steps of velocity Verlet in the single mode | The same values | 1e-5 |
+| All of the above on a GPU | The same values | The same tolerances |
+| Neighbor build template for devices | The matrix that the template for the host builds | Exact, order included |
 
 All but the first run sequentially and with OpenMP on 4 threads, except the
 mixed mode, which runs sequentially. The scripts are

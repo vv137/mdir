@@ -47,8 +47,9 @@ matrix.
 | 6 | For each particle, test the particles of the 27 surrounding cells and store those within `r_c + skin` | Generated loop with a generated predicate |
 | 7 | If a row of the matrix is full, report it | Runtime: overflow report |
 
-Steps 2 to 4 are a counting sort. On a GPU, step 2 needs atomic increments
-or a sort by key; the runtime provides a sort by key for that case.
+Steps 2 to 4 are a counting sort. On a GPU, steps 2 and 4 use atomic
+additions, and the particles of each cell are sorted by index afterward, so
+that the result does not depend on the order of the threads.
 
 ### 2.2 Neighbor matrix
 
@@ -165,7 +166,8 @@ On this machine: four RTX 3090, driver 595.84, CUDA toolkit 11.2, and LLVM
 | A counting sort of 100000 keys on the device: a histogram and a fill with atomic operations, a scan, and a sort of each cell by index | The order is the one that the host computes, and the same in every run. |
 | A buffer of the type `memref<?xf32, 1>`, with a memory space | Works through the whole lowering. Device buffers can differ in type from host buffers. |
 
-So the proposal is feasible as it stands.
+So the proposal is feasible as it stands. It was decided (D34) and
+implemented.
 
 ### 5.2 Plan
 
@@ -220,7 +222,8 @@ Proposal: the C++ tool.
 | Threading as a plan parameter | Not implemented. The choice is made by the passes that are run after lowering. |
 | Runtime library `libmdrt` | One function, the overflow report |
 | Spatial reordering (step 5) | Not implemented |
-| GPU | Not started |
+| GPU | Implemented for NVIDIA. See [ops-m0.md](ops-m0.md), Section 10.8. |
+| Runtime library `libmdrt_cuda` | The functions that the lowering of the `gpu` dialect calls, on the CUDA driver API. One stream serves all launches. |
 
 The template is sequential in its counting sort and parallel in its search
 for neighbors.
@@ -245,7 +248,7 @@ The generated code did not change: the run times are the same as before.
 |---|---|---|
 | 1 | Neighbor structure for M0 | Decided: neighbor matrix (D29) |
 | 2 | CPU threading | Decided: OpenMP for M0 (D28) |
-| 3 | GPU execution | Upstream `gpu` dialect; runtime functions in `mdrt` |
+| 3 | GPU execution | Decided and implemented (D34) |
 | 4 | Reference interpreter | Decided: none (V1) |
 | 5 | Vector field layout for M0 | Decided: `memref<?x3xT>` first (D30) |
 | 6 | Storage form of `md_exec` | Decided and implemented (D17, D33, A12) |

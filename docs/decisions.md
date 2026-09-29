@@ -293,6 +293,7 @@ P11 to P18 follow from the review of PPMD (Saunders et al. 2018). See
 | D30 | **Vector fields are stored as `memref<?x3xT>` first.** The other layout comes later. |
 | D31 | **Precision is assigned by a pass on `md_exec`.** `md-exec-assign-precision` runs on the value form, after the transformations of that level and before storage assignment. Everything before it works on the reference program in `f64`. The type `!md.field` admits `f32` for this; the ops of `md` and `dyn` reject it (B2). |
 | D33 | **The storage handle of a field is a `memref`.** The storage form of the `md_exec` ops takes `memref<?x3xT>` and `memref<?xT>`. No storage type of its own is introduced: upstream passes and the upstream `gpu` dialect work on `memref`s, and the memory space of a `memref` can tell the device. This narrows D19, which placed a storage type in `mdrt`. |
+| D34 | **GPU execution uses the upstream `gpu` dialect, with the runtime functions in `libmdrt_cuda`.** The kernels are embedded as PTX text. The neighbor build runs on the device, binning included; the particles of a cell are sorted by index so that the result does not depend on the order of the threads. A buffer on a device has a memory space in its type. |
 | D32 | **Buffers state the type that the state is stored in.** `mdrt.from_buffer` and `mdrt.to_buffer` accept a buffer of `f32` for a field of `f64`. Whoever allocates the state applies the roles `position` and `velocity`; the compiled program follows the buffers and never converts one (D18). For fields that no buffer holds, the pass derives the role from how the field is used. |
 
 ### 5.1 Amendments to earlier decisions
@@ -378,7 +379,9 @@ These items follow from the decisions above but have no design yet.
 | Removal of the square root from kernels that do not need it | M0 | Implemented |
 | Freeing of buffers | M0 | |
 | Driver, TOML input, XTC and H5MD output | M0 | |
-| GPU back end | M0 | |
+| GPU back end | M0 | Implemented for NVIDIA: `convert-md-exec-to-gpu`, `libmdrt_cuda` |
+| Global sums of vectors on a device, for the virial | M0 | |
+| GPU back end for AMD | M1 | |
 | Check that particle set symbols in types are declared | M0 | |
 | Regression test for the numerical values of derivatives | M0 | Implemented with a kernel runner |
 | `mdrt` ABI: storage, neighbor structures, events | M0 | Proposal in [mdrt-m0.md](mdrt-m0.md) |

@@ -2,8 +2,9 @@
 
 MDIR is an MLIR-based compiler stack for general-purpose molecular dynamics.
 It is at an early stage. A Lennard-Jones system compiles and runs on the
-CPU, sequentially or with OpenMP, and reproduces reference values. There is
-no driver, no input or output, and no GPU back end yet.
+CPU, sequentially or with OpenMP, and on NVIDIA GPUs, in single, mixed, or
+double precision, and reproduces reference values. There is no driver and
+no input or output yet.
 
 ## Documents
 
@@ -22,6 +23,8 @@ no driver, no input or output, and no GPU back end yet.
 - Ninja
 - LLVM and MLIR 23.1.2, built with `scripts/build-llvm.sh`
 - `lit`, for the tests (`pip install lit`)
+- For NVIDIA GPUs: the driver, and the CUDA toolkit for its header and its
+  device math library. Version 11.2 is known to work.
 
 ## Building LLVM
 
@@ -47,6 +50,11 @@ cmake -G Ninja -S . -B build \
 
 cmake --build build
 ```
+
+If the CUDA toolkit is found, the runtime for NVIDIA GPUs is built as
+`build/lib/libmdrt_cuda.so`. `-DCUDAToolkit_ROOT=<path>` names a toolkit
+that is not on the search path, and `-DMDIR_ENABLE_CUDA=OFF` leaves the
+runtime out.
 
 ## Testing
 
@@ -77,8 +85,9 @@ build/bin/mdir-opt test/Dialect/MD/ops.mlir
 | `--md-exec-fuse-loops` | Fuses loops over the pairs of one neighbor structure. Run `--cse` after it. |
 | `--md-exec-simplify-distance` | Rewrites pair kernels in powers of the squared distance. Changes rounding. Run `--canonicalize --cse` after it. |
 | `--md-exec-assign-precision` | Assigns `f32` or `f64` to fields and kernels. Options: `mode=single`, `mixed`, or `double`, and a type per role. Run it last before the lowering. |
-| `--md-exec-assign-storage` | Gives every field a buffer and converts the loops to the storage form, in which they update buffers where they are. |
+| `--md-exec-assign-storage` | Gives every field a buffer and converts the loops to the storage form, in which they update buffers where they are. With `memory=device` the buffers are on a GPU. |
 | `--convert-md-exec-to-loops` | Converts the loops in the storage form to `scf` loops over `memref`s. |
+| `--convert-md-exec-to-gpu` | Converts the loops in the storage form, with buffers on a device, to kernels of the upstream `gpu` dialect. |
 
 After the last pass the module holds only upstream dialects, so `mlir-opt`
 lowers it to LLVM and `mlir-runner` runs it:
@@ -104,15 +113,36 @@ Without `--convert-scf-to-openmp --canonicalize` and
 `--convert-openmp-to-llvm`, the loops run sequentially and `libomp.so` is
 not needed. `test/Integration` holds complete programs.
 
+For a GPU, the last two passes of `mdir-opt` and the passes of `mlir-opt`
+are others, and the runtime for GPUs is loaded:
+
+```sh
+export CUDA_ROOT=/usr/local/cuda
+
+build/bin/mdir-opt input.mlir \
+    ... \
+    --md-exec-assign-precision="mode=mixed" \
+    --md-exec-assign-storage="memory=device" --convert-md-exec-to-gpu \
+  | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-format=isa" \
+      --reconcile-unrealized-casts \
+  | mlir-runner -e main --entry-point-result=void \
+      --shared-libs=build/lib/libmdrt.so,build/lib/libmdrt_cuda.so,$LLVM_PREFIX/lib/libmlir_c_runner_utils.so
+```
+
+The kernels are embedded as PTX text, which the driver compiles when the
+program starts.
+
 ## Examples
 
 `examples/argon.mlir` is liquid argon at constant energy: 864 atoms, 2000
 steps of 5 fs with velocity Verlet.
 
 ```sh
-MDIR_BUILD=build LLVM_PREFIX=$HOME/opt/llvm/23.1.2 \
-    examples/run.sh examples/argon.mlir            # double precision
-    examples/run.sh examples/argon.mlir mixed 16   # mixed, 16 threads
+export MDIR_BUILD=build LLVM_PREFIX=$HOME/opt/llvm/23.1.2
+examples/run.sh examples/argon.mlir             # double precision
+examples/run.sh examples/argon.mlir mixed 16    # mixed, 16 threads
+CUDA_ROOT=/usr/local/cuda \
+    examples/run.sh examples/argon.mlir mixed gpu
 ```
 
 It prints the time, the potential, kinetic, and total energy, and the

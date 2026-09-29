@@ -68,4 +68,36 @@ def ConvertMDExecToLoops
                            "::mlir::vector::VectorDialect"];
 }
 
+def ConvertMDExecToGPU
+    : Pass<"convert-md-exec-to-gpu", "::mlir::ModuleOp"> {
+  let summary = "Converts md_exec loops in the storage form to GPU kernels";
+  let description = [{
+    Replaces every op of `md_exec` in the storage form, where it is, with
+    ops of the upstream `gpu` dialect. The buffers are on the device, as
+    `md-exec-assign-storage` with `memory=device` leaves them.
+
+    | Before | After |
+    |---|---|
+    | `md_exec.particle_for`, `md_exec.pair_for` | One `gpu.launch` with one thread per particle. A thread writes only to its own particle. |
+    | A global sum | The kernel writes the contribution of each particle to a buffer in `scratch`. A second kernel adds up chunks of 256 particles, a third adds up the chunks, and the host reads the result. The order is fixed. |
+    | `md_exec.empty_neighbors` | The buffers of a neighbor matrix, on the device |
+    | `md_exec.refresh_neighbors` | The test of validity, as a global maximum, and a call to the neighbor build template for devices, which the pass adds to the module |
+    | A cell | `vector<3xf64>`, the edge lengths of an orthorhombic cell |
+
+    The result is lowered further by the upstream pipeline
+    `gpu-lower-to-nvvm-pipeline`.
+  }];
+  let options = [
+    Option<"blockSize", "block-size", "int64_t", /*default=*/"128",
+           "The number of threads in a block">
+  ];
+  let dependentDialects = ["::mlir::arith::ArithDialect",
+                           "::mlir::func::FuncDialect",
+                           "::mlir::gpu::GPUDialect",
+                           "::mlir::math::MathDialect",
+                           "::mlir::memref::MemRefDialect",
+                           "::mlir::scf::SCFDialect",
+                           "::mlir::vector::VectorDialect"];
+}
+
 #endif // MDIR_CONVERSION_PASSES_TD

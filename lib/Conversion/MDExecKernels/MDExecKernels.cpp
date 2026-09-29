@@ -240,14 +240,16 @@ std::string kernels::instantiateTemplates(StringRef text, Type real) {
   if (real.isF64())
     return text.str();
 
+  // The functions of the templates have names that begin with `mdrt`.
   std::string instance;
-  StringRef prefix = "@mdrt.";
+  StringRef prefix = "@mdrt";
   while (!text.empty()) {
     if (text.consume_front("f64")) {
       instance += "f32";
     } else if (text.consume_front(prefix)) {
-      StringRef name = text.take_while(
-          [](char c) { return llvm::isAlnum(c) || c == '_'; });
+      StringRef name = text.take_while([](char c) {
+        return llvm::isAlnum(c) || c == '_' || c == '.';
+      });
       text = text.drop_front(name.size());
       instance += getInstanceName((prefix + name).str(), real);
     } else {
