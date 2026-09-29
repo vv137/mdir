@@ -287,6 +287,17 @@ Lett.* **19**, 155–160 (1992).
 Used for: dissipative particle dynamics (DPD), the example of a pairwise
 thermostat that needs a neighborhood.
 
+### Hub2014
+
+J. S. Hub, B. L. de Groot, H. Grubmüller, G. Groenhof, "Quantifying
+artifacts in Ewald simulations of inhomogeneous systems with a net
+charge," *J. Chem. Theory Comput.* **10**, 381–390 (2014).
+[doi:10.1021/ct400626b](https://doi.org/10.1021/ct400626b)
+
+Used for: the energy of the uniform background that neutralizes a system
+with a net charge under Ewald summation, `−π Q² / (2 V β²)` in units of
+`f` (pme-m1.md).
+
 ### Izadi2014
 
 S. Izadi, R. Anandakrishnan, A. V. Onufriev, "Building water models: A
@@ -530,6 +541,14 @@ Analysis* (IEEE, 2012), pp. 1116–1123.
 [doi:10.1109/SC.Companion.2012.134](https://doi.org/10.1109/SC.Companion.2012.134)
 
 Used for: PyOP2, with OP2 the origin of loops with access descriptors.
+
+### Reinecke2019
+
+M. Reinecke, "pocketfft," a library of fast Fourier transforms in C,
+Max-Planck-Society (2010–2019), under the 3-clause BSD license.
+[gitlab.mpcdf.mpg.de/mtr/pocketfft](https://gitlab.mpcdf.mpg.de/mtr/pocketfft)
+
+Used for: the FFT of particle mesh Ewald on the host (D64, pme-m1.md).
 
 ### Ryckaert1977
 

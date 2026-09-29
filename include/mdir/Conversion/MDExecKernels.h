@@ -118,6 +118,16 @@ void freeAtEndOfBlock(mlir::Operation *op, mlir::Value buffer);
 std::string instantiateTemplates(llvm::StringRef text, mlir::Type real);
 std::string getInstanceName(llvm::StringRef name, mlir::Type real);
 
+/// The templates of particle mesh Ewald for positions, charges, and forces
+/// stored as `position`, `charge`, and `force`: the aliases `!pme_pos`,
+/// `!pme_chg`, and `!pme_frc` take those types, the conversions from and to
+/// f64 become the ops that they need, and the functions take the suffix of
+/// `getPMESuffix`.
+std::string instantiatePMETemplates(llvm::StringRef text, mlir::Type position,
+                                    mlir::Type charge, mlir::Type force);
+std::string getPMEInstanceName(llvm::StringRef name, mlir::Type position,
+                               mlir::Type charge, mlir::Type force);
+
 } // namespace kernels
 } // namespace mdir
 

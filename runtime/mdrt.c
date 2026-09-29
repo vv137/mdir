@@ -143,3 +143,148 @@ double mdrtBussiFactor(int64_t seed, int64_t step, double kinetic,
                     sqrt(kinetic * target / freedom * (1.0 - decay) * decay);
   return sqrt(next / kinetic);
 }
+
+/*===----------------------------------------------------------------------===
+ * FFT of particle mesh Ewald on the host
+ *===----------------------------------------------------------------------===*/
+
+#include "pocketfft.h"
+
+/* The descriptor of a buffer of one dimension of f64, as the C interface
+   of MLIR passes it. */
+typedef struct {
+  double *allocated;
+  double *aligned;
+  int64_t offset;
+  int64_t sizes[1];
+  int64_t strides[1];
+} Buffer1D;
+
+/* The plans of the lengths that a run uses, kept for the run. */
+enum { numPlans = 32 };
+static struct {
+  size_t length;
+  rfft_plan real;
+  cfft_plan complex;
+} plans[numPlans];
+
+static rfft_plan getRealPlan(size_t length) {
+  for (int i = 0; i != numPlans; ++i) {
+    if (plans[i].length == length && plans[i].real)
+      return plans[i].real;
+    if (plans[i].length == 0 || (plans[i].length == length)) {
+      plans[i].length = length;
+      plans[i].real = make_rfft_plan(length);
+      return plans[i].real;
+    }
+  }
+  fprintf(stderr, "mdrt: too many lengths of FFT\n");
+  abort();
+}
+
+static cfft_plan getComplexPlan(size_t length) {
+  for (int i = 0; i != numPlans; ++i) {
+    if (plans[i].length == length && plans[i].complex)
+      return plans[i].complex;
+    if (plans[i].length == 0 || (plans[i].length == length)) {
+      plans[i].length = length;
+      plans[i].complex = make_cfft_plan(length);
+      return plans[i].complex;
+    }
+  }
+  fprintf(stderr, "mdrt: too many lengths of FFT\n");
+  abort();
+}
+
+/* Transforms of the complex lines along the first two dimensions of the
+   half-complex grid `c` of k1 x k2 x h complex numbers, interleaved. */
+static void transformColumns(double *c, int64_t k1, int64_t k2, int64_t h,
+                             int forward) {
+  int64_t longest = k1 > k2 ? k1 : k2;
+  double *line = (double *)malloc(2 * (size_t)longest * sizeof(double));
+  cfft_plan second = getComplexPlan((size_t)k2);
+  for (int64_t a = 0; a != k1; ++a)
+    for (int64_t z = 0; z != h; ++z) {
+      for (int64_t b = 0; b != k2; ++b) {
+        line[2 * b] = c[2 * ((a * k2 + b) * h + z)];
+        line[2 * b + 1] = c[2 * ((a * k2 + b) * h + z) + 1];
+      }
+      if (forward)
+        cfft_forward(second, line, 1.0);
+      else
+        cfft_backward(second, line, 1.0);
+      for (int64_t b = 0; b != k2; ++b) {
+        c[2 * ((a * k2 + b) * h + z)] = line[2 * b];
+        c[2 * ((a * k2 + b) * h + z) + 1] = line[2 * b + 1];
+      }
+    }
+  cfft_plan first = getComplexPlan((size_t)k1);
+  for (int64_t b = 0; b != k2; ++b)
+    for (int64_t z = 0; z != h; ++z) {
+      for (int64_t a = 0; a != k1; ++a) {
+        line[2 * a] = c[2 * ((a * k2 + b) * h + z)];
+        line[2 * a + 1] = c[2 * ((a * k2 + b) * h + z) + 1];
+      }
+      if (forward)
+        cfft_forward(first, line, 1.0);
+      else
+        cfft_backward(first, line, 1.0);
+      for (int64_t a = 0; a != k1; ++a) {
+        c[2 * ((a * k2 + b) * h + z)] = line[2 * a];
+        c[2 * ((a * k2 + b) * h + z) + 1] = line[2 * a + 1];
+      }
+    }
+  free(line);
+}
+
+/* The forward transform, exp(−2π i k·m / K), of the real grid `real` of
+   k1 x k2 x k3 points into the half-complex grid `complex` of
+   k1 x k2 x (k3 / 2 + 1) numbers, interleaved. */
+void _mlir_ciface_mdrtFFTForward3D(Buffer1D *real, Buffer1D *complex,
+                                   int64_t k1, int64_t k2, int64_t k3) {
+  const double *r = real->aligned + real->offset;
+  double *c = complex->aligned + complex->offset;
+  int64_t h = k3 / 2 + 1;
+  rfft_plan plan = getRealPlan((size_t)k3);
+  double *line = (double *)malloc((size_t)k3 * sizeof(double));
+  for (int64_t row = 0; row != k1 * k2; ++row) {
+    for (int64_t z = 0; z != k3; ++z)
+      line[z] = r[row * k3 + z];
+    rfft_forward(plan, line, 1.0);
+    /* From r0, r1, i1, r2, i2, ... to pairs. */
+    double *out = c + 2 * row * h;
+    out[0] = line[0];
+    out[1] = 0.0;
+    for (int64_t z = 1; z != h; ++z) {
+      out[2 * z] = line[2 * z - 1];
+      out[2 * z + 1] = 2 * z < k3 ? line[2 * z] : 0.0;
+    }
+  }
+  free(line);
+  transformColumns(c, k1, k2, h, /*forward=*/1);
+}
+
+/* The backward transform, exp(+2π i k·m / K), not normalized, of the
+   half-complex grid `complex`, which it overwrites, into `real`. */
+void _mlir_ciface_mdrtFFTBackward3D(Buffer1D *complex, Buffer1D *real,
+                                    int64_t k1, int64_t k2, int64_t k3) {
+  double *c = complex->aligned + complex->offset;
+  double *r = real->aligned + real->offset;
+  int64_t h = k3 / 2 + 1;
+  transformColumns(c, k1, k2, h, /*forward=*/0);
+  rfft_plan plan = getRealPlan((size_t)k3);
+  double *line = (double *)malloc((size_t)k3 * sizeof(double));
+  for (int64_t row = 0; row != k1 * k2; ++row) {
+    const double *in = c + 2 * row * h;
+    line[0] = in[0];
+    for (int64_t z = 1; z != h; ++z) {
+      line[2 * z - 1] = in[2 * z];
+      if (2 * z < k3)
+        line[2 * z] = in[2 * z + 1];
+    }
+    rfft_backward(plan, line, 1.0);
+    for (int64_t z = 0; z != k3; ++z)
+      r[row * k3 + z] = line[z];
+  }
+  free(line);
+}

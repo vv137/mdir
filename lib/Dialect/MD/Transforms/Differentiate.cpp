@@ -12,6 +12,7 @@
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 
 using namespace mlir;
@@ -61,6 +62,10 @@ private:
                                 SmallVectorImpl<Value> &forces,
                                 Value *virial = nullptr);
 
+  /// `field` times the number `weight`, particle by particle, or `field`
+  /// itself where `weight` is the constant 1.
+  Value scaleField(Value field, Value weight);
+
   LogicalResult buildForces(Value &forces);
   LogicalResult buildVirial(Value &virial);
   LogicalResult buildParameterDerivative(int64_t argument, Value &result);
@@ -75,6 +80,8 @@ private:
   Value energy;
   SmallVector<SumRelationOp> sums;
   SmallVector<SumTuplesOp> tupleSums;
+  /// Reciprocal sums, which yield their own forces and virial.
+  SmallVector<ReciprocalOp> reciprocals;
 };
 
 } // namespace
@@ -95,7 +102,7 @@ LogicalResult DerivativeBuilder::checkPositionUses() {
   for (OpOperand &use : positions.getUses()) {
     Operation *user = use.getOwner();
     unsigned index = use.getOperandNumber();
-    bool known = (isa<NeighborhoodOp>(user) && index == 0) ||
+    bool known = (isa<NeighborhoodOp, ReciprocalOp>(user) && index == 0) ||
                  (isa<SumRelationOp, SumTuplesOp>(user) && index == 1);
     if (!known)
       return user->emitError()
@@ -311,6 +318,36 @@ LogicalResult DerivativeBuilder::emitTupleForces(Operation *op, Value weight,
 // Forces
 //===----------------------------------------------------------------------===//
 
+/// Whether `value` is the constant 1.
+static bool isOne(Value value) {
+  FloatAttr attr;
+  return matchPattern(value, m_Constant(&attr)) &&
+         attr.getValueAsDouble() == 1.0;
+}
+
+Value DerivativeBuilder::scaleField(Value field, Value weight) {
+  if (isOne(weight))
+    return field;
+  Type vectorType = cast<FieldType>(field.getType()).getKernelValueType();
+  OperationState state(loc, MapParticlesOp::getOperationName());
+  state.addOperands(field);
+  state.addRegion();
+  state.addTypes(field.getType());
+  Operation *map = builder.create(state);
+  Block *block = new Block();
+  map->getRegion(0).push_back(block);
+  block->addArgument(vectorType, loc);
+  OpBuilder kernel = OpBuilder::atBlockEnd(block);
+  // The weight is a number outside the kernel; the kernel takes it as a
+  // value that it captures.
+  Value broadcast =
+      vector::BroadcastOp::create(kernel, loc, vectorType, weight);
+  Value product =
+      arith::MulFOp::create(kernel, loc, broadcast, block->getArgument(0));
+  YieldOp::create(kernel, loc, ValueRange{product});
+  return map->getResult(0);
+}
+
 LogicalResult DerivativeBuilder::buildForces(Value &forces) {
   Type fieldType = body->getArgument(0).getType();
   Type vectorType = cast<FieldType>(fieldType).getKernelValueType();
@@ -375,6 +412,17 @@ LogicalResult DerivativeBuilder::buildForces(Value &forces) {
     block.getTerminator()->setOperands(memberForces);
     eraseDeadOps(block);
     terms.push_back(gather->getResult(0));
+  }
+
+  // A reciprocal sum gives its forces, times the derivative of the energy
+  // with respect to it.
+  for (ReciprocalOp reciprocal : reciprocals) {
+    Value weight;
+    if (failed(getWeight(reciprocal.getEnergy(), weight)))
+      return failure();
+    if (!weight)
+      continue;
+    terms.push_back(scaleField(reciprocal.getForces(), weight));
   }
 
   if (terms.empty())
@@ -478,6 +526,21 @@ LogicalResult DerivativeBuilder::buildVirial(Value &virial) {
       contribution = emit.constant(0.0, virialType);
     setYield(block, contribution);
     total = outer.add(total, term->getResult(0));
+  }
+
+  for (ReciprocalOp reciprocal : reciprocals) {
+    Value weight;
+    if (failed(getWeight(reciprocal.getEnergy(), weight)))
+      return failure();
+    if (!weight)
+      continue;
+    Value term = reciprocal.getVirial();
+    if (!isOne(weight)) {
+      Value broadcast =
+          vector::BroadcastOp::create(builder, loc, virialType, weight);
+      term = outer.mul(broadcast, term);
+    }
+    total = outer.add(total, term);
   }
 
   virial = total ? total : outer.constant(0.0, virialType);
@@ -606,6 +669,8 @@ FunctionOp DerivativeBuilder::build(ArrayRef<int32_t> kinds,
   for (Operation &op : *body) {
     if (auto tuples = dyn_cast<SumTuplesOp>(&op))
       tupleSums.push_back(tuples);
+    if (auto reciprocal = dyn_cast<ReciprocalOp>(&op))
+      reciprocals.push_back(reciprocal);
     auto sum = dyn_cast<SumRelationOp>(&op);
     if (!sum)
       continue;

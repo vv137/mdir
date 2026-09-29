@@ -5,4 +5,8 @@ extern const char *const neighborsMatrixTemplate;
 const char *const neighborsMatrixTemplate = R"MDIRTEMPLATE(
 @NEIGHBORS_MATRIX_TEMPLATE@
 )MDIRTEMPLATE";
+extern const char *const pmeTemplate;
+const char *const pmeTemplate = R"MDIRTEMPLATE(
+@PME_TEMPLATE@
+)MDIRTEMPLATE";
 } // namespace mdir

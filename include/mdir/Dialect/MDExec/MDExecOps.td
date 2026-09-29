@@ -161,6 +161,60 @@ def MDExec_SpatialOrderOp : MDExec_Op<"spatial_order", [
   let hasVerifier = 1;
 }
 
+def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
+    AttrSizedOperandSegments,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "The reciprocal sum of particle mesh Ewald";
+  let description = [{
+    What `md.reciprocal` computes: the energy, the virial, and the forces
+    of the reciprocal sum of smooth particle mesh Ewald (docs/pme-m1.md).
+
+    ```mlir
+    %u, %w, %f = md_exec.reciprocal %x, %q, %cell, %influence
+                   grid([32, 32, 32]) order(4) beta(3.12)
+                   : !md.field<@atoms, 3 x f64>, !md.field<@atoms, f64>,
+                     !md.table<2, f64>
+                   -> f64, vector<9xf64>, !md.field<@atoms, 3 x f64>
+    ```
+
+    In the storage form the fields and the table are buffers, the forces
+    are written to the buffer in `outs`, and `scratch` holds the grid: the
+    charges in fixed point, the grid in f64, and the half-complex grid of
+    its transform, then on a device the sums of the rows of the grid.
+  }];
+  let arguments = (ins
+    MDExec_FieldOrBuffer:$positions,
+    MDExec_FieldOrBuffer:$charges,
+    MD_CellType:$cell,
+    AnyType:$influence,
+    Optional<MDExec_Buffer>:$out,
+    Variadic<MDExec_Buffer>:$scratch,
+    DenseI64ArrayAttr:$grid,
+    I64Attr:$order,
+    F64Attr:$beta
+  );
+  let results = (outs
+    F64:$energy,
+    VectorOfLengthAndType<[9], [F64]>:$virial,
+    Optional<MD_FieldType>:$forces
+  );
+  let assemblyFormat = [{
+    $positions `,` $charges `,` $cell `,` $influence
+    (`outs` `(` $out^ `:` type($out) `)`)?
+    (`scratch` `(` $scratch^ `:` type($scratch) `)`)?
+    `grid` `(` $grid `)` `order` `(` $order `)` `beta` `(` $beta `)`
+    attr-dict `:` qualified(type($positions)) `,` qualified(type($charges))
+    `,` qualified(type($influence)) `->` type($energy) `,` type($virial)
+    (`,` qualified(type($forces))^)?
+  }];
+  let extraClassDeclaration = [{
+    bool isStorageForm() {
+      return ::llvm::isa<::mlir::MemRefType>(getPositions().getType());
+    }
+  }];
+}
+
 def MDExec_PermuteOp : MDExec_Op<"permute", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {

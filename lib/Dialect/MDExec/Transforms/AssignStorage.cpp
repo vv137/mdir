@@ -101,6 +101,7 @@ private:
   LogicalResult convertTupleFor(TupleForOp op, Scope &scope,
                                 unsigned position);
   LogicalResult convertBuildIncidence(BuildIncidenceOp op, Scope &scope);
+  LogicalResult convertReciprocal(ReciprocalOp op, Scope &scope);
   LogicalResult convertGeneric(Operation *op, Scope &scope);
 
   /// Chooses the buffer that a loop writes the field `destination` to.
@@ -696,6 +697,68 @@ LogicalResult Assignment::convertBuildIncidence(BuildIncidenceOp op,
 // Neighbor structures
 //===----------------------------------------------------------------------===//
 
+LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
+  if (op.isStorageForm())
+    return op->emitOpError() << "is in the storage form already";
+  Location loc = op.getLoc();
+  Value positions, charges;
+  if (failed(getBuffer(op.getPositions(), scope, positions)) ||
+      failed(getBuffer(op.getCharges(), scope, charges)))
+    return failure();
+  Value influence = mapping.lookupOrNull(op.getInfluence());
+  if (!influence)
+    return op->emitOpError() << "the table has no buffer";
+
+  Type forces = op.getForces().getType();
+  Value size;
+  if (failed(getSize(op, forces, size)))
+    return failure();
+  Value out = scope.request(getStorageType(forces), size, loc);
+
+  // The grid, which the op needs for itself, once for the whole function:
+  // the charges in fixed point, the grid in f64, and its half-complex
+  // transform; on a device also the sums of its rows.
+  ArrayRef<int64_t> grid = op.getGrid();
+  int64_t points = grid[0] * grid[1] * grid[2];
+  int64_t half = grid[0] * grid[1] * (grid[2] / 2 + 1);
+  Attribute space;
+  if (onDevice)
+    space = IntegerAttr::get(IntegerType::get(context, 64), deviceSpace);
+  auto allocate = [&](Type element, int64_t count) -> Value {
+    auto type = MemRefType::get({ShapedType::kDynamic}, element,
+                                MemRefLayoutAttrInterface(), space);
+    Value length =
+        arith::ConstantIndexOp::create(root->builder, loc, count);
+    if (onDevice)
+      return gpu::AllocOp::create(root->builder, loc, type,
+                                  /*asyncToken=*/Type(),
+                                  /*asyncDependencies=*/ValueRange(),
+                                  ValueRange{length},
+                                  /*symbolOperands=*/ValueRange())
+          .getMemref();
+    return memref::AllocOp::create(root->builder, loc, type,
+                                   ValueRange{length});
+  };
+  SmallVector<Value> scratch = {
+      allocate(IntegerType::get(context, 64), points),
+      allocate(Float64Type::get(context), points),
+      allocate(Float64Type::get(context), 2 * half)};
+  if (onDevice)
+    scratch.push_back(
+        allocate(Float64Type::get(context), grid[0] * grid[1] * 10));
+
+  auto created = ReciprocalOp::create(
+      scope.builder, loc, op.getEnergy().getType(), op.getVirial().getType(),
+      /*forces=*/Type(), positions, charges, mapping.lookup(op.getCell()),
+      influence, out, scratch, op.getGridAttr(), op.getOrderAttr(),
+      op.getBetaAttr());
+  mapping.map(op.getEnergy(), created.getEnergy());
+  mapping.map(op.getVirial(), created.getVirial());
+  buffers[op.getForces()] = out;
+  scope.owned.insert(out);
+  return success();
+}
+
 LogicalResult Assignment::convertBuildNeighbors(BuildNeighborsOp op,
                                                 Scope &scope) {
   Location loc = op.getLoc();
@@ -1162,6 +1225,8 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     return success();
   }
 
+  if (auto reciprocal = dyn_cast<ReciprocalOp>(op))
+    return convertReciprocal(reciprocal, scope);
   if (auto build = dyn_cast<BuildNeighborsOp>(op))
     return convertBuildNeighbors(build, scope);
   if (auto refresh = dyn_cast<RefreshNeighborsOp>(op))

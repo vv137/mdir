@@ -218,6 +218,61 @@ def MD_LookupOp : MD_Op<"lookup", [Pure]> {
   let hasVerifier = 1;
 }
 
+//===----------------------------------------------------------------------===//
+// Particle mesh Ewald
+//===----------------------------------------------------------------------===//
+
+def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
+  let summary = "The reciprocal sum of particle mesh Ewald";
+  let description = [{
+    ```text
+    E = f / (2π V) Σ_{m ≠ 0} exp(−π² m² / β²) / m² · |S(m)|²
+    S(m) = Σ_i q_i exp(2π i m · x_i)
+    ```
+
+    The sum of smooth particle mesh Ewald over a grid of `grid` points with
+    B-splines of the order `order` (docs/pme-m1.md). `influence` holds the
+    product of the Euler exponential splines and the Gaussian of each wave
+    vector, `f / (π V) · B(m) exp(−π² m² / β²) / m²`, for each point of the
+    half-complex grid: a row for each of the first two indices, `k_1 K_2 +
+    k_2`, and a column for the third, from 0 to `K_3 / 2`.
+
+    The op yields the energy, the forces, and the virial `Σ d ⊗ F` of the
+    sum. Differentiation takes the forces and the virial from the op; it
+    does not differentiate through it.
+
+    ```mlir
+    %u, %f, %w = md.reciprocal %x, %q, %cell, %influence
+                   grid([32, 32, 32]) order(4) beta(3.12)
+                   : !md.field<@atoms, 3 x f64>, !md.field<@atoms, f64>,
+                     !md.table<2, f64>
+                   -> f64, !md.field<@atoms, 3 x f64>, vector<9xf64>
+    ```
+  }];
+  let arguments = (ins
+    MD_ReferenceFieldType:$positions,
+    MD_ReferenceFieldType:$charges,
+    MD_CellType:$cell,
+    MD_TableType:$influence,
+    DenseI64ArrayAttr:$grid,
+    I64Attr:$order,
+    F64Attr:$beta
+  );
+  let results = (outs
+    F64:$energy,
+    MD_ReferenceFieldType:$forces,
+    VectorOfLengthAndType<[9], [F64]>:$virial
+  );
+  let assemblyFormat = [{
+    $positions `,` $charges `,` $cell `,` $influence
+    `grid` `(` $grid `)` `order` `(` $order `)` `beta` `(` $beta `)`
+    attr-dict `:` qualified(type($positions)) `,` qualified(type($charges))
+    `,` qualified(type($influence)) `->` type($energy) `,`
+    qualified(type($forces)) `,` type($virial)
+  }];
+  let hasVerifier = 1;
+}
+
 def MD_YieldOp : MD_Op<"yield", [
     Pure, Terminator, ReturnLike,
     ParentOneOf<["SumRelationOp", "GatherRelationOp", "SumTuplesOp",

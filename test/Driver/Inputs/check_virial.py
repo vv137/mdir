@@ -3,10 +3,14 @@ the derivative of the energy under a uniform scaling of the positions and
 the cell by λ: tr W = −dU/dλ at λ = 1, with virtual sites placed from their
 scaled atoms.
 
-    check_virial.py mdir run.toml coordinates.inpcrd
+    check_virial.py mdir run.toml coordinates.inpcrd [step tolerance]
 
-The derivative is a central difference at two steps, extrapolated to a step
-of 0 (Richardson), from the total energy of the terms at the start."""
+The derivative is a central difference at the steps `step` and `step / 2`,
+extrapolated to a step of 0 (Richardson), from the total energy of the
+terms at the start; 2e-3 and a relative tolerance of 2e-5 by default. The
+coordinates of the file have 7 decimals of Å, whose rounding is noise in
+the difference of the order of the forces times 1e-7 Å over the step: a
+system with larger forces needs a larger step."""
 
 import os
 import re
@@ -14,6 +18,8 @@ import subprocess
 import sys
 
 mdir, control, coordinates = sys.argv[1:4]
+step = float(sys.argv[4]) if len(sys.argv) > 4 else 2e-3
+tolerance = float(sys.argv[5]) if len(sys.argv) > 5 else 2e-5
 lines = open(coordinates).read().splitlines()
 count = int(lines[1].split()[0])
 numbers = []
@@ -51,9 +57,9 @@ def difference(step):
     return -(run(1 + step)[0] - run(1 - step)[0]) / (2 * step)
 
 
-coarse, fine = difference(2e-3), difference(1e-3)
+coarse, fine = difference(step), difference(step / 2)
 derivative = fine + (fine - coarse) / 3
 trace = run(1.0)[1]
 error = abs(derivative - trace) / abs(trace)
 print(f"-dU/dlambda {derivative:.4f}, trace of W {trace:.4f}")
-print("virial " + ("ok" if error < 2e-5 else "FAILED") + f": {error:.1e}")
+print("virial " + ("ok" if error < tolerance else "FAILED") + f": {error:.1e}")

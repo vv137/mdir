@@ -80,7 +80,7 @@ static std::string getPipeline(const Control &control,
   os << "convert-scf-to-cf,convert-math-to-llvm,convert-math-to-libm,"
      << "convert-vector-to-llvm,expand-strided-metadata,"
      << "finalize-memref-to-llvm,convert-arith-to-llvm,"
-     << "convert-func-to-llvm,convert-cf-to-llvm,";
+     << "convert-func-to-llvm,convert-cf-to-llvm,convert-ub-to-llvm,";
   if (threaded)
     os << "convert-openmp-to-llvm,";
   os << "reconcile-unrealized-casts";
@@ -481,6 +481,9 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   output.volume = system->box[0] * system->box[1] * system->box[2];
   output.dispersionEnergy = program->dispersionEnergy;
   output.dispersionVirial = program->dispersionVirial;
+  output.pme = program->pme;
+  output.pmeConstantEnergy = program->pmeConstantEnergy;
+  output.pmeConstantVirial = program->pmeConstantVirial;
   output.system = &*system;
   if (control->framePeriod > 0) {
     if (llvm::Error error = output.trajectory.open(

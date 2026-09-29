@@ -358,6 +358,19 @@ LogicalResult Assigner::collect(Operation *op) {
     positions.push_back(order.getPositions());
     return success();
   }
+  if (auto reciprocal = dyn_cast<ReciprocalOp>(op)) {
+    if (reciprocal.isStorageForm())
+      return op->emitOpError() << "is in the storage form; precision is "
+                                  "assigned before storage";
+    // The positions and the charges as they are stored; the forces are
+    // forces.
+    positions.push_back(reciprocal.getPositions());
+    find(reciprocal.getPositions());
+    find(reciprocal.getCharges());
+    forces.push_back(reciprocal.getForces());
+    find(reciprocal.getForces());
+    return success();
+  }
   if (auto permute = dyn_cast<PermuteOp>(op)) {
     if (permute.isStorageForm())
       return op->emitOpError() << "is in the storage form; precision is "

@@ -98,6 +98,16 @@ struct Program {
   double dispersionEnergy = 0.0;
   double dispersionVirial = 0.0;
 
+  /// Particle mesh Ewald: whether the program has it, and the energy of
+  /// the self term and of the background of a net charge, in kJ/mol, with
+  /// what the background adds to the trace of the virial.
+  bool pme = false;
+  double pmeConstantEnergy = 0.0;
+  double pmeConstantVirial = 0.0;
+  /// β in nm⁻¹ and the numbers of points of the grid, for the log.
+  double pmeBeta = 0.0;
+  int64_t pmeGrid[3] = {0, 0, 0};
+
   /// The skin of the neighbor structures, in nm, and the number of
   /// neighbors that they hold per particle.
   double skin;

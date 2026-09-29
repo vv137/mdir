@@ -128,20 +128,25 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
   auto *values = static_cast<StridedMemRefType<double, 1> *>(terms);
   static const char *names[] = {
       "Lennard-Jones", "Coulomb", "bonds", "angles", "dihedrals",
-      "Lennard-Jones 1-4", "Coulomb 1-4", "CMAP"};
-  // CMAP only where the topology has it.
-  int count = output.system && output.system->topology &&
-                      !output.system->topology->cmaps.empty()
-                  ? 8
-                  : 7;
+      "Lennard-Jones 1-4", "Coulomb 1-4", "CMAP", "Coulomb excluded",
+      "Coulomb reciprocal"};
+  // CMAP only where the topology has it, and the terms of particle mesh
+  // Ewald only with it; with it "Coulomb" is the direct sum.
+  bool cmap = output.system && output.system->topology &&
+              !output.system->topology->cmaps.empty();
   std::fprintf(output.log, "MDIR: the terms at the start, in kcal/mol:\n");
-  double total = output.dispersionEnergy;
-  for (int i = 0; i != count; ++i) {
+  double total = output.dispersionEnergy + output.pmeConstantEnergy;
+  for (int i = 0; i != 10; ++i) {
+    if ((i == 7 && !cmap) || (i >= 8 && !output.pme))
+      continue;
     double value = values->data[i * values->strides[0]];
     total += value;
     std::fprintf(output.log, "MDIR:   %-22s %16.6f\n", names[i],
                  value / units::energy);
   }
+  if (output.pme)
+    std::fprintf(output.log, "MDIR:   %-22s %16.6f\n", "Coulomb self",
+                 output.pmeConstantEnergy / units::energy);
   std::fprintf(output.log, "MDIR:   %-22s %16.6f\n", "dispersion",
                output.dispersionEnergy / units::energy);
   std::fprintf(output.log, "MDIR:   %-22s %16.6f\n", "total",
@@ -157,8 +162,8 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
   // `kinetic` is that of the velocities at the step. The total energy has
   // it, because that sum varies least.
   // The correction for the dispersion is a number of the volume.
-  potential += output.dispersionEnergy;
-  virial += output.dispersionVirial;
+  potential += output.dispersionEnergy + output.pmeConstantEnergy;
+  virial += output.dispersionVirial + output.pmeConstantVirial;
   double total = potential + kinetic;
 
   // The mean of the kinetic energies half a step before and after exceeds

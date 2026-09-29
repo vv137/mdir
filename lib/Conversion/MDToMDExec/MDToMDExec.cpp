@@ -423,6 +423,22 @@ LogicalResult Converter::convert(Operation *op) {
   if (auto map = dyn_cast<md::MapParticlesOp>(op))
     return convertParticleOp(map, /*isSum=*/false);
 
+  if (auto reciprocal = dyn_cast<md::ReciprocalOp>(op)) {
+    builder.setInsertionPoint(op);
+    auto converted = md_exec::ReciprocalOp::create(
+        builder, op->getLoc(), builder.getF64Type(),
+        reciprocal.getVirial().getType(), reciprocal.getForces().getType(),
+        reciprocal.getPositions(), reciprocal.getCharges(),
+        reciprocal.getCell(), reciprocal.getInfluence(), /*out=*/Value(),
+        /*scratch=*/ValueRange(), reciprocal.getGridAttr(),
+        reciprocal.getOrderAttr(), reciprocal.getBetaAttr());
+    reciprocal.getEnergy().replaceAllUsesWith(converted.getEnergy());
+    reciprocal.getVirial().replaceAllUsesWith(converted.getVirial());
+    reciprocal.getForces().replaceAllUsesWith(converted.getForces());
+    this->converted.push_back(op);
+    return success();
+  }
+
   if (auto kick = dyn_cast<dyn::KickOp>(op))
     return convertKick(kick);
   if (auto drift = dyn_cast<dyn::DriftOp>(op))

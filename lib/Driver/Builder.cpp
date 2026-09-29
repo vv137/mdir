@@ -72,10 +72,15 @@ private:
     LennardJones14 = 32,
     Coulomb14 = 64,
     CMaps = 128,
-    AllTerms = 255,
+    CoulombExcluded = 256,
+    CoulombReciprocal = 512,
+    AllTerms = 1023,
   };
   /// Emits the potential `name` of the terms `terms` of the topology.
   void emitTopologyPotential(StringRef name, unsigned terms);
+  /// β, the grid, the influence function, and the constant terms of
+  /// particle mesh Ewald (docs/pme-m1.md).
+  llvm::Error collectPME();
   void emitPrograms();
   void emitEntry();
 
@@ -675,6 +680,10 @@ llvm::Error Builder::collectTopology() {
     }
   }
 
+  if (control.pme)
+    if (llvm::Error error = collectPME())
+      return error;
+
   // The correction for the dispersion (Section 7.2 of design-m1.md): N²
   // times the mean of C6 over the pairs of distinct particles that are not
   // excluded, as GROMACS takes it.
@@ -702,6 +711,131 @@ llvm::Error Builder::collectTopology() {
       -2.0 * M_PI / (3.0 * volume) * n * n * mean / (rc * rc * rc);
   program.dispersionEnergy = energy;
   program.dispersionVirial = 6.0 * energy;
+  return llvm::Error::success();
+}
+
+/// The smallest number of points, at least `least`, whose prime factors are
+/// 2, 3, 5, and 7, which the FFT handles fast.
+static int64_t getSmoothSize(int64_t least) {
+  for (int64_t size = least;; ++size) {
+    int64_t rest = size;
+    for (int64_t factor : {2, 3, 5, 7})
+      while (rest % factor == 0)
+        rest /= factor;
+    if (rest == 1)
+      return size;
+  }
+}
+
+/// |b(m)|² of the Euler exponential spline of order `order` for each index
+/// of a grid of `count` points: 1 / |Σ_{k=0}^{n−2} M_n(k + 1)
+/// exp(2π i m k / K)|² [Essmann1995].
+static std::vector<double> getSplineModuli(int64_t count, int64_t order) {
+  // M_n at 1 .. n − 1, from the recursion M_n(x) = (x M_{n−1}(x) + (n − x)
+  // M_{n−1}(x − 1)) / (n − 1), with M_2(x) = 1 − |x − 1|.
+  std::vector<double> m(order + 1, 0.0), next(order + 1, 0.0);
+  m[1] = 1.0;
+  for (int64_t n = 3; n <= order; ++n) {
+    std::fill(next.begin(), next.end(), 0.0);
+    for (int64_t x = 1; x < n; ++x)
+      next[x] = (x * m[x] + (n - x) * m[x - 1]) / (n - 1);
+    m.swap(next);
+  }
+  std::vector<double> moduli(count);
+  for (int64_t k = 0; k != count; ++k) {
+    double re = 0.0, im = 0.0;
+    for (int64_t j = 0; j <= order - 2; ++j) {
+      double angle = 2.0 * M_PI * k * j / count;
+      re += m[j + 1] * std::cos(angle);
+      im += m[j + 1] * std::sin(angle);
+    }
+    moduli[k] = 1.0 / (re * re + im * im);
+  }
+  return moduli;
+}
+
+llvm::Error Builder::collectPME() {
+  const Topology &topology = *system.topology;
+  double rc = control.cutoffDistance * units::length;
+
+  // β: given, or such that erfc(β rc) is the tolerance, by bisection.
+  double beta = control.pmeAlpha / units::length;
+  if (beta == 0.0) {
+    double low = 0.0, high = 1.0;
+    while (std::erfc(high * rc) > control.pmeAlphaTolerance)
+      high *= 2.0;
+    for (int i = 0; i != 100; ++i) {
+      double middle = 0.5 * (low + high);
+      if (std::erfc(middle * rc) > control.pmeAlphaTolerance)
+        low = middle;
+      else
+        high = middle;
+    }
+    beta = 0.5 * (low + high);
+  }
+
+  // The grid: given, or no wider than the largest spacing.
+  int64_t grid[3];
+  for (int k = 0; k != 3; ++k) {
+    grid[k] = control.pmeGrid[k];
+    if (grid[k] == 0)
+      grid[k] = getSmoothSize(static_cast<int64_t>(std::ceil(
+          system.box[k] / (control.pmeMaxSpacing * units::length) - 1e-9)));
+    if (grid[k] < 2 * control.pmeOrder)
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "the grid of particle mesh Ewald has %lld points along an edge, "
+          "fewer than twice the order %lld",
+          static_cast<long long>(grid[k]),
+          static_cast<long long>(control.pmeOrder));
+  }
+
+  // The influence function B C for each point of the half-complex grid.
+  double volume = system.box[0] * system.box[1] * system.box[2];
+  std::vector<double> moduli[3];
+  for (int k = 0; k != 3; ++k)
+    moduli[k] = getSplineModuli(grid[k], control.pmeOrder);
+  int64_t half = grid[2] / 2 + 1;
+  Program::Table table;
+  table.name = "pme_influence";
+  table.count = grid[0] * grid[1];
+  table.columns = half;
+  table.values.assign(table.count * half, 0.0);
+  auto wave = [&](int64_t k, int axis) {
+    int64_t signed_ = k <= grid[axis] / 2 ? k : k - grid[axis];
+    return static_cast<double>(signed_) / system.box[axis];
+  };
+  for (int64_t a = 0; a != grid[0]; ++a)
+    for (int64_t b = 0; b != grid[1]; ++b)
+      for (int64_t c = 0; c != half; ++c) {
+        if (a == 0 && b == 0 && c == 0)
+          continue;
+        double m1 = wave(a, 0), m2 = wave(b, 1),
+               m3 = static_cast<double>(c) / system.box[2];
+        double m2sum = m1 * m1 + m2 * m2 + m3 * m3;
+        table.values[(a * grid[1] + b) * half + c] =
+            coulombInternal / (M_PI * volume) *
+            std::exp(-M_PI * M_PI * m2sum / (beta * beta)) / m2sum *
+            moduli[0][a] * moduli[1][b] * moduli[2][c];
+      }
+  program.tables.push_back(std::move(table));
+
+  // The self term, and the background that neutralizes a net charge,
+  // whose virial is its energy on the diagonal.
+  double squares = 0.0, net = 0.0;
+  for (double q : topology.charges) {
+    squares += q * q;
+    net += q;
+  }
+  double self = -coulombInternal * beta / std::sqrt(M_PI) * squares;
+  double background =
+      -coulombInternal * M_PI * net * net / (2.0 * volume * beta * beta);
+  program.pme = true;
+  program.pmeConstantEnergy = self + background;
+  program.pmeConstantVirial = 3.0 * background;
+  program.pmeBeta = beta;
+  for (int k = 0; k != 3; ++k)
+    program.pmeGrid[k] = grid[k];
   return llvm::Error::success();
 }
 
@@ -766,8 +900,26 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms) {
       os << "    %f = arith.constant " << formatReal(coulombInternal)
          << " : f64\n"
          << "    %qq = arith.mulf %q_i, %q_j : f64\n"
-         << "    %fqq = arith.mulf %f, %qq : f64\n"
-         << "    %coulomb = arith.divf %fqq, %r : f64\n";
+         << "    %fqq = arith.mulf %f, %qq : f64\n";
+      if (program.pme) {
+        // The direct sum of particle mesh Ewald, f q q erfc(β r) / r,
+        // shifted to 0 at the cutoff if the control file asks.
+        double beta = program.pmeBeta;
+        os << "    %beta = arith.constant " << formatReal(beta) << " : f64\n"
+           << "    %br = arith.mulf %beta, %r : f64\n"
+           << "    %erfc = math.erfc %br : f64\n"
+           << "    %screened = arith.divf %erfc, %r : f64\n";
+        std::string kernel = "%screened";
+        if (control.pmeShift) {
+          os << "    %shift = arith.constant "
+             << formatReal(std::erfc(beta * cutoff) / cutoff) << " : f64\n"
+             << "    %shifted = arith.subf %screened, %shift : f64\n";
+          kernel = "%shifted";
+        }
+        os << "    %coulomb = arith.mulf %fqq, " << kernel << " : f64\n";
+      } else {
+        os << "    %coulomb = arith.divf %fqq, %r : f64\n";
+      }
       if (value.empty()) {
         value = "%coulomb";
       } else {
@@ -780,6 +932,36 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms) {
     add("nonbonded");
   }
 
+  if (program.pme && (terms & CoulombExcluded) && has("excluded")) {
+    // The excluded pairs take their share of the reciprocal sum out again:
+    // −f q_i q_j erf(β r) / r.
+    os << "  %u_excluded = md.sum_tuples %r_excluded, %x, %cell coordinates("
+          "distance(0, 1))\n"
+       << "      gather(%p_q : !real) {\n"
+       << "  ^bb0(%r: f64, %q_i: f64, %q_j: f64):\n"
+       << "    %f = arith.constant " << formatReal(-coulombInternal)
+       << " : f64\n"
+       << "    %beta = arith.constant " << formatReal(program.pmeBeta)
+       << " : f64\n"
+       << "    %qq = arith.mulf %q_i, %q_j : f64\n"
+       << "    %fqq = arith.mulf %f, %qq : f64\n"
+       << "    %br = arith.mulf %beta, %r : f64\n"
+       << "    %erf = math.erf %br : f64\n"
+       << "    %shielded = arith.divf %erf, %r : f64\n"
+       << "    %e = arith.mulf %fqq, %shielded : f64\n"
+       << "    md.yield %e : f64\n"
+       << "  } : !rel_excluded, !vec -> f64\n";
+    add("excluded");
+  }
+  if (program.pme && (terms & CoulombReciprocal)) {
+    os << "  %u_reciprocal, %f_reciprocal, %w_reciprocal = md.reciprocal %x, "
+          "%p_q, %cell, %t_pme_influence\n"
+       << "      grid([" << program.pmeGrid[0] << ", " << program.pmeGrid[1]
+       << ", " << program.pmeGrid[2] << "]) order(" << control.pmeOrder
+       << ") beta(" << formatReal(program.pmeBeta) << ")\n"
+       << "      : !vec, !real, !grid -> f64, !vec, vector<9xf64>\n";
+    add("reciprocal");
+  }
   if ((terms & Bonds) && has("bonds")) {
     os << "  %u_bonds = md.sum_tuples %r_bonds, %x, %cell coordinates("
           "distance(0, 1))\n"
@@ -2233,20 +2415,21 @@ void Builder::emitEntry() {
       virial = emitSpreadSites("  ", "%x0", "%f0e", "%f0", "%r_", "%w0e",
                                "%w0");
     if (system.topology) {
-      os << "  %terms = memref.alloca() : memref<8xf64>\n";
+      os << "  %terms = memref.alloca() : memref<10xf64>\n";
       int index = 0;
       for (StringRef name :
            {"term_lj", "term_coulomb", "term_bonds", "term_angles",
-            "term_dihedrals", "term_lj14", "term_coulomb14", "term_cmap"}) {
+            "term_dihedrals", "term_lj14", "term_coulomb14", "term_cmap",
+            "term_excluded", "term_reciprocal"}) {
         os << "  %" << name << " = md.evaluate @" << name << "(%x0, %cell"
            << getFieldValues() << ") request [energy]\n"
            << "      : (!vec, !md.cell" << getFieldTypes() << ") -> f64\n"
            << "  %i_" << name << " = arith.constant " << index++
            << " : index\n"
            << "  memref.store %" << name << ", %terms[%i_" << name
-           << "] : memref<8xf64>\n";
+           << "] : memref<10xf64>\n";
       }
-      os << "  %terms_cast = memref.cast %terms : memref<8xf64> to "
+      os << "  %terms_cast = memref.cast %terms : memref<10xf64> to "
             "memref<?xf64>\n"
          << "  call @mdrtWriteTerms(%terms_cast) : (memref<?xf64>) -> ()\n";
     }
@@ -2436,7 +2619,9 @@ llvm::Error Builder::build() {
             {"term_dihedrals", Dihedrals},
             {"term_lj14", LennardJones14},
             {"term_coulomb14", Coulomb14},
-            {"term_cmap", CMaps}})
+            {"term_cmap", CMaps},
+            {"term_excluded", CoulombExcluded},
+            {"term_reciprocal", CoulombReciprocal}})
         emitTopologyPotential(name, term);
   }
   else if (llvm::Error error = emitPotential())

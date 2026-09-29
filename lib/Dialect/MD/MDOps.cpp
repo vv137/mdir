@@ -477,6 +477,35 @@ LogicalResult GatherRelationOp::verifyRegions() {
 // Tables
 //===----------------------------------------------------------------------===//
 
+//===----------------------------------------------------------------------===//
+// ReciprocalOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult ReciprocalOp::verify() {
+  auto positions = cast<FieldType>(getPositions().getType());
+  auto charges = cast<FieldType>(getCharges().getType());
+  if (positions.getParticleSet() != charges.getParticleSet())
+    return emitOpError() << "the positions and the charges belong to "
+                            "different particle sets";
+  if (!isa<VectorType>(positions.getKernelValueType()))
+    return emitOpError() << "expected positions of three numbers";
+  if (isa<VectorType>(charges.getKernelValueType()))
+    return emitOpError() << "expected one charge for each particle";
+  if (getForces().getType() != getPositions().getType())
+    return emitOpError() << "expected the forces to be of the type of the "
+                            "positions";
+  if (getGrid().size() != 3 ||
+      llvm::any_of(getGrid(), [](int64_t points) { return points < 2; }))
+    return emitOpError() << "expected three numbers of points of at least 2";
+  if (getOrder() < 3 || getOrder() > 8)
+    return emitOpError() << "expected an order from 3 to 8";
+  if (!(getBeta().convertToDouble() > 0.0))
+    return emitOpError() << "expected a positive beta";
+  if (cast<TableType>(getInfluence().getType()).getRank() != 2)
+    return emitOpError() << "expected a table of rank 2";
+  return success();
+}
+
 LogicalResult LookupOp::verify() {
   Type type = getTable().getType();
   unsigned rank;

@@ -68,6 +68,11 @@ struct Output {
   /// it adds to the potential energy and to the trace of the virial.
   double dispersionEnergy = 0.0;
   double dispersionVirial = 0.0;
+  /// Particle mesh Ewald: the self term and the background of a net
+  /// charge, which the program does not compute.
+  bool pme = false;
+  double pmeConstantEnergy = 0.0;
+  double pmeConstantVirial = 0.0;
 
   /// Whether the velocities are coupled, and the energy that the coupling
   /// has taken from the system so far, in kJ/mol. The total energy with it

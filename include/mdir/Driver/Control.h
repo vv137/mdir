@@ -97,6 +97,19 @@ struct Control {
   std::vector<ParticleType> types;
   std::vector<PairOverride> overrides;
   /// The correction for the dispersion of a run from a topology.
+  /// Particle mesh Ewald for the Coulomb terms of a topology
+  /// (docs/pme-m1.md): β in Å⁻¹, or 0 to take it from the tolerance; the
+  /// numbers of points of the grid, or 0 to take them from the largest
+  /// spacing, in Å; the order of the B-splines; and whether the direct sum
+  /// is shifted to 0 at the cutoff.
+  bool pme = false;
+  double pmeAlpha = 0.0;
+  double pmeAlphaTolerance = 1.0e-5;
+  int64_t pmeGrid[3] = {0, 0, 0};
+  double pmeMaxSpacing = 1.2;
+  int64_t pmeOrder = 4;
+  bool pmeShift = false;
+
   DispersionCorrection topologyDispersion =
       DispersionCorrection::EnergyPressure;
 

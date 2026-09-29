@@ -328,7 +328,9 @@ Error Reader::readEnergy(const toml::table &table) {
           table, "energy",
           {"switchdist", "cutoffdist", "pairlistdist", "vdw_force_switch",
            "vdw_shift", "pair", "type", "nbfix", "dispersion_corr",
-           "electrostatic"},
+           "electrostatic", "pme_alpha", "pme_alpha_tol", "pme_ngrid_x",
+           "pme_ngrid_y", "pme_ngrid_z", "pme_max_spacing", "pme_nspline",
+           "pme_shift"},
           {{"forcefield", "M1"},
            {"dielec_const", "M1"}}))
     return error;
@@ -395,10 +397,12 @@ Error Reader::readEnergy(const toml::table &table) {
     return error;
 
   // With a topology, the correction for the dispersion is for the whole
-  // run, and the electrostatics are a cutoff until particle mesh Ewald
-  // comes (M1h).
+  // run, and the electrostatics are a cutoff or particle mesh Ewald.
   bool hasTopology = control.hasTopology();
-  for (StringRef key : {"dispersion_corr", "electrostatic"})
+  for (StringRef key : {"dispersion_corr", "electrostatic", "pme_alpha",
+                        "pme_alpha_tol", "pme_ngrid_x", "pme_ngrid_y",
+                        "pme_ngrid_z", "pme_max_spacing", "pme_nspline",
+                        "pme_shift"})
     if (!hasTopology && table.contains(std::string_view(key)))
       return fail(*table.get(std::string_view(key)),
                   "'" + key + "' in [energy] is for a run from a topology; "
@@ -412,10 +416,37 @@ Error Reader::readEnergy(const toml::table &table) {
   if (Error error = readChoice<int>(table, "electrostatic", electrostatic,
                                     {{"CUTOFF", 0}, {"PME", 1}}))
     return error;
-  if (electrostatic == 1)
-    return fail(*table.get("electrostatic"),
-                "'electrostatic = \"PME\"' is not supported yet; it is "
-                "planned for M1");
+  control.pme = electrostatic == 1;
+  for (StringRef key : {"pme_alpha", "pme_alpha_tol", "pme_ngrid_x",
+                        "pme_ngrid_y", "pme_ngrid_z", "pme_max_spacing",
+                        "pme_nspline", "pme_shift"})
+    if (!control.pme && table.contains(std::string_view(key)))
+      return fail(*table.get(std::string_view(key)),
+                  "'" + key + "' is for 'electrostatic = \"PME\"'");
+  if (Error error = readPositive(table, "pme_alpha", control.pmeAlpha))
+    return error;
+  if (Error error =
+          readPositive(table, "pme_alpha_tol", control.pmeAlphaTolerance))
+    return error;
+  if (!(control.pmeAlphaTolerance < 1.0))
+    return fail(*table.get("pme_alpha_tol"),
+                "expected a tolerance less than 1 for 'pme_alpha_tol'");
+  static const char *const gridKeys[] = {"pme_ngrid_x", "pme_ngrid_y",
+                                         "pme_ngrid_z"};
+  for (int k = 0; k != 3; ++k)
+    if (Error error = readCount(table, gridKeys[k], control.pmeGrid[k], 8))
+      return error;
+  if (Error error =
+          readPositive(table, "pme_max_spacing", control.pmeMaxSpacing))
+    return error;
+  if (Error error = readCount(table, "pme_nspline", control.pmeOrder, 4))
+    return error;
+  if (control.pmeOrder != 4 && control.pmeOrder != 6 &&
+      control.pmeOrder != 8)
+    return fail(*table.get("pme_nspline"),
+                "expected 4, 6, or 8 for 'pme_nspline'");
+  if (Error error = readBool(table, "pme_shift", control.pmeShift))
+    return error;
   if (hasTopology && control.truncation != Truncation::None)
     return fail(table, "a run from a topology takes a plain cutoff: "
                        "'switchdist' equal to 'cutoffdist', and no "

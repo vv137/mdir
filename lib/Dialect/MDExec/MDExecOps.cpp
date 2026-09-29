@@ -290,6 +290,22 @@ LogicalResult PermuteOp::verify() {
   return success();
 }
 
+void ReciprocalOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  if (!isStorageForm())
+    return;
+  addEffect<MemoryEffects::Read>(effects, getPositionsMutable());
+  addEffect<MemoryEffects::Read>(effects, getChargesMutable());
+  addEffect<MemoryEffects::Read>(effects, getInfluenceMutable());
+  for (OpOperand &operand : getOutMutable())
+    addEffect<MemoryEffects::Write>(effects, operand);
+  for (OpOperand &operand : getScratchMutable()) {
+    addEffect<MemoryEffects::Read>(effects, operand);
+    addEffect<MemoryEffects::Write>(effects, operand);
+  }
+}
+
 void PermuteOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {

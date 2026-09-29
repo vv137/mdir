@@ -648,6 +648,58 @@ std::string kernels::getInstanceName(StringRef name, Type real) {
   return real.isF64() ? name.str() : (name + "_f32").str();
 }
 
+static std::string getPMESuffix(Type position, Type charge, Type force) {
+  auto bits = [](Type type) {
+    return std::to_string(type.getIntOrFloatBitWidth());
+  };
+  return "_p" + bits(position) + "c" + bits(charge) + "f" + bits(force);
+}
+
+std::string kernels::getPMEInstanceName(StringRef name, Type position,
+                                        Type charge, Type force) {
+  return (name + getPMESuffix(position, charge, force)).str();
+}
+
+std::string kernels::instantiatePMETemplates(StringRef text, Type position,
+                                             Type charge, Type force) {
+  auto spell = [](Type type) { return type.isF64() ? "f64" : "f32"; };
+  // The conversion from and to f64 of a type that is f64 is a cast of the
+  // bits, which changes nothing.
+  auto extend = [](Type type) {
+    return type.isF64() ? "arith.bitcast" : "arith.extf";
+  };
+  std::string suffix = getPMESuffix(position, charge, force);
+  std::string instance;
+  while (!text.empty()) {
+    if (text.consume_front("!pme_pos = f64")) {
+      instance += "!pme_pos = " + std::string(spell(position));
+    } else if (text.consume_front("!pme_chg = f64")) {
+      instance += "!pme_chg = " + std::string(spell(charge));
+    } else if (text.consume_front("!pme_frc = f64")) {
+      instance += "!pme_frc = " + std::string(spell(force));
+    } else if (text.consume_front("PME_EXTEND_POS")) {
+      instance += extend(position);
+    } else if (text.consume_front("PME_EXTEND_CHG")) {
+      instance += extend(charge);
+    } else if (text.consume_front("PME_NARROW_FRC")) {
+      instance += force.isF64() ? "arith.bitcast" : "arith.truncf";
+    } else if (text.consume_front("@mdrt")) {
+      // The functions of the template, `@mdrt.` or `@mdrt_`; the functions
+      // of the runtime, such as `@mdrtCudaFFTForward3D`, keep their names.
+      StringRef name = text.take_while([](char c) {
+        return llvm::isAlnum(c) || c == '_' || c == '.';
+      });
+      text = text.drop_front(name.size());
+      bool local = name.starts_with(".") || name.starts_with("_");
+      instance += "@mdrt" + name.str() + (local ? suffix : "");
+    } else {
+      instance += text.front();
+      text = text.drop_front();
+    }
+  }
+  return instance;
+}
+
 std::string kernels::instantiateTemplates(StringRef text, Type real) {
   if (real.isF64())
     return text.str();
