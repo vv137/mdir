@@ -124,7 +124,7 @@ private:
   /// `positions` is the type of the field of the positions that the
   /// structure is built at.
   LogicalResult getNeighbors(Operation *op, Value structure, Type positions,
-                             Value &storage);
+                             Scope &scope, Value &storage);
 
   ModuleOp module;
   MLIRContext *context;
@@ -260,7 +260,8 @@ LogicalResult Assignment::getBuffer(Value field, Scope &scope,
 }
 
 LogicalResult Assignment::getNeighbors(Operation *op, Value structure,
-                                       Type positions, Value &storage) {
+                                       Type positions, Scope &scope,
+                                       Value &storage) {
   storage = neighbors.lookup(structure);
   if (storage)
     return success();
@@ -283,6 +284,9 @@ LogicalResult Assignment::getNeighbors(Operation *op, Value structure,
   storage = EmptyNeighborsOp::create(
       root->builder, empty.getLoc(), structure.getType(), size,
       TypeAttr::get(element), empty.getKindAttr(), empty.getWidthAttr());
+  // Inside a loop, every iteration begins with an empty structure.
+  if (&scope != root)
+    ResetNeighborsOp::create(scope.builder, empty.getLoc(), storage);
   return success();
 }
 
@@ -407,7 +411,7 @@ LogicalResult Assignment::convertPairFor(PairForOp op, Scope &scope,
                                          unsigned position) {
   Value storage;
   if (failed(getNeighbors(op, op.getNeighbors(),
-                          op.getPositions().getType(), storage)))
+                          op.getPositions().getType(), scope, storage)))
     return failure();
 
   Value positions;
@@ -488,12 +492,15 @@ LogicalResult Assignment::convertBuildNeighbors(BuildNeighborsOp op,
   if (failed(getSize(op, op.getPositions().getType(), size)))
     return failure();
 
-  // Storage, and a refresh that builds whatever the storage holds.
+  // Storage, and a refresh that builds whatever the storage holds. The
+  // count of builds is that of a structure that was built once.
   Type element =
       cast<md::FieldType>(op.getPositions().getType()).getElementType();
   Value storage = EmptyNeighborsOp::create(
       root->builder, loc, op.getResult().getType(), size,
       TypeAttr::get(element), op.getKindAttr(), op.getWidthAttr());
+  if (&scope != root)
+    ResetNeighborsOp::create(scope.builder, loc, storage);
   auto refresh = RefreshNeighborsOp::create(
       scope.builder, loc, storage.getType(), storage, positions,
       mapping.lookup(op.getCell()), op.getCutoffAttr(), op.getSkinAttr(),
@@ -516,7 +523,8 @@ LogicalResult Assignment::convertRefreshNeighbors(RefreshNeighborsOp op,
               "after it is refreshed";
 
   Value storage;
-  if (failed(getNeighbors(op, old, op.getPositions().getType(), storage)))
+  if (failed(getNeighbors(op, old, op.getPositions().getType(), scope,
+                          storage)))
     return failure();
   Value positions;
   if (failed(getBuffer(op.getPositions(), scope, positions)))
@@ -556,7 +564,7 @@ LogicalResult Assignment::convertFor(scf::ForOp op, Scope &scope,
        llvm::zip(op.getInitArgs(), op.getRegionIterArgs())) {
     if (isa<mdrt::NeighborsType>(init.getType())) {
       Value storage;
-      if (failed(getNeighbors(op, init, findPositionsType(argument),
+      if (failed(getNeighbors(op, init, findPositionsType(argument), scope,
                               storage)))
         return failure();
       neighbors[argument] = storage;
@@ -747,7 +755,7 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
   if (auto count = dyn_cast<RebuildCountOp>(op)) {
     Value storage;
     if (failed(getNeighbors(op, count.getNeighbors(),
-                            findPositionsType(count.getNeighbors()),
+                            findPositionsType(count.getNeighbors()), scope,
                             storage)))
       return failure();
     mapping.map(count.getResult(),

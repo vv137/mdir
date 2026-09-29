@@ -104,6 +104,25 @@ Without `--convert-scf-to-openmp --canonicalize` and
 `--convert-openmp-to-llvm`, the loops run sequentially and `libomp.so` is
 not needed. `test/Integration` holds complete programs.
 
+## Examples
+
+`examples/argon.mlir` is liquid argon at constant energy: 864 atoms, 2000
+steps of 5 fs with velocity Verlet.
+
+```sh
+MDIR_BUILD=build LLVM_PREFIX=$HOME/opt/llvm/23.1.2 \
+    examples/run.sh examples/argon.mlir            # double precision
+    examples/run.sh examples/argon.mlir mixed 16   # mixed, 16 threads
+```
+
+It prints the time, the potential, kinetic, and total energy, and the
+temperature every 100 steps, and at the end the relative change of the
+total energy, which is about 2e-5.
+
+An example is a module that places the atoms and holds the loop over the
+steps itself. There is no driver yet that reads an input file or writes a
+trajectory.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

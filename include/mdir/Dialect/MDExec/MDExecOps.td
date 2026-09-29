@@ -263,6 +263,28 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
   let hasVerifier = 1;
 }
 
+def MDExec_ResetNeighborsOp : MDExec_Op<"reset_neighbors"> {
+  let summary = "Makes a neighbor structure valid for no configuration";
+  let description = [{
+    Belongs to the storage form. The storage of a structure is allocated in
+    the body of the function. Where the value form has an empty structure
+    inside a loop, the storage form resets the structure, so that every
+    iteration begins with a structure that the first refresh builds.
+
+    The count of builds starts again from zero.
+
+    ```mlir
+    md_exec.reset_neighbors %nl : !mdrt.neighbors<@atoms>
+    ```
+  }];
+  let arguments = (ins
+    Arg<MDRT_NeighborsType, "the structure", [MemWrite]>:$neighbors
+  );
+  let assemblyFormat = [{
+    $neighbors attr-dict `:` qualified(type($neighbors))
+  }];
+}
+
 def MDExec_RebuildCountOp : MDExec_Op<"rebuild_count"> {
   let summary = "The number of times a neighbor structure has been built";
   let description = [{

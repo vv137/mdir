@@ -1065,6 +1065,7 @@ buffers. An op takes fields only or buffers only.
 | `md_exec.particle_for` | A buffer may be in `ins` and in `outs`: the kernel of a particle reads and writes the values of that particle only. |
 | `md_exec.empty_neighbors` | Takes `size` and `element` and allocates the storage of a structure for that many particles, with positions of that type. |
 | `md_exec.refresh_neighbors` | Rebuilds the structure where it is. The result is the structure that was given. |
+| `md_exec.reset_neighbors` | Storage form only. Makes the structure valid for no configuration. It stands where the value form has an empty structure inside a loop. |
 | `md_exec.zeros`, `md_exec.empty`, `md_exec.build_cells`, `md_exec.build_neighbors` | Do not occur. A build is storage and a refresh with the policy `always`. |
 
 The kernels are the same in both forms.
@@ -1220,7 +1221,7 @@ the storage form into loops (Section 10.7).
 | `md_exec.zeros`, `md_exec.empty` | A buffer from the pool, or `memref.alloc` |
 | `md_exec.particle_for`, `md_exec.pair_for` | The same op on buffers |
 | `md_exec.build_cells` and `md_exec.build_neighbors` | `md_exec.empty_neighbors` with storage, in the body of the function, and `md_exec.refresh_neighbors` with the policy `always` |
-| `md_exec.empty_neighbors` | The same op with storage, in the body of the function; one for each use of the empty structure |
+| `md_exec.empty_neighbors` | The same op with storage, in the body of the function; one for each use of the empty structure. Inside a loop, `md_exec.reset_neighbors` where the structure is used. |
 | `scf.for` that carries fields | `scf.for` that carries buffers |
 | `scf.for` that carries a neighbor structure | The loop does not carry it: the structure is refreshed where it is |
 | A cell | Unchanged |
@@ -1325,6 +1326,7 @@ decides nothing about buffers.
 | `md_exec.pair_for` | `scf.parallel` over the particles, with an `scf.for` over the neighbors of each |
 | `md_exec.empty_neighbors` | The buffers of a neighbor matrix: counts, indices, the configuration and the cell of the last build, a flag, and a count of builds |
 | `md_exec.refresh_neighbors` | The test of validity and, where it fails, a call to the neighbor build template |
+| `md_exec.reset_neighbors` | Two stores |
 | `md_exec.rebuild_count` | A load |
 | A cell | `vector<3xf64>`, the edge lengths of an orthorhombic cell |
 

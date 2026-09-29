@@ -203,3 +203,47 @@ func.func @plain(%a: f64) -> f64 {
   %s = arith.addf %a, %a : f64
   return %s : f64
 }
+
+// An empty structure inside a loop: the storage is allocated once, before
+// the loops, and reset where the empty structure is used, so that every
+// iteration of the outer loop begins with a structure that is built.
+//
+// CHECK-LABEL: func.func @segments(
+// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64>, %[[CELL:[a-z0-9]+]]: !md.cell,
+func.func @segments(%x: !vec, %cell: !md.cell, %segments: index,
+                    %steps: index) -> !vec {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  // CHECK:      %[[STORAGE:[0-9]+]] = md_exec.empty_neighbors size(%{{[a-z0-9_]+}}) element(f64)
+  // CHECK:      scf.for
+  // CHECK-NEXT:   md_exec.reset_neighbors %[[STORAGE]] : !mdrt.neighbors<@atoms>
+  // CHECK-NEXT:   scf.for
+  // CHECK:          md_exec.refresh_neighbors %[[STORAGE]],
+  %xe = scf.for %segment = %c0 to %segments step %c1
+      iter_args(%xs = %x) -> (!vec) {
+    %nl0 = md_exec.empty_neighbors kind(matrix) width(48)
+        : !mdrt.neighbors<@atoms>
+    %xi, %nli = scf.for %step = %c0 to %steps step %c1
+        iter_args(%xa = %xs, %nla = %nl0)
+        -> (!vec, !mdrt.neighbors<@atoms>) {
+      %nlb = md_exec.refresh_neighbors %nla, %xa, %cell
+          cutoff(1.5) skin(0.25) cell_width(1.75) policy(check)
+          : !mdrt.neighbors<@atoms>, !vec
+      %f0 = md_exec.zeros : !vec
+      %f = md_exec.pair_for %nlb, %xa, %cell outs(%f0 : !vec) cutoff(1.5)
+          policy(directed, owner_only) {
+      ^bb0(%r2: f64, %d: vector<3xf64>):
+        md_exec.yield %d : vector<3xf64>
+      } : !mdrt.neighbors<@atoms>, !vec -> !vec
+      %e = md_exec.empty : !vec
+      %xb = md_exec.particle_for ins(%xa, %f : !vec, !vec) outs(%e : !vec) {
+      ^bb0(%x_i: vector<3xf64>, %f_i: vector<3xf64>):
+        %s = arith.addf %x_i, %f_i : vector<3xf64>
+        md_exec.yield %s : vector<3xf64>
+      } -> !vec
+      scf.yield %xb, %nlb : !vec, !mdrt.neighbors<@atoms>
+    }
+    scf.yield %xi : !vec
+  }
+  return %xe : !vec
+}

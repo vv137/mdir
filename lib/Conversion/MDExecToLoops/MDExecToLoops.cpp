@@ -670,6 +670,19 @@ LogicalResult Lowering::lowerOp(Operation *op) {
   } else if (auto refresh = dyn_cast<md_exec::RefreshNeighborsOp>(op)) {
     if (failed(lowerRefreshNeighbors(refresh)))
       return failure();
+  } else if (auto reset = dyn_cast<md_exec::ResetNeighborsOp>(op)) {
+    Neighbors structure;
+    if (failed(getNeighbors(op, reset.getNeighbors(), structure)))
+      return failure();
+    OpBuilder builder(op);
+    Location loc = op->getLoc();
+    Value no = arith::ConstantOp::create(builder, loc, builder.getI1Type(),
+                                         builder.getBoolAttr(false));
+    Value none = arith::ConstantOp::create(
+        builder, loc, builder.getI64Type(), builder.getI64IntegerAttr(0));
+    memref::StoreOp::create(builder, loc, no, structure.valid, ValueRange{});
+    memref::StoreOp::create(builder, loc, none, structure.builds,
+                            ValueRange{});
   } else if (auto count = dyn_cast<md_exec::RebuildCountOp>(op)) {
     Neighbors structure;
     if (failed(getNeighbors(op, count.getNeighbors(), structure)))
