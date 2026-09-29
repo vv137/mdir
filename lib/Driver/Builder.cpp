@@ -1450,8 +1450,9 @@ void Builder::emitEntry() {
        << "    md.yield %mb : vector<3xf64>\n"
        << "  } : vector<3xf64>\n";
     if (control.thermostat) {
-      double freedom = 3.0 * static_cast<double>(system.getNumParticles()) -
-                       (control.comPeriod > 0 ? 3.0 : 0.0);
+      // The degrees of freedom of the log. The momentum stays 0 with or
+      // without its removal, from velocities that begin with none.
+      double freedom = system.getDegreesOfFreedom();
       double target =
           0.5 * freedom * units::boltzmann * control.temperature;
       double decay = std::exp(
