@@ -12,6 +12,9 @@ Identifiers are stable. C*n* are project constraints. D*n* and P*n* are
 decisions; the P series was first recorded as proposals and accepted on
 2026-09-29, and keeps its numbering so that existing references stay valid.
 
+An entry is not rewritten when a later entry changes it. It says
+"Amended by" and names the later entry, which holds where the two differ.
+
 ## 1. Project constraints
 
 | # | Constraint |
@@ -89,6 +92,8 @@ of stages. Each stage reports:
 The distribution planner consumes only this interface. It compares an
 expanded halo against per-stage communication with a cost model.
 
+*Amended by A3.*
+
 ### D5. The semantic dialects form an object graph, not a lowering chain
 
 `md`, `mlff`, `dyn`, and `ensemble` are peers that reference each other.
@@ -105,6 +110,8 @@ with no thermostat or stochastic sampler.
 
 Reason: whether an integrator samples a given ensemble exactly is a numerical
 property too subtle to encode as a type-system fact.
+
+*Amended by B9.*
 
 ### D7. The step loop gets a driver, not a dialect
 
@@ -133,12 +140,16 @@ such as the skin affect both. The planner is a compiler component, not a
 dialect. Example plan contents: partition, skin, neighbor strategy,
 Newton's-third-law usage, force accumulation strategy, halo mode.
 
+*Amended by A4.*
+
 ### D10. One dependency token
 
 Ordering constraints are expressed with a single project-owned SSA token
 type, `!mdrt.event`. It lowers to an MPI request, a CUDA event, or an NVSHMEM
 signal depending on the back end. `md_exec.task` and `md_exec.depend` are
 dropped.
+
+*Amended by A9 and A12.*
 
 ### D11. Pair execution policy is decided in `md_exec`
 
@@ -217,12 +228,16 @@ Consequences:
   have no data dependency. After storage assignment, the dependencies that
   field values carried are carried by event tokens.
 
+*Amended by A12 and D33.*
+
 ### D18. No implicit copies in the step loop
 
 The storage assignment pass must not insert a copy of a per-particle field
 inside the step loop silently. When a copy is required, the compiler reports
 it with the reason. A copy is legitimate only when one version of a field has
 more than one consumer, as in a Metropolis rejection.
+
+*Amended by B10.*
 
 ### D19. Shared types: `md` and a new `mdrt` dialect
 
@@ -242,11 +257,11 @@ other.
 |---|---|---|
 | P1 | **JIT binding times.** Structure is a compile-time constant: terms, functional forms, precision, target. Particle count, box, time step, temperature, and λ are run-time values. Force-field parameter tables may be made constant per parameter, opt-in. Compile once, distribute to all ranks, and cache by a hash of IR and target. | OpenMM kernel cache |
 | P2 | **Full-shell halo first.** The communication transport is abstracted, with in-process, MPI, and NVSHMEM implementations, so that one `md_dist` serves workstations and clusters. | LAMMPS; GROMACS thread-MPI |
-| P3 | **Milestones.** M0: Lennard-Jones fluid, NVE. M1: Martini CG membrane and water. M2: AA protein and water with PME and constraints. M3: MLFF. | — |
+| P3 | **Milestones.** M0: Lennard-Jones fluid, NVE. M1: Martini CG membrane and water. M2: AA protein and water with PME and constraints. M3: MLFF. *Amended by A10.* | — |
 | P4 | **Compiled segments.** The JIT compiles `run_segment(state, n) -> state`, which contains the step loop, rebuild checks, and migration. The driver owns events between segments: output, checkpoints, replica exchange, Python callbacks. | OpenMM `step(n)`; HOOMD-blue `run(n)` |
-| P5 | **Counter-based random numbers.** `dyn.random` is a pure function of seed, step, particle global ID, and stream ID. No generator state is carried in the simulation state. | HOOMD-blue (Random123) |
-| P6 | **Reproducibility levels.** *Fast*: no guarantee. *Deterministic*: same binary, hardware, and decomposition give the same bits. *Decomposition-independent*: the same bits for any rank count. Bitwise agreement between different hardware is a non-goal. | GROMACS `-reprod`; OpenMM deterministic forces; Desmond and Anton fixed-point accumulation |
-| P7 | **Plan in the IR.** The `ExecutionPlan` is serializable, user-overridable, and attached to the IR, so each lowering can be tested with a fixed plan. Structural parameters (cluster size, conflict strategy) require recompilation; numeric parameters (skin, rebuild interval, domain boundaries) are run-time values that can be tuned during the run. | GROMACS run-time tuning of list interval and load balance |
+| P5 | **Counter-based random numbers.** `dyn.random` is a pure function of seed, step, particle global ID, and stream ID. No generator state is carried in the simulation state. *Amended by A5 and A13.* | HOOMD-blue (Random123) |
+| P6 | **Reproducibility levels.** *Fast*: no guarantee. *Deterministic*: same binary, hardware, and decomposition give the same bits. *Decomposition-independent*: the same bits for any rank count. Bitwise agreement between different hardware is a non-goal. *Amended by A6.* | GROMACS `-reprod`; OpenMM deterministic forces; Desmond and Anton fixed-point accumulation |
+| P7 | **Plan in the IR.** The `ExecutionPlan` is serializable, user-overridable, and attached to the IR, so each lowering can be tested with a fixed plan. Structural parameters (cluster size, conflict strategy) require recompilation; numeric parameters (skin, rebuild interval, domain boundaries) are run-time values that can be tuned during the run. *Amended by A4.* | GROMACS run-time tuning of list interval and load balance |
 | P8 | **Exclusions as a first-class relation.** Nonbonded pairs are "within cutoff, minus excluded." Scaled 1-4 pairs are a separate topological relation with their own parameters. Terms may also sum over the exclusion relation, which Ewald exclusion corrections require. | OpenMM exceptions; GROMACS pair interactions |
 | P9 | **Runtime primitives versus generated predicates.** Refinement of D8: generic parallel primitives (sort, scan, compaction) live in the runtime. MD-specific predicates and kernels (distance tests, exclusion filters, type-pair cutoffs) are generated. | — |
 | P10 | **Trusted sampling metadata.** Refinement of D6: library-provided thermostat and barostat kinds carry metadata stating whether they preserve the target distribution. The verifier warns, for example, when replica exchange is combined with a thermostat that does not. | — |
@@ -260,9 +275,9 @@ P11 to P18 follow from the review of PPMD (Saunders et al. 2018). See
 | P12 | **Layer boundary wording.** `md`: what is computed. `md_exec`: over which set, with which access pattern. Back end: how. |
 | P13 | **Baseline pair execution.** Pair terms are executed over directed pairs, writing only to the central particle. This removes scatter races, atomics, and reverse accumulation from the first back ends. Half-list execution is added later as a planner optimization. Scope: two-body terms only. Bonded terms (M1) require a scatter strategy and MLFF (M3) requires reverse accumulation, so both remain in the architecture. |
 | P14 | **`md` has a generic relational core.** Particles, fields, relations, neighborhoods, and reductions are generic. A Hamiltonian is one kind of region built from them; analyses and collective variables are others. Whether a region can be differentiated depends on the ops it contains. |
-| P15 | **Neighbor structure validity is explicit.** A neighbor structure is a value built from a reference configuration, with a validity condition. The default rebuild policy is a fixed interval with a buffer sized for that interval, which needs no per-step global reduction. A displacement check is optional. |
+| P15 | **Neighbor structure validity is explicit.** A neighbor structure is a value built from a reference configuration, with a validity condition. The default rebuild policy is a fixed interval with a buffer sized for that interval, which needs no per-step global reduction. A displacement check is optional. *Amended by A11 and B1: the default policy checks validity in every step.* |
 | P16 | **Version counters at the segment boundary.** Inside a compiled segment, halo exchange placement is decided statically. State modified from the host between segments is detected with run-time version counters. |
-| P17 | **Particle identity is separate from storage index.** Topology, exclusions, and random number streams refer to global IDs. Particles are spatially reordered when neighbor structures are rebuilt. |
+| P17 | **Particle identity is separate from storage index.** Topology, exclusions, and random number streams refer to global IDs. Particles are spatially reordered when neighbor structures are rebuilt. *Amended by D44: the particles are put in order where a run and where a segment begins.* |
 | P18 | **The cutoff predicate is explicit on the pair loop.** It is not buried in the kernel body, so the lowering can choose between a branch and a mask. |
 
 ## 4. Resolved questions
@@ -285,8 +300,8 @@ P11 to P18 follow from the review of PPMD (Saunders et al. 2018). See
 | D22 | **Energy expressions use the syntax of OpenMM custom forces.** This makes D16 concrete. |
 | D23 | **Three precision modes are supported: single, mixed, and double.** The reference is the semantic program in double precision. V1 withdrew the interpreter that was to execute it. |
 | D24 | **The input format is TOML.** Its schema starts small and is expected to change. |
-| D25 | **Trajectories are written as XTC.** XTC holds positions only, in reduced precision, so it does not serve as a checkpoint. |
-| D26 | **Checkpoints are written as H5MD, in 64-bit floating point.** A checkpoint holds positions and velocities, together with everything else an exact restart needs. H5MD is an HDF5-based format with standard places for positions, velocities, periodic images, particle IDs, and the box, and it allows application-specific groups. |
+| D25 | **Trajectories are written as XTC.** XTC holds positions only, in reduced precision, so it does not serve as a checkpoint. *Amended by D37: DCD comes first.* |
+| D26 | **Checkpoints are written as H5MD, in 64-bit floating point.** A checkpoint holds positions and velocities, together with everything else an exact restart needs. H5MD is an HDF5-based format with standard places for positions, velocities, periodic images, particle IDs, and the box, and it allows application-specific groups. *Amended by D40: with velocity Verlet a checkpoint holds the forces.* |
 | D27 | **D8 applies from M0.** The kernels that build cells and neighbor structures are generated from the first milestone. The runtime provides only generic primitives. |
 | D28 | **CPU threading uses OpenMP in M0.** Threading is a structural plan parameter with the values `openmp` and `none`. With `none`, loops are lowered sequentially and the OpenMP runtime is not loaded. |
 | D29 | **The neighbor structure of M0 is the neighbor matrix.** |
@@ -309,7 +324,8 @@ P11 to P18 follow from the review of PPMD (Saunders et al. 2018). See
 
 ### 5.1 Amendments to earlier decisions
 
-A1 to A10 come from an external review of revision 3 of the architecture.
+A1 to A10 come from an external review of revision 3 of the architecture,
+A13 from one of revision 4.
 
 | # | Amendment | Amends |
 |---|---|---|
@@ -324,7 +340,8 @@ A1 to A10 come from an external review of revision 3 of the architecture.
 | A9 | **`!mdrt.event` is an opaque runtime completion object.** It is not tied one-to-one to a transport primitive. Its implementation may be one or more MPI requests, a CUDA event, or an NVSHMEM signal. | D10 |
 | A10 | **M2 has three parts.** M2a: constraints and virtual sites. M2b: PME on one node. M2c: distributed PME. | P3 |
 | A12 | **In the storage form, the ops of a block run in the order of the block.** The ops declare which buffers they read and write, so the upstream analyses keep that order where it matters. Event tokens (D10) are added when ops run asynchronously; until then nothing needs them. | D17 |
-| A11 | **Rebuilds are checked after the fact.** With the fixed-interval policy, the maximum displacement since the previous rebuild is measured at each rebuild. Violations of the validity condition are counted and reported. | P15 |
+| A11 | **Rebuilds are checked after the fact.** With the fixed-interval policy, the maximum displacement since the previous rebuild is measured at each rebuild. Violations of the validity condition are counted and reported. *Amended by B1.* | P15 |
+| A13 | **The random number key has a draw index**: seed, step, stream ID, entity key, and draw index. A stream ID names a purpose, such as a thermostat or a kind of move. The draw index counts the numbers that one entity takes from one stream in one step, from 0, and is a constant in the kernel that draws. The numbers then do not depend on the order in which kernels run or in which a kernel is evaluated. | P5, A5 |
 
 ### 5.2 Choices made in the M0 specification
 
@@ -353,7 +370,7 @@ B1 to B3 and B5 to B10 come from an external review of draft 1.
 | B5 | **Derivatives of functions that are not smooth have fixed conventions**, including the branch taken at a tie. | New |
 | B6 | **Comparing velocity Verlet with leapfrog maps the initial velocities**: `v(−dt/2) = v(0) − (dt/2) · F(0) / m`. | New |
 | B7 | **Both relation kernels receive the distance and the displacement vector.** | New |
-| B8 | **The virial is `W = Σ d_ij ⊗ K(i, j)`**, positive for repulsion, with `P = (2 E_kin + tr W) / (3V)`. | New |
+| B8 | **The virial is `W = Σ d_ij ⊗ K(i, j)`**, positive for repulsion, with `P = (2 E_kin + tr W) / (3V)`. *Amended by D45, which says which kinetic energy the pressure takes.* | New |
 | B9 | **Integrators declare `symplectic` and `time_reversible`.** They do not declare energy conservation. | D6 examples |
 | B10 | **A value that is live across an overwrite gets its own buffer.** The criterion is liveness, not the number of consumers. D18 covers extra buffers as well as copies. | D18 |
 
@@ -425,6 +442,9 @@ These items follow from the decisions above but have no design yet.
 | Storage assignment pass | M0 | Specified in ops-m0.md, Section 10 |
 | Lowering of transcendental functions on GPU targets | M1 | Works on NVIDIA through `libdevice`; see ops-m0.md, Section 3.3. Open for AMD. |
 | Syntax for combining relations | M1 | |
+| Streams and draw indices of the random numbers of a thermostat (A13) | M1 | |
+| The deterministic level as a constraint on the plan | With the planner | Note: the level says what the planner may choose, not what it prefers. It excludes a sum whose order threads decide. The lowerings of M0 add up in a fixed order on a device. On the CPU the order of a reduction is that of the OpenMP runtime: the tests find the same bits from run to run with the same number of threads, which the OpenMP standard does not promise. |
+| The dependency interface on domains other than particles | M2b | Note: the planner should reason about stages on a domain, of which the particles of a set are one and a mesh is another, so that PME does not need another planner. `ParticleDependencyInterface` (D4, A3) is not implemented yet. |
 | Scatter strategy for bonded terms | M1 | |
 | Long-range dispersion correction | M1 | |
 | Distributed fields and grids | M2c | |

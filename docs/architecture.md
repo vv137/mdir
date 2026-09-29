@@ -1,7 +1,14 @@
 # MDIR Architecture
 
-Status: draft, revision 4 (2026-09-29). Nothing described here is implemented
-yet. All IR snippets are illustrative; the syntax is not final.
+Status: draft, revision 5 (2026-09-29).
+
+| Part | State |
+|---|---|
+| `md`, `dyn`, `md_exec`, the lowerings to the CPU and to NVIDIA GPUs, the driver | Implemented for milestone M0. [ops-m0.md](ops-m0.md), [neighbors-m0.md](neighbors-m0.md), and [driver-m0.md](driver-m0.md) describe what is implemented and have the actual syntax. |
+| The planner, `md_dist`, `ensemble`, `mlff`, the events of `mdrt`, `ParticleDependencyInterface` | Not implemented. In M0 the options of the passes and the driver stand for the plan, and the ops of a block run in the order of the block (A12). |
+
+The IR snippets of this document are illustrative; where they differ from
+ops-m0.md, that document holds.
 
 Related documents:
 
@@ -253,9 +260,11 @@ Velocity Verlet:
 %v2 = dyn.kick  %v1, %f1, %m, %half_dt
 ```
 
-**Random numbers are counter-based** (P5, A5). `dyn.random` is a pure
-function of seed, step, stream ID, and an entity key. The state carries no
-generator.
+**Random numbers are counter-based** (P5, A5, A13). `dyn.random` is a pure
+function of seed, step, stream ID, an entity key, and a draw index. The
+state carries no generator. The draw index counts the numbers that one
+entity takes from one stream in one step, and is a constant in the kernel
+that draws.
 
 | Entity | Key |
 |---|---|
@@ -425,6 +434,9 @@ Determinism is an opt-in execution mode (C6). The plan selects one level
 | Deterministic | Same binary, hardware, and decomposition give the same bits |
 | Decomposition-independent | The same bits for any rank count |
 
+A level says what the planner may choose, not what it prefers: at the
+deterministic level a sum whose order threads decide is not allowed.
+
 The decomposition-independent level is a future mode and is not required for
 M0 to M3 (A6). It needs fixed-point or exact accumulation. Bitwise agreement
 between different hardware is a non-goal.
@@ -537,7 +549,8 @@ is measured at each rebuild. Violations of the validity condition are counted
 and reported (A11). A violation cannot be repaired afterward, which is why
 the fixed interval is not the default.
 
-Particles are spatially reordered when neighbor structures are rebuilt.
+Particles are put in the order of their positions where a run begins and
+where a segment begins (D44).
 
 **Data layout** is also chosen here: SoA, AoSoA, or cluster-packed, lowered
 to `memref`.
@@ -655,8 +668,8 @@ a generated kernel that fills it.
 
 | Purpose | Format | Contents |
 |---|---|---|
-| Input | TOML (D24) | System, potential, dynamics, and run settings. The schema is not designed yet. |
-| Trajectory | XTC (D25) | Positions, in reduced precision |
+| Input | TOML (D24, D35) | System, potential, dynamics, and run settings |
+| Trajectory | DCD first, then XTC (D25, D37) | Positions, in reduced precision |
 | Checkpoint | H5MD, 64-bit floating point (D26) | Everything an exact restart needs |
 
 A checkpoint holds:
@@ -665,6 +678,7 @@ A checkpoint holds:
 |---|---|
 | Positions | `position` |
 | Velocities | `velocity` |
+| Forces, with an integrator that begins a step with them | `force` |
 | Periodic image counters | `image` |
 | Particle global IDs | `id` |
 | Cell | `box` |
@@ -675,7 +689,13 @@ A checkpoint holds:
 Random number generators have no state to save, because random numbers are
 a function of seed, step, and entity (P5).
 
-Forces are not saved. They are recomputed from the positions at restart.
+With velocity Verlet the forces are saved (D40). A step begins with the
+forces of the step before, and forces that are computed again from the
+positions differ in their last bits: a neighbor structure that is built
+again has another order.
+
+The particles of a file are in the order of the input, whatever order the
+run keeps them in (D44).
 
 ## 12. Roadmap
 
