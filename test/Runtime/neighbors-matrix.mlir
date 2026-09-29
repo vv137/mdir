@@ -21,7 +21,10 @@
 //     which pairs were found but not on their order;
 //   - the largest number of neighbors of one particle.
 //
-// The reference values were found by testing all pairs.
+// The search takes the pairs within the reach and those within its margin
+// beyond. The reference values were found by testing all pairs, with
+// Inputs/neighbors_reference.py. In the first case, 2664 of the entries are
+// within the reach.
 
 func.func private @printI64(i64)
 func.func private @printNewline()
@@ -104,12 +107,36 @@ func.func @main() {
   %narrow = arith.constant 8 : index
   %reach = arith.constant 1.5 : f64
 
-  // Four cells along each direction.
-  // CHECK:      2664
-  // CHECK-NEXT: 27263246
+  // Three cells along each direction, as wide as the reach and more.
+  // CHECK:      2666
+  // CHECK-NEXT: 27305838
   // CHECK-NEXT: 22
   %l0 = arith.constant 6.0 : f64
   call @run(%l0, %reach, %reach, %wide) : (f64, f64, f64, index) -> ()
+
+  // Cells of half the reach: seven along each direction, of which five are
+  // searched. The pairs are the same.
+  // CHECK-NEXT: 2666
+  // CHECK-NEXT: 27305838
+  // CHECK-NEXT: 22
+  %half = arith.constant 0.75 : f64
+  call @run(%l0, %reach, %half, %wide) : (f64, f64, f64, index) -> ()
+
+  // Cells of a third of the reach: eleven along each direction, of which
+  // seven are searched.
+  // CHECK-NEXT: 2666
+  // CHECK-NEXT: 27305838
+  // CHECK-NEXT: 22
+  %third = arith.constant 0.5 : f64
+  call @run(%l0, %reach, %third, %wide) : (f64, f64, f64, index) -> ()
+
+  // Cells of half the reach in a cell that has four of them along each
+  // direction: all are searched, each once.
+  // CHECK-NEXT: 13056
+  // CHECK-NEXT: 132165308
+  // CHECK-NEXT: 80
+  %small = arith.constant 3.5 : f64
+  call @run(%small, %reach, %half, %wide) : (f64, f64, f64, index) -> ()
 
   // Two cells: the cell before and the cell after a cell are the same.
   // CHECK-NEXT: 13056

@@ -249,12 +249,16 @@ std::string kernels::instantiateTemplates(StringRef text, Type real) {
   if (real.isF64())
     return text.str();
 
-  // The functions of the templates have names that begin with `mdrt`.
+  // The functions of the templates have names that begin with `mdrt`. A
+  // conversion from f64 to f32 becomes one from f32 to f32, which is a
+  // cast of the bits.
   std::string instance;
   StringRef prefix = "@mdrt";
   while (!text.empty()) {
     if (text.consume_front("f64")) {
       instance += "f32";
+    } else if (text.consume_front("arith.truncf")) {
+      instance += "arith.bitcast";
     } else if (text.consume_front(prefix)) {
       StringRef name = text.take_while([](char c) {
         return llvm::isAlnum(c) || c == '_' || c == '.';

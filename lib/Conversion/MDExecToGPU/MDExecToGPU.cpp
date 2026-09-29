@@ -36,6 +36,7 @@ namespace mdir {
 extern const char *const neighborsMatrixGPUTemplate;
 } // namespace mdir
 
+static const char *const cellWidthName = "mdrt_gpu_cell_width";
 static const char *const buildNeighborsName =
     "mdrt_gpu_build_neighbors_matrix";
 static const char *const reportOverflowName = "mdrtReportNeighborOverflow";
@@ -82,8 +83,9 @@ struct Flag {
 
 class Lowering {
 public:
-  Lowering(ModuleOp module, int64_t blockSize)
-      : module(module), context(module.getContext()), blockSize(blockSize) {}
+  Lowering(ModuleOp module, int64_t blockSize, int64_t splitLimit)
+      : module(module), context(module.getContext()), blockSize(blockSize),
+        splitLimit(splitLimit) {}
 
   LogicalResult run();
 
@@ -165,6 +167,7 @@ private:
   ModuleOp module;
   MLIRContext *context;
   int64_t blockSize;
+  int64_t splitLimit;
 
   /// The function that is being lowered.
   func::FuncOp current;
@@ -609,14 +612,26 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
     return failure();
 
   Value reachValue = createReal(builder, loc, real, reach);
-  Value widthValue = createReal(builder, loc, real, cellWidth);
+  Value leastValue = createReal(builder, loc, real, cellWidth);
+  Value boxValue = convertReal(builder, loc, box, real);
+
+  // The width of the cells follows from the density, which is known when
+  // the structure is built.
+  auto choose = cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
+      module, getInstanceName(cellWidthName, real)));
+  Value widthValue =
+      func::CallOp::create(builder, loc, choose,
+                           ValueRange{structure.size, boxValue, reachValue,
+                                      leastValue})
+          .getResult(0);
 
   auto build = cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
       module, getInstanceName(buildNeighborsName, real)));
   auto call = func::CallOp::create(
       builder, loc, build,
-      ValueRange{positions, convertReal(builder, loc, box, real), reachValue,
-                 widthValue, structure.counts, structure.index});
+      ValueRange{positions, boxValue, reachValue,
+                 widthValue, createIndex(builder, loc, splitLimit),
+                 structure.counts, structure.index});
   Value largest = call.getResult(0);
 
   // The runtime counts the builds, for the log of the run.
@@ -1000,7 +1015,7 @@ public:
       ConvertMDExecToGPU>::ConvertMDExecToGPUBase;
 
   void runOnOperation() final {
-    Lowering lowering(getOperation(), blockSize);
+    Lowering lowering(getOperation(), blockSize, splitLimit);
     if (failed(lowering.run()))
       signalPassFailure();
   }

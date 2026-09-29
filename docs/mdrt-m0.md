@@ -35,7 +35,8 @@ The runtime provides only the generic primitives they need (P9).
 ### 2.1 Algorithm
 
 M0 uses one algorithm on both targets: binning into cells, then a neighbor
-matrix.
+matrix. [neighbors-m0.md](neighbors-m0.md) describes the method as it is
+implemented; the table is the proposal.
 
 | Step | Work | Provided by |
 |---|---|---|
@@ -211,7 +212,7 @@ Proposal: the C++ tool.
 
 | Item | State |
 |---|---|
-| Neighbor build as a template in IR, `lib/Runtime/Templates/NeighborsMatrix.mlir` | Implemented. The compiler adds it to the module, where it is lowered with the rest of the code. |
+| Neighbor build as a template in IR, `lib/Runtime/Templates/NeighborsMatrix.mlir` | Implemented. The compiler adds it to the module, where it is lowered with the rest of the code. See [neighbors-m0.md](neighbors-m0.md). |
 | Neighbor matrix | Implemented |
 | Overflow of a row | The runtime reports it and stops the run. Rebuilding with wider rows is not implemented. |
 | Storage in `memref<?x3xT>` | Implemented, for `f32` and `f64` |

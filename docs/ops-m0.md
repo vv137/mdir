@@ -1,6 +1,6 @@
 # MDIR Op Specification, Milestone M0
 
-Status: draft 14 (2026-09-29). Everything in this document is implemented,
+Status: draft 15 (2026-09-29). Everything in this document is implemented,
 except where a section says otherwise. A Lennard-Jones system runs end to
 end in single, mixed, and double precision, on the CPU sequentially and
 with OpenMP, and on NVIDIA GPUs.
@@ -1469,23 +1469,10 @@ the sum on the host in its last bits, because the host adds up in another
 order.
 
 The neighbor build template for devices,
-`lib/Runtime/Templates/NeighborsMatrixGPU.mlir`, builds the matrix in eight
-kernels:
-
-| Kernel | Threads | Work |
-|---|---|---|
-| 1 | One per cell | Sets the counts of the cells to zero |
-| 2 | One per particle | Computes the cell of the particle and counts it, with an atomic addition |
-| 3 | One | Turns the counts into the offsets of the cells |
-| 4 | One per particle | Takes the next slot of the cell, with an atomic addition |
-| 5 | One per cell | Sorts the particles of the cell by index |
-| 6 | One per particle | Tests the particles of the surrounding cells and fills the row |
-| 7 | One per chunk | Limits the counts to the width of a row and finds the largest count of the chunk |
-| 8 | One | Finds the largest count |
-
-Kernel 5 makes the result independent of which thread took its slot first.
-The matrix is the one that the template for the host builds, entry by
-entry.
+`lib/Runtime/Templates/NeighborsMatrixGPU.mlir`, builds the matrix in 10
+kernels, or in 12 where the search is split.
+[neighbors-m0.md](neighbors-m0.md) describes the method. The matrix is the
+one that the template for the host builds, entry by entry.
 
 The result is lowered by the upstream pipeline
 `gpu-lower-to-nvvm-pipeline`. The kernels become PTX text inside the
@@ -1503,6 +1490,7 @@ lowering does.
 |---|---|
 | A global sum is a single number. | The virial, a sum of vectors, cannot be computed on a device yet. |
 | The build allocates its work buffers at every build and frees them. | The cost is per build, not per step. |
+| A split search takes one number for each of its threads. | The search is split only for small systems. |
 | One device | |
 | NVIDIA only | The storage form does not depend on the vendor; the lowering to `rocdl` is not written. |
 
@@ -1549,9 +1537,9 @@ GPU in the mixed mode, 864 particles with 74 neighbors each:
 | Test of validity: displacements, chunks, the maximum | 7, 24, 6 | |
 | Forces | 165 | 95 |
 | Kick | 7 | 7 |
-| Neighbor build, all kernels, for each step | 97 | 54 |
-| Of a build, kernel 6, the search | 1600 | 860 |
-| A step | 330 | 150 |
+| Neighbor build, all kernels, for each step | 97 | 7 |
+| Of a build, the search | 1600 | 40 |
+| A step | 330 | 110 |
 
 A structure is built every 18 steps. "Before" is the state in which the
 loops over particles were fused already.
@@ -1563,12 +1551,13 @@ loops over particles were fused already.
 | The host does not wait for every kernel, and a constant is a constant of the kernel (Section 10.8). | 280 |
 | The minimum image is found with a multiplication (D42). | 170 |
 | The test of validity is made in the drift (Section 9.6). | 150 |
+| The neighbor build searches a copy of the positions, with narrower cells and more threads ([neighbors-m0.md](neighbors-m0.md)). | 110 |
 
 | Observation | Consequence |
 |---|---|
 | A kernel that does next to nothing takes 6 to 7 microseconds. | Every kernel that is saved saves that much. |
 | The time of a small system is the time of one thread, not of all. The kernel of the forces runs 864 threads at once; each visits its neighbors one after another, at 0.9 microseconds for a neighbor. | The time per step hardly depends on the number of particles until the device is full. A small system would need more than one thread per particle. |
-| The search of the build tests every particle of 27 cells. With 27 cells in all, that is every particle. | Cells of half the width would shorten the build. |
+| The search of a build tested every particle of 27 cells. With 27 cells in all, that was every particle. | The width of the cells is chosen from the density, and the search of a small system has a thread for each row of cells ([neighbors-m0.md](neighbors-m0.md)). |
 | A division in double precision costs a thread of a device much more than a multiplication. | The minimum image took three divisions for each neighbor, and nearly half the time of the forces. |
 | The kick after the forces writes to the particle that the thread of the forces has. | The two can be one kernel. A step then has two. |
 

@@ -33,6 +33,7 @@ namespace mdir {
 extern const char *const neighborsMatrixTemplate;
 } // namespace mdir
 
+static const char *const cellWidthName = "mdrt.cell_width";
 static const char *const buildNeighborsName = "mdrt.build_neighbors_matrix";
 static const char *const reportOverflowName = "mdrtReportNeighborOverflow";
 static const char *const countBuildName = "mdrtCountBuild";
@@ -315,13 +316,24 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
     return failure();
 
   Value reachValue = createReal(builder, loc, real, reach);
-  Value widthValue = createReal(builder, loc, real, cellWidth);
+  Value leastValue = createReal(builder, loc, real, cellWidth);
+  Value boxValue = convertReal(builder, loc, box, real);
+
+  // The width of the cells follows from the density, which is known when
+  // the structure is built.
+  auto choose = cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
+      module, getInstanceName(cellWidthName, real)));
+  Value widthValue =
+      func::CallOp::create(builder, loc, choose,
+                           ValueRange{structure.size, boxValue, reachValue,
+                                      leastValue})
+          .getResult(0);
 
   auto build = cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
       module, getInstanceName(buildNeighborsName, real)));
   auto call = func::CallOp::create(
       builder, loc, build,
-      ValueRange{positions, convertReal(builder, loc, box, real), reachValue,
+      ValueRange{positions, boxValue, reachValue,
                  widthValue, structure.counts, structure.index});
   Value largest = call.getResult(0);
 

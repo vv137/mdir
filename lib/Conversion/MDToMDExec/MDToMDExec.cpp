@@ -23,8 +23,10 @@ namespace {
 
 class Converter {
 public:
-  Converter(MLIRContext *context, double skin, int64_t width)
-      : builder(context), skin(skin), width(width) {}
+  Converter(MLIRContext *context, double skin, int64_t width,
+            int64_t cellsPerReach)
+      : builder(context), skin(skin), width(width),
+        cellsPerReach(cellsPerReach) {}
 
   LogicalResult convert(Operation *op);
 
@@ -73,6 +75,8 @@ private:
   OpBuilder builder;
   double skin;
   int64_t width;
+  /// The number of cells that the reach of a neighbor structure spans.
+  int64_t cellsPerReach;
 
   /// The neighbor structure that was built for a relation.
   llvm::DenseMap<Value, Value> neighbors;
@@ -95,7 +99,8 @@ LogicalResult Converter::convertNeighborhood(md::NeighborhoodOp op) {
   builder.setInsertionPoint(op);
   Value cells = md_exec::BuildCellsOp::create(
       builder, loc, mdrt::CellsType::get(context, particleSet),
-      op.getPositions(), op.getCell(), APFloat(cutoff + skin));
+      op.getPositions(), op.getCell(),
+      APFloat((cutoff + skin) / static_cast<double>(cellsPerReach)));
   Value structure = md_exec::BuildNeighborsOp::create(
       builder, loc, mdrt::NeighborsType::get(context, particleSet), cells,
       op.getPositions(), op.getCell(), APFloat(cutoff), APFloat(skin),
@@ -331,12 +336,16 @@ public:
       getOperation()->emitError() << "expected a positive width";
       return signalPassFailure();
     }
+    if (cells <= 0) {
+      getOperation()->emitError() << "expected a positive number of cells";
+      return signalPassFailure();
+    }
 
     SmallVector<Operation *> ops;
     getOperation()->walk<WalkOrder::PreOrder>(
         [&](Operation *op) { ops.push_back(op); });
 
-    Converter converter(&getContext(), skin, width);
+    Converter converter(&getContext(), skin, width, cells);
     for (Operation *op : ops)
       if (failed(converter.convert(op)))
         return signalPassFailure();

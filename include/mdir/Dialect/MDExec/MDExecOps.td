@@ -222,8 +222,9 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
     Under that condition it contains every pair within the cutoff. With the
     policy `always` the structure is built whether it is valid or not.
 
-    `cell_width` is the width of the cells that a rebuild bins the particles
-    into.
+    `cell_width` is the least width of the cells that a rebuild bins the
+    particles into. The build chooses the width from the density of the
+    particles: the cutoff plus the skin, half of it, or a third.
 
     ```mlir
     %nl1 = md_exec.refresh_neighbors %nl, %x, %cell

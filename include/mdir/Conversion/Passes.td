@@ -32,7 +32,11 @@ def ConvertMDToMDExec : Pass<"convert-md-to-md-exec", "::mlir::ModuleOp"> {
            "Distance that is added to the cutoff of neighbor structures">,
     Option<"width", "width", "int64_t", /*default=*/"64",
            "Number of neighbors that a neighbor structure holds per "
-           "particle">
+           "particle">,
+    Option<"cells", "cells", "int64_t", /*default=*/"3",
+           "Number of cells that the cutoff plus the skin may span: the "
+           "cells of a neighbor build are that fraction of it wide or "
+           "wider">
   ];
   let dependentDialects = ["::mdir::md_exec::MDExecDialect",
                            "::mdir::mdrt::MDRTDialect",
@@ -96,7 +100,11 @@ def ConvertMDExecToGPU
   }];
   let options = [
     Option<"blockSize", "block-size", "int64_t", /*default=*/"128",
-           "The number of threads in a block">
+           "The number of threads in a block">,
+    Option<"splitLimit", "split-limit", "int64_t", /*default=*/"131072",
+           "The largest number of threads that the search of a neighbor "
+           "build is split into, with one thread for each row of cells of "
+           "a particle">
   ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",

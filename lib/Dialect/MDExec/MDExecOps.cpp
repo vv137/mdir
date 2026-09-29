@@ -168,17 +168,6 @@ LogicalResult BuildNeighborsOp::verify() {
                          << skin;
   if (getWidth() <= 0)
     return emitOpError() << "expected a positive width, got " << getWidth();
-
-  // A cell that is narrower than the extended cutoff would hide neighbors
-  // beyond the 27 surrounding cells.
-  if (auto build = getCells().getDefiningOp<BuildCellsOp>()) {
-    double width = build.getWidth().convertToDouble();
-    if (width < cutoff + skin)
-      return emitOpError()
-             << "the cells are " << width
-             << " wide, which is less than the cutoff plus the skin, "
-             << cutoff + skin;
-  }
   return success();
 }
 
@@ -236,11 +225,9 @@ LogicalResult RefreshNeighborsOp::verify() {
   if (!(skin >= 0.0))
     return emitOpError() << "expected a skin that is not negative, got "
                          << skin;
-  if (width < cutoff + skin)
-    return emitOpError()
-           << "the cells are " << width
-           << " wide, which is less than the cutoff plus the skin, "
-           << cutoff + skin;
+  if (!(width > 0.0))
+    return emitOpError() << "expected cells of a positive width, got "
+                         << width;
 
   if (getMoved()) {
     if (getPolicy() != RebuildPolicy::Check)

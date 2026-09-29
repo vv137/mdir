@@ -62,7 +62,7 @@ func.func @forces(%x: memref<?x3xf64, 1>, %f: memref<?x3xf64, 1>,
   %nl0 = md_exec.empty_neighbors size(%n) positions(memref<?x3xf64, 1>)
       kind(matrix) width(48) : !mdrt.neighbors<@atoms>
 
-  // CHECK:      call @mdrt_gpu_build_neighbors_matrix(%[[X]], %[[BOX]], %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %[[COUNTS]], %[[INDEX]])
+  // CHECK:      call @mdrt_gpu_build_neighbors_matrix(%[[X]], %[[BOX]], %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %[[COUNTS]], %[[INDEX]])
   // CHECK:      gpu.memcpy async [%{{[0-9]+}}] %[[REFERENCE]], %[[X]]
   %nl = md_exec.refresh_neighbors %nl0, %x, %cell
       cutoff(1.5) skin(0.25) cell_width(1.75) policy(always)

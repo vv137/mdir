@@ -19,19 +19,6 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell) {
 // -----
 
 md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell) {
-  %cells = md_exec.build_cells %x, %cell width(2.5)
-      : !md.field<@atoms, 3 x f64> -> !mdrt.cells<@atoms>
-  // expected-error@+1 {{the cells are 2.500000e+00 wide, which is less than the cutoff plus the skin, 2.800000e+00}}
-  %nl = md_exec.build_neighbors %cells, %x, %cell
-      cutoff(2.5) skin(0.3) kind(matrix) width(96)
-      : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f64>
-      -> !mdrt.neighbors<@atoms>
-  md.return
-}
-
-// -----
-
-md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell) {
   %cells = md_exec.build_cells %x, %cell width(3.0)
       : !md.field<@atoms, 3 x f64> -> !mdrt.cells<@atoms>
   // expected-error@+1 {{expected a positive width, got 0}}
@@ -159,9 +146,9 @@ md.function @f(%v: !md.field<@atoms, 3 x f64>, %q: !md.field<@ions, f64>)
 
 md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
                %nl: !mdrt.neighbors<@atoms>) {
-  // expected-error@+1 {{the cells are 2.500000e+00 wide, which is less than the cutoff plus the skin, 2.800000e+00}}
+  // expected-error@+1 {{expected cells of a positive width, got 0.000000e+00}}
   %nl1 = md_exec.refresh_neighbors %nl, %x, %cell
-      cutoff(2.5) skin(0.3) cell_width(2.5) policy(check)
+      cutoff(2.5) skin(0.3) cell_width(0.0) policy(check)
       : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
   md.return
 }

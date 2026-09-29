@@ -1,4 +1,6 @@
 // RUN: mdir-opt %s --convert-md-to-md-exec="skin=0.25 width=48" | FileCheck %s
+// RUN: mdir-opt %s --convert-md-to-md-exec="skin=0.25 width=48 cells=1" \
+// RUN: | FileCheck %s --check-prefix=WIDE
 
 !vec   = !md.field<@atoms, 3 x f64>
 !real  = !md.field<@atoms, f64>
@@ -13,7 +15,10 @@ md.particle_set @atoms
 // CHECK-LABEL: md.function @energy(
 // CHECK-SAME:    %[[X:[a-z0-9]+]]: !md.field<@atoms, 3 x f64>, %[[CELL:[a-z0-9]+]]: !md.cell, %[[A:[a-z0-9]+]]: f64)
 md.function @energy(%x: !vec, %cell: !md.cell, %a: f64) -> f64 {
-  // CHECK:      %[[CELLS:[0-9]+]] = md_exec.build_cells %[[X]], %[[CELL]] width(1.750000e+00)
+  // The cells are a third as wide as the cutoff plus the skin, or wider.
+  //
+  // CHECK:      %[[CELLS:[0-9]+]] = md_exec.build_cells %[[X]], %[[CELL]] width(0.58333333333333337)
+  // WIDE:       md_exec.build_cells %{{[a-z0-9]+}}, %{{[a-z0-9]+}} width(1.750000e+00)
   // CHECK:      %[[NL:[0-9]+]] = md_exec.build_neighbors %[[CELLS]], %[[X]], %[[CELL]]
   // CHECK-SAME:   cutoff(1.500000e+00) skin(2.500000e-01) kind(matrix) width(48)
   // CHECK-NOT:  md.neighborhood
