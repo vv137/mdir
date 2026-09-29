@@ -15,9 +15,22 @@
 # RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
 # RUN: mdir run %t/run.toml | FileCheck %s
+# RUN: sed -e 's|nsteps        = 100|nsteps = 2|' -e 's|eneout_period = 50|eneout_period = 1|' \
+# RUN:     %t/run.toml > %t/start.toml
+# RUN: mdir run %t/start.toml | FileCheck %s --check-prefix=START
 
 # CHECK: INFO:         0         0.0000 {{ *}}-2811.4253 {{ *}}-3522.3477
 # CHECK: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
+
+# At the start no step has given the forces of the constraints; their
+# virial is that of the forces that keep the accelerations on the
+# constraints, less twice the kinetic energy within the rigid waters. The
+# pressure of step 0 then continues those of the steps after it, which
+# fall by about 135 atm per step here, rather than being 20000 atm.
+#
+# START: INFO:         0 {{.*}} -818.5888 {{ *}}695.9850
+# START: INFO:         1 {{.*}} -950.4970 {{ *}}554.4190
+# START: INFO:         2 {{.*}} -1078.0753 {{ *}}424.2331
 
 #--- run.toml
 [input]

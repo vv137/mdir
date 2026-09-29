@@ -92,6 +92,14 @@ private:
   /// masses on the surface of the constraints.
   void emitConstrainedDescent(StringRef indent, StringRef x, StringRef f,
                               StringRef result);
+  /// Returns the trace `trace` with that of the virial of the constraints
+  /// at the start added, where no step has given their forces: for a group
+  /// of particles that the constraints keep rigid, Σ (x_k − x_0) · G_k =
+  /// Σ (x_k − x_0) · G⁰_k − 2 K_int, with G⁰ = m P(F/m) − F the forces
+  /// that keep the accelerations on the constraints and K_int the kinetic
+  /// energy of the motion within the group.
+  std::string emitStartConstraintTrace(StringRef x, StringRef f,
+                                       StringRef v, StringRef trace);
   /// Sets `levels`, the loops of the schedule of a run of dynamics.
   void setSchedule();
   void emitMinimization();
@@ -2990,6 +2998,74 @@ void Builder::emitConstrainedDescent(StringRef indent, StringRef x,
   }
 }
 
+std::string Builder::emitStartConstraintTrace(StringRef x, StringRef f,
+                                              StringRef v, StringRef trace) {
+  emitConstrainedDescent("  ", x, f, "%gc0");
+  std::vector<const Program::TupleSet *> groups = getShakeSets();
+  for (const Program::TupleSet &set : program.tupleSets)
+    if (set.name == "settles")
+      groups.insert(groups.begin(), &set);
+  std::string current = trace.str();
+  for (const Program::TupleSet *set : groups) {
+    unsigned count = set->arity - 1;
+    std::string coordinates, arguments;
+    for (unsigned k = 1; k <= count; ++k) {
+      coordinates += (k == 1 ? "" : ", ") +
+                     ("displacement(" + std::to_string(k) + ", 0)");
+      arguments += "%vs_r" + std::to_string(k) + ": vector<3xf64>, ";
+    }
+    for (StringRef field : {"g", "f", "v"})
+      for (unsigned k = 0; k <= count; ++k)
+        arguments += ("%vs_" + field + std::to_string(k) + ": vector<3xf64>, ")
+                         .str();
+    for (unsigned k = 0; k <= count; ++k)
+      arguments += "%vs_m" + std::to_string(k) + ": f64" +
+                   (k == count ? "" : ", ");
+    std::string sum = "%trc0_" + set->name;
+    os << "  " << sum << " = md.sum_tuples %r_" << set->name << ", " << x
+       << ", %cell\n"
+       << "    coordinates(" << coordinates << ")\n"
+       << "    gather(%gc0, " << f << ", " << v
+       << ", %m : !vec, !vec, !vec, !real) {\n"
+       << "  ^bb0(" << arguments << "):\n";
+    SiteKernel k(os, "    ");
+    // Σ (x_k − x_0) · G⁰_k over the particles but the first, whose arm is
+    // 0.
+    std::string arms;
+    for (unsigned j = 1; j <= count; ++j) {
+      std::string n = std::to_string(j);
+      std::string force = k.vector(
+          "subf", k.scale("%vs_m" + n, "%vs_g" + n), "%vs_f" + n);
+      std::string term = k.dot("%vs_r" + n, force);
+      arms = arms.empty() ? term : k.real("addf", arms, term);
+    }
+    // 2 K_int = Σ m |v − V|².
+    std::string total = "%vs_m0", moment = k.scale("%vs_m0", "%vs_v0");
+    for (unsigned j = 1; j <= count; ++j) {
+      std::string n = std::to_string(j);
+      total = k.real("addf", total, "%vs_m" + n);
+      moment = k.vector("addf", moment, k.scale("%vs_m" + n, "%vs_v" + n));
+    }
+    std::string center =
+        k.scale(k.real("divf", k.constant(1.0), total), moment);
+    std::string twice;
+    for (unsigned j = 0; j <= count; ++j) {
+      std::string n = std::to_string(j);
+      std::string relative = k.vector("subf", "%vs_v" + n, center);
+      std::string term = k.real("mulf", "%vs_m" + n, k.dot(relative, relative));
+      twice = twice.empty() ? term : k.real("addf", twice, term);
+    }
+    std::string virial = k.real("subf", arms, twice);
+    os << "    md.yield " << virial << " : f64\n"
+       << "  } : !rel_" << set->name << ", !vec -> f64\n";
+    std::string next = "%trc0_" + set->name + "_sum";
+    os << "  " << next << " = arith.addf " << current << ", " << sum
+       << " : f64\n";
+    current = next;
+  }
+  return current;
+}
+
 void Builder::emitDescend() {
   // The step moves each particle along g, its force over its mass without
   // the parts along the constraints, by `%h` times g over the 16-norm of
@@ -3444,7 +3520,11 @@ void Builder::emitEntry() {
     else
       emitForceSquare(os, "%g0", "%f0", "%m", "  ");
     emitTrace(os, "%tr0", virial, "  ");
-    os << "  call @mdrtWriteEnergies(%start, %u0, %k0, %g0, %tr0)\n"
+    std::string trace = "%tr0";
+    if (hasConstraints())
+      trace = emitStartConstraintTrace("%x0", "%f0", velocities, trace);
+    os << "  call @mdrtWriteEnergies(%start, %u0, %k0, %g0, " << trace
+       << ")\n"
        << "      : (i64, f64, f64, f64, f64) -> ()\n";
 
     if (isLeapfrog()) {
