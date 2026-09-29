@@ -6,7 +6,7 @@ from lit.llvm import llvm_config
 
 config.name = "MDIR"
 config.test_format = lit.formats.ShTest()
-config.suffixes = [".mlir"]
+config.suffixes = [".mlir", ".toml", ".test"]
 config.test_source_root = os.path.dirname(__file__)
 config.test_exec_root = os.path.join(config.mdir_obj_root, "test")
 config.excludes = ["CMakeLists.txt", "lit.cfg.py", "lit.site.cfg.py.in", "lib", "Inputs"]
@@ -18,7 +18,15 @@ config.mdir_tools_dir = os.path.join(config.mdir_obj_root, "bin")
 llvm_config.with_environment("PATH", config.llvm_tools_dir, append_path=True)
 
 tool_dirs = [config.mdir_tools_dir, config.llvm_tools_dir]
-tools = ["mdir-opt", "mlir-opt", "mlir-runner", "FileCheck", "not"]
+tools = [
+    "mdir-opt",
+    "mdir-run",
+    "mlir-opt",
+    "mlir-runner",
+    "FileCheck",
+    "not",
+    "split-file",
+]
 llvm_config.add_tool_substitutions(tools, tool_dirs)
 
 # The library that provides printF64 and friends to code run by mlir-runner.

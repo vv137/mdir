@@ -1,0 +1,104 @@
+// The control file of a run.
+//
+// See docs/driver-m0.md, Section 1.
+
+#ifndef MDIR_DRIVER_CONTROL_H
+#define MDIR_DRIVER_CONTROL_H
+
+#include "llvm/ADT/StringMap.h"
+#include "llvm/ADT/StringRef.h"
+#include "llvm/Support/Error.h"
+
+#include <cstdint>
+#include <string>
+#include <vector>
+
+namespace mdir {
+namespace driver {
+
+/// A type of particle: its mass and its parameters, in the units of the
+/// control file.
+struct ParticleType {
+  std::string name;
+  double mass = 0.0;
+  /// The parameters, in the order of the control file.
+  std::vector<std::pair<std::string, double>> parameters;
+};
+
+/// How the parameter of a pair follows from those of its two particles.
+enum class Mixing { Arithmetic, Geometric };
+
+/// A term of the potential energy over pairs, given by an expression in the
+/// distance `r`.
+struct PairTerm {
+  std::string name;
+  std::string expression;
+  /// For the parameters of the types that the expression uses.
+  llvm::StringMap<Mixing> mixing;
+  /// Numbers that the expression uses under a name.
+  std::vector<std::pair<std::string, double>> constants;
+};
+
+enum class Truncation { None, Shift, Switch, ForceSwitch };
+enum class Integrator { VelocityVerlet, Leapfrog };
+enum class Target { CPU, GPU };
+enum class Precision { Single, Mixed, Double };
+
+/// What a control file says. Lengths are in Å, energies in kcal/mol, times
+/// in ps, masses in amu, and temperatures in K.
+struct Control {
+  // [input]
+  std::string pdbFile;
+  std::string restartInput;
+
+  // [output]
+  std::string dcdFile;
+  std::string restartOutput;
+
+  // [energy]
+  double switchDistance = 10.0;
+  double cutoffDistance = 12.0;
+  double pairlistDistance = 13.5;
+  Truncation truncation = Truncation::Switch;
+  std::vector<PairTerm> pairs;
+  std::vector<ParticleType> types;
+
+  // [dynamics]
+  Integrator integrator = Integrator::VelocityVerlet;
+  double timestep = 0.001;
+  int64_t numSteps = 100;
+  int64_t energyPeriod = 10;
+  int64_t framePeriod = 0;
+  int64_t checkpointPeriod = 0;
+  /// The interval of rebuilds, or 0 for a test of validity at every step.
+  int64_t rebuildPeriod = 0;
+  uint64_t seed = 314159;
+
+  // [ensemble]
+  double temperature = 298.15;
+
+  // [boundary]
+  double box[3] = {0.0, 0.0, 0.0};
+
+  // [execution]
+  Target target = Target::CPU;
+  int64_t threads = 1;
+  Precision precision = Precision::Double;
+  /// The number of neighbors that a neighbor structure holds per particle,
+  /// or 0 for an estimate from the density.
+  int64_t neighborWidth = 0;
+  /// Whether kernels are rewritten in ways that change rounding.
+  bool fastMath = true;
+};
+
+/// Reads the control file `path`. Paths of files in it are relative to the
+/// directory of the control file.
+llvm::Expected<Control> readControl(llvm::StringRef path);
+
+/// A control file with every keyword of M0 and its default.
+std::string getControlTemplate();
+
+} // namespace driver
+} // namespace mdir
+
+#endif // MDIR_DRIVER_CONTROL_H

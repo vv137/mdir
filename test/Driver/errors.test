@@ -1,0 +1,169 @@
+# What is wrong with a control file is reported with its line.
+#
+# RUN: split-file %s %t
+# RUN: not mdir-run %t/keyword.toml 2>&1 | FileCheck %s --check-prefix=KEYWORD
+# RUN: not mdir-run %t/planned.toml 2>&1 | FileCheck %s --check-prefix=PLANNED
+# RUN: not mdir-run %t/table.toml 2>&1 | FileCheck %s --check-prefix=TABLE
+# RUN: not mdir-run %t/choice.toml 2>&1 | FileCheck %s --check-prefix=CHOICE
+# RUN: not mdir-run %t/period.toml 2>&1 | FileCheck %s --check-prefix=PERIOD
+# RUN: not mdir-run %t/syntax.toml 2>&1 | FileCheck %s --check-prefix=SYNTAX
+# RUN: not mdir-run %t/name.toml 2>&1 | FileCheck %s --check-prefix=NAME
+# RUN: not mdir-run %t/mixing.toml 2>&1 | FileCheck %s --check-prefix=MIXING
+# RUN: not mdir-run %t/expression.toml 2>&1 \
+# RUN: | FileCheck %s --check-prefix=EXPRESSION
+# RUN: not mdir-run %t/atom.toml 2>&1 | FileCheck %s --check-prefix=ATOM
+
+# KEYWORD: keyword.toml:3: unknown keyword 'cutoff' in [energy]
+# PLANNED: planned.toml:3: 'electrostatic' in [energy] is not supported yet; it is planned for M2
+# TABLE: table.toml:1: 'constraints' in [the control file] is not supported yet; it is planned for M1
+# CHOICE: choice.toml:12: expected one of VVER, LEAP for 'integrator', got 'RK4'
+# PERIOD: period.toml:11: 'nsteps' is not a multiple of 'eneout_period'
+# SYNTAX: syntax.toml:2:
+# NAME: the expression of 'lj' uses 'delta', which is neither 'r', nor a number of the term, nor a parameter of the type 'AR'
+# MIXING: 'sigma' differs between the types, but the term 'lj' has no rule of 'mixing' for it
+# EXPRESSION: in the expression '4*epsilon*((sigma/r)^12 - ', at 27: expected a number, a name, or '('
+# ATOM: atoms.pdb:1: no {{\[\[}}energy.type]] is named 'XE'
+
+#--- atoms.pdb
+HETATM    1  XE  XE  A   1       1.000   1.000   1.000  1.00  0.00          XE
+#--- one.pdb
+HETATM    1  AR  AR  A   1       1.000   1.000   1.000  1.00  0.00          AR
+HETATM    2  AR  AR  A   1       5.000   1.000   1.000  1.00  0.00          AR
+#--- two.pdb
+HETATM    1  AR  AR  A   1       1.000   1.000   1.000  1.00  0.00          AR
+HETATM    2  KR  KR  A   1       5.000   1.000   1.000  1.00  0.00          KR
+#--- keyword.toml
+[energy]
+cutoffdist = 9.0
+cutoff = 9.0
+[input]
+pdbfile = "one.pdb"
+#--- planned.toml
+[energy]
+cutoffdist = 9.0
+electrostatic = "PME"
+[input]
+pdbfile = "one.pdb"
+#--- table.toml
+[constraints]
+rigid_bond = true
+[input]
+pdbfile = "one.pdb"
+#--- choice.toml
+[input]
+pdbfile = "one.pdb"
+[energy]
+cutoffdist = 9.0
+[[energy.pair]]
+expression = "epsilon/r"
+[[energy.type]]
+name = "AR"
+mass = 39.95
+epsilon = 0.2
+[dynamics]
+integrator = "RK4"
+#--- period.toml
+[input]
+pdbfile = "one.pdb"
+[energy]
+cutoffdist = 9.0
+[[energy.pair]]
+expression = "epsilon/r"
+[[energy.type]]
+name = "AR"
+mass = 39.95
+epsilon = 0.2
+[dynamics]
+nsteps = 105
+eneout_period = 10
+#--- syntax.toml
+[input]
+pdbfile = one.pdb
+#--- name.toml
+[input]
+pdbfile = "one.pdb"
+[energy]
+cutoffdist = 9.0
+[[energy.pair]]
+name = "lj"
+expression = "epsilon*delta/r"
+[[energy.type]]
+name = "AR"
+mass = 39.95
+epsilon = 0.2
+[dynamics]
+nsteps = 10
+[boundary]
+type = "PBC"
+box_size_x = 30.0
+box_size_y = 30.0
+box_size_z = 30.0
+#--- mixing.toml
+[input]
+pdbfile = "two.pdb"
+[energy]
+cutoffdist = 9.0
+[[energy.pair]]
+name = "lj"
+expression = "4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+[[energy.type]]
+name = "AR"
+mass = 39.95
+epsilon = 0.2
+sigma = 3.4
+[[energy.type]]
+name = "KR"
+mass = 83.8
+epsilon = 0.2
+sigma = 3.6
+[dynamics]
+nsteps = 10
+[boundary]
+type = "PBC"
+box_size_x = 30.0
+box_size_y = 30.0
+box_size_z = 30.0
+#--- expression.toml
+[input]
+pdbfile = "two.pdb"
+[energy]
+cutoffdist = 9.0
+[[energy.pair]]
+name = "lj"
+expression = "4*epsilon*((sigma/r)^12 - "
+[[energy.type]]
+name = "AR"
+mass = 39.95
+epsilon = 0.2
+sigma = 3.4
+[[energy.type]]
+name = "KR"
+mass = 83.8
+epsilon = 0.2
+sigma = 3.4
+[dynamics]
+nsteps = 10
+[boundary]
+type = "PBC"
+box_size_x = 30.0
+box_size_y = 30.0
+box_size_z = 30.0
+#--- atom.toml
+[input]
+pdbfile = "atoms.pdb"
+[energy]
+cutoffdist = 9.0
+[[energy.pair]]
+name = "lj"
+expression = "epsilon/r"
+[[energy.type]]
+name = "AR"
+mass = 39.95
+epsilon = 0.2
+[dynamics]
+nsteps = 10
+[boundary]
+type = "PBC"
+box_size_x = 30.0
+box_size_y = 30.0
+box_size_z = 30.0

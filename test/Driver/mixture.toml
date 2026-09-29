@@ -1,0 +1,72 @@
+# A mixture of two types of particles: the parameters of a pair follow from
+# those of its particles, which the kernel reads from fields.
+#
+# RUN: mdir-run %s | FileCheck %s
+# RUN: mdir-run %s --emit=mlir | FileCheck %s --check-prefix=MODULE
+
+# The potential energy at the start agrees with the sum over all pairs,
+# -497.729755 kcal/mol, and the total energy is conserved.
+#
+# CHECK:      MDIR: 256 particles, 200 steps of 0.004 ps
+# CHECK:      INFO:      STEP           TIME      TOTAL_ENE  POTENTIAL_ENE    KINETIC_ENE    TEMPERATURE
+# CHECK-NEXT: INFO:         0         0.0000 {{ *-[0-9.]+}} {{ *}}-497.7298 {{ *[0-9.]+}} {{ *}}120.0000
+# CHECK-NEXT: INFO:        50         0.2000
+# CHECK-NEXT: INFO:       100         0.4000
+# CHECK-NEXT: INFO:       150         0.6000
+# CHECK-NEXT: INFO:       200         0.8000
+# CHECK:      MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
+
+# A parameter that differs between the types is a field, and the kernel
+# mixes the values of the two particles.
+#
+# MODULE:      md.potential @energy(%x: !vec, %cell: !md.cell, %p_epsilon: !real, %p_sigma: !real) -> f64
+# MODULE:        md.sum_relation %n, %x, %cell gather(%p_epsilon, %p_sigma : !real, !real)
+# MODULE-NEXT:       exchange(symmetric) truncation(switch, from = 7.5{{0*}}e-01)
+# MODULE-NEXT:   ^bb0(%r: f64, %d: vector<3xf64>, %epsilon_i: f64, %epsilon_j: f64, %sigma_i: f64, %sigma_j: f64):
+# MODULE:          %product_epsilon = arith.mulf %epsilon_i, %epsilon_j : f64
+# MODULE-NEXT:     %epsilon = math.sqrt %product_epsilon : f64
+# MODULE:          %sum_sigma = arith.addf %sigma_i, %sigma_j : f64
+# MODULE:        func.func @mdir_run(
+# MODULE-NEXT:       %positions: memref<?x3xf64>, %velocities: memref<?x3xf64>,
+# MODULE-NEXT:       %masses: memref<?xf64>, %b_epsilon: memref<?xf64>, %b_sigma: memref<?xf64>,
+
+[input]
+pdbfile = "Inputs/mixture.pdb"
+
+[energy]
+switchdist   = 7.5
+cutoffdist   = 9.0
+pairlistdist = 10.0
+
+[[energy.pair]]
+name       = "lj"
+expression = "4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+mixing     = "lorentz-berthelot"
+
+[[energy.type]]
+name    = "AR"
+mass    = 39.95
+epsilon = 0.238465
+sigma   = 3.4
+
+[[energy.type]]
+name    = "KR"
+mass    = 83.80
+epsilon = 0.3253
+sigma   = 3.65
+
+[dynamics]
+integrator    = "VVER"
+timestep      = 0.004
+nsteps        = 200
+eneout_period = 50
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 120.0
+
+[boundary]
+type       = "PBC"
+box_size_x = 23.2
+box_size_y = 23.2
+box_size_z = 23.2

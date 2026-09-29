@@ -1,0 +1,27 @@
+# The trajectory: a frame every 50 steps, in the DCD format.
+#
+# RUN: sed -e 's|Inputs/|%S/Inputs/|' \
+# RUN:     -e 's|eneout_period = 50|eneout_period = 25\ncrdout_period = 50|' \
+# RUN:     %S/mixture.toml > %t.toml
+# RUN: echo '[output]' >> %t.toml
+# RUN: echo 'dcdfile = "%t.dcd"' >> %t.toml
+# RUN: mdir-run %t.toml | FileCheck %s
+# RUN: od -A d -t d4 -N 24 %t.dcd | FileCheck %s --check-prefix=HEADER
+# RUN: od -A d -c -j 4 -N 4 %t.dcd | FileCheck %s --check-prefix=TAG
+# RUN: wc -c < %t.dcd | FileCheck %s --check-prefix=SIZE
+
+# CHECK:      INFO:        25         0.1000
+# CHECK-NEXT: INFO:        50         0.2000
+# CHECK:      INFO:       200         0.8000
+
+# The first record has 84 bytes. It begins with the tag and the number of
+# frames, the first step, and the steps between two frames.
+#
+# HEADER:      0000000 {{ *}}84 {{ *[0-9]+}} {{ *}}4 {{ *}}50
+# HEADER-NEXT: 0000016 {{ *}}50 {{ *}}200
+# TAG:    C   O   R   D
+
+# The header, and for each of 4 frames the cell and 256 particles:
+# 92 + 92 + 12 + 4 (56 + 3 (8 + 4 256)).
+#
+# SIZE: 12804

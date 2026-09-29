@@ -3,8 +3,8 @@
 MDIR is an MLIR-based compiler stack for general-purpose molecular dynamics.
 It is at an early stage. A Lennard-Jones system compiles and runs on the
 CPU, sequentially or with OpenMP, and on NVIDIA GPUs, in single, mixed, or
-double precision, and reproduces reference values. There is no driver and
-no input or output yet.
+double precision, and reproduces reference values. A driver reads a control
+file and writes a log and a trajectory; checkpoints are not written yet.
 
 ## Documents
 
@@ -133,10 +133,36 @@ build/bin/mdir-opt input.mlir \
 The kernels are embedded as PTX text, which the driver compiles when the
 program starts.
 
+## Running a simulation
+
+`mdir-run` reads a control file, compiles the run, and executes it.
+
+```sh
+build/bin/mdir-run examples/argon.toml
+```
+
+```text
+MDIR: 864 particles, 2000 steps of 0.005 ps
+MDIR: compiled in 0.33 s
+INFO:      STEP           TIME      TOTAL_ENE  POTENTIAL_ENE    KINETIC_ENE    TEMPERATURE
+INFO:         0         0.0000      -834.1316     -1304.8874       470.7558       183.0000
+INFO:       100         0.5000      -834.1466     -1087.9806       253.8339        98.6745
+...
+INFO:      2000        10.0000      -834.1467     -1083.2389       249.0922        96.8312
+MDIR: ran in 0.39 s, 0.20 ms per step, 2198.1 ns per day
+MDIR: the total energy changed by 1.813e-05 of its value
+```
+
+The control file is a TOML file, in Å, kcal/mol, and ps. `[execution]`
+selects the target, `cpu` or `gpu`, the number of threads, and the
+precision. `mdir-run --template md` prints a control file with every
+keyword. See [docs/driver-m0.md](docs/driver-m0.md).
+
 ## Examples
 
-`examples/argon.mlir` is liquid argon at constant energy: 864 atoms, 2000
-steps of 5 fs with velocity Verlet.
+`examples/argon.toml` is liquid argon at constant energy: 864 atoms, 2000
+steps of 5 fs with velocity Verlet. `examples/argon.mlir` is the same
+system as a module that is written by hand.
 
 ```sh
 export MDIR_BUILD=build LLVM_PREFIX=$HOME/opt/llvm/23.1.2
@@ -150,9 +176,7 @@ It prints the time, the potential, kinetic, and total energy, and the
 temperature every 100 steps, and at the end the relative change of the
 total energy, which is about 2e-5.
 
-An example is a module that places the atoms and holds the loop over the
-steps itself. There is no driver yet that reads an input file or writes a
-trajectory.
+`examples/run.sh` compiles and runs a module with the tools, pass by pass.
 
 ## License
 

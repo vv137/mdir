@@ -1,6 +1,6 @@
 # MDIR Op Specification, Milestone M0
 
-Status: draft 11 (2026-09-29). Everything in this document is implemented,
+Status: draft 12 (2026-09-29). Everything in this document is implemented,
 except where a section says otherwise. A Lennard-Jones system runs end to
 end in single, mixed, and double precision, on the CPU sequentially and
 with OpenMP, and on NVIDIA GPUs.
@@ -951,7 +951,17 @@ structure is empty when the loop begins, so the first iteration builds it
 (R1).
 
 The pass `md-exec-reuse-neighbors` produces this form from a build in the
-body of a loop.
+body of a loop. It does two more things.
+
+| What | Why |
+|---|---|
+| A structure moves outward through the loops around it, one loop at a time. | A run has a loop for each period of output. The structure lives on from one output to the next. |
+| It stops at a loop that has the attribute `mdrt.segment`. | The iterations of that loop are segments of the run. A structure starts empty in each (R1). |
+| Structures of one block that are built with the same parameters, one after the other, share their storage. The later build becomes a refresh of what the earlier one left. | The step that returns the energy and the steps that do not are different code with the same neighbors. |
+
+Two structures share storage only if the first is no longer used where the
+second begins. The parameters are the cell, the cutoff, the skin, the width
+of the cells, and the kind and width of the structure.
 
 **Rebuild policy (B1).**
 

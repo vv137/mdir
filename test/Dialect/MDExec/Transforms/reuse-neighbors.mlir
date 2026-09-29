@@ -150,3 +150,71 @@ func.func @segments(%x0: !vec, %cell: !md.cell, %segments: index,
   } {mdrt.segment}
   return %x : !vec
 }
+
+// Structures that are built with the same parameters, one after the other,
+// share their storage: the second build refreshes what the first left. A
+// structure that is built with another cutoff has storage of its own.
+//
+// CHECK-LABEL: func.func @shared(
+func.func @shared(%x0: !vec, %cell: !md.cell, %steps: index) -> !vec {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  // CHECK:      %[[A:[0-9]+]] = md_exec.empty_neighbors kind(matrix) width(96)
+  // CHECK:      %[[B:[0-9]+]] = md_exec.empty_neighbors kind(matrix) width(96)
+  // CHECK:      scf.for {{.*}} iter_args(%{{[a-z0-9]+}} = %{{[a-z0-9]+}}, %[[NA:[a-z0-9]+]] = %[[A]], %[[NB:[a-z0-9]+]] = %[[B]])
+  // CHECK:        %[[FIRST:[0-9]+]] = md_exec.refresh_neighbors %[[NA]], {{.*}} cutoff(2.500000e+00)
+  // CHECK:        %[[OTHER:[0-9]+]] = md_exec.refresh_neighbors %[[NB]], {{.*}} cutoff(2.000000e+00)
+  // CHECK:        %[[SECOND:[0-9]+]] = md_exec.refresh_neighbors %[[FIRST]], {{.*}} cutoff(2.500000e+00)
+  // CHECK:        scf.yield %{{[0-9]+}}, %[[SECOND]], %[[OTHER]]
+  %x = scf.for %step = %c0 to %steps step %c1
+      iter_args(%xa = %x0) -> (!vec) {
+    %cells1 = md_exec.build_cells %xa, %cell width(2.8)
+        : !vec -> !mdrt.cells<@atoms>
+    %nl1 = md_exec.build_neighbors %cells1, %xa, %cell
+        cutoff(2.5) skin(0.3) kind(matrix) width(96)
+        : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+    %f0 = md_exec.zeros : !vec
+    %f = md_exec.pair_for %nl1, %xa, %cell outs(%f0 : !vec) cutoff(2.5)
+        policy(directed, owner_only) {
+    ^bb0(%r2: f64, %d: vector<3xf64>):
+      md_exec.yield %d : vector<3xf64>
+    } : !mdrt.neighbors<@atoms>, !vec -> !vec
+    %e = md_exec.empty : !vec
+    %xb = md_exec.particle_for ins(%xa, %f : !vec, !vec) outs(%e : !vec) {
+    ^bb0(%x_i: vector<3xf64>, %f_i: vector<3xf64>):
+      %s = arith.addf %x_i, %f_i : vector<3xf64>
+      md_exec.yield %s : vector<3xf64>
+    } -> !vec
+
+    %cells2 = md_exec.build_cells %xb, %cell width(2.8)
+        : !vec -> !mdrt.cells<@atoms>
+    %nl2 = md_exec.build_neighbors %cells2, %xb, %cell
+        cutoff(2.0) skin(0.3) kind(matrix) width(96)
+        : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+    %g0 = md_exec.zeros : !vec
+    %g = md_exec.pair_for %nl2, %xb, %cell outs(%g0 : !vec) cutoff(2.0)
+        policy(directed, owner_only) {
+    ^bb0(%r2: f64, %d: vector<3xf64>):
+      md_exec.yield %d : vector<3xf64>
+    } : !mdrt.neighbors<@atoms>, !vec -> !vec
+
+    %cells3 = md_exec.build_cells %xb, %cell width(2.8)
+        : !vec -> !mdrt.cells<@atoms>
+    %nl3 = md_exec.build_neighbors %cells3, %xb, %cell
+        cutoff(2.5) skin(0.3) kind(matrix) width(96)
+        : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
+    %h = md_exec.pair_for %nl3, %xb, %cell outs(%g : !vec) cutoff(2.5)
+        policy(directed, owner_only) {
+    ^bb0(%r2: f64, %d: vector<3xf64>):
+      md_exec.yield %d : vector<3xf64>
+    } : !mdrt.neighbors<@atoms>, !vec -> !vec
+    %e2 = md_exec.empty : !vec
+    %xc = md_exec.particle_for ins(%xb, %h : !vec, !vec) outs(%e2 : !vec) {
+    ^bb0(%x_i: vector<3xf64>, %f_i: vector<3xf64>):
+      %s = arith.addf %x_i, %f_i : vector<3xf64>
+      md_exec.yield %s : vector<3xf64>
+    } -> !vec
+    scf.yield %xc : !vec
+  }
+  return %x : !vec
+}

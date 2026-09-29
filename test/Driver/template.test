@@ -1,0 +1,14 @@
+# The template is a control file that is read without an error, apart from
+# the file of the positions, which it does not come with.
+#
+# RUN: mdir-run --template md > %t.toml
+# RUN: not mdir-run %t.toml 2>&1 | FileCheck %s
+# RUN: mdir-run --template md | FileCheck %s --check-prefix=TEMPLATE
+
+# CHECK: cannot read '{{.*}}system.pdb'
+
+# TEMPLATE: [input]
+# TEMPLATE: [energy]
+# TEMPLATE: {{\[\[}}energy.pair]]
+# TEMPLATE: [dynamics]
+# TEMPLATE: [execution]

@@ -16,6 +16,7 @@ configure_lit_site_cfg(
 
 set(MDIR_TEST_DEPENDS
   mdir-opt
+  mdir-run
   mdrt
   )
 if(MDIR_CUDA_FOUND)

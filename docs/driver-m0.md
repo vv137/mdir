@@ -1,6 +1,7 @@
 # Driver and Control File for Milestone M0
 
-Status: decided (2026-09-29), being implemented.
+Status: decided (2026-09-29). Implemented except for the checkpoint; see
+Section 4.
 
 This document describes the driver of MDIR and its input, the control file.
 
@@ -101,6 +102,18 @@ Keywords are in lower case. Values that name a choice, such as `VVER` and
 | `boundary` | `type` | `PBC` in M0 |
 | | `box_size_x`, `box_size_y`, `box_size_z` | `md.orthorhombic_cell` |
 | `execution` | `target`, `threads`, `precision` | Structural plan parameters |
+| | `neighbor_width` | The number of neighbors that a neighbor structure holds per particle. Absent: half as many again as a uniform density gives. |
+| | `fast_math` | Whether kernels are rewritten in ways that change rounding. The default is `true`. |
+
+A keyword of a pair term or of a type that is not listed here names a
+number: a parameter of the type, or a constant of the term, that the
+expression uses.
+
+A parameter that has the same value for all types is a constant of the
+kernel. A parameter that differs is a field, and `mixing` says how the
+parameter of a pair follows from those of its two particles:
+`lorentz-berthelot`, `geometric`, or a table with `arithmetic` or
+`geometric` for each parameter.
 
 An unknown keyword is an error. A keyword that is planned but not supported
 yet is an error that names the milestone that brings it.
@@ -123,6 +136,10 @@ simulations write. With amu they are not consistent with one another: a
 kinetic energy in these units needs a factor. nm, kJ/mol, amu, and ps are
 consistent, which is what S4 asks of the unit system inside MDIR. The
 driver converts when it reads and when it writes.
+
+An expression is evaluated in the units of the control file: the kernel
+scales the distance before the expression and the energy after it. The
+driver need not know the dimension of a parameter.
 
 ## 2. The driver
 
@@ -196,6 +213,26 @@ them.
 | Writers | DCD or XTC, H5MD | HDF5 for H5MD |
 | Initial velocities | From `temperature` and `iseed`, with the center of mass at rest | A random number generator |
 
+### 2.5 What the driver builds
+
+`mdir-run --emit=mlir control.toml` prints the module that the driver
+builds, and `--emit=lowered` the module that is executed.
+
+| Part of the module | From |
+|---|---|
+| `md.potential @energy` | `[energy]`: one `md.sum_relation` for each pair term, with the truncation and the cutoff |
+| `dyn.program @step` | `integrator`. With velocity Verlet there is a second program that returns the energy as well, for the last step before an output. |
+| `func.func @mdir_run` | The schedule: the loops, the calls that write, and the buffers of the state |
+
+The entry function takes the buffers of the positions, the velocities, the
+masses, and the fields of the parameters, then the edge lengths of the cell
+and the time step. The cell and the time step are values of the run, not of
+the program (P1).
+
+With leapfrog, the stored velocities are half a step behind the positions.
+The kinetic energy of a row of the log is that of the stored velocities,
+not that of the time of the row.
+
 ## 3. Decided
 
 | # | Question | Decision |
@@ -206,3 +243,18 @@ them.
 | 4 | The checkpoint | H5MD (D26). HDF5 is installed in the home directory. |
 | 5 | The TOML library | toml++, in the repository (D38) |
 | 6 | The schedule | Compiled (D39) |
+
+## 4. State
+
+| Part | State |
+|---|---|
+| Control file, with errors that name the line | Implemented |
+| Positions from a PDB file | Implemented |
+| Energy expressions, types, mixing | Implemented |
+| Compile and run in the process, on the CPU and on a GPU | Implemented |
+| Log | Implemented |
+| Trajectory in the DCD format | Implemented |
+| Initial velocities | Implemented. The sequence of random numbers is fixed by the seed and does not depend on a library. |
+| `nbupdate_period` | Not implemented; the keyword is an error |
+| Checkpoint, `rstfile` | Not implemented; the keyword is an error |
+| Trajectory in the XTC format | Not implemented |
