@@ -128,10 +128,15 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
   auto *values = static_cast<StridedMemRefType<double, 1> *>(terms);
   static const char *names[] = {
       "Lennard-Jones", "Coulomb", "bonds", "angles", "dihedrals",
-      "Lennard-Jones 1-4", "Coulomb 1-4"};
+      "Lennard-Jones 1-4", "Coulomb 1-4", "CMAP"};
+  // CMAP only where the topology has it.
+  int count = output.system && output.system->topology &&
+                      !output.system->topology->cmaps.empty()
+                  ? 8
+                  : 7;
   std::fprintf(output.log, "MDIR: the terms at the start, in kcal/mol:\n");
   double total = output.dispersionEnergy;
-  for (int i = 0; i != 7; ++i) {
+  for (int i = 0; i != count; ++i) {
     double value = values->data[i * values->strides[0]];
     total += value;
     std::fprintf(output.log, "MDIR:   %-22s %16.6f\n", names[i],

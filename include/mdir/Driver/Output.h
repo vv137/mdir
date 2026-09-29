@@ -114,8 +114,8 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
                                     double virial);
 void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids);
 /// The energy of each term of a topology at the start, in kJ/mol:
-/// Lennard-Jones, Coulomb, bonds, angles, dihedrals, and the pairs three
-/// bonds apart, Lennard-Jones and Coulomb.
+/// Lennard-Jones, Coulomb, bonds, angles, dihedrals, the pairs three bonds
+/// apart, Lennard-Jones and Coulomb, and CMAP.
 void _mlir_ciface_mdrtWriteTerms(void *terms);
 /// The energy that a coupling of the velocities has just taken from the
 /// system, in kJ/mol.

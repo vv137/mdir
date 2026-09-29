@@ -71,7 +71,8 @@ private:
     Dihedrals = 16,
     LennardJones14 = 32,
     Coulomb14 = 64,
-    AllTerms = 127,
+    CMaps = 128,
+    AllTerms = 255,
   };
   /// Emits the potential `name` of the terms `terms` of the topology.
   void emitTopologyPotential(StringRef name, unsigned terms);
@@ -187,7 +188,7 @@ std::string Builder::getFieldParameters() const {
   for (const Program::Field &field : program.fields)
     text += ", %p_" + field.name + ": " + getFieldType(field).str();
   for (const Program::Table &table : program.tables)
-    text += ", %t_" + table.name + ": !table";
+    text += ", %t_" + table.name + ": " + table.getType().str();
   for (const Program::TupleSet &set : program.tupleSets) {
     text += ", %r_" + set.name + ": !rel_" + set.name;
     for (const Program::Field &field : set.fields)
@@ -256,8 +257,8 @@ std::string Builder::getFieldTypes() const {
   std::string text;
   for (const Program::Field &field : program.fields)
     text += ", " + getFieldType(field).str();
-  for (size_t i = 0, e = program.tables.size(); i != e; ++i)
-    text += ", !table";
+  for (const Program::Table &table : program.tables)
+    text += ", " + table.getType().str();
   for (const Program::TupleSet &set : program.tupleSets) {
     text += ", !rel_" + set.name;
     for (size_t i = 0, e = set.fields.size(); i != e; ++i)
@@ -606,6 +607,7 @@ llvm::Error Builder::collectTopology() {
                       }))
       continue;
     Program::TupleSet &set = addSet(name, 4);
+    set.reversible = false;
     size_t a = addField(set, "a"), b = addField(set, "b");
     for (const Topology::VirtualSite &site : topology.virtualSites) {
       if (site.kind != kind)
@@ -615,6 +617,24 @@ llvm::Error Builder::collectTopology() {
       set.fields[a].values.push_back(site.a);
       set.fields[b].values.push_back(site.b);
     }
+  }
+  if (!topology.cmaps.empty()) {
+    // The map of each term, and the bicubic patches of every map: a row
+    // of 16 coefficients for each cell.
+    Program::TupleSet &set = addSet("cmap", 5);
+    set.reversible = false;
+    size_t map = addField(set, "map");
+    for (const Topology::CMap &cmap : topology.cmaps) {
+      for (unsigned member : {cmap.i, cmap.j, cmap.k, cmap.l, cmap.m})
+        set.members.push_back(member);
+      set.fields[map].values.push_back(cmap.map);
+    }
+    Program::Table table;
+    table.name = "cmap";
+    table.values = getCMapCoefficients(topology);
+    table.columns = 16;
+    table.count = table.values.size() / 16;
+    program.tables.push_back(std::move(table));
   }
   if (!topology.exclusions.empty()) {
     Program::TupleSet &set = addSet("excluded", 2);
@@ -798,6 +818,66 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms) {
     os << "    md.yield " << value << " : f64\n"
        << "  } : !rel_pairs14, !vec -> f64\n";
     add("pairs14");
+  }
+  if ((terms & CMaps) && has("cmap")) {
+    // The cell of φ and ψ, each from −180° in steps of 360° / n, and the
+    // places t and u in it; φ = 180° is the first cell again. The patch
+    // is E = Σ c_ij t^i u^j [MacKerell2004].
+    unsigned n = system.topology->cmapResolution;
+    os << "  %u_cmap = md.sum_tuples %r_cmap, %x, %cell coordinates("
+          "dihedral(0, 1, 2, 3), dihedral(1, 2, 3, 4))\n"
+       << "      tuple(%f_cmap_map : !of_cmap) {\n"
+       << "  ^bb0(%phi: f64, %psi: f64, %map: f64):\n"
+       << "    %scale = arith.constant " << formatReal(n / (2.0 * M_PI))
+       << " : f64\n"
+       << "    %shift = arith.constant " << formatReal(n / 2.0) << " : f64\n"
+       << "    %cmap_n = arith.constant " << n << " : i32\n";
+    for (StringRef angle : {"phi", "psi"}) {
+      std::string a = angle.str();
+      os << "    %" << a << "_s = arith.mulf %" << a << ", %scale : f64\n"
+         << "    %" << a << "_x = arith.addf %" << a << "_s, %shift : f64\n"
+         << "    %" << a << "_f = math.floor %" << a << "_x : f64\n"
+         << "    %" << a << "_t = arith.subf %" << a << "_x, %" << a
+         << "_f : f64\n"
+         << "    %" << a << "_i = arith.fptosi %" << a
+         << "_f : f64 to i32\n"
+         << "    %" << a << "_j = arith.addi %" << a
+         << "_i, %cmap_n : i32\n"
+         << "    %" << a << "_k = arith.remsi %" << a
+         << "_j, %cmap_n : i32\n";
+    }
+    os << "    %m = arith.fptosi %map : f64 to i32\n"
+       << "    %mn = arith.muli %m, %cmap_n : i32\n"
+       << "    %row = arith.addi %mn, %phi_k : i32\n"
+       << "    %rown = arith.muli %row, %cmap_n : i32\n"
+       << "    %cellid = arith.addi %rown, %psi_k : i32\n";
+    for (int k = 0; k != 16; ++k)
+      os << "    %k" << k << " = arith.constant " << k << " : i32\n"
+         << "    %c" << k << " = md.lookup %t_cmap[%cellid, %k" << k
+         << "] : !grid, i32, i32 -> f64\n";
+    // Horner in u for each power of t, then in t.
+    for (int i = 0; i != 4; ++i) {
+      std::string last = "%c" + std::to_string(4 * i + 3);
+      for (int j = 2; j >= 0; --j) {
+        std::string name = "%r" + std::to_string(i) + std::to_string(j);
+        os << "    " << name << "m = arith.mulf " << last
+           << ", %psi_t : f64\n"
+           << "    " << name << " = arith.addf " << name << "m, %c"
+           << 4 * i + j << " : f64\n";
+        last = name;
+      }
+    }
+    std::string last = "%r30";
+    for (int i = 2; i >= 0; --i) {
+      std::string name = "%e" + std::to_string(i);
+      os << "    " << name << "m = arith.mulf " << last << ", %phi_t : f64\n"
+         << "    " << name << " = arith.addf " << name << "m, %r" << i
+         << "0 : f64\n";
+      last = name;
+    }
+    os << "    md.yield %e0 : f64\n"
+       << "  } : !rel_cmap, !vec -> f64\n";
+    add("cmap");
   }
   if (total.empty()) {
     os << "  %zero = arith.constant 0.0 : f64\n";
@@ -1736,7 +1816,7 @@ void Builder::emitEntry() {
        << getFieldType(field) << "\n";
   for (const Program::Table &table : program.tables)
     os << "  %t_" << table.name << " = mdrt.from_buffer %bt_" << table.name
-       << " : memref<?x?xf64> to !table\n";
+       << " : memref<?x?xf64> to " << table.getType() << "\n";
   for (const Program::TupleSet &set : program.tupleSets) {
     // The members in the order of the files, which a new order of the
     // particles renumbers.
@@ -1811,20 +1891,20 @@ void Builder::emitEntry() {
       virial = emitSpreadSites("  ", "%x0", "%f0e", "%f0", "%r_", "%w0e",
                                "%w0");
     if (system.topology) {
-      os << "  %terms = memref.alloca() : memref<7xf64>\n";
+      os << "  %terms = memref.alloca() : memref<8xf64>\n";
       int index = 0;
       for (StringRef name :
            {"term_lj", "term_coulomb", "term_bonds", "term_angles",
-            "term_dihedrals", "term_lj14", "term_coulomb14"}) {
+            "term_dihedrals", "term_lj14", "term_coulomb14", "term_cmap"}) {
         os << "  %" << name << " = md.evaluate @" << name << "(%x0, %cell"
            << getFieldValues() << ") request [energy]\n"
            << "      : (!vec, !md.cell" << getFieldTypes() << ") -> f64\n"
            << "  %i_" << name << " = arith.constant " << index++
            << " : index\n"
            << "  memref.store %" << name << ", %terms[%i_" << name
-           << "] : memref<7xf64>\n";
+           << "] : memref<8xf64>\n";
       }
-      os << "  %terms_cast = memref.cast %terms : memref<7xf64> to "
+      os << "  %terms_cast = memref.cast %terms : memref<8xf64> to "
             "memref<?xf64>\n"
          << "  call @mdrtWriteTerms(%terms_cast) : (memref<?xf64>) -> ()\n";
     }
@@ -1987,18 +2067,17 @@ llvm::Error Builder::build() {
      << "!real  = !md.field<@atoms, f64>\n"
      << "!ids   = !md.field<@atoms, i32>\n"
      << "!table = !md.table<2, f64, symmetric>\n"
+     << "!grid = !md.table<2, f64>\n"
      << "!pairs = !md.relation<@atoms, 2, unordered>\n";
   for (const Program::TupleSet &set : program.tupleSets) {
-    StringRef orientation = set.arity == 2 ? "unordered" : "reversal";
     os << "!rel_" << set.name << " = !md.relation<@atoms, " << set.arity
-       << ", " << orientation << ", @" << set.name << ">\n"
+       << ", " << set.getOrientation() << ", @" << set.name << ">\n"
        << "!of_" << set.name << " = !md.field<@" << set.name << ", f64>\n";
   }
   os << "\nmd.particle_set @atoms\n";
   for (const Program::TupleSet &set : program.tupleSets)
     os << "md.tuple_set @" << set.name << " on(@atoms) arity(" << set.arity
-       << ") orientation(" << (set.arity == 2 ? "unordered" : "reversal")
-       << ")\n";
+       << ") orientation(" << set.getOrientation() << ")\n";
   os << "\n";
   if (system.topology) {
     emitTopologyPotential("energy", AllTerms);
@@ -2011,7 +2090,8 @@ llvm::Error Builder::build() {
             {"term_angles", Angles},
             {"term_dihedrals", Dihedrals},
             {"term_lj14", LennardJones14},
-            {"term_coulomb14", Coulomb14}})
+            {"term_coulomb14", Coulomb14},
+            {"term_cmap", CMaps}})
         emitTopologyPotential(name, term);
   }
   else if (llvm::Error error = emitPotential())

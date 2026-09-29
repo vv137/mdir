@@ -379,8 +379,9 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     descriptor->basePtr = descriptor->data =
         const_cast<double *>(table.values.data());
     descriptor->offset = 0;
-    descriptor->sizes[0] = descriptor->sizes[1] = table.count;
-    descriptor->strides[0] = table.count;
+    descriptor->sizes[0] = table.count;
+    descriptor->sizes[1] = table.getColumns();
+    descriptor->strides[0] = table.getColumns();
     descriptor->strides[1] = 1;
     tables.push_back(std::move(descriptor));
   }

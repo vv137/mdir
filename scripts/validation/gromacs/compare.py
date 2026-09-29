@@ -27,9 +27,12 @@ for line in out.stdout.splitlines():
 pairs = [("bonds", ["Bond"]), ("angles", ["Angle"]),
          ("dihedrals", ["Proper Dih.", "Per. Imp. Dih.", "Improper Dih."]),
          ("Lennard-Jones 1-4", ["LJ-14"]), ("Coulomb 1-4", ["Coulomb-14"]),
-         ("Lennard-Jones", ["LJ (SR)"]), ("dispersion", ["Disper. corr."])]
+         ("Lennard-Jones", ["LJ (SR)"]), ("dispersion", ["Disper. corr."]),
+         ("CMAP", ["CMAP Dih."])]
 print(f"{ff:16s} {'term':20s} {'MDIR kJ/mol':>16s} {'GROMACS':>16s} {'relative':>10s}")
 for mine, theirs in pairs:
+    if mine not in m:
+        continue
     ref = sum(g.get(t, 0.0) for t in theirs)
     val = m[mine]
     rel = abs(val - ref) / max(abs(ref), 1e-12)

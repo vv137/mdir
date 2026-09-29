@@ -85,6 +85,18 @@ struct Topology {
     double distanceOH, distanceHH;
   };
   std::vector<Settle> settles;
+  /// A correction map of two dihedrals, φ of `i, j, k, l` and ψ of
+  /// `j, k, l, m`, on the map `map`.
+  struct CMap {
+    unsigned i, j, k, l, m;
+    unsigned map;
+  };
+  std::vector<CMap> cmaps;
+  /// The maps: `resolution²` energies each, in kJ/mol, at φ and ψ from
+  /// −180° in steps of 360° / `resolution`, φ the slower index.
+  unsigned cmapResolution = 0;
+  std::vector<std::vector<double>> cmapGrids;
+
   /// A particle of mass 0 whose position follows from those of three
   /// others, `i`, `j`, and `k`, and whose force goes to them.
   struct VirtualSite {
@@ -119,6 +131,14 @@ struct Topology {
   size_t getNumParticles() const { return masses.size(); }
   size_t getNumTypes() const { return typeNames.size(); }
 };
+
+/// The coefficients of the bicubic patches of the maps of `topology`: for
+/// each map, each cell (a, b) with φ index a and ψ index b, 16 numbers
+/// `c[4 i + j]` of `E(t, u) = Σ c_ij t^i u^j`, with t and u the places of φ
+/// and ψ in the cell, from 0 to 1. The derivatives at the points of a grid
+/// are those of natural cubic splines through the grid repeated to twice
+/// its length, as sander and GROMACS compute them.
+std::vector<double> getCMapCoefficients(const Topology &topology);
 
 /// Reads a topology in the format of Amber (`prmtop`, `parm7`).
 llvm::Expected<Topology> readAmberTopology(llvm::StringRef path);

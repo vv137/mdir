@@ -10,6 +10,7 @@
 #include "mdir/Driver/Topology.h"
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/Sequence.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Support/FileSystem.h"
@@ -325,7 +326,7 @@ struct MoleculeType {
   int nrexcl = 0;
   std::vector<Atom> atoms;
   std::vector<Interaction> bonds, pairs, angles, dihedrals, settles,
-      virtualSites;
+      virtualSites, cmaps;
   std::vector<std::pair<unsigned, unsigned>> exclusions;
 };
 
@@ -386,6 +387,16 @@ private:
   std::vector<AtomType> atomTypes;
   std::map<std::string, unsigned> atomTypeIndex;
   std::map<std::string, std::vector<BondedType>> bondedTypes;
+  /// [ cmaptypes ]: the five types of each map and its grid, in kJ/mol.
+  struct CMapType {
+    std::vector<std::string> types;
+    std::vector<double> grid;
+    const Line *line;
+  };
+  std::vector<CMapType> cmapTypes;
+  unsigned cmapResolution = 0;
+  /// The place in the topology of each map of `cmapTypes` that is used.
+  std::map<unsigned, unsigned> usedCMaps;
   /// Overrides of the nonbonded pairs, and the pair types, by the two
   /// indices of the types, the lower first.
   std::map<std::pair<unsigned, unsigned>, std::pair<double, double>>
@@ -828,7 +839,8 @@ llvm::Error TopologyReader::readLine(const Line &line, StringRef section) {
     return readAtom(line, t);
   if (moleculeTypes.empty() &&
       llvm::is_contained({"bonds", "pairs", "angles", "dihedrals",
-                          "exclusions", "settles", "virtualsites3"},
+                          "exclusions", "settles", "virtualsites3",
+                          "cmap"},
                          section))
     return fail(line, "[ " + section + " ] before [ moleculetype ]");
   if (section == "bonds")
@@ -842,6 +854,49 @@ llvm::Error TopologyReader::readLine(const Line &line, StringRef section) {
                            "dihedrals");
   if (section == "exclusions")
     return readExclusions(line, t);
+  if (section == "cmaptypes") {
+    // Five bonded types, a function, the numbers of points along φ and ψ,
+    // and the grid, φ the slower index.
+    long function, nx, ny;
+    if (t.size() < 8 || !readInteger(t[5], function) ||
+        !readInteger(t[6], nx) || !readInteger(t[7], ny))
+      return fail(line, "expected five types, a function, and two numbers "
+                        "of points in [ cmaptypes ]");
+    if (function != 1)
+      return fail(line, "only the function 1 of [ cmaptypes ] is supported");
+    if (nx != ny || nx < 4 || nx % 2 != 0)
+      return fail(line, "a map of " + t[6] + " by " + t[7] +
+                            " points is not supported; the numbers must be "
+                            "equal and even");
+    if (cmapResolution != 0 && nx != static_cast<long>(cmapResolution))
+      return fail(line, "the maps have different numbers of points");
+    cmapResolution = nx;
+    CMapType type;
+    type.types.assign(t.begin(), t.begin() + 5);
+    type.line = &line;
+    for (size_t k = 8; k < t.size(); ++k) {
+      double value;
+      if (!readReal(t[k], value))
+        return fail(line, "cannot read the value '" + t[k] +
+                              "' in [ cmaptypes ]");
+      type.grid.push_back(value);
+    }
+    if (static_cast<long>(type.grid.size()) != nx * ny)
+      return fail(line, "expected " + llvm::Twine(nx * ny) +
+                            " values in [ cmaptypes ], got " +
+                            llvm::Twine(type.grid.size()));
+    cmapTypes.push_back(std::move(type));
+    return llvm::Error::success();
+  }
+  if (section == "cmap") {
+    MoleculeType &molecule = moleculeTypes.back();
+    if (llvm::Error error =
+            readInteraction(line, t, 5, molecule.cmaps, "cmap"))
+      return error;
+    if (molecule.cmaps.back().function != 1)
+      return fail(line, "only the function 1 of [ cmap ] is supported");
+    return llvm::Error::success();
+  }
   if (section == "virtualsites3") {
     // The site, the three atoms it is built from, a function, and the
     // parameters of the function.
@@ -1146,6 +1201,46 @@ llvm::Error TopologyReader::expandMolecule(const MoleculeType &molecule,
     topology.settles.push_back({offset + settle.atoms[0],
                                 settle.parameters[0], settle.parameters[1]});
 
+  // Each correction map takes the first [ cmaptypes ] whose five types
+  // are those of its atoms in their order. A type of the form `T-R`
+  // is the bonded type T in the residue R, or in any residue for `T-*`,
+  // as amber19sb.ff writes them.
+  for (const Interaction &cmap : molecule.cmaps) {
+    std::vector<std::string> types = bonded(cmap);
+    auto matches = [&](StringRef wanted, unsigned place) {
+      if (wanted == types[place])
+        return true;
+      size_t dash = wanted.rfind('-');
+      if (dash == StringRef::npos)
+        return false;
+      StringRef residue = wanted.drop_front(dash + 1);
+      return wanted.take_front(dash) == types[place] &&
+             (residue == "*" ||
+              residue == molecule.atoms[cmap.atoms[place]].residue);
+    };
+    int found = -1;
+    for (auto [index, type] : llvm::enumerate(cmapTypes))
+      if (llvm::all_of(llvm::seq(0u, 5u), [&](unsigned place) {
+            return matches(type.types[place], place);
+          })) {
+        found = index;
+        break;
+      }
+    if (found < 0)
+      return fail(*cmap.line, "no [ cmaptypes ] for the types " +
+                                  llvm::join(types, " "));
+    auto [entry, inserted] =
+        usedCMaps.insert({static_cast<unsigned>(found),
+                          static_cast<unsigned>(topology.cmapGrids.size())});
+    if (inserted) {
+      topology.cmapResolution = cmapResolution;
+      topology.cmapGrids.push_back(cmapTypes[found].grid);
+    }
+    const std::vector<unsigned> &a = cmap.atoms;
+    topology.cmaps.push_back({offset + a[0], offset + a[1], offset + a[2],
+                              offset + a[3], offset + a[4], entry->second});
+  }
+
   // Each virtual site is built once, from atoms that are not sites.
   std::vector<int> built(molecule.atoms.size(), 0);
   for (const Interaction &site : molecule.virtualSites) {
@@ -1290,7 +1385,7 @@ llvm::Expected<Topology> TopologyReader::read() {
           "dihedraltypes", "pairtypes", "nonbondparams", "moleculetype",
           "atoms", "bonds", "pairs", "angles", "dihedrals", "exclusions",
           "settles", "system", "molecules", "constrainttypes",
-          "virtualsites3",
+          "virtualsites3", "cmaptypes", "cmap",
           "implicitgenbornparams", "implicitsurfaceparams"};
       static const std::map<std::string, std::string> planned = {
           {"constraints", "M1"},
@@ -1298,9 +1393,7 @@ llvm::Expected<Topology> TopologyReader::read() {
           {"virtualsites4", "M2a"},
           {"virtualsitesn", "M2a"},    {"dummies1", "M2a"},
           {"dummies2", "M2a"},
-          {"dummies4", "M2a"},         {"dummiesn", "M2a"},
-          {"cmaptypes", "a later milestone"},
-          {"cmap", "a later milestone"}};
+          {"dummies4", "M2a"},         {"dummiesn", "M2a"}};
       auto found = planned.find(section);
       if (found != planned.end())
         return fail(line, "[ " + name.trim() + " ] is not supported yet; it "

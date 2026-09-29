@@ -163,6 +163,10 @@ LogicalResult ScalarDerivative::compute(Value value, Value &tangent) {
   if (isa<LookupOp>(op))
     return success();
 
+  // A number converted from an integer is constant where it is defined.
+  if (isa<arith::SIToFPOp, arith::UIToFPOp>(op))
+    return success();
+
   //===--------------------------------------------------------------------===//
   // Arithmetic
   //===--------------------------------------------------------------------===//

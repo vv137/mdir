@@ -10,7 +10,7 @@
 # RUN: not mdir check %t/missing.toml 2>&1 | FileCheck %s --check-prefix=MISSING
 
 # RB: rb.top:17: only periodic dihedrals (functions 1, 4, and 9) are supported, not 3
-# CMAP: cmap.top:8: [ cmaptypes ] is not supported yet; it is planned for a later milestone
+# CMAP: cmap.top:9: a map of 25 by 25 points is not supported; the numbers must be equal and even
 # ENDIF: endif.top:1: #endif without #ifdef in this file
 # INCLUDE: include.top:1: the included file 'nowhere.itp' is not found next to this file, in the include path, or in GMXLIB
 # TYPE: type.top:13: the virtual site 5 of the molecule type 'M' is not built by a [ virtual_sites3 ]
@@ -117,9 +117,9 @@ M 1
 CT 6 12.011 0.0 A 0.34 0.45
 [ bondtypes ]
 CT CT 1 0.15 200000
-; The grid is not read: the section is refused.
+; A map of an odd number of points.
 [ cmaptypes ]
-CT CT CT CT CT 1 24 24
+CT CT CT CT CT 1 25 25
 #--- endif.top
 #endif
 #--- include.top

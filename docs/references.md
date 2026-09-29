@@ -411,8 +411,8 @@ molecular dynamics simulations," *J. Comput. Chem.* **25**, 1400–1415
 (2004).
 [doi:10.1002/jcc.20065](https://doi.org/10.1002/jcc.20065)
 
-Used for: CMAP, the correction map of backbone dihedrals, which the
-readers of M1 reject.
+Used for: CMAP, the correction map of two backbone dihedrals, a bicubic
+patch in each cell of a grid (design-m1.md, Section 20).
 
 ### Maier2015
 
@@ -672,6 +672,18 @@ meso, and continuum scales," *Comput. Phys. Commun.* **271**, 108171
 
 Used for: identifying LAMMPS, a system discussed in
 [prior-art.md](prior-art.md).
+
+### Tian2020
+
+C. Tian, K. Kasavajhala, K. A. A. Belfon, L. Raguette, H. Huang,
+A. N. Migues, J. Bickel, Y. Wang, J. Pincay, Q. Wu, C. Simmerling, "ff19SB:
+Amino-acid-specific protein backbone parameters trained against quantum
+mechanics energy surfaces in solution," *J. Chem. Theory Comput.* **16**,
+528–552 (2020).
+[doi:10.1021/acs.jctc.9b00591](https://doi.org/10.1021/acs.jctc.9b00591)
+
+Used for: ff19SB, the protein force field of the target of M1 (D65), whose
+CMAP terms are corrections of φ and ψ for each amino acid.
 
 ### Tiesinga2021
 

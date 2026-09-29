@@ -56,10 +56,19 @@ struct Program {
   /// Parameters of the pairs of types that a pair term looks up, in the
   /// units of the control file: `values[a * count + b]` for the types `a`
   /// and `b`.
+  /// A table of `count` rows: of pairs of types, symmetric and square,
+  /// or of `columns` columns.
   struct Table {
     std::string name;
     unsigned count = 0;
     std::vector<double> values;
+    unsigned columns = 0;
+
+    bool isSquare() const { return columns == 0; }
+    unsigned getColumns() const { return isSquare() ? count : columns; }
+    llvm::StringRef getType() const {
+      return isSquare() ? "!table" : "!grid";
+    }
   };
   std::vector<Table> tables;
 
@@ -71,8 +80,15 @@ struct Program {
     unsigned arity = 0;
     std::vector<int32_t> members;
     std::vector<Field> fields;
+    /// Whether a tuple is the same read backward, as the members of a bond
+    /// or of a dihedral are. Those of a virtual site or a correction map
+    /// are not.
+    bool reversible = true;
 
     size_t size() const { return arity ? members.size() / arity : 0; }
+    llvm::StringRef getOrientation() const {
+      return arity == 2 ? "unordered" : reversible ? "reversal" : "ordered";
+    }
   };
   std::vector<TupleSet> tupleSets;
 

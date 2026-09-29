@@ -64,6 +64,9 @@ static int describeTopology(const Control &control, const System &system) {
               topology.dihedrals.size(), impropers);
   std::printf("pairs 1-4:          %zu\n", topology.pairs.size());
   std::printf("excluded pairs:     %zu\n", topology.exclusions.size());
+  if (!topology.cmaps.empty())
+    std::printf("CMAP terms:         %zu, %zu maps\n", topology.cmaps.size(),
+                topology.cmapGrids.size());
   if (!topology.virtualSites.empty())
     std::printf("virtual sites:      %zu\n", topology.virtualSites.size());
   std::printf("total charge:       %.6f e\n", totalCharge);

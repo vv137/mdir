@@ -1,0 +1,9 @@
+# ACE-ALA-GLY-SER-NME with ff19SB alone in a cell of 60 Å, made with tleap
+# of AmberTools 26:
+#
+#   tleap -f vacuum.leap
+source leaprc.protein.ff19SB
+m = sequence { ACE ALA GLY SER NME }
+set m box { 60.0 60.0 60.0 }
+saveAmberParm m vacuum.prmtop vacuum.inpcrd
+quit

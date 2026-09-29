@@ -5,11 +5,12 @@
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
 # RUN: cp %S/Inputs/dipeptide/dipeptide.inpcrd %t
 
-# CMAP, as ff19SB has it.
+# CMAP with a map of another resolution than 24 points, which sander does
+# not read right.
 # RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %t/dipeptide.prmtop
-# RUN: printf '%%%%FLAG CMAP_COUNT\n%%%%FORMAT(2I8)\n       1       1\n' >> %t/dipeptide.prmtop
+# RUN: printf '%%%%FLAG CMAP_COUNT\n%%%%FORMAT(2I8)\n       1       1\n%%%%FLAG CMAP_RESOLUTION\n%%%%FORMAT(20I4)\n  36\n' >> %t/dipeptide.prmtop
 # RUN: not mdir check %t/run.toml 2>&1 | FileCheck %s --check-prefix=CMAP
-# CMAP: CMAP terms (as in ff19SB) are not supported yet: CMAP_COUNT
+# CMAP: CMAP_RESOLUTION is 36; only maps of 24 points, as sander reads them, are supported
 
 # 12-6-4 terms.
 # RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %t/dipeptide.prmtop

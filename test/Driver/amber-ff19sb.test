@@ -1,0 +1,62 @@
+# The target of M1 (D65): a peptide with ff19SB in OPC water, whose CMAP
+# terms and extra points both need to be read, made with tleap
+# (Inputs/ff19sb/ff19.leap), with a plain cutoff of 9 Å.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/ff19sb/ff19.prmtop %S/Inputs/ff19sb/ff19.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: mdir check %t/run.toml | FileCheck %s --check-prefix=INPUT
+# RUN: mdir run %t/run.toml | FileCheck %s
+
+# ACE-ALA-GLY-SER-NME has a CMAP term for each of its three residues, each
+# with its own map, and each of the 573 waters an extra point.
+#
+# INPUT: particles:          2332
+# INPUT: CMAP terms:         3, 3 maps
+# INPUT: virtual sites:      573
+
+# The terms at the start. sander of AmberTools 26 gives, with
+# Inputs/dipeptide/sander-single-point.in:
+#
+#   BOND 0.3109, ANGLE 0.6875, DIHED 4.6682, 1-4 VDW 11.3031,
+#   1-4 EEL 164.9352, EEL -2478.8637, VDWAALS 856.8114 (with the
+#   correction), CMAP 0.0963
+#
+# They agree but for the conventions of docs/conventions.md, as in
+# amber.test. A model of CMAP written from the rules of design-m1.md,
+# Section 20, gives 0.096326461457 kcal/mol; MDIR gives 0.09632646145701.
+#
+# CHECK:      MDIR:   Lennard-Jones                887.0589
+# CHECK-NEXT: MDIR:   Coulomb                    -2478.9494
+# CHECK-NEXT: MDIR:   bonds                          0.3108
+# CHECK-NEXT: MDIR:   angles                         0.6875
+# CHECK-NEXT: MDIR:   dihedrals                      4.6681
+# CHECK-NEXT: MDIR:   Lennard-Jones 1-4             11.3031
+# CHECK-NEXT: MDIR:   Coulomb 1-4                  164.9409
+# CHECK-NEXT: MDIR:   CMAP                           0.096326
+# CHECK-NEXT: MDIR:   dispersion                   -30.2394
+# CHECK-NEXT: MDIR:   total                      -1440.1230
+
+#--- run.toml
+[input]
+prmtopfile = "ff19.prmtop"
+ambcrdfile = "ff19.inpcrd"
+
+[energy]
+cutoffdist    = 9.0
+pairlistdist  = 10.0
+electrostatic = "CUTOFF"
+
+[dynamics]
+integrator    = "VVER"
+timestep      = 0.0005
+nsteps        = 10
+eneout_period = 10
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PBC"
+#--- end

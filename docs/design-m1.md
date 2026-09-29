@@ -710,7 +710,8 @@ ships (`scripts/validation/gromacs/run.sh`):
 |---|---|
 | amber99sb-ildn, amber99sb, amber03, amber14sb | Agree to 5 × 10⁻⁶ or better, each term |
 | amber99sb-ildn with TIP4P-Ew, whose sites are virtual (Section 19) | Agree to 4 × 10⁻⁶ or better, each term; the correction for the dispersion counts the sites among the particles in both |
-| amber19sb, charmm27 | Rejected: CMAP |
+| amber19sb, with CMAP (Section 20) | Agree to 3 × 10⁻⁶ or better, each term; CMAP to 9 × 10⁻⁷ |
+| charmm27 | Rejected: Urey-Bradley angles (function 5) |
 | oplsaa | Rejected: Ryckaert-Bellemans dihedrals |
 | gromos54a7 | Rejected: bonds of function 2 |
 
@@ -772,7 +773,7 @@ into the home directory.
 | M1i | Constraints: SETTLE, SHAKE, RATTLE | With 2 fs | |
 | M1j | The barostat, a cell that changes | At constant temperature and pressure | |
 | M1k | Comparison with AmberTools and GROMACS; run times of the JAC benchmark | | |
-| M1l | CMAP (D65) | ff19SB | |
+| M1l | CMAP (D65) | ff19SB | Done (Section 20). The terms of ACE-ALA-GLY-SER-NME with ff19SB in OPC agree with sander, and CMAP with an independent model to 12 digits; a peptide with amber19sb agrees with GROMACS. The energy of the peptide alone is conserved as the square of the time step. |
 | M1m | Virtual sites: extra points of Amber, virtual sites of GROMACS (D65) | OPC | Done for water of four sites (Section 19, D68): the extra point of Amber and `[ virtual_sites3 ]` of function 1. The terms of alanine dipeptide in OPC agree with sander, and those of a peptide in TIP4P-Ew with GROMACS. The forces are the derivatives of the energy, and the virial that of a uniform scaling. Other frames of Amber and other kinds of GROMACS are rejected. |
 
 ## 19. Virtual sites
@@ -850,3 +851,54 @@ virtual sites of GROMACS, are rejected.
 | Three OPC waters: the change of the total energy with the time step (`test/Driver/virtual-sites.test`) | Shrinks as its square, 6.8 × 10⁻⁴ at 0.1 fs and 1.7 × 10⁻⁴ at 0.05 fs |
 | The same: the trace of the virial against `−dU/dλ` under a uniform scaling of the atoms and the cell | Agree to 6 × 10⁻⁶; without the change of Section 19.2, 35.84 instead of 43.57 kcal/mol |
 | The order of the positions, against that of the files (`test/Driver/amber-opc-reorder.test`) | The same states to 2 × 10⁻¹⁵ |
+
+## 20. CMAP
+
+A CMAP term [[MacKerell2004]](references.md#mackerell2004) is an energy of
+two dihedrals of five atoms, φ of atoms 1 to 4 and ψ of atoms 2 to 5, read
+from a map: a grid of n × n energies at φ and ψ from −180° in steps of
+h = 360°/n, with φ the slower index in both formats. ff19SB
+[[Tian2020]](references.md#tian2020) has a map for each amino acid, of
+n = 24; amber19sb.ff of GROMACS has the same maps in kJ/mol.
+
+### 20.1 The patches
+
+Between the points of the grid the energy is a bicubic patch in each cell,
+from the values and three derivatives at its corners:
+
+| Item | Rule |
+|---|---|
+| Derivatives at the points | dE/dφ and dE/dψ from cubic splines along each line of the grid; the cross derivative from the splines of dE/dφ along ψ. A spline is **not periodic**: it is the natural spline through the line repeated to 2n points, from −360° to 345°, taken at its central n points. A periodic spline differs by up to 4.5 × 10⁻⁸ kcal/mol. |
+| The patch | The Hermite bicubic `E(t, u) = Σ c_ij t^i u^j` that matches the value, `h dE/dφ`, `h dE/dψ`, and `h² d²E/dφdψ` at the four corners, with t and u the places of φ and ψ in the cell, from 0 to 1: `C = M F Mᵀ` with `M = [[1, 0, 0, 0], [0, 0, 1, 0], [−3, 3, −2, −1], [2, −2, 1, 1]]` |
+| The cell | `a = ⌊(φ + 180°)/h⌋ mod n`, `t = (φ + 180°)/h − ⌊…⌋`, likewise for ψ; φ = 180° is the first cell with t = 0 |
+| Units | kcal/mol in a `prmtop`, kJ/mol in `[ cmaptypes ]` |
+
+The driver computes the 16 coefficients of every cell of every map before
+the run (`lib/Driver/CMap.cpp`) and passes them as a table of 16 columns
+and a row for each cell. The kernel is an `md.sum_tuples` over a tuple set
+`cmap` of arity 5, ordered, with the internal coordinates
+`dihedral(0, 1, 2, 3)` and `dihedral(1, 2, 3, 4)`; it finds the cell, reads
+the coefficients with `md.lookup`, and evaluates the patch by Horner's
+rule. Differentiation gives the forces: the cell and the lookups have no
+derivative.
+
+### 20.2 What the readers take
+
+| Item | Amber | GROMACS |
+|---|---|---|
+| Maps | `CMAP_COUNT`, `CMAP_RESOLUTION`, `CMAP_PARAMETER_nn` | `[ cmaptypes ]`: five bonded types, function 1, n, n, and the grid |
+| Terms | `CMAP_INDEX`: five atoms numbered from 1 (not times 3) and the map | `[ cmap ]`: five atoms and function 1 |
+| Which map | The one of the file | The first `[ cmaptypes ]` whose five types are those of the atoms in their order, not reversed. A type `T-R` is the bonded type T in the residue R, or in any residue for `T-*`, as amber19sb.ff writes them; this is what grompp of GROMACS 2026.3 was seen to do. |
+| Grids | Only n = 24: sander takes the derivatives right only for 24 points | n even, the same for every map |
+
+CMAP adds no exclusions and no pairs three bonds apart.
+
+### 20.3 The angle near 0° and ±180°
+
+sander computes a dihedral as the arccosine of its cosine, with the sign of
+its sine; near 0° and ±180° the rounding of the cosine becomes an error of
+the angle of about 10⁻¹² deg²/δ at δ degrees from them, up to 1.5 × 10⁻⁶
+degrees. MDIR computes the dihedral as GROMACS does, accurately there, so
+its CMAP energies may differ from sander's by up to about 3 × 10⁻⁷
+kcal/mol within a few thousandths of a degree of 0° or ±180°, and by less
+than 10⁻¹² beyond 0.2°.

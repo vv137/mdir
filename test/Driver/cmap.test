@@ -1,0 +1,37 @@
+# CMAP terms at constant energy: the peptide of amber-ff19sb.test alone in
+# a cell of 60 Å (Inputs/ff19sb/vacuum.leap), with a cutoff that no pair
+# reaches, so that the change of the total energy comes from the time step
+# alone. It shrinks with the square of the step: 1.1e-3 at 0.2 fs, 2.9e-4
+# at 0.1 fs, 7.4e-5 at 0.05 fs. The same on a GPU in mixed precision.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/ff19sb/vacuum.prmtop %S/Inputs/ff19sb/vacuum.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: mdir run %t/run.toml | FileCheck %s
+
+# CHECK: MDIR:   CMAP                           0.096326
+# CHECK: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[4-9]}} of its value
+
+#--- run.toml
+[input]
+prmtopfile = "vacuum.prmtop"
+ambcrdfile = "vacuum.inpcrd"
+
+[energy]
+cutoffdist    = 28.0
+pairlistdist  = 29.0
+electrostatic = "CUTOFF"
+
+[dynamics]
+integrator    = "VVER"
+timestep      = 0.0001
+nsteps        = 2000
+eneout_period = 2000
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PBC"
+#--- end

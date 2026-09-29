@@ -1,0 +1,13 @@
+# The run of cmap.test on a GPU, in mixed precision: the patches of the
+# maps are a table on the device.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/ff19sb/vacuum.prmtop %S/Inputs/ff19sb/vacuum.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/cmap.test | sed '1d;$d' > %t/run.toml
+# RUN: printf '[execution]\ntarget = "gpu"\nprecision = "mixed"\n' >> %t/run.toml
+# RUN: mdir run %t/run.toml | FileCheck %s
+
+# CHECK: MDIR:   CMAP                           0.0963
+# CHECK: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[3-9]}} of its value

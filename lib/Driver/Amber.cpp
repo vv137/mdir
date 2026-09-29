@@ -87,6 +87,8 @@ private:
   /// Finds the extra points and the frames that place them, and removes
   /// the bonded terms of the extra points.
   llvm::Error readExtraPoints(Topology &topology, long numExtra);
+  /// Reads the correction maps of pairs of dihedrals (CMAP).
+  llvm::Error readCMaps(Topology &topology);
 
   std::string path;
   std::unique_ptr<llvm::MemoryBuffer> buffer;
@@ -265,9 +267,6 @@ llvm::Error Reader::checkSupported(const std::vector<long> &p) {
     if (flag.starts_with("AMOEBA_"))
       return fail("a topology of AMOEBA is not supported: " + flag);
   }
-  if (has("CMAP_COUNT"))
-    return fail("CMAP terms (as in ff19SB) are not supported yet: "
-                "CMAP_COUNT");
   if (has("LENNARD_JONES_CCOEF"))
     return fail("12-6-4 terms are not supported: LENNARD_JONES_CCOEF");
   if ((p.size() > 32 && p[32] > 0) || has("LENNARD_JONES_DCOEF") ||
@@ -331,9 +330,10 @@ llvm::Error Reader::checkSupported(const std::vector<long> &p) {
       "SOLVENT_POINTERS", "ATOMS_PER_MOLECULE", "BOX_DIMENSIONS",
       "RADIUS_SET", "RADII", "SCREEN", "IPOL", "RESIDUE_NUMBER",
       "RESIDUE_CHAINID", "RESIDUE_ICODE", "ATOM_NUMBER", "ATOM_BFACTOR",
-      "ATOM_OCCUPANCY", "ATOM_ALTLOC"};
+      "ATOM_OCCUPANCY", "ATOM_ALTLOC", "CMAP_COUNT", "CMAP_RESOLUTION",
+      "CMAP_INDEX"};
   for (auto &[name, section] : sections) {
-    if (known.count(name))
+    if (known.count(name) || StringRef(name).starts_with("CMAP_PARAMETER_"))
       continue;
     for (StringRef line : section.lines) {
       StringRef data = line.trim();
@@ -585,6 +585,8 @@ llvm::Error Reader::readTerms(Topology &topology,
 
   if (llvm::Error error = readExtraPoints(topology, p[30]))
     return error;
+  if (llvm::Error error = readCMaps(topology))
+    return error;
 
   // The exclusions of a periodic run: the members of the bonds, the ends of
   // the angles, and the ends of every dihedral. An extra point is excluded
@@ -618,6 +620,58 @@ llvm::Error Reader::readTerms(Topology &topology,
     exclude(dihedral.i, dihedral.l);
   topology.exclusions.assign(excluded.begin(), excluded.end());
   return checkExclusions(topology);
+}
+
+llvm::Error Reader::readCMaps(Topology &topology) {
+  if (!sections.count("CMAP_COUNT"))
+    return llvm::Error::success();
+  std::vector<long> counts, resolutions, index;
+  if (llvm::Error error = readIntegers("CMAP_COUNT", 2, counts))
+    return error;
+  long numTerms = counts[0], numMaps = counts[1];
+  if (numTerms < 0 || numMaps < 1)
+    return fail("CMAP_COUNT is out of range");
+  if (llvm::Error error =
+          readIntegers("CMAP_RESOLUTION", numMaps, resolutions))
+    return error;
+  // sander takes the slopes at the grid points right only for 24 points,
+  // a step of 15°, which every map of Amber has.
+  for (long resolution : resolutions)
+    if (resolution != 24)
+      return fail("CMAP_RESOLUTION is " + llvm::Twine(resolution) +
+                  "; only maps of 24 points, as sander reads them, are "
+                  "supported");
+  topology.cmapResolution = 24;
+  for (long map = 1; map <= numMaps; ++map) {
+    std::string flag = "CMAP_PARAMETER_" + std::string(map < 10 ? "0" : "") +
+                       std::to_string(map);
+    std::vector<double> grid;
+    if (llvm::Error error = readReals(flag, 24 * 24, grid))
+      return error;
+    for (double &value : grid)
+      value *= kjPerKcal;
+    topology.cmapGrids.push_back(std::move(grid));
+  }
+  // Five atoms, numbered from 1 (not times 3), and the map.
+  if (llvm::Error error = readIntegers("CMAP_INDEX", 6 * numTerms, index))
+    return error;
+  long natom = topology.getNumParticles();
+  for (long n = 0; n != numTerms; ++n) {
+    const long *entry = &index[6 * n];
+    for (int k = 0; k != 5; ++k)
+      if (entry[k] < 1 || entry[k] > natom)
+        return fail("an atom of CMAP_INDEX is out of range");
+    if (entry[5] < 1 || entry[5] > numMaps)
+      return fail("a map of CMAP_INDEX is out of range");
+    topology.cmaps.push_back(
+        {static_cast<unsigned>(entry[0] - 1),
+         static_cast<unsigned>(entry[1] - 1),
+         static_cast<unsigned>(entry[2] - 1),
+         static_cast<unsigned>(entry[3] - 1),
+         static_cast<unsigned>(entry[4] - 1),
+         static_cast<unsigned>(entry[5] - 1)});
+  }
+  return llvm::Error::success();
 }
 
 llvm::Error Reader::readExtraPoints(Topology &topology, long numExtra) {

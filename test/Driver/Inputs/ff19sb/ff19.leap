@@ -1,0 +1,10 @@
+# ACE-ALA-GLY-SER-NME with ff19SB in OPC water: CMAP terms and extra
+# points, made with tleap of AmberTools 26:
+#
+#   tleap -f ff19.leap
+source leaprc.protein.ff19SB
+source leaprc.water.opc
+m = sequence { ACE ALA GLY SER NME }
+solvateBox m OPCBOX 8.0
+saveAmberParm m ff19.prmtop ff19.inpcrd
+quit
