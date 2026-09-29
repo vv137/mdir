@@ -3,14 +3,17 @@
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: cp %S/Inputs/opc/three.prmtop %S/Inputs/opc/three.inpcrd %t
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/settle.test | sed '1d;$d' > %t/run.toml
-# RUN: sed -e 's|fast_water = true|fast_water = true\nrigid_bond = true|' %t/run.toml > %t/shake.toml
+# RUN: sed -e 's|fast_water = true|rigid_bond = true|' %t/run.toml > %t/shake.toml
 # RUN: not mdir check %t/shake.toml 2>&1 | FileCheck %s --check-prefix=SHAKE
 # RUN: sed -e 's|VVER|LEAP|' %t/run.toml > %t/leap.toml
 # RUN: not mdir check %t/leap.toml 2>&1 | FileCheck %s --check-prefix=LEAP
 # RUN: sed -e 's|fast_water = true|fast_water = true\nsettle_residues = ["WAT", "EPW"]|' %t/run.toml > %t/names.toml
 # RUN: mdir check %t/names.toml | FileCheck %s --check-prefix=NAMES
 
-# SHAKE: shake.toml:26: constraints of the bonds of hydrogen (SHAKE) are not supported yet
-# LEAP: SETTLE needs 'integrator = "VVER"'
+# A water whose hydrogens are bonded to each other is not a group of
+# SHAKE; SETTLE keeps it.
+# SHAKE: the hydrogens 2 and 3 are bonded to each other; with 'rigid_bond = true' such a water needs 'fast_water = true'
+
+# LEAP: constraints need 'integrator = "VVER"'
 # A name that no residue has is not an error.
 # NAMES: degrees of freedom: 15

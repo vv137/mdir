@@ -1,0 +1,65 @@
+# The target of M1 (D65) as it is meant to run: the peptide of
+# amber-ff19sb.test with ff19SB in OPC water, with CMAP, the extra points
+# of the waters, rigid water (SETTLE), rigid bonds of hydrogen (SHAKE and
+# RATTLE), particle mesh Ewald, and the thermostat, at a step of 2 fs on a
+# GPU in mixed precision.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/ff19sb/ff19.prmtop %S/Inputs/ff19sb/ff19.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: mdir run %t/run.toml | FileCheck %s
+# RUN: %python %S/Inputs/check_bonds.py %t/ff19.prmtop %t/run.dcd | FileCheck %s --check-prefix=BONDS
+
+# The energy that the thermostat exchanges is counted, and the conserved
+# energy changes little over 2 ps; the momentum stays 0.
+#
+# CHECK: MDIR:   CMAP                           0.0963
+# CHECK: MDIR: the momentum at the end is {{[0-9.]+}}e-{{(0[4-9]|1[0-9])}} amu nm/ps
+# CHECK: MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[3-9]}} of its value
+
+# The bonds of hydrogen of the peptide and of the waters (which SETTLE
+# keeps) have their lengths in every frame.
+#
+# BONDS: bonds ok
+
+#--- run.toml
+[input]
+prmtopfile = "ff19.prmtop"
+ambcrdfile = "ff19.inpcrd"
+
+[output]
+dcdfile = "run.dcd"
+
+[energy]
+cutoffdist    = 9.0
+pairlistdist  = 10.0
+electrostatic = "PME"
+pme_shift     = true
+
+[dynamics]
+integrator        = "VVER"
+timestep          = 0.002
+nsteps            = 1000
+eneout_period     = 250
+crdout_period     = 250
+thermostat_period = 10
+
+[ensemble]
+ensemble    = "NVT"
+thermostat  = "BUSSI"
+temperature = 300.0
+tau_t       = 0.5
+
+[constraints]
+rigid_bond = true
+fast_water = true
+
+[boundary]
+type = "PBC"
+
+[execution]
+target    = "gpu"
+precision = "mixed"
+#--- end

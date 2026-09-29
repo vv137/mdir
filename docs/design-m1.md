@@ -529,6 +529,16 @@ stage begins.
 | In the IR | An `md.gather_tuples` over a tuple set `settles` of arity 3, the oxygen first, for each of the two halves, in the program of the step; the virial an `md.sum_tuples` |
 | Which waters | Those of `[ settles ]` of GROMACS; from Amber the residues of `settle_residues`, `["WAT"]` by default, which are an oxygen and two hydrogens with at most virtual sites after them. Their bonds and angles are dropped. |
 
+### 9.2 SHAKE and RATTLE
+
+| Item | Rule |
+|---|---|
+| Groups | With `rigid_bond = true`, the bonds of hydrogen (`BONDS_INC_HYDROGEN` of Amber; a bond with an atom of atomic number 1 in GROMACS) outside the waters of SETTLE, grouped by their heavy atom: one to three hydrogens. A hydrogen bonded to two atoms, two hydrogens bonded to each other, and more than three hydrogens on an atom are errors. The bonds are dropped from the bond terms, as sander does with `ntf = 2`. |
+| Positions | SHAKE [[Ryckaert1977]](references.md#ryckaert1977): sweeps over the bonds of a group, each bringing one to its length by moving its two atoms along its direction before the drift. The coupling through the heavy atom is of the order of m_H / m_X, so each sweep shrinks the error by about that; 12 sweeps reach the precision of f64. The number is fixed, so the kernel has no test of convergence. |
+| Velocities | RATTLE [[Andersen1983]](references.md#andersen1983): the impulses along the bonds solve `A τ = −b` with `A_ij = δ_ij / m_j + e_i · e_j / m_0` exactly, by Gaussian elimination of at most 3 × 3 |
+| Virial, degrees of freedom, the start | As for SETTLE: the forces of the velocity constraint over the second half of the step, one degree of freedom less for each bond, and drawn velocities without parts along the bonds. The positions of the file are not constrained before the first step, as sander does not; the first step brings the bonds to their lengths. |
+| In the IR | An `md.gather_tuples` over a tuple set `shake1`, `shake2`, or `shake3`, the heavy atom first, for each half of the step; SETTLE comes first, then the groups of SHAKE, then the placement of the virtual sites |
+
 Three consequences reach other stages, and are recorded now:
 
 | Consequence | Where |
@@ -784,7 +794,7 @@ into the home directory.
 | M1f | Comparison of the intermediate stage with AmberTools and GROMACS | | This completes the intermediate stage |
 | M1g | Removal of the motion of the center of mass, random numbers, the thermostat | At constant temperature | Done (D67). Philox 4×32-10 agrees with the known answers of Random123, and the factor of the thermostat samples the canonical distribution of the kinetic energy. On a mixture of Lennard-Jones, the conserved energy changes by 2.5 × 10⁻⁵ over 20000 steps at constant temperature, on the CPU and on a GPU; a trajectory is the same for any grouping of steps into loops and across a restart. A drift of every particle is removed to a momentum of 10⁻¹³ amu nm/ps. The schedule uses the driver's own loops and `func.call`s, not yet the `dyn` ops of Section 11.2. |
 | M1h | Particle mesh Ewald | With particle mesh Ewald | Done ([pme-m1.md](pme-m1.md), D69 to D71): the reciprocal sum on the host and on a GPU, in fixed point; the terms agree with an Ewald sum and with sander, and a run with rigid water conserves the energy. |
-| M1i | Constraints: SETTLE, SHAKE, RATTLE | With 2 fs | SETTLE done, with velocity Verlet (Section 9.1): rigid OPC water runs at 2 fs, keeps its shape to the precision of the trajectory, and conserves the energy as the square of the step. SHAKE of the bonds of hydrogen, and SETTLE with leapfrog, are to come. |
+| M1i | Constraints: SETTLE, SHAKE, RATTLE | With 2 fs | Done with velocity Verlet (Sections 9.1 and 9.2): rigid water and rigid bonds of hydrogen keep their lengths to the precision of the trajectory; the target of D65 runs at 2 fs with PME and the thermostat (`test/Driver/ff19sb-gpu.test`). Constraints with leapfrog are to come. |
 | M1j | The barostat, a cell that changes | At constant temperature and pressure | |
 | M1k | Comparison with AmberTools and GROMACS; run times of the JAC benchmark | | |
 | M1l | CMAP (D65) | ff19SB | Done (Section 20). The terms of ACE-ALA-GLY-SER-NME with ff19SB in OPC agree with sander, and CMAP with an independent model to 12 digits; a peptide with amber19sb agrees with GROMACS. The energy of the peptide alone is conserved as the square of the time step. |

@@ -85,6 +85,14 @@ struct Topology {
     double distanceOH, distanceHH;
   };
   std::vector<Settle> settles;
+  /// The bonds of hydrogen that SHAKE and RATTLE keep at their lengths, in
+  /// groups of a heavy atom and the hydrogens bonded to it, one to three.
+  struct Shake {
+    unsigned center;
+    std::vector<unsigned> hydrogens;
+    std::vector<double> lengths;
+  };
+  std::vector<Shake> shakes;
   /// A correction map of two dihedrals, φ of `i, j, k, l` and ψ of
   /// `j, k, l, m`, on the map `map`.
   struct CMap {

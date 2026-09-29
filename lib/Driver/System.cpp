@@ -17,6 +17,7 @@ using llvm::StringRef;
 
 static llvm::Error findSettles(const Control &control, Topology &topology);
 static llvm::Error checkSettles(Topology &topology);
+static llvm::Error findShakes(Topology &topology);
 
 /// The system of a topology and a file of coordinates.
 static llvm::Expected<System> readTopologySystem(const Control &control) {
@@ -54,6 +55,9 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
   }
   if (llvm::Error error = checkSettles(*topology))
     return std::move(error);
+  if (control.rigidBonds)
+    if (llvm::Error error = findShakes(*topology))
+      return std::move(error);
 
   System system;
   system.types = topology->types;
@@ -62,6 +66,8 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
   system.velocities = topology->velocities;
   system.givenVelocities = !system.velocities.empty();
   system.numConstraints = 3 * topology->settles.size();
+  for (const Topology::Shake &shake : topology->shakes)
+    system.numConstraints += shake.hydrogens.size();
   if (system.velocities.empty())
     system.velocities.assign(system.positions.size(), 0.0);
   for (int i = 0; i != 3; ++i)
@@ -148,6 +154,60 @@ static llvm::Error checkSettles(Topology &topology) {
   });
   llvm::erase_if(topology.angles, [&](const Topology::Angle &angle) {
     return inside({angle.i, angle.j, angle.k});
+  });
+  return llvm::Error::success();
+}
+
+/// The bonds of hydrogen that SHAKE keeps, grouped by their heavy atom;
+/// their bond terms are dropped. The bonds of the waters of SETTLE are gone
+/// already.
+static llvm::Error findShakes(Topology &topology) {
+  auto fail = [](const llvm::Twine &message) {
+    return llvm::createStringError(llvm::inconvertibleErrorCode(), "%s",
+                                   message.str().c_str());
+  };
+  auto isHydrogen = [&](unsigned atom) {
+    int number = topology.atomicNumbers[atom];
+    return number > 0 ? number == 1 : topology.masses[atom] < 1.2;
+  };
+  std::map<unsigned, size_t> groupOf;
+  std::vector<bool> taken(topology.getNumParticles(), false);
+  for (const Topology::Bond &bond : topology.bonds) {
+    if (!bond.hydrogen)
+      continue;
+    bool first = isHydrogen(bond.i), second = isHydrogen(bond.j);
+    if (first && second)
+      return fail("the hydrogens " +
+                  llvm::Twine(std::min(bond.i, bond.j) + 1) + " and " +
+                  llvm::Twine(std::max(bond.i, bond.j) + 1) +
+                  " are bonded to each other; "
+                  "with 'rigid_bond = true' such a water needs "
+                  "'fast_water = true'");
+    unsigned heavy = first ? bond.j : bond.i;
+    unsigned hydrogen = first ? bond.i : bond.j;
+    if (taken[hydrogen])
+      return fail("the hydrogen " + llvm::Twine(hydrogen + 1) +
+                  " has two bonds that SHAKE would keep");
+    taken[hydrogen] = true;
+    auto [entry, inserted] =
+        groupOf.insert({heavy, topology.shakes.size()});
+    if (inserted)
+      topology.shakes.push_back({heavy, {}, {}});
+    Topology::Shake &group = topology.shakes[entry->second];
+    if (group.hydrogens.size() == 3)
+      return fail("the atom " + llvm::Twine(heavy + 1) +
+                  " has more than three hydrogens; SHAKE takes groups of "
+                  "at most three");
+    group.hydrogens.push_back(hydrogen);
+    group.lengths.push_back(bond.r0);
+  }
+  for (const Topology::Shake &group : topology.shakes)
+    if (taken[group.center])
+      return fail("the atom " + llvm::Twine(group.center + 1) +
+                  " is a hydrogen of one group of SHAKE and the center of "
+                  "another");
+  llvm::erase_if(topology.bonds, [&](const Topology::Bond &bond) {
+    return bond.hydrogen;
   });
   return llvm::Error::success();
 }
@@ -263,21 +323,23 @@ double mdir::driver::getKineticEnergy(const System &system) {
   return 0.5 * twice;
 }
 
-/// Removes from the velocities of the rigid water at `oxygen` their parts
-/// along its three bonds, by the impulses along the bonds that solve the
-/// three linear equations of the constraints.
-static void constrainVelocities(System &system, unsigned oxygen) {
+/// Removes from the velocities of the atoms of `pairs`, a group of
+/// constrained bonds, their parts along the bonds: the impulses along the
+/// bonds that solve the linear equations of the constraints, by Gaussian
+/// elimination, the matrix being symmetric and positive definite.
+static void constrainVelocities(
+    System &system, const std::vector<std::array<unsigned, 2>> &pairs) {
+  size_t count = pairs.size();
   auto x = [&](unsigned atom, int c) {
     return system.positions[3 * atom + c];
   };
   auto v = [&](unsigned atom, int c) -> double & {
     return system.velocities[3 * atom + c];
   };
-  const std::array<std::array<unsigned, 2>, 3> pairs = {
-      {{oxygen, oxygen + 1}, {oxygen, oxygen + 2}, {oxygen + 1, oxygen + 2}}};
-  std::array<std::array<double, 3>, 3> unit;
-  std::array<double, 3> rhs;
-  for (int c = 0; c != 3; ++c) {
+  auto inverseMass = [&](unsigned atom) { return 1.0 / system.masses[atom]; };
+  std::vector<std::array<double, 3>> unit(count);
+  std::vector<double> rhs(count);
+  for (size_t c = 0; c != count; ++c) {
     auto [p, q] = pairs[c];
     double norm = 0.0;
     for (int k = 0; k != 3; ++k) {
@@ -292,10 +354,9 @@ static void constrainVelocities(System &system, unsigned oxygen) {
     }
   }
   // A[c][d] = e_c · (the change of v_q − v_p of c by a unit impulse of d).
-  auto inverseMass = [&](unsigned atom) { return 1.0 / system.masses[atom]; };
-  double A[3][3];
-  for (int c = 0; c != 3; ++c)
-    for (int d = 0; d != 3; ++d) {
+  std::vector<std::vector<double>> A(count, std::vector<double>(count));
+  for (size_t c = 0; c != count; ++c)
+    for (size_t d = 0; d != count; ++d) {
       double dot = 0.0;
       for (int k = 0; k != 3; ++k)
         dot += unit[c][k] * unit[d][k];
@@ -307,21 +368,21 @@ static void constrainVelocities(System &system, unsigned oxygen) {
                       (p == r ? inverseMass(p) : 0.0);
       A[c][d] = dot * weight;
     }
-  double det = A[0][0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1]) -
-               A[0][1] * (A[1][0] * A[2][2] - A[1][2] * A[2][0]) +
-               A[0][2] * (A[1][0] * A[2][1] - A[1][1] * A[2][0]);
-  std::array<double, 3> impulse;
-  for (int d = 0; d != 3; ++d) {
-    double M[3][3];
-    for (int c = 0; c != 3; ++c)
-      for (int e = 0; e != 3; ++e)
-        M[c][e] = e == d ? rhs[c] : A[c][e];
-    impulse[d] = (M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) -
-                  M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) +
-                  M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0])) /
-                 det;
+  for (size_t c = 0; c != count; ++c)
+    for (size_t r = c + 1; r != count; ++r) {
+      double factor = A[r][c] / A[c][c];
+      for (size_t d = c; d != count; ++d)
+        A[r][d] -= factor * A[c][d];
+      rhs[r] -= factor * rhs[c];
+    }
+  std::vector<double> impulse(count);
+  for (size_t c = count; c-- != 0;) {
+    double sum = rhs[c];
+    for (size_t d = c + 1; d != count; ++d)
+      sum -= A[c][d] * impulse[d];
+    impulse[c] = sum / A[c][c];
   }
-  for (int c = 0; c != 3; ++c) {
+  for (size_t c = 0; c != count; ++c) {
     auto [p, q] = pairs[c];
     for (int k = 0; k != 3; ++k) {
       v(q, k) += impulse[c] * unit[c][k] * inverseMass(q);
@@ -347,9 +408,18 @@ void mdir::driver::assignVelocities(const Control &control, System &system) {
     return;
 
   // Velocities that the constraints allow: none along a rigid bond.
-  if (system.topology)
-    for (const Topology::Settle &settle : system.topology->settles)
-      constrainVelocities(system, settle.oxygen);
+  if (system.topology) {
+    for (const Topology::Settle &settle : system.topology->settles) {
+      unsigned o = settle.oxygen;
+      constrainVelocities(system, {{o, o + 1}, {o, o + 2}, {o + 1, o + 2}});
+    }
+    for (const Topology::Shake &shake : system.topology->shakes) {
+      std::vector<std::array<unsigned, 2>> pairs;
+      for (unsigned hydrogen : shake.hydrogens)
+        pairs.push_back({shake.center, hydrogen});
+      constrainVelocities(system, pairs);
+    }
+  }
 
   // Bring the center of mass to rest.
   double total = 0.0, momentum[3] = {0.0, 0.0, 0.0};

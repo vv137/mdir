@@ -118,6 +118,30 @@ private:
       return set.name == "settles";
     });
   }
+  /// The tuple sets of the groups of SHAKE, of one to three hydrogens.
+  std::vector<const Program::TupleSet *> getShakeSets() const {
+    std::vector<const Program::TupleSet *> sets;
+    for (const Program::TupleSet &set : program.tupleSets)
+      if (StringRef(set.name).starts_with("shake"))
+        sets.push_back(&set);
+    return sets;
+  }
+  bool hasConstraints() const {
+    return hasSettles() || !getShakeSets().empty();
+  }
+  /// Emits `result`, the positions `x` with the bonds of the groups of
+  /// `set` brought back to their lengths along the bonds of `old`, by the
+  /// iterations of SHAKE [Ryckaert1977].
+  void emitShakePositions(StringRef indent, StringRef old, StringRef x,
+                          const Program::TupleSet &set, StringRef result);
+  /// Emits `result`, the velocities `v` at the positions `x` without their
+  /// parts along the bonds of the groups of `set` (RATTLE [Andersen1983]),
+  /// and returns the virial `virial` with that of the constraints added, as
+  /// `emitSettleVelocities` does.
+  std::string emitShakeVelocities(StringRef indent, StringRef x, StringRef v,
+                                  const Program::TupleSet &set,
+                                  StringRef result, StringRef virial,
+                                  StringRef virialResult);
   /// Emits `result`, the positions `x` with the rigid waters brought back
   /// to their shape from `old`, the positions before the drift, and
   /// `change`, what that adds to the positions [Miyamoto1992].
@@ -652,6 +676,29 @@ llvm::Error Builder::collectTopology() {
         set.members.push_back(settle.oxygen + k);
       set.fields[oh].values.push_back(settle.distanceOH);
       set.fields[hh].values.push_back(settle.distanceHH);
+    }
+  }
+  // The groups of SHAKE, the heavy atom first, in a set for each number of
+  // hydrogens.
+  for (unsigned count = 1; count <= 3; ++count) {
+    if (llvm::none_of(topology.shakes, [&](const Topology::Shake &shake) {
+          return shake.hydrogens.size() == count;
+        }))
+      continue;
+    Program::TupleSet &set = addSet("shake" + std::to_string(count),
+                                    count + 1);
+    set.reversible = false;
+    std::vector<size_t> lengths;
+    for (unsigned k = 1; k <= count; ++k)
+      lengths.push_back(addField(set, "d" + std::to_string(k)));
+    for (const Topology::Shake &shake : topology.shakes) {
+      if (shake.hydrogens.size() != count)
+        continue;
+      set.members.push_back(shake.center);
+      for (unsigned k = 0; k != count; ++k) {
+        set.members.push_back(shake.hydrogens[k]);
+        set.fields[lengths[k]].values.push_back(shake.lengths[k]);
+      }
     }
   }
   if (!topology.cmaps.empty()) {
@@ -1263,6 +1310,8 @@ void Builder::emitPrograms() {
   // are constrained before the sites are placed.
   bool sites = hasSites();
   bool settles = hasSettles();
+  std::vector<const Program::TupleSet *> shakeSets = getShakeSets();
+  bool constraints = settles || !shakeSets.empty();
 
   if (isLeapfrog()) {
     // The stored velocities are half a step behind the positions.
@@ -1298,17 +1347,37 @@ void Builder::emitPrograms() {
        << "  %c = arith.constant 5.0e-01 : f64\n"
        << "  %half = arith.mulf %c, %dt : f64\n"
        << "  %v1 = dyn.kick %v, %f, %m, %half : !vec\n"
-       << "  %x1" << (sites || settles ? "d" : "")
+       << "  %x1" << (sites || constraints ? "d" : "")
        << " = dyn.drift %x, %v1, %dt : !vec\n";
-    // The rigid waters back in shape, and the velocities that take them
-    // there over the step (the first half of RATTLE).
+    // The constraints back to their lengths, and the velocities that take
+    // the atoms there over the step (the first half of RATTLE).
     std::string velocities = "%v1";
-    if (settles) {
-      emitSettlePositions("  ", "%x", "%x1d", "%dx1", sites ? "%x1s" : "%x1");
+    if (constraints) {
+      std::string current = "%x1d";
+      std::string constrained = sites ? "%x1s" : "%x1";
+      unsigned steps = (settles ? 1 : 0) + shakeSets.size(), step = 0;
+      auto next = [&]() {
+        ++step;
+        return step == steps ? constrained
+                             : "%x1c" + std::to_string(step);
+      };
+      if (settles) {
+        std::string result = next();
+        emitSettlePositions("  ", "%x", current, "%dx1", result);
+        current = result;
+      }
+      for (const Program::TupleSet *set : shakeSets) {
+        std::string result = next();
+        emitShakePositions("  ", "%x", current, *set, result);
+        current = result;
+      }
       os << "  %one = arith.constant 1.0 : f64\n"
          << "  %rate = arith.divf %one, %dt : f64\n"
-         << "  %v1c = md.map_particles gather(%v1, %dx1 : !vec, !vec) {\n"
-         << "  ^bb0(%vs_v: vector<3xf64>, %vs_d: vector<3xf64>):\n"
+         << "  %v1c = md.map_particles gather(%v1, " << current
+         << ", %x1d : !vec, !vec, !vec) {\n"
+         << "  ^bb0(%vs_v: vector<3xf64>, %vs_c: vector<3xf64>, "
+            "%vs_u: vector<3xf64>):\n"
+         << "    %vs_d = arith.subf %vs_c, %vs_u : vector<3xf64>\n"
          << "    %vs_r = vector.broadcast %rate : f64 to vector<3xf64>\n"
          << "    %vs_dv = arith.mulf %vs_r, %vs_d : vector<3xf64>\n"
          << "    %vs_sum = arith.addf %vs_v, %vs_dv : vector<3xf64>\n"
@@ -1317,7 +1386,7 @@ void Builder::emitPrograms() {
       velocities = "%v1c";
     }
     if (sites)
-      emitPlaceSites("  ", settles ? "%x1s" : "%x1d", "%x1", "%r_");
+      emitPlaceSites("  ", constraints ? "%x1s" : "%x1d", "%x1", "%r_");
     StringRef raw = sites ? "e" : "";
     if (withEnergy)
       os << "  %u1, %f1" << raw << ", %w1" << raw << " = " << evaluate
@@ -1330,12 +1399,32 @@ void Builder::emitPrograms() {
     if (sites)
       virial = emitSpreadSites("  ", "%x1", "%f1e", "%f1", "%r_",
                                withEnergy ? "%w1e" : "", "%w1");
-    os << "  %v2" << (settles ? "u" : "") << " = dyn.kick " << velocities
+    os << "  %v2" << (constraints ? "u" : "") << " = dyn.kick " << velocities
        << ", %f1, %m, %half : !vec\n";
-    // No velocity along a rigid bond (the second half of RATTLE).
-    if (settles)
-      virial = emitSettleVelocities("  ", "%x1", "%v2u", "%v2",
-                                    withEnergy ? virial : "", "%w1c");
+    // No velocity along a constrained bond (the second half of RATTLE).
+    if (constraints) {
+      std::string current = "%v2u";
+      unsigned steps = (settles ? 1 : 0) + shakeSets.size(), step = 0;
+      auto next = [&](StringRef base) {
+        ++step;
+        return step == steps ? base.str()
+                             : (base + "c" + std::to_string(step)).str();
+      };
+      if (settles) {
+        std::string result = next("%v2");
+        std::string w = step == steps ? "%w1c" : "%w1c1";
+        virial = emitSettleVelocities("  ", "%x1", current, result,
+                                      withEnergy ? virial : "", w);
+        current = result;
+      }
+      for (const Program::TupleSet *set : shakeSets) {
+        std::string result = next("%v2");
+        std::string w = "%w1s_" + set->name;
+        virial = emitShakeVelocities("  ", "%x1", current, *set, result,
+                                     withEnergy ? virial : "", w);
+        current = result;
+      }
+    }
     if (withEnergy)
       os << "  dyn.return %x1, %v2, %f1, %u1, " << virial << "\n"
          << "      : !vec, !vec, !vec, f64, vector<9xf64>\n";
@@ -1350,8 +1439,9 @@ namespace {
 /// numbers, with names of its own.
 class SiteKernel {
 public:
-  SiteKernel(llvm::raw_ostream &os, StringRef indent)
-      : os(os), indent(indent.str()) {}
+  SiteKernel(llvm::raw_ostream &os, StringRef indent,
+             StringRef prefix = "%vs")
+      : os(os), indent(indent.str()), prefix(prefix.str()) {}
 
   std::string vector(StringRef op, StringRef a, StringRef b) {
     std::string name = fresh();
@@ -1438,10 +1528,11 @@ public:
   }
 
 private:
-  std::string fresh() { return "%vs" + std::to_string(next++); }
+  std::string fresh() { return prefix + std::to_string(next++); }
 
   llvm::raw_ostream &os;
   std::string indent;
+  std::string prefix;
   unsigned next = 0;
 };
 
@@ -1755,6 +1846,241 @@ void Builder::emitSettlePositions(StringRef indent, StringRef old,
      << inner << "%vs_sum = arith.addf %vs_x, %vs_d : vector<3xf64>\n"
      << inner << "md.yield %vs_sum : vector<3xf64>\n"
      << indent << "} : !vec\n";
+}
+
+void Builder::emitShakePositions(StringRef indent, StringRef old,
+                                 StringRef x, const Program::TupleSet &set,
+                                 StringRef result) {
+  unsigned count = set.arity - 1;
+  std::string inner = (indent + "  ").str();
+  std::string change = (result + "_change").str();
+  std::string coordinates, tuple, tupleTypes, arguments;
+  for (unsigned k = 1; k <= count; ++k) {
+    coordinates += (k == 1 ? "" : ", ") + ("displacement(" +
+                                           std::to_string(k) + ", 0)");
+    tuple += (k == 1 ? "" : ", ") + ("%f_" + set.name + "_d" +
+                                     std::to_string(k));
+    tupleTypes += (k == 1 ? "" : ", ") + ("!of_" + set.name);
+    arguments += "%vs_r" + std::to_string(k) + ": vector<3xf64>, ";
+  }
+  for (StringRef field : {"o", "n"})
+    for (unsigned k = 0; k <= count; ++k)
+      arguments += ("%vs_" + field + std::to_string(k) + ": vector<3xf64>, ")
+                       .str();
+  for (unsigned k = 0; k <= count; ++k)
+    arguments += "%vs_m" + std::to_string(k) + ": f64, ";
+  for (unsigned k = 1; k <= count; ++k)
+    arguments += "%vs_d" + std::to_string(k) + ": f64" +
+                 (k == count ? "" : ", ");
+  os << indent << change << " = md.gather_tuples %r_" << set.name << ", " << x
+     << ", %cell\n"
+     << indent << "    coordinates(" << coordinates << ")\n"
+     << indent << "    gather(" << old << ", " << x
+     << ", %m : !vec, !vec, !real)\n"
+     << indent << "    tuple(" << tuple << " : " << tupleTypes << ") {\n"
+     << indent << "^bb0(" << arguments << "):\n";
+  SiteKernel k(os, inner);
+  // The old bonds, in the periods of the new ones.
+  std::vector<std::string> bonds, factors;
+  std::string one = k.constant(1.0), two = k.constant(2.0);
+  std::string inverseCenter = k.real("divf", one, "%vs_m0");
+  for (unsigned j = 1; j <= count; ++j) {
+    std::string n = std::to_string(j);
+    std::string raw = k.vector("subf", "%vs_n" + n, "%vs_n0");
+    std::string shift = k.vector("subf", "%vs_r" + n, raw);
+    bonds.push_back(k.vector(
+        "addf", k.vector("subf", "%vs_o" + n, "%vs_o0"), shift));
+    // 2 (1 / m_0 + 1 / m_j), which the step of SHAKE divides by.
+    std::string inverse = k.real("divf", one, "%vs_m" + n);
+    factors.push_back(
+        k.real("mulf", two, k.real("addf", inverseCenter, inverse)));
+  }
+  std::string zero = k.zero();
+  // Sweeps over the bonds, each bringing one to its length by moving its
+  // two atoms along its old direction; with the light hydrogens a sweep
+  // shrinks the error by about m_H / m_X, so 12 of them reach the
+  // precision of f64.
+  os << inner << "%vs_c0 = arith.constant 0 : index\n"
+     << inner << "%vs_c1 = arith.constant 1 : index\n"
+     << inner << "%vs_c12 = arith.constant 12 : index\n";
+  std::string results, inits, types;
+  for (unsigned j = 0; j <= count; ++j) {
+    std::string n = std::to_string(j);
+    results += (j == 0 ? "" : ", ") + ("%vs_a" + n);
+    inits += (j == 0 ? "" : ", ") + ("%vs_s" + n + " = " + zero);
+    types += (j == 0 ? "" : ", ") + std::string("vector<3xf64>");
+  }
+  os << inner << results << " = scf.for %vs_sweep = %vs_c0 to %vs_c12 "
+                            "step %vs_c1\n"
+     << inner << "    iter_args(" << inits << ") -> (" << types << ") {\n";
+  SiteKernel l(os, inner + "  ", "%vsl");
+  // Continue the names of the kernel.
+  std::vector<std::string> moved;
+  for (unsigned j = 0; j <= count; ++j)
+    moved.push_back("%vs_s" + std::to_string(j));
+  for (unsigned j = 1; j <= count; ++j) {
+    std::string n = std::to_string(j);
+    std::string bond = l.vector(
+        "subf", l.vector("addf", "%vs_r" + n, moved[j]), moved[0]);
+    std::string square = l.dot(bond, bond);
+    std::string length2 = l.real("mulf", "%vs_d" + n, "%vs_d" + n);
+    std::string along = l.dot(bonds[j - 1], bond);
+    std::string g = l.real(
+        "divf", l.real("subf", length2, square),
+        l.real("mulf", factors[j - 1], along));
+    std::string gj = l.real("divf", g, "%vs_m" + n);
+    std::string g0 = l.real("divf", g, "%vs_m0");
+    moved[j] = l.vector("addf", moved[j], l.scale(gj, bonds[j - 1]));
+    moved[0] = l.vector("subf", moved[0], l.scale(g0, bonds[j - 1]));
+  }
+  std::string yielded;
+  for (unsigned j = 0; j <= count; ++j)
+    yielded += (j == 0 ? "" : ", ") + moved[j];
+  os << inner << "  scf.yield " << yielded << " : " << types << "\n"
+     << inner << "}\n"
+     << inner << "md.yield " << results << " : " << types << "\n"
+     << indent << "} : !rel_" << set.name << ", !vec -> !vec\n";
+  os << indent << result << " = md.map_particles gather(" << x << ", "
+     << change << " : !vec, !vec) {\n"
+     << indent << "^bb0(%vs_x: vector<3xf64>, %vs_d: vector<3xf64>):\n"
+     << inner << "%vs_sum = arith.addf %vs_x, %vs_d : vector<3xf64>\n"
+     << inner << "md.yield %vs_sum : vector<3xf64>\n"
+     << indent << "} : !vec\n";
+}
+
+std::string Builder::emitShakeVelocities(StringRef indent, StringRef x,
+                                         StringRef v,
+                                         const Program::TupleSet &set,
+                                         StringRef result, StringRef virial,
+                                         StringRef virialResult) {
+  unsigned count = set.arity - 1;
+  std::string inner = (indent + "  ").str();
+  std::string coordinates, tuple, tupleTypes, arguments;
+  for (unsigned k = 1; k <= count; ++k) {
+    coordinates += (k == 1 ? "" : ", ") + ("displacement(" +
+                                           std::to_string(k) + ", 0)");
+    tuple += (k == 1 ? "" : ", ") + ("%f_" + set.name + "_d" +
+                                     std::to_string(k));
+    tupleTypes += (k == 1 ? "" : ", ") + ("!of_" + set.name);
+    arguments += "%vs_r" + std::to_string(k) + ": vector<3xf64>, ";
+  }
+  for (unsigned k = 0; k <= count; ++k)
+    arguments += "%vs_v" + std::to_string(k) + ": vector<3xf64>, ";
+  for (unsigned k = 0; k <= count; ++k)
+    arguments += "%vs_m" + std::to_string(k) + ": f64, ";
+  for (unsigned k = 1; k <= count; ++k)
+    arguments += "%vs_d" + std::to_string(k) + ": f64" +
+                 (k == count ? "" : ", ");
+  auto header = [&](StringRef name, StringRef op) {
+    os << indent << name << " = md." << op << " %r_" << set.name << ", " << x
+       << ", %cell\n"
+       << indent << "    coordinates(" << coordinates << ")\n"
+       << indent << "    gather(" << v << ", %m : !vec, !real)\n"
+       << indent << "    tuple(" << tuple << " : " << tupleTypes << ") {\n"
+       << indent << "^bb0(" << arguments << "):\n";
+  };
+  // The impulses τ along the bonds that leave no velocity along them:
+  // A τ = −b, A_ij = δ_ij / m_j + e_i · e_j / m_0, b_i = e_i · (v_i − v_0),
+  // by Gaussian elimination. Returns the changes of the velocities.
+  auto solve = [&](SiteKernel &k) {
+    std::vector<std::string> units, rhs;
+    std::string one = k.constant(1.0), zero = k.constant(0.0);
+    std::string inverseCenter = k.real("divf", one, "%vs_m0");
+    std::vector<std::string> inverse;
+    for (unsigned j = 1; j <= count; ++j) {
+      std::string n = std::to_string(j);
+      units.push_back(k.unit("%vs_r" + n));
+      inverse.push_back(k.real("divf", one, "%vs_m" + n));
+      rhs.push_back(k.real(
+          "subf", zero,
+          k.dot(units.back(), k.vector("subf", "%vs_v" + n, "%vs_v0"))));
+    }
+    std::vector<std::vector<std::string>> A(count,
+                                            std::vector<std::string>(count));
+    for (unsigned i = 0; i != count; ++i)
+      for (unsigned j = 0; j != count; ++j) {
+        std::string coupling =
+            k.real("mulf", k.dot(units[i], units[j]), inverseCenter);
+        A[i][j] = i == j ? k.real("addf", coupling, inverse[i]) : coupling;
+      }
+    for (unsigned c = 0; c != count; ++c)
+      for (unsigned r = c + 1; r != count; ++r) {
+        std::string factor = k.real("divf", A[r][c], A[c][c]);
+        for (unsigned d = c; d != count; ++d)
+          A[r][d] = k.real("subf", A[r][d], k.real("mulf", factor, A[c][d]));
+        rhs[r] = k.real("subf", rhs[r], k.real("mulf", factor, rhs[c]));
+      }
+    std::vector<std::string> impulse(count);
+    for (unsigned c = count; c-- != 0;) {
+      std::string sum = rhs[c];
+      for (unsigned d = c + 1; d != count; ++d)
+        sum = k.real("subf", sum, k.real("mulf", A[c][d], impulse[d]));
+      impulse[c] = k.real("divf", sum, A[c][c]);
+    }
+    std::vector<std::string> changes(count + 1);
+    std::string center = k.zero();
+    for (unsigned j = 0; j != count; ++j) {
+      std::string push = k.scale(impulse[j], units[j]);
+      changes[j + 1] = k.scale(inverse[j], push);
+      center = k.vector("subf", center, k.scale(inverseCenter, push));
+    }
+    changes[0] = center;
+    return changes;
+  };
+
+  std::string change = (result + "_change").str();
+  header(change, "gather_tuples");
+  SiteKernel k(os, inner);
+  std::vector<std::string> changes = solve(k);
+  std::string yielded, types;
+  for (unsigned j = 0; j <= count; ++j) {
+    yielded += (j == 0 ? "" : ", ") + changes[j];
+    types += (j == 0 ? "" : ", ") + std::string("vector<3xf64>");
+  }
+  os << inner << "md.yield " << yielded << " : " << types << "\n"
+     << indent << "} : !rel_" << set.name << ", !vec -> !vec\n";
+
+  std::string virialName = virial.str();
+  if (!virial.empty()) {
+    // The forces of the constraints over the second half of the step,
+    // G = 2 m Δv / dt, and their virial Σ (x_j − x_0) ⊗ G_j.
+    std::string sum = (virialResult + "_sum").str();
+    header(sum, "sum_tuples");
+    SiteKernel w(os, inner);
+    std::vector<std::string> dv = solve(w);
+    std::string two = w.constant(2.0);
+    std::string elements;
+    std::vector<std::string> forces;
+    for (unsigned j = 1; j <= count; ++j)
+      forces.push_back(w.scale(
+          w.real("divf", w.real("mulf", two, "%vs_m" + std::to_string(j)),
+                 "%dt"),
+          dv[j]));
+    for (int a = 0; a != 3; ++a) {
+      std::string row;
+      for (unsigned j = 1; j <= count; ++j) {
+        std::string term = w.scale(
+            w.component("%vs_r" + std::to_string(j), a), forces[j - 1]);
+        row = row.empty() ? term : w.vector("addf", row, term);
+      }
+      for (int b = 0; b != 3; ++b)
+        elements += (elements.empty() ? "" : ", ") + w.component(row, b);
+    }
+    os << inner << "%vs_w = vector.from_elements " << elements
+       << " : vector<9xf64>\n"
+       << inner << "md.yield %vs_w : vector<9xf64>\n"
+       << indent << "} : !rel_" << set.name << ", !vec -> vector<9xf64>\n";
+    os << indent << virialResult << " = arith.addf " << virial << ", " << sum
+       << " : vector<9xf64>\n";
+    virialName = virialResult.str();
+  }
+  os << indent << result << " = md.map_particles gather(" << v << ", "
+     << change << " : !vec, !vec) {\n"
+     << indent << "^bb0(%vs_x: vector<3xf64>, %vs_d: vector<3xf64>):\n"
+     << inner << "%vs_sum = arith.addf %vs_x, %vs_d : vector<3xf64>\n"
+     << inner << "md.yield %vs_sum : vector<3xf64>\n"
+     << indent << "} : !vec\n";
+  return virialName;
 }
 
 std::string Builder::emitSettleVelocities(StringRef indent, StringRef x,
@@ -2161,7 +2487,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       // With constraints the forces do not give the kinetic energies of
       // the half steps (Section 9 of design-m1.md); the log takes that of
       // the step.
-      if (hasSettles())
+      if (hasConstraints())
         os << inner << "%g = arith.constant 0.0 : f64\n";
       else
         emitForceSquare(os, "%g", "%fl", massName, inner);
@@ -2466,7 +2792,7 @@ void Builder::emitEntry() {
          << "  call @mdrtWriteTerms(%terms_cast) : (memref<?xf64>) -> ()\n";
     }
     emitKineticEnergy(os, "%k0", velocities, "%m", "  ");
-    if (hasSettles())
+    if (hasConstraints())
       os << "  %g0 = arith.constant 0.0 : f64\n";
     else
       emitForceSquare(os, "%g0", "%f0", "%m", "  ");

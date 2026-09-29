@@ -1,0 +1,58 @@
+# SHAKE and RATTLE: the peptide of cmap.test alone in its cell, with the
+# bonds of hydrogen rigid, at a step of 2 fs. Each heavy atom and its
+# hydrogens are a group; the bonds of hydrogen are dropped from the bond
+# terms, and each takes a degree of freedom: 3 × 40 − 20 − 3.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/ff19sb/vacuum.prmtop %S/Inputs/ff19sb/vacuum.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: mdir check %t/run.toml | FileCheck %s --check-prefix=INPUT
+# RUN: mdir run %t/run.toml | FileCheck %s
+# RUN: %python %S/Inputs/check_bonds.py %t/vacuum.prmtop %t/shake.dcd | FileCheck %s --check-prefix=BONDS
+
+# INPUT: bonds:              19, 0 with hydrogen
+# INPUT: degrees of freedom: 97
+
+# The velocities drawn at the start have none along the bonds. The first
+# step brings the bonds of the file to their lengths, which changes the
+# energy by about 0.4 kcal/mol; after that it stays within 0.1 kcal/mol.
+#
+# CHECK: INFO:         0         0.0000 {{ *[0-9.]+}} {{ *-[0-9.]+}} {{ *[0-9.]+}} {{ *}}300.0000
+# CHECK: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[2-9]}} of its value
+
+# Every bond of hydrogen has its length in every frame, to the precision
+# of the trajectory.
+#
+# BONDS: bonds 20, frames 5
+# BONDS: bonds ok
+
+#--- run.toml
+[input]
+prmtopfile = "vacuum.prmtop"
+ambcrdfile = "vacuum.inpcrd"
+
+[output]
+dcdfile = "shake.dcd"
+
+[energy]
+cutoffdist    = 28.0
+pairlistdist  = 29.0
+electrostatic = "CUTOFF"
+
+[dynamics]
+integrator    = "VVER"
+timestep      = 0.002
+nsteps        = 500
+eneout_period = 100
+crdout_period = 100
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[constraints]
+rigid_bond = true
+
+[boundary]
+type = "PBC"
+#--- end
