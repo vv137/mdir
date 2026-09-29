@@ -64,3 +64,32 @@ md.function @caller(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %a: f64)
       -> !md.field<@atoms, 3 x f64>
   md.return %f : !md.field<@atoms, 3 x f64>
 }
+
+// -----
+
+md.particle_set @atoms
+md.tuple_set @bonds on(@atoms) arity(2) orientation(unordered)
+
+md.potential @directional(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
+                          %b: !md.relation<@atoms, 2, unordered, @bonds>)
+    -> f64 {
+  // expected-error@+1 {{cannot differentiate a kernel that uses a displacement; only kernels that depend on distances, angles, cosines, and dihedrals are supported}}
+  %u = md.sum_tuples %b, %x, %cell coordinates(displacement(0, 1)) {
+  ^bb0(%d: vector<3xf64>):
+    %dx = vector.extract %d[0] : f64 from vector<3xf64>
+    %k = arith.mulf %dx, %dx : f64
+    md.yield %k : f64
+  } : !md.relation<@atoms, 2, unordered, @bonds>, !md.field<@atoms, 3 x f64>
+      -> f64
+  md.return %u : f64
+}
+
+md.function @caller(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
+                    %b: !md.relation<@atoms, 2, unordered, @bonds>)
+    -> !md.field<@atoms, 3 x f64> {
+  %f = md.evaluate @directional(%x, %cell, %b) request [forces]
+      : (!md.field<@atoms, 3 x f64>, !md.cell,
+         !md.relation<@atoms, 2, unordered, @bonds>)
+        -> !md.field<@atoms, 3 x f64>
+  md.return %f : !md.field<@atoms, 3 x f64>
+}

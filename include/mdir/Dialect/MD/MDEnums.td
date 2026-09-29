@@ -5,10 +5,26 @@
 
 include "mlir/IR/EnumAttr.td"
 
-// Whether the tuples of a relation have a first member.
+// Under which permutations of its members a tuple stays the same tuple.
 def MD_Orientation : I32EnumAttr<"Orientation", "orientation of a relation", [
+    // A pair without a first member.
     I32EnumAttrCase<"Unordered", 0, "unordered">,
-    I32EnumAttrCase<"Ordered", 1, "ordered">
+    // Under none.
+    I32EnumAttrCase<"Ordered", 1, "ordered">,
+    // Under the reversal of the members: (i, j, k) is (k, j, i).
+    I32EnumAttrCase<"Reversal", 2, "reversal">
+  ]> {
+  let cppNamespace = "::mdir::md";
+}
+
+// An internal coordinate of a tuple.
+def MD_CoordinateKind : I32EnumAttr<"CoordinateKind",
+    "internal coordinate of a tuple", [
+    I32EnumAttrCase<"Distance", 0, "distance">,
+    I32EnumAttrCase<"Displacement", 1, "displacement">,
+    I32EnumAttrCase<"Angle", 2, "angle">,
+    I32EnumAttrCase<"Cosine", 3, "cosine">,
+    I32EnumAttrCase<"Dihedral", 4, "dihedral">
   ]> {
   let cppNamespace = "::mdir::md";
 }

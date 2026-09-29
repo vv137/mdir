@@ -94,6 +94,22 @@ static void printTruncation(OpAsmPrinter &printer, Operation *,
 }
 
 //===----------------------------------------------------------------------===//
+// Custom directive: coordinates(<kind>(<members>), ...)
+//===----------------------------------------------------------------------===//
+
+static ParseResult parseCoordinates(OpAsmParser &parser,
+                                    DenseI32ArrayAttr &kinds,
+                                    DenseI64ArrayAttr &members) {
+  return parseCoordinateList(parser, kinds, members);
+}
+
+static void printCoordinates(OpAsmPrinter &printer, Operation *,
+                             DenseI32ArrayAttr kinds,
+                             DenseI64ArrayAttr members) {
+  printCoordinateList(printer, kinds, members);
+}
+
+//===----------------------------------------------------------------------===//
 // Custom directive: [energy, forces, virial, derivative(<n>)]
 //===----------------------------------------------------------------------===//
 
@@ -440,6 +456,140 @@ LogicalResult GatherRelationOp::verify() {
 LogicalResult GatherRelationOp::verifyRegions() {
   auto result = cast<FieldType>(getResult().getType());
   return verifyPairKernel(*this, result.getKernelValueType());
+}
+
+//===----------------------------------------------------------------------===//
+// Tuples of a topology
+//===----------------------------------------------------------------------===//
+
+LogicalResult TupleSetOp::verify() {
+  int64_t arity = getArity();
+  if (arity < 1)
+    return emitOpError() << "expected an arity of at least 1, got " << arity;
+  if (getOrientation() == Orientation::Unordered && arity != 2)
+    return emitOpError() << "expected the orientation 'unordered' with the "
+                            "arity 2 only, got the arity "
+                         << arity;
+  if (getOrientation() == Orientation::Reversal && arity < 2)
+    return emitOpError() << "expected the orientation 'reversal' with an "
+                            "arity of at least 2";
+  return success();
+}
+
+/// Verifies what `md.sum_tuples` and `md.gather_tuples` have in common:
+/// the operands and the coordinates.
+template <typename OpTy>
+static LogicalResult verifyTupleOperands(OpTy op) {
+  auto relation = cast<RelationType>(op.getRelation().getType());
+  FlatSymbolRefAttr tupleSet = relation.getTupleSet();
+  if (!tupleSet)
+    return op.emitOpError()
+           << "expected the relation of a tuple set, got " << relation;
+
+  if (!isPositionField(op.getPositions().getType()))
+    return op.emitOpError() << "expected a position field with 3 components "
+                               "of f64, got "
+                            << op.getPositions().getType();
+  auto positions = cast<FieldType>(op.getPositions().getType());
+  if (positions.getParticleSet() != relation.getParticleSet())
+    return op.emitOpError()
+           << "the relation is on " << relation.getParticleSet()
+           << ", but the positions belong to " << positions.getParticleSet();
+
+  for (Value gathered : op.getGathered()) {
+    auto field = cast<FieldType>(gathered.getType());
+    if (field.getParticleSet() != relation.getParticleSet())
+      return op.emitOpError()
+             << "the relation is on " << relation.getParticleSet()
+             << ", but a gathered field belongs to "
+             << field.getParticleSet();
+  }
+  for (Value parameter : op.getParameters()) {
+    auto field = cast<FieldType>(parameter.getType());
+    if (field.getParticleSet() != tupleSet)
+      return op.emitOpError()
+             << "the tuples are those of " << tupleSet
+             << ", but a field in 'tuple' belongs to "
+             << field.getParticleSet();
+  }
+  return verifyCoordinates(op.getOperation(), op.getCoordinateKinds(),
+                           op.getCoordinateMembers(), relation.getArity());
+}
+
+/// Verifies the kernel: its arguments and its terminator. The kernel must
+/// yield `numYields` values of the type `yieldType`.
+template <typename OpTy>
+static LogicalResult verifyTupleKernel(OpTy op, unsigned numYields,
+                                       Type yieldType) {
+  Block &block = op.getKernel().front();
+  Builder builder(op.getContext());
+
+  SmallVector<Type> expected;
+  for (const Coordinate &coordinate : op.getCoordinates())
+    expected.push_back(
+        getCoordinateType(coordinate.kind, builder.getF64Type()));
+  for (Value gathered : op.getGathered())
+    expected.append(op.getArity(),
+                    cast<FieldType>(gathered.getType()).getKernelValueType());
+  for (Value parameter : op.getParameters())
+    expected.push_back(
+        cast<FieldType>(parameter.getType()).getKernelValueType());
+
+  if (block.getNumArguments() != expected.size())
+    return op.emitOpError()
+           << "expected the kernel to have " << expected.size()
+           << " arguments (one per coordinate, one per member for each "
+              "gathered field, and one per field of the tuples), got "
+           << block.getNumArguments();
+  for (unsigned i = 0, e = expected.size(); i != e; ++i)
+    if (block.getArgument(i).getType() != expected[i])
+      return op.emitOpError()
+             << "expected kernel argument " << i << " to have type "
+             << expected[i] << ", got " << block.getArgument(i).getType();
+
+  auto yield = dyn_cast<YieldOp>(block.getTerminator());
+  if (!yield)
+    return op.emitOpError() << "expected the kernel to end with 'md.yield'";
+  if (yield.getNumOperands() != numYields)
+    return yield.emitOpError() << "expected " << numYields << " values, got "
+                               << yield.getNumOperands();
+  for (Value value : yield.getOperands())
+    if (value.getType() != yieldType)
+      return yield.emitOpError() << "expected values of type " << yieldType
+                                 << ", got " << value.getType();
+  return success();
+}
+
+LogicalResult SumTuplesOp::verify() {
+  if (failed(verifyTupleOperands(*this)))
+    return failure();
+  if (!isRealOrRealVector(getResult().getType()))
+    return emitOpError()
+           << "expected the result to be f64 or a fixed-size vector of f64, "
+              "got "
+           << getResult().getType();
+  return success();
+}
+
+LogicalResult SumTuplesOp::verifyRegions() {
+  return verifyTupleKernel(*this, 1, getResult().getType());
+}
+
+LogicalResult GatherTuplesOp::verify() {
+  if (failed(verifyTupleOperands(*this)))
+    return failure();
+  auto relation = cast<RelationType>(getRelation().getType());
+  auto result = cast<FieldType>(getResult().getType());
+  if (result.getParticleSet() != relation.getParticleSet())
+    return emitOpError() << "the relation is on " << relation.getParticleSet()
+                         << ", but the result belongs to "
+                         << result.getParticleSet();
+  return success();
+}
+
+LogicalResult GatherTuplesOp::verifyRegions() {
+  auto result = cast<FieldType>(getResult().getType());
+  return verifyTupleKernel(*this, getArity(), result.getKernelValueType());
 }
 
 //===----------------------------------------------------------------------===//

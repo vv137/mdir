@@ -1,6 +1,6 @@
 // Semantic differentiation of potentials.
 //
-// See docs/ops-m0.md, Section 5.
+// See docs/ops-m0.md, Section 5, and docs/design-m1.md, Section 4.
 
 #include "mdir/Dialect/MD/Transforms/Passes.h"
 #include "mdir/Dialect/MD/Transforms/ScalarDerivative.h"
@@ -33,9 +33,9 @@ public:
 private:
   LogicalResult checkPositionUses();
 
-  /// Sets `weight` to the derivative of the energy with respect to the
-  /// result of `sum`, or to null if the energy does not depend on it.
-  LogicalResult getWeight(SumRelationOp sum, Value &weight);
+  /// Sets `weight` to the derivative of the energy with respect to `sum`,
+  /// the result of a sum, or to null if the energy does not depend on it.
+  LogicalResult getWeight(Value sum, Value &weight);
 
   /// Creates a pair op named `opName` with the operands of `source` and a
   /// copy of its kernel. The kernel still yields the pair energy.
@@ -46,6 +46,20 @@ private:
   /// `factor` to `−weight · u'(r) / r`, or to null if it is zero.
   LogicalResult emitRadialFactor(Operation *op, Value weight, OpBuilder &kernel,
                                  Value &factor);
+
+  /// Creates an op over tuples named `opName` with the operands and the
+  /// coordinates of `source` and a copy of its kernel. The kernel still
+  /// yields the energy of a tuple.
+  Operation *createTupleOp(StringRef opName, SumTuplesOp source,
+                           Type resultType);
+
+  /// In the kernel of `op`, which still yields the energy `u` of a tuple,
+  /// sets `forces` to `−weight · ∂u/∂x_m` for each member `m` of the tuple,
+  /// or to null where it is zero. With `virial`, sets it to the sum of
+  /// `d ⊗ F` over the members, or to null.
+  LogicalResult emitTupleForces(Operation *op, Value weight, OpBuilder &kernel,
+                                SmallVectorImpl<Value> &forces,
+                                Value *virial = nullptr);
 
   LogicalResult buildForces(Value &forces);
   LogicalResult buildVirial(Value &virial);
@@ -60,6 +74,7 @@ private:
   Block *body = nullptr;
   Value energy;
   SmallVector<SumRelationOp> sums;
+  SmallVector<SumTuplesOp> tupleSums;
 };
 
 } // namespace
@@ -81,7 +96,7 @@ LogicalResult DerivativeBuilder::checkPositionUses() {
     Operation *user = use.getOwner();
     unsigned index = use.getOperandNumber();
     bool known = (isa<NeighborhoodOp>(user) && index == 0) ||
-                 (isa<SumRelationOp>(user) && index == 1);
+                 (isa<SumRelationOp, SumTuplesOp>(user) && index == 1);
     if (!known)
       return user->emitError()
              << "cannot differentiate with respect to the positions through "
@@ -97,10 +112,23 @@ LogicalResult DerivativeBuilder::checkPositionUses() {
       return sum.emitOpError()
              << "cannot differentiate a sum whose result is not f64";
   }
+  for (SumTuplesOp sum : tupleSums) {
+    Block &kernel = sum.getKernel().front();
+    for (auto [index, coordinate] : llvm::enumerate(sum.getCoordinates()))
+      if (coordinate.kind == CoordinateKind::Displacement &&
+          !kernel.getArgument(index).use_empty())
+        return sum.emitOpError()
+               << "cannot differentiate a kernel that uses a displacement; "
+                  "only kernels that depend on distances, angles, cosines, "
+                  "and dihedrals are supported";
+    if (!sum.getResult().getType().isF64())
+      return sum.emitOpError()
+             << "cannot differentiate a sum whose result is not f64";
+  }
   return success();
 }
 
-LogicalResult DerivativeBuilder::getWeight(SumRelationOp sum, Value &weight) {
+LogicalResult DerivativeBuilder::getWeight(Value sum, Value &weight) {
   // With respect to one sum, everything that does not come from a scalar op
   // is an independent input.
   auto leaf = [](Value value, Value &tangent) -> LogicalResult {
@@ -111,7 +139,7 @@ LogicalResult DerivativeBuilder::getWeight(SumRelationOp sum, Value &weight) {
     return op->emitError() << "no derivative rule for '" << op->getName()
                            << "'";
   };
-  ScalarDerivative derivative(builder, sum.getResult(), leaf);
+  ScalarDerivative derivative(builder, sum, leaf);
   return derivative.get(energy, weight);
 }
 
@@ -154,6 +182,132 @@ LogicalResult DerivativeBuilder::emitRadialFactor(Operation *op, Value weight,
 }
 
 //===----------------------------------------------------------------------===//
+// Tuples
+//===----------------------------------------------------------------------===//
+
+Operation *DerivativeBuilder::createTupleOp(StringRef opName,
+                                            SumTuplesOp source,
+                                            Type resultType) {
+  OperationState state(loc, opName);
+  state.addOperands(source->getOperands());
+  state.addAttributes(source->getAttrDictionary().getValue());
+  state.addRegion();
+  state.addTypes(resultType);
+
+  Operation *op = builder.create(state);
+  IRMapping mapping;
+  source.getKernel().cloneInto(&op->getRegion(0), mapping);
+  return op;
+}
+
+/// Returns the kernel arguments of `op`, an op over tuples, that hold the
+/// displacements `wanted`. Those that the op does not take yet become
+/// coordinates of it.
+static SmallVector<Value, 3> getDisplacementArguments(Operation *op,
+                                                      ArrayRef<Coordinate> wanted) {
+  Block &block = op->getRegion(0).front();
+  auto kinds = op->getAttrOfType<DenseI32ArrayAttr>("coordinate_kinds");
+  auto members = op->getAttrOfType<DenseI64ArrayAttr>("coordinate_members");
+  SmallVector<Coordinate, 2> coordinates =
+      getCoordinates(kinds.asArrayRef(), members.asArrayRef());
+
+  SmallVector<Value, 3> arguments;
+  for (const Coordinate &displacement : wanted) {
+    auto found = llvm::find_if(coordinates, [&](const Coordinate &known) {
+      return known.kind == displacement.kind &&
+             known.members == displacement.members;
+    });
+    unsigned index = std::distance(coordinates.begin(), found);
+    if (found == coordinates.end()) {
+      Builder types(op->getContext());
+      coordinates.push_back(displacement);
+      block.insertArgument(
+          index, getCoordinateType(displacement.kind, types.getF64Type()),
+          op->getLoc());
+    }
+    arguments.push_back(block.getArgument(index));
+  }
+
+  Builder attributes(op->getContext());
+  getCoordinateAttrs(attributes, coordinates, kinds, members);
+  op->setAttr("coordinate_kinds", kinds);
+  op->setAttr("coordinate_members", members);
+  return arguments;
+}
+
+LogicalResult DerivativeBuilder::emitTupleForces(Operation *op, Value weight,
+                                                 OpBuilder &kernel,
+                                                 SmallVectorImpl<Value> &forces,
+                                                 Value *virial) {
+  Block &block = op->getRegion(0).front();
+  Value tupleEnergy = cast<YieldOp>(block.getTerminator()).getOperand(0);
+  Type vectorType = VectorType::get({3}, kernel.getF64Type());
+
+  unsigned arity =
+      cast<RelationType>(op->getOperand(0).getType()).getArity();
+  forces.assign(arity, Value());
+  if (virial)
+    *virial = Value();
+
+  // The coordinates of the sum. The op receives more of them below.
+  SmallVector<Coordinate, 2> coordinates = getCoordinates(
+      op->getAttrOfType<DenseI32ArrayAttr>("coordinate_kinds").asArrayRef(),
+      op->getAttrOfType<DenseI64ArrayAttr>("coordinate_members")
+          .asArrayRef());
+
+  ScalarEmitter emit(kernel, loc);
+  SmallVector<Value, 9> elements(9, Value());
+  for (auto [index, coordinate] : llvm::enumerate(coordinates)) {
+    if (coordinate.kind == CoordinateKind::Displacement)
+      continue;
+
+    // F_m = −weight · (∂u/∂q) (∂q/∂x_m)
+    ScalarDerivative derivative(kernel, block.getArgument(index));
+    Value slope;
+    if (failed(derivative.get(tupleEnergy, slope)))
+      return failure();
+    Value factor = emit.neg(emit.mul(weight, slope));
+    if (!factor)
+      continue;
+
+    SmallVector<Value, 3> displacements =
+        getDisplacementArguments(op, getDisplacements(coordinate));
+    CoordinateGradient gradient =
+        emitCoordinateGradient(kernel, loc, coordinate.kind, displacements);
+    Value broadcast =
+        vector::BroadcastOp::create(kernel, loc, vectorType, factor);
+    for (auto [place, member] : llvm::enumerate(coordinate.members)) {
+      Value force = emit.mul(broadcast, gradient.members[place]);
+      forces[member] = emit.add(forces[member], force);
+
+      // W = Σ_m d_m ⊗ F_m, with the displacement of m from one of the
+      // members. The sum of the forces of a coordinate is zero, so that
+      // the member does not matter.
+      Value arm = gradient.arms[place];
+      if (!virial || !arm)
+        continue;
+      SmallVector<Value, 3> armComponents, forceComponents;
+      for (int64_t a = 0; a < 3; ++a) {
+        armComponents.push_back(
+            vector::ExtractOp::create(kernel, loc, arm, a));
+        forceComponents.push_back(
+            vector::ExtractOp::create(kernel, loc, force, a));
+      }
+      for (int64_t a = 0; a < 3; ++a)
+        for (int64_t b = 0; b < 3; ++b)
+          elements[3 * a + b] =
+              emit.add(elements[3 * a + b],
+                       emit.mul(armComponents[a], forceComponents[b]));
+    }
+  }
+
+  if (virial && elements[0])
+    *virial = vector::FromElementsOp::create(
+        kernel, loc, VectorType::get({9}, kernel.getF64Type()), elements);
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // Forces
 //===----------------------------------------------------------------------===//
 
@@ -164,7 +318,7 @@ LogicalResult DerivativeBuilder::buildForces(Value &forces) {
   SmallVector<Value> terms;
   for (SumRelationOp sum : sums) {
     Value weight;
-    if (failed(getWeight(sum, weight)))
+    if (failed(getWeight(sum.getResult(), weight)))
       return failure();
     if (!weight)
       continue;
@@ -189,6 +343,37 @@ LogicalResult DerivativeBuilder::buildForces(Value &forces) {
       contribution = emit.constant(0.0, vectorType);
     }
     setYield(block, contribution);
+    terms.push_back(gather->getResult(0));
+  }
+
+  for (SumTuplesOp sum : tupleSums) {
+    Value weight;
+    if (failed(getWeight(sum.getResult(), weight)))
+      return failure();
+    if (!weight)
+      continue;
+
+    // K(t)[m] = −weight · ∂u/∂x_m
+    Operation *gather =
+        createTupleOp(GatherTuplesOp::getOperationName(), sum, fieldType);
+    Block &block = gather->getRegion(0).front();
+    OpBuilder kernel(block.getTerminator());
+    SmallVector<Value, 4> memberForces;
+    if (failed(emitTupleForces(gather, weight, kernel, memberForces)))
+      return failure();
+
+    // A member that no coordinate names receives no force.
+    ScalarEmitter emit(kernel, loc);
+    Value zero;
+    for (Value &force : memberForces) {
+      if (force)
+        continue;
+      if (!zero)
+        zero = emit.constant(0.0, vectorType);
+      force = zero;
+    }
+    block.getTerminator()->setOperands(memberForces);
+    eraseDeadOps(block);
     terms.push_back(gather->getResult(0));
   }
 
@@ -235,7 +420,7 @@ LogicalResult DerivativeBuilder::buildVirial(Value &virial) {
   Value total;
   for (SumRelationOp sum : sums) {
     Value weight;
-    if (failed(getWeight(sum, weight)))
+    if (failed(getWeight(sum.getResult(), weight)))
       return failure();
     if (!weight)
       continue;
@@ -270,6 +455,30 @@ LogicalResult DerivativeBuilder::buildVirial(Value &virial) {
     total = outer.add(total, term->getResult(0));
   }
 
+  for (SumTuplesOp sum : tupleSums) {
+    Value weight;
+    if (failed(getWeight(sum.getResult(), weight)))
+      return failure();
+    if (!weight)
+      continue;
+
+    Operation *term =
+        createTupleOp(SumTuplesOp::getOperationName(), sum, virialType);
+    Block &block = term->getRegion(0).front();
+    OpBuilder kernel(block.getTerminator());
+    SmallVector<Value, 4> memberForces;
+    Value contribution;
+    if (failed(emitTupleForces(term, weight, kernel, memberForces,
+                               &contribution)))
+      return failure();
+
+    ScalarEmitter emit(kernel, loc);
+    if (!contribution)
+      contribution = emit.constant(0.0, virialType);
+    setYield(block, contribution);
+    total = outer.add(total, term->getResult(0));
+  }
+
   virial = total ? total : outer.constant(0.0, virialType);
   return success();
 }
@@ -290,13 +499,16 @@ LogicalResult DerivativeBuilder::buildParameterDerivative(int64_t argument,
     if (!op)
       return success();
 
-    auto sum = dyn_cast<SumRelationOp>(op);
-    if (!sum)
+    Operation *term;
+    if (auto sum = dyn_cast<SumRelationOp>(op))
+      term = createPairOp(SumRelationOp::getOperationName(), sum,
+                          Exchange::Symmetric, value.getType());
+    else if (auto tuples = dyn_cast<SumTuplesOp>(op))
+      term = createTupleOp(SumTuplesOp::getOperationName(), tuples,
+                           value.getType());
+    else
       return op->emitError() << "cannot differentiate '" << op->getName()
                              << "' with respect to a parameter";
-
-    Operation *term = createPairOp(SumRelationOp::getOperationName(), sum,
-                                   Exchange::Symmetric, value.getType());
     Block &block = term->getRegion(0).front();
     Value pairEnergy = cast<YieldOp>(block.getTerminator()).getOperand(0);
 
@@ -391,6 +603,8 @@ FunctionOp DerivativeBuilder::build(ArrayRef<int32_t> kinds,
   };
 
   for (Operation &op : *body) {
+    if (auto tuples = dyn_cast<SumTuplesOp>(&op))
+      tupleSums.push_back(tuples);
     auto sum = dyn_cast<SumRelationOp>(&op);
     if (!sum)
       continue;

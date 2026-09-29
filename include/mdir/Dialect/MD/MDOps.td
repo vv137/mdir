@@ -30,6 +30,35 @@ def MD_ParticleSetOp : MD_Op<"particle_set", [Symbol]> {
   let assemblyFormat = "$sym_name attr-dict";
 }
 
+def MD_TupleSetOp : MD_Op<"tuple_set", [Symbol]> {
+  let summary = "Declares a set of tuples of particles";
+  let description = [{
+    Declares the tuples of a topology: bonds, angles, and the like. A tuple
+    is an entity, as a particle is. It exists throughout a run, and it has
+    fields of its own, such as the parameters of a bond. The number of
+    tuples is a run-time value.
+
+    ```mlir
+    md.tuple_set @angles on(@atoms) arity(3) orientation(reversal)
+    ```
+
+    The members of the tuples are a value of the type
+    `!md.relation<@atoms, 3, reversal, @angles>`, and a field of the tuples
+    has the type `!md.field<@angles, f64>`.
+  }];
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    FlatSymbolRefAttr:$particle_set,
+    I64Attr:$arity,
+    MD_Orientation:$orientation
+  );
+  let assemblyFormat = [{
+    $sym_name `on` `(` $particle_set `)` `arity` `(` $arity `)`
+    `orientation` `(` $orientation `)` attr-dict
+  }];
+  let hasVerifier = 1;
+}
+
 //===----------------------------------------------------------------------===//
 // Functions
 //===----------------------------------------------------------------------===//
@@ -148,8 +177,8 @@ def MD_NeighborhoodOp : MD_Op<"neighborhood", [Pure]> {
 
 def MD_YieldOp : MD_Op<"yield", [
     Pure, Terminator, ReturnLike,
-    ParentOneOf<["SumRelationOp", "GatherRelationOp", "SumParticlesOp",
-                 "MapParticlesOp"]>
+    ParentOneOf<["SumRelationOp", "GatherRelationOp", "SumTuplesOp",
+                 "GatherTuplesOp", "SumParticlesOp", "MapParticlesOp"]>
   ]> {
   let summary = "Yields the value of a kernel";
   let arguments = (ins Variadic<AnyType>:$values);
@@ -250,6 +279,108 @@ def MD_GatherRelationOp : MD_Op<"gather_relation", [
   }];
   let hasVerifier = 1;
   let hasRegionVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Tuples of a topology
+//===----------------------------------------------------------------------===//
+
+class MD_TupleOp<string mnemonic> : MD_Op<mnemonic, [
+    AttrSizedOperandSegments, RecursiveMemoryEffects, SingleBlock
+  ]> {
+  let arguments = (ins
+    MD_RelationType:$relation,
+    MD_ReferenceFieldType:$positions,
+    MD_CellType:$cell,
+    Variadic<MD_ReferenceFieldType>:$gathered,
+    Variadic<MD_ReferenceFieldType>:$parameters,
+    DenseI32ArrayAttr:$coordinate_kinds,
+    DenseI64ArrayAttr:$coordinate_members
+  );
+  let regions = (region SizedRegion<1>:$kernel);
+  let assemblyFormat = [{
+    $relation `,` $positions `,` $cell
+    custom<Coordinates>($coordinate_kinds, $coordinate_members)
+    (`gather` `(` $gathered^ `:` qualified(type($gathered)) `)`)?
+    (`tuple` `(` $parameters^ `:` qualified(type($parameters)) `)`)?
+    $kernel attr-dict
+    `:` qualified(type($relation)) `,` qualified(type($positions)) `->` qualified(type($result))
+  }];
+  let extraClassDeclaration = [{
+    /// The internal coordinates that the kernel takes.
+    ::llvm::SmallVector<::mdir::md::Coordinate, 2> getCoordinates() {
+      return ::mdir::md::getCoordinates(getCoordinateKinds(),
+                                        getCoordinateMembers());
+    }
+    /// The number of members of a tuple.
+    unsigned getArity() {
+      return ::llvm::cast<::mdir::md::RelationType>(getRelation().getType())
+          .getArity();
+    }
+  }];
+  let hasVerifier = 1;
+  let hasRegionVerifier = 1;
+}
+
+def MD_SumTuplesOp : MD_TupleOp<"sum_tuples"> {
+  let summary = "Sums a kernel over the tuples of a tuple set";
+  let description = [{
+    ```text
+    S = Σ_{t ∈ T} k(t)
+    ```
+
+    The kernel receives the internal coordinates that the op names, then
+    one value for each member of the tuple for each gathered field of the
+    particles, then one value for each field of the tuples.
+
+    A place in `coordinates` is a place in the tuple, from 0.
+
+    | Coordinate | Value | Kernel argument |
+    |---|---|---|
+    | `distance(a, b)` | The length of `d_ab` | `f64` |
+    | `displacement(a, b)` | `d_ab = x_a − x_b`, in the minimum image | `vector<3xf64>` |
+    | `angle(a, b, c)` | The angle at `b` between `d_ab` and `d_cb`, from 0 to π | `f64` |
+    | `cosine(a, b, c)` | The cosine of that angle | `f64` |
+    | `dihedral(a, b, c, d)` | The angle between the planes of `a, b, c` and of `b, c, d`, from −π to π | `f64` |
+
+    ```mlir
+    %u = md.sum_tuples %angles, %x, %cell coordinates(cosine(0, 1, 2))
+           tuple(%k, %c0 : !md.field<@angles, f64>, !md.field<@angles, f64>) {
+    ^bb0(%c: f64, %k_t: f64, %c0_t: f64):
+      ...
+      md.yield %e : f64
+    } : !md.relation<@atoms, 3, reversal, @angles>,
+        !md.field<@atoms, 3 x f64> -> f64
+    ```
+  }];
+  let results = (outs AnyType:$result);
+}
+
+def MD_GatherTuplesOp : MD_TupleOp<"gather_tuples"> {
+  let summary = "Sums a kernel, per particle, over the tuples it is in";
+  let description = [{
+    ```text
+    a_i = Σ_{t, s : t[s] = i} k(t)[s]
+    ```
+
+    The kernel yields one value for each member of the tuple, in the order
+    of the members. A particle receives, from every tuple that it is a
+    member of, the value of its place.
+
+    The kernel receives what that of `md.sum_tuples` receives.
+
+    ```mlir
+    %f = md.gather_tuples %bonds, %x, %cell
+           coordinates(distance(0, 1), displacement(0, 1))
+           tuple(%k, %r0 : !md.field<@bonds, f64>, !md.field<@bonds, f64>) {
+    ^bb0(%r: f64, %d: vector<3xf64>, %k_t: f64, %r0_t: f64):
+      ...
+      md.yield %f0, %f1 : vector<3xf64>, vector<3xf64>
+    } : !md.relation<@atoms, 2, unordered, @bonds>,
+        !md.field<@atoms, 3 x f64> -> !md.field<@atoms, 3 x f64>
+    ```
+  }];
+  let results = (outs MD_ReferenceFieldType:$result);
 }
 
 //===----------------------------------------------------------------------===//

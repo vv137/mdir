@@ -12,6 +12,7 @@
 #include "mlir/Interfaces/FunctionInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
+#include "mdir/Dialect/MD/MDCoordinates.h"
 #include "mdir/Dialect/MD/MDTypes.h"
 
 #define GET_OP_CLASSES

@@ -1,6 +1,6 @@
 # Design for Milestone M1
 
-Status: decided (2026-09-29), not implemented. Section 12 has the
+Status: decided (2026-09-29), in implementation. Section 12 has the
 decisions; Section 13 has the order of work and its state.
 
 M1 is a coarse-grained membrane in water with the Martini force field
@@ -69,15 +69,18 @@ md.tuple_set @angles on(@atoms) arity(3) orientation(reversal)
 
 | Value | Type | Holds |
 |---|---|---|
-| The members of the tuples | `!md.relation<@atoms, 3, reversal>` | For each tuple, the numbers of its particles |
+| The members of the tuples | `!md.relation<@atoms, 3, reversal, @angles>` | For each tuple, the numbers of its particles |
 | A parameter of the tuples | `!md.field<@angles, f64>` | One value for each tuple |
+
+The type of the relation names the tuple set, so that an op can tell that
+a field belongs to the tuples of the relation that it takes.
 
 Both enter the program from buffers, as the fields of the particles do
 (D32):
 
 ```mlir
 %angles = mdrt.from_buffer %members
-            : memref<?x3xi32> to !md.relation<@atoms, 3, reversal>
+            : memref<?x3xi32> to !md.relation<@atoms, 3, reversal, @angles>
 %k      = mdrt.from_buffer %k_buffer
             : memref<?xf64> to !md.field<@angles, f64>
 ```
@@ -94,7 +97,7 @@ the same tuple (Section 2.2 of ops-m0.md).
 |---|---|---|---|
 | `unordered` | 2 | `{i, j}` and `{j, i}` | Bonds, exclusions |
 | `ordered` | Any | No other | Position restraints, with arity 1 |
-| `reversal` | 3, 4 | `(i, j, k)` and `(k, j, i)` | Angles, dihedrals |
+| `reversal` | 2 or more | `(i, j, k)` and `(k, j, i)` | Angles, dihedrals |
 
 ### 2.3 Parameters for each tuple, not for each kind
 
@@ -115,10 +118,13 @@ parameters are a table (Section 7).
 
 A kernel over a neighborhood takes the distance and the displacement of
 the pair (B7). A kernel over a relation of a topology takes the internal
-coordinates that the op names:
+coordinates that the op names. The ops are `md.sum_tuples` and
+`md.gather_tuples`; they are apart from `md.sum_relation` and
+`md.gather_relation` because exchange and truncation, which those two
+carry, have no meaning for a tuple of a topology.
 
 ```mlir
-%u = md.sum_relation %angles, %x, %cell
+%u = md.sum_tuples %angles, %x, %cell
        coordinates(cosine(0, 1, 2))
        tuple(%k, %c0 : !md.field<@angles, f64>, !md.field<@angles, f64>) {
 ^bb0(%c: f64, %k_t: f64, %c0_t: f64):
@@ -128,7 +134,7 @@ coordinates that the op names:
   %hk   = arith.mulf %half, %k_t : f64
   %e    = arith.mulf %hk, %sq : f64
   md.yield %e : f64
-} : !md.relation<@atoms, 3, reversal>, !vec -> f64
+} : !md.relation<@atoms, 3, reversal, @angles>, !vec -> f64
 ```
 
 | Coordinate | Value | Kernel argument |
@@ -168,10 +174,16 @@ fields of the particles is checked as in M0 (B3).
 
 ## 4. Differentiation
 
+### 4.1 With respect to the positions
+
 ```text
 F_m = − Σ_q (∂u/∂q) (∂q/∂x_m)          for every member m of the tuple
-W   = Σ_m d_m0 ⊗ F_m                   with the displacement of m from member 0
+W   = Σ_q Σ_m d_m ⊗ F_qm               with the displacement of m from one
+                                       member of the coordinate q
 ```
+
+The forces of one coordinate add up to zero, so that the member that the
+displacements are taken from does not matter.
 
 | Coordinate | `∂q/∂x_m` |
 |---|---|
@@ -184,12 +196,47 @@ The derivative of `angle` is singular where the three particles are in
 line. A term that is smooth there, such as the one above, should take
 `cosine`.
 
-`md-differentiate` produces, for a sum over a relation of arity `k`, a
-gather whose kernel yields `k` forces, one for each member:
+`md-differentiate` produces, for a sum over tuples of arity `k`, an
+`md.gather_tuples` whose kernel yields `k` forces, one for each member:
 
 ```text
 a_i = Σ_{t, s : t[s] = i} k(t)[s]
 ```
+
+The derivative of a coordinate is a function of displacements. The
+generated op takes them as further coordinates, after those of the sum:
+
+| Coordinate | Displacements |
+|---|---|
+| `distance(a, b)` | `d_ab` |
+| `angle(a, b, c)`, `cosine(a, b, c)` | `d_ab`, `d_cb` |
+| `dihedral(a, b, c, d)` | `d_ab`, `d_bc`, `d_dc` |
+
+```mlir
+%f = md.gather_tuples %angles, %x, %cell
+       coordinates(cosine(0, 1, 2), displacement(0, 1), displacement(2, 1))
+       tuple(%k, %c0 : ...) {
+^bb0(%c: f64, %u: vector<3xf64>, %v: vector<3xf64>, %k_t: f64, %c0_t: f64):
+  ...
+  md.yield %f0, %f1, %f2 : vector<3xf64>, vector<3xf64>, vector<3xf64>
+} : !md.relation<@atoms, 3, reversal, @angles>, !vec -> !vec
+```
+
+The value of a coordinate and its derivative have norms and products in
+common. Both are emitted by the same code, op for op, so that the
+elimination of common subexpressions leaves one of each after the
+coordinates have been computed in the kernel.
+
+A kernel that uses a `displacement` cannot be differentiated with respect
+to the positions yet, as in M0.
+
+### 4.2 With respect to a parameter
+
+| With respect to | In M1 | How |
+|---|---|---|
+| An argument of the potential that is a number, such as a scale of the energy or a coupling parameter | Yes | `request [derivative(n)]`, as in M0. The derivative of a sum over tuples is the sum of the derivative of its kernel |
+| A field of the tuples or of the particles, such as the force constant of every bond | No | The result is a field, not a number. It is a gather of the derivative of the kernel, and the machinery of 4.1 can produce it when an application needs it, such as the fitting of a force field |
+| An entry of a table (Section 7) | No | The result is a table. It needs a sum for each entry |
 
 ## 5. Execution of terms over tuples
 
@@ -409,12 +456,12 @@ GROMACS is not installed on the development machine.
 
 ## 13. Order of work
 
-| Stage | Work | Runs |
-|---|---|---|
-| M1a | Tuple sets, internal coordinates, differentiation, loops over tuples on the CPU and on a GPU | Chains of particles with bonds, angles, and dihedrals, at constant energy |
-| M1b | Exclusions in the neighbor build; terms over excluded pairs | The same with Lennard-Jones |
-| M1c | Tables, the rule `product`, the reaction field | A mixture of charged types |
-| M1d | Input of a topology | A bilayer at constant energy |
-| M1e | Random numbers, the thermostat | A bilayer at constant temperature |
-| M1f | The barostat, a cell that changes | A bilayer at constant temperature and pressure |
-| M1g | Comparison with GROMACS; run times | |
+| Stage | Work | Runs | State |
+|---|---|---|---|
+| M1a | Tuple sets, internal coordinates, differentiation, loops over tuples on the CPU and on a GPU | Chains of particles with bonds, angles, and dihedrals, at constant energy | The ops of `md` and their differentiation are done; the execution is not |
+| M1b | Exclusions in the neighbor build; terms over excluded pairs | The same with Lennard-Jones | |
+| M1c | Tables, the rule `product`, the reaction field | A mixture of charged types | |
+| M1d | Input of a topology | A bilayer at constant energy | |
+| M1e | Random numbers, the thermostat | A bilayer at constant temperature | |
+| M1f | The barostat, a cell that changes | A bilayer at constant temperature and pressure | |
+| M1g | Comparison with GROMACS; run times | | |

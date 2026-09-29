@@ -1,4 +1,5 @@
 add_mlir_dialect_library(MDIRMD
+  MDCoordinates.cpp
   MDDialect.cpp
   MDOps.cpp
   MDTypes.cpp
@@ -10,7 +11,10 @@ add_mlir_dialect_library(MDIRMD
   MDIRMDIncGen
 
   LINK_LIBS PUBLIC
+  MLIRArithDialect
   MLIRIR
+  MLIRMathDialect
+  MLIRVectorDialect
   MLIRControlFlowInterfaces
   MLIRFunctionInterfaces
   MLIRSideEffectInterfaces

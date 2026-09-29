@@ -74,14 +74,22 @@ def MD_RelationType : MD_Type<"Relation", "relation"> {
     ```mlir
     !md.relation<@atoms, 2, unordered>
     ```
+
+    The relation of a tuple set names the set. Its tuples are entities with
+    fields of their own, which are fields of that set.
+
+    ```mlir
+    !md.relation<@atoms, 3, reversal, @angles>
+    ```
   }];
   let parameters = (ins
     "::mlir::FlatSymbolRefAttr":$particleSet,
     "unsigned":$arity,
-    EnumParameter<MD_Orientation>:$orientation
+    EnumParameter<MD_Orientation>:$orientation,
+    OptionalParameter<"::mlir::FlatSymbolRefAttr">:$tupleSet
   );
   let assemblyFormat = [{
-    `<` $particleSet `,` $arity `,` $orientation `>`
+    `<` $particleSet `,` $arity `,` $orientation (`,` $tupleSet^)? `>`
   }];
   let genVerifyDecl = 1;
 }

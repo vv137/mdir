@@ -92,11 +92,22 @@ LogicalResult mdir::md::verifyReferencePrecision(Operation *op,
 LogicalResult
 RelationType::verify(function_ref<InFlightDiagnostic()> emitError,
                      FlatSymbolRefAttr particleSet, unsigned arity,
-                     Orientation orientation) {
+                     Orientation orientation, FlatSymbolRefAttr tupleSet) {
   if (!particleSet)
     return emitError() << "expected a particle set";
-  if (arity < 2)
-    return emitError() << "expected an arity of at least 2, got " << arity;
+  // A tuple of a tuple set may have one member, as a restraint of a
+  // particle has.
+  unsigned least = tupleSet ? 1 : 2;
+  if (arity < least)
+    return emitError() << "expected an arity of at least " << least
+                       << ", got " << arity;
+  if (orientation == Orientation::Unordered && arity != 2)
+    return emitError() << "expected the orientation 'unordered' with the "
+                          "arity 2 only, got the arity "
+                       << arity;
+  if (orientation == Orientation::Reversal && arity < 2)
+    return emitError() << "expected the orientation 'reversal' with an "
+                          "arity of at least 2";
   return success();
 }
 
