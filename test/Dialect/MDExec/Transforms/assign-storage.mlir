@@ -76,7 +76,7 @@ func.func @sum(%v: !vec) -> f64 {
 // CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64>, %[[CELL:[a-z0-9]+]]: !md.cell)
 func.func @forces(%x: !vec, %cell: !md.cell) -> (!vec, f64) {
   // CHECK:      %[[N:[a-z0-9_]+]] = memref.dim %[[X]],
-  // CHECK:      %[[STORAGE:[0-9]+]] = md_exec.empty_neighbors size(%[[N]]) element(f64) kind(matrix) width(48) : !mdrt.neighbors<@atoms>
+  // CHECK:      %[[STORAGE:[0-9]+]] = md_exec.empty_neighbors size(%[[N]]) positions(memref<?x3xf64>) kind(matrix) width(48) : !mdrt.neighbors<@atoms>
   // CHECK:      %[[NL:[0-9]+]] = md_exec.refresh_neighbors %[[STORAGE]], %[[X]], %[[CELL]]
   // CHECK-SAME:   cutoff(1.500000e+00) skin(2.500000e-01) cell_width(1.750000e+00) policy(always)
   // CHECK-SAME:   : !mdrt.neighbors<@atoms>, memref<?x3xf64>
@@ -131,7 +131,7 @@ func.func @steps(%x: !vec, %v: !vec, %cell: !md.cell, %dt: f64, %n: index)
   %c1 = arith.constant 1 : index
   %nl0 = md_exec.empty_neighbors kind(matrix) width(48)
       : !mdrt.neighbors<@atoms>
-  // CHECK-DAG:  %[[STORAGE:[0-9]+]] = md_exec.empty_neighbors size(%{{[a-z0-9_]+}}) element(f64) kind(matrix) width(48)
+  // CHECK-DAG:  %[[STORAGE:[0-9]+]] = md_exec.empty_neighbors size(%{{[a-z0-9_]+}}) positions(memref<?x3xf64>) kind(matrix) width(48)
   // CHECK-DAG:  %[[SPARE:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?x3xf64>
   // CHECK:      %[[LOOP:[0-9]+]]:3 = scf.for %{{[a-z0-9]+}} = %{{[a-z0-9_]+}} to %[[N]] step %{{[a-z0-9_]+}}
   // CHECK-SAME:   iter_args(%[[XA:[a-z0-9]+]] = %[[X]], %[[VA:[a-z0-9]+]] = %[[V]], %[[SA:[a-z0-9]+]] = %[[SPARE]])
@@ -214,7 +214,7 @@ func.func @segments(%x: !vec, %cell: !md.cell, %segments: index,
                     %steps: index) -> !vec {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
-  // CHECK:      %[[STORAGE:[0-9]+]] = md_exec.empty_neighbors size(%{{[a-z0-9_]+}}) element(f64)
+  // CHECK:      %[[STORAGE:[0-9]+]] = md_exec.empty_neighbors size(%{{[a-z0-9_]+}}) positions(memref<?x3xf64>)
   // CHECK:      scf.for
   // CHECK-NEXT:   md_exec.reset_neighbors %[[STORAGE]] : !mdrt.neighbors<@atoms>
   // CHECK-NEXT:   scf.for

@@ -181,11 +181,22 @@ def AssignStorage : Pass<"md-exec-assign-storage", "::mlir::ModuleOp"> {
 
     A neighbor structure gets storage, which is refreshed where it is.
 
-    Everything that depends on where a field is stored, such as its layout
-    or the device that holds it, is decided on the result of this pass.
+    With `memory=device` the buffers are on a device, and their types have
+    a memory space. `mdrt.from_buffer` copies a field to the device and
+    `mdrt.to_buffer` copies it back. Loops with global sums, and refreshes
+    that test validity, get the buffers they need for themselves from the
+    pool, as `scratch`; the lowering to a device does not allocate.
+
+    Everything else that depends on where a field is stored, such as its
+    layout, is decided on the result of this pass.
   }];
+  let options = [
+    Option<"memory", "memory", "std::string", /*default=*/"\"host\"",
+           "Where the buffers are: host or device">
+  ];
   let dependentDialects = ["::mdir::md_exec::MDExecDialect",
                            "::mlir::arith::ArithDialect",
+                           "::mlir::gpu::GPUDialect",
                            "::mlir::memref::MemRefDialect"];
 }
 

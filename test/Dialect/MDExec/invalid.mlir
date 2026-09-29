@@ -257,8 +257,8 @@ func.func @f(%nl: !mdrt.neighbors<@atoms>, %x: !md.field<@atoms, 3 x f64>,
 md.particle_set @atoms
 
 func.func @f(%n: index) {
-  // expected-error@+1 {{expected the element type f32 or f64, got 'i32'}}
-  %nl = md_exec.empty_neighbors size(%n) element(i32)
+  // expected-error@+1 {{expected the type of a buffer that holds positions, got 'memref<?xi32>'}}
+  %nl = md_exec.empty_neighbors size(%n) positions(memref<?xi32>)
       kind(matrix) width(48) : !mdrt.neighbors<@atoms>
   return
 }

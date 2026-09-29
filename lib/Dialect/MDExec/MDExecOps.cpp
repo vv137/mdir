@@ -89,6 +89,30 @@ static LogicalResult verifyPositions(Operation *op, Value positions,
   return success();
 }
 
+/// Verifies the buffers in `scratch`: none, or `perValue` for each of the
+/// `types`, with one value of that type per particle.
+static LogicalResult verifyScratch(Operation *op, bool isStorage,
+                                   ValueRange scratch, ArrayRef<Type> types,
+                                   unsigned perValue) {
+  if (scratch.empty())
+    return success();
+  if (!isStorage)
+    return op->emitOpError() << "'scratch' belongs to the storage form";
+  if (scratch.size() != perValue * types.size())
+    return op->emitOpError()
+           << "expected no buffers in 'scratch' or "
+           << perValue * types.size() << ", got " << scratch.size();
+  for (unsigned i = 0, e = scratch.size(); i != e; ++i) {
+    auto buffer = cast<MemRefType>(scratch[i].getType());
+    Type expected = types[i / perValue];
+    if (buffer.getRank() != 1 || buffer.getElementType() != expected)
+      return op->emitOpError()
+             << "expected buffer " << i << " in 'scratch' to hold one "
+             << expected << " per particle, got " << buffer;
+  }
+  return success();
+}
+
 //===----------------------------------------------------------------------===//
 // Spatial structures
 //===----------------------------------------------------------------------===//
@@ -161,11 +185,12 @@ LogicalResult BuildNeighborsOp::verify() {
 LogicalResult EmptyNeighborsOp::verify() {
   if (getWidth() <= 0)
     return emitOpError() << "expected a positive width, got " << getWidth();
-  if (static_cast<bool>(getSize()) != static_cast<bool>(getElement()))
-    return emitOpError() << "expected 'size' and 'element' together";
-  if (getElement() && !isReal(*getElement()))
-    return emitOpError() << "expected the element type f32 or f64, got "
-                         << *getElement();
+  if (static_cast<bool>(getSize()) != static_cast<bool>(getPositions()))
+    return emitOpError() << "expected 'size' and 'positions' together";
+  if (getPositions() && !isPositionType(*getPositions()))
+    return emitOpError() << "expected the type of a buffer that holds "
+                            "positions, got "
+                         << *getPositions();
   return success();
 }
 
@@ -187,6 +212,8 @@ void RefreshNeighborsOp::getEffects(
   addEffect<MemoryEffects::Read>(effects, getNeighborsMutable());
   addEffect<MemoryEffects::Write>(effects, getNeighborsMutable());
   addEffect<MemoryEffects::Read>(effects, getPositionsMutable());
+  for (OpOperand &operand : getScratchMutable())
+    addEffect<MemoryEffects::Write>(effects, operand);
 }
 
 LogicalResult RefreshNeighborsOp::verify() {
@@ -208,7 +235,13 @@ LogicalResult RefreshNeighborsOp::verify() {
            << "the cells are " << width
            << " wide, which is less than the cutoff plus the skin, "
            << cutoff + skin;
-  return success();
+
+  Type real = isStorageForm()
+                  ? cast<MemRefType>(getPositions().getType())
+                        .getElementType()
+                  : Type();
+  return verifyScratch(getOperation(), isStorageForm(), getScratch(), {real},
+                       2);
 }
 
 //===----------------------------------------------------------------------===//
@@ -239,6 +272,13 @@ static LogicalResult verifyLoop(OpTy op, FlatSymbolRefAttr particleSet) {
   if (op.getOuts().empty() && op.getReduce().empty())
     return op.emitOpError()
            << "expected at least 1 field in 'outs' or value in 'reduce'";
+
+  SmallVector<Type> sums;
+  for (Value value : op.getReduce())
+    sums.push_back(value.getType());
+  if (failed(verifyScratch(op.getOperation(), isStorage, op.getScratch(),
+                           sums, 2)))
+    return failure();
 
   // Results: one per field in `outs`, then one per value in `reduce`. A
   // buffer in `outs` is updated where it is and has no result.
@@ -279,6 +319,8 @@ static void getLoopEffects(
       addEffect<MemoryEffects::Read>(effects, operand);
     addEffect<MemoryEffects::Write>(effects, operand);
   }
+  for (OpOperand &operand : op.getScratchMutable())
+    addEffect<MemoryEffects::Write>(effects, operand);
 }
 
 /// Verifies the kernel of a loop.

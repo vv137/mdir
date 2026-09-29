@@ -14,6 +14,7 @@
 #include "mdir/Dialect/MDRT/MDRTOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
@@ -39,6 +40,9 @@ namespace {
 struct Scope {
   Scope(Scope *parent, MLIRContext *context)
       : parent(parent), builder(context) {}
+
+  /// The scope of the body of the function.
+  Scope &getRoot() { return parent ? parent->getRoot() : *this; }
 
   bool owns(Value buffer) const { return owned.contains(buffer); }
 
@@ -74,8 +78,8 @@ struct Scope {
 
 class Assignment {
 public:
-  explicit Assignment(ModuleOp module)
-      : module(module), context(module.getContext()) {}
+  Assignment(ModuleOp module, bool onDevice)
+      : module(module), context(module.getContext()), onDevice(onDevice) {}
 
   LogicalResult run();
 
@@ -108,6 +112,21 @@ private:
   /// the kernel `source`.
   void copyKernel(Operation *loop, Block &source);
 
+  /// The type of the buffer that holds a field of the type `field`: on the
+  /// host, or on the device, where the type has a memory space.
+  MemRefType getStorageType(Type field);
+
+  /// Copies what `source` holds to `destination`. One of the two is on the
+  /// device.
+  void createTransfer(OpBuilder &builder, Location loc, Value destination,
+                      Value source);
+
+  /// The buffers that a loop with the global sums `sums`, or a test with a
+  /// global maximum of the type of `sums`, needs for itself on a device.
+  /// `field` is the type of a field of the particle set.
+  LogicalResult getScratch(Operation *op, ArrayRef<Type> sums, Type field,
+                           Scope &scope, SmallVectorImpl<Value> &scratch);
+
   /// The buffer that holds the field `field`.
   LogicalResult getBuffer(Value field, Scope &scope, Value &buffer);
 
@@ -128,6 +147,11 @@ private:
 
   ModuleOp module;
   MLIRContext *context;
+  bool onDevice;
+
+  /// Host buffers that the program was given and has copied to the device.
+  /// They take what is copied back.
+  llvm::MapVector<Type, SmallVector<Value, 2>> hostBuffers;
 
   /// Values other than fields: the value in the new code.
   IRMapping mapping;
@@ -192,6 +216,12 @@ Value Scope::request(MemRefType type, Value size, Location loc) {
     extraInits.push_back(parent->request(type, size, loc));
     buffer = body->addArgument(type, loc);
     extraArguments.push_back(buffer);
+  } else if (type.getMemorySpace()) {
+    buffer = gpu::AllocOp::create(builder, loc, type, /*asyncToken=*/Type(),
+                                  /*asyncDependencies=*/ValueRange(),
+                                  ValueRange{size},
+                                  /*symbolOperands=*/ValueRange())
+                 .getMemref();
   } else {
     buffer = memref::AllocOp::create(builder, loc, type, ValueRange{size});
   }
@@ -202,6 +232,51 @@ Value Scope::request(MemRefType type, Value size, Location loc) {
 //===----------------------------------------------------------------------===//
 // Buffers
 //===----------------------------------------------------------------------===//
+
+/// The memory space of the buffers on the device.
+static const int64_t deviceSpace = 1;
+
+MemRefType Assignment::getStorageType(Type field) {
+  MemRefType host = mdrt::getBufferType(cast<md::FieldType>(field));
+  if (!onDevice)
+    return host;
+  return MemRefType::get(
+      host.getShape(), host.getElementType(), MemRefLayoutAttrInterface(),
+      IntegerAttr::get(IntegerType::get(context, 64), deviceSpace));
+}
+
+void Assignment::createTransfer(OpBuilder &builder, Location loc,
+                                Value destination, Value source) {
+  Type token = gpu::AsyncTokenType::get(context);
+  Value begin =
+      gpu::WaitOp::create(builder, loc, token, ValueRange()).getAsyncToken();
+  Value copied = gpu::MemcpyOp::create(builder, loc, token,
+                                       ValueRange{begin}, destination, source)
+                     .getAsyncToken();
+  gpu::WaitOp::create(builder, loc, Type(), ValueRange{copied});
+}
+
+LogicalResult Assignment::getScratch(Operation *op, ArrayRef<Type> sums,
+                                     Type field, Scope &scope,
+                                     SmallVectorImpl<Value> &scratch) {
+  if (!onDevice || sums.empty())
+    return success();
+  Value size;
+  if (failed(getSize(op, field, size)))
+    return failure();
+  for (Type sum : sums) {
+    if (!isa<FloatType>(sum))
+      return op->emitOpError()
+             << "has a global sum of the type " << sum
+             << "; on a device only sums of single numbers are supported";
+    MemRefType type = MemRefType::get(
+        {ShapedType::kDynamic}, sum, MemRefLayoutAttrInterface(),
+        IntegerAttr::get(IntegerType::get(context, 64), deviceSpace));
+    scratch.push_back(scope.request(type, size, op->getLoc()));
+    scratch.push_back(scope.request(type, size, op->getLoc()));
+  }
+  return success();
+}
 
 void Assignment::bind(Value field, Value buffer, Scope &scope) {
   buffers[field] = buffer;
@@ -239,14 +314,15 @@ LogicalResult Assignment::getBuffer(Value field, Scope &scope,
   if (failed(getSize(op, field.getType(), size)))
     return failure();
   auto fieldType = cast<md::FieldType>(field.getType());
-  buffer = scope.request(mdrt::getBufferType(fieldType), size, op->getLoc());
+  buffer = scope.request(getStorageType(fieldType), size, op->getLoc());
   buffers[field] = buffer;
 
   if (isa<ZerosOp>(op)) {
     OpBuilder &builder = scope.builder;
     Location loc = op->getLoc();
     auto fill = ParticleForOp::create(builder, loc, TypeRange(), ValueRange(),
-                                      ValueRange{buffer}, ValueRange());
+                                      ValueRange{buffer}, ValueRange(),
+                                      /*scratch=*/ValueRange());
     Block *block = new Block();
     fill.getKernel().push_back(block);
     OpBuilder kernel = OpBuilder::atBlockEnd(block);
@@ -280,10 +356,10 @@ LogicalResult Assignment::getNeighbors(Operation *op, Value structure,
 
   // The storage outlives the iterations of any loop around the structure,
   // so it is allocated in the body of the function.
-  Type element = cast<md::FieldType>(positions).getElementType();
   storage = EmptyNeighborsOp::create(
       root->builder, empty.getLoc(), structure.getType(), size,
-      TypeAttr::get(element), empty.getKindAttr(), empty.getWidthAttr());
+      TypeAttr::get(getStorageType(positions)), empty.getKindAttr(),
+      empty.getWidthAttr());
   // Inside a loop, every iteration begins with an empty structure.
   if (&scope != root)
     ResetNeighborsOp::create(scope.builder, empty.getLoc(), storage);
@@ -302,8 +378,7 @@ LogicalResult Assignment::chooseDestination(Operation *op, Value destination,
   Operation *definition = destination.getDefiningOp();
   bool isEmpty = definition && isa<EmptyOp>(definition);
   bool isZeros = definition && isa<ZerosOp>(definition);
-  MemRefType type =
-      mdrt::getBufferType(cast<md::FieldType>(destination.getType()));
+  MemRefType type = getStorageType(destination.getType());
 
   // A destination that holds a field: the loop continues in its buffer.
   if (buffers.count(destination) || (!isEmpty && !isZeros)) {
@@ -393,9 +468,17 @@ LogicalResult Assignment::convertParticleFor(ParticleForOp op, Scope &scope,
     resultTypes.push_back(value.getType());
   }
 
+  Type anyField = op.getIns().empty() ? op.getOuts().front().getType()
+                                      : op.getIns().front().getType();
+  SmallVector<Value> scratch;
+  if (failed(getScratch(op, resultTypes, anyField, scope, scratch)))
+    return failure();
+
   auto loop = ParticleForOp::create(scope.builder, op.getLoc(), resultTypes,
-                                    ins, outs, reduce);
+                                    ins, outs, reduce, scratch);
   copyKernel(loop, op.getKernel().front());
+  for (Value buffer : scratch)
+    scope.release(buffer);
 
   unsigned numOuts = outs.size();
   for (unsigned i = 0; i != numOuts; ++i) {
@@ -456,12 +539,19 @@ LogicalResult Assignment::convertPairFor(PairForOp op, Scope &scope,
   if (llvm::is_contained(overwrite, true))
     overwriteAttr = builder.getDenseBoolArrayAttr(overwrite);
 
+  SmallVector<Value> scratch;
+  if (failed(getScratch(op, resultTypes, op.getPositions().getType(), scope,
+                        scratch)))
+    return failure();
+
   auto loop = PairForOp::create(
       builder, op.getLoc(), resultTypes, storage, positions,
-      mapping.lookup(op.getCell()), ins, outs, reduce, op.getCutoffAttr(),
-      op.getWeightsAttr(), overwriteAttr, op.getTraversalAttr(),
-      op.getConflictAttr());
+      mapping.lookup(op.getCell()), ins, outs, reduce, scratch,
+      op.getCutoffAttr(), op.getWeightsAttr(), overwriteAttr,
+      op.getTraversalAttr(), op.getConflictAttr());
   copyKernel(loop, op.getKernel().front());
+  for (Value buffer : scratch)
+    scope.release(buffer);
 
   unsigned numOuts = outs.size();
   for (unsigned i = 0; i != numOuts; ++i) {
@@ -494,17 +584,16 @@ LogicalResult Assignment::convertBuildNeighbors(BuildNeighborsOp op,
 
   // Storage, and a refresh that builds whatever the storage holds. The
   // count of builds is that of a structure that was built once.
-  Type element =
-      cast<md::FieldType>(op.getPositions().getType()).getElementType();
   Value storage = EmptyNeighborsOp::create(
       root->builder, loc, op.getResult().getType(), size,
-      TypeAttr::get(element), op.getKindAttr(), op.getWidthAttr());
+      TypeAttr::get(getStorageType(op.getPositions().getType())),
+      op.getKindAttr(), op.getWidthAttr());
   if (&scope != root)
     ResetNeighborsOp::create(scope.builder, loc, storage);
   auto refresh = RefreshNeighborsOp::create(
       scope.builder, loc, storage.getType(), storage, positions,
-      mapping.lookup(op.getCell()), op.getCutoffAttr(), op.getSkinAttr(),
-      cells.getWidthAttr());
+      mapping.lookup(op.getCell()), /*scratch=*/ValueRange(),
+      op.getCutoffAttr(), op.getSkinAttr(), cells.getWidthAttr());
   refresh.setPolicy(RebuildPolicy::Always);
   neighbors[op.getResult()] = refresh.getResult();
   return success();
@@ -530,11 +619,22 @@ LogicalResult Assignment::convertRefreshNeighbors(RefreshNeighborsOp op,
   if (failed(getBuffer(op.getPositions(), scope, positions)))
     return failure();
 
+  // The test of validity is a global maximum.
+  SmallVector<Value> scratch;
+  if (op.getPolicy() == RebuildPolicy::Check) {
+    auto field = cast<md::FieldType>(op.getPositions().getType());
+    if (failed(getScratch(op, {field.getElementType()}, field, scope,
+                          scratch)))
+      return failure();
+  }
+
   auto refresh = RefreshNeighborsOp::create(
       scope.builder, op.getLoc(), storage.getType(), storage, positions,
-      mapping.lookup(op.getCell()), op.getCutoffAttr(), op.getSkinAttr(),
-      op.getCellWidthAttr(), op.getPolicyAttr());
+      mapping.lookup(op.getCell()), scratch, op.getCutoffAttr(),
+      op.getSkinAttr(), op.getCellWidthAttr(), op.getPolicyAttr());
   neighbors[op.getResult()] = refresh.getResult();
+  for (Value buffer : scratch)
+    scope.release(buffer);
   return success();
 }
 
@@ -720,8 +820,25 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
                            from.getBuffer().getType())))
       return failure();
     Value buffer = mapping.lookup(from.getBuffer());
-    bind(from.getResult(), buffer, scope);
-    scope.owned.insert(buffer);
+    if (!onDevice) {
+      bind(from.getResult(), buffer, scope);
+      scope.owned.insert(buffer);
+      return success();
+    }
+
+    // The field is copied to the device. The buffer on the host is free to
+    // take what is copied back.
+    Type field = from.getResult().getType();
+    Attribute set = getParticleSet(field);
+    if (!sizes.count(set))
+      sizes[set] = memref::DimOp::create(
+          builder, op->getLoc(), buffer,
+          arith::ConstantIndexOp::create(builder, op->getLoc(), 0));
+    Value device =
+        scope.request(getStorageType(field), sizes[set], op->getLoc());
+    createTransfer(builder, op->getLoc(), device, buffer);
+    buffers[from.getResult()] = device;
+    hostBuffers[buffer.getType()].push_back(buffer);
     return success();
   }
   if (auto to = dyn_cast<mdrt::ToBufferOp>(op)) {
@@ -731,9 +848,30 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     Value buffer;
     if (failed(getBuffer(to.getField(), scope, buffer)))
       return failure();
-    // The buffer is visible outside from here on. Leave it alone.
-    scope.owned.erase(buffer);
-    mapping.map(to.getResult(), buffer);
+    if (!onDevice) {
+      // The buffer is visible outside from here on. Leave it alone.
+      scope.owned.erase(buffer);
+      mapping.map(to.getResult(), buffer);
+      return success();
+    }
+
+    // The field is copied to the host and stays on the device. The buffer
+    // on the host is visible outside from here on.
+    Type type = to.getResult().getType();
+    SmallVector<Value, 2> &available = hostBuffers[type];
+    Value host;
+    if (&scope == root && !available.empty()) {
+      host = available.pop_back_val();
+    } else {
+      Value size;
+      if (failed(getSize(op, to.getField().getType(), size)))
+        return failure();
+      host = memref::AllocOp::create(builder, op->getLoc(),
+                                     cast<MemRefType>(type),
+                                     ValueRange{size});
+    }
+    createTransfer(builder, op->getLoc(), host, buffer);
+    mapping.map(to.getResult(), host);
     return success();
   }
 
@@ -862,9 +1000,9 @@ static bool usesFields(func::FuncOp function) {
 
 LogicalResult Assignment::convertFunction(func::FuncOp function) {
   FunctionType type = function.getFunctionType();
-  auto convertType = [](Type type) -> Type {
-    if (auto field = dyn_cast<md::FieldType>(type))
-      return mdrt::getBufferType(field);
+  auto convertType = [&](Type type) -> Type {
+    if (isa<md::FieldType>(type))
+      return getStorageType(type);
     return type;
   };
   SmallVector<Type> inputs, results;
@@ -899,6 +1037,7 @@ LogicalResult Assignment::convertFunction(func::FuncOp function) {
     scope.builder.setInsertionPointToEnd(entry);
 
     sizes.clear();
+    hostBuffers.clear();
     Block &oldEntry = function.getBody().front();
     for (unsigned i = 0, e = oldEntry.getNumArguments(); i != e; ++i) {
       Value oldArgument = oldEntry.getArgument(i);
@@ -943,7 +1082,12 @@ public:
   using impl::AssignStorageBase<AssignStorage>::AssignStorageBase;
 
   void runOnOperation() final {
-    if (failed(Assignment(getOperation()).run()))
+    if (memory != "host" && memory != "device") {
+      getOperation()->emitError()
+          << "expected the memory 'host' or 'device', got '" << memory << "'";
+      return signalPassFailure();
+    }
+    if (failed(Assignment(getOperation(), memory == "device").run()))
       signalPassFailure();
   }
 };

@@ -187,8 +187,8 @@ func.func @stored_in_single(%buffer: memref<?x3xf32>) -> memref<?x3xf32> {
 // CHECK-LABEL: func.func @storage(
 func.func @storage(%x: memref<?x3xf32>, %v: memref<?x3xf32>,
                    %f: memref<?x3xf32>, %cell: !md.cell, %n: index) -> f64 {
-  // CHECK: %[[NL0:[0-9]+]] = md_exec.empty_neighbors size(%{{[a-z0-9]+}}) element(f32) kind(matrix) width(96) : !mdrt.neighbors<@atoms>
-  %nl0 = md_exec.empty_neighbors size(%n) element(f32)
+  // CHECK: %[[NL0:[0-9]+]] = md_exec.empty_neighbors size(%{{[a-z0-9]+}}) positions(memref<?x3xf32>) kind(matrix) width(96) : !mdrt.neighbors<@atoms>
+  %nl0 = md_exec.empty_neighbors size(%n) positions(memref<?x3xf32>)
       kind(matrix) width(96) : !mdrt.neighbors<@atoms>
 
   // CHECK: %[[NL:[0-9]+]] = md_exec.refresh_neighbors %[[NL0]], %{{[a-z0-9]+}}, %{{[a-z0-9]+}}

@@ -101,8 +101,8 @@ func.func @forces(%x: !vec, %cell: !md.cell) -> !vec {
   // does not read the buffer.
   //
   // CHECK:      %[[OUT:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?x3xf64>
-  // CHECK:      %[[CUTOFF2:[a-z0-9_]+]] = arith.constant 2.250000e+00 : f64
   // CHECK:      scf.parallel (%[[I:[a-z0-9]+]]) =
+  // CHECK:        %[[CUTOFF2:[a-z0-9_]+]] = arith.constant 2.250000e+00 : f64
   // CHECK:        memref.load %[[COUNTS]][%[[I]]]
   // CHECK:        scf.for %[[K:[a-z0-9]+]] =
   // CHECK:          memref.load %[[INDEX]][%[[I]], %[[K]]]

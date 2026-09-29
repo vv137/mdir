@@ -139,7 +139,7 @@ LogicalResult Converter::convertPairOp(OpTy op, bool isSum) {
 
   auto loop = md_exec::PairForOp::create(
       builder, loc, TypeRange(resultType), structure, op.getPositions(),
-      op.getCell(), op.getGathered(), outs, reduce,
+      op.getCell(), op.getGathered(), outs, reduce, /*scratch=*/ValueRange(),
       builder.getF64FloatAttr(cutoff), weights,
       /*overwrite=*/DenseBoolArrayAttr());
 
@@ -183,7 +183,8 @@ LogicalResult Converter::convertParticleOp(OpTy op, bool isSum) {
     outs.push_back(md_exec::EmptyOp::create(builder, loc, resultType));
 
   auto loop = md_exec::ParticleForOp::create(
-      builder, loc, TypeRange(resultType), op.getGathered(), outs, reduce);
+      builder, loc, TypeRange(resultType), op.getGathered(), outs, reduce,
+      /*scratch=*/ValueRange());
 
   Block &source = op.getKernel().front();
   SmallVector<Type> arguments;
@@ -214,7 +215,8 @@ LogicalResult Converter::convertKick(dyn::KickOp op) {
   auto loop = md_exec::ParticleForOp::create(
       builder, loc, TypeRange(field),
       ValueRange{op.getVelocities(), op.getForces(), op.getMasses()},
-      ValueRange{destination}, ValueRange{});
+      ValueRange{destination}, /*reduce=*/ValueRange(),
+      /*scratch=*/ValueRange());
 
   Block *block = addKernel(loop, {vector, vector, real});
   OpBuilder kernel = OpBuilder::atBlockEnd(block);
@@ -244,7 +246,8 @@ LogicalResult Converter::convertDrift(dyn::DriftOp op) {
   auto loop = md_exec::ParticleForOp::create(
       builder, loc, TypeRange(field),
       ValueRange{op.getPositions(), op.getVelocities()},
-      ValueRange{destination}, ValueRange{});
+      ValueRange{destination}, /*reduce=*/ValueRange(),
+      /*scratch=*/ValueRange());
 
   Block *block = addKernel(loop, {vector, vector});
   OpBuilder kernel = OpBuilder::atBlockEnd(block);

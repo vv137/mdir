@@ -26,8 +26,8 @@ func.func @mixed(%x: !positions, %cell: !md.cell) -> (!forces, f64) {
       : !mdrt.cells<@atoms>, !positions -> !mdrt.neighbors<@atoms>
 
   // CHECK:      %[[F:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?x3xf32>
-  // CHECK:      %[[CUTOFF2:[a-z0-9_]+]] = arith.constant 6.250000e+00 : f64
   // CHECK:      scf.parallel
+  // CHECK:        %[[CUTOFF2:[a-z0-9_]+]] = arith.constant 6.250000e+00 : f64
   // CHECK:        scf.for
   // CHECK:          %[[RAW:[0-9]+]] = arith.subf %{{[0-9]+}}, %{{[0-9]+}} : vector<3xf64>
   // CHECK:          %[[D:[0-9]+]] = arith.subf %[[RAW]], %{{[0-9]+}} : vector<3xf64>

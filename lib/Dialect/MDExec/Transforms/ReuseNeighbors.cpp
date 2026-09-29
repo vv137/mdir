@@ -34,7 +34,8 @@ static scf::ForOp reuseNeighbors(scf::ForOp loop) {
   for (BuildNeighborsOp build : builds)
     inits.push_back(EmptyNeighborsOp::create(
         builder, build.getLoc(), build.getResult().getType(), /*size=*/Value(),
-        /*element=*/TypeAttr(), build.getKindAttr(), build.getWidthAttr()));
+        /*positions=*/TypeAttr(), build.getKindAttr(),
+        build.getWidthAttr()));
 
   OperationState state(loc, scf::ForOp::getOperationName());
   state.addOperands(
@@ -58,7 +59,8 @@ static scf::ForOp reuseNeighbors(scf::ForOp loop) {
     OpBuilder inner(build);
     Value refreshed = RefreshNeighborsOp::create(
         inner, build.getLoc(), carried.getType(), carried,
-        build.getPositions(), build.getCell(), build.getCutoffAttr(),
+        build.getPositions(), build.getCell(), /*scratch=*/ValueRange(),
+        build.getCutoffAttr(),
         build.getSkinAttr(), cells.getWidthAttr());
     build.getResult().replaceAllUsesWith(refreshed);
     build.erase();

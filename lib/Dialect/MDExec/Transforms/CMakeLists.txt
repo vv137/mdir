@@ -17,6 +17,7 @@ add_mlir_dialect_library(MDIRMDExecTransforms
   MDIRMDRT
   MLIRArithDialect
   MLIRFuncDialect
+  MLIRGPUDialect
   MLIRIR
   MLIRMathDialect
   MLIRMemRefDialect

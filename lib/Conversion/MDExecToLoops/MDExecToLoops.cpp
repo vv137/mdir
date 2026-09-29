@@ -5,6 +5,7 @@
 
 #include "mdir/Conversion/Passes.h"
 
+#include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
@@ -25,6 +26,7 @@
 
 using namespace mlir;
 using namespace mdir;
+using namespace mdir::kernels;
 
 namespace mdir {
 /// The text of the template that builds a neighbor matrix.
@@ -78,26 +80,6 @@ private:
                           const Neighbors &structure, Value positions,
                           Value box, double reach, double cellWidth);
 
-  /// `value`, a floating-point value or a vector of them, converted to the
-  /// floating-point type `real`.
-  Value convertReal(OpBuilder &builder, Location loc, Value value, Type real);
-  Value createReal(OpBuilder &builder, Location loc, Type real,
-                   double value) {
-    return arith::ConstantOp::create(builder, loc, real,
-                                     builder.getFloatAttr(real, value));
-  }
-
-  Value loadElement(OpBuilder &builder, Location loc, Value buffer,
-                    Value particle);
-  void storeElement(OpBuilder &builder, Location loc, Value value,
-                    Value buffer, Value particle);
-  Value createIndex(OpBuilder &builder, Location loc, int64_t value) {
-    return arith::ConstantIndexOp::create(builder, loc, value);
-  }
-  Value createZero(OpBuilder &builder, Location loc, Type type) {
-    return arith::ConstantOp::create(
-        builder, loc, type, cast<TypedAttr>(builder.getZeroAttr(type)));
-  }
   /// The number of particles that `buffer` holds a field of.
   Value createSize(OpBuilder &builder, Location loc, Value buffer) {
     return memref::DimOp::create(builder, loc, buffer,
@@ -126,40 +108,8 @@ private:
 } // namespace
 
 //===----------------------------------------------------------------------===//
-// Elements
+// Reductions
 //===----------------------------------------------------------------------===//
-
-Value Lowering::loadElement(OpBuilder &builder, Location loc, Value buffer,
-                            Value particle) {
-  auto type = cast<MemRefType>(buffer.getType());
-  if (type.getRank() == 1)
-    return memref::LoadOp::create(builder, loc, buffer, ValueRange{particle});
-
-  int64_t components = type.getDimSize(1);
-  SmallVector<Value, 3> elements;
-  for (int64_t c = 0; c < components; ++c)
-    elements.push_back(memref::LoadOp::create(
-        builder, loc, buffer,
-        ValueRange{particle, createIndex(builder, loc, c)}));
-  return vector::FromElementsOp::create(
-      builder, loc, VectorType::get({components}, type.getElementType()),
-      elements);
-}
-
-void Lowering::storeElement(OpBuilder &builder, Location loc, Value value,
-                            Value buffer, Value particle) {
-  auto type = cast<MemRefType>(buffer.getType());
-  if (type.getRank() == 1) {
-    memref::StoreOp::create(builder, loc, value, buffer,
-                            ValueRange{particle});
-    return;
-  }
-  for (int64_t c = 0, e = type.getDimSize(1); c < e; ++c) {
-    Value element = vector::ExtractOp::create(builder, loc, value, c);
-    memref::StoreOp::create(builder, loc, element, buffer,
-                            ValueRange{particle, createIndex(builder, loc, c)});
-  }
-}
 
 void Lowering::createReduction(OpBuilder &builder, Location loc,
                                ArrayRef<Value> values, bool isSum) {
@@ -184,20 +134,6 @@ void Lowering::createReduction(OpBuilder &builder, Location loc,
   }
 }
 
-Value Lowering::convertReal(OpBuilder &builder, Location loc, Value value,
-                            Type real) {
-  Type source = value.getType();
-  Type target = real;
-  if (auto vector = dyn_cast<VectorType>(source))
-    target = VectorType::get(vector.getShape(), real);
-  if (source == target)
-    return value;
-  if (getElementTypeOrSelf(source).getIntOrFloatBitWidth() <
-      real.getIntOrFloatBitWidth())
-    return arith::ExtFOp::create(builder, loc, target, value);
-  return arith::TruncFOp::create(builder, loc, target, value);
-}
-
 //===----------------------------------------------------------------------===//
 // Loops over particles
 //===----------------------------------------------------------------------===//
@@ -206,37 +142,19 @@ void Lowering::lowerParticleFor(md_exec::ParticleForOp op) {
   Location loc = op.getLoc();
   OpBuilder builder(op);
 
-  SmallVector<Value> ins(op.getIns().begin(), op.getIns().end());
-  SmallVector<Value> outs(op.getOuts().begin(), op.getOuts().end());
   SmallVector<Value> inits(op.getReduce().begin(), op.getReduce().end());
-  Value size = createSize(builder, loc, ins.empty() ? outs.front()
-                                                     : ins.front());
+  Value size = createSize(builder, loc, op.getIns().empty()
+                                            ? op.getOuts().front()
+                                            : op.getIns().front());
 
-  Block &kernel = op.getKernel().front();
   Value zero = createIndex(builder, loc, 0);
   Value one = createIndex(builder, loc, 1);
   auto loop = scf::ParallelOp::create(
       builder, loc, ValueRange{zero}, ValueRange{size}, ValueRange{one},
       inits, [&](OpBuilder &body, Location, ValueRange ivs, ValueRange) {
-        Value particle = ivs[0];
         IRMapping local;
-        for (unsigned i = 0, e = ins.size(); i != e; ++i)
-          local.map(kernel.getArgument(i),
-                    loadElement(body, loc, ins[i], particle));
-        for (Operation &nested : kernel.without_terminator())
-          body.clone(nested, local);
-
-        Operation *yield = kernel.getTerminator();
-        unsigned numOuts = outs.size();
-        for (unsigned i = 0; i != numOuts; ++i)
-          storeElement(body, loc,
-                       local.lookupOrDefault(yield->getOperand(i)), outs[i],
-                       particle);
-
-        SmallVector<Value> contributions;
-        for (unsigned i = numOuts, e = yield->getNumOperands(); i != e; ++i)
-          contributions.push_back(
-              local.lookupOrDefault(yield->getOperand(i)));
+        SmallVector<Value> contributions =
+            emitParticleKernel(body, op, ivs[0], local);
         if (!contributions.empty())
           createReduction(body, loc, contributions, /*isSum=*/true);
       });
@@ -258,130 +176,21 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
     return failure();
 
   Value positions = op.getPositions();
-  // The cell has become the vector of its edge lengths.
-  Value box = op.getCellMutable().get();
-  SmallVector<Value> ins(op.getIns().begin(), op.getIns().end());
-  SmallVector<Value> outs(op.getOuts().begin(), op.getOuts().end());
   SmallVector<Value> inits(op.getReduce().begin(), op.getReduce().end());
   Value size = createSize(builder, loc, positions);
 
-  double cutoff = op.getCutoff().convertToDouble();
-  Block &kernel = op.getKernel().front();
-  Operation *yield = kernel.getTerminator();
-  unsigned numOuts = outs.size();
-  unsigned numYields = yield->getNumOperands();
-
-  // The displacement is computed in the type of the positions and then
-  // converted to the type that the kernel computes in: the subtraction is
-  // the step that loses precision.
+  // The cell has become the vector of its edge lengths.
   Type real = cast<MemRefType>(positions.getType()).getElementType();
-  Type computed = kernel.getArgument(0).getType();
-  box = convertReal(builder, loc, box, real);
+  Value box = convertReal(builder, loc, op.getCellMutable().get(), real);
+
   Value zero = createIndex(builder, loc, 0);
   Value one = createIndex(builder, loc, 1);
-  Value cutoff2 = createReal(builder, loc, real, cutoff * cutoff);
-
   auto loop = scf::ParallelOp::create(
       builder, loc, ValueRange{zero}, ValueRange{size}, ValueRange{one},
       inits, [&](OpBuilder &body, Location, ValueRange ivs, ValueRange) {
-        Value central = ivs[0];
-        Value centralPosition = loadElement(body, loc, positions, central);
-        SmallVector<Value> centralValues;
-        for (Value buffer : ins)
-          centralValues.push_back(loadElement(body, loc, buffer, central));
-
-        Value count = memref::LoadOp::create(body, loc, structure.counts,
-                                             ValueRange{central});
-        Value end =
-            arith::IndexCastOp::create(body, loc, body.getIndexType(), count);
-
-        // The contributions of the neighbors of one particle are summed in
-        // the order of its list.
-        SmallVector<Value> sums;
-        for (Value value : yield->getOperands())
-          sums.push_back(createZero(body, loc, value.getType()));
-
-        auto inner = scf::ForOp::create(
-            body, loc, zero, end, one, sums,
-            [&](OpBuilder &pair, Location, Value entry, ValueRange partial) {
-              Value narrow =
-                  memref::LoadOp::create(pair, loc, structure.index,
-                                         ValueRange{central, entry});
-              Value other = arith::IndexCastOp::create(
-                  pair, loc, pair.getIndexType(), narrow);
-
-              // The minimum-image displacement and its squared length.
-              Value otherPosition = loadElement(pair, loc, positions, other);
-              Value raw =
-                  arith::SubFOp::create(pair, loc, centralPosition,
-                                        otherPosition);
-              Value images = arith::DivFOp::create(pair, loc, raw, box);
-              Value nearest = math::RoundEvenOp::create(pair, loc, images);
-              Value shift = arith::MulFOp::create(pair, loc, nearest, box);
-              Value d = arith::SubFOp::create(pair, loc, raw, shift);
-              Value squares = arith::MulFOp::create(pair, loc, d, d);
-              Value r2 = vector::ReductionOp::create(
-                  pair, loc, vector::CombiningKind::ADD, squares);
-
-              IRMapping local;
-              local.map(kernel.getArgument(0),
-                        convertReal(pair, loc, r2, computed));
-              local.map(kernel.getArgument(1),
-                        convertReal(pair, loc, d, computed));
-              for (unsigned i = 0, e = ins.size(); i != e; ++i) {
-                local.map(kernel.getArgument(2 + 2 * i), centralValues[i]);
-                local.map(kernel.getArgument(3 + 2 * i),
-                          loadElement(pair, loc, ins[i], other));
-              }
-              for (Operation &nested : kernel.without_terminator())
-                pair.clone(nested, local);
-
-              // A pair beyond the cutoff contributes nothing.
-              Value within = arith::CmpFOp::create(
-                  pair, loc, arith::CmpFPredicate::OLT, r2, cutoff2);
-              SmallVector<Value> updated;
-              for (unsigned i = 0; i != numYields; ++i) {
-                Value contribution =
-                    local.lookupOrDefault(yield->getOperand(i));
-                Value nothing =
-                    createZero(pair, loc, contribution.getType());
-                Value masked = arith::SelectOp::create(
-                    pair, loc, within, contribution, nothing);
-                updated.push_back(
-                    arith::AddFOp::create(pair, loc, partial[i], masked));
-              }
-              scf::YieldOp::create(pair, loc, updated);
-            });
-
-        for (unsigned i = 0; i != numOuts; ++i) {
-          Value total = inner.getResult(i);
-          if (!op.overwrites(i))
-            total = arith::AddFOp::create(
-                body, loc, loadElement(body, loc, outs[i], central), total);
-          storeElement(body, loc, total, outs[i], central);
-        }
-
-        SmallVector<Value> contributions;
-        for (unsigned i = numOuts; i != numYields; ++i) {
-          Value total = inner.getResult(i);
-          if (auto weights = op.getWeights()) {
-            double weight = (*weights)[i - numOuts];
-            if (weight != 1.0) {
-              Type type = total.getType();
-              FloatAttr scalar = body.getFloatAttr(
-                  getElementTypeOrSelf(type), weight);
-              Value factor;
-              if (auto vector = dyn_cast<VectorType>(type))
-                factor = arith::ConstantOp::create(
-                    body, loc, type,
-                    DenseElementsAttr::get(vector, scalar.getValue()));
-              else
-                factor = arith::ConstantOp::create(body, loc, type, scalar);
-              total = arith::MulFOp::create(body, loc, factor, total);
-            }
-          }
-          contributions.push_back(total);
-        }
+        IRMapping local;
+        SmallVector<Value> contributions = emitPairKernel(
+            body, op, structure.counts, structure.index, box, ivs[0], local);
         if (!contributions.empty())
           createReduction(body, loc, contributions, /*isSum=*/true);
       });
@@ -402,36 +211,6 @@ func::FuncOp Lowering::getOrDeclare(StringRef name, FunctionType type) {
   function.setPrivate();
   module.push_back(function);
   return function;
-}
-
-/// The name of the instance of the template function `name` for positions
-/// of the type `real`.
-static std::string getInstanceName(StringRef name, Type real) {
-  return real.isF64() ? name.str() : (name + "_f32").str();
-}
-
-/// The text of the templates for positions of the type `real`. The
-/// templates are written for `f64`.
-static std::string instantiateTemplates(StringRef text, Type real) {
-  if (real.isF64())
-    return text.str();
-
-  std::string instance;
-  StringRef prefix = "@mdrt.";
-  while (!text.empty()) {
-    if (text.consume_front("f64")) {
-      instance += "f32";
-    } else if (text.consume_front(prefix)) {
-      StringRef name = text.take_while(
-          [](char c) { return llvm::isAlnum(c) || c == '_'; });
-      text = text.drop_front(name.size());
-      instance += getInstanceName((prefix + name).str(), real);
-    } else {
-      instance += text.front();
-      text = text.drop_front();
-    }
-  }
-  return instance;
 }
 
 LogicalResult Lowering::addTemplates(Type real) {
@@ -470,7 +249,7 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
   Location loc = op.getLoc();
   OpBuilder builder(op);
   Type narrow = builder.getI32Type();
-  Type real = *op.getElement();
+  Type real = cast<MemRefType>(*op.getPositions()).getElementType();
 
   Neighbors structure;
   structure.size = op.getSize();
@@ -647,6 +426,12 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
 // Ops and functions
 //===----------------------------------------------------------------------===//
 
+/// Returns true if `type` is the type of a buffer on a device.
+static bool isDeviceType(Type type) {
+  auto buffer = dyn_cast<MemRefType>(type);
+  return buffer && buffer.getMemorySpace();
+}
+
 /// Returns true if `type` belongs to the value form: a field, or a
 /// structure that the storage form does not have.
 static bool isValueFormType(Type type) {
@@ -660,6 +445,17 @@ LogicalResult Lowering::lowerOp(Operation *op) {
     return op->emitOpError()
            << "is not in the storage form; run 'md-exec-assign-storage' "
               "first";
+
+  if (isa<md_exec::MDExecDialect>(op->getDialect())) {
+    bool onDevice = llvm::any_of(op->getOperandTypes(), isDeviceType);
+    if (auto empty = dyn_cast<md_exec::EmptyNeighborsOp>(op))
+      if (auto positions = empty.getPositions())
+        onDevice |= isDeviceType(*positions);
+    if (onDevice)
+      return op->emitOpError()
+             << "has its buffers on a device; use "
+                "'convert-md-exec-to-gpu'";
+  }
 
   if (auto empty = dyn_cast<md_exec::EmptyNeighborsOp>(op)) {
     if (!empty.isStorageForm())

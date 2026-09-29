@@ -22,6 +22,7 @@ add_mlir_conversion_library(MDIRMDExecToLoops
 
   LINK_LIBS PUBLIC
   MDIRMD
+  MDIRMDExecKernels
   MDIRMDExec
   MDIRMDRT
   MLIRArithDialect

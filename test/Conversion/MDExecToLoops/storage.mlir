@@ -40,7 +40,7 @@ func.func @forces(%x: memref<?x3xf64>, %f: memref<?x3xf64>, %cell: !md.cell,
   // CHECK:      %[[INDEX:[a-z0-9_]+]] = memref.alloc(%[[N]], %{{[a-z0-9_]+}}) : memref<?x?xi32>
   // CHECK:      %[[REFERENCE:[a-z0-9_]+]] = memref.alloc(%[[N]]) : memref<?x3xf64>
   // CHECK:      %[[BUILDS:[a-z0-9_]+]] = memref.alloc() : memref<i64>
-  %nl0 = md_exec.empty_neighbors size(%n) element(f64)
+  %nl0 = md_exec.empty_neighbors size(%n) positions(memref<?x3xf64>)
       kind(matrix) width(48) : !mdrt.neighbors<@atoms>
 
   // CHECK:      memref.load %[[REFERENCE]][

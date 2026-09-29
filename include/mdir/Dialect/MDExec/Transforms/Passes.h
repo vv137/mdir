@@ -10,6 +10,9 @@ namespace mlir {
 namespace arith {
 class ArithDialect;
 } // namespace arith
+namespace gpu {
+class GPUDialect;
+} // namespace gpu
 namespace math {
 class MathDialect;
 } // namespace math

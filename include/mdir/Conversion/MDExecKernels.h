@@ -1,0 +1,67 @@
+// What the lowerings of md_exec have in common: the code that a loop runs
+// for one particle. The lowerings differ in how they run it for all.
+
+#ifndef MDIR_CONVERSION_MDEXECKERNELS_H
+#define MDIR_CONVERSION_MDEXECKERNELS_H
+
+#include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/IRMapping.h"
+
+namespace mdir {
+namespace kernels {
+
+mlir::Value createIndex(mlir::OpBuilder &builder, mlir::Location loc,
+                        int64_t value);
+mlir::Value createZero(mlir::OpBuilder &builder, mlir::Location loc,
+                       mlir::Type type);
+
+/// The constant `value` of the floating-point type `real`.
+mlir::Value createReal(mlir::OpBuilder &builder, mlir::Location loc,
+                       mlir::Type real, double value);
+
+/// `value`, a floating-point value or a vector of them, converted to the
+/// floating-point type `real`.
+mlir::Value convertReal(mlir::OpBuilder &builder, mlir::Location loc,
+                        mlir::Value value, mlir::Type real);
+
+/// The value that `buffer` holds for the particle `particle`.
+mlir::Value loadElement(mlir::OpBuilder &builder, mlir::Location loc,
+                        mlir::Value buffer, mlir::Value particle);
+void storeElement(mlir::OpBuilder &builder, mlir::Location loc,
+                  mlir::Value value, mlir::Value buffer,
+                  mlir::Value particle);
+
+/// Emits what a loop over particles does for the particle `particle`: it
+/// loads the values of the fields, runs the kernel, and stores what the
+/// kernel yields for the destinations. Returns the contributions to the
+/// global sums.
+///
+/// `local` maps values from outside the kernel to the values that stand for
+/// them where the code is emitted.
+llvm::SmallVector<mlir::Value>
+emitParticleKernel(mlir::OpBuilder &builder, md_exec::ParticleForOp op,
+                   mlir::Value particle, mlir::IRMapping &local);
+
+/// Emits what a loop over pairs does for the particle `central`: the loop
+/// over its neighbors, with the minimum image, the cutoff, and the kernel,
+/// and the update of the destinations. Returns the contributions to the
+/// global sums, with their weights applied.
+///
+/// `counts` and `index` are the neighbor matrix. `box` holds the edge
+/// lengths of the cell, as a vector of the type of the positions.
+llvm::SmallVector<mlir::Value>
+emitPairKernel(mlir::OpBuilder &builder, md_exec::PairForOp op,
+               mlir::Value counts, mlir::Value index, mlir::Value box,
+               mlir::Value central, mlir::IRMapping &local);
+
+/// The text of the templates `text` for positions of the type `real`. The
+/// templates are written for `f64`; the functions of the instance for `f32`
+/// have names that end in `_f32`.
+std::string instantiateTemplates(llvm::StringRef text, mlir::Type real);
+std::string getInstanceName(llvm::StringRef name, mlir::Type real);
+
+} // namespace kernels
+} // namespace mdir
+
+#endif // MDIR_CONVERSION_MDEXECKERNELS_H

@@ -176,22 +176,24 @@ def MDExec_EmptyNeighborsOp : MDExec_Op<"empty_neighbors", [
     ```
 
     In the storage form the op allocates the storage of a structure for
-    `size` particles whose positions have the type `element`.
+    `size` particles. `positions` is the type of the buffers that hold the
+    positions the structure is built at. The storage is where those buffers
+    are: on the host, or on a device if the type has a memory space.
 
     ```mlir
-    %nl = md_exec.empty_neighbors size(%n) element(f32)
+    %nl = md_exec.empty_neighbors size(%n) positions(memref<?x3xf32>)
             kind(matrix) width(96) : !mdrt.neighbors<@atoms>
     ```
   }];
   let arguments = (ins
     Optional<Index>:$size,
-    OptionalAttr<TypeAttr>:$element,
+    OptionalAttr<TypeAttr>:$positions,
     MDExec_NeighborKind:$kind,
     I64Attr:$width
   );
   let results = (outs MDRT_NeighborsType:$result);
   let assemblyFormat = [{
-    (`size` `(` $size^ `)` `element` `(` $element `)`)?
+    (`size` `(` $size^ `)` `positions` `(` $positions `)`)?
     `kind` `(` $kind `)` `width` `(` $width `)` attr-dict
     `:` qualified(type($result))
   }];
@@ -237,11 +239,16 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
              cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
              : !mdrt.neighbors<@atoms>, memref<?x3xf64>
     ```
+
+    `scratch` holds buffers that the op may use as it likes. What they hold
+    before and after is unspecified. On a device the test of validity needs
+    two, with one value of the type of the positions per particle.
   }];
   let arguments = (ins
     MDRT_NeighborsType:$neighbors,
     MDExec_FieldOrBuffer:$positions,
     MD_CellType:$cell,
+    Variadic<MDExec_Buffer>:$scratch,
     F64Attr:$cutoff,
     F64Attr:$skin,
     F64Attr:$cell_width,
@@ -251,6 +258,7 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
   let results = (outs MDRT_NeighborsType:$result);
   let assemblyFormat = [{
     $neighbors `,` $positions `,` $cell
+    (`scratch` `(` $scratch^ `:` type($scratch) `)`)?
     `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
     `cell_width` `(` $cell_width `)` `policy` `(` $policy `)` attr-dict
     `:` qualified(type($neighbors)) `,` qualified(type($positions))
@@ -369,6 +377,11 @@ def MDExec_PairForOp : MDExec_Op<"pair_for", [
       md_exec.yield %k_f, %k_u : vector<3xf64>, f64
     } : !mdrt.neighbors<@atoms>, memref<?x3xf64> -> f64
     ```
+
+    `scratch` holds buffers that the loop may use as it likes. What they
+    hold before and after is unspecified. On a device a loop needs two for
+    each value in `reduce`, with one value of the type of the sum per
+    particle.
   }];
   let arguments = (ins
     MDRT_NeighborsType:$neighbors,
@@ -377,6 +390,7 @@ def MDExec_PairForOp : MDExec_Op<"pair_for", [
     Variadic<MDExec_FieldOrBuffer>:$ins,
     Variadic<MDExec_FieldOrBuffer>:$outs,
     Variadic<AnyType>:$reduce,
+    Variadic<MDExec_Buffer>:$scratch,
     F64Attr:$cutoff,
     OptionalAttr<DenseF64ArrayAttr>:$weights,
     OptionalAttr<DenseBoolArrayAttr>:$overwrite,
@@ -392,6 +406,7 @@ def MDExec_PairForOp : MDExec_Op<"pair_for", [
     (`ins` `(` $ins^ `:` qualified(type($ins)) `)`)?
     (`outs` `(` $outs^ `:` qualified(type($outs)) `)`)?
     (`reduce` `(` $reduce^ `:` type($reduce) `)`)?
+    (`scratch` `(` $scratch^ `:` type($scratch) `)`)?
     `cutoff` `(` $cutoff `)`
     (`weights` $weights^)?
     (`overwrite` $overwrite^)?
@@ -460,11 +475,14 @@ def MDExec_ParticleForOp : MDExec_Op<"particle_for", [
       md_exec.yield %v_new : vector<3xf64>
     }
     ```
+
+    `scratch` is as for `md_exec.pair_for`.
   }];
   let arguments = (ins
     Variadic<MDExec_FieldOrBuffer>:$ins,
     Variadic<MDExec_FieldOrBuffer>:$outs,
-    Variadic<AnyType>:$reduce
+    Variadic<AnyType>:$reduce,
+    Variadic<MDExec_Buffer>:$scratch
   );
   let regions = (region SizedRegion<1>:$kernel);
   let results = (outs Variadic<AnyType>:$results);
@@ -472,6 +490,7 @@ def MDExec_ParticleForOp : MDExec_Op<"particle_for", [
     (`ins` `(` $ins^ `:` qualified(type($ins)) `)`)?
     (`outs` `(` $outs^ `:` qualified(type($outs)) `)`)?
     (`reduce` `(` $reduce^ `:` type($reduce) `)`)?
+    (`scratch` `(` $scratch^ `:` type($scratch) `)`)?
     $kernel attr-dict
     (`->` qualified(type($results))^)?
   }];

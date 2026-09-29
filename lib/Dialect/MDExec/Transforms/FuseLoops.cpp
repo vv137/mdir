@@ -91,7 +91,8 @@ static void fuse(PairForOp first, PairForOp second) {
 
   auto fused = PairForOp::create(
       builder, loc, resultTypes, first.getNeighbors(), first.getPositions(),
-      first.getCell(), ins, outs, reduce, first.getCutoffAttr(), weightsAttr,
+      first.getCell(), ins, outs, reduce, /*scratch=*/ValueRange(),
+      first.getCutoffAttr(), weightsAttr,
       /*overwrite=*/DenseBoolArrayAttr(), first.getTraversalAttr(),
       first.getConflictAttr());
 
