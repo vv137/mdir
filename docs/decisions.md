@@ -378,7 +378,7 @@ These items follow from the decisions above but have no design yet.
 | Fusion of loops over particles | M0 | |
 | Removal of the square root from kernels that do not need it | M0 | Implemented |
 | Freeing of buffers | M0 | |
-| Driver, TOML input, XTC and H5MD output | M0 | |
+| Driver, TOML input, XTC and H5MD output | M0 | Proposal in [driver-m0.md](driver-m0.md) |
 | GPU back end | M0 | Implemented for NVIDIA: `convert-md-exec-to-gpu`, `libmdrt_cuda` |
 | Global sums of vectors on a device, for the virial | M0 | |
 | GPU back end for AMD | M1 | |
