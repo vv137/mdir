@@ -1,0 +1,49 @@
+# A run from a topology puts the particles and the members of the tuples in
+# the order of the positions where it begins. The files of the run are in
+# the order of the input all the same, and the states are those of a run
+# that leaves the particles as they are, up to rounding.
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/on.toml
+# RUN: sed -e 's|reorder = true|reorder = false|' -e 's|on.h5|off.h5|' %t/on.toml > %t/off.toml
+# RUN: mdir run %t/on.toml | FileCheck %s
+# RUN: mdir run %t/off.toml | FileCheck %s
+# RUN: not mdir checkpoint %t/on.h5 %t/off.h5 | FileCheck %s --check-prefix=STATES
+
+# CHECK: INFO:         0         0.0000 {{ *-?[0-9.]+}} {{ *}}-1896.1529
+# CHECK: INFO:        20
+
+# STATES: values of the positions differ, by up to {{[0-9.]+}}e-1{{[0-9]}}
+
+#--- run.toml
+[input]
+prmtopfile = "dipeptide.prmtop"
+ambcrdfile = "dipeptide.inpcrd"
+
+[output]
+rstfile = "on.h5"
+
+[energy]
+cutoffdist   = 9.0
+pairlistdist = 10.0
+
+[dynamics]
+integrator    = "VVER"
+timestep      = 0.0005
+nsteps        = 20
+eneout_period = 10
+rstout_period = 20
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PBC"
+
+[execution]
+reorder = true
+#--- end

@@ -49,6 +49,11 @@ struct System {
   /// The topology that the system was read from, if any. It gives the
   /// terms of the potential.
   std::shared_ptr<Topology> topology;
+
+  /// The number of each particle: its place in the files of the run. The
+  /// particles may be in another order (orderByPosition). Empty for the
+  /// order of the files.
+  std::vector<int32_t> identities;
 };
 
 /// Reads the positions from the PDB file of `control`. The name of an atom
@@ -61,6 +66,13 @@ void assignVelocities(const Control &control, System &system);
 
 /// The kinetic energy of `system`, in kJ/mol.
 double getKineticEnergy(const System &system);
+
+/// Puts the particles of `system`, and the members of the tuples of its
+/// topology, in the order of cells of the width `width`, numbered along x
+/// first, and within a cell in the order of their numbers, as
+/// `md_exec.spatial_order` orders them (D44). Returns the order: the
+/// particle that comes to each place.
+std::vector<unsigned> orderByPosition(System &system, double width);
 
 } // namespace driver
 } // namespace mdir

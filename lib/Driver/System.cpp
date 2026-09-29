@@ -2,6 +2,8 @@
 
 #include "mdir/Driver/System.h"
 
+#include <algorithm>
+
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/MemoryBuffer.h"
 
@@ -176,4 +178,86 @@ void mdir::driver::assignVelocities(const Control &control, System &system) {
     for (double &v : system.velocities)
       v *= factor;
   }
+}
+
+std::vector<unsigned> mdir::driver::orderByPosition(System &system,
+                                                    double width) {
+  size_t count = system.getNumParticles();
+  int cells[3];
+  for (int k = 0; k != 3; ++k)
+    cells[k] = std::max(1, static_cast<int>(system.box[k] / width));
+  std::vector<std::pair<long, unsigned>> keys;
+  for (size_t i = 0; i != count; ++i) {
+    long cell = 0;
+    for (int k = 2; k >= 0; --k) {
+      double length = system.box[k];
+      double x = system.positions[3 * i + k];
+      x -= length * std::floor(x / length);
+      int c = std::min(static_cast<int>(x / length * cells[k]), cells[k] - 1);
+      cell = cell * cells[k] + c;
+    }
+    keys.push_back({cell, static_cast<unsigned>(i)});
+  }
+  std::sort(keys.begin(), keys.end());
+  std::vector<unsigned> order, place(count);
+  for (auto [cell, i] : keys) {
+    place[i] = order.size();
+    order.push_back(i);
+  }
+
+  auto permute = [&](auto &values, size_t stride) {
+    if (values.empty())
+      return;
+    auto copy = values;
+    for (size_t k = 0; k != count; ++k)
+      for (size_t c = 0; c != stride; ++c)
+        values[stride * k + c] = copy[stride * order[k] + c];
+  };
+  permute(system.positions, 3);
+  permute(system.velocities, 3);
+  permute(system.masses, 1);
+  permute(system.types, 1);
+  if (system.identities.empty()) {
+    system.identities.resize(count);
+    for (size_t i = 0; i != count; ++i)
+      system.identities[i] = i;
+  }
+  permute(system.identities, 1);
+
+  if (Topology *topology = system.topology.get()) {
+    permute(topology->atomNames, 1);
+    permute(topology->atomicNumbers, 1);
+    permute(topology->masses, 1);
+    permute(topology->charges, 1);
+    permute(topology->types, 1);
+    permute(topology->residueOf, 1);
+    permute(topology->positions, 3);
+    permute(topology->velocities, 3);
+    for (Topology::Bond &bond : topology->bonds) {
+      bond.i = place[bond.i];
+      bond.j = place[bond.j];
+    }
+    for (Topology::Angle &angle : topology->angles) {
+      angle.i = place[angle.i];
+      angle.j = place[angle.j];
+      angle.k = place[angle.k];
+    }
+    for (Topology::Dihedral &dihedral : topology->dihedrals) {
+      dihedral.i = place[dihedral.i];
+      dihedral.j = place[dihedral.j];
+      dihedral.k = place[dihedral.k];
+      dihedral.l = place[dihedral.l];
+    }
+    for (Topology::Pair &pair : topology->pairs) {
+      pair.i = place[pair.i];
+      pair.j = place[pair.j];
+    }
+    for (auto &[i, j] : topology->exclusions) {
+      unsigned a = place[i], b = place[j];
+      i = std::min(a, b);
+      j = std::max(a, b);
+    }
+    std::sort(topology->exclusions.begin(), topology->exclusions.end());
+  }
+  return order;
 }

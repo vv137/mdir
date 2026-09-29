@@ -32,6 +32,9 @@ struct Topology {
   /// The residues: their names, and the particle that each begins with.
   std::vector<std::string> residueNames;
   std::vector<unsigned> residueStarts;
+  /// The residue of each particle. Unlike `residueStarts`, it follows the
+  /// particles when they are put in another order.
+  std::vector<unsigned> residueOf;
 
   //===--------------------------------------------------------------------===//
   // Terms

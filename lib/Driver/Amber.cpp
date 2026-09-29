@@ -697,6 +697,12 @@ llvm::Expected<Topology> Reader::read() {
       return fail("RESIDUE_POINTER is out of range");
     topology.residueStarts.push_back(start - 1);
   }
+  topology.residueOf.assign(natom, 0);
+  for (long r = 0; r != nres; ++r) {
+    long end = r + 1 < nres ? starts[r + 1] - 1 : natom;
+    for (long i = starts[r] - 1; i < end; ++i)
+      topology.residueOf[i] = r;
+  }
 
   if (llvm::Error error =
           readIntegers("NUMBER_EXCLUDED_ATOMS", natom, numExcluded))
