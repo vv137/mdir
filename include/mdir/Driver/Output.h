@@ -108,6 +108,9 @@ struct Output {
   double bath = 0.0;
   /// Whether a barostat changes the cell, which the log then shows.
   bool changesCell = false;
+  /// The shortest edge of the cell that the cutoff allows, twice it; a run
+  /// whose barostat takes the cell below it stops.
+  double leastEdge = 0.0;
 
   /// The energies at the first and at the last output, in kJ/mol. With
   /// coupling, those that are conserved.

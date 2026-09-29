@@ -484,6 +484,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   output.timestep = control->timestep;
   output.couples = control->getCouplingPeriod() > 0;
   output.changesCell = control->barostat;
+  output.leastEdge = 2.0 * control->cutoffDistance * units::length;
   output.degreesOfFreedom = system->getDegreesOfFreedom();
   output.volume = system->box[0] * system->box[1] * system->box[2];
   output.firstVolume = output.volume;

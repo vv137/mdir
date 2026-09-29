@@ -3241,6 +3241,16 @@ llvm::Error Builder::build() {
         llvm::inconvertibleErrorCode(),
         "the barostat needs 'integrator = \"VVER\"'; with leapfrog it is "
         "planned for M1");
+  // A pair is taken once, in the minimum image, which holds every image
+  // within the cutoff only while the cell is wider than twice the cutoff.
+  static const char axes[] = "xyz";
+  for (int k = 0; k != 3; ++k)
+    if (system.box[k] < 2.0 * control.cutoffDistance * units::length)
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "the cell is %.4f Å along %c, less than twice the cutoff, %.4f Å",
+          system.box[k] / units::length, axes[k],
+          control.cutoffDistance);
   program.entry = "mdir_run";
   switch (control.precision) {
   case Precision::Single:

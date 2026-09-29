@@ -169,6 +169,17 @@ void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz) {
   output.checkpoint.box[0] = lx;
   output.checkpoint.box[1] = ly;
   output.checkpoint.box[2] = lz;
+  static const char axes[] = "xyz";
+  for (int k = 0; k != 3; ++k)
+    if (output.box[k] < output.leastEdge) {
+      std::fprintf(stderr,
+                   "mdir: the barostat has made the cell %.4f Å along %c, "
+                   "less than twice the cutoff, %.4f Å; the run needs a "
+                   "larger cell\n",
+                   output.box[k] / units::length, axes[k],
+                   0.5 * output.leastEdge / units::length);
+      std::exit(1);
+    }
 }
 
 void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,

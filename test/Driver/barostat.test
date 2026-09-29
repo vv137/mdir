@@ -13,6 +13,23 @@
 # RUN: not mdir run %t/leap.toml 2>&1 | FileCheck %s --check-prefix=LEAP
 # RUN: mdir emit %t/a.toml | FileCheck %s --check-prefix=MODULE
 
+# A pair is taken once, in the minimum image, so the cell must be wider
+# than twice the cutoff, where the run begins and wherever the barostat
+# takes it.
+#
+# RUN: sed -e 's|cutoffdist   = 9.0|cutoffdist   = 12.0|' \
+# RUN:     -e 's|pairlistdist = 10.0|pairlistdist = 13.0|' \
+# RUN:     -e 's|switchdist   = 7.5|switchdist   = 10.5|' %t/a.toml > %t/small.toml
+# RUN: not mdir run %t/small.toml 2>&1 | FileCheck %s --check-prefix=SMALL
+# RUN: sed -e 's|cutoffdist   = 9.0|cutoffdist   = 11.4|' \
+# RUN:     -e 's|pairlistdist = 10.0|pairlistdist = 12.0|' \
+# RUN:     -e 's|switchdist   = 7.5|switchdist   = 10.0|' \
+# RUN:     -e 's|pressure    = 200.0|pressure    = 5000.0|' %t/a.toml > %t/shrink.toml
+# RUN: not mdir run %t/shrink.toml 2>&1 | FileCheck %s --check-prefix=SHRINK
+
+# SMALL: mdir: the cell is 23.2000 Å along x, less than twice the cutoff, 12.0000 Å
+# SHRINK: mdir: the barostat has made the cell 22.{{[0-9]+}} Å along {{[xyz]}}, less than twice the cutoff, 11.4000 Å; the run needs a larger cell
+
 # The trajectory does not depend on how the steps are grouped into loops.
 #
 # RUN: grep 'INFO: *2000 ' %t/a.log > %t/a.row
