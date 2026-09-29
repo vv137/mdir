@@ -393,14 +393,14 @@ SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
         }
 
         // A tuple adds to a sum once, through its member at place 0.
-        Value first = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq,
-                                            place, zero);
+        Value atFirst = arith::CmpIOp::create(
+            b, loc, arith::CmpIPredicate::eq, place, zero);
         for (unsigned i = numOuts * arity, j = numOuts; i != numYields;
              ++i, ++j) {
           Value contribution = inside.lookupOrDefault(yield->getOperand(i));
           Value nothing = createZero(b, loc, contribution.getType());
           Value masked =
-              arith::SelectOp::create(b, loc, first, contribution, nothing);
+              arith::SelectOp::create(b, loc, atFirst, contribution, nothing);
           updated.push_back(arith::AddFOp::create(b, loc, partial[j], masked));
         }
         scf::YieldOp::create(b, loc, updated);
