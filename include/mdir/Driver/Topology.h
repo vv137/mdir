@@ -85,6 +85,23 @@ struct Topology {
     double distanceOH, distanceHH;
   };
   std::vector<Settle> settles;
+  /// A particle of mass 0 whose position follows from those of three
+  /// others, `i`, `j`, and `k`, and whose force goes to them.
+  struct VirtualSite {
+    enum Kind {
+      /// The extra point of four-site water in Amber:
+      /// `x_i + a (û + v̂) / |û + v̂|`, with `û` and `v̂` the unit vectors
+      /// from `i` to `j` and to `k`. It depends only on their directions.
+      AmberWater,
+      /// `(1 − a − b) x_i + a x_j + b x_k` (`virtual_sites3`, function 1,
+      /// of GROMACS).
+      Linear,
+    };
+    Kind kind;
+    unsigned site, i, j, k;
+    double a, b;
+  };
+  std::vector<VirtualSite> virtualSites;
   /// The pairs that the nonbonded terms leave out, `i < j`, sorted: one,
   /// two, and three bonds apart.
   std::vector<std::pair<unsigned, unsigned>> exclusions;

@@ -84,6 +84,9 @@ private:
   llvm::Error readTypes(Topology &topology, long count, long numPairs);
   llvm::Error readTerms(Topology &topology, const std::vector<long> &p);
   llvm::Error checkExclusions(const Topology &topology);
+  /// Finds the extra points and the frames that place them, and removes
+  /// the bonded terms of the extra points.
+  llvm::Error readExtraPoints(Topology &topology, long numExtra);
 
   std::string path;
   std::unique_ptr<llvm::MemoryBuffer> buffer;
@@ -93,6 +96,8 @@ private:
   std::vector<double> tableA, tableB;
   std::vector<long> index;
   std::vector<long> numExcluded, excludedList;
+  /// The type of each atom, AMBER_ATOM_TYPE.
+  std::vector<std::string> atomTypes;
 };
 
 } // namespace
@@ -277,10 +282,6 @@ llvm::Error Reader::checkSupported(const std::vector<long> &p) {
   if (!ipol.empty() && ipol.front() > 0)
     return fail("a polarizable topology is not supported: IPOL = " +
                 llvm::Twine(ipol.front()));
-  if (p[30] > 0)
-    return fail("extra points (virtual sites, as in TIP4P-Ew or OPC) are "
-                "not supported yet (M2a): NUMEXTRA = " +
-                llvm::Twine(p[30]));
   if (p[27] == 0)
     return fail("the topology has no periodic cell: IFBOX = 0");
   if (p[27] != 1)
@@ -582,13 +583,33 @@ llvm::Error Reader::readTerms(Topology &topology,
     }
   }
 
+  if (llvm::Error error = readExtraPoints(topology, p[30]))
+    return error;
+
   // The exclusions of a periodic run: the members of the bonds, the ends of
-  // the angles, and the ends of every dihedral.
+  // the angles, and the ends of every dihedral. An extra point is excluded
+  // from its owner and from what its owner is excluded from, as sander
+  // rebuilds the exclusions (design-m1.md, Section 19).
+  std::vector<std::vector<unsigned>> extras(topology.getNumParticles());
+  for (const Topology::VirtualSite &site : topology.virtualSites)
+    extras[site.i].push_back(site.site);
   std::set<std::pair<unsigned, unsigned>> excluded;
-  auto exclude = [&](unsigned i, unsigned j) {
+  auto excludeOne = [&](unsigned i, unsigned j) {
     if (i != j)
       excluded.insert({std::min(i, j), std::max(i, j)});
   };
+  auto exclude = [&](unsigned i, unsigned j) {
+    excludeOne(i, j);
+    for (unsigned a : extras[i]) {
+      excludeOne(a, j);
+      for (unsigned b : extras[j])
+        excludeOne(a, b);
+    }
+    for (unsigned b : extras[j])
+      excludeOne(i, b);
+  };
+  for (const Topology::VirtualSite &site : topology.virtualSites)
+    excludeOne(site.site, site.i);
   for (const Topology::Bond &bond : topology.bonds)
     exclude(bond.i, bond.j);
   for (const Topology::Angle &angle : topology.angles)
@@ -597,6 +618,114 @@ llvm::Error Reader::readTerms(Topology &topology,
     exclude(dihedral.i, dihedral.l);
   topology.exclusions.assign(excluded.begin(), excluded.end());
   return checkExclusions(topology);
+}
+
+llvm::Error Reader::readExtraPoints(Topology &topology, long numExtra) {
+  size_t count = topology.getNumParticles();
+  std::vector<bool> extra(count, false);
+  long found = 0;
+  for (size_t i = 0; i != count; ++i)
+    if (atomTypes[i] == "EP") {
+      extra[i] = true;
+      ++found;
+    }
+  if (found != numExtra)
+    return fail("NUMEXTRA is " + llvm::Twine(numExtra) + ", but " +
+                llvm::Twine(found) + " atoms are of the type EP");
+  if (found == 0)
+    return llvm::Error::success();
+
+  // The neighbors of each atom, in the order of the bonds of the file: the
+  // heavy atoms and the extra points through the bonds without hydrogen,
+  // and the atoms through those with hydrogen. An extra point is placed
+  // by the bond to its owner, which is in the bonds without hydrogen, and
+  // at the distance of that bond.
+  std::vector<std::vector<unsigned>> heavy(count), hydrogens(count),
+      extras(count);
+  std::vector<long> owner(count, -1);
+  std::vector<double> distance(count, 0.0);
+  for (const Topology::Bond &bond : topology.bonds) {
+    for (auto [a, b] : {std::pair{bond.i, bond.j}, std::pair{bond.j, bond.i}}) {
+      if (bond.hydrogen) {
+        if (extra[a] || extra[b])
+          return fail("the extra point " +
+                      llvm::Twine((extra[a] ? a : b) + 1) +
+                      " is bonded in BONDS_INC_HYDROGEN, where sander does "
+                      "not look for the owner of an extra point");
+        hydrogens[a].push_back(b);
+        continue;
+      }
+      if (extra[b]) {
+        if (extra[a])
+          return fail("the extra points " + llvm::Twine(a + 1) + " and " +
+                      llvm::Twine(b + 1) + " are bonded to each other");
+        if (owner[b] >= 0 && owner[b] != static_cast<long>(a))
+          return fail("the extra point " + llvm::Twine(b + 1) +
+                      " is bonded to two atoms");
+        owner[b] = a;
+        distance[b] = bond.r0;
+        extras[a].push_back(b);
+      } else if (!extra[a]) {
+        heavy[a].push_back(b);
+      }
+    }
+  }
+
+  // The frame of each owner. Only the one of four-site water is supported:
+  // an owner with two hydrogens, no heavy neighbor, and one extra point,
+  // which is placed on the bisector on the side of the hydrogens.
+  for (size_t n = 0; n != count; ++n) {
+    if (!extra[n])
+      continue;
+    if (owner[n] < 0)
+      return fail("the extra point " + llvm::Twine(n + 1) +
+                  " has no bond in BONDS_WITHOUT_HYDROGEN to an owner");
+    unsigned o = owner[n];
+    if (!heavy[o].empty() || hydrogens[o].size() != 2 ||
+        extras[o].size() != 1)
+      return fail("the extra point " + llvm::Twine(n + 1) + " belongs to " +
+                  "the atom " + llvm::Twine(o + 1) + ", with " +
+                  llvm::Twine(heavy[o].size()) + " heavy neighbors, " +
+                  llvm::Twine(hydrogens[o].size()) + " hydrogens, and " +
+                  llvm::Twine(extras[o].size()) +
+                  " extra points; only the extra point of four-site water, "
+                  "as in OPC or TIP4P-Ew, is supported");
+    Topology::VirtualSite site;
+    site.kind = Topology::VirtualSite::AmberWater;
+    site.site = n;
+    site.i = o;
+    site.j = hydrogens[o][0];
+    site.k = hydrogens[o][1];
+    site.a = distance[n];
+    site.b = 0.0;
+    topology.virtualSites.push_back(site);
+  }
+
+  // sander drops every bonded term of an extra point: the bond to its owner
+  // gives no energy and no constraint.
+  auto touches = [&](std::initializer_list<unsigned> members) {
+    for (unsigned m : members)
+      if (extra[m])
+        return true;
+    return false;
+  };
+  llvm::erase_if(topology.bonds, [&](const Topology::Bond &bond) {
+    return touches({bond.i, bond.j});
+  });
+  llvm::erase_if(topology.angles, [&](const Topology::Angle &angle) {
+    return touches({angle.i, angle.j, angle.k});
+  });
+  llvm::erase_if(topology.dihedrals, [&](const Topology::Dihedral &d) {
+    return touches({d.i, d.j, d.k, d.l});
+  });
+  llvm::erase_if(topology.pairs, [&](const Topology::Pair &pair) {
+    return touches({pair.i, pair.j});
+  });
+  for (size_t n = 0; n != count; ++n)
+    if (extra[n] && topology.masses[n] != 0.0)
+      return fail("the extra point " + llvm::Twine(n + 1) + " has a mass of " +
+                  show(topology.masses[n]) + "; an extra point has none");
+  return llvm::Error::success();
 }
 
 /// The list of the file must not exclude a pair that the bonded terms do
@@ -665,7 +794,7 @@ llvm::Expected<Topology> Reader::read() {
   std::vector<long> types;
   if (llvm::Error error = readIntegers("ATOM_TYPE_INDEX", natom, types))
     return std::move(error);
-  std::vector<std::string> typeNames;
+  std::vector<std::string> &typeNames = atomTypes;
   if (llvm::Error error = readStrings("AMBER_ATOM_TYPE", natom, typeNames))
     return std::move(error);
   topology.typeNames.assign(ntypes, "");
@@ -678,9 +807,12 @@ llvm::Expected<Topology> Reader::read() {
     std::string &name = topology.typeNames[types[i] - 1];
     if (name.empty())
       name = typeNames[i];
-    if (StringRef(typeNames[i]).starts_with("EP"))
-      return fail("the atom " + llvm::Twine(i + 1) + " is an extra point (" +
-                  typeNames[i] + "); virtual sites are not supported yet");
+    // sander takes an atom of the type EP for an extra point, and stops
+    // at any other type whose name begins with EP, which tleap counts.
+    if (StringRef(typeNames[i]).starts_with("EP") && typeNames[i] != "EP")
+      return fail("the atom " + llvm::Twine(i + 1) + " is of the type " +
+                  typeNames[i] + ", which tleap counts as an extra point "
+                  "and sander does not; only the type EP is an extra point");
   }
   for (long t = 0; t != ntypes; ++t)
     if (topology.typeNames[t].empty())

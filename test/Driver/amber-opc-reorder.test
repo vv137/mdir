@@ -1,0 +1,23 @@
+# The OPC system of amber-opc.test in the order of the positions, where
+# each segment begins: the members of the virtual sites are renumbered with
+# the particles, and the states agree with those of a run in the order of
+# the files.
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/amber-opc.test | sed '1d;$d' \
+# RUN:     | sed -e 's|nsteps        = 10|nsteps = 40|' \
+# RUN:           -e 's|eneout_period = 10|eneout_period = 10\nrstout_period = 10|' \
+# RUN:     > %t/on.toml
+# RUN: printf '[output]\nrstfile = "on.h5"\n[execution]\nreorder = true\n' >> %t/on.toml
+# RUN: sed -e 's|reorder = true|reorder = false|' -e 's|on.h5|off.h5|' %t/on.toml > %t/off.toml
+# RUN: mdir run %t/on.toml | FileCheck %s
+# RUN: mdir run %t/off.toml | FileCheck %s
+# RUN: not mdir checkpoint %t/on.h5 %t/off.h5 | FileCheck %s --check-prefix=STATES
+
+# CHECK: INFO:         0         0.0000 {{ *-?[0-9.]+}} {{ *}}-12.0706
+# CHECK: INFO:        40
+
+# STATES: values of the positions differ, by up to {{[0-9.]+}}e-1{{[0-9]}}

@@ -169,8 +169,12 @@ void mdir::driver::assignVelocities(const Control &control, System &system) {
   size_t count = system.getNumParticles();
   Generator generator(control.seed);
   for (size_t i = 0; i != count; ++i) {
+    // A virtual site has no mass and no velocity.
     double width =
-        std::sqrt(units::boltzmann * control.temperature / system.masses[i]);
+        system.masses[i] > 0.0
+            ? std::sqrt(units::boltzmann * control.temperature /
+                        system.masses[i])
+            : 0.0;
     for (int c = 0; c != 3; ++c)
       system.velocities[3 * i + c] = width * generator.nextNormal();
   }

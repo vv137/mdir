@@ -116,7 +116,11 @@ dyn.program @leapfrog(%x: !vec, %v: !vec, %f: !vec, %m: !real, %dt: f64)
     -> (!vec, !vec) attributes {velocity_offset = -0.5} {
   // CHECK:      %[[V1:[0-9]+]] = md_exec.particle_for ins(%[[V]], %[[F]], %[[M]] :
   // CHECK-NEXT: ^bb0(%[[VI:[a-z0-9]+]]: vector<3xf64>, %[[FI:[a-z0-9]+]]: vector<3xf64>, %[[MI:[a-z0-9]+]]: f64):
-  // CHECK-NEXT:   %[[FACTOR:[0-9]+]] = arith.divf %[[DT]], %[[MI]] : f64
+  // A particle of mass 0 is not kicked.
+  // CHECK-NEXT:   %[[ZERO:[a-z0-9_]+]] = arith.constant 0.000000e+00 : f64
+  // CHECK-NEXT:   %[[MASSLESS:[0-9]+]] = arith.cmpf oeq, %[[MI]], %[[ZERO]] : f64
+  // CHECK-NEXT:   %[[QUOTIENT:[0-9]+]] = arith.divf %[[DT]], %[[MI]] : f64
+  // CHECK-NEXT:   %[[FACTOR:[0-9]+]] = arith.select %[[MASSLESS]], %[[ZERO]], %[[QUOTIENT]] : f64
   // CHECK-NEXT:   %[[FV:[0-9]+]] = vector.broadcast %[[FACTOR]] : f64 to vector<3xf64>
   // CHECK-NEXT:   %[[DV:[0-9]+]] = arith.mulf %[[FV]], %[[FI]] : vector<3xf64>
   // CHECK-NEXT:   %[[VN:[0-9]+]] = arith.addf %[[VI]], %[[DV]] : vector<3xf64>

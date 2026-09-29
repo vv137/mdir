@@ -31,10 +31,13 @@ constexpr double boltzmann = 0.0083144626181532;
 struct System {
   size_t getNumParticles() const { return types.size(); }
 
-  /// The number of degrees of freedom: three per particle, less three for
-  /// the center of mass. The log and the thermostat both take it.
+  /// The number of degrees of freedom: three per particle with a mass, less
+  /// three for the center of mass. The log and the thermostat both take it.
   double getDegreesOfFreedom() const {
-    return 3.0 * static_cast<double>(getNumParticles()) - 3.0;
+    size_t massive = 0;
+    for (double mass : masses)
+      massive += mass > 0.0;
+    return 3.0 * static_cast<double>(massive) - 3.0;
   }
 
   /// For every particle, the position of its type in `Control::types`.

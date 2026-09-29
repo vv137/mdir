@@ -36,6 +36,8 @@ def Dyn_KickOp : Dyn_Op<"kick", [
     v'_i = v_i + dt · f_i / m_i
     ```
 
+    A particle of mass 0, a virtual site, keeps its velocity.
+
     ```mlir
     %v1 = dyn.kick %v, %f, %m, %dt : !md.field<@atoms, 3 x f64>
     ```

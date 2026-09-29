@@ -1,0 +1,65 @@
+# A run from a topology of Amber with extra points: alanine dipeptide with
+# ff14SB in OPC water, made with tleap (Inputs/opc/opc.leap), with a plain
+# cutoff of 9 Å for Lennard-Jones and Coulomb.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: mdir check %t/run.toml | FileCheck %s --check-prefix=INPUT
+# RUN: mdir run %t/run.toml | FileCheck %s
+
+# Each of the 387 waters has an extra point, which sander places on the
+# bisector of its hydrogens and excludes from what its oxygen is excluded
+# from. The bond from the oxygen to the extra point is dropped. The
+# exclusions agree with those of the file.
+#
+# INPUT: particles:          1570
+# INPUT: bonds:              1182, 1173 with hydrogen
+# INPUT: excluded pairs:     2420
+# INPUT: virtual sites:      387
+# INPUT: degrees of freedom: 3546
+
+# The terms at the start. sander of AmberTools 26 gives, with
+# Inputs/dipeptide/sander-single-point.in, extra points placed by its
+# frames:
+#
+#   BOND 0.1339, ANGLE 0.3620, DIHED 9.6440, 1-4 VDW 5.0157,
+#   1-4 EEL 48.9355, EEL -626.4149, VDWAALS 550.2679 (with the correction)
+#
+# They agree but for the conventions of docs/conventions.md, as in
+# amber.test: the Coulomb terms are larger by the ratio of the constants,
+# 1.0000346, and the correction counts the pairs as GROMACS does.
+#
+# CHECK:      MDIR:   Lennard-Jones                569.9084
+# CHECK-NEXT: MDIR:   Coulomb                     -626.4365
+# CHECK-NEXT: MDIR:   bonds                          0.1339
+# CHECK-NEXT: MDIR:   angles                         0.3619
+# CHECK-NEXT: MDIR:   dihedrals                      9.6439
+# CHECK-NEXT: MDIR:   Lennard-Jones 1-4              5.0156
+# CHECK-NEXT: MDIR:   Coulomb 1-4                   48.9371
+# CHECK-NEXT: MDIR:   dispersion                   -19.6353
+# CHECK-NEXT: MDIR:   total                        -12.0706
+
+#--- run.toml
+[input]
+prmtopfile = "opc.prmtop"
+ambcrdfile = "opc.inpcrd"
+
+[energy]
+cutoffdist    = 9.0
+pairlistdist  = 10.0
+electrostatic = "CUTOFF"
+
+[dynamics]
+integrator    = "VVER"
+timestep      = 0.0005
+nsteps        = 10
+eneout_period = 10
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PBC"
+#--- end

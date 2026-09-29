@@ -13,7 +13,7 @@
 # CMAP: cmap.top:8: [ cmaptypes ] is not supported yet; it is planned for a later milestone
 # ENDIF: endif.top:1: #endif without #ifdef in this file
 # INCLUDE: include.top:1: the included file 'nowhere.itp' is not found next to this file, in the include path, or in GMXLIB
-# TYPE: type.top:13: the atom type 'MW' is of the particle type D; only atoms are supported, virtual sites and shells come later
+# TYPE: type.top:13: the virtual site 5 of the molecule type 'M' is not built by a [ virtual_sites3 ]
 # MISSING: missing.top:17: no [ bondtypes ] for this bond
 
 #--- base.toml
@@ -138,6 +138,10 @@ M 1
 3 CT 1 M C3 1 0.0
 4 CT 1 M C4 1 0.0
 5 MW 1 M MW 1 0.0
+[ system ]
+M
+[ molecules ]
+M 1
 #--- missing.top
 [ defaults ]
 1 2 yes 0.5 0.8333

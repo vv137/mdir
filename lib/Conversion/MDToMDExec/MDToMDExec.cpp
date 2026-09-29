@@ -341,8 +341,15 @@ LogicalResult Converter::convertKick(dyn::KickOp op) {
 
   Block *block = addKernel(loop, {vector, vector, real});
   OpBuilder kernel = OpBuilder::atBlockEnd(block);
-  Value factor =
+  // A particle of mass 0, a virtual site, is not kicked.
+  Value zero = arith::ConstantOp::create(
+      kernel, loc, real, cast<TypedAttr>(kernel.getZeroAttr(real)));
+  Value massless = arith::CmpFOp::create(kernel, loc, arith::CmpFPredicate::OEQ,
+                                         block->getArgument(2), zero);
+  Value quotient =
       arith::DivFOp::create(kernel, loc, op.getDt(), block->getArgument(2));
+  Value factor =
+      arith::SelectOp::create(kernel, loc, massless, zero, quotient);
   Value broadcast = vector::BroadcastOp::create(kernel, loc, vector, factor);
   Value change =
       arith::MulFOp::create(kernel, loc, broadcast, block->getArgument(1));

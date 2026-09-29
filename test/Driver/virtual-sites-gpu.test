@@ -1,0 +1,13 @@
+# The three waters of virtual-sites.test on a GPU, in mixed precision: the
+# sites are placed and their forces moved on the device.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/three.prmtop %S/Inputs/opc/three.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/virtual-sites.test | sed '1d;$d' > %t/run.toml
+# RUN: printf '[execution]\ntarget = "gpu"\nprecision = "mixed"\n' >> %t/run.toml
+# RUN: mdir run %t/run.toml | FileCheck %s
+
+# CHECK: INFO:         0         0.0000 {{ *}}-4.602{{[0-9]}} {{ *}}-11.756{{[0-9]}}
+# CHECK: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[4-9]}} of its value

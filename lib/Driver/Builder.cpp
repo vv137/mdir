@@ -6,6 +6,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <array>
 #include <cmath>
 
 using namespace mdir::driver;
@@ -80,6 +81,31 @@ private:
   /// Emits the loops of the schedule, from `level` inward, and returns the
   /// values that the loop of `level` results in.
   void emitLevel(unsigned level, StringRef indent);
+  /// Whether the topology has virtual sites.
+  bool hasSites() const { return !getSiteSets().empty(); }
+  /// The tuple sets of the virtual sites, those of Amber first.
+  std::vector<const Program::TupleSet *> getSiteSets() const {
+    std::vector<const Program::TupleSet *> sets;
+    for (StringRef name : {"sites_amber", "sites_linear"})
+      for (const Program::TupleSet &set : program.tupleSets)
+        if (set.name == name)
+          sets.push_back(&set);
+    return sets;
+  }
+  /// Emits the positions `result`: the positions `x` with the virtual sites
+  /// placed from the members of the tuples of `relations`, the prefix of
+  /// the names of the relations.
+  void emitPlaceSites(StringRef indent, StringRef x, StringRef result,
+                      StringRef relations);
+  /// Emits the forces `result`: the forces `f` at the positions `x` with
+  /// the force on each virtual site moved to the atoms it is built from.
+  /// If `virial` is given, returns the name of that virial with the change
+  /// that the move makes to it, `virialResult` if there is a change.
+  std::string emitSpreadSites(StringRef indent, StringRef x, StringRef f,
+                              StringRef result, StringRef relations,
+                              StringRef virial = "",
+                              StringRef virialResult = "");
+
   /// Emits the coupling of the velocities `velocities` at the end of the
   /// step `step`: the removal of the motion of the center of mass and the
   /// thermostat. Returns the name of the velocities after it.
@@ -570,6 +596,26 @@ llvm::Error Builder::collectTopology() {
                                       pair.scaleCoulomb);
     }
   }
+  // The virtual sites: the site, then the atoms that it is built from.
+  for (auto [kind, name] :
+       {std::pair{Topology::VirtualSite::AmberWater, "sites_amber"},
+        std::pair{Topology::VirtualSite::Linear, "sites_linear"}}) {
+    if (llvm::none_of(topology.virtualSites,
+                      [&](const Topology::VirtualSite &site) {
+                        return site.kind == kind;
+                      }))
+      continue;
+    Program::TupleSet &set = addSet(name, 4);
+    size_t a = addField(set, "a"), b = addField(set, "b");
+    for (const Topology::VirtualSite &site : topology.virtualSites) {
+      if (site.kind != kind)
+        continue;
+      for (unsigned member : {site.site, site.i, site.j, site.k})
+        set.members.push_back(member);
+      set.fields[a].values.push_back(site.a);
+      set.fields[b].values.push_back(site.b);
+    }
+  }
   if (!topology.exclusions.empty()) {
     Program::TupleSet &set = addSet("excluded", 2);
     for (auto [i, j] : topology.exclusions) {
@@ -887,6 +933,9 @@ void Builder::emitPrograms() {
   std::string evaluate = "md.evaluate @energy(%x1, %cell" + getFieldValues() +
                          ")";
   std::string signature = "(!vec, !md.cell" + getFieldTypes() + ")";
+  // Virtual sites are placed after the positions move, and the forces on
+  // them are moved to their atoms before the velocities do.
+  bool sites = hasSites();
 
   if (isLeapfrog()) {
     // The stored velocities are half a step behind the positions.
@@ -896,11 +945,16 @@ void Builder::emitPrograms() {
        << "    attributes {velocity_offset = -0.5,\n"
        << "                provides = [\"symplectic\", "
           "\"time_reversible\"]} {\n"
-       << "  %f = md.evaluate @energy(%x, %cell" << getFieldValues()
-       << ") request [forces]\n      : " << signature << " -> !vec\n"
-       << "  %v1 = dyn.kick %v, %f, %m, %dt : !vec\n"
-       << "  %x1 = dyn.drift %x, %v1, %dt : !vec\n"
-       << "  dyn.return %x1, %v1 : !vec, !vec\n}\n\n";
+       << "  %f" << (sites ? "e" : "") << " = md.evaluate @energy(%x, %cell"
+       << getFieldValues() << ") request [forces]\n      : " << signature
+       << " -> !vec\n";
+    if (sites)
+      emitSpreadSites("  ", "%x", "%fe", "%f", "%r_");
+    os << "  %v1 = dyn.kick %v, %f, %m, %dt : !vec\n"
+       << "  %x1" << (sites ? "d" : "") << " = dyn.drift %x, %v1, %dt : !vec\n";
+    if (sites)
+      emitPlaceSites("  ", "%x1d", "%x1", "%r_");
+    os << "  dyn.return %x1, %v1 : !vec, !vec\n}\n\n";
     return;
   }
 
@@ -917,22 +971,278 @@ void Builder::emitPrograms() {
        << "  %c = arith.constant 5.0e-01 : f64\n"
        << "  %half = arith.mulf %c, %dt : f64\n"
        << "  %v1 = dyn.kick %v, %f, %m, %half : !vec\n"
-       << "  %x1 = dyn.drift %x, %v1, %dt : !vec\n";
+       << "  %x1" << (sites ? "d" : "") << " = dyn.drift %x, %v1, %dt : !vec\n";
+    if (sites)
+      emitPlaceSites("  ", "%x1d", "%x1", "%r_");
+    StringRef raw = sites ? "e" : "";
     if (withEnergy)
-      os << "  %u1, %f1, %w1 = " << evaluate
+      os << "  %u1, %f1" << raw << ", %w1" << raw << " = " << evaluate
          << "\n      request [energy, forces, virial]\n"
          << "      : " << signature << " -> (f64, !vec, vector<9xf64>)\n";
     else
-      os << "  %f1 = " << evaluate << " request [forces]\n"
+      os << "  %f1" << raw << " = " << evaluate << " request [forces]\n"
          << "      : " << signature << " -> !vec\n";
+    std::string virial = "%w1";
+    if (sites)
+      virial = emitSpreadSites("  ", "%x1", "%f1e", "%f1", "%r_",
+                               withEnergy ? "%w1e" : "", "%w1");
     os << "  %v2 = dyn.kick %v1, %f1, %m, %half : !vec\n";
     if (withEnergy)
-      os << "  dyn.return %x1, %v2, %f1, %u1, %w1\n"
+      os << "  dyn.return %x1, %v2, %f1, %u1, " << virial << "\n"
          << "      : !vec, !vec, !vec, f64, vector<9xf64>\n";
     else
       os << "  dyn.return %x1, %v2, %f1 : !vec, !vec, !vec\n";
     os << "}\n\n";
   }
+}
+
+namespace {
+/// Emits the arithmetic of a kernel of virtual sites on vectors of three
+/// numbers, with names of its own.
+class SiteKernel {
+public:
+  SiteKernel(llvm::raw_ostream &os, StringRef indent)
+      : os(os), indent(indent.str()) {}
+
+  std::string vector(StringRef op, StringRef a, StringRef b) {
+    std::string name = fresh();
+    os << indent << name << " = arith." << op << " " << a << ", " << b
+       << " : vector<3xf64>\n";
+    return name;
+  }
+  std::string real(StringRef op, StringRef a, StringRef b) {
+    std::string name = fresh();
+    os << indent << name << " = arith." << op << " " << a << ", " << b
+       << " : f64\n";
+    return name;
+  }
+  std::string negate(StringRef a) {
+    std::string name = fresh();
+    os << indent << name << " = arith.negf " << a << " : vector<3xf64>\n";
+    return name;
+  }
+  std::string dot(StringRef a, StringRef b) {
+    std::string product = vector("mulf", a, b), name = fresh();
+    os << indent << name << " = vector.reduction <add>, " << product
+       << " : vector<3xf64> into f64\n";
+    return name;
+  }
+  std::string norm(StringRef a) {
+    std::string square = dot(a, a), name = fresh();
+    os << indent << name << " = math.sqrt " << square << " : f64\n";
+    return name;
+  }
+  std::string splat(StringRef a) {
+    std::string name = fresh();
+    os << indent << name << " = vector.broadcast " << a
+       << " : f64 to vector<3xf64>\n";
+    return name;
+  }
+  std::string scale(StringRef factor, StringRef a) {
+    return vector("mulf", splat(factor), a);
+  }
+  std::string component(StringRef a, int index) {
+    std::string name = fresh();
+    os << indent << name << " = vector.extract " << a << "[" << index
+       << "] : f64 from vector<3xf64>\n";
+    return name;
+  }
+  std::string zero() {
+    std::string name = fresh();
+    os << indent << name
+       << " = arith.constant dense<0.0> : vector<3xf64>\n";
+    return name;
+  }
+
+private:
+  std::string fresh() { return "%vs" + std::to_string(next++); }
+
+  llvm::raw_ostream &os;
+  std::string indent;
+  unsigned next = 0;
+};
+
+/// The frame of the extra point of Amber: the unit vectors from the owner
+/// to the two hydrogens, `u` and `v`, their lengths, and the unit vector
+/// along their sum, with the length of the sum.
+struct AmberFrame {
+  std::string u, v, lengthU, lengthV, sum, lengthSum;
+
+  AmberFrame(SiteKernel &k, StringRef toJ, StringRef toK) {
+    lengthU = k.norm(toJ);
+    lengthV = k.norm(toK);
+    u = k.vector("divf", toJ, k.splat(lengthU));
+    v = k.vector("divf", toK, k.splat(lengthV));
+    sum = k.vector("addf", u, v);
+    lengthSum = k.norm(sum);
+  }
+
+  /// The forces on the owner and on the two hydrogens from the force
+  /// `force` on the extra point at the distance `d`: the transpose of the
+  /// derivative of the position. Perpendicular to the bisector, then to
+  /// each bond: the extra point moves with the directions of the bonds,
+  /// not with their lengths.
+  std::array<std::string, 3> spread(SiteKernel &k, StringRef force,
+                                    StringRef d) {
+    std::string bisector = k.vector("divf", sum, k.splat(lengthSum));
+    std::string across =
+        k.vector("subf", force, k.scale(k.dot(force, bisector), bisector));
+    auto toHydrogen = [&](StringRef unit, StringRef length) {
+      std::string factor =
+          k.real("divf", d, k.real("mulf", length, lengthSum));
+      std::string perpendicular =
+          k.vector("subf", across, k.scale(k.dot(across, unit), unit));
+      return k.scale(factor, perpendicular);
+    };
+    std::string first = toHydrogen(u, lengthU),
+                second = toHydrogen(v, lengthV);
+    std::string owner =
+        k.vector("subf", k.vector("subf", force, first), second);
+    return {owner, first, second};
+  }
+};
+} // namespace
+
+void Builder::emitPlaceSites(StringRef indent, StringRef x, StringRef result,
+                             StringRef relations) {
+  std::string current = x.str();
+  std::string inner = (indent + "  ").str();
+  std::vector<const Program::TupleSet *> sets = getSiteSets();
+  for (const Program::TupleSet *each : sets) {
+    const Program::TupleSet &set = *each;
+    bool amber = set.name == "sites_amber";
+    bool last = each == sets.back();
+    // The change of the position of each site: to where it is built, from
+    // the owner, less where it is.
+    std::string delta = (result + "_" + set.name).str();
+    os << indent << delta << " = md.gather_tuples " << relations << set.name
+       << ", " << current << ", %cell\n"
+       << indent << "    coordinates(displacement(2, 1), displacement(3, 1), "
+                    "displacement(0, 1))\n"
+       << indent << "    tuple(%f_" << set.name << "_a, %f_" << set.name
+       << "_b : !of_" << set.name << ", !of_" << set.name << ") {\n"
+       << indent << "^bb0(%vs_j: vector<3xf64>, %vs_k: vector<3xf64>, "
+                    "%vs_s: vector<3xf64>, %vs_a: f64, %vs_b: f64):\n";
+    SiteKernel k(os, inner);
+    std::string placed;
+    if (amber) {
+      AmberFrame frame(k, "%vs_j", "%vs_k");
+      placed = k.scale(k.real("divf", "%vs_a", frame.lengthSum), frame.sum);
+    } else {
+      placed = k.vector("addf", k.scale("%vs_a", "%vs_j"),
+                        k.scale("%vs_b", "%vs_k"));
+    }
+    std::string change = k.vector("subf", placed, "%vs_s");
+    std::string zero = k.zero();
+    os << inner << "md.yield " << change << ", " << zero << ", " << zero
+       << ", " << zero
+       << " : vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>\n"
+       << indent << "} : !rel_" << set.name << ", !vec -> !vec\n";
+    std::string next =
+        last ? result.str() : (result + "_" + set.name + "_x").str();
+    os << indent << next << " = md.map_particles gather(" << current << ", "
+       << delta << " : !vec, !vec) {\n"
+       << indent << "^bb0(%vs_x: vector<3xf64>, %vs_d: vector<3xf64>):\n"
+       << inner << "%vs_sum = arith.addf %vs_x, %vs_d : vector<3xf64>\n"
+       << inner << "md.yield %vs_sum : vector<3xf64>\n"
+       << indent << "} : !vec\n";
+    current = next;
+  }
+}
+
+std::string Builder::emitSpreadSites(StringRef indent, StringRef x,
+                                     StringRef f, StringRef result,
+                                     StringRef relations, StringRef virial,
+                                     StringRef virialResult) {
+  std::string current = f.str(), currentVirial = virial.str();
+  std::string inner = (indent + "  ").str();
+  std::vector<const Program::TupleSet *> sets = getSiteSets();
+  for (const Program::TupleSet *each : sets) {
+    const Program::TupleSet &set = *each;
+    bool amber = set.name == "sites_amber";
+    bool last = each == sets.back();
+    std::string delta = (result + "_" + set.name).str();
+    os << indent << delta << " = md.gather_tuples " << relations << set.name
+       << ", " << x << ", %cell\n"
+       << indent << "    coordinates(displacement(2, 1), displacement(3, 1))\n"
+       << indent << "    gather(" << current << " : !vec)\n"
+       << indent << "    tuple(%f_" << set.name << "_a, %f_" << set.name
+       << "_b : !of_" << set.name << ", !of_" << set.name << ") {\n"
+       << indent << "^bb0(%vs_j: vector<3xf64>, %vs_k: vector<3xf64>, "
+                    "%vs_f0: vector<3xf64>, %vs_f1: vector<3xf64>, "
+                    "%vs_f2: vector<3xf64>, %vs_f3: vector<3xf64>, "
+                    "%vs_a: f64, %vs_b: f64):\n";
+    SiteKernel k(os, inner);
+    std::array<std::string, 3> spread;
+    if (amber) {
+      AmberFrame frame(k, "%vs_j", "%vs_k");
+      spread = frame.spread(k, "%vs_f0", "%vs_a");
+    } else {
+      std::string first = k.scale("%vs_a", "%vs_f0"),
+                  second = k.scale("%vs_b", "%vs_f0");
+      spread = {k.vector("subf", k.vector("subf", "%vs_f0", first), second),
+                first, second};
+    }
+    std::string removed = k.negate("%vs_f0");
+    os << inner << "md.yield " << removed << ", " << spread[0] << ", "
+       << spread[1] << ", " << spread[2]
+       << " : vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>\n"
+       << indent << "} : !rel_" << set.name << ", !vec -> !vec\n";
+
+    // The virial changes where the site is not a linear combination of the
+    // atoms: W = Σ d ⊗ F with the forces on the atoms instead of that on
+    // the site, Σ_k (x_k − x_s) ⊗ F_k.
+    if (amber && !currentVirial.empty()) {
+      std::string change = (virialResult + "_" + set.name).str();
+      os << indent << change << " = md.sum_tuples " << relations << set.name
+         << ", " << x << ", %cell\n"
+         << indent << "    coordinates(displacement(2, 1), displacement(3, "
+                      "1), displacement(1, 0), displacement(2, 0), "
+                      "displacement(3, 0))\n"
+         << indent << "    gather(" << current << " : !vec)\n"
+         << indent << "    tuple(%f_" << set.name << "_a, %f_" << set.name
+         << "_b : !of_" << set.name << ", !of_" << set.name << ") {\n"
+         << indent << "^bb0(%vs_j: vector<3xf64>, %vs_k: vector<3xf64>, "
+                      "%vs_e1: vector<3xf64>, %vs_e2: vector<3xf64>, "
+                      "%vs_e3: vector<3xf64>, "
+                      "%vs_f0: vector<3xf64>, %vs_f1: vector<3xf64>, "
+                      "%vs_f2: vector<3xf64>, %vs_f3: vector<3xf64>, "
+                      "%vs_a: f64, %vs_b: f64):\n";
+      SiteKernel w(os, inner);
+      AmberFrame frame(w, "%vs_j", "%vs_k");
+      std::array<std::string, 3> forces = frame.spread(w, "%vs_f0", "%vs_a");
+      std::array<std::string, 3> arms = {"%vs_e1", "%vs_e2", "%vs_e3"};
+      std::string elements;
+      for (int a = 0; a != 3; ++a) {
+        std::string row;
+        for (int m = 0; m != 3; ++m) {
+          std::string term = w.scale(w.component(arms[m], a), forces[m]);
+          row = row.empty() ? term : w.vector("addf", row, term);
+        }
+        for (int b = 0; b != 3; ++b)
+          elements += (elements.empty() ? "" : ", ") + w.component(row, b);
+      }
+      os << inner << "%vs_w = vector.from_elements " << elements
+         << " : vector<9xf64>\n"
+         << inner << "md.yield %vs_w : vector<9xf64>\n"
+         << indent << "} : !rel_" << set.name << ", !vec -> vector<9xf64>\n";
+      std::string next = virialResult.str();
+      os << indent << next << " = arith.addf " << currentVirial << ", "
+         << change << " : vector<9xf64>\n";
+      currentVirial = next;
+    }
+
+    std::string next =
+        last ? result.str() : (result + "_" + set.name + "_f").str();
+    os << indent << next << " = md.map_particles gather(" << current << ", "
+       << delta << " : !vec, !vec) {\n"
+       << indent << "^bb0(%vs_x: vector<3xf64>, %vs_d: vector<3xf64>):\n"
+       << inner << "%vs_sum = arith.addf %vs_x, %vs_d : vector<3xf64>\n"
+       << inner << "md.yield %vs_sum : vector<3xf64>\n"
+       << indent << "} : !vec\n";
+    current = next;
+  }
+  return currentVirial;
 }
 
 /// The trace of the virial `virial`, which enters the pressure.
@@ -961,7 +1271,10 @@ static void emitForceSquare(llvm::raw_ostream &os, StringRef result,
      << indent
      << "  %f2 = vector.reduction <add>, %sq : vector<3xf64> into f64\n"
      << indent << "  %g = arith.divf %f2, %m_i : f64\n"
-     << indent << "  md.yield %g : f64\n"
+     << indent << "  %zero = arith.constant 0.0 : f64\n"
+     << indent << "  %massless = arith.cmpf oeq, %m_i, %zero : f64\n"
+     << indent << "  %h = arith.select %massless, %zero, %g : f64\n"
+     << indent << "  md.yield %h : f64\n"
      << indent << "} : f64\n";
 }
 
@@ -1181,17 +1494,25 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
 
     if (current.name == "energy") {
       // The last step of the interval, and the energies after it.
+      std::string virialName = "%w";
       if (isLeapfrog()) {
         os << inner << "%xl, %vl = dyn.step @step(%x" << last << ", %v"
            << last << ", " << massName << ", %cell, %dt"
            << getFieldValues(fieldPrefix) << ")\n"
            << inner << "    : (!vec, !vec, !real, !md.cell, f64"
            << getFieldTypes() << ") -> (!vec, !vec)\n";
-        os << inner << "%u, %fl, %w = md.evaluate @energy(%xl, %cell"
+        StringRef raw = hasSites() ? "e" : "";
+        os << inner << "%u, %fl" << raw << ", %w" << raw
+           << " = md.evaluate @energy(%xl, %cell"
            << getFieldValues(fieldPrefix) << ")\n"
            << inner << "    request [energy, forces, virial]\n"
            << inner << "    : (!vec, !md.cell" << getFieldTypes()
            << ") -> (f64, !vec, vector<9xf64>)\n";
+        if (hasSites())
+          virialName = emitSpreadSites(
+              inner, "%xl", "%fle", "%fl",
+              ("%r" + StringRef(fieldPrefix).drop_front(2)).str(), "%we",
+              "%w");
         // The stored velocities are half a step behind. Those of the time
         // of the positions are half a kick ahead of them.
         os << inner << "%vn = dyn.kick %vl, %fl, " << massName
@@ -1208,7 +1529,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       emitKineticEnergy(os, "%k", isLeapfrog() ? "%vn" : "%vl", massName,
                         inner);
       emitForceSquare(os, "%g", "%fl", massName, inner);
-      emitTrace(os, "%tr", "%w", inner);
+      emitTrace(os, "%tr", virialName, inner);
       emitStep();
       os << inner << "func.call @mdrtWriteEnergies(%step" << here
          << ", %u, %k, %g, %tr) : (i64, f64, f64, f64, f64) -> ()\n";
@@ -1400,7 +1721,7 @@ void Builder::emitEntry() {
   std::string velocities = isLeapfrog() && !isRestart() ? "%vg" : "%v0";
   std::string given = program.reorders ? "_in" : "";
   os << "  %cell = md.orthorhombic_cell %lx, %ly, %lz\n"
-     << "  %x" << (program.reorders ? "_in" : "0")
+     << "  %x" << (program.reorders ? "_in" : "0") << (hasSites() ? "u" : "")
      << " = mdrt.from_buffer %positions : memref<?x3x" << state
      << "> to !vec\n"
      << "  " << (program.reorders ? "%v_in" : velocities)
@@ -1434,6 +1755,12 @@ void Builder::emitEntry() {
     os << "  %f" << (program.reorders ? "_in" : "0")
        << " = mdrt.from_buffer %forces : memref<?x3x" << force
        << "> to !vec\n";
+  // The virtual sites where their atoms put them, whatever the file says.
+  if (hasSites()) {
+    StringRef positions = program.reorders ? "%x_in" : "%x0";
+    emitPlaceSites("  ", (positions + "u").str(), positions,
+                   program.reorders ? "%ro_" : "%r_");
+  }
   if (program.reorders)
     emitReorder("  ", "_in", "0", "", givenForces, velocities);
 
@@ -1473,11 +1800,16 @@ void Builder::emitEntry() {
 
   if (!isRestart()) {
     // The energies at the start.
-    os << "  %u0, %f0, %w0 = md.evaluate @energy(%x0, %cell"
-       << getFieldValues() << ")\n"
+    StringRef raw = hasSites() ? "e" : "";
+    os << "  %u0, %f0" << raw << ", %w0" << raw
+       << " = md.evaluate @energy(%x0, %cell" << getFieldValues() << ")\n"
        << "      request [energy, forces, virial]\n"
        << "      : (!vec, !md.cell" << getFieldTypes()
        << ") -> (f64, !vec, vector<9xf64>)\n";
+    std::string virial = "%w0";
+    if (hasSites())
+      virial = emitSpreadSites("  ", "%x0", "%f0e", "%f0", "%r_", "%w0e",
+                               "%w0");
     if (system.topology) {
       os << "  %terms = memref.alloca() : memref<7xf64>\n";
       int index = 0;
@@ -1498,7 +1830,7 @@ void Builder::emitEntry() {
     }
     emitKineticEnergy(os, "%k0", velocities, "%m", "  ");
     emitForceSquare(os, "%g0", "%f0", "%m", "  ");
-    emitTrace(os, "%tr0", "%w0", "  ");
+    emitTrace(os, "%tr0", virial, "  ");
     os << "  call @mdrtWriteEnergies(%start, %u0, %k0, %g0, %tr0)\n"
        << "      : (i64, f64, f64, f64, f64) -> ()\n";
 

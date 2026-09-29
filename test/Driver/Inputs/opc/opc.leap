@@ -1,0 +1,10 @@
+# Alanine dipeptide (ACE-ALA-NME) with ff14SB in OPC water, whose extra
+# points are virtual sites, made with tleap of AmberTools 26:
+#
+#   tleap -f opc.leap
+source leaprc.protein.ff14SB
+source leaprc.water.opc
+m = sequence { ACE ALA NME }
+solvateBox m OPCBOX 8.0
+saveAmberParm m opc.prmtop opc.inpcrd
+quit

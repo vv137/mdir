@@ -308,6 +308,9 @@ struct Atom {
   std::string residue;
   std::string residueNumber;
   double charge, mass;
+  /// Of the particle type V or D: a virtual site.
+  bool virtualSite = false;
+  const Line *line = nullptr;
 };
 
 struct Interaction {
@@ -321,7 +324,8 @@ struct MoleculeType {
   std::string name;
   int nrexcl = 0;
   std::vector<Atom> atoms;
-  std::vector<Interaction> bonds, pairs, angles, dihedrals, settles;
+  std::vector<Interaction> bonds, pairs, angles, dihedrals, settles,
+      virtualSites;
   std::vector<std::pair<unsigned, unsigned>> exclusions;
 };
 
@@ -683,13 +687,14 @@ llvm::Error TopologyReader::readAtom(const Line &line,
   const AtomType *type = findType(t[1]);
   if (!type)
     return fail(line, "unknown atom type '" + t[1] + "'");
-  // A force field defines types for sites that a system may not use.
-  if (type->particle != 'A')
+  // A force field defines types for shells that a system may not use.
+  if (type->particle != 'A' && type->particle != 'V' && type->particle != 'D')
     return fail(line, "the atom type '" + t[1] + "' is of the particle type " +
                           llvm::Twine(type->particle) +
-                          "; only atoms are supported, virtual sites and "
-                          "shells come later");
+                          "; only atoms and virtual sites are supported");
   Atom atom;
+  atom.virtualSite = type->particle != 'A';
+  atom.line = &line;
   atom.type = t[1];
   atom.residueNumber = t[2];
   atom.residue = t[3];
@@ -703,6 +708,9 @@ llvm::Error TopologyReader::readAtom(const Line &line,
   if (t.size() > 8 && t[8] != t[1])
     return fail(line, "a topology of the state B (free energy) is not "
                       "supported");
+  if (atom.virtualSite && atom.mass != 0.0)
+    return fail(line, "the virtual site '" + atom.name + "' has a mass of " +
+                          show(atom.mass) + "; a virtual site has none");
   molecule.atoms.push_back(atom);
   return llvm::Error::success();
 }
@@ -820,7 +828,7 @@ llvm::Error TopologyReader::readLine(const Line &line, StringRef section) {
     return readAtom(line, t);
   if (moleculeTypes.empty() &&
       llvm::is_contained({"bonds", "pairs", "angles", "dihedrals",
-                          "exclusions", "settles"},
+                          "exclusions", "settles", "virtualsites3"},
                          section))
     return fail(line, "[ " + section + " ] before [ moleculetype ]");
   if (section == "bonds")
@@ -834,6 +842,23 @@ llvm::Error TopologyReader::readLine(const Line &line, StringRef section) {
                            "dihedrals");
   if (section == "exclusions")
     return readExclusions(line, t);
+  if (section == "virtualsites3") {
+    // The site, the three atoms it is built from, a function, and the
+    // parameters of the function.
+    MoleculeType &molecule = moleculeTypes.back();
+    if (llvm::Error error = readInteraction(line, t, 4, molecule.virtualSites,
+                                            "virtual_sites3"))
+      return error;
+    const Interaction &site = molecule.virtualSites.back();
+    if (site.function != 1)
+      return fail(line, "only the function 1 of [ virtual_sites3 ], a linear "
+                        "combination of three atoms, is supported");
+    if (site.parameters.size() != 2)
+      return fail(line, "expected the two weights a and b in "
+                        "[ virtual_sites3 ]; weights that grompp would "
+                        "compute from the constraints are not supported");
+    return llvm::Error::success();
+  }
   if (section == "settles") {
     // The oxygen, a function, and the distances O–H and H–H.
     MoleculeType &molecule = moleculeTypes.back();
@@ -1121,6 +1146,37 @@ llvm::Error TopologyReader::expandMolecule(const MoleculeType &molecule,
     topology.settles.push_back({offset + settle.atoms[0],
                                 settle.parameters[0], settle.parameters[1]});
 
+  // Each virtual site is built once, from atoms that are not sites.
+  std::vector<int> built(molecule.atoms.size(), 0);
+  for (const Interaction &site : molecule.virtualSites) {
+    unsigned s = site.atoms[0];
+    if (!molecule.atoms[s].virtualSite)
+      return fail(*site.line, "the atom " + llvm::Twine(s + 1) +
+                                  " of [ virtual_sites3 ] is not of the "
+                                  "particle type V or D");
+    for (unsigned k = 1; k != 4; ++k)
+      if (molecule.atoms[site.atoms[k]].virtualSite)
+        return fail(*site.line, "a virtual site built from another is not "
+                                "supported");
+    if (built[s]++)
+      return fail(*site.line, "the virtual site " + llvm::Twine(s + 1) +
+                                  " is built twice");
+    Topology::VirtualSite term;
+    term.kind = Topology::VirtualSite::Linear;
+    term.site = offset + s;
+    term.i = offset + site.atoms[1];
+    term.j = offset + site.atoms[2];
+    term.k = offset + site.atoms[3];
+    term.a = site.parameters[0];
+    term.b = site.parameters[1];
+    topology.virtualSites.push_back(term);
+  }
+  for (auto [local, atom] : llvm::enumerate(molecule.atoms))
+    if (atom.virtualSite && !built[local])
+      return fail(*atom.line, "the virtual site " + llvm::Twine(local + 1) +
+                                  " of the molecule type '" + molecule.name +
+                                  "' is not built by a [ virtual_sites3 ]");
+
   // Exclusions: the atoms within nrexcl bonds, and those of the section.
   size_t count = molecule.atoms.size();
   std::vector<std::vector<unsigned>> neighbors(count);
@@ -1226,18 +1282,22 @@ llvm::Expected<Topology> TopologyReader::read() {
       StringRef name = text.drop_front().take_until(
           [](char c) { return c == ']'; });
       section = canonicalSection(name);
+      // The old name of the section.
+      if (section == "dummies3")
+        section = "virtualsites3";
       static const std::set<std::string> known = {
           "defaults", "atomtypes", "bondtypes", "angletypes",
           "dihedraltypes", "pairtypes", "nonbondparams", "moleculetype",
           "atoms", "bonds", "pairs", "angles", "dihedrals", "exclusions",
           "settles", "system", "molecules", "constrainttypes",
+          "virtualsites3",
           "implicitgenbornparams", "implicitsurfaceparams"};
       static const std::map<std::string, std::string> planned = {
           {"constraints", "M1"},
           {"virtualsites1", "M2a"},    {"virtualsites2", "M2a"},
-          {"virtualsites3", "M2a"},    {"virtualsites4", "M2a"},
+          {"virtualsites4", "M2a"},
           {"virtualsitesn", "M2a"},    {"dummies1", "M2a"},
-          {"dummies2", "M2a"},         {"dummies3", "M2a"},
+          {"dummies2", "M2a"},
           {"dummies4", "M2a"},         {"dummiesn", "M2a"},
           {"cmaptypes", "a later milestone"},
           {"cmap", "a later milestone"}};

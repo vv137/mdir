@@ -1,0 +1,60 @@
+# Virtual sites: three OPC waters (Inputs/opc/three.py) whose extra points
+# are placed from their atoms and give their forces to them, in a cell
+# where no pair crosses the cutoff.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/three.prmtop %S/Inputs/opc/three.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: sed -e 's|VVER|LEAP|' %t/run.toml > %t/leap.toml
+# RUN: mdir check %t/run.toml | FileCheck %s --check-prefix=INPUT
+# RUN: mdir run %t/run.toml | FileCheck %s
+# RUN: mdir run %t/leap.toml | FileCheck %s
+# RUN: %python %S/Inputs/check_virial.py mdir %t/run.toml %t/three.inpcrd \
+# RUN: | FileCheck %s --check-prefix=VIRIAL
+
+# Each water has one extra point, excluded from its three atoms, and the
+# three atoms from each other: 6 pairs a water. The degrees of freedom are
+# those of the 9 atoms with a mass.
+#
+# INPUT: particles:          12
+# INPUT: bonds:              9, 9 with hydrogen
+# INPUT: excluded pairs:     18
+# INPUT: virtual sites:      3
+# INPUT: degrees of freedom: 24
+
+# The forces are the derivatives of the energy: the change of the total
+# energy shrinks with the square of the time step (6.8e-4 at 0.1 fs, 1.7e-4
+# at 0.05 fs), as that of flexible water without sites does.
+#
+# CHECK: INFO:         0         0.0000 {{ *}}-4.6023 {{ *}}-11.7562
+# CHECK: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[4-9]}} of its value
+
+# The extra point of Amber is not a linear combination of its atoms, and
+# moving its force to them changes the virial: without the change the trace
+# would be 35.84 kcal/mol, not 43.57.
+#
+# VIRIAL: virial ok
+
+#--- run.toml
+[input]
+prmtopfile = "three.prmtop"
+ambcrdfile = "three.inpcrd"
+
+[energy]
+cutoffdist    = 18.0
+pairlistdist  = 19.0
+electrostatic = "CUTOFF"
+
+[dynamics]
+integrator    = "VVER"
+timestep      = 0.0001
+nsteps        = 1000
+eneout_period = 1000
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PBC"
+#--- end
