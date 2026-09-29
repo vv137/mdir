@@ -1,0 +1,6 @@
+set(LLVM_TARGET_DEFINITIONS DynOps.td)
+mlir_tablegen(DynOps.h.inc -gen-op-decls)
+mlir_tablegen(DynOps.cpp.inc -gen-op-defs)
+mlir_tablegen(DynDialect.h.inc -gen-dialect-decls -dialect=dyn)
+mlir_tablegen(DynDialect.cpp.inc -gen-dialect-defs -dialect=dyn)
+add_mlir_dialect_tablegen_target(MDIRDynIncGen)

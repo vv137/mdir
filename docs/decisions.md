@@ -350,7 +350,8 @@ These items follow from the decisions above but have no design yet.
 | Item | Needed for | Status |
 |---|---|---|
 | `md` dialect: types, ops, truncation, differentiation, exchange check | M0 | Implemented |
-| `dyn` and `md_exec` dialects | M0 | Next step |
+| `dyn` dialect | M0 | Implemented |
+| `md_exec` dialect and the lowering into it | M0 | Next step |
 | Check that particle set symbols in types are declared | M0 | |
 | Regression test for the numerical values of derivatives | M0 | Implemented with a kernel runner |
 | `mdrt` ABI: storage, neighbor structures, events | M0 | Under discussion; requirements in ops-m0.md, Section 11 |

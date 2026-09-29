@@ -1,4 +1,5 @@
 set(LIBS
+  MDIRDyn
   MDIRMD
   MDIRMDTransforms
   MDIRTestPasses

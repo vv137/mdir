@@ -1,7 +1,7 @@
 # MDIR Op Specification, Milestone M0
 
-Status: draft 3 (2026-09-29). The `md` dialect and its passes are
-implemented; `dyn` and `md_exec` are not.
+Status: draft 4 (2026-09-29). The `md` and `dyn` dialects are implemented;
+`md_exec` is not.
 
 This document specifies the types and ops needed for milestone M0: a
 Lennard-Jones fluid integrated with velocity Verlet or leapfrog, on one node,
@@ -13,7 +13,8 @@ Operand lists, result lists, and the mathematical definitions are normative.
 |---|---|
 | `md` types and ops (Section 4) | Implemented. The examples show the actual syntax. |
 | Truncation, differentiation, exchange check (Sections 4.7, 4.8, 5) | Implemented as passes; see Section 5.6 |
-| `dyn`, `md_exec`, storage assignment (Sections 6, 8 to 10) | Not implemented. The syntax is illustrative. |
+| `dyn` ops (Section 6) | Implemented. The examples show the actual syntax. |
+| `md_exec`, storage assignment (Sections 8 to 10) | Not implemented. The syntax is illustrative. |
 
 It follows the accepted decisions in [decisions.md](decisions.md). Tags such
 as (S1) or (B4) name the decision behind a section.
@@ -607,12 +608,13 @@ dyn.program @velocity_verlet(%x: !vec, %v: !vec, %f: !vec,
                              %m: !real, %cell: !md.cell, %dt: f64,
                              %eps: f64, %sigma: f64)
     -> (!vec, !vec, !vec)
-    attributes { velocity_offset = 0.0,
-                 provides = [symplectic, time_reversible] } {
-  %half = arith.mulf %dt, 0.5
+    attributes {provides = ["symplectic", "time_reversible"]} {
+  %c    = arith.constant 0.5 : f64
+  %half = arith.mulf %c, %dt : f64
   %v1 = dyn.kick  %v,  %f, %m, %half : !vec
   %x1 = dyn.drift %x,  %v1, %dt      : !vec
-  %f1 = md.evaluate @lj(%x1, %cell, %eps, %sigma) request [forces] : !vec
+  %f1 = md.evaluate @lj(%x1, %cell, %eps, %sigma) request [forces]
+          : (!vec, !md.cell, f64, f64) -> !vec
   %v2 = dyn.kick  %v1, %f1, %m, %half : !vec
   dyn.return %x1, %v2, %f1 : !vec, !vec, !vec
 }
@@ -622,7 +624,7 @@ dyn.program @velocity_verlet(%x: !vec, %v: !vec, %f: !vec,
 |---|---|
 | `requires` | What the program needs from the thermodynamic state, such as a temperature. |
 | `provides` | Properties of the program, such as `symplectic`, `time_reversible`, or `thermostatting`. Neither integrator conserves energy exactly, so neither claims to (B9). |
-| `velocity_offset` | Time of the stored velocities relative to the positions, in units of `dt`. |
+| `velocity_offset` | Time of the stored velocities relative to the positions, in units of `dt`. Zero if absent. |
 
 ### 6.4 Leapfrog
 
@@ -631,9 +633,10 @@ dyn.program @leapfrog(%x: !vec, %v: !vec,
                       %m: !real, %cell: !md.cell, %dt: f64,
                       %eps: f64, %sigma: f64)
     -> (!vec, !vec)
-    attributes { velocity_offset = -0.5,
-                 provides = [symplectic, time_reversible] } {
-  %f  = md.evaluate @lj(%x, %cell, %eps, %sigma) request [forces] : !vec
+    attributes {velocity_offset = -0.5,
+                provides = ["symplectic", "time_reversible"]} {
+  %f  = md.evaluate @lj(%x, %cell, %eps, %sigma) request [forces]
+          : (!vec, !md.cell, f64, f64) -> !vec
   %v1 = dyn.kick  %v, %f, %m, %dt : !vec
   %x1 = dyn.drift %x, %v1, %dt    : !vec
   dyn.return %x1, %v1 : !vec, !vec
@@ -667,10 +670,14 @@ No `dyn` op is needed for it.
 func.func @run_segment(%x0: !vec, %v0: !vec, %f0: !vec, %m: !real,
                        %cell: !md.cell, %dt: f64, %eps: f64, %sigma: f64,
                        %n: index) -> (!vec, !vec, !vec) {
-  %x, %v, %f = scf.for %s = 0 to %n step 1
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %x, %v, %f = scf.for %s = %c0 to %n step %c1
       iter_args(%xa = %x0, %va = %v0, %fa = %f0) -> (!vec, !vec, !vec) {
     %xb, %vb, %fb = dyn.step @velocity_verlet(%xa, %va, %fa, %m, %cell, %dt,
                                               %eps, %sigma)
+        : (!vec, !vec, !vec, !real, !md.cell, f64, f64, f64)
+        -> (!vec, !vec, !vec)
     scf.yield %xb, %vb, %fb : !vec, !vec, !vec
   }
   return %x, %v, %f : !vec, !vec, !vec
