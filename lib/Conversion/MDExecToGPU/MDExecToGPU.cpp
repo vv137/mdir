@@ -406,11 +406,13 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   // The cell has become the vector of its edge lengths.
   Type real = cast<MemRefType>(positions.getType()).getElementType();
   Value box = convertReal(builder, loc, op.getCellMutable().get(), real);
+  Value inverse = createInverse(builder, loc, box);
 
   launchOver(builder, loc, size, [&](OpBuilder &body, Value central) {
     IRMapping local;
-    SmallVector<Value> contributions = emitPairKernel(
-        body, op, structure.counts, structure.index, box, central, local);
+    SmallVector<Value> contributions =
+        emitPairKernel(body, op, structure.counts, structure.index, box,
+                       inverse, central, local);
     for (auto [index, value] : llvm::enumerate(contributions))
       memref::StoreOp::create(body, loc, value, op.getScratch()[2 * index],
                               ValueRange{central});

@@ -28,6 +28,14 @@ Value kernels::createReal(OpBuilder &builder, Location loc, Type real,
                                    builder.getFloatAttr(real, value));
 }
 
+Value kernels::createInverse(OpBuilder &builder, Location loc, Value box) {
+  auto type = cast<VectorType>(box.getType());
+  FloatAttr one = builder.getFloatAttr(type.getElementType(), 1.0);
+  Value ones = arith::ConstantOp::create(
+      builder, loc, type, DenseElementsAttr::get(type, one.getValue()));
+  return arith::DivFOp::create(builder, loc, ones, box);
+}
+
 Value kernels::convertReal(OpBuilder &builder, Location loc, Value value,
                            Type real) {
   Type source = value.getType();
@@ -110,7 +118,8 @@ SmallVector<Value> kernels::emitParticleKernel(OpBuilder &builder,
 SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
                                            md_exec::PairForOp op,
                                            Value counts, Value index,
-                                           Value box, Value central,
+                                           Value box, Value inverse,
+                                           Value central,
                                            IRMapping &local) {
   Location loc = op.getLoc();
   Value positions = op.getPositions();
@@ -158,7 +167,7 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
         Value otherPosition = loadElement(pair, loc, positions, other);
         Value raw =
             arith::SubFOp::create(pair, loc, centralPosition, otherPosition);
-        Value images = arith::DivFOp::create(pair, loc, raw, box);
+        Value images = arith::MulFOp::create(pair, loc, raw, inverse);
         Value nearest = math::RoundEvenOp::create(pair, loc, images);
         Value shift = arith::MulFOp::create(pair, loc, nearest, box);
         Value d = arith::SubFOp::create(pair, loc, raw, shift);

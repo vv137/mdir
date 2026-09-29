@@ -183,6 +183,7 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   // The cell has become the vector of its edge lengths.
   Type real = cast<MemRefType>(positions.getType()).getElementType();
   Value box = convertReal(builder, loc, op.getCellMutable().get(), real);
+  Value inverse = createInverse(builder, loc, box);
 
   Value zero = createIndex(builder, loc, 0);
   Value one = createIndex(builder, loc, 1);
@@ -190,8 +191,9 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
       builder, loc, ValueRange{zero}, ValueRange{size}, ValueRange{one},
       inits, [&](OpBuilder &body, Location, ValueRange ivs, ValueRange) {
         IRMapping local;
-        SmallVector<Value> contributions = emitPairKernel(
-            body, op, structure.counts, structure.index, box, ivs[0], local);
+        SmallVector<Value> contributions =
+            emitPairKernel(body, op, structure.counts, structure.index, box,
+                           inverse, ivs[0], local);
         if (!contributions.empty())
           createReduction(body, loc, contributions, /*isSum=*/true);
       });

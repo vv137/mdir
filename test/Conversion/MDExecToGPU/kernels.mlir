@@ -68,16 +68,22 @@ func.func @forces(%x: memref<?x3xf64, 1>, %f: memref<?x3xf64, 1>,
       cutoff(1.5) skin(0.25) cell_width(1.75) policy(always)
       : !mdrt.neighbors<@atoms>, memref<?x3xf64, 1>
 
+  // The minimum image takes one over the edge lengths, computed once on
+  // the host.
+  //
+  // CHECK:      %[[INVERSE:[0-9]+]] = arith.divf %{{[a-z0-9_]+}}, %[[BOX]] : vector<3xf64>
   // CHECK:      arith.divui
-  // CHECK-NEXT: %[[LX:[0-9]+]] = vector.extract %[[BOX]][0]
-  // CHECK-NEXT: %[[LY:[0-9]+]] = vector.extract %[[BOX]][1]
-  // CHECK-NEXT: %[[LZ:[0-9]+]] = vector.extract %[[BOX]][2]
-  // CHECK-NEXT: gpu.launch
-  // CHECK-NEXT:   %[[INSIDE:[0-9]+]] = vector.from_elements %[[LX]], %[[LY]], %[[LZ]]
+  // CHECK-DAG:  %[[IX:[0-9]+]] = vector.extract %[[INVERSE]][0]
+  // CHECK-DAG:  %[[LX:[0-9]+]] = vector.extract %[[BOX]][0]
+  // CHECK:      gpu.launch
+  // CHECK-DAG:    %[[INSIDE:[0-9]+]] = vector.from_elements %[[IX]],
+  // CHECK-DAG:    %[[EDGES:[0-9]+]] = vector.from_elements %[[LX]],
   // CHECK:        scf.if
   // CHECK:          memref.load %[[COUNTS]][
   // CHECK:          scf.for
-  // CHECK:            arith.divf %{{[0-9]+}}, %[[INSIDE]]
+  // CHECK:            %[[IMAGES:[0-9]+]] = arith.mulf %{{[0-9]+}}, %[[INSIDE]]
+  // CHECK:            %[[NEAREST:[0-9]+]] = math.roundeven %[[IMAGES]]
+  // CHECK:            arith.mulf %[[NEAREST]], %[[EDGES]]
   // CHECK:          memref.store %{{[0-9]+}}, %[[F]][
   // CHECK:          memref.store %{{[0-9]+}}, %[[A]][
   // CHECK:        gpu.terminator

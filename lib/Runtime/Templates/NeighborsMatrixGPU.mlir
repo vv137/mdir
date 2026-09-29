@@ -54,6 +54,10 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
   %lx = vector.extract %box[0] : f64 from vector<3xf64>
   %ly = vector.extract %box[1] : f64 from vector<3xf64>
   %lz = vector.extract %box[2] : f64 from vector<3xf64>
+  %unit = arith.constant 1.0 : f64
+  %ilx = arith.divf %unit, %lx : f64
+  %ily = arith.divf %unit, %ly : f64
+  %ilz = arith.divf %unit, %lz : f64
   %nx = call @mdrt_gpu_cell_count(%lx, %cell_width) : (f64, f64) -> index
   %ny = call @mdrt_gpu_cell_count(%ly, %cell_width) : (f64, f64) -> index
   %nz = call @mdrt_gpu_cell_count(%lz, %cell_width) : (f64, f64) -> index
@@ -320,19 +324,20 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
               %yj = memref.load %x[%j, %i1] : memref<?x3xf64, 1>
               %zj = memref.load %x[%j, %i2] : memref<?x3xf64, 1>
 
-              // The minimum-image displacement.
+              // The minimum-image displacement, with one over the edge
+              // lengths: see the template for the host.
               %dx0 = arith.subf %xi, %xj : f64
-              %dx1 = arith.divf %dx0, %lx : f64
+              %dx1 = arith.mulf %dx0, %ilx : f64
               %dx2 = math.roundeven %dx1 : f64
               %dx3 = arith.mulf %dx2, %lx : f64
               %dx = arith.subf %dx0, %dx3 : f64
               %dy0 = arith.subf %yi, %yj : f64
-              %dy1 = arith.divf %dy0, %ly : f64
+              %dy1 = arith.mulf %dy0, %ily : f64
               %dy2 = math.roundeven %dy1 : f64
               %dy3 = arith.mulf %dy2, %ly : f64
               %dy = arith.subf %dy0, %dy3 : f64
               %dz0 = arith.subf %zi, %zj : f64
-              %dz1 = arith.divf %dz0, %lz : f64
+              %dz1 = arith.mulf %dz0, %ilz : f64
               %dz2 = math.roundeven %dz1 : f64
               %dz3 = arith.mulf %dz2, %lz : f64
               %dz = arith.subf %dz0, %dz3 : f64

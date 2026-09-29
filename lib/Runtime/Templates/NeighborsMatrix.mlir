@@ -41,9 +41,13 @@ func.func private @mdrt.cell_coordinate(%x: f64, %length: f64, %count: index)
   return %result : index
 }
 
-// One component of the minimum-image displacement.
-func.func private @mdrt.minimum_image(%d: f64, %length: f64) -> f64 {
-  %images = arith.divf %d, %length : f64
+// One component of the minimum-image displacement. `inverse` is one over
+// `length`. The number of images is a whole number, so the result is that
+// of a division by `length`, except where `d` is within rounding of half
+// of `length`, which is beyond every reach.
+func.func private @mdrt.minimum_image(%d: f64, %length: f64, %inverse: f64)
+    -> f64 {
+  %images = arith.mulf %d, %inverse : f64
   %nearest = math.roundeven %images : f64
   %shift = arith.mulf %nearest, %length : f64
   %result = arith.subf %d, %shift : f64
@@ -65,6 +69,10 @@ func.func private @mdrt.build_neighbors_matrix(
   %lx = vector.extract %box[0] : f64 from vector<3xf64>
   %ly = vector.extract %box[1] : f64 from vector<3xf64>
   %lz = vector.extract %box[2] : f64 from vector<3xf64>
+  %unit = arith.constant 1.0 : f64
+  %ilx = arith.divf %unit, %lx : f64
+  %ily = arith.divf %unit, %ly : f64
+  %ilz = arith.divf %unit, %lz : f64
   %nx = call @mdrt.cell_count(%lx, %cell_width) : (f64, f64) -> index
   %ny = call @mdrt.cell_count(%ly, %cell_width) : (f64, f64) -> index
   %nz = call @mdrt.cell_count(%lz, %cell_width) : (f64, f64) -> index
@@ -194,9 +202,12 @@ func.func private @mdrt.build_neighbors_matrix(
             %dx0 = arith.subf %xi, %xj : f64
             %dy0 = arith.subf %yi, %yj : f64
             %dz0 = arith.subf %zi, %zj : f64
-            %dx = func.call @mdrt.minimum_image(%dx0, %lx) : (f64, f64) -> f64
-            %dy = func.call @mdrt.minimum_image(%dy0, %ly) : (f64, f64) -> f64
-            %dz = func.call @mdrt.minimum_image(%dz0, %lz) : (f64, f64) -> f64
+            %dx = func.call @mdrt.minimum_image(%dx0, %lx, %ilx)
+                : (f64, f64, f64) -> f64
+            %dy = func.call @mdrt.minimum_image(%dy0, %ly, %ily)
+                : (f64, f64, f64) -> f64
+            %dz = func.call @mdrt.minimum_image(%dz0, %lz, %ilz)
+                : (f64, f64, f64) -> f64
             %dx2 = arith.mulf %dx, %dx : f64
             %dy2 = arith.mulf %dy, %dy : f64
             %dz2 = arith.mulf %dz, %dz : f64

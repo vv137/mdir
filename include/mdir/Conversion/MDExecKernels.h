@@ -25,6 +25,16 @@ mlir::Value createReal(mlir::OpBuilder &builder, mlir::Location loc,
 mlir::Value convertReal(mlir::OpBuilder &builder, mlir::Location loc,
                         mlir::Value value, mlir::Type real);
 
+/// One over each edge length of `box`. A kernel finds the minimum image
+/// with a multiplication in place of a division.
+///
+/// The number of images is a whole number, so the displacement is the same
+/// as with the division unless the two round to different whole numbers.
+/// They do so only where the displacement along an edge is within rounding
+/// of half the edge length, which is beyond every cutoff.
+mlir::Value createInverse(mlir::OpBuilder &builder, mlir::Location loc,
+                          mlir::Value box);
+
 /// The value that `buffer` holds for the particle `particle`.
 mlir::Value loadElement(mlir::OpBuilder &builder, mlir::Location loc,
                         mlir::Value buffer, mlir::Value particle);
@@ -49,11 +59,13 @@ emitParticleKernel(mlir::OpBuilder &builder, md_exec::ParticleForOp op,
 /// global sums, with their weights applied.
 ///
 /// `counts` and `index` are the neighbor matrix. `box` holds the edge
-/// lengths of the cell, as a vector of the type of the positions.
+/// lengths of the cell, as a vector of the type of the positions, and
+/// `inverse` what `createInverse` returns for it.
 llvm::SmallVector<mlir::Value>
 emitPairKernel(mlir::OpBuilder &builder, md_exec::PairForOp op,
                mlir::Value counts, mlir::Value index, mlir::Value box,
-               mlir::Value central, mlir::IRMapping &local);
+               mlir::Value inverse, mlir::Value central,
+               mlir::IRMapping &local);
 
 /// The text of the templates `text` for positions of the type `real`. The
 /// templates are written for `f64`; the functions of the instance for `f32`

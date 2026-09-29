@@ -100,14 +100,17 @@ func.func @forces(%x: !vec, %cell: !md.cell) -> !vec {
   // The destination is a field of zeros, so the loop stores the sum and
   // does not read the buffer.
   //
+  // The minimum image takes one over the edge lengths, computed once.
+  //
   // CHECK:      %[[OUT:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?x3xf64>
+  // CHECK:      %[[INVERSE:[0-9]+]] = arith.divf %{{[a-z0-9_]+}}, %[[BOX]] : vector<3xf64>
   // CHECK:      scf.parallel (%[[I:[a-z0-9]+]]) =
   // CHECK:        %[[CUTOFF2:[a-z0-9_]+]] = arith.constant 2.250000e+00 : f64
   // CHECK:        memref.load %[[COUNTS]][%[[I]]]
   // CHECK:        scf.for %[[K:[a-z0-9]+]] =
   // CHECK:          memref.load %[[INDEX]][%[[I]], %[[K]]]
   // CHECK:          %[[RAW:[0-9]+]] = arith.subf
-  // CHECK:          %[[IMAGES:[0-9]+]] = arith.divf %[[RAW]], %[[BOX]]
+  // CHECK:          %[[IMAGES:[0-9]+]] = arith.mulf %[[RAW]], %[[INVERSE]]
   // CHECK:          %[[NEAREST:[0-9]+]] = math.roundeven %[[IMAGES]]
   // CHECK:          %[[SHIFT:[0-9]+]] = arith.mulf %[[NEAREST]], %[[BOX]]
   // CHECK:          %[[D:[0-9]+]] = arith.subf %[[RAW]], %[[SHIFT]]

@@ -93,4 +93,4 @@ func.func @single(%x0: !single, %cell: !md.cell, %steps: index) -> !single {
 //
 // CHECK-DAG: func.func private @mdrt.build_neighbors_matrix(%{{[a-z0-9]+}}: memref<?x3xf64>, %{{[a-z0-9]+}}: vector<3xf64>, %{{[a-z0-9]+}}: f64, %{{[a-z0-9]+}}: f64,
 // CHECK-DAG: func.func private @mdrt.build_neighbors_matrix_f32(%{{[a-z0-9]+}}: memref<?x3xf32>, %{{[a-z0-9]+}}: vector<3xf32>, %{{[a-z0-9]+}}: f32, %{{[a-z0-9]+}}: f32,
-// CHECK-DAG: func.func private @mdrt.minimum_image_f32(%{{[a-z0-9]+}}: f32, %{{[a-z0-9]+}}: f32) -> f32
+// CHECK-DAG: func.func private @mdrt.minimum_image_f32(%{{[a-z0-9]+}}: f32, %{{[a-z0-9]+}}: f32, %{{[a-z0-9]+}}: f32) -> f32
