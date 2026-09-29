@@ -356,6 +356,10 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       memref.store %bz_f_bottom, %wz[%bz_c0] : memref<8xf64>
       %scale = arith.constant 1099511627776.0 : f64
       %qscaled = arith.mulf %qi, %scale : f64
+      %eight = arith.constant 8 : i64
+      %gridindex = memref.extract_aligned_pointer_as_index %grid : memref<?xi64, 1> -> index
+      // The grid is a buffer of its own, with no offset.
+      %gridbase = arith.index_cast %gridindex : index to i64
       %j0 = arith.constant 0 : index
       %j1c = arith.constant 1 : index
       scf.for %j1 = %j0 to %n step %j1c {
@@ -379,7 +383,13 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
             %rounded = math.roundeven %value : f64
             %fixed = arith.fptosi %rounded : f64 to i64
             %at = arith.addi %gbase, %g3 : index
-            %old = memref.atomic_rmw addi %fixed, %grid[%at] : (i64, memref<?xi64, 1>) -> i64
+            // A relaxed atomic at the scope of the device: the sum needs no
+            // order, and one of the system would wait for the host.
+            %ati = arith.index_cast %at : index to i64
+            %offset = arith.muli %ati, %eight : i64
+            %address = arith.addi %gridbase, %offset : i64
+            %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
+            %old = llvm.atomicrmw add %pointer, %fixed syncscope("device") monotonic : !llvm.ptr<1>, i64
           }
         }
       }

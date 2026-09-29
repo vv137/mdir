@@ -455,8 +455,15 @@ body += launch('%grid_n', '%n', '''      %i0 = arith.constant 0 : index
       %k = arith.addi %rows, %cx : index
       %k32 = arith.index_cast %k : index to i32
       memref.store %k32, %key[%i] : memref<?xi32, 1>
-      %old = memref.atomic_rmw addi %one, %held[%k]
-          : (i32, memref<?xi32, 1>) -> i32
+      // A relaxed atomic at the scope of the device (see PMEGPU.mlir).
+      %rx1_base = memref.extract_aligned_pointer_as_index %held : memref<?xi32, 1> -> index
+      %rx1_bi = arith.index_cast %rx1_base : index to i64
+      %rx1_ki = arith.index_cast %k : index to i64
+      %rx1_four = arith.constant 4 : i64
+      %rx1_off = arith.muli %rx1_ki, %rx1_four : i64
+      %rx1_addr = arith.addi %rx1_bi, %rx1_off : i64
+      %rx1_ptr = llvm.inttoptr %rx1_addr : i64 to !llvm.ptr<1>
+      %old = llvm.atomicrmw add %rx1_ptr, %one syncscope("device") monotonic : !llvm.ptr<1>, i32
 ''', var='%i')
 body += '''
   // The counts become the offsets of the cells: the sums of chunks of 256
@@ -516,8 +523,15 @@ body += '''
 body += launch('%grid_n', '%n', '''      %one = arith.constant 1 : i32
       %k32 = memref.load %key[%i] : memref<?xi32, 1>
       %k = arith.index_cast %k32 : i32 to index
-      %slot32 = memref.atomic_rmw addi %one, %cursor[%k]
-          : (i32, memref<?xi32, 1>) -> i32
+      // A relaxed atomic at the scope of the device (see PMEGPU.mlir).
+      %rx2_base = memref.extract_aligned_pointer_as_index %cursor : memref<?xi32, 1> -> index
+      %rx2_bi = arith.index_cast %rx2_base : index to i64
+      %rx2_ki = arith.index_cast %k : index to i64
+      %rx2_four = arith.constant 4 : i64
+      %rx2_off = arith.muli %rx2_ki, %rx2_four : i64
+      %rx2_addr = arith.addi %rx2_bi, %rx2_off : i64
+      %rx2_ptr = llvm.inttoptr %rx2_addr : i64 to !llvm.ptr<1>
+      %slot32 = llvm.atomicrmw add %rx2_ptr, %one syncscope("device") monotonic : !llvm.ptr<1>, i32
       %slot = arith.index_cast %slot32 : i32 to index
       %narrow = arith.index_cast %i : index to i32
       memref.store %narrow, %order[%slot] : memref<?xi32, 1>
@@ -729,8 +743,15 @@ body += launch('%grid_n', '%n', '''      %i0 = arith.constant 0 : index
       %k = arith.addi %rows, %cx : index
       %k32 = arith.index_cast %k : index to i32
       memref.store %k32, %key[%i] : memref<?xi32, 1>
-      %old = memref.atomic_rmw addi %one, %held[%k]
-          : (i32, memref<?xi32, 1>) -> i32
+      // A relaxed atomic at the scope of the device (see PMEGPU.mlir).
+      %rx3_base = memref.extract_aligned_pointer_as_index %held : memref<?xi32, 1> -> index
+      %rx3_bi = arith.index_cast %rx3_base : index to i64
+      %rx3_ki = arith.index_cast %k : index to i64
+      %rx3_four = arith.constant 4 : i64
+      %rx3_off = arith.muli %rx3_ki, %rx3_four : i64
+      %rx3_addr = arith.addi %rx3_bi, %rx3_off : i64
+      %rx3_ptr = llvm.inttoptr %rx3_addr : i64 to !llvm.ptr<1>
+      %old = llvm.atomicrmw add %rx3_ptr, %one syncscope("device") monotonic : !llvm.ptr<1>, i32
 ''', var='%i')
 body += '''
 '''
@@ -786,8 +807,15 @@ body += '''
 body += launch('%grid_n', '%n', '''      %one = arith.constant 1 : i32
       %k32 = memref.load %key[%i] : memref<?xi32, 1>
       %k = arith.index_cast %k32 : i32 to index
-      %slot32 = memref.atomic_rmw addi %one, %cursor[%k]
-          : (i32, memref<?xi32, 1>) -> i32
+      // A relaxed atomic at the scope of the device (see PMEGPU.mlir).
+      %rx4_base = memref.extract_aligned_pointer_as_index %cursor : memref<?xi32, 1> -> index
+      %rx4_bi = arith.index_cast %rx4_base : index to i64
+      %rx4_ki = arith.index_cast %k : index to i64
+      %rx4_four = arith.constant 4 : i64
+      %rx4_off = arith.muli %rx4_ki, %rx4_four : i64
+      %rx4_addr = arith.addi %rx4_bi, %rx4_off : i64
+      %rx4_ptr = llvm.inttoptr %rx4_addr : i64 to !llvm.ptr<1>
+      %slot32 = llvm.atomicrmw add %rx4_ptr, %one syncscope("device") monotonic : !llvm.ptr<1>, i32
       %slot = arith.index_cast %slot32 : i32 to index
       %narrow = arith.index_cast %i : index to i32
       memref.store %narrow, %order[%slot] : memref<?xi32, 1>
