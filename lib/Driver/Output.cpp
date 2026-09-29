@@ -115,21 +115,26 @@ static Output *current = nullptr;
 void mdir::driver::setOutput(Output *output) { current = output; }
 
 void mdir::driver::writeLogHeader(Output &output) {
-  std::fprintf(output.log, "INFO: %9s %14s %14s %14s %14s %14s\n", "STEP",
-               "TIME", "TOTAL_ENE", "POTENTIAL_ENE", "KINETIC_ENE",
-               "TEMPERATURE");
+  std::fprintf(output.log, "INFO: %9s %14s %14s %14s %14s %14s %14s %14s\n",
+               "STEP", "TIME", "TOTAL_ENE", "POTENTIAL_ENE", "KINETIC_ENE",
+               "TEMPERATURE", "VIRIAL", "PRESSURE");
 }
 
 void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
-                                    double kinetic) {
+                                    double kinetic, double virial) {
   Output &output = *current;
   double total = potential + kinetic;
   double temperature =
       2.0 * kinetic / (output.degreesOfFreedom * units::boltzmann);
-  std::fprintf(output.log, "INFO: %9lld %14.4f %14.4f %14.4f %14.4f %14.4f\n",
+  // `virial` is the trace of W, the sum of d (x) K over the pairs (B8).
+  double pressure = (2.0 * kinetic + virial) / (3.0 * output.volume);
+  std::fprintf(output.log,
+               "INFO: %9lld %14.4f %14.4f %14.4f %14.4f %14.4f %14.4f "
+               "%14.4f\n",
                static_cast<long long>(step), output.getTime(step),
                total / units::energy, potential / units::energy,
-               kinetic / units::energy, temperature);
+               kinetic / units::energy, temperature, virial / units::energy,
+               pressure * units::pressure);
   std::fflush(output.log);
 
   if (!output.hasEnergies)

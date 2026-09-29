@@ -159,12 +159,13 @@ build/bin/mdir-run examples/argon.toml
 ```text
 MDIR: 864 particles, 2000 steps of 0.005 ps
 MDIR: compiled in 0.33 s
-INFO:      STEP           TIME      TOTAL_ENE  POTENTIAL_ENE    KINETIC_ENE    TEMPERATURE
-INFO:         0         0.0000      -834.1316     -1304.8874       470.7558       183.0000
-INFO:       100         0.5000      -834.1466     -1087.9806       253.8339        98.6745
+INFO:      STEP           TIME      TOTAL_ENE  POTENTIAL_ENE    KINETIC_ENE    TEMPERATURE         VIRIAL       PRESSURE
+INFO:         0         0.0000      -834.1316     -1304.8874       470.7558       183.0000     -4920.3575     -2161.8410
+INFO:       100         0.5000      -834.1466     -1087.9806       253.8339        98.6745      -300.5656       112.5256
 ...
-INFO:      2000        10.0000      -834.1467     -1083.2389       249.0922        96.8312
-MDIR: ran in 0.39 s, 0.20 ms per step, 2198.1 ns per day
+INFO:      2000        10.0000      -834.1467     -1083.2389       249.0922        96.8312       -70.6513       232.2931
+MDIR: ran in 0.33 s, 0.17 ms per step, 2611.0 ns per day
+MDIR: neighbor structures were built 113 times, every 17.9 steps on average
 MDIR: the total energy changed by 1.813e-05 of its value
 ```
 

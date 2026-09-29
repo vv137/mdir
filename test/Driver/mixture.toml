@@ -4,12 +4,14 @@
 # RUN: mdir-run %s | FileCheck %s
 # RUN: mdir-run %s --emit=mlir | FileCheck %s --check-prefix=MODULE
 
-# The potential energy at the start agrees with the sum over all pairs,
-# -497.729755 kcal/mol, and the total energy is conserved.
+# The potential energy, the virial, and the pressure at the start agree
+# with the sums over all pairs of Inputs/mixture_reference.py:
+# -497.729755 kcal/mol, -1117.778154 kcal/mol, and -1712.041957 atm. The
+# total energy is conserved.
 #
 # CHECK:      MDIR: 256 particles, 200 steps of 0.004 ps
-# CHECK:      INFO:      STEP           TIME      TOTAL_ENE  POTENTIAL_ENE    KINETIC_ENE    TEMPERATURE
-# CHECK-NEXT: INFO:         0         0.0000 {{ *-[0-9.]+}} {{ *}}-497.7298 {{ *[0-9.]+}} {{ *}}120.0000
+# CHECK:      INFO:      STEP           TIME      TOTAL_ENE  POTENTIAL_ENE    KINETIC_ENE    TEMPERATURE         VIRIAL       PRESSURE
+# CHECK-NEXT: INFO:         0         0.0000 {{ *-[0-9.]+}} {{ *}}-497.7298 {{ *[0-9.]+}} {{ *}}120.0000 {{ *}}-1117.7782 {{ *}}-1712.0420
 # CHECK-NEXT: INFO:        50         0.2000
 # CHECK-NEXT: INFO:       100         0.4000
 # CHECK-NEXT: INFO:       150         0.6000

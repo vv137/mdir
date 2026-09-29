@@ -8,6 +8,8 @@
 # RUN: echo 'precision = "mixed"' >> %t.toml
 # RUN: mdir-run %t.toml | FileCheck %s
 
-# CHECK:      INFO:         0         0.0000 {{ *-[0-9.]+}} {{ *}}-497.729{{[0-9]}} {{ *[0-9.]+}} {{ *}}120.0000
+# The virial is a sum of vectors, which the device adds up.
+#
+# CHECK:      INFO:         0         0.0000 {{ *-[0-9.]+}} {{ *}}-497.729{{[0-9]}} {{ *[0-9.]+}} {{ *}}120.0000 {{ *}}-1117.77{{[0-9]+}} {{ *}}-1712.04{{[0-9]+}}
 # CHECK:      INFO:       200         0.8000
 # CHECK:      MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value

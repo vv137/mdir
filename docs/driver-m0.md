@@ -197,13 +197,27 @@ are multiples of `eneout_period`.
 ### 2.3 The log
 
 ```text
-INFO:      STEP           TIME      TOTAL_ENE  POTENTIAL_ENE     KINETIC_ENE    TEMPERATURE
-INFO:      2000        10.0000      -837.0889     -1087.8131       250.7242        97.4655
+INFO:      STEP           TIME      TOTAL_ENE  POTENTIAL_ENE    KINETIC_ENE    TEMPERATURE         VIRIAL       PRESSURE
+INFO:      2000        10.0000      -834.1467     -1083.2389       249.0922        96.8312       -70.6513       232.2931
 ```
 
-The line shows the last row of `examples/argon.mlir`, in kcal/mol. Columns
-for bonded terms, the virial, and the pressure follow when MDIR computes
-them.
+The line shows the last row of `examples/argon.toml`.
+
+| Column | Unit | Meaning |
+|---|---|---|
+| `TIME` | ps | |
+| `TOTAL_ENE`, `POTENTIAL_ENE`, `KINETIC_ENE` | kcal/mol | |
+| `TEMPERATURE` | K | `2 E_kin / (f k_B)`, with `f = 3 N − 3` degrees of freedom |
+| `VIRIAL` | kcal/mol | The trace of the MDIR virial `W = Σ d_ij ⊗ K(i, j)`, which is positive for repulsion (B8). Other packages print other quantities under this name: the GROMACS virial is `−W / 2`. |
+| `PRESSURE` | atm | `(2 E_kin + tr W) / (3 V)` |
+
+The pressure has no correction for the dispersion beyond the cutoff; that
+correction comes with M1. With leapfrog, the kinetic energy of a row is
+that of the stored velocities, and so is the pressure.
+
+The virial is computed in the steps whose energies are written, in the
+loop over pairs that computes the energy and the forces. Columns for
+bonded terms follow when MDIR computes them.
 
 ### 2.4 Parts
 
@@ -298,7 +312,7 @@ first.h5 second.h5` compares the states of two.
 | Positions from a PDB file | Implemented |
 | Energy expressions, types, mixing | Implemented |
 | Compile and run in the process, on the CPU and on a GPU | Implemented |
-| Log | Implemented |
+| Log, with the virial and the pressure | Implemented |
 | Trajectory in the DCD format | Implemented |
 | Initial velocities | Implemented. The sequence of random numbers is fixed by the seed and does not depend on a library. |
 | Checkpoints in H5MD, and runs that continue from one | Implemented |

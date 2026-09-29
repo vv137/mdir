@@ -1,6 +1,6 @@
 # MDIR Op Specification, Milestone M0
 
-Status: draft 16 (2026-09-29). Everything in this document is implemented,
+Status: draft 17 (2026-09-29). Everything in this document is implemented,
 except where a section says otherwise. A Lennard-Jones system runs end to
 end in single, mixed, and double precision, on the CPU sequentially and
 with OpenMP, and on NVIDIA GPUs.
@@ -1496,7 +1496,7 @@ of the upstream `gpu` dialect.
 | Storage form | Kernels |
 |---|---|
 | `md_exec.particle_for`, `md_exec.pair_for` | One kernel with one thread per particle, in blocks of 128 threads. With the policy `owner_only` a thread writes only to its own particle, so the kernel needs no atomic operation. |
-| A global sum | The kernel stores the contribution of each particle. A second kernel adds up chunks of 256 particles, a third adds up the results of the chunks, and the host reads the one number that results. |
+| A global sum | The kernel stores the contribution of each particle. A second kernel adds up chunks of 256 particles, a third adds up the results of the chunks, and the host reads the result. A contribution is a number or a vector: the virial is a vector of nine numbers, and its buffers in `scratch` hold nine numbers per particle. |
 | A value that tells whether the kernel yields true for any particle | A flag on the device. A thread that yields true sets it. Every thread that writes it writes the same value, so the threads need not take turns. The host reads the flag after the kernel and clears it where it was set. |
 | `md_exec.reference_positions` | The buffer of the structure that holds the positions |
 | `md_exec.empty_neighbors` | The buffers of a neighbor matrix on the device. The flag and the count of builds are on the host. |
@@ -1530,7 +1530,6 @@ lowering does.
 
 | Limitation | Consequence |
 |---|---|
-| A global sum is a single number. | The virial, a sum of vectors, cannot be computed on a device yet. |
 | The build allocates its work buffers at every build and frees them. | The cost is per build, not per step. |
 | A split search takes one number for each of its threads. | The search is split only for small systems. |
 | One device | |
@@ -1627,7 +1626,8 @@ and, from M1 on, on comparison with an established MD engine.
 | Kernels that differentiation generates | Closed-form derivatives; for `force_switch`, the formulas of the GROMACS manual | 1e-12 |
 | Neighbor build template | A search over all pairs | Exact |
 | A neighbor structure that a loop refreshes, 100 steps | Pairs within the cutoff at every step, by a search over all pairs; the number of builds | Exact |
-| Energy and forces of 64 particles | A script that evaluates all pairs | 1e-10 |
+| Energy, forces, and virial of 64 particles | A script that evaluates all pairs | 1e-10 |
+| Energy, virial, and pressure of a mixture of 256 particles, through the driver | A script that evaluates all pairs | 4 decimals of the log |
 | 200 steps of velocity Verlet and of leapfrog | The same script, integrating with all pairs | 1e-9 |
 | The same in the mixed mode | The same values | 1e-6 |
 | 200 steps of velocity Verlet in the single mode | The same values | 1e-5 |

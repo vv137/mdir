@@ -398,7 +398,7 @@ These items follow from the decisions above but have no design yet.
 | Reuse of neighbor structures across steps, with the policy `check` | M0 | Implemented |
 | Rebuild policy `interval`, with the diagnostic of A11 | M0 | |
 | Storage form of the `md_exec` ops, as D17 decided | M0 | Implemented: `md-exec-assign-storage` |
-| Precision policy | M0 | Implemented for the CPU: single, mixed, and double |
+| Precision policy | M0 | Implemented: single, mixed, and double, on the CPU and on a GPU |
 | Declaring the role of a field that a function takes | M0 | |
 | Vectorization of loops over pairs across pairs | M0 | Without it, single precision is no faster than double on the CPU |
 | Fusion of loops over the same neighbor structure | M0 | Implemented |
@@ -413,7 +413,7 @@ These items follow from the decisions above but have no design yet.
 | Checkpoints in H5MD, restart from a checkpoint | M0 | Implemented; a run that continues is exact |
 | Trajectory in XTC | M0 | |
 | GPU back end | M0 | Implemented for NVIDIA: `convert-md-exec-to-gpu`, `libmdrt_cuda` |
-| Global sums of vectors on a device, for the virial | M0 | |
+| Global sums of vectors on a device, for the virial | M0 | Implemented. The driver writes the virial and the pressure to the log. |
 | GPU back end for AMD | M1 | |
 | Check that particle set symbols in types are declared | M0 | |
 | Regression test for the numerical values of derivatives | M0 | Implemented with a kernel runner |

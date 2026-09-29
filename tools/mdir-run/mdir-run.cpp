@@ -414,6 +414,7 @@ int main(int argc, char **argv) {
   output.firstTime = firstTime;
   output.timestep = control->timestep;
   output.degreesOfFreedom = system->getDegreesOfFreedom();
+  output.volume = system->box[0] * system->box[1] * system->box[2];
   output.system = &*system;
   if (control->framePeriod > 0) {
     if (llvm::Error error = output.trajectory.open(

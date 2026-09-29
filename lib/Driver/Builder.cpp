@@ -325,7 +325,8 @@ void Builder::emitPrograms() {
     os << "dyn.program @" << (withEnergy ? "step_energy" : "step")
        << "(%x: !vec, %v: !vec, %f: !vec, %m: !real,\n"
        << "    %cell: !md.cell, %dt: f64" << getFieldParameters() << ")\n"
-       << "    -> (!vec, !vec, !vec" << (withEnergy ? ", f64" : "") << ")\n"
+       << "    -> (!vec, !vec, !vec"
+       << (withEnergy ? ", f64, vector<9xf64>" : "") << ")\n"
        << "    attributes {provides = [\"symplectic\", "
           "\"time_reversible\"]} {\n"
        << "  %c = arith.constant 5.0e-01 : f64\n"
@@ -333,18 +334,32 @@ void Builder::emitPrograms() {
        << "  %v1 = dyn.kick %v, %f, %m, %half : !vec\n"
        << "  %x1 = dyn.drift %x, %v1, %dt : !vec\n";
     if (withEnergy)
-      os << "  %u1, %f1 = " << evaluate << " request [energy, forces]\n"
-         << "      : " << signature << " -> (f64, !vec)\n";
+      os << "  %u1, %f1, %w1 = " << evaluate
+         << "\n      request [energy, forces, virial]\n"
+         << "      : " << signature << " -> (f64, !vec, vector<9xf64>)\n";
     else
       os << "  %f1 = " << evaluate << " request [forces]\n"
          << "      : " << signature << " -> !vec\n";
     os << "  %v2 = dyn.kick %v1, %f1, %m, %half : !vec\n";
     if (withEnergy)
-      os << "  dyn.return %x1, %v2, %f1, %u1 : !vec, !vec, !vec, f64\n";
+      os << "  dyn.return %x1, %v2, %f1, %u1, %w1\n"
+         << "      : !vec, !vec, !vec, f64, vector<9xf64>\n";
     else
       os << "  dyn.return %x1, %v2, %f1 : !vec, !vec, !vec\n";
     os << "}\n\n";
   }
+}
+
+/// The trace of the virial `virial`, which enters the pressure.
+static void emitTrace(llvm::raw_ostream &os, StringRef result,
+                      StringRef virial, StringRef indent) {
+  for (StringRef part : {"0", "4", "8"})
+    os << indent << result << "_" << part << " = vector.extract " << virial
+       << "[" << part << "] : f64 from vector<9xf64>\n";
+  os << indent << result << "_04 = arith.addf " << result << "_0, " << result
+     << "_4 : f64\n"
+     << indent << result << " = arith.addf " << result << "_04, " << result
+     << "_8 : f64\n";
 }
 
 /// The kernel of the kinetic energy of one particle.
@@ -490,21 +505,25 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
            << getFieldValues(fieldPrefix) << ")\n"
            << inner << "    : (!vec, !vec, !real, !md.cell, f64"
            << getFieldTypes() << ") -> (!vec, !vec)\n";
-        os << inner << "%u = md.evaluate @energy(%xl, %cell"
-           << getFieldValues(fieldPrefix) << ") request [energy]\n"
+        os << inner << "%u, %w = md.evaluate @energy(%xl, %cell"
+           << getFieldValues(fieldPrefix) << ")\n"
+           << inner << "    request [energy, virial]\n"
            << inner << "    : (!vec, !md.cell" << getFieldTypes()
-           << ") -> f64\n";
+           << ") -> (f64, vector<9xf64>)\n";
       } else {
-        os << inner << "%xl, %vl, %fl, %u = dyn.step @step_energy(%x" << last
+        os << inner << "%xl, %vl, %fl, %u, %w = dyn.step @step_energy(%x"
+           << last
            << ", %v" << last << ", %f" << last << ", " << massName
            << ", %cell, %dt" << getFieldValues(fieldPrefix) << ")\n"
            << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
-           << getFieldTypes() << ") -> (!vec, !vec, !vec, f64)\n";
+           << getFieldTypes()
+           << ") -> (!vec, !vec, !vec, f64, vector<9xf64>)\n";
       }
       emitKineticEnergy(os, "%k", "%vl", massName, inner);
+      emitTrace(os, "%tr", "%w", inner);
       emitStep();
       os << inner << "func.call @mdrtWriteEnergies(%step" << here
-         << ", %u, %k) : (i64, f64, f64) -> ()\n";
+         << ", %u, %k, %tr) : (i64, f64, f64, f64) -> ()\n";
       os << inner << "scf.yield " << getValues("l") << " : " << state << "\n";
     } else {
       if (current.name == "frame") {
@@ -546,7 +565,7 @@ void Builder::emitEntry() {
   StringRef mass = getName(program.mass);
   StringRef parameter = getName(program.parameter);
 
-  os << "func.func private @mdrtWriteEnergies(i64, f64, f64)\n"
+  os << "func.func private @mdrtWriteEnergies(i64, f64, f64, f64)\n"
      << "    attributes {llvm.emit_c_interface}\n"
      << "func.func private @mdrtWriteFrame(i64, memref<?x3x" << state
      << ">, memref<?xi32>)\n    attributes {llvm.emit_c_interface}\n"
@@ -618,12 +637,15 @@ void Builder::emitEntry() {
 
   if (!isRestart()) {
     // The energies at the start.
-    os << "  %u0, %f0 = md.evaluate @energy(%x0, %cell" << getFieldValues()
-       << ")\n      request [energy, forces]\n      : (!vec, !md.cell"
-       << getFieldTypes() << ") -> (f64, !vec)\n";
+    os << "  %u0, %f0, %w0 = md.evaluate @energy(%x0, %cell"
+       << getFieldValues() << ")\n"
+       << "      request [energy, forces, virial]\n"
+       << "      : (!vec, !md.cell" << getFieldTypes()
+       << ") -> (f64, !vec, vector<9xf64>)\n";
     emitKineticEnergy(os, "%k0", velocities, "%m", "  ");
-    os << "  call @mdrtWriteEnergies(%start, %u0, %k0) : (i64, f64, f64) "
-          "-> ()\n";
+    emitTrace(os, "%tr0", "%w0", "  ");
+    os << "  call @mdrtWriteEnergies(%start, %u0, %k0, %tr0)\n"
+       << "      : (i64, f64, f64, f64) -> ()\n";
 
     if (isLeapfrog()) {
       // v(-dt/2) = v(0) - (dt/2) F(0) / m.

@@ -12,6 +12,9 @@ namespace driver {
 
 /// Factors between the units of the control file and those inside MDIR.
 namespace units {
+/// The pressure: atm in one kJ/(mol nm^3).
+constexpr double pressure = 16.6053906717 / 1.01325;
+
 /// nm per Å.
 constexpr double length = 0.1;
 /// kJ/mol per kcal/mol.

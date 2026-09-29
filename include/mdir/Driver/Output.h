@@ -62,6 +62,8 @@ struct Output {
   double firstTime = 0.0;
   double timestep = 0.0;
   double degreesOfFreedom = 0.0;
+  /// The volume of the cell, in nm^3.
+  double volume = 0.0;
 
   /// The energies at the first and at the last output, in kJ/mol.
   bool hasEnergies = false;
@@ -97,7 +99,7 @@ void writeLogHeader(Output &output);
 /// of the run. What is written is in the order of these numbers.
 extern "C" {
 void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
-                                    double kinetic);
+                                    double kinetic, double virial);
 void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids);
 void _mlir_ciface_mdrtWriteCheckpoint(int64_t step, void *positions,
                                       void *velocities, void *ids);
