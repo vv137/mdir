@@ -359,19 +359,49 @@ crosses the cutoff. Energy is then not conserved, whatever the integrator.
 | `shift` | `u(r) − u(r_c)` | Energy |
 | `force_shift` | `u(r) − u(r_c) − (r − r_c) · u'(r_c)` | Energy and force |
 | `switch`, from `r_s` | `u(r) · S(r)` | Energy, force, and the derivative of the force |
+| `force_switch`, from `r_s` | `u(r) − P(r) − C` | Energy, force, and the derivative of the force |
+
+`r_c` is the cutoff of the neighborhood.
+
+**Switch.** The potential is multiplied by
 
 ```text
 S(r) = 1                          r ≤ r_s
 S(r) = 1 − 10t³ + 15t⁴ − 6t⁵      r_s < r < r_c,   t = (r − r_s) / (r_c − r_s)
 ```
 
-`r_c` is the cutoff of the neighborhood. The switching function is the one
-OpenMM uses.
+**Force switch.** A cubic polynomial in `r − r_s` is added to the force, so
+that the force and its derivative vanish at the cutoff. With
+`F = −u'(r_c)`, `F' = −u''(r_c)`, and `Δ = r_c − r_s`:
+
+```text
+A = (F'Δ − 3F) / Δ²        B = (2F − F'Δ) / Δ³
+
+P(r) = 0                                      r ≤ r_s
+P(r) = (A/3)(r − r_s)³ + (B/4)(r − r_s)⁴      r_s < r < r_c
+
+C = u(r_c) − (A/3)Δ³ − (B/4)Δ⁴
+```
+
+The definition holds for any kernel. It is linear in `u`, so applying it to a
+sum of terms equals applying it to each term.
+
+**Correspondence with other packages.**
+
+| MDIR | OpenMM | GROMACS |
+|---|---|---|
+| `shift` | — | `potential-shift` |
+| `switch` | Switching function | `potential-switch` |
+| `force_switch` | — | `force-switch` |
+| `force_shift` | — | — |
+
+The GROMACS manual defines `force-switch` for a power law `r^-α`. For that
+kernel the constants above reduce to the ones in the manual.
 
 A pass expands the attribute into the kernel before differentiation. After
 the pass every relation sum has `truncation(none)` and an explicit kernel.
-`force_shift` uses the scalar derivative rules of Section 5.4 to form
-`u'(r_c)`.
+`force_shift` and `force_switch` use the scalar derivative rules of
+Section 5.4 to form `u'(r_c)` and `u''(r_c)`.
 
 The expansion is a pass, not a front-end task, so that both front ends share
 it and the derivative rules exist once.
@@ -544,7 +574,8 @@ The numerical values of the generated kernels are tested. A test pass turns
 each kernel into a function, which is lowered and run, and the results are
 compared with closed-form expressions to a relative tolerance of 1e-12. The
 test covers the Lennard-Jones kernel with each truncation kind: energy,
-forces, virial, and a parameter derivative.
+forces, virial, and a parameter derivative. The reference values for
+`force_switch` come from the formulas of the GROMACS manual.
 
 ## 6. `dyn` ops
 

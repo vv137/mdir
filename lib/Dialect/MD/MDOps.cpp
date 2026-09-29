@@ -68,7 +68,8 @@ static ParseResult parseTruncation(OpAsmParser &parser,
   std::optional<Truncation> kind = symbolizeTruncation(keyword);
   if (!kind)
     return parser.emitError(loc)
-           << "expected 'none', 'shift', 'force_shift', or 'switch', got '"
+           << "expected 'none', 'shift', 'force_shift', 'switch', or "
+              "'force_switch', got '"
            << keyword << "'";
   truncation = TruncationAttr::get(parser.getContext(), *kind);
 
@@ -385,12 +386,14 @@ LogicalResult SumRelationOp::verify() {
     return emitOpError() << "a sum over an unordered relation requires "
                             "'exchange(symmetric)'";
 
-  bool isSwitch = getTruncation() == Truncation::Switch;
+  bool isSwitch = getTruncation() == Truncation::Switch ||
+                  getTruncation() == Truncation::ForceSwitch;
   if (isSwitch != getSwitchFrom().has_value())
     return emitOpError() << (isSwitch
-                                 ? "'truncation(switch)' requires 'from'"
+                                 ? "a switching truncation requires 'from'"
                                  : "'from' is allowed only with "
-                                   "'truncation(switch)'");
+                                   "'truncation(switch)' and "
+                                   "'truncation(force_switch)'");
   if (isSwitch) {
     double from = getSwitchFrom()->convertToDouble();
     if (!(from > 0.0))

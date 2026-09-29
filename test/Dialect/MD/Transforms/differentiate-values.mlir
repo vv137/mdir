@@ -82,8 +82,27 @@ md.potential @shift(%x: !vec, %cell: !md.cell, %eps: f64, %sigma: f64)
   md.return %u : f64
 }
 
+md.potential @force_switch(%x: !vec, %cell: !md.cell, %eps: f64, %sigma: f64)
+    -> f64 {
+  %n = md.neighborhood %x, %cell cutoff(2.5) : !vec -> !pairs
+  %u = md.sum_relation %n, %x, %cell
+         exchange(symmetric) truncation(force_switch, from = 2.0) {
+  ^bb0(%r: f64, %d: vector<3xf64>):
+    %c4  = arith.constant 4.0 : f64
+    %i6  = arith.constant 6 : i32
+    %sr  = arith.divf %sigma, %r : f64
+    %s6  = math.fpowi %sr, %i6 : f64, i32
+    %s12 = arith.mulf %s6, %s6 : f64
+    %t   = arith.subf %s12, %s6 : f64
+    %e4  = arith.mulf %c4, %eps : f64
+    %k   = arith.mulf %e4, %t : f64
+    md.yield %k : f64
+  } : !pairs, !vec -> f64
+  md.return %u : f64
+}
+
 md.function @requests(%x: !vec, %cell: !md.cell, %eps: f64, %sigma: f64)
-    -> (f64, !vec, vector<9xf64>, f64, f64, !vec, f64, !vec) {
+    -> (f64, !vec, vector<9xf64>, f64, f64, !vec, f64, !vec, f64, !vec) {
   %u0, %f0, %w0, %g0 = md.evaluate @force_shift(%x, %cell, %eps, %sigma)
       request [energy, forces, virial, derivative(3)]
       : (!vec, !md.cell, f64, f64) -> (f64, !vec, vector<9xf64>, f64)
@@ -93,8 +112,11 @@ md.function @requests(%x: !vec, %cell: !md.cell, %eps: f64, %sigma: f64)
   %u2, %f2 = md.evaluate @shift(%x, %cell, %eps, %sigma)
       request [energy, forces]
       : (!vec, !md.cell, f64, f64) -> (f64, !vec)
-  md.return %u0, %f0, %w0, %g0, %u1, %f1, %u2, %f2
-      : f64, !vec, vector<9xf64>, f64, f64, !vec, f64, !vec
+  %u3, %f3 = md.evaluate @force_switch(%x, %cell, %eps, %sigma)
+      request [energy, forces]
+      : (!vec, !md.cell, f64, f64) -> (f64, !vec)
+  md.return %u0, %f0, %w0, %g0, %u1, %f1, %u2, %f2, %u3, %f3
+      : f64, !vec, vector<9xf64>, f64, f64, !vec, f64, !vec, f64, !vec
 }
 
 // The kernels of the generated functions, in the order of the requests. The
@@ -114,6 +136,11 @@ func.func private @switch.energy_forces.kernel1(
 func.func private @shift.energy_forces.kernel0(
     f64, vector<3xf64>, f64, f64) -> f64
 func.func private @shift.energy_forces.kernel1(
+    f64, vector<3xf64>, f64, f64) -> vector<3xf64>
+
+func.func private @force_switch.energy_forces.kernel0(
+    f64, vector<3xf64>, f64, f64) -> f64
+func.func private @force_switch.energy_forces.kernel1(
     f64, vector<3xf64>, f64, f64) -> vector<3xf64>
 
 func.func private @printF64(f64)
@@ -157,6 +184,20 @@ func.func @check_shift(%r: f64, %energy: f64, %force: f64) {
   %u = call @shift.energy_forces.kernel0(%r, %d, %eps, %sigma)
       : (f64, vector<3xf64>, f64, f64) -> f64
   %f = call @shift.energy_forces.kernel1(%r, %d, %eps, %sigma)
+      : (f64, vector<3xf64>, f64, f64) -> vector<3xf64>
+  %fx = vector.extract %f[0] : f64 from vector<3xf64>
+  call @check(%u, %energy) : (f64, f64) -> ()
+  call @check(%fx, %force) : (f64, f64) -> ()
+  return
+}
+
+func.func @check_force_switch(%r: f64, %energy: f64, %force: f64) {
+  %d     = arith.constant dense<[1.0, 0.0, 0.0]> : vector<3xf64>
+  %eps   = arith.constant 1.7 : f64
+  %sigma = arith.constant 0.9 : f64
+  %u = call @force_switch.energy_forces.kernel0(%r, %d, %eps, %sigma)
+      : (f64, vector<3xf64>, f64, f64) -> f64
+  %f = call @force_switch.energy_forces.kernel1(%r, %d, %eps, %sigma)
       : (f64, vector<3xf64>, f64, f64) -> vector<3xf64>
   %fx = vector.extract %f[0] : f64 from vector<3xf64>
   call @check(%u, %energy) : (f64, f64) -> ()
@@ -268,6 +309,26 @@ func.func @main() {
   %hu2 = arith.constant -0.01695406506815541 : f64
   %hf2 = arith.constant -0.03914202303335085 : f64
   call @check_shift(%r2, %hu2, %hf2) : (f64, f64, f64) -> ()
+
+  //===--------------------------------------------------------------------===//
+  // Force switch from 2.0. The reference values come from the formulas of
+  // the GROMACS manual, applied to the r^-12 and r^-6 terms separately.
+  //===--------------------------------------------------------------------===//
+
+  // CHECK-NEXT: -0.640593
+  // CHECK-NEXT: 1
+  // CHECK-NEXT: -2.07276
+  // CHECK-NEXT: 1
+  %wu1 = arith.constant -0.6405925332470149 : f64
+  call @check_force_switch(%r1, %wu1, %sf1) : (f64, f64, f64) -> ()
+
+  // CHECK-NEXT: -0.00732975
+  // CHECK-NEXT: 1
+  // CHECK-NEXT: -0.03133
+  // CHECK-NEXT: 1
+  %wu2 = arith.constant -0.007329752494275116 : f64
+  %wf2 = arith.constant -0.031330041782731084 : f64
+  call @check_force_switch(%r2, %wu2, %wf2) : (f64, f64, f64) -> ()
 
   return
 }

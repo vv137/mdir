@@ -17,6 +17,7 @@ def ExpandTruncation : Pass<"md-expand-truncation", "::mlir::ModuleOp"> {
     | `shift` | `u(r) − u(r_c)` |
     | `force_shift` | `u(r) − u(r_c) − (r − r_c) · u'(r_c)` |
     | `switch`, from `r_s` | `u(r) · S(r)` |
+    | `force_switch`, from `r_s` | `u(r) − P(r) − C` |
   }];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::math::MathDialect",

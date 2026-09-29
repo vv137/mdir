@@ -40,7 +40,8 @@ def MD_Truncation : I32EnumAttr<"Truncation", "truncation of a kernel", [
     I32EnumAttrCase<"None", 0, "none">,
     I32EnumAttrCase<"Shift", 1, "shift">,
     I32EnumAttrCase<"ForceShift", 2, "force_shift">,
-    I32EnumAttrCase<"Switch", 3, "switch">
+    I32EnumAttrCase<"Switch", 3, "switch">,
+    I32EnumAttrCase<"ForceSwitch", 4, "force_switch">
   ]> {
   let cppNamespace = "::mdir::md";
 }

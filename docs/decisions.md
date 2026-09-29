@@ -329,7 +329,7 @@ B1 to B3 and B5 to B10 come from an external review of draft 1.
 | B1 | **The default rebuild policy checks validity every step.** A fixed interval with no check must be selected explicitly, because a violation found at the next rebuild cannot be repaired. | P15, A11 |
 | B2 | **`f64` is the reference precision of the semantic program.** It is ordinary floating point, not an abstract real. Lowering to single or mixed precision deliberately relaxes the numerical semantics. No separate real type is introduced. | S3 |
 | B3 | **`exchange` is a semantic contract.** It applies to `md.sum_relation` and `md.gather_relation`. The compiler verifies it when it can prove it; otherwise the front end must assert it. | New |
-| B4 | **Truncation is an attribute of a relation sum.** The kinds are `none`, `shift`, `force_shift`, and `switch`. A pass expands it into the kernel before differentiation. Energy conservation is validated with `force_shift` or `switch`. | New |
+| B4 | **Truncation is an attribute of a relation sum.** The kinds are `none`, `shift`, `force_shift`, `switch`, and `force_switch`; the last was added for parity with GROMACS. A pass expands it into the kernel before differentiation. Energy conservation is validated with `force_shift` or `switch`. | New |
 | B5 | **Derivatives of functions that are not smooth have fixed conventions**, including the branch taken at a tie. | New |
 | B6 | **Comparing velocity Verlet with leapfrog maps the initial velocities**: `v(−dt/2) = v(0) − (dt/2) · F(0) / m`. | New |
 | B7 | **Both relation kernels receive the distance and the displacement vector.** | New |

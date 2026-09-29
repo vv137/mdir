@@ -41,6 +41,59 @@ static Value emitSwitch(ScalarEmitter &emit, Value r, double from,
                                  emit.constantLike(1.0, r), polynomial);
 }
 
+/// Emits the force-switched energy
+///
+///   u(r) − C                                    for r <= from
+///   u(r) − (A/3)(r − from)³ − (B/4)(r − from)⁴ − C    otherwise
+///
+/// A cubic polynomial in `r − from` is added to the force so that the force
+/// and its derivative vanish at the cutoff. With F = −u'(cutoff),
+/// F' = −u''(cutoff), and Δ = cutoff − from,
+///
+///   A = (F'Δ − 3F) / Δ²      B = (2F − F'Δ) / Δ³
+///   C = u(cutoff) − (A/3)Δ³ − (B/4)Δ⁴
+///
+/// For a power law this is the force switch of GROMACS.
+static Value emitForceSwitch(ScalarEmitter &emit, Value r, Value energy,
+                             Value energyAtCutoff, Value slopeAtCutoff,
+                             Value curvatureAtCutoff, double from,
+                             double cutoff) {
+  OpBuilder &builder = emit.builder;
+  Location loc = emit.loc;
+  double width = cutoff - from;
+
+  Value force = emit.neg(slopeAtCutoff);
+  Value forceSlope = emit.neg(curvatureAtCutoff);
+
+  // A / 3 and B / 4.
+  Value a = emit.scale(1.0 / (3.0 * width * width),
+                       emit.sub(emit.scale(width, forceSlope),
+                                emit.scale(3.0, force)));
+  Value b = emit.scale(1.0 / (4.0 * width * width * width),
+                       emit.sub(emit.scale(2.0, force),
+                                emit.scale(width, forceSlope)));
+
+  // (A/3) t³ + (B/4) t⁴ = t³ · (A/3 + (B/4) t)
+  auto polynomial = [&](Value t) {
+    Value cube = emit.mul(emit.mul(t, t), t);
+    return emit.mul(cube, emit.add(a, emit.mul(b, t)));
+  };
+
+  Value atEnd = polynomial(emit.constantLike(width, r));
+  Value offset = emit.sub(energyAtCutoff, atEnd);
+
+  Value start = emit.constantLike(from, r);
+  Value inside = polynomial(emit.sub(r, start));
+  Value switched;
+  if (inside) {
+    Value below = arith::CmpFOp::create(builder, loc,
+                                        arith::CmpFPredicate::OLE, r, start);
+    switched = arith::SelectOp::create(builder, loc, below,
+                                       emit.constantLike(0.0, r), inside);
+  }
+  return emit.sub(emit.sub(energy, switched), offset);
+}
+
 LogicalResult mdir::md::expandTruncation(SumRelationOp op) {
   Truncation truncation = op.getTruncation();
   if (truncation == Truncation::None)
@@ -82,15 +135,29 @@ LogicalResult mdir::md::expandTruncation(SumRelationOp op) {
       builder.clone(*nested, mapping);
     Value energyAtCutoff = mapping.lookupOrDefault(energy);
 
-    truncated = emit.sub(energy, energyAtCutoff);
-
-    if (truncation == Truncation::ForceShift) {
-      ScalarDerivative derivative(builder, atCutoff);
-      Value slope;
-      if (failed(derivative.get(energyAtCutoff, slope)))
+    // The first and second derivatives at the cutoff.
+    Value slope, curvature;
+    if (truncation != Truncation::Shift) {
+      ScalarDerivative first(builder, atCutoff);
+      if (failed(first.get(energyAtCutoff, slope)))
         return failure();
-      Value distance = emit.sub(r, atCutoff);
-      truncated = emit.sub(truncated, emit.mul(distance, slope));
+    }
+    if (truncation == Truncation::ForceSwitch && slope) {
+      ScalarDerivative second(builder, atCutoff);
+      if (failed(second.get(slope, curvature)))
+        return failure();
+    }
+
+    if (truncation == Truncation::ForceSwitch) {
+      double from = op.getSwitchFrom()->convertToDouble();
+      truncated = emitForceSwitch(emit, r, energy, energyAtCutoff, slope,
+                                  curvature, from, cutoff);
+    } else {
+      truncated = emit.sub(energy, energyAtCutoff);
+      if (truncation == Truncation::ForceShift) {
+        Value distance = emit.sub(r, atCutoff);
+        truncated = emit.sub(truncated, emit.mul(distance, slope));
+      }
     }
   }
 

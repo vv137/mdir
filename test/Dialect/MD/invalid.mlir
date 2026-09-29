@@ -115,7 +115,7 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %y: !md.field<@atoms, 3 x f64>,
 md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell) -> f64 {
   %n = md.neighborhood %x, %cell cutoff(1.0)
          : !md.field<@atoms, 3 x f64> -> !md.relation<@atoms, 2, unordered>
-  // expected-error@+1 {{'truncation(switch)' requires 'from'}}
+  // expected-error@+1 {{a switching truncation requires 'from'}}
   %u = md.sum_relation %n, %x, %cell exchange(symmetric) truncation(switch) {
   ^bb0(%r: f64, %d: vector<3xf64>):
     md.yield %r : f64
@@ -128,7 +128,7 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell) -> f64 {
 md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell) -> f64 {
   %n = md.neighborhood %x, %cell cutoff(1.0)
          : !md.field<@atoms, 3 x f64> -> !md.relation<@atoms, 2, unordered>
-  // expected-error@+1 {{'from' is allowed only with 'truncation(switch)'}}
+  // expected-error@+1 {{'from' is allowed only with 'truncation(switch)' and 'truncation(force_switch)'}}
   %u = md.sum_relation %n, %x, %cell
          exchange(symmetric) truncation(shift, from = 0.5) {
   ^bb0(%r: f64, %d: vector<3xf64>):
