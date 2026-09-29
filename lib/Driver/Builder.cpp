@@ -864,13 +864,16 @@ llvm::Error Builder::collectPME() {
     beta = 0.5 * (low + high);
   }
 
-  // The grid: given, or no wider than the largest spacing.
+  // The grid: given, or no wider than the largest spacing in the cell of
+  // the file of coordinates. The grid stays as the barostat changes the
+  // cell, finer as the cell shrinks and coarser as it grows.
   int64_t grid[3];
   for (int k = 0; k != 3; ++k) {
     grid[k] = control.pmeGrid[k];
+    double edge = system.inputBox[k] > 0.0 ? system.inputBox[k] : system.box[k];
     if (grid[k] == 0)
       grid[k] = getSmoothSize(static_cast<int64_t>(std::ceil(
-          system.box[k] / (control.pmeMaxSpacing * units::length) - 1e-9)));
+          edge / (control.pmeMaxSpacing * units::length) - 1e-9)));
     if (grid[k] < 2 * control.pmeOrder)
       return llvm::createStringError(
           llvm::inconvertibleErrorCode(),

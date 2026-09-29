@@ -1,0 +1,71 @@
+# A run at constant pressure with particle mesh Ewald and rigid water that
+# continues from a checkpoint ends in the same state as one that does not
+# stop: the automatic grid is that of the cell of the file of coordinates,
+# not that of the checkpoint, which the barostat has changed.
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/whole.toml
+# RUN: sed -e 's|nsteps            = 200|nsteps = 100|' -e 's|whole.h5|first.h5|' \
+# RUN:     %t/whole.toml > %t/first.toml
+# RUN: sed -e 's|first.h5|second.h5|' \
+# RUN:     -e 's|^ambcrdfile = \(.*\)|ambcrdfile = \1\nrstfile = "first.h5"|' \
+# RUN:     %t/first.toml > %t/second.toml
+# RUN: mdir run %t/whole.toml > %t/both.log
+# RUN: mdir run %t/first.toml
+# RUN: mdir run %t/second.toml >> %t/both.log
+# RUN: FileCheck %s --check-prefix=LOG < %t/both.log
+# RUN: mdir checkpoint %t/whole.h5 %t/second.h5 | FileCheck %s
+# RUN: mdir emit %t/second.toml | FileCheck %s --check-prefix=GRID
+
+# CHECK: the states are identical
+
+# LOG:      INFO:       150         0.3000 {{ *}}[[ROW:-?[0-9.]+ +-?[0-9.]+ +-?[0-9.]+ +-?[0-9.]+ +-?[0-9.]+ +-?[0-9.]+]] {{ *}}{{-?[0-9.]+}} {{ *}}[[VOLUME:[0-9.]+]]
+# LOG:      MDIR: continues after step 100
+# LOG:      INFO:       150         0.3000 {{ *}}[[ROW]] {{ *}}{{-?[0-9.]+}} {{ *}}[[VOLUME]]
+
+# The spacing puts the edge along z, 25.1596 Å, 24.01 spacings long: 28
+# points, where the cell of the checkpoint, a little shorter, would give 24.
+#
+# GRID: grid([28, 28, 28])
+
+#--- run.toml
+[input]
+prmtopfile = "opc.prmtop"
+ambcrdfile = "opc.inpcrd"
+
+[output]
+rstfile = "whole.h5"
+
+[energy]
+cutoffdist    = 9.0
+pairlistdist  = 10.0
+electrostatic = "PME"
+pme_shift     = true
+pme_max_spacing = 1.0479
+
+[dynamics]
+integrator        = "VVER"
+timestep          = 0.002
+nsteps            = 200
+eneout_period     = 50
+rstout_period     = 100
+thermostat_period = 10
+
+[ensemble]
+ensemble    = "NPT"
+thermostat  = "BUSSI"
+temperature = 300.0
+tau_t       = 0.5
+barostat    = "BERNETTI-BUSSI"
+pressure    = 1.0
+tau_p       = 1.0
+
+[constraints]
+fast_water = true
+
+[boundary]
+type = "PBC"
+#--- end

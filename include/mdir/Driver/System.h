@@ -54,6 +54,11 @@ struct System {
   std::vector<double> masses;
   /// The edge lengths of the cell.
   double box[3];
+  /// Those of the file of coordinates, where a run that continues with a
+  /// barostat takes `box` from the checkpoint; 0 if they are those of
+  /// `box`. The automatic grid of particle mesh Ewald follows them, so
+  /// that the run continues with the grid it began with.
+  double inputBox[3] = {0.0, 0.0, 0.0};
 
   /// The topology that the system was read from, if any. It gives the
   /// terms of the potential.

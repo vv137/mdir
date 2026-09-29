@@ -120,7 +120,7 @@ order. The grid is converted to floating point before the FFT.
 | `pme_alpha` | β, in Å⁻¹ | From `pme_alpha_tol` |
 | `pme_alpha_tol` | β such that `erfc(β rc) = pme_alpha_tol`, by bisection, as both engines find it | 10⁻⁵ |
 | `pme_ngrid_x`, `_y`, `_z` | The numbers of points of the grid | From `pme_max_spacing` |
-| `pme_max_spacing` | The largest spacing of the grid, in Å; each number of points is the smallest even product of 2, 3, 5, and 7 that gives no wider spacing | 1.2 |
+| `pme_max_spacing` | The largest spacing of the grid, in Å; each number of points is the smallest even product of 2, 3, 5, and 7 that gives no wider spacing in the cell of the file of coordinates. The grid stays as a barostat changes the cell, finer as it shrinks and coarser as it grows, and a run that continues from a checkpoint has the grid it began with | 1.2 |
 | `pme_nspline` | The order of the B-splines, 4 to 8 | 4 |
 | `pme_shift` | Shift the direct sum to 0 at the cutoff, as GROMACS does by default | false, as sander |
 | `pme_influence` | `"SPME"` or `"OPTIMAL"` (Section 1.1) | `"SPME"` |

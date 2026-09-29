@@ -193,8 +193,10 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     // With a barostat the cell of the checkpoint is where the run left it;
     // otherwise it is that of the input.
     for (int i = 0; i != 3; ++i) {
-      if (control->barostat)
+      if (control->barostat) {
+        system->inputBox[i] = system->box[i];
         system->box[i] = checkpoint->box[i];
+      }
       else if (checkpoint->box[i] != system->box[i])
         return fail("the box of '" + path + "' differs from that of the "
                     "input; only a run with a barostat changes it");
