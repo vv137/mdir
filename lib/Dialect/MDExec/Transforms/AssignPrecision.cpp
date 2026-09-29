@@ -135,9 +135,14 @@ private:
   LogicalResult resolve();
   void apply();
 
+  /// Gives the kernel of `loop` the type `arithmetic`. The kernel takes
+  /// `numGeometry` arguments of its own, then `perField` for each field in
+  /// `ins`, then one for each of `parameters`. It yields `perOut` values
+  /// for each field in `outs`, then one for each value in `reduce`.
   template <typename OpTy>
   void rewriteLoop(OpTy loop, Type arithmetic, unsigned numGeometry,
-                   unsigned perField);
+                   unsigned perField, ValueRange parameters = {},
+                   unsigned perOut = 1);
 
   void markBoundary(Value field, Type element, Operation *op) {
     boundaries.push_back({field, element, op});
@@ -160,6 +165,7 @@ private:
   SmallVector<Value> positions, forces, integrated;
 
   SmallVector<PairForOp> pairLoops;
+  SmallVector<TupleForOp> tupleLoops;
   SmallVector<ParticleForOp> particleLoops;
   func::ReturnOp firstReturn;
 };
@@ -195,6 +201,8 @@ static bool isDestinationUse(OpOperand &use) {
            index < outs.getBeginOperandIndex() + outs.size();
   };
   if (auto loop = dyn_cast<PairForOp>(use.getOwner()))
+    return isOut(loop.getOuts());
+  if (auto loop = dyn_cast<TupleForOp>(use.getOwner()))
     return isOut(loop.getOuts());
   if (auto loop = dyn_cast<ParticleForOp>(use.getOwner()))
     return isOut(loop.getOuts());
@@ -302,6 +310,17 @@ LogicalResult Assigner::collect(Operation *op) {
     pairLoops.push_back(loop);
     return success();
   }
+  if (auto loop = dyn_cast<TupleForOp>(op)) {
+    if (failed(checkForm(loop)))
+      return failure();
+    positions.push_back(loop.getPositions());
+    collectLoop(loop, forces);
+    for (Value field : loop.getParameters())
+      if (isRealField(field.getType()))
+        find(field);
+    tupleLoops.push_back(loop);
+    return success();
+  }
   if (auto loop = dyn_cast<ParticleForOp>(op)) {
     if (failed(checkForm(loop)))
       return failure();
@@ -406,7 +425,8 @@ LogicalResult Assigner::resolve() {
 
 template <typename OpTy>
 void Assigner::rewriteLoop(OpTy loop, Type arithmetic, unsigned numGeometry,
-                           unsigned perField) {
+                           unsigned perField, ValueRange parameters,
+                           unsigned perOut) {
   Location loc = loop.getLoc();
   OpBuilder before(loop);
   unsigned numOuts = loop.getOuts().size();
@@ -492,9 +512,9 @@ void Assigner::rewriteLoop(OpTy loop, Type arithmetic, unsigned numGeometry,
   // is stored in.
   OpBuilder entry(&kernel, kernel.begin());
   unsigned index = numGeometry;
-  for (Value field : loop.getIns()) {
+  auto takeStored = [&](Value field, unsigned count) {
     Type stored = cast<FieldType>(field.getType()).getKernelValueType();
-    for (unsigned i = 0; i != perField; ++i, ++index) {
+    for (unsigned i = 0; i != count; ++i, ++index) {
       BlockArgument argument = kernel.getArgument(index);
       Type computed = argument.getType();
       if (stored == computed)
@@ -503,13 +523,19 @@ void Assigner::rewriteLoop(OpTy loop, Type arithmetic, unsigned numGeometry,
       Value converted = createCast(entry, loc, argument, computed);
       argument.replaceAllUsesExcept(converted, converted.getDefiningOp());
     }
-  }
+  };
+  for (Value field : loop.getIns())
+    takeStored(field, perField);
+  for (Value field : parameters)
+    takeStored(field, 1);
 
   // It yields values in the types of what they are added to.
   Operation *yield = kernel.getTerminator();
   OpBuilder exit(yield);
   for (unsigned i = 0, e = yield->getNumOperands(); i != e; ++i) {
-    Type expected = loop.getResult(i).getType();
+    unsigned result = i < numOuts * perOut ? i / perOut
+                                           : i - numOuts * (perOut - 1);
+    Type expected = loop.getResult(result).getType();
     if (auto field = dyn_cast<FieldType>(expected))
       expected = field.getKernelValueType();
     yield->setOperand(i,
@@ -524,6 +550,11 @@ void Assigner::apply() {
 
   for (PairForOp loop : pairLoops)
     rewriteLoop(loop, policy.kernel, /*numGeometry=*/2, /*perField=*/2);
+  for (TupleForOp loop : tupleLoops)
+    rewriteLoop(loop, policy.kernel,
+                /*numGeometry=*/loop.getCoordinateKinds().size(),
+                /*perField=*/loop.getArity(), loop.getParameters(),
+                /*perOut=*/loop.getArity());
   for (ParticleForOp loop : particleLoops)
     rewriteLoop(loop, policy.integrator, /*numGeometry=*/0, /*perField=*/1);
 
