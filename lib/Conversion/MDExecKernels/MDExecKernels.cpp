@@ -123,7 +123,7 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
                                            Value box, Value inverse,
                                            Value central,
                                            IRMapping &local,
-                                           const PairLanes *lanes) {
+                                           const RowLanes *lanes) {
   Location loc = op.getLoc();
   Value positions = op.getPositions();
   Block &kernel = op.getKernel().front();
@@ -289,7 +289,8 @@ SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
                                             md_exec::TupleForOp op,
                                             Value incidence, Value box,
                                             Value inverse, Value particle,
-                                            IRMapping &local) {
+                                            IRMapping &local,
+                                            const RowLanes *lanes) {
   Location loc = op.getLoc();
   Value positions = op.getPositions();
   Block &kernel = op.getKernel().front();
@@ -317,8 +318,14 @@ SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
     sums.push_back(createZero(builder, loc, yield->getOperand(i).getType()));
 
   Value count = loadIndex(builder, loc, incidence, particle, zero);
+  Value first = zero, step = one;
+  if (lanes) {
+    count = arith::SelectOp::create(builder, loc, lanes->valid, count, zero);
+    first = lanes->lane;
+    step = createIndex(builder, loc, lanes->lanes);
+  }
   auto loop = scf::ForOp::create(
-      builder, loc, zero, count, one, sums,
+      builder, loc, first, count, step, sums,
       [&](OpBuilder &b, Location, Value number, ValueRange partial) {
         Value offset = arith::MulIOp::create(
             b, loc, number, createIndex(b, loc, entry));
@@ -392,20 +399,35 @@ SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
         scf::YieldOp::create(b, loc, updated);
       });
 
-  for (unsigned i = 0; i != numOuts; ++i) {
-    Value destination = op.getOuts()[i];
-    Value total = loop.getResult(i);
-    if (!op.overwrites(i))
-      total = arith::AddFOp::create(
-          builder, loc, loadElement(builder, loc, destination, particle),
-          total);
-    storeElement(builder, loc, total, destination, particle);
+  SmallVector<Value> totals(loop.getResults());
+  if (lanes)
+    for (Value &total : totals)
+      total = lanes->combine(builder, loc, total);
+
+  auto emitStores = [&](OpBuilder &writer) {
+    for (unsigned i = 0; i != numOuts; ++i) {
+      Value destination = op.getOuts()[i];
+      Value total = totals[i];
+      if (!op.overwrites(i))
+        total = arith::AddFOp::create(
+            writer, loc, loadElement(writer, loc, destination, particle),
+            total);
+      storeElement(writer, loc, total, destination, particle);
+    }
+  };
+  if (lanes && numOuts != 0) {
+    Value leader = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq,
+                                         lanes->lane, zero);
+    Value writes = arith::AndIOp::create(builder, loc, leader, lanes->valid);
+    scf::IfOp::create(builder, loc, writes, [&](OpBuilder &then, Location) {
+      emitStores(then);
+      scf::YieldOp::create(then, loc);
+    });
+  } else {
+    emitStores(builder);
   }
 
-  SmallVector<Value> contributions;
-  for (unsigned i = numOuts, e = loop.getNumResults(); i != e; ++i)
-    contributions.push_back(loop.getResult(i));
-  return contributions;
+  return SmallVector<Value>(totals.begin() + numOuts, totals.end());
 }
 
 void kernels::emitExclusionMark(OpBuilder &builder, Location loc,

@@ -55,13 +55,14 @@ llvm::SmallVector<mlir::Value>
 emitParticleKernel(mlir::OpBuilder &builder, md_exec::ParticleForOp op,
                    mlir::Value particle, mlir::IRMapping &local);
 
-/// How the threads of a group share the neighbors of one particle: the
-/// thread `lane` of `lanes` takes every `lanes`th entry of the row from
+/// How the threads of a group share the row of one particle, of neighbors
+/// or of tuples: the thread `lane` of `lanes` takes every `lanes`th entry
+/// of the row from
 /// `lane` on, `combine` sums a value over the group and gives the sum to
 /// every thread of it, and only the first thread of a group whose particle
 /// is `valid` writes. The threads of a group whose particle is not valid
 /// take no entry but still combine, as a combination may need every thread.
-struct PairLanes {
+struct RowLanes {
   mlir::Value lane;
   int64_t lanes;
   mlir::Value valid;
@@ -77,12 +78,12 @@ struct PairLanes {
 /// `counts` and `index` are the neighbor matrix. `box` holds the edge
 /// lengths of the cell, as a vector of the type of the positions, and
 /// `inverse` what `createInverse` returns for it. With `lanes`, a group of
-/// threads shares the row (PairLanes).
+/// threads shares the row (RowLanes).
 llvm::SmallVector<mlir::Value>
 emitPairKernel(mlir::OpBuilder &builder, md_exec::PairForOp op,
                mlir::Value counts, mlir::Value index, mlir::Value box,
                mlir::Value inverse, mlir::Value central,
-               mlir::IRMapping &local, const PairLanes *lanes = nullptr);
+               mlir::IRMapping &local, const RowLanes *lanes = nullptr);
 
 /// Emits what a loop over tuples does for the particle `particle`: the loop
 /// over the tuples in its row of `incidence`, with the displacements in the
@@ -91,11 +92,12 @@ emitPairKernel(mlir::OpBuilder &builder, md_exec::PairForOp op,
 /// contributions to the global sums, which only the tuples where the
 /// particle is at place 0 make.
 ///
-/// `box` and `inverse` are as for `emitPairKernel`.
+/// `box`, `inverse`, and `lanes` are as for `emitPairKernel`.
 llvm::SmallVector<mlir::Value>
 emitTupleKernel(mlir::OpBuilder &builder, md_exec::TupleForOp op,
                 mlir::Value incidence, mlir::Value box, mlir::Value inverse,
-                mlir::Value particle, mlir::IRMapping &local);
+                mlir::Value particle, mlir::IRMapping &local,
+                const RowLanes *lanes = nullptr);
 
 /// Emits, on the host, the build of the incidence structure of the tuples
 /// that `members` holds, for `size` particles, and returns it in a new

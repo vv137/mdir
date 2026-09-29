@@ -49,10 +49,12 @@ static const char *const countBuildName = "mdrtCountBuild";
 /// The number of particles whose contributions one thread adds up.
 /// The least and the most particles that one thread adds up.
 static const int64_t smallestChunk = 32;
-/// The threads that share the neighbors of one particle in a loop over
-/// pairs. A particle has hundreds of neighbors, and a thread for each
-/// particle leaves most of a device idle for a system of thousands.
-static const int64_t pairLanes = 16;
+/// The threads that share the row of one particle in a loop over pairs or
+/// tuples. A particle has hundreds of neighbors, and a thread for each
+/// particle leaves most of a device idle for a system of thousands; the
+/// tuples of a few particles, such as the dihedrals of a protein, would
+/// make those threads the longest.
+static const int64_t rowLanes = 16;
 static const int64_t largestChunk = 1024;
 
 namespace {
@@ -135,6 +137,12 @@ private:
   /// emits what the thread of an item does.
   void launchOver(OpBuilder &builder, Location loc, Value count,
                   function_ref<void(OpBuilder &, Value)> body);
+
+  /// Launches a kernel with a group of threads for each of `count`
+  /// particles, which share its row (RowLanes).
+  void launchRows(
+      OpBuilder &builder, Location loc, Value count,
+      function_ref<void(OpBuilder &, Value, const RowLanes &)> body);
 
   /// Launches a kernel with one thread.
   void launchOne(OpBuilder &builder, Location loc,
@@ -654,6 +662,64 @@ static Value shuffleXor(OpBuilder &builder, Location loc, Value value,
   return arith::BitcastOp::create(builder, loc, type, joined);
 }
 
+/// Launches `rowLanes` threads for each of `count` particles, in groups of
+/// adjacent threads of one warp, and emits `body` for each with the
+/// particle and how its group shares the row. Every thread of a launched
+/// block runs the body, so that the warps stay whole for the shuffles;
+/// those beyond the last particle take the particle 0, not valid.
+void Lowering::launchRows(
+    OpBuilder &builder, Location loc, Value count,
+    function_ref<void(OpBuilder &, Value, const RowLanes &)> body) {
+  Value lanes = createIndex(builder, loc, rowLanes);
+  Value threads = arith::MulIOp::create(builder, loc, count, lanes);
+  Value one = createIndex(builder, loc, 1);
+  Value block = createIndex(builder, loc, blockSize);
+  Value grid = createGroups(builder, loc, threads, blockSize);
+  auto launch =
+      gpu::LaunchOp::create(builder, loc, grid, one, one, block, one, one);
+  OpBuilder kernel = OpBuilder::atBlockEnd(&launch.getBody().front());
+  Value base = arith::MulIOp::create(kernel, loc, launch.getBlockIds().x,
+                                     createIndex(kernel, loc, blockSize));
+  Value thread =
+      arith::AddIOp::create(kernel, loc, base, launch.getThreadIds().x);
+  Value item = arith::DivUIOp::create(kernel, loc, thread, lanes);
+  RowLanes sharing;
+  sharing.lane = arith::RemUIOp::create(kernel, loc, thread, lanes);
+  sharing.lanes = rowLanes;
+  sharing.valid = arith::CmpIOp::create(kernel, loc, arith::CmpIPredicate::ult,
+                                        item, count);
+  sharing.combine = [](OpBuilder &builder, Location loc, Value value) {
+    for (int64_t offset = rowLanes / 2; offset >= 1; offset /= 2)
+      value = arith::AddFOp::create(builder, loc, value,
+                                    shuffleXor(builder, loc, value, offset));
+    return value;
+  };
+  Value particle = arith::SelectOp::create(kernel, loc, sharing.valid, item,
+                                           createIndex(kernel, loc, 0));
+  body(kernel, particle, sharing);
+  gpu::TerminatorOp::create(kernel, loc);
+  bringIn(launch);
+}
+
+/// Stores `contributions` to the global sums of the particle in `scratch`,
+/// from the first thread of a group whose particle is valid.
+static void storeContributions(OpBuilder &builder, Location loc,
+                               ArrayRef<Value> contributions,
+                               ValueRange scratch, Value particle,
+                               const RowLanes &sharing) {
+  if (contributions.empty())
+    return;
+  Value leader = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq,
+                                       sharing.lane,
+                                       createIndex(builder, loc, 0));
+  Value writes = arith::AndIOp::create(builder, loc, leader, sharing.valid);
+  scf::IfOp::create(builder, loc, writes, [&](OpBuilder &then, Location) {
+    for (auto [index, value] : llvm::enumerate(contributions))
+      storeElement(then, loc, value, scratch[2 * index], particle);
+    scf::YieldOp::create(then, loc);
+  });
+}
+
 LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   Location loc = op.getLoc();
   OpBuilder builder(op);
@@ -672,54 +738,15 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   Value box = convertReal(builder, loc, op.getCellMutable().get(), real);
   Value inverse = createInverse(builder, loc, box);
 
-  // `pairLanes` threads for each particle, in a group of adjacent threads
-  // of one warp. Every thread of a launched block runs the kernel, so that
-  // the warps stay whole for the shuffles; those beyond the last particle
-  // take no neighbor and write nothing.
-  Value lanes = createIndex(builder, loc, pairLanes);
-  Value threads = arith::MulIOp::create(builder, loc, size, lanes);
-  Value one = createIndex(builder, loc, 1);
-  Value block = createIndex(builder, loc, blockSize);
-  Value grid = createGroups(builder, loc, threads, blockSize);
-  auto launch =
-      gpu::LaunchOp::create(builder, loc, grid, one, one, block, one, one);
-  OpBuilder body = OpBuilder::atBlockEnd(&launch.getBody().front());
-  Value base = arith::MulIOp::create(body, loc, launch.getBlockIds().x,
-                                     createIndex(body, loc, blockSize));
-  Value thread =
-      arith::AddIOp::create(body, loc, base, launch.getThreadIds().x);
-  Value item = arith::DivUIOp::create(body, loc, thread, lanes);
-  Value lane = arith::RemUIOp::create(body, loc, thread, lanes);
-  Value valid = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::ult,
-                                      item, size);
-  Value central = arith::SelectOp::create(body, loc, valid, item,
-                                          createIndex(body, loc, 0));
-  PairLanes sharing;
-  sharing.lane = lane;
-  sharing.lanes = pairLanes;
-  sharing.valid = valid;
-  sharing.combine = [](OpBuilder &builder, Location loc, Value value) {
-    for (int64_t offset = pairLanes / 2; offset >= 1; offset /= 2)
-      value = arith::AddFOp::create(builder, loc, value,
-                                    shuffleXor(builder, loc, value, offset));
-    return value;
-  };
-  IRMapping local;
-  SmallVector<Value> contributions =
-      emitPairKernel(body, op, structure.counts, structure.index, box,
-                     inverse, central, local, &sharing);
-  if (!contributions.empty()) {
-    Value leader = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::eq,
-                                         lane, createIndex(body, loc, 0));
-    Value writes = arith::AndIOp::create(body, loc, leader, valid);
-    scf::IfOp::create(body, loc, writes, [&](OpBuilder &then, Location) {
-      for (auto [index, value] : llvm::enumerate(contributions))
-        storeElement(then, loc, value, op.getScratch()[2 * index], central);
-      scf::YieldOp::create(then, loc);
-    });
-  }
-  gpu::TerminatorOp::create(body, loc);
-  bringIn(launch);
+  launchRows(builder, loc, size, [&](OpBuilder &body, Value central,
+                                     const RowLanes &sharing) {
+    IRMapping local;
+    SmallVector<Value> contributions =
+        emitPairKernel(body, op, structure.counts, structure.index, box,
+                       inverse, central, local, &sharing);
+    storeContributions(body, loc, contributions, op.getScratch(), central,
+                       sharing);
+  });
   return finishSums(op, builder, op.getReduce(), op.getScratch(), size);
 }
 
@@ -737,12 +764,13 @@ LogicalResult Lowering::lowerTupleFor(md_exec::TupleForOp op) {
   Value box = convertReal(builder, loc, op.getCellMutable().get(), real);
   Value inverse = createInverse(builder, loc, box);
 
-  launchOver(builder, loc, size, [&](OpBuilder &body, Value particle) {
+  launchRows(builder, loc, size, [&](OpBuilder &body, Value particle,
+                                     const RowLanes &sharing) {
     IRMapping local;
     SmallVector<Value> contributions = emitTupleKernel(
-        body, op, op.getIncidence(), box, inverse, particle, local);
-    for (auto [index, value] : llvm::enumerate(contributions))
-      storeElement(body, loc, value, op.getScratch()[2 * index], particle);
+        body, op, op.getIncidence(), box, inverse, particle, local, &sharing);
+    storeContributions(body, loc, contributions, op.getScratch(), particle,
+                       sharing);
   });
   return finishSums(op, builder, op.getReduce(), op.getScratch(), size);
 }

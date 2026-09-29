@@ -291,6 +291,19 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   std::string pipeline = getPipeline(*control, *program);
   if (mlir::failed(mlir::parsePassPipeline(pipeline, manager, llvm::errs())))
     return fail("cannot set up the passes");
+  // With MDIR_PRINT_AFTER set to the name of a pass of the pipeline, the
+  // module is printed to the standard error after each run of that pass,
+  // to see what the kernels are.
+  if (const char *after = std::getenv("MDIR_PRINT_AFTER")) {
+    context.disableMultithreading();
+    std::string name = after;
+    manager.enableIRPrinting(
+        /*shouldPrintBeforePass=*/nullptr,
+        [name](mlir::Pass *pass, mlir::Operation *) {
+          return pass->getArgument() == name;
+        },
+        /*printModuleScope=*/true, /*printAfterOnlyOnChange=*/false);
+  }
   if (mlir::failed(manager.run(*module)))
     return fail("cannot compile the run");
 
