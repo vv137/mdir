@@ -19,6 +19,7 @@ if(MDIR_ENABLE_HDF5)
 endif()
 
 add_mlir_library(MDIRDriver
+  Amber.cpp
   Builder.cpp
   Checkpoint.cpp
   Control.cpp

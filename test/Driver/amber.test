@@ -1,0 +1,69 @@
+# A run from a topology of Amber: alanine dipeptide in TIP3P water with
+# ff14SB, made with tleap (Inputs/dipeptide/dipeptide.leap), with a plain
+# cutoff of 9 Å for Lennard-Jones and Coulomb.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: mdir check %t/run.toml | FileCheck %s --check-prefix=CHECK-INPUT
+# RUN: mdir run %t/run.toml | FileCheck %s
+
+# The counts agree with those of ParmEd for the same files.
+#
+# CHECK-INPUT: particles:          1168
+# CHECK-INPUT: residues:           385
+# CHECK-INPUT: types:              9
+# CHECK-INPUT: bonds:              1167, 1158 with hydrogen
+# CHECK-INPUT: angles:             36
+# CHECK-INPUT: dihedrals:          67, 4 improper
+# CHECK-INPUT: pairs 1-4:          41
+# CHECK-INPUT: total charge:       {{-?}}0.000000 e
+# CHECK-INPUT: box:                27.1882 29.7181 25.397 Å
+
+# The terms at the start. sander of AmberTools 26 gives, with
+# Inputs/dipeptide/sander-single-point.in (eedmeth = 4, vdwmeth = 1):
+#
+#   BOND 0.0390, ANGLE 0.3620, DIHED 9.6440, 1-4 VDW 5.0157,
+#   1-4 EEL 48.9355, EEL -2333.9044, VDWAALS 373.7948 (with the correction)
+#
+# The terms agree but for the conventions of docs/conventions.md: the
+# electrostatic terms of MDIR are larger by 332.0637 / 332.0522, the ratio
+# of the Coulomb constant of CODATA 2018 to that of Amber, and sander counts
+# the pairs of the correction for the dispersion with the pairs of a
+# particle with itself and the excluded pairs (design-m1.md, Section 7.2).
+#
+# CHECK:      MDIR: the terms at the start, in kcal/mol:
+# CHECK-NEXT: MDIR:   Lennard-Jones                386.7447
+# CHECK-NEXT: MDIR:   Coulomb                    -2333.9851
+# CHECK-NEXT: MDIR:   bonds                          0.0390
+# CHECK-NEXT: MDIR:   angles                         0.3619
+# CHECK-NEXT: MDIR:   dihedrals                      9.6439
+# CHECK-NEXT: MDIR:   Lennard-Jones 1-4              5.0156
+# CHECK-NEXT: MDIR:   Coulomb 1-4                   48.9371
+# CHECK-NEXT: MDIR:   dispersion                   -12.9103
+# CHECK-NEXT: MDIR:   total                      -1896.1528
+# CHECK:      INFO:         0         0.0000 {{ *-?[0-9.]+}} {{ *}}-1896.1529
+
+#--- run.toml
+[input]
+prmtopfile = "dipeptide.prmtop"
+ambcrdfile = "dipeptide.inpcrd"
+
+[energy]
+cutoffdist    = 9.0
+pairlistdist  = 10.0
+electrostatic = "CUTOFF"
+
+[dynamics]
+integrator    = "VVER"
+timestep      = 0.0005
+nsteps        = 10
+eneout_period = 10
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PBC"
+#--- end

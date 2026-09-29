@@ -11,7 +11,31 @@
 using namespace mdir::driver;
 using llvm::StringRef;
 
+/// The system of a topology and a file of coordinates of Amber.
+static llvm::Expected<System> readAmberSystem(const Control &control) {
+  auto topology = readAmberTopology(control.prmtopFile);
+  if (!topology)
+    return topology.takeError();
+  if (llvm::Error error =
+          readAmberCoordinates(control.amberCoordinateFile, *topology))
+    return std::move(error);
+
+  System system;
+  system.types = topology->types;
+  system.masses = topology->masses;
+  system.positions = topology->positions;
+  system.velocities = topology->velocities;
+  if (system.velocities.empty())
+    system.velocities.assign(system.positions.size(), 0.0);
+  for (int i = 0; i != 3; ++i)
+    system.box[i] = topology->box[i];
+  system.topology = std::make_shared<Topology>(std::move(*topology));
+  return std::move(system);
+}
+
 llvm::Expected<System> mdir::driver::readSystem(const Control &control) {
+  if (!control.prmtopFile.empty())
+    return readAmberSystem(control);
   auto file = llvm::MemoryBuffer::getFile(control.pdbFile);
   if (!file)
     return llvm::createStringError(file.getError(), "cannot read '%s'",

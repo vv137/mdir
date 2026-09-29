@@ -56,6 +56,24 @@ public:
 private:
   llvm::Error collectParameters();
   llvm::Error emitPotential();
+
+  /// For a run from a topology: the fields, the tables, and the tuple sets
+  /// of the program, and the potential of the topology.
+  llvm::Error collectTopology();
+
+  /// The terms of the potential of a topology.
+  enum Term : unsigned {
+    LennardJones = 1,
+    Coulomb = 2,
+    Bonds = 4,
+    Angles = 8,
+    Dihedrals = 16,
+    LennardJones14 = 32,
+    Coulomb14 = 64,
+    AllTerms = 127,
+  };
+  /// Emits the potential `name` of the terms `terms` of the topology.
+  void emitTopologyPotential(StringRef name, unsigned terms);
   void emitPrograms();
   void emitEntry();
 
@@ -134,6 +152,11 @@ std::string Builder::getFieldParameters() const {
     text += ", %p_" + field.name + ": " + getFieldType(field).str();
   for (const Program::Table &table : program.tables)
     text += ", %t_" + table.name + ": !table";
+  for (const Program::TupleSet &set : program.tupleSets) {
+    text += ", %r_" + set.name + ": !rel_" + set.name;
+    for (const Program::Field &field : set.fields)
+      text += ", %f_" + set.name + "_" + field.name + ": !of_" + set.name;
+  }
   return text;
 }
 
@@ -145,6 +168,13 @@ std::string Builder::getFieldValues(StringRef prefix) const {
   // names everywhere.
   for (const Program::Table &table : program.tables)
     text += ", %t_" + table.name;
+  // Neither do the tuples of a topology: the program does not put the
+  // particles in a new order when it has them.
+  for (const Program::TupleSet &set : program.tupleSets) {
+    text += ", %r_" + set.name;
+    for (const Program::Field &field : set.fields)
+      text += ", %f_" + set.name + "_" + field.name;
+  }
   return text;
 }
 
@@ -180,6 +210,11 @@ std::string Builder::getFieldTypes() const {
     text += ", " + getFieldType(field).str();
   for (size_t i = 0, e = program.tables.size(); i != e; ++i)
     text += ", !table";
+  for (const Program::TupleSet &set : program.tupleSets) {
+    text += ", !rel_" + set.name;
+    for (size_t i = 0, e = set.fields.size(); i != e; ++i)
+      text += ", !of_" + set.name;
+  }
   return text;
 }
 
@@ -416,6 +451,283 @@ llvm::Error Builder::computeDispersion() {
   program.dispersionEnergy = energy * units::energy;
   program.dispersionVirial = 6.0 * energy * units::energy;
   return llvm::Error::success();
+}
+
+//===----------------------------------------------------------------------===//
+// Runs from a topology
+//===----------------------------------------------------------------------===//
+
+/// The Coulomb constant in kJ nm mol⁻¹ e⁻², from CODATA 2018.
+constexpr double coulombInternal = 138.935457644;
+
+llvm::Error Builder::collectTopology() {
+  const Topology &topology = *system.topology;
+  size_t count = topology.getNumParticles();
+
+  // The fields of the particles.
+  Program::Field charges;
+  charges.name = "q";
+  charges.values = topology.charges;
+  program.fields.push_back(std::move(charges));
+  Program::Field types;
+  types.name = "type";
+  types.isInteger = true;
+  for (unsigned type : topology.types)
+    types.values.push_back(type);
+  program.fields.push_back(std::move(types));
+  (void)count;
+
+  // Lennard-Jones for each pair of types.
+  unsigned numTypes = topology.getNumTypes();
+  program.tables.push_back({"lj_sigma", numTypes, topology.sigma});
+  program.tables.push_back({"lj_epsilon", numTypes, topology.epsilon});
+
+  auto addSet = [&](StringRef name, unsigned arity) -> Program::TupleSet & {
+    Program::TupleSet set;
+    set.name = name.str();
+    set.arity = arity;
+    program.tupleSets.push_back(std::move(set));
+    return program.tupleSets.back();
+  };
+  auto addField = [&](Program::TupleSet &set, StringRef name) {
+    Program::Field field;
+    field.name = name.str();
+    set.fields.push_back(std::move(field));
+    return set.fields.size() - 1;
+  };
+
+  if (!topology.bonds.empty()) {
+    Program::TupleSet &set = addSet("bonds", 2);
+    size_t k = addField(set, "k"), r0 = addField(set, "r0");
+    for (const Topology::Bond &bond : topology.bonds) {
+      set.members.push_back(bond.i);
+      set.members.push_back(bond.j);
+      set.fields[k].values.push_back(bond.k);
+      set.fields[r0].values.push_back(bond.r0);
+    }
+  }
+  if (!topology.angles.empty()) {
+    Program::TupleSet &set = addSet("angles", 3);
+    size_t k = addField(set, "k"), t0 = addField(set, "theta0");
+    for (const Topology::Angle &angle : topology.angles) {
+      for (unsigned member : {angle.i, angle.j, angle.k})
+        set.members.push_back(member);
+      set.fields[k].values.push_back(angle.force);
+      set.fields[t0].values.push_back(angle.theta0);
+    }
+  }
+  if (!topology.dihedrals.empty()) {
+    Program::TupleSet &set = addSet("dihedrals", 4);
+    size_t k = addField(set, "k"), n = addField(set, "n"),
+           phase = addField(set, "phase");
+    for (const Topology::Dihedral &dihedral : topology.dihedrals) {
+      for (unsigned member :
+           {dihedral.i, dihedral.j, dihedral.k, dihedral.l})
+        set.members.push_back(member);
+      set.fields[k].values.push_back(dihedral.force);
+      set.fields[n].values.push_back(dihedral.n);
+      set.fields[phase].values.push_back(dihedral.phase);
+    }
+  }
+  if (!topology.pairs.empty()) {
+    // The factors enter the parameters: ε s_LJ, and f q_i q_j s_C.
+    Program::TupleSet &set = addSet("pairs14", 2);
+    size_t sigma = addField(set, "sigma"), epsilon = addField(set, "epsilon"),
+           qq = addField(set, "qq");
+    for (const Topology::Pair &pair : topology.pairs) {
+      set.members.push_back(pair.i);
+      set.members.push_back(pair.j);
+      set.fields[sigma].values.push_back(pair.sigma);
+      set.fields[epsilon].values.push_back(pair.epsilon * pair.scaleLJ);
+      set.fields[qq].values.push_back(coulombInternal *
+                                      topology.charges[pair.i] *
+                                      topology.charges[pair.j] *
+                                      pair.scaleCoulomb);
+    }
+  }
+  if (!topology.exclusions.empty()) {
+    Program::TupleSet &set = addSet("excluded", 2);
+    for (auto [i, j] : topology.exclusions) {
+      set.members.push_back(i);
+      set.members.push_back(j);
+    }
+  }
+
+  // The correction for the dispersion (Section 7.2 of design-m1.md): the
+  // pairs of distinct particles, less the excluded pairs.
+  if (control.topologyDispersion == DispersionCorrection::None)
+    return llvm::Error::success();
+  std::vector<double> numbers(numTypes, 0.0);
+  for (unsigned type : topology.types)
+    numbers[type] += 1.0;
+  auto c6 = [&](unsigned a, unsigned b) {
+    double sigma = topology.sigma[a * numTypes + b];
+    return 4.0 * topology.epsilon[a * numTypes + b] * std::pow(sigma, 6);
+  };
+  double sum = 0.0;
+  for (unsigned a = 0; a != numTypes; ++a)
+    for (unsigned b = 0; b != numTypes; ++b)
+      sum += numbers[a] * (numbers[b] - (a == b ? 1.0 : 0.0)) * c6(a, b);
+  for (auto [i, j] : topology.exclusions)
+    sum -= 2.0 * c6(topology.types[i], topology.types[j]);
+  double rc = control.cutoffDistance * units::length;
+  double volume = system.box[0] * system.box[1] * system.box[2];
+  double energy = -2.0 * M_PI / (3.0 * volume) * sum / (rc * rc * rc);
+  program.dispersionEnergy = energy;
+  program.dispersionVirial = 6.0 * energy;
+  return llvm::Error::success();
+}
+
+void Builder::emitTopologyPotential(StringRef name, unsigned terms) {
+  double cutoff = control.cutoffDistance * units::length;
+  auto has = [&](StringRef set) {
+    return llvm::any_of(program.tupleSets, [&](const Program::TupleSet &s) {
+      return s.name == set;
+    });
+  };
+  auto emitLennardJones = [&](StringRef sigma, StringRef epsilon,
+                              StringRef result) {
+    os << "    %c4 = arith.constant 4.0 : f64\n"
+       << "    %i6 = arith.constant 6 : i32\n"
+       << "    %sr = arith.divf " << sigma << ", %r : f64\n"
+       << "    %s6 = math.fpowi %sr, %i6 : f64, i32\n"
+       << "    %s12 = arith.mulf %s6, %s6 : f64\n"
+       << "    %t = arith.subf %s12, %s6 : f64\n"
+       << "    %e4 = arith.mulf %c4, " << epsilon << " : f64\n"
+       << "    " << result << " = arith.mulf %e4, %t : f64\n";
+  };
+
+  os << "md.potential @" << name << "(%x: !vec, %cell: !md.cell"
+     << getFieldParameters() << ") -> f64 {\n";
+  std::string total;
+  auto add = [&](StringRef term) {
+    std::string value = ("%u_" + term).str();
+    if (total.empty()) {
+      total = value;
+      return;
+    }
+    std::string sum = ("%total_" + term).str();
+    os << "  " << sum << " = arith.addf " << total << ", " << value
+       << " : f64\n";
+    total = sum;
+  };
+
+  // Lennard-Jones and Coulomb, both cut at the cutoff with no shift, over
+  // the pairs that are not excluded.
+  bool lj = terms & LennardJones, coulomb = terms & Coulomb;
+  if (lj || coulomb) {
+    os << "  %n = md.neighborhood %x, %cell cutoff(" << formatReal(cutoff)
+       << ")";
+    if (has("excluded"))
+      os << " exclude(%r_excluded : !rel_excluded)";
+    os << " : !vec -> !pairs\n"
+       << "  %u_nonbonded = md.sum_relation %n, %x, %cell gather(%p_type, "
+          "%p_q : !ids, !real)\n"
+       << "      exchange(symmetric) {\n"
+       << "  ^bb0(%r: f64, %d: vector<3xf64>, %type_i: i32, %type_j: i32, "
+          "%q_i: f64, %q_j: f64):\n";
+    std::string value;
+    if (lj) {
+      os << "    %sigma = md.lookup %t_lj_sigma[%type_i, %type_j] : !table, "
+            "i32, i32 -> f64\n"
+         << "    %epsilon = md.lookup %t_lj_epsilon[%type_i, %type_j] : "
+            "!table, i32, i32 -> f64\n";
+      emitLennardJones("%sigma", "%epsilon", "%lj");
+      value = "%lj";
+    }
+    if (coulomb) {
+      os << "    %f = arith.constant " << formatReal(coulombInternal)
+         << " : f64\n"
+         << "    %qq = arith.mulf %q_i, %q_j : f64\n"
+         << "    %fqq = arith.mulf %f, %qq : f64\n"
+         << "    %coulomb = arith.divf %fqq, %r : f64\n";
+      if (value.empty()) {
+        value = "%coulomb";
+      } else {
+        os << "    %k = arith.addf %lj, %coulomb : f64\n";
+        value = "%k";
+      }
+    }
+    os << "    md.yield " << value << " : f64\n"
+       << "  } : !pairs, !vec -> f64\n";
+    add("nonbonded");
+  }
+
+  if ((terms & Bonds) && has("bonds")) {
+    os << "  %u_bonds = md.sum_tuples %r_bonds, %x, %cell coordinates("
+          "distance(0, 1))\n"
+       << "      tuple(%f_bonds_k, %f_bonds_r0 : !of_bonds, !of_bonds) {\n"
+       << "  ^bb0(%r: f64, %k: f64, %r0: f64):\n"
+       << "    %half = arith.constant 0.5 : f64\n"
+       << "    %dr = arith.subf %r, %r0 : f64\n"
+       << "    %dr2 = arith.mulf %dr, %dr : f64\n"
+       << "    %hk = arith.mulf %half, %k : f64\n"
+       << "    %e = arith.mulf %hk, %dr2 : f64\n"
+       << "    md.yield %e : f64\n"
+       << "  } : !rel_bonds, !vec -> f64\n";
+    add("bonds");
+  }
+  if ((terms & Angles) && has("angles")) {
+    os << "  %u_angles = md.sum_tuples %r_angles, %x, %cell coordinates("
+          "angle(0, 1, 2))\n"
+       << "      tuple(%f_angles_k, %f_angles_theta0 : !of_angles, "
+          "!of_angles) {\n"
+       << "  ^bb0(%theta: f64, %k: f64, %theta0: f64):\n"
+       << "    %half = arith.constant 0.5 : f64\n"
+       << "    %dt = arith.subf %theta, %theta0 : f64\n"
+       << "    %dt2 = arith.mulf %dt, %dt : f64\n"
+       << "    %hk = arith.mulf %half, %k : f64\n"
+       << "    %e = arith.mulf %hk, %dt2 : f64\n"
+       << "    md.yield %e : f64\n"
+       << "  } : !rel_angles, !vec -> f64\n";
+    add("angles");
+  }
+  if ((terms & Dihedrals) && has("dihedrals")) {
+    os << "  %u_dihedrals = md.sum_tuples %r_dihedrals, %x, %cell "
+          "coordinates(dihedral(0, 1, 2, 3))\n"
+       << "      tuple(%f_dihedrals_k, %f_dihedrals_n, %f_dihedrals_phase : "
+          "!of_dihedrals, !of_dihedrals, !of_dihedrals) {\n"
+       << "  ^bb0(%phi: f64, %k: f64, %period: f64, %phase: f64):\n"
+       << "    %one = arith.constant 1.0 : f64\n"
+       << "    %nphi = arith.mulf %period, %phi : f64\n"
+       << "    %a = arith.subf %nphi, %phase : f64\n"
+       << "    %cos = math.cos %a : f64\n"
+       << "    %s = arith.addf %one, %cos : f64\n"
+       << "    %e = arith.mulf %k, %s : f64\n"
+       << "    md.yield %e : f64\n"
+       << "  } : !rel_dihedrals, !vec -> f64\n";
+    add("dihedrals");
+  }
+  bool lj14 = terms & LennardJones14, coulomb14 = terms & Coulomb14;
+  if ((lj14 || coulomb14) && has("pairs14")) {
+    os << "  %u_pairs14 = md.sum_tuples %r_pairs14, %x, %cell coordinates("
+          "distance(0, 1))\n"
+       << "      tuple(%f_pairs14_sigma, %f_pairs14_epsilon, %f_pairs14_qq : "
+          "!of_pairs14, !of_pairs14, !of_pairs14) {\n"
+       << "  ^bb0(%r: f64, %sigma: f64, %epsilon: f64, %qq: f64):\n";
+    std::string value;
+    if (lj14) {
+      emitLennardJones("%sigma", "%epsilon", "%lj");
+      value = "%lj";
+    }
+    if (coulomb14) {
+      os << "    %coulomb = arith.divf %qq, %r : f64\n";
+      if (value.empty()) {
+        value = "%coulomb";
+      } else {
+        os << "    %k = arith.addf %lj, %coulomb : f64\n";
+        value = "%k";
+      }
+    }
+    os << "    md.yield " << value << " : f64\n"
+       << "  } : !rel_pairs14, !vec -> f64\n";
+    add("pairs14");
+  }
+  if (total.empty()) {
+    os << "  %zero = arith.constant 0.0 : f64\n";
+    total = "%zero";
+  }
+  os << "  md.return " << total << " : f64\n}\n\n";
 }
 
 llvm::Error Builder::emitPotential() {
@@ -834,6 +1146,8 @@ void Builder::emitEntry() {
 
   os << "func.func private @mdrtWriteEnergies(i64, f64, f64, f64, f64)\n"
      << "    attributes {llvm.emit_c_interface}\n"
+     << "func.func private @mdrtWriteTerms(memref<?xf64>)\n"
+     << "    attributes {llvm.emit_c_interface}\n"
      << "func.func private @mdrtWriteFrame(i64, memref<?x3x" << state
      << ">, memref<?xi32>)\n    attributes {llvm.emit_c_interface}\n"
      << "func.func private @mdrtFinish(memref<?x3x" << state
@@ -859,6 +1173,11 @@ void Builder::emitEntry() {
        << (field.isInteger ? StringRef("i32") : parameter) << ">";
   for (const Program::Table &table : program.tables)
     os << ", %bt_" << table.name << ": memref<?x?xf64>";
+  for (const Program::TupleSet &set : program.tupleSets) {
+    os << ",\n    %br_" << set.name << ": memref<?x" << set.arity << "xi32>";
+    for (const Program::Field &field : set.fields)
+      os << ", %bf_" << set.name << "_" << field.name << ": memref<?xf64>";
+  }
   os << ",\n    %identities: memref<?xi32>,\n"
      << "    %lx: f64, %ly: f64, %lz: f64, %dt: f64, %start: i64) {\n";
 
@@ -900,6 +1219,14 @@ void Builder::emitEntry() {
   for (const Program::Table &table : program.tables)
     os << "  %t_" << table.name << " = mdrt.from_buffer %bt_" << table.name
        << " : memref<?x?xf64> to !table\n";
+  for (const Program::TupleSet &set : program.tupleSets) {
+    os << "  %r_" << set.name << " = mdrt.from_buffer %br_" << set.name
+       << " : memref<?x" << set.arity << "xi32> to !rel_" << set.name << "\n";
+    for (const Program::Field &field : set.fields)
+      os << "  %f_" << set.name << "_" << field.name
+         << " = mdrt.from_buffer %bf_" << set.name << "_" << field.name
+         << " : memref<?xf64> to !of_" << set.name << "\n";
+  }
   os << "  %id" << given
      << " = mdrt.from_buffer %identities : memref<?xi32> to !ids\n";
   // A run that continues an earlier one has the forces of the step before.
@@ -921,6 +1248,24 @@ void Builder::emitEntry() {
        << "      request [energy, forces, virial]\n"
        << "      : (!vec, !md.cell" << getFieldTypes()
        << ") -> (f64, !vec, vector<9xf64>)\n";
+    if (system.topology) {
+      os << "  %terms = memref.alloca() : memref<7xf64>\n";
+      int index = 0;
+      for (StringRef name :
+           {"term_lj", "term_coulomb", "term_bonds", "term_angles",
+            "term_dihedrals", "term_lj14", "term_coulomb14"}) {
+        os << "  %" << name << " = md.evaluate @" << name << "(%x0, %cell"
+           << getFieldValues() << ") request [energy]\n"
+           << "      : (!vec, !md.cell" << getFieldTypes() << ") -> f64\n"
+           << "  %i_" << name << " = arith.constant " << index++
+           << " : index\n"
+           << "  memref.store %" << name << ", %terms[%i_" << name
+           << "] : memref<7xf64>\n";
+      }
+      os << "  %terms_cast = memref.cast %terms : memref<7xf64> to "
+            "memref<?xf64>\n"
+         << "  call @mdrtWriteTerms(%terms_cast) : (memref<?xf64>) -> ()\n";
+    }
     emitKineticEnergy(os, "%k0", velocities, "%m", "  ");
     emitForceSquare(os, "%g0", "%f0", "%m", "  ");
     emitTrace(os, "%tr0", "%w0", "  ");
@@ -939,6 +1284,63 @@ void Builder::emitEntry() {
   os << "  mdrt.host_call @mdrtFinish(%xe0, %ve0, " << idName
      << ") : (!vec, !vec, !ids)\n"
      << "  return\n}\n";
+}
+
+/// The largest number of particles within `reach` of a particle, found
+/// with cells of the width of the reach.
+static int64_t countMostNeighbors(const System &system, double reach) {
+  size_t count = system.getNumParticles();
+  int cells[3];
+  for (int k = 0; k != 3; ++k)
+    cells[k] = std::max(1, static_cast<int>(system.box[k] / reach));
+  auto wrap = [&](double x, int k) {
+    double length = system.box[k];
+    return x - length * std::floor(x / length);
+  };
+  auto cellOf = [&](size_t i, int k) {
+    int c = static_cast<int>(wrap(system.positions[3 * i + k], k) /
+                             system.box[k] * cells[k]);
+    return std::min(c, cells[k] - 1);
+  };
+  std::vector<std::vector<size_t>> members(cells[0] * cells[1] * cells[2]);
+  for (size_t i = 0; i != count; ++i)
+    members[(cellOf(i, 0) * cells[1] + cellOf(i, 1)) * cells[2] +
+            cellOf(i, 2)]
+        .push_back(i);
+
+  double reach2 = reach * reach;
+  int64_t most = 0;
+  for (size_t i = 0; i != count; ++i) {
+    int64_t found = 0;
+    int home[3] = {cellOf(i, 0), cellOf(i, 1), cellOf(i, 2)};
+    // Each cell once, where the cells on the two sides coincide.
+    std::vector<int> seen;
+    for (int dx = -1; dx <= 1; ++dx)
+      for (int dy = -1; dy <= 1; ++dy)
+        for (int dz = -1; dz <= 1; ++dz) {
+          int c[3] = {home[0] + dx, home[1] + dy, home[2] + dz};
+          for (int k = 0; k != 3; ++k)
+            c[k] = (c[k] % cells[k] + cells[k]) % cells[k];
+          int cell = (c[0] * cells[1] + c[1]) * cells[2] + c[2];
+          if (llvm::is_contained(seen, cell))
+            continue;
+          seen.push_back(cell);
+          for (size_t j : members[cell]) {
+            if (j == i)
+              continue;
+            double r2 = 0.0;
+            for (int k = 0; k != 3; ++k) {
+              double d = system.positions[3 * i + k] -
+                         system.positions[3 * j + k];
+              d -= system.box[k] * std::round(d / system.box[k]);
+              r2 += d * d;
+            }
+            found += r2 < reach2;
+          }
+        }
+    most = std::max(most, found);
+  }
+  return most;
 }
 
 llvm::Error Builder::build() {
@@ -965,16 +1367,18 @@ llvm::Error Builder::build() {
       (control.pairlistDistance - control.cutoffDistance) * units::length;
   // Cells of half the reach of a neighbor structure: particles that are
   // neighbors are then a few cells apart in memory.
-  program.reorders = control.reorder;
+  // The members of the tuples of a topology would have to follow a new
+  // order of the particles, which the program does not do yet.
+  program.reorders = control.reorder && !system.topology;
   program.orderWidth = 0.5 * control.pairlistDistance * units::length;
   program.neighborWidth = control.neighborWidth;
   if (program.neighborWidth == 0) {
-    // Half as many again as a uniform density gives, and a few more.
-    double volume = system.box[0] * system.box[1] * system.box[2];
+    // Half as many again as the particle with the most neighbors has at
+    // the start, and a few more. A uniform density would underestimate a
+    // box with room in it, such as a solvated molecule that tleap makes.
     double reach = control.pairlistDistance * units::length;
-    double expected = static_cast<double>(system.getNumParticles()) / volume *
-                      4.0 / 3.0 * M_PI * reach * reach * reach;
-    int64_t width = static_cast<int64_t>(std::ceil(1.5 * expected)) + 16;
+    int64_t most = countMostNeighbors(system, reach);
+    int64_t width = static_cast<int64_t>(std::ceil(1.5 * most)) + 16;
     program.neighborWidth = (width + 7) / 8 * 8;
   }
 
@@ -999,16 +1403,45 @@ llvm::Error Builder::build() {
     levels.push_back({"step", steps});
   }
 
-  if (llvm::Error error = collectParameters())
+  if (system.topology) {
+    if (llvm::Error error = collectTopology())
+      return error;
+  } else if (llvm::Error error = collectParameters()) {
     return error;
+  }
 
   os << "!vec   = !md.field<@atoms, 3 x f64>\n"
      << "!real  = !md.field<@atoms, f64>\n"
      << "!ids   = !md.field<@atoms, i32>\n"
      << "!table = !md.table<2, f64, symmetric>\n"
-     << "!pairs = !md.relation<@atoms, 2, unordered>\n\n"
-     << "md.particle_set @atoms\n\n";
-  if (llvm::Error error = emitPotential())
+     << "!pairs = !md.relation<@atoms, 2, unordered>\n";
+  for (const Program::TupleSet &set : program.tupleSets) {
+    StringRef orientation = set.arity == 2 ? "unordered" : "reversal";
+    os << "!rel_" << set.name << " = !md.relation<@atoms, " << set.arity
+       << ", " << orientation << ", @" << set.name << ">\n"
+       << "!of_" << set.name << " = !md.field<@" << set.name << ", f64>\n";
+  }
+  os << "\nmd.particle_set @atoms\n";
+  for (const Program::TupleSet &set : program.tupleSets)
+    os << "md.tuple_set @" << set.name << " on(@atoms) arity(" << set.arity
+       << ") orientation(" << (set.arity == 2 ? "unordered" : "reversal")
+       << ")\n";
+  os << "\n";
+  if (system.topology) {
+    emitTopologyPotential("energy", AllTerms);
+    // Each term on its own, for the log at the start.
+    if (!isRestart())
+      for (auto [name, term] :
+           {std::pair<StringRef, unsigned>{"term_lj", LennardJones},
+            {"term_coulomb", Coulomb},
+            {"term_bonds", Bonds},
+            {"term_angles", Angles},
+            {"term_dihedrals", Dihedrals},
+            {"term_lj14", LennardJones14},
+            {"term_coulomb14", Coulomb14}})
+        emitTopologyPotential(name, term);
+  }
+  else if (llvm::Error error = emitPotential())
     return error;
   emitPrograms();
   emitEntry();

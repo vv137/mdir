@@ -311,6 +311,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     add("_mlir_ciface_mdrtWriteEnergies",
         (void *)&_mlir_ciface_mdrtWriteEnergies);
     add("_mlir_ciface_mdrtWriteFrame", (void *)&_mlir_ciface_mdrtWriteFrame);
+    add("_mlir_ciface_mdrtWriteTerms", (void *)&_mlir_ciface_mdrtWriteTerms);
     add("_mlir_ciface_mdrtFinish", (void *)&_mlir_ciface_mdrtFinish);
     add("_mlir_ciface_mdrtWriteCheckpoint",
         program->writesForces
@@ -391,6 +392,30 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   if (program->takesForces)
     given.addTo(arguments);
   masses.addTo(arguments);
+  // The tuples of a topology: their members, and their fields.
+  std::vector<std::unique_ptr<StridedMemRefType<int32_t, 2>>> memberBuffers;
+  std::vector<std::unique_ptr<StridedMemRefType<double, 1>>> tupleFields;
+  for (const Program::TupleSet &set : program->tupleSets) {
+    auto members = std::make_unique<StridedMemRefType<int32_t, 2>>();
+    members->basePtr = members->data =
+        const_cast<int32_t *>(set.members.data());
+    members->offset = 0;
+    members->sizes[0] = set.size();
+    members->sizes[1] = set.arity;
+    members->strides[0] = set.arity;
+    members->strides[1] = 1;
+    memberBuffers.push_back(std::move(members));
+    for (const Program::Field &field : set.fields) {
+      auto values = std::make_unique<StridedMemRefType<double, 1>>();
+      values->basePtr = values->data =
+          const_cast<double *>(field.values.data());
+      values->offset = 0;
+      values->sizes[0] = set.size();
+      values->strides[0] = 1;
+      tupleFields.push_back(std::move(values));
+    }
+  }
+
   // The fields in the order of the program, then the tables.
   size_t realField = 0, integerField = 0;
   for (const Program::Field &field : program->fields) {
@@ -413,6 +438,25 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     arguments.push_back(&table->sizes[1]);
     arguments.push_back(&table->strides[0]);
     arguments.push_back(&table->strides[1]);
+  }
+  size_t tupleField = 0;
+  for (auto [index, set] : llvm::enumerate(program->tupleSets)) {
+    StridedMemRefType<int32_t, 2> &members = *memberBuffers[index];
+    arguments.push_back(&members.basePtr);
+    arguments.push_back(&members.data);
+    arguments.push_back(&members.offset);
+    arguments.push_back(&members.sizes[0]);
+    arguments.push_back(&members.sizes[1]);
+    arguments.push_back(&members.strides[0]);
+    arguments.push_back(&members.strides[1]);
+    for (size_t k = 0, e = set.fields.size(); k != e; ++k) {
+      StridedMemRefType<double, 1> &values = *tupleFields[tupleField++];
+      arguments.push_back(&values.basePtr);
+      arguments.push_back(&values.data);
+      arguments.push_back(&values.offset);
+      arguments.push_back(&values.sizes[0]);
+      arguments.push_back(&values.strides[0]);
+    }
   }
   arguments.push_back(&identities.basePtr);
   arguments.push_back(&identities.data);

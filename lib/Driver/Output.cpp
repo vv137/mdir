@@ -120,6 +120,26 @@ void mdir::driver::writeLogHeader(Output &output) {
                "TEMPERATURE", "VIRIAL", "PRESSURE");
 }
 
+void _mlir_ciface_mdrtWriteTerms(void *terms) {
+  Output &output = *current;
+  auto *values = static_cast<StridedMemRefType<double, 1> *>(terms);
+  static const char *names[] = {
+      "Lennard-Jones", "Coulomb", "bonds", "angles", "dihedrals",
+      "Lennard-Jones 1-4", "Coulomb 1-4"};
+  std::fprintf(output.log, "MDIR: the terms at the start, in kcal/mol:\n");
+  double total = output.dispersionEnergy;
+  for (int i = 0; i != 7; ++i) {
+    double value = values->data[i * values->strides[0]];
+    total += value;
+    std::fprintf(output.log, "MDIR:   %-22s %16.6f\n", names[i],
+                 value / units::energy);
+  }
+  std::fprintf(output.log, "MDIR:   %-22s %16.6f\n", "dispersion",
+               output.dispersionEnergy / units::energy);
+  std::fprintf(output.log, "MDIR:   %-22s %16.6f\n", "total",
+               total / units::energy);
+}
+
 void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
                                     double kinetic, double forceSquare,
                                     double virial) {

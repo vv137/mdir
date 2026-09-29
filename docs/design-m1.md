@@ -646,6 +646,14 @@ GROMACS needs: `defaults`, `atomtypes`, `nonbond_params`, `pairtypes`,
 `bonds`, `pairs`, `angles`, `dihedrals`, `exclusions`, `settles`,
 `system`, `molecules`.
 
+A plain cutoff of the Coulomb term does not conserve the energy: a pair
+of charged particles that crosses the cutoff changes the energy by
+`f q_i q_j / r_c`, some 10 kcal/mol for two waters at 9 Å. sander shows
+the same (155 kcal/mol in 10 steps of 0.5 fs for the dipeptide in water).
+The intermediate stage therefore compares the terms at a configuration;
+a test of the conservation of the energy needs a Coulomb term that goes
+to zero smoothly, or particle mesh Ewald.
+
 ### 13.2 Keywords of the control file
 
 | Keywords | Table |
@@ -736,7 +744,7 @@ into the home directory.
 | M1b | The command line (Section 14) | The runs of M0 through `mdir run` | Done |
 | M1c | Exclusions in the neighbor build; pairs three bonds apart | Chains with Lennard-Jones | Done: energy, forces, and virial agree with a reference on the CPU, with OpenMP, and on a GPU |
 | M1d | Tables, NBFIX, the rule `product`, a Coulomb cutoff, the correction for the dispersion | A mixture of charged types | Done. The IR has `!md.table` and `md.lookup`. The driver takes `[[energy.nbfix]]`, which turns the parameters of a term into tables of pairs of types, the rule `product`, the name `coulomb` for the constant of CODATA 2018, and `dispersion_corr` for each pair term, with a plain cutoff. The correction takes the r⁻⁶ part of the term and the N(N − 1) ordered pairs, as GROMACS does; excluded pairs come out of the count once topologies are read (M1e). |
-| M1e | The readers of both formats; renumbering of the members with the order | Alanine dipeptide in flexible water, at constant energy with 0.5 fs | |
+| M1e | The readers of both formats; renumbering of the members with the order | Alanine dipeptide in flexible water, at constant energy with 0.5 fs | In part. The reader of Amber topologies and coordinates is done, and a run from a topology has bonds, angles, dihedrals, pairs three bonds apart, exclusions, Lennard-Jones from tables, Coulomb with a plain cutoff, and the correction for the dispersion; its terms at the start agree with sander but for the conventions. Not yet: the reader of GROMACS, the renumbering of the members (a run from a topology keeps the particles in their order), SETTLE by residue. |
 | M1f | Comparison of the intermediate stage with AmberTools and GROMACS | | This completes the intermediate stage |
 | M1g | Removal of the motion of the center of mass, random numbers, the thermostat | At constant temperature | |
 | M1h | Particle mesh Ewald | With particle mesh Ewald | |

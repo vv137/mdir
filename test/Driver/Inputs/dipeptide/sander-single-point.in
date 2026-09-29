@@ -1,0 +1,7 @@
+single point, plain cutoff
+ &cntrl
+  imin=1, maxcyc=0, ntb=1, cut=9.0, ntc=1, ntf=1, ntpr=1,
+ /
+ &ewald
+  eedmeth=4, vdwmeth=1,
+ /

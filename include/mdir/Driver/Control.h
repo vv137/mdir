@@ -68,6 +68,10 @@ enum class Precision { Single, Mixed, Double };
 struct Control {
   // [input]
   std::string pdbFile;
+  /// A topology and the coordinates of Amber, in place of `pdbFile` and the
+  /// types of [energy].
+  std::string prmtopFile;
+  std::string amberCoordinateFile;
   std::string restartInput;
 
   // [output]
@@ -82,6 +86,9 @@ struct Control {
   std::vector<PairTerm> pairs;
   std::vector<ParticleType> types;
   std::vector<PairOverride> overrides;
+  /// The correction for the dispersion of a run from a topology.
+  DispersionCorrection topologyDispersion =
+      DispersionCorrection::EnergyPressure;
 
   // [dynamics]
   Integrator integrator = Integrator::VelocityVerlet;

@@ -4,6 +4,9 @@
 #define MDIR_DRIVER_SYSTEM_H
 
 #include "mdir/Driver/Control.h"
+#include "mdir/Driver/Topology.h"
+
+#include <memory>
 
 #include <vector>
 
@@ -42,6 +45,10 @@ struct System {
   std::vector<double> masses;
   /// The edge lengths of the cell.
   double box[3];
+
+  /// The topology that the system was read from, if any. It gives the
+  /// terms of the potential.
+  std::shared_ptr<Topology> topology;
 };
 
 /// Reads the positions from the PDB file of `control`. The name of an atom

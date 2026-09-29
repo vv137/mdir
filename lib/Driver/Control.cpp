@@ -324,9 +324,9 @@ Error Reader::readEnergy(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "energy",
           {"switchdist", "cutoffdist", "pairlistdist", "vdw_force_switch",
-           "vdw_shift", "pair", "type", "nbfix"},
+           "vdw_shift", "pair", "type", "nbfix", "dispersion_corr",
+           "electrostatic"},
           {{"forcefield", "M1"},
-           {"electrostatic", "M2"},
            {"dielec_const", "M1"}}))
     return error;
 
@@ -391,6 +391,42 @@ Error Reader::readEnergy(const toml::table &table) {
   if (Error error = readArray("nbfix", &Reader::readOverride))
     return error;
 
+  // With a topology, the correction for the dispersion is for the whole
+  // run, and the electrostatics are a cutoff until particle mesh Ewald
+  // comes (M1h).
+  bool hasTopology = !control.prmtopFile.empty();
+  for (StringRef key : {"dispersion_corr", "electrostatic"})
+    if (!hasTopology && table.contains(std::string_view(key)))
+      return fail(*table.get(std::string_view(key)),
+                  "'" + key + "' in [energy] is for a run from a topology; "
+                  "without one, give the terms in [[energy.pair]]");
+  if (Error error = readChoice<DispersionCorrection>(
+          table, "dispersion_corr", control.topologyDispersion,
+          {{"NONE", DispersionCorrection::None},
+           {"EPRESS", DispersionCorrection::EnergyPressure}}))
+    return error;
+  int electrostatic = 0;
+  if (Error error = readChoice<int>(table, "electrostatic", electrostatic,
+                                    {{"CUTOFF", 0}, {"PME", 1}}))
+    return error;
+  if (electrostatic == 1)
+    return fail(*table.get("electrostatic"),
+                "'electrostatic = \"PME\"' is not supported yet; it is "
+                "planned for M1");
+  if (hasTopology && control.truncation != Truncation::None)
+    return fail(table, "a run from a topology takes a plain cutoff: "
+                       "'switchdist' equal to 'cutoffdist', and no "
+                       "'vdw_shift' or 'vdw_force_switch'");
+
+  // A topology gives the types and the terms.
+  if (!control.prmtopFile.empty()) {
+    if (!control.types.empty() || !control.pairs.empty() ||
+        !control.overrides.empty())
+      return fail(table, "[[energy.type]], [[energy.pair]], and "
+                         "[[energy.nbfix]] are for a system without a "
+                         "topology; the topology gives them");
+    return Error::success();
+  }
   if (control.types.empty())
     return fail(table, "expected at least one [[energy.type]]");
   if (control.pairs.empty())
@@ -496,8 +532,16 @@ Error Reader::readBoundary(const toml::table &table) {
   int type = 0;
   if (Error error = readChoice<int>(table, "type", type, {{"PBC", 0}}))
     return error;
+  // With a file of coordinates of Amber, the box is that of the file.
   const char *keys[3] = {"box_size_x", "box_size_y", "box_size_z"};
   for (int i = 0; i != 3; ++i) {
+    if (!control.prmtopFile.empty()) {
+      if (table.contains(keys[i]))
+        return fail(table, llvm::Twine("'") + keys[i] +
+                               "' is not needed: the box comes from "
+                               "'ambcrdfile'");
+      continue;
+    }
     if (Error error = readPositive(table, keys[i], control.box[i]))
       return error;
     if (!table.contains(keys[i]))
@@ -562,20 +606,30 @@ Error Reader::read(const toml::table &root) {
   const toml::table *table;
   if (Error error = getTable("input", /*required=*/true, table))
     return error;
-  if (Error error = checkKeywords(*table, "input", {"pdbfile", "rstfile"},
-                                  {{"psffile", "M1"},
-                                   {"topfile", "M1"},
-                                   {"parfile", "M1"},
-                                   {"prmtopfile", "M1"},
-                                   {"grotopfile", "M1"},
-                                   {"grocrdfile", "M1"}}))
+  if (Error error = checkKeywords(
+          *table, "input", {"pdbfile", "rstfile", "prmtopfile", "ambcrdfile"},
+          {{"psffile", "M2"},
+           {"topfile", "M2"},
+           {"parfile", "M2"},
+           {"grotopfile", "M1"},
+           {"grocrdfile", "M1"}}))
     return error;
   if (Error error = readPath(*table, "pdbfile", control.pdbFile))
     return error;
   if (Error error = readPath(*table, "rstfile", control.restartInput))
     return error;
-  if (control.pdbFile.empty())
-    return fail(*table, "expected a 'pdbfile' in [input]");
+  if (Error error = readPath(*table, "prmtopfile", control.prmtopFile))
+    return error;
+  if (Error error =
+          readPath(*table, "ambcrdfile", control.amberCoordinateFile))
+    return error;
+  if (control.prmtopFile.empty() != control.amberCoordinateFile.empty())
+    return fail(*table, "expected 'prmtopfile' and 'ambcrdfile' together");
+  if (!control.prmtopFile.empty() && !control.pdbFile.empty())
+    return fail(*table, "expected either 'pdbfile' or 'prmtopfile', not "
+                        "both");
+  if (control.pdbFile.empty() && control.prmtopFile.empty())
+    return fail(*table, "expected a 'pdbfile' or a 'prmtopfile' in [input]");
 
   if (Error error = getTable("output", /*required=*/false, table))
     return error;

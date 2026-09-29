@@ -106,6 +106,10 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
                                     double kinetic, double forceSquare,
                                     double virial);
 void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids);
+/// The energy of each term of a topology at the start, in kJ/mol:
+/// Lennard-Jones, Coulomb, bonds, angles, dihedrals, and the pairs three
+/// bonds apart, Lennard-Jones and Coulomb.
+void _mlir_ciface_mdrtWriteTerms(void *terms);
 void _mlir_ciface_mdrtWriteCheckpoint(int64_t step, void *positions,
                                       void *velocities, void *ids);
 void _mlir_ciface_mdrtWriteCheckpointWithForces(int64_t step,

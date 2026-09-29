@@ -63,6 +63,19 @@ struct Program {
   };
   std::vector<Table> tables;
 
+  /// The tuples of a topology: bonds, angles, and the like. `members` has
+  /// `arity` particles for each tuple, and each field one value for each
+  /// tuple, in the units of MDIR.
+  struct TupleSet {
+    std::string name;
+    unsigned arity = 0;
+    std::vector<int32_t> members;
+    std::vector<Field> fields;
+
+    size_t size() const { return arity ? members.size() / arity : 0; }
+  };
+  std::vector<TupleSet> tupleSets;
+
   /// The correction for the dispersion beyond the cutoff, in kJ/mol, at
   /// the volume of the run: what it adds to the potential energy and to
   /// the trace of the virial.

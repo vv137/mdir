@@ -1,0 +1,13 @@
+# Alanine dipeptide (ACE-ALA-NME) in TIP3P water with ff14SB, made with
+# tleap of AmberTools 26:
+#
+#   tleap -f dipeptide.leap
+#
+# The files it writes, dipeptide.prmtop and dipeptide.inpcrd, are the
+# inputs of the tests of the reader of Amber topologies.
+source leaprc.protein.ff14SB
+source leaprc.water.tip3p
+m = sequence { ACE ALA NME }
+solvateBox m TIP3PBOX 8.0
+saveAmberParm m dipeptide.prmtop dipeptide.inpcrd
+quit

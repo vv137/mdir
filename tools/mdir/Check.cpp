@@ -34,6 +34,48 @@ static const char *getName(Precision precision) {
   return "";
 }
 
+/// What a topology describes.
+static int describeTopology(const Control &control, const System &system) {
+  const Topology &topology = *system.topology;
+  size_t count = topology.getNumParticles();
+  double totalMass = 0.0, totalCharge = 0.0;
+  for (size_t i = 0; i != count; ++i) {
+    totalMass += topology.masses[i];
+    totalCharge += topology.charges[i];
+  }
+  size_t impropers = 0;
+  for (const Topology::Dihedral &dihedral : topology.dihedrals)
+    impropers += dihedral.improper;
+  size_t hydrogenBonds = 0;
+  for (const Topology::Bond &bond : topology.bonds)
+    hydrogenBonds += bond.hydrogen;
+  double volume = topology.box[0] * topology.box[1] * topology.box[2];
+
+  std::printf("topology:           %s\n", control.prmtopFile.c_str());
+  std::printf("particles:          %zu\n", count);
+  std::printf("residues:           %zu\n", topology.residueNames.size());
+  std::printf("types:              %zu\n", topology.getNumTypes());
+  std::printf("bonds:              %zu, %zu with hydrogen\n",
+              topology.bonds.size(), hydrogenBonds);
+  std::printf("angles:             %zu\n", topology.angles.size());
+  std::printf("dihedrals:          %zu, %zu improper\n",
+              topology.dihedrals.size(), impropers);
+  std::printf("pairs 1-4:          %zu\n", topology.pairs.size());
+  std::printf("excluded pairs:     %zu\n", topology.exclusions.size());
+  std::printf("total charge:       %.6f e\n", totalCharge);
+  std::printf("total mass:         %g amu\n", totalMass);
+  std::printf("box:                %g %g %g Å\n",
+              topology.box[0] / units::length,
+              topology.box[1] / units::length,
+              topology.box[2] / units::length);
+  std::printf("density:            %g g/cm³\n",
+              totalMass / volume * 1.66053906660e-3);
+  std::printf("velocities:         %s\n",
+              topology.velocities.empty() ? "no" : "yes");
+  std::printf("degrees of freedom: %g\n", system.getDegreesOfFreedom());
+  return 0;
+}
+
 int mdir::tool::checkControl(llvm::StringRef controlFile) {
   auto control = readControl(controlFile);
   if (!control)
@@ -41,6 +83,9 @@ int mdir::tool::checkControl(llvm::StringRef controlFile) {
   auto system = readSystem(*control);
   if (!system)
     return fail(system.takeError());
+
+  if (system->topology)
+    return describeTopology(*control, *system);
 
   size_t count = system->getNumParticles();
   std::vector<size_t> perType(control->types.size(), 0);
