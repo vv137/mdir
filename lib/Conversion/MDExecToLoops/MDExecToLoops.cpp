@@ -631,6 +631,8 @@ LogicalResult Lowering::lowerOp(Operation *op) {
     Neighbors structure;
     if (failed(getNeighbors(op, reset.getNeighbors(), structure)))
       return failure();
+    if (Value excluded = reset.getExcluded())
+      neighbors[reset.getNeighbors()].excluded = excluded;
     OpBuilder builder(op);
     Location loc = op->getLoc();
     Value no = arith::ConstantOp::create(builder, loc, builder.getI1Type(),
@@ -663,8 +665,16 @@ LogicalResult Lowering::lowerOp(Operation *op) {
       return op->emitOpError() << "builds on a device; use "
                                   "'convert-md-exec-to-gpu'";
     OpBuilder builder(op);
-    build.getResult().replaceAllUsesWith(emitBuildIncidence(
-        builder, op->getLoc(), build.getRelation(), build.getSize()));
+    Value incidence = emitBuildIncidence(builder, op->getLoc(),
+                                         build.getRelation(), build.getSize());
+    build.getResult().replaceAllUsesWith(incidence);
+    freeAtEndOfBlock(op, incidence);
+  } else if (auto renumber = dyn_cast<md_exec::RenumberOp>(op)) {
+    OpBuilder builder(op);
+    Value members = emitRenumber(builder, op->getLoc(), renumber.getMembers(),
+                                 renumber.getIds());
+    renumber.getResult().replaceAllUsesWith(members);
+    freeAtEndOfBlock(op, members);
   } else if (auto cell = dyn_cast<md::OrthorhombicCellOp>(op)) {
     OpBuilder builder(op);
     Type real = builder.getF64Type();

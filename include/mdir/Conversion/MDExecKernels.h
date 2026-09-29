@@ -102,6 +102,16 @@ void emitExclusionFilter(mlir::OpBuilder &builder, mlir::Location loc,
 /// the table, converted to the type of the result.
 void lowerLookups(mlir::Operation *root);
 
+/// Emits, on the host, the members `members`, buffers of the host in the
+/// order of the files, at the places that `ids`, a buffer of the host, gives
+/// the particles: a member `m` becomes the place `p` with `ids[p] = m`.
+/// Returns them in a new buffer of the host.
+mlir::Value emitRenumber(mlir::OpBuilder &builder, mlir::Location loc,
+                         mlir::Value members, mlir::Value ids);
+
+/// Frees `buffer`, a buffer of the host, where the block of `op` ends.
+void freeAtEndOfBlock(mlir::Operation *op, mlir::Value buffer);
+
 /// The text of the templates `text` for positions of the type `real`. The
 /// templates are written for `f64`; the functions of the instance for `f32`
 /// have names that end in `_f32`.

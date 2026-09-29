@@ -95,6 +95,11 @@ private:
   void emitReorder(StringRef indent, StringRef from, StringRef stateTo,
                    StringRef otherTo, bool withForces,
                    StringRef velocities);
+  /// Emits the members of the tuples of the topology at the places that
+  /// the numbers `ids` give the particles, named `prefix` and the name of
+  /// the set.
+  void emitRenumber(StringRef indent, const llvm::Twine &ids,
+                    const llvm::Twine &prefix);
 
   bool isLeapfrog() const {
     return control.integrator == Integrator::Leapfrog;
@@ -170,8 +175,11 @@ std::string Builder::getFieldValues(StringRef prefix) const {
     text += ", %t_" + table.name;
   // Neither do the tuples of a topology: the program does not put the
   // particles in a new order when it has them.
+  // The members of the tuples follow the order of the particles: their
+  // names are those of the fields with `%r` for `%p`.
+  std::string relations = ("%r" + prefix.drop_front(2)).str();
   for (const Program::TupleSet &set : program.tupleSets) {
-    text += ", %r_" + set.name;
+    text += ", " + relations + set.name;
     for (const Program::Field &field : set.fields)
       text += ", %f_" + set.name + "_" + field.name;
   }
@@ -202,6 +210,15 @@ void Builder::emitReorder(StringRef indent, StringRef from,
     permute("%p" + otherTo + "_" + field.name,
             "%p" + from + "_" + field.name, getFieldType(field));
   permute("%id" + otherTo, "%id" + from, "!ids");
+  emitRenumber(indent, "%id" + otherTo, "%r" + otherTo + "_");
+}
+
+void Builder::emitRenumber(StringRef indent, const llvm::Twine &ids,
+                           const llvm::Twine &prefix) {
+  // From the members in the order of the files.
+  for (const Program::TupleSet &set : program.tupleSets)
+    os << indent << prefix << set.name << " = md_exec.renumber %ro_"
+       << set.name << ", " << ids << " : !rel_" << set.name << ", !ids\n";
 }
 
 std::string Builder::getFieldTypes() const {
@@ -1143,6 +1160,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
     massName = "%me" + here;
     fieldPrefix = "%pe" + here + "_";
     idName = "%ide" + here;
+    emitRenumber(indent, idName, "%re" + here + "_");
   }
 }
 
@@ -1228,8 +1246,11 @@ void Builder::emitEntry() {
     os << "  %t_" << table.name << " = mdrt.from_buffer %bt_" << table.name
        << " : memref<?x?xf64> to !table\n";
   for (const Program::TupleSet &set : program.tupleSets) {
-    os << "  %r_" << set.name << " = mdrt.from_buffer %br_" << set.name
-       << " : memref<?x" << set.arity << "xi32> to !rel_" << set.name << "\n";
+    // The members in the order of the files, which a new order of the
+    // particles renumbers.
+    os << "  %r" << (program.reorders ? "o" : "") << "_" << set.name
+       << " = mdrt.from_buffer %br_" << set.name << " : memref<?x"
+       << set.arity << "xi32> to !rel_" << set.name << "\n";
     for (const Program::Field &field : set.fields)
       os << "  %f_" << set.name << "_" << field.name
          << " = mdrt.from_buffer %bf_" << set.name << "_" << field.name
@@ -1375,9 +1396,7 @@ llvm::Error Builder::build() {
       (control.pairlistDistance - control.cutoffDistance) * units::length;
   // Cells of half the reach of a neighbor structure: particles that are
   // neighbors are then a few cells apart in memory.
-  // The members of the tuples of a topology would have to follow a new
-  // order of the particles, which the program does not do yet.
-  program.reorders = control.reorder && !system.topology;
+  program.reorders = control.reorder;
   program.orderWidth = 0.5 * control.pairlistDistance * units::length;
   program.neighborWidth = control.neighborWidth;
   if (program.neighborWidth == 0) {

@@ -110,6 +110,9 @@ private:
   LogicalResult lowerPairFor(md_exec::PairForOp op);
   LogicalResult lowerTupleFor(md_exec::TupleForOp op);
   void lowerBuildIncidence(md_exec::BuildIncidenceOp op);
+  void lowerRenumber(md_exec::RenumberOp op);
+  /// Frees `buffer`, a buffer of the device, where the block of `op` ends.
+  void freeDeviceAtEndOfBlock(Operation *op, Value buffer);
 
   /// The storage of the neighbor structure `structure`.
   LogicalResult getNeighbors(Operation *op, Value structure,
@@ -669,6 +672,36 @@ void Lowering::lowerBuildIncidence(md_exec::BuildIncidenceOp op) {
   createTransfer(builder, loc, device, host);
   memref::DeallocOp::create(builder, loc, host);
   op.getResult().replaceAllUsesWith(device);
+  freeDeviceAtEndOfBlock(op, device);
+}
+
+void Lowering::freeDeviceAtEndOfBlock(Operation *op, Value buffer) {
+  // The lowering of `gpu.dealloc` takes a buffer without a memory space.
+  OpBuilder builder(op->getBlock()->getTerminator());
+  auto type = cast<MemRefType>(buffer.getType());
+  Value plain = memref::MemorySpaceCastOp::create(
+      builder, op->getLoc(),
+      MemRefType::get(type.getShape(), type.getElementType()), buffer);
+  gpu::DeallocOp::create(builder, op->getLoc(), /*asyncToken=*/Type(),
+                         /*asyncDependencies=*/ValueRange(), plain);
+}
+
+/// The members are renumbered on the host; the numbers of the particles
+/// are copied there from the device.
+void Lowering::lowerRenumber(md_exec::RenumberOp op) {
+  Location loc = op.getLoc();
+  OpBuilder builder(op);
+  Value ids = op.getIds();
+  auto type = cast<MemRefType>(ids.getType());
+  Value host = memref::AllocOp::create(
+      builder, loc, MemRefType::get(type.getShape(), type.getElementType()),
+      ValueRange{memref::DimOp::create(builder, loc, ids,
+                                       createIndex(builder, loc, 0))});
+  createTransfer(builder, loc, host, ids);
+  Value members = emitRenumber(builder, loc, op.getMembers(), host);
+  memref::DeallocOp::create(builder, loc, host);
+  op.getResult().replaceAllUsesWith(members);
+  freeAtEndOfBlock(op, members);
 }
 
 //===----------------------------------------------------------------------===//
@@ -994,7 +1027,7 @@ LogicalResult Lowering::lowerOp(Operation *op) {
   // The members of tuples are on the host, and the incidence structure is
   // built there.
   if (isa<md_exec::MDExecDialect>(op->getDialect()) &&
-      !isa<md_exec::BuildIncidenceOp>(op)) {
+      !isa<md_exec::BuildIncidenceOp, md_exec::RenumberOp>(op)) {
     bool onHost = llvm::any_of(op->getOperandTypes(), [](Type type) {
       return isa<MemRefType>(type) && !isDeviceType(type);
     });
@@ -1036,6 +1069,8 @@ LogicalResult Lowering::lowerOp(Operation *op) {
     Neighbors structure;
     if (failed(getNeighbors(op, reset.getNeighbors(), structure)))
       return failure();
+    if (Value excluded = reset.getExcluded())
+      neighbors[reset.getNeighbors()].excluded = excluded;
     OpBuilder builder(op);
     Location loc = op->getLoc();
     Value no = arith::ConstantOp::create(builder, loc, builder.getI1Type(),
@@ -1068,6 +1103,8 @@ LogicalResult Lowering::lowerOp(Operation *op) {
              << "expected the storage form with the structure on the device; "
                 "run 'md-exec-assign-storage' with 'memory=device'";
     lowerBuildIncidence(build);
+  } else if (auto renumber = dyn_cast<md_exec::RenumberOp>(op)) {
+    lowerRenumber(renumber);
   } else if (auto cell = dyn_cast<md::OrthorhombicCellOp>(op)) {
     OpBuilder builder(op);
     Type real = builder.getF64Type();

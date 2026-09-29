@@ -208,19 +208,6 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     assignVelocities(*control, *system);
   }
 
-  // A run from a topology is put in the order of the positions once, here:
-  // the program does not renumber the members of the tuples.
-  if (system->topology && control->reorder) {
-    std::vector<unsigned> order = orderByPosition(
-        *system, 0.5 * control->pairlistDistance * units::length);
-    if (!forces.empty()) {
-      std::vector<double> copy = forces;
-      for (size_t k = 0, e = order.size(); k != e; ++k)
-        for (int c = 0; c != 3; ++c)
-          forces[3 * k + c] = copy[3 * order[k] + c];
-    }
-  }
-
   auto program = buildProgram(*control, *system);
   if (!program)
     return fail(program.takeError());
@@ -361,9 +348,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // The numbers of the particles: their places in the files of the run.
   std::vector<int32_t> numbers(count);
   for (size_t i = 0; i != count; ++i)
-    numbers[i] = system->identities.empty()
-                     ? static_cast<int32_t>(i)
-                     : system->identities[i];
+    numbers[i] = static_cast<int32_t>(i);
   StridedMemRefType<int32_t, 1> identities;
   identities.basePtr = identities.data = numbers.data();
   identities.offset = 0;
@@ -504,13 +489,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   if (writesCheckpoints) {
     output.checkpointPath = control->restartOutput;
     Checkpoint &checkpoint = output.checkpoint;
-    // In the order of the files, as the states that the checkpoint holds.
     checkpoint.masses = system->masses;
     checkpoint.species.assign(system->types.begin(), system->types.end());
-    for (size_t k = 0, e = system->identities.size(); k != e; ++k) {
-      checkpoint.masses[system->identities[k]] = system->masses[k];
-      checkpoint.species[system->identities[k]] = system->types[k];
-    }
     for (int i = 0; i != 3; ++i)
       checkpoint.box[i] = system->box[i];
     checkpoint.integrator = integrator.str();

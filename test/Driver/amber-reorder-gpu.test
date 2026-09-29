@@ -1,10 +1,12 @@
+# The test of amber-reorder.test on a GPU.
+#
 # A run from a topology puts the particles in the order of the positions
 # where it begins and where each of its four segments begins, and
 # renumbers the members of the tuples with them. The files of the run are
 # in the order of the input all the same, and the states are those of a
 # run that leaves the particles as they are, up to rounding.
 #
-# REQUIRES: hdf5
+# REQUIRES: hdf5, cuda
 #
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
@@ -46,5 +48,6 @@ temperature = 300.0
 type = "PBC"
 
 [execution]
+target = "gpu"
 reorder = true
 #--- end

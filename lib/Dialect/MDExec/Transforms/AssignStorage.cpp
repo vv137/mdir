@@ -364,7 +364,9 @@ LogicalResult Assignment::getNeighbors(Operation *op, Value structure,
               "structure is built at: nothing refreshes or traverses it";
 
   // The storage outlives the iterations of any loop around the structure,
-  // so it is allocated in the body of the function.
+  // so it is allocated in the body of the function. The pairs that it
+  // leaves out may be those of an iteration, where the particles are
+  // renumbered: a reset where the structure begins gives them.
   Value excluded;
   if (Value pairs = empty.getExcluded()) {
     excluded = mapping.lookupOrNull(pairs);
@@ -373,12 +375,13 @@ LogicalResult Assignment::getNeighbors(Operation *op, Value structure,
              << "the excluded pairs of the neighbor structure have no storage";
   }
   storage = EmptyNeighborsOp::create(
-      root->builder, empty.getLoc(), structure.getType(), size, excluded,
-      TypeAttr::get(getStorageType(positions)), empty.getKindAttr(),
-      empty.getWidthAttr());
+      root->builder, empty.getLoc(), structure.getType(), size,
+      /*excluded=*/Value(), TypeAttr::get(getStorageType(positions)),
+      empty.getKindAttr(), empty.getWidthAttr());
   // Inside a loop, every iteration begins with an empty structure.
-  if (&scope != root)
-    ResetNeighborsOp::create(scope.builder, empty.getLoc(), storage);
+  if (&scope != root || excluded)
+    ResetNeighborsOp::create(scope.builder, empty.getLoc(), storage,
+                             excluded);
   return success();
 }
 
@@ -717,11 +720,12 @@ LogicalResult Assignment::convertBuildNeighbors(BuildNeighborsOp op,
       return op.emitOpError() << "the excluded pairs have no storage";
   }
   Value storage = EmptyNeighborsOp::create(
-      root->builder, loc, op.getResult().getType(), size, excluded,
+      root->builder, loc, op.getResult().getType(), size,
+      /*excluded=*/Value(),
       TypeAttr::get(getStorageType(op.getPositions().getType())),
       op.getKindAttr(), op.getWidthAttr());
-  if (&scope != root)
-    ResetNeighborsOp::create(scope.builder, loc, storage);
+  if (&scope != root || excluded)
+    ResetNeighborsOp::create(scope.builder, loc, storage, excluded);
   auto refresh = RefreshNeighborsOp::create(
       scope.builder, loc, storage.getType(), storage, positions,
       mapping.lookup(op.getCell()), /*scratch=*/ValueRange(),
@@ -1181,6 +1185,22 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     return convertTupleFor(loop, scope, position);
   if (auto build = dyn_cast<BuildIncidenceOp>(op))
     return convertBuildIncidence(build, scope);
+  if (auto renumber = dyn_cast<RenumberOp>(op)) {
+    if (renumber.isStorageForm())
+      return op->emitOpError() << "is in the storage form already";
+    Value members = mapping.lookupOrNull(renumber.getMembers());
+    if (!members)
+      return op->emitOpError() << "the relation has no buffer";
+    Value ids;
+    if (failed(getBuffer(renumber.getIds(), scope, ids)))
+      return failure();
+    // The members stay on the host, where the incidence structures are
+    // built from them.
+    mapping.map(renumber.getResult(),
+                RenumberOp::create(builder, op->getLoc(), members.getType(),
+                                   members, ids));
+    return success();
+  }
 
   if (auto loop = dyn_cast<scf::ForOp>(op))
     return convertFor(loop, scope, position);

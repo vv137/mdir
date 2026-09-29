@@ -440,12 +440,18 @@ def MDExec_ResetNeighborsOp : MDExec_Op<"reset_neighbors"> {
     ```mlir
     md_exec.reset_neighbors %nl : !mdrt.neighbors<@atoms>
     ```
+
+    With `exclude`, the builds from here on leave out the pairs of that
+    incidence structure, in place of those that the structure had. A loop
+    whose iterations renumber the particles gives each iteration its own.
   }];
   let arguments = (ins
-    Arg<MDRT_NeighborsType, "the structure", [MemWrite]>:$neighbors
+    Arg<MDRT_NeighborsType, "the structure", [MemWrite]>:$neighbors,
+    Optional<MDExec_IncidenceBuffer>:$excluded
   );
   let assemblyFormat = [{
-    $neighbors attr-dict `:` qualified(type($neighbors))
+    $neighbors (`exclude` `(` $excluded^ `:` type($excluded) `)`)? attr-dict
+    `:` qualified(type($neighbors))
   }];
 }
 
@@ -714,6 +720,48 @@ def MDExec_BuildIncidenceOp : MDExec_Op<"build_incidence", [
   let extraClassDeclaration = [{
     bool isStorageForm() {
       return ::llvm::isa<::mlir::MemRefType>(getRelation().getType());
+    }
+  }];
+  let hasVerifier = 1;
+}
+
+def MDExec_RenumberOp : MDExec_Op<"renumber", [
+    AllTypesMatch<["members", "result"]>,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "The members of tuples in the current order of the particles";
+  let description = [{
+    The members of the tuples of a topology are places of particles. Where
+    the particles are put in another order, their places change. This op
+    takes the members as they are in the order of the files, and the
+    numbers of the particles in the current order, `ids`, which say for
+    each place the particle of the files that is there, and returns the
+    members at their current places.
+
+    ```text
+    member' = the place p with ids[p] = member
+    ```
+
+    ```mlir
+    %angles1 = md_exec.renumber %angles, %ids
+        : !md.relation<@atoms, 3, reversal, @angles>, !md.field<@atoms, i32>
+    ```
+
+    In the storage form the op takes buffers and returns a new buffer of
+    the host, which lasts to the end of the block that it is in.
+  }];
+  let arguments = (ins
+    MDExec_RelationOrMembers:$members,
+    MDExec_FieldOrBuffer:$ids
+  );
+  let results = (outs MDExec_RelationOrMembers:$result);
+  let assemblyFormat = [{
+    $members `,` $ids attr-dict `:` qualified(type($members)) `,`
+    qualified(type($ids))
+  }];
+  let extraClassDeclaration = [{
+    bool isStorageForm() {
+      return ::llvm::isa<::mlir::MemRefType>(getMembers().getType());
     }
   }];
   let hasVerifier = 1;

@@ -828,3 +828,32 @@ void TupleForOp::getEffects(
   getLoopEffects(*this, effects,
                  [&](unsigned index) { return !overwrites(index); });
 }
+
+LogicalResult RenumberOp::verify() {
+  Type ids = getIds().getType();
+  if (isStorageForm() != isa<MemRefType>(ids))
+    return emitOpError()
+           << "expected a relation and a field, as in the value form, or "
+              "buffers only, as in the storage form";
+  Type element = isa<MemRefType>(ids)
+                     ? cast<MemRefType>(ids).getElementType()
+                     : cast<FieldType>(ids).getElementType();
+  if (!element.isSignlessInteger(32))
+    return emitOpError() << "expected the numbers of the particles in i32, "
+                            "got "
+                         << ids;
+  return success();
+}
+
+void RenumberOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  if (!isStorageForm())
+    return;
+  addEffect<MemoryEffects::Read>(effects, getMembersMutable());
+  addEffect<MemoryEffects::Read>(effects, getIdsMutable());
+  effects.emplace_back(MemoryEffects::Allocate::get(),
+                       getOperation()->getOpResults().front(), /*stage=*/0,
+                       /*effectOnFullRegion=*/true,
+                       SideEffects::DefaultResource::get());
+}

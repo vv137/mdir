@@ -484,6 +484,56 @@ void kernels::lowerLookups(Operation *root) {
   }
 }
 
+Value kernels::emitRenumber(OpBuilder &builder, Location loc, Value members,
+                            Value ids) {
+  Type narrow = builder.getI32Type();
+  Value zero = createIndex(builder, loc, 0);
+  Value one = createIndex(builder, loc, 1);
+  auto toIndex = [&](OpBuilder &b, Value value) -> Value {
+    return arith::IndexCastOp::create(b, loc, b.getIndexType(), value);
+  };
+  Value count = memref::DimOp::create(builder, loc, ids, zero);
+  Value place = memref::AllocOp::create(
+      builder, loc, MemRefType::get({ShapedType::kDynamic}, narrow),
+      ValueRange{count});
+  scf::ForOp::create(
+      builder, loc, zero, count, one, ValueRange(),
+      [&](OpBuilder &b, Location, Value p, ValueRange) {
+        Value id = memref::LoadOp::create(b, loc, ids, ValueRange{p});
+        memref::StoreOp::create(
+            b, loc, arith::IndexCastOp::create(b, loc, narrow, p), place,
+            ValueRange{toIndex(b, id)});
+        scf::YieldOp::create(b, loc);
+      });
+
+  auto type = cast<MemRefType>(members.getType());
+  int64_t arity = type.getDimSize(1);
+  Value numTuples = memref::DimOp::create(builder, loc, members, zero);
+  Value result = memref::AllocOp::create(
+      builder, loc, MemRefType::get(type.getShape(), narrow),
+      ValueRange{numTuples});
+  scf::ForOp::create(
+      builder, loc, zero, numTuples, one, ValueRange(),
+      [&](OpBuilder &b, Location, Value t, ValueRange) {
+        for (int64_t q = 0; q != arity; ++q) {
+          Value column = createIndex(b, loc, q);
+          Value member =
+              memref::LoadOp::create(b, loc, members, ValueRange{t, column});
+          Value now =
+              memref::LoadOp::create(b, loc, place, ValueRange{toIndex(b, member)});
+          memref::StoreOp::create(b, loc, now, result, ValueRange{t, column});
+        }
+        scf::YieldOp::create(b, loc);
+      });
+  memref::DeallocOp::create(builder, loc, place);
+  return result;
+}
+
+void kernels::freeAtEndOfBlock(Operation *op, Value buffer) {
+  OpBuilder builder(op->getBlock()->getTerminator());
+  memref::DeallocOp::create(builder, op->getLoc(), buffer);
+}
+
 Value kernels::emitBuildIncidence(OpBuilder &builder, Location loc,
                                   Value members, Value size) {
   Type narrow = builder.getI32Type();
