@@ -27,7 +27,7 @@ energy, temperature, and pressure.
 
 | Property | Value |
 |---|---|
-| Force field | ff14SB [[Maier2015]](references.md#maier2015) for the protein, TIP3P [[Jorgensen1983]](references.md#jorgensen1983) for water, the ions that go with them |
+| Force field | ff14SB [[Maier2015]](references.md#maier2015) with TIP3P [[Jorgensen1983]](references.md#jorgensen1983), and ff19SB with OPC [[Izadi2014]](references.md#izadi2014) (D65), with the ions that go with them |
 | Systems | Alanine dipeptide in water, to validate; dihydrofolate reductase in water (the JAC benchmark of Amber), to measure |
 | Time step | 2 fs, with the bonds of hydrogen and the water constrained |
 | Nonbonded terms | Lennard-Jones with parameters for each pair of types, with the correction for the dispersion beyond the cutoff; Coulomb with particle mesh Ewald |
@@ -57,11 +57,10 @@ energy, temperature, and pressure.
 
 | Item | Milestone | Consequence for M1 |
 |---|---|---|
-| Virtual sites | M2a | Water models with four sites, such as TIP4P [[Jorgensen1983]](references.md#jorgensen1983) and OPC [[Izadi2014]](references.md#izadi2014), cannot be run |
 | Martini and other coarse-grained force fields | Later (D53) | |
 | Particle mesh Ewald on more than one device or process | M2c and later | |
 | The repartitioning of the mass of hydrogen | Later | The time step stays at 2 fs |
-| CMAP [[MacKerell2004]](references.md#mackerell2004), polarizable force fields, 12-6-4 terms [[Li2014]](references.md#li2014) | Later | The readers reject topologies that have them |
+| Polarizable force fields, 12-6-4 terms [[Li2014]](references.md#li2014) | Later | The readers reject topologies that have them |
 | Cells that are not orthorhombic | Later | The truncated octahedron of Amber cannot be run |
 | Random numbers for each particle, as Langevin dynamics needs them | Open | The thermostat of M1 takes a few random numbers for each step |
 | Groups with a thermostat each | Later | One group |
@@ -767,3 +766,5 @@ into the home directory.
 | M1i | Constraints: SETTLE, SHAKE, RATTLE | With 2 fs | |
 | M1j | The barostat, a cell that changes | At constant temperature and pressure | |
 | M1k | Comparison with AmberTools and GROMACS; run times of the JAC benchmark | | |
+| M1l | CMAP (D65) | ff19SB | |
+| M1m | Virtual sites: extra points of Amber, virtual sites of GROMACS (D65) | OPC | |
