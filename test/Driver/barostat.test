@@ -1,0 +1,86 @@
+# Stochastic cell rescaling at constant pressure and temperature, on the
+# mixture of thermostat.test at 100 K, which its pressure of -1800 atm
+# compresses toward 200 atm.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/mixture.pdb %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/a.toml
+# RUN: sed -e 's|eneout_period = 1000|eneout_period = 100|' %t/a.toml > %t/b.toml
+# RUN: sed -e 's|VVER|LEAP|' %t/a.toml > %t/leap.toml
+# RUN: mdir run %t/a.toml > %t/a.log
+# RUN: mdir run %t/b.toml > %t/b.log
+# RUN: FileCheck %s < %t/a.log
+# RUN: not mdir run %t/leap.toml 2>&1 | FileCheck %s --check-prefix=LEAP
+# RUN: mdir emit %t/a.toml | FileCheck %s --check-prefix=MODULE
+
+# The trajectory does not depend on how the steps are grouped into loops.
+#
+# RUN: grep 'INFO: *2000 ' %t/a.log > %t/a.row
+# RUN: grep 'INFO: *2000 ' %t/b.log > %t/b.row
+# RUN: diff %t/a.row %t/b.row
+
+# The energy that the thermostat and the barostat exchange with the bath is
+# added to the total energy, and the volume shrinks from 23.2^3 A^3. The
+# energy that the scaling gives the positions is counted to first order in
+# μ − 1, so that the conserved energy drifts as the square of the strain
+# (design-m1.md, Section 11.4), by about 2e-3 of its value here.
+#
+# CHECK:      INFO:      STEP {{.*}}PRESSURE      CONSERVED         VOLUME
+# CHECK-NEXT: INFO:         0         0.0000 {{ *}}[[TOTAL:-[0-9.]+]] {{.*}} [[TOTAL]]     12487.1680
+# CHECK-NEXT: INFO:      1000 {{.*}} {{11[0-9]{3}\.[0-9]+$}}
+# CHECK-NEXT: INFO:      2000 {{.*}} {{11[0-9]{3}\.[0-9]+$}}
+# CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[3-9]}} of its value
+
+# LEAP: the barostat needs 'integrator = "VVER"'
+
+# MODULE:      func.func private @mdrtBarostatStrain(
+# MODULE:      func.call @mdrtSetBox(
+
+#--- run.toml
+[input]
+pdbfile = "mixture.pdb"
+
+[energy]
+switchdist   = 7.5
+cutoffdist   = 9.0
+pairlistdist = 10.0
+
+[[energy.pair]]
+name       = "lj"
+expression = "4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+mixing     = "lorentz-berthelot"
+
+[[energy.type]]
+name    = "AR"
+mass    = 39.95
+epsilon = 0.238465
+sigma   = 3.4
+
+[[energy.type]]
+name    = "KR"
+mass    = 83.80
+epsilon = 0.3253
+sigma   = 3.65
+
+[dynamics]
+integrator        = "VVER"
+timestep          = 0.004
+nsteps            = 2000
+eneout_period = 1000
+thermostat_period = 10
+
+[ensemble]
+ensemble    = "NPT"
+thermostat  = "BUSSI"
+temperature = 100.0
+tau_t       = 0.5
+barostat    = "BERNETTI-BUSSI"
+pressure    = 200.0
+tau_p       = 2.0
+
+[boundary]
+type       = "PBC"
+box_size_x = 23.2
+box_size_y = 23.2
+box_size_z = 23.2
+#--- end

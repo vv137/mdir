@@ -106,6 +106,8 @@ struct Output {
   /// is conserved.
   bool couples = false;
   double bath = 0.0;
+  /// Whether a barostat changes the cell, which the log then shows.
+  bool changesCell = false;
 
   /// The energies at the first and at the last output, in kJ/mol. With
   /// coupling, those that are conserved.

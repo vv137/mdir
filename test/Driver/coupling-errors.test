@@ -11,6 +11,9 @@
 # RUN: | FileCheck %s --check-prefix=MULTIPLE
 # RUN: not mdir run %t/energy.toml 2>&1 | FileCheck %s --check-prefix=ENERGY
 # RUN: not mdir run %t/tau.toml 2>&1 | FileCheck %s --check-prefix=TAU
+# RUN: not mdir run %t/baroperiod.toml 2>&1 | FileCheck %s --check-prefix=BAROPERIOD
+# RUN: not mdir run %t/pressure.toml 2>&1 | FileCheck %s --check-prefix=PRESSURE
+# RUN: not mdir run %t/semi.toml 2>&1 | FileCheck %s --check-prefix=SEMI
 
 # NVT: nvt.toml:13: 'ensemble = "NVT"' and "NPT" need 'thermostat = "BUSSI"', the thermostat of M1
 # NVE: nve.toml:13: a thermostat needs 'ensemble = "NVT"' or "NPT"
@@ -20,6 +23,9 @@
 # MULTIPLE: multiple.toml: 'nsteps' is not a multiple of the period of coupling, 10 steps
 # ENERGY: energy.toml: 'eneout_period' is not a multiple of the period of coupling, 20 steps
 # TAU: tau.toml:16: expected a positive number for 'tau_t'
+# BAROPERIOD: baroperiod.toml: 'barostat_period' differs from 'thermostat_period'
+# PRESSURE: pressure.toml:15: 'pressure' is for 'ensemble = "NPT"'
+# SEMI: semi.toml:17: 'isotropy = "SEMI-ISO"' is not supported yet
 
 #--- one.pdb
 HETATM    1  AR  AR  A   1       1.000   1.000   1.000  1.00  0.00          AR
@@ -150,3 +156,56 @@ nsteps = 100
 ensemble = "NVT"
 thermostat = "BUSSI"
 tau_t = 0.0
+#--- baroperiod.toml
+[input]
+pdbfile = "one.pdb"
+[energy]
+cutoffdist = 9.0
+[[energy.pair]]
+expression = "epsilon/r"
+[[energy.type]]
+name = "AR"
+mass = 39.95
+epsilon = 0.2
+[dynamics]
+nsteps = 100
+thermostat_period = 10
+barostat_period = 20
+[ensemble]
+ensemble = "NPT"
+thermostat = "BUSSI"
+barostat = "BERNETTI-BUSSI"
+#--- pressure.toml
+[input]
+pdbfile = "one.pdb"
+[energy]
+cutoffdist = 9.0
+[[energy.pair]]
+expression = "epsilon/r"
+[[energy.type]]
+name = "AR"
+mass = 39.95
+epsilon = 0.2
+[dynamics]
+nsteps = 100
+[ensemble]
+ensemble = "NVE"
+pressure = 1.0
+#--- semi.toml
+[input]
+pdbfile = "one.pdb"
+[energy]
+cutoffdist = 9.0
+[[energy.pair]]
+expression = "epsilon/r"
+[[energy.type]]
+name = "AR"
+mass = 39.95
+epsilon = 0.2
+[dynamics]
+nsteps = 100
+[ensemble]
+ensemble = "NPT"
+thermostat = "BUSSI"
+barostat = "BERNETTI-BUSSI"
+isotropy = "SEMI-ISO"

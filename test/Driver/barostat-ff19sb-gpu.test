@@ -1,0 +1,69 @@
+# The target of M1 (D65) of ff19sb-gpu.test at constant pressure: the
+# peptide with ff19SB in OPC water, with SETTLE, SHAKE and RATTLE, particle
+# mesh Ewald, the thermostat and the barostat, at a step of 2 fs on a GPU
+# in mixed precision. The box of tleap holds the water at about 0.6 g/cm^3,
+# and the barostat compresses it by a fifth over 10 ps.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/ff19sb/ff19.prmtop %S/Inputs/ff19sb/ff19.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: mdir run %t/run.toml | FileCheck %s
+# RUN: %python %S/Inputs/check_bonds.py %t/ff19.prmtop %t/run.dcd | FileCheck %s --check-prefix=BONDS
+
+# The rigid groups move with their centers, and the work of the scaling is
+# counted, so the conserved energy changes little through the compression.
+#
+# CHECK:      INFO:         0 {{.*}} 28634.{{[0-9]+}}
+# CHECK:      INFO:      5000 {{.*}} {{2[0-3][0-9]{3}\.[0-9]+$}}
+# CHECK:      MDIR: the momentum at the end is {{[0-9.]+}}e-{{(0[4-9]|1[0-9])}} amu nm/ps
+# CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[3-9]}} of its value
+
+# The bonds of hydrogen keep their lengths in every frame, which has the
+# cell of its step.
+#
+# BONDS: bonds ok
+
+#--- run.toml
+[input]
+prmtopfile = "ff19.prmtop"
+ambcrdfile = "ff19.inpcrd"
+
+[output]
+dcdfile = "run.dcd"
+
+[energy]
+cutoffdist    = 9.0
+pairlistdist  = 10.0
+electrostatic = "PME"
+pme_shift     = true
+
+[dynamics]
+integrator        = "VVER"
+timestep          = 0.002
+nsteps            = 5000
+eneout_period     = 1000
+crdout_period     = 1000
+thermostat_period = 10
+
+[ensemble]
+ensemble    = "NPT"
+thermostat  = "BUSSI"
+temperature = 300.0
+tau_t       = 0.5
+barostat    = "BERNETTI-BUSSI"
+pressure    = 1.0
+tau_p       = 2.0
+
+[constraints]
+rigid_bond = true
+fast_water = true
+
+[boundary]
+type = "PBC"
+
+[execution]
+target    = "gpu"
+precision = "mixed"
+#--- end

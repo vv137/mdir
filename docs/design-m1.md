@@ -627,6 +627,20 @@ dyn.program @step(...) attributes {
 | Entity | A fixed key, as for a global move (A5) |
 | Random numbers in kernels | Not in M1. They need the generator as a template in IR, as the neighbor build is one. |
 
+### 11.4 The barostat as it is
+
+Stochastic cell rescaling, isotropic, with velocity Verlet (D72):
+
+| Item | Rule |
+|---|---|
+| When | At the end of the step that completes a period of coupling, after the removal of the motion of the center of mass and the thermostat; `barostat_period` equals `thermostat_period`. The last step of a period computes the virial for it. |
+| The pressure | `P = (2K + tr W) / (3V)`, with K the kinetic energy of the velocities of the step without that of the center of mass, W the virial of the step with those of the constraints (the mean of the two halves, Section 9.1), of the correction for the dispersion, and of the background of a net charge at the volume V of the cell before the scaling. No term k_B T / V. |
+| The change of the volume | One step of Euler and Maruyama of `dε = −(β_T/τ_p)(P0 − P) dt + √(2 k_B T β_T / (V τ_p)) dW` for ε = ln V [[Bernetti2020]](references.md#bernetti2020), over the period `Δt_p`: `Δε = −f (P0 − P) + √(2 k_B T f c / V) R`, `f = β_T Δt_p / τ_p`, pressures in bar, `c = 16.6053906717` bar nm³ mol/kJ, T that of the bath. R is the normal number of stream 1 of the step (A13), drawn on the host (`mdrtBarostatStrain`). |
+| Scaling | The positions of every particle and the edges of the cell by `μ = exp(Δε/3)`, the velocities by `1/μ`; a group that the constraints keep rigid (a water of SETTLE, a group of SHAKE) moves with its center of mass and keeps its shape, since stretched bonds would be taken back by the constraints of the next step with a change of the velocities that heats the system. Virtual sites are placed again in the next step |
+| The cell | Kept in memory on the host, where each iteration of a loop takes it, and the steps that follow a loop of periods in the same iteration take it again; the neighbor structures, whose test of validity compares the cell, are built again; the influence function of PME follows (pme-m1.md); the log and the trajectory take the new edges (`mdrtSetBox`); a checkpoint keeps them, and a restart takes them |
+| The conserved energy | Takes away what the scaling gives: `−(μ − 1) tr W_g`, the change of the potential energy to first order, and `(1/μ² − 1) K`, that of the kinetic energy, exactly. `W_g`, the virial of the rigid groups that move as wholes, is the W of the pressure above, which has the virial of the constraints, with twice the kinetic energy of the motion within the groups, `Σ ½ m |v − V|²` over each (the virial of the forces within a rigid group is minus that). What is left is the second order, `½ (μ − 1)² d²U/dμ²`, whose mean over the noise of Δε is proportional to its variance, and so to f: a drift that neither the time step nor the period of coupling reduces, only `tau_p`. On the mixture of `barostat.test` at 2 fs, 1.8 × 10⁻³ of the energy over 8 ps with `tau_p = 2`, 4.4 times less with `tau_p = 8`; on 1394 OPC waters with PME at 300 K and 1 bar, 2.1 kcal/mol per ps with `tau_p = 2` and 0.52 with `tau_p = 8`. The same runs at constant volume keep the conserved energy to 10⁻⁶ and 10⁻⁵ |
+| Parameters of `[ensemble]` | `ensemble = "NPT"`, `barostat = "BERNETTI-BUSSI"`, `pressure` in atm, `tau_p` in ps (5 by default), `compressibility` in 1/atm (4.5 × 10⁻⁵ /bar by default); `isotropy = "ISO"` only |
+
 ## 12. A cell that changes
 
 A neighbor structure is valid in the cell that it was built in (Section
@@ -638,7 +652,9 @@ A neighbor structure is valid in the cell that it was built in (Section
 | Builds | At least one for each step of the barostat | As without a barostat |
 | With a barostat every 10 steps and a build every 10 to 20 steps | Up to twice the builds | |
 
-Proposal: A for M1, and B when the builds are measured to cost.
+Proposal: A for M1, and B when the builds are measured to cost. A is what
+M1 does: the test of validity of a structure compares the cell, so a
+changed cell rebuilds it.
 
 The cell is a value of the state that the loops carry (S1). The order of
 the particles (D44) and the incidence structures do not depend on it. The

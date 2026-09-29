@@ -144,6 +144,29 @@ double mdrtBussiFactor(int64_t seed, int64_t step, double kinetic,
   return sqrt(next / kinetic);
 }
 
+/* The change of the logarithm of the volume that stochastic cell rescaling
+   (Bernetti and Bussi 2020, Eq. (5)) makes over one period of the barostat,
+   by one step of Euler and Maruyama:
+
+     Δε = −f (P0 − P) + √(2 k_B T f c / V) R,   f = β_T Δt_p / τ_p
+
+   with the pressures in bar, `compressibility` β_T in 1/bar, `volume` V in
+   nm³ before the scaling, `kT` k_B T at the temperature of the bath in
+   kJ/mol, `rate` Δt_p / τ_p, and c = 16.6053906717 bar nm³ mol/kJ. The
+   positions and the cell are then scaled by exp(Δε / 3), the velocities by
+   exp(−Δε / 3). The number R is that of stream 1 at `step`. */
+double mdrtBarostatStrain(int64_t seed, int64_t step, double pressure,
+                          double target, double volume, double kT,
+                          double compressibility, double rate) {
+  const double conversion = 16.6053906717;
+  Draws draws;
+  initDraws(&draws, (uint64_t)seed, step, /*entity=*/0, /*stream=*/1);
+  double r = drawNormal(&draws);
+  double f = compressibility * rate;
+  return -f * (target - pressure) +
+         sqrt(2.0 * kT * f * conversion / volume) * r;
+}
+
 /*===----------------------------------------------------------------------===
  * FFT of particle mesh Ewald on the host
  *===----------------------------------------------------------------------===*/

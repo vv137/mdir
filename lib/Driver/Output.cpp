@@ -120,6 +120,8 @@ void mdir::driver::writeLogHeader(Output &output) {
                "TEMPERATURE", "VIRIAL", "PRESSURE");
   if (output.couples)
     std::fprintf(output.log, " %14s", "CONSERVED");
+  if (output.changesCell)
+    std::fprintf(output.log, " %14s", "VOLUME");
   std::fprintf(output.log, "\n");
 }
 
@@ -203,6 +205,10 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
     total += output.bath;
     std::fprintf(output.log, " %14.4f", total / units::energy);
   }
+  if (output.changesCell)
+    std::fprintf(output.log, " %14.4f",
+                 output.volume / (units::length * units::length *
+                                  units::length));
   std::fprintf(output.log, "\n");
   std::fflush(output.log);
 
