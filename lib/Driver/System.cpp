@@ -45,6 +45,7 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
   system.masses = topology->masses;
   system.positions = topology->positions;
   system.velocities = topology->velocities;
+  system.givenVelocities = !system.velocities.empty();
   if (system.velocities.empty())
     system.velocities.assign(system.positions.size(), 0.0);
   for (int i = 0; i != 3; ++i)

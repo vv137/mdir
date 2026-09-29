@@ -1,0 +1,15 @@
+# The run at constant temperature of thermostat.test on a GPU, in mixed
+# precision: the coupling sums over the particles on the device, and the
+# host draws the factor of the thermostat.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/mixture.pdb %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/thermostat.test | sed '1d;$d' > %t/run.toml
+# RUN: printf '[execution]\ntarget = "gpu"\nprecision = "mixed"\n' >> %t/run.toml
+# RUN: mdir run %t/run.toml | FileCheck %s
+
+# CHECK:      INFO:         0         0.0000 {{ *}}[[TOTAL:-[0-9.]+]] {{.*}} [[TOTAL]]
+# CHECK:      MDIR: the momentum at the end is {{[0-9.]+}}e-{{(0[5-9]|1[0-9])}} amu nm/ps
+# CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value

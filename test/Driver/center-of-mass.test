@@ -1,0 +1,52 @@
+# The removal of the motion of the center of mass: the dipeptide of
+# amber.test with every particle drifting at (1, 2, -1) Å/ps, from the
+# velocities of the file of coordinates.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %t
+# RUN: %python %S/Inputs/add_drift.py %S/Inputs/dipeptide/dipeptide.inpcrd %t/drift.rst7 1 2 -1
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/removed.toml
+# RUN: sed -e '/comm_period/d' %t/removed.toml > %t/kept.toml
+# RUN: mdir run %t/kept.toml > %t/both.log
+# RUN: mdir run %t/removed.toml >> %t/both.log
+# RUN: FileCheck %s < %t/both.log
+
+# Without the removal the momentum stays that of the drift: the total mass
+# times 0.2449 nm/ps. The removal at step 10 takes the kinetic
+# energy of the drift, 50.3797 kcal/mol, all the energy at the start, and
+# gives it to the bath. The conserved energy is the total energy without
+# the removal.
+#
+# CHECK:      MDIR: the velocities are those of the file of coordinates
+# CHECK:      INFO:         0         0.0000 {{ *}}-1845.8079 {{ *}}-1896.1876 {{ *}}50.3797
+# CHECK-NEXT: INFO:        20         0.0100 {{ *}}[[TOTAL20:-[0-9.]+]] {{ *}}[[POTENTIAL20:-[0-9.]+]]
+# CHECK:      MDIR: the momentum at the end is 1.7{{[0-9]*}}e+03 amu nm/ps
+
+# CHECK:      INFO:         0         0.0000 {{ *}}-1845.8079 {{ *}}-1896.1876 {{ *}}50.3797 {{.*}} -1845.8079
+# CHECK-NEXT: INFO:        20         0.0100 {{ *}}{{-[0-9.]+}} {{ *}}[[POTENTIAL20]] {{.*}} [[TOTAL20]]
+# CHECK:      MDIR: the momentum at the end is {{[0-9.]+}}e-1{{[0-9]}} amu nm/ps
+
+#--- run.toml
+[input]
+prmtopfile = "dipeptide.prmtop"
+ambcrdfile = "drift.rst7"
+
+[energy]
+cutoffdist    = 9.0
+pairlistdist  = 10.0
+electrostatic = "CUTOFF"
+
+[dynamics]
+integrator    = "VVER"
+timestep      = 0.0005
+nsteps        = 20
+eneout_period = 20
+comm_period   = 10
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PBC"
+#--- end

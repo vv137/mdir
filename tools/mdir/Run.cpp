@@ -204,7 +204,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     forces = checkpoint->forces;
     firstStep = checkpoint->step;
     firstTime = checkpoint->time;
-  } else {
+  } else if (!system->givenVelocities) {
     assignVelocities(*control, *system);
   }
 
@@ -312,6 +312,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         (void *)&_mlir_ciface_mdrtWriteEnergies);
     add("_mlir_ciface_mdrtWriteFrame", (void *)&_mlir_ciface_mdrtWriteFrame);
     add("_mlir_ciface_mdrtWriteTerms", (void *)&_mlir_ciface_mdrtWriteTerms);
+    add("_mlir_ciface_mdrtAddBath", (void *)&_mlir_ciface_mdrtAddBath);
     add("_mlir_ciface_mdrtFinish", (void *)&_mlir_ciface_mdrtFinish);
     add("_mlir_ciface_mdrtWriteCheckpoint",
         program->writesForces
@@ -474,6 +475,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   output.firstStep = firstStep;
   output.firstTime = firstTime;
   output.timestep = control->timestep;
+  output.couples = control->getCouplingPeriod() > 0;
   output.degreesOfFreedom = system->getDegreesOfFreedom();
   output.volume = system->box[0] * system->box[1] * system->box[2];
   output.dispersionEnergy = program->dispersionEnergy;
@@ -511,6 +513,10 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     std::fprintf(output.log, "MDIR: continues after step %lld, from '%s'\n",
                  static_cast<long long>(firstStep),
                  control->restartInput.c_str());
+  else if (system->givenVelocities)
+    std::fprintf(output.log,
+                 "MDIR: the velocities are those of the file of "
+                 "coordinates\n");
   std::fprintf(output.log, "MDIR: compiled in %.2f s\n", compileTime);
   writeLogHeader(output);
 
@@ -549,9 +555,21 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   } else {
     llvm::consumeError(count.takeError());
   }
+  // The momentum of the state at the end, which the removal of the motion
+  // of the center of mass keeps at 0.
+  double momentum[3] = {0.0, 0.0, 0.0};
+  for (size_t i = 0, e = system->getNumParticles(); i != e; ++i)
+    for (int c = 0; c != 3; ++c)
+      momentum[c] += system->masses[i] * system->velocities[3 * i + c];
+  std::fprintf(output.log,
+               "MDIR: the momentum at the end is %.3e amu nm/ps\n",
+               std::sqrt(momentum[0] * momentum[0] +
+                         momentum[1] * momentum[1] +
+                         momentum[2] * momentum[2]));
   if (output.hasEnergies && output.firstTotal != 0.0)
     std::fprintf(output.log,
-                 "MDIR: the total energy changed by %.3e of its value\n",
+                 "MDIR: the %s energy changed by %.3e of its value\n",
+                 output.couples ? "conserved" : "total",
                  std::fabs((output.lastTotal - output.firstTotal) /
                            output.firstTotal));
   return 0;

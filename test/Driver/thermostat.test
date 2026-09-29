@@ -1,0 +1,92 @@
+# Stochastic velocity rescaling with the removal of the motion of the center
+# of mass, on the mixture of mixture.toml, heated from 120 K to 150 K.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/mixture.pdb %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/a.toml
+# RUN: sed -e 's|eneout_period = 1000|eneout_period = 100|' %t/a.toml > %t/b.toml
+# RUN: sed -e 's|VVER|LEAP|' %t/a.toml > %t/leap.toml
+# RUN: mdir run %t/a.toml > %t/a.log
+# RUN: mdir run %t/b.toml > %t/b.log
+# RUN: FileCheck %s < %t/a.log
+# RUN: mdir run %t/leap.toml | FileCheck %s --check-prefix=LEAP
+# RUN: mdir emit %t/a.toml | FileCheck %s --check-prefix=MODULE
+
+# The random numbers are keyed by the step, so that the trajectory does not
+# depend on how the steps are grouped into loops.
+#
+# RUN: grep 'INFO: *2000 ' %t/a.log > %t/a.row
+# RUN: grep 'INFO: *2000 ' %t/b.log > %t/b.row
+# RUN: diff %t/a.row %t/b.row
+
+# The energy that the thermostat exchanges with the bath is added to the
+# total energy, which is then conserved as the total energy of a run at
+# constant energy is.
+#
+# CHECK:      INFO:      STEP {{.*}}PRESSURE      CONSERVED
+# CHECK-NEXT: INFO:         0         0.0000 {{ *}}[[TOTAL:-[0-9.]+]] {{.*}} [[TOTAL]]
+# CHECK-NEXT: INFO:      1000
+# CHECK-NEXT: INFO:      2000
+# CHECK:      MDIR: the momentum at the end is {{[0-9.]+}}e-1{{[0-9]}} amu nm/ps
+# CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
+
+# LEAP:       MDIR: the momentum at the end is {{[0-9.]+}}e-1{{[0-9]}} amu nm/ps
+# LEAP:       MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[4-9]}} of its value
+
+# The coupling ends a period of 10 steps. An interval between energies
+# holds 99 periods and a last one that its step of energy ends.
+#
+# MODULE:      func.func private @mdrtBussiFactor(i64, i64, f64, f64, f64, f64) -> f64
+# MODULE:      %n0 = arith.constant 2 : index
+# MODULE-NEXT: %n1 = arith.constant 99 : index
+# MODULE-NEXT: %n2 = arith.constant 9 : index
+# MODULE:      %freedom = arith.constant 7.65{{0*}}e+02 : f64
+# MODULE:      %alpha1 = func.call @mdrtBussiFactor(%seed, %step1, %kt1, %target_kinetic, %freedom, %decay)
+# MODULE:      %vc1 = md.map_particles gather(%vk1 : !vec) {
+# MODULE:      %alpha0 = func.call @mdrtBussiFactor(%seed, %step0, %kt0, %target_kinetic, %freedom, %decay)
+
+#--- run.toml
+[input]
+pdbfile = "mixture.pdb"
+
+[energy]
+switchdist   = 7.5
+cutoffdist   = 9.0
+pairlistdist = 10.0
+
+[[energy.pair]]
+name       = "lj"
+expression = "4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+mixing     = "lorentz-berthelot"
+
+[[energy.type]]
+name    = "AR"
+mass    = 39.95
+epsilon = 0.238465
+sigma   = 3.4
+
+[[energy.type]]
+name    = "KR"
+mass    = 83.80
+epsilon = 0.3253
+sigma   = 3.65
+
+[dynamics]
+integrator        = "VVER"
+timestep          = 0.004
+nsteps            = 2000
+eneout_period = 1000
+thermostat_period = 10
+
+[ensemble]
+ensemble    = "NVT"
+thermostat  = "BUSSI"
+temperature = 150.0
+tau_t       = 0.5
+
+[boundary]
+type       = "PBC"
+box_size_x = 23.2
+box_size_y = 23.2
+box_size_z = 23.2
+#--- end

@@ -69,7 +69,14 @@ struct Output {
   double dispersionEnergy = 0.0;
   double dispersionVirial = 0.0;
 
-  /// The energies at the first and at the last output, in kJ/mol.
+  /// Whether the velocities are coupled, and the energy that the coupling
+  /// has taken from the system so far, in kJ/mol. The total energy with it
+  /// is conserved.
+  bool couples = false;
+  double bath = 0.0;
+
+  /// The energies at the first and at the last output, in kJ/mol. With
+  /// coupling, those that are conserved.
   bool hasEnergies = false;
   double firstTotal = 0.0;
   double lastTotal = 0.0;
@@ -110,6 +117,9 @@ void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids);
 /// Lennard-Jones, Coulomb, bonds, angles, dihedrals, and the pairs three
 /// bonds apart, Lennard-Jones and Coulomb.
 void _mlir_ciface_mdrtWriteTerms(void *terms);
+/// The energy that a coupling of the velocities has just taken from the
+/// system, in kJ/mol.
+void _mlir_ciface_mdrtAddBath(double energy);
 void _mlir_ciface_mdrtWriteCheckpoint(int64_t step, void *positions,
                                       void *velocities, void *ids);
 void _mlir_ciface_mdrtWriteCheckpointWithForces(int64_t step,

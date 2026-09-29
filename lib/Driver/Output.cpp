@@ -115,9 +115,12 @@ static Output *current = nullptr;
 void mdir::driver::setOutput(Output *output) { current = output; }
 
 void mdir::driver::writeLogHeader(Output &output) {
-  std::fprintf(output.log, "INFO: %9s %14s %14s %14s %14s %14s %14s %14s\n",
+  std::fprintf(output.log, "INFO: %9s %14s %14s %14s %14s %14s %14s %14s",
                "STEP", "TIME", "TOTAL_ENE", "POTENTIAL_ENE", "KINETIC_ENE",
                "TEMPERATURE", "VIRIAL", "PRESSURE");
+  if (output.couples)
+    std::fprintf(output.log, " %14s", "CONSERVED");
+  std::fprintf(output.log, "\n");
 }
 
 void _mlir_ciface_mdrtWriteTerms(void *terms) {
@@ -139,6 +142,8 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
   std::fprintf(output.log, "MDIR:   %-22s %16.6f\n", "total",
                total / units::energy);
 }
+
+void _mlir_ciface_mdrtAddBath(double energy) { current->bath += energy; }
 
 void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
                                     double kinetic, double forceSquare,
@@ -165,11 +170,16 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
   double pressure = (2.0 * half + virial) / (3.0 * output.volume);
   std::fprintf(output.log,
                "INFO: %9lld %14.4f %14.4f %14.4f %14.4f %14.4f %14.4f "
-               "%14.4f\n",
+               "%14.4f",
                static_cast<long long>(step), output.getTime(step),
                total / units::energy, potential / units::energy,
                kinetic / units::energy, temperature, virial / units::energy,
                pressure * units::pressure);
+  if (output.couples) {
+    total += output.bath;
+    std::fprintf(output.log, " %14.4f", total / units::energy);
+  }
+  std::fprintf(output.log, "\n");
   std::fflush(output.log);
 
   if (!output.hasEnergies)

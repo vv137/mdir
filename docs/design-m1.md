@@ -536,8 +536,8 @@ v_i ← v_i − (Σ_j m_j v_j) / (Σ_j m_j)       every `comm_period` steps
 | Item | Proposal |
 |---|---|
 | What is removed | The linear momentum. Under periodic boundaries the angular momentum is not conserved and is left alone. |
-| How | A `particle_for` with a sum of `vector<3xf64>`, as the virial is summed, and a `particle_for` that subtracts, which fuses with the kick |
-| How often | `comm_period` in `[dynamics]`, 100 steps by default |
+| How | A `particle_for` with a sum of `vector<3xf64>`, as the virial is summed, and a `particle_for` that subtracts and scales for the thermostat |
+| How often | `comm_period` in `[dynamics]`: with a thermostat, when it acts; without one, only if given (D67) |
 | Degrees of freedom | Three fewer, as in M0 |
 
 ## 11. Thermostat and barostat
@@ -587,7 +587,7 @@ dyn.program @step(...) attributes {
 
 | Item | Proposal |
 |---|---|
-| The kinetic energy of the thermostat | `K_T`, the mean of the three times (D45) |
+| The kinetic energy of the thermostat | That of the velocities it scales (D67): with velocity Verlet, those at the end of a step, which are of one time. `K_T` of D45 estimates the temperature of the log. |
 | The kinetic energy of the barostat | `K_P`, the mean of the two half steps (D45) |
 | The pressure of the barostat | With the correction for the dispersion (Section 7.2) and the virial of the constraints (Section 9) |
 | How often | Every `n` steps, with `n` times the time step. A step between computes no global sum. On a device a step with global sums takes up to twice the time of one without (Section 10.8 of ops-m0.md). |
@@ -662,6 +662,11 @@ to zero smoothly, or particle mesh Ewald.
 | `prmtopfile`, `ambcrdfile`; `grotopfile`, `grocrdfile`, `groinclude` (directories of includes), `grodefine` (macros, as `-D` of grompp) | `[input]` |
 | `ensemble = "NVT"` or `"NPT"`, `thermostat = "BUSSI"`, `barostat = "BERNETTI-BUSSI"`, `temperature`, `pressure`, `tau_t`, `tau_p`, `compressibility`, `isotropy = "ISO"` or `"SEMI-ISO"` | `[ensemble]` |
 | `thermostat_period`, `barostat_period`, `comm_period` | `[dynamics]` |
+
+The thermostat and the removal of the motion of the center of mass are
+done (M1g, D67): `ensemble = "NVT"`, `thermostat = "BUSSI"`,
+`temperature`, and `tau_t` in ps, with `thermostat_period` and
+`comm_period`.
 
 ## 14. The command line
 
@@ -761,7 +766,7 @@ into the home directory.
 | M1d | Tables, NBFIX, the rule `product`, a Coulomb cutoff, the correction for the dispersion | A mixture of charged types | Done. The IR has `!md.table` and `md.lookup`. The driver takes `[[energy.nbfix]]`, which turns the parameters of a term into tables of pairs of types, the rule `product`, the name `coulomb` for the constant of CODATA 2018, and `dispersion_corr` for each pair term, with a plain cutoff. The correction takes the r⁻⁶ part of the term and the N(N − 1) ordered pairs, as GROMACS does; excluded pairs come out of the count once topologies are read (M1e). |
 | M1e | The readers of both formats; renumbering of the members with the order | Alanine dipeptide in flexible water, at constant energy with 0.5 fs | In part. Both readers are done: the terms of a run from a topology agree with sander but for the conventions, and with GROMACS to 10⁻⁶ for amber99sb-ildn, amber99sb, amber03, and amber14sb and for a made-up topology that uses the preprocessor and the defaults of bonded types (Section 15). Done. A run from a topology puts the particles in the order of the positions where it begins and where each segment begins; `md_exec.renumber` gives the members of the tuples at their new places, from the members of the files and the numbers of the particles, and the incidence structures and the exclusions of the neighbor structures are built again for the segment. |
 | M1f | Comparison of the intermediate stage with AmberTools and GROMACS | | This completes the intermediate stage |
-| M1g | Removal of the motion of the center of mass, random numbers, the thermostat | At constant temperature | |
+| M1g | Removal of the motion of the center of mass, random numbers, the thermostat | At constant temperature | Done (D67). Philox 4×32-10 agrees with the known answers of Random123, and the factor of the thermostat samples the canonical distribution of the kinetic energy. On a mixture of Lennard-Jones, the conserved energy changes by 2.5 × 10⁻⁵ over 20000 steps at constant temperature, on the CPU and on a GPU; a trajectory is the same for any grouping of steps into loops and across a restart. A drift of every particle is removed to a momentum of 10⁻¹³ amu nm/ps. The schedule uses the driver's own loops and `func.call`s, not yet the `dyn` ops of Section 11.2. |
 | M1h | Particle mesh Ewald | With particle mesh Ewald | |
 | M1i | Constraints: SETTLE, SHAKE, RATTLE | With 2 fs | |
 | M1j | The barostat, a cell that changes | At constant temperature and pressure | |

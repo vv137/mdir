@@ -60,6 +60,9 @@ private:
   Error readType(const toml::table &table);
   Error readDynamics(const toml::table &table);
   Error readEnsemble(const toml::table &table);
+  /// Sets the periods of the removal of the motion of the center of mass
+  /// and of the thermostat that were not given, and checks them.
+  Error resolveCoupling();
   Error readBoundary(const toml::table &table);
   Error readExecution(const toml::table &table);
 
@@ -438,11 +441,11 @@ Error Reader::readDynamics(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "dynamics",
           {"integrator", "timestep", "nsteps", "eneout_period",
-           "crdout_period", "rstout_period", "nbupdate_period", "iseed"},
+           "crdout_period", "rstout_period", "nbupdate_period", "iseed",
+           "comm_period", "thermostat_period"},
           {{"velout_period", "M1"},
            {"stoptr_period", "M1"},
            {"elec_long_period", "M2"},
-           {"thermostat_period", "M1"},
            {"barostat_period", "M1"},
            {"annealing", "M1"}}))
     return error;
@@ -465,6 +468,13 @@ Error Reader::readDynamics(const toml::table &table) {
     return error;
   if (Error error =
           readCount(table, "nbupdate_period", control.rebuildPeriod, 0))
+    return error;
+  // Unset until [ensemble] is read; -1 stands for a period not given.
+  control.comPeriod = control.thermostatPeriod = -1;
+  if (Error error = readCount(table, "comm_period", control.comPeriod, 0))
+    return error;
+  if (Error error =
+          readCount(table, "thermostat_period", control.thermostatPeriod, 0))
     return error;
   int64_t seed = static_cast<int64_t>(control.seed);
   if (Error error = readCount(table, "iseed", seed, 0))
@@ -502,18 +512,85 @@ Error Reader::readDynamics(const toml::table &table) {
   return Error::success();
 }
 
+Error Reader::resolveCoupling() {
+  int64_t &com = control.comPeriod, &thermostat = control.thermostatPeriod;
+  if (!control.thermostat && thermostat > 0)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "%s: 'thermostat_period' is given, but there is no thermostat",
+        path.str().c_str());
+  // The thermostat acts every 10 steps and the motion of the center of mass
+  // is removed with it, unless one period is given: then both take it.
+  // Without a thermostat the motion is removed only if 'comm_period' asks.
+  if (control.thermostat) {
+    if (thermostat < 0)
+      thermostat = com > 0 ? com : 10;
+    if (thermostat == 0)
+      return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                     "%s: 'thermostat_period' is 0",
+                                     path.str().c_str());
+    if (com < 0)
+      com = thermostat;
+    if (com != 0 && com != thermostat)
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "%s: 'comm_period' differs from 'thermostat_period'; in M1 the "
+          "motion of the center of mass is removed when the thermostat acts, "
+          "or never",
+          path.str().c_str());
+  } else {
+    thermostat = 0;
+    if (com < 0)
+      com = 0;
+  }
+
+  // Coupling acts at the end of the step that completes a period, so the
+  // periods of output and the number of steps are multiples of it.
+  int64_t period = control.getCouplingPeriod();
+  if (period == 0)
+    return Error::success();
+  for (auto [name, value] :
+       {std::pair<StringRef, int64_t>{"nsteps", control.numSteps},
+        {"eneout_period", control.energyPeriod},
+        {"crdout_period", control.framePeriod},
+        {"rstout_period", control.checkpointPeriod}})
+    if (value % period != 0)
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "%s: '%s' is not a multiple of the period of coupling, %lld steps "
+          "('comm_period' or 'thermostat_period')",
+          path.str().c_str(), name.str().c_str(), (long long)period);
+  return Error::success();
+}
+
 Error Reader::readEnsemble(const toml::table &table) {
   if (Error error = checkKeywords(table, "ensemble",
-                                  {"ensemble", "temperature"},
-                                  {{"tpcontrol", "M1"},
-                                   {"pressure", "M1"},
-                                   {"tau_t", "M1"},
+                                  {"ensemble", "temperature", "thermostat",
+                                   "tau_t"},
+                                  {{"pressure", "M1"},
                                    {"tau_p", "M1"},
                                    {"gamma_t", "M1"},
                                    {"isotropy", "M1"}}))
     return error;
   int ensemble = 0;
-  if (Error error = readChoice<int>(table, "ensemble", ensemble, {{"NVE", 0}}))
+  if (Error error = readChoice<int>(table, "ensemble", ensemble,
+                                    {{"NVE", 0}, {"NVT", 1}, {"NPT", 2}}))
+    return error;
+  if (ensemble == 2)
+    return fail(*table.get("ensemble"),
+                "'ensemble = \"NPT\"' is not supported yet; it is planned "
+                "for M1");
+  int thermostat = 0;
+  if (Error error = readChoice<int>(table, "thermostat", thermostat,
+                                    {{"NO", 0}, {"BUSSI", 1}}))
+    return error;
+  if (ensemble == 1 && thermostat != 1)
+    return fail(table, "'ensemble = \"NVT\"' needs 'thermostat = \"BUSSI\"', "
+                       "the thermostat of M1");
+  if (ensemble == 0 && thermostat != 0)
+    return fail(table, "a thermostat needs 'ensemble = \"NVT\"'");
+  control.thermostat = thermostat == 1;
+  if (Error error = readPositive(table, "tau_t", control.tauT))
     return error;
   if (Error error = readReal(table, "temperature", control.temperature))
     return error;
@@ -692,6 +769,9 @@ Error Reader::read(const toml::table &root) {
     if (Error error = readEnsemble(*table))
       return error;
 
+  if (Error error = resolveCoupling())
+    return error;
+
   if (Error error = getTable("constraints", /*required=*/false, table))
     return error;
   if (table) {
@@ -792,11 +872,16 @@ nsteps        = 100
 eneout_period = 10              # steps between energies in the log; 0: none
 crdout_period = 0               # steps between frames; 0: none
 rstout_period = 0               # steps between checkpoints; 0: none
-iseed         = 314159          # seed of the initial velocities
+iseed         = 314159          # seed of the velocities and the thermostat
+# comm_period = 0               # steps between removals of the motion of
+#                               # the center of mass; 0: none
+# thermostat_period = 10        # steps between actions of the thermostat
 
 [ensemble]
-ensemble    = "NVE"             # NVE
-temperature = 298.15            # of the initial velocities (K)
+ensemble    = "NVE"             # NVE, NVT
+temperature = 298.15            # of the velocities and the bath (K)
+# thermostat = "BUSSI"          # with NVT: stochastic velocity rescaling
+# tau_t      = 1.0              # time of the thermostat (ps)
 
 [boundary]
 type       = "PBC"              # PBC

@@ -117,10 +117,26 @@ struct Control {
   int64_t checkpointPeriod = 0;
   /// The interval of rebuilds, or 0 for a test of validity at every step.
   int64_t rebuildPeriod = 0;
+  /// The interval of the removal of the motion of the center of mass, and
+  /// of the thermostat, in steps; 0 for none.
+  int64_t comPeriod = 0;
+  int64_t thermostatPeriod = 0;
   uint64_t seed = 314159;
 
   // [ensemble]
   double temperature = 298.15;
+  /// Stochastic velocity rescaling (Bussi, Donadio, and Parrinello 2007) at
+  /// `temperature` with the time constant `tauT`, in ps.
+  bool thermostat = false;
+  double tauT = 1.0;
+
+  /// The interval at which the velocities are coupled: the removal of the
+  /// motion of the center of mass and the thermostat act there, at the end
+  /// of a step. 0 if neither acts.
+  /// The two periods are equal where both are not 0.
+  int64_t getCouplingPeriod() const {
+    return thermostatPeriod ? thermostatPeriod : comPeriod;
+  }
 
   // [boundary]
   double box[3] = {0.0, 0.0, 0.0};

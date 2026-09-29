@@ -80,6 +80,11 @@ private:
   /// Emits the loops of the schedule, from `level` inward, and returns the
   /// values that the loop of `level` results in.
   void emitLevel(unsigned level, StringRef indent);
+  /// Emits the coupling of the velocities `velocities` at the end of the
+  /// step `step`: the removal of the motion of the center of mass and the
+  /// thermostat. Returns the name of the velocities after it.
+  std::string emitCoupling(StringRef indent, StringRef velocities,
+                           StringRef tag, StringRef step);
 
   /// The arguments that pass the fields of the parameters on: their
   /// declarations, their values, and their types, each after a comma.
@@ -1069,10 +1074,11 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
     std::string below = std::to_string(level + 1);
     std::string last = "e" + below;
 
-    // The number of the step that has just been taken.
-    auto emitStep = [&]() {
+    // The iteration of the loop of `upto` that is under way, counted over
+    // the whole run.
+    auto emitIteration = [&](unsigned upto) {
       std::string counted;
-      for (unsigned i = 0; i <= level; ++i) {
+      for (unsigned i = 0; i <= upto; ++i) {
         std::string index = "%i" + std::to_string(i);
         if (counted.empty()) {
           counted = index;
@@ -1085,15 +1091,93 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
            << " : index\n";
         counted = scaled;
       }
-      os << inner << "%done" << here << " = arith.addi " << counted
-         << ", %c1 : index\n";
-      os << inner << "%steps" << here << " = arith.muli %done" << here
-         << ", %per" << here << " : index\n";
+      return counted;
+    };
+    // The number of the step that has just been taken.
+    auto emitStep = [&]() {
+      if (current.name == "couple" && level != 0 &&
+          levels[level - 1].name == "energy") {
+        // The interval between energies holds one period more than its
+        // loop over periods: the steps before the interval, and those of
+        // the periods of this interval so far.
+        std::string outer = std::to_string(level - 1);
+        std::string counted = emitIteration(level - 1);
+        os << inner << "%before" << here << " = arith.muli " << counted
+           << ", %per" << outer << " : index\n";
+        os << inner << "%done" << here << " = arith.addi %i" << here
+           << ", %c1 : index\n";
+        os << inner << "%within" << here << " = arith.muli %done" << here
+           << ", %per" << here << " : index\n";
+        os << inner << "%steps" << here << " = arith.addi %before" << here
+           << ", %within" << here << " : index\n";
+      } else {
+        std::string counted = emitIteration(level);
+        os << inner << "%done" << here << " = arith.addi " << counted
+           << ", %c1 : index\n";
+        os << inner << "%steps" << here << " = arith.muli %done" << here
+           << ", %per" << here << " : index\n";
+      }
       os << inner << "%since" << here << " = arith.index_cast %steps"
          << here << " : index to i64\n";
       os << inner << "%step" << here << " = arith.addi %since" << here
          << ", %start : i64\n";
     };
+    // The velocities as the step after the coupling takes them, and the
+    // state that the loop yields.
+    auto getCoupled = [&](StringRef x, StringRef v, StringRef f) {
+      std::string coupled = emitCoupling(inner, v, here, "%step" + here);
+      return isLeapfrog() ? (x + ", " + coupled).str()
+                          : (x + ", " + coupled + ", " + f).str();
+    };
+    bool couplesBelow = levels[level + 1].name == "couple";
+
+    if (current.name == "couple") {
+      // The last step of the period, and the coupling after it.
+      os << inner << getValues("k" + here) << " = dyn.step @step(";
+      if (isLeapfrog())
+        os << "%x" << last << ", %v" << last << ", " << massName
+           << ", %cell, %dt" << getFieldValues(fieldPrefix) << ")\n"
+           << inner << "    : (!vec, !vec, !real, !md.cell, f64"
+           << getFieldTypes() << ") -> (!vec, !vec)\n";
+      else
+        os << "%x" << last << ", %v" << last << ", %f" << last << ", "
+           << massName << ", %cell, %dt" << getFieldValues(fieldPrefix)
+           << ")\n"
+           << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
+           << getFieldTypes() << ") -> (!vec, !vec, !vec)\n";
+      emitStep();
+      std::string coupled =
+          getCoupled("%xk" + here, "%vk" + here, "%fk" + here);
+      os << inner << "scf.yield " << coupled << " : " << state << "\n";
+      os << indent << "}\n";
+      return;
+    }
+
+    if (current.name == "energy" && couplesBelow) {
+      // The last period of the interval: its steps but the last, which
+      // the step of energy takes.
+      std::string steps = std::to_string(levels.size() - 1);
+      os << inner << getValues("q" + here) << " = scf.for %j" << here
+         << " = %c0 to %n" << steps << " step %c1\n"
+         << inner << "    iter_args(" << getInits("p" + here, last) << ")\n"
+         << inner << "    -> (" << state << ") {\n";
+      os << inner << "  " << getValues("r" + here) << " = dyn.step @step(";
+      if (isLeapfrog())
+        os << "%xp" << here << ", %vp" << here << ", " << massName
+           << ", %cell, %dt" << getFieldValues(fieldPrefix) << ")\n"
+           << inner << "      : (!vec, !vec, !real, !md.cell, f64"
+           << getFieldTypes() << ") -> (!vec, !vec)\n";
+      else
+        os << "%xp" << here << ", %vp" << here << ", %fp" << here << ", "
+           << massName << ", %cell, %dt" << getFieldValues(fieldPrefix)
+           << ")\n"
+           << inner << "      : (!vec, !vec, !vec, !real, !md.cell, f64"
+           << getFieldTypes() << ") -> (!vec, !vec, !vec)\n";
+      os << inner << "  scf.yield " << getValues("r" + here) << " : "
+         << state << "\n"
+         << inner << "}\n";
+      last = "q" + here;
+    }
 
     if (current.name == "energy") {
       // The last step of the interval, and the energies after it.
@@ -1128,7 +1212,9 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       emitStep();
       os << inner << "func.call @mdrtWriteEnergies(%step" << here
          << ", %u, %k, %g, %tr) : (i64, f64, f64, f64, f64) -> ()\n";
-      os << inner << "scf.yield " << getValues("l") << " : " << state << "\n";
+      std::string yielded =
+          couplesBelow ? getCoupled("%xl", "%vl", "%fl") : getValues("l");
+      os << inner << "scf.yield " << yielded << " : " << state << "\n";
     } else {
       if (current.name == "frame") {
         emitStep();
@@ -1164,6 +1250,78 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
   }
 }
 
+std::string Builder::emitCoupling(StringRef indent, StringRef velocities,
+                                  StringRef tag, StringRef step) {
+  bool removesMotion = control.comPeriod > 0;
+  std::string t = tag.str();
+  if (removesMotion) {
+    // The velocity of the center of mass.
+    os << indent << "%pc" << t << " = md.sum_particles gather(" << velocities
+       << ", " << massName << " : !vec, !real) {\n"
+       << indent << "^bb0(%v_i: vector<3xf64>, %m_i: f64):\n"
+       << indent << "  %mb = vector.broadcast %m_i : f64 to vector<3xf64>\n"
+       << indent << "  %p = arith.mulf %mb, %v_i : vector<3xf64>\n"
+       << indent << "  md.yield %p : vector<3xf64>\n"
+       << indent << "} : vector<3xf64>\n"
+       << indent << "%vcm" << t << " = arith.divf %pc" << t
+       << ", %total_mass : vector<3xf64>\n";
+  }
+  if (control.thermostat) {
+  }
+  // The kinetic energy of the center of mass, P·V / 2, which the removal
+  // takes away.
+  if (removesMotion)
+    os << indent << "%pvs" << t << " = arith.mulf %pc" << t << ", %vcm" << t
+       << " : vector<3xf64>\n"
+       << indent << "%pv" << t << " = vector.reduction <add>, %pvs" << t
+       << " : vector<3xf64> into f64\n"
+       << indent << "%kcm" << t << " = arith.mulf %couple_half, %pv" << t
+       << " : f64\n";
+  // The energy that the coupling takes: that of the center of mass, and
+  // what the thermostat takes from the rest.
+  std::string bath = "%kcm" + t;
+  if (control.thermostat) {
+    std::string kinetic = "%kc" + t;
+    emitKineticEnergy(os, kinetic, velocities, massName, indent);
+    if (removesMotion) {
+      os << indent << "%kt" << t << " = arith.subf %kc" << t << ", %kcm" << t
+         << " : f64\n";
+      kinetic = "%kt" + t;
+    }
+    os << indent << "%alpha" << t << " = func.call @mdrtBussiFactor(%seed, "
+       << step << ", " << kinetic
+       << ", %target_kinetic, %freedom, %decay)\n"
+       << indent << "    : (i64, i64, f64, f64, f64, f64) -> f64\n"
+       << indent << "%alpha2" << t << " = arith.mulf %alpha" << t
+       << ", %alpha" << t << " : f64\n"
+       << indent << "%kn" << t << " = arith.mulf %alpha2" << t << ", "
+       << kinetic << " : f64\n"
+       << indent << "%heat" << t << " = arith.subf %kc" << t << ", %kn" << t
+       << " : f64\n";
+    bath = "%heat" + t;
+  }
+  os << indent << "func.call @mdrtAddBath(" << bath << ") : (f64) -> ()\n";
+  os << indent << "%vc" << t << " = md.map_particles gather(" << velocities
+     << " : !vec) {\n"
+     << indent << "^bb0(%v_i: vector<3xf64>):\n";
+  std::string value = "%v_i";
+  if (removesMotion) {
+    os << indent << "  %d = arith.subf %v_i, %vcm" << t
+       << " : vector<3xf64>\n";
+    value = "%d";
+  }
+  if (control.thermostat) {
+    os << indent << "  %ab = vector.broadcast %alpha" << t
+       << " : f64 to vector<3xf64>\n"
+       << indent << "  %s = arith.mulf %ab, " << value
+       << " : vector<3xf64>\n";
+    value = "%s";
+  }
+  os << indent << "  md.yield " << value << " : vector<3xf64>\n"
+     << indent << "} : !vec\n";
+  return "%vc" + t;
+}
+
 void Builder::emitEntry() {
   StringRef state = getName(program.state);
   StringRef force = getName(program.force);
@@ -1179,6 +1337,12 @@ void Builder::emitEntry() {
      << "func.func private @mdrtFinish(memref<?x3x" << state
      << ">, memref<?x3x" << state << ">, memref<?xi32>)\n"
      << "    attributes {llvm.emit_c_interface}\n";
+  if (control.thermostat)
+    os << "func.func private @mdrtBussiFactor(i64, i64, f64, f64, f64, f64) "
+          "-> f64\n";
+  if (control.getCouplingPeriod() > 0)
+    os << "func.func private @mdrtAddBath(f64)\n"
+       << "    attributes {llvm.emit_c_interface}\n";
   if (control.checkpointPeriod > 0) {
     os << "func.func private @mdrtWriteCheckpoint(i64, memref<?x3x" << state
        << ">, memref<?x3x" << state << ">";
@@ -1215,12 +1379,19 @@ void Builder::emitEntry() {
   // The number of steps in one iteration of each loop. An iteration of
   // the loop over energy intervals takes one step after its loop over
   // steps.
+  // An iteration of the loop over the periods of coupling takes one as
+  // well, and one over energy intervals a whole period after its loop over
+  // periods.
   int64_t steps = 1;
   for (unsigned i = levels.size(); i-- != 0;) {
     os << "  %per" << i << " = arith.constant " << steps << " : index\n";
     steps *= levels[i].count;
-    if (i != 0 && levels[i - 1].name == "energy")
+    if (i == 0)
+      continue;
+    if (levels[i - 1].name == "couple")
       steps += 1;
+    else if (levels[i - 1].name == "energy")
+      steps += levels[i].name == "couple" ? control.getCouplingPeriod() : 1;
   }
 
   // The fields as the buffers hold them, and in the order of the positions
@@ -1265,6 +1436,35 @@ void Builder::emitEntry() {
        << "> to !vec\n";
   if (program.reorders)
     emitReorder("  ", "_in", "0", "", givenForces, velocities);
+
+  if (control.getCouplingPeriod() > 0) {
+    // What the coupling of the velocities takes: the total mass; and for
+    // the thermostat the key of the random numbers, the degrees of freedom,
+    // the mean kinetic energy at the temperature of the bath, and how much
+    // of the kinetic energy is kept over one period.
+    os << "  %couple_half = arith.constant 5.0e-01 : f64\n"
+       << "  %total_mass = md.sum_particles gather(%m" << given
+       << " : !real) {\n"
+       << "  ^bb0(%m_i: f64):\n"
+       << "    %mb = vector.broadcast %m_i : f64 to vector<3xf64>\n"
+       << "    md.yield %mb : vector<3xf64>\n"
+       << "  } : vector<3xf64>\n";
+    if (control.thermostat) {
+      double freedom = 3.0 * static_cast<double>(system.getNumParticles()) -
+                       (control.comPeriod > 0 ? 3.0 : 0.0);
+      double target =
+          0.5 * freedom * units::boltzmann * control.temperature;
+      double decay = std::exp(
+          -static_cast<double>(control.getCouplingPeriod()) *
+          control.timestep / control.tauT);
+      os << "  %seed = arith.constant " << static_cast<int64_t>(control.seed)
+         << " : i64\n"
+         << "  %freedom = arith.constant " << formatReal(freedom) << " : f64\n"
+         << "  %target_kinetic = arith.constant " << formatReal(target)
+         << " : f64\n"
+         << "  %decay = arith.constant " << formatReal(decay) << " : f64\n";
+    }
+  }
 
   if (isLeapfrog())
     os << "  %c_half = arith.constant 5.0e-01 : f64\n"
@@ -1420,12 +1620,25 @@ llvm::Error Builder::build() {
     levels.push_back({"frame", steps / control.framePeriod});
     steps = control.framePeriod;
   }
+  // The velocities are coupled at the end of the last step of a period of
+  // coupling, which is taken after the loop over steps, as the last step
+  // of an interval between energies is. The loop over the periods of an
+  // interval between energies leaves the last period to the interval,
+  // which ends it with its step of energy.
+  int64_t coupling = control.getCouplingPeriod();
   if (control.energyPeriod > 0) {
     levels.push_back({"energy", steps / control.energyPeriod});
     steps = control.energyPeriod;
     stepsPerEnergy = steps;
-    // The last step of the interval is taken after the loop over steps.
-    levels.push_back({"step", steps - 1});
+    if (coupling > 0) {
+      levels.push_back({"couple", steps / coupling - 1});
+      levels.push_back({"step", coupling - 1});
+    } else {
+      levels.push_back({"step", steps - 1});
+    }
+  } else if (coupling > 0) {
+    levels.push_back({"couple", steps / coupling});
+    levels.push_back({"step", coupling - 1});
   } else {
     levels.push_back({"step", steps});
   }

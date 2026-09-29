@@ -1,0 +1,8 @@
+# The random numbers of the runtime and the factor of the thermostat.
+#
+# RUN: %python %S/Inputs/check_random.py %mdrt | FileCheck %s
+#
+# CHECK-COUNT-3: philox ok
+# CHECK-COUNT-4: bussi ok
+# CHECK: key ok
+# CHECK-NOT: FAILED

@@ -42,6 +42,9 @@ struct System {
   /// Three numbers per particle.
   std::vector<double> positions;
   std::vector<double> velocities;
+  /// Whether the file of coordinates gave the velocities. If not, they are
+  /// drawn at the temperature of the control file.
+  bool givenVelocities = false;
   std::vector<double> masses;
   /// The edge lengths of the cell.
   double box[3];

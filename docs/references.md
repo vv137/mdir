@@ -117,7 +117,8 @@ G. E. P. Box, M. E. Muller, "A note on the generation of random normal
 deviates," *Ann. Math. Stat.* **29**, 610–611 (1958).
 [doi:10.1214/aoms/1177706645](https://doi.org/10.1214/aoms/1177706645)
 
-Used for: normal deviates from uniform ones, for the initial velocities.
+Used for: normal deviates from uniform ones, for the initial velocities
+and the thermostat.
 
 ### Bussi2007
 
@@ -432,6 +433,15 @@ simulations," *J. Phys. Chem. B* **111**, 7812–7824 (2007).
 Used for: the Martini 2 force field, including its lipids, deferred
 (D53).
 
+### Marsaglia2000
+
+G. Marsaglia, W. W. Tsang, "A simple method for generating gamma
+variables," *ACM Trans. Math. Softw.* **26**, 363–372 (2000).
+[doi:10.1145/358407.358414](https://doi.org/10.1145/358407.358414)
+
+Used for: the sum of the squares of normal deviates that the thermostat
+takes, drawn as a gamma deviate (`runtime/mdrt.c`).
+
 ### Metropolis1953
 
 N. Metropolis, A. W. Rosenbluth, M. N. Rosenbluth, A. H. Teller,
@@ -539,7 +549,8 @@ Analysis (SC '11)* (ACM, 2011), pp. 1–12.
 [doi:10.1145/2063384.2063405](https://doi.org/10.1145/2063384.2063405)
 
 Used for: counter-based random numbers (Random123) and the Philox
-generator, Philox 4×32 with 10 rounds in M1.
+generator, Philox 4×32 with 10 rounds in M1 (`runtime/mdrt.c`), checked
+against the known answers of Random123 (`test/Runtime/random.test`).
 
 ### Saunders2018
 
