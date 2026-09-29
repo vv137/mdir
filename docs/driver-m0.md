@@ -1,9 +1,8 @@
-# Driver and Control File for Milestone M0: Proposal
+# Driver and Control File for Milestone M0
 
-Status: proposal (2026-09-29). Nothing here is decided except where a
-decision is cited.
+Status: decided (2026-09-29), being implemented.
 
-This document proposes the driver of MDIR and its input, the control file.
+This document describes the driver of MDIR and its input, the control file.
 
 ## 1. The control file
 
@@ -197,12 +196,13 @@ them.
 | Writers | DCD or XTC, H5MD | HDF5 for H5MD |
 | Initial velocities | From `temperature` and `iseed`, with the center of mass at rest | A random number generator |
 
-## 3. Questions
+## 3. Decided
 
-| # | Question | Proposal |
+| # | Question | Decision |
 |---|---|---|
-| 1 | The units of the control file | Å, kcal/mol, ps |
-| 2 | The trajectory format | DCD first: a writer takes about 100 lines and no library, and the usual tools read it. XTC (D25) follows. |
-| 3 | The checkpoint | H5MD (D26) stays. The machine lacks the headers of HDF5; they are installed in the home directory. |
-| 4 | The TOML library | toml++, a header under the MIT license, added to the repository |
-| 5 | The order of work | Parser, builder, compile and run, log; then DCD; then initial velocities; then the checkpoint |
+| 1 | The tables and keywords of the control file | As in Section 1 (D35) |
+| 2 | The units of the control file | Å, kcal/mol, ps (D36) |
+| 3 | The trajectory format | DCD first; XTC follows (D37) |
+| 4 | The checkpoint | H5MD (D26). HDF5 is installed in the home directory. |
+| 5 | The TOML library | toml++, in the repository (D38) |
+| 6 | The schedule | Compiled (D39) |

@@ -292,9 +292,14 @@ P11 to P18 follow from the review of PPMD (Saunders et al. 2018). See
 | D29 | **The neighbor structure of M0 is the neighbor matrix.** |
 | D30 | **Vector fields are stored as `memref<?x3xT>` first.** The other layout comes later. |
 | D31 | **Precision is assigned by a pass on `md_exec`.** `md-exec-assign-precision` runs on the value form, after the transformations of that level and before storage assignment. Everything before it works on the reference program in `f64`. The type `!md.field` admits `f32` for this; the ops of `md` and `dyn` reject it (B2). |
+| D32 | **Buffers state the type that the state is stored in.** `mdrt.from_buffer` and `mdrt.to_buffer` accept a buffer of `f32` for a field of `f64`. Whoever allocates the state applies the roles `position` and `velocity`; the compiled program follows the buffers and never converts one (D18). For fields that no buffer holds, the pass derives the role from how the field is used. |
 | D33 | **The storage handle of a field is a `memref`.** The storage form of the `md_exec` ops takes `memref<?x3xT>` and `memref<?xT>`. No storage type of its own is introduced: upstream passes and the upstream `gpu` dialect work on `memref`s, and the memory space of a `memref` can tell the device. This narrows D19, which placed a storage type in `mdrt`. |
 | D34 | **GPU execution uses the upstream `gpu` dialect, with the runtime functions in `libmdrt_cuda`.** The kernels are embedded as PTX text. The neighbor build runs on the device, binning included; the particles of a cell are sorted by index so that the result does not depend on the order of the threads. A buffer on a device has a memory space in its type. |
-| D32 | **Buffers state the type that the state is stored in.** `mdrt.from_buffer` and `mdrt.to_buffer` accept a buffer of `f32` for a field of `f64`. Whoever allocates the state applies the roles `position` and `velocity`; the compiled program follows the buffers and never converts one (D18). For fields that no buffer holds, the pass derives the role from how the field is used. |
+| D35 | **The control file has one table for each concern of a run**: `[input]`, `[output]`, `[energy]`, `[dynamics]`, `[ensemble]`, `[boundary]`, and `[execution]`. The keywords are those of [driver-m0.md](driver-m0.md). An unknown keyword is an error. |
+| D36 | **The control file is written in Å, kcal/mol, ps, amu, K, and atm.** Inside MDIR the units are nm, kJ/mol, ps, amu, K, and bar, which are consistent (S4). The driver converts. An energy expression is evaluated in the units of the control file: the driver scales the distance that enters it and the energy that leaves it. |
+| D37 | **Trajectories are written as DCD first.** XTC (D25) follows. |
+| D38 | **The control file is parsed with toml++**, which is added to the repository under `third_party`. |
+| D39 | **The schedule of a run is compiled.** The driver builds one function with a loop for each period of output, and the code calls the host to write. A field that the host reads is passed with `mdrt.host_call`; it stays where it is. The loop over checkpoint intervals is marked as a segment, and neighbor structures start empty in each of its iterations (R1). |
 
 ### 5.1 Amendments to earlier decisions
 
@@ -378,7 +383,7 @@ These items follow from the decisions above but have no design yet.
 | Fusion of loops over particles | M0 | |
 | Removal of the square root from kernels that do not need it | M0 | Implemented |
 | Freeing of buffers | M0 | |
-| Driver, TOML input, XTC and H5MD output | M0 | Proposal in [driver-m0.md](driver-m0.md) |
+| Driver, TOML input, XTC and H5MD output | M0 | Decided in [driver-m0.md](driver-m0.md); being implemented |
 | GPU back end | M0 | Implemented for NVIDIA: `convert-md-exec-to-gpu`, `libmdrt_cuda` |
 | Global sums of vectors on a device, for the virial | M0 | |
 | GPU back end for AMD | M1 | |
