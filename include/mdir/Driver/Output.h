@@ -31,6 +31,11 @@ public:
 
   /// Writes a frame. `positions` holds three numbers per particle, in Å.
   void writeFrame(const float *positions);
+  /// The edges of the cell of the frames that follow, in Å.
+  void setBox(const double edges[3]) {
+    for (int i = 0; i != 3; ++i)
+      box[i] = edges[i];
+  }
 
   void close();
 
@@ -62,8 +67,13 @@ struct Output {
   double firstTime = 0.0;
   double timestep = 0.0;
   double degreesOfFreedom = 0.0;
-  /// The volume of the cell, in nm^3.
+  /// The volume of the cell, in nm^3, and the edges, which a barostat
+  /// changes (mdrtSetBox).
   double volume = 0.0;
+  double box[3] = {0.0, 0.0, 0.0};
+  /// The volume that the constants below are for; they are proportional to
+  /// 1 / V but the self term.
+  double firstVolume = 0.0;
   /// The correction for the dispersion beyond the cutoff, in kJ/mol: what
   /// it adds to the potential energy and to the trace of the virial.
   double dispersionEnergy = 0.0;
@@ -73,6 +83,23 @@ struct Output {
   bool pme = false;
   double pmeConstantEnergy = 0.0;
   double pmeConstantVirial = 0.0;
+  /// Of which the self term, which does not depend on the volume.
+  double pmeSelfEnergy = 0.0;
+
+  /// The constants at the volume `volume`.
+  double getDispersionEnergy() const {
+    return dispersionEnergy * firstVolume / volume;
+  }
+  double getDispersionVirial() const {
+    return dispersionVirial * firstVolume / volume;
+  }
+  double getPMEConstantEnergy() const {
+    return pmeSelfEnergy +
+           (pmeConstantEnergy - pmeSelfEnergy) * firstVolume / volume;
+  }
+  double getPMEConstantVirial() const {
+    return pmeConstantVirial * firstVolume / volume;
+  }
 
   /// Whether the velocities are coupled, and the energy that the coupling
   /// has taken from the system so far, in kJ/mol. The total energy with it
@@ -125,6 +152,8 @@ void _mlir_ciface_mdrtWriteTerms(void *terms);
 /// The energy that a coupling of the velocities has just taken from the
 /// system, in kJ/mol.
 void _mlir_ciface_mdrtAddBath(double energy);
+/// The cell after a barostat has changed it: its edges in nm.
+void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz);
 void _mlir_ciface_mdrtWriteCheckpoint(int64_t step, void *positions,
                                       void *velocities, void *ids);
 void _mlir_ciface_mdrtWriteCheckpointWithForces(int64_t step,

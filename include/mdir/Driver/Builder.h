@@ -104,6 +104,7 @@ struct Program {
   bool pme = false;
   double pmeConstantEnergy = 0.0;
   double pmeConstantVirial = 0.0;
+  double pmeSelfEnergy = 0.0;
   /// β in nm⁻¹ and the numbers of points of the grid, for the log.
   double pmeBeta = 0.0;
   int64_t pmeGrid[3] = {0, 0, 0};

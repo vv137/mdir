@@ -477,11 +477,10 @@ Error Reader::readDynamics(const toml::table &table) {
           table, "dynamics",
           {"integrator", "timestep", "nsteps", "eneout_period",
            "crdout_period", "rstout_period", "nbupdate_period", "iseed",
-           "comm_period", "thermostat_period"},
+           "comm_period", "thermostat_period", "barostat_period"},
           {{"velout_period", "M1"},
            {"stoptr_period", "M1"},
            {"elec_long_period", "M2"},
-           {"barostat_period", "M1"},
            {"annealing", "M1"}}))
     return error;
 
@@ -510,6 +509,10 @@ Error Reader::readDynamics(const toml::table &table) {
     return error;
   if (Error error =
           readCount(table, "thermostat_period", control.thermostatPeriod, 0))
+    return error;
+  control.barostatPeriod = -1;
+  if (Error error =
+          readCount(table, "barostat_period", control.barostatPeriod, 0))
     return error;
   int64_t seed = static_cast<int64_t>(control.seed);
   if (Error error = readCount(table, "iseed", seed, 0))
@@ -579,6 +582,24 @@ Error Reader::resolveCoupling() {
       com = 0;
   }
 
+  // The barostat acts when the thermostat does (D72).
+  int64_t &barostat = control.barostatPeriod;
+  if (!control.barostat && barostat > 0)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "%s: 'barostat_period' is given, but there is no barostat",
+        path.str().c_str());
+  if (!control.barostat)
+    barostat = 0;
+  else if (barostat < 0)
+    barostat = thermostat;
+  else if (barostat != thermostat)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "%s: 'barostat_period' differs from 'thermostat_period'; in M1 the "
+        "barostat acts when the thermostat does",
+        path.str().c_str());
+
   // Coupling acts at the end of the step that completes a period, so the
   // periods of output and the number of steps are multiples of it.
   int64_t period = control.getCouplingPeriod();
@@ -601,29 +622,52 @@ Error Reader::resolveCoupling() {
 Error Reader::readEnsemble(const toml::table &table) {
   if (Error error = checkKeywords(table, "ensemble",
                                   {"ensemble", "temperature", "thermostat",
-                                   "tau_t"},
-                                  {{"pressure", "M1"},
-                                   {"tau_p", "M1"},
-                                   {"gamma_t", "M1"},
-                                   {"isotropy", "M1"}}))
+                                   "tau_t", "barostat", "pressure", "tau_p",
+                                   "compressibility", "isotropy"},
+                                  {{"gamma_t", "M1"}}))
     return error;
   int ensemble = 0;
   if (Error error = readChoice<int>(table, "ensemble", ensemble,
                                     {{"NVE", 0}, {"NVT", 1}, {"NPT", 2}}))
     return error;
-  if (ensemble == 2)
-    return fail(*table.get("ensemble"),
-                "'ensemble = \"NPT\"' is not supported yet; it is planned "
-                "for M1");
+  int barostat = 0;
+  if (Error error = readChoice<int>(table, "barostat", barostat,
+                                    {{"NO", 0}, {"BERNETTI-BUSSI", 1}}))
+    return error;
+  if (ensemble == 2 && barostat != 1)
+    return fail(table, "'ensemble = \"NPT\"' needs 'barostat = "
+                       "\"BERNETTI-BUSSI\"', the barostat of M1");
+  if (ensemble != 2 && barostat != 0)
+    return fail(table, "a barostat needs 'ensemble = \"NPT\"'");
+  for (StringRef key : {"pressure", "tau_p", "compressibility", "isotropy"})
+    if (ensemble != 2 && table.contains(std::string_view(key)))
+      return fail(*table.get(std::string_view(key)),
+                  "'" + key + "' is for 'ensemble = \"NPT\"'");
+  control.barostat = barostat == 1;
+  if (Error error = readReal(table, "pressure", control.pressure))
+    return error;
+  if (Error error = readPositive(table, "tau_p", control.tauP))
+    return error;
+  if (Error error =
+          readPositive(table, "compressibility", control.compressibility))
+    return error;
+  int isotropy = 0;
+  if (Error error = readChoice<int>(table, "isotropy", isotropy,
+                                    {{"ISO", 0}, {"SEMI-ISO", 1}}))
+    return error;
+  if (isotropy != 0)
+    return fail(*table.get("isotropy"),
+                "'isotropy = \"SEMI-ISO\"' is not supported yet; it is "
+                "planned for M1");
   int thermostat = 0;
   if (Error error = readChoice<int>(table, "thermostat", thermostat,
                                     {{"NO", 0}, {"BUSSI", 1}}))
     return error;
-  if (ensemble == 1 && thermostat != 1)
-    return fail(table, "'ensemble = \"NVT\"' needs 'thermostat = \"BUSSI\"', "
-                       "the thermostat of M1");
+  if (ensemble >= 1 && thermostat != 1)
+    return fail(table, "'ensemble = \"NVT\"' and \"NPT\" need 'thermostat = "
+                       "\"BUSSI\"', the thermostat of M1");
   if (ensemble == 0 && thermostat != 0)
-    return fail(table, "a thermostat needs 'ensemble = \"NVT\"'");
+    return fail(table, "a thermostat needs 'ensemble = \"NVT\"' or \"NPT\"");
   control.thermostat = thermostat == 1;
   if (Error error = readPositive(table, "tau_t", control.tauT))
     return error;

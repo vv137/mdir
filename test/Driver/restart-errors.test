@@ -25,7 +25,7 @@
 # RUN:     -e 's|^pdbfile = \(.*\)|pdbfile = \1\nrstfile = "%t.first.h5"|' \
 # RUN:     %t.first.toml > %t.box.toml
 # RUN: not mdir run %t.box.toml 2>&1 | FileCheck %s --check-prefix=BOX
-# BOX: the box of '{{.*}}.first.h5' differs from that of [boundary]
+# BOX: the box of '{{.*}}.first.h5' differs from that of the input; only a run with a barostat changes it
 
 # RUN: sed -e 's|%t.first.h5|%t.other.h5|' \
 # RUN:     -e 's|^pdbfile = \(.*\)|pdbfile = \1\nrstfile = "%t.missing.h5"|' \

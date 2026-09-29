@@ -87,6 +87,9 @@ private:
   /// Emits the loops of the schedule, from `level` inward, and returns the
   /// values that the loop of `level` results in.
   void emitLevel(unsigned level, StringRef indent);
+  /// Whether the cell changes in the run, which a barostat does.
+  bool changesCell() const { return control.barostat; }
+
   /// Whether the topology has virtual sites.
   bool hasSites() const { return !getSiteSets().empty(); }
   /// The tuple sets of the virtual sites, those of Amber first.
@@ -920,6 +923,7 @@ llvm::Error Builder::collectPME() {
       -coulombInternal * M_PI * net * net / (2.0 * volume * beta * beta);
   program.pme = true;
   program.pmeConstantEnergy = self + background;
+  program.pmeSelfEnergy = self;
   program.pmeConstantVirial = 3.0 * background;
   program.pmeBeta = beta;
   for (int k = 0; k != 3; ++k)
@@ -2396,6 +2400,18 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
      << moreInits << ")\n"
      << indent << "    -> (" << state << moreTypes << ") {\n";
 
+  // With a barostat the cell changes: each iteration takes it from where
+  // the barostat keeps it.
+  std::string outerCell = cellName;
+  if (changesCell()) {
+    cellName = "%cell" + here;
+    for (int k = 0; k != 3; ++k)
+      os << inner << "%edge" << here << "_" << k << " = memref.load "
+         << "%box_memory[%c_edge" << k << "] : memref<3xf64>\n";
+    os << inner << cellName << " = md.orthorhombic_cell %edge" << here
+       << "_0, %edge" << here << "_1, %edge" << here << "_2\n";
+  }
+
   std::string outerMass = massName, outerPrefix = fieldPrefix,
               outerId = idName;
   if (reorders) {
@@ -2502,6 +2518,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
           getCoupled("%xk" + here, "%vk" + here, "%fk" + here);
       os << inner << "scf.yield " << coupled << " : " << state << "\n";
       os << indent << "}\n";
+      cellName = outerCell;
       return;
     }
 
@@ -2607,6 +2624,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
   massName = outerMass;
   fieldPrefix = outerPrefix;
   idName = outerId;
+  cellName = outerCell;
   // What the loop has left is in the order of its last iteration.
   if (reorders) {
     massName = "%me" + here;
@@ -2765,6 +2783,14 @@ void Builder::emitEntry() {
   bool givenForces = isRestart() && program.takesForces;
   std::string velocities = isLeapfrog() && !isRestart() ? "%vg" : "%v0";
   std::string given = program.reorders ? "_in" : "";
+  if (changesCell()) {
+    // Where the barostat keeps the cell, on the host.
+    os << "  %box_memory = memref.alloca() : memref<3xf64>\n";
+    for (int k = 0; k != 3; ++k)
+      os << "  %c_edge" << k << " = arith.constant " << k << " : index\n"
+         << "  memref.store %l" << "xyz"[k] << ", %box_memory[%c_edge" << k
+         << "] : memref<3xf64>\n";
+  }
   os << "  %cell = md.orthorhombic_cell %lx, %ly, %lz\n"
      << "  %x" << (program.reorders ? "_in" : "0") << (hasSites() ? "u" : "")
      << " = mdrt.from_buffer %positions : memref<?x3x" << state
@@ -2955,6 +2981,10 @@ static int64_t countMostNeighbors(const System &system, double reach) {
 }
 
 llvm::Error Builder::build() {
+  if (control.barostat)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "the barostat is not supported yet; it is planned for M1");
   program.entry = "mdir_run";
   switch (control.precision) {
   case Precision::Single:

@@ -135,7 +135,7 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
   bool cmap = output.system && output.system->topology &&
               !output.system->topology->cmaps.empty();
   std::fprintf(output.log, "MDIR: the terms at the start, in kcal/mol:\n");
-  double total = output.dispersionEnergy + output.pmeConstantEnergy;
+  double total = output.getDispersionEnergy() + output.getPMEConstantEnergy();
   for (int i = 0; i != 10; ++i) {
     if ((i == 7 && !cmap) || (i >= 8 && !output.pme))
       continue;
@@ -146,14 +146,28 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
   }
   if (output.pme)
     std::fprintf(output.log, "MDIR:   %-22s %16.6f\n", "Coulomb self",
-                 output.pmeConstantEnergy / units::energy);
+                 output.getPMEConstantEnergy() / units::energy);
   std::fprintf(output.log, "MDIR:   %-22s %16.6f\n", "dispersion",
-               output.dispersionEnergy / units::energy);
+               output.getDispersionEnergy() / units::energy);
   std::fprintf(output.log, "MDIR:   %-22s %16.6f\n", "total",
                total / units::energy);
 }
 
 void _mlir_ciface_mdrtAddBath(double energy) { current->bath += energy; }
+
+void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz) {
+  Output &output = *current;
+  output.box[0] = lx;
+  output.box[1] = ly;
+  output.box[2] = lz;
+  output.volume = lx * ly * lz;
+  double edges[3] = {lx / units::length, ly / units::length,
+                     lz / units::length};
+  output.trajectory.setBox(edges);
+  output.checkpoint.box[0] = lx;
+  output.checkpoint.box[1] = ly;
+  output.checkpoint.box[2] = lz;
+}
 
 void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
                                     double kinetic, double forceSquare,
@@ -162,8 +176,8 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
   // `kinetic` is that of the velocities at the step. The total energy has
   // it, because that sum varies least.
   // The correction for the dispersion is a number of the volume.
-  potential += output.dispersionEnergy + output.pmeConstantEnergy;
-  virial += output.dispersionVirial + output.pmeConstantVirial;
+  potential += output.getDispersionEnergy() + output.getPMEConstantEnergy();
+  virial += output.getDispersionVirial() + output.getPMEConstantVirial();
   double total = potential + kinetic;
 
   // The mean of the kinetic energies half a step before and after exceeds

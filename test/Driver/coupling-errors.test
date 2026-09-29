@@ -12,9 +12,9 @@
 # RUN: not mdir run %t/energy.toml 2>&1 | FileCheck %s --check-prefix=ENERGY
 # RUN: not mdir run %t/tau.toml 2>&1 | FileCheck %s --check-prefix=TAU
 
-# NVT: nvt.toml:13: 'ensemble = "NVT"' needs 'thermostat = "BUSSI"', the thermostat of M1
-# NVE: nve.toml:13: a thermostat needs 'ensemble = "NVT"'
-# NPT: npt.toml:14: 'ensemble = "NPT"' is not supported yet; it is planned for M1
+# NVT: nvt.toml:13: 'ensemble = "NVT"' and "NPT" need 'thermostat = "BUSSI"', the thermostat of M1
+# NVE: nve.toml:13: a thermostat needs 'ensemble = "NVT"' or "NPT"
+# NPT: npt.toml:13: 'ensemble = "NPT"' needs 'barostat = "BERNETTI-BUSSI"', the barostat of M1
 # UNUSED: unused.toml: 'thermostat_period' is given, but there is no thermostat
 # DIFFER: differ.toml: 'comm_period' differs from 'thermostat_period'
 # MULTIPLE: multiple.toml: 'nsteps' is not a multiple of the period of coupling, 10 steps

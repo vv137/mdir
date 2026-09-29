@@ -190,10 +190,15 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                   checkpoint->integrator + ", and the run uses " +
                   integrator + "; the velocities of the two are not of the "
                   "same time");
-    for (int i = 0; i != 3; ++i)
-      if (checkpoint->box[i] != system->box[i])
-        return fail("the box of '" + path + "' differs from that of "
-                    "[boundary]");
+    // With a barostat the cell of the checkpoint is where the run left it;
+    // otherwise it is that of the input.
+    for (int i = 0; i != 3; ++i) {
+      if (control->barostat)
+        system->box[i] = checkpoint->box[i];
+      else if (checkpoint->box[i] != system->box[i])
+        return fail("the box of '" + path + "' differs from that of the "
+                    "input; only a run with a barostat changes it");
+    }
     if (control->integrator == Integrator::VelocityVerlet &&
         checkpoint->forces.empty())
       return fail("'" + path + "' holds no forces, which velocity Verlet "
@@ -313,6 +318,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     add("_mlir_ciface_mdrtWriteFrame", (void *)&_mlir_ciface_mdrtWriteFrame);
     add("_mlir_ciface_mdrtWriteTerms", (void *)&_mlir_ciface_mdrtWriteTerms);
     add("_mlir_ciface_mdrtAddBath", (void *)&_mlir_ciface_mdrtAddBath);
+    add("_mlir_ciface_mdrtSetBox", (void *)&_mlir_ciface_mdrtSetBox);
     add("_mlir_ciface_mdrtFinish", (void *)&_mlir_ciface_mdrtFinish);
     add("_mlir_ciface_mdrtWriteCheckpoint",
         program->writesForces
@@ -479,11 +485,15 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   output.couples = control->getCouplingPeriod() > 0;
   output.degreesOfFreedom = system->getDegreesOfFreedom();
   output.volume = system->box[0] * system->box[1] * system->box[2];
+  output.firstVolume = output.volume;
+  for (int k = 0; k != 3; ++k)
+    output.box[k] = system->box[k];
   output.dispersionEnergy = program->dispersionEnergy;
   output.dispersionVirial = program->dispersionVirial;
   output.pme = program->pme;
   output.pmeConstantEnergy = program->pmeConstantEnergy;
   output.pmeConstantVirial = program->pmeConstantVirial;
+  output.pmeSelfEnergy = program->pmeSelfEnergy;
   output.system = &*system;
   if (control->framePeriod > 0) {
     // The cell in Å, from the system: a topology gives it with the

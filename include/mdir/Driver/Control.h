@@ -150,6 +150,14 @@ struct Control {
   /// `temperature` with the time constant `tauT`, in ps.
   bool thermostat = false;
   double tauT = 1.0;
+  /// Stochastic cell rescaling (Bernetti and Bussi 2020), isotropic, at
+  /// `pressure` in atm with the time constant `tauP` in ps and the
+  /// isothermal compressibility `compressibility` in 1/atm.
+  bool barostat = false;
+  double pressure = 1.0;
+  double tauP = 5.0;
+  double compressibility = 4.5e-5 * 1.01325;
+  int64_t barostatPeriod = 0;
 
   /// The interval at which the velocities are coupled: the removal of the
   /// motion of the center of mass and the thermostat act there, at the end
