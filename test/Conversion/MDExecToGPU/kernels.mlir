@@ -129,7 +129,8 @@ func.func @forces(%x: memref<?x3xf64, 1>, %f: memref<?x3xf64, 1>,
 }
 
 // A constant from outside the kernel is a constant of the kernel: the
-// kernel knows the exponent of the power. A loop of the host that launches
+// kernel knows the exponent of the power, and writes the power out as
+// products. A loop of the host that launches
 // kernels releases the stack at the end of every iteration, because the
 // arguments of a launch are put on the stack.
 //
@@ -139,9 +140,9 @@ func.func @steps(%v: memref<?x3xf64, 1>, %steps: index) {
   // CHECK-NEXT:   %[[STACK:[0-9]+]] = llvm.intr.stacksave : !llvm.ptr
   // CHECK:        gpu.launch
   // CHECK-DAG:      %[[SCALE:[a-z0-9_]+]] = arith.constant 5.000000e-01 : f64
-  // CHECK-DAG:      %[[POWER:[a-z0-9_]+]] = arith.constant 3 : i32
   // CHECK:          scf.if
-  // CHECK:            math.fpowi %[[SCALE]], %[[POWER]]
+  // CHECK:            %[[SQUARE:[0-9]+]] = arith.mulf %[[SCALE]], %[[SCALE]] : f64
+  // CHECK:            arith.mulf %[[SCALE]], %[[SQUARE]] : f64
   // CHECK:          gpu.terminator
   // CHECK:        llvm.intr.stackrestore %[[STACK]] : !llvm.ptr
   // CHECK-NEXT: }

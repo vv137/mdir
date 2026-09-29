@@ -10,7 +10,7 @@
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
 // RUN: | FileCheck %S/../lj-dynamics.mlir
 
-// RUN: sed 's/%%tolerance = arith.constant 1.0e-9/%%tolerance = arith.constant 1.0e-6/' \
+// RUN: sed 's/%%tolerance = arith.constant 1.0e-9/%%tolerance = arith.constant 2.0e-6/' \
 // RUN:     %S/../lj-dynamics.mlir \
 // RUN: | mdir-opt %md_passes \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \

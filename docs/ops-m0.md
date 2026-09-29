@@ -818,9 +818,14 @@ included. Values are converted where they cross the boundary of the kernel.
 | A contribution to a global sum | At the end of the kernel, to `accumulator` |
 
 The squared distance and the displacement arrive in the type of the kernel.
-The loop computes them in the type of the positions and converts the
-results. The subtraction is the step that loses precision, so it is done
-before narrowing. The cutoff is tested in the type of the positions.
+The loop takes the difference of the positions in their type, where the
+subtraction would lose precision, and converts it; the minimum image, the
+squared distance, and the test of the cutoff follow in the type of the
+kernel. For a pair across the cell the rounding of the image is then about
+10⁻⁷ of the edge in `f32`. A device computes in `f64` at a small fraction
+of the rate of `f32`: with the minimum image in `f64`, the forces of the
+target of D65 took 172 microseconds a step on an RTX 3090, and 76 with it
+in `f32`.
 
 In the mixed mode, a kick reads forces of `f32` and velocities of `f64`:
 

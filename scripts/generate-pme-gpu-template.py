@@ -479,6 +479,84 @@ func.func private @mdrt_gpu_pme_convolve(%c: memref<?xf64, 1>, %moduli: memref<?
 """
 
 
+def scale():
+    body = Body("      ")
+    body("""\
+%cc0 = arith.constant 0 : index
+%cc1 = arith.constant 1 : index
+%cc2 = arith.constant 2 : index
+%kzero = arith.constant 0.0 : f64
+%kone = arith.constant 1.0 : f64
+%h = arith.divui %k3, %cc2 : index
+%h1 = arith.addi %h, %cc1 : index
+%row = arith.divui %item, %h1 : index
+%z = arith.remui %item, %h1 : index
+%a = arith.divui %row, %k2 : index
+%b = arith.remui %row, %k2 : index""")
+    m1 = wave(body, "w1_", "%a", "%k1", "%lx")
+    m2 = wave(body, "w2_", "%b", "%k2", "%ly")
+    body(f"""\
+%m1s = arith.mulf {m1}, {m1} : f64
+%m2s = arith.mulf {m2}, {m2} : f64
+%m12 = arith.addf %m1s, %m2s : f64
+%mod1 = memref.load %moduli[%cc0, %a] : memref<?x?xf64, 1>
+%mod2 = memref.load %moduli[%cc1, %b] : memref<?x?xf64, 1>
+%mod12 = arith.mulf %mod1, %mod2 : f64
+%zi = arith.index_cast %z : index to i64
+%zf = arith.sitofp %zi : i64 to f64
+%m3 = arith.divf %zf, %lz : f64
+%mod3 = memref.load %moduli[%cc2, %z] : memref<?x?xf64, 1>
+%m3s = arith.mulf %m3, %m3 : f64
+%msq = arith.addf %m12, %m3s : f64
+%origin = arith.cmpf oeq, %msq, %kzero : f64
+%safe = arith.select %origin, %kone, %msq : f64
+%inverse = arith.divf %kone, %safe : f64
+%gm = arith.mulf %gauss, %msq : f64
+%ngm = arith.negf %gm : f64
+%ex = math.exp %ngm : f64
+%exm = arith.mulf %ex, %inverse : f64
+%pexm = arith.mulf %prefactor, %exm : f64
+%mods = arith.mulf %mod12, %mod3 : f64
+%bc0 = arith.mulf %pexm, %mods : f64
+%bc = arith.select %origin, %kzero, %bc0 : f64
+%re_at = arith.muli %item, %cc2 : index
+%im_at = arith.addi %re_at, %cc1 : index
+%re = memref.load %c[%re_at] : memref<?xf64, 1>
+%im = memref.load %c[%im_at] : memref<?xf64, 1>
+%reb = arith.mulf %re, %bc : f64
+%imb = arith.mulf %im, %bc : f64
+memref.store %reb, %c[%re_at] : memref<?xf64, 1>
+memref.store %imb, %c[%im_at] : memref<?xf64, 1>""")
+    return f"""
+// Multiplies the half-complex transform `c` by the influence function, as
+// @mdrt_gpu_pme_convolve does, where neither the energy nor the virial is
+// needed: a thread for each point, and nothing for the host to wait for.
+func.func private @mdrt_gpu_pme_scale(%c: memref<?xf64, 1>, %moduli: memref<?x?xf64, 1>,
+                                      %box: vector<3xf64>, %beta: f64, %coulomb: f64,
+                                      %k1: index, %k2: index, %k3: index) {{
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %c128 = arith.constant 128 : index
+  %pi2 = arith.constant 9.869604401089358 : f64
+  %lx = vector.extract %box[0] : f64 from vector<3xf64>
+  %ly = vector.extract %box[1] : f64 from vector<3xf64>
+  %lz = vector.extract %box[2] : f64 from vector<3xf64>
+  %beta2 = arith.mulf %beta, %beta : f64
+  %gauss = arith.divf %pi2, %beta2 : f64
+  %pi = arith.constant 3.141592653589793 : f64
+  %lxy = arith.mulf %lx, %ly : f64
+  %volume = arith.mulf %lxy, %lz : f64
+  %piv = arith.mulf %pi, %volume : f64
+  %prefactor = arith.divf %coulomb, %piv : f64
+  %rows = arith.muli %k1, %k2 : index
+  %half = arith.divui %k3, %c2 : index
+  %depth = arith.addi %half, %c1 : index
+  %points = arith.muli %rows, %depth : index
+{launch(body.text(), "%points")}  return
+}}
+"""
+
+
 def gather():
     body = Body("      ")
     body("%i = arith.addi %item, %c0 : index")
@@ -572,7 +650,8 @@ def main():
     here = os.path.dirname(os.path.abspath(__file__))
     path = os.path.join(here, "..", "lib", "Runtime", "Templates", "PMEGPU.mlir")
     with open(path, "w") as file:
-        file.write(HEADER + spread() + real() + convolve() + gather())
+        file.write(HEADER + spread() + real() + convolve() + scale() +
+                   gather())
 
 
 if __name__ == "__main__":

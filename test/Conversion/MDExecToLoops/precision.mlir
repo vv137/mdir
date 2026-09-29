@@ -25,19 +25,21 @@ func.func @mixed(%x: !positions, %cell: !md.cell) -> (!forces, f64) {
       cutoff(2.5) skin(0.3) kind(matrix) width(96)
       : !mdrt.cells<@atoms>, !positions -> !mdrt.neighbors<@atoms>
 
+  // The difference of the positions is taken in f64, then the minimum
+  // image and the squared length in f32, the type of the kernel.
+  //
   // CHECK:      %[[F:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?x3xf32>
   // CHECK:      scf.parallel
-  // CHECK:        %[[CUTOFF2:[a-z0-9_]+]] = arith.constant 6.250000e+00 : f64
+  // CHECK:        %[[CUTOFF2:[a-z0-9_]+]] = arith.constant 6.250000e+00 : f32
   // CHECK:        scf.for
   // CHECK:          %[[RAW:[0-9]+]] = arith.subf %{{[0-9]+}}, %{{[0-9]+}} : vector<3xf64>
-  // CHECK:          %[[D:[0-9]+]] = arith.subf %[[RAW]], %{{[0-9]+}} : vector<3xf64>
-  // CHECK:          %[[R2:[0-9]+]] = vector.reduction <add>, %{{[0-9]+}} : vector<3xf64> into f64
-  // CHECK:          %[[R2N:[0-9]+]] = arith.truncf %[[R2]] : f64 to f32
-  // CHECK:          %[[DN:[0-9]+]] = arith.truncf %[[D]] : vector<3xf64> to vector<3xf32>
-  // CHECK:          %[[S:[0-9]+]] = vector.broadcast %[[R2N]] : f32 to vector<3xf32>
-  // CHECK:          %[[K:[0-9]+]] = arith.mulf %[[S]], %[[DN]] : vector<3xf32>
-  // CHECK:          %[[E:[0-9]+]] = arith.extf %[[R2N]] : f32 to f64
-  // CHECK:          arith.cmpf olt, %[[R2]], %[[CUTOFF2]] : f64
+  // CHECK:          %[[RAWN:[0-9]+]] = arith.truncf %[[RAW]] : vector<3xf64> to vector<3xf32>
+  // CHECK:          %[[D:[0-9]+]] = arith.subf %[[RAWN]], %{{[0-9]+}} : vector<3xf32>
+  // CHECK:          %[[R2:[0-9]+]] = vector.reduction <add>, %{{[0-9]+}} : vector<3xf32> into f32
+  // CHECK:          %[[S:[0-9]+]] = vector.broadcast %[[R2]] : f32 to vector<3xf32>
+  // CHECK:          %[[K:[0-9]+]] = arith.mulf %[[S]], %[[D]] : vector<3xf32>
+  // CHECK:          %[[E:[0-9]+]] = arith.extf %[[R2]] : f32 to f64
+  // CHECK:          arith.cmpf olt, %[[R2]], %[[CUTOFF2]] : f32
   // CHECK:        memref.store %{{[0-9]+}}, %[[F]][
   %f0 = md_exec.zeros : !forces
   %u0 = arith.constant 0.0 : f64

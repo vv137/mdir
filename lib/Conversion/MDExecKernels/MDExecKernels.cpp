@@ -132,13 +132,16 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
   unsigned numOuts = op.getOuts().size();
   unsigned numYields = yield->getNumOperands();
 
-  // The displacement is computed in the type of the positions and then
+  // The difference of the positions is taken in their type and then
   // converted to the type that the kernel computes in: the subtraction is
-  // the step that loses precision.
-  Type real = cast<MemRefType>(positions.getType()).getElementType();
+  // the step that loses precision. The minimum image and the squared
+  // length follow in the type of the kernel; a device computes in double
+  // precision at a small fraction of the rate of single.
   Type computed = kernel.getArgument(0).getType();
   double cutoff = op.getCutoff().convertToDouble();
-  Value cutoff2 = createReal(builder, loc, real, cutoff * cutoff);
+  Value cutoff2 = createReal(builder, loc, computed, cutoff * cutoff);
+  Value boxComputed = convertReal(builder, loc, box, computed);
+  Value inverseComputed = convertReal(builder, loc, inverse, computed);
   Value zero = createIndex(builder, loc, 0);
   Value one = createIndex(builder, loc, 1);
 
@@ -176,21 +179,22 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
         // The minimum-image displacement [AllenTildesley2017] and its
         // squared length.
         Value otherPosition = loadElement(pair, loc, positions, other);
-        Value raw =
-            arith::SubFOp::create(pair, loc, centralPosition, otherPosition);
-        Value images = arith::MulFOp::create(pair, loc, raw, inverse);
+        Value raw = convertReal(
+            pair, loc,
+            arith::SubFOp::create(pair, loc, centralPosition, otherPosition),
+            computed);
+        Value images =
+            arith::MulFOp::create(pair, loc, raw, inverseComputed);
         Value nearest = math::RoundEvenOp::create(pair, loc, images);
-        Value shift = arith::MulFOp::create(pair, loc, nearest, box);
+        Value shift = arith::MulFOp::create(pair, loc, nearest, boxComputed);
         Value d = arith::SubFOp::create(pair, loc, raw, shift);
         Value squares = arith::MulFOp::create(pair, loc, d, d);
         Value r2 = vector::ReductionOp::create(
             pair, loc, vector::CombiningKind::ADD, squares);
 
         IRMapping inside = local;
-        inside.map(kernel.getArgument(0),
-                   convertReal(pair, loc, r2, computed));
-        inside.map(kernel.getArgument(1),
-                   convertReal(pair, loc, d, computed));
+        inside.map(kernel.getArgument(0), r2);
+        inside.map(kernel.getArgument(1), d);
         for (unsigned i = 0; i != numIns; ++i) {
           inside.map(kernel.getArgument(2 + 2 * i), centralValues[i]);
           inside.map(kernel.getArgument(3 + 2 * i),
@@ -301,10 +305,12 @@ SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
   unsigned numYields = yield->getNumOperands();
   int64_t entry = md_exec::getIncidenceEntrySize(arity);
 
-  // As for pairs, the displacements are computed in the type of the
-  // positions and converted to the type that the kernel computes in.
+  // As for pairs, the differences of the positions are taken in their type
+  // and the minimum image in the type that the kernel computes in.
   Type computed =
       cast<VectorType>(kernel.getArgument(0).getType()).getElementType();
+  Value boxComputed = convertReal(builder, loc, box, computed);
+  Value inverseComputed = convertReal(builder, loc, inverse, computed);
   SmallVector<md::Coordinate, 2> coordinates = op.getCoordinates();
   Value zero = createIndex(builder, loc, 0);
   Value one = createIndex(builder, loc, 1);
@@ -348,15 +354,16 @@ SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
           return memberPositions[q];
         };
         for (auto [index, coordinate] : llvm::enumerate(coordinates)) {
-          Value raw = arith::SubFOp::create(b, loc,
-                                            positionOf(coordinate.members[0]),
-                                            positionOf(coordinate.members[1]));
-          Value images = arith::MulFOp::create(b, loc, raw, inverse);
+          Value raw = convertReal(
+              b, loc,
+              arith::SubFOp::create(b, loc, positionOf(coordinate.members[0]),
+                                    positionOf(coordinate.members[1])),
+              computed);
+          Value images = arith::MulFOp::create(b, loc, raw, inverseComputed);
           Value nearest = math::RoundEvenOp::create(b, loc, images);
-          Value shift = arith::MulFOp::create(b, loc, nearest, box);
+          Value shift = arith::MulFOp::create(b, loc, nearest, boxComputed);
           Value d = arith::SubFOp::create(b, loc, raw, shift);
-          inside.map(kernel.getArgument(index),
-                     convertReal(b, loc, d, computed));
+          inside.map(kernel.getArgument(index), d);
         }
         unsigned argument = numCoordinates;
         for (Value buffer : op.getIns())

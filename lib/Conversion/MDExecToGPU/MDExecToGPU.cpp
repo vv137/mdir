@@ -1123,17 +1123,27 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
     function->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
   func::CallOp::create(builder, loc, forward,
                        ValueRange{real, complex, sizes[0], sizes[1], sizes[2]});
-  auto convolve = func::CallOp::create(
-      builder, loc, instance("mdrt_gpu_pme_convolve"),
-      ValueRange{complex, op.getModuli(), rows, box, beta, coulomb, k1, k2,
-                 k3});
+  // Without its energy and virial, a step only scales the transform, and
+  // the host need not wait for the sums of the rows.
+  func::CallOp convolve;
+  if (op.getEnergy().use_empty() && op.getVirial().use_empty())
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_scale"),
+                         ValueRange{complex, op.getModuli(), box, beta,
+                                    coulomb, k1, k2, k3});
+  else
+    convolve = func::CallOp::create(
+        builder, loc, instance("mdrt_gpu_pme_convolve"),
+        ValueRange{complex, op.getModuli(), rows, box, beta, coulomb, k1, k2,
+                   k3});
   func::CallOp::create(builder, loc, backward,
                        ValueRange{complex, real, sizes[0], sizes[1], sizes[2]});
   func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_gather"),
                        ValueRange{positions, charges, real, box, k1, k2, k3,
                                   order, forces});
-  op.getEnergy().replaceAllUsesWith(convolve.getResult(0));
-  op.getVirial().replaceAllUsesWith(convolve.getResult(1));
+  if (convolve) {
+    op.getEnergy().replaceAllUsesWith(convolve.getResult(0));
+    op.getVirial().replaceAllUsesWith(convolve.getResult(1));
+  }
   return success();
 }
 
@@ -1541,6 +1551,47 @@ LogicalResult Lowering::lowerOp(Operation *op) {
   return success();
 }
 
+/// Writes out every power with a constant exponent in the kernels of
+/// `function` as products, by squaring: a device would call a function of
+/// libdevice for each, and a pair of Lennard-Jones has five of them.
+static void expandPowers(func::FuncOp function) {
+  SmallVector<math::FPowIOp> powers;
+  function.walk([&](math::FPowIOp power) {
+    if (power->getParentOfType<gpu::LaunchOp>())
+      powers.push_back(power);
+  });
+  for (math::FPowIOp power : powers) {
+    APInt exponent;
+    if (!matchPattern(power.getRhs(), m_ConstantInt(&exponent)))
+      continue;
+    int64_t n = exponent.getSExtValue();
+    if (n < -32 || n > 32)
+      continue;
+    OpBuilder builder(power);
+    Location loc = power.getLoc();
+    Value base = power.getLhs();
+    Type type = base.getType();
+    Value one = createReal(builder, loc, getElementTypeOrSelf(type), 1.0);
+    if (auto vector = dyn_cast<VectorType>(type))
+      one = vector::BroadcastOp::create(builder, loc, vector, one);
+    Value result;
+    Value square = base;
+    for (int64_t m = n < 0 ? -n : n; m != 0; m >>= 1) {
+      if (m & 1)
+        result = result ? arith::MulFOp::create(builder, loc, result, square)
+                        : square;
+      if (m >> 1)
+        square = arith::MulFOp::create(builder, loc, square, square);
+    }
+    if (!result)
+      result = one;
+    if (n < 0)
+      result = arith::DivFOp::create(builder, loc, one, result);
+    power.getResult().replaceAllUsesWith(result);
+    power.erase();
+  }
+}
+
 LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   FunctionType type = function.getFunctionType();
   Type box = VectorType::get({3}, Float64Type::get(context));
@@ -1624,6 +1675,7 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
 
   // The kernels read tables from their buffers.
   lowerLookups(function);
+  expandPowers(function);
 
   releaseStack(function);
   return success();
