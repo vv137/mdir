@@ -287,6 +287,7 @@ P11 to P18 follow from the review of PPMD (Saunders et al. 2018). See
 | D24 | **The input format is TOML.** Its schema starts small and is expected to change. |
 | D25 | **Trajectories are written as XTC.** XTC holds positions only, in reduced precision, so it does not serve as a checkpoint. |
 | D26 | **Checkpoints are written as H5MD, in 64-bit floating point.** A checkpoint holds positions and velocities, together with everything else an exact restart needs. H5MD is an HDF5-based format with standard places for positions, velocities, periodic images, particle IDs, and the box, and it allows application-specific groups. |
+| D27 | **D8 applies from M0.** The kernels that build cells and neighbor structures are generated from the first milestone. The runtime provides only generic primitives. |
 
 ### 5.1 Amendments to earlier decisions
 
@@ -354,7 +355,7 @@ These items follow from the decisions above but have no design yet.
 | `md_exec` dialect and the lowering into it | M0 | Next step |
 | Check that particle set symbols in types are declared | M0 | |
 | Regression test for the numerical values of derivatives | M0 | Implemented with a kernel runner |
-| `mdrt` ABI: storage, neighbor structures, events | M0 | Under discussion; requirements in ops-m0.md, Section 11 |
+| `mdrt` ABI: storage, neighbor structures, events | M0 | Proposal in [mdrt-m0.md](mdrt-m0.md) |
 | Reference interpreter for the semantic dialects | M0 | |
 | Schema of the TOML input | M0 | |
 | Layout of the MDIR group inside an H5MD checkpoint | M0 | |

@@ -10,6 +10,7 @@ parses, verifies, and prints.
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | The design |
 | [docs/ops-m0.md](docs/ops-m0.md) | Types and ops for the first milestone |
+| [docs/mdrt-m0.md](docs/mdrt-m0.md) | Proposal for the runtime and execution of the first milestone |
 | [docs/decisions.md](docs/decisions.md) | Decisions and their status |
 | [docs/prior-art.md](docs/prior-art.md) | Earlier work and what is taken from it |
 
