@@ -47,8 +47,27 @@ struct Program {
   struct Field {
     std::string name;
     std::vector<double> values;
+    /// Whether the field holds whole numbers, which the program takes as
+    /// i32: the types of the particles.
+    bool isInteger = false;
   };
   std::vector<Field> fields;
+
+  /// Parameters of the pairs of types that a pair term looks up, in the
+  /// units of the control file: `values[a * count + b]` for the types `a`
+  /// and `b`.
+  struct Table {
+    std::string name;
+    unsigned count = 0;
+    std::vector<double> values;
+  };
+  std::vector<Table> tables;
+
+  /// The correction for the dispersion beyond the cutoff, in kJ/mol, at
+  /// the volume of the run: what it adds to the potential energy and to
+  /// the trace of the virial.
+  double dispersionEnergy = 0.0;
+  double dispersionVirial = 0.0;
 
   /// The skin of the neighbor structures, in nm, and the number of
   /// neighbors that they hold per particle.

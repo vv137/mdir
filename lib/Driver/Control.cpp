@@ -56,6 +56,7 @@ private:
 
   Error readEnergy(const toml::table &table);
   Error readPair(const toml::table &table);
+  Error readOverride(const toml::table &table);
   Error readType(const toml::table &table);
   Error readDynamics(const toml::table &table);
   Error readEnsemble(const toml::table &table);
@@ -205,8 +206,11 @@ Error Reader::readPair(const toml::table &table) {
       mixing = Mixing::Arithmetic;
     else if (text.equals_insensitive("geometric"))
       mixing = Mixing::Geometric;
+    else if (text.equals_insensitive("product"))
+      mixing = Mixing::Product;
     else
-      return fail(node, "expected 'arithmetic' or 'geometric', got '" +
+      return fail(node, "expected 'arithmetic', 'geometric', or 'product', "
+                        "got '" +
                             text + "'");
     return Error::success();
   };
@@ -215,12 +219,21 @@ Error Reader::readPair(const toml::table &table) {
     StringRef keyword = toRef(key.str());
     if (keyword == "name" || keyword == "expression")
       continue;
+    if (keyword == "dispersion_corr") {
+      if (Error error = readChoice<DispersionCorrection>(
+              table, "dispersion_corr", term.dispersion,
+              {{"NONE", DispersionCorrection::None},
+               {"EPRESS", DispersionCorrection::EnergyPressure}}))
+        return error;
+      continue;
+    }
     if (keyword == "mixing") {
       // The name of a rule, or a rule for each parameter.
       if (auto rules = node.as_table()) {
         for (auto &&[parameter, rule] : *rules) {
           if (!rule.is_string())
-            return fail(rule, "expected 'arithmetic' or 'geometric'");
+            return fail(rule,
+                        "expected 'arithmetic', 'geometric', or 'product'");
           Mixing mixing;
           if (Error error = readMixing(rule, *rule.value<std::string>(),
                                        mixing))
@@ -254,6 +267,33 @@ Error Reader::readPair(const toml::table &table) {
   return Error::success();
 }
 
+Error Reader::readOverride(const toml::table &table) {
+  PairOverride entry;
+  if (Error error = readString(table, "pair", entry.term))
+    return error;
+  const toml::node *types = table.get("types");
+  const toml::array *names = types ? types->as_array() : nullptr;
+  if (!names || names->size() != 2 || !(*names)[0].is_string() ||
+      !(*names)[1].is_string())
+    return fail(types ? *types : static_cast<const toml::node &>(table),
+                "expected 'types' with the names of two types in "
+                "[[energy.nbfix]]");
+  entry.first = *(*names)[0].value<std::string>();
+  entry.second = *(*names)[1].value<std::string>();
+  for (auto &&[key, node] : table) {
+    StringRef keyword = toRef(key.str());
+    if (keyword == "pair" || keyword == "types")
+      continue;
+    if (!node.is_number())
+      return fail(node, "expected a number for '" + keyword + "'");
+    entry.parameters.push_back({keyword.str(), *node.value<double>()});
+  }
+  if (entry.parameters.empty())
+    return fail(table, "expected at least one parameter in [[energy.nbfix]]");
+  control.overrides.push_back(std::move(entry));
+  return Error::success();
+}
+
 Error Reader::readType(const toml::table &table) {
   ParticleType type;
   if (Error error = readString(table, "name", type.name))
@@ -284,11 +324,10 @@ Error Reader::readEnergy(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "energy",
           {"switchdist", "cutoffdist", "pairlistdist", "vdw_force_switch",
-           "vdw_shift", "pair", "type"},
+           "vdw_shift", "pair", "type", "nbfix"},
           {{"forcefield", "M1"},
            {"electrostatic", "M2"},
-           {"dielec_const", "M1"},
-           {"dispersion_corr", "M1"}}))
+           {"dielec_const", "M1"}}))
     return error;
 
   if (Error error = readPositive(table, "cutoffdist", control.cutoffDistance))
@@ -348,6 +387,8 @@ Error Reader::readEnergy(const toml::table &table) {
   if (Error error = readArray("type", &Reader::readType))
     return error;
   if (Error error = readArray("pair", &Reader::readPair))
+    return error;
+  if (Error error = readArray("nbfix", &Reader::readOverride))
     return error;
 
   if (control.types.empty())

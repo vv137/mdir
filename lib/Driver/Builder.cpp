@@ -17,6 +17,24 @@ static StringRef getName(Element element) {
 
 namespace {
 
+/// The Coulomb constant in the units of the control file, kcal Å mol⁻¹ e⁻²,
+/// from CODATA 2018 (docs/conventions.md). An expression names it
+/// `coulomb`.
+constexpr double coulombConstant = 332.06371329919205;
+
+/// The parameter of a pair from those of its two particles.
+static double mix(Mixing mixing, double a, double b) {
+  switch (mixing) {
+  case Mixing::Arithmetic:
+    return 0.5 * (a + b);
+  case Mixing::Geometric:
+    return std::sqrt(a * b);
+  case Mixing::Product:
+    return a * b;
+  }
+  return 0.0;
+}
+
 /// A parameter of the types that an expression uses.
 struct Parameter {
   std::string name;
@@ -80,6 +98,23 @@ private:
   std::vector<Expression> expressions;
   std::vector<Parameter> parameters;
 
+  /// For each pair term that looks its parameters up: the table of each
+  /// parameter, by name. Empty for a term that gathers them.
+  std::vector<llvm::StringMap<unsigned>> termTables;
+
+  /// The values of the parameters of each term for each pair of types, in
+  /// the units of the control file: the constants of the term, and the
+  /// parameters as the mixing rules and the overrides give them.
+  llvm::Error collectPairValues(
+      unsigned term,
+      std::vector<std::vector<llvm::StringMap<double>>> &values);
+  llvm::Error computeDispersion();
+
+  /// The type of the field `field` in the program.
+  static StringRef getFieldType(const Program::Field &field) {
+    return field.isInteger ? "!ids" : "!real";
+  }
+
   /// The loops of the schedule, from the outside in: their number of
   /// iterations. The last loop is the one over steps.
   struct Level {
@@ -96,7 +131,9 @@ private:
 std::string Builder::getFieldParameters() const {
   std::string text;
   for (const Program::Field &field : program.fields)
-    text += ", %p_" + field.name + ": !real";
+    text += ", %p_" + field.name + ": " + getFieldType(field).str();
+  for (const Program::Table &table : program.tables)
+    text += ", %t_" + table.name + ": !table";
   return text;
 }
 
@@ -104,6 +141,10 @@ std::string Builder::getFieldValues(StringRef prefix) const {
   std::string text;
   for (const Program::Field &field : program.fields)
     text += (", " + prefix + field.name).str();
+  // Tables do not change with the order of the particles; they keep their
+  // names everywhere.
+  for (const Program::Table &table : program.tables)
+    text += ", %t_" + table.name;
   return text;
 }
 
@@ -129,60 +170,127 @@ void Builder::emitReorder(StringRef indent, StringRef from,
   permute("%m" + otherTo, "%m" + from, "!real");
   for (const Program::Field &field : program.fields)
     permute("%p" + otherTo + "_" + field.name,
-            "%p" + from + "_" + field.name, "!real");
+            "%p" + from + "_" + field.name, getFieldType(field));
   permute("%id" + otherTo, "%id" + from, "!ids");
 }
 
 std::string Builder::getFieldTypes() const {
   std::string text;
-  for (size_t i = 0, e = program.fields.size(); i != e; ++i)
-    text += ", !real";
+  for (const Program::Field &field : program.fields)
+    text += ", " + getFieldType(field).str();
+  for (size_t i = 0, e = program.tables.size(); i != e; ++i)
+    text += ", !table";
   return text;
 }
 
+/// The overrides of the pair term `term`: those that name it, and those
+/// that name no term where there is one term.
+static std::vector<const PairOverride *>
+getOverrides(const Control &control, const PairTerm &term) {
+  std::vector<const PairOverride *> found;
+  for (const PairOverride &entry : control.overrides)
+    if (entry.term == term.name ||
+        (entry.term.empty() && control.pairs.size() == 1))
+      found.push_back(&entry);
+  return found;
+}
+
+/// The index of the type named `name`, or -1.
+static int findType(const Control &control, StringRef name) {
+  for (auto [index, type] : llvm::enumerate(control.types))
+    if (type.name == name)
+      return static_cast<int>(index);
+  return -1;
+}
+
+static llvm::Error makeError(const llvm::Twine &message) {
+  return llvm::createStringError(llvm::inconvertibleErrorCode(), message);
+}
+
 llvm::Error Builder::collectParameters() {
+  for (const PairOverride &entry : control.overrides) {
+    if (entry.term.empty() && control.pairs.size() != 1)
+      return makeError("[[energy.nbfix]] needs 'pair' to name the pair term "
+                       "when there is more than one");
+    if (!entry.term.empty() &&
+        llvm::none_of(control.pairs, [&](const PairTerm &term) {
+          return term.name == entry.term;
+        }))
+      return makeError("[[energy.nbfix]] names the pair term '" + entry.term +
+                       "', which does not exist");
+    for (const std::string &name : {entry.first, entry.second})
+      if (findType(control, name) < 0)
+        return makeError("[[energy.nbfix]] names the type '" + name +
+                         "', which does not exist");
+  }
+
   for (const PairTerm &term : control.pairs) {
     auto expression = Expression::parse(term.expression);
     if (!expression)
       return expression.takeError();
+    std::vector<const PairOverride *> overrides = getOverrides(control, term);
+    llvm::StringMap<unsigned> tables;
 
     for (const std::string &name : expression->getNames()) {
-      if (name == "r")
+      if (name == "r" || name == "coulomb")
         continue;
       if (llvm::any_of(term.constants,
                        [&](auto &constant) { return constant.first == name; }))
         continue;
-      if (llvm::any_of(parameters,
-                       [&](Parameter &known) { return known.name == name; }))
-        continue;
 
       // A parameter of the types. Every type must have it.
-      Parameter parameter;
-      parameter.name = name;
       std::vector<double> values;
       for (const ParticleType &type : control.types) {
         auto found = llvm::find_if(type.parameters, [&](auto &entry) {
           return entry.first == name;
         });
         if (found == type.parameters.end())
-          return llvm::createStringError(
-              llvm::inconvertibleErrorCode(),
-              "the expression of '%s' uses '%s', which is neither 'r', nor "
-              "a number of the term, nor a parameter of the type '%s'",
-              term.name.c_str(), name.c_str(), type.name.c_str());
+          return makeError("the expression of '" + term.name + "' uses '" +
+                           name + "', which is neither 'r', nor 'coulomb', "
+                           "nor a number of the term, nor a parameter of the "
+                           "type '" + type.name + "'");
         values.push_back(found->second);
       }
-      parameter.value = values.front();
-      parameter.isUniform = llvm::all_of(
+      bool isUniform = llvm::all_of(
           values, [&](double value) { return value == values.front(); });
+      if (!isUniform && !term.mixing.count(name))
+        return makeError("'" + name + "' differs between the types, but the "
+                         "term '" + term.name + "' has no rule of 'mixing' "
+                         "for it");
 
+      // A term with overrides looks every parameter up in a table of the
+      // pairs of types (D57).
+      if (!overrides.empty()) {
+        Program::Table table;
+        table.name = term.name + "_" + name;
+        table.count = control.types.size();
+        table.values.resize(table.count * table.count);
+        for (unsigned a = 0; a != table.count; ++a)
+          for (unsigned b = 0; b != table.count; ++b)
+            table.values[a * table.count + b] =
+                isUniform ? values.front()
+                          : mix(term.mixing.lookup(name), values[a], values[b]);
+        for (const PairOverride *entry : overrides)
+          for (auto &[parameter, value] : entry->parameters)
+            if (parameter == name) {
+              unsigned a = findType(control, entry->first);
+              unsigned b = findType(control, entry->second);
+              table.values[a * table.count + b] = value;
+              table.values[b * table.count + a] = value;
+            }
+        tables[name] = program.tables.size();
+        program.tables.push_back(std::move(table));
+        continue;
+      }
+
+      if (llvm::any_of(parameters,
+                       [&](Parameter &known) { return known.name == name; }))
+        continue;
+      Parameter parameter;
+      parameter.name = name;
+      parameter.value = values.front();
+      parameter.isUniform = isUniform;
       if (!parameter.isUniform) {
-        if (!term.mixing.count(name))
-          return llvm::createStringError(
-              llvm::inconvertibleErrorCode(),
-              "'%s' differs between the types, but the term '%s' has no "
-              "rule of 'mixing' for it",
-              name.c_str(), term.name.c_str());
         parameter.field = program.fields.size();
         Program::Field field;
         field.name = name;
@@ -192,8 +300,121 @@ llvm::Error Builder::collectParameters() {
       }
       parameters.push_back(std::move(parameter));
     }
+
+    // Every parameter that an override sets is one that the term uses.
+    for (const PairOverride *entry : overrides)
+      for (auto &[parameter, value] : entry->parameters)
+        if (!tables.count(parameter))
+          return makeError("[[energy.nbfix]] sets '" + parameter +
+                           "', which is not a parameter of the types that "
+                           "the term '" + term.name + "' uses");
+
+    // The types of the particles, which the lookups take.
+    if (!tables.empty() &&
+        llvm::none_of(program.fields,
+                      [](const Program::Field &field) {
+                        return field.isInteger;
+                      })) {
+      Program::Field field;
+      field.name = "type";
+      field.isInteger = true;
+      for (unsigned type : system.types)
+        field.values.push_back(type);
+      program.fields.push_back(std::move(field));
+    }
+    termTables.push_back(std::move(tables));
     expressions.push_back(std::move(*expression));
   }
+  return computeDispersion();
+}
+
+llvm::Error Builder::collectPairValues(
+    unsigned index, std::vector<std::vector<llvm::StringMap<double>>> &values) {
+  const PairTerm &term = control.pairs[index];
+  unsigned count = control.types.size();
+  values.assign(count, std::vector<llvm::StringMap<double>>(count));
+  for (unsigned a = 0; a != count; ++a)
+    for (unsigned b = 0; b != count; ++b) {
+      llvm::StringMap<double> &pair = values[a][b];
+      pair["coulomb"] = coulombConstant;
+      for (auto &[name, value] : term.constants)
+        pair[name] = value;
+      for (const Parameter &parameter : parameters) {
+        auto valueOf = [&](unsigned type) {
+          for (auto &[name, value] : control.types[type].parameters)
+            if (name == parameter.name)
+              return value;
+          return 0.0;
+        };
+        pair[parameter.name] =
+            parameter.isUniform
+                ? parameter.value
+                : mix(term.mixing.lookup(parameter.name), valueOf(a),
+                      valueOf(b));
+      }
+      for (auto &[name, table] : termTables[index])
+        pair[name] = program.tables[table].values[a * count + b];
+    }
+  return llvm::Error::success();
+}
+
+llvm::Error Builder::computeDispersion() {
+  bool corrects = llvm::any_of(control.pairs, [](const PairTerm &term) {
+    return term.dispersion != DispersionCorrection::None;
+  });
+  if (!corrects)
+    return llvm::Error::success();
+  if (control.truncation != Truncation::None)
+    return makeError("'dispersion_corr' needs a plain cutoff: 'switchdist' "
+                     "equal to 'cutoffdist', and no 'vdw_shift' or "
+                     "'vdw_force_switch'");
+
+  // Beyond the cutoff the term is taken to be its dispersion, −C6 / r⁶,
+  // and the density to be uniform [AllenTildesley2017, GromacsManual2025]:
+  //
+  //   E = −(2π / 3V) Σ_ab N_a (N_b − δ_ab) C6_ab / rc³        W = 6 E
+  //
+  // for each pair of types a and b, so that the pressure changes by 2E / V.
+  // The repulsion beyond the cutoff is left out, as the engines leave it
+  // out. C6 is the limit of −r⁶ u(r); a term that does not decay as 1/r⁶ is
+  // an error. The expression is in the units of the control file.
+  unsigned count = control.types.size();
+  std::vector<double> numbers(count, 0.0);
+  for (unsigned type : system.types)
+    numbers[type] += 1.0;
+  double rc = control.cutoffDistance;
+  double volume = system.box[0] * system.box[1] * system.box[2] /
+                  (units::length * units::length * units::length);
+
+  double energy = 0.0;
+  for (unsigned index = 0, e = control.pairs.size(); index != e; ++index) {
+    const PairTerm &term = control.pairs[index];
+    if (term.dispersion == DispersionCorrection::None)
+      continue;
+    std::vector<std::vector<llvm::StringMap<double>>> values;
+    if (llvm::Error error = collectPairValues(index, values))
+      return error;
+    const Expression &expression = expressions[index];
+    for (unsigned a = 0; a != count; ++a)
+      for (unsigned b = 0; b != count; ++b) {
+        llvm::StringMap<double> pair = values[a][b];
+        auto c6At = [&](double r) {
+          pair["r"] = r;
+          return -std::pow(r, 6) * expression.evaluate(pair);
+        };
+        double near = c6At(1.0e3 * rc), far = c6At(1.0e4 * rc);
+        if (!std::isfinite(near) || !std::isfinite(far) ||
+            std::fabs(near - far) > 1.0e-9 * std::max(std::fabs(far), 1.0e-300))
+          return makeError("'dispersion_corr' of the term '" + term.name +
+                           "' needs a term that decays as 1/r^6 beyond the "
+                           "cutoff");
+        double pairs = numbers[a] * (numbers[b] - (a == b ? 1.0 : 0.0));
+        energy += -2.0 * M_PI / (3.0 * volume) * pairs * far /
+                  (rc * rc * rc);
+      }
+  }
+  program.dispersionEnergy = energy * units::energy;
+  program.dispersionVirial = 6.0 * energy * units::energy;
   return llvm::Error::success();
 }
 
@@ -227,9 +448,15 @@ llvm::Error Builder::emitPotential() {
 
     // The fields that the kernel reads, and the values of the two
     // particles of a pair.
+    const llvm::StringMap<unsigned> &tables = termTables[index];
     std::string gathered, types, arguments;
+    if (!tables.empty()) {
+      gathered = "%p_type";
+      types = "!ids";
+      arguments = ", %type_i: i32, %type_j: i32";
+    }
     for (const Parameter &parameter : parameters) {
-      if (parameter.isUniform ||
+      if (!tables.empty() || parameter.isUniform ||
           !llvm::is_contained(expression.getNames(), parameter.name))
         continue;
       gathered += (gathered.empty() ? "" : ", ") + ("%p_" + parameter.name);
@@ -257,8 +484,20 @@ llvm::Error Builder::emitPotential() {
          << " : f64\n";
       values[name] = "%c_" + name;
     }
+    if (llvm::is_contained(expression.getNames(), "coulomb")) {
+      os << "    %coulomb = arith.constant " << formatReal(coulombConstant)
+         << " : f64\n";
+      values["coulomb"] = "%coulomb";
+    }
+    for (auto &[name, table] : tables) {
+      os << "    %" << name.str() << " = md.lookup %t_"
+         << program.tables[table].name
+         << "[%type_i, %type_j] : !table, i32, i32 -> f64\n";
+      values[name] = "%" + name.str();
+    }
     for (const Parameter &parameter : parameters) {
-      if (!llvm::is_contained(expression.getNames(), parameter.name))
+      if (!tables.empty() ||
+          !llvm::is_contained(expression.getNames(), parameter.name))
         continue;
       const std::string &name = parameter.name;
       if (parameter.isUniform) {
@@ -270,6 +509,9 @@ llvm::Error Builder::emitPotential() {
            << name << "_j : f64\n";
         os << "    %" << name << " = arith.mulf %half_" << name << ", %sum_"
            << name << " : f64\n";
+      } else if (term.mixing.lookup(name) == Mixing::Product) {
+        os << "    %" << name << " = arith.mulf %" << name << "_i, %" << name
+           << "_j : f64\n";
       } else {
         os << "    %product_" << name << " = arith.mulf %" << name
            << "_i, %" << name << "_j : f64\n";
@@ -445,7 +687,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       moreResults += ", %pe" + here + "_" + field.name;
       moreInits +=
           ", %pa" + here + "_" + field.name + " = " + fieldPrefix + field.name;
-      moreTypes += ", !real";
+      moreTypes += ", " + getFieldType(field).str();
       moreYielded += ", %ps_" + field.name;
     }
     moreResults += ", %ide" + here;
@@ -613,7 +855,10 @@ void Builder::emitEntry() {
     os << "    %forces: memref<?x3x" << force << ">,\n";
   os << "    %masses: memref<?x" << mass << ">";
   for (const Program::Field &field : program.fields)
-    os << ", %b_" << field.name << ": memref<?x" << parameter << ">";
+    os << ", %b_" << field.name << ": memref<?x"
+       << (field.isInteger ? StringRef("i32") : parameter) << ">";
+  for (const Program::Table &table : program.tables)
+    os << ", %bt_" << table.name << ": memref<?x?xf64>";
   os << ",\n    %identities: memref<?xi32>,\n"
      << "    %lx: f64, %ly: f64, %lz: f64, %dt: f64, %start: i64) {\n";
 
@@ -649,7 +894,12 @@ void Builder::emitEntry() {
      << "> to !real\n";
   for (const Program::Field &field : program.fields)
     os << "  %p" << given << "_" << field.name << " = mdrt.from_buffer %b_"
-       << field.name << " : memref<?x" << parameter << "> to !real\n";
+       << field.name << " : memref<?x"
+       << (field.isInteger ? StringRef("i32") : parameter) << "> to "
+       << getFieldType(field) << "\n";
+  for (const Program::Table &table : program.tables)
+    os << "  %t_" << table.name << " = mdrt.from_buffer %bt_" << table.name
+       << " : memref<?x?xf64> to !table\n";
   os << "  %id" << given
      << " = mdrt.from_buffer %identities : memref<?xi32> to !ids\n";
   // A run that continues an earlier one has the forces of the step before.
@@ -755,6 +1005,7 @@ llvm::Error Builder::build() {
   os << "!vec   = !md.field<@atoms, 3 x f64>\n"
      << "!real  = !md.field<@atoms, f64>\n"
      << "!ids   = !md.field<@atoms, i32>\n"
+     << "!table = !md.table<2, f64, symmetric>\n"
      << "!pairs = !md.relation<@atoms, 2, unordered>\n\n"
      << "md.particle_set @atoms\n\n";
   if (llvm::Error error = emitPotential())

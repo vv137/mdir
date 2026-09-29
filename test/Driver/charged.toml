@@ -1,0 +1,81 @@
+# The mixture of argon (AR) and krypton (KR) of mixture.toml with made-up
+# charges of +0.25 and -0.25: Lennard-Jones with Lorentz-Berthelot mixing,
+# except for the pair of types AR and KR, which [[energy.nbfix]] sets;
+# Coulomb with the product of the charges; both cut at 9 Å with no shift,
+# and the correction for the dispersion of the Lennard-Jones term.
+#
+# RUN: mdir run %s | FileCheck %s
+# RUN: mdir emit %s | FileCheck %s --check-prefix=MODULE
+
+# The potential energy and the trace of the virial at the start agree with
+# Inputs/charged_reference.py: 349.977103 kcal/mol and -526.580632 kcal/mol,
+# with a correction of -24.807798 kcal/mol in the energy.
+#
+# CHECK:      INFO:      STEP           TIME      TOTAL_ENE  POTENTIAL_ENE    KINETIC_ENE    TEMPERATURE         VIRIAL       PRESSURE
+# CHECK-NEXT: INFO:         0         0.0000 {{ *[0-9.]+}} {{ *}}349.9771 {{ *[0-9.]+}} {{ *[0-9.]+}} {{ *}}-526.5806 {{ *-?[0-9.]+}}
+
+# The term with an override looks its parameters up in tables of the pairs
+# of types; the other gathers the charges and multiplies them.
+#
+# MODULE:      !table = !md.table<2, f64, symmetric>
+# MODULE:      md.potential @energy(%x: !vec, %cell: !md.cell, %p_type: !ids, %p_q: !real, %t_lj_epsilon: !table, %t_lj_sigma: !table) -> f64
+# MODULE:        md.sum_relation %n, %x, %cell gather(%p_type : !ids)
+# MODULE-DAG:      %sigma = md.lookup %t_lj_sigma[%type_i, %type_j] : !table, i32, i32 -> f64
+# MODULE-DAG:      %epsilon = md.lookup %t_lj_epsilon[%type_i, %type_j] : !table, i32, i32 -> f64
+# MODULE:        md.sum_relation %n, %x, %cell gather(%p_q : !real)
+# MODULE:          %coulomb = arith.constant 3.3206371329919{{[0-9]*}}e+02 : f64
+# MODULE:          %q = arith.mulf %q_i, %q_j : f64
+
+[input]
+pdbfile = "Inputs/mixture.pdb"
+
+[energy]
+cutoffdist   = 9.0
+pairlistdist = 10.0
+
+[[energy.pair]]
+name            = "lj"
+expression      = "4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+mixing          = "lorentz-berthelot"
+dispersion_corr = "EPRESS"
+
+[[energy.pair]]
+name       = "coulomb"
+expression = "coulomb*q/r"
+mixing     = { q = "product" }
+
+[[energy.nbfix]]
+pair    = "lj"
+types   = ["AR", "KR"]
+epsilon = 0.2
+sigma   = 3.3
+
+[[energy.type]]
+name    = "AR"
+mass    = 39.95
+epsilon = 0.238465
+sigma   = 3.4
+q       = 0.25
+
+[[energy.type]]
+name    = "KR"
+mass    = 83.80
+epsilon = 0.3253
+sigma   = 3.65
+q       = -0.25
+
+[dynamics]
+integrator    = "VVER"
+timestep      = 0.002
+nsteps        = 20
+eneout_period = 10
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 120.0
+
+[boundary]
+type       = "PBC"
+box_size_x = 23.2
+box_size_y = 23.2
+box_size_z = 23.2

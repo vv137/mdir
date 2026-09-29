@@ -40,6 +40,10 @@ public:
                    const llvm::StringMap<std::string> &values,
                    llvm::StringRef prefix, llvm::StringRef indent) const;
 
+  /// The value of the expression, with `values` giving the value of every
+  /// name.
+  double evaluate(const llvm::StringMap<double> &values) const;
+
 private:
   std::unique_ptr<Node> root;
   std::vector<std::string> names;

@@ -64,6 +64,10 @@ struct Output {
   double degreesOfFreedom = 0.0;
   /// The volume of the cell, in nm^3.
   double volume = 0.0;
+  /// The correction for the dispersion beyond the cutoff, in kJ/mol: what
+  /// it adds to the potential energy and to the trace of the virial.
+  double dispersionEnergy = 0.0;
+  double dispersionVirial = 0.0;
 
   /// The energies at the first and at the last output, in kJ/mol.
   bool hasEnergies = false;

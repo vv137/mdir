@@ -19,7 +19,7 @@
 # CHOICE: choice.toml:12: expected one of VVER, LEAP for 'integrator', got 'RK4'
 # PERIOD: period.toml:11: 'nsteps' is not a multiple of 'eneout_period'
 # SYNTAX: syntax.toml:2:
-# NAME: the expression of 'lj' uses 'delta', which is neither 'r', nor a number of the term, nor a parameter of the type 'AR'
+# NAME: the expression of 'lj' uses 'delta', which is neither 'r', nor 'coulomb', nor a number of the term, nor a parameter of the type 'AR'
 # MIXING: 'sigma' differs between the types, but the term 'lj' has no rule of 'mixing' for it
 # EXPRESSION: in the expression '4*epsilon*((sigma/r)^12 - ', at 27: expected a number, a name, or '('
 # ATOM: atoms.pdb:1: no {{\[\[}}energy.type]] is named 'XE'

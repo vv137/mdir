@@ -25,8 +25,13 @@ struct ParticleType {
   std::vector<std::pair<std::string, double>> parameters;
 };
 
-/// How the parameter of a pair follows from those of its two particles.
-enum class Mixing { Arithmetic, Geometric };
+/// How the parameter of a pair follows from those of its two particles:
+/// their mean, the square root of their product, or their product.
+enum class Mixing { Arithmetic, Geometric, Product };
+
+/// What the correction for the dispersion beyond the cutoff corrects: none,
+/// or the energy and the pressure.
+enum class DispersionCorrection { None, EnergyPressure };
 
 /// A term of the potential energy over pairs, given by an expression in the
 /// distance `r`.
@@ -37,6 +42,20 @@ struct PairTerm {
   llvm::StringMap<Mixing> mixing;
   /// Numbers that the expression uses under a name.
   std::vector<std::pair<std::string, double>> constants;
+  /// The correction for what the term leaves out beyond the cutoff. It
+  /// suits a term that decays faster than 1/r³, such as dispersion.
+  DispersionCorrection dispersion = DispersionCorrection::None;
+};
+
+/// Parameters of a pair of types that a pair term takes in place of those
+/// that its mixing rules give (NBFIX).
+struct PairOverride {
+  /// The name of the pair term.
+  std::string term;
+  /// The two types.
+  std::string first, second;
+  /// The parameters, in the order of the control file.
+  std::vector<std::pair<std::string, double>> parameters;
 };
 
 enum class Truncation { None, Shift, Switch, ForceSwitch };
@@ -62,6 +81,7 @@ struct Control {
   Truncation truncation = Truncation::Switch;
   std::vector<PairTerm> pairs;
   std::vector<ParticleType> types;
+  std::vector<PairOverride> overrides;
 
   // [dynamics]
   Integrator integrator = Integrator::VelocityVerlet;

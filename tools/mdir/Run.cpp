@@ -354,9 +354,34 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   identities.sizes[0] = count;
   identities.strides[0] = 1;
   std::vector<std::unique_ptr<Buffer<1>>> fields;
-  for (const Program::Field &field : program->fields)
-    fields.push_back(std::make_unique<Buffer<1>>(field.values,
-                                                 program->parameter, count));
+  std::vector<std::vector<int32_t>> integerValues;
+  std::vector<std::unique_ptr<StridedMemRefType<int32_t, 1>>> integerFields;
+  for (const Program::Field &field : program->fields) {
+    if (!field.isInteger) {
+      fields.push_back(std::make_unique<Buffer<1>>(field.values,
+                                                   program->parameter, count));
+      continue;
+    }
+    integerValues.emplace_back(field.values.begin(), field.values.end());
+    auto descriptor = std::make_unique<StridedMemRefType<int32_t, 1>>();
+    descriptor->basePtr = descriptor->data = integerValues.back().data();
+    descriptor->offset = 0;
+    descriptor->sizes[0] = count;
+    descriptor->strides[0] = 1;
+    integerFields.push_back(std::move(descriptor));
+  }
+  // The tables of pairs of types, n by n, in f64.
+  std::vector<std::unique_ptr<StridedMemRefType<double, 2>>> tables;
+  for (const Program::Table &table : program->tables) {
+    auto descriptor = std::make_unique<StridedMemRefType<double, 2>>();
+    descriptor->basePtr = descriptor->data =
+        const_cast<double *>(table.values.data());
+    descriptor->offset = 0;
+    descriptor->sizes[0] = descriptor->sizes[1] = table.count;
+    descriptor->strides[0] = table.count;
+    descriptor->strides[1] = 1;
+    tables.push_back(std::move(descriptor));
+  }
 
   double box[3] = {system->box[0], system->box[1], system->box[2]};
   double timestep = control->timestep;
@@ -366,8 +391,29 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   if (program->takesForces)
     given.addTo(arguments);
   masses.addTo(arguments);
-  for (auto &field : fields)
-    field->addTo(arguments);
+  // The fields in the order of the program, then the tables.
+  size_t realField = 0, integerField = 0;
+  for (const Program::Field &field : program->fields) {
+    if (!field.isInteger) {
+      fields[realField++]->addTo(arguments);
+      continue;
+    }
+    StridedMemRefType<int32_t, 1> &descriptor = *integerFields[integerField++];
+    arguments.push_back(&descriptor.basePtr);
+    arguments.push_back(&descriptor.data);
+    arguments.push_back(&descriptor.offset);
+    arguments.push_back(&descriptor.sizes[0]);
+    arguments.push_back(&descriptor.strides[0]);
+  }
+  for (auto &table : tables) {
+    arguments.push_back(&table->basePtr);
+    arguments.push_back(&table->data);
+    arguments.push_back(&table->offset);
+    arguments.push_back(&table->sizes[0]);
+    arguments.push_back(&table->sizes[1]);
+    arguments.push_back(&table->strides[0]);
+    arguments.push_back(&table->strides[1]);
+  }
   arguments.push_back(&identities.basePtr);
   arguments.push_back(&identities.data);
   arguments.push_back(&identities.offset);
@@ -386,6 +432,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   output.timestep = control->timestep;
   output.degreesOfFreedom = system->getDegreesOfFreedom();
   output.volume = system->box[0] * system->box[1] * system->box[2];
+  output.dispersionEnergy = program->dispersionEnergy;
+  output.dispersionVirial = program->dispersionVirial;
   output.system = &*system;
   if (control->framePeriod > 0) {
     if (llvm::Error error = output.trajectory.open(

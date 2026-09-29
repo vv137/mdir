@@ -126,6 +126,9 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
   Output &output = *current;
   // `kinetic` is that of the velocities at the step. The total energy has
   // it, because that sum varies least.
+  // The correction for the dispersion is a number of the volume.
+  potential += output.dispersionEnergy;
+  virial += output.dispersionVirial;
   double total = potential + kinetic;
 
   // The mean of the kinetic energies half a step before and after exceeds

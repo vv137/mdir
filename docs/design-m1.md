@@ -405,7 +405,18 @@ E_disp = − (2π N² / 3V) ⟨C6⟩ / r_c³        P_disp = 2 E_disp / V
 with `⟨C6⟩` the mean of `C6 = 4 ε σ⁶` over the pairs of particles,
 which the front end computes from the table and the counts of the types.
 It depends on the volume only, so it is a number on the host that
-changes with the cell. It is on by default, as in Amber.
+changes with the cell. It is on by default when a topology is read, as in
+Amber; a control file asks for it with `dispersion_corr` in a pair term.
+
+As the engines do [[GromacsManual2025]](references.md#gromacsmanual2025),
+the correction takes the part of the term that decays as `r⁻⁶` and leaves
+the repulsion out, and it counts the pairs of distinct particles:
+`N_a (N_b − δ_ab)` for the types `a` and `b`, less the excluded pairs once
+a topology gives them. Its virial is six times its energy, so the pressure
+changes by `2 E_disp / V`. A switch or a shift of the potential inside the
+cutoff needs the integral of the change as well; M1 takes a plain cutoff
+only. Lennard-Jones by particle mesh Ewald, for systems whose density
+beyond the cutoff is not uniform, such as membranes, is for later.
 
 ## 8. Electrostatics
 
@@ -671,7 +682,7 @@ into the home directory.
 | M1a | Tuple sets, internal coordinates, differentiation, loops over tuples on the CPU and on a GPU | Chains of particles with bonds, angles, and dihedrals, at constant energy | Done: energy, forces, and virial agree with a reference in double and mixed precision, on the CPU, with OpenMP, and on a GPU; 200 steps of velocity Verlet agree to 1e-9. Loops over tuples are not fused with each other yet. |
 | M1b | The command line (Section 14) | The runs of M0 through `mdir run` | Done |
 | M1c | Exclusions in the neighbor build; pairs three bonds apart | Chains with Lennard-Jones | Done: energy, forces, and virial agree with a reference on the CPU, with OpenMP, and on a GPU |
-| M1d | Tables, NBFIX, the rule `product`, a Coulomb cutoff, the correction for the dispersion | A mixture of charged types | In the IR: `!md.table` and `md.lookup`, with NBFIX and Coulomb, agree with a reference in double and mixed precision, on the CPU and on a GPU. The driver has none of it yet. |
+| M1d | Tables, NBFIX, the rule `product`, a Coulomb cutoff, the correction for the dispersion | A mixture of charged types | Done. The IR has `!md.table` and `md.lookup`. The driver takes `[[energy.nbfix]]`, which turns the parameters of a term into tables of pairs of types, the rule `product`, the name `coulomb` for the constant of CODATA 2018, and `dispersion_corr` for each pair term, with a plain cutoff. The correction takes the r⁻⁶ part of the term and the N(N − 1) ordered pairs, as GROMACS does; excluded pairs come out of the count once topologies are read (M1e). |
 | M1e | The readers of both formats; renumbering of the members with the order | Alanine dipeptide in flexible water, at constant energy with 0.5 fs | |
 | M1f | Comparison of the intermediate stage with AmberTools and GROMACS | | This completes the intermediate stage |
 | M1g | Removal of the motion of the center of mass, random numbers, the thermostat | At constant temperature | |

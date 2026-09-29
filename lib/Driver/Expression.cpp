@@ -322,6 +322,50 @@ llvm::Expected<Expression> Expression::parse(StringRef text) {
   return std::move(expression);
 }
 
+static double evaluateNode(const Expression::Node &node,
+                           const llvm::StringMap<double> &values) {
+  using Node = Expression::Node;
+  switch (node.kind) {
+  case Node::Number:
+    return node.number;
+  case Node::Name:
+    return values.lookup(node.name);
+  case Node::Negate:
+    return -evaluateNode(*node.lhs, values);
+  case Node::Add:
+    return evaluateNode(*node.lhs, values) + evaluateNode(*node.rhs, values);
+  case Node::Subtract:
+    return evaluateNode(*node.lhs, values) - evaluateNode(*node.rhs, values);
+  case Node::Multiply:
+    return evaluateNode(*node.lhs, values) * evaluateNode(*node.rhs, values);
+  case Node::Divide:
+    return evaluateNode(*node.lhs, values) / evaluateNode(*node.rhs, values);
+  case Node::Power:
+    return std::pow(evaluateNode(*node.lhs, values),
+                    evaluateNode(*node.rhs, values));
+  case Node::Call: {
+    double x = evaluateNode(*node.lhs, values);
+    return llvm::StringSwitch<double>(node.name)
+        .Case("sqrt", std::sqrt(x))
+        .Case("exp", std::exp(x))
+        .Case("log", std::log(x))
+        .Case("sin", std::sin(x))
+        .Case("cos", std::cos(x))
+        .Case("tan", std::tan(x))
+        .Case("tanh", std::tanh(x))
+        .Case("abs", std::fabs(x))
+        .Case("erf", std::erf(x))
+        .Case("erfc", std::erfc(x))
+        .Default(std::nan(""));
+  }
+  }
+  return std::nan("");
+}
+
+double Expression::evaluate(const llvm::StringMap<double> &values) const {
+  return evaluateNode(*root, values);
+}
+
 std::string Expression::emit(llvm::raw_ostream &os,
                              const llvm::StringMap<std::string> &values,
                              StringRef prefix, StringRef indent) const {
