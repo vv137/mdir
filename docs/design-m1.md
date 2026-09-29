@@ -415,7 +415,27 @@ the repulsion out, and it counts the pairs of distinct particles:
 a topology gives them. Its virial is six times its energy, so the pressure
 changes by `2 E_disp / V`. A switch or a shift of the potential inside the
 cutoff needs the integral of the change as well; M1 takes a plain cutoff
-only. Lennard-Jones by particle mesh Ewald, for systems whose density
+only.
+
+sander leaves the repulsion out as well, but counts the pairs as
+`N_a N_b`, with the pairs of a particle with itself and the excluded
+pairs (`vdw_correction` of `ew_setup.F90` in AmberTools). The two counts
+differ by about `1/N` of the correction; a comparison with sander scales
+the correction by the ratio of the two counts, or states the difference.
+
+Not implemented, and kept here as an alternative: the correction from the
+whole expression of the term, integrated numerically beyond the cutoff,
+
+```text
+E = (2π / V) Σ_ab N_a N_b ∫_rc^∞ r² u_ab(r) dr
+W = (2π / V) Σ_ab N_a N_b ∫_rc^∞ r² (−r u_ab'(r)) dr
+```
+
+over `x = r_c / r` in `(0, 1]`, which takes the repulsion and any term
+that decays faster than `r⁻³`. It differs from the correction above by
+`(σ / r_c)⁶ / 3` of it for Lennard-Jones, 10⁻³ at the cutoffs of M1, less
+than the error of the uniform density that both assume, and it would not
+agree with either engine. Lennard-Jones by particle mesh Ewald, for systems whose density
 beyond the cutoff is not uniform, such as membranes, is for later.
 
 ## 8. Electrostatics
