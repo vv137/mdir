@@ -5,15 +5,15 @@ Status: decided (2026-09-29), revised for an all-atom target
 has the order of work and its state.
 
 M1 is all-atom molecular dynamics with an Amber force field: a protein in
-water, with particle mesh Ewald and constraints, at constant energy,
-temperature, and pressure. This document proposes what MDIR needs for it:
+water, with particle mesh Ewald [[Darden1993]](references.md#darden1993), [[Essmann1995]](references.md#essmann1995) and
+constraints, at constant energy, temperature, and pressure. This document proposes what MDIR needs for it:
 relations that come from a topology, terms over them, exclusions and
 scaled pairs, parameters of pairs of types, electrostatics, constraints,
 the removal of the motion of the center of mass, a thermostat, a
 barostat, the input, and a command line.
 
 The first version of this document had a coarse-grained membrane with
-Martini as its target. Martini is deferred (D53).
+Martini [[Marrink2007]](references.md#marrink2007) as its target. Martini is deferred (D53).
 
 It follows [architecture.md](architecture.md) and extends
 [ops-m0.md](ops-m0.md). IR snippets show the proposed syntax.
@@ -27,7 +27,7 @@ energy, temperature, and pressure.
 
 | Property | Value |
 |---|---|
-| Force field | ff14SB for the protein, TIP3P for water, the ions that go with them |
+| Force field | ff14SB [[Maier2015]](references.md#maier2015) for the protein, TIP3P [[Jorgensen1983]](references.md#jorgensen1983) for water, the ions that go with them |
 | Systems | Alanine dipeptide in water, to validate; dihydrofolate reductase in water (the JAC benchmark of Amber), to measure |
 | Time step | 2 fs, with the bonds of hydrogen and the water constrained |
 | Nonbonded terms | Lennard-Jones with parameters for each pair of types, with the correction for the dispersion beyond the cutoff; Coulomb with particle mesh Ewald |
@@ -57,11 +57,11 @@ energy, temperature, and pressure.
 
 | Item | Milestone | Consequence for M1 |
 |---|---|---|
-| Virtual sites | M2a | Water models with four sites, such as TIP4P and OPC, cannot be run |
+| Virtual sites | M2a | Water models with four sites, such as TIP4P [[Jorgensen1983]](references.md#jorgensen1983) and OPC [[Izadi2014]](references.md#izadi2014), cannot be run |
 | Martini and other coarse-grained force fields | Later (D53) | |
 | Particle mesh Ewald on more than one device or process | M2c and later | |
 | The repartitioning of the mass of hydrogen | Later | The time step stays at 2 fs |
-| CMAP, polarizable force fields, 12-6-4 terms | Later | The readers reject topologies that have them |
+| CMAP [[MacKerell2004]](references.md#mackerell2004), polarizable force fields, 12-6-4 terms [[Li2014]](references.md#li2014) | Later | The readers reject topologies that have them |
 | Cells that are not orthorhombic | Later | The truncated octahedron of Amber cannot be run |
 | Random numbers for each particle, as Langevin dynamics needs them | Open | The thermostat of M1 takes a few random numbers for each step |
 | Groups with a thermostat each | Later | One group |
@@ -166,7 +166,7 @@ carry, have no meaning for a tuple of a topology.
 | Coordinate | Value | Kernel argument |
 |---|---|---|
 | `distance(a, b)` | `|d_ab|` | `f64` |
-| `displacement(a, b)` | `d_ab = x_a − x_b`, in the minimum image | `vector<3xf64>` |
+| `displacement(a, b)` | `d_ab = x_a − x_b`, in the minimum image [[AllenTildesley2017]](references.md#allentildesley2017) | `vector<3xf64>` |
 | `angle(a, b, c)` | The angle at `b` between `d_ab` and `d_cb`, from 0 to π | `f64` |
 | `cosine(a, b, c)` | The cosine of that angle | `f64` |
 | `dihedral(a, b, c, d)` | The angle between the planes of `a, b, c` and of `b, c, d`, from −π to π | `f64` |
@@ -208,6 +208,9 @@ W   = Σ_q Σ_m d_m ⊗ F_qm               with the displacement of m from one
                                        member of the coordinate q
 ```
 
+The virial takes the form of Thompson, Plimpton, and Mattson
+[[Thompson2009]](references.md#thompson2009) for terms of more than two particles.
+
 The forces of one coordinate add up to zero, so that the member that the
 displacements are taken from does not matter.
 
@@ -216,7 +219,7 @@ displacements are taken from does not matter.
 | `distance(a, b)` | `± d_ab / r` for `a` and `b` |
 | `cosine(a, b, c)` | For `a`: `(d_cb / |d_cb| − c · d_ab / |d_ab|) / |d_ab|`; for `c` likewise; for `b` the negative of their sum |
 | `angle(a, b, c)` | That of the cosine, times `−1 / sin θ` |
-| `dihedral(a, b, c, d)` | The form of Blondel and Karplus, which has no singularity where three particles are in line |
+| `dihedral(a, b, c, d)` | The form of Blondel and Karplus [[Blondel1996]](references.md#blondel1996), which has no singularity where three particles are in line |
 
 The derivative of `angle` is singular where the three particles are in
 line. A term that is smooth there, such as the one above, should take
@@ -382,7 +385,7 @@ kernel makes one lookup. No mixing rule is left at run time.
 | Exchange | A lookup in a symmetric table with the two types of a pair is symmetric |
 | Differentiation | A lookup does not depend on the positions |
 | Storage | A buffer, on the device where the loops are |
-| Mixing rules that fill a table | Lorentz–Berthelot, geometric, and none: the table as the topology gives it |
+| Mixing rules that fill a table | Lorentz–Berthelot [[Lorentz1881]](references.md#lorentz1881), [[Berthelot1898]](references.md#berthelot1898), geometric, and none: the table as the topology gives it |
 | In a control file | The topology gives the types and the table; a control file without a topology keeps the mixing rules of M0 |
 
 Charges need the product of the values of the two particles, which the
@@ -391,7 +394,7 @@ mixing rules of M0 do not have. The proposal is the rule `product`.
 ### 7.2 The correction for the dispersion
 
 Beyond the cutoff the attraction of Lennard-Jones is left out. The
-correction adds its mean, for a uniform density beyond the cutoff, to
+correction [[AllenTildesley2017]](references.md#allentildesley2017), [[Shirts2007]](references.md#shirts2007) adds its mean, for a uniform density beyond the cutoff, to
 the energy and the pressure:
 
 ```text
@@ -422,14 +425,14 @@ Designed in its own document when its stage begins. The parts:
 | The direct sum with `erfc(β r) / r` | A term over pairs, as any other |
 | The excluded pairs | A term over the tuples of `E` that takes `erf(β r) / r` out again (Section 6.1) |
 | The self term | A number, from the charges |
-| The reciprocal sum | Spreading the charges to a grid with B-splines of order 4, a forward FFT, a product with the influence function, an inverse FFT, and the forces from the grid |
+| The reciprocal sum | Spreading the charges to a grid with B-splines of order 4 [[Essmann1995]](references.md#essmann1995), a forward FFT, a product with the influence function, an inverse FFT, and the forces from the grid |
 | The virial | From the reciprocal energy of each wave vector, and from the direct sum as for pairs |
 
 Two questions shape the design (Section 17):
 
 | Question | Candidates |
 |---|---|
-| Spreading on a device writes to grid points that many particles share. Atomic additions of floating-point numbers depend on the order of the threads, which breaks the deterministic level (P13). | Spreading by grid points, which gather from the particles near them; or atomic additions of integers in fixed point, which do not depend on the order |
+| Spreading on a device writes to grid points that many particles share. Atomic additions of floating-point numbers depend on the order of the threads, which breaks the deterministic level (P13). | Spreading by grid points, which gather from the particles near them; or atomic additions of integers in fixed point [[LeGrand2013]](references.md#legrand2013), which do not depend on the order |
 | The library for the FFT. FFTW is under the GPL, and MDIR is under the MIT license. | cuFFT on a device, from the toolkit that MDIR needs anyway; a library under a permissive license on the host, such as pocketfft; or an FFT as a template in IR |
 
 ## 9. Constraints
@@ -439,8 +442,8 @@ stage begins.
 
 | Item | Decision |
 |---|---|
-| Water | SETTLE, which solves the three distances of a rigid water in closed form |
-| The bonds of hydrogen | SHAKE, with RATTLE for the velocities under velocity Verlet |
+| Water | SETTLE [[Miyamoto1992]](references.md#miyamoto1992), which solves the three distances of a rigid water in closed form |
+| The bonds of hydrogen | SHAKE [[Ryckaert1977]](references.md#ryckaert1977), with RATTLE [[Andersen1983]](references.md#andersen1983) for the velocities under velocity Verlet |
 | Execution | The constrained bonds fall into clusters with no particle in common: a heavy atom with its hydrogens, a water. A thread takes a cluster and writes to its particles only, so no two threads write to one particle. A loop over clusters is a new kind of loop. |
 
 Three consequences reach other stages, and are recorded now:
@@ -474,17 +477,17 @@ v_i ← v_i − (Σ_j m_j v_j) / (Σ_j m_j)       every `comm_period` steps
 
 | | Proposal | Reason |
 |---|---|---|
-| Thermostat | Stochastic velocity rescaling (Bussi, Donadio, and Parrinello 2007) | It samples the canonical distribution, and it takes the kinetic energy and a few random numbers for each step, not one for each particle. |
-| Barostat | Stochastic cell rescaling (Bernetti and Bussi 2020), isotropic; semi-isotropic, with the pressure in a plane apart from that along its normal, as an option | It samples the distribution at constant pressure and is of first order: it has no momentum of the cell to store. |
+| Thermostat | Stochastic velocity rescaling (Bussi, Donadio, and Parrinello 2007 [[Bussi2007]](references.md#bussi2007)) | It samples the canonical distribution, and it takes the kinetic energy and a few random numbers for each step, not one for each particle. |
+| Barostat | Stochastic cell rescaling (Bernetti and Bussi 2020 [[Bernetti2020]](references.md#bernetti2020)), isotropic; semi-isotropic, with the pressure in a plane apart from that along its normal, as an option | It samples the distribution at constant pressure and is of first order: it has no momentum of the cell to store. |
 
 Both carry the statement that they preserve the target distribution
 (P10).
 
 Two barostats go by the name of Bussi:
 
-| | Bussi, Zykova-Timan, and Parrinello 2009 | Bernetti and Bussi 2020 |
+| | Bussi, Zykova-Timan, and Parrinello 2009 [[Bussi2009]](references.md#bussi2009) | Bernetti and Bussi 2020 [[Bernetti2020]](references.md#bernetti2020) |
 |---|---|---|
-| Kind | Of second order: the cell has a momentum, and the thermostat acts on it as well | Of first order: the barostat of Berendsen with a term of noise |
+| Kind | Of second order: the cell has a momentum, and the thermostat acts on it as well | Of first order: the barostat of Berendsen [[Berendsen1984]](references.md#berendsen1984) with a term of noise |
 | State beside the cell | The momentum of the cell | None |
 | Parameters | A time | A time and a compressibility. A wrong compressibility changes how fast the volume relaxes, not what is sampled. |
 | The volume | May oscillate | Relaxes |
@@ -525,7 +528,7 @@ dyn.program @step(...) attributes {
 
 | Item | Proposal |
 |---|---|
-| The generator | Philox 4×32 with 10 rounds, from the key of A13 |
+| The generator | Philox 4×32 with 10 rounds [[Salmon2011]](references.md#salmon2011), from the key of A13 |
 | Where it runs | On the host, in `libmdrt`: the thermostat and the barostat take numbers for the system, not for a particle |
 | Streams | 0 for the thermostat, 1 for the barostat. The draw index counts the numbers of one step. |
 | Entity | A fixed key, as for a global move (A5) |
@@ -591,7 +594,7 @@ subcommands; `mdir-opt` stays a program for developers.
 |---|---|
 | `mdir run control.toml` | Reads the input, compiles the run, and runs it (`mdir-run` of M0) |
 | `mdir template md` | Prints a control file with every keyword |
-| `mdir check control.toml` | Reads the input and prints what it found: particles, tuples of each kind, types, charges and their sum, the cell, the energy of each term at the start. Compiles nothing. |
+| `mdir check control.toml` | Reads the input and prints what it found: particles, types, the mass and the density, the cell, the degrees of freedom, the integrator and the target; with a topology also the tuples of each kind, the charges and their sum. Compiles nothing, so it gives no energies: a run of zero steps does. |
 | `mdir emit control.toml --stage=<module\|lowered>` | Prints the program of the run, as `--emit` does in M0 |
 | `mdir checkpoint <file>` | Prints what a checkpoint holds (`mdir-checkpoint` of M0) |
 | `mdir version` | The version, the LLVM it was built with, the targets it has |
@@ -607,7 +610,7 @@ own right after the execution of terms over tuples (Section 18).
 | The same with particles in line and with a dihedral of π | The same | 1e-10 |
 | A neighbor structure with exclusions | A search over all pairs | Exact |
 | Lookup in a table, pairs three bonds apart | A script | 1e-10 |
-| Particle mesh Ewald | An Ewald sum with many wave vectors, in a script | That of the parameters |
+| Particle mesh Ewald | An Ewald sum [[Ewald1921]](references.md#ewald1921) with many wave vectors, in a script | That of the parameters |
 | SETTLE and SHAKE | A script; the constrained distances | That of the tolerance |
 | The factor of the thermostat and of the barostat | A script with the same generator | 1e-12 |
 | A run that continues from a checkpoint, with thermostat and barostat | The run that was not interrupted | Exact |
@@ -654,8 +657,8 @@ into the home directory.
 
 | Stage | Work | Runs | State |
 |---|---|---|---|
-| M1a | Tuple sets, internal coordinates, differentiation, loops over tuples on the CPU and on a GPU | Chains of particles with bonds, angles, and dihedrals, at constant energy | The ops of `md` and their differentiation are done; the ops of `md_exec` are defined; the conversion and the lowerings are not |
-| M1b | The command line (Section 14) | The runs of M0 through `mdir run` | |
+| M1a | Tuple sets, internal coordinates, differentiation, loops over tuples on the CPU and on a GPU | Chains of particles with bonds, angles, and dihedrals, at constant energy | Done: energy, forces, and virial agree with a reference in double and mixed precision, on the CPU, with OpenMP, and on a GPU; 200 steps of velocity Verlet agree to 1e-9. Loops over tuples are not fused with each other yet. |
+| M1b | The command line (Section 14) | The runs of M0 through `mdir run` | Done |
 | M1c | Exclusions in the neighbor build; pairs three bonds apart | Chains with Lennard-Jones | |
 | M1d | Tables, NBFIX, the rule `product`, a Coulomb cutoff, the correction for the dispersion | A mixture of charged types | |
 | M1e | The readers of both formats; renumbering of the members with the order | Alanine dipeptide in flexible water, at constant energy with 0.5 fs | |

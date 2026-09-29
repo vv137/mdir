@@ -320,7 +320,8 @@ void Builder::emitPrograms() {
     return;
   }
 
-  // Velocity Verlet, with and without the energy of the new positions.
+  // Velocity Verlet (Swope et al., J. Chem. Phys. 76, 637 (1982)), with and
+  // without the energy of the new positions.
   for (bool withEnergy : {false, true}) {
     os << "dyn.program @" << (withEnergy ? "step_energy" : "step")
        << "(%x: !vec, %v: !vec, %f: !vec, %m: !real,\n"
@@ -364,7 +365,8 @@ static void emitTrace(llvm::raw_ostream &os, StringRef result,
 
 /// The sum over the particles of F^2 / m. With the time step it gives the
 /// kinetic energy at the half steps before and after a step, from which
-/// the temperature and the pressure are estimated.
+/// the temperature and the pressure are estimated (Jung et al., J. Chem.
+/// Phys. 148, 164109 (2018)).
 static void emitForceSquare(llvm::raw_ostream &os, StringRef result,
                             StringRef forces, StringRef masses,
                             StringRef indent) {

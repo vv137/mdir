@@ -113,13 +113,13 @@ expression uses.
 A parameter that has the same value for all types is a constant of the
 kernel. A parameter that differs is a field, and `mixing` says how the
 parameter of a pair follows from those of its two particles:
-`lorentz-berthelot`, `geometric`, or a table with `arithmetic` or
+`lorentz-berthelot` [[Lorentz1881]](references.md#lorentz1881), [[Berthelot1898]](references.md#berthelot1898), `geometric`, or a table with `arithmetic` or
 `geometric` for each parameter.
 
 An unknown keyword is an error. A keyword that is planned but not supported
 yet is an error that names the milestone that brings it.
 
-`mdir-run --template md` prints a control file with every keyword and its
+`mdir template md` prints a control file with every keyword and its
 default.
 
 ### 1.2 Units
@@ -147,7 +147,7 @@ driver need not know the dimension of a parameter.
 ### 2.1 What it does
 
 ```text
-mdir-run control.toml
+mdir run control.toml
 
   1. read the control file and the files of [input]
   2. build a module of md and dyn ops
@@ -157,8 +157,9 @@ mdir-run control.toml
   5. write the last checkpoint
 ```
 
-The driver is a C++ program, `tools/mdir-run`. It runs the passes in its
-own process and executes the code with the execution engine of MLIR. The
+The driver is the subcommand `run` of the C++ program `tools/mdir`
+(D59). It runs the passes in its own process and executes the code with
+the execution engine of MLIR. The
 Python library (C5) comes later and calls the same steps.
 
 ### 2.2 The schedule is compiled
@@ -210,7 +211,7 @@ The line shows the last row of `examples/argon.toml`.
 | `KINETIC_ENE` | kcal/mol | `K`, the kinetic energy of the velocities at the time of the row |
 | `TOTAL_ENE` | kcal/mol | `POTENTIAL_ENE + KINETIC_ENE` |
 | `TEMPERATURE` | K | `2 K_T / (f k_B)`, with `f = 3 N − 3` degrees of freedom and `K_T` as below |
-| `VIRIAL` | kcal/mol | The trace of the MDIR virial `W = Σ d_ij ⊗ K(i, j)`, which is positive for repulsion (B8). Other packages print other quantities under this name: the GROMACS virial is `−W / 2`. |
+| `VIRIAL` | kcal/mol | The trace of the MDIR virial `W = Σ d_ij ⊗ K(i, j)`, which is positive for repulsion (B8). Other packages print other quantities under this name: the GROMACS virial is `−W / 2` [[GromacsManual2025]](references.md#gromacsmanual2025). |
 | `PRESSURE` | atm | `(2 K_P + tr W) / (3 V)`, with `K_P` as below |
 
 The pressure has no correction for the dispersion beyond the cutoff; that
@@ -236,8 +237,7 @@ which holds exactly without constraints and thermostats.
 | Pressure | `K_P = K_half` | The positions of the steps satisfy the virial theorem with this kinetic energy. |
 
 The estimators are those of Jung, Kobayashi, and Sugita
-(J. Chem. Phys. 148, 164109 (2018); J. Chem. Theory Comput. 15, 84
-(2019)). For liquid argon they were compared with runs at a step of 1 fs,
+[[Jung2018]](references.md#jung2018), [[Jung2019]](references.md#jung2019). For liquid argon they were compared with runs at a step of 1 fs,
 through the potential energy and the heat capacity:
 
 | Step | Error of the temperature from `K` | From `K_half` | From `K_T` | Error of the pressure from `K` | From `K_P` |
@@ -276,8 +276,8 @@ bonded terms follow when MDIR computes them.
 
 ### 2.5 What the driver builds
 
-`mdir-run --emit=mlir control.toml` prints the module that the driver
-builds, and `--emit=lowered` the module that is executed.
+`mdir emit control.toml` prints the module that the driver builds, and
+`mdir emit control.toml --stage=lowered` the module that is executed.
 
 | Part of the module | From |
 |---|---|
@@ -296,7 +296,7 @@ The log has the kinetic energy of the time of a row all the same
 
 ### 2.6 Checkpoints
 
-A checkpoint is a file in the H5MD format, version 1.1, with all numbers in
+A checkpoint is a file in the H5MD format [[deBuyl2014]](references.md#debuyl2014), version 1.1, with all numbers in
 64 bits (D26). It holds the state as the next step needs it.
 
 ```text
@@ -332,7 +332,7 @@ states. The two runs must have the same `rstout_period`.
 A run cannot continue with another integrator: the velocities of the two
 are not of the same time. It cannot continue in another box.
 
-`mdir-checkpoint file.h5` describes a checkpoint, and `mdir-checkpoint
+`mdir checkpoint file.h5` describes a checkpoint, and `mdir checkpoint
 first.h5 second.h5` compares the states of two.
 
 ## 3. Decided

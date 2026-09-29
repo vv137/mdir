@@ -151,10 +151,10 @@ program starts.
 
 ## Running a simulation
 
-`mdir-run` reads a control file, compiles the run, and executes it.
+`mdir run` reads a control file, compiles the run, and executes it.
 
 ```sh
-build/bin/mdir-run examples/argon.toml
+build/bin/mdir run examples/argon.toml
 ```
 
 ```text
@@ -172,8 +172,20 @@ MDIR: the total energy changed by 1.813e-05 of its value
 
 The control file is a TOML file, in Å, kcal/mol, and ps. `[execution]`
 selects the target, `cpu` or `gpu`, the number of threads, and the
-precision. `mdir-run --template md` prints a control file with every
-keyword. See [docs/driver-m0.md](docs/driver-m0.md).
+precision. `mdir template md` prints a control file with every keyword.
+See [docs/driver-m0.md](docs/driver-m0.md).
+
+| Command | Does |
+|---|---|
+| `mdir run <control file>` | Compiles the run and executes it |
+| `mdir emit <control file> [--stage=module\|lowered]` | Prints the program of the run, as it is built or as it is executed |
+| `mdir check <control file>` | Reads the input and prints what it describes, without compiling |
+| `mdir template md` | Prints a control file with every keyword |
+| `mdir checkpoint <file> [<file>]` | Describes a checkpoint, or compares the states of two |
+| `mdir version` | Prints the version and what the build supports |
+
+`mdir-opt` runs the passes of MDIR on IR, as `mlir-opt` does, for
+development.
 
 ## Examples
 

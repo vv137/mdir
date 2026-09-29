@@ -1,6 +1,7 @@
 // Expansion of truncation attributes into kernels.
 //
-// See docs/ops-m0.md, Section 4.8.
+// See docs/ops-m0.md, Section 4.8. Keys in brackets are those of
+// docs/references.md.
 
 #include "mdir/Dialect/MD/Transforms/Passes.h"
 #include "mdir/Dialect/MD/Transforms/ScalarDerivative.h"
@@ -19,6 +20,8 @@ using namespace mdir::md;
 ///
 ///   S(r) = 1                        for r <= from
 ///   S(r) = 1 − 10t³ + 15t⁴ − 6t⁵    otherwise, t = (r − from) / (cutoff − from)
+///
+/// This is the potential switch of the GROMACS manual [GromacsManual2025].
 static Value emitSwitch(ScalarEmitter &emit, Value r, double from,
                         double cutoff) {
   OpBuilder &builder = emit.builder;
@@ -53,7 +56,8 @@ static Value emitSwitch(ScalarEmitter &emit, Value r, double from,
 ///   A = (F'Δ − 3F) / Δ²      B = (2F − F'Δ) / Δ³
 ///   C = u(cutoff) − (A/3)Δ³ − (B/4)Δ⁴
 ///
-/// For a power law this is the force switch of GROMACS.
+/// For a power law this is the force switch of Steinbach and Brooks
+/// [Steinbach1994], as the GROMACS manual gives it [GromacsManual2025].
 static Value emitForceSwitch(ScalarEmitter &emit, Value r, Value energy,
                              Value energyAtCutoff, Value slopeAtCutoff,
                              Value curvatureAtCutoff, double from,
@@ -154,6 +158,7 @@ LogicalResult mdir::md::expandTruncation(SumRelationOp op) {
                                   curvature, from, cutoff);
     } else {
       truncated = emit.sub(energy, energyAtCutoff);
+      // The force shift of Stoddard and Ford [Stoddard1973].
       if (truncation == Truncation::ForceShift) {
         Value distance = emit.sub(r, atCutoff);
         truncated = emit.sub(truncated, emit.mul(distance, slope));

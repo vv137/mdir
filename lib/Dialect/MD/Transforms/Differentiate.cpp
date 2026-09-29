@@ -425,7 +425,8 @@ LogicalResult DerivativeBuilder::buildVirial(Value &virial) {
     if (!weight)
       continue;
 
-    // W = Σ d ⊗ K(i, j), with K(i, j) = factor · d.
+    // W = Σ d ⊗ K(i, j), with K(i, j) = factor · d: the virial of pairs in
+    // a periodic system [Louwerse2006].
     Operation *term = createPairOp(SumRelationOp::getOperationName(), sum,
                                    Exchange::Symmetric, virialType);
     Block &block = term->getRegion(0).front();

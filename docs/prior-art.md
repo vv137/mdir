@@ -10,7 +10,8 @@ it, and what is not. Decisions that follow from it are listed in
 
 W. R. Saunders, J. Grant, E. H. Müller, "A Domain Specific Language for
 Performance Portable Molecular Dynamics Algorithms," *Computer Physics
-Communications*, 2018. doi:10.1016/j.cpc.2017.11.006. arXiv:1704.03329.
+Communications* 224, 119–135 (2018). doi:10.1016/j.cpc.2017.11.006.
+arXiv:1704.03329. [[Saunders2018]](references.md#saunders2018)
 
 Statements in this section were checked against the arXiv version (v2).
 
@@ -123,22 +124,23 @@ The paper implements bond order analysis and common neighbor analysis with
 the same loops. Common neighbor analysis takes three consecutive pair loops,
 each reading per-particle results of the one before. This shows that the
 relational primitives are useful outside Hamiltonians, and it is a multistage
-locality case of the same shape as EAM.
+locality case of the same shape as EAM [[Daw1984]](references.md#daw1984).
 
 ## 2. Other systems referenced in the design discussion
 
 These entries are summarized from general knowledge and have not been checked
-against sources for this document.
+against sources for this document. The references identify the systems and
+methods; the summaries were not checked against them.
 
 | System | Relevance to MDIR |
 |---|---|
-| OpenMM | Custom forces from expression strings with symbolic differentiation; kernels generated and compiled when the context is created; `CustomIntegrator` as a model for `dyn`; Python object API. |
-| GROMACS | Cluster pair lists; eighth-shell decomposition with dynamic load balancing; separate PME ranks; update groups; thread-MPI for running without an MPI library; fixed-interval pair list with a buffer estimate. |
-| LAMMPS | Full-shell ghost atoms; pair styles declare forward and reverse communication; hook-based step loop. |
-| HOOMD-blue | GPU-first design; counter-based random numbers keyed by particle and step; run-time compiled user potentials. |
-| JAX-MD | Value semantics for state; forces by automatic differentiation of the energy. |
-| AutoPas | Run-time selection among containers, traversals, data layouts, and Newton's-third-law usage. A model for the joint planner. |
-| Cabana | Library of particle data structures, neighbor lists, and halo communication with AoSoA storage. A model for the runtime. |
-| Allegro, SevenNet | Strictly local MLFF, and message-passing MLFF with per-layer feature communication. The two halo strategies for MLFF. |
-| OP2, PyOP2 | Origin of loops with access descriptors. |
+| OpenMM [[Eastman2017]](references.md#eastman2017) | Custom forces from expression strings with symbolic differentiation; kernels generated and compiled when the context is created; `CustomIntegrator` as a model for `dyn`; Python object API. |
+| GROMACS [[Abraham2015]](references.md#abraham2015) | Cluster pair lists [[Pall2013]](references.md#pall2013); eighth-shell decomposition with dynamic load balancing; separate PME ranks [[Hess2008]](references.md#hess2008); update groups; thread-MPI for running without an MPI library; fixed-interval pair list with a buffer estimate. |
+| LAMMPS [[Thompson2022]](references.md#thompson2022) | Full-shell ghost atoms; pair styles declare forward and reverse communication; hook-based step loop. |
+| HOOMD-blue [[Anderson2020]](references.md#anderson2020) | GPU-first design; counter-based random numbers [[Salmon2011]](references.md#salmon2011) keyed by particle and step; run-time compiled user potentials. |
+| JAX-MD [[Schoenholz2020]](references.md#schoenholz2020) | Value semantics for state; forces by automatic differentiation of the energy. |
+| AutoPas [[Gratl2022]](references.md#gratl2022) | Run-time selection among containers, traversals, data layouts, and Newton's-third-law usage. A model for the joint planner. |
+| Cabana [[Slattery2022]](references.md#slattery2022) | Library of particle data structures, neighbor lists, and halo communication with AoSoA storage. A model for the runtime. |
+| Allegro [[Musaelian2023]](references.md#musaelian2023), SevenNet [[Park2024]](references.md#park2024) | Strictly local MLFF, and message-passing MLFF with per-layer feature communication. The two halo strategies for MLFF. |
+| OP2 [[Mudalige2012]](references.md#mudalige2012), PyOP2 [[Rathgeber2012]](references.md#rathgeber2012) | Origin of loops with access descriptors. |
 | MLIR `shard` dialect | Distributed dense tensors with halos. Reference for distributed grids. |

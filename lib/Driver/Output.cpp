@@ -130,7 +130,8 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
 
   // The mean of the kinetic energies half a step before and after exceeds
   // `kinetic` by (dt^2 / 8) sum F^2 / m. The pressure takes that mean, and
-  // the temperature the mean of all three (D45).
+  // the temperature the mean of all three (D45). See Jung et al., J. Chem.
+  // Phys. 148, 164109 (2018), and J. Chem. Theory Comput. 15, 84 (2019).
   double excess =
       0.125 * output.timestep * output.timestep * forceSquare;
   double half = kinetic + excess;

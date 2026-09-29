@@ -34,8 +34,8 @@ The runtime provides only the generic primitives they need (P9).
 
 ### 2.1 Algorithm
 
-M0 uses one algorithm on both targets: binning into cells, then a neighbor
-matrix. [neighbors-m0.md](neighbors-m0.md) describes the method as it is
+M0 uses one algorithm on both targets: binning into cells
+[[Quentrec1973]](references.md#quentrec1973), then a neighbor matrix. [neighbors-m0.md](neighbors-m0.md) describes the method as it is
 implemented; the table is the proposal.
 
 | Step | Work | Provided by |
@@ -70,8 +70,8 @@ is in the row of `i`, then `i` is in the row of `j`.
 | Overflow | Possible; the build is repeated with a larger `W` | Not possible |
 
 The matrix is proposed for M0 because the target is homogeneous systems
-(C7), where rows have nearly equal length. PPMD uses the same structure on
-GPUs.
+(C7), where rows have nearly equal length. PPMD [[Saunders2018]](references.md#saunders2018) uses the same
+structure on GPUs.
 
 ### 2.3 In the IR
 

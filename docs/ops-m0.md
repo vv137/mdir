@@ -6,7 +6,8 @@ end in single, mixed, and double precision, on the CPU sequentially and
 with OpenMP, and on NVIDIA GPUs.
 
 This document specifies the types and ops needed for milestone M0: a
-Lennard-Jones fluid integrated with velocity Verlet or leapfrog, on one node,
+Lennard-Jones [[Jones1924]](references.md#jones1924) fluid integrated with velocity Verlet
+[[Swope1982]](references.md#swope1982) or leapfrog [[HockneyEastwood1988]](references.md#hockneyeastwood1988), on one node,
 on CPU and GPU. It covers `md`, the minimal `dyn`, and `md_exec`.
 
 Operand lists, result lists, and the mathematical definitions are normative.
@@ -37,7 +38,7 @@ as (S1) or (B4) name the decision behind a section.
 | `P` | A particle set. Each particle has a global ID. |
 | `a : P → V` | A per-particle field with values in `V`. `a_i` is its value at particle `i`. |
 | `h` | The simulation cell: three lattice vectors and a periodicity flag per direction. |
-| `d_ij` | Minimum-image displacement `x_i − x_j − h·n`, with integer `n` chosen to minimize the length. |
+| `d_ij` | Minimum-image [[AllenTildesley2017]](references.md#allentildesley2017) displacement `x_i − x_j − h·n`, with integer `n` chosen to minimize the length. |
 | `r_ij` | `|d_ij|`. |
 | `r_c` | Cutoff. |
 
@@ -149,7 +150,8 @@ only pure ops from `arith`, `math`, and `vector`, and ends with a yield.
 
 ### 3.1 Expression syntax
 
-Energy expressions are strings in the syntax of OpenMM custom forces (D22).
+Energy expressions are strings in the syntax of OpenMM custom forces
+[[Eastman2017]](references.md#eastman2017) (D22).
 
 | Element | Rule |
 |---|---|
@@ -367,13 +369,14 @@ crosses the cutoff. Energy is then not conserved, whatever the integrator.
 |---|---|---|
 | `none` | `u(r)` | None |
 | `shift` | `u(r) − u(r_c)` | Energy |
-| `force_shift` | `u(r) − u(r_c) − (r − r_c) · u'(r_c)` | Energy and force |
+| `force_shift` [[Stoddard1973]](references.md#stoddard1973) | `u(r) − u(r_c) − (r − r_c) · u'(r_c)` | Energy and force |
 | `switch`, from `r_s` | `u(r) · S(r)` | Energy, force, and the derivative of the force |
-| `force_switch`, from `r_s` | `u(r) − P(r) − C` | Energy, force, and the derivative of the force |
+| `force_switch` [[Steinbach1994]](references.md#steinbach1994), from `r_s` | `u(r) − P(r) − C` | Energy, force, and the derivative of the force |
 
 `r_c` is the cutoff of the neighborhood.
 
-**Switch.** The potential is multiplied by
+**Switch.** The potential is multiplied by the fifth-degree polynomial of
+`potential-switch` in the GROMACS manual [[GromacsManual2025]](references.md#gromacsmanual2025):
 
 ```text
 S(r) = 1                          r ≤ r_s
@@ -405,7 +408,7 @@ sum of terms equals applying it to each term.
 | `force_switch` | — | `force-switch` |
 | `force_shift` | — | — |
 
-The GROMACS manual defines `force-switch` for a power law `r^-α`. For that
+The GROMACS manual [[GromacsManual2025]](references.md#gromacsmanual2025) defines `force-switch` for a power law `r^-α`. For that
 kernel the constants above reduce to the ones in the manual.
 
 A pass expands the attribute into the kernel before differentiation. After
@@ -416,7 +419,7 @@ Section 5.4 to form `u'(r_c)` and `u''(r_c)`.
 The expansion is a pass, not a front-end task, so that both front ends share
 it and the derivative rules exist once.
 
-Long-range dispersion corrections are not part of M0.
+Long-range dispersion corrections [[Shirts2007]](references.md#shirts2007) are not part of M0.
 
 ### 4.9 `md.sum_particles` and `md.map_particles`
 
@@ -457,8 +460,8 @@ with `md.call` to a generated `md.function`.
 
 ## 5. Semantic differentiation for M0
 
-This section traces the Lennard-Jones potential from its definition to the
-force kernel. Every step is an identity.
+This section traces the Lennard-Jones potential [[Jones1924]](references.md#jones1924) from its
+definition to the force kernel. Every step is an identity.
 
 ### 5.1 Energy
 
@@ -506,14 +509,15 @@ W      = Σ_{{i,j} ∈ N} d_ij ⊗ K(i, j)
 Both are `md.sum_relation`. The virial kernel is invariant under exchange
 because both factors change sign.
 
-**Sign convention (B8).** `W` is the MDIR virial. `K(i, j)` is the force on
+**Sign convention (B8).** `W` is the MDIR virial [[Louwerse2006]](references.md#louwerse2006). `K(i, j)` is the force on
 `i` due to `j`, so `W` is positive for repulsion. The pressure is
 
 ```text
 P = (2 · E_kin + tr W) / (3V)
 ```
 
-Other packages use other conventions. The GROMACS virial is `−W / 2`.
+Other packages use other conventions. The GROMACS virial is `−W / 2`
+[[GromacsManual2025]](references.md#gromacsmanual2025).
 
 ### 5.4 Rules
 
@@ -585,7 +589,8 @@ each kernel into a function, which is lowered and run, and the results are
 compared with closed-form expressions to a relative tolerance of 1e-12. The
 test covers the Lennard-Jones kernel with each truncation kind: energy,
 forces, virial, and a parameter derivative. The reference values for
-`force_switch` come from the formulas of the GROMACS manual.
+`force_switch` come from the formulas of the GROMACS manual
+[[GromacsManual2025]](references.md#gromacsmanual2025).
 
 ## 6. `dyn` ops
 
@@ -632,7 +637,7 @@ dyn.program @velocity_verlet(%x: !vec, %v: !vec, %f: !vec,
 | Attribute | Meaning |
 |---|---|
 | `requires` | What the program needs from the thermodynamic state, such as a temperature. |
-| `provides` | Properties of the program, such as `symplectic`, `time_reversible`, or `thermostatting`. Neither integrator conserves energy exactly, so neither claims to (B9). |
+| `provides` | Properties of the program, such as `symplectic`, `time_reversible`, or `thermostatting`. Neither integrator conserves energy exactly [[Hairer2003]](references.md#hairer2003), so neither claims to (B9). |
 | `velocity_offset` | Time of the stored velocities relative to the positions, in units of `dt`. Zero if absent. |
 
 ### 6.4 Leapfrog
@@ -921,7 +926,7 @@ L = { (i, j) : i ≠ j, |d_ij(x_ref)| < r_c + skin }
 ```
 
 **Validity.** The structure is valid for a configuration `x` when the cell is
-unchanged and
+unchanged and [[AllenTildesley2017]](references.md#allentildesley2017)
 
 ```text
 max_i |x_i − x_ref,i| ≤ skin / 2
@@ -1638,7 +1643,7 @@ and, from M1 on, on comparison with an established MD engine.
 
 | Test | Compared against | Tolerance |
 |---|---|---|
-| Kernels that differentiation generates | Closed-form derivatives; for `force_switch`, the formulas of the GROMACS manual | 1e-12 |
+| Kernels that differentiation generates | Closed-form derivatives; for `force_switch`, the formulas of the GROMACS manual [[GromacsManual2025]](references.md#gromacsmanual2025) | 1e-12 |
 | Neighbor build template | A search over all pairs | Exact |
 | A neighbor structure that a loop refreshes, 100 steps | Pairs within the cutoff at every step, by a search over all pairs; the number of builds | Exact |
 | Energy, forces, and virial of 64 particles | A script that evaluates all pairs | 1e-10 |

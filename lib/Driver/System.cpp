@@ -68,6 +68,8 @@ namespace {
 
 /// A generator of random numbers whose sequence is fixed by its definition,
 /// not by a library: splitmix64 for the state, xoshiro256** for the numbers.
+/// See Steele et al., OOPSLA '14, 453 (2014), and Blackman and Vigna, ACM
+/// Trans. Math. Softw. 47(4), 1 (2021); docs/references.md.
 class Generator {
 public:
   explicit Generator(uint64_t seed) {
@@ -95,7 +97,7 @@ public:
   }
 
   /// A number from the normal distribution, by the method of Box and
-  /// Muller.
+  /// Muller, Ann. Math. Stat. 29, 610 (1958).
   double nextNormal() {
     double radius = std::sqrt(-2.0 * std::log(nextUniform()));
     double angle = 2.0 * M_PI * nextUniform();

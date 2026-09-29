@@ -19,7 +19,8 @@ constexpr double pressure = 16.6053906717 / 1.01325;
 constexpr double length = 0.1;
 /// kJ/mol per kcal/mol.
 constexpr double energy = 4.184;
-/// The Boltzmann constant in kJ/(mol K).
+/// The Boltzmann constant in kJ/(mol K): k_B N_A, exact since the SI of 2019.
+/// See Tiesinga et al., Rev. Mod. Phys. 93, 025010 (2021).
 constexpr double boltzmann = 0.0083144626181532;
 } // namespace units
 

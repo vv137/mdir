@@ -1,4 +1,5 @@
-// Checkpoints in the H5MD format.
+// Checkpoints in the H5MD format: de Buyl et al., Comput. Phys. Commun. 185,
+// 1546 (2014).
 //
 // The layout of a file:
 //

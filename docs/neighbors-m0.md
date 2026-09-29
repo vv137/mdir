@@ -11,7 +11,8 @@ The ops are specified in [ops-m0.md](ops-m0.md), Section 8.2.
 ## 1. The structure
 
 A neighbor structure is a neighbor matrix: for each particle a row of the
-particles within the reach, which is the cutoff plus the skin.
+particles within the reach, which is the cutoff plus the skin, as in the
+neighbor list of Verlet [[Verlet1967]](references.md#verlet1967).
 
 ```text
 count[i]            number of neighbors of particle i
@@ -56,6 +57,7 @@ cells as particles, and one thread took longer than the search.
 
 ### 2.2 Cells and their width
 
+The search bins the particles into cells [[Quentrec1973]](references.md#quentrec1973).
 Along an edge of the length `L` there are `n = floor(L / w)` cells, of the
 width `L / n`, which is `w` or more. A search for the neighbors of a
 particle visits the cells within reach of the cell of the particle:
@@ -196,7 +198,7 @@ The matrix is the same either way.
 ## 3. The test of validity
 
 A structure that was built at the positions `x_ref` is valid for the
-positions `x` while
+positions `x` while [[AllenTildesley2017]](references.md#allentildesley2017)
 
 ```text
 max_i |x_i − x_ref,i| ≤ skin / 2
@@ -225,7 +227,7 @@ Other schemes that were considered are in
 | Time of a kernel | The runtime library for devices, with `MDRT_PROFILE` and `MDRT_WAIT` set: the time from the launch of a kernel to its end. The host then waits after every kernel, so the sum of the kernels is more than the time of a step. |
 | Repetition | The least of three runs |
 | Machine | A host with 128 cores and an RTX 3090, CUDA toolkit 11.2 |
-| Argon | `examples/argon.toml`: 864 atoms, cutoff 0.85 nm, reach 0.95 nm, 2000 steps of 5 fs, with `mdir-run` |
+| Argon | `examples/argon.toml`: 864 atoms, cutoff 0.85 nm, reach 0.95 nm, 2000 steps of 5 fs, with `mdir run` |
 
 The liquid starts from a lattice, so its particles are in an order that
 follows their positions. Section 5 has the times for another order.

@@ -3,6 +3,12 @@
 // This is a template. The compiler adds it to a module that builds neighbor
 // structures, where it is specialized like any other code.
 //
+// Binning the particles into cells to find their neighbors is the method of
+// linked cells [Quentrec1973]; a structure built with a skin and reused
+// while no particle has moved more than half of it is the list of Verlet
+// [Verlet1967]; displacements are taken in the minimum image
+// [AllenTildesley2017]. The keys are those of docs/references.md.
+//
 // The simulation cell is orthorhombic and periodic, with edge lengths `box`.
 // On return, row `i` of `index` holds the particles within `reach` of
 // particle `i`, and `counts[i]` holds their number. A row holds at most as

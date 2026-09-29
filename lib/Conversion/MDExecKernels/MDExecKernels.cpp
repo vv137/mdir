@@ -163,7 +163,8 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
         Value other = arith::IndexCastOp::create(pair, loc,
                                                  pair.getIndexType(), narrow);
 
-        // The minimum-image displacement and its squared length.
+        // The minimum-image displacement [AllenTildesley2017] and its
+        // squared length.
         Value otherPosition = loadElement(pair, loc, positions, other);
         Value raw =
             arith::SubFOp::create(pair, loc, centralPosition, otherPosition);

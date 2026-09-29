@@ -17,10 +17,11 @@ Related documents:
 - [ops-m0.md](ops-m0.md): types and ops for milestone M0.
 - [prior-art.md](prior-art.md): earlier work and what is taken from it.
 - [design-review.md](design-review.md): review of revision 1.
+- [references.md](references.md): the literature that the documents cite.
 
 ## 1. Goal
 
-MDIR is an MLIR-based compiler stack for general-purpose molecular dynamics
+MDIR is an MLIR-based [[Lattner2021]](references.md#lattner2021) compiler stack for general-purpose molecular dynamics
 (MD).
 
 - It supports all-atom and coarse-grained simulation.
@@ -216,11 +217,11 @@ kernel behaves under exchange of the two particles.
 | Scaled 1-4 pairs | A separate topological relation with its own parameters |
 | Excluded pairs | A relation that terms may sum over |
 
-The last row exists because Ewald methods compute a correction term over
+The last row exists because Ewald methods [[Ewald1921]](references.md#ewald1921) compute a correction term over
 excluded pairs. Exclusion is therefore not the same as removal.
 
 **Neighborhoods are not exclusive to potentials.** Pairwise thermostats
-such as DPD are velocity-dependent and not part of the potential, yet they
+such as DPD [[Hoogerbrugge1992]](references.md#hoogerbrugge1992) are velocity-dependent and not part of the potential, yet they
 need a neighborhood. `dyn` ops may consume neighborhoods too.
 
 ### 4.3 `mlff` — machine-learned force fields
@@ -251,7 +252,7 @@ Ops: `dyn.kick`, `dyn.drift`, `dyn.thermostat`, `dyn.barostat`,
 `dyn.constraint_position`, `dyn.constraint_velocity`, `dyn.random`,
 `dyn.metropolis`.
 
-Velocity Verlet:
+Velocity Verlet [[Swope1982]](references.md#swope1982):
 
 ```mlir
 %v1 = dyn.kick  %v,  %f,  %m, %half_dt
@@ -260,7 +261,7 @@ Velocity Verlet:
 %v2 = dyn.kick  %v1, %f1, %m, %half_dt
 ```
 
-**Random numbers are counter-based** (P5, A5, A13). `dyn.random` is a pure
+**Random numbers are counter-based** [[Salmon2011]](references.md#salmon2011) (P5, A5, A13). `dyn.random` is a pure
 function of seed, step, stream ID, an entity key, and a draw index. The
 state carries no generator. The draw index counts the numbers that one
 entity takes from one stream in one step, and is a constant in the kernel
@@ -290,7 +291,8 @@ whether they preserve the target distribution (P10).
 ### 4.5 `ensemble` — Ensemble / Protocol IR
 
 Expresses which thermodynamic states are sampled and by which protocol: NVT,
-NPT, temperature and Hamiltonian replica exchange, REST2, expanded ensembles,
+NPT, temperature [[Sugita1999]](references.md#sugita1999) and Hamiltonian [[Fukunishi2002]](references.md#fukunishi2002) replica
+exchange, REST2 [[Wang2011]](references.md#wang2011), expanded ensembles [[Lyubartsev1992]](references.md#lyubartsev1992),
 alchemical schedules.
 
 ```mlir
@@ -364,7 +366,7 @@ reports `support`, `reads`, `writes`, `accumulation`, and
 | Computation | Stages |
 |---|---|
 | Lennard-Jones | One stage: reads position and species within the cutoff, writes force. |
-| EAM | Three stages: neighbors to electron density; density to embedding; neighbors and density to force. |
+| EAM [[Daw1984]](references.md#daw1984) | Three stages: neighbors to electron density; density to embedding; neighbors and density to force. |
 | Message passing, L layers | L stages, each reading the previous layer's features within the cutoff. |
 
 Bonded terms, constraints, and virtual sites report topological support
@@ -438,7 +440,7 @@ A level says what the planner may choose, not what it prefers: at the
 deterministic level a sum whose order threads decide is not allowed.
 
 The decomposition-independent level is a future mode and is not required for
-M0 to M3 (A6). It needs fixed-point or exact accumulation. Bitwise agreement
+M0 to M3 (A6). It needs fixed-point [[LeGrand2013]](references.md#legrand2013) or exact accumulation. Bitwise agreement
 between different hardware is a non-goal.
 
 ### 7.4 Precision
@@ -497,13 +499,13 @@ runs. The transport is chosen below it:
 | NVSHMEM | NVIDIA cluster |
 
 Particle domains are not the only distributed object. Mesh-based methods such
-as PME need distributed fields and grids. They are excluded from v0 (D12) but
+as PME [[Darden1993]](references.md#darden1993), [[Essmann1995]](references.md#essmann1995) need distributed fields and grids. They are excluded from v0 (D12) but
 the dialect must not assume that all communication is particle halo exchange.
 
 ### 8.2 `md_exec` — MD-specific execution IR
 
 Turns abstract `md` constructs into concrete computational structure. Its
-core follows PPMD (P11): a particle loop, a pair loop, and a reduction, each
+core follows PPMD [[Saunders2018]](references.md#saunders2018) (P11): a particle loop, a pair loop, and a reduction, each
 with a kernel region.
 
 Initial op set:
@@ -532,8 +534,8 @@ verified. They are declared by hand only for external, opaque kernels.
 **The cutoff predicate is explicit on the pair loop** (P18). It is not part
 of the kernel body, so the lowering can choose between a branch and a mask.
 
-**Physical neighbor representation** is chosen here: dense cell list, Verlet
-list, cluster list, BVH, or sparse cell map. The same pair loop may use a
+**Physical neighbor representation** is chosen here: dense cell list
+[[Quentrec1973]](references.md#quentrec1973), Verlet list [[Verlet1967]](references.md#verlet1967), cluster list [[Pall2013]](references.md#pall2013), BVH, or sparse cell map. The same pair loop may use a
 different structure on each target.
 
 **Neighbor structure validity is explicit** (P15). A neighbor structure is a
@@ -577,7 +579,7 @@ the data layout. `md_exec` ops have a value form and a storage form, in the
 manner of upstream `linalg`.
 
 A value needs a buffer of its own when it is still live after the point where
-its buffer would be overwritten (B10). In a Metropolis step, the proposed
+its buffer would be overwritten (B10). In a Metropolis step [[Metropolis1953]](references.md#metropolis1953), the proposed
 positions go to a second buffer while the old positions stay in place.
 
 The pass introduces neither a copy nor an extra buffer inside the step loop
@@ -670,7 +672,7 @@ a generated kernel that fills it.
 |---|---|---|
 | Input | TOML (D24, D35) | System, potential, dynamics, and run settings |
 | Trajectory | DCD first, then XTC (D25, D37) | Positions, in reduced precision |
-| Checkpoint | H5MD, 64-bit floating point (D26) | Everything an exact restart needs |
+| Checkpoint | H5MD [[deBuyl2014]](references.md#debuyl2014), 64-bit floating point (D26) | Everything an exact restart needs |
 
 A checkpoint holds:
 
@@ -726,7 +728,7 @@ Milestones (P3) and what each one adds:
 | M1 | AA protein and water with an Amber force field | Bonded terms executed by the particles, exclusions and scaled pairs, tables of pairs of types, PME on one node, constraints, removal of the motion of the center of mass, thermostat, barostat, readers of Amber and GROMACS topologies, the `mdir` command (D53) |
 | M2a | AA protein and water | Virtual sites |
 | M2c | AA protein and water | Distributed PME: a mesh decomposition beside the particle decomposition |
-| Later | Martini CG membrane and water | Deferred (D53) |
+| Later | Martini [[Marrink2007]](references.md#marrink2007) CG membrane and water | Deferred (D53) |
 | M3 | MLFF | Reverse mode, reverse accumulation, feature halo exchange |
 
 The v0 performance target is homogeneous systems at finite density (C7).

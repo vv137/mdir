@@ -57,9 +57,9 @@ This cannot be deferred, because it constrains the layers below:
   adjoints accumulated on ghost particles must be sent back to their owners,
   layer by layer. `md_dist` can only plan that if the derivative program
   exists, with locality information intact, **before** distributed lowering.
-- The same holds for many-body potentials such as EAM, where an intermediate
+- The same holds for many-body potentials such as EAM [[Daw1984]](references.md#daw1984), where an intermediate
   per-particle quantity must be forward-communicated between two passes.
-- Differentiating at the LLVM level (for example with Enzyme) happens after
+- Differentiating at the LLVM level (for example with Enzyme [[Moses2020]](references.md#moses2020)) happens after
   communication has been lowered, so the compiler would have to differentiate
   through halo exchange. Enzyme can do this, but the adjoint communication
   it produces mirrors the primal calls one for one. The planner never sees it
@@ -105,9 +105,9 @@ with no list buffering. In general the halo depends on:
 
 | Source | Effect on halo |
 |---|---|
-| Verlet buffer (skin) | Halo is cutoff plus skin; skin is an execution choice. |
+| Verlet buffer (skin) [[Verlet1967]](references.md#verlet1967) | Halo is cutoff plus skin; skin is an execution choice. |
 | Message passing with L layers | Either a halo of L × cutoff with no per-layer exchange, or a halo of one cutoff with a feature exchange per layer. This is a cost-model decision. |
-| Many-body terms (EAM, Tersoff) | Intermediate per-particle fields must be communicated between passes. |
+| Many-body terms (EAM [[Daw1984]](references.md#daw1984), Tersoff [[Tersoff1988]](references.md#tersoff1988)) | Intermediate per-particle fields must be communicated between passes. |
 | Bonded terms | Determined by the spatial extent of bonded groups, not by a cutoff. |
 | Constraints, virtual sites, rigid bodies | Coupled atoms must be co-located or communicated. These live in `dyn`, so `md_dist` needs input from `dyn` as well as `md`. |
 | Newton's third law | Computing each pair once requires reverse force accumulation; computing it twice does not. |
@@ -155,12 +155,13 @@ the compiler.
 ### 3.3 Long-range interactions have no lowering path
 
 `md` lists fields, but every lower layer assumes cutoff-based neighborhoods.
-PME and PPPM need particle-to-grid spreading, a distributed FFT whose
+PME [[Darden1993]](references.md#darden1993), [[Essmann1995]](references.md#essmann1995) and PPPM [[HockneyEastwood1988]](references.md#hockneyeastwood1988) need particle-to-grid spreading, a distributed FFT whose
 decomposition differs from the particle decomposition, and grid-to-particle
 gathering. None of `md_dist`'s concepts cover that.
 
 **Recommendation.** Exclude mesh electrostatics from v0 explicitly and use
-cutoff-based electrostatics (reaction field or damped shifted force). Reserve
+cutoff-based electrostatics (reaction field [[Tironi1995]](references.md#tironi1995) or damped shifted
+force [[Fennell2006]](references.md#fennell2006)). Reserve
 the design space now, so that `md_dist` is not built on the assumption that
 all communication is particle halo exchange.
 
@@ -233,7 +234,7 @@ and with reproducibility (Section 4).
 - **Cell changes.** A barostat changes the cell, which invalidates both the
   partition and the cell grid. This follows from Section 2.3 but deserves its
   own test case.
-- **Time-dependent Hamiltonians.** Metadynamics and other history-dependent
+- **Time-dependent Hamiltonians.** Metadynamics [[Laio2002]](references.md#laio2002) and other history-dependent
   biases update Hamiltonian parameters from inside the dynamics. `H(x; θ)`
   allows this only if something is permitted to write `θ`.
 - **Front end.** The notes do not say how users produce `md` IR. Importers
@@ -291,7 +292,7 @@ One vertical slice, validated end to end:
 | Item | Choice |
 |---|---|
 | System | Single-species Lennard-Jones fluid, periodic orthorhombic cell |
-| Ensemble | NVE, velocity Verlet |
+| Ensemble | NVE, velocity Verlet [[Swope1982]](references.md#swope1982) |
 | Target | Single node, CPU first, then one GPU |
 | Pipeline | `md` → differentiation → `md_exec` → `scf` → `llvm` |
 | Runtime library | Cell list, neighbor list, I/O |
