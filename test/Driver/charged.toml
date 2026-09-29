@@ -8,11 +8,11 @@
 # RUN: mdir emit %s | FileCheck %s --check-prefix=MODULE
 
 # The potential energy and the trace of the virial at the start agree with
-# Inputs/charged_reference.py: 349.977103 kcal/mol and -526.580632 kcal/mol,
-# with a correction of -24.807798 kcal/mol in the energy.
+# Inputs/charged_reference.py: 349.879817 kcal/mol and -527.164345 kcal/mol,
+# with a correction of -24.905084 kcal/mol in the energy.
 #
 # CHECK:      INFO:      STEP           TIME      TOTAL_ENE  POTENTIAL_ENE    KINETIC_ENE    TEMPERATURE         VIRIAL       PRESSURE
-# CHECK-NEXT: INFO:         0         0.0000 {{ *[0-9.]+}} {{ *}}349.9771 {{ *[0-9.]+}} {{ *[0-9.]+}} {{ *}}-526.5806 {{ *-?[0-9.]+}}
+# CHECK-NEXT: INFO:         0         0.0000 {{ *[0-9.]+}} {{ *}}349.8798 {{ *[0-9.]+}} {{ *[0-9.]+}} {{ *}}-527.1643 {{ *-?[0-9.]+}}
 
 # The term with an override looks its parameters up in tables of the pairs
 # of types; the other gathers the charges and multiplies them.

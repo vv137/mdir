@@ -410,18 +410,18 @@ Amber; a control file asks for it with `dispersion_corr` in a pair term.
 
 As the engines do [[GromacsManual2025]](references.md#gromacsmanual2025),
 the correction takes the part of the term that decays as `r⁻⁶` and leaves
-the repulsion out, and it counts the pairs of distinct particles:
-`N_a (N_b − δ_ab)` for the types `a` and `b`, less the excluded pairs once
-a topology gives them. Its virial is six times its energy, so the pressure
+the repulsion out. As GROMACS does, it takes `N² ⟨C6⟩`, with `⟨C6⟩` the
+mean of `C6` over the pairs of distinct particles that are not excluded;
+it agrees with GROMACS to 10⁻⁷. Its virial is six times its energy, so the pressure
 changes by `2 E_disp / V`. A switch or a shift of the potential inside the
 cutoff needs the integral of the change as well; M1 takes a plain cutoff
 only.
 
-sander leaves the repulsion out as well, but counts the pairs as
-`N_a N_b`, with the pairs of a particle with itself and the excluded
-pairs (`vdw_correction` of `ew_setup.F90` in AmberTools). The two counts
-differ by about `1/N` of the correction; a comparison with sander scales
-the correction by the ratio of the two counts, or states the difference.
+sander leaves the repulsion out as well, but sums `N_a N_b C6_ab` over
+all pairs of types, with no mean over the pairs that are not excluded
+(`vdw_correction` of `ew_setup.F90` in AmberTools). The two differ by
+some `N_excl / N²` of the correction, 4 × 10⁻⁴ of it for the dipeptide in
+water; a comparison with sander states the difference.
 
 Not implemented, and kept here as an alternative: the correction from the
 whole expression of the term, integrated numerically beyond the cutoff,
@@ -659,7 +659,8 @@ to zero smoothly, or particle mesh Ewald.
 | Keywords | Table |
 |---|---|
 | `electrostatic = "CUTOFF"` or `"PME"`, `pme_ngrid_x`, `pme_ngrid_y`, `pme_ngrid_z` or `pme_spacing`, `pme_order`, `ewald_tolerance`, `dispersion_correction` | `[energy]` |
-| `rigid_bond`, `fast_water`, `settle_residues`, `shake_tolerance`, `shake_iterations` | `[constraints]` |
+| `rigid_bond`, `fast_water`, `settle_residues`, `shake_tolerance`, `shake_iterations` | `[constraints]`. Until constraints come, only `false` is taken for the first two, and a topology with SETTLE needs `fast_water = false` to run its waters flexible, with their bonds. |
+| `prmtopfile`, `ambcrdfile`; `grotopfile`, `grocrdfile`, `groinclude` (directories of includes), `grodefine` (macros, as `-D` of grompp) | `[input]` |
 | `ensemble = "NVT"` or `"NPT"`, `thermostat = "BUSSI"`, `barostat = "BERNETTI-BUSSI"`, `temperature`, `pressure`, `tau_t`, `tau_p`, `compressibility`, `isotropy = "ISO"` or `"SEMI-ISO"` | `[ensemble]` |
 | `thermostat_period`, `barostat_period`, `comm_period` | `[dynamics]` |
 
@@ -695,6 +696,21 @@ own right after the execution of terms over tuples (Section 18).
 | Alanine dipeptide in water: the energy of each term at the start, and the forces | AmberTools and GROMACS, each from its own format | 1e-5, relative |
 | The same system: the conservation of energy at constant energy, and temperature, pressure, and density at constant temperature and pressure | The engines, within the statistical error | |
 | The JAC benchmark: run times | The engines on the same device | |
+
+The terms of a run from a topology of GROMACS were compared with those of
+GROMACS 2026.3 (mixed precision) for the peptide ALA-GLY-SER-LYS-ASP-TRP
+in flexible water, built with `pdb2gmx` for each force field that GROMACS
+ships (`scripts/validation/gromacs/run.sh`):
+
+| Force field | Bonds, angles, dihedrals, pairs 1-4, Lennard-Jones, dispersion |
+|---|---|
+| amber99sb-ildn, amber99sb, amber03, amber14sb | Agree to 5 × 10⁻⁶ or better, each term |
+| amber19sb, charmm27 | Rejected: CMAP |
+| oplsaa | Rejected: Ryckaert-Bellemans dihedrals |
+| gromos54a7 | Rejected: bonds of function 2 |
+
+Coulomb (SR) is not compared: GROMACS has no plain cutoff for it, only
+a reaction field.
 
 The two readers can be compared with each other when the same system is
 in both formats. ParmEd converts a topology of Amber to the format of
@@ -744,7 +760,7 @@ into the home directory.
 | M1b | The command line (Section 14) | The runs of M0 through `mdir run` | Done |
 | M1c | Exclusions in the neighbor build; pairs three bonds apart | Chains with Lennard-Jones | Done: energy, forces, and virial agree with a reference on the CPU, with OpenMP, and on a GPU |
 | M1d | Tables, NBFIX, the rule `product`, a Coulomb cutoff, the correction for the dispersion | A mixture of charged types | Done. The IR has `!md.table` and `md.lookup`. The driver takes `[[energy.nbfix]]`, which turns the parameters of a term into tables of pairs of types, the rule `product`, the name `coulomb` for the constant of CODATA 2018, and `dispersion_corr` for each pair term, with a plain cutoff. The correction takes the r⁻⁶ part of the term and the N(N − 1) ordered pairs, as GROMACS does; excluded pairs come out of the count once topologies are read (M1e). |
-| M1e | The readers of both formats; renumbering of the members with the order | Alanine dipeptide in flexible water, at constant energy with 0.5 fs | In part. The reader of Amber topologies and coordinates is done, and a run from a topology has bonds, angles, dihedrals, pairs three bonds apart, exclusions, Lennard-Jones from tables, Coulomb with a plain cutoff, and the correction for the dispersion; its terms at the start agree with sander but for the conventions. A run from a topology puts the particles and the members of the tuples in the order of the positions once, on the host, where it begins; the states agree with a run in the order of the file to rounding. Not yet: the reader of GROMACS, a new order at every segment (which needs the members renumbered in the program), SETTLE by residue. |
+| M1e | The readers of both formats; renumbering of the members with the order | Alanine dipeptide in flexible water, at constant energy with 0.5 fs | In part. Both readers are done: the terms of a run from a topology agree with sander but for the conventions, and with GROMACS to 10⁻⁶ for amber99sb-ildn, amber99sb, amber03, and amber14sb and for a made-up topology that uses the preprocessor and the defaults of bonded types (Section 15). A run from a topology puts the particles in the order of the positions once, where it begins. Not yet: a new order at every segment, which needs the members renumbered in the program. |
 | M1f | Comparison of the intermediate stage with AmberTools and GROMACS | | This completes the intermediate stage |
 | M1g | Removal of the motion of the center of mass, random numbers, the thermostat | At constant temperature | |
 | M1h | Particle mesh Ewald | With particle mesh Ewald | |

@@ -78,6 +78,13 @@ struct Topology {
   std::vector<Angle> angles;
   std::vector<Dihedral> dihedrals;
   std::vector<Pair> pairs;
+  /// Rigid waters of three sites that SETTLE constrains: the first atom,
+  /// the oxygen, and the two after it, with the distances O–H and H–H.
+  struct Settle {
+    unsigned oxygen;
+    double distanceOH, distanceHH;
+  };
+  std::vector<Settle> settles;
   /// The pairs that the nonbonded terms leave out, `i < j`, sorted: one,
   /// two, and three bonds apart.
   std::vector<std::pair<unsigned, unsigned>> exclusions;
@@ -102,6 +109,19 @@ llvm::Expected<Topology> readAmberTopology(llvm::StringRef path);
 /// Reads the positions, the velocities if there are any, and the cell of
 /// `topology` from a file of coordinates of Amber (`inpcrd`, `rst7`).
 llvm::Error readAmberCoordinates(llvm::StringRef path, Topology &topology);
+
+/// Reads a topology in the format of GROMACS (`.top` with its `.itp`
+/// files). Included files are looked for next to the file that includes
+/// them, then in `includePath`, then in the directories of `GMXLIB`.
+/// `defines` are defined before the first line, as `-D` of grompp.
+llvm::Expected<Topology>
+readGromacsTopology(llvm::StringRef path,
+                    llvm::ArrayRef<std::string> includePath,
+                    llvm::ArrayRef<std::string> defines = {});
+
+/// Reads the positions, the velocities if there are any, and the cell of
+/// `topology` from a `.gro` file.
+llvm::Error readGromacsCoordinates(llvm::StringRef path, Topology &topology);
 
 } // namespace driver
 } // namespace mdir

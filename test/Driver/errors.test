@@ -15,7 +15,7 @@
 
 # KEYWORD: keyword.toml:3: unknown keyword 'cutoff' in [energy]
 # PLANNED: planned.toml:3: 'dielec_const' in [energy] is not supported yet; it is planned for M1
-# TABLE: table.toml:1: 'constraints' in [the control file] is not supported yet; it is planned for M1
+# TABLE: table.toml:1: 'selection' in [the control file] is not supported yet; it is planned for M1
 # CHOICE: choice.toml:12: expected one of VVER, LEAP for 'integrator', got 'RK4'
 # PERIOD: period.toml:11: 'nsteps' is not a multiple of 'eneout_period'
 # SYNTAX: syntax.toml:2:
@@ -45,8 +45,8 @@ dielec_const = 1.0
 [input]
 pdbfile = "one.pdb"
 #--- table.toml
-[constraints]
-rigid_bond = true
+[selection]
+group1 = "all"
 [input]
 pdbfile = "one.pdb"
 #--- choice.toml

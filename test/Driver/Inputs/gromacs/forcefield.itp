@@ -1,0 +1,47 @@
+; A made-up force field of the kind of Amber in the format of GROMACS, to
+; test the reader: the combination rule 1 (c6 and c12), an override in
+; [ nonbond_params ], pair types without gen-pairs, defaults of bonded
+; types with wildcards, and a dihedral of several terms.
+
+[ defaults ]
+; nbfunc  comb-rule  gen-pairs  fudgeLJ  fudgeQQ
+  1       1          no         0.5      0.8333333333
+
+[ atomtypes ]
+; name  at.num  mass     charge  ptype  c6           c12
+  CT    6       12.0110  0.0     A      2.33424e-03  3.47783e-06
+  HC    1        1.0080  0.0     A      1.22000e-04  1.19000e-07
+  OW    8       15.9994  0.0     A      2.48956e-03  2.43540e-06
+  HW    1        1.0080  0.0     A      0.0          0.0
+  MW    0        0.0     0.0     D      0.0          0.0      ; not used
+
+[ nonbond_params ]
+; i  j   func  c6           c12
+  CT OW  1     2.60000e-03  3.10000e-06
+
+[ pairtypes ]
+; i  j   func  c6           c12
+  CT CT  1     1.16712e-03  1.73892e-06
+  CT HC  1     2.66000e-04  3.20000e-07
+  HC HC  1     6.10000e-05  5.95000e-08
+
+#define kCC 224262.4
+#define kCH 284512.0
+
+[ bondtypes ]
+; i  j   func  b0     kb
+  CT CT  1     0.1526 kCC
+  CT HC  1     0.1090 kCH
+
+[ angletypes ]
+; i  j  k   func  th0     cth
+  CT CT CT  1     109.50  334.720
+  CT CT HC  1     109.50  418.400
+  HC CT HC  1     109.50  292.880
+
+[ dihedraltypes ]
+; A specific type, and a wildcard type of two terms.
+; i  j  k  l   func  phase  kd       pn
+  HC CT CT HC  9     0.0    0.62760  3
+  X  CT CT X   9     0.0    0.65084  3
+  X  CT CT X   9     180.0  0.20920  1

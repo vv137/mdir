@@ -1,0 +1,21 @@
+; The single-point settings of the comparison of run.sh.
+integrator      = md
+nsteps          = 0
+dt              = 0.0005
+cutoff-scheme   = Verlet
+nstlist         = 10
+rlist           = 1.0
+verlet-buffer-tolerance = -1
+coulombtype     = Reaction-Field
+epsilon-rf      = 1
+rcoulomb        = 0.9
+vdwtype         = Cut-off
+vdw-modifier    = None
+rvdw            = 0.9
+DispCorr        = EnerPres
+constraints     = none
+define          = -DFLEXIBLE
+pbc             = xyz
+nstcalcenergy   = 1
+nstenergy       = 1
+continuation    = yes

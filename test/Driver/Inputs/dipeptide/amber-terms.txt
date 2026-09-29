@@ -1,0 +1,11 @@
+# The terms of dipeptide.prmtop and dipeptide.inpcrd at the start, as MDIR
+# computes them from the topology of Amber (amber.test), in kJ/mol: the
+# values of the log in kcal/mol times 4.184.
+Lennard-Jones           1618.140017
+Coulomb                -9765.393968
+bonds                      0.163310
+angles                     1.514579
+dihedrals                 40.350488
+Lennard-Jones 1-4         20.985651
+Coulomb 1-4              204.753073
+dispersion               -54.161959

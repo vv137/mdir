@@ -1,0 +1,28 @@
+; A water of three sites, flexible with -DFLEXIBLE.
+
+[ moleculetype ]
+; name  nrexcl
+  SOL   2
+
+[ atoms ]
+  1  OW  1  SOL  OW   1  -0.834  15.99940
+  2  HW  1  SOL  HW1  1   0.417   1.00800
+  3  HW  1  SOL  HW2  1   0.417   1.00800
+
+#ifdef FLEXIBLE
+#define kOH 502416.0
+[ bonds ]
+; A line that continues on the next.
+  1  2  1  0.09572 \
+           kOH
+  1  3  1  0.09572 kOH
+[ angles ]
+  2  1  3  1  104.52  628.02
+#else
+[ settles ]
+  1  1  0.09572  0.15136
+#endif
+
+[ exclusions ]
+  1  2  3
+  2  1  3

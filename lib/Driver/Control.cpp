@@ -394,7 +394,7 @@ Error Reader::readEnergy(const toml::table &table) {
   // With a topology, the correction for the dispersion is for the whole
   // run, and the electrostatics are a cutoff until particle mesh Ewald
   // comes (M1h).
-  bool hasTopology = !control.prmtopFile.empty();
+  bool hasTopology = control.hasTopology();
   for (StringRef key : {"dispersion_corr", "electrostatic"})
     if (!hasTopology && table.contains(std::string_view(key)))
       return fail(*table.get(std::string_view(key)),
@@ -419,7 +419,7 @@ Error Reader::readEnergy(const toml::table &table) {
                        "'vdw_shift' or 'vdw_force_switch'");
 
   // A topology gives the types and the terms.
-  if (!control.prmtopFile.empty()) {
+  if (control.hasTopology()) {
     if (!control.types.empty() || !control.pairs.empty() ||
         !control.overrides.empty())
       return fail(table, "[[energy.type]], [[energy.pair]], and "
@@ -532,14 +532,14 @@ Error Reader::readBoundary(const toml::table &table) {
   int type = 0;
   if (Error error = readChoice<int>(table, "type", type, {{"PBC", 0}}))
     return error;
-  // With a file of coordinates of Amber, the box is that of the file.
+  // With a topology, the box is that of the file of coordinates.
   const char *keys[3] = {"box_size_x", "box_size_y", "box_size_z"};
   for (int i = 0; i != 3; ++i) {
-    if (!control.prmtopFile.empty()) {
+    if (control.hasTopology()) {
       if (table.contains(keys[i]))
         return fail(table, llvm::Twine("'") + keys[i] +
-                               "' is not needed: the box comes from "
-                               "'ambcrdfile'");
+                               "' is not needed: the box comes from the "
+                               "file of coordinates");
       continue;
     }
     if (Error error = readPositive(table, keys[i], control.box[i]))
@@ -581,9 +581,8 @@ Error Reader::read(const toml::table &root) {
   if (Error error = checkKeywords(
           root, "the control file",
           {"input", "output", "energy", "dynamics", "ensemble", "boundary",
-           "execution"},
-          {{"constraints", "M1"},
-           {"selection", "M1"},
+           "execution", "constraints"},
+          {{"selection", "M1"},
            {"restraints", "M1"},
            {"minimize", "M1"},
            {"remd", "M3"}}))
@@ -607,13 +606,43 @@ Error Reader::read(const toml::table &root) {
   if (Error error = getTable("input", /*required=*/true, table))
     return error;
   if (Error error = checkKeywords(
-          *table, "input", {"pdbfile", "rstfile", "prmtopfile", "ambcrdfile"},
-          {{"psffile", "M2"},
-           {"topfile", "M2"},
-           {"parfile", "M2"},
-           {"grotopfile", "M1"},
-           {"grocrdfile", "M1"}}))
+          *table, "input",
+          {"pdbfile", "rstfile", "prmtopfile", "ambcrdfile", "grotopfile",
+           "grocrdfile", "groinclude", "grodefine"},
+          {{"psffile", "M2"}, {"topfile", "M2"}, {"parfile", "M2"}}))
     return error;
+  if (Error error = readPath(*table, "grotopfile", control.gromacsTopologyFile))
+    return error;
+  if (Error error =
+          readPath(*table, "grocrdfile", control.gromacsCoordinateFile))
+    return error;
+  for (StringRef key : {"groinclude", "grodefine"}) {
+    const toml::node *node = table->get(std::string_view(key));
+    if (!node)
+      continue;
+    const toml::array *array = node->as_array();
+    if (!array)
+      return fail(*node, "expected a list of strings for '" + key + "'");
+    for (const toml::node &element : *array) {
+      if (!element.is_string())
+        return fail(element, "expected a list of strings for '" + key + "'");
+      std::string value = *element.value<std::string>();
+      if (key == "groinclude") {
+        // Relative to the control file, as the other paths are.
+        llvm::SmallString<256> full(llvm::sys::path::parent_path(path));
+        if (llvm::sys::path::is_absolute(value))
+          full = value;
+        else
+          llvm::sys::path::append(full, value);
+        control.gromacsIncludes.push_back(std::string(full));
+      } else {
+        control.gromacsDefines.push_back(value);
+      }
+    }
+  }
+  if (control.gromacsTopologyFile.empty() !=
+      control.gromacsCoordinateFile.empty())
+    return fail(*table, "expected 'grotopfile' and 'grocrdfile' together");
   if (Error error = readPath(*table, "pdbfile", control.pdbFile))
     return error;
   if (Error error = readPath(*table, "rstfile", control.restartInput))
@@ -625,11 +654,14 @@ Error Reader::read(const toml::table &root) {
     return error;
   if (control.prmtopFile.empty() != control.amberCoordinateFile.empty())
     return fail(*table, "expected 'prmtopfile' and 'ambcrdfile' together");
-  if (!control.prmtopFile.empty() && !control.pdbFile.empty())
-    return fail(*table, "expected either 'pdbfile' or 'prmtopfile', not "
-                        "both");
-  if (control.pdbFile.empty() && control.prmtopFile.empty())
-    return fail(*table, "expected a 'pdbfile' or a 'prmtopfile' in [input]");
+  int sources = !control.pdbFile.empty() + !control.prmtopFile.empty() +
+                !control.gromacsTopologyFile.empty();
+  if (sources > 1)
+    return fail(*table, "expected one of 'pdbfile', 'prmtopfile', and "
+                        "'grotopfile'");
+  if (sources == 0)
+    return fail(*table, "expected a 'pdbfile', a 'prmtopfile', or a "
+                        "'grotopfile' in [input]");
 
   if (Error error = getTable("output", /*required=*/false, table))
     return error;
@@ -659,6 +691,26 @@ Error Reader::read(const toml::table &root) {
   if (table)
     if (Error error = readEnsemble(*table))
       return error;
+
+  if (Error error = getTable("constraints", /*required=*/false, table))
+    return error;
+  if (table) {
+    if (Error error = checkKeywords(*table, "constraints",
+                                    {"rigid_bond", "fast_water"},
+                                    {{"shake_tolerance", "M1"},
+                                     {"shake_iterations", "M1"},
+                                     {"settle_residues", "M1"}}))
+      return error;
+    if (Error error = readBool(*table, "rigid_bond", control.rigidBonds))
+      return error;
+    if (Error error = readBool(*table, "fast_water", control.fastWater))
+      return error;
+    if (control.rigidBonds || control.fastWater)
+      return fail(*table, "constraints are not supported yet; they are "
+                          "planned for M1. Set 'rigid_bond' and "
+                          "'fast_water' to false to run flexible");
+    control.statesFlexible = table->contains("fast_water");
+  }
 
   if (Error error = getTable("boundary", /*required=*/true, table))
     return error;

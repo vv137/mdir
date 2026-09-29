@@ -28,9 +28,10 @@
 #
 # The terms agree but for the conventions of docs/conventions.md: the
 # electrostatic terms of MDIR are larger by 332.0637 / 332.0522, the ratio
-# of the Coulomb constant of CODATA 2018 to that of Amber, and sander counts
-# the pairs of the correction for the dispersion with the pairs of a
-# particle with itself and the excluded pairs (design-m1.md, Section 7.2).
+# of the Coulomb constant of CODATA 2018 to that of Amber, and the
+# correction for the dispersion is N² times the mean of C6 over the pairs
+# of distinct particles that are not excluded, as GROMACS takes it, where
+# sander sums over all pairs of types (design-m1.md, Section 7.2).
 #
 # CHECK:      MDIR: the terms at the start, in kcal/mol:
 # CHECK-NEXT: MDIR:   Lennard-Jones                386.7447
@@ -40,9 +41,9 @@
 # CHECK-NEXT: MDIR:   dihedrals                      9.6439
 # CHECK-NEXT: MDIR:   Lennard-Jones 1-4              5.0156
 # CHECK-NEXT: MDIR:   Coulomb 1-4                   48.9371
-# CHECK-NEXT: MDIR:   dispersion                   -12.9103
-# CHECK-NEXT: MDIR:   total                      -1896.1528
-# CHECK:      INFO:         0         0.0000 {{ *-?[0-9.]+}} {{ *}}-1896.1529
+# CHECK-NEXT: MDIR:   dispersion                   -12.9450
+# CHECK-NEXT: MDIR:   total                      -1896.1875
+# CHECK:      INFO:         0         0.0000 {{ *-?[0-9.]+}} {{ *}}-1896.1876
 
 #--- run.toml
 [input]

@@ -13,14 +13,32 @@
 using namespace mdir::driver;
 using llvm::StringRef;
 
-/// The system of a topology and a file of coordinates of Amber.
-static llvm::Expected<System> readAmberSystem(const Control &control) {
-  auto topology = readAmberTopology(control.prmtopFile);
+/// The system of a topology and a file of coordinates.
+static llvm::Expected<System> readTopologySystem(const Control &control) {
+  llvm::Expected<Topology> topology =
+      control.prmtopFile.empty()
+          ? readGromacsTopology(control.gromacsTopologyFile,
+                                control.gromacsIncludes,
+                                control.gromacsDefines)
+          : readAmberTopology(control.prmtopFile);
   if (!topology)
     return topology.takeError();
   if (llvm::Error error =
-          readAmberCoordinates(control.amberCoordinateFile, *topology))
+          control.prmtopFile.empty()
+              ? readGromacsCoordinates(control.gromacsCoordinateFile,
+                                       *topology)
+              : readAmberCoordinates(control.amberCoordinateFile, *topology))
     return std::move(error);
+
+  // SETTLE comes with the constraints of M1. A run may leave it out only
+  // when it says that it runs flexible, and the waters then need bonds.
+  if (!topology->settles.empty() && !control.statesFlexible)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "the topology has %zu waters with SETTLE, and constraints are not "
+        "supported yet; set 'fast_water = false' in [constraints] to run "
+        "them flexible, with their bonds",
+        topology->settles.size());
 
   System system;
   system.types = topology->types;
@@ -36,8 +54,8 @@ static llvm::Expected<System> readAmberSystem(const Control &control) {
 }
 
 llvm::Expected<System> mdir::driver::readSystem(const Control &control) {
-  if (!control.prmtopFile.empty())
-    return readAmberSystem(control);
+  if (control.hasTopology())
+    return readTopologySystem(control);
   auto file = llvm::MemoryBuffer::getFile(control.pdbFile);
   if (!file)
     return llvm::createStringError(file.getError(), "cannot read '%s'",

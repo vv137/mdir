@@ -1,0 +1,62 @@
+# A run from a topology of GROMACS: propane and water in a made-up force
+# field of the kind of Amber (Inputs/gromacs), with flexible water. The
+# topology uses includes, macros, #ifdef and #else, a continued line, the
+# combination rule 1 with an override in [ nonbond_params ], pair types
+# without gen-pairs, defaults of bonded types with wildcards, and a
+# dihedral type of two terms.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/gromacs/system.top %S/Inputs/gromacs/system.gro %S/Inputs/gromacs/forcefield.itp %S/Inputs/gromacs/water.itp %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: mdir check %t/run.toml | FileCheck %s --check-prefix=CHECK-INPUT
+# RUN: mdir run %t/run.toml | %python %S/Inputs/check_terms.py %S/Inputs/gromacs/reference.txt 5e-6 | FileCheck %s
+
+# Four propanes of 11 atoms and 60 waters. Each propane has 18 dihedrals:
+# 12 of one term and 6 of two.
+#
+# CHECK-INPUT: particles:          224
+# CHECK-INPUT: types:              4
+# CHECK-INPUT: bonds:              160, 152 with hydrogen
+# CHECK-INPUT: angles:             132
+# CHECK-INPUT: dihedrals:          96, 0 improper
+# CHECK-INPUT: pairs 1-4:          72
+# CHECK-INPUT: total charge:       0.000000 e
+
+# Every term agrees with GROMACS (Inputs/gromacs/reference.txt) to the
+# precision of its mixed precision.
+#
+# CHECK:      bonds 1
+# CHECK-NEXT: angles 1
+# CHECK-NEXT: dihedrals 1
+# CHECK-NEXT: Lennard-Jones 1-4 1
+# CHECK-NEXT: Coulomb 1-4 1
+# CHECK-NEXT: Lennard-Jones 1
+# CHECK-NEXT: dispersion 1
+
+#--- run.toml
+[input]
+grotopfile = "system.top"
+grocrdfile = "system.gro"
+grodefine  = ["FLEXIBLE"]
+
+[energy]
+cutoffdist   = 8.0
+pairlistdist = 9.0
+
+[constraints]
+rigid_bond = false
+fast_water = false
+
+[dynamics]
+integrator    = "VVER"
+timestep      = 0.0005
+nsteps        = 0
+eneout_period = 0
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PBC"
+#--- end

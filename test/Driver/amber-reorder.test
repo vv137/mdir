@@ -13,7 +13,7 @@
 # RUN: mdir run %t/off.toml | FileCheck %s
 # RUN: not mdir checkpoint %t/on.h5 %t/off.h5 | FileCheck %s --check-prefix=STATES
 
-# CHECK: INFO:         0         0.0000 {{ *-?[0-9.]+}} {{ *}}-1896.1529
+# CHECK: INFO:         0         0.0000 {{ *-?[0-9.]+}} {{ *}}-1896.1876
 # CHECK: INFO:        20
 
 # STATES: values of the positions differ, by up to {{[0-9.]+}}e-1{{[0-9]}}

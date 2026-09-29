@@ -1,0 +1,170 @@
+# Topologies of GROMACS that MDIR cannot read or run are rejected with a
+# message that names the file, the line, and what it has.
+#
+# RUN: rm -rf %t && mkdir -p %t && split-file %s %t
+# RUN: not mdir check %t/rb.toml 2>&1 | FileCheck %s --check-prefix=RB
+# RUN: not mdir check %t/cmap.toml 2>&1 | FileCheck %s --check-prefix=CMAP
+# RUN: not mdir check %t/endif.toml 2>&1 | FileCheck %s --check-prefix=ENDIF
+# RUN: not mdir check %t/include.toml 2>&1 | FileCheck %s --check-prefix=INCLUDE
+# RUN: not mdir check %t/type.toml 2>&1 | FileCheck %s --check-prefix=TYPE
+# RUN: not mdir check %t/missing.toml 2>&1 | FileCheck %s --check-prefix=MISSING
+
+# RB: rb.top:17: only periodic dihedrals (functions 1, 4, and 9) are supported, not 3
+# CMAP: cmap.top:8: [ cmaptypes ] is not supported yet; it is planned for a later milestone
+# ENDIF: endif.top:1: #endif without #ifdef in this file
+# INCLUDE: include.top:1: the included file 'nowhere.itp' is not found next to this file, in the include path, or in GMXLIB
+# TYPE: type.top:13: the atom type 'MW' is of the particle type D; only atoms are supported, virtual sites and shells come later
+# MISSING: missing.top:17: no [ bondtypes ] for this bond
+
+#--- base.toml
+[energy]
+cutoffdist   = 8.0
+pairlistdist = 9.0
+
+[dynamics]
+integrator = "VVER"
+timestep   = 0.0005
+nsteps     = 0
+
+[boundary]
+type = "PBC"
+#--- rb.toml
+[input]
+grotopfile = "rb.top"
+grocrdfile = "two.gro"
+[energy]
+cutoffdist = 8.0
+[dynamics]
+nsteps = 0
+[boundary]
+type = "PBC"
+#--- cmap.toml
+[input]
+grotopfile = "cmap.top"
+grocrdfile = "two.gro"
+[energy]
+cutoffdist = 8.0
+[dynamics]
+nsteps = 0
+[boundary]
+type = "PBC"
+#--- endif.toml
+[input]
+grotopfile = "endif.top"
+grocrdfile = "two.gro"
+[energy]
+cutoffdist = 8.0
+[dynamics]
+nsteps = 0
+[boundary]
+type = "PBC"
+#--- include.toml
+[input]
+grotopfile = "include.top"
+grocrdfile = "two.gro"
+[energy]
+cutoffdist = 8.0
+[dynamics]
+nsteps = 0
+[boundary]
+type = "PBC"
+#--- type.toml
+[input]
+grotopfile = "type.top"
+grocrdfile = "two.gro"
+[energy]
+cutoffdist = 8.0
+[dynamics]
+nsteps = 0
+[boundary]
+type = "PBC"
+#--- missing.toml
+[input]
+grotopfile = "missing.top"
+grocrdfile = "two.gro"
+[energy]
+cutoffdist = 8.0
+[dynamics]
+nsteps = 0
+[boundary]
+type = "PBC"
+#--- rb.top
+[ defaults ]
+1 2 yes 0.5 0.8333
+[ atomtypes ]
+CT 6 12.011 0.0 A 0.34 0.45
+[ moleculetype ]
+M 3
+[ atoms ]
+1 CT 1 M C1 1 0.0
+2 CT 1 M C2 1 0.0
+3 CT 1 M C3 1 0.0
+4 CT 1 M C4 1 0.0
+[ bonds ]
+1 2 1 0.15 200000
+2 3 1 0.15 200000
+3 4 1 0.15 200000
+[ dihedrals ]
+1 2 3 4 3 1 1 1 1 1 1
+[ system ]
+x
+[ molecules ]
+M 1
+#--- cmap.top
+[ defaults ]
+1 2 yes 0.5 0.8333
+[ atomtypes ]
+CT 6 12.011 0.0 A 0.34 0.45
+[ bondtypes ]
+CT CT 1 0.15 200000
+; The grid is not read: the section is refused.
+[ cmaptypes ]
+CT CT CT CT CT 1 24 24
+#--- endif.top
+#endif
+#--- include.top
+#include "nowhere.itp"
+#--- type.top
+[ defaults ]
+1 2 yes 0.5 0.8333
+[ atomtypes ]
+CT 6 12.011 0.0 A 0.34 0.45
+MW 0 0.0 0.0 D 0.0 0.0
+[ moleculetype ]
+M 1
+[ atoms ]
+1 CT 1 M C1 1 0.0
+2 CT 1 M C2 1 0.0
+3 CT 1 M C3 1 0.0
+4 CT 1 M C4 1 0.0
+5 MW 1 M MW 1 0.0
+#--- missing.top
+[ defaults ]
+1 2 yes 0.5 0.8333
+[ atomtypes ]
+CT 6 12.011 0.0 A 0.34 0.45
+[ moleculetype ]
+M 3
+[ atoms ]
+1 CT 1 M C1 1 0.0
+2 CT 1 M C2 1 0.0
+3 CT 1 M C3 1 0.0
+4 CT 1 M C4 1 0.0
+[ bonds ]
+1 2 1 0.15 200000
+2 3 1 0.15 200000
+3 4 1 0.15 200000
+; No parameters, and no [ bondtypes ].
+1 4
+[ system ]
+x
+[ molecules ]
+M 1
+#--- two.gro
+Four atoms
+    4
+    1M       C1    1   0.100   0.100   0.100
+    1M       C2    2   0.250   0.100   0.100
+    1M       C3    3   0.300   0.240   0.100
+    1M       C4    4   0.450   0.250   0.100
+   3.00000   3.00000   3.00000

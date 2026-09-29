@@ -1,0 +1,26 @@
+[input]
+grotopfile = "topol.top"
+grocrdfile = "solv.gro"
+groinclude = ["@TOP@"]
+grodefine  = ["FLEXIBLE"]
+
+[energy]
+cutoffdist   = 9.0
+pairlistdist = 10.0
+
+[constraints]
+rigid_bond = false
+fast_water = false
+
+[dynamics]
+integrator    = "VVER"
+timestep      = 0.0005
+nsteps        = 0
+eneout_period = 0
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PBC"

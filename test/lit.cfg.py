@@ -39,6 +39,11 @@ config.substitutions.append(
     )
 )
 
+# The Python that runs lit, for the scripts that check results.
+import sys
+
+config.substitutions.append(("%python", sys.executable))
+
 # The runtime, and the OpenMP runtime that code lowered through the omp
 # dialect needs.
 config.substitutions.append(

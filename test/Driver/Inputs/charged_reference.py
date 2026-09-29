@@ -9,10 +9,10 @@ of the control file:
   - Coulomb with the product of the charges and the constant of CODATA
     2018, cut at the cutoff with no shift;
   - the correction for the dispersion beyond the cutoff of the
-    Lennard-Jones term: its r^-6 part only, for a uniform density, over the
-    N (N - 1) ordered pairs of particles (Allen and Tildesley, 2017; the
-    GROMACS manual, "Long range Van der Waals interactions"). The virial of
-    the correction is 6 times its energy.
+    Lennard-Jones term: its r^-6 part only, for a uniform density, with N^2
+    times the mean of C6 over the pairs of distinct particles (Allen and
+    Tildesley, 2017; the GROMACS manual, "Long range Van der Waals
+    interactions"). The virial of the correction is 6 times its energy.
 
 It prints the potential energy and the trace of the virial W = sum of
 d (x) F over the pairs (B8), as the log has them at the start.
@@ -78,6 +78,8 @@ def main():
             c6 = 4.0 * epsilon * sigma ** 6
             pairs = counts[a] * (counts[b] - (1 if a == b else 0))
             tail_energy += -2.0 * math.pi / (3.0 * volume) * pairs * c6 / CUTOFF ** 3
+    n = len(particles)
+    tail_energy *= n / (n - 1.0)
     tail_virial = 6.0 * tail_energy
 
     print("potential energy without the correction %.6f" % energy)

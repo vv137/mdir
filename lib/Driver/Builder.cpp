@@ -407,9 +407,10 @@ llvm::Error Builder::computeDispersion() {
   // Beyond the cutoff the term is taken to be its dispersion, −C6 / r⁶,
   // and the density to be uniform [AllenTildesley2017, GromacsManual2025]:
   //
-  //   E = −(2π / 3V) Σ_ab N_a (N_b − δ_ab) C6_ab / rc³        W = 6 E
+  //   E = −(2π / 3V) N² ⟨C6⟩ / rc³        W = 6 E
   //
-  // for each pair of types a and b, so that the pressure changes by 2E / V.
+  // with ⟨C6⟩ the mean over the pairs of distinct particles, as GROMACS
+  // takes it, so that the pressure changes by 2E / V.
   // The repulsion beyond the cutoff is left out, as the engines leave it
   // out. C6 is the limit of −r⁶ u(r); a term that does not decay as 1/r⁶ is
   // an error. The expression is in the units of the control file.
@@ -422,6 +423,8 @@ llvm::Error Builder::computeDispersion() {
                   (units::length * units::length * units::length);
 
   double energy = 0.0;
+  double n = static_cast<double>(system.getNumParticles());
+  double scale = n > 1.0 ? n / (n - 1.0) : 0.0;
   for (unsigned index = 0, e = control.pairs.size(); index != e; ++index) {
     const PairTerm &term = control.pairs[index];
     if (term.dispersion == DispersionCorrection::None)
@@ -444,7 +447,7 @@ llvm::Error Builder::computeDispersion() {
                            "' needs a term that decays as 1/r^6 beyond the "
                            "cutoff");
         double pairs = numbers[a] * (numbers[b] - (a == b ? 1.0 : 0.0));
-        energy += -2.0 * M_PI / (3.0 * volume) * pairs * far /
+        energy += -2.0 * M_PI / (3.0 * volume) * scale * pairs * far /
                   (rc * rc * rc);
       }
   }
@@ -553,8 +556,9 @@ llvm::Error Builder::collectTopology() {
     }
   }
 
-  // The correction for the dispersion (Section 7.2 of design-m1.md): the
-  // pairs of distinct particles, less the excluded pairs.
+  // The correction for the dispersion (Section 7.2 of design-m1.md): N²
+  // times the mean of C6 over the pairs of distinct particles that are not
+  // excluded, as GROMACS takes it.
   if (control.topologyDispersion == DispersionCorrection::None)
     return llvm::Error::success();
   std::vector<double> numbers(numTypes, 0.0);
@@ -570,9 +574,13 @@ llvm::Error Builder::collectTopology() {
       sum += numbers[a] * (numbers[b] - (a == b ? 1.0 : 0.0)) * c6(a, b);
   for (auto [i, j] : topology.exclusions)
     sum -= 2.0 * c6(topology.types[i], topology.types[j]);
+  double n = static_cast<double>(topology.getNumParticles());
+  double pairs = n * (n - 1.0) - 2.0 * topology.exclusions.size();
+  double mean = pairs > 0.0 ? sum / pairs : 0.0;
   double rc = control.cutoffDistance * units::length;
   double volume = system.box[0] * system.box[1] * system.box[2];
-  double energy = -2.0 * M_PI / (3.0 * volume) * sum / (rc * rc * rc);
+  double energy =
+      -2.0 * M_PI / (3.0 * volume) * n * n * mean / (rc * rc * rc);
   program.dispersionEnergy = energy;
   program.dispersionVirial = 6.0 * energy;
   return llvm::Error::success();

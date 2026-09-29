@@ -51,7 +51,9 @@ static int describeTopology(const Control &control, const System &system) {
     hydrogenBonds += bond.hydrogen;
   double volume = topology.box[0] * topology.box[1] * topology.box[2];
 
-  std::printf("topology:           %s\n", control.prmtopFile.c_str());
+  std::printf("topology:           %s\n", control.prmtopFile.empty()
+                                             ? control.gromacsTopologyFile.c_str()
+                                             : control.prmtopFile.c_str());
   std::printf("particles:          %zu\n", count);
   std::printf("residues:           %zu\n", topology.residueNames.size());
   std::printf("types:              %zu\n", topology.getNumTypes());

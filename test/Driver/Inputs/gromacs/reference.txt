@@ -1,0 +1,11 @@
+# The terms of system.top and system.gro at the start, in kJ/mol, from
+# GROMACS 2026.3 (mixed precision) with -DFLEXIBLE: a run of zero steps
+# with the settings of scripts/validation/gromacs/single.mdp, with rvdw and
+# rcoulomb of 0.8 nm. "dihedrals" is Proper Dih.
+bonds              2673.269775
+angles             1818.042114
+dihedrals            95.285973
+Lennard-Jones 1-4   184.857330
+Coulomb 1-4          -8.683568
+Lennard-Jones     89510.335938
+dispersion           -7.992992

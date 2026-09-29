@@ -1,0 +1,54 @@
+# The dipeptide of amber.test, converted to the format of GROMACS with
+# ParmEd (Inputs/dipeptide/dipeptide.top, and dipeptide.gro with six
+# decimals). Read with the reader of GROMACS, its terms agree with those
+# that the reader of Amber gives (Inputs/dipeptide/amber-terms.txt), to the
+# digits that ParmEd writes the parameters with.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.top %S/Inputs/dipeptide/dipeptide.gro %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: mdir run %t/run.toml | %python %S/Inputs/check_terms.py %S/Inputs/dipeptide/amber-terms.txt 2e-6 3e-4 | FileCheck %s
+
+# CHECK:      Lennard-Jones 1
+# CHECK-NEXT: Coulomb 1
+# CHECK-NEXT: bonds 1
+# CHECK-NEXT: angles 1
+# CHECK-NEXT: dihedrals 1
+# CHECK-NEXT: Lennard-Jones 1-4 1
+# CHECK-NEXT: Coulomb 1-4 1
+# CHECK-NEXT: dispersion 1
+
+# Without -DFLEXIBLE the waters have SETTLE, and without a statement that
+# the run is flexible that is an error.
+#
+# RUN: sed -e '/^\[constraints\]/,/^fast_water/d' -e '/^grodefine/d' %t/run.toml > %t/rigid.toml
+# RUN: not mdir check %t/rigid.toml 2>&1 | FileCheck %s --check-prefix=SETTLE
+# SETTLE: the topology has 382 waters with SETTLE, and constraints are not supported yet; set 'fast_water = false' in [constraints] to run them flexible, with their bonds
+
+#--- run.toml
+[input]
+grotopfile = "dipeptide.top"
+grocrdfile = "dipeptide.gro"
+grodefine  = ["FLEXIBLE"]
+
+[energy]
+cutoffdist   = 9.0
+pairlistdist = 10.0
+
+[constraints]
+rigid_bond = false
+fast_water = false
+
+[dynamics]
+integrator    = "VVER"
+timestep      = 0.0005
+nsteps        = 0
+eneout_period = 0
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PBC"
+#--- end

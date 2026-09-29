@@ -72,6 +72,16 @@ struct Control {
   /// types of [energy].
   std::string prmtopFile;
   std::string amberCoordinateFile;
+  /// A topology and the coordinates of GROMACS, the directories that its
+  /// includes are looked for in, and the macros defined before it is read.
+  std::string gromacsTopologyFile;
+  std::string gromacsCoordinateFile;
+  std::vector<std::string> gromacsIncludes;
+  std::vector<std::string> gromacsDefines;
+
+  bool hasTopology() const {
+    return !prmtopFile.empty() || !gromacsTopologyFile.empty();
+  }
   std::string restartInput;
 
   // [output]
@@ -89,6 +99,14 @@ struct Control {
   /// The correction for the dispersion of a run from a topology.
   DispersionCorrection topologyDispersion =
       DispersionCorrection::EnergyPressure;
+
+  // [constraints]
+  /// Whether the bonds of hydrogen and the rigid waters are constrained.
+  /// Constraints come later in M1; a run takes them only as false, which a
+  /// topology with SETTLE needs to be stated.
+  bool rigidBonds = false;
+  bool fastWater = false;
+  bool statesFlexible = false;
 
   // [dynamics]
   Integrator integrator = Integrator::VelocityVerlet;

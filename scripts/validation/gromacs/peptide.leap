@@ -1,0 +1,7 @@
+# The peptide ALA-GLY-SER-LYS-ASP-TRP, charged at its ends, made with
+# tleap of AmberTools; pdb2gmx adds its hydrogens again for each force
+# field.
+source leaprc.protein.ff14SB
+m = sequence { NALA GLY SER LYS ASP CTRP }
+savepdb m peptide.pdb
+quit

@@ -24,6 +24,7 @@ add_mlir_library(MDIRDriver
   Checkpoint.cpp
   Control.cpp
   Expression.cpp
+  Gromacs.cpp
   Output.cpp
   System.cpp
 
