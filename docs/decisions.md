@@ -337,19 +337,22 @@ B1 to B3 and B5 to B10 come from an external review of draft 1.
 | B9 | **Integrators declare `symplectic` and `time_reversible`.** They do not declare energy conservation. | D6 examples |
 | B10 | **A value that is live across an overwrite gets its own buffer.** The criterion is liveness, not the number of consumers. D18 covers extra buffers as well as copies. | D18 |
 
-## 6. Awaiting confirmation
+### 5.4 Restart
 
-| # | Item |
+| # | Decision |
 |---|---|
 | R1 | **Neighbor structures are rebuilt at the start of every segment.** A run that is restarted from a checkpoint then performs the same rebuilds as a run that was not interrupted, provided both use the same segment schedule. Without this rule the two runs sum forces in different orders. |
 
-## 7. Not yet designed
+## 6. Not yet designed
 
 These items follow from the decisions above but have no design yet.
 
 | Item | Needed for | Status |
 |---|---|---|
-| TableGen definitions of the M0 types and ops | M0 | Next step |
+| `md` dialect: types, ops, truncation, differentiation, exchange check | M0 | Implemented |
+| `dyn` and `md_exec` dialects | M0 | Next step |
+| Check that particle set symbols in types are declared | M0 | |
+| Regression test for the numerical values of derivatives | M0 | Implemented with a kernel runner |
 | `mdrt` ABI: storage, neighbor structures, events | M0 | Under discussion; requirements in ops-m0.md, Section 11 |
 | Reference interpreter for the semantic dialects | M0 | |
 | Schema of the TOML input | M0 | |

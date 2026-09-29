@@ -1,14 +1,19 @@
 # MDIR Op Specification, Milestone M0
 
-Status: draft 2 (2026-09-29). Not implemented.
+Status: draft 3 (2026-09-29). The `md` dialect and its passes are
+implemented; `dyn` and `md_exec` are not.
 
 This document specifies the types and ops needed for milestone M0: a
 Lennard-Jones fluid integrated with velocity Verlet or leapfrog, on one node,
 on CPU and GPU. It covers `md`, the minimal `dyn`, and `md_exec`.
 
 Operand lists, result lists, and the mathematical definitions are normative.
-The textual syntax is illustrative and will be fixed when the ops are written
-in TableGen against LLVM 23.1.2.
+
+| Part | State |
+|---|---|
+| `md` types and ops (Section 4) | Implemented. The examples show the actual syntax. |
+| Truncation, differentiation, exchange check (Sections 4.7, 4.8, 5) | Implemented as passes; see Section 5.6 |
+| `dyn`, `md_exec`, storage assignment (Sections 6, 8 to 10) | Not implemented. The syntax is illustrative. |
 
 It follows the accepted decisions in [decisions.md](decisions.md). Tags such
 as (S1) or (B4) name the decision behind a section.
@@ -238,7 +243,7 @@ Inlining and constant propagation do the specialization.
 ### 4.4 `md.neighborhood`
 
 ```mlir
-%n = md.neighborhood %x, %cell { cutoff = 2.5 } : !pairs
+%n = md.neighborhood %x, %cell cutoff(2.5) : !vec -> !pairs
 ```
 
 | | |
@@ -261,7 +266,7 @@ The cutoff is a compile-time constant in M0 (S5).
 ^bb0(%r: f64, %d: vector<3xf64>, %q_i: f64, %q_j: f64):
   ...
   md.yield %k : f64
-} : f64
+} : !pairs, !vec -> f64
 ```
 
 | | |
@@ -288,11 +293,11 @@ operands must be the same SSA values that the neighborhood was built from.
 ### 4.6 `md.gather_relation`
 
 ```mlir
-%f = md.gather_relation %n, %x, %cell exchange(antisymmetric) {
+%f = md.gather_relation %n, %x, %cell exchange(antisymmetric, derived) {
 ^bb0(%r: f64, %d: vector<3xf64>):
   ...
   md.yield %k : vector<3xf64>
-} : !vec
+} : !pairs, !vec -> !vec
 ```
 
 | | |
@@ -326,15 +331,18 @@ field.
 The attribute is a semantic contract, not something the compiler derives in
 general. Deciding the property for an arbitrary kernel is not possible.
 
-| Origin of the attribute | Check |
-|---|---|
-| Set by a compiler pass, such as differentiation | Holds by construction |
-| Proven by the compiler from the kernel | Verified |
-| Asserted by the front end | Trusted; marked `asserted` |
+The attribute records what the contract rests on.
 
-The compiler attempts a proof by swapping the kernel arguments and comparing
-the two kernels structurally, treating commutative ops as unordered. If the
-proof fails and the attribute is not marked `asserted`, the op is rejected.
+| Basis | Syntax | Meaning |
+|---|---|---|
+| `proof` | `exchange(symmetric)` | The compiler must prove the contract from the kernel. This is the default. |
+| `asserted` | `exchange(symmetric, asserted)` | The front end asserts the contract. It is trusted. |
+| `derived` | `exchange(antisymmetric, derived)` | A compiler pass, such as differentiation, produced the kernel. The contract holds by construction. |
+
+For the basis `proof`, a checking pass attempts the proof by swapping the
+kernel arguments and comparing the two kernels structurally, treating
+commutative ops as unordered. If the proof fails, the op is rejected. The
+pass is not implemented yet.
 
 The reference interpreter checks asserted contracts numerically on the pairs
 it evaluates.
@@ -373,7 +381,7 @@ Long-range dispersion corrections are not part of M0.
 ### 4.9 `md.sum_particles` and `md.map_particles`
 
 ```mlir
-%ke = md.sum_particles gather(%v : !vec, %m : !real) {
+%ke = md.sum_particles gather(%v, %m : !vec, !real) {
 ^bb0(%v_i: vector<3xf64>, %m_i: f64):
   ...
   md.yield %k : f64
@@ -388,19 +396,24 @@ md.map_particles:  b_i = k(i)
 ### 4.10 `md.evaluate`
 
 ```mlir
-%u, %f = md.evaluate @lj(%x, %cell, %eps, %sigma)
-           request [energy, forces] : f64, !vec
+%u, %f = md.evaluate @lj(%x, %cell, %eps, %sigma) request [energy, forces]
+           : (!vec, !md.cell, f64, f64) -> (f64, !vec)
 ```
 
 | Request | Result type | Definition |
 |---|---|---|
 | `energy` | `f64` | `U` |
 | `forces` | Position field type | `F_i = −∂U/∂x_i` |
-| `virial` | `vector<9xf64>` | `W`, as defined in Section 5.3 |
+| `virial` | `vector<9xf64>` | `W`, as defined in Section 5.3, in row-major order |
 | `derivative(n)` | `f64` | `∂U/∂θ_n`, where `θ_n` is scalar argument `n` |
 
 `md.evaluate` does not survive semantic differentiation. The pass replaces it
-with a call to a generated `md.function`.
+with `md.call` to a generated `md.function`.
+
+```mlir
+%u, %f = md.call @lj.energy_forces(%x, %cell, %eps, %sigma)
+           : (!vec, !md.cell, f64, f64) -> (f64, !vec)
+```
 
 ## 5. Semantic differentiation for M0
 
@@ -490,15 +503,48 @@ produce the same branch at a tie.
 ```mlir
 md.function @lj.energy_forces(%x: !vec, %cell: !md.cell, %eps: f64, %sigma: f64)
     -> (f64, !vec) {
-  %n = md.neighborhood %x, %cell { cutoff = 2.5 } : !pairs
-  %u = md.sum_relation    %n, %x, %cell exchange(symmetric)     { ... } : f64
-  %f = md.gather_relation %n, %x, %cell exchange(antisymmetric) { ... } : !vec
+  %n = md.neighborhood %x, %cell cutoff(2.5) : !vec -> !pairs
+  %u = md.sum_relation %n, %x, %cell exchange(symmetric) {
+    ...
+  } : !pairs, !vec -> f64
+  %f = md.gather_relation %n, %x, %cell exchange(antisymmetric, derived) {
+    ...
+  } : !pairs, !vec -> !vec
   md.return %u, %f : f64, !vec
 }
 ```
 
 The two ops are separate at this level. Fusing them into one loop is an
 `md_exec` decision.
+
+### 5.6 Passes
+
+| Pass | Effect |
+|---|---|
+| `md-check-exchange` | Proves the exchange contracts whose basis is `proof`. Fails if a proof fails. |
+| `md-expand-truncation` | Expands truncation into the kernels. |
+| `md-differentiate` | Generates derivative functions and replaces `md.evaluate` with `md.call`. Expands truncation in the generated functions. |
+
+A generated function is named after the potential and the requests:
+`@lj.energy_forces`, `@lj.derivative3`. Equal requests share one function.
+
+When the energy combines several sums, each sum is weighted by the derivative
+of the energy with respect to that sum, and the force fields of the sums are
+added with `md.map_particles`.
+
+Restrictions of the current implementation:
+
+| Restriction | Reason |
+|---|---|
+| A kernel that uses the displacement `d` cannot be differentiated with respect to positions. | Only the geometry rule for the distance exists. |
+| A parameter derivative is taken with respect to a scalar argument only. | Per-particle parameters would need a field-valued result. |
+| The body of a potential must be a single block. | |
+
+The numerical values of the generated kernels are tested. A test pass turns
+each kernel into a function, which is lowered and run, and the results are
+compared with closed-form expressions to a relative tolerance of 1e-12. The
+test covers the Lennard-Jones kernel with each truncation kind: energy,
+forces, virial, and a parameter derivative.
 
 ## 6. `dyn` ops
 
