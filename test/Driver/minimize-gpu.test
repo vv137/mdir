@@ -1,0 +1,48 @@
+# The minimization of minimize.test on a GPU in mixed precision.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/ff19sb/ff19.prmtop %S/Inputs/ff19sb/ff19.inpcrd %t
+# RUN: sed -n '/^#--- min.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/min.toml
+# RUN: mdir run %t/min.toml | FileCheck %s
+# RUN: %python %S/Inputs/check_bonds.py %t/ff19.prmtop %t/min.dcd | FileCheck %s --check-prefix=BONDS
+
+# The same steps as in double precision, to the rounding of the forces.
+#
+# CHECK: INFO:         0     -5348.43{{[0-9]+}}         8.69{{[0-9]+}}
+# CHECK: INFO:        50     -6587.1{{[0-9]+}}         2.27{{[0-9]+}}
+# CHECK: MDIR: the potential energy went from -5348.43{{[0-9]+}} to -67{{[0-9]+}}.{{[0-9]+}} kcal/mol
+
+# BONDS: bonds ok
+
+#--- min.toml
+[input]
+prmtopfile = "ff19.prmtop"
+ambcrdfile = "ff19.inpcrd"
+
+[output]
+dcdfile = "min.dcd"
+
+[energy]
+cutoffdist    = 9.0
+pairlistdist  = 10.0
+electrostatic = "PME"
+pme_shift     = true
+
+[minimize]
+nsteps        = 100
+eneout_period = 50
+crdout_period = 50
+
+[constraints]
+rigid_bond = true
+fast_water = true
+
+[boundary]
+type = "PBC"
+
+[execution]
+target    = "gpu"
+precision = "mixed"
+#--- end

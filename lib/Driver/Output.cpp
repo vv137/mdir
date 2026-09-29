@@ -115,6 +115,12 @@ static Output *current = nullptr;
 void mdir::driver::setOutput(Output *output) { current = output; }
 
 void mdir::driver::writeLogHeader(Output &output) {
+  if (output.minimizes) {
+    std::fprintf(output.log, "INFO: %9s %14s %14s %14s %9s %14s\n", "STEP",
+                 "POTENTIAL_ENE", "RMS_FORCE", "MAX_FORCE", "MAX_ATOM",
+                 "STEP_SIZE");
+    return;
+  }
   std::fprintf(output.log, "INFO: %9s %14s %14s %14s %14s %14s %14s %14s",
                "STEP", "TIME", "TOTAL_ENE", "POTENTIAL_ENE", "KINETIC_ENE",
                "TEMPERATURE", "VIRIAL", "PRESSURE");
@@ -253,6 +259,41 @@ static std::vector<double> readVectors(void *descriptor, void *ids,
     }
   }
   return values;
+}
+
+void _mlir_ciface_mdrtWriteMinimization(int64_t step, double energy,
+                                        double size, void *forces,
+                                        void *ids) {
+  Output &output = *current;
+  std::vector<double> values = readVectors(forces, ids, output.force);
+  const std::vector<double> &masses = output.system->masses;
+  double square = 0.0, largest = 0.0;
+  size_t counted = 0, where = 0;
+  for (size_t i = 0, e = masses.size(); i != e; ++i) {
+    if (masses[i] == 0.0)
+      continue;
+    double f2 = values[3 * i] * values[3 * i] +
+                values[3 * i + 1] * values[3 * i + 1] +
+                values[3 * i + 2] * values[3 * i + 2];
+    square += f2;
+    ++counted;
+    if (f2 > largest) {
+      largest = f2;
+      where = i;
+    }
+  }
+  double scale = units::energy / units::length;
+  double rms = counted ? std::sqrt(square / counted) : 0.0;
+  energy += output.getDispersionEnergy() + output.getPMEConstantEnergy();
+  std::fprintf(output.log, "INFO: %9lld %14.4f %14.4f %14.4f %9zu %14.6f\n",
+               static_cast<long long>(step), energy / units::energy,
+               rms / scale, std::sqrt(largest) / scale, where + 1,
+               size / units::length);
+  std::fflush(output.log);
+  if (!output.hasEnergies)
+    output.firstTotal = energy;
+  output.hasEnergies = true;
+  output.lastTotal = energy;
 }
 
 void _mlir_ciface_mdrtWriteFrame(int64_t, void *positions, void *ids) {

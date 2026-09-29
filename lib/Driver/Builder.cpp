@@ -83,6 +83,20 @@ private:
   llvm::Error collectPME();
   void emitPrograms();
   void emitEntry();
+  /// Emits `@descend`, one step of steepest descent that moves no particle
+  /// farther than `%h`, and the loops of a minimization in the entry.
+  void emitDescend();
+  /// Emits `result`, the forces `f` over the masses, 0 for particles
+  /// without mass, without their parts along the constraints at the
+  /// positions `x`: the direction of steepest descent in the metric of the
+  /// masses on the surface of the constraints.
+  void emitConstrainedDescent(StringRef indent, StringRef x, StringRef f,
+                              StringRef result);
+  /// Sets `levels`, the loops of the schedule of a run of dynamics.
+  void setSchedule();
+  void emitMinimization();
+  /// Emits the energy of each term at the positions `%x0`, for the log.
+  void emitTerms();
 
   /// Emits the loops of the schedule, from `level` inward, and returns the
   /// values that the loop of `level` results in.
@@ -1320,6 +1334,10 @@ llvm::Error Builder::emitPotential() {
 }
 
 void Builder::emitPrograms() {
+  if (control.minimize) {
+    emitDescend();
+    return;
+  }
   std::string evaluate = "md.evaluate @energy(%x1, %cell" + getFieldValues() +
                          ")";
   std::string signature = "(!vec, !md.cell" + getFieldTypes() + ")";
@@ -2932,6 +2950,278 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
   return {newPositions, "%vc" + t};
 }
 
+void Builder::emitConstrainedDescent(StringRef indent, StringRef x,
+                                     StringRef f, StringRef result) {
+  bool settles = hasSettles();
+  std::vector<const Program::TupleSet *> shakeSets = getShakeSets();
+  unsigned steps = (settles ? 1 : 0) + shakeSets.size(), step = 0;
+  std::string current = (result + "_all").str();
+  if (steps == 0)
+    current = result.str();
+  os << indent << current << " = md.map_particles gather(" << f
+     << ", %m : !vec, !real) {\n"
+     << indent << "^bb0(%f_i: vector<3xf64>, %m_i: f64):\n"
+     << indent << "  %zero_s = arith.constant 0.0 : f64\n"
+     << indent << "  %unit_s = arith.constant 1.0 : f64\n"
+     << indent << "  %zero_v = arith.constant dense<0.0> : vector<3xf64>\n"
+     << indent << "  %massive = arith.cmpf ogt, %m_i, %zero_s : f64\n"
+     << indent << "  %m_safe = arith.select %massive, %m_i, %unit_s : f64\n"
+     << indent << "  %mb = vector.broadcast %m_safe : f64 to vector<3xf64>\n"
+     << indent << "  %ratio = arith.divf %f_i, %mb : vector<3xf64>\n"
+     << indent << "  %g_i = arith.select %massive, %ratio, %zero_v "
+        ": vector<3xf64>\n"
+     << indent << "  md.yield %g_i : vector<3xf64>\n"
+     << indent << "} : !vec\n";
+  // As RATTLE takes the velocities off the constraints.
+  auto next = [&]() {
+    ++step;
+    return step == steps ? result.str()
+                         : (result + "_c" + std::to_string(step)).str();
+  };
+  if (settles) {
+    std::string projected = next();
+    emitSettleVelocities(indent, x, current, projected);
+    current = projected;
+  }
+  for (const Program::TupleSet *set : shakeSets) {
+    std::string projected = next();
+    emitShakeVelocities(indent, x, current, *set, projected, "", "");
+    current = projected;
+  }
+}
+
+void Builder::emitDescend() {
+  // The step moves each particle along g, its force over its mass without
+  // the parts along the constraints, by `%h` times g over the 16-norm of
+  // g. That norm is no less than the largest |g|, so that no particle
+  // moves farther than `%h`, and it is taken of g over its root mean
+  // square, which keeps the powers finite. The constraints weigh the
+  // particles by their masses, so that the step stays downhill once they
+  // take the groups back to their shapes. Virtual sites have no mass and
+  // do not move.
+  bool sites = hasSites();
+  bool settles = hasSettles();
+  std::vector<const Program::TupleSet *> shakeSets = getShakeSets();
+  bool constraints = settles || !shakeSets.empty();
+  std::string evaluate = "md.evaluate @energy(%x1, %cell" + getFieldValues() +
+                         ")";
+  std::string signature = "(!vec, !md.cell" + getFieldTypes() + ")";
+  os << "dyn.program @descend(%x: !vec, %f: !vec, %m: !real, "
+        "%cell: !md.cell,\n    %h: f64"
+     << getFieldParameters() << ")\n    -> (!vec, !vec, f64) {\n"
+     << "  %zero = arith.constant 0.0 : f64\n"
+     << "  %tiny = arith.constant 1.0e-300 : f64\n"
+     << "  %count = arith.constant "
+     << formatReal(static_cast<double>(system.getNumParticles()))
+     << " : f64\n";
+  emitConstrainedDescent("  ", "%x", "%f", "%g");
+  os << "  %square = md.sum_particles gather(%g : !vec) {\n"
+     << "  ^bb0(%f_i: vector<3xf64>):\n"
+     << "    %sq = arith.mulf %f_i, %f_i : vector<3xf64>\n"
+     << "    %s = vector.reduction <add>, %sq : vector<3xf64> into f64\n"
+     << "    md.yield %s : f64\n"
+     << "  } : f64\n"
+     << "  %mean = arith.divf %square, %count : f64\n"
+     << "  %mean_safe = arith.maximumf %mean, %tiny : f64\n"
+     << "  %rms = math.sqrt %mean_safe : f64\n"
+     << "  %power = md.sum_particles gather(%g : !vec) {\n"
+     << "  ^bb0(%f_i: vector<3xf64>):\n"
+     << "    %sq = arith.mulf %f_i, %f_i : vector<3xf64>\n"
+     << "    %s = vector.reduction <add>, %sq : vector<3xf64> into f64\n"
+     << "    %r2 = arith.divf %s, %mean_safe : f64\n"
+     << "    %r4 = arith.mulf %r2, %r2 : f64\n"
+     << "    %r8 = arith.mulf %r4, %r4 : f64\n"
+     << "    %r16 = arith.mulf %r8, %r8 : f64\n"
+     << "    md.yield %r16 : f64\n"
+     << "  } : f64\n"
+     << "  %root2 = math.sqrt %power : f64\n"
+     << "  %root4 = math.sqrt %root2 : f64\n"
+     << "  %root8 = math.sqrt %root4 : f64\n"
+     << "  %root16 = math.sqrt %root8 : f64\n"
+     << "  %norm = arith.mulf %rms, %root16 : f64\n"
+     << "  %scale = arith.divf %h, %norm : f64\n"
+     << "  %x1" << (sites || constraints ? "d" : "")
+     << " = md.map_particles gather(%x, %g : !vec, !vec) {\n"
+     << "  ^bb0(%x_i: vector<3xf64>, %f_i: vector<3xf64>):\n"
+     << "    %sb = vector.broadcast %scale : f64 to vector<3xf64>\n"
+     << "    %d = arith.mulf %sb, %f_i : vector<3xf64>\n"
+     << "    %moved = arith.addf %x_i, %d : vector<3xf64>\n"
+     << "    md.yield %moved : vector<3xf64>\n"
+     << "  } : !vec\n";
+  // The rigid groups back to their shapes, and the sites where their
+  // atoms put them.
+  if (constraints) {
+    std::string current = "%x1d";
+    std::string constrained = sites ? "%x1s" : "%x1";
+    unsigned steps = (settles ? 1 : 0) + shakeSets.size(), step = 0;
+    auto next = [&]() {
+      ++step;
+      return step == steps ? constrained : "%x1c" + std::to_string(step);
+    };
+    if (settles) {
+      std::string result = next();
+      emitSettlePositions("  ", "%x", current, "%dx1", result);
+      current = result;
+    }
+    for (const Program::TupleSet *set : shakeSets) {
+      std::string result = next();
+      emitShakePositions("  ", "%x", current, *set, result);
+      current = result;
+    }
+  }
+  if (sites)
+    emitPlaceSites("  ", constraints ? "%x1s" : "%x1d", "%x1", "%r_");
+  StringRef raw = sites ? "e" : "";
+  os << "  %u1, %f1" << raw << " = " << evaluate
+     << "\n      request [energy, forces]\n"
+     << "      : " << signature << " -> (f64, !vec)\n";
+  if (sites)
+    emitSpreadSites("  ", "%x1", "%f1e", "%f1", "%r_");
+  os << "  dyn.return %x1, %f1, %u1 : !vec, !vec, f64\n}\n\n";
+}
+
+void Builder::emitMinimization() {
+  // The energy and the forces at the start, and the terms.
+  StringRef raw = hasSites() ? "e" : "";
+  os << "  %u0, %f0" << raw << " = md.evaluate @energy(%x0, %cell"
+     << getFieldValues() << ")\n"
+     << "      request [energy, forces]\n"
+     << "      : (!vec, !md.cell" << getFieldTypes() << ") -> (f64, !vec)\n";
+  if (hasSites())
+    emitSpreadSites("  ", "%x0", "%f0e", "%f0", "%r_");
+  emitTerms();
+  os << "  %h0 = arith.constant "
+     << formatReal(control.minimizeStep * units::length) << " : f64\n"
+     << "  %h_most = arith.constant " << formatReal(1.0 * units::length)
+     << " : f64\n"
+     << "  %grow = arith.constant 1.2 : f64\n"
+     << "  %shrink = arith.constant 0.2 : f64\n"
+     << "  %one = arith.constant 1.0 : f64\n"
+     << "  %zero = arith.constant 0.0 : f64\n"
+     ;
+  // The log has the forces without their parts along the constraints,
+  // those that the minimization lowers.
+  auto emitReported = [&](StringRef indent, StringRef x, StringRef f,
+                          StringRef tag) {
+    std::string direction = ("%gr" + tag).str();
+    emitConstrainedDescent(indent, x, f, direction);
+    std::string reported = ("%fr" + tag).str();
+    os << indent << reported << " = md.map_particles gather(" << direction
+       << ", %m : !vec, !real) {\n"
+       << indent << "^bb0(%g_i: vector<3xf64>, %m_i: f64):\n"
+       << indent << "  %mb = vector.broadcast %m_i : f64 to vector<3xf64>\n"
+       << indent << "  %f_i = arith.mulf %mb, %g_i : vector<3xf64>\n"
+       << indent << "  md.yield %f_i : vector<3xf64>\n"
+       << indent << "} : !vec\n";
+    return reported;
+  };
+  std::string reported = emitReported("  ", "%x0", "%f0", "0");
+  os << "  mdrt.host_call @mdrtWriteMinimization(%start, %u0, %h0, "
+     << reported << ", %id)\n"
+     << "      : (i64, f64, f64, !vec, !ids)\n";
+
+  // A step is taken if it lowers the energy, and the next one is longer;
+  // otherwise the next one is shorter, from where the step began. The
+  // loops: over the intervals between frames (one if there are none),
+  // over the intervals between energies in each, and over the steps.
+  int64_t period = control.energyPeriod;
+  int64_t framePeriod =
+      control.framePeriod > 0 ? control.framePeriod : control.numSteps;
+  std::string state = "!vec, !vec, f64, f64";
+  os << "  %n0 = arith.constant " << control.numSteps / framePeriod
+     << " : index\n"
+     << "  %n1 = arith.constant " << framePeriod / period << " : index\n"
+     << "  %n2 = arith.constant " << period << " : index\n"
+     << "  %per0 = arith.constant " << framePeriod << " : index\n"
+     << "  %xe0, %fe0, %ue0, %he0 = scf.for %i0 = %c0 to %n0 step %c1\n"
+     << "      iter_args(%xa0 = %x0, %fa0 = %f0, %ua0 = %u0, %ha0 = %h0)\n"
+     << "      -> (" << state << ") {\n"
+     << "    %xe1, %fe1, %ue1, %he1 = scf.for %i1 = %c0 to %n1 step %c1\n"
+     << "        iter_args(%xa1 = %xa0, %fa1 = %fa0, %ua1 = %ua0, "
+        "%ha1 = %ha0)\n"
+     << "        -> (" << state << ") {\n"
+     << "      %xe2, %fe2, %ue2, %he2 = scf.for %i2 = %c0 to %n2 step %c1\n"
+     << "          iter_args(%xa2 = %xa1, %fa2 = %fa1, %ua2 = %ua1, "
+        "%ha2 = %ha1)\n"
+     << "          -> (" << state << ") {\n"
+     << "        %xt, %ft, %ut = dyn.step @descend(%xa2, %fa2, %m, %cell, "
+        "%ha2" << getFieldValues() << ")\n"
+     << "            : (!vec, !vec, !real, !md.cell, f64" << getFieldTypes()
+     << ") -> (!vec, !vec, f64)\n"
+     << "        %lower = arith.cmpf olt, %ut, %ua2 : f64\n"
+     << "        %longer = arith.mulf %ha2, %grow : f64\n"
+     << "        %capped = arith.minimumf %longer, %h_most : f64\n"
+     << "        %shorter = arith.mulf %ha2, %shrink : f64\n"
+     << "        %ub = arith.select %lower, %ut, %ua2 : f64\n"
+     << "        %hb = arith.select %lower, %capped, %shorter : f64\n"
+     << "        %keep = arith.select %lower, %one, %zero : f64\n";
+  // The fields are chosen particle by particle, so that each has storage
+  // of its own.
+  for (StringRef field : {"x", "f"})
+    os << "        %" << field << "b = md.map_particles gather(%" << field
+       << "t, %" << field << "a2 : !vec, !vec) {\n"
+       << "        ^bb0(%new_i: vector<3xf64>, %old_i: vector<3xf64>):\n"
+       << "          %half = arith.constant 5.0e-01 : f64\n"
+       << "          %taken = arith.cmpf ogt, %keep, %half : f64\n"
+       << "          %chosen = arith.select %taken, %new_i, %old_i "
+          ": vector<3xf64>\n"
+       << "          md.yield %chosen : vector<3xf64>\n"
+       << "        } : !vec\n";
+  os << "        scf.yield %xb, %fb, %ub, %hb : " << state << "\n"
+     << "      }\n"
+     << "      %before = arith.muli %i0, %per0 : index\n"
+     << "      %done = arith.addi %i1, %c1 : index\n"
+     << "      %within = arith.muli %done, %n2 : index\n"
+     << "      %steps = arith.addi %before, %within : index\n"
+     << "      %since = arith.index_cast %steps : index to i64\n"
+     << "      %step = arith.addi %since, %start : i64\n";
+  reported = emitReported("      ", "%xe2", "%fe2", "1");
+  os << "      mdrt.host_call @mdrtWriteMinimization(%step, %ue2, %he2, "
+     << reported << ", %id)\n"
+     << "          : (i64, f64, f64, !vec, !ids)\n"
+     << "      scf.yield %xe2, %fe2, %ue2, %he2 : " << state << "\n"
+     << "    }\n";
+  if (control.framePeriod > 0)
+    os << "    %frames = arith.addi %i0, %c1 : index\n"
+       << "    %frame_steps = arith.muli %frames, %per0 : index\n"
+       << "    %frame_since = arith.index_cast %frame_steps : index to i64\n"
+       << "    %frame_step = arith.addi %frame_since, %start : i64\n"
+       << "    mdrt.host_call @mdrtWriteFrame(%frame_step, %xe1, %id) "
+          ": (i64, !vec, !ids)\n";
+  os << "    scf.yield %xe1, %fe1, %ue1, %he1 : " << state << "\n"
+     << "  }\n";
+  // The checkpoint holds the positions, and velocities of 0.
+  if (control.checkpointPeriod > 0)
+    os << "  %c_total = arith.constant " << control.numSteps << " : i64\n"
+       << "  %end = arith.addi %start, %c_total : i64\n"
+       << "  mdrt.host_call @mdrtWriteCheckpoint(%end, %xe0, %v0, %id)\n"
+       << "      : (i64, !vec, !vec, !ids)\n";
+  os << "  mdrt.host_call @mdrtFinish(%xe0, %v0, %id) : (!vec, !vec, !ids)\n"
+     << "  return\n}\n";
+}
+
+void Builder::emitTerms() {
+  if (!system.topology)
+    return;
+  os << "  %terms = memref.alloca() : memref<10xf64>\n";
+  int index = 0;
+  for (StringRef name :
+       {"term_lj", "term_coulomb", "term_bonds", "term_angles",
+        "term_dihedrals", "term_lj14", "term_coulomb14", "term_cmap",
+        "term_excluded", "term_reciprocal"}) {
+    os << "  %" << name << " = md.evaluate @" << name << "(%x0, %cell"
+       << getFieldValues() << ") request [energy]\n"
+       << "      : (!vec, !md.cell" << getFieldTypes() << ") -> f64\n"
+       << "  %i_" << name << " = arith.constant " << index++
+       << " : index\n"
+       << "  memref.store %" << name << ", %terms[%i_" << name
+       << "] : memref<10xf64>\n";
+  }
+  os << "  %terms_cast = memref.cast %terms : memref<10xf64> to "
+        "memref<?xf64>\n"
+     << "  call @mdrtWriteTerms(%terms_cast) : (memref<?xf64>) -> ()\n";
+}
+
 void Builder::emitEntry() {
   StringRef state = getName(program.state);
   StringRef force = getName(program.force);
@@ -2947,6 +3237,10 @@ void Builder::emitEntry() {
      << "func.func private @mdrtFinish(memref<?x3x" << state
      << ">, memref<?x3x" << state << ">, memref<?xi32>)\n"
      << "    attributes {llvm.emit_c_interface}\n";
+  if (control.minimize)
+    os << "func.func private @mdrtWriteMinimization(i64, f64, f64, memref<?x3x"
+       << force << ">, memref<?xi32>)\n"
+       << "    attributes {llvm.emit_c_interface}\n";
   if (control.thermostat)
     os << "func.func private @mdrtBussiFactor(i64, i64, f64, f64, f64, f64) "
           "-> f64\n";
@@ -3065,6 +3359,10 @@ void Builder::emitEntry() {
   }
   if (program.reorders)
     emitReorder("  ", "_in", "0", "", givenForces, velocities);
+  if (control.minimize) {
+    emitMinimization();
+    return;
+  }
 
   if (control.getCouplingPeriod() > 0) {
     // What the coupling of the velocities takes: the total mass; and for
@@ -3139,25 +3437,7 @@ void Builder::emitEntry() {
     if (hasSites())
       virial = emitSpreadSites("  ", "%x0", "%f0e", "%f0", "%r_", "%w0e",
                                "%w0");
-    if (system.topology) {
-      os << "  %terms = memref.alloca() : memref<10xf64>\n";
-      int index = 0;
-      for (StringRef name :
-           {"term_lj", "term_coulomb", "term_bonds", "term_angles",
-            "term_dihedrals", "term_lj14", "term_coulomb14", "term_cmap",
-            "term_excluded", "term_reciprocal"}) {
-        os << "  %" << name << " = md.evaluate @" << name << "(%x0, %cell"
-           << getFieldValues() << ") request [energy]\n"
-           << "      : (!vec, !md.cell" << getFieldTypes() << ") -> f64\n"
-           << "  %i_" << name << " = arith.constant " << index++
-           << " : index\n"
-           << "  memref.store %" << name << ", %terms[%i_" << name
-           << "] : memref<10xf64>\n";
-      }
-      os << "  %terms_cast = memref.cast %terms : memref<10xf64> to "
-            "memref<?xf64>\n"
-         << "  call @mdrtWriteTerms(%terms_cast) : (memref<?xf64>) -> ()\n";
-    }
+    emitTerms();
     emitKineticEnergy(os, "%k0", velocities, "%m", "  ");
     if (hasConstraints())
       os << "  %g0 = arith.constant 0.0 : f64\n";
@@ -3238,6 +3518,41 @@ static int64_t countMostNeighbors(const System &system, double reach) {
   return most;
 }
 
+void Builder::setSchedule() {
+  // A period of zero means no output of that kind, and no loop for it.
+  int64_t steps = control.numSteps;
+  if (control.checkpointPeriod > 0) {
+    levels.push_back({"segment", steps / control.checkpointPeriod});
+    steps = control.checkpointPeriod;
+  }
+  if (control.framePeriod > 0) {
+    levels.push_back({"frame", steps / control.framePeriod});
+    steps = control.framePeriod;
+  }
+  // The velocities are coupled at the end of the last step of a period of
+  // coupling, which is taken after the loop over steps, as the last step
+  // of an interval between energies is. The loop over the periods of an
+  // interval between energies leaves the last period to the interval,
+  // which ends it with its step of energy.
+  int64_t coupling = control.getCouplingPeriod();
+  if (control.energyPeriod > 0) {
+    levels.push_back({"energy", steps / control.energyPeriod});
+    steps = control.energyPeriod;
+    stepsPerEnergy = steps;
+    if (coupling > 0) {
+      levels.push_back({"couple", steps / coupling - 1});
+      levels.push_back({"step", coupling - 1});
+    } else {
+      levels.push_back({"step", steps - 1});
+    }
+  } else if (coupling > 0) {
+    levels.push_back({"couple", steps / coupling});
+    levels.push_back({"step", coupling - 1});
+  } else {
+    levels.push_back({"step", steps});
+  }
+}
+
 llvm::Error Builder::build() {
   if (control.barostat && isLeapfrog())
     return llvm::createStringError(
@@ -3270,14 +3585,14 @@ llvm::Error Builder::build() {
     break;
   }
   // Velocity Verlet begins a step with the forces of the step before.
-  program.writesForces = !isLeapfrog();
-  program.takesForces = isRestart() && !isLeapfrog();
+  program.writesForces = !isLeapfrog() && !control.minimize;
+  program.takesForces = isRestart() && !isLeapfrog() && !control.minimize;
 
   program.skin =
       (control.pairlistDistance - control.cutoffDistance) * units::length;
   // Cells of half the reach of a neighbor structure: particles that are
   // neighbors are then a few cells apart in memory.
-  program.reorders = control.reorder;
+  program.reorders = control.reorder && !control.minimize;
   program.orderWidth = 0.5 * control.pairlistDistance * units::length;
   program.neighborWidth = control.neighborWidth;
   if (program.neighborWidth == 0) {
@@ -3290,39 +3605,10 @@ llvm::Error Builder::build() {
     program.neighborWidth = (width + 7) / 8 * 8;
   }
 
-  // The loops of the schedule. A period of zero means no output of that
-  // kind, and no loop for it.
-  int64_t steps = control.numSteps;
-  if (control.checkpointPeriod > 0) {
-    levels.push_back({"segment", steps / control.checkpointPeriod});
-    steps = control.checkpointPeriod;
-  }
-  if (control.framePeriod > 0) {
-    levels.push_back({"frame", steps / control.framePeriod});
-    steps = control.framePeriod;
-  }
-  // The velocities are coupled at the end of the last step of a period of
-  // coupling, which is taken after the loop over steps, as the last step
-  // of an interval between energies is. The loop over the periods of an
-  // interval between energies leaves the last period to the interval,
-  // which ends it with its step of energy.
-  int64_t coupling = control.getCouplingPeriod();
-  if (control.energyPeriod > 0) {
-    levels.push_back({"energy", steps / control.energyPeriod});
-    steps = control.energyPeriod;
-    stepsPerEnergy = steps;
-    if (coupling > 0) {
-      levels.push_back({"couple", steps / coupling - 1});
-      levels.push_back({"step", coupling - 1});
-    } else {
-      levels.push_back({"step", steps - 1});
-    }
-  } else if (coupling > 0) {
-    levels.push_back({"couple", steps / coupling});
-    levels.push_back({"step", coupling - 1});
-  } else {
-    levels.push_back({"step", steps});
-  }
+  // The loops of the schedule; a minimization has its own
+  // (emitMinimization).
+  if (!control.minimize)
+    setSchedule();
 
   if (system.topology) {
     if (llvm::Error error = collectTopology())

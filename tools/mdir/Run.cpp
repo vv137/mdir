@@ -39,6 +39,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <optional>
 
 using namespace mdir;
 using namespace mdir::driver;
@@ -162,7 +163,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     return fail("this build of MDIR has no HDF5, which checkpoints need");
 
   StringRef integrator =
-      control->integrator == Integrator::Leapfrog ? "LEAP" : "VVER";
+      control->minimize ? "MIN"
+      : control->integrator == Integrator::Leapfrog ? "LEAP" : "VVER";
   double velocityOffset =
       control->integrator == Integrator::Leapfrog ? -0.5 : 0.0;
 
@@ -171,10 +173,13 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   int64_t firstStep = 0;
   double firstTime = 0.0;
   std::vector<double> forces;
+  std::optional<Checkpoint> checkpoint;
+  bool fromPositions = false;
   if (isRestart) {
-    auto checkpoint = readCheckpoint(control->restartInput);
-    if (!checkpoint)
-      return fail(checkpoint.takeError());
+    auto read = readCheckpoint(control->restartInput);
+    if (!read)
+      return fail(read.takeError());
+    checkpoint = std::move(*read);
     const std::string &path = control->restartInput;
     if (checkpoint->getNumParticles() != system->getNumParticles())
       return fail("'" + path + "' holds " +
@@ -185,6 +190,20 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       if (checkpoint->species[i] != static_cast<int32_t>(system->types[i]))
         return fail("particle " + llvm::Twine(i + 1) + " has another type "
                     "in '" + path + "' than in '" + control->pdbFile + "'");
+    // A minimization takes the positions and the cell of any checkpoint,
+    // and a run of dynamics those of a minimization, and begins anew.
+    if (control->minimize || checkpoint->integrator == "MIN") {
+      system->positions = checkpoint->positions;
+      for (int i = 0; i != 3; ++i)
+        system->box[i] = checkpoint->box[i];
+      std::fprintf(stdout, "MDIR: begins at the positions of '%s'\n",
+                   path.c_str());
+      isRestart = false;
+      fromPositions = true;
+    }
+  }
+  if (isRestart) {
+    const std::string &path = control->restartInput;
     if (checkpoint->integrator != integrator)
       return fail("'" + path + "' was written with the integrator " +
                   checkpoint->integrator + ", and the run uses " +
@@ -211,9 +230,15 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     forces = checkpoint->forces;
     firstStep = checkpoint->step;
     firstTime = checkpoint->time;
-  } else if (!system->givenVelocities) {
+  } else if (control->minimize) {
+    system->velocities.assign(3 * system->getNumParticles(), 0.0);
+  } else if (!system->givenVelocities || fromPositions) {
     assignVelocities(*control, *system);
   }
+  // The input of the build: a run that begins at the positions of a
+  // checkpoint does not continue it.
+  if (fromPositions)
+    control->restartInput.clear();
 
   auto program = buildProgram(*control, *system);
   if (!program)
@@ -321,6 +346,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     add("_mlir_ciface_mdrtWriteTerms", (void *)&_mlir_ciface_mdrtWriteTerms);
     add("_mlir_ciface_mdrtAddBath", (void *)&_mlir_ciface_mdrtAddBath);
     add("_mlir_ciface_mdrtSetBox", (void *)&_mlir_ciface_mdrtSetBox);
+    add("_mlir_ciface_mdrtWriteMinimization",
+        (void *)&_mlir_ciface_mdrtWriteMinimization);
     add("_mlir_ciface_mdrtFinish", (void *)&_mlir_ciface_mdrtFinish);
     add("_mlir_ciface_mdrtWriteCheckpoint",
         program->writesForces
@@ -486,6 +513,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   output.timestep = control->timestep;
   output.couples = control->getCouplingPeriod() > 0;
   output.changesCell = control->barostat;
+  output.minimizes = control->minimize;
   output.leastEdge = 2.0 * control->cutoffDistance * units::length;
   output.degreesOfFreedom = system->getDegreesOfFreedom();
   output.volume = system->box[0] * system->box[1] * system->box[2];
@@ -529,9 +557,14 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   }
   setOutput(&output);
 
-  std::fprintf(output.log, "MDIR: %zu particles, %lld steps of %g ps\n",
-               count, static_cast<long long>(control->numSteps),
-               control->timestep);
+  if (control->minimize)
+    std::fprintf(output.log,
+                 "MDIR: %zu particles, %lld steps of steepest descent\n",
+                 count, static_cast<long long>(control->numSteps));
+  else
+    std::fprintf(output.log, "MDIR: %zu particles, %lld steps of %g ps\n",
+                 count, static_cast<long long>(control->numSteps),
+                 control->timestep);
   if (isRestart)
     std::fprintf(output.log, "MDIR: continues after step %lld, from '%s'\n",
                  static_cast<long long>(firstStep),
@@ -551,7 +584,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   output.trajectory.close();
 
   std::fprintf(output.log, "MDIR: ran in %.2f s", runTime);
-  if (control->numSteps > 0 && runTime > 0.0) {
+  if (!control->minimize && control->numSteps > 0 && runTime > 0.0) {
     double simulated = control->timestep * control->numSteps * 1.0e-3;
     std::fprintf(output.log, ", %.2f ms per step, %.1f ns per day",
                  1.0e3 * runTime / control->numSteps,
@@ -589,6 +622,15 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                std::sqrt(momentum[0] * momentum[0] +
                          momentum[1] * momentum[1] +
                          momentum[2] * momentum[2]));
+  if (control->minimize) {
+    if (output.hasEnergies)
+      std::fprintf(output.log,
+                   "MDIR: the potential energy went from %.4f to %.4f "
+                   "kcal/mol\n",
+                   output.firstTotal / units::energy,
+                   output.lastTotal / units::energy);
+    return 0;
+  }
   if (output.hasEnergies && output.firstTotal != 0.0)
     std::fprintf(output.log,
                  "MDIR: the %s energy changed by %.3e of its value\n",

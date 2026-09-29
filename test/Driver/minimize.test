@@ -1,0 +1,89 @@
+# Steepest descent on the target of D65 (ff19SB in OPC) with rigid water,
+# rigid bonds of hydrogen, and particle mesh Ewald, and a run of dynamics
+# that begins where the minimization ends.
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/ff19sb/ff19.prmtop %S/Inputs/ff19sb/ff19.inpcrd %t
+# RUN: sed -n '/^#--- min.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/min.toml
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: mdir run %t/min.toml > %t/both.log
+# RUN: mdir run %t/run.toml >> %t/both.log
+# RUN: FileCheck %s < %t/both.log
+# RUN: %python %S/Inputs/check_bonds.py %t/ff19.prmtop %t/min.dcd | FileCheck %s --check-prefix=BONDS
+
+# The log has the forces without their parts along the constraints. Each
+# step that raises the energy is not taken, and the next one is shorter.
+#
+# CHECK:      MDIR: 2332 particles, 100 steps of steepest descent
+# CHECK:      INFO:      STEP  POTENTIAL_ENE      RMS_FORCE      MAX_FORCE  MAX_ATOM      STEP_SIZE
+# CHECK:      INFO:         0     -5348.4328         8.6905        51.7717        35       0.100000
+# CHECK-NEXT: INFO:        50     -6587.1388         2.2776        28.6500        24       0.117032
+# CHECK-NEXT: INFO:       100     [[LAST:-[0-9]+\.[0-9]+]]
+# CHECK:      MDIR: wrote 1 checkpoints to '{{.*}}min.h5'
+# CHECK:      MDIR: the potential energy went from -5348.4328 to [[LAST]] kcal/mol
+
+# The run of dynamics takes the positions, and draws velocities.
+#
+# CHECK:      MDIR: begins at the positions of '{{.*}}min.h5'
+# CHECK:      INFO:         0         0.0000 {{ *}}{{-[0-9.]+}} {{ *}}[[LAST]] {{ *}}{{[0-9.]+}} {{ *}}300.0000
+
+# The minimization keeps the bonds of hydrogen and the waters rigid.
+#
+# BONDS: bonds ok
+
+#--- min.toml
+[input]
+prmtopfile = "ff19.prmtop"
+ambcrdfile = "ff19.inpcrd"
+
+[output]
+rstfile = "min.h5"
+dcdfile = "min.dcd"
+
+[energy]
+cutoffdist    = 9.0
+pairlistdist  = 10.0
+electrostatic = "PME"
+pme_shift     = true
+
+[minimize]
+nsteps        = 100
+eneout_period = 50
+crdout_period = 50
+
+[constraints]
+rigid_bond = true
+fast_water = true
+
+[boundary]
+type = "PBC"
+#--- end
+#--- run.toml
+[input]
+prmtopfile = "ff19.prmtop"
+ambcrdfile = "ff19.inpcrd"
+rstfile    = "min.h5"
+
+[energy]
+cutoffdist    = 9.0
+pairlistdist  = 10.0
+electrostatic = "PME"
+pme_shift     = true
+
+[dynamics]
+timestep      = 0.002
+nsteps        = 10
+eneout_period = 10
+
+[ensemble]
+temperature = 300.0
+
+[constraints]
+rigid_bond = true
+fast_water = true
+
+[boundary]
+type = "PBC"
+#--- end

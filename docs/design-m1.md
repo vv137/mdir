@@ -942,3 +942,25 @@ degrees. MDIR computes the dihedral as GROMACS does, accurately there, so
 its CMAP energies may differ from sander's by up to about 3 × 10⁻⁷
 kcal/mol within a few thousandths of a degree of 0° or ±180°, and by less
 than 10⁻¹² beyond 0.2°.
+
+## 21. Minimization
+
+`[minimize]` in place of `[dynamics]` lowers the potential energy by
+steepest descent (D73):
+
+| Item | Rule |
+|---|---|
+| Direction | `g = P (F / m)`: the force over the mass, 0 for virtual sites, with P the projection that RATTLE applies to velocities, which takes off the parts along the bonds of SETTLE and SHAKE at the current positions |
+| Step | `x' = x + h g / ‖g‖₁₆`, with `‖g‖₁₆ = r (Σ (|g_i| / r)¹⁶)^(1/16)` and r the root mean square of |g|; since `‖g‖₁₆ ≥ max |g_i|`, no particle moves farther than h. Then SETTLE and SHAKE take the groups back to their shapes from x, and the sites are placed |
+| Acceptance | The step is taken if the energy at x' is lower: h grows by 1.2, to at most 1 Å; otherwise x stays and h shrinks by 0.2. The choice is made particle by particle (a map that selects), so that the fields keep storage of their own |
+| Loops | Over the intervals between frames (one if there are none), over the intervals between energies in each, and over the steps; one `dyn.step @descend` per step, which evaluates the energy and the forces once |
+| Log | The potential energy with the constant terms, the root mean square and the largest of the forces `m g` without their parts along the constraints, in kcal/mol/Å, over the particles with mass, the particle of the largest, and h in Å |
+| Checkpoint | At the end, with `rstfile` of `[output]`: the positions, velocities of 0, and the integrator `MIN`. A run that reads it, a minimization or a run of dynamics, takes the positions and the cell and begins anew at step 0 with drawn velocities; a minimization takes the positions and the cell of any checkpoint |
+| Keywords | `method = "SD"`, `nsteps`, `eneout_period` (a divisor of `nsteps`), `crdout_period` (a multiple of it), `step_size` in Å (0.1). No thermostat or barostat. A tolerance on the force is planned; in mixed precision the forces are rounded to about 10⁻⁵ of their size, which bounds how far a minimization can go |
+
+On the target of D65 on the CPU in double precision, 500 steps take the
+energy from −5348 to −7137 kcal/mol and the root mean square of the
+constrained forces from 8.7 to 2.1 kcal/mol/Å (`test/Driver/minimize.test`
+takes 100). Without the masses in the direction, the steps that SHAKE and
+SETTLE correct went uphill after 50 steps, and h fell to 0.
+

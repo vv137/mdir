@@ -108,6 +108,9 @@ struct Output {
   double bath = 0.0;
   /// Whether a barostat changes the cell, which the log then shows.
   bool changesCell = false;
+  /// Whether the run minimizes the energy, whose log has the forces in
+  /// place of the kinetic energy (mdrtWriteMinimization).
+  bool minimizes = false;
   /// The shortest edge of the cell that the cutoff allows, twice it; a run
   /// whose barostat takes the cell below it stops.
   double leastEdge = 0.0;
@@ -157,6 +160,12 @@ void _mlir_ciface_mdrtWriteTerms(void *terms);
 /// The energy that a coupling of the velocities has just taken from the
 /// system, in kJ/mol.
 void _mlir_ciface_mdrtAddBath(double energy);
+/// A step of a minimization: the potential energy and the length of the
+/// next step, in kJ/mol and nm, and the forces, of which the log has the
+/// root mean square over the particles with mass and the largest.
+void _mlir_ciface_mdrtWriteMinimization(int64_t step, double energy,
+                                        double size, void *forces,
+                                        void *ids);
 /// The cell after a barostat has changed it: its edges in nm.
 void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz);
 void _mlir_ciface_mdrtWriteCheckpoint(int64_t step, void *positions,

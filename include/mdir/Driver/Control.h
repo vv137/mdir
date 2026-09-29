@@ -129,6 +129,13 @@ struct Control {
   /// The residues of an Amber topology that SETTLE constrains (D63).
   std::vector<std::string> settleResidues = {"WAT"};
 
+  // [minimize], in place of [dynamics]: steepest descent over `numSteps`
+  // steps, the first of which moves no particle farther than
+  // `minimizeStep`, in Å. The energies are written every `energyPeriod`
+  // steps, a frame every `framePeriod`, and a checkpoint at the end.
+  bool minimize = false;
+  double minimizeStep = 0.1;
+
   // [dynamics]
   Integrator integrator = Integrator::VelocityVerlet;
   double timestep = 0.001;

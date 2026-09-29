@@ -59,6 +59,7 @@ private:
   Error readOverride(const toml::table &table);
   Error readType(const toml::table &table);
   Error readDynamics(const toml::table &table);
+  Error readMinimize(const toml::table &table);
   Error readEnsemble(const toml::table &table);
   /// Sets the periods of the removal of the motion of the center of mass
   /// and of the thermostat that were not given, and checks them.
@@ -550,6 +551,36 @@ Error Reader::readDynamics(const toml::table &table) {
   return Error::success();
 }
 
+Error Reader::readMinimize(const toml::table &table) {
+  if (Error error = checkKeywords(
+          table, "minimize",
+          {"method", "nsteps", "eneout_period", "crdout_period", "step_size"},
+          {{"force_tolerance", "M1"}}))
+    return error;
+  enum class Method { SteepestDescent };
+  Method method = Method::SteepestDescent;
+  if (Error error = readChoice<Method>(
+          table, "method", method, {{"SD", Method::SteepestDescent}}))
+    return error;
+  control.minimize = true;
+  if (Error error = readCount(table, "nsteps", control.numSteps, 0))
+    return error;
+  if (Error error = readCount(table, "eneout_period", control.energyPeriod, 1))
+    return error;
+  if (Error error = readCount(table, "crdout_period", control.framePeriod, 0))
+    return error;
+  if (Error error = readPositive(table, "step_size", control.minimizeStep))
+    return error;
+  if (control.numSteps % control.energyPeriod != 0)
+    return fail(table, "'nsteps' is not a multiple of 'eneout_period'");
+  if (control.framePeriod != 0 &&
+      control.framePeriod % control.energyPeriod != 0)
+    return fail(table, "'crdout_period' is not a multiple of 'eneout_period'");
+  if (control.framePeriod != 0 && control.numSteps % control.framePeriod != 0)
+    return fail(table, "'nsteps' is not a multiple of 'crdout_period'");
+  return Error::success();
+}
+
 Error Reader::resolveCoupling() {
   int64_t &com = control.comPeriod, &thermostat = control.thermostatPeriod;
   if (!control.thermostat && thermostat > 0)
@@ -736,11 +767,10 @@ Error Reader::readExecution(const toml::table &table) {
 Error Reader::read(const toml::table &root) {
   if (Error error = checkKeywords(
           root, "the control file",
-          {"input", "output", "energy", "dynamics", "ensemble", "boundary",
-           "execution", "constraints"},
+          {"input", "output", "energy", "dynamics", "minimize", "ensemble",
+           "boundary", "execution", "constraints"},
           {{"selection", "M1"},
            {"restraints", "M1"},
-           {"minimize", "M1"},
            {"remd", "M3"}}))
     return error;
 
@@ -837,19 +867,33 @@ Error Reader::read(const toml::table &root) {
   if (Error error = readEnergy(*table))
     return error;
 
-  if (Error error = getTable("dynamics", /*required=*/true, table))
+  // A run minimizes the energy or follows the dynamics.
+  if (Error error = getTable("minimize", /*required=*/false, table))
     return error;
-  if (Error error = readDynamics(*table))
-    return error;
+  if (table) {
+    if (root.contains("dynamics"))
+      return fail(*root.get("dynamics"),
+                  "expected [dynamics] or [minimize], not both");
+    if (Error error = readMinimize(*table))
+      return error;
+  } else {
+    if (Error error = getTable("dynamics", /*required=*/true, table))
+      return error;
+    if (Error error = readDynamics(*table))
+      return error;
+  }
 
   if (Error error = getTable("ensemble", /*required=*/false, table))
     return error;
   if (table)
     if (Error error = readEnsemble(*table))
       return error;
+  if (control.minimize && (control.thermostat || control.barostat))
+    return fail(*table, "a minimization has no thermostat or barostat");
 
-  if (Error error = resolveCoupling())
-    return error;
+  if (!control.minimize)
+    if (Error error = resolveCoupling())
+      return error;
 
   if (Error error = getTable("constraints", /*required=*/false, table))
     return error;
@@ -904,6 +948,9 @@ Error Reader::read(const toml::table &root) {
         llvm::inconvertibleErrorCode(),
         "%s: 'rstout_period' is given, but [output] names no 'rstfile'",
         path.str().c_str());
+  // A minimization writes its checkpoint at the end.
+  if (control.minimize && !control.restartOutput.empty())
+    control.checkpointPeriod = control.numSteps;
   if (control.checkpointPeriod == 0 && !control.restartOutput.empty())
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
