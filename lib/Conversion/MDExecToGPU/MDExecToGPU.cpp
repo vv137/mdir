@@ -49,6 +49,10 @@ static const char *const countBuildName = "mdrtCountBuild";
 /// The number of particles whose contributions one thread adds up.
 /// The least and the most particles that one thread adds up.
 static const int64_t smallestChunk = 32;
+/// The threads that share the neighbors of one particle in a loop over
+/// pairs. A particle has hundreds of neighbors, and a thread for each
+/// particle leaves most of a device idle for a system of thousands.
+static const int64_t pairLanes = 16;
 static const int64_t largestChunk = 1024;
 
 namespace {
@@ -61,8 +65,10 @@ struct Neighbors {
   /// The number of neighbors of each particle, and their indices.
   Value counts;
   Value index;
-  /// The number of neighbors that a row holds.
+  /// The number of neighbors that a row holds, and the entries of the
+  /// matrix, `size` times `width`.
   Value width;
+  Value entries;
   /// The configuration and the cell that the structure was built at.
   Value reference;
   Value box;
@@ -606,6 +612,48 @@ LogicalResult Lowering::lowerParticleFor(md_exec::ParticleForOp op) {
   return success();
 }
 
+/// `value` from the thread whose number in the warp differs from that of
+/// this one by `offset` in its bits. Numbers of 64 bits travel as two of 32,
+/// and vectors element by element.
+static Value shuffleXor(OpBuilder &builder, Location loc, Value value,
+                        int64_t offset) {
+  Type type = value.getType();
+  if (auto vector = dyn_cast<VectorType>(type)) {
+    SmallVector<Value> elements;
+    for (int64_t i = 0, e = vector.getNumElements(); i != e; ++i)
+      elements.push_back(shuffleXor(
+          builder, loc, vector::ExtractOp::create(builder, loc, value, i),
+          offset));
+    return vector::FromElementsOp::create(builder, loc, vector, elements);
+  }
+  Type i32 = builder.getI32Type();
+  Value distance = arith::ConstantOp::create(
+      builder, loc, i32, builder.getI32IntegerAttr(offset));
+  Value width =
+      arith::ConstantOp::create(builder, loc, i32, builder.getI32IntegerAttr(32));
+  auto shuffle = [&](Value word) {
+    return gpu::ShuffleOp::create(builder, loc, word, distance, width,
+                                  gpu::ShuffleMode::XOR)
+        .getShuffleResult();
+  };
+  if (type.getIntOrFloatBitWidth() == 32)
+    return shuffle(value);
+  Type i64 = builder.getI64Type();
+  Value bits = arith::BitcastOp::create(builder, loc, i64, value);
+  Value shift =
+      arith::ConstantOp::create(builder, loc, i64, builder.getI64IntegerAttr(32));
+  Value low = arith::TruncIOp::create(builder, loc, i32, bits);
+  Value high = arith::TruncIOp::create(
+      builder, loc, i32, arith::ShRUIOp::create(builder, loc, bits, shift));
+  Value lowBack =
+      arith::ExtUIOp::create(builder, loc, i64, shuffle(low));
+  Value highBack = arith::ShLIOp::create(
+      builder, loc, arith::ExtUIOp::create(builder, loc, i64, shuffle(high)),
+      shift);
+  Value joined = arith::OrIOp::create(builder, loc, lowBack, highBack);
+  return arith::BitcastOp::create(builder, loc, type, joined);
+}
+
 LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   Location loc = op.getLoc();
   OpBuilder builder(op);
@@ -624,14 +672,54 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   Value box = convertReal(builder, loc, op.getCellMutable().get(), real);
   Value inverse = createInverse(builder, loc, box);
 
-  launchOver(builder, loc, size, [&](OpBuilder &body, Value central) {
-    IRMapping local;
-    SmallVector<Value> contributions =
-        emitPairKernel(body, op, structure.counts, structure.index, box,
-                       inverse, central, local);
-    for (auto [index, value] : llvm::enumerate(contributions))
-      storeElement(body, loc, value, op.getScratch()[2 * index], central);
-  });
+  // `pairLanes` threads for each particle, in a group of adjacent threads
+  // of one warp. Every thread of a launched block runs the kernel, so that
+  // the warps stay whole for the shuffles; those beyond the last particle
+  // take no neighbor and write nothing.
+  Value lanes = createIndex(builder, loc, pairLanes);
+  Value threads = arith::MulIOp::create(builder, loc, size, lanes);
+  Value one = createIndex(builder, loc, 1);
+  Value block = createIndex(builder, loc, blockSize);
+  Value grid = createGroups(builder, loc, threads, blockSize);
+  auto launch =
+      gpu::LaunchOp::create(builder, loc, grid, one, one, block, one, one);
+  OpBuilder body = OpBuilder::atBlockEnd(&launch.getBody().front());
+  Value base = arith::MulIOp::create(body, loc, launch.getBlockIds().x,
+                                     createIndex(body, loc, blockSize));
+  Value thread =
+      arith::AddIOp::create(body, loc, base, launch.getThreadIds().x);
+  Value item = arith::DivUIOp::create(body, loc, thread, lanes);
+  Value lane = arith::RemUIOp::create(body, loc, thread, lanes);
+  Value valid = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::ult,
+                                      item, size);
+  Value central = arith::SelectOp::create(body, loc, valid, item,
+                                          createIndex(body, loc, 0));
+  PairLanes sharing;
+  sharing.lane = lane;
+  sharing.lanes = pairLanes;
+  sharing.valid = valid;
+  sharing.combine = [](OpBuilder &builder, Location loc, Value value) {
+    for (int64_t offset = pairLanes / 2; offset >= 1; offset /= 2)
+      value = arith::AddFOp::create(builder, loc, value,
+                                    shuffleXor(builder, loc, value, offset));
+    return value;
+  };
+  IRMapping local;
+  SmallVector<Value> contributions =
+      emitPairKernel(body, op, structure.counts, structure.index, box,
+                     inverse, central, local, &sharing);
+  if (!contributions.empty()) {
+    Value leader = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::eq,
+                                         lane, createIndex(body, loc, 0));
+    Value writes = arith::AndIOp::create(body, loc, leader, valid);
+    scf::IfOp::create(body, loc, writes, [&](OpBuilder &then, Location) {
+      for (auto [index, value] : llvm::enumerate(contributions))
+        storeElement(then, loc, value, op.getScratch()[2 * index], central);
+      scf::YieldOp::create(then, loc);
+    });
+  }
+  gpu::TerminatorOp::create(body, loc);
+  bringIn(launch);
   return finishSums(op, builder, op.getReduce(), op.getScratch(), size);
 }
 
@@ -852,6 +940,8 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
   Neighbors structure;
   structure.size = op.getSize();
   structure.width = createIndex(builder, loc, op.getWidth());
+  structure.entries =
+      arith::MulIOp::create(builder, loc, structure.size, structure.width);
   structure.counts = createDeviceBuffer(
       builder, loc, getDeviceType({ShapedType::kDynamic}, narrow),
       ValueRange{structure.size});
@@ -933,14 +1023,18 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
         scf::YieldOp::create(then, loc);
       });
 
-  // Leave the excluded pairs out.
-  if (structure.excluded)
-    launchOver(builder, loc, structure.size,
-               [&](OpBuilder &body, Value particle) {
-                 emitExclusionFilter(body, loc, structure.counts,
-                                     structure.index, structure.excluded,
-                                     particle);
-               });
+  // Mark the excluded pairs, a thread for each entry of the matrix.
+  if (structure.excluded) {
+    launchOver(builder, loc, structure.entries, [&](OpBuilder &body,
+                                                    Value item) {
+      Value width = memref::DimOp::create(body, loc, structure.index,
+                                          createIndex(body, loc, 1));
+      Value particle = arith::DivUIOp::create(body, loc, item, width);
+      Value slot = arith::RemUIOp::create(body, loc, item, width);
+      emitExclusionMark(body, loc, structure.counts, structure.index,
+                        structure.excluded, particle, slot);
+    });
+  }
 
   // Remember the configuration that the structure was built at.
   createTransfer(builder, loc, structure.reference, positions);

@@ -75,16 +75,23 @@ func.func @forces(%x: memref<?x3xf64, 1>, %f: memref<?x3xf64, 1>,
   // CHECK:      arith.divui
   // CHECK-DAG:  %[[IX:[0-9]+]] = vector.extract %[[INVERSE]][0]
   // CHECK-DAG:  %[[LX:[0-9]+]] = vector.extract %[[BOX]][0]
+  // Threads in groups of 16 share the row of a particle and sum over the
+  // group by shuffles; the first thread of a group writes.
+  //
   // CHECK:      gpu.launch
   // CHECK-DAG:    %[[INSIDE:[0-9]+]] = vector.from_elements %[[IX]],
   // CHECK-DAG:    %[[EDGES:[0-9]+]] = vector.from_elements %[[LX]],
+  // CHECK:        arith.divui
+  // CHECK:        arith.remui
+  // CHECK:        memref.load %[[COUNTS]][
+  // CHECK:        scf.for
+  // CHECK:          %[[IMAGES:[0-9]+]] = arith.mulf %{{[0-9]+}}, %[[INSIDE]]
+  // CHECK:          %[[NEAREST:[0-9]+]] = math.roundeven %[[IMAGES]]
+  // CHECK:          arith.mulf %[[NEAREST]], %[[EDGES]]
+  // CHECK:        gpu.shuffle xor
   // CHECK:        scf.if
-  // CHECK:          memref.load %[[COUNTS]][
-  // CHECK:          scf.for
-  // CHECK:            %[[IMAGES:[0-9]+]] = arith.mulf %{{[0-9]+}}, %[[INSIDE]]
-  // CHECK:            %[[NEAREST:[0-9]+]] = math.roundeven %[[IMAGES]]
-  // CHECK:            arith.mulf %[[NEAREST]], %[[EDGES]]
   // CHECK:          memref.store %{{[0-9]+}}, %[[F]][
+  // CHECK:        scf.if
   // CHECK:          memref.store %{{[0-9]+}}, %[[A]][
   // CHECK:        gpu.terminator
   //

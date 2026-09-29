@@ -116,7 +116,9 @@ func.func @forces(%x: !vec, %cell: !md.cell) -> !vec {
   // CHECK:          %[[D:[0-9]+]] = arith.subf %[[RAW]], %[[SHIFT]]
   // CHECK:          %[[R2:[0-9]+]] = vector.reduction <add>,
   // CHECK:          %[[WITHIN:[0-9]+]] = arith.cmpf olt, %[[R2]], %[[CUTOFF2]]
-  // CHECK:          arith.select %[[WITHIN]], %[[D]],
+  // CHECK:          %[[DISTINCT:[0-9]+]] = arith.cmpi ne,
+  // CHECK:          %[[KEEP:[0-9]+]] = arith.andi %[[WITHIN]], %[[DISTINCT]]
+  // CHECK:          arith.select %[[KEEP]], %[[D]],
   // CHECK-NOT:    memref.load %[[OUT]]
   // CHECK:        memref.store %{{[0-9]+}}, %[[OUT]][%[[I]],
   %f0 = md_exec.zeros : !vec

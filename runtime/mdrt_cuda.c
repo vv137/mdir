@@ -56,6 +56,8 @@ struct Kernel {
   char name[64];
   int64_t count;
   double seconds;
+  /* The threads of its last launch, which tell what it runs over. */
+  int64_t threads;
 };
 static struct Kernel kernels[MAX_KERNELS];
 static int numKernels = 0;
@@ -66,17 +68,19 @@ static int lastKernel = -1;
 static double lastLaunch = 0.0;
 
 static void report(void) {
-  fprintf(stderr, "mdrt: %-40s %10s %12s %12s\n", "", "calls", "seconds",
-          "microseconds");
+  fprintf(stderr, "mdrt: %-40s %10s %12s %12s %10s\n", "", "calls",
+          "seconds", "microseconds", "threads");
   for (int i = 0; i != NUM_COUNTERS; ++i)
     fprintf(stderr, "mdrt: %-40s %10lld %12.4f %12.2f\n", counterNames[i],
             (long long)counts[i], seconds[i],
             counts[i] ? 1.0e6 * seconds[i] / (double)counts[i] : 0.0);
   for (int i = 0; i != numKernels; ++i)
     if (kernels[i].count)
-      fprintf(stderr, "mdrt: %-40s %10lld %12.4f %12.2f\n", kernels[i].name,
-              (long long)kernels[i].count, kernels[i].seconds,
-              1.0e6 * kernels[i].seconds / (double)kernels[i].count);
+      fprintf(stderr, "mdrt: %-40s %10lld %12.4f %12.2f %10lld\n",
+              kernels[i].name, (long long)kernels[i].count,
+              kernels[i].seconds,
+              1.0e6 * kernels[i].seconds / (double)kernels[i].count,
+              (long long)kernels[i].threads);
 }
 
 /* Notes that `function` has the name `name`. */
@@ -233,6 +237,8 @@ void mgpuLaunchKernel(CUfunction function, intptr_t gridX, intptr_t gridY,
   if (start >= 0.0) {
     lastKernel = findKernel(function);
     lastLaunch = start;
+    kernels[lastKernel].threads =
+        (int64_t)(gridX * gridY * gridZ * blockX * blockY * blockZ);
   }
   end(LAUNCH, start);
 }

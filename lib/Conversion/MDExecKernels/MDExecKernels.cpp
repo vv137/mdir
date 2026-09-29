@@ -122,7 +122,8 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
                                            Value counts, Value index,
                                            Value box, Value inverse,
                                            Value central,
-                                           IRMapping &local) {
+                                           IRMapping &local,
+                                           const PairLanes *lanes) {
   Location loc = op.getLoc();
   Value positions = op.getPositions();
   Block &kernel = op.getKernel().front();
@@ -150,15 +151,22 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
       memref::LoadOp::create(builder, loc, counts, ValueRange{central});
   Value end =
       arith::IndexCastOp::create(builder, loc, builder.getIndexType(), count);
+  Value first = zero, step = one;
+  if (lanes) {
+    end = arith::SelectOp::create(builder, loc, lanes->valid, end, zero);
+    first = lanes->lane;
+    step = createIndex(builder, loc, lanes->lanes);
+  }
 
   // The contributions of the neighbors of one particle are summed in the
-  // order of its list.
+  // order of its list, or, with lanes, in that order within each lane and
+  // then over the lanes.
   SmallVector<Value> sums;
   for (Value value : yield->getOperands())
     sums.push_back(createZero(builder, loc, value.getType()));
 
   auto inner = scf::ForOp::create(
-      builder, loc, zero, end, one, sums,
+      builder, loc, first, end, step, sums,
       [&](OpBuilder &pair, Location, Value entry, ValueRange partial) {
         Value narrow = memref::LoadOp::create(pair, loc, index,
                                               ValueRange{central, entry});
@@ -191,9 +199,14 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
         for (Operation &nested : kernel.without_terminator())
           pair.clone(nested, inside);
 
-        // A pair beyond the cutoff contributes nothing.
+        // A pair beyond the cutoff contributes nothing, and neither does
+        // an entry that stands for the particle itself, which is how a
+        // device marks an excluded pair (emitExclusionMark).
         Value within = arith::CmpFOp::create(
             pair, loc, arith::CmpFPredicate::OLT, r2, cutoff2);
+        Value distinct = arith::CmpIOp::create(
+            pair, loc, arith::CmpIPredicate::ne, other, central);
+        within = arith::AndIOp::create(pair, loc, within, distinct);
         SmallVector<Value> updated;
         for (unsigned i = 0; i != numYields; ++i) {
           Value contribution = inside.lookupOrDefault(yield->getOperand(i));
@@ -206,19 +219,37 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
         scf::YieldOp::create(pair, loc, updated);
       });
 
-  for (unsigned i = 0; i != numOuts; ++i) {
-    Value destination = op.getOuts()[i];
-    Value total = inner.getResult(i);
-    if (!op.overwrites(i))
-      total = arith::AddFOp::create(
-          builder, loc, loadElement(builder, loc, destination, central),
-          total);
-    storeElement(builder, loc, total, destination, central);
+  SmallVector<Value> totals(inner.getResults());
+  if (lanes)
+    for (Value &total : totals)
+      total = lanes->combine(builder, loc, total);
+
+  auto emitStores = [&](OpBuilder &writer) {
+    for (unsigned i = 0; i != numOuts; ++i) {
+      Value destination = op.getOuts()[i];
+      Value total = totals[i];
+      if (!op.overwrites(i))
+        total = arith::AddFOp::create(
+            writer, loc, loadElement(writer, loc, destination, central),
+            total);
+      storeElement(writer, loc, total, destination, central);
+    }
+  };
+  if (lanes && numOuts != 0) {
+    Value leader = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq,
+                                         lanes->lane, zero);
+    Value writes = arith::AndIOp::create(builder, loc, leader, lanes->valid);
+    scf::IfOp::create(builder, loc, writes, [&](OpBuilder &then, Location) {
+      emitStores(then);
+      scf::YieldOp::create(then, loc);
+    });
+  } else {
+    emitStores(builder);
   }
 
   SmallVector<Value> contributions;
   for (unsigned i = numOuts; i != numYields; ++i) {
-    Value total = inner.getResult(i);
+    Value total = totals[i];
     if (auto weights = op.getWeights()) {
       double weight = (*weights)[i - numOuts];
       if (weight != 1.0) {
@@ -375,6 +406,71 @@ SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
   for (unsigned i = numOuts, e = loop.getNumResults(); i != e; ++i)
     contributions.push_back(loop.getResult(i));
   return contributions;
+}
+
+void kernels::emitExclusionMark(OpBuilder &builder, Location loc,
+                                Value counts, Value index, Value excluded,
+                                Value particle, Value slot) {
+  Type narrow = builder.getI32Type();
+  Value zero = createIndex(builder, loc, 0);
+  Value one = createIndex(builder, loc, 1);
+  int64_t entry = md_exec::getIncidenceEntrySize(2);
+  Value found = arith::IndexCastOp::create(
+      builder, loc, builder.getIndexType(),
+      memref::LoadOp::create(builder, loc, counts, ValueRange{particle}));
+  Value width = memref::DimOp::create(builder, loc, index, one);
+  Value inRow = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ult,
+                                      slot, found);
+  Value inside = arith::CmpIOp::create(
+      builder, loc, arith::CmpIPredicate::ult, slot, width);
+  Value filled = arith::AndIOp::create(builder, loc, inRow, inside);
+  scf::IfOp::create(builder, loc, filled, [&](OpBuilder &b, Location) {
+    Value neighbor =
+        memref::LoadOp::create(b, loc, index, ValueRange{particle, slot});
+    Value numExcluded = arith::IndexCastOp::create(
+        b, loc, b.getIndexType(),
+        memref::LoadOp::create(b, loc, excluded, ValueRange{particle, zero}));
+    // The other member of each excluded pair of the particle: the member at
+    // place 1 − s, for the place s of the particle.
+    auto search = scf::ForOp::create(
+        b, loc, zero, numExcluded, one,
+        ValueRange{arith::ConstantOp::create(b, loc, b.getI1Type(),
+                                             b.getBoolAttr(false))},
+        [&](OpBuilder &c, Location, Value k, ValueRange isExcluded) {
+          Value offset =
+              arith::MulIOp::create(c, loc, k, createIndex(c, loc, entry));
+          Value base = arith::AddIOp::create(c, loc, offset, one);
+          Value placeColumn =
+              arith::AddIOp::create(c, loc, base, createIndex(c, loc, 1));
+          Value place = memref::LoadOp::create(
+              c, loc, excluded, ValueRange{particle, placeColumn});
+          Value isFirst = arith::CmpIOp::create(
+              c, loc, arith::CmpIPredicate::eq, place,
+              arith::ConstantOp::create(c, loc, narrow,
+                                        c.getI32IntegerAttr(0)));
+          Value first =
+              arith::AddIOp::create(c, loc, base, createIndex(c, loc, 2));
+          Value second =
+              arith::AddIOp::create(c, loc, base, createIndex(c, loc, 3));
+          Value column =
+              arith::SelectOp::create(c, loc, isFirst, second, first);
+          Value partner = memref::LoadOp::create(
+              c, loc, excluded, ValueRange{particle, column});
+          Value same = arith::CmpIOp::create(c, loc, arith::CmpIPredicate::eq,
+                                             partner, neighbor);
+          scf::YieldOp::create(
+              c, loc,
+              ValueRange{arith::OrIOp::create(c, loc, isExcluded[0], same)});
+        });
+    scf::IfOp::create(b, loc, search.getResult(0), [&](OpBuilder &c,
+                                                        Location) {
+      Value self = arith::IndexCastOp::create(c, loc, narrow, particle);
+      memref::StoreOp::create(c, loc, self, index,
+                              ValueRange{particle, slot});
+      scf::YieldOp::create(c, loc);
+    });
+    scf::YieldOp::create(b, loc);
+  });
 }
 
 void kernels::emitExclusionFilter(OpBuilder &builder, Location loc,

@@ -8,6 +8,8 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/IRMapping.h"
 
+#include <functional>
+
 namespace mdir {
 namespace kernels {
 
@@ -53,6 +55,20 @@ llvm::SmallVector<mlir::Value>
 emitParticleKernel(mlir::OpBuilder &builder, md_exec::ParticleForOp op,
                    mlir::Value particle, mlir::IRMapping &local);
 
+/// How the threads of a group share the neighbors of one particle: the
+/// thread `lane` of `lanes` takes every `lanes`th entry of the row from
+/// `lane` on, `combine` sums a value over the group and gives the sum to
+/// every thread of it, and only the first thread of a group whose particle
+/// is `valid` writes. The threads of a group whose particle is not valid
+/// take no entry but still combine, as a combination may need every thread.
+struct PairLanes {
+  mlir::Value lane;
+  int64_t lanes;
+  mlir::Value valid;
+  std::function<mlir::Value(mlir::OpBuilder &, mlir::Location, mlir::Value)>
+      combine;
+};
+
 /// Emits what a loop over pairs does for the particle `central`: the loop
 /// over its neighbors, with the minimum image, the cutoff, and the kernel,
 /// and the update of the destinations. Returns the contributions to the
@@ -60,12 +76,13 @@ emitParticleKernel(mlir::OpBuilder &builder, md_exec::ParticleForOp op,
 ///
 /// `counts` and `index` are the neighbor matrix. `box` holds the edge
 /// lengths of the cell, as a vector of the type of the positions, and
-/// `inverse` what `createInverse` returns for it.
+/// `inverse` what `createInverse` returns for it. With `lanes`, a group of
+/// threads shares the row (PairLanes).
 llvm::SmallVector<mlir::Value>
 emitPairKernel(mlir::OpBuilder &builder, md_exec::PairForOp op,
                mlir::Value counts, mlir::Value index, mlir::Value box,
                mlir::Value inverse, mlir::Value central,
-               mlir::IRMapping &local);
+               mlir::IRMapping &local, const PairLanes *lanes = nullptr);
 
 /// Emits what a loop over tuples does for the particle `particle`: the loop
 /// over the tuples in its row of `incidence`, with the displacements in the
@@ -88,6 +105,16 @@ emitTupleKernel(mlir::OpBuilder &builder, md_exec::TupleForOp op,
 /// a row is as wide as the particle with the most tuples needs.
 mlir::Value emitBuildIncidence(mlir::OpBuilder &builder, mlir::Location loc,
                                mlir::Value members, mlir::Value size);
+
+/// Marks the entry `slot` of the row of `particle` in the neighbor matrix
+/// `counts` and `index` if it is an excluded pair of `excluded`, by the
+/// number of the particle itself, which the loops over pairs skip. Unlike
+/// `emitExclusionFilter` it keeps the row as it is, so that every entry can
+/// be marked by a thread of its own.
+void emitExclusionMark(mlir::OpBuilder &builder, mlir::Location loc,
+                       mlir::Value counts, mlir::Value index,
+                       mlir::Value excluded, mlir::Value particle,
+                       mlir::Value slot);
 
 /// Emits what the particle `particle` does to leave the pairs of the
 /// incidence structure `excluded`, a structure of pairs, out of its row of
