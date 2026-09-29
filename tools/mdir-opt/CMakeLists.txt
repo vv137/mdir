@@ -3,7 +3,9 @@ set(LIBS
   MDIRMD
   MDIRMDExec
   MDIRMDRT
+  MDIRMDExecToLoops
   MDIRMDToMDExec
+  MLIRMemRefDialect
   MDIRMDTransforms
   MDIRTestPasses
   MLIRArithDialect

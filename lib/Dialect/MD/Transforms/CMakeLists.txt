@@ -2,6 +2,7 @@ add_mlir_dialect_library(MDIRMDTransforms
   CheckExchange.cpp
   Differentiate.cpp
   ExpandTruncation.cpp
+  Inline.cpp
   ScalarDerivative.cpp
 
   ADDITIONAL_HEADER_DIRS
@@ -11,6 +12,7 @@ add_mlir_dialect_library(MDIRMDTransforms
   MDIRMDPassIncGen
 
   LINK_LIBS PUBLIC
+  MDIRDyn
   MDIRMD
   MLIRArithDialect
   MLIRIR

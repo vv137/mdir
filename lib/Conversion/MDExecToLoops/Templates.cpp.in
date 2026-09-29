@@ -1,0 +1,8 @@
+// Generated from the templates in lib/Runtime/Templates. Do not edit.
+
+namespace mdir {
+extern const char *const neighborsMatrixTemplate;
+const char *const neighborsMatrixTemplate = R"MDIRTEMPLATE(
+@NEIGHBORS_MATRIX_TEMPLATE@
+)MDIRTEMPLATE";
+} // namespace mdir

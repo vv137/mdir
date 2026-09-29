@@ -1,4 +1,6 @@
-set(LLVM_TARGET_DEFINITIONS MDRTTypes.td)
+set(LLVM_TARGET_DEFINITIONS MDRTOps.td)
+mlir_tablegen(MDRTOps.h.inc -gen-op-decls)
+mlir_tablegen(MDRTOps.cpp.inc -gen-op-defs)
 mlir_tablegen(MDRTTypes.h.inc -gen-typedef-decls -typedefs-dialect=mdrt)
 mlir_tablegen(MDRTTypes.cpp.inc -gen-typedef-defs -typedefs-dialect=mdrt)
 mlir_tablegen(MDRTDialect.h.inc -gen-dialect-decls -dialect=mdrt)

@@ -1,8 +1,8 @@
 # MDIR Op Specification, Milestone M0
 
-Status: draft 5 (2026-09-29). The `md` and `dyn` dialects are implemented,
-and so are the value form of `md_exec` and the conversion into it. Storage
-assignment and the lowering of `md_exec` to executable code are not.
+Status: draft 6 (2026-09-29). Everything in this document is implemented for
+the CPU in double precision, except where a section says otherwise. A
+Lennard-Jones system runs end to end, sequentially and with OpenMP.
 
 This document specifies the types and ops needed for milestone M0: a
 Lennard-Jones fluid integrated with velocity Verlet or leapfrog, on one node,
@@ -17,7 +17,8 @@ Operand lists, result lists, and the mathematical definitions are normative.
 | `dyn` ops (Section 6) | Implemented. The examples show the actual syntax. |
 | `md_exec` ops in the value form (Section 8) | Implemented. The examples show the actual syntax. |
 | Conversion of `md` and `dyn` to `md_exec` (Section 9.1) | Implemented as the pass `convert-md-to-md-exec` |
-| Storage form, storage assignment, fusion (Sections 8.5, 9.4, 10) | Not implemented |
+| Storage assignment and lowering to loops (Section 10) | Implemented as the pass `convert-md-exec-to-loops` |
+| Storage form as a stage of its own, fusion, precision policy (Sections 7, 8.5, 9.4) | Not implemented |
 
 It follows the accepted decisions in [decisions.md](decisions.md). Tags such
 as (S1) or (B4) name the decision behind a section.
@@ -916,54 +917,104 @@ subexpressions of the kernels are then shared.
 
 ## 10. Storage assignment
 
-Storage assignment turns the value form into the storage form. It runs inside
-`md_exec`.
+Storage assignment gives every field value a buffer. It is part of the pass
+`convert-md-exec-to-loops`, which emits loops over buffers directly.
 
-### 10.1 What it decides
+The pass does not produce the storage form of the `md_exec` ops as a stage
+of its own (Section 8.5). Whether that stage is needed is open; see
+[mdrt-m0.md](mdrt-m0.md), Section 8.
 
-| Decision | Input |
+### 10.1 What is lowered to what
+
+| Before | After |
 |---|---|
-| Which buffer holds each field value | Use-def graph |
-| Which updates happen in place | Number of consumers of each value |
-| Layout of each buffer | Plan |
-| Element type of each buffer | Precision policy |
+| A field | `memref<?x3xf64>` or `memref<?xT>` |
+| A cell | `vector<3xf64>`, the edge lengths of an orthorhombic cell |
+| `md_exec.particle_for` | `scf.parallel` over the particles |
+| `md_exec.pair_for` | `scf.parallel` over the particles, with an `scf.for` over the neighbors of each |
+| `md_exec.build_neighbors` | A call to the neighbor build template |
+| `scf.for` that carries fields | `scf.for` that carries buffers |
 
-### 10.2 The rule for in-place updates
+Everything is lowered in double precision. The precision policy of Section 7
+is not implemented.
 
-A loop may write its result into the buffer of its destination operand when
-that operand has no other consumer after the loop.
+### 10.2 Regions, ownership, and the pool
 
-In the velocity Verlet step, every field value has one consumer:
+The pass works region by region: the body of a function, and the body of
+each loop inside it. A region **owns** the buffers that it may overwrite.
+
+| Region | Buffers it owns |
+|---|---|
+| Body of a function | The buffers of its field arguments, the buffers handed over with `mdrt.from_buffer`, and the buffers it allocates |
+| Body of a loop | The buffers that the loop carries |
+
+A field is **dead** after the last op of its region that uses it. When a
+field dies, its buffer goes to the **pool** of its region, from which a
+later op may take it.
+
+### 10.3 Choosing the buffer of a result
+
+| Loop | Rule |
+|---|---|
+| Over particles | Kernel `i` reads and writes particle `i` only. The loop writes to the buffer of a field that it reads, if the region owns the buffer and the field is dead afterward. Otherwise it takes a buffer from the pool. |
+| Over pairs | The loop reads the positions and the fields in `ins` of other particles, so it cannot write to their buffers. It takes a buffer from the pool. |
+
+When the destination of a loop over pairs is `md_exec.zeros`, the loop stores
+the sum for each particle and never reads the buffer. The buffer is not
+filled with zeros first.
+
+In the velocity Verlet step, three buffers serve the whole step:
 
 ```text
-%v  ──kick──► %v1 ──kick──► %v2         one buffer
-%x  ──drift─► %x1                        one buffer
-%f  (consumed by the first kick), %f1    one buffer
+%v  ──kick──► %v1 ──kick──► %v2         in place, one buffer
+%x  ──drift─► %x1                        in place, one buffer
+%f  dies at the first kick; %f1          takes the buffer of %f from the pool
 ```
 
-Three buffers serve the whole step, and the loop-carried values of
-`scf.for` map to the same three buffers on every iteration.
+### 10.4 Loops that carry fields
 
-### 10.3 When one buffer is not enough (B10)
+A loop that carries fields carries their buffers. When the body needs a
+buffer and its pool is empty, the buffer becomes one more loop-carried
+value, initialized with a buffer from the enclosing region. The body never
+allocates.
 
-A value needs a buffer of its own when it is still live after the point where
-its buffer would be overwritten. Having a second consumer is not the
-criterion; being live across the overwrite is.
+At the end of the body, the loop yields the buffers of the fields it
+carries, and then as many unused buffers as it borrowed. Which buffer plays
+which role may change from one iteration to the next.
 
-The remedy is usually a second buffer, not a copy. In a Metropolis step the
-proposed positions are written to a second buffer while the old positions
-stay where they are. Acceptance then selects one of the two.
+The leapfrog step carries positions and velocities. The forces are needed
+only within the step, so their buffer is a third loop-carried value:
 
-Inside the step loop the pass introduces neither a copy nor an extra buffer
-silently (D18). It reports the value, the overwrite, and the later consumer.
-The front end accepts by marking the value, or the program is rejected.
+```mlir
+scf.for ... iter_args(%x = ..., %v = ..., %spare = ...)
+    -> (memref<?x3xf64>, memref<?x3xf64>, memref<?x3xf64>) {
+  // forces into %spare; kick and drift in place in %v and %x
+  scf.yield %x, %v, %spare
+}
+```
 
-### 10.4 Accumulation from zero
+### 10.5 When a field needs a buffer of its own (B10, D18)
 
-A force field produced by `md.gather_relation` has no old value. Its
-destination is a buffer filled with zeros. When several loops contribute to
-the same force field, the first starts from zeros and the others accumulate
-into the result of the one before.
+The pass never copies a field. It fails, and names the op, in these cases:
+
+| Case | Example |
+|---|---|
+| A loop updates a field that is used after the loop | The initial positions are read after the step loop. |
+| A loop yields a field that belongs to an enclosing region | A loop yields a field that it did not carry. |
+| A loop yields one field twice | |
+| A loop over pairs accumulates into a field that it reads from other particles | |
+
+A field that is merely read after an op keeps its buffer, and the result of
+the op goes to another buffer. Outside loops that buffer is allocated where
+it is needed.
+
+### 10.6 Limitations
+
+| Limitation | Consequence |
+|---|---|
+| Buffers are never freed. | A function that allocates leaks when it is called repeatedly. The tests run everything from one `main`. |
+| Marking a field so that a copy is accepted is not implemented. | A program that needs a copy, such as a Metropolis step, cannot be lowered. |
+| The storage of a neighbor structure is allocated once per build site. | Carrying a neighbor structure through a loop is not supported. |
 
 ## 11. Requirements on `mdrt`
 
@@ -980,8 +1031,23 @@ The `mdrt` ABI is not designed yet. M0 needs these services from it.
 
 ## 12. Validation
 
-The reference interpreter evaluates the semantic dialects directly from the
-definitions in Sections 4 to 6, in `f64`.
+The reference interpreter is to evaluate the semantic dialects directly from
+the definitions in Sections 4 to 6, in `f64`. It does not exist yet.
+
+What exists are tests that run compiled code and compare with reference
+values from independent sources.
+
+| Test | Compared against | Tolerance |
+|---|---|---|
+| Kernels that differentiation generates | Closed-form derivatives; for `force_switch`, the formulas of the GROMACS manual | 1e-12 |
+| Neighbor build template | A search over all pairs | Exact |
+| Energy and forces of 64 particles | A script that evaluates all pairs | 1e-10 |
+| 200 steps of velocity Verlet and of leapfrog | The same script, integrating with all pairs | 1e-9 |
+
+The last three run sequentially and with OpenMP on 4 threads. The script is
+`test/Integration/Inputs/lj_reference.py`.
+
+The checks that were planned:
 
 | Check | Compared against | Tolerance depends on |
 |---|---|---|

@@ -39,6 +39,15 @@ def Differentiate : Pass<"md-differentiate", "::mlir::ModuleOp"> {
                            "::mlir::vector::VectorDialect"];
 }
 
+def Inline : Pass<"md-inline", "::mlir::ModuleOp"> {
+  let summary = "Inlines potentials, functions, and programs";
+  let description = [{
+    Replaces every `md.call` and `dyn.step` with the body of what it calls,
+    then removes the potentials, functions, and programs that are no longer
+    referenced. What remains is code in ordinary functions.
+  }];
+}
+
 def CheckExchange : Pass<"md-check-exchange", "::mlir::ModuleOp"> {
   let summary = "Proves the exchange contracts that rest on a proof";
   let description = [{

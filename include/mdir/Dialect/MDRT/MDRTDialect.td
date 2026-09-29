@@ -14,6 +14,7 @@ def MDRT_Dialect : Dialect {
     the ops that stand for calls into the runtime.
   }];
   let cppNamespace = "::mdir::mdrt";
+  let dependentDialects = ["::mdir::md::MDDialect"];
 
   let useDefaultTypePrinterParser = 1;
   let extraClassDeclaration = [{

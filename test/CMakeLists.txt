@@ -9,6 +9,7 @@ configure_lit_site_cfg(
 
 set(MDIR_TEST_DEPENDS
   mdir-opt
+  mdrt
   )
 
 add_lit_testsuite(check-mdir "Running the MDIR regression tests"

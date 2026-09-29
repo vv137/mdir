@@ -8,5 +8,7 @@ add_mlir_dialect_library(MDIRMDRT
   MDIRMDRTIncGen
 
   LINK_LIBS PUBLIC
+  MDIRMD
   MLIRIR
+  MLIRSideEffectInterfaces
   )

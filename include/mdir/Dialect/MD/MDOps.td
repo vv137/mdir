@@ -96,6 +96,25 @@ def MD_ReturnOp : MD_Op<"return", [
 }
 
 //===----------------------------------------------------------------------===//
+// Cells
+//===----------------------------------------------------------------------===//
+
+def MD_OrthorhombicCellOp : MD_Op<"orthorhombic_cell", [Pure]> {
+  let summary = "A periodic cell with perpendicular edges";
+  let description = [{
+    The cell is periodic in all three directions. The operands are the
+    lengths of its edges along x, y, and z.
+
+    ```mlir
+    %cell = md.orthorhombic_cell %lx, %ly, %lz
+    ```
+  }];
+  let arguments = (ins F64:$lx, F64:$ly, F64:$lz);
+  let results = (outs MD_CellType:$result);
+  let assemblyFormat = "$lx `,` $ly `,` $lz attr-dict";
+}
+
+//===----------------------------------------------------------------------===//
 // Relations
 //===----------------------------------------------------------------------===//
 

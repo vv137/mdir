@@ -10,6 +10,15 @@ namespace mlir {
 namespace arith {
 class ArithDialect;
 } // namespace arith
+namespace func {
+class FuncDialect;
+} // namespace func
+namespace memref {
+class MemRefDialect;
+} // namespace memref
+namespace scf {
+class SCFDialect;
+} // namespace scf
 namespace math {
 class MathDialect;
 } // namespace math

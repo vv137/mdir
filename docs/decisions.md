@@ -289,6 +289,8 @@ P11 to P18 follow from the review of PPMD (Saunders et al. 2018). See
 | D26 | **Checkpoints are written as H5MD, in 64-bit floating point.** A checkpoint holds positions and velocities, together with everything else an exact restart needs. H5MD is an HDF5-based format with standard places for positions, velocities, periodic images, particle IDs, and the box, and it allows application-specific groups. |
 | D27 | **D8 applies from M0.** The kernels that build cells and neighbor structures are generated from the first milestone. The runtime provides only generic primitives. |
 | D28 | **CPU threading uses OpenMP in M0.** Threading is a structural plan parameter with the values `openmp` and `none`. With `none`, loops are lowered sequentially and the OpenMP runtime is not loaded. |
+| D29 | **The neighbor structure of M0 is the neighbor matrix.** |
+| D30 | **Vector fields are stored as `memref<?x3xT>` first.** The other layout comes later. |
 
 ### 5.1 Amendments to earlier decisions
 
@@ -354,8 +356,13 @@ These items follow from the decisions above but have no design yet.
 | `md` dialect: types, ops, truncation, differentiation, exchange check | M0 | Implemented |
 | `dyn` dialect | M0 | Implemented |
 | `md_exec` dialect in the value form, and the conversion into it | M0 | Implemented |
+| Lowering of `md_exec` to executable code on the CPU | M0 | Implemented, in double precision |
 | Reuse of neighbor structures across steps | M0 | |
-| Lowering of `md_exec` to executable code | M0 | Next step; depends on the `mdrt` proposal |
+| Precision policy | M0 | |
+| Fusion of loops over the same neighbor structure | M0 | |
+| Freeing of buffers | M0 | |
+| Driver, TOML input, XTC and H5MD output | M0 | |
+| GPU back end | M0 | |
 | Check that particle set symbols in types are declared | M0 | |
 | Regression test for the numerical values of derivatives | M0 | Implemented with a kernel runner |
 | `mdrt` ABI: storage, neighbor structures, events | M0 | Proposal in [mdrt-m0.md](mdrt-m0.md) |

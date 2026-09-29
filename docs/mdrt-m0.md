@@ -160,12 +160,45 @@ double precision. A neighborhood is found by testing all pairs.
 
 Proposal: the C++ tool.
 
-## 7. Questions
+## 7. What is implemented
+
+| Item | State |
+|---|---|
+| Neighbor build as a template in IR, `lib/Runtime/Templates/NeighborsMatrix.mlir` | Implemented. The compiler adds it to the module, where it is lowered with the rest of the code. |
+| Neighbor matrix | Implemented |
+| Overflow of a row | The runtime reports it and stops the run. Rebuilding with wider rows is not implemented. |
+| Storage in `memref<?x3xf64>` | Implemented, in double precision |
+| `mdrt.from_buffer`, `mdrt.to_buffer` | Implemented. They connect code that works on buffers with code that works on fields. |
+| OpenMP | Works through the upstream lowering of `scf.parallel`. Reductions work. |
+| Threading as a plan parameter | Not implemented. The choice is made by the passes that are run after lowering. |
+| Runtime library `libmdrt` | One function, the overflow report |
+| Spatial reordering (step 5) | Not implemented |
+| GPU | Not started |
+
+The template is sequential in its counting sort and parallel in its search
+for neighbors.
+
+## 8. Open point: the storage form
+
+D17 decided that `md_exec` ops have a value form and a storage form. The
+implementation lowers the value form directly to `scf` loops and `memref`s,
+and the storage form does not exist as IR.
+
+| Option | For | Against |
+|---|---|---|
+| Keep the direct lowering | Less code. Buffer assignment and loop emission share what they know. | No IR in which loops still are `md_exec` loops but operate on buffers. |
+| Add the storage form | Policies that depend on storage, such as layout or mapping to a GPU, can be passes over `md_exec` ops. | A second form of every loop op, and a pass between the two. |
+
+The direct lowering was chosen to reach running code. The GPU back end is
+the point at which the storage form may be needed.
+
+## 9. Questions
 
 | # | Question | Proposal |
 |---|---|---|
-| 1 | Neighbor structure for M0 | Neighbor matrix on both targets |
+| 1 | Neighbor structure for M0 | Decided: neighbor matrix (D29) |
 | 2 | CPU threading | Decided: OpenMP for M0 (D28) |
 | 3 | GPU execution | Upstream `gpu` dialect; runtime functions in `mdrt` |
 | 4 | Reference interpreter | C++ tool |
-| 5 | Vector field layout for M0 | `memref<?x3xT>`; the other layout later |
+| 5 | Vector field layout for M0 | Decided: `memref<?x3xT>` first (D30) |
+| 6 | Storage form of `md_exec` | Keep the direct lowering until the GPU back end needs more |

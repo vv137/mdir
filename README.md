@@ -1,8 +1,9 @@
 # MDIR
 
 MDIR is an MLIR-based compiler stack for general-purpose molecular dynamics.
-It is at an early stage: the design is written down and the first dialect
-parses, verifies, and prints.
+It is at an early stage. A Lennard-Jones system compiles and runs on the
+CPU, sequentially or with OpenMP, and reproduces reference values. There is
+no driver, no input or output, and no GPU back end yet.
 
 ## Documents
 
@@ -70,9 +71,28 @@ build/bin/mdir-opt test/Dialect/MD/ops.mlir
 | `--md-check-exchange` | Proves the exchange contracts of pair kernels. |
 | `--md-expand-truncation` | Expands truncation attributes into kernels. |
 | `--md-differentiate` | Replaces `md.evaluate` with calls to generated derivative functions. |
+| `--md-inline` | Inlines potentials, functions, and programs into the code that calls them. |
 | `--convert-md-to-md-exec` | Converts `md` and `dyn` ops to loops over particles and pairs. |
+| `--convert-md-exec-to-loops` | Assigns buffers and converts the loops to `scf` loops over `memref`s. |
+
+After the last pass the module holds only upstream dialects, so `mlir-opt`
+lowers it to LLVM and `mlir-runner` runs it:
 
 ```sh
-build/bin/mdir-opt input.mlir --md-check-exchange --md-differentiate \
-    --md-expand-truncation --convert-md-to-md-exec="skin=0.3 width=96"
+build/bin/mdir-opt input.mlir \
+    --md-check-exchange --md-differentiate --md-expand-truncation \
+    --md-inline --convert-md-to-md-exec="skin=0.3 width=96" \
+    --convert-md-exec-to-loops \
+  | mlir-opt --convert-scf-to-openmp --canonicalize \
+      --convert-scf-to-cf --convert-math-to-llvm --convert-math-to-libm \
+      --convert-vector-to-llvm --expand-strided-metadata \
+      --finalize-memref-to-llvm --convert-arith-to-llvm \
+      --convert-func-to-llvm --convert-cf-to-llvm \
+      --convert-openmp-to-llvm --reconcile-unrealized-casts \
+  | mlir-runner -e main --entry-point-result=void \
+      --shared-libs=build/lib/libmdrt.so,$LLVM_PREFIX/lib/libomp.so,$LLVM_PREFIX/lib/libmlir_c_runner_utils.so
 ```
+
+Without `--convert-scf-to-openmp --canonicalize` and
+`--convert-openmp-to-llvm`, the loops run sequentially and `libomp.so` is
+not needed. `test/Integration` holds complete programs.
