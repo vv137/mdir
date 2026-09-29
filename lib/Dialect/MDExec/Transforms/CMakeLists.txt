@@ -1,4 +1,5 @@
 add_mlir_dialect_library(MDIRMDExecTransforms
+  FuseLoops.cpp
   ReuseNeighbors.cpp
 
   ADDITIONAL_HEADER_DIRS

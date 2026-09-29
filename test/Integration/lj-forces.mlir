@@ -2,16 +2,14 @@
 // with a brute-force evaluation over all pairs.
 //
 // RUN: mdir-opt %s %md_passes \
-// RUN:     --convert-md-to-md-exec="skin=0.2 width=64" \
-// RUN:     --convert-md-exec-to-loops \
+// RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
 // RUN: | FileCheck %s
 
 // RUN: mdir-opt %s %md_passes \
-// RUN:     --convert-md-to-md-exec="skin=0.2 width=64" \
-// RUN:     --convert-md-exec-to-loops \
+// RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_openmp \
 // RUN: | env OMP_NUM_THREADS=4 mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%openmp \

@@ -150,6 +150,8 @@ functions provided by `mdrt`.
 
 ## 6. Reference interpreter
 
+V1 decided against an interpreter. The options that were considered:
+
 | Option | For | Against |
 |---|---|---|
 | A C++ tool, `mdir-interpret` | Uses the IR data structures directly. No new dependency. | Array code is more verbose than in Python. |
@@ -199,6 +201,6 @@ the point at which the storage form may be needed.
 | 1 | Neighbor structure for M0 | Decided: neighbor matrix (D29) |
 | 2 | CPU threading | Decided: OpenMP for M0 (D28) |
 | 3 | GPU execution | Upstream `gpu` dialect; runtime functions in `mdrt` |
-| 4 | Reference interpreter | Proposed to be dropped; see V1 in decisions.md |
+| 4 | Reference interpreter | Decided: none (V1) |
 | 5 | Vector field layout for M0 | Decided: `memref<?x3xT>` first (D30) |
 | 6 | Storage form of `md_exec` | Keep the direct lowering until the GPU back end needs more |

@@ -18,7 +18,8 @@ Operand lists, result lists, and the mathematical definitions are normative.
 | `md_exec` ops in the value form (Section 8) | Implemented. The examples show the actual syntax. |
 | Conversion of `md` and `dyn` to `md_exec` (Section 9.1) | Implemented as the pass `convert-md-to-md-exec` |
 | Storage assignment and lowering to loops (Section 10) | Implemented as the pass `convert-md-exec-to-loops` |
-| Storage form as a stage of its own, fusion, precision policy (Sections 7, 8.5, 9.4) | Not implemented |
+| Fusion of loops over pairs (Section 9.4) | Implemented as the pass `md-exec-fuse-loops` |
+| Storage form as a stage of its own, precision policy (Sections 7, 8.5) | Not implemented |
 
 It follows the accepted decisions in [decisions.md](decisions.md). Tags such
 as (S1) or (B4) name the decision behind a section.
@@ -942,9 +943,22 @@ strategy for the write to `a_j`.
 
 ### 9.4 Fusion
 
-Loops over the same neighbor structure may be fused into one
-`md_exec.pair_for` with several `outs` and `reduce` clauses. Common
-subexpressions of the kernels are then shared.
+The pass `md-exec-fuse-loops` fuses two `md_exec.pair_for` ops into one when
+
+- they run over the same neighbor structure, positions, and cell, with the
+  same cutoff and policy;
+- the second does not use a result of the first; and
+- no op between the two uses a result of the first.
+
+The fused loop has the fields, destinations, and global sums of both. A
+field that both kernels read is read once. The kernel is the first kernel
+followed by the second; common subexpression elimination, run afterward,
+removes what the two compute twice.
+
+Fusion does not change any result: every sum receives the same
+contributions in the same order.
+
+Loops over particles are not fused yet.
 
 ## 10. Storage assignment
 
@@ -1062,11 +1076,9 @@ The `mdrt` ABI is not designed yet. M0 needs these services from it.
 
 ## 12. Validation
 
-The reference interpreter is to evaluate the semantic dialects directly from
-the definitions in Sections 4 to 6, in `f64`. It does not exist yet.
-
-What exists are tests that run compiled code and compare with reference
-values from independent sources.
+There is no reference interpreter (V1). Validation rests on tests that run
+compiled code and compare with reference values from independent sources,
+and, from M1 on, on comparison with an established MD engine.
 
 | Test | Compared against | Tolerance |
 |---|---|---|

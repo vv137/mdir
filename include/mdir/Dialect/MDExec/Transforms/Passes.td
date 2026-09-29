@@ -41,4 +41,22 @@ def ReuseNeighbors : Pass<"md-exec-reuse-neighbors", "::mlir::ModuleOp"> {
                            "::mdir::mdrt::MDRTDialect"];
 }
 
+def FuseLoops : Pass<"md-exec-fuse-loops", "::mlir::ModuleOp"> {
+  let summary = "Fuses loops over the pairs of one neighbor structure";
+  let description = [{
+    Two `md_exec.pair_for` ops are fused into one when they run over the
+    same neighbor structure, positions, and cell, with the same cutoff and
+    policy, and the second does not use a result of the first.
+
+    The fused loop has the fields, destinations, and global sums of both,
+    and its kernel is the first kernel followed by the second. Common
+    subexpression elimination, run afterward, removes what the two kernels
+    compute twice.
+
+    The results are the same as before, bit for bit: every sum receives the
+    same contributions in the same order.
+  }];
+  let dependentDialects = ["::mdir::md_exec::MDExecDialect"];
+}
+
 #endif // MDIR_DIALECT_MDEXEC_TRANSFORMS_PASSES_TD

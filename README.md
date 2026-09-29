@@ -74,6 +74,7 @@ build/bin/mdir-opt test/Dialect/MD/ops.mlir
 | `--md-inline` | Inlines potentials, functions, and programs into the code that calls them. |
 | `--convert-md-to-md-exec` | Converts `md` and `dyn` ops to loops over particles and pairs. |
 | `--md-exec-reuse-neighbors` | Makes a neighbor structure that is built in a loop a value that the loop carries and refreshes. |
+| `--md-exec-fuse-loops` | Fuses loops over the pairs of one neighbor structure. Run `--cse` after it. |
 | `--convert-md-exec-to-loops` | Assigns buffers and converts the loops to `scf` loops over `memref`s. |
 
 After the last pass the module holds only upstream dialects, so `mlir-opt`
@@ -83,7 +84,8 @@ lowers it to LLVM and `mlir-runner` runs it:
 build/bin/mdir-opt input.mlir \
     --md-check-exchange --md-differentiate --md-expand-truncation \
     --md-inline --convert-md-to-md-exec="skin=0.3 width=96" \
-    --md-exec-reuse-neighbors --convert-md-exec-to-loops \
+    --md-exec-reuse-neighbors --md-exec-fuse-loops --cse \
+    --convert-md-exec-to-loops \
   | mlir-opt --convert-scf-to-openmp --canonicalize \
       --convert-scf-to-cf --convert-math-to-llvm --convert-math-to-libm \
       --convert-vector-to-llvm --expand-strided-metadata \
