@@ -444,6 +444,39 @@ Designed in its own document when its stage begins. The parts:
 | The reciprocal sum | Spreading the charges to a grid with B-splines of order 4 [[Essmann1995]](references.md#essmann1995), a forward FFT, a product with the influence function, an inverse FFT, and the forces from the grid |
 | The virial | From the reciprocal energy of each wave vector, and from the direct sum as for pairs |
 
+The methods of the reciprocal sum share the grid, the spreading, and the
+FFT, and differ in the influence function
+[[GromacsManual2025]](references.md#gromacsmanual2025):
+
+| Method | Cost | In MDIR |
+|---|---|---|
+| Ewald summation [[Ewald1921]](references.md#ewald1921), a sum over wave vectors | Of order N^(3/2) at best | The reference of the tests: a script with many wave vectors |
+| Smooth particle mesh Ewald [[Essmann1995]](references.md#essmann1995): B-splines, an FFT, and the forces from the gradient of the B-splines | N log N | The method of M1, as both engines use it |
+| P3M with forces from the potential (P3M-AD): the influence function that minimizes the error for the grid | N log N | A variant: another influence function in the same pipeline, when it is measured to help |
+
+What the engines do differently, which MDIR must be able to do both ways
+to compare with them:
+
+| Item | GROMACS | Amber (sander, `eedmeth = 1`) | In MDIR |
+|---|---|---|---|
+| The direct sum at the cutoff | Shifted by a constant to zero, so that the energy is continuous | `erfc(β r) / r`, cut with no shift | A choice of the term, as the truncations of M0 are |
+| β | From `ewald-rtol`: the relative size of the direct sum at the cutoff | From `dsum_tol`, the same idea | From a tolerance, as both |
+| The grid | The largest spacing, `fourierspacing`, with sizes that the FFT handles fast | Grid sizes or a spacing | The same, with sizes of small prime factors |
+| The terms of the log | Coulomb (SR): the direct sum, the excluded pairs, and the self term; Coul. recip.: the reciprocal sum | Its own split | The terms kept apart, so that each can be compared |
+
+Beside those:
+
+- A system with a net charge needs the neutralizing background, and a
+  surface term (the dipole correction) is an option in both engines.
+  Which one each applies by default is checked from their documentation
+  before the stage begins.
+- The balance of the direct and the reciprocal sum (the cutoff, β, and
+  the grid) is tuned at run time by the engines. In MDIR it is a numeric
+  parameter of the plan (A4), which a run can tune without compiling
+  again, since β and the grid enter the program as values.
+- Methods of other kinds, such as fast multipole or multilevel summation,
+  are not planned for M1; distributed particle mesh Ewald is M2c.
+
 Two questions shape the design (Section 17):
 
 | Question | Candidates |
