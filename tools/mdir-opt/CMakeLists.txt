@@ -1,6 +1,8 @@
 set(LIBS
   MDIRDyn
   MDIRMD
+  MDIRMDExec
+  MDIRMDRT
   MDIRMDTransforms
   MDIRTestPasses
   MLIRArithDialect

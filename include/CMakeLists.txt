@@ -1,3 +1,5 @@
 add_subdirectory(mdir/Dialect/MD)
 add_subdirectory(mdir/Dialect/MD/Transforms)
 add_subdirectory(mdir/Dialect/Dyn)
+add_subdirectory(mdir/Dialect/MDRT)
+add_subdirectory(mdir/Dialect/MDExec)

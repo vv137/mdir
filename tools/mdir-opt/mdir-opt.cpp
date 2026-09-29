@@ -2,6 +2,8 @@
 
 #include "mdir/Dialect/Dyn/DynDialect.h"
 #include "mdir/Dialect/MD/MDDialect.h"
+#include "mdir/Dialect/MDExec/MDExecDialect.h"
+#include "mdir/Dialect/MDRT/MDRTDialect.h"
 #include "mdir/Dialect/MD/Transforms/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -26,6 +28,7 @@ int main(int argc, char **argv) {
 
   mlir::DialectRegistry registry;
   registry.insert<mdir::dyn::DynDialect, mdir::md::MDDialect,
+                  mdir::md_exec::MDExecDialect, mdir::mdrt::MDRTDialect,
                   mlir::arith::ArithDialect,
                   mlir::func::FuncDialect, mlir::math::MathDialect,
                   mlir::scf::SCFDialect, mlir::vector::VectorDialect>();
