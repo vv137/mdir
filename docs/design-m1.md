@@ -1,8 +1,7 @@
-# Design for Milestone M1: Proposal
+# Design for Milestone M1
 
-Status: proposal (2026-09-29). Nothing here is decided except where a
-decision is cited, and nothing is implemented. Section 12 has the
-questions that must be answered first.
+Status: decided (2026-09-29), not implemented. Section 12 has the
+decisions; Section 13 has the order of work and its state.
 
 M1 is a coarse-grained membrane in water with the Martini force field
 (P3). This document proposes what MDIR needs for it: relations that come
@@ -291,6 +290,17 @@ mixing rules of M0 do not have. The proposal is the rule `product`.
 Both carry the statement that they preserve the target distribution
 (P10).
 
+Two barostats go by the name of Bussi:
+
+| | Bussi, Zykova-Timan, and Parrinello 2009 | Bernetti and Bussi 2020 |
+|---|---|---|
+| Kind | Of second order: the cell has a momentum, and the thermostat acts on it as well | Of first order: the barostat of Berendsen with a term of noise |
+| State beside the cell | The momentum of the cell | None |
+| Parameters | A time | A time and a compressibility. A wrong compressibility changes how fast the volume relaxes, not what is sampled. |
+| The volume | May oscillate | Relaxes |
+
+MDIR takes the one of 2020 (D50). A checkpoint needs nothing for it.
+
 ### 8.2 In `dyn`
 
 ```mlir
@@ -362,7 +372,7 @@ the particles (D44) and the incidence structures do not depend on it.
 | Keywords of the control file | Table |
 |---|---|
 | `electrostatic = "CUTOFF"`, `dielec_const`, `epsilon_rf` | `[energy]` |
-| `ensemble = "NVT"` or `"NPT"`, `tpcontrol = "BUSSI"`, `temperature`, `pressure`, `tau_t`, `tau_p`, `compressibility`, `isotropy = "SEMI-ISO"` | `[ensemble]` |
+| `ensemble = "NVT"` or `"NPT"`, `thermostat = "BUSSI"`, `barostat = "BERNETTI-BUSSI"`, `temperature`, `pressure`, `tau_t`, `tau_p`, `compressibility`, `isotropy = "SEMI-ISO"` | `[ensemble]` |
 | `thermostat_period`, `barostat_period` | `[dynamics]` |
 
 ## 11. Validation
@@ -380,20 +390,20 @@ the particles (D44) and the incidence structures do not depend on it.
 
 GROMACS is not installed on the development machine.
 
-## 12. Questions
+## 12. Decisions
 
-| # | Question | Proposal |
-|---|---|---|
-| 1 | The force field and the lipid of the target | Martini 2.2 with DPPC, for which many results are published. Martini 3 has the same kinds of terms. |
-| 2 | Kernels in internal coordinates or over positions | Internal coordinates (Section 3.2) |
-| 3 | Parameters for each tuple or for each kind | For each tuple (Section 2.3) |
-| 4 | The strategy for terms over tuples | A: every particle takes its own part (Section 5.1) |
-| 5 | The thermostat and the barostat | Stochastic velocity rescaling and stochastic cell rescaling (Section 8.1) |
-| 6 | A cell that changes | A build after every change, in M1 (Section 9) |
-| 7 | The format of the topology | That of GROMACS (Section 10) |
-| 8 | The engine to compare with | GROMACS, built into the home directory with `scripts/build-gromacs.sh` |
-| 9 | Groups with a thermostat each | One group in M1 |
-| 10 | The correction for the dispersion beyond the cutoff | Not in M1: Martini runs without it. It stays on the list for M2. |
+| # | Question | Decision | Recorded as |
+|---|---|---|---|
+| 1 | The force field and the lipid of the target | Martini 2.2 with DPPC | D46 |
+| 2 | Kernels in internal coordinates or over positions | Internal coordinates (Section 3.2) | D48 |
+| 3 | Parameters for each tuple or for each kind | For each tuple (Section 2.3) | D47 |
+| 4 | The strategy for terms over tuples | Every particle takes its own part (Section 5.1) | D49 |
+| 5 | The thermostat and the barostat | Stochastic velocity rescaling (2007) and stochastic cell rescaling (2020) (Section 8.1) | D50 |
+| 6 | A cell that changes | A build after every change, in M1 (Section 9) | D51 |
+| 7 | The format of the topology | That of GROMACS (Section 10) | D52 |
+| 8 | The engine to compare with | GROMACS, built into the home directory | D52 |
+| 9 | Groups with a thermostat each | One group in M1 | D50 |
+| 10 | The correction for the dispersion beyond the cutoff | Not in M1 | D46 |
 
 ## 13. Order of work
 
