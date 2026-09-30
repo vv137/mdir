@@ -5,6 +5,7 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include <string>
 
@@ -17,6 +18,8 @@ enum class Emit {
   Module,
   /// Print it as it is executed, in the LLVM dialect.
   Lowered,
+  /// Print the pipeline of passes that lowers it.
+  Pipeline,
   /// Execute it.
   Run,
 };
@@ -34,6 +37,18 @@ int checkControl(llvm::StringRef controlFile);
 /// Describes a checkpoint, or compares the states of two. Returns the exit
 /// status: 0 if the states are identical, 1 if they differ, 2 on an error.
 int describeCheckpoints(llvm::ArrayRef<std::string> files);
+
+/// Prints the version of MDIR, the commit it was built from, and what the
+/// build supports.
+void printVersion(llvm::raw_ostream &os);
+
+/// Writes into `directory` what a report of a defect in the run of
+/// `controlFile` needs: the versions, the environment, the inputs with
+/// their hashes, and the program at each stage, each made by a process of
+/// its own. With `runs`, runs it as well, waiting for each kernel. Returns
+/// the exit status.
+int writeBugReport(llvm::StringRef controlFile, llvm::StringRef directory,
+                   bool runs, const char *argv0);
 
 } // namespace tool
 } // namespace mdir

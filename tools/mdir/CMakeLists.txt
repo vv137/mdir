@@ -10,10 +10,23 @@ set(LLVM_LINK_COMPONENTS
 
 add_llvm_executable(mdir
   mdir.cpp
+  BugReport.cpp
   Check.cpp
   Checkpoint.cpp
   Run.cpp
   )
+
+# The commit that was built, refreshed at every build.
+set(MDIR_BUILD_INFO "${CMAKE_CURRENT_BINARY_DIR}/BuildInfo.h")
+add_custom_target(mdir-build-info
+  COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${PROJECT_SOURCE_DIR}
+          -DOUTPUT=${MDIR_BUILD_INFO}
+          -P ${PROJECT_SOURCE_DIR}/cmake/BuildInfo.cmake
+  BYPRODUCTS ${MDIR_BUILD_INFO}
+  COMMENT "Recording the commit of the source"
+  )
+add_dependencies(mdir mdir-build-info)
+target_include_directories(mdir PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 llvm_update_compile_flags(mdir)
 target_link_libraries(mdir PRIVATE
   MDIRDriver

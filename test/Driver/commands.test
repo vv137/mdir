@@ -2,6 +2,8 @@
 #
 # RUN: mdir version | FileCheck %s --check-prefix=VERSION
 # VERSION: MDIR {{[0-9]+\.[0-9]+\.[0-9]+}}
+# VERSION-NEXT: commit: {{[0-9a-f]+|unknown}}
+# VERSION-NEXT: uncommitted changes: {{yes|no|unknown}}
 # VERSION-NEXT: LLVM {{[0-9]+}}
 # VERSION-NEXT: targets: cpu
 # VERSION-NEXT: checkpoints:
@@ -20,3 +22,28 @@
 
 # RUN: not mdir template gro 2>&1 | FileCheck %s --check-prefix=TEMPLATE
 # TEMPLATE: mdir: expected the template 'md', got 'gro'
+
+# The passes that lower a run.
+# RUN: mdir emit --stage=pipeline %t.toml | FileCheck %s --check-prefix=PIPELINE
+# PIPELINE: md-check-exchange,{{.*}}convert-md-to-md-exec
+
+# A report of a defect: the versions, the inputs with their hashes and
+# copies, and the program at each stage.
+# RUN: rm -rf %t.report
+# RUN: mdir bug-report %t.toml -o %t.report | FileCheck %s --check-prefix=REPORT
+# REPORT: mdir: wrote a report to
+# REPORT-NEXT: check: ok
+# REPORT-NEXT: module: ok
+# REPORT-NEXT: pipeline: ok
+# REPORT-NEXT: lowered: ok
+# RUN: FileCheck %s --check-prefix=INPUTS < %t.report/inputs.txt
+# INPUTS: control:
+# INPUTS: sha256: {{[0-9a-f]+}}{{$}}
+# INPUTS: pdb: {{.*}}argon.pdb
+# INPUTS-NEXT: bytes: 68390
+# INPUTS-NEXT: sha256: {{[0-9a-f]+}}{{$}}
+# INPUTS-NEXT: copied to: inputs/pdb-argon.pdb
+# RUN: FileCheck %s --check-prefix=MODULE < %t.report/module.out
+# MODULE: func.func @mdir_run(
+# RUN: test -f %t.report/version.txt
+# RUN: test -f %t.report/inputs/pdb-argon.pdb

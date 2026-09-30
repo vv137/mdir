@@ -2,10 +2,8 @@
 
 #include "Commands.h"
 
-#include "mdir/Driver/Checkpoint.h"
 #include "mdir/Driver/Control.h"
 
-#include "llvm/Config/llvm-config.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/InitLLVM.h"
 #include "llvm/Support/raw_ostream.h"
@@ -23,20 +21,37 @@ static llvm::cl::SubCommand templateCommand(
     "template", "Print a control file with every keyword");
 static llvm::cl::SubCommand checkpointCommand(
     "checkpoint", "Describe a checkpoint, or compare the states of two");
+static llvm::cl::SubCommand bugReportCommand(
+    "bug-report", "Collect what a report of a defect in a run needs");
 static llvm::cl::SubCommand versionCommand(
     "version", "Print the version and what this build supports");
 
 static llvm::cl::opt<std::string>
     controlFile(llvm::cl::Positional, llvm::cl::desc("<control file>"),
                 llvm::cl::Required, llvm::cl::sub(runCommand),
-                llvm::cl::sub(emitCommand), llvm::cl::sub(checkCommand));
+                llvm::cl::sub(emitCommand), llvm::cl::sub(checkCommand),
+                llvm::cl::sub(bugReportCommand));
+
+static llvm::cl::opt<std::string>
+    reportDirectory("o", llvm::cl::desc("The directory of the report"),
+                    llvm::cl::value_desc("directory"),
+                    llvm::cl::init("mdir-report"),
+                    llvm::cl::sub(bugReportCommand));
+
+static llvm::cl::opt<bool>
+    reportRuns("run",
+               llvm::cl::desc("Run as well, waiting for each kernel, and "
+                              "keep the log"),
+               llvm::cl::sub(bugReportCommand));
 
 static llvm::cl::opt<Emit> stage(
     "stage", llvm::cl::desc("Which form of the program to print"),
     llvm::cl::values(
         clEnumValN(Emit::Module, "module", "As it is built (default)"),
         clEnumValN(Emit::Lowered, "lowered",
-                   "As it is executed, in the LLVM dialect")),
+                   "As it is executed, in the LLVM dialect"),
+        clEnumValN(Emit::Pipeline, "pipeline",
+                   "The passes that lower it")),
     llvm::cl::init(Emit::Module), llvm::cl::sub(emitCommand));
 
 static llvm::cl::opt<std::string>
@@ -46,23 +61,6 @@ static llvm::cl::opt<std::string>
 static llvm::cl::list<std::string> checkpointFiles(
     llvm::cl::Positional, llvm::cl::desc("<checkpoint> [<checkpoint>]"),
     llvm::cl::OneOrMore, llvm::cl::sub(checkpointCommand));
-
-#ifndef MDIR_VERSION
-#define MDIR_VERSION "unknown"
-#endif
-
-static int printVersion() {
-  llvm::outs() << "MDIR " << MDIR_VERSION << "\n";
-  llvm::outs() << "LLVM " << LLVM_VERSION_STRING << "\n";
-  llvm::outs() << "targets: cpu";
-  if (llvm::StringRef(MDIR_CUDA_ROOT) != "")
-    llvm::outs() << ", gpu (CUDA)";
-  llvm::outs() << "\n";
-  llvm::outs() << "checkpoints: "
-               << (driver::hasCheckpointSupport() ? "yes (HDF5)" : "no")
-               << "\n";
-  return 0;
-}
 
 int main(int argc, char **argv) {
   llvm::InitLLVM init(argc, argv);
@@ -74,6 +72,7 @@ int main(int argc, char **argv) {
       "  mdir check <control file>\n"
       "  mdir template md\n"
       "  mdir checkpoint <checkpoint> [<checkpoint>]\n"
+      "  mdir bug-report <control file> [-o <directory>] [--run]\n"
       "  mdir version\n");
 
   if (runCommand)
@@ -93,8 +92,12 @@ int main(int argc, char **argv) {
   }
   if (checkpointCommand)
     return describeCheckpoints(checkpointFiles);
-  if (versionCommand)
-    return printVersion();
+  if (bugReportCommand)
+    return writeBugReport(controlFile, reportDirectory, reportRuns, argv[0]);
+  if (versionCommand) {
+    printVersion(llvm::outs());
+    return 0;
+  }
 
   llvm::errs() << "mdir: expected a subcommand; see 'mdir --help'\n";
   return 1;

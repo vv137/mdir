@@ -281,7 +281,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       mlir::parseSourceString<mlir::ModuleOp>(program->module, &context);
   if (!module)
     return fail("the program of the run does not parse; this is a defect "
-                "of mdir");
+                "of mdir. Please report it with the directory that `mdir "
+                "bug-report " + controlFile + "` writes");
 
   // Passes on functions are nested where they occur, as on the command
   // line of mlir-opt.
@@ -289,6 +290,10 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                             mlir::ModuleOp::getOperationName(),
                             mlir::PassManager::Nesting::Implicit);
   std::string pipeline = getPipeline(*control, *program);
+  if (emit == Emit::Pipeline) {
+    llvm::outs() << pipeline << "\n";
+    return 0;
+  }
   if (mlir::failed(mlir::parsePassPipeline(pipeline, manager, llvm::errs())))
     return fail("cannot set up the passes");
   // With MDIR_PRINT_AFTER set to the name of a pass of the pipeline, the
@@ -304,8 +309,18 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         },
         /*printModuleScope=*/true, /*printAfterOnlyOnChange=*/false);
   }
+  // If a pass fails or crashes, the module that it began with and the
+  // pipeline are written where MDIR_REPRODUCER says, so that `mdir-opt
+  // --run-reproducer` repeats the failure.
+  std::string reproducer = "mdir-reproducer.mlir";
+  if (const char *path = std::getenv("MDIR_REPRODUCER"))
+    reproducer = path;
+  manager.enableCrashReproducerGeneration(reproducer);
   if (mlir::failed(manager.run(*module)))
-    return fail("cannot compile the run");
+    return fail("cannot compile the run; this is a defect of mdir. The "
+                "input of the passes is in '" + reproducer + "'. Please "
+                "report it with the directory that `mdir bug-report " +
+                controlFile + "` writes");
 
   if (emit == Emit::Lowered) {
     module->print(llvm::outs());

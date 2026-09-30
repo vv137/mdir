@@ -11,7 +11,7 @@ follows are in [principles.md](principles.md).
 | Principles of development | Done ([principles.md](principles.md)) |
 | Tests under compute-sanitizer; short runs of the Amber suite | Done (`test/Sanitizer`, `test/Scale`) |
 | Kernels named after their op and line | Done |
-| Reports of defects that can be reproduced: `mdir bug-report`, crash reproducers of the passes, versions, a template for issues | Next |
+| Reports of defects that can be reproduced: `mdir bug-report`, crash reproducers of the passes, versions, a template for issues | Done ([debugging.md](debugging.md)) |
 | The set of each buffer in the type of the storage form; memory planning as a pass of its own | Design first, then implementation |
 | A summary of the effects of each loop op, from which fusion decides | After the storage types |
 | Copies between host and device ordered by async tokens in the IR | After the effects |
@@ -25,8 +25,14 @@ follows are in [principles.md](principles.md).
 | M1e | What remains of the readers and renumbering (design-m1.md, Section 18) |
 | M1f | The terms and dynamics of the intermediate stage against AmberTools and GROMACS |
 | M1k | The Amber suite against pmemd.cuda (published) and GROMACS 2026.3 with CUDA, on an RTX 3090: energies term by term against sander at the start, conservation and ensembles over runs, and rates |
-| Integrators | Constraints and the barostat with leapfrog, or leapfrog limited to what it has, by decision |
+| Integrators | Leapfrog does what velocity Verlet does: constraints (SHAKE, SETTLE), virtual sites, the thermostats, the barostat, restraints |
 | Performance | Host synchronization moved to the device (the test of validity and the decision to rebuild), fusion of the loops over particles, CUDA graphs, PME in single precision for the mixed mode (an experiment), the pair kernel |
+
+The order: leapfrog, then performance. The goal of performance for the
+first milestone is 70% of the rate of GROMACS with CUDA, in mixed
+precision, on each system of the Amber suite (from 23,558 to 1,067,095
+atoms, NVE and NPT) and on the target of D65; the white paper begins when
+it is reached.
 
 The rates of the first comparison (2026-09-30, ns/day, RTX 3090):
 
@@ -41,7 +47,8 @@ The rates of the first comparison (2026-09-30, ns/day, RTX 3090):
 ## 3. White paper, after the first milestone
 
 A paper that describes MDIR and what the first milestone shows, written
-when the milestone ends:
+when the milestone ends and the rates reach 70% of GROMACS across the
+systems:
 
 - The design: the levels of the IR (`md`, `dyn`, `md_exec`), compilation of
   each run before it runs, the lowerings to CPUs and GPUs, the runtime.

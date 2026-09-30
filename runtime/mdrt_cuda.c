@@ -14,6 +14,12 @@
 #include <stdlib.h>
 #include <time.h>
 
+/* The kernel that was launched last, and its name, which a failure names:
+   a kernel that fails is reported by the driver at the next call that
+   waits for it. */
+static CUfunction lastFunction = NULL;
+static const char *getKernelName(CUfunction function);
+
 /* A failure of the driver is reported and ends the run: compiled code has no
    way to continue without its device. */
 static void check(CUresult result, const char *what) {
@@ -23,6 +29,14 @@ static void check(CUresult result, const char *what) {
   cuGetErrorName(result, &name);
   fprintf(stderr, "mdrt: %s failed with %s\n", what,
           name ? name : "an unknown error");
+  if (lastFunction)
+    fprintf(stderr,
+            "mdrt: the last kernel launched was %s; the driver reports the "
+            "failure of a kernel at a later call, and with MDRT_WAIT=1 each "
+            "launch is waited for, so that the report names the kernel that "
+            "failed. compute-sanitizer names the access; see "
+            "docs/debugging.md\n",
+            getKernelName(lastFunction));
   fflush(stderr);
   abort();
 }
@@ -53,10 +67,10 @@ static double now(void) {
 }
 
 /* The kernels that were launched. */
-enum { MAX_KERNELS = 256 };
+enum { MAX_KERNELS = 1024 };
 struct Kernel {
   CUfunction function;
-  char name[64];
+  char name[128];
   int64_t count;
   double seconds;
   /* The threads of its last launch, which tell what it runs over. */
@@ -106,6 +120,11 @@ static int findKernel(CUfunction function) {
   return -1;
 }
 
+static const char *getKernelName(CUfunction function) {
+  int i = findKernel(function);
+  return i < 0 ? "a kernel without a name" : kernels[i].name;
+}
+
 /* The time at which a call begins, or a negative number if the profile is
    off. */
 static double begin(void) {
@@ -131,8 +150,9 @@ static CUcontext context = NULL;
    order in which they were issued. The lowering waits after every launch.
    The library does not: the host goes on issuing work while the device
    runs, and waits only where it reads what the device has computed. With
-   MDRT_WAIT set, the library waits wherever the lowering does, which
-   tells an error of the order apart from other errors. */
+   MDRT_WAIT set, the library waits after every launch, which tells an
+   error of the order apart from other errors and names the kernel that
+   fails. */
 static CUstream sharedStream = NULL;
 static int waitsAlways = -1;
 
@@ -224,11 +244,13 @@ CUfunction mgpuModuleGetFunction(CUmodule module, const char *name) {
   if (getenv("MDRT_TRACE"))
     fprintf(stderr, "TRACE function %p module %p %s\n", (void *)function,
             (void *)module, name);
-  if (start >= 0.0)
-    noteKernel(function, name);
+  noteKernel(function, name);
   end(LOOKUP, start);
   return function;
 }
+
+static void finish(void);
+static void endKernel(void);
 
 void mgpuLaunchKernel(CUfunction function, intptr_t gridX, intptr_t gridY,
                       intptr_t gridZ, intptr_t blockX, intptr_t blockY,
@@ -249,14 +271,24 @@ void mgpuLaunchKernel(CUfunction function, intptr_t gridX, intptr_t gridY,
                        (unsigned)blockZ, (unsigned)sharedMemory, stream,
                        parameters, extra),
         "cuLaunchKernel");
+  lastFunction = function;
   isPending = 1;
   if (start >= 0.0) {
     lastKernel = findKernel(function);
     lastLaunch = start;
-    kernels[lastKernel].threads =
-        (int64_t)(gridX * gridY * gridZ * blockX * blockY * blockZ);
+    if (lastKernel >= 0)
+      kernels[lastKernel].threads =
+          (int64_t)(gridX * gridY * gridZ * blockX * blockY * blockZ);
   }
   end(LAUNCH, start);
+  /* With MDRT_WAIT set, every launch is waited for, so that a failure is
+     reported with the kernel that failed. */
+  if (waitsAlways < 0)
+    waitsAlways = getenv("MDRT_WAIT") != NULL;
+  if (waitsAlways) {
+    finish();
+    endKernel();
+  }
 }
 
 /*===----------------------------------------------------------------------===
