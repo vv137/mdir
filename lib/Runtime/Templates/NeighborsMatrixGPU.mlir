@@ -195,7 +195,6 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
   %nz = call @mdrt_gpu_cell_count(%lz, %cell_width) : (f64, f64) -> index
   %nxy = arith.muli %nx, %ny : index
   %cells = arith.muli %nxy, %nz : index
-  %chunks = call @mdrt_gpu_grid(%n, %chunk) : (index, index) -> index
   %cell_chunks = call @mdrt_gpu_grid(%cells, %chunk)
       : (index, index) -> index
 
@@ -249,8 +248,6 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
 
   %grid_n = call @mdrt_gpu_grid(%n, %block) : (index, index) -> index
   %grid_cells = call @mdrt_gpu_grid(%cells, %block) : (index, index) -> index
-  %grid_chunks = call @mdrt_gpu_grid(%chunks, %block)
-      : (index, index) -> index
   %grid_cell_chunks = call @mdrt_gpu_grid(%cell_chunks, %block)
       : (index, index) -> index
   %grid_warps = call @mdrt_gpu_grid(%threads, %block)
@@ -265,7 +262,6 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
   %start = gpu.alloc (%cells1) : memref<?xi32, 1>
   %cursor = gpu.alloc (%cells) : memref<?xi32, 1>
   %cell_sums = gpu.alloc (%cell_chunks) : memref<?xi32, 1>
-  %partial = gpu.alloc (%chunks) : memref<?xi32, 1>
   %result = gpu.alloc () : memref<1xi32, 1>
   %host = memref.alloca() : memref<1xi32>
 
@@ -281,6 +277,12 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
     scf.if %inside {
       %none = arith.constant 0 : i32
       memref.store %none, %held[%c] : memref<?xi32, 1>
+      // The largest count, which the search raises.
+      %c0_first = arith.constant 0 : index
+      %first_cell = arith.cmpi eq, %c, %c0_first : index
+      scf.if %first_cell {
+        memref.store %none, %result[%c0_first] : memref<1xi32, 1>
+      }
     }
     gpu.terminator
   }
@@ -747,60 +749,20 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
         scf.yield %after_x : i32
       }
 
+      // The count limited to the width of a row, and the largest count,
+      // which tells the caller that a row was too narrow. The largest of
+      // the counts does not depend on the order of the atomics.
       %writer = arith.cmpi eq, %lane32, %zero32 : i32
       scf.if %writer {
-        memref.store %found, %counts[%i] : memref<?xi32, 1>
-      }
-    }
-    gpu.terminator
-  }
-
-  //===--------------------------------------------------------------------===//
-  // The largest count, and the counts limited to the width of a row
-  //===--------------------------------------------------------------------===//
-
-  // One thread for each chunk of 256 particles.
-  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_chunks, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
-    %base = arith.muli %bx, %block : index
-    %b = arith.addi %base, %tx : index
-    %inside = arith.cmpi ult, %b, %chunks : index
-    scf.if %inside {
-      %i1 = arith.constant 1 : index
-      %none = arith.constant 0 : i32
-      %width32 = arith.index_cast %row_width : index to i32
-      %begin = arith.muli %b, %chunk : index
-      %full = arith.addi %begin, %chunk : index
-      %short = arith.cmpi ult, %n, %full : index
-      %end = arith.select %short, %n, %full : index
-      %largest = scf.for %i = %begin to %end step %i1
-          iter_args(%max = %none) -> (i32) {
-        %count = memref.load %counts[%i] : memref<?xi32, 1>
-        %over = arith.cmpi sgt, %count, %width32 : i32
-        %limited = arith.select %over, %width32, %count : i32
+        %limited = arith.minui %found, %row_width32 : i32
         memref.store %limited, %counts[%i] : memref<?xi32, 1>
-        %more = arith.cmpi sgt, %count, %max : i32
-        %larger = arith.select %more, %count, %max : i32
-        scf.yield %larger : i32
+        // A relaxed atomic at the scope of the device (see PMEGPU.mlir).
+        %rm_base = memref.extract_aligned_pointer_as_index %result : memref<1xi32, 1> -> index
+        %rm_addr = arith.index_cast %rm_base : index to i64
+        %rm_ptr = llvm.inttoptr %rm_addr : i64 to !llvm.ptr<1>
+        %rm_old = llvm.atomicrmw umax %rm_ptr, %found syncscope("device") monotonic : !llvm.ptr<1>, i32
       }
-      memref.store %largest, %partial[%b] : memref<?xi32, 1>
     }
-    gpu.terminator
-  }
-
-  gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
-    %i0 = arith.constant 0 : index
-    %i1 = arith.constant 1 : index
-    %none = arith.constant 0 : i32
-    %largest = scf.for %b = %i0 to %chunks step %i1
-        iter_args(%max = %none) -> (i32) {
-      %value = memref.load %partial[%b] : memref<?xi32, 1>
-      %more = arith.cmpi sgt, %value, %max : i32
-      %larger = arith.select %more, %value, %max : i32
-      scf.yield %larger : i32
-    }
-    memref.store %largest, %result[%i0] : memref<1xi32, 1>
     gpu.terminator
   }
 
@@ -835,9 +797,6 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
   %cell_sums0 = memref.memory_space_cast %cell_sums
       : memref<?xi32, 1> to memref<?xi32>
   gpu.dealloc %cell_sums0 : memref<?xi32>
-  %partial0 = memref.memory_space_cast %partial
-      : memref<?xi32, 1> to memref<?xi32>
-  gpu.dealloc %partial0 : memref<?xi32>
   %result0 = memref.memory_space_cast %result
       : memref<1xi32, 1> to memref<1xi32>
   gpu.dealloc %result0 : memref<1xi32>
