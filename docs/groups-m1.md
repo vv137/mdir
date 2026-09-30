@@ -29,6 +29,27 @@ each group and neighbor, a sixteenth as many, and compute each pair once.
 The published layout is that of [SalomonFerrer2013] (Section 3.3); the
 cluster pair lists of [Pall2013] have the same aim.
 
+**What the gain rests on** (`groups.cu`, Cellulose, reach 9 Å, GPU 1,
+2026-10-01; groups of 16 against the matrix in the same places):
+
+| Order of the places | erfc | Slots within the cutoff | Groups | Matrix |
+|---|---|---|---|---|
+| Cells of a third of the reach, x first (a build of MDIR now) | `erfcf` | 23.8 % | 1751 µs | 1284 µs |
+| The same | shares the exponential | 23.8 % | 1410 to 1416 µs | 1270 to 1305 µs |
+| Compact: columns of 64 halved in x and y into groups of 16, sorted by z | `erfcf` | 29.7 % | 1614 µs | 1236 µs |
+| The same | shares the exponential | 29.7 % | 1162 to 1209 µs (996 to 1034 in `supercluster.cu`, not yet explained) | 1196 to 1331 µs |
+
+So the loop over groups gains only with both a compact order of the places
+and a cheaper erfc: with the exact `erfcf` of the kernels now it is slower
+than the matrix, and with the order of a build now its boxes are 12 Å long
+and it is slower as well. Trivial acceptance within 0.75 R of the box (the
+build of Section 5 as first written) made the loop 2.5 times slower in the
+order of cells and changed little in the compact order: the build tests
+every pair against the reach instead. The compact order makes the matrix
+faster too (5 to 16 %). The gain of the build, a sixteenth of the entries
+and no test of candidates far from a box, is still to be measured
+(stage G1).
+
 ## 2. The structure
 
 **Places and groups.** A build sorts the particles into cells and gives
@@ -87,7 +108,24 @@ whole list.
 order of the threads. In the default mode they are additions in the type
 of the destination (D84). In the deterministic mode they are integer
 additions in fixed point (D70, [LeGrand2013]), whose sum does not depend on
-the order.
+the order: the value of an entry, summed over the 16 steps of a chunk in
+registers, is converted and added; the value of a particle of the group is
+converted and added for each chunk, so its sum does not depend on the
+order of the chunks either; the entries of a group are in a fixed order
+(Section 5), so the sum of a chunk in registers is the same from run to
+run.
+
+**Destinations.** A loop that adds each pair once adds into its
+destination; it cannot overwrite it (the `overwrite` of
+`md_exec.pair_for`). Its destination is zeros or the destination of the
+term before (`md-exec-accumulate-destinations`), and the lowering clears a
+destination that would be overwritten before the loop.
+
+**Fusion.** A loop over groups is not a loop over the particles: it is
+not fused with loops over tuples into runs of rows (`convert-md-exec-to-gpu`,
+D83). Two loops over pairs fuse as before when both run over groups; a
+fused loop whose destinations are not all symmetric or antisymmetric keeps
+the matrix.
 
 ## 4. What the loop reads
 
@@ -99,18 +137,20 @@ the atomic additions.
 
 ## 5. The build on a device
 
-For each group: its bounding box; the particles of the cells within R of
-the box, as candidates; a candidate within 0.75 R of the box is taken with
-all the bits of the group, one farther than R from the box is dropped, and
-one between is tested against each particle of the group. The excluded
-pairs of the group are compared with the candidates as in the build of the
-matrix. The entries are written group by group; their number is not known
-before, so each group reserves its room with an atomic addition, and the
-loop takes the groups in any order.
+The build sorts the particles into a compact order (Section 1): groups of
+16 that fill a near-cube, so that their boxes are small. For each group:
+its bounding box; the particles of the cells within R of the box, as
+candidates; a candidate farther than R from the box is dropped, and the
+others are tested against each particle of the group, the bit set for a
+pair within R. The excluded pairs of the group are compared with the
+candidates as in the build of the matrix. A warp builds the list of one
+group, scanning its cells in a fixed order, so the order of the entries of
+a group does not depend on the threads; the entries are written group by
+group, each group reserving its room with an atomic addition, and the loop
+takes the groups in any order.
 
-Trivial acceptance sets bits of pairs up to about 1.5 R apart; they cost
-the loop a test each and keep the build cheap. Its threshold is a
-parameter to measure (Section 8).
+Trivial acceptance, which takes a candidate near the box for all the
+group without testing, was measured and dropped (Section 1).
 
 ## 6. In the IR
 
@@ -131,16 +171,19 @@ parameter to measure (Section 8).
 
 | Stage | What | Checked by |
 |---|---|---|
-| G1 | The structure and its build on a device; the exchange contracts on `md_exec.pair_for` | The pairs of the list within the cutoff are those of the matrix, on JAC and Cellulose |
-| G2 | The loop over groups, each pair once, both modes | Forces, energies, and virials against the matrix (to the rounding; to the bit in the deterministic mode, where the matrix sums in fixed point too); conservation over runs |
+| G0 | The build prototyped standalone (`scripts/experiments/neighbor-structures`) against the build of the matrix | Its time on Cellulose and JAC, before it is written as a template |
+| G1 | The compact order of the places (for the matrix as well); the structure and its build on a device; the exchange contracts on `md_exec.pair_for` | The pairs of the list within the cutoff are those of the matrix, on JAC and Cellulose; the matrix in the compact order against the order of cells |
+| G2 | The loop over groups, each pair once, both modes; the cheaper erfc of the direct sum under `fast_math`, with the accuracy of the force near the cutoff checked (it is what lets the loop over groups gain, Section 1) | Forces, energies, and virials against the matrix (to the rounding; to the bit in the deterministic mode, where the matrix sums in fixed point too); conservation over runs |
 | G3 | Groups by default on a device for the loops that allow them | The Amber suite against pmemd.cuda and GROMACS |
 | G4 | The reach of the list: a skin of 1 Å, once builds are cheap | Rates and intervals between builds |
-| G5 | The arithmetic of the kernel (the erfc of the direct sum, the order of the entries) | The prototype first |
+| G5 | The arithmetic of the kernel (a table for the erfc, the order of the entries) | The prototype first |
 
 ## 8. Open questions
 
 - The size of a group: 16 measured best among 16 and 32 on Cellulose; 8
   is untried.
-- The threshold of trivial acceptance, against the slots of the loop.
+- Why the same loop over groups of 16 measures 996 to 1034 µs in
+  `supercluster.cu` and 1162 to 1209 in `groups.cu`.
 - Whether small systems (JAC) keep the matrix, whose loop reads a list that
-  fits the cache.
+  fits the cache: groups of 32 took 289 µs on JAC against 104 for the
+  matrix (too few warps); groups of 16 are unmeasured there.
