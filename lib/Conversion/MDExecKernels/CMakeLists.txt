@@ -10,6 +10,7 @@ add_mlir_conversion_library(MDIRMDExecKernels
   LINK_LIBS PUBLIC
   MDIRMDExec
   MLIRArithDialect
+  MLIRGPUDialect
   MLIRIR
   MLIRMathDialect
   MLIRMemRefDialect

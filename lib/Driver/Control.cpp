@@ -923,7 +923,8 @@ Error Reader::readExecution(const toml::table &table) {
   if (Error error = checkKeywords(table, "execution",
                                   {"target", "threads", "precision",
                                    "neighbor_capacity", "fast_math",
-                                   "spatial_order", "deterministic"}))
+                                   "spatial_order", "deterministic",
+                                   "neighbor_structure"}))
     return error;
   if (Error error = readChoice<Target>(
           table, "target", control.target,
@@ -944,6 +945,18 @@ Error Reader::readExecution(const toml::table &table) {
     return error;
   if (Error error = readBool(table, "deterministic", control.deterministic))
     return error;
+  // Groups of 16 that share a list of neighbors, each pair once, where the
+  // loops allow them (D89): on a device, and not yet in the deterministic
+  // mode.
+  if (Error error = readChoice<NeighborStructure>(
+          table, "neighbor_structure", control.neighborStructure,
+          {{"MATRIX", NeighborStructure::Matrix},
+           {"GROUPS", NeighborStructure::Groups}}))
+    return error;
+  if (control.neighborStructure == NeighborStructure::Groups &&
+      (control.target != Target::GPU || control.deterministic))
+    return fail(table, "'neighbor_structure = \"GROUPS\"' needs 'target = "
+                       "\"GPU\"' and not 'deterministic'");
   return readBool(table, "spatial_order", control.reorder);
 }
 
@@ -1224,6 +1237,8 @@ spatial_order = true            # keep the particles in the order of their
 deterministic = false           # sums in an order the threads do not decide:
                                 # the same bits from run to run
 # neighbor_capacity = 160       # neighbors per particle; default: estimated
+# neighbor_structure = "MATRIX" # MATRIX, GROUPS: groups of 16 that share
+                                # a list, each pair once (GPU only)
 )TOML";
 }
 
@@ -1307,6 +1322,8 @@ type = "PERIODIC"               # the box is that of the coordinates
 target    = "GPU"               # CPU, GPU
 precision = "MIXED"             # SINGLE, MIXED, DOUBLE
 # threads = 1                   # for the target CPU
+# neighbor_structure = "MATRIX"  # MATRIX, GROUPS: groups of 16 that share
+                                # a list, each pair once
 
 # A minimization instead of dynamics: steepest descent.
 # [minimize]

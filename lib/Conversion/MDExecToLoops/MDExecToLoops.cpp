@@ -213,6 +213,9 @@ void Lowering::lowerParticleFor(md_exec::ParticleForOp op) {
 LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   Location loc = op.getLoc();
   OpBuilder builder(op);
+  if (op.getTraversal() != md_exec::Traversal::Directed)
+    return op.emitOpError()
+           << "takes each pair once, which a loop on the host does not do";
 
   Neighbors structure;
   if (failed(getNeighbors(op, op.getNeighbors(), structure)))
@@ -780,6 +783,9 @@ LogicalResult Lowering::lowerOp(Operation *op) {
       return op->emitOpError()
              << "is not in the storage form; run 'md-exec-assign-storage' "
                 "first";
+    if (empty.getKind() != md_exec::NeighborKind::Matrix)
+      return op->emitOpError()
+             << "is a structure of groups, which is built on a device only";
     lowerEmptyNeighbors(empty);
   } else if (auto refresh = dyn_cast<md_exec::RefreshNeighborsOp>(op)) {
     if (failed(lowerRefreshNeighbors(refresh)))

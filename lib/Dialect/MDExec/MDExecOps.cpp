@@ -651,10 +651,30 @@ LogicalResult PairForOp::verify() {
                            << " weights, one per value in 'reduce', got "
                            << weights->size();
 
-  if (getTraversal() != Traversal::Directed ||
-      getConflict() != Conflict::OwnerOnly)
-    return emitOpError()
-           << "only the policy (directed, owner_only) is supported";
+  // Each pair once, with atomic additions to both particles, over a
+  // structure of groups (D89): the value of the kernel for (j, i) follows
+  // from that for (i, j) by the exchange contract of each destination, and
+  // a sum over the pairs from the sum over each pair once if its kernel is
+  // symmetric.
+  bool unique = getTraversal() == Traversal::Unique &&
+                getConflict() == Conflict::Atomic;
+  if (!unique && (getTraversal() != Traversal::Directed ||
+                  getConflict() != Conflict::OwnerOnly))
+    return emitOpError() << "only the policies (directed, owner_only) and "
+                            "(unique, atomic) are supported";
+  if (unique) {
+    unsigned numOuts = getOuts().size();
+    for (unsigned i = 0, e = numOuts + getReduce().size(); i != e; ++i) {
+      mdir::md::Exchange exchange = getExchange(i);
+      if (exchange == mdir::md::Exchange::Symmetric ||
+          (i < numOuts && exchange == mdir::md::Exchange::Antisymmetric))
+        continue;
+      return emitOpError()
+             << "the policy (unique, atomic) needs every destination "
+                "symmetric or antisymmetric and every sum symmetric; value "
+             << i << " is " << mdir::md::stringifyExchange(exchange);
+    }
+  }
 
   if (auto exchange = getExchange()) {
     unsigned values = getOuts().size() + getReduce().size();

@@ -100,6 +100,36 @@ emitPairKernel(mlir::OpBuilder &builder, md_exec::PairForOp op,
                llvm::SmallVectorImpl<mlir::Value> *outTotals = nullptr,
                const PairLayout *layout = nullptr);
 
+/// Where a loop over pairs over groups of 16 (D89, docs/groups-m1.md) finds
+/// its work: the lists of the groups (`entries` and `masks`, a row a group,
+/// `counts` entries in each), the units of work (`units`: 64 g + k for the
+/// unit k of group g), and the particle at each place (`order`, -1 at an
+/// empty place). The positions and the fields of `ins` of `layout` are in
+/// the order of the places.
+struct GroupLists {
+  mlir::Value entries;
+  mlir::Value masks;
+  mlir::Value counts;
+  mlir::Value units;
+  mlir::Value order;
+};
+
+/// Emits what a warp does for the unit of work `unit` of a loop over pairs
+/// over groups, each pair once: lanes u and u + 16 hold the particle at
+/// place 16 g + u; the entries of the unit, 32 at a time, turn within each
+/// half-warp for 16 steps, so that each particle of the group meets each
+/// entry once. The value of the kernel goes to the particle of the group
+/// and, times the sign of its exchange contract, to the particle of the
+/// entry, with atomic additions to the destinations (in the order of the
+/// particles); `lane` is the lane in the warp. Returns the contributions of
+/// the lane to the global sums, each pair once (no weight): the caller sums
+/// them over the warp.
+llvm::SmallVector<mlir::Value>
+emitGroupPairKernel(mlir::OpBuilder &builder, md_exec::PairForOp op,
+                    const GroupLists &lists, const PairLayout &layout,
+                    mlir::Value box, mlir::Value inverse, mlir::Value unit,
+                    mlir::Value lane, mlir::IRMapping &local);
+
 /// Emits what a loop over tuples does for the particle `particle`: the loop
 /// over the tuples in its row of `incidence`, with the displacements in the
 /// minimum image, the kernel, and the update of the destinations with the

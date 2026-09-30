@@ -3,6 +3,7 @@ add_mlir_dialect_library(MDIRMDExecTransforms
   AssignPrecision.cpp
   AssignStorage.cpp
   AssignStreams.cpp
+  ChooseNeighbors.cpp
   ExposeValidity.cpp
   FuseLoops.cpp
   RebuildAtInterval.cpp

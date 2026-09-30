@@ -62,6 +62,7 @@ enum class Truncation { None, Shift, Switch, ForceSwitch };
 enum class Integrator { VelocityVerlet, Leapfrog };
 enum class Target { CPU, GPU };
 enum class Precision { Single, Mixed, Double };
+enum class NeighborStructure { Matrix, Groups };
 
 /// What a control file says. Lengths are in Å, energies in kcal/mol, times
 /// in ps, masses in amu, and temperatures in K.
@@ -97,6 +98,10 @@ struct Control {
   /// default). NOT A DEFAULT: at an interval, the structures are not
   /// tested between builds and may miss pairs within the cutoff (D88).
   int64_t rebuildPeriod = 0;
+  /// The neighbor structure of the loops over pairs on a device: a row a
+  /// particle, or groups of 16 that share a list, each pair once, where the
+  /// loops allow it (D89).
+  NeighborStructure neighborStructure = NeighborStructure::Matrix;
   Truncation truncation = Truncation::Switch;
   std::vector<PairTerm> pairs;
   std::vector<ParticleType> types;

@@ -82,6 +82,49 @@ def RebuildAtInterval
   ];
 }
 
+def ChooseNeighbors
+    : Pass<"md-exec-choose-neighbors", "::mlir::ModuleOp"> {
+  let summary = "Chooses the kind of each neighbor structure and the policy "
+                "of the loops over it";
+  let description = [{
+    With `kind=groups`, a neighbor structure becomes a structure of groups
+    of 16 particles that share a list of neighbors (D89,
+    docs/groups-m1.md), and every loop over it takes the policy
+    `(unique, atomic)`: each pair once, the value of the kernel added to
+    both particles. It does so only when every loop over pairs over the
+    structure has an exchange contract for each destination, symmetric or
+    antisymmetric, and for each sum, symmetric: the value of the kernel for
+    (j, i) follows from that for (i, j). Otherwise the structure stays a
+    matrix. The weight of a sum stays that of the sum over both orders of
+    each pair; the lowering doubles it.
+
+    A structure is found through the refreshes and the loops that carry it
+    to where it begins (`md_exec.build_neighbors` or
+    `md_exec.empty_neighbors`); a loop over a structure whose beginnings
+    cannot be found keeps the matrix, and so do those beginnings.
+
+    Structures of groups are built on a device only: the pass runs on
+    programs for a device.
+
+    ```mlir
+    %nl = md_exec.empty_neighbors kind(matrix) width(96) ...
+    %f, %e = md_exec.pair_for %nl1, ... exchange [antisymmetric, symmetric]
+               policy(directed, owner_only) { ... }
+    ```
+
+    ```mlir
+    %nl = md_exec.empty_neighbors kind(groups) width(96) ...
+    %f, %e = md_exec.pair_for %nl1, ... exchange [antisymmetric, symmetric]
+               policy(unique, atomic) { ... }
+    ```
+  }];
+  let options = [
+    Option<"kind", "kind", "std::string", /*default=*/"\"groups\"",
+           "The kind of structure to choose where the loops allow it: "
+           "groups or matrix">
+  ];
+}
+
 def ExposeValidity
     : Pass<"md-exec-expose-validity", "::mlir::ModuleOp"> {
   let summary = "Makes the test of validity of a neighbor structure a loop";

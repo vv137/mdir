@@ -33,6 +33,22 @@ void mdrtReportNeighborOverflow(int64_t needed, int64_t width) {
   abort();
 }
 
+/* A buffer of a structure of groups of neighbors (D89) that a build found
+   too small: `what` is 0 for the places, 1 for the entries of a group, 2
+   for the units of work. */
+void mdrtReportGroupsOverflow(int64_t what, int64_t needed,
+                              int64_t available) {
+  static const char *const names[] = {"places", "entries of a group",
+                                      "units of work"};
+  fprintf(stderr,
+          "mdrt: the structure of groups of neighbors needs %lld %s, but "
+          "holds %lld\n",
+          (long long)needed, names[what < 0 || what > 2 ? 0 : what],
+          (long long)available);
+  fflush(stderr);
+  abort();
+}
+
 /*===----------------------------------------------------------------------===
  * Random numbers
  *===----------------------------------------------------------------------===*/

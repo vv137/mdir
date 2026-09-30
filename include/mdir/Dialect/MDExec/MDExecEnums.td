@@ -9,7 +9,10 @@ include "mlir/IR/EnumAttr.td"
 def MDExec_NeighborKind : I32EnumAttr<"NeighborKind",
     "physical form of a neighbor structure", [
     // A row of fixed width per particle.
-    I32EnumAttrCase<"Matrix", 0, "matrix">
+    I32EnumAttrCase<"Matrix", 0, "matrix">,
+    // Groups of 16 particles that share a list of neighbors, each pair once
+    // (D89, docs/groups-m1.md). On a device only.
+    I32EnumAttrCase<"Groups", 1, "groups">
   ]> {
   let cppNamespace = "::mdir::md_exec";
 }

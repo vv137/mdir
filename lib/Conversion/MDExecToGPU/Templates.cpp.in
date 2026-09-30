@@ -9,4 +9,8 @@ extern const char *const pmeGPUTemplate;
 const char *const pmeGPUTemplate = R"MDIRTEMPLATE(
 @PME_GPU_TEMPLATE@
 )MDIRTEMPLATE";
+extern const char *const neighborsGroupsGPUTemplate;
+const char *const neighborsGroupsGPUTemplate = R"MDIRTEMPLATE(
+@NEIGHBORS_GROUPS_GPU_TEMPLATE@
+)MDIRTEMPLATE";
 } // namespace mdir

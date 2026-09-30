@@ -64,9 +64,37 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell) -> f64 {
 md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
                %nl: !mdrt.neighbors<@atoms>) -> f64 {
   %u0 = arith.constant 0.0 : f64
-  // expected-error@+1 {{only the policy (directed, owner_only) is supported}}
+  // expected-error@+1 {{only the policies (directed, owner_only) and (unique, atomic) are supported}}
+  %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64) cutoff(1.0)
+      policy(directed, atomic) {
+  ^bb0(%r2: f64, %d: vector<3xf64>):
+    md_exec.yield %r2 : f64
+  } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> f64
+  md.return %u : f64
+}
+
+// -----
+
+md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
+               %nl: !mdrt.neighbors<@atoms>) -> f64 {
+  %u0 = arith.constant 0.0 : f64
+  // expected-error@+1 {{the policy (unique, atomic) needs every destination symmetric or antisymmetric and every sum symmetric; value 0 is none}}
   %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64) cutoff(1.0)
       policy(unique, atomic) {
+  ^bb0(%r2: f64, %d: vector<3xf64>):
+    md_exec.yield %r2 : f64
+  } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> f64
+  md.return %u : f64
+}
+
+// -----
+
+md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
+               %nl: !mdrt.neighbors<@atoms>) -> f64 {
+  %u0 = arith.constant 0.0 : f64
+  // expected-error@+1 {{the policy (unique, atomic) needs every destination symmetric or antisymmetric and every sum symmetric; value 0 is antisymmetric}}
+  %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64) cutoff(1.0)
+      exchange [antisymmetric] policy(unique, atomic) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %r2 : f64
   } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> f64

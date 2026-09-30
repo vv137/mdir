@@ -57,7 +57,7 @@ SYSTEMS = {
 # for NPT, the correction for the dispersion; NPT at 300 K and 1 bar. The
 # couplings differ: Amber uses the thermostat of Berendsen and a Monte
 # Carlo barostat, MDIR and GROMACS stochastic velocity rescaling and cell
-# rescaling. The neighbor lists have the skin of pmemd, 2 Å.
+# rescaling. The neighbor lists reach 10 Å, a skin of 2 Å.
 CUTOFF = 8.0
 SKIN = 2.0
 GRID_SPACING = 1.0

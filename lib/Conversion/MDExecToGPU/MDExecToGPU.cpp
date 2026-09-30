@@ -43,6 +43,7 @@ namespace mdir {
 extern const char *const neighborsMatrixGPUTemplate;
 /// The text of the template of particle mesh Ewald on a device.
 extern const char *const pmeGPUTemplate;
+extern const char *const neighborsGroupsGPUTemplate;
 } // namespace mdir
 
 static const char *const spatialOrderName = "mdrt_gpu_spatial_order";
@@ -54,6 +55,9 @@ static const char *const countBuildName = "mdrtCountBuild";
 /// Counts a build at an interval that found the structure no longer valid
 /// (D88).
 static const char *const countLateBuildName = "mdrtCountLateBuild";
+static const char *const reportGroupsOverflowName =
+    "mdrtReportGroupsOverflow";
+static const char *const buildGroupsName = "mdrt_gpu_build_neighbors_groups";
 
 /// The threads that share the row of one particle in a loop over pairs or
 /// tuples. A particle has hundreds of neighbors, and a thread for each
@@ -76,10 +80,8 @@ struct Neighbors {
   Value counts;
   Value index;
   Value order;
-  /// The number of neighbors that a row holds, and the entries of the
-  /// matrix, `size` times `width`.
+  /// The number of neighbors that a row holds (for groups, a list).
   Value width;
-  Value entries;
   /// The configuration and the cell that the structure was built at.
   Value reference;
   Value box;
@@ -91,6 +93,19 @@ struct Neighbors {
   /// The incidence structure of the pairs that the structure leaves out,
   /// or null.
   Value excluded;
+  /// A structure of groups of 16 (D89): `counts` holds the number of
+  /// entries of each group, `index` their places, `masks` their masks,
+  /// `units` the units of work, and `order` the particle at each of
+  /// `places` places; `placeOf` is the place of each particle. `sizes`, on
+  /// the host, holds the places, the largest list and the units of the last
+  /// build.
+  bool groups = false;
+  Value masks;
+  Value units;
+  Value placeOf;
+  Value sizes;
+  Value places;
+  Value unitCapacity;
 };
 
 /// Where the global sums and maxima of a loop arrive: numbers on the
@@ -135,6 +150,8 @@ private:
   LogicalResult lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op);
   LogicalResult lowerParticleFor(md_exec::ParticleForOp op);
   LogicalResult lowerPairFor(md_exec::PairForOp op);
+  LogicalResult lowerGroupPairFor(md_exec::PairForOp op,
+                                  const Neighbors &structure);
   LogicalResult lowerTupleFor(md_exec::TupleForOp op);
   void lowerBuildIncidence(md_exec::BuildIncidenceOp op);
   void lowerRenumber(md_exec::RenumberOp op);
@@ -145,10 +162,18 @@ private:
   LogicalResult getNeighbors(Operation *op, Value structure,
                              Neighbors &storage);
 
-  /// Builds `structure` at the configuration `positions`.
+  /// Builds `structure` at the configuration `positions`: the lists of a
+  /// structure of groups (emitGroupsBuild) or the rows of a matrix, then
+  /// what every build records (finishBuild).
   LogicalResult emitBuild(OpBuilder &builder, Location loc,
                           const Neighbors &structure, Value positions,
                           Value box, double reach, double cellWidth);
+  LogicalResult emitGroupsBuild(OpBuilder &builder, Location loc,
+                                const Neighbors &structure, Value positions,
+                                Value box, double reach);
+  LogicalResult finishBuild(OpBuilder &builder, Location loc,
+                            const Neighbors &structure, Value positions,
+                            Value box);
 
   /// Launches a kernel with one thread for each of `count` items. `body`
   /// emits what the thread of an item does.
@@ -247,6 +272,7 @@ private:
 
   /// Adds the templates for positions of the type `real` to the module.
   LogicalResult addTemplates(Type real);
+  LogicalResult addGroupsTemplates();
   func::FuncOp getOrDeclare(StringRef name, FunctionType type);
   LogicalResult addPMETemplates(Type position, Type charge, Type force,
                                 int64_t order);
@@ -738,7 +764,9 @@ void Lowering::findRows(func::FuncOp function) {
   auto isRowLoop = [&](Operation *op) {
     if (auto tuple = dyn_cast<md_exec::TupleForOp>(op))
       return !tuple.getDisjoint() && !evaluatesOnce(tuple);
-    return isa<md_exec::PairForOp>(op);
+    // A loop that takes each pair once runs over groups, not rows (D89).
+    auto pair = dyn_cast<md_exec::PairForOp>(op);
+    return pair && pair.getTraversal() == md_exec::Traversal::Directed;
   };
   auto getPositions = [](Operation *op) -> Value {
     if (auto pair = dyn_cast<md_exec::PairForOp>(op))
@@ -1274,6 +1302,15 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   Neighbors structure;
   if (failed(getNeighbors(op, op.getNeighbors(), structure)))
     return failure();
+  bool unique = op.getTraversal() == md_exec::Traversal::Unique;
+  if (unique != structure.groups)
+    return op.emitOpError()
+           << (unique ? "takes each pair once, which only a structure of "
+                        "groups gives"
+                      : "takes each pair in both orders, which a structure "
+                        "of groups does not give");
+  if (unique)
+    return lowerGroupPairFor(op, structure);
 
   Value positions = op.getPositions();
   Value size = createSize(builder, loc, positions);
@@ -1296,6 +1333,156 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
                        sharing);
   });
   return finishSums(op, builder, op.getReduce(), op.getScratch(), size);
+}
+
+LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
+                                          const Neighbors &structure) {
+  Location loc = op.getLoc();
+  OpBuilder builder(op);
+  // The atomic additions make the sums depend on the order of the threads;
+  // the deterministic mode needs them in fixed point (D89), which is to
+  // come.
+  if (deterministic)
+    return op.emitOpError()
+           << "takes each pair once with atomic additions in floating "
+              "point, which the deterministic mode does not allow";
+  if (blockSize % 32 != 0)
+    return op.emitOpError() << "runs a warp for each unit of work, which "
+                               "needs blocks of whole warps, not "
+                            << blockSize << " threads";
+
+  Value positions = op.getPositions();
+  Value size = createSize(builder, loc, positions);
+  Type real = cast<MemRefType>(positions.getType()).getElementType();
+  Value box = convertReal(builder, loc, op.getCellMutable().get(), real);
+  Value inverse = createInverse(builder, loc, box);
+
+  // The loop adds to its destinations: one that it would overwrite is
+  // cleared first.
+  for (auto [i, out] : llvm::enumerate(op.getOuts())) {
+    if (!op.overwrites(i))
+      continue;
+    Value destination = out;
+    launchOver(builder, loc, size, [&](OpBuilder &body, Value particle) {
+      Type element = getElementTypeOrSelf(destination.getType());
+      auto type = cast<MemRefType>(destination.getType());
+      Type value = type.getRank() == 1
+                       ? element
+                       : VectorType::get({type.getDimSize(1)}, element);
+      storeElement(body, loc, createZero(body, loc, value), destination,
+                   particle);
+    });
+  }
+
+  // The positions and the fields that the kernel reads, in the order of
+  // the places of the last build; an empty place takes those of the
+  // particle 0, which no pair reads.
+  Value places = arith::IndexCastOp::create(
+      builder, loc, builder.getIndexType(),
+      memref::LoadOp::create(builder, loc, structure.sizes,
+                             ValueRange{createIndex(builder, loc, 0)}));
+  SmallVector<Value> sources = {positions};
+  llvm::append_range(sources, op.getIns());
+  SmallVector<Value> targets;
+  for (Value source : sources)
+    targets.push_back(createDeviceBuffer(
+        builder, loc, cast<MemRefType>(source.getType()),
+        ValueRange{structure.places}));
+  launchOver(builder, loc, places, [&](OpBuilder &body, Value place) {
+    Value at = memref::LoadOp::create(body, loc, structure.order,
+                                      ValueRange{place});
+    Value empty = arith::CmpIOp::create(
+        body, loc, arith::CmpIPredicate::slt, at,
+        arith::ConstantOp::create(body, loc, body.getI32Type(),
+                                  body.getI32IntegerAttr(0)));
+    Value particle = arith::SelectOp::create(
+        body, loc, empty, createIndex(body, loc, 0),
+        arith::IndexCastOp::create(body, loc, body.getIndexType(), at));
+    for (auto [source, target] : llvm::zip(sources, targets))
+      storeElement(body, loc, loadElement(body, loc, source, particle),
+                   target, place);
+  });
+  PairLayout layout;
+  layout.order = structure.order;
+  layout.positions = targets.front();
+  layout.ins.assign(targets.begin() + 1, targets.end());
+  kernels::GroupLists lists{structure.index, structure.masks,
+                            structure.counts, structure.units,
+                            structure.order};
+
+  // A warp for each unit of work, as many warps as particles at most: the
+  // sums of the warps go to the scratch of the particles. A warp takes the
+  // units w, w + warps, ...
+  Value units = arith::IndexCastOp::create(
+      builder, loc, builder.getIndexType(),
+      memref::LoadOp::create(builder, loc, structure.sizes,
+                             ValueRange{createIndex(builder, loc, 2)}));
+  Value one = createIndex(builder, loc, 1);
+  Value warps = arith::MaxUIOp::create(
+      builder, loc, arith::MinUIOp::create(builder, loc, units, size), one);
+  Value warp32 = createIndex(builder, loc, 32);
+  Value threads = arith::MulIOp::create(builder, loc, warps, warp32);
+  Value block = createIndex(builder, loc, blockSize);
+  Value grid = createGroups(builder, loc, threads, blockSize);
+  auto launch =
+      gpu::LaunchOp::create(builder, loc, grid, one, one, block, one, one);
+  OpBuilder kernel = OpBuilder::atBlockEnd(&launch.getBody().front());
+  Value thread = arith::AddIOp::create(
+      kernel, loc,
+      arith::MulIOp::create(kernel, loc, launch.getBlockIds().x, block),
+      launch.getThreadIds().x);
+  Value warp = arith::DivUIOp::create(kernel, loc, thread, warp32);
+  Value lane = arith::RemUIOp::create(kernel, loc, thread, warp32);
+  Value valid = arith::CmpIOp::create(kernel, loc, arith::CmpIPredicate::ult,
+                                      warp, warps);
+  Value first = arith::SelectOp::create(kernel, loc, valid, warp, units);
+
+  Operation *yield = op.getKernel().front().getTerminator();
+  unsigned numOuts = op.getOuts().size();
+  SmallVector<Value> initial;
+  for (unsigned i = numOuts, e = yield->getNumOperands(); i != e; ++i)
+    initial.push_back(
+        createZero(kernel, loc, yield->getOperand(i).getType()));
+  auto loop = scf::ForOp::create(
+      kernel, loc, first, units, warps, initial,
+      [&](OpBuilder &body, Location, Value unit, ValueRange sums) {
+        IRMapping local;
+        SmallVector<Value> contributions = kernels::emitGroupPairKernel(
+            body, op, lists, layout, box, inverse, unit, lane, local);
+        SmallVector<Value> next;
+        for (auto [sum, contribution] : llvm::zip(sums, contributions))
+          next.push_back(arith::AddFOp::create(body, loc, sum, contribution));
+        scf::YieldOp::create(body, loc, next);
+      });
+  SmallVector<Value> totals(loop.getResults());
+  for (Value &total : totals)
+    for (int64_t offset = 16; offset >= 1; offset /= 2)
+      total = arith::AddFOp::create(kernel, loc, total,
+                                    shuffleXor(kernel, loc, total, offset));
+  if (!totals.empty()) {
+    Value leader = arith::AndIOp::create(
+        kernel, loc, valid,
+        arith::CmpIOp::create(kernel, loc, arith::CmpIPredicate::eq, lane,
+                              createIndex(kernel, loc, 0)));
+    scf::IfOp::create(kernel, loc, leader, [&](OpBuilder &then, Location) {
+      for (auto [index, total] : llvm::enumerate(totals))
+        storeElement(then, loc, total, op.getScratch()[2 * index], warp);
+      scf::YieldOp::create(then, loc);
+    });
+  }
+  gpu::TerminatorOp::create(kernel, loc);
+  bringIn(launch);
+
+  // The buffers are freed once the loop has read them.
+  for (Value target : targets) {
+    auto type = cast<MemRefType>(target.getType());
+    Value plain = memref::MemorySpaceCastOp::create(
+        builder, loc, MemRefType::get(type.getShape(), type.getElementType()),
+        target);
+    gpu::DeallocOp::create(builder, loc, /*asyncToken=*/Type(),
+                           /*asyncDependencies=*/ValueRange(), plain);
+  }
+  return finishSums(op, builder, op.getReduce(), op.getScratch(), warps);
 }
 
 LogicalResult Lowering::lowerTupleFor(md_exec::TupleForOp op) {
@@ -1445,6 +1632,22 @@ LogicalResult Lowering::addTemplates(Type real) {
   if (!templates)
     return module.emitError()
            << "cannot parse the neighbor build template for devices";
+  for (Operation &op : llvm::make_early_inc_range(*templates)) {
+    op.remove();
+    module.push_back(&op);
+  }
+  return success();
+}
+
+LogicalResult Lowering::addGroupsTemplates() {
+  if (SymbolTable::lookupSymbolIn(module, buildGroupsName))
+    return success();
+  ParserConfig config(context);
+  OwningOpRef<ModuleOp> templates =
+      parseSourceString<ModuleOp>(neighborsGroupsGPUTemplate, config);
+  if (!templates)
+    return module.emitError()
+           << "cannot parse the template that builds groups of neighbors";
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
     op.remove();
     module.push_back(&op);
@@ -1739,18 +1942,61 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
   Neighbors structure;
   structure.size = op.getSize();
   structure.width = createIndex(builder, loc, op.getWidth());
-  structure.entries =
-      arith::MulIOp::create(builder, loc, structure.size, structure.width);
-  structure.counts = createDeviceBuffer(
-      builder, loc, getDeviceType({ShapedType::kDynamic}, narrow),
-      ValueRange{structure.size});
-  structure.index = createDeviceBuffer(
-      builder, loc,
-      getDeviceType({ShapedType::kDynamic, ShapedType::kDynamic}, narrow),
-      ValueRange{structure.size, structure.width});
-  structure.order = createDeviceBuffer(
-      builder, loc, getDeviceType({ShapedType::kDynamic}, narrow),
-      ValueRange{structure.size});
+  if (op.getKind() == md_exec::NeighborKind::Groups) {
+    // Groups of 16 (D89). The compact order leaves the places of a short
+    // group of a chunk empty: at most 63 in a chunk, a chunk of 64 places
+    // for each 64 particles and one more at the end of each column. Twice
+    // the particles and one chunk hold them unless the columns are nearly
+    // empty, which a build reports. A list holds the neighbors at later
+    // places of the 16 particles of its group: for the first groups nearly
+    // all of them, whose union is about 1.7 times the neighbors of one at
+    // a reach of 10 Å (a box of 2.5 Å, the density of water). It holds
+    // twice as many entries as a row of the matrix holds neighbors; a
+    // build reports more. A unit of work is up to 64 entries of one group.
+    structure.groups = true;
+    structure.width = createIndex(builder, loc, 2 * op.getWidth());
+    Value groups = arith::DivUIOp::create(
+        builder, loc,
+        arith::AddIOp::create(
+            builder, loc,
+            arith::MulIOp::create(builder, loc, structure.size,
+                                  createIndex(builder, loc, 2)),
+            createIndex(builder, loc, 64 + 15)),
+        createIndex(builder, loc, 16));
+    structure.places = arith::MulIOp::create(builder, loc, groups,
+                                             createIndex(builder, loc, 16));
+    structure.unitCapacity = arith::MulIOp::create(
+        builder, loc, groups,
+        createIndex(builder, loc, (2 * op.getWidth() + 63) / 64));
+    MemRefType list = getDeviceType(
+        {ShapedType::kDynamic, ShapedType::kDynamic}, narrow);
+    MemRefType row = getDeviceType({ShapedType::kDynamic}, narrow);
+    structure.counts =
+        createDeviceBuffer(builder, loc, row, ValueRange{groups});
+    structure.index = createDeviceBuffer(builder, loc, list,
+                                         ValueRange{groups, structure.width});
+    structure.masks = createDeviceBuffer(builder, loc, list,
+                                         ValueRange{groups, structure.width});
+    structure.units = createDeviceBuffer(builder, loc, row,
+                                         ValueRange{structure.unitCapacity});
+    structure.order = createDeviceBuffer(builder, loc, row,
+                                         ValueRange{structure.places});
+    structure.placeOf =
+        createDeviceBuffer(builder, loc, row, ValueRange{structure.size});
+    structure.sizes =
+        memref::AllocOp::create(builder, loc, MemRefType::get({3}, narrow));
+  } else {
+    structure.counts = createDeviceBuffer(
+        builder, loc, getDeviceType({ShapedType::kDynamic}, narrow),
+        ValueRange{structure.size});
+    structure.index = createDeviceBuffer(
+        builder, loc,
+        getDeviceType({ShapedType::kDynamic, ShapedType::kDynamic}, narrow),
+        ValueRange{structure.size, structure.width});
+    structure.order = createDeviceBuffer(
+        builder, loc, getDeviceType({ShapedType::kDynamic}, narrow),
+        ValueRange{structure.size});
+  }
   structure.reference =
       createDeviceBuffer(builder, loc, positions, ValueRange{structure.size});
   // The test of validity reads the configuration before the first build,
@@ -1791,6 +2037,12 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
                                   const Neighbors &structure, Value positions,
                                   Value box, double reach,
                                   double cellWidth) {
+  if (structure.groups) {
+    if (failed(emitGroupsBuild(builder, loc, structure, positions, box,
+                               reach)))
+      return failure();
+    return finishBuild(builder, loc, structure, positions, box);
+  }
   Type real = cast<MemRefType>(positions.getType()).getElementType();
   if (failed(addTemplates(real)))
     return failure();
@@ -1861,6 +2113,88 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
                            /*asyncDependencies=*/ValueRange(), plain);
   }
 
+  return finishBuild(builder, loc, structure, positions, box);
+}
+
+LogicalResult Lowering::emitGroupsBuild(OpBuilder &builder, Location loc,
+                                        const Neighbors &structure,
+                                        Value positions, Value box,
+                                        double reach) {
+  Type real = cast<MemRefType>(positions.getType()).getElementType();
+  if (!real.isF64())
+    return module.emitError()
+           << "structures of groups of neighbors are built from positions "
+              "in f64, not "
+           << real;
+  if (failed(addGroupsTemplates()))
+    return failure();
+
+  // Without excluded pairs the build takes a buffer with no rows.
+  Value excluded = structure.excluded;
+  Value noExcluded;
+  if (!excluded) {
+    MemRefType type = getDeviceType(
+        {ShapedType::kDynamic, ShapedType::kDynamic}, builder.getI32Type());
+    noExcluded = createDeviceBuffer(
+        builder, loc, type,
+        ValueRange{createIndex(builder, loc, 0), createIndex(builder, loc, 1)});
+    excluded = noExcluded;
+  }
+  auto build = cast<func::FuncOp>(
+      SymbolTable::lookupSymbolIn(module, buildGroupsName));
+  func::CallOp::create(
+      builder, loc, build,
+      ValueRange{positions, box,
+                 createReal(builder, loc, builder.getF64Type(), reach),
+                 excluded, structure.order, structure.placeOf,
+                 structure.index, structure.masks, structure.counts,
+                 structure.units, structure.sizes});
+  func::CallOp::create(
+      builder, loc,
+      getOrDeclare(countBuildName, builder.getFunctionType({}, {})),
+      ValueRange());
+
+  // A buffer that was too small leaves the structure incomplete. Stop.
+  Type wide = builder.getI64Type();
+  auto report = getOrDeclare(reportGroupsOverflowName,
+                             builder.getFunctionType({wide, wide, wide}, {}));
+  Value capacities[] = {structure.places, structure.width,
+                        structure.unitCapacity};
+  for (auto [what, capacity] : llvm::enumerate(capacities)) {
+    Value needed = arith::ExtUIOp::create(
+        builder, loc, wide,
+        memref::LoadOp::create(
+            builder, loc, structure.sizes,
+            ValueRange{createIndex(builder, loc, what)}));
+    Value available = arith::IndexCastOp::create(builder, loc, wide, capacity);
+    Value tooMany = arith::CmpIOp::create(
+        builder, loc, arith::CmpIPredicate::ugt, needed, available);
+    scf::IfOp::create(builder, loc, tooMany, [&](OpBuilder &then, Location) {
+      func::CallOp::create(
+          then, loc, report,
+          ValueRange{arith::ConstantOp::create(
+                         then, loc, wide, then.getI64IntegerAttr(what)),
+                     needed, available});
+      scf::YieldOp::create(then, loc);
+    });
+  }
+
+  if (noExcluded) {
+    Value plain = memref::MemorySpaceCastOp::create(
+        builder, loc,
+        MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic},
+                        builder.getI32Type()),
+        noExcluded);
+    gpu::DeallocOp::create(builder, loc, /*asyncToken=*/Type(),
+                           /*asyncDependencies=*/ValueRange(), plain);
+  }
+  return success();
+}
+
+LogicalResult Lowering::finishBuild(OpBuilder &builder, Location loc,
+                                    const Neighbors &structure,
+                                    Value positions, Value box) {
+  Type wide = builder.getI64Type();
   // Remember the configuration that the structure was built at.
   createTransfer(builder, loc, structure.reference, positions);
   for (int64_t c = 0; c < 3; ++c) {

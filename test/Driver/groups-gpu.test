@@ -1,0 +1,27 @@
+# Groups of 16 particles that share a list of neighbors, each pair once
+# (D89), against the neighbor matrix: the run of pme-settle.test on a GPU.
+# In double precision the two give the energies of the log to their digits
+# over 100 steps; in mixed precision they conserve the energy as well.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/pme-settle.test | sed '1d;$d' \
+# RUN:     | sed -e 's|energy_interval = 50|energy_interval = 20|' > %t/run.toml
+# RUN: sed -e 's|^type = "PERIODIC"|type = "PERIODIC"\n[execution]\ntarget = "gpu"\nprecision = "double"|' %t/run.toml > %t/matrix.toml
+# RUN: sed -e 's|^precision = "double"|precision = "double"\nneighbor_structure = "GROUPS"|' %t/matrix.toml > %t/groups.toml
+# RUN: sed -e 's|^precision = "double"|precision = "mixed"|' %t/groups.toml > %t/mixed.toml
+# RUN: cd %t && mdir run matrix.toml | grep 'INFO: \|MDIR:   ' > matrix.log
+# RUN: cd %t && mdir run groups.toml | grep 'INFO: \|MDIR:   ' > groups.log
+# RUN: diff %t/matrix.log %t/groups.log
+# RUN: cd %t && env MDIR_PRINT_AFTER=md-exec-choose-neighbors mdir run mixed.toml 2>&1 | FileCheck %s
+# RUN: sed -e 's|^target = "gpu"|target = "cpu"|' %t/groups.toml > %t/cpu.toml
+# RUN: not mdir run %t/cpu.toml 2>&1 | FileCheck %s --check-prefix=CPU
+
+# CHECK:     kind(groups)
+# CHECK:     policy(unique, atomic)
+# CHECK:     INFO:       100
+# CHECK:     MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
+
+# CPU: 'neighbor_structure = "GROUPS"' needs 'target = "GPU"' and not 'deterministic'
