@@ -12,8 +12,12 @@
 # RUN: not mdir run %t/expression.toml 2>&1 \
 # RUN: | FileCheck %s --check-prefix=EXPRESSION
 # RUN: not mdir run %t/atom.toml 2>&1 | FileCheck %s --check-prefix=ATOM
+# RUN: not mdir run %t/reach.toml 2>&1 | FileCheck %s --check-prefix=REACH
 
 # KEYWORD: keyword.toml:3: unknown keyword 'cutoff' in [energy]
+# A neighbor structure that reaches less far than the cutoff would miss
+# pairs within it.
+# REACH: reach.toml:{{[0-9]+}}: 'pairlistdist' is less than 'cutoffdist
 # PLANNED: planned.toml:3: 'dielec_const' in [energy] is not supported yet; it is planned for M1
 # TABLE: table.toml:1: 'selection' in [the control file] is not supported yet; it is planned for M1
 # CHOICE: choice.toml:12: expected one of VVER, LEAP for 'integrator', got 'RK4'
@@ -167,3 +171,10 @@ type = "PBC"
 box_size_x = 30.0
 box_size_y = 30.0
 box_size_z = 30.0
+#--- reach.toml
+[input]
+pdbfile = "atoms.pdb"
+
+[energy]
+cutoffdist   = 9.0
+pairlistdist = 8.5
