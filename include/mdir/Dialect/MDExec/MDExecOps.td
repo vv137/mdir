@@ -362,14 +362,20 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
     Returns `neighbors` if it is valid for the configuration `positions` in
     the cell `cell`, and a structure built at that configuration otherwise.
 
-    A structure that was built at the configuration `x_ref` is valid when
-    the cell is the one it was built in and
+    A structure that was built at the configuration `x_ref` in the cell of
+    edges `L_ref` is valid in the cell of edges `L` when, with the scale
+    `m = L / L_ref` of each axis, `R = cutoff + skin`, and `r_c = cutoff`,
 
     ```text
-    max_i |x_i − x_ref,i| ≤ skin / 2
+    2 max_i |x_i − m ⊙ x_ref,i| ≤ min(m) R − r_c
     ```
 
-    Under that condition it contains every pair within the cutoff. With the
+    Under that condition it contains every pair within the cutoff: a pair
+    that it leaves out was farther than `R` apart at the build, so it is
+    farther than `min(m) R − 2 max_i |x_i − m ⊙ x_ref,i|` apart now. In
+    the cell of the build the condition is `max_i |x_i − x_ref,i| ≤ skin /
+    2`; a barostat that scales the positions with the cell costs only the
+    margin `(1 − min(m)) R` (D80). With the
     policy `always` the structure is built whether it is valid or not.
 
     `cell_width` is the least width of the cells that a rebuild bins the
@@ -396,10 +402,10 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
     two, with one value of the type of the positions per particle.
 
     With `moved`, the op does not test the displacements: `moved` tells
-    whether a particle has moved more than half the skin since the
-    structure was built. A loop over particles computes it from the
-    positions and from `md_exec.reference_positions`. The op then needs
-    nothing in `scratch`.
+    whether the condition above fails for a particle. A loop over particles
+    computes it from the positions, `md_exec.reference_positions`, and the
+    cells (`md_exec.reference_cell`). The op then needs nothing in
+    `scratch`.
 
     ```mlir
     %nl1 = md_exec.refresh_neighbors %nl, %x, %cell moved(%moved)
@@ -481,6 +487,37 @@ def MDExec_ReferencePositionsOp : MDExec_Op<"reference_positions", [Pure]> {
     }
   }];
   let hasVerifier = 1;
+}
+
+def MDExec_ReferenceCellOp : MDExec_Op<"reference_cell", [Pure]> {
+  let summary = "The cell that a neighbor structure was built in";
+  let description = [{
+    Returns the cell that `neighbors` was built in. For a structure that
+    has not been built, it is unspecified. With the cell of the step, it
+    tells how far a barostat has scaled the configuration since the build,
+    which the test of validity allows for (D80).
+
+    ```mlir
+    %cell0 = md_exec.reference_cell %nl : !mdrt.neighbors<@atoms>
+    ```
+  }];
+  let arguments = (ins MDRT_NeighborsType:$neighbors);
+  let results = (outs MD_CellType:$result);
+  let assemblyFormat = [{
+    $neighbors attr-dict `:` qualified(type($neighbors))
+  }];
+}
+
+def MDExec_CellEdgesOp : MDExec_Op<"cell_edges", [Pure]> {
+  let summary = "The lengths of the edges of an orthorhombic cell";
+  let description = [{
+    ```mlir
+    %edges = md_exec.cell_edges %cell : vector<3xf64>
+    ```
+  }];
+  let arguments = (ins MD_CellType:$cell);
+  let results = (outs VectorOfLengthAndType<[3], [F64]>:$result);
+  let assemblyFormat = "$cell attr-dict `:` type($result)";
 }
 
 def MDExec_ResetNeighborsOp : MDExec_Op<"reset_neighbors"> {

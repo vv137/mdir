@@ -7,9 +7,11 @@
 
 md.particle_set @atoms
 
-// The test of validity becomes a loop over particles. The limit is the
-// square of half the skin. With the drift before it, the loop is fused: the
-// thread that moves a particle tests it.
+// The test of validity becomes a loop over particles. It compares the
+// positions with the reference scaled as the cell was since the build,
+// m = L / L_ref, and its limit is the square of half of min(m) R - r_c,
+// which is half the skin in the cell of the build (D80). With the drift
+// before it, the loop is fused: the thread that moves a particle tests it.
 //
 // CHECK-LABEL: func.func @steps(
 // CHECK-SAME:    %[[X:[a-z0-9]+]]: !md.field<@atoms, 3 x f64>, %[[V:[a-z0-9]+]]: !md.field<@atoms, 3 x f64>, %[[CELL:[a-z0-9]+]]: !md.cell, %[[N:[a-z0-9]+]]: index)
@@ -28,7 +30,8 @@ func.func @steps(%x: !vec, %v: !vec, %cell: !md.cell, %n: index) -> !vec {
     // FUSED-SAME:   outs(%{{[0-9]+}} : !md.field<@atoms, 3 x f64>) reduce(%{{[a-z0-9_]+}} : i1)
     // FUSED-NEXT: ^bb0(%[[XI:[a-z0-9]+]]: vector<3xf64>, %{{[a-z0-9]+}}: vector<3xf64>, %[[RI:[a-z0-9]+]]: vector<3xf64>):
     // FUSED-NEXT:   %[[XN:[0-9]+]] = arith.addf %[[XI]],
-    // FUSED-NEXT:   %[[D:[0-9]+]] = arith.subf %[[XN]], %[[RI]]
+    // FUSED-NEXT:   %[[SR:[0-9]+]] = arith.mulf %[[RI]],
+    // FUSED-NEXT:   %[[D:[0-9]+]] = arith.subf %[[XN]], %[[SR]]
     // FUSED:        md_exec.yield %[[XN]], %{{[0-9]+}} : vector<3xf64>, i1
     // FUSED-NOT:  md_exec.particle_for
     // FUSED:      md_exec.refresh_neighbors %{{[a-z0-9]+}}, %[[LOOP]]#0, %{{[a-z0-9]+}} moved(%[[LOOP]]#1)
@@ -40,14 +43,24 @@ func.func @steps(%x: !vec, %v: !vec, %cell: !md.cell, %n: index) -> !vec {
     } -> !vec
 
     // CHECK:      %[[REF:[0-9]+]] = md_exec.reference_positions %[[NA]] : !mdrt.neighbors<@atoms> -> !md.field<@atoms, 3 x f64>
+    // CHECK:      %[[EDGES:[0-9]+]] = md_exec.cell_edges %[[CELL]] : vector<3xf64>
+    // CHECK:      %[[CELL0:[0-9]+]] = md_exec.reference_cell %[[NA]] : !mdrt.neighbors<@atoms>
+    // CHECK:      %[[EDGES0:[0-9]+]] = md_exec.cell_edges %[[CELL0]] : vector<3xf64>
+    // CHECK:      %[[M:[0-9]+]] = arith.divf %[[EDGES]], %[[EDGES0]] : vector<3xf64>
+    // CHECK:      %[[LEAST:[0-9]+]] = vector.reduction <minnumf>, %[[M]]
+    // CHECK:      %[[RC:[a-z0-9_]+]] = arith.constant 1.500000e+00 : f64
+    // CHECK:      %[[R:[a-z0-9_]+]] = arith.constant 1.750000e+00 : f64
+    // CHECK:      %[[MR:[0-9]+]] = arith.mulf %[[LEAST]], %[[R]]
+    // CHECK:      %[[MARGIN:[0-9]+]] = arith.subf %[[MR]], %[[RC]]
+    // CHECK:      %[[LIMIT:[0-9]+]] = arith.mulf %[[HALF:[0-9]+]], %[[HALF]] : f64
     // CHECK:      %[[NO:[a-z0-9_]+]] = arith.constant false
     // CHECK:      %[[MOVED:[0-9]+]] = md_exec.particle_for ins(%[[X1]], %[[REF]] :
     // CHECK-SAME:   reduce(%[[NO]] : i1) {
     // CHECK-NEXT: ^bb0(%[[NOW:[a-z0-9]+]]: vector<3xf64>, %[[THEN:[a-z0-9]+]]: vector<3xf64>):
-    // CHECK-NEXT:   %[[D:[0-9]+]] = arith.subf %[[NOW]], %[[THEN]]
+    // CHECK-NEXT:   %[[SCALED:[0-9]+]] = arith.mulf %[[THEN]], %[[M]]
+    // CHECK-NEXT:   %[[D:[0-9]+]] = arith.subf %[[NOW]], %[[SCALED]]
     // CHECK-NEXT:   %[[SQ:[0-9]+]] = arith.mulf %[[D]], %[[D]]
     // CHECK-NEXT:   %[[D2:[0-9]+]] = vector.reduction <add>, %[[SQ]]
-    // CHECK-NEXT:   %[[LIMIT:[a-z0-9_]+]] = arith.constant 1.562500e-02 : f64
     // CHECK-NEXT:   %[[FAR:[0-9]+]] = arith.cmpf ugt, %[[D2]], %[[LIMIT]]
     // CHECK-NEXT:   md_exec.yield %[[FAR]] : i1
     // CHECK:      %[[NB:[0-9]+]] = md_exec.refresh_neighbors %[[NA]], %[[X1]], %[[CELL]] moved(%[[MOVED]])

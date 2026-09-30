@@ -1330,6 +1330,17 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     return convertBuildNeighbors(build, scope);
   if (auto refresh = dyn_cast<RefreshNeighborsOp>(op))
     return convertRefreshNeighbors(refresh, scope, position);
+  if (auto cell = dyn_cast<ReferenceCellOp>(op)) {
+    Value storage;
+    if (failed(getNeighbors(op, cell.getNeighbors(),
+                            findPositionsType(cell.getNeighbors()), scope,
+                            storage)))
+      return failure();
+    mapping.map(cell.getResult(),
+                ReferenceCellOp::create(builder, op->getLoc(),
+                                        cell.getResult().getType(), storage));
+    return success();
+  }
   if (auto count = dyn_cast<RebuildCountOp>(op)) {
     Value storage;
     if (failed(getNeighbors(op, count.getNeighbors(),
@@ -1388,7 +1399,8 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     return success();
   }
 
-  bool isCell = isa<md::OrthorhombicCellOp>(op);
+  // Ops on cells hold no fields, and are copied as they are.
+  bool isCell = isa<md::OrthorhombicCellOp, CellEdgesOp>(op);
   if (!isCell && (isa<md::MDDialect>(op->getDialect()) ||
                   isa<MDExecDialect>(op->getDialect()) ||
                   op->getName().getDialectNamespace() == "dyn"))

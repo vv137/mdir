@@ -73,7 +73,7 @@ func.func @single(%x0: !single, %cell: !md.cell, %steps: index) -> !single {
     // The test of the displacement since the last build.
     //
     // CHECK:        memref.load %[[REFERENCE]][
-    // CHECK:        arith.constant 2.250000e-02 : f32
+    // CHECK:        arith.cmpf ole, %{{[0-9]+}}, %{{[0-9]+}} : f32
     // CHECK:        scf.if
     // CHECK:          %[[NARROW:[0-9]+]] = arith.truncf %[[BOX]] : vector<3xf64> to vector<3xf32>
     // CHECK:          call @mdrt.build_neighbors_matrix_f32(%{{[a-z0-9_]+}}, %[[NARROW]], %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}},

@@ -1463,15 +1463,42 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
   // particle has moved more than half the skin since.
   Value valid =
       memref::LoadOp::create(builder, loc, structure.valid, ValueRange{});
-  for (int64_t c = 0; c < 3; ++c) {
-    Value edge = vector::ExtractOp::create(builder, loc, box, c);
-    Value built = memref::LoadOp::create(
-        builder, loc, structure.box,
-        ValueRange{createIndex(builder, loc, c)});
-    Value same = arith::CmpFOp::create(builder, loc,
-                                       arith::CmpFPredicate::OEQ, edge, built);
-    valid = arith::AndIOp::create(builder, loc, valid, same);
-  }
+  // A barostat scales the positions with the cell: the reference is
+  // compared scaled as the cell was, m = L / L_ref, against half of
+  // min(m) R − r_c (D80).
+  SmallVector<Value, 3> builtEdges;
+  for (int64_t c = 0; c < 3; ++c)
+    builtEdges.push_back(memref::LoadOp::create(
+        builder, loc, structure.box, ValueRange{createIndex(builder, loc, c)}));
+  Value scale = arith::DivFOp::create(
+      builder, loc, box,
+      vector::FromElementsOp::create(
+          builder, loc, VectorType::get({3}, builder.getF64Type()),
+          builtEdges));
+  Value least = vector::ReductionOp::create(
+      builder, loc, vector::CombiningKind::MINNUMF, scale);
+  Value margin = arith::SubFOp::create(
+      builder, loc,
+      arith::MulFOp::create(builder, loc, least,
+                            createReal(builder, loc, builder.getF64Type(),
+                                       reach)),
+      createReal(builder, loc, builder.getF64Type(),
+                 op.getCutoff().convertToDouble()));
+  Value halfMargin = arith::MulFOp::create(
+      builder, loc,
+      arith::MaximumFOp::create(
+          builder, loc, margin,
+          createReal(builder, loc, builder.getF64Type(), 0.0)),
+      createReal(builder, loc, builder.getF64Type(), 0.5));
+  Value limit2 = arith::MulFOp::create(builder, loc, halfMargin, halfMargin);
+  Value scaleReal = scale;
+  if (!real.isF64())
+    scaleReal = arith::TruncFOp::create(
+        builder, loc, VectorType::get({3}, real), scale);
+  Value limitReal = limit2;
+  if (!real.isF64())
+    limitReal = arith::TruncFOp::create(builder, loc, real, limit2);
+  (void)skin;
 
   // Before the first build the configuration that the test compares with
   // holds nothing. The result of the test then does not count.
@@ -1486,8 +1513,10 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
     launchOver(builder, loc, structure.size,
                [&](OpBuilder &body, Value particle) {
                  Value now = loadElement(body, loc, positions, particle);
-                 Value then =
-                     loadElement(body, loc, structure.reference, particle);
+                 Value then = arith::MulFOp::create(
+                     body, loc,
+                     loadElement(body, loc, structure.reference, particle),
+                     scaleReal);
                  Value change = arith::SubFOp::create(body, loc, now, then);
                  Value squares =
                      arith::MulFOp::create(body, loc, change, change);
@@ -1500,7 +1529,7 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
                                     {op.getScratch()[1]}, structure.size,
                                     /*isSum=*/false)
                          .front();
-    Value limit = createReal(builder, loc, real, 0.25 * skin * skin);
+    Value limit = limitReal;
     near = arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::OLE,
                                  farthest, limit);
   }
@@ -1609,6 +1638,24 @@ LogicalResult Lowering::lowerOp(Operation *op) {
       return failure();
   } else if (auto permute = dyn_cast<md_exec::PermuteOp>(op)) {
     lowerPermute(permute);
+  } else if (auto cell = dyn_cast<md_exec::ReferenceCellOp>(op)) {
+    // The cell that the structure was built in, as the vector of its
+    // edges that cells have become.
+    Neighbors structure;
+    if (failed(getNeighbors(op, cell.getNeighbors(), structure)))
+      return failure();
+    OpBuilder builder(op);
+    Location loc = op->getLoc();
+    SmallVector<Value, 3> edges;
+    for (int64_t c = 0; c < 3; ++c)
+      edges.push_back(memref::LoadOp::create(
+          builder, loc, structure.box,
+          ValueRange{createIndex(builder, loc, c)}));
+    cell->getResult(0).replaceAllUsesWith(vector::FromElementsOp::create(
+        builder, loc, VectorType::get({3}, builder.getF64Type()), edges));
+  } else if (auto edges = dyn_cast<md_exec::CellEdgesOp>(op)) {
+    // The cell is the vector of its edges by now.
+    edges.getResult().replaceAllUsesWith(edges->getOperand(0));
   } else if (auto reference = dyn_cast<md_exec::ReferencePositionsOp>(op)) {
     Neighbors structure;
     if (failed(getNeighbors(op, reference.getNeighbors(), structure)))
@@ -1665,7 +1712,7 @@ LogicalResult Lowering::lowerOp(Operation *op) {
   } else if (auto cell = dyn_cast<md::OrthorhombicCellOp>(op)) {
     OpBuilder builder(op);
     Type real = builder.getF64Type();
-    cell.getResult().replaceAllUsesWith(vector::FromElementsOp::create(
+    cell->getResult(0).replaceAllUsesWith(vector::FromElementsOp::create(
         builder, op->getLoc(), VectorType::get({3}, real),
         ValueRange{cell.getLx(), cell.getLy(), cell.getLz()}));
   } else if (isa<md::MDDialect>(op->getDialect()) ||

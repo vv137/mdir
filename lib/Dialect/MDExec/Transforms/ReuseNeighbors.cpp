@@ -18,18 +18,20 @@ namespace {
 
 /// What a neighbor structure is built with. Two structures with the same
 /// parameters can share their storage if they are not in use at the same
-/// time.
+/// time. The cell is not among them: the test of validity holds in any
+/// cell, scaling the reference by the cell's change since the build (D80),
+/// so structures that a barostat's loops refresh in cells of their own
+/// share one storage.
 struct Parameters {
   bool isKnown = false;
   Type type;
-  Value cell;
   /// The pairs that the structure leaves out.
   Value excluded;
   Attribute kind, width, cutoff, skin, cellWidth;
 
   bool operator==(const Parameters &other) const {
     return isKnown && other.isKnown && type == other.type &&
-           cell == other.cell && excluded == other.excluded &&
+           excluded == other.excluded &&
            kind == other.kind &&
            width == other.width && cutoff == other.cutoff &&
            skin == other.skin && cellWidth == other.cellWidth;
@@ -79,7 +81,6 @@ static void findParameters(Value structure,
       Parameters parameters;
       parameters.isKnown = true;
       parameters.type = structure.getType();
-      parameters.cell = refresh.getCell();
       parameters.cutoff = refresh.getCutoffAttr();
       parameters.skin = refresh.getSkinAttr();
       parameters.cellWidth = refresh.getCellWidthAttr();
@@ -108,7 +109,6 @@ static SmallVector<Source, 4> findSources(Block &block) {
       source.build = build;
       source.parameters.isKnown = true;
       source.parameters.type = build.getResult().getType();
-      source.parameters.cell = build.getCell();
       source.parameters.excluded = build.getExcluded();
       source.parameters.kind = build.getKindAttr();
       source.parameters.width = build.getWidthAttr();
@@ -142,8 +142,7 @@ static SmallVector<Source, 4> findSources(Block &block) {
       SmallVector<Parameters> found;
       findParameters(loop.getRegionIterArgs()[index], found);
       if (!found.empty() && llvm::all_of(found, [&](Parameters &other) {
-            return other.cell == found.front().cell &&
-                   other.cutoff == found.front().cutoff &&
+            return other.cutoff == found.front().cutoff &&
                    other.skin == found.front().skin &&
                    other.cellWidth == found.front().cellWidth;
           })) {
