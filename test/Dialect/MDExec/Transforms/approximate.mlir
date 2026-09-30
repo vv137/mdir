@@ -14,7 +14,7 @@ md.particle_set @atoms
 // CHECK:         ^bb0(%[[R2:[a-z0-9]+]]: f32,
 // CHECK:           arith.divf {{.*}} fastmath<afn> : f32
 // CHECK:           %[[K:[0-9]+]] = arith.mulf %[[R2]], %{{.*}} : f32
-// CHECK:           %[[G:[0-9]+]] = math.exp %[[K]] : f32
+// CHECK:           %[[G:[0-9]+]] = math.exp %[[K]] fastmath<afn> : f32
 // CHECK:           %[[T:[0-9]+]] = arith.divf %{{.*}}, %{{.*}} fastmath<afn> : f32
 // CHECK-COUNT-9:   math.fma %{{.*}}, %[[T]], %{{.*}} : f32
 // CHECK:           arith.mulf %[[G]], %{{.*}} : f32
@@ -50,7 +50,7 @@ func.func @ewald(%x: !vec, %cell: !md.cell, %nl: !nl) -> !vec {
 //
 // CHECK-LABEL: func.func @alone(
 // CHECK:         md_exec.particle_for
-// CHECK:           math.exp
+// CHECK:           math.exp {{.*}} fastmath<afn> : f32
 // CHECK-NOT:       math.erfc {{.*}} : f32
 // CHECK:           math.erfc %{{.*}} : f32
 // CHECK:           math.erfc %{{.*}} : f64

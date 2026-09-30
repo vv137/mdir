@@ -109,12 +109,13 @@ void approximate(math::ErfcOp erfc) {
   };
   double minusC2 = -(*c) * (*c);
   Value exponential = findExponential(y, minusC2, erfc);
+  auto approximately = arith::FastMathFlagsAttr::get(
+      builder.getContext(), arith::FastMathFlags::afn);
   if (!exponential)
     exponential = math::ExpOp::create(
         builder, loc,
-        arith::MulFOp::create(builder, loc, y, constant(minusC2)));
-  auto approximately = arith::FastMathFlagsAttr::get(
-      builder.getContext(), arith::FastMathFlags::afn);
+        arith::MulFOp::create(builder, loc, y, constant(minusC2)),
+        approximately);
   Value denominator = arith::AddFOp::create(
       builder, loc,
       arith::MulFOp::create(builder, loc, x, constant(0.5)), constant(1.0));
@@ -146,6 +147,11 @@ public:
       kernel->walk([&](Operation *op) {
         if (auto erfc = dyn_cast<math::ErfcOp>(op))
           erfcs.push_back(erfc);
+        if (auto exp = dyn_cast<math::ExpOp>(op)) {
+          if (isF32(exp.getType()))
+            exp.setFastmath(exp.getFastmath() | arith::FastMathFlags::afn);
+          return;
+        }
         auto divide = dyn_cast<arith::DivFOp>(op);
         if (!divide || !isF32(divide.getType()))
           return;

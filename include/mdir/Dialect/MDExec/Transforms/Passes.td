@@ -243,6 +243,10 @@ def Approximate
     - A division may be approximate (`afn`): on a device it becomes
       `div.approx.f32` or `rcp.approx.f32`, within 2 ulp, instead of the
       correctly rounded sequence.
+    - An exponential may be approximate (`afn`): on a device `ex2.approx`
+      of the argument times log2(e), within 2 + 1.2 |x| ulp (about 1.5e-6
+      at the cutoff of the direct sum of Ewald, x = -(β rc)² ≈ -10),
+      instead of the reduction of the argument that `expf` makes.
     - `math.erfc(sqrt(y) * c)`, with `c` a positive constant, becomes
 
       ```text
