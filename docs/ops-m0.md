@@ -217,6 +217,7 @@ is needed when the kernels are compiled, not when LLVM is built.
 | `md.sum_particles` | Sums a kernel over particles. |
 | `md.map_particles` | Applies a kernel to each particle. |
 | `md.evaluate` | Requests energy and derivatives of a potential. |
+| `md.tuple_set`, `md.disjoint_union`, `md.sum_tuples`, `md.gather_tuples` | The tuples of a topology, and the loops over them; see [design-m1.md](design-m1.md), Sections 2 and 3. |
 | `md.yield`, `md.return` | Terminators of kernels and functions. |
 
 All `md` ops are pure.
@@ -568,6 +569,7 @@ The two ops are separate at this level. Fusing them into one loop is an
 | `md-check-exchange` | Proves the exchange contracts whose basis is `proof`. Fails if a proof fails. |
 | `md-expand-truncation` | Expands truncation into the kernels. |
 | `md-differentiate` | Generates derivative functions and replaces `md.evaluate` with `md.call`. Expands truncation in the generated functions. |
+| `md-bypass-updates` | Lets a loop over the tuples of a set of an `md.disjoint_union` read a field before an update by an other set of the union: where a field is $\mathbf y = \mathbf x + \mathbf c$, with $\mathbf c$ gathered over an other set, the loop reads $\mathbf x$, which agrees with $\mathbf y$ at its members up to the sign of a zero (D83; the union is in [design-m1.md](design-m1.md), Section 2). |
 
 A generated function is named after the potential and the requests:
 `@lj.energy_forces`, `@lj.derivative3`. Equal requests share one function.

@@ -748,7 +748,7 @@ void Lowering::findRows(func::FuncOp function) {
                !llvm::is_contained(getOuts(&op), operand)) ||
               sums.contains(operand))
             joins = false;
-      for (Value out : getOuts(&op))
+      for (Value out : llvm::concat<Value>(getOuts(&op), scratch))
         joins &= !read.contains(out);
       if (!joins) {
         finish(run);
@@ -771,7 +771,8 @@ void Lowering::findRows(func::FuncOp function) {
   // Runs of loops over disjoint tuples: a thread evaluates the tuple of
   // each loop whose member at place 0 it is. A loop joins the run if it
   // reads nothing that a loop of the run writes and writes nothing that
-  // one reads (a loop that overwrites writes every particle), and has
+  // one reads, in its destinations or its scratch (a loop that
+  // overwrites writes every particle), and has
   // buffers for its global sums of its own. The sets of a disjoint union
   // give such runs (md-bypass-updates, D83).
   function.walk([&](Block *block) {
@@ -791,7 +792,8 @@ void Lowering::findRows(func::FuncOp function) {
       bool joins = !run.empty();
       for (Value operand : op.getOperands())
         joins &= !written.contains(operand) && !sums.contains(operand);
-      for (Value out : tuple.getOuts())
+      for (Value out :
+           llvm::concat<Value>(tuple.getOuts(), tuple.getScratch()))
         joins &= !read.contains(out);
       if (!joins) {
         finish(run);

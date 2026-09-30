@@ -98,6 +98,30 @@ md.tuple_set @angles on(@atoms) arity(3) orientation(reversal)
 The type of the relation names the tuple set, so that an op can tell that
 a field belongs to the tuples of the relation that it takes.
 
+`disjoint` on a tuple set states that no particle is a member of two of
+its tuples, as in the groups of a constraint; a loop over the tuples may
+then evaluate each tuple once and write to all its members. A disjoint
+union states the same across sets (D83):
+
+```mlir
+md.tuple_set @settles on(@atoms) arity(3) orientation(ordered) disjoint
+md.tuple_set @shake1  on(@atoms) arity(2) orientation(unordered) disjoint
+md.disjoint_union @constraints on(@atoms) of [@settles, @shake1]
+```
+
+For tuple sets $T_1, \dots, T_n$ of the union, with $P(t)$ the particles of
+a tuple $t$, the union states
+
+$$
+P(t) \cap P(t') = \emptyset \quad \text{for all } t \ne t' \in T_1 \cup \dots \cup T_n .
+$$
+
+Each set must be `disjoint` and on the particle set of the union. The
+driver declares the groups of SETTLE and SHAKE as one union after checking
+their members. What `md.gather_tuples` over one set gathers is then zero at
+the members of the tuples of every other set of the union, which
+`md-bypass-updates` uses ([ops-m0.md](ops-m0.md), Section 5.6).
+
 Both enter the program from buffers, as the fields of the particles do
 (D32):
 
