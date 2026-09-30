@@ -110,7 +110,10 @@ def ConvertMDExecToGPU
            "a power of two up to 32; 1 gives a thread to each particle">,
     Option<"fuseRows", "fuse-rows", "bool", /*default=*/"true",
            "Whether consecutive loops over pairs and tuples of the same "
-           "positions become one kernel">
+           "positions become one kernel">,
+    Option<"pmeStream", "pme-stream", "bool", /*default=*/"true",
+           "Whether the reciprocal sum of PME runs on a second stream, "
+           "beside what follows it until its forces are read">
   ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",

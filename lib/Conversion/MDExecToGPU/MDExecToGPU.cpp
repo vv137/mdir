@@ -100,9 +100,10 @@ struct Flag {
 class Lowering {
 public:
   Lowering(ModuleOp module, int64_t blockSize, int64_t splitLimit,
-           int64_t rowLanes, bool fuseRows)
+           int64_t rowLanes, bool fuseRows, bool pmeStream)
       : module(module), context(module.getContext()), blockSize(blockSize),
-        splitLimit(splitLimit), rowLanes(rowLanes), fuseRows(fuseRows) {}
+        splitLimit(splitLimit), rowLanes(rowLanes), fuseRows(fuseRows),
+        pmeStream(pmeStream) {}
 
   LogicalResult run();
 
@@ -220,6 +221,8 @@ private:
   int64_t rowLanes;
   /// Whether runs of loops over rows become one kernel (findRows).
   bool fuseRows;
+  /// Whether the reciprocal sum runs on a second stream (lowerReciprocal).
+  bool pmeStream;
 
   /// The function that is being lowered.
   func::FuncOp current;
@@ -1225,6 +1228,16 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   Value fixed = op.getScratch()[0], real = op.getScratch()[1],
         complex = op.getScratch()[2], rows = op.getScratch()[3];
 
+  // On a second stream the sum runs beside the loops that follow it, from
+  // the positions as they are here, until an op reads its forces (or the
+  // buffers it reads are written), where the first stream waits for it.
+  auto sideCall = [&](OpBuilder &at, StringRef name) {
+    func::FuncOp function =
+        getOrDeclare(name, at.getFunctionType({}, {}));
+    func::CallOp::create(at, loc, function, ValueRange());
+  };
+  if (pmeStream)
+    sideCall(builder, "mdrtSideBegin");
   func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_spread"),
                        ValueRange{positions, charges, box, fixed, k1, k2, k3,
                                   order});
@@ -1266,6 +1279,42 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_gather"),
                        ValueRange{positions, charges, real, box, k1, k2, k3,
                                   order, forces});
+  if (pmeStream) {
+    sideCall(builder, "mdrtSideEnd");
+    // The first op after the sum, in its block, that reads its forces or
+    // writes what it reads, or that is not a loop over pairs, tuples, or
+    // particles, which could do either by other means.
+    Operation *join = nullptr;
+    for (Operation *next = op->getNextNode(); next;
+         next = next->getNextNode()) {
+      // Loops may read what the sum reads at the same time; they may not
+      // write it, nor read the forces it writes.
+      ValueRange outs;
+      if (auto loop = dyn_cast<md_exec::PairForOp>(next))
+        outs = loop.getOuts();
+      else if (auto loop = dyn_cast<md_exec::TupleForOp>(next))
+        outs = loop.getOuts();
+      else if (auto loop = dyn_cast<md_exec::ParticleForOp>(next))
+        outs = loop.getOuts();
+      bool touches =
+          llvm::is_contained(next->getOperands(), forces) ||
+          llvm::any_of(outs, [&](Value out) {
+            return out == positions || out == charges;
+          });
+      bool isLoop = isa<md_exec::PairForOp, md_exec::TupleForOp,
+                        md_exec::ParticleForOp, arith::ConstantOp>(next);
+      if (touches || !isLoop) {
+        join = next;
+        break;
+      }
+    }
+    OpBuilder at(op->getContext());
+    if (join)
+      at.setInsertionPoint(join);
+    else
+      at.setInsertionPoint(op->getBlock()->getTerminator());
+    sideCall(at, "mdrtSideJoin");
+  }
   if (convolve) {
     op.getEnergy().replaceAllUsesWith(convolve.getResult(0));
     op.getVirial().replaceAllUsesWith(convolve.getResult(1));
@@ -2027,7 +2076,7 @@ public:
 
   void runOnOperation() final {
     Lowering lowering(getOperation(), blockSize, splitLimit, rowLanes,
-                      fuseRows);
+                      fuseRows, pmeStream);
     if (failed(lowering.run()))
       signalPassFailure();
   }

@@ -156,6 +156,15 @@ static CUcontext context = NULL;
 static CUstream sharedStream = NULL;
 static int waitsAlways = -1;
 
+/* A second stream, on which work that is independent of what follows it on
+   the first can run beside it (mdrtSideBegin). Work issued between
+   mdrtSideBegin and mdrtSideEnd goes there, after what the first stream
+   had been given; mdrtSideJoin makes the first stream wait for it. */
+static CUstream sideStream = NULL;
+static int onSide = 0;
+static CUevent forkEvent = NULL, joinEvent = NULL;
+static int joinPending = 0;
+
 /* Whether the device may still be running work that was issued. */
 static int isPending = 0;
 
@@ -300,7 +309,35 @@ CUstream mgpuStreamCreate(void) {
   if (!sharedStream)
     check(cuStreamCreate(&sharedStream, CU_STREAM_NON_BLOCKING),
           "cuStreamCreate");
-  return sharedStream;
+  return onSide ? sideStream : sharedStream;
+}
+
+void mdrtSideBegin(void) {
+  mgpuStreamCreate();
+  if (!sideStream) {
+    check(cuStreamCreate(&sideStream, CU_STREAM_NON_BLOCKING),
+          "cuStreamCreate");
+    check(cuEventCreate(&forkEvent, CU_EVENT_DISABLE_TIMING),
+          "cuEventCreate");
+    check(cuEventCreate(&joinEvent, CU_EVENT_DISABLE_TIMING),
+          "cuEventCreate");
+  }
+  check(cuEventRecord(forkEvent, sharedStream), "cuEventRecord");
+  check(cuStreamWaitEvent(sideStream, forkEvent, 0), "cuStreamWaitEvent");
+  onSide = 1;
+}
+
+void mdrtSideEnd(void) {
+  check(cuEventRecord(joinEvent, sideStream), "cuEventRecord");
+  onSide = 0;
+  joinPending = 1;
+}
+
+void mdrtSideJoin(void) {
+  if (!joinPending)
+    return;
+  check(cuStreamWaitEvent(sharedStream, joinEvent, 0), "cuStreamWaitEvent");
+  joinPending = 0;
 }
 
 void mgpuStreamDestroy(CUstream stream) { (void)stream; }
@@ -310,6 +347,8 @@ static void finish(void) {
   if (!isPending || !sharedStream)
     return;
   double start = begin();
+  if (sideStream)
+    check(cuStreamSynchronize(sideStream), "cuStreamSynchronize");
   check(cuStreamSynchronize(sharedStream), "cuStreamSynchronize");
   end(WAIT, start);
   isPending = 0;
@@ -570,6 +609,9 @@ void _mlir_ciface_mdrtCudaFFTForward3D(DeviceBuffer1D *real,
                                        int64_t k2, int64_t k3) {
   enter();
   double start = begin();
+  checkFFT(cufftSetStream(getFFTPlan(k1, k2, k3, 1, 0),
+                          (cudaStream_t)mgpuStreamCreate()),
+           "cufftSetStream");
   checkFFT(cufftExecD2Z(getFFTPlan(k1, k2, k3, 1, 0),
                         (cufftDoubleReal *)(real->aligned + real->offset),
                         (cufftDoubleComplex *)(complex->aligned +
@@ -586,6 +628,9 @@ void _mlir_ciface_mdrtCudaFFTBackward3D(DeviceBuffer1D *complex,
                                         int64_t k2, int64_t k3) {
   enter();
   double start = begin();
+  checkFFT(cufftSetStream(getFFTPlan(k1, k2, k3, 0, 0),
+                          (cudaStream_t)mgpuStreamCreate()),
+           "cufftSetStream");
   checkFFT(cufftExecZ2D(getFFTPlan(k1, k2, k3, 0, 0),
                         (cufftDoubleComplex *)(complex->aligned +
                                                complex->offset),
@@ -602,6 +647,9 @@ void _mlir_ciface_mdrtCudaFFTForward3DF32(DeviceBuffer1DF32 *real,
                                           int64_t k3) {
   enter();
   double start = begin();
+  checkFFT(cufftSetStream(getFFTPlan(k1, k2, k3, 1, 1),
+                          (cudaStream_t)mgpuStreamCreate()),
+           "cufftSetStream");
   checkFFT(cufftExecR2C(getFFTPlan(k1, k2, k3, 1, 1),
                         (cufftReal *)(real->aligned + real->offset),
                         (cufftComplex *)(complex->aligned + complex->offset)),
@@ -616,6 +664,9 @@ void _mlir_ciface_mdrtCudaFFTBackward3DF32(DeviceBuffer1DF32 *complex,
                                            int64_t k3) {
   enter();
   double start = begin();
+  checkFFT(cufftSetStream(getFFTPlan(k1, k2, k3, 0, 1),
+                          (cudaStream_t)mgpuStreamCreate()),
+           "cufftSetStream");
   checkFFT(cufftExecC2R(getFFTPlan(k1, k2, k3, 0, 1),
                         (cufftComplex *)(complex->aligned + complex->offset),
                         (cufftReal *)(real->aligned + real->offset)),

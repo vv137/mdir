@@ -75,6 +75,9 @@ systems:
   why (the differences of positions, D75; the sums), what moved to `f32`
   (the kernels of pairs, PME), and what each step cost and gained.
 - The principles of development and the defects that led to them.
+- A manual of the control file (TODO): every table and keyword, its
+  units and default, and the combinations that are errors, checked
+  against `mdir template` so that it follows the code.
 - How to take part: how the code is laid out, how a new term, pass, or
   target is added and tested, and how defects are reported, so that a
   reader can begin to contribute.
