@@ -1445,6 +1445,12 @@ LogicalResult Assignment::convertBlock(Block &block, Scope &scope) {
           continue;
         Value buffer = found->second;
         held.erase(found);
+        // A loop that accumulates into the field continues in its buffer,
+        // which its result holds now.
+        if (llvm::any_of(held, [&](const auto &entry) {
+              return entry.second == buffer;
+            }))
+          continue;
         if (scope.owns(buffer))
           scope.release(buffer);
       }

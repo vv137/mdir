@@ -216,6 +216,47 @@ def AssignPrecision
                            "::mlir::arith::ArithDialect"];
 }
 
+def AccumulateDestinations
+    : Pass<"md-exec-accumulate-destinations", "::mlir::ModuleOp"> {
+  let summary = "Lets loops that a loop over particles adds up accumulate "
+                "into one destination";
+  let description = [{
+    A loop over particles that adds the fields of several loops over pairs
+    or tuples, as the forces of the terms of a potential are added, reads
+    them all and each is stored:
+
+    ```mlir
+    %f1 = md_exec.pair_for ... outs(%z1 : !vec) { ... }
+    %f2 = md_exec.tuple_for ... outs(%z2 : !vec) { ... }
+    %v = md_exec.particle_for ins(%f1, %f2, ...) {
+    ^bb0(%a: vector<3xf64>, %b: vector<3xf64>, ...):
+      %s = arith.addf %a, %b : vector<3xf64>
+      ...
+    }
+    ```
+
+    Where each field is the destination of a loop that accumulates from
+    zeros (`md_exec.zeros`), used by the loop over particles alone, and the
+    loops come in the order of the sum, each loop accumulates onto what the
+    loop before it gave, and the loop over particles reads the last:
+
+    ```mlir
+    %f1 = md_exec.pair_for ... outs(%z1 : !vec) { ... }
+    %f2 = md_exec.tuple_for ... outs(%f1 : !vec) { ... }
+    %v = md_exec.particle_for ins(%f2, ...) { ... }
+    ```
+
+    A loop computes `a0 + Σ`, so the sums are those of the loop over
+    particles, in the same order, in the type of the destination: to the
+    bit where that is the type in which the loop over particles added
+    (double precision); in the mixed mode the forces are added in `f32`
+    where they were added in `f64` after being stored in `f32`, as GROMACS
+    adds them. A run of such loops in one kernel adds to one buffer and
+    stores it once (`convert-md-exec-to-gpu`).
+  }];
+  let dependentDialects = ["::mlir::arith::ArithDialect"];
+}
+
 def AssignStorage : Pass<"md-exec-assign-storage", "::mlir::ModuleOp"> {
   let summary = "Gives every field a buffer";
   let description = [{

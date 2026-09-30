@@ -903,25 +903,73 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
 
   launchRows(builder, loc, size, [&](OpBuilder &body, Value particle,
                                      const RowLanes &sharing) {
+    // What the loops add to each destination, in their order, stored once
+    // at the end: loops of a run may add to one buffer, as the terms of a
+    // potential add to the forces (md-exec-accumulate-destinations). The
+    // additions are those that the loops would make one after the other.
+    struct Destination {
+      bool loads = false;
+      SmallVector<Value, 4> additions;
+    };
+    llvm::MapVector<Value, Destination> destinations;
     for (Loop &loop : loops) {
       IRMapping local;
-      SmallVector<Value> contributions;
-      ValueRange scratch;
+      SmallVector<Value> contributions, totals;
+      ValueRange scratch, outs;
+      auto overwrites = [&](unsigned i) {
+        if (auto pair = dyn_cast<md_exec::PairForOp>(loop.op))
+          return pair.overwrites(i);
+        return cast<md_exec::TupleForOp>(loop.op).overwrites(i);
+      };
       if (auto pair = dyn_cast<md_exec::PairForOp>(loop.op)) {
         contributions = emitPairKernel(
             body, pair, loop.structure.counts, loop.structure.index,
-            loop.box, loop.inverse, particle, local, &sharing);
+            loop.box, loop.inverse, particle, local, &sharing, &totals);
         scratch = pair.getScratch();
+        outs = pair.getOuts();
       } else {
         auto tuple = cast<md_exec::TupleForOp>(loop.op);
-        contributions =
-            emitTupleKernel(body, tuple, tuple.getIncidence(), loop.box,
-                            loop.inverse, particle, local, &sharing);
+        contributions = emitTupleKernel(body, tuple, tuple.getIncidence(),
+                                        loop.box, loop.inverse, particle,
+                                        local, &sharing, &totals);
         scratch = tuple.getScratch();
+        outs = tuple.getOuts();
+      }
+      for (auto [i, out] : llvm::enumerate(outs)) {
+        Destination &destination = destinations[out];
+        if (overwrites(i)) {
+          destination.loads = false;
+          destination.additions.clear();
+        } else if (destination.additions.empty()) {
+          destination.loads = true;
+        }
+        destination.additions.push_back(totals[i]);
       }
       storeContributions(body, loc, contributions, scratch, particle,
                          sharing);
     }
+    if (destinations.empty())
+      return;
+    Value leader = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::eq,
+                                         sharing.lane,
+                                         createIndex(body, loc, 0));
+    Value writes = arith::AndIOp::create(body, loc, leader, sharing.valid);
+    scf::IfOp::create(body, loc, writes, [&](OpBuilder &then, Location) {
+      for (auto &[buffer, destination] : destinations) {
+        Value total;
+        ArrayRef<Value> additions = destination.additions;
+        if (destination.loads) {
+          total = loadElement(then, loc, buffer, particle);
+        } else {
+          total = additions.front();
+          additions = additions.drop_front();
+        }
+        for (Value addition : additions)
+          total = arith::AddFOp::create(then, loc, total, addition);
+        storeElement(then, loc, total, buffer, particle);
+      }
+      scf::YieldOp::create(then, loc);
+    });
   });
 
   // One reduction for the global sums of all the loops.

@@ -58,7 +58,7 @@ static std::string getPipeline(const Control &control,
   os << "convert-md-to-md-exec{skin=" << program.skin
      << " width=" << program.neighborWidth << "},";
   os << "md-exec-reuse-neighbors,md-exec-expose-validity,"
-     << "md-exec-fuse-loops,";
+     << "md-exec-fuse-loops,md-exec-accumulate-destinations,";
   if (control.fastMath)
     os << "md-exec-simplify-distance,";
   os << "canonicalize,cse,";

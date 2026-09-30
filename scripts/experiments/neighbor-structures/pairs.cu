@@ -278,6 +278,111 @@ __global__ void halfListKernel(int T, const int *rowStart, const int *recTile, c
   }
 }
 
+// The matrix, 16 lanes per particle, with the entries within the cutoff
+// compacted before the kernel: the lanes test 16 entries at once and a
+// ballot packs those within the cutoff into a queue of the group in shared
+// memory; the kernel runs once the queue holds 16, so that no lane
+// computes a pair beyond the cutoff.
+__global__ void compactKernel(int n, int W, const int *counts, const int *index, const float *xs,
+                              const float *qs, const int *ts, const float *A, const float *B, int nt,
+                              float3 L, float3 iL, float *force) {
+  __shared__ int queue[128 / 16][32];
+  int t = blockIdx.x * blockDim.x + threadIdx.x;
+  int i = t / 16, lane = t % 16, group = threadIdx.x / 16;
+  unsigned groupMask = 0xffffu << ((threadIdx.x % 32) & 16);
+  bool valid = i < n;
+  float3 f = {0, 0, 0};
+  float3 xi = {0, 0, 0}; float qi = 0; int ti = 0, c = 0;
+  if (valid) { xi = make_float3(xs[3*i], xs[3*i+1], xs[3*i+2]); qi = qs[i]; ti = ts[i]; c = counts[i]; }
+  int held = 0;
+  auto drain = [&](int count) {
+    if (lane < count) {
+      int j = queue[group][lane];
+      float3 xj = {xs[3*j], xs[3*j+1], xs[3*j+2]};
+      pairForce(xi, qi, ti, xj, qs[j], ts[j], L, iL, A, B, nt, f);
+    }
+  };
+  // Every group of a warp runs the same number of rounds.
+  int rounds = (c + 15) / 16;
+  for (int o = 1; o < 32; o <<= 1) rounds = max(rounds, __shfl_xor_sync(0xffffffff, rounds, o));
+  for (int r = 0; r < rounds; ++r) {
+    int e = r * 16 + lane;
+    bool keep = false; int j = 0;
+    if (e < c) {
+      j = index[(size_t)i * W + e];
+      if (j != i) {
+        float dx = xi.x - xs[3*j], dy = xi.y - xs[3*j+1], dz = xi.z - xs[3*j+2];
+        dx -= L.x * rintf(dx * iL.x); dy -= L.y * rintf(dy * iL.y); dz -= L.z * rintf(dz * iL.z);
+        keep = dx*dx + dy*dy + dz*dz < RC * RC;
+      }
+    }
+    unsigned ballot = __ballot_sync(0xffffffff, keep) & groupMask;
+    unsigned mine = ballot >> ((threadIdx.x % 32) & 16);
+    int slot = held + __popc(mine & ((1u << lane) - 1));
+    if (keep) queue[group][slot] = j;
+    held += __popc(mine);
+    __syncwarp();
+    if (__any_sync(0xffffffff, held >= 16)) {
+      bool full = held >= 16;
+      if (full) drain(16);
+      __syncwarp();
+      if (full) {
+        if (lane < held - 16) queue[group][lane] = queue[group][lane + 16];
+        held -= 16;
+      }
+      __syncwarp();
+    }
+  }
+  drain(held);
+  for (int o = 8; o; o >>= 1) {
+    f.x += __shfl_xor_sync(0xffffffff, f.x, o);
+    f.y += __shfl_xor_sync(0xffffffff, f.y, o);
+    f.z += __shfl_xor_sync(0xffffffff, f.z, o);
+  }
+  if (valid && lane == 0) { force[3*i] = f.x; force[3*i+1] = f.y; force[3*i+2] = f.z; }
+}
+
+// The matrix kernel that also writes the entries within `inner2` of the
+// row, in their order, to a pruned matrix: the pruning of a dual list done
+// by the loop that computes the forces, as GROMACS prunes on the first use
+// of a list, with the exact test of MDIR deciding when to prune again.
+__global__ void pruningKernel(int n, int W, const int *counts, const int *index, const float *xs,
+                              const float *qs, const int *ts, const float *A, const float *B, int nt,
+                              float3 L, float3 iL, float inner2, int *countsIn, int *indexIn,
+                              float *force) {
+  int t = blockIdx.x * blockDim.x + threadIdx.x;
+  int i = t / 16, lane = t % 16;
+  unsigned groupMask = 0xffffu << ((threadIdx.x % 32) & 16);
+  bool valid = i < n;
+  float3 f = {0, 0, 0};
+  float3 xi = {0, 0, 0}; float qi = 0; int ti = 0, c = 0;
+  if (valid) { xi = make_float3(xs[3*i], xs[3*i+1], xs[3*i+2]); qi = qs[i]; ti = ts[i]; c = counts[i]; }
+  int rounds = (c + 15) / 16;
+  for (int o = 1; o < 32; o <<= 1) rounds = max(rounds, __shfl_xor_sync(0xffffffff, rounds, o));
+  int kept = 0;
+  for (int r = 0; r < rounds; ++r) {
+    int e = r * 16 + lane;
+    bool keep = false; int j = 0;
+    if (e < c) {
+      j = index[(size_t)i * W + e];
+      float3 xj = {xs[3*j], xs[3*j+1], xs[3*j+2]};
+      float dx = xi.x - xj.x, dy = xi.y - xj.y, dz = xi.z - xj.z;
+      dx -= L.x * rintf(dx * iL.x); dy -= L.y * rintf(dy * iL.y); dz -= L.z * rintf(dz * iL.z);
+      keep = j == i || dx*dx + dy*dy + dz*dz <= inner2;
+      if (j != i) pairForce(xi, qi, ti, xj, qs[j], ts[j], L, iL, A, B, nt, f);
+    }
+    unsigned mine = (__ballot_sync(0xffffffff, keep) & groupMask) >> ((threadIdx.x % 32) & 16);
+    if (keep) indexIn[(size_t)i * W + kept + __popc(mine & ((1u << lane) - 1))] = j;
+    kept += __popc(mine);
+  }
+  for (int o = 8; o; o >>= 1) {
+    f.x += __shfl_xor_sync(0xffffffff, f.x, o);
+    f.y += __shfl_xor_sync(0xffffffff, f.y, o);
+    f.z += __shfl_xor_sync(0xffffffff, f.z, o);
+  }
+  if (valid && lane == 0) { force[3*i] = f.x; force[3*i+1] = f.y; force[3*i+2] = f.z; countsIn[i] = kept; }
+}
+
 int main(int argc, char **argv) {
   if (argc > 2) REACH = atof(argv[2]);
   FILE *fp = fopen(argv[1], "rb");
@@ -483,5 +588,18 @@ int main(int argc, char **argv) {
   for (int i = 0; i < 3 * n; ++i) { num += (f1[i] - f2[i]) * (double)(f1[i] - f2[i]); den += (double)f1[i] * f1[i]; }
   printf("reach %.1f: matrix %.1f us, tiles %.1f us, relative difference of the forces %.2e\n", REACH, tm, tl, std::sqrt(num / den));
   printf("csv,pairs,matrix 16 lanes,%.2f,,%.2f\ncsv,pairs,tiles 8x8 full,%.2f,,%.2f\n", REACH, tm, REACH, tl);
+  double tc = time([&] { compactKernel<<<(16 * n + 127) / 128, 128>>>(n, W, dcounts, dindex, dx, dq, dt, dA, dB, ntypes, L, iL, df2); });
+  cudaMemcpy(f2.data(), df2, 12 * n, cudaMemcpyDeviceToHost);
+  num = 0;
+  for (int i = 0; i < 3 * n; ++i) num += (f1[i] - f2[i]) * (double)(f1[i] - f2[i]);
+  printf("matrix compacted within the cutoff: %.1f us, relative difference %.2e\ncsv,pairs,matrix 16 lanes compacted,%.2f,,%.2f\n", tc, std::sqrt(num / den), REACH, tc);
+  for (float rin : {8.5f, 8.75f, 9.0f}) {
+    if (rin >= REACH) continue;
+    int *dci, *dii; CK(cudaMalloc(&dci, 4 * n)); CK(cudaMalloc(&dii, 4 * index.size()));
+    double tp = time([&] { pruningKernel<<<(16 * n + 127) / 128, 128>>>(n, W, dcounts, dindex, dx, dq, dt, dA, dB, ntypes, L, iL, rin * rin, dci, dii, df2); });
+    double tk = time([&] { matrixKernel<<<(16 * n + 127) / 128, 128>>>(n, W, dci, dii, dx, dq, dt, dA, dB, ntypes, L, iL, df2); });
+    printf("inner %.2f: loop that prunes %.1f us, loop over the inner matrix %.1f us\ncsv,prune,loop that prunes,%.2f,%.2f,%.2f\ncsv,prune,loop over the inner matrix,%.2f,%.2f,%.2f\n", rin, tp, tk, REACH, rin, tp, REACH, rin, tk);
+    cudaFree(dci); cudaFree(dii);
+  }
   return 0;
 }

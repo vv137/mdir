@@ -78,12 +78,15 @@ struct RowLanes {
 /// `counts` and `index` are the neighbor matrix. `box` holds the edge
 /// lengths of the cell, as a vector of the type of the positions, and
 /// `inverse` what `createInverse` returns for it. With `lanes`, a group of
-/// threads shares the row (RowLanes).
+/// threads shares the row (RowLanes). With `outTotals`, the sums of the
+/// particle for its destinations are returned there, in every thread of
+/// the group, and not stored: the caller stores them.
 llvm::SmallVector<mlir::Value>
 emitPairKernel(mlir::OpBuilder &builder, md_exec::PairForOp op,
                mlir::Value counts, mlir::Value index, mlir::Value box,
                mlir::Value inverse, mlir::Value central,
-               mlir::IRMapping &local, const RowLanes *lanes = nullptr);
+               mlir::IRMapping &local, const RowLanes *lanes = nullptr,
+               llvm::SmallVectorImpl<mlir::Value> *outTotals = nullptr);
 
 /// Emits what a loop over tuples does for the particle `particle`: the loop
 /// over the tuples in its row of `incidence`, with the displacements in the
@@ -92,12 +95,14 @@ emitPairKernel(mlir::OpBuilder &builder, md_exec::PairForOp op,
 /// contributions to the global sums, which only the tuples where the
 /// particle is at place 0 make.
 ///
-/// `box`, `inverse`, and `lanes` are as for `emitPairKernel`.
+/// `box`, `inverse`, `lanes`, and `outTotals` are as for `emitPairKernel`;
+/// `outTotals` is for a set that is not disjoint.
 llvm::SmallVector<mlir::Value>
 emitTupleKernel(mlir::OpBuilder &builder, md_exec::TupleForOp op,
                 mlir::Value incidence, mlir::Value box, mlir::Value inverse,
                 mlir::Value particle, mlir::IRMapping &local,
-                const RowLanes *lanes = nullptr);
+                const RowLanes *lanes = nullptr,
+                llvm::SmallVectorImpl<mlir::Value> *outTotals = nullptr);
 
 /// Emits, on the host, the build of the incidence structure of the tuples
 /// that `members` holds, for `size` particles, and returns it in a new

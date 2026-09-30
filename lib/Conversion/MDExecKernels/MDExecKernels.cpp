@@ -124,7 +124,8 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
                                            Value box, Value inverse,
                                            Value central,
                                            IRMapping &local,
-                                           const RowLanes *lanes) {
+                                           const RowLanes *lanes,
+                                           SmallVectorImpl<Value> *outTotals) {
   Location loc = op.getLoc();
   Value positions = op.getPositions();
   Block &kernel = op.getKernel().front();
@@ -241,7 +242,9 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
       storeElement(writer, loc, total, destination, central);
     }
   };
-  if (lanes && numOuts != 0) {
+  if (outTotals) {
+    outTotals->assign(totals.begin(), totals.begin() + numOuts);
+  } else if (lanes && numOuts != 0) {
     Value leader = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq,
                                          lanes->lane, zero);
     Value writes = arith::AndIOp::create(builder, loc, leader, lanes->valid);
@@ -443,7 +446,8 @@ SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
                                             Value incidence, Value box,
                                             Value inverse, Value particle,
                                             IRMapping &local,
-                                            const RowLanes *lanes) {
+                                            const RowLanes *lanes,
+                                            SmallVectorImpl<Value> *outTotals) {
   Location loc = op.getLoc();
   Block &kernel = op.getKernel().front();
   Operation *yield = kernel.getTerminator();
@@ -533,7 +537,9 @@ SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
       storeElement(writer, loc, total, destination, particle);
     }
   };
-  if (lanes && numOuts != 0) {
+  if (outTotals) {
+    outTotals->assign(totals.begin(), totals.begin() + numOuts);
+  } else if (lanes && numOuts != 0) {
     Value leader = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq,
                                          lanes->lane, zero);
     Value writes = arith::AndIOp::create(builder, loc, leader, lanes->valid);
