@@ -34,7 +34,7 @@ follows are in [principles.md](principles.md).
 | Semi-isotropic barostat | Eqs. (9a, 9b) and SI Secs. VI–VII of [[Bernetti2020]](references.md#bernetti2020): strains of the area and of the height from their own pressures and noises, a surface tension, and a frozen height; the kinetic energy per direction, scaling per axis in the Trotter step and in the exact work, the reference of restraints per axis. Validated on a POPC bilayer of Lipid21 from packmol-memgen against GROMACS, and on water, where it must sample what the isotropic barostat does |
 
 The order: leapfrog, then performance. The goal of performance for the
-first milestone is 70% of the rate of GROMACS with CUDA, in mixed
+first milestone is 90% of the rate of GROMACS with CUDA, in mixed
 precision, on each system of the Amber suite (from 23,558 to 1,067,095
 atoms, NVE and NPT) and on the target of D65; the white paper begins when
 it is reached.
@@ -59,7 +59,7 @@ The rates of the first comparison (2026-09-30, ns/day, RTX 3090):
 ## 3. White paper, after the first milestone
 
 A paper that describes MDIR and what the first milestone shows, written
-when the milestone ends and the rates reach 70% of GROMACS across the
+when the milestone ends and the rates reach 90% of GROMACS across the
 systems:
 
 - Every method that MDIR implements, with its equations as implemented
