@@ -23,10 +23,11 @@
 //     margin for the rounding of f32;
 //   - whether a group lies across two places that are not of one chunk (0).
 //
-// The numbers of pairs are those within the reach, tested in f64 here;
-// the matrices of neighbors-matrix-gpu.mlir hold a few more, with a margin
-// beyond the reach for the rounding of f32 (32704 entries are 16352 pairs
-// against 16349).
+// The build widens the reach by 3e-6 of the sum of the edges of the cell,
+// more than the rounding of the positions in f32 can move a distance, as
+// the build of the matrix does: the lists hold the pairs of the matrices of
+// neighbors-matrix-gpu.mlir (32704 entries are 16352 pairs), a few more
+// than those within the reach in f64 (16349).
 
 func.func private @printI64(i64)
 func.func private @printNewline()
@@ -178,8 +179,13 @@ func.func @run(%length: f64, %reach: f64, %exclude: i1) {
   }
   %zero = arith.constant 0 : i64
   %one64 = arith.constant 1 : i64
-  %slack = arith.constant 1.00001 : f64
-  %far = arith.mulf %reach, %slack : f64
+  // The build widens the reach by 3e-6 of the sum of the edges; a pair
+  // within twice that may be there.
+  %edges = arith.constant 3.0 : f64
+  %sum = arith.mulf %length, %edges : f64
+  %tiny = arith.constant 6.0e-6 : f64
+  %margin = arith.mulf %sum, %tiny : f64
+  %far = arith.addf %reach, %margin : f64
   %far2 = arith.mulf %far, %far : f64
   %zero32 = arith.constant 0 : i32
   %one32 = arith.constant 1 : i32
@@ -289,7 +295,7 @@ func.func @main() {
   %yes = arith.constant true
 
   // Seven cells of the reach along each direction.
-  // CHECK:      16349
+  // CHECK:      16352
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
@@ -297,14 +303,14 @@ func.func @main() {
   call @run(%l0, %reach, %no) : (f64, f64, i1) -> ()
 
   // With the excluded pairs (2k, 2k + 1): 4 of them are within the reach.
-  // CHECK-NEXT: 16345
+  // CHECK-NEXT: 16348
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
   call @run(%l0, %reach, %yes) : (f64, f64, i1) -> ()
 
   // A denser cube: the grid of the candidates is 14 cells a side.
-  // CHECK-NEXT: 24385
+  // CHECK-NEXT: 24389
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
@@ -313,7 +319,7 @@ func.func @main() {
   call @run(%l1, %r1, %no) : (f64, f64, i1) -> ()
 
   // A smaller reach in a smaller cube.
-  // CHECK-NEXT: 21976
+  // CHECK-NEXT: 21979
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}

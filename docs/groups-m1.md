@@ -1,6 +1,8 @@
 # Groups of Neighbors for M1: Design
 
-Status: accepted (2026-10-01), D89; stage G1 under way. It replaces the
+Status: accepted (2026-10-01), D89; G1 done, G2 under way (the loop in
+the default mode is in MDIR, behind `neighbor_structure = "GROUPS"`). It
+replaces the
 tile structure of D82 ([tiles-m1.md](tiles-m1.md)), whose prototype did not
 beat the neighbor matrix. The keys in brackets are those of
 [references.md](references.md).
@@ -70,7 +72,24 @@ A bit is cleared for an excluded pair and for an empty place. The build
 may set bits of pairs farther apart than R (Section 5); the loop tests the
 cutoff of each pair.
 
-**Validity.** The test of D80 decides when to build again, unchanged: the
+**Sizes.** The places are at most twice the particles and one chunk (a
+short group leaves at most 63 places of its chunk empty, and a column one
+chunk more). A list holds the entries at later places of the 16 particles
+of its group: for the first groups nearly all their neighbors, whose union
+is about 1.7 times the neighbors of one particle at a reach of 10 Å (a box
+of 2.5 Å at the density of water). The lists hold twice the width of a row
+of the matrix; the first build of JAC with the width of a row found 871
+entries in a list of 736. A build that finds a buffer too small stops the
+run and says which (`mdrtReportGroupsOverflow`).
+
+**Validity.** The build tests distances in f32 against the reach widened
+by 3e-6 of the sum of the edges of the cell, as the build of the matrix
+does: far more than the rounding of the positions to f32 (half an ulp of
+the edge a coordinate) can move a distance, so that every pair within R in
+f64 is in the lists (`test/Runtime/neighbors-groups-gpu.mlir` checks this
+against every pair in f64).
+
+The test of D80 decides when to build again, unchanged: the
 structure is valid while
 2 max_i |x_i − m ⊙ x_ref,i| ≤ min(m) R − r_c. A pair that the list leaves
 out was farther than R apart at the build, and so is farther than r_c now
@@ -131,6 +150,13 @@ D83). Two loops over pairs fuse as before when both run over groups; a
 fused loop whose destinations are not all symmetric or antisymmetric keeps
 the matrix.
 
+**In MDIR** (`convert-md-exec-to-gpu`, `lowerGroupPairFor`): a warp a unit
+of work, as many warps as particles at most, a warp taking the units w,
+w + warps, ...; the sums of a warp go to the scratch of a particle and are
+reduced as those of the matrix. The positions and the fields that the
+kernel reads are gathered in the order of the places first; an empty place
+takes those of particle 0, which no bit reads.
+
 ## 4. What the loop reads
 
 The positions are read in the order of the places, as the matrix reads them
@@ -187,13 +213,33 @@ relative to the first particle of the group, in the minimum image.
 - A pass chooses the kind of each structure and the policy of its loops on
   a device (the kind stays `matrix` on the CPU).
 
+## 6.1 Measured in MDIR
+
+Mixed precision, reach 10 Å (the benchmark settings), RTX 3090 at 300 W,
+one run each, `nsys` (2026-10-01). The loop over pairs of a step (forces
+only) and all the work of the device over the run:
+
+| | Matrix | Groups | Matrix, D90 | Groups, D90 |
+|---|---|---|---|---|
+| Loop over pairs, Cellulose | 2134 µs | 2097 µs | 1856 µs | 1687 µs |
+| Loop over pairs, JAC | 113 µs | 113 µs | 102 µs | 92 µs |
+| The device over 500 steps of Cellulose | 2471 ms | 2081 ms | 2325 ms | 1876 ms |
+| A build of Cellulose | about 1.0 ms in the kernel of the search, 10 builds per 100 steps | about 0.35 ms over its kernels | | |
+
+With the exact `erfcf` the loops are even, as Section 1 found; with the
+approximation of D90 the groups gain 9 % on Cellulose and 10 % on JAC. The
+gain of the whole run comes mostly from the build. In double precision the
+run of `test/Driver/groups-gpu.test` gives the energies of the matrix to
+every digit of the log over 100 steps; JAC under NPT (400 steps) builds as
+often, and its conserved energy drifts as much (−7.5 and −7.7 kcal/mol).
+
 ## 7. Stages
 
 | Stage | What | Checked by |
 |---|---|---|
 | G0 | The build prototyped standalone (`scripts/experiments/neighbor-structures`) against the build of the matrix | Its time on Cellulose and JAC, before it is written as a template |
-| G1 | The compact order of the places (for the matrix as well); the structure and its build on a device; the exchange contracts on `md_exec.pair_for` | The pairs of the list within the cutoff are those of the matrix, on JAC and Cellulose; the matrix in the compact order against the order of cells |
-| G2 | The loop over groups, each pair once, both modes; the cheaper erfc of the direct sum under `fast_math`, with the accuracy of the force near the cutoff checked (it is what lets the loop over groups gain, Section 1) | Forces, energies, and virials against the matrix (to the rounding; to the bit in the deterministic mode, where the matrix sums in fixed point too); conservation over runs |
+| G1, done but the matrix in the compact order | The compact order of the places (for the matrix as well); the structure and its build on a device; the exchange contracts on `md_exec.pair_for` | The pairs of the list within the cutoff are those of the matrix, on JAC and Cellulose; the matrix in the compact order against the order of cells |
+| G2, under way: the default mode and the erfc of D90 done; the deterministic mode to come | The loop over groups, each pair once, both modes; the cheaper erfc of the direct sum under `fast_math`, with the accuracy of the force near the cutoff checked (it is what lets the loop over groups gain, Section 1) | Forces, energies, and virials against the matrix (to the rounding; to the bit in the deterministic mode, where the matrix sums in fixed point too); conservation over runs |
 | G3 | Groups by default on a device for the loops that allow them | The Amber suite against pmemd.cuda and GROMACS |
 | G4 | The reach of the list: a skin of 1 Å, once builds are cheap | Rates and intervals between builds |
 | G5 | The arithmetic of the kernel (a table for the erfc, the order of the entries) | The prototype first |

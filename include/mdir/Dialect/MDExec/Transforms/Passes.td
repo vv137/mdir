@@ -231,6 +231,56 @@ def SimplifyDistance
                            "::mlir::math::MathDialect"];
 }
 
+def Approximate
+    : Pass<"md-exec-approximate", "::mlir::ModuleOp"> {
+  let summary = "Approximates divisions and erfc in the f32 kernels of "
+                "loops (fast_math)";
+  let description = [{
+    The control keyword `fast_math` runs the pass, after
+    `md-exec-assign-precision`. In the kernels of `md_exec.pair_for`,
+    `md_exec.tuple_for`, and `md_exec.particle_for`, in f32:
+
+    - A division may be approximate (`afn`): on a device it becomes
+      `div.approx.f32` or `rcp.approx.f32`, within 2 ulp, instead of the
+      correctly rounded sequence.
+    - `math.erfc(sqrt(y) * c)`, with `c` a positive constant, becomes
+
+      ```text
+      exp(-c² y) · P(t),   t = 1 / (1 + x / 2),   x = sqrt(y) · c,
+      ```
+
+      with P a polynomial of degree 9 fitted to erfc(x) exp(x²) on
+      [0, 6] (`scripts/fit-erfc.py`): the relative error of P in f32 is
+      below 3.3e-7 there, that of `erfcf` a few ulp. The argument of the
+      exponential rounds to f32 as it does in the exponential of the
+      derivative of erfc, which the kernel of a force has already:
+      `exp(y * k)` with `k` within 4 ulp of `-c²` is taken as it is, so the
+      two share it. Beyond 6, erfc(x) < 2.2e-17 and the term does not
+      count. A negative argument cannot match, so the rewrite never sees
+      one.
+
+    In a force of the direct sum of Ewald, the erfc term is a share
+    1 / (1 + 2 x²) of the force factor, so the relative error of the force
+    that the approximation adds is at most that of erfc over 1 + 2 x².
+
+    ```mlir
+    %s = math.sqrt %r2 : f32
+    %x = arith.mulf %s, %beta : f32
+    %e = math.erfc %x : f32
+    ```
+
+    ```mlir
+    %k = arith.mulf %r2, %minus_beta2 : f32
+    %g = math.exp %k : f32
+    %t = arith.divf %one, %d fastmath<afn> : f32   // %d = 1 + x / 2
+    %p = math.fma ...                               // P(t), Horner
+    %e = arith.mulf %g, %p : f32
+    ```
+  }];
+  let dependentDialects = ["::mlir::arith::ArithDialect",
+                           "::mlir::math::MathDialect"];
+}
+
 def AssignPrecision
     : Pass<"md-exec-assign-precision", "::mlir::ModuleOp"> {
   let summary = "Assigns floating-point types to fields and kernels";

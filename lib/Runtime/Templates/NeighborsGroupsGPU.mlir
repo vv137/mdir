@@ -108,9 +108,14 @@ func.func private @mdrt_gpu_build_neighbors_groups(
   %filx = arith.divf %funit, %flx : f32
   %fily = arith.divf %funit, %fly : f32
   %filz = arith.divf %funit, %flz : f32
-  // The reach, a little wider than asked, for the rounding of f32.
-  %slack = arith.constant 1.000001 : f64
-  %reach_wide = arith.mulf %reach, %slack : f64
+  // The reach, wider than asked by more than the rounding of the positions
+  // in f32 can move a distance: a few ulp of the edges of the cell, as for
+  // the matrix, so that every pair within the reach is in the lists (D80).
+  %edges_xy = arith.addf %lx, %ly : f64
+  %edges = arith.addf %edges_xy, %lz : f64
+  %tiny = arith.constant 3.0e-6 : f64
+  %margin = arith.mulf %edges, %tiny : f64
+  %reach_wide = arith.addf %reach, %margin : f64
   %freach = arith.truncf %reach_wide : f64 to f32
 
   // The columns: about 64 particles in a cube of their width.

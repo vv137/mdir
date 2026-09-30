@@ -73,6 +73,8 @@ static std::string getPipeline(const Control &control,
                        : control.precision == Precision::Mixed ? "mixed"
                                                                : "double";
   os << "md-exec-assign-precision{mode=" << mode << "},";
+  if (control.fastMath)
+    os << "md-exec-approximate,canonicalize,cse,";
 
   if (control.target == Target::GPU) {
     // Kernels in f32 look their tables up in f32.
