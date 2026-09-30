@@ -10,7 +10,10 @@
 # RUN: mdir run %t/a.toml > %t/a.log
 # RUN: mdir run %t/b.toml > %t/b.log
 # RUN: FileCheck %s < %t/a.log
-# RUN: mdir run %t/leap.toml | FileCheck %s
+# RUN: mdir run %t/leap.toml > %t/leap.log
+# RUN: FileCheck %s < %t/leap.log
+# RUN: sed -e 's|tau_p       = 2.0|tau_p       = 2.0\nbarostat_work = "FIRST_ORDER"|' %t/a.toml > %t/first.toml
+# RUN: mdir run %t/first.toml | FileCheck %s --check-prefix=FIRST
 # RUN: mdir emit %t/a.toml | FileCheck %s --check-prefix=MODULE
 
 # A pair is taken once, in the minimum image, so the cell must be wider
@@ -35,22 +38,28 @@
 # RUN: grep 'INFO: *2000 ' %t/a.log > %t/a.row
 # RUN: grep 'INFO: *2000 ' %t/b.log > %t/b.row
 # RUN: diff %t/a.row %t/b.row
+# RUN: grep 'INFO: *2000 ' %t/leap.log > %t/leap.row
+# RUN: diff %t/a.row %t/leap.row
 
 # The energy that the thermostat and the barostat exchange with the bath is
 # added to the total energy, and the volume shrinks from 23.2^3 A^3. The
-# energy that the scaling gives the positions is counted to first order in
-# μ − 1, so that the conserved energy drifts as the square of the strain
-# (design-m1.md, Section 11.4), by about 2e-3 of its value here.
+# energy that the scaling gives the positions is that of the scaled
+# positions less that of the positions before, so the conserved energy
+# changes as at constant energy (D77). Counted to first order in μ − 1, as
+# GROMACS does, it drifts as the square of the strain, by about 2e-3 of its
+# value here (design-m1.md, Section 11.4).
 #
 # CHECK:      INFO:      STEP {{.*}}PRESSURE      CONSERVED         VOLUME
 # CHECK-NEXT: INFO:         0         0.0000 {{ *}}[[TOTAL:-[0-9.]+]] {{.*}} [[TOTAL]]     12487.1680
 # CHECK-NEXT: INFO:      1000 {{.*}} {{11[0-9]{3}\.[0-9]+$}}
 # CHECK-NEXT: INFO:      2000 {{.*}} {{11[0-9]{3}\.[0-9]+$}}
-# CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[3-9]}} of its value
+# CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
+# FIRST:      MDIR: the conserved energy changed by {{[0-9.]+}}e-03 of its value
 
 # Leapfrog takes the pressure from the velocities of the time of the
-# positions, which its step of energy returns, and reaches the same volume
-# with the same drift of the conserved energy (D76).
+# positions, which its step of energy returns, couples those, and takes the
+# forces of the scaled positions as velocity Verlet does: without
+# constraints its trajectory is that of velocity Verlet (D76, D77).
 
 # MODULE:      func.func private @mdrtBarostatStrain(
 # MODULE:      func.call @mdrtSetBox(

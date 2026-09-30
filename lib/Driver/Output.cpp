@@ -192,6 +192,9 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
                                     double kinetic, double forceSquare,
                                     double virial) {
   Output &output = *current;
+  if (output.energyPeriod > 0 &&
+      (step - output.firstStep) % output.energyPeriod != 0)
+    return;
   // `kinetic` is that of the velocities at the step. The total energy has
   // it, because that sum varies least.
   // The correction for the dispersion is a number of the volume.

@@ -629,7 +629,8 @@ dyn.program @step(...) attributes {
 
 ### 11.4 The barostat as it is
 
-Stochastic cell rescaling, isotropic, with velocity Verlet (D72):
+Stochastic cell rescaling, isotropic, with velocity Verlet and leapfrog
+(D72, D76, D77):
 
 | Item | Rule |
 |---|---|
@@ -638,7 +639,9 @@ Stochastic cell rescaling, isotropic, with velocity Verlet (D72):
 | The change of the volume | One step of Euler and Maruyama of `dε = −(β_T/τ_p)(P0 − P) dt + √(2 k_B T β_T / (V τ_p)) dW` for ε = ln V [[Bernetti2020]](references.md#bernetti2020), over the period `Δt_p`: `Δε = −f (P0 − P) + √(2 k_B T f c / V) R`, `f = β_T Δt_p / τ_p`, pressures in bar, `c = 16.6053906717` bar nm³ mol/kJ, T that of the bath. R is the normal number of stream 1 of the step (A13), drawn on the host (`mdrtBarostatStrain`). |
 | Scaling | The positions of every particle and the edges of the cell by `μ = exp(Δε/3)`, the velocities by `1/μ`; a group that the constraints keep rigid (a water of SETTLE, a group of SHAKE) moves with its center of mass and keeps its shape, since stretched bonds would be taken back by the constraints of the next step with a change of the velocities that heats the system. Virtual sites are placed again in the next step |
 | The cell | Kept in memory on the host, where each iteration of a loop takes it, and the steps that follow a loop of periods in the same iteration take it again; the neighbor structures, whose test of validity compares the cell, are built again; the influence function of PME follows (pme-m1.md); the log and the trajectory take the new edges (`mdrtSetBox`); a checkpoint keeps them, and a restart takes them. A run stops if an edge becomes shorter than twice the cutoff, below which the minimum image misses pairs; a run that begins so is rejected |
-| The conserved energy | Takes away what the scaling gives: `−(μ − 1) tr W_g`, the change of the potential energy to first order, and `(1/μ² − 1) K`, that of the kinetic energy, exactly. `W_g`, the virial of the rigid groups that move as wholes, is the W of the pressure above, which has the virial of the constraints, with twice the kinetic energy of the motion within the groups, `Σ ½ m |v − V|²` over each (the virial of the forces within a rigid group is minus that). What is left is the second order, `½ (μ − 1)² d²U/dμ²`, whose mean over the noise of Δε is proportional to its variance, and so to f: a drift that neither the time step nor the period of coupling reduces, only `tau_p`. On the mixture of `barostat.test` at 2 fs, 1.8 × 10⁻³ of the energy over 8 ps with `tau_p = 2`, 4.4 times less with `tau_p = 8`; on 1394 OPC waters with PME at 300 K and 1 bar, 2.1 kcal/mol per ps with `tau_p = 2` and 0.52 with `tau_p = 8`. The same runs at constant volume keep the conserved energy to 10⁻⁶ and 10⁻⁵ |
+| The scaled positions | With `barostat_work = "EXACT"`, the default, the virtual sites are placed on the scaled positions, and those are evaluated in the new cell: their energy gives the work of the scaling, and their forces are those that the next step begins with (D77). With `"FIRST_ORDER"`, the next step begins with the forces of the positions before the scaling, and places the sites after its drift |
+| The conserved energy, exact | Takes away what the scaling gives: `U(x′) − U(x)`, the potential energy of the scaled positions less that of the positions before, and `(1/μ² − 1) K`, the change of the kinetic energy of the velocities it scales. Between scalings the dynamics is that of constant energy, so the conserved energy changes as there. On the mixture of `barostat.test`, 7.4 × 10⁻⁶ of its value over 8 ps instead of 2.2 × 10⁻³; on tri-alanine in 1218 OPC waters at 1 bar, 300 K, `tau_p = 2`, 2 fs, on a GPU in mixed precision (`examples/ala3`), 0.011 kcal/mol per ps instead of 2.1. The evaluation costs 0.13 ms per step at a period of coupling of 10 steps there, 20% of the rate (316 to 253 ns/day) |
+| The conserved energy, first order | Takes away `−(μ − 1) tr W_g`, the change of the potential energy to first order, as GROMACS does, and `(1/μ² − 1) K`, that of the kinetic energy, exactly. `W_g`, the virial of the rigid groups that move as wholes, is the W of the pressure above, which has the virial of the constraints, with twice the kinetic energy of the motion within the groups, `Σ ½ m |v − V|²` over each (the virial of the forces within a rigid group is minus that). What is left is the second order, `½ (μ − 1)² d²U/dμ²`, whose mean over the noise of Δε is proportional to its variance, and so to f: a drift that neither the time step nor the period of coupling reduces, only `tau_p`. On the mixture of `barostat.test` at 2 fs, 1.8 × 10⁻³ of the energy over 8 ps with `tau_p = 2`, 4.4 times less with `tau_p = 8`; on 1394 OPC waters with PME at 300 K and 1 bar, 2.1 kcal/mol per ps with `tau_p = 2` and 0.52 with `tau_p = 8`. The same runs at constant volume keep the conserved energy to 10⁻⁶ and 10⁻⁵ |
 | Parameters of `[ensemble]` | `ensemble = "NPT"`, `barostat = "BERNETTI-BUSSI"`, `pressure` in atm, `tau_p` in ps (5 by default), `compressibility` in 1/atm (4.5 × 10⁻⁵ /bar by default); `isotropy = "ISO"` only |
 
 ## 12. A cell that changes
@@ -1018,7 +1021,7 @@ What each quantity is taken from:
 | Energy, virial, pressure in the log | `x_{n+1}` and `v_{n+1}` of the step with energies | The same `x_{n+1}` and `v_{n+1}` |
 | Virial of the constraints | ½ of the impulses of the positions (`G = 2mΔ/dt²` for `x' = x_n + dt v_n + dt² f_n/2m`) and ½ of those of the velocities (Section 9) | The same: the step with energies drifts from `P(v_{n−½} + h f_n/m)`, the form above, so `Δ` has the same meaning. The plain step, whose drift is a whole kick, computes no virial |
 | Thermostat alone | Scales `v_n`, with its kinetic energy | Scales `v_{n−½}`, with its kinetic energy, as GROMACS does with leapfrog |
-| Barostat (and the thermostat with it) | Pressure from `v_{n+1}`; scales `v_{n+1}` by `α/μ` | Pressure from `v_{n+1}`; scales `v_{n+1}` by `α/μ` and stores `v'_{n+½} = v'_{n+1} − h f_{n+1}/m` |
+| Barostat (and the thermostat with it) | Pressure from `v_{n+1}`; scales `x_{n+1}` by `μ` and `v_{n+1}` by `α/μ`; carries `f′ = F(x′_{n+1})` (D77) | Pressure from `v_{n+1}`; scales `x_{n+1}` by `μ` and `v_{n+1}` by `α/μ`; carries `f′` and stores `v'_{n+½} = v'_{n+1} − h f′/m`, so that the next step is that of velocity Verlet |
 
 The barostat couples the velocities of the time of the positions: scaling
 the stored `v_{n+½}` by `1/μ` would leave the half kick `h f_{n+1}/m` in
@@ -1027,8 +1030,10 @@ the stored `v_{n+½}` by `1/μ` would leave the half kick `h f_{n+1}/m` in
 counts. That term follows `dU/dt`; while the barostat compresses the target
 of D65 by a fifth over 10 ps, the conserved energy drifted by 4.3 × 10⁻³
 of its value with it, and by 1.3 × 10⁻³ without it, as with velocity
-Verlet (1.4 × 10⁻³). The forces that leapfrog carries across the scaling
-are those of the positions before it, as with velocity Verlet.
+Verlet (1.4 × 10⁻³), with the work counted to first order. With the exact
+work (D77) both integrators carry the forces of the scaled positions, and
+without constraints the trajectory of leapfrog at constant pressure is that
+of velocity Verlet to the bit (`test/Driver/barostat.test`).
 
 The stored velocities are half a kick behind the ones the coupling leaves
 without the motion of the center of mass. The forces of PME do not sum to

@@ -211,12 +211,21 @@ private:
                                    StringRef result, StringRef virial = "",
                                    StringRef virialResult = "");
 
-  /// Emits the coupling of the velocities `velocities` at the end of the
-  /// step `step`: the removal of the motion of the center of mass and the
-  /// thermostat. Returns the name of the velocities after it.
-  std::pair<std::string, std::string>
-  emitCoupling(StringRef indent, StringRef positions, StringRef velocities,
-               StringRef tag, StringRef step, StringRef trace);
+  /// What a coupling leaves: the positions, the velocities, and the forces
+  /// of the positions.
+  struct Coupled {
+    std::string positions, velocities, forces;
+  };
+  /// Emits the coupling at the end of the step `step` of the positions
+  /// `positions`, the velocities `velocities`, and the forces `forces`,
+  /// whose potential energy is `energy` and the trace of whose virial is
+  /// `trace`: the removal of the motion of the center of mass, the
+  /// thermostat, and the barostat, which with the exact work evaluates the
+  /// scaled positions and returns their forces (D77).
+  Coupled emitCoupling(StringRef indent, StringRef positions,
+                       StringRef velocities, StringRef forces,
+                       StringRef energy, StringRef tag, StringRef step,
+                       StringRef trace);
 
   /// The arguments that pass the fields of the parameters on: their
   /// declarations, their values, and their types, each after a comma.
@@ -288,7 +297,9 @@ private:
   };
   std::vector<Level> levels;
   /// The number of steps between two energies.
-  int64_t stepsPerEnergy = 0;
+  /// Whether the frames are written at the ends of the intervals between
+  /// energies, which have their period (Control::getEnergyLoopPeriod).
+  bool framesAtEnergies = false;
 };
 
 } // namespace
@@ -2643,17 +2654,20 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
     // Verlet, and the energy that the coupling gives is that which the log
     // counts (D76).
     auto getCoupled = [&](StringRef x, StringRef v, StringRef f,
-                          StringRef trace, StringRef current = "") {
-      auto [positions, velocities] = emitCoupling(
-          inner, x, current.empty() ? v : current, here, "%step" + here,
-          trace);
+                          StringRef energy, StringRef trace,
+                          StringRef current = "") {
+      Coupled coupled =
+          emitCoupling(inner, x, current.empty() ? v : current, f, energy,
+                       here, "%step" + here, trace);
+      std::string velocities = coupled.velocities;
       if (!current.empty()) {
         std::string behind = "%vh" + here;
-        os << inner << behind << " = dyn.kick " << velocities << ", " << f
-           << ", " << massName << ", %half_back : !vec\n";
+        os << inner << behind << " = dyn.kick " << velocities << ", "
+           << coupled.forces << ", " << massName
+           << ", %half_back : !vec\n";
         velocities = behind;
       }
-      return positions + ", " + velocities + ", " + f.str();
+      return coupled.positions + ", " + velocities + ", " + coupled.forces;
     };
     bool couplesBelow = levels[level + 1].name == "couple";
 
@@ -2677,8 +2691,9 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         trace = "%trk" + here;
         emitTrace(os, trace, "%wk" + here, inner);
         emitStep();
-        std::string coupled = getCoupled("%xk" + here, "%vk" + here,
-                                         "%fk" + here, trace, current);
+        std::string coupled =
+            getCoupled("%xk" + here, "%vk" + here, "%fk" + here,
+                       "%uk" + here, trace, current);
         os << inner << "scf.yield " << coupled << " : " << state << "\n";
         os << indent << "}\n";
         cellName = outerCell;
@@ -2693,7 +2708,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
            << getFieldTypes() << ") -> (!vec, !vec, !vec)\n";
       emitStep();
       std::string coupled =
-          getCoupled("%xk" + here, "%vk" + here, "%fk" + here, "");
+          getCoupled("%xk" + here, "%vk" + here, "%fk" + here, "", "");
       os << inner << "scf.yield " << coupled << " : " << state << "\n";
       os << indent << "}\n";
       cellName = outerCell;
@@ -2750,9 +2765,15 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
          << ", %u, %k, %g, %tr) : (i64, f64, f64, f64, f64) -> ()\n";
       std::string yielded =
           couplesBelow
-              ? getCoupled("%xl", "%vl", "%fl", "%tr",
+              ? getCoupled("%xl", "%vl", "%fl", "%u", "%tr",
                            isLeapfrog() && control.barostat ? "%vn" : "")
               : getValues("l");
+      // The frame of the positions that the interval leaves, as a loop
+      // over frames writes them.
+      if (framesAtEnergies)
+        os << inner << "mdrt.host_call @mdrtWriteFrame(%step" << here << ", "
+           << StringRef(yielded).split(',').first << ", " << idName
+           << ") : (i64, !vec, !ids)\n";
       os << inner << "scf.yield " << yielded << " : " << state << "\n";
     } else {
       if (current.name == "frame") {
@@ -2791,10 +2812,12 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
   }
 }
 
-std::pair<std::string, std::string>
+Builder::Coupled
 Builder::emitCoupling(StringRef indent, StringRef positions,
-                      StringRef velocities, StringRef tag, StringRef step,
+                      StringRef velocities, StringRef forces,
+                      StringRef energy, StringRef tag, StringRef step,
                       StringRef trace) {
+  std::string newForces = forces.str();
   bool removesMotion = control.comPeriod > 0;
   std::string t = tag.str();
   if (removesMotion) {
@@ -2890,10 +2913,12 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
          << ", %box_memory[%c_edge" << k << "] : memref<3xf64>\n";
     os << indent << "func.call @mdrtSetBox(%bn" << t << "_0, %bn" << t
        << "_1, %bn" << t << "_2) : (f64, f64, f64) -> ()\n";
-    // The energy that the scaling gives the system: to first order in the
-    // positions −(μ − 1) tr W, with W the sum of d (x) K over the pairs
-    // and the virials of the constant terms, and exactly in the
-    // velocities (1/μ² − 1) K.
+    // The energy that the scaling gives the system: exactly in the
+    // velocities, (1/μ² − 1) K, and in the positions either exactly, from
+    // the energy of the scaled positions (below), or to first order,
+    // −(μ − 1) tr W, with W the sum of d (x) K over the pairs and the
+    // virials of the constant terms.
+    bool exact = control.exactBarostatWork;
     std::string after = control.thermostat ? "%kn" + t : kinetic;
     // The groups that the constraints keep rigid move with their centers
     // of mass (below). Their virial is W with twice the kinetic energy of
@@ -2906,7 +2931,7 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
         ("%r" + StringRef(fieldPrefix).drop_front(2)).str();
     std::string inner = (indent + "  ").str();
     std::string groupTrace = trace.str();
-    for (const Program::TupleSet *set : groups) {
+    for (const Program::TupleSet *set : exact ? decltype(groups)() : groups) {
       unsigned count = set->arity - 1;
       std::string arguments = "%vs_r: vector<3xf64>, ";
       for (unsigned k = 0; k <= count; ++k)
@@ -2947,22 +2972,25 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
       groupTrace = next;
     }
     os << indent << "%bm1" << t << " = arith.subf %c_unit, %mu" << t
-       << " : f64\n"
-       << indent << "%bwt" << t << " = arith.addf " << groupTrace << ", %bwc" << t
-       << " : f64\n"
-       << indent << "%bwork" << t << " = arith.mulf %bm1" << t << ", %bwt"
-       << t << " : f64\n"
-       << indent << "%bmi2" << t << " = arith.mulf %muinv" << t << ", %muinv"
+       << " : f64\n";
+    if (!exact)
+      os << indent << "%bwt" << t << " = arith.addf " << groupTrace
+         << ", %bwc" << t << " : f64\n"
+         << indent << "%bwork" << t << " = arith.mulf %bm1" << t << ", %bwt"
+         << t << " : f64\n";
+    os << indent << "%bmi2" << t << " = arith.mulf %muinv" << t << ", %muinv"
        << t << " : f64\n"
        << indent << "%bmi21" << t << " = arith.subf %bmi2" << t
        << ", %c_unit : f64\n"
        << indent << "%bdk" << t << " = arith.mulf %bmi21" << t << ", " << after
-       << " : f64\n"
-       << indent << "%bgain" << t << " = arith.addf %bwork" << t << ", %bdk"
-       << t << " : f64\n"
-       << indent << "%btake" << t << " = arith.subf " << bath << ", %bgain"
-       << t << " : f64\n";
-    bath = "%btake" + t;
+       << " : f64\n";
+    if (!exact) {
+      os << indent << "%bgain" << t << " = arith.addf %bwork" << t << ", %bdk"
+         << t << " : f64\n"
+         << indent << "%btake" << t << " = arith.subf " << bath << ", %bgain"
+         << t << " : f64\n";
+      bath = "%btake" + t;
+    }
     newPositions = "%xc" + t;
     os << indent << newPositions << " = md.map_particles gather(" << positions
        << " : !vec) {\n"
@@ -3022,6 +3050,54 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
          << indent << "} : !vec\n";
       newPositions = moved;
     }
+    if (exact) {
+      // The scaled positions in the new cell, with the virtual sites placed
+      // on their atoms, and their energy and forces, which the next step
+      // takes: the change of the potential energy is counted exactly, and
+      // no step begins with the forces of other positions (D77).
+      std::string cell = "%bcell" + t;
+      os << indent << cell << " = md.orthorhombic_cell %bn" << t << "_0, %bn"
+         << t << "_1, %bn" << t << "_2\n";
+      std::string outerCell = cellName, outerScale = scaleName;
+      cellName = cell;
+      if (scalesReference()) {
+        scaleName = "%bscale" + t;
+        os << indent << scaleName << " = arith.divf %bn" << t
+           << "_0, %rest_edge : f64\n";
+      }
+      if (hasSites()) {
+        std::string placed = "%xcs" + t;
+        emitPlaceSites(indent, newPositions, placed, relations);
+        newPositions = placed;
+      }
+      std::string held = hasRestraints() ? "p" : "";
+      std::string raw = hasSites() ? "e" : "";
+      std::string u = "%bu" + t, f = "%bf" + t, w = "%bw" + t + "_";
+      os << indent << u << held << ", " << f << held << raw << ", " << w
+         << held << raw << " = md.evaluate @energy(" << newPositions << ", "
+         << cell << getFieldValues(fieldPrefix) << ")\n"
+         << indent << "    request [energy, forces, virial]\n"
+         << indent << "    : (!vec, !md.cell" << getFieldTypes()
+         << ") -> (f64, !vec, vector<9xf64>)\n";
+      std::string virial = w + held;
+      if (hasSites())
+        virial = emitSpreadSites(indent, newPositions, f + held + "e",
+                                 f + held, relations, w + held + "e",
+                                 w + held);
+      if (hasRestraints())
+        emitRestraints(indent, newPositions, fieldPrefix, f + "p", f,
+                       u + "p", u, virial, w);
+      cellName = outerCell;
+      scaleName = outerScale;
+      newForces = f;
+      os << indent << "%bdu" << t << " = arith.subf " << u << ", " << energy
+         << " : f64\n"
+         << indent << "%bgain" << t << " = arith.addf %bdu" << t << ", %bdk"
+         << t << " : f64\n"
+         << indent << "%btake" << t << " = arith.subf " << bath << ", %bgain"
+         << t << " : f64\n";
+      bath = "%btake" + t;
+    }
   }
   os << indent << "func.call @mdrtAddBath(" << bath << ") : (f64) -> ()\n";
   os << indent << "%vc" << t << " = md.map_particles gather(" << velocities
@@ -3049,7 +3125,7 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
   }
   os << indent << "  md.yield " << value << " : vector<3xf64>\n"
      << indent << "} : !vec\n";
-  return {newPositions, "%vc" + t};
+  return {newPositions, "%vc" + t, newForces};
 }
 
 void Builder::emitRestraints(StringRef indent, StringRef x,
@@ -3803,7 +3879,11 @@ void Builder::setSchedule() {
     levels.push_back({"segment", steps / control.checkpointPeriod});
     steps = control.checkpointPeriod;
   }
-  if (control.framePeriod > 0) {
+  // Frames more frequent than energies are written at the end of each
+  // interval between energies, which then has their period.
+  int64_t energyPeriod = control.getEnergyLoopPeriod();
+  framesAtEnergies = energyPeriod != control.energyPeriod;
+  if (control.framePeriod > 0 && !framesAtEnergies) {
     levels.push_back({"frame", steps / control.framePeriod});
     steps = control.framePeriod;
   }
@@ -3813,10 +3893,9 @@ void Builder::setSchedule() {
   // interval between energies leaves the last period to the interval,
   // which ends it with its step of energy.
   int64_t coupling = control.getCouplingPeriod();
-  if (control.energyPeriod > 0) {
-    levels.push_back({"energy", steps / control.energyPeriod});
-    steps = control.energyPeriod;
-    stepsPerEnergy = steps;
+  if (energyPeriod > 0) {
+    levels.push_back({"energy", steps / energyPeriod});
+    steps = energyPeriod;
     if (coupling > 0) {
       levels.push_back({"couple", steps / coupling - 1});
       levels.push_back({"step", coupling - 1});

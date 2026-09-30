@@ -65,6 +65,9 @@ struct Output {
   /// The step and the time that the run begins with.
   int64_t firstStep = 0;
   double firstTime = 0.0;
+  /// The steps between the rows of the log; energies computed between
+  /// them, at more frequent frames, are not shown.
+  int64_t energyPeriod = 0;
   double timestep = 0.0;
   double degreesOfFreedom = 0.0;
   /// The volume of the cell, in nm^3, and the edges, which a barostat

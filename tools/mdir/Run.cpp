@@ -541,6 +541,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   output.state = program->state;
   output.force = program->force;
   output.firstStep = firstStep;
+  output.energyPeriod = control->energyPeriod;
   output.firstTime = firstTime;
   output.timestep = control->timestep;
   output.couples = control->getCouplingPeriod() > 0;

@@ -526,8 +526,10 @@ Error Reader::readDynamics(const toml::table &table) {
                 "neighbor structure is rebuilt when it is no longer valid");
 
   // Each period is a multiple of the one inside it: the loops of the run
-  // nest, and a frame or a checkpoint is written where an interval between
-  // energies ends.
+  // nest, and a checkpoint is written where an interval between frames and
+  // one between energies ends. Frames and energies nest either way: if
+  // frames are the more frequent, the energies are computed at each frame
+  // and the log shows those of its period.
   auto checkMultiple = [&](StringRef outer, int64_t large, StringRef inner,
                            int64_t small) -> Error {
     if (large == 0 || small == 0 || large % small == 0)
@@ -540,9 +542,16 @@ Error Reader::readDynamics(const toml::table &table) {
     return fail(table, "'" + outer + "' is not a multiple of '" + inner +
                            "'" + hint);
   };
-  if (Error error = checkMultiple("crdout_period", control.framePeriod,
-                                  "eneout_period", control.energyPeriod))
+  if (control.framePeriod >= control.energyPeriod ||
+      control.framePeriod == 0) {
+    if (Error error = checkMultiple("crdout_period", control.framePeriod,
+                                    "eneout_period", control.energyPeriod))
+      return error;
+  } else if (Error error =
+                 checkMultiple("eneout_period", control.energyPeriod,
+                               "crdout_period", control.framePeriod)) {
     return error;
+  }
   if (Error error = checkMultiple("rstout_period", control.checkpointPeriod,
                                   "crdout_period", control.framePeriod))
     return error;
@@ -661,7 +670,8 @@ Error Reader::readEnsemble(const toml::table &table) {
   if (Error error = checkKeywords(table, "ensemble",
                                   {"ensemble", "temperature", "thermostat",
                                    "tau_t", "barostat", "pressure", "tau_p",
-                                   "compressibility", "isotropy"},
+                                   "compressibility", "isotropy",
+                                   "barostat_work"},
                                   {{"gamma_t", "M1"}}))
     return error;
   int ensemble = 0;
@@ -677,7 +687,8 @@ Error Reader::readEnsemble(const toml::table &table) {
                        "\"BERNETTI-BUSSI\"', the barostat of M1");
   if (ensemble != 2 && barostat != 0)
     return fail(table, "a barostat needs 'ensemble = \"NPT\"'");
-  for (StringRef key : {"pressure", "tau_p", "compressibility", "isotropy"})
+  for (StringRef key : {"pressure", "tau_p", "compressibility", "isotropy",
+                        "barostat_work"})
     if (ensemble != 2 && table.contains(std::string_view(key)))
       return fail(*table.get(std::string_view(key)),
                   "'" + key + "' is for 'ensemble = \"NPT\"'");
@@ -688,6 +699,10 @@ Error Reader::readEnsemble(const toml::table &table) {
     return error;
   if (Error error =
           readPositive(table, "compressibility", control.compressibility))
+    return error;
+  if (Error error = readChoice<bool>(table, "barostat_work",
+                                     control.exactBarostatWork,
+                                     {{"EXACT", true}, {"FIRST_ORDER", false}}))
     return error;
   int isotropy = 0;
   if (Error error = readChoice<int>(table, "isotropy", isotropy,
@@ -1114,6 +1129,10 @@ barostat    = "BERNETTI-BUSSI"  # stochastic cell rescaling, with NPT
 pressure    = 1.0               # bar
 tau_p       = 2.0               # ps
 # compressibility = 4.5e-5      # 1/bar
+# barostat_work = "EXACT"       # EXACT: the energy of each scaling from
+#                               # the scaled positions, whose forces the
+#                               # next step takes; FIRST_ORDER: from the
+#                               # virial, as GROMACS does
 
 [constraints]
 rigid_bond = true               # SHAKE and RATTLE on the bonds of hydrogen

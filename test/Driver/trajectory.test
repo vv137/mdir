@@ -9,6 +9,23 @@
 # RUN: od -A d -t d4 -N 24 %t.dcd | FileCheck %s --check-prefix=HEADER
 # RUN: od -A d -c -j 4 -N 4 %t.dcd | FileCheck %s --check-prefix=TAG
 # RUN: wc -c < %t.dcd | FileCheck %s --check-prefix=SIZE
+#
+# Frames more frequent than the energies: the energies are computed at
+# each frame and the log shows those of its period. The frames are those
+# of the run above, bit for bit.
+#
+# RUN: sed -e 's|Inputs/|%S/Inputs/|' \
+# RUN:     -e 's|eneout_period = 50|eneout_period = 100\ncrdout_period = 50|' \
+# RUN:     %S/mixture.toml > %t.sparse.toml
+# RUN: echo '[output]' >> %t.sparse.toml
+# RUN: echo 'dcdfile = "%t.sparse.dcd"' >> %t.sparse.toml
+# RUN: mdir run %t.sparse.toml | FileCheck %s --check-prefix=SPARSE
+# RUN: cmp %t.dcd %t.sparse.dcd
+
+# SPARSE:      INFO:         0         0.0000
+# SPARSE-NEXT: INFO:       100         0.4000
+# SPARSE-NEXT: INFO:       200         0.8000
+# SPARSE-NEXT: MDIR:
 
 # CHECK:      INFO:        25         0.1000
 # CHECK-NEXT: INFO:        50         0.2000

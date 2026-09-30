@@ -164,6 +164,12 @@ struct Control {
   double pressure = 1.0;
   double tauP = 5.0;
   double compressibility = 4.5e-5 * 1.01325;
+  /// Whether the barostat counts the energy that a scaling gives the
+  /// positions exactly, from the potential energy of the scaled positions,
+  /// whose forces the next step then takes; or to first order in the
+  /// strain from the virial, as GROMACS does, keeping the forces of the
+  /// positions before the scaling (D77).
+  bool exactBarostatWork = true;
   int64_t barostatPeriod = 0;
 
   /// The interval at which the velocities are coupled: the removal of the
@@ -172,6 +178,14 @@ struct Control {
   /// The two periods are equal where both are not 0.
   int64_t getCouplingPeriod() const {
     return thermostatPeriod ? thermostatPeriod : comPeriod;
+  }
+  /// The steps between the energies that the run computes: those of the
+  /// log, or those of the frames if they are more frequent, of which the
+  /// log then shows every energyPeriod / framePeriod-th.
+  int64_t getEnergyLoopPeriod() const {
+    if (framePeriod > 0 && energyPeriod > 0 && framePeriod < energyPeriod)
+      return framePeriod;
+    return energyPeriod;
   }
 
   // [[restraints]]
