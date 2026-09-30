@@ -76,3 +76,9 @@ systems:
 
 Every citation is checked against its source (docs/references.md), and the
 figures are generated from the logs by scripts in the repository.
+
+## 4. Later (TODO)
+
+| Item | Notes |
+|---|---|
+| A Python API whose buffers follow DLPack | The state (positions, velocities, forces) and the fields shared with frameworks such as PyTorch and JAX without copies, through `__dlpack__` and `__dlpack_device__`, in both directions (for example forces from a learned potential into a step). To decide: the order of the particles when the run keeps them in the order of their positions (a permuted view, or the numbers of the particles alongside), the lifetime of a buffer that the caching allocator of the runtime owns, the stream on which a consumer may read, and the types of the mixed mode (forces in `f32`, the state in `f64`) |
