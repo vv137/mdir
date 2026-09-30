@@ -54,8 +54,8 @@ func.func @kick(%v: memref<?x3xf64, 1>, %f: memref<?x3xf32, 1>, %dt: f64) {
 func.func @forces(%x: memref<?x3xf64, 1>, %f: memref<?x3xf64, 1>,
                   %a: memref<?xf64, 1>, %b: memref<?xf64, 1>,
                   %cell: !md.cell, %n: index) -> f64 {
-  // CHECK:      %[[CELL:[a-z0-9_]+]] = gpu.alloc () : memref<1xf64, 1>
-  // CHECK:      %[[HOST:[a-z0-9_]+]] = memref.alloca() : memref<1xf64>
+  // CHECK:      %[[CELL:[a-z0-9_]+]] = gpu.alloc () : memref<1024xf64, 1>
+  // CHECK:      %[[HOST:[a-z0-9_]+]] = memref.alloca() : memref<1024xf64>
   // CHECK:      %[[COUNTS:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?xi32, 1>
   // CHECK:      %[[INDEX:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}) : memref<?x?xi32, 1>
   // CHECK:      %[[REFERENCE:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?x3xf64, 1>
@@ -252,8 +252,8 @@ func.func @ordered(%x: memref<?x3xf64, 1>, %ids: memref<?xi32, 1>,
 //
 // CHECK-LABEL: func.func @momentum(
 // CHECK-SAME:    %[[V:[a-z0-9]+]]: memref<?x3xf64, 1>, %[[A:[a-z0-9]+]]: memref<?x3xf64, 1>, %[[B:[a-z0-9]+]]: memref<?x3xf64, 1>)
-// CHECK:         %[[CELL:[a-z0-9_]+]] = gpu.alloc () : memref<3xf64, 1>
-// CHECK:         %[[HOST:[a-z0-9_]+]] = memref.alloca() : memref<3xf64>
+// CHECK:         %[[CELL:[a-z0-9_]+]] = gpu.alloc () : memref<1024xf64, 1>
+// CHECK:         %[[HOST:[a-z0-9_]+]] = memref.alloca() : memref<1024xf64>
 // CHECK:         gpu.launch
 // CHECK:           memref.load %[[V]][
 // CHECK:           memref.store %{{[0-9]+}}, %[[A]][%{{[0-9]+}}, %{{[a-z0-9_]+}}]
@@ -290,8 +290,8 @@ func.func @momentum(%v: memref<?x3xf64, 1>, %a: memref<?x3xf64, 1>,
 //
 // CHECK-LABEL: func.func @together(
 // CHECK-SAME:    %[[V:[a-z0-9]+]]: memref<?x3xf64, 1>, %[[A:[a-z0-9]+]]: memref<?xf64, 1>, %[[B:[a-z0-9]+]]: memref<?xf64, 1>, %[[C:[a-z0-9]+]]: memref<?x9xf64, 1>, %[[D:[a-z0-9]+]]: memref<?x9xf64, 1>)
-// CHECK:         %[[CELL:[a-z0-9_]+]] = gpu.alloc () : memref<10xf64, 1>
-// CHECK:         %[[HOST:[a-z0-9_]+]] = memref.alloca() : memref<10xf64>
+// CHECK:         %[[CELL:[a-z0-9_]+]] = gpu.alloc () : memref<1024xf64, 1>
+// CHECK:         %[[HOST:[a-z0-9_]+]] = memref.alloca() : memref<1024xf64>
 // CHECK:         gpu.launch
 // CHECK:           memref.store %{{[0-9]+}}, %[[A]][
 // CHECK:           memref.store %{{[0-9]+}}, %[[C]][
@@ -333,6 +333,42 @@ func.func @together(%v: memref<?x3xf64, 1>, %a: memref<?xf64, 1>,
   } -> f64, vector<9xf64>
   return %k, %w : f64, vector<9xf64>
 }
+
+// Two sums that the host needs only where the function returns: each has
+// slots of its own in the buffer of results, and one copy brings both.
+//
+// CHECK-LABEL: func.func @deferred(
+// CHECK:         %[[CELL:[a-z0-9_]+]] = gpu.alloc () : memref<1024xf64, 1>
+// CHECK:         %[[HOST:[a-z0-9_]+]] = memref.alloca() : memref<1024xf64>
+// CHECK:         gpu.launch
+// CHECK:         gpu.launch
+// CHECK:         gpu.launch
+// CHECK-NOT:     gpu.memcpy
+// CHECK:         gpu.launch
+// CHECK:         gpu.launch
+// CHECK:         gpu.launch
+// CHECK:         gpu.memcpy async [%{{[0-9]+}}] %[[HOST]], %[[CELL]]
+// CHECK-NOT:     gpu.memcpy
+// CHECK:         return
+func.func @deferred(%v: memref<?x3xf64, 1>, %a: memref<?xf64, 1>,
+                    %b: memref<?xf64, 1>, %c: memref<?xf64, 1>,
+                    %d: memref<?xf64, 1>) -> (f64, f64) {
+  %zero = arith.constant 0.0 : f64
+  %k = md_exec.particle_for ins(%v : memref<?x3xf64, 1>) reduce(%zero : f64)
+      scratch(%a, %b : memref<?xf64, 1>, memref<?xf64, 1>) {
+  ^bb0(%v_i: vector<3xf64>):
+    %x = vector.extract %v_i[0] : f64 from vector<3xf64>
+    md_exec.yield %x : f64
+  } -> f64
+  %l = md_exec.particle_for ins(%v : memref<?x3xf64, 1>) reduce(%zero : f64)
+      scratch(%c, %d : memref<?xf64, 1>, memref<?xf64, 1>) {
+  ^bb0(%v_i: vector<3xf64>):
+    %y = vector.extract %v_i[1] : f64 from vector<3xf64>
+    md_exec.yield %y : f64
+  } -> f64
+  return %k, %l : f64, f64
+}
+
 
 // The template for devices is in the module.
 //

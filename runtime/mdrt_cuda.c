@@ -313,6 +313,23 @@ void mgpuEventRecord(CUevent event, CUstream stream) {
   Memory
   ===----------------------------------------------------------------------===*/
 
+/* Memory of the device is kept for reuse when it is freed. All work goes
+   to one stream, in order, so a block that is freed may be handed to work
+   issued after the free without waiting: that work runs after the work that
+   used the block. Freeing memory with the driver would wait for the device,
+   and a build of a neighbor structure frees a dozen blocks. The live blocks
+   are recorded with their sizes, and the free blocks are reused for
+   requests of the same size. */
+#define MAX_BLOCKS 4096
+struct Block {
+  CUdeviceptr pointer;
+  uint64_t size;
+};
+static struct Block liveBlocks[MAX_BLOCKS];
+static int numLive = 0;
+static struct Block freeBlocks[MAX_BLOCKS];
+static int numFree = 0;
+
 void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
   (void)stream;
   enter();
@@ -320,11 +337,23 @@ void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
   if (size == 0)
     return NULL;
   double start = begin();
-  if (isHostShared)
+  if (isHostShared) {
     check(cuMemAllocManaged(&pointer, size, CU_MEM_ATTACH_GLOBAL),
           "cuMemAllocManaged");
-  else
+    end(ALLOCATE, start);
+    return (void *)pointer;
+  }
+  for (int i = numFree; i-- != 0;) {
+    if (freeBlocks[i].size != size)
+      continue;
+    pointer = freeBlocks[i].pointer;
+    freeBlocks[i] = freeBlocks[--numFree];
+    break;
+  }
+  if (!pointer)
     check(cuMemAlloc(&pointer, size), "cuMemAlloc");
+  if (numLive < MAX_BLOCKS)
+    liveBlocks[numLive++] = (struct Block){pointer, size};
   end(ALLOCATE, start);
   return (void *)pointer;
 }
@@ -333,10 +362,24 @@ void mgpuMemFree(void *pointer, CUstream stream) {
   (void)stream;
   if (!pointer)
     return;
-  /* Work that was issued may use the memory. */
-  finish();
   double start = begin();
-  check(cuMemFree((CUdeviceptr)pointer), "cuMemFree");
+  CUdeviceptr address = (CUdeviceptr)pointer;
+  for (int i = numLive; i-- != 0;) {
+    if (liveBlocks[i].pointer != address)
+      continue;
+    struct Block block = liveBlocks[i];
+    liveBlocks[i] = liveBlocks[--numLive];
+    if (numFree < MAX_BLOCKS) {
+      freeBlocks[numFree++] = block;
+      end(ALLOCATE, start);
+      return;
+    }
+    break;
+  }
+  /* Memory that is not recorded, or that the pool has no room for, goes
+     back to the driver once the work that may use it is done. */
+  finish();
+  check(cuMemFree(address), "cuMemFree");
   end(ALLOCATE, start);
 }
 

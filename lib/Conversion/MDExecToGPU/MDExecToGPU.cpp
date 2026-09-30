@@ -52,6 +52,8 @@ static const char *const countBuildName = "mdrtCountBuild";
 /// tuples of a few particles, such as the dihedrals of a protein, would
 /// make those threads the longest.
 static const int64_t rowLanes = 16;
+/// The slots of the buffers of the results of global sums, for each type.
+static const int64_t resultCapacity = 1024;
 
 namespace {
 
@@ -219,6 +221,12 @@ private:
 
   llvm::DenseMap<Value, Neighbors> neighbors;
   llvm::DenseMap<Type, SmallVector<Cell, 2>> cells;
+  /// Where global sums arrive to be read later (deferReadbacks): a slot of
+  /// its own for each sum of the function, in one buffer for each type.
+  llvm::DenseMap<Type, Cell> resultCells;
+  llvm::DenseMap<Type, int64_t> nextResult;
+  int64_t numReadbacks = 0;
+  Cell getResults(Type element, Location loc);
   SmallVector<Flag, 2> flags;
   llvm::DenseSet<Type> templatesAdded;
 
@@ -326,6 +334,22 @@ void Lowering::launchOver(OpBuilder &builder, Location loc, Value count,
   });
   gpu::TerminatorOp::create(kernel, loc);
   bringIn(launch);
+}
+
+Cell Lowering::getResults(Type element, Location loc) {
+  auto found = resultCells.find(element);
+  if (found != resultCells.end())
+    return found->second;
+  Block &entry = current.getBody().front();
+  OpBuilder builder(&entry, entry.begin());
+  Cell cell;
+  cell.capacity = resultCapacity;
+  cell.device = createDeviceBuffer(
+      builder, loc, getDeviceType({resultCapacity}, element), ValueRange());
+  cell.host = memref::AllocaOp::create(
+      builder, loc, MemRefType::get({resultCapacity}, element));
+  resultCells[element] = cell;
+  return cell;
 }
 
 Cell Lowering::getCell(Type element, int64_t count, Location loc) {
@@ -493,9 +517,24 @@ Lowering::emitReductions(OpBuilder &builder, Location loc,
     places.push_back({Cell(), totals[element], count});
     totals[element] += count;
   }
+  // Each sum has slots of its own in the buffer of results of its type,
+  // so that the copy to the host can wait until the host uses them
+  // (deferReadbacks); a function with more sums than the buffer holds
+  // shares a cell among them and reads at once.
+  bool deferred = llvm::all_of(totals, [&](auto &entry) {
+    return nextResult[entry.first] + entry.second <= resultCapacity;
+  });
+  llvm::DenseMap<Type, int64_t> base;
+  for (auto &[element, total] : totals) {
+    base[element] = deferred ? nextResult[element] : 0;
+    if (deferred)
+      nextResult[element] += total;
+  }
   for (auto [index, type] : llvm::enumerate(types)) {
     Type element = getElementTypeOrSelf(type);
-    places[index].cell = getCell(element, totals[element], loc);
+    places[index].cell = deferred ? getResults(element, loc)
+                                  : getCell(element, totals[element], loc);
+    places[index].offset += base[element];
   }
 
   // One block for the results of the parts.
@@ -531,18 +570,39 @@ Lowering::emitReductions(OpBuilder &builder, Location loc,
     });
   });
 
+  // The copies and the loads of the results are marked, so that they can
+  // be moved to where the host first needs them.
+  int64_t readback = numReadbacks++;
+  auto mark = [&](Operation *op) {
+    if (deferred)
+      op->setAttr("mdir.readback", builder.getI64IntegerAttr(readback));
+  };
   for (auto &[element, total] : totals) {
-    Cell cell = getCell(element, total, loc);
-    createTransfer(builder, loc, cell.host, cell.device);
+    Cell cell = deferred ? getResults(element, loc)
+                         : getCell(element, total, loc);
+    Type token = gpu::AsyncTokenType::get(context);
+    auto begin = gpu::WaitOp::create(builder, loc, token, ValueRange());
+    auto copy = gpu::MemcpyOp::create(builder, loc, token,
+                                      ValueRange{begin.getAsyncToken()},
+                                      cell.host, cell.device);
+    auto done = gpu::WaitOp::create(builder, loc, Type(),
+                                    ValueRange{copy.getAsyncToken()});
+    for (Operation *op : {begin.getOperation(), copy.getOperation(),
+                          done.getOperation()})
+      mark(op);
   }
 
   SmallVector<Value> results;
   for (auto [place, type] : llvm::zip(places, types)) {
     SmallVector<Value, 9> numbers;
-    for (int64_t c = 0; c != place.count; ++c)
-      numbers.push_back(memref::LoadOp::create(
+    for (int64_t c = 0; c != place.count; ++c) {
+      auto load = memref::LoadOp::create(
           builder, loc, place.cell.host,
-          ValueRange{createIndex(builder, loc, place.offset + c)}));
+          ValueRange{createIndex(builder, loc, place.offset + c)});
+      mark(load);
+      mark(load.getIndices()[0].getDefiningOp());
+      numbers.push_back(load);
+    }
     if (isa<VectorType>(type))
       results.push_back(
           vector::FromElementsOp::create(builder, loc, type, numbers));
@@ -1592,6 +1652,83 @@ static void expandPowers(func::FuncOp function) {
   }
 }
 
+/// Moves each group of ops that reads global sums back to the host (marked
+/// `mdir.readback` by emitReductions) down its block to just before the
+/// first op that needs its values and may have effects, taking the pure ops
+/// that use the values along. A copy that then follows another copy of the
+/// same buffer with nothing but such ops between is left out: the sums
+/// that it would bring were computed before the first copy, which brought
+/// the whole buffer. The host then waits once where it used to wait for
+/// each sum.
+static void deferReadbacks(func::FuncOp function) {
+  llvm::MapVector<int64_t, SmallVector<Operation *>> groups;
+  function.walk([&](Operation *op) {
+    if (auto id = op->getAttrOfType<IntegerAttr>("mdir.readback"))
+      groups[id.getInt()].push_back(op);
+  });
+  auto isPure = [](Operation *op) {
+    return op->getNumRegions() == 0 && isMemoryEffectFree(op);
+  };
+  for (auto &[id, group] : groups) {
+    Block *block = group.front()->getBlock();
+    if (llvm::any_of(group, [&](Operation *op) {
+          return op->getBlock() != block;
+        }))
+      continue;
+    // The ops that move: the group, and the pure ops of the block that use
+    // what moves, until the first op that needs it and is not pure.
+    llvm::SetVector<Operation *> moving(group.begin(), group.end());
+    Operation *target = nullptr;
+    for (Operation *op = group.front()->getNextNode(); op;
+         op = op->getNextNode()) {
+      if (moving.contains(op))
+        continue;
+      bool uses = false;
+      op->walk([&](Operation *nested) {
+        for (Value operand : nested->getOperands())
+          if (Operation *def = operand.getDefiningOp())
+            uses |= moving.contains(def);
+      });
+      if (!uses)
+        continue;
+      if (isPure(op) && !op->hasTrait<OpTrait::IsTerminator>()) {
+        moving.insert(op);
+        continue;
+      }
+      target = op;
+      break;
+    }
+    if (!target || target->isBeforeInBlock(group.back()))
+      continue;
+    for (Operation *op : moving)
+      op->moveBefore(target);
+  }
+
+  // Copies that follow a copy of the same buffer.
+  SmallVector<Operation *> redundant;
+  function.walk([&](Block *block) {
+    llvm::DenseSet<Value> copied;
+    for (Operation &op : *block) {
+      auto copy = dyn_cast<gpu::MemcpyOp>(op);
+      if (copy && op.hasAttr("mdir.readback")) {
+        if (!copied.insert(copy.getDst()).second) {
+          redundant.push_back(*copy.getAsyncToken().user_begin());
+          redundant.push_back(copy);
+          redundant.push_back(
+              copy.getAsyncDependencies().front().getDefiningOp());
+        }
+        continue;
+      }
+      if (op.hasAttr("mdir.readback") || isPure(&op))
+        continue;
+      copied.clear();
+    }
+  });
+  for (Operation *op : redundant)
+    op->erase();
+  function.walk([](Operation *op) { op->removeAttr("mdir.readback"); });
+}
+
 LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   FunctionType type = function.getFunctionType();
   Type box = VectorType::get({3}, Float64Type::get(context));
@@ -1620,6 +1757,8 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
 
   current = function;
   cells.clear();
+  resultCells.clear();
+  nextResult.clear();
   flags.clear();
 
   SmallVector<Operation *> ops;
@@ -1676,6 +1815,7 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   // The kernels read tables from their buffers.
   lowerLookups(function);
   expandPowers(function);
+  deferReadbacks(function);
 
   releaseStack(function);
   return success();
