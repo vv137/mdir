@@ -11,6 +11,7 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
 #include "mdir/Dialect/MD/MDCoordinates.h"
+#include "mdir/Dialect/MD/MDEnums.h"
 #include "mdir/Dialect/MD/MDTypes.h"
 #include "mdir/Dialect/MDRT/MDRTTypes.h"
 

@@ -7,7 +7,8 @@
 md.particle_set @atoms
 
 // Energy and forces become one loop. What both kernels compute is computed
-// once.
+// once. The exchange contracts follow the values: the destination of the
+// second loop, then the sum of the first.
 //
 // CHECK-LABEL: func.func @energy_forces(
 // CHECK-SAME:    %[[X:[a-z0-9]+]]: !md.field<@atoms, 3 x f64>, %[[CELL:[a-z0-9]+]]: !md.cell, %[[NL:[a-z0-9]+]]: !mdrt.neighbors<@atoms>, %[[A:[a-z0-9]+]]: f64)
@@ -18,6 +19,7 @@ func.func @energy_forces(%x: !vec, %cell: !md.cell, %nl: !nl, %a: f64)
   // CHECK:      %[[LOOP:[0-9]+]]:2 = md_exec.pair_for %[[NL]], %[[X]], %[[CELL]]
   // CHECK-SAME:   outs(%[[F0]] : !md.field<@atoms, 3 x f64>) reduce(%[[U0]] : f64)
   // CHECK-SAME:   cutoff(1.500000e+00) weights [5.000000e-01]
+  // CHECK-SAME:   exchange [antisymmetric, symmetric]
   // CHECK-NEXT: ^bb0(%[[R2:[a-z0-9]+]]: f64, %[[D:[a-z0-9]+]]: vector<3xf64>):
   // CHECK-NEXT:   %[[R:[0-9]+]] = math.sqrt %[[R2]]
   // CHECK-NEXT:   %[[K:[0-9]+]] = arith.divf %[[A]], %[[R]]
@@ -26,7 +28,7 @@ func.func @energy_forces(%x: !vec, %cell: !md.cell, %nl: !nl, %a: f64)
   // CHECK-NOT:  md_exec.pair_for
   %u0 = arith.constant 0.0 : f64
   %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64) cutoff(1.5)
-      weights [0.5] policy(directed, owner_only) {
+      weights [0.5] exchange [symmetric] policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     %r = math.sqrt %r2 : f64
     %k = arith.divf %a, %r : f64
@@ -35,7 +37,7 @@ func.func @energy_forces(%x: !vec, %cell: !md.cell, %nl: !nl, %a: f64)
 
   %f0 = md_exec.zeros : !vec
   %f = md_exec.pair_for %nl, %x, %cell outs(%f0 : !vec) cutoff(1.5)
-      policy(directed, owner_only) {
+      exchange [antisymmetric] policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     %r = math.sqrt %r2 : f64
     %k = arith.divf %a, %r : f64

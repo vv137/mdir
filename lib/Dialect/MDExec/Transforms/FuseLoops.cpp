@@ -92,12 +92,32 @@ static void fuse(PairForOp first, PairForOp second) {
   for (Value value : reduce)
     resultTypes.push_back(value.getType());
 
+  // The exchange contracts, in the order of the values: the destinations
+  // of the first and the second, then their sums.
+  ArrayAttr exchangeAttr;
+  if (first.getExchange() || second.getExchange()) {
+    SmallVector<Attribute> kinds;
+    auto contract = [&](PairForOp op, unsigned index) {
+      kinds.push_back(md::ExchangeAttr::get(builder.getContext(),
+                                            op.getExchange(index)));
+    };
+    for (unsigned i = 0, e = first.getOuts().size(); i != e; ++i)
+      contract(first, i);
+    for (unsigned i = 0, e = second.getOuts().size(); i != e; ++i)
+      contract(second, i);
+    for (unsigned i = 0, e = first.getReduce().size(); i != e; ++i)
+      contract(first, first.getOuts().size() + i);
+    for (unsigned i = 0, e = second.getReduce().size(); i != e; ++i)
+      contract(second, second.getOuts().size() + i);
+    exchangeAttr = builder.getArrayAttr(kinds);
+  }
+
   auto fused = PairForOp::create(
       builder, loc, resultTypes, first.getNeighbors(), first.getPositions(),
       first.getCell(), ins, outs, reduce, /*scratch=*/ValueRange(),
       first.getCutoffAttr(), weightsAttr,
       /*overwrite=*/DenseBoolArrayAttr(), first.getTraversalAttr(),
-      first.getConflictAttr());
+      first.getConflictAttr(), exchangeAttr);
 
   // The kernel: the first kernel, then the second.
   Block *block = new Block();

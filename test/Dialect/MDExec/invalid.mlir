@@ -404,3 +404,33 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
       : !md.field<@atoms, 3 x f64>, !md.field<@atoms, i32>
   md.return
 }
+
+// -----
+
+md.particle_set @atoms
+
+func.func @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
+             %nl: !mdrt.neighbors<@atoms>, %u0: f64) -> f64 {
+  // expected-error@+1 {{expected 1 exchange contracts, one per value in 'outs' and 'reduce', got 2}}
+  %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64) cutoff(1.5)
+      exchange [symmetric, symmetric] policy(directed, owner_only) {
+  ^bb0(%r2: f64, %d: vector<3xf64>):
+    md_exec.yield %r2 : f64
+  } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> f64
+  return %u : f64
+}
+
+// -----
+
+md.particle_set @atoms
+
+func.func @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
+             %nl: !mdrt.neighbors<@atoms>, %u0: f64) -> f64 {
+  // expected-error@+2 {{expected 'none', 'symmetric', or 'antisymmetric', got 'odd'}}
+  %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64) cutoff(1.5)
+      exchange [odd] policy(directed, owner_only) {
+  ^bb0(%r2: f64, %d: vector<3xf64>):
+    md_exec.yield %r2 : f64
+  } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> f64
+  return %u : f64
+}

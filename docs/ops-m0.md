@@ -1047,6 +1047,7 @@ be repaired afterward, which is why `interval` is not the default.
 | `reduce` | Global sums. |
 | `weights` | One weight per global sum. All 1 if absent. |
 | `cutoff` | The predicate `r² < r_c²`. The loop evaluates it, not the kernel. |
+| `exchange` | One exchange contract for each value, the destinations and then the sums, from the `md.gather_relation` or `md.sum_relation` of the value (Section 4.7); `none` for all if absent. Fusion keeps them with their values. A loop may compute a pair once only if every value is `symmetric` or `antisymmetric` (Section 9.3, D89). |
 | `policy` | The pair execution policy from the plan. |
 
 The loop computes `d` and `r²` from the position field and the cell. The

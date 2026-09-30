@@ -27,7 +27,7 @@ md.function @energy(%x: !vec, %cell: !md.cell, %a: f64) -> f64 {
   // CHECK:      %[[ZERO:[a-z0-9_]+]] = arith.constant 0.000000e+00 : f64
   // CHECK:      %[[U:[0-9]+]] = md_exec.pair_for %[[NL]], %[[X]], %[[CELL]]
   // CHECK-SAME:   reduce(%[[ZERO]] : f64) cutoff(1.500000e+00) weights [5.000000e-01]
-  // CHECK-SAME:   policy(directed, owner_only) {
+  // CHECK-SAME:   exchange [symmetric] policy(directed, owner_only) {
   // CHECK-NEXT: ^bb0(%[[R2:[a-z0-9]+]]: f64, %{{[a-z0-9]+}}: vector<3xf64>):
   // CHECK-NEXT:   %[[R:[0-9]+]] = math.sqrt %[[R2]] : f64
   // CHECK-NEXT:   %[[K:[0-9]+]] = arith.divf %[[A]], %[[R]] : f64
@@ -45,6 +45,7 @@ md.function @energy(%x: !vec, %cell: !md.cell, %a: f64) -> f64 {
 }
 
 // A gather accumulates from zero. One neighbor structure serves both loops.
+// Each loop carries the exchange contract of its kernel.
 //
 // CHECK-LABEL: md.function @energy_forces(
 md.function @energy_forces(%x: !vec, %cell: !md.cell, %q: !real)
@@ -69,7 +70,7 @@ md.function @energy_forces(%x: !vec, %cell: !md.cell, %q: !real)
   // CHECK:      %[[F:[0-9]+]] = md_exec.pair_for %[[NL]],
   // CHECK-SAME:   outs(%[[F0]] : !md.field<@atoms, 3 x f64>) cutoff(1.500000e+00)
   // CHECK-NOT:    weights
-  // CHECK-SAME:   policy(directed, owner_only) {
+  // CHECK-SAME:   exchange [antisymmetric] policy(directed, owner_only) {
   // CHECK-NEXT: ^bb0(%{{[a-z0-9]+}}: f64, %[[D:[a-z0-9]+]]: vector<3xf64>):
   // CHECK-NEXT:   md_exec.yield %[[D]] : vector<3xf64>
   %f = md.gather_relation %n, %x, %cell exchange(antisymmetric, derived) {

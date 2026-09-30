@@ -157,11 +157,18 @@ LogicalResult Converter::convertPairOp(OpTy op, bool isSum) {
     outs.push_back(md_exec::ZerosOp::create(builder, loc, resultType));
   }
 
+  // The exchange contract of the kernel goes with the value it gives.
+  ArrayAttr exchange = builder.getArrayAttr({op.getExchangeAttr()});
   auto loop = md_exec::PairForOp::create(
       builder, loc, TypeRange(resultType), structure, op.getPositions(),
       op.getCell(), op.getGathered(), outs, reduce, /*scratch=*/ValueRange(),
       builder.getF64FloatAttr(cutoff), weights,
-      /*overwrite=*/DenseBoolArrayAttr());
+      /*overwrite=*/DenseBoolArrayAttr(),
+      md_exec::TraversalAttr::get(builder.getContext(),
+                                  md_exec::Traversal::Directed),
+      md_exec::ConflictAttr::get(builder.getContext(),
+                                 md_exec::Conflict::OwnerOnly),
+      exchange);
 
   // The kernel receives the squared distance; the semantic kernel is
   // written in terms of the distance.

@@ -11,6 +11,7 @@
 include "mlir/IR/BuiltinAttributes.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+include "mdir/Dialect/MD/MDEnums.td"
 include "mdir/Dialect/MD/MDTypes.td"
 include "mdir/Dialect/MDExec/MDExecDialect.td"
 include "mdir/Dialect/MDExec/MDExecEnums.td"
@@ -681,6 +682,22 @@ def MDExec_PairForOp : MDExec_Op<"pair_for", [
     hold before and after is unspecified. On a device a loop needs two for
     each value in `reduce`, with one value of the type of the sum per
     particle.
+
+    `exchange` has one contract for each field in `outs` and then each
+    value in `reduce`, in the order of the yield: how the kernel of that
+    value behaves when the two particles are swapped, from the
+    `md.gather_relation` or `md.sum_relation` it came from. A loop may
+    compute a pair once for its two particles only if every value is
+    `symmetric` or `antisymmetric` (docs/groups-m1.md, D89). Without it,
+    every value is `none`.
+
+    ```mlir
+    %f, %u = md_exec.pair_for %nl, %x, %cell
+               outs(%f0 : !md.field<@atoms, 3 x f64>)
+               reduce(%u0 : f64) cutoff(2.5) weights [0.5]
+               exchange [antisymmetric, symmetric]
+               policy(directed, owner_only) { ... }
+    ```
   }];
   let arguments = (ins
     MDRT_NeighborsType:$neighbors,
@@ -696,7 +713,9 @@ def MDExec_PairForOp : MDExec_Op<"pair_for", [
     DefaultValuedAttr<MDExec_Traversal,
                       "::mdir::md_exec::Traversal::Directed">:$traversal,
     DefaultValuedAttr<MDExec_Conflict,
-                      "::mdir::md_exec::Conflict::OwnerOnly">:$conflict
+                      "::mdir::md_exec::Conflict::OwnerOnly">:$conflict,
+    OptionalAttr<TypedArrayAttrBase<MD_Exchange,
+                 "exchange contracts">>:$exchange
   );
   let regions = (region SizedRegion<1>:$kernel);
   let results = (outs Variadic<AnyType>:$results);
@@ -709,6 +728,7 @@ def MDExec_PairForOp : MDExec_Op<"pair_for", [
     `cutoff` `(` $cutoff `)`
     (`weights` $weights^)?
     (`overwrite` $overwrite^)?
+    custom<ExchangeList>($exchange)
     `policy` `(` $traversal `,` $conflict `)`
     $kernel attr-dict
     `:` qualified(type($neighbors)) `,` qualified(type($positions))
@@ -723,6 +743,9 @@ def MDExec_PairForOp : MDExec_Op<"pair_for", [
       auto flags = getOverwrite();
       return flags && (*flags)[index];
     }
+    /// The exchange contract of value `index`: a destination in `outs`,
+    /// then a value in `reduce`. `none` without the attribute.
+    ::mdir::md::Exchange getExchange(unsigned index);
   }];
   let hasVerifier = 1;
   let hasRegionVerifier = 1;

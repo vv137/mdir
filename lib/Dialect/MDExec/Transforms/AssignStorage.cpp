@@ -616,7 +616,7 @@ LogicalResult Assignment::convertPairFor(PairForOp op, Scope &scope,
       builder, op.getLoc(), resultTypes, storage, positions,
       mapping.lookup(op.getCell()), ins, outs, reduce, scratch,
       op.getCutoffAttr(), op.getWeightsAttr(), overwriteAttr,
-      op.getTraversalAttr(), op.getConflictAttr());
+      op.getTraversalAttr(), op.getConflictAttr(), op.getExchangeAttr());
   copyKernel(loop, op.getKernel().front());
   for (Value buffer : scratch)
     scope.release(buffer);

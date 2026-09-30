@@ -18,6 +18,42 @@ using mdir::mdrt::PermutationType;
 #include "mdir/Dialect/MDExec/MDExecEnums.cpp.inc"
 
 // The custom directive `coordinates(<kind>(<members>), ...)`.
+/// `exchange [<kind>, ...]`, one exchange contract a value, or nothing.
+static ParseResult parseExchangeList(OpAsmParser &parser, ArrayAttr &list) {
+  if (failed(parser.parseOptionalKeyword("exchange")))
+    return success();
+  MLIRContext *context = parser.getContext();
+  SmallVector<Attribute> kinds;
+  auto parseOne = [&]() -> ParseResult {
+    StringRef keyword;
+    SMLoc loc = parser.getCurrentLocation();
+    if (parser.parseKeyword(&keyword))
+      return failure();
+    std::optional<mdir::md::Exchange> kind = mdir::md::symbolizeExchange(keyword);
+    if (!kind)
+      return parser.emitError(loc)
+             << "expected 'none', 'symmetric', or 'antisymmetric', got '"
+             << keyword << "'";
+    kinds.push_back(mdir::md::ExchangeAttr::get(context, *kind));
+    return success();
+  };
+  if (parser.parseCommaSeparatedList(OpAsmParser::Delimiter::Square, parseOne))
+    return failure();
+  list = ArrayAttr::get(context, kinds);
+  return success();
+}
+
+static void printExchangeList(OpAsmPrinter &printer, Operation *,
+                              ArrayAttr list) {
+  if (!list)
+    return;
+  printer << "exchange [";
+  llvm::interleaveComma(list, printer, [&](Attribute kind) {
+    printer << mdir::md::stringifyExchange(cast<mdir::md::ExchangeAttr>(kind).getValue());
+  });
+  printer << "] ";
+}
+
 static ParseResult parseCoordinates(OpAsmParser &parser,
                                     DenseI32ArrayAttr &kinds,
                                     DenseI64ArrayAttr &members) {
@@ -620,6 +656,15 @@ LogicalResult PairForOp::verify() {
     return emitOpError()
            << "only the policy (directed, owner_only) is supported";
 
+  if (auto exchange = getExchange()) {
+    unsigned values = getOuts().size() + getReduce().size();
+    if (exchange->size() != values)
+      return emitOpError() << "expected " << values
+                           << " exchange contracts, one per value in 'outs' "
+                              "and 'reduce', got "
+                           << exchange->size();
+  }
+
   if (auto overwrite = getOverwrite()) {
     if (!isStorageForm())
       return emitOpError() << "'overwrite' belongs to the storage form; in "
@@ -662,6 +707,13 @@ void PairForOp::getEffects(
   addEffect<MemoryEffects::Read>(effects, getPositionsMutable());
   getLoopEffects(*this, effects,
                  [&](unsigned index) { return !overwrites(index); });
+}
+
+mdir::md::Exchange PairForOp::getExchange(unsigned index) {
+  std::optional<ArrayAttr> list = getExchange();
+  if (!list || index >= list->size())
+    return mdir::md::Exchange::None;
+  return cast<mdir::md::ExchangeAttr>((*list)[index]).getValue();
 }
 
 LogicalResult ParticleForOp::verify() {
