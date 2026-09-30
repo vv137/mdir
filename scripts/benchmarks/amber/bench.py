@@ -131,12 +131,17 @@ q.save({os.path.join(target, "system.top")!r}, format="gromacs",
 def write_mdir(name, system, target, steps=None, path="mdir.toml"):
     npt = system["ensemble"] == "NPT"
     ensemble = (f"""ensemble    = "NPT"
-thermostat  = "BUSSI"
 temperature = {TEMPERATURE}
-tau_t       = 1.0
-barostat    = "BERNETTI-BUSSI"
 pressure    = 0.986923
-tau_p       = 2.0
+
+[thermostat]
+method = "V-RESCALE"
+tau_t  = 1.0
+period = 10
+
+[barostat]
+method = "C-RESCALE"
+tau_p  = 2.0
 """ if npt else f"""ensemble    = "NVE"
 temperature = {TEMPERATURE}
 """)
@@ -158,7 +163,6 @@ integrator    = "VVER"
 timestep      = {system['timestep']}
 nsteps        = {steps}
 eneout_period = {steps}
-{"thermostat_period = 10" if npt else ""}
 
 [ensemble]
 {ensemble}

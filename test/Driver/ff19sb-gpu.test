@@ -44,13 +44,15 @@ timestep          = 0.002
 nsteps            = 1000
 eneout_period     = 250
 crdout_period     = 250
-thermostat_period = 10
 
 [ensemble]
 ensemble    = "NVT"
-thermostat  = "BUSSI"
 temperature = 300.0
-tau_t       = 0.5
+
+[thermostat]
+method = "V-RESCALE"
+period = 10
+tau_t  = 0.5
 
 [constraints]
 rigid_bond = true

@@ -76,13 +76,15 @@ integrator        = "VVER"
 timestep          = 0.004
 nsteps            = 2000
 eneout_period = 1000
-thermostat_period = 10
 
 [ensemble]
 ensemble    = "NVT"
-thermostat  = "BUSSI"
 temperature = 150.0
-tau_t       = 0.5
+
+[thermostat]
+method = "V-RESCALE"
+period = 10
+tau_t  = 0.5
 
 [boundary]
 type       = "PBC"

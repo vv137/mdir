@@ -28,17 +28,19 @@ timestep          = 0.002
 nsteps            = 25000
 eneout_period     = 2500
 rstout_period     = 25000
-thermostat_period = 10
 
 [ensemble]
 ensemble    = "NVT"
-thermostat  = "BUSSI"
 temperature = 300.0
-tau_t       = 0.5
 
 [[restraints]]
 selection      = "!:WAT & !@H*"
 force_constant = 10.0
+
+[thermostat]
+method = "V-RESCALE"
+period = 10
+tau_t  = 0.5
 
 [execution]
 target    = "gpu"               # or "cpu", with threads = <n>

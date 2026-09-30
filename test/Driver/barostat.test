@@ -12,7 +12,7 @@
 # RUN: FileCheck %s < %t/a.log
 # RUN: mdir run %t/leap.toml > %t/leap.log
 # RUN: FileCheck %s < %t/leap.log
-# RUN: sed -e 's|tau_p       = 2.0|tau_p       = 2.0\nbarostat_work = "FIRST_ORDER"|' %t/a.toml > %t/first.toml
+# RUN: sed -e 's|^tau_p  = 2.0$|tau_p  = 2.0\nwork   = "FIRST_ORDER"|' %t/a.toml > %t/first.toml
 # RUN: mdir run %t/first.toml | FileCheck %s --check-prefix=FIRST
 # RUN: mdir emit %t/a.toml | FileCheck %s --check-prefix=MODULE
 
@@ -95,16 +95,20 @@ integrator        = "VVER"
 timestep          = 0.004
 nsteps            = 2000
 eneout_period = 1000
-thermostat_period = 10
 
 [ensemble]
 ensemble    = "NPT"
-thermostat  = "BUSSI"
 temperature = 100.0
-tau_t       = 0.5
-barostat    = "BERNETTI-BUSSI"
 pressure    = 200.0
-tau_p       = 2.0
+
+[thermostat]
+method = "V-RESCALE"
+period = 10
+tau_t  = 0.5
+
+[barostat]
+method = "C-RESCALE"
+tau_p  = 2.0
 
 [boundary]
 type       = "PBC"

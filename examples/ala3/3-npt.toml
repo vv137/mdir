@@ -28,20 +28,24 @@ timestep          = 0.002
 nsteps            = 50000
 eneout_period     = 5000
 rstout_period     = 50000
-thermostat_period = 10
 
 [ensemble]
 ensemble    = "NPT"
-thermostat  = "BUSSI"
 temperature = 300.0
-tau_t       = 0.5
-barostat    = "BERNETTI-BUSSI"
 pressure    = 1.0
-tau_p       = 2.0
 
 [[restraints]]
 selection      = "!:WAT & !@H*"
 force_constant = 1.0
+
+[thermostat]
+method = "V-RESCALE"
+period = 10
+tau_t  = 0.5
+
+[barostat]
+method = "C-RESCALE"
+tau_p  = 2.0
 
 [execution]
 target    = "gpu"               # or "cpu", with threads = <n>

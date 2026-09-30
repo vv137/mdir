@@ -61,6 +61,9 @@ private:
   Error readDynamics(const toml::table &table);
   Error readMinimize(const toml::table &table);
   Error readEnsemble(const toml::table &table);
+  Error readThermostat(const toml::table &table);
+  Error readBarostat(const toml::table &table);
+
   /// Sets the periods of the removal of the motion of the center of mass
   /// and of the thermostat that were not given, and checks them.
   Error resolveCoupling();
@@ -69,6 +72,8 @@ private:
 
   StringRef path;
   Control &control;
+  /// NVE, NVT, or NPT, from [ensemble]: 0, 1, or 2.
+  int ensembleKind = 0;
 };
 
 } // namespace
@@ -478,7 +483,7 @@ Error Reader::readDynamics(const toml::table &table) {
           table, "dynamics",
           {"integrator", "timestep", "nsteps", "eneout_period",
            "crdout_period", "rstout_period", "nbupdate_period", "iseed",
-           "comm_period", "thermostat_period", "barostat_period"},
+           "comm_period"},
           {{"velout_period", "M1"},
            {"stoptr_period", "M1"},
            {"elec_long_period", "M2"},
@@ -504,16 +509,11 @@ Error Reader::readDynamics(const toml::table &table) {
   if (Error error =
           readCount(table, "nbupdate_period", control.rebuildPeriod, 0))
     return error;
-  // Unset until [ensemble] is read; -1 stands for a period not given.
+  // Unset until [thermostat] and [barostat] are read; -1 stands for a
+  // period not given.
   control.comPeriod = control.thermostatPeriod = -1;
-  if (Error error = readCount(table, "comm_period", control.comPeriod, 0))
-    return error;
-  if (Error error =
-          readCount(table, "thermostat_period", control.thermostatPeriod, 0))
-    return error;
   control.barostatPeriod = -1;
-  if (Error error =
-          readCount(table, "barostat_period", control.barostatPeriod, 0))
+  if (Error error = readCount(table, "comm_period", control.comPeriod, 0))
     return error;
   int64_t seed = static_cast<int64_t>(control.seed);
   if (Error error = readCount(table, "iseed", seed, 0))
@@ -602,7 +602,7 @@ Error Reader::resolveCoupling() {
   if (!control.thermostat && thermostat > 0)
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
-        "%s: 'thermostat_period' is given, but there is no thermostat",
+        "%s: [thermostat] gives 'period', but there is no thermostat",
         path.str().c_str());
   // The thermostat acts every 10 steps and the motion of the center of mass
   // is removed with it, unless one period is given: then both take it.
@@ -612,14 +612,15 @@ Error Reader::resolveCoupling() {
       thermostat = com > 0 ? com : 10;
     if (thermostat == 0)
       return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                     "%s: 'thermostat_period' is 0",
+                                     "%s: 'period' in [thermostat] is 0",
                                      path.str().c_str());
     if (com < 0)
       com = thermostat;
     if (com != 0 && com != thermostat)
       return llvm::createStringError(
           llvm::inconvertibleErrorCode(),
-          "%s: 'comm_period' differs from 'thermostat_period'; in M1 the "
+          "%s: 'comm_period' differs from 'period' in [thermostat]; in M1 "
+          "the "
           "motion of the center of mass is removed when the thermostat acts, "
           "or never",
           path.str().c_str());
@@ -634,7 +635,7 @@ Error Reader::resolveCoupling() {
   if (!control.barostat && barostat > 0)
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
-        "%s: 'barostat_period' is given, but there is no barostat",
+        "%s: [barostat] gives 'period', but there is no barostat",
         path.str().c_str());
   if (!control.barostat)
     barostat = 0;
@@ -643,8 +644,8 @@ Error Reader::resolveCoupling() {
   else if (barostat != thermostat)
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
-        "%s: 'barostat_period' differs from 'thermostat_period'; in M1 the "
-        "barostat acts when the thermostat does",
+        "%s: 'period' in [barostat] differs from that in [thermostat]; in "
+        "M1 the barostat acts when the thermostat does",
         path.str().c_str());
 
   // Coupling acts at the end of the step that completes a period, so the
@@ -661,47 +662,72 @@ Error Reader::resolveCoupling() {
       return llvm::createStringError(
           llvm::inconvertibleErrorCode(),
           "%s: '%s' is not a multiple of the period of coupling, %lld steps "
-          "('comm_period' or 'thermostat_period')",
+          "('comm_period' or 'period' in [thermostat])",
           path.str().c_str(), name.str().c_str(), (long long)period);
   return Error::success();
 }
 
 Error Reader::readEnsemble(const toml::table &table) {
   if (Error error = checkKeywords(table, "ensemble",
-                                  {"ensemble", "temperature", "thermostat",
-                                   "tau_t", "barostat", "pressure", "tau_p",
-                                   "compressibility", "isotropy",
-                                   "barostat_work"},
+                                  {"ensemble", "temperature", "pressure"},
                                   {{"gamma_t", "M1"}}))
     return error;
-  int ensemble = 0;
-  if (Error error = readChoice<int>(table, "ensemble", ensemble,
+  if (Error error = readChoice<int>(table, "ensemble", ensembleKind,
                                     {{"NVE", 0}, {"NVT", 1}, {"NPT", 2}}))
     return error;
-  int barostat = 0;
-  if (Error error = readChoice<int>(table, "barostat", barostat,
-                                    {{"NO", 0}, {"BERNETTI-BUSSI", 1}}))
-    return error;
-  if (ensemble == 2 && barostat != 1)
-    return fail(table, "'ensemble = \"NPT\"' needs 'barostat = "
-                       "\"BERNETTI-BUSSI\"', the barostat of M1");
-  if (ensemble != 2 && barostat != 0)
-    return fail(table, "a barostat needs 'ensemble = \"NPT\"'");
-  for (StringRef key : {"pressure", "tau_p", "compressibility", "isotropy",
-                        "barostat_work"})
-    if (ensemble != 2 && table.contains(std::string_view(key)))
-      return fail(*table.get(std::string_view(key)),
-                  "'" + key + "' is for 'ensemble = \"NPT\"'");
-  control.barostat = barostat == 1;
+  if (ensembleKind != 2 && table.contains("pressure"))
+    return fail(*table.get("pressure"),
+                "'pressure' is for 'ensemble = \"NPT\"'");
   if (Error error = readReal(table, "pressure", control.pressure))
     return error;
+  if (Error error = readReal(table, "temperature", control.temperature))
+    return error;
+  if (control.temperature < 0.0)
+    return fail(*table.get("temperature"),
+                "expected a temperature that is not negative");
+  return Error::success();
+}
+
+Error Reader::readThermostat(const toml::table &table) {
+  if (Error error = checkKeywords(table, "thermostat",
+                                  {"method", "tau_t", "period"}, {}))
+    return error;
+  int method = -1;
+  if (Error error = readChoice<int>(table, "method", method,
+                                    {{"V-RESCALE", 0}}))
+    return error;
+  if (method < 0)
+    return fail(table, "expected 'method' in [thermostat]: \"V-RESCALE\", "
+                       "stochastic velocity rescaling");
+  control.thermostat = true;
+  if (Error error = readPositive(table, "tau_t", control.tauT))
+    return error;
+  if (Error error = readCount(table, "period", control.thermostatPeriod, 0))
+    return error;
+  return Error::success();
+}
+
+Error Reader::readBarostat(const toml::table &table) {
+  if (Error error = checkKeywords(
+          table, "barostat",
+          {"method", "tau_p", "compressibility", "isotropy", "work",
+           "period"},
+          {}))
+    return error;
+  int method = -1;
+  if (Error error = readChoice<int>(table, "method", method,
+                                    {{"C-RESCALE", 0}}))
+    return error;
+  if (method < 0)
+    return fail(table, "expected 'method' in [barostat]: \"C-RESCALE\", "
+                       "stochastic cell rescaling");
+  control.barostat = true;
   if (Error error = readPositive(table, "tau_p", control.tauP))
     return error;
   if (Error error =
           readPositive(table, "compressibility", control.compressibility))
     return error;
-  if (Error error = readChoice<bool>(table, "barostat_work",
-                                     control.exactBarostatWork,
+  if (Error error = readChoice<bool>(table, "work", control.exactBarostatWork,
                                      {{"EXACT", true}, {"FIRST_ORDER", false}}))
     return error;
   int isotropy = 0;
@@ -712,23 +738,8 @@ Error Reader::readEnsemble(const toml::table &table) {
     return fail(*table.get("isotropy"),
                 "'isotropy = \"SEMI-ISO\"' is not supported yet; it is "
                 "planned for M1");
-  int thermostat = 0;
-  if (Error error = readChoice<int>(table, "thermostat", thermostat,
-                                    {{"NO", 0}, {"BUSSI", 1}}))
+  if (Error error = readCount(table, "period", control.barostatPeriod, 0))
     return error;
-  if (ensemble >= 1 && thermostat != 1)
-    return fail(table, "'ensemble = \"NVT\"' and \"NPT\" need 'thermostat = "
-                       "\"BUSSI\"', the thermostat of M1");
-  if (ensemble == 0 && thermostat != 0)
-    return fail(table, "a thermostat needs 'ensemble = \"NVT\"' or \"NPT\"");
-  control.thermostat = thermostat == 1;
-  if (Error error = readPositive(table, "tau_t", control.tauT))
-    return error;
-  if (Error error = readReal(table, "temperature", control.temperature))
-    return error;
-  if (control.temperature < 0.0)
-    return fail(*table.get("temperature"),
-                "expected a temperature that is not negative");
   return Error::success();
 }
 
@@ -790,6 +801,7 @@ Error Reader::read(const toml::table &root) {
   if (Error error = checkKeywords(
           root, "the control file",
           {"input", "output", "energy", "dynamics", "minimize", "ensemble",
+           "thermostat", "barostat",
            "boundary", "execution", "constraints", "restraints"},
           {{"selection", "M1"}, {"remd", "M3"}}))
     return error;
@@ -905,11 +917,40 @@ Error Reader::read(const toml::table &root) {
 
   if (Error error = getTable("ensemble", /*required=*/false, table))
     return error;
+  const toml::table *ensembleTable = table;
   if (table)
     if (Error error = readEnsemble(*table))
       return error;
-  if (control.minimize && (control.thermostat || control.barostat))
-    return fail(*table, "a minimization has no thermostat or barostat");
+  // The coupling to the bath: [thermostat] for NVT and NPT, [barostat] for
+  // NPT as well.
+  const toml::table *thermostat, *barostat;
+  if (Error error = getTable("thermostat", /*required=*/false, thermostat))
+    return error;
+  if (Error error = getTable("barostat", /*required=*/false, barostat))
+    return error;
+  if (control.minimize && (thermostat || barostat))
+    return fail(thermostat ? *thermostat : *barostat,
+                "a minimization has no thermostat or barostat");
+  static const char *const names[] = {"NVE", "NVT", "NPT"};
+  if (thermostat && ensembleKind == 0)
+    return fail(*thermostat, "a [thermostat] needs 'ensemble = \"NVT\"' or "
+                             "\"NPT\" in [ensemble]");
+  if (barostat && ensembleKind != 2)
+    return fail(*barostat,
+                "a [barostat] needs 'ensemble = \"NPT\"' in [ensemble]");
+  if (!thermostat && ensembleKind != 0)
+    return fail(*ensembleTable, llvm::Twine("'ensemble = \"") +
+                                    names[ensembleKind] +
+                                    "\"' needs a [thermostat]");
+  if (!barostat && ensembleKind == 2)
+    return fail(*ensembleTable,
+                "'ensemble = \"NPT\"' needs a [barostat]");
+  if (thermostat)
+    if (Error error = readThermostat(*thermostat))
+      return error;
+  if (barostat)
+    if (Error error = readBarostat(*barostat))
+      return error;
 
   if (!control.minimize)
     if (Error error = resolveCoupling())
@@ -1057,13 +1098,16 @@ rstout_period = 0               # steps between checkpoints; 0: none
 iseed         = 314159          # seed of the velocities and the thermostat
 # comm_period = 0               # steps between removals of the motion of
 #                               # the center of mass; 0: none
-# thermostat_period = 10        # steps between actions of the thermostat
 
 [ensemble]
-ensemble    = "NVE"             # NVE, NVT
+ensemble    = "NVE"             # NVE, NVT (with [thermostat])
 temperature = 298.15            # of the velocities and the bath (K)
-# thermostat = "BUSSI"          # with NVT: stochastic velocity rescaling
-# tau_t      = 1.0              # time of the thermostat (ps)
+
+# With 'ensemble = "NVT"':
+# [thermostat]
+# method = "V-RESCALE"          # stochastic velocity rescaling
+# tau_t  = 1.0                  # ps
+# period = 10                   # steps between its actions
 
 [boundary]
 type       = "PBC"              # PBC
@@ -1116,23 +1160,30 @@ eneout_period     = 5000        # steps between energies in the log
 crdout_period     = 5000        # steps between frames
 rstout_period     = 50000       # steps between checkpoints
 iseed             = 314159      # seed of the velocities and the coupling
-thermostat_period = 10          # steps between actions of the thermostat
 # comm_period     = 0           # steps between removals of the motion of
 #                               # the center of mass
 
 [ensemble]
-ensemble    = "NPT"             # NVE, NVT, NPT
+ensemble    = "NPT"             # NVE, NVT (with [thermostat]), NPT (with
+                                # [thermostat] and [barostat])
 temperature = 300.0             # of the velocities and the bath (K)
-thermostat  = "BUSSI"           # stochastic velocity rescaling
-tau_t       = 0.5               # ps
-barostat    = "BERNETTI-BUSSI"  # stochastic cell rescaling, with NPT
-pressure    = 1.0               # bar
-tau_p       = 2.0               # ps
+pressure    = 1.0               # bar, with NPT
+
+[thermostat]
+method = "V-RESCALE"            # stochastic velocity rescaling
+tau_t  = 0.5                    # ps
+period = 10                     # steps between its actions
+
+[barostat]
+method = "C-RESCALE"            # stochastic cell rescaling
+tau_p  = 2.0                    # ps
 # compressibility = 4.5e-5      # 1/bar
-# barostat_work = "EXACT"       # EXACT: the energy of each scaling from
+# work   = "EXACT"              # EXACT: the energy of each scaling from
 #                               # the scaled positions, whose forces the
 #                               # next step takes; FIRST_ORDER: from the
 #                               # virial, as GROMACS does
+# period = 10                   # steps between its actions: those of the
+#                               # thermostat
 
 [constraints]
 rigid_bond = true               # SHAKE and RATTLE on the bonds of hydrogen

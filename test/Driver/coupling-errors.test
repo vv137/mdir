@@ -1,5 +1,5 @@
-# What is wrong with the thermostat and the removal of the motion of the
-# center of mass is reported.
+# What is wrong with the thermostat, the barostat, and the removal of the
+# motion of the center of mass is reported.
 #
 # RUN: split-file %s %t
 # RUN: not mdir run %t/nvt.toml 2>&1 | FileCheck %s --check-prefix=NVT
@@ -15,17 +15,17 @@
 # RUN: not mdir run %t/pressure.toml 2>&1 | FileCheck %s --check-prefix=PRESSURE
 # RUN: not mdir run %t/semi.toml 2>&1 | FileCheck %s --check-prefix=SEMI
 
-# NVT: nvt.toml:13: 'ensemble = "NVT"' and "NPT" need 'thermostat = "BUSSI"', the thermostat of M1
-# NVE: nve.toml:13: a thermostat needs 'ensemble = "NVT"' or "NPT"
-# NPT: npt.toml:13: 'ensemble = "NPT"' needs 'barostat = "BERNETTI-BUSSI"', the barostat of M1
-# UNUSED: unused.toml: 'thermostat_period' is given, but there is no thermostat
-# DIFFER: differ.toml: 'comm_period' differs from 'thermostat_period'
+# NVT: nvt.toml:{{[0-9]+}}: 'ensemble = "NVT"' needs a [thermostat]
+# NVE: nve.toml:{{[0-9]+}}: a [thermostat] needs 'ensemble = "NVT"' or "NPT" in [ensemble]
+# NPT: npt.toml:{{[0-9]+}}: 'ensemble = "NPT"' needs a [barostat]
+# UNUSED: unused.toml:{{[0-9]+}}: expected 'method' in [thermostat]: "V-RESCALE", stochastic velocity rescaling
+# DIFFER: differ.toml: 'comm_period' differs from 'period' in [thermostat]
 # MULTIPLE: multiple.toml: 'nsteps' is not a multiple of the period of coupling, 10 steps
 # ENERGY: energy.toml: 'eneout_period' is not a multiple of the period of coupling, 20 steps
-# TAU: tau.toml:16: expected a positive number for 'tau_t'
-# BAROPERIOD: baroperiod.toml: 'barostat_period' differs from 'thermostat_period'
-# PRESSURE: pressure.toml:15: 'pressure' is for 'ensemble = "NPT"'
-# SEMI: semi.toml:17: 'isotropy = "SEMI-ISO"' is not supported yet
+# TAU: tau.toml:{{[0-9]+}}: expected a positive number for 'tau_t'
+# BAROPERIOD: baroperiod.toml: 'period' in [barostat] differs from that in [thermostat]
+# PRESSURE: pressure.toml:{{[0-9]+}}: 'pressure' is for 'ensemble = "NPT"'
+# SEMI: semi.toml:{{[0-9]+}}: 'isotropy = "SEMI-ISO"' is not supported yet
 
 #--- one.pdb
 HETATM    1  AR  AR  A   1       1.000   1.000   1.000  1.00  0.00          AR
@@ -59,7 +59,9 @@ epsilon = 0.2
 [dynamics]
 nsteps = 100
 [ensemble]
-thermostat = "BUSSI"
+
+[thermostat]
+method = "V-RESCALE"
 #--- npt.toml
 [input]
 pdbfile = "one.pdb"
@@ -75,6 +77,8 @@ epsilon = 0.2
 nsteps = 100
 [ensemble]
 ensemble = "NPT"
+[thermostat]
+method = "V-RESCALE"
 #--- unused.toml
 [input]
 pdbfile = "one.pdb"
@@ -88,7 +92,10 @@ mass = 39.95
 epsilon = 0.2
 [dynamics]
 nsteps = 100
-thermostat_period = 10
+[ensemble]
+ensemble = "NVT"
+[thermostat]
+period = 10
 #--- differ.toml
 [input]
 pdbfile = "one.pdb"
@@ -103,10 +110,12 @@ epsilon = 0.2
 [dynamics]
 nsteps = 100
 comm_period = 10
-thermostat_period = 20
 [ensemble]
 ensemble = "NVT"
-thermostat = "BUSSI"
+
+[thermostat]
+method = "V-RESCALE"
+period = 20
 #--- multiple.toml
 [input]
 pdbfile = "one.pdb"
@@ -123,7 +132,9 @@ nsteps = 105
 eneout_period = 5
 [ensemble]
 ensemble = "NVT"
-thermostat = "BUSSI"
+
+[thermostat]
+method = "V-RESCALE"
 #--- energy.toml
 [input]
 pdbfile = "one.pdb"
@@ -154,8 +165,10 @@ epsilon = 0.2
 nsteps = 100
 [ensemble]
 ensemble = "NVT"
-thermostat = "BUSSI"
-tau_t = 0.0
+
+[thermostat]
+method = "V-RESCALE"
+tau_t  = 0.0
 #--- baroperiod.toml
 [input]
 pdbfile = "one.pdb"
@@ -169,12 +182,16 @@ mass = 39.95
 epsilon = 0.2
 [dynamics]
 nsteps = 100
-thermostat_period = 10
-barostat_period = 20
 [ensemble]
 ensemble = "NPT"
-thermostat = "BUSSI"
-barostat = "BERNETTI-BUSSI"
+
+[thermostat]
+method = "V-RESCALE"
+period = 10
+
+[barostat]
+method = "C-RESCALE"
+period = 20
 #--- pressure.toml
 [input]
 pdbfile = "one.pdb"
@@ -206,6 +223,10 @@ epsilon = 0.2
 nsteps = 100
 [ensemble]
 ensemble = "NPT"
-thermostat = "BUSSI"
-barostat = "BERNETTI-BUSSI"
+
+[thermostat]
+method = "V-RESCALE"
+
+[barostat]
+method   = "C-RESCALE"
 isotropy = "SEMI-ISO"
