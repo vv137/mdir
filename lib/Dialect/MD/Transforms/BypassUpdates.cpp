@@ -89,6 +89,25 @@ public:
       DisjointUnionOp unionOp = unions.lookup(set);
       if (!unionOp)
         return;
+      // The loop is the next link of a chain of updates when a map adds
+      // what it gathers to a field that it reads: only then does reading
+      // the field before the updates of the other sets let the links run
+      // at once. A loop that is no link, such as one over velocities that
+      // reads the positions that a chain gave, keeps its fields; reading
+      // an earlier one would only keep that one alive.
+      auto isLinkOf = [&](Value field) {
+        auto gather = dyn_cast<GatherTuplesOp>(op);
+        if (!gather)
+          return false;
+        for (Operation *user : gather.getResult().getUsers()) {
+          auto map = dyn_cast<MapParticlesOp>(user);
+          if (map && map.getGathered().size() == 2 &&
+              llvm::is_contained(map.getGathered(), field) &&
+              getBypassed(map, unionOp, FlatSymbolRefAttr()) == field)
+            return true;
+        }
+        return false;
+      };
       // The positions and the gathered fields, which the loop reads at
       // the members of its tuples only.
       unsigned gathered =
@@ -99,6 +118,8 @@ public:
         if (index == 2)
           continue; // The cell.
         Value field = op->getOperand(index);
+        if (!isLinkOf(field))
+          continue;
         while (auto map = field.getDefiningOp<MapParticlesOp>()) {
           Value bypassed = getBypassed(map, unionOp, set);
           if (!bypassed)

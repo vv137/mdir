@@ -64,7 +64,8 @@ def BypassUpdates : Pass<"md-bypass-updates", "::mlir::ModuleOp"> {
   let summary = "Lets the loops over the sets of a disjoint union read the "
                 "fields before the updates of the other sets";
   let description = [{
-    A loop over the tuples of a set (`md.gather_tuples`, `md.sum_tuples`)
+    A loop over the tuples of a set (`md.gather_tuples`) that is the next
+    link of a chain of updates, whose result a map adds to a field it reads,
     reads its positions and gathered fields at the members of its tuples
     only. When the set is in an `md.disjoint_union`, what a loop over the
     tuples of an other set of the union gathers is zero at those members,

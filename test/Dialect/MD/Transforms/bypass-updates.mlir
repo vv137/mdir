@@ -111,3 +111,29 @@ md.function @scaled(%x: !vec, %cell: !md.cell, %pairs: !pairs, %trios: !trios)
   } : !trios, !vec -> !vec
   md.return %z : !vec
 }
+
+// A loop over the trios that is no link of the chain, as the loop over the
+// velocities that reads the positions a chain gave: nothing adds what it
+// gathers to the field it reads, so it keeps the field, and the earlier
+// field need not be kept alive for it.
+//
+// CHECK-LABEL: md.function @no_link(
+// CHECK:         %[[Y:[a-z0-9]+]] = md.map_particles
+// CHECK:         md.gather_tuples %{{[a-z0-9]+}}, %[[Y]], %{{[a-z0-9]+}}
+md.function @no_link(%x: !vec, %cell: !md.cell, %pairs: !pairs, %trios: !trios)
+    -> !vec {
+  %c = md.gather_tuples %pairs, %x, %cell coordinates(displacement(0, 1)) {
+  ^bb0(%d: vector<3xf64>):
+    md.yield %d, %d : vector<3xf64>, vector<3xf64>
+  } : !pairs, !vec -> !vec
+  %y = md.map_particles gather(%x, %c : !vec, !vec) {
+  ^bb0(%a: vector<3xf64>, %b: vector<3xf64>):
+    %s = arith.addf %a, %b : vector<3xf64>
+    md.yield %s : vector<3xf64>
+  } : !vec
+  %z = md.gather_tuples %trios, %y, %cell coordinates(displacement(0, 1)) {
+  ^bb0(%d: vector<3xf64>):
+    md.yield %d, %d, %d : vector<3xf64>, vector<3xf64>, vector<3xf64>
+  } : !trios, !vec -> !vec
+  md.return %z : !vec
+}

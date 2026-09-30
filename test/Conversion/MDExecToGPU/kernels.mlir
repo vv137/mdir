@@ -1,8 +1,15 @@
 // The storage form on a device, lowered to kernels.
 //
-// RUN: mdir-opt %s --convert-md-exec-to-gpu | FileCheck %s
-// RUN: mdir-opt %s --convert-md-exec-to-gpu="block-size=64" \
+// RUN: mdir-opt %s --convert-md-exec-to-gpu="contract=false" | FileCheck %s
+// RUN: mdir-opt %s --convert-md-exec-to-gpu="block-size=64 contract=false" \
 // RUN: | FileCheck %s --check-prefix=SMALL
+// RUN: mdir-opt %s --convert-md-exec-to-gpu | FileCheck %s --check-prefix=CONTRACT
+
+// By default the arithmetic of a kernel may contract into fused
+// multiply-adds.
+// CONTRACT-LABEL: func.func @kick(
+// CONTRACT:         gpu.launch
+// CONTRACT:           arith.mulf {{.*}} fastmath<contract>
 
 md.particle_set @atoms
 

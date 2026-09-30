@@ -2191,7 +2191,21 @@ public:
     Lowering lowering(getOperation(), blockSize, rowLanes, fuseRows,
                       pmeStream, deterministic);
     if (failed(lowering.run()))
-      signalPassFailure();
+      return signalPassFailure();
+    // Products and sums in the kernels may become fused multiply-adds, as
+    // nvcc makes them by default: the backend fuses only what is marked.
+    if (contract)
+      getOperation()->walk([](gpu::LaunchOp launch) {
+        launch.getBody().walk([](arith::ArithFastMathInterface op) {
+          arith::FastMathFlags flags = arith::FastMathFlags::none;
+          if (arith::FastMathFlagsAttr given = op.getFastMathFlagsAttr())
+            flags = given.getValue();
+          op->setAttr(op.getFastMathAttrName(),
+                      arith::FastMathFlagsAttr::get(
+                          op->getContext(),
+                          flags | arith::FastMathFlags::contract));
+        });
+      });
   }
 };
 } // namespace

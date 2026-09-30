@@ -107,6 +107,10 @@ def ConvertMDExecToGPU
     Option<"fuseRows", "fuse-rows", "bool", /*default=*/"true",
            "Whether consecutive loops over pairs and tuples of the same "
            "positions become one kernel">,
+    Option<"contract", "contract", "bool", /*default=*/"true",
+           "Whether the arithmetic of the kernels may contract a product "
+           "and a sum into a fused multiply-add, which rounds once "
+           "(the control keyword fast_math)">,
     Option<"deterministic", "deterministic", "bool", /*default=*/"false",
            "Whether sums are added in an order that does not depend on the "
            "threads (D84): the charges of PME in fixed point, not with "
