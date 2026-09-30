@@ -28,9 +28,11 @@ HEADER = """\
 // cell are in f64. The buffers are on the device.
 //
 // A kernel runs one thread per item, in blocks of 128 threads. The threads
-// beyond the last item do nothing. The charges are added to the grid in
-// fixed point with integer atomics, so that the sum does not depend on the
-// order of the threads (D70). The product with the influence function sums
+// beyond the last item do nothing. In the deterministic mode the charges
+// are added to the grid in fixed point with integer atomics, so that the
+// sum does not depend on the order of the threads (D70); by default they
+// are added in !pme_real with floating-point atomics (D84). The product
+// with the influence function sums
 // the energy and the virial of each row of the grid in a thread; the host
 // adds the rows up in their order.
 
@@ -216,64 +218,87 @@ def launch(body_text, count):
 """
 
 
-def spread():
+def spread(fixed=True):
     body = Body("      ")
-    body("%i = arith.addi %item, %c0 : index")
+    # A thread for each particle and point of its splines along z, so that
+    # the threads of a particle add to neighboring points of the grid at
+    # once, as those of GROMACS do.
+    body("""\
+%lanes = arith.constant PME_ORDER : index
+%i = arith.divui %item, %lanes : index
+%j3 = arith.remui %item, %lanes : index""")
     sx, sy, sz = particle_prologue(body, slopes=False)
+    rounded_line = ("      %rounded = math.roundeven %value : !pme_real" if fixed else "")
+    fixed_line = ("      %fixed = arith.fptosi %rounded : !pme_real to i64" if fixed else "")
+    if fixed:
+        atomic_line = ('      %old = llvm.atomicrmw add %pointer, %fixed syncscope("device") '
+                       'monotonic : !llvm.ptr<1>, i64')
+    else:
+        atomic_line = ("      // An addition without a result: the instance chooses its op,\n"
+                       "      // since the NVPTX backend of LLVM expands atomicrmw fadd of f32\n"
+                       "      // into a loop of compare-and-swap.\n"
+                       "      PME_ATOMIC_ADD %pointer, %value")
     body(f"""\
-%scale = arith.constant 1099511627776.0 : !pme_real
+{"%scale = arith.constant 1099511627776.0 : !pme_real" if fixed else "%scale = arith.constant 1.0 : !pme_real"}
 %qscaled = arith.mulf %qi, %scale : !pme_real
-%eight = arith.constant 8 : i64
-%gridindex = memref.extract_aligned_pointer_as_index %grid : memref<?xi64, 1> -> index
+%eight = arith.constant {8 if fixed else "PME_REAL_BYTES"} : i64
+%gridindex = memref.extract_aligned_pointer_as_index %grid : memref<?x{"i64" if fixed else "!pme_real"}, 1> -> index
 // The grid is a buffer of its own, with no offset.
 %gridbase = arith.index_cast %gridindex : index to i64
 %j0 = arith.constant 0 : index
 %j1c = arith.constant 1 : index
+// The point of this thread along z; the threads of a particle add to
+// points next to one another in memory.
+%g3s = arith.addi {sz}, %j3 : index
+%g3w = arith.subi %g3s, %k3 : index
+%g3over = arith.cmpi uge, %g3s, %k3 : index
+%g3 = arith.select %g3over, %g3w, %g3s : index
+%w3 = memref.load %wz[%j3] : memref<8x!pme_real>
+%q3 = arith.mulf %qscaled, %w3 : !pme_real
 scf.for %j1 = %j0 to %order step %j1c {{
   %g1s = arith.addi {sx}, %j1 : index
   %g1w = arith.subi %g1s, %k1 : index
   %g1over = arith.cmpi uge, %g1s, %k1 : index
   %g1 = arith.select %g1over, %g1w, %g1s : index
   %w1 = memref.load %wx[%j1] : memref<8x!pme_real>
-  %q1 = arith.mulf %qscaled, %w1 : !pme_real
+  %q13 = arith.mulf %q3, %w1 : !pme_real
   scf.for %j2 = %j0 to %order step %j1c {{
     %g2s = arith.addi {sy}, %j2 : index
     %g2w = arith.subi %g2s, %k2 : index
     %g2over = arith.cmpi uge, %g2s, %k2 : index
     %g2 = arith.select %g2over, %g2w, %g2s : index
     %w2 = memref.load %wy[%j2] : memref<8x!pme_real>
-    %q12 = arith.mulf %q1, %w2 : !pme_real
+    %value = arith.mulf %q13, %w2 : !pme_real
     %row1 = arith.muli %g1, %k2 : index
     %row = arith.addi %row1, %g2 : index
     %gbase = arith.muli %row, %k3 : index
-    scf.for %j3 = %j0 to %order step %j1c {{
-      %g3s = arith.addi {sz}, %j3 : index
-      %g3w = arith.subi %g3s, %k3 : index
-      %g3over = arith.cmpi uge, %g3s, %k3 : index
-      %g3 = arith.select %g3over, %g3w, %g3s : index
-      %w3 = memref.load %wz[%j3] : memref<8x!pme_real>
-      %value = arith.mulf %q12, %w3 : !pme_real
-      %rounded = math.roundeven %value : !pme_real
-      %fixed = arith.fptosi %rounded : !pme_real to i64
-      %at = arith.addi %gbase, %g3 : index
-      // A relaxed atomic at the scope of the device: the sum needs no
-      // order, and one of the system would wait for the host.
-      %ati = arith.index_cast %at : index to i64
-      %offset = arith.muli %ati, %eight : i64
-      %address = arith.addi %gridbase, %offset : i64
-      %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-      %old = llvm.atomicrmw add %pointer, %fixed syncscope("device") monotonic : !llvm.ptr<1>, i64
-    }}
+{rounded_line}
+{fixed_line}
+    %at = arith.addi %gbase, %g3 : index
+    // A relaxed atomic at the scope of the device: the sum needs no
+    // order, and one of the system would wait for the host.
+    %ati = arith.index_cast %at : index to i64
+    %offset = arith.muli %ati, %eight : i64
+    %address = arith.addi %gridbase, %offset : i64
+    %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
+{atomic_line}
   }}
 }}""")
+
     zero = Body("      ")
-    zero("""\
-%none = arith.constant 0 : i64
-memref.store %none, %grid[%item] : memref<?xi64, 1>""")
+    zero(f"""\
+%none = arith.constant {"0 : i64" if fixed else "0.0 : !pme_real"}
+memref.store %none, %grid[%item] : memref<?x{"i64" if fixed else "!pme_real"}, 1>""")
+    name = "spread" if fixed else "spread_float"
+    what = ("in fixed point, so that the sum does not depend on the order of\n"
+            "// the threads (D70; the deterministic mode, D84)") if fixed else (
+            "in !pme_real, with floating-point atomics, whose sum depends on\n"
+            "// the order of the threads (the default mode, D84)")
+    grid_type = "i64" if fixed else "!pme_real"
     return f"""
-// Spreads the charges to `grid`, in fixed point.
-func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
-                                       %box: vector<3xf64>, %grid: memref<?xi64, 1>,
+// Spreads the charges to `grid`, {what}.
+func.func private @mdrt_gpu_pme_{name}(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
+                                       %box: vector<3xf64>, %grid: memref<?x{grid_type}, 1>,
                                        %k1: index, %k2: index, %k3: index, %n: index) {{
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
@@ -285,9 +310,11 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
   %ilx = arith.divf %unit, %lx : f64
   %ily = arith.divf %unit, %ly : f64
   %ilz = arith.divf %unit, %lz : f64
-  %points = memref.dim %grid, %c0 : memref<?xi64, 1>
+  %points = memref.dim %grid, %c0 : memref<?x{grid_type}, 1>
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-{launch(zero.text(), "%points")}{launch(body.text(), "%count")}  return
+  %spread_lanes = arith.constant PME_ORDER : index
+  %spread = arith.muli %count, %spread_lanes : index
+{launch(zero.text(), "%points")}{launch(body.text(), "%spread")}  return
 }}
 """
 
@@ -716,8 +743,8 @@ def main():
     here = os.path.dirname(os.path.abspath(__file__))
     path = os.path.join(here, "..", "lib", "Runtime", "Templates", "PMEGPU.mlir")
     with open(path, "w") as file:
-        file.write(HEADER + spread() + real() + convolve() + scale() +
-                   gather())
+        file.write(HEADER + spread() + spread(fixed=False) + real() +
+                   convolve() + scale() + gather())
 
 
 if __name__ == "__main__":

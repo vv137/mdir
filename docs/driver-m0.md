@@ -115,6 +115,7 @@ regard to case.
 | | `neighbor_capacity` | Neighbors that a neighbor structure holds per particle. Absent: estimated from the configuration. |
 | | `fast_math` | Whether kernels are rewritten in ways that change rounding. The default is `true`. |
 | | `spatial_order` | Whether the run keeps the particles in the order of their positions (D44). The default is `true`. The files of the run are in the order of the input either way. |
+| | `deterministic` | Whether every sum is added in an order that the threads do not decide, so that a run gives the same bits from run to run on the same binary and hardware (D84). The default is `false`: a device then adds the charges of PME with floating-point atomics. |
 
 A keyword of a pair term or of a type that is not listed here names a
 number: a parameter of the type, or a constant of the term, that the

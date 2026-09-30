@@ -872,6 +872,22 @@ std::string kernels::instantiatePMETemplates(StringRef text, Type position,
       instance += convert(Float64Type::get(force.getContext()), force);
     } else if (text.consume_front("PME_REAL_TO_F64")) {
       instance += convert(force, Float64Type::get(force.getContext()));
+    } else if (text.consume_front("PME_ATOMIC_ADD %pointer, %value")) {
+      // An atomic addition of `!pme_real` to global memory at the scope of
+      // the device, with no result. The NVPTX backend of LLVM expands
+      // `atomicrmw fadd` of f32 into a loop of compare-and-swap, at four
+      // times the time of PTX's own reduction on an RTX 3090, so f32 takes
+      // that (NVIDIA only, as the template is); f64 is native.
+      if (force.isF64())
+        instance += "%old = llvm.atomicrmw fadd %pointer, %value "
+                    "syncscope(\"device\") monotonic : !llvm.ptr<1>, f64";
+      else
+        instance += "llvm.inline_asm has_side_effects "
+                    "\"red.relaxed.gpu.global.add.f32 [$0], $1;\", \"l,f\" "
+                    "%pointer, %value : (!llvm.ptr<1>, f32) -> ()";
+    } else if (text.consume_front("PME_REAL_BYTES")) {
+      // The bytes of a value of `!pme_real`, the type of the forces.
+      instance += force.isF64() ? "8" : "4";
     } else if (text.consume_front("PME_ORDER")) {
       // The order of the splines, a constant in the kernels.
       instance += std::to_string(order);

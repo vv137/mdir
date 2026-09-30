@@ -917,7 +917,7 @@ Error Reader::readExecution(const toml::table &table) {
   if (Error error = checkKeywords(table, "execution",
                                   {"target", "threads", "precision",
                                    "neighbor_capacity", "fast_math",
-                                   "spatial_order"}))
+                                   "spatial_order", "deterministic"}))
     return error;
   if (Error error = readChoice<Target>(
           table, "target", control.target,
@@ -935,6 +935,8 @@ Error Reader::readExecution(const toml::table &table) {
           readCount(table, "neighbor_capacity", control.neighborWidth, 1))
     return error;
   if (Error error = readBool(table, "fast_math", control.fastMath))
+    return error;
+  if (Error error = readBool(table, "deterministic", control.deterministic))
     return error;
   return readBool(table, "spatial_order", control.reorder);
 }
@@ -1210,6 +1212,8 @@ precision     = "DOUBLE"        # SINGLE, MIXED, DOUBLE
 fast_math     = true            # allow rewrites that change rounding
 spatial_order = true            # keep the particles in the order of their
                                 # positions
+deterministic = false           # sums in an order the threads do not decide:
+                                # the same bits from run to run
 # neighbor_capacity = 160       # neighbors per particle; default: estimated
 )TOML";
 }

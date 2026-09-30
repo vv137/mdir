@@ -100,10 +100,10 @@ struct Flag {
 class Lowering {
 public:
   Lowering(ModuleOp module, int64_t blockSize, int64_t rowLanes,
-           bool fuseRows, bool pmeStream)
+           bool fuseRows, bool pmeStream, bool deterministic)
       : module(module), context(module.getContext()), blockSize(blockSize),
         rowLanes(rowLanes), fuseRows(fuseRows),
-        pmeStream(pmeStream) {}
+        pmeStream(pmeStream), deterministic(deterministic) {}
 
   LogicalResult run();
 
@@ -223,6 +223,9 @@ private:
   bool fuseRows;
   /// Whether the reciprocal sum runs on a second stream (lowerReciprocal).
   bool pmeStream;
+  /// Whether sums are added in an order that the threads do not decide
+  /// (D84).
+  bool deterministic;
 
   /// The function that is being lowered.
   func::FuncOp current;
@@ -1332,11 +1335,19 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   };
   if (pmeStream)
     sideCall(builder, "mdrtSideBegin");
-  func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_spread"),
-                       ValueRange{positions, charges, box, fixed, k1, k2, k3,
-                                  order});
-  func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_real"),
-                       ValueRange{fixed, real});
+  // The charges in fixed point in the deterministic mode, then converted;
+  // by default with floating-point atomics, straight to the grid (D84).
+  if (deterministic) {
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_spread"),
+                         ValueRange{positions, charges, box, fixed, k1, k2,
+                                    k3, order});
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_real"),
+                         ValueRange{fixed, real});
+  } else {
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_spread_float"),
+                         ValueRange{positions, charges, box, real, k1, k2, k3,
+                                    order});
+  }
   Type wide = builder.getI64Type();
   SmallVector<Value> sizes;
   for (int64_t points : grid)
@@ -2178,7 +2189,7 @@ public:
 
   void runOnOperation() final {
     Lowering lowering(getOperation(), blockSize, rowLanes, fuseRows,
-                      pmeStream);
+                      pmeStream, deterministic);
     if (failed(lowering.run()))
       signalPassFailure();
   }

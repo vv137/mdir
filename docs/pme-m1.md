@@ -105,6 +105,19 @@ each contribution `q_i M M M` is rounded to a 64-bit integer at the scale
 2⁴⁰ and added with an integer atomic, whose sum does not depend on the
 order. The grid is converted to floating point before the FFT.
 
+This is the deterministic mode of a run (`deterministic = true` in
+`[execution]`, D84). By default a device adds the contributions in the type
+of the grid with floating-point atomics, straight into the grid that the
+FFT takes, and the last bits of the grid depend on the order of the
+threads. A thread adds the contributions of one particle at one point
+along z to the points of the other two directions, so that the threads of
+a particle add to neighboring points at once (as GROMACS arranges them);
+on JAC (RTX 3090) the spreading took 38 µs a step in fixed point with a
+thread per particle and takes 24 in `f32` with a thread per particle and
+point along z. The NVPTX backend of LLVM turns an atomic addition of `f32`
+into a loop of compare-and-swap, four times slower; the template for `f32`
+takes PTX's own reduction, `red.relaxed.gpu.global.add.f32`.
+
 | Item | Value |
 |---|---|
 | Scale | 2⁴⁰: a contribution is resolved to 10⁻¹² e, and a point holds up to 2⁶³ / 2⁴⁰ ≈ 8 × 10⁶ e, far beyond any point of a real system. A charge of 100 e or more is rejected. A position that is not a number converts to an undefined integer; the run has failed by then, but the grid does not say so. |

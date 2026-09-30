@@ -212,6 +212,10 @@ struct Control {
   bool fastMath = true;
   /// Whether the particles are put in the order of their positions.
   bool reorder = true;
+  /// Whether every sum is added in an order that the threads do not decide,
+  /// so that a run gives the same bits on the same binary and hardware
+  /// (D84).
+  bool deterministic = false;
 };
 
 /// Reads the control file `path`. Paths of files in it are relative to the
