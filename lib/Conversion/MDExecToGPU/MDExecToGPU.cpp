@@ -62,9 +62,11 @@ namespace {
 struct Neighbors {
   /// The number of particles.
   Value size;
-  /// The number of neighbors of each particle, and their indices.
+  /// The number of neighbors of each place in the order of the cells of
+  /// the last build, and their places; the particle at each place (D86).
   Value counts;
   Value index;
+  Value order;
   /// The number of neighbors that a row holds, and the entries of the
   /// matrix, `size` times `width`.
   Value width;
@@ -189,6 +191,13 @@ private:
   /// which the group of threads of a particle does each loop in turn, and
   /// their global sums to one reduction.
   LogicalResult lowerRows(ArrayRef<Operation *> run);
+
+  /// Gathers the positions and the fields of `ins` of a loop over pairs
+  /// into the order of the cells of `structure`, in buffers of their own
+  /// that are freed after `after` (D86).
+  PairLayout gatherInOrder(OpBuilder &builder, Location loc,
+                           const Neighbors &structure, Value positions,
+                           ValueRange ins, Operation *after);
 
   /// Stores the contributions of a particle and returns, for each global
   /// sum of a loop, its result.
@@ -762,6 +771,11 @@ void Lowering::findRows(func::FuncOp function) {
                                ? cast<md_exec::PairForOp>(op).getScratch()
                                : cast<md_exec::TupleForOp>(op).getScratch();
       bool joins = !run.empty() && getPositions(&op) == getPositions(run[0]);
+      // The loops over pairs of a run share the order of one structure.
+      if (auto pair = dyn_cast<md_exec::PairForOp>(op))
+        for (Operation *member : run)
+          if (auto other = dyn_cast<md_exec::PairForOp>(member))
+            joins &= other.getNeighbors() == pair.getNeighbors();
       if (joins)
         for (Value operand : op.getOperands())
           if ((written.contains(operand) &&
@@ -834,6 +848,45 @@ void Lowering::findRows(func::FuncOp function) {
   });
 }
 
+PairLayout Lowering::gatherInOrder(OpBuilder &builder, Location loc,
+                                   const Neighbors &structure,
+                                   Value positions, ValueRange ins,
+                                   Operation *after) {
+  PairLayout layout;
+  layout.order = structure.order;
+  SmallVector<Value> sources = {positions};
+  sources.append(ins.begin(), ins.end());
+  SmallVector<Value> targets;
+  for (Value source : sources) {
+    auto type = cast<MemRefType>(source.getType());
+    SmallVector<Value> sizes = {structure.size};
+    Value target = createDeviceBuffer(builder, loc, type, sizes);
+    targets.push_back(target);
+  }
+  launchOver(builder, loc, structure.size, [&](OpBuilder &body, Value place) {
+    Value particle = arith::IndexCastOp::create(
+        body, loc, body.getIndexType(),
+        memref::LoadOp::create(body, loc, structure.order, ValueRange{place}));
+    for (auto [source, target] : llvm::zip(sources, targets))
+      storeElement(body, loc, loadElement(body, loc, source, particle),
+                   target, place);
+  });
+  // The buffers are freed once the loop has read them.
+  OpBuilder release(after->getContext());
+  release.setInsertionPointAfter(after);
+  for (Value target : targets) {
+    auto type = cast<MemRefType>(target.getType());
+    Value plain = memref::MemorySpaceCastOp::create(
+        release, loc, MemRefType::get(type.getShape(), type.getElementType()),
+        target);
+    gpu::DeallocOp::create(release, loc, /*asyncToken=*/Type(),
+                           /*asyncDependencies=*/ValueRange(), plain);
+  }
+  layout.positions = targets.front();
+  layout.ins.assign(targets.begin() + 1, targets.end());
+  return layout;
+}
+
 LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
   Operation *last = run.back();
   // The kernel of a run is named after its first loop and its length.
@@ -876,6 +929,19 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
     loops.push_back(loop);
   }
   Value size = createSize(builder, loc, positions);
+
+  // The loops over pairs run in the order of the cells of their structure,
+  // which is one for the run (findRows), and the loops over tuples take the
+  // particle at the place of the thread (D86).
+  DenseMap<Operation *, PairLayout> layouts;
+  Value order;
+  for (Loop &loop : loops)
+    if (auto pair = dyn_cast<md_exec::PairForOp>(loop.op)) {
+      layouts[loop.op] = gatherInOrder(builder, loc, loop.structure,
+                                       pair.getPositions(), pair.getIns(),
+                                       last);
+      order = loop.structure.order;
+    }
 
   // Loops over disjoint tuples: one thread for each particle, which
   // evaluates the tuples of which it is the member at place 0. The loops
@@ -929,6 +995,11 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
       SmallVector<Value, 4> additions;
     };
     llvm::MapVector<Value, Destination> destinations;
+    Value place = particle;
+    if (order)
+      particle = arith::IndexCastOp::create(
+          body, loc, body.getIndexType(),
+          memref::LoadOp::create(body, loc, order, ValueRange{place}));
     for (Loop &loop : loops) {
       IRMapping local;
       SmallVector<Value> contributions, totals;
@@ -941,7 +1012,8 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
       if (auto pair = dyn_cast<md_exec::PairForOp>(loop.op)) {
         contributions = emitPairKernel(
             body, pair, loop.structure.counts, loop.structure.index,
-            loop.box, loop.inverse, particle, local, &sharing, &totals);
+            loop.box, loop.inverse, place, local, &sharing, &totals,
+            &layouts[loop.op]);
         scratch = pair.getScratch();
         outs = pair.getOuts();
       } else {
@@ -1200,12 +1272,15 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   Value box = convertReal(builder, loc, op.getCellMutable().get(), real);
   Value inverse = createInverse(builder, loc, box);
 
+  // The loop runs in the order of the cells of the last build (D86).
+  PairLayout layout = gatherInOrder(builder, loc, structure, positions,
+                                    op.getIns(), op);
   launchRows(builder, loc, size, [&](OpBuilder &body, Value central,
                                      const RowLanes &sharing) {
     IRMapping local;
-    SmallVector<Value> contributions =
-        emitPairKernel(body, op, structure.counts, structure.index, box,
-                       inverse, central, local, &sharing);
+    SmallVector<Value> contributions = emitPairKernel(
+        body, op, structure.counts, structure.index, box, inverse, central,
+        local, &sharing, /*outTotals=*/nullptr, &layout);
     storeContributions(body, loc, contributions, op.getScratch(), central,
                        sharing);
   });
@@ -1555,6 +1630,9 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
       builder, loc,
       getDeviceType({ShapedType::kDynamic, ShapedType::kDynamic}, narrow),
       ValueRange{structure.size, structure.width});
+  structure.order = createDeviceBuffer(
+      builder, loc, getDeviceType({ShapedType::kDynamic}, narrow),
+      ValueRange{structure.size});
   structure.reference =
       createDeviceBuffer(builder, loc, positions, ValueRange{structure.size});
   // The test of validity reads the configuration before the first build,
@@ -1627,7 +1705,7 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
   auto call = func::CallOp::create(
       builder, loc, build,
       ValueRange{positions, boxValue, reachValue, widthValue, excluded,
-                 structure.counts, structure.index});
+                 structure.counts, structure.index, structure.order});
   Value largest = call.getResult(0);
 
   // The runtime counts the builds, for the log of the run.

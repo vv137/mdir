@@ -70,6 +70,16 @@ struct RowLanes {
       combine;
 };
 
+/// Where a loop over pairs finds its particles: the positions and the
+/// fields of `ins` gathered into the order of the cells of the neighbor
+/// structure, whose place `p` holds the particle `order[p]` (D86). The
+/// destinations stay in the order of the particles.
+struct PairLayout {
+  mlir::Value positions;
+  llvm::SmallVector<mlir::Value> ins;
+  mlir::Value order;
+};
+
 /// Emits what a loop over pairs does for the particle `central`: the loop
 /// over its neighbors, with the minimum image, the cutoff, and the kernel,
 /// and the update of the destinations. Returns the contributions to the
@@ -80,13 +90,15 @@ struct RowLanes {
 /// `inverse` what `createInverse` returns for it. With `lanes`, a group of
 /// threads shares the row (RowLanes). With `outTotals`, the sums of the
 /// particle for its destinations are returned there, in every thread of
-/// the group, and not stored: the caller stores them.
+/// the group, and not stored: the caller stores them. With `layout`,
+/// `central` and the entries of the matrix are places in its order.
 llvm::SmallVector<mlir::Value>
 emitPairKernel(mlir::OpBuilder &builder, md_exec::PairForOp op,
                mlir::Value counts, mlir::Value index, mlir::Value box,
                mlir::Value inverse, mlir::Value central,
                mlir::IRMapping &local, const RowLanes *lanes = nullptr,
-               llvm::SmallVectorImpl<mlir::Value> *outTotals = nullptr);
+               llvm::SmallVectorImpl<mlir::Value> *outTotals = nullptr,
+               const PairLayout *layout = nullptr);
 
 /// Emits what a loop over tuples does for the particle `particle`: the loop
 /// over the tuples in its row of `incidence`, with the displacements in the

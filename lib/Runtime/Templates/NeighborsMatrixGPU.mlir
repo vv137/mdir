@@ -10,15 +10,18 @@
 // [AllenTildesley2017]. The keys are those of docs/references.md.
 //
 // The buffers are on the device. The simulation cell is orthorhombic and
-// periodic, with edge lengths `box`. On return, row `i` of `index` holds the
-// particles within `reach` of particle `i`, and `counts[i]` holds their
-// number, limited to the width of a row. The result is the largest number
-// of neighbors that a particle has, which may exceed the width; the caller
-// can then tell that a row was too narrow.
+// periodic, with edge lengths `box`. On return, `order[p]` is the particle
+// at the place `p` of the order of the cells, row `p` of `index` holds the
+// places of the particles within `reach` of that particle, and `counts[p]`
+// holds their number, limited to the width of a row. The loops over pairs
+// run in this order, whose places are next to one another in space (D86).
+// The result is the largest number of neighbors that a particle has, which
+// may exceed the width; the caller can then tell that a row was too narrow.
 //
-// The matrix is that of the template for the host, entry by entry. See
-// there for the cells, for the copy of the positions that the search works
-// on, and for the margin of the search.
+// The matrix is that of the template for the host in the order of the
+// cells: row `p` is its row `order[p]`, and an entry `q` is its entry
+// `order[q]`. See there for the cells, for the copy of the positions that
+// the search works on, and for the margin of the search.
 //
 // A kernel runs one thread per item, in blocks of 128 threads. The threads
 // beyond the last item do nothing.
@@ -174,7 +177,8 @@ func.func private @mdrt_gpu_excluded_partner(%excluded: memref<?x?xi32, 1>,
 func.func private @mdrt_gpu_build_neighbors_matrix(
     %x: memref<?x3xf64, 1>, %box: vector<3xf64>, %reach: f64,
     %cell_width: f64, %excluded: memref<?x?xi32, 1>,
-    %counts: memref<?xi32, 1>, %index: memref<?x?xi32, 1>) -> index {
+    %counts: memref<?xi32, 1>, %index: memref<?x?xi32, 1>,
+    %order: memref<?xi32, 1>) -> index {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %block = arith.constant 128 : index
@@ -255,7 +259,6 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
 
   %cells1 = arith.addi %cells, %c1 : index
   %key = gpu.alloc (%n) : memref<?xi32, 1>
-  %order = gpu.alloc (%n) : memref<?xi32, 1>
   %wrapped = gpu.alloc (%n) : memref<?x3xf32, 1>
   %sorted = gpu.alloc (%n) : memref<?x3xf32, 1>
   %held = gpu.alloc (%cells) : memref<?xi32, 1>
@@ -735,9 +738,9 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
                 %any_e = arith.ori %found_e, %same : i1
                 scf.yield %any_e : i1
               }
-              %entered = arith.select %is_excluded, %i32, %j32 : i32
+              %entered = arith.select %is_excluded, %p32, %q32 : i32
               %slot_index = arith.index_cast %slot : i32 to index
-              memref.store %entered, %index[%i, %slot_index] : memref<?x?xi32, 1>
+              memref.store %entered, %index[%p, %slot_index] : memref<?x?xi32, 1>
             }
 
             %found_here = math.ctpop %ballot : i32
@@ -755,7 +758,7 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
       %writer = arith.cmpi eq, %lane32, %zero32 : i32
       scf.if %writer {
         %limited = arith.minui %found, %row_width32 : i32
-        memref.store %limited, %counts[%i] : memref<?xi32, 1>
+        memref.store %limited, %counts[%p] : memref<?xi32, 1>
         // A relaxed atomic at the scope of the device (see PMEGPU.mlir).
         %rm_base = memref.extract_aligned_pointer_as_index %result : memref<1xi32, 1> -> index
         %rm_addr = arith.index_cast %rm_base : index to i64
@@ -776,9 +779,6 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
   %key0 = memref.memory_space_cast %key
       : memref<?xi32, 1> to memref<?xi32>
   gpu.dealloc %key0 : memref<?xi32>
-  %order0 = memref.memory_space_cast %order
-      : memref<?xi32, 1> to memref<?xi32>
-  gpu.dealloc %order0 : memref<?xi32>
   %wrapped0 = memref.memory_space_cast %wrapped
       : memref<?x3xf32, 1> to memref<?x3xf32>
   gpu.dealloc %wrapped0 : memref<?x3xf32>

@@ -29,6 +29,14 @@ index[i][0 .. W)    their indices; entries from count[i] on are unused
 The order of a row decides the order in which a loop over pairs adds up
 the forces on a particle, and with it the last bits of the forces.
 
+On a device the matrix is kept in the order of the cells of its build
+(D86): `order[p]` is the particle at the place `p`, the row `p` is that of
+that particle, and its entries are places. A kernel of each step gathers
+the positions and the fields that a loop over pairs reads into that order,
+and the loop writes the forces of a particle at its place in the state.
+The places of a cell are next to one another in memory, and the order is
+new with every build.
+
 ## 2. The build
 
 ### 2.1 Steps
@@ -338,9 +346,13 @@ compare the states.
 
 **Between two orders** the particles move. With the diffusion
 coefficient of liquid argon, about 2e-3 nm²/ps, a particle moves 0.35 nm
-in 10 ps, less than the width of a cell, and 1.1 nm in 100 ps. This is an
-estimate; how the time of a step grows between two orders was not
-measured. A run without checkpoints keeps the order of its start.
+in 10 ps, less than the width of a cell, and 1.1 nm in 100 ps. Measured on
+JAC (RTX 3090, 2026-09-30), when the loops over pairs read the state in
+this order: over 40 ps the loop over pairs went from 117 to 208 µs a step,
+and a run of 200 ps ran 20 % slower than one of 40 ps. The loops over pairs
+on a device therefore read their particles in the order of the cells of
+the last build of their structure (Section 1, D86); the other kernels kept
+their times.
 
 | Alternative | Why not |
 |---|---|

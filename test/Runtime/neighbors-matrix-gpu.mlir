@@ -19,7 +19,9 @@
 //   - the largest number of neighbors of one particle, from the device.
 //
 // The rows agree in their order as well: the particles of a cell are
-// sorted by index on the device, which is the order of the host.
+// sorted by index on the device, which is the order of the host. The
+// device keeps the matrix in the order of the cells (D86); the test takes
+// it back to the particles.
 //
 // The numbers of entries were found by testing all pairs, with
 // Inputs/neighbors_reference.py.
@@ -73,15 +75,16 @@ func.func @run(%length: f64, %reach: f64, %width: f64, %row: index) {
   %xd = gpu.alloc (%count) : memref<?x3xf64, 1>
   %countsd = gpu.alloc (%count) : memref<?xi32, 1>
   %indexd = gpu.alloc (%count, %row) : memref<?x?xi32, 1>
+  %orderd = gpu.alloc (%count) : memref<?xi32, 1>
   %t0 = gpu.wait async
   %t1 = gpu.memcpy async [%t0] %xd, %x : memref<?x3xf64, 1>, memref<?x3xf64>
   gpu.wait [%t1]
   // No excluded pairs: a buffer with no rows.
   %none = gpu.alloc (%c0, %c1) : memref<?x?xi32, 1>
   %largest = call @mdrt_gpu_build_neighbors_matrix(
-      %xd, %box, %reach, %width, %none, %countsd, %indexd)
+      %xd, %box, %reach, %width, %none, %countsd, %indexd, %orderd)
       : (memref<?x3xf64, 1>, vector<3xf64>, f64, f64, memref<?x?xi32, 1>,
-         memref<?xi32, 1>, memref<?x?xi32, 1>) -> index
+         memref<?xi32, 1>, memref<?x?xi32, 1>, memref<?xi32, 1>) -> index
   %counts2 = memref.alloc(%count) : memref<?xi32>
   %index2 = memref.alloc(%count, %row) : memref<?x?xi32>
   %t2 = gpu.wait async
@@ -89,12 +92,19 @@ func.func @run(%length: f64, %reach: f64, %width: f64, %row: index) {
       : memref<?xi32>, memref<?xi32, 1>
   %t4 = gpu.memcpy async [%t3] %index2, %indexd
       : memref<?x?xi32>, memref<?x?xi32, 1>
-  gpu.wait [%t4]
+  %order2 = memref.alloc(%count) : memref<?xi32>
+  %t5 = gpu.memcpy async [%t4] %order2, %orderd
+      : memref<?xi32>, memref<?xi32, 1>
+  gpu.wait [%t5]
 
   %zero = arith.constant 0 : i64
+  // Row `i` of the device is the row of the particle `order[i]` of the
+  // host, and an entry `q` of the device is the entry `order[q]` (D86).
   %entries, %wrong = scf.for %i = %c0 to %count step %c1
       iter_args(%p = %zero, %w = %zero) -> (i64, i64) {
-    %ci = memref.load %counts[%i] : memref<?xi32>
+    %hi32 = memref.load %order2[%i] : memref<?xi32>
+    %hi = arith.index_cast %hi32 : i32 to index
+    %ci = memref.load %counts[%hi] : memref<?xi32>
     %di = memref.load %counts2[%i] : memref<?xi32>
     %cn = arith.index_cast %di : i32 to index
     %cw = arith.extsi %di : i32 to i64
@@ -103,8 +113,10 @@ func.func @run(%length: f64, %reach: f64, %width: f64, %row: index) {
     %d = arith.extui %differs : i1 to i64
     %w0 = arith.addi %w, %d : i64
     %w1 = scf.for %k = %c0 to %cn step %c1 iter_args(%t = %w0) -> (i64) {
-      %j = memref.load %index[%i, %k] : memref<?x?xi32>
-      %j2 = memref.load %index2[%i, %k] : memref<?x?xi32>
+      %j = memref.load %index[%hi, %k] : memref<?x?xi32>
+      %q2 = memref.load %index2[%i, %k] : memref<?x?xi32>
+      %q = arith.index_cast %q2 : i32 to index
+      %j2 = memref.load %order2[%q] : memref<?xi32>
       %other = arith.cmpi ne, %j, %j2 : i32
       %o = arith.extui %other : i1 to i64
       %next = arith.addi %t, %o : i64

@@ -128,9 +128,13 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
                                            Value central,
                                            IRMapping &local,
                                            const RowLanes *lanes,
-                                           SmallVectorImpl<Value> *outTotals) {
+                                           SmallVectorImpl<Value> *outTotals,
+                                           const PairLayout *layout) {
   Location loc = op.getLoc();
-  Value positions = op.getPositions();
+  Value positions = layout ? layout->positions : op.getPositions();
+  SmallVector<Value> insBuffers(op.getIns().begin(), op.getIns().end());
+  if (layout)
+    insBuffers.assign(layout->ins.begin(), layout->ins.end());
   Block &kernel = op.getKernel().front();
   Operation *yield = kernel.getTerminator();
   unsigned numIns = op.getIns().size();
@@ -152,7 +156,7 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
 
   Value centralPosition = loadElement(builder, loc, positions, central);
   SmallVector<Value> centralValues;
-  for (Value buffer : op.getIns())
+  for (Value buffer : insBuffers)
     centralValues.push_back(loadElement(builder, loc, buffer, central));
 
   Value count =
@@ -203,7 +207,7 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
         for (unsigned i = 0; i != numIns; ++i) {
           inside.map(kernel.getArgument(2 + 2 * i), centralValues[i]);
           inside.map(kernel.getArgument(3 + 2 * i),
-                     loadElement(pair, loc, op.getIns()[i], other));
+                     loadElement(pair, loc, insBuffers[i], other));
         }
         for (Operation &nested : kernel.without_terminator())
           pair.clone(nested, inside);
@@ -235,14 +239,21 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
       total = lanes->combine(builder, loc, total);
 
   auto emitStores = [&](OpBuilder &writer) {
+    // The destinations are in the order of the particles.
+    Value particle = central;
+    if (layout)
+      particle = arith::IndexCastOp::create(
+          writer, loc, writer.getIndexType(),
+          memref::LoadOp::create(writer, loc, layout->order,
+                                 ValueRange{central}));
     for (unsigned i = 0; i != numOuts; ++i) {
       Value destination = op.getOuts()[i];
       Value total = totals[i];
       if (!op.overwrites(i))
         total = arith::AddFOp::create(
-            writer, loc, loadElement(writer, loc, destination, central),
+            writer, loc, loadElement(writer, loc, destination, particle),
             total);
-      storeElement(writer, loc, total, destination, central);
+      storeElement(writer, loc, total, destination, particle);
     }
   };
   if (outTotals) {

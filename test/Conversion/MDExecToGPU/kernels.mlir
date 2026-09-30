@@ -65,11 +65,12 @@ func.func @forces(%x: memref<?x3xf64, 1>, %f: memref<?x3xf64, 1>,
   // CHECK:      %[[HOST:[a-z0-9_]+]] = memref.alloca() : memref<1024xf64>
   // CHECK:      %[[COUNTS:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?xi32, 1>
   // CHECK:      %[[INDEX:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}) : memref<?x?xi32, 1>
+  // CHECK:      %[[ORDER:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?xi32, 1>
   // CHECK:      %[[REFERENCE:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?x3xf64, 1>
   %nl0 = md_exec.empty_neighbors size(%n) positions(memref<?x3xf64, 1>)
       kind(matrix) width(48) : !mdrt.neighbors<@atoms>
 
-  // CHECK:      call @mdrt_gpu_build_neighbors_matrix(%[[X]], %[[BOX]], %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %[[COUNTS]], %[[INDEX]])
+  // CHECK:      call @mdrt_gpu_build_neighbors_matrix(%[[X]], %[[BOX]], %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %[[COUNTS]], %[[INDEX]], %[[ORDER]])
   // CHECK:      gpu.memcpy async [%{{[0-9]+}}] %[[REFERENCE]], %[[X]]
   %nl = md_exec.refresh_neighbors %nl0, %x, %cell
       cutoff(1.5) skin(0.25) cell_width(1.75) policy(always)
@@ -79,6 +80,14 @@ func.func @forces(%x: memref<?x3xf64, 1>, %f: memref<?x3xf64, 1>,
   // the host.
   //
   // CHECK:      %[[INVERSE:[0-9]+]] = arith.divf %{{[a-z0-9_]+}}, %[[BOX]] : vector<3xf64>
+  //
+  // The positions in the order of the cells of the build, which the loop
+  // reads (D86).
+  //
+  // CHECK:      gpu.alloc (%{{[a-z0-9_]+}}) : memref<?x3xf64, 1>
+  // CHECK:      gpu.launch
+  // CHECK:        memref.load %[[ORDER]][
+  // CHECK:        gpu.terminator
   // CHECK:      arith.divui
   // CHECK-DAG:  %[[IX:[0-9]+]] = vector.extract %[[INVERSE]][0]
   // CHECK-DAG:  %[[LX:[0-9]+]] = vector.extract %[[BOX]][0]
