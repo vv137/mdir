@@ -89,7 +89,9 @@ M. Bernetti, G. Bussi, "Pressure control using stochastic cell
 rescaling," *J. Chem. Phys.* **153**, 114107 (2020).
 [doi:10.1063/5.0020514](https://doi.org/10.1063/5.0020514)
 
-Used for: stochastic cell rescaling, the barostat of M1 (D50).
+Used for: stochastic cell rescaling, the barostat of M1 (D50, D72); its
+integrators, the cost of evaluating after a scaling, the effective energy,
+and the dependence on the period of coupling (D77).
 
 ### Berthelot1898
 
