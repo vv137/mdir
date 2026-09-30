@@ -1,6 +1,7 @@
 # Tile Neighbor Structure for M1: Design
 
-Status: proposed (2026-09-30), D82; not implemented. A prototype
+Status: superseded (2026-10-01) by D89, groups of neighbors
+([groups-m1.md](groups-m1.md)). Proposed (2026-09-30), D82; not implemented. A prototype
 (Section 11) did not bear out the premise of stage T1 on an RTX 3090: at
 equal reach the tile kernels were slower than the neighbor matrix. The
 stages are on hold until the reach of the list and the cost of a build,
