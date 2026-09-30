@@ -28,6 +28,8 @@ follows are in [principles.md](principles.md).
 | Integrators | Done: leapfrog does what velocity Verlet does: constraints (SHAKE, SETTLE), virtual sites, the thermostats, the barostat, restraints (D76) |
 | Performance | Host synchronization moved to the device (the test of validity and the decision to rebuild), fusion of the loops over particles, CUDA graphs, PME in single precision for the mixed mode (an experiment), the pair kernel |
 
+| Barostat integrators | The strain stepped in λ = √V (eq. S7 of [[Bernetti2020]](references.md#bernetti2020)), which makes the exact work of D77 the paper's reversible integrator, with its effective energy (eq. S11) as a diagnostic; then its Trotter integrator (SI Sec. V.C), which needs no evaluation after a scaling; the ensemble test of two pressures (SI Fig. S6) for the white paper |
+
 The order: leapfrog, then performance. The goal of performance for the
 first milestone is 70% of the rate of GROMACS with CUDA, in mixed
 precision, on each system of the Amber suite (from 23,558 to 1,067,095
