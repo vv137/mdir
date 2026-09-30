@@ -154,7 +154,10 @@ they are sunk back into the kernels, or the outlining makes them
 arguments and a division by 32 one by an argument (the additions into the
 bricks took 350 µs so, against 231). The gathering computes its splines
 again rather than read them with their slopes from the weights: 155 to
-158 µs so, against 127 to 134.
+158 µs so, against 127 to 134; by batches of 32 particles a warp, which
+compute the splines once into memory of the block and then read the grid
+with 4 threads a particle in rounds, it took 155 µs as well. pmemd.cuda
+gathers in 79 µs (open).
 
 | Item | Value |
 |---|---|
