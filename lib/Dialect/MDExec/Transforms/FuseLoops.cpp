@@ -7,6 +7,7 @@
 #include "mdir/Dialect/MD/MDTypes.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
 
 using namespace mlir;
@@ -386,6 +387,37 @@ static bool fuseParticleLoopsOnce(Block &block) {
 // Pass
 //===----------------------------------------------------------------------===//
 
+/// Returns true if `second` can move to follow `first`, in one block: every
+/// value that it or its kernel uses is defined before `first`, inside
+/// `second`, or by a pure op without operands (a constant, a field of
+/// zeros), which `moved` receives to move along.
+static bool canMoveAfter(PairForOp second, PairForOp first,
+                         SmallVectorImpl<Operation *> &moved) {
+  bool movable = true;
+  second->walk([&](Operation *nested) {
+    for (Value operand : nested->getOperands()) {
+      Operation *definition = operand.getDefiningOp();
+      if (!definition) {
+        // A block argument: of a region of `second`, or of an enclosing
+        // one, which dominates both.
+        continue;
+      }
+      if (second->isAncestor(definition) ||
+          definition->getBlock() != first->getBlock() ||
+          definition->isBeforeInBlock(first) || definition == first)
+        continue;
+      if (definition->getNumOperands() == 0 && isPure(definition) &&
+          definition->getNumRegions() == 0) {
+        if (!llvm::is_contained(moved, definition))
+          moved.push_back(definition);
+        continue;
+      }
+      movable = false;
+    }
+  });
+  return movable;
+}
+
 /// Fuses two loops of `block`, if two can be fused. Returns true if it did.
 static bool fuseOnce(Block &block) {
   SmallVector<PairForOp> loops;
@@ -400,9 +432,20 @@ static bool fuseOnce(Block &block) {
     for (unsigned j = i + 1; j != e; ++j) {
       PairForOp first = loops[i];
       PairForOp second = loops[j];
-      if (!haveSameDomain(first, second) || uses(second, first) ||
-          !usersComeAfter(first, second))
+      if (!haveSameDomain(first, second) || uses(second, first))
         continue;
+      if (!usersComeAfter(first, second)) {
+        // Something between the two uses a result of the first, as the sum
+        // of the energies of the terms uses the energy of the loop over
+        // pairs: the second moves up to follow the first, with the pure
+        // ops without operands that it needs, if it can.
+        SmallVector<Operation *> moved;
+        if (!canMoveAfter(second, first, moved))
+          continue;
+        second->moveAfter(first);
+        for (Operation *op : moved)
+          op->moveBefore(second);
+      }
       fuse(first, second);
       return true;
     }

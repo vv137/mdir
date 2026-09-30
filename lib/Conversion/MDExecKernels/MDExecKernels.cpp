@@ -173,9 +173,24 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
   // The contributions of the neighbors of one particle are summed in the
   // order of its list, or, with lanes, in that order within each lane and
   // then over the lanes.
+  // A contribution to a global sum that the kernel widens, as the mixed
+  // mode widens the energy and the virial to f64, is summed over the row
+  // in the type the kernel computed it in and widened once for the row:
+  // a device adds in f64 at a small fraction of the rate of f32.
+  auto getNarrow = [&](unsigned i) -> Value {
+    if (i < numOuts)
+      return Value();
+    auto widen = yield->getOperand(i).getDefiningOp<arith::ExtFOp>();
+    if (!widen || widen->getBlock() != &kernel)
+      return Value();
+    return widen.getIn();
+  };
   SmallVector<Value> sums;
-  for (Value value : yield->getOperands())
-    sums.push_back(createZero(builder, loc, value.getType()));
+  for (unsigned i = 0; i != numYields; ++i) {
+    Value narrow = getNarrow(i);
+    Type type = narrow ? narrow.getType() : yield->getOperand(i).getType();
+    sums.push_back(createZero(builder, loc, type));
+  }
 
   auto inner = scf::ForOp::create(
       builder, loc, first, end, step, sums,
@@ -223,7 +238,9 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
         within = arith::AndIOp::create(pair, loc, within, distinct);
         SmallVector<Value> updated;
         for (unsigned i = 0; i != numYields; ++i) {
-          Value contribution = inside.lookupOrDefault(yield->getOperand(i));
+          Value narrow = getNarrow(i);
+          Value contribution =
+              inside.lookupOrDefault(narrow ? narrow : yield->getOperand(i));
           Value nothing = createZero(pair, loc, contribution.getType());
           Value masked = arith::SelectOp::create(pair, loc, within,
                                                  contribution, nothing);
@@ -234,6 +251,10 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
       });
 
   SmallVector<Value> totals(inner.getResults());
+  for (unsigned i = 0; i != numYields; ++i)
+    if (getNarrow(i))
+      totals[i] = arith::ExtFOp::create(
+          builder, loc, yield->getOperand(i).getType(), totals[i]);
   if (lanes)
     for (Value &total : totals)
       total = lanes->combine(builder, loc, total);
@@ -500,8 +521,21 @@ SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
   SmallVector<Value> sums;
   for (unsigned i = 0; i != numOuts; ++i)
     sums.push_back(createZero(builder, loc, yield->getOperand(i * arity).getType()));
-  for (unsigned i = numOuts * arity; i != numYields; ++i)
-    sums.push_back(createZero(builder, loc, yield->getOperand(i).getType()));
+  // A contribution to a global sum that the kernel widens is summed over
+  // the row in the type it was computed in and widened once (as in
+  // emitPairKernel).
+  auto getNarrow = [&](unsigned i) -> Value {
+    auto widen = yield->getOperand(i).getDefiningOp<arith::ExtFOp>();
+    if (!widen || widen->getBlock() != &kernel)
+      return Value();
+    return widen.getIn();
+  };
+  for (unsigned i = numOuts * arity; i != numYields; ++i) {
+    Value narrow = getNarrow(i);
+    sums.push_back(createZero(
+        builder, loc,
+        narrow ? narrow.getType() : yield->getOperand(i).getType()));
+  }
 
   Value count = loadIndex(builder, loc, incidence, particle, zero);
   Value first = zero, step = one;
@@ -540,7 +574,9 @@ SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
             b, loc, arith::CmpIPredicate::eq, place, zero);
         for (unsigned i = numOuts * arity, j = numOuts; i != numYields;
              ++i, ++j) {
-          Value contribution = inside.lookupOrDefault(yield->getOperand(i));
+          Value narrow = getNarrow(i);
+          Value contribution =
+              inside.lookupOrDefault(narrow ? narrow : yield->getOperand(i));
           Value nothing = createZero(b, loc, contribution.getType());
           Value masked =
               arith::SelectOp::create(b, loc, atFirst, contribution, nothing);
@@ -550,6 +586,10 @@ SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
       });
 
   SmallVector<Value> totals(loop.getResults());
+  for (unsigned i = numOuts * arity, j = numOuts; i != numYields; ++i, ++j)
+    if (getNarrow(i))
+      totals[j] = arith::ExtFOp::create(
+          builder, loc, yield->getOperand(i).getType(), totals[j]);
   if (lanes)
     for (Value &total : totals)
       total = lanes->combine(builder, loc, total);

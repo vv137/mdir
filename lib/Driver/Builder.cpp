@@ -3072,21 +3072,21 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
       }
       std::string held = hasRestraints() ? "p" : "";
       std::string raw = hasSites() ? "e" : "";
-      std::string u = "%bu" + t, f = "%bf" + t, w = "%bw" + t + "_";
-      os << indent << u << held << ", " << f << held << raw << ", " << w
-         << held << raw << " = md.evaluate @energy(" << newPositions << ", "
-         << cell << getFieldValues(fieldPrefix) << ")\n"
-         << indent << "    request [energy, forces, virial]\n"
+      // The work takes the energy, and the next step the forces; the
+      // virial of the scaled positions is not needed.
+      std::string u = "%bu" + t, f = "%bf" + t;
+      os << indent << u << held << ", " << f << held << raw
+         << " = md.evaluate @energy(" << newPositions << ", " << cell
+         << getFieldValues(fieldPrefix) << ")\n"
+         << indent << "    request [energy, forces]\n"
          << indent << "    : (!vec, !md.cell" << getFieldTypes()
-         << ") -> (f64, !vec, vector<9xf64>)\n";
-      std::string virial = w + held;
+         << ") -> (f64, !vec)\n";
       if (hasSites())
-        virial = emitSpreadSites(indent, newPositions, f + held + "e",
-                                 f + held, relations, w + held + "e",
-                                 w + held);
+        emitSpreadSites(indent, newPositions, f + held + "e", f + held,
+                        relations);
       if (hasRestraints())
         emitRestraints(indent, newPositions, fieldPrefix, f + "p", f,
-                       u + "p", u, virial, w);
+                       u + "p", u);
       cellName = outerCell;
       scaleName = outerScale;
       newForces = f;
@@ -3180,6 +3180,8 @@ void Builder::emitRestraints(StringRef indent, StringRef x,
      << " : vector<3xf64> into f64\n"
      << indent << uResult << " = arith.addf " << u << ", " << uResult
      << "_r : f64\n";
+  if (w.empty())
+    return;
   std::string zero = (wResult + "_zero").str();
   os << indent << zero << " = arith.constant 0.0 : f64\n"
      << indent << wResult << "_m2 = arith.constant -2.0 : f64\n";
