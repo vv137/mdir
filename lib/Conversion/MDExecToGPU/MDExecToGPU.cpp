@@ -100,10 +100,12 @@ struct Flag {
 class Lowering {
 public:
   Lowering(ModuleOp module, int64_t blockSize, int64_t rowLanes,
-           bool fuseRows, bool pmeStream, bool deterministic)
+           bool fuseRows, bool pmeStream, bool deterministic,
+           bool tuplesOnce)
       : module(module), context(module.getContext()), blockSize(blockSize),
         rowLanes(rowLanes), fuseRows(fuseRows),
-        pmeStream(pmeStream), deterministic(deterministic) {}
+        pmeStream(pmeStream), deterministic(deterministic),
+        tuplesOnce(tuplesOnce) {}
 
   LogicalResult run();
 
@@ -159,6 +161,20 @@ private:
   /// The runs of loops that are lowered together, by their last loop, and
   /// the loops of the runs.
   DenseMap<Operation *, SmallVector<Operation *>> rows;
+  /// The members on the device of each incidence structure on the device.
+  DenseMap<Value, Value> members;
+  /// Whether a loop over tuples evaluates each tuple once, adding to its
+  /// members with atomics: by default, for a loop that is not over disjoint
+  /// tuples, has no global sums, and adds to its destinations.
+  bool evaluatesOnce(md_exec::TupleForOp op) {
+    if (deterministic || !tuplesOnce || op.getDisjoint() ||
+        !op.getReduce().empty())
+      return false;
+    for (unsigned i = 0, e = op.getOuts().size(); i != e; ++i)
+      if (op.overwrites(i))
+        return false;
+    return true;
+  }
   DenseSet<Operation *> inRows;
 
   SmallVector<Value> emitReductions(OpBuilder &builder, Location loc,
@@ -226,6 +242,7 @@ private:
   /// Whether sums are added in an order that the threads do not decide
   /// (D84).
   bool deterministic;
+  bool tuplesOnce;
 
   /// The function that is being lowered.
   func::FuncOp current;
@@ -698,9 +715,9 @@ static void storeContributions(OpBuilder &builder, Location loc,
                                const RowLanes &sharing);
 
 void Lowering::findRows(func::FuncOp function) {
-  auto isRowLoop = [](Operation *op) {
+  auto isRowLoop = [&](Operation *op) {
     if (auto tuple = dyn_cast<md_exec::TupleForOp>(op))
-      return !tuple.getDisjoint();
+      return !tuple.getDisjoint() && !evaluatesOnce(tuple);
     return isa<md_exec::PairForOp>(op);
   };
   auto getPositions = [](Operation *op) -> Value {
@@ -1209,6 +1226,21 @@ LogicalResult Lowering::lowerTupleFor(md_exec::TupleForOp op) {
   Value box = convertReal(builder, loc, op.getCellMutable().get(), real);
   Value inverse = createInverse(builder, loc, box);
 
+  // By default a set whose tuples may share particles has each tuple
+  // evaluated once, by a thread of its own, which adds to the members with
+  // atomics (D84).
+  if (evaluatesOnce(op)) {
+    Value tupleMembers = members.lookup(op.getIncidence());
+    if (!tupleMembers)
+      return op->emitOpError()
+             << "has no members on the device to evaluate each tuple once";
+    Value tuples = createSize(builder, loc, tupleMembers);
+    launchOver(builder, loc, tuples, [&](OpBuilder &body, Value tuple) {
+      IRMapping local;
+      emitTupleOnce(body, op, tupleMembers, tuple, box, inverse, local);
+    });
+    return success();
+  }
   // A set whose tuples share no particle has each tuple evaluated once, by
   // the thread of its first member; its rows hold one tuple at most, which
   // a group of threads would not share.
@@ -1251,6 +1283,24 @@ void Lowering::lowerBuildIncidence(md_exec::BuildIncidenceOp op) {
   memref::DeallocOp::create(builder, loc, host);
   op.getResult().replaceAllUsesWith(device);
   freeDeviceAtEndOfBlock(op, device);
+
+  // The members too, for the loops that evaluate each tuple once.
+  if (deterministic || !tuplesOnce)
+    return;
+  Value relation = op.getRelation();
+  auto hostType = dyn_cast<MemRefType>(relation.getType());
+  if (!hostType || hostType.getRank() != 2)
+    return;
+  Value rows = memref::DimOp::create(builder, loc, relation, zero);
+  Value copy = createDeviceBuffer(
+      builder, loc,
+      getDeviceType(hostType.getShape(), hostType.getElementType()),
+      hostType.isDynamicDim(1)
+          ? ValueRange{rows, memref::DimOp::create(builder, loc, relation, one)}
+          : ValueRange{rows});
+  createTransfer(builder, loc, copy, relation);
+  members[device] = copy;
+  freeDeviceAtEndOfBlock(op, copy);
 }
 
 void Lowering::freeDeviceAtEndOfBlock(Operation *op, Value buffer) {
@@ -2237,7 +2287,7 @@ public:
 
   void runOnOperation() final {
     Lowering lowering(getOperation(), blockSize, rowLanes, fuseRows,
-                      pmeStream, deterministic);
+                      pmeStream, deterministic, tuplesOnce);
     if (failed(lowering.run()))
       return signalPassFailure();
     // Products and sums in the kernels may become fused multiply-adds, as

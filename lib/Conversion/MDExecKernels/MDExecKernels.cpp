@@ -2,9 +2,12 @@
 
 #include "mdir/Conversion/MDExecKernels.h"
 
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+
 #include "mdir/Dialect/MD/MDOps.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -305,6 +308,10 @@ struct EvaluatedTuple {
 };
 } // namespace
 
+static void evaluateMembers(OpBuilder &b, md_exec::TupleForOp op,
+                            EvaluatedTuple &result, Value box, Value inverse,
+                            const IRMapping &local);
+
 /// Loads the entry `number` of the row of `particle` in `incidence` and
 /// emits the kernel of `op` for it: the displacements in the minimum image,
 /// taken in the type of the positions and imaged in `computed`, the values
@@ -330,7 +337,18 @@ static EvaluatedTuple evaluateTuple(OpBuilder &b, md_exec::TupleForOp op,
   for (int64_t q = 0; q != arity; ++q)
     result.members.push_back(
         loadIndex(b, loc, incidence, particle, column(2 + q)));
+  evaluateMembers(b, op, result, box, inverse, local);
+  return result;
+}
 
+/// Emits the kernel of `op` for the tuple `result.tuple` of the members
+/// `result.members`, as `evaluateTuple` does.
+static void evaluateMembers(OpBuilder &b, md_exec::TupleForOp op,
+                            EvaluatedTuple &result, Value box, Value inverse,
+                            const IRMapping &local) {
+  Location loc = op.getLoc();
+  Block &kernel = op.getKernel().front();
+  int64_t arity = op.getArity();
   IRMapping &inside = result.inside;
   inside = local;
   Value positions = op.getPositions();
@@ -363,7 +381,6 @@ static EvaluatedTuple evaluateTuple(OpBuilder &b, md_exec::TupleForOp op,
                loadElement(b, loc, buffer, result.tuple));
   for (Operation &nested : kernel.without_terminator())
     b.clone(nested, inside);
-  return result;
 }
 
 /// The loop of `emitTupleKernel` for a set whose tuples share no particle:
@@ -552,6 +569,80 @@ SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
   }
 
   return SmallVector<Value>(totals.begin() + numOuts, totals.end());
+}
+
+/// Adds `value`, a scalar or a vector, atomically to the element `row` of
+/// the buffer `buffer` on a device, with no result: a relaxed atomic at the
+/// scope of the device. f32 takes PTX's own reduction, as the NVPTX backend
+/// of LLVM expands atomicrmw fadd of f32 into a loop of compare-and-swap.
+static void emitAtomicAdd(OpBuilder &b, Location loc, Value value,
+                          Value buffer, Value row) {
+  auto type = cast<MemRefType>(buffer.getType());
+  Type element = type.getElementType();
+  int64_t components = type.getRank() == 1 ? 1 : type.getDimSize(1);
+  int64_t bytes = element.getIntOrFloatBitWidth() / 8;
+  Type wide = b.getI64Type();
+  Value base = arith::IndexCastOp::create(
+      b, loc, wide,
+      memref::ExtractAlignedPointerAsIndexOp::create(b, loc, buffer));
+  Value first = arith::MulIOp::create(
+      b, loc, arith::IndexCastOp::create(b, loc, wide, row),
+      arith::ConstantOp::create(b, loc, wide,
+                                b.getI64IntegerAttr(components * bytes)));
+  for (int64_t c = 0; c != components; ++c) {
+    Value part = components == 1
+                     ? value
+                     : vector::ExtractOp::create(b, loc, value, c).getResult();
+    Value offset = arith::AddIOp::create(
+        b, loc, first,
+        arith::ConstantOp::create(b, loc, wide, b.getI64IntegerAttr(c * bytes)));
+    Value address = arith::AddIOp::create(b, loc, base, offset);
+    Value pointer = LLVM::IntToPtrOp::create(
+        b, loc, LLVM::LLVMPointerType::get(b.getContext(), 1), address);
+    if (element.isF32()) {
+      LLVM::InlineAsmOp::create(
+          b, loc, TypeRange(), ValueRange{pointer, part},
+          "red.relaxed.gpu.global.add.f32 [$0], $1;", "l,f",
+          /*has_side_effects=*/true, /*is_align_stack=*/false,
+          LLVM::TailCallKind::None, /*asm_dialect=*/LLVM::AsmDialectAttr(),
+          /*operand_attrs=*/ArrayAttr());
+    } else {
+      LLVM::AtomicRMWOp::create(b, loc, LLVM::AtomicBinOp::fadd, pointer,
+                                part, LLVM::AtomicOrdering::monotonic,
+                                StringRef("device"));
+    }
+  }
+}
+
+void kernels::emitTupleOnce(OpBuilder &builder, md_exec::TupleForOp op,
+                            Value members, Value tuple, Value box,
+                            Value inverse, IRMapping &local) {
+  Location loc = op.getLoc();
+  Block &kernel = op.getKernel().front();
+  Operation *yield = kernel.getTerminator();
+  int64_t arity = op.getArity();
+  Type computed =
+      cast<VectorType>(kernel.getArgument(0).getType()).getElementType();
+  Value boxComputed = convertReal(builder, loc, box, computed);
+  Value inverseComputed = convertReal(builder, loc, inverse, computed);
+
+  EvaluatedTuple evaluated;
+  evaluated.tuple = tuple;
+  for (int64_t q = 0; q != arity; ++q)
+    evaluated.members.push_back(
+        loadIndex(builder, loc, members, tuple, createIndex(builder, loc, q)));
+  evaluateMembers(builder, op, evaluated, boxComputed, inverseComputed,
+                  local);
+  for (unsigned i = 0, e = op.getOuts().size(); i != e; ++i) {
+    Value destination = op.getOuts()[i];
+    Type stored = getElementTypeOrSelf(destination.getType());
+    for (int64_t q = 0; q != arity; ++q) {
+      Value value = evaluated.inside.lookupOrDefault(
+          yield->getOperand(i * arity + q));
+      emitAtomicAdd(builder, loc, convertReal(builder, loc, value, stored),
+                    destination, evaluated.members[q]);
+    }
+  }
 }
 
 void kernels::emitExclusionFilter(OpBuilder &builder, Location loc,

@@ -111,6 +111,13 @@ def ConvertMDExecToGPU
            "Whether the arithmetic of the kernels may contract a product "
            "and a sum into a fused multiply-add, which rounds once "
            "(the control keyword fast_math)">,
+    Option<"tuplesOnce", "tuples-once", "bool", /*default=*/"false",
+           "Whether a loop over tuples that may share particles evaluates "
+           "each tuple once and adds to its members with atomics, outside "
+           "the deterministic mode; off, as the loop over pairs apart from "
+           "the tuples lost more to the decay of the order of the particles "
+           "over a run than the tuples gained (JAC, 40 ps: 454 against "
+           "479 ns/day)">,
     Option<"deterministic", "deterministic", "bool", /*default=*/"false",
            "Whether sums are added in an order that does not depend on the "
            "threads (D84): the charges of PME in fixed point, not with "

@@ -104,6 +104,16 @@ emitTupleKernel(mlir::OpBuilder &builder, md_exec::TupleForOp op,
                 const RowLanes *lanes = nullptr,
                 llvm::SmallVectorImpl<mlir::Value> *outTotals = nullptr);
 
+/// Emits what a loop over tuples does for the tuple `tuple` alone, on a
+/// device, where each tuple is evaluated once: the members from `members`,
+/// a buffer of a row of members for each tuple, the kernel, and the values
+/// for the destinations added to the members with atomics, whose order the
+/// threads decide (not in the deterministic mode, D84). The loop has no
+/// global sums, and adds to its destinations.
+void emitTupleOnce(mlir::OpBuilder &builder, md_exec::TupleForOp op,
+                   mlir::Value members, mlir::Value tuple, mlir::Value box,
+                   mlir::Value inverse, mlir::IRMapping &local);
+
 /// Emits, on the host, the build of the incidence structure of the tuples
 /// that `members` holds, for `size` particles, and returns it in a new
 /// buffer of the host. A row holds the number of tuples of the particle,
