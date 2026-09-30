@@ -52,11 +52,16 @@ struct Scope {
     return found == lastUse.end() || found->second == position;
   }
 
-  void release(Value buffer) { pool[buffer.getType()].push_back(buffer); }
+  /// Makes `buffer` available to later requests of its type and size. The
+  /// buffers of a particle set and of a tuple set can have one type and
+  /// different sizes, so a buffer is reused only for its size.
+  void release(Value buffer) {
+    pool[{buffer.getType(), getSet(buffer)}].push_back(buffer);
+  }
 
   /// A buffer of type `type` that holds no live field. `size` is the number
   /// of particles.
-  Value request(MemRefType type, Value size, Location loc);
+  Value request(MemRefType type, Value size, Attribute set, Location loc);
 
   Scope *parent;
   OpBuilder builder;
@@ -65,7 +70,16 @@ struct Scope {
   Block *body = nullptr;
 
   llvm::DenseSet<Value> owned;
-  llvm::MapVector<Type, SmallVector<Value, 2>> pool;
+  llvm::MapVector<std::pair<Type, Attribute>, SmallVector<Value, 2>> pool;
+  /// The set, of particles or of tuples, whose elements each buffer holds,
+  /// by which it is reused: buffers of one type are of one size only within
+  /// a set. The scope of the function keeps them for all scopes.
+  llvm::DenseMap<Value, Attribute> setOf;
+  Attribute getSet(Value buffer) { return getRoot().setOf.lookup(buffer); }
+  void setSet(Value buffer, Attribute set) {
+    if (set)
+      getRoot().setOf[buffer] = set;
+  }
 
   /// The additional loop-carried buffers, and the buffers that they are
   /// initialized with.
@@ -156,7 +170,10 @@ private:
 
   /// Host buffers that the program was given and has copied to the device.
   /// They take what is copied back.
-  llvm::MapVector<Type, SmallVector<Value, 2>> hostBuffers;
+  /// Buffers of the host that copies of fields can go to, by their type
+  /// and set, as the pools of the scopes hold buffers of the device.
+  llvm::MapVector<std::pair<Type, Attribute>, SmallVector<Value, 2>>
+      hostBuffers;
 
   /// Values other than fields: the value in the new code.
   IRMapping mapping;
@@ -183,6 +200,10 @@ static bool isUnsupported(Type type) {
   return isa<mdrt::CellsType, mdrt::PermutationType>(type);
 }
 
+/// The set whose elements a buffer of a value of type `type` holds: the
+/// tuple set of the members of tuples, the particle or tuple set of a field.
+static FlatSymbolRefAttr getStorageSet(Type type);
+
 static FlatSymbolRefAttr getParticleSet(Type type) {
   if (auto field = dyn_cast<md::FieldType>(type))
     return field.getParticleSet();
@@ -191,6 +212,12 @@ static FlatSymbolRefAttr getParticleSet(Type type) {
   if (auto incidence = dyn_cast<mdrt::IncidenceType>(type))
     return incidence.getParticleSet();
   return cast<mdrt::NeighborsType>(type).getParticleSet();
+}
+
+static FlatSymbolRefAttr getStorageSet(Type type) {
+  if (auto relation = dyn_cast<md::RelationType>(type))
+    return relation.getTupleSet();
+  return getParticleSet(type);
 }
 
 /// The type of the positions that the neighbor structure `structure` is
@@ -217,14 +244,15 @@ static Type findPositionsType(Value structure) {
 // Scope
 //===----------------------------------------------------------------------===//
 
-Value Scope::request(MemRefType type, Value size, Location loc) {
-  auto found = pool.find(type);
+Value Scope::request(MemRefType type, Value size, Attribute set,
+                     Location loc) {
+  auto found = pool.find({type, set});
   if (found != pool.end() && !found->second.empty())
     return found->second.pop_back_val();
 
   Value buffer;
   if (parent) {
-    extraInits.push_back(parent->request(type, size, loc));
+    extraInits.push_back(parent->request(type, size, set, loc));
     buffer = body->addArgument(type, loc);
     extraArguments.push_back(buffer);
   } else if (type.getMemorySpace()) {
@@ -237,6 +265,7 @@ Value Scope::request(MemRefType type, Value size, Location loc) {
     buffer = memref::AllocOp::create(builder, loc, type, ValueRange{size});
   }
   owned.insert(buffer);
+  setSet(buffer, set);
   return buffer;
 }
 
@@ -282,15 +311,24 @@ LogicalResult Assignment::getScratch(Operation *op, ArrayRef<Type> sums,
   for (Type sum : sums) {
     // A number, or a vector of numbers: the virial has nine.
     MemRefType type = getScratchType(sum, device);
-    scratch.push_back(scope.request(type, size, op->getLoc()));
-    scratch.push_back(scope.request(type, size, op->getLoc()));
+    scratch.push_back(
+        scope.request(type, size, getStorageSet(field), op->getLoc()));
+    scratch.push_back(
+        scope.request(type, size, getStorageSet(field), op->getLoc()));
   }
   return success();
 }
 
 void Assignment::bind(Value field, Value buffer, Scope &scope) {
   buffers[field] = buffer;
+  scope.setSet(buffer, getStorageSet(field.getType()));
+  // The buffer of the members of tuples has a row for each tuple: its size
+  // is that of the tuple set, not of the particles.
   Attribute set = getParticleSet(field.getType());
+  if (auto relation = dyn_cast<md::RelationType>(field.getType()))
+    set = relation.getTupleSet();
+  if (!set)
+    return;
   if (sizes.count(set))
     return;
   Value zero =
@@ -324,7 +362,8 @@ LogicalResult Assignment::getBuffer(Value field, Scope &scope,
   if (failed(getSize(op, field.getType(), size)))
     return failure();
   auto fieldType = cast<md::FieldType>(field.getType());
-  buffer = scope.request(getStorageType(fieldType), size, op->getLoc());
+  buffer = scope.request(getStorageType(fieldType), size,
+                         getStorageSet(fieldType), op->getLoc());
   buffers[field] = buffer;
 
   if (isa<ZerosOp>(op)) {
@@ -437,7 +476,8 @@ LogicalResult Assignment::chooseDestination(Operation *op, Value destination,
   Value size;
   if (failed(getSize(op, destination.getType(), size)))
     return failure();
-  buffer = scope.request(type, size, op->getLoc());
+  buffer = scope.request(type, size, getStorageSet(destination.getType()),
+                         op->getLoc());
   return success();
 }
 
@@ -650,7 +690,7 @@ LogicalResult Assignment::convertTupleFor(TupleForOp op, Scope &scope,
       builder, op.getLoc(), resultTypes, incidence, positions,
       mapping.lookup(op.getCell()), ins, parameters, outs, reduce, scratch,
       op.getCoordinateKindsAttr(), op.getCoordinateMembersAttr(),
-      op.getArityAttr(), overwriteAttr);
+      op.getArityAttr(), overwriteAttr, op.getDisjointAttr());
   copyKernel(loop, op.getKernel().front());
   for (Value buffer : scratch)
     scope.release(buffer);
@@ -713,7 +753,8 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
   Value size;
   if (failed(getSize(op, forces, size)))
     return failure();
-  Value out = scope.request(getStorageType(forces), size, loc);
+  Value out =
+      scope.request(getStorageType(forces), size, getStorageSet(forces), loc);
 
   // The grid, which the op needs for itself, once for the whole function:
   // the charges in fixed point, the grid in f64, and its half-complex
@@ -896,6 +937,7 @@ LogicalResult Assignment::convertFor(scf::ForOp op, Scope &scope,
     inits.push_back(buffer);
 
     Value inside = inner.body->addArgument(buffer.getType(), loc);
+    inner.setSet(inside, scope.getSet(buffer));
     buffers[argument] = inside;
     inner.owned.insert(inside);
   }
@@ -926,6 +968,7 @@ LogicalResult Assignment::convertFor(scf::ForOp op, Scope &scope,
     }
     Value newResult = loop->getResult(carried[i]);
     if (isField(oldResult.getType())) {
+      scope.setSet(newResult, scope.getSet(inits[carried[i]]));
       buffers[oldResult] = newResult;
       scope.owned.insert(newResult);
     } else {
@@ -934,6 +977,8 @@ LogicalResult Assignment::convertFor(scf::ForOp op, Scope &scope,
   }
   // The buffers that the loop borrowed hold no field when it ends.
   for (unsigned i = numCarried, e = loop->getNumResults(); i != e; ++i) {
+    scope.setSet(loop->getResult(i),
+                 scope.getSet(inner.extraInits[i - numCarried]));
     scope.owned.insert(loop->getResult(i));
     scope.release(loop->getResult(i));
   }
@@ -970,7 +1015,8 @@ LogicalResult Assignment::convertYield(scf::YieldOp op, Scope &scope) {
 
   // Hand back as many unused buffers as the loop borrowed.
   for (Value extra : scope.extraArguments) {
-    SmallVector<Value, 2> &available = scope.pool[extra.getType()];
+    SmallVector<Value, 2> &available =
+        scope.pool[{extra.getType(), scope.getSet(extra)}];
     assert(!available.empty() && "the buffers of a loop are conserved");
     values.push_back(available.pop_back_val());
   }
@@ -1076,10 +1122,10 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
           builder, op->getLoc(), buffer,
           arith::ConstantIndexOp::create(builder, op->getLoc(), 0));
     Value device =
-        scope.request(getStorageType(field), sizes[set], op->getLoc());
+        scope.request(getStorageType(field), sizes[set], set, op->getLoc());
     createTransfer(builder, op->getLoc(), device, buffer);
     buffers[from.getResult()] = device;
-    hostBuffers[buffer.getType()].push_back(buffer);
+    hostBuffers[{buffer.getType(), set}].push_back(buffer);
     return success();
   }
   if (auto to = dyn_cast<mdrt::ToBufferOp>(op)) {
@@ -1099,7 +1145,8 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     // The field is copied to the host and stays on the device. The buffer
     // on the host is visible outside from here on.
     Type type = to.getResult().getType();
-    SmallVector<Value, 2> &available = hostBuffers[type];
+    SmallVector<Value, 2> &available =
+        hostBuffers[{type, getStorageSet(to.getField().getType())}];
     Value host;
     if (&scope == root && !available.empty()) {
       host = available.pop_back_val();
@@ -1124,7 +1171,7 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
 
     SmallVector<Value> arguments;
     // The buffers of the host that this call has taken, by type.
-    llvm::DenseMap<Type, unsigned> taken;
+    llvm::DenseMap<std::pair<Type, Attribute>, unsigned> taken;
     for (auto [operand, type] :
          llvm::zip(call.getOperands(), callee.getArgumentTypes())) {
       if (!isField(operand.getType())) {
@@ -1144,8 +1191,9 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
 
       // The host reads a copy. The buffer that takes it is free again when
       // the call returns.
-      SmallVector<Value, 2> &available = hostBuffers[type];
-      unsigned index = taken[type]++;
+      std::pair<Type, Attribute> key{type, getStorageSet(operand.getType())};
+      SmallVector<Value, 2> &available = hostBuffers[key];
+      unsigned index = taken[key]++;
       while (available.size() <= index) {
         Value size;
         if (failed(getSize(op, operand.getType(), size)))
@@ -1182,7 +1230,10 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
         failed(getSize(op, order.getPositions().getType(), size)))
       return failure();
     auto type = cast<MemRefType>(ids.getType());
-    Value buffer = scope.request(type, size, op->getLoc());
+    Value buffer =
+        scope.request(type, size,
+                      getStorageSet(order.getPositions().getType()),
+                      op->getLoc());
     SpatialOrderOp::create(builder, op->getLoc(), Type(), positions,
                            mapping.lookup(order.getCell()), ids, buffer,
                            order.getWidthAttr());
@@ -1199,8 +1250,9 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     if (failed(getBuffer(permute.getField(), scope, field)) ||
         failed(getSize(op, permute.getField().getType(), size)))
       return failure();
-    Value buffer = scope.request(cast<MemRefType>(field.getType()), size,
-                                 op->getLoc());
+    Value buffer = scope.request(
+        cast<MemRefType>(field.getType()), size,
+        getStorageSet(permute.getField().getType()), op->getLoc());
     Value order = orders.lookup(permute.getOrder());
     if (!order)
       return op->emitOpError() << "the order has no buffer";

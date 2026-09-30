@@ -266,11 +266,20 @@ LogicalResult Converter::convertTupleOp(OpTy op, bool isSum) {
   DenseI32ArrayAttr kinds;
   DenseI64ArrayAttr members;
   md::getCoordinateAttrs(builder, displacements, kinds, members);
+  // Whether the tuple set promises that its tuples share no particle.
+  UnitAttr disjoint;
+  if (auto relation = dyn_cast<md::RelationType>(op.getRelation().getType()))
+    if (FlatSymbolRefAttr name = relation.getTupleSet())
+      if (auto set = SymbolTable::lookupNearestSymbolFrom<md::TupleSetOp>(
+              op, name))
+        if (set.getDisjoint())
+          disjoint = builder.getUnitAttr();
   auto loop = md_exec::TupleForOp::create(
       builder, loc, TypeRange(resultType), incidence, op.getPositions(),
       op.getCell(), op.getGathered(), op.getParameters(), outs, reduce,
       /*scratch=*/ValueRange(), kinds, members,
-      builder.getI64IntegerAttr(arity), /*overwrite=*/DenseBoolArrayAttr());
+      builder.getI64IntegerAttr(arity), /*overwrite=*/DenseBoolArrayAttr(),
+      disjoint);
 
   Block &source = op.getKernel().front();
   Type vector = VectorType::get({3}, builder.getF64Type());

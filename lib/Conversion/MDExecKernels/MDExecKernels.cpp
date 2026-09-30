@@ -14,6 +14,7 @@
 
 using namespace mlir;
 using namespace mdir;
+using namespace mdir::kernels;
 
 Value kernels::createIndex(OpBuilder &builder, Location loc, int64_t value) {
   return arith::ConstantIndexOp::create(builder, loc, value);
@@ -289,6 +290,153 @@ static Value loadIndex(OpBuilder &builder, Location loc, Value buffer,
                                     narrow);
 }
 
+namespace {
+/// A tuple of the row of a particle in an incidence structure, evaluated:
+/// its number, the place of the particle, its members, and the mapping
+/// from the values of the kernel to those that it computes.
+struct EvaluatedTuple {
+  Value tuple, place;
+  SmallVector<Value, 4> members;
+  IRMapping inside;
+};
+} // namespace
+
+/// Loads the entry `number` of the row of `particle` in `incidence` and
+/// emits the kernel of `op` for it: the displacements in the minimum image,
+/// taken in the type of the positions and imaged in `computed`, the values
+/// of `ins` for each member and of `parameters` for the tuple.
+static EvaluatedTuple evaluateTuple(OpBuilder &b, md_exec::TupleForOp op,
+                                    Value incidence, Value particle,
+                                    Value number, Value box, Value inverse,
+                                    const IRMapping &local) {
+  Location loc = op.getLoc();
+  Block &kernel = op.getKernel().front();
+  int64_t arity = op.getArity();
+  int64_t entry = md_exec::getIncidenceEntrySize(arity);
+  Value one = createIndex(b, loc, 1);
+  Value offset =
+      arith::MulIOp::create(b, loc, number, createIndex(b, loc, entry));
+  Value base = arith::AddIOp::create(b, loc, offset, one);
+  auto column = [&](int64_t c) -> Value {
+    return arith::AddIOp::create(b, loc, base, createIndex(b, loc, c));
+  };
+  EvaluatedTuple result;
+  result.tuple = loadIndex(b, loc, incidence, particle, column(0));
+  result.place = loadIndex(b, loc, incidence, particle, column(1));
+  for (int64_t q = 0; q != arity; ++q)
+    result.members.push_back(
+        loadIndex(b, loc, incidence, particle, column(2 + q)));
+
+  IRMapping &inside = result.inside;
+  inside = local;
+  Value positions = op.getPositions();
+  SmallVector<Value, 4> memberPositions(arity);
+  auto positionOf = [&](int64_t q) {
+    if (!memberPositions[q])
+      memberPositions[q] = loadElement(b, loc, positions, result.members[q]);
+    return memberPositions[q];
+  };
+  Type computed = getElementTypeOrSelf(box.getType());
+  for (auto [index, coordinate] : llvm::enumerate(op.getCoordinates())) {
+    Value raw = convertReal(
+        b, loc,
+        arith::SubFOp::create(b, loc, positionOf(coordinate.members[0]),
+                              positionOf(coordinate.members[1])),
+        computed);
+    Value images = arith::MulFOp::create(b, loc, raw, inverse);
+    Value nearest = math::RoundEvenOp::create(b, loc, images);
+    Value shift = arith::MulFOp::create(b, loc, nearest, box);
+    Value d = arith::SubFOp::create(b, loc, raw, shift);
+    inside.map(kernel.getArgument(index), d);
+  }
+  unsigned argument = op.getCoordinateKinds().size();
+  for (Value buffer : op.getIns())
+    for (int64_t q = 0; q != arity; ++q)
+      inside.map(kernel.getArgument(argument++),
+                 loadElement(b, loc, buffer, result.members[q]));
+  for (Value buffer : op.getParameters())
+    inside.map(kernel.getArgument(argument++),
+               loadElement(b, loc, buffer, result.tuple));
+  for (Operation &nested : kernel.without_terminator())
+    b.clone(nested, inside);
+  return result;
+}
+
+/// The loop of `emitTupleKernel` for a set whose tuples share no particle:
+/// the member at place 0 evaluates the tuple once and writes the values of
+/// all members; a particle in no tuple writes 0 where the loop overwrites.
+static SmallVector<Value> emitOwnedTupleKernel(OpBuilder &builder,
+                                               md_exec::TupleForOp op,
+                                               Value incidence, Value box,
+                                               Value inverse, Value particle,
+                                               IRMapping &local) {
+  Location loc = op.getLoc();
+  Block &kernel = op.getKernel().front();
+  Operation *yield = kernel.getTerminator();
+  int64_t arity = op.getArity();
+  unsigned numOuts = op.getOuts().size();
+  unsigned numYields = yield->getNumOperands();
+  Value zero = createIndex(builder, loc, 0);
+
+  SmallVector<Type> sumTypes;
+  for (unsigned i = numOuts * arity; i != numYields; ++i)
+    sumTypes.push_back(yield->getOperand(i).getType());
+  auto zeros = [&](OpBuilder &b) {
+    SmallVector<Value> values;
+    for (Type type : sumTypes)
+      values.push_back(createZero(b, loc, type));
+    return values;
+  };
+
+  Value count = loadIndex(builder, loc, incidence, particle, zero);
+  Value member = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ne,
+                                       count, zero);
+  auto branch = scf::IfOp::create(
+      builder, loc, member,
+      [&](OpBuilder &b, Location) {
+        EvaluatedTuple evaluated = evaluateTuple(
+            b, op, incidence, particle, zero, box, inverse, local);
+        Value owner = arith::CmpIOp::create(
+            b, loc, arith::CmpIPredicate::eq, evaluated.place, zero);
+        auto owned = scf::IfOp::create(
+            b, loc, owner,
+            [&](OpBuilder &c, Location) {
+              for (unsigned i = 0; i != numOuts; ++i) {
+                Value destination = op.getOuts()[i];
+                for (int64_t q = 0; q != arity; ++q) {
+                  Value target = evaluated.members[q];
+                  Value value = evaluated.inside.lookupOrDefault(
+                      yield->getOperand(i * arity + q));
+                  if (!op.overwrites(i))
+                    value = arith::AddFOp::create(
+                        c, loc, loadElement(c, loc, destination, target),
+                        value);
+                  storeElement(c, loc, value, destination, target);
+                }
+              }
+              SmallVector<Value> contributions;
+              for (unsigned i = numOuts * arity; i != numYields; ++i)
+                contributions.push_back(
+                    evaluated.inside.lookupOrDefault(yield->getOperand(i)));
+              scf::YieldOp::create(c, loc, contributions);
+            },
+            [&](OpBuilder &c, Location) {
+              scf::YieldOp::create(c, loc, zeros(c));
+            });
+        scf::YieldOp::create(b, loc, owned.getResults());
+      },
+      [&](OpBuilder &b, Location) {
+        for (unsigned i = 0; i != numOuts; ++i)
+          if (op.overwrites(i))
+            storeElement(
+                b, loc,
+                createZero(b, loc, yield->getOperand(i * arity).getType()),
+                op.getOuts()[i], particle);
+        scf::YieldOp::create(b, loc, zeros(b));
+      });
+  return SmallVector<Value>(branch.getResults());
+}
+
 SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
                                             md_exec::TupleForOp op,
                                             Value incidence, Value box,
@@ -296,14 +444,11 @@ SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
                                             IRMapping &local,
                                             const RowLanes *lanes) {
   Location loc = op.getLoc();
-  Value positions = op.getPositions();
   Block &kernel = op.getKernel().front();
   Operation *yield = kernel.getTerminator();
   int64_t arity = op.getArity();
-  unsigned numCoordinates = op.getCoordinateKinds().size();
   unsigned numOuts = op.getOuts().size();
   unsigned numYields = yield->getNumOperands();
-  int64_t entry = md_exec::getIncidenceEntrySize(arity);
 
   // As for pairs, the differences of the positions are taken in their type
   // and the minimum image in the type that the kernel computes in.
@@ -311,7 +456,9 @@ SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
       cast<VectorType>(kernel.getArgument(0).getType()).getElementType();
   Value boxComputed = convertReal(builder, loc, box, computed);
   Value inverseComputed = convertReal(builder, loc, inverse, computed);
-  SmallVector<md::Coordinate, 2> coordinates = op.getCoordinates();
+  if (op.getDisjoint() && !lanes)
+    return emitOwnedTupleKernel(builder, op, incidence, boxComputed,
+                                inverseComputed, particle, local);
   Value zero = createIndex(builder, loc, 0);
   Value one = createIndex(builder, loc, 1);
 
@@ -333,48 +480,11 @@ SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
   auto loop = scf::ForOp::create(
       builder, loc, first, count, step, sums,
       [&](OpBuilder &b, Location, Value number, ValueRange partial) {
-        Value offset = arith::MulIOp::create(
-            b, loc, number, createIndex(b, loc, entry));
-        Value base = arith::AddIOp::create(b, loc, offset, one);
-        auto column = [&](int64_t c) -> Value {
-          return arith::AddIOp::create(b, loc, base, createIndex(b, loc, c));
-        };
-        Value tuple = loadIndex(b, loc, incidence, particle, column(0));
-        Value place = loadIndex(b, loc, incidence, particle, column(1));
-        SmallVector<Value, 4> members;
-        for (int64_t q = 0; q != arity; ++q)
-          members.push_back(
-              loadIndex(b, loc, incidence, particle, column(2 + q)));
-
-        IRMapping inside = local;
-        SmallVector<Value, 4> memberPositions(arity);
-        auto positionOf = [&](int64_t q) {
-          if (!memberPositions[q])
-            memberPositions[q] = loadElement(b, loc, positions, members[q]);
-          return memberPositions[q];
-        };
-        for (auto [index, coordinate] : llvm::enumerate(coordinates)) {
-          Value raw = convertReal(
-              b, loc,
-              arith::SubFOp::create(b, loc, positionOf(coordinate.members[0]),
-                                    positionOf(coordinate.members[1])),
-              computed);
-          Value images = arith::MulFOp::create(b, loc, raw, inverseComputed);
-          Value nearest = math::RoundEvenOp::create(b, loc, images);
-          Value shift = arith::MulFOp::create(b, loc, nearest, boxComputed);
-          Value d = arith::SubFOp::create(b, loc, raw, shift);
-          inside.map(kernel.getArgument(index), d);
-        }
-        unsigned argument = numCoordinates;
-        for (Value buffer : op.getIns())
-          for (int64_t q = 0; q != arity; ++q)
-            inside.map(kernel.getArgument(argument++),
-                       loadElement(b, loc, buffer, members[q]));
-        for (Value buffer : op.getParameters())
-          inside.map(kernel.getArgument(argument++),
-                     loadElement(b, loc, buffer, tuple));
-        for (Operation &nested : kernel.without_terminator())
-          b.clone(nested, inside);
+        EvaluatedTuple evaluated =
+            evaluateTuple(b, op, incidence, particle, number, boxComputed,
+                          inverseComputed, local);
+        IRMapping &inside = evaluated.inside;
+        Value place = evaluated.place;
 
         // The value for the place of the particle, of each destination.
         SmallVector<Value> updated;

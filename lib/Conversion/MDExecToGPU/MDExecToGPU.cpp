@@ -651,7 +651,9 @@ static void storeContributions(OpBuilder &builder, Location loc,
 
 void Lowering::findRows(func::FuncOp function) {
   auto isRowLoop = [](Operation *op) {
-    return isa<md_exec::PairForOp, md_exec::TupleForOp>(op);
+    if (auto tuple = dyn_cast<md_exec::TupleForOp>(op))
+      return !tuple.getDisjoint();
+    return isa<md_exec::PairForOp>(op);
   };
   auto getPositions = [](Operation *op) -> Value {
     if (auto pair = dyn_cast<md_exec::PairForOp>(op))
@@ -1014,6 +1016,19 @@ LogicalResult Lowering::lowerTupleFor(md_exec::TupleForOp op) {
   Value box = convertReal(builder, loc, op.getCellMutable().get(), real);
   Value inverse = createInverse(builder, loc, box);
 
+  // A set whose tuples share no particle has each tuple evaluated once, by
+  // the thread of its first member; its rows hold one tuple at most, which
+  // a group of threads would not share.
+  if (op.getDisjoint()) {
+    launchOver(builder, loc, size, [&](OpBuilder &body, Value particle) {
+      IRMapping local;
+      SmallVector<Value> contributions = emitTupleKernel(
+          body, op, op.getIncidence(), box, inverse, particle, local);
+      for (auto [index, value] : llvm::enumerate(contributions))
+        storeElement(body, loc, value, op.getScratch()[2 * index], particle);
+    });
+    return finishSums(op, builder, op.getReduce(), op.getScratch(), size);
+  }
   launchRows(builder, loc, size, [&](OpBuilder &body, Value particle,
                                      const RowLanes &sharing) {
     IRMapping local;

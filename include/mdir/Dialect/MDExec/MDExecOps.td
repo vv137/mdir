@@ -865,6 +865,11 @@ def MDExec_TupleForOp : MDExec_Op<"tuple_for", [
 
     The storage form is as that of `md_exec.pair_for`, with `overwrite` and
     `scratch`.
+
+    `disjoint` states that no particle is a member of two tuples, as the
+    tuple set declares (`md.tuple_set`). The results are the same; a
+    lowering may evaluate each tuple once, by its member at place 0, and
+    write to all of its members.
   }];
   let arguments = (ins
     MDExec_Incidence:$incidence,
@@ -878,7 +883,8 @@ def MDExec_TupleForOp : MDExec_Op<"tuple_for", [
     DenseI32ArrayAttr:$coordinate_kinds,
     DenseI64ArrayAttr:$coordinate_members,
     I64Attr:$arity,
-    OptionalAttr<DenseBoolArrayAttr>:$overwrite
+    OptionalAttr<DenseBoolArrayAttr>:$overwrite,
+    UnitAttr:$disjoint
   );
   let regions = (region SizedRegion<1>:$kernel);
   let results = (outs Variadic<AnyType>:$results);
@@ -892,6 +898,7 @@ def MDExec_TupleForOp : MDExec_Op<"tuple_for", [
     (`scratch` `(` $scratch^ `:` type($scratch) `)`)?
     `arity` `(` $arity `)`
     (`overwrite` $overwrite^)?
+    (`disjoint` $disjoint^)?
     $kernel attr-dict
     `:` qualified(type($incidence)) `,` qualified(type($positions))
     (`->` qualified(type($results))^)?

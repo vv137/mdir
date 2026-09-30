@@ -34,7 +34,10 @@ static void check(CUresult result, const char *what) {
   With MDRT_PROFILE set, the library counts its calls and the time they
   take, and reports when the program ends. With MDRT_WAIT set as well, it
   reports the time of each kernel: the time from the launch to the end of
-  the kernel. */
+  the kernel. With MDRT_TRACE set, it prints each module that it loads, the
+  kernels of each module, and each launch with its grid, so that a kernel
+  that a tool such as compute-sanitizer reports can be found in the module
+  that the pass `gpu-kernel-outlining` prints (MDIR_PRINT_AFTER). */
 
 enum { LAUNCH, WAIT, COPY, ALLOCATE, LOOKUP, NUM_COUNTERS };
 static const char *const counterNames[NUM_COUNTERS] = {
@@ -173,6 +176,9 @@ CUmodule mgpuModuleLoad(void *data, size_t size) {
   enter();
   CUmodule module = NULL;
   check(cuModuleLoadData(&module, data), "cuModuleLoadData");
+  static int loads = 0;
+  if (getenv("MDRT_TRACE"))
+    fprintf(stderr, "TRACE module %p #%d\n", (void *)module, loads++);
   return module;
 }
 
@@ -192,6 +198,9 @@ CUmodule mgpuModuleLoadJIT(void *data, int optLevel, size_t size) {
     fprintf(stderr, "mdrt: the driver could not compile a kernel:\n%s\n",
             log);
   check(result, "cuModuleLoadDataEx");
+  static int jitLoads = 0;
+  if (getenv("MDRT_TRACE"))
+    fprintf(stderr, "TRACE module %p #%d\n", (void *)module, jitLoads++);
   return module;
 }
 
@@ -212,6 +221,9 @@ CUfunction mgpuModuleGetFunction(CUmodule module, const char *name) {
   double start = begin();
   CUfunction function = NULL;
   check(cuModuleGetFunction(&function, module, name), "cuModuleGetFunction");
+  if (getenv("MDRT_TRACE"))
+    fprintf(stderr, "TRACE function %p module %p %s\n", (void *)function,
+            (void *)module, name);
   if (start >= 0.0)
     noteKernel(function, name);
   end(LOOKUP, start);
@@ -228,6 +240,10 @@ void mgpuLaunchKernel(CUfunction function, intptr_t gridX, intptr_t gridY,
   if (gridX <= 0 || gridY <= 0 || gridZ <= 0)
     return;
   double start = begin();
+  static long traceCount = 0;
+  if (getenv("MDRT_TRACE"))
+    fprintf(stderr, "TRACE launch %ld fn %p grid %ld block %ld\n",
+            traceCount++, (void *)function, (long)gridX, (long)blockX);
   check(cuLaunchKernel(function, (unsigned)gridX, (unsigned)gridY,
                        (unsigned)gridZ, (unsigned)blockX, (unsigned)blockY,
                        (unsigned)blockZ, (unsigned)sharedMemory, stream,

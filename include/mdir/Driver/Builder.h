@@ -8,6 +8,7 @@
 #include "mdir/Driver/Control.h"
 #include "mdir/Driver/System.h"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -86,6 +87,13 @@ struct Program {
     bool reversible = true;
 
     size_t size() const { return arity ? members.size() / arity : 0; }
+    /// Whether no particle is a member of two tuples, as in the groups of
+    /// a constraint.
+    bool isDisjoint() const {
+      std::vector<int32_t> sorted(members);
+      std::sort(sorted.begin(), sorted.end());
+      return std::adjacent_find(sorted.begin(), sorted.end()) == sorted.end();
+    }
     llvm::StringRef getOrientation() const {
       return arity == 2 ? "unordered" : reversible ? "reversal" : "ordered";
     }

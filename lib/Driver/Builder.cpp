@@ -2021,6 +2021,35 @@ std::string Builder::emitConstraintVirial(StringRef indent,
   return virialResult.str();
 }
 
+/// Emits the solution of `A x = b` for a system of at most 3 × 3, by
+/// Gaussian elimination without pivoting: the matrices of the constraints
+/// of a group are dominated by their diagonals.
+/// The iterations of Newton of the positions of SHAKE: from the error of
+/// a step of 4 fs with repartitioned masses, about 1e-2 of a bond, four
+/// reach the rounding of f64; two more are a margin.
+static const int shakeIterations = 6;
+
+static std::vector<std::string>
+emitSmallSolve(SiteKernel &k, std::vector<std::vector<std::string>> A,
+               std::vector<std::string> b) {
+  unsigned count = b.size();
+  for (unsigned c = 0; c != count; ++c)
+    for (unsigned r = c + 1; r != count; ++r) {
+      std::string factor = k.real("divf", A[r][c], A[c][c]);
+      for (unsigned d = c; d != count; ++d)
+        A[r][d] = k.real("subf", A[r][d], k.real("mulf", factor, A[c][d]));
+      b[r] = k.real("subf", b[r], k.real("mulf", factor, b[c]));
+    }
+  std::vector<std::string> x(count);
+  for (unsigned c = count; c-- != 0;) {
+    std::string sum = b[c];
+    for (unsigned d = c + 1; d != count; ++d)
+      sum = k.real("subf", sum, k.real("mulf", A[c][d], x[d]));
+    x[c] = k.real("divf", sum, A[c][c]);
+  }
+  return x;
+}
+
 void Builder::emitShakePositions(StringRef indent, StringRef old,
                                  StringRef x, const Program::TupleSet &set,
                                  StringRef result) {
@@ -2054,7 +2083,7 @@ void Builder::emitShakePositions(StringRef indent, StringRef old,
      << indent << "^bb0(" << arguments << "):\n";
   SiteKernel k(os, inner);
   // The old bonds, in the periods of the new ones.
-  std::vector<std::string> bonds, factors;
+  std::vector<std::string> bonds, inverse;
   std::string one = k.constant(1.0), two = k.constant(2.0);
   std::string inverseCenter = k.real("divf", one, "%vs_m0");
   for (unsigned j = 1; j <= count; ++j) {
@@ -2063,19 +2092,20 @@ void Builder::emitShakePositions(StringRef indent, StringRef old,
     std::string shift = k.vector("subf", "%vs_r" + n, raw);
     bonds.push_back(k.vector(
         "addf", k.vector("subf", "%vs_o" + n, "%vs_o0"), shift));
-    // 2 (1 / m_0 + 1 / m_j), which the step of SHAKE divides by.
-    std::string inverse = k.real("divf", one, "%vs_m" + n);
-    factors.push_back(
-        k.real("mulf", two, k.real("addf", inverseCenter, inverse)));
+    inverse.push_back(k.real("divf", one, "%vs_m" + n));
   }
   std::string zero = k.zero();
-  // Sweeps over the bonds, each bringing one to its length by moving its
-  // two atoms along its old direction; with the light hydrogens a sweep
-  // shrinks the error by about m_H / m_X, so 12 of them reach the
-  // precision of f64.
+  // The atoms move along the old bonds s_j: the hydrogen j by λ_j s_j / m_j
+  // and the heavy atom by −Σ λ_j s_j / m_0. Each iteration of Newton solves
+  // the constraints linearized at the current bonds r_k exactly,
+  //   Σ_j 2 (r_k · s_j) (δ_kj / m_j + 1 / m_0) λ_j = d_k² − r_k²,
+  // so that the error squares with each iteration whatever the masses; a
+  // relaxation bond by bond shrinks it only by about m_H / m_X, which the
+  // repartitioned masses of hydrogen make close to 1/2.
   os << inner << "%vs_c0 = arith.constant 0 : index\n"
      << inner << "%vs_c1 = arith.constant 1 : index\n"
-     << inner << "%vs_c12 = arith.constant 12 : index\n";
+     << inner << "%vs_iterations = arith.constant " << shakeIterations
+     << " : index\n";
   std::string results, inits, types;
   for (unsigned j = 0; j <= count; ++j) {
     std::string n = std::to_string(j);
@@ -2083,28 +2113,36 @@ void Builder::emitShakePositions(StringRef indent, StringRef old,
     inits += (j == 0 ? "" : ", ") + ("%vs_s" + n + " = " + zero);
     types += (j == 0 ? "" : ", ") + std::string("vector<3xf64>");
   }
-  os << inner << results << " = scf.for %vs_sweep = %vs_c0 to %vs_c12 "
-                            "step %vs_c1\n"
+  os << inner << results << " = scf.for %vs_sweep = %vs_c0 to "
+                            "%vs_iterations step %vs_c1\n"
      << inner << "    iter_args(" << inits << ") -> (" << types << ") {\n";
   SiteKernel l(os, inner + "  ", "%vsl");
-  // Continue the names of the kernel.
   std::vector<std::string> moved;
   for (unsigned j = 0; j <= count; ++j)
     moved.push_back("%vs_s" + std::to_string(j));
+  std::vector<std::string> current, error;
   for (unsigned j = 1; j <= count; ++j) {
     std::string n = std::to_string(j);
-    std::string bond = l.vector(
-        "subf", l.vector("addf", "%vs_r" + n, moved[j]), moved[0]);
-    std::string square = l.dot(bond, bond);
-    std::string length2 = l.real("mulf", "%vs_d" + n, "%vs_d" + n);
-    std::string along = l.dot(bonds[j - 1], bond);
-    std::string g = l.real(
-        "divf", l.real("subf", length2, square),
-        l.real("mulf", factors[j - 1], along));
-    std::string gj = l.real("divf", g, "%vs_m" + n);
-    std::string g0 = l.real("divf", g, "%vs_m0");
-    moved[j] = l.vector("addf", moved[j], l.scale(gj, bonds[j - 1]));
-    moved[0] = l.vector("subf", moved[0], l.scale(g0, bonds[j - 1]));
+    current.push_back(l.vector(
+        "subf", l.vector("addf", "%vs_r" + n, moved[j]), moved[0]));
+    error.push_back(l.real("subf", l.real("mulf", "%vs_d" + n, "%vs_d" + n),
+                           l.dot(current.back(), current.back())));
+  }
+  std::vector<std::vector<std::string>> A(count,
+                                          std::vector<std::string>(count));
+  for (unsigned i = 0; i != count; ++i)
+    for (unsigned j = 0; j != count; ++j) {
+      std::string weight = i == j ? l.real("addf", inverse[j], inverseCenter)
+                                  : inverseCenter;
+      A[i][j] = l.real("mulf", l.real("mulf", two, l.dot(current[i],
+                                                          bonds[j])),
+                       weight);
+    }
+  std::vector<std::string> lambda = emitSmallSolve(l, A, error);
+  for (unsigned j = 1; j <= count; ++j) {
+    std::string push = l.scale(lambda[j - 1], bonds[j - 1]);
+    moved[j] = l.vector("addf", moved[j], l.scale(inverse[j - 1], push));
+    moved[0] = l.vector("subf", moved[0], l.scale(inverseCenter, push));
   }
   std::string yielded;
   for (unsigned j = 0; j <= count; ++j)
@@ -2176,20 +2214,7 @@ std::string Builder::emitShakeVelocities(StringRef indent, StringRef x,
             k.real("mulf", k.dot(units[i], units[j]), inverseCenter);
         A[i][j] = i == j ? k.real("addf", coupling, inverse[i]) : coupling;
       }
-    for (unsigned c = 0; c != count; ++c)
-      for (unsigned r = c + 1; r != count; ++r) {
-        std::string factor = k.real("divf", A[r][c], A[c][c]);
-        for (unsigned d = c; d != count; ++d)
-          A[r][d] = k.real("subf", A[r][d], k.real("mulf", factor, A[c][d]));
-        rhs[r] = k.real("subf", rhs[r], k.real("mulf", factor, rhs[c]));
-      }
-    std::vector<std::string> impulse(count);
-    for (unsigned c = count; c-- != 0;) {
-      std::string sum = rhs[c];
-      for (unsigned d = c + 1; d != count; ++d)
-        sum = k.real("subf", sum, k.real("mulf", A[c][d], impulse[d]));
-      impulse[c] = k.real("divf", sum, A[c][c]);
-    }
+    std::vector<std::string> impulse = emitSmallSolve(k, A, rhs);
     std::vector<std::string> changes(count + 1);
     std::string center = k.zero();
     for (unsigned j = 0; j != count; ++j) {
@@ -3894,7 +3919,8 @@ llvm::Error Builder::build() {
   os << "\nmd.particle_set @atoms\n";
   for (const Program::TupleSet &set : program.tupleSets)
     os << "md.tuple_set @" << set.name << " on(@atoms) arity(" << set.arity
-       << ") orientation(" << set.getOrientation() << ")\n";
+       << ") orientation(" << set.getOrientation() << ")"
+       << (set.arity > 1 && set.isDisjoint() ? " disjoint" : "") << "\n";
   os << "\n";
   if (system.topology) {
     emitTopologyPotential("energy", AllTerms);

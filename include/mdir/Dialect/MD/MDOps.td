@@ -45,16 +45,26 @@ def MD_TupleSetOp : MD_Op<"tuple_set", [Symbol]> {
     The members of the tuples are a value of the type
     `!md.relation<@atoms, 3, reversal, @angles>`, and a field of the tuples
     has the type `!md.field<@angles, f64>`.
+
+    `disjoint` states that no particle is a member of two tuples, as in the
+    groups of a constraint: a loop over the tuples may then evaluate each
+    tuple once and write to all of its members. It is a promise of whoever
+    declares the set.
+
+    ```mlir
+    md.tuple_set @settles on(@atoms) arity(3) orientation(ordered) disjoint
+    ```
   }];
   let arguments = (ins
     SymbolNameAttr:$sym_name,
     FlatSymbolRefAttr:$particle_set,
     I64Attr:$arity,
-    MD_Orientation:$orientation
+    MD_Orientation:$orientation,
+    UnitAttr:$disjoint
   );
   let assemblyFormat = [{
     $sym_name `on` `(` $particle_set `)` `arity` `(` $arity `)`
-    `orientation` `(` $orientation `)` attr-dict
+    `orientation` `(` $orientation `)` (`disjoint` $disjoint^)? attr-dict
   }];
   let hasVerifier = 1;
 }
