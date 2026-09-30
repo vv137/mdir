@@ -34,10 +34,16 @@ follows are in [principles.md](principles.md).
 | Semi-isotropic barostat | Eqs. (9a, 9b) and SI Secs. VI–VII of [[Bernetti2020]](references.md#bernetti2020): strains of the area and of the height from their own pressures and noises, a surface tension, and a frozen height; the kinetic energy per direction, scaling per axis in the Trotter step and in the exact work, the reference of restraints per axis. Validated on a POPC bilayer of Lipid21 from packmol-memgen against GROMACS, and on water, where it must sample what the isotropic barostat does |
 
 The order: leapfrog, then performance. The goal of performance for the
-first milestone is 90% of the rate of GROMACS with CUDA, in mixed
-precision, on each system of the Amber suite (from 23,558 to 1,067,095
-atoms, NVE and NPT) and on the target of D65; the white paper begins when
-it is reached.
+first milestone is at least the rate of pmemd.cuda (Amber 26, SPFP), in
+mixed precision, on each system of the Amber suite (from 23,558 to
+1,067,095 atoms, NVE and NPT) on the same GPU; the white paper begins when
+it is reached. (Changed 2026-09-30 from 90% of GROMACS with CUDA:
+pmemd.cuda keeps a neighbor list as MDIR does, with a skin and a test of
+displacements, so the comparison measures the kernels; what GROMACS gains
+with a thermostat comes from a list every 50 steps and dynamic pruning,
+which is an item of its own.) On 2026-09-30, MDIR against pmemd.cuda:
+JAC 84–85% (NVE), 63–64% (NPT); FactorIX 60%, 47%; Cellulose 49%, 40%;
+STMV 38%.
 
 The rates of the first comparison (2026-09-30, ns/day, RTX 3090):
 
@@ -59,7 +65,7 @@ The rates of the first comparison (2026-09-30, ns/day, RTX 3090):
 ## 3. White paper, after the first milestone
 
 A paper that describes MDIR and what the first milestone shows, written
-when the milestone ends and the rates reach 90% of GROMACS across the
+when the milestone ends and the rates reach those of pmemd.cuda across the
 systems:
 
 - A section of notation at the front (TODO): the symbols of positions,
@@ -78,6 +84,27 @@ systems:
 - The way from double to mixed precision (TODO, if it makes a story): what stays in `f64` and
   why (the differences of positions, D75; the sums), what moved to `f32`
   (the kernels of pairs, PME), and what each step cost and gained.
+- Related work (TODO: survey): compilers and MLIR in molecular dynamics.
+  To look up, read at the source, and verify before any claim is cited
+  (the list came from a summary whose claims and links are unchecked; some
+  links did not match their topics):
+  - chemtrain-deploy (arXiv 2506.04055): JAX potentials (MACE, Allegro,
+    PaiNN) exported as StableHLO and run inside LAMMPS through XLA/PJRT
+    on many GPUs.
+  - JAX-MD: differentiable MD in JAX, compiled by XLA (through StableHLO).
+  - Reactant.jl with EnzymeMLIR: Julia code traced to MLIR, with automatic
+    differentiation at the level of MLIR (Enzyme).
+  - FFTc (doi:10.1007/978-3-031-50684-0_16; arXiv 2308.00497): an MLIR
+    dialect for FFTs, generating kernels for the hardware; bears on the
+    transforms of PME, for which MDIR calls cuFFT.
+  - Lapis, MLIR-AIR, SODA-OPT: sparse linear algebra and hardware co-design
+    on MLIR; whether any concerns neighbor lists or MD is to be checked.
+  - Also given without titles: arXiv 2505.22397, 2511.22951;
+    doi:10.1145/3763125; DiVA diva2:1757681.
+  The point to make, if the sources bear it out: these compile potentials
+  or tensor programs (mostly machine-learned) through general ML
+  compilers, while MDIR has dialects of MD itself (particle sets, neighbor
+  structures, tuples, integrators) and lowers the whole step.
 - The principles of development and the defects that led to them.
 - A manual of the control file (TODO): every table and keyword, its
   units and default, and the combinations that are errors, checked
