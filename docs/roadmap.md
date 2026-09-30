@@ -48,6 +48,13 @@ The rates of the first comparison (2026-09-30, ns/day, RTX 3090):
 | cellulose_nve | 408,609 | 9 | 51 | 63 |
 | stmv_npt_4fs | 1,067,095 | 5 | 40 | 39 |
 
+## Documentation
+
+| Item | State |
+|---|---|
+| Equations in the Markdown documents written in TeX (`$...$`, `$$...$$`, which GitHub renders) instead of Unicode text | To do |
+| A guide for contributors: building, the layers of the IR and where a feature goes, adding a term, a pass, or a lowering, the tiers of tests and the tools of debugging, the principles, how a change is reviewed | With the white paper (Section 3), and as `CONTRIBUTING.md` |
+
 ## 3. White paper, after the first milestone
 
 A paper that describes MDIR and what the first milestone shows, written
@@ -62,6 +69,9 @@ systems:
 - Performance: the Amber suite against GROMACS and pmemd.cuda, with the
   scripts that produce every number and figure.
 - The principles of development and the defects that led to them.
+- How to take part: how the code is laid out, how a new term, pass, or
+  target is added and tested, and how defects are reported, so that a
+  reader can begin to contribute.
 - Limitations and the next milestones.
 
 Every citation is checked against its source (docs/references.md), and the

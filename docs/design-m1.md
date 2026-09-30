@@ -645,6 +645,23 @@ Stochastic cell rescaling, isotropic, with velocity Verlet and leapfrog
 | The conserved energy, first order | Takes away `−(μ − 1) tr W_g`, the change of the potential energy to first order, as GROMACS does, and `(1/μ² − 1) K`, that of the kinetic energy, exactly. `W_g`, the virial of the rigid groups that move as wholes, is the W of the pressure above, which has the virial of the constraints, with twice the kinetic energy of the motion within the groups, `Σ ½ m |v − V|²` over each (the virial of the forces within a rigid group is minus that). What is left is the second order, `½ (μ − 1)² d²U/dμ²`, whose mean over the noise of Δε is proportional to its variance, and so to f: a drift that neither the time step nor the period of coupling reduces, only `tau_p`. On the mixture of `barostat.test` at 2 fs, 1.8 × 10⁻³ of the energy over 8 ps with `tau_p = 2`, 4.4 times less with `tau_p = 8`; on 1394 OPC waters with PME at 300 K and 1 bar, 2.1 kcal/mol per ps with `tau_p = 2` and 0.52 with `tau_p = 8`. The same runs at constant volume keep the conserved energy to 10⁻⁶ and 10⁻⁵ |
 | Parameters of `[ensemble]` | `ensemble = "NPT"`, `barostat = "BERNETTI-BUSSI"`, `pressure` in atm, `tau_p` in ps (5 by default), `compressibility` in 1/atm (4.5 × 10⁻⁵ /bar by default); `isotropy = "ISO"` only |
 
+The drift of the conserved energy on tri-alanine in 1218 OPC waters
+(`examples/ala3`, 4,905 particles, from its checkpoint after 100 ps at
+constant pressure; 100 ps of each, 2 fs, SETTLE and SHAKE, PME, an RTX
+3090, velocity Verlet, the barostat with the exact work and the step in
+λ, thermostat and barostat every 10 steps, `tau_t` 0.5 ps, `tau_p` 2 ps),
+from the slope of a line through the rows of the log:
+
+| Ensemble | Mixed: kcal/mol/ps | kJ/mol/ns per atom | ns/day | Double: kcal/mol/ps | kJ/mol/ns per atom | ns/day |
+|---|---|---|---|---|---|---|
+| NVE | −0.0111 | −0.0094 | 426.5 | −0.0082 | −0.0070 | 83.8 |
+| NVT | +0.0047 | +0.0040 | 423.0 | −0.0015 | −0.0013 | 83.7 |
+| NPT | −0.0014 | −0.0012 | 253.9 | −0.0054 | −0.0046 | 57.8 |
+
+The barostat costs 40% of the rate at this period: the evaluation after
+each scaling, and the neighbor structures that each change of the cell
+rebuilds (with the first-order work, 316 ns/day).
+
 ## 12. A cell that changes
 
 A neighbor structure is valid in the cell that it was built in (Section
