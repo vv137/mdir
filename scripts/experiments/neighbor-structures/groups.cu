@@ -11,6 +11,8 @@
 //                   (the order of a build of MDIR, D86)
 //         compact - columns in x-y of the width of 64 particles, sorted by
 //                   z, cut into 64 and halved in x, y, z into groups of 16
+//         zcurve  - cells of about 2 particles (CELL_PARTICLES), all in
+//                   the order of a Z curve (Morton code) through the cell
 //         morton  - cells of a third of the reach, and within them the
 //                   particles by the Morton code of their position in the
 //                   cell at a resolution of 1/4 (as the Hilbert order of a
@@ -200,6 +202,26 @@ int main(int argc, char **argv) {
         }
       }
     }
+  } else if (!strcmp(order, "zcurve")) {
+    // Cells of about CELL_PARTICLES particles (2 by default), all of them
+    // in the order of the Morton code of their coordinates (a Z curve
+    // through the cell), the particles of a cell by number.
+    double per = getenv("CELL_PARTICLES") ? atof(getenv("CELL_PARTICLES")) : 2.0;
+    double rho = n / (box[0] * box[1] * box[2]);
+    double w = std::cbrt(per / rho);
+    int nc[3]; for (int k = 0; k < 3; ++k) nc[k] = std::max(1, (int)(box[k] / w));
+    auto spread10 = [](uint64_t v) {
+      uint64_t r = 0; for (int b = 0; b < 21; ++b) r |= ((v >> b) & 1) << (3 * b); return r; };
+    std::vector<std::pair<uint64_t, int>> key(n);
+    for (int i = 0; i < n; ++i) {
+      uint64_t c[3];
+      for (int k = 0; k < 3; ++k) c[k] = std::min(nc[k] - 1, (int)(x[3*i+k] / box[k] * nc[k]));
+      key[i] = {spread10(c[0]) | spread10(c[1]) << 1 | spread10(c[2]) << 2, i};
+    }
+    std::sort(key.begin(), key.end());
+    for (auto &k : key) members.push_back(k.second);
+    while (members.size() % 16) members.push_back(-1);
+    printf("cells of %.2f A, %d x %d x %d\n", w, nc[0], nc[1], nc[2]);
   } else {
     bool morton = !strcmp(order, "morton");
     double w = REACH / 3.0;

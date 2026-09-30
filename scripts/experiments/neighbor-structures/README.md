@@ -13,6 +13,8 @@ compiler.
 | `pairs.cu` | The loop over pairs (Lennard-Jones from type tables and the direct sum of PME, in `f32`) with the neighbor matrix of MDIR (16 lanes per particle), with tiles of 8 × 8 and 8 × 4 (full lists), with 8 × 4 half lists (`f32` atomics and fixed point), and the pruning of a matrix from an outer reach. The lists are built on the host; only the kernels are timed, 1000 launches each. The forces of the variants are compared |
 | `supercluster.cu` | The loop over pairs with two half lists against the matrix, on any system that `prep.py` writes: the cluster pair list of [Pall2013] as its GPU layout has it (super-clusters of 64 in 8 clusters of 8, a warp per super-cluster, the forces on i in registers and those on j summed with shuffles once per entry), and groups of 32 particles sharing a list of particles j, which turn around the warp one lane per step (the neighbor list that [SalomonFerrer2013] describes for pmemd, groups of 16 or 32). The forces are compared with the matrix |
 | `spread.cu` | The atomic additions of the spreading of PME, order 4, on the grid of MDIR for a system: 4 threads a particle, a warp a particle in the order of the transform, and a warp a particle into bricks of 4 × 4 in x-y with a copy after, with `f32` and `i32` atomics; and the kernel of the weights, as a structure a particle and by component. The grids are compared with one summed on the host |
+| `groups.cu` | The loop over groups of 16 against the matrix in the same places, for an order of the places (`cells`, `morton`, `zcurve`, `compact`) and a threshold of trivial acceptance |
+| `build.cu` | The build of groups of 16 on a device (order by a counting sort on a Z curve, or the compact order from the host with `ORDER=compact`; boxes; the lists, a warp a group and a lane a candidate), compared entry by entry with lists built on the host |
 | `search.cu` | The search of a build of the matrix as the template of MDIR does it (cells, runs of cells): a thread per particle, a warp per particle with ballots (with and without the excluded pairs), and a block per cell with the runs in shared memory. The matrices are compared entry by entry |
 | `run.sh` | Builds both, runs the sweeps, and writes `results/<date>-<device>.csv` |
 | `plot.py` | Draws `pairs.png`, `search.png`, `model.png`, and `scan.png` into `results/` (matplotlib; the project uses the environment `~/opt/render`) |
@@ -130,3 +132,26 @@ The cheaper erfc does not change the matrix, which is bound by its index,
 and gains 22 % on the groups, which are bound by their arithmetic; leaving
 out the minimum image gains 2 % more. A list of groups holds a fifteenth of
 the entries of the matrix, which a build writes.
+
+### The order of the groups, and their build (2026-10-01)
+
+`groups cell.bin 9 <order> 0` (`-DFAST_ERFC`): the Z curve through cells of
+1 to 4 particles gives boxes of 7.3 Å but 26.3 % of the slots within the
+cutoff, and 1337 to 1377 µs, against 29.7 % and 1162 to 1213 µs in the
+compact order: cutting a Z curve into sixteens puts particles across its
+jumps into one group.
+
+`build <system.bin> 9` (GPU 1), the lists of the groups:
+
+| Order | Cellulose | JAC | Boxes over 20 Å (Cellulose) |
+|---|---|---|---|
+| Z curve (counting sort on the device) | 12.4 ms | 1.31 ms | 1272 of 25539 |
+| Compact (from the host) | 2.44 ms | 0.22 ms | 2 of 26355 |
+
+A lane takes a candidate and tests it against the 16 particles of the
+group; a first version, which took the survivors two at a time (a
+half-warp each) with a load of each from memory, took 53 to 59 ms on
+Cellulose, and a box computed in the wrapped coordinates made a group
+across the edge of the cell as large as the cell. The lists equal those of
+the host but for 2 groups of Cellulose (pairs at the reach itself, to be
+checked). The matrix of MDIR takes 8.0 ms a build of 10 Å on Cellulose.

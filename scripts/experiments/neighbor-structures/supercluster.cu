@@ -59,7 +59,12 @@ __device__ __forceinline__ void pairForce(float3 xi, float qi, int ti, float3 xj
   float r2 = dx*dx + dy*dy + dz*dz;
   if (r2 < RC * RC) {
     float ri = rsqrtf(r2), r2i = ri * ri, r6i = r2i * r2i * r2i;
+#ifdef LJ2
+    float2 ab = reinterpret_cast<const float2 *>(A)[ti * nt + tj];
+    float a = ab.x, b = ab.y;
+#else
     float a = A[ti * nt + tj], b = B[ti * nt + tj];
+#endif
     float r = r2 * ri;
     float fs = (12.f * a * r6i - 6.f * b) * r6i * r2i;
     float br = BETA * r;
@@ -219,7 +224,7 @@ __global__ void groupKernel(int Gn, const int *rowStart, const int *entSlot, con
   atomicAdd(a, fi.x); atomicAdd(a + 1, fi.y); atomicAdd(a + 2, fi.z);
 }
 
-// Groups of 16, as pmemd.cuda arranges them (lanes 0-15 and 16-31 hold the
+// Groups of 16 [SalomonFerrer2013] (lanes 0-15 and 16-31 hold the
 // same 16 particles i; each lane takes one of 32 particles j of a chunk,
 // which turn within their half-warp, 16 steps a chunk): entries carry a
 // mask of 16 bits over the particles i.
@@ -241,6 +246,23 @@ __global__ void group16Kernel(int Gn, const int *rowStart, const int *entSlot, c
     float4 pj = js >= 0 ? slots[js] : make_float4(0, 0, 0, 0);
     int tj = js >= 0 ? slotType[js] : 0;
     float3 fj = {0, 0, 0};
+#ifdef FULLPATH
+    bool plain = __all_sync(0xffffffff, js >= 0 && m == 0xffffu);
+    if (plain) {
+#pragma unroll 2
+      for (int step = 0; step < 16; ++step) {
+        float3 f = {0, 0, 0};
+        pairForce(xi, pi.w, ti, make_float3(pj.x, pj.y, pj.z), pj.w, tj, L, iL, A, B, nt, f);
+        fi.x += f.x; fi.y += f.y; fi.z += f.z;
+        fj.x -= f.x; fj.y -= f.y; fj.z -= f.z;
+        pj.x = __shfl_sync(0xffffffff, pj.x, src); pj.y = __shfl_sync(0xffffffff, pj.y, src);
+        pj.z = __shfl_sync(0xffffffff, pj.z, src); pj.w = __shfl_sync(0xffffffff, pj.w, src);
+        tj = __shfl_sync(0xffffffff, tj, src);
+        fj.x = __shfl_sync(0xffffffff, fj.x, src); fj.y = __shfl_sync(0xffffffff, fj.y, src);
+        fj.z = __shfl_sync(0xffffffff, fj.z, src);
+      }
+    } else
+#endif
 #pragma unroll 2
     for (int step = 0; step < 16; ++step) {
       if (m >> u & 1u) {
@@ -475,7 +497,14 @@ int main(int argc, char **argv) {
 
   auto up = [](const auto &v) { using T = typename std::decay_t<decltype(v)>::value_type;
     T *d; CK(cudaMalloc(&d, sizeof(T) * std::max<size_t>(1, v.size()))); cudaMemcpy(d, v.data(), sizeof(T) * v.size(), cudaMemcpyHostToDevice); return d; };
-  float *dx = up(xs), *dq = up(qs), *dA = up(ta), *dB = up(tb); int *dt = up(ts), *dcounts = up(counts), *dindex = up(index);
+#ifdef LJ2
+  std::vector<float> tab(2 * ta.size());
+  for (size_t k = 0; k < ta.size(); ++k) { tab[2*k] = ta[k]; tab[2*k+1] = tb[k]; }
+  float *dx = up(xs), *dq = up(qs), *dA = up(tab), *dB = up(tb);
+#else
+  float *dx = up(xs), *dq = up(qs), *dA = up(ta), *dB = up(tb);
+#endif
+  int *dt = up(ts), *dcounts = up(counts), *dindex = up(index);
   int *drow = up(rowStart), *dent = up(entCluster), *dem = up(entMasks); unsigned char *dim = up(entImask);
   unsigned long long *dmasks = up(masks); float4 *dslots = up(slots); int *dstype = up(slotType);
   float *df1, *df2; CK(cudaMalloc(&df1, 12 * n)); CK(cudaMalloc(&df2, 12 * 8 * C));
