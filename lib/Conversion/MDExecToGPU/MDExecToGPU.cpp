@@ -8,6 +8,7 @@
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Dialect/MD/MDOps.h"
+#include "mdir/Dialect/MDExec/Independence.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
@@ -102,11 +103,9 @@ struct Flag {
 class Lowering {
 public:
   Lowering(ModuleOp module, int64_t blockSize, int64_t rowLanes,
-           bool fuseRows, bool pmeStream, bool deterministic,
-           bool tuplesOnce)
+           bool fuseRows, bool deterministic, bool tuplesOnce)
       : module(module), context(module.getContext()), blockSize(blockSize),
-        rowLanes(rowLanes), fuseRows(fuseRows),
-        pmeStream(pmeStream), deterministic(deterministic),
+        rowLanes(rowLanes), fuseRows(fuseRows), deterministic(deterministic),
         tuplesOnce(tuplesOnce) {}
 
   LogicalResult run();
@@ -246,8 +245,6 @@ private:
   int64_t rowLanes;
   /// Whether runs of loops over rows become one kernel (findRows).
   bool fuseRows;
-  /// Whether the reciprocal sum runs on a second stream (lowerReciprocal).
-  bool pmeStream;
   /// Whether sums are added in an order that the threads do not decide
   /// (D84).
   bool deterministic;
@@ -1498,16 +1495,18 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   Value fixed = op.getScratch()[0], real = op.getScratch()[1],
         complex = op.getScratch()[2], rows = op.getScratch()[3];
 
-  // On a second stream the sum runs beside the loops that follow it, from
-  // the positions as they are here, until an op reads its forces (or the
-  // buffers it reads are written), where the first stream waits for it.
-  auto sideCall = [&](OpBuilder &at, StringRef name) {
-    func::FuncOp function =
-        getOrDeclare(name, at.getFunctionType({}, {}));
-    func::CallOp::create(at, loc, function, ValueRange());
-  };
-  if (pmeStream)
-    sideCall(builder, "mdrtSideBegin");
+  // Marked, the sum runs on a second stream, beside the ops up to its join
+  // (md_exec.join, D87). All the work that it issues goes there, and none
+  // of it allocates or frees memory: the runtime hands a block that is
+  // freed to the next allocation without waiting, as work that runs in
+  // the order in which it was issued may.
+  bool side = op->hasAttr(md_exec::kSideAttrName);
+  func::CallOp begin;
+  if (side)
+    begin = func::CallOp::create(
+        builder, loc,
+        getOrDeclare("mdrtSideBegin", builder.getFunctionType({}, {})),
+        ValueRange());
   // The charges in fixed point in the deterministic mode, then converted;
   // by default with floating-point atomics, straight to the grid (D84).
   if (deterministic) {
@@ -1557,41 +1556,22 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_gather"),
                        ValueRange{positions, charges, real, box, k1, k2, k3,
                                   order, forces});
-  if (pmeStream) {
-    sideCall(builder, "mdrtSideEnd");
-    // The first op after the sum, in its block, that reads its forces or
-    // writes what it reads, or that is not a loop over pairs, tuples, or
-    // particles, which could do either by other means.
-    Operation *join = nullptr;
-    for (Operation *next = op->getNextNode(); next;
-         next = next->getNextNode()) {
-      // Loops may read what the sum reads at the same time; they may not
-      // write it, nor read the forces it writes.
-      ValueRange outs;
-      if (auto loop = dyn_cast<md_exec::PairForOp>(next))
-        outs = loop.getOuts();
-      else if (auto loop = dyn_cast<md_exec::TupleForOp>(next))
-        outs = loop.getOuts();
-      else if (auto loop = dyn_cast<md_exec::ParticleForOp>(next))
-        outs = loop.getOuts();
-      bool touches =
-          llvm::is_contained(next->getOperands(), forces) ||
-          llvm::any_of(outs, [&](Value out) {
-            return out == positions || out == charges;
-          });
-      bool isLoop = isa<md_exec::PairForOp, md_exec::TupleForOp,
-                        md_exec::ParticleForOp, arith::ConstantOp>(next);
-      if (touches || !isLoop) {
-        join = next;
-        break;
-      }
+  if (side) {
+    auto end = func::CallOp::create(
+        builder, loc,
+        getOrDeclare("mdrtSideEnd", builder.getFunctionType({}, {})),
+        ValueRange());
+    for (Operation *issued = begin->getNextNode(); issued != end;
+         issued = issued->getNextNode()) {
+      bool allocates = false;
+      issued->walk([&](Operation *nested) {
+        allocates |= isa<gpu::AllocOp, gpu::DeallocOp, memref::AllocOp,
+                         memref::DeallocOp>(nested);
+      });
+      if (allocates)
+        return op->emitOpError()
+               << "allocates or frees memory on a second stream";
     }
-    OpBuilder at(op->getContext());
-    if (join)
-      at.setInsertionPoint(join);
-    else
-      at.setInsertionPoint(op->getBlock()->getTerminator());
-    sideCall(at, "mdrtSideJoin");
   }
   if (convolve) {
     op.getEnergy().replaceAllUsesWith(convolve.getResult(0));
@@ -2026,6 +2006,13 @@ LogicalResult Lowering::lowerOp(Operation *op) {
     OpBuilder builder(op);
     count.getResult().replaceAllUsesWith(memref::LoadOp::create(
         builder, op->getLoc(), structure.builds, ValueRange{}));
+  } else if (isa<md_exec::JoinOp>(op)) {
+    // The first stream waits for the work of the second.
+    OpBuilder builder(op);
+    func::CallOp::create(
+        builder, op->getLoc(),
+        getOrDeclare("mdrtSideJoin", builder.getFunctionType({}, {})),
+        ValueRange());
   } else if (auto loop = dyn_cast<md_exec::ParticleForOp>(op)) {
     if (failed(lowerParticleFor(loop)))
       return failure();
@@ -2147,6 +2134,14 @@ static void deferReadbacks(func::FuncOp function) {
          op = op->getNextNode()) {
       if (moving.contains(op))
         continue;
+      // A group stays out of the work of a second stream, which begins
+      // with a call to mdrtSideBegin: issued there, a copy would go to
+      // that stream (D87).
+      if (auto call = dyn_cast<func::CallOp>(op))
+        if (call.getCallee().starts_with("mdrtSide")) {
+          target = op;
+          break;
+        }
       bool uses = false;
       op->walk([&](Operation *nested) {
         for (Value operand : nested->getOperands())
@@ -2218,6 +2213,23 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   function.setType(FunctionType::get(context, inputs, results));
   if (function.isExternal())
     return success();
+
+  // The ops that run on a second stream are independent of the ops before
+  // their joins, which the lowering issues in the same order (D87).
+  md_exec::BufferAliases aliases;
+  WalkResult sides = function.walk([&](Operation *op) {
+    if (!op->hasAttr(md_exec::kSideAttrName))
+      return WalkResult::advance();
+    if (!isa<md_exec::ReciprocalOp>(op)) {
+      op->emitOpError() << "cannot run on a second stream; only the "
+                           "reciprocal sums of PME can";
+      return WalkResult::interrupt();
+    }
+    return failed(md_exec::verifySide(op, aliases)) ? WalkResult::interrupt()
+                                           : WalkResult::advance();
+  });
+  if (sides.wasInterrupted())
+    return failure();
 
   current = function;
   cells.clear();
@@ -2365,7 +2377,7 @@ public:
 
   void runOnOperation() final {
     Lowering lowering(getOperation(), blockSize, rowLanes, fuseRows,
-                      pmeStream, deterministic, tuplesOnce);
+                      deterministic, tuplesOnce);
     if (failed(lowering.run()))
       return signalPassFailure();
     // Products and sums in the kernels may become fused multiply-adds, as

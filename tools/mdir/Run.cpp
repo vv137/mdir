@@ -73,7 +73,7 @@ static std::string getPipeline(const Control &control,
     // Kernels in f32 look their tables up in f32.
     os << "md-exec-assign-storage{memory=device"
        << (control.precision == Precision::Double ? "" : " tables=f32")
-       << "},convert-md-exec-to-gpu{"
+       << "},md-exec-assign-streams,convert-md-exec-to-gpu{"
        << (control.deterministic ? "deterministic=true " : "")
        << (control.fastMath ? "" : "contract=false") << "},"
        << "gpu-lower-to-nvvm-pipeline{cubin-format=isa},"

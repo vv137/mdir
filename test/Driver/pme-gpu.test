@@ -3,7 +3,10 @@
 # precision it conserves the energy as well. In the deterministic mode the
 # charges are spread in fixed point, so a run on the device gives the same
 # state from run to run, to the bit (D84); by default they are added with
-# floating-point atomics.
+# floating-point atomics. With the reciprocal sums on a second stream
+# (md-exec-assign-streams, D87), the state is the same to the bit again:
+# evidence, beside the argument of D87, that the ops that run beside them
+# are independent of them.
 #
 # REQUIRES: cuda, hdf5
 #
@@ -14,14 +17,22 @@
 # RUN: sed -e 's|^type = "PERIODIC"|type = "PERIODIC"\n[execution]\ntarget = "gpu"\ndeterministic = true|' %t/run.toml > %t/double.toml
 # RUN: sed -e 's|^energy_interval = 500|energy_interval = 500\ncheckpoint = "first.h5"\ncheckpoint_interval = 500|' %t/double.toml > %t/first.toml
 # RUN: sed -e 's|^energy_interval = 500|energy_interval = 500\ncheckpoint = "second.h5"\ncheckpoint_interval = 500|' %t/double.toml > %t/second.toml
+# RUN: sed -e 's|^energy_interval = 500|energy_interval = 500\ncheckpoint = "side.h5"\ncheckpoint_interval = 500|' %t/double.toml > %t/side.toml
 # RUN: sed -e 's|^type = "PERIODIC"|type = "PERIODIC"\n[execution]\ntarget = "gpu"\nprecision = "mixed"|' %t/run.toml > %t/mixed.toml
 # RUN: cd %t && mdir run first.toml > first.log
 # RUN: cd %t && mdir run second.toml > second.log
 # RUN: FileCheck %s --check-prefix=DOUBLE < %t/first.log
 # RUN: mdir checkpoint %t/first.h5 %t/second.h5 | FileCheck %s --check-prefix=SAME
+# RUN: cd %t && mdir emit side.toml --stage=pipeline \
+# RUN:     | sed 's|md-exec-assign-streams,|md-exec-assign-streams{reciprocal=true},|' > pipeline
+# RUN: cd %t && env MDIR_PRINT_AFTER=md-exec-assign-streams sh -c 'MDIR_PIPELINE="$(cat pipeline)" mdir run side.toml' > side.log 2>&1
+# RUN: FileCheck %s --check-prefix=SIDE < %t/side.log
+# RUN: mdir checkpoint %t/first.h5 %t/side.h5 | FileCheck %s --check-prefix=SAME
 # RUN: mdir run %t/mixed.toml | FileCheck %s --check-prefix=MIXED
 
 # SAME: the states are identical
+# SIDE: md_exec.reciprocal {{.*}} {md_exec.side}
+# SIDE: md_exec.join
 # DOUBLE: INFO:       500         0.5000 {{ *}}-2811.6418 {{ *}}-3754.0064 {{ *}}942.3645
 # DOUBLE: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
 # MIXED:  MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value

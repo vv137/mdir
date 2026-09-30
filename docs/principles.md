@@ -34,10 +34,32 @@ static, a debug mode checks it at run time.
 - Deferral of the readbacks of sums: each sum has slots of its own; a copy
   is left out only when nothing that runs on the device lies between it and
   the copy before.
-- Reuse of device memory freed by a program: one stream, in order.
+- Reuse of device memory freed by a program: one stream, in order; the
+  work of a second stream allocates and frees nothing (D87).
+- Work on a second stream: every op before its join is independent of it,
+  from declared effects and traced aliases (D87).
 - SHAKE by Newton: a fixed number of iterations reaches the rounding for a
   step no larger than the constraints were built for; a debug mode should
   check the residual.
+
+### Optimizations that reorder or overlap work
+
+An optimization that changes the order in which work runs, or runs work at
+once, is exact or wrong: nothing in a test of a few systems tells a race
+that did not happen from one that cannot. Such an optimization carries an
+argument, written in its decision: the claim (what is the same as in the
+serial program), the proof, and the list of its premises, each with the
+place where it is checked, statically in a pass or the lowering, or as a
+contract of an op that was audited. The pass that applies it and the
+lowering that relies on it check the same condition with the same code. A
+bitwise comparison with the serial program in the deterministic mode is
+the evidence beside it, not the proof. D87 is the pattern.
+
+An optimization that changes results beyond the rounding of sums, such as
+a list of neighbors kept for a fixed number of steps, is not of this kind:
+it is a mode or an option, off by default unless it is a documented
+choice of the method, it warns when a run chooses it, and the log records
+it.
 
 ## 3. Every optimization can be turned off, and the two are compared
 
@@ -103,7 +125,9 @@ indexes past what it read.
    the path to CUDA graphs is open.
 3. Each loop op carries a summary of its effects: what it reads and writes,
    and where (its own element, all members of a tuple, a global sum). Fusion
-   decides from it in one place.
+   decides from it in one place. Begun: the independence of whole ops, from
+   their declared effects and traced aliases, decides what runs on a second
+   stream (D87); fusion still has checks of its own.
 4. A debug lowering checks the bounds of every load and store, and the
    residual of iterative solvers.
 5. Done: the tests have a tier under compute-sanitizer (`lit -Dsanitize=1`,

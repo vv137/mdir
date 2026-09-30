@@ -119,12 +119,7 @@ def ConvertMDExecToGPU
     Option<"deterministic", "deterministic", "bool", /*default=*/"false",
            "Whether sums are added in an order that does not depend on the "
            "threads (D84): the charges of PME in fixed point, not with "
-           "floating-point atomics">,
-    Option<"pmeStream", "pme-stream", "bool", /*default=*/"false",
-           "Whether the reciprocal sum of PME runs on a second stream, "
-           "beside what follows it until its forces are read (D81; off "
-           "since the kernels of PME are cheap enough that sharing the "
-           "device slows the loops over pairs more than it gains)">
+           "floating-point atomics">
   ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",

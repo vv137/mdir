@@ -2,6 +2,7 @@ add_mlir_dialect_library(MDIRMDExecTransforms
   AccumulateDestinations.cpp
   AssignPrecision.cpp
   AssignStorage.cpp
+  AssignStreams.cpp
   ExposeValidity.cpp
   FuseLoops.cpp
   ReuseNeighbors.cpp

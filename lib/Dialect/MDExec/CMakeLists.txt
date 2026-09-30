@@ -1,5 +1,6 @@
 add_mlir_dialect_library(MDIRMDExec
   MDExecDialect.cpp
+  Independence.cpp
   MDExecOps.cpp
 
   ADDITIONAL_HEADER_DIRS
@@ -13,6 +14,9 @@ add_mlir_dialect_library(MDIRMDExec
   MDIRMD
   MDIRMDRT
   MLIRControlFlowInterfaces
+  MLIRFunctionInterfaces
   MLIRIR
+  MLIRLoopLikeInterface
   MLIRSideEffectInterfaces
+  MLIRViewLikeInterface
   )

@@ -572,6 +572,32 @@ def MDExec_RebuildCountOp : MDExec_Op<"rebuild_count"> {
 }
 
 //===----------------------------------------------------------------------===//
+// Streams
+//===----------------------------------------------------------------------===//
+
+def MDExec_JoinOp : MDExec_Op<"join"> {
+  let summary = "Waits for the op that runs beside the ops before it";
+  let description = [{
+    Belongs to the storage form. An op marked `md_exec.side` runs on a
+    second stream, beside the ops that follow it, up to the next
+    `md_exec.join` in its block: the ops that follow the join run after it.
+    Every op between the two must be independent of the marked op
+    (`md-exec-assign-streams`, D87).
+
+    ```mlir
+    %e, %w = md_exec.reciprocal ... {md_exec.side}
+    md_exec.refresh_neighbors ...
+    md_exec.join
+    md_exec.particle_for ins(%forces, ...) ...
+    ```
+
+    The op declares no effects, so that no pass moves an op across it, or
+    moves it.
+  }];
+  let assemblyFormat = "attr-dict";
+}
+
+//===----------------------------------------------------------------------===//
 // Loops
 //===----------------------------------------------------------------------===//
 

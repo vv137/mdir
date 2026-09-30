@@ -257,6 +257,36 @@ def AccumulateDestinations
   let dependentDialects = ["::mlir::arith::ArithDialect"];
 }
 
+def AssignStreams : Pass<"md-exec-assign-streams", "::mlir::ModuleOp"> {
+  let summary = "Runs ops on a second stream beside those they are "
+                "independent of";
+  let description = [{
+    Belongs to the storage form. Marks the ops that the options name
+    `md_exec.side`, so that they run on a second stream, and puts an
+    `md_exec.join` after each where the first stream waits for it. Each
+    marked op first moves up its block past the ops that it is independent
+    of and whose results it does not take; the join goes before the first
+    op after it that is not independent of it (or that is marked too), or
+    before the terminator of the block.
+
+    The ops between a marked op and its join run in another order than the
+    program gives, or at once. That leaves memory and every value as the
+    program does because each is independent of the marked op: see D87 in
+    docs/decisions.md for the argument, and `Independence.h` for what
+    independent means. `convert-md-exec-to-gpu` checks it again, so that
+    it holds of any program that it lowers.
+
+    Nothing runs beside by default: measured, the sums gained nothing
+    beside the refresh of the neighbor structure, and slowed the loops over
+    pairs beside them (D81).
+  }];
+  let options = [
+    Option<"reciprocal", "reciprocal", "bool", /*default=*/"false",
+           "Run the reciprocal sums of particle mesh Ewald on a second "
+           "stream">
+  ];
+}
+
 def AssignStorage : Pass<"md-exec-assign-storage", "::mlir::ModuleOp"> {
   let summary = "Gives every field a buffer";
   let description = [{
