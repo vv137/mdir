@@ -128,7 +128,7 @@ q.save({os.path.join(target, "system.top")!r}, format="gromacs",
         subprocess.run([args.parmed_python, "-c", script], check=True)
 
 
-def write_mdir(name, system, target):
+def write_mdir(name, system, target, steps=None, path="mdir.toml"):
     npt = system["ensemble"] == "NPT"
     ensemble = (f"""ensemble    = "NPT"
 thermostat  = "BUSSI"
@@ -140,7 +140,7 @@ tau_p       = 2.0
 """ if npt else f"""ensemble    = "NVE"
 temperature = {TEMPERATURE}
 """)
-    steps = system["steps"]
+    steps = steps or system["steps"]
     text = f"""# {name}: from {system['directory']} of the Amber benchmark suite.
 [input]
 prmtopfile = "system.parm7"
@@ -173,10 +173,35 @@ type = "PBC"
 target    = "gpu"
 precision = "mixed"
 """
-    path = os.path.join(target, "mdir.toml")
+    path = os.path.join(target, path)
     with open(path, "w") as file:
         file.write(text)
     return path
+
+
+def smoke(args):
+    """Runs each system for a few steps and checks that the run ends and
+    that every number of the log is finite: the tier of short runs of large
+    systems (docs/principles.md, Section 5)."""
+    names = args.systems or list(SYSTEMS)
+    failed = 0
+    for name in names:
+        system = SYSTEMS[name]
+        target = os.path.join(args.work, name)
+        control = write_mdir(name, system, target, steps=args.steps,
+                             path="smoke.toml")
+        done = subprocess.run([args.mdir, "run", control], cwd=target,
+                              capture_output=True, text=True)
+        rows = [line.split() for line in done.stdout.splitlines()
+                if line.startswith("INFO:") and line.split()[1].isdigit()]
+        finite = all(re.fullmatch(r"-?[0-9.]+", value)
+                     for row in rows for value in row[1:])
+        ok = done.returncode == 0 and len(rows) == 2 and finite
+        failed += not ok
+        print(f"{name}: {'ok' if ok else 'FAILED'}, {len(rows)} rows")
+        if not ok:
+            print(done.stdout[-2000:] + done.stderr[-2000:])
+    sys.exit(1 if failed else 0)
 
 
 def write_mdp(name, system, target):
@@ -318,8 +343,13 @@ def main():
     p.add_argument("--threads", type=int, default=8,
                    help="OpenMP threads of GROMACS")
     commands.add_parser("report")
+    p = commands.add_parser("smoke")
+    p.add_argument("systems", nargs="*", metavar="SYSTEM")
+    p.add_argument("--mdir", default="mdir")
+    p.add_argument("--steps", type=int, default=20)
     args = parser.parse_args()
-    {"prepare": prepare, "run": run, "report": report}[args.command](args)
+    {"prepare": prepare, "run": run, "report": report,
+     "smoke": smoke}[args.command](args)
 
 
 if __name__ == "__main__":

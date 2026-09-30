@@ -345,6 +345,9 @@ static struct Block liveBlocks[MAX_BLOCKS];
 static int numLive = 0;
 static struct Block freeBlocks[MAX_BLOCKS];
 static int numFree = 0;
+/* Whether memory of the device was allocated that `liveBlocks` does not
+   record, for want of room. */
+static int untracked = 0;
 
 void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
   (void)stream;
@@ -370,6 +373,8 @@ void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
     check(cuMemAlloc(&pointer, size), "cuMemAlloc");
   if (numLive < MAX_BLOCKS)
     liveBlocks[numLive++] = (struct Block){pointer, size};
+  else
+    untracked = 1;
   end(ALLOCATE, start);
   return (void *)pointer;
 }
@@ -399,9 +404,18 @@ void mgpuMemFree(void *pointer, CUstream stream) {
   end(ALLOCATE, start);
 }
 
-/* Returns true if `pointer` is memory of the device. The driver knows the
-   memory that it has allocated, and nothing about memory of the host. */
+/* Returns true if `pointer` is memory of the device: in a block that the
+   library has allocated. Only where it has not recorded every block does it
+   ask the driver, which reports an error for memory of the host (and tools
+   such as compute-sanitizer count it). */
 static bool isOnDevice(void *pointer) {
+  CUdeviceptr address = (CUdeviceptr)pointer;
+  for (int i = 0; i != numLive; ++i)
+    if (address >= liveBlocks[i].pointer &&
+        address < liveBlocks[i].pointer + liveBlocks[i].size)
+      return true;
+  if (!untracked)
+    return false;
   unsigned type = 0;
   CUresult result = cuPointerGetAttribute(
       &type, CU_POINTER_ATTRIBUTE_MEMORY_TYPE, (CUdeviceptr)pointer);

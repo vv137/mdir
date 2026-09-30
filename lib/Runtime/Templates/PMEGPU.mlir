@@ -585,6 +585,15 @@ func.func private @mdrt_gpu_pme_convolve(%c: memref<?xf64, 1>, %moduli: memref<?
       %oc6 = arith.constant 6 : index
       %o6 = arith.addi %out, %oc6 : index
       memref.store %kw22, %rows[%o6] : memref<?xf64, 1>
+      %oc7 = arith.constant 7 : index
+      %o7 = arith.addi %out, %oc7 : index
+      memref.store %kzero, %rows[%o7] : memref<?xf64, 1>
+      %oc8 = arith.constant 8 : index
+      %o8 = arith.addi %out, %oc8 : index
+      memref.store %kzero, %rows[%o8] : memref<?xf64, 1>
+      %oc9 = arith.constant 9 : index
+      %o9 = arith.addi %out, %oc9 : index
+      memref.store %kzero, %rows[%o9] : memref<?xf64, 1>
     }
     gpu.terminator
   }

@@ -105,5 +105,9 @@ indexes past what it read.
    decides from it in one place.
 4. A debug lowering checks the bounds of every load and store, and the
    residual of iterative solvers.
-5. The tests run a tier under compute-sanitizer and a tier of short runs of
-   the Amber suite.
+5. Done: the tests have a tier under compute-sanitizer (`lit -Dsanitize=1`,
+   `test/Sanitizer`) and a tier of short runs of the Amber suite
+   (`MDIR_BENCH_DIR`, `test/Scale`). Kernels are named after the op and the
+   line of the module of `mdir emit` that they come from, such as
+   `mdir_run_particle_for_l44_121`, in profiles and in the reports of the
+   sanitizer.

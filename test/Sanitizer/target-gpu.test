@@ -1,0 +1,23 @@
+# The target of D65 at constant pressure with restraints, on a GPU in mixed
+# precision (restraints-gpu.test), for 20 steps under compute-sanitizer:
+# no access beyond a buffer, no read of memory that nothing has written, and
+# no race in shared memory. The run exercises the loops over pairs, the
+# fused kernels, the disjoint sets of SETTLE and SHAKE, the virtual sites,
+# particle mesh Ewald, the barostat, and the deferred readbacks of sums.
+#
+# REQUIRES: cuda, compute-sanitizer
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/../Driver/Inputs/ff19sb/ff19.prmtop %S/../Driver/Inputs/ff19sb/ff19.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/../Driver/restraints-gpu.test | sed '1d;$d' \
+# RUN:   | sed -e 's/^nsteps .*/nsteps = 20/' -e 's/^eneout_period .*/eneout_period = 10/' \
+# RUN:         -e 's/^crdout_period .*/crdout_period = 10/' > %t/run.toml
+# RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run %t/run.toml 2>&1 \
+# RUN:   | FileCheck %s
+# RUN: %compute_sanitizer --tool initcheck --error-exitcode 1 mdir run %t/run.toml 2>&1 \
+# RUN:   | FileCheck %s
+# RUN: %compute_sanitizer --tool racecheck --error-exitcode 1 mdir run %t/run.toml 2>&1 \
+# RUN:   | FileCheck %s --check-prefix=RACE
+
+# CHECK: ERROR SUMMARY: 0 errors
+# RACE: RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)

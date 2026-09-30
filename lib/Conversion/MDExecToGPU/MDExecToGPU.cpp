@@ -218,6 +218,12 @@ private:
 
   /// The function that is being lowered.
   func::FuncOp current;
+  /// What the kernels that are being made compute, for their names: the op
+  /// and the line of the input that it comes from (nameKernel).
+  std::string purpose = "kernel";
+  int64_t numKernels = 0;
+  void setPurpose(Operation *op);
+  void nameKernel(gpu::LaunchOp launch);
 
   llvm::DenseMap<Value, Neighbors> neighbors;
   llvm::DenseMap<Type, SmallVector<Cell, 2>> cells;
@@ -271,7 +277,30 @@ void Lowering::createTransfer(OpBuilder &builder, Location loc,
   gpu::WaitOp::create(builder, loc, Type(), ValueRange{copied});
 }
 
+/// The purpose of the kernels of `op`: its name, and the line of the input
+/// where it begins, such as `tuple_for_l2449`: the line of the module that
+/// `mdir emit` prints for a run.
+void Lowering::setPurpose(Operation *op) {
+  std::string name = op->getName().stripDialect().str();
+  if (auto location = dyn_cast<FileLineColLoc>(op->getLoc()))
+    name += "_l" + std::to_string(location.getLine());
+  purpose = name;
+}
+
+/// Names the kernel that `launch` becomes, and its module: the function,
+/// the purpose, and a number that makes the name unique. A profiler, a
+/// sanitizer, and the trace of the runtime report kernels by these names.
+void Lowering::nameKernel(gpu::LaunchOp launch) {
+  if (launch.getFunctionAttr())
+    return;
+  std::string name = (current ? current.getName().str() + "_" : "") +
+                     purpose + "_" + std::to_string(numKernels++);
+  launch.setFunctionAttr(FlatSymbolRefAttr::get(context, name));
+  launch.setModuleAttr(FlatSymbolRefAttr::get(context, name));
+}
+
 void Lowering::bringIn(gpu::LaunchOp launch) {
+  nameKernel(launch);
   Region &region = launch.getBody();
   OpBuilder outside(launch);
   OpBuilder inside(&region.front(), region.front().begin());
@@ -348,6 +377,14 @@ Cell Lowering::getResults(Type element, Location loc) {
       builder, loc, getDeviceType({resultCapacity}, element), ValueRange());
   cell.host = memref::AllocaOp::create(
       builder, loc, MemRefType::get({resultCapacity}, element));
+  // A copy brings the whole buffer, the slots that no sum has written yet
+  // too: they hold zeros.
+  Value device = cell.device;
+  launchOver(builder, loc, createIndex(builder, loc, resultCapacity),
+             [&](OpBuilder &body, Value slot) {
+               memref::StoreOp::create(body, loc, createZero(body, loc, element),
+                                       device, ValueRange{slot});
+             });
   resultCells[element] = cell;
   return cell;
 }
@@ -719,6 +756,9 @@ void Lowering::findRows(func::FuncOp function) {
 
 LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
   Operation *last = run.back();
+  // The kernel of a run is named after its first loop and its length.
+  setPurpose(run.front());
+  purpose += "_run" + std::to_string(run.size());
   Location loc = last->getLoc();
   OpBuilder builder(last);
 
@@ -1254,6 +1294,18 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
       ValueRange{structure.size, structure.width});
   structure.reference =
       createDeviceBuffer(builder, loc, positions, ValueRange{structure.size});
+  // The test of validity reads the configuration before the first build,
+  // and ignores what it finds; it reads zeros, not memory that nothing has
+  // written.
+  {
+    Value reference = structure.reference;
+    Type element = positions.getElementType();
+    launchOver(builder, loc, structure.size, [&](OpBuilder &body,
+                                                 Value particle) {
+      Value zero = createZero(body, loc, VectorType::get({3}, element));
+      storeElement(body, loc, zero, reference, particle);
+    });
+  }
 
   // The state of the structure is on the host.
   structure.box = memref::AllocOp::create(
@@ -1508,6 +1560,7 @@ static bool isValueFormType(Type type) {
 }
 
 LogicalResult Lowering::lowerOp(Operation *op) {
+  setPurpose(op);
   if (llvm::any_of(op->getOperandTypes(), isValueFormType) ||
       llvm::any_of(op->getResultTypes(), isValueFormType))
     return op->emitOpError()

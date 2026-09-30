@@ -400,8 +400,11 @@ def convolve():
       : f64, f64, f64, f64, f64, f64, f64
 }}
 %out = arith.muli %item, %c10 : index""")
+    # The row has ten slots and seven sums; the last three hold zeros, so
+    # that the copy of the rows reads nothing that no kernel has written.
     for index, name in enumerate(
-            ["%ke", "%kw00", "%kw01", "%kw02", "%kw11", "%kw12", "%kw22"]):
+            ["%ke", "%kw00", "%kw01", "%kw02", "%kw11", "%kw12", "%kw22",
+             "%kzero", "%kzero", "%kzero"]):
         body(f"%oc{index} = arith.constant {index} : index")
         body(f"%o{index} = arith.addi %out, %oc{index} : index")
         body(f"memref.store {name}, %rows[%o{index}] : memref<?xf64, 1>")

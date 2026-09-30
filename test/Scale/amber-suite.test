@@ -1,0 +1,21 @@
+# Short runs of the systems of the Amber benchmark suite, from 23,558 to
+# 1,067,095 atoms, on a GPU in mixed precision: each ends, and every number
+# of its log is finite. Counts that differ between the particles and the
+# tuples, and rows longer than those of the small tests, reach code that
+# the unit tests do not (docs/principles.md, Section 5). The suite runs
+# where MDIR_BENCH_DIR holds its prepared inputs
+# (scripts/benchmarks/amber/README.md).
+#
+# REQUIRES: cuda, amber-suite
+#
+# RUN: %bench --work %amber_suite smoke --mdir mdir | FileCheck %s
+
+# CHECK: jac_nve: ok, 2 rows
+# CHECK: jac_nve_4fs: ok, 2 rows
+# CHECK: jac_npt: ok, 2 rows
+# CHECK: jac_npt_4fs: ok, 2 rows
+# CHECK: factorix_nve: ok, 2 rows
+# CHECK: factorix_npt: ok, 2 rows
+# CHECK: cellulose_nve: ok, 2 rows
+# CHECK: cellulose_npt: ok, 2 rows
+# CHECK: stmv_npt_4fs: ok, 2 rows

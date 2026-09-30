@@ -82,6 +82,34 @@ if config.mdir_cuda:
     except (OSError, subprocess.SubprocessError):
         pass
     config.environment["CUDA_ROOT"] = config.mdir_cuda_root
+# Runs of the driver under compute-sanitizer (memcheck, initcheck,
+# racecheck) take about a minute; they run when lit is given
+# -Dsanitize=1 (docs/principles.md, Section 6).
+if "cuda" in config.available_features and lit_config.params.get("sanitize"):
+    sanitizer = os.path.join(config.mdir_cuda_root, "bin", "compute-sanitizer")
+    if os.path.exists(sanitizer):
+        config.available_features.add("compute-sanitizer")
+        config.substitutions.append(("%compute_sanitizer", sanitizer))
+
+# Short runs of the systems of the Amber benchmark suite, which
+# scripts/benchmarks/amber/bench.py prepares in MDIR_BENCH_DIR
+# (docs/principles.md, Section 5).
+bench = os.environ.get("MDIR_BENCH_DIR")
+if bench and os.path.exists(os.path.join(bench, "jac_nve", "system.parm7")):
+    config.available_features.add("amber-suite")
+    config.environment["MDIR_BENCH_DIR"] = bench
+    config.substitutions.append(("%amber_suite", bench))
+    config.substitutions.append(
+        (
+            "%bench",
+            "python3 "
+            + os.path.join(
+                os.path.dirname(__file__), "..", "scripts", "benchmarks", "amber",
+                "bench.py",
+            ),
+        )
+    )
+
 # It goes before "%mdrt", which is the beginning of its name.
 config.substitutions.insert(
     0,
