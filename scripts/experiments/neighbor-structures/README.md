@@ -173,3 +173,8 @@ an order by key besides. The lists then (Cellulose, reach 9 Å):
 A build of groups is then about 1.6 ms on Cellulose, against 8.0 ms for
 the matrix of 10 Å. The lists equal those of the host but for 2 to 4
 groups, at pairs at the reach itself.
+
+Units of work (`groups.cu`, `-DFAST_ERFC`, compact, 9 Å): the list of a
+group cut into units of 64, 128, or 256 entries, a warp a unit. JAC: 69.2,
+76.9, 93.2 µs against 125.4 for a warp a group and 75.3 for the matrix.
+Cellulose: 1109, 1097, 1118 µs against 1195 and 1200.

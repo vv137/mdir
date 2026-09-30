@@ -96,13 +96,17 @@ symmetric. `md_exec.pair_for` carries the contract of each of its
 destinations and sums (Section 6); a loop with a destination whose kernel
 has none keeps the matrix.
 
-**On a device.** A warp takes a group and 32 entries at a time. Lanes u
+**On a device.** The list of a group is cut into units of work of up to
+64 entries (the unit of the loop, not of the structure); a warp takes a
+unit, 32 entries at a time. Lanes u
 and u + 16 hold particle 16 g + u; each lane loads one entry, and the
 entries turn within their half-warp, one lane a step, for 16 steps, with
 the value accumulated for them, so that each of the 16 particles meets
 each of the 32 entries once. The values of the entries go back to their
-own places with an atomic addition each, those of the group once for the
-whole list.
+own places with an atomic addition each, those of the group once a unit.
+With a warp for a whole group, JAC (1,568 groups) had too few warps: 125 µs
+against 75 for the matrix at 9 Å; with units of 64 entries, 69 µs, and
+Cellulose 1109 µs against 1200 (`groups.cu`, 2026-10-01).
 
 **Order of the sums.** The atomic additions make the sums depend on the
 order of the threads. In the default mode they are additions in the type
@@ -138,7 +142,13 @@ the atomic additions.
 ## 5. The build on a device
 
 The build sorts the particles into a compact order (Section 1): groups of
-16 that fill a near-cube, so that their boxes are small. For each group:
+16 that fill a near-cube, so that their boxes are small. On a device: a
+counting sort by column in x-y (of the width of 64 particles) and bin
+along z; then a warp a chunk of 64 of a column, sorting by x with a bitonic
+network and each half by y, which gives 4 groups of up to 16; the places of
+a short group stay empty. A Z curve cut into sixteens gives boxes across
+its jumps as long as the cell (Section 1 of the README of the
+experiments). For each group:
 its bounding box; the particles of the cells within R of the box, as
 candidates; a candidate farther than R from the box is dropped, and the
 others are tested against each particle of the group, the bit set for a
@@ -151,6 +161,16 @@ takes the groups in any order.
 
 Trivial acceptance, which takes a candidate near the box for all the
 group without testing, was measured and dropped (Section 1).
+
+Measured (`build.cu`, reach 9 Å, GPU 1): the lists of Cellulose in 1.48 ms
+and of JAC in 116 µs, with the order about 0.1 ms more, against 8.0 ms for
+a build of the matrix of 10 Å on Cellulose. What it took: a lane a
+candidate, testing it against the 16 particles of the group (taking the
+survivors two at a time took 53 ms); the partners of the excluded pairs of
+a group sorted, and a binary search for each candidate (a linear scan cost
+1 ms of 2.4); the candidate relative to the center of the box, once, and
+the particles of the group too (1.76 to 1.48 ms). A box is computed
+relative to the first particle of the group, in the minimum image.
 
 ## 6. In the IR
 
@@ -184,6 +204,4 @@ group without testing, was measured and dropped (Section 1).
   is untried.
 - Why the same loop over groups of 16 measures 996 to 1034 µs in
   `supercluster.cu` and 1162 to 1209 in `groups.cu`.
-- Whether small systems (JAC) keep the matrix, whose loop reads a list that
-  fits the cache: groups of 32 took 289 µs on JAC against 104 for the
-  matrix (too few warps); groups of 16 are unmeasured there.
+- The size of a unit of work (64 and 128 entries measured; Section 3).

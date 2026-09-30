@@ -149,6 +149,51 @@ __global__ void groupKernel(int G, const int *rowStart, const int *entPlace, con
   if (!half) { float *a = force + 3 * (16 * g + u); atomicAdd(a, fi.x); atomicAdd(a + 1, fi.y); atomicAdd(a + 2, fi.z); }
 }
 
+// The same over units of work: a unit is a group and up to UNIT entries of
+// its list, so that a small system has warps enough; the value of a
+// particle of the group is added with an atomic once a unit.
+__global__ void unitKernel(int U, const int *unitGroup, const int *unitBegin, const int *unitEnd,
+                           const int *entPlace, const unsigned *entMask,
+                           const float4 *xq, const int *ts, const float *A, const float *B,
+                           int nt, float3 L, float3 iL, float *force) {
+  int w = blockIdx.x * (blockDim.x / 32) + threadIdx.x / 32;
+  if (w >= U) return;
+  int g = unitGroup[w];
+  int lane = threadIdx.x % 32, u = lane & 15, half = lane & 16;
+  float4 pi = xq[16 * g + u];
+  float3 xi = make_float3(pi.x, pi.y, pi.z); int ti = ts[16 * g + u];
+  float3 fi = {0, 0, 0};
+  int end = unitEnd[w];
+  int src = half | ((u + 15) & 15);
+  for (int e0 = unitBegin[w]; e0 < end; e0 += 32) {
+    int e = e0 + lane;
+    int jp = e < end ? entPlace[e] : -1;
+    unsigned m = e < end ? entMask[e] : 0u;
+    float4 pj = jp >= 0 ? xq[jp] : make_float4(0, 0, 0, 0);
+    int tj = jp >= 0 ? ts[jp] : 0;
+    float3 fj = {0, 0, 0};
+#pragma unroll 2
+    for (int step = 0; step < 16; ++step) {
+      if (m >> u & 1u) {
+        float3 f = {0, 0, 0};
+        pairForce(xi, pi.w, ti, make_float3(pj.x, pj.y, pj.z), pj.w, tj, L, iL, A, B, nt, f);
+        fi.x += f.x; fi.y += f.y; fi.z += f.z;
+        fj.x -= f.x; fj.y -= f.y; fj.z -= f.z;
+      }
+      pj.x = __shfl_sync(0xffffffff, pj.x, src); pj.y = __shfl_sync(0xffffffff, pj.y, src);
+      pj.z = __shfl_sync(0xffffffff, pj.z, src); pj.w = __shfl_sync(0xffffffff, pj.w, src);
+      tj = __shfl_sync(0xffffffff, tj, src); m = __shfl_sync(0xffffffff, m, src);
+      fj.x = __shfl_sync(0xffffffff, fj.x, src); fj.y = __shfl_sync(0xffffffff, fj.y, src);
+      fj.z = __shfl_sync(0xffffffff, fj.z, src);
+    }
+    if (jp >= 0) { float *a = force + 3 * jp; atomicAdd(a, fj.x); atomicAdd(a + 1, fj.y); atomicAdd(a + 2, fj.z); }
+  }
+  fi.x += __shfl_xor_sync(0xffffffff, fi.x, 16);
+  fi.y += __shfl_xor_sync(0xffffffff, fi.y, 16);
+  fi.z += __shfl_xor_sync(0xffffffff, fi.z, 16);
+  if (!half) { float *a = force + 3 * (16 * g + u); atomicAdd(a, fi.x); atomicAdd(a + 1, fi.y); atomicAdd(a + 2, fi.z); }
+}
+
 static uint32_t spread3(uint32_t v) {  // two bits of v into every third
   v &= 0x3; return (v & 1) | ((v & 2) << 2);
 }
@@ -355,6 +400,18 @@ int main(int argc, char **argv) {
   double tm = time([&] { matrixKernel<<<(16 * P + 127) / 128, 128>>>(P, W, dcounts, dindex, dxq, dts, dA, dB, ntypes, L, iL, df1); });
   double tg = time([&] { cudaMemsetAsync(df2, 0, 12 * P);
     groupKernel<<<(G + 3) / 4, 128>>>(G, drow, dent, dmask, dxq, dts, dA, dB, ntypes, L, iL, df2); });
+  for (int UNIT : {64, 128, 256}) {
+    std::vector<int> ug, ub, ue;
+    for (int g = 0; g < G; ++g)
+      for (int b = rowStart[g]; b < rowStart[g + 1]; b += UNIT) { ug.push_back(g); ub.push_back(b); ue.push_back(std::min(rowStart[g + 1], b + UNIT)); }
+    int U = ug.size();
+    int *dug = up(ug), *dub = up(ub), *due = up(ue);
+    double tu = time([&] { cudaMemsetAsync(df2, 0, 12 * P);
+      unitKernel<<<(U + 3) / 4, 128>>>(U, dug, dub, due, dent, dmask, dxq, dts, dA, dB, ntypes, L, iL, df2); });
+    printf("units of %d entries: %d units, %.1f us\n", UNIT, U, tu);
+    printf("csv,units,%s,%.2f,%d,%.1f\n", order, REACH, UNIT, tu);
+    cudaFree(dug); cudaFree(dub); cudaFree(due);
+  }
   std::vector<float> f1(3 * P), f2(3 * P);
   cudaMemcpy(f1.data(), df1, 12 * P, cudaMemcpyDeviceToHost); cudaMemcpy(f2.data(), df2, 12 * P, cudaMemcpyDeviceToHost);
   double num = 0, den = 0;
