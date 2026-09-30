@@ -24,6 +24,8 @@
 #include <cstdlib>
 #include <cstdint>
 #include <cmath>
+#include <cstring>
+#include <string>
 #include <vector>
 #include <algorithm>
 #include <cuda_runtime.h>
@@ -112,7 +114,7 @@ __global__ void boxes(Params P, int nplaces, const float4 *xp, float4 *lo, float
 // 4. The lists: a warp a group; a lane takes a candidate and tests it
 // against the 16 particles of the group.
 __global__ void lists(Params P, int nplaces, const float4 *xp, const int *gstart, const int *gplace,
-                      const float4 *glo, const float4 *ghi, const float4 *gorg, const int *exOff,
+                      const float4 *gpos, const float4 *glo, const float4 *ghi, const float4 *gorg, const int *exOff,
                       const int *exPlace, int *entCount, int *entPlace, unsigned *entMask) {
   __shared__ int partners[4][EXCL];
   __shared__ float4 group[4][16];
@@ -125,6 +127,16 @@ __global__ void lists(Params P, int nplaces, const float4 *xp, const int *gstart
   float3 c = make_float3(o.x + 0.5f * (lo.x + hi.x), o.y + 0.5f * (lo.y + hi.y), o.z + 0.5f * (lo.z + hi.z));
   float3 h = make_float3(0.5f * (hi.x - lo.x), 0.5f * (hi.y - lo.y), 0.5f * (hi.z - lo.z));
   float reach = sqrtf(P.reach2);
+#ifdef RELATIVE
+  __shared__ float4 rel[4][16];
+  __syncwarp();
+  if (lane < 16) {
+    float4 xi = group[w][lane];
+    rel[w][lane] = make_float4(image(xi.x - c.x, P.L.x, P.iL.x), image(xi.y - c.y, P.L.y, P.iL.y),
+                               image(xi.z - c.z, P.L.z, P.iL.z), xi.w);
+  }
+  __syncwarp();
+#endif
   // The exclusion partners of the group (places), and their range.
   int np = 0, pmin = 0x7fffffff, pmax = -1;
   for (int k = 0; k < 16; ++k) {
@@ -141,6 +153,23 @@ __global__ void lists(Params P, int nplaces, const float4 *xp, const int *gstart
   __syncwarp();
   for (int s2 = lane; s2 < np; s2 += 32) { int q = partners[w][s2] >> 4; pmin = min(pmin, q); pmax = max(pmax, q); }
   for (int o2 = 16; o2; o2 >>= 1) { pmin = min(pmin, __shfl_xor_sync(0xffffffff, pmin, o2)); pmax = max(pmax, __shfl_xor_sync(0xffffffff, pmax, o2)); }
+#ifdef SORTED_PARTNERS
+  // The partners sorted by place (then lane), padded to a power of 2, so
+  // that a candidate finds its own by a binary search.
+  int span = 1; while (span < np) span <<= 1;
+  for (int s2 = np + lane; s2 < span; s2 += 32) partners[w][s2] = 0x7fffffff;
+  __syncwarp();
+  for (int size = 2; size <= span; size <<= 1)
+    for (int stride = size >> 1; stride > 0; stride >>= 1) {
+      for (int t = lane; t < span / 2; t += 32) {
+        int a0 = 2 * t - (t & (stride - 1)), b0 = a0 + stride;
+        bool up = (a0 & size) == 0;
+        int va = partners[w][a0], vb = partners[w][b0];
+        if ((va > vb) == up) { partners[w][a0] = vb; partners[w][b0] = va; }
+      }
+      __syncwarp();
+    }
+#endif
 
   // The cells of the grid that the box and the reach touch.
   float cv[3] = {c.x, c.y, c.z}, hv[3] = {h.x, h.y, h.z};
@@ -170,14 +199,32 @@ __global__ void lists(Params P, int nplaces, const float4 *xp, const int *gstart
           unsigned bits = 0;
           int q = -1;
           if (s2 < end) {
+#ifdef GRID_POSITIONS
+            float4 xq = gpos[s2];
+            q = __float_as_int(xq.w);
+#else
             q = gplace[s2];
+            float4 xq = q >= first ? xp[q] : make_float4(0, 0, 0, 0);
+#endif
             if (q >= first) {
-              float4 xq = xp[q];
               float dx = fmaxf(fabsf(image(xq.x - c.x, P.L.x, P.iL.x)) - h.x, 0.f);
               float dy = fmaxf(fabsf(image(xq.y - c.y, P.L.y, P.iL.y)) - h.y, 0.f);
               float dz = fmaxf(fabsf(image(xq.z - c.z, P.L.z, P.iL.z)) - h.z, 0.f);
               if (dx * dx + dy * dy + dz * dz <= P.reach2) {
                 bool own = q < first + 16;
+#ifdef RELATIVE
+                // The candidate relative to the center of the box, once; the
+                // particles of the group are relative to it as well.
+                float rx = image(xq.x - c.x, P.L.x, P.iL.x), ry = image(xq.y - c.y, P.L.y, P.iL.y),
+                      rz = image(xq.z - c.z, P.L.z, P.iL.z);
+#pragma unroll
+                for (int u = 0; u < 16; ++u) {
+                  float4 gi = rel[w][u];
+                  float ex = rx - gi.x, ey = ry - gi.y, ez = rz - gi.z;
+                  bool in = ex * ex + ey * ey + ez * ez <= P.reach2 && !(own && q <= first + u) && !isnan(gi.w);
+                  bits |= (unsigned)in << u;
+                }
+#else
 #pragma unroll
                 for (int u = 0; u < 16; ++u) {
                   float4 xi = group[w][u];
@@ -186,11 +233,24 @@ __global__ void lists(Params P, int nplaces, const float4 *xp, const int *gstart
                   bool in = ex * ex + ey * ey + ez * ez <= P.reach2 && !(own && q <= first + u) && !isnan(xi.w);
                   bits |= (unsigned)in << u;
                 }
+#endif
+#ifdef NO_EXCLUSIONS
+                if (false)
+#else
                 if (bits && q >= pmin && q <= pmax)
+#endif
+#ifdef SORTED_PARTNERS
+                {
+                  int lo2 = 0, hi2 = np;  // the first partner at q or later
+                  while (lo2 < hi2) { int mid = (lo2 + hi2) >> 1; if ((partners[w][mid] >> 4) < q) lo2 = mid + 1; else hi2 = mid; }
+                  for (int e = lo2; e < np && (partners[w][e] >> 4) == q; ++e) bits &= ~(1u << (partners[w][e] & 15));
+                }
+#else
                   for (int e = 0; e < np; ++e) {
                     int pe = partners[w][e];
                     if ((pe >> 4) == q) bits &= ~(1u << (pe & 15));
                   }
+#endif
               }
             }
           }
@@ -204,6 +264,86 @@ __global__ void lists(Params P, int nplaces, const float4 *xp, const int *gstart
       }
     }
   if (lane == 0) entCount[g] = count;
+}
+
+// The compact order on the device. keysCompact: the column of each particle
+// in x-y (of the width of 64 particles) and its bin along z (of dz), as
+// one key, column first; a counting sort by it orders the particles by
+// column and then by z. chunks: a warp a chunk of 64 particles of a column
+// (the last of a column shorter), sorted by x with a bitonic network over
+// 64 values (2 a lane), halved, each half sorted by y and halved again: 4
+// groups of up to 16, in the order of z within a group, written at the
+// places of the chunk (64 a chunk; the places of a short group are empty).
+__global__ void keysCompact(int n, const float4 *x, float3 iL, int ncx, int ncy, int nzb, uint32_t *key) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= n) return;
+  float4 p = x[i];
+  int cx = min(ncx - 1, (int)(p.x * iL.x * ncx)), cy = min(ncy - 1, (int)(p.y * iL.y * ncy));
+  int cz = min(nzb - 1, (int)(p.z * iL.z * nzb));
+  key[i] = (uint32_t)((cy * ncx + cx) * nzb + cz);
+}
+// Sorts the values v (one a lane, index iv) of a warp ascending (bitonic,
+// 32 values; +inf last).
+__device__ __forceinline__ void bitonic32(float &v, int &iv, int lane) {
+  for (int size = 2; size <= 32; size <<= 1)
+    for (int stride = size >> 1; stride > 0; stride >>= 1) {
+      float pv = __shfl_xor_sync(0xffffffff, v, stride);
+      int pi = __shfl_xor_sync(0xffffffff, iv, stride);
+      bool up = (lane & size) == 0 || size == 32;
+      bool lower = (lane & stride) == 0;
+      bool take = lower ? (up ? pv < v : pv > v) : (up ? pv > v : pv < v);
+      if (take) { v = pv; iv = pi; }
+    }
+}
+// The same for 64 values, two a lane (a at lane, b at lane + 32).
+__device__ __forceinline__ void bitonic64(float &a, int &ia, float &b, int &ib, int lane) {
+  for (int size = 2; size <= 64; size <<= 1)
+    for (int stride = size >> 1; stride > 0; stride >>= 1) {
+      if (stride == 32) {
+        if (b < a) { float t = a; a = b; b = t; int ti = ia; ia = ib; ib = ti; }
+        continue;
+      }
+      for (int k = 0; k < 2; ++k) {
+        float &v = k ? b : a; int &iv = k ? ib : ia;
+        int pos = lane + 32 * k;
+        float pv = __shfl_xor_sync(0xffffffff, v, stride);
+        int pi = __shfl_xor_sync(0xffffffff, iv, stride);
+        bool up = (pos & size) == 0;
+        bool lower = (pos & stride) == 0;
+        bool take = lower ? (up ? pv < v : pv > v) : (up ? pv > v : pv < v);
+        if (take) { v = pv; iv = pi; }
+      }
+    }
+}
+// A warp a chunk of up to 64 particles (sorted by column and z): sorted by
+// x and halved; each half sorted by y and halved: 4 groups, whose places are
+// 16 (4 c + k) + rank. The order within a group is that of y.
+__global__ void chunks(int nchunks, const int *chunkStart, const int *chunkLen, const int *sorted,
+                       const float4 *x, int *placeOf) {
+  __shared__ int ids[4][64];
+  int w = threadIdx.x >> 5, lane = threadIdx.x & 31;
+  int c = blockIdx.x * 4 + w;
+  if (c >= nchunks) return;
+  int start = chunkStart[c], len = chunkLen[c];
+  int ia = lane < len ? sorted[start + lane] : -1, ib = lane + 32 < len ? sorted[start + lane + 32] : -1;
+  float a = ia >= 0 ? x[ia].x : INFINITY, b = ib >= 0 ? x[ib].x : INFINITY;
+  bitonic64(a, ia, b, ib, lane);
+  ids[w][lane] = ia; ids[w][lane + 32] = ib;
+  __syncwarp();
+  int h = (len + 1) / 2;
+  for (int half = 0; half < 2; ++half) {
+    int from = half ? h : 0, count = half ? len - h : h;
+    int iv = lane < count ? ids[w][from + lane] : -1;
+    float v = iv >= 0 ? x[iv].y : INFINITY;
+    bitonic32(v, iv, lane);
+    int q = (count + 1) / 2;
+    // Quarter 2 half + (lane >= q), rank lane or lane - q.
+    if (iv >= 0) {
+      int quarter = 2 * half + (lane >= q ? 1 : 0);
+      int rank = lane >= q ? lane - q : lane;
+      placeOf[iv] = 16 * (4 * c + quarter) + rank;
+    }
+  }
 }
 
 int main(int argc, char **argv) {
@@ -267,6 +407,12 @@ int main(int argc, char **argv) {
     scanOnHost(dgstart, ng, hg);
     cudaMemcpy(dgnext, dgstart, 4 * (ng + 1), cudaMemcpyDeviceToDevice);
   };
+  cudaEvent_t e0, e1; cudaEventCreate(&e0); cudaEventCreate(&e1);
+  auto time = [&](auto launch) {
+    launch(); CK(cudaDeviceSynchronize());
+    cudaEventRecord(e0); for (int r = 0; r < reps; ++r) launch(); cudaEventRecord(e1); CK(cudaEventSynchronize(e1));
+    float ms; cudaEventElapsedTime(&ms, e0, e1); return 1000.0 * ms / reps;
+  };
   order();
   // With ORDER=compact, the places come instead from the compact order of
   // groups.cu, computed on the host (columns of the width of 64 particles,
@@ -274,7 +420,57 @@ int main(int argc, char **argv) {
   // places where a column or a group runs short): the lists and their
   // times for compact groups, before an order that a device computes.
   std::vector<int> hostPlace;
-  if (getenv("ORDER") && std::string(getenv("ORDER")) == "compact") {
+  double tcompact = 0;
+  if (getenv("ORDER") && std::string(getenv("ORDER")) == "gpu") {
+    double side = std::cbrt(64.0 / rho);
+    int ncx = std::max(1, (int)(box[0] / side)), ncy = std::max(1, (int)(box[1] / side));
+    int nzb = std::max(1, (int)(box[2] / 0.1));
+    int nk = ncx * ncy * nzb;
+    uint32_t *dk; int *dkc, *dknext, *dsorted, *dcs, *dcl, *dpo;
+    CK(cudaMalloc(&dk, 4 * n)); CK(cudaMalloc(&dkc, 4 * (nk + 1))); CK(cudaMalloc(&dknext, 4 * (nk + 1)));
+    CK(cudaMalloc(&dsorted, 4 * n)); CK(cudaMalloc(&dpo, 4 * n));
+    std::vector<int> hk(nk + 1);
+    // Keys, counts, the scan (host here), and the order by key.
+    keysCompact<<<blocks(n), T>>>(n, dx, P.iL, ncx, ncy, nzb, dk);
+    cudaMemset(dkc, 0, 4 * (nk + 1));
+    count<<<blocks(n), T>>>(n, dk, dkc);
+    scanOnHost(dkc, nk, hk);
+    cudaMemcpy(dknext, dkc, 4 * (nk + 1), cudaMemcpyDeviceToDevice);
+    scatter<<<blocks(n), T>>>(n, dk, dknext, dpo);
+    std::vector<int> po(n); cudaMemcpy(po.data(), dpo, 4 * n, cudaMemcpyDeviceToHost);
+    std::vector<int> sorted(n); for (int i = 0; i < n; ++i) sorted[po[i]] = i;
+    cudaMemcpy(dsorted, sorted.data(), 4 * n, cudaMemcpyHostToDevice);
+    // The chunks: 64 at a time along each column.
+    std::vector<int> cs, cl;
+    for (int col = 0; col < ncx * ncy; ++col) {
+      int b0 = hk[col * nzb], e0 = hk[(col + 1) * nzb];
+      for (int s0 = b0; s0 < e0; s0 += 64) { cs.push_back(s0); cl.push_back(std::min(64, e0 - s0)); }
+    }
+    int nch = cs.size();
+    CK(cudaMalloc(&dcs, 4 * nch)); CK(cudaMalloc(&dcl, 4 * nch));
+    cudaMemcpy(dcs, cs.data(), 4 * nch, cudaMemcpyHostToDevice); cudaMemcpy(dcl, cl.data(), 4 * nch, cudaMemcpyHostToDevice);
+    chunks<<<(nch + 3) / 4, 128>>>(nch, dcs, dcl, dsorted, dx, dpo);
+    CK(cudaDeviceSynchronize());
+    tcompact = time([&] {
+      keysCompact<<<blocks(n), T>>>(n, dx, P.iL, ncx, ncy, nzb, dk);
+      cudaMemsetAsync(dkc, 0, 4 * (nk + 1));
+      count<<<blocks(n), T>>>(n, dk, dkc);
+      chunks<<<(nch + 3) / 4, 128>>>(nch, dcs, dcl, dsorted, dx, dpo);
+    });
+    hostPlace.resize(n); cudaMemcpy(hostPlace.data(), dpo, 4 * n, cudaMemcpyDeviceToHost);
+    nplaces = 64 * nch; P.G = nplaces / 16;
+    std::vector<int> members(nplaces, -1); for (int i = 0; i < n; ++i) members[hostPlace[i]] = i;
+    printf("compact order on the device: %d chunks, %d places, %d groups; keys, counts, and chunks %.1f us (the scan and the order by key not timed)\n",
+           nch, nplaces, P.G, tcompact);
+    std::vector<float4> xph(nplaces);
+    for (int pl = 0; pl < nplaces; ++pl) { int i = members[pl]; xph[pl] = i >= 0 ? xh[i] : make_float4(0, 0, 0, NAN); }
+    cudaFree(dxp); CK(cudaMalloc(&dxp, 16 * nplaces));
+    cudaMemcpy(dxp, xph.data(), 16 * nplaces, cudaMemcpyHostToDevice);
+    cudaFree(dlo); cudaFree(dhi); cudaFree(dorg);
+    CK(cudaMalloc(&dlo, 16 * P.G)); CK(cudaMalloc(&dhi, 16 * P.G)); CK(cudaMalloc(&dorg, 16 * P.G));
+    cudaFree(dentCount); cudaFree(dentPlace); cudaFree(dentMask);
+    CK(cudaMalloc(&dentCount, 4 * P.G)); CK(cudaMalloc(&dentPlace, 4 * (size_t)P.G * CAP)); CK(cudaMalloc(&dentMask, 4 * (size_t)P.G * CAP));
+  } else if (getenv("ORDER") && std::string(getenv("ORDER")) == "compact") {
     double side = std::cbrt(64.0 / rho);
     int ncx = std::max(1, (int)(box[0] / side)), ncy = std::max(1, (int)(box[1] / side));
     std::vector<std::vector<int>> cols(ncx * ncy);
@@ -339,6 +535,12 @@ int main(int argc, char **argv) {
   std::vector<int> gplace(n), next(hs.begin(), hs.end() - 1);
   for (int pl = 0; pl < nplaces; ++pl) if (gk[pl] != 0xffffffffu) gplace[next[gk[pl]]++] = pl;
   cudaMemcpy(dgplace, gplace.data(), 4 * n, cudaMemcpyHostToDevice);
+  // The grid with the positions and places of its particles (GRID_POSITIONS).
+  std::vector<float4> gposh(n);
+  for (int k = 0; k < n; ++k) { int pl = gplace[k]; int i = member[pl];
+    float bits; memcpy(&bits, &pl, 4);
+    gposh[k] = make_float4(xh[i].x, xh[i].y, xh[i].z, bits); }
+  float4 *dgpos; CK(cudaMalloc(&dgpos, 16 * n)); cudaMemcpy(dgpos, gposh.data(), 16 * n, cudaMemcpyHostToDevice);
   // The exclusion partners by place.
   std::vector<int> exOffP(nplaces + 1, 0), exPlace;
   for (int pl = 0; pl < nplaces; ++pl) { int i = member[pl];
@@ -349,12 +551,6 @@ int main(int argc, char **argv) {
   cudaMemcpy(dexOff, exOffP.data(), 4 * (nplaces + 1), cudaMemcpyHostToDevice);
   cudaMemcpy(dexPlace, exPlace.data(), 4 * exPlace.size(), cudaMemcpyHostToDevice);
 
-  cudaEvent_t e0, e1; cudaEventCreate(&e0); cudaEventCreate(&e1);
-  auto time = [&](auto launch) {
-    launch(); CK(cudaDeviceSynchronize());
-    cudaEventRecord(e0); for (int r = 0; r < reps; ++r) launch(); cudaEventRecord(e1); CK(cudaEventSynchronize(e1));
-    float ms; cudaEventElapsedTime(&ms, e0, e1); return 1000.0 * ms / reps;
-  };
   double tk = time([&] { keys<<<blocks(n), T>>>(P, dx, dzkey); cudaMemsetAsync(dcounts, 0, 4 * (nz + 1)); count<<<blocks(n), T>>>(n, dzkey, dcounts); });
   double ts = time([&] { cudaMemcpyAsync(dnext, dcounts, 4 * (nz + 1), cudaMemcpyDeviceToDevice); scatter<<<blocks(n), T>>>(n, dzkey, dnext, dplace); });
   // Timed into buffers of its own, so that the positions of the places
@@ -362,7 +558,7 @@ int main(int argc, char **argv) {
   float4 *dxp2; uint32_t *dgkey2; CK(cudaMalloc(&dxp2, 16 * n)); CK(cudaMalloc(&dgkey2, 4 * n));
   double tg = time([&] { gather<<<blocks(n), T>>>(P, dx, dplace, dxp2, dgkey2); });
   double tb2 = time([&] { boxes<<<blocks(16L * P.G), T>>>(P, nplaces, dxp, dlo, dhi, dorg); });
-  double tl = time([&] { lists<<<(P.G + 3) / 4, 128>>>(P, nplaces, dxp, dgstart, dgplace, dlo, dhi, dorg, dexOff, dexPlace, dentCount, dentPlace, dentMask); });
+  double tl = time([&] { lists<<<(P.G + 3) / 4, 128>>>(P, nplaces, dxp, dgstart, dgplace, dgpos, dlo, dhi, dorg, dexOff, dexPlace, dentCount, dentPlace, dentMask); });
   printf("keys and counts %.1f us, places %.1f us, positions and cells %.1f us, boxes %.1f us, lists %.1f us\n", tk, ts, tg, tb2, tl);
   printf("csv,build,groups,%.2f,%.1f,%.1f,%.1f,%.1f,%.1f\n", REACH, tk, ts, tg, tb2, tl);
 

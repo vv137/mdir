@@ -155,3 +155,21 @@ Cellulose, and a box computed in the wrapped coordinates made a group
 across the edge of the cell as large as the cell. The lists equal those of
 the host but for 2 groups of Cellulose (pairs at the reach itself, to be
 checked). The matrix of MDIR takes 8.0 ms a build of 10 Å on Cellulose.
+
+The compact order on the device (`ORDER=gpu`: a counting sort by column in
+x-y and bin of 0.1 Å along z, then a warp a chunk of 64 sorting by x and
+each half by y with bitonic networks) gives groups as good as those of the
+host (338.1 entries a group on Cellulose) in about 54 µs, with a scan and
+an order by key besides. The lists then (Cellulose, reach 9 Å):
+
+| Lists | Cellulose | JAC |
+|---|---|---|
+| A lane a candidate | 2.41 ms | 218 µs |
+| The grid holding positions and places, not places alone | 2.38 ms | |
+| Without the excluded pairs (to see their cost) | 1.42 ms | |
+| The partners of a group sorted, a binary search a candidate | 1.76 ms | 157 µs |
+| And the candidate relative to the center of the box, the group too | 1.48 ms | 116 µs |
+
+A build of groups is then about 1.6 ms on Cellulose, against 8.0 ms for
+the matrix of 10 Å. The lists equal those of the host but for 2 to 4
+groups, at pairs at the reach itself.
