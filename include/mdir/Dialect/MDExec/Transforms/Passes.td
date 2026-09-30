@@ -41,6 +41,47 @@ def ReuseNeighbors : Pass<"md-exec-reuse-neighbors", "::mlir::ModuleOp"> {
                            "::mdir::mdrt::MDRTDialect"];
 }
 
+def RebuildAtInterval
+    : Pass<"md-exec-rebuild-at-interval", "::mlir::ModuleOp"> {
+  let summary = "Rebuilds neighbor structures at a fixed interval, whether "
+                "they are valid or not (opt-in; may miss pairs)";
+  let description = [{
+    NOT A DEFAULT. A run takes this pass only when its control file sets
+    `rebuild_interval`, and the driver then warns at the start of the run.
+
+    Gives every refresh with the policy `check` the policy `interval`: the
+    structure is built at the first refresh and at every `interval`-th
+    refresh since the last build, and is not tested for validity at the
+    refreshes between. A particle that moves more than half the skin in
+    fewer refreshes than that leaves pairs out of the structure while they
+    are within the cutoff, and the forces between them are not computed.
+    The run saves the test at each step, and on a device the wait of the
+    host for its result.
+
+    The structure is still tested at each build, before it, and a build
+    that finds it no longer valid is counted: the driver reports how many
+    were late. A particle that went too far and came back within the
+    interval is not seen. See D88.
+
+    ```mlir
+    %nl1 = md_exec.refresh_neighbors %nl, %x, %cell ... policy(check)
+    ```
+
+    ```mlir
+    %nl1 = md_exec.refresh_neighbors %nl, %x, %cell ... interval(10)
+             policy(interval)
+    ```
+
+    Runs before `md-exec-expose-validity`, which then leaves the refresh
+    alone.
+  }];
+  let options = [
+    Option<"interval", "interval", "int64_t", /*default=*/"0",
+           "The number of refreshes after a build at which the structure "
+           "is built again">
+  ];
+}
+
 def ExposeValidity
     : Pass<"md-exec-expose-validity", "::mlir::ModuleOp"> {
   let summary = "Makes the test of validity of a neighbor structure a loop";

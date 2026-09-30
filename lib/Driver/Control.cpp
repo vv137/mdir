@@ -468,7 +468,7 @@ Error Reader::readEnergy(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "energy",
           {"cutoff", "switch_distance", "pairlist_distance",
-           "lennard_jones_modifier", "coulomb_modifier", "pair", "type",
+           "rebuild_interval", "lennard_jones_modifier", "coulomb_modifier", "pair", "type",
            "pair_override", "dispersion_correction", "electrostatics"},
           {}))
     return error;
@@ -483,6 +483,12 @@ Error Reader::readEnergy(const toml::table &table) {
   control.pairlistDistance = control.cutoffDistance + 1.5;
   if (Error error =
           readPositive(table, "pairlist_distance", control.pairlistDistance))
+    return error;
+
+  // Opt-in, not a default: a structure rebuilt at a fixed interval may miss
+  // pairs within the cutoff (D88). The run warns.
+  if (Error error =
+          readCount(table, "rebuild_interval", control.rebuildPeriod, 0))
     return error;
 
   if (control.switchDistance > control.cutoffDistance)
@@ -1170,6 +1176,9 @@ trajectory_interval = 0         # steps between frames; 0: none
 cutoff            = 12.0        # Å
 switch_distance   = 10.0        # where switching begins (Å); the cutoff: none
 pairlist_distance = 13.5        # reach of the neighbor structures (Å)
+# rebuild_interval = 0          # 0: rebuild when a particle has moved half
+                                # the skin (default); N: every N steps, not
+                                # tested between; may miss pairs (opt-in)
 # lennard_jones_modifier = "NONE"  # NONE, POTENTIAL_SHIFT, FORCE_SWITCH
 
 [[energy.pair]]
@@ -1236,6 +1245,9 @@ checkpoint_interval = 50000     # steps between checkpoints
 [energy]
 cutoff            = 9.0         # of the direct terms (Å)
 pairlist_distance = 10.0        # reach of the neighbor structures (Å)
+# rebuild_interval = 0          # 0: rebuild when a particle has moved half
+                                # the skin (default); N: every N steps, not
+                                # tested between; may miss pairs (opt-in)
 electrostatics    = "PME"       # PME, CUTOFF
 coulomb_modifier  = "POTENTIAL_SHIFT"  # NONE, POTENTIAL_SHIFT: the direct
                                        # sum shifted to zero at the cutoff

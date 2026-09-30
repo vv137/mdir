@@ -214,7 +214,9 @@ static Value continueIn(Source source, Value current) {
         builder, build.getLoc(), current.getType(), current,
         build.getPositions(), build.getCell(), /*scratch=*/ValueRange(),
         /*moved=*/Value(), build.getCutoffAttr(), build.getSkinAttr(),
-        cells.getWidthAttr());
+        cells.getWidthAttr(),
+        RebuildPolicyAttr::get(builder.getContext(), RebuildPolicy::Check),
+        /*interval=*/IntegerAttr());
     build.getResult().replaceAllUsesWith(refreshed);
     build.erase();
     if (cells.use_empty())

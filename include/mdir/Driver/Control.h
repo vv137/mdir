@@ -92,6 +92,11 @@ struct Control {
   double switchDistance = 10.0;
   double cutoffDistance = 12.0;
   double pairlistDistance = 13.5;
+  /// The interval of the rebuilds of the neighbor structures, in steps, or
+  /// 0 for a rebuild when the test of validity at every step fails (the
+  /// default). NOT A DEFAULT: at an interval, the structures are not
+  /// tested between builds and may miss pairs within the cutoff (D88).
+  int64_t rebuildPeriod = 0;
   Truncation truncation = Truncation::Switch;
   std::vector<PairTerm> pairs;
   std::vector<ParticleType> types;
@@ -143,8 +148,6 @@ struct Control {
   int64_t energyPeriod = 10;
   int64_t framePeriod = 0;
   int64_t checkpointPeriod = 0;
-  /// The interval of rebuilds, or 0 for a test of validity at every step.
-  int64_t rebuildPeriod = 0;
   /// The interval of the removal of the motion of the center of mass, and
   /// of the thermostat, in steps; 0 for none.
   int64_t comPeriod = 0;

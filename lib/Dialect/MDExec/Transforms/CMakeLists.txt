@@ -5,6 +5,7 @@ add_mlir_dialect_library(MDIRMDExecTransforms
   AssignStreams.cpp
   ExposeValidity.cpp
   FuseLoops.cpp
+  RebuildAtInterval.cpp
   ReuseNeighbors.cpp
   SimplifyDistance.cpp
 

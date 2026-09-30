@@ -90,6 +90,7 @@ regard to case.
 | | `energy_interval`, `trajectory_interval`, `checkpoint_interval` | Steps between the rows of the log, the frames, and the checkpoints (Section 2.2). The intervals nest, either way for energies and frames. |
 | `[energy]` | `cutoff` | The cutoff of `md.neighborhood` (Å). |
 | | `pairlist_distance` | The reach of the neighbor structures; the skin is `pairlist_distance − cutoff`. |
+| | `rebuild_interval` | **Opt-in, not a default.** 0 (the default): a structure is rebuilt when a particle has moved half the skin, tested at every step. `n`: rebuilt every `n` steps and not tested in between, so it may miss pairs within the cutoff (D88). The run warns at the start, on the standard error and in the log, and reports at the end how many rebuilds found a structure no longer valid, with a warning if any did. |
 | | `switch_distance` | `truncation(switch, from = ...)`; equal to `cutoff`: no switching. For terms in the control file. |
 | | `lennard_jones_modifier` | `NONE`, `POTENTIAL_SHIFT` (`truncation(shift)`), or `FORCE_SWITCH` (`truncation(force_switch, from = switch_distance)`). For terms in the control file. |
 | | `electrostatics` | With a topology: `CUTOFF` or `PME`. |

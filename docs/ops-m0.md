@@ -993,9 +993,11 @@ of the cells, and the kind and width of the structure.
 | Policy | Behavior | Exact | State |
 |---|---|---|---|
 | `check` | The validity condition is evaluated at every refresh. The structure is rebuilt when it fails. | Yes | Implemented |
-| `interval(n)` | The structure is rebuilt every `n` steps with no check in between. | Only if the condition happened to hold | Not implemented |
+| `interval` with `interval(n)` | The structure is rebuilt at the first refresh and every `n` refreshes after a build, with no check in between. The condition is tested at each build, before it, and a build that finds it failed is counted. | Only if the condition happened to hold | Implemented (D88) |
 
-`check` is the default. `interval` must be selected explicitly.
+`check` is the default. `interval` must be selected explicitly: the pass
+`md-exec-rebuild-at-interval`, which the driver runs only for
+`rebuild_interval` in the control file, and warns.
 
 **Who makes the test.** A refresh with the policy `check` makes the test
 itself, unless it is given the result as `moved`:

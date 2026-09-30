@@ -57,7 +57,12 @@ static std::string getPipeline(const Control &control,
      << "md-bypass-updates,";
   os << "convert-md-to-md-exec{skin=" << program.skin
      << " width=" << program.neighborWidth << "},";
-  os << "md-exec-reuse-neighbors,md-exec-expose-validity,"
+  os << "md-exec-reuse-neighbors,";
+  // Opt-in only (D88): the structures may miss pairs; the run warns.
+  if (control.rebuildPeriod > 0)
+    os << "md-exec-rebuild-at-interval{interval=" << control.rebuildPeriod
+       << "},";
+  os << "md-exec-expose-validity,"
      << "md-exec-fuse-loops,md-exec-accumulate-destinations,";
   if (control.fastMath)
     os << "md-exec-simplify-distance,";
@@ -188,6 +193,17 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   auto control = readControl(controlFile);
   if (!control)
     return fail(control.takeError());
+  // The policy of a fixed interval of rebuilds is opt-in and not a
+  // default: the structures are not tested between builds and may leave out
+  // pairs within the cutoff, whose forces are then missing (D88). Warn at
+  // the start, always, on the standard error.
+  if (control->rebuildPeriod > 0)
+    warn(llvm::formatv(
+        "'rebuild_interval = {0}': the neighbor structures are rebuilt every "
+        "{0} steps and not tested in between; they may miss pairs within "
+        "the cutoff. This is not a default of MDIR; the run counts the "
+        "rebuilds that found a structure no longer valid",
+        control->rebuildPeriod));
   auto system = readSystem(*control);
   if (!system)
     return fail(system.takeError());
@@ -634,6 +650,12 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     std::fprintf(output.log, "MDIR: %zu particles, %lld steps of %g ps\n",
                  count, static_cast<long long>(control->numSteps),
                  control->timestep);
+  if (control->rebuildPeriod > 0)
+    std::fprintf(output.log,
+                 "MDIR: warning: the neighbor structures are rebuilt every "
+                 "%lld steps and not tested in between (rebuild_interval, "
+                 "opt-in); they may miss pairs within the cutoff\n",
+                 static_cast<long long>(control->rebuildPeriod));
   if (isRestart)
     std::fprintf(output.log, "MDIR: continues after step %lld, from '%s'\n",
                  static_cast<long long>(firstStep),
@@ -679,6 +701,26 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     std::fprintf(output.log, "\n");
   } else {
     llvm::consumeError(count.takeError());
+  }
+  // At a fixed interval, the builds that found a structure no longer valid:
+  // pairs within the cutoff may have been missed before each (D88).
+  if (control->rebuildPeriod > 0) {
+    if (auto count = (*engine)->lookup("mdrtGetLateBuildCount")) {
+      int64_t late = reinterpret_cast<int64_t (*)()>(*count)();
+      std::fprintf(output.log,
+                   "MDIR: %lld rebuilds found a neighbor structure no "
+                   "longer valid\n",
+                   static_cast<long long>(late));
+      if (late > 0)
+        warn(llvm::formatv(
+            "{0} rebuilds at the interval of {1} steps found a neighbor "
+            "structure no longer valid: pairs within the cutoff may have "
+            "been missed; use a shorter 'rebuild_interval', a longer "
+            "'pairlist_distance', or none",
+            late, control->rebuildPeriod));
+    } else {
+      llvm::consumeError(count.takeError());
+    }
   }
   // The momentum of the state at the end, which the removal of the motion
   // of the center of mass keeps at 0.

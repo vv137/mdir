@@ -13,6 +13,15 @@ void mdrtCountBuild(void) { ++numBuilds; }
 
 int64_t mdrtGetBuildCount(void) { return numBuilds; }
 
+/* The number of builds at a fixed interval that found the structure no
+   longer valid: between the build before and this one, pairs within the
+   cutoff may have been left out (the opt-in policy `interval`, D88). */
+static int64_t numLateBuilds = 0;
+
+void mdrtCountLateBuild(void) { ++numLateBuilds; }
+
+int64_t mdrtGetLateBuildCount(void) { return numLateBuilds; }
+
 /* Called when a particle has more neighbors than a row of the neighbor
    matrix holds. The run cannot continue: pairs would be missed. */
 void mdrtReportNeighborOverflow(int64_t needed, int64_t width) {

@@ -397,6 +397,22 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
              : !mdrt.neighbors<@atoms>, memref<?x3xf64>
     ```
 
+    With the policy `interval`, the structure is built at the first
+    refresh and at every `interval`-th refresh since the last build,
+    whether it is valid or not; the displacements are tested only at those
+    refreshes, before the build, and a build that finds the structure no
+    longer valid is counted (`mdrtCountLateBuild`): pairs within the cutoff
+    may have been missed since. The test does not see a particle that went
+    too far and came back within the interval. Not a default of any run
+    (`md-exec-rebuild-at-interval`, D88).
+
+    ```mlir
+    %nl1 = md_exec.refresh_neighbors %nl, %x, %cell
+             cutoff(2.5) skin(0.3) cell_width(2.8) interval(10)
+             policy(interval)
+             : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+    ```
+
     `scratch` holds buffers that the op may use as it likes. What they hold
     before and after is unspecified. On a device the test of validity needs
     two, with one value of the type of the positions per particle.
@@ -423,7 +439,8 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
     F64Attr:$skin,
     F64Attr:$cell_width,
     DefaultValuedAttr<MDExec_RebuildPolicy,
-                      "::mdir::md_exec::RebuildPolicy::Check">:$policy
+                      "::mdir::md_exec::RebuildPolicy::Check">:$policy,
+    OptionalAttr<I64Attr>:$interval
   );
   let results = (outs MDRT_NeighborsType:$result);
   let assemblyFormat = [{
@@ -431,7 +448,8 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
     (`scratch` `(` $scratch^ `:` type($scratch) `)`)?
     (`moved` `(` $moved^ `)`)?
     `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
-    `cell_width` `(` $cell_width `)` `policy` `(` $policy `)` attr-dict
+    `cell_width` `(` $cell_width `)` (`interval` `(` $interval^ `)`)?
+    `policy` `(` $policy `)` attr-dict
     `:` qualified(type($neighbors)) `,` qualified(type($positions))
   }];
   let extraClassDeclaration = [{

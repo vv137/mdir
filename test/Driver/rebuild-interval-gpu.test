@@ -1,0 +1,21 @@
+# The opt-in policy of a fixed interval of rebuilds (D88) on a device: the
+# same builds as on the CPU (rebuild-interval.test), and the warnings.
+#
+# REQUIRES: cuda
+#
+# RUN: sed -e 's|"argon.pdb"|"%S/../../examples/argon/argon.pdb"|' \
+# RUN:     -e 's|"argon.dcd"|"%t.dcd"|' \
+# RUN:     -e 's|^pairlist_distance = 9.5|pairlist_distance = 9.5\nrebuild_interval = 10|' \
+# RUN:     -e 's|^target    = "CPU"|target    = "GPU"|' \
+# RUN:     %S/../../examples/argon/argon.toml > %t.toml
+# RUN: sed -e 's|^rebuild_interval = 10|rebuild_interval = 400|' %t.toml > %t.late.toml
+# RUN: mdir run %t.toml 2>&1 | FileCheck %s
+# RUN: mdir run %t.late.toml 2>&1 | FileCheck %s --check-prefix=LATE
+
+# CHECK:      mdir: warning: 'rebuild_interval = 10'
+# CHECK:      MDIR: neighbor structures were built 201 times, every 10.0 steps on average
+# CHECK-NEXT: MDIR: 0 rebuilds found a neighbor structure no longer valid
+# CHECK:      MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
+
+# LATE:       mdir: warning: 5 rebuilds at the interval of 400 steps found a neighbor structure no longer valid
+# LATE:       MDIR: neighbor structures were built 6 times

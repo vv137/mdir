@@ -1,0 +1,29 @@
+# The opt-in policy of a fixed interval of rebuilds (D88), which is not a
+# default: the run warns at the start, on the standard error and in the
+# log, and counts the rebuilds that found a structure no longer valid. At
+# 10 steps liquid argon stays within the skin; at 400 it does not, and the
+# run warns again at the end.
+#
+# RUN: sed -e 's|"argon.pdb"|"%S/../../examples/argon/argon.pdb"|' \
+# RUN:     -e 's|"argon.dcd"|"%t.dcd"|' \
+# RUN:     -e 's|^pairlist_distance = 9.5|pairlist_distance = 9.5\nrebuild_interval = 10|' \
+# RUN:     %S/../../examples/argon/argon.toml > %t.toml
+# RUN: sed -e 's|^rebuild_interval = 10|rebuild_interval = 400|' %t.toml > %t.late.toml
+# RUN: mdir run %t.toml 2>&1 | FileCheck %s
+# RUN: mdir run %t.late.toml 2>&1 | FileCheck %s --check-prefix=LATE
+# RUN: sed -e 's|^rebuild_interval = 10|rebuild_interval = -1|' %t.toml > %t.bad.toml
+# RUN: not mdir run %t.bad.toml 2>&1 | FileCheck %s --check-prefix=BAD
+
+# CHECK:      mdir: warning: 'rebuild_interval = 10': the neighbor structures are rebuilt every 10 steps and not tested in between; they may miss pairs within the cutoff. This is not a default of MDIR
+# CHECK:      MDIR: warning: the neighbor structures are rebuilt every 10 steps and not tested in between (rebuild_interval, opt-in)
+# CHECK:      MDIR: neighbor structures were built 201 times, every 10.0 steps on average
+# CHECK-NEXT: MDIR: 0 rebuilds found a neighbor structure no longer valid
+# CHECK-NOT:  warning
+# CHECK:      MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
+
+# LATE:       mdir: warning: 'rebuild_interval = 400'
+# LATE:       mdir: warning: 5 rebuilds at the interval of 400 steps found a neighbor structure no longer valid: pairs within the cutoff may have been missed
+# LATE:       MDIR: neighbor structures were built 6 times
+# LATE-NEXT:  MDIR: 5 rebuilds found a neighbor structure no longer valid
+
+# BAD: rebuild_interval

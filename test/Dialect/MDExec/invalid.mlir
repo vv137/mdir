@@ -292,6 +292,28 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
 
 // -----
 
+md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
+               %nl: !mdrt.neighbors<@atoms>) {
+  // expected-error@+1 {{expected a positive 'interval' with the policy 'interval'}}
+  %nl1 = md_exec.refresh_neighbors %nl, %x, %cell
+      cutoff(2.5) skin(0.3) cell_width(2.8) policy(interval)
+      : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+  md.return
+}
+
+// -----
+
+md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
+               %nl: !mdrt.neighbors<@atoms>) {
+  // expected-error@+1 {{'interval' belongs to the policy 'interval'}}
+  %nl1 = md_exec.refresh_neighbors %nl, %x, %cell
+      cutoff(2.5) skin(0.3) cell_width(2.8) interval(10) policy(check)
+      : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+  md.return
+}
+
+// -----
+
 md.particle_set @atoms
 
 func.func @f(%x: memref<?x3xf64>, %a: memref<?xf64>, %cell: !md.cell,

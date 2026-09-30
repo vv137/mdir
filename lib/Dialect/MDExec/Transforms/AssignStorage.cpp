@@ -842,7 +842,9 @@ LogicalResult Assignment::convertBuildNeighbors(BuildNeighborsOp op,
       scope.builder, loc, storage.getType(), storage, positions,
       mapping.lookup(op.getCell()), /*scratch=*/ValueRange(),
       /*moved=*/Value(), op.getCutoffAttr(), op.getSkinAttr(),
-      cells.getWidthAttr());
+      cells.getWidthAttr(),
+      RebuildPolicyAttr::get(scope.builder.getContext(), RebuildPolicy::Check),
+      /*interval=*/IntegerAttr());
   refresh.setPolicy(RebuildPolicy::Always);
   neighbors[op.getResult()] = refresh.getResult();
   return success();
@@ -869,10 +871,10 @@ LogicalResult Assignment::convertRefreshNeighbors(RefreshNeighborsOp op,
     return failure();
 
   // The test of validity is a global maximum, unless a loop has made the
-  // test already.
+  // test already. With the policy `interval` it runs at the builds only.
   Value moved = op.getMoved() ? mapping.lookup(op.getMoved()) : Value();
   SmallVector<Value> scratch;
-  if (op.getPolicy() == RebuildPolicy::Check && !moved) {
+  if (op.getPolicy() != RebuildPolicy::Always && !moved) {
     auto field = cast<md::FieldType>(op.getPositions().getType());
     if (failed(getScratch(op, {field.getElementType()}, field, scope,
                           scratch)))
@@ -882,7 +884,8 @@ LogicalResult Assignment::convertRefreshNeighbors(RefreshNeighborsOp op,
   auto refresh = RefreshNeighborsOp::create(
       scope.builder, op.getLoc(), storage.getType(), storage, positions,
       mapping.lookup(op.getCell()), scratch, moved, op.getCutoffAttr(),
-      op.getSkinAttr(), op.getCellWidthAttr(), op.getPolicyAttr());
+      op.getSkinAttr(), op.getCellWidthAttr(), op.getPolicyAttr(),
+      op.getIntervalAttr());
   neighbors[op.getResult()] = refresh.getResult();
   for (Value buffer : scratch)
     scope.release(buffer);

@@ -39,6 +39,9 @@ static const char *const cellWidthName = "mdrt.cell_width";
 static const char *const buildNeighborsName = "mdrt.build_neighbors_matrix";
 static const char *const reportOverflowName = "mdrtReportNeighborOverflow";
 static const char *const countBuildName = "mdrtCountBuild";
+/// Counts a build at an interval that found the structure no longer valid
+/// (D88).
+static const char *const countLateBuildName = "mdrtCountLateBuild";
 
 namespace {
 
@@ -54,9 +57,11 @@ struct Neighbors {
   /// The configuration and the cell that the structure was built at.
   Value reference;
   Value box;
-  /// Whether the structure has been built, and how often.
+  /// Whether the structure has been built, and how often; the refreshes
+  /// since the last build (the policy `interval`).
   Value valid;
   Value builds;
+  Value age;
   /// The incidence structure of the pairs that the structure leaves out,
   /// or null.
   Value excluded;
@@ -431,6 +436,8 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
       builder, loc, MemRefType::get({}, builder.getI1Type()));
   structure.builds = memref::AllocOp::create(
       builder, loc, MemRefType::get({}, builder.getI64Type()));
+  structure.age = memref::AllocOp::create(
+      builder, loc, MemRefType::get({}, builder.getI64Type()));
 
   Value no = arith::ConstantOp::create(builder, loc, builder.getI1Type(),
                                        builder.getBoolAttr(false));
@@ -438,6 +445,7 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
                                          builder.getI64IntegerAttr(0));
   memref::StoreOp::create(builder, loc, no, structure.valid, ValueRange{});
   memref::StoreOp::create(builder, loc, none, structure.builds, ValueRange{});
+  memref::StoreOp::create(builder, loc, none, structure.age, ValueRange{});
   structure.excluded = op.getExcluded();
   neighbors[op.getResult()] = structure;
 }
@@ -529,6 +537,9 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
       builder, loc, wide, builder.getI64IntegerAttr(1));
   Value more = arith::AddIOp::create(builder, loc, builds, increment);
   memref::StoreOp::create(builder, loc, more, structure.builds, ValueRange{});
+  Value fresh =
+      arith::ConstantOp::create(builder, loc, wide, builder.getI64IntegerAttr(0));
+  memref::StoreOp::create(builder, loc, fresh, structure.age, ValueRange{});
   return success();
 }
 
@@ -563,59 +574,51 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
     return emitBuild(builder, loc, structure, positions, box, reach,
                      cellWidth);
 
-  // The structure is valid if it has been built, in this cell, and no
-  // particle has moved more than half the skin since.
-  Value valid =
-      memref::LoadOp::create(builder, loc, structure.valid, ValueRange{});
-  // A barostat scales the positions with the cell: the reference is
-  // compared scaled as the cell was, m = L / L_ref, against half of
-  // min(m) R − r_c (D80).
-  SmallVector<Value, 3> builtEdges;
-  for (int64_t c = 0; c < 3; ++c)
-    builtEdges.push_back(memref::LoadOp::create(
-        builder, loc, structure.box, ValueRange{createIndex(builder, loc, c)}));
-  Value scale = arith::DivFOp::create(
-      builder, loc, box,
-      vector::FromElementsOp::create(
-          builder, loc, VectorType::get({3}, builder.getF64Type()),
-          builtEdges));
-  Value least = vector::ReductionOp::create(
-      builder, loc, vector::CombiningKind::MINNUMF, scale);
-  Value margin = arith::SubFOp::create(
-      builder, loc,
-      arith::MulFOp::create(builder, loc, least,
-                            createReal(builder, loc, builder.getF64Type(),
-                                       reach)),
-      createReal(builder, loc, builder.getF64Type(),
-                 op.getCutoff().convertToDouble()));
-  Value halfMargin = arith::MulFOp::create(
-      builder, loc,
-      arith::MaximumFOp::create(
-          builder, loc, margin,
-          createReal(builder, loc, builder.getF64Type(), 0.0)),
-      createReal(builder, loc, builder.getF64Type(), 0.5));
-  Value limit2 = arith::MulFOp::create(builder, loc, halfMargin, halfMargin);
-  Value scaleReal = scale;
-  if (!real.isF64())
-    scaleReal = arith::TruncFOp::create(
-        builder, loc, VectorType::get({3}, real), scale);
-  Value limitReal = limit2;
-  if (!real.isF64())
-    limitReal = arith::TruncFOp::create(builder, loc, real, limit2);
-  (void)skin;
+  // Whether no particle has moved more than half the skin since the
+  // structure was built, emitted where `at` is. A barostat scales the
+  // positions with the cell: the reference is compared scaled as the cell
+  // was, m = L / L_ref, against half of min(m) R − r_c (D80).
+  auto emitNear = [&](OpBuilder &at) -> Value {
+    SmallVector<Value, 3> builtEdges;
+    for (int64_t c = 0; c < 3; ++c)
+      builtEdges.push_back(memref::LoadOp::create(
+          at, loc, structure.box, ValueRange{createIndex(at, loc, c)}));
+    Value scale = arith::DivFOp::create(
+        at, loc, box,
+        vector::FromElementsOp::create(
+            at, loc, VectorType::get({3}, at.getF64Type()), builtEdges));
+    Value least = vector::ReductionOp::create(
+        at, loc, vector::CombiningKind::MINNUMF, scale);
+    Value margin = arith::SubFOp::create(
+        at, loc,
+        arith::MulFOp::create(at, loc, least,
+                              createReal(at, loc, at.getF64Type(), reach)),
+        createReal(at, loc, at.getF64Type(),
+                   op.getCutoff().convertToDouble()));
+    Value halfMargin = arith::MulFOp::create(
+        at, loc,
+        arith::MaximumFOp::create(at, loc, margin,
+                                  createReal(at, loc, at.getF64Type(), 0.0)),
+        createReal(at, loc, at.getF64Type(), 0.5));
+    Value limit2 = arith::MulFOp::create(at, loc, halfMargin, halfMargin);
+    Value scaleReal = scale;
+    if (!real.isF64())
+      scaleReal = arith::TruncFOp::create(
+          at, loc, VectorType::get({3}, real), scale);
+    Value limitReal = limit2;
+    if (!real.isF64())
+      limitReal = arith::TruncFOp::create(at, loc, real, limit2);
 
-  Value yes = arith::ConstantOp::create(builder, loc, builder.getI1Type(),
-                                        builder.getBoolAttr(true));
-  Value near;
-  if (Value moved = op.getMoved()) {
+    Value yes = arith::ConstantOp::create(at, loc, at.getI1Type(),
+                                          at.getBoolAttr(true));
     // A loop has made the test.
-    near = arith::XOrIOp::create(builder, loc, moved, yes);
-  } else {
-    Value zero = createIndex(builder, loc, 0);
-    Value one = createIndex(builder, loc, 1);
-    Value none = createZero(builder, loc, real);
+    if (Value moved = op.getMoved())
+      return arith::XOrIOp::create(at, loc, moved, yes);
+    Value zero = createIndex(at, loc, 0);
+    Value one = createIndex(at, loc, 1);
+    Value none = createZero(at, loc, real);
     auto farthest = scf::ParallelOp::create(
-        builder, loc, ValueRange{zero}, ValueRange{structure.size},
+        at, loc, ValueRange{zero}, ValueRange{structure.size},
         ValueRange{one}, ValueRange{none},
         [&](OpBuilder &body, Location, ValueRange ivs, ValueRange) {
           Value now = loadElement(body, loc, positions, ivs[0]);
@@ -628,15 +631,68 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
               body, loc, vector::CombiningKind::ADD, squares);
           createReduction(body, loc, {distance2}, /*isSum=*/false);
         });
-    Value limit = limitReal;
-    near = arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::OLE,
-                                 farthest.getResult(0), limit);
-  }
-  valid = arith::AndIOp::create(builder, loc, valid, near);
+    return arith::CmpFOp::create(at, loc, arith::CmpFPredicate::OLE,
+                                 farthest.getResult(0), limitReal);
+  };
+  (void)skin;
 
-  Value stale = arith::XOrIOp::create(builder, loc, valid, yes);
-
+  Value yes = arith::ConstantOp::create(builder, loc, builder.getI1Type(),
+                                        builder.getBoolAttr(true));
+  Value valid =
+      memref::LoadOp::create(builder, loc, structure.valid, ValueRange{});
   LogicalResult status = success();
+
+  if (op.getPolicy() == md_exec::RebuildPolicy::Interval) {
+    // NOT A DEFAULT (D88): the structure is built every `interval`
+    // refreshes whether it is valid or not, and may leave out pairs within
+    // the cutoff in between. It is tested at a build only, and a build that
+    // finds it no longer valid is counted for the log.
+    Type wide = builder.getI64Type();
+    Value age = arith::AddIOp::create(
+        builder, loc,
+        memref::LoadOp::create(builder, loc, structure.age, ValueRange{}),
+        arith::ConstantOp::create(builder, loc, wide,
+                                  builder.getI64IntegerAttr(1)));
+    memref::StoreOp::create(builder, loc, age, structure.age, ValueRange{});
+    Value old = arith::CmpIOp::create(
+        builder, loc, arith::CmpIPredicate::sge, age,
+        arith::ConstantOp::create(builder, loc, wide,
+                                  builder.getI64IntegerAttr(*op.getInterval())));
+    Value due = arith::OrIOp::create(
+        builder, loc, arith::XOrIOp::create(builder, loc, valid, yes), old);
+    // The branches are filled once they are in the function: the test
+    // launches kernels, which look up where they are.
+    auto emitIf = [&](OpBuilder &at, Value condition,
+                      llvm::function_ref<void(OpBuilder &)> fill) {
+      auto branch = scf::IfOp::create(at, loc, condition,
+                                      /*withElseRegion=*/false);
+      OpBuilder inner(branch.thenBlock()->getTerminator());
+      fill(inner);
+    };
+    emitIf(builder, due, [&](OpBuilder &then) {
+      emitIf(then, valid, [&](OpBuilder &test) {
+        Value late = arith::XOrIOp::create(
+            test, loc, emitNear(test),
+            arith::ConstantOp::create(test, loc, test.getI1Type(),
+                                      test.getBoolAttr(true)));
+        emitIf(test, late, [&](OpBuilder &count) {
+          func::CallOp::create(
+              count, loc,
+              getOrDeclare(countLateBuildName,
+                           count.getFunctionType({}, {})),
+              ValueRange());
+        });
+      });
+      status = emitBuild(then, loc, structure, positions, box, reach,
+                         cellWidth);
+    });
+    return status;
+  }
+
+  // The structure is valid if it has been built, in this cell, and no
+  // particle has moved more than half the skin since.
+  valid = arith::AndIOp::create(builder, loc, valid, emitNear(builder));
+  Value stale = arith::XOrIOp::create(builder, loc, valid, yes);
   scf::IfOp::create(
       builder, loc, stale, [&](OpBuilder &then, Location) {
         status = emitBuild(then, loc, structure, positions, box, reach,

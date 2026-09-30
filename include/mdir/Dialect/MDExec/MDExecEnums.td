@@ -43,7 +43,11 @@ def MDExec_RebuildPolicy : I32EnumAttr<"RebuildPolicy",
     // every refresh.
     I32EnumAttrCase<"Check", 0, "check">,
     // At every refresh.
-    I32EnumAttrCase<"Always", 1, "always">
+    I32EnumAttrCase<"Always", 1, "always">,
+    // At the first refresh, and then at every `interval`-th refresh since
+    // the last build, whether the structure is still valid or not. It may
+    // miss pairs within the cutoff; opt-in only (D88).
+    I32EnumAttrCase<"Interval", 2, "interval">
   ]> {
   let cppNamespace = "::mdir::md_exec";
 }

@@ -428,6 +428,15 @@ LogicalResult RefreshNeighborsOp::verify() {
     return emitOpError() << "expected cells of a positive width, got "
                          << width;
 
+  if (getPolicy() == RebuildPolicy::Interval) {
+    if (!getInterval() || *getInterval() < 1)
+      return emitOpError()
+             << "expected a positive 'interval' with the policy 'interval'";
+  } else if (getInterval()) {
+    return emitOpError()
+           << "'interval' belongs to the policy 'interval'";
+  }
+
   if (getMoved()) {
     if (getPolicy() != RebuildPolicy::Check)
       return emitOpError()
