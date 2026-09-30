@@ -12,3 +12,12 @@
 # TEMPLATE: {{\[\[}}energy.pair]]
 # TEMPLATE: [dynamics]
 # TEMPLATE: [execution]
+
+# The template of a run from an Amber topology reads without an error with
+# the files of examples/ala3.
+#
+# RUN: mdir template amber | sed -e 's|"system.prmtop"|"%S/../../examples/ala3/ala3.prmtop"|' \
+# RUN:     -e 's|"system.inpcrd"|"%S/../../examples/ala3/ala3.inpcrd"|' > %t.amber.toml
+# RUN: mdir check %t.amber.toml | FileCheck %s --check-prefix=AMBER
+# AMBER: particles: {{ *}}4905
+# AMBER: degrees of freedom: 7387

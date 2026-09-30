@@ -1527,7 +1527,7 @@ between 32 and 1024. One thread adds up a chunk and one thread the
 chunks, so both take the time of that many additions: with 864 particles
 29, where chunks of 256 took nine times as long.
 
-| A step of `examples/argon.toml` that computes energies | Kernels | Copies | Milliseconds |
+| A step of `examples/argon/argon.toml` that computes energies | Kernels | Copies | Milliseconds |
 |---|---|---|---|
 | A pair of kernels and a copy for each sum, chunks of 256 | 11 | 5 | 0.33 |
 | A pair of kernels and a copy for each loop | 7 | 3 | 0.27 |
@@ -1596,7 +1596,7 @@ the driver and the compilation of the kernels.
 
 With `MDRT_PROFILE` set, the runtime library for devices reports the
 number and the time of its calls when the program ends; with `MDRT_WAIT`
-set as well, the time of each kernel. For `examples/argon.toml` on the
+set as well, the time of each kernel. For `examples/argon/argon.toml` on the
 GPU in the mixed mode, 864 particles with 74 neighbors each:
 
 | Kernel | Microseconds, before | Now |

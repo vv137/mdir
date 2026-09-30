@@ -157,7 +157,7 @@ program starts.
 `mdir run` reads a control file, compiles the run, and executes it.
 
 ```sh
-build/bin/mdir run examples/argon.toml
+build/bin/mdir run examples/argon/argon.toml
 ```
 
 ```text
@@ -181,34 +181,47 @@ See [docs/driver-m0.md](docs/driver-m0.md).
 | Command | Does |
 |---|---|
 | `mdir run <control file>` | Compiles the run and executes it |
-| `mdir emit <control file> [--stage=module\|lowered]` | Prints the program of the run, as it is built or as it is executed |
+| `mdir emit <control file> [--stage=module\|lowered\|pipeline]` | Prints the program of the run, as it is built or as it is executed, or the passes between |
 | `mdir check <control file>` | Reads the input and prints what it describes, without compiling |
-| `mdir template md` | Prints a control file with every keyword |
+| `mdir template md\|amber` | Prints a control file with every keyword, for terms in the control file or for an Amber topology |
 | `mdir checkpoint <file> [<file>]` | Describes a checkpoint, or compares the states of two |
-| `mdir version` | Prints the version and what the build supports |
+| `mdir version` | Prints the version, the commit, and what the build supports |
+| `mdir bug-report <control file> [--run]` | Collects what a report of a defect needs ([docs/debugging.md](docs/debugging.md)) |
 
 `mdir-opt` runs the passes of MDIR on IR, as `mlir-opt` does, for
 development.
 
 ## Examples
 
-`examples/argon.toml` is liquid argon at constant energy: 864 atoms, 2000
-steps of 5 fs with velocity Verlet. `examples/argon.mlir` is the same
-system as a module that is written by hand.
+| Example | System | Shows |
+|---|---|---|
+| [examples/ala3](examples/ala3) | Tri-alanine with ff19SB in OPC water, 4,905 particles | A whole protocol from a topology of tleap: minimization, heating at constant volume, equilibration at constant pressure with restraints, and 1 ns of production, with PME, SETTLE, SHAKE, and the virtual sites of OPC |
+| [examples/argon](examples/argon) | Liquid argon, 864 atoms | A run from a PDB file with the terms in the control file, and the same system as a module written by hand |
+
+```sh
+examples/ala3/run.sh ala3-run build/bin/mdir   # the four stages, in ala3-run
+```
+
+`mdir template amber` prints a control file for a run from an Amber
+topology with every keyword it takes, and `mdir template md` one for a run
+with the terms in the control file.
+
+`examples/argon/argon.toml` is liquid argon at constant energy: 864 atoms,
+2000 steps of 5 fs with velocity Verlet. `examples/argon/argon.mlir` is the
+same system as a module that is written by hand, which
+`examples/argon/run.sh` compiles and runs with the tools, pass by pass:
 
 ```sh
 export MDIR_BUILD=build LLVM_PREFIX=$HOME/opt/llvm/23.1.2
-examples/run.sh examples/argon.mlir             # double precision
-examples/run.sh examples/argon.mlir mixed 16    # mixed, 16 threads
+examples/argon/run.sh examples/argon/argon.mlir             # double precision
+examples/argon/run.sh examples/argon/argon.mlir mixed 16    # mixed, 16 threads
 CUDA_ROOT=/usr/local/cuda \
-    examples/run.sh examples/argon.mlir mixed gpu
+    examples/argon/run.sh examples/argon/argon.mlir mixed gpu
 ```
 
 It prints the time, the potential, kinetic, and total energy, and the
 temperature every 100 steps, and at the end the relative change of the
 total energy, which is about 2e-5.
-
-`examples/run.sh` compiles and runs a module with the tools, pass by pass.
 
 ## License
 

@@ -1,0 +1,45 @@
+# 2. Heating at constant volume: velocities drawn at 300 K, the Bussi
+#    thermostat, 50 ps with the heavy atoms of the peptide restrained.
+
+[input]
+prmtopfile = "ala3.prmtop"
+ambcrdfile = "ala3.inpcrd"      # also the reference of the restraints
+rstfile    = "min.h5"           # begins at the minimized positions
+
+[output]
+rstfile = "nvt.h5"
+
+[energy]
+cutoffdist    = 9.0
+pairlistdist  = 10.0
+electrostatic = "PME"
+pme_shift     = true
+
+[constraints]
+rigid_bond = true               # SHAKE and RATTLE on the bonds of hydrogen
+fast_water = true               # SETTLE on the waters
+
+[boundary]
+type = "PBC"
+
+[dynamics]
+integrator        = "VVER"      # or "LEAP"; each stage must use the same
+timestep          = 0.002
+nsteps            = 25000
+eneout_period     = 2500
+rstout_period     = 25000
+thermostat_period = 10
+
+[ensemble]
+ensemble    = "NVT"
+thermostat  = "BUSSI"
+temperature = 300.0
+tau_t       = 0.5
+
+[[restraints]]
+selection      = "!:WAT & !@H*"
+force_constant = 10.0
+
+[execution]
+target    = "gpu"               # or "cpu", with threads = <n>
+precision = "mixed"

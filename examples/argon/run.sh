@@ -2,7 +2,7 @@
 # Compiles an example and runs it.
 #
 # Usage:
-#   examples/run.sh <example.mlir> [mode] [target]
+#   examples/argon/run.sh <example.mlir> [mode] [target]
 #
 #   mode    The precision mode: double (the default), mixed, or single.
 #           The mode single needs an example whose buffers hold f32.
@@ -21,7 +21,7 @@
 
 set -euo pipefail
 
-INPUT="${1:?usage: examples/run.sh <example.mlir> [mode] [target]}"
+INPUT="${1:?usage: examples/argon/run.sh <example.mlir> [mode] [target]}"
 MODE="${2:-double}"
 TARGET="${3:-}"
 

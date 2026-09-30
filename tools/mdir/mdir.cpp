@@ -55,7 +55,7 @@ static llvm::cl::opt<Emit> stage(
     llvm::cl::init(Emit::Module), llvm::cl::sub(emitCommand));
 
 static llvm::cl::opt<std::string>
-    templateName(llvm::cl::Positional, llvm::cl::desc("<kind>: md"),
+    templateName(llvm::cl::Positional, llvm::cl::desc("<kind>: md, amber"),
                  llvm::cl::Required, llvm::cl::sub(templateCommand));
 
 static llvm::cl::list<std::string> checkpointFiles(
@@ -70,7 +70,7 @@ int main(int argc, char **argv) {
       "  mdir run <control file>\n"
       "  mdir emit <control file> [--stage=module|lowered]\n"
       "  mdir check <control file>\n"
-      "  mdir template md\n"
+      "  mdir template md|amber\n"
       "  mdir checkpoint <checkpoint> [<checkpoint>]\n"
       "  mdir bug-report <control file> [-o <directory>] [--run]\n"
       "  mdir version\n");
@@ -82,13 +82,17 @@ int main(int argc, char **argv) {
   if (checkCommand)
     return checkControl(controlFile);
   if (templateCommand) {
-    if (templateName != "md") {
-      llvm::errs() << "mdir: expected the template 'md', got '"
-                   << templateName << "'\n";
-      return 1;
+    if (templateName == "md") {
+      llvm::outs() << driver::getControlTemplate();
+      return 0;
     }
-    llvm::outs() << driver::getControlTemplate();
-    return 0;
+    if (templateName == "amber") {
+      llvm::outs() << driver::getAmberControlTemplate();
+      return 0;
+    }
+    llvm::errs() << "mdir: expected the template 'md' or 'amber', got '"
+                 << templateName << "'\n";
+    return 1;
   }
   if (checkpointCommand)
     return describeCheckpoints(checkpointFiles);

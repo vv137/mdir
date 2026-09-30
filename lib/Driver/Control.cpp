@@ -1065,3 +1065,77 @@ reorder   = true                # keep the particles in the order of their posit
 # neighbor_width = 160          # neighbors per particle; default: estimated
 )TOML";
 }
+
+std::string mdir::driver::getAmberControlTemplate() {
+  return R"TOML([input]
+prmtopfile = "system.prmtop"    # topology of Amber (tleap, ParmEd)
+ambcrdfile = "system.inpcrd"    # coordinates and the box; the reference
+                                # of the restraints
+# rstfile = "earlier.h5"        # the checkpoint that the run continues
+#                               # from; one of a minimization gives only
+#                               # the positions
+
+[output]
+dcdfile = "run.dcd"             # trajectory of positions
+rstfile = "run.h5"              # checkpoints, with rstout_period
+
+[energy]
+cutoffdist    = 9.0             # cutoff of the direct terms (Å)
+pairlistdist  = 10.0            # reach of the neighbor structures (Å)
+electrostatic = "PME"           # PME, CUTOFF
+pme_shift     = true            # shift the direct sum to zero at the cutoff
+# dispersion_corr = "EPRESS"    # NONE, EPRESS: long-range correction of
+#                               # the energy and the pressure
+# pme_alpha_tol   = 1.0e-5      # erfc(β rc), which gives β
+# pme_alpha       = 0.35        # β (1/Å), instead
+# pme_max_spacing = 1.2         # largest spacing of the grid (Å)
+# pme_ngrid_x     = 48          # the grid, instead (and _y, _z)
+# pme_nspline     = 4           # order of the B-splines: 4, 6, 8
+# pme_influence   = "SPME"      # SPME, OPTIMAL (as sander)
+
+[dynamics]
+integrator        = "VVER"      # VVER, LEAP (velocities half a step behind)
+timestep          = 0.002       # ps
+nsteps            = 500000
+eneout_period     = 5000        # steps between energies in the log
+crdout_period     = 5000        # steps between frames
+rstout_period     = 50000       # steps between checkpoints
+iseed             = 314159      # seed of the velocities and the coupling
+thermostat_period = 10          # steps between actions of the thermostat
+# comm_period     = 0           # steps between removals of the motion of
+#                               # the center of mass
+
+[ensemble]
+ensemble    = "NPT"             # NVE, NVT, NPT
+temperature = 300.0             # of the velocities and the bath (K)
+thermostat  = "BUSSI"           # stochastic velocity rescaling
+tau_t       = 0.5               # ps
+barostat    = "BERNETTI-BUSSI"  # stochastic cell rescaling, with NPT
+pressure    = 1.0               # bar
+tau_p       = 2.0               # ps
+# compressibility = 4.5e-5      # 1/bar
+
+[constraints]
+rigid_bond = true               # SHAKE and RATTLE on the bonds of hydrogen
+fast_water = true               # SETTLE on the waters
+# settle_residues = ["WAT"]     # names of the residues of rigid water
+
+[boundary]
+type = "PBC"                    # the box is that of the coordinates
+
+[execution]
+target    = "gpu"               # cpu, gpu
+precision = "mixed"             # single, mixed, double
+# threads = 1                   # for the target cpu
+
+# A minimization instead of dynamics: steepest descent.
+# [minimize]
+# nsteps        = 2000
+# eneout_period = 500
+
+# Restraints to the positions of ambcrdfile, any number of them.
+# [[restraints]]
+# selection      = "!:WAT & !@H*"  # a mask of Amber
+# force_constant = 10.0            # kcal/mol/Å²
+)TOML";
+}

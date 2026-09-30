@@ -227,7 +227,7 @@ Other schemes that were considered are in
 | Time of a kernel | The runtime library for devices, with `MDRT_PROFILE` and `MDRT_WAIT` set: the time from the launch of a kernel to its end. The host then waits after every kernel, so the sum of the kernels is more than the time of a step. |
 | Repetition | The least of three runs |
 | Machine | A host with 128 cores and an RTX 3090, CUDA toolkit 11.2 |
-| Argon | `examples/argon.toml`: 864 atoms, cutoff 0.85 nm, reach 0.95 nm, 2000 steps of 5 fs, with `mdir run` |
+| Argon | `examples/argon/argon.toml`: 864 atoms, cutoff 0.85 nm, reach 0.95 nm, 2000 steps of 5 fs, with `mdir run` |
 
 The liquid starts from a lattice, so its particles are in an order that
 follows their positions. Section 5 has the times for another order.

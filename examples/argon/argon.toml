@@ -6,7 +6,7 @@
 # 183 K; about half of the kinetic energy goes into the potential energy
 # within the first picosecond.
 #
-#   mdir-run examples/argon.toml
+#   mdir-run examples/argon/argon.toml
 
 [input]
 pdbfile = "argon.pdb"

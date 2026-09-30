@@ -21,7 +21,7 @@
 // The last row is the relative change of the total energy between the start
 // and the end of the run.
 //
-// Run it with examples/run.sh.
+// Run it with examples/argon/run.sh.
 
 !vec   = !md.field<@atoms, 3 x f64>
 !real  = !md.field<@atoms, f64>

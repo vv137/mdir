@@ -8,8 +8,8 @@
 # VERSION-NEXT: targets: cpu
 # VERSION-NEXT: checkpoints:
 
-# RUN: sed -e 's|"argon.pdb"|"%S/../../examples/argon.pdb"|' \
-# RUN:     %S/../../examples/argon.toml > %t.toml
+# RUN: sed -e 's|"argon.pdb"|"%S/../../examples/argon/argon.pdb"|' \
+# RUN:     %S/../../examples/argon/argon.toml > %t.toml
 # RUN: mdir check %t.toml | FileCheck %s --check-prefix=CHECK-INPUT
 # CHECK-INPUT: particles: {{ *}}864
 # CHECK-INPUT-NEXT: of type AR {{ *}}864
@@ -21,7 +21,7 @@
 # NONE: mdir: expected a subcommand
 
 # RUN: not mdir template gro 2>&1 | FileCheck %s --check-prefix=TEMPLATE
-# TEMPLATE: mdir: expected the template 'md', got 'gro'
+# TEMPLATE: mdir: expected the template 'md' or 'amber', got 'gro'
 
 # The passes that lower a run.
 # RUN: mdir emit --stage=pipeline %t.toml | FileCheck %s --check-prefix=PIPELINE

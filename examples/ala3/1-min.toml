@@ -1,0 +1,34 @@
+# 1. Minimization: steepest descent from the coordinates of tleap, with the
+#    heavy atoms of the peptide held at their places.
+
+[input]
+prmtopfile = "ala3.prmtop"
+ambcrdfile = "ala3.inpcrd"
+
+[output]
+rstfile = "min.h5"
+
+[energy]
+cutoffdist    = 9.0
+pairlistdist  = 10.0
+electrostatic = "PME"
+pme_shift     = true
+
+[constraints]
+rigid_bond = true               # SHAKE and RATTLE on the bonds of hydrogen
+fast_water = true               # SETTLE on the waters
+
+[boundary]
+type = "PBC"
+
+[minimize]
+nsteps        = 2000
+eneout_period = 500
+
+[[restraints]]
+selection      = "!:WAT & !@H*"
+force_constant = 10.0           # kcal/mol/Å²
+
+[execution]
+target    = "gpu"               # or "cpu", with threads = <n>
+precision = "mixed"

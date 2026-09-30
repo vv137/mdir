@@ -2,7 +2,7 @@
 //
 // REQUIRES: cuda
 //
-// RUN: mdir-opt %S/../../../examples/argon.mlir %md_passes \
+// RUN: mdir-opt %S/../../../examples/argon/argon.mlir %md_passes \
 // RUN:     --convert-md-to-md-exec="skin=0.1 width=160" \
 // RUN:     %md_exec_gpu_passes \
 // RUN: | mlir-opt %lower_gpu_to_llvm \

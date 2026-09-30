@@ -190,7 +190,7 @@ for each checkpoint interval           rstout_period steps
 | A loop over pairs reads the neighbors of a particle from few places in memory | The particles are in the order of their positions. The loop over checkpoint intervals carries the masses, the parameters, and the numbers of the particles as well, because they change places with every new order. |
 | The files are in the order of the input | A call that writes takes the numbers of the particles with the field, and the driver writes the value of a particle at the place of its number. |
 
-`examples/argon.mlir` has this form already, with two levels of loops.
+`examples/argon/argon.mlir` has this form already, with two levels of loops.
 
 The periods must divide one another: `crdout_period` and `rstout_period`
 are multiples of `eneout_period`.
@@ -202,7 +202,7 @@ INFO:      STEP           TIME      TOTAL_ENE  POTENTIAL_ENE    KINETIC_ENE    T
 INFO:      2000        10.0000      -834.1467     -1083.2389       249.0922        96.8538       -70.6513       232.3875
 ```
 
-The line shows the last row of `examples/argon.toml`.
+The line shows the last row of `examples/argon/argon.toml`.
 
 | Column | Unit | Meaning |
 |---|---|---|

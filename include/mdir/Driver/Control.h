@@ -207,6 +207,11 @@ llvm::Expected<Control> readControl(llvm::StringRef path);
 /// A control file with every keyword of M0 and its default.
 std::string getControlTemplate();
 
+/// A control file for a run from an Amber topology, with every keyword that
+/// such a run takes: particle mesh Ewald, constraints, the ensembles, a
+/// minimization, and restraints.
+std::string getAmberControlTemplate();
+
 } // namespace driver
 } // namespace mdir
 

@@ -1,0 +1,48 @@
+# 3. Equilibration at constant pressure: stochastic cell rescaling at
+#    1 bar for 100 ps, with weaker restraints.
+
+[input]
+prmtopfile = "ala3.prmtop"
+ambcrdfile = "ala3.inpcrd"
+rstfile    = "nvt.h5"
+
+[output]
+rstfile = "npt.h5"
+
+[energy]
+cutoffdist    = 9.0
+pairlistdist  = 10.0
+electrostatic = "PME"
+pme_shift     = true
+
+[constraints]
+rigid_bond = true               # SHAKE and RATTLE on the bonds of hydrogen
+fast_water = true               # SETTLE on the waters
+
+[boundary]
+type = "PBC"
+
+[dynamics]
+integrator        = "VVER"
+timestep          = 0.002
+nsteps            = 50000
+eneout_period     = 5000
+rstout_period     = 50000
+thermostat_period = 10
+
+[ensemble]
+ensemble    = "NPT"
+thermostat  = "BUSSI"
+temperature = 300.0
+tau_t       = 0.5
+barostat    = "BERNETTI-BUSSI"
+pressure    = 1.0
+tau_p       = 2.0
+
+[[restraints]]
+selection      = "!:WAT & !@H*"
+force_constant = 1.0
+
+[execution]
+target    = "gpu"               # or "cpu", with threads = <n>
+precision = "mixed"
