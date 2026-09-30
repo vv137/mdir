@@ -662,6 +662,61 @@ The barostat costs 40% of the rate at this period: the evaluation after
 each scaling, and the neighbor structures that each change of the cell
 rebuilds (with the first-order work, 316 ns/day).
 
+
+### 11.5 The effective energy of the barostat (planned)
+
+The conserved energy of Section 11.4 tests the dynamics between scalings
+and the counting of their work. Whether the barostat itself samples its
+distribution is what the effective energy of [[Bernetti2020]](references.md#bernetti2020)
+measures (Sec. II.C and SI Sec. IV): the work that the steps of the volume
+do against detailed balance.
+
+At fixed scaled positions and momenta the variable $\lambda = \sqrt{V}$ has
+the stationary distribution $P(\lambda) \propto e^{-E(\lambda)/k_BT}$ with
+
+$$E(\lambda) = K + U + P_0 \lambda^2 - k_BT \ln\lambda,$$
+
+the last term from $dV = 2\lambda\, d\lambda$. Since
+$-\partial(K + U)/\partial V = P_\text{int}$ at fixed scaled coordinates,
+
+$$f(\lambda) \equiv -\frac{dE}{d\lambda}
+  = -2\lambda\left(P_0 - P_\text{int} - \frac{k_BT}{2\lambda^2}\right),$$
+
+and the step of eq. (S7), with $D = k_BT\beta_T/(4\tau_p)$ and the period
+$\Delta t$ of the barostat, is
+
+$$\lambda' = \lambda + \frac{D}{k_BT} f(\lambda)\, \Delta t + \sqrt{2D\Delta t}\, R.$$
+
+The probability of a step and of its reverse are Gaussians of the same
+variance $2D\Delta t$ about $\lambda + a f$ and $\lambda' + a f'$, with
+$a = D\Delta t/k_BT$, $f = f(\lambda)$, $f' = f(\lambda')$ at the scaled
+configuration. With $d = \lambda' - \lambda$,
+
+$$k_BT \ln\frac{T(\lambda\to\lambda')}{T(\lambda'\to\lambda)}
+  = k_BT\,\frac{(d + a f')^2 - (d - a f)^2}{4D\Delta t}
+  = d\,\frac{f + f'}{2} + \frac{D\Delta t}{4k_BT}\left(f'^2 - f^2\right),$$
+
+and the work of a step, which detailed balance would make zero, is
+
+$$w = \Delta K + \Delta U + P_0 \Delta(\lambda^2) - k_BT\, \Delta\ln\lambda
+  + d\,\frac{f + f'}{2} + \frac{\beta_T \Delta t}{16\,\tau_p}\left(f'^2 - f^2\right).$$
+
+Its exponential has mean one from equilibrium,
+$\langle e^{-w/k_BT}\rangle = 1$. The coefficient of the last term in the
+image of the paper's eq. (S11), $\beta_T\Delta t/(4\tau_p k_BT)$, is not an
+energy; `scripts/validation/barostat/effective_energy.py` checks on a model
+in one variable that the closed form above equals the definition to
+rounding and satisfies the identity, and that the other does not. The
+effective energy is the conserved energy of Section 11.4 plus the sum of
+$w - \Delta K - \Delta U$ over the steps of the volume.
+
+To compute it, $P_\text{int}$ in $f$ and $f'$ must have one definition
+before and after a scaling. With rigid groups scaled about their centers
+of mass it is the molecular pressure; at the scaled positions MDIR has the
+atomic virial without the constraints, so the molecular one needs
+$\sum_\text{groups}\sum_i (\mathbf r_i - \mathbf R)\cdot\mathbf F_i$
+as well. Without constraints the atomic pressure serves.
+
 ## 12. A cell that changes
 
 A neighbor structure is valid in the cell that it was built in (Section
