@@ -171,23 +171,6 @@ application to impurities, surfaces, and other defects in metals,"
 Used for: the embedded-atom method (EAM), the example of a many-body
 potential with several stages.
 
-### SalomonFerrer2013
-
-R. Salomon-Ferrer, A. W. Götz, D. Poole, S. Le Grand, R. C. Walker,
-"Routine microsecond molecular dynamics simulations with AMBER on GPUs.
-2. Explicit solvent particle mesh Ewald," *J. Chem. Theory Comput.* **9**,
-3878–3888 (2013).
-[doi:10.1021/ct400314y](https://doi.org/10.1021/ct400314y)
-
-Used for: how pmemd.cuda, the reference of the goal of performance, builds
-its neighbor list (Section 3.3): particles sorted into boxes of the
-cutoff plus the skin and along a Hilbert curve of 4 × 4 × 4 within each,
-then taken in groups of 16 or 32 that share the particles within the
-extended cutoff of any of them, from the box and its 13 neighbors on the
-leading edge (a half shell); the direct sum iterates over that list a warp
-at a time, with the exclusions masked. Measured against in
-`scripts/experiments/neighbor-structures` (2026-10-01).
-
 ### deBuyl2014
 
 P. de Buyl, P. H. Colberg, F. Höfling, "H5MD: A structured, efficient, and
@@ -620,6 +603,23 @@ Analysis (SC '11)* (ACM, 2011), pp. 1–12.
 Used for: counter-based random numbers (Random123) and the Philox
 generator, Philox 4×32 with 10 rounds in M1 (`runtime/mdrt.c`), checked
 against the known answers of Random123 (`test/Runtime/random.test`).
+
+### SalomonFerrer2013
+
+R. Salomon-Ferrer, A. W. Götz, D. Poole, S. Le Grand, R. C. Walker,
+"Routine microsecond molecular dynamics simulations with AMBER on GPUs.
+2. Explicit solvent particle mesh Ewald," *J. Chem. Theory Comput.* **9**,
+3878–3888 (2013).
+[doi:10.1021/ct400314y](https://doi.org/10.1021/ct400314y)
+
+Used for: how pmemd.cuda, the reference of the goal of performance, builds
+its neighbor list (Section 3.3): particles sorted into boxes of the
+cutoff plus the skin and along a Hilbert curve of 4 × 4 × 4 within each,
+then taken in groups of 16 or 32 that share the particles within the
+extended cutoff of any of them, from the box and its 13 neighbors on the
+leading edge (a half shell); the direct sum iterates over that list a warp
+at a time, with the exclusions masked. Measured against in
+`scripts/experiments/neighbor-structures` (2026-10-01).
 
 ### Saunders2018
 
