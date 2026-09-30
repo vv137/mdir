@@ -1,6 +1,6 @@
 # References
 
-Last updated: 2026-09-29.
+Last updated: 2026-09-30.
 
 This document lists the literature behind the methods, algorithms,
 derivations, force fields, and formats that the MDIR documentation and
@@ -14,8 +14,9 @@ and the year of publication, written in ASCII; a book by two authors is
 keyed by both names, and a manual by the name of the program.
 
 **Verification.** The bibliographic data of every entry was checked on
-2026-09-29 against a primary source: the Crossref record of the DOI, the
-DataCite record for a Zenodo DOI, or the page of the publisher. An entry
+2026-09-29, or on the day a later entry was added, against a primary
+source: the Crossref record of the DOI, the DataCite record for a Zenodo
+DOI, or the page of the publisher. An entry
 whose data could not be checked is marked **UNVERIFIED**, with the reason.
 Authors are listed in full up to six; beyond six, the first three are
 followed by "et al."
@@ -524,8 +525,24 @@ on SIMD architectures," *Comput. Phys. Commun.* **184**, 2641–2650
 (2013).
 [doi:10.1016/j.cpc.2013.06.003](https://doi.org/10.1016/j.cpc.2013.06.003)
 
-Used for: cluster pair lists, discussed in [prior-art.md](prior-art.md)
-and a candidate neighbor structure of MDIR.
+Used for: cluster pair lists (clusters of a fixed number of particles,
+lists of cluster pairs searched by bounding boxes, masks of interactions
+and exclusions, the 8 × 4 layout of the CUDA kernels), discussed in
+[prior-art.md](prior-art.md); the tile structure of MDIR (D82) follows
+them, see [tiles-m1.md](tiles-m1.md).
+
+### Pall2020
+
+S. Páll, A. Zhmurov, P. Bauer, et al., "Heterogeneous parallelization
+and acceleration of molecular dynamics simulations in GROMACS," *J. Chem.
+Phys.* **153**, 134110 (2020).
+[doi:10.1063/5.0018516](https://doi.org/10.1063/5.0018516)
+
+Used for: the dual pair list with dynamic (rolling) pruning, the pruning
+of cluster pairs on the GPU, and the fixed lifetime of the pair list with
+a buffer estimated from a tolerance of the energy drift, which the tile
+structure of MDIR (D82) follows or departs from; see
+[tiles-m1.md](tiles-m1.md).
 
 ### Park2024
 
