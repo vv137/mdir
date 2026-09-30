@@ -20,11 +20,15 @@
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Parser/Parser.h"
+#include "mlir/Pass/PassManager.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
+#include "mlir/Transforms/Passes.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
@@ -1447,6 +1451,45 @@ LogicalResult Lowering::addTemplates(Type real) {
   return success();
 }
 
+/// Unrolls, in the kernels of `root`, every loop whose trip count is a
+/// constant of at most `limit`, innermost first, folding constants between
+/// the rounds so that a loop whose bounds were the induction variables of
+/// the loops around it unrolls too. The B-splines of PME are held in small
+/// arrays indexed by the loops over the order: unrolled, the indices are
+/// constants and the arrays become registers; otherwise they stay in local
+/// memory (the gather of Cellulose took 303 us so).
+static void unrollSmallLoops(Operation *root, int64_t limit) {
+  MLIRContext *context = root->getContext();
+  RewritePatternSet patterns(context);
+  for (Dialect *dialect : context->getLoadedDialects())
+    dialect->getCanonicalizationPatterns(patterns);
+  for (RegisteredOperationName name : context->getRegisteredOperations())
+    name.getCanonicalizationPatterns(patterns, context);
+  FrozenRewritePatternSet frozen(std::move(patterns));
+  for (;;) {
+    (void)applyPatternsGreedily(root, frozen);
+    SmallVector<scf::ForOp> loops;
+    root->walk([&](scf::ForOp loop) {
+      if (!loop->getParentOfType<gpu::LaunchOp>())
+        return;
+      // The innermost of the loops that can unroll: a loop inside whose
+      // bounds are not constants yet may become one once this unrolls.
+      bool innermost = true;
+      loop.getBody()->walk([&](scf::ForOp inner) {
+        std::optional<APInt> count = inner.getStaticTripCount();
+        innermost &= !(count && count->getSExtValue() <= limit);
+      });
+      std::optional<APInt> count = loop.getStaticTripCount();
+      if (innermost && count && count->getSExtValue() <= limit)
+        loops.push_back(loop);
+    });
+    if (loops.empty())
+      return;
+    for (scf::ForOp loop : loops)
+      (void)loopUnrollFull(loop);
+  }
+}
+
 LogicalResult Lowering::addPMETemplates(Type position, Type charge,
                                         Type force, int64_t order) {
   if (SymbolTable::lookupSymbolIn(
@@ -1461,6 +1504,15 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
   if (!templates)
     return module.emitError()
            << "cannot parse the template of particle mesh Ewald for devices";
+  unrollSmallLoops(templates->getOperation(), /*limit=*/8);
+  // The arrays of the splines, indexed by constants now, become values.
+  PassManager promote(context);
+  promote.addPass(createSROA());
+  promote.addPass(createMem2Reg());
+  promote.addPass(createCanonicalizerPass());
+  if (failed(promote.run(*templates)))
+    return module.emitError()
+           << "cannot promote the splines of particle mesh Ewald to values";
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
     op.remove();
     module.push_back(&op);
@@ -1525,7 +1577,10 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_real"),
                          ValueRange{fixed, real});
   } else {
-    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_spread_float"),
+    func::CallOp::create(builder, loc,
+                         instance(op.getOrder() == 4
+                                      ? "mdrt_gpu_pme_spread_warp"
+                                      : "mdrt_gpu_pme_spread_float"),
                          ValueRange{positions, charges, box, real, k1, k2, k3,
                                     order});
   }

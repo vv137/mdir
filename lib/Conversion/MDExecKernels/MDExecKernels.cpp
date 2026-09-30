@@ -1036,6 +1036,10 @@ std::string kernels::instantiatePMETemplates(StringRef text, Type position,
     } else if (text.consume_front("PME_REAL_BYTES")) {
       // The bytes of a value of `!pme_real`, the type of the forces.
       instance += force.isF64() ? "8" : "4";
+    } else if (text.consume_front("PME_LANES")) {
+      // The threads of a particle in the gather: the least power of 2 not
+      // below the order, so that they are aligned within a warp.
+      instance += order <= 4 ? "4" : "8";
     } else if (text.consume_front("PME_ORDER")) {
       // The order of the splines, a constant in the kernels.
       instance += std::to_string(order);

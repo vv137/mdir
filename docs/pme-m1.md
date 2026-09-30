@@ -118,11 +118,27 @@ point along z. The NVPTX backend of LLVM turns an atomic addition of `f32`
 into a loop of compare-and-swap, four times slower; the template for `f32`
 takes PTX's own reduction, `red.relaxed.gpu.global.add.f32`.
 
+With splines of order 4, the default mode spreads with a warp for each
+particle (`mdrt_gpu_pme_spread_warp`): lane 16 a + 4 b + c adds the points
+(a, b, c) and (a + 2, b, c), so the 32 addresses of an atomic are points
+of one particle and none repeats, and lanes 0 to 2 place the particle
+along one axis each in `f64` and hand the first points and the fractions
+to the others with shuffles; on Cellulose (408,609 atoms, RTX 3090) it
+takes 442 µs a step against 533 with 4 threads a particle. The gathering
+takes a thread for each particle and point along z (the least power of 2
+not below the order, those beyond it adding zeros), and adds their sums
+with shuffles: 127 µs on Cellulose, from 339 with a thread a particle.
+
+The loops over the order in the kernels of the template unroll when the
+template is instantiated, and the arrays of the B-splines become values
+(`sroa`, `mem2reg`); left as loops, the arrays were in local memory, and
+the gathering on Cellulose took 303 µs.
+
 | Item | Value |
 |---|---|
 | Scale | 2⁴⁰: a contribution is resolved to 10⁻¹² e, and a point holds up to 2⁶³ / 2⁴⁰ ≈ 8 × 10⁶ e, far beyond any point of a real system. A charge of 100 e or more is rejected. A position that is not a number converts to an undefined integer; the run has failed by then, but the grid does not say so. |
 | Host | The same fixed point, with atomics of the threads of OpenMP |
-| Mixed precision | The positions, the charges, and the forces as they are stored. On the host the B-splines, the grid, and the FFT are in f64; on a device they are in the type of the forces, f32 in the mixed and single modes, with the fractions of the positions on the grid and the edges of the cell in f64 (D78). The energy and the virial are summed in f64 |
+| Mixed precision | The positions, the charges, and the forces as they are stored. On the host the B-splines, the grid, and the FFT are in f64; on a device they are in the type of the forces, f32 in the mixed and single modes, with the fractions of the positions along the cell (the position times one over the edge, less its floor) and the edges of the cell in f64, and the point of the grid and the fraction within it in the type of the forces (D78, amended). The energy and the virial are summed in f64 |
 | The sums of a device | Each thread sums a row of the grid; the host adds the rows in their order, so the energy and the virial do not depend on the order of the threads either |
 
 ## 4. Parameters (D71)

@@ -148,12 +148,14 @@ def place(body, p, x, length, k, n):
 %{p}s = arith.mulf {x}, {length} : f64
 %{p}fs = math.floor %{p}s : f64
 %{p}frac = arith.subf %{p}s, %{p}fs : f64
-%{p}ki = arith.index_cast {k} : index to i64
-%{p}kf = arith.sitofp %{p}ki : i64 to f64
-%{p}u = arith.mulf %{p}frac, %{p}kf : f64
-%{p}fu = math.floor %{p}u : f64
-%{p}w = arith.subf %{p}u, %{p}fu : f64
-%{p}bi = arith.fptosi %{p}fu : f64 to i64
+%{p}ki = arith.index_cast {k} : index to i32
+%{p}kf = arith.sitofp %{p}ki : i32 to !pme_real
+%{p}fracr = PME_F64_TO_REAL %{p}frac : f64 to !pme_real
+%{p}u = arith.mulf %{p}fracr, %{p}kf : !pme_real
+%{p}fu = math.floor %{p}u : !pme_real
+%{p}w = arith.subf %{p}u, %{p}fu : !pme_real
+%{p}bi32 = arith.fptosi %{p}fu : !pme_real to i32
+%{p}bi = arith.extsi %{p}bi32 : i32 to i64
 %{p}b = arith.index_cast %{p}bi : i64 to index
 %{p}bk = arith.addi %{p}b, {k} : index
 %{p}bkn = arith.subi %{p}bk, {n} : index
@@ -162,8 +164,8 @@ def place(body, p, x, length, k, n):
 // The first point within the grid, so that the points of the particle need
 // one subtraction at most to wrap around.
 %{p}start = arith.remui %{p}start0, {k} : index
-%{p}wr = PME_F64_TO_REAL %{p}w : f64 to !pme_real""")
-    return f"%{p}start", f"%{p}wr"
+""")
+    return f"%{p}start", f"%{p}w"
 
 
 def particle_prologue(body, slopes):
@@ -659,14 +661,154 @@ func.func private @mdrt_gpu_pme_scale(%c: memref<?x!pme_real, 1>, %moduli: memre
 """
 
 
+def spread_warp():
+    """A warp for each particle, of order 4: lane = 16 a + 4 b + c takes the
+    points (a, b, c) and (a + 2, b, c) of the splines along x, y, z. The
+    lanes of an atomic add to 32 points of one particle, none the same, 8
+    runs of 4 along z; a warp of 8 particles, next to one another in the
+    order, added to the same points at once. Lanes 0 to 2 place the
+    particle along one axis each, in f64, and hand the first points and the
+    fractions to the others with shuffles."""
+    body = Body("      ")
+    body("""\
+%c32i = arith.constant 32 : index
+%i = arith.divui %item, %c32i : index
+%lane = arith.remui %item, %c32i : index
+%i0 = arith.constant 0 : index
+%i1 = arith.constant 1 : index
+%i2 = arith.constant 2 : index
+%i3 = arith.constant 3 : index
+%i4 = arith.constant 4 : index
+%i16 = arith.constant 16 : index
+%order = arith.constant 4 : index
+%qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
+%qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
+// Lane a < 3 places the particle along axis a.
+%axis = arith.minui %lane, %i2 : index
+%xs = memref.load %x[%i, %axis] : memref<?x3x!pme_pos, 1>
+%xa = PME_EXTEND_POS %xs : !pme_pos to f64
+%is_y = arith.cmpi eq, %axis, %i1 : index
+%is_z = arith.cmpi eq, %axis, %i2 : index
+%il_xy = arith.select %is_y, %ily, %ilx : f64
+%il = arith.select %is_z, %ilz, %il_xy : f64
+%k_xy = arith.select %is_y, %k2, %k1 : index
+%ka = arith.select %is_z, %k3, %k_xy : index""")
+    start, frac = place(body, "pa_", "%xa", "%il", "%ka", "%order")
+    body(f"""\
+%start32 = arith.index_cast {start} : index to i32
+%width = arith.constant 32 : i32
+%l0 = arith.constant 0 : i32
+%l1 = arith.constant 1 : i32
+%l2 = arith.constant 2 : i32
+%stx32, %v0 = gpu.shuffle idx %start32, %l0, %width : i32
+%sty32, %v1 = gpu.shuffle idx %start32, %l1, %width : i32
+%stz32, %v2 = gpu.shuffle idx %start32, %l2, %width : i32
+%fx, %v3 = gpu.shuffle idx {frac}, %l0, %width : !pme_real
+%fy, %v4 = gpu.shuffle idx {frac}, %l1, %width : !pme_real
+%fz, %v5 = gpu.shuffle idx {frac}, %l2, %width : !pme_real
+%stx = arith.index_cast %stx32 : i32 to index
+%sty = arith.index_cast %sty32 : i32 to index
+%stz = arith.index_cast %stz32 : i32 to index
+%wx = memref.alloca() : memref<8x!pme_real>
+%wy = memref.alloca() : memref<8x!pme_real>
+%wz = memref.alloca() : memref<8x!pme_real>""")
+    bspline(body, "bx_", "%fx", "%order", "%wx", None)
+    bspline(body, "by_", "%fy", "%order", "%wy", None)
+    bspline(body, "bz_", "%fz", "%order", "%wz", None)
+    body("""\
+%j3 = arith.remui %lane, %i4 : index
+%lane4 = arith.divui %lane, %i4 : index
+%j2 = arith.remui %lane4, %i4 : index
+%j1a = arith.divui %lane, %i16 : index""")
+    w3 = pick(body, "w3p_", "%wz", "%j3")
+    w2 = pick(body, "w2p_", "%wy", "%j2")
+    body(f"""\
+%qyz0 = arith.mulf %qi, {w3} : !pme_real
+%qyz = arith.mulf %qyz0, {w2} : !pme_real
+%eight = arith.constant PME_REAL_BYTES : i64
+%gridindex = memref.extract_aligned_pointer_as_index %grid : memref<?x!pme_real, 1> -> index
+%gridbase = arith.index_cast %gridindex : index to i64
+%g3s = arith.addi %stz, %j3 : index
+%g3w = arith.subi %g3s, %k3 : index
+%g3over = arith.cmpi uge, %g3s, %k3 : index
+%g3 = arith.select %g3over, %g3w, %g3s : index
+%g2s = arith.addi %sty, %j2 : index
+%g2w = arith.subi %g2s, %k2 : index
+%g2over = arith.cmpi uge, %g2s, %k2 : index
+%g2 = arith.select %g2over, %g2w, %g2s : index
+scf.for %h = %i0 to %i2 step %i1 {{
+  %h2 = arith.muli %h, %i2 : index
+  %j1 = arith.addi %j1a, %h2 : index""")
+    w1 = pick(body, "w1p_", "%wx", "%j1")
+    body(f"""\
+  %g1s = arith.addi %stx, %j1 : index
+  %g1w = arith.subi %g1s, %k1 : index
+  %g1over = arith.cmpi uge, %g1s, %k1 : index
+  %g1 = arith.select %g1over, %g1w, %g1s : index
+  %value = arith.mulf %qyz, {w1} : !pme_real
+  %row1 = arith.muli %g1, %k2 : index
+  %row = arith.addi %row1, %g2 : index
+  %gbase = arith.muli %row, %k3 : index
+  %at = arith.addi %gbase, %g3 : index
+  %ati = arith.index_cast %at : index to i64
+  %offset = arith.muli %ati, %eight : i64
+  %address = arith.addi %gridbase, %offset : i64
+  %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
+  PME_ATOMIC_ADD %pointer, %value
+}}""")
+    return f"""
+// Spreads the charges to `grid` as @mdrt_gpu_pme_spread_float does, with a
+// warp for each particle (order 4 only; see spread_warp in the script).
+func.func private @mdrt_gpu_pme_spread_warp(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
+                                            %box: vector<3xf64>, %grid: memref<?x!pme_real, 1>,
+                                            %k1: index, %k2: index, %k3: index, %n: index) {{
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c128 = arith.constant 128 : index
+  %lx = vector.extract %box[0] : f64 from vector<3xf64>
+  %ly = vector.extract %box[1] : f64 from vector<3xf64>
+  %lz = vector.extract %box[2] : f64 from vector<3xf64>
+  %unit = arith.constant 1.0 : f64
+  %ilx = arith.divf %unit, %lx : f64
+  %ily = arith.divf %unit, %ly : f64
+  %ilz = arith.divf %unit, %lz : f64
+  %points = memref.dim %grid, %c0 : memref<?x!pme_real, 1>
+  %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
+  %c32 = arith.constant 32 : index
+  %spread = arith.muli %count, %c32 : index
+{launch(zero_text(), "%points")}{launch(body.text(), "%spread")}  return
+}}
+"""
+
+
+def zero_text():
+    zero = Body("      ")
+    zero("""\
+%none = arith.constant 0.0 : !pme_real
+memref.store %none, %grid[%item] : memref<?x!pme_real, 1>""")
+    return zero.text()
+
+
 def gather():
     body = Body("      ")
-    body("%i = arith.addi %item, %c0 : index")
+    # A thread for each particle and point of its splines along z, as the
+    # spreading has them: the threads of a particle read neighboring points
+    # of the grid at once, and their sums are added with shuffles.
+    body("""\
+%lanes = arith.constant PME_LANES : index
+%i = arith.divui %item, %lanes : index
+%j3 = arith.remui %item, %lanes : index""")
     sx, sy, sz = particle_prologue(body, slopes=True)
+    w3 = pick(body, "w3p_", "%wz", "%j3")
+    d3 = pick(body, "d3p_", "%dz", "%j3")
     body(f"""\
 %gzero = arith.constant 0.0 : !pme_real
 %j0 = arith.constant 0 : index
 %j1c = arith.constant 1 : index
+%g3s = arith.addi {sz}, %j3 : index
+%g3w = arith.subi %g3s, %k3 : index
+%g3over = arith.cmpi uge, %g3s, %k3 : index
+%g3 = arith.select %g3over, %g3w, %g3s : index
 %sumx, %sumy, %sumz = scf.for %j1 = %j0 to %order step %j1c
     iter_args(%ax = %gzero, %ay = %gzero, %az = %gzero) -> (!pme_real, !pme_real, !pme_real) {{
   %g1s = arith.addi {sx}, %j1 : index
@@ -686,49 +828,32 @@ def gather():
     %row1 = arith.muli %g1, %k2 : index
     %row = arith.addi %row1, %g2 : index
     %gbase = arith.muli %row, %k3 : index
+    %at = arith.addi %gbase, %g3 : index
+    %p = memref.load %phi[%at] : memref<?x!pme_real, 1>
     %d1w2 = arith.mulf %d1, %w2 : !pme_real
     %w1d2 = arith.mulf %w1, %d2 : !pme_real
     %w1w2 = arith.mulf %w1, %w2 : !pme_real
-    %ex, %ey, %ez = scf.for %j3 = %j0 to %order step %j1c
-        iter_args(%tx3 = %cx, %ty3 = %cy, %tz3 = %cz) -> (!pme_real, !pme_real, !pme_real) {{
-      %g3s = arith.addi {sz}, %j3 : index
-      %g3w = arith.subi %g3s, %k3 : index
-      %g3over = arith.cmpi uge, %g3s, %k3 : index
-      %g3 = arith.select %g3over, %g3w, %g3s : index
-      %w3 = memref.load %wz[%j3] : memref<8x!pme_real>
-      %d3 = memref.load %dz[%j3] : memref<8x!pme_real>
-      %at = arith.addi %gbase, %g3 : index
-      %p = memref.load %phi[%at] : memref<?x!pme_real, 1>
-      %px = arith.mulf %d1w2, %w3 : !pme_real
-      %py = arith.mulf %w1d2, %w3 : !pme_real
-      %pz = arith.mulf %w1w2, %d3 : !pme_real
-      %vx = arith.mulf %p, %px : !pme_real
-      %vy = arith.mulf %p, %py : !pme_real
-      %vz = arith.mulf %p, %pz : !pme_real
-      %nx = arith.addf %tx3, %vx : !pme_real
-      %ny = arith.addf %ty3, %vy : !pme_real
-      %nz = arith.addf %tz3, %vz : !pme_real
-      scf.yield %nx, %ny, %nz : !pme_real, !pme_real, !pme_real
-    }}
-    scf.yield %ex, %ey, %ez : !pme_real, !pme_real, !pme_real
+    %px = arith.mulf %d1w2, {w3} : !pme_real
+    %py = arith.mulf %w1d2, {w3} : !pme_real
+    %pz = arith.mulf %w1w2, {d3} : !pme_real
+    %vx = arith.mulf %p, %px : !pme_real
+    %vy = arith.mulf %p, %py : !pme_real
+    %vz = arith.mulf %p, %pz : !pme_real
+    %nx = arith.addf %cx, %vx : !pme_real
+    %ny = arith.addf %cy, %vy : !pme_real
+    %nz = arith.addf %cz, %vz : !pme_real
+    scf.yield %nx, %ny, %nz : !pme_real, !pme_real, !pme_real
   }}
   scf.yield %bx2, %by2, %bz2 : !pme_real, !pme_real, !pme_real
-}}
-%mq = arith.negf %qi : !pme_real
-%sxq = arith.mulf %mq, %rxr : !pme_real
-%syq = arith.mulf %mq, %ryr : !pme_real
-%szq = arith.mulf %mq, %rzr : !pme_real
-%fx64 = arith.mulf %sxq, %sumx : !pme_real
-%fy64 = arith.mulf %syq, %sumy : !pme_real
-%fz64 = arith.mulf %szq, %sumz : !pme_real
-%fxs = PME_REAL_TO_FRC %fx64 : !pme_real to !pme_frc
-%fys = PME_REAL_TO_FRC %fy64 : !pme_real to !pme_frc
-%fzs = PME_REAL_TO_FRC %fz64 : !pme_real to !pme_frc
-memref.store %fxs, %f[%i, %i0] : memref<?x3x!pme_frc, 1>
-memref.store %fys, %f[%i, %i1] : memref<?x3x!pme_frc, 1>
-memref.store %fzs, %f[%i, %i2] : memref<?x3x!pme_frc, 1>""")
+}}""")
     return f"""
-// The forces, as @mdrt.pme_gather gives them: a thread for each particle.
+// The forces, as @mdrt.pme_gather gives them: for each particle, a thread
+// for each point of its splines along z (PME_LANES threads, the least power
+// of 2 not below the order; those beyond it add zeros), and the first
+// thread of a particle stores. The threads of a particle are consecutive
+// and within a warp. The shuffles take every thread of the
+// block, so the threads beyond the last particle compute too, from the
+// last particle, and do not store.
 func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
                                        %phi: memref<?x!pme_real, 1>, %box: vector<3xf64>,
                                        %k1: index, %k2: index, %k3: index, %n: index,
@@ -756,8 +881,80 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
   %ily = arith.divf %unit, %ly : f64
   %ilz = arith.divf %unit, %lz : f64
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-{launch(body.text(), "%count")}  return
+  %lanes_all = arith.constant PME_LANES : index
+  %points = arith.muli %count, %lanes_all : index
+  %last = arith.subi %count, %c1 : index
+{gather_launch(body.text())}  return
 }}
+"""
+
+
+def gather_launch(body_text):
+    """The launch of the gather: every thread of a block takes part in the
+    shuffles, so the threads beyond the last point compute for the last
+    particle."""
+    return f"""\
+  %blocks_points = func.call @mdrt_gpu_pme_blocks(%points) : (index) -> index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_points, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {{
+    %base = arith.muli %bx, %c128 : index
+    %item0 = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %item0, %points : index
+    %lanes_l = arith.constant PME_LANES : index
+    %c4l = arith.constant 4 : index
+    %lane_of = arith.remui %item0, %lanes_l : index
+    %last_first = arith.muli %last, %lanes_l : index
+    %last_item = arith.addi %last_first, %lane_of : index
+    %item = arith.select %inside, %item0, %last_item : index
+{body_text}\
+      %width = arith.constant 32 : i32
+      %one32 = arith.constant 1 : i32
+      %two32 = arith.constant 2 : i32
+      %sx1, %vsx1 = gpu.shuffle xor %sumx, %one32, %width : !pme_real
+      %sy1, %vsy1 = gpu.shuffle xor %sumy, %one32, %width : !pme_real
+      %sz1, %vsz1 = gpu.shuffle xor %sumz, %one32, %width : !pme_real
+      %tx1 = arith.addf %sumx, %sx1 : !pme_real
+      %ty1 = arith.addf %sumy, %sy1 : !pme_real
+      %tz1 = arith.addf %sumz, %sz1 : !pme_real
+      %sx2, %vsx2 = gpu.shuffle xor %tx1, %two32, %width : !pme_real
+      %sy2, %vsy2 = gpu.shuffle xor %ty1, %two32, %width : !pme_real
+      %sz2, %vsz2 = gpu.shuffle xor %tz1, %two32, %width : !pme_real
+      %ux = arith.addf %tx1, %sx2 : !pme_real
+      %uy = arith.addf %ty1, %sy2 : !pme_real
+      %uz = arith.addf %tz1, %sz2 : !pme_real
+      // With 8 threads a particle, the halves are added too; with 4, the
+      // other half of the shuffle is another particle.
+      %four32 = arith.constant 4 : i32
+      %eight_lanes = arith.cmpi ugt, %lanes_l, %c4l : index
+      %sx4, %vsx4 = gpu.shuffle xor %ux, %four32, %width : !pme_real
+      %sy4, %vsy4 = gpu.shuffle xor %uy, %four32, %width : !pme_real
+      %sz4, %vsz4 = gpu.shuffle xor %uz, %four32, %width : !pme_real
+      %zero_r = arith.constant 0.0 : !pme_real
+      %hx = arith.select %eight_lanes, %sx4, %zero_r : !pme_real
+      %hy = arith.select %eight_lanes, %sy4, %zero_r : !pme_real
+      %hz = arith.select %eight_lanes, %sz4, %zero_r : !pme_real
+      %allx = arith.addf %ux, %hx : !pme_real
+      %ally = arith.addf %uy, %hy : !pme_real
+      %allz = arith.addf %uz, %hz : !pme_real
+      %first = arith.cmpi eq, %j3, %c0 : index
+      %stores = arith.andi %inside, %first : i1
+      scf.if %stores {{
+        %mq = arith.negf %qi : !pme_real
+        %sxq = arith.mulf %mq, %rxr : !pme_real
+        %syq = arith.mulf %mq, %ryr : !pme_real
+        %szq = arith.mulf %mq, %rzr : !pme_real
+        %fx64 = arith.mulf %sxq, %allx : !pme_real
+        %fy64 = arith.mulf %syq, %ally : !pme_real
+        %fz64 = arith.mulf %szq, %allz : !pme_real
+        %fxs = PME_REAL_TO_FRC %fx64 : !pme_real to !pme_frc
+        %fys = PME_REAL_TO_FRC %fy64 : !pme_real to !pme_frc
+        %fzs = PME_REAL_TO_FRC %fz64 : !pme_real to !pme_frc
+        memref.store %fxs, %f[%i, %i0] : memref<?x3x!pme_frc, 1>
+        memref.store %fys, %f[%i, %i1] : memref<?x3x!pme_frc, 1>
+        memref.store %fzs, %f[%i, %i2] : memref<?x3x!pme_frc, 1>
+      }}
+    gpu.terminator
+  }}
 """
 
 
@@ -765,7 +962,7 @@ def main():
     here = os.path.dirname(os.path.abspath(__file__))
     path = os.path.join(here, "..", "lib", "Runtime", "Templates", "PMEGPU.mlir")
     with open(path, "w") as file:
-        file.write(HEADER + spread() + spread(fixed=False) + real() +
+        file.write(HEADER + spread() + spread(fixed=False) + spread_warp() + real() +
                    convolve() + scale() + gather())
 
 
