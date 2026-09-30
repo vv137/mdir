@@ -177,11 +177,11 @@ whole run as one function with nested loops:
 
 ```text
 the particles are put in the order of their positions      (D44)
-for each checkpoint interval           rstout_period steps
+for each checkpoint interval           checkpoint_interval steps
     the particles are put in order again
     neighbor structures start empty      (R1)
-    for each frame interval            crdout_period steps
-        for each energy interval       eneout_period steps
+    for each frame interval            trajectory_interval steps
+        for each energy interval       energy_interval steps
             for each step
                 one step of the integrator
             mdrt.write_energies
