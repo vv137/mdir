@@ -185,3 +185,47 @@ func.func @arguments(%x: !pos, %y: !pos, %n: index, %k: index,
   md_exec.permute %z, %o outs(%y : !pos) : !pos, !ord
   return
 }
+
+// -----
+
+!pos = memref<?x3xf64, 1>
+!frc = memref<?x3xf32, 1>
+!chg = memref<?xf32, 1>
+!ord = memref<?xi32, 1>
+!mod = memref<?x?xf64, 1>
+
+// Orbits of different lengths: %c stays, %a and %b swap. At the first
+// iteration %a and %c are distinct, at the second both are %g: every pair
+// of places in the two orbits counts, and the window is empty.
+//
+// CHECK-LABEL: func.func @orbits(
+// CHECK:         scf.for
+// CHECK:           md_exec.reciprocal {{.*}} {md_exec.side}
+// CHECK-NEXT:      md_exec.join
+// CHECK-NEXT:      md_exec.permute
+func.func @orbits(%n: index, %k: index, %steps: index, %cell: !md.cell) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %x = gpu.alloc (%n) : !pos
+  %q = gpu.alloc (%n) : !chg
+  %o = gpu.alloc (%n) : !ord
+  %m = gpu.alloc (%k, %k) : !mod
+  %f = gpu.alloc (%n) : !frc
+  %g = gpu.alloc (%n) : !frc
+  %h = gpu.alloc (%n) : !frc
+  %s0 = gpu.alloc (%k) : memref<?xi64, 1>
+  %s1 = gpu.alloc (%k) : memref<?xf32, 1>
+  %s2 = gpu.alloc (%k) : memref<?xf32, 1>
+  %s3 = gpu.alloc (%k) : memref<?xf64, 1>
+  %r:3 = scf.for %i = %c0 to %steps step %c1
+      iter_args(%a = %f, %b = %g, %c = %g) -> (!frc, !frc, !frc) {
+    %e, %w = md_exec.reciprocal %x, %q, %cell, %m outs(%c : !frc)
+        scratch(%s0, %s1, %s2, %s3 : memref<?xi64, 1>, memref<?xf32, 1>,
+                memref<?xf32, 1>, memref<?xf64, 1>)
+        grid([8, 8, 8]) order(4) beta(3.0) coulomb(138.935457644)
+        : !pos, !chg, !mod -> f64, vector<9xf64>
+    md_exec.permute %h, %o outs(%a : !frc) : !frc, !ord
+    scf.yield %b, %a, %c : !frc, !frc, !frc
+  }
+  return
+}

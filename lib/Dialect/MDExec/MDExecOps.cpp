@@ -36,6 +36,12 @@ static void printCoordinates(OpAsmPrinter &printer, Operation *,
 /// Returns true if `type` is a floating-point type of the execution level.
 static bool isReal(Type type) { return type.isF32() || type.isF64(); }
 
+bool mdir::md_exec::isValueFormType(Type type) {
+  return isa<mdir::md::FieldType, mdir::md::RelationType,
+             mdir::mdrt::CellsType, mdir::mdrt::PermutationType,
+             mdir::mdrt::IncidenceType, mdir::md::TableType>(type);
+}
+
 bool mdir::md_exec::isBufferType(Type type) {
   auto buffer = dyn_cast<MemRefType>(type);
   if (!buffer || buffer.getRank() < 1 || buffer.getRank() > 2 ||

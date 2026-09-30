@@ -701,16 +701,9 @@ static bool isDeviceType(Type type) {
   return buffer && buffer.getMemorySpace();
 }
 
-/// Returns true if `type` belongs to the value form: a field, or a
-/// structure that the storage form does not have.
-static bool isValueFormType(Type type) {
-  return isa<md::FieldType, md::RelationType, mdrt::CellsType,
-             mdrt::PermutationType, mdrt::IncidenceType, md::TableType>(type);
-}
-
 LogicalResult Lowering::lowerOp(Operation *op) {
-  if (llvm::any_of(op->getOperandTypes(), isValueFormType) ||
-      llvm::any_of(op->getResultTypes(), isValueFormType))
+  if (llvm::any_of(op->getOperandTypes(), md_exec::isValueFormType) ||
+      llvm::any_of(op->getResultTypes(), md_exec::isValueFormType))
     return op->emitOpError()
            << "is not in the storage form; run 'md-exec-assign-storage' "
               "first";
@@ -857,7 +850,7 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   SmallVector<Type> inputs, results;
   for (Type part : llvm::concat<const Type>(type.getInputs(),
                                             type.getResults())) {
-    if (isValueFormType(part))
+    if (md_exec::isValueFormType(part))
       return function.emitOpError()
              << "has " << part << " in its signature, which is not in the "
              << "storage form; run 'md-exec-assign-storage' first";

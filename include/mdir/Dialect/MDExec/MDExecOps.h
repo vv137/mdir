@@ -19,6 +19,10 @@
 namespace mdir {
 namespace md_exec {
 
+/// Returns true if `type` belongs to the value form: a field, or a
+/// structure that the storage form does not have.
+bool isValueFormType(mlir::Type type);
+
 /// Returns true if `type` is the type of a buffer that holds a field:
 /// `memref<?x3xT>` or `memref<?xT>`.
 bool isBufferType(mlir::Type type);

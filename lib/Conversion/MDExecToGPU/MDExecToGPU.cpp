@@ -109,6 +109,10 @@ public:
         tuplesOnce(tuplesOnce) {}
 
   LogicalResult run();
+  /// Returns true if `op`, an op inside it, or a function that it calls
+  /// may allocate or free memory of the device. A function of the runtime without a body
+  /// may, unless it was audited not to.
+  bool allocates(Operation *op);
 
 private:
   LogicalResult lowerFunction(func::FuncOp function);
@@ -1562,22 +1566,63 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
         getOrDeclare("mdrtSideEnd", builder.getFunctionType({}, {})),
         ValueRange());
     for (Operation *issued = begin->getNextNode(); issued != end;
-         issued = issued->getNextNode()) {
-      bool allocates = false;
-      issued->walk([&](Operation *nested) {
-        allocates |= isa<gpu::AllocOp, gpu::DeallocOp, memref::AllocOp,
-                         memref::DeallocOp>(nested);
-      });
-      if (allocates)
+         issued = issued->getNextNode())
+      if (allocates(issued))
         return op->emitOpError()
                << "allocates or frees memory on a second stream";
-    }
   }
   if (convolve) {
     op.getEnergy().replaceAllUsesWith(convolve.getResult(0));
     op.getVirial().replaceAllUsesWith(convolve.getResult(1));
   }
   return success();
+}
+
+/// The functions of the runtime without a body here that allocate and free
+/// nothing with the allocator of the runtime: the transforms of cuFFT,
+/// whose plans hold their work areas (runtime/mdrt_cuda.c).
+static bool isAuditedNotToAllocate(StringRef name) {
+  return name == "mdrtCudaFFTForward3D" || name == "mdrtCudaFFTBackward3D" ||
+         name == "mdrtCudaFFTForward3DF32" ||
+         name == "mdrtCudaFFTBackward3DF32";
+}
+
+bool Lowering::allocates(Operation *op) {
+  DenseSet<Operation *> seen;
+  SmallVector<Operation *> pending = {op};
+  while (!pending.empty()) {
+    Operation *next = pending.pop_back_val();
+    if (!seen.insert(next).second)
+      continue;
+    WalkResult result = next->walk([&](Operation *nested) {
+      // Memory of the host comes from malloc, which orders nothing on the
+      // device.
+      if (isa<gpu::AllocOp, gpu::DeallocOp>(nested))
+        return WalkResult::interrupt();
+      if (auto alloc = dyn_cast<memref::AllocOp>(nested))
+        if (alloc.getType().getMemorySpace())
+          return WalkResult::interrupt();
+      if (auto dealloc = dyn_cast<memref::DeallocOp>(nested))
+        if (dealloc.getMemref().getType().getMemorySpace())
+          return WalkResult::interrupt();
+      auto call = dyn_cast<func::CallOp>(nested);
+      if (!call)
+        return WalkResult::advance();
+      auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(
+          module, call.getCalleeAttr());
+      if (!callee)
+        return WalkResult::interrupt();
+      if (callee.isExternal())
+        return isAuditedNotToAllocate(callee.getName())
+                   ? WalkResult::advance()
+                   : WalkResult::interrupt();
+      pending.push_back(callee);
+      return WalkResult::advance();
+    });
+    if (result.wasInterrupted())
+      return true;
+  }
+  return false;
 }
 
 LogicalResult Lowering::getNeighbors(Operation *op, Value structure,
@@ -1910,17 +1955,10 @@ void Lowering::lowerPermute(md_exec::PermuteOp op) {
 // Ops and functions
 //===----------------------------------------------------------------------===//
 
-/// Returns true if `type` belongs to the value form: a field, or a
-/// structure that the storage form does not have.
-static bool isValueFormType(Type type) {
-  return isa<md::FieldType, md::RelationType, mdrt::CellsType,
-             mdrt::PermutationType, mdrt::IncidenceType, md::TableType>(type);
-}
-
 LogicalResult Lowering::lowerOp(Operation *op) {
   setPurpose(op);
-  if (llvm::any_of(op->getOperandTypes(), isValueFormType) ||
-      llvm::any_of(op->getResultTypes(), isValueFormType))
+  if (llvm::any_of(op->getOperandTypes(), md_exec::isValueFormType) ||
+      llvm::any_of(op->getResultTypes(), md_exec::isValueFormType))
     return op->emitOpError()
            << "is not in the storage form; run 'md-exec-assign-storage' "
               "first";
@@ -2198,7 +2236,7 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   SmallVector<Type> inputs, results;
   for (Type part : llvm::concat<const Type>(type.getInputs(),
                                             type.getResults())) {
-    if (isValueFormType(part))
+    if (md_exec::isValueFormType(part))
       return function.emitOpError()
              << "has " << part << " in its signature, which is not in the "
              << "storage form; run 'md-exec-assign-storage' first";

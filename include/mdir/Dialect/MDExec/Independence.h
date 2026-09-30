@@ -35,11 +35,11 @@ namespace md_exec {
 /// value, and those that the iterations yield. What cannot be traced has
 /// no roots that are known, and may be any memory.
 ///
-/// Two arguments carried by one loop that are the values of distinct
-/// allocations at the start, and that each iteration permutes, are distinct
-/// at every iteration: by induction, after k iterations they are the
-/// initial values at pi^k(i) and pi^k(j), which differ because the
-/// permutation pi is a bijection.
+/// Two arguments i and j carried by one loop whose iterations permute its
+/// arguments by pi are, after k iterations, the initial values at pi^k(i)
+/// and pi^k(j), which are distinct places as pi is a bijection. So the two
+/// are distinct memory at every iteration if the initial values at every
+/// two distinct places of the orbits of i and of j are.
 class BufferAliases {
 public:
   /// Returns true if `a` and `b` may be the same memory, or overlap.

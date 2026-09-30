@@ -174,8 +174,8 @@ bool BufferAliases::mayAlias(Value a, Value b) {
   if (a == b)
     return true;
 
-  // Two arguments carried by one loop that permutes them, which begin as
-  // distinct memory, are distinct at every iteration.
+  // Two arguments carried by one loop that permutes them are distinct at
+  // every iteration when the initial values they may take at once are.
   auto getCarried = [](Value value) -> std::pair<Operation *, unsigned> {
     if (auto argument = dyn_cast<BlockArgument>(value))
       if (auto like = dyn_cast<LoopLikeOpInterface>(
@@ -195,15 +195,24 @@ bool BufferAliases::mayAlias(Value a, Value b) {
     auto like = cast<LoopLikeOpInterface>(loopA);
     if (std::optional<SmallVector<unsigned>> permutation =
             getPermutation(loopA)) {
-      // Every pair of initial values that the two may be at once.
+      // After k iterations the two are the initial values at pi^k(i) and
+      // pi^k(j), which differ: every pair of distinct places in the orbits
+      // of i and of j (the orbits may differ in length, so pairs further
+      // than one turn of the shorter matter too).
+      auto getOrbit = [&](unsigned start) {
+        SmallVector<unsigned> orbit;
+        unsigned k = start;
+        do {
+          orbit.push_back(k);
+          k = (*permutation)[k];
+        } while (k != start);
+        return orbit;
+      };
       bool distinct = true;
-      unsigned m = i, n = j;
-      do {
-        distinct &= !mayAlias(like.getInitsMutable()[m].get(),
-                              like.getInitsMutable()[n].get());
-        m = (*permutation)[m];
-        n = (*permutation)[n];
-      } while (distinct && m != i);
+      for (unsigned m : getOrbit(i))
+        for (unsigned n : getOrbit(j))
+          distinct &= m == n || !mayAlias(like.getInitsMutable()[m].get(),
+                                          like.getInitsMutable()[n].get());
       if (distinct)
         return false;
     }
@@ -228,7 +237,7 @@ static bool hasValueForm(Operation *op) {
   op->walk([&](Operation *nested) {
     for (Type type : llvm::concat<Type>(nested->getOperandTypes(),
                                         nested->getResultTypes()))
-      found |= isa<md::FieldType, md::RelationType>(type);
+      found |= isValueFormType(type);
   });
   return found;
 }
