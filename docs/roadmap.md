@@ -62,6 +62,10 @@ A paper that describes MDIR and what the first milestone shows, written
 when the milestone ends and the rates reach 90% of GROMACS across the
 systems:
 
+- A section of notation at the front (TODO): the symbols of positions,
+  cells, images and their shifts, forces, the virial and its sign, units,
+  and the types of the precision modes, fixed before the chapters and used
+  in all of them.
 - Every method that MDIR implements, with its equations as implemented
   (TODO: keep the design documents complete in TeX as features land).
 - The design: the levels of the IR (`md`, `dyn`, `md_exec`), compilation of
