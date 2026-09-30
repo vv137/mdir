@@ -385,6 +385,16 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %bz_f_d0 = arith.mulf %bz_f_div, %bz_f_omw : !pme_real
       %bz_f_bottom = arith.mulf %bz_f_d0, %bz_f_first : !pme_real
       memref.store %bz_f_bottom, %wz[%bz_c0] : memref<8x!pme_real>
+      %w3p_none = arith.constant 0.0 : !pme_real
+      %w3p_c0 = arith.constant 0 : index
+      %w3p_c1 = arith.constant 1 : index
+      %w3p_value = scf.for %w3p_e = %w3p_c0 to %order step %w3p_c1
+          iter_args(%w3p_acc = %w3p_none) -> (!pme_real) {
+        %w3p_at = memref.load %wz[%w3p_e] : memref<8x!pme_real>
+        %w3p_here = arith.cmpi eq, %w3p_e, %j3 : index
+        %w3p_chosen = arith.select %w3p_here, %w3p_at, %w3p_acc : !pme_real
+        scf.yield %w3p_chosen : !pme_real
+      }
       %scale = arith.constant 1099511627776.0 : !pme_real
       %qscaled = arith.mulf %qi, %scale : !pme_real
       %eight = arith.constant 8 : i64
@@ -399,8 +409,7 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %g3w = arith.subi %g3s, %k3 : index
       %g3over = arith.cmpi uge, %g3s, %k3 : index
       %g3 = arith.select %g3over, %g3w, %g3s : index
-      %w3 = memref.load %wz[%j3] : memref<8x!pme_real>
-      %q3 = arith.mulf %qscaled, %w3 : !pme_real
+      %q3 = arith.mulf %qscaled, %w3p_value : !pme_real
       scf.for %j1 = %j0 to %order step %j1c {
         %g1s = arith.addi %px_start, %j1 : index
         %g1w = arith.subi %g1s, %k1 : index
@@ -785,6 +794,16 @@ func.func private @mdrt_gpu_pme_spread_float(%x: memref<?x3x!pme_pos, 1>, %q: me
       %bz_f_d0 = arith.mulf %bz_f_div, %bz_f_omw : !pme_real
       %bz_f_bottom = arith.mulf %bz_f_d0, %bz_f_first : !pme_real
       memref.store %bz_f_bottom, %wz[%bz_c0] : memref<8x!pme_real>
+      %w3p_none = arith.constant 0.0 : !pme_real
+      %w3p_c0 = arith.constant 0 : index
+      %w3p_c1 = arith.constant 1 : index
+      %w3p_value = scf.for %w3p_e = %w3p_c0 to %order step %w3p_c1
+          iter_args(%w3p_acc = %w3p_none) -> (!pme_real) {
+        %w3p_at = memref.load %wz[%w3p_e] : memref<8x!pme_real>
+        %w3p_here = arith.cmpi eq, %w3p_e, %j3 : index
+        %w3p_chosen = arith.select %w3p_here, %w3p_at, %w3p_acc : !pme_real
+        scf.yield %w3p_chosen : !pme_real
+      }
       %scale = arith.constant 1.0 : !pme_real
       %qscaled = arith.mulf %qi, %scale : !pme_real
       %eight = arith.constant PME_REAL_BYTES : i64
@@ -799,8 +818,7 @@ func.func private @mdrt_gpu_pme_spread_float(%x: memref<?x3x!pme_pos, 1>, %q: me
       %g3w = arith.subi %g3s, %k3 : index
       %g3over = arith.cmpi uge, %g3s, %k3 : index
       %g3 = arith.select %g3over, %g3w, %g3s : index
-      %w3 = memref.load %wz[%j3] : memref<8x!pme_real>
-      %q3 = arith.mulf %qscaled, %w3 : !pme_real
+      %q3 = arith.mulf %qscaled, %w3p_value : !pme_real
       scf.for %j1 = %j0 to %order step %j1c {
         %g1s = arith.addi %px_start, %j1 : index
         %g1w = arith.subi %g1s, %k1 : index
@@ -1121,6 +1139,9 @@ func.func private @mdrt_gpu_pme_scale(%c: memref<?x!pme_real, 1>, %moduli: memre
   %ilx = arith.divf %unit, %lx : f64
   %ily = arith.divf %unit, %ly : f64
   %ilz = arith.divf %unit, %lz : f64
+  %ilxr = PME_F64_TO_REAL %ilx : f64 to !pme_real
+  %ilyr = PME_F64_TO_REAL %ily : f64 to !pme_real
+  %ilzr = PME_F64_TO_REAL %ilz : f64 to !pme_real
   %blocks_points = func.call @mdrt_gpu_pme_blocks(%points) : (index) -> index
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_points, %gy = %c1, %gz = %c1)
              threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
@@ -1149,33 +1170,34 @@ func.func private @mdrt_gpu_pme_scale(%c: memref<?x!pme_real, 1>, %moduli: memre
       %w1_beyond = arith.cmpi ugt, %a, %w1_half : index
       %w1_shifted = arith.subi %w1_ki, %w1_ni : i64
       %w1_signed = arith.select %w1_beyond, %w1_shifted, %w1_ki : i64
-      %w1_sf = arith.sitofp %w1_signed : i64 to f64
-      %w1_m = arith.mulf %w1_sf, %ilx : f64
+      %w1_sf = arith.sitofp %w1_signed : i64 to !pme_real
+      %w1_m = arith.mulf %w1_sf, %ilxr : !pme_real
       %w2_half = arith.divui %k2, %cc2 : index
       %w2_ki = arith.index_cast %b : index to i64
       %w2_ni = arith.index_cast %k2 : index to i64
       %w2_beyond = arith.cmpi ugt, %b, %w2_half : index
       %w2_shifted = arith.subi %w2_ki, %w2_ni : i64
       %w2_signed = arith.select %w2_beyond, %w2_shifted, %w2_ki : i64
-      %w2_sf = arith.sitofp %w2_signed : i64 to f64
-      %w2_m = arith.mulf %w2_sf, %ily : f64
-      %m1s = arith.mulf %w1_m, %w1_m : f64
-      %m2s = arith.mulf %w2_m, %w2_m : f64
-      %m12 = arith.addf %m1s, %m2s : f64
+      %w2_sf = arith.sitofp %w2_signed : i64 to !pme_real
+      %w2_m = arith.mulf %w2_sf, %ilyr : !pme_real
+      %m1s = arith.mulf %w1_m, %w1_m : !pme_real
+      %m2s = arith.mulf %w2_m, %w2_m : !pme_real
+      %m12 = arith.addf %m1s, %m2s : !pme_real
+      // The influence function in !pme_real, f32 in the mixed mode: the
+      // transform holds no more than that, and f64 is slow on a device.
       %mod1 = memref.load %moduli[%cc0, %a] : memref<?x?xf64, 1>
       %mod2 = memref.load %moduli[%cc1, %b] : memref<?x?xf64, 1>
-      %mod12 = arith.mulf %mod1, %mod2 : f64
-      %zi = arith.index_cast %z : index to i64
-      %zf = arith.sitofp %zi : i64 to f64
-      %m3 = arith.mulf %zf, %ilz : f64
       %mod3 = memref.load %moduli[%cc2, %z] : memref<?x?xf64, 1>
-      %m3s = arith.mulf %m3, %m3 : f64
-      %msq = arith.addf %m12, %m3s : f64
-      %mods = arith.mulf %mod12, %mod3 : f64
-      // The influence function in !pme_real: the exponential is most of the
-      // work, and in f32 it is what the transform holds anyway.
-      %msqr = PME_F64_TO_REAL %msq : f64 to !pme_real
-      %modsr = PME_F64_TO_REAL %mods : f64 to !pme_real
+      %mod1r = PME_F64_TO_REAL %mod1 : f64 to !pme_real
+      %mod2r = PME_F64_TO_REAL %mod2 : f64 to !pme_real
+      %mod3r = PME_F64_TO_REAL %mod3 : f64 to !pme_real
+      %mod12 = arith.mulf %mod1r, %mod2r : !pme_real
+      %modsr = arith.mulf %mod12, %mod3r : !pme_real
+      %zi = arith.index_cast %z : index to i64
+      %zf = arith.sitofp %zi : i64 to !pme_real
+      %m3 = arith.mulf %zf, %ilzr : !pme_real
+      %m3s = arith.mulf %m3, %m3 : !pme_real
+      %msqr = arith.addf %m12, %m3s : !pme_real
       %rzero = arith.constant 0.0 : !pme_real
       %rone = arith.constant 1.0 : !pme_real
       %origin = arith.cmpf oeq, %msqr, %rzero : !pme_real

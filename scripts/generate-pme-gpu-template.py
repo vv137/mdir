@@ -203,6 +203,24 @@ def particle_prologue(body, slopes):
     return starts
 
 
+def pick(body, p, array, index):
+    """The element `index` of the spline `array`, a value held in registers:
+    compared with every place, so that no load has an index that is not a
+    constant once the loop over the order unrolls."""
+    body(f"""\
+%{p}none = arith.constant 0.0 : !pme_real
+%{p}c0 = arith.constant 0 : index
+%{p}c1 = arith.constant 1 : index
+%{p}value = scf.for %{p}e = %{p}c0 to %order step %{p}c1
+    iter_args(%{p}acc = %{p}none) -> (!pme_real) {{
+  %{p}at = memref.load {array}[%{p}e] : memref<8x!pme_real>
+  %{p}here = arith.cmpi eq, %{p}e, {index} : index
+  %{p}chosen = arith.select %{p}here, %{p}at, %{p}acc : !pme_real
+  scf.yield %{p}chosen : !pme_real
+}}""")
+    return f"%{p}value"
+
+
 def launch(body_text, count):
     return f"""\
   %blocks_{count[1:]} = func.call @mdrt_gpu_pme_blocks({count}) : (index) -> index
@@ -228,6 +246,7 @@ def spread(fixed=True):
 %i = arith.divui %item, %lanes : index
 %j3 = arith.remui %item, %lanes : index""")
     sx, sy, sz = particle_prologue(body, slopes=False)
+    w3 = pick(body, "w3p_", "%wz", "%j3")
     rounded_line = ("      %rounded = math.roundeven %value : !pme_real" if fixed else "")
     fixed_line = ("      %fixed = arith.fptosi %rounded : !pme_real to i64" if fixed else "")
     if fixed:
@@ -253,8 +272,7 @@ def spread(fixed=True):
 %g3w = arith.subi %g3s, %k3 : index
 %g3over = arith.cmpi uge, %g3s, %k3 : index
 %g3 = arith.select %g3over, %g3w, %g3s : index
-%w3 = memref.load %wz[%j3] : memref<8x!pme_real>
-%q3 = arith.mulf %qscaled, %w3 : !pme_real
+%q3 = arith.mulf %qscaled, {w3} : !pme_real
 scf.for %j1 = %j0 to %order step %j1c {{
   %g1s = arith.addi {sx}, %j1 : index
   %g1w = arith.subi %g1s, %k1 : index
@@ -339,9 +357,9 @@ func.func private @mdrt_gpu_pme_real(%grid: memref<?xi64, 1>, %real: memref<?x!p
 """
 
 
-def wave(body, p, k, count, length):
+def wave(body, p, k, count, length, real="f64"):
     """The wave number of the point `k` of `count` along an edge, signed,
-    over the edge; `length` is one over the edge."""
+    over the edge; `length` is one over the edge, of the type `real`."""
     body(f"""\
 %{p}half = arith.divui {count}, %cc2 : index
 %{p}ki = arith.index_cast {k} : index to i64
@@ -349,8 +367,8 @@ def wave(body, p, k, count, length):
 %{p}beyond = arith.cmpi ugt, {k}, %{p}half : index
 %{p}shifted = arith.subi %{p}ki, %{p}ni : i64
 %{p}signed = arith.select %{p}beyond, %{p}shifted, %{p}ki : i64
-%{p}sf = arith.sitofp %{p}signed : i64 to f64
-%{p}m = arith.mulf %{p}sf, {length} : f64""")
+%{p}sf = arith.sitofp %{p}signed : i64 to {real}
+%{p}m = arith.mulf %{p}sf, {length} : {real}""")
     return f"%{p}m"
 
 
@@ -559,26 +577,27 @@ def scale():
 %z = arith.index_cast %z32 : i32 to index
 %a = arith.index_cast %a32 : i32 to index
 %b = arith.index_cast %b32 : i32 to index""")
-    m1 = wave(body, "w1_", "%a", "%k1", "%ilx")
-    m2 = wave(body, "w2_", "%b", "%k2", "%ily")
+    m1 = wave(body, "w1_", "%a", "%k1", "%ilxr", "!pme_real")
+    m2 = wave(body, "w2_", "%b", "%k2", "%ilyr", "!pme_real")
     body(f"""\
-%m1s = arith.mulf {m1}, {m1} : f64
-%m2s = arith.mulf {m2}, {m2} : f64
-%m12 = arith.addf %m1s, %m2s : f64
+%m1s = arith.mulf {m1}, {m1} : !pme_real
+%m2s = arith.mulf {m2}, {m2} : !pme_real
+%m12 = arith.addf %m1s, %m2s : !pme_real
+// The influence function in !pme_real, f32 in the mixed mode: the
+// transform holds no more than that, and f64 is slow on a device.
 %mod1 = memref.load %moduli[%cc0, %a] : memref<?x?xf64, 1>
 %mod2 = memref.load %moduli[%cc1, %b] : memref<?x?xf64, 1>
-%mod12 = arith.mulf %mod1, %mod2 : f64
-%zi = arith.index_cast %z : index to i64
-%zf = arith.sitofp %zi : i64 to f64
-%m3 = arith.mulf %zf, %ilz : f64
 %mod3 = memref.load %moduli[%cc2, %z] : memref<?x?xf64, 1>
-%m3s = arith.mulf %m3, %m3 : f64
-%msq = arith.addf %m12, %m3s : f64
-%mods = arith.mulf %mod12, %mod3 : f64
-// The influence function in !pme_real: the exponential is most of the
-// work, and in f32 it is what the transform holds anyway.
-%msqr = PME_F64_TO_REAL %msq : f64 to !pme_real
-%modsr = PME_F64_TO_REAL %mods : f64 to !pme_real
+%mod1r = PME_F64_TO_REAL %mod1 : f64 to !pme_real
+%mod2r = PME_F64_TO_REAL %mod2 : f64 to !pme_real
+%mod3r = PME_F64_TO_REAL %mod3 : f64 to !pme_real
+%mod12 = arith.mulf %mod1r, %mod2r : !pme_real
+%modsr = arith.mulf %mod12, %mod3r : !pme_real
+%zi = arith.index_cast %z : index to i64
+%zf = arith.sitofp %zi : i64 to !pme_real
+%m3 = arith.mulf %zf, %ilzr : !pme_real
+%m3s = arith.mulf %m3, %m3 : !pme_real
+%msqr = arith.addf %m12, %m3s : !pme_real
 %rzero = arith.constant 0.0 : !pme_real
 %rone = arith.constant 1.0 : !pme_real
 %origin = arith.cmpf oeq, %msqr, %rzero : !pme_real
@@ -632,6 +651,9 @@ func.func private @mdrt_gpu_pme_scale(%c: memref<?x!pme_real, 1>, %moduli: memre
   %ilx = arith.divf %unit, %lx : f64
   %ily = arith.divf %unit, %ly : f64
   %ilz = arith.divf %unit, %lz : f64
+  %ilxr = PME_F64_TO_REAL %ilx : f64 to !pme_real
+  %ilyr = PME_F64_TO_REAL %ily : f64 to !pme_real
+  %ilzr = PME_F64_TO_REAL %ilz : f64 to !pme_real
 {launch(body.text(), "%points")}  return
 }}
 """
