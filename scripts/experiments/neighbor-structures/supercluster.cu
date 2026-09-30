@@ -53,7 +53,9 @@ __device__ __forceinline__ void pairForce(float3 xi, float qi, int ti, float3 xj
                                           float3 L, float3 iL, const float *A, const float *B, int nt,
                                           float3 &f) {
   float dx = xi.x - xj.x, dy = xi.y - xj.y, dz = xi.z - xj.z;
+#ifndef NO_IMAGE
   dx -= L.x * rintf(dx * iL.x); dy -= L.y * rintf(dy * iL.y); dz -= L.z * rintf(dz * iL.z);
+#endif
   float r2 = dx*dx + dy*dy + dz*dz;
   if (r2 < RC * RC) {
     float ri = rsqrtf(r2), r2i = ri * ri, r6i = r2i * r2i * r2i;
@@ -61,7 +63,16 @@ __device__ __forceinline__ void pairForce(float3 xi, float qi, int ti, float3 xj
     float r = r2 * ri;
     float fs = (12.f * a * r6i - 6.f * b) * r6i * r2i;
     float br = BETA * r;
+#ifdef FAST_ERFC
+    // erfc(x) = t (a1 + t (a2 + t (a3 + t (a4 + t a5)))) exp(-x^2), t = 1 / (1 + p x)
+    // (Abramowitz and Stegun 7.1.26); the exponential is that of the force.
+    float ex = __expf(-br * br);
+    float t = __frcp_rn(1.f + 0.3275911f * br);
+    float poly = t * (0.254829592f + t * (-0.284496736f + t * (1.421413741f + t * (-1.453152027f + t * 1.061405429f))));
+    fs += qi * qj * (poly * ri + 1.1283792f * BETA) * ex * r2i;
+#else
     fs += qi * qj * (erfcf(br) * ri + 1.1283792f * BETA * __expf(-br * br)) * r2i;
+#endif
     f.x += fs * dx; f.y += fs * dy; f.z += fs * dz;
   }
 }
@@ -206,6 +217,50 @@ __global__ void groupKernel(int Gn, const int *rowStart, const int *entSlot, con
   }
   float *a = force + 3 * (32 * g + lane);
   atomicAdd(a, fi.x); atomicAdd(a + 1, fi.y); atomicAdd(a + 2, fi.z);
+}
+
+// Groups of 16, as pmemd.cuda arranges them (lanes 0-15 and 16-31 hold the
+// same 16 particles i; each lane takes one of 32 particles j of a chunk,
+// which turn within their half-warp, 16 steps a chunk): entries carry a
+// mask of 16 bits over the particles i.
+__global__ void group16Kernel(int Gn, const int *rowStart, const int *entSlot, const unsigned *entMask,
+                              const float4 *slots, const int *slotType, const float *A, const float *B,
+                              int nt, float3 L, float3 iL, float *force) {
+  int g = blockIdx.x * (blockDim.x / 32) + threadIdx.x / 32;
+  if (g >= Gn) return;
+  int lane = threadIdx.x % 32, u = lane & 15, half = lane & 16;
+  float4 pi = slots[16 * g + u];
+  float3 xi = make_float3(pi.x, pi.y, pi.z); int ti = slotType[16 * g + u];
+  float3 fi = {0, 0, 0};
+  int end = rowStart[g + 1];
+  int src = half | ((u + 15) & 15);
+  for (int e0 = rowStart[g]; e0 < end; e0 += 32) {
+    int e = e0 + lane;
+    int js = e < end ? entSlot[e] : -1;
+    unsigned m = e < end ? entMask[e] : 0u;
+    float4 pj = js >= 0 ? slots[js] : make_float4(0, 0, 0, 0);
+    int tj = js >= 0 ? slotType[js] : 0;
+    float3 fj = {0, 0, 0};
+#pragma unroll 2
+    for (int step = 0; step < 16; ++step) {
+      if (m >> u & 1u) {
+        float3 f = {0, 0, 0};
+        pairForce(xi, pi.w, ti, make_float3(pj.x, pj.y, pj.z), pj.w, tj, L, iL, A, B, nt, f);
+        fi.x += f.x; fi.y += f.y; fi.z += f.z;
+        fj.x -= f.x; fj.y -= f.y; fj.z -= f.z;
+      }
+      pj.x = __shfl_sync(0xffffffff, pj.x, src); pj.y = __shfl_sync(0xffffffff, pj.y, src);
+      pj.z = __shfl_sync(0xffffffff, pj.z, src); pj.w = __shfl_sync(0xffffffff, pj.w, src);
+      tj = __shfl_sync(0xffffffff, tj, src); m = __shfl_sync(0xffffffff, m, src);
+      fj.x = __shfl_sync(0xffffffff, fj.x, src); fj.y = __shfl_sync(0xffffffff, fj.y, src);
+      fj.z = __shfl_sync(0xffffffff, fj.z, src);
+    }
+    if (js >= 0) { float *a = force + 3 * js; atomicAdd(a, fj.x); atomicAdd(a + 1, fj.y); atomicAdd(a + 2, fj.z); }
+  }
+  fi.x += __shfl_xor_sync(0xffffffff, fi.x, 16);
+  fi.y += __shfl_xor_sync(0xffffffff, fi.y, 16);
+  fi.z += __shfl_xor_sync(0xffffffff, fi.z, 16);
+  if (!half) { float *a = force + 3 * (16 * g + u); atomicAdd(a, fi.x); atomicAdd(a + 1, fi.y); atomicAdd(a + 2, fi.z); }
 }
 
 int main(int argc, char **argv) {
@@ -360,6 +415,35 @@ int main(int argc, char **argv) {
   size_t gChunks = 0; for (int gi = 0; gi < Gn; ++gi) gChunks += (gStart[gi+1] - gStart[gi] + 31) / 32;
   printf("groups %d, entries %zu (%.1f per group), slots %zu, within the cutoff %.1f%% of the slots\n",
          Gn, gEnt.size(), (double)gEnt.size() / Gn, gChunks * 1024, 100.0 * gSlotsWithin / (gChunks * 1024.0));
+
+  // The groups of 16: two clusters in a row.
+  int G16 = C / 2;
+  std::vector<int> hStart(G16 + 1, 0), hEnt; std::vector<unsigned> hMask;
+  size_t hWithin = 0, hChunks = 0;
+  for (int gi = 0; gi < G16; ++gi) {
+    int s = gi / 4;
+    unsigned mine = 0x3u << (2 * (gi % 4));
+    std::vector<int> cand;
+    for (int e = rowStart[s]; e < rowStart[s + 1]; ++e)
+      if (entImask[e] & mine) cand.push_back(entCluster[e]);
+    for (int cj : cand) for (int v = 0; v < 8; ++v) {
+      int slot = cj * 8 + v, j = members[slot]; if (j < 0) continue;
+      if (slot / 16 < gi) continue;
+      unsigned mk = 0, all = 0;
+      for (int k = 0; k < 16; ++k) { int islot = 16 * gi + k, i = members[islot]; if (i < 0) continue;
+        if (slot / 16 == gi && slot <= islot) continue;
+        if (excluded(i, j)) continue;
+        all |= 1u << k; double d2 = dist2(i, j);
+        if (d2 <= R2) mk |= 1u << k;
+        if (d2 < RC * RC) ++hWithin; }
+      if (!mk) continue;
+      hEnt.push_back(slot); hMask.push_back(all);
+    }
+    hStart[gi + 1] = hEnt.size();
+    hChunks += (hStart[gi + 1] - hStart[gi] + 31) / 32;
+  }
+  printf("groups of 16 %d, entries %zu (%.1f per group), slots %zu, within the cutoff %.1f%% of the slots\n",
+         G16, hEnt.size(), (double)hEnt.size() / G16, hChunks * 512, 100.0 * hWithin / (hChunks * 512.0));
   // The matrix, full, in the order of the slots, for the reference.
   std::vector<int> order; for (int i : members) if (i >= 0) order.push_back(i);
   std::vector<int> place(n); for (int p = 0; p < n; ++p) place[order[p]] = p;
@@ -425,6 +509,18 @@ int main(int argc, char **argv) {
     for (int s = 0; s < 8 * C; ++s) { int i = members[s]; if (i < 0) continue; int p = place[i];
       for (int k = 0; k < 3; ++k) { double d = f1[3*p+k] - f2[3*s+k]; num += d * d; den += (double)f1[3*p+k] * f1[3*p+k]; } }
     printf("groups: relative difference of the forces %.2e\n", std::sqrt(num / den));
+    int *dhs = up(hStart), *dhe = up(hEnt); unsigned *dhm = up(hMask);
+    for (int warps : {1, 4}) {
+      double th = time([&] { cudaMemsetAsync(df2, 0, 12 * 8 * C);
+        group16Kernel<<<(G16 + warps - 1) / warps, 32 * warps>>>(G16, dhs, dhe, dhm, dslots, dstype, dA, dB, ntypes, L, iL, df2); });
+      printf("reach %.2f: groups of 16, %d warps a block (with the clearing): %.1f us\n", REACH, warps, th);
+      printf("csv,pairs,groups of 16 half %d warps,%.2f,,%.2f\n", warps, REACH, th);
+    }
+    cudaMemcpy(f2.data(), df2, 12 * 8 * C, cudaMemcpyDeviceToHost);
+    num = 0;
+    for (int s = 0; s < 8 * C; ++s) { int i = members[s]; if (i < 0) continue; int p = place[i];
+      for (int k = 0; k < 3; ++k) { double d = f1[3*p+k] - f2[3*s+k]; num += d * d; } }
+    printf("groups of 16: relative difference of the forces %.2e\n", std::sqrt(num / den));
   }
   double ts4 = time([&] { cudaMemsetAsync(df2, 0, 12 * 8 * C);
     superKernel<<<(S + 3) / 4, 128>>>(S, drow, dent, dim, dem, dmasks, dslots, dstype, dA, dB, ntypes, L, iL, df2); });

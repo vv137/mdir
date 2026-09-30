@@ -108,3 +108,25 @@ warp a particle 351 and 393; a warp a particle into bricks 257 and 278. The
 weights of the particles take 142 µs written as a structure a particle and
 52 by component; the whole, from the positions, 329 µs. In MDIR the three
 kernels take 367 µs a step (docs/pme-m1.md).
+
+### Groups of 16 (2026-10-01)
+
+After reading how pmemd.cuda arranges its loop (groups of 16 particles
+sharing a list of particles j, the two halves of a warp holding the same
+16 and turning 16 of the 32 j each; an erfc from a table), `supercluster`
+gained groups of 16 and, with `-DFAST_ERFC`, an erfc that shares the
+exponential of the force (Abramowitz and Stegun 7.1.26). Cellulose, reach
+9 Å, GPU 1:
+
+| Loop | µs | Entries | Slots within the cutoff |
+|---|---|---|---|
+| Matrix | 1245 to 1267 | 128.7 million | |
+| Groups of 32, erfcf | 1668 | 5.8 million | 23 % |
+| Groups of 32, cheaper erfc | 1283 to 1300 | | |
+| Groups of 16, cheaper erfc | 1013 | 8.8 million | 30 % |
+| pmemd.cuda | 886 | | |
+
+The cheaper erfc does not change the matrix, which is bound by its index,
+and gains 22 % on the groups, which are bound by their arithmetic; leaving
+out the minimum image gains 2 % more. A list of groups holds a fifteenth of
+the entries of the matrix, which a build writes.
