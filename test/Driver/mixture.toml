@@ -37,12 +37,12 @@
 # MODULE-NEXT:       %masses: memref<?xf64>, %b_epsilon: memref<?xf64>, %b_sigma: memref<?xf64>,
 
 [input]
-pdbfile = "Inputs/mixture.pdb"
+coordinates = "Inputs/mixture.pdb"
 
 [energy]
-switchdist   = 7.5
-cutoffdist   = 9.0
-pairlistdist = 10.0
+switch_distance = 7.5
+cutoff       = 9.0
+pairlist_distance = 10.0
 
 [[energy.pair]]
 name       = "lj"
@@ -62,17 +62,17 @@ epsilon = 0.3253
 sigma   = 3.65
 
 [dynamics]
-integrator    = "VVER"
-timestep      = 0.004
-nsteps        = 200
-eneout_period = 50
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.004
+steps         = 200
 
 [ensemble]
 ensemble    = "NVE"
 temperature = 120.0
 
 [boundary]
-type       = "PBC"
-box_size_x = 23.2
-box_size_y = 23.2
-box_size_z = 23.2
+type       = "PERIODIC"
+box = [23.2, 23.2, 23.2]
+
+[output]
+energy_interval = 50

@@ -26,30 +26,32 @@
 
 #--- run.toml
 [input]
-prmtopfile = "opc.prmtop"
-ambcrdfile = "opc.inpcrd"
+topology   = "opc.prmtop"
+coordinates = "opc.inpcrd"
 
+[output]
+energy_interval = 0
 [energy]
-cutoffdist    = 9.0
-pairlistdist  = 10.0
-electrostatic = "PME"
-pme_alpha     = 0.347045919371208278
-pme_ngrid_x   = 30
-pme_ngrid_y   = 30
-pme_ngrid_z   = 24
-pme_nspline   = 4
-pme_influence = "OPTIMAL"
+cutoff        = 9.0
+pairlist_distance = 10.0
+electrostatics = "PME"
+
+[pme]
+beta = 0.347045919371208278
+order = 4
+influence = "OPTIMAL"
+grid = [30, 30, 24]
+
 
 [dynamics]
-integrator    = "VVER"
-timestep      = 0.0005
-nsteps        = 0
-eneout_period = 0
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.0005
+steps         = 0
 
 [ensemble]
 ensemble    = "NVE"
 temperature = 300.0
 
 [boundary]
-type = "PBC"
+type = "PERIODIC"
 #--- end

@@ -8,19 +8,20 @@
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/amber-opc.test | sed '1d;$d' \
-# RUN:     | sed -e 's|nsteps        = 10|nsteps = 40|' \
-# RUN:           -e 's|eneout_period = 10|eneout_period = 10\nrstout_period = 10|' \
+# RUN:     | sed -e 's|^steps *= 10|steps = 40|' \
+# RUN:           -e 's|energy_interval = 10|energy_interval = 10\ncheckpoint_interval = 10|' \
 # RUN:     > %t/on.toml
-# RUN: printf '[output]\nrstfile = "on.h5"\n[execution]\nreorder = true\n' >> %t/on.toml
-# RUN: sed -e 's|reorder = true|reorder = false|' -e 's|on.h5|off.h5|' %t/on.toml > %t/off.toml
+# RUN: sed -i 's|^\[output\]$|[output]\ncheckpoint = "on.h5"|' %t/on.toml
+# RUN: printf '[execution]\nspatial_order = true\n' >> %t/on.toml
+# RUN: sed -e 's|spatial_order = true|spatial_order = false|' -e 's|on.h5|off.h5|' %t/on.toml > %t/off.toml
 # RUN: mdir run %t/on.toml | FileCheck %s
 # RUN: mdir run %t/off.toml | FileCheck %s
 # RUN: not mdir checkpoint %t/on.h5 %t/off.h5 | FileCheck %s --check-prefix=STATES
 
 # The same with the waters rigid: the members of SETTLE are renumbered too.
 #
-# RUN: printf '[constraints]\nfast_water = true\n' >> %t/on.toml
-# RUN: printf '[constraints]\nfast_water = true\n' >> %t/off.toml
+# RUN: printf '[constraints]\nrigid_water = true\n' >> %t/on.toml
+# RUN: printf '[constraints]\nrigid_water = true\n' >> %t/off.toml
 # RUN: mdir run %t/on.toml | FileCheck %s --check-prefix=RIGID
 # RUN: mdir run %t/off.toml | FileCheck %s --check-prefix=RIGID
 # RUN: not mdir checkpoint %t/on.h5 %t/off.h5 | FileCheck %s --check-prefix=STATES

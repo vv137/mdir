@@ -27,24 +27,26 @@
 # MODULE:          %q = arith.mulf %q_i, %q_j : f64
 
 [input]
-pdbfile = "Inputs/mixture.pdb"
+coordinates = "Inputs/mixture.pdb"
 
+[output]
+energy_interval = 10
 [energy]
-cutoffdist   = 9.0
-pairlistdist = 10.0
+cutoff       = 9.0
+pairlist_distance = 10.0
 
 [[energy.pair]]
 name            = "lj"
 expression      = "4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
 mixing          = "lorentz-berthelot"
-dispersion_corr = "EPRESS"
+dispersion_correction = "ENERGY_PRESSURE"
 
 [[energy.pair]]
 name       = "coulomb"
 expression = "coulomb*q/r"
 mixing     = { q = "product" }
 
-[[energy.nbfix]]
+[[energy.pair_override]]
 pair    = "lj"
 types   = ["AR", "KR"]
 epsilon = 0.2
@@ -65,17 +67,14 @@ sigma   = 3.65
 q       = -0.25
 
 [dynamics]
-integrator    = "VVER"
-timestep      = 0.002
-nsteps        = 20
-eneout_period = 10
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.002
+steps         = 20
 
 [ensemble]
 ensemble    = "NVE"
 temperature = 120.0
 
 [boundary]
-type       = "PBC"
-box_size_x = 23.2
-box_size_y = 23.2
-box_size_z = 23.2
+type       = "PERIODIC"
+box = [23.2, 23.2, 23.2]

@@ -121,7 +121,7 @@ struct Control {
   // [constraints]
   /// Whether the bonds of hydrogen are constrained (SHAKE, later in M1),
   /// and whether rigid waters are, by SETTLE. `statesFlexible` tells that
-  /// the control file says `fast_water = false`, which a topology of
+  /// the control file says `rigid_water = false`, which a topology of
   /// GROMACS with SETTLE needs to run flexible.
   bool rigidBonds = false;
   bool fastWater = false;

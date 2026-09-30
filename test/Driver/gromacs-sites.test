@@ -20,25 +20,26 @@
 
 #--- run.toml
 [input]
-grotopfile = "system.top"
-grocrdfile = "system.gro"
+topology   = "system.top"
+coordinates = "system.gro"
 
+[output]
+energy_interval = 1000
 [energy]
-cutoffdist   = 18.0
-pairlistdist = 19.0
+cutoff       = 18.0
+pairlist_distance = 19.0
 
 [dynamics]
-integrator    = "VVER"
-timestep      = 0.0001
-nsteps        = 1000
-eneout_period = 1000
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.0001
+steps         = 1000
 
 [ensemble]
 ensemble    = "NVE"
 temperature = 300.0
 
 [boundary]
-type = "PBC"
+type = "PERIODIC"
 #--- system.top
 [ defaults ]
 ; nbfunc  comb-rule  gen-pairs  fudgeLJ  fudgeQQ

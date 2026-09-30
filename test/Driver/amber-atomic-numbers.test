@@ -26,21 +26,22 @@
 
 #--- run.toml
 [input]
-prmtopfile = "opc.prmtop"
-ambcrdfile = "opc.inpcrd"
+topology   = "opc.prmtop"
+coordinates = "opc.inpcrd"
 
+[output]
+energy_interval = 10
 [energy]
-cutoffdist    = 9.0
-pairlistdist  = 10.0
+cutoff        = 9.0
+pairlist_distance = 10.0
 
 [dynamics]
-nsteps        = 10
-eneout_period = 10
+steps         = 10
 
 [constraints]
-rigid_bond = true
-fast_water = true
+hydrogen_bonds = true
+rigid_water = true
 
 [boundary]
-type = "PBC"
+type = "PERIODIC"
 #--- end

@@ -196,8 +196,9 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     return fail("this build of MDIR has no HDF5, which checkpoints need");
 
   StringRef integrator =
-      control->minimize ? "MIN"
-      : control->integrator == Integrator::Leapfrog ? "LEAP" : "VVER";
+      control->minimize ? "MINIMIZATION"
+      : control->integrator == Integrator::Leapfrog ? "LEAPFROG"
+                                                   : "VELOCITY_VERLET";
   double velocityOffset =
       control->integrator == Integrator::Leapfrog ? -0.5 : 0.0;
 
@@ -225,7 +226,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                     "in '" + path + "' than in '" + control->pdbFile + "'");
     // A minimization takes the positions and the cell of any checkpoint,
     // and a run of dynamics those of a minimization, and begins anew.
-    if (control->minimize || checkpoint->integrator == "MIN") {
+    if (control->minimize || checkpoint->integrator == "MINIMIZATION") {
       system->positions = checkpoint->positions;
       warnAboutCell(*checkpoint, *system, path);
       for (int i = 0; i != 3; ++i)

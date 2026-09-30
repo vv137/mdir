@@ -1,5 +1,5 @@
 # SETTLE: the three OPC waters of virtual-sites.test, rigid, at a step of
-# 2 fs. The waters are the residues WAT, which 'settle_residues' names by
+# 2 fs. The waters are the residues WAT, which 'water_residues' names by
 # default; their bonds are dropped, and each has three degrees of freedom
 # fewer: 9 × 3 − 9 − 3.
 #
@@ -30,31 +30,31 @@
 
 #--- run.toml
 [input]
-prmtopfile = "three.prmtop"
-ambcrdfile = "three.inpcrd"
+topology   = "three.prmtop"
+coordinates = "three.inpcrd"
 
 [output]
-dcdfile = "rigid.dcd"
+trajectory = "rigid.dcd"
+energy_interval = 100
+trajectory_interval = 100
 
 [energy]
-cutoffdist    = 18.0
-pairlistdist  = 19.0
-electrostatic = "CUTOFF"
+cutoff        = 18.0
+pairlist_distance = 19.0
+electrostatics = "CUTOFF"
 
 [dynamics]
-integrator    = "VVER"
-timestep      = 0.002
-nsteps        = 500
-eneout_period = 100
-crdout_period = 100
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.002
+steps         = 500
 
 [ensemble]
 ensemble    = "NVE"
 temperature = 300.0
 
 [constraints]
-fast_water = true
+rigid_water = true
 
 [boundary]
-type = "PBC"
+type = "PERIODIC"
 #--- end

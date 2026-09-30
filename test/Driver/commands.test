@@ -15,7 +15,7 @@
 # CHECK-INPUT-NEXT: of type AR {{ *}}864
 # CHECK-INPUT: box:
 # CHECK-INPUT: degrees of freedom: 2589
-# CHECK-INPUT: integrator: {{ *}}VVER
+# CHECK-INPUT: integrator: {{ *}}VELOCITY_VERLET
 
 # RUN: not mdir 2>&1 | FileCheck %s --check-prefix=NONE
 # NONE: mdir: expected a subcommand

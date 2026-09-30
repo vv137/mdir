@@ -19,7 +19,7 @@
 # forces of PME sum to a little more than zero (their interpolation does
 # not conserve momentum), so those keep h Σ F of it.
 #
-# RUN: sed -e 's|"VVER"|"LEAP"|' -e 's|run.dcd|leap.dcd|' %t/run.toml > %t/leap.toml
+# RUN: sed -e 's|"VELOCITY_VERLET"|"LEAPFROG"|' -e 's|run.dcd|leap.dcd|' %t/run.toml > %t/leap.toml
 # RUN: mdir run %t/leap.toml | FileCheck %s --check-prefix=LEAP
 # RUN: %python %S/Inputs/check_bonds.py %t/ff19.prmtop %t/leap.dcd | FileCheck %s --check-prefix=BONDS
 
@@ -43,24 +43,24 @@
 
 #--- run.toml
 [input]
-prmtopfile = "ff19.prmtop"
-ambcrdfile = "ff19.inpcrd"
+topology   = "ff19.prmtop"
+coordinates = "ff19.inpcrd"
 
 [output]
-dcdfile = "run.dcd"
+trajectory = "run.dcd"
+energy_interval = 1000
+trajectory_interval = 1000
 
 [energy]
-cutoffdist    = 9.0
-pairlistdist  = 10.0
-electrostatic = "PME"
-pme_shift     = true
+cutoff        = 9.0
+pairlist_distance = 10.0
+electrostatics = "PME"
+coulomb_modifier     = "POTENTIAL_SHIFT"
 
 [dynamics]
-integrator        = "VVER"
-timestep          = 0.002
-nsteps            = 5000
-eneout_period     = 1000
-crdout_period     = 1000
+integrator        = "VELOCITY_VERLET"
+time_step         = 0.002
+steps             = 5000
 
 [ensemble]
 ensemble    = "NPT"
@@ -69,19 +69,19 @@ pressure    = 1.0
 
 [thermostat]
 method = "V-RESCALE"
-period = 10
-tau_t  = 0.5
+interval = 10
+time_constant = 0.5
 
 [barostat]
 method = "C-RESCALE"
-tau_p  = 2.0
+time_constant = 2.0
 
 [constraints]
-rigid_bond = true
-fast_water = true
+hydrogen_bonds = true
+rigid_water = true
 
 [boundary]
-type = "PBC"
+type = "PERIODIC"
 
 [execution]
 target    = "gpu"

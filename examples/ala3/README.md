@@ -8,7 +8,7 @@ before:
 | Stage | Control file | What |
 |---|---|---|
 | 1 | `1-min.toml` | Steepest descent, 2000 steps, heavy atoms of the peptide restrained at 10 kcal/mol/Å² |
-| 2 | `2-nvt.toml` | Velocities at 300 K, 50 ps at constant volume with the Bussi thermostat, the same restraints |
+| 2 | `2-nvt.toml` | Velocities at 300 K, 50 ps at constant volume with stochastic velocity rescaling, the same restraints |
 | 3 | `3-npt.toml` | 100 ps at 1 bar with stochastic cell rescaling, restraints at 1 kcal/mol/Å² |
 | 4 | `4-md.toml` | 1 ns at 1 bar without restraints, a frame every ps |
 

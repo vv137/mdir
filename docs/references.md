@@ -70,7 +70,7 @@ influence functions and error estimates," *J. Chem. Theory Comput.* **8**,
 [doi:10.1021/ct2001792](https://doi.org/10.1021/ct2001792)
 
 Used for: influence functions of mesh Ewald other than that of smooth
-particle mesh Ewald, of which `pme_influence = "OPTIMAL"` takes a factor
+particle mesh Ewald, of which `influence = "OPTIMAL"` takes a factor
 for each edge (pme-m1.md, Section 1.1).
 
 ### Berendsen1984

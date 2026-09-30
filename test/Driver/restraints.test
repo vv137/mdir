@@ -79,28 +79,28 @@
 
 #--- min.toml
 [input]
-prmtopfile = "ff19.prmtop"
-ambcrdfile = "ff19.inpcrd"
+topology   = "ff19.prmtop"
+coordinates = "ff19.inpcrd"
 
 [output]
-rstfile = "min.h5"
+checkpoint = "min.h5"
+energy_interval = 50
 
 [energy]
-cutoffdist    = 9.0
-pairlistdist  = 10.0
-electrostatic = "PME"
-pme_shift     = true
+cutoff        = 9.0
+pairlist_distance = 10.0
+electrostatics = "PME"
+coulomb_modifier     = "POTENTIAL_SHIFT"
 
 [minimize]
-nsteps        = 100
-eneout_period = 50
+steps         = 100
 
 [constraints]
-rigid_bond = true
-fast_water = true
+hydrogen_bonds = true
+rigid_water = true
 
 [boundary]
-type = "PBC"
+type = "PERIODIC"
 
 [[restraints]]
 selection      = "SELECTION"
@@ -108,30 +108,31 @@ force_constant = 10.0
 #--- end
 #--- run.toml
 [input]
-prmtopfile = "ff19.prmtop"
-ambcrdfile = "ff19.inpcrd"
-rstfile    = "min.h5"
+topology   = "ff19.prmtop"
+coordinates = "ff19.inpcrd"
+checkpoint = "min.h5"
 
+[output]
+energy_interval = 250
 [energy]
-cutoffdist    = 9.0
-pairlistdist  = 10.0
-electrostatic = "PME"
-pme_shift     = true
+cutoff        = 9.0
+pairlist_distance = 10.0
+electrostatics = "PME"
+coulomb_modifier     = "POTENTIAL_SHIFT"
 
 [dynamics]
-timestep      = 0.001
-nsteps        = 500
-eneout_period = 250
+time_step     = 0.001
+steps         = 500
 
 [ensemble]
 temperature = 300.0
 
 [constraints]
-rigid_bond = true
-fast_water = true
+hydrogen_bonds = true
+rigid_water = true
 
 [boundary]
-type = "PBC"
+type = "PERIODIC"
 
 [[restraints]]
 selection      = "!:WAT & !@H*"

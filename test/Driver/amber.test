@@ -47,24 +47,25 @@
 
 #--- run.toml
 [input]
-prmtopfile = "dipeptide.prmtop"
-ambcrdfile = "dipeptide.inpcrd"
+topology   = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
 
+[output]
+energy_interval = 10
 [energy]
-cutoffdist    = 9.0
-pairlistdist  = 10.0
-electrostatic = "CUTOFF"
+cutoff        = 9.0
+pairlist_distance = 10.0
+electrostatics = "CUTOFF"
 
 [dynamics]
-integrator    = "VVER"
-timestep      = 0.0005
-nsteps        = 10
-eneout_period = 10
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.0005
+steps         = 10
 
 [ensemble]
 ensemble    = "NVE"
 temperature = 300.0
 
 [boundary]
-type = "PBC"
+type = "PERIODIC"
 #--- end

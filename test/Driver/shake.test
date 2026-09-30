@@ -32,31 +32,31 @@
 
 #--- run.toml
 [input]
-prmtopfile = "vacuum.prmtop"
-ambcrdfile = "vacuum.inpcrd"
+topology   = "vacuum.prmtop"
+coordinates = "vacuum.inpcrd"
 
 [output]
-dcdfile = "shake.dcd"
+trajectory = "shake.dcd"
+energy_interval = 100
+trajectory_interval = 100
 
 [energy]
-cutoffdist    = 28.0
-pairlistdist  = 29.0
-electrostatic = "CUTOFF"
+cutoff        = 28.0
+pairlist_distance = 29.0
+electrostatics = "CUTOFF"
 
 [dynamics]
-integrator    = "VVER"
-timestep      = 0.002
-nsteps        = 500
-eneout_period = 100
-crdout_period = 100
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.002
+steps         = 500
 
 [ensemble]
 ensemble    = "NVE"
 temperature = 300.0
 
 [constraints]
-rigid_bond = true
+hydrogen_bonds = true
 
 [boundary]
-type = "PBC"
+type = "PERIODIC"
 #--- end

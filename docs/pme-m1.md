@@ -49,9 +49,9 @@ with `u_ai` the fractional coordinates of particle `i` along edge `a`.
 
 ### 1.1 The influence function
 
-Two influence functions are in use, and `pme_influence` chooses:
+Two influence functions are in use, and `influence` chooses:
 
-| `pme_influence` | Influence function | Engine |
+| `influence` | Influence function | Engine |
 |---|---|---|
 | `"SPME"`, the default | `B C` as above [[Essmann1995]](references.md#essmann1995) | GROMACS |
 | `"OPTIMAL"` | `B C` times `λ_1(m_1)² λ_2(m_2)² λ_3(m_3)²`, with `λ(m) = S_n(x) / S_2n(x)`, `S_p(x) = Σ_{j=−50}^{50} (x / (x + π j))^p`, `x = π m / K`, and `λ(0) = 1`: a factor for each edge from the sums over the aliases of `m` of the B-splines of order n and 2n, which brings the energy of the grid toward that of the Ewald sum in the mean (on influence functions of mesh Ewald, [[Ballenegger2012]](references.md#ballenegger2012)) | sander, by default |
@@ -116,18 +116,18 @@ order. The grid is converted to floating point before the FFT.
 
 | Keyword of `[energy]` | Meaning | Default |
 |---|---|---|
-| `electrostatic = "PME"` | Particle mesh Ewald, with the cutoff `cutoffdist` for the direct sum | |
-| `pme_alpha` | β, in Å⁻¹ | From `pme_alpha_tol` |
-| `pme_alpha_tol` | β such that `erfc(β rc) = pme_alpha_tol`, by bisection, as both engines find it | 10⁻⁵ |
-| `pme_ngrid_x`, `_y`, `_z` | The numbers of points of the grid | From `pme_max_spacing` |
-| `pme_max_spacing` | The largest spacing of the grid, in Å; each number of points is the smallest even product of 2, 3, 5, and 7 that gives no wider spacing in the cell of the file of coordinates. The grid stays as a barostat changes the cell, finer as it shrinks and coarser as it grows, and a run that continues from a checkpoint has the grid it began with | 1.2 |
-| `pme_nspline` | The order of the B-splines, 4 to 8 | 4 |
-| `pme_shift` | Shift the direct sum to 0 at the cutoff, as GROMACS does by default | false, as sander |
-| `pme_influence` | `"SPME"` or `"OPTIMAL"` (Section 1.1) | `"SPME"` |
+| `electrostatics = "PME"` | Particle mesh Ewald, with the cutoff `cutoff` for the direct sum | |
+| `beta` | β, in Å⁻¹ | From `tolerance` |
+| `tolerance` | β such that `erfc(β rc) = tolerance`, by bisection, as both engines find it | 10⁻⁵ |
+| `grid`, `_y`, `_z` | The numbers of points of the grid | From `max_spacing` |
+| `max_spacing` | The largest spacing of the grid, in Å; each number of points is the smallest even product of 2, 3, 5, and 7 that gives no wider spacing in the cell of the file of coordinates. The grid stays as a barostat changes the cell, finer as it shrinks and coarser as it grows, and a run that continues from a checkpoint has the grid it began with | 1.2 |
+| `order` | The order of the B-splines, 4 to 8 | 4 |
+| `coulomb_modifier` | Shift the direct sum to 0 at the cutoff, as GROMACS does by default | false, as sander |
+| `influence` | `"SPME"` or `"OPTIMAL"` (Section 1.1) | `"SPME"` |
 
 The tolerance of sander, `dsum_tol`, is `erfc(β rc) / rc` with `rc` in Å,
 not `erfc(β rc)`: its default of 10⁻⁵ gives a larger β than
-`pme_alpha_tol` of 10⁻⁵ does. A comparison gives β itself.
+`tolerance` of 10⁻⁵ does. A comparison gives β itself.
 
 β, the grid, and the order can each be given, so that a run can take those
 of sander (`ew_coeff`, `nfft1` to `nfft3`, `order`) or of GROMACS
@@ -137,12 +137,12 @@ of sander (`ew_coeff`, `nfft1` to `nfft3`, `order`) or of GROMACS
 
 | Item | sander (`eedmeth = 1`) | GROMACS (Verlet) | In MDIR |
 |---|---|---|---|
-| The direct sum at the cutoff | Not shifted | Shifted (`coulomb-modifier = Potential-shift`) | `pme_shift` |
+| The direct sum at the cutoff | Not shifted | Shifted (`coulomb-modifier = Potential-shift`) | `coulomb_modifier` |
 | The terms of the log | `EEL`: all but the pairs three bonds apart | `Coulomb (SR)` and `Coul. recip.`; which of E_self, E_excl, and the shift of excluded pairs goes into which is found by comparison before the terms are compared one by one | The five terms apart, and their sum |
 | A net charge | The background, with a warning | The background, with a warning | E_Q |
-| The influence function | With the factor λ (`opt_infl`) | Without | `pme_influence` |
+| The influence function | With the factor λ (`opt_infl`) | Without | `influence` |
 | The grid | Products of 2, 3, and 5 | Products of 2, 3, 5, and 7 | Products of 2, 3, 5, and 7 when chosen |
-| The net force of the reciprocal sum, which is not 0 on a grid | Removed at every step (`netfrc`) | Left; the motion of the center of mass is removed | Left; `comm_period` removes the motion |
+| The net force of the reciprocal sum, which is not 0 on a grid | Removed at every step (`netfrc`) | Left; the motion of the center of mass is removed | Left; `center_of_mass_interval` removes the motion |
 
 ## 6. Validation
 

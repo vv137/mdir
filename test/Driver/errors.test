@@ -2,8 +2,6 @@
 #
 # RUN: split-file %s %t
 # RUN: not mdir run %t/keyword.toml 2>&1 | FileCheck %s --check-prefix=KEYWORD
-# RUN: not mdir run %t/planned.toml 2>&1 | FileCheck %s --check-prefix=PLANNED
-# RUN: not mdir run %t/table.toml 2>&1 | FileCheck %s --check-prefix=TABLE
 # RUN: not mdir run %t/choice.toml 2>&1 | FileCheck %s --check-prefix=CHOICE
 # RUN: not mdir run %t/period.toml 2>&1 | FileCheck %s --check-prefix=PERIOD
 # RUN: not mdir run %t/syntax.toml 2>&1 | FileCheck %s --check-prefix=SYNTAX
@@ -14,14 +12,12 @@
 # RUN: not mdir run %t/atom.toml 2>&1 | FileCheck %s --check-prefix=ATOM
 # RUN: not mdir run %t/reach.toml 2>&1 | FileCheck %s --check-prefix=REACH
 
-# KEYWORD: keyword.toml:3: unknown keyword 'cutoff' in [energy]
+# KEYWORD: keyword.toml:3: unknown keyword 'cutoff_distance' in [energy]
 # A neighbor structure that reaches less far than the cutoff would miss
 # pairs within it.
-# REACH: reach.toml:{{[0-9]+}}: 'pairlistdist' is less than 'cutoffdist
-# PLANNED: planned.toml:3: 'dielec_const' in [energy] is not supported yet; it is planned for M1
-# TABLE: table.toml:1: 'selection' in [the control file] is not supported yet; it is planned for M1
-# CHOICE: choice.toml:12: expected one of VVER, LEAP for 'integrator', got 'RK4'
-# PERIOD: period.toml:11: 'nsteps' is not a multiple of 'eneout_period'
+# REACH: reach.toml:{{[0-9]+}}: 'pairlist_distance' is less than 'cutoff
+# CHOICE: choice.toml:12: expected one of VELOCITY_VERLET, LEAPFROG for 'integrator', got 'RK4'
+# PERIOD: period.toml:{{[0-9]+}}: 'steps' is not a multiple of 'energy_interval'
 # SYNTAX: syntax.toml:2:
 # NAME: the expression of 'lj' uses 'delta', which is neither 'r', nor 'coulomb', nor a number of the term, nor a parameter of the type 'AR'
 # MIXING: 'sigma' differs between the types, but the term 'lj' has no rule of 'mixing' for it
@@ -38,26 +34,15 @@ HETATM    1  AR  AR  A   1       1.000   1.000   1.000  1.00  0.00          AR
 HETATM    2  KR  KR  A   1       5.000   1.000   1.000  1.00  0.00          KR
 #--- keyword.toml
 [energy]
-cutoffdist = 9.0
-cutoff = 9.0
+cutoff     = 9.0
+cutoff_distance = 9.0
 [input]
-pdbfile = "one.pdb"
-#--- planned.toml
-[energy]
-cutoffdist = 9.0
-dielec_const = 1.0
-[input]
-pdbfile = "one.pdb"
-#--- table.toml
-[selection]
-group1 = "all"
-[input]
-pdbfile = "one.pdb"
+coordinates = "one.pdb"
 #--- choice.toml
 [input]
-pdbfile = "one.pdb"
+coordinates = "one.pdb"
 [energy]
-cutoffdist = 9.0
+cutoff     = 9.0
 [[energy.pair]]
 expression = "epsilon/r"
 [[energy.type]]
@@ -68,9 +53,12 @@ epsilon = 0.2
 integrator = "RK4"
 #--- period.toml
 [input]
-pdbfile = "one.pdb"
+coordinates = "one.pdb"
+[output]
+energy_interval = 10
+
 [energy]
-cutoffdist = 9.0
+cutoff     = 9.0
 [[energy.pair]]
 expression = "epsilon/r"
 [[energy.type]]
@@ -78,16 +66,15 @@ name = "AR"
 mass = 39.95
 epsilon = 0.2
 [dynamics]
-nsteps = 105
-eneout_period = 10
+steps  = 105
 #--- syntax.toml
 [input]
-pdbfile = one.pdb
+coordinates = one.pdb
 #--- name.toml
 [input]
-pdbfile = "one.pdb"
+coordinates = "one.pdb"
 [energy]
-cutoffdist = 9.0
+cutoff     = 9.0
 [[energy.pair]]
 name = "lj"
 expression = "epsilon*delta/r"
@@ -96,17 +83,15 @@ name = "AR"
 mass = 39.95
 epsilon = 0.2
 [dynamics]
-nsteps = 10
+steps  = 10
 [boundary]
-type = "PBC"
-box_size_x = 30.0
-box_size_y = 30.0
-box_size_z = 30.0
+type = "PERIODIC"
+box = [30.0, 30.0, 30.0]
 #--- mixing.toml
 [input]
-pdbfile = "two.pdb"
+coordinates = "two.pdb"
 [energy]
-cutoffdist = 9.0
+cutoff     = 9.0
 [[energy.pair]]
 name = "lj"
 expression = "4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
@@ -121,17 +106,15 @@ mass = 83.8
 epsilon = 0.2
 sigma = 3.6
 [dynamics]
-nsteps = 10
+steps  = 10
 [boundary]
-type = "PBC"
-box_size_x = 30.0
-box_size_y = 30.0
-box_size_z = 30.0
+type = "PERIODIC"
+box = [30.0, 30.0, 30.0]
 #--- expression.toml
 [input]
-pdbfile = "two.pdb"
+coordinates = "two.pdb"
 [energy]
-cutoffdist = 9.0
+cutoff     = 9.0
 [[energy.pair]]
 name = "lj"
 expression = "4*epsilon*((sigma/r)^12 - "
@@ -146,17 +129,15 @@ mass = 83.8
 epsilon = 0.2
 sigma = 3.4
 [dynamics]
-nsteps = 10
+steps  = 10
 [boundary]
-type = "PBC"
-box_size_x = 30.0
-box_size_y = 30.0
-box_size_z = 30.0
+type = "PERIODIC"
+box = [30.0, 30.0, 30.0]
 #--- atom.toml
 [input]
-pdbfile = "atoms.pdb"
+coordinates = "atoms.pdb"
 [energy]
-cutoffdist = 9.0
+cutoff     = 9.0
 [[energy.pair]]
 name = "lj"
 expression = "epsilon/r"
@@ -165,16 +146,14 @@ name = "AR"
 mass = 39.95
 epsilon = 0.2
 [dynamics]
-nsteps = 10
+steps  = 10
 [boundary]
-type = "PBC"
-box_size_x = 30.0
-box_size_y = 30.0
-box_size_z = 30.0
+type = "PERIODIC"
+box = [30.0, 30.0, 30.0]
 #--- reach.toml
 [input]
-pdbfile = "atoms.pdb"
+coordinates = "atoms.pdb"
 
 [energy]
-cutoffdist   = 9.0
-pairlistdist = 8.5
+cutoff       = 9.0
+pairlist_distance = 8.5

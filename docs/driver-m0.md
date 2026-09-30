@@ -26,17 +26,20 @@ its own.
 
 ```toml
 [input]
-pdbfile = "argon.pdb"            # positions
-# rstfile = "equilibrated.h5"   # positions and velocities of an earlier run
+coordinates = "argon.pdb"       # positions
+# checkpoint = "equilibrated.h5" # the state of an earlier run
 
 [output]
-dcdfile = "run.dcd"
-rstfile = "run.h5"
+trajectory          = "run.dcd"
+checkpoint          = "run.h5"
+energy_interval     = 100
+trajectory_interval = 100
+checkpoint_interval = 2000
 
 [energy]
-switchdist   = 7.5               # Å
-cutoffdist   = 8.5
-pairlistdist = 9.5
+switch_distance   = 7.5         # Å
+cutoff            = 8.5
+pairlist_distance = 9.5
 
 [[energy.pair]]
 name       = "lj"
@@ -50,61 +53,68 @@ epsilon = 0.2385                 # kcal/mol
 sigma   = 3.4
 
 [dynamics]
-integrator    = "VVER"
-timestep      = 0.005            # ps
-nsteps        = 2000
-eneout_period = 100
-crdout_period = 100
-rstout_period = 2000
-iseed         = 314159
+integrator = "VELOCITY_VERLET"
+time_step  = 0.005              # ps
+steps      = 2000
+seed       = 314159
 
 [ensemble]
 ensemble    = "NVE"
 temperature = 94.4               # for the initial velocities
 
 [boundary]
-type       = "PBC"
-box_size_x = 34.7786
-box_size_y = 34.7786
-box_size_z = 34.7786
+type = "PERIODIC"
+box  = [34.7786, 34.7786, 34.7786]  # Å
 
 [execution]
-target    = "gpu"                # or "cpu"
-threads   = 16                   # for the target cpu
-precision = "mixed"              # single, mixed, or double
+target    = "GPU"               # or "CPU"
+threads   = 16                  # for the target CPU
+precision = "MIXED"             # SINGLE, MIXED, or DOUBLE
 ```
 
-Keywords are in lower case. Values that name a choice, such as `VVER` and
-`PBC`, are strings and are read without regard to case.
+Keywords are in lower case and spelled out. Values that name a choice,
+such as `VELOCITY_VERLET` and `PERIODIC`, are strings and are read without
+regard to case.
 
-### 1.1 Keywords of M0
+### 1.1 Keywords
 
-| Table | Keyword | Meaning in MDIR |
+| Table | Keyword | Meaning |
 |---|---|---|
-| `input` | `pdbfile` | Positions. The name of an atom selects its type. |
-| | `rstfile` | The checkpoint of an earlier run, which the run continues. It replaces the positions of `pdbfile`; the types still come from there. The run takes the cell of the checkpoint, which a barostat may have changed, and warns on the standard error if the input has another; the input's cell still sets what was derived from the file (the grid of PME, the reference of restraints). |
-| `output` | `dcdfile`, `xtcfile` | Trajectory of positions |
-| | `rstfile` | The checkpoint (D26). It is written every `rstout_period` steps, each time in place of the one before. |
-| `energy` | `cutoffdist` | The cutoff of `md.neighborhood` |
-| | `switchdist` | `truncation(switch, from = ...)`. Equal to `cutoffdist`: no switching. |
-| | `vdw_force_switch` | `truncation(force_switch, from = ...)` |
-| | `vdw_shift` | `truncation(shift)` |
-| | `pairlistdist` | The skin is `pairlistdist − cutoffdist`. |
-| | `[[energy.pair]]` | A pair term, given by an expression (D16, D22) |
-| | `[[energy.type]]` | A type of particle: its mass and its parameters |
-| `dynamics` | `integrator` | `VVER` or `LEAP`: the `dyn.program` |
-| | `timestep`, `nsteps` | |
-| | `eneout_period`, `crdout_period`, `rstout_period` | The schedule of Section 2.2 |
-| | `nbupdate_period` | The rebuild policy `interval`, with the check of A11. Absent: the policy `check` (B1). |
-| | `iseed` | The seed of the initial velocities |
-| `ensemble` | `ensemble` | `NVE` in M0 |
-| | `temperature` | The temperature of the initial velocities |
-| `boundary` | `type` | `PBC` in M0 |
-| | `box_size_x`, `box_size_y`, `box_size_z` | `md.orthorhombic_cell` |
-| `execution` | `target`, `threads`, `precision` | Structural plan parameters |
-| | `neighbor_width` | The number of neighbors that a neighbor structure holds per particle. Absent: half as many again as a uniform density gives. |
+| `[input]` | `topology` | The topology: of Amber (`.prmtop`, `.parm7`) or GROMACS (`.top`). Absent for a run from a PDB file, whose terms are in `[energy]`. |
+| | `coordinates` | The positions and the cell: of Amber (`.inpcrd`, `.rst7`), GROMACS (`.gro`), or a PDB file, in which the name of an atom selects its type. The reference of restraints. |
+| | `format` | `AUTO` (the default: from the names of the files), `AMBER`, `GROMACS`, or `PDB`; `CHARMM` is not supported yet. |
+| | `include_paths`, `defines` | With a GROMACS topology: the directories of `#include` and the names that `#define` gives. |
+| | `checkpoint` | The checkpoint of an earlier run, which the run continues, taking its cell (and warning on the standard error if the input has another); the input's cell still sets the grid of PME and the reference of restraints. One of a minimization gives the positions only. |
+| `[output]` | `trajectory` | Positions, in DCD (`.dcd`). |
+| | `checkpoint` | The checkpoint (D26), written every `checkpoint_interval` steps in place of the one before, and at the end of a minimization. |
+| | `energy_interval`, `trajectory_interval`, `checkpoint_interval` | Steps between the rows of the log, the frames, and the checkpoints (Section 2.2). The intervals nest, either way for energies and frames. |
+| `[energy]` | `cutoff` | The cutoff of `md.neighborhood` (Å). |
+| | `pairlist_distance` | The reach of the neighbor structures; the skin is `pairlist_distance − cutoff`. |
+| | `switch_distance` | `truncation(switch, from = ...)`; equal to `cutoff`: no switching. For terms in the control file. |
+| | `lennard_jones_modifier` | `NONE`, `POTENTIAL_SHIFT` (`truncation(shift)`), or `FORCE_SWITCH` (`truncation(force_switch, from = switch_distance)`). For terms in the control file. |
+| | `electrostatics` | With a topology: `CUTOFF` or `PME`. |
+| | `coulomb_modifier` | With PME: `NONE`, or `POTENTIAL_SHIFT`, the direct sum shifted to zero at the cutoff. |
+| | `dispersion_correction` | `NONE` or `ENERGY_PRESSURE`; also in `[[energy.pair]]`. |
+| | `[[energy.pair]]` | A pair term, given by an expression (D16, D22). |
+| | `[[energy.type]]` | A type of particle: its mass and its parameters. |
+| | `[[energy.pair_override]]` | Parameters of a term for one pair of types. |
+| `[pme]` | `tolerance`, `beta`, `max_spacing`, `grid`, `order`, `influence` | Particle mesh Ewald (D71): β from `erfc(β r_c) = tolerance` or given; the grid from the largest spacing or given as three numbers of points; the order of the B-splines, 4, 6, or 8; the influence function, `SPME` or `OPTIMAL`. |
+| `[dynamics]` | `integrator` | `VELOCITY_VERLET` or `LEAPFROG`: the `dyn.program` (D76). |
+| | `time_step`, `steps` | In ps, and the number of steps. |
+| | `seed` | Of the initial velocities and of the coupling. |
+| | `center_of_mass_interval` | Steps between removals of the motion of the center of mass; with a thermostat, when it acts. |
+| `[minimize]` | `method`, `steps`, `initial_step` | `STEEPEST_DESCENT`, the number of steps, and the first step (Å) (D73). Instead of `[dynamics]`. |
+| `[ensemble]` | `ensemble` | `NVE`, `NVT` (with `[thermostat]`), or `NPT` (with `[thermostat]` and `[barostat]`). |
+| | `temperature`, `pressure` | K, of the initial velocities and the bath; atm, with `NPT`. |
+| `[thermostat]` | `method`, `time_constant`, `interval` | `V-RESCALE`, stochastic velocity rescaling; ps; steps between its actions (10 by default). |
+| `[barostat]` | `method`, `time_constant`, `compressibility`, `coupling`, `work`, `interval` | `C-RESCALE`, stochastic cell rescaling (D72, D77); ps; 1/atm; `ISOTROPIC`; `EXACT` or `FIRST_ORDER`; the steps of the thermostat. |
+| `[constraints]` | `hydrogen_bonds`, `rigid_water`, `water_residues` | SHAKE and RATTLE on the bonds of hydrogen; SETTLE on the waters; the names of the residues of water. |
+| `[[restraints]]` | `selection`, `force_constant` | A mask of Amber, and kcal/mol/Å² (D74). |
+| `[boundary]` | `type`, `box` | `PERIODIC`; the edges of the cell (Å), without a topology. |
+| `[execution]` | `target`, `threads`, `precision` | `CPU` or `GPU`; the threads of the CPU; `SINGLE`, `MIXED`, or `DOUBLE`. |
+| | `neighbor_capacity` | Neighbors that a neighbor structure holds per particle. Absent: estimated from the configuration. |
 | | `fast_math` | Whether kernels are rewritten in ways that change rounding. The default is `true`. |
-| | `reorder` | Whether the run keeps the particles in the order of their positions (D44). The default is `true`. The files of the run are in the order of the input either way. |
+| | `spatial_order` | Whether the run keeps the particles in the order of their positions (D44). The default is `true`. The files of the run are in the order of the input either way. |
 
 A keyword of a pair term or of a type that is not listed here names a
 number: a parameter of the type, or a constant of the term, that the
@@ -116,11 +126,9 @@ parameter of a pair follows from those of its two particles:
 `lorentz-berthelot` [[Lorentz1881]](references.md#lorentz1881), [[Berthelot1898]](references.md#berthelot1898), `geometric`, or a table with `arithmetic` or
 `geometric` for each parameter.
 
-An unknown keyword is an error. A keyword that is planned but not supported
-yet is an error that names the milestone that brings it.
-
-`mdir template md` prints a control file with every keyword and its
-default.
+An unknown keyword is an error. `mdir template md` and `mdir template
+amber` print control files with every keyword; the keywords follow the
+code, not earlier versions, until a milestone is released.
 
 ### 1.2 Units
 
@@ -192,8 +200,8 @@ for each checkpoint interval           rstout_period steps
 
 `examples/argon/argon.mlir` has this form already, with two levels of loops.
 
-The periods must divide one another: `crdout_period` and `rstout_period`
-are multiples of `eneout_period`.
+The periods must divide one another: `trajectory_interval` and `checkpoint_interval`
+are multiples of `energy_interval`.
 
 ### 2.3 The log
 
@@ -272,7 +280,7 @@ bonded terms follow when MDIR computes them.
 | Compile and run | Passes in the process, the execution engine | MLIR libraries, linked into the tool |
 | `mdrt` ops for output | `mdrt.write_energies`, `mdrt.write_frame`, `mdrt.write_checkpoint` | |
 | Writers | DCD or XTC, H5MD | HDF5 for H5MD |
-| Initial velocities | From `temperature` and `iseed`, with the center of mass at rest | A random number generator |
+| Initial velocities | From `temperature` and `seed`, with the center of mass at rest | A random number generator |
 
 ### 2.5 What the driver builds
 
@@ -327,7 +335,7 @@ and kJ/mol.
 A run that continues from a checkpoint arrives at the state of the run that
 was not interrupted, bit for bit. This holds on the CPU and on a GPU, in
 every precision mode, and for both integrators; the tests compare the
-states. The two runs must have the same `rstout_period`.
+states. The two runs must have the same `checkpoint_interval`.
 
 A run cannot continue with another integrator: the velocities of the two
 are not of the same time. It cannot continue in another box.
@@ -359,7 +367,7 @@ first.h5 second.h5` compares the states of two.
 | Initial velocities | Implemented. The sequence of random numbers is fixed by the seed and does not depend on a library. |
 | Checkpoints in H5MD, and runs that continue from one | Implemented |
 | The number of builds of the neighbor structures, in the log | Implemented |
-| The particles in the order of their positions, `reorder` | Implemented |
+| The particles in the order of their positions, `spatial_order` | Implemented |
 | `nbupdate_period` | Not implemented; the keyword is an error |
 | Trajectory in the XTC format | Not implemented |
 | Velocities in the trajectory, `dcdvelfile` | Not implemented |

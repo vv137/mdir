@@ -190,8 +190,8 @@ The matrix is the same either way.
 
 | Parameter | Option | Default |
 |---|---|---|
-| The skin | `skin` of `convert-md-to-md-exec`; in a control file `pairlistdist − cutoffdist` | |
-| The width of a row of the matrix | `width` of `convert-md-to-md-exec`; in a control file `neighbor_width` | Half as many again as a uniform density gives |
+| The skin | `skin` of `convert-md-to-md-exec`; in a control file `pairlist_distance − cutoff` | |
+| The width of a row of the matrix | `width` of `convert-md-to-md-exec`; in a control file `neighbor_capacity` | Half as many again as a uniform density gives |
 | The least width of the cells | `cells` of `convert-md-to-md-exec` | A third of the reach |
 | The most threads of a split search | `split-limit` of `convert-md-exec-to-gpu` | 131072 |
 
@@ -332,7 +332,7 @@ measured. A run without checkpoints keeps the order of its start.
 | A copy of the positions in the order of the cells, inside the neighbor structure, renewed in every step | One kernel more in every step, and the fields of the parameters would need copies as well. The state stays as it is, which is simpler for the files. |
 | The order of a space-filling curve | Better for the rows of cells along z and y. Not measured. |
 
-The control file has the keyword `reorder` in `[execution]`. The default
+The control file has the keyword `spatial_order` in `[execution]`. The default
 is `true`.
 
 ### 5.3 Measurements

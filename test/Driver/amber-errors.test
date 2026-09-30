@@ -38,18 +38,18 @@
 
 #--- run.toml
 [input]
-prmtopfile = "dipeptide.prmtop"
-ambcrdfile = "dipeptide.inpcrd"
+topology   = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
 
 [energy]
-cutoffdist   = 9.0
-pairlistdist = 10.0
+cutoff       = 9.0
+pairlist_distance = 10.0
 
 [dynamics]
-integrator = "VVER"
-timestep   = 0.0005
-nsteps     = 10
+integrator = "VELOCITY_VERLET"
+time_step  = 0.0005
+steps      = 10
 
 [boundary]
-type = "PBC"
+type = "PERIODIC"
 #--- end

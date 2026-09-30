@@ -5,7 +5,7 @@
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: cp %S/Inputs/opc/three.prmtop %S/Inputs/opc/three.inpcrd %t
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
-# RUN: sed -e 's|VVER|LEAP|' %t/run.toml > %t/leap.toml
+# RUN: sed -e 's|VELOCITY_VERLET|LEAPFROG|' %t/run.toml > %t/leap.toml
 # RUN: mdir check %t/run.toml | FileCheck %s --check-prefix=INPUT
 # RUN: mdir run %t/run.toml | FileCheck %s
 # RUN: mdir run %t/leap.toml | FileCheck %s
@@ -37,24 +37,25 @@
 
 #--- run.toml
 [input]
-prmtopfile = "three.prmtop"
-ambcrdfile = "three.inpcrd"
+topology   = "three.prmtop"
+coordinates = "three.inpcrd"
 
+[output]
+energy_interval = 1000
 [energy]
-cutoffdist    = 18.0
-pairlistdist  = 19.0
-electrostatic = "CUTOFF"
+cutoff        = 18.0
+pairlist_distance = 19.0
+electrostatics = "CUTOFF"
 
 [dynamics]
-integrator    = "VVER"
-timestep      = 0.0001
-nsteps        = 1000
-eneout_period = 1000
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.0001
+steps         = 1000
 
 [ensemble]
 ensemble    = "NVE"
 temperature = 300.0
 
 [boundary]
-type = "PBC"
+type = "PERIODIC"
 #--- end

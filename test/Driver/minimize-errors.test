@@ -10,19 +10,19 @@
 
 # BOTH: both.toml:{{[0-9]+}}: expected [dynamics] or [minimize], not both
 # BATH: bath.toml:{{[0-9]+}}: a minimization has no thermostat or barostat
-# MULTIPLE: multiple.toml:{{[0-9]+}}: 'nsteps' is not a multiple of 'eneout_period'
-# FRAMES: frames.toml:{{[0-9]+}}: 'crdout_period' is not a multiple of 'eneout_period'
+# MULTIPLE: multiple.toml:{{[0-9]+}}: 'steps' is not a multiple of 'energy_interval'
+# FRAMES: frames.toml:{{[0-9]+}}: 'trajectory_interval' is not a multiple of 'energy_interval'
 # METHOD: method.toml:{{[0-9]+}}: expected one of
-# SIZE: size.toml:{{[0-9]+}}: expected a positive number for 'step_size'
+# SIZE: size.toml:{{[0-9]+}}: expected a positive number for 'initial_step'
 
 #--- one.pdb
 HETATM    1  AR  AR  A   1       1.000   1.000   1.000  1.00  0.00          AR
 HETATM    2  AR  AR  A   1       5.000   1.000   1.000  1.00  0.00          AR
 #--- both.toml
 [input]
-pdbfile = "one.pdb"
+coordinates = "one.pdb"
 [energy]
-cutoffdist = 9.0
+cutoff     = 9.0
 [[energy.pair]]
 expression = "epsilon/r"
 [[energy.type]]
@@ -30,19 +30,17 @@ name = "AR"
 mass = 39.95
 epsilon = 0.2
 [minimize]
-nsteps = 10
+steps  = 10
 [dynamics]
-nsteps = 10
+steps  = 10
 [boundary]
-type = "PBC"
-box_size_x = 30.0
-box_size_y = 30.0
-box_size_z = 30.0
+type = "PERIODIC"
+box = [30.0, 30.0, 30.0]
 #--- bath.toml
 [input]
-pdbfile = "one.pdb"
+coordinates = "one.pdb"
 [energy]
-cutoffdist = 9.0
+cutoff     = 9.0
 [[energy.pair]]
 expression = "epsilon/r"
 [[energy.type]]
@@ -50,7 +48,7 @@ name = "AR"
 mass = 39.95
 epsilon = 0.2
 [minimize]
-nsteps = 10
+steps  = 10
 [ensemble]
 ensemble = "NVT"
 
@@ -58,15 +56,16 @@ ensemble = "NVT"
 method = "V-RESCALE"
 
 [boundary]
-type = "PBC"
-box_size_x = 30.0
-box_size_y = 30.0
-box_size_z = 30.0
+type = "PERIODIC"
+box = [30.0, 30.0, 30.0]
 #--- multiple.toml
 [input]
-pdbfile = "one.pdb"
+coordinates = "one.pdb"
+[output]
+energy_interval = 10
+
 [energy]
-cutoffdist = 9.0
+cutoff     = 9.0
 [[energy.pair]]
 expression = "epsilon/r"
 [[energy.type]]
@@ -74,18 +73,15 @@ name = "AR"
 mass = 39.95
 epsilon = 0.2
 [minimize]
-nsteps = 15
-eneout_period = 10
+steps  = 15
 [boundary]
-type = "PBC"
-box_size_x = 30.0
-box_size_y = 30.0
-box_size_z = 30.0
+type = "PERIODIC"
+box = [30.0, 30.0, 30.0]
 #--- frames.toml
 [input]
-pdbfile = "one.pdb"
+coordinates = "one.pdb"
 [energy]
-cutoffdist = 9.0
+cutoff     = 9.0
 [[energy.pair]]
 expression = "epsilon/r"
 [[energy.type]]
@@ -93,21 +89,20 @@ name = "AR"
 mass = 39.95
 epsilon = 0.2
 [minimize]
-nsteps = 20
-eneout_period = 10
-crdout_period = 15
+steps  = 20
 [output]
-dcdfile = "a.dcd"
+trajectory = "a.dcd"
+energy_interval = 10
+trajectory_interval = 15
+
 [boundary]
-type = "PBC"
-box_size_x = 30.0
-box_size_y = 30.0
-box_size_z = 30.0
+type = "PERIODIC"
+box = [30.0, 30.0, 30.0]
 #--- method.toml
 [input]
-pdbfile = "one.pdb"
+coordinates = "one.pdb"
 [energy]
-cutoffdist = 9.0
+cutoff     = 9.0
 [[energy.pair]]
 expression = "epsilon/r"
 [[energy.type]]
@@ -116,17 +111,15 @@ mass = 39.95
 epsilon = 0.2
 [minimize]
 method = "CG"
-nsteps = 10
+steps  = 10
 [boundary]
-type = "PBC"
-box_size_x = 30.0
-box_size_y = 30.0
-box_size_z = 30.0
+type = "PERIODIC"
+box = [30.0, 30.0, 30.0]
 #--- size.toml
 [input]
-pdbfile = "one.pdb"
+coordinates = "one.pdb"
 [energy]
-cutoffdist = 9.0
+cutoff     = 9.0
 [[energy.pair]]
 expression = "epsilon/r"
 [[energy.type]]
@@ -134,10 +127,8 @@ name = "AR"
 mass = 39.95
 epsilon = 0.2
 [minimize]
-nsteps = 10
-step_size = -1.0
+steps  = 10
+initial_step = -1.0
 [boundary]
-type = "PBC"
-box_size_x = 30.0
-box_size_y = 30.0
-box_size_z = 30.0
+type = "PERIODIC"
+box = [30.0, 30.0, 30.0]

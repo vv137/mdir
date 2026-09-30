@@ -8,10 +8,10 @@
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/whole.toml
-# RUN: sed -e 's|nsteps            = 200|nsteps = 100|' -e 's|whole.h5|first.h5|' \
+# RUN: sed -e 's|^steps *= 200|steps = 100|' -e 's|whole.h5|first.h5|' \
 # RUN:     %t/whole.toml > %t/first.toml
 # RUN: sed -e 's|first.h5|second.h5|' \
-# RUN:     -e 's|^ambcrdfile = \(.*\)|ambcrdfile = \1\nrstfile = "first.h5"|' \
+# RUN:     -e 's|^coordinates = \(.*\)|coordinates = \1\ncheckpoint = "first.h5"|' \
 # RUN:     %t/first.toml > %t/second.toml
 # RUN: mdir run %t/whole.toml > %t/both.log
 # RUN: mdir run %t/first.toml
@@ -33,25 +33,28 @@
 
 #--- run.toml
 [input]
-prmtopfile = "opc.prmtop"
-ambcrdfile = "opc.inpcrd"
+topology   = "opc.prmtop"
+coordinates = "opc.inpcrd"
 
 [output]
-rstfile = "whole.h5"
+checkpoint = "whole.h5"
+energy_interval = 50
+checkpoint_interval = 100
 
 [energy]
-cutoffdist    = 9.0
-pairlistdist  = 10.0
-electrostatic = "PME"
-pme_shift     = true
-pme_max_spacing = 1.0479
+cutoff        = 9.0
+pairlist_distance = 10.0
+electrostatics = "PME"
+coulomb_modifier     = "POTENTIAL_SHIFT"
+
+[pme]
+max_spacing = 1.0479
+
 
 [dynamics]
-integrator        = "VVER"
-timestep          = 0.002
-nsteps            = 200
-eneout_period     = 50
-rstout_period     = 100
+integrator        = "VELOCITY_VERLET"
+time_step         = 0.002
+steps             = 200
 
 [ensemble]
 ensemble    = "NPT"
@@ -60,16 +63,16 @@ pressure    = 1.0
 
 [thermostat]
 method = "V-RESCALE"
-period = 10
-tau_t  = 0.5
+interval = 10
+time_constant = 0.5
 
 [barostat]
 method = "C-RESCALE"
-tau_p  = 1.0
+time_constant = 1.0
 
 [constraints]
-fast_water = true
+rigid_water = true
 
 [boundary]
-type = "PBC"
+type = "PERIODIC"
 #--- end

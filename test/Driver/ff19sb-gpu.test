@@ -26,24 +26,24 @@
 
 #--- run.toml
 [input]
-prmtopfile = "ff19.prmtop"
-ambcrdfile = "ff19.inpcrd"
+topology   = "ff19.prmtop"
+coordinates = "ff19.inpcrd"
 
 [output]
-dcdfile = "run.dcd"
+trajectory = "run.dcd"
+energy_interval = 250
+trajectory_interval = 250
 
 [energy]
-cutoffdist    = 9.0
-pairlistdist  = 10.0
-electrostatic = "PME"
-pme_shift     = true
+cutoff        = 9.0
+pairlist_distance = 10.0
+electrostatics = "PME"
+coulomb_modifier     = "POTENTIAL_SHIFT"
 
 [dynamics]
-integrator        = "VVER"
-timestep          = 0.002
-nsteps            = 1000
-eneout_period     = 250
-crdout_period     = 250
+integrator        = "VELOCITY_VERLET"
+time_step         = 0.002
+steps             = 1000
 
 [ensemble]
 ensemble    = "NVT"
@@ -51,15 +51,15 @@ temperature = 300.0
 
 [thermostat]
 method = "V-RESCALE"
-period = 10
-tau_t  = 0.5
+interval = 10
+time_constant = 0.5
 
 [constraints]
-rigid_bond = true
-fast_water = true
+hydrogen_bonds = true
+rigid_water = true
 
 [boundary]
-type = "PBC"
+type = "PERIODIC"
 
 [execution]
 target    = "gpu"

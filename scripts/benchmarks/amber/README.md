@@ -30,9 +30,9 @@ As in `mdin.GPU` of each system:
 
 | Item | Amber input | MDIR | GROMACS |
 |---|---|---|---|
-| Cutoff | `cut=8.` | `cutoffdist = 8` | `rcoulomb = rvdw = 0.8` |
-| Neighbor lists | skin of 2 Å (pmemd) | `pairlistdist = 10` | Verlet buffer from its tolerance |
-| Particle mesh Ewald | `dsum_tol` 1e-6 (NVE), 1e-5 (NPT) | `pme_alpha_tol`, spacing 1 Å, order 4 | `ewald-rtol`, `fourierspacing = 0.1`, order 4; `-notunepme` |
+| Cutoff | `cut=8.` | `cutoff = 8` | `rcoulomb = rvdw = 0.8` |
+| Neighbor lists | skin of 2 Å (pmemd) | `pairlist_distance = 10` | Verlet buffer from its tolerance |
+| Particle mesh Ewald | `dsum_tol` 1e-6 (NVE), 1e-5 (NPT) | `tolerance`, spacing 1 Å, order 4 | `ewald-rtol`, `fourierspacing = 0.1`, order 4; `-notunepme` |
 | Dispersion | correction of energy and pressure | the same | `DispCorr = EnerPres` |
 | Constraints | SHAKE of the bonds of hydrogen, rigid water | SHAKE, RATTLE, SETTLE | LINCS, SETTLE |
 | NVE | velocities of the restart file | the same | `continuation = yes` |

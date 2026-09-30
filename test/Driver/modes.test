@@ -1,7 +1,7 @@
 # The mixture of mixture.toml with leapfrog, with threads, in single
 # precision, and without the rewrites that change rounding.
 #
-# RUN: sed -e 's|Inputs/|%S/Inputs/|' -e 's|"VVER"|"LEAP"|' %S/mixture.toml \
+# RUN: sed -e 's|Inputs/|%S/Inputs/|' -e 's|"VELOCITY_VERLET"|"LEAPFROG"|' %S/mixture.toml \
 # RUN:     > %t.toml
 # RUN: echo '[execution]' >> %t.toml
 # RUN: echo 'threads = 4' >> %t.toml

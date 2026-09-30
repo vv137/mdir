@@ -2,34 +2,27 @@
 #    every 1 ps.
 
 [input]
-prmtopfile = "ala3.prmtop"
-ambcrdfile = "ala3.inpcrd"
-rstfile    = "npt.h5"
+topology    = "ala3.prmtop"
+coordinates = "ala3.inpcrd"
+checkpoint  = "npt.h5"
 
 [output]
-dcdfile = "md.dcd"
-rstfile = "md.h5"
+trajectory          = "md.dcd"
+checkpoint          = "md.h5"
+energy_interval     = 5000
+trajectory_interval = 500
+checkpoint_interval = 50000
 
 [energy]
-cutoffdist    = 9.0
-pairlistdist  = 10.0
-electrostatic = "PME"
-pme_shift     = true
-
-[constraints]
-rigid_bond = true               # SHAKE and RATTLE on the bonds of hydrogen
-fast_water = true               # SETTLE on the waters
-
-[boundary]
-type = "PBC"
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "PME"
+coulomb_modifier  = "POTENTIAL_SHIFT"
 
 [dynamics]
-integrator        = "VVER"
-timestep          = 0.002
-nsteps            = 500000
-eneout_period     = 5000
-crdout_period     = 500 
-rstout_period     = 50000
+integrator = "VELOCITY_VERLET"
+time_step  = 0.002
+steps      = 500000
 
 [ensemble]
 ensemble    = "NPT"
@@ -37,14 +30,21 @@ temperature = 300.0
 pressure    = 1.0
 
 [thermostat]
-method = "V-RESCALE"
-period = 10
-tau_t  = 0.5
+method        = "V-RESCALE"     # stochastic velocity rescaling
+time_constant = 0.5             # ps
+interval      = 10              # steps
 
 [barostat]
-method = "C-RESCALE"
-tau_p  = 2.0
+method        = "C-RESCALE"     # stochastic cell rescaling
+time_constant = 2.0             # ps
+
+[constraints]
+hydrogen_bonds = true           # SHAKE and RATTLE on the bonds of hydrogen
+rigid_water    = true           # SETTLE on the waters
+
+[boundary]
+type = "PERIODIC"
 
 [execution]
-target    = "gpu"               # or "cpu", with threads = <n>
-precision = "mixed"
+target    = "GPU"               # or "CPU", with threads = <n>
+precision = "MIXED"

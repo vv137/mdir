@@ -6,6 +6,8 @@
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/Path.h"
 
+#include <optional>
+
 #define TOML_EXCEPTIONS 0
 #define TOML_ENABLE_FORMATTERS 0
 #include "toml.hpp"
@@ -61,6 +63,10 @@ private:
   Error readDynamics(const toml::table &table);
   Error readMinimize(const toml::table &table);
   Error readEnsemble(const toml::table &table);
+  Error readInput(const toml::table &table);
+  Error checkIntervals(const toml::table &table);
+  Error readPME(const toml::table &table);
+  Error readOutput(const toml::table &table);
   Error readThermostat(const toml::table &table);
   Error readBarostat(const toml::table &table);
 
@@ -74,6 +80,8 @@ private:
   Control &control;
   /// NVE, NVT, or NPT, from [ensemble]: 0, 1, or 2.
   int ensembleKind = 0;
+  /// [output], which the intervals of output are checked against.
+  const toml::table *outputTable = nullptr;
 };
 
 } // namespace
@@ -228,11 +236,11 @@ Error Reader::readPair(const toml::table &table) {
     StringRef keyword = toRef(key.str());
     if (keyword == "name" || keyword == "expression")
       continue;
-    if (keyword == "dispersion_corr") {
+    if (keyword == "dispersion_correction") {
       if (Error error = readChoice<DispersionCorrection>(
-              table, "dispersion_corr", term.dispersion,
+              table, "dispersion_correction", term.dispersion,
               {{"NONE", DispersionCorrection::None},
-               {"EPRESS", DispersionCorrection::EnergyPressure}}))
+               {"ENERGY_PRESSURE", DispersionCorrection::EnergyPressure}}))
         return error;
       continue;
     }
@@ -286,7 +294,7 @@ Error Reader::readOverride(const toml::table &table) {
       !(*names)[1].is_string())
     return fail(types ? *types : static_cast<const toml::node &>(table),
                 "expected 'types' with the names of two types in "
-                "[[energy.nbfix]]");
+                "[[energy.pair_override]]");
   entry.first = *(*names)[0].value<std::string>();
   entry.second = *(*names)[1].value<std::string>();
   for (auto &&[key, node] : table) {
@@ -298,7 +306,8 @@ Error Reader::readOverride(const toml::table &table) {
     entry.parameters.push_back({keyword.str(), *node.value<double>()});
   }
   if (entry.parameters.empty())
-    return fail(table, "expected at least one parameter in [[energy.nbfix]]");
+    return fail(table,
+                "expected at least one parameter in [[energy.pair_override]]");
   control.overrides.push_back(std::move(entry));
   return Error::success();
 }
@@ -329,50 +338,174 @@ Error Reader::readType(const toml::table &table) {
   return Error::success();
 }
 
+Error Reader::readInput(const toml::table &table) {
+  if (Error error = checkKeywords(
+          table, "input",
+          {"topology", "coordinates", "format", "checkpoint", "include_paths",
+           "defines"},
+          {}))
+    return error;
+  std::string topology, coordinates;
+  if (Error error = readPath(table, "topology", topology))
+    return error;
+  if (Error error = readPath(table, "coordinates", coordinates))
+    return error;
+  if (Error error = readPath(table, "checkpoint", control.restartInput))
+    return error;
+  if (coordinates.empty())
+    return fail(table, "expected 'coordinates' in [input]");
+
+  // The format of the files: given, or, with "AUTO", the default, from
+  // their extensions.
+  enum class Format { Unknown, Amber, Gromacs, Charmm, PDB };
+  Format format = Format::Unknown;
+  if (Error error = readChoice<Format>(table, "format", format,
+                                       {{"AUTO", Format::Unknown},
+                                        {"AMBER", Format::Amber},
+                                        {"GROMACS", Format::Gromacs},
+                                        {"CHARMM", Format::Charmm},
+                                        {"PDB", Format::PDB}}))
+    return error;
+  if (format == Format::Charmm)
+    return fail(*table.get("format"),
+                "'format = \"CHARMM\"' is not supported yet: MDIR reads "
+                "topologies of Amber and GROMACS");
+  if (format == Format::Unknown) {
+    StringRef extension =
+        llvm::sys::path::extension(topology.empty() ? coordinates : topology);
+    if (extension.equals_insensitive(".prmtop") ||
+        extension.equals_insensitive(".parm7"))
+      format = Format::Amber;
+    else if (extension.equals_insensitive(".top"))
+      format = Format::Gromacs;
+    else if (topology.empty() && extension.equals_insensitive(".pdb"))
+      format = Format::PDB;
+    else
+      return fail(table, "cannot tell the format from the name '" +
+                             (topology.empty() ? coordinates : topology) +
+                             "'; give 'format' in [input]: \"AMBER\", "
+                             "\"GROMACS\", or \"PDB\"");
+  }
+  if (format == Format::PDB && !topology.empty())
+    return fail(table, "a run from a PDB file takes no 'topology': the "
+                       "terms are in [energy]");
+  if (format != Format::PDB && topology.empty())
+    return fail(table, "expected 'topology' in [input]");
+  switch (format) {
+  case Format::Amber:
+    control.prmtopFile = topology;
+    control.amberCoordinateFile = coordinates;
+    break;
+  case Format::Gromacs:
+    control.gromacsTopologyFile = topology;
+    control.gromacsCoordinateFile = coordinates;
+    break;
+  case Format::PDB:
+  case Format::Charmm:
+  case Format::Unknown:
+    control.pdbFile = coordinates;
+    break;
+  }
+
+  for (StringRef key : {"include_paths", "defines"}) {
+    const toml::node *node = table.get(std::string_view(key));
+    if (!node)
+      continue;
+    if (format != Format::Gromacs)
+      return fail(*node, "'" + key + "' is for a GROMACS topology");
+    const toml::array *array = node->as_array();
+    if (!array)
+      return fail(*node, "expected a list of strings for '" + key + "'");
+    for (const toml::node &element : *array) {
+      if (!element.is_string())
+        return fail(element, "expected a list of strings for '" + key + "'");
+      std::string value = *element.value<std::string>();
+      if (key == "include_paths") {
+        // Relative to the control file, as the other paths are.
+        llvm::SmallString<256> full(llvm::sys::path::parent_path(path));
+        if (llvm::sys::path::is_absolute(value))
+          full = value;
+        else
+          llvm::sys::path::append(full, value);
+        control.gromacsIncludes.push_back(std::string(full));
+      } else {
+        control.gromacsDefines.push_back(value);
+      }
+    }
+  }
+  return Error::success();
+}
+
+Error Reader::readOutput(const toml::table &table) {
+  if (Error error = checkKeywords(
+          table, "output",
+          {"trajectory", "checkpoint", "energy_interval",
+           "trajectory_interval", "checkpoint_interval"},
+          {}))
+    return error;
+  if (Error error = readPath(table, "trajectory", control.dcdFile))
+    return error;
+  if (!control.dcdFile.empty() &&
+      !llvm::sys::path::extension(control.dcdFile).equals_insensitive(".dcd"))
+    return fail(*table.get("trajectory"),
+                "expected a trajectory in DCD, a name that ends in '.dcd'");
+  if (Error error = readPath(table, "checkpoint", control.restartOutput))
+    return error;
+  if (Error error =
+          readCount(table, "energy_interval", control.energyPeriod, 0))
+    return error;
+  if (Error error =
+          readCount(table, "trajectory_interval", control.framePeriod, 0))
+    return error;
+  if (Error error =
+          readCount(table, "checkpoint_interval", control.checkpointPeriod, 0))
+    return error;
+  outputTable = &table;
+  return Error::success();
+}
+
 Error Reader::readEnergy(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "energy",
-          {"switchdist", "cutoffdist", "pairlistdist", "vdw_force_switch",
-           "vdw_shift", "pair", "type", "nbfix", "dispersion_corr",
-           "electrostatic", "pme_alpha", "pme_alpha_tol", "pme_ngrid_x",
-           "pme_ngrid_y", "pme_ngrid_z", "pme_max_spacing", "pme_nspline",
-           "pme_shift", "pme_influence"},
-          {{"forcefield", "M1"},
-           {"dielec_const", "M1"}}))
+          {"cutoff", "switch_distance", "pairlist_distance",
+           "lennard_jones_modifier", "coulomb_modifier", "pair", "type",
+           "pair_override", "dispersion_correction", "electrostatics"},
+          {}))
     return error;
 
-  if (Error error = readPositive(table, "cutoffdist", control.cutoffDistance))
+  if (Error error = readPositive(table, "cutoff", control.cutoffDistance))
     return error;
   // Without a distance to switch from, nothing is switched.
   control.switchDistance = control.cutoffDistance;
-  if (Error error = readPositive(table, "switchdist", control.switchDistance))
+  if (Error error =
+          readPositive(table, "switch_distance", control.switchDistance))
     return error;
   control.pairlistDistance = control.cutoffDistance + 1.5;
   if (Error error =
-          readPositive(table, "pairlistdist", control.pairlistDistance))
+          readPositive(table, "pairlist_distance", control.pairlistDistance))
     return error;
 
   if (control.switchDistance > control.cutoffDistance)
-    return fail(table, "'switchdist' exceeds 'cutoffdist'");
+    return fail(table, "'switch_distance' exceeds 'cutoff'");
   if (control.pairlistDistance < control.cutoffDistance)
-    return fail(table, "'pairlistdist' is less than 'cutoffdist'");
+    return fail(table, "'pairlist_distance' is less than 'cutoff'");
 
-  bool forceSwitch = false, shift = false;
-  if (Error error = readBool(table, "vdw_force_switch", forceSwitch))
+  enum class Modifier { None, PotentialShift, ForceSwitch };
+  Modifier modifier = Modifier::None;
+  if (Error error = readChoice<Modifier>(
+          table, "lennard_jones_modifier", modifier,
+          {{"NONE", Modifier::None},
+           {"POTENTIAL_SHIFT", Modifier::PotentialShift},
+           {"FORCE_SWITCH", Modifier::ForceSwitch}}))
     return error;
-  if (Error error = readBool(table, "vdw_shift", shift))
-    return error;
-  if (forceSwitch && shift)
-    return fail(table,
-                "'vdw_force_switch' and 'vdw_shift' exclude each other");
   bool switches = control.switchDistance < control.cutoffDistance;
-  if (shift)
+  if (modifier == Modifier::PotentialShift)
     control.truncation = Truncation::Shift;
-  else if (forceSwitch && switches)
+  else if (modifier == Modifier::ForceSwitch && switches)
     control.truncation = Truncation::ForceSwitch;
-  else if (forceSwitch)
-    return fail(table, "'vdw_force_switch' needs a 'switchdist' that is "
-                       "less than 'cutoffdist'");
+  else if (modifier == Modifier::ForceSwitch)
+    return fail(table, "'lennard_jones_modifier = \"FORCE_SWITCH\"' needs a "
+                       "'switch_distance' that is less than 'cutoff'");
   else if (switches)
     control.truncation = Truncation::Switch;
   else
@@ -399,75 +532,47 @@ Error Reader::readEnergy(const toml::table &table) {
     return error;
   if (Error error = readArray("pair", &Reader::readPair))
     return error;
-  if (Error error = readArray("nbfix", &Reader::readOverride))
+  if (Error error = readArray("pair_override", &Reader::readOverride))
     return error;
 
   // With a topology, the correction for the dispersion is for the whole
   // run, and the electrostatics are a cutoff or particle mesh Ewald.
   bool hasTopology = control.hasTopology();
-  for (StringRef key : {"dispersion_corr", "electrostatic", "pme_alpha",
-                        "pme_alpha_tol", "pme_ngrid_x", "pme_ngrid_y",
-                        "pme_ngrid_z", "pme_max_spacing", "pme_nspline",
-                        "pme_shift", "pme_influence"})
+  for (StringRef key :
+       {"dispersion_correction", "electrostatics", "coulomb_modifier"})
     if (!hasTopology && table.contains(std::string_view(key)))
       return fail(*table.get(std::string_view(key)),
                   "'" + key + "' in [energy] is for a run from a topology; "
                   "without one, give the terms in [[energy.pair]]");
   if (Error error = readChoice<DispersionCorrection>(
-          table, "dispersion_corr", control.topologyDispersion,
+          table, "dispersion_correction", control.topologyDispersion,
           {{"NONE", DispersionCorrection::None},
-           {"EPRESS", DispersionCorrection::EnergyPressure}}))
+           {"ENERGY_PRESSURE", DispersionCorrection::EnergyPressure}}))
     return error;
   int electrostatic = 0;
-  if (Error error = readChoice<int>(table, "electrostatic", electrostatic,
+  if (Error error = readChoice<int>(table, "electrostatics", electrostatic,
                                     {{"CUTOFF", 0}, {"PME", 1}}))
     return error;
   control.pme = electrostatic == 1;
-  for (StringRef key : {"pme_alpha", "pme_alpha_tol", "pme_ngrid_x",
-                        "pme_ngrid_y", "pme_ngrid_z", "pme_max_spacing",
-                        "pme_nspline", "pme_shift", "pme_influence"})
-    if (!control.pme && table.contains(std::string_view(key)))
-      return fail(*table.get(std::string_view(key)),
-                  "'" + key + "' is for 'electrostatic = \"PME\"'");
-  if (Error error = readPositive(table, "pme_alpha", control.pmeAlpha))
-    return error;
-  if (Error error =
-          readPositive(table, "pme_alpha_tol", control.pmeAlphaTolerance))
-    return error;
-  if (!(control.pmeAlphaTolerance < 1.0))
-    return fail(*table.get("pme_alpha_tol"),
-                "expected a tolerance less than 1 for 'pme_alpha_tol'");
-  static const char *const gridKeys[] = {"pme_ngrid_x", "pme_ngrid_y",
-                                         "pme_ngrid_z"};
-  for (int k = 0; k != 3; ++k)
-    if (Error error = readCount(table, gridKeys[k], control.pmeGrid[k], 8))
-      return error;
-  if (Error error =
-          readPositive(table, "pme_max_spacing", control.pmeMaxSpacing))
-    return error;
-  if (Error error = readCount(table, "pme_nspline", control.pmeOrder, 4))
-    return error;
-  if (control.pmeOrder != 4 && control.pmeOrder != 6 &&
-      control.pmeOrder != 8)
-    return fail(*table.get("pme_nspline"),
-                "expected 4, 6, or 8 for 'pme_nspline'");
-  if (Error error = readBool(table, "pme_shift", control.pmeShift))
-    return error;
-  if (Error error = readChoice<bool>(table, "pme_influence",
-                                     control.pmeOptimal,
-                                     {{"OPTIMAL", true}, {"SPME", false}}))
+  if (!control.pme && table.contains("coulomb_modifier"))
+    return fail(*table.get("coulomb_modifier"),
+                "'coulomb_modifier' is for 'electrostatics = \"PME\"'");
+  if (Error error = readChoice<bool>(table, "coulomb_modifier",
+                                     control.pmeShift,
+                                     {{"NONE", false},
+                                      {"POTENTIAL_SHIFT", true}}))
     return error;
   if (hasTopology && control.truncation != Truncation::None)
     return fail(table, "a run from a topology takes a plain cutoff: "
-                       "'switchdist' equal to 'cutoffdist', and no "
-                       "'vdw_shift' or 'vdw_force_switch'");
+                       "'switch_distance' equal to 'cutoff', and no "
+                       "'lennard_jones_modifier'");
 
   // A topology gives the types and the terms.
   if (control.hasTopology()) {
     if (!control.types.empty() || !control.pairs.empty() ||
         !control.overrides.empty())
       return fail(table, "[[energy.type]], [[energy.pair]], and "
-                         "[[energy.nbfix]] are for a system without a "
+                         "[[energy.pair_override]] are for a system without a "
                          "topology; the topology gives them");
     return Error::success();
   }
@@ -478,122 +583,155 @@ Error Reader::readEnergy(const toml::table &table) {
   return Error::success();
 }
 
-Error Reader::readDynamics(const toml::table &table) {
-  if (Error error = checkKeywords(
-          table, "dynamics",
-          {"integrator", "timestep", "nsteps", "eneout_period",
-           "crdout_period", "rstout_period", "nbupdate_period", "iseed",
-           "comm_period"},
-          {{"velout_period", "M1"},
-           {"stoptr_period", "M1"},
-           {"elec_long_period", "M2"},
-           {"annealing", "M1"}}))
+Error Reader::readPME(const toml::table &table) {
+  if (Error error = checkKeywords(table, "pme",
+                                  {"tolerance", "beta", "max_spacing", "grid",
+                                   "order", "influence"},
+                                  {}))
     return error;
-
-  if (Error error = readChoice<Integrator>(
-          table, "integrator", control.integrator,
-          {{"VVER", Integrator::VelocityVerlet},
-           {"LEAP", Integrator::Leapfrog}}))
-    return error;
-  if (Error error = readPositive(table, "timestep", control.timestep))
-    return error;
-  if (Error error = readCount(table, "nsteps", control.numSteps, 0))
-    return error;
-  if (Error error = readCount(table, "eneout_period", control.energyPeriod, 0))
-    return error;
-  if (Error error = readCount(table, "crdout_period", control.framePeriod, 0))
+  if (Error error = readPositive(table, "beta", control.pmeAlpha))
     return error;
   if (Error error =
-          readCount(table, "rstout_period", control.checkpointPeriod, 0))
+          readPositive(table, "tolerance", control.pmeAlphaTolerance))
     return error;
+  if (!(control.pmeAlphaTolerance < 1.0))
+    return fail(*table.get("tolerance"),
+                "expected a tolerance less than 1 for 'tolerance'");
+  if (const toml::node *node = table.get("grid")) {
+    const toml::array *grid = node->as_array();
+    if (!grid || grid->size() != 3)
+      return fail(*node, "expected three numbers of points for 'grid'");
+    for (int k = 0; k != 3; ++k) {
+      std::optional<int64_t> points = (*grid)[k].value<int64_t>();
+      if (!points || *points < 8)
+        return fail(*node, "expected numbers of points of 8 or more for "
+                           "'grid'");
+      control.pmeGrid[k] = *points;
+    }
+  }
   if (Error error =
-          readCount(table, "nbupdate_period", control.rebuildPeriod, 0))
+          readPositive(table, "max_spacing", control.pmeMaxSpacing))
     return error;
-  // Unset until [thermostat] and [barostat] are read; -1 stands for a
-  // period not given.
-  control.comPeriod = control.thermostatPeriod = -1;
-  control.barostatPeriod = -1;
-  if (Error error = readCount(table, "comm_period", control.comPeriod, 0))
+  if (Error error = readCount(table, "order", control.pmeOrder, 4))
     return error;
-  int64_t seed = static_cast<int64_t>(control.seed);
-  if (Error error = readCount(table, "iseed", seed, 0))
+  if (control.pmeOrder != 4 && control.pmeOrder != 6 &&
+      control.pmeOrder != 8)
+    return fail(*table.get("order"), "expected 4, 6, or 8 for 'order'");
+  if (Error error = readChoice<bool>(table, "influence", control.pmeOptimal,
+                                     {{"OPTIMAL", true}, {"SPME", false}}))
     return error;
-  control.seed = static_cast<uint64_t>(seed);
+  return Error::success();
+}
 
-  if (control.rebuildPeriod != 0)
-    return fail(*table.get("nbupdate_period"),
-                "'nbupdate_period' is not supported yet; without it, a "
-                "neighbor structure is rebuilt when it is no longer valid");
-
-  // Each period is a multiple of the one inside it: the loops of the run
-  // nest, and a checkpoint is written where an interval between frames and
-  // one between energies ends. Frames and energies nest either way: if
-  // frames are the more frequent, the energies are computed at each frame
-  // and the log shows those of its period.
+/// Checks that the intervals of output nest: each is a multiple of the one
+/// inside it, and the number of steps a multiple of each. A checkpoint is
+/// written where an interval between frames and one between energies ends;
+/// frames and energies nest either way: if frames are the more frequent,
+/// the energies are computed at each frame and the log shows those of its
+/// interval.
+Error Reader::checkIntervals(const toml::table &table) {
+  const toml::table &at = outputTable ? *outputTable : table;
   auto checkMultiple = [&](StringRef outer, int64_t large, StringRef inner,
                            int64_t small) -> Error {
     if (large == 0 || small == 0 || large % small == 0)
       return Error::success();
     std::string hint;
-    if (outer != "nsteps")
+    if (outer != "steps")
       hint = "; the output of '" + outer.str() +
              "' is written where an interval of '" + inner.str() +
              "' ends, so '" + inner.str() + "' must divide it";
-    return fail(table, "'" + outer + "' is not a multiple of '" + inner +
-                           "'" + hint);
+    return fail(outer == "steps" ? table : at,
+                "'" + outer + "' is not a multiple of '" + inner + "'" +
+                    hint);
   };
   if (control.framePeriod >= control.energyPeriod ||
       control.framePeriod == 0) {
-    if (Error error = checkMultiple("crdout_period", control.framePeriod,
-                                    "eneout_period", control.energyPeriod))
+    if (Error error =
+            checkMultiple("trajectory_interval", control.framePeriod,
+                          "energy_interval", control.energyPeriod))
       return error;
   } else if (Error error =
-                 checkMultiple("eneout_period", control.energyPeriod,
-                               "crdout_period", control.framePeriod)) {
+                 checkMultiple("energy_interval", control.energyPeriod,
+                               "trajectory_interval", control.framePeriod)) {
     return error;
   }
-  if (Error error = checkMultiple("rstout_period", control.checkpointPeriod,
-                                  "crdout_period", control.framePeriod))
+  if (Error error =
+          checkMultiple("checkpoint_interval", control.checkpointPeriod,
+                        "trajectory_interval", control.framePeriod))
     return error;
-  if (Error error = checkMultiple("rstout_period", control.checkpointPeriod,
-                                  "eneout_period", control.energyPeriod))
+  if (Error error =
+          checkMultiple("checkpoint_interval", control.checkpointPeriod,
+                        "energy_interval", control.energyPeriod))
     return error;
   for (auto [name, period] :
-       {std::pair<StringRef, int64_t>{"eneout_period", control.energyPeriod},
-        {"crdout_period", control.framePeriod},
-        {"rstout_period", control.checkpointPeriod}})
-    if (Error error = checkMultiple("nsteps", control.numSteps, name, period))
+       {std::pair<StringRef, int64_t>{"energy_interval",
+                                      control.energyPeriod},
+        {"trajectory_interval", control.framePeriod},
+        {"checkpoint_interval", control.checkpointPeriod}})
+    if (Error error = checkMultiple("steps", control.numSteps, name, period))
       return error;
   return Error::success();
 }
 
-Error Reader::readMinimize(const toml::table &table) {
+Error Reader::readDynamics(const toml::table &table) {
   if (Error error = checkKeywords(
-          table, "minimize",
-          {"method", "nsteps", "eneout_period", "crdout_period", "step_size"},
-          {{"force_tolerance", "M1"}}))
+          table, "dynamics",
+          {"integrator", "time_step", "steps", "seed",
+           "center_of_mass_interval"},
+          {}))
+    return error;
+
+  if (Error error = readChoice<Integrator>(
+          table, "integrator", control.integrator,
+          {{"VELOCITY_VERLET", Integrator::VelocityVerlet},
+           {"LEAPFROG", Integrator::Leapfrog}}))
+    return error;
+  if (Error error = readPositive(table, "time_step", control.timestep))
+    return error;
+  if (Error error = readCount(table, "steps", control.numSteps, 0))
+    return error;
+  // Unset until [thermostat] and [barostat] are read; -1 stands for an
+  // interval not given.
+  control.comPeriod = control.thermostatPeriod = -1;
+  control.barostatPeriod = -1;
+  if (Error error =
+          readCount(table, "center_of_mass_interval", control.comPeriod, 0))
+    return error;
+  int64_t seed = static_cast<int64_t>(control.seed);
+  if (Error error = readCount(table, "seed", seed, 0))
+    return error;
+  control.seed = static_cast<uint64_t>(seed);
+  return checkIntervals(table);
+}
+
+Error Reader::readMinimize(const toml::table &table) {
+  if (Error error = checkKeywords(table, "minimize",
+                                  {"method", "steps", "initial_step"}, {}))
     return error;
   enum class Method { SteepestDescent };
   Method method = Method::SteepestDescent;
   if (Error error = readChoice<Method>(
-          table, "method", method, {{"SD", Method::SteepestDescent}}))
+          table, "method", method,
+          {{"STEEPEST_DESCENT", Method::SteepestDescent}}))
     return error;
   control.minimize = true;
-  if (Error error = readCount(table, "nsteps", control.numSteps, 0))
+  if (Error error = readCount(table, "steps", control.numSteps, 0))
     return error;
-  if (Error error = readCount(table, "eneout_period", control.energyPeriod, 1))
+  if (Error error = readPositive(table, "initial_step", control.minimizeStep))
     return error;
-  if (Error error = readCount(table, "crdout_period", control.framePeriod, 0))
-    return error;
-  if (Error error = readPositive(table, "step_size", control.minimizeStep))
-    return error;
-  if (control.numSteps % control.energyPeriod != 0)
-    return fail(table, "'nsteps' is not a multiple of 'eneout_period'");
+  if (control.energyPeriod == 0)
+    return fail(outputTable ? *outputTable : table,
+                "a minimization writes energies: 'energy_interval' may not "
+                "be 0");
   if (control.framePeriod != 0 &&
       control.framePeriod % control.energyPeriod != 0)
-    return fail(table, "'crdout_period' is not a multiple of 'eneout_period'");
+    return fail(outputTable ? *outputTable : table,
+                "'trajectory_interval' is not a multiple of "
+                "'energy_interval'");
+  if (control.numSteps % control.energyPeriod != 0)
+    return fail(table, "'steps' is not a multiple of 'energy_interval'");
   if (control.framePeriod != 0 && control.numSteps % control.framePeriod != 0)
-    return fail(table, "'nsteps' is not a multiple of 'crdout_period'");
+    return fail(table, "'steps' is not a multiple of 'trajectory_interval'");
   return Error::success();
 }
 
@@ -602,25 +740,26 @@ Error Reader::resolveCoupling() {
   if (!control.thermostat && thermostat > 0)
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
-        "%s: [thermostat] gives 'period', but there is no thermostat",
+        "%s: [thermostat] gives 'interval', but there is no thermostat",
         path.str().c_str());
   // The thermostat acts every 10 steps and the motion of the center of mass
   // is removed with it, unless one period is given: then both take it.
-  // Without a thermostat the motion is removed only if 'comm_period' asks.
+  // Without a thermostat the motion is removed only if
+  // 'center_of_mass_interval' asks.
   if (control.thermostat) {
     if (thermostat < 0)
       thermostat = com > 0 ? com : 10;
     if (thermostat == 0)
       return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                     "%s: 'period' in [thermostat] is 0",
+                                     "%s: 'interval' in [thermostat] is 0",
                                      path.str().c_str());
     if (com < 0)
       com = thermostat;
     if (com != 0 && com != thermostat)
       return llvm::createStringError(
           llvm::inconvertibleErrorCode(),
-          "%s: 'comm_period' differs from 'period' in [thermostat]; in M1 "
-          "the "
+          "%s: 'center_of_mass_interval' differs from 'interval' in "
+          "[thermostat]; in M1 the "
           "motion of the center of mass is removed when the thermostat acts, "
           "or never",
           path.str().c_str());
@@ -635,7 +774,7 @@ Error Reader::resolveCoupling() {
   if (!control.barostat && barostat > 0)
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
-        "%s: [barostat] gives 'period', but there is no barostat",
+        "%s: [barostat] gives 'interval', but there is no barostat",
         path.str().c_str());
   if (!control.barostat)
     barostat = 0;
@@ -644,7 +783,7 @@ Error Reader::resolveCoupling() {
   else if (barostat != thermostat)
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
-        "%s: 'period' in [barostat] differs from that in [thermostat]; in "
+        "%s: 'interval' in [barostat] differs from that in [thermostat]; in "
         "M1 the barostat acts when the thermostat does",
         path.str().c_str());
 
@@ -654,15 +793,15 @@ Error Reader::resolveCoupling() {
   if (period == 0)
     return Error::success();
   for (auto [name, value] :
-       {std::pair<StringRef, int64_t>{"nsteps", control.numSteps},
-        {"eneout_period", control.energyPeriod},
-        {"crdout_period", control.framePeriod},
-        {"rstout_period", control.checkpointPeriod}})
+       {std::pair<StringRef, int64_t>{"steps", control.numSteps},
+        {"energy_interval", control.energyPeriod},
+        {"trajectory_interval", control.framePeriod},
+        {"checkpoint_interval", control.checkpointPeriod}})
     if (value % period != 0)
       return llvm::createStringError(
           llvm::inconvertibleErrorCode(),
-          "%s: '%s' is not a multiple of the period of coupling, %lld steps "
-          "('comm_period' or 'period' in [thermostat])",
+          "%s: '%s' is not a multiple of the interval of coupling, %lld "
+          "steps ('center_of_mass_interval' or 'interval' in [thermostat])",
           path.str().c_str(), name.str().c_str(), (long long)period);
   return Error::success();
 }
@@ -690,7 +829,8 @@ Error Reader::readEnsemble(const toml::table &table) {
 
 Error Reader::readThermostat(const toml::table &table) {
   if (Error error = checkKeywords(table, "thermostat",
-                                  {"method", "tau_t", "period"}, {}))
+                                  {"method", "time_constant", "interval"},
+                                  {}))
     return error;
   int method = -1;
   if (Error error = readChoice<int>(table, "method", method,
@@ -700,9 +840,10 @@ Error Reader::readThermostat(const toml::table &table) {
     return fail(table, "expected 'method' in [thermostat]: \"V-RESCALE\", "
                        "stochastic velocity rescaling");
   control.thermostat = true;
-  if (Error error = readPositive(table, "tau_t", control.tauT))
+  if (Error error = readPositive(table, "time_constant", control.tauT))
     return error;
-  if (Error error = readCount(table, "period", control.thermostatPeriod, 0))
+  if (Error error =
+          readCount(table, "interval", control.thermostatPeriod, 0))
     return error;
   return Error::success();
 }
@@ -710,8 +851,8 @@ Error Reader::readThermostat(const toml::table &table) {
 Error Reader::readBarostat(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "barostat",
-          {"method", "tau_p", "compressibility", "isotropy", "work",
-           "period"},
+          {"method", "time_constant", "compressibility", "coupling", "work",
+           "interval"},
           {}))
     return error;
   int method = -1;
@@ -722,7 +863,7 @@ Error Reader::readBarostat(const toml::table &table) {
     return fail(table, "expected 'method' in [barostat]: \"C-RESCALE\", "
                        "stochastic cell rescaling");
   control.barostat = true;
-  if (Error error = readPositive(table, "tau_p", control.tauP))
+  if (Error error = readPositive(table, "time_constant", control.tauP))
     return error;
   if (Error error =
           readPositive(table, "compressibility", control.compressibility))
@@ -730,43 +871,44 @@ Error Reader::readBarostat(const toml::table &table) {
   if (Error error = readChoice<bool>(table, "work", control.exactBarostatWork,
                                      {{"EXACT", true}, {"FIRST_ORDER", false}}))
     return error;
-  int isotropy = 0;
-  if (Error error = readChoice<int>(table, "isotropy", isotropy,
-                                    {{"ISO", 0}, {"SEMI-ISO", 1}}))
+  int coupling = 0;
+  if (Error error = readChoice<int>(table, "coupling", coupling,
+                                    {{"ISOTROPIC", 0}, {"SEMI_ISOTROPIC", 1}}))
     return error;
-  if (isotropy != 0)
-    return fail(*table.get("isotropy"),
-                "'isotropy = \"SEMI-ISO\"' is not supported yet; it is "
-                "planned for M1");
-  if (Error error = readCount(table, "period", control.barostatPeriod, 0))
+  if (coupling != 0)
+    return fail(*table.get("coupling"),
+                "'coupling = \"SEMI_ISOTROPIC\"' is not supported yet; it "
+                "is planned for M1");
+  if (Error error = readCount(table, "interval", control.barostatPeriod, 0))
     return error;
   return Error::success();
 }
 
 Error Reader::readBoundary(const toml::table &table) {
-  if (Error error = checkKeywords(
-          table, "boundary",
-          {"type", "box_size_x", "box_size_y", "box_size_z"},
-          {{"domain_x", "M2"}, {"domain_y", "M2"}, {"domain_z", "M2"}}))
+  if (Error error = checkKeywords(table, "boundary", {"type", "box"}, {}))
     return error;
   int type = 0;
-  if (Error error = readChoice<int>(table, "type", type, {{"PBC", 0}}))
+  if (Error error = readChoice<int>(table, "type", type, {{"PERIODIC", 0}}))
     return error;
   // With a topology, the box is that of the file of coordinates.
-  const char *keys[3] = {"box_size_x", "box_size_y", "box_size_z"};
+  const toml::node *node = table.get("box");
+  if (control.hasTopology()) {
+    if (node)
+      return fail(*node, "'box' is not needed: the box comes from the file "
+                         "of coordinates");
+    return Error::success();
+  }
+  if (!node)
+    return fail(table, "expected 'box' in [boundary], the edges of the "
+                       "cell in Å");
+  const toml::array *box = node->as_array();
+  if (!box || box->size() != 3)
+    return fail(*node, "expected the three edges of the cell for 'box'");
   for (int i = 0; i != 3; ++i) {
-    if (control.hasTopology()) {
-      if (table.contains(keys[i]))
-        return fail(table, llvm::Twine("'") + keys[i] +
-                               "' is not needed: the box comes from the "
-                               "file of coordinates");
-      continue;
-    }
-    if (Error error = readPositive(table, keys[i], control.box[i]))
-      return error;
-    if (!table.contains(keys[i]))
-      return fail(table, llvm::Twine("expected '") + keys[i] +
-                             "' in [boundary]");
+    std::optional<double> edge = (*box)[i].value<double>();
+    if (!edge || !(*edge > 0.0))
+      return fail(*node, "expected positive edges of the cell for 'box'");
+    control.box[i] = *edge;
   }
   return Error::success();
 }
@@ -774,8 +916,8 @@ Error Reader::readBoundary(const toml::table &table) {
 Error Reader::readExecution(const toml::table &table) {
   if (Error error = checkKeywords(table, "execution",
                                   {"target", "threads", "precision",
-                                   "neighbor_width", "fast_math",
-                                   "reorder"}))
+                                   "neighbor_capacity", "fast_math",
+                                   "spatial_order"}))
     return error;
   if (Error error = readChoice<Target>(
           table, "target", control.target,
@@ -790,20 +932,20 @@ Error Reader::readExecution(const toml::table &table) {
            {"double", Precision::Double}}))
     return error;
   if (Error error =
-          readCount(table, "neighbor_width", control.neighborWidth, 1))
+          readCount(table, "neighbor_capacity", control.neighborWidth, 1))
     return error;
   if (Error error = readBool(table, "fast_math", control.fastMath))
     return error;
-  return readBool(table, "reorder", control.reorder);
+  return readBool(table, "spatial_order", control.reorder);
 }
 
 Error Reader::read(const toml::table &root) {
   if (Error error = checkKeywords(
           root, "the control file",
-          {"input", "output", "energy", "dynamics", "minimize", "ensemble",
-           "thermostat", "barostat",
+          {"input", "output", "energy", "pme", "dynamics", "minimize",
+           "ensemble", "thermostat", "barostat",
            "boundary", "execution", "constraints", "restraints"},
-          {{"selection", "M1"}, {"remd", "M3"}}))
+          {}))
     return error;
 
   auto getTable = [&](StringRef name, bool required,
@@ -823,81 +965,27 @@ Error Reader::read(const toml::table &root) {
   const toml::table *table;
   if (Error error = getTable("input", /*required=*/true, table))
     return error;
-  if (Error error = checkKeywords(
-          *table, "input",
-          {"pdbfile", "rstfile", "prmtopfile", "ambcrdfile", "grotopfile",
-           "grocrdfile", "groinclude", "grodefine"},
-          {{"psffile", "M2"}, {"topfile", "M2"}, {"parfile", "M2"}}))
+  if (Error error = readInput(*table))
     return error;
-  if (Error error = readPath(*table, "grotopfile", control.gromacsTopologyFile))
-    return error;
-  if (Error error =
-          readPath(*table, "grocrdfile", control.gromacsCoordinateFile))
-    return error;
-  for (StringRef key : {"groinclude", "grodefine"}) {
-    const toml::node *node = table->get(std::string_view(key));
-    if (!node)
-      continue;
-    const toml::array *array = node->as_array();
-    if (!array)
-      return fail(*node, "expected a list of strings for '" + key + "'");
-    for (const toml::node &element : *array) {
-      if (!element.is_string())
-        return fail(element, "expected a list of strings for '" + key + "'");
-      std::string value = *element.value<std::string>();
-      if (key == "groinclude") {
-        // Relative to the control file, as the other paths are.
-        llvm::SmallString<256> full(llvm::sys::path::parent_path(path));
-        if (llvm::sys::path::is_absolute(value))
-          full = value;
-        else
-          llvm::sys::path::append(full, value);
-        control.gromacsIncludes.push_back(std::string(full));
-      } else {
-        control.gromacsDefines.push_back(value);
-      }
-    }
-  }
-  if (control.gromacsTopologyFile.empty() !=
-      control.gromacsCoordinateFile.empty())
-    return fail(*table, "expected 'grotopfile' and 'grocrdfile' together");
-  if (Error error = readPath(*table, "pdbfile", control.pdbFile))
-    return error;
-  if (Error error = readPath(*table, "rstfile", control.restartInput))
-    return error;
-  if (Error error = readPath(*table, "prmtopfile", control.prmtopFile))
-    return error;
-  if (Error error =
-          readPath(*table, "ambcrdfile", control.amberCoordinateFile))
-    return error;
-  if (control.prmtopFile.empty() != control.amberCoordinateFile.empty())
-    return fail(*table, "expected 'prmtopfile' and 'ambcrdfile' together");
-  int sources = !control.pdbFile.empty() + !control.prmtopFile.empty() +
-                !control.gromacsTopologyFile.empty();
-  if (sources > 1)
-    return fail(*table, "expected one of 'pdbfile', 'prmtopfile', and "
-                        "'grotopfile'");
-  if (sources == 0)
-    return fail(*table, "expected a 'pdbfile', a 'prmtopfile', or a "
-                        "'grotopfile' in [input]");
 
   if (Error error = getTable("output", /*required=*/false, table))
     return error;
-  if (table) {
-    if (Error error = checkKeywords(*table, "output", {"dcdfile", "rstfile"},
-                                    {{"xtcfile", "M0"},
-                                     {"dcdvelfile", "M1"}}))
+  if (table)
+    if (Error error = readOutput(*table))
       return error;
-    if (Error error = readPath(*table, "dcdfile", control.dcdFile))
-      return error;
-    if (Error error = readPath(*table, "rstfile", control.restartOutput))
-      return error;
-  }
 
   if (Error error = getTable("energy", /*required=*/true, table))
     return error;
   if (Error error = readEnergy(*table))
     return error;
+  if (Error error = getTable("pme", /*required=*/false, table))
+    return error;
+  if (table && !control.pme)
+    return fail(*table, "[pme] is for 'electrostatics = \"PME\"' in "
+                        "[energy]");
+  if (table)
+    if (Error error = readPME(*table))
+      return error;
 
   // A run minimizes the energy or follows the dynamics.
   if (Error error = getTable("minimize", /*required=*/false, table))
@@ -960,30 +1048,30 @@ Error Reader::read(const toml::table &root) {
     return error;
   if (table) {
     if (Error error = checkKeywords(*table, "constraints",
-                                    {"rigid_bond", "fast_water",
-                                     "settle_residues"},
-                                    {{"shake_tolerance", "M1"},
-                                     {"shake_iterations", "M1"}}))
+                                    {"hydrogen_bonds", "rigid_water",
+                                     "water_residues"},
+                                    {}))
       return error;
-    if (Error error = readBool(*table, "rigid_bond", control.rigidBonds))
+    if (Error error =
+            readBool(*table, "hydrogen_bonds", control.rigidBonds))
       return error;
-    if (Error error = readBool(*table, "fast_water", control.fastWater))
+    if (Error error = readBool(*table, "rigid_water", control.fastWater))
       return error;
-    if (const toml::node *node = table->get("settle_residues")) {
+    if (const toml::node *node = table->get("water_residues")) {
       const toml::array *array = node->as_array();
       if (!array)
         return fail(*node, "expected a list of residue names for "
-                           "'settle_residues'");
+                           "'water_residues'");
       control.settleResidues.clear();
       for (const toml::node &element : *array) {
         if (!element.is_string())
           return fail(element, "expected a list of residue names for "
-                               "'settle_residues'");
+                               "'water_residues'");
         control.settleResidues.push_back(*element.value<std::string>());
       }
     }
     control.statesFlexible =
-        table->contains("fast_water") && !control.fastWater;
+        table->contains("rigid_water") && !control.fastWater;
   }
 
   if (const toml::node *node = root.get("restraints")) {
@@ -996,7 +1084,7 @@ Error Reader::read(const toml::table &root) {
         return fail(element, "expected [[restraints]]");
       if (Error error = checkKeywords(*entry, "restraints",
                                       {"selection", "force_constant"},
-                                      {{"reffile", "M1"}}))
+                                      {}))
         return error;
       Control::Restraint restraint;
       if (Error error = readString(*entry, "selection", restraint.selection))
@@ -1026,7 +1114,8 @@ Error Reader::read(const toml::table &root) {
   if (control.checkpointPeriod != 0 && control.restartOutput.empty())
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
-        "%s: 'rstout_period' is given, but [output] names no 'rstfile'",
+        "%s: 'checkpoint_interval' is given, but [output] names no "
+        "'checkpoint'",
         path.str().c_str());
   // A minimization writes its checkpoint at the end.
   if (control.minimize && !control.restartOutput.empty())
@@ -1034,12 +1123,14 @@ Error Reader::read(const toml::table &root) {
   if (control.checkpointPeriod == 0 && !control.restartOutput.empty())
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
-        "%s: [output] names an 'rstfile', but 'rstout_period' is not given",
+        "%s: [output] names a 'checkpoint', but 'checkpoint_interval' is "
+        "not given",
         path.str().c_str());
   if (control.framePeriod != 0 && control.dcdFile.empty())
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
-        "%s: 'crdout_period' is given, but [output] names no 'dcdfile'",
+        "%s: 'trajectory_interval' is given, but [output] names no "
+        "'trajectory'",
         path.str().c_str());
   return Error::success();
 }
@@ -1063,19 +1154,21 @@ llvm::Expected<Control> mdir::driver::readControl(StringRef path) {
 
 std::string mdir::driver::getControlTemplate() {
   return R"TOML([input]
-pdbfile = "system.pdb"          # positions; the name of an atom is its type
-# rstfile = "earlier.h5"        # the state that the run continues from
+coordinates = "system.pdb"      # positions; the name of an atom is its type
+# checkpoint = "earlier.h5"     # the state that the run continues from
 
 [output]
-dcdfile = "run.dcd"             # trajectory of positions
-# rstfile = "run.h5"            # checkpoint, with rstout_period
+trajectory          = "run.dcd" # positions, in DCD
+# checkpoint        = "run.h5"  # the state, with checkpoint_interval
+energy_interval     = 10        # steps between energies in the log; 0: none
+trajectory_interval = 0         # steps between frames; 0: none
+# checkpoint_interval = 0       # steps between checkpoints
 
 [energy]
-cutoffdist       = 12.0         # cutoff (Å)
-switchdist       = 10.0         # where switching begins (Å); the cutoff: none
-pairlistdist     = 13.5         # reach of the neighbor structures (Å)
-vdw_force_switch = false        # switch the force instead of the energy
-vdw_shift        = false        # shift the energy to zero at the cutoff
+cutoff            = 12.0        # Å
+switch_distance   = 10.0        # where switching begins (Å); the cutoff: none
+pairlist_distance = 13.5        # reach of the neighbor structures (Å)
+# lennard_jones_modifier = "NONE"  # NONE, POTENTIAL_SHIFT, FORCE_SWITCH
 
 [[energy.pair]]
 name       = "lj"
@@ -1089,14 +1182,11 @@ epsilon = 0.2385                # kcal/mol
 sigma   = 3.4                   # Å
 
 [dynamics]
-integrator    = "VVER"          # VVER, LEAP
-timestep      = 0.001           # ps
-nsteps        = 100
-eneout_period = 10              # steps between energies in the log; 0: none
-crdout_period = 0               # steps between frames; 0: none
-rstout_period = 0               # steps between checkpoints; 0: none
-iseed         = 314159          # seed of the velocities and the thermostat
-# comm_period = 0               # steps between removals of the motion of
+integrator = "VELOCITY_VERLET"  # VELOCITY_VERLET, LEAPFROG
+time_step  = 0.001              # ps
+steps      = 100
+seed       = 314159             # of the velocities and the thermostat
+# center_of_mass_interval = 0   # steps between removals of the motion of
 #                               # the center of mass; 0: none
 
 [ensemble]
@@ -1105,105 +1195,110 @@ temperature = 298.15            # of the velocities and the bath (K)
 
 # With 'ensemble = "NVT"':
 # [thermostat]
-# method = "V-RESCALE"          # stochastic velocity rescaling
-# tau_t  = 1.0                  # ps
-# period = 10                   # steps between its actions
+# method        = "V-RESCALE"   # stochastic velocity rescaling
+# time_constant = 1.0           # ps
+# interval      = 10            # steps between its actions
 
 [boundary]
-type       = "PBC"              # PBC
-box_size_x = 40.0               # Å
-box_size_y = 40.0
-box_size_z = 40.0
+type = "PERIODIC"
+box  = [40.0, 40.0, 40.0]       # edges of the cell (Å)
 
 [execution]
-target    = "cpu"               # cpu, gpu
-threads   = 1                   # for the target cpu
-precision = "double"            # single, mixed, double
-fast_math = true                # allow rewrites that change rounding
-reorder   = true                # keep the particles in the order of their positions
-# neighbor_width = 160          # neighbors per particle; default: estimated
+target        = "CPU"           # CPU, GPU
+threads       = 1               # for the target CPU
+precision     = "DOUBLE"        # SINGLE, MIXED, DOUBLE
+fast_math     = true            # allow rewrites that change rounding
+spatial_order = true            # keep the particles in the order of their
+                                # positions
+# neighbor_capacity = 160       # neighbors per particle; default: estimated
 )TOML";
 }
 
 std::string mdir::driver::getAmberControlTemplate() {
   return R"TOML([input]
-prmtopfile = "system.prmtop"    # topology of Amber (tleap, ParmEd)
-ambcrdfile = "system.inpcrd"    # coordinates and the box; the reference
-                                # of the restraints
-# rstfile = "earlier.h5"        # the checkpoint that the run continues
-#                               # from; one of a minimization gives only
-#                               # the positions
+topology    = "system.prmtop"   # of Amber (tleap, ParmEd)
+coordinates = "system.inpcrd"   # and the box; the reference of restraints
+# format    = "AUTO"            # AUTO (from the names), AMBER, GROMACS, PDB
+# checkpoint = "earlier.h5"     # the state that the run continues from; one
+#                               # of a minimization gives only positions
 
 [output]
-dcdfile = "run.dcd"             # trajectory of positions
-rstfile = "run.h5"              # checkpoints, with rstout_period
+trajectory          = "run.dcd" # positions, in DCD
+checkpoint          = "run.h5"  # the state
+energy_interval     = 5000      # steps between energies in the log
+trajectory_interval = 5000      # steps between frames
+checkpoint_interval = 50000     # steps between checkpoints
 
 [energy]
-cutoffdist    = 9.0             # cutoff of the direct terms (Å)
-pairlistdist  = 10.0            # reach of the neighbor structures (Å)
-electrostatic = "PME"           # PME, CUTOFF
-pme_shift     = true            # shift the direct sum to zero at the cutoff
-# dispersion_corr = "EPRESS"    # NONE, EPRESS: long-range correction of
-#                               # the energy and the pressure
-# pme_alpha_tol   = 1.0e-5      # erfc(β rc), which gives β
-# pme_alpha       = 0.35        # β (1/Å), instead
-# pme_max_spacing = 1.2         # largest spacing of the grid (Å)
-# pme_ngrid_x     = 48          # the grid, instead (and _y, _z)
-# pme_nspline     = 4           # order of the B-splines: 4, 6, 8
-# pme_influence   = "SPME"      # SPME, OPTIMAL (as sander)
+cutoff            = 9.0         # of the direct terms (Å)
+pairlist_distance = 10.0        # reach of the neighbor structures (Å)
+electrostatics    = "PME"       # PME, CUTOFF
+coulomb_modifier  = "POTENTIAL_SHIFT"  # NONE, POTENTIAL_SHIFT: the direct
+                                       # sum shifted to zero at the cutoff
+# dispersion_correction = "ENERGY_PRESSURE"  # NONE, ENERGY_PRESSURE
+
+# Particle mesh Ewald; every entry has a default.
+# [pme]
+# tolerance   = 1.0e-5          # erfc(β r_c), which gives β
+# beta        = 0.35            # β (1/Å), instead
+# max_spacing = 1.2             # largest spacing of the grid (Å)
+# grid        = [48, 48, 48]    # the grid, instead
+# order       = 4               # of the B-splines: 4, 6, 8
+# influence   = "SPME"          # SPME, OPTIMAL (as sander)
 
 [dynamics]
-integrator        = "VVER"      # VVER, LEAP (velocities half a step behind)
-timestep          = 0.002       # ps
-nsteps            = 500000
-eneout_period     = 5000        # steps between energies in the log
-crdout_period     = 5000        # steps between frames
-rstout_period     = 50000       # steps between checkpoints
-iseed             = 314159      # seed of the velocities and the coupling
-# comm_period     = 0           # steps between removals of the motion of
-#                               # the center of mass
+integrator = "VELOCITY_VERLET"  # VELOCITY_VERLET, LEAPFROG (velocities
+                                # half a step behind)
+time_step  = 0.002              # ps
+steps      = 500000
+seed       = 314159             # of the velocities and the coupling
+# center_of_mass_interval = 10  # steps between removals of the motion of
+#                               # the center of mass: with a thermostat,
+#                               # when it acts
 
 [ensemble]
 ensemble    = "NPT"             # NVE, NVT (with [thermostat]), NPT (with
                                 # [thermostat] and [barostat])
 temperature = 300.0             # of the velocities and the bath (K)
-pressure    = 1.0               # bar, with NPT
+pressure    = 1.0               # atm, with NPT
 
 [thermostat]
-method = "V-RESCALE"            # stochastic velocity rescaling
-tau_t  = 0.5                    # ps
-period = 10                     # steps between its actions
+method        = "V-RESCALE"     # stochastic velocity rescaling
+time_constant = 0.5             # ps
+interval      = 10              # steps between its actions
 
 [barostat]
-method = "C-RESCALE"            # stochastic cell rescaling
-tau_p  = 2.0                    # ps
-# compressibility = 4.5e-5      # 1/bar
-# work   = "EXACT"              # EXACT: the energy of each scaling from
-#                               # the scaled positions, whose forces the
-#                               # next step takes; FIRST_ORDER: from the
-#                               # virial, as GROMACS does
-# period = 10                   # steps between its actions: those of the
+method        = "C-RESCALE"     # stochastic cell rescaling
+time_constant = 2.0             # ps
+# compressibility = 4.56e-5     # 1/atm (4.5e-5 /bar)
+# coupling = "ISOTROPIC"        # ISOTROPIC
+# work     = "EXACT"            # EXACT: the energy of each scaling from the
+#                               # scaled positions, whose forces the next
+#                               # step takes; FIRST_ORDER: from the virial,
+#                               # as GROMACS does
+# interval = 10                 # steps between its actions: those of the
 #                               # thermostat
 
 [constraints]
-rigid_bond = true               # SHAKE and RATTLE on the bonds of hydrogen
-fast_water = true               # SETTLE on the waters
-# settle_residues = ["WAT"]     # names of the residues of rigid water
+hydrogen_bonds = true           # SHAKE and RATTLE on the bonds of hydrogen
+rigid_water    = true           # SETTLE on the waters
+# water_residues = ["WAT"]      # names of the residues of rigid water
 
 [boundary]
-type = "PBC"                    # the box is that of the coordinates
+type = "PERIODIC"               # the box is that of the coordinates
 
 [execution]
-target    = "gpu"               # cpu, gpu
-precision = "mixed"             # single, mixed, double
-# threads = 1                   # for the target cpu
+target    = "GPU"               # CPU, GPU
+precision = "MIXED"             # SINGLE, MIXED, DOUBLE
+# threads = 1                   # for the target CPU
 
 # A minimization instead of dynamics: steepest descent.
 # [minimize]
-# nsteps        = 2000
-# eneout_period = 500
+# method       = "STEEPEST_DESCENT"
+# steps        = 2000
+# initial_step = 0.1            # Å
 
-# Restraints to the positions of ambcrdfile, any number of them.
+# Restraints to the positions of 'coordinates', any number of them.
 # [[restraints]]
 # selection      = "!:WAT & !@H*"  # a mask of Amber
 # force_constant = 10.0            # kcal/mol/Å²

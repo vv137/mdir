@@ -5,18 +5,18 @@
 # REQUIRES: hdf5
 #
 # RUN: sed -e 's|Inputs/|%S/Inputs/|' \
-# RUN:     -e 's|nsteps        = 200|nsteps = 200\nrstout_period = 100|' \
+# RUN:     -e 's|^steps *= 200|steps = 200|' \
 # RUN:     %S/mixture.toml > %t.whole.toml
-# RUN: echo '[output]' >> %t.whole.toml
-# RUN: echo 'rstfile = "%t.whole.h5"' >> %t.whole.toml
+# RUN: echo 'checkpoint = "%t.whole.h5"' >> %t.whole.toml
+# RUN: echo 'checkpoint_interval = 100' >> %t.whole.toml
 # RUN: echo '[execution]' >> %t.whole.toml
 # RUN: echo 'threads = 4' >> %t.whole.toml
 # RUN: echo 'precision = "mixed"' >> %t.whole.toml
 #
-# RUN: sed -e 's|nsteps = 200|nsteps = 100|' -e 's|%t.whole.h5|%t.first.h5|' \
+# RUN: sed -e 's|^steps = 200|steps = 100|' -e 's|%t.whole.h5|%t.first.h5|' \
 # RUN:     %t.whole.toml > %t.first.toml
 # RUN: sed -e 's|%t.first.h5|%t.second.h5|' \
-# RUN:     -e 's|^pdbfile = \(.*\)|pdbfile = \1\nrstfile = "%t.first.h5"|' \
+# RUN:     -e 's|^coordinates = \(.*\)|coordinates = \1\ncheckpoint = "%t.first.h5"|' \
 # RUN:     %t.first.toml > %t.second.toml
 #
 # RUN: mdir run %t.whole.toml | FileCheck %s --check-prefix=WHOLE
@@ -48,7 +48,7 @@
 # ABOUT-NEXT: time:            0.8 ps
 # ABOUT-NEXT: box:             2.32 2.32 2.32 nm
 # ABOUT-NEXT: forces:          yes
-# ABOUT-NEXT: integrator:      VVER
+# ABOUT-NEXT: integrator:      VELOCITY_VERLET
 # ABOUT-NEXT: velocity offset: 0 time steps
 # ABOUT-NEXT: precision:       mixed
 # ABOUT-NEXT: time step:       0.004 ps

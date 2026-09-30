@@ -6,18 +6,20 @@
 # 183 K; about half of the kinetic energy goes into the potential energy
 # within the first picosecond.
 #
-#   mdir-run examples/argon/argon.toml
+#   mdir run examples/argon/argon.toml
 
 [input]
-pdbfile = "argon.pdb"
+coordinates = "argon.pdb"
 
 [output]
-dcdfile = "argon.dcd"
+trajectory          = "argon.dcd"
+energy_interval     = 100
+trajectory_interval = 100
 
 [energy]
-switchdist   = 7.5
-cutoffdist   = 8.5
-pairlistdist = 9.5
+switch_distance   = 7.5
+cutoff            = 8.5
+pairlist_distance = 9.5
 
 [[energy.pair]]
 name       = "lj"
@@ -31,24 +33,20 @@ epsilon = 0.238465
 sigma   = 3.4
 
 [dynamics]
-integrator    = "VVER"
-timestep      = 0.005
-nsteps        = 2000
-eneout_period = 100
-crdout_period = 100
-iseed         = 314159
+integrator = "VELOCITY_VERLET"
+time_step  = 0.005
+steps      = 2000
+seed       = 314159
 
 [ensemble]
 ensemble    = "NVE"
 temperature = 183.0
 
 [boundary]
-type       = "PBC"
-box_size_x = 34.7786
-box_size_y = 34.7786
-box_size_z = 34.7786
+type = "PERIODIC"
+box  = [34.7786, 34.7786, 34.7786]
 
 [execution]
-target    = "cpu"
+target    = "CPU"
 threads   = 16
-precision = "double"
+precision = "DOUBLE"

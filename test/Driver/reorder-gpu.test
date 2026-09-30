@@ -10,14 +10,14 @@
 # REQUIRES: hdf5, cuda
 #
 # RUN: sed -e 's|Inputs/mixture.pdb|%S/Inputs/mixture-scattered.pdb|' \
-# RUN:     -e 's|nsteps        = 200|nsteps = 200\nrstout_period = 100|' \
+# RUN:     -e 's|^steps *= 200|steps = 200|' \
 # RUN:     %S/mixture.toml > %t.on.toml
-# RUN: echo '[output]' >> %t.on.toml
-# RUN: echo 'rstfile = "%t.on.h5"' >> %t.on.toml
+# RUN: echo 'checkpoint = "%t.on.h5"' >> %t.on.toml
+# RUN: echo 'checkpoint_interval = 100' >> %t.on.toml
 # RUN: echo '[execution]' >> %t.on.toml
 # RUN: echo 'target = "gpu"' >> %t.on.toml
-# RUN: echo 'reorder = true' >> %t.on.toml
-# RUN: sed -e 's|reorder = true|reorder = false|' -e 's|%t.on.h5|%t.off.h5|' \
+# RUN: echo 'spatial_order = true' >> %t.on.toml
+# RUN: sed -e 's|spatial_order = true|spatial_order = false|' -e 's|%t.on.h5|%t.off.h5|' \
 # RUN:     %t.on.toml > %t.off.toml
 #
 # RUN: mdir run %t.on.toml | FileCheck %s

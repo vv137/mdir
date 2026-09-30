@@ -39,7 +39,7 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
     return std::move(error);
 
   // The waters that SETTLE constrains (D63): those of [ settles ] of
-  // GROMACS, and the residues of Amber named in 'settle_residues'. A run
+  // GROMACS, and the residues of Amber named in 'water_residues'. A run
   // leaves them flexible only when it says so, and they then need bonds.
   if (control.fastWater) {
     if (!control.prmtopFile.empty())
@@ -49,8 +49,8 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
     if (!control.statesFlexible)
       return llvm::createStringError(
           llvm::inconvertibleErrorCode(),
-          "the topology has %zu waters with SETTLE; set 'fast_water = true' "
-          "in [constraints] to constrain them, or 'fast_water = false' to "
+          "the topology has %zu waters with SETTLE; set 'rigid_water = true' "
+          "in [constraints] to constrain them, or 'rigid_water = false' to "
           "run them flexible, with their bonds",
           topology->settles.size());
     topology->settles.clear();
@@ -104,7 +104,7 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
 }
 
 /// The settled waters of an Amber topology: every residue that
-/// 'settle_residues' names, with an oxygen and two hydrogens first, and
+/// 'water_residues' names, with an oxygen and two hydrogens first, and
 /// the distances of the bonds among them, as sander takes them.
 static llvm::Error findSettles(const Control &control, Topology &topology) {
   auto fail = [&](const llvm::Twine &message) {
@@ -133,7 +133,7 @@ static llvm::Error findSettles(const Control &control, Topology &topology) {
     for (unsigned i = first + 3; i < end; ++i)
       water = water && site[i];
     if (!water)
-      return fail(where + " is named in 'settle_residues', but it is not "
+      return fail(where + " is named in 'water_residues', but it is not "
                           "an oxygen and two hydrogens, with at most virtual "
                           "sites after them");
     unsigned o = first, h1 = first + 1, h2 = first + 2;
@@ -209,8 +209,8 @@ static llvm::Error findShakes(Topology &topology) {
                   llvm::Twine(std::min(bond.i, bond.j) + 1) + " and " +
                   llvm::Twine(std::max(bond.i, bond.j) + 1) +
                   " are bonded to each other; "
-                  "with 'rigid_bond = true' such a water needs "
-                  "'fast_water = true'");
+                  "with 'hydrogen_bonds = true' such a water needs "
+                  "'rigid_water = true'");
     unsigned heavy = first ? bond.j : bond.i;
     unsigned hydrogen = first ? bond.i : bond.j;
     if (taken[hydrogen])
@@ -295,7 +295,7 @@ llvm::Expected<System> mdir::driver::readSystem(const Control &control) {
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
         "restraints select particles by the names of a topology; a run from "
-        "'pdbfile' has none");
+        "a PDB file has none");
   system.velocities.assign(system.positions.size(), 0.0);
   return std::move(system);
 }

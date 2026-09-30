@@ -10,8 +10,8 @@
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: cp %S/../Driver/Inputs/ff19sb/ff19.prmtop %S/../Driver/Inputs/ff19sb/ff19.inpcrd %t
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/../Driver/restraints-gpu.test | sed '1d;$d' \
-# RUN:   | sed -e 's/^nsteps .*/nsteps = 20/' -e 's/^eneout_period .*/eneout_period = 10/' \
-# RUN:         -e 's/^crdout_period .*/crdout_period = 10/' > %t/run.toml
+# RUN:   | sed -e 's/^steps .*/steps = 20/' -e 's/^energy_interval .*/energy_interval = 10/' \
+# RUN:         -e 's/^trajectory_interval .*/trajectory_interval = 10/' > %t/run.toml
 # RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run %t/run.toml 2>&1 \
 # RUN:   | FileCheck %s
 # RUN: %compute_sanitizer --tool initcheck --error-exitcode 1 mdir run %t/run.toml 2>&1 \

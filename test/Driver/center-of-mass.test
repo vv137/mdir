@@ -6,7 +6,7 @@
 # RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %t
 # RUN: %python %S/Inputs/add_drift.py %S/Inputs/dipeptide/dipeptide.inpcrd %t/drift.rst7 1 2 -1
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/removed.toml
-# RUN: sed -e '/comm_period/d' %t/removed.toml > %t/kept.toml
+# RUN: sed -e '/center_of_mass_interval/d' %t/removed.toml > %t/kept.toml
 # RUN: mdir run %t/kept.toml > %t/both.log
 # RUN: mdir run %t/removed.toml >> %t/both.log
 # RUN: FileCheck %s < %t/both.log
@@ -28,25 +28,26 @@
 
 #--- run.toml
 [input]
-prmtopfile = "dipeptide.prmtop"
-ambcrdfile = "drift.rst7"
+topology   = "dipeptide.prmtop"
+coordinates = "drift.rst7"
 
+[output]
+energy_interval = 20
 [energy]
-cutoffdist    = 9.0
-pairlistdist  = 10.0
-electrostatic = "CUTOFF"
+cutoff        = 9.0
+pairlist_distance = 10.0
+electrostatics = "CUTOFF"
 
 [dynamics]
-integrator    = "VVER"
-timestep      = 0.0005
-nsteps        = 20
-eneout_period = 20
-comm_period   = 10
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.0005
+steps         = 20
+center_of_mass_interval = 10
 
 [ensemble]
 ensemble    = "NVE"
 temperature = 300.0
 
 [boundary]
-type = "PBC"
+type = "PERIODIC"
 #--- end

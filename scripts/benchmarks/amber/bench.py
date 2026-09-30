@@ -135,47 +135,51 @@ temperature = {TEMPERATURE}
 pressure    = 0.986923
 
 [thermostat]
-method = "V-RESCALE"
-tau_t  = 1.0
-period = 10
+method        = "V-RESCALE"
+time_constant = 1.0
+interval      = 10
 
 [barostat]
-method = "C-RESCALE"
-tau_p  = 2.0
+method        = "C-RESCALE"
+time_constant = 2.0
 """ if npt else f"""ensemble    = "NVE"
 temperature = {TEMPERATURE}
 """)
     steps = steps or system["steps"]
     text = f"""# {name}: from {system['directory']} of the Amber benchmark suite.
 [input]
-prmtopfile = "system.parm7"
-ambcrdfile = "system.rst7"
+topology    = "system.parm7"
+coordinates = "system.rst7"
+
+[output]
+energy_interval = {steps}
 
 [energy]
-cutoffdist          = {CUTOFF}
-pairlistdist        = {CUTOFF + SKIN}
-electrostatic       = "PME"
-pme_alpha_tol       = {tolerance(system)}
-pme_max_spacing     = {GRID_SPACING}
+cutoff            = {CUTOFF}
+pairlist_distance = {CUTOFF + SKIN}
+electrostatics    = "PME"
+
+[pme]
+tolerance   = {tolerance(system)}
+max_spacing = {GRID_SPACING}
 
 [dynamics]
-integrator    = "VVER"
-timestep      = {system['timestep']}
-nsteps        = {steps}
-eneout_period = {steps}
+integrator = "VELOCITY_VERLET"
+time_step  = {system['timestep']}
+steps      = {steps}
 
 [ensemble]
 {ensemble}
 [constraints]
-rigid_bond = true
-fast_water = true
+hydrogen_bonds = true
+rigid_water    = true
 
 [boundary]
-type = "PBC"
+type = "PERIODIC"
 
 [execution]
-target    = "gpu"
-precision = "mixed"
+target    = "GPU"
+precision = "MIXED"
 """
     path = os.path.join(target, path)
     with open(path, "w") as file:

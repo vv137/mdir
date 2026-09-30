@@ -14,24 +14,25 @@
 
 #--- run.toml
 [input]
-prmtopfile = "vacuum.prmtop"
-ambcrdfile = "vacuum.inpcrd"
+topology   = "vacuum.prmtop"
+coordinates = "vacuum.inpcrd"
 
+[output]
+energy_interval = 2000
 [energy]
-cutoffdist    = 28.0
-pairlistdist  = 29.0
-electrostatic = "CUTOFF"
+cutoff        = 28.0
+pairlist_distance = 29.0
+electrostatics = "CUTOFF"
 
 [dynamics]
-integrator    = "VVER"
-timestep      = 0.0001
-nsteps        = 2000
-eneout_period = 2000
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.0001
+steps         = 2000
 
 [ensemble]
 ensemble    = "NVE"
 temperature = 300.0
 
 [boundary]
-type = "PBC"
+type = "PERIODIC"
 #--- end

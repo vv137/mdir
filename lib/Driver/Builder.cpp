@@ -570,9 +570,9 @@ llvm::Error Builder::computeDispersion() {
   if (!corrects)
     return llvm::Error::success();
   if (control.truncation != Truncation::None)
-    return makeError("'dispersion_corr' needs a plain cutoff: 'switchdist' "
-                     "equal to 'cutoffdist', and no 'vdw_shift' or "
-                     "'vdw_force_switch'");
+    return makeError("'dispersion_correction' needs a plain cutoff: "
+                     "'switch_distance' equal to 'cutoff', and no "
+                     "'lennard_jones_modifier'");
 
   // Beyond the cutoff the term is taken to be its dispersion, −C6 / r⁶,
   // and the density to be uniform [AllenTildesley2017, GromacsManual2025]:

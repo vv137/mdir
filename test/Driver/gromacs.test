@@ -35,28 +35,29 @@
 
 #--- run.toml
 [input]
-grotopfile = "system.top"
-grocrdfile = "system.gro"
-grodefine  = ["FLEXIBLE"]
+topology   = "system.top"
+coordinates = "system.gro"
+defines    = ["FLEXIBLE"]
 
+[output]
+energy_interval = 0
 [energy]
-cutoffdist   = 8.0
-pairlistdist = 9.0
+cutoff       = 8.0
+pairlist_distance = 9.0
 
 [constraints]
-rigid_bond = false
-fast_water = false
+hydrogen_bonds = false
+rigid_water = false
 
 [dynamics]
-integrator    = "VVER"
-timestep      = 0.0005
-nsteps        = 0
-eneout_period = 0
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.0005
+steps         = 0
 
 [ensemble]
 ensemble    = "NVE"
 temperature = 300.0
 
 [boundary]
-type = "PBC"
+type = "PERIODIC"
 #--- end

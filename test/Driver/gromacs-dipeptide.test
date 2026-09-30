@@ -21,41 +21,42 @@
 # Without -DFLEXIBLE the waters have SETTLE, and without a statement that
 # the run is flexible that is an error.
 #
-# RUN: sed -e '/^\[constraints\]/,/^fast_water/d' -e '/^grodefine/d' %t/run.toml > %t/rigid.toml
+# RUN: sed -e '/^\[constraints\]/,/^rigid_water/d' -e '/^defines/d' %t/run.toml > %t/rigid.toml
 # RUN: not mdir check %t/rigid.toml 2>&1 | FileCheck %s --check-prefix=SETTLE
-# SETTLE: the topology has 382 waters with SETTLE; set 'fast_water = true' in [constraints] to constrain them, or 'fast_water = false' to run them flexible, with their bonds
+# SETTLE: the topology has 382 waters with SETTLE; set 'rigid_water = true' in [constraints] to constrain them, or 'rigid_water = false' to run them flexible, with their bonds
 
-# With 'fast_water = true' SETTLE keeps them rigid: three degrees of freedom
+# With 'rigid_water = true' SETTLE keeps them rigid: three degrees of freedom
 # fewer for each, 3 × 1168 − 3 × 382 − 3.
 #
-# RUN: printf '[constraints]\nfast_water = true\n' >> %t/rigid.toml
+# RUN: printf '[constraints]\nrigid_water = true\n' >> %t/rigid.toml
 # RUN: mdir check %t/rigid.toml | FileCheck %s --check-prefix=RIGID
 # RIGID: degrees of freedom: 2355
 
 #--- run.toml
 [input]
-grotopfile = "dipeptide.top"
-grocrdfile = "dipeptide.gro"
-grodefine  = ["FLEXIBLE"]
+topology   = "dipeptide.top"
+coordinates = "dipeptide.gro"
+defines    = ["FLEXIBLE"]
 
+[output]
+energy_interval = 0
 [energy]
-cutoffdist   = 9.0
-pairlistdist = 10.0
+cutoff       = 9.0
+pairlist_distance = 10.0
 
 [constraints]
-rigid_bond = false
-fast_water = false
+hydrogen_bonds = false
+rigid_water = false
 
 [dynamics]
-integrator    = "VVER"
-timestep      = 0.0005
-nsteps        = 0
-eneout_period = 0
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.0005
+steps         = 0
 
 [ensemble]
 ensemble    = "NVE"
 temperature = 300.0
 
 [boundary]
-type = "PBC"
+type = "PERIODIC"
 #--- end

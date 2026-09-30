@@ -3,19 +3,19 @@
 #
 # REQUIRES: hdf5, cuda
 #
-# RUN: sed -e 's|Inputs/|%S/Inputs/|' -e 's|"VVER"|"LEAP"|' \
-# RUN:     -e 's|nsteps        = 200|nsteps = 200\nrstout_period = 100|' \
+# RUN: sed -e 's|Inputs/|%S/Inputs/|' -e 's|"VELOCITY_VERLET"|"LEAPFROG"|' \
+# RUN:     -e 's|^steps *= 200|steps = 200|' \
 # RUN:     %S/mixture.toml > %t.whole.toml
-# RUN: echo '[output]' >> %t.whole.toml
-# RUN: echo 'rstfile = "%t.whole.h5"' >> %t.whole.toml
+# RUN: echo 'checkpoint = "%t.whole.h5"' >> %t.whole.toml
+# RUN: echo 'checkpoint_interval = 100' >> %t.whole.toml
 # RUN: echo '[execution]' >> %t.whole.toml
 # RUN: echo 'target = "gpu"' >> %t.whole.toml
 # RUN: echo 'precision = "single"' >> %t.whole.toml
 #
-# RUN: sed -e 's|nsteps = 200|nsteps = 100|' -e 's|%t.whole.h5|%t.first.h5|' \
+# RUN: sed -e 's|^steps = 200|steps = 100|' -e 's|%t.whole.h5|%t.first.h5|' \
 # RUN:     %t.whole.toml > %t.first.toml
 # RUN: sed -e 's|%t.first.h5|%t.second.h5|' \
-# RUN:     -e 's|^pdbfile = \(.*\)|pdbfile = \1\nrstfile = "%t.first.h5"|' \
+# RUN:     -e 's|^coordinates = \(.*\)|coordinates = \1\ncheckpoint = "%t.first.h5"|' \
 # RUN:     %t.first.toml > %t.second.toml
 #
 # RUN: mdir run %t.whole.toml
@@ -27,6 +27,6 @@
 # CHECK: the states are identical
 
 # ABOUT: forces:          yes
-# ABOUT: integrator:      LEAP
+# ABOUT: integrator:      LEAPFROG
 # ABOUT: velocity offset: -0.5 time steps
 # ABOUT: precision:       single

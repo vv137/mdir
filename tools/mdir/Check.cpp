@@ -19,7 +19,7 @@ static int fail(llvm::Error error) {
 }
 
 static const char *getName(Integrator integrator) {
-  return integrator == Integrator::Leapfrog ? "LEAP" : "VVER";
+  return integrator == Integrator::Leapfrog ? "LEAPFROG" : "VELOCITY_VERLET";
 }
 
 static const char *getName(Precision precision) {

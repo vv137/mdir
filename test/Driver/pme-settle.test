@@ -9,13 +9,13 @@
 # momentum is not kept: 2 amu nm/ps after 100 steps here, a velocity of the
 # center of mass of 3e-4 nm/ps. sander removes the net force at every step
 # by default; MDIR removes the motion of the center of mass with
-# 'comm_period'.
+# 'center_of_mass_interval'.
 #
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
 # RUN: mdir run %t/run.toml | FileCheck %s
-# RUN: sed -e 's|nsteps        = 100|nsteps = 2|' -e 's|eneout_period = 50|eneout_period = 1|' \
+# RUN: sed -e 's|^steps *= 100|steps = 2|' -e 's|energy_interval = 50|energy_interval = 1|' \
 # RUN:     %t/run.toml > %t/start.toml
 # RUN: mdir run %t/start.toml | FileCheck %s --check-prefix=START
 
@@ -34,28 +34,29 @@
 
 #--- run.toml
 [input]
-prmtopfile = "opc.prmtop"
-ambcrdfile = "opc.inpcrd"
+topology   = "opc.prmtop"
+coordinates = "opc.inpcrd"
 
+[output]
+energy_interval = 50
 [energy]
-cutoffdist    = 9.0
-pairlistdist  = 10.0
-electrostatic = "PME"
-pme_shift     = true
+cutoff        = 9.0
+pairlist_distance = 10.0
+electrostatics = "PME"
+coulomb_modifier     = "POTENTIAL_SHIFT"
 
 [dynamics]
-integrator    = "VVER"
-timestep      = 0.001
-nsteps        = 100
-eneout_period = 50
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.001
+steps         = 100
 
 [ensemble]
 ensemble    = "NVE"
 temperature = 300.0
 
 [constraints]
-fast_water = true
+rigid_water = true
 
 [boundary]
-type = "PBC"
+type = "PERIODIC"
 #--- end

@@ -8,9 +8,9 @@
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/pme-settle.test | sed '1d;$d' \
-# RUN:     | sed -e 's|nsteps        = 100|nsteps = 500|' -e 's|eneout_period = 50|eneout_period = 500|' > %t/run.toml
-# RUN: sed -e 's|^type = "PBC"|type = "PBC"\n[execution]\ntarget = "gpu"|' %t/run.toml > %t/double.toml
-# RUN: sed -e 's|^type = "PBC"|type = "PBC"\n[execution]\ntarget = "gpu"\nprecision = "mixed"|' %t/run.toml > %t/mixed.toml
+# RUN:     | sed -e 's|^steps *= 100|steps = 500|' -e 's|energy_interval = 50|energy_interval = 500|' > %t/run.toml
+# RUN: sed -e 's|^type = "PERIODIC"|type = "PERIODIC"\n[execution]\ntarget = "gpu"|' %t/run.toml > %t/double.toml
+# RUN: sed -e 's|^type = "PERIODIC"|type = "PERIODIC"\n[execution]\ntarget = "gpu"\nprecision = "mixed"|' %t/run.toml > %t/mixed.toml
 # RUN: mdir run %t/double.toml > %t/first.log
 # RUN: mdir run %t/double.toml > %t/second.log
 # RUN: FileCheck %s --check-prefix=DOUBLE < %t/first.log

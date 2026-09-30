@@ -9,7 +9,7 @@
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/on.toml
-# RUN: sed -e 's|reorder = true|reorder = false|' -e 's|on.h5|off.h5|' %t/on.toml > %t/off.toml
+# RUN: sed -e 's|spatial_order = true|spatial_order = false|' -e 's|on.h5|off.h5|' %t/on.toml > %t/off.toml
 # RUN: mdir run %t/on.toml | FileCheck %s
 # RUN: mdir run %t/off.toml | FileCheck %s
 # RUN: not mdir checkpoint %t/on.h5 %t/off.h5 | FileCheck %s --check-prefix=STATES
@@ -21,30 +21,30 @@
 
 #--- run.toml
 [input]
-prmtopfile = "dipeptide.prmtop"
-ambcrdfile = "dipeptide.inpcrd"
+topology   = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
 
 [output]
-rstfile = "on.h5"
+checkpoint = "on.h5"
+energy_interval = 10
+checkpoint_interval = 10
 
 [energy]
-cutoffdist   = 9.0
-pairlistdist = 10.0
+cutoff       = 9.0
+pairlist_distance = 10.0
 
 [dynamics]
-integrator    = "VVER"
-timestep      = 0.0005
-nsteps        = 40
-eneout_period = 10
-rstout_period = 10
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.0005
+steps         = 40
 
 [ensemble]
 ensemble    = "NVE"
 temperature = 300.0
 
 [boundary]
-type = "PBC"
+type = "PERIODIC"
 
 [execution]
-reorder = true
+spatial_order = true
 #--- end

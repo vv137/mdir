@@ -4,8 +4,8 @@
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: cp %S/Inputs/mixture.pdb %t
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/a.toml
-# RUN: sed -e 's|eneout_period = 1000|eneout_period = 100|' %t/a.toml > %t/b.toml
-# RUN: sed -e 's|VVER|LEAP|' %t/a.toml > %t/leap.toml
+# RUN: sed -e 's|energy_interval = 1000|energy_interval = 100|' %t/a.toml > %t/b.toml
+# RUN: sed -e 's|VELOCITY_VERLET|LEAPFROG|' %t/a.toml > %t/leap.toml
 # RUN: mdir run %t/a.toml > %t/a.log
 # RUN: mdir run %t/b.toml > %t/b.log
 # RUN: FileCheck %s < %t/a.log
@@ -47,12 +47,14 @@
 
 #--- run.toml
 [input]
-pdbfile = "mixture.pdb"
+coordinates = "mixture.pdb"
 
+[output]
+energy_interval = 1000
 [energy]
-switchdist   = 7.5
-cutoffdist   = 9.0
-pairlistdist = 10.0
+switch_distance = 7.5
+cutoff       = 9.0
+pairlist_distance = 10.0
 
 [[energy.pair]]
 name       = "lj"
@@ -72,10 +74,9 @@ epsilon = 0.3253
 sigma   = 3.65
 
 [dynamics]
-integrator        = "VVER"
-timestep          = 0.004
-nsteps            = 2000
-eneout_period = 1000
+integrator        = "VELOCITY_VERLET"
+time_step         = 0.004
+steps             = 2000
 
 [ensemble]
 ensemble    = "NVT"
@@ -83,12 +84,10 @@ temperature = 150.0
 
 [thermostat]
 method = "V-RESCALE"
-period = 10
-tau_t  = 0.5
+interval = 10
+time_constant = 0.5
 
 [boundary]
-type       = "PBC"
-box_size_x = 23.2
-box_size_y = 23.2
-box_size_z = 23.2
+type       = "PERIODIC"
+box = [23.2, 23.2, 23.2]
 #--- end
