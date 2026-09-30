@@ -792,9 +792,23 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
   SmallVector<Value> scratch = {
       allocate(IntegerType::get(context, 64), points),
       allocate(gridType, points), allocate(gridType, 2 * half)};
-  if (onDevice)
+  if (onDevice) {
     scratch.push_back(
         allocate(Float64Type::get(context), grid[0] * grid[1] * 10));
+    // The weights of the particles, 15 values each, from which the
+    // spreading of order 4 adds the charges (lowerReciprocal).
+    auto type = MemRefType::get({ShapedType::kDynamic}, gridType,
+                                MemRefLayoutAttrInterface(), space);
+    Value length = arith::MulIOp::create(
+        root->builder, loc, size,
+        arith::ConstantIndexOp::create(root->builder, loc, 15));
+    scratch.push_back(gpu::AllocOp::create(root->builder, loc, type,
+                                           /*asyncToken=*/Type(),
+                                           /*asyncDependencies=*/ValueRange(),
+                                           ValueRange{length},
+                                           /*symbolOperands=*/ValueRange())
+                          .getMemref());
+  }
 
   auto created = ReciprocalOp::create(
       scope.builder, loc, op.getEnergy().getType(), op.getVirial().getType(),

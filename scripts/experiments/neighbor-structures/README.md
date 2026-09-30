@@ -12,6 +12,7 @@ compiler.
 | `prep.py` | Writes JAC (`jac_nve` of the Amber suite) as a flat binary: positions, charges, types, the Lennard-Jones tables, the excluded pairs |
 | `pairs.cu` | The loop over pairs (Lennard-Jones from type tables and the direct sum of PME, in `f32`) with the neighbor matrix of MDIR (16 lanes per particle), with tiles of 8 × 8 and 8 × 4 (full lists), with 8 × 4 half lists (`f32` atomics and fixed point), and the pruning of a matrix from an outer reach. The lists are built on the host; only the kernels are timed, 1000 launches each. The forces of the variants are compared |
 | `supercluster.cu` | The loop over pairs with two half lists against the matrix, on any system that `prep.py` writes: the cluster pair list of [Pall2013] as its GPU layout has it (super-clusters of 64 in 8 clusters of 8, a warp per super-cluster, the forces on i in registers and those on j summed with shuffles once per entry), and groups of 32 particles sharing a list of particles j, which turn around the warp one lane per step (the neighbor list that [SalomonFerrer2013] describes for pmemd, groups of 16 or 32). The forces are compared with the matrix |
+| `spread.cu` | The atomic additions of the spreading of PME, order 4, on the grid of MDIR for a system: 4 threads a particle, a warp a particle in the order of the transform, and a warp a particle into bricks of 4 × 4 in x-y with a copy after, with `f32` and `i32` atomics; and the kernel of the weights, as a structure a particle and by component. The grids are compared with one summed on the host |
 | `search.cu` | The search of a build of the matrix as the template of MDIR does it (cells, runs of cells): a thread per particle, a warp per particle with ballots (with and without the excluded pairs), and a block per cell with the runs in shared memory. The matrices are compared entry by entry |
 | `run.sh` | Builds both, runs the sweeps, and writes `results/<date>-<device>.csv` |
 | `plot.py` | Draws `pairs.png`, `search.png`, `model.png`, and `scan.png` into `results/` (matplotlib; the project uses the environment `~/opt/render`) |
@@ -98,3 +99,12 @@ pmemd.cuda: pairs 2102 against 886 µs, builds 1049 against 224 µs a step
 (8.0 ms against 1.1 ms a build), bonded terms about 545 against 343, the
 spreading of PME 553 against about 344, its gathering 339 against 79, and
 the transforms about the same.
+
+### The spreading of PME (2026-10-01)
+
+`spread cell.bin` (Cellulose, grid 270 × 126 × 126, GPU 1), clearing and
+copying included: 4 threads a particle 434 µs (`f32`) and 479 (`i32`); a
+warp a particle 351 and 393; a warp a particle into bricks 257 and 278. The
+weights of the particles take 142 µs written as a structure a particle and
+52 by component; the whole, from the positions, 329 µs. In MDIR the three
+kernels take 367 µs a step (docs/pme-m1.md).

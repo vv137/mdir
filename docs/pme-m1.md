@@ -118,13 +118,29 @@ point along z. The NVPTX backend of LLVM turns an atomic addition of `f32`
 into a loop of compare-and-swap, four times slower; the template for `f32`
 takes PTX's own reduction, `red.relaxed.gpu.global.add.f32`.
 
-With splines of order 4, the default mode spreads with a warp for each
-particle (`mdrt_gpu_pme_spread_warp`): lane 16 a + 4 b + c adds the points
-(a, b, c) and (a + 2, b, c), so the 32 addresses of an atomic are points
-of one particle and none repeats, and lanes 0 to 2 place the particle
-along one axis each in `f64` and hand the first points and the fractions
-to the others with shuffles; on Cellulose (408,609 atoms, RTX 3090) it
-takes 442 µs a step against 533 with 4 threads a particle. The gathering
+With splines of order 4 and the grid in `f32`, the default mode spreads
+in three kernels. The first places each particle and computes its
+B-splines, a thread a particle, into arrays by component (15 values a
+particle, the first points and the weights along x, y, z), a scratch of the
+op. The second adds the charges with a warp for each particle into a grid
+of bricks: 4 × 4 points in x-y with z inside them, so that the points of a
+particle at one z are 16 consecutive values of at most 4 bricks, and lane
+4 b + a of an atomic adds point (a, b, c) or (a, b, c + 2); the bricks take
+the buffer of the fixed point. The third copies the bricks into the grid of
+the transform. On Cellulose (408,609 atoms, grid 270 × 126 × 126, RTX 3090)
+they take 47, 231 (with 28 to clear the bricks), and 61 µs a step, 367 in
+all, against 553 for the spreading of a thread for each particle and point
+along z; pmemd.cuda takes about 344 (93 for its weights, 207 for its
+additions, 44 for its copy). Standalone
+(`scripts/experiments/neighbor-structures/spread.cu`): the additions in the
+order of the transform take 351 µs with a warp a particle and 434 with 4
+threads, in bricks 257; atomics of `i32` in fixed point are slower than
+those of `f32`; and computing the splines in every lane of a warp, as a
+first version did, left the kernel bound by its instructions (375 a
+particle, 442 µs). The orders 6 and 8, and the deterministic mode, keep the
+spreading of a thread for each particle and point along z.
+
+The gathering
 takes a thread for each particle and point along z (the least power of 2
 not below the order, those beyond it adding zeros), and adds their sums
 with shuffles: 127 µs on Cellulose, from 339 with a thread a particle.
@@ -132,7 +148,13 @@ with shuffles: 127 µs on Cellulose, from 339 with a thread a particle.
 The loops over the order in the kernels of the template unroll when the
 template is instantiated, and the arrays of the B-splines become values
 (`sroa`, `mem2reg`); left as loops, the arrays were in local memory, and
-the gathering on Cellulose took 303 µs.
+the gathering on Cellulose took 303 µs. The canonicalization that goes
+with the unrolling hoists the constants of the kernels to their functions;
+they are sunk back into the kernels, or the outlining makes them
+arguments and a division by 32 one by an argument (the additions into the
+bricks took 350 µs so, against 231). The gathering computes its splines
+again rather than read them with their slopes from the weights: 155 to
+158 µs so, against 127 to 134.
 
 | Item | Value |
 |---|---|

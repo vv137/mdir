@@ -661,122 +661,234 @@ func.func private @mdrt_gpu_pme_scale(%c: memref<?x!pme_real, 1>, %moduli: memre
 """
 
 
-def spread_warp():
-    """A warp for each particle, of order 4: lane = 16 a + 4 b + c takes the
-    points (a, b, c) and (a + 2, b, c) of the splines along x, y, z. The
-    lanes of an atomic add to 32 points of one particle, none the same, 8
-    runs of 4 along z; a warp of 8 particles, next to one another in the
-    order, added to the same points at once. Lanes 0 to 2 place the
-    particle along one axis each, in f64, and hand the first points and the
-    fractions to the others with shuffles."""
-    body = Body("      ")
-    body("""\
-%c32i = arith.constant 32 : index
-%i = arith.divui %item, %c32i : index
-%lane = arith.remui %item, %c32i : index
+COMPONENTS = 15  # the first points (3), the weights (12)
+
+
+def weights_kernels():
+    """The spreading of order 4 from the weights of the particles, as
+    scripts/experiments/neighbor-structures/spread.cu measured it: a kernel
+    places each particle and computes its B-splines, a thread a particle,
+    into arrays by component (component c of particle i at c n + i: the
+    first points along x, y, z as values, then the weights along x, y, z);
+    the charges are added with a warp a particle into a grid of bricks of
+    4 x 4 points in x-y, z inside them, so that the points of a particle
+    at one z are 16 consecutive values of at most 4 bricks; a kernel copies
+    the bricks into the grid of the transform. The gathering computes its
+    splines again: read from 27 arrays with their slopes, it took 155 to
+    158 us on Cellulose against 127 to 134 (2026-10-01)."""
+    # The weights.
+    w = Body("      ")
+    w("""\
+%i = arith.addi %item, %c0 : index
 %i0 = arith.constant 0 : index
 %i1 = arith.constant 1 : index
 %i2 = arith.constant 2 : index
-%i3 = arith.constant 3 : index
+%order = arith.constant 4 : index""")
+    for axis, (length, k) in enumerate((("%ilx", "%k1"), ("%ily", "%k2"), ("%ilz", "%k3"))):
+        t = "xyz"[axis]
+        w(f"""\
+%{t}c = arith.constant {axis} : index
+%{t}s = memref.load %x[%i, %{t}c] : memref<?x3x!pme_pos, 1>
+%{t}p = PME_EXTEND_POS %{t}s : !pme_pos to f64
+%w{t} = memref.alloca() : memref<8x!pme_real>
+""")
+        start, frac = place(w, f"p{t}_", f"%{t}p", length, k, "%order")
+        bspline(w, f"b{t}_", frac, "%order", f"%w{t}", None)
+        w(f"""\
+%{t}start_i = arith.index_cast {start} : index to i32
+%{t}start_r = arith.sitofp %{t}start_i : i32 to !pme_real
+%{t}sn = arith.muli %n_all, %{t}c : index
+%{t}sat = arith.addi %{t}sn, %i : index
+memref.store %{t}start_r, %weights[%{t}sat] : memref<?x!pme_real, 1>""")
+        for e in range(4):
+            for kind, array, base in (("w", f"%w{t}", 3),):
+                c = base + 4 * axis + e
+                w(f"""\
+%{t}{kind}{e}i = arith.constant {e} : index
+%{t}{kind}{e} = memref.load {array}[%{t}{kind}{e}i] : memref<8x!pme_real>
+%{t}{kind}{e}c = arith.constant {c} : index
+%{t}{kind}{e}n = arith.muli %n_all, %{t}{kind}{e}c : index
+%{t}{kind}{e}at = arith.addi %{t}{kind}{e}n, %i : index
+memref.store %{t}{kind}{e}, %weights[%{t}{kind}{e}at] : memref<?x!pme_real, 1>""")
+
+    # The additions into the bricks, counting in i32 (D85): a particle, a
+    # point, and a brick of the grid are numbered in 32 bits, and the
+    # address in bytes in 64.
+    a = Body("      ")
+    a("""\
+%c32i = arith.constant 32 : index
+%i = arith.divui %item, %c32i : index
+%item32 = arith.index_cast %item : index to i32
+%n32 = arith.index_cast %n_all : index to i32
+%i32 = arith.index_cast %i : index to i32
+%t32 = arith.constant 32 : i32
+%t2 = arith.constant 2 : i32
+%t3 = arith.constant 3 : i32
+%t4 = arith.constant 4 : i32
+%t7 = arith.constant 7 : i32
+%t11 = arith.constant 11 : i32
+%t16 = arith.constant 16 : i32
+%lane = arith.remui %item32, %t32 : i32
+%xa = arith.remui %lane, %t4 : i32
+%lane4 = arith.divui %lane, %t4 : i32
+%yb = arith.remui %lane4, %t4 : i32
+%zc = arith.divui %lane, %t16 : i32
+%zc2 = arith.addi %zc, %t2 : i32
+%k1t = arith.index_cast %k1 : index to i32
+%k2t = arith.index_cast %k2 : index to i32
+%k3t = arith.index_cast %k3 : index to i32
+%b2t = arith.index_cast %b2 : index to i32
+%qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
+%qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real""")
+    def load(name, component):
+        a(f"""\
+%{name}_n = arith.muli %n32, {component} : i32
+%{name}_at32 = arith.addi %{name}_n, %i32 : i32
+%{name}_at = arith.index_cast %{name}_at32 : i32 to index
+%{name} = memref.load %weights[%{name}_at] : memref<?x!pme_real, 1>""")
+    for axis, t in enumerate("xyz"):
+        a(f"%t{axis}c = arith.constant {axis} : i32")
+        load(f"st{t}_r", f"%t{axis}c")
+        a(f"%st{t} = arith.fptosi %st{t}_r : !pme_real to i32")
+    a("""\
+%wx_c = arith.addi %t3, %xa : i32
+%wy_c = arith.addi %t7, %yb : i32
+%wz_c = arith.addi %t11, %zc : i32
+%wz2_c = arith.addi %t11, %zc2 : i32""")
+    load("wxa", "%wx_c")
+    load("wyb", "%wy_c")
+    load("wz0", "%wz_c")
+    load("wz1", "%wz2_c")
+    a("""\
+%qx = arith.mulf %qi, %wxa : !pme_real
+%qxy = arith.mulf %qx, %wyb : !pme_real
+%g1s = arith.addi %stx, %xa : i32
+%g1w = arith.subi %g1s, %k1t : i32
+%g1over = arith.cmpi uge, %g1s, %k1t : i32
+%g1 = arith.select %g1over, %g1w, %g1s : i32
+%g2s = arith.addi %sty, %yb : i32
+%g2w = arith.subi %g2s, %k2t : i32
+%g2over = arith.cmpi uge, %g2s, %k2t : i32
+%g2 = arith.select %g2over, %g2w, %g2s : i32
+%bx1 = arith.divui %g1, %t4 : i32
+%by1 = arith.divui %g2, %t4 : i32
+%brow = arith.muli %bx1, %b2t : i32
+%bxy = arith.addi %brow, %by1 : i32
+%bxyz = arith.muli %bxy, %k3t : i32
+%inx = arith.remui %g1, %t4 : i32
+%iny = arith.remui %g2, %t4 : i32
+%iny4 = arith.muli %iny, %t4 : i32
+%inxy = arith.addi %iny4, %inx : i32
+%bytes = arith.constant PME_REAL_BYTES : i64
+%bindex = memref.extract_aligned_pointer_as_index %bricks : memref<?xi64, 1> -> index
+%bbase = arith.index_cast %bindex : index to i64
+%h0 = arith.constant 0 : index
+%h1 = arith.constant 1 : index
+%h2 = arith.constant 2 : index
+scf.for %h = %h0 to %h2 step %h1 {
+  %second = arith.cmpi ne, %h, %h0 : index
+  %c = arith.select %second, %zc2, %zc : i32
+  %wz = arith.select %second, %wz1, %wz0 : !pme_real
+  %g3s = arith.addi %stz, %c : i32
+  %g3w = arith.subi %g3s, %k3t : i32
+  %g3over = arith.cmpi uge, %g3s, %k3t : i32
+  %g3 = arith.select %g3over, %g3w, %g3s : i32
+  %slab = arith.addi %bxyz, %g3 : i32
+  %slab16 = arith.muli %slab, %t16 : i32
+  %at = arith.addi %slab16, %inxy : i32
+  %ati = arith.extui %at : i32 to i64
+  %offset = arith.muli %ati, %bytes : i64
+  %address = arith.addi %bbase, %offset : i64
+  %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
+  %value = arith.mulf %qxy, %wz : !pme_real
+  PME_ATOMIC_ADD %pointer, %value
+}""")
+
+    # Clearing the bricks, and copying them into the grid of the transform.
+    z = Body("      ")
+    z("""\
+%bytes = arith.constant PME_REAL_BYTES : i64
+%bindex = memref.extract_aligned_pointer_as_index %bricks : memref<?xi64, 1> -> index
+%bbase = arith.index_cast %bindex : index to i64
+%ati = arith.index_cast %item : index to i64
+%offset = arith.muli %ati, %bytes : i64
+%address = arith.addi %bbase, %offset : i64
+%pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
+%none = arith.constant 0.0 : !pme_real
+llvm.store %none, %pointer {alignment = PME_REAL_BYTES : i64} : !pme_real, !llvm.ptr<1>""")
+    u = Body("      ")
+    u("""\
 %i4 = arith.constant 4 : index
 %i16 = arith.constant 16 : index
-%order = arith.constant 4 : index
-%qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
-%qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
-// Lane a < 3 places the particle along axis a.
-%axis = arith.minui %lane, %i2 : index
-%xs = memref.load %x[%i, %axis] : memref<?x3x!pme_pos, 1>
-%xa = PME_EXTEND_POS %xs : !pme_pos to f64
-%is_y = arith.cmpi eq, %axis, %i1 : index
-%is_z = arith.cmpi eq, %axis, %i2 : index
-%il_xy = arith.select %is_y, %ily, %ilx : f64
-%il = arith.select %is_z, %ilz, %il_xy : f64
-%k_xy = arith.select %is_y, %k2, %k1 : index
-%ka = arith.select %is_z, %k3, %k_xy : index""")
-    start, frac = place(body, "pa_", "%xa", "%il", "%ka", "%order")
-    body(f"""\
-%start32 = arith.index_cast {start} : index to i32
-%width = arith.constant 32 : i32
-%l0 = arith.constant 0 : i32
-%l1 = arith.constant 1 : i32
-%l2 = arith.constant 2 : i32
-%stx32, %v0 = gpu.shuffle idx %start32, %l0, %width : i32
-%sty32, %v1 = gpu.shuffle idx %start32, %l1, %width : i32
-%stz32, %v2 = gpu.shuffle idx %start32, %l2, %width : i32
-%fx, %v3 = gpu.shuffle idx {frac}, %l0, %width : !pme_real
-%fy, %v4 = gpu.shuffle idx {frac}, %l1, %width : !pme_real
-%fz, %v5 = gpu.shuffle idx {frac}, %l2, %width : !pme_real
-%stx = arith.index_cast %stx32 : i32 to index
-%sty = arith.index_cast %sty32 : i32 to index
-%stz = arith.index_cast %stz32 : i32 to index
-%wx = memref.alloca() : memref<8x!pme_real>
-%wy = memref.alloca() : memref<8x!pme_real>
-%wz = memref.alloca() : memref<8x!pme_real>""")
-    bspline(body, "bx_", "%fx", "%order", "%wx", None)
-    bspline(body, "by_", "%fy", "%order", "%wy", None)
-    bspline(body, "bz_", "%fz", "%order", "%wz", None)
-    body("""\
-%j3 = arith.remui %lane, %i4 : index
-%lane4 = arith.divui %lane, %i4 : index
-%j2 = arith.remui %lane4, %i4 : index
-%j1a = arith.divui %lane, %i16 : index""")
-    w3 = pick(body, "w3p_", "%wz", "%j3")
-    w2 = pick(body, "w2p_", "%wy", "%j2")
-    body(f"""\
-%qyz0 = arith.mulf %qi, {w3} : !pme_real
-%qyz = arith.mulf %qyz0, {w2} : !pme_real
-%eight = arith.constant PME_REAL_BYTES : i64
-%gridindex = memref.extract_aligned_pointer_as_index %grid : memref<?x!pme_real, 1> -> index
-%gridbase = arith.index_cast %gridindex : index to i64
-%g3s = arith.addi %stz, %j3 : index
-%g3w = arith.subi %g3s, %k3 : index
-%g3over = arith.cmpi uge, %g3s, %k3 : index
-%g3 = arith.select %g3over, %g3w, %g3s : index
-%g2s = arith.addi %sty, %j2 : index
-%g2w = arith.subi %g2s, %k2 : index
-%g2over = arith.cmpi uge, %g2s, %k2 : index
-%g2 = arith.select %g2over, %g2w, %g2s : index
-scf.for %h = %i0 to %i2 step %i1 {{
-  %h2 = arith.muli %h, %i2 : index
-  %j1 = arith.addi %j1a, %h2 : index""")
-    w1 = pick(body, "w1p_", "%wx", "%j1")
-    body(f"""\
-  %g1s = arith.addi %stx, %j1 : index
-  %g1w = arith.subi %g1s, %k1 : index
-  %g1over = arith.cmpi uge, %g1s, %k1 : index
-  %g1 = arith.select %g1over, %g1w, %g1s : index
-  %value = arith.mulf %qyz, {w1} : !pme_real
-  %row1 = arith.muli %g1, %k2 : index
-  %row = arith.addi %row1, %g2 : index
-  %gbase = arith.muli %row, %k3 : index
-  %at = arith.addi %gbase, %g3 : index
-  %ati = arith.index_cast %at : index to i64
-  %offset = arith.muli %ati, %eight : i64
-  %address = arith.addi %gridbase, %offset : i64
-  %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-  PME_ATOMIC_ADD %pointer, %value
-}}""")
-    return f"""
-// Spreads the charges to `grid` as @mdrt_gpu_pme_spread_float does, with a
-// warp for each particle (order 4 only; see spread_warp in the script).
-func.func private @mdrt_gpu_pme_spread_warp(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
-                                            %box: vector<3xf64>, %grid: memref<?x!pme_real, 1>,
-                                            %k1: index, %k2: index, %k3: index, %n: index) {{
+%g3 = arith.remui %item, %k3 : index
+%rest = arith.divui %item, %k3 : index
+%g2 = arith.remui %rest, %k2 : index
+%g1 = arith.divui %rest, %k2 : index
+%bx1 = arith.divui %g1, %i4 : index
+%by1 = arith.divui %g2, %i4 : index
+%brow = arith.muli %bx1, %b2 : index
+%bxy = arith.addi %brow, %by1 : index
+%bxyz = arith.muli %bxy, %k3 : index
+%slab = arith.addi %bxyz, %g3 : index
+%slab16 = arith.muli %slab, %i16 : index
+%inx = arith.remui %g1, %i4 : index
+%iny = arith.remui %g2, %i4 : index
+%iny4 = arith.muli %iny, %i4 : index
+%inxy = arith.addi %iny4, %inx : index
+%at = arith.addi %slab16, %inxy : index
+%bytes = arith.constant PME_REAL_BYTES : i64
+%bindex = memref.extract_aligned_pointer_as_index %bricks : memref<?xi64, 1> -> index
+%bbase = arith.index_cast %bindex : index to i64
+%ati = arith.index_cast %at : index to i64
+%offset = arith.muli %ati, %bytes : i64
+%address = arith.addi %bbase, %offset : i64
+%pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
+%value = llvm.load %pointer {alignment = PME_REAL_BYTES : i64} : !llvm.ptr<1> -> !pme_real
+memref.store %value, %real[%item] : memref<?x!pme_real, 1>""")
+
+    header = """\
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
+  %c3 = arith.constant 3 : index
+  %c4 = arith.constant 4 : index
+  %c16 = arith.constant 16 : index
+  %c32 = arith.constant 32 : index
   %c128 = arith.constant 128 : index
-  %lx = vector.extract %box[0] : f64 from vector<3xf64>
+  %n_all = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
+  %k1u = arith.addi %k1, %c3 : index
+  %b1 = arith.divui %k1u, %c4 : index
+  %k2u = arith.addi %k2, %c3 : index
+  %b2 = arith.divui %k2u, %c4 : index
+  %b12 = arith.muli %b1, %b2 : index
+  %b123 = arith.muli %b12, %k3 : index
+  %brick_points = arith.muli %b123, %c16 : index
+"""
+    return f"""
+// The weights of the particles for the spreading and the gathering of
+// order 4: see weights_kernels in the script.
+func.func private @mdrt_gpu_pme_weights(%x: memref<?x3x!pme_pos, 1>, %box: vector<3xf64>,
+                                        %weights: memref<?x!pme_real, 1>,
+                                        %k1: index, %k2: index, %k3: index) {{
+{header}  %lx = vector.extract %box[0] : f64 from vector<3xf64>
   %ly = vector.extract %box[1] : f64 from vector<3xf64>
   %lz = vector.extract %box[2] : f64 from vector<3xf64>
   %unit = arith.constant 1.0 : f64
   %ilx = arith.divf %unit, %lx : f64
   %ily = arith.divf %unit, %ly : f64
   %ilz = arith.divf %unit, %lz : f64
-  %points = memref.dim %grid, %c0 : memref<?x!pme_real, 1>
-  %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-  %c32 = arith.constant 32 : index
-  %spread = arith.muli %count, %c32 : index
-{launch(zero_text(), "%points")}{launch(body.text(), "%spread")}  return
+{launch(w.text(), "%n_all")}  return
+}}
+
+// Adds the charges to `bricks` (a buffer of at least as many bytes as the
+// bricks take) from the weights, and copies the bricks into `real`, the
+// grid of the transform.
+func.func private @mdrt_gpu_pme_spread_bricks(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
+                                              %weights: memref<?x!pme_real, 1>,
+                                              %bricks: memref<?xi64, 1>, %real: memref<?x!pme_real, 1>,
+                                              %k1: index, %k2: index, %k3: index) {{
+{header}  %lanes = arith.muli %n_all, %c32 : index
+  %points = memref.dim %real, %c0 : memref<?x!pme_real, 1>
+{launch(z.text(), "%brick_points")}{launch(a.text(), "%lanes")}{launch(u.text(), "%points")}  return
 }}
 """
 
@@ -962,7 +1074,7 @@ def main():
     here = os.path.dirname(os.path.abspath(__file__))
     path = os.path.join(here, "..", "lib", "Runtime", "Templates", "PMEGPU.mlir")
     with open(path, "w") as file:
-        file.write(HEADER + spread() + spread(fixed=False) + spread_warp() + real() +
+        file.write(HEADER + spread() + spread(fixed=False) + weights_kernels() + real() +
                    convolve() + scale() + gather())
 
 

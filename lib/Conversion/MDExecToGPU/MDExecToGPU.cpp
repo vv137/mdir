@@ -16,6 +16,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/GPU/Utils/GPUUtils.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -1513,6 +1514,22 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
   if (failed(promote.run(*templates)))
     return module.emitError()
            << "cannot promote the splines of particle mesh Ewald to values";
+  // The canonicalization hoists the constants of the kernels to their
+  // functions, where the outlining would make them arguments: a division
+  // by 32 became one by an argument, of 64 bits, at twice the time of the
+  // spreading (2026-10-01). They go back into the kernels.
+  WalkResult sunk = templates->walk([](gpu::LaunchOp launch) {
+    return failed(sinkOperationsIntoLaunchOp(
+               launch, [](Operation *op) {
+                 return isa<arith::ConstantOp>(op);
+               }))
+               ? WalkResult::interrupt()
+               : WalkResult::advance();
+  });
+  if (sunk.wasInterrupted())
+    return module.emitError()
+           << "cannot sink the constants of particle mesh Ewald into its "
+              "kernels";
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
     op.remove();
     module.push_back(&op);
@@ -1555,6 +1572,15 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   Value box = op.getCellMutable().get();
   Value fixed = op.getScratch()[0], real = op.getScratch()[1],
         complex = op.getScratch()[2], rows = op.getScratch()[3];
+  // Splines of order 4 in f32 are spread from the weights of the
+  // particles into bricks, which the buffer of the fixed point holds: 4
+  // bytes a point of ceil(k1 / 4) ceil(k2 / 4) 16 k3 against 8 bytes a
+  // point of the grid.
+  Value weights = op.getScratch().size() > 4 ? op.getScratch()[4] : Value();
+  int64_t bricks = (grid[0] + 3) / 4 * ((grid[1] + 3) / 4) * 16 * grid[2];
+  bool usesWeights = weights && !deterministic && op.getOrder() == 4 &&
+                     force.isF32() &&
+                     4 * bricks <= 8 * grid[0] * grid[1] * grid[2];
 
   // Marked, the sum runs on a second stream, beside the ops up to its join
   // (md_exec.join, D87). All the work that it issues goes there, and none
@@ -1576,11 +1602,18 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                                     k3, order});
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_real"),
                          ValueRange{fixed, real});
+  } else if (usesWeights) {
+    // The weights of the particles once, then the charges into bricks of
+    // the grid and the bricks into the grid (weights_kernels in
+    // scripts/generate-pme-gpu-template.py).
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_weights"),
+                         ValueRange{positions, box, weights, k1, k2, k3});
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_spread_bricks"),
+                         ValueRange{positions, charges, weights, fixed, real,
+                                    k1, k2, k3});
   } else {
     func::CallOp::create(builder, loc,
-                         instance(op.getOrder() == 4
-                                      ? "mdrt_gpu_pme_spread_warp"
-                                      : "mdrt_gpu_pme_spread_float"),
+                         instance("mdrt_gpu_pme_spread_float"),
                          ValueRange{positions, charges, box, real, k1, k2, k3,
                                     order});
   }
