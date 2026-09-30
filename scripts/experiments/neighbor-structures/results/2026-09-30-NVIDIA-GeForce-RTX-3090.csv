@@ -1,0 +1,125 @@
+experiment,variant,reach,parameter,microseconds
+pairs,tiles 8x4 full,8.05,,136.51
+pairs,tiles 8x4 full over 4 warps,8.05,,110.10
+prune,prune from outer,8.05,8.25,56.39
+prune,loop over pruned,8.05,8.25,64.04
+prune,prune from outer,8.05,8.50,57.59
+prune,loop over pruned,8.05,8.50,63.83
+prune,prune from outer,8.05,9.00,57.76
+prune,loop over pruned,8.05,9.00,69.22
+pairs,tiles 8x4 half f32 atomics,8.05,,110.61
+pairs,tiles 8x4 half fixed point,8.05,,106.24
+pairs,matrix 16 lanes,8.05,,61.20
+pairs,tiles 8x8 full,8.05,,145.45
+pairs,tiles 8x4 full,8.50,,145.69
+pairs,tiles 8x4 full over 4 warps,8.50,,116.92
+prune,prune from outer,8.50,8.25,63.98
+prune,loop over pruned,8.50,8.25,69.13
+prune,prune from outer,8.50,8.50,67.95
+prune,loop over pruned,8.50,8.50,76.57
+prune,prune from outer,8.50,9.00,67.69
+prune,loop over pruned,8.50,9.00,77.45
+pairs,tiles 8x4 half f32 atomics,8.50,,113.25
+pairs,tiles 8x4 half fixed point,8.50,,114.83
+pairs,matrix 16 lanes,8.50,,70.72
+pairs,tiles 8x8 full,8.50,,147.77
+pairs,tiles 8x4 full,9.00,,153.30
+pairs,tiles 8x4 full over 4 warps,9.00,,122.87
+prune,prune from outer,9.00,8.25,71.23
+prune,loop over pruned,9.00,8.25,72.95
+prune,prune from outer,9.00,8.50,74.82
+prune,loop over pruned,9.00,8.50,78.46
+prune,prune from outer,9.00,9.00,78.83
+prune,loop over pruned,9.00,9.00,88.12
+pairs,tiles 8x4 half f32 atomics,9.00,,128.84
+pairs,tiles 8x4 half fixed point,9.00,,123.85
+pairs,matrix 16 lanes,9.00,,81.41
+pairs,tiles 8x8 full,9.00,,154.96
+pairs,tiles 8x4 full,9.50,,159.94
+pairs,tiles 8x4 full over 4 warps,9.50,,128.09
+prune,prune from outer,9.50,8.25,79.62
+prune,loop over pruned,9.50,8.25,69.60
+prune,prune from outer,9.50,8.50,83.30
+prune,loop over pruned,9.50,8.50,79.02
+prune,prune from outer,9.50,9.00,88.01
+prune,loop over pruned,9.50,9.00,88.61
+pairs,tiles 8x4 half f32 atomics,9.50,,140.08
+pairs,tiles 8x4 half fixed point,9.50,,132.48
+pairs,matrix 16 lanes,9.50,,96.05
+pairs,tiles 8x8 full,9.50,,161.57
+pairs,tiles 8x4 full,10.00,,168.30
+pairs,tiles 8x4 full over 4 warps,10.00,,134.70
+prune,prune from outer,10.00,8.25,87.22
+prune,loop over pruned,10.00,8.25,70.12
+prune,prune from outer,10.00,8.50,92.33
+prune,loop over pruned,10.00,8.50,79.89
+prune,prune from outer,10.00,9.00,96.70
+prune,loop over pruned,10.00,9.00,87.71
+pairs,tiles 8x4 half f32 atomics,10.00,,145.69
+pairs,tiles 8x4 half fixed point,10.00,,148.80
+pairs,matrix 16 lanes,10.00,,107.96
+pairs,tiles 8x8 full,10.00,,171.35
+pairs,tiles 8x4 full,11.00,,205.91
+pairs,tiles 8x4 full over 4 warps,11.00,,165.47
+prune,prune from outer,11.00,8.25,112.73
+prune,loop over pruned,11.00,8.25,74.22
+prune,prune from outer,11.00,8.50,113.88
+prune,loop over pruned,11.00,8.50,76.33
+prune,prune from outer,11.00,9.00,117.59
+prune,loop over pruned,11.00,9.00,86.26
+pairs,tiles 8x4 half f32 atomics,11.00,,196.03
+pairs,tiles 8x4 half fixed point,11.00,,173.27
+pairs,matrix 16 lanes,11.00,,139.94
+pairs,tiles 8x8 full,11.00,,199.54
+pairs,tiles 8x4 full,12.00,,233.19
+pairs,tiles 8x4 full over 4 warps,12.00,,192.85
+prune,prune from outer,12.00,8.25,140.34
+prune,loop over pruned,12.00,8.25,73.45
+prune,prune from outer,12.00,8.50,136.81
+prune,loop over pruned,12.00,8.50,76.12
+prune,prune from outer,12.00,9.00,140.86
+prune,loop over pruned,12.00,9.00,87.15
+pairs,tiles 8x4 half f32 atomics,12.00,,241.86
+pairs,tiles 8x4 half fixed point,12.00,,218.92
+pairs,matrix 16 lanes,12.00,,172.98
+pairs,tiles 8x8 full,12.00,,221.39
+search,warp without writing,10.00,1,215.91
+search,warp with exclusions,10.00,1,442.90
+search,block per cell,10.00,1,nan
+search,thread per particle,10.00,1,706.35
+search,warp per particle,10.00,1,355.84
+search,warp without writing,10.00,2,277.76
+search,warp with exclusions,10.00,2,437.09
+search,block per cell,10.00,2,433.12
+search,thread per particle,10.00,2,519.50
+search,warp per particle,10.00,2,395.79
+search,warp without writing,10.00,3,444.32
+search,warp with exclusions,10.00,3,576.06
+search,block per cell,10.00,3,829.08
+search,thread per particle,10.00,3,497.68
+search,warp per particle,10.00,3,543.44
+search,warp without writing,10.00,4,718.32
+search,warp with exclusions,10.00,4,899.66
+search,block per cell,10.00,4,2212.78
+search,thread per particle,10.00,4,510.63
+search,warp per particle,10.00,4,840.70
+search,warp without writing,8.50,2,250.95
+search,warp with exclusions,8.50,2,349.62
+search,block per cell,8.50,2,388.90
+search,thread per particle,8.50,2,332.88
+search,warp per particle,8.50,2,334.68
+search,warp without writing,9.00,2,253.42
+search,warp with exclusions,9.00,2,380.73
+search,block per cell,9.00,2,398.23
+search,thread per particle,9.00,2,409.77
+search,warp per particle,9.00,2,350.09
+search,warp without writing,11.00,2,300.40
+search,warp with exclusions,11.00,2,504.33
+search,block per cell,11.00,2,483.58
+search,thread per particle,11.00,2,696.38
+search,warp per particle,11.00,2,437.64
+search,warp without writing,12.00,2,341.81
+search,warp with exclusions,12.00,2,593.99
+search,block per cell,12.00,2,599.69
+search,thread per particle,12.00,2,886.47
+search,warp per particle,12.00,2,506.10

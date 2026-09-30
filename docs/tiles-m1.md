@@ -90,8 +90,9 @@ the exchange contract of the kernel, which the IR already carries
 (`exchange(symmetric)`, `exchange(antisymmetric, derived)`; ops-m0.md,
 Sections 4.7 and 9.3).
 
-**The deterministic level holds (P6).** A sum whose order the threads
-decide is excluded at the deterministic level. The full list writes each
+**The deterministic level is a mode (P6, D84).** A sum whose order the
+threads decide is excluded in the deterministic mode, and allowed by
+default. The full list writes each
 particle from one thread in a fixed order, as the matrix does. A half list
 adds the contribution of a pair to the second particle from another
 thread: with floating-point atomics that breaks the level, in fixed point
@@ -181,14 +182,14 @@ forces of $B$ from the thread of $A$: a conflict, with two strategies.
 | Strategy | Pair work | Determinism (P6) | Cost |
 |---|---|---|---|
 | Full list (5.1) | 2× | Deterministic | Twice the kernels |
-| Half list, `f32` atomic additions | 1× | Not deterministic: the order of the additions to a particle depends on the threads | Atomics to global memory |
+| Half list, `f32` atomic additions | 1× | Not deterministic: the order of the additions to a particle depends on the threads; allowed by default (D84) | Atomics to global memory |
 | Half list, fixed point (64-bit integers, as D70) | 1× | Deterministic | Integer atomics, a buffer of 64-bit integers, a conversion per particle per step |
 
 A loop over pairs whose kernel has no exchange contract (`exchange(none)`)
 takes the full list. The choice is a policy of `md_exec.pair_for`
 (`policy(directed, owner_only)` now; `policy(once, fixed_point)` and
-`policy(once, atomic)` for the half list, the last one allowed only below
-the deterministic level). This document does not choose between them;
+`policy(once, atomic)` for the half list, the last one not in the
+deterministic mode, D84). This document does not choose between them;
 Section 9 measures them.
 
 ## 6. Validity, with a dual list
@@ -313,8 +314,9 @@ against displacement tests (Section 3).
 
 ## 11. Prototype measurements (2026-09-30)
 
-A standalone CUDA program (kept in the notes of the project, not in the
-repository) timed the loop over the pairs of JAC with lists built on the
+A standalone CUDA program
+([scripts/experiments/neighbor-structures](../scripts/experiments/neighbor-structures/README.md),
+with its results and plots) timed the loop over the pairs of JAC with lists built on the
 host: Lennard-Jones from type tables and the direct sum of PME in `f32`,
 the particles in the spatial order of MDIR, 1000 launches each, RTX 3090.
 
