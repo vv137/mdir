@@ -108,16 +108,6 @@ emitTupleKernel(mlir::OpBuilder &builder, md_exec::TupleForOp op,
 mlir::Value emitBuildIncidence(mlir::OpBuilder &builder, mlir::Location loc,
                                mlir::Value members, mlir::Value size);
 
-/// Marks the entry `slot` of the row of `particle` in the neighbor matrix
-/// `counts` and `index` if it is an excluded pair of `excluded`, by the
-/// number of the particle itself, which the loops over pairs skip. Unlike
-/// `emitExclusionFilter` it keeps the row as it is, so that every entry can
-/// be marked by a thread of its own.
-void emitExclusionMark(mlir::OpBuilder &builder, mlir::Location loc,
-                       mlir::Value counts, mlir::Value index,
-                       mlir::Value excluded, mlir::Value particle,
-                       mlir::Value slot);
-
 /// Emits what the particle `particle` does to leave the pairs of the
 /// incidence structure `excluded`, a structure of pairs, out of its row of
 /// the neighbor matrix `counts`, `index`: it keeps the other neighbors, in

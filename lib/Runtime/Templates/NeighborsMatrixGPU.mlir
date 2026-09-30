@@ -27,13 +27,13 @@
 // order in which threads take their slots is not fixed, and the order of
 // the neighbors decides the order in which forces are added up.
 //
-// The search has one thread for a particle, or one for every row of cells
-// of a particle. A thread takes as long as the particles that it tests, so
-// the second is faster as long as the device has threads to spare. It
-// searches twice: the threads of a particle count what they find, the
-// counts become the places of the threads in the row of the particle, and
-// the threads search again and fill the row. `split_limit` is the largest
-// number of threads that the search is split into.
+// The search has a warp of 32 threads for each particle. The lanes test 32
+// particles of a run of cells at once, which a thread for each particle
+// would test one after the other, and a ballot gives each neighbor its
+// place in the row in the order in which that thread would find it. The
+// excluded pairs of `excluded`, an incidence structure of pairs (a buffer
+// with no rows where there are none), are entered as the particle itself,
+// which the loops over pairs skip.
 
 func.func private @mdrt_gpu_cell_count(%length: f64, %width: f64) -> index {
   %c1 = arith.constant 1 : index
@@ -66,10 +66,11 @@ func.func private @mdrt_gpu_cell_range(%length: f64, %count: index,
 // The width of the cells for `count` particles in the cell `box`: the
 // reach, half of it, or a third, and `least` or more.
 //
-// A search visits rows of cells and tests the particles in them. Narrow
-// cells have fewer particles to test and more rows to visit, and a row
-// costs as much as 12 particles. The width is the one with the least cost
-// for the cells that it gives in this cell.
+// A search visits rows of cells and tests the particles in them, 32 at a
+// time, a warp for each particle. Narrow cells have fewer particles to
+// test and more rows to visit; a row costs as much as one step of 32
+// tests, and the last step of a row is half empty on average. The width is
+// the one with the least cost for the cells that it gives in this cell.
 func.func private @mdrt_gpu_cell_width(%count: index, %box: vector<3xf64>,
     %reach: f64, %least: f64) -> f64 {
   %c1 = arith.constant 1 : index
@@ -79,7 +80,8 @@ func.func private @mdrt_gpu_cell_width(%count: index, %box: vector<3xf64>,
   %lz = vector.extract %box[2] : f64 from vector<3xf64>
   %wide_count = arith.index_cast %count : index to i64
   %particles = arith.sitofp %wide_count : i64 to f64
-  %row_cost = arith.constant 12.0 : f64
+  // A row: the visit, and the half-empty last step.
+  %row_cost = arith.constant 1.5 : f64
   %none = arith.constant 1.0e30 : f64
 
   %cost, %width = scf.for %parts = %c1 to %c4 step %c1
@@ -120,10 +122,14 @@ func.func private @mdrt_gpu_cell_width(%count: index, %box: vector<3xf64>,
     %real_rows = arith.sitofp %wide_rows : i64 to f64
     %real_visited = arith.sitofp %wide_visited : i64 to f64
     %real_cells = arith.sitofp %wide_cells : i64 to f64
-    %share = arith.divf %real_visited, %real_cells : f64
-    %tested = arith.mulf %particles, %share : f64
-    %visits = arith.mulf %row_cost, %real_rows : f64
-    %total = arith.addf %visits, %tested : f64
+    // The particles of a row of cells, and the steps of 32 that it takes.
+    %real_span = arith.divf %real_visited, %real_rows : f64
+    %share = arith.divf %real_span, %real_cells : f64
+    %per_row = arith.mulf %particles, %share : f64
+    %lanes = arith.constant 32.0 : f64
+    %steps = arith.divf %per_row, %lanes : f64
+    %row_steps = arith.addf %steps, %row_cost : f64
+    %total = arith.mulf %real_rows, %row_steps : f64
 
     %better = arith.cmpf olt, %total, %best : f64
     %next_best = arith.select %better, %total, %best : f64
@@ -144,8 +150,8 @@ func.func private @mdrt_gpu_grid(%count: index, %block: index) -> index {
 
 func.func private @mdrt_gpu_build_neighbors_matrix(
     %x: memref<?x3xf64, 1>, %box: vector<3xf64>, %reach: f64,
-    %cell_width: f64, %split_limit: index, %counts: memref<?xi32, 1>,
-    %index: memref<?x?xi32, 1>) -> index {
+    %cell_width: f64, %excluded: memref<?x?xi32, 1>,
+    %counts: memref<?xi32, 1>, %index: memref<?x?xi32, 1>) -> index {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %block = arith.constant 128 : index
@@ -212,14 +218,11 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
   %first_y = arith.select %all_y, %back_y, %c0 : index
   %first_z = arith.select %all_z, %back_z, %c0 : index
 
-  // The threads of the search: one for a particle, or one for each row of
-  // cells of a particle.
+  // The search has a warp of 32 threads for each particle.
   %rows_within = arith.muli %span_y, %span_z : index
-  %split_threads = arith.muli %n, %rows_within : index
-  %splits = arith.cmpi ule, %split_threads, %split_limit : index
-  %split = arith.select %splits, %c1, %c0 : index
-  %groups = arith.select %splits, %rows_within, %c1 : index
-  %threads = arith.muli %n, %groups : index
+  %warp_threads = arith.constant 32 : index
+  %threads = arith.muli %n, %warp_threads : index
+  %false = arith.constant false
 
   %grid_n = call @mdrt_gpu_grid(%n, %block) : (index, index) -> index
   %grid_cells = call @mdrt_gpu_grid(%cells, %block) : (index, index) -> index
@@ -227,7 +230,7 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
       : (index, index) -> index
   %grid_cell_chunks = call @mdrt_gpu_grid(%cell_chunks, %block)
       : (index, index) -> index
-  %grid_threads = call @mdrt_gpu_grid(%threads, %block)
+  %grid_warps = call @mdrt_gpu_grid(%threads, %block)
       : (index, index) -> index
 
   %cells1 = arith.addi %cells, %c1 : index
@@ -239,7 +242,6 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
   %start = gpu.alloc (%cells1) : memref<?xi32, 1>
   %cursor = gpu.alloc (%cells) : memref<?xi32, 1>
   %cell_sums = gpu.alloc (%cell_chunks) : memref<?xi32, 1>
-  %part = gpu.alloc (%threads) : memref<?xi32, 1>
   %partial = gpu.alloc (%chunks) : memref<?xi32, 1>
   %result = gpu.alloc () : memref<1xi32, 1>
   %host = memref.alloca() : memref<1xi32>
@@ -492,163 +494,27 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
   // Neighbors
   //===--------------------------------------------------------------------===//
 
-  // Where the search is split, its threads count what they find, and the
-  // counts become the places of the threads in the rows.
-  scf.if %splits {
-    gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_threads, %gy = %c1, %gz = %c1)
-               threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
-      %base = arith.muli %bx, %block : index
-      %t = arith.addi %base, %tx : index
-      %inside = arith.cmpi ult, %t, %threads : index
-      scf.if %inside {
-        %i0 = arith.constant 0 : index
-        %i1 = arith.constant 1 : index
-        %i2 = arith.constant 2 : index
-        %p = arith.divui %t, %groups : index
-        %g = arith.remui %t, %groups : index
-        %i32 = memref.load %order[%p] : memref<?xi32, 1>
-        %i = arith.index_cast %i32 : i32 to index
-        %xi = memref.load %sorted[%p, %i0] : memref<?x3xf32, 1>
-        %yi = memref.load %sorted[%p, %i1] : memref<?x3xf32, 1>
-        %zi = memref.load %sorted[%p, %i2] : memref<?x3xf32, 1>
-
-        %k32 = memref.load %key[%i] : memref<?xi32, 1>
-        %k = arith.index_cast %k32 : i32 to index
-        %cx = arith.remui %k, %nx : index
-        %rest = arith.divui %k, %nx : index
-        %cy = arith.remui %rest, %ny : index
-        %cz = arith.divui %rest, %ny : index
-
-        // The rows of cells that the thread searches: one, or all.
-        %is_split = arith.cmpi ne, %split, %i0 : index
-        %g1 = arith.addi %g, %i1 : index
-        %row_begin = arith.select %is_split, %g, %i0 : index
-        %row_end = arith.select %is_split, %g1, %rows_within : index
-        %none = arith.constant 0 : index
-
-        %found = scf.for %r = %row_begin to %row_end step %i1
-            iter_args(%count_r = %none) -> (index) {
-          %oz = arith.divui %r, %span_y : index
-          %oy = arith.remui %r, %span_y : index
-          %sz0 = arith.addi %cz, %first_z : index
-          %sz1 = arith.addi %sz0, %oz : index
-          %nz_cell = arith.remui %sz1, %nz : index
-          %sy0 = arith.addi %cy, %first_y : index
-          %sy1 = arith.addi %sy0, %oy : index
-          %ny_cell = arith.remui %sy1, %ny : index
-
-          // The cells of the row are next to one another in the order of
-          // the cells, so the thread reads them as one run, or as two where
-          // the row goes around the edge of the cell.
-          %zy = arith.muli %nz_cell, %ny : index
-          %row = arith.addi %zy, %ny_cell : index
-          %row_first = arith.muli %row, %nx : index
-          %sx0 = arith.addi %cx, %first_x : index
-          %x_begin = arith.remui %sx0, %nx : index
-          %x_end = arith.addi %x_begin, %span_x : index
-          %around = arith.cmpi ugt, %x_end, %nx : index
-          %x_stop = arith.select %around, %nx, %x_end : index
-          %x_rest0 = arith.subi %x_end, %nx : index
-          %x_rest = arith.select %around, %x_rest0, %i0 : index
-
-          %after_x = scf.for %part_x = %i0 to %i2 step %i1
-              iter_args(%count_x = %count_r) -> (index) {
-            %second = arith.cmpi ne, %part_x, %i0 : index
-            %from_x = arith.select %second, %i0, %x_begin : index
-            %to_x = arith.select %second, %x_rest, %x_stop : index
-            %from_cell = arith.addi %row_first, %from_x : index
-            %to_cell = arith.addi %row_first, %to_x : index
-            %begin32 = memref.load %start[%from_cell] : memref<?xi32, 1>
-            %end32 = memref.load %start[%to_cell] : memref<?xi32, 1>
-            %begin = arith.index_cast %begin32 : i32 to index
-            %end = arith.index_cast %end32 : i32 to index
-
-            %after_cell = scf.for %q = %begin to %end step %i1
-                iter_args(%count = %count_x) -> (index) {
-              %xj = memref.load %sorted[%q, %i0] : memref<?x3xf32, 1>
-              %yj = memref.load %sorted[%q, %i1] : memref<?x3xf32, 1>
-              %zj = memref.load %sorted[%q, %i2] : memref<?x3xf32, 1>
-
-              // The minimum-image displacement, with one over the edge
-              // lengths: see the template for the host.
-                %dx0 = arith.subf %xi, %xj : f32
-                %dx1 = arith.mulf %dx0, %narrow_ilx : f32
-                %dx2 = math.roundeven %dx1 : f32
-                %dx3 = arith.mulf %dx2, %narrow_lx : f32
-                %dx = arith.subf %dx0, %dx3 : f32
-                %dy0 = arith.subf %yi, %yj : f32
-                %dy1 = arith.mulf %dy0, %narrow_ily : f32
-                %dy2 = math.roundeven %dy1 : f32
-                %dy3 = arith.mulf %dy2, %narrow_ly : f32
-                %dy = arith.subf %dy0, %dy3 : f32
-                %dz0 = arith.subf %zi, %zj : f32
-                %dz1 = arith.mulf %dz0, %narrow_ilz : f32
-                %dz2 = math.roundeven %dz1 : f32
-                %dz3 = arith.mulf %dz2, %narrow_lz : f32
-                %dz = arith.subf %dz0, %dz3 : f32
-
-              %dx_2 = arith.mulf %dx, %dx : f32
-              %dy_2 = arith.mulf %dy, %dy : f32
-              %dz_2 = arith.mulf %dz, %dz : f32
-              %dxy_2 = arith.addf %dx_2, %dy_2 : f32
-              %r2 = arith.addf %dxy_2, %dz_2 : f32
-
-              %near = arith.cmpf olt, %r2, %limit2 : f32
-              %other = arith.cmpi ne, %p, %q : index
-              %neighbor = arith.andi %near, %other : i1
-
-              %more = arith.addi %count, %i1 : index
-              %next = arith.select %neighbor, %more, %count : index
-              scf.yield %next : index
-            }
-            scf.yield %after_cell : index
-          }
-          scf.yield %after_x : index
-        }
-
-        %found32 = arith.index_cast %found : index to i32
-        memref.store %found32, %part[%t] : memref<?xi32, 1>
-      }
-      gpu.terminator
-    }
-
-    gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_n, %gy = %c1, %gz = %c1)
-               threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
-      %base = arith.muli %bx, %block : index
-      %p = arith.addi %base, %tx : index
-      %inside = arith.cmpi ult, %p, %n : index
-      scf.if %inside {
-        %i0 = arith.constant 0 : index
-        %i1 = arith.constant 1 : index
-        %none = arith.constant 0 : i32
-        %begin = arith.muli %p, %groups : index
-        %end = arith.addi %begin, %groups : index
-        %total = scf.for %t = %begin to %end step %i1
-            iter_args(%before = %none) -> (i32) {
-          %found = memref.load %part[%t] : memref<?xi32, 1>
-          memref.store %before, %part[%t] : memref<?xi32, 1>
-          %next = arith.addi %before, %found : i32
-          scf.yield %next : i32
-        }
-        %i32 = memref.load %order[%p] : memref<?xi32, 1>
-        %i = arith.index_cast %i32 : i32 to index
-        memref.store %total, %counts[%i] : memref<?xi32, 1>
-      }
-      gpu.terminator
-    }
-  }
-
-  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_threads, %gy = %c1, %gz = %c1)
+  // A warp for each particle. Its lanes test 32 particles of a run of
+  // cells at once, and a ballot gives each neighbor its place in the row,
+  // in the order in which one thread would find them. A neighbor that is
+  // an excluded pair of `excluded` is entered as the particle itself,
+  // which the loops over pairs skip. The count goes on beyond the width
+  // of the row, without writing.
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_warps, %gy = %c1, %gz = %c1)
              threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
     %base = arith.muli %bx, %block : index
     %t = arith.addi %base, %tx : index
-    %inside = arith.cmpi ult, %t, %threads : index
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %i3 = arith.constant 3 : index
+    %i4 = arith.constant 4 : index
+    %warp_size = arith.constant 32 : index
+    %p = arith.divui %t, %warp_size : index
+    %lane = arith.remui %t, %warp_size : index
+    // The warps past the last particle stop together.
+    %inside = arith.cmpi ult, %p, %n : index
     scf.if %inside {
-      %i0 = arith.constant 0 : index
-      %i1 = arith.constant 1 : index
-      %i2 = arith.constant 2 : index
-      %p = arith.divui %t, %groups : index
-      %g = arith.remui %t, %groups : index
       %i32 = memref.load %order[%p] : memref<?xi32, 1>
       %i = arith.index_cast %i32 : i32 to index
       %xi = memref.load %sorted[%p, %i0] : memref<?x3xf32, 1>
@@ -662,17 +528,24 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
       %cy = arith.remui %rest, %ny : index
       %cz = arith.divui %rest, %ny : index
 
-      // The rows of cells that the thread searches: one, or all.
-      %is_split = arith.cmpi ne, %split, %i0 : index
-      %g1 = arith.addi %g, %i1 : index
-      %row_begin = arith.select %is_split, %g, %i0 : index
-      %row_end = arith.select %is_split, %g1, %rows_within : index
-      // The first entry of the thread in the row.
-      %offset32 = memref.load %part[%t] : memref<?xi32, 1>
-      %offset = arith.index_cast %offset32 : i32 to index
-      %none = arith.select %is_split, %offset, %i0 : index
+      // The excluded pairs of the particle, if the structure has any.
+      %rows_excluded = memref.dim %excluded, %i0 : memref<?x?xi32, 1>
+      %has_excluded = arith.cmpi ult, %i, %rows_excluded : index
+      %num_excluded = scf.if %has_excluded -> (index) {
+        %e32 = memref.load %excluded[%i, %i0] : memref<?x?xi32, 1>
+        %e = arith.index_cast %e32 : i32 to index
+        scf.yield %e : index
+      } else {
+        scf.yield %i0 : index
+      }
 
-      %found = scf.for %r = %row_begin to %row_end step %i1
+      %lane32 = arith.index_cast %lane : index to i32
+      %one32 = arith.constant 1 : i32
+      %lane_bit = arith.shli %one32, %lane32 : i32
+      %below_mask = arith.subi %lane_bit, %one32 : i32
+      %none = arith.constant 0 : index
+
+      %found = scf.for %r = %i0 to %rows_within step %i1
           iter_args(%count_r = %none) -> (index) {
         %oz = arith.divui %r, %span_y : index
         %oy = arith.remui %r, %span_y : index
@@ -684,7 +557,7 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
         %ny_cell = arith.remui %sy1, %ny : index
 
         // The cells of the row are next to one another in the order of
-        // the cells, so the thread reads them as one run, or as two where
+        // the cells, so the warp reads them as one run, or as two where
         // the row goes around the edge of the cell.
         %zy = arith.muli %nz_cell, %ny : index
         %row = arith.addi %zy, %ny_cell : index
@@ -709,29 +582,33 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
           %begin = arith.index_cast %begin32 : i32 to index
           %end = arith.index_cast %end32 : i32 to index
 
-          %after_cell = scf.for %q = %begin to %end step %i1
+          %after_cell = scf.for %q0 = %begin to %end step %warp_size
               iter_args(%count = %count_x) -> (index) {
-            %xj = memref.load %sorted[%q, %i0] : memref<?x3xf32, 1>
-            %yj = memref.load %sorted[%q, %i1] : memref<?x3xf32, 1>
-            %zj = memref.load %sorted[%q, %i2] : memref<?x3xf32, 1>
+            %q = arith.addi %q0, %lane : index
+            %in_run = arith.cmpi ult, %q, %end : index
+            %last = arith.subi %end, %i1 : index
+            %qc = arith.minui %q, %last : index
+            %xj = memref.load %sorted[%qc, %i0] : memref<?x3xf32, 1>
+            %yj = memref.load %sorted[%qc, %i1] : memref<?x3xf32, 1>
+            %zj = memref.load %sorted[%qc, %i2] : memref<?x3xf32, 1>
 
             // The minimum-image displacement, with one over the edge
             // lengths: see the template for the host.
-              %dx0 = arith.subf %xi, %xj : f32
-              %dx1 = arith.mulf %dx0, %narrow_ilx : f32
-              %dx2 = math.roundeven %dx1 : f32
-              %dx3 = arith.mulf %dx2, %narrow_lx : f32
-              %dx = arith.subf %dx0, %dx3 : f32
-              %dy0 = arith.subf %yi, %yj : f32
-              %dy1 = arith.mulf %dy0, %narrow_ily : f32
-              %dy2 = math.roundeven %dy1 : f32
-              %dy3 = arith.mulf %dy2, %narrow_ly : f32
-              %dy = arith.subf %dy0, %dy3 : f32
-              %dz0 = arith.subf %zi, %zj : f32
-              %dz1 = arith.mulf %dz0, %narrow_ilz : f32
-              %dz2 = math.roundeven %dz1 : f32
-              %dz3 = arith.mulf %dz2, %narrow_lz : f32
-              %dz = arith.subf %dz0, %dz3 : f32
+            %dx0 = arith.subf %xi, %xj : f32
+            %dx1 = arith.mulf %dx0, %narrow_ilx : f32
+            %dx2 = math.roundeven %dx1 : f32
+            %dx3 = arith.mulf %dx2, %narrow_lx : f32
+            %dx = arith.subf %dx0, %dx3 : f32
+            %dy0 = arith.subf %yi, %yj : f32
+            %dy1 = arith.mulf %dy0, %narrow_ily : f32
+            %dy2 = math.roundeven %dy1 : f32
+            %dy3 = arith.mulf %dy2, %narrow_ly : f32
+            %dy = arith.subf %dy0, %dy3 : f32
+            %dz0 = arith.subf %zi, %zj : f32
+            %dz1 = arith.mulf %dz0, %narrow_ilz : f32
+            %dz2 = math.roundeven %dz1 : f32
+            %dz3 = arith.mulf %dz2, %narrow_lz : f32
+            %dz = arith.subf %dz0, %dz3 : f32
 
             %dx_2 = arith.mulf %dx, %dx : f32
             %dy_2 = arith.mulf %dy, %dy : f32
@@ -741,17 +618,43 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
 
             %near = arith.cmpf olt, %r2, %limit2 : f32
             %other = arith.cmpi ne, %p, %q : index
-            %neighbor = arith.andi %near, %other : i1
+            %near_other = arith.andi %near, %other : i1
+            %neighbor = arith.andi %near_other, %in_run : i1
 
-              %fits = arith.cmpi ult, %count, %row_width : index
-              %keep = arith.andi %neighbor, %fits : i1
-              scf.if %keep {
-                %j32 = memref.load %order[%q] : memref<?xi32, 1>
-                memref.store %j32, %index[%i, %count] : memref<?x?xi32, 1>
+            %ballot = gpu.ballot %neighbor : i32
+            %before_bits = arith.andi %ballot, %below_mask : i32
+            %before32 = math.ctpop %before_bits : i32
+            %before = arith.index_cast %before32 : i32 to index
+            %slot = arith.addi %count, %before : index
+            %fits = arith.cmpi ult, %slot, %row_width : index
+            %keep = arith.andi %neighbor, %fits : i1
+            scf.if %keep {
+              %j32 = memref.load %order[%q] : memref<?xi32, 1>
+              // The other member of each excluded pair of the particle:
+              // the member at place 1 − s, for the place s of the particle.
+              %is_excluded = scf.for %e = %i0 to %num_excluded step %i1
+                  iter_args(%found_e = %false) -> (i1) {
+                %entry = arith.muli %e, %i4 : index
+                %entry1 = arith.addi %entry, %i1 : index
+                %place_col = arith.addi %entry1, %i1 : index
+                %place = memref.load %excluded[%i, %place_col] : memref<?x?xi32, 1>
+                %zero32 = arith.constant 0 : i32
+                %at_first = arith.cmpi eq, %place, %zero32 : i32
+                %col_first = arith.addi %entry1, %i2 : index
+                %col_second = arith.addi %entry1, %i3 : index
+                %col = arith.select %at_first, %col_second, %col_first : index
+                %partner = memref.load %excluded[%i, %col] : memref<?x?xi32, 1>
+                %same = arith.cmpi eq, %partner, %j32 : i32
+                %any = arith.ori %found_e, %same : i1
+                scf.yield %any : i1
               }
+              %entered = arith.select %is_excluded, %i32, %j32 : i32
+              memref.store %entered, %index[%i, %slot] : memref<?x?xi32, 1>
+            }
 
-            %more = arith.addi %count, %i1 : index
-            %next = arith.select %neighbor, %more, %count : index
+            %found32 = math.ctpop %ballot : i32
+            %found_here = arith.index_cast %found32 : i32 to index
+            %next = arith.addi %count, %found_here : index
             scf.yield %next : index
           }
           scf.yield %after_cell : index
@@ -759,10 +662,8 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
         scf.yield %after_x : index
       }
 
-      // A thread that searches for the whole particle has counted its
-      // neighbors.
-      %whole = arith.cmpi eq, %split, %i0 : index
-      scf.if %whole {
+      %writer = arith.cmpi eq, %lane, %i0 : index
+      scf.if %writer {
         %found32 = arith.index_cast %found : index to i32
         memref.store %found32, %counts[%i] : memref<?xi32, 1>
       }
@@ -850,9 +751,6 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
   %cell_sums0 = memref.memory_space_cast %cell_sums
       : memref<?xi32, 1> to memref<?xi32>
   gpu.dealloc %cell_sums0 : memref<?xi32>
-  %part0 = memref.memory_space_cast %part
-      : memref<?xi32, 1> to memref<?xi32>
-  gpu.dealloc %part0 : memref<?xi32>
   %partial0 = memref.memory_space_cast %partial
       : memref<?xi32, 1> to memref<?xi32>
   gpu.dealloc %partial0 : memref<?xi32>

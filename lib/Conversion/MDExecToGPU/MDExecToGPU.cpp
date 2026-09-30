@@ -99,10 +99,10 @@ struct Flag {
 
 class Lowering {
 public:
-  Lowering(ModuleOp module, int64_t blockSize, int64_t splitLimit,
-           int64_t rowLanes, bool fuseRows, bool pmeStream)
+  Lowering(ModuleOp module, int64_t blockSize, int64_t rowLanes,
+           bool fuseRows, bool pmeStream)
       : module(module), context(module.getContext()), blockSize(blockSize),
-        splitLimit(splitLimit), rowLanes(rowLanes), fuseRows(fuseRows),
+        rowLanes(rowLanes), fuseRows(fuseRows),
         pmeStream(pmeStream) {}
 
   LogicalResult run();
@@ -216,7 +216,6 @@ private:
   ModuleOp module;
   MLIRContext *context;
   int64_t blockSize;
-  int64_t splitLimit;
   /// The threads that share the rows of a particle (launchRows).
   int64_t rowLanes;
   /// Whether runs of loops over rows become one kernel (findRows).
@@ -1500,12 +1499,23 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
                                       leastValue})
           .getResult(0);
 
+  // The search enters the excluded pairs as the particle itself; without
+  // them it takes a buffer with no rows.
+  Value excluded = structure.excluded;
+  Value noExcluded;
+  if (!excluded) {
+    MemRefType type = getDeviceType(
+        {ShapedType::kDynamic, ShapedType::kDynamic}, builder.getI32Type());
+    noExcluded = createDeviceBuffer(
+        builder, loc, type,
+        ValueRange{createIndex(builder, loc, 0), createIndex(builder, loc, 1)});
+    excluded = noExcluded;
+  }
   auto build = cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
       module, getInstanceName(buildNeighborsName, real)));
   auto call = func::CallOp::create(
       builder, loc, build,
-      ValueRange{positions, boxValue, reachValue,
-                 widthValue, createIndex(builder, loc, splitLimit),
+      ValueRange{positions, boxValue, reachValue, widthValue, excluded,
                  structure.counts, structure.index});
   Value largest = call.getResult(0);
 
@@ -1531,17 +1541,14 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
         scf::YieldOp::create(then, loc);
       });
 
-  // Mark the excluded pairs, a thread for each entry of the matrix.
-  if (structure.excluded) {
-    launchOver(builder, loc, structure.entries, [&](OpBuilder &body,
-                                                    Value item) {
-      Value width = memref::DimOp::create(body, loc, structure.index,
-                                          createIndex(body, loc, 1));
-      Value particle = arith::DivUIOp::create(body, loc, item, width);
-      Value slot = arith::RemUIOp::create(body, loc, item, width);
-      emitExclusionMark(body, loc, structure.counts, structure.index,
-                        structure.excluded, particle, slot);
-    });
+  if (noExcluded) {
+    Value plain = memref::MemorySpaceCastOp::create(
+        builder, loc,
+        MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic},
+                        builder.getI32Type()),
+        noExcluded);
+    gpu::DeallocOp::create(builder, loc, /*asyncToken=*/Type(),
+                           /*asyncDependencies=*/ValueRange(), plain);
   }
 
   // Remember the configuration that the structure was built at.
@@ -2168,8 +2175,8 @@ public:
       ConvertMDExecToGPU>::ConvertMDExecToGPUBase;
 
   void runOnOperation() final {
-    Lowering lowering(getOperation(), blockSize, splitLimit, rowLanes,
-                      fuseRows, pmeStream);
+    Lowering lowering(getOperation(), blockSize, rowLanes, fuseRows,
+                      pmeStream);
     if (failed(lowering.run()))
       signalPassFailure();
   }

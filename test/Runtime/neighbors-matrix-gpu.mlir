@@ -53,8 +53,7 @@ func.func @fill(%x: memref<?x3xf64>, %length: f64) {
   return
 }
 
-func.func @run(%length: f64, %reach: f64, %width: f64, %row: index,
-                %split: index) {
+func.func @run(%length: f64, %reach: f64, %width: f64, %row: index) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %count = arith.constant 2000 : index
@@ -77,9 +76,11 @@ func.func @run(%length: f64, %reach: f64, %width: f64, %row: index,
   %t0 = gpu.wait async
   %t1 = gpu.memcpy async [%t0] %xd, %x : memref<?x3xf64, 1>, memref<?x3xf64>
   gpu.wait [%t1]
+  // No excluded pairs: a buffer with no rows.
+  %none = gpu.alloc (%c0, %c1) : memref<?x?xi32, 1>
   %largest = call @mdrt_gpu_build_neighbors_matrix(
-      %xd, %box, %reach, %width, %split, %countsd, %indexd)
-      : (memref<?x3xf64, 1>, vector<3xf64>, f64, f64, index,
+      %xd, %box, %reach, %width, %none, %countsd, %indexd)
+      : (memref<?x3xf64, 1>, vector<3xf64>, f64, f64, memref<?x?xi32, 1>,
          memref<?xi32, 1>, memref<?x?xi32, 1>) -> index
   %counts2 = memref.alloc(%count) : memref<?xi32>
   %index2 = memref.alloc(%count, %row) : memref<?x?xi32>
@@ -131,36 +132,21 @@ func.func @main() {
   %reach = arith.constant 1.5 : f64
   %half = arith.constant 0.75 : f64
 
-  // The search with one thread for a particle, and with one for each row
-  // of cells of a particle.
-  %whole = arith.constant 0 : index
-  %rows = arith.constant 1000000 : index
-
   // Seven cells along each direction, as wide as the reach and more.
   // CHECK:      32704
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: 31
   %l0 = arith.constant 12.0 : f64
-  call @run(%l0, %reach, %reach, %wide, %whole)
-      : (f64, f64, f64, index, index) -> ()
-  // CHECK-NEXT: 32704
-  // CHECK-NEXT: {{^0$}}
-  // CHECK-NEXT: 31
-  call @run(%l0, %reach, %reach, %wide, %rows)
-      : (f64, f64, f64, index, index) -> ()
+  call @run(%l0, %reach, %reach, %wide)
+      : (f64, f64, f64, index) -> ()
 
   // Cells of half the reach: fifteen along each direction, of which five
   // are searched.
   // CHECK-NEXT: 32704
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: 31
-  call @run(%l0, %reach, %half, %wide, %whole)
-      : (f64, f64, f64, index, index) -> ()
-  // CHECK-NEXT: 32704
-  // CHECK-NEXT: {{^0$}}
-  // CHECK-NEXT: 31
-  call @run(%l0, %reach, %half, %wide, %rows)
-      : (f64, f64, f64, index, index) -> ()
+  call @run(%l0, %reach, %half, %wide)
+      : (f64, f64, f64, index) -> ()
 
   // Two cells: the cell before and the cell after a cell are the same.
   // CHECK-NEXT: 48778
@@ -169,13 +155,8 @@ func.func @main() {
   %l1 = arith.constant 7.0 : f64
   %r1 = arith.constant 1.0 : f64
   %w1 = arith.constant 3.0 : f64
-  call @run(%l1, %r1, %w1, %wide, %whole)
-      : (f64, f64, f64, index, index) -> ()
-  // CHECK-NEXT: 48778
-  // CHECK-NEXT: {{^0$}}
-  // CHECK-NEXT: 42
-  call @run(%l1, %r1, %w1, %wide, %rows)
-      : (f64, f64, f64, index, index) -> ()
+  call @run(%l1, %r1, %w1, %wide)
+      : (f64, f64, f64, index) -> ()
 
   // One cell.
   // CHECK-NEXT: 43958
@@ -183,8 +164,8 @@ func.func @main() {
   // CHECK-NEXT: 40
   %l2 = arith.constant 5.8 : f64
   %r2 = arith.constant 0.8 : f64
-  call @run(%l2, %r2, %w1, %wide, %whole)
-      : (f64, f64, f64, index, index) -> ()
+  call @run(%l2, %r2, %w1, %wide)
+      : (f64, f64, f64, index) -> ()
 
   // Rows that are too narrow: every row is full, and the largest count
   // tells the caller so.
@@ -192,12 +173,7 @@ func.func @main() {
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: 44
   %l3 = arith.constant 10.0 : f64
-  call @run(%l3, %reach, %reach, %narrow, %whole)
-      : (f64, f64, f64, index, index) -> ()
-  // CHECK-NEXT: 16000
-  // CHECK-NEXT: {{^0$}}
-  // CHECK-NEXT: 44
-  call @run(%l3, %reach, %half, %narrow, %rows)
-      : (f64, f64, f64, index, index) -> ()
+  call @run(%l3, %reach, %reach, %narrow)
+      : (f64, f64, f64, index) -> ()
   return
 }

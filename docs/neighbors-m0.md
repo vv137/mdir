@@ -159,32 +159,39 @@ cell gives.
 
 ### 2.5 The threads of the search on a device
 
-A kernel takes as long as its slowest thread. With one thread for a
-particle, a thread tests every particle of 9 to 49 rows of cells. A small
-system leaves most of the device idle meanwhile.
+A warp of 32 threads searches for one particle. Its lanes test 32
+particles of a run of cells at once, and a ballot gives each neighbor its
+place in the row: the number of lanes before it that found one, added to
+the count so far. The row is the one that a thread for the particle would
+fill, testing the particles one after the other, entry by entry. The
+count goes on past the width of a row without writing, so that the build
+can report how wide the row must be.
 
-The search is therefore split where the device has threads to spare: one
-thread for each row of cells of a particle. The threads of a particle must
-fill one row of the matrix in a fixed order, so the search runs twice:
+The excluded pairs are entered in the search: a neighbor that is an
+excluded pair of the particle is written as the particle itself, which
+the loops over pairs skip (Section 1). The excluded pairs of a particle
+are few (the incidence structure of the relation `excluded`), and only
+the neighbors that the ballot keeps are looked up.
 
-| Kernel | Threads | Work |
-|---|---|---|
-| Count | One per particle and row of cells | Counts the neighbors in its row of cells |
-| Places | One per particle | Turns the counts of the threads of the particle into their places in the row of the matrix, and stores the number of neighbors |
-| Fill | One per particle and row of cells | Searches again and writes what it finds from its place on |
+| Search (JAC, 23,558 atoms, reach 10 Å, RTX 3090) | µs per build |
+|---|---|
+| A thread per particle, as before (2026-09-30) | 520 in the app, with 180 more for a kernel that marked the excluded pairs with a thread per entry of the matrix |
+| A thread per row of cells of a particle, counted and then filled (the former split search) | Slower on JAC than a thread per particle |
+| A warp per particle, in a prototype | 340 to 390; 440 with the excluded pairs |
+| A warp per particle with the excluded pairs, in the app (now) | 612, and no kernel for the marks |
+| A block per cell, the runs of cells in shared memory, in a prototype | 425 to 435 |
 
-| | One thread for a particle | One for each row of cells |
-|---|---|---|
-| Time of the search | That of all rows of cells | That of one row of cells, twice, and one kernel more |
-| Work | Once | Twice |
-| Memory | | One number for each thread |
+The block per cell reads a run once for all the particles of the cell,
+and was no faster: the search is bound by the tests (1,700 candidates
+per particle, 4 × 10⁷ for JAC), not by the loads. The prototypes and
+their results are in
+[scripts/experiments/neighbor-structures](../scripts/experiments/neighbor-structures/README.md).
 
-The search is split if it has no more threads than `split-limit`, an
-option of `convert-md-exec-to-gpu`. The default is 131072, about the
-threads that the device that was measured runs at once. With 25 rows of
-cells that is 5000 particles.
-
-The matrix is the same either way.
+The width of the cells is chosen for the warp: a row of cells costs one
+step of 32 tests to visit, and its particles one step for every 32
+(`mdrt_gpu_cell_width`). With a thread per particle the cost of a row was
+that of 12 particles, and the cells were a third of the reach; for the
+warp that width took 846 µs on JAC, half the reach 612.
 
 ### 2.6 Plan parameters
 
@@ -193,7 +200,6 @@ The matrix is the same either way.
 | The skin | `skin` of `convert-md-to-md-exec`; in a control file `pairlist_distance − cutoff` | |
 | The width of a row of the matrix | `width` of `convert-md-to-md-exec`; in a control file `neighbor_capacity` | Half as many again as a uniform density gives |
 | The least width of the cells | `cells` of `convert-md-to-md-exec` | A third of the reach |
-| The most threads of a split search | `split-limit` of `convert-md-exec-to-gpu` | 131072 |
 
 ## 3. The test of validity
 

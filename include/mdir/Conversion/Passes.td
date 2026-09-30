@@ -101,10 +101,6 @@ def ConvertMDExecToGPU
   let options = [
     Option<"blockSize", "block-size", "int64_t", /*default=*/"128",
            "The number of threads in a block">,
-    Option<"splitLimit", "split-limit", "int64_t", /*default=*/"131072",
-           "The largest number of threads that the search of a neighbor "
-           "build is split into, with one thread for each row of cells of "
-           "a particle">,
     Option<"rowLanes", "row-lanes", "int64_t", /*default=*/"16",
            "The threads that share the neighbors or tuples of a particle, "
            "a power of two up to 32; 1 gives a thread to each particle">,
