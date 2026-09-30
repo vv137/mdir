@@ -3985,6 +3985,29 @@ llvm::Error Builder::build() {
     os << "md.tuple_set @" << set.name << " on(@atoms) arity(" << set.arity
        << ") orientation(" << set.getOrientation() << ")"
        << (set.arity > 1 && set.isDisjoint() ? " disjoint" : "") << "\n";
+  // The groups of the constraints share no atom with one another either
+  // (D83): the bonds of a rigid water are gone before SHAKE groups the
+  // bonds of hydrogen, and a hydrogen is in one group only (findShakes).
+  // What the groups promise is checked here all the same, and without the
+  // promise the loops keep their order.
+  std::vector<const Program::TupleSet *> groups;
+  for (const Program::TupleSet &set : program.tupleSets)
+    if (set.name == "settles")
+      groups.push_back(&set);
+  for (const Program::TupleSet *set : getShakeSets())
+    groups.push_back(set);
+  std::vector<int32_t> members;
+  for (const Program::TupleSet *set : groups)
+    members.insert(members.end(), set->members.begin(), set->members.end());
+  std::sort(members.begin(), members.end());
+  if (groups.size() >= 2 &&
+      std::adjacent_find(members.begin(), members.end()) == members.end()) {
+    os << "md.disjoint_union @constraints on(@atoms) of [";
+    llvm::interleaveComma(groups, os, [&](const Program::TupleSet *set) {
+      os << "@" << set->name;
+    });
+    os << "]\n";
+  }
   os << "\n";
   if (system.topology) {
     emitTopologyPotential("energy", AllTerms);

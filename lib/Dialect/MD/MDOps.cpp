@@ -547,6 +547,29 @@ LogicalResult TupleSetOp::verify() {
   return success();
 }
 
+//===----------------------------------------------------------------------===//
+// DisjointUnionOp
+//===----------------------------------------------------------------------===//
+
+LogicalResult
+DisjointUnionOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  for (Attribute attr : getTupleSets()) {
+    auto name = cast<FlatSymbolRefAttr>(attr);
+    auto set = symbolTable.lookupNearestSymbolFrom<TupleSetOp>(*this, name);
+    if (!set)
+      return emitOpError() << "'" << name.getValue()
+                           << "' does not name a tuple set";
+    if (set.getParticleSetAttr() != getParticleSetAttr())
+      return emitOpError() << "expected the tuple set '" << name.getValue()
+                           << "' on '" << getParticleSet() << "', got '"
+                           << set.getParticleSet() << "'";
+    if (!set.getDisjoint())
+      return emitOpError() << "expected the tuple set '" << name.getValue()
+                           << "' to be 'disjoint'";
+  }
+  return success();
+}
+
 /// Verifies what `md.sum_tuples` and `md.gather_tuples` have in common:
 /// the operands and the coordinates.
 template <typename OpTy>

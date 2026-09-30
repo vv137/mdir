@@ -11,6 +11,8 @@
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
 # RUN: mdir run %t/run.toml | FileCheck %s
 # RUN: %python %S/Inputs/check_bonds.py %t/ff19.prmtop %t/run.dcd | FileCheck %s --check-prefix=BONDS
+# RUN: mdir emit %t/run.toml | FileCheck %s --check-prefix=MODULE
+# RUN: mdir emit %t/run.toml --stage=lowered | FileCheck %s --check-prefix=KERNELS
 
 # The energy that the thermostat exchanges is counted, and the conserved
 # energy changes little over 2 ps; the momentum stays 0.
@@ -23,6 +25,13 @@
 # keeps) have their lengths in every frame.
 #
 # BONDS: bonds ok
+
+# The groups of the constraints share no atom (D83): the loops over them
+# read the positions and velocities before the updates of the other groups,
+# and run as one kernel.
+#
+# MODULE: md.disjoint_union @constraints on(@atoms) of [@settles, @shake1
+# KERNELS: tuple_for_l{{[0-9]+}}_run{{[2-9]}}
 
 #--- run.toml
 [input]

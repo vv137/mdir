@@ -933,7 +933,7 @@ LogicalResult Lowering::run() {
             op.getDialect()) &&
         op.getName().getDialectNamespace() != "dyn")
       continue;
-    if (isa<md::ParticleSetOp, md::TupleSetOp>(op)) {
+    if (isa<md::ParticleSetOp, md::TupleSetOp, md::DisjointUnionOp>(op)) {
       op.erase();
       continue;
     }

@@ -53,7 +53,8 @@ static std::string getPipeline(const Control &control,
                                const Program &program) {
   std::string pipeline;
   llvm::raw_string_ostream os(pipeline);
-  os << "md-check-exchange,md-differentiate,md-expand-truncation,md-inline,";
+  os << "md-check-exchange,md-differentiate,md-expand-truncation,md-inline,"
+     << "md-bypass-updates,";
   os << "convert-md-to-md-exec{skin=" << program.skin
      << " width=" << program.neighborWidth << "},";
   os << "md-exec-reuse-neighbors,md-exec-expose-validity,"

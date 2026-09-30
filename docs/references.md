@@ -259,7 +259,9 @@ Used for: the definitions of the `potential-shift`, `potential-switch`
 (the fifth-degree switching polynomial), and `force-switch` modifiers,
 which the MDIR truncations `shift`, `switch`, and `force_switch` match
 and against which the tests check them; the sign convention of the
-GROMACS virial; the formats `.top`, `.itp`, and `.gro`.
+GROMACS virial; the formats `.top`, `.itp`, and `.gro`; the update groups of
+the domain decomposition of GROMACS (Section "Domain decomposition"),
+which the disjoint union of the groups of the constraints parallels (D83).
 
 ### Hairer2003
 

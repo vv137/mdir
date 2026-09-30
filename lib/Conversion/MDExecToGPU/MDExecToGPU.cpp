@@ -719,7 +719,7 @@ void Lowering::findRows(func::FuncOp function) {
   };
   function.walk([&](Block *block) {
     SmallVector<Operation *> run;
-    DenseSet<Value> written, sums;
+    DenseSet<Value> written, read, sums;
     for (Operation &op : *block) {
       if (!isRowLoop(&op)) {
         // Constants may lie between the loops of a run; they are not
@@ -728,15 +728,16 @@ void Lowering::findRows(func::FuncOp function) {
           continue;
         finish(run);
         written.clear();
+        read.clear();
         sums.clear();
         continue;
       }
       // A loop joins the run if it takes the same positions, reads nothing
-      // that a loop of the run writes, so that the order of the loops
-      // within a thread is the only order that matters, and has buffers
-      // for its global sums of its own: storage may give loops that ran
-      // one after the other the same buffers, which one kernel would
-      // write at once.
+      // that a loop of the run writes and writes nothing that one reads,
+      // so that the order of the loops within a thread is the only order
+      // that matters, and has buffers for its global sums of its own:
+      // storage may give loops that ran one after the other the same
+      // buffers, which one kernel would write at once.
       ValueRange scratch = isa<md_exec::PairForOp>(op)
                                ? cast<md_exec::PairForOp>(op).getScratch()
                                : cast<md_exec::TupleForOp>(op).getScratch();
@@ -747,15 +748,64 @@ void Lowering::findRows(func::FuncOp function) {
                !llvm::is_contained(getOuts(&op), operand)) ||
               sums.contains(operand))
             joins = false;
+      for (Value out : getOuts(&op))
+        joins &= !read.contains(out);
       if (!joins) {
         finish(run);
         written.clear();
+        read.clear();
         sums.clear();
       }
       run.push_back(&op);
       for (Value out : getOuts(&op))
         written.insert(out);
+      for (Value operand : op.getOperands())
+        if (!llvm::is_contained(getOuts(&op), operand))
+          read.insert(operand);
       for (Value buffer : scratch)
+        sums.insert(buffer);
+    }
+    finish(run);
+  });
+
+  // Runs of loops over disjoint tuples: a thread evaluates the tuple of
+  // each loop whose member at place 0 it is. A loop joins the run if it
+  // reads nothing that a loop of the run writes and writes nothing that
+  // one reads (a loop that overwrites writes every particle), and has
+  // buffers for its global sums of its own. The sets of a disjoint union
+  // give such runs (md-bypass-updates, D83).
+  function.walk([&](Block *block) {
+    SmallVector<Operation *> run;
+    DenseSet<Value> written, read, sums;
+    for (Operation &op : *block) {
+      auto tuple = dyn_cast<md_exec::TupleForOp>(op);
+      if (!tuple || !tuple.getDisjoint()) {
+        if (isa<arith::ConstantOp>(op))
+          continue;
+        finish(run);
+        written.clear();
+        read.clear();
+        sums.clear();
+        continue;
+      }
+      bool joins = !run.empty();
+      for (Value operand : op.getOperands())
+        joins &= !written.contains(operand) && !sums.contains(operand);
+      for (Value out : tuple.getOuts())
+        joins &= !read.contains(out);
+      if (!joins) {
+        finish(run);
+        written.clear();
+        read.clear();
+        sums.clear();
+      }
+      run.push_back(&op);
+      for (Value out : tuple.getOuts())
+        written.insert(out);
+      for (Value operand : op.getOperands())
+        if (!llvm::is_contained(tuple.getOuts(), operand))
+          read.insert(operand);
+      for (Value buffer : tuple.getScratch())
         sums.insert(buffer);
     }
     finish(run);
@@ -804,6 +854,47 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
     loops.push_back(loop);
   }
   Value size = createSize(builder, loc, positions);
+
+  // Loops over disjoint tuples: one thread for each particle, which
+  // evaluates the tuples of which it is the member at place 0. The loops
+  // may be over particles of different sets, and a thread past those of
+  // a loop does nothing in it.
+  auto isDisjoint = [](Operation *op) {
+    auto tuple = dyn_cast<md_exec::TupleForOp>(op);
+    return tuple && tuple.getDisjoint();
+  };
+  if (isDisjoint(run.front())) {
+    SmallVector<Value> sizes;
+    for (Loop &loop : loops) {
+      sizes.push_back(createSize(
+          builder, loc, cast<md_exec::TupleForOp>(loop.op).getPositions()));
+      size = arith::MaxUIOp::create(builder, loc, size, sizes.back());
+    }
+    launchOver(builder, loc, size, [&](OpBuilder &body, Value particle) {
+      for (auto [loop, own] : llvm::zip(loops, sizes)) {
+        auto tuple = cast<md_exec::TupleForOp>(loop.op);
+        Value inside = arith::CmpIOp::create(
+            body, loc, arith::CmpIPredicate::ult, particle, own);
+        auto branch = scf::IfOp::create(body, loc, inside);
+        OpBuilder then = branch.getThenBodyBuilder();
+        IRMapping local;
+        SmallVector<Value> contributions =
+            emitTupleKernel(then, tuple, tuple.getIncidence(), loop.box,
+                            loop.inverse, particle, local);
+        for (auto [index, value] : llvm::enumerate(contributions))
+          storeElement(then, loc, value, tuple.getScratch()[2 * index],
+                       particle);
+      }
+    });
+    // The global sums of each loop, over its own particles.
+    for (auto [loop, own] : llvm::zip(loops, sizes)) {
+      auto tuple = cast<md_exec::TupleForOp>(loop.op);
+      if (failed(finishSums(tuple, builder, tuple.getReduce(),
+                            tuple.getScratch(), own)))
+        return failure();
+    }
+    return success();
+  }
 
   launchRows(builder, loc, size, [&](OpBuilder &body, Value particle,
                                      const RowLanes &sharing) {
@@ -2052,7 +2143,7 @@ LogicalResult Lowering::run() {
             op.getDialect()) &&
         op.getName().getDialectNamespace() != "dyn")
       continue;
-    if (isa<md::ParticleSetOp, md::TupleSetOp>(op)) {
+    if (isa<md::ParticleSetOp, md::TupleSetOp, md::DisjointUnionOp>(op)) {
       op.erase();
       continue;
     }

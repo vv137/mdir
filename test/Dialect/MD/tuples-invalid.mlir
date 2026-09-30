@@ -255,3 +255,26 @@ func.func @f(%b: memref<?xf64>) {
   %t = mdrt.from_buffer %b : memref<?xf64> to !md.table<2, f64, symmetric>
   return
 }
+
+// -----
+
+md.particle_set @atoms
+md.tuple_set @pairs on(@atoms) arity(2) orientation(unordered) disjoint
+// expected-error@+1 {{'missing' does not name a tuple set}}
+md.disjoint_union @groups on(@atoms) of [@pairs, @missing]
+
+// -----
+
+md.particle_set @atoms
+md.tuple_set @pairs on(@atoms) arity(2) orientation(unordered) disjoint
+md.tuple_set @bonds on(@atoms) arity(2) orientation(unordered)
+// expected-error@+1 {{expected the tuple set 'bonds' to be 'disjoint'}}
+md.disjoint_union @groups on(@atoms) of [@pairs, @bonds]
+
+// -----
+
+md.particle_set @atoms
+md.particle_set @beads
+md.tuple_set @pairs on(@atoms) arity(2) orientation(unordered) disjoint
+// expected-error@+1 {{expected the tuple set 'pairs' on 'beads', got 'atoms'}}
+md.disjoint_union @groups on(@beads) of [@pairs]

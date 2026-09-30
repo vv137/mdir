@@ -1,4 +1,5 @@
 add_mlir_dialect_library(MDIRMDTransforms
+  BypassUpdates.cpp
   CheckExchange.cpp
   Differentiate.cpp
   ExpandTruncation.cpp

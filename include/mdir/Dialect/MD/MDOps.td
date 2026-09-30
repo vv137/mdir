@@ -69,6 +69,43 @@ def MD_TupleSetOp : MD_Op<"tuple_set", [Symbol]> {
   let hasVerifier = 1;
 }
 
+def MD_DisjointUnionOp : MD_Op<"disjoint_union", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>
+  ]> {
+  let summary = "Declares that tuple sets share no particle";
+  let description = [{
+    States that no particle is a member of two tuples of the sets, whether
+    the two tuples are of one set or of two: the groups of the constraints
+    of a topology, for one, where a rigid water and a group of bonds to
+    hydrogen never share an atom. Each set is `disjoint`, and the union
+    extends the promise across the sets. It is a promise of whoever
+    declares the sets.
+
+    ```mlir
+    md.disjoint_union @constraints on(@atoms) of [@settles, @shake1, @shake2]
+    ```
+
+    A loop over the tuples of one of the sets reads its fields at the
+    members of its tuples only, where what a loop over the tuples of an
+    other set gathered is zero: the loops of the sets may run in any order,
+    and at once (`md-bypass-updates`).
+  }];
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    FlatSymbolRefAttr:$particle_set,
+    FlatSymbolRefArrayAttr:$tuple_sets
+  );
+  let assemblyFormat = [{
+    $sym_name `on` `(` $particle_set `)` `of` $tuple_sets attr-dict
+  }];
+  let extraClassDeclaration = [{
+    /// Returns true if the union has the tuple set `name`.
+    bool contains(::mlir::FlatSymbolRefAttr name) {
+      return ::llvm::is_contained(getTupleSets(), name);
+    }
+  }];
+}
+
 //===----------------------------------------------------------------------===//
 // Functions
 //===----------------------------------------------------------------------===//

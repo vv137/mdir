@@ -60,4 +60,33 @@ def CheckExchange : Pass<"md-check-exchange", "::mlir::ModuleOp"> {
   }];
 }
 
+def BypassUpdates : Pass<"md-bypass-updates", "::mlir::ModuleOp"> {
+  let summary = "Lets the loops over the sets of a disjoint union read the "
+                "fields before the updates of the other sets";
+  let description = [{
+    A loop over the tuples of a set (`md.gather_tuples`, `md.sum_tuples`)
+    reads its positions and gathered fields at the members of its tuples
+    only. When the set is in an `md.disjoint_union`, what a loop over the
+    tuples of an other set of the union gathers is zero at those members,
+    and a field that is another field plus that gathered value agrees with
+    the other field there. The loop reads the other field instead:
+
+    ```mlir
+    %c1 = md.gather_tuples %settles, %x, %cell ...
+    %y1 = md.map_particles gather(%x, %c1 : !vec, !vec) {
+    ^bb0(%a: vector<3xf64>, %b: vector<3xf64>):
+      %s = arith.addf %a, %b : vector<3xf64>
+      md.yield %s : vector<3xf64>
+    } : !vec
+    %c2 = md.gather_tuples %shake1, %y1, %cell ...   // reads %x instead
+    ```
+
+    The loops of the sets then depend on no loop of the union, and a
+    later pass may run them at once; the updates become one loop over the
+    particles (`md-exec-fuse-loops`). The values read are the same, up to
+    the sign of a zero (x + 0 is +0 where x is −0).
+  }];
+  let dependentDialects = ["::mlir::arith::ArithDialect"];
+}
+
 #endif // MDIR_DIALECT_MD_TRANSFORMS_PASSES_TD

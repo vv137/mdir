@@ -17,6 +17,7 @@ map of a pass or in a comment, is a defect waiting for a new input.
 | A buffer of the members of the tuples of a SHAKE set served as scratch for the particles of Cellulose; kernels wrote beyond it (eaca883) | The storage form `memref<?xf64>` does not say which set a buffer holds; the pool reused buffers by type | The pools key buffers by set; the storage form should carry the set in its type ([Planned work](#planned-work)) |
 | The loops of a fused kernel wrote at once to scratch that storage gave to several of them (19fa9ef) | Storage assumed that loops run one after the other | Fusion checks that the loops' buffers are distinct; an effects summary of each loop should state it |
 | A tuple set whose tuples share no particle is evaluated once per tuple (eaca883) | — | `disjoint` on `md.tuple_set` and `md_exec.tuple_for`, which the driver proves from the members |
+| The groups of the constraints update in a chain, one after another, though they share no atom (D83) | That SETTLE and the sets of SHAKE share no atom was known to the driver only | `md.disjoint_union`, which the driver checks from the members; `md-bypass-updates` relies on it |
 
 The positive side: a fact in the IR is also a license to optimize. The
 driver proves `disjoint`; the lowering evaluates each tuple once because the
