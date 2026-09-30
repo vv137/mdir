@@ -61,6 +61,8 @@ A paper that describes MDIR and what the first milestone shows, written
 when the milestone ends and the rates reach 70% of GROMACS across the
 systems:
 
+- Every method that MDIR implements, with its equations as implemented
+  (TODO: keep the design documents complete in TeX as features land).
 - The design: the levels of the IR (`md`, `dyn`, `md_exec`), compilation of
   each run before it runs, the lowerings to CPUs and GPUs, the runtime.
 - Correctness: agreement of the terms with sander and GROMACS, conservation
