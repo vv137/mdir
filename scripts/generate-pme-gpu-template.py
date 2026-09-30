@@ -21,9 +21,11 @@ HEADER = """\
 //
 // This is a template. The compiler adds it to a module that has a
 // reciprocal sum on a device, where it is specialized like any other code;
-// the types and the conversions are those of the template for the host
-// (PME.mlir), and so are the grid and the B-splines. The buffers are on the
-// device.
+// the types of the positions, the charges, and the forces and their
+// conversions are those of the template for the host (PME.mlir); the
+// splines, the grid, and its transform are in !pme_real, which is the type
+// of the forces, while the fractions of the positions and the edges of the
+// cell are in f64. The buffers are on the device.
 //
 // A kernel runs one thread per item, in blocks of 128 threads. The threads
 // beyond the last item do nothing. The charges are added to the grid in
@@ -35,6 +37,9 @@ HEADER = """\
 !pme_pos = f64
 !pme_chg = f64
 !pme_frc = f64
+// The type in which the splines, the grid, and its transform are computed:
+// that of the forces on a device, so f32 in the mixed and single modes.
+!pme_real = f64
 
 func.func private @mdrt_gpu_pme_blocks(%count: index) -> index {
   %c127 = arith.constant 127 : index
@@ -72,35 +77,35 @@ def bspline(body, p, w, n, values, slopes):
 %{q}km1 = arith.subi {k}, %{p}c1 : index
 %{q}km2 = arith.subi {k}, %{p}c2 : index
 %{q}km1i = arith.index_cast %{q}km1 : index to i64
-%{q}km1f = arith.sitofp %{q}km1i : i64 to f64
-%{q}div = arith.divf %{p}one, %{q}km1f : f64
+%{q}km1f = arith.sitofp %{q}km1i : i64 to !pme_real
+%{q}div = arith.divf %{p}one, %{q}km1f : !pme_real
 %{q}ki = arith.index_cast {k} : index to i64
-%{q}kf = arith.sitofp %{q}ki : i64 to f64
-%{q}last = memref.load {values}[%{q}km2] : memref<8xf64>
-%{q}dw = arith.mulf %{q}div, {w} : f64
-%{q}top = arith.mulf %{q}dw, %{q}last : f64
-memref.store %{q}top, {values}[%{q}km1] : memref<8xf64>
+%{q}kf = arith.sitofp %{q}ki : i64 to !pme_real
+%{q}last = memref.load {values}[%{q}km2] : memref<8x!pme_real>
+%{q}dw = arith.mulf %{q}div, {w} : !pme_real
+%{q}top = arith.mulf %{q}dw, %{q}last : !pme_real
+memref.store %{q}top, {values}[%{q}km1] : memref<8x!pme_real>
 scf.for %{q}j = %{p}c1 to %{q}km1 step %{p}c1 {{
   %{q}ji = arith.index_cast %{q}j : index to i64
-  %{q}jf = arith.sitofp %{q}ji : i64 to f64
+  %{q}jf = arith.sitofp %{q}ji : i64 to !pme_real
   %{q}at = arith.subi %{q}km1, %{q}j : index
   %{q}below = arith.subi %{q}at, %{p}c1 : index
-  %{q}lo = memref.load {values}[%{q}below] : memref<8xf64>
-  %{q}hi = memref.load {values}[%{q}at] : memref<8xf64>
-  %{q}wj = arith.addf {w}, %{q}jf : f64
-  %{q}kj = arith.subf %{q}kf, %{q}jf : f64
-  %{q}kjw = arith.subf %{q}kj, {w} : f64
-  %{q}t1 = arith.mulf %{q}wj, %{q}lo : f64
-  %{q}t2 = arith.mulf %{q}kjw, %{q}hi : f64
-  %{q}sum = arith.addf %{q}t1, %{q}t2 : f64
-  %{q}value = arith.mulf %{q}div, %{q}sum : f64
-  memref.store %{q}value, {values}[%{q}at] : memref<8xf64>
+  %{q}lo = memref.load {values}[%{q}below] : memref<8x!pme_real>
+  %{q}hi = memref.load {values}[%{q}at] : memref<8x!pme_real>
+  %{q}wj = arith.addf {w}, %{q}jf : !pme_real
+  %{q}kj = arith.subf %{q}kf, %{q}jf : !pme_real
+  %{q}kjw = arith.subf %{q}kj, {w} : !pme_real
+  %{q}t1 = arith.mulf %{q}wj, %{q}lo : !pme_real
+  %{q}t2 = arith.mulf %{q}kjw, %{q}hi : !pme_real
+  %{q}sum = arith.addf %{q}t1, %{q}t2 : !pme_real
+  %{q}value = arith.mulf %{q}div, %{q}sum : !pme_real
+  memref.store %{q}value, {values}[%{q}at] : memref<8x!pme_real>
 }}
-%{q}first = memref.load {values}[%{p}c0] : memref<8xf64>
-%{q}omw = arith.subf %{p}one, {w} : f64
-%{q}d0 = arith.mulf %{q}div, %{q}omw : f64
-%{q}bottom = arith.mulf %{q}d0, %{q}first : f64
-memref.store %{q}bottom, {values}[%{p}c0] : memref<8xf64>""")
+%{q}first = memref.load {values}[%{p}c0] : memref<8x!pme_real>
+%{q}omw = arith.subf %{p}one, {w} : !pme_real
+%{q}d0 = arith.mulf %{q}div, %{q}omw : !pme_real
+%{q}bottom = arith.mulf %{q}d0, %{q}first : !pme_real
+memref.store %{q}bottom, {values}[%{p}c0] : memref<8x!pme_real>""")
 
     body(f"""\
 %{p}c0 = arith.constant 0 : index
@@ -108,28 +113,28 @@ memref.store %{q}bottom, {values}[%{p}c0] : memref<8xf64>""")
 %{p}c2 = arith.constant 2 : index
 %{p}c3 = arith.constant 3 : index
 %{p}c8 = arith.constant 8 : index
-%{p}zero = arith.constant 0.0 : f64
-%{p}one = arith.constant 1.0 : f64
+%{p}zero = arith.constant 0.0 : !pme_real
+%{p}one = arith.constant 1.0 : !pme_real
 scf.for %{p}j = %{p}c0 to %{p}c8 step %{p}c1 {{
-  memref.store %{p}zero, {values}[%{p}j] : memref<8xf64>
+  memref.store %{p}zero, {values}[%{p}j] : memref<8x!pme_real>
 }}
-%{p}omw = arith.subf %{p}one, {w} : f64
-memref.store %{p}omw, {values}[%{p}c0] : memref<8xf64>
-memref.store {w}, {values}[%{p}c1] : memref<8xf64>
+%{p}omw = arith.subf %{p}one, {w} : !pme_real
+memref.store %{p}omw, {values}[%{p}c0] : memref<8x!pme_real>
+memref.store {w}, {values}[%{p}c1] : memref<8x!pme_real>
 scf.for %{p}k = %{p}c3 to {n} step %{p}c1 {{""")
     raise_order(f"%{p}k", "r_")
     body("}")
     if slopes:
         body(f"""\
-%{p}v0 = memref.load {values}[%{p}c0] : memref<8xf64>
-%{p}s0 = arith.negf %{p}v0 : f64
-memref.store %{p}s0, {slopes}[%{p}c0] : memref<8xf64>
+%{p}v0 = memref.load {values}[%{p}c0] : memref<8x!pme_real>
+%{p}s0 = arith.negf %{p}v0 : !pme_real
+memref.store %{p}s0, {slopes}[%{p}c0] : memref<8x!pme_real>
 scf.for %{p}js = %{p}c1 to {n} step %{p}c1 {{
   %{p}jm1 = arith.subi %{p}js, %{p}c1 : index
-  %{p}before = memref.load {values}[%{p}jm1] : memref<8xf64>
-  %{p}here = memref.load {values}[%{p}js] : memref<8xf64>
-  %{p}slope = arith.subf %{p}before, %{p}here : f64
-  memref.store %{p}slope, {slopes}[%{p}js] : memref<8xf64>
+  %{p}before = memref.load {values}[%{p}jm1] : memref<8x!pme_real>
+  %{p}here = memref.load {values}[%{p}js] : memref<8x!pme_real>
+  %{p}slope = arith.subf %{p}before, %{p}here : !pme_real
+  memref.store %{p}slope, {slopes}[%{p}js] : memref<8x!pme_real>
 }}""")
     raise_order(n, "f_")
 
@@ -151,8 +156,9 @@ def place(body, p, x, length, k, n):
 %{p}bk = arith.addi %{p}b, {k} : index
 %{p}bkn = arith.subi %{p}bk, {n} : index
 %{p}c1p = arith.constant 1 : index
-%{p}start = arith.addi %{p}bkn, %{p}c1p : index""")
-    return f"%{p}start", f"%{p}w"
+%{p}start = arith.addi %{p}bkn, %{p}c1p : index
+%{p}wr = PME_F64_TO_REAL %{p}w : f64 to !pme_real""")
+    return f"%{p}start", f"%{p}wr"
 
 
 def particle_prologue(body, slopes):
@@ -161,14 +167,14 @@ def particle_prologue(body, slopes):
 %i0 = arith.constant 0 : index
 %i1 = arith.constant 1 : index
 %i2 = arith.constant 2 : index
-%wx = memref.alloca() : memref<8xf64>
-%wy = memref.alloca() : memref<8xf64>
-%wz = memref.alloca() : memref<8xf64>""")
+%wx = memref.alloca() : memref<8x!pme_real>
+%wy = memref.alloca() : memref<8x!pme_real>
+%wz = memref.alloca() : memref<8x!pme_real>""")
     if slopes:
         body("""\
-%dx = memref.alloca() : memref<8xf64>
-%dy = memref.alloca() : memref<8xf64>
-%dz = memref.alloca() : memref<8xf64>""")
+%dx = memref.alloca() : memref<8x!pme_real>
+%dy = memref.alloca() : memref<8x!pme_real>
+%dz = memref.alloca() : memref<8x!pme_real>""")
     body("""\
 %xs = memref.load %x[%i, %i0] : memref<?x3x!pme_pos, 1>
 %ys = memref.load %x[%i, %i1] : memref<?x3x!pme_pos, 1>
@@ -177,7 +183,7 @@ def particle_prologue(body, slopes):
 %xi = PME_EXTEND_POS %xs : !pme_pos to f64
 %yi = PME_EXTEND_POS %ys : !pme_pos to f64
 %zi = PME_EXTEND_POS %zs : !pme_pos to f64
-%qi = PME_EXTEND_CHG %qs : !pme_chg to f64""")
+%qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real""")
     starts = []
     for axis, (coordinate, length, k, w, d) in enumerate(
         (("%xi", "%lx", "%k1", "%wx", "%dx"), ("%yi", "%ly", "%k2", "%wy", "%dy"),
@@ -209,8 +215,8 @@ def spread():
     body("%i = arith.addi %item, %c0 : index")
     sx, sy, sz = particle_prologue(body, slopes=False)
     body(f"""\
-%scale = arith.constant 1099511627776.0 : f64
-%qscaled = arith.mulf %qi, %scale : f64
+%scale = arith.constant 1099511627776.0 : !pme_real
+%qscaled = arith.mulf %qi, %scale : !pme_real
 %eight = arith.constant 8 : i64
 %gridindex = memref.extract_aligned_pointer_as_index %grid : memref<?xi64, 1> -> index
 // The grid is a buffer of its own, with no offset.
@@ -220,23 +226,23 @@ def spread():
 scf.for %j1 = %j0 to %n step %j1c {{
   %g1s = arith.addi {sx}, %j1 : index
   %g1 = arith.remui %g1s, %k1 : index
-  %w1 = memref.load %wx[%j1] : memref<8xf64>
-  %q1 = arith.mulf %qscaled, %w1 : f64
+  %w1 = memref.load %wx[%j1] : memref<8x!pme_real>
+  %q1 = arith.mulf %qscaled, %w1 : !pme_real
   scf.for %j2 = %j0 to %n step %j1c {{
     %g2s = arith.addi {sy}, %j2 : index
     %g2 = arith.remui %g2s, %k2 : index
-    %w2 = memref.load %wy[%j2] : memref<8xf64>
-    %q12 = arith.mulf %q1, %w2 : f64
+    %w2 = memref.load %wy[%j2] : memref<8x!pme_real>
+    %q12 = arith.mulf %q1, %w2 : !pme_real
     %row1 = arith.muli %g1, %k2 : index
     %row = arith.addi %row1, %g2 : index
     %gbase = arith.muli %row, %k3 : index
     scf.for %j3 = %j0 to %n step %j1c {{
       %g3s = arith.addi {sz}, %j3 : index
       %g3 = arith.remui %g3s, %k3 : index
-      %w3 = memref.load %wz[%j3] : memref<8xf64>
-      %value = arith.mulf %q12, %w3 : f64
-      %rounded = math.roundeven %value : f64
-      %fixed = arith.fptosi %rounded : f64 to i64
+      %w3 = memref.load %wz[%j3] : memref<8x!pme_real>
+      %value = arith.mulf %q12, %w3 : !pme_real
+      %rounded = math.roundeven %value : !pme_real
+      %fixed = arith.fptosi %rounded : !pme_real to i64
       %at = arith.addi %gbase, %g3 : index
       // A relaxed atomic at the scope of the device: the sum needs no
       // order, and one of the system would wait for the host.
@@ -273,14 +279,14 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
 def real():
     body = Body("      ")
     body("""\
-%inverse = arith.constant 9.094947017729282e-13 : f64
+%inverse = arith.constant 9.094947017729282e-13 : !pme_real
 %fixed = memref.load %grid[%item] : memref<?xi64, 1>
-%value = arith.sitofp %fixed : i64 to f64
-%scaled = arith.mulf %value, %inverse : f64
-memref.store %scaled, %real[%item] : memref<?xf64, 1>""")
+%value = arith.sitofp %fixed : i64 to !pme_real
+%scaled = arith.mulf %value, %inverse : !pme_real
+memref.store %scaled, %real[%item] : memref<?x!pme_real, 1>""")
     return f"""
-// The grid in f64, from fixed point.
-func.func private @mdrt_gpu_pme_real(%grid: memref<?xi64, 1>, %real: memref<?xf64, 1>) {{
+// The grid in !pme_real, from fixed point.
+func.func private @mdrt_gpu_pme_real(%grid: memref<?xi64, 1>, %real: memref<?x!pme_real, 1>) {{
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c128 = arith.constant 128 : index
@@ -353,8 +359,10 @@ def convolve():
   %base2 = arith.addi %base1, %z : index
   %re_at = arith.muli %base2, %cc2 : index
   %im_at = arith.addi %re_at, %cc1 : index
-  %re = memref.load %c[%re_at] : memref<?xf64, 1>
-  %im = memref.load %c[%im_at] : memref<?xf64, 1>
+  %rer = memref.load %c[%re_at] : memref<?x!pme_real, 1>
+  %imr = memref.load %c[%im_at] : memref<?x!pme_real, 1>
+  %re = PME_REAL_TO_F64 %rer : !pme_real to f64
+  %im = PME_REAL_TO_F64 %imr : !pme_real to f64
   %re2 = arith.mulf %re, %re : f64
   %im2 = arith.mulf %im, %im : f64
   %g2 = arith.addf %re2, %im2 : f64
@@ -394,8 +402,10 @@ def convolve():
   %ne = arith.addf %e0, %em : f64
   %reb = arith.mulf %re, %bc : f64
   %imb = arith.mulf %im, %bc : f64
-  memref.store %reb, %c[%re_at] : memref<?xf64, 1>
-  memref.store %imb, %c[%im_at] : memref<?xf64, 1>
+  %rebr = PME_F64_TO_REAL %reb : f64 to !pme_real
+  %imbr = PME_F64_TO_REAL %imb : f64 to !pme_real
+  memref.store %rebr, %c[%re_at] : memref<?x!pme_real, 1>
+  memref.store %imbr, %c[%im_at] : memref<?x!pme_real, 1>
   scf.yield %ne, %n00, %n01, %n02, %n11, %n12, %n22
       : f64, f64, f64, f64, f64, f64, f64
 }}
@@ -414,7 +424,7 @@ def convolve():
 // returns the energy and the virial, as @mdrt.pme_convolve does. A thread
 // takes a row of the grid, (k1, k2), and writes its sums to `rows`: the
 // energy, then the virial xx, xy, xz, yy, yz, zz.
-func.func private @mdrt_gpu_pme_convolve(%c: memref<?xf64, 1>, %moduli: memref<?x?xf64, 1>,
+func.func private @mdrt_gpu_pme_convolve(%c: memref<?x!pme_real, 1>, %moduli: memref<?x?xf64, 1>,
                                          %rows: memref<?xf64, 1>, %box: vector<3xf64>,
                                          %beta: f64, %coulomb: f64,
                                          %k1: index, %k2: index, %k3: index)
@@ -511,30 +521,36 @@ def scale():
 %mod3 = memref.load %moduli[%cc2, %z] : memref<?x?xf64, 1>
 %m3s = arith.mulf %m3, %m3 : f64
 %msq = arith.addf %m12, %m3s : f64
-%origin = arith.cmpf oeq, %msq, %kzero : f64
-%safe = arith.select %origin, %kone, %msq : f64
-%inverse = arith.divf %kone, %safe : f64
-%gm = arith.mulf %gauss, %msq : f64
-%ngm = arith.negf %gm : f64
-%ex = math.exp %ngm : f64
-%exm = arith.mulf %ex, %inverse : f64
-%pexm = arith.mulf %prefactor, %exm : f64
 %mods = arith.mulf %mod12, %mod3 : f64
-%bc0 = arith.mulf %pexm, %mods : f64
-%bc = arith.select %origin, %kzero, %bc0 : f64
+// The influence function in !pme_real: the exponential is most of the
+// work, and in f32 it is what the transform holds anyway.
+%msqr = PME_F64_TO_REAL %msq : f64 to !pme_real
+%modsr = PME_F64_TO_REAL %mods : f64 to !pme_real
+%rzero = arith.constant 0.0 : !pme_real
+%rone = arith.constant 1.0 : !pme_real
+%origin = arith.cmpf oeq, %msqr, %rzero : !pme_real
+%safe = arith.select %origin, %rone, %msqr : !pme_real
+%inverse = arith.divf %rone, %safe : !pme_real
+%gm = arith.mulf %gaussr, %msqr : !pme_real
+%ngm = arith.negf %gm : !pme_real
+%ex = math.exp %ngm : !pme_real
+%exm = arith.mulf %ex, %inverse : !pme_real
+%pexm = arith.mulf %prefactorr, %exm : !pme_real
+%bc0 = arith.mulf %pexm, %modsr : !pme_real
+%bc = arith.select %origin, %rzero, %bc0 : !pme_real
 %re_at = arith.muli %item, %cc2 : index
 %im_at = arith.addi %re_at, %cc1 : index
-%re = memref.load %c[%re_at] : memref<?xf64, 1>
-%im = memref.load %c[%im_at] : memref<?xf64, 1>
-%reb = arith.mulf %re, %bc : f64
-%imb = arith.mulf %im, %bc : f64
-memref.store %reb, %c[%re_at] : memref<?xf64, 1>
-memref.store %imb, %c[%im_at] : memref<?xf64, 1>""")
+%re = memref.load %c[%re_at] : memref<?x!pme_real, 1>
+%im = memref.load %c[%im_at] : memref<?x!pme_real, 1>
+%reb = arith.mulf %re, %bc : !pme_real
+%imb = arith.mulf %im, %bc : !pme_real
+memref.store %reb, %c[%re_at] : memref<?x!pme_real, 1>
+memref.store %imb, %c[%im_at] : memref<?x!pme_real, 1>""")
     return f"""
 // Multiplies the half-complex transform `c` by the influence function, as
 // @mdrt_gpu_pme_convolve does, where neither the energy nor the virial is
 // needed: a thread for each point, and nothing for the host to wait for.
-func.func private @mdrt_gpu_pme_scale(%c: memref<?xf64, 1>, %moduli: memref<?x?xf64, 1>,
+func.func private @mdrt_gpu_pme_scale(%c: memref<?x!pme_real, 1>, %moduli: memref<?x?xf64, 1>,
                                       %box: vector<3xf64>, %beta: f64, %coulomb: f64,
                                       %k1: index, %k2: index, %k3: index) {{
   %c1 = arith.constant 1 : index
@@ -551,6 +567,8 @@ func.func private @mdrt_gpu_pme_scale(%c: memref<?xf64, 1>, %moduli: memref<?x?x
   %volume = arith.mulf %lxy, %lz : f64
   %piv = arith.mulf %pi, %volume : f64
   %prefactor = arith.divf %coulomb, %piv : f64
+  %gaussr = PME_F64_TO_REAL %gauss : f64 to !pme_real
+  %prefactorr = PME_F64_TO_REAL %prefactor : f64 to !pme_real
   %rows = arith.muli %k1, %k2 : index
   %half = arith.divui %k3, %c2 : index
   %depth = arith.addi %half, %c1 : index
@@ -565,67 +583,67 @@ def gather():
     body("%i = arith.addi %item, %c0 : index")
     sx, sy, sz = particle_prologue(body, slopes=True)
     body(f"""\
-%gzero = arith.constant 0.0 : f64
+%gzero = arith.constant 0.0 : !pme_real
 %j0 = arith.constant 0 : index
 %j1c = arith.constant 1 : index
 %sumx, %sumy, %sumz = scf.for %j1 = %j0 to %n step %j1c
-    iter_args(%ax = %gzero, %ay = %gzero, %az = %gzero) -> (f64, f64, f64) {{
+    iter_args(%ax = %gzero, %ay = %gzero, %az = %gzero) -> (!pme_real, !pme_real, !pme_real) {{
   %g1s = arith.addi {sx}, %j1 : index
   %g1 = arith.remui %g1s, %k1 : index
-  %w1 = memref.load %wx[%j1] : memref<8xf64>
-  %d1 = memref.load %dx[%j1] : memref<8xf64>
+  %w1 = memref.load %wx[%j1] : memref<8x!pme_real>
+  %d1 = memref.load %dx[%j1] : memref<8x!pme_real>
   %bx2, %by2, %bz2 = scf.for %j2 = %j0 to %n step %j1c
-      iter_args(%cx = %ax, %cy = %ay, %cz = %az) -> (f64, f64, f64) {{
+      iter_args(%cx = %ax, %cy = %ay, %cz = %az) -> (!pme_real, !pme_real, !pme_real) {{
     %g2s = arith.addi {sy}, %j2 : index
     %g2 = arith.remui %g2s, %k2 : index
-    %w2 = memref.load %wy[%j2] : memref<8xf64>
-    %d2 = memref.load %dy[%j2] : memref<8xf64>
+    %w2 = memref.load %wy[%j2] : memref<8x!pme_real>
+    %d2 = memref.load %dy[%j2] : memref<8x!pme_real>
     %row1 = arith.muli %g1, %k2 : index
     %row = arith.addi %row1, %g2 : index
     %gbase = arith.muli %row, %k3 : index
-    %d1w2 = arith.mulf %d1, %w2 : f64
-    %w1d2 = arith.mulf %w1, %d2 : f64
-    %w1w2 = arith.mulf %w1, %w2 : f64
+    %d1w2 = arith.mulf %d1, %w2 : !pme_real
+    %w1d2 = arith.mulf %w1, %d2 : !pme_real
+    %w1w2 = arith.mulf %w1, %w2 : !pme_real
     %ex, %ey, %ez = scf.for %j3 = %j0 to %n step %j1c
-        iter_args(%tx3 = %cx, %ty3 = %cy, %tz3 = %cz) -> (f64, f64, f64) {{
+        iter_args(%tx3 = %cx, %ty3 = %cy, %tz3 = %cz) -> (!pme_real, !pme_real, !pme_real) {{
       %g3s = arith.addi {sz}, %j3 : index
       %g3 = arith.remui %g3s, %k3 : index
-      %w3 = memref.load %wz[%j3] : memref<8xf64>
-      %d3 = memref.load %dz[%j3] : memref<8xf64>
+      %w3 = memref.load %wz[%j3] : memref<8x!pme_real>
+      %d3 = memref.load %dz[%j3] : memref<8x!pme_real>
       %at = arith.addi %gbase, %g3 : index
-      %p = memref.load %phi[%at] : memref<?xf64, 1>
-      %px = arith.mulf %d1w2, %w3 : f64
-      %py = arith.mulf %w1d2, %w3 : f64
-      %pz = arith.mulf %w1w2, %d3 : f64
-      %vx = arith.mulf %p, %px : f64
-      %vy = arith.mulf %p, %py : f64
-      %vz = arith.mulf %p, %pz : f64
-      %nx = arith.addf %tx3, %vx : f64
-      %ny = arith.addf %ty3, %vy : f64
-      %nz = arith.addf %tz3, %vz : f64
-      scf.yield %nx, %ny, %nz : f64, f64, f64
+      %p = memref.load %phi[%at] : memref<?x!pme_real, 1>
+      %px = arith.mulf %d1w2, %w3 : !pme_real
+      %py = arith.mulf %w1d2, %w3 : !pme_real
+      %pz = arith.mulf %w1w2, %d3 : !pme_real
+      %vx = arith.mulf %p, %px : !pme_real
+      %vy = arith.mulf %p, %py : !pme_real
+      %vz = arith.mulf %p, %pz : !pme_real
+      %nx = arith.addf %tx3, %vx : !pme_real
+      %ny = arith.addf %ty3, %vy : !pme_real
+      %nz = arith.addf %tz3, %vz : !pme_real
+      scf.yield %nx, %ny, %nz : !pme_real, !pme_real, !pme_real
     }}
-    scf.yield %ex, %ey, %ez : f64, f64, f64
+    scf.yield %ex, %ey, %ez : !pme_real, !pme_real, !pme_real
   }}
-  scf.yield %bx2, %by2, %bz2 : f64, f64, f64
+  scf.yield %bx2, %by2, %bz2 : !pme_real, !pme_real, !pme_real
 }}
-%mq = arith.negf %qi : f64
-%sxq = arith.mulf %mq, %rx : f64
-%syq = arith.mulf %mq, %ry : f64
-%szq = arith.mulf %mq, %rz : f64
-%fx64 = arith.mulf %sxq, %sumx : f64
-%fy64 = arith.mulf %syq, %sumy : f64
-%fz64 = arith.mulf %szq, %sumz : f64
-%fxs = PME_NARROW_FRC %fx64 : f64 to !pme_frc
-%fys = PME_NARROW_FRC %fy64 : f64 to !pme_frc
-%fzs = PME_NARROW_FRC %fz64 : f64 to !pme_frc
+%mq = arith.negf %qi : !pme_real
+%sxq = arith.mulf %mq, %rxr : !pme_real
+%syq = arith.mulf %mq, %ryr : !pme_real
+%szq = arith.mulf %mq, %rzr : !pme_real
+%fx64 = arith.mulf %sxq, %sumx : !pme_real
+%fy64 = arith.mulf %syq, %sumy : !pme_real
+%fz64 = arith.mulf %szq, %sumz : !pme_real
+%fxs = PME_REAL_TO_FRC %fx64 : !pme_real to !pme_frc
+%fys = PME_REAL_TO_FRC %fy64 : !pme_real to !pme_frc
+%fzs = PME_REAL_TO_FRC %fz64 : !pme_real to !pme_frc
 memref.store %fxs, %f[%i, %i0] : memref<?x3x!pme_frc, 1>
 memref.store %fys, %f[%i, %i1] : memref<?x3x!pme_frc, 1>
 memref.store %fzs, %f[%i, %i2] : memref<?x3x!pme_frc, 1>""")
     return f"""
 // The forces, as @mdrt.pme_gather gives them: a thread for each particle.
 func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
-                                       %phi: memref<?xf64, 1>, %box: vector<3xf64>,
+                                       %phi: memref<?x!pme_real, 1>, %box: vector<3xf64>,
                                        %k1: index, %k2: index, %k3: index, %n: index,
                                        %f: memref<?x3x!pme_frc, 1>) {{
   %c0 = arith.constant 0 : index
@@ -643,6 +661,9 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
   %rx = arith.divf %k1f, %lx : f64
   %ry = arith.divf %k2f, %ly : f64
   %rz = arith.divf %k3f, %lz : f64
+  %rxr = PME_F64_TO_REAL %rx : f64 to !pme_real
+  %ryr = PME_F64_TO_REAL %ry : f64 to !pme_real
+  %rzr = PME_F64_TO_REAL %rz : f64 to !pme_real
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
 {launch(body.text(), "%count")}  return
 }}

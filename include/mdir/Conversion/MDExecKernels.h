@@ -151,7 +151,8 @@ std::string getInstanceName(llvm::StringRef name, mlir::Type real);
 /// stored as `position`, `charge`, and `force`: the aliases `!pme_pos`,
 /// `!pme_chg`, and `!pme_frc` take those types, the conversions from and to
 /// f64 become the ops that they need, and the functions take the suffix of
-/// `getPMESuffix`.
+/// `getPMESuffix`. The alias `!pme_real` of the template for devices, the
+/// type of the splines and the grid, takes the type of the forces.
 std::string instantiatePMETemplates(llvm::StringRef text, mlir::Type position,
                                     mlir::Type charge, mlir::Type force);
 std::string getPMEInstanceName(llvm::StringRef name, mlir::Type position,

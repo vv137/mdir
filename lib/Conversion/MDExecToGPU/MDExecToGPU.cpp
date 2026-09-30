@@ -1232,8 +1232,13 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   Type buffer = real.getType();
   FunctionType transform =
       builder.getFunctionType({buffer, buffer, wide, wide, wide}, {});
-  func::FuncOp forward = getOrDeclare("mdrtCudaFFTForward3D", transform);
-  func::FuncOp backward = getOrDeclare("mdrtCudaFFTBackward3D", transform);
+  // The transforms of cuFFT in the type of the grid.
+  bool narrow = cast<MemRefType>(buffer).getElementType().isF32();
+  func::FuncOp forward = getOrDeclare(
+      narrow ? "mdrtCudaFFTForward3DF32" : "mdrtCudaFFTForward3D", transform);
+  func::FuncOp backward = getOrDeclare(
+      narrow ? "mdrtCudaFFTBackward3DF32" : "mdrtCudaFFTBackward3D",
+      transform);
   for (func::FuncOp function : {forward, backward})
     function->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
   func::CallOp::create(builder, loc, forward,

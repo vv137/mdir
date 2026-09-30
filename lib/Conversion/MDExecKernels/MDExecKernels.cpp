@@ -903,6 +903,12 @@ std::string kernels::instantiatePMETemplates(StringRef text, Type position,
   auto extend = [](Type type) {
     return type.isF64() ? "arith.bitcast" : "arith.extf";
   };
+  // The conversion between two of f32 and f64.
+  auto convert = [](Type from, Type to) -> const char * {
+    if (from == to)
+      return "arith.bitcast";
+    return from.isF64() ? "arith.truncf" : "arith.extf";
+  };
   std::string suffix = getPMESuffix(position, charge, force);
   std::string instance;
   while (!text.empty()) {
@@ -918,6 +924,16 @@ std::string kernels::instantiatePMETemplates(StringRef text, Type position,
       instance += extend(charge);
     } else if (text.consume_front("PME_NARROW_FRC")) {
       instance += force.isF64() ? "arith.bitcast" : "arith.truncf";
+    } else if (text.consume_front("!pme_real = f64")) {
+      instance += "!pme_real = " + std::string(spell(force));
+    } else if (text.consume_front("PME_CHG_TO_REAL")) {
+      instance += convert(charge, force);
+    } else if (text.consume_front("PME_F64_TO_REAL")) {
+      instance += convert(Float64Type::get(force.getContext()), force);
+    } else if (text.consume_front("PME_REAL_TO_F64")) {
+      instance += convert(force, Float64Type::get(force.getContext()));
+    } else if (text.consume_front("PME_REAL_TO_FRC")) {
+      instance += "arith.bitcast";
     } else if (text.consume_front("@mdrt")) {
       // The functions of the template, `@mdrt.` or `@mdrt_`; the functions
       // of the runtime, such as `@mdrtCudaFFTForward3D`, keep their names.

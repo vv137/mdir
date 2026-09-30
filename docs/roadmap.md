@@ -26,6 +26,7 @@ follows are in [principles.md](principles.md).
 | M1f | The terms and dynamics of the intermediate stage against AmberTools and GROMACS |
 | M1k | The Amber suite against pmemd.cuda (published) and GROMACS 2026.3 with CUDA, on an RTX 3090: energies term by term against sander at the start, conservation and ensembles over runs, and rates |
 | Integrators | Done: leapfrog does what velocity Verlet does: constraints (SHAKE, SETTLE), virtual sites, the thermostats, the barostat, restraints (D76) |
+| Comparison on a protein | TODO: a protein of moderate size with ff19SB in OPC water (the target of D65, or larger), converted with ParmEd, run by GROMACS with CUDA and by MDIR: rates and agreement of the terms |
 | Performance | Host synchronization moved to the device (the test of validity and the decision to rebuild), fusion of the loops over particles, CUDA graphs, PME in single precision for the mixed mode (an experiment), the pair kernel |
 
 | Barostat integrators | Done: the strain stepped in λ = √V (eq. S7 of [[Bernetti2020]](references.md#bernetti2020)), which makes the exact work of D77 the paper's reversible integrator. Next: its effective energy (eq. S11) as a diagnostic, which with rigid groups needs the pressure of the same definition before and after a scaling; then its Trotter integrator (SI Sec. V.C), which needs no evaluation after a scaling; the ensemble test of two pressures (SI Fig. S6) for the white paper |
@@ -70,6 +71,9 @@ systems:
   the thermostat and the barostat), the target of D65 (ff19SB in OPC).
 - Performance: the Amber suite against GROMACS and pmemd.cuda, with the
   scripts that produce every number and figure.
+- The way from double to mixed precision (TODO, if it makes a story): what stays in `f64` and
+  why (the differences of positions, D75; the sums), what moved to `f32`
+  (the kernels of pairs, PME), and what each step cost and gained.
 - The principles of development and the defects that led to them.
 - How to take part: how the code is laid out, how a new term, pass, or
   target is added and tested, and how defects are reported, so that a

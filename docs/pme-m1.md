@@ -109,7 +109,7 @@ order. The grid is converted to floating point before the FFT.
 |---|---|
 | Scale | 2⁴⁰: a contribution is resolved to 10⁻¹² e, and a point holds up to 2⁶³ / 2⁴⁰ ≈ 8 × 10⁶ e, far beyond any point of a real system. A charge of 100 e or more is rejected. A position that is not a number converts to an undefined integer; the run has failed by then, but the grid does not say so. |
 | Host | The same fixed point, with atomics of the threads of OpenMP |
-| Mixed precision | The positions, the charges, and the forces as they are stored; the B-splines, the grid, and the FFT in f64 on the host and on a device for now, which is to be measured against f32; the energy and the virial summed in f64 |
+| Mixed precision | The positions, the charges, and the forces as they are stored. On the host the B-splines, the grid, and the FFT are in f64; on a device they are in the type of the forces, f32 in the mixed and single modes, with the fractions of the positions on the grid and the edges of the cell in f64 (D78). The energy and the virial are summed in f64 |
 | The sums of a device | Each thread sums a row of the grid; the host adds the rows in their order, so the energy and the virial do not depend on the order of the threads either |
 
 ## 4. Parameters (D71)

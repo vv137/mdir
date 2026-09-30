@@ -6,9 +6,11 @@
 //
 // This is a template. The compiler adds it to a module that has a
 // reciprocal sum on a device, where it is specialized like any other code;
-// the types and the conversions are those of the template for the host
-// (PME.mlir), and so are the grid and the B-splines. The buffers are on the
-// device.
+// the types of the positions, the charges, and the forces and their
+// conversions are those of the template for the host (PME.mlir); the
+// splines, the grid, and its transform are in !pme_real, which is the type
+// of the forces, while the fractions of the positions and the edges of the
+// cell are in f64. The buffers are on the device.
 //
 // A kernel runs one thread per item, in blocks of 128 threads. The threads
 // beyond the last item do nothing. The charges are added to the grid in
@@ -20,6 +22,9 @@
 !pme_pos = f64
 !pme_chg = f64
 !pme_frc = f64
+// The type in which the splines, the grid, and its transform are computed:
+// that of the forces on a device, so f32 in the mixed and single modes.
+!pme_real = f64
 
 func.func private @mdrt_gpu_pme_blocks(%count: index) -> index {
   %c127 = arith.constant 127 : index
@@ -64,9 +69,9 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %i0 = arith.constant 0 : index
       %i1 = arith.constant 1 : index
       %i2 = arith.constant 2 : index
-      %wx = memref.alloca() : memref<8xf64>
-      %wy = memref.alloca() : memref<8xf64>
-      %wz = memref.alloca() : memref<8xf64>
+      %wx = memref.alloca() : memref<8x!pme_real>
+      %wy = memref.alloca() : memref<8x!pme_real>
+      %wz = memref.alloca() : memref<8x!pme_real>
       %xs = memref.load %x[%i, %i0] : memref<?x3x!pme_pos, 1>
       %ys = memref.load %x[%i, %i1] : memref<?x3x!pme_pos, 1>
       %zs = memref.load %x[%i, %i2] : memref<?x3x!pme_pos, 1>
@@ -74,7 +79,7 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %xi = PME_EXTEND_POS %xs : !pme_pos to f64
       %yi = PME_EXTEND_POS %ys : !pme_pos to f64
       %zi = PME_EXTEND_POS %zs : !pme_pos to f64
-      %qi = PME_EXTEND_CHG %qs : !pme_chg to f64
+      %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
       %px_s = arith.divf %xi, %lx : f64
       %px_fs = math.floor %px_s : f64
       %px_frac = arith.subf %px_s, %px_fs : f64
@@ -89,85 +94,86 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %px_bkn = arith.subi %px_bk, %n : index
       %px_c1p = arith.constant 1 : index
       %px_start = arith.addi %px_bkn, %px_c1p : index
+      %px_wr = PME_F64_TO_REAL %px_w : f64 to !pme_real
       %bx_c0 = arith.constant 0 : index
       %bx_c1 = arith.constant 1 : index
       %bx_c2 = arith.constant 2 : index
       %bx_c3 = arith.constant 3 : index
       %bx_c8 = arith.constant 8 : index
-      %bx_zero = arith.constant 0.0 : f64
-      %bx_one = arith.constant 1.0 : f64
+      %bx_zero = arith.constant 0.0 : !pme_real
+      %bx_one = arith.constant 1.0 : !pme_real
       scf.for %bx_j = %bx_c0 to %bx_c8 step %bx_c1 {
-        memref.store %bx_zero, %wx[%bx_j] : memref<8xf64>
+        memref.store %bx_zero, %wx[%bx_j] : memref<8x!pme_real>
       }
-      %bx_omw = arith.subf %bx_one, %px_w : f64
-      memref.store %bx_omw, %wx[%bx_c0] : memref<8xf64>
-      memref.store %px_w, %wx[%bx_c1] : memref<8xf64>
+      %bx_omw = arith.subf %bx_one, %px_wr : !pme_real
+      memref.store %bx_omw, %wx[%bx_c0] : memref<8x!pme_real>
+      memref.store %px_wr, %wx[%bx_c1] : memref<8x!pme_real>
       scf.for %bx_k = %bx_c3 to %n step %bx_c1 {
       %bx_r_km1 = arith.subi %bx_k, %bx_c1 : index
       %bx_r_km2 = arith.subi %bx_k, %bx_c2 : index
       %bx_r_km1i = arith.index_cast %bx_r_km1 : index to i64
-      %bx_r_km1f = arith.sitofp %bx_r_km1i : i64 to f64
-      %bx_r_div = arith.divf %bx_one, %bx_r_km1f : f64
+      %bx_r_km1f = arith.sitofp %bx_r_km1i : i64 to !pme_real
+      %bx_r_div = arith.divf %bx_one, %bx_r_km1f : !pme_real
       %bx_r_ki = arith.index_cast %bx_k : index to i64
-      %bx_r_kf = arith.sitofp %bx_r_ki : i64 to f64
-      %bx_r_last = memref.load %wx[%bx_r_km2] : memref<8xf64>
-      %bx_r_dw = arith.mulf %bx_r_div, %px_w : f64
-      %bx_r_top = arith.mulf %bx_r_dw, %bx_r_last : f64
-      memref.store %bx_r_top, %wx[%bx_r_km1] : memref<8xf64>
+      %bx_r_kf = arith.sitofp %bx_r_ki : i64 to !pme_real
+      %bx_r_last = memref.load %wx[%bx_r_km2] : memref<8x!pme_real>
+      %bx_r_dw = arith.mulf %bx_r_div, %px_wr : !pme_real
+      %bx_r_top = arith.mulf %bx_r_dw, %bx_r_last : !pme_real
+      memref.store %bx_r_top, %wx[%bx_r_km1] : memref<8x!pme_real>
       scf.for %bx_r_j = %bx_c1 to %bx_r_km1 step %bx_c1 {
         %bx_r_ji = arith.index_cast %bx_r_j : index to i64
-        %bx_r_jf = arith.sitofp %bx_r_ji : i64 to f64
+        %bx_r_jf = arith.sitofp %bx_r_ji : i64 to !pme_real
         %bx_r_at = arith.subi %bx_r_km1, %bx_r_j : index
         %bx_r_below = arith.subi %bx_r_at, %bx_c1 : index
-        %bx_r_lo = memref.load %wx[%bx_r_below] : memref<8xf64>
-        %bx_r_hi = memref.load %wx[%bx_r_at] : memref<8xf64>
-        %bx_r_wj = arith.addf %px_w, %bx_r_jf : f64
-        %bx_r_kj = arith.subf %bx_r_kf, %bx_r_jf : f64
-        %bx_r_kjw = arith.subf %bx_r_kj, %px_w : f64
-        %bx_r_t1 = arith.mulf %bx_r_wj, %bx_r_lo : f64
-        %bx_r_t2 = arith.mulf %bx_r_kjw, %bx_r_hi : f64
-        %bx_r_sum = arith.addf %bx_r_t1, %bx_r_t2 : f64
-        %bx_r_value = arith.mulf %bx_r_div, %bx_r_sum : f64
-        memref.store %bx_r_value, %wx[%bx_r_at] : memref<8xf64>
+        %bx_r_lo = memref.load %wx[%bx_r_below] : memref<8x!pme_real>
+        %bx_r_hi = memref.load %wx[%bx_r_at] : memref<8x!pme_real>
+        %bx_r_wj = arith.addf %px_wr, %bx_r_jf : !pme_real
+        %bx_r_kj = arith.subf %bx_r_kf, %bx_r_jf : !pme_real
+        %bx_r_kjw = arith.subf %bx_r_kj, %px_wr : !pme_real
+        %bx_r_t1 = arith.mulf %bx_r_wj, %bx_r_lo : !pme_real
+        %bx_r_t2 = arith.mulf %bx_r_kjw, %bx_r_hi : !pme_real
+        %bx_r_sum = arith.addf %bx_r_t1, %bx_r_t2 : !pme_real
+        %bx_r_value = arith.mulf %bx_r_div, %bx_r_sum : !pme_real
+        memref.store %bx_r_value, %wx[%bx_r_at] : memref<8x!pme_real>
       }
-      %bx_r_first = memref.load %wx[%bx_c0] : memref<8xf64>
-      %bx_r_omw = arith.subf %bx_one, %px_w : f64
-      %bx_r_d0 = arith.mulf %bx_r_div, %bx_r_omw : f64
-      %bx_r_bottom = arith.mulf %bx_r_d0, %bx_r_first : f64
-      memref.store %bx_r_bottom, %wx[%bx_c0] : memref<8xf64>
+      %bx_r_first = memref.load %wx[%bx_c0] : memref<8x!pme_real>
+      %bx_r_omw = arith.subf %bx_one, %px_wr : !pme_real
+      %bx_r_d0 = arith.mulf %bx_r_div, %bx_r_omw : !pme_real
+      %bx_r_bottom = arith.mulf %bx_r_d0, %bx_r_first : !pme_real
+      memref.store %bx_r_bottom, %wx[%bx_c0] : memref<8x!pme_real>
       }
       %bx_f_km1 = arith.subi %n, %bx_c1 : index
       %bx_f_km2 = arith.subi %n, %bx_c2 : index
       %bx_f_km1i = arith.index_cast %bx_f_km1 : index to i64
-      %bx_f_km1f = arith.sitofp %bx_f_km1i : i64 to f64
-      %bx_f_div = arith.divf %bx_one, %bx_f_km1f : f64
+      %bx_f_km1f = arith.sitofp %bx_f_km1i : i64 to !pme_real
+      %bx_f_div = arith.divf %bx_one, %bx_f_km1f : !pme_real
       %bx_f_ki = arith.index_cast %n : index to i64
-      %bx_f_kf = arith.sitofp %bx_f_ki : i64 to f64
-      %bx_f_last = memref.load %wx[%bx_f_km2] : memref<8xf64>
-      %bx_f_dw = arith.mulf %bx_f_div, %px_w : f64
-      %bx_f_top = arith.mulf %bx_f_dw, %bx_f_last : f64
-      memref.store %bx_f_top, %wx[%bx_f_km1] : memref<8xf64>
+      %bx_f_kf = arith.sitofp %bx_f_ki : i64 to !pme_real
+      %bx_f_last = memref.load %wx[%bx_f_km2] : memref<8x!pme_real>
+      %bx_f_dw = arith.mulf %bx_f_div, %px_wr : !pme_real
+      %bx_f_top = arith.mulf %bx_f_dw, %bx_f_last : !pme_real
+      memref.store %bx_f_top, %wx[%bx_f_km1] : memref<8x!pme_real>
       scf.for %bx_f_j = %bx_c1 to %bx_f_km1 step %bx_c1 {
         %bx_f_ji = arith.index_cast %bx_f_j : index to i64
-        %bx_f_jf = arith.sitofp %bx_f_ji : i64 to f64
+        %bx_f_jf = arith.sitofp %bx_f_ji : i64 to !pme_real
         %bx_f_at = arith.subi %bx_f_km1, %bx_f_j : index
         %bx_f_below = arith.subi %bx_f_at, %bx_c1 : index
-        %bx_f_lo = memref.load %wx[%bx_f_below] : memref<8xf64>
-        %bx_f_hi = memref.load %wx[%bx_f_at] : memref<8xf64>
-        %bx_f_wj = arith.addf %px_w, %bx_f_jf : f64
-        %bx_f_kj = arith.subf %bx_f_kf, %bx_f_jf : f64
-        %bx_f_kjw = arith.subf %bx_f_kj, %px_w : f64
-        %bx_f_t1 = arith.mulf %bx_f_wj, %bx_f_lo : f64
-        %bx_f_t2 = arith.mulf %bx_f_kjw, %bx_f_hi : f64
-        %bx_f_sum = arith.addf %bx_f_t1, %bx_f_t2 : f64
-        %bx_f_value = arith.mulf %bx_f_div, %bx_f_sum : f64
-        memref.store %bx_f_value, %wx[%bx_f_at] : memref<8xf64>
+        %bx_f_lo = memref.load %wx[%bx_f_below] : memref<8x!pme_real>
+        %bx_f_hi = memref.load %wx[%bx_f_at] : memref<8x!pme_real>
+        %bx_f_wj = arith.addf %px_wr, %bx_f_jf : !pme_real
+        %bx_f_kj = arith.subf %bx_f_kf, %bx_f_jf : !pme_real
+        %bx_f_kjw = arith.subf %bx_f_kj, %px_wr : !pme_real
+        %bx_f_t1 = arith.mulf %bx_f_wj, %bx_f_lo : !pme_real
+        %bx_f_t2 = arith.mulf %bx_f_kjw, %bx_f_hi : !pme_real
+        %bx_f_sum = arith.addf %bx_f_t1, %bx_f_t2 : !pme_real
+        %bx_f_value = arith.mulf %bx_f_div, %bx_f_sum : !pme_real
+        memref.store %bx_f_value, %wx[%bx_f_at] : memref<8x!pme_real>
       }
-      %bx_f_first = memref.load %wx[%bx_c0] : memref<8xf64>
-      %bx_f_omw = arith.subf %bx_one, %px_w : f64
-      %bx_f_d0 = arith.mulf %bx_f_div, %bx_f_omw : f64
-      %bx_f_bottom = arith.mulf %bx_f_d0, %bx_f_first : f64
-      memref.store %bx_f_bottom, %wx[%bx_c0] : memref<8xf64>
+      %bx_f_first = memref.load %wx[%bx_c0] : memref<8x!pme_real>
+      %bx_f_omw = arith.subf %bx_one, %px_wr : !pme_real
+      %bx_f_d0 = arith.mulf %bx_f_div, %bx_f_omw : !pme_real
+      %bx_f_bottom = arith.mulf %bx_f_d0, %bx_f_first : !pme_real
+      memref.store %bx_f_bottom, %wx[%bx_c0] : memref<8x!pme_real>
       %py_s = arith.divf %yi, %ly : f64
       %py_fs = math.floor %py_s : f64
       %py_frac = arith.subf %py_s, %py_fs : f64
@@ -182,85 +188,86 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %py_bkn = arith.subi %py_bk, %n : index
       %py_c1p = arith.constant 1 : index
       %py_start = arith.addi %py_bkn, %py_c1p : index
+      %py_wr = PME_F64_TO_REAL %py_w : f64 to !pme_real
       %by_c0 = arith.constant 0 : index
       %by_c1 = arith.constant 1 : index
       %by_c2 = arith.constant 2 : index
       %by_c3 = arith.constant 3 : index
       %by_c8 = arith.constant 8 : index
-      %by_zero = arith.constant 0.0 : f64
-      %by_one = arith.constant 1.0 : f64
+      %by_zero = arith.constant 0.0 : !pme_real
+      %by_one = arith.constant 1.0 : !pme_real
       scf.for %by_j = %by_c0 to %by_c8 step %by_c1 {
-        memref.store %by_zero, %wy[%by_j] : memref<8xf64>
+        memref.store %by_zero, %wy[%by_j] : memref<8x!pme_real>
       }
-      %by_omw = arith.subf %by_one, %py_w : f64
-      memref.store %by_omw, %wy[%by_c0] : memref<8xf64>
-      memref.store %py_w, %wy[%by_c1] : memref<8xf64>
+      %by_omw = arith.subf %by_one, %py_wr : !pme_real
+      memref.store %by_omw, %wy[%by_c0] : memref<8x!pme_real>
+      memref.store %py_wr, %wy[%by_c1] : memref<8x!pme_real>
       scf.for %by_k = %by_c3 to %n step %by_c1 {
       %by_r_km1 = arith.subi %by_k, %by_c1 : index
       %by_r_km2 = arith.subi %by_k, %by_c2 : index
       %by_r_km1i = arith.index_cast %by_r_km1 : index to i64
-      %by_r_km1f = arith.sitofp %by_r_km1i : i64 to f64
-      %by_r_div = arith.divf %by_one, %by_r_km1f : f64
+      %by_r_km1f = arith.sitofp %by_r_km1i : i64 to !pme_real
+      %by_r_div = arith.divf %by_one, %by_r_km1f : !pme_real
       %by_r_ki = arith.index_cast %by_k : index to i64
-      %by_r_kf = arith.sitofp %by_r_ki : i64 to f64
-      %by_r_last = memref.load %wy[%by_r_km2] : memref<8xf64>
-      %by_r_dw = arith.mulf %by_r_div, %py_w : f64
-      %by_r_top = arith.mulf %by_r_dw, %by_r_last : f64
-      memref.store %by_r_top, %wy[%by_r_km1] : memref<8xf64>
+      %by_r_kf = arith.sitofp %by_r_ki : i64 to !pme_real
+      %by_r_last = memref.load %wy[%by_r_km2] : memref<8x!pme_real>
+      %by_r_dw = arith.mulf %by_r_div, %py_wr : !pme_real
+      %by_r_top = arith.mulf %by_r_dw, %by_r_last : !pme_real
+      memref.store %by_r_top, %wy[%by_r_km1] : memref<8x!pme_real>
       scf.for %by_r_j = %by_c1 to %by_r_km1 step %by_c1 {
         %by_r_ji = arith.index_cast %by_r_j : index to i64
-        %by_r_jf = arith.sitofp %by_r_ji : i64 to f64
+        %by_r_jf = arith.sitofp %by_r_ji : i64 to !pme_real
         %by_r_at = arith.subi %by_r_km1, %by_r_j : index
         %by_r_below = arith.subi %by_r_at, %by_c1 : index
-        %by_r_lo = memref.load %wy[%by_r_below] : memref<8xf64>
-        %by_r_hi = memref.load %wy[%by_r_at] : memref<8xf64>
-        %by_r_wj = arith.addf %py_w, %by_r_jf : f64
-        %by_r_kj = arith.subf %by_r_kf, %by_r_jf : f64
-        %by_r_kjw = arith.subf %by_r_kj, %py_w : f64
-        %by_r_t1 = arith.mulf %by_r_wj, %by_r_lo : f64
-        %by_r_t2 = arith.mulf %by_r_kjw, %by_r_hi : f64
-        %by_r_sum = arith.addf %by_r_t1, %by_r_t2 : f64
-        %by_r_value = arith.mulf %by_r_div, %by_r_sum : f64
-        memref.store %by_r_value, %wy[%by_r_at] : memref<8xf64>
+        %by_r_lo = memref.load %wy[%by_r_below] : memref<8x!pme_real>
+        %by_r_hi = memref.load %wy[%by_r_at] : memref<8x!pme_real>
+        %by_r_wj = arith.addf %py_wr, %by_r_jf : !pme_real
+        %by_r_kj = arith.subf %by_r_kf, %by_r_jf : !pme_real
+        %by_r_kjw = arith.subf %by_r_kj, %py_wr : !pme_real
+        %by_r_t1 = arith.mulf %by_r_wj, %by_r_lo : !pme_real
+        %by_r_t2 = arith.mulf %by_r_kjw, %by_r_hi : !pme_real
+        %by_r_sum = arith.addf %by_r_t1, %by_r_t2 : !pme_real
+        %by_r_value = arith.mulf %by_r_div, %by_r_sum : !pme_real
+        memref.store %by_r_value, %wy[%by_r_at] : memref<8x!pme_real>
       }
-      %by_r_first = memref.load %wy[%by_c0] : memref<8xf64>
-      %by_r_omw = arith.subf %by_one, %py_w : f64
-      %by_r_d0 = arith.mulf %by_r_div, %by_r_omw : f64
-      %by_r_bottom = arith.mulf %by_r_d0, %by_r_first : f64
-      memref.store %by_r_bottom, %wy[%by_c0] : memref<8xf64>
+      %by_r_first = memref.load %wy[%by_c0] : memref<8x!pme_real>
+      %by_r_omw = arith.subf %by_one, %py_wr : !pme_real
+      %by_r_d0 = arith.mulf %by_r_div, %by_r_omw : !pme_real
+      %by_r_bottom = arith.mulf %by_r_d0, %by_r_first : !pme_real
+      memref.store %by_r_bottom, %wy[%by_c0] : memref<8x!pme_real>
       }
       %by_f_km1 = arith.subi %n, %by_c1 : index
       %by_f_km2 = arith.subi %n, %by_c2 : index
       %by_f_km1i = arith.index_cast %by_f_km1 : index to i64
-      %by_f_km1f = arith.sitofp %by_f_km1i : i64 to f64
-      %by_f_div = arith.divf %by_one, %by_f_km1f : f64
+      %by_f_km1f = arith.sitofp %by_f_km1i : i64 to !pme_real
+      %by_f_div = arith.divf %by_one, %by_f_km1f : !pme_real
       %by_f_ki = arith.index_cast %n : index to i64
-      %by_f_kf = arith.sitofp %by_f_ki : i64 to f64
-      %by_f_last = memref.load %wy[%by_f_km2] : memref<8xf64>
-      %by_f_dw = arith.mulf %by_f_div, %py_w : f64
-      %by_f_top = arith.mulf %by_f_dw, %by_f_last : f64
-      memref.store %by_f_top, %wy[%by_f_km1] : memref<8xf64>
+      %by_f_kf = arith.sitofp %by_f_ki : i64 to !pme_real
+      %by_f_last = memref.load %wy[%by_f_km2] : memref<8x!pme_real>
+      %by_f_dw = arith.mulf %by_f_div, %py_wr : !pme_real
+      %by_f_top = arith.mulf %by_f_dw, %by_f_last : !pme_real
+      memref.store %by_f_top, %wy[%by_f_km1] : memref<8x!pme_real>
       scf.for %by_f_j = %by_c1 to %by_f_km1 step %by_c1 {
         %by_f_ji = arith.index_cast %by_f_j : index to i64
-        %by_f_jf = arith.sitofp %by_f_ji : i64 to f64
+        %by_f_jf = arith.sitofp %by_f_ji : i64 to !pme_real
         %by_f_at = arith.subi %by_f_km1, %by_f_j : index
         %by_f_below = arith.subi %by_f_at, %by_c1 : index
-        %by_f_lo = memref.load %wy[%by_f_below] : memref<8xf64>
-        %by_f_hi = memref.load %wy[%by_f_at] : memref<8xf64>
-        %by_f_wj = arith.addf %py_w, %by_f_jf : f64
-        %by_f_kj = arith.subf %by_f_kf, %by_f_jf : f64
-        %by_f_kjw = arith.subf %by_f_kj, %py_w : f64
-        %by_f_t1 = arith.mulf %by_f_wj, %by_f_lo : f64
-        %by_f_t2 = arith.mulf %by_f_kjw, %by_f_hi : f64
-        %by_f_sum = arith.addf %by_f_t1, %by_f_t2 : f64
-        %by_f_value = arith.mulf %by_f_div, %by_f_sum : f64
-        memref.store %by_f_value, %wy[%by_f_at] : memref<8xf64>
+        %by_f_lo = memref.load %wy[%by_f_below] : memref<8x!pme_real>
+        %by_f_hi = memref.load %wy[%by_f_at] : memref<8x!pme_real>
+        %by_f_wj = arith.addf %py_wr, %by_f_jf : !pme_real
+        %by_f_kj = arith.subf %by_f_kf, %by_f_jf : !pme_real
+        %by_f_kjw = arith.subf %by_f_kj, %py_wr : !pme_real
+        %by_f_t1 = arith.mulf %by_f_wj, %by_f_lo : !pme_real
+        %by_f_t2 = arith.mulf %by_f_kjw, %by_f_hi : !pme_real
+        %by_f_sum = arith.addf %by_f_t1, %by_f_t2 : !pme_real
+        %by_f_value = arith.mulf %by_f_div, %by_f_sum : !pme_real
+        memref.store %by_f_value, %wy[%by_f_at] : memref<8x!pme_real>
       }
-      %by_f_first = memref.load %wy[%by_c0] : memref<8xf64>
-      %by_f_omw = arith.subf %by_one, %py_w : f64
-      %by_f_d0 = arith.mulf %by_f_div, %by_f_omw : f64
-      %by_f_bottom = arith.mulf %by_f_d0, %by_f_first : f64
-      memref.store %by_f_bottom, %wy[%by_c0] : memref<8xf64>
+      %by_f_first = memref.load %wy[%by_c0] : memref<8x!pme_real>
+      %by_f_omw = arith.subf %by_one, %py_wr : !pme_real
+      %by_f_d0 = arith.mulf %by_f_div, %by_f_omw : !pme_real
+      %by_f_bottom = arith.mulf %by_f_d0, %by_f_first : !pme_real
+      memref.store %by_f_bottom, %wy[%by_c0] : memref<8x!pme_real>
       %pz_s = arith.divf %zi, %lz : f64
       %pz_fs = math.floor %pz_s : f64
       %pz_frac = arith.subf %pz_s, %pz_fs : f64
@@ -275,87 +282,88 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %pz_bkn = arith.subi %pz_bk, %n : index
       %pz_c1p = arith.constant 1 : index
       %pz_start = arith.addi %pz_bkn, %pz_c1p : index
+      %pz_wr = PME_F64_TO_REAL %pz_w : f64 to !pme_real
       %bz_c0 = arith.constant 0 : index
       %bz_c1 = arith.constant 1 : index
       %bz_c2 = arith.constant 2 : index
       %bz_c3 = arith.constant 3 : index
       %bz_c8 = arith.constant 8 : index
-      %bz_zero = arith.constant 0.0 : f64
-      %bz_one = arith.constant 1.0 : f64
+      %bz_zero = arith.constant 0.0 : !pme_real
+      %bz_one = arith.constant 1.0 : !pme_real
       scf.for %bz_j = %bz_c0 to %bz_c8 step %bz_c1 {
-        memref.store %bz_zero, %wz[%bz_j] : memref<8xf64>
+        memref.store %bz_zero, %wz[%bz_j] : memref<8x!pme_real>
       }
-      %bz_omw = arith.subf %bz_one, %pz_w : f64
-      memref.store %bz_omw, %wz[%bz_c0] : memref<8xf64>
-      memref.store %pz_w, %wz[%bz_c1] : memref<8xf64>
+      %bz_omw = arith.subf %bz_one, %pz_wr : !pme_real
+      memref.store %bz_omw, %wz[%bz_c0] : memref<8x!pme_real>
+      memref.store %pz_wr, %wz[%bz_c1] : memref<8x!pme_real>
       scf.for %bz_k = %bz_c3 to %n step %bz_c1 {
       %bz_r_km1 = arith.subi %bz_k, %bz_c1 : index
       %bz_r_km2 = arith.subi %bz_k, %bz_c2 : index
       %bz_r_km1i = arith.index_cast %bz_r_km1 : index to i64
-      %bz_r_km1f = arith.sitofp %bz_r_km1i : i64 to f64
-      %bz_r_div = arith.divf %bz_one, %bz_r_km1f : f64
+      %bz_r_km1f = arith.sitofp %bz_r_km1i : i64 to !pme_real
+      %bz_r_div = arith.divf %bz_one, %bz_r_km1f : !pme_real
       %bz_r_ki = arith.index_cast %bz_k : index to i64
-      %bz_r_kf = arith.sitofp %bz_r_ki : i64 to f64
-      %bz_r_last = memref.load %wz[%bz_r_km2] : memref<8xf64>
-      %bz_r_dw = arith.mulf %bz_r_div, %pz_w : f64
-      %bz_r_top = arith.mulf %bz_r_dw, %bz_r_last : f64
-      memref.store %bz_r_top, %wz[%bz_r_km1] : memref<8xf64>
+      %bz_r_kf = arith.sitofp %bz_r_ki : i64 to !pme_real
+      %bz_r_last = memref.load %wz[%bz_r_km2] : memref<8x!pme_real>
+      %bz_r_dw = arith.mulf %bz_r_div, %pz_wr : !pme_real
+      %bz_r_top = arith.mulf %bz_r_dw, %bz_r_last : !pme_real
+      memref.store %bz_r_top, %wz[%bz_r_km1] : memref<8x!pme_real>
       scf.for %bz_r_j = %bz_c1 to %bz_r_km1 step %bz_c1 {
         %bz_r_ji = arith.index_cast %bz_r_j : index to i64
-        %bz_r_jf = arith.sitofp %bz_r_ji : i64 to f64
+        %bz_r_jf = arith.sitofp %bz_r_ji : i64 to !pme_real
         %bz_r_at = arith.subi %bz_r_km1, %bz_r_j : index
         %bz_r_below = arith.subi %bz_r_at, %bz_c1 : index
-        %bz_r_lo = memref.load %wz[%bz_r_below] : memref<8xf64>
-        %bz_r_hi = memref.load %wz[%bz_r_at] : memref<8xf64>
-        %bz_r_wj = arith.addf %pz_w, %bz_r_jf : f64
-        %bz_r_kj = arith.subf %bz_r_kf, %bz_r_jf : f64
-        %bz_r_kjw = arith.subf %bz_r_kj, %pz_w : f64
-        %bz_r_t1 = arith.mulf %bz_r_wj, %bz_r_lo : f64
-        %bz_r_t2 = arith.mulf %bz_r_kjw, %bz_r_hi : f64
-        %bz_r_sum = arith.addf %bz_r_t1, %bz_r_t2 : f64
-        %bz_r_value = arith.mulf %bz_r_div, %bz_r_sum : f64
-        memref.store %bz_r_value, %wz[%bz_r_at] : memref<8xf64>
+        %bz_r_lo = memref.load %wz[%bz_r_below] : memref<8x!pme_real>
+        %bz_r_hi = memref.load %wz[%bz_r_at] : memref<8x!pme_real>
+        %bz_r_wj = arith.addf %pz_wr, %bz_r_jf : !pme_real
+        %bz_r_kj = arith.subf %bz_r_kf, %bz_r_jf : !pme_real
+        %bz_r_kjw = arith.subf %bz_r_kj, %pz_wr : !pme_real
+        %bz_r_t1 = arith.mulf %bz_r_wj, %bz_r_lo : !pme_real
+        %bz_r_t2 = arith.mulf %bz_r_kjw, %bz_r_hi : !pme_real
+        %bz_r_sum = arith.addf %bz_r_t1, %bz_r_t2 : !pme_real
+        %bz_r_value = arith.mulf %bz_r_div, %bz_r_sum : !pme_real
+        memref.store %bz_r_value, %wz[%bz_r_at] : memref<8x!pme_real>
       }
-      %bz_r_first = memref.load %wz[%bz_c0] : memref<8xf64>
-      %bz_r_omw = arith.subf %bz_one, %pz_w : f64
-      %bz_r_d0 = arith.mulf %bz_r_div, %bz_r_omw : f64
-      %bz_r_bottom = arith.mulf %bz_r_d0, %bz_r_first : f64
-      memref.store %bz_r_bottom, %wz[%bz_c0] : memref<8xf64>
+      %bz_r_first = memref.load %wz[%bz_c0] : memref<8x!pme_real>
+      %bz_r_omw = arith.subf %bz_one, %pz_wr : !pme_real
+      %bz_r_d0 = arith.mulf %bz_r_div, %bz_r_omw : !pme_real
+      %bz_r_bottom = arith.mulf %bz_r_d0, %bz_r_first : !pme_real
+      memref.store %bz_r_bottom, %wz[%bz_c0] : memref<8x!pme_real>
       }
       %bz_f_km1 = arith.subi %n, %bz_c1 : index
       %bz_f_km2 = arith.subi %n, %bz_c2 : index
       %bz_f_km1i = arith.index_cast %bz_f_km1 : index to i64
-      %bz_f_km1f = arith.sitofp %bz_f_km1i : i64 to f64
-      %bz_f_div = arith.divf %bz_one, %bz_f_km1f : f64
+      %bz_f_km1f = arith.sitofp %bz_f_km1i : i64 to !pme_real
+      %bz_f_div = arith.divf %bz_one, %bz_f_km1f : !pme_real
       %bz_f_ki = arith.index_cast %n : index to i64
-      %bz_f_kf = arith.sitofp %bz_f_ki : i64 to f64
-      %bz_f_last = memref.load %wz[%bz_f_km2] : memref<8xf64>
-      %bz_f_dw = arith.mulf %bz_f_div, %pz_w : f64
-      %bz_f_top = arith.mulf %bz_f_dw, %bz_f_last : f64
-      memref.store %bz_f_top, %wz[%bz_f_km1] : memref<8xf64>
+      %bz_f_kf = arith.sitofp %bz_f_ki : i64 to !pme_real
+      %bz_f_last = memref.load %wz[%bz_f_km2] : memref<8x!pme_real>
+      %bz_f_dw = arith.mulf %bz_f_div, %pz_wr : !pme_real
+      %bz_f_top = arith.mulf %bz_f_dw, %bz_f_last : !pme_real
+      memref.store %bz_f_top, %wz[%bz_f_km1] : memref<8x!pme_real>
       scf.for %bz_f_j = %bz_c1 to %bz_f_km1 step %bz_c1 {
         %bz_f_ji = arith.index_cast %bz_f_j : index to i64
-        %bz_f_jf = arith.sitofp %bz_f_ji : i64 to f64
+        %bz_f_jf = arith.sitofp %bz_f_ji : i64 to !pme_real
         %bz_f_at = arith.subi %bz_f_km1, %bz_f_j : index
         %bz_f_below = arith.subi %bz_f_at, %bz_c1 : index
-        %bz_f_lo = memref.load %wz[%bz_f_below] : memref<8xf64>
-        %bz_f_hi = memref.load %wz[%bz_f_at] : memref<8xf64>
-        %bz_f_wj = arith.addf %pz_w, %bz_f_jf : f64
-        %bz_f_kj = arith.subf %bz_f_kf, %bz_f_jf : f64
-        %bz_f_kjw = arith.subf %bz_f_kj, %pz_w : f64
-        %bz_f_t1 = arith.mulf %bz_f_wj, %bz_f_lo : f64
-        %bz_f_t2 = arith.mulf %bz_f_kjw, %bz_f_hi : f64
-        %bz_f_sum = arith.addf %bz_f_t1, %bz_f_t2 : f64
-        %bz_f_value = arith.mulf %bz_f_div, %bz_f_sum : f64
-        memref.store %bz_f_value, %wz[%bz_f_at] : memref<8xf64>
+        %bz_f_lo = memref.load %wz[%bz_f_below] : memref<8x!pme_real>
+        %bz_f_hi = memref.load %wz[%bz_f_at] : memref<8x!pme_real>
+        %bz_f_wj = arith.addf %pz_wr, %bz_f_jf : !pme_real
+        %bz_f_kj = arith.subf %bz_f_kf, %bz_f_jf : !pme_real
+        %bz_f_kjw = arith.subf %bz_f_kj, %pz_wr : !pme_real
+        %bz_f_t1 = arith.mulf %bz_f_wj, %bz_f_lo : !pme_real
+        %bz_f_t2 = arith.mulf %bz_f_kjw, %bz_f_hi : !pme_real
+        %bz_f_sum = arith.addf %bz_f_t1, %bz_f_t2 : !pme_real
+        %bz_f_value = arith.mulf %bz_f_div, %bz_f_sum : !pme_real
+        memref.store %bz_f_value, %wz[%bz_f_at] : memref<8x!pme_real>
       }
-      %bz_f_first = memref.load %wz[%bz_c0] : memref<8xf64>
-      %bz_f_omw = arith.subf %bz_one, %pz_w : f64
-      %bz_f_d0 = arith.mulf %bz_f_div, %bz_f_omw : f64
-      %bz_f_bottom = arith.mulf %bz_f_d0, %bz_f_first : f64
-      memref.store %bz_f_bottom, %wz[%bz_c0] : memref<8xf64>
-      %scale = arith.constant 1099511627776.0 : f64
-      %qscaled = arith.mulf %qi, %scale : f64
+      %bz_f_first = memref.load %wz[%bz_c0] : memref<8x!pme_real>
+      %bz_f_omw = arith.subf %bz_one, %pz_wr : !pme_real
+      %bz_f_d0 = arith.mulf %bz_f_div, %bz_f_omw : !pme_real
+      %bz_f_bottom = arith.mulf %bz_f_d0, %bz_f_first : !pme_real
+      memref.store %bz_f_bottom, %wz[%bz_c0] : memref<8x!pme_real>
+      %scale = arith.constant 1099511627776.0 : !pme_real
+      %qscaled = arith.mulf %qi, %scale : !pme_real
       %eight = arith.constant 8 : i64
       %gridindex = memref.extract_aligned_pointer_as_index %grid : memref<?xi64, 1> -> index
       // The grid is a buffer of its own, with no offset.
@@ -365,23 +373,23 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       scf.for %j1 = %j0 to %n step %j1c {
         %g1s = arith.addi %px_start, %j1 : index
         %g1 = arith.remui %g1s, %k1 : index
-        %w1 = memref.load %wx[%j1] : memref<8xf64>
-        %q1 = arith.mulf %qscaled, %w1 : f64
+        %w1 = memref.load %wx[%j1] : memref<8x!pme_real>
+        %q1 = arith.mulf %qscaled, %w1 : !pme_real
         scf.for %j2 = %j0 to %n step %j1c {
           %g2s = arith.addi %py_start, %j2 : index
           %g2 = arith.remui %g2s, %k2 : index
-          %w2 = memref.load %wy[%j2] : memref<8xf64>
-          %q12 = arith.mulf %q1, %w2 : f64
+          %w2 = memref.load %wy[%j2] : memref<8x!pme_real>
+          %q12 = arith.mulf %q1, %w2 : !pme_real
           %row1 = arith.muli %g1, %k2 : index
           %row = arith.addi %row1, %g2 : index
           %gbase = arith.muli %row, %k3 : index
           scf.for %j3 = %j0 to %n step %j1c {
             %g3s = arith.addi %pz_start, %j3 : index
             %g3 = arith.remui %g3s, %k3 : index
-            %w3 = memref.load %wz[%j3] : memref<8xf64>
-            %value = arith.mulf %q12, %w3 : f64
-            %rounded = math.roundeven %value : f64
-            %fixed = arith.fptosi %rounded : f64 to i64
+            %w3 = memref.load %wz[%j3] : memref<8x!pme_real>
+            %value = arith.mulf %q12, %w3 : !pme_real
+            %rounded = math.roundeven %value : !pme_real
+            %fixed = arith.fptosi %rounded : !pme_real to i64
             %at = arith.addi %gbase, %g3 : index
             // A relaxed atomic at the scope of the device: the sum needs no
             // order, and one of the system would wait for the host.
@@ -399,8 +407,8 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
   return
 }
 
-// The grid in f64, from fixed point.
-func.func private @mdrt_gpu_pme_real(%grid: memref<?xi64, 1>, %real: memref<?xf64, 1>) {
+// The grid in !pme_real, from fixed point.
+func.func private @mdrt_gpu_pme_real(%grid: memref<?xi64, 1>, %real: memref<?x!pme_real, 1>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c128 = arith.constant 128 : index
@@ -412,11 +420,11 @@ func.func private @mdrt_gpu_pme_real(%grid: memref<?xi64, 1>, %real: memref<?xf6
     %item = arith.addi %base, %tx : index
     %inside = arith.cmpi ult, %item, %points : index
     scf.if %inside {
-      %inverse = arith.constant 9.094947017729282e-13 : f64
+      %inverse = arith.constant 9.094947017729282e-13 : !pme_real
       %fixed = memref.load %grid[%item] : memref<?xi64, 1>
-      %value = arith.sitofp %fixed : i64 to f64
-      %scaled = arith.mulf %value, %inverse : f64
-      memref.store %scaled, %real[%item] : memref<?xf64, 1>
+      %value = arith.sitofp %fixed : i64 to !pme_real
+      %scaled = arith.mulf %value, %inverse : !pme_real
+      memref.store %scaled, %real[%item] : memref<?x!pme_real, 1>
     }
     gpu.terminator
   }
@@ -428,7 +436,7 @@ func.func private @mdrt_gpu_pme_real(%grid: memref<?xi64, 1>, %real: memref<?xf6
 // returns the energy and the virial, as @mdrt.pme_convolve does. A thread
 // takes a row of the grid, (k1, k2), and writes its sums to `rows`: the
 // energy, then the virial xx, xy, xz, yy, yz, zz.
-func.func private @mdrt_gpu_pme_convolve(%c: memref<?xf64, 1>, %moduli: memref<?x?xf64, 1>,
+func.func private @mdrt_gpu_pme_convolve(%c: memref<?x!pme_real, 1>, %moduli: memref<?x?xf64, 1>,
                                          %rows: memref<?xf64, 1>, %box: vector<3xf64>,
                                          %beta: f64, %coulomb: f64,
                                          %k1: index, %k2: index, %k3: index)
@@ -517,8 +525,10 @@ func.func private @mdrt_gpu_pme_convolve(%c: memref<?xf64, 1>, %moduli: memref<?
         %base2 = arith.addi %base1, %z : index
         %re_at = arith.muli %base2, %cc2 : index
         %im_at = arith.addi %re_at, %cc1 : index
-        %re = memref.load %c[%re_at] : memref<?xf64, 1>
-        %im = memref.load %c[%im_at] : memref<?xf64, 1>
+        %rer = memref.load %c[%re_at] : memref<?x!pme_real, 1>
+        %imr = memref.load %c[%im_at] : memref<?x!pme_real, 1>
+        %re = PME_REAL_TO_F64 %rer : !pme_real to f64
+        %im = PME_REAL_TO_F64 %imr : !pme_real to f64
         %re2 = arith.mulf %re, %re : f64
         %im2 = arith.mulf %im, %im : f64
         %g2 = arith.addf %re2, %im2 : f64
@@ -558,8 +568,10 @@ func.func private @mdrt_gpu_pme_convolve(%c: memref<?xf64, 1>, %moduli: memref<?
         %ne = arith.addf %e0, %em : f64
         %reb = arith.mulf %re, %bc : f64
         %imb = arith.mulf %im, %bc : f64
-        memref.store %reb, %c[%re_at] : memref<?xf64, 1>
-        memref.store %imb, %c[%im_at] : memref<?xf64, 1>
+        %rebr = PME_F64_TO_REAL %reb : f64 to !pme_real
+        %imbr = PME_F64_TO_REAL %imb : f64 to !pme_real
+        memref.store %rebr, %c[%re_at] : memref<?x!pme_real, 1>
+        memref.store %imbr, %c[%im_at] : memref<?x!pme_real, 1>
         scf.yield %ne, %n00, %n01, %n02, %n11, %n12, %n22
             : f64, f64, f64, f64, f64, f64, f64
       }
@@ -644,7 +656,7 @@ func.func private @mdrt_gpu_pme_convolve(%c: memref<?xf64, 1>, %moduli: memref<?
 // Multiplies the half-complex transform `c` by the influence function, as
 // @mdrt_gpu_pme_convolve does, where neither the energy nor the virial is
 // needed: a thread for each point, and nothing for the host to wait for.
-func.func private @mdrt_gpu_pme_scale(%c: memref<?xf64, 1>, %moduli: memref<?x?xf64, 1>,
+func.func private @mdrt_gpu_pme_scale(%c: memref<?x!pme_real, 1>, %moduli: memref<?x?xf64, 1>,
                                       %box: vector<3xf64>, %beta: f64, %coulomb: f64,
                                       %k1: index, %k2: index, %k3: index) {
   %c1 = arith.constant 1 : index
@@ -661,6 +673,8 @@ func.func private @mdrt_gpu_pme_scale(%c: memref<?xf64, 1>, %moduli: memref<?x?x
   %volume = arith.mulf %lxy, %lz : f64
   %piv = arith.mulf %pi, %volume : f64
   %prefactor = arith.divf %coulomb, %piv : f64
+  %gaussr = PME_F64_TO_REAL %gauss : f64 to !pme_real
+  %prefactorr = PME_F64_TO_REAL %prefactor : f64 to !pme_real
   %rows = arith.muli %k1, %k2 : index
   %half = arith.divui %k3, %c2 : index
   %depth = arith.addi %half, %c1 : index
@@ -711,25 +725,31 @@ func.func private @mdrt_gpu_pme_scale(%c: memref<?xf64, 1>, %moduli: memref<?x?x
       %mod3 = memref.load %moduli[%cc2, %z] : memref<?x?xf64, 1>
       %m3s = arith.mulf %m3, %m3 : f64
       %msq = arith.addf %m12, %m3s : f64
-      %origin = arith.cmpf oeq, %msq, %kzero : f64
-      %safe = arith.select %origin, %kone, %msq : f64
-      %inverse = arith.divf %kone, %safe : f64
-      %gm = arith.mulf %gauss, %msq : f64
-      %ngm = arith.negf %gm : f64
-      %ex = math.exp %ngm : f64
-      %exm = arith.mulf %ex, %inverse : f64
-      %pexm = arith.mulf %prefactor, %exm : f64
       %mods = arith.mulf %mod12, %mod3 : f64
-      %bc0 = arith.mulf %pexm, %mods : f64
-      %bc = arith.select %origin, %kzero, %bc0 : f64
+      // The influence function in !pme_real: the exponential is most of the
+      // work, and in f32 it is what the transform holds anyway.
+      %msqr = PME_F64_TO_REAL %msq : f64 to !pme_real
+      %modsr = PME_F64_TO_REAL %mods : f64 to !pme_real
+      %rzero = arith.constant 0.0 : !pme_real
+      %rone = arith.constant 1.0 : !pme_real
+      %origin = arith.cmpf oeq, %msqr, %rzero : !pme_real
+      %safe = arith.select %origin, %rone, %msqr : !pme_real
+      %inverse = arith.divf %rone, %safe : !pme_real
+      %gm = arith.mulf %gaussr, %msqr : !pme_real
+      %ngm = arith.negf %gm : !pme_real
+      %ex = math.exp %ngm : !pme_real
+      %exm = arith.mulf %ex, %inverse : !pme_real
+      %pexm = arith.mulf %prefactorr, %exm : !pme_real
+      %bc0 = arith.mulf %pexm, %modsr : !pme_real
+      %bc = arith.select %origin, %rzero, %bc0 : !pme_real
       %re_at = arith.muli %item, %cc2 : index
       %im_at = arith.addi %re_at, %cc1 : index
-      %re = memref.load %c[%re_at] : memref<?xf64, 1>
-      %im = memref.load %c[%im_at] : memref<?xf64, 1>
-      %reb = arith.mulf %re, %bc : f64
-      %imb = arith.mulf %im, %bc : f64
-      memref.store %reb, %c[%re_at] : memref<?xf64, 1>
-      memref.store %imb, %c[%im_at] : memref<?xf64, 1>
+      %re = memref.load %c[%re_at] : memref<?x!pme_real, 1>
+      %im = memref.load %c[%im_at] : memref<?x!pme_real, 1>
+      %reb = arith.mulf %re, %bc : !pme_real
+      %imb = arith.mulf %im, %bc : !pme_real
+      memref.store %reb, %c[%re_at] : memref<?x!pme_real, 1>
+      memref.store %imb, %c[%im_at] : memref<?x!pme_real, 1>
     }
     gpu.terminator
   }
@@ -738,7 +758,7 @@ func.func private @mdrt_gpu_pme_scale(%c: memref<?xf64, 1>, %moduli: memref<?x?x
 
 // The forces, as @mdrt.pme_gather gives them: a thread for each particle.
 func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
-                                       %phi: memref<?xf64, 1>, %box: vector<3xf64>,
+                                       %phi: memref<?x!pme_real, 1>, %box: vector<3xf64>,
                                        %k1: index, %k2: index, %k3: index, %n: index,
                                        %f: memref<?x3x!pme_frc, 1>) {
   %c0 = arith.constant 0 : index
@@ -756,6 +776,9 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
   %rx = arith.divf %k1f, %lx : f64
   %ry = arith.divf %k2f, %ly : f64
   %rz = arith.divf %k3f, %lz : f64
+  %rxr = PME_F64_TO_REAL %rx : f64 to !pme_real
+  %ryr = PME_F64_TO_REAL %ry : f64 to !pme_real
+  %rzr = PME_F64_TO_REAL %rz : f64 to !pme_real
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
   %blocks_count = func.call @mdrt_gpu_pme_blocks(%count) : (index) -> index
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_count, %gy = %c1, %gz = %c1)
@@ -768,12 +791,12 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %i0 = arith.constant 0 : index
       %i1 = arith.constant 1 : index
       %i2 = arith.constant 2 : index
-      %wx = memref.alloca() : memref<8xf64>
-      %wy = memref.alloca() : memref<8xf64>
-      %wz = memref.alloca() : memref<8xf64>
-      %dx = memref.alloca() : memref<8xf64>
-      %dy = memref.alloca() : memref<8xf64>
-      %dz = memref.alloca() : memref<8xf64>
+      %wx = memref.alloca() : memref<8x!pme_real>
+      %wy = memref.alloca() : memref<8x!pme_real>
+      %wz = memref.alloca() : memref<8x!pme_real>
+      %dx = memref.alloca() : memref<8x!pme_real>
+      %dy = memref.alloca() : memref<8x!pme_real>
+      %dz = memref.alloca() : memref<8x!pme_real>
       %xs = memref.load %x[%i, %i0] : memref<?x3x!pme_pos, 1>
       %ys = memref.load %x[%i, %i1] : memref<?x3x!pme_pos, 1>
       %zs = memref.load %x[%i, %i2] : memref<?x3x!pme_pos, 1>
@@ -781,7 +804,7 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %xi = PME_EXTEND_POS %xs : !pme_pos to f64
       %yi = PME_EXTEND_POS %ys : !pme_pos to f64
       %zi = PME_EXTEND_POS %zs : !pme_pos to f64
-      %qi = PME_EXTEND_CHG %qs : !pme_chg to f64
+      %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
       %px_s = arith.divf %xi, %lx : f64
       %px_fs = math.floor %px_s : f64
       %px_frac = arith.subf %px_s, %px_fs : f64
@@ -796,95 +819,96 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %px_bkn = arith.subi %px_bk, %n : index
       %px_c1p = arith.constant 1 : index
       %px_start = arith.addi %px_bkn, %px_c1p : index
+      %px_wr = PME_F64_TO_REAL %px_w : f64 to !pme_real
       %bx_c0 = arith.constant 0 : index
       %bx_c1 = arith.constant 1 : index
       %bx_c2 = arith.constant 2 : index
       %bx_c3 = arith.constant 3 : index
       %bx_c8 = arith.constant 8 : index
-      %bx_zero = arith.constant 0.0 : f64
-      %bx_one = arith.constant 1.0 : f64
+      %bx_zero = arith.constant 0.0 : !pme_real
+      %bx_one = arith.constant 1.0 : !pme_real
       scf.for %bx_j = %bx_c0 to %bx_c8 step %bx_c1 {
-        memref.store %bx_zero, %wx[%bx_j] : memref<8xf64>
+        memref.store %bx_zero, %wx[%bx_j] : memref<8x!pme_real>
       }
-      %bx_omw = arith.subf %bx_one, %px_w : f64
-      memref.store %bx_omw, %wx[%bx_c0] : memref<8xf64>
-      memref.store %px_w, %wx[%bx_c1] : memref<8xf64>
+      %bx_omw = arith.subf %bx_one, %px_wr : !pme_real
+      memref.store %bx_omw, %wx[%bx_c0] : memref<8x!pme_real>
+      memref.store %px_wr, %wx[%bx_c1] : memref<8x!pme_real>
       scf.for %bx_k = %bx_c3 to %n step %bx_c1 {
       %bx_r_km1 = arith.subi %bx_k, %bx_c1 : index
       %bx_r_km2 = arith.subi %bx_k, %bx_c2 : index
       %bx_r_km1i = arith.index_cast %bx_r_km1 : index to i64
-      %bx_r_km1f = arith.sitofp %bx_r_km1i : i64 to f64
-      %bx_r_div = arith.divf %bx_one, %bx_r_km1f : f64
+      %bx_r_km1f = arith.sitofp %bx_r_km1i : i64 to !pme_real
+      %bx_r_div = arith.divf %bx_one, %bx_r_km1f : !pme_real
       %bx_r_ki = arith.index_cast %bx_k : index to i64
-      %bx_r_kf = arith.sitofp %bx_r_ki : i64 to f64
-      %bx_r_last = memref.load %wx[%bx_r_km2] : memref<8xf64>
-      %bx_r_dw = arith.mulf %bx_r_div, %px_w : f64
-      %bx_r_top = arith.mulf %bx_r_dw, %bx_r_last : f64
-      memref.store %bx_r_top, %wx[%bx_r_km1] : memref<8xf64>
+      %bx_r_kf = arith.sitofp %bx_r_ki : i64 to !pme_real
+      %bx_r_last = memref.load %wx[%bx_r_km2] : memref<8x!pme_real>
+      %bx_r_dw = arith.mulf %bx_r_div, %px_wr : !pme_real
+      %bx_r_top = arith.mulf %bx_r_dw, %bx_r_last : !pme_real
+      memref.store %bx_r_top, %wx[%bx_r_km1] : memref<8x!pme_real>
       scf.for %bx_r_j = %bx_c1 to %bx_r_km1 step %bx_c1 {
         %bx_r_ji = arith.index_cast %bx_r_j : index to i64
-        %bx_r_jf = arith.sitofp %bx_r_ji : i64 to f64
+        %bx_r_jf = arith.sitofp %bx_r_ji : i64 to !pme_real
         %bx_r_at = arith.subi %bx_r_km1, %bx_r_j : index
         %bx_r_below = arith.subi %bx_r_at, %bx_c1 : index
-        %bx_r_lo = memref.load %wx[%bx_r_below] : memref<8xf64>
-        %bx_r_hi = memref.load %wx[%bx_r_at] : memref<8xf64>
-        %bx_r_wj = arith.addf %px_w, %bx_r_jf : f64
-        %bx_r_kj = arith.subf %bx_r_kf, %bx_r_jf : f64
-        %bx_r_kjw = arith.subf %bx_r_kj, %px_w : f64
-        %bx_r_t1 = arith.mulf %bx_r_wj, %bx_r_lo : f64
-        %bx_r_t2 = arith.mulf %bx_r_kjw, %bx_r_hi : f64
-        %bx_r_sum = arith.addf %bx_r_t1, %bx_r_t2 : f64
-        %bx_r_value = arith.mulf %bx_r_div, %bx_r_sum : f64
-        memref.store %bx_r_value, %wx[%bx_r_at] : memref<8xf64>
+        %bx_r_lo = memref.load %wx[%bx_r_below] : memref<8x!pme_real>
+        %bx_r_hi = memref.load %wx[%bx_r_at] : memref<8x!pme_real>
+        %bx_r_wj = arith.addf %px_wr, %bx_r_jf : !pme_real
+        %bx_r_kj = arith.subf %bx_r_kf, %bx_r_jf : !pme_real
+        %bx_r_kjw = arith.subf %bx_r_kj, %px_wr : !pme_real
+        %bx_r_t1 = arith.mulf %bx_r_wj, %bx_r_lo : !pme_real
+        %bx_r_t2 = arith.mulf %bx_r_kjw, %bx_r_hi : !pme_real
+        %bx_r_sum = arith.addf %bx_r_t1, %bx_r_t2 : !pme_real
+        %bx_r_value = arith.mulf %bx_r_div, %bx_r_sum : !pme_real
+        memref.store %bx_r_value, %wx[%bx_r_at] : memref<8x!pme_real>
       }
-      %bx_r_first = memref.load %wx[%bx_c0] : memref<8xf64>
-      %bx_r_omw = arith.subf %bx_one, %px_w : f64
-      %bx_r_d0 = arith.mulf %bx_r_div, %bx_r_omw : f64
-      %bx_r_bottom = arith.mulf %bx_r_d0, %bx_r_first : f64
-      memref.store %bx_r_bottom, %wx[%bx_c0] : memref<8xf64>
+      %bx_r_first = memref.load %wx[%bx_c0] : memref<8x!pme_real>
+      %bx_r_omw = arith.subf %bx_one, %px_wr : !pme_real
+      %bx_r_d0 = arith.mulf %bx_r_div, %bx_r_omw : !pme_real
+      %bx_r_bottom = arith.mulf %bx_r_d0, %bx_r_first : !pme_real
+      memref.store %bx_r_bottom, %wx[%bx_c0] : memref<8x!pme_real>
       }
-      %bx_v0 = memref.load %wx[%bx_c0] : memref<8xf64>
-      %bx_s0 = arith.negf %bx_v0 : f64
-      memref.store %bx_s0, %dx[%bx_c0] : memref<8xf64>
+      %bx_v0 = memref.load %wx[%bx_c0] : memref<8x!pme_real>
+      %bx_s0 = arith.negf %bx_v0 : !pme_real
+      memref.store %bx_s0, %dx[%bx_c0] : memref<8x!pme_real>
       scf.for %bx_js = %bx_c1 to %n step %bx_c1 {
         %bx_jm1 = arith.subi %bx_js, %bx_c1 : index
-        %bx_before = memref.load %wx[%bx_jm1] : memref<8xf64>
-        %bx_here = memref.load %wx[%bx_js] : memref<8xf64>
-        %bx_slope = arith.subf %bx_before, %bx_here : f64
-        memref.store %bx_slope, %dx[%bx_js] : memref<8xf64>
+        %bx_before = memref.load %wx[%bx_jm1] : memref<8x!pme_real>
+        %bx_here = memref.load %wx[%bx_js] : memref<8x!pme_real>
+        %bx_slope = arith.subf %bx_before, %bx_here : !pme_real
+        memref.store %bx_slope, %dx[%bx_js] : memref<8x!pme_real>
       }
       %bx_f_km1 = arith.subi %n, %bx_c1 : index
       %bx_f_km2 = arith.subi %n, %bx_c2 : index
       %bx_f_km1i = arith.index_cast %bx_f_km1 : index to i64
-      %bx_f_km1f = arith.sitofp %bx_f_km1i : i64 to f64
-      %bx_f_div = arith.divf %bx_one, %bx_f_km1f : f64
+      %bx_f_km1f = arith.sitofp %bx_f_km1i : i64 to !pme_real
+      %bx_f_div = arith.divf %bx_one, %bx_f_km1f : !pme_real
       %bx_f_ki = arith.index_cast %n : index to i64
-      %bx_f_kf = arith.sitofp %bx_f_ki : i64 to f64
-      %bx_f_last = memref.load %wx[%bx_f_km2] : memref<8xf64>
-      %bx_f_dw = arith.mulf %bx_f_div, %px_w : f64
-      %bx_f_top = arith.mulf %bx_f_dw, %bx_f_last : f64
-      memref.store %bx_f_top, %wx[%bx_f_km1] : memref<8xf64>
+      %bx_f_kf = arith.sitofp %bx_f_ki : i64 to !pme_real
+      %bx_f_last = memref.load %wx[%bx_f_km2] : memref<8x!pme_real>
+      %bx_f_dw = arith.mulf %bx_f_div, %px_wr : !pme_real
+      %bx_f_top = arith.mulf %bx_f_dw, %bx_f_last : !pme_real
+      memref.store %bx_f_top, %wx[%bx_f_km1] : memref<8x!pme_real>
       scf.for %bx_f_j = %bx_c1 to %bx_f_km1 step %bx_c1 {
         %bx_f_ji = arith.index_cast %bx_f_j : index to i64
-        %bx_f_jf = arith.sitofp %bx_f_ji : i64 to f64
+        %bx_f_jf = arith.sitofp %bx_f_ji : i64 to !pme_real
         %bx_f_at = arith.subi %bx_f_km1, %bx_f_j : index
         %bx_f_below = arith.subi %bx_f_at, %bx_c1 : index
-        %bx_f_lo = memref.load %wx[%bx_f_below] : memref<8xf64>
-        %bx_f_hi = memref.load %wx[%bx_f_at] : memref<8xf64>
-        %bx_f_wj = arith.addf %px_w, %bx_f_jf : f64
-        %bx_f_kj = arith.subf %bx_f_kf, %bx_f_jf : f64
-        %bx_f_kjw = arith.subf %bx_f_kj, %px_w : f64
-        %bx_f_t1 = arith.mulf %bx_f_wj, %bx_f_lo : f64
-        %bx_f_t2 = arith.mulf %bx_f_kjw, %bx_f_hi : f64
-        %bx_f_sum = arith.addf %bx_f_t1, %bx_f_t2 : f64
-        %bx_f_value = arith.mulf %bx_f_div, %bx_f_sum : f64
-        memref.store %bx_f_value, %wx[%bx_f_at] : memref<8xf64>
+        %bx_f_lo = memref.load %wx[%bx_f_below] : memref<8x!pme_real>
+        %bx_f_hi = memref.load %wx[%bx_f_at] : memref<8x!pme_real>
+        %bx_f_wj = arith.addf %px_wr, %bx_f_jf : !pme_real
+        %bx_f_kj = arith.subf %bx_f_kf, %bx_f_jf : !pme_real
+        %bx_f_kjw = arith.subf %bx_f_kj, %px_wr : !pme_real
+        %bx_f_t1 = arith.mulf %bx_f_wj, %bx_f_lo : !pme_real
+        %bx_f_t2 = arith.mulf %bx_f_kjw, %bx_f_hi : !pme_real
+        %bx_f_sum = arith.addf %bx_f_t1, %bx_f_t2 : !pme_real
+        %bx_f_value = arith.mulf %bx_f_div, %bx_f_sum : !pme_real
+        memref.store %bx_f_value, %wx[%bx_f_at] : memref<8x!pme_real>
       }
-      %bx_f_first = memref.load %wx[%bx_c0] : memref<8xf64>
-      %bx_f_omw = arith.subf %bx_one, %px_w : f64
-      %bx_f_d0 = arith.mulf %bx_f_div, %bx_f_omw : f64
-      %bx_f_bottom = arith.mulf %bx_f_d0, %bx_f_first : f64
-      memref.store %bx_f_bottom, %wx[%bx_c0] : memref<8xf64>
+      %bx_f_first = memref.load %wx[%bx_c0] : memref<8x!pme_real>
+      %bx_f_omw = arith.subf %bx_one, %px_wr : !pme_real
+      %bx_f_d0 = arith.mulf %bx_f_div, %bx_f_omw : !pme_real
+      %bx_f_bottom = arith.mulf %bx_f_d0, %bx_f_first : !pme_real
+      memref.store %bx_f_bottom, %wx[%bx_c0] : memref<8x!pme_real>
       %py_s = arith.divf %yi, %ly : f64
       %py_fs = math.floor %py_s : f64
       %py_frac = arith.subf %py_s, %py_fs : f64
@@ -899,95 +923,96 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %py_bkn = arith.subi %py_bk, %n : index
       %py_c1p = arith.constant 1 : index
       %py_start = arith.addi %py_bkn, %py_c1p : index
+      %py_wr = PME_F64_TO_REAL %py_w : f64 to !pme_real
       %by_c0 = arith.constant 0 : index
       %by_c1 = arith.constant 1 : index
       %by_c2 = arith.constant 2 : index
       %by_c3 = arith.constant 3 : index
       %by_c8 = arith.constant 8 : index
-      %by_zero = arith.constant 0.0 : f64
-      %by_one = arith.constant 1.0 : f64
+      %by_zero = arith.constant 0.0 : !pme_real
+      %by_one = arith.constant 1.0 : !pme_real
       scf.for %by_j = %by_c0 to %by_c8 step %by_c1 {
-        memref.store %by_zero, %wy[%by_j] : memref<8xf64>
+        memref.store %by_zero, %wy[%by_j] : memref<8x!pme_real>
       }
-      %by_omw = arith.subf %by_one, %py_w : f64
-      memref.store %by_omw, %wy[%by_c0] : memref<8xf64>
-      memref.store %py_w, %wy[%by_c1] : memref<8xf64>
+      %by_omw = arith.subf %by_one, %py_wr : !pme_real
+      memref.store %by_omw, %wy[%by_c0] : memref<8x!pme_real>
+      memref.store %py_wr, %wy[%by_c1] : memref<8x!pme_real>
       scf.for %by_k = %by_c3 to %n step %by_c1 {
       %by_r_km1 = arith.subi %by_k, %by_c1 : index
       %by_r_km2 = arith.subi %by_k, %by_c2 : index
       %by_r_km1i = arith.index_cast %by_r_km1 : index to i64
-      %by_r_km1f = arith.sitofp %by_r_km1i : i64 to f64
-      %by_r_div = arith.divf %by_one, %by_r_km1f : f64
+      %by_r_km1f = arith.sitofp %by_r_km1i : i64 to !pme_real
+      %by_r_div = arith.divf %by_one, %by_r_km1f : !pme_real
       %by_r_ki = arith.index_cast %by_k : index to i64
-      %by_r_kf = arith.sitofp %by_r_ki : i64 to f64
-      %by_r_last = memref.load %wy[%by_r_km2] : memref<8xf64>
-      %by_r_dw = arith.mulf %by_r_div, %py_w : f64
-      %by_r_top = arith.mulf %by_r_dw, %by_r_last : f64
-      memref.store %by_r_top, %wy[%by_r_km1] : memref<8xf64>
+      %by_r_kf = arith.sitofp %by_r_ki : i64 to !pme_real
+      %by_r_last = memref.load %wy[%by_r_km2] : memref<8x!pme_real>
+      %by_r_dw = arith.mulf %by_r_div, %py_wr : !pme_real
+      %by_r_top = arith.mulf %by_r_dw, %by_r_last : !pme_real
+      memref.store %by_r_top, %wy[%by_r_km1] : memref<8x!pme_real>
       scf.for %by_r_j = %by_c1 to %by_r_km1 step %by_c1 {
         %by_r_ji = arith.index_cast %by_r_j : index to i64
-        %by_r_jf = arith.sitofp %by_r_ji : i64 to f64
+        %by_r_jf = arith.sitofp %by_r_ji : i64 to !pme_real
         %by_r_at = arith.subi %by_r_km1, %by_r_j : index
         %by_r_below = arith.subi %by_r_at, %by_c1 : index
-        %by_r_lo = memref.load %wy[%by_r_below] : memref<8xf64>
-        %by_r_hi = memref.load %wy[%by_r_at] : memref<8xf64>
-        %by_r_wj = arith.addf %py_w, %by_r_jf : f64
-        %by_r_kj = arith.subf %by_r_kf, %by_r_jf : f64
-        %by_r_kjw = arith.subf %by_r_kj, %py_w : f64
-        %by_r_t1 = arith.mulf %by_r_wj, %by_r_lo : f64
-        %by_r_t2 = arith.mulf %by_r_kjw, %by_r_hi : f64
-        %by_r_sum = arith.addf %by_r_t1, %by_r_t2 : f64
-        %by_r_value = arith.mulf %by_r_div, %by_r_sum : f64
-        memref.store %by_r_value, %wy[%by_r_at] : memref<8xf64>
+        %by_r_lo = memref.load %wy[%by_r_below] : memref<8x!pme_real>
+        %by_r_hi = memref.load %wy[%by_r_at] : memref<8x!pme_real>
+        %by_r_wj = arith.addf %py_wr, %by_r_jf : !pme_real
+        %by_r_kj = arith.subf %by_r_kf, %by_r_jf : !pme_real
+        %by_r_kjw = arith.subf %by_r_kj, %py_wr : !pme_real
+        %by_r_t1 = arith.mulf %by_r_wj, %by_r_lo : !pme_real
+        %by_r_t2 = arith.mulf %by_r_kjw, %by_r_hi : !pme_real
+        %by_r_sum = arith.addf %by_r_t1, %by_r_t2 : !pme_real
+        %by_r_value = arith.mulf %by_r_div, %by_r_sum : !pme_real
+        memref.store %by_r_value, %wy[%by_r_at] : memref<8x!pme_real>
       }
-      %by_r_first = memref.load %wy[%by_c0] : memref<8xf64>
-      %by_r_omw = arith.subf %by_one, %py_w : f64
-      %by_r_d0 = arith.mulf %by_r_div, %by_r_omw : f64
-      %by_r_bottom = arith.mulf %by_r_d0, %by_r_first : f64
-      memref.store %by_r_bottom, %wy[%by_c0] : memref<8xf64>
+      %by_r_first = memref.load %wy[%by_c0] : memref<8x!pme_real>
+      %by_r_omw = arith.subf %by_one, %py_wr : !pme_real
+      %by_r_d0 = arith.mulf %by_r_div, %by_r_omw : !pme_real
+      %by_r_bottom = arith.mulf %by_r_d0, %by_r_first : !pme_real
+      memref.store %by_r_bottom, %wy[%by_c0] : memref<8x!pme_real>
       }
-      %by_v0 = memref.load %wy[%by_c0] : memref<8xf64>
-      %by_s0 = arith.negf %by_v0 : f64
-      memref.store %by_s0, %dy[%by_c0] : memref<8xf64>
+      %by_v0 = memref.load %wy[%by_c0] : memref<8x!pme_real>
+      %by_s0 = arith.negf %by_v0 : !pme_real
+      memref.store %by_s0, %dy[%by_c0] : memref<8x!pme_real>
       scf.for %by_js = %by_c1 to %n step %by_c1 {
         %by_jm1 = arith.subi %by_js, %by_c1 : index
-        %by_before = memref.load %wy[%by_jm1] : memref<8xf64>
-        %by_here = memref.load %wy[%by_js] : memref<8xf64>
-        %by_slope = arith.subf %by_before, %by_here : f64
-        memref.store %by_slope, %dy[%by_js] : memref<8xf64>
+        %by_before = memref.load %wy[%by_jm1] : memref<8x!pme_real>
+        %by_here = memref.load %wy[%by_js] : memref<8x!pme_real>
+        %by_slope = arith.subf %by_before, %by_here : !pme_real
+        memref.store %by_slope, %dy[%by_js] : memref<8x!pme_real>
       }
       %by_f_km1 = arith.subi %n, %by_c1 : index
       %by_f_km2 = arith.subi %n, %by_c2 : index
       %by_f_km1i = arith.index_cast %by_f_km1 : index to i64
-      %by_f_km1f = arith.sitofp %by_f_km1i : i64 to f64
-      %by_f_div = arith.divf %by_one, %by_f_km1f : f64
+      %by_f_km1f = arith.sitofp %by_f_km1i : i64 to !pme_real
+      %by_f_div = arith.divf %by_one, %by_f_km1f : !pme_real
       %by_f_ki = arith.index_cast %n : index to i64
-      %by_f_kf = arith.sitofp %by_f_ki : i64 to f64
-      %by_f_last = memref.load %wy[%by_f_km2] : memref<8xf64>
-      %by_f_dw = arith.mulf %by_f_div, %py_w : f64
-      %by_f_top = arith.mulf %by_f_dw, %by_f_last : f64
-      memref.store %by_f_top, %wy[%by_f_km1] : memref<8xf64>
+      %by_f_kf = arith.sitofp %by_f_ki : i64 to !pme_real
+      %by_f_last = memref.load %wy[%by_f_km2] : memref<8x!pme_real>
+      %by_f_dw = arith.mulf %by_f_div, %py_wr : !pme_real
+      %by_f_top = arith.mulf %by_f_dw, %by_f_last : !pme_real
+      memref.store %by_f_top, %wy[%by_f_km1] : memref<8x!pme_real>
       scf.for %by_f_j = %by_c1 to %by_f_km1 step %by_c1 {
         %by_f_ji = arith.index_cast %by_f_j : index to i64
-        %by_f_jf = arith.sitofp %by_f_ji : i64 to f64
+        %by_f_jf = arith.sitofp %by_f_ji : i64 to !pme_real
         %by_f_at = arith.subi %by_f_km1, %by_f_j : index
         %by_f_below = arith.subi %by_f_at, %by_c1 : index
-        %by_f_lo = memref.load %wy[%by_f_below] : memref<8xf64>
-        %by_f_hi = memref.load %wy[%by_f_at] : memref<8xf64>
-        %by_f_wj = arith.addf %py_w, %by_f_jf : f64
-        %by_f_kj = arith.subf %by_f_kf, %by_f_jf : f64
-        %by_f_kjw = arith.subf %by_f_kj, %py_w : f64
-        %by_f_t1 = arith.mulf %by_f_wj, %by_f_lo : f64
-        %by_f_t2 = arith.mulf %by_f_kjw, %by_f_hi : f64
-        %by_f_sum = arith.addf %by_f_t1, %by_f_t2 : f64
-        %by_f_value = arith.mulf %by_f_div, %by_f_sum : f64
-        memref.store %by_f_value, %wy[%by_f_at] : memref<8xf64>
+        %by_f_lo = memref.load %wy[%by_f_below] : memref<8x!pme_real>
+        %by_f_hi = memref.load %wy[%by_f_at] : memref<8x!pme_real>
+        %by_f_wj = arith.addf %py_wr, %by_f_jf : !pme_real
+        %by_f_kj = arith.subf %by_f_kf, %by_f_jf : !pme_real
+        %by_f_kjw = arith.subf %by_f_kj, %py_wr : !pme_real
+        %by_f_t1 = arith.mulf %by_f_wj, %by_f_lo : !pme_real
+        %by_f_t2 = arith.mulf %by_f_kjw, %by_f_hi : !pme_real
+        %by_f_sum = arith.addf %by_f_t1, %by_f_t2 : !pme_real
+        %by_f_value = arith.mulf %by_f_div, %by_f_sum : !pme_real
+        memref.store %by_f_value, %wy[%by_f_at] : memref<8x!pme_real>
       }
-      %by_f_first = memref.load %wy[%by_c0] : memref<8xf64>
-      %by_f_omw = arith.subf %by_one, %py_w : f64
-      %by_f_d0 = arith.mulf %by_f_div, %by_f_omw : f64
-      %by_f_bottom = arith.mulf %by_f_d0, %by_f_first : f64
-      memref.store %by_f_bottom, %wy[%by_c0] : memref<8xf64>
+      %by_f_first = memref.load %wy[%by_c0] : memref<8x!pme_real>
+      %by_f_omw = arith.subf %by_one, %py_wr : !pme_real
+      %by_f_d0 = arith.mulf %by_f_div, %by_f_omw : !pme_real
+      %by_f_bottom = arith.mulf %by_f_d0, %by_f_first : !pme_real
+      memref.store %by_f_bottom, %wy[%by_c0] : memref<8x!pme_real>
       %pz_s = arith.divf %zi, %lz : f64
       %pz_fs = math.floor %pz_s : f64
       %pz_frac = arith.subf %pz_s, %pz_fs : f64
@@ -1002,149 +1027,150 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %pz_bkn = arith.subi %pz_bk, %n : index
       %pz_c1p = arith.constant 1 : index
       %pz_start = arith.addi %pz_bkn, %pz_c1p : index
+      %pz_wr = PME_F64_TO_REAL %pz_w : f64 to !pme_real
       %bz_c0 = arith.constant 0 : index
       %bz_c1 = arith.constant 1 : index
       %bz_c2 = arith.constant 2 : index
       %bz_c3 = arith.constant 3 : index
       %bz_c8 = arith.constant 8 : index
-      %bz_zero = arith.constant 0.0 : f64
-      %bz_one = arith.constant 1.0 : f64
+      %bz_zero = arith.constant 0.0 : !pme_real
+      %bz_one = arith.constant 1.0 : !pme_real
       scf.for %bz_j = %bz_c0 to %bz_c8 step %bz_c1 {
-        memref.store %bz_zero, %wz[%bz_j] : memref<8xf64>
+        memref.store %bz_zero, %wz[%bz_j] : memref<8x!pme_real>
       }
-      %bz_omw = arith.subf %bz_one, %pz_w : f64
-      memref.store %bz_omw, %wz[%bz_c0] : memref<8xf64>
-      memref.store %pz_w, %wz[%bz_c1] : memref<8xf64>
+      %bz_omw = arith.subf %bz_one, %pz_wr : !pme_real
+      memref.store %bz_omw, %wz[%bz_c0] : memref<8x!pme_real>
+      memref.store %pz_wr, %wz[%bz_c1] : memref<8x!pme_real>
       scf.for %bz_k = %bz_c3 to %n step %bz_c1 {
       %bz_r_km1 = arith.subi %bz_k, %bz_c1 : index
       %bz_r_km2 = arith.subi %bz_k, %bz_c2 : index
       %bz_r_km1i = arith.index_cast %bz_r_km1 : index to i64
-      %bz_r_km1f = arith.sitofp %bz_r_km1i : i64 to f64
-      %bz_r_div = arith.divf %bz_one, %bz_r_km1f : f64
+      %bz_r_km1f = arith.sitofp %bz_r_km1i : i64 to !pme_real
+      %bz_r_div = arith.divf %bz_one, %bz_r_km1f : !pme_real
       %bz_r_ki = arith.index_cast %bz_k : index to i64
-      %bz_r_kf = arith.sitofp %bz_r_ki : i64 to f64
-      %bz_r_last = memref.load %wz[%bz_r_km2] : memref<8xf64>
-      %bz_r_dw = arith.mulf %bz_r_div, %pz_w : f64
-      %bz_r_top = arith.mulf %bz_r_dw, %bz_r_last : f64
-      memref.store %bz_r_top, %wz[%bz_r_km1] : memref<8xf64>
+      %bz_r_kf = arith.sitofp %bz_r_ki : i64 to !pme_real
+      %bz_r_last = memref.load %wz[%bz_r_km2] : memref<8x!pme_real>
+      %bz_r_dw = arith.mulf %bz_r_div, %pz_wr : !pme_real
+      %bz_r_top = arith.mulf %bz_r_dw, %bz_r_last : !pme_real
+      memref.store %bz_r_top, %wz[%bz_r_km1] : memref<8x!pme_real>
       scf.for %bz_r_j = %bz_c1 to %bz_r_km1 step %bz_c1 {
         %bz_r_ji = arith.index_cast %bz_r_j : index to i64
-        %bz_r_jf = arith.sitofp %bz_r_ji : i64 to f64
+        %bz_r_jf = arith.sitofp %bz_r_ji : i64 to !pme_real
         %bz_r_at = arith.subi %bz_r_km1, %bz_r_j : index
         %bz_r_below = arith.subi %bz_r_at, %bz_c1 : index
-        %bz_r_lo = memref.load %wz[%bz_r_below] : memref<8xf64>
-        %bz_r_hi = memref.load %wz[%bz_r_at] : memref<8xf64>
-        %bz_r_wj = arith.addf %pz_w, %bz_r_jf : f64
-        %bz_r_kj = arith.subf %bz_r_kf, %bz_r_jf : f64
-        %bz_r_kjw = arith.subf %bz_r_kj, %pz_w : f64
-        %bz_r_t1 = arith.mulf %bz_r_wj, %bz_r_lo : f64
-        %bz_r_t2 = arith.mulf %bz_r_kjw, %bz_r_hi : f64
-        %bz_r_sum = arith.addf %bz_r_t1, %bz_r_t2 : f64
-        %bz_r_value = arith.mulf %bz_r_div, %bz_r_sum : f64
-        memref.store %bz_r_value, %wz[%bz_r_at] : memref<8xf64>
+        %bz_r_lo = memref.load %wz[%bz_r_below] : memref<8x!pme_real>
+        %bz_r_hi = memref.load %wz[%bz_r_at] : memref<8x!pme_real>
+        %bz_r_wj = arith.addf %pz_wr, %bz_r_jf : !pme_real
+        %bz_r_kj = arith.subf %bz_r_kf, %bz_r_jf : !pme_real
+        %bz_r_kjw = arith.subf %bz_r_kj, %pz_wr : !pme_real
+        %bz_r_t1 = arith.mulf %bz_r_wj, %bz_r_lo : !pme_real
+        %bz_r_t2 = arith.mulf %bz_r_kjw, %bz_r_hi : !pme_real
+        %bz_r_sum = arith.addf %bz_r_t1, %bz_r_t2 : !pme_real
+        %bz_r_value = arith.mulf %bz_r_div, %bz_r_sum : !pme_real
+        memref.store %bz_r_value, %wz[%bz_r_at] : memref<8x!pme_real>
       }
-      %bz_r_first = memref.load %wz[%bz_c0] : memref<8xf64>
-      %bz_r_omw = arith.subf %bz_one, %pz_w : f64
-      %bz_r_d0 = arith.mulf %bz_r_div, %bz_r_omw : f64
-      %bz_r_bottom = arith.mulf %bz_r_d0, %bz_r_first : f64
-      memref.store %bz_r_bottom, %wz[%bz_c0] : memref<8xf64>
+      %bz_r_first = memref.load %wz[%bz_c0] : memref<8x!pme_real>
+      %bz_r_omw = arith.subf %bz_one, %pz_wr : !pme_real
+      %bz_r_d0 = arith.mulf %bz_r_div, %bz_r_omw : !pme_real
+      %bz_r_bottom = arith.mulf %bz_r_d0, %bz_r_first : !pme_real
+      memref.store %bz_r_bottom, %wz[%bz_c0] : memref<8x!pme_real>
       }
-      %bz_v0 = memref.load %wz[%bz_c0] : memref<8xf64>
-      %bz_s0 = arith.negf %bz_v0 : f64
-      memref.store %bz_s0, %dz[%bz_c0] : memref<8xf64>
+      %bz_v0 = memref.load %wz[%bz_c0] : memref<8x!pme_real>
+      %bz_s0 = arith.negf %bz_v0 : !pme_real
+      memref.store %bz_s0, %dz[%bz_c0] : memref<8x!pme_real>
       scf.for %bz_js = %bz_c1 to %n step %bz_c1 {
         %bz_jm1 = arith.subi %bz_js, %bz_c1 : index
-        %bz_before = memref.load %wz[%bz_jm1] : memref<8xf64>
-        %bz_here = memref.load %wz[%bz_js] : memref<8xf64>
-        %bz_slope = arith.subf %bz_before, %bz_here : f64
-        memref.store %bz_slope, %dz[%bz_js] : memref<8xf64>
+        %bz_before = memref.load %wz[%bz_jm1] : memref<8x!pme_real>
+        %bz_here = memref.load %wz[%bz_js] : memref<8x!pme_real>
+        %bz_slope = arith.subf %bz_before, %bz_here : !pme_real
+        memref.store %bz_slope, %dz[%bz_js] : memref<8x!pme_real>
       }
       %bz_f_km1 = arith.subi %n, %bz_c1 : index
       %bz_f_km2 = arith.subi %n, %bz_c2 : index
       %bz_f_km1i = arith.index_cast %bz_f_km1 : index to i64
-      %bz_f_km1f = arith.sitofp %bz_f_km1i : i64 to f64
-      %bz_f_div = arith.divf %bz_one, %bz_f_km1f : f64
+      %bz_f_km1f = arith.sitofp %bz_f_km1i : i64 to !pme_real
+      %bz_f_div = arith.divf %bz_one, %bz_f_km1f : !pme_real
       %bz_f_ki = arith.index_cast %n : index to i64
-      %bz_f_kf = arith.sitofp %bz_f_ki : i64 to f64
-      %bz_f_last = memref.load %wz[%bz_f_km2] : memref<8xf64>
-      %bz_f_dw = arith.mulf %bz_f_div, %pz_w : f64
-      %bz_f_top = arith.mulf %bz_f_dw, %bz_f_last : f64
-      memref.store %bz_f_top, %wz[%bz_f_km1] : memref<8xf64>
+      %bz_f_kf = arith.sitofp %bz_f_ki : i64 to !pme_real
+      %bz_f_last = memref.load %wz[%bz_f_km2] : memref<8x!pme_real>
+      %bz_f_dw = arith.mulf %bz_f_div, %pz_wr : !pme_real
+      %bz_f_top = arith.mulf %bz_f_dw, %bz_f_last : !pme_real
+      memref.store %bz_f_top, %wz[%bz_f_km1] : memref<8x!pme_real>
       scf.for %bz_f_j = %bz_c1 to %bz_f_km1 step %bz_c1 {
         %bz_f_ji = arith.index_cast %bz_f_j : index to i64
-        %bz_f_jf = arith.sitofp %bz_f_ji : i64 to f64
+        %bz_f_jf = arith.sitofp %bz_f_ji : i64 to !pme_real
         %bz_f_at = arith.subi %bz_f_km1, %bz_f_j : index
         %bz_f_below = arith.subi %bz_f_at, %bz_c1 : index
-        %bz_f_lo = memref.load %wz[%bz_f_below] : memref<8xf64>
-        %bz_f_hi = memref.load %wz[%bz_f_at] : memref<8xf64>
-        %bz_f_wj = arith.addf %pz_w, %bz_f_jf : f64
-        %bz_f_kj = arith.subf %bz_f_kf, %bz_f_jf : f64
-        %bz_f_kjw = arith.subf %bz_f_kj, %pz_w : f64
-        %bz_f_t1 = arith.mulf %bz_f_wj, %bz_f_lo : f64
-        %bz_f_t2 = arith.mulf %bz_f_kjw, %bz_f_hi : f64
-        %bz_f_sum = arith.addf %bz_f_t1, %bz_f_t2 : f64
-        %bz_f_value = arith.mulf %bz_f_div, %bz_f_sum : f64
-        memref.store %bz_f_value, %wz[%bz_f_at] : memref<8xf64>
+        %bz_f_lo = memref.load %wz[%bz_f_below] : memref<8x!pme_real>
+        %bz_f_hi = memref.load %wz[%bz_f_at] : memref<8x!pme_real>
+        %bz_f_wj = arith.addf %pz_wr, %bz_f_jf : !pme_real
+        %bz_f_kj = arith.subf %bz_f_kf, %bz_f_jf : !pme_real
+        %bz_f_kjw = arith.subf %bz_f_kj, %pz_wr : !pme_real
+        %bz_f_t1 = arith.mulf %bz_f_wj, %bz_f_lo : !pme_real
+        %bz_f_t2 = arith.mulf %bz_f_kjw, %bz_f_hi : !pme_real
+        %bz_f_sum = arith.addf %bz_f_t1, %bz_f_t2 : !pme_real
+        %bz_f_value = arith.mulf %bz_f_div, %bz_f_sum : !pme_real
+        memref.store %bz_f_value, %wz[%bz_f_at] : memref<8x!pme_real>
       }
-      %bz_f_first = memref.load %wz[%bz_c0] : memref<8xf64>
-      %bz_f_omw = arith.subf %bz_one, %pz_w : f64
-      %bz_f_d0 = arith.mulf %bz_f_div, %bz_f_omw : f64
-      %bz_f_bottom = arith.mulf %bz_f_d0, %bz_f_first : f64
-      memref.store %bz_f_bottom, %wz[%bz_c0] : memref<8xf64>
-      %gzero = arith.constant 0.0 : f64
+      %bz_f_first = memref.load %wz[%bz_c0] : memref<8x!pme_real>
+      %bz_f_omw = arith.subf %bz_one, %pz_wr : !pme_real
+      %bz_f_d0 = arith.mulf %bz_f_div, %bz_f_omw : !pme_real
+      %bz_f_bottom = arith.mulf %bz_f_d0, %bz_f_first : !pme_real
+      memref.store %bz_f_bottom, %wz[%bz_c0] : memref<8x!pme_real>
+      %gzero = arith.constant 0.0 : !pme_real
       %j0 = arith.constant 0 : index
       %j1c = arith.constant 1 : index
       %sumx, %sumy, %sumz = scf.for %j1 = %j0 to %n step %j1c
-          iter_args(%ax = %gzero, %ay = %gzero, %az = %gzero) -> (f64, f64, f64) {
+          iter_args(%ax = %gzero, %ay = %gzero, %az = %gzero) -> (!pme_real, !pme_real, !pme_real) {
         %g1s = arith.addi %px_start, %j1 : index
         %g1 = arith.remui %g1s, %k1 : index
-        %w1 = memref.load %wx[%j1] : memref<8xf64>
-        %d1 = memref.load %dx[%j1] : memref<8xf64>
+        %w1 = memref.load %wx[%j1] : memref<8x!pme_real>
+        %d1 = memref.load %dx[%j1] : memref<8x!pme_real>
         %bx2, %by2, %bz2 = scf.for %j2 = %j0 to %n step %j1c
-            iter_args(%cx = %ax, %cy = %ay, %cz = %az) -> (f64, f64, f64) {
+            iter_args(%cx = %ax, %cy = %ay, %cz = %az) -> (!pme_real, !pme_real, !pme_real) {
           %g2s = arith.addi %py_start, %j2 : index
           %g2 = arith.remui %g2s, %k2 : index
-          %w2 = memref.load %wy[%j2] : memref<8xf64>
-          %d2 = memref.load %dy[%j2] : memref<8xf64>
+          %w2 = memref.load %wy[%j2] : memref<8x!pme_real>
+          %d2 = memref.load %dy[%j2] : memref<8x!pme_real>
           %row1 = arith.muli %g1, %k2 : index
           %row = arith.addi %row1, %g2 : index
           %gbase = arith.muli %row, %k3 : index
-          %d1w2 = arith.mulf %d1, %w2 : f64
-          %w1d2 = arith.mulf %w1, %d2 : f64
-          %w1w2 = arith.mulf %w1, %w2 : f64
+          %d1w2 = arith.mulf %d1, %w2 : !pme_real
+          %w1d2 = arith.mulf %w1, %d2 : !pme_real
+          %w1w2 = arith.mulf %w1, %w2 : !pme_real
           %ex, %ey, %ez = scf.for %j3 = %j0 to %n step %j1c
-              iter_args(%tx3 = %cx, %ty3 = %cy, %tz3 = %cz) -> (f64, f64, f64) {
+              iter_args(%tx3 = %cx, %ty3 = %cy, %tz3 = %cz) -> (!pme_real, !pme_real, !pme_real) {
             %g3s = arith.addi %pz_start, %j3 : index
             %g3 = arith.remui %g3s, %k3 : index
-            %w3 = memref.load %wz[%j3] : memref<8xf64>
-            %d3 = memref.load %dz[%j3] : memref<8xf64>
+            %w3 = memref.load %wz[%j3] : memref<8x!pme_real>
+            %d3 = memref.load %dz[%j3] : memref<8x!pme_real>
             %at = arith.addi %gbase, %g3 : index
-            %p = memref.load %phi[%at] : memref<?xf64, 1>
-            %px = arith.mulf %d1w2, %w3 : f64
-            %py = arith.mulf %w1d2, %w3 : f64
-            %pz = arith.mulf %w1w2, %d3 : f64
-            %vx = arith.mulf %p, %px : f64
-            %vy = arith.mulf %p, %py : f64
-            %vz = arith.mulf %p, %pz : f64
-            %nx = arith.addf %tx3, %vx : f64
-            %ny = arith.addf %ty3, %vy : f64
-            %nz = arith.addf %tz3, %vz : f64
-            scf.yield %nx, %ny, %nz : f64, f64, f64
+            %p = memref.load %phi[%at] : memref<?x!pme_real, 1>
+            %px = arith.mulf %d1w2, %w3 : !pme_real
+            %py = arith.mulf %w1d2, %w3 : !pme_real
+            %pz = arith.mulf %w1w2, %d3 : !pme_real
+            %vx = arith.mulf %p, %px : !pme_real
+            %vy = arith.mulf %p, %py : !pme_real
+            %vz = arith.mulf %p, %pz : !pme_real
+            %nx = arith.addf %tx3, %vx : !pme_real
+            %ny = arith.addf %ty3, %vy : !pme_real
+            %nz = arith.addf %tz3, %vz : !pme_real
+            scf.yield %nx, %ny, %nz : !pme_real, !pme_real, !pme_real
           }
-          scf.yield %ex, %ey, %ez : f64, f64, f64
+          scf.yield %ex, %ey, %ez : !pme_real, !pme_real, !pme_real
         }
-        scf.yield %bx2, %by2, %bz2 : f64, f64, f64
+        scf.yield %bx2, %by2, %bz2 : !pme_real, !pme_real, !pme_real
       }
-      %mq = arith.negf %qi : f64
-      %sxq = arith.mulf %mq, %rx : f64
-      %syq = arith.mulf %mq, %ry : f64
-      %szq = arith.mulf %mq, %rz : f64
-      %fx64 = arith.mulf %sxq, %sumx : f64
-      %fy64 = arith.mulf %syq, %sumy : f64
-      %fz64 = arith.mulf %szq, %sumz : f64
-      %fxs = PME_NARROW_FRC %fx64 : f64 to !pme_frc
-      %fys = PME_NARROW_FRC %fy64 : f64 to !pme_frc
-      %fzs = PME_NARROW_FRC %fz64 : f64 to !pme_frc
+      %mq = arith.negf %qi : !pme_real
+      %sxq = arith.mulf %mq, %rxr : !pme_real
+      %syq = arith.mulf %mq, %ryr : !pme_real
+      %szq = arith.mulf %mq, %rzr : !pme_real
+      %fx64 = arith.mulf %sxq, %sumx : !pme_real
+      %fy64 = arith.mulf %syq, %sumy : !pme_real
+      %fz64 = arith.mulf %szq, %sumz : !pme_real
+      %fxs = PME_REAL_TO_FRC %fx64 : !pme_real to !pme_frc
+      %fys = PME_REAL_TO_FRC %fy64 : !pme_real to !pme_frc
+      %fzs = PME_REAL_TO_FRC %fz64 : !pme_real to !pme_frc
       memref.store %fxs, %f[%i, %i0] : memref<?x3x!pme_frc, 1>
       memref.store %fys, %f[%i, %i1] : memref<?x3x!pme_frc, 1>
       memref.store %fzs, %f[%i, %i2] : memref<?x3x!pme_frc, 1>
