@@ -45,12 +45,14 @@ MDIR_BENCH_DIR=~/opt/benchmarks/amber CUDA_VISIBLE_DEVICES=0 \
    with cells of half the reach or wider; a block per cell, which reads
    each run once for all the particles of the cell, is no faster. The
    excluded pairs, entered in the search, cost about 50 µs.
-4. **In the app** the warp search with the excluded pairs takes 612 µs a
-   build (the prototype: 440), and the kernel that marked the excluded
-   pairs (180 µs) is gone; JAC went from 374 to 381 ns/day, and the best
-   `pairlist_distance` stays 10 Å (`scan.png`; its "before" curve was
-   measured before D81 and D83, so the gap between the curves is not the
-   search alone).
+4. **In the app** the warp search with the excluded pairs took 612 µs a
+   build (the prototype: 440) while it counted in `index`, 64 bits on the
+   device, which took more than 64 registers and spilled; counting in
+   `i32`, with the partners of the excluded pairs in registers, it takes
+   430 µs. The kernel that marked the excluded pairs (180 µs) is gone.
+   JAC went from 374 to 381 and then to 402 ns/day, and the best
+   `pairlist_distance` moved from 10 to 9.5 Å (`scan.png`; its first curve
+   was measured before D81 and D83, so the gap to it is not the search
+   alone).
 
-The gap between the search in the app and in the prototype, and a build
-of 150 µs, are open.
+A build of 150 µs is open: the search is bound by its tests.

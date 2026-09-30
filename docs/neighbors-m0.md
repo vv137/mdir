@@ -178,7 +178,8 @@ the neighbors that the ballot keeps are looked up.
 | A thread per particle, as before (2026-09-30) | 520 in the app, with 180 more for a kernel that marked the excluded pairs with a thread per entry of the matrix |
 | A thread per row of cells of a particle, counted and then filled (the former split search) | Slower on JAC than a thread per particle |
 | A warp per particle, in a prototype | 340 to 390; 440 with the excluded pairs |
-| A warp per particle with the excluded pairs, in the app (now) | 612, and no kernel for the marks |
+| A warp per particle with the excluded pairs, in the app, counting in `index` (64 bits) | 612, and no kernel for the marks: 64 registers and spills |
+| The same, counting in `i32`, the partners of the excluded pairs in registers (now) | 430 (the first build of a run: 653 before), 56 registers and no spills |
 | A block per cell, the runs of cells in shared memory, in a prototype | 425 to 435 |
 
 The block per cell reads a run once for all the particles of the cell,
@@ -192,6 +193,15 @@ step of 32 tests to visit, and its particles one step for every 32
 (`mdrt_gpu_cell_width`). With a thread per particle the cost of a row was
 that of 12 particles, and the cells were a third of the reach; for the
 warp that width took 846 µs on JAC, half the reach 612.
+
+The kernel counts in `i32`: the numbers of the particles, of the cells,
+and of the entries of a row. With `index`, which is 64 bits on the
+device, it needed more than 64 registers and spilled, and took 612 µs
+where a CUDA program of the same search took 440. The partners of the
+excluded pairs of a particle are held one per lane and compared by
+shuffles, and only when a neighbor's number lies between the least and
+the greatest of them; a particle with more than 32 compares the rest in
+memory.
 
 ### 2.6 Plan parameters
 

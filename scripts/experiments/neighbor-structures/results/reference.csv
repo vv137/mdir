@@ -6,7 +6,8 @@ gromacs-2026.3-cuda,all kernels per step,8.05,154,us,same run
 mdir-app,pair kernel per step (alone),10.0,116,us,"nsys, fuse-rows=false pme-stream=false, commit 1ab3f65"
 mdir-app,search kernel per build (thread per particle),10.0,520,us,"nsys, commit 1ab3f65"
 mdir-app,exclusion marks per build (thread per entry),10.0,180,us,"nsys, commit 1ab3f65"
-mdir-app,search kernel per build (warp per particle with exclusions),10.0,612,us,nsys after the change of the search
+mdir-app,search kernel per build (warp per particle with exclusions),10.0,612,us,"nsys, commit ec9eb1f (index arithmetic)"
+mdir-app,search kernel per build (warp per particle with exclusions; i32),10.0,430,us,"nsys, the first build of a 5-step run, i32 arithmetic and partners in registers"
 mdir-app,steps between builds,8.6,3.0,steps,"pairlist_distance scan, 4000 steps, D79 build"
 mdir-app,steps between builds,10.0,9.3,steps,same scan
 mdir-app,steps between builds,12.0,28.4,steps,same scan

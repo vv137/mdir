@@ -91,7 +91,7 @@ fig.savefig(os.path.join(out, "search.png"), dpi=150)
 # 3. The time per step of the loop and the builds, K(R) + B / I(R), from
 # the loop of the prototype and the intervals that the app measured.
 intervals = sorted((float(r["reach"]), float(r["steps_between_builds"]))
-                   for r in scan if r["label"].startswith("after")
+                   for r in scan if r["label"].startswith("warp search in i32")
                    and r["steps_between_builds"]) or sorted(
     (float(r["reach"]), float(r["value"])) for r in reference
     if r["quantity"] == "steps between builds")
@@ -110,8 +110,8 @@ def interval(reach):
 loop = series("pairs", "matrix 16 lanes")
 fig, ax = plt.subplots(figsize=(6.4, 4.4))
 for build, label in [(780, "build 780 µs (search + marks, before)"),
-                     (650, "build 650 µs (warp search, app)"),
-                     (400, "build 400 µs (warp search, prototype)"),
+                     (650, "build 650 µs (warp search, index)"),
+                     (470, "build 470 µs (warp search, i32)"),
                      (150, "build 150 µs")]:
     points = [(r, k + build / interval(r)) for r, k in loop
               if interval(r) is not None]

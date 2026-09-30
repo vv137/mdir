@@ -10,10 +10,17 @@ before (D79 build: thread search + marks; before D81 and D83),10.5,355.8,
 before (D79 build: thread search + marks; before D81 and D83),11.0,346.9,
 before (D79 build: thread search + marks; before D81 and D83),11.5,335.6,
 before (D79 build: thread search + marks; before D81 and D83),12.0,322.3,28.4
-after (warp search; with D81 and D83),8.6,326.3,3.0
-after (warp search; with D81 and D83),9.0,357.0,4.4
-after (warp search; with D81 and D83),9.5,377.0,6.7
-after (warp search; with D81 and D83),10.0,380.0,9.3
-after (warp search; with D81 and D83),10.5,366.8,12.4
-after (warp search; with D81 and D83),11.0,355.8,16.4
-after (warp search; with D81 and D83),12.0,317.2,28.3
+warp search in index (with D81 and D83),8.6,326.3,3.0
+warp search in index (with D81 and D83),9.0,357.0,4.4
+warp search in index (with D81 and D83),9.5,377.0,6.7
+warp search in index (with D81 and D83),10.0,380.0,9.3
+warp search in index (with D81 and D83),10.5,366.8,12.4
+warp search in index (with D81 and D83),11.0,355.8,16.4
+warp search in index (with D81 and D83),12.0,317.2,28.3
+warp search in i32 (with D81 and D83),8.6,367.5,3.0
+warp search in i32 (with D81 and D83),9.0,392.1,4.4
+warp search in i32 (with D81 and D83),9.5,404.8,6.7
+warp search in i32 (with D81 and D83),10.0,401.4,9.3
+warp search in i32 (with D81 and D83),10.5,381.8,12.4
+warp search in i32 (with D81 and D83),11.0,367.6,16.4
+warp search in i32 (with D81 and D83),12.0,324.7,28.3

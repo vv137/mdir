@@ -148,6 +148,29 @@ func.func private @mdrt_gpu_grid(%count: index, %block: index) -> index {
   return %result : index
 }
 
+// The other member of the excluded pair `k` of the particle `i` in the
+// incidence structure `excluded`: the member at place 1 − s, for the place
+// s of the particle. A row holds the number of pairs, then for each its
+// number, the place of the particle, and its two members.
+func.func private @mdrt_gpu_excluded_partner(%excluded: memref<?x?xi32, 1>,
+    %i: index, %k: index) -> i32 {
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %c3 = arith.constant 3 : index
+  %c4 = arith.constant 4 : index
+  %zero = arith.constant 0 : i32
+  %entry0 = arith.muli %k, %c4 : index
+  %entry = arith.addi %entry0, %c1 : index
+  %place_column = arith.addi %entry, %c1 : index
+  %place = memref.load %excluded[%i, %place_column] : memref<?x?xi32, 1>
+  %at_first = arith.cmpi eq, %place, %zero : i32
+  %first = arith.addi %entry, %c2 : index
+  %second = arith.addi %entry, %c3 : index
+  %column = arith.select %at_first, %second, %first : index
+  %partner = memref.load %excluded[%i, %column] : memref<?x?xi32, 1>
+  return %partner : i32
+}
+
 func.func private @mdrt_gpu_build_neighbors_matrix(
     %x: memref<?x3xf64, 1>, %box: vector<3xf64>, %reach: f64,
     %cell_width: f64, %excluded: memref<?x?xi32, 1>,
@@ -500,21 +523,40 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
   // an excluded pair of `excluded` is entered as the particle itself,
   // which the loops over pairs skip. The count goes on beyond the width
   // of the row, without writing.
+  //
+  // The kernel counts in i32, which holds every number of a particle, a
+  // cell, or an entry of a row: with 64-bit indices it needed more
+  // registers than a thread has and spilled.
+  %n32 = arith.index_cast %n : index to i32
+  %nx32 = arith.index_cast %nx : index to i32
+  %ny32 = arith.index_cast %ny : index to i32
+  %nz32 = arith.index_cast %nz : index to i32
+  %span_x32 = arith.index_cast %span_x : index to i32
+  %span_y32 = arith.index_cast %span_y : index to i32
+  %rows32 = arith.index_cast %rows_within : index to i32
+  %first_x32 = arith.index_cast %first_x : index to i32
+  %first_y32 = arith.index_cast %first_y : index to i32
+  %first_z32 = arith.index_cast %first_z : index to i32
+  %row_width32 = arith.index_cast %row_width : index to i32
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_warps, %gy = %c1, %gz = %c1)
              threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
     %base = arith.muli %bx, %block : index
     %t = arith.addi %base, %tx : index
+    %t32 = arith.index_cast %t : index to i32
     %i0 = arith.constant 0 : index
     %i1 = arith.constant 1 : index
     %i2 = arith.constant 2 : index
-    %i3 = arith.constant 3 : index
-    %i4 = arith.constant 4 : index
-    %warp_size = arith.constant 32 : index
-    %p = arith.divui %t, %warp_size : index
-    %lane = arith.remui %t, %warp_size : index
+    %zero32 = arith.constant 0 : i32
+    %one32 = arith.constant 1 : i32
+    %two32 = arith.constant 2 : i32
+    %lanes32 = arith.constant 32 : i32
+    %none32 = arith.constant -1 : i32
+    %p32 = arith.divui %t32, %lanes32 : i32
+    %lane32 = arith.remui %t32, %lanes32 : i32
     // The warps past the last particle stop together.
-    %inside = arith.cmpi ult, %p, %n : index
+    %inside = arith.cmpi ult, %p32, %n32 : i32
     scf.if %inside {
+      %p = arith.index_cast %p32 : i32 to index
       %i32 = memref.load %order[%p] : memref<?xi32, 1>
       %i = arith.index_cast %i32 : i32 to index
       %xi = memref.load %sorted[%p, %i0] : memref<?x3xf32, 1>
@@ -522,72 +564,97 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
       %zi = memref.load %sorted[%p, %i2] : memref<?x3xf32, 1>
 
       %k32 = memref.load %key[%i] : memref<?xi32, 1>
-      %k = arith.index_cast %k32 : i32 to index
-      %cx = arith.remui %k, %nx : index
-      %rest = arith.divui %k, %nx : index
-      %cy = arith.remui %rest, %ny : index
-      %cz = arith.divui %rest, %ny : index
+      %cx = arith.remui %k32, %nx32 : i32
+      %rest = arith.divui %k32, %nx32 : i32
+      %cy = arith.remui %rest, %ny32 : i32
+      %cz = arith.divui %rest, %ny32 : i32
 
       // The excluded pairs of the particle, if the structure has any.
       %rows_excluded = memref.dim %excluded, %i0 : memref<?x?xi32, 1>
       %has_excluded = arith.cmpi ult, %i, %rows_excluded : index
-      %num_excluded = scf.if %has_excluded -> (index) {
+      %num_excluded = scf.if %has_excluded -> (i32) {
         %e32 = memref.load %excluded[%i, %i0] : memref<?x?xi32, 1>
-        %e = arith.index_cast %e32 : i32 to index
-        scf.yield %e : index
+        scf.yield %e32 : i32
       } else {
-        scf.yield %i0 : index
+        scf.yield %zero32 : i32
       }
 
-      %lane32 = arith.index_cast %lane : index to i32
-      %one32 = arith.constant 1 : i32
+      // The other member of each excluded pair of the particle: lane k
+      // holds that of the pair k, for the first 32; a neighbor is compared
+      // with them by shuffles, and with the rest, if any, in memory.
+      %lane_excluded = arith.cmpi ult, %lane32, %num_excluded : i32
+      %my_partner = scf.if %lane_excluded -> (i32) {
+        %lane = arith.index_cast %lane32 : i32 to index
+        %mine = func.call @mdrt_gpu_excluded_partner(%excluded, %i, %lane)
+            : (memref<?x?xi32, 1>, index, index) -> i32
+        scf.yield %mine : i32
+      } else {
+        scf.yield %none32 : i32
+      }
+      %in_registers = arith.minui %num_excluded, %lanes32 : i32
+      // The least and the greatest number of a partner: a neighbor outside
+      // them is not excluded, and needs no comparison. With more than 32
+      // pairs every neighbor is compared.
+      %all_low = arith.constant 0 : i32
+      %all_high = arith.constant 2147483647 : i32
+      %low0, %high0 = scf.for %e = %zero32 to %in_registers step %one32
+          iter_args(%lo = %all_high, %hi = %all_low) -> (i32, i32) : i32 {
+        %partner, %valid = gpu.shuffle idx %my_partner, %e, %lanes32 : i32
+        %lo1 = arith.minsi %lo, %partner : i32
+        %hi1 = arith.maxsi %hi, %partner : i32
+        scf.yield %lo1, %hi1 : i32, i32
+      }
+      %overflow = arith.cmpi ugt, %num_excluded, %lanes32 : i32
+      %low = arith.select %overflow, %all_low, %low0 : i32
+      %high = arith.select %overflow, %all_high, %high0 : i32
+
       %lane_bit = arith.shli %one32, %lane32 : i32
       %below_mask = arith.subi %lane_bit, %one32 : i32
-      %none = arith.constant 0 : index
 
-      %found = scf.for %r = %i0 to %rows_within step %i1
-          iter_args(%count_r = %none) -> (index) {
-        %oz = arith.divui %r, %span_y : index
-        %oy = arith.remui %r, %span_y : index
-        %sz0 = arith.addi %cz, %first_z : index
-        %sz1 = arith.addi %sz0, %oz : index
-        %nz_cell = arith.remui %sz1, %nz : index
-        %sy0 = arith.addi %cy, %first_y : index
-        %sy1 = arith.addi %sy0, %oy : index
-        %ny_cell = arith.remui %sy1, %ny : index
+      %found = scf.for %r = %zero32 to %rows32 step %one32
+          iter_args(%count_r = %zero32) -> (i32) : i32 {
+        %oz = arith.divui %r, %span_y32 : i32
+        %oy = arith.remui %r, %span_y32 : i32
+        %sz0 = arith.addi %cz, %first_z32 : i32
+        %sz1 = arith.addi %sz0, %oz : i32
+        %nz_cell = arith.remui %sz1, %nz32 : i32
+        %sy0 = arith.addi %cy, %first_y32 : i32
+        %sy1 = arith.addi %sy0, %oy : i32
+        %ny_cell = arith.remui %sy1, %ny32 : i32
 
         // The cells of the row are next to one another in the order of
         // the cells, so the warp reads them as one run, or as two where
         // the row goes around the edge of the cell.
-        %zy = arith.muli %nz_cell, %ny : index
-        %row = arith.addi %zy, %ny_cell : index
-        %row_first = arith.muli %row, %nx : index
-        %sx0 = arith.addi %cx, %first_x : index
-        %x_begin = arith.remui %sx0, %nx : index
-        %x_end = arith.addi %x_begin, %span_x : index
-        %around = arith.cmpi ugt, %x_end, %nx : index
-        %x_stop = arith.select %around, %nx, %x_end : index
-        %x_rest0 = arith.subi %x_end, %nx : index
-        %x_rest = arith.select %around, %x_rest0, %i0 : index
+        %zy = arith.muli %nz_cell, %ny32 : i32
+        %row = arith.addi %zy, %ny_cell : i32
+        %row_first = arith.muli %row, %nx32 : i32
+        %sx0 = arith.addi %cx, %first_x32 : i32
+        %x_begin = arith.remui %sx0, %nx32 : i32
+        %x_end = arith.addi %x_begin, %span_x32 : i32
+        %around = arith.cmpi ugt, %x_end, %nx32 : i32
+        %x_stop = arith.select %around, %nx32, %x_end : i32
+        %x_rest0 = arith.subi %x_end, %nx32 : i32
+        %x_rest = arith.select %around, %x_rest0, %zero32 : i32
 
-        %after_x = scf.for %part_x = %i0 to %i2 step %i1
-            iter_args(%count_x = %count_r) -> (index) {
-          %second = arith.cmpi ne, %part_x, %i0 : index
-          %from_x = arith.select %second, %i0, %x_begin : index
-          %to_x = arith.select %second, %x_rest, %x_stop : index
-          %from_cell = arith.addi %row_first, %from_x : index
-          %to_cell = arith.addi %row_first, %to_x : index
-          %begin32 = memref.load %start[%from_cell] : memref<?xi32, 1>
-          %end32 = memref.load %start[%to_cell] : memref<?xi32, 1>
-          %begin = arith.index_cast %begin32 : i32 to index
-          %end = arith.index_cast %end32 : i32 to index
+        %after_x = scf.for %part_x = %zero32 to %two32 step %one32
+            iter_args(%count_x = %count_r) -> (i32) : i32 {
+          %second = arith.cmpi ne, %part_x, %zero32 : i32
+          %from_x = arith.select %second, %zero32, %x_begin : i32
+          %to_x = arith.select %second, %x_rest, %x_stop : i32
+          %from_cell32 = arith.addi %row_first, %from_x : i32
+          %to_cell32 = arith.addi %row_first, %to_x : i32
+          %from_cell = arith.index_cast %from_cell32 : i32 to index
+          %to_cell = arith.index_cast %to_cell32 : i32 to index
+          %begin = memref.load %start[%from_cell] : memref<?xi32, 1>
+          %end = memref.load %start[%to_cell] : memref<?xi32, 1>
+          %last = arith.subi %end, %one32 : i32
 
-          %after_cell = scf.for %q0 = %begin to %end step %warp_size
-              iter_args(%count = %count_x) -> (index) {
-            %q = arith.addi %q0, %lane : index
-            %in_run = arith.cmpi ult, %q, %end : index
-            %last = arith.subi %end, %i1 : index
-            %qc = arith.minui %q, %last : index
+          %after_cell = scf.for %q0 = %begin to %end step %lanes32
+              iter_args(%count = %count_x) -> (i32) : i32 {
+            %q32 = arith.addi %q0, %lane32 : i32
+            %in_run = arith.cmpi slt, %q32, %end : i32
+            %qc32 = arith.minsi %q32, %last : i32
+            %qc = arith.index_cast %qc32 : i32 to index
             %xj = memref.load %sorted[%qc, %i0] : memref<?x3xf32, 1>
             %yj = memref.load %sorted[%qc, %i1] : memref<?x3xf32, 1>
             %zj = memref.load %sorted[%qc, %i2] : memref<?x3xf32, 1>
@@ -617,55 +684,72 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
             %r2 = arith.addf %dxy_2, %dz_2 : f32
 
             %near = arith.cmpf olt, %r2, %limit2 : f32
-            %other = arith.cmpi ne, %p, %q : index
+            %other = arith.cmpi ne, %p32, %q32 : i32
             %near_other = arith.andi %near, %other : i1
             %neighbor = arith.andi %near_other, %in_run : i1
 
             %ballot = gpu.ballot %neighbor : i32
             %before_bits = arith.andi %ballot, %below_mask : i32
-            %before32 = math.ctpop %before_bits : i32
-            %before = arith.index_cast %before32 : i32 to index
-            %slot = arith.addi %count, %before : index
-            %fits = arith.cmpi ult, %slot, %row_width : index
+            %before = math.ctpop %before_bits : i32
+            %slot = arith.addi %count, %before : i32
+            %fits = arith.cmpi ult, %slot, %row_width32 : i32
             %keep = arith.andi %neighbor, %fits : i1
-            scf.if %keep {
-              %j32 = memref.load %order[%q] : memref<?xi32, 1>
-              // The other member of each excluded pair of the particle:
-              // the member at place 1 − s, for the place s of the particle.
-              %is_excluded = scf.for %e = %i0 to %num_excluded step %i1
-                  iter_args(%found_e = %false) -> (i1) {
-                %entry = arith.muli %e, %i4 : index
-                %entry1 = arith.addi %entry, %i1 : index
-                %place_col = arith.addi %entry1, %i1 : index
-                %place = memref.load %excluded[%i, %place_col] : memref<?x?xi32, 1>
-                %zero32 = arith.constant 0 : i32
-                %at_first = arith.cmpi eq, %place, %zero32 : i32
-                %col_first = arith.addi %entry1, %i2 : index
-                %col_second = arith.addi %entry1, %i3 : index
-                %col = arith.select %at_first, %col_second, %col_first : index
-                %partner = memref.load %excluded[%i, %col] : memref<?x?xi32, 1>
+
+            // Whether the neighbor of each lane is excluded: all lanes
+            // shuffle when any lane has found one within the numbers of the
+            // partners.
+            %j32 = scf.if %neighbor -> (i32) {
+              %q = arith.index_cast %q32 : i32 to index
+              %j_found = memref.load %order[%q] : memref<?xi32, 1>
+              scf.yield %j_found : i32
+            } else {
+              scf.yield %none32 : i32
+            }
+            %above = arith.cmpi sge, %j32, %low : i32
+            %under = arith.cmpi sle, %j32, %high : i32
+            %between = arith.andi %above, %under : i1
+            %maybe = arith.andi %neighbor, %between : i1
+            %maybe_bits = gpu.ballot %maybe : i32
+            %any = arith.cmpi ne, %maybe_bits, %zero32 : i32
+            %shuffled = scf.if %any -> (i1) {
+              %hit = scf.for %e = %zero32 to %in_registers step %one32
+                  iter_args(%found_e = %false) -> (i1) : i32 {
+                %partner, %valid = gpu.shuffle idx %my_partner, %e, %lanes32 : i32
                 %same = arith.cmpi eq, %partner, %j32 : i32
-                %any = arith.ori %found_e, %same : i1
-                scf.yield %any : i1
+                %or = arith.ori %found_e, %same : i1
+                scf.yield %or : i1
+              }
+              scf.yield %hit : i1
+            } else {
+              scf.yield %false : i1
+            }
+            scf.if %keep {
+              %is_excluded = scf.for %e = %in_registers to %num_excluded
+                  step %one32 iter_args(%found_e = %shuffled) -> (i1) : i32 {
+                %e_index = arith.index_cast %e : i32 to index
+                %partner = func.call @mdrt_gpu_excluded_partner(%excluded, %i, %e_index)
+                    : (memref<?x?xi32, 1>, index, index) -> i32
+                %same = arith.cmpi eq, %partner, %j32 : i32
+                %any_e = arith.ori %found_e, %same : i1
+                scf.yield %any_e : i1
               }
               %entered = arith.select %is_excluded, %i32, %j32 : i32
-              memref.store %entered, %index[%i, %slot] : memref<?x?xi32, 1>
+              %slot_index = arith.index_cast %slot : i32 to index
+              memref.store %entered, %index[%i, %slot_index] : memref<?x?xi32, 1>
             }
 
-            %found32 = math.ctpop %ballot : i32
-            %found_here = arith.index_cast %found32 : i32 to index
-            %next = arith.addi %count, %found_here : index
-            scf.yield %next : index
+            %found_here = math.ctpop %ballot : i32
+            %next = arith.addi %count, %found_here : i32
+            scf.yield %next : i32
           }
-          scf.yield %after_cell : index
+          scf.yield %after_cell : i32
         }
-        scf.yield %after_x : index
+        scf.yield %after_x : i32
       }
 
-      %writer = arith.cmpi eq, %lane, %i0 : index
+      %writer = arith.cmpi eq, %lane32, %zero32 : i32
       scf.if %writer {
-        %found32 = arith.index_cast %found : index to i32
-        memref.store %found32, %counts[%i] : memref<?xi32, 1>
+        memref.store %found, %counts[%i] : memref<?xi32, 1>
       }
     }
     gpu.terminator
