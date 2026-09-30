@@ -11,6 +11,7 @@ compiler.
 |---|---|
 | `prep.py` | Writes JAC (`jac_nve` of the Amber suite) as a flat binary: positions, charges, types, the Lennard-Jones tables, the excluded pairs |
 | `pairs.cu` | The loop over pairs (Lennard-Jones from type tables and the direct sum of PME, in `f32`) with the neighbor matrix of MDIR (16 lanes per particle), with tiles of 8 × 8 and 8 × 4 (full lists), with 8 × 4 half lists (`f32` atomics and fixed point), and the pruning of a matrix from an outer reach. The lists are built on the host; only the kernels are timed, 1000 launches each. The forces of the variants are compared |
+| `supercluster.cu` | The loop over pairs with two half lists against the matrix, on any system that `prep.py` writes: the cluster pair list of [Pall2013] as its GPU layout has it (super-clusters of 64 in 8 clusters of 8, a warp per super-cluster, the forces on i in registers and those on j summed with shuffles once per entry), and groups of 32 particles sharing a list of particles j, which turn around the warp one lane per step (the neighbor list that [SalomonFerrer2013] describes for pmemd, groups of 16 or 32). The forces are compared with the matrix |
 | `search.cu` | The search of a build of the matrix as the template of MDIR does it (cells, runs of cells): a thread per particle, a warp per particle with ballots (with and without the excluded pairs), and a block per cell with the runs in shared memory. The matrices are compared entry by entry |
 | `run.sh` | Builds both, runs the sweeps, and writes `results/<date>-<device>.csv` |
 | `plot.py` | Draws `pairs.png`, `search.png`, `model.png`, and `scan.png` into `results/` (matplotlib; the project uses the environment `~/opt/render`) |
@@ -56,3 +57,44 @@ MDIR_BENCH_DIR=~/opt/benchmarks/amber CUDA_VISIBLE_DEVICES=0 \
    alone).
 
 A build of 150 µs is open: the search is bound by its tests.
+
+## Large systems (RTX 3090, 2026-10-01)
+
+Cellulose (408,609 atoms) against JAC, to see why MDIR falls further behind
+pmemd.cuda as systems grow (JAC 84 %, Cellulose 49 %). `supercluster
+<system.bin> <reach> <repeats>`; GPU 1, times of the kernels alone.
+
+| Cellulose | reach 10 Å | reach 9 Å |
+|---|---|---|
+| Matrix, the order of `pairs.cu` (cells of half the reach) | 2013 µs | |
+| Matrix, in the order of the clusters | 1694 µs | 1245 µs |
+| Super-clusters, half list | 1752 to 1798 µs | 1590 µs |
+| Groups of 32, half list | 1913 µs | 1633 µs |
+| pmemd.cuda, nonbonded kernel (nsys, `kCalcPMEOrthoNBFrc16`) | | 886 µs |
+
+1. **pmemd.cuda lists to 9 Å, not 10.** Its skin is 1 Å by default
+   without MPI (`skinnb`, `mdin_ewald_dat.F90` of Amber 26), and it builds
+   every 4.9 steps on Cellulose at about 1.1 ms a build. The suite's inputs
+   for MDIR have `pairlist_distance = 10`.
+2. **The matrix is bound by its index.** Its time follows its entries
+   (1694 to 1245 µs as they go from 177 to 129 million, 4 bytes each), and a
+   cheaper erfc (Abramowitz and Stegun 7.1.26, sharing the exponential of
+   the force) changed nothing. The order of the particles matters: the same
+   matrix in the order of the clusters (columns in x-y sorted by z, halved
+   in x, y, z) is 16 % faster than in cells of half the reach.
+3. **The half lists of these prototypes do not yet pay.** They compute
+   each pair once, but at 9 to 10 Å only 18 to 26 % of their slots are
+   within the cutoff, and a warp takes the costly path when any lane does.
+   GROMACS runs the same layout with an inner list pruned to about the
+   cutoff; its kernel on JAC (about 50 µs at 8.05 Å) is several times
+   faster than these.
+4. **Per particle, MDIR costs the same on JAC and Cellulose** (the loop
+   over pairs about 5 ns, a build about 20 ns); pmemd.cuda gets cheaper per
+   particle as systems grow, so its lead on JAC was hidden by its fixed
+   costs.
+
+On Cellulose, a step of MDIR takes 5.28 ms of the device against 2.75 for
+pmemd.cuda: pairs 2102 against 886 µs, builds 1049 against 224 µs a step
+(8.0 ms against 1.1 ms a build), bonded terms about 545 against 343, the
+spreading of PME 553 against about 344, its gathering 339 against 79, and
+the transforms about the same.
