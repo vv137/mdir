@@ -383,6 +383,37 @@ __global__ void pruningKernel(int n, int W, const int *counts, const int *index,
   if (valid && lane == 0) { force[3*i] = f.x; force[3*i+1] = f.y; force[3*i+2] = f.z; countsIn[i] = kept; }
 }
 
+// The matrix kernel reading the position and the charge of a neighbor as
+// one float4 (x, y, z, q), as GROMACS stores them, or the position alone as
+// a float4 with the charge apart (PACKED false).
+template <bool PACKED>
+__global__ void matrixKernel4(int n, int W, const int *counts, const int *index, const float4 *xq,
+                              const float *qs, const int *ts, const float *A, const float *B, int nt,
+                              float3 L, float3 iL, float *force) {
+  int t = blockIdx.x * blockDim.x + threadIdx.x;
+  int i = t / 16, lane = t % 16;
+  bool valid = i < n;
+  float3 f = {0, 0, 0};
+  if (valid) {
+    float4 pi = xq[i];
+    float3 xi = {pi.x, pi.y, pi.z};
+    float qi = PACKED ? pi.w : qs[i]; int ti = ts[i];
+    int c = counts[i];
+    for (int e = lane; e < c; e += 16) {
+      int j = index[(size_t)i * W + e];
+      if (j == i) continue;
+      float4 pj = xq[j];
+      pairForce(xi, qi, ti, make_float3(pj.x, pj.y, pj.z), PACKED ? pj.w : qs[j], ts[j], L, iL, A, B, nt, f);
+    }
+  }
+  for (int o = 8; o; o >>= 1) {
+    f.x += __shfl_xor_sync(0xffffffff, f.x, o);
+    f.y += __shfl_xor_sync(0xffffffff, f.y, o);
+    f.z += __shfl_xor_sync(0xffffffff, f.z, o);
+  }
+  if (valid && lane == 0) { force[3*i] = f.x; force[3*i+1] = f.y; force[3*i+2] = f.z; }
+}
+
 int main(int argc, char **argv) {
   if (argc > 2) REACH = atof(argv[2]);
   FILE *fp = fopen(argv[1], "rb");
@@ -588,6 +619,15 @@ int main(int argc, char **argv) {
   for (int i = 0; i < 3 * n; ++i) { num += (f1[i] - f2[i]) * (double)(f1[i] - f2[i]); den += (double)f1[i] * f1[i]; }
   printf("reach %.1f: matrix %.1f us, tiles %.1f us, relative difference of the forces %.2e\n", REACH, tm, tl, std::sqrt(num / den));
   printf("csv,pairs,matrix 16 lanes,%.2f,,%.2f\ncsv,pairs,tiles 8x8 full,%.2f,,%.2f\n", REACH, tm, REACH, tl);
+  {
+    std::vector<float4> xq(n);
+    for (int i = 0; i < n; ++i) xq[i] = make_float4(x[3*i], x[3*i+1], x[3*i+2], q[i]);
+    float4 *dxq; CK(cudaMalloc(&dxq, 16 * n)); cudaMemcpy(dxq, xq.data(), 16 * n, cudaMemcpyHostToDevice);
+    double tp = time([&] { matrixKernel4<true><<<(16 * n + 127) / 128, 128>>>(n, W, dcounts, dindex, dxq, dq, dt, dA, dB, ntypes, L, iL, df2); });
+    double tq = time([&] { matrixKernel4<false><<<(16 * n + 127) / 128, 128>>>(n, W, dcounts, dindex, dxq, dq, dt, dA, dB, ntypes, L, iL, df2); });
+    printf("matrix with float4 (x,y,z,q): %.1f us, float4 positions and charges apart: %.1f us\ncsv,pairs,matrix 16 lanes xyzq,%.2f,,%.2f\ncsv,pairs,matrix 16 lanes xyz0,%.2f,,%.2f\n", tp, tq, REACH, tp, REACH, tq);
+    cudaFree(dxq);
+  }
   double tc = time([&] { compactKernel<<<(16 * n + 127) / 128, 128>>>(n, W, dcounts, dindex, dx, dq, dt, dA, dB, ntypes, L, iL, df2); });
   cudaMemcpy(f2.data(), df2, 12 * n, cudaMemcpyDeviceToHost);
   num = 0;
