@@ -221,10 +221,9 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         return fail("the box of '" + path + "' differs from that of the "
                     "input; only a run with a barostat changes it");
     }
-    if (control->integrator == Integrator::VelocityVerlet &&
-        checkpoint->forces.empty())
-      return fail("'" + path + "' holds no forces, which velocity Verlet "
-                  "begins a step with");
+    if (checkpoint->forces.empty())
+      return fail("'" + path + "' holds no forces, which a step begins "
+                  "with");
 
     system->positions = checkpoint->positions;
     system->velocities = checkpoint->velocities;

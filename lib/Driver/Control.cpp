@@ -913,13 +913,6 @@ Error Reader::read(const toml::table &root) {
       return error;
     if (Error error = readBool(*table, "fast_water", control.fastWater))
       return error;
-    for (StringRef key : {"fast_water", "rigid_bond"}) {
-      bool on = key == "fast_water" ? control.fastWater : control.rigidBonds;
-      if (on && control.integrator != Integrator::VelocityVerlet)
-        return fail(*table->get(std::string_view(key)),
-                    "constraints need 'integrator = \"VVER\"'; with "
-                    "leapfrog they are planned for M1");
-    }
     if (const toml::node *node = table->get("settle_residues")) {
       const toml::array *array = node->as_array();
       if (!array)

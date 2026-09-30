@@ -10,7 +10,7 @@
 # RUN: mdir run %t/a.toml > %t/a.log
 # RUN: mdir run %t/b.toml > %t/b.log
 # RUN: FileCheck %s < %t/a.log
-# RUN: not mdir run %t/leap.toml 2>&1 | FileCheck %s --check-prefix=LEAP
+# RUN: mdir run %t/leap.toml | FileCheck %s
 # RUN: mdir emit %t/a.toml | FileCheck %s --check-prefix=MODULE
 
 # A pair is taken once, in the minimum image, so the cell must be wider
@@ -48,7 +48,9 @@
 # CHECK-NEXT: INFO:      2000 {{.*}} {{11[0-9]{3}\.[0-9]+$}}
 # CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[3-9]}} of its value
 
-# LEAP: the barostat needs 'integrator = "VVER"'
+# Leapfrog takes the pressure from the velocities of the time of the
+# positions, which its step of energy returns, and reaches the same volume
+# with the same drift of the conserved energy (D76).
 
 # MODULE:      func.func private @mdrtBarostatStrain(
 # MODULE:      func.call @mdrtSetBox(

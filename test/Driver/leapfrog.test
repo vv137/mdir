@@ -13,12 +13,18 @@
 # CHECK:      INFO:         0         0.0000
 # CHECK:      INFO:       200         0.8000 {{ *}}-406.5155 {{ *}}-460.4736 {{ *}}53.9581
 
-# Where energies are written, the forces at the new positions give the
-# velocities of their time.
+# Leapfrog carries the forces of the positions, as velocity Verlet does,
+# and evaluates once per step, at its end. The step of energy returns the
+# velocities of the time of the new positions, half a kick ahead of those
+# that it stores, and the kinetic energy takes them.
 #
-# MODULE:      %xl, %vl = dyn.step @step(
-# MODULE:      %u, %fl, %w = md.evaluate @energy(%xl, %cell, %p_epsilon, %p_sigma)
-# MODULE-NEXT:     request [energy, forces, virial]
-# MODULE:      %vn = dyn.kick %vl, %fl, %m, %half_dt : !vec
+# MODULE:      dyn.program @step(%x: !vec, %v: !vec, %f: !vec, %m: !real,
+# MODULE:      attributes {velocity_offset = -0.5,
+# MODULE:      %v1 = dyn.kick %v, %f, %m, %dt : !vec
+# MODULE:      dyn.return %x1, %v1, %f1 : !vec, !vec, !vec
+# MODULE:      dyn.program @step_energy(
+# MODULE:      %v2 = dyn.kick %v1, %f1, %m, %half : !vec
+# MODULE-NEXT: dyn.return %x1, %v1, %f1, %u1, %w1, %v2
+# MODULE:      %xl, %vl, %fl, %u, %w, %vn = dyn.step @step_energy(
 # MODULE:      %k = md.sum_particles gather(%vn, %m : !vec, !real)
 # MODULE:      %g = md.sum_particles gather(%fl, %m : !vec, !real)

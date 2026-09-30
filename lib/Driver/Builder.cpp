@@ -1402,44 +1402,76 @@ void Builder::emitPrograms() {
   // With restraints the names of an evaluation have `p`, and the
   // restraints give those that the step goes on with.
   std::string held = hasRestraints() ? "p" : "";
-  if (isLeapfrog()) {
-    // The stored velocities are half a step behind the positions.
-    os << "dyn.program @step(%x: !vec, %v: !vec, %m: !real, %cell: !md.cell, "
-          "%dt: f64"
-       << getScaleParameter() << getFieldParameters() << ")\n    -> (!vec, !vec)\n"
-       << "    attributes {velocity_offset = -0.5,\n"
-       << "                provides = [\"symplectic\", "
-          "\"time_reversible\"]} {\n"
-       << "  %f" << held << (sites ? "e" : "")
-       << " = md.evaluate @energy(%x, %cell" << getFieldValues()
-       << ") request [forces]\n      : " << signature << " -> !vec\n";
-    if (sites)
-      emitSpreadSites("  ", "%x", "%f" + held + "e", "%f" + held, "%r_");
-    if (hasRestraints())
-      emitRestraints("  ", "%x", "%p_", "%fp", "%f");
-    os << "  %v1 = dyn.kick %v, %f, %m, %dt : !vec\n"
-       << "  %x1" << (sites ? "d" : "") << " = dyn.drift %x, %v1, %dt : !vec\n";
-    if (sites)
-      emitPlaceSites("  ", "%x1d", "%x1", "%r_");
-    os << "  dyn.return %x1, %v1 : !vec, !vec\n}\n\n";
-    return;
-  }
+  // The velocities that leave none along a constrained bond (the second
+  // half of RATTLE), with the virial of the impulses if `virial` is given.
+  // Returns the velocities and the virial.
+  auto project = [&](StringRef x, StringRef input, StringRef base,
+                     std::string virial) {
+    std::string current = input.str();
+    unsigned steps = (settles ? 1 : 0) + shakeSets.size(), step = 0;
+    auto next = [&]() {
+      ++step;
+      return step == steps ? base.str()
+                           : (base + "c" + std::to_string(step)).str();
+    };
+    if (settles) {
+      std::string result = next();
+      std::string w = step == steps ? "%w1c" : "%w1c1";
+      std::string sum = emitSettleVelocities("  ", x, current, result,
+                                             virial, w);
+      if (!virial.empty())
+        virial = sum;
+      current = result;
+    }
+    for (const Program::TupleSet *set : shakeSets) {
+      std::string result = next();
+      std::string w = "%w1s_" + set->name;
+      std::string sum = emitShakeVelocities("  ", x, current, *set, result,
+                                            virial, w);
+      if (!virial.empty())
+        virial = sum;
+      current = result;
+    }
+    return std::make_pair(current, virial);
+  };
 
-  // Velocity Verlet (Swope et al., J. Chem. Phys. 76, 637 (1982)), with and
-  // without the energy of the new positions.
+  // Velocity Verlet (Swope et al., J. Chem. Phys. 76, 637 (1982)) stores
+  // the velocities of the time of the positions; leapfrog, those half a
+  // step behind (design-m1.md, Section 23). Both carry the forces of the
+  // positions, so that a step evaluates once, at its end. The step of
+  // energy returns the energy and the virial of the new positions, and
+  // with leapfrog also the velocities of their time, which the energies
+  // and the barostat take.
+  bool leapfrog = isLeapfrog();
   for (bool withEnergy : {false, true}) {
+    bool returnsCurrent = leapfrog && withEnergy;
     os << "dyn.program @" << (withEnergy ? "step_energy" : "step")
        << "(%x: !vec, %v: !vec, %f: !vec, %m: !real,\n"
        << "    %cell: !md.cell, %dt: f64" << getScaleParameter()
        << getFieldParameters() << ")\n"
        << "    -> (!vec, !vec, !vec"
-       << (withEnergy ? ", f64, vector<9xf64>" : "") << ")\n"
-       << "    attributes {provides = [\"symplectic\", "
-          "\"time_reversible\"]} {\n"
+       << (withEnergy ? ", f64, vector<9xf64>" : "")
+       << (returnsCurrent ? ", !vec" : "") << ")\n"
+       << "    attributes {"
+       << (leapfrog ? "velocity_offset = -0.5,\n                " : "")
+       << "provides = [\"symplectic\", \"time_reversible\"]} {\n"
        << "  %c = arith.constant 5.0e-01 : f64\n"
-       << "  %half = arith.mulf %c, %dt : f64\n"
-       << "  %v1 = dyn.kick %v, %f, %m, %half : !vec\n"
-       << "  %x1" << (sites || constraints ? "d" : "")
+       << "  %half = arith.mulf %c, %dt : f64\n";
+    if (!leapfrog) {
+      os << "  %v1 = dyn.kick %v, %f, %m, %half : !vec\n";
+    } else if (withEnergy && constraints) {
+      // The velocities of the time of the positions, as velocity Verlet
+      // has them, and its first half kick. The drift then takes the
+      // positions where the kick of a whole step does, up to the
+      // constraints, which bring both to the same place; the constraints
+      // of the step then give the virial of the first half (D76).
+      os << "  %v0u = dyn.kick %v, %f, %m, %half : !vec\n";
+      std::string current = project("%x", "%v0u", "%v0", "").first;
+      os << "  %v1 = dyn.kick " << current << ", %f, %m, %half : !vec\n";
+    } else {
+      os << "  %v1 = dyn.kick %v, %f, %m, %dt : !vec\n";
+    }
+    os << "  %x1" << (sites || constraints ? "d" : "")
        << " = dyn.drift %x, %v1, %dt : !vec\n";
     // The constraints back to their lengths, and the velocities that take
     // the atoms there over the step (the first half of RATTLE).
@@ -1507,6 +1539,14 @@ void Builder::emitPrograms() {
         emitRestraints("  ", "%x1", "%p_", "%f1p", "%f1");
       virial = "%w1";
     }
+    if (leapfrog && !withEnergy) {
+      os << "  dyn.return %x1, " << velocities
+         << ", %f1 : !vec, !vec, !vec\n}\n\n";
+      continue;
+    }
+    // The second half kick, to the velocities of the time of the new
+    // positions: those of the next step with velocity Verlet, and those of
+    // the energies with leapfrog.
     os << "  %v2" << (constraints ? "u" : "") << " = dyn.kick " << velocities
        << ", %f1, %m, %half : !vec\n";
     // The virial of the constraints over the first half of the step.
@@ -1516,33 +1556,15 @@ void Builder::emitPrograms() {
         virial = emitConstraintVirial("  ", *set, "%x", change, virial,
                                       "%w1x" + std::to_string(index++));
     }
-    // No velocity along a constrained bond (the second half of RATTLE).
-    if (constraints) {
-      std::string current = "%v2u";
-      unsigned steps = (settles ? 1 : 0) + shakeSets.size(), step = 0;
-      auto next = [&](StringRef base) {
-        ++step;
-        return step == steps ? base.str()
-                             : (base + "c" + std::to_string(step)).str();
-      };
-      if (settles) {
-        std::string result = next("%v2");
-        std::string w = step == steps ? "%w1c" : "%w1c1";
-        virial = emitSettleVelocities("  ", "%x1", current, result,
-                                      withEnergy ? virial : "", w);
-        current = result;
-      }
-      for (const Program::TupleSet *set : shakeSets) {
-        std::string result = next("%v2");
-        std::string w = "%w1s_" + set->name;
-        virial = emitShakeVelocities("  ", "%x1", current, *set, result,
-                                     withEnergy ? virial : "", w);
-        current = result;
-      }
-    }
+    if (constraints)
+      virial = project("%x1", "%v2u", "%v2", withEnergy ? virial : "")
+                   .second;
+    std::string stored = leapfrog ? velocities : "%v2";
     if (withEnergy)
-      os << "  dyn.return %x1, %v2, %f1, %u1, " << virial << "\n"
-         << "      : !vec, !vec, !vec, f64, vector<9xf64>\n";
+      os << "  dyn.return %x1, " << stored << ", %f1, %u1, " << virial
+         << (returnsCurrent ? ", %v2" : "") << "\n"
+         << "      : !vec, !vec, !vec, f64, vector<9xf64>"
+         << (returnsCurrent ? ", !vec" : "") << "\n";
     else
       os << "  dyn.return %x1, %v2, %f1 : !vec, !vec, !vec\n";
     os << "}\n\n";
@@ -2452,19 +2474,16 @@ static void emitKineticEnergy(llvm::raw_ostream &os, StringRef result,
 }
 
 void Builder::emitLevel(unsigned level, StringRef indent) {
-  // The state that the loops carry: positions and velocities, and with
-  // velocity Verlet the forces.
-  std::string state = isLeapfrog() ? "!vec, !vec" : "!vec, !vec, !vec";
+  // The state that the loops carry: positions, velocities, and forces.
+  std::string state = "!vec, !vec, !vec";
   auto getValues = [&](const llvm::Twine &suffix) {
     std::string x = ("%x" + suffix).str(), v = ("%v" + suffix).str(),
                 f = ("%f" + suffix).str();
-    return isLeapfrog() ? x + ", " + v : x + ", " + v + ", " + f;
+    return x + ", " + v + ", " + f;
   };
   auto getInits = [&](const llvm::Twine &inside, const llvm::Twine &outside) {
     std::string text;
     for (StringRef name : {"x", "v", "f"}) {
-      if (name == "f" && isLeapfrog())
-        continue;
       text += (text.empty() ? "" : ", ") +
               ("%" + name + inside + " = %" + name + outside).str();
     }
@@ -2533,8 +2552,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
   std::string outerMass = massName, outerPrefix = fieldPrefix,
               outerId = idName;
   if (reorders) {
-    emitReorder(inner, "a" + here, "s", "s", /*withForces=*/!isLeapfrog(),
-                "%vs");
+    emitReorder(inner, "a" + here, "s", "s", /*withForces=*/true, "%vs");
     massName = "%ms";
     fieldPrefix = "%ps_";
     idName = "%ids";
@@ -2542,13 +2560,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
 
   if (isStepLoop) {
     os << inner << getValues("b" + here) << " = dyn.step @step(";
-    if (isLeapfrog())
-      os << "%xa" << here << ", %va" << here << ", " << massName
-         << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << ")\n"
-         << inner << "    : (!vec, !vec, !real, !md.cell, f64" << getScaleType()
-         << getFieldTypes() << ") -> (!vec, !vec)\n";
-    else
-      os << "%xa" << here << ", %va" << here << ", %fa" << here << ", "
+    os << "%xa" << here << ", %va" << here << ", %fa" << here << ", "
          << massName << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix)
          << ")\n"
          << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
@@ -2625,12 +2637,23 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
     };
     // The velocities as the step after the coupling takes them, and the
     // state that the loop yields.
+    // With leapfrog and a barostat, the coupling takes the velocities of
+    // the time of the positions, `current`, and the stored ones are half a
+    // kick behind those it leaves: the steps are then those of velocity
+    // Verlet, and the energy that the coupling gives is that which the log
+    // counts (D76).
     auto getCoupled = [&](StringRef x, StringRef v, StringRef f,
-                          StringRef trace) {
-      auto [positions, velocities] =
-          emitCoupling(inner, x, v, here, "%step" + here, trace);
-      return isLeapfrog() ? positions + ", " + velocities
-                          : positions + ", " + velocities + ", " + f.str();
+                          StringRef trace, StringRef current = "") {
+      auto [positions, velocities] = emitCoupling(
+          inner, x, current.empty() ? v : current, here, "%step" + here,
+          trace);
+      if (!current.empty()) {
+        std::string behind = "%vh" + here;
+        os << inner << behind << " = dyn.kick " << velocities << ", " << f
+           << ", " << massName << ", %half_back : !vec\n";
+        velocities = behind;
+      }
+      return positions + ", " + velocities + ", " + f.str();
     };
     bool couplesBelow = levels[level + 1].name == "couple";
 
@@ -2638,19 +2661,24 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       // The last step of the period, and the coupling after it. The
       // barostat needs the virial of the step.
       std::string trace;
-      if (control.barostat && !isLeapfrog()) {
+      if (control.barostat) {
+        // With leapfrog the pressure takes the velocities of the time of
+        // the positions, which the step of energy returns.
+        std::string current = isLeapfrog() ? "%vck" + here : "";
         os << inner << getValues("k" + here) << ", %uk" << here << ", %wk"
-           << here << " = dyn.step @step_energy(%x" << last << ", %v" << last
+           << here << (isLeapfrog() ? ", " + current : "")
+           << " = dyn.step @step_energy(%x" << last << ", %v" << last
            << ", %f" << last << ", " << massName << ", " << cellName
            << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << ")\n"
            << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
            << getFieldTypes()
-           << ") -> (!vec, !vec, !vec, f64, vector<9xf64>)\n";
+           << ") -> (!vec, !vec, !vec, f64, vector<9xf64>"
+           << (isLeapfrog() ? ", !vec" : "") << ")\n";
         trace = "%trk" + here;
         emitTrace(os, trace, "%wk" + here, inner);
         emitStep();
-        std::string coupled =
-            getCoupled("%xk" + here, "%vk" + here, "%fk" + here, trace);
+        std::string coupled = getCoupled("%xk" + here, "%vk" + here,
+                                         "%fk" + here, trace, current);
         os << inner << "scf.yield " << coupled << " : " << state << "\n";
         os << indent << "}\n";
         cellName = outerCell;
@@ -2658,13 +2686,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         return;
       }
       os << inner << getValues("k" + here) << " = dyn.step @step(";
-      if (isLeapfrog())
-        os << "%x" << last << ", %v" << last << ", " << massName
-           << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << ")\n"
-           << inner << "    : (!vec, !vec, !real, !md.cell, f64" << getScaleType()
-           << getFieldTypes() << ") -> (!vec, !vec)\n";
-      else
-        os << "%x" << last << ", %v" << last << ", %f" << last << ", "
+      os << "%x" << last << ", %v" << last << ", %f" << last << ", "
            << massName << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix)
            << ")\n"
            << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
@@ -2688,13 +2710,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
          << inner << "    iter_args(" << getInits("p" + here, last) << ")\n"
          << inner << "    -> (" << state << ") {\n";
       os << inner << "  " << getValues("r" + here) << " = dyn.step @step(";
-      if (isLeapfrog())
-        os << "%xp" << here << ", %vp" << here << ", " << massName
-           << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << ")\n"
-           << inner << "      : (!vec, !vec, !real, !md.cell, f64" << getScaleType()
-           << getFieldTypes() << ") -> (!vec, !vec)\n";
-      else
-        os << "%xp" << here << ", %vp" << here << ", %fp" << here << ", "
+      os << "%xp" << here << ", %vp" << here << ", %fp" << here << ", "
            << massName << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix)
            << ")\n"
            << inner << "      : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
@@ -2707,46 +2723,18 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
 
     if (current.name == "energy") {
       // The last step of the interval, and the energies after it.
+      // With leapfrog the step of energy also returns the velocities of
+      // the time of the positions, which the kinetic energy takes.
       std::string virialName = "%w";
-      if (isLeapfrog()) {
-        os << inner << "%xl, %vl = dyn.step @step(%x" << last << ", %v"
-           << last << ", " << massName << ", " << cellName << ", %dt" << getScaleValue()
-           << getFieldValues(fieldPrefix) << ")\n"
-           << inner << "    : (!vec, !vec, !real, !md.cell, f64" << getScaleType()
-           << getFieldTypes() << ") -> (!vec, !vec)\n";
-        std::string raw = hasSites() ? "e" : "";
-        std::string held = hasRestraints() ? "p" : "";
-        os << inner << "%u" << held << ", %fl" << held << raw << ", %w"
-           << held << raw
-           << " = md.evaluate @energy(%xl, " << cellName
-           << getFieldValues(fieldPrefix) << ")\n"
-           << inner << "    request [energy, forces, virial]\n"
-           << inner << "    : (!vec, !md.cell" << getFieldTypes()
-           << ") -> (f64, !vec, vector<9xf64>)\n";
-        virialName = "%w" + held;
-        if (hasSites())
-          virialName = emitSpreadSites(
-              inner, "%xl", "%fl" + held + "e", "%fl" + held,
-              ("%r" + StringRef(fieldPrefix).drop_front(2)).str(),
-              "%w" + held + "e", "%w" + held);
-        if (hasRestraints()) {
-          emitRestraints(inner, "%xl", fieldPrefix, "%flp", "%fl", "%up",
-                         "%u", virialName, "%w");
-          virialName = "%w";
-        }
-        // The stored velocities are half a step behind. Those of the time
-        // of the positions are half a kick ahead of them.
-        os << inner << "%vn = dyn.kick %vl, %fl, " << massName
-           << ", %half_dt : !vec\n";
-      } else {
-        os << inner << "%xl, %vl, %fl, %u, %w = dyn.step @step_energy(%x"
-           << last
-           << ", %v" << last << ", %f" << last << ", " << massName
-           << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << ")\n"
-           << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
-           << getFieldTypes()
-           << ") -> (!vec, !vec, !vec, f64, vector<9xf64>)\n";
-      }
+      os << inner << "%xl, %vl, %fl, %u, %w"
+         << (isLeapfrog() ? ", %vn" : "") << " = dyn.step @step_energy(%x"
+         << last << ", %v" << last << ", %f" << last << ", " << massName
+         << ", " << cellName << ", %dt" << getScaleValue()
+         << getFieldValues(fieldPrefix) << ")\n"
+         << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
+         << getScaleType() << getFieldTypes()
+         << ") -> (!vec, !vec, !vec, f64, vector<9xf64>"
+         << (isLeapfrog() ? ", !vec" : "") << ")\n";
       emitKineticEnergy(os, "%k", isLeapfrog() ? "%vn" : "%vl", massName,
                         inner);
       // With constraints the forces do not give the kinetic energies of
@@ -2761,8 +2749,10 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       os << inner << "func.call @mdrtWriteEnergies(%step" << here
          << ", %u, %k, %g, %tr) : (i64, f64, f64, f64, f64) -> ()\n";
       std::string yielded =
-          couplesBelow ? getCoupled("%xl", "%vl", "%fl", "%tr")
-                       : getValues("l");
+          couplesBelow
+              ? getCoupled("%xl", "%vl", "%fl", "%tr",
+                           isLeapfrog() && control.barostat ? "%vn" : "")
+              : getValues("l");
       os << inner << "scf.yield " << yielded << " : " << state << "\n";
     } else {
       if (current.name == "frame") {
@@ -3699,9 +3689,9 @@ void Builder::emitEntry() {
     }
   }
 
-  if (isLeapfrog())
-    os << "  %c_half = arith.constant 5.0e-01 : f64\n"
-       << "  %half_dt = arith.mulf %c_half, %dt : f64\n";
+  if (isLeapfrog() && control.barostat)
+    os << "  %c_half_back = arith.constant -5.0e-01 : f64\n"
+       << "  %half_back = arith.mulf %c_half_back, %dt : f64\n";
 
   if (!isRestart()) {
     // The energies at the start.
@@ -3842,11 +3832,6 @@ void Builder::setSchedule() {
 }
 
 llvm::Error Builder::build() {
-  if (control.barostat && isLeapfrog())
-    return llvm::createStringError(
-        llvm::inconvertibleErrorCode(),
-        "the barostat needs 'integrator = \"VVER\"'; with leapfrog it is "
-        "planned for M1");
   // A pair is taken once, in the minimum image, which holds every image
   // within the cutoff only while the cell is wider than twice the cutoff.
   static const char axes[] = "xyz";
@@ -3873,8 +3858,8 @@ llvm::Error Builder::build() {
     break;
   }
   // Velocity Verlet begins a step with the forces of the step before.
-  program.writesForces = !isLeapfrog() && !control.minimize;
-  program.takesForces = isRestart() && !isLeapfrog() && !control.minimize;
+  program.writesForces = !control.minimize;
+  program.takesForces = isRestart() && !control.minimize;
 
   program.skin =
       (control.pairlistDistance - control.cutoffDistance) * units::length;

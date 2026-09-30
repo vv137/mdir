@@ -1,5 +1,5 @@
-# The test of restart.test on a GPU, with leapfrog, whose state has no
-# forces.
+# The test of restart.test on a GPU, with leapfrog, whose state has the
+# forces too, as that of velocity Verlet does.
 #
 # REQUIRES: hdf5, cuda
 #
@@ -26,7 +26,7 @@
 
 # CHECK: the states are identical
 
-# ABOUT: forces:          no
+# ABOUT: forces:          yes
 # ABOUT: integrator:      LEAP
 # ABOUT: velocity offset: -0.5 time steps
 # ABOUT: precision:       single

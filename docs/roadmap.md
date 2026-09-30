@@ -25,7 +25,7 @@ follows are in [principles.md](principles.md).
 | M1e | What remains of the readers and renumbering (design-m1.md, Section 18) |
 | M1f | The terms and dynamics of the intermediate stage against AmberTools and GROMACS |
 | M1k | The Amber suite against pmemd.cuda (published) and GROMACS 2026.3 with CUDA, on an RTX 3090: energies term by term against sander at the start, conservation and ensembles over runs, and rates |
-| Integrators | Leapfrog does what velocity Verlet does: constraints (SHAKE, SETTLE), virtual sites, the thermostats, the barostat, restraints |
+| Integrators | Done: leapfrog does what velocity Verlet does: constraints (SHAKE, SETTLE), virtual sites, the thermostats, the barostat, restraints (D76) |
 | Performance | Host synchronization moved to the device (the test of validity and the decision to rebuild), fusion of the loops over particles, CUDA graphs, PME in single precision for the mixed mode (an experiment), the pair kernel |
 
 The order: leapfrog, then performance. The goal of performance for the

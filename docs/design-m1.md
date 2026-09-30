@@ -810,8 +810,8 @@ into the home directory.
 | M1f | Comparison of the intermediate stage with AmberTools and GROMACS | | This completes the intermediate stage |
 | M1g | Removal of the motion of the center of mass, random numbers, the thermostat | At constant temperature | Done (D67). Philox 4×32-10 agrees with the known answers of Random123, and the factor of the thermostat samples the canonical distribution of the kinetic energy. On a mixture of Lennard-Jones, the conserved energy changes by 2.5 × 10⁻⁵ over 20000 steps at constant temperature, on the CPU and on a GPU; a trajectory is the same for any grouping of steps into loops and across a restart. A drift of every particle is removed to a momentum of 10⁻¹³ amu nm/ps. The schedule uses the driver's own loops and `func.call`s, not yet the `dyn` ops of Section 11.2. |
 | M1h | Particle mesh Ewald | With particle mesh Ewald | Done ([pme-m1.md](pme-m1.md), D69 to D71): the reciprocal sum on the host and on a GPU, in fixed point; the terms agree with an Ewald sum and with sander, and a run with rigid water conserves the energy. |
-| M1i | Constraints: SETTLE, SHAKE, RATTLE | With 2 fs | Done with velocity Verlet (Sections 9.1 and 9.2): rigid water and rigid bonds of hydrogen keep their lengths to the precision of the trajectory; the target of D65 runs at 2 fs with PME and the thermostat (`test/Driver/ff19sb-gpu.test`). Constraints with leapfrog are to come. |
-| M1j | The barostat, a cell that changes | At constant temperature and pressure | Done with velocity Verlet (Section 11.4, D72): isotropic stochastic cell rescaling. 1394 OPC waters at 300 K and 1 bar come to 0.9977 g/cm³ over 300 ps, with a compressibility from the fluctuations of the volume of 4.1 × 10⁻⁵ /bar; a trajectory is the same for any grouping of steps into loops and across a restart; the target of D65 runs at constant pressure on a GPU (`test/Driver/barostat-ff19sb-gpu.test`). The barostat with leapfrog, and anisotropic cells, are to come. |
+| M1i | Constraints: SETTLE, SHAKE, RATTLE | With 2 fs | Done with velocity Verlet (Sections 9.1 and 9.2): rigid water and rigid bonds of hydrogen keep their lengths to the precision of the trajectory; the target of D65 runs at 2 fs with PME and the thermostat (`test/Driver/ff19sb-gpu.test`). With leapfrog as well (Section 23). |
+| M1j | The barostat, a cell that changes | At constant temperature and pressure | Done with velocity Verlet (Section 11.4, D72): isotropic stochastic cell rescaling. 1394 OPC waters at 300 K and 1 bar come to 0.9977 g/cm³ over 300 ps, with a compressibility from the fluctuations of the volume of 4.1 × 10⁻⁵ /bar; a trajectory is the same for any grouping of steps into loops and across a restart; the target of D65 runs at constant pressure on a GPU (`test/Driver/barostat-ff19sb-gpu.test`). With leapfrog as well (Section 23); anisotropic cells are to come. |
 | M1k | Comparison with AmberTools and GROMACS; run times of the JAC benchmark | | |
 | M1l | CMAP (D65) | ff19SB | Done (Section 20). The terms of ACE-ALA-GLY-SER-NME with ff19SB in OPC agree with sander, and CMAP with an independent model to 12 digits; a peptide with amber19sb agrees with GROMACS. The energy of the peptide alone is conserved as the square of the time step. |
 | M1m | Virtual sites: extra points of Amber, virtual sites of GROMACS (D65) | OPC | Done for water of four sites (Section 19, D68): the extra point of Amber and `[ virtual_sites3 ]` of function 1. The terms of alanine dipeptide in OPC agree with sander, and those of a peptide in TIP4P-Ew with GROMACS. The forces are the derivatives of the energy, and the virial that of a uniform scaling. Other frames of Amber and other kinds of GROMACS are rejected. |
@@ -982,3 +982,60 @@ over 2 ps at 1 fs, as the same run without them does; at constant
 pressure the conserved energy drifts as it does without them, by the term
 of Section 11.4.
 
+
+## 23. Leapfrog
+
+Leapfrog does what velocity Verlet does: virtual sites, SETTLE, SHAKE and
+RATTLE, restraints, the thermostat, and the barostat (D76). The two store
+different velocities and take the same steps. With `h = dt/2`, positions
+`x_n`, forces `f_n = F(x_n)`, and `P_x` the projection that takes off the
+velocities along the constraints at `x` (the second half of RATTLE):
+
+| | Velocity Verlet | Leapfrog |
+|---|---|---|
+| Stored velocities | `v_n`, of the time of `x_n` | `v_{n−½}`, half a step behind (`velocity_offset = −0.5`) |
+| Carried state | `x_n, v_n, f_n` | `x_n, v_{n−½}, f_n` |
+| A step | `u = v_n + h f_n/m`; `x' = x_n + dt u`; constrain `x'` to `x_{n+1}`; `v_{n+½} = u + (x_{n+1} − x')/dt`; `f_{n+1}`; `v_{n+1} = P(v_{n+½} + h f_{n+1}/m)` | `u = v_{n−½} + dt f_n/m`; `x' = x_n + dt u`; constrain `x'` to `x_{n+1}`; `v_{n+½} = u + (x_{n+1} − x')/dt`; `f_{n+1}` |
+| A step with energies | The same, with the energy and the virial of `x_{n+1}` | `u = P(v_{n−½} + h f_n/m) + h f_n/m`, then as velocity Verlet, returning `v_{n+½}` to store and `v_{n+1} = P(v_{n+½} + h f_{n+1}/m)` for the energies |
+| Start | `v_0` drawn or read | `v_{−½} = v_0 − h f_0/m` |
+
+Why the steps are the same: without constraints, `v_{n−½} + dt f_n/m` is
+velocity Verlet's `v_n + h f_n/m` when `v_n = v_{n−½} + h f_n/m`, which is
+what leapfrog's `v_{n−½}` and velocity Verlet's `v_n` are to each other.
+With constraints, velocity Verlet's `v_n` is `P(v_{n−½} + h f_n/m)`; the
+two drifts differ by `dt (1 − P)(v_{n−½} + h f_n/m)`, which lies along the
+directions, weighted by the inverse masses, in which SHAKE and SETTLE move
+the particles back. Both are brought to the same point on the surface of
+the constraints, to the tolerance of the solvers; the velocities that
+follow, `(x_{n+1} − x_n)/dt`, are then the same too. The logs of the two
+agree row by row (`test/Driver/leapfrog.test`, and
+`test/Driver/leapfrog-constraints.test` with the peptide in OPC water).
+
+What each quantity is taken from:
+
+| Quantity | Velocity Verlet | Leapfrog |
+|---|---|---|
+| Energy, virial, pressure in the log | `x_{n+1}` and `v_{n+1}` of the step with energies | The same `x_{n+1}` and `v_{n+1}` |
+| Virial of the constraints | ½ of the impulses of the positions (`G = 2mΔ/dt²` for `x' = x_n + dt v_n + dt² f_n/2m`) and ½ of those of the velocities (Section 9) | The same: the step with energies drifts from `P(v_{n−½} + h f_n/m)`, the form above, so `Δ` has the same meaning. The plain step, whose drift is a whole kick, computes no virial |
+| Thermostat alone | Scales `v_n`, with its kinetic energy | Scales `v_{n−½}`, with its kinetic energy, as GROMACS does with leapfrog |
+| Barostat (and the thermostat with it) | Pressure from `v_{n+1}`; scales `v_{n+1}` by `α/μ` | Pressure from `v_{n+1}`; scales `v_{n+1}` by `α/μ` and stores `v'_{n+½} = v'_{n+1} − h f_{n+1}/m` |
+
+The barostat couples the velocities of the time of the positions: scaling
+the stored `v_{n+½}` by `1/μ` would leave the half kick `h f_{n+1}/m` in
+`v_{n+1}` unscaled, and the kinetic energy of the log would change by
+`(1/μ − 1) h Σ v_{n+½}·f_{n+1}` more than the work that the barostat
+counts. That term follows `dU/dt`; while the barostat compresses the target
+of D65 by a fifth over 10 ps, the conserved energy drifted by 4.3 × 10⁻³
+of its value with it, and by 1.3 × 10⁻³ without it, as with velocity
+Verlet (1.4 × 10⁻³). The forces that leapfrog carries across the scaling
+are those of the positions before it, as with velocity Verlet.
+
+The stored velocities are half a kick behind the ones the coupling leaves
+without the motion of the center of mass. The forces of PME do not sum to
+zero (their interpolation does not conserve momentum), so the momentum of
+the stored velocities is `−h Σ f`, 10⁻² amu nm/ps on the target of D65,
+where that of velocity Verlet is at the rounding.
+
+A checkpoint of leapfrog holds the forces, as one of velocity Verlet does,
+and a run continues it exactly. A checkpoint of leapfrog written before
+this holds none and is refused with a message.

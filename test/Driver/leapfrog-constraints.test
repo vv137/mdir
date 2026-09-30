@@ -1,0 +1,60 @@
+# Leapfrog with SETTLE, SHAKE and RATTLE: the peptide with ff19SB in OPC
+# water of barostat-ff19sb-gpu.test, at a step of 2 fs. The constraints
+# bring the positions of both integrators to the same place, so leapfrog
+# takes the steps of velocity Verlet; the log, with the virial of the
+# constraints and the pressure, is the same row by row (D76).
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/ff19sb/ff19.prmtop %S/Inputs/ff19sb/ff19.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/verlet.toml
+# RUN: sed -e 's|"VVER"|"LEAP"|' -e 's|verlet.dcd|leapfrog.dcd|' %t/verlet.toml > %t/leapfrog.toml
+# RUN: mdir run %t/verlet.toml > %t/verlet.log
+# RUN: mdir run %t/leapfrog.toml > %t/leapfrog.log
+# RUN: %python %S/Inputs/compare_logs.py %t/verlet.log %t/leapfrog.log 1e-7 | FileCheck %s
+# RUN: %python %S/Inputs/check_bonds.py %t/ff19.prmtop %t/leapfrog.dcd | FileCheck %s --check-prefix=BONDS
+# RUN: mdir emit %t/leapfrog.toml | FileCheck %s --check-prefix=MODULE
+
+# CHECK: VIRIAL:
+# CHECK: logs agree
+
+# BONDS: bonds ok
+
+# The step of energy takes the stored velocities to the time of the
+# positions, with no velocity along the bonds, and makes the first half
+# kick of velocity Verlet from there.
+#
+# MODULE:      dyn.program @step_energy(
+# MODULE:      %v0u = dyn.kick %v, %f, %m, %half : !vec
+# MODULE:      %v1 = dyn.kick %v0, %f, %m, %half : !vec
+
+#--- run.toml
+[input]
+prmtopfile = "ff19.prmtop"
+ambcrdfile = "ff19.inpcrd"
+
+[output]
+dcdfile = "verlet.dcd"
+
+[energy]
+cutoffdist    = 9.0
+pairlistdist  = 10.0
+electrostatic = "PME"
+pme_shift     = true
+
+[dynamics]
+integrator        = "VVER"
+timestep          = 0.002
+nsteps            = 100
+eneout_period     = 10
+crdout_period     = 10
+
+[ensemble]
+ensemble    = "NVE"
+
+[constraints]
+rigid_bond = true
+fast_water = true
+
+[boundary]
+type = "PBC"
+#--- end

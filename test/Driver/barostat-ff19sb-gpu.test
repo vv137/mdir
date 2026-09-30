@@ -11,6 +11,17 @@
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
 # RUN: mdir run %t/run.toml | FileCheck %s
 # RUN: %python %S/Inputs/check_bonds.py %t/ff19.prmtop %t/run.dcd | FileCheck %s --check-prefix=BONDS
+#
+# Leapfrog couples the velocities of the time of the positions, and keeps
+# those half a kick behind; the conserved energy changes as little. The
+# coupling removes the motion of the center of mass from the velocities it
+# takes; the stored ones are half a kick of the forces behind, and the
+# forces of PME sum to a little more than zero (their interpolation does
+# not conserve momentum), so those keep h Σ F of it.
+#
+# RUN: sed -e 's|"VVER"|"LEAP"|' -e 's|run.dcd|leap.dcd|' %t/run.toml > %t/leap.toml
+# RUN: mdir run %t/leap.toml | FileCheck %s --check-prefix=LEAP
+# RUN: %python %S/Inputs/check_bonds.py %t/ff19.prmtop %t/leap.dcd | FileCheck %s --check-prefix=BONDS
 
 # The rigid groups move with their centers, and the work of the scaling is
 # counted, so the conserved energy changes little through the compression.
@@ -19,6 +30,11 @@
 # CHECK:      INFO:      5000 {{.*}} {{2[0-3][0-9]{3}\.[0-9]+$}}
 # CHECK:      MDIR: the momentum at the end is {{[0-9.]+}}e-{{(0[4-9]|1[0-9])}} amu nm/ps
 # CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[3-9]}} of its value
+#
+# LEAP:       INFO:         0 {{.*}} 28634.{{[0-9]+}}
+# LEAP:       INFO:      5000 {{.*}} {{2[0-3][0-9]{3}\.[0-9]+$}}
+# LEAP:       MDIR: the momentum at the end is {{[0-9.]+}}e-{{(0[2-9]|1[0-9])}} amu nm/ps
+# LEAP:       MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[3-9]}} of its value
 
 # The bonds of hydrogen keep their lengths in every frame, which has the
 # cell of its step.
