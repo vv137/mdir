@@ -249,10 +249,60 @@ nstlog           = 0
     return path
 
 
-def record(args, engine, name, rate, log):
+def visible_bus_ids():
+    """The PCI bus ids of the devices that a run can see."""
+    listing = subprocess.run(
+        ["nvidia-smi", "--query-gpu=index,pci.bus_id",
+         "--format=csv,noheader"], capture_output=True, text=True).stdout
+    devices = {}
+    for line in listing.splitlines():
+        index, bus = [field.strip() for field in line.split(",")]
+        devices[index] = bus
+    visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+    if visible is None:
+        return set(devices.values())
+    return {devices[index] for index in visible.split(",") if index in devices}
+
+
+def others_on(buses, own):
+    """The processes other than `own` that compute on the devices `buses`."""
+    listing = subprocess.run(
+        ["nvidia-smi", "--query-compute-apps=gpu_bus_id,pid,process_name",
+         "--format=csv,noheader"], capture_output=True, text=True).stdout
+    found = set()
+    for line in listing.splitlines():
+        fields = [field.strip() for field in line.split(",")]
+        if len(fields) >= 3 and fields[0] in buses and int(fields[1]) != own:
+            found.add((int(fields[1]), fields[2]))
+    return found
+
+
+def timed(command, cwd, out):
+    """Runs `command` and watches its devices every two seconds; returns the
+    processes of others that shared them, which make a rate meaningless."""
+    buses = visible_bus_ids()
+    shared = others_on(buses, own=-1)
+    child = subprocess.Popen(command, cwd=cwd, stdout=out,
+                             stderr=subprocess.STDOUT)
+    while True:
+        try:
+            child.wait(timeout=2)
+            break
+        except subprocess.TimeoutExpired:
+            shared |= others_on(buses, own=child.pid)
+    shared |= others_on(buses, own=child.pid)
+    if shared:
+        names = ", ".join(f"{name} ({pid})" for pid, name in sorted(shared))
+        print(f"warning: the device was shared with {names}; "
+              "the rate is not a measurement", file=sys.stderr)
+    return child.returncode, shared
+
+
+def record(args, engine, name, rate, log, shared=False):
     path = os.path.join(args.work, "results.json")
     results = json.load(open(path)) if os.path.exists(path) else {}
-    results.setdefault(engine, {})[name] = {"ns_per_day": rate, "log": log}
+    results.setdefault(engine, {})[name] = {"ns_per_day": rate, "log": log,
+                                            "shared": shared}
     with open(path, "w") as file:
         json.dump(results, file, indent=2)
 
@@ -273,8 +323,7 @@ def run(args):
         if args.engine == "mdir":
             control = write_mdir(name, system, target)
             with open(log, "w") as out:
-                subprocess.run([args.mdir, "run", control], cwd=target,
-                               stdout=out, stderr=subprocess.STDOUT)
+                _, shared = timed([args.mdir, "run", control], target, out)
             text = open(log).read()
             match = re.search(r"([0-9.]+) ns per day", text)
         else:
@@ -289,22 +338,22 @@ def run(args):
                 # and on the host otherwise (constraints in triangles, for
                 # one).
                 for update in ("gpu", "cpu"):
-                    done = subprocess.run(
+                    code, shared = timed(
                         [args.gmx, "mdrun", "-s", tpr, "-deffnm", "gromacs",
                          "-nb", "gpu", "-pme", "gpu", "-bonded", "gpu",
                          "-update", update, "-ntmpi", "1", "-ntomp",
                          str(args.threads), "-pin", "on", "-notunepme",
-                         "-resethway", "-noconfout"],
-                        cwd=target, stdout=out, stderr=subprocess.STDOUT)
-                    if done.returncode == 0:
+                         "-resethway", "-noconfout"], target, out)
+                    if code == 0:
                         break
             mdrun = os.path.join(target, "gromacs.log")
             text = open(mdrun).read() if os.path.exists(mdrun) else ""
             match = re.search(r"Performance:\s+([0-9.]+)", text)
         rate = float(match.group(1)) if match else None
         print(f"{args.engine:8s} {name:15s} "
-              f"{rate if rate is not None else 'failed; see ' + log}")
-        record(args, args.engine, name, rate, log)
+              f"{rate if rate is not None else 'failed; see ' + log}"
+              f"{' (the device was shared)' if shared else ''}")
+        record(args, args.engine, name, rate, log, bool(shared))
 
 
 def report(args):
