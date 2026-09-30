@@ -18,6 +18,7 @@ continues exactly.
 | [docs/neighbors-m0.md](docs/neighbors-m0.md) | How neighbor structures are built and kept valid, with measurements |
 | [docs/design-m1.md](docs/design-m1.md) | Proposal for the second milestone: bonded terms, exclusions, thermostat, barostat |
 | [docs/decisions.md](docs/decisions.md) | Decisions and their status |
+| [docs/principles.md](docs/principles.md) | Principles of development, from the defects that taught them |
 | [docs/prior-art.md](docs/prior-art.md) | Earlier work and what is taken from it |
 
 ## Requirements
