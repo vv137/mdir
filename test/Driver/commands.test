@@ -47,3 +47,16 @@
 # MODULE: func.func @mdir_run(
 # RUN: test -f %t.report/version.txt
 # RUN: test -f %t.report/inputs/pdb-argon.pdb
+
+# A pass that fails leaves a reproducer, from which mdir-opt repeats the
+# failure. MDIR_PIPELINE replaces the pipeline with one that cannot work.
+# RUN: rm -f %t.reproducer.mlir
+# RUN: env MDIR_PIPELINE=convert-md-exec-to-gpu \
+# RUN:     MDIR_REPRODUCER=%t.reproducer.mlir \
+# RUN:     not mdir emit --stage=lowered %t.toml 2>&1 \
+# RUN:   | FileCheck %s --check-prefix=FAILED
+# FAILED: error: 'mdrt.from_buffer' op is not in the storage form
+# FAILED: mdir: cannot compile the run; this is a defect of mdir. The input of the passes is in '{{.*}}reproducer.mlir'
+# RUN: not mdir-opt --run-reproducer %t.reproducer.mlir 2>&1 \
+# RUN:   | FileCheck %s --check-prefix=REPLAYED
+# REPLAYED: error: 'mdrt.from_buffer' op is not in the storage form

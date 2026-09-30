@@ -290,6 +290,10 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                             mlir::ModuleOp::getOperationName(),
                             mlir::PassManager::Nesting::Implicit);
   std::string pipeline = getPipeline(*control, *program);
+  // MDIR_PIPELINE replaces the pipeline, to try another order of passes or
+  // to stop part of the way.
+  if (const char *replaced = std::getenv("MDIR_PIPELINE"))
+    pipeline = replaced;
   if (emit == Emit::Pipeline) {
     llvm::outs() << pipeline << "\n";
     return 0;

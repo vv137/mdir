@@ -48,7 +48,9 @@ mdir-opt --run-reproducer mdir-reproducer.mlir
 ```
 
 repeats the failure without the inputs of the run. `MDIR_PRINT_AFTER=<pass>`
-prints the module after each run of that pass.
+prints the module after each run of that pass, and `MDIR_PIPELINE=<passes>`
+replaces the pipeline (`mdir emit --stage=pipeline` prints the one that
+`mdir run` uses).
 
 ## Failures on the device
 
@@ -75,3 +77,4 @@ at a later call. To find the kernel that failed:
 | Default | `lit test` | Units, dialects, lowerings, short runs on CPU and GPU |
 | Sanitizer | `lit -Dsanitize=1 test` | The GPU tests under compute-sanitizer |
 | Scale | `MDIR_BENCH_DIR=<dir> lit test/Scale` | Short runs of the Amber benchmark suite |
+| Host sanitizers | `scripts/build-sanitized.sh <dir>` | All tests, with the driver and runtimes under AddressSanitizer and UndefinedBehaviorSanitizer |

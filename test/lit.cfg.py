@@ -11,7 +11,10 @@ config.test_source_root = os.path.dirname(__file__)
 config.test_exec_root = os.path.join(config.mdir_obj_root, "test")
 config.excludes = ["CMakeLists.txt", "lit.cfg.py", "lit.site.cfg.py.in", "lib", "Inputs"]
 
-llvm_config.with_system_environment(["HOME", "TMP", "TEMP"])
+# The options of the sanitizers reach the tests of a sanitized build
+# (scripts/build-sanitized.sh).
+llvm_config.with_system_environment(
+    ["HOME", "TMP", "TEMP", "ASAN_OPTIONS", "UBSAN_OPTIONS"])
 llvm_config.use_default_substitutions()
 
 config.mdir_tools_dir = os.path.join(config.mdir_obj_root, "bin")

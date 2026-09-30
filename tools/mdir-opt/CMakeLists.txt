@@ -18,6 +18,9 @@ set(LIBS
   MLIRSCFDialect
   MLIRTransforms
   MLIRVectorDialect
+  MLIRRegisterAllDialects
+  MLIRRegisterAllExtensions
+  MLIRRegisterAllPasses
   )
 
 add_llvm_executable(mdir-opt mdir-opt.cpp)

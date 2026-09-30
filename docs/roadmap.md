@@ -16,7 +16,7 @@ follows are in [principles.md](principles.md).
 | A summary of the effects of each loop op, from which fusion decides | After the storage types |
 | Copies between host and device ordered by async tokens in the IR | After the effects |
 | A debug lowering that checks bounds and the residuals of iterative solvers | With the storage types |
-| A build of the driver and runtime under AddressSanitizer and UndefinedBehaviorSanitizer | Next |
+| A build of the driver and runtime under AddressSanitizer and UndefinedBehaviorSanitizer | Done (`scripts/build-sanitized.sh`; the tests pass) |
 
 ## 2. The rest of the first milestone
 
