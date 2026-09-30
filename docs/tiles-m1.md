@@ -77,8 +77,8 @@ missed. The tiles keep that, for both lists of the dual scheme
 (Section 6). The argument of GROMACS is real and is measured in Section 9
 (the interval between builds against the size of the system); a policy of
 a fixed interval with a stated tolerance would be a separate choice of the
-plan (the rebuild policy `interval` of decisions.md, Section 7), not a
-change to this structure.
+plan (the rebuild policy `interval` of decisions.md, Section 7, decided to be
+an option only and never the default), not a change to this structure.
 
 **The kernel of a pair is the semantic kernel.** A loop over pairs runs the
 body that the `md` dialect wrote, with the distance, the displacement,

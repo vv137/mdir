@@ -453,7 +453,7 @@ These items follow from the decisions above but have no design yet.
 | `md_exec` dialect in the value form, and the conversion into it | M0 | Implemented |
 | Lowering of `md_exec` to executable code on the CPU | M0 | Implemented |
 | Reuse of neighbor structures across steps, with the policy `check` | M0 | Implemented |
-| Rebuild policy `interval`, with the diagnostic of A11 | M0 | |
+| Rebuild policy `interval`, with the diagnostic of A11 | M0 | Decided 2026-09-30: an option only, never the default. A list kept for a fixed number of steps with a buffer estimated from a tolerance of the energy drift, as GROMACS does [[Pall2020]](references.md#pall2020), may miss pairs within the cutoff; the default stays the exact test of D41 and D80. A run that chooses it must say so in its log and its checkpoint, with the tolerance. Not implemented. |
 | Storage form of the `md_exec` ops, as D17 decided | M0 | Implemented: `md-exec-assign-storage` |
 | Precision policy | M0 | Implemented: single, mixed, and double, on the CPU and on a GPU |
 | Declaring the role of a field that a function takes | M0 | |
