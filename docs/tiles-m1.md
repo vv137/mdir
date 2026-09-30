@@ -1,7 +1,10 @@
 # Tile Neighbor Structure for M1: Design
 
-Status: proposed (2026-09-30), D82. Nothing of it is implemented yet; the
-measurements of Section 9 decide between the variants it leaves open. The
+Status: proposed (2026-09-30), D82; not implemented. A prototype
+(Section 11) did not bear out the premise of stage T1 on an RTX 3090: at
+equal reach the tile kernels were slower than the neighbor matrix. The
+stages are on hold until the reach of the list and the cost of a build,
+which the prototype found to decide the rate, are addressed. The
 keys in brackets are those of [references.md](references.md).
 
 This document describes a second kind of neighbor structure, `tiles`, for
@@ -307,3 +310,39 @@ against displacement tests (Section 3).
 - A domain decomposition (M2c) keeps the structure per domain; the rows
   that need halo particles are those with records of halo tiles, which the
   build can classify, so that the other rows run while the halo arrives.
+
+## 11. Prototype measurements (2026-09-30)
+
+A standalone CUDA program (kept in the notes of the project, not in the
+repository) timed the loop over the pairs of JAC with lists built on the
+host: Lennard-Jones from type tables and the direct sum of PME in `f32`,
+the particles in the spatial order of MDIR, 1000 launches each, RTX 3090.
+
+| Reach (Å) | Matrix, 16 lanes (µs) | Tiles 8 × 8, full (µs) | 8 × 4, full, a row over 4 warps (µs) | 8 × 4, half, `f32` atomics / fixed point (µs) |
+|---|---|---|---|---|
+| 8.05 | 60.6 | 142.1 | 111.0 | 112.1 / 106.7 |
+| 8.5 | 70.2 | 148.1 | 116.2 | 118.4 / 112.9 |
+| 10.0 | 108.3 | 171.2 | 136.7 | 159.3 / 148.3 |
+
+The slots of the 8 × 4 records that hold a pair of the list are 38 to
+47 %; of the entries of the matrix, 98 % are within the cutoff at 8.05 Å
+and 51 % at 10 Å. A full list of tiles computes about twice the slots of
+the matrix, and the kernel is bound by the arithmetic of the pairs, so the
+contiguous loads do not pay for the empty slots. The half list halves the
+records but adds the reduction and the atomic additions of the sources.
+
+GROMACS 2026.3 on the same system (nsys, `-update gpu`): its nonbonded
+kernel takes about 50 µs per step with `rlist` 8.05 Å and a half list, and
+all its kernels 154 µs. The tile kernel of the prototype is twice as slow
+as that of GROMACS for the same list, and the matrix with a list of
+8.05 Å is within 20 % of it.
+
+Pruning the matrix from an outer reach (a warp per row, compacted with a
+ballot) took 87 to 96 µs from 10 Å, as much as it saves.
+
+What separates MDIR from GROMACS on this system is therefore the reach of
+the list (10 Å against 8.05 Å) and the cost of a build (about 600 µs), not
+the layout. With the measured intervals between builds (every 3.0 steps at
+8.6 Å, 9.3 at 10 Å), the time $K(R) + B / I(R)$ of the loop and the builds
+is lowest at 10 Å for $B = 600$ µs, as measured; for $B = 150$ µs it moves
+to about 9 Å and falls by about a third.
