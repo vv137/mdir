@@ -29,6 +29,7 @@ follows are in [principles.md](principles.md).
 | Performance | Host synchronization moved to the device (the test of validity and the decision to rebuild), fusion of the loops over particles, CUDA graphs, PME in single precision for the mixed mode (an experiment), the pair kernel |
 
 | Barostat integrators | The strain stepped in λ = √V (eq. S7 of [[Bernetti2020]](references.md#bernetti2020)), which makes the exact work of D77 the paper's reversible integrator, with its effective energy (eq. S11) as a diagnostic; then its Trotter integrator (SI Sec. V.C), which needs no evaluation after a scaling; the ensemble test of two pressures (SI Fig. S6) for the white paper |
+| CHARMM force fields (later) | For CHARMM36 lipids and proteins: the switch of the Lennard-Jones force from 10 to 12 Å in runs from a topology, Urey–Bradley angles (function 5 of GROMACS), and NBFIX pairs |
 | Semi-isotropic barostat | Eqs. (9a, 9b) and SI Secs. VI–VII of [[Bernetti2020]](references.md#bernetti2020): strains of the area and of the height from their own pressures and noises, a surface tension, and a frozen height; the kinetic energy per direction, scaling per axis in the Trotter step and in the exact work, the reference of restraints per axis. Validated on a POPC bilayer of Lipid21 from packmol-memgen against GROMACS, and on water, where it must sample what the isotropic barostat does |
 
 The order: leapfrog, then performance. The goal of performance for the

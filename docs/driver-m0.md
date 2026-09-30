@@ -82,7 +82,7 @@ Keywords are in lower case. Values that name a choice, such as `VVER` and
 | Table | Keyword | Meaning in MDIR |
 |---|---|---|
 | `input` | `pdbfile` | Positions. The name of an atom selects its type. |
-| | `rstfile` | The checkpoint of an earlier run, which the run continues. It replaces the positions of `pdbfile`; the types still come from there. |
+| | `rstfile` | The checkpoint of an earlier run, which the run continues. It replaces the positions of `pdbfile`; the types still come from there. The run takes the cell of the checkpoint, which a barostat may have changed, and warns on the standard error if the input has another; the input's cell still sets what was derived from the file (the grid of PME, the reference of restraints). |
 | `output` | `dcdfile`, `xtcfile` | Trajectory of positions |
 | | `rstfile` | The checkpoint (D26). It is written every `rstout_period` steps, each time in place of the one before. |
 | `energy` | `cutoffdist` | The cutoff of `md.neighborhood` |

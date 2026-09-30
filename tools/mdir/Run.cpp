@@ -33,6 +33,7 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <chrono>
@@ -136,9 +137,37 @@ static int fail(llvm::Error error) {
   return 1;
 }
 
+/// Reports something that the run goes on with but that its user should
+/// know, on the standard error.
+static void warn(const llvm::Twine &message) {
+  llvm::errs() << "mdir: warning: " << message << "\n";
+}
+
 static int fail(const llvm::Twine &message) {
   llvm::errs() << "mdir: " << message << "\n";
   return 1;
+}
+
+/// Warns if the cell of `checkpoint`, which the run takes, differs from that
+/// of the input. Always, on the standard error, so that it shows when the
+/// log goes to a file.
+static void warnAboutCell(const Checkpoint &checkpoint, const System &system,
+                          StringRef path) {
+  bool same = true;
+  for (int i = 0; i != 3; ++i)
+    same &= checkpoint.box[i] == system.box[i];
+  if (same)
+    return;
+  warn(llvm::formatv("the cell of '{0}', {1:F4} {2:F4} {3:F4} Å, differs "
+                     "from that of the input, {4:F4} {5:F4} {6:F4} Å; the "
+                     "run takes that of the checkpoint",
+                     path, checkpoint.box[0] / units::length,
+                     checkpoint.box[1] / units::length,
+                     checkpoint.box[2] / units::length,
+                     system.box[0] / units::length,
+                     system.box[1] / units::length,
+                     system.box[2] / units::length)
+           .str());
 }
 
 /// A function of this program, whose address tells where the program is.
@@ -195,6 +224,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     // and a run of dynamics those of a minimization, and begins anew.
     if (control->minimize || checkpoint->integrator == "MIN") {
       system->positions = checkpoint->positions;
+      warnAboutCell(*checkpoint, *system, path);
       for (int i = 0; i != 3; ++i)
         system->box[i] = checkpoint->box[i];
       std::fprintf(stdout, "MDIR: begins at the positions of '%s'\n",
@@ -212,14 +242,13 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                   "same time");
     // With a barostat the cell of the checkpoint is where the run left it;
     // otherwise it is that of the input.
+    // The cell is where the run that wrote the checkpoint left it, which a
+    // barostat may have changed; the input keeps its own for what depends
+    // on it (the grid of PME, the reference of restraints).
+    warnAboutCell(*checkpoint, *system, path);
     for (int i = 0; i != 3; ++i) {
-      if (control->barostat) {
-        system->inputBox[i] = system->box[i];
-        system->box[i] = checkpoint->box[i];
-      }
-      else if (checkpoint->box[i] != system->box[i])
-        return fail("the box of '" + path + "' differs from that of the "
-                    "input; only a run with a barostat changes it");
+      system->inputBox[i] = system->box[i];
+      system->box[i] = checkpoint->box[i];
     }
     if (checkpoint->forces.empty())
       return fail("'" + path + "' holds no forces, which a step begins "
