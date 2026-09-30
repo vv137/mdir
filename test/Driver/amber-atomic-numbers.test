@@ -1,0 +1,46 @@
+# A topology of Amber without ATOMIC_NUMBER, as older ones are, and with
+# repartitioned masses: the elements come from the names and the masses.
+# The waters of OPC are found for SETTLE and the bonds of hydrogen for
+# SHAKE as they are with the atomic numbers.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/opc.inpcrd %t
+# RUN: awk '/^%FLAG ATOMIC_NUMBER/ {skip = 1; next} /^%FLAG/ {skip = 0} !skip' \
+# RUN:     %S/Inputs/opc/opc.prmtop > %t/opc.prmtop
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: not grep ATOMIC_NUMBER %t/opc.prmtop
+# RUN: mdir check %t/run.toml | FileCheck %s
+# RUN: cp %S/Inputs/opc/opc.prmtop %t/with.prmtop
+# RUN: sed -e 's/opc.prmtop/with.prmtop/' %t/run.toml > %t/with.toml
+# RUN: mdir check %t/with.toml | FileCheck %s
+
+# Repartitioned: 3.024 amu for each hydrogen of the waters, taken from the
+# oxygen, which keeps 11.967 amu.
+#
+# RUN: python3 %S/Inputs/repartition.py %t/opc.prmtop > %t/heavy.prmtop
+# RUN: sed -e 's/opc.prmtop/heavy.prmtop/' %t/run.toml > %t/heavy.toml
+# RUN: mdir check %t/heavy.toml | FileCheck %s
+
+# CHECK: bonds: {{[0-9]+}}, 0 with hydrogen
+# CHECK: degrees of freedom: 2373
+
+#--- run.toml
+[input]
+prmtopfile = "opc.prmtop"
+ambcrdfile = "opc.inpcrd"
+
+[energy]
+cutoffdist    = 9.0
+pairlistdist  = 10.0
+
+[dynamics]
+nsteps        = 10
+eneout_period = 10
+
+[constraints]
+rigid_bond = true
+fast_water = true
+
+[boundary]
+type = "PBC"
+#--- end

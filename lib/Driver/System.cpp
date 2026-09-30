@@ -125,7 +125,8 @@ static llvm::Error findSettles(const Control &control, Topology &topology) {
       continue;
     unsigned first = topology.residueStarts[r];
     unsigned end = r + 1 < e ? topology.residueStarts[r + 1] : count;
-    auto where = "the residue " + llvm::Twine(r + 1) + " (" + name + ")";
+    std::string where =
+        ("the residue " + llvm::Twine(r + 1) + " (" + name + ")").str();
     bool water = end - first >= 3 && topology.atomicNumbers[first] == 8 &&
                  topology.atomicNumbers[first + 1] == 1 &&
                  topology.atomicNumbers[first + 2] == 1;

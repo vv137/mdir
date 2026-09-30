@@ -108,6 +108,56 @@ private:
 // Sections
 //===----------------------------------------------------------------------===//
 
+/// The atomic number of an atom of mass `mass`, in amu, and name `name`,
+/// for a topology without atomic numbers, or 0 for a particle without mass.
+/// The element whose symbol begins the name is taken where the mass allows
+/// it: a hydrogen below 4.1 amu, and a heavier element from its standard
+/// atomic weight down to 6.5 amu less, which repartitioned masses of its
+/// hydrogens take from it; `CA` of 40 amu is calcium, and of 12 or less
+/// carbon. Otherwise the element of the nearest standard atomic weight,
+/// within 0.5 amu.
+static int inferAtomicNumber(double mass, StringRef name) {
+  if (mass <= 0.0)
+    return 0;
+  struct Element {
+    int number;
+    const char *symbol;
+    double weight;
+  };
+  static const Element elements[] = {
+      {1, "H", 1.008},    {3, "LI", 6.94},    {6, "C", 12.011},
+      {7, "N", 14.007},   {8, "O", 15.999},   {9, "F", 18.998},
+      {11, "NA", 22.990}, {12, "MG", 24.305}, {15, "P", 30.974},
+      {16, "S", 32.06},   {17, "CL", 35.45},  {19, "K", 39.098},
+      {20, "CA", 40.078}, {25, "MN", 54.938}, {26, "FE", 55.845},
+      {29, "CU", 63.546}, {30, "ZN", 65.38},  {35, "BR", 79.904},
+      {37, "RB", 85.468}, {53, "I", 126.90},  {55, "CS", 132.91}};
+  std::string upper = name.trim().upper();
+  StringRef symbol(upper);
+  // Two letters first, so that CL is chlorine and not carbon.
+  for (size_t letters : {2, 1}) {
+    if (symbol.size() < letters)
+      continue;
+    for (const Element &element : elements) {
+      if (StringRef(element.symbol) != symbol.take_front(letters))
+        continue;
+      if (element.number == 1 ? mass < 4.1
+                              : mass <= element.weight + 0.5 &&
+                                    mass >= element.weight - 6.5)
+        return element.number;
+    }
+  }
+  int best = 0;
+  double closest = 0.5;
+  for (const Element &element : elements) {
+    if (std::fabs(mass - element.weight) < closest) {
+      closest = std::fabs(mass - element.weight);
+      best = element.number;
+    }
+  }
+  return best;
+}
+
 llvm::Error Reader::split(StringRef text) {
   llvm::SmallVector<StringRef> lines;
   text.split(lines, '\n');
@@ -844,6 +894,13 @@ llvm::Expected<Topology> Reader::read() {
   if (llvm::Error error = readIntegers("ATOMIC_NUMBER", natom, numbers, false))
     return std::move(error);
   topology.atomicNumbers.assign(numbers.begin(), numbers.end());
+  // Older topologies have no atomic numbers; they are taken from the
+  // masses, and from the names for a hydrogen whose mass has been
+  // repartitioned.
+  if (topology.atomicNumbers.empty())
+    for (size_t i = 0; i != natom; ++i)
+      topology.atomicNumbers.push_back(
+          inferAtomicNumber(topology.masses[i], topology.atomNames[i]));
 
   std::vector<long> types;
   if (llvm::Error error = readIntegers("ATOM_TYPE_INDEX", natom, types))
