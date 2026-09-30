@@ -179,7 +179,11 @@ def AssignPrecision
        them.
 
     A loop over pairs computes in the type of `kernel` and a loop over
-    particles in the type of `integrator`. Values are converted where they
+    particles in the type of `integrator`. Where `kernel` is narrower than
+    the positions, a loop over particles converts the positions to it once,
+    and the loops over pairs and over tuples that are not disjoint (the
+    terms of the potential, not the constraints) take that field
+    (`kernel-positions`; D79). Values are converted where they
     enter and leave a kernel. Global sums are accumulated in the type of
     `accumulator`.
 
@@ -201,7 +205,12 @@ def AssignPrecision
            "The type that loops over particles compute in: f32 or f64">,
     Option<"accumulator", "accumulator", "std::string",
            /*default=*/"\"\"",
-           "The type that global sums are accumulated in: f32 or f64">
+           "The type that global sums are accumulated in: f32 or f64">,
+    Option<"kernelPositions", "kernel-positions", "bool",
+           /*default=*/"true",
+           "Whether loops over pairs, and over tuples that are not "
+           "disjoint, take the positions converted once to the type of "
+           "the kernel, where that is narrower than the positions">
   ];
   let dependentDialects = ["::mdir::md_exec::MDExecDialect",
                            "::mlir::arith::ArithDialect"];
@@ -249,7 +258,11 @@ def AssignStorage : Pass<"md-exec-assign-storage", "::mlir::ModuleOp"> {
   }];
   let options = [
     Option<"memory", "memory", "std::string", /*default=*/"\"host\"",
-           "Where the buffers are: host or device">
+           "Where the buffers are: host or device">,
+    Option<"tables", "tables", "std::string", /*default=*/"\"f64\"",
+           "The type in which tables are copied to a device: f64, or f32 "
+           "where the kernels compute in f32 and would convert every "
+           "value they look up">
   ];
   let dependentDialects = ["::mdir::md_exec::MDExecDialect",
                            "::mlir::arith::ArithDialect",

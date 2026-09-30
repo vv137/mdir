@@ -104,7 +104,13 @@ def ConvertMDExecToGPU
     Option<"splitLimit", "split-limit", "int64_t", /*default=*/"131072",
            "The largest number of threads that the search of a neighbor "
            "build is split into, with one thread for each row of cells of "
-           "a particle">
+           "a particle">,
+    Option<"rowLanes", "row-lanes", "int64_t", /*default=*/"16",
+           "The threads that share the neighbors or tuples of a particle, "
+           "a power of two up to 32; 1 gives a thread to each particle">,
+    Option<"fuseRows", "fuse-rows", "bool", /*default=*/"true",
+           "Whether consecutive loops over pairs and tuples of the same "
+           "positions become one kernel">
   ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",

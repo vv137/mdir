@@ -69,7 +69,10 @@ static std::string getPipeline(const Control &control,
   os << "md-exec-assign-precision{mode=" << mode << "},";
 
   if (control.target == Target::GPU) {
-    os << "md-exec-assign-storage{memory=device},convert-md-exec-to-gpu,"
+    // Kernels in f32 look their tables up in f32.
+    os << "md-exec-assign-storage{memory=device"
+       << (control.precision == Precision::Double ? "" : " tables=f32")
+       << "},convert-md-exec-to-gpu,"
        << "gpu-lower-to-nvvm-pipeline{cubin-format=isa},"
        << "reconcile-unrealized-casts";
     return pipeline;

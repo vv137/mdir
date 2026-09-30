@@ -7,6 +7,9 @@
 // RUN: mdir-opt %s \
 // RUN:     --md-exec-assign-precision="mode=mixed accumulator=f32" \
 // RUN: | FileCheck %s --check-prefixes=ACCUMULATOR
+// RUN: mdir-opt %s \
+// RUN:     --md-exec-assign-precision="mode=mixed kernel-positions=false" \
+// RUN: | FileCheck %s --check-prefixes=UNCONVERTED
 
 !vec   = !md.field<@atoms, 3 x f64>
 !real  = !md.field<@atoms, f64>
@@ -17,7 +20,9 @@ md.particle_set @atoms
 // A loop over pairs computes in the type of the kernel and writes fields of
 // the type of forces. The buffer states the type of the positions, whatever
 // the mode. Values from outside the kernel are converted before the loop,
-// and the contribution to a global sum where the kernel ends.
+// and the contribution to a global sum where the kernel ends. Where the
+// kernel is narrower than the positions, a loop over particles converts
+// them once, and the loop over pairs takes that field (D79).
 
 // CHECK-LABEL: func.func @forces
 // MIXED-SAME:    -> (f64, !md.field<@atoms, 3 x f32>)
@@ -26,7 +31,12 @@ md.particle_set @atoms
 // CHECK:         %[[X:.*]] = mdrt.from_buffer %{{.*}} : memref<?x3xf64> to !md.field<@atoms, 3 x f64>
 // MIXED:         %[[F0:.*]] = md_exec.zeros : !md.field<@atoms, 3 x f32>
 // MIXED:         %[[EPS:.*]] = arith.truncf %{{.*}} : f64 to f32
-// MIXED:         md_exec.pair_for %{{.*}}, %[[X]], %{{.*}} outs(%[[F0]] : !md.field<@atoms, 3 x f32>) reduce(%{{.*}} : f64)
+// MIXED:         %[[XE:.*]] = md_exec.empty : !md.field<@atoms, 3 x f32>
+// MIXED:         %[[XK:.*]] = md_exec.particle_for ins(%[[X]] : !md.field<@atoms, 3 x f64>) outs(%[[XE]] : !md.field<@atoms, 3 x f32>)
+// MIXED-NEXT:    ^bb0(%[[XI:.*]]: vector<3xf64>):
+// MIXED-NEXT:      %[[XN:.*]] = arith.truncf %[[XI]] : vector<3xf64> to vector<3xf32>
+// MIXED-NEXT:      md_exec.yield %[[XN]] : vector<3xf32>
+// MIXED:         md_exec.pair_for %{{.*}}, %[[XK]], %{{.*}} outs(%[[F0]] : !md.field<@atoms, 3 x f32>) reduce(%{{.*}} : f64)
 // MIXED-NEXT:    ^bb0(%[[R2:.*]]: f32, %[[D:.*]]: vector<3xf32>):
 // MIXED-NEXT:      %[[TWO:.*]] = arith.constant 2.000000e+00 : f32
 // MIXED-NEXT:      %[[A:.*]] = arith.mulf %[[EPS]], %[[R2]] : f32
@@ -35,7 +45,10 @@ md.particle_set @atoms
 // MIXED-NEXT:      %[[K:.*]] = arith.mulf %[[S]], %[[D]] : vector<3xf32>
 // MIXED-NEXT:      %[[WIDE:.*]] = arith.extf %[[A]] : f32 to f64
 // MIXED-NEXT:      md_exec.yield %[[K]], %[[WIDE]] : vector<3xf32>, f64
-// MIXED-NEXT:    } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> !md.field<@atoms, 3 x f32>, f64
+// MIXED-NEXT:    } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f32> -> !md.field<@atoms, 3 x f32>, f64
+// UNCONVERTED-LABEL:    func.func @forces
+// UNCONVERTED-NOT:      md_exec.particle_for
+// UNCONVERTED:          } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> !md.field<@atoms, 3 x f32>, f64
 // DOUBLE:        md_exec.pair_for
 // DOUBLE-NEXT:   ^bb0(%{{.*}}: f64, %{{.*}}: vector<3xf64>):
 // DOUBLE-NOT:    arith.truncf

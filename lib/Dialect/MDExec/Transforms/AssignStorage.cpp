@@ -23,6 +23,7 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/MapVector.h"
 #include <cassert>
+#include <functional>
 
 using namespace mlir;
 using namespace mdir;
@@ -93,8 +94,9 @@ struct Scope {
 
 class Assignment {
 public:
-  Assignment(ModuleOp module, bool onDevice)
-      : module(module), context(module.getContext()), onDevice(onDevice) {}
+  Assignment(ModuleOp module, bool onDevice, bool narrowTables)
+      : module(module), context(module.getContext()), onDevice(onDevice),
+        narrowTables(narrowTables) {}
 
   LogicalResult run();
 
@@ -167,6 +169,8 @@ private:
   ModuleOp module;
   MLIRContext *context;
   bool onDevice;
+  /// Whether tables are copied to the device in f32.
+  bool narrowTables;
 
   /// Host buffers that the program was given and has copied to the device.
   /// They take what is copied back.
@@ -1076,21 +1080,60 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
         return success();
       }
       auto host = cast<MemRefType>(buffer.getType());
-      MemRefType type = MemRefType::get(
-          host.getShape(), host.getElementType(), MemRefLayoutAttrInterface(),
-          IntegerAttr::get(IntegerType::get(context, 64), deviceSpace));
+      Location loc = op->getLoc();
       SmallVector<Value, 2> sizes;
       for (int64_t d = 0, e = host.getRank(); d != e; ++d)
         sizes.push_back(memref::DimOp::create(
-            builder, op->getLoc(), buffer,
-            arith::ConstantIndexOp::create(builder, op->getLoc(), d)));
+            builder, loc, buffer,
+            arith::ConstantIndexOp::create(builder, loc, d)));
+      // Kernels that compute in f32 take the table in f32: a copy on the
+      // host, converted element by element, goes to the device.
+      // The factors of particle mesh Ewald stay in f64, as its kernels
+      // take them.
+      bool readByReciprocal = llvm::any_of(
+          from.getResult().getUsers(),
+          [](Operation *user) { return isa<ReciprocalOp>(user); });
+      if (narrowTables && host.getElementType().isF64() &&
+          !readByReciprocal) {
+        Type narrow = Float32Type::get(context);
+        auto copyType = MemRefType::get(host.getShape(), narrow);
+        Value copy =
+            memref::AllocOp::create(builder, loc, copyType, sizes);
+        Value zero = arith::ConstantIndexOp::create(builder, loc, 0);
+        Value one = arith::ConstantIndexOp::create(builder, loc, 1);
+        std::function<void(OpBuilder &, unsigned, SmallVector<Value, 2>)>
+            convert = [&](OpBuilder &b, unsigned d,
+                          SmallVector<Value, 2> indices) {
+              if (d == host.getRank()) {
+                Value value = memref::LoadOp::create(b, loc, buffer, indices);
+                Value narrowed =
+                    arith::TruncFOp::create(b, loc, narrow, value);
+                memref::StoreOp::create(b, loc, narrowed, copy, indices);
+                return;
+              }
+              scf::ForOp::create(
+                  b, loc, zero, sizes[d], one, ValueRange(),
+                  [&](OpBuilder &inner, Location, Value i, ValueRange) {
+                    SmallVector<Value, 2> next = indices;
+                    next.push_back(i);
+                    convert(inner, d + 1, next);
+                    scf::YieldOp::create(inner, loc);
+                  });
+            };
+        convert(builder, 0, {});
+        buffer = copy;
+        host = copyType;
+      }
+      MemRefType type = MemRefType::get(
+          host.getShape(), host.getElementType(), MemRefLayoutAttrInterface(),
+          IntegerAttr::get(IntegerType::get(context, 64), deviceSpace));
       Value device =
           gpu::AllocOp::create(builder, op->getLoc(), type,
                                /*asyncToken=*/Type(),
                                /*asyncDependencies=*/ValueRange(), sizes,
                                /*symbolOperands=*/ValueRange())
               .getMemref();
-      createTransfer(builder, op->getLoc(), device, buffer);
+      createTransfer(builder, loc, device, buffer);
       mapping.map(from.getResult(), device);
       return success();
     }
@@ -1519,7 +1562,13 @@ public:
           << "expected the memory 'host' or 'device', got '" << memory << "'";
       return signalPassFailure();
     }
-    if (failed(Assignment(getOperation(), memory == "device").run()))
+    if (tables != "f64" && tables != "f32") {
+      getOperation()->emitError()
+          << "expected the tables 'f64' or 'f32', got '" << tables << "'";
+      return signalPassFailure();
+    }
+    if (failed(Assignment(getOperation(), memory == "device", tables == "f32")
+                   .run()))
       signalPassFailure();
   }
 };

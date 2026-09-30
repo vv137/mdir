@@ -119,8 +119,10 @@ namespace {
 /// Assigns types to the fields and the kernels of one function.
 class Assigner {
 public:
-  Assigner(func::FuncOp function, const Policy &policy)
-      : function(function), policy(policy) {}
+  Assigner(func::FuncOp function, const Policy &policy,
+           bool kernelPositions)
+      : function(function), policy(policy),
+        kernelPositions(kernelPositions) {}
 
   LogicalResult run();
 
@@ -134,6 +136,12 @@ private:
   LogicalResult collect(Operation *op);
   LogicalResult resolve();
   void apply();
+  /// Gives the loops that compute in a type narrower than the positions the
+  /// positions converted to it, once for each block and positions.
+  void convertPositions();
+  /// A loop over particles, before `before`, that converts `positions` to
+  /// the type of the kernels.
+  Value createConversion(Operation *before, Value positions);
 
   /// Gives the kernel of `loop` the type `arithmetic`. The kernel takes
   /// `numGeometry` arguments of its own, then `perField` for each field in
@@ -150,6 +158,7 @@ private:
 
   func::FuncOp function;
   const Policy &policy;
+  bool kernelPositions;
 
   llvm::DenseMap<Value, unsigned> ids;
   SmallVector<Value> fields;
@@ -595,7 +604,59 @@ LogicalResult Assigner::run() {
   if (failed(status) || failed(resolve()))
     return failure();
   apply();
+  if (kernelPositions)
+    convertPositions();
   return success();
+}
+
+Value Assigner::createConversion(Operation *before, Value positions) {
+  OpBuilder builder(before);
+  Location loc = before->getLoc();
+  auto field = cast<FieldType>(positions.getType());
+  auto narrow = cast<FieldType>(withReal(field, policy.kernel));
+  Value empty = EmptyOp::create(builder, loc, narrow);
+  auto loop = ParticleForOp::create(
+      builder, loc, TypeRange{narrow}, ValueRange{positions},
+      ValueRange{empty}, /*reduce=*/ValueRange(), /*scratch=*/ValueRange());
+  Block *block = new Block();
+  loop.getKernel().push_back(block);
+  Value position = block->addArgument(field.getKernelValueType(), loc);
+  OpBuilder kernel = OpBuilder::atBlockEnd(block);
+  Value converted =
+      createCast(kernel, loc, position, narrow.getKernelValueType());
+  YieldOp::create(kernel, loc, ValueRange{converted});
+  return loop.getResult(0);
+}
+
+void Assigner::convertPositions() {
+  // The subtraction of two positions is where precision is lost; in f32
+  // the positions of a cell of 60 Å are 4e-6 Å apart. The terms of the
+  // potential take them so, as GROMACS does; the constraints, whose loops
+  // are over disjoint tuples, keep the positions they are stored in (D79).
+  SmallVector<Operation *> loops;
+  function.walk([&](Operation *op) {
+    if (isa<PairForOp>(op))
+      loops.push_back(op);
+    else if (auto tuple = dyn_cast<TupleForOp>(op))
+      if (!tuple.getDisjoint())
+        loops.push_back(op);
+  });
+  DenseMap<std::pair<Block *, Value>, Value> converted;
+  for (Operation *op : loops) {
+    OpOperand &operand = isa<PairForOp>(op)
+                             ? cast<PairForOp>(op).getPositionsMutable()
+                             : cast<TupleForOp>(op).getPositionsMutable();
+    Value positions = operand.get();
+    auto field = dyn_cast<FieldType>(positions.getType());
+    if (!field || !isReal(field.getElementType()) ||
+        field.getElementType().getIntOrFloatBitWidth() <=
+            policy.kernel.getIntOrFloatBitWidth())
+      continue;
+    Value &slot = converted[{op->getBlock(), positions}];
+    if (!slot)
+      slot = createConversion(op, positions);
+    operand.set(slot);
+  }
 }
 
 //===----------------------------------------------------------------------===//
@@ -625,7 +686,7 @@ public:
         if (!function.isExternal())
           functions.push_back(function);
     for (func::FuncOp function : functions)
-      if (failed(Assigner(function, policy).run()))
+      if (failed(Assigner(function, policy, kernelPositions).run()))
         return signalPassFailure();
   }
 

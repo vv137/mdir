@@ -744,7 +744,16 @@ knowledge of precision.
 ```text
 --md-exec-assign-precision="mode=mixed"
 --md-exec-assign-precision="mode=single accumulator=f32"
+--md-exec-assign-precision="mode=mixed kernel-positions=false"
 ```
+
+Where the kernels compute in a type narrower than the positions, the pass
+converts the positions once, in a loop over particles before the first
+loop of a block that needs them, and the loops over pairs and over tuples
+that are not disjoint take that field (D79). The difference
+$\mathbf d = \mathbf x_i - \mathbf x_j$ is then taken in the type of the
+kernel; the loops over disjoint tuples, those of the constraints, take the
+positions as they are stored.
 
 ### 7.2 Buffers state the type of the state (D32)
 

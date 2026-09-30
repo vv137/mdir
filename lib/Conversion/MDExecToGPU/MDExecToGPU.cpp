@@ -51,7 +51,7 @@ static const char *const countBuildName = "mdrtCountBuild";
 /// particle leaves most of a device idle for a system of thousands; the
 /// tuples of a few particles, such as the dihedrals of a protein, would
 /// make those threads the longest.
-static const int64_t rowLanes = 16;
+
 /// The slots of the buffers of the results of global sums, for each type.
 static const int64_t resultCapacity = 1024;
 
@@ -99,9 +99,10 @@ struct Flag {
 
 class Lowering {
 public:
-  Lowering(ModuleOp module, int64_t blockSize, int64_t splitLimit)
+  Lowering(ModuleOp module, int64_t blockSize, int64_t splitLimit,
+           int64_t rowLanes, bool fuseRows)
       : module(module), context(module.getContext()), blockSize(blockSize),
-        splitLimit(splitLimit) {}
+        splitLimit(splitLimit), rowLanes(rowLanes), fuseRows(fuseRows) {}
 
   LogicalResult run();
 
@@ -215,6 +216,10 @@ private:
   MLIRContext *context;
   int64_t blockSize;
   int64_t splitLimit;
+  /// The threads that share the rows of a particle (launchRows).
+  int64_t rowLanes;
+  /// Whether runs of loops over rows become one kernel (findRows).
+  bool fuseRows;
 
   /// The function that is being lowered.
   func::FuncOp current;
@@ -703,7 +708,7 @@ void Lowering::findRows(func::FuncOp function) {
     return cast<md_exec::TupleForOp>(op).getOuts();
   };
   auto finish = [&](SmallVector<Operation *> &run) {
-    if (run.size() >= 2) {
+    if (run.size() >= 2 && fuseRows) {
       rows[run.back()] = run;
       inRows.insert(run.begin(), run.end());
     }
@@ -980,8 +985,9 @@ void Lowering::launchRows(
   sharing.lanes = rowLanes;
   sharing.valid = arith::CmpIOp::create(kernel, loc, arith::CmpIPredicate::ult,
                                         item, count);
-  sharing.combine = [](OpBuilder &builder, Location loc, Value value) {
-    for (int64_t offset = rowLanes / 2; offset >= 1; offset /= 2)
+  sharing.combine = [lanes = rowLanes](OpBuilder &builder, Location loc,
+                                       Value value) {
+    for (int64_t offset = lanes / 2; offset >= 1; offset /= 2)
       value = arith::AddFOp::create(builder, loc, value,
                                     shuffleXor(builder, loc, value, offset));
     return value;
@@ -1926,6 +1932,11 @@ void Lowering::releaseStack(func::FuncOp function) {
 LogicalResult Lowering::run() {
   if (blockSize <= 0)
     return module.emitError() << "expected a positive size of a block";
+  if (rowLanes < 1 || rowLanes > 32 || (rowLanes & (rowLanes - 1)) != 0 ||
+      blockSize % rowLanes != 0)
+    return module.emitError()
+           << "expected a power of two up to 32 that divides the block for "
+              "'row-lanes'";
 
   SmallVector<func::FuncOp> functions;
   for (Operation &op : module)
@@ -1968,7 +1979,8 @@ public:
       ConvertMDExecToGPU>::ConvertMDExecToGPUBase;
 
   void runOnOperation() final {
-    Lowering lowering(getOperation(), blockSize, splitLimit);
+    Lowering lowering(getOperation(), blockSize, splitLimit, rowLanes,
+                      fuseRows);
     if (failed(lowering.run()))
       signalPassFailure();
   }
