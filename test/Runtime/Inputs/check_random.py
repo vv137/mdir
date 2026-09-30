@@ -59,16 +59,19 @@ same = factor(1, 5, 50.0, 60.0, 30.0, 0.5) == factor(1, 5, 50.0, 60.0, 30.0, 0.5
 other = factor(1, 6, 50.0, 60.0, 30.0, 0.5) != factor(1, 5, 50.0, 60.0, 30.0, 0.5)
 print(f"key {'ok' if same and other else 'FAILED'}")
 
-# The strain of the barostat: with no temperature it is the drift alone, as
-# in the worked example of the specification (P0 = 1 bar, P = -150 bar,
-# beta_T = 4.5e-5 / bar, dt_p / tau_p = 0.02 / 5): -1.8e-7 * 151.
+# The strain of the barostat, a step of lambda = sqrt(V) (eq. S7 of Bernetti
+# and Bussi): with no temperature it is the drift alone, as in the worked
+# example of the specification (P0 = 1 bar, P = -150 bar, beta_T = 4.5e-5
+# / bar, dt_p / tau_p = 0.02 / 5), 2 ln(1 - f (P0 - P) / 2), which is
+# -1.8e-7 * 151 to first order.
 strain = library.mdrtBarostatStrain
 strain.restype = ctypes.c_double
 strain.argtypes = [ctypes.c_int64, ctypes.c_int64] + [ctypes.c_double] * 6
 drift = strain(1, 0, -150.0, 1.0, 27.0, 0.0, 4.5e-5, 0.02 / 5.0)
-print(f"strain drift {'ok' if abs(drift + 2.718e-5) < 1e-15 else 'FAILED'}: {drift:.6e}")
-# At the target pressure its mean is 0 and its deviation sqrt(2 kT f c / V):
-# 7.431417e-4 for V = 27 nm^3 at 300 K.
+expected = 2.0 * math.log1p(-4.5e-5 * 0.004 * 151.0 / 2.0)
+print(f"strain drift {'ok' if abs(drift - expected) < 1e-15 and abs(drift + 2.718e-5) < 1e-9 else 'FAILED'}: {drift:.6e}")
+# At the target pressure its mean is 0 to first order in f, and its
+# deviation sqrt(2 kT f c / V): 7.431417e-4 for V = 27 nm^3 at 300 K.
 kT = 0.0083144626181532 * 300.0
 values = [strain(7, n, 1.0, 1.0, 27.0, kT, 4.5e-5, 0.004) for n in range(40000)]
 mean = sum(values) / len(values)

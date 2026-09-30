@@ -145,16 +145,23 @@ double mdrtBussiFactor(int64_t seed, int64_t step, double kinetic,
 }
 
 /* The change of the logarithm of the volume that stochastic cell rescaling
-   (Bernetti and Bussi 2020, Eq. (5)) makes over one period of the barostat,
-   by one step of Euler and Maruyama:
+   (Bernetti and Bussi 2020) makes over one period of the barostat. The
+   square root of the volume, λ = √V, takes one step of Euler and Maruyama
+   of Eq. (7), Eq. (S7) of the supplementary material:
 
-     Δε = −f (P0 − P) + √(2 k_B T f c / V) R,   f = β_T Δt_p / τ_p
+     λ' = λ − (f λ / 2)(P0 − P − k_B T c / (2V)) + √(k_B T f c / 2) R,
+     f = β_T Δt_p / τ_p,
 
-   with the pressures in bar, `compressibility` β_T in 1/bar, `volume` V in
-   nm³ before the scaling, `kT` k_B T at the temperature of the bath in
-   kJ/mol, `rate` Δt_p / τ_p, and c = 16.6053906717 bar nm³ mol/kJ. The
-   positions and the cell are then scaled by exp(Δε / 3), the velocities by
-   exp(−Δε / 3). The number R is that of stream 1 at `step`. */
+   whose noise, unlike that of the step in ε = ln V, does not depend on the
+   volume, which makes a move and its reverse as likely as the paper's
+   reversible integrators need. The two agree to first order in Δt_p; the
+   term k_B T c / (2V) is what the Itô chain rule adds for λ. Returns
+   Δε = 2 ln(λ'/λ). The pressures are in bar, `compressibility` β_T in
+   1/bar, `volume` V in nm³ before the scaling, `kT` k_B T at the
+   temperature of the bath in kJ/mol, `rate` Δt_p / τ_p, and
+   c = 16.6053906717 bar nm³ mol/kJ. The positions and the cell are then
+   scaled by exp(Δε / 3), the velocities by exp(−Δε / 3). The number R is
+   that of stream 1 at `step`. */
 double mdrtBarostatStrain(int64_t seed, int64_t step, double pressure,
                           double target, double volume, double kT,
                           double compressibility, double rate) {
@@ -163,8 +170,12 @@ double mdrtBarostatStrain(int64_t seed, int64_t step, double pressure,
   initDraws(&draws, (uint64_t)seed, step, /*entity=*/0, /*stream=*/1);
   double r = drawNormal(&draws);
   double f = compressibility * rate;
-  return -f * (target - pressure) +
-         sqrt(2.0 * kT * f * conversion / volume) * r;
+  double thermal = kT * conversion;
+  double lambda = sqrt(volume);
+  double next = lambda -
+                0.5 * f * lambda * (target - pressure - thermal / (2.0 * volume)) +
+                sqrt(0.5 * thermal * f) * r;
+  return 2.0 * log(next / lambda);
 }
 
 /*===----------------------------------------------------------------------===
