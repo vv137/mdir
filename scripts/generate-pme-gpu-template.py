@@ -141,9 +141,9 @@ scf.for %{p}js = %{p}c1 to {n} step %{p}c1 {{
 
 def place(body, p, x, length, k, n):
     """The first point and the fraction of a particle at `x` along an edge,
-    as @mdrt.pme_place gives them."""
+    as @mdrt.pme_place gives them; `length` is one over the edge."""
     body(f"""\
-%{p}s = arith.divf {x}, {length} : f64
+%{p}s = arith.mulf {x}, {length} : f64
 %{p}fs = math.floor %{p}s : f64
 %{p}frac = arith.subf %{p}s, %{p}fs : f64
 %{p}ki = arith.index_cast {k} : index to i64
@@ -156,7 +156,10 @@ def place(body, p, x, length, k, n):
 %{p}bk = arith.addi %{p}b, {k} : index
 %{p}bkn = arith.subi %{p}bk, {n} : index
 %{p}c1p = arith.constant 1 : index
-%{p}start = arith.addi %{p}bkn, %{p}c1p : index
+%{p}start0 = arith.addi %{p}bkn, %{p}c1p : index
+// The first point within the grid, so that the points of the particle need
+// one subtraction at most to wrap around.
+%{p}start = arith.remui %{p}start0, {k} : index
 %{p}wr = PME_F64_TO_REAL %{p}w : f64 to !pme_real""")
     return f"%{p}start", f"%{p}wr"
 
@@ -167,6 +170,9 @@ def particle_prologue(body, slopes):
 %i0 = arith.constant 0 : index
 %i1 = arith.constant 1 : index
 %i2 = arith.constant 2 : index
+// The order of the splines, a constant of the instance, so that the loops
+// over it unroll and the splines are held in registers.
+%order = arith.constant PME_ORDER : index
 %wx = memref.alloca() : memref<8x!pme_real>
 %wy = memref.alloca() : memref<8x!pme_real>
 %wz = memref.alloca() : memref<8x!pme_real>""")
@@ -186,11 +192,11 @@ def particle_prologue(body, slopes):
 %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real""")
     starts = []
     for axis, (coordinate, length, k, w, d) in enumerate(
-        (("%xi", "%lx", "%k1", "%wx", "%dx"), ("%yi", "%ly", "%k2", "%wy", "%dy"),
-         ("%zi", "%lz", "%k3", "%wz", "%dz"))):
+        (("%xi", "%ilx", "%k1", "%wx", "%dx"), ("%yi", "%ily", "%k2", "%wy", "%dy"),
+         ("%zi", "%ilz", "%k3", "%wz", "%dz"))):
         tag = "xyz"[axis]
-        start, fraction = place(body, f"p{tag}_", coordinate, length, k, "%n")
-        bspline(body, f"b{tag}_", fraction, "%n", w, d if slopes else None)
+        start, fraction = place(body, f"p{tag}_", coordinate, length, k, "%order")
+        bspline(body, f"b{tag}_", fraction, "%order", w, d if slopes else None)
         starts.append(start)
     return starts
 
@@ -223,22 +229,28 @@ def spread():
 %gridbase = arith.index_cast %gridindex : index to i64
 %j0 = arith.constant 0 : index
 %j1c = arith.constant 1 : index
-scf.for %j1 = %j0 to %n step %j1c {{
+scf.for %j1 = %j0 to %order step %j1c {{
   %g1s = arith.addi {sx}, %j1 : index
-  %g1 = arith.remui %g1s, %k1 : index
+  %g1w = arith.subi %g1s, %k1 : index
+  %g1over = arith.cmpi uge, %g1s, %k1 : index
+  %g1 = arith.select %g1over, %g1w, %g1s : index
   %w1 = memref.load %wx[%j1] : memref<8x!pme_real>
   %q1 = arith.mulf %qscaled, %w1 : !pme_real
-  scf.for %j2 = %j0 to %n step %j1c {{
+  scf.for %j2 = %j0 to %order step %j1c {{
     %g2s = arith.addi {sy}, %j2 : index
-    %g2 = arith.remui %g2s, %k2 : index
+    %g2w = arith.subi %g2s, %k2 : index
+    %g2over = arith.cmpi uge, %g2s, %k2 : index
+    %g2 = arith.select %g2over, %g2w, %g2s : index
     %w2 = memref.load %wy[%j2] : memref<8x!pme_real>
     %q12 = arith.mulf %q1, %w2 : !pme_real
     %row1 = arith.muli %g1, %k2 : index
     %row = arith.addi %row1, %g2 : index
     %gbase = arith.muli %row, %k3 : index
-    scf.for %j3 = %j0 to %n step %j1c {{
+    scf.for %j3 = %j0 to %order step %j1c {{
       %g3s = arith.addi {sz}, %j3 : index
-      %g3 = arith.remui %g3s, %k3 : index
+      %g3w = arith.subi %g3s, %k3 : index
+      %g3over = arith.cmpi uge, %g3s, %k3 : index
+      %g3 = arith.select %g3over, %g3w, %g3s : index
       %w3 = memref.load %wz[%j3] : memref<8x!pme_real>
       %value = arith.mulf %q12, %w3 : !pme_real
       %rounded = math.roundeven %value : !pme_real
@@ -269,6 +281,10 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
   %lx = vector.extract %box[0] : f64 from vector<3xf64>
   %ly = vector.extract %box[1] : f64 from vector<3xf64>
   %lz = vector.extract %box[2] : f64 from vector<3xf64>
+  %unit = arith.constant 1.0 : f64
+  %ilx = arith.divf %unit, %lx : f64
+  %ily = arith.divf %unit, %ly : f64
+  %ilz = arith.divf %unit, %lz : f64
   %points = memref.dim %grid, %c0 : memref<?xi64, 1>
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
 {launch(zero.text(), "%points")}{launch(body.text(), "%count")}  return
@@ -297,6 +313,8 @@ func.func private @mdrt_gpu_pme_real(%grid: memref<?xi64, 1>, %real: memref<?x!p
 
 
 def wave(body, p, k, count, length):
+    """The wave number of the point `k` of `count` along an edge, signed,
+    over the edge; `length` is one over the edge."""
     body(f"""\
 %{p}half = arith.divui {count}, %cc2 : index
 %{p}ki = arith.index_cast {k} : index to i64
@@ -305,7 +323,7 @@ def wave(body, p, k, count, length):
 %{p}shifted = arith.subi %{p}ki, %{p}ni : i64
 %{p}signed = arith.select %{p}beyond, %{p}shifted, %{p}ki : i64
 %{p}sf = arith.sitofp %{p}signed : i64 to f64
-%{p}m = arith.divf %{p}sf, {length} : f64""")
+%{p}m = arith.mulf %{p}sf, {length} : f64""")
     return f"%{p}m"
 
 
@@ -321,8 +339,8 @@ def convolve():
 %ktwo = arith.constant 2.0 : f64
 %a = arith.divui %item, %k2 : index
 %b = arith.remui %item, %k2 : index""")
-    m1 = wave(body, "w1_", "%a", "%k1", "%lx")
-    m2 = wave(body, "w2_", "%b", "%k2", "%ly")
+    m1 = wave(body, "w1_", "%a", "%k1", "%ilx")
+    m2 = wave(body, "w2_", "%b", "%k2", "%ily")
     body(f"""\
 %h = arith.divui %k3, %cc2 : index
 %h1 = arith.addi %h, %cc1 : index
@@ -340,7 +358,7 @@ def convolve():
     -> (f64, f64, f64, f64, f64, f64, f64) {{
   %zi = arith.index_cast %z : index to i64
   %zf = arith.sitofp %zi : i64 to f64
-  %m3 = arith.divf %zf, %lz : f64
+  %m3 = arith.mulf %zf, %ilz : f64
   %mod3 = memref.load %moduli[%cc2, %z] : memref<?x?xf64, 1>
   %m3s = arith.mulf %m3, %m3 : f64
   %msq = arith.addf %m12, %m3s : f64
@@ -438,6 +456,10 @@ func.func private @mdrt_gpu_pme_convolve(%c: memref<?x!pme_real, 1>, %moduli: me
   %lx = vector.extract %box[0] : f64 from vector<3xf64>
   %ly = vector.extract %box[1] : f64 from vector<3xf64>
   %lz = vector.extract %box[2] : f64 from vector<3xf64>
+  %unit = arith.constant 1.0 : f64
+  %ilx = arith.divf %unit, %lx : f64
+  %ily = arith.divf %unit, %ly : f64
+  %ilz = arith.divf %unit, %lz : f64
   %beta2 = arith.mulf %beta, %beta : f64
   %gauss = arith.divf %pi2, %beta2 : f64
   %pi = arith.constant 3.141592653589793 : f64
@@ -500,14 +522,18 @@ def scale():
 %cc2 = arith.constant 2 : index
 %kzero = arith.constant 0.0 : f64
 %kone = arith.constant 1.0 : f64
-%h = arith.divui %k3, %cc2 : index
-%h1 = arith.addi %h, %cc1 : index
-%row = arith.divui %item, %h1 : index
-%z = arith.remui %item, %h1 : index
-%a = arith.divui %row, %k2 : index
-%b = arith.remui %row, %k2 : index""")
-    m1 = wave(body, "w1_", "%a", "%k1", "%lx")
-    m2 = wave(body, "w2_", "%b", "%k2", "%ly")
+// The point, in i32 (D85): a division of 64-bit integers is a long
+// sequence of instructions on a device.
+%item32 = arith.index_cast %item : index to i32
+%row32 = arith.divui %item32, %depth32 : i32
+%z32 = arith.remui %item32, %depth32 : i32
+%a32 = arith.divui %row32, %k2_32 : i32
+%b32 = arith.remui %row32, %k2_32 : i32
+%z = arith.index_cast %z32 : i32 to index
+%a = arith.index_cast %a32 : i32 to index
+%b = arith.index_cast %b32 : i32 to index""")
+    m1 = wave(body, "w1_", "%a", "%k1", "%ilx")
+    m2 = wave(body, "w2_", "%b", "%k2", "%ily")
     body(f"""\
 %m1s = arith.mulf {m1}, {m1} : f64
 %m2s = arith.mulf {m2}, {m2} : f64
@@ -517,7 +543,7 @@ def scale():
 %mod12 = arith.mulf %mod1, %mod2 : f64
 %zi = arith.index_cast %z : index to i64
 %zf = arith.sitofp %zi : i64 to f64
-%m3 = arith.divf %zf, %lz : f64
+%m3 = arith.mulf %zf, %ilz : f64
 %mod3 = memref.load %moduli[%cc2, %z] : memref<?x?xf64, 1>
 %m3s = arith.mulf %m3, %m3 : f64
 %msq = arith.addf %m12, %m3s : f64
@@ -573,6 +599,12 @@ func.func private @mdrt_gpu_pme_scale(%c: memref<?x!pme_real, 1>, %moduli: memre
   %half = arith.divui %k3, %c2 : index
   %depth = arith.addi %half, %c1 : index
   %points = arith.muli %rows, %depth : index
+  %depth32 = arith.index_cast %depth : index to i32
+  %k2_32 = arith.index_cast %k2 : index to i32
+  %unit = arith.constant 1.0 : f64
+  %ilx = arith.divf %unit, %lx : f64
+  %ily = arith.divf %unit, %ly : f64
+  %ilz = arith.divf %unit, %lz : f64
 {launch(body.text(), "%points")}  return
 }}
 """
@@ -586,16 +618,20 @@ def gather():
 %gzero = arith.constant 0.0 : !pme_real
 %j0 = arith.constant 0 : index
 %j1c = arith.constant 1 : index
-%sumx, %sumy, %sumz = scf.for %j1 = %j0 to %n step %j1c
+%sumx, %sumy, %sumz = scf.for %j1 = %j0 to %order step %j1c
     iter_args(%ax = %gzero, %ay = %gzero, %az = %gzero) -> (!pme_real, !pme_real, !pme_real) {{
   %g1s = arith.addi {sx}, %j1 : index
-  %g1 = arith.remui %g1s, %k1 : index
+  %g1w = arith.subi %g1s, %k1 : index
+  %g1over = arith.cmpi uge, %g1s, %k1 : index
+  %g1 = arith.select %g1over, %g1w, %g1s : index
   %w1 = memref.load %wx[%j1] : memref<8x!pme_real>
   %d1 = memref.load %dx[%j1] : memref<8x!pme_real>
-  %bx2, %by2, %bz2 = scf.for %j2 = %j0 to %n step %j1c
+  %bx2, %by2, %bz2 = scf.for %j2 = %j0 to %order step %j1c
       iter_args(%cx = %ax, %cy = %ay, %cz = %az) -> (!pme_real, !pme_real, !pme_real) {{
     %g2s = arith.addi {sy}, %j2 : index
-    %g2 = arith.remui %g2s, %k2 : index
+    %g2w = arith.subi %g2s, %k2 : index
+    %g2over = arith.cmpi uge, %g2s, %k2 : index
+    %g2 = arith.select %g2over, %g2w, %g2s : index
     %w2 = memref.load %wy[%j2] : memref<8x!pme_real>
     %d2 = memref.load %dy[%j2] : memref<8x!pme_real>
     %row1 = arith.muli %g1, %k2 : index
@@ -604,10 +640,12 @@ def gather():
     %d1w2 = arith.mulf %d1, %w2 : !pme_real
     %w1d2 = arith.mulf %w1, %d2 : !pme_real
     %w1w2 = arith.mulf %w1, %w2 : !pme_real
-    %ex, %ey, %ez = scf.for %j3 = %j0 to %n step %j1c
+    %ex, %ey, %ez = scf.for %j3 = %j0 to %order step %j1c
         iter_args(%tx3 = %cx, %ty3 = %cy, %tz3 = %cz) -> (!pme_real, !pme_real, !pme_real) {{
       %g3s = arith.addi {sz}, %j3 : index
-      %g3 = arith.remui %g3s, %k3 : index
+      %g3w = arith.subi %g3s, %k3 : index
+      %g3over = arith.cmpi uge, %g3s, %k3 : index
+      %g3 = arith.select %g3over, %g3w, %g3s : index
       %w3 = memref.load %wz[%j3] : memref<8x!pme_real>
       %d3 = memref.load %dz[%j3] : memref<8x!pme_real>
       %at = arith.addi %gbase, %g3 : index
@@ -664,6 +702,10 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
   %rxr = PME_F64_TO_REAL %rx : f64 to !pme_real
   %ryr = PME_F64_TO_REAL %ry : f64 to !pme_real
   %rzr = PME_F64_TO_REAL %rz : f64 to !pme_real
+  %unit = arith.constant 1.0 : f64
+  %ilx = arith.divf %unit, %lx : f64
+  %ily = arith.divf %unit, %ly : f64
+  %ilz = arith.divf %unit, %lz : f64
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
 {launch(body.text(), "%count")}  return
 }}

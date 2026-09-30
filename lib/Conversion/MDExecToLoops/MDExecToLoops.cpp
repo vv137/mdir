@@ -105,7 +105,8 @@ private:
   LogicalResult addTemplates(Type real);
   /// Adds the templates of particle mesh Ewald for the types of the
   /// positions, the charges, and the forces.
-  LogicalResult addPMETemplates(Type position, Type charge, Type force);
+  LogicalResult addPMETemplates(Type position, Type charge, Type force,
+                                int64_t order);
   LogicalResult lowerReciprocal(md_exec::ReciprocalOp op);
   func::FuncOp getOrDeclare(StringRef name, FunctionType type);
 
@@ -306,14 +307,15 @@ LogicalResult Lowering::addTemplates(Type real) {
 }
 
 LogicalResult Lowering::addPMETemplates(Type position, Type charge,
-                                        Type force) {
+                                        Type force, int64_t order) {
   if (SymbolTable::lookupSymbolIn(
           module, getPMEInstanceName("mdrt.pme_spread", position, charge,
-                                     force)))
+                                     force, order)))
     return success();
   ParserConfig config(context);
   OwningOpRef<ModuleOp> templates = parseSourceString<ModuleOp>(
-      instantiatePMETemplates(pmeTemplate, position, charge, force), config);
+      instantiatePMETemplates(pmeTemplate, position, charge, force,
+                              order), config);
   if (!templates)
     return module.emitError()
            << "cannot parse the template of particle mesh Ewald";
@@ -338,11 +340,11 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   };
   Type position = elementOf(positions), charge = elementOf(charges),
        force = elementOf(forces);
-  if (failed(addPMETemplates(position, charge, force)))
+  if (failed(addPMETemplates(position, charge, force, op.getOrder())))
     return failure();
   auto instance = [&](StringRef name) {
     return cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
-        module, getPMEInstanceName(name, position, charge, force)));
+        module, getPMEInstanceName(name, position, charge, force, op.getOrder())));
   };
 
   ArrayRef<int64_t> grid = op.getGrid();

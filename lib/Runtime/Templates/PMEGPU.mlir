@@ -44,6 +44,10 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
   %lx = vector.extract %box[0] : f64 from vector<3xf64>
   %ly = vector.extract %box[1] : f64 from vector<3xf64>
   %lz = vector.extract %box[2] : f64 from vector<3xf64>
+  %unit = arith.constant 1.0 : f64
+  %ilx = arith.divf %unit, %lx : f64
+  %ily = arith.divf %unit, %ly : f64
+  %ilz = arith.divf %unit, %lz : f64
   %points = memref.dim %grid, %c0 : memref<?xi64, 1>
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
   %blocks_points = func.call @mdrt_gpu_pme_blocks(%points) : (index) -> index
@@ -69,6 +73,9 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %i0 = arith.constant 0 : index
       %i1 = arith.constant 1 : index
       %i2 = arith.constant 2 : index
+      // The order of the splines, a constant of the instance, so that the loops
+      // over it unroll and the splines are held in registers.
+      %order = arith.constant PME_ORDER : index
       %wx = memref.alloca() : memref<8x!pme_real>
       %wy = memref.alloca() : memref<8x!pme_real>
       %wz = memref.alloca() : memref<8x!pme_real>
@@ -80,7 +87,7 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %yi = PME_EXTEND_POS %ys : !pme_pos to f64
       %zi = PME_EXTEND_POS %zs : !pme_pos to f64
       %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
-      %px_s = arith.divf %xi, %lx : f64
+      %px_s = arith.mulf %xi, %ilx : f64
       %px_fs = math.floor %px_s : f64
       %px_frac = arith.subf %px_s, %px_fs : f64
       %px_ki = arith.index_cast %k1 : index to i64
@@ -91,9 +98,12 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %px_bi = arith.fptosi %px_fu : f64 to i64
       %px_b = arith.index_cast %px_bi : i64 to index
       %px_bk = arith.addi %px_b, %k1 : index
-      %px_bkn = arith.subi %px_bk, %n : index
+      %px_bkn = arith.subi %px_bk, %order : index
       %px_c1p = arith.constant 1 : index
-      %px_start = arith.addi %px_bkn, %px_c1p : index
+      %px_start0 = arith.addi %px_bkn, %px_c1p : index
+      // The first point within the grid, so that the points of the particle need
+      // one subtraction at most to wrap around.
+      %px_start = arith.remui %px_start0, %k1 : index
       %px_wr = PME_F64_TO_REAL %px_w : f64 to !pme_real
       %bx_c0 = arith.constant 0 : index
       %bx_c1 = arith.constant 1 : index
@@ -108,7 +118,7 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %bx_omw = arith.subf %bx_one, %px_wr : !pme_real
       memref.store %bx_omw, %wx[%bx_c0] : memref<8x!pme_real>
       memref.store %px_wr, %wx[%bx_c1] : memref<8x!pme_real>
-      scf.for %bx_k = %bx_c3 to %n step %bx_c1 {
+      scf.for %bx_k = %bx_c3 to %order step %bx_c1 {
       %bx_r_km1 = arith.subi %bx_k, %bx_c1 : index
       %bx_r_km2 = arith.subi %bx_k, %bx_c2 : index
       %bx_r_km1i = arith.index_cast %bx_r_km1 : index to i64
@@ -142,12 +152,12 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %bx_r_bottom = arith.mulf %bx_r_d0, %bx_r_first : !pme_real
       memref.store %bx_r_bottom, %wx[%bx_c0] : memref<8x!pme_real>
       }
-      %bx_f_km1 = arith.subi %n, %bx_c1 : index
-      %bx_f_km2 = arith.subi %n, %bx_c2 : index
+      %bx_f_km1 = arith.subi %order, %bx_c1 : index
+      %bx_f_km2 = arith.subi %order, %bx_c2 : index
       %bx_f_km1i = arith.index_cast %bx_f_km1 : index to i64
       %bx_f_km1f = arith.sitofp %bx_f_km1i : i64 to !pme_real
       %bx_f_div = arith.divf %bx_one, %bx_f_km1f : !pme_real
-      %bx_f_ki = arith.index_cast %n : index to i64
+      %bx_f_ki = arith.index_cast %order : index to i64
       %bx_f_kf = arith.sitofp %bx_f_ki : i64 to !pme_real
       %bx_f_last = memref.load %wx[%bx_f_km2] : memref<8x!pme_real>
       %bx_f_dw = arith.mulf %bx_f_div, %px_wr : !pme_real
@@ -174,7 +184,7 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %bx_f_d0 = arith.mulf %bx_f_div, %bx_f_omw : !pme_real
       %bx_f_bottom = arith.mulf %bx_f_d0, %bx_f_first : !pme_real
       memref.store %bx_f_bottom, %wx[%bx_c0] : memref<8x!pme_real>
-      %py_s = arith.divf %yi, %ly : f64
+      %py_s = arith.mulf %yi, %ily : f64
       %py_fs = math.floor %py_s : f64
       %py_frac = arith.subf %py_s, %py_fs : f64
       %py_ki = arith.index_cast %k2 : index to i64
@@ -185,9 +195,12 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %py_bi = arith.fptosi %py_fu : f64 to i64
       %py_b = arith.index_cast %py_bi : i64 to index
       %py_bk = arith.addi %py_b, %k2 : index
-      %py_bkn = arith.subi %py_bk, %n : index
+      %py_bkn = arith.subi %py_bk, %order : index
       %py_c1p = arith.constant 1 : index
-      %py_start = arith.addi %py_bkn, %py_c1p : index
+      %py_start0 = arith.addi %py_bkn, %py_c1p : index
+      // The first point within the grid, so that the points of the particle need
+      // one subtraction at most to wrap around.
+      %py_start = arith.remui %py_start0, %k2 : index
       %py_wr = PME_F64_TO_REAL %py_w : f64 to !pme_real
       %by_c0 = arith.constant 0 : index
       %by_c1 = arith.constant 1 : index
@@ -202,7 +215,7 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %by_omw = arith.subf %by_one, %py_wr : !pme_real
       memref.store %by_omw, %wy[%by_c0] : memref<8x!pme_real>
       memref.store %py_wr, %wy[%by_c1] : memref<8x!pme_real>
-      scf.for %by_k = %by_c3 to %n step %by_c1 {
+      scf.for %by_k = %by_c3 to %order step %by_c1 {
       %by_r_km1 = arith.subi %by_k, %by_c1 : index
       %by_r_km2 = arith.subi %by_k, %by_c2 : index
       %by_r_km1i = arith.index_cast %by_r_km1 : index to i64
@@ -236,12 +249,12 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %by_r_bottom = arith.mulf %by_r_d0, %by_r_first : !pme_real
       memref.store %by_r_bottom, %wy[%by_c0] : memref<8x!pme_real>
       }
-      %by_f_km1 = arith.subi %n, %by_c1 : index
-      %by_f_km2 = arith.subi %n, %by_c2 : index
+      %by_f_km1 = arith.subi %order, %by_c1 : index
+      %by_f_km2 = arith.subi %order, %by_c2 : index
       %by_f_km1i = arith.index_cast %by_f_km1 : index to i64
       %by_f_km1f = arith.sitofp %by_f_km1i : i64 to !pme_real
       %by_f_div = arith.divf %by_one, %by_f_km1f : !pme_real
-      %by_f_ki = arith.index_cast %n : index to i64
+      %by_f_ki = arith.index_cast %order : index to i64
       %by_f_kf = arith.sitofp %by_f_ki : i64 to !pme_real
       %by_f_last = memref.load %wy[%by_f_km2] : memref<8x!pme_real>
       %by_f_dw = arith.mulf %by_f_div, %py_wr : !pme_real
@@ -268,7 +281,7 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %by_f_d0 = arith.mulf %by_f_div, %by_f_omw : !pme_real
       %by_f_bottom = arith.mulf %by_f_d0, %by_f_first : !pme_real
       memref.store %by_f_bottom, %wy[%by_c0] : memref<8x!pme_real>
-      %pz_s = arith.divf %zi, %lz : f64
+      %pz_s = arith.mulf %zi, %ilz : f64
       %pz_fs = math.floor %pz_s : f64
       %pz_frac = arith.subf %pz_s, %pz_fs : f64
       %pz_ki = arith.index_cast %k3 : index to i64
@@ -279,9 +292,12 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %pz_bi = arith.fptosi %pz_fu : f64 to i64
       %pz_b = arith.index_cast %pz_bi : i64 to index
       %pz_bk = arith.addi %pz_b, %k3 : index
-      %pz_bkn = arith.subi %pz_bk, %n : index
+      %pz_bkn = arith.subi %pz_bk, %order : index
       %pz_c1p = arith.constant 1 : index
-      %pz_start = arith.addi %pz_bkn, %pz_c1p : index
+      %pz_start0 = arith.addi %pz_bkn, %pz_c1p : index
+      // The first point within the grid, so that the points of the particle need
+      // one subtraction at most to wrap around.
+      %pz_start = arith.remui %pz_start0, %k3 : index
       %pz_wr = PME_F64_TO_REAL %pz_w : f64 to !pme_real
       %bz_c0 = arith.constant 0 : index
       %bz_c1 = arith.constant 1 : index
@@ -296,7 +312,7 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %bz_omw = arith.subf %bz_one, %pz_wr : !pme_real
       memref.store %bz_omw, %wz[%bz_c0] : memref<8x!pme_real>
       memref.store %pz_wr, %wz[%bz_c1] : memref<8x!pme_real>
-      scf.for %bz_k = %bz_c3 to %n step %bz_c1 {
+      scf.for %bz_k = %bz_c3 to %order step %bz_c1 {
       %bz_r_km1 = arith.subi %bz_k, %bz_c1 : index
       %bz_r_km2 = arith.subi %bz_k, %bz_c2 : index
       %bz_r_km1i = arith.index_cast %bz_r_km1 : index to i64
@@ -330,12 +346,12 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %bz_r_bottom = arith.mulf %bz_r_d0, %bz_r_first : !pme_real
       memref.store %bz_r_bottom, %wz[%bz_c0] : memref<8x!pme_real>
       }
-      %bz_f_km1 = arith.subi %n, %bz_c1 : index
-      %bz_f_km2 = arith.subi %n, %bz_c2 : index
+      %bz_f_km1 = arith.subi %order, %bz_c1 : index
+      %bz_f_km2 = arith.subi %order, %bz_c2 : index
       %bz_f_km1i = arith.index_cast %bz_f_km1 : index to i64
       %bz_f_km1f = arith.sitofp %bz_f_km1i : i64 to !pme_real
       %bz_f_div = arith.divf %bz_one, %bz_f_km1f : !pme_real
-      %bz_f_ki = arith.index_cast %n : index to i64
+      %bz_f_ki = arith.index_cast %order : index to i64
       %bz_f_kf = arith.sitofp %bz_f_ki : i64 to !pme_real
       %bz_f_last = memref.load %wz[%bz_f_km2] : memref<8x!pme_real>
       %bz_f_dw = arith.mulf %bz_f_div, %pz_wr : !pme_real
@@ -370,22 +386,28 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %gridbase = arith.index_cast %gridindex : index to i64
       %j0 = arith.constant 0 : index
       %j1c = arith.constant 1 : index
-      scf.for %j1 = %j0 to %n step %j1c {
+      scf.for %j1 = %j0 to %order step %j1c {
         %g1s = arith.addi %px_start, %j1 : index
-        %g1 = arith.remui %g1s, %k1 : index
+        %g1w = arith.subi %g1s, %k1 : index
+        %g1over = arith.cmpi uge, %g1s, %k1 : index
+        %g1 = arith.select %g1over, %g1w, %g1s : index
         %w1 = memref.load %wx[%j1] : memref<8x!pme_real>
         %q1 = arith.mulf %qscaled, %w1 : !pme_real
-        scf.for %j2 = %j0 to %n step %j1c {
+        scf.for %j2 = %j0 to %order step %j1c {
           %g2s = arith.addi %py_start, %j2 : index
-          %g2 = arith.remui %g2s, %k2 : index
+          %g2w = arith.subi %g2s, %k2 : index
+          %g2over = arith.cmpi uge, %g2s, %k2 : index
+          %g2 = arith.select %g2over, %g2w, %g2s : index
           %w2 = memref.load %wy[%j2] : memref<8x!pme_real>
           %q12 = arith.mulf %q1, %w2 : !pme_real
           %row1 = arith.muli %g1, %k2 : index
           %row = arith.addi %row1, %g2 : index
           %gbase = arith.muli %row, %k3 : index
-          scf.for %j3 = %j0 to %n step %j1c {
+          scf.for %j3 = %j0 to %order step %j1c {
             %g3s = arith.addi %pz_start, %j3 : index
-            %g3 = arith.remui %g3s, %k3 : index
+            %g3w = arith.subi %g3s, %k3 : index
+            %g3over = arith.cmpi uge, %g3s, %k3 : index
+            %g3 = arith.select %g3over, %g3w, %g3s : index
             %w3 = memref.load %wz[%j3] : memref<8x!pme_real>
             %value = arith.mulf %q12, %w3 : !pme_real
             %rounded = math.roundeven %value : !pme_real
@@ -450,6 +472,10 @@ func.func private @mdrt_gpu_pme_convolve(%c: memref<?x!pme_real, 1>, %moduli: me
   %lx = vector.extract %box[0] : f64 from vector<3xf64>
   %ly = vector.extract %box[1] : f64 from vector<3xf64>
   %lz = vector.extract %box[2] : f64 from vector<3xf64>
+  %unit = arith.constant 1.0 : f64
+  %ilx = arith.divf %unit, %lx : f64
+  %ily = arith.divf %unit, %ly : f64
+  %ilz = arith.divf %unit, %lz : f64
   %beta2 = arith.mulf %beta, %beta : f64
   %gauss = arith.divf %pi2, %beta2 : f64
   %pi = arith.constant 3.141592653589793 : f64
@@ -481,7 +507,7 @@ func.func private @mdrt_gpu_pme_convolve(%c: memref<?x!pme_real, 1>, %moduli: me
       %w1_shifted = arith.subi %w1_ki, %w1_ni : i64
       %w1_signed = arith.select %w1_beyond, %w1_shifted, %w1_ki : i64
       %w1_sf = arith.sitofp %w1_signed : i64 to f64
-      %w1_m = arith.divf %w1_sf, %lx : f64
+      %w1_m = arith.mulf %w1_sf, %ilx : f64
       %w2_half = arith.divui %k2, %cc2 : index
       %w2_ki = arith.index_cast %b : index to i64
       %w2_ni = arith.index_cast %k2 : index to i64
@@ -489,7 +515,7 @@ func.func private @mdrt_gpu_pme_convolve(%c: memref<?x!pme_real, 1>, %moduli: me
       %w2_shifted = arith.subi %w2_ki, %w2_ni : i64
       %w2_signed = arith.select %w2_beyond, %w2_shifted, %w2_ki : i64
       %w2_sf = arith.sitofp %w2_signed : i64 to f64
-      %w2_m = arith.divf %w2_sf, %ly : f64
+      %w2_m = arith.mulf %w2_sf, %ily : f64
       %h = arith.divui %k3, %cc2 : index
       %h1 = arith.addi %h, %cc1 : index
       %odd = arith.remui %k3, %cc2 : index
@@ -506,7 +532,7 @@ func.func private @mdrt_gpu_pme_convolve(%c: memref<?x!pme_real, 1>, %moduli: me
           -> (f64, f64, f64, f64, f64, f64, f64) {
         %zi = arith.index_cast %z : index to i64
         %zf = arith.sitofp %zi : i64 to f64
-        %m3 = arith.divf %zf, %lz : f64
+        %m3 = arith.mulf %zf, %ilz : f64
         %mod3 = memref.load %moduli[%cc2, %z] : memref<?x?xf64, 1>
         %m3s = arith.mulf %m3, %m3 : f64
         %msq = arith.addf %m12, %m3s : f64
@@ -679,6 +705,12 @@ func.func private @mdrt_gpu_pme_scale(%c: memref<?x!pme_real, 1>, %moduli: memre
   %half = arith.divui %k3, %c2 : index
   %depth = arith.addi %half, %c1 : index
   %points = arith.muli %rows, %depth : index
+  %depth32 = arith.index_cast %depth : index to i32
+  %k2_32 = arith.index_cast %k2 : index to i32
+  %unit = arith.constant 1.0 : f64
+  %ilx = arith.divf %unit, %lx : f64
+  %ily = arith.divf %unit, %ly : f64
+  %ilz = arith.divf %unit, %lz : f64
   %blocks_points = func.call @mdrt_gpu_pme_blocks(%points) : (index) -> index
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_points, %gy = %c1, %gz = %c1)
              threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
@@ -691,12 +723,16 @@ func.func private @mdrt_gpu_pme_scale(%c: memref<?x!pme_real, 1>, %moduli: memre
       %cc2 = arith.constant 2 : index
       %kzero = arith.constant 0.0 : f64
       %kone = arith.constant 1.0 : f64
-      %h = arith.divui %k3, %cc2 : index
-      %h1 = arith.addi %h, %cc1 : index
-      %row = arith.divui %item, %h1 : index
-      %z = arith.remui %item, %h1 : index
-      %a = arith.divui %row, %k2 : index
-      %b = arith.remui %row, %k2 : index
+      // The point, in i32 (D85): a division of 64-bit integers is a long
+      // sequence of instructions on a device.
+      %item32 = arith.index_cast %item : index to i32
+      %row32 = arith.divui %item32, %depth32 : i32
+      %z32 = arith.remui %item32, %depth32 : i32
+      %a32 = arith.divui %row32, %k2_32 : i32
+      %b32 = arith.remui %row32, %k2_32 : i32
+      %z = arith.index_cast %z32 : i32 to index
+      %a = arith.index_cast %a32 : i32 to index
+      %b = arith.index_cast %b32 : i32 to index
       %w1_half = arith.divui %k1, %cc2 : index
       %w1_ki = arith.index_cast %a : index to i64
       %w1_ni = arith.index_cast %k1 : index to i64
@@ -704,7 +740,7 @@ func.func private @mdrt_gpu_pme_scale(%c: memref<?x!pme_real, 1>, %moduli: memre
       %w1_shifted = arith.subi %w1_ki, %w1_ni : i64
       %w1_signed = arith.select %w1_beyond, %w1_shifted, %w1_ki : i64
       %w1_sf = arith.sitofp %w1_signed : i64 to f64
-      %w1_m = arith.divf %w1_sf, %lx : f64
+      %w1_m = arith.mulf %w1_sf, %ilx : f64
       %w2_half = arith.divui %k2, %cc2 : index
       %w2_ki = arith.index_cast %b : index to i64
       %w2_ni = arith.index_cast %k2 : index to i64
@@ -712,7 +748,7 @@ func.func private @mdrt_gpu_pme_scale(%c: memref<?x!pme_real, 1>, %moduli: memre
       %w2_shifted = arith.subi %w2_ki, %w2_ni : i64
       %w2_signed = arith.select %w2_beyond, %w2_shifted, %w2_ki : i64
       %w2_sf = arith.sitofp %w2_signed : i64 to f64
-      %w2_m = arith.divf %w2_sf, %ly : f64
+      %w2_m = arith.mulf %w2_sf, %ily : f64
       %m1s = arith.mulf %w1_m, %w1_m : f64
       %m2s = arith.mulf %w2_m, %w2_m : f64
       %m12 = arith.addf %m1s, %m2s : f64
@@ -721,7 +757,7 @@ func.func private @mdrt_gpu_pme_scale(%c: memref<?x!pme_real, 1>, %moduli: memre
       %mod12 = arith.mulf %mod1, %mod2 : f64
       %zi = arith.index_cast %z : index to i64
       %zf = arith.sitofp %zi : i64 to f64
-      %m3 = arith.divf %zf, %lz : f64
+      %m3 = arith.mulf %zf, %ilz : f64
       %mod3 = memref.load %moduli[%cc2, %z] : memref<?x?xf64, 1>
       %m3s = arith.mulf %m3, %m3 : f64
       %msq = arith.addf %m12, %m3s : f64
@@ -779,6 +815,10 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
   %rxr = PME_F64_TO_REAL %rx : f64 to !pme_real
   %ryr = PME_F64_TO_REAL %ry : f64 to !pme_real
   %rzr = PME_F64_TO_REAL %rz : f64 to !pme_real
+  %unit = arith.constant 1.0 : f64
+  %ilx = arith.divf %unit, %lx : f64
+  %ily = arith.divf %unit, %ly : f64
+  %ilz = arith.divf %unit, %lz : f64
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
   %blocks_count = func.call @mdrt_gpu_pme_blocks(%count) : (index) -> index
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_count, %gy = %c1, %gz = %c1)
@@ -791,6 +831,9 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %i0 = arith.constant 0 : index
       %i1 = arith.constant 1 : index
       %i2 = arith.constant 2 : index
+      // The order of the splines, a constant of the instance, so that the loops
+      // over it unroll and the splines are held in registers.
+      %order = arith.constant PME_ORDER : index
       %wx = memref.alloca() : memref<8x!pme_real>
       %wy = memref.alloca() : memref<8x!pme_real>
       %wz = memref.alloca() : memref<8x!pme_real>
@@ -805,7 +848,7 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %yi = PME_EXTEND_POS %ys : !pme_pos to f64
       %zi = PME_EXTEND_POS %zs : !pme_pos to f64
       %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
-      %px_s = arith.divf %xi, %lx : f64
+      %px_s = arith.mulf %xi, %ilx : f64
       %px_fs = math.floor %px_s : f64
       %px_frac = arith.subf %px_s, %px_fs : f64
       %px_ki = arith.index_cast %k1 : index to i64
@@ -816,9 +859,12 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %px_bi = arith.fptosi %px_fu : f64 to i64
       %px_b = arith.index_cast %px_bi : i64 to index
       %px_bk = arith.addi %px_b, %k1 : index
-      %px_bkn = arith.subi %px_bk, %n : index
+      %px_bkn = arith.subi %px_bk, %order : index
       %px_c1p = arith.constant 1 : index
-      %px_start = arith.addi %px_bkn, %px_c1p : index
+      %px_start0 = arith.addi %px_bkn, %px_c1p : index
+      // The first point within the grid, so that the points of the particle need
+      // one subtraction at most to wrap around.
+      %px_start = arith.remui %px_start0, %k1 : index
       %px_wr = PME_F64_TO_REAL %px_w : f64 to !pme_real
       %bx_c0 = arith.constant 0 : index
       %bx_c1 = arith.constant 1 : index
@@ -833,7 +879,7 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %bx_omw = arith.subf %bx_one, %px_wr : !pme_real
       memref.store %bx_omw, %wx[%bx_c0] : memref<8x!pme_real>
       memref.store %px_wr, %wx[%bx_c1] : memref<8x!pme_real>
-      scf.for %bx_k = %bx_c3 to %n step %bx_c1 {
+      scf.for %bx_k = %bx_c3 to %order step %bx_c1 {
       %bx_r_km1 = arith.subi %bx_k, %bx_c1 : index
       %bx_r_km2 = arith.subi %bx_k, %bx_c2 : index
       %bx_r_km1i = arith.index_cast %bx_r_km1 : index to i64
@@ -870,19 +916,19 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %bx_v0 = memref.load %wx[%bx_c0] : memref<8x!pme_real>
       %bx_s0 = arith.negf %bx_v0 : !pme_real
       memref.store %bx_s0, %dx[%bx_c0] : memref<8x!pme_real>
-      scf.for %bx_js = %bx_c1 to %n step %bx_c1 {
+      scf.for %bx_js = %bx_c1 to %order step %bx_c1 {
         %bx_jm1 = arith.subi %bx_js, %bx_c1 : index
         %bx_before = memref.load %wx[%bx_jm1] : memref<8x!pme_real>
         %bx_here = memref.load %wx[%bx_js] : memref<8x!pme_real>
         %bx_slope = arith.subf %bx_before, %bx_here : !pme_real
         memref.store %bx_slope, %dx[%bx_js] : memref<8x!pme_real>
       }
-      %bx_f_km1 = arith.subi %n, %bx_c1 : index
-      %bx_f_km2 = arith.subi %n, %bx_c2 : index
+      %bx_f_km1 = arith.subi %order, %bx_c1 : index
+      %bx_f_km2 = arith.subi %order, %bx_c2 : index
       %bx_f_km1i = arith.index_cast %bx_f_km1 : index to i64
       %bx_f_km1f = arith.sitofp %bx_f_km1i : i64 to !pme_real
       %bx_f_div = arith.divf %bx_one, %bx_f_km1f : !pme_real
-      %bx_f_ki = arith.index_cast %n : index to i64
+      %bx_f_ki = arith.index_cast %order : index to i64
       %bx_f_kf = arith.sitofp %bx_f_ki : i64 to !pme_real
       %bx_f_last = memref.load %wx[%bx_f_km2] : memref<8x!pme_real>
       %bx_f_dw = arith.mulf %bx_f_div, %px_wr : !pme_real
@@ -909,7 +955,7 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %bx_f_d0 = arith.mulf %bx_f_div, %bx_f_omw : !pme_real
       %bx_f_bottom = arith.mulf %bx_f_d0, %bx_f_first : !pme_real
       memref.store %bx_f_bottom, %wx[%bx_c0] : memref<8x!pme_real>
-      %py_s = arith.divf %yi, %ly : f64
+      %py_s = arith.mulf %yi, %ily : f64
       %py_fs = math.floor %py_s : f64
       %py_frac = arith.subf %py_s, %py_fs : f64
       %py_ki = arith.index_cast %k2 : index to i64
@@ -920,9 +966,12 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %py_bi = arith.fptosi %py_fu : f64 to i64
       %py_b = arith.index_cast %py_bi : i64 to index
       %py_bk = arith.addi %py_b, %k2 : index
-      %py_bkn = arith.subi %py_bk, %n : index
+      %py_bkn = arith.subi %py_bk, %order : index
       %py_c1p = arith.constant 1 : index
-      %py_start = arith.addi %py_bkn, %py_c1p : index
+      %py_start0 = arith.addi %py_bkn, %py_c1p : index
+      // The first point within the grid, so that the points of the particle need
+      // one subtraction at most to wrap around.
+      %py_start = arith.remui %py_start0, %k2 : index
       %py_wr = PME_F64_TO_REAL %py_w : f64 to !pme_real
       %by_c0 = arith.constant 0 : index
       %by_c1 = arith.constant 1 : index
@@ -937,7 +986,7 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %by_omw = arith.subf %by_one, %py_wr : !pme_real
       memref.store %by_omw, %wy[%by_c0] : memref<8x!pme_real>
       memref.store %py_wr, %wy[%by_c1] : memref<8x!pme_real>
-      scf.for %by_k = %by_c3 to %n step %by_c1 {
+      scf.for %by_k = %by_c3 to %order step %by_c1 {
       %by_r_km1 = arith.subi %by_k, %by_c1 : index
       %by_r_km2 = arith.subi %by_k, %by_c2 : index
       %by_r_km1i = arith.index_cast %by_r_km1 : index to i64
@@ -974,19 +1023,19 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %by_v0 = memref.load %wy[%by_c0] : memref<8x!pme_real>
       %by_s0 = arith.negf %by_v0 : !pme_real
       memref.store %by_s0, %dy[%by_c0] : memref<8x!pme_real>
-      scf.for %by_js = %by_c1 to %n step %by_c1 {
+      scf.for %by_js = %by_c1 to %order step %by_c1 {
         %by_jm1 = arith.subi %by_js, %by_c1 : index
         %by_before = memref.load %wy[%by_jm1] : memref<8x!pme_real>
         %by_here = memref.load %wy[%by_js] : memref<8x!pme_real>
         %by_slope = arith.subf %by_before, %by_here : !pme_real
         memref.store %by_slope, %dy[%by_js] : memref<8x!pme_real>
       }
-      %by_f_km1 = arith.subi %n, %by_c1 : index
-      %by_f_km2 = arith.subi %n, %by_c2 : index
+      %by_f_km1 = arith.subi %order, %by_c1 : index
+      %by_f_km2 = arith.subi %order, %by_c2 : index
       %by_f_km1i = arith.index_cast %by_f_km1 : index to i64
       %by_f_km1f = arith.sitofp %by_f_km1i : i64 to !pme_real
       %by_f_div = arith.divf %by_one, %by_f_km1f : !pme_real
-      %by_f_ki = arith.index_cast %n : index to i64
+      %by_f_ki = arith.index_cast %order : index to i64
       %by_f_kf = arith.sitofp %by_f_ki : i64 to !pme_real
       %by_f_last = memref.load %wy[%by_f_km2] : memref<8x!pme_real>
       %by_f_dw = arith.mulf %by_f_div, %py_wr : !pme_real
@@ -1013,7 +1062,7 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %by_f_d0 = arith.mulf %by_f_div, %by_f_omw : !pme_real
       %by_f_bottom = arith.mulf %by_f_d0, %by_f_first : !pme_real
       memref.store %by_f_bottom, %wy[%by_c0] : memref<8x!pme_real>
-      %pz_s = arith.divf %zi, %lz : f64
+      %pz_s = arith.mulf %zi, %ilz : f64
       %pz_fs = math.floor %pz_s : f64
       %pz_frac = arith.subf %pz_s, %pz_fs : f64
       %pz_ki = arith.index_cast %k3 : index to i64
@@ -1024,9 +1073,12 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %pz_bi = arith.fptosi %pz_fu : f64 to i64
       %pz_b = arith.index_cast %pz_bi : i64 to index
       %pz_bk = arith.addi %pz_b, %k3 : index
-      %pz_bkn = arith.subi %pz_bk, %n : index
+      %pz_bkn = arith.subi %pz_bk, %order : index
       %pz_c1p = arith.constant 1 : index
-      %pz_start = arith.addi %pz_bkn, %pz_c1p : index
+      %pz_start0 = arith.addi %pz_bkn, %pz_c1p : index
+      // The first point within the grid, so that the points of the particle need
+      // one subtraction at most to wrap around.
+      %pz_start = arith.remui %pz_start0, %k3 : index
       %pz_wr = PME_F64_TO_REAL %pz_w : f64 to !pme_real
       %bz_c0 = arith.constant 0 : index
       %bz_c1 = arith.constant 1 : index
@@ -1041,7 +1093,7 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %bz_omw = arith.subf %bz_one, %pz_wr : !pme_real
       memref.store %bz_omw, %wz[%bz_c0] : memref<8x!pme_real>
       memref.store %pz_wr, %wz[%bz_c1] : memref<8x!pme_real>
-      scf.for %bz_k = %bz_c3 to %n step %bz_c1 {
+      scf.for %bz_k = %bz_c3 to %order step %bz_c1 {
       %bz_r_km1 = arith.subi %bz_k, %bz_c1 : index
       %bz_r_km2 = arith.subi %bz_k, %bz_c2 : index
       %bz_r_km1i = arith.index_cast %bz_r_km1 : index to i64
@@ -1078,19 +1130,19 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %bz_v0 = memref.load %wz[%bz_c0] : memref<8x!pme_real>
       %bz_s0 = arith.negf %bz_v0 : !pme_real
       memref.store %bz_s0, %dz[%bz_c0] : memref<8x!pme_real>
-      scf.for %bz_js = %bz_c1 to %n step %bz_c1 {
+      scf.for %bz_js = %bz_c1 to %order step %bz_c1 {
         %bz_jm1 = arith.subi %bz_js, %bz_c1 : index
         %bz_before = memref.load %wz[%bz_jm1] : memref<8x!pme_real>
         %bz_here = memref.load %wz[%bz_js] : memref<8x!pme_real>
         %bz_slope = arith.subf %bz_before, %bz_here : !pme_real
         memref.store %bz_slope, %dz[%bz_js] : memref<8x!pme_real>
       }
-      %bz_f_km1 = arith.subi %n, %bz_c1 : index
-      %bz_f_km2 = arith.subi %n, %bz_c2 : index
+      %bz_f_km1 = arith.subi %order, %bz_c1 : index
+      %bz_f_km2 = arith.subi %order, %bz_c2 : index
       %bz_f_km1i = arith.index_cast %bz_f_km1 : index to i64
       %bz_f_km1f = arith.sitofp %bz_f_km1i : i64 to !pme_real
       %bz_f_div = arith.divf %bz_one, %bz_f_km1f : !pme_real
-      %bz_f_ki = arith.index_cast %n : index to i64
+      %bz_f_ki = arith.index_cast %order : index to i64
       %bz_f_kf = arith.sitofp %bz_f_ki : i64 to !pme_real
       %bz_f_last = memref.load %wz[%bz_f_km2] : memref<8x!pme_real>
       %bz_f_dw = arith.mulf %bz_f_div, %pz_wr : !pme_real
@@ -1120,16 +1172,20 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %gzero = arith.constant 0.0 : !pme_real
       %j0 = arith.constant 0 : index
       %j1c = arith.constant 1 : index
-      %sumx, %sumy, %sumz = scf.for %j1 = %j0 to %n step %j1c
+      %sumx, %sumy, %sumz = scf.for %j1 = %j0 to %order step %j1c
           iter_args(%ax = %gzero, %ay = %gzero, %az = %gzero) -> (!pme_real, !pme_real, !pme_real) {
         %g1s = arith.addi %px_start, %j1 : index
-        %g1 = arith.remui %g1s, %k1 : index
+        %g1w = arith.subi %g1s, %k1 : index
+        %g1over = arith.cmpi uge, %g1s, %k1 : index
+        %g1 = arith.select %g1over, %g1w, %g1s : index
         %w1 = memref.load %wx[%j1] : memref<8x!pme_real>
         %d1 = memref.load %dx[%j1] : memref<8x!pme_real>
-        %bx2, %by2, %bz2 = scf.for %j2 = %j0 to %n step %j1c
+        %bx2, %by2, %bz2 = scf.for %j2 = %j0 to %order step %j1c
             iter_args(%cx = %ax, %cy = %ay, %cz = %az) -> (!pme_real, !pme_real, !pme_real) {
           %g2s = arith.addi %py_start, %j2 : index
-          %g2 = arith.remui %g2s, %k2 : index
+          %g2w = arith.subi %g2s, %k2 : index
+          %g2over = arith.cmpi uge, %g2s, %k2 : index
+          %g2 = arith.select %g2over, %g2w, %g2s : index
           %w2 = memref.load %wy[%j2] : memref<8x!pme_real>
           %d2 = memref.load %dy[%j2] : memref<8x!pme_real>
           %row1 = arith.muli %g1, %k2 : index
@@ -1138,10 +1194,12 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
           %d1w2 = arith.mulf %d1, %w2 : !pme_real
           %w1d2 = arith.mulf %w1, %d2 : !pme_real
           %w1w2 = arith.mulf %w1, %w2 : !pme_real
-          %ex, %ey, %ez = scf.for %j3 = %j0 to %n step %j1c
+          %ex, %ey, %ez = scf.for %j3 = %j0 to %order step %j1c
               iter_args(%tx3 = %cx, %ty3 = %cy, %tz3 = %cz) -> (!pme_real, !pme_real, !pme_real) {
             %g3s = arith.addi %pz_start, %j3 : index
-            %g3 = arith.remui %g3s, %k3 : index
+            %g3w = arith.subi %g3s, %k3 : index
+            %g3over = arith.cmpi uge, %g3s, %k3 : index
+            %g3 = arith.select %g3over, %g3w, %g3s : index
             %w3 = memref.load %wz[%j3] : memref<8x!pme_real>
             %d3 = memref.load %dz[%j3] : memref<8x!pme_real>
             %at = arith.addi %gbase, %g3 : index

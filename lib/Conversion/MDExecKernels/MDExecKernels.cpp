@@ -819,20 +819,24 @@ std::string kernels::getInstanceName(StringRef name, Type real) {
   return real.isF64() ? name.str() : (name + "_f32").str();
 }
 
-static std::string getPMESuffix(Type position, Type charge, Type force) {
+static std::string getPMESuffix(Type position, Type charge, Type force,
+                                int64_t order) {
   auto bits = [](Type type) {
     return std::to_string(type.getIntOrFloatBitWidth());
   };
-  return "_p" + bits(position) + "c" + bits(charge) + "f" + bits(force);
+  return "_p" + bits(position) + "c" + bits(charge) + "f" + bits(force) +
+         "o" + std::to_string(order);
 }
 
 std::string kernels::getPMEInstanceName(StringRef name, Type position,
-                                        Type charge, Type force) {
-  return (name + getPMESuffix(position, charge, force)).str();
+                                        Type charge, Type force,
+                                        int64_t order) {
+  return (name + getPMESuffix(position, charge, force, order)).str();
 }
 
 std::string kernels::instantiatePMETemplates(StringRef text, Type position,
-                                             Type charge, Type force) {
+                                             Type charge, Type force,
+                                             int64_t order) {
   auto spell = [](Type type) { return type.isF64() ? "f64" : "f32"; };
   // The conversion from and to f64 of a type that is f64 is a cast of the
   // bits, which changes nothing.
@@ -845,7 +849,7 @@ std::string kernels::instantiatePMETemplates(StringRef text, Type position,
       return "arith.bitcast";
     return from.isF64() ? "arith.truncf" : "arith.extf";
   };
-  std::string suffix = getPMESuffix(position, charge, force);
+  std::string suffix = getPMESuffix(position, charge, force, order);
   std::string instance;
   while (!text.empty()) {
     if (text.consume_front("!pme_pos = f64")) {
@@ -868,6 +872,9 @@ std::string kernels::instantiatePMETemplates(StringRef text, Type position,
       instance += convert(Float64Type::get(force.getContext()), force);
     } else if (text.consume_front("PME_REAL_TO_F64")) {
       instance += convert(force, Float64Type::get(force.getContext()));
+    } else if (text.consume_front("PME_ORDER")) {
+      // The order of the splines, a constant in the kernels.
+      instance += std::to_string(order);
     } else if (text.consume_front("PME_REAL_TO_FRC")) {
       instance += "arith.bitcast";
     } else if (text.consume_front("@mdrt")) {
