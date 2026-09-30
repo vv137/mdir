@@ -1,10 +1,10 @@
-// With tuples-once, a loop over tuples that may share particles, has no
+// By default (tuples-once), a loop over tuples that may share particles, has no
 // global sums, and adds to its destination evaluates each tuple once, a
 // thread for each tuple, and adds to the members with atomics: in f32 by
 // PTX's own reduction.
 //
 // RUN: mdir-opt %s --convert-md-exec-to-gpu="tuples-once=true" | FileCheck %s
-// RUN: mdir-opt %s --convert-md-exec-to-gpu | FileCheck %s --check-prefix=ROWS
+// RUN: mdir-opt %s --convert-md-exec-to-gpu="tuples-once=false" | FileCheck %s --check-prefix=ROWS
 
 md.particle_set @atoms
 
