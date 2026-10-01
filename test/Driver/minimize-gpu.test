@@ -10,10 +10,11 @@
 
 # The steps of double precision to within the rounding of the forces,
 # whose terms take the positions in f32 (D79): after 50 steps the energy is
-# within 0.5 kcal/mol of that in double precision, -6587.1.
+# within 0.5 kcal/mol of that in double precision, -6587.1 (from -6587.6 to
+# -6586.6; the floating-point atomics move it by about 0.1 from run to run).
 #
 # CHECK: INFO:         0     -5348.43{{[0-9]+}}         8.69{{[0-9]+}}
-# CHECK: INFO:        50     -6587.{{[0-5][0-9]+}}
+# CHECK: INFO:        50     -{{6587\.[0-5][0-9]+|6586\.[6-9][0-9]+}}
 # CHECK: MDIR: the potential energy went from -5348.43{{[0-9]+}} to -67{{[0-9]+}}.{{[0-9]+}} kcal/mol
 
 # BONDS: bonds ok
