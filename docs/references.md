@@ -311,8 +311,8 @@ charge," *J. Chem. Theory Comput.* **10**, 381–390 (2014).
 [doi:10.1021/ct400626b](https://doi.org/10.1021/ct400626b)
 
 Used for: the energy of the uniform background that neutralizes a system
-with a net charge under Ewald summation, `−π Q² / (2 V β²)` in units of
-`f` (pme-m1.md).
+with a net charge under Ewald summation, $-\pi Q^2 / (2V\beta^2)$ in units of
+$f$ (pme-m1.md).
 
 ### Izadi2014
 
@@ -777,7 +777,7 @@ mechanics energy surfaces in solution," *J. Chem. Theory Comput.* **16**,
 [doi:10.1021/acs.jctc.9b00591](https://doi.org/10.1021/acs.jctc.9b00591)
 
 Used for: ff19SB, the protein force field of the target of M1 (D65), whose
-CMAP terms are corrections of φ and ψ for each amino acid.
+CMAP terms are corrections of $\phi$ and $\psi$ for each amino acid.
 
 ### Tiesinga2021
 

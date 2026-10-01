@@ -129,13 +129,13 @@ and what stays a run-time value (P1):
 |---|---|
 | Terms of the potential and their functional forms | Particle count |
 | Structure of the dynamics program | Simulation cell |
-| Precision | Time step, temperature, λ |
+| Precision | Time step, temperature, $\lambda$ |
 | Target hardware | Force-field parameter tables, by default |
 | Structural plan parameters | Numeric plan parameters |
 
 Binding is not an attribute in the IR. A parameter is static when the front
 end passes it as a constant, which it may do per parameter when the
-specialization pays off. Temperature and λ are always run-time values, so
+specialization pays off. Temperature and $\lambda$ are always run-time values, so
 that all replicas share one compiled kernel.
 
 The program is compiled once and distributed to all ranks. Compiled code is
@@ -171,7 +171,7 @@ neighborhoods, and reductions. A potential is one kind of function built from
 that core. Analyses and collective variables are others. Whether a function
 can be differentiated depends on the ops it contains.
 
-A potential expresses the potential energy of a configuration, `U(x; θ)`, and
+A potential expresses the potential energy of a configuration, $U(\mathbf x; \theta)$, and
 nothing about how or where it is computed (A1). Kinetic energy is not part of
 it. "Hamiltonian" means `K + U` and is used only where that is meant, as in
 Hamiltonian replica exchange.

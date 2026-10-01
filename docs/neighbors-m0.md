@@ -126,9 +126,7 @@ converted. A distance between two positions of the copy differs from the
 distance of the particles by rounding. The search therefore takes a pair
 that is within the reach plus a margin:
 
-```text
-margin = 3e-6 · (Lx + Ly + Lz)
-```
+$$\text{margin} = 3 \times 10^{-6}\,(L_x + L_y + L_z).$$
 
 | Source of the difference | Size |
 |---|---|
@@ -221,15 +219,13 @@ memory.
 
 ## 3. The test of validity
 
-A structure that was built at the positions `x_ref` is valid for the
-positions `x` while [[AllenTildesley2017]](references.md#allentildesley2017)
+A structure that was built at the positions $\mathbf x^\text{ref}$ is valid for the
+positions $\mathbf x$ while [[AllenTildesley2017]](references.md#allentildesley2017)
 
-```text
-max_i |x_i − x_ref,i| ≤ skin / 2
-```
+$$\max_i \lVert \mathbf x_i - \mathbf x^\text{ref}_i \rVert \le s / 2,$$
 
-and the cell is the one it was built in. Two particles that are farther
-apart than the reach at `x_ref` have then not come closer than the cutoff.
+with $s$ the skin, and the cell is the one it was built in. Two particles that are farther
+apart than the reach at $\mathbf x^\text{ref}$ have then not come closer than the cutoff.
 
 | Method | State |
 |---|---|
@@ -370,8 +366,8 @@ lattice in three ways:
 
 | Order | Meaning |
 |---|---|
-| Lattice | Particle `i` is on site `i`. The order follows the positions. |
-| Scattered | Particle `i` is on site `i · p mod N`, with a number `p` that has no divisor in common with `N`. Neighbors in space are far apart in memory. |
+| Lattice | Particle $i$ is on site $i$. The order follows the positions. |
+| Scattered | Particle $i$ is on site $i p \bmod N$, with a number $p$ that has no divisor in common with $N$. Neighbors in space are far apart in memory. |
 | Scattered, put in order | The scattered particles, put in the order of their positions before the first step |
 
 Milliseconds per step on the GPU in the mixed mode:

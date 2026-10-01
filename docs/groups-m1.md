@@ -56,17 +56,17 @@ and no test of candidates far from a box, is still to be measured
 
 **Places and groups.** A build sorts the particles into cells and gives
 each a place in the order of the cells (D86); the positions that the loops
-read are gathered in that order. Group g is the places 16 g to 16 g + 15;
+read are gathered in that order. Group $g$ is the places $16g$ to $16g + 15$;
 the last group is padded with empty places.
 
-**Entries.** The list of group g holds entries (q, m): a place q and a mask
-m of 16 bits, bit u for the particle at place 16 g + u. The list holds
-every pair {p, q} with |x_p − x_q| ≤ R at the build, once:
+**Entries.** The list of group $g$ holds entries $(q, m)$: a place $q$ and a mask
+$m$ of 16 bits, bit $u$ for the particle at place $16g + u$. The list holds
+every pair $\{p, q\}$ with $\lVert\mathbf x_p - \mathbf x_q\rVert \le R$ at the build, once:
 
-- for q in a later group, in the list of g = ⌊p/16⌋ with the bits of the
-  particles p of g that pair with q;
-- for q in group g itself, in the list of g, with the bits of the places
-  before q.
+- for $q$ in a later group, in the list of $g = \lfloor p/16 \rfloor$ with the bits of the
+  particles $p$ of $g$ that pair with $q$;
+- for $q$ in group $g$ itself, in the list of $g$, with the bits of the places
+  before $q$.
 
 A bit is cleared for an excluded pair and for an empty place. The build
 may set bits of pairs farther apart than R (Section 5); the loop tests the
@@ -98,8 +98,8 @@ against every pair in f64).
 
 The test of D80 decides when to build again, unchanged: the
 structure is valid while
-2 max_i |x_i − m ⊙ x_ref,i| ≤ min(m) R − r_c. A pair that the list leaves
-out was farther than R apart at the build, and so is farther than r_c now
+$2 \max_i \lVert \mathbf x_i - \mathbf m \odot \mathbf x^\text{ref}_i \rVert \le \min(\mathbf m) R - r_c$. A pair that the list leaves
+out was farther than $R$ apart at the build, and so is farther than $r_c$ now
 (D80). Every pair within the cutoff is in the list: the list is a superset
 of the pairs within the cutoff, and the cutoff test of the loop removes the
 others, as for the matrix ([ops-m0.md](ops-m0.md), Section 9.2).
@@ -107,7 +107,7 @@ others, as for the matrix ([ops-m0.md](ops-m0.md), Section 9.2).
 ## 3. The loop: each pair once
 
 The loop implements Section 9.3 of [ops-m0.md](ops-m0.md): for each
-unordered pair {i, j} in the list and within the cutoff,
+unordered pair $\{i, j\}$ in the list and within the cutoff,
 
 ```text
 a_i += k(i, j)
@@ -265,17 +265,17 @@ often, and its conserved energy drifts as much (−7.5 and −7.7 kcal/mol).
 
 `pruned_distance` in `[energy]` keeps a dual list: the structure of groups
 built with the reach R = `pairlist_distance` (the outer list) and an inner
-list pruned from it with the reach R_in = `pruned_distance`, which the
+list pruned from it with the reach $R_\text{in} = \texttt{pruned\_distance}$, which the
 loops over pairs take. [tiles-m1.md](tiles-m1.md), Section 6, gives the
 validity and its proof; they do not depend on the layout of the list.
 
 | Item | Rule |
 |---|---|
-| The tests | Two loops over particles, fused with the loop that moves them (`md-exec-expose-validity`): that of D80 against the configuration and the cell of the build, and the same against those of the last pruning with R_in (`md_exec.reference_positions pruned`, `md_exec.reference_cell pruned`). Each scales by its own cell, `m = L / L_ref` and `m_p = L / L_p`, per axis; the cells are orthorhombic, so a scaling has no shear |
+| The tests | Two loops over particles, fused with the loop that moves them (`md-exec-expose-validity`): that of D80 against the configuration and the cell of the build, and the same against those of the last pruning with $R_\text{in}$ (`md_exec.reference_positions pruned`, `md_exec.reference_cell pruned`). Each scales by its own cell, $\mathbf m = \mathbf L \oslash \mathbf L^\text{ref}$ and $\mathbf m^p = \mathbf L \oslash \mathbf L^p$, per axis; the cells are orthorhombic, so a scaling has no shear |
 | The refresh | Where the outer list is not valid, it is built and the inner list pruned from it; where only the inner one is not, the inner one is pruned again. A pruning sets the configuration and the cell of the inner list only; those of the outer list change at a build only. Before the first pruning the cell of the inner list is not a number, so its test fails |
-| The pruning | Always from the outer list: the bits of an entry are those of the outer mask whose pairs are within R_in now, `inner = outer & (r² ≤ R_in²)`, so that a pair dropped once comes back when it is near again. The outer entries and masks are kept as the build left them |
-| The distances | In f32, from positions moved into the frames of their groups as the loop takes them (D95), against R_in widened by 3e-6 of the sum of the edges of the cell, as the build widens R: the rounding can keep a pair beyond R_in, never drop one within it |
-| The layout | A warp for each group takes the entries of the outer list of the group in their order, 32 at a time, and writes those with a bit left to the front of the blocks of the group, in their order (a ballot and a count of the bits below each lane), across the boundaries of the blocks; each block holds its number of entries. The inner list thus fills its blocks as a list built with R_in would. A block that the inner list leaves empty writes nothing in the loop |
+| The pruning | Always from the outer list: the bits of an entry are those of the outer mask whose pairs are within $R_\text{in}$ now, $\text{inner} = \text{outer} \mathbin{\&} (r^2 \le R_\text{in}^2)$, so that a pair dropped once comes back when it is near again. The outer entries and masks are kept as the build left them |
+| The distances | In f32, from positions moved into the frames of their groups as the loop takes them (D95), against $R_\text{in}$ widened by $3 \times 10^{-6}$ of the sum of the edges of the cell, as the build widens $R$: the rounding can keep a pair beyond $R_\text{in}$, never drop one within it |
+| The layout | A warp for each group takes the entries of the outer list of the group in their order, 32 at a time, and writes those with a bit left to the front of the blocks of the group, in their order (a ballot and a count of the bits below each lane), across the boundaries of the blocks; each block holds its number of entries. The inner list thus fills its blocks as a list built with $R_\text{in}$ would. A block that the inner list leaves empty writes nothing in the loop |
 | The order | The pruning keeps the order of the outer list and adds no order of its own. The order of the outer list, the blocks that the build takes with an atomic addition, and the atomic additions of the loop are as without a dual list: the sums still depend on the order of the threads, and the deterministic mode does not take groups |
 | The log | `the inner lists were pruned N times, every k steps on average`, the prunings that follow a build included |
 

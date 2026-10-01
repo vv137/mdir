@@ -159,7 +159,7 @@ variants Section 9 measures.
 ### 5.1 Full list (owner computes)
 
 A tile pair $(A, B)$ is in the rows of both $A$ and $B$. A warp computes
-the row of one target tile: its 32 lanes are 8 targets $u$ × 4 lanes $q$,
+the row of one target tile: its 32 lanes are 8 targets $u$ times 4 lanes $q$,
 and for each record the lane $(u, q)$ evaluates the sources $v = q$ and
 $v = q + 4$ whose mask bit is set and which are within the cutoff. At the
 end of the row the four lanes of a target add their sums with shuffles,

@@ -36,10 +36,10 @@ as (S1) or (B4) name the decision behind a section.
 | Symbol | Meaning |
 |---|---|
 | `P` | A particle set. Each particle has a global ID. |
-| `a : P → V` | A per-particle field with values in `V`. `a_i` is its value at particle `i`. |
+| $a : P \to V$ | A per-particle field with values in $V$. $a_i$ is its value at particle $i$. |
 | `h` | The simulation cell: three lattice vectors and a periodicity flag per direction. |
-| `d_ij` | Minimum-image [[AllenTildesley2017]](references.md#allentildesley2017) displacement `x_i − x_j − h·n`, with integer `n` chosen to minimize the length. |
-| `r_ij` | `|d_ij|`. |
+| $\mathbf d_{ij}$ | Minimum-image [[AllenTildesley2017]](references.md#allentildesley2017) displacement $\mathbf x_i - \mathbf x_j - h\mathbf n$, with integer $\mathbf n$ chosen to minimize the length. |
+| $r_{ij}$ | $\lVert\mathbf d_{ij}\rVert$. |
 | `r_c` | Cutoff. |
 
 M0 requires `r_c` to be smaller than half the shortest perpendicular width of
@@ -80,9 +80,7 @@ decision and is never part of the type.
 
 For an unordered relation `R`, its directed expansion is
 
-```text
-D(R) = { (i, j), (j, i) : {i, j} ∈ R }
-```
+$$D(R) = \{ (i, j), (j, i) : \{i, j\} \in R \}.$$
 
 `D(R)` has exactly twice as many tuples as `R`. It appears in the definitions
 below and in the lowering, but it is not a type that users write.
@@ -139,7 +137,7 @@ the system once. Front ends convert on input and output.
 | Unit system | Length | Time | Mass | Energy |
 |---|---|---|---|---|
 | `md` | nm | ps | amu | kJ/mol |
-| `reduced` | σ | τ | m | ε |
+| `reduced` | $\sigma$ | $\tau$ | $m$ | $\varepsilon$ |
 
 The `md` system is the one OpenMM uses.
 
@@ -240,7 +238,7 @@ md.potential @lj(%x: !vec, %cell: !md.cell, %eps: f64, %sigma: f64) -> f64 {
 ```
 
 `md.potential` defines the coordinate-dependent potential energy
-`U(x; θ)`. It has exactly one result, of type `f64`. Kinetic energy is not
+$U(\mathbf x; \theta)$. It has exactly one result, of type `f64`. Kinetic energy is not
 part of it.
 
 The first argument is the position field and the second is the cell. All
@@ -268,9 +266,7 @@ Inlining and constant propagation do the specialization.
 | Attributes | `cutoff`: positive real, in internal units |
 | Result | `!md.relation<@set, 2, unordered>` |
 
-```text
-N(x, h) = { {i, j} : i ≠ j, r_ij < r_c }
-```
+$$N(\mathbf x, h) = \{ \{i, j\} : i \ne j,\ r_{ij} < r_c \}.$$
 
 The cutoff is a compile-time constant in M0 (S5).
 
@@ -293,9 +289,7 @@ The cutoff is a compile-time constant in M0 (S5).
 | Kernel result | `f64` or a fixed-size vector of `f64` |
 | Result | Same type as the kernel result |
 
-```text
-S = Σ_{t ∈ R} k(t)
-```
+$$S = \sum_{t \in R} k(t).$$
 
 Each tuple contributes once.
 
@@ -323,11 +317,9 @@ operands must be the same SSA values that the neighborhood was built from.
 | Kernel arguments | `r`, `d`, then two values per gathered field |
 | Result | A field whose element type is the kernel result type |
 
-```text
-a_i = Σ_{j : (i, j) ∈ D(R)} k(i, j)
-```
+$$a_i = \sum_{j : (i, j) \in D(R)} k(i, j).$$
 
-The kernel is evaluated with `i` as the central particle. `d` is `d_ij`.
+The kernel is evaluated with $i$ as the central particle. `d` is $\mathbf d_{ij}$.
 
 The definition is a gather. It has no write conflicts by construction.
 `exchange` only records a fact that an execution policy may exploit.
@@ -368,36 +360,34 @@ crosses the cutoff. Energy is then not conserved, whatever the integrator.
 
 | `truncation` | Kernel used for `r < r_c` | Continuity at `r_c` |
 |---|---|---|
-| `none` | `u(r)` | None |
-| `shift` | `u(r) − u(r_c)` | Energy |
-| `force_shift` [[Stoddard1973]](references.md#stoddard1973) | `u(r) − u(r_c) − (r − r_c) · u'(r_c)` | Energy and force |
-| `switch`, from `r_s` | `u(r) · S(r)` | Energy, force, and the derivative of the force |
-| `force_switch` [[Steinbach1994]](references.md#steinbach1994), from `r_s` | `u(r) − P(r) − C` | Energy, force, and the derivative of the force |
+| `none` | $u(r)$ | None |
+| `shift` | $u(r) - u(r_c)$ | Energy |
+| `force_shift` [[Stoddard1973]](references.md#stoddard1973) | $u(r) - u(r_c) - (r - r_c)\, u'(r_c)$ | Energy and force |
+| `switch`, from $r_s$ | $u(r)\, S(r)$ | Energy, force, and the derivative of the force |
+| `force_switch` [[Steinbach1994]](references.md#steinbach1994), from $r_s$ | $u(r) - P(r) - C$ | Energy, force, and the derivative of the force |
 
 `r_c` is the cutoff of the neighborhood.
 
 **Switch.** The potential is multiplied by the fifth-degree polynomial of
 `potential-switch` in the GROMACS manual [[GromacsManual2025]](references.md#gromacsmanual2025):
 
-```text
-S(r) = 1                          r ≤ r_s
-S(r) = 1 − 10t³ + 15t⁴ − 6t⁵      r_s < r < r_c,   t = (r − r_s) / (r_c − r_s)
-```
+$$
+S(r) = \begin{cases} 1 & r \le r_s \\ 1 - 10t^3 + 15t^4 - 6t^5 & r_s < r < r_c, \end{cases} \qquad t = \frac{r - r_s}{r_c - r_s}.
+$$
 
-**Force switch.** A cubic polynomial in `r − r_s` is added to the force, so
+**Force switch.** A cubic polynomial in $r - r_s$ is added to the force, so
 that the force and its derivative vanish at the cutoff. With
-`F = −u'(r_c)`, `F' = −u''(r_c)`, and `Δ = r_c − r_s`:
+$F = -u'(r_c)$, $F' = -u''(r_c)$, and $\Delta = r_c - r_s$:
 
-```text
-A = (F'Δ − 3F) / Δ²        B = (2F − F'Δ) / Δ³
+$$
+\begin{aligned}
+A &= \frac{F'\Delta - 3F}{\Delta^2}, \qquad B = \frac{2F - F'\Delta}{\Delta^3}, \\
+P(r) &= \begin{cases} 0 & r \le r_s \\ \tfrac{A}{3}(r - r_s)^3 + \tfrac{B}{4}(r - r_s)^4 & r_s < r < r_c, \end{cases} \\
+C &= u(r_c) - \tfrac{A}{3}\Delta^3 - \tfrac{B}{4}\Delta^4.
+\end{aligned}
+$$
 
-P(r) = 0                                      r ≤ r_s
-P(r) = (A/3)(r − r_s)³ + (B/4)(r − r_s)⁴      r_s < r < r_c
-
-C = u(r_c) − (A/3)Δ³ − (B/4)Δ⁴
-```
-
-The definition holds for any kernel. It is linear in `u`, so applying it to a
+The definition holds for any kernel. It is linear in $u$, so applying it to a
 sum of terms equals applying it to each term.
 
 **Correspondence with other packages.**
@@ -409,7 +399,7 @@ sum of terms equals applying it to each term.
 | `force_switch` | — | `force-switch` |
 | `force_shift` | — | — |
 
-The GROMACS manual [[GromacsManual2025]](references.md#gromacsmanual2025) defines `force-switch` for a power law `r^-α`. For that
+The GROMACS manual [[GromacsManual2025]](references.md#gromacsmanual2025) defines `force-switch` for a power law $r^{-\alpha}$. For that
 kernel the constants above reduce to the ones in the manual.
 
 A pass expands the attribute into the kernel before differentiation. After
@@ -432,10 +422,12 @@ Long-range dispersion corrections [[Shirts2007]](references.md#shirts2007) are n
 } : f64
 ```
 
-```text
-md.sum_particles:  S   = Σ_{i ∈ P} k(i)
-md.map_particles:  b_i = k(i)
-```
+$$
+\begin{aligned}
+\texttt{md.sum\_particles}: \quad & S = \sum_{i \in P} k(i), \\
+\texttt{md.map\_particles}: \quad & b_i = k(i).
+\end{aligned}
+$$
 
 ### 4.10 `md.evaluate`
 
@@ -446,10 +438,10 @@ md.map_particles:  b_i = k(i)
 
 | Request | Result type | Definition |
 |---|---|---|
-| `energy` | `f64` | `U` |
-| `forces` | Position field type | `F_i = −∂U/∂x_i` |
-| `virial` | `vector<9xf64>` | `W`, as defined in Section 5.3, in row-major order |
-| `derivative(n)` | `f64` | `∂U/∂θ_n`, where `θ_n` is scalar argument `n` |
+| `energy` | `f64` | $U$ |
+| `forces` | Position field type | $\mathbf F_i = -\partial U/\partial\mathbf x_i$ |
+| `virial` | `vector<9xf64>` | $\mathsf W$, as defined in Section 5.3, in row-major order |
+| `derivative(n)` | `f64` | $\partial U/\partial\theta_n$, where $\theta_n$ is scalar argument `n` |
 
 `md.evaluate` does not survive semantic differentiation. The pass replaces it
 with `md.call` to a generated `md.function`.
@@ -466,58 +458,50 @@ definition to the force kernel. Every step is an identity.
 
 ### 5.1 Energy
 
-```text
-U(x) = Σ_{{i,j} ∈ N(x)} u(r_ij)          u(r) = 4ε((σ/r)^12 − (σ/r)^6)
-```
+$$U(\mathbf x) = \sum_{\{i,j\} \in N(\mathbf x)} u(r_{ij}), \qquad u(r) = 4\varepsilon \big((\sigma/r)^{12} - (\sigma/r)^6\big).$$
 
 This is `md.sum_relation` over an unordered relation. Each pair is counted
-once. `u` here is the kernel after truncation has been expanded.
+once. $u$ here is the kernel after truncation has been expanded.
 
 ### 5.2 Forces
 
-The set `N(x)` is treated as locally constant. When the kernel is continuous
-at the cutoff, the result is the exact gradient of `U`. With
+The set $N(\mathbf x)$ is treated as locally constant. When the kernel is continuous
+at the cutoff, the result is the exact gradient of $U$. With
 `truncation(none)` it is the gradient everywhere except at configurations
-where a pair crosses the cutoff, where `U` itself jumps. With
+where a pair crosses the cutoff, where $U$ itself jumps. With
 
-```text
-∂r_ij/∂x_i = d_ij / r_ij        ∂r_ij/∂x_j = −d_ij / r_ij
-```
+$$\frac{\partial r_{ij}}{\partial\mathbf x_i} = \frac{\mathbf d_{ij}}{r_{ij}}, \qquad \frac{\partial r_{ij}}{\partial\mathbf x_j} = -\frac{\mathbf d_{ij}}{r_{ij}},$$
 
-the force on particle `i` is
+the force on particle $i$ is
 
-```text
-F_i = −∂U/∂x_i = Σ_{j : (i,j) ∈ D(N)} K(i, j)        K(i, j) = −u'(r_ij) · d_ij / r_ij
-```
+$$\mathbf F_i = -\frac{\partial U}{\partial\mathbf x_i} = \sum_{j : (i,j) \in D(N)} \mathbf K(i, j), \qquad \mathbf K(i, j) = -u'(r_{ij})\, \frac{\mathbf d_{ij}}{r_{ij}}.$$
 
-This is `md.gather_relation`. The factor in front of `d_ij` depends only on
-`r_ij`, and `d_ji = −d_ij`, so `K(j, i) = −K(i, j)`. The pass sets
+This is `md.gather_relation`. The factor in front of $\mathbf d_{ij}$ depends only on
+$r_{ij}$, and $\mathbf d_{ji} = -\mathbf d_{ij}$, so $\mathbf K(j, i) = -\mathbf K(i, j)$. The pass sets
 `exchange(antisymmetric)`.
 
 For Lennard-Jones:
 
-```text
-K(i, j) = (24ε / r²) · (2(σ/r)^12 − (σ/r)^6) · d_ij
-```
+$$\mathbf K(i, j) = \frac{24\varepsilon}{r^2} \big(2(\sigma/r)^{12} - (\sigma/r)^6\big)\, \mathbf d_{ij}.$$
 
 ### 5.3 Virial and parameter derivatives
 
-```text
-W      = Σ_{{i,j} ∈ N} d_ij ⊗ K(i, j)
-∂U/∂θ  = Σ_{{i,j} ∈ N} ∂u/∂θ (r_ij)
-```
+$$
+\begin{aligned}
+\mathsf W &= \sum_{\{i,j\} \in N} \mathbf d_{ij} \otimes \mathbf K(i, j), \\
+\frac{\partial U}{\partial\theta} &= \sum_{\{i,j\} \in N} \frac{\partial u}{\partial\theta}(r_{ij}).
+\end{aligned}
+$$
 
 Both are `md.sum_relation`. The virial kernel is invariant under exchange
 because both factors change sign.
 
-**Sign convention (B8).** `W` is the MDIR virial [[Louwerse2006]](references.md#louwerse2006). `K(i, j)` is the force on
-`i` due to `j`, so `W` is positive for repulsion. The pressure is
+**Sign convention (B8).** $\mathsf W$ is the MDIR virial [[Louwerse2006]](references.md#louwerse2006). $\mathbf K(i, j)$ is the force on
+$i$ due to $j$, so $\mathsf W$ is positive for repulsion. The pressure is
 
-```text
-P = (2 · E_kin + tr W) / (3V)
-```
+$$P = \frac{2 E_\text{kin} + \operatorname{tr}\mathsf W}{3V}.$$
 
-Other packages use other conventions. The GROMACS virial is `−W / 2`
+Other packages use other conventions. The GROMACS virial is $-\mathsf W / 2$
 [[GromacsManual2025]](references.md#gromacsmanual2025).
 
 ### 5.4 Rules
@@ -526,7 +510,7 @@ The pass needs two kinds of rules.
 
 | Kind | M0 content |
 |---|---|
-| Geometry | For a pair with distance geometry: `∂r/∂x_i = d/r`, `∂r/∂x_j = −d/r` |
+| Geometry | For a pair with distance geometry: $\partial r/\partial\mathbf x_i = \mathbf d/r$, $\partial r/\partial\mathbf x_j = -\mathbf d/r$ |
 | Scalar | One derivative rule per `arith` and `math` op in Section 3.2 |
 
 Functions that are not smooth have fixed conventions (B5). `x'` denotes the
@@ -536,7 +520,7 @@ derivative of the argument.
 |---|---|
 | `select(c, a, b)` | `select(c, a', b')`. The condition is not differentiated. |
 | `step(x)`, `delta(x)`, `floor(x)`, `ceil(x)` | 0 |
-| `abs(x)` | `x'` if `x ≥ 0`, else `−x'` |
+| `abs(x)` | `x'` if $x \ge 0$, else `−x'` |
 | `min(a, b)` | `a'` if `a < b`, else `b'` |
 | `max(a, b)` | `a'` if `a > b`, else `b'` |
 
@@ -600,8 +584,8 @@ forces, virial, and a parameter derivative. The reference values for
 
 | Op | Definition |
 |---|---|
-| `dyn.kick %v, %f, %m, %dt` | `v'_i = v_i + dt · f_i / m_i` |
-| `dyn.drift %x, %v, %dt` | `x'_i = x_i + dt · v_i` |
+| `dyn.kick %v, %f, %m, %dt` | $\mathbf v'_i = \mathbf v_i + \Delta t\, \mathbf f_i / m_i$ |
+| `dyn.drift %x, %v, %dt` | $\mathbf x'_i = \mathbf x_i + \Delta t\, \mathbf v_i$ |
 | `dyn.program` | Defines one time step. |
 | `dyn.step` | Applies a program. |
 | `dyn.return` | Terminator. |
@@ -669,9 +653,7 @@ The two generate the same positions when they start from the same physical
 state. The stored velocities differ, so the initial velocities must be
 mapped (B6):
 
-```text
-v(−dt/2) = v(0) − (dt/2) · F(0) / m
-```
+$$\mathbf v(-\Delta t/2) = \mathbf v(0) - \frac{\Delta t}{2}\, \frac{\mathbf F(0)}{m}.$$
 
 An observable that uses velocities must read `velocity_offset`: with
 leapfrog, the kinetic energy at time `t` is computed from the velocities on
@@ -937,21 +919,17 @@ at first; a build that finds a particle with more makes the rows wider
 (the runtime holds them). The kinds are `matrix`, a row per particle, and
 `groups` (D89), lists of groups of 16 in blocks that grow as well.
 
-The structure is built at a reference configuration `x_ref` with the extended
-cutoff `r_c + skin`. It holds the list
+The structure is built at a reference configuration $\mathbf x^\text{ref}$ with the extended
+cutoff $r_c + s$, $s$ the skin. It holds the list
 
-```text
-L = { (i, j) : i ≠ j, |d_ij(x_ref)| < r_c + skin }
-```
+$$L = \{ (i, j) : i \ne j,\ \lVert\mathbf d_{ij}(\mathbf x^\text{ref})\rVert < r_c + s \}.$$
 
-**Validity.** The structure is valid for a configuration `x` when the cell is
+**Validity.** The structure is valid for a configuration $\mathbf x$ when the cell is
 unchanged and [[AllenTildesley2017]](references.md#allentildesley2017)
 
-```text
-max_i |x_i − x_ref,i| ≤ skin / 2
-```
+$$\max_i \lVert \mathbf x_i - \mathbf x^\text{ref}_i \rVert \le s / 2.$$
 
-Under that condition `L ⊇ D(N(x))`: no pair within the cutoff is missing.
+Under that condition $L \supseteq D(N(\mathbf x))$: no pair within the cutoff is missing.
 
 A structure also becomes invalid when the cell changes.
 
@@ -1048,24 +1026,26 @@ be repaired afterward, which is why `interval` is not the default.
 | `outs` | Destination fields. The kernel yields a contribution to the central particle. |
 | `reduce` | Global sums. |
 | `weights` | One weight per global sum. All 1 if absent. |
-| `cutoff` | The predicate `r² < r_c²`. The loop evaluates it, not the kernel. |
+| `cutoff` | The predicate $r^2 < r_c^2$. The loop evaluates it, not the kernel. |
 | `exchange` | One exchange contract for each value, the destinations and then the sums, from the `md.gather_relation` or `md.sum_relation` of the value (Section 4.7); `none` for all if absent. Fusion keeps them with their values. A loop may compute a pair once only if every value is `symmetric` or `antisymmetric` (Section 9.3, D89). |
 | `policy` | The pair execution policy from the plan. |
 
-The loop computes `d` and `r²` from the position field and the cell. The
-kernel receives `r²`, not `r`, so that a kernel with only even powers needs
+The loop computes `d` and $r^2$ from the position field and the cell. The
+kernel receives $r^2$, not `r`, so that a kernel with only even powers needs
 no square root.
 
-`r²` has the type `f32` or `f64`, and `d` is a vector of the same type: the
+$r^2$ has the type `f32` or `f64`, and `d` is a vector of the same type: the
 type that the kernel computes in (Section 7.4). The values of a field
 arrive in the type that the field is stored in.
 
 Semantics with `traversal = directed`:
 
-```text
-a_i = a0_i + Σ_{(i,j) ∈ L, r_ij < r_c} k_a(i, j)
-S   = S0   + w · Σ_{(i,j) ∈ L, r_ij < r_c} k_S(i, j)
-```
+$$
+\begin{aligned}
+a_i &= a^0_i + \sum_{(i,j) \in L,\ r_{ij} < r_c} k_a(i, j), \\
+S &= S^0 + w \sum_{(i,j) \in L,\ r_{ij} < r_c} k_S(i, j).
+\end{aligned}
+$$
 
 ### 8.4 `md_exec.particle_for`
 
@@ -1083,11 +1063,13 @@ S   = S0   + w · Σ_{(i,j) ∈ L, r_ij < r_c} k_S(i, j)
 It has the same `ins`, `outs`, and `reduce` clauses as `md_exec.pair_for`,
 with one difference: a field in `outs` is written, not accumulated into.
 
-```text
-b_i = k_b(i)                 for every field in outs
-S   = S0 + Σ_i k_S(i)        for every number or vector in reduce
-A   = A0 or any_i k_A(i)     for every value of the type i1 in reduce
-```
+$$
+\begin{aligned}
+b_i &= k_b(i) && \text{for every field in } \texttt{outs}, \\
+S &= S^0 + \sum_i k_S(i) && \text{for every number or vector in } \texttt{reduce}, \\
+A &= A^0 \lor \bigvee_i k_A(i) && \text{for every value of the type } \texttt{i1} \text{ in } \texttt{reduce}.
+\end{aligned}
+$$
 
 A value of the type `i1` in `reduce` tells whether the kernel yields true
 for any particle. `md_exec.pair_for` has sums only.
@@ -1208,7 +1190,7 @@ the body of a loop that would be a build in every iteration; the pass
 refresh (Section 8.2).
 
 The semantic kernel is written in terms of the distance `r`, and the loop
-provides `r²`. The conversion inserts a square root at the start of the
+provides $r^2$. The conversion inserts a square root at the start of the
 kernel when the kernel uses `r`. Section 9.5 describes how it is removed
 again.
 
@@ -1216,20 +1198,18 @@ again.
 
 **Sum.** For a kernel that is invariant under exchange:
 
-```text
-Σ_{{i,j} ∈ R} k(i, j) = ½ · Σ_{(i,j) ∈ D(R)} k(i, j)
-```
+$$\sum_{\{i,j\} \in R} k(i, j) = \tfrac12 \sum_{(i,j) \in D(R)} k(i, j).$$
 
-Each unordered pair appears twice in `D(R)` with the same kernel value. The
+Each unordered pair appears twice in $D(R)$ with the same kernel value. The
 lowering therefore sets `weight = 0.5`.
 
 **Gather.** The definition of `md.gather_relation` is already a sum over
 `D(R)` for each central particle. The lowering writes only to the central
 particle and needs no weight.
 
-**Neighbor list.** When the structure is valid, `L ⊇ D(N(x))`, and the cutoff
-predicate removes exactly the tuples of `L` that are not in `D(N(x))`. A
-traversal of `L` with the predicate equals a traversal of `D(N(x))`. The
+**Neighbor list.** When the structure is valid, $L \supseteq D(N(\mathbf x))$, and the cutoff
+predicate removes exactly the tuples of $L$ that are not in $D(N(\mathbf x))$. A
+traversal of $L$ with the predicate equals a traversal of $D(N(\mathbf x))$. The
 `check` rebuild policy guarantees validity at every force evaluation.
 
 Together: in double precision and without reassociation, the lowered program
@@ -1244,7 +1224,7 @@ definitions must allow it.
 ```text
 for {i, j} in R:
     a_i += k(i, j)
-    a_j += s · k(i, j)        s = +1 for symmetric, −1 for antisymmetric
+    a_j += s * k(i, j)        s = +1 for symmetric, -1 for antisymmetric
     S   += k_S(i, j)          weight = 1
 ```
 
@@ -1297,18 +1277,16 @@ become one loop.
 
 ### 9.5 Powers of the squared distance
 
-The loop provides `r²`, and a kernel that was written in terms of `r` starts
+The loop provides $r^2$, and a kernel that was written in terms of `r` starts
 with a square root. The pass `md-exec-simplify-distance` removes the square
 root where the kernel does not need it.
 
 The pass writes every `f64` value of a kernel as a sum of terms
 
-```text
-c · r^p
-```
+$$c\, r^p,$$
 
-where `c` is a product of a number and of values that carry no explicit
-power of `r`. It carries that form through sums, differences, products,
+where $c$ is a product of a number and of values that carry no explicit
+power of $r$. It carries that form through sums, differences, products,
 quotients, and integer powers. Code is emitted only where a value is needed:
 for the operands of any other op, and for what the kernel yields.
 
@@ -1328,9 +1306,9 @@ compiler, so a program that is compiled twice computes the same bits.
 
 | Power | Computed from |
 |---|---|
-| Even and positive | `r²` |
-| Even and negative | `1 / r²`, which is computed once |
-| Odd | The even power below it, times `sqrt(r²)`, which is computed once |
+| Even and positive | $r^2$ |
+| Even and negative | $1 / r^2$, which is computed once |
+| Odd | The even power below it, times $\sqrt{r^2}$, which is computed once |
 
 For the Lennard-Jones potential without truncation, or with `shift`, energy
 and force contain only even powers, and the kernel has no square root. With

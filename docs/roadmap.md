@@ -29,7 +29,7 @@ follows are in [principles.md](principles.md).
 | Comparison on a protein | TODO: a protein of moderate size with ff19SB in OPC water (the target of D65, or larger), converted with ParmEd, run by GROMACS with CUDA and by MDIR: rates and agreement of the terms |
 | Performance | Done: PME in `f32` (D78), positions converted once (D79), valid structures across scalings (D80), PME on a second stream (D81, off by default; D87 checks what runs beside it), the groups of the constraints as a disjoint union run at once (D83). Next: one kernel for the kick, drift, and constraints of each group; effect summaries of loops; host synchronization moved to the device (the test of validity and the decision to rebuild, one copy to the host per step now); CUDA graphs; the tile structure (D82, [tiles-m1.md](tiles-m1.md)), stages T1 to T4 |
 
-| Barostat integrators | Done: the strain stepped in λ = √V (eq. S7 of [[Bernetti2020]](references.md#bernetti2020)), which makes the exact work of D77 the paper's reversible integrator. Done: its Trotter integrator (SI Sec. V.C), the default, which needs no evaluation after a scaling (D92). Next: its effective energy (eq. S11) as a diagnostic, which with rigid groups needs the pressure of the same definition before and after a scaling; the ensemble test of two pressures (SI Fig. S6) for the white paper |
+| Barostat integrators | Done: the strain stepped in $\lambda = \sqrt V$ (eq. S7 of [[Bernetti2020]](references.md#bernetti2020)), which makes the exact work of D77 the paper's reversible integrator. Done: its Trotter integrator (SI Sec. V.C), the default, which needs no evaluation after a scaling (D92). Next: its effective energy (eq. S11) as a diagnostic, which with rigid groups needs the pressure of the same definition before and after a scaling; the ensemble test of two pressures (SI Fig. S6) for the white paper |
 | CHARMM force fields (later) | For CHARMM36 lipids and proteins: the switch of the Lennard-Jones force from 10 to 12 Å in runs from a topology, Urey–Bradley angles (function 5 of GROMACS), and NBFIX pairs |
 | PME grid axes | TODO: the longest edge as the contiguous axis of the grid, along which the real-to-complex transform runs: cuFFT on an RTX 3090 takes 277 µs for the pair of transforms of 126 × 126 × 270 against 292 for 270 × 126 × 126 (Cellulose; 255 against 275 for 128 × 128 × 256). The spreading, the weights, the tables of D104, the products, and the gathering then take the axes permuted; nothing for a cubic cell (STMV) |
 | Dual pair lists | Done (D114): an outer list of groups with a skin of 3 Å and an inner one pruned from it with 0.6 to 1 Å, whenever its test asks; 4 to 8 % on the Amber suite |
@@ -61,7 +61,7 @@ The rates of the first comparison (2026-09-30, ns/day, RTX 3090):
 
 | Item | State |
 |---|---|
-| Equations in the Markdown documents written in TeX (`$...$`, `$$...$$`, which GitHub renders) instead of Unicode text | To do |
+| Equations in the Markdown documents written in TeX (`$...$`, `$$...$$`, which GitHub renders) instead of Unicode text | Done (2026-10-02): the equations of every document of `docs/` are TeX; numbers, units, and the sizes of grids and tiles stay as text |
 | A guide for contributors: building, the layers of the IR and where a feature goes, adding a term, a pass, or a lowering, the tiers of tests and the tools of debugging, the principles, how a change is reviewed | With the white paper (Section 3), and as `CONTRIBUTING.md` |
 
 ## 3. White paper, after the first milestone

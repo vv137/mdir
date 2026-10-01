@@ -100,7 +100,7 @@ regard to case.
 | | `[[energy.pair]]` | A pair term, given by an expression (D16, D22). |
 | | `[[energy.type]]` | A type of particle: its mass and its parameters. |
 | | `[[energy.pair_override]]` | Parameters of a term for one pair of types. |
-| `[pme]` | `tolerance`, `beta`, `max_spacing`, `grid`, `order`, `influence` | Particle mesh Ewald (D71): β from `erfc(β r_c) = tolerance` or given; the grid from the largest spacing or given as three numbers of points; the order of the B-splines, 4, 6, or 8; the influence function, `SPME` or `OPTIMAL`. |
+| `[pme]` | `tolerance`, `beta`, `max_spacing`, `grid`, `order`, `influence` | Particle mesh Ewald (D71): $\beta$ from $\operatorname{erfc}(\beta r_c) = \texttt{tolerance}$ or given; the grid from the largest spacing or given as three numbers of points; the order of the B-splines, 4, 6, or 8; the influence function, `SPME` or `OPTIMAL`. |
 | `[dynamics]` | `integrator` | `VELOCITY_VERLET` or `LEAPFROG`: the `dyn.program` (D76). |
 | | `time_step`, `steps` | In ps, and the number of steps. |
 | | `seed` | Of the initial velocities and of the coupling. |
@@ -222,31 +222,29 @@ The line shows the last row of `examples/argon/argon.toml`.
 | `POTENTIAL_ENE` | kcal/mol | |
 | `KINETIC_ENE` | kcal/mol | `K`, the kinetic energy of the velocities at the time of the row |
 | `TOTAL_ENE` | kcal/mol | `POTENTIAL_ENE + KINETIC_ENE` |
-| `TEMPERATURE` | K | `2 K_T / (f k_B)`, with `f = 3 N − 3` degrees of freedom and `K_T` as below |
-| `VIRIAL` | kcal/mol | The trace of the MDIR virial `W = Σ d_ij ⊗ K(i, j)`, which is positive for repulsion (B8). Other packages print other quantities under this name: the GROMACS virial is `−W / 2` [[GromacsManual2025]](references.md#gromacsmanual2025). |
-| `PRESSURE` | atm | `(2 K_P + tr W) / (3 V)`, with `K_P` as below |
+| `TEMPERATURE` | K | $2 K_T / (f k_B)$, with $f = 3N - 3$ degrees of freedom and $K_T$ as below |
+| `VIRIAL` | kcal/mol | The trace of the MDIR virial $\mathsf W = \sum \mathbf d_{ij} \otimes \mathbf K(i, j)$, which is positive for repulsion (B8). Other packages print other quantities under this name: the GROMACS virial is $-\mathsf W / 2$ [[GromacsManual2025]](references.md#gromacsmanual2025). |
+| `PRESSURE` | atm | $(2 K_P + \operatorname{tr}\mathsf W) / (3V)$, with $K_P$ as below |
 
 The pressure has no correction for the dispersion beyond the cutoff; that
 correction comes with M1.
 
 **Three kinetic energies (D45).** The velocities of a step are those of a
 finite difference of the positions, not those of the trajectory, so their
-kinetic energy `K` is off by a term of the order `Δt²`. The kinetic
+kinetic energy $K$ is off by a term of the order $\Delta t^2$. The kinetic
 energy of the velocities half a step before and after is off as well, by
 half as much and in the other direction. The mean of the two half steps
 is
 
-```text
-K_half = K + (Δt² / 8) Σ_i F_i² / m_i
-```
+$$K_\text{half} = K + \frac{\Delta t^2}{8} \sum_i \frac{\lVert\mathbf F_i\rVert^2}{m_i},$$
 
 which holds exactly without constraints and thermostats.
 
 | Quantity | Kinetic energy | Reason |
 |---|---|---|
-| Total energy | `K` | The sum with the potential energy varies least: for argon with a step of 20 fs, by 0.05 kcal/mol, against 0.10 and 0.12 with the other two. |
-| Temperature | `K_T = (K + 2 K_half) / 3`, the mean of the three times | The terms of the order `Δt²` cancel. |
-| Pressure | `K_P = K_half` | The positions of the steps satisfy the virial theorem with this kinetic energy. |
+| Total energy | $K$ | The sum with the potential energy varies least: for argon with a step of 20 fs, by 0.05 kcal/mol, against 0.10 and 0.12 with the other two. |
+| Temperature | $K_T = (K + 2 K_\text{half}) / 3$, the mean of the three times | The terms of the order $\Delta t^2$ cancel. |
+| Pressure | $K_P = K_\text{half}$ | The positions of the steps satisfy the virial theorem with this kinetic energy. |
 
 The estimators are those of Jung, Kobayashi, and Sugita
 [[Jung2018]](references.md#jung2018), [[Jung2019]](references.md#jung2019). For liquid argon they were compared with runs at a step of 1 fs,
