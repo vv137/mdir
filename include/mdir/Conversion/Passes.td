@@ -56,8 +56,11 @@ def ConvertMDExecToLoops
     |---|---|
     | `md_exec.particle_for` | `scf.parallel` over the particles |
     | `md_exec.pair_for` | `scf.parallel` over the particles, with an `scf.for` over the neighbors of each |
+    | `md_exec.tuple_for` | `scf.parallel` over the particles, with an `scf.for` over the tuples that each belongs to (the incidence of the set) |
+    | The global sums of a loop | `scf.reduce` of the `scf.parallel`, which `convert-scf-to-openmp` makes a reduction of OpenMP when the run has more than one thread |
     | `md_exec.empty_neighbors` | The buffers of a neighbor matrix |
     | `md_exec.refresh_neighbors` | The test of validity and a call to the neighbor build template, which the pass adds to the module |
+    | `md_exec.reciprocal` | The templates of particle mesh Ewald for the host, in f64, and the transforms of pocketfft (`mdrtFFTForward3D`, `mdrtFFTBackward3D`) |
     | `md_exec.rebuild_count` | A load |
     | A cell | `vector<3xf64>`, the edge lengths of an orthorhombic cell |
 
@@ -82,10 +85,17 @@ def ConvertMDExecToGPU
 
     | Before | After |
     |---|---|
-    | `md_exec.particle_for`, `md_exec.pair_for` | One `gpu.launch` with one thread per particle. A thread writes only to its own particle. |
-    | The global sums of a loop | The kernel writes the contributions of each particle to buffers in `scratch`. A second kernel adds up chunks of particles, a third adds up the chunks, and the host reads the results with one copy. The order is fixed. |
-    | `md_exec.empty_neighbors` | The buffers of a neighbor matrix, on the device |
-    | `md_exec.refresh_neighbors` | The test of validity, as a global maximum, and a call to the neighbor build template for devices, which the pass adds to the module |
+    | `md_exec.particle_for` | One `gpu.launch` with a thread for each particle, which writes only to its own particle. |
+    | `md_exec.pair_for` over a neighbor matrix | `row-lanes` threads share the row of a particle and add their values by shuffles; the first writes the particle. No atomics. |
+    | `md_exec.pair_for` over groups | A warp for each block of 64 entries of the lists of groups of 16; each pair once, added to the particle of the entry with an atomic addition and to the group once for the block (D89). |
+    | `md_exec.tuple_for`, not disjoint | A thread evaluates each tuple once and adds to its members with atomics (`tuples-once`, D103); in the deterministic mode, the rows of the particles take the tuples they belong to. |
+    | `md_exec.tuple_for`, disjoint | A thread for each particle; the member at place 0 evaluates the tuple and writes every member, which no other thread writes (D83). |
+    | Consecutive loops of the same positions | One kernel, where no loop reads what another writes (`fuse-rows`); a loop over particles, the loops over the tuples of a disjoint union that read it, and the loop over particles that reads them become one integration kernel, in which a warp takes whole groups of constraints (`fuse-integration`, D110, D111). |
+    | The global sums of a loop | Each thread adds up the particles that it takes, and a block adds up its threads by a tree (`gpu.all_reduce`) into partial sums in `scratch`; one block adds up the partial sums. The order depends only on the number of particles. The host reads the results with one copy for each type of number. |
+    | An `i1` reduction (any) | A flag on the device, set by a plain store; the host reads it through pinned memory and an event, without waiting for the stream, just before the first op that uses it (`mdrtFlagStart`, `mdrtFlagFinish`, D113). |
+    | `md_exec.empty_neighbors` | The buffers of a neighbor matrix or of the lists of groups, which the runtime grows when a build needs more |
+    | `md_exec.refresh_neighbors` | A branch on the flag of the test of validity to the build of its kind, a template that the pass adds to the module; with `prune_skin`, on the flag of the inner list to a pruning of the inner list from the outer one (D114) |
+    | `md_exec.reciprocal` | The kernels of the template of particle mesh Ewald on a device and the transforms of cuFFT; with `md_exec.side`, on the second stream |
     | A cell | `vector<3xf64>`, the edge lengths of an orthorhombic cell |
 
     A constant that a kernel uses is a constant of the kernel, not an

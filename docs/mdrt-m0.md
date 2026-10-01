@@ -173,6 +173,12 @@ implemented.
 
 ### 5.2 Plan
 
+*The plan of M0, kept as it was.* The lowering as it is now is described
+in [ops-m0.md](ops-m0.md), Section 10.8, and in the description of
+`convert-md-exec-to-gpu` (`include/mdir/Conversion/Passes.td`): loops over
+pairs take 16 lanes a particle or groups of 16, global sums are added by
+blocks, and the test of validity is a flag rather than a global maximum.
+
 The GPU back end is a second lowering of the storage form
 (ops-m0.md, Section 10.7), next to `convert-md-exec-to-loops`.
 
@@ -213,7 +219,7 @@ Proposal: the C++ tool.
 
 | Item | State |
 |---|---|
-| Neighbor build as a template in IR, `lib/Runtime/Templates/NeighborsMatrix.mlir` | Implemented. The compiler adds it to the module, where it is lowered with the rest of the code. See [neighbors-m0.md](neighbors-m0.md). |
+| Neighbor build as a template in IR, `lib/Runtime/Templates/NeighborsMatrix.mlir` | Implemented. The compiler adds it to the module, where it is lowered with the rest of the code. See [neighbors-m0.md](neighbors-m0.md). On a device the templates are `NeighborsMatrixGPU.mlir` and, for groups of 16 with each pair once, `NeighborsGroupsGPU.mlir` ([groups-m1.md](groups-m1.md)); particle mesh Ewald has `PME.mlir` and `PMEGPU.mlir` ([pme-m1.md](pme-m1.md)). |
 | Neighbor matrix | Implemented |
 | Overflow of a row | The runtime holds the rows (`mdrtMatrixCreate`, `mdrtHostMatrixCreate`) and makes them a quarter wider than needed (`mdrtMatrixGrow`); the build is made again. Compiled code takes the rows where it uses them (`mdrtMatrixEntries`). |
 | Storage in `memref<?x3xT>` | Implemented, for `f32` and `f64` |
@@ -222,10 +228,10 @@ Proposal: the C++ tool.
 | OpenMP | Works through the upstream lowering of `scf.parallel`. Reductions work. |
 | Storage form of the loops | Implemented |
 | Threading as a plan parameter | Not implemented. The choice is made by the passes that are run after lowering. |
-| Runtime library `libmdrt` | One function, the overflow report |
+| Runtime library `libmdrt` | The host side of a run (`runtime/mdrt.c`): the counts of builds, of prunings of inner lists, and of late builds (`mdrtCountBuild`, `mdrtCountPrune`, `mdrtCountLateBuild`) and the statistics of the lists of groups (`mdrtNoteGroups`) that the log reports; the stop of a run whose positions are not numbers (`mdrtStopNotNumbers`, D107); the generator Philox 4×32-10 and the factors of the thermostat and the barostat drawn from it (`mdrtPhilox4x32`, `mdrtBussiFactor`, `mdrtBarostatStrain`); the FFT of the host, from pocketfft (`mdrtFFTForward3D`, `mdrtFFTBackward3D`); and the neighbor matrix of the host (`mdrtHostMatrixCreate`, `mdrtHostMatrixGrow`, `mdrtHostMatrixEntries`) |
 | Spatial reordering (step 5) | Implemented, where a run and where a segment begins (D44); see [neighbors-m0.md](neighbors-m0.md), Section 5 |
 | GPU | Implemented for NVIDIA. See [ops-m0.md](ops-m0.md), Section 10.8. |
-| Runtime library `libmdrt_cuda` | The functions that the lowering of the `gpu` dialect calls, on the CUDA driver API. One stream serves all launches. The host waits only where it reads what the device has computed. |
+| Runtime library `libmdrt_cuda` | The functions that the lowering of the `gpu` dialect calls (`mgpu*`), on the CUDA driver API: modules of PTX compiled by the driver at load, launches that skip empty grids, and a caching allocator whose frees do not wait. One stream serves all launches, and an optional second one the reciprocal sum (`mdrtSideBegin`, `mdrtSideEnd`, `mdrtSideJoin`, D81, D87). The host waits only where it reads what the device has computed; a flag of a test is read through pinned memory and an event (`mdrtFlagStart`, `mdrtFlagFinish`, D113). The buffers of the neighbor matrix and of the lists of groups, grown when a build overflows (`mdrtMatrixCreate`, `mdrtMatrixGrow`, `mdrtGroupsCreate`, `mdrtGroupsGrow`, `mdrtGroupsBuffer`); the transforms of cuFFT in f32 and f64 with cached plans (`mdrtCudaFFTForward3D`, `mdrtCudaFFTBackward3D` and their `F32` forms). |
 
 The runtime library for devices reads these variables of the environment:
 

@@ -347,10 +347,16 @@ The attribute records what the contract rests on.
 | `asserted` | `exchange(symmetric, asserted)` | The front end asserts the contract. It is trusted. |
 | `derived` | `exchange(antisymmetric, derived)` | A compiler pass, such as differentiation, produced the kernel. The contract holds by construction. |
 
-For the basis `proof`, a checking pass attempts the proof by swapping the
-kernel arguments and comparing the two kernels structurally, treating
-commutative ops as unordered. If the proof fails, the op is rejected. The
-pass is not implemented yet.
+For the basis `proof`, `md-check-exchange` attempts the proof by swapping
+the kernel arguments and comparing the two kernels structurally: the
+distance is unchanged, the displacement is negated, the two values of each
+gathered field are swapped, a lookup in a table marked `symmetric` gives
+the same value with its indices swapped, and commutative ops are compared
+in either operand order. If the proof fails, the op is rejected, with a
+note that the contract may be stated as `asserted` if it holds. The pass
+runs first in every pipeline of `mdir run`
+(`lib/Dialect/MD/Transforms/CheckExchange.cpp`,
+`test/Dialect/MD/Transforms/check-exchange.mlir`).
 
 ### 4.8 Truncation (B4)
 
@@ -1499,12 +1505,16 @@ of the upstream `gpu` dialect.
 | Storage form | Kernels |
 |---|---|
 | `md_exec.particle_for`, `md_exec.pair_for` | One kernel with one thread per particle, in blocks of 128 threads. With the policy `owner_only` a thread writes only to its own particle, so the kernel needs no atomic operation. A loop over pairs or tuples has 16 threads per particle, adjacent in a warp: each takes every 16th entry of the row of neighbors or of tuples, the group sums its values by shuffles (`gpu.shuffle xor`, 64-bit numbers as two words), and its first thread writes. Every thread of a launched block runs the loop, those beyond the last particle with no entry, so that the warps stay whole for the shuffles. |
+| `md_exec.pair_for` over groups | A warp for each block of 64 entries of the lists of groups of 16, each pair once: the value of the other particle is added with an atomic addition, and the group's once for the block (D89, [groups-m1.md](groups-m1.md)). `md-exec-choose-neighbors` takes groups only where every destination has an exchange contract. |
+| `md_exec.tuple_for` | Over tuples that may share particles, a thread evaluates each tuple once and adds to its members with atomics (D103; in the deterministic mode, the rows of the particles take their tuples). Over disjoint tuples, the member at place 0 evaluates the tuple and writes every member, which no other thread writes (D83). |
+| A loop over particles, the loops over the tuples of a disjoint union that read it, and the loop over particles that reads them | One integration kernel (`fuse-integration`, D110): a warp takes whole groups of constraints, which the order of the state keeps contiguous, and the members exchange their values by shuffles; the groups that a warp cannot take whole go to a second kernel of one block (D111). |
 | The global sums of a loop | The kernel stores the contributions of each particle. A second kernel has a block of 128 threads for each part of the particles, at least 512 particles and at most 128 parts: a thread adds up every so manyth particle, and the block adds up its threads by a tree (`gpu.all_reduce`). A third kernel, one block, adds up the parts the same way, and the host reads the results with one copy. The order of a sum depends only on the number of particles. All sums of the loop share the two kernels and the copy. Each sum has slots of its own in one buffer of results for each type, and the copy and the reads move down to where the host first needs a result; a copy that then follows another with nothing between that runs on the device is left out, since the first brought the whole buffer. The sums of a step of coupling, read one after another, then reach the host in one or two copies. A contribution is a number or a vector: the virial is a vector of nine numbers, and its buffers in `scratch` hold nine numbers per particle. |
 | Loops over pairs and tuples one after another | One kernel, where the group of threads of a particle does each loop in turn, when the loops take the same positions, none reads what an earlier one writes, and their buffers for global sums are their own; their sums share the kernels of the sums. The forces of a step, the loop over pairs and those over bonds, angles, dihedrals, and the like, are one kernel. |
-| A value that tells whether the kernel yields true for any particle | A flag on the device. A thread that yields true sets it. Every thread that writes it writes the same value, so the threads need not take turns. The host reads the flag after the kernel and clears it where it was set. |
+| A value that tells whether the kernel yields true for any particle | A flag on the device. A thread that yields true sets it. Every thread that writes it writes the same value, so the threads need not take turns. The flag is copied into pinned memory of the host with an event after the copy, and the host waits for that event alone, just before the first op that uses the flag, so the device goes on with what was issued meanwhile (`mdrtFlagStart`, `mdrtFlagFinish`, D113). |
 | `md_exec.reference_positions` | The buffer of the structure that holds the positions |
-| `md_exec.empty_neighbors` | The buffers of a neighbor matrix on the device. The flag and the count of builds are on the host. |
-| `md_exec.refresh_neighbors` | Where the structure is not valid, a call to the neighbor build template for devices. Without `moved`, the test of validity before it, with the largest displacement as a global maximum. The excluded pairs are marked, not taken out: a thread for each entry of the matrix replaces an excluded neighbor by the particle itself, which the loops over pairs skip. Taking them out moved the rest of a row, one thread per particle, and took as long as the forces. |
+| `md_exec.empty_neighbors` | The buffers of a neighbor matrix, or of the lists of groups, on the device; the runtime grows them when a build needs more. The flag and the count of builds are on the host. |
+| `md_exec.refresh_neighbors` | Where the structure is not valid, a call to the neighbor build template for devices. Without `moved`, the test of validity before it, with the largest displacement as a global maximum. The excluded pairs are marked, not taken out: a thread for each entry of the matrix replaces an excluded neighbor by the particle itself, which the loops over pairs skip. Taking them out moved the rest of a row, one thread per particle, and took as long as the forces. Groups clear the bit of an excluded pair in the mask at the build. With `prune_skin`, a dual list: where the outer list is valid but the inner one is not, the inner list is pruned from the outer one, a warp for each group, in the order of the outer list (D114). |
+| `md_exec.reciprocal` | The kernels of the template `PMEGPU.mlir` and the transforms of cuFFT ([pme-m1.md](pme-m1.md), Section 3); with `md_exec.side`, on a second stream that the first joins where it reads the forces (D81, D87) |
 | A cell | `vector<3xf64>`. A kernel takes numbers and buffers as arguments, so a vector from outside enters a kernel as its elements. |
 | A constant | A constant of the kernel, not an argument. A power whose exponent is an argument would be a loop. |
 | A loop of the host | The loop releases, at the end of every iteration, the stack that the iteration has taken. The lowering of a launch puts the arguments on the stack where the launch is; in a loop over steps the stack would grow until it overflows. |
@@ -1514,10 +1524,11 @@ chunk, then by chunk. The sum is the same in every run. It differs from
 the sum on the host in its last bits, because the host adds up in another
 order.
 
-A chunk has as many particles as the square root of their number, and
-between 32 and 1024. One thread adds up a chunk and one thread the
-chunks, so both take the time of that many additions: with 864 particles
-29, where chunks of 256 took nine times as long.
+Before the sums by blocks of the table above, a chunk had as many
+particles as the square root of their number, and between 32 and 1024.
+One thread added up a chunk and one thread the chunks, so both took the
+time of that many additions: with 864 particles 29, where chunks of 256
+took nine times as long.
 
 | A step of `examples/argon/argon.toml` that computes energies | Kernels | Copies | Milliseconds |
 |---|---|---|---|
@@ -1549,7 +1560,7 @@ lowering does.
 
 | Limitation | Consequence |
 |---|---|
-| The build allocates its work buffers at every build and frees them. | The cost is per build, not per step. |
+| The build allocates its work buffers at every build and frees them. | The caching allocator of the runtime hands a freed block of the same size to the next allocation, so this costs a lookup. |
 | A split search takes one number for each of its threads. | The search is split only for small systems. |
 | One device | |
 | NVIDIA only | The storage form does not depend on the vendor; the lowering to `rocdl` is not written. |

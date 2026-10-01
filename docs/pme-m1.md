@@ -91,7 +91,7 @@ pairs does.
 | $E_\text{dir}$ | The pair term of the topology, $f q_i q_j \big(\operatorname{erfc}(\beta r) / r - s\big)$: no new op. `math.erfc` has a derivative. |
 | $E_\text{excl}$ | An `md.sum_tuples` over the relation `excluded` with `distance(0, 1)` and the charges gathered: no new op |
 | $E_\text{self}$, $E_Q$ | Numbers from the driver |
-| $E_\text{rec}$ | One new op, `md.reciprocal %x, %q, %cell, %influence`, with the grid, the order, and $\beta$ as attributes, that yields the energy. Differentiation asks the same op for the forces and the virial, which it computes from the grid; it is not differentiated through. |
+| $E_\text{rec}$ | One new op, `md.reciprocal %x, %q, %cell, %moduli`, with the grid, the order, $\beta$, and the Coulomb constant as attributes, that yields the energy, the forces, and the virial at once, all from the grid. Differentiation takes the forces and the virial from it; it is not differentiated through. |
 | The lowering of `md.reciprocal` | Templates in IR, as the build of neighbor structures is (`lib/Runtime/Templates`): spreading, the product with the influence function with the sums of the energy and the virial, and gathering the forces, for the CPU and for a GPU. The FFT is a call of the runtime. |
 | FFT | On the host, pocketfft [[Reinecke2019]](references.md#reinecke2019) under the BSD license, in `libmdrt`; on a device, cuFFT of the CUDA toolkit, in `libmdrt_cuda`, with a plan kept for each size of grid (D64). |
 | The influence function | Computed where it is used, from $\beta$, the cell, and the factors of the three edges, $\lvert b_a(k)\rvert^2$ (times the factor of the aliasing with `"OPTIMAL"`), which the driver passes as a table of three rows: the factors do not depend on the cell, so a cell that changes (the barostat, M1j) needs nothing new. On a device a kernel multiplies them, at each evaluation, by $\exp(-\pi^2 m^2/\beta^2)$ along each edge in f64, and keeps the wave numbers and their squares beside them, each rounded once to the type of the grid (D104) |
@@ -122,11 +122,14 @@ takes PTX's own reduction, `red.relaxed.gpu.global.add.f32`.
 With splines of order 4 and the grid in `f32`, the default mode spreads
 in three kernels. The first places each particle, a thread a particle,
 into arrays by component (6 values a particle, the first points and the
-fractions along x, y, z; the weights of the splines are computed from the
-fractions in closed form where they are used, D109), a scratch of the op. The second adds the charges with a warp for each particle into a grid
+fractions along x, y, z, D109), a scratch of the op; the additions compute
+the weights of the splines from the fractions in closed form, and the
+gathering computes the splines and their slopes from them by the
+recursion (D102). The second adds the charges with a warp for each particle into a grid
 of bricks: 4 × 4 points in x-y with z inside them, so that the points of a
 particle at one z are 16 consecutive values of at most 4 bricks, and lane
-4 b + a of an atomic adds point (a, b, c) or (a, b, c + 2); the bricks are
+16 c + 4 b + a of the warp, with c 0 or 1, adds the points (a, b, c) and
+(a, b, c + 2); the bricks are
 a buffer of their own, zero when it is allocated. The third copies the
 bricks into the grid of the transform and leaves them zero (D108): a block
 takes a brick and 32 of its slabs along z, reads the 512 values in order
@@ -172,22 +175,25 @@ points numbered in i32, it takes 90 µs (D102); pmemd.cuda gathers in 79
 | Item | Value |
 |---|---|
 | Scale | 2⁴⁰: a contribution is resolved to 10⁻¹² e, and a point holds up to 2⁶³ / 2⁴⁰ ≈ 8 × 10⁶ e, far beyond any point of a real system. A charge of 100 e or more is rejected. A position that is not a number converts to an undefined integer; the run has failed by then, but the grid does not say so. |
-| Host | The same fixed point, with atomics of the threads of OpenMP |
-| Mixed precision | The positions, the charges, and the forces as they are stored. On the host the B-splines, the grid, and the FFT are in f64; on a device they are in the type of the forces, f32 in the mixed and single modes, with the fractions of the positions along the cell (the position times one over the edge, less its floor) and the edges of the cell in f64, and the point of the grid and the fraction within it in the type of the forces (D78, amended). The energy and the virial are summed in f64 |
-| The sums of a device | Each thread sums a row of the grid; the host adds the rows in their order, so the energy and the virial do not depend on the order of the threads either |
+| Host | The same fixed point, added by one thread in a plain loop (`@mdrt.pme_spread` of `PME.mlir`); the conversion of the grid and the gathering are parallel loops, under OpenMP with more than one thread |
+| Mixed precision | The positions, the charges, and the forces as they are stored. On the host the B-splines, the grid, and the FFT are in f64; on a device they are in the type of the forces, f32 in the mixed and single modes, with the fractions of the positions along the cell (the position times one over the edge, less its floor) and the edges of the cell in f64, and the point of the grid and the fraction within it in the type of the forces (D78, amended). The energy and the virial are summed in f64 across blocks (below) |
+| The sums of a device | A thread for each point of the transform; a block of 128 threads adds up its energy and virial by a tree (`gpu.all_reduce`) in the type of the grid and stores them in f64, and one block adds up the blocks in f64; the host copies seven numbers (D104). The order of every sum depends on the size of the grid alone, so the energy and the virial do not depend on the order of the threads either |
 
 ## 4. Parameters (D71)
 
-| Keyword of `[energy]` | Meaning | Default |
+| Keyword | Meaning | Default |
 |---|---|---|
-| `electrostatics = "PME"` | Particle mesh Ewald, with the cutoff `cutoff` for the direct sum | |
-| `beta` | $\beta$, in Å⁻¹ | From `tolerance` |
-| `tolerance` | $\beta$ such that $\operatorname{erfc}(\beta r_c) = \texttt{tolerance}$, by bisection, as both engines find it | 10⁻⁵ |
-| `grid`, `_y`, `_z` | The numbers of points of the grid | From `max_spacing` |
-| `max_spacing` | The largest spacing of the grid, in Å; each number of points is the smallest even product of 2, 3, 5, and 7 that gives no wider spacing in the cell of the file of coordinates. The grid stays as a barostat changes the cell, finer as it shrinks and coarser as it grows, and a run that continues from a checkpoint has the grid it began with | 1.2 |
-| `order` | The order of the B-splines, 4 to 8 | 4 |
-| `coulomb_modifier` | Shift the direct sum to 0 at the cutoff, as GROMACS does by default | false, as sander |
-| `influence` | `"SPME"` or `"OPTIMAL"` (Section 1.1) | `"SPME"` |
+| `electrostatics = "PME"` in `[energy]` | Particle mesh Ewald, with the cutoff `cutoff` for the direct sum | |
+| `coulomb_modifier` in `[energy]` | `"POTENTIAL_SHIFT"` shifts the direct sum to 0 at the cutoff, as GROMACS does by default; `"NONE"` does not, as sander | `"NONE"` |
+| `beta` in `[pme]` | $\beta$, in Å⁻¹ | From `tolerance` |
+| `tolerance` in `[pme]` | $\beta$ such that $\operatorname{erfc}(\beta r_c) = \texttt{tolerance}$, by bisection, as both engines find it; less than 1 | 10⁻⁵ |
+| `grid` in `[pme]` | The numbers of points of the grid along the three edges, `[nx, ny, nz]`, each 8 or more | From `max_spacing` |
+| `max_spacing` in `[pme]` | The largest spacing of the grid, in Å; each number of points is the smallest even product of 2, 3, 5, and 7 that gives no wider spacing in the cell of the file of coordinates. The grid stays as a barostat changes the cell, finer as it shrinks and coarser as it grows, and a run that continues from a checkpoint has the grid it began with | 1.2 |
+| `order` in `[pme]` | The order of the B-splines: 4, 6, or 8 | 4 |
+| `influence` in `[pme]` | `"SPME"` or `"OPTIMAL"` (Section 1.1) | `"SPME"` |
+
+The table `[pme]` is for `electrostatics = "PME"` only, and a grid needs at
+least twice the order of points along each edge.
 
 The tolerance of sander, `dsum_tol`, is $\operatorname{erfc}(\beta r_c) / r_c$ with $r_c$ in Å,
 not $\operatorname{erfc}(\beta r_c)$: its default of 10⁻⁵ gives a larger $\beta$ than

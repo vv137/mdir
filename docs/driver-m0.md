@@ -222,12 +222,19 @@ The line shows the last row of `examples/argon/argon.toml`.
 | `POTENTIAL_ENE` | kcal/mol | |
 | `KINETIC_ENE` | kcal/mol | `K`, the kinetic energy of the velocities at the time of the row |
 | `TOTAL_ENE` | kcal/mol | `POTENTIAL_ENE + KINETIC_ENE` |
-| `TEMPERATURE` | K | $2 K_T / (f k_B)$, with $f = 3N - 3$ degrees of freedom and $K_T$ as below |
+| `TEMPERATURE` | K | $2 K_T / (N_f k_B)$, with $N_f = 3N_{m>0} - N_c - 3$ degrees of freedom (the particles with mass, less the constraints and the motion of the center of mass) and $K_T$ as below |
 | `VIRIAL` | kcal/mol | The trace of the MDIR virial $\mathsf W = \sum \mathbf d_{ij} \otimes \mathbf K(i, j)$, which is positive for repulsion (B8). Other packages print other quantities under this name: the GROMACS virial is $-\mathsf W / 2$ [[GromacsManual2025]](references.md#gromacsmanual2025). |
 | `PRESSURE` | atm | $(2 K_P + \operatorname{tr}\mathsf W) / (3V)$, with $K_P$ as below |
+| `CONSERVED` | kcal/mol | With a thermostat or a barostat: the total energy plus what the couplings have taken from the system |
+| `VOLUME` | Å³ | With a barostat: the volume of the cell |
 
-The pressure has no correction for the dispersion beyond the cutoff; that
-correction comes with M1.
+The potential energy and the virial include the correction for the
+dispersion beyond the cutoff and the energy of the background that
+neutralizes a net charge under particle mesh Ewald, both at the volume of
+the row; the virial includes those of the constraints, of the virtual
+sites, and of the restraints. Before the first row the log lists the
+terms of the potential energy at the start (`MDIR: the terms at the
+start, in kcal/mol`).
 
 **Three kinetic energies (D45).** The velocities of a step are those of a
 finite difference of the positions, not those of the trajectory, so their
@@ -238,7 +245,10 @@ is
 
 $$K_\text{half} = K + \frac{\Delta t^2}{8} \sum_i \frac{\lVert\mathbf F_i\rVert^2}{m_i},$$
 
-which holds exactly without constraints and thermostats.
+which holds exactly without constraints and thermostats. With
+constraints the forces do not give the kinetic energies of the half steps,
+and the log takes $K$ for the temperature and the pressure as well
+(D45, amended).
 
 | Quantity | Kinetic energy | Reason |
 |---|---|---|
@@ -268,36 +278,39 @@ the positions and from them the velocities of their time, so the log is
 that of velocity Verlet, row by row.
 
 The virial is computed in the steps whose energies are written, in the
-loop over pairs that computes the energy and the forces. Columns for
-bonded terms follow when MDIR computes them.
+loops that compute the energy and the forces.
 
 ### 2.4 Parts
 
 | Part | Work | Depends on |
 |---|---|---|
-| Parser of the control file | TOML to a description of the run; errors with the line | A TOML library |
-| Reader of PDB | Positions and names | |
-| Builder | The description of the run to a module | |
-| Energy expressions | The syntax of D22 to a kernel | A parser of expressions |
-| Compile and run | Passes in the process, the execution engine | MLIR libraries, linked into the tool |
-| `mdrt` ops for output | `mdrt.write_energies`, `mdrt.write_frame`, `mdrt.write_checkpoint` | |
-| Writers | DCD or XTC, H5MD | HDF5 for H5MD |
-| Initial velocities | From `temperature` and `seed`, with the center of mass at rest | A random number generator |
+| Parser of the control file | TOML to a description of the run; errors with the line (`lib/Driver/Control.cpp`) | toml++ |
+| Readers of systems | PDB: positions and names (`System.cpp`). Amber: the topology (`prmtop`; one in the format before Amber 7 is rejected with a message) with CMAP, and coordinates and velocities from `inpcrd` or `rst7` (`Amber.cpp`, `CMap.cpp`). GROMACS: `top` and `itp` with `#include`, `#define`, `#ifdef`, and wildcards of dihedral types, and coordinates from `gro` (`Gromacs.cpp`) | |
+| Selections | The masks of Amber for the atoms of restraints (`Selection.cpp`) | |
+| Builder | The description of the run to a module (`Builder.cpp`) | |
+| Energy expressions | The syntax of D22 to a kernel (`Expression.cpp`) | A parser of expressions |
+| Compile and run | Passes in the process, the execution engine (`tools/mdir/Run.cpp`) | MLIR libraries, linked into the tool |
+| Output | `mdrt.host_call` to functions of the driver that the execution engine registers: `mdrtWriteEnergies`, `mdrtWriteFrame`, `mdrtWriteCheckpoint`, `mdrtWriteMinimization` (`Output.cpp`) | |
+| Writers | Trajectories in DCD; checkpoints in H5MD (`Checkpoint.cpp`). XTC is not implemented | HDF5 for H5MD |
+| Initial velocities | From `temperature` and `seed`: normal numbers from xoshiro256** seeded by splitmix64, without the components along the constraints and with the center of mass at rest, scaled to the temperature (`System.cpp`) | |
 
 ### 2.5 What the driver builds
 
-`mdir emit control.toml` prints the module that the driver builds, and
-`mdir emit control.toml --stage=lowered` the module that is executed.
+`mdir emit control.toml` prints the module that the driver builds,
+`mdir emit control.toml --stage=lowered` the module that is executed, and
+`--stage=pipeline` the passes between them.
 
 | Part of the module | From |
 |---|---|
 | `md.potential @energy` | `[energy]`: one `md.sum_relation` for each pair term, with the truncation and the cutoff |
-| `dyn.program @step` | `integrator`. With velocity Verlet there is a second program that returns the energy as well, for the last step before an output. |
+| `dyn.program @step` | `integrator`, with the constraints, the virtual sites, and the restraints. A second program, `@step_energy`, returns the energy and the virial as well, for the last step before an output. With the barostat of Trotter type, `@step_virial`, `@step_trotter`, and `@step_trotter_energy` take the last two steps of a period (design-m1.md, Section 11.4). |
 | `func.func @mdir_run` | The schedule: the loops, the calls that write, and the buffers of the state |
 
 The entry function takes the buffers of the positions, the velocities, the
-masses, the fields of the parameters, and the numbers of the particles,
-then the edge lengths of the cell and the time step. The cell and the time step are values of the run, not of
+masses, the fields of the parameters, the tables of the parameters of
+pairs of types, the members of each tuple set, and the numbers of the
+particles, then the edge lengths of the cell, the time step, and the step
+to start from. The cell and the time step are values of the run, not of
 the program (P1).
 
 With leapfrog, the stored velocities are half a step behind the positions.

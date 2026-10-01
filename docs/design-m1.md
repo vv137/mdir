@@ -611,6 +611,15 @@ MDIR takes the one of 2020 (D50). A checkpoint needs nothing for it.
 
 ### 11.2 In `dyn`
 
+*Proposed, not implemented as written.* The couplings are not ops of
+`dyn`: the driver writes them into the schedule of `@mdir_run` at the end
+of each period of coupling (Section 11.4). The factor of the thermostat
+and the strain of the barostat are calls to the host (`mdrtBussiFactor`,
+`mdrtBarostatStrain` of `libmdrt`, which draw from Philox 4×32-10 by the
+key of A13), and loops over particles (`md.map_particles`) remove the
+motion of the center of mass and scale the velocities and the positions.
+The proposal was:
+
 ```mlir
 dyn.program @step(...) attributes {
     requires = ["temperature", "pressure"],
@@ -634,7 +643,7 @@ dyn.program @step(...) attributes {
 | Item | Proposal |
 |---|---|
 | The kinetic energy of the thermostat | That of the velocities it scales (D67): with velocity Verlet, those at the end of a step, which are of one time. `K_T` of D45 estimates the temperature of the log. |
-| The kinetic energy of the barostat | `K_P`, the mean of the two half steps (D45) |
+| The kinetic energy of the barostat | That of the velocities of the step without that of the center of mass, before the thermostat (Section 11.4), not `K_P` of D45 |
 | The pressure of the barostat | With the correction for the dispersion (Section 7.2) and the virial of the constraints (Section 9) |
 | How often | Every `n` steps, with `n` times the time step. A step between computes no global sum. On a device a step with global sums takes up to twice the time of one without (Section 10.8 of ops-m0.md). |
 | Groups with a thermostat each | One group in M1 |
@@ -661,12 +670,12 @@ Stochastic cell rescaling, isotropic, with velocity Verlet and leapfrog
 | The change of the volume | One step of Euler and Maruyama over the period $\Delta t_p$ of the equation for $\lambda = \sqrt V$, eq. (7) and eq. (S7) of [[Bernetti2020]](references.md#bernetti2020): $\lambda' = \lambda - \tfrac12 f\lambda\, \big(P_0 - P - k_B T c/(2V)\big) + \sqrt{k_B T f c/2}\, R$, $\Delta\varepsilon = 2 \ln(\lambda'/\lambda)$, $f = \beta_T \Delta t_p / \tau_p$. Its noise does not depend on the volume, which the paper's reversible integrators need; to first order it is the step of $d\varepsilon = -(\beta_T/\tau_p)(P_0 - P)\, dt + \sqrt{2 k_B T \beta_T / (V \tau_p)}\, dW$, eq. (5), which GROMACS takes. Pressures in bar, $c = 16.6053906717$ bar nm³ mol/kJ, $T$ that of the bath. $R$ is the normal number of stream 1 of the step (A13), drawn on the host (`mdrtBarostatStrain`). |
 | Scaling | The positions of every particle and the edges of the cell by $\mu = \exp(\Delta\varepsilon/3)$, the velocities by $1/\mu$; a group that the constraints keep rigid (a water of SETTLE, a group of SHAKE) moves with its center of mass and keeps its shape, since stretched bonds would be taken back by the constraints of the next step with a change of the velocities that heats the system. Virtual sites are placed again in the next step |
 | The cell | Kept in memory on the host, where each iteration of a loop takes it, and the steps that follow a loop of periods in the same iteration take it again; the neighbor structures, whose test of validity compares the cell, are built again; the influence function of PME follows (pme-m1.md); the log and the trajectory take the new edges (`mdrtSetBox`); a checkpoint keeps them, and a restart takes them. A run stops if an edge becomes shorter than twice the cutoff, below which the minimum image misses pairs; a run that begins so is rejected |
-| The scaled positions | With `work = "EXACT"`, the default, the virtual sites are placed on the scaled positions, and those are evaluated in the new cell: their energy gives the work of the scaling, and their forces are those that the next step begins with (D77). With `"FIRST_ORDER"`, the next step begins with the forces of the positions before the scaling, and places the sites after its drift |
+| The scaled positions | With `work = "EXACT"`, the virtual sites are placed on the scaled positions, and those are evaluated in the new cell: their energy gives the work of the scaling, and their forces are those that the next step begins with (D77). With `"FIRST_ORDER"`, the next step begins with the forces of the positions before the scaling, and places the sites after its drift |
 | The conserved energy, exact | Takes away what the scaling gives: $U(\mathbf x') - U(\mathbf x)$, the potential energy of the scaled positions less that of the positions before, and $(1/\mu^2 - 1) K$, the change of the kinetic energy of the velocities it scales. Between scalings the dynamics is that of constant energy, so the conserved energy changes as there. On the mixture of `barostat.test`, 7.4 × 10⁻⁶ of its value over 8 ps instead of 2.2 × 10⁻³; on tri-alanine in 1218 OPC waters at 1 bar, 300 K, `time_constant = 2`, 2 fs, on a GPU in mixed precision (`examples/ala3`), 0.011 kcal/mol per ps instead of 2.1. The evaluation costs 0.13 ms per step at a period of coupling of 10 steps there, 20% of the rate (316 to 253 ns/day): the cost of the reversible integrator of [[Bernetti2020]](references.md#bernetti2020) (Table I; SI Sec. V.B), which this is but for the thermostat, applied once at the end of the period rather than in halves around the step. This conserved energy is not the paper's effective energy, which adds $P_0 \Delta V$, the terms of the noise, and the drift of eq. (7) to measure the violation of detailed balance (Sec. II.C); it tests the dynamics between scalings and the counting of the work, and the distribution of the volume tests the barostat |
 | The scaling of Trotter type, the default | The last two steps of a period follow its loop: the step of energy whose pressure gives the strain and the new cell, and `step_trotter`, which kicks half, drifts half, scales the positions by $\mu$ (the rigid groups with their centers) and the velocities by $1/\mu$, drifts the other half, and evaluates in the new cell with the virial ([[Bernetti2020]](references.md#bernetti2020), SI Sec. V.C, eqs. S12a–d; eqs. S13a and S15 have two misprints, D92). The conserved energy takes away $(1/\mu^2 - 1) K$ of the velocities scaled and $-\ln\mu\, (\mathsf W_\text{before} + \mathsf W_\text{after}) / 2$, the virials of the groups and the constant terms before and after the step. No evaluation is added; the count drifts with the period of coupling (D92) |
 | The period of coupling | The paper finds the fluctuations of the volume too large when $N_P \Delta t$ is not small against $\tau_p$ (a TIP3P box at $\tau_p = 0.5$ ps: $\sigma^2_V$ from 0.23 at $N_P \le 10$ to 0.45 nm⁶ at 100, Fig. 3b), with $N_P = 10$ as a compromise and little gain in rate beyond 20 to 40 in GROMACS (Fig. 4). A longer period that lowers the cost of the evaluation must keep $N_P \Delta t / \tau_p$ small |
 | The conserved energy, first order | Takes away $-(\mu - 1) \operatorname{tr}\mathsf W_g$, the change of the potential energy to first order, as GROMACS does, and $(1/\mu^2 - 1) K$, that of the kinetic energy, exactly. $\mathsf W_g$, the virial of the rigid groups that move as wholes, is the $\mathsf W$ of the pressure above, which has the virial of the constraints, with twice the kinetic energy of the motion within the groups, $\sum \tfrac12 m \lVert\mathbf v - \mathbf V\rVert^2$ over each (the virial of the forces within a rigid group is minus that). What is left is the second order, $\tfrac12 (\mu - 1)^2\, d^2U/d\mu^2$, whose mean over the noise of $\Delta\varepsilon$ is proportional to its variance, and so to $f$: a drift that neither the time step nor the period of coupling reduces, only `time_constant`. On the mixture of `barostat.test` at 2 fs, 1.8 × 10⁻³ of the energy over 8 ps with `time_constant = 2`, 4.4 times less with `time_constant = 8`; on 1394 OPC waters with PME at 300 K and 1 bar, 2.1 kcal/mol per ps with `time_constant = 2` and 0.52 with `time_constant = 8`. The same runs at constant volume keep the conserved energy to 10⁻⁶ and 10⁻⁵ |
-| Parameters of `[ensemble]` | `ensemble = "NPT"`, `barostat = "C-RESCALE"`, `pressure` in atm, `time_constant` in ps (5 by default), `compressibility` in 1/atm (4.5 × 10⁻⁵ /bar by default); `coupling = "ISOTROPIC"` only |
+| Parameters | In `[ensemble]`: `ensemble = "NPT"`, `temperature`, and `pressure` in atm. In `[barostat]`: `method = "C-RESCALE"`, `time_constant` in ps (5 by default), `compressibility` in 1/atm (4.5 × 10⁻⁵ /bar by default), `coupling = "ISOTROPIC"` only (`"SEMI_ISOTROPIC"` stops with "not supported yet"), `work` (`"TROTTER"` by default, `"TROTTER_FIRST_ORDER"`, `"EXACT"`, `"FIRST_ORDER"`), and `interval`, which must be that of the thermostat. NPT needs a `[thermostat]` |
 
 The drift of the conserved energy on tri-alanine in 1218 OPC waters
 (`examples/ala3`, 4,905 particles, from its checkpoint after 100 ps at
@@ -751,9 +760,14 @@ A neighbor structure is valid in the cell that it was built in (Section
 | Builds | At least one for each step of the barostat | As without a barostat |
 | With a barostat every 10 steps and a build every 10 to 20 steps | Up to twice the builds | |
 
-Proposal: A for M1, and B when the builds are measured to cost. A is what
-M1 does: the test of validity of a structure compares the cell, so a
-changed cell rebuilds it.
+Proposal: A for M1, and B when the builds are measured to cost. *Done:
+B (D80).* The test of validity takes the scale of each axis since the
+build, $\mathbf m = \mathbf L \oslash \mathbf L^\text{ref}$, and holds while
+$2\max_i \lVert \mathbf x_i - \mathbf m \odot \mathbf x^\text{ref}_i \rVert \le
+\min(\mathbf m) R - r_c$, so a scaling of the cell rebuilds a structure only
+when it would leave a pair within the cutoff out; the proof is in Section
+4.1 of the white paper (`docs/paper/04-neighbors.md`). The inner list of a
+dual list takes the same test against its last pruning (D114).
 
 The cell is a value of the state that the loops carry (S1). The order of
 the particles (D44) and the incidence structures do not depend on it. The
@@ -794,18 +808,30 @@ to zero smoothly, or particle mesh Ewald.
 
 ### 13.2 Keywords of the control file
 
-| Keywords | Table |
+The tables and their keywords, as `lib/Driver/Control.cpp` takes them; a
+keyword that a table does not take is an error with its line. The manual,
+with units, defaults, and the combinations that are errors, is Appendix A
+of the white paper (`docs/paper/A-control-file.md`), whose example is the
+output of `mdir template amber` (`scripts/paper/check-appendix.sh`).
+
+| Table | Keywords |
 |---|---|
-| `electrostatics = "CUTOFF"` or `"PME"`, `grid`, `grid`, `grid` or `pme_spacing`, `pme_order`, `ewald_tolerance`, `dispersion_correction` | `[energy]` |
-| `hydrogen_bonds`, `rigid_water`, `water_residues`, `shake_tolerance`, `shake_iterations` | `[constraints]`. Until constraints come, only `false` is taken for the first two, and a topology with SETTLE needs `rigid_water = false` to run its waters flexible, with their bonds. |
-| `topology`, `coordinates`; `topology`, `coordinates`, `include_paths` (directories of includes), `defines` (macros, as `-D` of grompp) | `[input]` |
-| `ensemble = "NVT"` or `"NPT"`, `thermostat = "V-RESCALE"`, `barostat = "C-RESCALE"`, `temperature`, `pressure`, `time_constant`, `time_constant`, `compressibility`, `coupling = "ISOTROPIC"` or `"SEMI_ISOTROPIC"` | `[ensemble]` |
-| `interval`, `interval`, `center_of_mass_interval` | `[dynamics]` |
+| `[input]` | `topology`, `coordinates`, `format`, `checkpoint`, `include_paths` (directories of includes of GROMACS), `defines` (macros, as `-D` of grompp) |
+| `[output]` | `trajectory`, `checkpoint`, `energy_interval`, `trajectory_interval`, `checkpoint_interval` |
+| `[energy]` | `cutoff`, `switch_distance`, `pairlist_distance`, `pruned_distance`, `rebuild_interval`, `lennard_jones_modifier`, `coulomb_modifier` (`"NONE"`, `"POTENTIAL_SHIFT"`), `dispersion_correction`, `electrostatics` (`"CUTOFF"`, `"PME"`), and for a system without a topology `[[energy.type]]`, `[[energy.pair]]`, `[[energy.pair_override]]` |
+| `[pme]` | `tolerance`, `beta`, `max_spacing`, `grid`, `order` (4, 6, 8), `influence` (`"SPME"`, `"OPTIMAL"`) |
+| `[dynamics]` | `integrator`, `time_step`, `steps`, `seed`, `center_of_mass_interval` |
+| `[minimize]` | `method`, `steps`, `initial_step` |
+| `[ensemble]` | `ensemble` (`"NVE"`, `"NVT"`, `"NPT"`), `temperature`, `pressure` |
+| `[thermostat]` | `method = "V-RESCALE"`, `time_constant`, `interval` |
+| `[barostat]` | `method = "C-RESCALE"`, `time_constant`, `compressibility`, `coupling = "ISOTROPIC"`, `work`, `interval` |
+| `[constraints]` | `hydrogen_bonds`, `rigid_water`, `water_residues`. A topology with SETTLE needs `rigid_water = false` to run its waters flexible, with their bonds |
+| `[[restraints]]` | `selection` (a mask of Amber), `force_constant` |
+| `[boundary]` | `type`, `box` |
+| `[execution]` | `target`, `threads`, `precision`, `neighbor_capacity`, `fast_math`, `spatial_order`, `deterministic`, `neighbor_structure` |
 
 The thermostat and the removal of the motion of the center of mass are
-done (M1g, D67): `ensemble = "NVT"`, `thermostat = "V-RESCALE"`,
-`temperature`, and `time_constant` in ps, with `interval` and
-`center_of_mass_interval`.
+done (M1g, D67), and so is the barostat (Section 11.4).
 
 ## 14. The command line
 

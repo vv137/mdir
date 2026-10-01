@@ -257,8 +257,9 @@ f64, and tables go to the device in f32 when their kernels are f32.
 
 `convert-md-exec-to-loops` lowers the storage form to `scf` loops for the
 CPU, with `scf.parallel` where iterations are independent; with more than
-one thread, `convert-scf-to-openmp` makes them OpenMP. Sums go through
-partial sums per thread in a fixed order. `convert-md-exec-to-gpu` lowers
+one thread, `convert-scf-to-openmp` makes them OpenMP. A global sum is
+the reduction of its `scf.parallel`, which OpenMP combines from partial
+sums per thread. `convert-md-exec-to-gpu` lowers
 to kernels of the `gpu` dialect (Section 8), and the upstream
 `gpu-lower-to-nvvm-pipeline` outlines them, lowers them to NVVM, links
 libdevice, and embeds PTX in the module.

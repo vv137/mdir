@@ -16,7 +16,7 @@
 #
 # and sander times the ratio is −4136.14360. sander scales the influence
 # function by a factor that the aliasing of the B-splines sets
-# (docs/pme-m1.md, Section 1.1); 'pme_influence = "OPTIMAL"' does the same.
+# (docs/pme-m1.md, Section 1.1); 'influence = "OPTIMAL"' of [pme] does the same.
 # sander takes grids of 2, 3, and 5 only.
 #
 # CHECK:      MDIR:   Coulomb                    -3741.8095

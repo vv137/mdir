@@ -235,7 +235,10 @@ def SimplifyDistance
     digits.
 
     The pass reassociates floating-point arithmetic, so results change in
-    their last bits. It must not be run in the deterministic mode.
+    their last bits against the kernel as written. It rewrites the program
+    once, at compilation, so two runs of the same program still give the
+    same bits, and the deterministic mode (D84) keeps it; `fast_math =
+    false` leaves it out.
 
     With `radial`, the terms of a value that share their factors that do
     not depend on the distance, and whose part that does includes a

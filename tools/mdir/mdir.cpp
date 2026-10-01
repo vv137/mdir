@@ -68,7 +68,7 @@ int main(int argc, char **argv) {
       argc, argv,
       "MDIR: compiles and runs molecular dynamics\n\n"
       "  mdir run <control file>\n"
-      "  mdir emit <control file> [--stage=module|lowered]\n"
+      "  mdir emit <control file> [--stage=module|lowered|pipeline]\n"
       "  mdir check <control file>\n"
       "  mdir template md|amber\n"
       "  mdir checkpoint <checkpoint> [<checkpoint>]\n"

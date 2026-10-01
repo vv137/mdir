@@ -1251,7 +1251,7 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
 def gather_weights():
     """The gathering of order 4 where the weights kernel has placed the
     particles: the first points and the fractions are read from the
-    weights (components 0 to 2 and 15 to 17), the splines and their slopes
+    weights (components 0 to 2 and 3 to 5, D109), the splines and their slopes
     computed again in !pme_real, and the points of the grid numbered in
     i32 (D102). The fractions are those that the spreading took, so the
     forces are those of the same splines."""
