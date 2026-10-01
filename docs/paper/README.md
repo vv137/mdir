@@ -17,7 +17,11 @@ role; and lower the result to OpenMP or to NVIDIA GPUs, specialized to
 the topology and the parameters at hand. On one RTX 3090 in mixed
 precision, MDIR runs every system of the Amber GPU benchmark suite, from
 23,558 to 1,067,095 atoms, at constant energy and at constant pressure,
-at 102% to 127% of the rate of pmemd.cuda 26 on the same device. Over
+at 102% to 127% of the rate of pmemd.cuda 26 on the same device; on
+ubiquitin in OPC with a cutoff of 9 Å it reaches 64% to 72% of the rate
+of GROMACS 2026.3, whose nonbonded kernel takes as long as MDIR's loop
+over pairs but which runs PME, the bonded terms, and the update beside it.
+Over
 2 ns of the JAC system its total energy drifts by 1.5 kcal/mol/ns, against
 5.9 for pmemd.cuda on the same input. The paper derives the methods as
 they are implemented, among them groups of 16 particles that share a

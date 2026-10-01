@@ -942,6 +942,81 @@ energy and the excluded pairs, which cancel to 3%; MDIR in mixed
 precision on a device differs from MDIR in double precision by 5e-6
 (rms) on the same input.
 
+**Ubiquitin in OPC against GROMACS** (2026-10-02,
+`scripts/validation/protein/run.py`). 1UBQ with amber19sb.ff and its OPC
+from `pdb2gmx` (ff19SB with CMAP, 76 residues, neutral), 5700 waters,
+24,031 particles in a triclinic cell of 5.4 × 5.6 × 6.0 nm, minimized and
+then equilibrated by GROMACS 2026.3 for 200 ps at 300 K and 1 bar. The
+terms of the equilibrated state, MDIR in double precision on the CPU
+against a rerun of GROMACS (mixed precision) at the same positions, with
+the sites placed from their atoms on both sides; a cutoff of 9 Å with no
+shift, the correction for the dispersion, and particle mesh Ewald of the
+same β (erfc(β r_c) = 1e-5, which both solve for), grid, and order:
+
+| Term | MDIR, kcal/mol | Relative to GROMACS |
+|---|---|---|
+| Bonds | 209.2124 | −1.7e-6 |
+| Angles | 620.1280 | 5.2e-7 |
+| Dihedrals, proper and improper | 444.3518 | 1.5e-7 |
+| CMAP | 57.2390 | 3.4e-7 |
+| Lennard-Jones 1-4 | 272.9706 | −3.1e-7 |
+| Coulomb 1-4 | 2875.2110 | 3.8e-9 |
+| Lennard-Jones | 10207.9679 | −1.2e-6 |
+| Dispersion | −540.0697 | 4.5e-7 |
+| Coulomb, all but 1-4 | −87461.2462 | 6.6e-6; 1.9e-6 against tables of the Ewald correction |
+| Total | −73314.2353 | 7.7e-6; 2.0e-6 against tables |
+
+Two differences were found on the way. The impropers were 0.896 kcal/mol
+above GROMACS, by an amount that did not add up over subsets of the lines
+of the topology: grompp puts the atoms of dihedrals in the order of LEaP
+when the force field asks for it (Section 13.1), and the reader now does
+too. The Coulomb term is the error of GROMACS's SIMD kernels, which
+compute the Ewald correction by an analytical approximation in single
+precision: its error is the same for the excluded pairs of every rigid
+water, and over 5700 waters it adds up to 0.55 kcal/mol. The waters alone
+show it: GROMACS's short-range Coulomb term is below MDIR's by 0.554
+kcal/mol with its default kernels, 0.121 with tables of the correction
+(`GMX_NBNXN_EWALD_TABLE`), and 0.136 with its plain C kernel; translating
+the whole system moves GROMACS's
+short-range Coulomb term by 0.02 kcal/mol at most. The reciprocal sums
+agree to 4e-6 (592.8846 against 592.8822).
+
+The rates on GPU 0 (an RTX 3090 at 300 W), 60,000 steps of 2 fs from the
+equilibrated state with the second half timed, mixed precision in both:
+MDIR with groups and the dual list (outer 12 Å, inner 9.6 Å, within 0.4%
+of the best of 11 to 12 Å and 9.4 to 9.8 Å), SHAKE on the bonds of
+hydrogen, and SETTLE; GROMACS with its nonbonded terms and PME on the GPU
+and its update on the CPU, which virtual sites need, and its own pair
+list (`verlet-buffer-tolerance` 0.005 kJ/mol/ps per atom):
+
+| Ensemble | MDIR, ns/day | GROMACS, ns/day | MDIR / GROMACS | Energy changed by: MDIR | GROMACS |
+|---|---|---|---|---|---|
+| NVE | 583.6 | 805.6 with nstlist 80; 689.7 with the nstlist 10 that it keeps at constant energy | 72% | 4.2e-5 | 1.4e-4 |
+| NPT | 543.5 | 851.5; 771.8 at a tolerance of 5e-5 | 64% | 4.4e-4 (conserved energy) | 6.2e-3 (conserved energy; 5.3e-3 to 6.9e-3 at tolerances of 5e-4 and 5e-5) |
+
+The device time of a step (nsys, NVE, 20,000 steps):
+
+| Part | MDIR, µs | GROMACS, µs |
+|---|---|---|
+| Loops over pairs | 91.6 (3 launches; the inner list of 9.6 Å) | 87.7 (one kernel; its list of 10.7 Å, built every 80 steps) |
+| PME | 47.3 | 76.7, on a second stream, beside the nonbonded kernel |
+| Loops over particles: integration, constraints, sites | 48.9 | On the CPU |
+| Loops over tuples: bonded terms, excluded pairs | 39.3 | The bonded terms on the CPU; the excluded pairs in the nonbonded kernel |
+| Builds and prunings | 34.6 | In the nonbonded kernel every 80 steps |
+| Layout and reductions | | 18.3 |
+| Total on the device | 261.8 on one stream | 182.8 on two |
+| Wall time of a step | 310 | 214 |
+
+The loop over pairs costs the same in both, and MDIR's PME is faster.
+GROMACS runs beside that loop what MDIR runs after it: PME on a second
+stream, and the bonded terms, the update, and the constraints on the 64
+threads of the host; the host's time between MDIR's launches is 48 µs of
+a step of 310. MDIR's second stream for the reciprocal sum (D81, D87)
+gives 580.8 ns/day here against 584.0 without. On JAC (TIP3P, 8 Å)
+MDIR's rate is 125% of pmemd.cuda's (Section 10 of the white paper); on
+this system, with four sites per water and a cutoff of 9 Å, its pair loop
+and its list are as fast as GROMACS's, and the rest of the step is not.
+
 **The ensembles** (2026-10-02, `scripts/validation/ensembles/run.py` and
 `analyze.py`). A box of 1039 OPC waters from tleap, rigid (M-SHAKE in the
 mixed mode), particle mesh Ewald, a cutoff of 9 Å with the correction for

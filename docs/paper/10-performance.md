@@ -103,3 +103,58 @@ stayed flat; an earlier build fell by 1.8% in the same way. The loops over
 pairs read the particles in the order of the last build (D86) and do not
 slow; what slows is the loops that read the state in its own order, which
 is sorted only where a run begins (Section 4.2).
+
+## 10.6 Against GROMACS on a protein in OPC
+
+The target of the milestone was the rate of pmemd.cuda; GROMACS 2026.3
+[[Pall2020]](references.md#pall2020), built with CUDA and run on the same
+device, is the stronger reference on a small system. The system is
+ubiquitin (1UBQ) in 5700 OPC waters with amber19sb.ff, 24,031 particles
+in a triclinic cell, prepared and equilibrated by GROMACS
+(`scripts/validation/protein/run.py`); its energy terms agree with
+GROMACS's (Section 9.1). Both run 60,000 steps of 2 fs from the
+equilibrated state in mixed precision, timed over the second half, with a
+cutoff of 9 Å, PME with $\operatorname{erfc}(\beta r_c) = 10^{-5}$, SHAKE
+on the bonds of hydrogen and rigid water, and at constant pressure the
+same couplings every 25 steps. MDIR uses groups and the dual list with
+reaches of 12 and 9.6 Å, within 0.4% of the best of 11 to 12 Å and 9.4 to
+9.8 Å; GROMACS its own list, its nonbonded terms and PME on the GPU, and
+its update on the CPU, which virtual sites need.
+
+*Table 10.3. Ubiquitin in OPC, RTX 3090 at 300 W. "Energy changed by" as
+in Table 10.2, over 120 ps.*
+
+| Ensemble | MDIR, ns/day | GROMACS, ns/day | MDIR / GROMACS | Energy changed by: MDIR | GROMACS |
+|---|---|---|---|---|---|
+| NVE | 583.6 | 805.6 (nstlist 80; 689.7 with the nstlist of 10 that it keeps at constant energy) | 72% | $4.2\times10^{-5}$ | $1.4\times10^{-4}$ |
+| NPT | 543.5 | 851.5 (771.8 with `verlet-buffer-tolerance` $5\times10^{-5}$) | 64% | $4.4\times10^{-4}$ | $6.2\times10^{-3}$ |
+
+*Table 10.4. The device time of a step, NVE, from nsys over 20,000
+steps.*
+
+| Part | MDIR, µs | GROMACS, µs |
+|---|---|---|
+| Loops over pairs | 91.6 (the inner list of 9.6 Å) | 87.7 (one kernel; a list of 10.7 Å built every 80 steps) |
+| PME | 47.3 | 76.7, on a second stream beside the nonbonded kernel |
+| Loops over particles: integration, constraints, sites | 48.9 | On the host |
+| Loops over tuples: bonded terms, excluded pairs | 39.3 | Bonded terms on the host; excluded pairs in the nonbonded kernel |
+| Builds and prunings of the lists | 34.6 | In the nonbonded kernel, every 80 steps |
+| Layout and reductions | | 18.3 |
+| On the device | 261.8, one stream | 182.8, two streams |
+| Wall time of a step | 310 | 214 |
+
+The loop over pairs costs the same in both programs, and MDIR's PME is
+faster. GROMACS runs beside that loop what MDIR runs after it: PME on a
+second stream of the device, and the bonded terms, the update, and the
+constraints on the 64 threads of the host. MDIR runs every part on one
+stream; its loops over particles and over tuples and its builds and
+prunings take 123 µs of the device in a step, and the host's time between
+its launches 48 µs of the 310. Its own second stream for the reciprocal
+sum (D81, D87), tried on this system, gives 580.8 ns/day against 584.0
+without. On JAC, with three sites per water and a cutoff of 8 Å, the same
+structure is 25% faster than pmemd.cuda (Table 10.2); on this system its
+rate is 64% to 72% of GROMACS's, and the measurements place the
+difference outside the loop over pairs. GROMACS's conserved energy at
+constant pressure changed by $5\times10^{-3}$ to $7\times10^{-3}$ at every
+tolerance of its buffer that was tried ($5\times10^{-3}$, $5\times10^{-4}$,
+and $5\times10^{-5}$ kJ/mol/ps per atom); that change was not investigated.

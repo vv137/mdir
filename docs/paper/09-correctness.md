@@ -2,7 +2,7 @@
 
 A compiler that writes its own kernels must show that they compute the
 model. This section collects the evidence, each item marked by its kind:
-a check that runs with the tests (`lit`, 144 tests in `test/`), a value
+a check that runs with the tests (`lit`, 145 tests in `test/`), a value
 that a test pins after it was compared once with an independent program
 (the reference value is in the test's comment), or a measurement recorded
 in a decision. Where the log says that an energy "changed by" a fraction,
@@ -26,6 +26,7 @@ terms are multiplied by that factor before they are compared.*
 | The dipeptide from a topology converted to GROMACS format (`gromacs-dipeptide.test`) | MDIR's Amber reader | Eight terms within $2\times10^{-6}$ relative or $3\times10^{-4}$ kJ/mol | `lit` |
 | amber99sb-ildn, 99sb, 03, 14sb; 99sb-ildn with TIP4P-Ew; amber19sb (`scripts/validation/gromacs`) | GROMACS | Within $5\times10^{-6}$; amber19sb within $3\times10^{-6}$, its CMAP within $9\times10^{-7}$ | Recorded |
 | The dipeptide in TIP3P from its GROMACS topology, PME of the same $\beta$, grid, and order (`scripts/validation/forces`) | GROMACS 2026.3 | Reciprocal energy within $2.6\times10^{-6}$; the rest of the Coulomb energy within $1.1\times10^{-6}$ of its largest terms | Recorded |
+| Ubiquitin in 5700 OPC waters, amber19sb.ff from `pdb2gmx`, 24,031 particles, PME of the same $\beta$, grid, and order (`scripts/validation/protein`) | GROMACS 2026.3 | Bonds, angles, dihedrals, CMAP, both 1–4 terms, Lennard–Jones, and dispersion within $1.7\times10^{-6}$ each; Coulomb within $1.9\times10^{-6}$ of GROMACS with tables of the Ewald correction ($6.6\times10^{-6}$ with its SIMD kernels, below) | Recorded |
 
 **Forces on every particle** (`scripts/validation/forces/run.sh`). MDIR in
 double precision writes the forces of the input coordinates into a
@@ -45,6 +46,33 @@ The first two are the rounding of sander's forces, which it writes in
 single precision; the third that of GROMACS in mixed precision (MDIR's
 own mixed mode differs from its double precision by $5\times10^{-6}$ on
 the same input).
+
+**Ubiquitin against GROMACS** (`scripts/validation/protein/run.py`). The
+system of Section 10.6, equilibrated by GROMACS, at the same positions in
+both programs (the sites placed from their atoms on both sides), MDIR in
+double precision on the CPU against a rerun of GROMACS. Two differences
+were found and explained on the way. The impropers were 0.896 kcal/mol
+above GROMACS's, by an amount that did not add up over subsets of the
+lines of the topology. amber19sb.ff defines
+`_FF_AMBER_LEAP_ATOM_REORDERING`, and grompp then puts the atoms of each
+dihedral in the order that LEaP gives them: by the types of the matching
+entry, a blank for a wildcard, it reverses a dihedral whose first type
+sorts after its last, and it sorts the three outer atoms of every improper
+after the first of its types, keeping the parameters found in the order
+of the file. Which atoms are the outer ones changes the angle of an
+improper, and whether an improper is reordered depends on the impropers
+before it, which is why subsets did not add up. MDIR's reader now does the
+same (`gromacs-leap-order.test`), and the dihedrals agree to
+$1.5\times10^{-7}$. The Coulomb term then differed by $6.6\times10^{-6}$
+(0.58 kcal/mol). On the waters alone GROMACS's short-range Coulomb term
+is 0.554 kcal/mol below MDIR's with its default SIMD kernels, which
+compute the Ewald correction by an analytical approximation in single
+precision, and 0.121 below with its kernels with tables of the
+correction; translating the whole system moves
+GROMACS's short-range term by at most 0.02 kcal/mol. The approximation
+makes the same error on the excluded pairs of every rigid water, and over
+5700 waters the errors add up. The reciprocal sums agree to
+$4\times10^{-6}$.
 
 ## 9.2 Particle mesh Ewald against a direct Ewald sum
 

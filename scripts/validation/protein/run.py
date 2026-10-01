@@ -26,8 +26,10 @@ Both run with a cutoff of 9 Å, particle mesh Ewald with erfc(beta r_c) =
 1e-5 and a spacing of at most 1 Å, the correction for the dispersion,
 SHAKE on the bonds of hydrogen and rigid water, mixed precision, and at
 constant pressure stochastic velocity and cell rescaling every 25 steps.
-GROMACS chooses its own pair list (verlet-buffer-tolerance), MDIR the
-dual list of the suite (outer 12 Å, inner 9.6 Å at 2 fs). GROMACS updates
+GROMACS chooses its own pair list (verlet-buffer-tolerance; nstlist 80
+at constant energy, where it does not raise it itself), MDIR the dual
+list with an outer reach of 12 Å and an inner one of 9.6 Å, within 0.4%
+of the best of 11 to 12 Å and 9.4 to 9.8 Å. GROMACS updates
 on the CPU: its update on the GPU does not take virtual sites, which the
 four sites of OPC are.
 """
@@ -276,7 +278,10 @@ def rates(args, w, gmx):
                   "ref-t = 300\npcoupl = C-rescale\ntau-p = 2.0\n"
                   "ref-p = 1.0\ncompressibility = 4.5e-5\nnsttcouple = 25\n"
                   "nstpcouple = 25\n" if ensemble == "NPT" else
-                  "tcoupl = no\npcoupl = no\n")
+                  # GROMACS keeps nstlist at 10 at constant energy (its
+                  # rate falls from 806 to 690 ns/day); 80 is what it
+                  # chooses at constant pressure here.
+                  "tcoupl = no\npcoupl = no\nnstlist = 80\n")
         write(os.path.join(w, f"{name}-gmx.mdp"), MDP_COMMON + f"""integrator = md
 dt = 0.002
 nsteps = {args.steps}

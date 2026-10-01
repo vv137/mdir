@@ -51,6 +51,15 @@ the spreading of PME has (D70), would close the gap.
   that measures it is not, for rigid groups, and is to be derived again
   for groups that scale by their centers while their velocities scale
   particle by particle.
+- *Slower than GROMACS on a protein in OPC.* On ubiquitin in OPC with a
+  cutoff of 9 Å (Section 10.6) MDIR's rate is 72% of GROMACS's at constant
+  energy and 64% at constant pressure, though its loop over pairs costs
+  the same as GROMACS's nonbonded kernel and its PME less. GROMACS runs
+  PME beside its nonbonded kernel and the bonded terms, the update, and
+  the constraints on the host; MDIR runs them in series on the device
+  (123 µs of a step of 310), and the host's time between its launches is
+  48 µs. Fewer and fused launches outside the loop over pairs, and work
+  beside it, are where the rest of the step is.
 - *The order of the state decays.* Over 2 ns of JAC the rate fell by 2%
   and then stayed flat: the state is sorted where a run or a segment
   begins (D44), and only the loops over pairs read it in an order renewed
