@@ -63,7 +63,7 @@ enum class Integrator { VelocityVerlet, Leapfrog };
 enum class Target { CPU, GPU };
 enum class Precision { Single, Mixed, Double };
 enum class NeighborStructure { Matrix, Groups };
-enum class BarostatWork { Trotter, Exact, FirstOrder };
+enum class BarostatWork { Trotter, TrotterFirstOrder, Exact, FirstOrder };
 
 /// What a control file says. Lengths are in Å, energies in kcal/mol, times
 /// in ps, masses in amu, and temperatures in K.
@@ -179,7 +179,9 @@ struct Control {
   /// and after it (the default); exactly, from the potential energy of the
   /// scaled positions, whose forces the next step then takes; or to first
   /// order in the strain from the virial, keeping the forces of the
-  /// positions before the scaling, as GROMACS does.
+  /// positions before the scaling, as GROMACS does. The Trotter type may
+  /// count its energy from the virial before the scaling only, to first
+  /// order, and skip the virial of the step that scales.
   BarostatWork barostatWork = BarostatWork::Trotter;
   int64_t barostatPeriod = 0;
 

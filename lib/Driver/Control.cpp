@@ -877,6 +877,7 @@ Error Reader::readBarostat(const toml::table &table) {
   if (Error error = readChoice<BarostatWork>(
           table, "work", control.barostatWork,
           {{"TROTTER", BarostatWork::Trotter},
+           {"TROTTER_FIRST_ORDER", BarostatWork::TrotterFirstOrder},
            {"EXACT", BarostatWork::Exact},
            {"FIRST_ORDER", BarostatWork::FirstOrder}}))
     return error;
@@ -1308,7 +1309,8 @@ time_constant = 2.0             # ps
 # coupling = "ISOTROPIC"        # ISOTROPIC
 # work     = "TROTTER"          # TROTTER: the scaling within the drift of
 #                               # a step, its energy from the virials before
-#                               # and after; EXACT: the energy of each
+#                               # and after; TROTTER_FIRST_ORDER: from the
+#                               # one before, a virial less; EXACT: the energy of each
 #                               # scaling from the scaled positions, whose
 #                               # forces the next step takes; FIRST_ORDER:
 #                               # from the virial, as GROMACS does

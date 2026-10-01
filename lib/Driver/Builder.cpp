@@ -142,7 +142,17 @@ private:
   /// Whether the barostat scales the cell within the drift of the last
   /// step of a period (D92).
   bool usesTrotter() const {
-    return control.barostat && control.barostatWork == BarostatWork::Trotter;
+    return control.barostat &&
+           (control.barostatWork == BarostatWork::Trotter ||
+            control.barostatWork == BarostatWork::TrotterFirstOrder);
+  }
+  /// Whether the barostat of Trotter type counts the energy of a scaling
+  /// from the virial after it as well (D92); with a scaling every step the
+  /// next scaling takes that virial anyway.
+  bool countsAfterScaling() const {
+    return usesTrotter() &&
+           (control.barostatWork == BarostatWork::Trotter ||
+            control.barostatPeriod == 1);
   }
   /// Whether every step scales the cell (a period of one step): the
   /// pressure is then that of the state that the step before left, which
@@ -1547,13 +1557,13 @@ void Builder::emitPrograms() {
   if (trotter) {
     if (!scalesEveryStep())
       kinds.push_back({"step_virial", false, true, false});
-    kinds.push_back({"step_trotter", false, true, true});
+    kinds.push_back({"step_trotter", false, countsAfterScaling(), true});
     kinds.push_back({"step_trotter_energy", true, true, true});
   }
   for (const Kind &kind : kinds) {
     bool withEnergy = kind.energy, withVirial = kind.virial;
     bool scales = kind.scales;
-    bool returnsCurrent = leapfrog && withVirial;
+    bool returnsCurrent = leapfrog && (withVirial || scales);
     os << "dyn.program @" << kind.name
        << "(%x: !vec, %v: !vec, %f: !vec, %m: !real,\n"
        << "    %cell: !md.cell, %dt: f64" << (scales ? ", %mu: f64" : "")
@@ -1681,7 +1691,7 @@ void Builder::emitPrograms() {
                      withVirial ? virial : "", withVirial ? "%w1" : "");
       virial = "%w1";
     }
-    if (leapfrog && !withVirial) {
+    if (leapfrog && !withVirial && !scales) {
       os << "  dyn.return %x1, " << velocities
          << ", %f1 : !vec, !vec, !vec\n}\n\n";
       continue;
@@ -1702,14 +1712,16 @@ void Builder::emitPrograms() {
       virial = project("%x1", "%v2u", "%v2", withVirial ? virial : "")
                    .second;
     std::string stored = leapfrog ? velocities : "%v2";
-    if (withVirial)
+    if (withVirial || scales)
       os << "  dyn.return %x1, " << stored << ", %f1"
-         << (withEnergy ? ", %u1" : "") << ", " << virial
+         << (withEnergy ? ", %u1" : "")
+         << (withVirial ? ", " + virial : "")
          << (returnsCurrent ? ", %v2" : "") << (scales ? ", %khalf" : "")
          << "\n"
          << "      : !vec, !vec, !vec" << (withEnergy ? ", f64" : "")
-         << ", vector<9xf64>" << (returnsCurrent ? ", !vec" : "")
-         << (scales ? ", f64" : "") << "\n";
+         << (withVirial ? ", vector<9xf64>" : "")
+         << (returnsCurrent ? ", !vec" : "") << (scales ? ", f64" : "")
+         << "\n";
     else
       os << "  dyn.return %x1, %v2, %f1 : !vec, !vec, !vec\n";
     os << "}\n\n";
@@ -2853,8 +2865,9 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       std::string outerScale = scaleName;
       if (!scaling.scale.empty())
         scaleName = scaling.scale;
+      bool virial = withEnergy || countsAfterScaling();
       os << inner << "%x" << n << ", %v" << n << ", %f" << n
-         << (withEnergy ? ", %u" + n : "") << ", %w" << n
+         << (withEnergy ? ", %u" + n : "") << (virial ? ", %w" + n : "")
          << (leapfrog ? ", %vc" + n : "") << ", %kh" << n
          << " = dyn.step @step_trotter" << (withEnergy ? "_energy" : "")
          << "(" << x << ", " << v << ", %f"
@@ -2863,7 +2876,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
          << getFieldValues(fieldPrefix) << ")\n"
          << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64, f64"
          << getScaleType() << getFieldTypes() << ") -> (!vec, !vec, !vec"
-         << (withEnergy ? ", f64" : "") << ", vector<9xf64>"
+         << (withEnergy ? ", f64" : "") << (virial ? ", vector<9xf64>" : "")
          << (leapfrog ? ", !vec" : "") << ", f64)\n";
       scaleName = outerScale;
       scaling.kineticHalf = "%kh" + n;
@@ -2877,8 +2890,10 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       if (usesTrotter()) {
         std::string k = "k" + here;
         TrotterScaling scaling = emitTrotterSteps(k, /*withEnergy=*/false);
-        trace = "%tr" + k;
-        emitTrace(os, trace, "%w" + k, inner);
+        if (countsAfterScaling()) {
+          trace = "%tr" + k;
+          emitTrace(os, trace, "%w" + k, inner);
+        }
         std::string coupled =
             getCoupled("%x" + k, "%v" + k, "%f" + k, "", trace,
                        isLeapfrog() ? "%vc" + k : "", &scaling);
@@ -3378,25 +3393,32 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
       // of the motion within the rigid groups, is taken as the mean of
       // those before and after the scaling, which makes the count exact
       // to second order in the strain (D92).
+      // To first order, from the virial before the scaling only.
+      if (!countsAfterScaling())
+        os << indent << "%bwork" << t << " = arith.mulf "
+           << trotter->workBefore << ", " << trotter->logMu << " : f64\n";
       std::string after =
-          emitGroupTrace(indent, trace, positions, velocities, cellName,
-                         massName, relations, t);
+          countsAfterScaling()
+              ? emitGroupTrace(indent, trace, positions, velocities,
+                               cellName, massName, relations, t)
+              : "";
       // With a scaling every step, the state that the next one takes its
       // pressure from: the kinetic energy after the thermostat.
       if (scalesEveryStep())
         emitStoreTrotterState(indent, trace, after,
                               control.thermostat ? "%kn" + t : kinetic);
-      os << indent << "%bwca" << t << " = arith.divf %baro_constant, "
-         << trotter->newVolume << " : f64\n"
-         << indent << "%bwb" << t << " = arith.addf " << after << ", %bwca"
-         << t << " : f64\n"
-         << indent << "%bws" << t << " = arith.addf " << trotter->workBefore
-         << ", %bwb" << t << " : f64\n"
-         << indent << "%bwm" << t << " = arith.mulf %bws" << t
-         << ", %couple_half : f64\n"
-         << indent << "%bwork" << t << " = arith.mulf %bwm" << t << ", "
-         << trotter->logMu << " : f64\n"
-         << indent << "%bmi2" << t << " = arith.mulf " << trotter->muinv
+      if (countsAfterScaling())
+        os << indent << "%bwca" << t << " = arith.divf %baro_constant, "
+           << trotter->newVolume << " : f64\n"
+           << indent << "%bwb" << t << " = arith.addf " << after << ", %bwca"
+           << t << " : f64\n"
+           << indent << "%bws" << t << " = arith.addf " << trotter->workBefore
+           << ", %bwb" << t << " : f64\n"
+           << indent << "%bwm" << t << " = arith.mulf %bws" << t
+           << ", %couple_half : f64\n"
+           << indent << "%bwork" << t << " = arith.mulf %bwm" << t << ", "
+           << trotter->logMu << " : f64\n";
+      os << indent << "%bmi2" << t << " = arith.mulf " << trotter->muinv
          << ", " << trotter->muinv << " : f64\n"
          << indent << "%bmi21" << t << " = arith.subf %bmi2" << t
          << ", %c_unit : f64\n"
