@@ -42,13 +42,17 @@ HEADER = """\
 // depend on the threads either. The layout is that of [SalomonFerrer2013];
 // every pair is tested against the reach.
 //
-// The loops read the lists by units of work of up to 64 entries: `units`
-// holds 64 g + k for the unit k of group g.
+// The lists are held in blocks of 64 entries, which a group takes from
+// `entries` and `masks` as it fills them, with an atomic addition: block b
+// holds entries 64 b to 64 b + 63, and is block `ordinals[b]` of the list
+// of group `units[b]`, which holds `counts[g]` entries. A block is the
+// unit of work of the loops. The lists take the room they need, not a
+// fixed room for each group.
 //
 // On return, `sizes` (on the host) holds the number of places, the largest
-// number of entries of a group, and the number of units. A number beyond
-// the capacity of its buffer means that the buffer was too small and the
-// structure is not complete; the caller stops.
+// number of entries of a group, and the number of blocks. A number beyond
+// the capacity of its buffer means that the structure is not complete; the
+// caller makes more room and builds again.
 //
 // A kernel runs in blocks of 128 threads, a thread or a warp an item. The
 // buffers are on the device; positions are in the cell `box`, orthorhombic
@@ -154,6 +158,19 @@ def atomic_max(p, buffer, value):
 %{p}addr = arith.addi %{p}bi, %{p}four : i64
 %{p}ptr = llvm.inttoptr %{p}addr : i64 to !llvm.ptr<1>
 %{p}old = llvm.atomicrmw max %{p}ptr, {value} syncscope("device") monotonic : !llvm.ptr<1>, i32
+"""
+
+
+def atomic_block(p, value, result):
+    """Takes `value` blocks from the count of blocks, `%sizes_device[2]`,
+    with a relaxed atomic addition; `result` is the first."""
+    return f"""\
+%{p}base = memref.extract_aligned_pointer_as_index %sizes_device : memref<3xi32, 1> -> index
+%{p}bi = arith.index_cast %{p}base : index to i64
+%{p}eight = arith.constant 8 : i64
+%{p}addr = arith.addi %{p}bi, %{p}eight : i64
+%{p}ptr = llvm.inttoptr %{p}addr : i64 to !llvm.ptr<1>
+{result} = llvm.atomicrmw add %{p}ptr, {value} syncscope("device") monotonic : !llvm.ptr<1>, i32
 """
 
 
@@ -820,15 +837,19 @@ scf.if %real_group {{
   %lane_bit = arith.shli %one_i, %lane32 : i32
   %below = arith.subi %lane_bit, %one_i : i32
   %first16 = arith.addi %first32, %c16i : i32
-  %width = memref.dim %entries, %c1w : memref<?x?xi32, 1>
+  %unit_capacity_w = memref.dim %units, %c0w : memref<?xi32, 1>
+  %none_block = arith.constant -1 : i32
+  %c63i_w = arith.constant 63 : i32
+  %c6i_w = arith.constant 6 : i32
+  %g32_w = arith.index_cast %g : index to i32
   %fz1p = arith.addi %fz1, %one_i : i32
   %fy1p = arith.addi %fy1, %one_i : i32
-  %count_all = scf.for %zz = %fz0 to %fz1p step %one_i iter_args(%cz_count = %zero_i) -> (i32) : i32 {{
+  %count_all, %block_all = scf.for %zz = %fz0 to %fz1p step %one_i iter_args(%cz_count = %zero_i, %czb = %none_block) -> (i32, i32) : i32 {{
     %zm = arith.remsi %zz, %gnz32 : i32
     %zneg = arith.cmpi slt, %zm, %zero_i : i32
     %zw = arith.addi %zm, %gnz32 : i32
     %iz = arith.select %zneg, %zw, %zm : i32
-    %cy_count = scf.for %yy = %fy0 to %fy1p step %one_i iter_args(%cy0 = %cz_count) -> (i32) : i32 {{
+    %cy_count, %cy_block = scf.for %yy = %fy0 to %fy1p step %one_i iter_args(%cy0 = %cz_count, %cyb0 = %czb) -> (i32, i32) : i32 {{
       %ym = arith.remsi %yy, %gny32 : i32
       %yneg = arith.cmpi slt, %ym, %zero_i : i32
       %yw = arith.addi %ym, %gny32 : i32
@@ -847,7 +868,7 @@ scf.if %real_group {{
       %to2a = arith.subi %fx1, %gnx32 : i32
       %to2 = arith.select %under, %fx1, %to2a : i32
       %pieces = arith.select %two_pieces, %c2i, %one_i : i32
-      %cp_count = scf.for %piece = %zero_i to %pieces step %one_i iter_args(%cp0 = %cy0) -> (i32) : i32 {{
+      %cp_count, %cp_block = scf.for %piece = %zero_i to %pieces step %one_i iter_args(%cp0 = %cy0, %cpb0 = %cyb0) -> (i32, i32) : i32 {{
         %is_second = arith.cmpi ne, %piece, %zero_i : i32
         %from = arith.select %is_second, %zero_i, %from1 : i32
         %to = arith.select %is_second, %to2, %to1b : i32
@@ -858,7 +879,7 @@ scf.if %real_group {{
         %cto_i = arith.index_cast %cto : i32 to index
         %begin = memref.load %gstart[%cfrom_i] : memref<?xi32, 1>
         %end = memref.load %gstart[%cto_i] : memref<?xi32, 1>
-        %cs_count = scf.for %s0 = %begin to %end step %c32i iter_args(%cs = %cp0) -> (i32) : i32 {{
+        %cs_count, %cs_block = scf.for %s0 = %begin to %end step %c32i iter_args(%cs = %cp0, %csb = %cpb0) -> (i32, i32) : i32 {{
           %s = arith.addi %s0, %lane32 : i32
           %in_run = arith.cmpi slt, %s, %end : i32
           %bits = scf.if %in_run -> (i32) {{
@@ -990,24 +1011,78 @@ scf.if %real_group {{
           %before_bits = arith.andi %kept, %below : i32
           %rank = math.ctpop %before_bits : i32
           %slot = arith.addi %cs, %rank : i32
-          %slot_i = arith.index_cast %slot : i32 to index
-          %fits = arith.cmpi ult, %slot_i, %width : index
+          %n_kept = math.ctpop %kept : i32
+          %next = arith.addi %cs, %n_kept : i32
+          // The blocks of the slots of this round: the block of slot cs,
+          // new if cs begins one, and the next if the round runs into it.
+          // The first lane takes the new ones; the warp shares them.
+          %any = arith.cmpi ne, %n_kept, %zero_i : i32
+          %first_k = arith.shrui %cs, %c6i_w : i32
+          %last_slot = arith.subi %next, %one_i : i32
+          %last_k = arith.shrui %last_slot, %c6i_w : i32
+          %cs_mod = arith.andi %cs, %c63i_w : i32
+          %at_start = arith.cmpi eq, %cs_mod, %zero_i : i32
+          %need_a = arith.andi %any, %at_start : i1
+          %crosses = arith.cmpi ugt, %last_k, %first_k : i32
+          %need_b = arith.andi %any, %crosses : i1
+          %na = arith.extui %need_a : i1 to i32
+          %nb = arith.extui %need_b : i1 to i32
+          %taken = arith.addi %na, %nb : i32
+          %takes = arith.cmpi ne, %taken, %zero_i : i32
+          %lane_first = arith.cmpi eq, %lane32, %zero_i : i32
+          %allocates = arith.andi %takes, %lane_first : i1
+          %base0 = scf.if %allocates -> (i32) {{
+{indent(atomic_block("bk_", "%taken", "%base_new"), 12).rstrip()}
+            scf.yield %base_new : i32
+          }} else {{
+            scf.yield %zero_i : i32
+          }}
+          %w32s = arith.constant 32 : i32
+          %taken_at, %taken_ok = gpu.shuffle idx %base0, %zero_i, %w32s : i32
+          %block_a = arith.select %need_a, %taken_at, %csb : i32
+          %taken_at1 = arith.addi %taken_at, %one_i : i32
+          %block_b = arith.select %need_a, %taken_at1, %taken_at : i32
+          %slot_k = arith.shrui %slot, %c6i_w : i32
+          %in_a = arith.cmpi eq, %slot_k, %first_k : i32
+          %slot_block = arith.select %in_a, %block_a, %block_b : i32
+          %slot_mod = arith.andi %slot, %c63i_w : i32
+          %slot_base = arith.shli %slot_block, %c6i_w : i32
+          %pos32 = arith.addi %slot_base, %slot_mod : i32
+          %slot_block_i = arith.index_cast %slot_block : i32 to index
+          %fits = arith.cmpi ult, %slot_block_i, %unit_capacity_w : index
           %store = arith.andi %keep, %fits : i1
           scf.if %store {{
             %si = arith.index_cast %s : i32 to index
             %q = memref.load %gplace[%si] : memref<?xi32, 1>
-            memref.store %q, %entries[%g, %slot_i] : memref<?x?xi32, 1>
-            memref.store %bits, %masks[%g, %slot_i] : memref<?x?xi32, 1>
+            %pos = arith.index_cast %pos32 : i32 to index
+            memref.store %q, %entries[%pos] : memref<?xi32, 1>
+            memref.store %bits, %masks[%pos] : memref<?xi32, 1>
           }}
-          %n_kept = math.ctpop %kept : i32
-          %next = arith.addi %cs, %n_kept : i32
-          scf.yield %next : i32
+          // The first lane names the new blocks.
+          %name_a = arith.andi %need_a, %lane_first : i1
+          %a_i = arith.index_cast %block_a : i32 to index
+          %a_fits = arith.cmpi ult, %a_i, %unit_capacity_w : index
+          %write_a = arith.andi %name_a, %a_fits : i1
+          scf.if %write_a {{
+            memref.store %g32_w, %units[%a_i] : memref<?xi32, 1>
+            memref.store %first_k, %ordinals[%a_i] : memref<?xi32, 1>
+          }}
+          %name_b = arith.andi %need_b, %lane_first : i1
+          %b_i = arith.index_cast %block_b : i32 to index
+          %b_fits = arith.cmpi ult, %b_i, %unit_capacity_w : index
+          %write_b = arith.andi %name_b, %b_fits : i1
+          scf.if %write_b {{
+            memref.store %g32_w, %units[%b_i] : memref<?xi32, 1>
+            memref.store %last_k, %ordinals[%b_i] : memref<?xi32, 1>
+          }}
+          %next_block = arith.select %need_b, %block_b, %block_a : i32
+          scf.yield %next, %next_block : i32, i32
         }}
-        scf.yield %cs_count : i32
+        scf.yield %cs_count, %cs_block : i32, i32
       }}
-      scf.yield %cp_count : i32
+      scf.yield %cp_count, %cp_block : i32, i32
     }}
-    scf.yield %cy_count : i32
+    scf.yield %cy_count, %cy_block : i32, i32
   }}
   %lane0 = arith.cmpi eq, %lane, %c0w : index
   scf.if %lane0 {{
@@ -1024,9 +1099,10 @@ def build():
 func.func private @mdrt_gpu_build_neighbors_groups(
     %x: memref<?x3xf64, 1>, %box: vector<3xf64>, %reach: f64,
     %excluded: memref<?x?xi32, 1>, %order: memref<?xi32, 1>,
-    %place_of: memref<?xi32, 1>, %entries: memref<?x?xi32, 1>,
-    %masks: memref<?x?xi32, 1>, %counts: memref<?xi32, 1>,
-    %units: memref<?xi32, 1>, %sizes: memref<3xi32>) {
+    %place_of: memref<?xi32, 1>, %entries: memref<?xi32, 1>,
+    %masks: memref<?xi32, 1>, %counts: memref<?xi32, 1>,
+    %units: memref<?xi32, 1>, %ordinals: memref<?xi32, 1>,
+    %sizes: memref<3xi32>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %block = arith.constant 128 : index
@@ -1138,10 +1214,6 @@ func.func private @mdrt_gpu_build_neighbors_groups(
   %gcursor = gpu.alloc (%gcells) : memref<?xi32, 1>
   %gplace = gpu.alloc (%n) : memref<?xi32, 1>
   %boxes = gpu.alloc (%group_capacity) : memref<?x8xf32, 1>
-  %group_units = gpu.alloc (%group_capacity) : memref<?xi32, 1>
-  %unit_start1 = arith.addi %group_capacity, %c1 : index
-  %unit_start = gpu.alloc (%unit_start1) : memref<?xi32, 1>
-  %unit_cursor = gpu.alloc (%group_capacity) : memref<?xi32, 1>
 
   //===--------------------------------------------------------------------===//
   // The compact order
@@ -1424,55 +1496,6 @@ scf.if %store {{
                     workgroup=(f"%rel_wg : memref<64x4xf32, {WG}>, "
                                f"%partners : memref<1024xi32, {WG}>")))
     t.append("""\
-  //===--------------------------------------------------------------------===//
-  // The units of work: 64 entries at most
-  //===--------------------------------------------------------------------===//
-
-""")
-    t.append(launch("%grid_of_groups", per_item("%group_capacity", """\
-%i0 = arith.constant 0 : index
-%zero = arith.constant 0 : i32
-%sixty_three = arith.constant 63 : i32
-%six = arith.constant 6 : i32
-%c16 = arith.constant 16 : index
-%places32 = memref.load %sizes_device[%i0] : memref<3xi32, 1>
-%places = arith.index_cast %places32 : i32 to index
-%groups = arith.divui %places, %c16 : index
-%real = arith.cmpi ult, %item, %groups : index
-%count = scf.if %real -> (i32) {
-  %c = memref.load %counts[%item] : memref<?xi32, 1>
-  scf.yield %c : i32
-} else {
-  scf.yield %zero : i32
-}
-%c63 = arith.addi %count, %sixty_three : i32
-%u = arith.shrsi %c63, %six : i32
-memref.store %u, %group_units[%item] : memref<?xi32, 1>""")))
-    t.append(scan("us_", "%group_units", "%unit_start", "%unit_cursor", "%group_capacity"))
-    t.append(launch("%grid_of_groups", per_item("%group_capacity", """\
-%i1 = arith.constant 1 : index
-%six = arith.constant 6 : i32
-%u32 = memref.load %group_units[%item] : memref<?xi32, 1>
-%s32 = memref.load %unit_start[%item] : memref<?xi32, 1>
-%u = arith.index_cast %u32 : i32 to index
-%s = arith.index_cast %s32 : i32 to index
-%g32 = arith.index_cast %item : index to i32
-%g64 = arith.shli %g32, %six : i32
-%i0 = arith.constant 0 : index
-scf.for %k = %i0 to %u step %i1 {
-  %at = arith.addi %s, %k : index
-  %fits = arith.cmpi ult, %at, %unit_capacity : index
-  scf.if %fits {
-    %k32 = arith.index_cast %k : index to i32
-    %v = arith.addi %g64, %k32 : i32
-    memref.store %v, %units[%at] : memref<?xi32, 1>
-  }
-}""")))
-    t.append(launch("%c1", """\
-%i2 = arith.constant 2 : index
-%total = memref.load %unit_start[%group_capacity] : memref<?xi32, 1>
-memref.store %total, %sizes_device[%i2] : memref<3xi32, 1>""", threads="%c1"))
-    t.append("""\
   // The sizes, to the host.
   %copy_token0 = gpu.wait async
   %copy_token = gpu.memcpy async [%copy_token0] %sizes, %sizes_device : memref<3xi32>, memref<3xi32, 1>
@@ -1496,12 +1519,6 @@ memref.store %total, %sizes_device[%i2] : memref<3xi32, 1>""", threads="%c1"))
   gpu.dealloc %gplace_plain : memref<?xi32>
   %boxes_plain = memref.memory_space_cast %boxes : memref<?x8xf32, 1> to memref<?x8xf32>
   gpu.dealloc %boxes_plain : memref<?x8xf32>
-  %group_units_plain = memref.memory_space_cast %group_units : memref<?xi32, 1> to memref<?xi32>
-  gpu.dealloc %group_units_plain : memref<?xi32>
-  %unit_start_plain = memref.memory_space_cast %unit_start : memref<?xi32, 1> to memref<?xi32>
-  gpu.dealloc %unit_start_plain : memref<?xi32>
-  %unit_cursor_plain = memref.memory_space_cast %unit_cursor : memref<?xi32, 1> to memref<?xi32>
-  gpu.dealloc %unit_cursor_plain : memref<?xi32>
   return
 }
 """)

@@ -55,9 +55,11 @@ static const char *const countBuildName = "mdrtCountBuild";
 /// Counts a build at an interval that found the structure no longer valid
 /// (D88).
 static const char *const countLateBuildName = "mdrtCountLateBuild";
-static const char *const reportGroupsOverflowName =
-    "mdrtReportGroupsOverflow";
 static const char *const buildGroupsName = "mdrt_gpu_build_neighbors_groups";
+static const char *const noteGroupsName = "mdrtNoteGroups";
+static const char *const createGroupsName = "mdrtGroupsCreate";
+static const char *const groupsBufferName = "mdrtGroupsBuffer";
+static const char *const growGroupsName = "mdrtGroupsGrow";
 
 /// The threads that share the row of one particle in a loop over pairs or
 /// tuples. A particle has hundreds of neighbors, and a thread for each
@@ -93,19 +95,20 @@ struct Neighbors {
   /// The incidence structure of the pairs that the structure leaves out,
   /// or null.
   Value excluded;
-  /// A structure of groups of 16 (D89): `counts` holds the number of
-  /// entries of each group, `index` their places, `masks` their masks,
-  /// `units` the units of work, and `order` the particle at each of
-  /// `places` places; `placeOf` is the place of each particle. `sizes`, on
-  /// the host, holds the places, the largest list and the units of the last
-  /// build.
+  /// A structure of groups of 16 (D89): the runtime holds its buffers,
+  /// which grow when a build finds them too small, by `handle`, and gives
+  /// them where they are used (getGroupsBuffers). `placeOf` is the place
+  /// of each particle. `sizes`, on the host, holds the places, the longest
+  /// list and the blocks of the last build.
   bool groups = false;
-  Value masks;
-  Value units;
+  Value handle;
   Value placeOf;
   Value sizes;
-  Value places;
-  Value unitCapacity;
+};
+
+/// The buffers of a structure of groups, as the runtime holds them now.
+struct GroupBuffers {
+  Value order, counts, entries, masks, units, ordinals;
 };
 
 /// Where the global sums and maxima of a loop arrive: numbers on the
@@ -152,6 +155,10 @@ private:
   LogicalResult lowerPairFor(md_exec::PairForOp op);
   LogicalResult lowerGroupPairFor(md_exec::PairForOp op,
                                   const Neighbors &structure);
+  /// The buffers of the structure of groups `handle`, as they are where
+  /// `builder` is.
+  GroupBuffers getGroupsBuffers(OpBuilder &builder, Location loc,
+                                Value handle);
   LogicalResult lowerTupleFor(md_exec::TupleForOp op);
   void lowerBuildIncidence(md_exec::BuildIncidenceOp op);
   void lowerRenumber(md_exec::RenumberOp op);
@@ -1374,6 +1381,9 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
     });
   }
 
+  // The buffers of the structure as the runtime holds them now.
+  GroupBuffers buffers = getGroupsBuffers(builder, loc, structure.handle);
+
   // The positions and the fields that the kernel reads, in the order of
   // the places of the last build; an empty place takes those of the
   // particle 0, which no pair reads.
@@ -1387,9 +1397,9 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
   for (Value source : sources)
     targets.push_back(createDeviceBuffer(
         builder, loc, cast<MemRefType>(source.getType()),
-        ValueRange{structure.places}));
+        ValueRange{places}));
   launchOver(builder, loc, places, [&](OpBuilder &body, Value place) {
-    Value at = memref::LoadOp::create(body, loc, structure.order,
+    Value at = memref::LoadOp::create(body, loc, buffers.order,
                                       ValueRange{place});
     Value empty = arith::CmpIOp::create(
         body, loc, arith::CmpIPredicate::slt, at,
@@ -1403,12 +1413,11 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
                    target, place);
   });
   PairLayout layout;
-  layout.order = structure.order;
+  layout.order = buffers.order;
   layout.positions = targets.front();
   layout.ins.assign(targets.begin() + 1, targets.end());
-  kernels::GroupLists lists{structure.index, structure.masks,
-                            structure.counts, structure.units,
-                            structure.order};
+  kernels::GroupLists lists{buffers.entries, buffers.masks, buffers.counts,
+                            buffers.units, buffers.ordinals, buffers.order};
 
   // A warp for each unit of work, as many warps as particles at most: the
   // sums of the warps go to the scratch of the particles. A warp takes the
@@ -1943,46 +1952,44 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
   structure.size = op.getSize();
   structure.width = createIndex(builder, loc, op.getWidth());
   if (op.getKind() == md_exec::NeighborKind::Groups) {
-    // Groups of 16 (D89). The compact order leaves the places of a short
-    // group of a chunk empty: at most 63 in a chunk, a chunk of 64 places
-    // for each 64 particles and one more at the end of each column. Twice
-    // the particles and one chunk hold them unless the columns are nearly
-    // empty, which a build reports. A list holds the neighbors at later
-    // places of the 16 particles of its group: for the first groups nearly
-    // all of them, whose union is about 1.7 times the neighbors of one at
-    // a reach of 10 Å (a box of 2.5 Å, the density of water). It holds
-    // twice as many entries as a row of the matrix holds neighbors; a
-    // build reports more. A unit of work is up to 64 entries of one group.
+    // Groups of 16 (D89). The runtime holds the buffers, sized from an
+    // estimate, and makes them larger when a build finds them too small
+    // (emitGroupsBuild). The compact order leaves at most 63 places of a
+    // chunk empty, one chunk for each column at most. A list takes blocks
+    // of 64 entries as it fills them; it holds the neighbors at later
+    // places of the 16 particles of its group, on average half of their
+    // union, about as many as a row of the matrix.
     structure.groups = true;
-    structure.width = createIndex(builder, loc, 2 * op.getWidth());
-    Value groups = arith::DivUIOp::create(
+    Type wide = builder.getI64Type();
+    // Places for a quarter more than the particles and a chunk; blocks for
+    // as many entries as a row for each group and one block more.
+    Value places = arith::AddIOp::create(
         builder, loc,
         arith::AddIOp::create(
+            builder, loc, structure.size,
+            arith::DivUIOp::create(builder, loc, structure.size,
+                                   createIndex(builder, loc, 4))),
+        createIndex(builder, loc, 64));
+    Value filled = arith::AddIOp::create(
+        builder, loc,
+        arith::DivUIOp::create(builder, loc, structure.size,
+                               createIndex(builder, loc, 16)),
+        createIndex(builder, loc, 1));
+    Value blocks = arith::MulIOp::create(
+        builder, loc, filled,
+        createIndex(builder, loc, (op.getWidth() + 63) / 64 + 1));
+    structure.handle =
+        func::CallOp::create(
             builder, loc,
-            arith::MulIOp::create(builder, loc, structure.size,
-                                  createIndex(builder, loc, 2)),
-            createIndex(builder, loc, 64 + 15)),
-        createIndex(builder, loc, 16));
-    structure.places = arith::MulIOp::create(builder, loc, groups,
-                                             createIndex(builder, loc, 16));
-    structure.unitCapacity = arith::MulIOp::create(
-        builder, loc, groups,
-        createIndex(builder, loc, (2 * op.getWidth() + 63) / 64));
-    MemRefType list = getDeviceType(
-        {ShapedType::kDynamic, ShapedType::kDynamic}, narrow);
-    MemRefType row = getDeviceType({ShapedType::kDynamic}, narrow);
-    structure.counts =
-        createDeviceBuffer(builder, loc, row, ValueRange{groups});
-    structure.index = createDeviceBuffer(builder, loc, list,
-                                         ValueRange{groups, structure.width});
-    structure.masks = createDeviceBuffer(builder, loc, list,
-                                         ValueRange{groups, structure.width});
-    structure.units = createDeviceBuffer(builder, loc, row,
-                                         ValueRange{structure.unitCapacity});
-    structure.order = createDeviceBuffer(builder, loc, row,
-                                         ValueRange{structure.places});
-    structure.placeOf =
-        createDeviceBuffer(builder, loc, row, ValueRange{structure.size});
+            getOrDeclare(createGroupsName,
+                         builder.getFunctionType({wide, wide}, {wide})),
+            ValueRange{
+                arith::IndexCastOp::create(builder, loc, wide, places),
+                arith::IndexCastOp::create(builder, loc, wide, blocks)})
+            .getResult(0);
+    structure.placeOf = createDeviceBuffer(
+        builder, loc, getDeviceType({ShapedType::kDynamic}, narrow),
+        ValueRange{structure.size});
     structure.sizes =
         memref::AllocOp::create(builder, loc, MemRefType::get({3}, narrow));
   } else {
@@ -2116,6 +2123,33 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
   return finishBuild(builder, loc, structure, positions, box);
 }
 
+GroupBuffers Lowering::getGroupsBuffers(OpBuilder &builder, Location loc,
+                                       Value handle) {
+  Type wide = builder.getI64Type();
+  MemRefType type =
+      getDeviceType({ShapedType::kDynamic}, builder.getI32Type());
+  func::FuncOp getter = getOrDeclare(
+      groupsBufferName, builder.getFunctionType({wide, wide}, {type}));
+  getter->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+  auto get = [&](int64_t which) -> Value {
+    return func::CallOp::create(
+               builder, loc, getter,
+               ValueRange{handle, arith::ConstantOp::create(
+                                      builder, loc, wide,
+                                      builder.getI64IntegerAttr(which))})
+        .getResult(0);
+  };
+  // In the order of the runtime (mdrt_cuda.c).
+  GroupBuffers buffers;
+  buffers.order = get(0);
+  buffers.counts = get(1);
+  buffers.entries = get(2);
+  buffers.masks = get(3);
+  buffers.units = get(4);
+  buffers.ordinals = get(5);
+  return buffers;
+}
+
 LogicalResult Lowering::emitGroupsBuild(OpBuilder &builder, Location loc,
                                         const Neighbors &structure,
                                         Value positions, Value box,
@@ -2142,42 +2176,64 @@ LogicalResult Lowering::emitGroupsBuild(OpBuilder &builder, Location loc,
   }
   auto build = cast<func::FuncOp>(
       SymbolTable::lookupSymbolIn(module, buildGroupsName));
-  func::CallOp::create(
-      builder, loc, build,
-      ValueRange{positions, box,
-                 createReal(builder, loc, builder.getF64Type(), reach),
-                 excluded, structure.order, structure.placeOf,
-                 structure.index, structure.masks, structure.counts,
-                 structure.units, structure.sizes});
+  Type wide = builder.getI64Type();
+  Value reachValue = createReal(builder, loc, builder.getF64Type(), reach);
+
+  // Build; if a buffer was too small, the runtime makes more room, and the
+  // build is made again.
+  auto again = scf::WhileOp::create(builder, loc, TypeRange(), ValueRange());
+  {
+    Block *before = builder.createBlock(&again.getBefore());
+    OpBuilder at = OpBuilder::atBlockEnd(before);
+    GroupBuffers buffers = getGroupsBuffers(at, loc, structure.handle);
+    func::CallOp::create(
+        at, loc, build,
+        ValueRange{positions, box, reachValue, excluded, buffers.order,
+                   structure.placeOf, buffers.entries, buffers.masks,
+                   buffers.counts, buffers.units, buffers.ordinals,
+                   structure.sizes});
+    auto load = [&](int64_t which) -> Value {
+      return arith::ExtUIOp::create(
+          at, loc, wide,
+          memref::LoadOp::create(at, loc, structure.sizes,
+                                 ValueRange{createIndex(at, loc, which)}));
+    };
+    auto capacity = [&](Value buffer) -> Value {
+      return arith::IndexCastOp::create(
+          at, loc, wide,
+          memref::DimOp::create(at, loc, buffer, createIndex(at, loc, 0)));
+    };
+    Value places = load(0), blocks = load(2);
+    Value more = arith::OrIOp::create(
+        at, loc,
+        arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ugt, places,
+                              capacity(buffers.order)),
+        arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ugt, blocks,
+                              capacity(buffers.units)));
+    scf::IfOp::create(at, loc, more, [&](OpBuilder &then, Location) {
+      func::CallOp::create(
+          then, loc,
+          getOrDeclare(growGroupsName,
+                       then.getFunctionType({wide, wide, wide}, {})),
+          ValueRange{structure.handle, places, blocks});
+      scf::YieldOp::create(then, loc);
+    });
+    // The runtime keeps the largest use of the blocks, for the log.
+    func::CallOp::create(
+        at, loc,
+        getOrDeclare(noteGroupsName,
+                     at.getFunctionType({wide, wide, wide}, {})),
+        ValueRange{blocks, capacity(buffers.units), load(1)});
+    scf::ConditionOp::create(at, loc, more, ValueRange());
+    Block *after = builder.createBlock(&again.getAfter());
+    OpBuilder close = OpBuilder::atBlockEnd(after);
+    scf::YieldOp::create(close, loc);
+  }
+  builder.setInsertionPointAfter(again);
   func::CallOp::create(
       builder, loc,
       getOrDeclare(countBuildName, builder.getFunctionType({}, {})),
       ValueRange());
-
-  // A buffer that was too small leaves the structure incomplete. Stop.
-  Type wide = builder.getI64Type();
-  auto report = getOrDeclare(reportGroupsOverflowName,
-                             builder.getFunctionType({wide, wide, wide}, {}));
-  Value capacities[] = {structure.places, structure.width,
-                        structure.unitCapacity};
-  for (auto [what, capacity] : llvm::enumerate(capacities)) {
-    Value needed = arith::ExtUIOp::create(
-        builder, loc, wide,
-        memref::LoadOp::create(
-            builder, loc, structure.sizes,
-            ValueRange{createIndex(builder, loc, what)}));
-    Value available = arith::IndexCastOp::create(builder, loc, wide, capacity);
-    Value tooMany = arith::CmpIOp::create(
-        builder, loc, arith::CmpIPredicate::ugt, needed, available);
-    scf::IfOp::create(builder, loc, tooMany, [&](OpBuilder &then, Location) {
-      func::CallOp::create(
-          then, loc, report,
-          ValueRange{arith::ConstantOp::create(
-                         then, loc, wide, then.getI64IntegerAttr(what)),
-                     needed, available});
-      scf::YieldOp::create(then, loc);
-    });
-  }
 
   if (noExcluded) {
     Value plain = memref::MemorySpaceCastOp::create(

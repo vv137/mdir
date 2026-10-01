@@ -363,11 +363,10 @@ SmallVector<Value> kernels::emitGroupPairKernel(
   };
 
   // The unit: its group, and its entries.
-  Value code = memref::LoadOp::create(builder, loc, lists.units,
-                                      ValueRange{unit});
-  Value group = arith::ShRUIOp::create(builder, loc, code,
-                                       constant32(builder, 6));
-  Value k = arith::AndIOp::create(builder, loc, code, constant32(builder, 63));
+  Value group = memref::LoadOp::create(builder, loc, lists.units,
+                                       ValueRange{unit});
+  Value k = memref::LoadOp::create(builder, loc, lists.ordinals,
+                                   ValueRange{unit});
   Value groupIndex = toIndex(builder, group);
   Value count = memref::LoadOp::create(builder, loc, lists.counts,
                                        ValueRange{groupIndex});
@@ -425,7 +424,10 @@ SmallVector<Value> kernels::emitGroupPairKernel(
   for (unsigned i = 0; i != numYields; ++i)
     initial.push_back(createZero(builder, loc, yieldType(i)));
 
-  // The entries, 32 at a time: at most two rounds for a unit of 64.
+  // The entries, 32 at a time: at most two rounds for a unit of 64. The
+  // unit is block `unit` of the entries.
+  Value blockBase = arith::MulIOp::create(builder, loc, unit,
+                                          createIndex(builder, loc, 64));
   Value first = toIndex(builder, begin);
   Value last = toIndex(builder, end);
   Value step32 = createIndex(builder, loc, 32);
@@ -436,12 +438,14 @@ SmallVector<Value> kernels::emitGroupPairKernel(
         Value has = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult,
                                           e, last);
         Value safe = arith::SelectOp::create(b, loc, has, e, first);
-        Value place32 = memref::LoadOp::create(
-            b, loc, lists.entries, ValueRange{groupIndex, safe});
+        // Entry e of the list is entry e - 64 k of the block.
+        Value at = arith::AddIOp::create(
+            b, loc, arith::SubIOp::create(b, loc, safe, first), blockBase);
+        Value place32 =
+            memref::LoadOp::create(b, loc, lists.entries, ValueRange{at});
         Value mask = arith::SelectOp::create(
             b, loc, has,
-            memref::LoadOp::create(b, loc, lists.masks,
-                                   ValueRange{groupIndex, safe}),
+            memref::LoadOp::create(b, loc, lists.masks, ValueRange{at}),
             constant32(b, 0));
         Value place = toIndex(b, place32);
         Value position = loadElement(b, loc, layout.positions, place);

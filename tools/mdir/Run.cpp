@@ -711,6 +711,23 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                  static_cast<long long>(output.numCheckpoints),
                  output.checkpointPath.c_str());
 
+  // How much of the blocks of the lists of groups the builds took.
+  auto readCount = [&](StringRef name) -> int64_t {
+    auto symbol = (*engine)->lookup(name);
+    if (!symbol) {
+      llvm::consumeError(symbol.takeError());
+      return 0;
+    }
+    return reinterpret_cast<int64_t (*)()>(*symbol)();
+  };
+  if (int64_t used = readCount("mdrtGetGroupsBlocks"))
+    std::fprintf(output.log,
+                 "MDIR: the lists of groups took at most %lld of %lld "
+                 "blocks of 64 entries; the longest held %lld\n",
+                 static_cast<long long>(used),
+                 static_cast<long long>(readCount("mdrtGetGroupsCapacity")),
+                 static_cast<long long>(readCount("mdrtGetGroupsLongest")));
+
   // The runtime has counted the builds of the neighbor structures.
   if (auto count = (*engine)->lookup("mdrtGetBuildCount")) {
     auto getCount = reinterpret_cast<int64_t (*)()>(*count);

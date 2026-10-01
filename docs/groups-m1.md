@@ -72,15 +72,22 @@ A bit is cleared for an excluded pair and for an empty place. The build
 may set bits of pairs farther apart than R (Section 5); the loop tests the
 cutoff of each pair.
 
-**Sizes.** The places are at most twice the particles and one chunk (a
-short group leaves at most 63 places of its chunk empty, and a column one
-chunk more). A list holds the entries at later places of the 16 particles
-of its group: for the first groups nearly all their neighbors, whose union
-is about 1.7 times the neighbors of one particle at a reach of 10 Å (a box
-of 2.5 Å at the density of water). The lists hold twice the width of a row
-of the matrix; the first build of JAC with the width of a row found 871
-entries in a list of 736. A build that finds a buffer too small stops the
-run and says which (`mdrtReportGroupsOverflow`).
+**Sizes.** No size is fixed. A list is held in blocks of 64 entries,
+which its group takes from one pool as it fills them (with an atomic
+addition); block b is block `ordinals[b]` of the list of group `units[b]`,
+and a block is the unit of work of the loop. The runtime holds the buffers
+(`mdrtGroupsCreate`, `mdrtGroupsBuffer`) and sizes them from an estimate:
+places for a quarter more than the particles and a chunk, blocks for as
+many entries as a row of the matrix for each group and one block more. A
+build that finds a buffer too small makes it a quarter larger than it
+needs (`mdrtGroupsGrow`) and is made again; the run stops only if the
+device has no memory left. Measured: a fixed list of twice the width of
+a row stopped a run of Cellulose under NPT when one group needed 2521
+entries of 1248, where the longest list is usually 740 to 900; with the
+pool, Cellulose takes at most 153,517 of 280,929 blocks (144 MB for the
+entries and the masks, against 510 MB for the fixed lists), and a run of
+`test/Driver/groups-gpu.test` that starts with almost no room grows its
+buffers and gives the energies of the matrix to every digit.
 
 **Validity.** The build tests distances in f32 against the reach widened
 by 3e-6 of the sum of the edges of the cell, as the build of the matrix

@@ -125,15 +125,16 @@ func.func @run(%length: f64, %reach: f64, %exclude: i1) {
 
   %capacity = arith.muli %count, %c4 : index
   %groups = arith.divui %capacity, %c16 : index
-  %width = arith.constant 1024 : index
   %unit_capacity = arith.muli %groups, %c16 : index
+  %entry_capacity = arith.muli %unit_capacity, %c64 : index
   %xd = gpu.alloc (%count) : memref<?x3xf64, 1>
   %orderd = gpu.alloc (%capacity) : memref<?xi32, 1>
   %placed = gpu.alloc (%count) : memref<?xi32, 1>
-  %entriesd = gpu.alloc (%groups, %width) : memref<?x?xi32, 1>
-  %masksd = gpu.alloc (%groups, %width) : memref<?x?xi32, 1>
+  %entriesd = gpu.alloc (%entry_capacity) : memref<?xi32, 1>
+  %masksd = gpu.alloc (%entry_capacity) : memref<?xi32, 1>
   %countsd = gpu.alloc (%groups) : memref<?xi32, 1>
   %unitsd = gpu.alloc (%unit_capacity) : memref<?xi32, 1>
+  %ordinalsd = gpu.alloc (%unit_capacity) : memref<?xi32, 1>
   %sizes = memref.alloc() : memref<3xi32>
   %t0 = gpu.wait async
   %t1 = gpu.memcpy async [%t0] %xd, %x : memref<?x3xf64, 1>, memref<?x3xf64>
@@ -148,21 +149,28 @@ func.func @run(%length: f64, %reach: f64, %exclude: i1) {
     gpu.wait [%t3]
   }
   func.call @mdrt_gpu_build_neighbors_groups(%xd, %box, %reach, %excludedd,
-      %orderd, %placed, %entriesd, %masksd, %countsd, %unitsd, %sizes)
+      %orderd, %placed, %entriesd, %masksd, %countsd, %unitsd, %ordinalsd,
+      %sizes)
       : (memref<?x3xf64, 1>, vector<3xf64>, f64, memref<?x?xi32, 1>,
-         memref<?xi32, 1>, memref<?xi32, 1>, memref<?x?xi32, 1>,
-         memref<?x?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>,
-         memref<3xi32>) -> ()
+         memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>,
+         memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>,
+         memref<?xi32, 1>, memref<3xi32>) -> ()
   %order = memref.alloc(%capacity) : memref<?xi32>
-  %entries = memref.alloc(%groups, %width) : memref<?x?xi32>
-  %masks = memref.alloc(%groups, %width) : memref<?x?xi32>
+  %entries = memref.alloc(%entry_capacity) : memref<?xi32>
+  %masks = memref.alloc(%entry_capacity) : memref<?xi32>
   %counts = memref.alloc(%groups) : memref<?xi32>
+  %units = memref.alloc(%unit_capacity) : memref<?xi32>
+  %ordinals = memref.alloc(%unit_capacity) : memref<?xi32>
   %t4 = gpu.wait async
   %t5 = gpu.memcpy async [%t4] %order, %orderd : memref<?xi32>, memref<?xi32, 1>
-  %t6 = gpu.memcpy async [%t5] %entries, %entriesd : memref<?x?xi32>, memref<?x?xi32, 1>
-  %t7 = gpu.memcpy async [%t6] %masks, %masksd : memref<?x?xi32>, memref<?x?xi32, 1>
+  %t6 = gpu.memcpy async [%t5] %entries, %entriesd : memref<?xi32>, memref<?xi32, 1>
+  %t7 = gpu.memcpy async [%t6] %masks, %masksd : memref<?xi32>, memref<?xi32, 1>
   %t8 = gpu.memcpy async [%t7] %counts, %countsd : memref<?xi32>, memref<?xi32, 1>
-  gpu.wait [%t8]
+  %t9 = gpu.memcpy async [%t8] %units, %unitsd : memref<?xi32>, memref<?xi32, 1>
+  %t10 = gpu.memcpy async [%t9] %ordinals, %ordinalsd : memref<?xi32>, memref<?xi32, 1>
+  gpu.wait [%t10]
+  %blocks32 = memref.load %sizes[%c2] : memref<3xi32>
+  %blocks = arith.index_cast %blocks32 : i32 to index
 
   %places32 = memref.load %sizes[%c0] : memref<3xi32>
   %places = arith.index_cast %places32 : i32 to index
@@ -189,14 +197,25 @@ func.func @run(%length: f64, %reach: f64, %exclude: i1) {
   %far2 = arith.mulf %far, %far : f64
   %zero32 = arith.constant 0 : i32
   %one32 = arith.constant 1 : i32
-  %bits, %too_far = scf.for %g = %c0 to %used_groups step %c1
+  // The lists, block by block: block b is block ordinals[b] of the list of
+  // group units[b].
+  %bits, %too_far = scf.for %blk = %c0 to %blocks step %c1
       iter_args(%b = %zero, %f = %zero) -> (i64, i64) {
+    %g32 = memref.load %units[%blk] : memref<?xi32>
+    %k32 = memref.load %ordinals[%blk] : memref<?xi32>
+    %g = arith.index_cast %g32 : i32 to index
+    %k = arith.index_cast %k32 : i32 to index
     %n32 = memref.load %counts[%g] : memref<?xi32>
-    %ne = arith.index_cast %n32 : i32 to index
+    %n = arith.index_cast %n32 : i32 to index
+    %k64 = arith.muli %k, %c64 : index
+    %left = arith.subi %n, %k64 : index
+    %ne = arith.minui %left, %c64 : index
+    %blk64 = arith.muli %blk, %c64 : index
     %b1, %f1 = scf.for %e = %c0 to %ne step %c1
         iter_args(%bb = %b, %ff = %f) -> (i64, i64) {
-      %q32 = memref.load %entries[%g, %e] : memref<?x?xi32>
-      %m = memref.load %masks[%g, %e] : memref<?x?xi32>
+      %at = arith.addi %blk64, %e : index
+      %q32 = memref.load %entries[%at] : memref<?xi32>
+      %m = memref.load %masks[%at] : memref<?xi32>
       %q = arith.index_cast %q32 : i32 to index
       %j32 = memref.load %order[%q] : memref<?xi32>
       %j = arith.index_cast %j32 : i32 to index

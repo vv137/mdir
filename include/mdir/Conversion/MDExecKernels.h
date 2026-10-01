@@ -101,16 +101,18 @@ emitPairKernel(mlir::OpBuilder &builder, md_exec::PairForOp op,
                const PairLayout *layout = nullptr);
 
 /// Where a loop over pairs over groups of 16 (D89, docs/groups-m1.md) finds
-/// its work: the lists of the groups (`entries` and `masks`, a row a group,
-/// `counts` entries in each), the units of work (`units`: 64 g + k for the
-/// unit k of group g), and the particle at each place (`order`, -1 at an
-/// empty place). The positions and the fields of `ins` of `layout` are in
+/// its work: the lists of the groups in blocks of 64 entries (`entries` and
+/// `masks`; block b is entries 64 b to 64 b + 63), the number of entries
+/// of each group (`counts`), what each block is (block `ordinals[b]` of the
+/// list of group `units[b]`: a block is a unit of work), and the particle
+/// at each place (`order`, -1 at an empty place). The positions and the fields of `ins` of `layout` are in
 /// the order of the places.
 struct GroupLists {
   mlir::Value entries;
   mlir::Value masks;
   mlir::Value counts;
   mlir::Value units;
+  mlir::Value ordinals;
   mlir::Value order;
 };
 

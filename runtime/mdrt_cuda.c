@@ -674,3 +674,106 @@ void _mlir_ciface_mdrtCudaFFTBackward3DF32(DeviceBuffer1DF32 *complex,
   isPending = 1;
   end(LAUNCH, start);
 }
+
+/*===----------------------------------------------------------------------===
+ * The buffers of a structure of groups of neighbors (D89)
+ *===----------------------------------------------------------------------===*/
+
+/* The buffers that a build of a structure of groups fills, which grow when
+   a build finds them too small: the particle at each place, the number of
+   entries of each group (a group is 16 places), the entries and the masks
+   in blocks of 64, and the group and the number within its list of each
+   block. Compiled code takes a buffer where it uses it
+   (`mdrtGroupsBuffer`), so a buffer that grew is the one it takes. */
+enum {
+  GROUPS_ORDER,
+  GROUPS_COUNTS,
+  GROUPS_ENTRIES,
+  GROUPS_MASKS,
+  GROUPS_UNIT_GROUPS,
+  GROUPS_UNIT_ORDINALS,
+  GROUPS_BUFFERS
+};
+
+struct Groups {
+  void *data[GROUPS_BUFFERS];
+  int64_t places;
+  int64_t blocks;
+};
+
+/* A memref of rank 1 as the C interface of MLIR passes it. */
+struct Buffer1 {
+  void *allocated;
+  void *aligned;
+  int64_t offset;
+  int64_t size;
+  int64_t stride;
+};
+
+static int64_t getGroupsLength(const struct Groups *groups, int which) {
+  switch (which) {
+  case GROUPS_ORDER:
+    return groups->places;
+  case GROUPS_COUNTS:
+    return groups->places / 16;
+  case GROUPS_ENTRIES:
+  case GROUPS_MASKS:
+    return groups->blocks * 64;
+  default:
+    return groups->blocks;
+  }
+}
+
+static void allocateGroups(struct Groups *groups) {
+  for (int which = 0; which != GROUPS_BUFFERS; ++which)
+    groups->data[which] = mgpuMemAlloc(
+        (uint64_t)getGroupsLength(groups, which) * sizeof(int32_t), NULL,
+        false);
+}
+
+static void freeGroups(struct Groups *groups) {
+  for (int which = 0; which != GROUPS_BUFFERS; ++which)
+    mgpuMemFree(groups->data[which], NULL);
+}
+
+/* A structure with room for `places` places (a multiple of 16) and
+   `blocks` blocks. */
+int64_t mdrtGroupsCreate(int64_t places, int64_t blocks) {
+  struct Groups *groups = calloc(1, sizeof(struct Groups));
+  if (!groups) {
+    fprintf(stderr, "mdrt: out of memory of the host\n");
+    abort();
+  }
+  groups->places = (places + 15) / 16 * 16;
+  groups->blocks = blocks > 0 ? blocks : 1;
+  allocateGroups(groups);
+  return (int64_t)(intptr_t)groups;
+}
+
+void _mlir_ciface_mdrtGroupsBuffer(struct Buffer1 *result, int64_t handle,
+                                   int64_t which) {
+  struct Groups *groups = (struct Groups *)(intptr_t)handle;
+  result->allocated = groups->data[which];
+  result->aligned = groups->data[which];
+  result->offset = 0;
+  result->size = getGroupsLength(groups, (int)which);
+  result->stride = 1;
+}
+
+/* Makes room for `places` places and `blocks` blocks, a quarter more than
+   asked, if the structure has less. What the buffers held is lost: the
+   caller builds again. */
+void mdrtGroupsGrow(int64_t handle, int64_t places, int64_t blocks) {
+  struct Groups *groups = (struct Groups *)(intptr_t)handle;
+  if (places <= groups->places && blocks <= groups->blocks)
+    return;
+  /* No kernel may still use the buffers that are freed. */
+  enter();
+  check(cuCtxSynchronize(), "cuCtxSynchronize");
+  freeGroups(groups);
+  if (places > groups->places)
+    groups->places = (places + places / 4 + 15) / 16 * 16;
+  if (blocks > groups->blocks)
+    groups->blocks = blocks + blocks / 4;
+  allocateGroups(groups);
+}
