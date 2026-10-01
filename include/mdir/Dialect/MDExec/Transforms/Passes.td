@@ -356,8 +356,9 @@ def Approximate
                 "loops (fast_math)";
   let description = [{
     The control keyword `fast_math` runs the pass, after
-    `md-exec-assign-precision`. In the kernels of `md_exec.pair_for`,
-    `md_exec.tuple_for`, and `md_exec.particle_for`, in f32:
+    `md-exec-assign-precision`. In the kernels of `md_exec.pair_for` and
+    of `md_exec.tuple_for` over tuples that are not disjoint, the terms of
+    the potential, in f32:
 
     - A division may be approximate (`afn`): on a device it becomes
       `div.approx.f32` or `rcp.approx.f32`, within 2 ulp, instead of the
@@ -381,6 +382,13 @@ def Approximate
       two share it. Beyond 6, erfc(x) < 2.2e-17 and the term does not
       count. A negative argument cannot match, so the rewrite never sees
       one.
+
+    The kernels of loops over particles and of loops over disjoint tuples,
+    the integrators and the constraints, keep their arithmetic: the
+    constraints divide by the masses and solve for their multipliers, and
+    an inverse mass within 2 ulp weighs the members of a group otherwise
+    than the masses that the kicks divide by, which heated JAC by 7 K in
+    2 ns (D112).
 
     In a force of the direct sum of Ewald, the erfc term is a share
     1 / (1 + 2 x²) of the force factor, so the relative error of the force

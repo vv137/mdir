@@ -362,6 +362,31 @@ Comput.* **15**, 84–94 (2019).
 Used for: the mean of the kinetic energies at the step and at the half
 steps, which the temperature takes (D45).
 
+### Jung2026
+
+J. Jung, D. Ugarte La Torre, C. Kobayashi, K. Ozaki, Y. Sugita,
+"Optimized M-SHAKE constraint implementations for GPU-accelerated
+molecular dynamics: Balancing precision and performance across
+architectures," *J. Comput. Chem.* **47**(25), e70492 (2026).
+[doi:10.1002/jcc.70492](https://doi.org/10.1002/jcc.70492)
+
+Used for: the error of the velocities that the rounding of a constraint
+in single precision makes, the change of a step divided by the step, as
+the source of the drift of the energy, and M-SHAKE for the waters in
+mixed precision, whose change is a small number (D112).
+
+### Krautler2001
+
+V. Kräutler, W. F. van Gunsteren, P. H. Hünenberger, "A fast SHAKE
+algorithm to solve distance constraint equations for small molecules in
+molecular dynamics simulations," *J. Comput. Chem.* **22**(5), 501–508
+(2001).
+[doi:10.1002/1096-987X(20010415)22:5<501::AID-JCC1021>3.0.CO;2-V](https://doi.org/10.1002/1096-987X(20010415)22:5%3C501::AID-JCC1021%3E3.0.CO;2-V)
+
+Used for: M-SHAKE, the iterations of Newton on all the bonds of a group
+at once: the groups of SHAKE, and the rigid waters below double
+precision (D112).
+
 ### Laio2002
 
 A. Laio, M. Parrinello, "Escaping free-energy minima," *Proc. Natl. Acad.
@@ -486,7 +511,8 @@ and RATTLE algorithm for rigid water models," *J. Comput. Chem.* **13**,
 952–962 (1992).
 [doi:10.1002/jcc.540130805](https://doi.org/10.1002/jcc.540130805)
 
-Used for: SETTLE, the constraints of rigid water (M1).
+Used for: SETTLE, the constraints of rigid water in double precision
+(M1; below it, M-SHAKE, D112).
 
 ### Moses2020
 

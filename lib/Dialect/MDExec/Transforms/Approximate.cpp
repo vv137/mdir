@@ -136,7 +136,11 @@ public:
   void runOnOperation() final {
     SmallVector<Region *> kernels;
     getOperation()->walk([&](Operation *op) {
-      if (isa<PairForOp, TupleForOp, ParticleForOp>(op))
+      // The terms of the potential only: the integrators and the
+      // constraints keep their arithmetic (D112).
+      if (auto tuple = dyn_cast<TupleForOp>(op); tuple && tuple.getDisjoint())
+        return;
+      if (isa<PairForOp, TupleForOp>(op))
         kernels.push_back(&op->getRegion(0));
     });
     auto isF32 = [](Type type) {

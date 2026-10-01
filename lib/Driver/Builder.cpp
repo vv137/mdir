@@ -205,6 +205,23 @@ private:
   /// iterations of SHAKE [Ryckaert1977].
   void emitShakePositions(StringRef indent, StringRef old, StringRef x,
                           const Program::TupleSet &set, StringRef result);
+  /// A bond of a group of constraints: its members, by their places in the
+  /// tuple, and the argument of the kernel that holds its length.
+  struct ConstrainedBond {
+    unsigned first, second;
+    std::string length;
+  };
+  /// Emits `change`, what bringing the bonds `bonds` of the groups of the
+  /// tuple set `setName` (of `arity` members, with the fields `tuple`) back
+  /// to their lengths along the bonds of `old` adds to the positions `x`,
+  /// by the iterations of Newton of M-SHAKE [Krautler2001].
+  void emitBondConstraints(StringRef indent, StringRef setName,
+                           unsigned arity, llvm::ArrayRef<ConstrainedBond> bonds,
+                           llvm::ArrayRef<std::string> tuple, StringRef old,
+                           StringRef x, StringRef change);
+  /// Emits `result`, the positions `x` plus `change`.
+  void emitAddChange(StringRef indent, StringRef x, StringRef change,
+                     StringRef result);
   /// Emits `result`, the velocities `v` at the positions `x` without their
   /// parts along the bonds of the groups of `set` (RATTLE [Andersen1983]),
   /// and returns the virial `virial` with that of the constraints added, as
@@ -2057,6 +2074,19 @@ std::string Builder::emitSpreadSites(StringRef indent, StringRef x,
 void Builder::emitSettlePositions(StringRef indent, StringRef old,
                                   StringRef x, StringRef change,
                                   StringRef result) {
+  // Below double precision, the three bonds of the water by M-SHAKE: the
+  // positions that SETTLE turns are of the size of the water, and their
+  // rounding in f32 over the change of a step is an error of the
+  // velocities, which heated JAC by 7 K in 2 ns; M-SHAKE carries the
+  // change itself, a small number [Jung2026] (D112).
+  if (control.precision != Precision::Double) {
+    emitBondConstraints(indent, "settles", 3,
+                        {{0, 1, "%vs_doh"}, {0, 2, "%vs_doh"},
+                         {1, 2, "%vs_dhh"}},
+                        {"%f_settles_doh", "%f_settles_dhh"}, old, x, change);
+    emitAddChange(indent, x, change, result);
+    return;
+  }
   std::string inner = (indent + "  ").str();
   // In the frame of the old plane of the water, with the origin at the new
   // center of mass, the new triangle is the rigid one turned by three
@@ -2274,60 +2304,100 @@ void Builder::emitShakePositions(StringRef indent, StringRef old,
                                  StringRef x, const Program::TupleSet &set,
                                  StringRef result) {
   unsigned count = set.arity - 1;
-  std::string inner = (indent + "  ").str();
   std::string change = (result + "_change").str();
-  std::string coordinates, tuple, tupleTypes, arguments;
+  // The bonds of the heavy atom 0 to its hydrogens.
+  std::vector<ConstrainedBond> bonds;
+  std::vector<std::string> tuple;
   for (unsigned k = 1; k <= count; ++k) {
-    coordinates += (k == 1 ? "" : ", ") + ("displacement(" +
-                                           std::to_string(k) + ", 0)");
-    tuple += (k == 1 ? "" : ", ") + ("%f_" + set.name + "_d" +
-                                     std::to_string(k));
-    tupleTypes += (k == 1 ? "" : ", ") + ("!of_" + set.name);
+    bonds.push_back({0, k, "%vs_d" + std::to_string(k)});
+    tuple.push_back("%f_" + set.name + "_d" + std::to_string(k));
+  }
+  emitBondConstraints(indent, set.name, set.arity, bonds, tuple, old, x,
+                      change);
+  emitAddChange(indent, x, change, result);
+}
+
+void Builder::emitAddChange(StringRef indent, StringRef x, StringRef change,
+                            StringRef result) {
+  std::string inner = (indent + "  ").str();
+  os << indent << result << " = md.map_particles gather(" << x << ", "
+     << change << " : !vec, !vec) {\n"
+     << indent << "^bb0(%vs_x: vector<3xf64>, %vs_d: vector<3xf64>):\n"
+     << inner << "%vs_sum = arith.addf %vs_x, %vs_d : vector<3xf64>\n"
+     << inner << "md.yield %vs_sum : vector<3xf64>\n"
+     << indent << "} : !vec\n";
+}
+
+void Builder::emitBondConstraints(StringRef indent, StringRef setName,
+                                  unsigned arity,
+                                  llvm::ArrayRef<ConstrainedBond> bonds,
+                                  llvm::ArrayRef<std::string> tuple, StringRef old,
+                                  StringRef x, StringRef change) {
+  unsigned count = bonds.size();
+  std::string inner = (indent + "  ").str();
+  std::string coordinates, tupleTypes, arguments;
+  for (auto [k, bond] : llvm::enumerate(bonds)) {
+    coordinates += (k == 0 ? "" : ", ") +
+                   ("displacement(" + std::to_string(bond.second) + ", " +
+                    std::to_string(bond.first) + ")");
     arguments += "%vs_r" + std::to_string(k) + ": vector<3xf64>, ";
   }
   for (StringRef field : {"o", "n"})
-    for (unsigned k = 0; k <= count; ++k)
-      arguments += ("%vs_" + field + std::to_string(k) + ": vector<3xf64>, ")
+    for (unsigned j = 0; j != arity; ++j)
+      arguments += ("%vs_" + field + std::to_string(j) + ": vector<3xf64>, ")
                        .str();
-  for (unsigned k = 0; k <= count; ++k)
-    arguments += "%vs_m" + std::to_string(k) + ": f64, ";
-  for (unsigned k = 1; k <= count; ++k)
-    arguments += "%vs_d" + std::to_string(k) + ": f64" +
-                 (k == count ? "" : ", ");
-  os << indent << change << " = md.gather_tuples %r_" << set.name << ", " << x
+  for (unsigned j = 0; j != arity; ++j)
+    arguments += "%vs_m" + std::to_string(j) + ": f64, ";
+  std::string tupleList;
+  for (auto [k, name] : llvm::enumerate(tuple)) {
+    tupleList += (k == 0 ? "" : ", ") + name;
+    tupleTypes += (k == 0 ? "" : ", ") + ("!of_" + setName).str();
+  }
+  // The arguments of the tuple fields: the lengths the bonds name.
+  std::vector<std::string> fieldArguments;
+  for (const ConstrainedBond &bond : bonds)
+    if (!llvm::is_contained(fieldArguments, bond.length))
+      fieldArguments.push_back(bond.length);
+  for (auto [k, name] : llvm::enumerate(fieldArguments))
+    arguments += name + ": f64" +
+                 (k + 1 == fieldArguments.size() ? "" : ", ");
+  os << indent << change << " = md.gather_tuples %r_" << setName << ", " << x
      << ", %cell\n"
      << indent << "    coordinates(" << coordinates << ")\n"
      << indent << "    gather(" << old << ", " << x
      << ", %m : !vec, !vec, !real)\n"
-     << indent << "    tuple(" << tuple << " : " << tupleTypes << ") {\n"
+     << indent << "    tuple(" << tupleList << " : " << tupleTypes << ") {\n"
      << indent << "^bb0(" << arguments << "):\n";
   SiteKernel k(os, inner);
   // The old bonds, in the periods of the new ones.
-  std::vector<std::string> bonds, inverse;
+  std::vector<std::string> olds, inverse;
   std::string one = k.constant(1.0), two = k.constant(2.0);
-  std::string inverseCenter = k.real("divf", one, "%vs_m0");
-  for (unsigned j = 1; j <= count; ++j) {
-    std::string n = std::to_string(j);
-    std::string raw = k.vector("subf", "%vs_n" + n, "%vs_n0");
-    std::string shift = k.vector("subf", "%vs_r" + n, raw);
-    bonds.push_back(k.vector(
-        "addf", k.vector("subf", "%vs_o" + n, "%vs_o0"), shift));
-    inverse.push_back(k.real("divf", one, "%vs_m" + n));
+  for (unsigned j = 0; j != arity; ++j)
+    inverse.push_back(k.real("divf", one, "%vs_m" + std::to_string(j)));
+  for (auto [i, bond] : llvm::enumerate(bonds)) {
+    std::string a = std::to_string(bond.first), b = std::to_string(bond.second);
+    std::string raw = k.vector("subf", "%vs_n" + b, "%vs_n" + a);
+    std::string shift = k.vector("subf", "%vs_r" + std::to_string(i), raw);
+    olds.push_back(k.vector(
+        "addf", k.vector("subf", "%vs_o" + b, "%vs_o" + a), shift));
   }
   std::string zero = k.zero();
-  // The atoms move along the old bonds s_j: the hydrogen j by λ_j s_j / m_j
-  // and the heavy atom by −Σ λ_j s_j / m_0. Each iteration of Newton solves
-  // the constraints linearized at the current bonds r_k exactly,
-  //   Σ_j 2 (r_k · s_j) (δ_kj / m_j + 1 / m_0) λ_j = d_k² − r_k²,
-  // so that the error squares with each iteration whatever the masses; a
-  // relaxation bond by bond shrinks it only by about m_H / m_X, which the
-  // repartitioned masses of hydrogen make close to 1/2.
+  // The members move along the old bonds s_l: for each bond l = (a, b),
+  // b by λ_l s_l / m_b and a by −λ_l s_l / m_a. Each iteration of Newton
+  // solves the constraints linearized at the current bonds r_k exactly,
+  //   Σ_l 2 (r_k · s_l) w_kl λ_l = d_k² − r_k²,
+  // with w_kl what bond l moves bond k by per unit of λ_l s_l: the inverse
+  // mass of each member that the two share, with its sign; the error
+  // squares with each iteration whatever the masses (M-SHAKE
+  // [Krautler2001]). The atoms carry what they moved, small numbers, so
+  // that the change keeps its digits in f32: its rounding becomes an
+  // error of the velocities a step divides by [Jung2026].
   os << inner << "%vs_c0 = arith.constant 0 : index\n"
      << inner << "%vs_c1 = arith.constant 1 : index\n"
      << inner << "%vs_iterations = arith.constant " << shakeIterations
      << " : index\n";
   std::string results, inits, types;
-  for (unsigned j = 0; j <= count; ++j) {
+  for (unsigned j = 0; j != arity; ++j) {
     std::string n = std::to_string(j);
     results += (j == 0 ? "" : ", ") + ("%vs_a" + n);
     inits += (j == 0 ? "" : ", ") + ("%vs_s" + n + " = " + zero);
@@ -2338,45 +2408,61 @@ void Builder::emitShakePositions(StringRef indent, StringRef old,
      << inner << "    iter_args(" << inits << ") -> (" << types << ") {\n";
   SiteKernel l(os, inner + "  ", "%vsl");
   std::vector<std::string> moved;
-  for (unsigned j = 0; j <= count; ++j)
+  for (unsigned j = 0; j != arity; ++j)
     moved.push_back("%vs_s" + std::to_string(j));
   std::vector<std::string> current, error;
-  for (unsigned j = 1; j <= count; ++j) {
-    std::string n = std::to_string(j);
+  for (auto [i, bond] : llvm::enumerate(bonds)) {
     current.push_back(l.vector(
-        "subf", l.vector("addf", "%vs_r" + n, moved[j]), moved[0]));
-    error.push_back(l.real("subf", l.real("mulf", "%vs_d" + n, "%vs_d" + n),
+        "subf",
+        l.vector("addf", "%vs_r" + std::to_string(i), moved[bond.second]),
+        moved[bond.first]));
+    error.push_back(l.real("subf", l.real("mulf", bond.length, bond.length),
                            l.dot(current.back(), current.back())));
   }
+  // w_kl: what bond l moves bond k by, per unit of λ_l s_l: the inverse
+  // masses of the members the two share, with their signs.
+  auto weightOf = [&](const ConstrainedBond &k,
+                      const ConstrainedBond &bond) -> std::string {
+    std::string sum;
+    auto add = [&](bool negative, unsigned j) {
+      if (sum.empty())
+        sum = negative ? l.real("subf", l.constant(0.0), inverse[j])
+                       : inverse[j];
+      else
+        sum = l.real(negative ? "subf" : "addf", sum, inverse[j]);
+    };
+    if (k.second == bond.second)
+      add(false, k.second);
+    if (k.second == bond.first)
+      add(true, k.second);
+    if (k.first == bond.second)
+      add(true, k.first);
+    if (k.first == bond.first)
+      add(false, k.first);
+    return sum.empty() ? l.constant(0.0) : sum;
+  };
   std::vector<std::vector<std::string>> A(count,
                                           std::vector<std::string>(count));
   for (unsigned i = 0; i != count; ++i)
-    for (unsigned j = 0; j != count; ++j) {
-      std::string weight = i == j ? l.real("addf", inverse[j], inverseCenter)
-                                  : inverseCenter;
+    for (unsigned j = 0; j != count; ++j)
       A[i][j] = l.real("mulf", l.real("mulf", two, l.dot(current[i],
-                                                          bonds[j])),
-                       weight);
-    }
+                                                          olds[j])),
+                       weightOf(bonds[i], bonds[j]));
   std::vector<std::string> lambda = emitSmallSolve(l, A, error);
-  for (unsigned j = 1; j <= count; ++j) {
-    std::string push = l.scale(lambda[j - 1], bonds[j - 1]);
-    moved[j] = l.vector("addf", moved[j], l.scale(inverse[j - 1], push));
-    moved[0] = l.vector("subf", moved[0], l.scale(inverseCenter, push));
+  for (auto [j, bond] : llvm::enumerate(bonds)) {
+    std::string push = l.scale(lambda[j], olds[j]);
+    moved[bond.second] = l.vector("addf", moved[bond.second],
+                                  l.scale(inverse[bond.second], push));
+    moved[bond.first] = l.vector("subf", moved[bond.first],
+                                 l.scale(inverse[bond.first], push));
   }
   std::string yielded;
-  for (unsigned j = 0; j <= count; ++j)
+  for (unsigned j = 0; j != arity; ++j)
     yielded += (j == 0 ? "" : ", ") + moved[j];
   os << inner << "  scf.yield " << yielded << " : " << types << "\n"
      << inner << "}\n"
      << inner << "md.yield " << results << " : " << types << "\n"
-     << indent << "} : !rel_" << set.name << ", !vec -> !vec\n";
-  os << indent << result << " = md.map_particles gather(" << x << ", "
-     << change << " : !vec, !vec) {\n"
-     << indent << "^bb0(%vs_x: vector<3xf64>, %vs_d: vector<3xf64>):\n"
-     << inner << "%vs_sum = arith.addf %vs_x, %vs_d : vector<3xf64>\n"
-     << inner << "md.yield %vs_sum : vector<3xf64>\n"
-     << indent << "} : !vec\n";
+     << indent << "} : !rel_" << setName << ", !vec -> !vec\n";
 }
 
 std::string Builder::emitShakeVelocities(StringRef indent, StringRef x,
