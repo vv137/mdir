@@ -15,6 +15,7 @@ configure_file(
   @ONLY)
 
 add_mlir_conversion_library(MDIRMDExecToLoops
+  HoistAllocas.cpp
   MDExecToLoops.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/Templates.cpp
 
@@ -32,6 +33,7 @@ add_mlir_conversion_library(MDIRMDExecToLoops
   MLIRArithDialect
   MLIRFuncDialect
   MLIRIR
+  MLIRLLVMDialect
   MLIRMathDialect
   MLIRMemRefDialect
   MLIRParser

@@ -75,6 +75,26 @@ def ConvertMDExecToLoops
                            "::mlir::vector::VectorDialect"];
 }
 
+def HoistStaticAllocas : Pass<"hoist-static-allocas", "::mlir::ModuleOp"> {
+  let summary = "Moves the allocas of a constant size outside the regions "
+                "of OpenMP to the entry of their function";
+  let description = [{
+    `convert-scf-to-openmp` makes each variable of a reduction an
+    `llvm.alloca` where the parallel loop is, inside a `memref.alloca_scope`
+    that `canonicalize` inlines, since `convert-scf-to-cf` would otherwise
+    leave the scope with more than one block. Inside the loop of the steps
+    the stack then grows at every reduction until it ends: a run on the CPU
+    grew it by 22 bytes a step and overflowed its 8 MB after some 300,000
+    steps (D117). The pass moves every `llvm.alloca` whose size is a
+    constant, and that is not inside an op of OpenMP (whose regions become
+    functions of their own, with an alloca for each thread), to the start
+    of the entry block of its function, where it is allocated once. The
+    variable of a reduction is live within one iteration of the loops
+    around it, so one place serves every iteration.
+  }];
+  let dependentDialects = ["::mlir::LLVM::LLVMDialect"];
+}
+
 def ConvertMDExecToGPU
     : Pass<"convert-md-exec-to-gpu", "::mlir::ModuleOp"> {
   let summary = "Converts md_exec loops in the storage form to GPU kernels";

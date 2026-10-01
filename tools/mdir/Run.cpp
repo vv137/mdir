@@ -100,7 +100,7 @@ static std::string getPipeline(const Control &control,
   os << "md-exec-assign-storage,convert-md-exec-to-loops,";
   bool threaded = control.threads > 1;
   if (threaded)
-    os << "convert-scf-to-openmp,canonicalize,";
+    os << "convert-scf-to-openmp,hoist-static-allocas,canonicalize,";
   os << "convert-scf-to-cf,convert-math-to-llvm,convert-math-to-libm,"
      << "convert-vector-to-llvm,expand-strided-metadata,"
      << "finalize-memref-to-llvm,convert-arith-to-llvm,"

@@ -16,6 +16,9 @@ class FuncDialect;
 namespace gpu {
 class GPUDialect;
 } // namespace gpu
+namespace LLVM {
+class LLVMDialect;
+} // namespace LLVM
 namespace memref {
 class MemRefDialect;
 } // namespace memref

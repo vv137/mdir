@@ -259,7 +259,9 @@ f64, and tables go to the device in f32 when their kernels are f32.
 CPU, with `scf.parallel` where iterations are independent; with more than
 one thread, `convert-scf-to-openmp` makes them OpenMP. A global sum is
 the reduction of its `scf.parallel`, which OpenMP combines from partial
-sums per thread. `convert-md-exec-to-gpu` lowers
+sums per thread; the variable of each reduction is an alloca, which
+`hoist-static-allocas` moves to the entry of the function so that the loop
+of the steps does not grow the stack (D117). `convert-md-exec-to-gpu` lowers
 to kernels of the `gpu` dialect (Section 8), and the upstream
 `gpu-lower-to-nvvm-pipeline` outlines them, lowers them to NVVM, links
 libdevice, and embeds PTX in the module.
