@@ -42,9 +42,12 @@ and halo exchange for portable performance.
 **Differentiable and compiled frameworks.** JAX MD [[Schoenholz2020]](references.md#schoenholz2020)
 expresses molecular dynamics in JAX and obtains forces by automatic
 differentiation of the energy; Enzyme [[Moses2020]](references.md#moses2020) differentiates at the
-level of LLVM IR. MDIR differentiates in its own dialect (Section 3.3),
-where the derivative of a sum over pairs or tuples is again a gather over
-the same relation and carries an exchange contract that later passes use.
+level of LLVM IR, and on MLIR, where an activity analysis proved sound as
+an abstract interpretation finds the operations that do not contribute to
+a derivative [[Peng2025]](references.md#peng2025). MDIR differentiates in its own dialect (Section
+3.3), where the derivative of a sum over pairs or tuples is again a gather
+over the same relation and carries an exchange contract that later passes
+use.
 
 **Compilers on MLIR.** MLIR [[Lattner2021]](references.md#lattner2021) provides the infrastructure of
 dialects, passes, and lowerings that MDIR is built on. Reactant.jl
@@ -54,12 +57,19 @@ TPUs through XLA; FFTc [[He2024]](references.md#he2024) is a language for fast F
 transforms on dialects of MLIR, which vectorizes them on CPUs to the
 performance of FFTW and ports them to NVIDIA GPUs. MDIR calls cuFFT and
 pocketfft for the transforms of PME, which such a dialect could replace.
+LAPIS [[Kelley2025]](references.md#kelley2025) lowers sparse and dense linear algebra on MLIR to
+Kokkos for performance portability; MDIR lowers to LLVM and NVVM itself.
 MDIR contributes dialects whose objects are those of molecular dynamics
 rather than tensors or loops.
 
 **Learned potentials.** chemtrain-deploy [[Fuchs2025]](references.md#fuchs2025) runs any
 semi-local potential defined in JAX inside LAMMPS, on several GPUs and
 for millions of atoms, and was validated with MACE, Allegro, and PaiNN.
+Libraries and engines built around learned potentials, such as mlip
+[[Brunken2025]](references.md#brunken2025), which trains MACE, NequIP, and ViSNet and runs them
+through ASE and JAX MD, and MDcraft [[Galtsov2025]](references.md#galtsov2025), an engine with a core
+in C++, a Python interface, and MPI, take the step from an existing engine
+or write it in their own code around the model.
 Strictly local equivariant potentials such as
 Allegro [[Musaelian2023]](references.md#musaelian2023), and message-passing potentials whose features
 cross the boundaries of domains at each layer, as in [[Park2024]](references.md#park2024), set the

@@ -68,6 +68,13 @@ G. E. P. Box, M. E. Muller, "A note on the generation of random normal
 deviates," *Ann. Math. Stat.* **29**, 610–611 (1958).
 [doi:10.1214/aoms/1177706645](https://doi.org/10.1214/aoms/1177706645)
 
+### Brunken2025
+
+C. Brunken, O. Peltre, H. Chomet, et al., "Machine learning interatomic
+potentials: library for efficient training, model development and
+simulation of molecular systems," arXiv:2505.22397 (2025).
+[doi:10.48550/arXiv.2505.22397](https://doi.org/10.48550/arXiv.2505.22397)
+
 ### Bussi2007
 
 G. Bussi, D. Donadio, M. Parrinello, "Canonical sampling through velocity
@@ -114,6 +121,14 @@ P. Fuchs, W. Chen, S. Thaler, J. Zavadlav, "chemtrain-deploy: A parallel
 and scalable framework for machine learning potentials in million-atom
 MD simulations," *J. Chem. Theory Comput.* **21**(15), 7550–7560 (2025).
 [doi:10.1021/acs.jctc.5c00996](https://doi.org/10.1021/acs.jctc.5c00996)
+
+### Galtsov2025
+
+I. S. Galtsov, R. V. Muratov, G. V. Vyskvarko, S. A. Murzov, S. A.
+Dyachkov, P. R. Levashov, "MDcraft -- a modern molecular dynamics
+simulation package with machine learning potentials support,"
+arXiv:2511.22951 (2025).
+[doi:10.48550/arXiv.2511.22951](https://doi.org/10.48550/arXiv.2511.22951)
 
 ### Gratl2022
 
@@ -177,6 +192,12 @@ J. Jung, D. Ugarte La Torre, C. Kobayashi, K. Ozaki, Y. Sugita,
 molecular dynamics: Balancing precision and performance across
 architectures," *J. Comput. Chem.* **47**(25), e70492 (2026).
 [doi:10.1002/jcc.70492](https://doi.org/10.1002/jcc.70492)
+
+### Kelley2025
+
+B. Kelley, S. Rajamanickam, "LAPIS: A performance portable, high
+productivity compiler framework," arXiv:2509.25605 (2025).
+[doi:10.48550/arXiv.2509.25605](https://doi.org/10.48550/arXiv.2509.25605)
 
 ### Krautler2001
 
@@ -272,6 +293,13 @@ Y. Park, J. Kim, S. Hwang, S. Han, "Scalable parallel algorithm for graph
 neural network interatomic potentials in molecular dynamics
 simulations," *J. Chem. Theory Comput.* **20**, 4857–4868 (2024).
 [doi:10.1021/acs.jctc.4c00190](https://doi.org/10.1021/acs.jctc.4c00190)
+
+### Peng2025
+
+M. J. Peng, W. S. Moses, O. Zinenko, C. Dubach, "Sound and modular
+activity analysis for automatic differentiation in MLIR," *Proc. ACM
+Program. Lang.* **9**(OOPSLA2), 2087–2114 (2025).
+[doi:10.1145/3763125](https://doi.org/10.1145/3763125)
 
 ### Quentrec1973
 

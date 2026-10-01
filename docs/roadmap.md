@@ -1,6 +1,6 @@
 # Roadmap
 
-Status: 2026-09-30. The stages of the first milestone are in
+Status: 2026-10-02. The stages of the first milestone are in
 [design-m1.md](design-m1.md), Section 18; the principles that the work
 follows are in [principles.md](principles.md).
 
@@ -26,10 +26,11 @@ follows are in [principles.md](principles.md).
 | M1f | The terms and dynamics of the intermediate stage against AmberTools and GROMACS |
 | M1k | The Amber suite against pmemd.cuda (published) and GROMACS 2026.3 with CUDA, on an RTX 3090: energies term by term against sander at the start, conservation and ensembles over runs, and rates |
 | Integrators | Done: leapfrog does what velocity Verlet does: constraints (SHAKE, SETTLE), virtual sites, the thermostats, the barostat, restraints (D76) |
-| Comparison on a protein | TODO: a protein of moderate size with ff19SB in OPC water (the target of D65, or larger), converted with ParmEd, run by GROMACS with CUDA and by MDIR: rates and agreement of the terms |
+| Comparison on a protein | Done (2026-10-02, `scripts/validation/protein`): ubiquitin in 5700 OPC waters with amber19sb.ff from `pdb2gmx` (ParmEd collapsed the 13 residue-specific maps of CMAP into one and was set aside). The terms agree with a rerun of GROMACS 2026.3 to 1.7e-6 each, Coulomb to 1.9e-6 against its tabulated kernels; the reader now puts the atoms of dihedrals in the order of LEaP, as grompp does. MDIR's rate is 72% of GROMACS's at constant energy and 65% at constant pressure: its loop over pairs is as fast and its PME faster, and the rest of the step runs in series on the device (white paper, Section 10.6) |
+| The rest of the step against GROMACS | TODO: the 123 µs a step of loops over particles and tuples and of builds and prunings, and the 48 µs of the host between launches, which GROMACS runs beside its nonbonded kernel or on the host (fewer launches, CUDA graphs or the decision to rebuild on the device, work beside the loop over pairs) |
 | Performance | Done: PME in `f32` (D78), positions converted once (D79), valid structures across scalings (D80), PME on a second stream (D81, off by default; D87 checks what runs beside it), the groups of the constraints as a disjoint union run at once (D83). Next: one kernel for the kick, drift, and constraints of each group; effect summaries of loops; host synchronization moved to the device (the test of validity and the decision to rebuild, one copy to the host per step now); CUDA graphs; the tile structure (D82, [tiles-m1.md](tiles-m1.md)), stages T1 to T4 |
 
-| Barostat integrators | Done: the strain stepped in $\lambda = \sqrt V$ (eq. S7 of [[Bernetti2020]](references.md#bernetti2020)), which makes the exact work of D77 the paper's reversible integrator. Done: its Trotter integrator (SI Sec. V.C), the default, which needs no evaluation after a scaling (D92). Next: its effective energy (eq. S11) as a diagnostic, which with rigid groups needs the pressure of the same definition before and after a scaling; the ensemble test of two pressures (SI Fig. S6) for the white paper |
+| Barostat integrators | Done: the strain stepped in $\lambda = \sqrt V$ (eq. S7 of [[Bernetti2020]](references.md#bernetti2020)), which makes the exact work of D77 the paper's reversible integrator. Done: its Trotter integrator (SI Sec. V.C), the default, which needs no evaluation after a scaling (D92). The count of its work takes the virial of the groups of the evaluations (D116), which removed a drift of −230 kcal/mol/ns with rigid groups. Done: the ensemble test of two pressures (white paper, Section 9.5). Next: its effective energy (eq. S11) as a diagnostic, which the virial of the groups of D116 now defines the same before and after a scaling |
 | CHARMM force fields (later) | For CHARMM36 lipids and proteins: the switch of the Lennard-Jones force from 10 to 12 Å in runs from a topology, Urey–Bradley angles (function 5 of GROMACS), and NBFIX pairs |
 | PME grid axes | TODO: the longest edge as the contiguous axis of the grid, along which the real-to-complex transform runs: cuFFT on an RTX 3090 takes 277 µs for the pair of transforms of 126 × 126 × 270 against 292 for 270 × 126 × 126 (Cellulose; 255 against 275 for 128 × 128 × 256). The spreading, the weights, the tables of D104, the products, and the gathering then take the axes permuted; nothing for a cubic cell (STMV) |
 | Dual pair lists | Done (D114): an outer list of groups with a skin of 3 Å and an inner one pruned from it with 0.6 to 1 Å, whenever its test asks; 4 to 8 % on the Amber suite |
@@ -47,7 +48,10 @@ which is an item of its own.) On 2026-09-30, MDIR against pmemd.cuda:
 JAC 84–85% (NVE), 63–64% (NPT); FactorIX 60%, 47%; Cellulose 49%, 40%;
 STMV 38%.
 
-The rates of the first comparison (2026-09-30, ns/day, RTX 3090):
+The goal was reached on 2026-10-02 (D114): MDIR runs every system of the
+suite at 102% to 127% of the rate of pmemd.cuda (white paper, Table 10.2).
+The rates of the first comparison, kept for the record (2026-09-30,
+ns/day, RTX 3090):
 
 | System | Atoms | MDIR | GROMACS (CUDA) | pmemd.cuda (published) |
 |---|---|---|---|---|
@@ -62,7 +66,7 @@ The rates of the first comparison (2026-09-30, ns/day, RTX 3090):
 | Item | State |
 |---|---|
 | Equations in the Markdown documents written in TeX (`$...$`, `$$...$$`, which GitHub renders) instead of Unicode text | Done (2026-10-02): the equations of every document of `docs/` are TeX; numbers, units, and the sizes of grids and tiles stay as text |
-| A guide for contributors: building, the layers of the IR and where a feature goes, adding a term, a pass, or a lowering, the tiers of tests and the tools of debugging, the principles, how a change is reviewed | Done in the white paper (Appendix B of `docs/paper/`); to do as `CONTRIBUTING.md` |
+| A guide for contributors: building, the layers of the IR and where a feature goes, adding a term, a pass, or a lowering, the tiers of tests and the tools of debugging, the principles, how a change is reviewed | Done: Appendix B of the white paper, and `CONTRIBUTING.md` at the root |
 
 ## 3. White paper, after the first milestone
 
@@ -71,8 +75,9 @@ when the milestone ends and the rates reach those of pmemd.cuda across the
 systems. *Written 2026-10-02:* [docs/paper/](paper/README.md), in
 Markdown with equations in TeX, built as a PDF with pandoc and tectonic
 (`scripts/paper/build-pdf.sh`); a change to a method, an algorithm, or an
-implementation updates it. The performance is measured against
-pmemd.cuda only (the user, 2026-10-01). The outline:
+implementation updates it. The performance of the suite is measured
+against pmemd.cuda (the user, 2026-10-01); the comparison on a protein
+(Section 10.6) is against GROMACS. The outline:
 
 - A section of notation at the front (Done, Section 2): the symbols of positions,
   cells, images and their shifts, forces, the virial and its sign, units,
@@ -99,29 +104,19 @@ pmemd.cuda only (the user, 2026-10-01). The outline:
 - The way from double to mixed precision (Done, Section 7): what stays in `f64` and
   why (the differences of positions, D75; the sums), what moved to `f32`
   (the kernels of pairs, PME), and what each step cost and gained.
-- Related work (Done in part, Section 11: chemtrain-deploy, JAX MD,
-  Reactant.jl, and FFTc, each read at its source; the rest of the list
-  below is not yet checked): compilers and MLIR in molecular dynamics.
-  To look up, read at the source, and verify before any claim is cited
-  (the list came from a summary whose claims and links are unchecked; some
-  links did not match their topics):
-  - chemtrain-deploy (arXiv 2506.04055): JAX potentials (MACE, Allegro,
-    PaiNN) exported as StableHLO and run inside LAMMPS through XLA/PJRT
-    on many GPUs.
-  - JAX-MD: differentiable MD in JAX, compiled by XLA (through StableHLO).
-  - Reactant.jl with EnzymeMLIR: Julia code traced to MLIR, with automatic
-    differentiation at the level of MLIR (Enzyme).
-  - FFTc (doi:10.1007/978-3-031-50684-0_16; arXiv 2308.00497): an MLIR
-    dialect for FFTs, generating kernels for the hardware; bears on the
-    transforms of PME, for which MDIR calls cuFFT.
-  - Lapis, MLIR-AIR, SODA-OPT: sparse linear algebra and hardware co-design
-    on MLIR; whether any concerns neighbor lists or MD is to be checked.
-  - Also given without titles: arXiv 2505.22397, 2511.22951;
-    doi:10.1145/3763125; DiVA diva2:1757681.
-  The point to make, if the sources bear it out: these compile potentials
-  or tensor programs (mostly machine-learned) through general ML
-  compilers, while MDIR has dialects of MD itself (particle sets, neighbor
-  structures, tuples, integrators) and lowers the whole step.
+- Related work (Done, Section 11): every source of the list that the
+  outline began with was read at its source on 2026-10-02.
+  chemtrain-deploy, JAX MD, Reactant.jl, FFTc (also diva2:1757681),
+  LAPIS (arXiv 2509.25605), the activity analysis of automatic
+  differentiation on MLIR (doi:10.1145/3763125), mlip (arXiv 2505.22397),
+  and MDcraft (arXiv 2511.22951) are cited. MLIR-AIR (arXiv 2510.14871,
+  AI workloads on AMD NPUs) and SODA-OPT (high-level synthesis) target
+  spatial hardware and concern neither neighbor lists nor molecular
+  dynamics; they are not cited. The point the sources bear out: these
+  compile tensor programs, linear algebra, or potentials, or wrap learned
+  potentials in an engine, while MDIR has dialects of molecular dynamics
+  itself (particle sets, neighbor structures, tuples, integrators) and
+  lowers the whole step.
 - The principles of development and the defects that led to them.
 - A manual of the control file (Done, Appendix A, checked by
   `scripts/paper/check-appendix.sh`): every table and keyword, its

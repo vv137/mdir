@@ -1,6 +1,6 @@
 # References
 
-Last updated: 2026-09-30.
+Last updated: 2026-10-02.
 
 This document lists the literature behind the methods, algorithms,
 derivations, force fields, and formats that the MDIR documentation and
@@ -134,6 +134,16 @@ deviates," *Ann. Math. Stat.* **29**, 610–611 (1958).
 Used for: normal deviates from uniform ones, for the initial velocities
 and the thermostat.
 
+### Brunken2025
+
+C. Brunken, O. Peltre, H. Chomet, et al., "Machine learning interatomic
+potentials: library for efficient training, model development and
+simulation of molecular systems," arXiv:2505.22397 (2025).
+[doi:10.48550/arXiv.2505.22397](https://doi.org/10.48550/arXiv.2505.22397)
+
+Used for: related work, a library of learned potentials (MACE, NequIP,
+ViSNet) with wrappers for ASE and JAX MD.
+
 ### Bussi2007
 
 G. Bussi, D. Donadio, M. Parrinello, "Canonical sampling through velocity
@@ -249,6 +259,17 @@ Application to protein structure prediction," *J. Chem. Phys.* **116**,
 [doi:10.1063/1.1472510](https://doi.org/10.1063/1.1472510)
 
 Used for: Hamiltonian replica exchange, a protocol of `ensemble`.
+
+### Galtsov2025
+
+I. S. Galtsov, R. V. Muratov, G. V. Vyskvarko, S. A. Murzov, S. A.
+Dyachkov, P. R. Levashov, "MDcraft -- a modern molecular dynamics
+simulation package with machine learning potentials support,"
+arXiv:2511.22951 (2025).
+[doi:10.48550/arXiv.2511.22951](https://doi.org/10.48550/arXiv.2511.22951)
+
+Used for: related work, an engine with a Python interface over a core in
+C++, parallel with MPI, that runs learned potentials.
 
 ### Gratl2022
 
@@ -395,6 +416,15 @@ Used for: the error of the velocities that the rounding of a constraint
 in single precision makes, the change of a step divided by the step, as
 the source of the drift of the energy, and M-SHAKE for the waters in
 mixed precision, whose change is a small number (D112).
+
+### Kelley2025
+
+B. Kelley, S. Rajamanickam, "LAPIS: A performance portable, high
+productivity compiler framework," arXiv:2509.25605 (2025).
+[doi:10.48550/arXiv.2509.25605](https://doi.org/10.48550/arXiv.2509.25605)
+
+Used for: related work, a compiler on MLIR for sparse and dense linear
+algebra that emits Kokkos.
 
 ### Krautler2001
 
@@ -600,6 +630,16 @@ simulations," *J. Chem. Theory Comput.* **20**, 4857–4868 (2024).
 
 Used for: SevenNet, the example of a message-passing learned potential
 with per-layer communication.
+
+### Peng2025
+
+M. J. Peng, W. S. Moses, O. Zinenko, C. Dubach, "Sound and modular
+activity analysis for automatic differentiation in MLIR," *Proc. ACM
+Program. Lang.* **9**(OOPSLA2), 2087–2114 (2025).
+[doi:10.1145/3763125](https://doi.org/10.1145/3763125)
+
+Used for: related work, an activity analysis for automatic
+differentiation on MLIR, proved sound as an abstract interpretation.
 
 ### Quentrec1973
 

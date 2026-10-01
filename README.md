@@ -1,11 +1,19 @@
 # MDIR
 
 MDIR is an MLIR-based compiler stack for general-purpose molecular dynamics.
-It is at an early stage. A Lennard-Jones system compiles and runs on the
-CPU, sequentially or with OpenMP, and on NVIDIA GPUs, in single, mixed, or
-double precision, and reproduces reference values. A driver reads a control
-file and writes a log, a trajectory, and checkpoints, from which a run
-continues exactly.
+It compiles each run before it runs: the potential, the integrator, the
+constraints, and the couplings are written in dialects of molecular
+dynamics, differentiated, fused, given a precision, and lowered to the CPU
+with OpenMP or to NVIDIA GPUs, specialized to the system at hand. The first
+milestone runs all-atom systems from Amber (`prmtop`) and GROMACS (`top`,
+`itp`, `gro`) topologies: bonded terms with CMAP, Lennard-Jones with the
+correction for the dispersion, particle mesh Ewald, SHAKE and SETTLE,
+virtual sites, restraints, stochastic velocity rescaling, and stochastic
+cell rescaling, in single, mixed, or double precision. On an RTX 3090 it
+runs every system of the Amber GPU benchmark suite at 102% to 127% of the
+rate of pmemd.cuda. A driver reads a control file and writes a log, a
+trajectory, and checkpoints, from which a run continues exactly. The white
+paper of the first milestone is in [docs/paper/](docs/paper/README.md).
 
 ## Documents
 
@@ -17,7 +25,9 @@ continues exactly.
 | [docs/mdrt-m0.md](docs/mdrt-m0.md) | Proposal for the runtime and execution of the first milestone |
 | [docs/driver-m0.md](docs/driver-m0.md) | The driver and its control file |
 | [docs/neighbors-m0.md](docs/neighbors-m0.md) | How neighbor structures are built and kept valid, with measurements |
-| [docs/design-m1.md](docs/design-m1.md) | Proposal for the second milestone: bonded terms, exclusions, thermostat, barostat |
+| [docs/design-m1.md](docs/design-m1.md) | The design of the first milestone: bonded terms, exclusions, PME, constraints, virtual sites, thermostat, barostat, and their validation |
+| [docs/paper/](docs/paper/README.md) | The white paper of the first milestone, with derivations and measurements (`scripts/paper/build-pdf.sh` builds the PDF) |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to build, test, and change MDIR |
 | [docs/decisions.md](docs/decisions.md) | Decisions and their status |
 | [docs/principles.md](docs/principles.md) | Principles of development, from the defects that taught them |
 | [docs/roadmap.md](docs/roadmap.md) | What comes next: robustness, the rest of the first milestone, the white paper |
@@ -32,7 +42,7 @@ continues exactly.
 - LLVM and MLIR 23.1.2, built with `scripts/build-llvm.sh`
 - `lit`, for the tests (`pip install lit`)
 - For NVIDIA GPUs: the driver, and the CUDA toolkit for its header and its
-  device math library. Version 11.2 is known to work.
+  device math library. Versions 11.2 and 13.x are known to work.
 - For checkpoints: HDF5, built with `scripts/build-hdf5.sh`
 
 ## Building LLVM
@@ -108,6 +118,9 @@ build/bin/mdir-opt test/Dialect/MD/ops.mlir
 | `--md-exec-assign-storage` | Gives every field a buffer and converts the loops to the storage form, in which they update buffers where they are. With `memory=device` the buffers are on a GPU. |
 | `--convert-md-exec-to-loops` | Converts the loops in the storage form to `scf` loops over `memref`s. |
 | `--convert-md-exec-to-gpu` | Converts the loops in the storage form, with buffers on a device, to kernels of the upstream `gpu` dialect. |
+
+The table names the passes of the semantic levels; `mdir emit FILE
+--stage=pipeline` prints the whole pipeline that a run takes.
 
 After the last pass the module holds only upstream dialects, so `mlir-opt`
 lowers it to LLVM and `mlir-runner` runs it:

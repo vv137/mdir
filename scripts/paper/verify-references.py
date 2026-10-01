@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Checks every entry of docs/references.md that has a DOI against its
-Crossref record (DataCite for Zenodo DOIs): the title, the year, the
+Crossref record (DataCite for Zenodo and arXiv DOIs): the title, the year, the
 surname of the first author, the volume, and the first page. Prints one
 line for each entry, OK or what differs, and a summary.
 
@@ -45,7 +45,8 @@ def fetch(url):
 def record(doi):
     """Title, year, first family name, volume, first page of `doi`."""
     quoted = urllib.parse.quote(doi, safe="")
-    if doi.lower().startswith("10.5281/"):
+    # Zenodo and arXiv register their DOIs with DataCite.
+    if doi.lower().startswith(("10.5281/", "10.48550/")):
         data = fetch(f"https://api.datacite.org/dois/{quoted}")["data"]
         attributes = data["attributes"]
         creators = attributes.get("creators") or [{}]
