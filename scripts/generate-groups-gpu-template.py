@@ -786,6 +786,20 @@ scf.if %real_group {{
     sort_partners(inner, 256)
     b(indent(inner.text(), 2).rstrip("\n"))
     b(f"""\
+  // The range of the places of the partners: a candidate outside it has no
+  // excluded pair with the group, and is not searched for.
+  %has_partners = arith.cmpi ne, %np, %c0w : index
+  %np_last0 = arith.subi %np, %c1w : index
+  %np_last = arith.select %has_partners, %np_last0, %c0w : index
+  %pmin_at = arith.addi %pbase, %c0w : index
+  %pmax_at = arith.addi %pbase, %np_last : index
+  %pmin_key = memref.load %partners[%pmin_at] : memref<1024xi32, {WG}>
+  %pmax_key = memref.load %partners[%pmax_at] : memref<1024xi32, {WG}>
+  %four_p = arith.constant 4 : i32
+  %pmin = arith.shrsi %pmin_key, %four_p : i32
+  %pmax0 = arith.shrsi %pmax_key, %four_p : i32
+  %none_max = arith.constant -1 : i32
+  %pmax = arith.select %has_partners, %pmax0, %none_max : i32
   // The cells of the grid within the reach of the box.
   %ecx = arith.addf %hx, %freach : f32
   %ecy = arith.addf %hy, %freach : f32
@@ -1012,7 +1026,11 @@ scf.if %real_group {{
                 }}
                 // The excluded pairs: a binary search among the sorted
                 // partners for the first at the place q.
-                %any = arith.cmpi ne, %m, %zero_i : i32
+                %any_bits = arith.cmpi ne, %m, %zero_i : i32
+                %from_min = arith.cmpi sge, %q, %pmin : i32
+                %to_max = arith.cmpi sle, %q, %pmax : i32
+                %in_range = arith.andi %from_min, %to_max : i1
+                %any = arith.andi %any_bits, %in_range : i1
                 %mex = scf.if %any -> (i32) {{
                   %four = arith.constant 4 : i32
                   %lo_r, %hi_r = scf.while (%lo = %c0w, %hi = %np) : (index, index) -> (index, index) {{
@@ -1280,7 +1298,11 @@ scf.if %real_group {{
                 }}
                 // The excluded pairs: a binary search among the sorted
                 // partners for the first at the place q.
-                %any = arith.cmpi ne, %m, %zero_i : i32
+                %any_bits = arith.cmpi ne, %m, %zero_i : i32
+                %from_min = arith.cmpi sge, %q, %pmin : i32
+                %to_max = arith.cmpi sle, %q, %pmax : i32
+                %in_range = arith.andi %from_min, %to_max : i1
+                %any = arith.andi %any_bits, %in_range : i1
                 %mex = scf.if %any -> (i32) {{
                   %four = arith.constant 4 : i32
                   %lo_r, %hi_r = scf.while (%lo = %c0w, %hi = %np) : (index, index) -> (index, index) {{
