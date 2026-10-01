@@ -994,13 +994,18 @@ list (`verlet-buffer-tolerance` 0.005 kJ/mol/ps per atom):
 
 | Ensemble | MDIR, ns/day | GROMACS, ns/day | MDIR / GROMACS | Energy changed by: MDIR | GROMACS |
 |---|---|---|---|---|---|
-| NVE | 583.6 | 805.6 with nstlist 80; 689.7 with the nstlist 10 that it keeps at constant energy | 72% | 4.2e-5 | 1.4e-4 |
-| NPT | 551.7 | 851.5; 771.8 at a tolerance of 5e-5 | 65% | 4.4e-5 (conserved energy) | 6.2e-3 (conserved energy; 5.3e-3 to 6.9e-3 at tolerances of 5e-4 and 5e-5) |
+| NVE | 585.1 ± 0.6 | 842.0 ± 2.2 with nstlist 80; 689.7 with the nstlist 10 that it keeps at constant energy | 69.5 ± 0.2% | 1.3e-5 to 6.0e-5 | 1.0e-4 to 1.4e-4 |
+| NPT | 549.2 ± 0.4 | 862.8 ± 3.4; 771.8 at a tolerance of 5e-5 | 63.6 ± 0.2% | 6.2e-5 to 1.4e-4 (conserved energy) | 6.5e-3 to 7.2e-3 (conserved energy; 5.3e-3 to 6.9e-3 at tolerances of 5e-4 and 5e-5) |
+
+The rates are means and sample standard deviations over three repeats
+(2026-10-02, each program after the other); the other settings of GROMACS
+are from one run each.
 
 MDIR's conserved energy at constant pressure moved by −228 kcal/mol/ns
 with the count of D92, the bias with rigid groups (below) as on 1039
-waters (−234), and by −2.7 kcal/mol over the 120 ps with that of D116
-(the row above; 543.5 ns/day with the count of D92). GROMACS's moves at
+waters (−234), and by 6.2e-5 to 1.4e-4 of its value over the 120 ps with
+that of D116 (the row above; 543.5 ns/day in one run with the count of
+D92). GROMACS's moves at
 constant temperature without the barostat too, by +370 to +610
 kcal/mol/ns (`nsttcouple` 1 or 25, τ_T 1 or 10 ps, `nstcalcenergy` 1 or
 100), against −70 for its total energy at constant energy; not

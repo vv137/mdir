@@ -123,15 +123,17 @@ reaches of 12 and 9.6 Å, within 0.4% of the best of 11 to 12 Å and 9.4 to
 9.8 Å; GROMACS its own list, its nonbonded terms and PME on the GPU, and
 its update on the CPU, which virtual sites need.
 
-*Table 10.3. Ubiquitin in OPC, RTX 3090 at 300 W. "Energy changed by" as
-in Table 10.2, over 120 ps. At constant pressure MDIR counts the work of
-the barostat from the virial of the groups (D116); with the count before
-it, $-228$ kcal/mol/ns (Section 13), its rate was 543.5 ns/day.*
+*Table 10.3. Ubiquitin in OPC, RTX 3090 at 300 W, mean ± sample standard
+deviation over three repeats, each program after the other on the device.
+"Energy changed by" as in Table 10.2, over 120 ps, the range of the three.
+At constant pressure MDIR counts the work of the barostat from the virial
+of the groups (D116); with the count before it, $-228$ kcal/mol/ns
+(Section 13). The other settings of GROMACS are from one run each.*
 
 | Ensemble | MDIR, ns/day | GROMACS, ns/day | MDIR / GROMACS | Energy changed by: MDIR | GROMACS |
 |---|---|---|---|---|---|
-| NVE | 583.6 | 805.6 (nstlist 80; 689.7 with the nstlist of 10 that it keeps at constant energy) | 72% | $4.2\times10^{-5}$ | $1.4\times10^{-4}$ |
-| NPT | 551.7 | 851.5 (771.8 with `verlet-buffer-tolerance` $5\times10^{-5}$) | 65% | $4.4\times10^{-5}$ | $6.2\times10^{-3}$ |
+| NVE | 585.1 ± 0.6 | 842.0 ± 2.2 (nstlist 80; 689.7 with the nstlist of 10 that it keeps at constant energy) | 69.5 ± 0.2% | $1.3\times10^{-5}$ to $6.0\times10^{-5}$ | $1.0\times10^{-4}$ to $1.4\times10^{-4}$ |
+| NPT | 549.2 ± 0.4 | 862.8 ± 3.4 (771.8 with `verlet-buffer-tolerance` $5\times10^{-5}$) | 63.6 ± 0.2% | $6.2\times10^{-5}$ to $1.4\times10^{-4}$ | $6.5\times10^{-3}$ to $7.2\times10^{-3}$ |
 
 *Table 10.4. The device time of a step, NVE, from nsys: MDIR over 20,000
 steps, GROMACS over the 3528 steps that the profile captured. MDIR's
@@ -158,7 +160,7 @@ its launches 48 µs of the 310. Its own second stream for the reciprocal
 sum (D81, D87), tried on this system, gives 580.8 ns/day against 584.0
 without. On JAC, with three sites per water and a cutoff of 8 Å, the same
 structure is 25% faster than pmemd.cuda (Table 10.2); on this system its
-rate is 65% to 72% of GROMACS's, and the measurements place the
+rate is 64% to 70% of GROMACS's, and the measurements place the
 difference outside the loop over pairs. GROMACS's conserved energy at
 constant pressure changed by $5\times10^{-3}$ to $7\times10^{-3}$ at every
 tolerance of its buffer that was tried ($5\times10^{-3}$, $5\times10^{-4}$,
