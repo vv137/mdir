@@ -686,6 +686,26 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                  simulated * 86400.0 / runTime);
   }
   std::fprintf(output.log, "\n");
+  // The rate past the start: from the first output of the energies at or
+  // after half the steps to the last, which wait for the device.
+  if (!control->minimize && output.energyTimes.size() >= 2) {
+    int64_t half = firstStep + control->numSteps / 2;
+    auto from = llvm::find_if(output.energyTimes, [&](const auto &time) {
+      return time.first >= half;
+    });
+    const auto &last = output.energyTimes.back();
+    if (from != output.energyTimes.end() && from->first < last.first) {
+      double seconds = last.second - from->second;
+      int64_t steps = last.first - from->first;
+      double simulated = control->timestep * steps * 1.0e-3;
+      std::fprintf(output.log,
+                   "MDIR: from step %lld to step %lld, %.3f ms per step, "
+                   "%.1f ns per day\n",
+                   static_cast<long long>(from->first),
+                   static_cast<long long>(last.first),
+                   1.0e3 * seconds / steps, simulated * 86400.0 / seconds);
+    }
+  }
   if (writesCheckpoints)
     std::fprintf(output.log, "MDIR: wrote %lld checkpoints to '%s'\n",
                  static_cast<long long>(output.numCheckpoints),

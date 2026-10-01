@@ -482,8 +482,14 @@ SmallVector<Value> kernels::emitGroupPairKernel(
                                                   boxComputed);
               Value d = arith::SubFOp::create(s, loc, raw, shift);
               Value squares = arith::MulFOp::create(s, loc, d, d);
-              Value r2 = vector::ReductionOp::create(
+              Value distance2 = vector::ReductionOp::create(
                   s, loc, vector::CombiningKind::ADD, squares);
+              // A slot whose bit is clear takes a squared distance beyond
+              // the cutoff, so that one comparison masks it: the kernel
+              // sees a finite distance and its value is not taken.
+              Value r2 = arith::SelectOp::create(
+                  s, loc, paired, distance2,
+                  createReal(s, loc, computed, 4.0 * cutoff * cutoff));
               IRMapping inside = local;
               inside.map(kernel.getArgument(0), r2);
               inside.map(kernel.getArgument(1), d);
@@ -493,11 +499,8 @@ SmallVector<Value> kernels::emitGroupPairKernel(
               }
               for (Operation &nested : kernel.without_terminator())
                 s.clone(nested, inside);
-              Value within = arith::AndIOp::create(
-                  s, loc,
-                  arith::CmpFOp::create(s, loc, arith::CmpFPredicate::OLT, r2,
-                                        cutoff2),
-                  paired);
+              Value within = arith::CmpFOp::create(
+                  s, loc, arith::CmpFPredicate::OLT, r2, cutoff2);
 
               SmallVector<Value> nextOwn, nextReceived;
               for (unsigned i = 0; i != numYields; ++i) {

@@ -128,7 +128,8 @@ q.save({os.path.join(target, "system.top")!r}, format="gromacs",
         subprocess.run([args.parmed_python, "-c", script], check=True)
 
 
-def write_mdir(name, system, target, steps=None, path="mdir.toml"):
+def write_mdir(name, system, target, steps=None, path="mdir.toml",
+               skin=SKIN, neighbor_structure=None):
     npt = system["ensemble"] == "NPT"
     ensemble = (f"""ensemble    = "NPT"
 temperature = {TEMPERATURE}
@@ -152,11 +153,11 @@ topology    = "system.parm7"
 coordinates = "system.rst7"
 
 [output]
-energy_interval = {steps}
+energy_interval = {max(steps // 2, 1)}
 
 [energy]
 cutoff            = {CUTOFF}
-pairlist_distance = {CUTOFF + SKIN}
+pairlist_distance = {CUTOFF + skin}
 electrostatics    = "PME"
 
 [pme]
@@ -180,7 +181,8 @@ type = "PERIODIC"
 [execution]
 target    = "GPU"
 precision = "MIXED"
-"""
+""" + (f'neighbor_structure = "{neighbor_structure}"\n'
+       if neighbor_structure else "")
     path = os.path.join(target, path)
     with open(path, "w") as file:
         file.write(text)
@@ -321,11 +323,17 @@ def run(args):
         # gromacs.log, where its rate is.
         log = os.path.join(target, f"{args.engine}.out")
         if args.engine == "mdir":
-            control = write_mdir(name, system, target)
+            control = write_mdir(name, system, target, skin=args.skin,
+                                 neighbor_structure=args.neighbor_structure)
             with open(log, "w") as out:
                 _, shared = timed([args.mdir, "run", control], target, out)
             text = open(log).read()
-            match = re.search(r"([0-9.]+) ns per day", text)
+            # The rate of the second half, past the set-up and the first
+            # build, as GROMACS reports it with -resethway; that of the
+            # whole run if the log has none.
+            match = (re.search(r"from step [0-9]+ to step [0-9]+, [0-9.]+ "
+                               r"ms per step, ([0-9.]+) ns per day", text)
+                     or re.search(r"([0-9.]+) ns per day", text))
         else:
             mdp = write_mdp(name, system, target)
             tpr = os.path.join(target, "gromacs.tpr")
@@ -396,6 +404,10 @@ def main():
     p.add_argument("systems", nargs="*", metavar="SYSTEM",
                    help="of " + ", ".join(SYSTEMS) + "; all by default")
     p.add_argument("--mdir", default="mdir")
+    p.add_argument("--skin", type=float, default=SKIN,
+                   help="of the neighbor structures of MDIR (Å)")
+    p.add_argument("--neighbor-structure", choices=["MATRIX", "GROUPS"],
+                   help="of MDIR on the device; its default if absent")
     p.add_argument("--gmx", default="gmx")
     p.add_argument("--threads", type=int, default=8,
                    help="OpenMP threads of GROMACS")

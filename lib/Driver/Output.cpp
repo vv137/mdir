@@ -4,6 +4,7 @@
 
 #include "mlir/ExecutionEngine/CRunnerUtils.h"
 
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -236,6 +237,10 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
     output.firstTotal = total;
   output.hasEnergies = true;
   output.lastTotal = total;
+  output.energyTimes.emplace_back(
+      step, std::chrono::duration<double>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
 }
 
 /// The values of a buffer with three numbers per particle, scaled, in the

@@ -124,6 +124,12 @@ struct Output {
   double firstTotal = 0.0;
   double lastTotal = 0.0;
 
+  /// The steps of the outputs of the energies and when each was written,
+  /// in seconds of a steady clock: the rate of the run past its start
+  /// (the set-up and the first build), as GROMACS reports it with
+  /// `-resethway`.
+  std::vector<std::pair<int64_t, double>> energyTimes;
+
   /// Where checkpoints go, and what they hold beside the state.
   std::string checkpointPath;
   Checkpoint checkpoint;
