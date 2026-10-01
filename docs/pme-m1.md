@@ -93,7 +93,7 @@ pairs does.
 | E_rec | One new op, `md.reciprocal %x, %q, %cell, %influence`, with the grid, the order, and β as attributes, that yields the energy. Differentiation asks the same op for the forces and the virial, which it computes from the grid; it is not differentiated through. |
 | The lowering of `md.reciprocal` | Templates in IR, as the build of neighbor structures is (`lib/Runtime/Templates`): spreading, the product with the influence function with the sums of the energy and the virial, and gathering the forces, for the CPU and for a GPU. The FFT is a call of the runtime. |
 | FFT | On the host, pocketfft [[Reinecke2019]](references.md#reinecke2019) under the BSD license, in `libmdrt`; on a device, cuFFT of the CUDA toolkit, in `libmdrt_cuda`, with a plan kept for each size of grid (D64). |
-| The influence function | Computed where it is used, from β, the cell, and the factors of the three edges, `|b_a(k)|²` (times the factor of the aliasing with `"OPTIMAL"`), which the driver passes as a table of three rows: the factors do not depend on the cell, so a cell that changes (the barostat, M1j) needs nothing new |
+| The influence function | Computed where it is used, from β, the cell, and the factors of the three edges, `|b_a(k)|²` (times the factor of the aliasing with `"OPTIMAL"`), which the driver passes as a table of three rows: the factors do not depend on the cell, so a cell that changes (the barostat, M1j) needs nothing new. On a device a kernel multiplies them, at each evaluation, by exp(−π² m² / β²) along each edge in f64, and keeps the wave numbers and their squares beside them, each rounded once to the type of the grid (D104) |
 
 ## 3. Spreading that does not depend on the order (D70)
 

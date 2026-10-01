@@ -818,6 +818,16 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
                                            ValueRange{length},
                                            /*symbolOperands=*/ValueRange())
                           .getMemref());
+    // The factors of the influence function along the edges, three for
+    // each point of each edge (D104).
+    Value entries = arith::ConstantIndexOp::create(
+        root->builder, loc, 3 * (grid[0] + grid[1] + grid[2]));
+    scratch.push_back(gpu::AllocOp::create(root->builder, loc, type,
+                                           /*asyncToken=*/Type(),
+                                           /*asyncDependencies=*/ValueRange(),
+                                           ValueRange{entries},
+                                           /*symbolOperands=*/ValueRange())
+                          .getMemref());
   }
 
   auto created = ReciprocalOp::create(

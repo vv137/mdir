@@ -375,130 +375,326 @@ def wave(body, p, k, count, length, real="f64"):
 
 
 def convolve():
-    body = Body("      ")
+    """The product with the influence function where the energy and the
+    virial are needed (D104): a thread for points of the grid, as `scale`
+    has them, computing the influence function in !pme_real as `scale`
+    does, so that the forces are those of the steps without the virial.
+    A block of 128 threads takes a run of points, `per` a thread, 128
+    apart, sums the energy and the six elements of the virial of its
+    threads by the tree of gpu.all_reduce in !pme_real, and stores them in
+    f64; one block adds the blocks in f64, a thread every 128th block and
+    then the tree, and the host copies the seven sums. The order of every
+    sum is fixed by the size of the grid alone."""
+    body = Body("    ")
     body("""\
 %cc0 = arith.constant 0 : index
 %cc1 = arith.constant 1 : index
 %cc2 = arith.constant 2 : index
-%kzero = arith.constant 0.0 : f64
-%khalf = arith.constant 0.5 : f64
-%kone = arith.constant 1.0 : f64
-%ktwo = arith.constant 2.0 : f64
-%a = arith.divui %item, %k2 : index
-%b = arith.remui %item, %k2 : index""")
-    m1 = wave(body, "w1_", "%a", "%k1", "%ilx")
-    m2 = wave(body, "w2_", "%b", "%k2", "%ily")
-    body(f"""\
-%h = arith.divui %k3, %cc2 : index
-%h1 = arith.addi %h, %cc1 : index
-%odd = arith.remui %k3, %cc2 : index
-%even = arith.cmpi eq, %odd, %cc0 : index
-%m1s = arith.mulf {m1}, {m1} : f64
-%m2s = arith.mulf {m2}, {m2} : f64
-%m12 = arith.addf %m1s, %m2s : f64
-%mod1 = memref.load %moduli[%cc0, %a] : memref<?x?xf64, 1>
-%mod2 = memref.load %moduli[%cc1, %b] : memref<?x?xf64, 1>
-%mod12 = arith.mulf %mod1, %mod2 : f64
-%ke, %kw00, %kw01, %kw02, %kw11, %kw12, %kw22 = scf.for %z = %cc0 to %h1 step %cc1
-    iter_args(%e0 = %kzero, %a00 = %kzero, %a01 = %kzero, %a02 = %kzero,
-              %a11 = %kzero, %a12 = %kzero, %a22 = %kzero)
-    -> (f64, f64, f64, f64, f64, f64, f64) {{
-  %zi = arith.index_cast %z : index to i64
-  %zf = arith.sitofp %zi : i64 to f64
-  %m3 = arith.mulf %zf, %ilz : f64
-  %mod3 = memref.load %moduli[%cc2, %z] : memref<?x?xf64, 1>
-  %m3s = arith.mulf %m3, %m3 : f64
-  %msq = arith.addf %m12, %m3s : f64
-  %origin = arith.cmpf oeq, %msq, %kzero : f64
-  %safe = arith.select %origin, %kone, %msq : f64
-  %inverse = arith.divf %kone, %safe : f64
-  %gm = arith.mulf %gauss, %msq : f64
-  %ngm = arith.negf %gm : f64
-  %ex = math.exp %ngm : f64
-  %exm = arith.mulf %ex, %inverse : f64
-  %pexm = arith.mulf %prefactor, %exm : f64
-  %mods = arith.mulf %mod12, %mod3 : f64
-  %bc0 = arith.mulf %pexm, %mods : f64
-  %bc = arith.select %origin, %kzero, %bc0 : f64
-  %base1 = arith.muli %item, %h1 : index
-  %base2 = arith.addi %base1, %z : index
-  %re_at = arith.muli %base2, %cc2 : index
-  %im_at = arith.addi %re_at, %cc1 : index
-  %rer = memref.load %c[%re_at] : memref<?x!pme_real, 1>
-  %imr = memref.load %c[%im_at] : memref<?x!pme_real, 1>
-  %re = PME_REAL_TO_F64 %rer : !pme_real to f64
-  %im = PME_REAL_TO_F64 %imr : !pme_real to f64
-  %re2 = arith.mulf %re, %re : f64
-  %im2 = arith.mulf %im, %im : f64
-  %g2 = arith.addf %re2, %im2 : f64
-  %first = arith.cmpi eq, %z, %cc0 : index
-  %middle = arith.cmpi eq, %z, %h : index
-  %middle_even = arith.andi %middle, %even : i1
-  %single = arith.ori %first, %middle_even : i1
-  %weight = arith.select %single, %kone, %ktwo : f64
-  %hw = arith.mulf %khalf, %weight : f64
-  %hwb = arith.mulf %hw, %bc : f64
-  %em = arith.mulf %hwb, %g2 : f64
-  %sum = arith.addf %inverse, %gauss : f64
-  %factor0 = arith.mulf %ktwo, %sum : f64
-  %factor = arith.select %origin, %kzero, %factor0 : f64
-  %ef = arith.mulf %em, %factor : f64
-  %p11 = arith.mulf {m1}, {m1} : f64
-  %p12 = arith.mulf {m1}, {m2} : f64
-  %p13 = arith.mulf {m1}, %m3 : f64
-  %p22 = arith.mulf {m2}, {m2} : f64
-  %p23 = arith.mulf {m2}, %m3 : f64
-  %p33 = arith.mulf %m3, %m3 : f64
-  %t11 = arith.mulf %ef, %p11 : f64
-  %t12 = arith.mulf %ef, %p12 : f64
-  %t13 = arith.mulf %ef, %p13 : f64
-  %t22 = arith.mulf %ef, %p22 : f64
-  %t23 = arith.mulf %ef, %p23 : f64
-  %t33 = arith.mulf %ef, %p33 : f64
-  %d11 = arith.subf %em, %t11 : f64
-  %d22 = arith.subf %em, %t22 : f64
-  %d33 = arith.subf %em, %t33 : f64
-  %n00 = arith.addf %a00, %d11 : f64
-  %n01 = arith.subf %a01, %t12 : f64
-  %n02 = arith.subf %a02, %t13 : f64
-  %n11 = arith.addf %a11, %d22 : f64
-  %n12 = arith.subf %a12, %t23 : f64
-  %n22 = arith.addf %a22, %d33 : f64
-  %ne = arith.addf %e0, %em : f64
-  %reb = arith.mulf %re, %bc : f64
-  %imb = arith.mulf %im, %bc : f64
-  %rebr = PME_F64_TO_REAL %reb : f64 to !pme_real
-  %imbr = PME_F64_TO_REAL %imb : f64 to !pme_real
-  memref.store %rebr, %c[%re_at] : memref<?x!pme_real, 1>
-  memref.store %imbr, %c[%im_at] : memref<?x!pme_real, 1>
-  scf.yield %ne, %n00, %n01, %n02, %n11, %n12, %n22
-      : f64, f64, f64, f64, f64, f64, f64
-}}
-%out = arith.muli %item, %c10 : index""")
-    # The row has ten slots and seven sums; the last three hold zeros, so
-    # that the copy of the rows reads nothing that no kernel has written.
-    for index, name in enumerate(
-            ["%ke", "%kw00", "%kw01", "%kw02", "%kw11", "%kw12", "%kw22",
-             "%kzero", "%kzero", "%kzero"]):
-        body(f"%oc{index} = arith.constant {index} : index")
-        body(f"%o{index} = arith.addi %out, %oc{index} : index")
-        body(f"memref.store {name}, %rows[%o{index}] : memref<?xf64, 1>")
+%rzero = arith.constant 0.0 : !pme_real
+%rone = arith.constant 1.0 : !pme_real
+%rhalf = arith.constant 0.5 : !pme_real
+%rtwo = arith.constant 2.0 : !pme_real
+%run = arith.muli %bx, %span : index
+%e, %v00, %v01, %v02, %v11, %v12, %v22 = scf.for %c_ = %cc0 to %per step %cc1
+    iter_args(%e0 = %rzero, %a00 = %rzero, %a01 = %rzero, %a02 = %rzero,
+              %a11 = %rzero, %a12 = %rzero, %a22 = %rzero)
+    -> (!pme_real, !pme_real, !pme_real, !pme_real, !pme_real, !pme_real, !pme_real) {
+  %c128_ = arith.muli %c_, %c128 : index
+  %run_c = arith.addi %run, %c128_ : index
+  %item = arith.addi %run_c, %tx : index
+  %inside = arith.cmpi ult, %item, %points : index
+  %sums:7 = scf.if %inside -> (!pme_real, !pme_real, !pme_real, !pme_real, !pme_real, !pme_real, !pme_real) {
+    %item32 = arith.index_cast %item : index to i32
+    %row32 = arith.divui %item32, %depth32 : i32
+    %z32 = arith.remui %item32, %depth32 : i32
+    %a32 = arith.divui %row32, %k2_32 : i32
+    %b32 = arith.remui %row32, %k2_32 : i32
+    %z = arith.index_cast %z32 : i32 to index
+    %a = arith.index_cast %a32 : i32 to index
+    %b = arith.index_cast %b32 : i32 to index""")
+    inner = Body("    ")
+    inner("""\
+%tbx1 = arith.addi %a, %k1 : index
+%tbx2 = arith.addi %tbx1, %k1 : index
+%m1 = memref.load %tables[%a] : memref<?x!pme_real, 1>
+%m1s = memref.load %tables[%tbx1] : memref<?x!pme_real, 1>
+%t1 = memref.load %tables[%tbx2] : memref<?x!pme_real, 1>
+%tby0 = arith.addi %ty0, %b : index
+%tby1 = arith.addi %tby0, %k2 : index
+%tby2 = arith.addi %tby1, %k2 : index
+%m2 = memref.load %tables[%tby0] : memref<?x!pme_real, 1>
+%m2s = memref.load %tables[%tby1] : memref<?x!pme_real, 1>
+%t2 = memref.load %tables[%tby2] : memref<?x!pme_real, 1>
+%tbz0 = arith.addi %tz0, %z : index
+%tbz1 = arith.addi %tbz0, %k3 : index
+%tbz2 = arith.addi %tbz1, %k3 : index
+%m3 = memref.load %tables[%tbz0] : memref<?x!pme_real, 1>
+%m3s = memref.load %tables[%tbz1] : memref<?x!pme_real, 1>
+%t3 = memref.load %tables[%tbz2] : memref<?x!pme_real, 1>
+%m12 = arith.addf %m1s, %m2s : !pme_real
+%msqr = arith.addf %m12, %m3s : !pme_real
+%origin = arith.cmpf oeq, %msqr, %rzero : !pme_real
+%safe = arith.select %origin, %rone, %msqr : !pme_real
+%inverse = arith.divf %rone, %safe : !pme_real
+// The influence function from the tables of the edges (D104): each factor
+// computed in f64 and rounded once.
+%tt12 = arith.mulf %t1, %t2 : !pme_real
+%tt123 = arith.mulf %tt12, %t3 : !pme_real
+%bc0 = arith.mulf %tt123, %inverse : !pme_real
+%bc = arith.select %origin, %rzero, %bc0 : !pme_real
+""")
+    m1, m2 = "%m1", "%m2"
+    inner(f"""\
+%re_at = arith.muli %item, %cc2 : index
+%im_at = arith.addi %re_at, %cc1 : index
+%re = memref.load %c[%re_at] : memref<?x!pme_real, 1>
+%im = memref.load %c[%im_at] : memref<?x!pme_real, 1>
+// The energy and the virial of the point: the points of the half-complex
+// transform stand for two but at z = 0 and, for an even k3, at k3 / 2.
+%re2 = arith.mulf %re, %re : !pme_real
+%im2 = arith.mulf %im, %im : !pme_real
+%g2 = arith.addf %re2, %im2 : !pme_real
+%first = arith.cmpi eq, %z, %cc0 : index
+%middle = arith.cmpi eq, %z, %half : index
+%middle_even = arith.andi %middle, %even : i1
+%single = arith.ori %first, %middle_even : i1
+%hw = arith.select %single, %rhalf, %rone : !pme_real
+%hwb = arith.mulf %hw, %bc : !pme_real
+%em = arith.mulf %hwb, %g2 : !pme_real
+%sum = arith.addf %inverse, %gaussr : !pme_real
+%factor0 = arith.mulf %rtwo, %sum : !pme_real
+%factor = arith.select %origin, %rzero, %factor0 : !pme_real
+%ef = arith.mulf %em, %factor : !pme_real
+%p11 = arith.mulf {m1}, {m1} : !pme_real
+%p12 = arith.mulf {m1}, {m2} : !pme_real
+%p13 = arith.mulf {m1}, %m3 : !pme_real
+%p22 = arith.mulf {m2}, {m2} : !pme_real
+%p23 = arith.mulf {m2}, %m3 : !pme_real
+%p33 = arith.mulf %m3, %m3 : !pme_real
+%t11 = arith.mulf %ef, %p11 : !pme_real
+%t12 = arith.mulf %ef, %p12 : !pme_real
+%t13 = arith.mulf %ef, %p13 : !pme_real
+%t22 = arith.mulf %ef, %p22 : !pme_real
+%t23 = arith.mulf %ef, %p23 : !pme_real
+%t33 = arith.mulf %ef, %p33 : !pme_real
+%d11 = arith.subf %em, %t11 : !pme_real
+%d22 = arith.subf %em, %t22 : !pme_real
+%d33 = arith.subf %em, %t33 : !pme_real
+%n00 = arith.addf %a00, %d11 : !pme_real
+%n01 = arith.subf %a01, %t12 : !pme_real
+%n02 = arith.subf %a02, %t13 : !pme_real
+%n11 = arith.addf %a11, %d22 : !pme_real
+%n12 = arith.subf %a12, %t23 : !pme_real
+%n22 = arith.addf %a22, %d33 : !pme_real
+%ne = arith.addf %e0, %em : !pme_real
+%reb = arith.mulf %re, %bc : !pme_real
+%imb = arith.mulf %im, %bc : !pme_real
+memref.store %reb, %c[%re_at] : memref<?x!pme_real, 1>
+memref.store %imb, %c[%im_at] : memref<?x!pme_real, 1>
+scf.yield %ne, %n00, %n01, %n02, %n11, %n12, %n22
+    : !pme_real, !pme_real, !pme_real, !pme_real, !pme_real, !pme_real, !pme_real""")
+    body(inner.text().rstrip("\n"))
+    body("""\
+  } else {
+    scf.yield %e0, %a00, %a01, %a02, %a11, %a12, %a22
+        : !pme_real, !pme_real, !pme_real, !pme_real, !pme_real, !pme_real, !pme_real
+  }
+  scf.yield %sums#0, %sums#1, %sums#2, %sums#3, %sums#4, %sums#5, %sums#6
+      : !pme_real, !pme_real, !pme_real, !pme_real, !pme_real, !pme_real, !pme_real
+}
+%out = arith.muli %bx, %c10 : index
+%lead = arith.cmpi eq, %tx, %cc0 : index""")
+    for index, name in enumerate(["%e", "%v00", "%v01", "%v02", "%v11", "%v12", "%v22"]):
+        body(f"""\
+%r{index} = gpu.all_reduce add {name} uniform {{
+}} : (!pme_real) -> !pme_real
+%r{index}w = PME_REAL_TO_F64 %r{index} : !pme_real to f64""")
+    body("scf.if %lead {")
+    for index in range(7):
+        body(f"""\
+  %oc{index} = arith.constant {index} : index
+  %o{index} = arith.addi %out, %oc{index} : index
+  memref.store %r{index}w, %rows[%o{index}] : memref<?xf64, 1>""")
+    body("}")
+
+    total = Body("    ")
+    total("""\
+%zero_d = arith.constant 0.0 : f64
+%cc0 = arith.constant 0 : index
+%s:7 = scf.for %blk = %tx to %blocks step %c128
+    iter_args(%q0 = %zero_d, %q1 = %zero_d, %q2 = %zero_d, %q3 = %zero_d,
+              %q4 = %zero_d, %q5 = %zero_d, %q6 = %zero_d)
+    -> (f64, f64, f64, f64, f64, f64, f64) {
+  %at = arith.muli %blk, %c10 : index""")
+    for index in range(7):
+        total(f"""\
+  %tc{index} = arith.constant {index} : index
+  %ta{index} = arith.addi %at, %tc{index} : index
+  %tv{index} = memref.load %rows[%ta{index}] : memref<?xf64, 1>
+  %tn{index} = arith.addf %q{index}, %tv{index} : f64""")
+    total("""\
+  scf.yield %tn0, %tn1, %tn2, %tn3, %tn4, %tn5, %tn6 : f64, f64, f64, f64, f64, f64, f64
+}
+%lead = arith.cmpi eq, %tx, %cc0 : index""")
+    for index in range(7):
+        total(f"""\
+%u{index} = gpu.all_reduce add %s#{index} uniform {{
+}} : (f64) -> f64""")
+    total("scf.if %lead {")
+    for index in range(7):
+        total(f"""\
+  %uc{index} = arith.constant {index} : index
+  memref.store %u{index}, %rows[%uc{index}] : memref<?xf64, 1>""")
+    total("}")
     return f"""
 // Multiplies the half-complex transform `c` by the influence function, which
 // it computes from the factors of the edges in `moduli` and the cell, and
-// returns the energy and the virial, as @mdrt.pme_convolve does. A thread
-// takes a row of the grid, (k1, k2), and writes its sums to `rows`: the
-// energy, then the virial xx, xy, xz, yy, yz, zz.
-func.func private @mdrt_gpu_pme_convolve(%c: memref<?x!pme_real, 1>, %moduli: memref<?x?xf64, 1>,
+// returns the energy and the virial, as @mdrt.pme_convolve does: see
+// convolve in the script (D104). `rows` holds the sums of the blocks, ten
+// slots each, then the seven sums at its start.
+func.func private @mdrt_gpu_pme_convolve(%c: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>,
                                          %rows: memref<?xf64, 1>, %box: vector<3xf64>,
                                          %beta: f64, %coulomb: f64,
                                          %k1: index, %k2: index, %k3: index)
     -> (f64, vector<9xf64>) {{
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %c3t = arith.constant 3 : index
   %c10 = arith.constant 10 : index
+  %c127 = arith.constant 127 : index
   %c128 = arith.constant 128 : index
-  %zero = arith.constant 0.0 : f64
+  %pi2 = arith.constant 9.869604401089358 : f64
+  %lx = vector.extract %box[0] : f64 from vector<3xf64>
+  %ly = vector.extract %box[1] : f64 from vector<3xf64>
+  %lz = vector.extract %box[2] : f64 from vector<3xf64>
+  %beta2 = arith.mulf %beta, %beta : f64
+  %gauss = arith.divf %pi2, %beta2 : f64
+  %pi = arith.constant 3.141592653589793 : f64
+  %lxy = arith.mulf %lx, %ly : f64
+  %volume = arith.mulf %lxy, %lz : f64
+  %piv = arith.mulf %pi, %volume : f64
+  %prefactor = arith.divf %coulomb, %piv : f64
+  %gaussr = PME_F64_TO_REAL %gauss : f64 to !pme_real
+  %prefactorr = PME_F64_TO_REAL %prefactor : f64 to !pme_real
+  %unit = arith.constant 1.0 : f64
+  %ilx = arith.divf %unit, %lx : f64
+  %ily = arith.divf %unit, %ly : f64
+  %ilz = arith.divf %unit, %lz : f64
+  %ilxr = PME_F64_TO_REAL %ilx : f64 to !pme_real
+  %ilyr = PME_F64_TO_REAL %ily : f64 to !pme_real
+  %ilzr = PME_F64_TO_REAL %ilz : f64 to !pme_real
+  %count = arith.muli %k1, %k2 : index
+  %ty0 = arith.muli %k1, %c3t : index
+  %k2_3 = arith.muli %k2, %c3t : index
+  %tz0 = arith.addi %ty0, %k2_3 : index
+  %half = arith.divui %k3, %c2 : index
+  %depth = arith.addi %half, %c1 : index
+  %odd = arith.remui %k3, %c2 : index
+  %even = arith.cmpi eq, %odd, %c0 : index
+  %points = arith.muli %count, %depth : index
+  %depth32 = arith.index_cast %depth : index to i32
+  %k2_32 = arith.index_cast %k2 : index to i32
+  // Points a thread: as many as keep the blocks within the rows, at most
+  // one for each row of the grid.
+  %depth127 = arith.addi %depth, %c127 : index
+  %per = arith.divui %depth127, %c128 : index
+  %span = arith.muli %per, %c128 : index
+  %points_up = arith.addi %points, %span : index
+  %points_up1 = arith.subi %points_up, %c1 : index
+  %blocks = arith.divui %points_up1, %span : index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {{
+{body.text()}    gpu.terminator
+  }}
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {{
+{total.text()}    gpu.terminator
+  }}
+  %host = memref.alloc() : memref<10xf64>
+  %rows7 = memref.subview %rows[0] [10] [1] : memref<?xf64, 1> to memref<10xf64, strided<[1]>, 1>
+  %t0 = gpu.wait async
+  %t1 = gpu.memcpy async [%t0] %host, %rows7 : memref<10xf64>, memref<10xf64, strided<[1]>, 1>
+  gpu.wait [%t1]
+  %e = memref.load %host[%c0] : memref<10xf64>
+  %c3 = arith.constant 3 : index
+  %c4 = arith.constant 4 : index
+  %c5 = arith.constant 5 : index
+  %c6 = arith.constant 6 : index
+  %w00 = memref.load %host[%c1] : memref<10xf64>
+  %w01 = memref.load %host[%c2] : memref<10xf64>
+  %w02 = memref.load %host[%c3] : memref<10xf64>
+  %w11 = memref.load %host[%c4] : memref<10xf64>
+  %w12 = memref.load %host[%c5] : memref<10xf64>
+  %w22 = memref.load %host[%c6] : memref<10xf64>
+  memref.dealloc %host : memref<10xf64>
+  %virial = vector.from_elements %w00, %w01, %w02, %w01, %w11, %w12, %w02, %w12, %w22 : vector<9xf64>
+  return %e, %virial : f64, vector<9xf64>
+}}
+"""
+
+
+def tables():
+    """The factors of the influence function along each edge (D104), for
+    `scale` and `convolve`: for each point k of an edge of K points, the
+    wave number m (signed, over the edge), m^2, and exp(-pi^2 m^2 /
+    beta^2) times the factor of the B-splines of the edge, with the
+    prefactor of the energy along x; computed in f64 and rounded once to
+    !pme_real. Edge a holds 3 K_a values from 3 times the points of the
+    edges before it: m, then m^2, then the factor."""
+    body = Body("      ")
+    body("""\
+%c0t = arith.constant 0 : index
+%c1t = arith.constant 1 : index
+%c2t = arith.constant 2 : index
+%k12 = arith.addi %k1, %k2 : index
+%on_y = arith.cmpi uge, %item, %k1 : index
+%on_z = arith.cmpi uge, %item, %k12 : index
+%axis0 = arith.select %on_y, %c1t, %c0t : index
+%axis = arith.select %on_z, %c2t, %axis0 : index
+%from0 = arith.select %on_y, %k1, %c0t : index
+%from = arith.select %on_z, %k12, %from0 : index
+%kk0 = arith.select %on_y, %k2, %k1 : index
+%kk = arith.select %on_z, %k3, %kk0 : index
+%l0 = arith.select %on_y, %ily, %ilx : f64
+%l = arith.select %on_z, %ilz, %l0 : f64
+%k = arith.subi %item, %from : index
+%half = arith.divui %kk, %c2t : index
+%ki = arith.index_cast %k : index to i64
+%ni = arith.index_cast %kk : index to i64
+%beyond = arith.cmpi ugt, %k, %half : index
+%shifted = arith.subi %ki, %ni : i64
+%signed = arith.select %beyond, %shifted, %ki : i64
+%sf = arith.sitofp %signed : i64 to f64
+%m = arith.mulf %sf, %l : f64
+%m2 = arith.mulf %m, %m : f64
+%gm = arith.mulf %gauss, %m2 : f64
+%ngm = arith.negf %gm : f64
+%ex = math.exp %ngm : f64
+%mod = memref.load %moduli[%axis, %k] : memref<?x?xf64, 1>
+%factor0 = arith.mulf %ex, %mod : f64
+%first_axis = arith.cmpi eq, %axis, %c0t : index
+%scaled = arith.mulf %factor0, %prefactor : f64
+%factor = arith.select %first_axis, %scaled, %factor0 : f64
+%tstart = arith.muli %from, %c3 : index
+%at0 = arith.addi %tstart, %k : index
+%at1 = arith.addi %at0, %kk : index
+%at2 = arith.addi %at1, %kk : index
+%mr = PME_F64_TO_REAL %m : f64 to !pme_real
+%m2r = PME_F64_TO_REAL %m2 : f64 to !pme_real
+%fr = PME_F64_TO_REAL %factor : f64 to !pme_real
+memref.store %mr, %tables[%at0] : memref<?x!pme_real, 1>
+memref.store %m2r, %tables[%at1] : memref<?x!pme_real, 1>
+memref.store %fr, %tables[%at2] : memref<?x!pme_real, 1>""")
+    return f"""
+// The factors of the influence function along the edges, for
+// @mdrt_gpu_pme_scale and @mdrt_gpu_pme_convolve: see tables in the script.
+func.func private @mdrt_gpu_pme_tables(%moduli: memref<?x?xf64, 1>, %tables: memref<?x!pme_real, 1>,
+                                       %box: vector<3xf64>, %beta: f64, %coulomb: f64,
+                                       %k1: index, %k2: index, %k3: index) {{
+  %c1 = arith.constant 1 : index
+  %c3 = arith.constant 3 : index
+  %c128 = arith.constant 128 : index
   %pi2 = arith.constant 9.869604401089358 : f64
   %lx = vector.extract %box[0] : f64 from vector<3xf64>
   %ly = vector.extract %box[1] : f64 from vector<3xf64>
@@ -514,49 +710,9 @@ func.func private @mdrt_gpu_pme_convolve(%c: memref<?x!pme_real, 1>, %moduli: me
   %volume = arith.mulf %lxy, %lz : f64
   %piv = arith.mulf %pi, %volume : f64
   %prefactor = arith.divf %coulomb, %piv : f64
-  %count = arith.muli %k1, %k2 : index
-{launch(body.text(), "%count")}
-  // The rows, added up in their order on the host.
-  %length = arith.muli %count, %c10 : index
-  %host = memref.alloc(%length) : memref<?xf64>
-  %t0 = gpu.wait async
-  %t1 = gpu.memcpy async [%t0] %host, %rows : memref<?xf64>, memref<?xf64, 1>
-  gpu.wait [%t1]
-  %e, %w00, %w01, %w02, %w11, %w12, %w22 = scf.for %r = %c0 to %count step %c1
-      iter_args(%s0 = %zero, %s1 = %zero, %s2 = %zero, %s3 = %zero,
-                %s4 = %zero, %s5 = %zero, %s6 = %zero)
-      -> (f64, f64, f64, f64, f64, f64, f64) {{
-    %at = arith.muli %r, %c10 : index
-    %c2h = arith.constant 2 : index
-    %c3h = arith.constant 3 : index
-    %c4h = arith.constant 4 : index
-    %c5h = arith.constant 5 : index
-    %c6h = arith.constant 6 : index
-    %a1 = arith.addi %at, %c1 : index
-    %a2 = arith.addi %at, %c2h : index
-    %a3 = arith.addi %at, %c3h : index
-    %a4 = arith.addi %at, %c4h : index
-    %a5 = arith.addi %at, %c5h : index
-    %a6 = arith.addi %at, %c6h : index
-    %v0 = memref.load %host[%at] : memref<?xf64>
-    %v1 = memref.load %host[%a1] : memref<?xf64>
-    %v2 = memref.load %host[%a2] : memref<?xf64>
-    %v3 = memref.load %host[%a3] : memref<?xf64>
-    %v4 = memref.load %host[%a4] : memref<?xf64>
-    %v5 = memref.load %host[%a5] : memref<?xf64>
-    %v6 = memref.load %host[%a6] : memref<?xf64>
-    %n0 = arith.addf %s0, %v0 : f64
-    %n1 = arith.addf %s1, %v1 : f64
-    %n2 = arith.addf %s2, %v2 : f64
-    %n3 = arith.addf %s3, %v3 : f64
-    %n4 = arith.addf %s4, %v4 : f64
-    %n5 = arith.addf %s5, %v5 : f64
-    %n6 = arith.addf %s6, %v6 : f64
-    scf.yield %n0, %n1, %n2, %n3, %n4, %n5, %n6 : f64, f64, f64, f64, f64, f64, f64
-  }}
-  memref.dealloc %host : memref<?xf64>
-  %virial = vector.from_elements %w00, %w01, %w02, %w01, %w11, %w12, %w02, %w12, %w22 : vector<9xf64>
-  return %e, %virial : f64, vector<9xf64>
+  %k12a = arith.addi %k1, %k2 : index
+  %entries = arith.addi %k12a, %k3 : index
+{launch(body.text(), "%entries")}  return
 }}
 """
 
@@ -579,38 +735,36 @@ def scale():
 %z = arith.index_cast %z32 : i32 to index
 %a = arith.index_cast %a32 : i32 to index
 %b = arith.index_cast %b32 : i32 to index""")
-    m1 = wave(body, "w1_", "%a", "%k1", "%ilxr", "!pme_real")
-    m2 = wave(body, "w2_", "%b", "%k2", "%ilyr", "!pme_real")
-    body(f"""\
-%m1s = arith.mulf {m1}, {m1} : !pme_real
-%m2s = arith.mulf {m2}, {m2} : !pme_real
-%m12 = arith.addf %m1s, %m2s : !pme_real
-// The influence function in !pme_real, f32 in the mixed mode: the
-// transform holds no more than that, and f64 is slow on a device.
-%mod1 = memref.load %moduli[%cc0, %a] : memref<?x?xf64, 1>
-%mod2 = memref.load %moduli[%cc1, %b] : memref<?x?xf64, 1>
-%mod3 = memref.load %moduli[%cc2, %z] : memref<?x?xf64, 1>
-%mod1r = PME_F64_TO_REAL %mod1 : f64 to !pme_real
-%mod2r = PME_F64_TO_REAL %mod2 : f64 to !pme_real
-%mod3r = PME_F64_TO_REAL %mod3 : f64 to !pme_real
-%mod12 = arith.mulf %mod1r, %mod2r : !pme_real
-%modsr = arith.mulf %mod12, %mod3r : !pme_real
-%zi = arith.index_cast %z : index to i64
-%zf = arith.sitofp %zi : i64 to !pme_real
-%m3 = arith.mulf %zf, %ilzr : !pme_real
-%m3s = arith.mulf %m3, %m3 : !pme_real
-%msqr = arith.addf %m12, %m3s : !pme_real
+    body("""\
 %rzero = arith.constant 0.0 : !pme_real
 %rone = arith.constant 1.0 : !pme_real
+%tbx1 = arith.addi %a, %k1 : index
+%tbx2 = arith.addi %tbx1, %k1 : index
+%m1 = memref.load %tables[%a] : memref<?x!pme_real, 1>
+%m1s = memref.load %tables[%tbx1] : memref<?x!pme_real, 1>
+%t1 = memref.load %tables[%tbx2] : memref<?x!pme_real, 1>
+%tby0 = arith.addi %ty0, %b : index
+%tby1 = arith.addi %tby0, %k2 : index
+%tby2 = arith.addi %tby1, %k2 : index
+%m2 = memref.load %tables[%tby0] : memref<?x!pme_real, 1>
+%m2s = memref.load %tables[%tby1] : memref<?x!pme_real, 1>
+%t2 = memref.load %tables[%tby2] : memref<?x!pme_real, 1>
+%tbz0 = arith.addi %tz0, %z : index
+%tbz1 = arith.addi %tbz0, %k3 : index
+%tbz2 = arith.addi %tbz1, %k3 : index
+%m3 = memref.load %tables[%tbz0] : memref<?x!pme_real, 1>
+%m3s = memref.load %tables[%tbz1] : memref<?x!pme_real, 1>
+%t3 = memref.load %tables[%tbz2] : memref<?x!pme_real, 1>
+%m12 = arith.addf %m1s, %m2s : !pme_real
+%msqr = arith.addf %m12, %m3s : !pme_real
 %origin = arith.cmpf oeq, %msqr, %rzero : !pme_real
 %safe = arith.select %origin, %rone, %msqr : !pme_real
 %inverse = arith.divf %rone, %safe : !pme_real
-%gm = arith.mulf %gaussr, %msqr : !pme_real
-%ngm = arith.negf %gm : !pme_real
-%ex = math.exp %ngm : !pme_real
-%exm = arith.mulf %ex, %inverse : !pme_real
-%pexm = arith.mulf %prefactorr, %exm : !pme_real
-%bc0 = arith.mulf %pexm, %modsr : !pme_real
+// The influence function from the tables of the edges (D104): each factor
+// computed in f64 and rounded once.
+%tt12 = arith.mulf %t1, %t2 : !pme_real
+%tt123 = arith.mulf %tt12, %t3 : !pme_real
+%bc0 = arith.mulf %tt123, %inverse : !pme_real
 %bc = arith.select %origin, %rzero, %bc0 : !pme_real
 %re_at = arith.muli %item, %cc2 : index
 %im_at = arith.addi %re_at, %cc1 : index
@@ -624,7 +778,7 @@ memref.store %imb, %c[%im_at] : memref<?x!pme_real, 1>""")
 // Multiplies the half-complex transform `c` by the influence function, as
 // @mdrt_gpu_pme_convolve does, where neither the energy nor the virial is
 // needed: a thread for each point, and nothing for the host to wait for.
-func.func private @mdrt_gpu_pme_scale(%c: memref<?x!pme_real, 1>, %moduli: memref<?x?xf64, 1>,
+func.func private @mdrt_gpu_pme_scale(%c: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>,
                                       %box: vector<3xf64>, %beta: f64, %coulomb: f64,
                                       %k1: index, %k2: index, %k3: index) {{
   %c1 = arith.constant 1 : index
@@ -644,6 +798,10 @@ func.func private @mdrt_gpu_pme_scale(%c: memref<?x!pme_real, 1>, %moduli: memre
   %gaussr = PME_F64_TO_REAL %gauss : f64 to !pme_real
   %prefactorr = PME_F64_TO_REAL %prefactor : f64 to !pme_real
   %rows = arith.muli %k1, %k2 : index
+  %c3t = arith.constant 3 : index
+  %ty0 = arith.muli %k1, %c3t : index
+  %k2_3 = arith.muli %k2, %c3t : index
+  %tz0 = arith.addi %ty0, %k2_3 : index
   %half = arith.divui %k3, %c2 : index
   %depth = arith.addi %half, %c1 : index
   %points = arith.muli %rows, %depth : index
@@ -661,7 +819,7 @@ func.func private @mdrt_gpu_pme_scale(%c: memref<?x!pme_real, 1>, %moduli: memre
 """
 
 
-COMPONENTS = 15  # the first points (3), the weights (12)
+COMPONENTS = 18  # the first points (3), the weights (12), the fractions (3)
 
 
 def weights_kernels():
@@ -1210,7 +1368,7 @@ def main():
     path = os.path.join(here, "..", "lib", "Runtime", "Templates", "PMEGPU.mlir")
     with open(path, "w") as file:
         file.write(HEADER + spread() + spread(fixed=False) + weights_kernels() + real() +
-                   convolve() + scale() + gather() + gather_weights())
+                   tables() + convolve() + scale() + gather() + gather_weights())
 
 
 if __name__ == "__main__":

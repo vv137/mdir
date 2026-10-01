@@ -220,10 +220,10 @@ private:
   DenseMap<Value, Value> members;
   /// Whether a loop over tuples evaluates each tuple once, adding to its
   /// members with atomics: by default, for a loop that is not over disjoint
-  /// tuples, has no global sums, and adds to its destinations.
+  /// tuples and adds to its destinations. Its global sums are summed by
+  /// a thread a particle over the tuples it takes (D103).
   bool evaluatesOnce(md_exec::TupleForOp op) {
-    if (deterministic || !tuplesOnce || op.getDisjoint() ||
-        !op.getReduce().empty())
+    if (deterministic || !tuplesOnce || op.getDisjoint())
       return false;
     for (unsigned i = 0, e = op.getOuts().size(); i != e; ++i)
       if (op.overwrites(i))
@@ -1571,11 +1571,24 @@ LogicalResult Lowering::lowerTupleFor(md_exec::TupleForOp op) {
       return op->emitOpError()
              << "has no members on the device to evaluate each tuple once";
     Value tuples = createSize(builder, loc, tupleMembers);
-    launchOver(builder, loc, tuples, [&](OpBuilder &body, Value tuple) {
-      IRMapping local;
-      emitTupleOnce(body, op, tupleMembers, tuple, box, inverse, local);
+    if (op.getReduce().empty()) {
+      launchOver(builder, loc, tuples, [&](OpBuilder &body, Value tuple) {
+        IRMapping local;
+        emitTupleOnce(body, op, tupleMembers, tuple, box, inverse, local);
+      });
+      return success();
+    }
+    // With global sums, a thread for each particle takes the tuples p,
+    // p + n, ..., and writes the sums of their contributions where a loop
+    // over the rows of the particles would: the reduction is that of the
+    // particles, in an order that does not depend on the threads.
+    launchOver(builder, loc, size, [&](OpBuilder &body, Value particle) {
+      SmallVector<Value> contributions = emitTuplesOnceWithSums(
+          body, op, tupleMembers, particle, size, tuples, box, inverse);
+      for (auto [index, value] : llvm::enumerate(contributions))
+        storeElement(body, loc, value, op.getScratch()[2 * index], particle);
     });
-    return success();
+    return finishSums(op, builder, op.getReduce(), op.getScratch(), size);
   }
   // A set whose tuples share no particle has each tuple evaluated once, by
   // the thread of its first member; its rows hold one tuple at most, which
@@ -1904,16 +1917,23 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                        ValueRange{real, complex, sizes[0], sizes[1], sizes[2]});
   // Without its energy and virial, a step only scales the transform, and
   // the host need not wait for the sums of the rows.
+  // The factors of the influence function along the edges first (D104).
+  if (op.getScratch().size() <= 5)
+    return op->emitOpError()
+           << "expected a buffer for the factors of the influence function";
+  Value tables = op.getScratch()[5];
+  func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_tables"),
+                       ValueRange{op.getModuli(), tables, box, beta, coulomb,
+                                  k1, k2, k3});
   func::CallOp convolve;
   if (op.getEnergy().use_empty() && op.getVirial().use_empty())
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_scale"),
-                         ValueRange{complex, op.getModuli(), box, beta,
-                                    coulomb, k1, k2, k3});
+                         ValueRange{complex, tables, box, beta, coulomb, k1,
+                                    k2, k3});
   else
     convolve = func::CallOp::create(
         builder, loc, instance("mdrt_gpu_pme_convolve"),
-        ValueRange{complex, op.getModuli(), rows, box, beta, coulomb, k1, k2,
-                   k3});
+        ValueRange{complex, tables, rows, box, beta, coulomb, k1, k2, k3});
   func::CallOp::create(builder, loc, backward,
                        ValueRange{complex, real, sizes[0], sizes[1], sizes[2]});
   // The gathering takes the places of the particles from the weights

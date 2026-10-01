@@ -1057,6 +1057,74 @@ void kernels::emitTupleOnce(OpBuilder &builder, md_exec::TupleForOp op,
   }
 }
 
+SmallVector<Value>
+kernels::emitTuplesOnceWithSums(OpBuilder &builder, md_exec::TupleForOp op,
+                                Value members, Value first, Value stride,
+                                Value count, Value box, Value inverse) {
+  Location loc = op.getLoc();
+  Block &kernel = op.getKernel().front();
+  Operation *yield = kernel.getTerminator();
+  int64_t arity = op.getArity();
+  unsigned numOuts = op.getOuts().size();
+  unsigned numYields = yield->getNumOperands();
+  Type computed =
+      cast<VectorType>(kernel.getArgument(0).getType()).getElementType();
+  Value boxComputed = convertReal(builder, loc, box, computed);
+  Value inverseComputed = convertReal(builder, loc, inverse, computed);
+  // A contribution that the kernel widens is summed in the type it was
+  // computed in (as in emitTupleKernel).
+  auto getNarrow = [&](unsigned i) -> Value {
+    auto widen = yield->getOperand(i).getDefiningOp<arith::ExtFOp>();
+    if (!widen || widen->getBlock() != &kernel)
+      return Value();
+    return widen.getIn();
+  };
+  SmallVector<Value> sums;
+  for (unsigned i = numOuts * arity; i != numYields; ++i) {
+    Value narrow = getNarrow(i);
+    sums.push_back(createZero(
+        builder, loc,
+        narrow ? narrow.getType() : yield->getOperand(i).getType()));
+  }
+  auto loop = scf::ForOp::create(
+      builder, loc, first, count, stride, sums,
+      [&](OpBuilder &b, Location, Value tuple, ValueRange partial) {
+        EvaluatedTuple evaluated;
+        evaluated.tuple = tuple;
+        for (int64_t q = 0; q != arity; ++q)
+          evaluated.members.push_back(
+              loadIndex(b, loc, members, tuple, createIndex(b, loc, q)));
+        evaluateMembers(b, op, evaluated, boxComputed, inverseComputed,
+                        IRMapping());
+        IRMapping &inside = evaluated.inside;
+        for (unsigned i = 0; i != numOuts; ++i) {
+          Value destination = op.getOuts()[i];
+          Type stored = getElementTypeOrSelf(destination.getType());
+          for (int64_t q = 0; q != arity; ++q) {
+            Value value =
+                inside.lookupOrDefault(yield->getOperand(i * arity + q));
+            emitAtomicAdd(b, loc, convertReal(b, loc, value, stored),
+                          destination, evaluated.members[q]);
+          }
+        }
+        SmallVector<Value> updated;
+        for (unsigned i = numOuts * arity, j = 0; i != numYields; ++i, ++j) {
+          Value narrow = getNarrow(i);
+          Value contribution =
+              inside.lookupOrDefault(narrow ? narrow : yield->getOperand(i));
+          updated.push_back(
+              arith::AddFOp::create(b, loc, partial[j], contribution));
+        }
+        scf::YieldOp::create(b, loc, updated);
+      });
+  SmallVector<Value> totals(loop.getResults());
+  for (unsigned i = numOuts * arity, j = 0; i != numYields; ++i, ++j)
+    if (getNarrow(i))
+      totals[j] = arith::ExtFOp::create(
+          builder, loc, yield->getOperand(i).getType(), totals[j]);
+  return totals;
+}
+
 void kernels::emitExclusionFilter(OpBuilder &builder, Location loc,
                                   Value counts, Value index, Value excluded,
                                   Value particle) {

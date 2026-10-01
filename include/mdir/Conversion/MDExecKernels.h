@@ -158,6 +158,18 @@ void emitTupleOnce(mlir::OpBuilder &builder, md_exec::TupleForOp op,
                    mlir::Value members, mlir::Value tuple, mlir::Value box,
                    mlir::Value inverse, mlir::IRMapping &local);
 
+/// Emits what a thread of a loop over tuples with global sums does where
+/// each tuple is evaluated once (D103): the tuples `first`, `first +
+/// stride`, ... below `count`, each as emitTupleOnce does it, and returns
+/// the sums of their contributions to the global sums of the loop, in the
+/// order of the tuples, each summed in the type the kernel computes it in
+/// and widened once.
+llvm::SmallVector<mlir::Value>
+emitTuplesOnceWithSums(mlir::OpBuilder &builder, md_exec::TupleForOp op,
+                       mlir::Value members, mlir::Value first,
+                       mlir::Value stride, mlir::Value count, mlir::Value box,
+                       mlir::Value inverse);
+
 /// Emits, on the host, the build of the incidence structure of the tuples
 /// that `members` holds, for `size` particles, and returns it in a new
 /// buffer of the host. A row holds the number of tuples of the particle,
