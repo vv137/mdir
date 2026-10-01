@@ -86,11 +86,13 @@ func.func @sum(%v: !vec) -> f64 {
 // CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64>, %[[BOX:[a-z0-9]+]]: vector<3xf64>)
 func.func @forces(%x: !vec, %cell: !md.cell) -> !vec {
   // CHECK:      %[[COUNTS:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?xi32>
-  // CHECK:      %[[INDEX:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}) : memref<?x?xi32>
-  // CHECK:      %[[LARGEST:[0-9]+]] = call @mdrt.build_neighbors_matrix(%[[X]], %[[BOX]], %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %[[COUNTS]], %[[INDEX]])
-  // CHECK:      arith.cmpi ugt, %[[LARGEST]],
-  // CHECK:      scf.if
-  // CHECK:        call @mdrtReportNeighborOverflow(
+  // CHECK:      %[[ROWS:[a-z0-9_]+]] = call @mdrtHostMatrixCreate(
+  // CHECK:      scf.while
+  // CHECK:        %[[INDEX:[a-z0-9_]+]] = func.call @mdrtHostMatrixEntries(%[[ROWS]])
+  // CHECK:        %[[LARGEST:[0-9]+]] = func.call @mdrt.build_neighbors_matrix(%[[X]], %[[BOX]], %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %[[COUNTS]], %[[INDEX]])
+  // CHECK:        arith.cmpi ugt, %[[LARGEST]],
+  // CHECK:        scf.if
+  // CHECK:          func.call @mdrtHostMatrixGrow(%[[ROWS]],
   %cells = md_exec.build_cells %x, %cell width(1.75)
       : !vec -> !mdrt.cells<@atoms>
   %nl = md_exec.build_neighbors %cells, %x, %cell
@@ -104,11 +106,12 @@ func.func @forces(%x: !vec, %cell: !md.cell) -> !vec {
   //
   // CHECK:      %[[OUT:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?x3xf64>
   // CHECK:      %[[INVERSE:[0-9]+]] = arith.divf %{{[a-z0-9_]+}}, %[[BOX]] : vector<3xf64>
+  // CHECK:      %[[ENTRIES:[0-9]+]] = call @mdrtHostMatrixEntries(%[[ROWS]])
   // CHECK:      scf.parallel (%[[I:[a-z0-9]+]]) =
   // CHECK:        %[[CUTOFF2:[a-z0-9_]+]] = arith.constant 2.250000e+00 : f64
   // CHECK:        memref.load %[[COUNTS]][%[[I]]]
   // CHECK:        scf.for %[[K:[a-z0-9]+]] =
-  // CHECK:          memref.load %[[INDEX]][%[[I]], %[[K]]]
+  // CHECK:          memref.load %[[ENTRIES]][%[[I]], %[[K]]]
   // CHECK:          %[[RAW:[0-9]+]] = arith.subf
   // CHECK:          %[[IMAGES:[0-9]+]] = arith.mulf %[[RAW]], %[[INVERSE]]
   // CHECK:          %[[NEAREST:[0-9]+]] = math.roundeven %[[IMAGES]]

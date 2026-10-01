@@ -283,8 +283,9 @@ def MDExec_BuildNeighborsOp : MDExec_Op<"build_neighbors", [Pure]> {
     ```
 
     With `exclude`, the structure leaves out the pairs of an incidence
-    structure of a tuple set of arity 2. A row must be wide enough for the
-    neighbors of a particle before those are left out.
+    structure of a tuple set of arity 2. `width` is the room a row has at
+    first, for the neighbors of a particle before those are left out; a
+    build that finds a row too narrow makes the rows wider.
   }];
   let arguments = (ins
     MDRT_CellsType:$cells,

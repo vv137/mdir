@@ -64,13 +64,18 @@ func.func @forces(%x: memref<?x3xf64, 1>, %f: memref<?x3xf64, 1>,
   // CHECK:      %[[CELL:[a-z0-9_]+]] = gpu.alloc () : memref<1024xf64, 1>
   // CHECK:      %[[HOST:[a-z0-9_]+]] = memref.alloca() : memref<1024xf64>
   // CHECK:      %[[COUNTS:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?xi32, 1>
-  // CHECK:      %[[INDEX:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}) : memref<?x?xi32, 1>
+  // CHECK:      %[[ROWS:[a-z0-9_]+]] = call @mdrtMatrixCreate(
   // CHECK:      %[[ORDER:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?xi32, 1>
   // CHECK:      %[[REFERENCE:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?x3xf64, 1>
   %nl0 = md_exec.empty_neighbors size(%n) positions(memref<?x3xf64, 1>)
       kind(matrix) width(48) : !mdrt.neighbors<@atoms>
 
-  // CHECK:      call @mdrt_gpu_build_neighbors_matrix(%[[X]], %[[BOX]], %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %[[COUNTS]], %[[INDEX]], %[[ORDER]])
+  // The rows of the matrix grow when a build finds them too narrow.
+  //
+  // CHECK:      scf.while
+  // CHECK:        %[[INDEX:[a-z0-9_]+]] = func.call @mdrtMatrixEntries(%[[ROWS]])
+  // CHECK:        func.call @mdrt_gpu_build_neighbors_matrix(%[[X]], %[[BOX]], %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %[[COUNTS]], %[[INDEX]], %[[ORDER]])
+  // CHECK:        func.call @mdrtMatrixGrow(%[[ROWS]],
   // CHECK:      gpu.memcpy async [%{{[0-9]+}}] %[[REFERENCE]], %[[X]]
   %nl = md_exec.refresh_neighbors %nl0, %x, %cell
       cutoff(1.5) skin(0.25) cell_width(1.75) policy(always)

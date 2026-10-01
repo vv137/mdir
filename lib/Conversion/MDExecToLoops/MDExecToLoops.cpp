@@ -37,7 +37,9 @@ extern const char *const pmeTemplate;
 static const char *const spatialOrderName = "mdrt.spatial_order";
 static const char *const cellWidthName = "mdrt.cell_width";
 static const char *const buildNeighborsName = "mdrt.build_neighbors_matrix";
-static const char *const reportOverflowName = "mdrtReportNeighborOverflow";
+static const char *const createMatrixName = "mdrtHostMatrixCreate";
+static const char *const matrixEntriesName = "mdrtHostMatrixEntries";
+static const char *const growMatrixName = "mdrtHostMatrixGrow";
 static const char *const countBuildName = "mdrtCountBuild";
 /// Counts a build at an interval that found the structure no longer valid
 /// (D88).
@@ -49,10 +51,12 @@ namespace {
 struct Neighbors {
   /// The number of particles.
   Value size;
-  /// The number of neighbors of each particle, and their indices.
+  /// The number of neighbors of each particle. The runtime holds the rows
+  /// of their indices, by `handle`, and makes them wider when a build finds
+  /// them too narrow (getMatrixEntries).
   Value counts;
-  Value index;
-  /// The number of neighbors that a row holds.
+  Value handle;
+  /// The number of neighbors that a row holds at first.
   Value width;
   /// The configuration and the cell that the structure was built at.
   Value reference;
@@ -114,6 +118,9 @@ private:
                                 int64_t order);
   LogicalResult lowerReciprocal(md_exec::ReciprocalOp op);
   func::FuncOp getOrDeclare(StringRef name, FunctionType type);
+  /// The rows of the neighbor matrix `handle`, as they are where `builder`
+  /// is.
+  Value getMatrixEntries(OpBuilder &builder, Location loc, Value handle);
 
   ModuleOp module;
   MLIRContext *context;
@@ -230,6 +237,7 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   Value box = convertReal(builder, loc, op.getCellMutable().get(), real);
   Value inverse = createInverse(builder, loc, box);
 
+  Value entries = getMatrixEntries(builder, loc, structure.handle);
   Value zero = createIndex(builder, loc, 0);
   Value one = createIndex(builder, loc, 1);
   auto loop = scf::ParallelOp::create(
@@ -237,7 +245,7 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
       inits, [&](OpBuilder &body, Location, ValueRange ivs, ValueRange) {
         IRMapping local;
         SmallVector<Value> contributions =
-            emitPairKernel(body, op, structure.counts, structure.index, box,
+            emitPairKernel(body, op, structure.counts, entries, box,
                            inverse, ivs[0], local);
         if (!contributions.empty())
           createReduction(body, loc, contributions, /*isSum=*/true);
@@ -284,6 +292,18 @@ void Lowering::lowerTupleFor(md_exec::TupleForOp op) {
 //===----------------------------------------------------------------------===//
 // Neighbor structures
 //===----------------------------------------------------------------------===//
+
+Value Lowering::getMatrixEntries(OpBuilder &builder, Location loc,
+                                Value handle) {
+  auto type = MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic},
+                              builder.getI32Type());
+  func::FuncOp getter = getOrDeclare(
+      matrixEntriesName,
+      builder.getFunctionType({builder.getI64Type()}, {type}));
+  getter->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+  return func::CallOp::create(builder, loc, getter, ValueRange{handle})
+      .getResult(0);
+}
 
 func::FuncOp Lowering::getOrDeclare(StringRef name, FunctionType type) {
   if (Operation *existing = SymbolTable::lookupSymbolIn(module, name))
@@ -426,10 +446,17 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
   structure.counts = memref::AllocOp::create(
       builder, loc, MemRefType::get({ShapedType::kDynamic}, narrow),
       ValueRange{structure.size});
-  structure.index = memref::AllocOp::create(
-      builder, loc,
-      MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, narrow),
-      ValueRange{structure.size, structure.width});
+  Type wide = builder.getI64Type();
+  structure.handle =
+      func::CallOp::create(
+          builder, loc,
+          getOrDeclare(createMatrixName,
+                       builder.getFunctionType({wide, wide}, {wide})),
+          ValueRange{
+              arith::IndexCastOp::create(builder, loc, wide, structure.size),
+              arith::IndexCastOp::create(builder, loc, wide,
+                                         structure.width)})
+          .getResult(0);
   structure.reference = memref::AllocOp::create(
       builder, loc, MemRefType::get({ShapedType::kDynamic, 3}, real),
       ValueRange{structure.size});
@@ -477,11 +504,39 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
 
   auto build = cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
       module, getInstanceName(buildNeighborsName, real)));
-  auto call = func::CallOp::create(
-      builder, loc, build,
-      ValueRange{positions, boxValue, reachValue,
-                 widthValue, structure.counts, structure.index});
-  Value largest = call.getResult(0);
+  // Build; if a row was too narrow to hold the neighbors of a particle,
+  // the runtime makes the rows wider, and the build is made again.
+  Type wide = builder.getI64Type();
+  auto again = scf::WhileOp::create(builder, loc, TypeRange(), ValueRange());
+  {
+    Block *before = builder.createBlock(&again.getBefore());
+    OpBuilder at = OpBuilder::atBlockEnd(before);
+    Value entries = getMatrixEntries(at, loc, structure.handle);
+    Value largest =
+        func::CallOp::create(at, loc, build,
+                             ValueRange{positions, boxValue, reachValue,
+                                        widthValue, structure.counts,
+                                        entries})
+            .getResult(0);
+    Value width =
+        memref::DimOp::create(at, loc, entries, createIndex(at, loc, 1));
+    Value tooMany = arith::CmpIOp::create(
+        at, loc, arith::CmpIPredicate::ugt, largest, width);
+    scf::IfOp::create(at, loc, tooMany, [&](OpBuilder &then, Location) {
+      func::CallOp::create(
+          then, loc,
+          getOrDeclare(growMatrixName,
+                       then.getFunctionType({wide, wide}, {})),
+          ValueRange{structure.handle,
+                     arith::IndexCastOp::create(then, loc, wide, largest)});
+      scf::YieldOp::create(then, loc);
+    });
+    scf::ConditionOp::create(at, loc, tooMany, ValueRange());
+    Block *after = builder.createBlock(&again.getAfter());
+    OpBuilder close = OpBuilder::atBlockEnd(after);
+    scf::YieldOp::create(close, loc);
+  }
+  builder.setInsertionPointAfter(again);
 
   // The runtime counts the builds, for the log of the run.
   func::CallOp::create(
@@ -489,29 +544,14 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
       getOrDeclare(countBuildName, builder.getFunctionType({}, {})),
       ValueRange());
 
-  // A row that is too narrow loses pairs. Stop.
-  Type wide = builder.getI64Type();
-  auto report = getOrDeclare(
-      reportOverflowName, builder.getFunctionType({wide, wide}, {}));
-  Value tooMany = arith::CmpIOp::create(
-      builder, loc, arith::CmpIPredicate::ugt, largest, structure.width);
-  scf::IfOp::create(
-      builder, loc, tooMany, [&](OpBuilder &then, Location) {
-        Value needed = arith::IndexCastOp::create(then, loc, wide, largest);
-        Value available =
-            arith::IndexCastOp::create(then, loc, wide, structure.width);
-        func::CallOp::create(then, loc, report,
-                             ValueRange{needed, available});
-        scf::YieldOp::create(then, loc);
-      });
-
   // Leave the excluded pairs out.
+  Value filtered = getMatrixEntries(builder, loc, structure.handle);
   if (structure.excluded)
     scf::ParallelOp::create(
         builder, loc, ValueRange{createIndex(builder, loc, 0)},
         ValueRange{structure.size}, ValueRange{createIndex(builder, loc, 1)},
         [&](OpBuilder &body, Location, ValueRange ivs) {
-          emitExclusionFilter(body, loc, structure.counts, structure.index,
+          emitExclusionFilter(body, loc, structure.counts, filtered,
                               structure.excluded, ivs[0]);
         });
 

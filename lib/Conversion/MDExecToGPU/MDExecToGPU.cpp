@@ -50,7 +50,6 @@ static const char *const spatialOrderName = "mdrt_gpu_spatial_order";
 static const char *const cellWidthName = "mdrt_gpu_cell_width";
 static const char *const buildNeighborsName =
     "mdrt_gpu_build_neighbors_matrix";
-static const char *const reportOverflowName = "mdrtReportNeighborOverflow";
 static const char *const countBuildName = "mdrtCountBuild";
 /// Counts a build at an interval that found the structure no longer valid
 /// (D88).
@@ -58,6 +57,9 @@ static const char *const countLateBuildName = "mdrtCountLateBuild";
 static const char *const buildGroupsName = "mdrt_gpu_build_neighbors_groups";
 static const char *const noteGroupsName = "mdrtNoteGroups";
 static const char *const createGroupsName = "mdrtGroupsCreate";
+static const char *const createMatrixName = "mdrtMatrixCreate";
+static const char *const matrixEntriesName = "mdrtMatrixEntries";
+static const char *const growMatrixName = "mdrtMatrixGrow";
 static const char *const groupsBufferName = "mdrtGroupsBuffer";
 static const char *const growGroupsName = "mdrtGroupsGrow";
 
@@ -78,11 +80,12 @@ struct Neighbors {
   /// The number of particles.
   Value size;
   /// The number of neighbors of each place in the order of the cells of
-  /// the last build, and their places; the particle at each place (D86).
+  /// the last build; the particle at each place (D86). The runtime holds
+  /// the rows of the places of the neighbors, by `handle`, and makes them
+  /// wider when a build finds them too narrow (getMatrixEntries).
   Value counts;
-  Value index;
   Value order;
-  /// The number of neighbors that a row holds (for groups, a list).
+  /// The number of neighbors that a row holds at first.
   Value width;
   /// The configuration and the cell that the structure was built at.
   Value reference;
@@ -95,13 +98,14 @@ struct Neighbors {
   /// The incidence structure of the pairs that the structure leaves out,
   /// or null.
   Value excluded;
+  /// What the runtime holds the buffers of the structure by.
+  Value handle;
   /// A structure of groups of 16 (D89): the runtime holds its buffers,
   /// which grow when a build finds them too small, by `handle`, and gives
   /// them where they are used (getGroupsBuffers). `placeOf` is the place
   /// of each particle. `sizes`, on the host, holds the places, the longest
   /// list and the blocks of the last build.
   bool groups = false;
-  Value handle;
   Value placeOf;
   Value sizes;
 };
@@ -159,6 +163,9 @@ private:
   /// `builder` is.
   GroupBuffers getGroupsBuffers(OpBuilder &builder, Location loc,
                                 Value handle);
+  /// The rows of the neighbor matrix `handle`, as they are where `builder`
+  /// is.
+  Value getMatrixEntries(OpBuilder &builder, Location loc, Value handle);
   LogicalResult lowerTupleFor(md_exec::TupleForOp op);
   void lowerBuildIncidence(md_exec::BuildIncidenceOp op);
   void lowerRenumber(md_exec::RenumberOp op);
@@ -947,6 +954,8 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
     Operation *op;
     Neighbors structure;
     Value box, inverse;
+    /// The rows of the neighbor matrix of a loop over pairs.
+    Value entries;
   };
   SmallVector<Loop> loops;
   Value positions;
@@ -961,6 +970,7 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
         return failure();
       positions = pair.getPositions();
       cell = pair.getCellMutable().get();
+      loop.entries = getMatrixEntries(builder, loc, loop.structure.handle);
     } else {
       auto tuple = cast<md_exec::TupleForOp>(op);
       if (failed(checkScratch(op, tuple.getReduce().size(),
@@ -1057,7 +1067,7 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
       };
       if (auto pair = dyn_cast<md_exec::PairForOp>(loop.op)) {
         contributions = emitPairKernel(
-            body, pair, loop.structure.counts, loop.structure.index,
+            body, pair, loop.structure.counts, loop.entries,
             loop.box, loop.inverse, place, local, &sharing, &totals,
             &layouts[loop.op]);
         scratch = pair.getScratch();
@@ -1330,11 +1340,12 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   // The loop runs in the order of the cells of the last build (D86).
   PairLayout layout = gatherInOrder(builder, loc, structure, positions,
                                     op.getIns(), op);
+  Value entries = getMatrixEntries(builder, loc, structure.handle);
   launchRows(builder, loc, size, [&](OpBuilder &body, Value central,
                                      const RowLanes &sharing) {
     IRMapping local;
     SmallVector<Value> contributions = emitPairKernel(
-        body, op, structure.counts, structure.index, box, inverse, central,
+        body, op, structure.counts, entries, box, inverse, central,
         local, &sharing, /*outTotals=*/nullptr, &layout);
     storeContributions(body, loc, contributions, op.getScratch(), central,
                        sharing);
@@ -1996,10 +2007,19 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
     structure.counts = createDeviceBuffer(
         builder, loc, getDeviceType({ShapedType::kDynamic}, narrow),
         ValueRange{structure.size});
-    structure.index = createDeviceBuffer(
-        builder, loc,
-        getDeviceType({ShapedType::kDynamic, ShapedType::kDynamic}, narrow),
-        ValueRange{structure.size, structure.width});
+    // The runtime holds the rows, which grow wider when a build finds them
+    // too narrow (emitBuild).
+    Type wide = builder.getI64Type();
+    structure.handle =
+        func::CallOp::create(
+            builder, loc,
+            getOrDeclare(createMatrixName,
+                         builder.getFunctionType({wide, wide}, {wide})),
+            ValueRange{
+                arith::IndexCastOp::create(builder, loc, wide, structure.size),
+                arith::IndexCastOp::create(builder, loc, wide,
+                                           structure.width)})
+            .getResult(0);
     structure.order = createDeviceBuffer(
         builder, loc, getDeviceType({ShapedType::kDynamic}, narrow),
         ValueRange{structure.size});
@@ -2082,33 +2102,45 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
   }
   auto build = cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
       module, getInstanceName(buildNeighborsName, real)));
-  auto call = func::CallOp::create(
-      builder, loc, build,
-      ValueRange{positions, boxValue, reachValue, widthValue, excluded,
-                 structure.counts, structure.index, structure.order});
-  Value largest = call.getResult(0);
+  // Build; if a row was too narrow to hold the neighbors of a particle,
+  // the runtime makes the rows wider, and the build is made again.
+  Type wide = builder.getI64Type();
+  auto again = scf::WhileOp::create(builder, loc, TypeRange(), ValueRange());
+  {
+    Block *before = builder.createBlock(&again.getBefore());
+    OpBuilder at = OpBuilder::atBlockEnd(before);
+    Value entries = getMatrixEntries(at, loc, structure.handle);
+    Value largest =
+        func::CallOp::create(
+            at, loc, build,
+            ValueRange{positions, boxValue, reachValue, widthValue, excluded,
+                       structure.counts, entries, structure.order})
+            .getResult(0);
+    Value width =
+        memref::DimOp::create(at, loc, entries, createIndex(at, loc, 1));
+    Value tooMany = arith::CmpIOp::create(
+        at, loc, arith::CmpIPredicate::ugt, largest, width);
+    scf::IfOp::create(at, loc, tooMany, [&](OpBuilder &then, Location) {
+      func::CallOp::create(
+          then, loc,
+          getOrDeclare(growMatrixName,
+                       then.getFunctionType({wide, wide}, {})),
+          ValueRange{structure.handle,
+                     arith::IndexCastOp::create(then, loc, wide, largest)});
+      scf::YieldOp::create(then, loc);
+    });
+    scf::ConditionOp::create(at, loc, tooMany, ValueRange());
+    Block *after = builder.createBlock(&again.getAfter());
+    OpBuilder close = OpBuilder::atBlockEnd(after);
+    scf::YieldOp::create(close, loc);
+  }
+  builder.setInsertionPointAfter(again);
 
   // The runtime counts the builds, for the log of the run.
   func::CallOp::create(
       builder, loc,
       getOrDeclare(countBuildName, builder.getFunctionType({}, {})),
       ValueRange());
-
-  // A row that is too narrow loses pairs. Stop.
-  Type wide = builder.getI64Type();
-  auto report = getOrDeclare(
-      reportOverflowName, builder.getFunctionType({wide, wide}, {}));
-  Value tooMany = arith::CmpIOp::create(
-      builder, loc, arith::CmpIPredicate::ugt, largest, structure.width);
-  scf::IfOp::create(
-      builder, loc, tooMany, [&](OpBuilder &then, Location) {
-        Value needed = arith::IndexCastOp::create(then, loc, wide, largest);
-        Value available =
-            arith::IndexCastOp::create(then, loc, wide, structure.width);
-        func::CallOp::create(then, loc, report,
-                             ValueRange{needed, available});
-        scf::YieldOp::create(then, loc);
-      });
 
   if (noExcluded) {
     Value plain = memref::MemorySpaceCastOp::create(
@@ -2121,6 +2153,18 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
   }
 
   return finishBuild(builder, loc, structure, positions, box);
+}
+
+Value Lowering::getMatrixEntries(OpBuilder &builder, Location loc,
+                                Value handle) {
+  MemRefType type = getDeviceType(
+      {ShapedType::kDynamic, ShapedType::kDynamic}, builder.getI32Type());
+  func::FuncOp getter = getOrDeclare(
+      matrixEntriesName,
+      builder.getFunctionType({builder.getI64Type()}, {type}));
+  getter->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+  return func::CallOp::create(builder, loc, getter, ValueRange{handle})
+      .getResult(0);
 }
 
 GroupBuffers Lowering::getGroupsBuffers(OpBuilder &builder, Location loc,

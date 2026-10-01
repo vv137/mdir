@@ -24,7 +24,7 @@ index[i][0 .. W)    their indices; entries from count[i] on are unused
 | Directed | If `j` is in the row of `i`, then `i` is in the row of `j`. |
 | Complete | A row holds every particle within the reach. It may hold particles that are beyond the reach by less than the margin of Section 2.3; a loop over pairs tests the cutoff for every entry, so these contribute nothing. |
 | Order of a row | The order of the cells that the search visits, and within a cell the order of the indices. The order does not depend on the threads, on the device, or on the run. |
-| Overflow | `W` is a plan parameter. If a row is too narrow the run stops with a message. |
+| Overflow | `W` is the width a row has at first. A build that finds a row too narrow has the runtime make the rows a quarter wider than needed, and builds again. |
 
 The order of a row decides the order in which a loop over pairs adds up
 the forces on a particle, and with it the last bits of the forces.

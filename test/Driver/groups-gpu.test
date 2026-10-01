@@ -1,8 +1,8 @@
 # Groups of 16 particles that share a list of neighbors, each pair once
 # (D89), against the neighbor matrix: the run of pme-settle.test on a GPU.
 # In double precision the two give the energies of the log to their digits
-# over 100 steps, also when the buffers of the lists start with almost no
-# room and the builds make them larger; in mixed precision they conserve
+# over 100 steps, also when the buffers of the lists, or the rows of the
+# matrix, start with almost no room and the builds make them larger; in mixed precision they conserve
 # the energy as well.
 #
 # REQUIRES: cuda
@@ -22,6 +22,9 @@
 # RUN: grep 'INFO: \|MDIR:   ' %t/tiny.out > %t/tiny.log
 # RUN: diff %t/matrix.log %t/tiny.log
 # RUN: FileCheck %s --check-prefix=GROW < %t/tiny.out
+# RUN: sed -e 's|^precision = "double"|precision = "double"\nneighbor_capacity = 1|' %t/matrix.toml > %t/narrow.toml
+# RUN: cd %t && mdir run narrow.toml | grep 'INFO: \|MDIR:   ' > narrow.log
+# RUN: diff %t/matrix.log %t/narrow.log
 # RUN: cd %t && env MDIR_PRINT_AFTER=md-exec-choose-neighbors mdir run mixed.toml 2>&1 | FileCheck %s
 # RUN: sed -e 's|^target = "gpu"|target = "cpu"|' %t/groups.toml > %t/cpu.toml
 # RUN: not mdir run %t/cpu.toml 2>&1 | FileCheck %s --check-prefix=CPU

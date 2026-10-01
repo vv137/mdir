@@ -1236,7 +1236,7 @@ spatial_order = true            # keep the particles in the order of their
                                 # positions
 deterministic = false           # sums in an order the threads do not decide:
                                 # the same bits from run to run
-# neighbor_capacity = 160       # neighbors per particle; default: estimated
+# neighbor_capacity = 160       # neighbors per particle at first; grows
 # neighbor_structure = "MATRIX" # MATRIX, GROUPS: groups of 16 that share
                                 # a list, each pair once (GPU only)
 )TOML";

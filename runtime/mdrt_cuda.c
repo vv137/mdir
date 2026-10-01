@@ -777,3 +777,68 @@ void mdrtGroupsGrow(int64_t handle, int64_t places, int64_t blocks) {
     groups->blocks = blocks + blocks / 4;
   allocateGroups(groups);
 }
+
+/*===----------------------------------------------------------------------===
+ * The rows of a neighbor matrix
+ *===----------------------------------------------------------------------===*/
+
+/* The entries of a neighbor matrix, a row for each particle, which grow
+   wider when a build finds a particle with more neighbors than a row
+   holds. Compiled code takes the buffer where it uses it
+   (`mdrtMatrixEntries`). */
+struct Matrix {
+  void *data;
+  int64_t rows;
+  int64_t width;
+};
+
+/* A memref of rank 2 as the C interface of MLIR passes it. */
+struct Buffer2 {
+  void *allocated;
+  void *aligned;
+  int64_t offset;
+  int64_t sizes[2];
+  int64_t strides[2];
+};
+
+static void allocateMatrix(struct Matrix *matrix) {
+  matrix->data = mgpuMemAlloc(
+      (uint64_t)(matrix->rows * matrix->width) * sizeof(int32_t), NULL,
+      false);
+}
+
+int64_t mdrtMatrixCreate(int64_t rows, int64_t width) {
+  struct Matrix *matrix = calloc(1, sizeof(struct Matrix));
+  if (!matrix) {
+    fprintf(stderr, "mdrt: out of memory of the host\n");
+    abort();
+  }
+  matrix->rows = rows > 0 ? rows : 1;
+  matrix->width = width > 0 ? width : 1;
+  allocateMatrix(matrix);
+  return (int64_t)(intptr_t)matrix;
+}
+
+void _mlir_ciface_mdrtMatrixEntries(struct Buffer2 *result, int64_t handle) {
+  struct Matrix *matrix = (struct Matrix *)(intptr_t)handle;
+  result->allocated = matrix->data;
+  result->aligned = matrix->data;
+  result->offset = 0;
+  result->sizes[0] = matrix->rows;
+  result->sizes[1] = matrix->width;
+  result->strides[0] = matrix->width;
+  result->strides[1] = 1;
+}
+
+/* Makes the rows hold `width` entries, a quarter more than asked, if they
+   hold fewer. What they held is lost: the caller builds again. */
+void mdrtMatrixGrow(int64_t handle, int64_t width) {
+  struct Matrix *matrix = (struct Matrix *)(intptr_t)handle;
+  if (width <= matrix->width)
+    return;
+  enter();
+  check(cuCtxSynchronize(), "cuCtxSynchronize");
+  mgpuMemFree(matrix->data, NULL);
+  matrix->width = width + width / 4;
+  allocateMatrix(matrix);
+}

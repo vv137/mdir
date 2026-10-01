@@ -932,8 +932,10 @@ placeholders here, pending the `mdrt` ABI.
            : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
 ```
 
-`width` is the number of neighbors that the structure holds per particle.
-The only kind so far is `matrix`, a row of fixed width per particle.
+`width` is the number of neighbors that the structure holds per particle
+at first; a build that finds a particle with more makes the rows wider
+(the runtime holds them). The kinds are `matrix`, a row per particle, and
+`groups` (D89), lists of groups of 16 in blocks that grow as well.
 
 The structure is built at a reference configuration `x_ref` with the extended
 cutoff `r_c + skin`. It holds the list

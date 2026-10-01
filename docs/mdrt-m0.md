@@ -215,7 +215,7 @@ Proposal: the C++ tool.
 |---|---|
 | Neighbor build as a template in IR, `lib/Runtime/Templates/NeighborsMatrix.mlir` | Implemented. The compiler adds it to the module, where it is lowered with the rest of the code. See [neighbors-m0.md](neighbors-m0.md). |
 | Neighbor matrix | Implemented |
-| Overflow of a row | The runtime reports it and stops the run. Rebuilding with wider rows is not implemented. |
+| Overflow of a row | The runtime holds the rows (`mdrtMatrixCreate`, `mdrtHostMatrixCreate`) and makes them a quarter wider than needed (`mdrtMatrixGrow`); the build is made again. Compiled code takes the rows where it uses them (`mdrtMatrixEntries`). |
 | Storage in `memref<?x3xT>` | Implemented, for `f32` and `f64` |
 | Neighbor build for positions of `f32` | Implemented, as an instance of the template with the type replaced |
 | `mdrt.from_buffer`, `mdrt.to_buffer` | Implemented. They connect code that works on buffers with code that works on fields. |

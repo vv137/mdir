@@ -22,17 +22,6 @@ void mdrtCountLateBuild(void) { ++numLateBuilds; }
 
 int64_t mdrtGetLateBuildCount(void) { return numLateBuilds; }
 
-/* Called when a particle has more neighbors than a row of the neighbor
-   matrix holds. The run cannot continue: pairs would be missed. */
-void mdrtReportNeighborOverflow(int64_t needed, int64_t width) {
-  fprintf(stderr,
-          "mdrt: a particle has %lld neighbors, but the neighbor structure "
-          "holds %lld per particle\n",
-          (long long)needed, (long long)width);
-  fflush(stderr);
-  abort();
-}
-
 /* The largest number of blocks of entries that a build of a structure of
    groups of neighbors (D89) took, the blocks it had, and the longest list,
    for the log of the run. */
@@ -348,4 +337,74 @@ void _mlir_ciface_mdrtFFTBackward3D(Buffer1D *complex, Buffer1D *real,
       r[row * k3 + z] = line[z];
   }
   free(line);
+}
+
+/*===----------------------------------------------------------------------===
+ * The rows of a neighbor matrix on the host
+ *===----------------------------------------------------------------------===*/
+
+/* The entries of a neighbor matrix on the host, a row for each particle,
+   which grow wider when a build finds a particle with more neighbors than
+   a row holds. Compiled code takes the buffer where it uses it
+   (`mdrtHostMatrixEntries`). */
+struct HostMatrix {
+  int32_t *data;
+  int64_t rows;
+  int64_t width;
+};
+
+/* A memref of rank 2 as the C interface of MLIR passes it. */
+struct HostBuffer2 {
+  void *allocated;
+  void *aligned;
+  int64_t offset;
+  int64_t sizes[2];
+  int64_t strides[2];
+};
+
+static void allocateHostMatrix(struct HostMatrix *matrix) {
+  matrix->data = malloc((size_t)(matrix->rows * matrix->width) *
+                        sizeof(int32_t));
+  if (!matrix->data) {
+    fprintf(stderr,
+            "mdrt: out of memory of the host for a neighbor matrix of "
+            "%lld rows of %lld\n",
+            (long long)matrix->rows, (long long)matrix->width);
+    abort();
+  }
+}
+
+int64_t mdrtHostMatrixCreate(int64_t rows, int64_t width) {
+  struct HostMatrix *matrix = calloc(1, sizeof(struct HostMatrix));
+  if (!matrix) {
+    fprintf(stderr, "mdrt: out of memory of the host\n");
+    abort();
+  }
+  matrix->rows = rows > 0 ? rows : 1;
+  matrix->width = width > 0 ? width : 1;
+  allocateHostMatrix(matrix);
+  return (int64_t)(intptr_t)matrix;
+}
+
+void _mlir_ciface_mdrtHostMatrixEntries(struct HostBuffer2 *result,
+                                        int64_t handle) {
+  struct HostMatrix *matrix = (struct HostMatrix *)(intptr_t)handle;
+  result->allocated = matrix->data;
+  result->aligned = matrix->data;
+  result->offset = 0;
+  result->sizes[0] = matrix->rows;
+  result->sizes[1] = matrix->width;
+  result->strides[0] = matrix->width;
+  result->strides[1] = 1;
+}
+
+/* Makes the rows hold `width` entries, a quarter more than asked, if they
+   hold fewer. What they held is lost: the caller builds again. */
+void mdrtHostMatrixGrow(int64_t handle, int64_t width) {
+  struct HostMatrix *matrix = (struct HostMatrix *)(intptr_t)handle;
+  if (width <= matrix->width)
+    return;
+  free(matrix->data);
+  matrix->width = width + width / 4;
+  allocateHostMatrix(matrix);
 }

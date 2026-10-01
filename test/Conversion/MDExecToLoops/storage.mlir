@@ -37,7 +37,7 @@ func.func @kick(%v: memref<?x3xf64>, %f: memref<?x3xf64>, %dt: f64) {
 func.func @forces(%x: memref<?x3xf64>, %f: memref<?x3xf64>, %cell: !md.cell,
                   %n: index) -> (f64, i64) {
   // CHECK:      %[[COUNTS:[a-z0-9_]+]] = memref.alloc(%[[N]]) : memref<?xi32>
-  // CHECK:      %[[INDEX:[a-z0-9_]+]] = memref.alloc(%[[N]], %{{[a-z0-9_]+}}) : memref<?x?xi32>
+  // CHECK:      %[[ROWS:[a-z0-9_]+]] = call @mdrtHostMatrixCreate(
   // CHECK:      %[[REFERENCE:[a-z0-9_]+]] = memref.alloc(%[[N]]) : memref<?x3xf64>
   // CHECK:      %[[BUILDS:[a-z0-9_]+]] = memref.alloc() : memref<i64>
   %nl0 = md_exec.empty_neighbors size(%n) positions(memref<?x3xf64>)
@@ -45,7 +45,10 @@ func.func @forces(%x: memref<?x3xf64>, %f: memref<?x3xf64>, %cell: !md.cell,
 
   // CHECK:      memref.load %[[REFERENCE]][
   // CHECK:      scf.if
-  // CHECK:        call @mdrt.build_neighbors_matrix(%[[X]], %[[BOX]], %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %[[COUNTS]], %[[INDEX]])
+  // CHECK:        scf.while
+  // CHECK:          %[[INDEX:[a-z0-9_]+]] = func.call @mdrtHostMatrixEntries(%[[ROWS]])
+  // CHECK:          call @mdrt.build_neighbors_matrix(%[[X]], %[[BOX]], %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %[[COUNTS]], %[[INDEX]])
+  // CHECK:          call @mdrtHostMatrixGrow(%[[ROWS]],
   %nl = md_exec.refresh_neighbors %nl0, %x, %cell
       cutoff(1.5) skin(0.25) cell_width(1.75) policy(check)
       : !mdrt.neighbors<@atoms>, memref<?x3xf64>

@@ -213,8 +213,9 @@ struct Control {
   Target target = Target::CPU;
   int64_t threads = 1;
   Precision precision = Precision::Double;
-  /// The number of neighbors that a neighbor structure holds per particle,
-  /// or 0 for an estimate from the density.
+  /// The number of neighbors that a neighbor structure holds per particle
+  /// at first, or 0 for an estimate from the density; builds make room for
+  /// more.
   int64_t neighborWidth = 0;
   /// Whether kernels are rewritten in ways that change rounding.
   bool fastMath = true;
