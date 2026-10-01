@@ -994,14 +994,23 @@ list (`verlet-buffer-tolerance` 0.005 kJ/mol/ps per atom):
 | NVE | 583.6 | 805.6 with nstlist 80; 689.7 with the nstlist 10 that it keeps at constant energy | 72% | 4.2e-5 | 1.4e-4 |
 | NPT | 543.5 | 851.5; 771.8 at a tolerance of 5e-5 | 64% | 4.4e-4 (conserved energy) | 6.2e-3 (conserved energy; 5.3e-3 to 6.9e-3 at tolerances of 5e-4 and 5e-5) |
 
-The device time of a step (nsys, NVE, 20,000 steps):
+MDIR's conserved energy at constant pressure moved by −228 kcal/mol/ns,
+the bias of the Trotter count with rigid groups (below), as on 1039
+waters (−234): it does not grow with the system. GROMACS's moves at
+constant temperature without the barostat too, by +370 to +610
+kcal/mol/ns (`nsttcouple` 1 or 25, τ_T 1 or 10 ps, `nstcalcenergy` 25 or
+100), against −70 for its total energy at constant energy; not
+investigated further.
+
+The device time of a step (nsys, NVE; MDIR over 20,000 steps, GROMACS over
+the 3528 that its profile captured; MDIR's kernels sorted by their kind):
 
 | Part | MDIR, µs | GROMACS, µs |
 |---|---|---|
 | Loops over pairs | 91.6 (3 launches; the inner list of 9.6 Å) | 87.7 (one kernel; its list of 10.7 Å, built every 80 steps) |
 | PME | 47.3 | 76.7, on a second stream, beside the nonbonded kernel |
-| Loops over particles: integration, constraints, sites | 48.9 | On the CPU |
-| Loops over tuples: bonded terms, excluded pairs | 39.3 | The bonded terms on the CPU; the excluded pairs in the nonbonded kernel |
+| Loops over particles: the drift, the kicks, and the other loops over particles | 48.9 | The update on the CPU |
+| Loops over tuples: bonded terms and excluded pairs 22.5, SETTLE 11.8, placement of the sites 4.9 | 39.3 | Bonded terms, SETTLE, and sites on the CPU; the excluded pairs in the nonbonded kernel |
 | Builds and prunings | 34.6 | In the nonbonded kernel every 80 steps |
 | Layout and reductions | | 18.3 |
 | Total on the device | 261.8 on one stream | 182.8 on two |

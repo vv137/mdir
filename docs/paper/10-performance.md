@@ -122,22 +122,26 @@ reaches of 12 and 9.6 Å, within 0.4% of the best of 11 to 12 Å and 9.4 to
 its update on the CPU, which virtual sites need.
 
 *Table 10.3. Ubiquitin in OPC, RTX 3090 at 300 W. "Energy changed by" as
-in Table 10.2, over 120 ps.*
+in Table 10.2, over 120 ps. MDIR's change at constant pressure, $-228$
+kcal/mol/ns, is the bias of the Trotter count of the work with rigid
+groups (Section 13), as on 1039 waters ($-234$): it does not grow with
+the system.*
 
 | Ensemble | MDIR, ns/day | GROMACS, ns/day | MDIR / GROMACS | Energy changed by: MDIR | GROMACS |
 |---|---|---|---|---|---|
 | NVE | 583.6 | 805.6 (nstlist 80; 689.7 with the nstlist of 10 that it keeps at constant energy) | 72% | $4.2\times10^{-5}$ | $1.4\times10^{-4}$ |
 | NPT | 543.5 | 851.5 (771.8 with `verlet-buffer-tolerance` $5\times10^{-5}$) | 64% | $4.4\times10^{-4}$ | $6.2\times10^{-3}$ |
 
-*Table 10.4. The device time of a step, NVE, from nsys over 20,000
-steps.*
+*Table 10.4. The device time of a step, NVE, from nsys: MDIR over 20,000
+steps, GROMACS over the 3528 steps that the profile captured. MDIR's
+kernels are sorted by their kind.*
 
 | Part | MDIR, µs | GROMACS, µs |
 |---|---|---|
 | Loops over pairs | 91.6 (the inner list of 9.6 Å) | 87.7 (one kernel; a list of 10.7 Å built every 80 steps) |
 | PME | 47.3 | 76.7, on a second stream beside the nonbonded kernel |
-| Loops over particles: integration, constraints, sites | 48.9 | On the host |
-| Loops over tuples: bonded terms, excluded pairs | 39.3 | Bonded terms on the host; excluded pairs in the nonbonded kernel |
+| Loops over particles: the drift, the kicks, and the other loops over particles | 48.9 | The update on the host |
+| Loops over tuples: bonded terms and excluded pairs 22.5, SETTLE 11.8, placement of the sites 4.9 | 39.3 | Bonded terms, SETTLE, and sites on the host; excluded pairs in the nonbonded kernel |
 | Builds and prunings of the lists | 34.6 | In the nonbonded kernel, every 80 steps |
 | Layout and reductions | | 18.3 |
 | On the device | 261.8, one stream | 182.8, two streams |
@@ -157,4 +161,7 @@ rate is 64% to 72% of GROMACS's, and the measurements place the
 difference outside the loop over pairs. GROMACS's conserved energy at
 constant pressure changed by $5\times10^{-3}$ to $7\times10^{-3}$ at every
 tolerance of its buffer that was tried ($5\times10^{-3}$, $5\times10^{-4}$,
-and $5\times10^{-5}$ kJ/mol/ps per atom); that change was not investigated.
+and $5\times10^{-5}$ kJ/mol/ps per atom). Its thermostat alone, without
+the barostat, moves it by $+370$ to $+610$ kcal/mol/ns (`nsttcouple` 1 or
+25, $\tau_T$ 1 or 10 ps, `nstcalcenergy` 25 or 100), against $-70$ for its
+total energy at constant energy; that was not investigated further.

@@ -45,7 +45,9 @@ the spreading of PME has (D70), would close the gap.
   On 1039 rigid OPC waters the default count of the work of the barostat,
   of Trotter type (Section 6.4), drifts by about $-200$ kcal/mol/ns, where
   the exact count drifts by about $+10$ and GROMACS by $-0.4$; with
-  flexible water the counts agree. The bias is proportional to the time
+  flexible water the counts agree. On ubiquitin in 5700 OPC waters the
+  default count drifts by $-228$ kcal/mol/ns (Table 10.3), as much as on
+  1039 waters. The bias is proportional to the time
   and does not depend on the period of coupling, as a term of second order
   in the strain would be. The sampling is right (Section 9.5); the count
   that measures it is not, for rigid groups, and is to be derived again
@@ -57,7 +59,7 @@ the spreading of PME has (D70), would close the gap.
   the same as GROMACS's nonbonded kernel and its PME less. GROMACS runs
   PME beside its nonbonded kernel and the bonded terms, the update, and
   the constraints on the host; MDIR runs them in series on the device
-  (123 µs of a step of 310), and the host's time between its launches is
+  (123 µs of the device in a step of 310), and the host's time between its launches is
   48 µs. Fewer and fused launches outside the loop over pairs, and work
   beside it, are where the rest of the step is.
 - *The order of the state decays.* Over 2 ns of JAC the rate fell by 2%
