@@ -2,7 +2,7 @@
 
 A compiler that writes its own kernels must show that they compute the
 model. This section collects the evidence, each item marked by its kind:
-a check that runs with the tests (`lit`, 145 tests in `test/`), a value
+a check that runs with the tests (`lit`, 146 tests in `test/`), a value
 that a test pins after it was compared once with an independent program
 (the reference value is in the test's comment), or a measurement recorded
 in a decision. Where the log says that an energy "changed by" a fraction,
@@ -127,6 +127,7 @@ convergence):
 | `virtual-sites.test` | Three OPC waters, 1000 × 0.1 fs | $10^{-3}$ | $6.8\times10^{-4}$ at 0.1 fs, $1.7\times10^{-4}$ at 0.05 fs |
 | `thermostat.test` | Mixture, NVT, 2000 × 4 fs | $10^{-4}$ (conserved energy) | |
 | `barostat.test` | Mixture compressed from 12,487 to about 11,000 Å³ | $10^{-3}$; $10^{-4}$ with `EXACT` | |
+| `barostat-rigid-gpu.test` | Dipeptide in OPC, rigid, NPT with $\tau_P = 0.5$ ps, 25,000 × 2 fs, deterministic | $10^{-2}$ (conserved energy) | $9.5\times10^{-4}$; $1.3\times10^{-2}$ with the count before D116 |
 
 Halving the step divides the change by about four in each series, as a
 method of second order should.

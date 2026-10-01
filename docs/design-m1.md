@@ -672,7 +672,7 @@ Stochastic cell rescaling, isotropic, with velocity Verlet and leapfrog
 | The cell | Kept in memory on the host, where each iteration of a loop takes it, and the steps that follow a loop of periods in the same iteration take it again; the neighbor structures, whose test of validity compares the cell, are built again; the influence function of PME follows (pme-m1.md); the log and the trajectory take the new edges (`mdrtSetBox`); a checkpoint keeps them, and a restart takes them. A run stops if an edge becomes shorter than twice the cutoff, below which the minimum image misses pairs; a run that begins so is rejected |
 | The scaled positions | With `work = "EXACT"`, the virtual sites are placed on the scaled positions, and those are evaluated in the new cell: their energy gives the work of the scaling, and their forces are those that the next step begins with (D77). With `"FIRST_ORDER"`, the next step begins with the forces of the positions before the scaling, and places the sites after its drift |
 | The conserved energy, exact | Takes away what the scaling gives: $U(\mathbf x') - U(\mathbf x)$, the potential energy of the scaled positions less that of the positions before; $C\,(1/V' - 1/V)$, the change of the terms that are constants of the volume (the correction for the dispersion and the background of a net charge, $C$ their energy times the volume of the start), which `md.evaluate` leaves out (amended 2026-10-02: before, the conserved energy carried $E_c(V) - E_c(V_0)$); and $(1/\mu^2 - 1) K$, the change of the kinetic energy of the velocities it scales. Between scalings the dynamics is that of constant energy, so the conserved energy changes as there. On the mixture of `barostat.test`, 7.4 × 10⁻⁶ of its value over 8 ps instead of 2.2 × 10⁻³; on tri-alanine in 1218 OPC waters at 1 bar, 300 K, `time_constant = 2`, 2 fs, on a GPU in mixed precision (`examples/ala3`), 0.011 kcal/mol per ps instead of 2.1. The evaluation costs 0.13 ms per step at a period of coupling of 10 steps there, 20% of the rate (316 to 253 ns/day): the cost of the reversible integrator of [[Bernetti2020]](references.md#bernetti2020) (Table I; SI Sec. V.B), which this is but for the thermostat, applied once at the end of the period rather than in halves around the step. This conserved energy is not the paper's effective energy, which adds $P_0 \Delta V$, the terms of the noise, and the drift of eq. (7) to measure the violation of detailed balance (Sec. II.C); it tests the dynamics between scalings and the counting of the work, and the distribution of the volume tests the barostat |
-| The scaling of Trotter type, the default | The last two steps of a period follow its loop: the step of energy whose pressure gives the strain and the new cell, and `step_trotter`, which kicks half, drifts half, scales the positions by $\mu$ (the rigid groups with their centers) and the velocities by $1/\mu$, drifts the other half, and evaluates in the new cell with the virial ([[Bernetti2020]](references.md#bernetti2020), SI Sec. V.C, eqs. S12a–d; eqs. S13a and S15 have two misprints, D92). The conserved energy takes away $(1/\mu^2 - 1) K$ of the velocities scaled and $-\ln\mu\, (\mathsf W_\text{before} + \mathsf W_\text{after}) / 2$, the virials of the groups and the constant terms before and after the step. No evaluation is added; the count drifts with the period of coupling (D92) |
+| The scaling of Trotter type, the default | The last two steps of a period follow its loop: the step of energy whose pressure gives the strain and the new cell, and `step_trotter`, which kicks half, drifts half, scales the positions by $\mu$ (the rigid groups with their centers) and the velocities by $1/\mu$, drifts the other half, and evaluates in the new cell with the virial ([[Bernetti2020]](references.md#bernetti2020), SI Sec. V.C, eqs. S12a–d; eqs. S13a and S15 have two misprints, D92). The conserved energy takes away $(1/\mu^2 - 1) K$ of the velocities scaled and $-\ln\mu\, (\mathsf W_\text{before} + \mathsf W_\text{after}) / 2$, the virials of the groups and the constant terms before and after the step: $\sum_g \mathbf X_g\cdot\mathbf F_g$, from the forces of the evaluations, $\operatorname{tr}\mathsf W_\text{eval} - \sum_g\sum_{j\in g}(\mathbf x_j - \mathbf X_g)\cdot\mathbf F_j$, which the forces of the constraints do not enter (D116). No evaluation is added; the count drifts with the period of coupling (D92) |
 | The period of coupling | The paper finds the fluctuations of the volume too large when $N_P \Delta t$ is not small against $\tau_p$ (a TIP3P box at $\tau_p = 0.5$ ps: $\sigma^2_V$ from 0.23 at $N_P \le 10$ to 0.45 nm⁶ at 100, Fig. 3b), with $N_P = 10$ as a compromise and little gain in rate beyond 20 to 40 in GROMACS (Fig. 4). A longer period that lowers the cost of the evaluation must keep $N_P \Delta t / \tau_p$ small |
 | The conserved energy, first order | Takes away $-(\mu - 1) \operatorname{tr}\mathsf W_g$, the change of the potential energy to first order, as GROMACS does, and $(1/\mu^2 - 1) K$, that of the kinetic energy, exactly. $\mathsf W_g$, the virial of the rigid groups that move as wholes, is the $\mathsf W$ of the pressure above, which has the virial of the constraints, with twice the kinetic energy of the motion within the groups, $\sum \tfrac12 m \lVert\mathbf v - \mathbf V\rVert^2$ over each (the virial of the forces within a rigid group is minus that). What is left is the second order, $\tfrac12 (\mu - 1)^2\, d^2U/d\mu^2$, whose mean over the noise of $\Delta\varepsilon$ is proportional to its variance, and so to $f$: a drift that neither the time step nor the period of coupling reduces, only `time_constant`. On the mixture of `barostat.test` at 2 fs, 1.8 × 10⁻³ of the energy over 8 ps with `time_constant = 2`, 4.4 times less with `time_constant = 8`; on 1394 OPC waters with PME at 300 K and 1 bar, 2.1 kcal/mol per ps with `time_constant = 2` and 0.52 with `time_constant = 8`. The same runs at constant volume keep the conserved energy to 10⁻⁶ and 10⁻⁵ |
 | Parameters | In `[ensemble]`: `ensemble = "NPT"`, `temperature`, and `pressure` in atm. In `[barostat]`: `method = "C-RESCALE"`, `time_constant` in ps (5 by default), `compressibility` in 1/atm (4.5 × 10⁻⁵ /bar by default), `coupling = "ISOTROPIC"` only (`"SEMI_ISOTROPIC"` stops with "not supported yet"), `work` (`"TROTTER"` by default, `"TROTTER_FIRST_ORDER"`, `"EXACT"`, `"FIRST_ORDER"`), and `interval`, which must be that of the thermostat. NPT needs a `[thermostat]` |
@@ -992,11 +992,12 @@ list (`verlet-buffer-tolerance` 0.005 kJ/mol/ps per atom):
 | Ensemble | MDIR, ns/day | GROMACS, ns/day | MDIR / GROMACS | Energy changed by: MDIR | GROMACS |
 |---|---|---|---|---|---|
 | NVE | 583.6 | 805.6 with nstlist 80; 689.7 with the nstlist 10 that it keeps at constant energy | 72% | 4.2e-5 | 1.4e-4 |
-| NPT | 543.5 | 851.5; 771.8 at a tolerance of 5e-5 | 64% | 4.4e-4 (conserved energy) | 6.2e-3 (conserved energy; 5.3e-3 to 6.9e-3 at tolerances of 5e-4 and 5e-5) |
+| NPT | 551.7 | 851.5; 771.8 at a tolerance of 5e-5 | 65% | 4.4e-5 (conserved energy) | 6.2e-3 (conserved energy; 5.3e-3 to 6.9e-3 at tolerances of 5e-4 and 5e-5) |
 
-MDIR's conserved energy at constant pressure moved by −228 kcal/mol/ns,
-the bias of the Trotter count with rigid groups (below), as on 1039
-waters (−234): it does not grow with the system. GROMACS's moves at
+MDIR's conserved energy at constant pressure moved by −228 kcal/mol/ns
+with the count of D92, the bias with rigid groups (below) as on 1039
+waters (−234), and by −2.7 kcal/mol over the 120 ps with that of D116
+(the row above; 543.5 ns/day with the count of D92). GROMACS's moves at
 constant temperature without the barostat too, by +370 to +610
 kcal/mol/ns (`nsttcouple` 1 or 25, τ_T 1 or 10 ps, `nstcalcenergy` 25 or
 100), against −70 for its total energy at constant energy; not
@@ -1050,8 +1051,8 @@ OPC (amber19sb.ff, its update on the CPU, which virtual sites need), the
 same cutoff, PME, couplings, and length, gives 0.99698 ± 0.00030 g/cm³ and
 (4.41 ± 0.23) × 10⁻⁵ /bar, 0.6 and 0.9 standard errors apart.
 
-**The conserved energy at constant pressure drifts with rigid groups**
-(open). In the same runs the conserved energy at constant volume moved by
+**The conserved energy at constant pressure drifted with rigid groups**
+(found and fixed, D116). In the same runs the conserved energy at constant volume moved by
 −0.16 kcal/mol/ns, and at constant pressure by −234 kcal/mol/ns, where
 GROMACS's moved by −0.37. Runs of 100 ps from the same state: the default
 count of the work, of Trotter type, −16.3 kcal/mol (−18.0 in double
@@ -1059,14 +1060,24 @@ precision, −22.1 with a period of 10 steps, −25.7 at 1 fs), the exact
 count +1.3, the first-order count +209; over 20 ps a period of one step
 drifts as much as one of 25 (−5.4 and −6.3). With flexible water at 0.5
 fs, the Trotter count, the exact count, and constant volume drift alike.
-So the Trotter count is biased when rigid groups scale by their centers:
+So the Trotter count was biased when rigid groups scale by their centers:
 a bias proportional to the time, independent of the period, as a term of
 second order in the strain would be, about 2 × 10⁴ kcal/mol times the
 sum of $(\ln\mu)^2$. Twice the internal kinetic energy, which the count
 carries in $\mathcal W$ before and after the velocities are scaled,
-accounts for a twelfth of it. The sampling is not in question (the test
+accounts for a twelfth of it. The sampling was not in question (the test
 of two pressures, the density, and the compressibility above); the count
-that measures it is.
+that measures it was. The count took the virial of the step with twice
+the internal kinetic energy, which is the virial of the groups only when
+the forces of the constraints are those of one configuration; in the step
+that scales, the constraints of the positions take the forces before the
+scaling and those of the velocities the forces after it. Counted from the
+virial of the groups of the evaluations (D116), the conserved energy of
+the water box moves over 1 ns by +16.2 ± 11, +12.7 ± 13, and +12.0 ± 12
+kcal/mol/ns at periods of 5, 25, and 100 steps (the exact count +3.7 ±
+3.5), and that of ubiquitin in OPC over 0.6 ns by +11.4 ± 33, from −228.
+The count changes nothing in the trajectory, so the tests of the
+ensembles above stand.
 
 **The GPU against the CPU over 20 ps** (`scripts/validation/gpu-cpu/run.sh`).
 The dipeptide in OPC of `pme-settle.test`, 20,000 steps of 1 fs in double

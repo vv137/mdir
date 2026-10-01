@@ -40,9 +40,13 @@ became unstable. SHAKE is now solved by Newton's method on all the bonds of
 a group (Section 6.2). The drift of Section 7.3 is a second instance: an
 approximation bounded where it was introduced (a term of the potential)
 was unbounded where a pass also applied it (an operator divided by the
-step). Tests include repartitioned masses, steps of 4 fs, hot starts,
-and large cells, and since D112 the conservation of energy is also
-measured over 2 ns against pmemd.cuda (Section 9).
+step). The count of the work of the barostat is a third (D116): an
+identity that holds for the forces of the constraints of one
+configuration was applied in the step that scales, where they straddle
+the scaling, and the bias showed only with rigid groups and only over
+nanoseconds. Tests include repartitioned masses, steps of 4 fs, hot
+starts, and large cells, and since D112 the conservation of energy is
+also measured over 2 ns against pmemd.cuda (Section 9).
 
 **5. Scale is a separate axis of testing.** Defects in sizes and indices
 show only where counts differ: more particles than tuples, counts that are

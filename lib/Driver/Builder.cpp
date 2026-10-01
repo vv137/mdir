@@ -254,12 +254,13 @@ private:
   /// of the positions.
   /// The scaling of a period of coupling made within the drift of its last
 /// step (D92): its factor, the inverse, and the logarithm; the trace of
-/// the virial before it, with those of the constant terms and of the rigid
-/// groups; the volume after it, and its cell; and the kinetic energy of
-/// the velocities that it scaled.
+/// the virial of the groups before it, with those of the constant terms;
+/// the volume after it, and its cell; the kinetic energy of the velocities
+/// that it scaled; and the trace of the virial of the groups after it
+/// (emitMolecularTrace), where the count takes it.
 struct TrotterScaling {
   std::string mu, muinv, logMu, workBefore, newVolume, cell, scale,
-      kineticHalf;
+      kineticHalf, groupsAfter;
 };
 
 struct Coupled {
@@ -276,11 +277,23 @@ struct Coupled {
   std::vector<const Program::TupleSet *> getRigidGroups() const;
   /// `trace` with twice the kinetic energy of the motion within each rigid
   /// group added: the trace of the virial of the groups, which scale with
-  /// their centers of mass.
+  /// their centers of mass, for a step that does not scale (the
+  /// first-order count).
   std::string emitGroupTrace(StringRef indent, StringRef trace,
                              StringRef positions, StringRef velocities,
                              StringRef cell, StringRef masses,
                              StringRef relations, StringRef tag);
+  /// `trace`, the trace of the virial of the forces `forces` at the
+  /// positions `positions` without that of the constraints, less
+  /// Σ (x_j − X)·F_j over the particles of each rigid group about its
+  /// center of mass X: the trace of the virial of the groups,
+  /// Σ X·F_group, which is −dU/d ln μ when they scale with their centers
+  /// (D116). The forces of the constraints, internal to the groups, drop
+  /// out of it.
+  std::string emitMolecularTrace(StringRef indent, StringRef trace,
+                                 StringRef positions, StringRef forces,
+                                 StringRef cell, StringRef masses,
+                                 StringRef relations, StringRef tag);
   /// `positions` scaled by `mu`, each rigid group with its center of mass,
   /// keeping its shape (`oneMinusMu` is 1 − mu).
   std::string emitGroupScaling(StringRef indent, StringRef positions,
@@ -301,16 +314,14 @@ struct Coupled {
                   StringRef tag, StringRef step);
   /// Before the step of a period of coupling that scales the cell within
   /// its drift (the Trotter type of D92): the strain from the pressure of
-  /// the positions `positions` and the velocities `velocities` of the step
-  /// before, whose virial has the trace `trace`.
-  /// `givenKinetic` and `givenGroups`, if given, are the kinetic energy
-  /// without the center of mass and the trace of the virial of the groups
-  /// (emitGroupTrace), computed before.
-  TrotterScaling emitTrotterStrain(StringRef indent, StringRef positions,
-                                   StringRef velocities, StringRef trace,
+  /// the velocities `velocities` of the step before, whose virial has the
+  /// trace `trace`; `groups` is the trace of the virial of its groups
+  /// (emitMolecularTrace). `givenKinetic`, if given, is the kinetic energy
+  /// without the center of mass, computed before.
+  TrotterScaling emitTrotterStrain(StringRef indent, StringRef velocities,
+                                   StringRef trace, StringRef groups,
                                    StringRef tag, StringRef step,
-                                   StringRef givenKinetic = "",
-                                   StringRef givenGroups = "");
+                                   StringRef givenKinetic = "");
   TrotterScaling finishTrotterStrain(StringRef indent, StringRef groups,
                                      StringRef tag);
   /// The kinetic energy of `velocities` without that of the center of mass
@@ -1530,6 +1541,18 @@ llvm::Error Builder::emitPotential() {
   return llvm::Error::success();
 }
 
+/// The trace of the virial `virial`, which enters the pressure.
+static void emitTrace(llvm::raw_ostream &os, StringRef result,
+                      StringRef virial, StringRef indent) {
+  for (StringRef part : {"0", "4", "8"})
+    os << indent << result << "_" << part << " = vector.extract " << virial
+       << "[" << part << "] : f64 from vector<9xf64>\n";
+  os << indent << result << "_04 = arith.addf " << result << "_0, " << result
+     << "_4 : f64\n"
+     << indent << result << " = arith.addf " << result << "_04, " << result
+     << "_8 : f64\n";
+}
+
 void Builder::emitPrograms() {
   if (control.minimize) {
     emitDescend();
@@ -1622,12 +1645,17 @@ void Builder::emitPrograms() {
     bool withEnergy = kind.energy, withVirial = kind.virial;
     bool scales = kind.scales;
     bool returnsCurrent = leapfrog && (withVirial || scales);
+    // The steps around a scaling of Trotter type also return the trace of
+    // the virial of the groups at their new positions, which the count of
+    // the work takes (D116).
+    bool molecular = trotter && withVirial &&
+                     (scales || StringRef(kind.name) == "step_virial");
     os << "dyn.program @" << kind.name
        << "(%x: !vec, %v: !vec, %f: !vec, %m: !real,\n"
        << "    %cell: !md.cell, %dt: f64" << (scales ? ", %mu: f64" : "")
        << getScaleParameter() << getFieldParameters() << ")\n"
        << "    -> (!vec, !vec, !vec" << (withEnergy ? ", f64" : "")
-       << (withVirial ? ", vector<9xf64>" : "")
+       << (withVirial ? ", vector<9xf64>" : "") << (molecular ? ", f64" : "")
        << (returnsCurrent ? ", !vec" : "") << (scales ? ", f64" : "")
        << ")\n"
        << "    attributes {"
@@ -1749,6 +1777,12 @@ void Builder::emitPrograms() {
                      withVirial ? virial : "", withVirial ? "%w1" : "");
       virial = "%w1";
     }
+    std::string groups;
+    if (molecular) {
+      emitTrace(os, "%gt1", virial, "  ");
+      groups = emitMolecularTrace("  ", "%gt1", "%x1", "%f1", "%cell", "%m",
+                                  "%r_", "1");
+    }
     if (leapfrog && !withVirial && !scales) {
       os << "  dyn.return %x1, " << velocities
          << ", %f1 : !vec, !vec, !vec\n}\n\n";
@@ -1774,10 +1808,12 @@ void Builder::emitPrograms() {
       os << "  dyn.return %x1, " << stored << ", %f1"
          << (withEnergy ? ", %u1" : "")
          << (withVirial ? ", " + virial : "")
+         << (molecular ? ", " + groups : "")
          << (returnsCurrent ? ", %v2" : "") << (scales ? ", %khalf" : "")
          << "\n"
          << "      : !vec, !vec, !vec" << (withEnergy ? ", f64" : "")
          << (withVirial ? ", vector<9xf64>" : "")
+         << (molecular ? ", f64" : "")
          << (returnsCurrent ? ", !vec" : "") << (scales ? ", f64" : "")
          << "\n";
     else
@@ -2707,18 +2743,6 @@ std::string Builder::emitSettleVelocities(StringRef indent, StringRef x,
   return virialName;
 }
 
-/// The trace of the virial `virial`, which enters the pressure.
-static void emitTrace(llvm::raw_ostream &os, StringRef result,
-                      StringRef virial, StringRef indent) {
-  for (StringRef part : {"0", "4", "8"})
-    os << indent << result << "_" << part << " = vector.extract " << virial
-       << "[" << part << "] : f64 from vector<9xf64>\n";
-  os << indent << result << "_04 = arith.addf " << result << "_0, " << result
-     << "_4 : f64\n"
-     << indent << result << " = arith.addf " << result << "_04, " << result
-     << "_8 : f64\n";
-}
-
 /// The sum over the particles of F^2 / m. With the time step it gives the
 /// kinetic energy at the half steps before and after a step, from which
 /// the temperature and the pressure are estimated (Jung et al., J. Chem.
@@ -2967,34 +2991,35 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         v = "%v" + last;
       } else {
         // The step whose pressure gives the strain.
-        os << inner << getValues(a) << ", %w" << a
+        os << inner << getValues(a) << ", %w" << a << ", %gw" << a
            << (leapfrog ? ", %vc" + a : "") << " = dyn.step @step_virial(%x"
            << last << ", %v" << last << ", %f" << last << ", " << massName
            << ", " << cellName << ", %dt" << getScaleValue()
            << getFieldValues(fieldPrefix) << ")\n"
            << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
            << getScaleType() << getFieldTypes()
-           << ") -> (!vec, !vec, !vec, vector<9xf64>"
+           << ") -> (!vec, !vec, !vec, vector<9xf64>, f64"
            << (leapfrog ? ", !vec" : "") << ")\n";
         trace = "%tr" + a;
         emitTrace(os, trace, "%w" + a, inner);
+        groups = "%gw" + a;
         x = "%x" + a;
         v = "%v" + a;
       }
       emitStep();
       TrotterScaling scaling =
           scalesEveryStep()
-              ? emitTrotterStrain(inner, "", "", trace, here,
-                                  "%step" + here, kinetic, groups)
-              : emitTrotterStrain(inner, "%x" + a,
-                                  leapfrog ? "%vc" + a : "%v" + a, trace,
-                                  here, "%step" + here);
+              ? emitTrotterStrain(inner, "", trace, groups, here,
+                                  "%step" + here, kinetic)
+              : emitTrotterStrain(inner, leapfrog ? "%vc" + a : "%v" + a,
+                                  trace, groups, here, "%step" + here);
       std::string outerScale = scaleName;
       if (!scaling.scale.empty())
         scaleName = scaling.scale;
       bool virial = withEnergy || countsAfterScaling();
       os << inner << "%x" << n << ", %v" << n << ", %f" << n
          << (withEnergy ? ", %u" + n : "") << (virial ? ", %w" + n : "")
+         << (virial ? ", %gw" + n : "")
          << (leapfrog ? ", %vc" + n : "") << ", %kh" << n
          << " = dyn.step @step_trotter" << (withEnergy ? "_energy" : "")
          << "(" << x << ", " << v << ", %f"
@@ -3003,10 +3028,13 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
          << getFieldValues(fieldPrefix) << ")\n"
          << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64, f64"
          << getScaleType() << getFieldTypes() << ") -> (!vec, !vec, !vec"
-         << (withEnergy ? ", f64" : "") << (virial ? ", vector<9xf64>" : "")
+         << (withEnergy ? ", f64" : "")
+         << (virial ? ", vector<9xf64>, f64" : "")
          << (leapfrog ? ", !vec" : "") << ", f64)\n";
       scaleName = outerScale;
       scaling.kineticHalf = "%kh" + n;
+      if (virial)
+        scaling.groupsAfter = "%gw" + n;
       return scaling;
     };
 
@@ -3238,6 +3266,58 @@ std::string Builder::emitGroupTrace(StringRef indent, StringRef trace,
   return groupTrace;
 }
 
+std::string Builder::emitMolecularTrace(StringRef indent, StringRef trace,
+                                        StringRef positions, StringRef forces,
+                                        StringRef cell, StringRef masses,
+                                        StringRef relations, StringRef tag) {
+  std::string t = tag.str();
+  std::string inner = (indent + "  ").str();
+  std::string molecular = trace.str();
+  for (const Program::TupleSet *set : getRigidGroups()) {
+    unsigned count = set->arity - 1;
+    std::string coordinates, arguments;
+    for (unsigned k = 1; k <= count; ++k) {
+      coordinates += (k == 1 ? "" : ", ") +
+                     ("displacement(" + std::to_string(k) + ", 0)");
+      arguments += "%vs_r" + std::to_string(k) + ": vector<3xf64>, ";
+    }
+    for (unsigned k = 0; k <= count; ++k)
+      arguments += "%vs_f" + std::to_string(k) + ": vector<3xf64>, ";
+    for (unsigned k = 0; k <= count; ++k)
+      arguments += "%vs_m" + std::to_string(k) + ": f64" +
+                   (k == count ? "" : ", ");
+    // With the places r_k about the first particle and c the center of
+    // mass about it, Σ (r_k − c)·F_k = Σ r_k·F_k − c·Σ F_k.
+    std::string internal = "%bgi" + t + "_" + set->name;
+    os << indent << internal << " = md.sum_tuples " << relations
+       << set->name << ", " << positions << ", " << cell << "\n"
+       << indent << "    coordinates(" << coordinates << ")\n"
+       << indent << "    gather(" << forces << ", " << masses
+       << " : !vec, !real) {\n"
+       << indent << "^bb0(" << arguments << "):\n";
+    SiteKernel k(os, inner);
+    std::string total = "%vs_m0", moment = k.zero(), sum = "%vs_f0",
+                places = k.constant(0.0);
+    for (unsigned j = 1; j <= count; ++j) {
+      std::string n = std::to_string(j);
+      total = k.real("addf", total, "%vs_m" + n);
+      moment = k.vector("addf", moment, k.scale("%vs_m" + n, "%vs_r" + n));
+      sum = k.vector("addf", sum, "%vs_f" + n);
+      places = k.real("addf", places, k.dot("%vs_r" + n, "%vs_f" + n));
+    }
+    std::string center =
+        k.scale(k.real("divf", k.constant(1.0), total), moment);
+    std::string about = k.real("subf", places, k.dot(center, sum));
+    os << inner << "md.yield " << about << " : f64\n"
+       << indent << "} : !rel_" << set->name << ", !vec -> f64\n";
+    std::string next = "%bgm" + t + "_" + set->name;
+    os << indent << next << " = arith.subf " << molecular << ", " << internal
+       << " : f64\n";
+    molecular = next;
+  }
+  return molecular;
+}
+
 std::string Builder::emitGroupScaling(StringRef indent, StringRef positions,
                                       StringRef mu, StringRef oneMinusMu,
                                       StringRef cell, StringRef masses,
@@ -3351,9 +3431,8 @@ void Builder::emitStrain(StringRef indent, StringRef kinetic,
 }
 
 Builder::TrotterScaling Builder::emitTrotterStrain(
-    StringRef indent, StringRef positions, StringRef velocities,
-    StringRef trace, StringRef tag, StringRef step, StringRef givenKinetic,
-    StringRef givenGroups) {
+    StringRef indent, StringRef velocities, StringRef trace, StringRef groups,
+    StringRef tag, StringRef step, StringRef givenKinetic) {
   std::string t = tag.str();
   // The kinetic energy of the pressure: that of the velocities of the
   // step, without the center of mass.
@@ -3361,12 +3440,6 @@ Builder::TrotterScaling Builder::emitTrotterStrain(
   if (kinetic.empty())
     kinetic = emitKineticWithoutCenter(indent, velocities, massName, t);
   emitStrain(indent, kinetic, trace, t, step);
-  std::string relations =
-      ("%r" + StringRef(fieldPrefix).drop_front(2)).str();
-  std::string groups = givenGroups.str();
-  if (groups.empty())
-    groups = emitGroupTrace(indent, trace, positions, velocities, cellName,
-                            massName, relations, "a" + t);
   return finishTrotterStrain(indent, groups, t);
 }
 
@@ -3515,20 +3588,19 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
       // The scaling was made within the drift of the step (Trotter type,
       // [Bernetti2020], SI Sec. V.C): the velocities of its middle by 1/μ,
       // which changes their kinetic energy by (1/μ² − 1) K, and the
-      // positions by μ, which changes the potential energy by −ln μ tr W
-      // to first order: tr W, with the virials of the constant terms and
-      // of the motion within the rigid groups, is taken as the mean of
-      // those before and after the scaling, which makes the count exact
-      // to second order in the strain (D92).
+      // positions by μ, which changes the potential energy by −ln μ W to
+      // first order, W the trace of the virial of the groups, Σ X·F_group,
+      // with those of the constant terms. W is taken as the mean of those
+      // of the evaluations before and after the scaling, which makes the
+      // count exact to second order in the strain (D92). The virial of the
+      // step with twice the internal kinetic energy would not do: the
+      // constraints of the step that scales straddle the scaling, and the
+      // count was biased by the square of the strain (D116).
       // To first order, from the virial before the scaling only.
       if (!countsAfterScaling())
         os << indent << "%bwork" << t << " = arith.mulf "
            << trotter->workBefore << ", " << trotter->logMu << " : f64\n";
-      std::string after =
-          countsAfterScaling()
-              ? emitGroupTrace(indent, trace, positions, velocities,
-                               cellName, massName, relations, t)
-              : "";
+      std::string after = countsAfterScaling() ? trotter->groupsAfter : "";
       // With a scaling every step, the state that the next one takes its
       // pressure from: the kinetic energy after the thermostat.
       if (scalesEveryStep())
@@ -4381,8 +4453,8 @@ void Builder::emitEntry() {
     if (scalesEveryStep())
       emitStoreTrotterState(
           "  ", trace,
-          emitGroupTrace("  ", trace, "%x0", velocities, "%cell", "%m",
-                         "%r_", "s0"),
+          emitMolecularTrace("  ", "%tr0", "%x0", "%f0", "%cell", "%m",
+                             "%r_", "s0"),
           emitKineticWithoutCenter("  ", velocities, "%m", "s0"));
 
     if (isLeapfrog()) {
@@ -4438,8 +4510,8 @@ void Builder::emitEntry() {
       trace = emitStartConstraintTrace("%x0", "%fbs", current, trace);
     emitStoreTrotterState(
         "  ", trace,
-        emitGroupTrace("  ", trace, "%x0", current, "%cell", "%m", "%r_",
-                       "s0"),
+        emitMolecularTrace("  ", "%trs", "%x0", "%fbs", "%cell", "%m", "%r_",
+                           "s0"),
         emitKineticWithoutCenter("  ", current, "%m", "s0"));
   }
 

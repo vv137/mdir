@@ -18,7 +18,7 @@ the topology and the parameters at hand. On one RTX 3090 in mixed
 precision, MDIR runs every system of the Amber GPU benchmark suite, from
 23,558 to 1,067,095 atoms, at constant energy and at constant pressure,
 at 102% to 127% of the rate of pmemd.cuda 26 on the same device; on
-ubiquitin in OPC with a cutoff of 9 Å it reaches 64% to 72% of the rate
+ubiquitin in OPC with a cutoff of 9 Å it reaches 65% to 72% of the rate
 of GROMACS 2026.3, whose nonbonded kernel takes as long as MDIR's loop
 over pairs but which runs PME, the bonded terms, and the update beside it.
 Over

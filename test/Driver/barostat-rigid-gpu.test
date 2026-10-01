@@ -1,0 +1,73 @@
+# The count of the work of the barostat of Trotter type with rigid groups
+# (D116). The dipeptide in OPC, rigid, equilibrated at constant pressure
+# for 20 ps, then 50 ps with a strong coupling (tau_P = 0.5 ps), in the
+# deterministic mode. The count takes the virial of the groups at the
+# evaluated positions before and after the scaling, Σ X·F_group; with the
+# virial of the step, whose constraints straddle the scaling, and twice the
+# internal kinetic energy, it was biased in proportion to the square of the
+# strain, and the conserved energy changed by 1.3e-2 (1.28e-2 to 1.39e-2
+# over three seeds in the default mode, against 0.7e-3 to 2.6e-3 now and
+# 1.2e-4 to 3.6e-4 counted exactly).
+#
+# REQUIRES: cuda, hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
+# RUN: sed -n '/^#--- equil.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/equil.toml
+# RUN: sed -e 's|^checkpoint = "equil.h5"|checkpoint = "run.h5"|' \
+# RUN:     -e 's|^coordinates = \(.*\)|coordinates = \1\ncheckpoint = "equil.h5"|' \
+# RUN:     -e 's|^work = "EXACT"||' -e 's|^steps *= 10000|steps = 25000|' \
+# RUN:     -e 's|^checkpoint_interval = 10000|checkpoint_interval = 25000|' \
+# RUN:     %t/equil.toml > %t/run.toml
+# RUN: mdir run %t/equil.toml > %t/equil.log
+# RUN: mdir run %t/run.toml | FileCheck %s
+
+# CHECK: MDIR: continues after step 10000
+# CHECK: MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[3-9]}} of its value
+
+#--- equil.toml
+[input]
+topology   = "opc.prmtop"
+coordinates = "opc.inpcrd"
+
+[output]
+energy_interval = 1000
+checkpoint = "equil.h5"
+checkpoint_interval = 10000
+
+[energy]
+cutoff        = 9.0
+pairlist_distance = 10.0
+electrostatics = "PME"
+
+[dynamics]
+integrator        = "VELOCITY_VERLET"
+time_step         = 0.002
+steps             = 10000
+seed              = 7
+
+[ensemble]
+ensemble    = "NPT"
+temperature = 300.0
+pressure    = 1.0
+
+[thermostat]
+method = "V-RESCALE"
+interval = 25
+time_constant = 1.0
+
+[barostat]
+work = "EXACT"
+method = "C-RESCALE"
+time_constant = 0.5
+
+[constraints]
+rigid_water = true
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target = "GPU"
+deterministic = true
+#--- end

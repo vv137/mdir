@@ -241,27 +241,47 @@ before and after gives to second order:
 $$
 \Delta E_\text{sys} = (\mu^{-2} - 1)K_{1/2} - \ln\mu\cdot\tfrac12(\mathcal W_b + \mathcal W_a),
 \qquad
-\mathcal W = \operatorname{tr}\mathsf W + 2K_\text{int} + C/V .
+\mathcal W = \sum_g\mathbf X_g\cdot\mathbf F_g + C/V .
 $$
 
-$\mathcal W$ is the virial of groups that move as wholes,
-$\sum_g\mathbf X_g\cdot\mathbf F_g$ with $\mathbf F_g$ the total force on
-group $g$. It differs from the atomic virial with the constraints,
-$\sum_j\mathbf x_j\cdot\mathbf F_j$, by $-\sum_j(\mathbf x_j -
-\mathbf X)\cdot\mathbf F_j$ over each group. Since
-$\sum_j m_j(\mathbf x_j - \mathbf X) = 0$,
+$\mathcal W$ is the virial of the groups that move as wholes, with
+$\mathbf X_g$ the center of mass of group $g$ (a free particle is a group
+of one) and $\mathbf F_g$ the total force on it; it is $-dU/d\ln\mu$
+when the groups scale with their centers. In a periodic cell it is taken
+from the virial of an evaluation and the places within each group,
+
+$$
+\sum_g\mathbf X_g\cdot\mathbf F_g
+= \operatorname{tr}\mathsf W_\text{eval} - \sum_g\sum_{j\in g}(\mathbf x_j - \mathbf X_g)\cdot\mathbf F_j ,
+$$
+
+with the forces after the virtual sites have given theirs to their atoms
+(a linear site leaves the virial as it is). The forces of the
+constraints do not enter: they are internal to the groups and drop out
+of both sums. The virial of the step, which has those of the
+constraints, gives the same with twice the internal kinetic energy:
+since $\sum_j m_j(\mathbf x_j - \mathbf X) = 0$,
 
 $$
 \frac{d}{dt}\sum_j m_j(\mathbf x_j - \mathbf X)\cdot(\mathbf v_j - \mathbf V)
 = \sum_j m_j\lVert\mathbf v_j - \mathbf V\rVert^2 + \sum_j(\mathbf x_j - \mathbf X)\cdot\mathbf F_j ,
 $$
 
-and the left side is half the second derivative of the moment of
-inertia about the center, zero for a rigid group. So
-$-\sum_j(\mathbf x_j - \mathbf X)\cdot\mathbf F_j = 2K_\text{int}$, the
-term of $\mathcal W$. A water and a group of one bond are rigid; for a
-group of SHAKE with two or three hydrogens, whose angles bend, the
-identity is approximate. The virials before and after are those of the
+and the left side is half the second derivative of the moment of inertia
+about the center, zero for a rigid group, so $-\sum_j(\mathbf x_j -
+\mathbf X)\cdot\mathbf F_j = 2K_\text{int}$ with $\mathbf F_j$ the forces
+with those of the constraints, and $\mathcal W = \operatorname{tr}\mathsf
+W + 2K_\text{int} + C/V$. MDIR counted so first, and the count was biased
+with rigid groups: the identity needs the forces of the constraints of
+one configuration, and in the step that scales, the constraints of the
+positions take the forces of its start, before the scaling, and those of
+the velocities the forces after it. The error of $\mathcal W_a$ is then
+of first order in $\ln\mu$, and the trapezoid errs by a term of second
+order of one sign: on 1039 rigid OPC waters the conserved energy drifted
+by $-234$ kcal/mol/ns, at every period, and from the evaluations it
+drifts by $+12.7 \pm 13$ (D116). The virial of the groups is also exact
+for a group of SHAKE with two or three hydrogens, whose angles bend.
+The virials before and after are those of the
 steps around the scaling, half a step from it, so the count is exact to
 second order in the strain but not in that offset, and the conserved
 energy drifts slowly, more with longer periods, as the effective energy

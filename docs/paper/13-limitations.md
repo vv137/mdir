@@ -41,21 +41,22 @@ the spreading of PME has (D70), would close the gap.
   narrower than twice the reach and the extent of a group (Section 4.4,
   D115). The build now keeps an entry for each image within the reach,
   and the two agree to every printed digit.
-- *The conserved energy at constant pressure drifts with rigid groups.*
-  On 1039 rigid OPC waters the default count of the work of the barostat,
-  of Trotter type (Section 6.4), drifts by about $-200$ kcal/mol/ns, where
-  the exact count drifts by about $+10$ and GROMACS by $-0.4$; with
-  flexible water the counts agree. On ubiquitin in 5700 OPC waters the
-  default count drifts by $-228$ kcal/mol/ns (Table 10.3), as much as on
-  1039 waters. The bias is proportional to the time
-  and does not depend on the period of coupling, as a term of second order
-  in the strain would be. The sampling is right (Section 9.5); the count
-  that measures it is not, for rigid groups, and is to be derived again
-  for groups that scale by their centers while their velocities scale
-  particle by particle.
+- *The conserved energy at constant pressure drifted with rigid groups,
+  found and fixed.* On 1039 rigid OPC waters the default count of the
+  work of the barostat, of Trotter type (Section 6.4), drifted by about
+  $-230$ kcal/mol/ns at every period of coupling, where the exact count
+  drifted by about $+10$ and GROMACS by $-0.4$; with flexible water the
+  counts agreed. It took the virial of the step with twice the internal
+  kinetic energy, which is the virial of the groups only when the forces
+  of the constraints are those of one configuration, and in the step that
+  scales they straddle the scaling. Counted from the virial of the groups
+  of the evaluations (D116), the drift is $+12.7 \pm 13$ kcal/mol/ns on
+  the water box and $+11.4 \pm 33$ on ubiquitin in OPC, from $-228$. The
+  sampling was never in question (Section 9.5): the count changes nothing
+  in the trajectory.
 - *Slower than GROMACS on a protein in OPC.* On ubiquitin in OPC with a
   cutoff of 9 Å (Section 10.6) MDIR's rate is 72% of GROMACS's at constant
-  energy and 64% at constant pressure, though its loop over pairs costs
+  energy and 65% at constant pressure, though its loop over pairs costs
   the same as GROMACS's nonbonded kernel and its PME less. GROMACS runs
   PME beside its nonbonded kernel and the bonded terms, the update, and
   the constraints on the host; MDIR runs them in series on the device
