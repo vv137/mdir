@@ -342,6 +342,45 @@ void mdrtSideJoin(void) {
 
 void mgpuStreamDestroy(CUstream stream) { (void)stream; }
 
+/* Reads of flags of the device that do not wait for the work issued after
+   them (D113): mdrtFlagStart copies the flag into memory of the host that
+   the device writes while the host goes on, and marks the copy with an
+   event; mdrtFlagFinish waits for that event only. The host can then issue
+   the work that does not depend on the flag, such as the reciprocal sum,
+   before it waits, and the device does not stand idle while the host
+   decides. A run has few flags in flight; the slots are reused in turn. */
+enum { FLAG_SLOTS = 32 };
+static int32_t *flagSlots = NULL;
+static CUevent flagEvents[FLAG_SLOTS];
+static int64_t nextFlagSlot = 0;
+
+int64_t mdrtFlagStart(void *device) {
+  mgpuStreamCreate();
+  if (!flagSlots) {
+    check(cuMemAllocHost((void **)&flagSlots,
+                         FLAG_SLOTS * sizeof(*flagSlots)),
+          "cuMemAllocHost");
+    for (int i = 0; i != FLAG_SLOTS; ++i)
+      check(cuEventCreate(&flagEvents[i], CU_EVENT_DISABLE_TIMING),
+            "cuEventCreate");
+  }
+  /* The kernels that set flags run on the first stream. */
+  int64_t slot = nextFlagSlot++ % FLAG_SLOTS;
+  check(cuMemcpyDtoHAsync(&flagSlots[slot], (CUdeviceptr)device,
+                          sizeof(*flagSlots), sharedStream),
+        "cuMemcpyDtoHAsync");
+  check(cuEventRecord(flagEvents[slot], sharedStream), "cuEventRecord");
+  isPending = 1;
+  return slot;
+}
+
+int32_t mdrtFlagFinish(int64_t slot) {
+  double start = begin();
+  check(cuEventSynchronize(flagEvents[slot]), "cuEventSynchronize");
+  end(WAIT, start);
+  return flagSlots[slot];
+}
+
 /* Waits until the device has run everything that was issued. */
 static void finish(void) {
   if (!isPending || !sharedStream)

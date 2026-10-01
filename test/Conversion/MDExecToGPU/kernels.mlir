@@ -187,13 +187,13 @@ func.func @steps(%v: memref<?x3xf64, 1>, %steps: index) {
 // A loop that tells whether the kernel yields true for any particle: a
 // thread that yields true sets a flag on the device, and the others write
 // nothing. The flag is not set when the function begins, and the host
-// clears it where it finds it set. The refresh launches no kernel for its
-// test.
+// clears it where it finds it set. The copy of the flag begins after the
+// loop and the host waits for it before the refresh, its first use (D113).
+// The refresh launches no kernel for its test.
 //
 // CHECK-LABEL: func.func @validity(
 // CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64, 1>, %[[V:[a-z0-9]+]]: memref<?x3xf64, 1>,
 // CHECK:         %[[FLAG:[a-z0-9_]+]] = gpu.alloc () : memref<1xi32, 1>
-// CHECK:         %[[HOST:[a-z0-9_]+]] = memref.alloca() : memref<1xi32>
 // CHECK:         %[[CLEAR:[a-z0-9_]+]] = memref.alloca() : memref<1xi32>
 // CHECK:         memref.store %{{[a-z0-9_]+}}, %[[CLEAR]][
 // CHECK:         gpu.memcpy async [%{{[0-9]+}}] %[[FLAG]], %[[CLEAR]]
@@ -205,8 +205,9 @@ func.func @steps(%v: memref<?x3xf64, 1>, %steps: index) {
 // CHECK:           scf.if %[[FAR]] {
 // CHECK:             memref.store %{{[a-z0-9_]+}}, %[[FLAG]][
 // CHECK:           gpu.terminator
-// CHECK:         gpu.memcpy async [%{{[0-9]+}}] %[[HOST]], %[[FLAG]]
-// CHECK:         %[[VALUE:[0-9]+]] = memref.load %[[HOST]][
+// CHECK:         memref.extract_aligned_pointer_as_index %[[FLAG]]
+// CHECK:         %[[SLOT:[0-9]+]] = call @mdrtFlagStart(
+// CHECK:         %[[VALUE:[0-9]+]] = call @mdrtFlagFinish(%[[SLOT]])
 // CHECK:         %[[SET:[0-9]+]] = arith.cmpi ne, %[[VALUE]],
 // CHECK:         scf.if %[[SET]] {
 // CHECK:           gpu.memcpy async [%{{[0-9]+}}] %[[FLAG]], %[[CLEAR]]

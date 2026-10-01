@@ -52,6 +52,8 @@ static const char *const cellWidthName = "mdrt_gpu_cell_width";
 static const char *const buildNeighborsName =
     "mdrt_gpu_build_neighbors_matrix";
 static const char *const countBuildName = "mdrtCountBuild";
+static const char *const flagStartName = "mdrtFlagStart";
+static const char *const flagFinishName = "mdrtFlagFinish";
 /// Counts a build at an interval that found the structure no longer valid
 /// (D88).
 static const char *const countLateBuildName = "mdrtCountLateBuild";
@@ -124,12 +126,11 @@ struct Cell {
   int64_t capacity = 0;
 };
 
-/// A flag that the threads of a kernel set: one value on the device, the
-/// buffer of the host that it is copied to, and a buffer of the host that
-/// holds the value of a flag that is not set.
+/// A flag that the threads of a kernel set: one value on the device, and a
+/// buffer of the host that holds the value of a flag that is not set. The
+/// runtime reads it into memory of its own (mdrtFlagStart, D113).
 struct Flag {
   Value device;
-  Value host;
   Value clear;
 };
 
@@ -278,11 +279,15 @@ private:
   Cell getCell(Type element, int64_t count, Location loc);
 
   /// Flag number `number` of the function. It is not set where a kernel
-  /// begins that sets it: `readFlag` sees to that.
+  /// begins that sets it: `replaceWithFlag` sees to that.
   Flag getFlag(unsigned number, Location loc);
 
-  /// Returns whether `flag` is set, on the host, and leaves it not set.
-  Value readFlag(OpBuilder &builder, Location loc, const Flag &flag);
+  /// Replaces `result`, the reduction of a flag that `start` begins, with
+  /// `start` or whether the flag is set, which it leaves not set: the copy of the flag starts at `builder`, and the
+  /// host waits for it only before the first op of the block that uses
+  /// `result`, so that it issues the work between before it waits (D113).
+  void replaceWithFlag(OpBuilder &builder, Location loc, const Flag &flag,
+                       Value start, Value result);
 
   /// Copies what `source` holds to `destination`.
   void createTransfer(OpBuilder &builder, Location loc, Value destination,
@@ -525,8 +530,6 @@ Flag Lowering::getFlag(unsigned number, Location loc) {
     Flag flag;
     flag.device = createDeviceBuffer(builder, loc,
                                      getDeviceType({1}, narrow), ValueRange());
-    flag.host =
-        memref::AllocaOp::create(builder, loc, MemRefType::get({1}, narrow));
     flag.clear =
         memref::AllocaOp::create(builder, loc, MemRefType::get({1}, narrow));
     Value zero = arith::ConstantOp::create(builder, loc, narrow,
@@ -539,21 +542,52 @@ Flag Lowering::getFlag(unsigned number, Location loc) {
   return flags[number];
 }
 
-Value Lowering::readFlag(OpBuilder &builder, Location loc,
-                         const Flag &flag) {
-  createTransfer(builder, loc, flag.host, flag.device);
-  Value value = memref::LoadOp::create(
-      builder, loc, flag.host, ValueRange{createIndex(builder, loc, 0)});
-  Value zero = arith::ConstantOp::create(builder, loc, value.getType(),
-                                         builder.getI32IntegerAttr(0));
-  Value isSet = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ne,
-                                      value, zero);
+void Lowering::replaceWithFlag(OpBuilder &builder, Location loc,
+                               const Flag &flag, Value start, Value result) {
+  Type i64 = builder.getI64Type();
+  Type i32 = builder.getI32Type();
+  auto pointerType = LLVM::LLVMPointerType::get(context);
+  Value address = arith::IndexCastOp::create(
+      builder, loc, i64,
+      memref::ExtractAlignedPointerAsIndexOp::create(builder, loc,
+                                                     flag.device));
+  Value pointer = LLVM::IntToPtrOp::create(builder, loc, pointerType, address);
+  Value slot =
+      func::CallOp::create(
+          builder, loc,
+          getOrDeclare(flagStartName,
+                       builder.getFunctionType({pointerType}, {i64})),
+          ValueRange{pointer})
+          .getResult(0);
+  // The first op of the block that uses the result, directly or within.
+  Block *block = builder.getInsertionBlock();
+  Operation *first = nullptr;
+  for (Operation *user : result.getUsers()) {
+    Operation *inBlock = block->findAncestorOpInBlock(*user);
+    if (inBlock && (!first || inBlock->isBeforeInBlock(first)))
+      first = inBlock;
+  }
+  OpBuilder wait(builder.getContext());
+  if (first)
+    wait.setInsertionPoint(first);
+  else
+    wait.setInsertionPoint(builder.getInsertionBlock(),
+                           builder.getInsertionPoint());
+  Value value =
+      func::CallOp::create(
+          wait, loc,
+          getOrDeclare(flagFinishName, wait.getFunctionType({i64}, {i32})),
+          ValueRange{slot})
+          .getResult(0);
+  Value isSet = arith::CmpIOp::create(
+      wait, loc, arith::CmpIPredicate::ne, value,
+      arith::ConstantOp::create(wait, loc, i32, wait.getI32IntegerAttr(0)));
   // Few kernels set the flag, so it is cleared only where it was set.
-  scf::IfOp::create(builder, loc, isSet, [&](OpBuilder &then, Location) {
+  scf::IfOp::create(wait, loc, isSet, [&](OpBuilder &then, Location) {
     createTransfer(then, loc, flag.device, flag.clear);
     scf::YieldOp::create(then, loc);
   });
-  return isSet;
+  result.replaceAllUsesWith(arith::OrIOp::create(wait, loc, start, isSet));
 }
 
 SmallVector<Value>
@@ -1183,13 +1217,12 @@ LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &run) {
                                            partials, size, /*isSum=*/true);
   for (auto [index, start] : llvm::enumerate(after.getReduce())) {
     int place = places[index];
-    Value total;
-    if (place >= 0) {
-      total = arith::AddFOp::create(builder, loc, start, sums[place]);
-    } else {
-      Value isSet = readFlag(builder, loc, used[-place - 1]);
-      total = arith::OrIOp::create(builder, loc, start, isSet);
+    if (place < 0) {
+      replaceWithFlag(builder, loc, used[-place - 1], start,
+                      after.getResult(index));
+      continue;
     }
+    Value total = arith::AddFOp::create(builder, loc, start, sums[place]);
     after.getResult(index).replaceAllUsesWith(total);
   }
   return success();
@@ -1491,13 +1524,12 @@ LogicalResult Lowering::lowerParticleFor(md_exec::ParticleForOp op) {
 
   for (auto [index, start] : llvm::enumerate(op.getReduce())) {
     int place = places[index];
-    Value total;
-    if (place >= 0) {
-      total = arith::AddFOp::create(builder, loc, start, sums[place]);
-    } else {
-      Value isSet = readFlag(builder, loc, used[-place - 1]);
-      total = arith::OrIOp::create(builder, loc, start, isSet);
+    if (place < 0) {
+      replaceWithFlag(builder, loc, used[-place - 1], start,
+                      op.getResult(index));
+      continue;
     }
+    Value total = arith::AddFOp::create(builder, loc, start, sums[place]);
     op.getResult(index).replaceAllUsesWith(total);
   }
   return success();
@@ -3263,6 +3295,41 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
         for (BlockArgument argument : block.getArguments())
           argument.setType(convertType(argument.getType()));
   }
+
+  // A reciprocal sum between the test of a neighbor structure and the
+  // first loop that takes the structure goes before the test: it takes
+  // the positions only, and the device computes it while the host waits
+  // for the test (D113).
+  function.walk([&](md_exec::RefreshNeighborsOp refresh) {
+    SmallVector<md_exec::ReciprocalOp> sums;
+    for (Operation *next = refresh->getNextNode(); next;
+         next = next->getNextNode()) {
+      bool uses = llvm::any_of(refresh->getResults(), [&](Value result) {
+        return llvm::any_of(result.getUsers(), [&](Operation *user) {
+          return next->isAncestor(user);
+        });
+      });
+      if (uses || next->hasTrait<OpTrait::IsTerminator>())
+        break;
+      // A sum on the second stream has its window from
+      // md-exec-assign-streams, which this leaves as it is (D87).
+      auto reciprocal = dyn_cast<md_exec::ReciprocalOp>(next);
+      if (!reciprocal || reciprocal->hasAttr(md_exec::kSideAttrName))
+        continue;
+      bool independent = true;
+      for (Value written : llvm::concat<Value>(
+               reciprocal.getOut() ? ValueRange(reciprocal.getOut())
+                                   : ValueRange(),
+               reciprocal.getScratch()))
+        independent &= !llvm::is_contained(refresh->getOperands(), written);
+      for (Value operand : reciprocal->getOperands())
+        independent &= !llvm::is_contained(refresh->getResults(), operand);
+      if (independent)
+        sums.push_back(reciprocal);
+    }
+    for (md_exec::ReciprocalOp reciprocal : sums)
+      reciprocal->moveBefore(refresh);
+  });
 
   // The kernels are copied into the loops, so the ops inside them are not
   // lowered where they are. A run of loops is lowered at its last loop.
