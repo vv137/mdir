@@ -85,6 +85,9 @@ struct Program {
     /// or of a dihedral are. Those of a virtual site or a correction map
     /// are not.
     bool reversible = true;
+    /// Whether a tuple of two members has an order, as the pairs of a
+    /// particle and the anchor of its constraint group have (D110).
+    bool oriented = false;
 
     size_t size() const { return arity ? members.size() / arity : 0; }
     /// Whether no particle is a member of two tuples, as in the groups of
@@ -95,7 +98,9 @@ struct Program {
       return std::adjacent_find(sorted.begin(), sorted.end()) == sorted.end();
     }
     llvm::StringRef getOrientation() const {
-      return arity == 2 ? "unordered" : reversible ? "reversal" : "ordered";
+      if (arity == 2 && !oriented)
+        return "unordered";
+      return reversible ? "reversal" : "ordered";
     }
   };
   std::vector<TupleSet> tupleSets;

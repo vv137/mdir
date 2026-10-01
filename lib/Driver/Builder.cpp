@@ -421,8 +421,27 @@ void Builder::emitReorder(StringRef indent, StringRef from,
                           StringRef stateTo, StringRef otherTo,
                           bool withForces, StringRef velocities) {
   StringRef order = "!mdrt.permutation<@atoms>";
-  os << indent << "%order" << stateTo << " = md_exec.spatial_order %x"
-     << from << ", " << cellName << ", %id" << from << " width("
+  // A particle goes where the anchor of its constraint group is (D110):
+  // the positions that the order takes are those of the anchors, from the
+  // pairs of the anchors in the order the particles are in now.
+  std::string ordered = ("%x" + from).str();
+  if (llvm::any_of(program.tupleSets, [](const Program::TupleSet &set) {
+        return set.name == "anchors";
+      })) {
+    ordered = ("%xanchor" + stateTo).str();
+    os << indent << "%ranchor" << stateTo << " = md_exec.renumber %ro_anchors, %id"
+       << from << " : !rel_anchors, !ids\n"
+       << indent << ordered << " = md.gather_tuples %ranchor" << stateTo << ", %x"
+       << from << ", " << cellName << " coordinates(displacement(1, 0)) gather(%x" << from
+       << " : !vec) {\n"
+       << indent << "^bb0(%xanchor_d: vector<3xf64>, %xanchor_0: vector<3xf64>, "
+       << "%xanchor_1: vector<3xf64>):\n"
+       << indent << "  %xanchor_none = arith.constant dense<0.0> : vector<3xf64>\n"
+       << indent << "  md.yield %xanchor_1, %xanchor_none : vector<3xf64>, vector<3xf64>\n"
+       << indent << "} : !rel_anchors, !vec -> !vec\n";
+  }
+  os << indent << "%order" << stateTo << " = md_exec.spatial_order "
+     << ordered << ", " << cellName << ", %id" << from << " width("
      << formatReal(program.orderWidth) << ")\n"
      << indent << "    : !vec, !ids -> " << order << "\n";
   auto permute = [&](const llvm::Twine &result, const llvm::Twine &field,
@@ -865,6 +884,28 @@ llvm::Error Builder::collectTopology() {
         set.members.push_back(shake.hydrogens[k]);
         set.fields[lengths[k]].values.push_back(shake.lengths[k]);
       }
+    }
+  }
+  // The anchor of each particle: the oxygen of its rigid water, the heavy
+  // atom of its SHAKE group, or itself. The order of the particles puts a
+  // particle where its anchor is (emitReorder), so that the members of a
+  // group stay together, in one warp of a device for most (D110).
+  if (!topology.settles.empty() || !topology.shakes.empty()) {
+    std::vector<int32_t> anchors(count);
+    for (size_t i = 0; i != count; ++i)
+      anchors[i] = i;
+    for (const Topology::Settle &settle : topology.settles)
+      for (unsigned k = 0; k != 3; ++k)
+        anchors[settle.oxygen + k] = settle.oxygen;
+    for (const Topology::Shake &shake : topology.shakes)
+      for (int32_t hydrogen : shake.hydrogens)
+        anchors[hydrogen] = shake.center;
+    Program::TupleSet &set = addSet("anchors", 2);
+    set.reversible = false;
+    set.oriented = true;
+    for (size_t i = 0; i != count; ++i) {
+      set.members.push_back(i);
+      set.members.push_back(anchors[i]);
     }
   }
   if (!topology.cmaps.empty()) {

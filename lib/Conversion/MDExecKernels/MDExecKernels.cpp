@@ -701,20 +701,39 @@ struct EvaluatedTuple {
 };
 } // namespace
 
+/// How a kernel loads the value of a member from a buffer, in `type` if
+/// it is not null (the kernel narrows the value to it at once), and
+/// whether the value is the position whose differences the kernel takes:
+/// `loadElement`, or a value held in registers (emitIntegrationThread),
+/// where a position may be one relative to the tuple, in the type of the
+/// kernel.
+using LoadMember = function_ref<Value(OpBuilder &, Value, Value, Type, bool)>;
+
+/// The type that every use of `argument` narrows it to, if each is an
+/// arith.truncf to one type; otherwise null.
+static Type getNarrowedType(BlockArgument argument) {
+  Type narrowed;
+  for (Operation *user : argument.getUsers()) {
+    auto truncate = dyn_cast<arith::TruncFOp>(user);
+    if (!truncate || truncate.getRoundingmodeAttr() ||
+        (narrowed && truncate.getType() != narrowed))
+      return Type();
+    narrowed = truncate.getType();
+  }
+  return narrowed;
+}
+
 static void evaluateMembers(OpBuilder &b, md_exec::TupleForOp op,
                             EvaluatedTuple &result, Value box, Value inverse,
-                            const IRMapping &local);
+                            const IRMapping &local,
+                            LoadMember loadMember = nullptr);
 
-/// Loads the entry `number` of the row of `particle` in `incidence` and
-/// emits the kernel of `op` for it: the displacements in the minimum image,
-/// taken in the type of the positions and imaged in `computed`, the values
-/// of `ins` for each member and of `parameters` for the tuple.
-static EvaluatedTuple evaluateTuple(OpBuilder &b, md_exec::TupleForOp op,
-                                    Value incidence, Value particle,
-                                    Value number, Value box, Value inverse,
-                                    const IRMapping &local) {
+/// Loads the entry `number` of the row of `particle` in `incidence`: the
+/// tuple, the place of the particle in it, and its members.
+static EvaluatedTuple loadTuple(OpBuilder &b, md_exec::TupleForOp op,
+                                Value incidence, Value particle,
+                                Value number) {
   Location loc = op.getLoc();
-  Block &kernel = op.getKernel().front();
   int64_t arity = op.getArity();
   int64_t entry = md_exec::getIncidenceEntrySize(arity);
   Value one = createIndex(b, loc, 1);
@@ -730,6 +749,18 @@ static EvaluatedTuple evaluateTuple(OpBuilder &b, md_exec::TupleForOp op,
   for (int64_t q = 0; q != arity; ++q)
     result.members.push_back(
         loadIndex(b, loc, incidence, particle, column(2 + q)));
+  return result;
+}
+
+/// Loads the entry `number` of the row of `particle` in `incidence` and
+/// emits the kernel of `op` for it: the displacements in the minimum image,
+/// taken in the type of the positions and imaged in `computed`, the values
+/// of `ins` for each member and of `parameters` for the tuple.
+static EvaluatedTuple evaluateTuple(OpBuilder &b, md_exec::TupleForOp op,
+                                    Value incidence, Value particle,
+                                    Value number, Value box, Value inverse,
+                                    const IRMapping &local) {
+  EvaluatedTuple result = loadTuple(b, op, incidence, particle, number);
   evaluateMembers(b, op, result, box, inverse, local);
   return result;
 }
@@ -738,17 +769,27 @@ static EvaluatedTuple evaluateTuple(OpBuilder &b, md_exec::TupleForOp op,
 /// `result.members`, as `evaluateTuple` does.
 static void evaluateMembers(OpBuilder &b, md_exec::TupleForOp op,
                             EvaluatedTuple &result, Value box, Value inverse,
-                            const IRMapping &local) {
+                            const IRMapping &local, LoadMember loadMember) {
   Location loc = op.getLoc();
   Block &kernel = op.getKernel().front();
   int64_t arity = op.getArity();
   IRMapping &inside = result.inside;
   inside = local;
   Value positions = op.getPositions();
+  auto load = [&](Value buffer, Value member, Type type,
+                  bool position = false) -> Value {
+    if (loadMember)
+      return loadMember(b, buffer, member, type, position);
+    Value value = loadElement(b, loc, buffer, member);
+    if (type)
+      value = arith::TruncFOp::create(b, loc, type, value);
+    return value;
+  };
   SmallVector<Value, 4> memberPositions(arity);
   auto positionOf = [&](int64_t q) {
     if (!memberPositions[q])
-      memberPositions[q] = loadElement(b, loc, positions, result.members[q]);
+      memberPositions[q] =
+          load(positions, result.members[q], Type(), /*position=*/true);
     return memberPositions[q];
   };
   Type computed = getElementTypeOrSelf(box.getType());
@@ -764,16 +805,32 @@ static void evaluateMembers(OpBuilder &b, md_exec::TupleForOp op,
     Value d = arith::SubFOp::create(b, loc, raw, shift);
     inside.map(kernel.getArgument(index), d);
   }
+  // A value that the kernel narrows at once is loaded narrowed, and the
+  // ops that narrow it are not cloned.
   unsigned argument = op.getCoordinateKinds().size();
   for (Value buffer : op.getIns())
-    for (int64_t q = 0; q != arity; ++q)
-      inside.map(kernel.getArgument(argument++),
-                 loadElement(b, loc, buffer, result.members[q]));
+    for (int64_t q = 0; q != arity; ++q) {
+      BlockArgument in = kernel.getArgument(argument++);
+      if (in.use_empty())
+        continue;
+      Type narrowed = getNarrowedType(in);
+      if (!narrowed) {
+        inside.map(in, load(buffer, result.members[q], Type()));
+        continue;
+      }
+      Value value = load(buffer, result.members[q], narrowed);
+      for (Operation *user : in.getUsers())
+        inside.map(user->getResult(0), value);
+    }
   for (Value buffer : op.getParameters())
     inside.map(kernel.getArgument(argument++),
                loadElement(b, loc, buffer, result.tuple));
-  for (Operation &nested : kernel.without_terminator())
+  for (Operation &nested : kernel.without_terminator()) {
+    if (nested.getNumResults() == 1 && isa<arith::TruncFOp>(nested) &&
+        inside.contains(nested.getResult(0)))
+      continue;
     b.clone(nested, inside);
+  }
 }
 
 /// The loop of `emitTupleKernel` for a set whose tuples share no particle:
@@ -1123,6 +1180,527 @@ kernels::emitTuplesOnceWithSums(OpBuilder &builder, md_exec::TupleForOp op,
       totals[j] = arith::ExtFOp::create(
           builder, loc, yield->getOperand(i).getType(), totals[j]);
   return totals;
+}
+
+void kernels::emitIntegrationThread(
+    OpBuilder &builder, const IntegrationRun &run, ArrayRef<Value> boxes,
+    ArrayRef<Value> inverses, Value thread, Value acrossList,
+    Value acrossCount, bool across,
+    function_ref<void(OpBuilder &, Value, ArrayRef<Value>)> storeAfter) {
+  md_exec::ParticleForOp before = run.before, after = run.after;
+  SmallVector<md_exec::TupleForOp, 4> loops(run.loops.begin(),
+                                            run.loops.end());
+  Location loc = after.getLoc();
+  Type i32 = builder.getI32Type();
+  Value zero = createIndex(builder, loc, 0);
+  Value width = arith::ConstantOp::create(builder, loc, i32,
+                                          builder.getI32IntegerAttr(32));
+  unsigned beforeOuts = before.getOuts().size();
+  unsigned afterOuts = after.getOuts().size();
+  auto toI32 = [&](OpBuilder &b, Value index) -> Value {
+    return arith::IndexCastOp::create(b, loc, i32, index);
+  };
+  auto True = [&](OpBuilder &b) -> Value {
+    return arith::ConstantOp::create(b, loc, b.getI1Type(),
+                                     b.getBoolAttr(true));
+  };
+
+  // `value` from the lane `source` of the warp; numbers of 64 bits travel
+  // as two of 32.
+  auto shuffleFrom = [&](OpBuilder &b, Value value, Value source) -> Value {
+    SmallVector<Value> parts = getComponents(b, loc, value);
+    for (Value &part : parts) {
+      Type type = part.getType();
+      if (type.getIntOrFloatBitWidth() == 64) {
+        Type i64 = b.getI64Type();
+        Value bits = arith::BitcastOp::create(b, loc, i64, part);
+        Value low = arith::TruncIOp::create(b, loc, i32, bits);
+        Value high = arith::TruncIOp::create(
+            b, loc, i32,
+            arith::ShRUIOp::create(
+                b, loc, bits,
+                arith::ConstantOp::create(b, loc, i64,
+                                          b.getI64IntegerAttr(32))));
+        low = gpu::ShuffleOp::create(b, loc, low, source, width,
+                                     gpu::ShuffleMode::IDX)
+                  .getShuffleResult();
+        high = gpu::ShuffleOp::create(b, loc, high, source, width,
+                                      gpu::ShuffleMode::IDX)
+                   .getShuffleResult();
+        Value joined = arith::OrIOp::create(
+            b, loc, arith::ExtUIOp::create(b, loc, i64, low),
+            arith::ShLIOp::create(
+                b, loc, arith::ExtUIOp::create(b, loc, i64, high),
+                arith::ConstantOp::create(b, loc, i64,
+                                          b.getI64IntegerAttr(32))));
+        part = arith::BitcastOp::create(b, loc, type, joined);
+      } else {
+        part = gpu::ShuffleOp::create(b, loc, part, source, width,
+                                      gpu::ShuffleMode::IDX)
+                   .getShuffleResult();
+      }
+    }
+    return fromComponents(b, loc, value.getType(), parts);
+  };
+
+  // The values of the loop before for a member, from its inputs as they
+  // are stored, before the thread writes anything.
+  auto evalBefore = [&](OpBuilder &b, Value member) {
+    IRMapping local;
+    Block &kernel = before.getKernel().front();
+    for (auto [index, buffer] : llvm::enumerate(before.getIns()))
+      local.map(kernel.getArgument(index), loadElement(b, loc, buffer, member));
+    for (Operation &nested : kernel.without_terminator())
+      b.clone(nested, local);
+    Operation *yield = kernel.getTerminator();
+    SmallVector<Value> values;
+    for (unsigned i = 0; i != beforeOuts; ++i)
+      values.push_back(local.lookupOrDefault(yield->getOperand(i)));
+    return values;
+  };
+  // The values of the loop before for a member, as the first kernel wrote
+  // them.
+  auto loadBefore = [&](OpBuilder &b, Value member) {
+    SmallVector<Value> values;
+    for (Value buffer : before.getOuts())
+      values.push_back(loadElement(b, loc, buffer, member));
+    return values;
+  };
+  auto fromBefore = [&](Value buffer) -> int {
+    for (unsigned j = 0; j != beforeOuts; ++j)
+      if (before.getOuts()[j] == buffer)
+        return j;
+    return -1;
+  };
+  auto fromLoop = [&](Value buffer) -> std::pair<int, int> {
+    for (auto [i, loop] : llvm::enumerate(loops))
+      for (auto [o, out] : llvm::enumerate(loop.getOuts()))
+        if (out == buffer)
+          return {int(i), int(o)};
+    return {-1, -1};
+  };
+  // The types of the values of a loop over tuples for one member: one for
+  // each destination.
+  auto correctionTypes = [&](md_exec::TupleForOp loop) {
+    Operation *yield = loop.getKernel().front().getTerminator();
+    int64_t arity = loop.getArity();
+    SmallVector<Type> types;
+    for (unsigned o = 0, e = loop.getOuts().size(); o != e; ++o)
+      types.push_back(yield->getOperand(o * arity).getType());
+    return types;
+  };
+  // The cell of a loop in the type its kernel computes in.
+  auto cellOf = [&](OpBuilder &, unsigned i) -> std::pair<Value, Value> {
+    return {boxes[i], inverses[i]};
+  };
+
+  // The loop after for a member, its values of the loop before from
+  // registers and those of the loops over tuples from `corrections` (one
+  // for each destination of each loop), and its contributions handed
+  // over; the destinations of the loops over tuples for the member, and
+  // those of the loop before that the loop after does not write, too.
+  auto evalAfter = [&](OpBuilder &b, Value member, ArrayRef<Value> values,
+                       ArrayRef<SmallVector<Value>> corrections) {
+    for (auto [i, loop] : llvm::enumerate(loops))
+      for (auto [o, out] : llvm::enumerate(loop.getOuts())) {
+        if (!run.keepOuts[i][o])
+          continue;
+        Value value = corrections[i][o];
+        if (!loop.overwrites(o))
+          value = arith::AddFOp::create(
+              b, loc, loadElement(b, loc, out, member), value);
+        storeElement(b, loc, value, out, member);
+      }
+    IRMapping local;
+    Block &kernel = after.getKernel().front();
+    for (auto [index, buffer] : llvm::enumerate(after.getIns())) {
+      Type type = kernel.getArgument(index).getType();
+      Type real = getElementTypeOrSelf(type);
+      Value value;
+      if (int j = fromBefore(buffer); j >= 0)
+        value = convertReal(b, loc, values[j], real);
+      else if (auto [i, o] = fromLoop(buffer); i >= 0)
+        value = convertReal(b, loc, corrections[i][o], real);
+      else
+        value = loadElement(b, loc, buffer, member);
+      local.map(kernel.getArgument(index), value);
+    }
+    for (Operation &nested : kernel.without_terminator())
+      b.clone(nested, local);
+    Operation *yield = kernel.getTerminator();
+    for (unsigned i = 0; i != afterOuts; ++i)
+      storeElement(b, loc, local.lookupOrDefault(yield->getOperand(i)),
+                   after.getOuts()[i], member);
+    for (unsigned j = 0; j != beforeOuts; ++j)
+      if (!llvm::is_contained(after.getOuts(), before.getOuts()[j]))
+        storeElement(b, loc, values[j], before.getOuts()[j], member);
+    SmallVector<Value> contributions;
+    for (unsigned i = afterOuts, e = yield->getNumOperands(); i != e; ++i)
+      contributions.push_back(local.lookupOrDefault(yield->getOperand(i)));
+    storeAfter(b, member, contributions);
+  };
+
+  // The tuple of a particle in each loop, if any (at most one over the
+  // loops), and whether its members all lie in the warp of the particle.
+  struct Row {
+    EvaluatedTuple tuple;
+    Value inTuple, inWarp, useWarp, leaderLane, leadsAcross;
+  };
+  auto loadRows = [&](OpBuilder &b, Value particle, Value lane32,
+                      Value warpBase, Value warpEnd) {
+    SmallVector<Row> rows;
+    for (auto [i, loop] : llvm::enumerate(loops)) {
+      Row row;
+      Value count = loadIndex(b, loc, loop.getIncidence(), particle, zero);
+      row.inTuple = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne,
+                                          count, zero);
+      row.tuple = loadTuple(b, loop, loop.getIncidence(), particle, zero);
+      Value inWarp;
+      for (Value member : row.tuple.members) {
+        Value in = arith::AndIOp::create(
+            b, loc,
+            arith::CmpIOp::create(b, loc, arith::CmpIPredicate::uge, member,
+                                  warpBase),
+            arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult, member,
+                                  warpEnd));
+        inWarp = inWarp ? arith::AndIOp::create(b, loc, inWarp, in) : in;
+      }
+      row.inWarp = inWarp;
+      row.useWarp = arith::AndIOp::create(b, loc, row.inTuple, inWarp);
+      row.leaderLane = arith::SelectOp::create(
+          b, loc, row.useWarp,
+          toI32(b, arith::SubIOp::create(b, loc, row.tuple.members[0],
+                                         warpBase)),
+          lane32);
+      Value leads = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq,
+                                          row.tuple.place, zero);
+      row.leadsAcross = arith::AndIOp::create(
+          b, loc,
+          arith::AndIOp::create(
+              b, loc, row.inTuple,
+              arith::XOrIOp::create(b, loc, inWarp, True(b))),
+          leads);
+      rows.push_back(row);
+    }
+    return rows;
+  };
+
+  // The second kernel: the tuples that lie across warps, from the list
+  // the first kernel made. Their member at place 0 takes every member:
+  // the values of the loop before that the first kernel wrote, the tuple,
+  // and the loop after for each.
+  if (across) {
+    Value listed = arith::CmpIOp::create(
+        builder, loc, arith::CmpIPredicate::ult, thread,
+        arith::IndexCastOp::create(
+            builder, loc, builder.getIndexType(),
+            memref::LoadOp::create(builder, loc, acrossCount,
+                                   ValueRange{zero})));
+    scf::IfOp::create(builder, loc, listed, [&](OpBuilder &b, Location) {
+      Value particle = arith::IndexCastOp::create(
+          b, loc, b.getIndexType(),
+          memref::LoadOp::create(b, loc, acrossList, ValueRange{thread}));
+      Value lane = arith::RemUIOp::create(b, loc, particle,
+                                          createIndex(b, loc, 32));
+      Value warpBase = arith::SubIOp::create(b, loc, particle, lane);
+      Value warpEnd =
+          arith::AddIOp::create(b, loc, warpBase, createIndex(b, loc, 32));
+      SmallVector<Row> rows =
+          loadRows(b, particle, toI32(b, lane), warpBase, warpEnd);
+      for (auto [i, loop] : llvm::enumerate(loops)) {
+        Row &row = rows[i];
+        scf::IfOp::create(b, loc, row.leadsAcross, [&](OpBuilder &c,
+                                                       Location) {
+          int64_t arity = loop.getArity();
+          EvaluatedTuple evaluated = row.tuple;
+          SmallVector<SmallVector<Value>, 4> values;
+          for (int64_t q = 0; q != arity; ++q)
+            values.push_back(loadBefore(c, evaluated.members[q]));
+          auto loadMember = [&](OpBuilder &d, Value buffer, Value member,
+                                Type type, bool) -> Value {
+            Value value;
+            if (int j = fromBefore(buffer); j < 0) {
+              value = loadElement(d, loc, buffer, member);
+            } else {
+              for (int64_t q = 0; q != arity && !value; ++q)
+                if (evaluated.members[q] == member)
+                  value = values[q][j];
+              assert(value && "a member of the tuple");
+            }
+            if (type)
+              value = arith::TruncFOp::create(d, loc, type, value);
+            return value;
+          };
+          auto [box, inverse] = cellOf(c, i);
+          evaluateMembers(c, loop, evaluated, box, inverse, IRMapping(),
+                          loadMember);
+          Operation *yield = loop.getKernel().front().getTerminator();
+          for (int64_t q = 0; q != arity; ++q) {
+            SmallVector<SmallVector<Value>> corrections;
+            for (auto [k, other] : llvm::enumerate(loops)) {
+              SmallVector<Value> ofLoop;
+              SmallVector<Type> types = correctionTypes(other);
+              for (unsigned o = 0, e = types.size(); o != e; ++o)
+                ofLoop.push_back(
+                    k == i ? evaluated.inside.lookupOrDefault(
+                                 yield->getOperand(o * arity + q))
+                           : createZero(c, loc, types[o]));
+              corrections.push_back(ofLoop);
+            }
+            evalAfter(c, evaluated.members[q], values[q], corrections);
+          }
+          scf::YieldOp::create(c, loc);
+        });
+      }
+      scf::YieldOp::create(b, loc);
+    });
+    return;
+  }
+
+  // The first kernel. Every thread: the loop before for its particle, in
+  // order.
+  Value particle = thread;
+  SmallVector<Value> own = evalBefore(builder, particle);
+  Value lane = arith::RemUIOp::create(builder, loc, particle,
+                                      createIndex(builder, loc, 32));
+  Value lane32 = toI32(builder, lane);
+  Value warpBase = arith::SubIOp::create(builder, loc, particle, lane);
+  Value warpEnd = arith::AddIOp::create(builder, loc, warpBase,
+                                        createIndex(builder, loc, 32));
+  SmallVector<Row> rows = loadRows(builder, particle, lane32, warpBase, warpEnd);
+
+  // The tuples whose members are in one warp: the member at place 0
+  // gathers the values of every member from its lane, computes the
+  // tuple, and every member takes its values from the lane of the member
+  // at place 0. A particle is in one tuple at most over the loops, the
+  // sets being disjoint, so one set of shuffles serves every loop; a lane
+  // loads its own values, narrowed where the kernels narrow them at once.
+  // The shuffles take every lane of the warp, so they are outside any
+  // branch; a lane in no tuple shuffles from itself.
+  int64_t widest = 0;
+  Value useWarp, leaderLane = lane32;
+  for (auto [i, loop] : llvm::enumerate(loops)) {
+    Row &row = rows[i];
+    widest = std::max<int64_t>(widest, loop.getArity());
+    useWarp = useWarp ? arith::OrIOp::create(builder, loc, useWarp, row.useWarp)
+                      : row.useWarp;
+    leaderLane = arith::SelectOp::create(builder, loc, row.useWarp,
+                                         row.leaderLane, leaderLane);
+  }
+  SmallVector<Value, 4> sources;
+  for (int64_t q = 0; q != widest; ++q) {
+    Value source = lane32;
+    for (auto [i, loop] : llvm::enumerate(loops)) {
+      if (q >= loop.getArity())
+        continue;
+      Row &row = rows[i];
+      source = arith::SelectOp::create(
+          builder, loc, row.useWarp,
+          toI32(builder, arith::SubIOp::create(builder, loc,
+                                               row.tuple.members[q],
+                                               warpBase)),
+          source);
+    }
+    sources.push_back(source);
+  }
+  // The values that the kernels take of each member: the positions, and
+  // each of their inputs in the type they narrow it to, if any. Where a
+  // kernel computes in a type narrower than that of the positions, a lane
+  // takes its position relative to that of the member at place 0, in f64,
+  // and narrows that: the differences of the kernel are then those of
+  // small numbers, and the member at place 0 narrows nothing.
+  struct Request {
+    Value buffer;
+    Type type;
+    bool position;
+    bool operator==(const Request &other) const {
+      return buffer == other.buffer && type == other.type &&
+             position == other.position;
+    }
+  };
+  SmallVector<Request> requests;
+  auto request = [&](Request wanted) {
+    if (!llvm::is_contained(requests, wanted))
+      requests.push_back(wanted);
+  };
+  auto positionRequest = [&](unsigned i) {
+    Value positions = loops[i].getPositions();
+    Type real = cast<MemRefType>(positions.getType()).getElementType();
+    Type computed = getElementTypeOrSelf(boxes[i].getType());
+    if (computed.getIntOrFloatBitWidth() < real.getIntOrFloatBitWidth())
+      return Request{positions, VectorType::get({3}, computed), true};
+    return Request{positions, Type(), true};
+  };
+  for (auto [i, loop] : llvm::enumerate(loops)) {
+    Block &kernel = loop.getKernel().front();
+    request(positionRequest(i));
+    unsigned argument = loop.getCoordinateKinds().size();
+    for (Value buffer : loop.getIns())
+      for (int64_t q = 0, arity = loop.getArity(); q != arity; ++q) {
+        BlockArgument in = kernel.getArgument(argument++);
+        if (!in.use_empty())
+          request({buffer, getNarrowedType(in), false});
+      }
+  }
+  SmallVector<SmallVector<Value, 4>> gathered;
+  for (auto [buffer, type, position] : requests) {
+    Value value;
+    if (int j = fromBefore(buffer); j >= 0)
+      value = own[j];
+    else
+      value = loadElement(builder, loc, buffer, particle);
+    if (position && type) {
+      Value origin = shuffleFrom(builder, value, leaderLane);
+      value = arith::TruncFOp::create(
+          builder, loc, type,
+          arith::SubFOp::create(builder, loc, value, origin));
+    } else if (type) {
+      value = arith::TruncFOp::create(builder, loc, type, value);
+    }
+    SmallVector<Value, 4> ofMembers;
+    for (Value source : sources)
+      ofMembers.push_back(shuffleFrom(builder, value, source));
+    gathered.push_back(ofMembers);
+  }
+
+  // The values of each loop for each member and destination, computed by
+  // the member at place 0 of its tuple.
+  SmallVector<SmallVector<Value>> computedOf;
+  for (auto [i, loop] : llvm::enumerate(loops)) {
+    Row &row = rows[i];
+    int64_t arity = loop.getArity();
+    SmallVector<Type> types = correctionTypes(loop);
+    Value leads = arith::AndIOp::create(
+        builder, loc, row.useWarp,
+        arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq,
+                              row.tuple.place, zero));
+    auto computed = scf::IfOp::create(
+        builder, loc, leads,
+        [&](OpBuilder &b, Location) {
+          EvaluatedTuple evaluated = row.tuple;
+          Request place = positionRequest(i);
+          auto loadMember = [&](OpBuilder &, Value buffer, Value member,
+                                Type type, bool position) -> Value {
+            auto it = llvm::find(requests, position
+                                               ? place
+                                               : Request{buffer, type, false});
+            assert(it != requests.end() && "a value that was gathered");
+            for (int64_t q = 0; q != arity; ++q)
+              if (evaluated.members[q] == member)
+                return gathered[it - requests.begin()][q];
+            llvm_unreachable("a member of the tuple");
+          };
+          auto [box, inverse] = cellOf(b, i);
+          evaluateMembers(b, loop, evaluated, box, inverse, IRMapping(),
+                          loadMember);
+          Operation *yield = loop.getKernel().front().getTerminator();
+          SmallVector<Value> values;
+          for (int64_t q = 0; q != arity; ++q)
+            for (unsigned o = 0, e = types.size(); o != e; ++o)
+              values.push_back(evaluated.inside.lookupOrDefault(
+                  yield->getOperand(o * arity + q)));
+          scf::YieldOp::create(b, loc, values);
+        },
+        [&](OpBuilder &b, Location) {
+          SmallVector<Value> values;
+          for (int64_t q = 0; q != arity; ++q)
+            for (Type type : types)
+              values.push_back(createZero(b, loc, type));
+          scf::YieldOp::create(b, loc, values);
+        });
+    computedOf.push_back(SmallVector<Value>(computed.getResults()));
+  }
+
+  // Every member takes its values from the lane of the member at place 0:
+  // the loops whose destinations have the same types share the shuffles,
+  // the lane at place 0 holding the values of the one loop it leads.
+  SmallVector<SmallVector<Value>> mine(loops.size());
+  SmallVector<bool> done(loops.size(), false);
+  for (unsigned first = 0, e = loops.size(); first != e; ++first) {
+    if (done[first])
+      continue;
+    SmallVector<Type> types = correctionTypes(loops[first]);
+    SmallVector<unsigned> group;
+    for (unsigned i = first; i != e; ++i)
+      if (!done[i] && correctionTypes(loops[i]) == types) {
+        group.push_back(i);
+        done[i] = true;
+      }
+    int64_t arity = 0;
+    for (unsigned i : group)
+      arity = std::max<int64_t>(arity, loops[i].getArity());
+    SmallVector<Value> received(arity * types.size());
+    for (int64_t q = 0; q != arity; ++q)
+      for (unsigned o = 0, n = types.size(); o != n; ++o) {
+        Value held = createZero(builder, loc, types[o]);
+        for (unsigned i : group)
+          if (q < loops[i].getArity())
+            held = arith::SelectOp::create(builder, loc, rows[i].useWarp,
+                                           computedOf[i][q * n + o], held);
+        received[q * n + o] = shuffleFrom(builder, held, leaderLane);
+      }
+    for (unsigned i : group) {
+      Row &row = rows[i];
+      for (unsigned o = 0, n = types.size(); o != n; ++o) {
+        Value chosen = createZero(builder, loc, types[o]);
+        for (int64_t q = 0, a = loops[i].getArity(); q != a; ++q) {
+          Value here = arith::CmpIOp::create(
+              builder, loc, arith::CmpIPredicate::eq, row.tuple.place,
+              createIndex(builder, loc, q));
+          chosen = arith::SelectOp::create(builder, loc, here,
+                                           received[q * n + o], chosen);
+        }
+        mine[i].push_back(
+            arith::SelectOp::create(builder, loc, row.useWarp, chosen,
+                                    createZero(builder, loc, types[o])));
+      }
+    }
+  }
+
+  // A particle in a tuple that lies across warps is left to the second
+  // kernel, and its member at place 0 goes on the list; every other
+  // particle takes the loop after here.
+  Value elsewhere, leadsAcross;
+  for (Row &row : rows) {
+    Value across = arith::AndIOp::create(
+        builder, loc, row.inTuple,
+        arith::XOrIOp::create(builder, loc, row.inWarp, True(builder)));
+    elsewhere = elsewhere ? arith::OrIOp::create(builder, loc, elsewhere,
+                                                 across)
+                          : across;
+    leadsAcross = leadsAcross ? arith::OrIOp::create(builder, loc,
+                                                     leadsAcross,
+                                                     row.leadsAcross)
+                              : row.leadsAcross;
+  }
+  scf::IfOp::create(builder, loc, leadsAcross, [&](OpBuilder &b, Location) {
+    Value address = arith::IndexCastOp::create(
+        b, loc, b.getI64Type(),
+        memref::ExtractAlignedPointerAsIndexOp::create(b, loc, acrossCount));
+    Value pointer = LLVM::IntToPtrOp::create(
+        b, loc, LLVM::LLVMPointerType::get(b.getContext(), 1), address);
+    Value slot = LLVM::AtomicRMWOp::create(
+        b, loc, LLVM::AtomicBinOp::add, pointer,
+        arith::ConstantOp::create(b, loc, i32, b.getI32IntegerAttr(1)),
+        LLVM::AtomicOrdering::monotonic, StringRef("device"));
+    memref::StoreOp::create(
+        b, loc, toI32(b, particle), acrossList,
+        ValueRange{arith::IndexCastOp::create(b, loc, b.getIndexType(), slot)});
+    scf::YieldOp::create(b, loc);
+  });
+  // A particle left to the second kernel writes its values of the loop
+  // before, which that kernel takes.
+  scf::IfOp::create(
+      builder, loc, elsewhere,
+      [&](OpBuilder &b, Location) {
+        for (unsigned j = 0; j != beforeOuts; ++j)
+          storeElement(b, loc, own[j], before.getOuts()[j], particle);
+        scf::YieldOp::create(b, loc);
+      },
+      [&](OpBuilder &b, Location) {
+        evalAfter(b, particle, own, mine);
+        scf::YieldOp::create(b, loc);
+      });
 }
 
 void kernels::emitExclusionFilter(OpBuilder &builder, Location loc,

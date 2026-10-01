@@ -240,6 +240,18 @@ private:
                                     ArrayRef<Value> partials, Value size,
                                     bool isSum);
 
+  /// The integration runs (D110), by their loop after, where they are
+  /// lowered.
+  DenseMap<Operation *, kernels::IntegrationRun> integrations;
+  /// Records `run`, a run of loops over disjoint tuples, as an integration
+  /// run if a loop over particles before it writes what it reads, a loop
+  /// over particles after it reads what they wrote, and nothing else does
+  /// between them. Returns whether it did.
+  bool recordIntegration(ArrayRef<Operation *> run);
+  /// Lowers an integration run to one kernel (emitIntegrationThread) and
+  /// the reductions of its loop after.
+  LogicalResult lowerIntegration(const kernels::IntegrationRun &run);
+
   /// Finds the runs of loops over pairs and tuples in `function` that one
   /// kernel can do (lowerRows), and records them in `rows`.
   void findRows(func::FuncOp function);
@@ -865,7 +877,15 @@ void Lowering::findRows(func::FuncOp function) {
   // one reads, in its destinations or its scratch (a loop that
   // overwrites writes every particle), and has
   // buffers for its global sums of its own. The sets of a disjoint union
-  // give such runs (md-bypass-updates, D83).
+  // give such runs (md-bypass-updates, D83). A run between a loop over
+  // particles that it reads and one that reads it is an integration run,
+  // one kernel with them (D110).
+  auto finishDisjoint = [&](SmallVector<Operation *> &run) {
+    if (fuseRows && !run.empty() && recordIntegration(run))
+      run.clear();
+    else
+      finish(run);
+  };
   function.walk([&](Block *block) {
     SmallVector<Operation *> run;
     DenseSet<Value> written, read, sums;
@@ -874,7 +894,7 @@ void Lowering::findRows(func::FuncOp function) {
       if (!tuple || !tuple.getDisjoint()) {
         if (isa<arith::ConstantOp>(op))
           continue;
-        finish(run);
+        finishDisjoint(run);
         written.clear();
         read.clear();
         sums.clear();
@@ -887,7 +907,7 @@ void Lowering::findRows(func::FuncOp function) {
            llvm::concat<Value>(tuple.getOuts(), tuple.getScratch()))
         joins &= !read.contains(out);
       if (!joins) {
-        finish(run);
+        finishDisjoint(run);
         written.clear();
         read.clear();
         sums.clear();
@@ -901,8 +921,257 @@ void Lowering::findRows(func::FuncOp function) {
       for (Value buffer : tuple.getScratch())
         sums.insert(buffer);
     }
-    finish(run);
+    finishDisjoint(run);
   });
+}
+
+/// Returns true if `op` writes every element of `buffer` and reads none:
+/// a loop that overwrites it, or the forces of the reciprocal sum.
+static bool overwritesAll(Operation *op, Value buffer) {
+  auto readsOnlyAs = [&](ValueRange outs) {
+    unsigned uses = 0;
+    for (Value operand : op->getOperands())
+      uses += operand == buffer;
+    return uses == unsigned(llvm::count(outs, buffer));
+  };
+  if (auto loop = dyn_cast<md_exec::ParticleForOp>(op))
+    return llvm::is_contained(loop.getOuts(), buffer) &&
+           readsOnlyAs(loop.getOuts());
+  auto overwrites = [&](auto loop) {
+    for (auto [index, out] : llvm::enumerate(loop.getOuts()))
+      if (out == buffer && !loop.overwrites(index))
+        return false;
+    return llvm::is_contained(loop.getOuts(), buffer) &&
+           readsOnlyAs(loop.getOuts());
+  };
+  if (auto loop = dyn_cast<md_exec::TupleForOp>(op))
+    return overwrites(loop);
+  if (auto loop = dyn_cast<md_exec::PairForOp>(op))
+    return overwrites(loop);
+  if (auto reciprocal = dyn_cast<md_exec::ReciprocalOp>(op))
+    return reciprocal.getOut() == buffer &&
+           readsOnlyAs(ValueRange(reciprocal.getOut()));
+  return false;
+}
+
+/// Returns true if nothing reads `buffer` after `op` before an op writes
+/// all of it: the ops after `op` in its block, and, in the body of an
+/// scf.for that passes `buffer` on to the next iteration unchanged, the
+/// ops before `op` too and the ops after the loop for its result.
+static bool isDeadAfter(Value buffer, Operation *op) {
+  Block *block = op->getBlock();
+  auto touches = [&](Operation *other) {
+    return llvm::any_of(buffer.getUsers(), [&](Operation *user) {
+      return other->isAncestor(user);
+    });
+  };
+  bool wrapped = false;
+  for (Operation *next = op->getNextNode(); next && next != op;) {
+    if (next->hasTrait<OpTrait::IsTerminator>()) {
+      auto loop = dyn_cast<scf::ForOp>(block->getParentOp());
+      auto argument = dyn_cast<BlockArgument>(buffer);
+      if (wrapped || !loop || !argument || argument.getOwner() != block ||
+          argument.getArgNumber() == 0)
+        return false;
+      unsigned index = argument.getArgNumber() - 1;
+      if (next->getOperand(index) != buffer ||
+          !isDeadAfter(loop.getResult(index), loop))
+        return false;
+      wrapped = true;
+      next = &block->front();
+      continue;
+    }
+    if (touches(next))
+      return overwritesAll(next, buffer);
+    next = next->getNextNode();
+  }
+  return false;
+}
+
+bool Lowering::recordIntegration(ArrayRef<Operation *> run) {
+  // The loop before: the op before the run but constants, a loop over
+  // particles with no reductions whose destinations the run reads.
+  Operation *first = run.front();
+  Operation *previous = first->getPrevNode();
+  while (previous && isa<arith::ConstantOp>(previous))
+    previous = previous->getPrevNode();
+  // A loop of an other run (the loop after of the run before, in a
+  // minimization) stays there.
+  auto before = dyn_cast_or_null<md_exec::ParticleForOp>(previous);
+  if (!before || inRows.contains(before) || !before.getReduce().empty() ||
+      before.getOuts().empty())
+    return false;
+  DenseSet<Value> beforeOuts(before.getOuts().begin(),
+                             before.getOuts().end());
+  DenseSet<Value> loopOuts;
+  SmallVector<md_exec::TupleForOp, 4> loops;
+  Value positions;
+  bool readsBefore = false;
+  for (Operation *op : run) {
+    auto loop = cast<md_exec::TupleForOp>(op);
+    // The loops take the particles of one set, have no reductions, and
+    // write none of what the loop before wrote.
+    if (!loop.getReduce().empty())
+      return false;
+    if (!positions)
+      positions = loop.getPositions();
+    else if (loop.getPositions() != positions)
+      return false;
+    for (Value out : loop.getOuts())
+      if (beforeOuts.contains(out))
+        return false;
+    for (Value operand : loop.getOperands())
+      readsBefore |= beforeOuts.contains(operand);
+    loops.push_back(loop);
+    loopOuts.insert(loop.getOuts().begin(), loop.getOuts().end());
+  }
+  if (!readsBefore)
+    return false;
+  // The loop after: the first op after the run that touches what the loop
+  // before or the run wrote, a loop over particles that reads it; the ops
+  // between touch none of it.
+  Operation *next = run.back()->getNextNode();
+  md_exec::ParticleForOp after;
+  while (next) {
+    bool touches = llvm::any_of(next->getOperands(), [&](Value operand) {
+      return beforeOuts.contains(operand) || loopOuts.contains(operand);
+    });
+    if (touches) {
+      after = dyn_cast<md_exec::ParticleForOp>(next);
+      break;
+    }
+    if (next->hasTrait<OpTrait::IsTerminator>() || next->getNumRegions() != 0)
+      return false;
+    next = next->getNextNode();
+  }
+  if (!after || inRows.contains(after))
+    return false;
+  // The loop after reads what the loop before wrote and what the loops
+  // over tuples wrote, and takes the particles of the loop before.
+  bool readsLoops = false;
+  for (Value in : after.getIns())
+    readsLoops |= loopOuts.contains(in);
+  if (!readsLoops || after.getIns().empty() || before.getIns().empty())
+    return false;
+  kernels::IntegrationRun integration;
+  integration.before = before;
+  integration.loops = loops;
+  integration.after = after;
+  for (md_exec::TupleForOp loop : loops) {
+    SmallVector<bool, 2> keep;
+    for (Value out : loop.getOuts())
+      keep.push_back(!isDeadAfter(out, after));
+    integration.keepOuts.push_back(keep);
+  }
+  integrations[after] = integration;
+  inRows.insert(before);
+  inRows.insert(run.begin(), run.end());
+  inRows.insert(after);
+  return true;
+}
+
+LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &run) {
+  md_exec::ParticleForOp before = run.before, after = run.after;
+  Location loc = after.getLoc();
+  OpBuilder builder(after);
+  setPurpose(before);
+  purpose += "_integration" + std::to_string(run.loops.size());
+
+  // The cells of the loops over tuples, in the type of their kernels.
+  SmallVector<Value> boxes, inverses;
+  for (md_exec::TupleForOp loop : run.loops) {
+    Type real = cast<MemRefType>(loop.getPositions().getType()).getElementType();
+    Type computed =
+        cast<VectorType>(loop.getKernel().front().getArgument(0).getType())
+            .getElementType();
+    Value box = convertReal(builder, loc, loop.getCellMutable().get(), real);
+    boxes.push_back(convertReal(builder, loc, box, computed));
+    inverses.push_back(
+        convertReal(builder, loc, createInverse(builder, loc, box), computed));
+  }
+
+  // The reductions of the loop after, as lowerParticleFor has them.
+  SmallVector<int> places;
+  unsigned numSums = 0, numFlags = 0;
+  for (Value value : after.getReduce())
+    places.push_back(value.getType().isInteger(1) ? -int(++numFlags)
+                                                  : int(numSums++));
+  if (failed(checkScratch(after, numSums, after.getScratch().size())))
+    return failure();
+  SmallVector<Flag, 2> used;
+  for (unsigned i = 0; i != numFlags; ++i)
+    used.push_back(getFlag(i, loc));
+
+  Value size = createSize(builder, loc, before.getIns().front());
+  auto storeAfter = [&](OpBuilder &b, Value member,
+                        ArrayRef<Value> contributions) {
+          for (auto [index, value] : llvm::enumerate(contributions)) {
+            int place = places[index];
+            if (place >= 0) {
+              storeElement(b, loc, value, after.getScratch()[2 * place],
+                           member);
+              continue;
+            }
+            Value device = used[-place - 1].device;
+            scf::IfOp::create(b, loc, value, [&](OpBuilder &then, Location) {
+              Value set = arith::ConstantOp::create(
+                  then, loc, then.getI32Type(), then.getI32IntegerAttr(1));
+              memref::StoreOp::create(then, loc, set, device,
+                                      ValueRange{createIndex(then, loc, 0)});
+              scf::YieldOp::create(then, loc);
+            });
+          }
+  };
+  // The particles in no tuple and the tuples within a warp, which list
+  // the tuples across warps; then those.
+  Type narrow = builder.getI32Type();
+  Value acrossList = createDeviceBuffer(
+      builder, loc, getDeviceType({ShapedType::kDynamic}, narrow),
+      ValueRange{size});
+  Value acrossCount =
+      createDeviceBuffer(builder, loc, getDeviceType({1}, narrow), ValueRange());
+  launchOver(builder, loc, createIndex(builder, loc, 1),
+             [&](OpBuilder &body, Value) {
+               memref::StoreOp::create(
+                   body, loc,
+                   arith::ConstantOp::create(body, loc, narrow,
+                                             body.getI32IntegerAttr(0)),
+                   acrossCount, ValueRange{createIndex(body, loc, 0)});
+             });
+  for (bool across : {false, true})
+    launchOver(builder, loc, size, [&](OpBuilder &body, Value thread) {
+      kernels::emitIntegrationThread(body, run, boxes, inverses, thread,
+                                     acrossList, acrossCount, across,
+                                     storeAfter);
+    });
+  for (Value buffer : {acrossList, acrossCount}) {
+    auto type = cast<MemRefType>(buffer.getType());
+    Value plain = memref::MemorySpaceCastOp::create(
+        builder, loc, MemRefType::get(type.getShape(), type.getElementType()),
+        buffer);
+    gpu::DeallocOp::create(builder, loc, /*asyncToken=*/Type(),
+                           /*asyncDependencies=*/ValueRange(), plain);
+  }
+
+  SmallVector<Value> contributions, partials;
+  for (unsigned i = 0; i != numSums; ++i) {
+    contributions.push_back(after.getScratch()[2 * i]);
+    partials.push_back(after.getScratch()[2 * i + 1]);
+  }
+  SmallVector<Value> sums = emitReductions(builder, loc, contributions,
+                                           partials, size, /*isSum=*/true);
+  for (auto [index, start] : llvm::enumerate(after.getReduce())) {
+    int place = places[index];
+    Value total;
+    if (place >= 0) {
+      total = arith::AddFOp::create(builder, loc, start, sums[place]);
+    } else {
+      Value isSet = readFlag(builder, loc, used[-place - 1]);
+      total = arith::OrIOp::create(builder, loc, start, isSet);
+    }
+    after.getResult(index).replaceAllUsesWith(total);
+  }
+  return success();
 }
 
 PairLayout Lowering::gatherInOrder(OpBuilder &builder, Location loc,
@@ -2990,12 +3259,23 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
         for (Operation *loop : run->second)
           lowered.push_back(loop);
       }
+      auto integration = integrations.find(op);
+      if (integration != integrations.end()) {
+        const kernels::IntegrationRun &fused = integration->second;
+        if (failed(lowerIntegration(fused)))
+          return failure();
+        lowered.push_back(fused.before);
+        for (md_exec::TupleForOp loop : fused.loops)
+          lowered.push_back(loop);
+        lowered.push_back(fused.after);
+      }
       continue;
     }
     if (failed(lowerOp(op)))
       return failure();
   }
   rows.clear();
+  integrations.clear();
   inRows.clear();
 
   // Users come after what they use, so erase from the back.

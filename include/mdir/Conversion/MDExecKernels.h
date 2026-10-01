@@ -148,6 +148,52 @@ emitTupleKernel(mlir::OpBuilder &builder, md_exec::TupleForOp op,
                 const RowLanes *lanes = nullptr,
                 llvm::SmallVectorImpl<mlir::Value> *outTotals = nullptr);
 
+/// A loop over particles, a run of loops over disjoint tuples that read
+/// what it wrote, and a loop over particles that reads what they all wrote:
+/// the kick and drift of a step, the corrections of the constraints, and
+/// the update of the positions and velocities, which one kernel does
+/// (D110). The loops over tuples write their destinations as before; the
+/// loop before writes its destinations through the loop after, which
+/// writes them in place.
+struct IntegrationRun {
+  md_exec::ParticleForOp before;
+  llvm::SmallVector<md_exec::TupleForOp, 4> loops;
+  md_exec::ParticleForOp after;
+  /// For each destination of each loop over tuples, whether anything reads
+  /// it after the loop after; the loop after takes the values from
+  /// registers, so a destination that nothing else reads is not written.
+  llvm::SmallVector<llvm::SmallVector<bool, 2>, 4> keepOuts;
+};
+
+/// Emits what one thread of a kernel of an integration run (D110) does
+/// for `thread`: the loop before, the tuple of the particle if any (at
+/// most one over the loops, the sets being disjoint), and the loop after,
+/// whose values of the loop before and of the tuple stay in registers.
+/// `boxes` and `inverses` are those of the loops over tuples, in the type
+/// of their kernels. `storeAfter` is
+/// called for each particle whose values the thread writes, with the
+/// contributions of the loop after to its reductions, in their order.
+///
+/// The run takes two kernels: the first (`across` false, a thread for
+/// each particle) handles the particles in no tuple and the tuples whose
+/// members lie in one warp, where the member at place 0 gathers the
+/// values of the loop before from the lanes of the members and the
+/// members take their values of the tuple from its lane, and lists in
+/// `acrossList` (counted in `acrossCount`, zero before) the members at
+/// place 0 of the tuples that lie across warps, whose members write their
+/// values of the loop before; the second (`across` true, a thread for
+/// each entry of the list) handles those tuples from those values. The
+/// list keeps those few in full warps: spread over the warps of the
+/// particles, they cost the latency of the tuple in each.
+void emitIntegrationThread(
+    mlir::OpBuilder &builder, const IntegrationRun &run,
+    llvm::ArrayRef<mlir::Value> boxes, llvm::ArrayRef<mlir::Value> inverses,
+    mlir::Value thread, mlir::Value acrossList, mlir::Value acrossCount,
+    bool across,
+    llvm::function_ref<void(mlir::OpBuilder &, mlir::Value,
+                            llvm::ArrayRef<mlir::Value>)>
+        storeAfter);
+
 /// Emits what a loop over tuples does for the tuple `tuple` alone, on a
 /// device, where each tuple is evaluated once: the members from `members`,
 /// a buffer of a row of members for each tuple, the kernel, and the values
