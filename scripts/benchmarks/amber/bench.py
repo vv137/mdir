@@ -62,6 +62,11 @@ CUTOFF = 8.0
 SKIN = 2.0
 GRID_SPACING = 1.0
 TEMPERATURE = 300.0
+# The steps between the actions of the thermostat and of the barostat,
+# which act together: those that GROMACS takes for the pressure on these
+# inputs (nstpcouple 25 with nstcalcenergy 100, tau-p 2 ps); Amber's Monte
+# Carlo barostat acts every 100 steps.
+COUPLING_INTERVAL = 25
 
 
 def tolerance(system):
@@ -138,7 +143,7 @@ pressure    = 0.986923
 [thermostat]
 method        = "V-RESCALE"
 time_constant = 1.0
-interval      = 10
+interval      = {COUPLING_INTERVAL}
 
 [barostat]
 method        = "C-RESCALE"

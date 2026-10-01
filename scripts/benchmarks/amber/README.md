@@ -37,6 +37,7 @@ As in `mdin.GPU` of each system:
 | Constraints | SHAKE of the bonds of hydrogen, rigid water | SHAKE, RATTLE, SETTLE | LINCS, SETTLE |
 | NVE | velocities of the restart file | the same | `continuation = yes` |
 | NPT | Berendsen thermostat, `tautp=10`; Monte Carlo barostat | Bussi thermostat, 1 ps; stochastic cell rescaling, 2 ps | `v-rescale`, 1 ps; `c-rescale`, 2 ps |
+| Coupling interval | Monte Carlo barostat every 100 steps (`mcbarint`) | Both every 25 steps | `nsttcouple = 100`, `nstpcouple = 25`, its own choices for these inputs |
 
 `erfc(β rc)` is the tolerance of MDIR and of GROMACS; Amber's `dsum_tol`
 is `erfc(β rc) / rc`, which gives a slightly smaller β.
