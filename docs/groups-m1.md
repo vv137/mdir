@@ -164,6 +164,13 @@ reduced as those of the matrix. The positions and the fields that the
 kernel reads are gathered in the order of the places first; an empty place
 takes those of particle 0, which no bit reads.
 
+The kernel is bound by the pipe of loads and shuffles (Nsight Compute, 92%
+of its peak on Cellulose), so what it reads and turns a pair is what it
+costs: the coefficients of Lennard-Jones are one load of 8 bytes, a table of
+vectors (D96), and the mask does not turn with the entry, each lane taking
+its bits by ballots at the start of a round (D97); a pair takes two loads
+(with the radial table of D94) and eight shuffles.
+
 ## 4. What the loop reads
 
 The positions are read in the order of the places, as the matrix reads them

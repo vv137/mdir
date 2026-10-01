@@ -474,8 +474,41 @@ SmallVector<Value> kernels::emitGroupPairKernel(
         for (Value buffer : layout.ins)
           values.push_back(loadElement(b, loc, buffer, place));
 
+        // The bits of the pairs of this lane's particle with the 16 entries
+        // of its half-warp, as they come by: a ballot for each particle of
+        // the group gives the bits of every entry, and each lane keeps
+        // those of its own, rotated so that step k tests bit 15 - k and
+        // each step shifts by one. The mask then does not turn with the
+        // entry: a shuffle a pair less, on the pipe of loads and shuffles
+        // that bounds the loop (D97).
+        Value own16 = constant32(b, 0);
+        for (int64_t p = 0; p != 16; ++p) {
+          Value set = arith::CmpIOp::create(
+              b, loc, arith::CmpIPredicate::ne,
+              arith::AndIOp::create(b, loc, mask, constant32(b, 1 << p)),
+              constant32(b, 0));
+          Value word = gpu::BallotOp::create(b, loc, b.getI32Type(), set);
+          own16 = arith::SelectOp::create(
+              b, loc,
+              arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq, u,
+                                    constant32(b, p)),
+              word, own16);
+        }
+        Value low16 = constant32(b, 0xFFFF);
+        Value halfBits = arith::AndIOp::create(
+            b, loc, arith::ShRUIOp::create(b, loc, own16, half), low16);
+        Value turn = arith::SubIOp::create(b, loc, constant32(b, 15), u);
+        Value pairBits = arith::AndIOp::create(
+            b, loc,
+            arith::OrIOp::create(
+                b, loc, arith::ShLIOp::create(b, loc, halfBits, turn),
+                arith::ShRUIOp::create(
+                    b, loc, halfBits,
+                    arith::SubIOp::create(b, loc, constant32(b, 16), turn))),
+            low16);
+
         // 16 steps, the entry's values and what it receives turning.
-        SmallVector<Value> carried = {position, mask};
+        SmallVector<Value> carried = {position, pairBits};
         carried.append(values.begin(), values.end());
         for (unsigned i = 0; i != numOuts; ++i)
           carried.push_back(createZero(b, loc, yieldType(i)));
@@ -485,14 +518,13 @@ SmallVector<Value> kernels::emitGroupPairKernel(
             createIndex(b, loc, 1), carried,
             [&](OpBuilder &s, Location, Value, ValueRange state) {
               Value otherPosition = state[0];
-              Value otherMask = state[1];
+              Value bits = state[1];
               ValueRange otherValues = state.slice(2, numIns);
               ValueRange received = state.slice(2 + numIns, numOuts);
               ValueRange own = state.slice(2 + numIns + numOuts, numYields);
 
-              Value bit = arith::AndIOp::create(
-                  s, loc, arith::ShRUIOp::create(s, loc, otherMask, u),
-                  constant32(s, 1));
+              Value bit = arith::AndIOp::create(s, loc, bits,
+                                                constant32(s, 0x8000));
               Value paired = arith::CmpIOp::create(
                   s, loc, arith::CmpIPredicate::ne, bit, constant32(s, 0));
               // Both are in the frame of the group: the displacement is the
@@ -543,8 +575,9 @@ SmallVector<Value> kernels::emitGroupPairKernel(
                                 .getResult());
                 }
               }
-              SmallVector<Value> next = {shuffle(s, otherPosition),
-                                         shuffle(s, otherMask)};
+              SmallVector<Value> next = {
+                  shuffle(s, otherPosition),
+                  arith::ShLIOp::create(s, loc, bits, constant32(s, 1))};
               for (Value value : otherValues)
                 next.push_back(shuffle(s, value));
               for (Value value : nextReceived)
