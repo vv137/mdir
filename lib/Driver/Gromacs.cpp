@@ -19,6 +19,7 @@
 #include "llvm/Support/Process.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <map>
@@ -46,6 +47,9 @@ struct Line {
   std::string text;
   std::string file;
   unsigned number;
+  /// Whether `_FF_AMBER_LEAP_ATOM_REORDERING` is defined here: the force
+  /// field asks for the atoms of dihedrals in the order of LEaP.
+  bool leapOrder = false;
 };
 
 class Preprocessor {
@@ -246,7 +250,10 @@ llvm::Error Preprocessor::readFile(StringRef path, std::vector<Line> &lines) {
     }
     if (!isActive())
       continue;
-    lines.push_back({substitute(text.str()), path.str(), number});
+    bool leapOrder = llvm::any_of(macros, [](auto &macro) {
+      return macro.first == "_FF_AMBER_LEAP_ATOM_REORDERING";
+    });
+    lines.push_back({substitute(text.str()), path.str(), number, leapOrder});
   }
   --depth;
   return llvm::Error::success();
@@ -316,6 +323,9 @@ struct Atom {
 
 struct Interaction {
   std::vector<unsigned> atoms;
+  /// The atoms in the order of the file, by which the types are looked up,
+  /// when the order of LEaP has changed `atoms`; empty otherwise.
+  std::vector<unsigned> written;
   int function;
   std::vector<double> parameters;
   const Line *line;
@@ -367,6 +377,19 @@ private:
   llvm::Error build(Topology &topology);
   llvm::Error expandMolecule(const MoleculeType &type, Topology &topology,
                              unsigned offset);
+  /// The entry of `[ dihedraltypes ]` for a dihedral, in the order of the
+  /// file: the first with the most types that are not wildcards, in either
+  /// direction. For functions 1 and 9, the first term of a block.
+  struct DihedralMatch {
+    const std::vector<BondedType> *list = nullptr;
+    size_t index = 0;
+    /// The entry matches the atoms in the reverse order.
+    bool reversed = false;
+  };
+  DihedralMatch matchDihedral(const MoleculeType &molecule,
+                              const Interaction &dihedral) const;
+  /// Puts the atoms of a dihedral in the order that LEaP gives them.
+  void orderLikeLeap(const MoleculeType &molecule, Interaction &dihedral);
   const AtomType *findType(StringRef name) const;
   /// The σ and ε of a pair of types, from the rule and the overrides.
   std::pair<double, double> getPair(unsigned a, unsigned b) const;
@@ -404,6 +427,10 @@ private:
   std::vector<MoleculeType> moleculeTypes;
   std::vector<std::pair<unsigned, long>> molecules;
   bool sawMoleculeType = false;
+  /// The types and the atoms of the impropers that kept the order of the
+  /// file under the order of LEaP, by function, over all molecule types.
+  std::map<int, std::set<std::array<std::string, 4>>> leapImproperTypes;
+  std::map<int, std::set<std::array<unsigned, 4>>> leapImproperAtoms;
 };
 
 } // namespace
@@ -849,9 +876,15 @@ llvm::Error TopologyReader::readLine(const Line &line, StringRef section) {
     return readInteraction(line, t, 2, moleculeTypes.back().pairs, "pairs");
   if (section == "angles")
     return readInteraction(line, t, 3, moleculeTypes.back().angles, "angles");
-  if (section == "dihedrals")
-    return readInteraction(line, t, 4, moleculeTypes.back().dihedrals,
-                           "dihedrals");
+  if (section == "dihedrals") {
+    MoleculeType &molecule = moleculeTypes.back();
+    if (llvm::Error error =
+            readInteraction(line, t, 4, molecule.dihedrals, "dihedrals"))
+      return error;
+    if (line.leapOrder)
+      orderLikeLeap(molecule, molecule.dihedrals.back());
+    return llvm::Error::success();
+  }
   if (section == "exclusions")
     return readExclusions(line, t);
   if (section == "cmaptypes") {
@@ -1010,6 +1043,100 @@ getBondedTypes(const MoleculeType &molecule,
   return result;
 }
 
+TopologyReader::DihedralMatch
+TopologyReader::matchDihedral(const MoleculeType &molecule,
+                              const Interaction &dihedral) const {
+  DihedralMatch match;
+  int table = dihedral.function == 9 ? 1 : dihedral.function;
+  auto found = bondedTypes.find("dihedraltypes:" + std::to_string(table));
+  if (found == bondedTypes.end())
+    return match;
+  const std::vector<BondedType> &list = found->second;
+  std::vector<std::string> types = getBondedTypes(
+      molecule, atomTypes, atomTypeIndex,
+      dihedral.written.empty() ? dihedral.atoms : dihedral.written);
+  std::vector<std::string> reversed(types.rbegin(), types.rend());
+  int best = -1;
+  for (size_t e = 0; e != list.size(); ++e) {
+    for (bool backward : {false, true}) {
+      const std::vector<std::string> &candidate = backward ? reversed : types;
+      int exact = 0;
+      bool matches = true;
+      for (int k = 0; k != 4; ++k) {
+        if (list[e].types[k] == "X")
+          continue;
+        if (list[e].types[k] != candidate[k]) {
+          matches = false;
+          break;
+        }
+        ++exact;
+      }
+      if (matches && exact > best) {
+        best = exact;
+        match.list = &list;
+        match.index = e;
+        match.reversed = backward;
+      }
+    }
+    // Skip the other terms of a block.
+    while (table == 1 && e + 1 < list.size() &&
+           list[e + 1].types == list[e].types)
+      ++e;
+  }
+  return match;
+}
+
+// The order of LEaP, as grompp gives it when the force field defines
+// `_FF_AMBER_LEAP_ATOM_REORDERING`: with the types of the matching entry, a
+// blank for a wildcard, a dihedral with a force constant is reversed when its
+// first type sorts after its last, or the two are equal and the second sorts
+// after the third. An improper whose types or atoms came before has the
+// three atoms around the third, the central one, sorted by type and then by
+// index; the first of its types keeps its order. Which atoms are the outer
+// ones changes the angle and so the energy of an improper.
+void TopologyReader::orderLikeLeap(const MoleculeType &molecule,
+                                   Interaction &dihedral) {
+  DihedralMatch match = matchDihedral(molecule, dihedral);
+  if (!match.list)
+    return;
+  const BondedType &entry = (*match.list)[match.index];
+  std::array<std::pair<std::string, unsigned>, 4> atoms;
+  for (int k = 0; k != 4; ++k) {
+    const std::string &type = entry.types[match.reversed ? 3 - k : k];
+    atoms[k] = {type == "X" ? " " : type, dihedral.atoms[k]};
+  }
+  if (entry.parameters.size() > 1 && entry.parameters[1] != 0.0 &&
+      (atoms[0].first > atoms[3].first ||
+       (atoms[0].first == atoms[3].first && atoms[1].first > atoms[2].first)))
+    std::reverse(atoms.begin(), atoms.end());
+  if (dihedral.function == 2 || dihedral.function == 4) {
+    std::array<std::string, 4> types;
+    std::array<unsigned, 4> indices;
+    for (int k = 0; k != 4; ++k)
+      std::tie(types[k], indices[k]) = atoms[k];
+    auto &seenTypes = leapImproperTypes[dihedral.function];
+    auto &seenAtoms = leapImproperAtoms[dihedral.function];
+    if (!seenTypes.count(types) && !seenAtoms.count(indices)) {
+      seenTypes.insert(types);
+      seenAtoms.insert(indices);
+    } else {
+      std::array<std::pair<std::string, unsigned>, 3> outer = {
+          atoms[0], atoms[1], atoms[3]};
+      std::sort(outer.begin(), outer.end());
+      atoms[0] = outer[0];
+      atoms[1] = outer[1];
+      atoms[3] = outer[2];
+    }
+  }
+  std::vector<unsigned> ordered;
+  for (auto &[type, index] : atoms)
+    ordered.push_back(index);
+  if (ordered != dihedral.atoms) {
+    dihedral.written = dihedral.atoms;
+    dihedral.atoms = std::move(ordered);
+  }
+}
+
 llvm::Error TopologyReader::expandMolecule(const MoleculeType &molecule,
                                            Topology &topology,
                                            unsigned offset) {
@@ -1102,47 +1229,14 @@ llvm::Error TopologyReader::expandMolecule(const MoleculeType &molecule,
       // The entry with the most types that are not wildcards, and, in the
       // table of functions 1 and 9, the terms that follow it with the same
       // types.
-      int table = function == 9 ? 1 : function;
-      bool terms9 = table == 1;
-      auto found = bondedTypes.find("dihedraltypes:" + std::to_string(table));
-      std::vector<std::string> types = bonded(dihedral);
-      std::vector<std::string> reversed(types.rbegin(), types.rend());
-      int best = -1;
-      size_t bestIndex = 0;
-      if (found != bondedTypes.end()) {
-        const std::vector<BondedType> &list = found->second;
-        for (size_t e = 0; e != list.size(); ++e) {
-          for (const std::vector<std::string> *candidate :
-               {&types, &reversed}) {
-            int exact = 0;
-            bool matches = true;
-            for (int k = 0; k != 4; ++k) {
-              if (list[e].types[k] == "X")
-                continue;
-              if (list[e].types[k] != (*candidate)[k]) {
-                matches = false;
-                break;
-              }
-              ++exact;
-            }
-            if (matches && exact > best) {
-              best = exact;
-              bestIndex = e;
-            }
-          }
-          // Skip the other terms of a block.
-          while (terms9 && e + 1 < list.size() &&
-                 list[e + 1].types == list[e].types)
-            ++e;
-        }
-        if (best >= 0) {
-          terms.push_back(list[bestIndex].parameters);
-          if (terms9)
-            for (size_t e = bestIndex + 1;
-                 e < list.size() && list[e].types == list[bestIndex].types;
-                 ++e)
-              terms.push_back(list[e].parameters);
-        }
+      DihedralMatch match = matchDihedral(molecule, dihedral);
+      if (match.list) {
+        const std::vector<BondedType> &list = *match.list;
+        terms.push_back(list[match.index].parameters);
+        if (function != 4)
+          for (size_t e = match.index + 1;
+               e < list.size() && list[e].types == list[match.index].types; ++e)
+            terms.push_back(list[e].parameters);
       }
       if (terms.empty())
         return fail(*dihedral.line, "no [ dihedraltypes ] for this dihedral");

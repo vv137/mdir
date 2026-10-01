@@ -798,6 +798,27 @@ GROMACS needs: `defaults`, `atomtypes`, `nonbond_params`, `pairtypes`,
 `bonds`, `pairs`, `angles`, `dihedrals`, `exclusions`, `settles`,
 `system`, `molecules`.
 
+A dihedral without parameters takes those of the first entry of
+`[ dihedraltypes ]` of its function with the most types that are not
+wildcards, matched to its atoms in the order of the file or the reverse;
+functions 1 and 9 share a table, and an entry of function 9 brings the
+entries of the same types on the lines that follow it. When the force
+field defines `_FF_AMBER_LEAP_ATOM_REORDERING`, as amber14sb.ff and
+amber19sb.ff of GROMACS do, the atoms of each dihedral are then put in the
+order that LEaP gives them, as grompp of GROMACS 2026.3 does, while the
+parameters stay those of the order of the file. With the types of the
+matching entry, a blank for a wildcard: a dihedral whose entry has a force
+constant is reversed when its first type sorts after its last, or the two
+are equal and its second sorts after its third; an improper whose types,
+or whose atoms, an earlier improper of the same function had, over all
+molecule types in the order of the file, has the three atoms around the
+third, the central one, sorted by type and then by index. The first
+improper of its types keeps its order. Reversing a dihedral leaves its
+angle alone, but which atoms are the outer ones of an improper changes its
+angle: in ubiquitin with amber19sb.ff, the order of the file gives
+impropers 0.896 kcal/mol above those of grompp, and the order of LEaP
+agrees with them to 5 × 10⁻⁵ kcal/mol (`gromacs-leap-order.test`).
+
 A plain cutoff of the Coulomb term does not conserve the energy: a pair
 of charged particles that crosses the cutoff changes the energy by
 `f q_i q_j / r_c`, some 10 kcal/mol for two waters at 9 Å. sander shows
