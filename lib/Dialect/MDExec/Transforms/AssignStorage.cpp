@@ -828,6 +828,31 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
                                            ValueRange{entries},
                                            /*symbolOperands=*/ValueRange())
                           .getMemref());
+    // The bricks of the spreading of order 4 in f32 (D85): 16 values for
+    // each z of each brick of 4 x 4 points in x-y, zero at the start and
+    // left zero by each spreading (D108).
+    if (gridType.isF32()) {
+      int64_t bricks =
+          (grid[0] + 3) / 4 * ((grid[1] + 3) / 4) * 16 * grid[2];
+      Value points = arith::ConstantIndexOp::create(root->builder, loc, bricks);
+      Value buffer = gpu::AllocOp::create(root->builder, loc, type,
+                                          /*asyncToken=*/Type(),
+                                          /*asyncDependencies=*/ValueRange(),
+                                          ValueRange{points},
+                                          /*symbolOperands=*/ValueRange())
+                         .getMemref();
+      Type token = gpu::AsyncTokenType::get(context);
+      Value begin = gpu::WaitOp::create(root->builder, loc, token, ValueRange())
+                        .getAsyncToken();
+      Value cleared =
+          gpu::MemsetOp::create(
+              root->builder, loc, token, ValueRange{begin}, buffer,
+              arith::ConstantOp::create(root->builder, loc,
+                                        root->builder.getF32FloatAttr(0.0f)))
+              .getAsyncToken();
+      gpu::WaitOp::create(root->builder, loc, Type(), ValueRange{cleared});
+      scratch.push_back(buffer);
+    }
   }
 
   auto created = ReciprocalOp::create(

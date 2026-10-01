@@ -944,7 +944,7 @@ memref.store %{t}{kind}{e}, %weights[%{t}{kind}{e}at] : memref<?x!pme_real, 1>""
 %iny4 = arith.muli %iny, %t4 : i32
 %inxy = arith.addi %iny4, %inx : i32
 %bytes = arith.constant PME_REAL_BYTES : i64
-%bindex = memref.extract_aligned_pointer_as_index %bricks : memref<?xi64, 1> -> index
+%bindex = memref.extract_aligned_pointer_as_index %bricks : memref<?x!pme_real, 1> -> index
 %bbase = arith.index_cast %bindex : index to i64
 %h0 = arith.constant 0 : index
 %h1 = arith.constant 1 : index
@@ -968,48 +968,108 @@ scf.for %h = %h0 to %h2 step %h1 {
   PME_ATOMIC_ADD %pointer, %value
 }""")
 
-    # Clearing the bricks, and copying them into the grid of the transform.
-    z = Body("      ")
-    z("""\
-%bytes = arith.constant PME_REAL_BYTES : i64
-%bindex = memref.extract_aligned_pointer_as_index %bricks : memref<?xi64, 1> -> index
-%bbase = arith.index_cast %bindex : index to i64
-%ati = arith.index_cast %item : index to i64
-%offset = arith.muli %ati, %bytes : i64
-%address = arith.addi %bbase, %offset : i64
-%pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-%none = arith.constant 0.0 : !pme_real
-llvm.store %none, %pointer {alignment = PME_REAL_BYTES : i64} : !pme_real, !llvm.ptr<1>""")
-    u = Body("      ")
-    u("""\
-%i4 = arith.constant 4 : index
-%i16 = arith.constant 16 : index
-%g3 = arith.remui %item, %k3 : index
-%rest = arith.divui %item, %k3 : index
-%g2 = arith.remui %rest, %k2 : index
-%g1 = arith.divui %rest, %k2 : index
-%bx1 = arith.divui %g1, %i4 : index
-%by1 = arith.divui %g2, %i4 : index
-%brow = arith.muli %bx1, %b2 : index
-%bxy = arith.addi %brow, %by1 : index
-%bxyz = arith.muli %bxy, %k3 : index
-%slab = arith.addi %bxyz, %g3 : index
-%slab16 = arith.muli %slab, %i16 : index
-%inx = arith.remui %g1, %i4 : index
-%iny = arith.remui %g2, %i4 : index
-%iny4 = arith.muli %iny, %i4 : index
-%inxy = arith.addi %iny4, %inx : index
-%at = arith.addi %slab16, %inxy : index
-%bytes = arith.constant PME_REAL_BYTES : i64
-%bindex = memref.extract_aligned_pointer_as_index %bricks : memref<?xi64, 1> -> index
-%bbase = arith.index_cast %bindex : index to i64
-%ati = arith.index_cast %at : index to i64
-%offset = arith.muli %ati, %bytes : i64
-%address = arith.addi %bbase, %offset : i64
-%pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
-%value = llvm.load %pointer {alignment = PME_REAL_BYTES : i64} : !llvm.ptr<1> -> !pme_real
-memref.store %value, %real[%item] : memref<?x!pme_real, 1>""")
-
+    # The copy of the bricks into the grid of the transform, which leaves
+    # them zero for the next spreading (D108): a block takes a brick and 32
+    # of its slabs along z, reads its 512 values in order and writes zeros
+    # back, and writes each of the 16 rows of the brick to the grid as 32
+    # values along z in order, a warp a row, through a tile of the memory
+    # of the block (rows of 17, so that the reads of a warp from the tile
+    # hit different banks).
+    copy = """\
+  %c8 = arith.constant 8 : index
+  %c17 = arith.constant 17 : index
+  %c31 = arith.constant 31 : index
+  %k3_31 = arith.addi %k3, %c31 : index
+  %zchunks = arith.divui %k3_31, %c32 : index
+  %copy_blocks = arith.muli %b12, %zchunks : index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %copy_blocks, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1)
+             workgroup(%tile : memref<544x!pme_real, #gpu.address_space<workgroup>>) {
+    %bxy = arith.divui %bx, %zchunks : index
+    %zc = arith.remui %bx, %zchunks : index
+    %z0 = arith.muli %zc, %c32 : index
+    %bx1 = arith.divui %bxy, %b2 : index
+    %by1 = arith.remui %bxy, %b2 : index
+    %slab0 = arith.muli %bxy, %k3 : index
+    %zero_r = arith.constant 0.0 : !pme_real
+    %bytes = arith.constant PME_REAL_BYTES : i64
+    %bindex = memref.extract_aligned_pointer_as_index %bricks : memref<?x!pme_real, 1> -> index
+    %bbase = arith.index_cast %bindex : index to i64
+    scf.for %j = %c0 to %c4 step %c1 {
+      %j128 = arith.muli %j, %c128 : index
+      %e = arith.addi %j128, %tx : index
+      %zz = arith.divui %e, %c16 : index
+      %inxy = arith.remui %e, %c16 : index
+      %z = arith.addi %z0, %zz : index
+      %in = arith.cmpi ult, %z, %k3 : index
+      scf.if %in {
+        %slab = arith.addi %slab0, %z : index
+        %slab16 = arith.muli %slab, %c16 : index
+        %at = arith.addi %slab16, %inxy : index
+        %ati = arith.index_cast %at : index to i64
+        %offset = arith.muli %ati, %bytes : i64
+        %address = arith.addi %bbase, %offset : i64
+        %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
+        %value = llvm.load %pointer {alignment = PME_REAL_BYTES : i64} : !llvm.ptr<1> -> !pme_real
+        %t17 = arith.muli %zz, %c17 : index
+        %tat = arith.addi %t17, %inxy : index
+        memref.store %value, %tile[%tat] : memref<544x!pme_real, #gpu.address_space<workgroup>>
+      }
+    }
+    gpu.barrier
+    // The slabs read are zero for the next spreading: written after every
+    // read of the block, so that the reads are not held behind them.
+    scf.for %j = %c0 to %c4 step %c1 {
+      %j128 = arith.muli %j, %c128 : index
+      %e = arith.addi %j128, %tx : index
+      %zz = arith.divui %e, %c16 : index
+      %inxy = arith.remui %e, %c16 : index
+      %z = arith.addi %z0, %zz : index
+      %in = arith.cmpi ult, %z, %k3 : index
+      scf.if %in {
+        %slab = arith.addi %slab0, %z : index
+        %slab16 = arith.muli %slab, %c16 : index
+        %at = arith.addi %slab16, %inxy : index
+        %ati = arith.index_cast %at : index to i64
+        %offset = arith.muli %ati, %bytes : i64
+        %address = arith.addi %bbase, %offset : i64
+        %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
+        llvm.store %zero_r, %pointer {alignment = PME_REAL_BYTES : i64} : !pme_real, !llvm.ptr<1>
+      }
+    }
+    // Each warp writes a row of the brick, its lanes the 32 values along
+    // z in order; four rows a pass, four passes.
+    %warp = arith.divui %tx, %c32 : index
+    %lane = arith.remui %tx, %c32 : index
+    %z = arith.addi %z0, %lane : index
+    %in = arith.cmpi ult, %z, %k3 : index
+    %t17 = arith.muli %lane, %c17 : index
+    scf.for %pass = %c0 to %c4 step %c1 {
+      %pass4 = arith.muli %pass, %c4 : index
+      %r = arith.addi %pass4, %warp : index
+      %inx = arith.remui %r, %c4 : index
+      %iny = arith.divui %r, %c4 : index
+      %g1a = arith.muli %bx1, %c4 : index
+      %g1 = arith.addi %g1a, %inx : index
+      %g2a = arith.muli %by1, %c4 : index
+      %g2 = arith.addi %g2a, %iny : index
+      %in1 = arith.cmpi ult, %g1, %k1 : index
+      %in2 = arith.cmpi ult, %g2, %k2 : index
+      %in12 = arith.andi %in1, %in2 : i1
+      %writes = arith.andi %in12, %in : i1
+      scf.if %writes {
+        %row1 = arith.muli %g1, %k2 : index
+        %row = arith.addi %row1, %g2 : index
+        %gbase = arith.muli %row, %k3 : index
+        %tat = arith.addi %t17, %r : index
+        %value = memref.load %tile[%tat] : memref<544x!pme_real, #gpu.address_space<workgroup>>
+        %gat = arith.addi %gbase, %z : index
+        memref.store %value, %real[%gat] : memref<?x!pme_real, 1>
+      }
+    }
+    gpu.terminator
+  }
+"""
     header = """\
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
@@ -1043,16 +1103,15 @@ func.func private @mdrt_gpu_pme_weights(%x: memref<?x3x!pme_pos, 1>, %box: vecto
 {launch(w.text(), "%n_all")}  return
 }}
 
-// Adds the charges to `bricks` (a buffer of at least as many bytes as the
-// bricks take) from the weights, and copies the bricks into `real`, the
-// grid of the transform.
+// Adds the charges to `bricks`, which are zero, from the weights, and
+// copies the bricks into `real`, the grid of the transform, leaving them
+// zero again (D108; the buffer is zero when it is allocated).
 func.func private @mdrt_gpu_pme_spread_bricks(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
                                               %weights: memref<?x!pme_real, 1>,
-                                              %bricks: memref<?xi64, 1>, %real: memref<?x!pme_real, 1>,
+                                              %bricks: memref<?x!pme_real, 1>, %real: memref<?x!pme_real, 1>,
                                               %k1: index, %k2: index, %k3: index) {{
 {header}  %lanes = arith.muli %n_all, %c32 : index
-  %points = memref.dim %real, %c0 : memref<?x!pme_real, 1>
-{launch(z.text(), "%brick_points")}{launch(a.text(), "%lanes")}{launch(u.text(), "%points")}  return
+{launch(a.text(), "%lanes")}{copy}  return
 }}
 """
 

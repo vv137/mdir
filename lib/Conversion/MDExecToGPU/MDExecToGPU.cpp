@@ -1855,14 +1855,12 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   Value fixed = op.getScratch()[0], real = op.getScratch()[1],
         complex = op.getScratch()[2], rows = op.getScratch()[3];
   // Splines of order 4 in f32 are spread from the weights of the
-  // particles into bricks, which the buffer of the fixed point holds: 4
-  // bytes a point of ceil(k1 / 4) ceil(k2 / 4) 16 k3 against 8 bytes a
-  // point of the grid.
+  // particles into bricks of their own, which each spreading leaves zero
+  // (D85, D108).
   Value weights = op.getScratch().size() > 4 ? op.getScratch()[4] : Value();
-  int64_t bricks = (grid[0] + 3) / 4 * ((grid[1] + 3) / 4) * 16 * grid[2];
-  bool usesWeights = weights && !deterministic && op.getOrder() == 4 &&
-                     force.isF32() &&
-                     4 * bricks <= 8 * grid[0] * grid[1] * grid[2];
+  Value bricks = op.getScratch().size() > 6 ? op.getScratch()[6] : Value();
+  bool usesWeights = weights && bricks && !deterministic &&
+                     op.getOrder() == 4 && force.isF32();
 
   // Marked, the sum runs on a second stream, beside the ops up to its join
   // (md_exec.join, D87). All the work that it issues goes there, and none
@@ -1891,7 +1889,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_weights"),
                          ValueRange{positions, box, weights, k1, k2, k3});
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_spread_bricks"),
-                         ValueRange{positions, charges, weights, fixed, real,
+                         ValueRange{positions, charges, weights, bricks, real,
                                     k1, k2, k3});
   } else {
     func::CallOp::create(builder, loc,
