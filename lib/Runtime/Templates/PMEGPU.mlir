@@ -1712,23 +1712,25 @@ func.func private @mdrt_gpu_pme_convolve(%c: memref<?x!pme_real, 1>, %tables: me
     }
     gpu.terminator
   }
-  %host = memref.alloc() : memref<10xf64>
-  %rows7 = memref.subview %rows[0] [10] [1] : memref<?xf64, 1> to memref<10xf64, strided<[1]>, 1>
+  // The energy and the six components of the virial that the total wrote:
+  // a longer copy read values that no kernel wrote (initcheck).
+  %host = memref.alloc() : memref<7xf64>
+  %rows7 = memref.subview %rows[0] [7] [1] : memref<?xf64, 1> to memref<7xf64, strided<[1]>, 1>
   %t0 = gpu.wait async
-  %t1 = gpu.memcpy async [%t0] %host, %rows7 : memref<10xf64>, memref<10xf64, strided<[1]>, 1>
+  %t1 = gpu.memcpy async [%t0] %host, %rows7 : memref<7xf64>, memref<7xf64, strided<[1]>, 1>
   gpu.wait [%t1]
-  %e = memref.load %host[%c0] : memref<10xf64>
+  %e = memref.load %host[%c0] : memref<7xf64>
   %c3 = arith.constant 3 : index
   %c4 = arith.constant 4 : index
   %c5 = arith.constant 5 : index
   %c6 = arith.constant 6 : index
-  %w00 = memref.load %host[%c1] : memref<10xf64>
-  %w01 = memref.load %host[%c2] : memref<10xf64>
-  %w02 = memref.load %host[%c3] : memref<10xf64>
-  %w11 = memref.load %host[%c4] : memref<10xf64>
-  %w12 = memref.load %host[%c5] : memref<10xf64>
-  %w22 = memref.load %host[%c6] : memref<10xf64>
-  memref.dealloc %host : memref<10xf64>
+  %w00 = memref.load %host[%c1] : memref<7xf64>
+  %w01 = memref.load %host[%c2] : memref<7xf64>
+  %w02 = memref.load %host[%c3] : memref<7xf64>
+  %w11 = memref.load %host[%c4] : memref<7xf64>
+  %w12 = memref.load %host[%c5] : memref<7xf64>
+  %w22 = memref.load %host[%c6] : memref<7xf64>
+  memref.dealloc %host : memref<7xf64>
   %virial = vector.from_elements %w00, %w01, %w02, %w01, %w11, %w12, %w02, %w12, %w22 : vector<9xf64>
   return %e, %virial : f64, vector<9xf64>
 }
