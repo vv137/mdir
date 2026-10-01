@@ -43,6 +43,21 @@
 # RUN: cd %t && mdir run npt.toml | grep 'INFO: ' > npt.log
 # RUN: cd %t && mdir run npt-dual.toml | grep 'INFO: ' > npt-dual.log
 # RUN: diff %t/npt.log %t/npt-dual.log
+# The cell of the mixture, 23.2 Å, is narrower than twice the reach of 10 Å
+# and the extent of a group (about 9 Å at this density), so some pairs need
+# the image on the other side of the boundary from the one nearest to the
+# center of their group; the build keeps an entry for each image within the
+# reach (D115). Before, the lists missed those pairs: the potential energy
+# at the start was -497.7291 against -497.7298 of the matrix, the virial
+# -1117.6307 against -1117.7782.
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/barostat.test | sed '1d;$d' \
+# RUN:     | sed -e '/^\[ensemble\]/,/^time_constant = 2.0/d' -e 's|energy_interval = 1000|energy_interval = 20|' -e 's|^steps *= 2000|steps = 100|' > %t/small.toml
+# RUN: printf '[execution]\ntarget = "gpu"\nprecision = "double"\n' >> %t/small.toml
+# RUN: sed -e 's|^precision = "double"|precision = "double"\nneighbor_structure = "GROUPS"|' %t/small.toml > %t/small-groups.toml
+# RUN: cd %t && mdir run small.toml | grep 'INFO: ' > small.log
+# RUN: cd %t && mdir run small-groups.toml | grep 'INFO: ' > small-groups.log
+# RUN: diff %t/small.log %t/small-groups.log
+# RUN: FileCheck %s --check-prefix=SMALL < %t/small-groups.log
 # RUN: cd %t && env MDIR_PRINT_AFTER=md-exec-choose-neighbors mdir run mixed.toml 2>&1 | FileCheck %s
 # RUN: sed -e 's|^target = "gpu"|target = "cpu"|' %t/groups.toml > %t/cpu.toml
 # RUN: not mdir run %t/cpu.toml 2>&1 | FileCheck %s --check-prefix=CPU
@@ -53,6 +68,8 @@
 # CHECK:     MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
 
 # DUAL: MDIR: the inner lists were pruned {{[0-9]+}} times
+
+# SMALL: INFO:         0         0.0000 {{ *-?[0-9.]+}} {{ *}}-497.7298 {{.*}} -1117.7782
 
 # GROW: MDIR: the lists of groups took at most [[USED:[0-9]+]] of {{[0-9]+}} blocks of 64 entries
 

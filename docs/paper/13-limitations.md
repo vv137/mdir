@@ -32,12 +32,15 @@ the spreading of PME has (D70), would close the gap.
   step of 4 fs at that temperature, before both run flat at about 401 K.
   The change of the energy that Section 10 reports for these runs
   measures the transient, not a drift.
-- *Groups against the matrix with a switched Lennard–Jones potential.* On
-  the argon–krypton mixture of `barostat.test` in double precision, the
-  potential energy at step 0 differs between the groups and the matrix by
-  $7\times 10^{-4}$ kcal/mol ($1.4\times 10^{-6}$ relative); on the water
-  boxes of the tests, with particle mesh Ewald and no switch, the two agree
-  to every printed digit. The cause is not yet known.
+- *Groups against the matrix in a narrow cell, found and fixed.* The
+  difference between the groups and the matrix on the argon–krypton
+  mixture of `barostat.test` ($7\times10^{-4}$ kcal/mol in the potential
+  energy, $1.4\times10^{-6}$ relative, and 0.15 kcal/mol in the virial)
+  was a defect of the build: an entry took the image of its candidate
+  nearest to the center of its group, which misses pairs in a cell
+  narrower than twice the reach and the extent of a group (Section 4.4,
+  D115). The build now keeps an entry for each image within the reach,
+  and the two agree to every printed digit.
 - *The order of the state decays.* Over 2 ns of JAC the rate fell by 2%
   and then stayed flat: the state is sorted where a run or a segment
   begins (D44), and only the loops over pairs read it in an order renewed

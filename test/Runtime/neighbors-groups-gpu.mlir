@@ -75,7 +75,7 @@ func.func @fill(%x: memref<?x3xf64>, %length: f64) {
 // The squared distance of i and j in the minimum image.
 // Whether the displacement of the pair (i at place p, j at place q) in the
 // frames of the groups, x_i + s_p L − (x_j + s_q L + e L), with the place
-// shifts s of `shift` and the shift e of the entry in bits 16 to 24 of its
+// shifts s of `shift` and the shift e of the entry in bits 16 to 27 of its
 // mask `m`, differs from that of the minimum image.
 func.func @frame_mismatch(%x: memref<?x3xf64>, %shift: memref<?xi32>,
                           %m: i32, %p: index, %q: index, %i: index,
@@ -86,28 +86,28 @@ func.func @frame_mismatch(%x: memref<?x3xf64>, %shift: memref<?xi32>,
   %sp = memref.load %shift[%p] : memref<?xi32>
   %sq = memref.load %shift[%q] : memref<?xi32>
   %ten = arith.constant 10 : i32
-  %three = arith.constant 3 : i32
+  %width4 = arith.constant 4 : i32
   %sixteen = arith.constant 16 : i32
   %mask10 = arith.constant 1023 : i32
-  %mask3 = arith.constant 7 : i32
+  %mask4 = arith.constant 15 : i32
   %off = arith.constant 512 : i32
-  %two = arith.constant 2 : i32
+  %offset4 = arith.constant 4 : i32
   %tol = arith.constant 1.0e-6 : f64
   %no = arith.constant false
   %bad = scf.for %k = %c0 to %c3 step %c1 iter_args(%b = %no) -> (i1) {
     %k32 = arith.index_cast %k : index to i32
     %bits10 = arith.muli %k32, %ten : i32
-    %bits3a = arith.muli %k32, %three : i32
-    %bits3 = arith.addi %bits3a, %sixteen : i32
+    %bits4a = arith.muli %k32, %width4 : i32
+    %bits4 = arith.addi %bits4a, %sixteen : i32
     %pp0 = arith.shrui %sp, %bits10 : i32
     %pp1 = arith.andi %pp0, %mask10 : i32
     %pp = arith.subi %pp1, %off : i32
     %qq0 = arith.shrui %sq, %bits10 : i32
     %qq1 = arith.andi %qq0, %mask10 : i32
     %qq = arith.subi %qq1, %off : i32
-    %ee0 = arith.shrui %m, %bits3 : i32
-    %ee1 = arith.andi %ee0, %mask3 : i32
-    %ee = arith.subi %ee1, %two : i32
+    %ee0 = arith.shrui %m, %bits4 : i32
+    %ee1 = arith.andi %ee0, %mask4 : i32
+    %ee = arith.subi %ee1, %offset4 : i32
     %ppf = arith.sitofp %pp : i32 to f64
     %qqf = arith.sitofp %qq : i32 to f64
     %eef = arith.sitofp %ee : i32 to f64
@@ -488,5 +488,17 @@ func.func @main() {
   %l2 = arith.constant 5.8 : f64
   %r2 = arith.constant 0.8 : f64
   call @run(%l2, %r2, %none, %no) : (f64, f64, index, i1) -> ()
+
+  // A cell narrower than twice the reach and the extent of a group: the
+  // reach 1.9 and a group about 0.8 wide are more than half the cell of
+  // 4.0, so some pairs need the image on the other side of the boundary
+  // from the one nearest to the center of the group (D115).
+  // CHECK-NEXT: 896816
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: {{^0$}}
+  %l3 = arith.constant 4.0 : f64
+  %r3 = arith.constant 1.9 : f64
+  call @run(%l3, %r3, %none, %no) : (f64, f64, index, i1) -> ()
   return
 }

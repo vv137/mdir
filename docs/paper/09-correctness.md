@@ -142,14 +142,16 @@ with and without it agree to about $10^{-10}$ (`reorder.test`).
   longest row; the matrix of the device equals that of the host entry by
   entry, with no difference in five cases of 2000 particles. The build of
   groups is checked on 2000 particles with positions unwrapped up to
-  three edges away, in six cases including exclusions, a row of more
+  three edges away, in seven cases including exclusions, a row of more
   excluded partners than a warp holds (D106), a position that is not a
-  number (D107), a denser cube, and a smaller reach: no pair within reach
+  number (D107), a denser cube, a smaller reach, and a cell narrower than
+  twice the reach and the extent of a group (D115): no pair within reach
   missing or duplicated, none beyond reach or in the wrong image, and the
-  same 16,352 pairs as the matrix (`neighbors-groups-gpu.mlir`).
+  same 16,352 pairs as the matrix in the first (`neighbors-groups-gpu.mlir`).
 - **Runs.** Over 100 steps in double precision the logs of the groups and
   of the matrix are identical, terms included, as are those of the dual
-  list (11/9.3 Å) and the matrix (`groups-gpu.test`). Under the barostat,
+  list (11/9.3 Å) and the matrix, and those of the groups and the matrix
+  on the argon–krypton mixture in its cell of 23.2 Å (`groups-gpu.test`). Under the barostat,
   the dual list matches one list over 1000 steps (Section 4.5).
 - **The tests of validity.** Section 4.1 proves the test under scaling;
   `tiles-m1.md` proves the dual list's.

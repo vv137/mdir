@@ -48,8 +48,10 @@ measured over 2 ns against pmemd.cuda (Section 9).
 show only where counts differ: more particles than tuples, counts that are
 not multiples of a block, rows longer than a warp, more excluded partners
 than a warp can hold (D106, found on Cellulose and nowhere else in the
-suite). Short runs of the Amber suite are a tier of the tests
-(`test/Scale`).
+suite), cells narrower than twice the reach and the extent of a group
+(D115, found on a mixture of 256 atoms and nowhere in the suite). Short
+runs of the Amber suite are a tier of the tests (`test/Scale`), and small
+cells are cases of the tests of the templates.
 
 **6. Tools check what tests cannot.** The GPU tests run under
 compute-sanitizer (`lit -Dsanitize=1`); the host code is built with

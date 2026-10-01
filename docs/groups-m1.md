@@ -180,7 +180,7 @@ is wrapped and the others at their places relative to it, and stores for
 each place the whole cells that move its particle, as it is kept, into
 that frame (ten bits an axis), and in the mask of each entry the cells
 that move the entry from the frame of its own group into that of the group
-whose list holds it (three bits an axis, −2 to 2, in bits 16 to 24). The
+whose list holds it (four bits an axis, −4 to 4, in bits 16 to 27; D115). The
 gather adds the shift of the place to the positions as they are stored,
 in f64, and converts the sum (D101); the kernel adds that of the entry,
 and a displacement is then a subtraction. The kernel is the semantic kernel of the loop,
@@ -225,6 +225,22 @@ a group sorted, and a binary search for each candidate (a linear scan cost
 256, reads the rows of the excluded pairs instead, D106); the candidate relative to the center of the box, once, and
 the particles of the group too (1.76 to 1.48 ms). A box is computed
 relative to the first particle of the group, in the minimum image.
+
+The image of a candidate (D115). An entry takes one image of its
+candidate, the one nearest to the center of the box of the group, which is
+the image of every pair of the entry within the reach only while the reach
+and the half-width of the box are no more than half the cell along each
+axis. A second kernel takes the groups whose box and the reach are more
+than half the cell wide along an axis, the only ones whose candidates can
+have an image on the other side of the boundary within the reach, and adds
+entries for those images to their lists, from the block where the list
+kernel left each (stored in the free column of the box); the sides go in
+bits 28 to 30 of the entry of the queue, and each image becomes an entry
+with its own mask and shift. With edges longer than twice the reach a pair
+has at most one image within it, so each pair is still in one list once.
+In a wide cell the second kernel is warps that return; in the list kernel,
+the same code took 128 registers instead of 64 and the build of Cellulose
+30% more time.
 
 ## 6. In the IR
 

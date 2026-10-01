@@ -456,8 +456,8 @@ SmallVector<Value> kernels::emitGroupPairKernel(
             constant32(b, 0));
         Value place = toIndex(b, place32);
         // The entry in the frame of the group: its position, in the frame
-        // of its own group, moved by the whole cells in bits 16 to 24 of
-        // its mask, (e + 2) in three bits an axis (D95).
+        // of its own group, moved by the whole cells in bits 16 to 27 of
+        // its mask, (e + 4) in four bits an axis (D95, D115).
         Value position = loadElement(b, loc, layout.positions, place);
         {
           auto positionType = cast<VectorType>(position.getType());
@@ -467,11 +467,11 @@ SmallVector<Value> kernels::emitGroupPairKernel(
             Value bits = arith::AndIOp::create(
                 b, loc,
                 arith::ShRUIOp::create(b, loc, mask,
-                                       constant32(b, 16 + 3 * axis)),
-                constant32(b, 7));
+                                       constant32(b, 16 + 4 * axis)),
+                constant32(b, 15));
             cells.push_back(arith::SIToFPOp::create(
                 b, loc, element,
-                arith::SubIOp::create(b, loc, bits, constant32(b, 2))));
+                arith::SubIOp::create(b, loc, bits, constant32(b, 4))));
           }
           Value shift = arith::MulFOp::create(
               b, loc, vector::FromElementsOp::create(b, loc, positionType, cells),

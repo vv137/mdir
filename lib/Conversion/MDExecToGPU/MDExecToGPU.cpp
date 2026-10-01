@@ -24,6 +24,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
@@ -2866,7 +2867,7 @@ void Lowering::emitGroupsPrune(OpBuilder &builder, Location loc,
                                          ValueRange{at}),
                   constant32(c, 0));
               // The entry in the frame of the group: moved by the whole
-              // cells in bits 16 to 24 of its mask (D95).
+              // cells in bits 16 to 27 of its mask (D95, D115).
               Value position = loadElement(
                   c, loc, placed,
                   toIndex(c, arith::SelectOp::create(c, loc, has, entry,
@@ -2876,11 +2877,11 @@ void Lowering::emitGroupsPrune(OpBuilder &builder, Location loc,
                 Value bits = arith::AndIOp::create(
                     c, loc,
                     arith::ShRUIOp::create(c, loc, mask,
-                                           constant32(c, 16 + 3 * axis)),
-                    constant32(c, 7));
+                                           constant32(c, 16 + 4 * axis)),
+                    constant32(c, 15));
                 cells.push_back(arith::SIToFPOp::create(
                     c, loc, f32,
-                    arith::SubIOp::create(c, loc, bits, constant32(c, 2))));
+                    arith::SubIOp::create(c, loc, bits, constant32(c, 4))));
               }
               position = arith::AddFOp::create(
                   c, loc, position,
@@ -3695,7 +3696,10 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   // A reciprocal sum between the test of a neighbor structure and the
   // first loop that takes the structure goes before the test: it takes
   // the positions only, and the device computes it while the host waits
-  // for the test (D113).
+  // for the test (D113). Its operands, its scratch included, must already
+  // be there: a run of one step with no energies allocates the scratch
+  // after the test.
+  DominanceInfo dominance(function);
   function.walk([&](md_exec::RefreshNeighborsOp refresh) {
     SmallVector<md_exec::ReciprocalOp> sums;
     for (Operation *next = refresh->getNextNode(); next;
@@ -3719,7 +3723,8 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
                reciprocal.getScratch()))
         independent &= !llvm::is_contained(refresh->getOperands(), written);
       for (Value operand : reciprocal->getOperands())
-        independent &= !llvm::is_contained(refresh->getResults(), operand);
+        independent &= !llvm::is_contained(refresh->getResults(), operand) &&
+                       dominance.properlyDominates(operand, refresh);
       if (independent)
         sums.push_back(reciprocal);
     }

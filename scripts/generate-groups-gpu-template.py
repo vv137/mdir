@@ -36,7 +36,12 @@ HEADER = """\
 // of the particle at place 16 g + u and j is within the reach, is not an
 // excluded pair of `excluded` (an incidence structure of pairs, as for the
 // matrix), and, within the group itself, u is before q. Each pair within
-// the reach is in one list once. The candidates come from a grid of cells
+// the reach is in one list once. An entry takes one image of its candidate,
+// the one nearest to the center of the box of the group; where the box and
+// the reach are more than half the cell wide along an axis, a pair can need
+// the image on the other side of the boundary, and a second kernel adds
+// entries for those images to the lists of such groups, continuing each
+// where the first left it (D115). The candidates come from a grid of cells
 // of half the reach over the places, each cell in the order of its places,
 // visited in a fixed order, so the order of the entries of a group does not
 // depend on the threads either. The layout is that of [SalomonFerrer2013];
@@ -1195,14 +1200,15 @@ scf.if %real_group {{
               // of its own place, in cells: e = W_g − W_q − k, with W the
               // frame less the wrapped position of a place (the first of
               // the group for W_g) and k the cells between the candidate
-              // and the center of the box; -2 to 2 along each axis, (e + 2)
-              // in three bits each, in bits 16 to 24 of its mask.
+              // and the center of the box, of the image that the entry
+              // takes; -4 to 4 along each axis, (e + 4) in four bits each,
+              // in bits 16 to 27 of its mask (D115).
               %pairs = arith.cmpi ne, %b3, %zero_i : i32
               %b3s = scf.if %pairs -> (i32) {{
                 %c3q = arith.constant 3 : index
                 %wq_f = memref.load %xp[%qi, %c3q] : memref<?x4xf32, 1>
                 %wq = arith.bitcast %wq_f : f32 to i32
-                // In the packed form: e + 2 is 0 to 4 along each axis, so
+                // In the packed form: e + 4 is 0 to 8 along each axis, so
                 // the sum over the fields comes out with no carry.
                 %kx0 = arith.mulf %dx0, %filx : f32
                 %ky0 = arith.mulf %dy0, %fily : f32
@@ -1217,20 +1223,21 @@ scf.if %real_group {{
                 %kxy = arith.addf %kx1, %kyy : f32
                 %kp_f = arith.addf %kxy, %kyz : f32
                 %kp = arith.fptosi %kp_f : f32 to i32
-                %twos = arith.constant 2099202 : i32
+                %twos = arith.constant 4198404 : i32
                 %wd = arith.subi %wfirst, %wq : i32
                 %wd2 = arith.addi %wd, %twos : i32
                 %ep = arith.subi %wd2, %kp : i32
-                %seven = arith.constant 7 : i32
-                %c56 = arith.constant 56 : i32
-                %c448 = arith.constant 448 : i32
-                %fourteen = arith.constant 14 : i32
+                %fifteen_e = arith.constant 15 : i32
+                %six_e = arith.constant 6 : i32
+                %c240 = arith.constant 240 : i32
+                %twelve_e = arith.constant 12 : i32
+                %c3840 = arith.constant 3840 : i32
                 %sixteen_s = arith.constant 16 : i32
-                %eqx = arith.andi %ep, %seven : i32
-                %eqy0 = arith.shrui %ep, %seven : i32
-                %eqy = arith.andi %eqy0, %c56 : i32
-                %eqz0 = arith.shrui %ep, %fourteen : i32
-                %eqz = arith.andi %eqz0, %c448 : i32
+                %eqx = arith.andi %ep, %fifteen_e : i32
+                %eqy0 = arith.shrui %ep, %six_e : i32
+                %eqy = arith.andi %eqy0, %c240 : i32
+                %eqz0 = arith.shrui %ep, %twelve_e : i32
+                %eqz = arith.andi %eqz0, %c3840 : i32
                 %eq_xy = arith.ori %eqx, %eqy : i32
                 %eq = arith.ori %eq_xy, %eqz : i32
                 %eq16 = arith.shli %eq, %sixteen_s : i32
@@ -1512,14 +1519,15 @@ scf.if %real_group {{
               // of its own place, in cells: e = W_g − W_q − k, with W the
               // frame less the wrapped position of a place (the first of
               // the group for W_g) and k the cells between the candidate
-              // and the center of the box; -2 to 2 along each axis, (e + 2)
-              // in three bits each, in bits 16 to 24 of its mask.
+              // and the center of the box, of the image that the entry
+              // takes; -4 to 4 along each axis, (e + 4) in four bits each,
+              // in bits 16 to 27 of its mask (D115).
               %pairs = arith.cmpi ne, %b3, %zero_i : i32
               %b3s = scf.if %pairs -> (i32) {{
                 %c3q = arith.constant 3 : index
                 %wq_f = memref.load %xp[%qi, %c3q] : memref<?x4xf32, 1>
                 %wq = arith.bitcast %wq_f : f32 to i32
-                // In the packed form: e + 2 is 0 to 4 along each axis, so
+                // In the packed form: e + 4 is 0 to 8 along each axis, so
                 // the sum over the fields comes out with no carry.
                 %kx0 = arith.mulf %dx0, %filx : f32
                 %ky0 = arith.mulf %dy0, %fily : f32
@@ -1534,20 +1542,21 @@ scf.if %real_group {{
                 %kxy = arith.addf %kx1, %kyy : f32
                 %kp_f = arith.addf %kxy, %kyz : f32
                 %kp = arith.fptosi %kp_f : f32 to i32
-                %twos = arith.constant 2099202 : i32
+                %twos = arith.constant 4198404 : i32
                 %wd = arith.subi %wfirst, %wq : i32
                 %wd2 = arith.addi %wd, %twos : i32
                 %ep = arith.subi %wd2, %kp : i32
-                %seven = arith.constant 7 : i32
-                %c56 = arith.constant 56 : i32
-                %c448 = arith.constant 448 : i32
-                %fourteen = arith.constant 14 : i32
+                %fifteen_e = arith.constant 15 : i32
+                %six_e = arith.constant 6 : i32
+                %c240 = arith.constant 240 : i32
+                %twelve_e = arith.constant 12 : i32
+                %c3840 = arith.constant 3840 : i32
                 %sixteen_s = arith.constant 16 : i32
-                %eqx = arith.andi %ep, %seven : i32
-                %eqy0 = arith.shrui %ep, %seven : i32
-                %eqy = arith.andi %eqy0, %c56 : i32
-                %eqz0 = arith.shrui %ep, %fourteen : i32
-                %eqz = arith.andi %eqz0, %c448 : i32
+                %eqx = arith.andi %ep, %fifteen_e : i32
+                %eqy0 = arith.shrui %ep, %six_e : i32
+                %eqy = arith.andi %eqy0, %c240 : i32
+                %eqz0 = arith.shrui %ep, %twelve_e : i32
+                %eqz = arith.andi %eqz0, %c3840 : i32
                 %eq_xy = arith.ori %eqx, %eqy : i32
                 %eq = arith.ori %eq_xy, %eqz : i32
                 %eq16 = arith.shli %eq, %sixteen_s : i32
@@ -1637,10 +1646,90 @@ scf.if %real_group {{
   %lane0 = arith.cmpi eq, %lane, %c0w : index
   scf.if %lane0 {{
     memref.store %count_all, %counts[%g] : memref<?xi32, 1>
+    // The block that the list ends in, where the kernel of the images
+    // continues it (D115), in the column of the box that is free.
+    %last_block_f = arith.bitcast %block_all : i32 to f32
+    %c6_last = arith.constant 6 : index
+    memref.store %last_block_f, %boxes[%g, %c6_last] : memref<?x8xf32, 1>
 {indent(atomic_max("mx_", "%sizes_device", "%count_all"), 4).rstrip()}
   }}
 }}""")
     return b.text()
+
+
+def images_body():
+    """A warp a group whose box and the reach are more than half the cell
+    wide along an axis: the entries of the images of its candidates on the
+    other side of the boundary, which the list kernel takes only on the
+    side nearest to the center of the box, added to its list (D115)."""
+    text = lists_body()
+    # Only those groups: within the reach of the box, an image on the
+    # other side is possible only there.
+    old = "%real_group = arith.cmpi ult, %g, %groups : index\n"
+    assert text.count(old) == 1
+    text = text.replace(old, """%real_group0 = arith.cmpi ult, %g, %groups : index
+%img_c0 = arith.constant 0 : index
+%img_c1 = arith.constant 1 : index
+%img_c2 = arith.constant 2 : index
+%img_c3 = arith.constant 3 : index
+%img_c4 = arith.constant 4 : index
+%img_c5 = arith.constant 5 : index
+%img_lox = memref.load %boxes[%g, %img_c0] : memref<?x8xf32, 1>
+%img_loy = memref.load %boxes[%g, %img_c1] : memref<?x8xf32, 1>
+%img_loz = memref.load %boxes[%g, %img_c2] : memref<?x8xf32, 1>
+%img_hix = memref.load %boxes[%g, %img_c3] : memref<?x8xf32, 1>
+%img_hiy = memref.load %boxes[%g, %img_c4] : memref<?x8xf32, 1>
+%img_hiz = memref.load %boxes[%g, %img_c5] : memref<?x8xf32, 1>
+%img_wx = arith.subf %img_hix, %img_lox : f32
+%img_wy = arith.subf %img_hiy, %img_loy : f32
+%img_wz = arith.subf %img_hiz, %img_loz : f32
+%img_rx = arith.addf %freach, %freach : f32
+%img_ex = arith.addf %img_wx, %img_rx : f32
+%img_ey = arith.addf %img_wy, %img_rx : f32
+%img_ez = arith.addf %img_wz, %img_rx : f32
+%img_nx = arith.cmpf oge, %img_ex, %flx : f32
+%img_ny = arith.cmpf oge, %img_ey, %fly : f32
+%img_nz = arith.cmpf oge, %img_ez, %flz : f32
+%img_nxy = arith.ori %img_nx, %img_ny : i1
+%img_nxyz = arith.ori %img_nxy, %img_nz : i1
+%real_group = arith.andi %real_group0, %img_nxyz : i1
+""")
+    # Each list continues where the list kernel left it.
+    old = "iter_args(%cz_count = %zero_i, %czb = %none_block, %czq = %zero_i)"
+    assert text.count(old) == 1
+    text = text.replace(old, "iter_args(%cz_count = %img_count0, %czb = %img_block0, %czq = %zero_i)")
+    old = "  %count_main, %block_main, %queued_all = scf.for %zz"
+    assert text.count(old) == 1
+    text = text.replace(old, """  %img_count0 = memref.load %counts[%g] : memref<?xi32, 1>
+  %img_c6 = arith.constant 6 : index
+  %img_block0_f = memref.load %boxes[%g, %img_c6] : memref<?x8xf32, 1>
+  %img_block0 = arith.bitcast %img_block0_f : f32 to i32
+""" + old)
+    # The candidates go to the queue with the images on the other side.
+    old_loop = "iter_args(%cs = %cp0, %csb = %cpb0, %qn = %cpq0)"
+    assert text.count(old_loop) == 1
+    text = text.replace(old_loop, "iter_args(%cs_o = %cp0, %csb_o = %cpb0, %qn_o = %cpq0)")
+    start = text.index("          %nearq = scf.if %in_run -> (i32) {")
+    end = text.index("          %is_near = arith.cmpi sge, %nearq, %zero_i : i32")
+    text = text[:start] + PREFILTER + text[end:]
+    old_close = """          scf.yield %r_count, %r_block, %r_queued : i32, i32, i32
+        }
+        scf.yield %cs_count, %cs_block, %cs_queued : i32, i32, i32"""
+    assert text.count(old_close) == 1
+    text = text.replace(old_close, """          scf.yield %r_count, %r_block, %r_queued : i32, i32, i32
+          }
+          scf.yield %s_count, %s_block, %s_queued : i32, i32, i32
+        }
+        scf.yield %cs_count, %cs_block, %cs_queued : i32, i32, i32""")
+    # The queue holds the image in the bits from 28.
+    for old, new in PROCESSING:
+        assert text.count(old) >= 1, old[:60]
+        text = text.replace(old, new)
+    return text
+
+
+PREFILTER = '          // The distances from the box of the group, along each axis, of\n          // the image of the candidate nearest to its center and of the\n          // image on the other side of the boundary, L - |r| away. In a\n          // cell less wide than twice the reach and the extent of the\n          // group, a pair can need the second (D115).\n          %im_far = arith.constant 3.0e+38 : f32\n          %cand, %bdx, %bdy, %bdz, %adx, %ady, %adz = scf.if %in_run -> (i32, f32, f32, f32, f32, f32, f32) {\n            %si = arith.index_cast %s : i32 to index\n            %q = memref.load %gplace[%si] : memref<?xi32, 1>\n            %later = arith.cmpi sge, %q, %first32 : i32\n            %qa, %qbx, %qby, %qbz, %qax, %qay, %qaz = scf.if %later -> (i32, f32, f32, f32, f32, f32, f32) {\n              %qi = arith.index_cast %q : i32 to index\n              %xq = memref.load %xp[%qi, %c0w] : memref<?x4xf32, 1>\n              %yq = memref.load %xp[%qi, %c1w] : memref<?x4xf32, 1>\n              %zq = memref.load %xp[%qi, %c2w] : memref<?x4xf32, 1>\n              %dx0 = arith.subf %xq, %cx : f32\n              %dy0 = arith.subf %yq, %cy : f32\n              %dz0 = arith.subf %zq, %cz : f32\n              %rqx = func.call @mdrt_gpu_groups_image(%dx0, %flx, %filx) : (f32, f32, f32) -> f32\n              %rqy = func.call @mdrt_gpu_groups_image(%dy0, %fly, %fily) : (f32, f32, f32) -> f32\n              %rqz = func.call @mdrt_gpu_groups_image(%dz0, %flz, %filz) : (f32, f32, f32) -> f32\n              %ax = math.absf %rqx : f32\n              %ay = math.absf %rqy : f32\n              %az = math.absf %rqz : f32\n              %zero_f = arith.constant 0.0 : f32\n              %bx0 = arith.subf %ax, %hx : f32\n              %by0 = arith.subf %ay, %hy : f32\n              %bz0 = arith.subf %az, %hz : f32\n              %bxd = arith.maximumf %bx0, %zero_f : f32\n              %byd = arith.maximumf %by0, %zero_f : f32\n              %bzd = arith.maximumf %bz0, %zero_f : f32\n              %ox0 = arith.subf %flx, %ax : f32\n              %oy0 = arith.subf %fly, %ay : f32\n              %oz0 = arith.subf %flz, %az : f32\n              %ox1 = arith.subf %ox0, %hx : f32\n              %oy1 = arith.subf %oy0, %hy : f32\n              %oz1 = arith.subf %oz0, %hz : f32\n              %oxd = arith.maximumf %ox1, %zero_f : f32\n              %oyd = arith.maximumf %oy1, %zero_f : f32\n              %ozd = arith.maximumf %oz1, %zero_f : f32\n              scf.yield %q, %bxd, %byd, %bzd, %oxd, %oyd, %ozd : i32, f32, f32, f32, f32, f32, f32\n            } else {\n              scf.yield %none_q, %im_far, %im_far, %im_far, %im_far, %im_far, %im_far : i32, f32, f32, f32, f32, f32, f32\n            }\n            scf.yield %qa, %qbx, %qby, %qbz, %qax, %qay, %qaz : i32, f32, f32, f32, f32, f32, f32\n          } else {\n            scf.yield %none_q, %im_far, %im_far, %im_far, %im_far, %im_far, %im_far : i32, f32, f32, f32, f32, f32, f32\n          }\n          %has_cand = arith.cmpi sge, %cand, %zero_i : i32\n          %alt_x = arith.cmpf ole, %adx, %freach : f32\n          %alt_y = arith.cmpf ole, %ady, %freach : f32\n          %alt_z = arith.cmpf ole, %adz, %freach : f32\n          %alt_xy = arith.ori %alt_x, %alt_y : i1\n          %alt_xyz = arith.ori %alt_xy, %alt_z : i1\n          %alt_any = arith.andi %alt_xyz, %has_cand : i1\n          %im_n8 = arith.constant 8 : i32\n          %im_true = arith.constant true\n          %im_c28q = arith.constant 28 : i32\n          // The images of the candidates, the nearest first, then those\n          // with the other side along the axes of the bits of img_s; a\n          // warp in a wide cell takes the first alone.\n          %s_count, %s_block, %s_queued = scf.for %img_s = %one_i to %im_n8 step %one_i iter_args(%cs = %cs_o, %csb = %csb_o, %qn = %qn_o) -> (i32, i32, i32) : i32 {\n          %isx0 = arith.andi %img_s, %one_i : i32\n          %im_two = arith.constant 2 : i32\n          %im_four = arith.constant 4 : i32\n          %isy0 = arith.andi %img_s, %im_two : i32\n          %isz0 = arith.andi %img_s, %im_four : i32\n          %isx = arith.cmpi ne, %isx0, %zero_i : i32\n          %isy = arith.cmpi ne, %isy0, %zero_i : i32\n          %isz = arith.cmpi ne, %isz0, %zero_i : i32\n          %nisx = arith.xori %isx, %im_true : i1\n          %nisy = arith.xori %isy, %im_true : i1\n          %nisz = arith.xori %isz, %im_true : i1\n          %okx = arith.ori %nisx, %alt_x : i1\n          %oky = arith.ori %nisy, %alt_y : i1\n          %okz = arith.ori %nisz, %alt_z : i1\n          %okxy = arith.andi %okx, %oky : i1\n          %okxyz = arith.andi %okxy, %okz : i1\n          %ok_img = arith.andi %okxyz, %has_cand : i1\n          %dsx = arith.select %isx, %adx, %bdx : f32\n          %dsy = arith.select %isy, %ady, %bdy : f32\n          %dsz = arith.select %isz, %adz, %bdz : f32\n          %dsx2 = arith.mulf %dsx, %dsx : f32\n          %dsy2 = arith.mulf %dsy, %dsy : f32\n          %dsz2 = arith.mulf %dsz, %dsz : f32\n          %dsxy = arith.addf %dsx2, %dsy2 : f32\n          %ds2 = arith.addf %dsxy, %dsz2 : f32\n          %near_img = arith.cmpf ole, %ds2, %reach2 : f32\n          %take_img = arith.andi %near_img, %ok_img : i1\n          %img_bits = arith.shli %img_s, %im_c28q : i32\n          %qimg = arith.ori %cand, %img_bits : i32\n          %nearq = arith.select %take_img, %qimg, %none_q : i32\n'
+PROCESSING = [('              %q = arith.addi %qv, %zero_i : i32\n', '              // The place, and in the bits from 28 the image of the\n              // candidate: bit a takes the image on the other side of the\n              // boundary along axis a (D115). Places are fewer than 2^28.\n              %im_mask = arith.constant 268435455 : i32\n              %q = arith.andi %qv, %im_mask : i32\n              %im_c28 = arith.constant 28 : i32\n              %img = arith.shrui %qv, %im_c28 : i32\n'), ('              %rqx = func.call @mdrt_gpu_groups_image(%dx0, %flx, %filx) : (f32, f32, f32) -> f32\n              %rqy = func.call @mdrt_gpu_groups_image(%dy0, %fly, %fily) : (f32, f32, f32) -> f32\n              %rqz = func.call @mdrt_gpu_groups_image(%dz0, %flz, %filz) : (f32, f32, f32) -> f32\n              %ax = math.absf %rqx : f32\n              %ay = math.absf %rqy : f32\n              %az = math.absf %rqz : f32\n              %zero_f = arith.constant 0.0 : f32\n              %bx0 = arith.subf %ax, %hx : f32\n              %by0 = arith.subf %ay, %hy : f32\n              %bz0 = arith.subf %az, %hz : f32\n              %bxd = arith.maximumf %bx0, %zero_f : f32\n              %byd = arith.maximumf %by0, %zero_f : f32\n              %bzd = arith.maximumf %bz0, %zero_f : f32\n              %bx2 = arith.mulf %bxd, %bxd : f32\n', '              %rqxb = func.call @mdrt_gpu_groups_image(%dx0, %flx, %filx) : (f32, f32, f32) -> f32\n              %rqyb = func.call @mdrt_gpu_groups_image(%dy0, %fly, %fily) : (f32, f32, f32) -> f32\n              %rqzb = func.call @mdrt_gpu_groups_image(%dz0, %flz, %filz) : (f32, f32, f32) -> f32\n              // The image the queue asked for: the other side of the\n              // boundary, a cell away from the image nearest to the center\n              // of the box, along the axes of its bits (D115).\n              %im_zero = arith.constant 0.0 : f32\n              %im_one = arith.constant 1.0 : f32\n              %im_mone = arith.constant -1.0 : f32\n              %im_bitx = arith.constant 1 : i32\n              %im_bity = arith.constant 2 : i32\n              %im_bitz = arith.constant 4 : i32\n              %im_bx0 = arith.andi %img, %im_bitx : i32\n              %im_fx = arith.cmpi ne, %im_bx0, %zero_i : i32\n              %im_nx = arith.cmpf olt, %rqxb, %im_zero : f32\n              %im_sx = arith.select %im_nx, %im_mone, %im_one : f32\n              %im_ox = arith.select %im_fx, %im_sx, %im_zero : f32\n              %im_lx = arith.mulf %im_ox, %flx : f32\n              %rqx = arith.subf %rqxb, %im_lx : f32\n              %im_by0 = arith.andi %img, %im_bity : i32\n              %im_fy = arith.cmpi ne, %im_by0, %zero_i : i32\n              %im_ny = arith.cmpf olt, %rqyb, %im_zero : f32\n              %im_sy = arith.select %im_ny, %im_mone, %im_one : f32\n              %im_oy = arith.select %im_fy, %im_sy, %im_zero : f32\n              %im_ly = arith.mulf %im_oy, %fly : f32\n              %rqy = arith.subf %rqyb, %im_ly : f32\n              %im_bz0 = arith.andi %img, %im_bitz : i32\n              %im_fz = arith.cmpi ne, %im_bz0, %zero_i : i32\n              %im_nz = arith.cmpf olt, %rqzb, %im_zero : f32\n              %im_sz = arith.select %im_nz, %im_mone, %im_one : f32\n              %im_oz = arith.select %im_fz, %im_sz, %im_zero : f32\n              %im_lz = arith.mulf %im_oz, %flz : f32\n              %rqz = arith.subf %rqzb, %im_lz : f32\n              %ax = math.absf %rqx : f32\n              %ay = math.absf %rqy : f32\n              %az = math.absf %rqz : f32\n              %zero_f = arith.constant 0.0 : f32\n              %bx0 = arith.subf %ax, %hx : f32\n              %by0 = arith.subf %ay, %hy : f32\n              %bz0 = arith.subf %az, %hz : f32\n              %bxd = arith.maximumf %bx0, %zero_f : f32\n              %byd = arith.maximumf %by0, %zero_f : f32\n              %bzd = arith.maximumf %bz0, %zero_f : f32\n              %bx2 = arith.mulf %bxd, %bxd : f32\n'), ('                %kx1 = math.roundeven %kx0 : f32\n', '                %kx1r = math.roundeven %kx0 : f32\n                %kx1 = arith.addf %kx1r, %im_ox : f32\n'), ('                %ky1 = math.roundeven %ky0 : f32\n', '                %ky1r = math.roundeven %ky0 : f32\n                %ky1 = arith.addf %ky1r, %im_oy : f32\n'), ('                %kz1 = math.roundeven %kz0 : f32\n', '                %kz1r = math.roundeven %kz0 : f32\n                %kz1 = arith.addf %kz1r, %im_oz : f32\n'), ('            memref.store %qv, %entries[%pos] : memref<?xi32, 1>\n', '            %qplace_mask = arith.constant 268435455 : i32\n            %qplace = arith.andi %qv, %qplace_mask : i32\n            memref.store %qplace, %entries[%pos] : memref<?xi32, 1>\n')]
 
 
 def build():
@@ -2151,6 +2240,10 @@ scf.if %store {{
 
 """)
     t.append(launch("%grid_of_lists", lists_body(),
+                    workgroup=(f"%rel_wg : memref<64x4xf32, {WG}>, "
+                               f"%partners : memref<1024xi32, {WG}>, "
+                               f"%queue : memref<256xi32, {WG}>")))
+    t.append(launch("%grid_of_lists", images_body(),
                     workgroup=(f"%rel_wg : memref<64x4xf32, {WG}>, "
                                f"%partners : memref<1024xi32, {WG}>, "
                                f"%queue : memref<256xi32, {WG}>")))

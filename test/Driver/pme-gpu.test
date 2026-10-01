@@ -28,6 +28,11 @@
 # RUN: cd %t && env MDIR_PRINT_AFTER=md-exec-assign-streams sh -c 'MDIR_PIPELINE="$(cat pipeline)" mdir run side.toml' > side.log 2>&1
 # RUN: FileCheck %s --check-prefix=SIDE < %t/side.log
 # RUN: mdir checkpoint %t/first.h5 %t/side.h5 | FileCheck %s --check-prefix=SAME
+# A run of one step with no energies: the scratch of the reciprocal sum is
+# allocated after the test of the neighbor structure, so the sum stays
+# after the test rather than going before it (D113).
+# RUN: sed -e 's|^steps = 500|steps = 1|' -e 's|^energy_interval = 500|energy_interval = 0\ncheckpoint = "one.h5"\ncheckpoint_interval = 1|' %t/mixed.toml > %t/one.toml
+# RUN: cd %t && mdir run one.toml | FileCheck %s --check-prefix=ONE
 # RUN: mdir run %t/mixed.toml | FileCheck %s --check-prefix=MIXED
 
 # SAME: the states are identical
@@ -36,3 +41,5 @@
 # DOUBLE: INFO:       500         0.5000 {{ *}}-2811.6418 {{ *}}-3754.0064 {{ *}}942.3645
 # DOUBLE: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
 # MIXED:  MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
+
+# ONE: MDIR: the total energy changed by

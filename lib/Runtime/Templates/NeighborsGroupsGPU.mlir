@@ -22,7 +22,12 @@
 // of the particle at place 16 g + u and j is within the reach, is not an
 // excluded pair of `excluded` (an incidence structure of pairs, as for the
 // matrix), and, within the group itself, u is before q. Each pair within
-// the reach is in one list once. The candidates come from a grid of cells
+// the reach is in one list once. An entry takes one image of its candidate,
+// the one nearest to the center of the box of the group; where the box and
+// the reach are more than half the cell wide along an axis, a pair can need
+// the image on the other side of the boundary, and a second kernel adds
+// entries for those images to the lists of such groups, continuing each
+// where the first left it (D115). The candidates come from a grid of cells
 // of half the reach over the places, each cell in the order of its places,
 // visited in a fixed order, so the order of the entries of a group does not
 // depend on the threads either. The layout is that of [SalomonFerrer2013];
@@ -9314,14 +9319,15 @@ func.func private @mdrt_gpu_build_neighbors_groups(
                   // of its own place, in cells: e = W_g − W_q − k, with W the
                   // frame less the wrapped position of a place (the first of
                   // the group for W_g) and k the cells between the candidate
-                  // and the center of the box; -2 to 2 along each axis, (e + 2)
-                  // in three bits each, in bits 16 to 24 of its mask.
+                  // and the center of the box, of the image that the entry
+                  // takes; -4 to 4 along each axis, (e + 4) in four bits each,
+                  // in bits 16 to 27 of its mask (D115).
                   %pairs = arith.cmpi ne, %b3, %zero_i : i32
                   %b3s = scf.if %pairs -> (i32) {
                     %c3q = arith.constant 3 : index
                     %wq_f = memref.load %xp[%qi, %c3q] : memref<?x4xf32, 1>
                     %wq = arith.bitcast %wq_f : f32 to i32
-                    // In the packed form: e + 2 is 0 to 4 along each axis, so
+                    // In the packed form: e + 4 is 0 to 8 along each axis, so
                     // the sum over the fields comes out with no carry.
                     %kx0 = arith.mulf %dx0, %filx : f32
                     %ky0 = arith.mulf %dy0, %fily : f32
@@ -9336,20 +9342,21 @@ func.func private @mdrt_gpu_build_neighbors_groups(
                     %kxy = arith.addf %kx1, %kyy : f32
                     %kp_f = arith.addf %kxy, %kyz : f32
                     %kp = arith.fptosi %kp_f : f32 to i32
-                    %twos = arith.constant 2099202 : i32
+                    %twos = arith.constant 4198404 : i32
                     %wd = arith.subi %wfirst, %wq : i32
                     %wd2 = arith.addi %wd, %twos : i32
                     %ep = arith.subi %wd2, %kp : i32
-                    %seven = arith.constant 7 : i32
-                    %c56 = arith.constant 56 : i32
-                    %c448 = arith.constant 448 : i32
-                    %fourteen = arith.constant 14 : i32
+                    %fifteen_e = arith.constant 15 : i32
+                    %six_e = arith.constant 6 : i32
+                    %c240 = arith.constant 240 : i32
+                    %twelve_e = arith.constant 12 : i32
+                    %c3840 = arith.constant 3840 : i32
                     %sixteen_s = arith.constant 16 : i32
-                    %eqx = arith.andi %ep, %seven : i32
-                    %eqy0 = arith.shrui %ep, %seven : i32
-                    %eqy = arith.andi %eqy0, %c56 : i32
-                    %eqz0 = arith.shrui %ep, %fourteen : i32
-                    %eqz = arith.andi %eqz0, %c448 : i32
+                    %eqx = arith.andi %ep, %fifteen_e : i32
+                    %eqy0 = arith.shrui %ep, %six_e : i32
+                    %eqy = arith.andi %eqy0, %c240 : i32
+                    %eqz0 = arith.shrui %ep, %twelve_e : i32
+                    %eqz = arith.andi %eqz0, %c3840 : i32
                     %eq_xy = arith.ori %eqx, %eqy : i32
                     %eq = arith.ori %eq_xy, %eqz : i32
                     %eq16 = arith.shli %eq, %sixteen_s : i32
@@ -9636,14 +9643,15 @@ func.func private @mdrt_gpu_build_neighbors_groups(
                   // of its own place, in cells: e = W_g − W_q − k, with W the
                   // frame less the wrapped position of a place (the first of
                   // the group for W_g) and k the cells between the candidate
-                  // and the center of the box; -2 to 2 along each axis, (e + 2)
-                  // in three bits each, in bits 16 to 24 of its mask.
+                  // and the center of the box, of the image that the entry
+                  // takes; -4 to 4 along each axis, (e + 4) in four bits each,
+                  // in bits 16 to 27 of its mask (D115).
                   %pairs = arith.cmpi ne, %b3, %zero_i : i32
                   %b3s = scf.if %pairs -> (i32) {
                     %c3q = arith.constant 3 : index
                     %wq_f = memref.load %xp[%qi, %c3q] : memref<?x4xf32, 1>
                     %wq = arith.bitcast %wq_f : f32 to i32
-                    // In the packed form: e + 2 is 0 to 4 along each axis, so
+                    // In the packed form: e + 4 is 0 to 8 along each axis, so
                     // the sum over the fields comes out with no carry.
                     %kx0 = arith.mulf %dx0, %filx : f32
                     %ky0 = arith.mulf %dy0, %fily : f32
@@ -9658,20 +9666,21 @@ func.func private @mdrt_gpu_build_neighbors_groups(
                     %kxy = arith.addf %kx1, %kyy : f32
                     %kp_f = arith.addf %kxy, %kyz : f32
                     %kp = arith.fptosi %kp_f : f32 to i32
-                    %twos = arith.constant 2099202 : i32
+                    %twos = arith.constant 4198404 : i32
                     %wd = arith.subi %wfirst, %wq : i32
                     %wd2 = arith.addi %wd, %twos : i32
                     %ep = arith.subi %wd2, %kp : i32
-                    %seven = arith.constant 7 : i32
-                    %c56 = arith.constant 56 : i32
-                    %c448 = arith.constant 448 : i32
-                    %fourteen = arith.constant 14 : i32
+                    %fifteen_e = arith.constant 15 : i32
+                    %six_e = arith.constant 6 : i32
+                    %c240 = arith.constant 240 : i32
+                    %twelve_e = arith.constant 12 : i32
+                    %c3840 = arith.constant 3840 : i32
                     %sixteen_s = arith.constant 16 : i32
-                    %eqx = arith.andi %ep, %seven : i32
-                    %eqy0 = arith.shrui %ep, %seven : i32
-                    %eqy = arith.andi %eqy0, %c56 : i32
-                    %eqz0 = arith.shrui %ep, %fourteen : i32
-                    %eqz = arith.andi %eqz0, %c448 : i32
+                    %eqx = arith.andi %ep, %fifteen_e : i32
+                    %eqy0 = arith.shrui %ep, %six_e : i32
+                    %eqy = arith.andi %eqy0, %c240 : i32
+                    %eqz0 = arith.shrui %ep, %twelve_e : i32
+                    %eqz = arith.andi %eqz0, %c3840 : i32
                     %eq_xy = arith.ori %eqx, %eqy : i32
                     %eq = arith.ori %eq_xy, %eqz : i32
                     %eq16 = arith.shli %eq, %sixteen_s : i32
@@ -9766,6 +9775,6120 @@ func.func private @mdrt_gpu_build_neighbors_groups(
       %lane0 = arith.cmpi eq, %lane, %c0w : index
       scf.if %lane0 {
         memref.store %count_all, %counts[%g] : memref<?xi32, 1>
+        // The block that the list ends in, where the kernel of the images
+        // continues it (D115), in the column of the box that is free.
+        %last_block_f = arith.bitcast %block_all : i32 to f32
+        %c6_last = arith.constant 6 : index
+        memref.store %last_block_f, %boxes[%g, %c6_last] : memref<?x8xf32, 1>
+        %mx_base = memref.extract_aligned_pointer_as_index %sizes_device : memref<5xi32, 1> -> index
+        %mx_bi = arith.index_cast %mx_base : index to i64
+        %mx_four = arith.constant 4 : i64
+        %mx_addr = arith.addi %mx_bi, %mx_four : i64
+        %mx_ptr = llvm.inttoptr %mx_addr : i64 to !llvm.ptr<1>
+        %mx_old = llvm.atomicrmw max %mx_ptr, %count_all syncscope("device") monotonic : !llvm.ptr<1>, i32
+      }
+    }
+    gpu.terminator
+  }
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_of_lists, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1)
+             workgroup(%rel_wg : memref<64x4xf32, #gpu.address_space<workgroup>>, %partners : memref<1024xi32, #gpu.address_space<workgroup>>, %queue : memref<256xi32, #gpu.address_space<workgroup>>) {
+    %base = arith.muli %bx, %block : index
+    %item = arith.addi %base, %tx : index
+    %c0w = arith.constant 0 : index
+    %c1w = arith.constant 1 : index
+    %c2w = arith.constant 2 : index
+    %c3w = arith.constant 3 : index
+    %c4w = arith.constant 4 : index
+    %c16w = arith.constant 16 : index
+    %c32w = arith.constant 32 : index
+    %zero_i = arith.constant 0 : i32
+    %one_i = arith.constant 1 : i32
+    %c2i = arith.constant 2 : i32
+    %c16i = arith.constant 16 : i32
+    %c32i = arith.constant 32 : i32
+    %all = arith.constant -1 : i32
+    %g = arith.divui %item, %c32w : index
+    %lane = arith.remui %tx, %c32w : index
+    %lane32 = arith.index_cast %lane : index to i32
+    %warp = arith.divui %tx, %c32w : index
+    %places32 = memref.load %sizes_device[%c0w] : memref<5xi32, 1>
+    %places = arith.index_cast %places32 : i32 to index
+    %groups = arith.divui %places, %c16w : index
+    %real_group0 = arith.cmpi ult, %g, %groups : index
+    %img_c0 = arith.constant 0 : index
+    %img_c1 = arith.constant 1 : index
+    %img_c2 = arith.constant 2 : index
+    %img_c3 = arith.constant 3 : index
+    %img_c4 = arith.constant 4 : index
+    %img_c5 = arith.constant 5 : index
+    %img_lox = memref.load %boxes[%g, %img_c0] : memref<?x8xf32, 1>
+    %img_loy = memref.load %boxes[%g, %img_c1] : memref<?x8xf32, 1>
+    %img_loz = memref.load %boxes[%g, %img_c2] : memref<?x8xf32, 1>
+    %img_hix = memref.load %boxes[%g, %img_c3] : memref<?x8xf32, 1>
+    %img_hiy = memref.load %boxes[%g, %img_c4] : memref<?x8xf32, 1>
+    %img_hiz = memref.load %boxes[%g, %img_c5] : memref<?x8xf32, 1>
+    %img_wx = arith.subf %img_hix, %img_lox : f32
+    %img_wy = arith.subf %img_hiy, %img_loy : f32
+    %img_wz = arith.subf %img_hiz, %img_loz : f32
+    %img_rx = arith.addf %freach, %freach : f32
+    %img_ex = arith.addf %img_wx, %img_rx : f32
+    %img_ey = arith.addf %img_wy, %img_rx : f32
+    %img_ez = arith.addf %img_wz, %img_rx : f32
+    %img_nx = arith.cmpf oge, %img_ex, %flx : f32
+    %img_ny = arith.cmpf oge, %img_ey, %fly : f32
+    %img_nz = arith.cmpf oge, %img_ez, %flz : f32
+    %img_nxy = arith.ori %img_nx, %img_ny : i1
+    %img_nxyz = arith.ori %img_nxy, %img_nz : i1
+    %real_group = arith.andi %real_group0, %img_nxyz : i1
+    scf.if %real_group {
+      %first = arith.muli %g, %c16w : index
+      %first32 = arith.index_cast %first : index to i32
+      // The particles of the group relative to the center of its box, in the
+      // memory of the block: x, y, z, and 1 or 0 for a real one.
+      %box_lo_x = memref.load %boxes[%g, %c0w] : memref<?x8xf32, 1>
+      %box_lo_y = memref.load %boxes[%g, %c1w] : memref<?x8xf32, 1>
+      %box_lo_z = memref.load %boxes[%g, %c2w] : memref<?x8xf32, 1>
+      %box_hi_x = memref.load %boxes[%g, %c3w] : memref<?x8xf32, 1>
+      %c4b = arith.constant 4 : index
+      %c5b = arith.constant 5 : index
+      %box_hi_y = memref.load %boxes[%g, %c4b] : memref<?x8xf32, 1>
+      %box_hi_z = memref.load %boxes[%g, %c5b] : memref<?x8xf32, 1>
+      %halff = arith.constant 0.5 : f32
+      %sum_x = arith.addf %box_lo_x, %box_hi_x : f32
+      %sum_y = arith.addf %box_lo_y, %box_hi_y : f32
+      %sum_z = arith.addf %box_lo_z, %box_hi_z : f32
+      %cx = arith.mulf %sum_x, %halff : f32
+      %cy = arith.mulf %sum_y, %halff : f32
+      %cz = arith.mulf %sum_z, %halff : f32
+      %dif_x = arith.subf %box_hi_x, %box_lo_x : f32
+      %dif_y = arith.subf %box_hi_y, %box_lo_y : f32
+      %dif_z = arith.subf %box_hi_z, %box_lo_z : f32
+      %hx = arith.mulf %dif_x, %halff : f32
+      %hy = arith.mulf %dif_y, %halff : f32
+      %hz = arith.mulf %dif_z, %halff : f32
+      // The frame of the group less the wrapped positions, in cells, for its
+      // first particle (whose place shift is zero).
+      %wfirst_f = memref.load %xp[%first, %c3w] : memref<?x4xf32, 1>
+      %wfirst = arith.bitcast %wfirst_f : f32 to i32
+      %rel0 = arith.muli %warp, %c16w : index
+      %mine_lane = arith.cmpi ult, %lane, %c16w : index
+      scf.if %mine_lane {
+        %p = arith.addi %first, %lane : index
+        %pi = memref.load %order[%p] : memref<?xi32, 1>
+        %real = arith.cmpi sge, %pi, %zero_i : i32
+        %xi = memref.load %xp[%p, %c0w] : memref<?x4xf32, 1>
+        %yi = memref.load %xp[%p, %c1w] : memref<?x4xf32, 1>
+        %zi = memref.load %xp[%p, %c2w] : memref<?x4xf32, 1>
+        %ex0 = arith.subf %xi, %cx : f32
+        %ey0 = arith.subf %yi, %cy : f32
+        %ez0 = arith.subf %zi, %cz : f32
+        %rx = func.call @mdrt_gpu_groups_image(%ex0, %flx, %filx) : (f32, f32, f32) -> f32
+        %ry = func.call @mdrt_gpu_groups_image(%ey0, %fly, %fily) : (f32, f32, f32) -> f32
+        %rz = func.call @mdrt_gpu_groups_image(%ez0, %flz, %filz) : (f32, f32, f32) -> f32
+        %one_ff = arith.constant 1.0 : f32
+        %zero_ff = arith.constant 0.0 : f32
+        %flag = arith.select %real, %one_ff, %zero_ff : f32
+        %at = arith.addi %rel0, %lane : index
+        memref.store %rx, %rel_wg[%at, %c0w] : memref<64x4xf32, #gpu.address_space<workgroup>>
+        memref.store %ry, %rel_wg[%at, %c1w] : memref<64x4xf32, #gpu.address_space<workgroup>>
+        memref.store %rz, %rel_wg[%at, %c2w] : memref<64x4xf32, #gpu.address_space<workgroup>>
+        memref.store %flag, %rel_wg[%at, %c3w] : memref<64x4xf32, #gpu.address_space<workgroup>>
+      }
+      // The partners of the excluded pairs of the group: (place << 4) | u,
+      // sorted, 256 at most; a group with more takes its excluded pairs from
+      // their rows (D106).
+      %c256 = arith.constant 256 : index
+      %pbase = arith.muli %warp, %c256 : index
+      %c64q = arith.constant 64 : index
+      %qbase = arith.muli %warp, %c64q : index
+      %largest_i = arith.constant 2147483647 : i32
+      scf.for %s = %lane to %c256 step %c32w {
+        %at = arith.addi %pbase, %s : index
+        memref.store %largest_i, %partners[%at] : memref<1024xi32, #gpu.address_space<workgroup>>
+      }
+      nvvm.bar.warp.sync %all : i32
+      // Each particle of the group in a lane of each half-warp: its partners
+      // at even k from the first half, at odd k from the second, from where
+      // the counts of the particles before it end (D105).
+      %rows = memref.dim %excluded, %c0w : memref<?x?xi32, 1>
+      %u16 = arith.remui %lane, %c16w : index
+      %hk = arith.divui %lane, %c16w : index
+      %u16_32 = arith.index_cast %u16 : index to i32
+      %pe = arith.addi %first, %u16 : index
+      %pie = memref.load %order[%pe] : memref<?xi32, 1>
+      %piie = arith.index_cast %pie : i32 to index
+      %reale = arith.cmpi sge, %pie, %zero_i : i32
+      %in_rowse = arith.cmpi ult, %piie, %rows : index
+      %hase = arith.andi %reale, %in_rowse : i1
+      %counte = scf.if %hase -> (index) {
+        %c32v = memref.load %excluded[%piie, %c0w] : memref<?x?xi32, 1>
+        %cv = arith.index_cast %c32v : i32 to index
+        scf.yield %cv : index
+      } else {
+        scf.yield %c0w : index
+      }
+      %count32e = arith.index_cast %counte : index to i32
+      // Shuffles over the whole warp: the halves hold the same counts, so a
+      // lane reads one of its own half (shuffles up by segments of 16 lost
+      // excluded pairs).
+      %wexcl = arith.constant 32 : i32
+      %pre0 = arith.addi %count32e, %zero_i : i32
+      %d1 = arith.constant 1 : i32
+      %up1, %upv1 = gpu.shuffle up %pre0, %d1, %wexcl : i32
+      %xfrom1 = arith.cmpi uge, %u16_32, %d1 : i32
+      %add1 = arith.select %xfrom1, %up1, %zero_i : i32
+      %pre1 = arith.addi %pre0, %add1 : i32
+      %d2 = arith.constant 2 : i32
+      %up2, %upv2 = gpu.shuffle up %pre1, %d2, %wexcl : i32
+      %xfrom2 = arith.cmpi uge, %u16_32, %d2 : i32
+      %add2 = arith.select %xfrom2, %up2, %zero_i : i32
+      %pre2 = arith.addi %pre1, %add2 : i32
+      %d4 = arith.constant 4 : i32
+      %up4, %upv4 = gpu.shuffle up %pre2, %d4, %wexcl : i32
+      %xfrom4 = arith.cmpi uge, %u16_32, %d4 : i32
+      %add4 = arith.select %xfrom4, %up4, %zero_i : i32
+      %pre3 = arith.addi %pre2, %add4 : i32
+      %d8 = arith.constant 8 : i32
+      %up8, %upv8 = gpu.shuffle up %pre3, %d8, %wexcl : i32
+      %xfrom8 = arith.cmpi uge, %u16_32, %d8 : i32
+      %add8 = arith.select %xfrom8, %up8, %zero_i : i32
+      %pre4 = arith.addi %pre3, %add8 : i32
+      %start32e = arith.subi %pre4, %count32e : i32
+      %starte = arith.index_cast %start32e : i32 to index
+      %c15i = arith.constant 15 : i32
+      %total32, %totalv = gpu.shuffle idx %pre4, %c15i, %wexcl : i32
+      scf.for %k = %hk to %counte step %c2w {
+        %partner = func.call @mdrt_gpu_groups_partner(%excluded, %piie, %k) : (memref<?x?xi32, 1>, index, index) -> i32
+        %pj = arith.index_cast %partner : i32 to index
+        %q = memref.load %place_of[%pj] : memref<?xi32, 1>
+        %four = arith.constant 4 : i32
+        %shifted = arith.shli %q, %four : i32
+        %partner_key = arith.ori %shifted, %u16_32 : i32
+        %slot0 = arith.addi %starte, %k : index
+        %fits = arith.cmpi ult, %slot0, %c256 : index
+        scf.if %fits {
+          %at = arith.addi %pbase, %slot0 : index
+          memref.store %partner_key, %partners[%at] : memref<1024xi32, #gpu.address_space<workgroup>>
+        }
+      }
+      %np_all = arith.index_cast %total32 : i32 to index
+      %np = arith.minui %np_all, %c256 : index
+      // Whether the partners did not all fit: then the lists take the excluded
+      // pairs from their rows (D106). The count came from one lane, so every
+      // lane sees the same.
+      %overflow = arith.cmpi ugt, %np_all, %c256 : index
+      %ov_lane0 = arith.cmpi eq, %lane, %c0w : index
+      %ov_count = arith.andi %overflow, %ov_lane0 : i1
+      scf.if %ov_count {
+        %ov_base = memref.extract_aligned_pointer_as_index %sizes_device : memref<5xi32, 1> -> index
+        %ov_bi = arith.index_cast %ov_base : index to i64
+        %ov_twelve = arith.constant 12 : i64
+        %ov_addr = arith.addi %ov_bi, %ov_twelve : i64
+        %ov_ptr = llvm.inttoptr %ov_addr : i64 to !llvm.ptr<1>
+        %ov_old = llvm.atomicrmw add %ov_ptr, %one_i syncscope("device") monotonic : !llvm.ptr<1>, i32
+      }
+      nvvm.bar.warp.sync %all : i32
+      %c64s = arith.constant 64 : index
+      %c128s = arith.constant 128 : index
+      %fits64 = arith.cmpi ule, %np, %c64s : index
+      %fits128 = arith.cmpi ule, %np, %c128s : index
+      scf.if %fits64 {
+          %ps1_0_pair = arith.constant 0 : index
+          %ps1_0_tp = arith.addi %lane, %ps1_0_pair : index
+          %ps1_0_s = arith.constant 1 : index
+          %ps1_0_sm1 = arith.constant 0 : index
+          %ps1_0_low = arith.andi %ps1_0_tp, %ps1_0_sm1 : index
+          %ps1_0_twice = arith.addi %ps1_0_tp, %ps1_0_tp : index
+          %ps1_0_a = arith.subi %ps1_0_twice, %ps1_0_low : index
+          %ps1_0_b = arith.addi %ps1_0_a, %ps1_0_s : index
+          %ps1_0_sz = arith.constant 2 : index
+          %ps1_0_upb = arith.andi %ps1_0_a, %ps1_0_sz : index
+          %ps1_0_z = arith.constant 0 : index
+          %ps1_0_up = arith.cmpi eq, %ps1_0_upb, %ps1_0_z : index
+          %ps1_0_aa = arith.addi %pbase, %ps1_0_a : index
+          %ps1_0_bb = arith.addi %pbase, %ps1_0_b : index
+          %ps1_0_va = memref.load %partners[%ps1_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps1_0_vb = memref.load %partners[%ps1_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps1_0_gt = arith.cmpi sgt, %ps1_0_va, %ps1_0_vb : i32
+          %ps1_0_swap = arith.cmpi eq, %ps1_0_gt, %ps1_0_up : i1
+          %ps1_0_na = arith.select %ps1_0_swap, %ps1_0_vb, %ps1_0_va : i32
+          %ps1_0_nb = arith.select %ps1_0_swap, %ps1_0_va, %ps1_0_vb : i32
+          memref.store %ps1_0_na, %partners[%ps1_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps1_0_nb, %partners[%ps1_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps2_0_pair = arith.constant 0 : index
+          %ps2_0_tp = arith.addi %lane, %ps2_0_pair : index
+          %ps2_0_s = arith.constant 2 : index
+          %ps2_0_sm1 = arith.constant 1 : index
+          %ps2_0_low = arith.andi %ps2_0_tp, %ps2_0_sm1 : index
+          %ps2_0_twice = arith.addi %ps2_0_tp, %ps2_0_tp : index
+          %ps2_0_a = arith.subi %ps2_0_twice, %ps2_0_low : index
+          %ps2_0_b = arith.addi %ps2_0_a, %ps2_0_s : index
+          %ps2_0_sz = arith.constant 4 : index
+          %ps2_0_upb = arith.andi %ps2_0_a, %ps2_0_sz : index
+          %ps2_0_z = arith.constant 0 : index
+          %ps2_0_up = arith.cmpi eq, %ps2_0_upb, %ps2_0_z : index
+          %ps2_0_aa = arith.addi %pbase, %ps2_0_a : index
+          %ps2_0_bb = arith.addi %pbase, %ps2_0_b : index
+          %ps2_0_va = memref.load %partners[%ps2_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps2_0_vb = memref.load %partners[%ps2_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps2_0_gt = arith.cmpi sgt, %ps2_0_va, %ps2_0_vb : i32
+          %ps2_0_swap = arith.cmpi eq, %ps2_0_gt, %ps2_0_up : i1
+          %ps2_0_na = arith.select %ps2_0_swap, %ps2_0_vb, %ps2_0_va : i32
+          %ps2_0_nb = arith.select %ps2_0_swap, %ps2_0_va, %ps2_0_vb : i32
+          memref.store %ps2_0_na, %partners[%ps2_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps2_0_nb, %partners[%ps2_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps3_0_pair = arith.constant 0 : index
+          %ps3_0_tp = arith.addi %lane, %ps3_0_pair : index
+          %ps3_0_s = arith.constant 1 : index
+          %ps3_0_sm1 = arith.constant 0 : index
+          %ps3_0_low = arith.andi %ps3_0_tp, %ps3_0_sm1 : index
+          %ps3_0_twice = arith.addi %ps3_0_tp, %ps3_0_tp : index
+          %ps3_0_a = arith.subi %ps3_0_twice, %ps3_0_low : index
+          %ps3_0_b = arith.addi %ps3_0_a, %ps3_0_s : index
+          %ps3_0_sz = arith.constant 4 : index
+          %ps3_0_upb = arith.andi %ps3_0_a, %ps3_0_sz : index
+          %ps3_0_z = arith.constant 0 : index
+          %ps3_0_up = arith.cmpi eq, %ps3_0_upb, %ps3_0_z : index
+          %ps3_0_aa = arith.addi %pbase, %ps3_0_a : index
+          %ps3_0_bb = arith.addi %pbase, %ps3_0_b : index
+          %ps3_0_va = memref.load %partners[%ps3_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps3_0_vb = memref.load %partners[%ps3_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps3_0_gt = arith.cmpi sgt, %ps3_0_va, %ps3_0_vb : i32
+          %ps3_0_swap = arith.cmpi eq, %ps3_0_gt, %ps3_0_up : i1
+          %ps3_0_na = arith.select %ps3_0_swap, %ps3_0_vb, %ps3_0_va : i32
+          %ps3_0_nb = arith.select %ps3_0_swap, %ps3_0_va, %ps3_0_vb : i32
+          memref.store %ps3_0_na, %partners[%ps3_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps3_0_nb, %partners[%ps3_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps4_0_pair = arith.constant 0 : index
+          %ps4_0_tp = arith.addi %lane, %ps4_0_pair : index
+          %ps4_0_s = arith.constant 4 : index
+          %ps4_0_sm1 = arith.constant 3 : index
+          %ps4_0_low = arith.andi %ps4_0_tp, %ps4_0_sm1 : index
+          %ps4_0_twice = arith.addi %ps4_0_tp, %ps4_0_tp : index
+          %ps4_0_a = arith.subi %ps4_0_twice, %ps4_0_low : index
+          %ps4_0_b = arith.addi %ps4_0_a, %ps4_0_s : index
+          %ps4_0_sz = arith.constant 8 : index
+          %ps4_0_upb = arith.andi %ps4_0_a, %ps4_0_sz : index
+          %ps4_0_z = arith.constant 0 : index
+          %ps4_0_up = arith.cmpi eq, %ps4_0_upb, %ps4_0_z : index
+          %ps4_0_aa = arith.addi %pbase, %ps4_0_a : index
+          %ps4_0_bb = arith.addi %pbase, %ps4_0_b : index
+          %ps4_0_va = memref.load %partners[%ps4_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps4_0_vb = memref.load %partners[%ps4_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps4_0_gt = arith.cmpi sgt, %ps4_0_va, %ps4_0_vb : i32
+          %ps4_0_swap = arith.cmpi eq, %ps4_0_gt, %ps4_0_up : i1
+          %ps4_0_na = arith.select %ps4_0_swap, %ps4_0_vb, %ps4_0_va : i32
+          %ps4_0_nb = arith.select %ps4_0_swap, %ps4_0_va, %ps4_0_vb : i32
+          memref.store %ps4_0_na, %partners[%ps4_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps4_0_nb, %partners[%ps4_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps5_0_pair = arith.constant 0 : index
+          %ps5_0_tp = arith.addi %lane, %ps5_0_pair : index
+          %ps5_0_s = arith.constant 2 : index
+          %ps5_0_sm1 = arith.constant 1 : index
+          %ps5_0_low = arith.andi %ps5_0_tp, %ps5_0_sm1 : index
+          %ps5_0_twice = arith.addi %ps5_0_tp, %ps5_0_tp : index
+          %ps5_0_a = arith.subi %ps5_0_twice, %ps5_0_low : index
+          %ps5_0_b = arith.addi %ps5_0_a, %ps5_0_s : index
+          %ps5_0_sz = arith.constant 8 : index
+          %ps5_0_upb = arith.andi %ps5_0_a, %ps5_0_sz : index
+          %ps5_0_z = arith.constant 0 : index
+          %ps5_0_up = arith.cmpi eq, %ps5_0_upb, %ps5_0_z : index
+          %ps5_0_aa = arith.addi %pbase, %ps5_0_a : index
+          %ps5_0_bb = arith.addi %pbase, %ps5_0_b : index
+          %ps5_0_va = memref.load %partners[%ps5_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps5_0_vb = memref.load %partners[%ps5_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps5_0_gt = arith.cmpi sgt, %ps5_0_va, %ps5_0_vb : i32
+          %ps5_0_swap = arith.cmpi eq, %ps5_0_gt, %ps5_0_up : i1
+          %ps5_0_na = arith.select %ps5_0_swap, %ps5_0_vb, %ps5_0_va : i32
+          %ps5_0_nb = arith.select %ps5_0_swap, %ps5_0_va, %ps5_0_vb : i32
+          memref.store %ps5_0_na, %partners[%ps5_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps5_0_nb, %partners[%ps5_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps6_0_pair = arith.constant 0 : index
+          %ps6_0_tp = arith.addi %lane, %ps6_0_pair : index
+          %ps6_0_s = arith.constant 1 : index
+          %ps6_0_sm1 = arith.constant 0 : index
+          %ps6_0_low = arith.andi %ps6_0_tp, %ps6_0_sm1 : index
+          %ps6_0_twice = arith.addi %ps6_0_tp, %ps6_0_tp : index
+          %ps6_0_a = arith.subi %ps6_0_twice, %ps6_0_low : index
+          %ps6_0_b = arith.addi %ps6_0_a, %ps6_0_s : index
+          %ps6_0_sz = arith.constant 8 : index
+          %ps6_0_upb = arith.andi %ps6_0_a, %ps6_0_sz : index
+          %ps6_0_z = arith.constant 0 : index
+          %ps6_0_up = arith.cmpi eq, %ps6_0_upb, %ps6_0_z : index
+          %ps6_0_aa = arith.addi %pbase, %ps6_0_a : index
+          %ps6_0_bb = arith.addi %pbase, %ps6_0_b : index
+          %ps6_0_va = memref.load %partners[%ps6_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps6_0_vb = memref.load %partners[%ps6_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps6_0_gt = arith.cmpi sgt, %ps6_0_va, %ps6_0_vb : i32
+          %ps6_0_swap = arith.cmpi eq, %ps6_0_gt, %ps6_0_up : i1
+          %ps6_0_na = arith.select %ps6_0_swap, %ps6_0_vb, %ps6_0_va : i32
+          %ps6_0_nb = arith.select %ps6_0_swap, %ps6_0_va, %ps6_0_vb : i32
+          memref.store %ps6_0_na, %partners[%ps6_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps6_0_nb, %partners[%ps6_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps7_0_pair = arith.constant 0 : index
+          %ps7_0_tp = arith.addi %lane, %ps7_0_pair : index
+          %ps7_0_s = arith.constant 8 : index
+          %ps7_0_sm1 = arith.constant 7 : index
+          %ps7_0_low = arith.andi %ps7_0_tp, %ps7_0_sm1 : index
+          %ps7_0_twice = arith.addi %ps7_0_tp, %ps7_0_tp : index
+          %ps7_0_a = arith.subi %ps7_0_twice, %ps7_0_low : index
+          %ps7_0_b = arith.addi %ps7_0_a, %ps7_0_s : index
+          %ps7_0_sz = arith.constant 16 : index
+          %ps7_0_upb = arith.andi %ps7_0_a, %ps7_0_sz : index
+          %ps7_0_z = arith.constant 0 : index
+          %ps7_0_up = arith.cmpi eq, %ps7_0_upb, %ps7_0_z : index
+          %ps7_0_aa = arith.addi %pbase, %ps7_0_a : index
+          %ps7_0_bb = arith.addi %pbase, %ps7_0_b : index
+          %ps7_0_va = memref.load %partners[%ps7_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps7_0_vb = memref.load %partners[%ps7_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps7_0_gt = arith.cmpi sgt, %ps7_0_va, %ps7_0_vb : i32
+          %ps7_0_swap = arith.cmpi eq, %ps7_0_gt, %ps7_0_up : i1
+          %ps7_0_na = arith.select %ps7_0_swap, %ps7_0_vb, %ps7_0_va : i32
+          %ps7_0_nb = arith.select %ps7_0_swap, %ps7_0_va, %ps7_0_vb : i32
+          memref.store %ps7_0_na, %partners[%ps7_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps7_0_nb, %partners[%ps7_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps8_0_pair = arith.constant 0 : index
+          %ps8_0_tp = arith.addi %lane, %ps8_0_pair : index
+          %ps8_0_s = arith.constant 4 : index
+          %ps8_0_sm1 = arith.constant 3 : index
+          %ps8_0_low = arith.andi %ps8_0_tp, %ps8_0_sm1 : index
+          %ps8_0_twice = arith.addi %ps8_0_tp, %ps8_0_tp : index
+          %ps8_0_a = arith.subi %ps8_0_twice, %ps8_0_low : index
+          %ps8_0_b = arith.addi %ps8_0_a, %ps8_0_s : index
+          %ps8_0_sz = arith.constant 16 : index
+          %ps8_0_upb = arith.andi %ps8_0_a, %ps8_0_sz : index
+          %ps8_0_z = arith.constant 0 : index
+          %ps8_0_up = arith.cmpi eq, %ps8_0_upb, %ps8_0_z : index
+          %ps8_0_aa = arith.addi %pbase, %ps8_0_a : index
+          %ps8_0_bb = arith.addi %pbase, %ps8_0_b : index
+          %ps8_0_va = memref.load %partners[%ps8_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps8_0_vb = memref.load %partners[%ps8_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps8_0_gt = arith.cmpi sgt, %ps8_0_va, %ps8_0_vb : i32
+          %ps8_0_swap = arith.cmpi eq, %ps8_0_gt, %ps8_0_up : i1
+          %ps8_0_na = arith.select %ps8_0_swap, %ps8_0_vb, %ps8_0_va : i32
+          %ps8_0_nb = arith.select %ps8_0_swap, %ps8_0_va, %ps8_0_vb : i32
+          memref.store %ps8_0_na, %partners[%ps8_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps8_0_nb, %partners[%ps8_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps9_0_pair = arith.constant 0 : index
+          %ps9_0_tp = arith.addi %lane, %ps9_0_pair : index
+          %ps9_0_s = arith.constant 2 : index
+          %ps9_0_sm1 = arith.constant 1 : index
+          %ps9_0_low = arith.andi %ps9_0_tp, %ps9_0_sm1 : index
+          %ps9_0_twice = arith.addi %ps9_0_tp, %ps9_0_tp : index
+          %ps9_0_a = arith.subi %ps9_0_twice, %ps9_0_low : index
+          %ps9_0_b = arith.addi %ps9_0_a, %ps9_0_s : index
+          %ps9_0_sz = arith.constant 16 : index
+          %ps9_0_upb = arith.andi %ps9_0_a, %ps9_0_sz : index
+          %ps9_0_z = arith.constant 0 : index
+          %ps9_0_up = arith.cmpi eq, %ps9_0_upb, %ps9_0_z : index
+          %ps9_0_aa = arith.addi %pbase, %ps9_0_a : index
+          %ps9_0_bb = arith.addi %pbase, %ps9_0_b : index
+          %ps9_0_va = memref.load %partners[%ps9_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps9_0_vb = memref.load %partners[%ps9_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps9_0_gt = arith.cmpi sgt, %ps9_0_va, %ps9_0_vb : i32
+          %ps9_0_swap = arith.cmpi eq, %ps9_0_gt, %ps9_0_up : i1
+          %ps9_0_na = arith.select %ps9_0_swap, %ps9_0_vb, %ps9_0_va : i32
+          %ps9_0_nb = arith.select %ps9_0_swap, %ps9_0_va, %ps9_0_vb : i32
+          memref.store %ps9_0_na, %partners[%ps9_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps9_0_nb, %partners[%ps9_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps10_0_pair = arith.constant 0 : index
+          %ps10_0_tp = arith.addi %lane, %ps10_0_pair : index
+          %ps10_0_s = arith.constant 1 : index
+          %ps10_0_sm1 = arith.constant 0 : index
+          %ps10_0_low = arith.andi %ps10_0_tp, %ps10_0_sm1 : index
+          %ps10_0_twice = arith.addi %ps10_0_tp, %ps10_0_tp : index
+          %ps10_0_a = arith.subi %ps10_0_twice, %ps10_0_low : index
+          %ps10_0_b = arith.addi %ps10_0_a, %ps10_0_s : index
+          %ps10_0_sz = arith.constant 16 : index
+          %ps10_0_upb = arith.andi %ps10_0_a, %ps10_0_sz : index
+          %ps10_0_z = arith.constant 0 : index
+          %ps10_0_up = arith.cmpi eq, %ps10_0_upb, %ps10_0_z : index
+          %ps10_0_aa = arith.addi %pbase, %ps10_0_a : index
+          %ps10_0_bb = arith.addi %pbase, %ps10_0_b : index
+          %ps10_0_va = memref.load %partners[%ps10_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps10_0_vb = memref.load %partners[%ps10_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps10_0_gt = arith.cmpi sgt, %ps10_0_va, %ps10_0_vb : i32
+          %ps10_0_swap = arith.cmpi eq, %ps10_0_gt, %ps10_0_up : i1
+          %ps10_0_na = arith.select %ps10_0_swap, %ps10_0_vb, %ps10_0_va : i32
+          %ps10_0_nb = arith.select %ps10_0_swap, %ps10_0_va, %ps10_0_vb : i32
+          memref.store %ps10_0_na, %partners[%ps10_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps10_0_nb, %partners[%ps10_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps11_0_pair = arith.constant 0 : index
+          %ps11_0_tp = arith.addi %lane, %ps11_0_pair : index
+          %ps11_0_s = arith.constant 16 : index
+          %ps11_0_sm1 = arith.constant 15 : index
+          %ps11_0_low = arith.andi %ps11_0_tp, %ps11_0_sm1 : index
+          %ps11_0_twice = arith.addi %ps11_0_tp, %ps11_0_tp : index
+          %ps11_0_a = arith.subi %ps11_0_twice, %ps11_0_low : index
+          %ps11_0_b = arith.addi %ps11_0_a, %ps11_0_s : index
+          %ps11_0_sz = arith.constant 32 : index
+          %ps11_0_upb = arith.andi %ps11_0_a, %ps11_0_sz : index
+          %ps11_0_z = arith.constant 0 : index
+          %ps11_0_up = arith.cmpi eq, %ps11_0_upb, %ps11_0_z : index
+          %ps11_0_aa = arith.addi %pbase, %ps11_0_a : index
+          %ps11_0_bb = arith.addi %pbase, %ps11_0_b : index
+          %ps11_0_va = memref.load %partners[%ps11_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps11_0_vb = memref.load %partners[%ps11_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps11_0_gt = arith.cmpi sgt, %ps11_0_va, %ps11_0_vb : i32
+          %ps11_0_swap = arith.cmpi eq, %ps11_0_gt, %ps11_0_up : i1
+          %ps11_0_na = arith.select %ps11_0_swap, %ps11_0_vb, %ps11_0_va : i32
+          %ps11_0_nb = arith.select %ps11_0_swap, %ps11_0_va, %ps11_0_vb : i32
+          memref.store %ps11_0_na, %partners[%ps11_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps11_0_nb, %partners[%ps11_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps12_0_pair = arith.constant 0 : index
+          %ps12_0_tp = arith.addi %lane, %ps12_0_pair : index
+          %ps12_0_s = arith.constant 8 : index
+          %ps12_0_sm1 = arith.constant 7 : index
+          %ps12_0_low = arith.andi %ps12_0_tp, %ps12_0_sm1 : index
+          %ps12_0_twice = arith.addi %ps12_0_tp, %ps12_0_tp : index
+          %ps12_0_a = arith.subi %ps12_0_twice, %ps12_0_low : index
+          %ps12_0_b = arith.addi %ps12_0_a, %ps12_0_s : index
+          %ps12_0_sz = arith.constant 32 : index
+          %ps12_0_upb = arith.andi %ps12_0_a, %ps12_0_sz : index
+          %ps12_0_z = arith.constant 0 : index
+          %ps12_0_up = arith.cmpi eq, %ps12_0_upb, %ps12_0_z : index
+          %ps12_0_aa = arith.addi %pbase, %ps12_0_a : index
+          %ps12_0_bb = arith.addi %pbase, %ps12_0_b : index
+          %ps12_0_va = memref.load %partners[%ps12_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps12_0_vb = memref.load %partners[%ps12_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps12_0_gt = arith.cmpi sgt, %ps12_0_va, %ps12_0_vb : i32
+          %ps12_0_swap = arith.cmpi eq, %ps12_0_gt, %ps12_0_up : i1
+          %ps12_0_na = arith.select %ps12_0_swap, %ps12_0_vb, %ps12_0_va : i32
+          %ps12_0_nb = arith.select %ps12_0_swap, %ps12_0_va, %ps12_0_vb : i32
+          memref.store %ps12_0_na, %partners[%ps12_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps12_0_nb, %partners[%ps12_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps13_0_pair = arith.constant 0 : index
+          %ps13_0_tp = arith.addi %lane, %ps13_0_pair : index
+          %ps13_0_s = arith.constant 4 : index
+          %ps13_0_sm1 = arith.constant 3 : index
+          %ps13_0_low = arith.andi %ps13_0_tp, %ps13_0_sm1 : index
+          %ps13_0_twice = arith.addi %ps13_0_tp, %ps13_0_tp : index
+          %ps13_0_a = arith.subi %ps13_0_twice, %ps13_0_low : index
+          %ps13_0_b = arith.addi %ps13_0_a, %ps13_0_s : index
+          %ps13_0_sz = arith.constant 32 : index
+          %ps13_0_upb = arith.andi %ps13_0_a, %ps13_0_sz : index
+          %ps13_0_z = arith.constant 0 : index
+          %ps13_0_up = arith.cmpi eq, %ps13_0_upb, %ps13_0_z : index
+          %ps13_0_aa = arith.addi %pbase, %ps13_0_a : index
+          %ps13_0_bb = arith.addi %pbase, %ps13_0_b : index
+          %ps13_0_va = memref.load %partners[%ps13_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps13_0_vb = memref.load %partners[%ps13_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps13_0_gt = arith.cmpi sgt, %ps13_0_va, %ps13_0_vb : i32
+          %ps13_0_swap = arith.cmpi eq, %ps13_0_gt, %ps13_0_up : i1
+          %ps13_0_na = arith.select %ps13_0_swap, %ps13_0_vb, %ps13_0_va : i32
+          %ps13_0_nb = arith.select %ps13_0_swap, %ps13_0_va, %ps13_0_vb : i32
+          memref.store %ps13_0_na, %partners[%ps13_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps13_0_nb, %partners[%ps13_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps14_0_pair = arith.constant 0 : index
+          %ps14_0_tp = arith.addi %lane, %ps14_0_pair : index
+          %ps14_0_s = arith.constant 2 : index
+          %ps14_0_sm1 = arith.constant 1 : index
+          %ps14_0_low = arith.andi %ps14_0_tp, %ps14_0_sm1 : index
+          %ps14_0_twice = arith.addi %ps14_0_tp, %ps14_0_tp : index
+          %ps14_0_a = arith.subi %ps14_0_twice, %ps14_0_low : index
+          %ps14_0_b = arith.addi %ps14_0_a, %ps14_0_s : index
+          %ps14_0_sz = arith.constant 32 : index
+          %ps14_0_upb = arith.andi %ps14_0_a, %ps14_0_sz : index
+          %ps14_0_z = arith.constant 0 : index
+          %ps14_0_up = arith.cmpi eq, %ps14_0_upb, %ps14_0_z : index
+          %ps14_0_aa = arith.addi %pbase, %ps14_0_a : index
+          %ps14_0_bb = arith.addi %pbase, %ps14_0_b : index
+          %ps14_0_va = memref.load %partners[%ps14_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps14_0_vb = memref.load %partners[%ps14_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps14_0_gt = arith.cmpi sgt, %ps14_0_va, %ps14_0_vb : i32
+          %ps14_0_swap = arith.cmpi eq, %ps14_0_gt, %ps14_0_up : i1
+          %ps14_0_na = arith.select %ps14_0_swap, %ps14_0_vb, %ps14_0_va : i32
+          %ps14_0_nb = arith.select %ps14_0_swap, %ps14_0_va, %ps14_0_vb : i32
+          memref.store %ps14_0_na, %partners[%ps14_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps14_0_nb, %partners[%ps14_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps15_0_pair = arith.constant 0 : index
+          %ps15_0_tp = arith.addi %lane, %ps15_0_pair : index
+          %ps15_0_s = arith.constant 1 : index
+          %ps15_0_sm1 = arith.constant 0 : index
+          %ps15_0_low = arith.andi %ps15_0_tp, %ps15_0_sm1 : index
+          %ps15_0_twice = arith.addi %ps15_0_tp, %ps15_0_tp : index
+          %ps15_0_a = arith.subi %ps15_0_twice, %ps15_0_low : index
+          %ps15_0_b = arith.addi %ps15_0_a, %ps15_0_s : index
+          %ps15_0_sz = arith.constant 32 : index
+          %ps15_0_upb = arith.andi %ps15_0_a, %ps15_0_sz : index
+          %ps15_0_z = arith.constant 0 : index
+          %ps15_0_up = arith.cmpi eq, %ps15_0_upb, %ps15_0_z : index
+          %ps15_0_aa = arith.addi %pbase, %ps15_0_a : index
+          %ps15_0_bb = arith.addi %pbase, %ps15_0_b : index
+          %ps15_0_va = memref.load %partners[%ps15_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps15_0_vb = memref.load %partners[%ps15_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps15_0_gt = arith.cmpi sgt, %ps15_0_va, %ps15_0_vb : i32
+          %ps15_0_swap = arith.cmpi eq, %ps15_0_gt, %ps15_0_up : i1
+          %ps15_0_na = arith.select %ps15_0_swap, %ps15_0_vb, %ps15_0_va : i32
+          %ps15_0_nb = arith.select %ps15_0_swap, %ps15_0_va, %ps15_0_vb : i32
+          memref.store %ps15_0_na, %partners[%ps15_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps15_0_nb, %partners[%ps15_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps16_0_pair = arith.constant 0 : index
+          %ps16_0_tp = arith.addi %lane, %ps16_0_pair : index
+          %ps16_0_s = arith.constant 32 : index
+          %ps16_0_sm1 = arith.constant 31 : index
+          %ps16_0_low = arith.andi %ps16_0_tp, %ps16_0_sm1 : index
+          %ps16_0_twice = arith.addi %ps16_0_tp, %ps16_0_tp : index
+          %ps16_0_a = arith.subi %ps16_0_twice, %ps16_0_low : index
+          %ps16_0_b = arith.addi %ps16_0_a, %ps16_0_s : index
+          %ps16_0_sz = arith.constant 64 : index
+          %ps16_0_upb = arith.andi %ps16_0_a, %ps16_0_sz : index
+          %ps16_0_z = arith.constant 0 : index
+          %ps16_0_up = arith.cmpi eq, %ps16_0_upb, %ps16_0_z : index
+          %ps16_0_aa = arith.addi %pbase, %ps16_0_a : index
+          %ps16_0_bb = arith.addi %pbase, %ps16_0_b : index
+          %ps16_0_va = memref.load %partners[%ps16_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps16_0_vb = memref.load %partners[%ps16_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps16_0_gt = arith.cmpi sgt, %ps16_0_va, %ps16_0_vb : i32
+          %ps16_0_swap = arith.cmpi eq, %ps16_0_gt, %ps16_0_up : i1
+          %ps16_0_na = arith.select %ps16_0_swap, %ps16_0_vb, %ps16_0_va : i32
+          %ps16_0_nb = arith.select %ps16_0_swap, %ps16_0_va, %ps16_0_vb : i32
+          memref.store %ps16_0_na, %partners[%ps16_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps16_0_nb, %partners[%ps16_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps17_0_pair = arith.constant 0 : index
+          %ps17_0_tp = arith.addi %lane, %ps17_0_pair : index
+          %ps17_0_s = arith.constant 16 : index
+          %ps17_0_sm1 = arith.constant 15 : index
+          %ps17_0_low = arith.andi %ps17_0_tp, %ps17_0_sm1 : index
+          %ps17_0_twice = arith.addi %ps17_0_tp, %ps17_0_tp : index
+          %ps17_0_a = arith.subi %ps17_0_twice, %ps17_0_low : index
+          %ps17_0_b = arith.addi %ps17_0_a, %ps17_0_s : index
+          %ps17_0_sz = arith.constant 64 : index
+          %ps17_0_upb = arith.andi %ps17_0_a, %ps17_0_sz : index
+          %ps17_0_z = arith.constant 0 : index
+          %ps17_0_up = arith.cmpi eq, %ps17_0_upb, %ps17_0_z : index
+          %ps17_0_aa = arith.addi %pbase, %ps17_0_a : index
+          %ps17_0_bb = arith.addi %pbase, %ps17_0_b : index
+          %ps17_0_va = memref.load %partners[%ps17_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps17_0_vb = memref.load %partners[%ps17_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps17_0_gt = arith.cmpi sgt, %ps17_0_va, %ps17_0_vb : i32
+          %ps17_0_swap = arith.cmpi eq, %ps17_0_gt, %ps17_0_up : i1
+          %ps17_0_na = arith.select %ps17_0_swap, %ps17_0_vb, %ps17_0_va : i32
+          %ps17_0_nb = arith.select %ps17_0_swap, %ps17_0_va, %ps17_0_vb : i32
+          memref.store %ps17_0_na, %partners[%ps17_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps17_0_nb, %partners[%ps17_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps18_0_pair = arith.constant 0 : index
+          %ps18_0_tp = arith.addi %lane, %ps18_0_pair : index
+          %ps18_0_s = arith.constant 8 : index
+          %ps18_0_sm1 = arith.constant 7 : index
+          %ps18_0_low = arith.andi %ps18_0_tp, %ps18_0_sm1 : index
+          %ps18_0_twice = arith.addi %ps18_0_tp, %ps18_0_tp : index
+          %ps18_0_a = arith.subi %ps18_0_twice, %ps18_0_low : index
+          %ps18_0_b = arith.addi %ps18_0_a, %ps18_0_s : index
+          %ps18_0_sz = arith.constant 64 : index
+          %ps18_0_upb = arith.andi %ps18_0_a, %ps18_0_sz : index
+          %ps18_0_z = arith.constant 0 : index
+          %ps18_0_up = arith.cmpi eq, %ps18_0_upb, %ps18_0_z : index
+          %ps18_0_aa = arith.addi %pbase, %ps18_0_a : index
+          %ps18_0_bb = arith.addi %pbase, %ps18_0_b : index
+          %ps18_0_va = memref.load %partners[%ps18_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps18_0_vb = memref.load %partners[%ps18_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps18_0_gt = arith.cmpi sgt, %ps18_0_va, %ps18_0_vb : i32
+          %ps18_0_swap = arith.cmpi eq, %ps18_0_gt, %ps18_0_up : i1
+          %ps18_0_na = arith.select %ps18_0_swap, %ps18_0_vb, %ps18_0_va : i32
+          %ps18_0_nb = arith.select %ps18_0_swap, %ps18_0_va, %ps18_0_vb : i32
+          memref.store %ps18_0_na, %partners[%ps18_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps18_0_nb, %partners[%ps18_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps19_0_pair = arith.constant 0 : index
+          %ps19_0_tp = arith.addi %lane, %ps19_0_pair : index
+          %ps19_0_s = arith.constant 4 : index
+          %ps19_0_sm1 = arith.constant 3 : index
+          %ps19_0_low = arith.andi %ps19_0_tp, %ps19_0_sm1 : index
+          %ps19_0_twice = arith.addi %ps19_0_tp, %ps19_0_tp : index
+          %ps19_0_a = arith.subi %ps19_0_twice, %ps19_0_low : index
+          %ps19_0_b = arith.addi %ps19_0_a, %ps19_0_s : index
+          %ps19_0_sz = arith.constant 64 : index
+          %ps19_0_upb = arith.andi %ps19_0_a, %ps19_0_sz : index
+          %ps19_0_z = arith.constant 0 : index
+          %ps19_0_up = arith.cmpi eq, %ps19_0_upb, %ps19_0_z : index
+          %ps19_0_aa = arith.addi %pbase, %ps19_0_a : index
+          %ps19_0_bb = arith.addi %pbase, %ps19_0_b : index
+          %ps19_0_va = memref.load %partners[%ps19_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps19_0_vb = memref.load %partners[%ps19_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps19_0_gt = arith.cmpi sgt, %ps19_0_va, %ps19_0_vb : i32
+          %ps19_0_swap = arith.cmpi eq, %ps19_0_gt, %ps19_0_up : i1
+          %ps19_0_na = arith.select %ps19_0_swap, %ps19_0_vb, %ps19_0_va : i32
+          %ps19_0_nb = arith.select %ps19_0_swap, %ps19_0_va, %ps19_0_vb : i32
+          memref.store %ps19_0_na, %partners[%ps19_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps19_0_nb, %partners[%ps19_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps20_0_pair = arith.constant 0 : index
+          %ps20_0_tp = arith.addi %lane, %ps20_0_pair : index
+          %ps20_0_s = arith.constant 2 : index
+          %ps20_0_sm1 = arith.constant 1 : index
+          %ps20_0_low = arith.andi %ps20_0_tp, %ps20_0_sm1 : index
+          %ps20_0_twice = arith.addi %ps20_0_tp, %ps20_0_tp : index
+          %ps20_0_a = arith.subi %ps20_0_twice, %ps20_0_low : index
+          %ps20_0_b = arith.addi %ps20_0_a, %ps20_0_s : index
+          %ps20_0_sz = arith.constant 64 : index
+          %ps20_0_upb = arith.andi %ps20_0_a, %ps20_0_sz : index
+          %ps20_0_z = arith.constant 0 : index
+          %ps20_0_up = arith.cmpi eq, %ps20_0_upb, %ps20_0_z : index
+          %ps20_0_aa = arith.addi %pbase, %ps20_0_a : index
+          %ps20_0_bb = arith.addi %pbase, %ps20_0_b : index
+          %ps20_0_va = memref.load %partners[%ps20_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps20_0_vb = memref.load %partners[%ps20_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps20_0_gt = arith.cmpi sgt, %ps20_0_va, %ps20_0_vb : i32
+          %ps20_0_swap = arith.cmpi eq, %ps20_0_gt, %ps20_0_up : i1
+          %ps20_0_na = arith.select %ps20_0_swap, %ps20_0_vb, %ps20_0_va : i32
+          %ps20_0_nb = arith.select %ps20_0_swap, %ps20_0_va, %ps20_0_vb : i32
+          memref.store %ps20_0_na, %partners[%ps20_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps20_0_nb, %partners[%ps20_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps21_0_pair = arith.constant 0 : index
+          %ps21_0_tp = arith.addi %lane, %ps21_0_pair : index
+          %ps21_0_s = arith.constant 1 : index
+          %ps21_0_sm1 = arith.constant 0 : index
+          %ps21_0_low = arith.andi %ps21_0_tp, %ps21_0_sm1 : index
+          %ps21_0_twice = arith.addi %ps21_0_tp, %ps21_0_tp : index
+          %ps21_0_a = arith.subi %ps21_0_twice, %ps21_0_low : index
+          %ps21_0_b = arith.addi %ps21_0_a, %ps21_0_s : index
+          %ps21_0_sz = arith.constant 64 : index
+          %ps21_0_upb = arith.andi %ps21_0_a, %ps21_0_sz : index
+          %ps21_0_z = arith.constant 0 : index
+          %ps21_0_up = arith.cmpi eq, %ps21_0_upb, %ps21_0_z : index
+          %ps21_0_aa = arith.addi %pbase, %ps21_0_a : index
+          %ps21_0_bb = arith.addi %pbase, %ps21_0_b : index
+          %ps21_0_va = memref.load %partners[%ps21_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps21_0_vb = memref.load %partners[%ps21_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps21_0_gt = arith.cmpi sgt, %ps21_0_va, %ps21_0_vb : i32
+          %ps21_0_swap = arith.cmpi eq, %ps21_0_gt, %ps21_0_up : i1
+          %ps21_0_na = arith.select %ps21_0_swap, %ps21_0_vb, %ps21_0_va : i32
+          %ps21_0_nb = arith.select %ps21_0_swap, %ps21_0_va, %ps21_0_vb : i32
+          memref.store %ps21_0_na, %partners[%ps21_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps21_0_nb, %partners[%ps21_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+      } else {
+        scf.if %fits128 {
+          %ps1_0_pair = arith.constant 0 : index
+          %ps1_0_tp = arith.addi %lane, %ps1_0_pair : index
+          %ps1_0_s = arith.constant 1 : index
+          %ps1_0_sm1 = arith.constant 0 : index
+          %ps1_0_low = arith.andi %ps1_0_tp, %ps1_0_sm1 : index
+          %ps1_0_twice = arith.addi %ps1_0_tp, %ps1_0_tp : index
+          %ps1_0_a = arith.subi %ps1_0_twice, %ps1_0_low : index
+          %ps1_0_b = arith.addi %ps1_0_a, %ps1_0_s : index
+          %ps1_0_sz = arith.constant 2 : index
+          %ps1_0_upb = arith.andi %ps1_0_a, %ps1_0_sz : index
+          %ps1_0_z = arith.constant 0 : index
+          %ps1_0_up = arith.cmpi eq, %ps1_0_upb, %ps1_0_z : index
+          %ps1_0_aa = arith.addi %pbase, %ps1_0_a : index
+          %ps1_0_bb = arith.addi %pbase, %ps1_0_b : index
+          %ps1_0_va = memref.load %partners[%ps1_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps1_0_vb = memref.load %partners[%ps1_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps1_0_gt = arith.cmpi sgt, %ps1_0_va, %ps1_0_vb : i32
+          %ps1_0_swap = arith.cmpi eq, %ps1_0_gt, %ps1_0_up : i1
+          %ps1_0_na = arith.select %ps1_0_swap, %ps1_0_vb, %ps1_0_va : i32
+          %ps1_0_nb = arith.select %ps1_0_swap, %ps1_0_va, %ps1_0_vb : i32
+          memref.store %ps1_0_na, %partners[%ps1_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps1_0_nb, %partners[%ps1_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps1_1_pair = arith.constant 32 : index
+          %ps1_1_tp = arith.addi %lane, %ps1_1_pair : index
+          %ps1_1_s = arith.constant 1 : index
+          %ps1_1_sm1 = arith.constant 0 : index
+          %ps1_1_low = arith.andi %ps1_1_tp, %ps1_1_sm1 : index
+          %ps1_1_twice = arith.addi %ps1_1_tp, %ps1_1_tp : index
+          %ps1_1_a = arith.subi %ps1_1_twice, %ps1_1_low : index
+          %ps1_1_b = arith.addi %ps1_1_a, %ps1_1_s : index
+          %ps1_1_sz = arith.constant 2 : index
+          %ps1_1_upb = arith.andi %ps1_1_a, %ps1_1_sz : index
+          %ps1_1_z = arith.constant 0 : index
+          %ps1_1_up = arith.cmpi eq, %ps1_1_upb, %ps1_1_z : index
+          %ps1_1_aa = arith.addi %pbase, %ps1_1_a : index
+          %ps1_1_bb = arith.addi %pbase, %ps1_1_b : index
+          %ps1_1_va = memref.load %partners[%ps1_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps1_1_vb = memref.load %partners[%ps1_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps1_1_gt = arith.cmpi sgt, %ps1_1_va, %ps1_1_vb : i32
+          %ps1_1_swap = arith.cmpi eq, %ps1_1_gt, %ps1_1_up : i1
+          %ps1_1_na = arith.select %ps1_1_swap, %ps1_1_vb, %ps1_1_va : i32
+          %ps1_1_nb = arith.select %ps1_1_swap, %ps1_1_va, %ps1_1_vb : i32
+          memref.store %ps1_1_na, %partners[%ps1_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps1_1_nb, %partners[%ps1_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps2_0_pair = arith.constant 0 : index
+          %ps2_0_tp = arith.addi %lane, %ps2_0_pair : index
+          %ps2_0_s = arith.constant 2 : index
+          %ps2_0_sm1 = arith.constant 1 : index
+          %ps2_0_low = arith.andi %ps2_0_tp, %ps2_0_sm1 : index
+          %ps2_0_twice = arith.addi %ps2_0_tp, %ps2_0_tp : index
+          %ps2_0_a = arith.subi %ps2_0_twice, %ps2_0_low : index
+          %ps2_0_b = arith.addi %ps2_0_a, %ps2_0_s : index
+          %ps2_0_sz = arith.constant 4 : index
+          %ps2_0_upb = arith.andi %ps2_0_a, %ps2_0_sz : index
+          %ps2_0_z = arith.constant 0 : index
+          %ps2_0_up = arith.cmpi eq, %ps2_0_upb, %ps2_0_z : index
+          %ps2_0_aa = arith.addi %pbase, %ps2_0_a : index
+          %ps2_0_bb = arith.addi %pbase, %ps2_0_b : index
+          %ps2_0_va = memref.load %partners[%ps2_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps2_0_vb = memref.load %partners[%ps2_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps2_0_gt = arith.cmpi sgt, %ps2_0_va, %ps2_0_vb : i32
+          %ps2_0_swap = arith.cmpi eq, %ps2_0_gt, %ps2_0_up : i1
+          %ps2_0_na = arith.select %ps2_0_swap, %ps2_0_vb, %ps2_0_va : i32
+          %ps2_0_nb = arith.select %ps2_0_swap, %ps2_0_va, %ps2_0_vb : i32
+          memref.store %ps2_0_na, %partners[%ps2_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps2_0_nb, %partners[%ps2_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps2_1_pair = arith.constant 32 : index
+          %ps2_1_tp = arith.addi %lane, %ps2_1_pair : index
+          %ps2_1_s = arith.constant 2 : index
+          %ps2_1_sm1 = arith.constant 1 : index
+          %ps2_1_low = arith.andi %ps2_1_tp, %ps2_1_sm1 : index
+          %ps2_1_twice = arith.addi %ps2_1_tp, %ps2_1_tp : index
+          %ps2_1_a = arith.subi %ps2_1_twice, %ps2_1_low : index
+          %ps2_1_b = arith.addi %ps2_1_a, %ps2_1_s : index
+          %ps2_1_sz = arith.constant 4 : index
+          %ps2_1_upb = arith.andi %ps2_1_a, %ps2_1_sz : index
+          %ps2_1_z = arith.constant 0 : index
+          %ps2_1_up = arith.cmpi eq, %ps2_1_upb, %ps2_1_z : index
+          %ps2_1_aa = arith.addi %pbase, %ps2_1_a : index
+          %ps2_1_bb = arith.addi %pbase, %ps2_1_b : index
+          %ps2_1_va = memref.load %partners[%ps2_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps2_1_vb = memref.load %partners[%ps2_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps2_1_gt = arith.cmpi sgt, %ps2_1_va, %ps2_1_vb : i32
+          %ps2_1_swap = arith.cmpi eq, %ps2_1_gt, %ps2_1_up : i1
+          %ps2_1_na = arith.select %ps2_1_swap, %ps2_1_vb, %ps2_1_va : i32
+          %ps2_1_nb = arith.select %ps2_1_swap, %ps2_1_va, %ps2_1_vb : i32
+          memref.store %ps2_1_na, %partners[%ps2_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps2_1_nb, %partners[%ps2_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps3_0_pair = arith.constant 0 : index
+          %ps3_0_tp = arith.addi %lane, %ps3_0_pair : index
+          %ps3_0_s = arith.constant 1 : index
+          %ps3_0_sm1 = arith.constant 0 : index
+          %ps3_0_low = arith.andi %ps3_0_tp, %ps3_0_sm1 : index
+          %ps3_0_twice = arith.addi %ps3_0_tp, %ps3_0_tp : index
+          %ps3_0_a = arith.subi %ps3_0_twice, %ps3_0_low : index
+          %ps3_0_b = arith.addi %ps3_0_a, %ps3_0_s : index
+          %ps3_0_sz = arith.constant 4 : index
+          %ps3_0_upb = arith.andi %ps3_0_a, %ps3_0_sz : index
+          %ps3_0_z = arith.constant 0 : index
+          %ps3_0_up = arith.cmpi eq, %ps3_0_upb, %ps3_0_z : index
+          %ps3_0_aa = arith.addi %pbase, %ps3_0_a : index
+          %ps3_0_bb = arith.addi %pbase, %ps3_0_b : index
+          %ps3_0_va = memref.load %partners[%ps3_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps3_0_vb = memref.load %partners[%ps3_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps3_0_gt = arith.cmpi sgt, %ps3_0_va, %ps3_0_vb : i32
+          %ps3_0_swap = arith.cmpi eq, %ps3_0_gt, %ps3_0_up : i1
+          %ps3_0_na = arith.select %ps3_0_swap, %ps3_0_vb, %ps3_0_va : i32
+          %ps3_0_nb = arith.select %ps3_0_swap, %ps3_0_va, %ps3_0_vb : i32
+          memref.store %ps3_0_na, %partners[%ps3_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps3_0_nb, %partners[%ps3_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps3_1_pair = arith.constant 32 : index
+          %ps3_1_tp = arith.addi %lane, %ps3_1_pair : index
+          %ps3_1_s = arith.constant 1 : index
+          %ps3_1_sm1 = arith.constant 0 : index
+          %ps3_1_low = arith.andi %ps3_1_tp, %ps3_1_sm1 : index
+          %ps3_1_twice = arith.addi %ps3_1_tp, %ps3_1_tp : index
+          %ps3_1_a = arith.subi %ps3_1_twice, %ps3_1_low : index
+          %ps3_1_b = arith.addi %ps3_1_a, %ps3_1_s : index
+          %ps3_1_sz = arith.constant 4 : index
+          %ps3_1_upb = arith.andi %ps3_1_a, %ps3_1_sz : index
+          %ps3_1_z = arith.constant 0 : index
+          %ps3_1_up = arith.cmpi eq, %ps3_1_upb, %ps3_1_z : index
+          %ps3_1_aa = arith.addi %pbase, %ps3_1_a : index
+          %ps3_1_bb = arith.addi %pbase, %ps3_1_b : index
+          %ps3_1_va = memref.load %partners[%ps3_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps3_1_vb = memref.load %partners[%ps3_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps3_1_gt = arith.cmpi sgt, %ps3_1_va, %ps3_1_vb : i32
+          %ps3_1_swap = arith.cmpi eq, %ps3_1_gt, %ps3_1_up : i1
+          %ps3_1_na = arith.select %ps3_1_swap, %ps3_1_vb, %ps3_1_va : i32
+          %ps3_1_nb = arith.select %ps3_1_swap, %ps3_1_va, %ps3_1_vb : i32
+          memref.store %ps3_1_na, %partners[%ps3_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps3_1_nb, %partners[%ps3_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps4_0_pair = arith.constant 0 : index
+          %ps4_0_tp = arith.addi %lane, %ps4_0_pair : index
+          %ps4_0_s = arith.constant 4 : index
+          %ps4_0_sm1 = arith.constant 3 : index
+          %ps4_0_low = arith.andi %ps4_0_tp, %ps4_0_sm1 : index
+          %ps4_0_twice = arith.addi %ps4_0_tp, %ps4_0_tp : index
+          %ps4_0_a = arith.subi %ps4_0_twice, %ps4_0_low : index
+          %ps4_0_b = arith.addi %ps4_0_a, %ps4_0_s : index
+          %ps4_0_sz = arith.constant 8 : index
+          %ps4_0_upb = arith.andi %ps4_0_a, %ps4_0_sz : index
+          %ps4_0_z = arith.constant 0 : index
+          %ps4_0_up = arith.cmpi eq, %ps4_0_upb, %ps4_0_z : index
+          %ps4_0_aa = arith.addi %pbase, %ps4_0_a : index
+          %ps4_0_bb = arith.addi %pbase, %ps4_0_b : index
+          %ps4_0_va = memref.load %partners[%ps4_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps4_0_vb = memref.load %partners[%ps4_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps4_0_gt = arith.cmpi sgt, %ps4_0_va, %ps4_0_vb : i32
+          %ps4_0_swap = arith.cmpi eq, %ps4_0_gt, %ps4_0_up : i1
+          %ps4_0_na = arith.select %ps4_0_swap, %ps4_0_vb, %ps4_0_va : i32
+          %ps4_0_nb = arith.select %ps4_0_swap, %ps4_0_va, %ps4_0_vb : i32
+          memref.store %ps4_0_na, %partners[%ps4_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps4_0_nb, %partners[%ps4_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps4_1_pair = arith.constant 32 : index
+          %ps4_1_tp = arith.addi %lane, %ps4_1_pair : index
+          %ps4_1_s = arith.constant 4 : index
+          %ps4_1_sm1 = arith.constant 3 : index
+          %ps4_1_low = arith.andi %ps4_1_tp, %ps4_1_sm1 : index
+          %ps4_1_twice = arith.addi %ps4_1_tp, %ps4_1_tp : index
+          %ps4_1_a = arith.subi %ps4_1_twice, %ps4_1_low : index
+          %ps4_1_b = arith.addi %ps4_1_a, %ps4_1_s : index
+          %ps4_1_sz = arith.constant 8 : index
+          %ps4_1_upb = arith.andi %ps4_1_a, %ps4_1_sz : index
+          %ps4_1_z = arith.constant 0 : index
+          %ps4_1_up = arith.cmpi eq, %ps4_1_upb, %ps4_1_z : index
+          %ps4_1_aa = arith.addi %pbase, %ps4_1_a : index
+          %ps4_1_bb = arith.addi %pbase, %ps4_1_b : index
+          %ps4_1_va = memref.load %partners[%ps4_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps4_1_vb = memref.load %partners[%ps4_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps4_1_gt = arith.cmpi sgt, %ps4_1_va, %ps4_1_vb : i32
+          %ps4_1_swap = arith.cmpi eq, %ps4_1_gt, %ps4_1_up : i1
+          %ps4_1_na = arith.select %ps4_1_swap, %ps4_1_vb, %ps4_1_va : i32
+          %ps4_1_nb = arith.select %ps4_1_swap, %ps4_1_va, %ps4_1_vb : i32
+          memref.store %ps4_1_na, %partners[%ps4_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps4_1_nb, %partners[%ps4_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps5_0_pair = arith.constant 0 : index
+          %ps5_0_tp = arith.addi %lane, %ps5_0_pair : index
+          %ps5_0_s = arith.constant 2 : index
+          %ps5_0_sm1 = arith.constant 1 : index
+          %ps5_0_low = arith.andi %ps5_0_tp, %ps5_0_sm1 : index
+          %ps5_0_twice = arith.addi %ps5_0_tp, %ps5_0_tp : index
+          %ps5_0_a = arith.subi %ps5_0_twice, %ps5_0_low : index
+          %ps5_0_b = arith.addi %ps5_0_a, %ps5_0_s : index
+          %ps5_0_sz = arith.constant 8 : index
+          %ps5_0_upb = arith.andi %ps5_0_a, %ps5_0_sz : index
+          %ps5_0_z = arith.constant 0 : index
+          %ps5_0_up = arith.cmpi eq, %ps5_0_upb, %ps5_0_z : index
+          %ps5_0_aa = arith.addi %pbase, %ps5_0_a : index
+          %ps5_0_bb = arith.addi %pbase, %ps5_0_b : index
+          %ps5_0_va = memref.load %partners[%ps5_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps5_0_vb = memref.load %partners[%ps5_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps5_0_gt = arith.cmpi sgt, %ps5_0_va, %ps5_0_vb : i32
+          %ps5_0_swap = arith.cmpi eq, %ps5_0_gt, %ps5_0_up : i1
+          %ps5_0_na = arith.select %ps5_0_swap, %ps5_0_vb, %ps5_0_va : i32
+          %ps5_0_nb = arith.select %ps5_0_swap, %ps5_0_va, %ps5_0_vb : i32
+          memref.store %ps5_0_na, %partners[%ps5_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps5_0_nb, %partners[%ps5_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps5_1_pair = arith.constant 32 : index
+          %ps5_1_tp = arith.addi %lane, %ps5_1_pair : index
+          %ps5_1_s = arith.constant 2 : index
+          %ps5_1_sm1 = arith.constant 1 : index
+          %ps5_1_low = arith.andi %ps5_1_tp, %ps5_1_sm1 : index
+          %ps5_1_twice = arith.addi %ps5_1_tp, %ps5_1_tp : index
+          %ps5_1_a = arith.subi %ps5_1_twice, %ps5_1_low : index
+          %ps5_1_b = arith.addi %ps5_1_a, %ps5_1_s : index
+          %ps5_1_sz = arith.constant 8 : index
+          %ps5_1_upb = arith.andi %ps5_1_a, %ps5_1_sz : index
+          %ps5_1_z = arith.constant 0 : index
+          %ps5_1_up = arith.cmpi eq, %ps5_1_upb, %ps5_1_z : index
+          %ps5_1_aa = arith.addi %pbase, %ps5_1_a : index
+          %ps5_1_bb = arith.addi %pbase, %ps5_1_b : index
+          %ps5_1_va = memref.load %partners[%ps5_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps5_1_vb = memref.load %partners[%ps5_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps5_1_gt = arith.cmpi sgt, %ps5_1_va, %ps5_1_vb : i32
+          %ps5_1_swap = arith.cmpi eq, %ps5_1_gt, %ps5_1_up : i1
+          %ps5_1_na = arith.select %ps5_1_swap, %ps5_1_vb, %ps5_1_va : i32
+          %ps5_1_nb = arith.select %ps5_1_swap, %ps5_1_va, %ps5_1_vb : i32
+          memref.store %ps5_1_na, %partners[%ps5_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps5_1_nb, %partners[%ps5_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps6_0_pair = arith.constant 0 : index
+          %ps6_0_tp = arith.addi %lane, %ps6_0_pair : index
+          %ps6_0_s = arith.constant 1 : index
+          %ps6_0_sm1 = arith.constant 0 : index
+          %ps6_0_low = arith.andi %ps6_0_tp, %ps6_0_sm1 : index
+          %ps6_0_twice = arith.addi %ps6_0_tp, %ps6_0_tp : index
+          %ps6_0_a = arith.subi %ps6_0_twice, %ps6_0_low : index
+          %ps6_0_b = arith.addi %ps6_0_a, %ps6_0_s : index
+          %ps6_0_sz = arith.constant 8 : index
+          %ps6_0_upb = arith.andi %ps6_0_a, %ps6_0_sz : index
+          %ps6_0_z = arith.constant 0 : index
+          %ps6_0_up = arith.cmpi eq, %ps6_0_upb, %ps6_0_z : index
+          %ps6_0_aa = arith.addi %pbase, %ps6_0_a : index
+          %ps6_0_bb = arith.addi %pbase, %ps6_0_b : index
+          %ps6_0_va = memref.load %partners[%ps6_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps6_0_vb = memref.load %partners[%ps6_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps6_0_gt = arith.cmpi sgt, %ps6_0_va, %ps6_0_vb : i32
+          %ps6_0_swap = arith.cmpi eq, %ps6_0_gt, %ps6_0_up : i1
+          %ps6_0_na = arith.select %ps6_0_swap, %ps6_0_vb, %ps6_0_va : i32
+          %ps6_0_nb = arith.select %ps6_0_swap, %ps6_0_va, %ps6_0_vb : i32
+          memref.store %ps6_0_na, %partners[%ps6_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps6_0_nb, %partners[%ps6_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps6_1_pair = arith.constant 32 : index
+          %ps6_1_tp = arith.addi %lane, %ps6_1_pair : index
+          %ps6_1_s = arith.constant 1 : index
+          %ps6_1_sm1 = arith.constant 0 : index
+          %ps6_1_low = arith.andi %ps6_1_tp, %ps6_1_sm1 : index
+          %ps6_1_twice = arith.addi %ps6_1_tp, %ps6_1_tp : index
+          %ps6_1_a = arith.subi %ps6_1_twice, %ps6_1_low : index
+          %ps6_1_b = arith.addi %ps6_1_a, %ps6_1_s : index
+          %ps6_1_sz = arith.constant 8 : index
+          %ps6_1_upb = arith.andi %ps6_1_a, %ps6_1_sz : index
+          %ps6_1_z = arith.constant 0 : index
+          %ps6_1_up = arith.cmpi eq, %ps6_1_upb, %ps6_1_z : index
+          %ps6_1_aa = arith.addi %pbase, %ps6_1_a : index
+          %ps6_1_bb = arith.addi %pbase, %ps6_1_b : index
+          %ps6_1_va = memref.load %partners[%ps6_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps6_1_vb = memref.load %partners[%ps6_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps6_1_gt = arith.cmpi sgt, %ps6_1_va, %ps6_1_vb : i32
+          %ps6_1_swap = arith.cmpi eq, %ps6_1_gt, %ps6_1_up : i1
+          %ps6_1_na = arith.select %ps6_1_swap, %ps6_1_vb, %ps6_1_va : i32
+          %ps6_1_nb = arith.select %ps6_1_swap, %ps6_1_va, %ps6_1_vb : i32
+          memref.store %ps6_1_na, %partners[%ps6_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps6_1_nb, %partners[%ps6_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps7_0_pair = arith.constant 0 : index
+          %ps7_0_tp = arith.addi %lane, %ps7_0_pair : index
+          %ps7_0_s = arith.constant 8 : index
+          %ps7_0_sm1 = arith.constant 7 : index
+          %ps7_0_low = arith.andi %ps7_0_tp, %ps7_0_sm1 : index
+          %ps7_0_twice = arith.addi %ps7_0_tp, %ps7_0_tp : index
+          %ps7_0_a = arith.subi %ps7_0_twice, %ps7_0_low : index
+          %ps7_0_b = arith.addi %ps7_0_a, %ps7_0_s : index
+          %ps7_0_sz = arith.constant 16 : index
+          %ps7_0_upb = arith.andi %ps7_0_a, %ps7_0_sz : index
+          %ps7_0_z = arith.constant 0 : index
+          %ps7_0_up = arith.cmpi eq, %ps7_0_upb, %ps7_0_z : index
+          %ps7_0_aa = arith.addi %pbase, %ps7_0_a : index
+          %ps7_0_bb = arith.addi %pbase, %ps7_0_b : index
+          %ps7_0_va = memref.load %partners[%ps7_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps7_0_vb = memref.load %partners[%ps7_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps7_0_gt = arith.cmpi sgt, %ps7_0_va, %ps7_0_vb : i32
+          %ps7_0_swap = arith.cmpi eq, %ps7_0_gt, %ps7_0_up : i1
+          %ps7_0_na = arith.select %ps7_0_swap, %ps7_0_vb, %ps7_0_va : i32
+          %ps7_0_nb = arith.select %ps7_0_swap, %ps7_0_va, %ps7_0_vb : i32
+          memref.store %ps7_0_na, %partners[%ps7_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps7_0_nb, %partners[%ps7_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps7_1_pair = arith.constant 32 : index
+          %ps7_1_tp = arith.addi %lane, %ps7_1_pair : index
+          %ps7_1_s = arith.constant 8 : index
+          %ps7_1_sm1 = arith.constant 7 : index
+          %ps7_1_low = arith.andi %ps7_1_tp, %ps7_1_sm1 : index
+          %ps7_1_twice = arith.addi %ps7_1_tp, %ps7_1_tp : index
+          %ps7_1_a = arith.subi %ps7_1_twice, %ps7_1_low : index
+          %ps7_1_b = arith.addi %ps7_1_a, %ps7_1_s : index
+          %ps7_1_sz = arith.constant 16 : index
+          %ps7_1_upb = arith.andi %ps7_1_a, %ps7_1_sz : index
+          %ps7_1_z = arith.constant 0 : index
+          %ps7_1_up = arith.cmpi eq, %ps7_1_upb, %ps7_1_z : index
+          %ps7_1_aa = arith.addi %pbase, %ps7_1_a : index
+          %ps7_1_bb = arith.addi %pbase, %ps7_1_b : index
+          %ps7_1_va = memref.load %partners[%ps7_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps7_1_vb = memref.load %partners[%ps7_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps7_1_gt = arith.cmpi sgt, %ps7_1_va, %ps7_1_vb : i32
+          %ps7_1_swap = arith.cmpi eq, %ps7_1_gt, %ps7_1_up : i1
+          %ps7_1_na = arith.select %ps7_1_swap, %ps7_1_vb, %ps7_1_va : i32
+          %ps7_1_nb = arith.select %ps7_1_swap, %ps7_1_va, %ps7_1_vb : i32
+          memref.store %ps7_1_na, %partners[%ps7_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps7_1_nb, %partners[%ps7_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps8_0_pair = arith.constant 0 : index
+          %ps8_0_tp = arith.addi %lane, %ps8_0_pair : index
+          %ps8_0_s = arith.constant 4 : index
+          %ps8_0_sm1 = arith.constant 3 : index
+          %ps8_0_low = arith.andi %ps8_0_tp, %ps8_0_sm1 : index
+          %ps8_0_twice = arith.addi %ps8_0_tp, %ps8_0_tp : index
+          %ps8_0_a = arith.subi %ps8_0_twice, %ps8_0_low : index
+          %ps8_0_b = arith.addi %ps8_0_a, %ps8_0_s : index
+          %ps8_0_sz = arith.constant 16 : index
+          %ps8_0_upb = arith.andi %ps8_0_a, %ps8_0_sz : index
+          %ps8_0_z = arith.constant 0 : index
+          %ps8_0_up = arith.cmpi eq, %ps8_0_upb, %ps8_0_z : index
+          %ps8_0_aa = arith.addi %pbase, %ps8_0_a : index
+          %ps8_0_bb = arith.addi %pbase, %ps8_0_b : index
+          %ps8_0_va = memref.load %partners[%ps8_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps8_0_vb = memref.load %partners[%ps8_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps8_0_gt = arith.cmpi sgt, %ps8_0_va, %ps8_0_vb : i32
+          %ps8_0_swap = arith.cmpi eq, %ps8_0_gt, %ps8_0_up : i1
+          %ps8_0_na = arith.select %ps8_0_swap, %ps8_0_vb, %ps8_0_va : i32
+          %ps8_0_nb = arith.select %ps8_0_swap, %ps8_0_va, %ps8_0_vb : i32
+          memref.store %ps8_0_na, %partners[%ps8_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps8_0_nb, %partners[%ps8_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps8_1_pair = arith.constant 32 : index
+          %ps8_1_tp = arith.addi %lane, %ps8_1_pair : index
+          %ps8_1_s = arith.constant 4 : index
+          %ps8_1_sm1 = arith.constant 3 : index
+          %ps8_1_low = arith.andi %ps8_1_tp, %ps8_1_sm1 : index
+          %ps8_1_twice = arith.addi %ps8_1_tp, %ps8_1_tp : index
+          %ps8_1_a = arith.subi %ps8_1_twice, %ps8_1_low : index
+          %ps8_1_b = arith.addi %ps8_1_a, %ps8_1_s : index
+          %ps8_1_sz = arith.constant 16 : index
+          %ps8_1_upb = arith.andi %ps8_1_a, %ps8_1_sz : index
+          %ps8_1_z = arith.constant 0 : index
+          %ps8_1_up = arith.cmpi eq, %ps8_1_upb, %ps8_1_z : index
+          %ps8_1_aa = arith.addi %pbase, %ps8_1_a : index
+          %ps8_1_bb = arith.addi %pbase, %ps8_1_b : index
+          %ps8_1_va = memref.load %partners[%ps8_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps8_1_vb = memref.load %partners[%ps8_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps8_1_gt = arith.cmpi sgt, %ps8_1_va, %ps8_1_vb : i32
+          %ps8_1_swap = arith.cmpi eq, %ps8_1_gt, %ps8_1_up : i1
+          %ps8_1_na = arith.select %ps8_1_swap, %ps8_1_vb, %ps8_1_va : i32
+          %ps8_1_nb = arith.select %ps8_1_swap, %ps8_1_va, %ps8_1_vb : i32
+          memref.store %ps8_1_na, %partners[%ps8_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps8_1_nb, %partners[%ps8_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps9_0_pair = arith.constant 0 : index
+          %ps9_0_tp = arith.addi %lane, %ps9_0_pair : index
+          %ps9_0_s = arith.constant 2 : index
+          %ps9_0_sm1 = arith.constant 1 : index
+          %ps9_0_low = arith.andi %ps9_0_tp, %ps9_0_sm1 : index
+          %ps9_0_twice = arith.addi %ps9_0_tp, %ps9_0_tp : index
+          %ps9_0_a = arith.subi %ps9_0_twice, %ps9_0_low : index
+          %ps9_0_b = arith.addi %ps9_0_a, %ps9_0_s : index
+          %ps9_0_sz = arith.constant 16 : index
+          %ps9_0_upb = arith.andi %ps9_0_a, %ps9_0_sz : index
+          %ps9_0_z = arith.constant 0 : index
+          %ps9_0_up = arith.cmpi eq, %ps9_0_upb, %ps9_0_z : index
+          %ps9_0_aa = arith.addi %pbase, %ps9_0_a : index
+          %ps9_0_bb = arith.addi %pbase, %ps9_0_b : index
+          %ps9_0_va = memref.load %partners[%ps9_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps9_0_vb = memref.load %partners[%ps9_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps9_0_gt = arith.cmpi sgt, %ps9_0_va, %ps9_0_vb : i32
+          %ps9_0_swap = arith.cmpi eq, %ps9_0_gt, %ps9_0_up : i1
+          %ps9_0_na = arith.select %ps9_0_swap, %ps9_0_vb, %ps9_0_va : i32
+          %ps9_0_nb = arith.select %ps9_0_swap, %ps9_0_va, %ps9_0_vb : i32
+          memref.store %ps9_0_na, %partners[%ps9_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps9_0_nb, %partners[%ps9_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps9_1_pair = arith.constant 32 : index
+          %ps9_1_tp = arith.addi %lane, %ps9_1_pair : index
+          %ps9_1_s = arith.constant 2 : index
+          %ps9_1_sm1 = arith.constant 1 : index
+          %ps9_1_low = arith.andi %ps9_1_tp, %ps9_1_sm1 : index
+          %ps9_1_twice = arith.addi %ps9_1_tp, %ps9_1_tp : index
+          %ps9_1_a = arith.subi %ps9_1_twice, %ps9_1_low : index
+          %ps9_1_b = arith.addi %ps9_1_a, %ps9_1_s : index
+          %ps9_1_sz = arith.constant 16 : index
+          %ps9_1_upb = arith.andi %ps9_1_a, %ps9_1_sz : index
+          %ps9_1_z = arith.constant 0 : index
+          %ps9_1_up = arith.cmpi eq, %ps9_1_upb, %ps9_1_z : index
+          %ps9_1_aa = arith.addi %pbase, %ps9_1_a : index
+          %ps9_1_bb = arith.addi %pbase, %ps9_1_b : index
+          %ps9_1_va = memref.load %partners[%ps9_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps9_1_vb = memref.load %partners[%ps9_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps9_1_gt = arith.cmpi sgt, %ps9_1_va, %ps9_1_vb : i32
+          %ps9_1_swap = arith.cmpi eq, %ps9_1_gt, %ps9_1_up : i1
+          %ps9_1_na = arith.select %ps9_1_swap, %ps9_1_vb, %ps9_1_va : i32
+          %ps9_1_nb = arith.select %ps9_1_swap, %ps9_1_va, %ps9_1_vb : i32
+          memref.store %ps9_1_na, %partners[%ps9_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps9_1_nb, %partners[%ps9_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps10_0_pair = arith.constant 0 : index
+          %ps10_0_tp = arith.addi %lane, %ps10_0_pair : index
+          %ps10_0_s = arith.constant 1 : index
+          %ps10_0_sm1 = arith.constant 0 : index
+          %ps10_0_low = arith.andi %ps10_0_tp, %ps10_0_sm1 : index
+          %ps10_0_twice = arith.addi %ps10_0_tp, %ps10_0_tp : index
+          %ps10_0_a = arith.subi %ps10_0_twice, %ps10_0_low : index
+          %ps10_0_b = arith.addi %ps10_0_a, %ps10_0_s : index
+          %ps10_0_sz = arith.constant 16 : index
+          %ps10_0_upb = arith.andi %ps10_0_a, %ps10_0_sz : index
+          %ps10_0_z = arith.constant 0 : index
+          %ps10_0_up = arith.cmpi eq, %ps10_0_upb, %ps10_0_z : index
+          %ps10_0_aa = arith.addi %pbase, %ps10_0_a : index
+          %ps10_0_bb = arith.addi %pbase, %ps10_0_b : index
+          %ps10_0_va = memref.load %partners[%ps10_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps10_0_vb = memref.load %partners[%ps10_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps10_0_gt = arith.cmpi sgt, %ps10_0_va, %ps10_0_vb : i32
+          %ps10_0_swap = arith.cmpi eq, %ps10_0_gt, %ps10_0_up : i1
+          %ps10_0_na = arith.select %ps10_0_swap, %ps10_0_vb, %ps10_0_va : i32
+          %ps10_0_nb = arith.select %ps10_0_swap, %ps10_0_va, %ps10_0_vb : i32
+          memref.store %ps10_0_na, %partners[%ps10_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps10_0_nb, %partners[%ps10_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps10_1_pair = arith.constant 32 : index
+          %ps10_1_tp = arith.addi %lane, %ps10_1_pair : index
+          %ps10_1_s = arith.constant 1 : index
+          %ps10_1_sm1 = arith.constant 0 : index
+          %ps10_1_low = arith.andi %ps10_1_tp, %ps10_1_sm1 : index
+          %ps10_1_twice = arith.addi %ps10_1_tp, %ps10_1_tp : index
+          %ps10_1_a = arith.subi %ps10_1_twice, %ps10_1_low : index
+          %ps10_1_b = arith.addi %ps10_1_a, %ps10_1_s : index
+          %ps10_1_sz = arith.constant 16 : index
+          %ps10_1_upb = arith.andi %ps10_1_a, %ps10_1_sz : index
+          %ps10_1_z = arith.constant 0 : index
+          %ps10_1_up = arith.cmpi eq, %ps10_1_upb, %ps10_1_z : index
+          %ps10_1_aa = arith.addi %pbase, %ps10_1_a : index
+          %ps10_1_bb = arith.addi %pbase, %ps10_1_b : index
+          %ps10_1_va = memref.load %partners[%ps10_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps10_1_vb = memref.load %partners[%ps10_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps10_1_gt = arith.cmpi sgt, %ps10_1_va, %ps10_1_vb : i32
+          %ps10_1_swap = arith.cmpi eq, %ps10_1_gt, %ps10_1_up : i1
+          %ps10_1_na = arith.select %ps10_1_swap, %ps10_1_vb, %ps10_1_va : i32
+          %ps10_1_nb = arith.select %ps10_1_swap, %ps10_1_va, %ps10_1_vb : i32
+          memref.store %ps10_1_na, %partners[%ps10_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps10_1_nb, %partners[%ps10_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps11_0_pair = arith.constant 0 : index
+          %ps11_0_tp = arith.addi %lane, %ps11_0_pair : index
+          %ps11_0_s = arith.constant 16 : index
+          %ps11_0_sm1 = arith.constant 15 : index
+          %ps11_0_low = arith.andi %ps11_0_tp, %ps11_0_sm1 : index
+          %ps11_0_twice = arith.addi %ps11_0_tp, %ps11_0_tp : index
+          %ps11_0_a = arith.subi %ps11_0_twice, %ps11_0_low : index
+          %ps11_0_b = arith.addi %ps11_0_a, %ps11_0_s : index
+          %ps11_0_sz = arith.constant 32 : index
+          %ps11_0_upb = arith.andi %ps11_0_a, %ps11_0_sz : index
+          %ps11_0_z = arith.constant 0 : index
+          %ps11_0_up = arith.cmpi eq, %ps11_0_upb, %ps11_0_z : index
+          %ps11_0_aa = arith.addi %pbase, %ps11_0_a : index
+          %ps11_0_bb = arith.addi %pbase, %ps11_0_b : index
+          %ps11_0_va = memref.load %partners[%ps11_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps11_0_vb = memref.load %partners[%ps11_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps11_0_gt = arith.cmpi sgt, %ps11_0_va, %ps11_0_vb : i32
+          %ps11_0_swap = arith.cmpi eq, %ps11_0_gt, %ps11_0_up : i1
+          %ps11_0_na = arith.select %ps11_0_swap, %ps11_0_vb, %ps11_0_va : i32
+          %ps11_0_nb = arith.select %ps11_0_swap, %ps11_0_va, %ps11_0_vb : i32
+          memref.store %ps11_0_na, %partners[%ps11_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps11_0_nb, %partners[%ps11_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps11_1_pair = arith.constant 32 : index
+          %ps11_1_tp = arith.addi %lane, %ps11_1_pair : index
+          %ps11_1_s = arith.constant 16 : index
+          %ps11_1_sm1 = arith.constant 15 : index
+          %ps11_1_low = arith.andi %ps11_1_tp, %ps11_1_sm1 : index
+          %ps11_1_twice = arith.addi %ps11_1_tp, %ps11_1_tp : index
+          %ps11_1_a = arith.subi %ps11_1_twice, %ps11_1_low : index
+          %ps11_1_b = arith.addi %ps11_1_a, %ps11_1_s : index
+          %ps11_1_sz = arith.constant 32 : index
+          %ps11_1_upb = arith.andi %ps11_1_a, %ps11_1_sz : index
+          %ps11_1_z = arith.constant 0 : index
+          %ps11_1_up = arith.cmpi eq, %ps11_1_upb, %ps11_1_z : index
+          %ps11_1_aa = arith.addi %pbase, %ps11_1_a : index
+          %ps11_1_bb = arith.addi %pbase, %ps11_1_b : index
+          %ps11_1_va = memref.load %partners[%ps11_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps11_1_vb = memref.load %partners[%ps11_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps11_1_gt = arith.cmpi sgt, %ps11_1_va, %ps11_1_vb : i32
+          %ps11_1_swap = arith.cmpi eq, %ps11_1_gt, %ps11_1_up : i1
+          %ps11_1_na = arith.select %ps11_1_swap, %ps11_1_vb, %ps11_1_va : i32
+          %ps11_1_nb = arith.select %ps11_1_swap, %ps11_1_va, %ps11_1_vb : i32
+          memref.store %ps11_1_na, %partners[%ps11_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps11_1_nb, %partners[%ps11_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps12_0_pair = arith.constant 0 : index
+          %ps12_0_tp = arith.addi %lane, %ps12_0_pair : index
+          %ps12_0_s = arith.constant 8 : index
+          %ps12_0_sm1 = arith.constant 7 : index
+          %ps12_0_low = arith.andi %ps12_0_tp, %ps12_0_sm1 : index
+          %ps12_0_twice = arith.addi %ps12_0_tp, %ps12_0_tp : index
+          %ps12_0_a = arith.subi %ps12_0_twice, %ps12_0_low : index
+          %ps12_0_b = arith.addi %ps12_0_a, %ps12_0_s : index
+          %ps12_0_sz = arith.constant 32 : index
+          %ps12_0_upb = arith.andi %ps12_0_a, %ps12_0_sz : index
+          %ps12_0_z = arith.constant 0 : index
+          %ps12_0_up = arith.cmpi eq, %ps12_0_upb, %ps12_0_z : index
+          %ps12_0_aa = arith.addi %pbase, %ps12_0_a : index
+          %ps12_0_bb = arith.addi %pbase, %ps12_0_b : index
+          %ps12_0_va = memref.load %partners[%ps12_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps12_0_vb = memref.load %partners[%ps12_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps12_0_gt = arith.cmpi sgt, %ps12_0_va, %ps12_0_vb : i32
+          %ps12_0_swap = arith.cmpi eq, %ps12_0_gt, %ps12_0_up : i1
+          %ps12_0_na = arith.select %ps12_0_swap, %ps12_0_vb, %ps12_0_va : i32
+          %ps12_0_nb = arith.select %ps12_0_swap, %ps12_0_va, %ps12_0_vb : i32
+          memref.store %ps12_0_na, %partners[%ps12_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps12_0_nb, %partners[%ps12_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps12_1_pair = arith.constant 32 : index
+          %ps12_1_tp = arith.addi %lane, %ps12_1_pair : index
+          %ps12_1_s = arith.constant 8 : index
+          %ps12_1_sm1 = arith.constant 7 : index
+          %ps12_1_low = arith.andi %ps12_1_tp, %ps12_1_sm1 : index
+          %ps12_1_twice = arith.addi %ps12_1_tp, %ps12_1_tp : index
+          %ps12_1_a = arith.subi %ps12_1_twice, %ps12_1_low : index
+          %ps12_1_b = arith.addi %ps12_1_a, %ps12_1_s : index
+          %ps12_1_sz = arith.constant 32 : index
+          %ps12_1_upb = arith.andi %ps12_1_a, %ps12_1_sz : index
+          %ps12_1_z = arith.constant 0 : index
+          %ps12_1_up = arith.cmpi eq, %ps12_1_upb, %ps12_1_z : index
+          %ps12_1_aa = arith.addi %pbase, %ps12_1_a : index
+          %ps12_1_bb = arith.addi %pbase, %ps12_1_b : index
+          %ps12_1_va = memref.load %partners[%ps12_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps12_1_vb = memref.load %partners[%ps12_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps12_1_gt = arith.cmpi sgt, %ps12_1_va, %ps12_1_vb : i32
+          %ps12_1_swap = arith.cmpi eq, %ps12_1_gt, %ps12_1_up : i1
+          %ps12_1_na = arith.select %ps12_1_swap, %ps12_1_vb, %ps12_1_va : i32
+          %ps12_1_nb = arith.select %ps12_1_swap, %ps12_1_va, %ps12_1_vb : i32
+          memref.store %ps12_1_na, %partners[%ps12_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps12_1_nb, %partners[%ps12_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps13_0_pair = arith.constant 0 : index
+          %ps13_0_tp = arith.addi %lane, %ps13_0_pair : index
+          %ps13_0_s = arith.constant 4 : index
+          %ps13_0_sm1 = arith.constant 3 : index
+          %ps13_0_low = arith.andi %ps13_0_tp, %ps13_0_sm1 : index
+          %ps13_0_twice = arith.addi %ps13_0_tp, %ps13_0_tp : index
+          %ps13_0_a = arith.subi %ps13_0_twice, %ps13_0_low : index
+          %ps13_0_b = arith.addi %ps13_0_a, %ps13_0_s : index
+          %ps13_0_sz = arith.constant 32 : index
+          %ps13_0_upb = arith.andi %ps13_0_a, %ps13_0_sz : index
+          %ps13_0_z = arith.constant 0 : index
+          %ps13_0_up = arith.cmpi eq, %ps13_0_upb, %ps13_0_z : index
+          %ps13_0_aa = arith.addi %pbase, %ps13_0_a : index
+          %ps13_0_bb = arith.addi %pbase, %ps13_0_b : index
+          %ps13_0_va = memref.load %partners[%ps13_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps13_0_vb = memref.load %partners[%ps13_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps13_0_gt = arith.cmpi sgt, %ps13_0_va, %ps13_0_vb : i32
+          %ps13_0_swap = arith.cmpi eq, %ps13_0_gt, %ps13_0_up : i1
+          %ps13_0_na = arith.select %ps13_0_swap, %ps13_0_vb, %ps13_0_va : i32
+          %ps13_0_nb = arith.select %ps13_0_swap, %ps13_0_va, %ps13_0_vb : i32
+          memref.store %ps13_0_na, %partners[%ps13_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps13_0_nb, %partners[%ps13_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps13_1_pair = arith.constant 32 : index
+          %ps13_1_tp = arith.addi %lane, %ps13_1_pair : index
+          %ps13_1_s = arith.constant 4 : index
+          %ps13_1_sm1 = arith.constant 3 : index
+          %ps13_1_low = arith.andi %ps13_1_tp, %ps13_1_sm1 : index
+          %ps13_1_twice = arith.addi %ps13_1_tp, %ps13_1_tp : index
+          %ps13_1_a = arith.subi %ps13_1_twice, %ps13_1_low : index
+          %ps13_1_b = arith.addi %ps13_1_a, %ps13_1_s : index
+          %ps13_1_sz = arith.constant 32 : index
+          %ps13_1_upb = arith.andi %ps13_1_a, %ps13_1_sz : index
+          %ps13_1_z = arith.constant 0 : index
+          %ps13_1_up = arith.cmpi eq, %ps13_1_upb, %ps13_1_z : index
+          %ps13_1_aa = arith.addi %pbase, %ps13_1_a : index
+          %ps13_1_bb = arith.addi %pbase, %ps13_1_b : index
+          %ps13_1_va = memref.load %partners[%ps13_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps13_1_vb = memref.load %partners[%ps13_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps13_1_gt = arith.cmpi sgt, %ps13_1_va, %ps13_1_vb : i32
+          %ps13_1_swap = arith.cmpi eq, %ps13_1_gt, %ps13_1_up : i1
+          %ps13_1_na = arith.select %ps13_1_swap, %ps13_1_vb, %ps13_1_va : i32
+          %ps13_1_nb = arith.select %ps13_1_swap, %ps13_1_va, %ps13_1_vb : i32
+          memref.store %ps13_1_na, %partners[%ps13_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps13_1_nb, %partners[%ps13_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps14_0_pair = arith.constant 0 : index
+          %ps14_0_tp = arith.addi %lane, %ps14_0_pair : index
+          %ps14_0_s = arith.constant 2 : index
+          %ps14_0_sm1 = arith.constant 1 : index
+          %ps14_0_low = arith.andi %ps14_0_tp, %ps14_0_sm1 : index
+          %ps14_0_twice = arith.addi %ps14_0_tp, %ps14_0_tp : index
+          %ps14_0_a = arith.subi %ps14_0_twice, %ps14_0_low : index
+          %ps14_0_b = arith.addi %ps14_0_a, %ps14_0_s : index
+          %ps14_0_sz = arith.constant 32 : index
+          %ps14_0_upb = arith.andi %ps14_0_a, %ps14_0_sz : index
+          %ps14_0_z = arith.constant 0 : index
+          %ps14_0_up = arith.cmpi eq, %ps14_0_upb, %ps14_0_z : index
+          %ps14_0_aa = arith.addi %pbase, %ps14_0_a : index
+          %ps14_0_bb = arith.addi %pbase, %ps14_0_b : index
+          %ps14_0_va = memref.load %partners[%ps14_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps14_0_vb = memref.load %partners[%ps14_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps14_0_gt = arith.cmpi sgt, %ps14_0_va, %ps14_0_vb : i32
+          %ps14_0_swap = arith.cmpi eq, %ps14_0_gt, %ps14_0_up : i1
+          %ps14_0_na = arith.select %ps14_0_swap, %ps14_0_vb, %ps14_0_va : i32
+          %ps14_0_nb = arith.select %ps14_0_swap, %ps14_0_va, %ps14_0_vb : i32
+          memref.store %ps14_0_na, %partners[%ps14_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps14_0_nb, %partners[%ps14_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps14_1_pair = arith.constant 32 : index
+          %ps14_1_tp = arith.addi %lane, %ps14_1_pair : index
+          %ps14_1_s = arith.constant 2 : index
+          %ps14_1_sm1 = arith.constant 1 : index
+          %ps14_1_low = arith.andi %ps14_1_tp, %ps14_1_sm1 : index
+          %ps14_1_twice = arith.addi %ps14_1_tp, %ps14_1_tp : index
+          %ps14_1_a = arith.subi %ps14_1_twice, %ps14_1_low : index
+          %ps14_1_b = arith.addi %ps14_1_a, %ps14_1_s : index
+          %ps14_1_sz = arith.constant 32 : index
+          %ps14_1_upb = arith.andi %ps14_1_a, %ps14_1_sz : index
+          %ps14_1_z = arith.constant 0 : index
+          %ps14_1_up = arith.cmpi eq, %ps14_1_upb, %ps14_1_z : index
+          %ps14_1_aa = arith.addi %pbase, %ps14_1_a : index
+          %ps14_1_bb = arith.addi %pbase, %ps14_1_b : index
+          %ps14_1_va = memref.load %partners[%ps14_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps14_1_vb = memref.load %partners[%ps14_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps14_1_gt = arith.cmpi sgt, %ps14_1_va, %ps14_1_vb : i32
+          %ps14_1_swap = arith.cmpi eq, %ps14_1_gt, %ps14_1_up : i1
+          %ps14_1_na = arith.select %ps14_1_swap, %ps14_1_vb, %ps14_1_va : i32
+          %ps14_1_nb = arith.select %ps14_1_swap, %ps14_1_va, %ps14_1_vb : i32
+          memref.store %ps14_1_na, %partners[%ps14_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps14_1_nb, %partners[%ps14_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps15_0_pair = arith.constant 0 : index
+          %ps15_0_tp = arith.addi %lane, %ps15_0_pair : index
+          %ps15_0_s = arith.constant 1 : index
+          %ps15_0_sm1 = arith.constant 0 : index
+          %ps15_0_low = arith.andi %ps15_0_tp, %ps15_0_sm1 : index
+          %ps15_0_twice = arith.addi %ps15_0_tp, %ps15_0_tp : index
+          %ps15_0_a = arith.subi %ps15_0_twice, %ps15_0_low : index
+          %ps15_0_b = arith.addi %ps15_0_a, %ps15_0_s : index
+          %ps15_0_sz = arith.constant 32 : index
+          %ps15_0_upb = arith.andi %ps15_0_a, %ps15_0_sz : index
+          %ps15_0_z = arith.constant 0 : index
+          %ps15_0_up = arith.cmpi eq, %ps15_0_upb, %ps15_0_z : index
+          %ps15_0_aa = arith.addi %pbase, %ps15_0_a : index
+          %ps15_0_bb = arith.addi %pbase, %ps15_0_b : index
+          %ps15_0_va = memref.load %partners[%ps15_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps15_0_vb = memref.load %partners[%ps15_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps15_0_gt = arith.cmpi sgt, %ps15_0_va, %ps15_0_vb : i32
+          %ps15_0_swap = arith.cmpi eq, %ps15_0_gt, %ps15_0_up : i1
+          %ps15_0_na = arith.select %ps15_0_swap, %ps15_0_vb, %ps15_0_va : i32
+          %ps15_0_nb = arith.select %ps15_0_swap, %ps15_0_va, %ps15_0_vb : i32
+          memref.store %ps15_0_na, %partners[%ps15_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps15_0_nb, %partners[%ps15_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps15_1_pair = arith.constant 32 : index
+          %ps15_1_tp = arith.addi %lane, %ps15_1_pair : index
+          %ps15_1_s = arith.constant 1 : index
+          %ps15_1_sm1 = arith.constant 0 : index
+          %ps15_1_low = arith.andi %ps15_1_tp, %ps15_1_sm1 : index
+          %ps15_1_twice = arith.addi %ps15_1_tp, %ps15_1_tp : index
+          %ps15_1_a = arith.subi %ps15_1_twice, %ps15_1_low : index
+          %ps15_1_b = arith.addi %ps15_1_a, %ps15_1_s : index
+          %ps15_1_sz = arith.constant 32 : index
+          %ps15_1_upb = arith.andi %ps15_1_a, %ps15_1_sz : index
+          %ps15_1_z = arith.constant 0 : index
+          %ps15_1_up = arith.cmpi eq, %ps15_1_upb, %ps15_1_z : index
+          %ps15_1_aa = arith.addi %pbase, %ps15_1_a : index
+          %ps15_1_bb = arith.addi %pbase, %ps15_1_b : index
+          %ps15_1_va = memref.load %partners[%ps15_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps15_1_vb = memref.load %partners[%ps15_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps15_1_gt = arith.cmpi sgt, %ps15_1_va, %ps15_1_vb : i32
+          %ps15_1_swap = arith.cmpi eq, %ps15_1_gt, %ps15_1_up : i1
+          %ps15_1_na = arith.select %ps15_1_swap, %ps15_1_vb, %ps15_1_va : i32
+          %ps15_1_nb = arith.select %ps15_1_swap, %ps15_1_va, %ps15_1_vb : i32
+          memref.store %ps15_1_na, %partners[%ps15_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps15_1_nb, %partners[%ps15_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps16_0_pair = arith.constant 0 : index
+          %ps16_0_tp = arith.addi %lane, %ps16_0_pair : index
+          %ps16_0_s = arith.constant 32 : index
+          %ps16_0_sm1 = arith.constant 31 : index
+          %ps16_0_low = arith.andi %ps16_0_tp, %ps16_0_sm1 : index
+          %ps16_0_twice = arith.addi %ps16_0_tp, %ps16_0_tp : index
+          %ps16_0_a = arith.subi %ps16_0_twice, %ps16_0_low : index
+          %ps16_0_b = arith.addi %ps16_0_a, %ps16_0_s : index
+          %ps16_0_sz = arith.constant 64 : index
+          %ps16_0_upb = arith.andi %ps16_0_a, %ps16_0_sz : index
+          %ps16_0_z = arith.constant 0 : index
+          %ps16_0_up = arith.cmpi eq, %ps16_0_upb, %ps16_0_z : index
+          %ps16_0_aa = arith.addi %pbase, %ps16_0_a : index
+          %ps16_0_bb = arith.addi %pbase, %ps16_0_b : index
+          %ps16_0_va = memref.load %partners[%ps16_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps16_0_vb = memref.load %partners[%ps16_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps16_0_gt = arith.cmpi sgt, %ps16_0_va, %ps16_0_vb : i32
+          %ps16_0_swap = arith.cmpi eq, %ps16_0_gt, %ps16_0_up : i1
+          %ps16_0_na = arith.select %ps16_0_swap, %ps16_0_vb, %ps16_0_va : i32
+          %ps16_0_nb = arith.select %ps16_0_swap, %ps16_0_va, %ps16_0_vb : i32
+          memref.store %ps16_0_na, %partners[%ps16_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps16_0_nb, %partners[%ps16_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps16_1_pair = arith.constant 32 : index
+          %ps16_1_tp = arith.addi %lane, %ps16_1_pair : index
+          %ps16_1_s = arith.constant 32 : index
+          %ps16_1_sm1 = arith.constant 31 : index
+          %ps16_1_low = arith.andi %ps16_1_tp, %ps16_1_sm1 : index
+          %ps16_1_twice = arith.addi %ps16_1_tp, %ps16_1_tp : index
+          %ps16_1_a = arith.subi %ps16_1_twice, %ps16_1_low : index
+          %ps16_1_b = arith.addi %ps16_1_a, %ps16_1_s : index
+          %ps16_1_sz = arith.constant 64 : index
+          %ps16_1_upb = arith.andi %ps16_1_a, %ps16_1_sz : index
+          %ps16_1_z = arith.constant 0 : index
+          %ps16_1_up = arith.cmpi eq, %ps16_1_upb, %ps16_1_z : index
+          %ps16_1_aa = arith.addi %pbase, %ps16_1_a : index
+          %ps16_1_bb = arith.addi %pbase, %ps16_1_b : index
+          %ps16_1_va = memref.load %partners[%ps16_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps16_1_vb = memref.load %partners[%ps16_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps16_1_gt = arith.cmpi sgt, %ps16_1_va, %ps16_1_vb : i32
+          %ps16_1_swap = arith.cmpi eq, %ps16_1_gt, %ps16_1_up : i1
+          %ps16_1_na = arith.select %ps16_1_swap, %ps16_1_vb, %ps16_1_va : i32
+          %ps16_1_nb = arith.select %ps16_1_swap, %ps16_1_va, %ps16_1_vb : i32
+          memref.store %ps16_1_na, %partners[%ps16_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps16_1_nb, %partners[%ps16_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps17_0_pair = arith.constant 0 : index
+          %ps17_0_tp = arith.addi %lane, %ps17_0_pair : index
+          %ps17_0_s = arith.constant 16 : index
+          %ps17_0_sm1 = arith.constant 15 : index
+          %ps17_0_low = arith.andi %ps17_0_tp, %ps17_0_sm1 : index
+          %ps17_0_twice = arith.addi %ps17_0_tp, %ps17_0_tp : index
+          %ps17_0_a = arith.subi %ps17_0_twice, %ps17_0_low : index
+          %ps17_0_b = arith.addi %ps17_0_a, %ps17_0_s : index
+          %ps17_0_sz = arith.constant 64 : index
+          %ps17_0_upb = arith.andi %ps17_0_a, %ps17_0_sz : index
+          %ps17_0_z = arith.constant 0 : index
+          %ps17_0_up = arith.cmpi eq, %ps17_0_upb, %ps17_0_z : index
+          %ps17_0_aa = arith.addi %pbase, %ps17_0_a : index
+          %ps17_0_bb = arith.addi %pbase, %ps17_0_b : index
+          %ps17_0_va = memref.load %partners[%ps17_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps17_0_vb = memref.load %partners[%ps17_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps17_0_gt = arith.cmpi sgt, %ps17_0_va, %ps17_0_vb : i32
+          %ps17_0_swap = arith.cmpi eq, %ps17_0_gt, %ps17_0_up : i1
+          %ps17_0_na = arith.select %ps17_0_swap, %ps17_0_vb, %ps17_0_va : i32
+          %ps17_0_nb = arith.select %ps17_0_swap, %ps17_0_va, %ps17_0_vb : i32
+          memref.store %ps17_0_na, %partners[%ps17_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps17_0_nb, %partners[%ps17_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps17_1_pair = arith.constant 32 : index
+          %ps17_1_tp = arith.addi %lane, %ps17_1_pair : index
+          %ps17_1_s = arith.constant 16 : index
+          %ps17_1_sm1 = arith.constant 15 : index
+          %ps17_1_low = arith.andi %ps17_1_tp, %ps17_1_sm1 : index
+          %ps17_1_twice = arith.addi %ps17_1_tp, %ps17_1_tp : index
+          %ps17_1_a = arith.subi %ps17_1_twice, %ps17_1_low : index
+          %ps17_1_b = arith.addi %ps17_1_a, %ps17_1_s : index
+          %ps17_1_sz = arith.constant 64 : index
+          %ps17_1_upb = arith.andi %ps17_1_a, %ps17_1_sz : index
+          %ps17_1_z = arith.constant 0 : index
+          %ps17_1_up = arith.cmpi eq, %ps17_1_upb, %ps17_1_z : index
+          %ps17_1_aa = arith.addi %pbase, %ps17_1_a : index
+          %ps17_1_bb = arith.addi %pbase, %ps17_1_b : index
+          %ps17_1_va = memref.load %partners[%ps17_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps17_1_vb = memref.load %partners[%ps17_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps17_1_gt = arith.cmpi sgt, %ps17_1_va, %ps17_1_vb : i32
+          %ps17_1_swap = arith.cmpi eq, %ps17_1_gt, %ps17_1_up : i1
+          %ps17_1_na = arith.select %ps17_1_swap, %ps17_1_vb, %ps17_1_va : i32
+          %ps17_1_nb = arith.select %ps17_1_swap, %ps17_1_va, %ps17_1_vb : i32
+          memref.store %ps17_1_na, %partners[%ps17_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps17_1_nb, %partners[%ps17_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps18_0_pair = arith.constant 0 : index
+          %ps18_0_tp = arith.addi %lane, %ps18_0_pair : index
+          %ps18_0_s = arith.constant 8 : index
+          %ps18_0_sm1 = arith.constant 7 : index
+          %ps18_0_low = arith.andi %ps18_0_tp, %ps18_0_sm1 : index
+          %ps18_0_twice = arith.addi %ps18_0_tp, %ps18_0_tp : index
+          %ps18_0_a = arith.subi %ps18_0_twice, %ps18_0_low : index
+          %ps18_0_b = arith.addi %ps18_0_a, %ps18_0_s : index
+          %ps18_0_sz = arith.constant 64 : index
+          %ps18_0_upb = arith.andi %ps18_0_a, %ps18_0_sz : index
+          %ps18_0_z = arith.constant 0 : index
+          %ps18_0_up = arith.cmpi eq, %ps18_0_upb, %ps18_0_z : index
+          %ps18_0_aa = arith.addi %pbase, %ps18_0_a : index
+          %ps18_0_bb = arith.addi %pbase, %ps18_0_b : index
+          %ps18_0_va = memref.load %partners[%ps18_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps18_0_vb = memref.load %partners[%ps18_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps18_0_gt = arith.cmpi sgt, %ps18_0_va, %ps18_0_vb : i32
+          %ps18_0_swap = arith.cmpi eq, %ps18_0_gt, %ps18_0_up : i1
+          %ps18_0_na = arith.select %ps18_0_swap, %ps18_0_vb, %ps18_0_va : i32
+          %ps18_0_nb = arith.select %ps18_0_swap, %ps18_0_va, %ps18_0_vb : i32
+          memref.store %ps18_0_na, %partners[%ps18_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps18_0_nb, %partners[%ps18_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps18_1_pair = arith.constant 32 : index
+          %ps18_1_tp = arith.addi %lane, %ps18_1_pair : index
+          %ps18_1_s = arith.constant 8 : index
+          %ps18_1_sm1 = arith.constant 7 : index
+          %ps18_1_low = arith.andi %ps18_1_tp, %ps18_1_sm1 : index
+          %ps18_1_twice = arith.addi %ps18_1_tp, %ps18_1_tp : index
+          %ps18_1_a = arith.subi %ps18_1_twice, %ps18_1_low : index
+          %ps18_1_b = arith.addi %ps18_1_a, %ps18_1_s : index
+          %ps18_1_sz = arith.constant 64 : index
+          %ps18_1_upb = arith.andi %ps18_1_a, %ps18_1_sz : index
+          %ps18_1_z = arith.constant 0 : index
+          %ps18_1_up = arith.cmpi eq, %ps18_1_upb, %ps18_1_z : index
+          %ps18_1_aa = arith.addi %pbase, %ps18_1_a : index
+          %ps18_1_bb = arith.addi %pbase, %ps18_1_b : index
+          %ps18_1_va = memref.load %partners[%ps18_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps18_1_vb = memref.load %partners[%ps18_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps18_1_gt = arith.cmpi sgt, %ps18_1_va, %ps18_1_vb : i32
+          %ps18_1_swap = arith.cmpi eq, %ps18_1_gt, %ps18_1_up : i1
+          %ps18_1_na = arith.select %ps18_1_swap, %ps18_1_vb, %ps18_1_va : i32
+          %ps18_1_nb = arith.select %ps18_1_swap, %ps18_1_va, %ps18_1_vb : i32
+          memref.store %ps18_1_na, %partners[%ps18_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps18_1_nb, %partners[%ps18_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps19_0_pair = arith.constant 0 : index
+          %ps19_0_tp = arith.addi %lane, %ps19_0_pair : index
+          %ps19_0_s = arith.constant 4 : index
+          %ps19_0_sm1 = arith.constant 3 : index
+          %ps19_0_low = arith.andi %ps19_0_tp, %ps19_0_sm1 : index
+          %ps19_0_twice = arith.addi %ps19_0_tp, %ps19_0_tp : index
+          %ps19_0_a = arith.subi %ps19_0_twice, %ps19_0_low : index
+          %ps19_0_b = arith.addi %ps19_0_a, %ps19_0_s : index
+          %ps19_0_sz = arith.constant 64 : index
+          %ps19_0_upb = arith.andi %ps19_0_a, %ps19_0_sz : index
+          %ps19_0_z = arith.constant 0 : index
+          %ps19_0_up = arith.cmpi eq, %ps19_0_upb, %ps19_0_z : index
+          %ps19_0_aa = arith.addi %pbase, %ps19_0_a : index
+          %ps19_0_bb = arith.addi %pbase, %ps19_0_b : index
+          %ps19_0_va = memref.load %partners[%ps19_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps19_0_vb = memref.load %partners[%ps19_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps19_0_gt = arith.cmpi sgt, %ps19_0_va, %ps19_0_vb : i32
+          %ps19_0_swap = arith.cmpi eq, %ps19_0_gt, %ps19_0_up : i1
+          %ps19_0_na = arith.select %ps19_0_swap, %ps19_0_vb, %ps19_0_va : i32
+          %ps19_0_nb = arith.select %ps19_0_swap, %ps19_0_va, %ps19_0_vb : i32
+          memref.store %ps19_0_na, %partners[%ps19_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps19_0_nb, %partners[%ps19_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps19_1_pair = arith.constant 32 : index
+          %ps19_1_tp = arith.addi %lane, %ps19_1_pair : index
+          %ps19_1_s = arith.constant 4 : index
+          %ps19_1_sm1 = arith.constant 3 : index
+          %ps19_1_low = arith.andi %ps19_1_tp, %ps19_1_sm1 : index
+          %ps19_1_twice = arith.addi %ps19_1_tp, %ps19_1_tp : index
+          %ps19_1_a = arith.subi %ps19_1_twice, %ps19_1_low : index
+          %ps19_1_b = arith.addi %ps19_1_a, %ps19_1_s : index
+          %ps19_1_sz = arith.constant 64 : index
+          %ps19_1_upb = arith.andi %ps19_1_a, %ps19_1_sz : index
+          %ps19_1_z = arith.constant 0 : index
+          %ps19_1_up = arith.cmpi eq, %ps19_1_upb, %ps19_1_z : index
+          %ps19_1_aa = arith.addi %pbase, %ps19_1_a : index
+          %ps19_1_bb = arith.addi %pbase, %ps19_1_b : index
+          %ps19_1_va = memref.load %partners[%ps19_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps19_1_vb = memref.load %partners[%ps19_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps19_1_gt = arith.cmpi sgt, %ps19_1_va, %ps19_1_vb : i32
+          %ps19_1_swap = arith.cmpi eq, %ps19_1_gt, %ps19_1_up : i1
+          %ps19_1_na = arith.select %ps19_1_swap, %ps19_1_vb, %ps19_1_va : i32
+          %ps19_1_nb = arith.select %ps19_1_swap, %ps19_1_va, %ps19_1_vb : i32
+          memref.store %ps19_1_na, %partners[%ps19_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps19_1_nb, %partners[%ps19_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps20_0_pair = arith.constant 0 : index
+          %ps20_0_tp = arith.addi %lane, %ps20_0_pair : index
+          %ps20_0_s = arith.constant 2 : index
+          %ps20_0_sm1 = arith.constant 1 : index
+          %ps20_0_low = arith.andi %ps20_0_tp, %ps20_0_sm1 : index
+          %ps20_0_twice = arith.addi %ps20_0_tp, %ps20_0_tp : index
+          %ps20_0_a = arith.subi %ps20_0_twice, %ps20_0_low : index
+          %ps20_0_b = arith.addi %ps20_0_a, %ps20_0_s : index
+          %ps20_0_sz = arith.constant 64 : index
+          %ps20_0_upb = arith.andi %ps20_0_a, %ps20_0_sz : index
+          %ps20_0_z = arith.constant 0 : index
+          %ps20_0_up = arith.cmpi eq, %ps20_0_upb, %ps20_0_z : index
+          %ps20_0_aa = arith.addi %pbase, %ps20_0_a : index
+          %ps20_0_bb = arith.addi %pbase, %ps20_0_b : index
+          %ps20_0_va = memref.load %partners[%ps20_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps20_0_vb = memref.load %partners[%ps20_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps20_0_gt = arith.cmpi sgt, %ps20_0_va, %ps20_0_vb : i32
+          %ps20_0_swap = arith.cmpi eq, %ps20_0_gt, %ps20_0_up : i1
+          %ps20_0_na = arith.select %ps20_0_swap, %ps20_0_vb, %ps20_0_va : i32
+          %ps20_0_nb = arith.select %ps20_0_swap, %ps20_0_va, %ps20_0_vb : i32
+          memref.store %ps20_0_na, %partners[%ps20_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps20_0_nb, %partners[%ps20_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps20_1_pair = arith.constant 32 : index
+          %ps20_1_tp = arith.addi %lane, %ps20_1_pair : index
+          %ps20_1_s = arith.constant 2 : index
+          %ps20_1_sm1 = arith.constant 1 : index
+          %ps20_1_low = arith.andi %ps20_1_tp, %ps20_1_sm1 : index
+          %ps20_1_twice = arith.addi %ps20_1_tp, %ps20_1_tp : index
+          %ps20_1_a = arith.subi %ps20_1_twice, %ps20_1_low : index
+          %ps20_1_b = arith.addi %ps20_1_a, %ps20_1_s : index
+          %ps20_1_sz = arith.constant 64 : index
+          %ps20_1_upb = arith.andi %ps20_1_a, %ps20_1_sz : index
+          %ps20_1_z = arith.constant 0 : index
+          %ps20_1_up = arith.cmpi eq, %ps20_1_upb, %ps20_1_z : index
+          %ps20_1_aa = arith.addi %pbase, %ps20_1_a : index
+          %ps20_1_bb = arith.addi %pbase, %ps20_1_b : index
+          %ps20_1_va = memref.load %partners[%ps20_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps20_1_vb = memref.load %partners[%ps20_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps20_1_gt = arith.cmpi sgt, %ps20_1_va, %ps20_1_vb : i32
+          %ps20_1_swap = arith.cmpi eq, %ps20_1_gt, %ps20_1_up : i1
+          %ps20_1_na = arith.select %ps20_1_swap, %ps20_1_vb, %ps20_1_va : i32
+          %ps20_1_nb = arith.select %ps20_1_swap, %ps20_1_va, %ps20_1_vb : i32
+          memref.store %ps20_1_na, %partners[%ps20_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps20_1_nb, %partners[%ps20_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps21_0_pair = arith.constant 0 : index
+          %ps21_0_tp = arith.addi %lane, %ps21_0_pair : index
+          %ps21_0_s = arith.constant 1 : index
+          %ps21_0_sm1 = arith.constant 0 : index
+          %ps21_0_low = arith.andi %ps21_0_tp, %ps21_0_sm1 : index
+          %ps21_0_twice = arith.addi %ps21_0_tp, %ps21_0_tp : index
+          %ps21_0_a = arith.subi %ps21_0_twice, %ps21_0_low : index
+          %ps21_0_b = arith.addi %ps21_0_a, %ps21_0_s : index
+          %ps21_0_sz = arith.constant 64 : index
+          %ps21_0_upb = arith.andi %ps21_0_a, %ps21_0_sz : index
+          %ps21_0_z = arith.constant 0 : index
+          %ps21_0_up = arith.cmpi eq, %ps21_0_upb, %ps21_0_z : index
+          %ps21_0_aa = arith.addi %pbase, %ps21_0_a : index
+          %ps21_0_bb = arith.addi %pbase, %ps21_0_b : index
+          %ps21_0_va = memref.load %partners[%ps21_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps21_0_vb = memref.load %partners[%ps21_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps21_0_gt = arith.cmpi sgt, %ps21_0_va, %ps21_0_vb : i32
+          %ps21_0_swap = arith.cmpi eq, %ps21_0_gt, %ps21_0_up : i1
+          %ps21_0_na = arith.select %ps21_0_swap, %ps21_0_vb, %ps21_0_va : i32
+          %ps21_0_nb = arith.select %ps21_0_swap, %ps21_0_va, %ps21_0_vb : i32
+          memref.store %ps21_0_na, %partners[%ps21_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps21_0_nb, %partners[%ps21_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps21_1_pair = arith.constant 32 : index
+          %ps21_1_tp = arith.addi %lane, %ps21_1_pair : index
+          %ps21_1_s = arith.constant 1 : index
+          %ps21_1_sm1 = arith.constant 0 : index
+          %ps21_1_low = arith.andi %ps21_1_tp, %ps21_1_sm1 : index
+          %ps21_1_twice = arith.addi %ps21_1_tp, %ps21_1_tp : index
+          %ps21_1_a = arith.subi %ps21_1_twice, %ps21_1_low : index
+          %ps21_1_b = arith.addi %ps21_1_a, %ps21_1_s : index
+          %ps21_1_sz = arith.constant 64 : index
+          %ps21_1_upb = arith.andi %ps21_1_a, %ps21_1_sz : index
+          %ps21_1_z = arith.constant 0 : index
+          %ps21_1_up = arith.cmpi eq, %ps21_1_upb, %ps21_1_z : index
+          %ps21_1_aa = arith.addi %pbase, %ps21_1_a : index
+          %ps21_1_bb = arith.addi %pbase, %ps21_1_b : index
+          %ps21_1_va = memref.load %partners[%ps21_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps21_1_vb = memref.load %partners[%ps21_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps21_1_gt = arith.cmpi sgt, %ps21_1_va, %ps21_1_vb : i32
+          %ps21_1_swap = arith.cmpi eq, %ps21_1_gt, %ps21_1_up : i1
+          %ps21_1_na = arith.select %ps21_1_swap, %ps21_1_vb, %ps21_1_va : i32
+          %ps21_1_nb = arith.select %ps21_1_swap, %ps21_1_va, %ps21_1_vb : i32
+          memref.store %ps21_1_na, %partners[%ps21_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps21_1_nb, %partners[%ps21_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps22_0_pair = arith.constant 0 : index
+          %ps22_0_tp = arith.addi %lane, %ps22_0_pair : index
+          %ps22_0_s = arith.constant 64 : index
+          %ps22_0_sm1 = arith.constant 63 : index
+          %ps22_0_low = arith.andi %ps22_0_tp, %ps22_0_sm1 : index
+          %ps22_0_twice = arith.addi %ps22_0_tp, %ps22_0_tp : index
+          %ps22_0_a = arith.subi %ps22_0_twice, %ps22_0_low : index
+          %ps22_0_b = arith.addi %ps22_0_a, %ps22_0_s : index
+          %ps22_0_sz = arith.constant 128 : index
+          %ps22_0_upb = arith.andi %ps22_0_a, %ps22_0_sz : index
+          %ps22_0_z = arith.constant 0 : index
+          %ps22_0_up = arith.cmpi eq, %ps22_0_upb, %ps22_0_z : index
+          %ps22_0_aa = arith.addi %pbase, %ps22_0_a : index
+          %ps22_0_bb = arith.addi %pbase, %ps22_0_b : index
+          %ps22_0_va = memref.load %partners[%ps22_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps22_0_vb = memref.load %partners[%ps22_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps22_0_gt = arith.cmpi sgt, %ps22_0_va, %ps22_0_vb : i32
+          %ps22_0_swap = arith.cmpi eq, %ps22_0_gt, %ps22_0_up : i1
+          %ps22_0_na = arith.select %ps22_0_swap, %ps22_0_vb, %ps22_0_va : i32
+          %ps22_0_nb = arith.select %ps22_0_swap, %ps22_0_va, %ps22_0_vb : i32
+          memref.store %ps22_0_na, %partners[%ps22_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps22_0_nb, %partners[%ps22_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps22_1_pair = arith.constant 32 : index
+          %ps22_1_tp = arith.addi %lane, %ps22_1_pair : index
+          %ps22_1_s = arith.constant 64 : index
+          %ps22_1_sm1 = arith.constant 63 : index
+          %ps22_1_low = arith.andi %ps22_1_tp, %ps22_1_sm1 : index
+          %ps22_1_twice = arith.addi %ps22_1_tp, %ps22_1_tp : index
+          %ps22_1_a = arith.subi %ps22_1_twice, %ps22_1_low : index
+          %ps22_1_b = arith.addi %ps22_1_a, %ps22_1_s : index
+          %ps22_1_sz = arith.constant 128 : index
+          %ps22_1_upb = arith.andi %ps22_1_a, %ps22_1_sz : index
+          %ps22_1_z = arith.constant 0 : index
+          %ps22_1_up = arith.cmpi eq, %ps22_1_upb, %ps22_1_z : index
+          %ps22_1_aa = arith.addi %pbase, %ps22_1_a : index
+          %ps22_1_bb = arith.addi %pbase, %ps22_1_b : index
+          %ps22_1_va = memref.load %partners[%ps22_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps22_1_vb = memref.load %partners[%ps22_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps22_1_gt = arith.cmpi sgt, %ps22_1_va, %ps22_1_vb : i32
+          %ps22_1_swap = arith.cmpi eq, %ps22_1_gt, %ps22_1_up : i1
+          %ps22_1_na = arith.select %ps22_1_swap, %ps22_1_vb, %ps22_1_va : i32
+          %ps22_1_nb = arith.select %ps22_1_swap, %ps22_1_va, %ps22_1_vb : i32
+          memref.store %ps22_1_na, %partners[%ps22_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps22_1_nb, %partners[%ps22_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps23_0_pair = arith.constant 0 : index
+          %ps23_0_tp = arith.addi %lane, %ps23_0_pair : index
+          %ps23_0_s = arith.constant 32 : index
+          %ps23_0_sm1 = arith.constant 31 : index
+          %ps23_0_low = arith.andi %ps23_0_tp, %ps23_0_sm1 : index
+          %ps23_0_twice = arith.addi %ps23_0_tp, %ps23_0_tp : index
+          %ps23_0_a = arith.subi %ps23_0_twice, %ps23_0_low : index
+          %ps23_0_b = arith.addi %ps23_0_a, %ps23_0_s : index
+          %ps23_0_sz = arith.constant 128 : index
+          %ps23_0_upb = arith.andi %ps23_0_a, %ps23_0_sz : index
+          %ps23_0_z = arith.constant 0 : index
+          %ps23_0_up = arith.cmpi eq, %ps23_0_upb, %ps23_0_z : index
+          %ps23_0_aa = arith.addi %pbase, %ps23_0_a : index
+          %ps23_0_bb = arith.addi %pbase, %ps23_0_b : index
+          %ps23_0_va = memref.load %partners[%ps23_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps23_0_vb = memref.load %partners[%ps23_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps23_0_gt = arith.cmpi sgt, %ps23_0_va, %ps23_0_vb : i32
+          %ps23_0_swap = arith.cmpi eq, %ps23_0_gt, %ps23_0_up : i1
+          %ps23_0_na = arith.select %ps23_0_swap, %ps23_0_vb, %ps23_0_va : i32
+          %ps23_0_nb = arith.select %ps23_0_swap, %ps23_0_va, %ps23_0_vb : i32
+          memref.store %ps23_0_na, %partners[%ps23_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps23_0_nb, %partners[%ps23_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps23_1_pair = arith.constant 32 : index
+          %ps23_1_tp = arith.addi %lane, %ps23_1_pair : index
+          %ps23_1_s = arith.constant 32 : index
+          %ps23_1_sm1 = arith.constant 31 : index
+          %ps23_1_low = arith.andi %ps23_1_tp, %ps23_1_sm1 : index
+          %ps23_1_twice = arith.addi %ps23_1_tp, %ps23_1_tp : index
+          %ps23_1_a = arith.subi %ps23_1_twice, %ps23_1_low : index
+          %ps23_1_b = arith.addi %ps23_1_a, %ps23_1_s : index
+          %ps23_1_sz = arith.constant 128 : index
+          %ps23_1_upb = arith.andi %ps23_1_a, %ps23_1_sz : index
+          %ps23_1_z = arith.constant 0 : index
+          %ps23_1_up = arith.cmpi eq, %ps23_1_upb, %ps23_1_z : index
+          %ps23_1_aa = arith.addi %pbase, %ps23_1_a : index
+          %ps23_1_bb = arith.addi %pbase, %ps23_1_b : index
+          %ps23_1_va = memref.load %partners[%ps23_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps23_1_vb = memref.load %partners[%ps23_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps23_1_gt = arith.cmpi sgt, %ps23_1_va, %ps23_1_vb : i32
+          %ps23_1_swap = arith.cmpi eq, %ps23_1_gt, %ps23_1_up : i1
+          %ps23_1_na = arith.select %ps23_1_swap, %ps23_1_vb, %ps23_1_va : i32
+          %ps23_1_nb = arith.select %ps23_1_swap, %ps23_1_va, %ps23_1_vb : i32
+          memref.store %ps23_1_na, %partners[%ps23_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps23_1_nb, %partners[%ps23_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps24_0_pair = arith.constant 0 : index
+          %ps24_0_tp = arith.addi %lane, %ps24_0_pair : index
+          %ps24_0_s = arith.constant 16 : index
+          %ps24_0_sm1 = arith.constant 15 : index
+          %ps24_0_low = arith.andi %ps24_0_tp, %ps24_0_sm1 : index
+          %ps24_0_twice = arith.addi %ps24_0_tp, %ps24_0_tp : index
+          %ps24_0_a = arith.subi %ps24_0_twice, %ps24_0_low : index
+          %ps24_0_b = arith.addi %ps24_0_a, %ps24_0_s : index
+          %ps24_0_sz = arith.constant 128 : index
+          %ps24_0_upb = arith.andi %ps24_0_a, %ps24_0_sz : index
+          %ps24_0_z = arith.constant 0 : index
+          %ps24_0_up = arith.cmpi eq, %ps24_0_upb, %ps24_0_z : index
+          %ps24_0_aa = arith.addi %pbase, %ps24_0_a : index
+          %ps24_0_bb = arith.addi %pbase, %ps24_0_b : index
+          %ps24_0_va = memref.load %partners[%ps24_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps24_0_vb = memref.load %partners[%ps24_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps24_0_gt = arith.cmpi sgt, %ps24_0_va, %ps24_0_vb : i32
+          %ps24_0_swap = arith.cmpi eq, %ps24_0_gt, %ps24_0_up : i1
+          %ps24_0_na = arith.select %ps24_0_swap, %ps24_0_vb, %ps24_0_va : i32
+          %ps24_0_nb = arith.select %ps24_0_swap, %ps24_0_va, %ps24_0_vb : i32
+          memref.store %ps24_0_na, %partners[%ps24_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps24_0_nb, %partners[%ps24_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps24_1_pair = arith.constant 32 : index
+          %ps24_1_tp = arith.addi %lane, %ps24_1_pair : index
+          %ps24_1_s = arith.constant 16 : index
+          %ps24_1_sm1 = arith.constant 15 : index
+          %ps24_1_low = arith.andi %ps24_1_tp, %ps24_1_sm1 : index
+          %ps24_1_twice = arith.addi %ps24_1_tp, %ps24_1_tp : index
+          %ps24_1_a = arith.subi %ps24_1_twice, %ps24_1_low : index
+          %ps24_1_b = arith.addi %ps24_1_a, %ps24_1_s : index
+          %ps24_1_sz = arith.constant 128 : index
+          %ps24_1_upb = arith.andi %ps24_1_a, %ps24_1_sz : index
+          %ps24_1_z = arith.constant 0 : index
+          %ps24_1_up = arith.cmpi eq, %ps24_1_upb, %ps24_1_z : index
+          %ps24_1_aa = arith.addi %pbase, %ps24_1_a : index
+          %ps24_1_bb = arith.addi %pbase, %ps24_1_b : index
+          %ps24_1_va = memref.load %partners[%ps24_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps24_1_vb = memref.load %partners[%ps24_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps24_1_gt = arith.cmpi sgt, %ps24_1_va, %ps24_1_vb : i32
+          %ps24_1_swap = arith.cmpi eq, %ps24_1_gt, %ps24_1_up : i1
+          %ps24_1_na = arith.select %ps24_1_swap, %ps24_1_vb, %ps24_1_va : i32
+          %ps24_1_nb = arith.select %ps24_1_swap, %ps24_1_va, %ps24_1_vb : i32
+          memref.store %ps24_1_na, %partners[%ps24_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps24_1_nb, %partners[%ps24_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps25_0_pair = arith.constant 0 : index
+          %ps25_0_tp = arith.addi %lane, %ps25_0_pair : index
+          %ps25_0_s = arith.constant 8 : index
+          %ps25_0_sm1 = arith.constant 7 : index
+          %ps25_0_low = arith.andi %ps25_0_tp, %ps25_0_sm1 : index
+          %ps25_0_twice = arith.addi %ps25_0_tp, %ps25_0_tp : index
+          %ps25_0_a = arith.subi %ps25_0_twice, %ps25_0_low : index
+          %ps25_0_b = arith.addi %ps25_0_a, %ps25_0_s : index
+          %ps25_0_sz = arith.constant 128 : index
+          %ps25_0_upb = arith.andi %ps25_0_a, %ps25_0_sz : index
+          %ps25_0_z = arith.constant 0 : index
+          %ps25_0_up = arith.cmpi eq, %ps25_0_upb, %ps25_0_z : index
+          %ps25_0_aa = arith.addi %pbase, %ps25_0_a : index
+          %ps25_0_bb = arith.addi %pbase, %ps25_0_b : index
+          %ps25_0_va = memref.load %partners[%ps25_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps25_0_vb = memref.load %partners[%ps25_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps25_0_gt = arith.cmpi sgt, %ps25_0_va, %ps25_0_vb : i32
+          %ps25_0_swap = arith.cmpi eq, %ps25_0_gt, %ps25_0_up : i1
+          %ps25_0_na = arith.select %ps25_0_swap, %ps25_0_vb, %ps25_0_va : i32
+          %ps25_0_nb = arith.select %ps25_0_swap, %ps25_0_va, %ps25_0_vb : i32
+          memref.store %ps25_0_na, %partners[%ps25_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps25_0_nb, %partners[%ps25_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps25_1_pair = arith.constant 32 : index
+          %ps25_1_tp = arith.addi %lane, %ps25_1_pair : index
+          %ps25_1_s = arith.constant 8 : index
+          %ps25_1_sm1 = arith.constant 7 : index
+          %ps25_1_low = arith.andi %ps25_1_tp, %ps25_1_sm1 : index
+          %ps25_1_twice = arith.addi %ps25_1_tp, %ps25_1_tp : index
+          %ps25_1_a = arith.subi %ps25_1_twice, %ps25_1_low : index
+          %ps25_1_b = arith.addi %ps25_1_a, %ps25_1_s : index
+          %ps25_1_sz = arith.constant 128 : index
+          %ps25_1_upb = arith.andi %ps25_1_a, %ps25_1_sz : index
+          %ps25_1_z = arith.constant 0 : index
+          %ps25_1_up = arith.cmpi eq, %ps25_1_upb, %ps25_1_z : index
+          %ps25_1_aa = arith.addi %pbase, %ps25_1_a : index
+          %ps25_1_bb = arith.addi %pbase, %ps25_1_b : index
+          %ps25_1_va = memref.load %partners[%ps25_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps25_1_vb = memref.load %partners[%ps25_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps25_1_gt = arith.cmpi sgt, %ps25_1_va, %ps25_1_vb : i32
+          %ps25_1_swap = arith.cmpi eq, %ps25_1_gt, %ps25_1_up : i1
+          %ps25_1_na = arith.select %ps25_1_swap, %ps25_1_vb, %ps25_1_va : i32
+          %ps25_1_nb = arith.select %ps25_1_swap, %ps25_1_va, %ps25_1_vb : i32
+          memref.store %ps25_1_na, %partners[%ps25_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps25_1_nb, %partners[%ps25_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps26_0_pair = arith.constant 0 : index
+          %ps26_0_tp = arith.addi %lane, %ps26_0_pair : index
+          %ps26_0_s = arith.constant 4 : index
+          %ps26_0_sm1 = arith.constant 3 : index
+          %ps26_0_low = arith.andi %ps26_0_tp, %ps26_0_sm1 : index
+          %ps26_0_twice = arith.addi %ps26_0_tp, %ps26_0_tp : index
+          %ps26_0_a = arith.subi %ps26_0_twice, %ps26_0_low : index
+          %ps26_0_b = arith.addi %ps26_0_a, %ps26_0_s : index
+          %ps26_0_sz = arith.constant 128 : index
+          %ps26_0_upb = arith.andi %ps26_0_a, %ps26_0_sz : index
+          %ps26_0_z = arith.constant 0 : index
+          %ps26_0_up = arith.cmpi eq, %ps26_0_upb, %ps26_0_z : index
+          %ps26_0_aa = arith.addi %pbase, %ps26_0_a : index
+          %ps26_0_bb = arith.addi %pbase, %ps26_0_b : index
+          %ps26_0_va = memref.load %partners[%ps26_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps26_0_vb = memref.load %partners[%ps26_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps26_0_gt = arith.cmpi sgt, %ps26_0_va, %ps26_0_vb : i32
+          %ps26_0_swap = arith.cmpi eq, %ps26_0_gt, %ps26_0_up : i1
+          %ps26_0_na = arith.select %ps26_0_swap, %ps26_0_vb, %ps26_0_va : i32
+          %ps26_0_nb = arith.select %ps26_0_swap, %ps26_0_va, %ps26_0_vb : i32
+          memref.store %ps26_0_na, %partners[%ps26_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps26_0_nb, %partners[%ps26_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps26_1_pair = arith.constant 32 : index
+          %ps26_1_tp = arith.addi %lane, %ps26_1_pair : index
+          %ps26_1_s = arith.constant 4 : index
+          %ps26_1_sm1 = arith.constant 3 : index
+          %ps26_1_low = arith.andi %ps26_1_tp, %ps26_1_sm1 : index
+          %ps26_1_twice = arith.addi %ps26_1_tp, %ps26_1_tp : index
+          %ps26_1_a = arith.subi %ps26_1_twice, %ps26_1_low : index
+          %ps26_1_b = arith.addi %ps26_1_a, %ps26_1_s : index
+          %ps26_1_sz = arith.constant 128 : index
+          %ps26_1_upb = arith.andi %ps26_1_a, %ps26_1_sz : index
+          %ps26_1_z = arith.constant 0 : index
+          %ps26_1_up = arith.cmpi eq, %ps26_1_upb, %ps26_1_z : index
+          %ps26_1_aa = arith.addi %pbase, %ps26_1_a : index
+          %ps26_1_bb = arith.addi %pbase, %ps26_1_b : index
+          %ps26_1_va = memref.load %partners[%ps26_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps26_1_vb = memref.load %partners[%ps26_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps26_1_gt = arith.cmpi sgt, %ps26_1_va, %ps26_1_vb : i32
+          %ps26_1_swap = arith.cmpi eq, %ps26_1_gt, %ps26_1_up : i1
+          %ps26_1_na = arith.select %ps26_1_swap, %ps26_1_vb, %ps26_1_va : i32
+          %ps26_1_nb = arith.select %ps26_1_swap, %ps26_1_va, %ps26_1_vb : i32
+          memref.store %ps26_1_na, %partners[%ps26_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps26_1_nb, %partners[%ps26_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps27_0_pair = arith.constant 0 : index
+          %ps27_0_tp = arith.addi %lane, %ps27_0_pair : index
+          %ps27_0_s = arith.constant 2 : index
+          %ps27_0_sm1 = arith.constant 1 : index
+          %ps27_0_low = arith.andi %ps27_0_tp, %ps27_0_sm1 : index
+          %ps27_0_twice = arith.addi %ps27_0_tp, %ps27_0_tp : index
+          %ps27_0_a = arith.subi %ps27_0_twice, %ps27_0_low : index
+          %ps27_0_b = arith.addi %ps27_0_a, %ps27_0_s : index
+          %ps27_0_sz = arith.constant 128 : index
+          %ps27_0_upb = arith.andi %ps27_0_a, %ps27_0_sz : index
+          %ps27_0_z = arith.constant 0 : index
+          %ps27_0_up = arith.cmpi eq, %ps27_0_upb, %ps27_0_z : index
+          %ps27_0_aa = arith.addi %pbase, %ps27_0_a : index
+          %ps27_0_bb = arith.addi %pbase, %ps27_0_b : index
+          %ps27_0_va = memref.load %partners[%ps27_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps27_0_vb = memref.load %partners[%ps27_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps27_0_gt = arith.cmpi sgt, %ps27_0_va, %ps27_0_vb : i32
+          %ps27_0_swap = arith.cmpi eq, %ps27_0_gt, %ps27_0_up : i1
+          %ps27_0_na = arith.select %ps27_0_swap, %ps27_0_vb, %ps27_0_va : i32
+          %ps27_0_nb = arith.select %ps27_0_swap, %ps27_0_va, %ps27_0_vb : i32
+          memref.store %ps27_0_na, %partners[%ps27_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps27_0_nb, %partners[%ps27_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps27_1_pair = arith.constant 32 : index
+          %ps27_1_tp = arith.addi %lane, %ps27_1_pair : index
+          %ps27_1_s = arith.constant 2 : index
+          %ps27_1_sm1 = arith.constant 1 : index
+          %ps27_1_low = arith.andi %ps27_1_tp, %ps27_1_sm1 : index
+          %ps27_1_twice = arith.addi %ps27_1_tp, %ps27_1_tp : index
+          %ps27_1_a = arith.subi %ps27_1_twice, %ps27_1_low : index
+          %ps27_1_b = arith.addi %ps27_1_a, %ps27_1_s : index
+          %ps27_1_sz = arith.constant 128 : index
+          %ps27_1_upb = arith.andi %ps27_1_a, %ps27_1_sz : index
+          %ps27_1_z = arith.constant 0 : index
+          %ps27_1_up = arith.cmpi eq, %ps27_1_upb, %ps27_1_z : index
+          %ps27_1_aa = arith.addi %pbase, %ps27_1_a : index
+          %ps27_1_bb = arith.addi %pbase, %ps27_1_b : index
+          %ps27_1_va = memref.load %partners[%ps27_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps27_1_vb = memref.load %partners[%ps27_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps27_1_gt = arith.cmpi sgt, %ps27_1_va, %ps27_1_vb : i32
+          %ps27_1_swap = arith.cmpi eq, %ps27_1_gt, %ps27_1_up : i1
+          %ps27_1_na = arith.select %ps27_1_swap, %ps27_1_vb, %ps27_1_va : i32
+          %ps27_1_nb = arith.select %ps27_1_swap, %ps27_1_va, %ps27_1_vb : i32
+          memref.store %ps27_1_na, %partners[%ps27_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps27_1_nb, %partners[%ps27_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps28_0_pair = arith.constant 0 : index
+          %ps28_0_tp = arith.addi %lane, %ps28_0_pair : index
+          %ps28_0_s = arith.constant 1 : index
+          %ps28_0_sm1 = arith.constant 0 : index
+          %ps28_0_low = arith.andi %ps28_0_tp, %ps28_0_sm1 : index
+          %ps28_0_twice = arith.addi %ps28_0_tp, %ps28_0_tp : index
+          %ps28_0_a = arith.subi %ps28_0_twice, %ps28_0_low : index
+          %ps28_0_b = arith.addi %ps28_0_a, %ps28_0_s : index
+          %ps28_0_sz = arith.constant 128 : index
+          %ps28_0_upb = arith.andi %ps28_0_a, %ps28_0_sz : index
+          %ps28_0_z = arith.constant 0 : index
+          %ps28_0_up = arith.cmpi eq, %ps28_0_upb, %ps28_0_z : index
+          %ps28_0_aa = arith.addi %pbase, %ps28_0_a : index
+          %ps28_0_bb = arith.addi %pbase, %ps28_0_b : index
+          %ps28_0_va = memref.load %partners[%ps28_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps28_0_vb = memref.load %partners[%ps28_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps28_0_gt = arith.cmpi sgt, %ps28_0_va, %ps28_0_vb : i32
+          %ps28_0_swap = arith.cmpi eq, %ps28_0_gt, %ps28_0_up : i1
+          %ps28_0_na = arith.select %ps28_0_swap, %ps28_0_vb, %ps28_0_va : i32
+          %ps28_0_nb = arith.select %ps28_0_swap, %ps28_0_va, %ps28_0_vb : i32
+          memref.store %ps28_0_na, %partners[%ps28_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps28_0_nb, %partners[%ps28_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps28_1_pair = arith.constant 32 : index
+          %ps28_1_tp = arith.addi %lane, %ps28_1_pair : index
+          %ps28_1_s = arith.constant 1 : index
+          %ps28_1_sm1 = arith.constant 0 : index
+          %ps28_1_low = arith.andi %ps28_1_tp, %ps28_1_sm1 : index
+          %ps28_1_twice = arith.addi %ps28_1_tp, %ps28_1_tp : index
+          %ps28_1_a = arith.subi %ps28_1_twice, %ps28_1_low : index
+          %ps28_1_b = arith.addi %ps28_1_a, %ps28_1_s : index
+          %ps28_1_sz = arith.constant 128 : index
+          %ps28_1_upb = arith.andi %ps28_1_a, %ps28_1_sz : index
+          %ps28_1_z = arith.constant 0 : index
+          %ps28_1_up = arith.cmpi eq, %ps28_1_upb, %ps28_1_z : index
+          %ps28_1_aa = arith.addi %pbase, %ps28_1_a : index
+          %ps28_1_bb = arith.addi %pbase, %ps28_1_b : index
+          %ps28_1_va = memref.load %partners[%ps28_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps28_1_vb = memref.load %partners[%ps28_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps28_1_gt = arith.cmpi sgt, %ps28_1_va, %ps28_1_vb : i32
+          %ps28_1_swap = arith.cmpi eq, %ps28_1_gt, %ps28_1_up : i1
+          %ps28_1_na = arith.select %ps28_1_swap, %ps28_1_vb, %ps28_1_va : i32
+          %ps28_1_nb = arith.select %ps28_1_swap, %ps28_1_va, %ps28_1_vb : i32
+          memref.store %ps28_1_na, %partners[%ps28_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps28_1_nb, %partners[%ps28_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+        } else {
+          %ps1_0_pair = arith.constant 0 : index
+          %ps1_0_tp = arith.addi %lane, %ps1_0_pair : index
+          %ps1_0_s = arith.constant 1 : index
+          %ps1_0_sm1 = arith.constant 0 : index
+          %ps1_0_low = arith.andi %ps1_0_tp, %ps1_0_sm1 : index
+          %ps1_0_twice = arith.addi %ps1_0_tp, %ps1_0_tp : index
+          %ps1_0_a = arith.subi %ps1_0_twice, %ps1_0_low : index
+          %ps1_0_b = arith.addi %ps1_0_a, %ps1_0_s : index
+          %ps1_0_sz = arith.constant 2 : index
+          %ps1_0_upb = arith.andi %ps1_0_a, %ps1_0_sz : index
+          %ps1_0_z = arith.constant 0 : index
+          %ps1_0_up = arith.cmpi eq, %ps1_0_upb, %ps1_0_z : index
+          %ps1_0_aa = arith.addi %pbase, %ps1_0_a : index
+          %ps1_0_bb = arith.addi %pbase, %ps1_0_b : index
+          %ps1_0_va = memref.load %partners[%ps1_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps1_0_vb = memref.load %partners[%ps1_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps1_0_gt = arith.cmpi sgt, %ps1_0_va, %ps1_0_vb : i32
+          %ps1_0_swap = arith.cmpi eq, %ps1_0_gt, %ps1_0_up : i1
+          %ps1_0_na = arith.select %ps1_0_swap, %ps1_0_vb, %ps1_0_va : i32
+          %ps1_0_nb = arith.select %ps1_0_swap, %ps1_0_va, %ps1_0_vb : i32
+          memref.store %ps1_0_na, %partners[%ps1_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps1_0_nb, %partners[%ps1_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps1_1_pair = arith.constant 32 : index
+          %ps1_1_tp = arith.addi %lane, %ps1_1_pair : index
+          %ps1_1_s = arith.constant 1 : index
+          %ps1_1_sm1 = arith.constant 0 : index
+          %ps1_1_low = arith.andi %ps1_1_tp, %ps1_1_sm1 : index
+          %ps1_1_twice = arith.addi %ps1_1_tp, %ps1_1_tp : index
+          %ps1_1_a = arith.subi %ps1_1_twice, %ps1_1_low : index
+          %ps1_1_b = arith.addi %ps1_1_a, %ps1_1_s : index
+          %ps1_1_sz = arith.constant 2 : index
+          %ps1_1_upb = arith.andi %ps1_1_a, %ps1_1_sz : index
+          %ps1_1_z = arith.constant 0 : index
+          %ps1_1_up = arith.cmpi eq, %ps1_1_upb, %ps1_1_z : index
+          %ps1_1_aa = arith.addi %pbase, %ps1_1_a : index
+          %ps1_1_bb = arith.addi %pbase, %ps1_1_b : index
+          %ps1_1_va = memref.load %partners[%ps1_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps1_1_vb = memref.load %partners[%ps1_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps1_1_gt = arith.cmpi sgt, %ps1_1_va, %ps1_1_vb : i32
+          %ps1_1_swap = arith.cmpi eq, %ps1_1_gt, %ps1_1_up : i1
+          %ps1_1_na = arith.select %ps1_1_swap, %ps1_1_vb, %ps1_1_va : i32
+          %ps1_1_nb = arith.select %ps1_1_swap, %ps1_1_va, %ps1_1_vb : i32
+          memref.store %ps1_1_na, %partners[%ps1_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps1_1_nb, %partners[%ps1_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps1_2_pair = arith.constant 64 : index
+          %ps1_2_tp = arith.addi %lane, %ps1_2_pair : index
+          %ps1_2_s = arith.constant 1 : index
+          %ps1_2_sm1 = arith.constant 0 : index
+          %ps1_2_low = arith.andi %ps1_2_tp, %ps1_2_sm1 : index
+          %ps1_2_twice = arith.addi %ps1_2_tp, %ps1_2_tp : index
+          %ps1_2_a = arith.subi %ps1_2_twice, %ps1_2_low : index
+          %ps1_2_b = arith.addi %ps1_2_a, %ps1_2_s : index
+          %ps1_2_sz = arith.constant 2 : index
+          %ps1_2_upb = arith.andi %ps1_2_a, %ps1_2_sz : index
+          %ps1_2_z = arith.constant 0 : index
+          %ps1_2_up = arith.cmpi eq, %ps1_2_upb, %ps1_2_z : index
+          %ps1_2_aa = arith.addi %pbase, %ps1_2_a : index
+          %ps1_2_bb = arith.addi %pbase, %ps1_2_b : index
+          %ps1_2_va = memref.load %partners[%ps1_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps1_2_vb = memref.load %partners[%ps1_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps1_2_gt = arith.cmpi sgt, %ps1_2_va, %ps1_2_vb : i32
+          %ps1_2_swap = arith.cmpi eq, %ps1_2_gt, %ps1_2_up : i1
+          %ps1_2_na = arith.select %ps1_2_swap, %ps1_2_vb, %ps1_2_va : i32
+          %ps1_2_nb = arith.select %ps1_2_swap, %ps1_2_va, %ps1_2_vb : i32
+          memref.store %ps1_2_na, %partners[%ps1_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps1_2_nb, %partners[%ps1_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps1_3_pair = arith.constant 96 : index
+          %ps1_3_tp = arith.addi %lane, %ps1_3_pair : index
+          %ps1_3_s = arith.constant 1 : index
+          %ps1_3_sm1 = arith.constant 0 : index
+          %ps1_3_low = arith.andi %ps1_3_tp, %ps1_3_sm1 : index
+          %ps1_3_twice = arith.addi %ps1_3_tp, %ps1_3_tp : index
+          %ps1_3_a = arith.subi %ps1_3_twice, %ps1_3_low : index
+          %ps1_3_b = arith.addi %ps1_3_a, %ps1_3_s : index
+          %ps1_3_sz = arith.constant 2 : index
+          %ps1_3_upb = arith.andi %ps1_3_a, %ps1_3_sz : index
+          %ps1_3_z = arith.constant 0 : index
+          %ps1_3_up = arith.cmpi eq, %ps1_3_upb, %ps1_3_z : index
+          %ps1_3_aa = arith.addi %pbase, %ps1_3_a : index
+          %ps1_3_bb = arith.addi %pbase, %ps1_3_b : index
+          %ps1_3_va = memref.load %partners[%ps1_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps1_3_vb = memref.load %partners[%ps1_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps1_3_gt = arith.cmpi sgt, %ps1_3_va, %ps1_3_vb : i32
+          %ps1_3_swap = arith.cmpi eq, %ps1_3_gt, %ps1_3_up : i1
+          %ps1_3_na = arith.select %ps1_3_swap, %ps1_3_vb, %ps1_3_va : i32
+          %ps1_3_nb = arith.select %ps1_3_swap, %ps1_3_va, %ps1_3_vb : i32
+          memref.store %ps1_3_na, %partners[%ps1_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps1_3_nb, %partners[%ps1_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps2_0_pair = arith.constant 0 : index
+          %ps2_0_tp = arith.addi %lane, %ps2_0_pair : index
+          %ps2_0_s = arith.constant 2 : index
+          %ps2_0_sm1 = arith.constant 1 : index
+          %ps2_0_low = arith.andi %ps2_0_tp, %ps2_0_sm1 : index
+          %ps2_0_twice = arith.addi %ps2_0_tp, %ps2_0_tp : index
+          %ps2_0_a = arith.subi %ps2_0_twice, %ps2_0_low : index
+          %ps2_0_b = arith.addi %ps2_0_a, %ps2_0_s : index
+          %ps2_0_sz = arith.constant 4 : index
+          %ps2_0_upb = arith.andi %ps2_0_a, %ps2_0_sz : index
+          %ps2_0_z = arith.constant 0 : index
+          %ps2_0_up = arith.cmpi eq, %ps2_0_upb, %ps2_0_z : index
+          %ps2_0_aa = arith.addi %pbase, %ps2_0_a : index
+          %ps2_0_bb = arith.addi %pbase, %ps2_0_b : index
+          %ps2_0_va = memref.load %partners[%ps2_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps2_0_vb = memref.load %partners[%ps2_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps2_0_gt = arith.cmpi sgt, %ps2_0_va, %ps2_0_vb : i32
+          %ps2_0_swap = arith.cmpi eq, %ps2_0_gt, %ps2_0_up : i1
+          %ps2_0_na = arith.select %ps2_0_swap, %ps2_0_vb, %ps2_0_va : i32
+          %ps2_0_nb = arith.select %ps2_0_swap, %ps2_0_va, %ps2_0_vb : i32
+          memref.store %ps2_0_na, %partners[%ps2_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps2_0_nb, %partners[%ps2_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps2_1_pair = arith.constant 32 : index
+          %ps2_1_tp = arith.addi %lane, %ps2_1_pair : index
+          %ps2_1_s = arith.constant 2 : index
+          %ps2_1_sm1 = arith.constant 1 : index
+          %ps2_1_low = arith.andi %ps2_1_tp, %ps2_1_sm1 : index
+          %ps2_1_twice = arith.addi %ps2_1_tp, %ps2_1_tp : index
+          %ps2_1_a = arith.subi %ps2_1_twice, %ps2_1_low : index
+          %ps2_1_b = arith.addi %ps2_1_a, %ps2_1_s : index
+          %ps2_1_sz = arith.constant 4 : index
+          %ps2_1_upb = arith.andi %ps2_1_a, %ps2_1_sz : index
+          %ps2_1_z = arith.constant 0 : index
+          %ps2_1_up = arith.cmpi eq, %ps2_1_upb, %ps2_1_z : index
+          %ps2_1_aa = arith.addi %pbase, %ps2_1_a : index
+          %ps2_1_bb = arith.addi %pbase, %ps2_1_b : index
+          %ps2_1_va = memref.load %partners[%ps2_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps2_1_vb = memref.load %partners[%ps2_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps2_1_gt = arith.cmpi sgt, %ps2_1_va, %ps2_1_vb : i32
+          %ps2_1_swap = arith.cmpi eq, %ps2_1_gt, %ps2_1_up : i1
+          %ps2_1_na = arith.select %ps2_1_swap, %ps2_1_vb, %ps2_1_va : i32
+          %ps2_1_nb = arith.select %ps2_1_swap, %ps2_1_va, %ps2_1_vb : i32
+          memref.store %ps2_1_na, %partners[%ps2_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps2_1_nb, %partners[%ps2_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps2_2_pair = arith.constant 64 : index
+          %ps2_2_tp = arith.addi %lane, %ps2_2_pair : index
+          %ps2_2_s = arith.constant 2 : index
+          %ps2_2_sm1 = arith.constant 1 : index
+          %ps2_2_low = arith.andi %ps2_2_tp, %ps2_2_sm1 : index
+          %ps2_2_twice = arith.addi %ps2_2_tp, %ps2_2_tp : index
+          %ps2_2_a = arith.subi %ps2_2_twice, %ps2_2_low : index
+          %ps2_2_b = arith.addi %ps2_2_a, %ps2_2_s : index
+          %ps2_2_sz = arith.constant 4 : index
+          %ps2_2_upb = arith.andi %ps2_2_a, %ps2_2_sz : index
+          %ps2_2_z = arith.constant 0 : index
+          %ps2_2_up = arith.cmpi eq, %ps2_2_upb, %ps2_2_z : index
+          %ps2_2_aa = arith.addi %pbase, %ps2_2_a : index
+          %ps2_2_bb = arith.addi %pbase, %ps2_2_b : index
+          %ps2_2_va = memref.load %partners[%ps2_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps2_2_vb = memref.load %partners[%ps2_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps2_2_gt = arith.cmpi sgt, %ps2_2_va, %ps2_2_vb : i32
+          %ps2_2_swap = arith.cmpi eq, %ps2_2_gt, %ps2_2_up : i1
+          %ps2_2_na = arith.select %ps2_2_swap, %ps2_2_vb, %ps2_2_va : i32
+          %ps2_2_nb = arith.select %ps2_2_swap, %ps2_2_va, %ps2_2_vb : i32
+          memref.store %ps2_2_na, %partners[%ps2_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps2_2_nb, %partners[%ps2_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps2_3_pair = arith.constant 96 : index
+          %ps2_3_tp = arith.addi %lane, %ps2_3_pair : index
+          %ps2_3_s = arith.constant 2 : index
+          %ps2_3_sm1 = arith.constant 1 : index
+          %ps2_3_low = arith.andi %ps2_3_tp, %ps2_3_sm1 : index
+          %ps2_3_twice = arith.addi %ps2_3_tp, %ps2_3_tp : index
+          %ps2_3_a = arith.subi %ps2_3_twice, %ps2_3_low : index
+          %ps2_3_b = arith.addi %ps2_3_a, %ps2_3_s : index
+          %ps2_3_sz = arith.constant 4 : index
+          %ps2_3_upb = arith.andi %ps2_3_a, %ps2_3_sz : index
+          %ps2_3_z = arith.constant 0 : index
+          %ps2_3_up = arith.cmpi eq, %ps2_3_upb, %ps2_3_z : index
+          %ps2_3_aa = arith.addi %pbase, %ps2_3_a : index
+          %ps2_3_bb = arith.addi %pbase, %ps2_3_b : index
+          %ps2_3_va = memref.load %partners[%ps2_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps2_3_vb = memref.load %partners[%ps2_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps2_3_gt = arith.cmpi sgt, %ps2_3_va, %ps2_3_vb : i32
+          %ps2_3_swap = arith.cmpi eq, %ps2_3_gt, %ps2_3_up : i1
+          %ps2_3_na = arith.select %ps2_3_swap, %ps2_3_vb, %ps2_3_va : i32
+          %ps2_3_nb = arith.select %ps2_3_swap, %ps2_3_va, %ps2_3_vb : i32
+          memref.store %ps2_3_na, %partners[%ps2_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps2_3_nb, %partners[%ps2_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps3_0_pair = arith.constant 0 : index
+          %ps3_0_tp = arith.addi %lane, %ps3_0_pair : index
+          %ps3_0_s = arith.constant 1 : index
+          %ps3_0_sm1 = arith.constant 0 : index
+          %ps3_0_low = arith.andi %ps3_0_tp, %ps3_0_sm1 : index
+          %ps3_0_twice = arith.addi %ps3_0_tp, %ps3_0_tp : index
+          %ps3_0_a = arith.subi %ps3_0_twice, %ps3_0_low : index
+          %ps3_0_b = arith.addi %ps3_0_a, %ps3_0_s : index
+          %ps3_0_sz = arith.constant 4 : index
+          %ps3_0_upb = arith.andi %ps3_0_a, %ps3_0_sz : index
+          %ps3_0_z = arith.constant 0 : index
+          %ps3_0_up = arith.cmpi eq, %ps3_0_upb, %ps3_0_z : index
+          %ps3_0_aa = arith.addi %pbase, %ps3_0_a : index
+          %ps3_0_bb = arith.addi %pbase, %ps3_0_b : index
+          %ps3_0_va = memref.load %partners[%ps3_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps3_0_vb = memref.load %partners[%ps3_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps3_0_gt = arith.cmpi sgt, %ps3_0_va, %ps3_0_vb : i32
+          %ps3_0_swap = arith.cmpi eq, %ps3_0_gt, %ps3_0_up : i1
+          %ps3_0_na = arith.select %ps3_0_swap, %ps3_0_vb, %ps3_0_va : i32
+          %ps3_0_nb = arith.select %ps3_0_swap, %ps3_0_va, %ps3_0_vb : i32
+          memref.store %ps3_0_na, %partners[%ps3_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps3_0_nb, %partners[%ps3_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps3_1_pair = arith.constant 32 : index
+          %ps3_1_tp = arith.addi %lane, %ps3_1_pair : index
+          %ps3_1_s = arith.constant 1 : index
+          %ps3_1_sm1 = arith.constant 0 : index
+          %ps3_1_low = arith.andi %ps3_1_tp, %ps3_1_sm1 : index
+          %ps3_1_twice = arith.addi %ps3_1_tp, %ps3_1_tp : index
+          %ps3_1_a = arith.subi %ps3_1_twice, %ps3_1_low : index
+          %ps3_1_b = arith.addi %ps3_1_a, %ps3_1_s : index
+          %ps3_1_sz = arith.constant 4 : index
+          %ps3_1_upb = arith.andi %ps3_1_a, %ps3_1_sz : index
+          %ps3_1_z = arith.constant 0 : index
+          %ps3_1_up = arith.cmpi eq, %ps3_1_upb, %ps3_1_z : index
+          %ps3_1_aa = arith.addi %pbase, %ps3_1_a : index
+          %ps3_1_bb = arith.addi %pbase, %ps3_1_b : index
+          %ps3_1_va = memref.load %partners[%ps3_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps3_1_vb = memref.load %partners[%ps3_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps3_1_gt = arith.cmpi sgt, %ps3_1_va, %ps3_1_vb : i32
+          %ps3_1_swap = arith.cmpi eq, %ps3_1_gt, %ps3_1_up : i1
+          %ps3_1_na = arith.select %ps3_1_swap, %ps3_1_vb, %ps3_1_va : i32
+          %ps3_1_nb = arith.select %ps3_1_swap, %ps3_1_va, %ps3_1_vb : i32
+          memref.store %ps3_1_na, %partners[%ps3_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps3_1_nb, %partners[%ps3_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps3_2_pair = arith.constant 64 : index
+          %ps3_2_tp = arith.addi %lane, %ps3_2_pair : index
+          %ps3_2_s = arith.constant 1 : index
+          %ps3_2_sm1 = arith.constant 0 : index
+          %ps3_2_low = arith.andi %ps3_2_tp, %ps3_2_sm1 : index
+          %ps3_2_twice = arith.addi %ps3_2_tp, %ps3_2_tp : index
+          %ps3_2_a = arith.subi %ps3_2_twice, %ps3_2_low : index
+          %ps3_2_b = arith.addi %ps3_2_a, %ps3_2_s : index
+          %ps3_2_sz = arith.constant 4 : index
+          %ps3_2_upb = arith.andi %ps3_2_a, %ps3_2_sz : index
+          %ps3_2_z = arith.constant 0 : index
+          %ps3_2_up = arith.cmpi eq, %ps3_2_upb, %ps3_2_z : index
+          %ps3_2_aa = arith.addi %pbase, %ps3_2_a : index
+          %ps3_2_bb = arith.addi %pbase, %ps3_2_b : index
+          %ps3_2_va = memref.load %partners[%ps3_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps3_2_vb = memref.load %partners[%ps3_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps3_2_gt = arith.cmpi sgt, %ps3_2_va, %ps3_2_vb : i32
+          %ps3_2_swap = arith.cmpi eq, %ps3_2_gt, %ps3_2_up : i1
+          %ps3_2_na = arith.select %ps3_2_swap, %ps3_2_vb, %ps3_2_va : i32
+          %ps3_2_nb = arith.select %ps3_2_swap, %ps3_2_va, %ps3_2_vb : i32
+          memref.store %ps3_2_na, %partners[%ps3_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps3_2_nb, %partners[%ps3_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps3_3_pair = arith.constant 96 : index
+          %ps3_3_tp = arith.addi %lane, %ps3_3_pair : index
+          %ps3_3_s = arith.constant 1 : index
+          %ps3_3_sm1 = arith.constant 0 : index
+          %ps3_3_low = arith.andi %ps3_3_tp, %ps3_3_sm1 : index
+          %ps3_3_twice = arith.addi %ps3_3_tp, %ps3_3_tp : index
+          %ps3_3_a = arith.subi %ps3_3_twice, %ps3_3_low : index
+          %ps3_3_b = arith.addi %ps3_3_a, %ps3_3_s : index
+          %ps3_3_sz = arith.constant 4 : index
+          %ps3_3_upb = arith.andi %ps3_3_a, %ps3_3_sz : index
+          %ps3_3_z = arith.constant 0 : index
+          %ps3_3_up = arith.cmpi eq, %ps3_3_upb, %ps3_3_z : index
+          %ps3_3_aa = arith.addi %pbase, %ps3_3_a : index
+          %ps3_3_bb = arith.addi %pbase, %ps3_3_b : index
+          %ps3_3_va = memref.load %partners[%ps3_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps3_3_vb = memref.load %partners[%ps3_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps3_3_gt = arith.cmpi sgt, %ps3_3_va, %ps3_3_vb : i32
+          %ps3_3_swap = arith.cmpi eq, %ps3_3_gt, %ps3_3_up : i1
+          %ps3_3_na = arith.select %ps3_3_swap, %ps3_3_vb, %ps3_3_va : i32
+          %ps3_3_nb = arith.select %ps3_3_swap, %ps3_3_va, %ps3_3_vb : i32
+          memref.store %ps3_3_na, %partners[%ps3_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps3_3_nb, %partners[%ps3_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps4_0_pair = arith.constant 0 : index
+          %ps4_0_tp = arith.addi %lane, %ps4_0_pair : index
+          %ps4_0_s = arith.constant 4 : index
+          %ps4_0_sm1 = arith.constant 3 : index
+          %ps4_0_low = arith.andi %ps4_0_tp, %ps4_0_sm1 : index
+          %ps4_0_twice = arith.addi %ps4_0_tp, %ps4_0_tp : index
+          %ps4_0_a = arith.subi %ps4_0_twice, %ps4_0_low : index
+          %ps4_0_b = arith.addi %ps4_0_a, %ps4_0_s : index
+          %ps4_0_sz = arith.constant 8 : index
+          %ps4_0_upb = arith.andi %ps4_0_a, %ps4_0_sz : index
+          %ps4_0_z = arith.constant 0 : index
+          %ps4_0_up = arith.cmpi eq, %ps4_0_upb, %ps4_0_z : index
+          %ps4_0_aa = arith.addi %pbase, %ps4_0_a : index
+          %ps4_0_bb = arith.addi %pbase, %ps4_0_b : index
+          %ps4_0_va = memref.load %partners[%ps4_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps4_0_vb = memref.load %partners[%ps4_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps4_0_gt = arith.cmpi sgt, %ps4_0_va, %ps4_0_vb : i32
+          %ps4_0_swap = arith.cmpi eq, %ps4_0_gt, %ps4_0_up : i1
+          %ps4_0_na = arith.select %ps4_0_swap, %ps4_0_vb, %ps4_0_va : i32
+          %ps4_0_nb = arith.select %ps4_0_swap, %ps4_0_va, %ps4_0_vb : i32
+          memref.store %ps4_0_na, %partners[%ps4_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps4_0_nb, %partners[%ps4_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps4_1_pair = arith.constant 32 : index
+          %ps4_1_tp = arith.addi %lane, %ps4_1_pair : index
+          %ps4_1_s = arith.constant 4 : index
+          %ps4_1_sm1 = arith.constant 3 : index
+          %ps4_1_low = arith.andi %ps4_1_tp, %ps4_1_sm1 : index
+          %ps4_1_twice = arith.addi %ps4_1_tp, %ps4_1_tp : index
+          %ps4_1_a = arith.subi %ps4_1_twice, %ps4_1_low : index
+          %ps4_1_b = arith.addi %ps4_1_a, %ps4_1_s : index
+          %ps4_1_sz = arith.constant 8 : index
+          %ps4_1_upb = arith.andi %ps4_1_a, %ps4_1_sz : index
+          %ps4_1_z = arith.constant 0 : index
+          %ps4_1_up = arith.cmpi eq, %ps4_1_upb, %ps4_1_z : index
+          %ps4_1_aa = arith.addi %pbase, %ps4_1_a : index
+          %ps4_1_bb = arith.addi %pbase, %ps4_1_b : index
+          %ps4_1_va = memref.load %partners[%ps4_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps4_1_vb = memref.load %partners[%ps4_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps4_1_gt = arith.cmpi sgt, %ps4_1_va, %ps4_1_vb : i32
+          %ps4_1_swap = arith.cmpi eq, %ps4_1_gt, %ps4_1_up : i1
+          %ps4_1_na = arith.select %ps4_1_swap, %ps4_1_vb, %ps4_1_va : i32
+          %ps4_1_nb = arith.select %ps4_1_swap, %ps4_1_va, %ps4_1_vb : i32
+          memref.store %ps4_1_na, %partners[%ps4_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps4_1_nb, %partners[%ps4_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps4_2_pair = arith.constant 64 : index
+          %ps4_2_tp = arith.addi %lane, %ps4_2_pair : index
+          %ps4_2_s = arith.constant 4 : index
+          %ps4_2_sm1 = arith.constant 3 : index
+          %ps4_2_low = arith.andi %ps4_2_tp, %ps4_2_sm1 : index
+          %ps4_2_twice = arith.addi %ps4_2_tp, %ps4_2_tp : index
+          %ps4_2_a = arith.subi %ps4_2_twice, %ps4_2_low : index
+          %ps4_2_b = arith.addi %ps4_2_a, %ps4_2_s : index
+          %ps4_2_sz = arith.constant 8 : index
+          %ps4_2_upb = arith.andi %ps4_2_a, %ps4_2_sz : index
+          %ps4_2_z = arith.constant 0 : index
+          %ps4_2_up = arith.cmpi eq, %ps4_2_upb, %ps4_2_z : index
+          %ps4_2_aa = arith.addi %pbase, %ps4_2_a : index
+          %ps4_2_bb = arith.addi %pbase, %ps4_2_b : index
+          %ps4_2_va = memref.load %partners[%ps4_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps4_2_vb = memref.load %partners[%ps4_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps4_2_gt = arith.cmpi sgt, %ps4_2_va, %ps4_2_vb : i32
+          %ps4_2_swap = arith.cmpi eq, %ps4_2_gt, %ps4_2_up : i1
+          %ps4_2_na = arith.select %ps4_2_swap, %ps4_2_vb, %ps4_2_va : i32
+          %ps4_2_nb = arith.select %ps4_2_swap, %ps4_2_va, %ps4_2_vb : i32
+          memref.store %ps4_2_na, %partners[%ps4_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps4_2_nb, %partners[%ps4_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps4_3_pair = arith.constant 96 : index
+          %ps4_3_tp = arith.addi %lane, %ps4_3_pair : index
+          %ps4_3_s = arith.constant 4 : index
+          %ps4_3_sm1 = arith.constant 3 : index
+          %ps4_3_low = arith.andi %ps4_3_tp, %ps4_3_sm1 : index
+          %ps4_3_twice = arith.addi %ps4_3_tp, %ps4_3_tp : index
+          %ps4_3_a = arith.subi %ps4_3_twice, %ps4_3_low : index
+          %ps4_3_b = arith.addi %ps4_3_a, %ps4_3_s : index
+          %ps4_3_sz = arith.constant 8 : index
+          %ps4_3_upb = arith.andi %ps4_3_a, %ps4_3_sz : index
+          %ps4_3_z = arith.constant 0 : index
+          %ps4_3_up = arith.cmpi eq, %ps4_3_upb, %ps4_3_z : index
+          %ps4_3_aa = arith.addi %pbase, %ps4_3_a : index
+          %ps4_3_bb = arith.addi %pbase, %ps4_3_b : index
+          %ps4_3_va = memref.load %partners[%ps4_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps4_3_vb = memref.load %partners[%ps4_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps4_3_gt = arith.cmpi sgt, %ps4_3_va, %ps4_3_vb : i32
+          %ps4_3_swap = arith.cmpi eq, %ps4_3_gt, %ps4_3_up : i1
+          %ps4_3_na = arith.select %ps4_3_swap, %ps4_3_vb, %ps4_3_va : i32
+          %ps4_3_nb = arith.select %ps4_3_swap, %ps4_3_va, %ps4_3_vb : i32
+          memref.store %ps4_3_na, %partners[%ps4_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps4_3_nb, %partners[%ps4_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps5_0_pair = arith.constant 0 : index
+          %ps5_0_tp = arith.addi %lane, %ps5_0_pair : index
+          %ps5_0_s = arith.constant 2 : index
+          %ps5_0_sm1 = arith.constant 1 : index
+          %ps5_0_low = arith.andi %ps5_0_tp, %ps5_0_sm1 : index
+          %ps5_0_twice = arith.addi %ps5_0_tp, %ps5_0_tp : index
+          %ps5_0_a = arith.subi %ps5_0_twice, %ps5_0_low : index
+          %ps5_0_b = arith.addi %ps5_0_a, %ps5_0_s : index
+          %ps5_0_sz = arith.constant 8 : index
+          %ps5_0_upb = arith.andi %ps5_0_a, %ps5_0_sz : index
+          %ps5_0_z = arith.constant 0 : index
+          %ps5_0_up = arith.cmpi eq, %ps5_0_upb, %ps5_0_z : index
+          %ps5_0_aa = arith.addi %pbase, %ps5_0_a : index
+          %ps5_0_bb = arith.addi %pbase, %ps5_0_b : index
+          %ps5_0_va = memref.load %partners[%ps5_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps5_0_vb = memref.load %partners[%ps5_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps5_0_gt = arith.cmpi sgt, %ps5_0_va, %ps5_0_vb : i32
+          %ps5_0_swap = arith.cmpi eq, %ps5_0_gt, %ps5_0_up : i1
+          %ps5_0_na = arith.select %ps5_0_swap, %ps5_0_vb, %ps5_0_va : i32
+          %ps5_0_nb = arith.select %ps5_0_swap, %ps5_0_va, %ps5_0_vb : i32
+          memref.store %ps5_0_na, %partners[%ps5_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps5_0_nb, %partners[%ps5_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps5_1_pair = arith.constant 32 : index
+          %ps5_1_tp = arith.addi %lane, %ps5_1_pair : index
+          %ps5_1_s = arith.constant 2 : index
+          %ps5_1_sm1 = arith.constant 1 : index
+          %ps5_1_low = arith.andi %ps5_1_tp, %ps5_1_sm1 : index
+          %ps5_1_twice = arith.addi %ps5_1_tp, %ps5_1_tp : index
+          %ps5_1_a = arith.subi %ps5_1_twice, %ps5_1_low : index
+          %ps5_1_b = arith.addi %ps5_1_a, %ps5_1_s : index
+          %ps5_1_sz = arith.constant 8 : index
+          %ps5_1_upb = arith.andi %ps5_1_a, %ps5_1_sz : index
+          %ps5_1_z = arith.constant 0 : index
+          %ps5_1_up = arith.cmpi eq, %ps5_1_upb, %ps5_1_z : index
+          %ps5_1_aa = arith.addi %pbase, %ps5_1_a : index
+          %ps5_1_bb = arith.addi %pbase, %ps5_1_b : index
+          %ps5_1_va = memref.load %partners[%ps5_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps5_1_vb = memref.load %partners[%ps5_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps5_1_gt = arith.cmpi sgt, %ps5_1_va, %ps5_1_vb : i32
+          %ps5_1_swap = arith.cmpi eq, %ps5_1_gt, %ps5_1_up : i1
+          %ps5_1_na = arith.select %ps5_1_swap, %ps5_1_vb, %ps5_1_va : i32
+          %ps5_1_nb = arith.select %ps5_1_swap, %ps5_1_va, %ps5_1_vb : i32
+          memref.store %ps5_1_na, %partners[%ps5_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps5_1_nb, %partners[%ps5_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps5_2_pair = arith.constant 64 : index
+          %ps5_2_tp = arith.addi %lane, %ps5_2_pair : index
+          %ps5_2_s = arith.constant 2 : index
+          %ps5_2_sm1 = arith.constant 1 : index
+          %ps5_2_low = arith.andi %ps5_2_tp, %ps5_2_sm1 : index
+          %ps5_2_twice = arith.addi %ps5_2_tp, %ps5_2_tp : index
+          %ps5_2_a = arith.subi %ps5_2_twice, %ps5_2_low : index
+          %ps5_2_b = arith.addi %ps5_2_a, %ps5_2_s : index
+          %ps5_2_sz = arith.constant 8 : index
+          %ps5_2_upb = arith.andi %ps5_2_a, %ps5_2_sz : index
+          %ps5_2_z = arith.constant 0 : index
+          %ps5_2_up = arith.cmpi eq, %ps5_2_upb, %ps5_2_z : index
+          %ps5_2_aa = arith.addi %pbase, %ps5_2_a : index
+          %ps5_2_bb = arith.addi %pbase, %ps5_2_b : index
+          %ps5_2_va = memref.load %partners[%ps5_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps5_2_vb = memref.load %partners[%ps5_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps5_2_gt = arith.cmpi sgt, %ps5_2_va, %ps5_2_vb : i32
+          %ps5_2_swap = arith.cmpi eq, %ps5_2_gt, %ps5_2_up : i1
+          %ps5_2_na = arith.select %ps5_2_swap, %ps5_2_vb, %ps5_2_va : i32
+          %ps5_2_nb = arith.select %ps5_2_swap, %ps5_2_va, %ps5_2_vb : i32
+          memref.store %ps5_2_na, %partners[%ps5_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps5_2_nb, %partners[%ps5_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps5_3_pair = arith.constant 96 : index
+          %ps5_3_tp = arith.addi %lane, %ps5_3_pair : index
+          %ps5_3_s = arith.constant 2 : index
+          %ps5_3_sm1 = arith.constant 1 : index
+          %ps5_3_low = arith.andi %ps5_3_tp, %ps5_3_sm1 : index
+          %ps5_3_twice = arith.addi %ps5_3_tp, %ps5_3_tp : index
+          %ps5_3_a = arith.subi %ps5_3_twice, %ps5_3_low : index
+          %ps5_3_b = arith.addi %ps5_3_a, %ps5_3_s : index
+          %ps5_3_sz = arith.constant 8 : index
+          %ps5_3_upb = arith.andi %ps5_3_a, %ps5_3_sz : index
+          %ps5_3_z = arith.constant 0 : index
+          %ps5_3_up = arith.cmpi eq, %ps5_3_upb, %ps5_3_z : index
+          %ps5_3_aa = arith.addi %pbase, %ps5_3_a : index
+          %ps5_3_bb = arith.addi %pbase, %ps5_3_b : index
+          %ps5_3_va = memref.load %partners[%ps5_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps5_3_vb = memref.load %partners[%ps5_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps5_3_gt = arith.cmpi sgt, %ps5_3_va, %ps5_3_vb : i32
+          %ps5_3_swap = arith.cmpi eq, %ps5_3_gt, %ps5_3_up : i1
+          %ps5_3_na = arith.select %ps5_3_swap, %ps5_3_vb, %ps5_3_va : i32
+          %ps5_3_nb = arith.select %ps5_3_swap, %ps5_3_va, %ps5_3_vb : i32
+          memref.store %ps5_3_na, %partners[%ps5_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps5_3_nb, %partners[%ps5_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps6_0_pair = arith.constant 0 : index
+          %ps6_0_tp = arith.addi %lane, %ps6_0_pair : index
+          %ps6_0_s = arith.constant 1 : index
+          %ps6_0_sm1 = arith.constant 0 : index
+          %ps6_0_low = arith.andi %ps6_0_tp, %ps6_0_sm1 : index
+          %ps6_0_twice = arith.addi %ps6_0_tp, %ps6_0_tp : index
+          %ps6_0_a = arith.subi %ps6_0_twice, %ps6_0_low : index
+          %ps6_0_b = arith.addi %ps6_0_a, %ps6_0_s : index
+          %ps6_0_sz = arith.constant 8 : index
+          %ps6_0_upb = arith.andi %ps6_0_a, %ps6_0_sz : index
+          %ps6_0_z = arith.constant 0 : index
+          %ps6_0_up = arith.cmpi eq, %ps6_0_upb, %ps6_0_z : index
+          %ps6_0_aa = arith.addi %pbase, %ps6_0_a : index
+          %ps6_0_bb = arith.addi %pbase, %ps6_0_b : index
+          %ps6_0_va = memref.load %partners[%ps6_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps6_0_vb = memref.load %partners[%ps6_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps6_0_gt = arith.cmpi sgt, %ps6_0_va, %ps6_0_vb : i32
+          %ps6_0_swap = arith.cmpi eq, %ps6_0_gt, %ps6_0_up : i1
+          %ps6_0_na = arith.select %ps6_0_swap, %ps6_0_vb, %ps6_0_va : i32
+          %ps6_0_nb = arith.select %ps6_0_swap, %ps6_0_va, %ps6_0_vb : i32
+          memref.store %ps6_0_na, %partners[%ps6_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps6_0_nb, %partners[%ps6_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps6_1_pair = arith.constant 32 : index
+          %ps6_1_tp = arith.addi %lane, %ps6_1_pair : index
+          %ps6_1_s = arith.constant 1 : index
+          %ps6_1_sm1 = arith.constant 0 : index
+          %ps6_1_low = arith.andi %ps6_1_tp, %ps6_1_sm1 : index
+          %ps6_1_twice = arith.addi %ps6_1_tp, %ps6_1_tp : index
+          %ps6_1_a = arith.subi %ps6_1_twice, %ps6_1_low : index
+          %ps6_1_b = arith.addi %ps6_1_a, %ps6_1_s : index
+          %ps6_1_sz = arith.constant 8 : index
+          %ps6_1_upb = arith.andi %ps6_1_a, %ps6_1_sz : index
+          %ps6_1_z = arith.constant 0 : index
+          %ps6_1_up = arith.cmpi eq, %ps6_1_upb, %ps6_1_z : index
+          %ps6_1_aa = arith.addi %pbase, %ps6_1_a : index
+          %ps6_1_bb = arith.addi %pbase, %ps6_1_b : index
+          %ps6_1_va = memref.load %partners[%ps6_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps6_1_vb = memref.load %partners[%ps6_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps6_1_gt = arith.cmpi sgt, %ps6_1_va, %ps6_1_vb : i32
+          %ps6_1_swap = arith.cmpi eq, %ps6_1_gt, %ps6_1_up : i1
+          %ps6_1_na = arith.select %ps6_1_swap, %ps6_1_vb, %ps6_1_va : i32
+          %ps6_1_nb = arith.select %ps6_1_swap, %ps6_1_va, %ps6_1_vb : i32
+          memref.store %ps6_1_na, %partners[%ps6_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps6_1_nb, %partners[%ps6_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps6_2_pair = arith.constant 64 : index
+          %ps6_2_tp = arith.addi %lane, %ps6_2_pair : index
+          %ps6_2_s = arith.constant 1 : index
+          %ps6_2_sm1 = arith.constant 0 : index
+          %ps6_2_low = arith.andi %ps6_2_tp, %ps6_2_sm1 : index
+          %ps6_2_twice = arith.addi %ps6_2_tp, %ps6_2_tp : index
+          %ps6_2_a = arith.subi %ps6_2_twice, %ps6_2_low : index
+          %ps6_2_b = arith.addi %ps6_2_a, %ps6_2_s : index
+          %ps6_2_sz = arith.constant 8 : index
+          %ps6_2_upb = arith.andi %ps6_2_a, %ps6_2_sz : index
+          %ps6_2_z = arith.constant 0 : index
+          %ps6_2_up = arith.cmpi eq, %ps6_2_upb, %ps6_2_z : index
+          %ps6_2_aa = arith.addi %pbase, %ps6_2_a : index
+          %ps6_2_bb = arith.addi %pbase, %ps6_2_b : index
+          %ps6_2_va = memref.load %partners[%ps6_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps6_2_vb = memref.load %partners[%ps6_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps6_2_gt = arith.cmpi sgt, %ps6_2_va, %ps6_2_vb : i32
+          %ps6_2_swap = arith.cmpi eq, %ps6_2_gt, %ps6_2_up : i1
+          %ps6_2_na = arith.select %ps6_2_swap, %ps6_2_vb, %ps6_2_va : i32
+          %ps6_2_nb = arith.select %ps6_2_swap, %ps6_2_va, %ps6_2_vb : i32
+          memref.store %ps6_2_na, %partners[%ps6_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps6_2_nb, %partners[%ps6_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps6_3_pair = arith.constant 96 : index
+          %ps6_3_tp = arith.addi %lane, %ps6_3_pair : index
+          %ps6_3_s = arith.constant 1 : index
+          %ps6_3_sm1 = arith.constant 0 : index
+          %ps6_3_low = arith.andi %ps6_3_tp, %ps6_3_sm1 : index
+          %ps6_3_twice = arith.addi %ps6_3_tp, %ps6_3_tp : index
+          %ps6_3_a = arith.subi %ps6_3_twice, %ps6_3_low : index
+          %ps6_3_b = arith.addi %ps6_3_a, %ps6_3_s : index
+          %ps6_3_sz = arith.constant 8 : index
+          %ps6_3_upb = arith.andi %ps6_3_a, %ps6_3_sz : index
+          %ps6_3_z = arith.constant 0 : index
+          %ps6_3_up = arith.cmpi eq, %ps6_3_upb, %ps6_3_z : index
+          %ps6_3_aa = arith.addi %pbase, %ps6_3_a : index
+          %ps6_3_bb = arith.addi %pbase, %ps6_3_b : index
+          %ps6_3_va = memref.load %partners[%ps6_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps6_3_vb = memref.load %partners[%ps6_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps6_3_gt = arith.cmpi sgt, %ps6_3_va, %ps6_3_vb : i32
+          %ps6_3_swap = arith.cmpi eq, %ps6_3_gt, %ps6_3_up : i1
+          %ps6_3_na = arith.select %ps6_3_swap, %ps6_3_vb, %ps6_3_va : i32
+          %ps6_3_nb = arith.select %ps6_3_swap, %ps6_3_va, %ps6_3_vb : i32
+          memref.store %ps6_3_na, %partners[%ps6_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps6_3_nb, %partners[%ps6_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps7_0_pair = arith.constant 0 : index
+          %ps7_0_tp = arith.addi %lane, %ps7_0_pair : index
+          %ps7_0_s = arith.constant 8 : index
+          %ps7_0_sm1 = arith.constant 7 : index
+          %ps7_0_low = arith.andi %ps7_0_tp, %ps7_0_sm1 : index
+          %ps7_0_twice = arith.addi %ps7_0_tp, %ps7_0_tp : index
+          %ps7_0_a = arith.subi %ps7_0_twice, %ps7_0_low : index
+          %ps7_0_b = arith.addi %ps7_0_a, %ps7_0_s : index
+          %ps7_0_sz = arith.constant 16 : index
+          %ps7_0_upb = arith.andi %ps7_0_a, %ps7_0_sz : index
+          %ps7_0_z = arith.constant 0 : index
+          %ps7_0_up = arith.cmpi eq, %ps7_0_upb, %ps7_0_z : index
+          %ps7_0_aa = arith.addi %pbase, %ps7_0_a : index
+          %ps7_0_bb = arith.addi %pbase, %ps7_0_b : index
+          %ps7_0_va = memref.load %partners[%ps7_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps7_0_vb = memref.load %partners[%ps7_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps7_0_gt = arith.cmpi sgt, %ps7_0_va, %ps7_0_vb : i32
+          %ps7_0_swap = arith.cmpi eq, %ps7_0_gt, %ps7_0_up : i1
+          %ps7_0_na = arith.select %ps7_0_swap, %ps7_0_vb, %ps7_0_va : i32
+          %ps7_0_nb = arith.select %ps7_0_swap, %ps7_0_va, %ps7_0_vb : i32
+          memref.store %ps7_0_na, %partners[%ps7_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps7_0_nb, %partners[%ps7_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps7_1_pair = arith.constant 32 : index
+          %ps7_1_tp = arith.addi %lane, %ps7_1_pair : index
+          %ps7_1_s = arith.constant 8 : index
+          %ps7_1_sm1 = arith.constant 7 : index
+          %ps7_1_low = arith.andi %ps7_1_tp, %ps7_1_sm1 : index
+          %ps7_1_twice = arith.addi %ps7_1_tp, %ps7_1_tp : index
+          %ps7_1_a = arith.subi %ps7_1_twice, %ps7_1_low : index
+          %ps7_1_b = arith.addi %ps7_1_a, %ps7_1_s : index
+          %ps7_1_sz = arith.constant 16 : index
+          %ps7_1_upb = arith.andi %ps7_1_a, %ps7_1_sz : index
+          %ps7_1_z = arith.constant 0 : index
+          %ps7_1_up = arith.cmpi eq, %ps7_1_upb, %ps7_1_z : index
+          %ps7_1_aa = arith.addi %pbase, %ps7_1_a : index
+          %ps7_1_bb = arith.addi %pbase, %ps7_1_b : index
+          %ps7_1_va = memref.load %partners[%ps7_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps7_1_vb = memref.load %partners[%ps7_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps7_1_gt = arith.cmpi sgt, %ps7_1_va, %ps7_1_vb : i32
+          %ps7_1_swap = arith.cmpi eq, %ps7_1_gt, %ps7_1_up : i1
+          %ps7_1_na = arith.select %ps7_1_swap, %ps7_1_vb, %ps7_1_va : i32
+          %ps7_1_nb = arith.select %ps7_1_swap, %ps7_1_va, %ps7_1_vb : i32
+          memref.store %ps7_1_na, %partners[%ps7_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps7_1_nb, %partners[%ps7_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps7_2_pair = arith.constant 64 : index
+          %ps7_2_tp = arith.addi %lane, %ps7_2_pair : index
+          %ps7_2_s = arith.constant 8 : index
+          %ps7_2_sm1 = arith.constant 7 : index
+          %ps7_2_low = arith.andi %ps7_2_tp, %ps7_2_sm1 : index
+          %ps7_2_twice = arith.addi %ps7_2_tp, %ps7_2_tp : index
+          %ps7_2_a = arith.subi %ps7_2_twice, %ps7_2_low : index
+          %ps7_2_b = arith.addi %ps7_2_a, %ps7_2_s : index
+          %ps7_2_sz = arith.constant 16 : index
+          %ps7_2_upb = arith.andi %ps7_2_a, %ps7_2_sz : index
+          %ps7_2_z = arith.constant 0 : index
+          %ps7_2_up = arith.cmpi eq, %ps7_2_upb, %ps7_2_z : index
+          %ps7_2_aa = arith.addi %pbase, %ps7_2_a : index
+          %ps7_2_bb = arith.addi %pbase, %ps7_2_b : index
+          %ps7_2_va = memref.load %partners[%ps7_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps7_2_vb = memref.load %partners[%ps7_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps7_2_gt = arith.cmpi sgt, %ps7_2_va, %ps7_2_vb : i32
+          %ps7_2_swap = arith.cmpi eq, %ps7_2_gt, %ps7_2_up : i1
+          %ps7_2_na = arith.select %ps7_2_swap, %ps7_2_vb, %ps7_2_va : i32
+          %ps7_2_nb = arith.select %ps7_2_swap, %ps7_2_va, %ps7_2_vb : i32
+          memref.store %ps7_2_na, %partners[%ps7_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps7_2_nb, %partners[%ps7_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps7_3_pair = arith.constant 96 : index
+          %ps7_3_tp = arith.addi %lane, %ps7_3_pair : index
+          %ps7_3_s = arith.constant 8 : index
+          %ps7_3_sm1 = arith.constant 7 : index
+          %ps7_3_low = arith.andi %ps7_3_tp, %ps7_3_sm1 : index
+          %ps7_3_twice = arith.addi %ps7_3_tp, %ps7_3_tp : index
+          %ps7_3_a = arith.subi %ps7_3_twice, %ps7_3_low : index
+          %ps7_3_b = arith.addi %ps7_3_a, %ps7_3_s : index
+          %ps7_3_sz = arith.constant 16 : index
+          %ps7_3_upb = arith.andi %ps7_3_a, %ps7_3_sz : index
+          %ps7_3_z = arith.constant 0 : index
+          %ps7_3_up = arith.cmpi eq, %ps7_3_upb, %ps7_3_z : index
+          %ps7_3_aa = arith.addi %pbase, %ps7_3_a : index
+          %ps7_3_bb = arith.addi %pbase, %ps7_3_b : index
+          %ps7_3_va = memref.load %partners[%ps7_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps7_3_vb = memref.load %partners[%ps7_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps7_3_gt = arith.cmpi sgt, %ps7_3_va, %ps7_3_vb : i32
+          %ps7_3_swap = arith.cmpi eq, %ps7_3_gt, %ps7_3_up : i1
+          %ps7_3_na = arith.select %ps7_3_swap, %ps7_3_vb, %ps7_3_va : i32
+          %ps7_3_nb = arith.select %ps7_3_swap, %ps7_3_va, %ps7_3_vb : i32
+          memref.store %ps7_3_na, %partners[%ps7_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps7_3_nb, %partners[%ps7_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps8_0_pair = arith.constant 0 : index
+          %ps8_0_tp = arith.addi %lane, %ps8_0_pair : index
+          %ps8_0_s = arith.constant 4 : index
+          %ps8_0_sm1 = arith.constant 3 : index
+          %ps8_0_low = arith.andi %ps8_0_tp, %ps8_0_sm1 : index
+          %ps8_0_twice = arith.addi %ps8_0_tp, %ps8_0_tp : index
+          %ps8_0_a = arith.subi %ps8_0_twice, %ps8_0_low : index
+          %ps8_0_b = arith.addi %ps8_0_a, %ps8_0_s : index
+          %ps8_0_sz = arith.constant 16 : index
+          %ps8_0_upb = arith.andi %ps8_0_a, %ps8_0_sz : index
+          %ps8_0_z = arith.constant 0 : index
+          %ps8_0_up = arith.cmpi eq, %ps8_0_upb, %ps8_0_z : index
+          %ps8_0_aa = arith.addi %pbase, %ps8_0_a : index
+          %ps8_0_bb = arith.addi %pbase, %ps8_0_b : index
+          %ps8_0_va = memref.load %partners[%ps8_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps8_0_vb = memref.load %partners[%ps8_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps8_0_gt = arith.cmpi sgt, %ps8_0_va, %ps8_0_vb : i32
+          %ps8_0_swap = arith.cmpi eq, %ps8_0_gt, %ps8_0_up : i1
+          %ps8_0_na = arith.select %ps8_0_swap, %ps8_0_vb, %ps8_0_va : i32
+          %ps8_0_nb = arith.select %ps8_0_swap, %ps8_0_va, %ps8_0_vb : i32
+          memref.store %ps8_0_na, %partners[%ps8_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps8_0_nb, %partners[%ps8_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps8_1_pair = arith.constant 32 : index
+          %ps8_1_tp = arith.addi %lane, %ps8_1_pair : index
+          %ps8_1_s = arith.constant 4 : index
+          %ps8_1_sm1 = arith.constant 3 : index
+          %ps8_1_low = arith.andi %ps8_1_tp, %ps8_1_sm1 : index
+          %ps8_1_twice = arith.addi %ps8_1_tp, %ps8_1_tp : index
+          %ps8_1_a = arith.subi %ps8_1_twice, %ps8_1_low : index
+          %ps8_1_b = arith.addi %ps8_1_a, %ps8_1_s : index
+          %ps8_1_sz = arith.constant 16 : index
+          %ps8_1_upb = arith.andi %ps8_1_a, %ps8_1_sz : index
+          %ps8_1_z = arith.constant 0 : index
+          %ps8_1_up = arith.cmpi eq, %ps8_1_upb, %ps8_1_z : index
+          %ps8_1_aa = arith.addi %pbase, %ps8_1_a : index
+          %ps8_1_bb = arith.addi %pbase, %ps8_1_b : index
+          %ps8_1_va = memref.load %partners[%ps8_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps8_1_vb = memref.load %partners[%ps8_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps8_1_gt = arith.cmpi sgt, %ps8_1_va, %ps8_1_vb : i32
+          %ps8_1_swap = arith.cmpi eq, %ps8_1_gt, %ps8_1_up : i1
+          %ps8_1_na = arith.select %ps8_1_swap, %ps8_1_vb, %ps8_1_va : i32
+          %ps8_1_nb = arith.select %ps8_1_swap, %ps8_1_va, %ps8_1_vb : i32
+          memref.store %ps8_1_na, %partners[%ps8_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps8_1_nb, %partners[%ps8_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps8_2_pair = arith.constant 64 : index
+          %ps8_2_tp = arith.addi %lane, %ps8_2_pair : index
+          %ps8_2_s = arith.constant 4 : index
+          %ps8_2_sm1 = arith.constant 3 : index
+          %ps8_2_low = arith.andi %ps8_2_tp, %ps8_2_sm1 : index
+          %ps8_2_twice = arith.addi %ps8_2_tp, %ps8_2_tp : index
+          %ps8_2_a = arith.subi %ps8_2_twice, %ps8_2_low : index
+          %ps8_2_b = arith.addi %ps8_2_a, %ps8_2_s : index
+          %ps8_2_sz = arith.constant 16 : index
+          %ps8_2_upb = arith.andi %ps8_2_a, %ps8_2_sz : index
+          %ps8_2_z = arith.constant 0 : index
+          %ps8_2_up = arith.cmpi eq, %ps8_2_upb, %ps8_2_z : index
+          %ps8_2_aa = arith.addi %pbase, %ps8_2_a : index
+          %ps8_2_bb = arith.addi %pbase, %ps8_2_b : index
+          %ps8_2_va = memref.load %partners[%ps8_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps8_2_vb = memref.load %partners[%ps8_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps8_2_gt = arith.cmpi sgt, %ps8_2_va, %ps8_2_vb : i32
+          %ps8_2_swap = arith.cmpi eq, %ps8_2_gt, %ps8_2_up : i1
+          %ps8_2_na = arith.select %ps8_2_swap, %ps8_2_vb, %ps8_2_va : i32
+          %ps8_2_nb = arith.select %ps8_2_swap, %ps8_2_va, %ps8_2_vb : i32
+          memref.store %ps8_2_na, %partners[%ps8_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps8_2_nb, %partners[%ps8_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps8_3_pair = arith.constant 96 : index
+          %ps8_3_tp = arith.addi %lane, %ps8_3_pair : index
+          %ps8_3_s = arith.constant 4 : index
+          %ps8_3_sm1 = arith.constant 3 : index
+          %ps8_3_low = arith.andi %ps8_3_tp, %ps8_3_sm1 : index
+          %ps8_3_twice = arith.addi %ps8_3_tp, %ps8_3_tp : index
+          %ps8_3_a = arith.subi %ps8_3_twice, %ps8_3_low : index
+          %ps8_3_b = arith.addi %ps8_3_a, %ps8_3_s : index
+          %ps8_3_sz = arith.constant 16 : index
+          %ps8_3_upb = arith.andi %ps8_3_a, %ps8_3_sz : index
+          %ps8_3_z = arith.constant 0 : index
+          %ps8_3_up = arith.cmpi eq, %ps8_3_upb, %ps8_3_z : index
+          %ps8_3_aa = arith.addi %pbase, %ps8_3_a : index
+          %ps8_3_bb = arith.addi %pbase, %ps8_3_b : index
+          %ps8_3_va = memref.load %partners[%ps8_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps8_3_vb = memref.load %partners[%ps8_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps8_3_gt = arith.cmpi sgt, %ps8_3_va, %ps8_3_vb : i32
+          %ps8_3_swap = arith.cmpi eq, %ps8_3_gt, %ps8_3_up : i1
+          %ps8_3_na = arith.select %ps8_3_swap, %ps8_3_vb, %ps8_3_va : i32
+          %ps8_3_nb = arith.select %ps8_3_swap, %ps8_3_va, %ps8_3_vb : i32
+          memref.store %ps8_3_na, %partners[%ps8_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps8_3_nb, %partners[%ps8_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps9_0_pair = arith.constant 0 : index
+          %ps9_0_tp = arith.addi %lane, %ps9_0_pair : index
+          %ps9_0_s = arith.constant 2 : index
+          %ps9_0_sm1 = arith.constant 1 : index
+          %ps9_0_low = arith.andi %ps9_0_tp, %ps9_0_sm1 : index
+          %ps9_0_twice = arith.addi %ps9_0_tp, %ps9_0_tp : index
+          %ps9_0_a = arith.subi %ps9_0_twice, %ps9_0_low : index
+          %ps9_0_b = arith.addi %ps9_0_a, %ps9_0_s : index
+          %ps9_0_sz = arith.constant 16 : index
+          %ps9_0_upb = arith.andi %ps9_0_a, %ps9_0_sz : index
+          %ps9_0_z = arith.constant 0 : index
+          %ps9_0_up = arith.cmpi eq, %ps9_0_upb, %ps9_0_z : index
+          %ps9_0_aa = arith.addi %pbase, %ps9_0_a : index
+          %ps9_0_bb = arith.addi %pbase, %ps9_0_b : index
+          %ps9_0_va = memref.load %partners[%ps9_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps9_0_vb = memref.load %partners[%ps9_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps9_0_gt = arith.cmpi sgt, %ps9_0_va, %ps9_0_vb : i32
+          %ps9_0_swap = arith.cmpi eq, %ps9_0_gt, %ps9_0_up : i1
+          %ps9_0_na = arith.select %ps9_0_swap, %ps9_0_vb, %ps9_0_va : i32
+          %ps9_0_nb = arith.select %ps9_0_swap, %ps9_0_va, %ps9_0_vb : i32
+          memref.store %ps9_0_na, %partners[%ps9_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps9_0_nb, %partners[%ps9_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps9_1_pair = arith.constant 32 : index
+          %ps9_1_tp = arith.addi %lane, %ps9_1_pair : index
+          %ps9_1_s = arith.constant 2 : index
+          %ps9_1_sm1 = arith.constant 1 : index
+          %ps9_1_low = arith.andi %ps9_1_tp, %ps9_1_sm1 : index
+          %ps9_1_twice = arith.addi %ps9_1_tp, %ps9_1_tp : index
+          %ps9_1_a = arith.subi %ps9_1_twice, %ps9_1_low : index
+          %ps9_1_b = arith.addi %ps9_1_a, %ps9_1_s : index
+          %ps9_1_sz = arith.constant 16 : index
+          %ps9_1_upb = arith.andi %ps9_1_a, %ps9_1_sz : index
+          %ps9_1_z = arith.constant 0 : index
+          %ps9_1_up = arith.cmpi eq, %ps9_1_upb, %ps9_1_z : index
+          %ps9_1_aa = arith.addi %pbase, %ps9_1_a : index
+          %ps9_1_bb = arith.addi %pbase, %ps9_1_b : index
+          %ps9_1_va = memref.load %partners[%ps9_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps9_1_vb = memref.load %partners[%ps9_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps9_1_gt = arith.cmpi sgt, %ps9_1_va, %ps9_1_vb : i32
+          %ps9_1_swap = arith.cmpi eq, %ps9_1_gt, %ps9_1_up : i1
+          %ps9_1_na = arith.select %ps9_1_swap, %ps9_1_vb, %ps9_1_va : i32
+          %ps9_1_nb = arith.select %ps9_1_swap, %ps9_1_va, %ps9_1_vb : i32
+          memref.store %ps9_1_na, %partners[%ps9_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps9_1_nb, %partners[%ps9_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps9_2_pair = arith.constant 64 : index
+          %ps9_2_tp = arith.addi %lane, %ps9_2_pair : index
+          %ps9_2_s = arith.constant 2 : index
+          %ps9_2_sm1 = arith.constant 1 : index
+          %ps9_2_low = arith.andi %ps9_2_tp, %ps9_2_sm1 : index
+          %ps9_2_twice = arith.addi %ps9_2_tp, %ps9_2_tp : index
+          %ps9_2_a = arith.subi %ps9_2_twice, %ps9_2_low : index
+          %ps9_2_b = arith.addi %ps9_2_a, %ps9_2_s : index
+          %ps9_2_sz = arith.constant 16 : index
+          %ps9_2_upb = arith.andi %ps9_2_a, %ps9_2_sz : index
+          %ps9_2_z = arith.constant 0 : index
+          %ps9_2_up = arith.cmpi eq, %ps9_2_upb, %ps9_2_z : index
+          %ps9_2_aa = arith.addi %pbase, %ps9_2_a : index
+          %ps9_2_bb = arith.addi %pbase, %ps9_2_b : index
+          %ps9_2_va = memref.load %partners[%ps9_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps9_2_vb = memref.load %partners[%ps9_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps9_2_gt = arith.cmpi sgt, %ps9_2_va, %ps9_2_vb : i32
+          %ps9_2_swap = arith.cmpi eq, %ps9_2_gt, %ps9_2_up : i1
+          %ps9_2_na = arith.select %ps9_2_swap, %ps9_2_vb, %ps9_2_va : i32
+          %ps9_2_nb = arith.select %ps9_2_swap, %ps9_2_va, %ps9_2_vb : i32
+          memref.store %ps9_2_na, %partners[%ps9_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps9_2_nb, %partners[%ps9_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps9_3_pair = arith.constant 96 : index
+          %ps9_3_tp = arith.addi %lane, %ps9_3_pair : index
+          %ps9_3_s = arith.constant 2 : index
+          %ps9_3_sm1 = arith.constant 1 : index
+          %ps9_3_low = arith.andi %ps9_3_tp, %ps9_3_sm1 : index
+          %ps9_3_twice = arith.addi %ps9_3_tp, %ps9_3_tp : index
+          %ps9_3_a = arith.subi %ps9_3_twice, %ps9_3_low : index
+          %ps9_3_b = arith.addi %ps9_3_a, %ps9_3_s : index
+          %ps9_3_sz = arith.constant 16 : index
+          %ps9_3_upb = arith.andi %ps9_3_a, %ps9_3_sz : index
+          %ps9_3_z = arith.constant 0 : index
+          %ps9_3_up = arith.cmpi eq, %ps9_3_upb, %ps9_3_z : index
+          %ps9_3_aa = arith.addi %pbase, %ps9_3_a : index
+          %ps9_3_bb = arith.addi %pbase, %ps9_3_b : index
+          %ps9_3_va = memref.load %partners[%ps9_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps9_3_vb = memref.load %partners[%ps9_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps9_3_gt = arith.cmpi sgt, %ps9_3_va, %ps9_3_vb : i32
+          %ps9_3_swap = arith.cmpi eq, %ps9_3_gt, %ps9_3_up : i1
+          %ps9_3_na = arith.select %ps9_3_swap, %ps9_3_vb, %ps9_3_va : i32
+          %ps9_3_nb = arith.select %ps9_3_swap, %ps9_3_va, %ps9_3_vb : i32
+          memref.store %ps9_3_na, %partners[%ps9_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps9_3_nb, %partners[%ps9_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps10_0_pair = arith.constant 0 : index
+          %ps10_0_tp = arith.addi %lane, %ps10_0_pair : index
+          %ps10_0_s = arith.constant 1 : index
+          %ps10_0_sm1 = arith.constant 0 : index
+          %ps10_0_low = arith.andi %ps10_0_tp, %ps10_0_sm1 : index
+          %ps10_0_twice = arith.addi %ps10_0_tp, %ps10_0_tp : index
+          %ps10_0_a = arith.subi %ps10_0_twice, %ps10_0_low : index
+          %ps10_0_b = arith.addi %ps10_0_a, %ps10_0_s : index
+          %ps10_0_sz = arith.constant 16 : index
+          %ps10_0_upb = arith.andi %ps10_0_a, %ps10_0_sz : index
+          %ps10_0_z = arith.constant 0 : index
+          %ps10_0_up = arith.cmpi eq, %ps10_0_upb, %ps10_0_z : index
+          %ps10_0_aa = arith.addi %pbase, %ps10_0_a : index
+          %ps10_0_bb = arith.addi %pbase, %ps10_0_b : index
+          %ps10_0_va = memref.load %partners[%ps10_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps10_0_vb = memref.load %partners[%ps10_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps10_0_gt = arith.cmpi sgt, %ps10_0_va, %ps10_0_vb : i32
+          %ps10_0_swap = arith.cmpi eq, %ps10_0_gt, %ps10_0_up : i1
+          %ps10_0_na = arith.select %ps10_0_swap, %ps10_0_vb, %ps10_0_va : i32
+          %ps10_0_nb = arith.select %ps10_0_swap, %ps10_0_va, %ps10_0_vb : i32
+          memref.store %ps10_0_na, %partners[%ps10_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps10_0_nb, %partners[%ps10_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps10_1_pair = arith.constant 32 : index
+          %ps10_1_tp = arith.addi %lane, %ps10_1_pair : index
+          %ps10_1_s = arith.constant 1 : index
+          %ps10_1_sm1 = arith.constant 0 : index
+          %ps10_1_low = arith.andi %ps10_1_tp, %ps10_1_sm1 : index
+          %ps10_1_twice = arith.addi %ps10_1_tp, %ps10_1_tp : index
+          %ps10_1_a = arith.subi %ps10_1_twice, %ps10_1_low : index
+          %ps10_1_b = arith.addi %ps10_1_a, %ps10_1_s : index
+          %ps10_1_sz = arith.constant 16 : index
+          %ps10_1_upb = arith.andi %ps10_1_a, %ps10_1_sz : index
+          %ps10_1_z = arith.constant 0 : index
+          %ps10_1_up = arith.cmpi eq, %ps10_1_upb, %ps10_1_z : index
+          %ps10_1_aa = arith.addi %pbase, %ps10_1_a : index
+          %ps10_1_bb = arith.addi %pbase, %ps10_1_b : index
+          %ps10_1_va = memref.load %partners[%ps10_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps10_1_vb = memref.load %partners[%ps10_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps10_1_gt = arith.cmpi sgt, %ps10_1_va, %ps10_1_vb : i32
+          %ps10_1_swap = arith.cmpi eq, %ps10_1_gt, %ps10_1_up : i1
+          %ps10_1_na = arith.select %ps10_1_swap, %ps10_1_vb, %ps10_1_va : i32
+          %ps10_1_nb = arith.select %ps10_1_swap, %ps10_1_va, %ps10_1_vb : i32
+          memref.store %ps10_1_na, %partners[%ps10_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps10_1_nb, %partners[%ps10_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps10_2_pair = arith.constant 64 : index
+          %ps10_2_tp = arith.addi %lane, %ps10_2_pair : index
+          %ps10_2_s = arith.constant 1 : index
+          %ps10_2_sm1 = arith.constant 0 : index
+          %ps10_2_low = arith.andi %ps10_2_tp, %ps10_2_sm1 : index
+          %ps10_2_twice = arith.addi %ps10_2_tp, %ps10_2_tp : index
+          %ps10_2_a = arith.subi %ps10_2_twice, %ps10_2_low : index
+          %ps10_2_b = arith.addi %ps10_2_a, %ps10_2_s : index
+          %ps10_2_sz = arith.constant 16 : index
+          %ps10_2_upb = arith.andi %ps10_2_a, %ps10_2_sz : index
+          %ps10_2_z = arith.constant 0 : index
+          %ps10_2_up = arith.cmpi eq, %ps10_2_upb, %ps10_2_z : index
+          %ps10_2_aa = arith.addi %pbase, %ps10_2_a : index
+          %ps10_2_bb = arith.addi %pbase, %ps10_2_b : index
+          %ps10_2_va = memref.load %partners[%ps10_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps10_2_vb = memref.load %partners[%ps10_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps10_2_gt = arith.cmpi sgt, %ps10_2_va, %ps10_2_vb : i32
+          %ps10_2_swap = arith.cmpi eq, %ps10_2_gt, %ps10_2_up : i1
+          %ps10_2_na = arith.select %ps10_2_swap, %ps10_2_vb, %ps10_2_va : i32
+          %ps10_2_nb = arith.select %ps10_2_swap, %ps10_2_va, %ps10_2_vb : i32
+          memref.store %ps10_2_na, %partners[%ps10_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps10_2_nb, %partners[%ps10_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps10_3_pair = arith.constant 96 : index
+          %ps10_3_tp = arith.addi %lane, %ps10_3_pair : index
+          %ps10_3_s = arith.constant 1 : index
+          %ps10_3_sm1 = arith.constant 0 : index
+          %ps10_3_low = arith.andi %ps10_3_tp, %ps10_3_sm1 : index
+          %ps10_3_twice = arith.addi %ps10_3_tp, %ps10_3_tp : index
+          %ps10_3_a = arith.subi %ps10_3_twice, %ps10_3_low : index
+          %ps10_3_b = arith.addi %ps10_3_a, %ps10_3_s : index
+          %ps10_3_sz = arith.constant 16 : index
+          %ps10_3_upb = arith.andi %ps10_3_a, %ps10_3_sz : index
+          %ps10_3_z = arith.constant 0 : index
+          %ps10_3_up = arith.cmpi eq, %ps10_3_upb, %ps10_3_z : index
+          %ps10_3_aa = arith.addi %pbase, %ps10_3_a : index
+          %ps10_3_bb = arith.addi %pbase, %ps10_3_b : index
+          %ps10_3_va = memref.load %partners[%ps10_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps10_3_vb = memref.load %partners[%ps10_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps10_3_gt = arith.cmpi sgt, %ps10_3_va, %ps10_3_vb : i32
+          %ps10_3_swap = arith.cmpi eq, %ps10_3_gt, %ps10_3_up : i1
+          %ps10_3_na = arith.select %ps10_3_swap, %ps10_3_vb, %ps10_3_va : i32
+          %ps10_3_nb = arith.select %ps10_3_swap, %ps10_3_va, %ps10_3_vb : i32
+          memref.store %ps10_3_na, %partners[%ps10_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps10_3_nb, %partners[%ps10_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps11_0_pair = arith.constant 0 : index
+          %ps11_0_tp = arith.addi %lane, %ps11_0_pair : index
+          %ps11_0_s = arith.constant 16 : index
+          %ps11_0_sm1 = arith.constant 15 : index
+          %ps11_0_low = arith.andi %ps11_0_tp, %ps11_0_sm1 : index
+          %ps11_0_twice = arith.addi %ps11_0_tp, %ps11_0_tp : index
+          %ps11_0_a = arith.subi %ps11_0_twice, %ps11_0_low : index
+          %ps11_0_b = arith.addi %ps11_0_a, %ps11_0_s : index
+          %ps11_0_sz = arith.constant 32 : index
+          %ps11_0_upb = arith.andi %ps11_0_a, %ps11_0_sz : index
+          %ps11_0_z = arith.constant 0 : index
+          %ps11_0_up = arith.cmpi eq, %ps11_0_upb, %ps11_0_z : index
+          %ps11_0_aa = arith.addi %pbase, %ps11_0_a : index
+          %ps11_0_bb = arith.addi %pbase, %ps11_0_b : index
+          %ps11_0_va = memref.load %partners[%ps11_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps11_0_vb = memref.load %partners[%ps11_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps11_0_gt = arith.cmpi sgt, %ps11_0_va, %ps11_0_vb : i32
+          %ps11_0_swap = arith.cmpi eq, %ps11_0_gt, %ps11_0_up : i1
+          %ps11_0_na = arith.select %ps11_0_swap, %ps11_0_vb, %ps11_0_va : i32
+          %ps11_0_nb = arith.select %ps11_0_swap, %ps11_0_va, %ps11_0_vb : i32
+          memref.store %ps11_0_na, %partners[%ps11_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps11_0_nb, %partners[%ps11_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps11_1_pair = arith.constant 32 : index
+          %ps11_1_tp = arith.addi %lane, %ps11_1_pair : index
+          %ps11_1_s = arith.constant 16 : index
+          %ps11_1_sm1 = arith.constant 15 : index
+          %ps11_1_low = arith.andi %ps11_1_tp, %ps11_1_sm1 : index
+          %ps11_1_twice = arith.addi %ps11_1_tp, %ps11_1_tp : index
+          %ps11_1_a = arith.subi %ps11_1_twice, %ps11_1_low : index
+          %ps11_1_b = arith.addi %ps11_1_a, %ps11_1_s : index
+          %ps11_1_sz = arith.constant 32 : index
+          %ps11_1_upb = arith.andi %ps11_1_a, %ps11_1_sz : index
+          %ps11_1_z = arith.constant 0 : index
+          %ps11_1_up = arith.cmpi eq, %ps11_1_upb, %ps11_1_z : index
+          %ps11_1_aa = arith.addi %pbase, %ps11_1_a : index
+          %ps11_1_bb = arith.addi %pbase, %ps11_1_b : index
+          %ps11_1_va = memref.load %partners[%ps11_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps11_1_vb = memref.load %partners[%ps11_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps11_1_gt = arith.cmpi sgt, %ps11_1_va, %ps11_1_vb : i32
+          %ps11_1_swap = arith.cmpi eq, %ps11_1_gt, %ps11_1_up : i1
+          %ps11_1_na = arith.select %ps11_1_swap, %ps11_1_vb, %ps11_1_va : i32
+          %ps11_1_nb = arith.select %ps11_1_swap, %ps11_1_va, %ps11_1_vb : i32
+          memref.store %ps11_1_na, %partners[%ps11_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps11_1_nb, %partners[%ps11_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps11_2_pair = arith.constant 64 : index
+          %ps11_2_tp = arith.addi %lane, %ps11_2_pair : index
+          %ps11_2_s = arith.constant 16 : index
+          %ps11_2_sm1 = arith.constant 15 : index
+          %ps11_2_low = arith.andi %ps11_2_tp, %ps11_2_sm1 : index
+          %ps11_2_twice = arith.addi %ps11_2_tp, %ps11_2_tp : index
+          %ps11_2_a = arith.subi %ps11_2_twice, %ps11_2_low : index
+          %ps11_2_b = arith.addi %ps11_2_a, %ps11_2_s : index
+          %ps11_2_sz = arith.constant 32 : index
+          %ps11_2_upb = arith.andi %ps11_2_a, %ps11_2_sz : index
+          %ps11_2_z = arith.constant 0 : index
+          %ps11_2_up = arith.cmpi eq, %ps11_2_upb, %ps11_2_z : index
+          %ps11_2_aa = arith.addi %pbase, %ps11_2_a : index
+          %ps11_2_bb = arith.addi %pbase, %ps11_2_b : index
+          %ps11_2_va = memref.load %partners[%ps11_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps11_2_vb = memref.load %partners[%ps11_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps11_2_gt = arith.cmpi sgt, %ps11_2_va, %ps11_2_vb : i32
+          %ps11_2_swap = arith.cmpi eq, %ps11_2_gt, %ps11_2_up : i1
+          %ps11_2_na = arith.select %ps11_2_swap, %ps11_2_vb, %ps11_2_va : i32
+          %ps11_2_nb = arith.select %ps11_2_swap, %ps11_2_va, %ps11_2_vb : i32
+          memref.store %ps11_2_na, %partners[%ps11_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps11_2_nb, %partners[%ps11_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps11_3_pair = arith.constant 96 : index
+          %ps11_3_tp = arith.addi %lane, %ps11_3_pair : index
+          %ps11_3_s = arith.constant 16 : index
+          %ps11_3_sm1 = arith.constant 15 : index
+          %ps11_3_low = arith.andi %ps11_3_tp, %ps11_3_sm1 : index
+          %ps11_3_twice = arith.addi %ps11_3_tp, %ps11_3_tp : index
+          %ps11_3_a = arith.subi %ps11_3_twice, %ps11_3_low : index
+          %ps11_3_b = arith.addi %ps11_3_a, %ps11_3_s : index
+          %ps11_3_sz = arith.constant 32 : index
+          %ps11_3_upb = arith.andi %ps11_3_a, %ps11_3_sz : index
+          %ps11_3_z = arith.constant 0 : index
+          %ps11_3_up = arith.cmpi eq, %ps11_3_upb, %ps11_3_z : index
+          %ps11_3_aa = arith.addi %pbase, %ps11_3_a : index
+          %ps11_3_bb = arith.addi %pbase, %ps11_3_b : index
+          %ps11_3_va = memref.load %partners[%ps11_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps11_3_vb = memref.load %partners[%ps11_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps11_3_gt = arith.cmpi sgt, %ps11_3_va, %ps11_3_vb : i32
+          %ps11_3_swap = arith.cmpi eq, %ps11_3_gt, %ps11_3_up : i1
+          %ps11_3_na = arith.select %ps11_3_swap, %ps11_3_vb, %ps11_3_va : i32
+          %ps11_3_nb = arith.select %ps11_3_swap, %ps11_3_va, %ps11_3_vb : i32
+          memref.store %ps11_3_na, %partners[%ps11_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps11_3_nb, %partners[%ps11_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps12_0_pair = arith.constant 0 : index
+          %ps12_0_tp = arith.addi %lane, %ps12_0_pair : index
+          %ps12_0_s = arith.constant 8 : index
+          %ps12_0_sm1 = arith.constant 7 : index
+          %ps12_0_low = arith.andi %ps12_0_tp, %ps12_0_sm1 : index
+          %ps12_0_twice = arith.addi %ps12_0_tp, %ps12_0_tp : index
+          %ps12_0_a = arith.subi %ps12_0_twice, %ps12_0_low : index
+          %ps12_0_b = arith.addi %ps12_0_a, %ps12_0_s : index
+          %ps12_0_sz = arith.constant 32 : index
+          %ps12_0_upb = arith.andi %ps12_0_a, %ps12_0_sz : index
+          %ps12_0_z = arith.constant 0 : index
+          %ps12_0_up = arith.cmpi eq, %ps12_0_upb, %ps12_0_z : index
+          %ps12_0_aa = arith.addi %pbase, %ps12_0_a : index
+          %ps12_0_bb = arith.addi %pbase, %ps12_0_b : index
+          %ps12_0_va = memref.load %partners[%ps12_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps12_0_vb = memref.load %partners[%ps12_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps12_0_gt = arith.cmpi sgt, %ps12_0_va, %ps12_0_vb : i32
+          %ps12_0_swap = arith.cmpi eq, %ps12_0_gt, %ps12_0_up : i1
+          %ps12_0_na = arith.select %ps12_0_swap, %ps12_0_vb, %ps12_0_va : i32
+          %ps12_0_nb = arith.select %ps12_0_swap, %ps12_0_va, %ps12_0_vb : i32
+          memref.store %ps12_0_na, %partners[%ps12_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps12_0_nb, %partners[%ps12_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps12_1_pair = arith.constant 32 : index
+          %ps12_1_tp = arith.addi %lane, %ps12_1_pair : index
+          %ps12_1_s = arith.constant 8 : index
+          %ps12_1_sm1 = arith.constant 7 : index
+          %ps12_1_low = arith.andi %ps12_1_tp, %ps12_1_sm1 : index
+          %ps12_1_twice = arith.addi %ps12_1_tp, %ps12_1_tp : index
+          %ps12_1_a = arith.subi %ps12_1_twice, %ps12_1_low : index
+          %ps12_1_b = arith.addi %ps12_1_a, %ps12_1_s : index
+          %ps12_1_sz = arith.constant 32 : index
+          %ps12_1_upb = arith.andi %ps12_1_a, %ps12_1_sz : index
+          %ps12_1_z = arith.constant 0 : index
+          %ps12_1_up = arith.cmpi eq, %ps12_1_upb, %ps12_1_z : index
+          %ps12_1_aa = arith.addi %pbase, %ps12_1_a : index
+          %ps12_1_bb = arith.addi %pbase, %ps12_1_b : index
+          %ps12_1_va = memref.load %partners[%ps12_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps12_1_vb = memref.load %partners[%ps12_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps12_1_gt = arith.cmpi sgt, %ps12_1_va, %ps12_1_vb : i32
+          %ps12_1_swap = arith.cmpi eq, %ps12_1_gt, %ps12_1_up : i1
+          %ps12_1_na = arith.select %ps12_1_swap, %ps12_1_vb, %ps12_1_va : i32
+          %ps12_1_nb = arith.select %ps12_1_swap, %ps12_1_va, %ps12_1_vb : i32
+          memref.store %ps12_1_na, %partners[%ps12_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps12_1_nb, %partners[%ps12_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps12_2_pair = arith.constant 64 : index
+          %ps12_2_tp = arith.addi %lane, %ps12_2_pair : index
+          %ps12_2_s = arith.constant 8 : index
+          %ps12_2_sm1 = arith.constant 7 : index
+          %ps12_2_low = arith.andi %ps12_2_tp, %ps12_2_sm1 : index
+          %ps12_2_twice = arith.addi %ps12_2_tp, %ps12_2_tp : index
+          %ps12_2_a = arith.subi %ps12_2_twice, %ps12_2_low : index
+          %ps12_2_b = arith.addi %ps12_2_a, %ps12_2_s : index
+          %ps12_2_sz = arith.constant 32 : index
+          %ps12_2_upb = arith.andi %ps12_2_a, %ps12_2_sz : index
+          %ps12_2_z = arith.constant 0 : index
+          %ps12_2_up = arith.cmpi eq, %ps12_2_upb, %ps12_2_z : index
+          %ps12_2_aa = arith.addi %pbase, %ps12_2_a : index
+          %ps12_2_bb = arith.addi %pbase, %ps12_2_b : index
+          %ps12_2_va = memref.load %partners[%ps12_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps12_2_vb = memref.load %partners[%ps12_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps12_2_gt = arith.cmpi sgt, %ps12_2_va, %ps12_2_vb : i32
+          %ps12_2_swap = arith.cmpi eq, %ps12_2_gt, %ps12_2_up : i1
+          %ps12_2_na = arith.select %ps12_2_swap, %ps12_2_vb, %ps12_2_va : i32
+          %ps12_2_nb = arith.select %ps12_2_swap, %ps12_2_va, %ps12_2_vb : i32
+          memref.store %ps12_2_na, %partners[%ps12_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps12_2_nb, %partners[%ps12_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps12_3_pair = arith.constant 96 : index
+          %ps12_3_tp = arith.addi %lane, %ps12_3_pair : index
+          %ps12_3_s = arith.constant 8 : index
+          %ps12_3_sm1 = arith.constant 7 : index
+          %ps12_3_low = arith.andi %ps12_3_tp, %ps12_3_sm1 : index
+          %ps12_3_twice = arith.addi %ps12_3_tp, %ps12_3_tp : index
+          %ps12_3_a = arith.subi %ps12_3_twice, %ps12_3_low : index
+          %ps12_3_b = arith.addi %ps12_3_a, %ps12_3_s : index
+          %ps12_3_sz = arith.constant 32 : index
+          %ps12_3_upb = arith.andi %ps12_3_a, %ps12_3_sz : index
+          %ps12_3_z = arith.constant 0 : index
+          %ps12_3_up = arith.cmpi eq, %ps12_3_upb, %ps12_3_z : index
+          %ps12_3_aa = arith.addi %pbase, %ps12_3_a : index
+          %ps12_3_bb = arith.addi %pbase, %ps12_3_b : index
+          %ps12_3_va = memref.load %partners[%ps12_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps12_3_vb = memref.load %partners[%ps12_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps12_3_gt = arith.cmpi sgt, %ps12_3_va, %ps12_3_vb : i32
+          %ps12_3_swap = arith.cmpi eq, %ps12_3_gt, %ps12_3_up : i1
+          %ps12_3_na = arith.select %ps12_3_swap, %ps12_3_vb, %ps12_3_va : i32
+          %ps12_3_nb = arith.select %ps12_3_swap, %ps12_3_va, %ps12_3_vb : i32
+          memref.store %ps12_3_na, %partners[%ps12_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps12_3_nb, %partners[%ps12_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps13_0_pair = arith.constant 0 : index
+          %ps13_0_tp = arith.addi %lane, %ps13_0_pair : index
+          %ps13_0_s = arith.constant 4 : index
+          %ps13_0_sm1 = arith.constant 3 : index
+          %ps13_0_low = arith.andi %ps13_0_tp, %ps13_0_sm1 : index
+          %ps13_0_twice = arith.addi %ps13_0_tp, %ps13_0_tp : index
+          %ps13_0_a = arith.subi %ps13_0_twice, %ps13_0_low : index
+          %ps13_0_b = arith.addi %ps13_0_a, %ps13_0_s : index
+          %ps13_0_sz = arith.constant 32 : index
+          %ps13_0_upb = arith.andi %ps13_0_a, %ps13_0_sz : index
+          %ps13_0_z = arith.constant 0 : index
+          %ps13_0_up = arith.cmpi eq, %ps13_0_upb, %ps13_0_z : index
+          %ps13_0_aa = arith.addi %pbase, %ps13_0_a : index
+          %ps13_0_bb = arith.addi %pbase, %ps13_0_b : index
+          %ps13_0_va = memref.load %partners[%ps13_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps13_0_vb = memref.load %partners[%ps13_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps13_0_gt = arith.cmpi sgt, %ps13_0_va, %ps13_0_vb : i32
+          %ps13_0_swap = arith.cmpi eq, %ps13_0_gt, %ps13_0_up : i1
+          %ps13_0_na = arith.select %ps13_0_swap, %ps13_0_vb, %ps13_0_va : i32
+          %ps13_0_nb = arith.select %ps13_0_swap, %ps13_0_va, %ps13_0_vb : i32
+          memref.store %ps13_0_na, %partners[%ps13_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps13_0_nb, %partners[%ps13_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps13_1_pair = arith.constant 32 : index
+          %ps13_1_tp = arith.addi %lane, %ps13_1_pair : index
+          %ps13_1_s = arith.constant 4 : index
+          %ps13_1_sm1 = arith.constant 3 : index
+          %ps13_1_low = arith.andi %ps13_1_tp, %ps13_1_sm1 : index
+          %ps13_1_twice = arith.addi %ps13_1_tp, %ps13_1_tp : index
+          %ps13_1_a = arith.subi %ps13_1_twice, %ps13_1_low : index
+          %ps13_1_b = arith.addi %ps13_1_a, %ps13_1_s : index
+          %ps13_1_sz = arith.constant 32 : index
+          %ps13_1_upb = arith.andi %ps13_1_a, %ps13_1_sz : index
+          %ps13_1_z = arith.constant 0 : index
+          %ps13_1_up = arith.cmpi eq, %ps13_1_upb, %ps13_1_z : index
+          %ps13_1_aa = arith.addi %pbase, %ps13_1_a : index
+          %ps13_1_bb = arith.addi %pbase, %ps13_1_b : index
+          %ps13_1_va = memref.load %partners[%ps13_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps13_1_vb = memref.load %partners[%ps13_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps13_1_gt = arith.cmpi sgt, %ps13_1_va, %ps13_1_vb : i32
+          %ps13_1_swap = arith.cmpi eq, %ps13_1_gt, %ps13_1_up : i1
+          %ps13_1_na = arith.select %ps13_1_swap, %ps13_1_vb, %ps13_1_va : i32
+          %ps13_1_nb = arith.select %ps13_1_swap, %ps13_1_va, %ps13_1_vb : i32
+          memref.store %ps13_1_na, %partners[%ps13_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps13_1_nb, %partners[%ps13_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps13_2_pair = arith.constant 64 : index
+          %ps13_2_tp = arith.addi %lane, %ps13_2_pair : index
+          %ps13_2_s = arith.constant 4 : index
+          %ps13_2_sm1 = arith.constant 3 : index
+          %ps13_2_low = arith.andi %ps13_2_tp, %ps13_2_sm1 : index
+          %ps13_2_twice = arith.addi %ps13_2_tp, %ps13_2_tp : index
+          %ps13_2_a = arith.subi %ps13_2_twice, %ps13_2_low : index
+          %ps13_2_b = arith.addi %ps13_2_a, %ps13_2_s : index
+          %ps13_2_sz = arith.constant 32 : index
+          %ps13_2_upb = arith.andi %ps13_2_a, %ps13_2_sz : index
+          %ps13_2_z = arith.constant 0 : index
+          %ps13_2_up = arith.cmpi eq, %ps13_2_upb, %ps13_2_z : index
+          %ps13_2_aa = arith.addi %pbase, %ps13_2_a : index
+          %ps13_2_bb = arith.addi %pbase, %ps13_2_b : index
+          %ps13_2_va = memref.load %partners[%ps13_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps13_2_vb = memref.load %partners[%ps13_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps13_2_gt = arith.cmpi sgt, %ps13_2_va, %ps13_2_vb : i32
+          %ps13_2_swap = arith.cmpi eq, %ps13_2_gt, %ps13_2_up : i1
+          %ps13_2_na = arith.select %ps13_2_swap, %ps13_2_vb, %ps13_2_va : i32
+          %ps13_2_nb = arith.select %ps13_2_swap, %ps13_2_va, %ps13_2_vb : i32
+          memref.store %ps13_2_na, %partners[%ps13_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps13_2_nb, %partners[%ps13_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps13_3_pair = arith.constant 96 : index
+          %ps13_3_tp = arith.addi %lane, %ps13_3_pair : index
+          %ps13_3_s = arith.constant 4 : index
+          %ps13_3_sm1 = arith.constant 3 : index
+          %ps13_3_low = arith.andi %ps13_3_tp, %ps13_3_sm1 : index
+          %ps13_3_twice = arith.addi %ps13_3_tp, %ps13_3_tp : index
+          %ps13_3_a = arith.subi %ps13_3_twice, %ps13_3_low : index
+          %ps13_3_b = arith.addi %ps13_3_a, %ps13_3_s : index
+          %ps13_3_sz = arith.constant 32 : index
+          %ps13_3_upb = arith.andi %ps13_3_a, %ps13_3_sz : index
+          %ps13_3_z = arith.constant 0 : index
+          %ps13_3_up = arith.cmpi eq, %ps13_3_upb, %ps13_3_z : index
+          %ps13_3_aa = arith.addi %pbase, %ps13_3_a : index
+          %ps13_3_bb = arith.addi %pbase, %ps13_3_b : index
+          %ps13_3_va = memref.load %partners[%ps13_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps13_3_vb = memref.load %partners[%ps13_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps13_3_gt = arith.cmpi sgt, %ps13_3_va, %ps13_3_vb : i32
+          %ps13_3_swap = arith.cmpi eq, %ps13_3_gt, %ps13_3_up : i1
+          %ps13_3_na = arith.select %ps13_3_swap, %ps13_3_vb, %ps13_3_va : i32
+          %ps13_3_nb = arith.select %ps13_3_swap, %ps13_3_va, %ps13_3_vb : i32
+          memref.store %ps13_3_na, %partners[%ps13_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps13_3_nb, %partners[%ps13_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps14_0_pair = arith.constant 0 : index
+          %ps14_0_tp = arith.addi %lane, %ps14_0_pair : index
+          %ps14_0_s = arith.constant 2 : index
+          %ps14_0_sm1 = arith.constant 1 : index
+          %ps14_0_low = arith.andi %ps14_0_tp, %ps14_0_sm1 : index
+          %ps14_0_twice = arith.addi %ps14_0_tp, %ps14_0_tp : index
+          %ps14_0_a = arith.subi %ps14_0_twice, %ps14_0_low : index
+          %ps14_0_b = arith.addi %ps14_0_a, %ps14_0_s : index
+          %ps14_0_sz = arith.constant 32 : index
+          %ps14_0_upb = arith.andi %ps14_0_a, %ps14_0_sz : index
+          %ps14_0_z = arith.constant 0 : index
+          %ps14_0_up = arith.cmpi eq, %ps14_0_upb, %ps14_0_z : index
+          %ps14_0_aa = arith.addi %pbase, %ps14_0_a : index
+          %ps14_0_bb = arith.addi %pbase, %ps14_0_b : index
+          %ps14_0_va = memref.load %partners[%ps14_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps14_0_vb = memref.load %partners[%ps14_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps14_0_gt = arith.cmpi sgt, %ps14_0_va, %ps14_0_vb : i32
+          %ps14_0_swap = arith.cmpi eq, %ps14_0_gt, %ps14_0_up : i1
+          %ps14_0_na = arith.select %ps14_0_swap, %ps14_0_vb, %ps14_0_va : i32
+          %ps14_0_nb = arith.select %ps14_0_swap, %ps14_0_va, %ps14_0_vb : i32
+          memref.store %ps14_0_na, %partners[%ps14_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps14_0_nb, %partners[%ps14_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps14_1_pair = arith.constant 32 : index
+          %ps14_1_tp = arith.addi %lane, %ps14_1_pair : index
+          %ps14_1_s = arith.constant 2 : index
+          %ps14_1_sm1 = arith.constant 1 : index
+          %ps14_1_low = arith.andi %ps14_1_tp, %ps14_1_sm1 : index
+          %ps14_1_twice = arith.addi %ps14_1_tp, %ps14_1_tp : index
+          %ps14_1_a = arith.subi %ps14_1_twice, %ps14_1_low : index
+          %ps14_1_b = arith.addi %ps14_1_a, %ps14_1_s : index
+          %ps14_1_sz = arith.constant 32 : index
+          %ps14_1_upb = arith.andi %ps14_1_a, %ps14_1_sz : index
+          %ps14_1_z = arith.constant 0 : index
+          %ps14_1_up = arith.cmpi eq, %ps14_1_upb, %ps14_1_z : index
+          %ps14_1_aa = arith.addi %pbase, %ps14_1_a : index
+          %ps14_1_bb = arith.addi %pbase, %ps14_1_b : index
+          %ps14_1_va = memref.load %partners[%ps14_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps14_1_vb = memref.load %partners[%ps14_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps14_1_gt = arith.cmpi sgt, %ps14_1_va, %ps14_1_vb : i32
+          %ps14_1_swap = arith.cmpi eq, %ps14_1_gt, %ps14_1_up : i1
+          %ps14_1_na = arith.select %ps14_1_swap, %ps14_1_vb, %ps14_1_va : i32
+          %ps14_1_nb = arith.select %ps14_1_swap, %ps14_1_va, %ps14_1_vb : i32
+          memref.store %ps14_1_na, %partners[%ps14_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps14_1_nb, %partners[%ps14_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps14_2_pair = arith.constant 64 : index
+          %ps14_2_tp = arith.addi %lane, %ps14_2_pair : index
+          %ps14_2_s = arith.constant 2 : index
+          %ps14_2_sm1 = arith.constant 1 : index
+          %ps14_2_low = arith.andi %ps14_2_tp, %ps14_2_sm1 : index
+          %ps14_2_twice = arith.addi %ps14_2_tp, %ps14_2_tp : index
+          %ps14_2_a = arith.subi %ps14_2_twice, %ps14_2_low : index
+          %ps14_2_b = arith.addi %ps14_2_a, %ps14_2_s : index
+          %ps14_2_sz = arith.constant 32 : index
+          %ps14_2_upb = arith.andi %ps14_2_a, %ps14_2_sz : index
+          %ps14_2_z = arith.constant 0 : index
+          %ps14_2_up = arith.cmpi eq, %ps14_2_upb, %ps14_2_z : index
+          %ps14_2_aa = arith.addi %pbase, %ps14_2_a : index
+          %ps14_2_bb = arith.addi %pbase, %ps14_2_b : index
+          %ps14_2_va = memref.load %partners[%ps14_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps14_2_vb = memref.load %partners[%ps14_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps14_2_gt = arith.cmpi sgt, %ps14_2_va, %ps14_2_vb : i32
+          %ps14_2_swap = arith.cmpi eq, %ps14_2_gt, %ps14_2_up : i1
+          %ps14_2_na = arith.select %ps14_2_swap, %ps14_2_vb, %ps14_2_va : i32
+          %ps14_2_nb = arith.select %ps14_2_swap, %ps14_2_va, %ps14_2_vb : i32
+          memref.store %ps14_2_na, %partners[%ps14_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps14_2_nb, %partners[%ps14_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps14_3_pair = arith.constant 96 : index
+          %ps14_3_tp = arith.addi %lane, %ps14_3_pair : index
+          %ps14_3_s = arith.constant 2 : index
+          %ps14_3_sm1 = arith.constant 1 : index
+          %ps14_3_low = arith.andi %ps14_3_tp, %ps14_3_sm1 : index
+          %ps14_3_twice = arith.addi %ps14_3_tp, %ps14_3_tp : index
+          %ps14_3_a = arith.subi %ps14_3_twice, %ps14_3_low : index
+          %ps14_3_b = arith.addi %ps14_3_a, %ps14_3_s : index
+          %ps14_3_sz = arith.constant 32 : index
+          %ps14_3_upb = arith.andi %ps14_3_a, %ps14_3_sz : index
+          %ps14_3_z = arith.constant 0 : index
+          %ps14_3_up = arith.cmpi eq, %ps14_3_upb, %ps14_3_z : index
+          %ps14_3_aa = arith.addi %pbase, %ps14_3_a : index
+          %ps14_3_bb = arith.addi %pbase, %ps14_3_b : index
+          %ps14_3_va = memref.load %partners[%ps14_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps14_3_vb = memref.load %partners[%ps14_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps14_3_gt = arith.cmpi sgt, %ps14_3_va, %ps14_3_vb : i32
+          %ps14_3_swap = arith.cmpi eq, %ps14_3_gt, %ps14_3_up : i1
+          %ps14_3_na = arith.select %ps14_3_swap, %ps14_3_vb, %ps14_3_va : i32
+          %ps14_3_nb = arith.select %ps14_3_swap, %ps14_3_va, %ps14_3_vb : i32
+          memref.store %ps14_3_na, %partners[%ps14_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps14_3_nb, %partners[%ps14_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps15_0_pair = arith.constant 0 : index
+          %ps15_0_tp = arith.addi %lane, %ps15_0_pair : index
+          %ps15_0_s = arith.constant 1 : index
+          %ps15_0_sm1 = arith.constant 0 : index
+          %ps15_0_low = arith.andi %ps15_0_tp, %ps15_0_sm1 : index
+          %ps15_0_twice = arith.addi %ps15_0_tp, %ps15_0_tp : index
+          %ps15_0_a = arith.subi %ps15_0_twice, %ps15_0_low : index
+          %ps15_0_b = arith.addi %ps15_0_a, %ps15_0_s : index
+          %ps15_0_sz = arith.constant 32 : index
+          %ps15_0_upb = arith.andi %ps15_0_a, %ps15_0_sz : index
+          %ps15_0_z = arith.constant 0 : index
+          %ps15_0_up = arith.cmpi eq, %ps15_0_upb, %ps15_0_z : index
+          %ps15_0_aa = arith.addi %pbase, %ps15_0_a : index
+          %ps15_0_bb = arith.addi %pbase, %ps15_0_b : index
+          %ps15_0_va = memref.load %partners[%ps15_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps15_0_vb = memref.load %partners[%ps15_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps15_0_gt = arith.cmpi sgt, %ps15_0_va, %ps15_0_vb : i32
+          %ps15_0_swap = arith.cmpi eq, %ps15_0_gt, %ps15_0_up : i1
+          %ps15_0_na = arith.select %ps15_0_swap, %ps15_0_vb, %ps15_0_va : i32
+          %ps15_0_nb = arith.select %ps15_0_swap, %ps15_0_va, %ps15_0_vb : i32
+          memref.store %ps15_0_na, %partners[%ps15_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps15_0_nb, %partners[%ps15_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps15_1_pair = arith.constant 32 : index
+          %ps15_1_tp = arith.addi %lane, %ps15_1_pair : index
+          %ps15_1_s = arith.constant 1 : index
+          %ps15_1_sm1 = arith.constant 0 : index
+          %ps15_1_low = arith.andi %ps15_1_tp, %ps15_1_sm1 : index
+          %ps15_1_twice = arith.addi %ps15_1_tp, %ps15_1_tp : index
+          %ps15_1_a = arith.subi %ps15_1_twice, %ps15_1_low : index
+          %ps15_1_b = arith.addi %ps15_1_a, %ps15_1_s : index
+          %ps15_1_sz = arith.constant 32 : index
+          %ps15_1_upb = arith.andi %ps15_1_a, %ps15_1_sz : index
+          %ps15_1_z = arith.constant 0 : index
+          %ps15_1_up = arith.cmpi eq, %ps15_1_upb, %ps15_1_z : index
+          %ps15_1_aa = arith.addi %pbase, %ps15_1_a : index
+          %ps15_1_bb = arith.addi %pbase, %ps15_1_b : index
+          %ps15_1_va = memref.load %partners[%ps15_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps15_1_vb = memref.load %partners[%ps15_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps15_1_gt = arith.cmpi sgt, %ps15_1_va, %ps15_1_vb : i32
+          %ps15_1_swap = arith.cmpi eq, %ps15_1_gt, %ps15_1_up : i1
+          %ps15_1_na = arith.select %ps15_1_swap, %ps15_1_vb, %ps15_1_va : i32
+          %ps15_1_nb = arith.select %ps15_1_swap, %ps15_1_va, %ps15_1_vb : i32
+          memref.store %ps15_1_na, %partners[%ps15_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps15_1_nb, %partners[%ps15_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps15_2_pair = arith.constant 64 : index
+          %ps15_2_tp = arith.addi %lane, %ps15_2_pair : index
+          %ps15_2_s = arith.constant 1 : index
+          %ps15_2_sm1 = arith.constant 0 : index
+          %ps15_2_low = arith.andi %ps15_2_tp, %ps15_2_sm1 : index
+          %ps15_2_twice = arith.addi %ps15_2_tp, %ps15_2_tp : index
+          %ps15_2_a = arith.subi %ps15_2_twice, %ps15_2_low : index
+          %ps15_2_b = arith.addi %ps15_2_a, %ps15_2_s : index
+          %ps15_2_sz = arith.constant 32 : index
+          %ps15_2_upb = arith.andi %ps15_2_a, %ps15_2_sz : index
+          %ps15_2_z = arith.constant 0 : index
+          %ps15_2_up = arith.cmpi eq, %ps15_2_upb, %ps15_2_z : index
+          %ps15_2_aa = arith.addi %pbase, %ps15_2_a : index
+          %ps15_2_bb = arith.addi %pbase, %ps15_2_b : index
+          %ps15_2_va = memref.load %partners[%ps15_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps15_2_vb = memref.load %partners[%ps15_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps15_2_gt = arith.cmpi sgt, %ps15_2_va, %ps15_2_vb : i32
+          %ps15_2_swap = arith.cmpi eq, %ps15_2_gt, %ps15_2_up : i1
+          %ps15_2_na = arith.select %ps15_2_swap, %ps15_2_vb, %ps15_2_va : i32
+          %ps15_2_nb = arith.select %ps15_2_swap, %ps15_2_va, %ps15_2_vb : i32
+          memref.store %ps15_2_na, %partners[%ps15_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps15_2_nb, %partners[%ps15_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps15_3_pair = arith.constant 96 : index
+          %ps15_3_tp = arith.addi %lane, %ps15_3_pair : index
+          %ps15_3_s = arith.constant 1 : index
+          %ps15_3_sm1 = arith.constant 0 : index
+          %ps15_3_low = arith.andi %ps15_3_tp, %ps15_3_sm1 : index
+          %ps15_3_twice = arith.addi %ps15_3_tp, %ps15_3_tp : index
+          %ps15_3_a = arith.subi %ps15_3_twice, %ps15_3_low : index
+          %ps15_3_b = arith.addi %ps15_3_a, %ps15_3_s : index
+          %ps15_3_sz = arith.constant 32 : index
+          %ps15_3_upb = arith.andi %ps15_3_a, %ps15_3_sz : index
+          %ps15_3_z = arith.constant 0 : index
+          %ps15_3_up = arith.cmpi eq, %ps15_3_upb, %ps15_3_z : index
+          %ps15_3_aa = arith.addi %pbase, %ps15_3_a : index
+          %ps15_3_bb = arith.addi %pbase, %ps15_3_b : index
+          %ps15_3_va = memref.load %partners[%ps15_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps15_3_vb = memref.load %partners[%ps15_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps15_3_gt = arith.cmpi sgt, %ps15_3_va, %ps15_3_vb : i32
+          %ps15_3_swap = arith.cmpi eq, %ps15_3_gt, %ps15_3_up : i1
+          %ps15_3_na = arith.select %ps15_3_swap, %ps15_3_vb, %ps15_3_va : i32
+          %ps15_3_nb = arith.select %ps15_3_swap, %ps15_3_va, %ps15_3_vb : i32
+          memref.store %ps15_3_na, %partners[%ps15_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps15_3_nb, %partners[%ps15_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps16_0_pair = arith.constant 0 : index
+          %ps16_0_tp = arith.addi %lane, %ps16_0_pair : index
+          %ps16_0_s = arith.constant 32 : index
+          %ps16_0_sm1 = arith.constant 31 : index
+          %ps16_0_low = arith.andi %ps16_0_tp, %ps16_0_sm1 : index
+          %ps16_0_twice = arith.addi %ps16_0_tp, %ps16_0_tp : index
+          %ps16_0_a = arith.subi %ps16_0_twice, %ps16_0_low : index
+          %ps16_0_b = arith.addi %ps16_0_a, %ps16_0_s : index
+          %ps16_0_sz = arith.constant 64 : index
+          %ps16_0_upb = arith.andi %ps16_0_a, %ps16_0_sz : index
+          %ps16_0_z = arith.constant 0 : index
+          %ps16_0_up = arith.cmpi eq, %ps16_0_upb, %ps16_0_z : index
+          %ps16_0_aa = arith.addi %pbase, %ps16_0_a : index
+          %ps16_0_bb = arith.addi %pbase, %ps16_0_b : index
+          %ps16_0_va = memref.load %partners[%ps16_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps16_0_vb = memref.load %partners[%ps16_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps16_0_gt = arith.cmpi sgt, %ps16_0_va, %ps16_0_vb : i32
+          %ps16_0_swap = arith.cmpi eq, %ps16_0_gt, %ps16_0_up : i1
+          %ps16_0_na = arith.select %ps16_0_swap, %ps16_0_vb, %ps16_0_va : i32
+          %ps16_0_nb = arith.select %ps16_0_swap, %ps16_0_va, %ps16_0_vb : i32
+          memref.store %ps16_0_na, %partners[%ps16_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps16_0_nb, %partners[%ps16_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps16_1_pair = arith.constant 32 : index
+          %ps16_1_tp = arith.addi %lane, %ps16_1_pair : index
+          %ps16_1_s = arith.constant 32 : index
+          %ps16_1_sm1 = arith.constant 31 : index
+          %ps16_1_low = arith.andi %ps16_1_tp, %ps16_1_sm1 : index
+          %ps16_1_twice = arith.addi %ps16_1_tp, %ps16_1_tp : index
+          %ps16_1_a = arith.subi %ps16_1_twice, %ps16_1_low : index
+          %ps16_1_b = arith.addi %ps16_1_a, %ps16_1_s : index
+          %ps16_1_sz = arith.constant 64 : index
+          %ps16_1_upb = arith.andi %ps16_1_a, %ps16_1_sz : index
+          %ps16_1_z = arith.constant 0 : index
+          %ps16_1_up = arith.cmpi eq, %ps16_1_upb, %ps16_1_z : index
+          %ps16_1_aa = arith.addi %pbase, %ps16_1_a : index
+          %ps16_1_bb = arith.addi %pbase, %ps16_1_b : index
+          %ps16_1_va = memref.load %partners[%ps16_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps16_1_vb = memref.load %partners[%ps16_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps16_1_gt = arith.cmpi sgt, %ps16_1_va, %ps16_1_vb : i32
+          %ps16_1_swap = arith.cmpi eq, %ps16_1_gt, %ps16_1_up : i1
+          %ps16_1_na = arith.select %ps16_1_swap, %ps16_1_vb, %ps16_1_va : i32
+          %ps16_1_nb = arith.select %ps16_1_swap, %ps16_1_va, %ps16_1_vb : i32
+          memref.store %ps16_1_na, %partners[%ps16_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps16_1_nb, %partners[%ps16_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps16_2_pair = arith.constant 64 : index
+          %ps16_2_tp = arith.addi %lane, %ps16_2_pair : index
+          %ps16_2_s = arith.constant 32 : index
+          %ps16_2_sm1 = arith.constant 31 : index
+          %ps16_2_low = arith.andi %ps16_2_tp, %ps16_2_sm1 : index
+          %ps16_2_twice = arith.addi %ps16_2_tp, %ps16_2_tp : index
+          %ps16_2_a = arith.subi %ps16_2_twice, %ps16_2_low : index
+          %ps16_2_b = arith.addi %ps16_2_a, %ps16_2_s : index
+          %ps16_2_sz = arith.constant 64 : index
+          %ps16_2_upb = arith.andi %ps16_2_a, %ps16_2_sz : index
+          %ps16_2_z = arith.constant 0 : index
+          %ps16_2_up = arith.cmpi eq, %ps16_2_upb, %ps16_2_z : index
+          %ps16_2_aa = arith.addi %pbase, %ps16_2_a : index
+          %ps16_2_bb = arith.addi %pbase, %ps16_2_b : index
+          %ps16_2_va = memref.load %partners[%ps16_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps16_2_vb = memref.load %partners[%ps16_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps16_2_gt = arith.cmpi sgt, %ps16_2_va, %ps16_2_vb : i32
+          %ps16_2_swap = arith.cmpi eq, %ps16_2_gt, %ps16_2_up : i1
+          %ps16_2_na = arith.select %ps16_2_swap, %ps16_2_vb, %ps16_2_va : i32
+          %ps16_2_nb = arith.select %ps16_2_swap, %ps16_2_va, %ps16_2_vb : i32
+          memref.store %ps16_2_na, %partners[%ps16_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps16_2_nb, %partners[%ps16_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps16_3_pair = arith.constant 96 : index
+          %ps16_3_tp = arith.addi %lane, %ps16_3_pair : index
+          %ps16_3_s = arith.constant 32 : index
+          %ps16_3_sm1 = arith.constant 31 : index
+          %ps16_3_low = arith.andi %ps16_3_tp, %ps16_3_sm1 : index
+          %ps16_3_twice = arith.addi %ps16_3_tp, %ps16_3_tp : index
+          %ps16_3_a = arith.subi %ps16_3_twice, %ps16_3_low : index
+          %ps16_3_b = arith.addi %ps16_3_a, %ps16_3_s : index
+          %ps16_3_sz = arith.constant 64 : index
+          %ps16_3_upb = arith.andi %ps16_3_a, %ps16_3_sz : index
+          %ps16_3_z = arith.constant 0 : index
+          %ps16_3_up = arith.cmpi eq, %ps16_3_upb, %ps16_3_z : index
+          %ps16_3_aa = arith.addi %pbase, %ps16_3_a : index
+          %ps16_3_bb = arith.addi %pbase, %ps16_3_b : index
+          %ps16_3_va = memref.load %partners[%ps16_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps16_3_vb = memref.load %partners[%ps16_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps16_3_gt = arith.cmpi sgt, %ps16_3_va, %ps16_3_vb : i32
+          %ps16_3_swap = arith.cmpi eq, %ps16_3_gt, %ps16_3_up : i1
+          %ps16_3_na = arith.select %ps16_3_swap, %ps16_3_vb, %ps16_3_va : i32
+          %ps16_3_nb = arith.select %ps16_3_swap, %ps16_3_va, %ps16_3_vb : i32
+          memref.store %ps16_3_na, %partners[%ps16_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps16_3_nb, %partners[%ps16_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps17_0_pair = arith.constant 0 : index
+          %ps17_0_tp = arith.addi %lane, %ps17_0_pair : index
+          %ps17_0_s = arith.constant 16 : index
+          %ps17_0_sm1 = arith.constant 15 : index
+          %ps17_0_low = arith.andi %ps17_0_tp, %ps17_0_sm1 : index
+          %ps17_0_twice = arith.addi %ps17_0_tp, %ps17_0_tp : index
+          %ps17_0_a = arith.subi %ps17_0_twice, %ps17_0_low : index
+          %ps17_0_b = arith.addi %ps17_0_a, %ps17_0_s : index
+          %ps17_0_sz = arith.constant 64 : index
+          %ps17_0_upb = arith.andi %ps17_0_a, %ps17_0_sz : index
+          %ps17_0_z = arith.constant 0 : index
+          %ps17_0_up = arith.cmpi eq, %ps17_0_upb, %ps17_0_z : index
+          %ps17_0_aa = arith.addi %pbase, %ps17_0_a : index
+          %ps17_0_bb = arith.addi %pbase, %ps17_0_b : index
+          %ps17_0_va = memref.load %partners[%ps17_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps17_0_vb = memref.load %partners[%ps17_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps17_0_gt = arith.cmpi sgt, %ps17_0_va, %ps17_0_vb : i32
+          %ps17_0_swap = arith.cmpi eq, %ps17_0_gt, %ps17_0_up : i1
+          %ps17_0_na = arith.select %ps17_0_swap, %ps17_0_vb, %ps17_0_va : i32
+          %ps17_0_nb = arith.select %ps17_0_swap, %ps17_0_va, %ps17_0_vb : i32
+          memref.store %ps17_0_na, %partners[%ps17_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps17_0_nb, %partners[%ps17_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps17_1_pair = arith.constant 32 : index
+          %ps17_1_tp = arith.addi %lane, %ps17_1_pair : index
+          %ps17_1_s = arith.constant 16 : index
+          %ps17_1_sm1 = arith.constant 15 : index
+          %ps17_1_low = arith.andi %ps17_1_tp, %ps17_1_sm1 : index
+          %ps17_1_twice = arith.addi %ps17_1_tp, %ps17_1_tp : index
+          %ps17_1_a = arith.subi %ps17_1_twice, %ps17_1_low : index
+          %ps17_1_b = arith.addi %ps17_1_a, %ps17_1_s : index
+          %ps17_1_sz = arith.constant 64 : index
+          %ps17_1_upb = arith.andi %ps17_1_a, %ps17_1_sz : index
+          %ps17_1_z = arith.constant 0 : index
+          %ps17_1_up = arith.cmpi eq, %ps17_1_upb, %ps17_1_z : index
+          %ps17_1_aa = arith.addi %pbase, %ps17_1_a : index
+          %ps17_1_bb = arith.addi %pbase, %ps17_1_b : index
+          %ps17_1_va = memref.load %partners[%ps17_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps17_1_vb = memref.load %partners[%ps17_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps17_1_gt = arith.cmpi sgt, %ps17_1_va, %ps17_1_vb : i32
+          %ps17_1_swap = arith.cmpi eq, %ps17_1_gt, %ps17_1_up : i1
+          %ps17_1_na = arith.select %ps17_1_swap, %ps17_1_vb, %ps17_1_va : i32
+          %ps17_1_nb = arith.select %ps17_1_swap, %ps17_1_va, %ps17_1_vb : i32
+          memref.store %ps17_1_na, %partners[%ps17_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps17_1_nb, %partners[%ps17_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps17_2_pair = arith.constant 64 : index
+          %ps17_2_tp = arith.addi %lane, %ps17_2_pair : index
+          %ps17_2_s = arith.constant 16 : index
+          %ps17_2_sm1 = arith.constant 15 : index
+          %ps17_2_low = arith.andi %ps17_2_tp, %ps17_2_sm1 : index
+          %ps17_2_twice = arith.addi %ps17_2_tp, %ps17_2_tp : index
+          %ps17_2_a = arith.subi %ps17_2_twice, %ps17_2_low : index
+          %ps17_2_b = arith.addi %ps17_2_a, %ps17_2_s : index
+          %ps17_2_sz = arith.constant 64 : index
+          %ps17_2_upb = arith.andi %ps17_2_a, %ps17_2_sz : index
+          %ps17_2_z = arith.constant 0 : index
+          %ps17_2_up = arith.cmpi eq, %ps17_2_upb, %ps17_2_z : index
+          %ps17_2_aa = arith.addi %pbase, %ps17_2_a : index
+          %ps17_2_bb = arith.addi %pbase, %ps17_2_b : index
+          %ps17_2_va = memref.load %partners[%ps17_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps17_2_vb = memref.load %partners[%ps17_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps17_2_gt = arith.cmpi sgt, %ps17_2_va, %ps17_2_vb : i32
+          %ps17_2_swap = arith.cmpi eq, %ps17_2_gt, %ps17_2_up : i1
+          %ps17_2_na = arith.select %ps17_2_swap, %ps17_2_vb, %ps17_2_va : i32
+          %ps17_2_nb = arith.select %ps17_2_swap, %ps17_2_va, %ps17_2_vb : i32
+          memref.store %ps17_2_na, %partners[%ps17_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps17_2_nb, %partners[%ps17_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps17_3_pair = arith.constant 96 : index
+          %ps17_3_tp = arith.addi %lane, %ps17_3_pair : index
+          %ps17_3_s = arith.constant 16 : index
+          %ps17_3_sm1 = arith.constant 15 : index
+          %ps17_3_low = arith.andi %ps17_3_tp, %ps17_3_sm1 : index
+          %ps17_3_twice = arith.addi %ps17_3_tp, %ps17_3_tp : index
+          %ps17_3_a = arith.subi %ps17_3_twice, %ps17_3_low : index
+          %ps17_3_b = arith.addi %ps17_3_a, %ps17_3_s : index
+          %ps17_3_sz = arith.constant 64 : index
+          %ps17_3_upb = arith.andi %ps17_3_a, %ps17_3_sz : index
+          %ps17_3_z = arith.constant 0 : index
+          %ps17_3_up = arith.cmpi eq, %ps17_3_upb, %ps17_3_z : index
+          %ps17_3_aa = arith.addi %pbase, %ps17_3_a : index
+          %ps17_3_bb = arith.addi %pbase, %ps17_3_b : index
+          %ps17_3_va = memref.load %partners[%ps17_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps17_3_vb = memref.load %partners[%ps17_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps17_3_gt = arith.cmpi sgt, %ps17_3_va, %ps17_3_vb : i32
+          %ps17_3_swap = arith.cmpi eq, %ps17_3_gt, %ps17_3_up : i1
+          %ps17_3_na = arith.select %ps17_3_swap, %ps17_3_vb, %ps17_3_va : i32
+          %ps17_3_nb = arith.select %ps17_3_swap, %ps17_3_va, %ps17_3_vb : i32
+          memref.store %ps17_3_na, %partners[%ps17_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps17_3_nb, %partners[%ps17_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps18_0_pair = arith.constant 0 : index
+          %ps18_0_tp = arith.addi %lane, %ps18_0_pair : index
+          %ps18_0_s = arith.constant 8 : index
+          %ps18_0_sm1 = arith.constant 7 : index
+          %ps18_0_low = arith.andi %ps18_0_tp, %ps18_0_sm1 : index
+          %ps18_0_twice = arith.addi %ps18_0_tp, %ps18_0_tp : index
+          %ps18_0_a = arith.subi %ps18_0_twice, %ps18_0_low : index
+          %ps18_0_b = arith.addi %ps18_0_a, %ps18_0_s : index
+          %ps18_0_sz = arith.constant 64 : index
+          %ps18_0_upb = arith.andi %ps18_0_a, %ps18_0_sz : index
+          %ps18_0_z = arith.constant 0 : index
+          %ps18_0_up = arith.cmpi eq, %ps18_0_upb, %ps18_0_z : index
+          %ps18_0_aa = arith.addi %pbase, %ps18_0_a : index
+          %ps18_0_bb = arith.addi %pbase, %ps18_0_b : index
+          %ps18_0_va = memref.load %partners[%ps18_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps18_0_vb = memref.load %partners[%ps18_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps18_0_gt = arith.cmpi sgt, %ps18_0_va, %ps18_0_vb : i32
+          %ps18_0_swap = arith.cmpi eq, %ps18_0_gt, %ps18_0_up : i1
+          %ps18_0_na = arith.select %ps18_0_swap, %ps18_0_vb, %ps18_0_va : i32
+          %ps18_0_nb = arith.select %ps18_0_swap, %ps18_0_va, %ps18_0_vb : i32
+          memref.store %ps18_0_na, %partners[%ps18_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps18_0_nb, %partners[%ps18_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps18_1_pair = arith.constant 32 : index
+          %ps18_1_tp = arith.addi %lane, %ps18_1_pair : index
+          %ps18_1_s = arith.constant 8 : index
+          %ps18_1_sm1 = arith.constant 7 : index
+          %ps18_1_low = arith.andi %ps18_1_tp, %ps18_1_sm1 : index
+          %ps18_1_twice = arith.addi %ps18_1_tp, %ps18_1_tp : index
+          %ps18_1_a = arith.subi %ps18_1_twice, %ps18_1_low : index
+          %ps18_1_b = arith.addi %ps18_1_a, %ps18_1_s : index
+          %ps18_1_sz = arith.constant 64 : index
+          %ps18_1_upb = arith.andi %ps18_1_a, %ps18_1_sz : index
+          %ps18_1_z = arith.constant 0 : index
+          %ps18_1_up = arith.cmpi eq, %ps18_1_upb, %ps18_1_z : index
+          %ps18_1_aa = arith.addi %pbase, %ps18_1_a : index
+          %ps18_1_bb = arith.addi %pbase, %ps18_1_b : index
+          %ps18_1_va = memref.load %partners[%ps18_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps18_1_vb = memref.load %partners[%ps18_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps18_1_gt = arith.cmpi sgt, %ps18_1_va, %ps18_1_vb : i32
+          %ps18_1_swap = arith.cmpi eq, %ps18_1_gt, %ps18_1_up : i1
+          %ps18_1_na = arith.select %ps18_1_swap, %ps18_1_vb, %ps18_1_va : i32
+          %ps18_1_nb = arith.select %ps18_1_swap, %ps18_1_va, %ps18_1_vb : i32
+          memref.store %ps18_1_na, %partners[%ps18_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps18_1_nb, %partners[%ps18_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps18_2_pair = arith.constant 64 : index
+          %ps18_2_tp = arith.addi %lane, %ps18_2_pair : index
+          %ps18_2_s = arith.constant 8 : index
+          %ps18_2_sm1 = arith.constant 7 : index
+          %ps18_2_low = arith.andi %ps18_2_tp, %ps18_2_sm1 : index
+          %ps18_2_twice = arith.addi %ps18_2_tp, %ps18_2_tp : index
+          %ps18_2_a = arith.subi %ps18_2_twice, %ps18_2_low : index
+          %ps18_2_b = arith.addi %ps18_2_a, %ps18_2_s : index
+          %ps18_2_sz = arith.constant 64 : index
+          %ps18_2_upb = arith.andi %ps18_2_a, %ps18_2_sz : index
+          %ps18_2_z = arith.constant 0 : index
+          %ps18_2_up = arith.cmpi eq, %ps18_2_upb, %ps18_2_z : index
+          %ps18_2_aa = arith.addi %pbase, %ps18_2_a : index
+          %ps18_2_bb = arith.addi %pbase, %ps18_2_b : index
+          %ps18_2_va = memref.load %partners[%ps18_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps18_2_vb = memref.load %partners[%ps18_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps18_2_gt = arith.cmpi sgt, %ps18_2_va, %ps18_2_vb : i32
+          %ps18_2_swap = arith.cmpi eq, %ps18_2_gt, %ps18_2_up : i1
+          %ps18_2_na = arith.select %ps18_2_swap, %ps18_2_vb, %ps18_2_va : i32
+          %ps18_2_nb = arith.select %ps18_2_swap, %ps18_2_va, %ps18_2_vb : i32
+          memref.store %ps18_2_na, %partners[%ps18_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps18_2_nb, %partners[%ps18_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps18_3_pair = arith.constant 96 : index
+          %ps18_3_tp = arith.addi %lane, %ps18_3_pair : index
+          %ps18_3_s = arith.constant 8 : index
+          %ps18_3_sm1 = arith.constant 7 : index
+          %ps18_3_low = arith.andi %ps18_3_tp, %ps18_3_sm1 : index
+          %ps18_3_twice = arith.addi %ps18_3_tp, %ps18_3_tp : index
+          %ps18_3_a = arith.subi %ps18_3_twice, %ps18_3_low : index
+          %ps18_3_b = arith.addi %ps18_3_a, %ps18_3_s : index
+          %ps18_3_sz = arith.constant 64 : index
+          %ps18_3_upb = arith.andi %ps18_3_a, %ps18_3_sz : index
+          %ps18_3_z = arith.constant 0 : index
+          %ps18_3_up = arith.cmpi eq, %ps18_3_upb, %ps18_3_z : index
+          %ps18_3_aa = arith.addi %pbase, %ps18_3_a : index
+          %ps18_3_bb = arith.addi %pbase, %ps18_3_b : index
+          %ps18_3_va = memref.load %partners[%ps18_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps18_3_vb = memref.load %partners[%ps18_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps18_3_gt = arith.cmpi sgt, %ps18_3_va, %ps18_3_vb : i32
+          %ps18_3_swap = arith.cmpi eq, %ps18_3_gt, %ps18_3_up : i1
+          %ps18_3_na = arith.select %ps18_3_swap, %ps18_3_vb, %ps18_3_va : i32
+          %ps18_3_nb = arith.select %ps18_3_swap, %ps18_3_va, %ps18_3_vb : i32
+          memref.store %ps18_3_na, %partners[%ps18_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps18_3_nb, %partners[%ps18_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps19_0_pair = arith.constant 0 : index
+          %ps19_0_tp = arith.addi %lane, %ps19_0_pair : index
+          %ps19_0_s = arith.constant 4 : index
+          %ps19_0_sm1 = arith.constant 3 : index
+          %ps19_0_low = arith.andi %ps19_0_tp, %ps19_0_sm1 : index
+          %ps19_0_twice = arith.addi %ps19_0_tp, %ps19_0_tp : index
+          %ps19_0_a = arith.subi %ps19_0_twice, %ps19_0_low : index
+          %ps19_0_b = arith.addi %ps19_0_a, %ps19_0_s : index
+          %ps19_0_sz = arith.constant 64 : index
+          %ps19_0_upb = arith.andi %ps19_0_a, %ps19_0_sz : index
+          %ps19_0_z = arith.constant 0 : index
+          %ps19_0_up = arith.cmpi eq, %ps19_0_upb, %ps19_0_z : index
+          %ps19_0_aa = arith.addi %pbase, %ps19_0_a : index
+          %ps19_0_bb = arith.addi %pbase, %ps19_0_b : index
+          %ps19_0_va = memref.load %partners[%ps19_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps19_0_vb = memref.load %partners[%ps19_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps19_0_gt = arith.cmpi sgt, %ps19_0_va, %ps19_0_vb : i32
+          %ps19_0_swap = arith.cmpi eq, %ps19_0_gt, %ps19_0_up : i1
+          %ps19_0_na = arith.select %ps19_0_swap, %ps19_0_vb, %ps19_0_va : i32
+          %ps19_0_nb = arith.select %ps19_0_swap, %ps19_0_va, %ps19_0_vb : i32
+          memref.store %ps19_0_na, %partners[%ps19_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps19_0_nb, %partners[%ps19_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps19_1_pair = arith.constant 32 : index
+          %ps19_1_tp = arith.addi %lane, %ps19_1_pair : index
+          %ps19_1_s = arith.constant 4 : index
+          %ps19_1_sm1 = arith.constant 3 : index
+          %ps19_1_low = arith.andi %ps19_1_tp, %ps19_1_sm1 : index
+          %ps19_1_twice = arith.addi %ps19_1_tp, %ps19_1_tp : index
+          %ps19_1_a = arith.subi %ps19_1_twice, %ps19_1_low : index
+          %ps19_1_b = arith.addi %ps19_1_a, %ps19_1_s : index
+          %ps19_1_sz = arith.constant 64 : index
+          %ps19_1_upb = arith.andi %ps19_1_a, %ps19_1_sz : index
+          %ps19_1_z = arith.constant 0 : index
+          %ps19_1_up = arith.cmpi eq, %ps19_1_upb, %ps19_1_z : index
+          %ps19_1_aa = arith.addi %pbase, %ps19_1_a : index
+          %ps19_1_bb = arith.addi %pbase, %ps19_1_b : index
+          %ps19_1_va = memref.load %partners[%ps19_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps19_1_vb = memref.load %partners[%ps19_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps19_1_gt = arith.cmpi sgt, %ps19_1_va, %ps19_1_vb : i32
+          %ps19_1_swap = arith.cmpi eq, %ps19_1_gt, %ps19_1_up : i1
+          %ps19_1_na = arith.select %ps19_1_swap, %ps19_1_vb, %ps19_1_va : i32
+          %ps19_1_nb = arith.select %ps19_1_swap, %ps19_1_va, %ps19_1_vb : i32
+          memref.store %ps19_1_na, %partners[%ps19_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps19_1_nb, %partners[%ps19_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps19_2_pair = arith.constant 64 : index
+          %ps19_2_tp = arith.addi %lane, %ps19_2_pair : index
+          %ps19_2_s = arith.constant 4 : index
+          %ps19_2_sm1 = arith.constant 3 : index
+          %ps19_2_low = arith.andi %ps19_2_tp, %ps19_2_sm1 : index
+          %ps19_2_twice = arith.addi %ps19_2_tp, %ps19_2_tp : index
+          %ps19_2_a = arith.subi %ps19_2_twice, %ps19_2_low : index
+          %ps19_2_b = arith.addi %ps19_2_a, %ps19_2_s : index
+          %ps19_2_sz = arith.constant 64 : index
+          %ps19_2_upb = arith.andi %ps19_2_a, %ps19_2_sz : index
+          %ps19_2_z = arith.constant 0 : index
+          %ps19_2_up = arith.cmpi eq, %ps19_2_upb, %ps19_2_z : index
+          %ps19_2_aa = arith.addi %pbase, %ps19_2_a : index
+          %ps19_2_bb = arith.addi %pbase, %ps19_2_b : index
+          %ps19_2_va = memref.load %partners[%ps19_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps19_2_vb = memref.load %partners[%ps19_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps19_2_gt = arith.cmpi sgt, %ps19_2_va, %ps19_2_vb : i32
+          %ps19_2_swap = arith.cmpi eq, %ps19_2_gt, %ps19_2_up : i1
+          %ps19_2_na = arith.select %ps19_2_swap, %ps19_2_vb, %ps19_2_va : i32
+          %ps19_2_nb = arith.select %ps19_2_swap, %ps19_2_va, %ps19_2_vb : i32
+          memref.store %ps19_2_na, %partners[%ps19_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps19_2_nb, %partners[%ps19_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps19_3_pair = arith.constant 96 : index
+          %ps19_3_tp = arith.addi %lane, %ps19_3_pair : index
+          %ps19_3_s = arith.constant 4 : index
+          %ps19_3_sm1 = arith.constant 3 : index
+          %ps19_3_low = arith.andi %ps19_3_tp, %ps19_3_sm1 : index
+          %ps19_3_twice = arith.addi %ps19_3_tp, %ps19_3_tp : index
+          %ps19_3_a = arith.subi %ps19_3_twice, %ps19_3_low : index
+          %ps19_3_b = arith.addi %ps19_3_a, %ps19_3_s : index
+          %ps19_3_sz = arith.constant 64 : index
+          %ps19_3_upb = arith.andi %ps19_3_a, %ps19_3_sz : index
+          %ps19_3_z = arith.constant 0 : index
+          %ps19_3_up = arith.cmpi eq, %ps19_3_upb, %ps19_3_z : index
+          %ps19_3_aa = arith.addi %pbase, %ps19_3_a : index
+          %ps19_3_bb = arith.addi %pbase, %ps19_3_b : index
+          %ps19_3_va = memref.load %partners[%ps19_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps19_3_vb = memref.load %partners[%ps19_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps19_3_gt = arith.cmpi sgt, %ps19_3_va, %ps19_3_vb : i32
+          %ps19_3_swap = arith.cmpi eq, %ps19_3_gt, %ps19_3_up : i1
+          %ps19_3_na = arith.select %ps19_3_swap, %ps19_3_vb, %ps19_3_va : i32
+          %ps19_3_nb = arith.select %ps19_3_swap, %ps19_3_va, %ps19_3_vb : i32
+          memref.store %ps19_3_na, %partners[%ps19_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps19_3_nb, %partners[%ps19_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps20_0_pair = arith.constant 0 : index
+          %ps20_0_tp = arith.addi %lane, %ps20_0_pair : index
+          %ps20_0_s = arith.constant 2 : index
+          %ps20_0_sm1 = arith.constant 1 : index
+          %ps20_0_low = arith.andi %ps20_0_tp, %ps20_0_sm1 : index
+          %ps20_0_twice = arith.addi %ps20_0_tp, %ps20_0_tp : index
+          %ps20_0_a = arith.subi %ps20_0_twice, %ps20_0_low : index
+          %ps20_0_b = arith.addi %ps20_0_a, %ps20_0_s : index
+          %ps20_0_sz = arith.constant 64 : index
+          %ps20_0_upb = arith.andi %ps20_0_a, %ps20_0_sz : index
+          %ps20_0_z = arith.constant 0 : index
+          %ps20_0_up = arith.cmpi eq, %ps20_0_upb, %ps20_0_z : index
+          %ps20_0_aa = arith.addi %pbase, %ps20_0_a : index
+          %ps20_0_bb = arith.addi %pbase, %ps20_0_b : index
+          %ps20_0_va = memref.load %partners[%ps20_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps20_0_vb = memref.load %partners[%ps20_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps20_0_gt = arith.cmpi sgt, %ps20_0_va, %ps20_0_vb : i32
+          %ps20_0_swap = arith.cmpi eq, %ps20_0_gt, %ps20_0_up : i1
+          %ps20_0_na = arith.select %ps20_0_swap, %ps20_0_vb, %ps20_0_va : i32
+          %ps20_0_nb = arith.select %ps20_0_swap, %ps20_0_va, %ps20_0_vb : i32
+          memref.store %ps20_0_na, %partners[%ps20_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps20_0_nb, %partners[%ps20_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps20_1_pair = arith.constant 32 : index
+          %ps20_1_tp = arith.addi %lane, %ps20_1_pair : index
+          %ps20_1_s = arith.constant 2 : index
+          %ps20_1_sm1 = arith.constant 1 : index
+          %ps20_1_low = arith.andi %ps20_1_tp, %ps20_1_sm1 : index
+          %ps20_1_twice = arith.addi %ps20_1_tp, %ps20_1_tp : index
+          %ps20_1_a = arith.subi %ps20_1_twice, %ps20_1_low : index
+          %ps20_1_b = arith.addi %ps20_1_a, %ps20_1_s : index
+          %ps20_1_sz = arith.constant 64 : index
+          %ps20_1_upb = arith.andi %ps20_1_a, %ps20_1_sz : index
+          %ps20_1_z = arith.constant 0 : index
+          %ps20_1_up = arith.cmpi eq, %ps20_1_upb, %ps20_1_z : index
+          %ps20_1_aa = arith.addi %pbase, %ps20_1_a : index
+          %ps20_1_bb = arith.addi %pbase, %ps20_1_b : index
+          %ps20_1_va = memref.load %partners[%ps20_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps20_1_vb = memref.load %partners[%ps20_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps20_1_gt = arith.cmpi sgt, %ps20_1_va, %ps20_1_vb : i32
+          %ps20_1_swap = arith.cmpi eq, %ps20_1_gt, %ps20_1_up : i1
+          %ps20_1_na = arith.select %ps20_1_swap, %ps20_1_vb, %ps20_1_va : i32
+          %ps20_1_nb = arith.select %ps20_1_swap, %ps20_1_va, %ps20_1_vb : i32
+          memref.store %ps20_1_na, %partners[%ps20_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps20_1_nb, %partners[%ps20_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps20_2_pair = arith.constant 64 : index
+          %ps20_2_tp = arith.addi %lane, %ps20_2_pair : index
+          %ps20_2_s = arith.constant 2 : index
+          %ps20_2_sm1 = arith.constant 1 : index
+          %ps20_2_low = arith.andi %ps20_2_tp, %ps20_2_sm1 : index
+          %ps20_2_twice = arith.addi %ps20_2_tp, %ps20_2_tp : index
+          %ps20_2_a = arith.subi %ps20_2_twice, %ps20_2_low : index
+          %ps20_2_b = arith.addi %ps20_2_a, %ps20_2_s : index
+          %ps20_2_sz = arith.constant 64 : index
+          %ps20_2_upb = arith.andi %ps20_2_a, %ps20_2_sz : index
+          %ps20_2_z = arith.constant 0 : index
+          %ps20_2_up = arith.cmpi eq, %ps20_2_upb, %ps20_2_z : index
+          %ps20_2_aa = arith.addi %pbase, %ps20_2_a : index
+          %ps20_2_bb = arith.addi %pbase, %ps20_2_b : index
+          %ps20_2_va = memref.load %partners[%ps20_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps20_2_vb = memref.load %partners[%ps20_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps20_2_gt = arith.cmpi sgt, %ps20_2_va, %ps20_2_vb : i32
+          %ps20_2_swap = arith.cmpi eq, %ps20_2_gt, %ps20_2_up : i1
+          %ps20_2_na = arith.select %ps20_2_swap, %ps20_2_vb, %ps20_2_va : i32
+          %ps20_2_nb = arith.select %ps20_2_swap, %ps20_2_va, %ps20_2_vb : i32
+          memref.store %ps20_2_na, %partners[%ps20_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps20_2_nb, %partners[%ps20_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps20_3_pair = arith.constant 96 : index
+          %ps20_3_tp = arith.addi %lane, %ps20_3_pair : index
+          %ps20_3_s = arith.constant 2 : index
+          %ps20_3_sm1 = arith.constant 1 : index
+          %ps20_3_low = arith.andi %ps20_3_tp, %ps20_3_sm1 : index
+          %ps20_3_twice = arith.addi %ps20_3_tp, %ps20_3_tp : index
+          %ps20_3_a = arith.subi %ps20_3_twice, %ps20_3_low : index
+          %ps20_3_b = arith.addi %ps20_3_a, %ps20_3_s : index
+          %ps20_3_sz = arith.constant 64 : index
+          %ps20_3_upb = arith.andi %ps20_3_a, %ps20_3_sz : index
+          %ps20_3_z = arith.constant 0 : index
+          %ps20_3_up = arith.cmpi eq, %ps20_3_upb, %ps20_3_z : index
+          %ps20_3_aa = arith.addi %pbase, %ps20_3_a : index
+          %ps20_3_bb = arith.addi %pbase, %ps20_3_b : index
+          %ps20_3_va = memref.load %partners[%ps20_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps20_3_vb = memref.load %partners[%ps20_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps20_3_gt = arith.cmpi sgt, %ps20_3_va, %ps20_3_vb : i32
+          %ps20_3_swap = arith.cmpi eq, %ps20_3_gt, %ps20_3_up : i1
+          %ps20_3_na = arith.select %ps20_3_swap, %ps20_3_vb, %ps20_3_va : i32
+          %ps20_3_nb = arith.select %ps20_3_swap, %ps20_3_va, %ps20_3_vb : i32
+          memref.store %ps20_3_na, %partners[%ps20_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps20_3_nb, %partners[%ps20_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps21_0_pair = arith.constant 0 : index
+          %ps21_0_tp = arith.addi %lane, %ps21_0_pair : index
+          %ps21_0_s = arith.constant 1 : index
+          %ps21_0_sm1 = arith.constant 0 : index
+          %ps21_0_low = arith.andi %ps21_0_tp, %ps21_0_sm1 : index
+          %ps21_0_twice = arith.addi %ps21_0_tp, %ps21_0_tp : index
+          %ps21_0_a = arith.subi %ps21_0_twice, %ps21_0_low : index
+          %ps21_0_b = arith.addi %ps21_0_a, %ps21_0_s : index
+          %ps21_0_sz = arith.constant 64 : index
+          %ps21_0_upb = arith.andi %ps21_0_a, %ps21_0_sz : index
+          %ps21_0_z = arith.constant 0 : index
+          %ps21_0_up = arith.cmpi eq, %ps21_0_upb, %ps21_0_z : index
+          %ps21_0_aa = arith.addi %pbase, %ps21_0_a : index
+          %ps21_0_bb = arith.addi %pbase, %ps21_0_b : index
+          %ps21_0_va = memref.load %partners[%ps21_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps21_0_vb = memref.load %partners[%ps21_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps21_0_gt = arith.cmpi sgt, %ps21_0_va, %ps21_0_vb : i32
+          %ps21_0_swap = arith.cmpi eq, %ps21_0_gt, %ps21_0_up : i1
+          %ps21_0_na = arith.select %ps21_0_swap, %ps21_0_vb, %ps21_0_va : i32
+          %ps21_0_nb = arith.select %ps21_0_swap, %ps21_0_va, %ps21_0_vb : i32
+          memref.store %ps21_0_na, %partners[%ps21_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps21_0_nb, %partners[%ps21_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps21_1_pair = arith.constant 32 : index
+          %ps21_1_tp = arith.addi %lane, %ps21_1_pair : index
+          %ps21_1_s = arith.constant 1 : index
+          %ps21_1_sm1 = arith.constant 0 : index
+          %ps21_1_low = arith.andi %ps21_1_tp, %ps21_1_sm1 : index
+          %ps21_1_twice = arith.addi %ps21_1_tp, %ps21_1_tp : index
+          %ps21_1_a = arith.subi %ps21_1_twice, %ps21_1_low : index
+          %ps21_1_b = arith.addi %ps21_1_a, %ps21_1_s : index
+          %ps21_1_sz = arith.constant 64 : index
+          %ps21_1_upb = arith.andi %ps21_1_a, %ps21_1_sz : index
+          %ps21_1_z = arith.constant 0 : index
+          %ps21_1_up = arith.cmpi eq, %ps21_1_upb, %ps21_1_z : index
+          %ps21_1_aa = arith.addi %pbase, %ps21_1_a : index
+          %ps21_1_bb = arith.addi %pbase, %ps21_1_b : index
+          %ps21_1_va = memref.load %partners[%ps21_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps21_1_vb = memref.load %partners[%ps21_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps21_1_gt = arith.cmpi sgt, %ps21_1_va, %ps21_1_vb : i32
+          %ps21_1_swap = arith.cmpi eq, %ps21_1_gt, %ps21_1_up : i1
+          %ps21_1_na = arith.select %ps21_1_swap, %ps21_1_vb, %ps21_1_va : i32
+          %ps21_1_nb = arith.select %ps21_1_swap, %ps21_1_va, %ps21_1_vb : i32
+          memref.store %ps21_1_na, %partners[%ps21_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps21_1_nb, %partners[%ps21_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps21_2_pair = arith.constant 64 : index
+          %ps21_2_tp = arith.addi %lane, %ps21_2_pair : index
+          %ps21_2_s = arith.constant 1 : index
+          %ps21_2_sm1 = arith.constant 0 : index
+          %ps21_2_low = arith.andi %ps21_2_tp, %ps21_2_sm1 : index
+          %ps21_2_twice = arith.addi %ps21_2_tp, %ps21_2_tp : index
+          %ps21_2_a = arith.subi %ps21_2_twice, %ps21_2_low : index
+          %ps21_2_b = arith.addi %ps21_2_a, %ps21_2_s : index
+          %ps21_2_sz = arith.constant 64 : index
+          %ps21_2_upb = arith.andi %ps21_2_a, %ps21_2_sz : index
+          %ps21_2_z = arith.constant 0 : index
+          %ps21_2_up = arith.cmpi eq, %ps21_2_upb, %ps21_2_z : index
+          %ps21_2_aa = arith.addi %pbase, %ps21_2_a : index
+          %ps21_2_bb = arith.addi %pbase, %ps21_2_b : index
+          %ps21_2_va = memref.load %partners[%ps21_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps21_2_vb = memref.load %partners[%ps21_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps21_2_gt = arith.cmpi sgt, %ps21_2_va, %ps21_2_vb : i32
+          %ps21_2_swap = arith.cmpi eq, %ps21_2_gt, %ps21_2_up : i1
+          %ps21_2_na = arith.select %ps21_2_swap, %ps21_2_vb, %ps21_2_va : i32
+          %ps21_2_nb = arith.select %ps21_2_swap, %ps21_2_va, %ps21_2_vb : i32
+          memref.store %ps21_2_na, %partners[%ps21_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps21_2_nb, %partners[%ps21_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps21_3_pair = arith.constant 96 : index
+          %ps21_3_tp = arith.addi %lane, %ps21_3_pair : index
+          %ps21_3_s = arith.constant 1 : index
+          %ps21_3_sm1 = arith.constant 0 : index
+          %ps21_3_low = arith.andi %ps21_3_tp, %ps21_3_sm1 : index
+          %ps21_3_twice = arith.addi %ps21_3_tp, %ps21_3_tp : index
+          %ps21_3_a = arith.subi %ps21_3_twice, %ps21_3_low : index
+          %ps21_3_b = arith.addi %ps21_3_a, %ps21_3_s : index
+          %ps21_3_sz = arith.constant 64 : index
+          %ps21_3_upb = arith.andi %ps21_3_a, %ps21_3_sz : index
+          %ps21_3_z = arith.constant 0 : index
+          %ps21_3_up = arith.cmpi eq, %ps21_3_upb, %ps21_3_z : index
+          %ps21_3_aa = arith.addi %pbase, %ps21_3_a : index
+          %ps21_3_bb = arith.addi %pbase, %ps21_3_b : index
+          %ps21_3_va = memref.load %partners[%ps21_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps21_3_vb = memref.load %partners[%ps21_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps21_3_gt = arith.cmpi sgt, %ps21_3_va, %ps21_3_vb : i32
+          %ps21_3_swap = arith.cmpi eq, %ps21_3_gt, %ps21_3_up : i1
+          %ps21_3_na = arith.select %ps21_3_swap, %ps21_3_vb, %ps21_3_va : i32
+          %ps21_3_nb = arith.select %ps21_3_swap, %ps21_3_va, %ps21_3_vb : i32
+          memref.store %ps21_3_na, %partners[%ps21_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps21_3_nb, %partners[%ps21_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps22_0_pair = arith.constant 0 : index
+          %ps22_0_tp = arith.addi %lane, %ps22_0_pair : index
+          %ps22_0_s = arith.constant 64 : index
+          %ps22_0_sm1 = arith.constant 63 : index
+          %ps22_0_low = arith.andi %ps22_0_tp, %ps22_0_sm1 : index
+          %ps22_0_twice = arith.addi %ps22_0_tp, %ps22_0_tp : index
+          %ps22_0_a = arith.subi %ps22_0_twice, %ps22_0_low : index
+          %ps22_0_b = arith.addi %ps22_0_a, %ps22_0_s : index
+          %ps22_0_sz = arith.constant 128 : index
+          %ps22_0_upb = arith.andi %ps22_0_a, %ps22_0_sz : index
+          %ps22_0_z = arith.constant 0 : index
+          %ps22_0_up = arith.cmpi eq, %ps22_0_upb, %ps22_0_z : index
+          %ps22_0_aa = arith.addi %pbase, %ps22_0_a : index
+          %ps22_0_bb = arith.addi %pbase, %ps22_0_b : index
+          %ps22_0_va = memref.load %partners[%ps22_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps22_0_vb = memref.load %partners[%ps22_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps22_0_gt = arith.cmpi sgt, %ps22_0_va, %ps22_0_vb : i32
+          %ps22_0_swap = arith.cmpi eq, %ps22_0_gt, %ps22_0_up : i1
+          %ps22_0_na = arith.select %ps22_0_swap, %ps22_0_vb, %ps22_0_va : i32
+          %ps22_0_nb = arith.select %ps22_0_swap, %ps22_0_va, %ps22_0_vb : i32
+          memref.store %ps22_0_na, %partners[%ps22_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps22_0_nb, %partners[%ps22_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps22_1_pair = arith.constant 32 : index
+          %ps22_1_tp = arith.addi %lane, %ps22_1_pair : index
+          %ps22_1_s = arith.constant 64 : index
+          %ps22_1_sm1 = arith.constant 63 : index
+          %ps22_1_low = arith.andi %ps22_1_tp, %ps22_1_sm1 : index
+          %ps22_1_twice = arith.addi %ps22_1_tp, %ps22_1_tp : index
+          %ps22_1_a = arith.subi %ps22_1_twice, %ps22_1_low : index
+          %ps22_1_b = arith.addi %ps22_1_a, %ps22_1_s : index
+          %ps22_1_sz = arith.constant 128 : index
+          %ps22_1_upb = arith.andi %ps22_1_a, %ps22_1_sz : index
+          %ps22_1_z = arith.constant 0 : index
+          %ps22_1_up = arith.cmpi eq, %ps22_1_upb, %ps22_1_z : index
+          %ps22_1_aa = arith.addi %pbase, %ps22_1_a : index
+          %ps22_1_bb = arith.addi %pbase, %ps22_1_b : index
+          %ps22_1_va = memref.load %partners[%ps22_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps22_1_vb = memref.load %partners[%ps22_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps22_1_gt = arith.cmpi sgt, %ps22_1_va, %ps22_1_vb : i32
+          %ps22_1_swap = arith.cmpi eq, %ps22_1_gt, %ps22_1_up : i1
+          %ps22_1_na = arith.select %ps22_1_swap, %ps22_1_vb, %ps22_1_va : i32
+          %ps22_1_nb = arith.select %ps22_1_swap, %ps22_1_va, %ps22_1_vb : i32
+          memref.store %ps22_1_na, %partners[%ps22_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps22_1_nb, %partners[%ps22_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps22_2_pair = arith.constant 64 : index
+          %ps22_2_tp = arith.addi %lane, %ps22_2_pair : index
+          %ps22_2_s = arith.constant 64 : index
+          %ps22_2_sm1 = arith.constant 63 : index
+          %ps22_2_low = arith.andi %ps22_2_tp, %ps22_2_sm1 : index
+          %ps22_2_twice = arith.addi %ps22_2_tp, %ps22_2_tp : index
+          %ps22_2_a = arith.subi %ps22_2_twice, %ps22_2_low : index
+          %ps22_2_b = arith.addi %ps22_2_a, %ps22_2_s : index
+          %ps22_2_sz = arith.constant 128 : index
+          %ps22_2_upb = arith.andi %ps22_2_a, %ps22_2_sz : index
+          %ps22_2_z = arith.constant 0 : index
+          %ps22_2_up = arith.cmpi eq, %ps22_2_upb, %ps22_2_z : index
+          %ps22_2_aa = arith.addi %pbase, %ps22_2_a : index
+          %ps22_2_bb = arith.addi %pbase, %ps22_2_b : index
+          %ps22_2_va = memref.load %partners[%ps22_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps22_2_vb = memref.load %partners[%ps22_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps22_2_gt = arith.cmpi sgt, %ps22_2_va, %ps22_2_vb : i32
+          %ps22_2_swap = arith.cmpi eq, %ps22_2_gt, %ps22_2_up : i1
+          %ps22_2_na = arith.select %ps22_2_swap, %ps22_2_vb, %ps22_2_va : i32
+          %ps22_2_nb = arith.select %ps22_2_swap, %ps22_2_va, %ps22_2_vb : i32
+          memref.store %ps22_2_na, %partners[%ps22_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps22_2_nb, %partners[%ps22_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps22_3_pair = arith.constant 96 : index
+          %ps22_3_tp = arith.addi %lane, %ps22_3_pair : index
+          %ps22_3_s = arith.constant 64 : index
+          %ps22_3_sm1 = arith.constant 63 : index
+          %ps22_3_low = arith.andi %ps22_3_tp, %ps22_3_sm1 : index
+          %ps22_3_twice = arith.addi %ps22_3_tp, %ps22_3_tp : index
+          %ps22_3_a = arith.subi %ps22_3_twice, %ps22_3_low : index
+          %ps22_3_b = arith.addi %ps22_3_a, %ps22_3_s : index
+          %ps22_3_sz = arith.constant 128 : index
+          %ps22_3_upb = arith.andi %ps22_3_a, %ps22_3_sz : index
+          %ps22_3_z = arith.constant 0 : index
+          %ps22_3_up = arith.cmpi eq, %ps22_3_upb, %ps22_3_z : index
+          %ps22_3_aa = arith.addi %pbase, %ps22_3_a : index
+          %ps22_3_bb = arith.addi %pbase, %ps22_3_b : index
+          %ps22_3_va = memref.load %partners[%ps22_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps22_3_vb = memref.load %partners[%ps22_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps22_3_gt = arith.cmpi sgt, %ps22_3_va, %ps22_3_vb : i32
+          %ps22_3_swap = arith.cmpi eq, %ps22_3_gt, %ps22_3_up : i1
+          %ps22_3_na = arith.select %ps22_3_swap, %ps22_3_vb, %ps22_3_va : i32
+          %ps22_3_nb = arith.select %ps22_3_swap, %ps22_3_va, %ps22_3_vb : i32
+          memref.store %ps22_3_na, %partners[%ps22_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps22_3_nb, %partners[%ps22_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps23_0_pair = arith.constant 0 : index
+          %ps23_0_tp = arith.addi %lane, %ps23_0_pair : index
+          %ps23_0_s = arith.constant 32 : index
+          %ps23_0_sm1 = arith.constant 31 : index
+          %ps23_0_low = arith.andi %ps23_0_tp, %ps23_0_sm1 : index
+          %ps23_0_twice = arith.addi %ps23_0_tp, %ps23_0_tp : index
+          %ps23_0_a = arith.subi %ps23_0_twice, %ps23_0_low : index
+          %ps23_0_b = arith.addi %ps23_0_a, %ps23_0_s : index
+          %ps23_0_sz = arith.constant 128 : index
+          %ps23_0_upb = arith.andi %ps23_0_a, %ps23_0_sz : index
+          %ps23_0_z = arith.constant 0 : index
+          %ps23_0_up = arith.cmpi eq, %ps23_0_upb, %ps23_0_z : index
+          %ps23_0_aa = arith.addi %pbase, %ps23_0_a : index
+          %ps23_0_bb = arith.addi %pbase, %ps23_0_b : index
+          %ps23_0_va = memref.load %partners[%ps23_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps23_0_vb = memref.load %partners[%ps23_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps23_0_gt = arith.cmpi sgt, %ps23_0_va, %ps23_0_vb : i32
+          %ps23_0_swap = arith.cmpi eq, %ps23_0_gt, %ps23_0_up : i1
+          %ps23_0_na = arith.select %ps23_0_swap, %ps23_0_vb, %ps23_0_va : i32
+          %ps23_0_nb = arith.select %ps23_0_swap, %ps23_0_va, %ps23_0_vb : i32
+          memref.store %ps23_0_na, %partners[%ps23_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps23_0_nb, %partners[%ps23_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps23_1_pair = arith.constant 32 : index
+          %ps23_1_tp = arith.addi %lane, %ps23_1_pair : index
+          %ps23_1_s = arith.constant 32 : index
+          %ps23_1_sm1 = arith.constant 31 : index
+          %ps23_1_low = arith.andi %ps23_1_tp, %ps23_1_sm1 : index
+          %ps23_1_twice = arith.addi %ps23_1_tp, %ps23_1_tp : index
+          %ps23_1_a = arith.subi %ps23_1_twice, %ps23_1_low : index
+          %ps23_1_b = arith.addi %ps23_1_a, %ps23_1_s : index
+          %ps23_1_sz = arith.constant 128 : index
+          %ps23_1_upb = arith.andi %ps23_1_a, %ps23_1_sz : index
+          %ps23_1_z = arith.constant 0 : index
+          %ps23_1_up = arith.cmpi eq, %ps23_1_upb, %ps23_1_z : index
+          %ps23_1_aa = arith.addi %pbase, %ps23_1_a : index
+          %ps23_1_bb = arith.addi %pbase, %ps23_1_b : index
+          %ps23_1_va = memref.load %partners[%ps23_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps23_1_vb = memref.load %partners[%ps23_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps23_1_gt = arith.cmpi sgt, %ps23_1_va, %ps23_1_vb : i32
+          %ps23_1_swap = arith.cmpi eq, %ps23_1_gt, %ps23_1_up : i1
+          %ps23_1_na = arith.select %ps23_1_swap, %ps23_1_vb, %ps23_1_va : i32
+          %ps23_1_nb = arith.select %ps23_1_swap, %ps23_1_va, %ps23_1_vb : i32
+          memref.store %ps23_1_na, %partners[%ps23_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps23_1_nb, %partners[%ps23_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps23_2_pair = arith.constant 64 : index
+          %ps23_2_tp = arith.addi %lane, %ps23_2_pair : index
+          %ps23_2_s = arith.constant 32 : index
+          %ps23_2_sm1 = arith.constant 31 : index
+          %ps23_2_low = arith.andi %ps23_2_tp, %ps23_2_sm1 : index
+          %ps23_2_twice = arith.addi %ps23_2_tp, %ps23_2_tp : index
+          %ps23_2_a = arith.subi %ps23_2_twice, %ps23_2_low : index
+          %ps23_2_b = arith.addi %ps23_2_a, %ps23_2_s : index
+          %ps23_2_sz = arith.constant 128 : index
+          %ps23_2_upb = arith.andi %ps23_2_a, %ps23_2_sz : index
+          %ps23_2_z = arith.constant 0 : index
+          %ps23_2_up = arith.cmpi eq, %ps23_2_upb, %ps23_2_z : index
+          %ps23_2_aa = arith.addi %pbase, %ps23_2_a : index
+          %ps23_2_bb = arith.addi %pbase, %ps23_2_b : index
+          %ps23_2_va = memref.load %partners[%ps23_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps23_2_vb = memref.load %partners[%ps23_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps23_2_gt = arith.cmpi sgt, %ps23_2_va, %ps23_2_vb : i32
+          %ps23_2_swap = arith.cmpi eq, %ps23_2_gt, %ps23_2_up : i1
+          %ps23_2_na = arith.select %ps23_2_swap, %ps23_2_vb, %ps23_2_va : i32
+          %ps23_2_nb = arith.select %ps23_2_swap, %ps23_2_va, %ps23_2_vb : i32
+          memref.store %ps23_2_na, %partners[%ps23_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps23_2_nb, %partners[%ps23_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps23_3_pair = arith.constant 96 : index
+          %ps23_3_tp = arith.addi %lane, %ps23_3_pair : index
+          %ps23_3_s = arith.constant 32 : index
+          %ps23_3_sm1 = arith.constant 31 : index
+          %ps23_3_low = arith.andi %ps23_3_tp, %ps23_3_sm1 : index
+          %ps23_3_twice = arith.addi %ps23_3_tp, %ps23_3_tp : index
+          %ps23_3_a = arith.subi %ps23_3_twice, %ps23_3_low : index
+          %ps23_3_b = arith.addi %ps23_3_a, %ps23_3_s : index
+          %ps23_3_sz = arith.constant 128 : index
+          %ps23_3_upb = arith.andi %ps23_3_a, %ps23_3_sz : index
+          %ps23_3_z = arith.constant 0 : index
+          %ps23_3_up = arith.cmpi eq, %ps23_3_upb, %ps23_3_z : index
+          %ps23_3_aa = arith.addi %pbase, %ps23_3_a : index
+          %ps23_3_bb = arith.addi %pbase, %ps23_3_b : index
+          %ps23_3_va = memref.load %partners[%ps23_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps23_3_vb = memref.load %partners[%ps23_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps23_3_gt = arith.cmpi sgt, %ps23_3_va, %ps23_3_vb : i32
+          %ps23_3_swap = arith.cmpi eq, %ps23_3_gt, %ps23_3_up : i1
+          %ps23_3_na = arith.select %ps23_3_swap, %ps23_3_vb, %ps23_3_va : i32
+          %ps23_3_nb = arith.select %ps23_3_swap, %ps23_3_va, %ps23_3_vb : i32
+          memref.store %ps23_3_na, %partners[%ps23_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps23_3_nb, %partners[%ps23_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps24_0_pair = arith.constant 0 : index
+          %ps24_0_tp = arith.addi %lane, %ps24_0_pair : index
+          %ps24_0_s = arith.constant 16 : index
+          %ps24_0_sm1 = arith.constant 15 : index
+          %ps24_0_low = arith.andi %ps24_0_tp, %ps24_0_sm1 : index
+          %ps24_0_twice = arith.addi %ps24_0_tp, %ps24_0_tp : index
+          %ps24_0_a = arith.subi %ps24_0_twice, %ps24_0_low : index
+          %ps24_0_b = arith.addi %ps24_0_a, %ps24_0_s : index
+          %ps24_0_sz = arith.constant 128 : index
+          %ps24_0_upb = arith.andi %ps24_0_a, %ps24_0_sz : index
+          %ps24_0_z = arith.constant 0 : index
+          %ps24_0_up = arith.cmpi eq, %ps24_0_upb, %ps24_0_z : index
+          %ps24_0_aa = arith.addi %pbase, %ps24_0_a : index
+          %ps24_0_bb = arith.addi %pbase, %ps24_0_b : index
+          %ps24_0_va = memref.load %partners[%ps24_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps24_0_vb = memref.load %partners[%ps24_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps24_0_gt = arith.cmpi sgt, %ps24_0_va, %ps24_0_vb : i32
+          %ps24_0_swap = arith.cmpi eq, %ps24_0_gt, %ps24_0_up : i1
+          %ps24_0_na = arith.select %ps24_0_swap, %ps24_0_vb, %ps24_0_va : i32
+          %ps24_0_nb = arith.select %ps24_0_swap, %ps24_0_va, %ps24_0_vb : i32
+          memref.store %ps24_0_na, %partners[%ps24_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps24_0_nb, %partners[%ps24_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps24_1_pair = arith.constant 32 : index
+          %ps24_1_tp = arith.addi %lane, %ps24_1_pair : index
+          %ps24_1_s = arith.constant 16 : index
+          %ps24_1_sm1 = arith.constant 15 : index
+          %ps24_1_low = arith.andi %ps24_1_tp, %ps24_1_sm1 : index
+          %ps24_1_twice = arith.addi %ps24_1_tp, %ps24_1_tp : index
+          %ps24_1_a = arith.subi %ps24_1_twice, %ps24_1_low : index
+          %ps24_1_b = arith.addi %ps24_1_a, %ps24_1_s : index
+          %ps24_1_sz = arith.constant 128 : index
+          %ps24_1_upb = arith.andi %ps24_1_a, %ps24_1_sz : index
+          %ps24_1_z = arith.constant 0 : index
+          %ps24_1_up = arith.cmpi eq, %ps24_1_upb, %ps24_1_z : index
+          %ps24_1_aa = arith.addi %pbase, %ps24_1_a : index
+          %ps24_1_bb = arith.addi %pbase, %ps24_1_b : index
+          %ps24_1_va = memref.load %partners[%ps24_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps24_1_vb = memref.load %partners[%ps24_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps24_1_gt = arith.cmpi sgt, %ps24_1_va, %ps24_1_vb : i32
+          %ps24_1_swap = arith.cmpi eq, %ps24_1_gt, %ps24_1_up : i1
+          %ps24_1_na = arith.select %ps24_1_swap, %ps24_1_vb, %ps24_1_va : i32
+          %ps24_1_nb = arith.select %ps24_1_swap, %ps24_1_va, %ps24_1_vb : i32
+          memref.store %ps24_1_na, %partners[%ps24_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps24_1_nb, %partners[%ps24_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps24_2_pair = arith.constant 64 : index
+          %ps24_2_tp = arith.addi %lane, %ps24_2_pair : index
+          %ps24_2_s = arith.constant 16 : index
+          %ps24_2_sm1 = arith.constant 15 : index
+          %ps24_2_low = arith.andi %ps24_2_tp, %ps24_2_sm1 : index
+          %ps24_2_twice = arith.addi %ps24_2_tp, %ps24_2_tp : index
+          %ps24_2_a = arith.subi %ps24_2_twice, %ps24_2_low : index
+          %ps24_2_b = arith.addi %ps24_2_a, %ps24_2_s : index
+          %ps24_2_sz = arith.constant 128 : index
+          %ps24_2_upb = arith.andi %ps24_2_a, %ps24_2_sz : index
+          %ps24_2_z = arith.constant 0 : index
+          %ps24_2_up = arith.cmpi eq, %ps24_2_upb, %ps24_2_z : index
+          %ps24_2_aa = arith.addi %pbase, %ps24_2_a : index
+          %ps24_2_bb = arith.addi %pbase, %ps24_2_b : index
+          %ps24_2_va = memref.load %partners[%ps24_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps24_2_vb = memref.load %partners[%ps24_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps24_2_gt = arith.cmpi sgt, %ps24_2_va, %ps24_2_vb : i32
+          %ps24_2_swap = arith.cmpi eq, %ps24_2_gt, %ps24_2_up : i1
+          %ps24_2_na = arith.select %ps24_2_swap, %ps24_2_vb, %ps24_2_va : i32
+          %ps24_2_nb = arith.select %ps24_2_swap, %ps24_2_va, %ps24_2_vb : i32
+          memref.store %ps24_2_na, %partners[%ps24_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps24_2_nb, %partners[%ps24_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps24_3_pair = arith.constant 96 : index
+          %ps24_3_tp = arith.addi %lane, %ps24_3_pair : index
+          %ps24_3_s = arith.constant 16 : index
+          %ps24_3_sm1 = arith.constant 15 : index
+          %ps24_3_low = arith.andi %ps24_3_tp, %ps24_3_sm1 : index
+          %ps24_3_twice = arith.addi %ps24_3_tp, %ps24_3_tp : index
+          %ps24_3_a = arith.subi %ps24_3_twice, %ps24_3_low : index
+          %ps24_3_b = arith.addi %ps24_3_a, %ps24_3_s : index
+          %ps24_3_sz = arith.constant 128 : index
+          %ps24_3_upb = arith.andi %ps24_3_a, %ps24_3_sz : index
+          %ps24_3_z = arith.constant 0 : index
+          %ps24_3_up = arith.cmpi eq, %ps24_3_upb, %ps24_3_z : index
+          %ps24_3_aa = arith.addi %pbase, %ps24_3_a : index
+          %ps24_3_bb = arith.addi %pbase, %ps24_3_b : index
+          %ps24_3_va = memref.load %partners[%ps24_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps24_3_vb = memref.load %partners[%ps24_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps24_3_gt = arith.cmpi sgt, %ps24_3_va, %ps24_3_vb : i32
+          %ps24_3_swap = arith.cmpi eq, %ps24_3_gt, %ps24_3_up : i1
+          %ps24_3_na = arith.select %ps24_3_swap, %ps24_3_vb, %ps24_3_va : i32
+          %ps24_3_nb = arith.select %ps24_3_swap, %ps24_3_va, %ps24_3_vb : i32
+          memref.store %ps24_3_na, %partners[%ps24_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps24_3_nb, %partners[%ps24_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps25_0_pair = arith.constant 0 : index
+          %ps25_0_tp = arith.addi %lane, %ps25_0_pair : index
+          %ps25_0_s = arith.constant 8 : index
+          %ps25_0_sm1 = arith.constant 7 : index
+          %ps25_0_low = arith.andi %ps25_0_tp, %ps25_0_sm1 : index
+          %ps25_0_twice = arith.addi %ps25_0_tp, %ps25_0_tp : index
+          %ps25_0_a = arith.subi %ps25_0_twice, %ps25_0_low : index
+          %ps25_0_b = arith.addi %ps25_0_a, %ps25_0_s : index
+          %ps25_0_sz = arith.constant 128 : index
+          %ps25_0_upb = arith.andi %ps25_0_a, %ps25_0_sz : index
+          %ps25_0_z = arith.constant 0 : index
+          %ps25_0_up = arith.cmpi eq, %ps25_0_upb, %ps25_0_z : index
+          %ps25_0_aa = arith.addi %pbase, %ps25_0_a : index
+          %ps25_0_bb = arith.addi %pbase, %ps25_0_b : index
+          %ps25_0_va = memref.load %partners[%ps25_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps25_0_vb = memref.load %partners[%ps25_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps25_0_gt = arith.cmpi sgt, %ps25_0_va, %ps25_0_vb : i32
+          %ps25_0_swap = arith.cmpi eq, %ps25_0_gt, %ps25_0_up : i1
+          %ps25_0_na = arith.select %ps25_0_swap, %ps25_0_vb, %ps25_0_va : i32
+          %ps25_0_nb = arith.select %ps25_0_swap, %ps25_0_va, %ps25_0_vb : i32
+          memref.store %ps25_0_na, %partners[%ps25_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps25_0_nb, %partners[%ps25_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps25_1_pair = arith.constant 32 : index
+          %ps25_1_tp = arith.addi %lane, %ps25_1_pair : index
+          %ps25_1_s = arith.constant 8 : index
+          %ps25_1_sm1 = arith.constant 7 : index
+          %ps25_1_low = arith.andi %ps25_1_tp, %ps25_1_sm1 : index
+          %ps25_1_twice = arith.addi %ps25_1_tp, %ps25_1_tp : index
+          %ps25_1_a = arith.subi %ps25_1_twice, %ps25_1_low : index
+          %ps25_1_b = arith.addi %ps25_1_a, %ps25_1_s : index
+          %ps25_1_sz = arith.constant 128 : index
+          %ps25_1_upb = arith.andi %ps25_1_a, %ps25_1_sz : index
+          %ps25_1_z = arith.constant 0 : index
+          %ps25_1_up = arith.cmpi eq, %ps25_1_upb, %ps25_1_z : index
+          %ps25_1_aa = arith.addi %pbase, %ps25_1_a : index
+          %ps25_1_bb = arith.addi %pbase, %ps25_1_b : index
+          %ps25_1_va = memref.load %partners[%ps25_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps25_1_vb = memref.load %partners[%ps25_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps25_1_gt = arith.cmpi sgt, %ps25_1_va, %ps25_1_vb : i32
+          %ps25_1_swap = arith.cmpi eq, %ps25_1_gt, %ps25_1_up : i1
+          %ps25_1_na = arith.select %ps25_1_swap, %ps25_1_vb, %ps25_1_va : i32
+          %ps25_1_nb = arith.select %ps25_1_swap, %ps25_1_va, %ps25_1_vb : i32
+          memref.store %ps25_1_na, %partners[%ps25_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps25_1_nb, %partners[%ps25_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps25_2_pair = arith.constant 64 : index
+          %ps25_2_tp = arith.addi %lane, %ps25_2_pair : index
+          %ps25_2_s = arith.constant 8 : index
+          %ps25_2_sm1 = arith.constant 7 : index
+          %ps25_2_low = arith.andi %ps25_2_tp, %ps25_2_sm1 : index
+          %ps25_2_twice = arith.addi %ps25_2_tp, %ps25_2_tp : index
+          %ps25_2_a = arith.subi %ps25_2_twice, %ps25_2_low : index
+          %ps25_2_b = arith.addi %ps25_2_a, %ps25_2_s : index
+          %ps25_2_sz = arith.constant 128 : index
+          %ps25_2_upb = arith.andi %ps25_2_a, %ps25_2_sz : index
+          %ps25_2_z = arith.constant 0 : index
+          %ps25_2_up = arith.cmpi eq, %ps25_2_upb, %ps25_2_z : index
+          %ps25_2_aa = arith.addi %pbase, %ps25_2_a : index
+          %ps25_2_bb = arith.addi %pbase, %ps25_2_b : index
+          %ps25_2_va = memref.load %partners[%ps25_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps25_2_vb = memref.load %partners[%ps25_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps25_2_gt = arith.cmpi sgt, %ps25_2_va, %ps25_2_vb : i32
+          %ps25_2_swap = arith.cmpi eq, %ps25_2_gt, %ps25_2_up : i1
+          %ps25_2_na = arith.select %ps25_2_swap, %ps25_2_vb, %ps25_2_va : i32
+          %ps25_2_nb = arith.select %ps25_2_swap, %ps25_2_va, %ps25_2_vb : i32
+          memref.store %ps25_2_na, %partners[%ps25_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps25_2_nb, %partners[%ps25_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps25_3_pair = arith.constant 96 : index
+          %ps25_3_tp = arith.addi %lane, %ps25_3_pair : index
+          %ps25_3_s = arith.constant 8 : index
+          %ps25_3_sm1 = arith.constant 7 : index
+          %ps25_3_low = arith.andi %ps25_3_tp, %ps25_3_sm1 : index
+          %ps25_3_twice = arith.addi %ps25_3_tp, %ps25_3_tp : index
+          %ps25_3_a = arith.subi %ps25_3_twice, %ps25_3_low : index
+          %ps25_3_b = arith.addi %ps25_3_a, %ps25_3_s : index
+          %ps25_3_sz = arith.constant 128 : index
+          %ps25_3_upb = arith.andi %ps25_3_a, %ps25_3_sz : index
+          %ps25_3_z = arith.constant 0 : index
+          %ps25_3_up = arith.cmpi eq, %ps25_3_upb, %ps25_3_z : index
+          %ps25_3_aa = arith.addi %pbase, %ps25_3_a : index
+          %ps25_3_bb = arith.addi %pbase, %ps25_3_b : index
+          %ps25_3_va = memref.load %partners[%ps25_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps25_3_vb = memref.load %partners[%ps25_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps25_3_gt = arith.cmpi sgt, %ps25_3_va, %ps25_3_vb : i32
+          %ps25_3_swap = arith.cmpi eq, %ps25_3_gt, %ps25_3_up : i1
+          %ps25_3_na = arith.select %ps25_3_swap, %ps25_3_vb, %ps25_3_va : i32
+          %ps25_3_nb = arith.select %ps25_3_swap, %ps25_3_va, %ps25_3_vb : i32
+          memref.store %ps25_3_na, %partners[%ps25_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps25_3_nb, %partners[%ps25_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps26_0_pair = arith.constant 0 : index
+          %ps26_0_tp = arith.addi %lane, %ps26_0_pair : index
+          %ps26_0_s = arith.constant 4 : index
+          %ps26_0_sm1 = arith.constant 3 : index
+          %ps26_0_low = arith.andi %ps26_0_tp, %ps26_0_sm1 : index
+          %ps26_0_twice = arith.addi %ps26_0_tp, %ps26_0_tp : index
+          %ps26_0_a = arith.subi %ps26_0_twice, %ps26_0_low : index
+          %ps26_0_b = arith.addi %ps26_0_a, %ps26_0_s : index
+          %ps26_0_sz = arith.constant 128 : index
+          %ps26_0_upb = arith.andi %ps26_0_a, %ps26_0_sz : index
+          %ps26_0_z = arith.constant 0 : index
+          %ps26_0_up = arith.cmpi eq, %ps26_0_upb, %ps26_0_z : index
+          %ps26_0_aa = arith.addi %pbase, %ps26_0_a : index
+          %ps26_0_bb = arith.addi %pbase, %ps26_0_b : index
+          %ps26_0_va = memref.load %partners[%ps26_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps26_0_vb = memref.load %partners[%ps26_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps26_0_gt = arith.cmpi sgt, %ps26_0_va, %ps26_0_vb : i32
+          %ps26_0_swap = arith.cmpi eq, %ps26_0_gt, %ps26_0_up : i1
+          %ps26_0_na = arith.select %ps26_0_swap, %ps26_0_vb, %ps26_0_va : i32
+          %ps26_0_nb = arith.select %ps26_0_swap, %ps26_0_va, %ps26_0_vb : i32
+          memref.store %ps26_0_na, %partners[%ps26_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps26_0_nb, %partners[%ps26_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps26_1_pair = arith.constant 32 : index
+          %ps26_1_tp = arith.addi %lane, %ps26_1_pair : index
+          %ps26_1_s = arith.constant 4 : index
+          %ps26_1_sm1 = arith.constant 3 : index
+          %ps26_1_low = arith.andi %ps26_1_tp, %ps26_1_sm1 : index
+          %ps26_1_twice = arith.addi %ps26_1_tp, %ps26_1_tp : index
+          %ps26_1_a = arith.subi %ps26_1_twice, %ps26_1_low : index
+          %ps26_1_b = arith.addi %ps26_1_a, %ps26_1_s : index
+          %ps26_1_sz = arith.constant 128 : index
+          %ps26_1_upb = arith.andi %ps26_1_a, %ps26_1_sz : index
+          %ps26_1_z = arith.constant 0 : index
+          %ps26_1_up = arith.cmpi eq, %ps26_1_upb, %ps26_1_z : index
+          %ps26_1_aa = arith.addi %pbase, %ps26_1_a : index
+          %ps26_1_bb = arith.addi %pbase, %ps26_1_b : index
+          %ps26_1_va = memref.load %partners[%ps26_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps26_1_vb = memref.load %partners[%ps26_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps26_1_gt = arith.cmpi sgt, %ps26_1_va, %ps26_1_vb : i32
+          %ps26_1_swap = arith.cmpi eq, %ps26_1_gt, %ps26_1_up : i1
+          %ps26_1_na = arith.select %ps26_1_swap, %ps26_1_vb, %ps26_1_va : i32
+          %ps26_1_nb = arith.select %ps26_1_swap, %ps26_1_va, %ps26_1_vb : i32
+          memref.store %ps26_1_na, %partners[%ps26_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps26_1_nb, %partners[%ps26_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps26_2_pair = arith.constant 64 : index
+          %ps26_2_tp = arith.addi %lane, %ps26_2_pair : index
+          %ps26_2_s = arith.constant 4 : index
+          %ps26_2_sm1 = arith.constant 3 : index
+          %ps26_2_low = arith.andi %ps26_2_tp, %ps26_2_sm1 : index
+          %ps26_2_twice = arith.addi %ps26_2_tp, %ps26_2_tp : index
+          %ps26_2_a = arith.subi %ps26_2_twice, %ps26_2_low : index
+          %ps26_2_b = arith.addi %ps26_2_a, %ps26_2_s : index
+          %ps26_2_sz = arith.constant 128 : index
+          %ps26_2_upb = arith.andi %ps26_2_a, %ps26_2_sz : index
+          %ps26_2_z = arith.constant 0 : index
+          %ps26_2_up = arith.cmpi eq, %ps26_2_upb, %ps26_2_z : index
+          %ps26_2_aa = arith.addi %pbase, %ps26_2_a : index
+          %ps26_2_bb = arith.addi %pbase, %ps26_2_b : index
+          %ps26_2_va = memref.load %partners[%ps26_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps26_2_vb = memref.load %partners[%ps26_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps26_2_gt = arith.cmpi sgt, %ps26_2_va, %ps26_2_vb : i32
+          %ps26_2_swap = arith.cmpi eq, %ps26_2_gt, %ps26_2_up : i1
+          %ps26_2_na = arith.select %ps26_2_swap, %ps26_2_vb, %ps26_2_va : i32
+          %ps26_2_nb = arith.select %ps26_2_swap, %ps26_2_va, %ps26_2_vb : i32
+          memref.store %ps26_2_na, %partners[%ps26_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps26_2_nb, %partners[%ps26_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps26_3_pair = arith.constant 96 : index
+          %ps26_3_tp = arith.addi %lane, %ps26_3_pair : index
+          %ps26_3_s = arith.constant 4 : index
+          %ps26_3_sm1 = arith.constant 3 : index
+          %ps26_3_low = arith.andi %ps26_3_tp, %ps26_3_sm1 : index
+          %ps26_3_twice = arith.addi %ps26_3_tp, %ps26_3_tp : index
+          %ps26_3_a = arith.subi %ps26_3_twice, %ps26_3_low : index
+          %ps26_3_b = arith.addi %ps26_3_a, %ps26_3_s : index
+          %ps26_3_sz = arith.constant 128 : index
+          %ps26_3_upb = arith.andi %ps26_3_a, %ps26_3_sz : index
+          %ps26_3_z = arith.constant 0 : index
+          %ps26_3_up = arith.cmpi eq, %ps26_3_upb, %ps26_3_z : index
+          %ps26_3_aa = arith.addi %pbase, %ps26_3_a : index
+          %ps26_3_bb = arith.addi %pbase, %ps26_3_b : index
+          %ps26_3_va = memref.load %partners[%ps26_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps26_3_vb = memref.load %partners[%ps26_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps26_3_gt = arith.cmpi sgt, %ps26_3_va, %ps26_3_vb : i32
+          %ps26_3_swap = arith.cmpi eq, %ps26_3_gt, %ps26_3_up : i1
+          %ps26_3_na = arith.select %ps26_3_swap, %ps26_3_vb, %ps26_3_va : i32
+          %ps26_3_nb = arith.select %ps26_3_swap, %ps26_3_va, %ps26_3_vb : i32
+          memref.store %ps26_3_na, %partners[%ps26_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps26_3_nb, %partners[%ps26_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps27_0_pair = arith.constant 0 : index
+          %ps27_0_tp = arith.addi %lane, %ps27_0_pair : index
+          %ps27_0_s = arith.constant 2 : index
+          %ps27_0_sm1 = arith.constant 1 : index
+          %ps27_0_low = arith.andi %ps27_0_tp, %ps27_0_sm1 : index
+          %ps27_0_twice = arith.addi %ps27_0_tp, %ps27_0_tp : index
+          %ps27_0_a = arith.subi %ps27_0_twice, %ps27_0_low : index
+          %ps27_0_b = arith.addi %ps27_0_a, %ps27_0_s : index
+          %ps27_0_sz = arith.constant 128 : index
+          %ps27_0_upb = arith.andi %ps27_0_a, %ps27_0_sz : index
+          %ps27_0_z = arith.constant 0 : index
+          %ps27_0_up = arith.cmpi eq, %ps27_0_upb, %ps27_0_z : index
+          %ps27_0_aa = arith.addi %pbase, %ps27_0_a : index
+          %ps27_0_bb = arith.addi %pbase, %ps27_0_b : index
+          %ps27_0_va = memref.load %partners[%ps27_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps27_0_vb = memref.load %partners[%ps27_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps27_0_gt = arith.cmpi sgt, %ps27_0_va, %ps27_0_vb : i32
+          %ps27_0_swap = arith.cmpi eq, %ps27_0_gt, %ps27_0_up : i1
+          %ps27_0_na = arith.select %ps27_0_swap, %ps27_0_vb, %ps27_0_va : i32
+          %ps27_0_nb = arith.select %ps27_0_swap, %ps27_0_va, %ps27_0_vb : i32
+          memref.store %ps27_0_na, %partners[%ps27_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps27_0_nb, %partners[%ps27_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps27_1_pair = arith.constant 32 : index
+          %ps27_1_tp = arith.addi %lane, %ps27_1_pair : index
+          %ps27_1_s = arith.constant 2 : index
+          %ps27_1_sm1 = arith.constant 1 : index
+          %ps27_1_low = arith.andi %ps27_1_tp, %ps27_1_sm1 : index
+          %ps27_1_twice = arith.addi %ps27_1_tp, %ps27_1_tp : index
+          %ps27_1_a = arith.subi %ps27_1_twice, %ps27_1_low : index
+          %ps27_1_b = arith.addi %ps27_1_a, %ps27_1_s : index
+          %ps27_1_sz = arith.constant 128 : index
+          %ps27_1_upb = arith.andi %ps27_1_a, %ps27_1_sz : index
+          %ps27_1_z = arith.constant 0 : index
+          %ps27_1_up = arith.cmpi eq, %ps27_1_upb, %ps27_1_z : index
+          %ps27_1_aa = arith.addi %pbase, %ps27_1_a : index
+          %ps27_1_bb = arith.addi %pbase, %ps27_1_b : index
+          %ps27_1_va = memref.load %partners[%ps27_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps27_1_vb = memref.load %partners[%ps27_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps27_1_gt = arith.cmpi sgt, %ps27_1_va, %ps27_1_vb : i32
+          %ps27_1_swap = arith.cmpi eq, %ps27_1_gt, %ps27_1_up : i1
+          %ps27_1_na = arith.select %ps27_1_swap, %ps27_1_vb, %ps27_1_va : i32
+          %ps27_1_nb = arith.select %ps27_1_swap, %ps27_1_va, %ps27_1_vb : i32
+          memref.store %ps27_1_na, %partners[%ps27_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps27_1_nb, %partners[%ps27_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps27_2_pair = arith.constant 64 : index
+          %ps27_2_tp = arith.addi %lane, %ps27_2_pair : index
+          %ps27_2_s = arith.constant 2 : index
+          %ps27_2_sm1 = arith.constant 1 : index
+          %ps27_2_low = arith.andi %ps27_2_tp, %ps27_2_sm1 : index
+          %ps27_2_twice = arith.addi %ps27_2_tp, %ps27_2_tp : index
+          %ps27_2_a = arith.subi %ps27_2_twice, %ps27_2_low : index
+          %ps27_2_b = arith.addi %ps27_2_a, %ps27_2_s : index
+          %ps27_2_sz = arith.constant 128 : index
+          %ps27_2_upb = arith.andi %ps27_2_a, %ps27_2_sz : index
+          %ps27_2_z = arith.constant 0 : index
+          %ps27_2_up = arith.cmpi eq, %ps27_2_upb, %ps27_2_z : index
+          %ps27_2_aa = arith.addi %pbase, %ps27_2_a : index
+          %ps27_2_bb = arith.addi %pbase, %ps27_2_b : index
+          %ps27_2_va = memref.load %partners[%ps27_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps27_2_vb = memref.load %partners[%ps27_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps27_2_gt = arith.cmpi sgt, %ps27_2_va, %ps27_2_vb : i32
+          %ps27_2_swap = arith.cmpi eq, %ps27_2_gt, %ps27_2_up : i1
+          %ps27_2_na = arith.select %ps27_2_swap, %ps27_2_vb, %ps27_2_va : i32
+          %ps27_2_nb = arith.select %ps27_2_swap, %ps27_2_va, %ps27_2_vb : i32
+          memref.store %ps27_2_na, %partners[%ps27_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps27_2_nb, %partners[%ps27_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps27_3_pair = arith.constant 96 : index
+          %ps27_3_tp = arith.addi %lane, %ps27_3_pair : index
+          %ps27_3_s = arith.constant 2 : index
+          %ps27_3_sm1 = arith.constant 1 : index
+          %ps27_3_low = arith.andi %ps27_3_tp, %ps27_3_sm1 : index
+          %ps27_3_twice = arith.addi %ps27_3_tp, %ps27_3_tp : index
+          %ps27_3_a = arith.subi %ps27_3_twice, %ps27_3_low : index
+          %ps27_3_b = arith.addi %ps27_3_a, %ps27_3_s : index
+          %ps27_3_sz = arith.constant 128 : index
+          %ps27_3_upb = arith.andi %ps27_3_a, %ps27_3_sz : index
+          %ps27_3_z = arith.constant 0 : index
+          %ps27_3_up = arith.cmpi eq, %ps27_3_upb, %ps27_3_z : index
+          %ps27_3_aa = arith.addi %pbase, %ps27_3_a : index
+          %ps27_3_bb = arith.addi %pbase, %ps27_3_b : index
+          %ps27_3_va = memref.load %partners[%ps27_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps27_3_vb = memref.load %partners[%ps27_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps27_3_gt = arith.cmpi sgt, %ps27_3_va, %ps27_3_vb : i32
+          %ps27_3_swap = arith.cmpi eq, %ps27_3_gt, %ps27_3_up : i1
+          %ps27_3_na = arith.select %ps27_3_swap, %ps27_3_vb, %ps27_3_va : i32
+          %ps27_3_nb = arith.select %ps27_3_swap, %ps27_3_va, %ps27_3_vb : i32
+          memref.store %ps27_3_na, %partners[%ps27_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps27_3_nb, %partners[%ps27_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps28_0_pair = arith.constant 0 : index
+          %ps28_0_tp = arith.addi %lane, %ps28_0_pair : index
+          %ps28_0_s = arith.constant 1 : index
+          %ps28_0_sm1 = arith.constant 0 : index
+          %ps28_0_low = arith.andi %ps28_0_tp, %ps28_0_sm1 : index
+          %ps28_0_twice = arith.addi %ps28_0_tp, %ps28_0_tp : index
+          %ps28_0_a = arith.subi %ps28_0_twice, %ps28_0_low : index
+          %ps28_0_b = arith.addi %ps28_0_a, %ps28_0_s : index
+          %ps28_0_sz = arith.constant 128 : index
+          %ps28_0_upb = arith.andi %ps28_0_a, %ps28_0_sz : index
+          %ps28_0_z = arith.constant 0 : index
+          %ps28_0_up = arith.cmpi eq, %ps28_0_upb, %ps28_0_z : index
+          %ps28_0_aa = arith.addi %pbase, %ps28_0_a : index
+          %ps28_0_bb = arith.addi %pbase, %ps28_0_b : index
+          %ps28_0_va = memref.load %partners[%ps28_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps28_0_vb = memref.load %partners[%ps28_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps28_0_gt = arith.cmpi sgt, %ps28_0_va, %ps28_0_vb : i32
+          %ps28_0_swap = arith.cmpi eq, %ps28_0_gt, %ps28_0_up : i1
+          %ps28_0_na = arith.select %ps28_0_swap, %ps28_0_vb, %ps28_0_va : i32
+          %ps28_0_nb = arith.select %ps28_0_swap, %ps28_0_va, %ps28_0_vb : i32
+          memref.store %ps28_0_na, %partners[%ps28_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps28_0_nb, %partners[%ps28_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps28_1_pair = arith.constant 32 : index
+          %ps28_1_tp = arith.addi %lane, %ps28_1_pair : index
+          %ps28_1_s = arith.constant 1 : index
+          %ps28_1_sm1 = arith.constant 0 : index
+          %ps28_1_low = arith.andi %ps28_1_tp, %ps28_1_sm1 : index
+          %ps28_1_twice = arith.addi %ps28_1_tp, %ps28_1_tp : index
+          %ps28_1_a = arith.subi %ps28_1_twice, %ps28_1_low : index
+          %ps28_1_b = arith.addi %ps28_1_a, %ps28_1_s : index
+          %ps28_1_sz = arith.constant 128 : index
+          %ps28_1_upb = arith.andi %ps28_1_a, %ps28_1_sz : index
+          %ps28_1_z = arith.constant 0 : index
+          %ps28_1_up = arith.cmpi eq, %ps28_1_upb, %ps28_1_z : index
+          %ps28_1_aa = arith.addi %pbase, %ps28_1_a : index
+          %ps28_1_bb = arith.addi %pbase, %ps28_1_b : index
+          %ps28_1_va = memref.load %partners[%ps28_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps28_1_vb = memref.load %partners[%ps28_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps28_1_gt = arith.cmpi sgt, %ps28_1_va, %ps28_1_vb : i32
+          %ps28_1_swap = arith.cmpi eq, %ps28_1_gt, %ps28_1_up : i1
+          %ps28_1_na = arith.select %ps28_1_swap, %ps28_1_vb, %ps28_1_va : i32
+          %ps28_1_nb = arith.select %ps28_1_swap, %ps28_1_va, %ps28_1_vb : i32
+          memref.store %ps28_1_na, %partners[%ps28_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps28_1_nb, %partners[%ps28_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps28_2_pair = arith.constant 64 : index
+          %ps28_2_tp = arith.addi %lane, %ps28_2_pair : index
+          %ps28_2_s = arith.constant 1 : index
+          %ps28_2_sm1 = arith.constant 0 : index
+          %ps28_2_low = arith.andi %ps28_2_tp, %ps28_2_sm1 : index
+          %ps28_2_twice = arith.addi %ps28_2_tp, %ps28_2_tp : index
+          %ps28_2_a = arith.subi %ps28_2_twice, %ps28_2_low : index
+          %ps28_2_b = arith.addi %ps28_2_a, %ps28_2_s : index
+          %ps28_2_sz = arith.constant 128 : index
+          %ps28_2_upb = arith.andi %ps28_2_a, %ps28_2_sz : index
+          %ps28_2_z = arith.constant 0 : index
+          %ps28_2_up = arith.cmpi eq, %ps28_2_upb, %ps28_2_z : index
+          %ps28_2_aa = arith.addi %pbase, %ps28_2_a : index
+          %ps28_2_bb = arith.addi %pbase, %ps28_2_b : index
+          %ps28_2_va = memref.load %partners[%ps28_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps28_2_vb = memref.load %partners[%ps28_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps28_2_gt = arith.cmpi sgt, %ps28_2_va, %ps28_2_vb : i32
+          %ps28_2_swap = arith.cmpi eq, %ps28_2_gt, %ps28_2_up : i1
+          %ps28_2_na = arith.select %ps28_2_swap, %ps28_2_vb, %ps28_2_va : i32
+          %ps28_2_nb = arith.select %ps28_2_swap, %ps28_2_va, %ps28_2_vb : i32
+          memref.store %ps28_2_na, %partners[%ps28_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps28_2_nb, %partners[%ps28_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps28_3_pair = arith.constant 96 : index
+          %ps28_3_tp = arith.addi %lane, %ps28_3_pair : index
+          %ps28_3_s = arith.constant 1 : index
+          %ps28_3_sm1 = arith.constant 0 : index
+          %ps28_3_low = arith.andi %ps28_3_tp, %ps28_3_sm1 : index
+          %ps28_3_twice = arith.addi %ps28_3_tp, %ps28_3_tp : index
+          %ps28_3_a = arith.subi %ps28_3_twice, %ps28_3_low : index
+          %ps28_3_b = arith.addi %ps28_3_a, %ps28_3_s : index
+          %ps28_3_sz = arith.constant 128 : index
+          %ps28_3_upb = arith.andi %ps28_3_a, %ps28_3_sz : index
+          %ps28_3_z = arith.constant 0 : index
+          %ps28_3_up = arith.cmpi eq, %ps28_3_upb, %ps28_3_z : index
+          %ps28_3_aa = arith.addi %pbase, %ps28_3_a : index
+          %ps28_3_bb = arith.addi %pbase, %ps28_3_b : index
+          %ps28_3_va = memref.load %partners[%ps28_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps28_3_vb = memref.load %partners[%ps28_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps28_3_gt = arith.cmpi sgt, %ps28_3_va, %ps28_3_vb : i32
+          %ps28_3_swap = arith.cmpi eq, %ps28_3_gt, %ps28_3_up : i1
+          %ps28_3_na = arith.select %ps28_3_swap, %ps28_3_vb, %ps28_3_va : i32
+          %ps28_3_nb = arith.select %ps28_3_swap, %ps28_3_va, %ps28_3_vb : i32
+          memref.store %ps28_3_na, %partners[%ps28_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps28_3_nb, %partners[%ps28_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps29_0_pair = arith.constant 0 : index
+          %ps29_0_tp = arith.addi %lane, %ps29_0_pair : index
+          %ps29_0_s = arith.constant 128 : index
+          %ps29_0_sm1 = arith.constant 127 : index
+          %ps29_0_low = arith.andi %ps29_0_tp, %ps29_0_sm1 : index
+          %ps29_0_twice = arith.addi %ps29_0_tp, %ps29_0_tp : index
+          %ps29_0_a = arith.subi %ps29_0_twice, %ps29_0_low : index
+          %ps29_0_b = arith.addi %ps29_0_a, %ps29_0_s : index
+          %ps29_0_sz = arith.constant 256 : index
+          %ps29_0_upb = arith.andi %ps29_0_a, %ps29_0_sz : index
+          %ps29_0_z = arith.constant 0 : index
+          %ps29_0_up = arith.cmpi eq, %ps29_0_upb, %ps29_0_z : index
+          %ps29_0_aa = arith.addi %pbase, %ps29_0_a : index
+          %ps29_0_bb = arith.addi %pbase, %ps29_0_b : index
+          %ps29_0_va = memref.load %partners[%ps29_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps29_0_vb = memref.load %partners[%ps29_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps29_0_gt = arith.cmpi sgt, %ps29_0_va, %ps29_0_vb : i32
+          %ps29_0_swap = arith.cmpi eq, %ps29_0_gt, %ps29_0_up : i1
+          %ps29_0_na = arith.select %ps29_0_swap, %ps29_0_vb, %ps29_0_va : i32
+          %ps29_0_nb = arith.select %ps29_0_swap, %ps29_0_va, %ps29_0_vb : i32
+          memref.store %ps29_0_na, %partners[%ps29_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps29_0_nb, %partners[%ps29_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps29_1_pair = arith.constant 32 : index
+          %ps29_1_tp = arith.addi %lane, %ps29_1_pair : index
+          %ps29_1_s = arith.constant 128 : index
+          %ps29_1_sm1 = arith.constant 127 : index
+          %ps29_1_low = arith.andi %ps29_1_tp, %ps29_1_sm1 : index
+          %ps29_1_twice = arith.addi %ps29_1_tp, %ps29_1_tp : index
+          %ps29_1_a = arith.subi %ps29_1_twice, %ps29_1_low : index
+          %ps29_1_b = arith.addi %ps29_1_a, %ps29_1_s : index
+          %ps29_1_sz = arith.constant 256 : index
+          %ps29_1_upb = arith.andi %ps29_1_a, %ps29_1_sz : index
+          %ps29_1_z = arith.constant 0 : index
+          %ps29_1_up = arith.cmpi eq, %ps29_1_upb, %ps29_1_z : index
+          %ps29_1_aa = arith.addi %pbase, %ps29_1_a : index
+          %ps29_1_bb = arith.addi %pbase, %ps29_1_b : index
+          %ps29_1_va = memref.load %partners[%ps29_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps29_1_vb = memref.load %partners[%ps29_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps29_1_gt = arith.cmpi sgt, %ps29_1_va, %ps29_1_vb : i32
+          %ps29_1_swap = arith.cmpi eq, %ps29_1_gt, %ps29_1_up : i1
+          %ps29_1_na = arith.select %ps29_1_swap, %ps29_1_vb, %ps29_1_va : i32
+          %ps29_1_nb = arith.select %ps29_1_swap, %ps29_1_va, %ps29_1_vb : i32
+          memref.store %ps29_1_na, %partners[%ps29_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps29_1_nb, %partners[%ps29_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps29_2_pair = arith.constant 64 : index
+          %ps29_2_tp = arith.addi %lane, %ps29_2_pair : index
+          %ps29_2_s = arith.constant 128 : index
+          %ps29_2_sm1 = arith.constant 127 : index
+          %ps29_2_low = arith.andi %ps29_2_tp, %ps29_2_sm1 : index
+          %ps29_2_twice = arith.addi %ps29_2_tp, %ps29_2_tp : index
+          %ps29_2_a = arith.subi %ps29_2_twice, %ps29_2_low : index
+          %ps29_2_b = arith.addi %ps29_2_a, %ps29_2_s : index
+          %ps29_2_sz = arith.constant 256 : index
+          %ps29_2_upb = arith.andi %ps29_2_a, %ps29_2_sz : index
+          %ps29_2_z = arith.constant 0 : index
+          %ps29_2_up = arith.cmpi eq, %ps29_2_upb, %ps29_2_z : index
+          %ps29_2_aa = arith.addi %pbase, %ps29_2_a : index
+          %ps29_2_bb = arith.addi %pbase, %ps29_2_b : index
+          %ps29_2_va = memref.load %partners[%ps29_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps29_2_vb = memref.load %partners[%ps29_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps29_2_gt = arith.cmpi sgt, %ps29_2_va, %ps29_2_vb : i32
+          %ps29_2_swap = arith.cmpi eq, %ps29_2_gt, %ps29_2_up : i1
+          %ps29_2_na = arith.select %ps29_2_swap, %ps29_2_vb, %ps29_2_va : i32
+          %ps29_2_nb = arith.select %ps29_2_swap, %ps29_2_va, %ps29_2_vb : i32
+          memref.store %ps29_2_na, %partners[%ps29_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps29_2_nb, %partners[%ps29_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps29_3_pair = arith.constant 96 : index
+          %ps29_3_tp = arith.addi %lane, %ps29_3_pair : index
+          %ps29_3_s = arith.constant 128 : index
+          %ps29_3_sm1 = arith.constant 127 : index
+          %ps29_3_low = arith.andi %ps29_3_tp, %ps29_3_sm1 : index
+          %ps29_3_twice = arith.addi %ps29_3_tp, %ps29_3_tp : index
+          %ps29_3_a = arith.subi %ps29_3_twice, %ps29_3_low : index
+          %ps29_3_b = arith.addi %ps29_3_a, %ps29_3_s : index
+          %ps29_3_sz = arith.constant 256 : index
+          %ps29_3_upb = arith.andi %ps29_3_a, %ps29_3_sz : index
+          %ps29_3_z = arith.constant 0 : index
+          %ps29_3_up = arith.cmpi eq, %ps29_3_upb, %ps29_3_z : index
+          %ps29_3_aa = arith.addi %pbase, %ps29_3_a : index
+          %ps29_3_bb = arith.addi %pbase, %ps29_3_b : index
+          %ps29_3_va = memref.load %partners[%ps29_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps29_3_vb = memref.load %partners[%ps29_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps29_3_gt = arith.cmpi sgt, %ps29_3_va, %ps29_3_vb : i32
+          %ps29_3_swap = arith.cmpi eq, %ps29_3_gt, %ps29_3_up : i1
+          %ps29_3_na = arith.select %ps29_3_swap, %ps29_3_vb, %ps29_3_va : i32
+          %ps29_3_nb = arith.select %ps29_3_swap, %ps29_3_va, %ps29_3_vb : i32
+          memref.store %ps29_3_na, %partners[%ps29_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps29_3_nb, %partners[%ps29_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps30_0_pair = arith.constant 0 : index
+          %ps30_0_tp = arith.addi %lane, %ps30_0_pair : index
+          %ps30_0_s = arith.constant 64 : index
+          %ps30_0_sm1 = arith.constant 63 : index
+          %ps30_0_low = arith.andi %ps30_0_tp, %ps30_0_sm1 : index
+          %ps30_0_twice = arith.addi %ps30_0_tp, %ps30_0_tp : index
+          %ps30_0_a = arith.subi %ps30_0_twice, %ps30_0_low : index
+          %ps30_0_b = arith.addi %ps30_0_a, %ps30_0_s : index
+          %ps30_0_sz = arith.constant 256 : index
+          %ps30_0_upb = arith.andi %ps30_0_a, %ps30_0_sz : index
+          %ps30_0_z = arith.constant 0 : index
+          %ps30_0_up = arith.cmpi eq, %ps30_0_upb, %ps30_0_z : index
+          %ps30_0_aa = arith.addi %pbase, %ps30_0_a : index
+          %ps30_0_bb = arith.addi %pbase, %ps30_0_b : index
+          %ps30_0_va = memref.load %partners[%ps30_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps30_0_vb = memref.load %partners[%ps30_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps30_0_gt = arith.cmpi sgt, %ps30_0_va, %ps30_0_vb : i32
+          %ps30_0_swap = arith.cmpi eq, %ps30_0_gt, %ps30_0_up : i1
+          %ps30_0_na = arith.select %ps30_0_swap, %ps30_0_vb, %ps30_0_va : i32
+          %ps30_0_nb = arith.select %ps30_0_swap, %ps30_0_va, %ps30_0_vb : i32
+          memref.store %ps30_0_na, %partners[%ps30_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps30_0_nb, %partners[%ps30_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps30_1_pair = arith.constant 32 : index
+          %ps30_1_tp = arith.addi %lane, %ps30_1_pair : index
+          %ps30_1_s = arith.constant 64 : index
+          %ps30_1_sm1 = arith.constant 63 : index
+          %ps30_1_low = arith.andi %ps30_1_tp, %ps30_1_sm1 : index
+          %ps30_1_twice = arith.addi %ps30_1_tp, %ps30_1_tp : index
+          %ps30_1_a = arith.subi %ps30_1_twice, %ps30_1_low : index
+          %ps30_1_b = arith.addi %ps30_1_a, %ps30_1_s : index
+          %ps30_1_sz = arith.constant 256 : index
+          %ps30_1_upb = arith.andi %ps30_1_a, %ps30_1_sz : index
+          %ps30_1_z = arith.constant 0 : index
+          %ps30_1_up = arith.cmpi eq, %ps30_1_upb, %ps30_1_z : index
+          %ps30_1_aa = arith.addi %pbase, %ps30_1_a : index
+          %ps30_1_bb = arith.addi %pbase, %ps30_1_b : index
+          %ps30_1_va = memref.load %partners[%ps30_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps30_1_vb = memref.load %partners[%ps30_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps30_1_gt = arith.cmpi sgt, %ps30_1_va, %ps30_1_vb : i32
+          %ps30_1_swap = arith.cmpi eq, %ps30_1_gt, %ps30_1_up : i1
+          %ps30_1_na = arith.select %ps30_1_swap, %ps30_1_vb, %ps30_1_va : i32
+          %ps30_1_nb = arith.select %ps30_1_swap, %ps30_1_va, %ps30_1_vb : i32
+          memref.store %ps30_1_na, %partners[%ps30_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps30_1_nb, %partners[%ps30_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps30_2_pair = arith.constant 64 : index
+          %ps30_2_tp = arith.addi %lane, %ps30_2_pair : index
+          %ps30_2_s = arith.constant 64 : index
+          %ps30_2_sm1 = arith.constant 63 : index
+          %ps30_2_low = arith.andi %ps30_2_tp, %ps30_2_sm1 : index
+          %ps30_2_twice = arith.addi %ps30_2_tp, %ps30_2_tp : index
+          %ps30_2_a = arith.subi %ps30_2_twice, %ps30_2_low : index
+          %ps30_2_b = arith.addi %ps30_2_a, %ps30_2_s : index
+          %ps30_2_sz = arith.constant 256 : index
+          %ps30_2_upb = arith.andi %ps30_2_a, %ps30_2_sz : index
+          %ps30_2_z = arith.constant 0 : index
+          %ps30_2_up = arith.cmpi eq, %ps30_2_upb, %ps30_2_z : index
+          %ps30_2_aa = arith.addi %pbase, %ps30_2_a : index
+          %ps30_2_bb = arith.addi %pbase, %ps30_2_b : index
+          %ps30_2_va = memref.load %partners[%ps30_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps30_2_vb = memref.load %partners[%ps30_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps30_2_gt = arith.cmpi sgt, %ps30_2_va, %ps30_2_vb : i32
+          %ps30_2_swap = arith.cmpi eq, %ps30_2_gt, %ps30_2_up : i1
+          %ps30_2_na = arith.select %ps30_2_swap, %ps30_2_vb, %ps30_2_va : i32
+          %ps30_2_nb = arith.select %ps30_2_swap, %ps30_2_va, %ps30_2_vb : i32
+          memref.store %ps30_2_na, %partners[%ps30_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps30_2_nb, %partners[%ps30_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps30_3_pair = arith.constant 96 : index
+          %ps30_3_tp = arith.addi %lane, %ps30_3_pair : index
+          %ps30_3_s = arith.constant 64 : index
+          %ps30_3_sm1 = arith.constant 63 : index
+          %ps30_3_low = arith.andi %ps30_3_tp, %ps30_3_sm1 : index
+          %ps30_3_twice = arith.addi %ps30_3_tp, %ps30_3_tp : index
+          %ps30_3_a = arith.subi %ps30_3_twice, %ps30_3_low : index
+          %ps30_3_b = arith.addi %ps30_3_a, %ps30_3_s : index
+          %ps30_3_sz = arith.constant 256 : index
+          %ps30_3_upb = arith.andi %ps30_3_a, %ps30_3_sz : index
+          %ps30_3_z = arith.constant 0 : index
+          %ps30_3_up = arith.cmpi eq, %ps30_3_upb, %ps30_3_z : index
+          %ps30_3_aa = arith.addi %pbase, %ps30_3_a : index
+          %ps30_3_bb = arith.addi %pbase, %ps30_3_b : index
+          %ps30_3_va = memref.load %partners[%ps30_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps30_3_vb = memref.load %partners[%ps30_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps30_3_gt = arith.cmpi sgt, %ps30_3_va, %ps30_3_vb : i32
+          %ps30_3_swap = arith.cmpi eq, %ps30_3_gt, %ps30_3_up : i1
+          %ps30_3_na = arith.select %ps30_3_swap, %ps30_3_vb, %ps30_3_va : i32
+          %ps30_3_nb = arith.select %ps30_3_swap, %ps30_3_va, %ps30_3_vb : i32
+          memref.store %ps30_3_na, %partners[%ps30_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps30_3_nb, %partners[%ps30_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps31_0_pair = arith.constant 0 : index
+          %ps31_0_tp = arith.addi %lane, %ps31_0_pair : index
+          %ps31_0_s = arith.constant 32 : index
+          %ps31_0_sm1 = arith.constant 31 : index
+          %ps31_0_low = arith.andi %ps31_0_tp, %ps31_0_sm1 : index
+          %ps31_0_twice = arith.addi %ps31_0_tp, %ps31_0_tp : index
+          %ps31_0_a = arith.subi %ps31_0_twice, %ps31_0_low : index
+          %ps31_0_b = arith.addi %ps31_0_a, %ps31_0_s : index
+          %ps31_0_sz = arith.constant 256 : index
+          %ps31_0_upb = arith.andi %ps31_0_a, %ps31_0_sz : index
+          %ps31_0_z = arith.constant 0 : index
+          %ps31_0_up = arith.cmpi eq, %ps31_0_upb, %ps31_0_z : index
+          %ps31_0_aa = arith.addi %pbase, %ps31_0_a : index
+          %ps31_0_bb = arith.addi %pbase, %ps31_0_b : index
+          %ps31_0_va = memref.load %partners[%ps31_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps31_0_vb = memref.load %partners[%ps31_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps31_0_gt = arith.cmpi sgt, %ps31_0_va, %ps31_0_vb : i32
+          %ps31_0_swap = arith.cmpi eq, %ps31_0_gt, %ps31_0_up : i1
+          %ps31_0_na = arith.select %ps31_0_swap, %ps31_0_vb, %ps31_0_va : i32
+          %ps31_0_nb = arith.select %ps31_0_swap, %ps31_0_va, %ps31_0_vb : i32
+          memref.store %ps31_0_na, %partners[%ps31_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps31_0_nb, %partners[%ps31_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps31_1_pair = arith.constant 32 : index
+          %ps31_1_tp = arith.addi %lane, %ps31_1_pair : index
+          %ps31_1_s = arith.constant 32 : index
+          %ps31_1_sm1 = arith.constant 31 : index
+          %ps31_1_low = arith.andi %ps31_1_tp, %ps31_1_sm1 : index
+          %ps31_1_twice = arith.addi %ps31_1_tp, %ps31_1_tp : index
+          %ps31_1_a = arith.subi %ps31_1_twice, %ps31_1_low : index
+          %ps31_1_b = arith.addi %ps31_1_a, %ps31_1_s : index
+          %ps31_1_sz = arith.constant 256 : index
+          %ps31_1_upb = arith.andi %ps31_1_a, %ps31_1_sz : index
+          %ps31_1_z = arith.constant 0 : index
+          %ps31_1_up = arith.cmpi eq, %ps31_1_upb, %ps31_1_z : index
+          %ps31_1_aa = arith.addi %pbase, %ps31_1_a : index
+          %ps31_1_bb = arith.addi %pbase, %ps31_1_b : index
+          %ps31_1_va = memref.load %partners[%ps31_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps31_1_vb = memref.load %partners[%ps31_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps31_1_gt = arith.cmpi sgt, %ps31_1_va, %ps31_1_vb : i32
+          %ps31_1_swap = arith.cmpi eq, %ps31_1_gt, %ps31_1_up : i1
+          %ps31_1_na = arith.select %ps31_1_swap, %ps31_1_vb, %ps31_1_va : i32
+          %ps31_1_nb = arith.select %ps31_1_swap, %ps31_1_va, %ps31_1_vb : i32
+          memref.store %ps31_1_na, %partners[%ps31_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps31_1_nb, %partners[%ps31_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps31_2_pair = arith.constant 64 : index
+          %ps31_2_tp = arith.addi %lane, %ps31_2_pair : index
+          %ps31_2_s = arith.constant 32 : index
+          %ps31_2_sm1 = arith.constant 31 : index
+          %ps31_2_low = arith.andi %ps31_2_tp, %ps31_2_sm1 : index
+          %ps31_2_twice = arith.addi %ps31_2_tp, %ps31_2_tp : index
+          %ps31_2_a = arith.subi %ps31_2_twice, %ps31_2_low : index
+          %ps31_2_b = arith.addi %ps31_2_a, %ps31_2_s : index
+          %ps31_2_sz = arith.constant 256 : index
+          %ps31_2_upb = arith.andi %ps31_2_a, %ps31_2_sz : index
+          %ps31_2_z = arith.constant 0 : index
+          %ps31_2_up = arith.cmpi eq, %ps31_2_upb, %ps31_2_z : index
+          %ps31_2_aa = arith.addi %pbase, %ps31_2_a : index
+          %ps31_2_bb = arith.addi %pbase, %ps31_2_b : index
+          %ps31_2_va = memref.load %partners[%ps31_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps31_2_vb = memref.load %partners[%ps31_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps31_2_gt = arith.cmpi sgt, %ps31_2_va, %ps31_2_vb : i32
+          %ps31_2_swap = arith.cmpi eq, %ps31_2_gt, %ps31_2_up : i1
+          %ps31_2_na = arith.select %ps31_2_swap, %ps31_2_vb, %ps31_2_va : i32
+          %ps31_2_nb = arith.select %ps31_2_swap, %ps31_2_va, %ps31_2_vb : i32
+          memref.store %ps31_2_na, %partners[%ps31_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps31_2_nb, %partners[%ps31_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps31_3_pair = arith.constant 96 : index
+          %ps31_3_tp = arith.addi %lane, %ps31_3_pair : index
+          %ps31_3_s = arith.constant 32 : index
+          %ps31_3_sm1 = arith.constant 31 : index
+          %ps31_3_low = arith.andi %ps31_3_tp, %ps31_3_sm1 : index
+          %ps31_3_twice = arith.addi %ps31_3_tp, %ps31_3_tp : index
+          %ps31_3_a = arith.subi %ps31_3_twice, %ps31_3_low : index
+          %ps31_3_b = arith.addi %ps31_3_a, %ps31_3_s : index
+          %ps31_3_sz = arith.constant 256 : index
+          %ps31_3_upb = arith.andi %ps31_3_a, %ps31_3_sz : index
+          %ps31_3_z = arith.constant 0 : index
+          %ps31_3_up = arith.cmpi eq, %ps31_3_upb, %ps31_3_z : index
+          %ps31_3_aa = arith.addi %pbase, %ps31_3_a : index
+          %ps31_3_bb = arith.addi %pbase, %ps31_3_b : index
+          %ps31_3_va = memref.load %partners[%ps31_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps31_3_vb = memref.load %partners[%ps31_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps31_3_gt = arith.cmpi sgt, %ps31_3_va, %ps31_3_vb : i32
+          %ps31_3_swap = arith.cmpi eq, %ps31_3_gt, %ps31_3_up : i1
+          %ps31_3_na = arith.select %ps31_3_swap, %ps31_3_vb, %ps31_3_va : i32
+          %ps31_3_nb = arith.select %ps31_3_swap, %ps31_3_va, %ps31_3_vb : i32
+          memref.store %ps31_3_na, %partners[%ps31_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps31_3_nb, %partners[%ps31_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps32_0_pair = arith.constant 0 : index
+          %ps32_0_tp = arith.addi %lane, %ps32_0_pair : index
+          %ps32_0_s = arith.constant 16 : index
+          %ps32_0_sm1 = arith.constant 15 : index
+          %ps32_0_low = arith.andi %ps32_0_tp, %ps32_0_sm1 : index
+          %ps32_0_twice = arith.addi %ps32_0_tp, %ps32_0_tp : index
+          %ps32_0_a = arith.subi %ps32_0_twice, %ps32_0_low : index
+          %ps32_0_b = arith.addi %ps32_0_a, %ps32_0_s : index
+          %ps32_0_sz = arith.constant 256 : index
+          %ps32_0_upb = arith.andi %ps32_0_a, %ps32_0_sz : index
+          %ps32_0_z = arith.constant 0 : index
+          %ps32_0_up = arith.cmpi eq, %ps32_0_upb, %ps32_0_z : index
+          %ps32_0_aa = arith.addi %pbase, %ps32_0_a : index
+          %ps32_0_bb = arith.addi %pbase, %ps32_0_b : index
+          %ps32_0_va = memref.load %partners[%ps32_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps32_0_vb = memref.load %partners[%ps32_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps32_0_gt = arith.cmpi sgt, %ps32_0_va, %ps32_0_vb : i32
+          %ps32_0_swap = arith.cmpi eq, %ps32_0_gt, %ps32_0_up : i1
+          %ps32_0_na = arith.select %ps32_0_swap, %ps32_0_vb, %ps32_0_va : i32
+          %ps32_0_nb = arith.select %ps32_0_swap, %ps32_0_va, %ps32_0_vb : i32
+          memref.store %ps32_0_na, %partners[%ps32_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps32_0_nb, %partners[%ps32_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps32_1_pair = arith.constant 32 : index
+          %ps32_1_tp = arith.addi %lane, %ps32_1_pair : index
+          %ps32_1_s = arith.constant 16 : index
+          %ps32_1_sm1 = arith.constant 15 : index
+          %ps32_1_low = arith.andi %ps32_1_tp, %ps32_1_sm1 : index
+          %ps32_1_twice = arith.addi %ps32_1_tp, %ps32_1_tp : index
+          %ps32_1_a = arith.subi %ps32_1_twice, %ps32_1_low : index
+          %ps32_1_b = arith.addi %ps32_1_a, %ps32_1_s : index
+          %ps32_1_sz = arith.constant 256 : index
+          %ps32_1_upb = arith.andi %ps32_1_a, %ps32_1_sz : index
+          %ps32_1_z = arith.constant 0 : index
+          %ps32_1_up = arith.cmpi eq, %ps32_1_upb, %ps32_1_z : index
+          %ps32_1_aa = arith.addi %pbase, %ps32_1_a : index
+          %ps32_1_bb = arith.addi %pbase, %ps32_1_b : index
+          %ps32_1_va = memref.load %partners[%ps32_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps32_1_vb = memref.load %partners[%ps32_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps32_1_gt = arith.cmpi sgt, %ps32_1_va, %ps32_1_vb : i32
+          %ps32_1_swap = arith.cmpi eq, %ps32_1_gt, %ps32_1_up : i1
+          %ps32_1_na = arith.select %ps32_1_swap, %ps32_1_vb, %ps32_1_va : i32
+          %ps32_1_nb = arith.select %ps32_1_swap, %ps32_1_va, %ps32_1_vb : i32
+          memref.store %ps32_1_na, %partners[%ps32_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps32_1_nb, %partners[%ps32_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps32_2_pair = arith.constant 64 : index
+          %ps32_2_tp = arith.addi %lane, %ps32_2_pair : index
+          %ps32_2_s = arith.constant 16 : index
+          %ps32_2_sm1 = arith.constant 15 : index
+          %ps32_2_low = arith.andi %ps32_2_tp, %ps32_2_sm1 : index
+          %ps32_2_twice = arith.addi %ps32_2_tp, %ps32_2_tp : index
+          %ps32_2_a = arith.subi %ps32_2_twice, %ps32_2_low : index
+          %ps32_2_b = arith.addi %ps32_2_a, %ps32_2_s : index
+          %ps32_2_sz = arith.constant 256 : index
+          %ps32_2_upb = arith.andi %ps32_2_a, %ps32_2_sz : index
+          %ps32_2_z = arith.constant 0 : index
+          %ps32_2_up = arith.cmpi eq, %ps32_2_upb, %ps32_2_z : index
+          %ps32_2_aa = arith.addi %pbase, %ps32_2_a : index
+          %ps32_2_bb = arith.addi %pbase, %ps32_2_b : index
+          %ps32_2_va = memref.load %partners[%ps32_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps32_2_vb = memref.load %partners[%ps32_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps32_2_gt = arith.cmpi sgt, %ps32_2_va, %ps32_2_vb : i32
+          %ps32_2_swap = arith.cmpi eq, %ps32_2_gt, %ps32_2_up : i1
+          %ps32_2_na = arith.select %ps32_2_swap, %ps32_2_vb, %ps32_2_va : i32
+          %ps32_2_nb = arith.select %ps32_2_swap, %ps32_2_va, %ps32_2_vb : i32
+          memref.store %ps32_2_na, %partners[%ps32_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps32_2_nb, %partners[%ps32_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps32_3_pair = arith.constant 96 : index
+          %ps32_3_tp = arith.addi %lane, %ps32_3_pair : index
+          %ps32_3_s = arith.constant 16 : index
+          %ps32_3_sm1 = arith.constant 15 : index
+          %ps32_3_low = arith.andi %ps32_3_tp, %ps32_3_sm1 : index
+          %ps32_3_twice = arith.addi %ps32_3_tp, %ps32_3_tp : index
+          %ps32_3_a = arith.subi %ps32_3_twice, %ps32_3_low : index
+          %ps32_3_b = arith.addi %ps32_3_a, %ps32_3_s : index
+          %ps32_3_sz = arith.constant 256 : index
+          %ps32_3_upb = arith.andi %ps32_3_a, %ps32_3_sz : index
+          %ps32_3_z = arith.constant 0 : index
+          %ps32_3_up = arith.cmpi eq, %ps32_3_upb, %ps32_3_z : index
+          %ps32_3_aa = arith.addi %pbase, %ps32_3_a : index
+          %ps32_3_bb = arith.addi %pbase, %ps32_3_b : index
+          %ps32_3_va = memref.load %partners[%ps32_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps32_3_vb = memref.load %partners[%ps32_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps32_3_gt = arith.cmpi sgt, %ps32_3_va, %ps32_3_vb : i32
+          %ps32_3_swap = arith.cmpi eq, %ps32_3_gt, %ps32_3_up : i1
+          %ps32_3_na = arith.select %ps32_3_swap, %ps32_3_vb, %ps32_3_va : i32
+          %ps32_3_nb = arith.select %ps32_3_swap, %ps32_3_va, %ps32_3_vb : i32
+          memref.store %ps32_3_na, %partners[%ps32_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps32_3_nb, %partners[%ps32_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps33_0_pair = arith.constant 0 : index
+          %ps33_0_tp = arith.addi %lane, %ps33_0_pair : index
+          %ps33_0_s = arith.constant 8 : index
+          %ps33_0_sm1 = arith.constant 7 : index
+          %ps33_0_low = arith.andi %ps33_0_tp, %ps33_0_sm1 : index
+          %ps33_0_twice = arith.addi %ps33_0_tp, %ps33_0_tp : index
+          %ps33_0_a = arith.subi %ps33_0_twice, %ps33_0_low : index
+          %ps33_0_b = arith.addi %ps33_0_a, %ps33_0_s : index
+          %ps33_0_sz = arith.constant 256 : index
+          %ps33_0_upb = arith.andi %ps33_0_a, %ps33_0_sz : index
+          %ps33_0_z = arith.constant 0 : index
+          %ps33_0_up = arith.cmpi eq, %ps33_0_upb, %ps33_0_z : index
+          %ps33_0_aa = arith.addi %pbase, %ps33_0_a : index
+          %ps33_0_bb = arith.addi %pbase, %ps33_0_b : index
+          %ps33_0_va = memref.load %partners[%ps33_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps33_0_vb = memref.load %partners[%ps33_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps33_0_gt = arith.cmpi sgt, %ps33_0_va, %ps33_0_vb : i32
+          %ps33_0_swap = arith.cmpi eq, %ps33_0_gt, %ps33_0_up : i1
+          %ps33_0_na = arith.select %ps33_0_swap, %ps33_0_vb, %ps33_0_va : i32
+          %ps33_0_nb = arith.select %ps33_0_swap, %ps33_0_va, %ps33_0_vb : i32
+          memref.store %ps33_0_na, %partners[%ps33_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps33_0_nb, %partners[%ps33_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps33_1_pair = arith.constant 32 : index
+          %ps33_1_tp = arith.addi %lane, %ps33_1_pair : index
+          %ps33_1_s = arith.constant 8 : index
+          %ps33_1_sm1 = arith.constant 7 : index
+          %ps33_1_low = arith.andi %ps33_1_tp, %ps33_1_sm1 : index
+          %ps33_1_twice = arith.addi %ps33_1_tp, %ps33_1_tp : index
+          %ps33_1_a = arith.subi %ps33_1_twice, %ps33_1_low : index
+          %ps33_1_b = arith.addi %ps33_1_a, %ps33_1_s : index
+          %ps33_1_sz = arith.constant 256 : index
+          %ps33_1_upb = arith.andi %ps33_1_a, %ps33_1_sz : index
+          %ps33_1_z = arith.constant 0 : index
+          %ps33_1_up = arith.cmpi eq, %ps33_1_upb, %ps33_1_z : index
+          %ps33_1_aa = arith.addi %pbase, %ps33_1_a : index
+          %ps33_1_bb = arith.addi %pbase, %ps33_1_b : index
+          %ps33_1_va = memref.load %partners[%ps33_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps33_1_vb = memref.load %partners[%ps33_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps33_1_gt = arith.cmpi sgt, %ps33_1_va, %ps33_1_vb : i32
+          %ps33_1_swap = arith.cmpi eq, %ps33_1_gt, %ps33_1_up : i1
+          %ps33_1_na = arith.select %ps33_1_swap, %ps33_1_vb, %ps33_1_va : i32
+          %ps33_1_nb = arith.select %ps33_1_swap, %ps33_1_va, %ps33_1_vb : i32
+          memref.store %ps33_1_na, %partners[%ps33_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps33_1_nb, %partners[%ps33_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps33_2_pair = arith.constant 64 : index
+          %ps33_2_tp = arith.addi %lane, %ps33_2_pair : index
+          %ps33_2_s = arith.constant 8 : index
+          %ps33_2_sm1 = arith.constant 7 : index
+          %ps33_2_low = arith.andi %ps33_2_tp, %ps33_2_sm1 : index
+          %ps33_2_twice = arith.addi %ps33_2_tp, %ps33_2_tp : index
+          %ps33_2_a = arith.subi %ps33_2_twice, %ps33_2_low : index
+          %ps33_2_b = arith.addi %ps33_2_a, %ps33_2_s : index
+          %ps33_2_sz = arith.constant 256 : index
+          %ps33_2_upb = arith.andi %ps33_2_a, %ps33_2_sz : index
+          %ps33_2_z = arith.constant 0 : index
+          %ps33_2_up = arith.cmpi eq, %ps33_2_upb, %ps33_2_z : index
+          %ps33_2_aa = arith.addi %pbase, %ps33_2_a : index
+          %ps33_2_bb = arith.addi %pbase, %ps33_2_b : index
+          %ps33_2_va = memref.load %partners[%ps33_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps33_2_vb = memref.load %partners[%ps33_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps33_2_gt = arith.cmpi sgt, %ps33_2_va, %ps33_2_vb : i32
+          %ps33_2_swap = arith.cmpi eq, %ps33_2_gt, %ps33_2_up : i1
+          %ps33_2_na = arith.select %ps33_2_swap, %ps33_2_vb, %ps33_2_va : i32
+          %ps33_2_nb = arith.select %ps33_2_swap, %ps33_2_va, %ps33_2_vb : i32
+          memref.store %ps33_2_na, %partners[%ps33_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps33_2_nb, %partners[%ps33_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps33_3_pair = arith.constant 96 : index
+          %ps33_3_tp = arith.addi %lane, %ps33_3_pair : index
+          %ps33_3_s = arith.constant 8 : index
+          %ps33_3_sm1 = arith.constant 7 : index
+          %ps33_3_low = arith.andi %ps33_3_tp, %ps33_3_sm1 : index
+          %ps33_3_twice = arith.addi %ps33_3_tp, %ps33_3_tp : index
+          %ps33_3_a = arith.subi %ps33_3_twice, %ps33_3_low : index
+          %ps33_3_b = arith.addi %ps33_3_a, %ps33_3_s : index
+          %ps33_3_sz = arith.constant 256 : index
+          %ps33_3_upb = arith.andi %ps33_3_a, %ps33_3_sz : index
+          %ps33_3_z = arith.constant 0 : index
+          %ps33_3_up = arith.cmpi eq, %ps33_3_upb, %ps33_3_z : index
+          %ps33_3_aa = arith.addi %pbase, %ps33_3_a : index
+          %ps33_3_bb = arith.addi %pbase, %ps33_3_b : index
+          %ps33_3_va = memref.load %partners[%ps33_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps33_3_vb = memref.load %partners[%ps33_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps33_3_gt = arith.cmpi sgt, %ps33_3_va, %ps33_3_vb : i32
+          %ps33_3_swap = arith.cmpi eq, %ps33_3_gt, %ps33_3_up : i1
+          %ps33_3_na = arith.select %ps33_3_swap, %ps33_3_vb, %ps33_3_va : i32
+          %ps33_3_nb = arith.select %ps33_3_swap, %ps33_3_va, %ps33_3_vb : i32
+          memref.store %ps33_3_na, %partners[%ps33_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps33_3_nb, %partners[%ps33_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps34_0_pair = arith.constant 0 : index
+          %ps34_0_tp = arith.addi %lane, %ps34_0_pair : index
+          %ps34_0_s = arith.constant 4 : index
+          %ps34_0_sm1 = arith.constant 3 : index
+          %ps34_0_low = arith.andi %ps34_0_tp, %ps34_0_sm1 : index
+          %ps34_0_twice = arith.addi %ps34_0_tp, %ps34_0_tp : index
+          %ps34_0_a = arith.subi %ps34_0_twice, %ps34_0_low : index
+          %ps34_0_b = arith.addi %ps34_0_a, %ps34_0_s : index
+          %ps34_0_sz = arith.constant 256 : index
+          %ps34_0_upb = arith.andi %ps34_0_a, %ps34_0_sz : index
+          %ps34_0_z = arith.constant 0 : index
+          %ps34_0_up = arith.cmpi eq, %ps34_0_upb, %ps34_0_z : index
+          %ps34_0_aa = arith.addi %pbase, %ps34_0_a : index
+          %ps34_0_bb = arith.addi %pbase, %ps34_0_b : index
+          %ps34_0_va = memref.load %partners[%ps34_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps34_0_vb = memref.load %partners[%ps34_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps34_0_gt = arith.cmpi sgt, %ps34_0_va, %ps34_0_vb : i32
+          %ps34_0_swap = arith.cmpi eq, %ps34_0_gt, %ps34_0_up : i1
+          %ps34_0_na = arith.select %ps34_0_swap, %ps34_0_vb, %ps34_0_va : i32
+          %ps34_0_nb = arith.select %ps34_0_swap, %ps34_0_va, %ps34_0_vb : i32
+          memref.store %ps34_0_na, %partners[%ps34_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps34_0_nb, %partners[%ps34_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps34_1_pair = arith.constant 32 : index
+          %ps34_1_tp = arith.addi %lane, %ps34_1_pair : index
+          %ps34_1_s = arith.constant 4 : index
+          %ps34_1_sm1 = arith.constant 3 : index
+          %ps34_1_low = arith.andi %ps34_1_tp, %ps34_1_sm1 : index
+          %ps34_1_twice = arith.addi %ps34_1_tp, %ps34_1_tp : index
+          %ps34_1_a = arith.subi %ps34_1_twice, %ps34_1_low : index
+          %ps34_1_b = arith.addi %ps34_1_a, %ps34_1_s : index
+          %ps34_1_sz = arith.constant 256 : index
+          %ps34_1_upb = arith.andi %ps34_1_a, %ps34_1_sz : index
+          %ps34_1_z = arith.constant 0 : index
+          %ps34_1_up = arith.cmpi eq, %ps34_1_upb, %ps34_1_z : index
+          %ps34_1_aa = arith.addi %pbase, %ps34_1_a : index
+          %ps34_1_bb = arith.addi %pbase, %ps34_1_b : index
+          %ps34_1_va = memref.load %partners[%ps34_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps34_1_vb = memref.load %partners[%ps34_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps34_1_gt = arith.cmpi sgt, %ps34_1_va, %ps34_1_vb : i32
+          %ps34_1_swap = arith.cmpi eq, %ps34_1_gt, %ps34_1_up : i1
+          %ps34_1_na = arith.select %ps34_1_swap, %ps34_1_vb, %ps34_1_va : i32
+          %ps34_1_nb = arith.select %ps34_1_swap, %ps34_1_va, %ps34_1_vb : i32
+          memref.store %ps34_1_na, %partners[%ps34_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps34_1_nb, %partners[%ps34_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps34_2_pair = arith.constant 64 : index
+          %ps34_2_tp = arith.addi %lane, %ps34_2_pair : index
+          %ps34_2_s = arith.constant 4 : index
+          %ps34_2_sm1 = arith.constant 3 : index
+          %ps34_2_low = arith.andi %ps34_2_tp, %ps34_2_sm1 : index
+          %ps34_2_twice = arith.addi %ps34_2_tp, %ps34_2_tp : index
+          %ps34_2_a = arith.subi %ps34_2_twice, %ps34_2_low : index
+          %ps34_2_b = arith.addi %ps34_2_a, %ps34_2_s : index
+          %ps34_2_sz = arith.constant 256 : index
+          %ps34_2_upb = arith.andi %ps34_2_a, %ps34_2_sz : index
+          %ps34_2_z = arith.constant 0 : index
+          %ps34_2_up = arith.cmpi eq, %ps34_2_upb, %ps34_2_z : index
+          %ps34_2_aa = arith.addi %pbase, %ps34_2_a : index
+          %ps34_2_bb = arith.addi %pbase, %ps34_2_b : index
+          %ps34_2_va = memref.load %partners[%ps34_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps34_2_vb = memref.load %partners[%ps34_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps34_2_gt = arith.cmpi sgt, %ps34_2_va, %ps34_2_vb : i32
+          %ps34_2_swap = arith.cmpi eq, %ps34_2_gt, %ps34_2_up : i1
+          %ps34_2_na = arith.select %ps34_2_swap, %ps34_2_vb, %ps34_2_va : i32
+          %ps34_2_nb = arith.select %ps34_2_swap, %ps34_2_va, %ps34_2_vb : i32
+          memref.store %ps34_2_na, %partners[%ps34_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps34_2_nb, %partners[%ps34_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps34_3_pair = arith.constant 96 : index
+          %ps34_3_tp = arith.addi %lane, %ps34_3_pair : index
+          %ps34_3_s = arith.constant 4 : index
+          %ps34_3_sm1 = arith.constant 3 : index
+          %ps34_3_low = arith.andi %ps34_3_tp, %ps34_3_sm1 : index
+          %ps34_3_twice = arith.addi %ps34_3_tp, %ps34_3_tp : index
+          %ps34_3_a = arith.subi %ps34_3_twice, %ps34_3_low : index
+          %ps34_3_b = arith.addi %ps34_3_a, %ps34_3_s : index
+          %ps34_3_sz = arith.constant 256 : index
+          %ps34_3_upb = arith.andi %ps34_3_a, %ps34_3_sz : index
+          %ps34_3_z = arith.constant 0 : index
+          %ps34_3_up = arith.cmpi eq, %ps34_3_upb, %ps34_3_z : index
+          %ps34_3_aa = arith.addi %pbase, %ps34_3_a : index
+          %ps34_3_bb = arith.addi %pbase, %ps34_3_b : index
+          %ps34_3_va = memref.load %partners[%ps34_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps34_3_vb = memref.load %partners[%ps34_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps34_3_gt = arith.cmpi sgt, %ps34_3_va, %ps34_3_vb : i32
+          %ps34_3_swap = arith.cmpi eq, %ps34_3_gt, %ps34_3_up : i1
+          %ps34_3_na = arith.select %ps34_3_swap, %ps34_3_vb, %ps34_3_va : i32
+          %ps34_3_nb = arith.select %ps34_3_swap, %ps34_3_va, %ps34_3_vb : i32
+          memref.store %ps34_3_na, %partners[%ps34_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps34_3_nb, %partners[%ps34_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps35_0_pair = arith.constant 0 : index
+          %ps35_0_tp = arith.addi %lane, %ps35_0_pair : index
+          %ps35_0_s = arith.constant 2 : index
+          %ps35_0_sm1 = arith.constant 1 : index
+          %ps35_0_low = arith.andi %ps35_0_tp, %ps35_0_sm1 : index
+          %ps35_0_twice = arith.addi %ps35_0_tp, %ps35_0_tp : index
+          %ps35_0_a = arith.subi %ps35_0_twice, %ps35_0_low : index
+          %ps35_0_b = arith.addi %ps35_0_a, %ps35_0_s : index
+          %ps35_0_sz = arith.constant 256 : index
+          %ps35_0_upb = arith.andi %ps35_0_a, %ps35_0_sz : index
+          %ps35_0_z = arith.constant 0 : index
+          %ps35_0_up = arith.cmpi eq, %ps35_0_upb, %ps35_0_z : index
+          %ps35_0_aa = arith.addi %pbase, %ps35_0_a : index
+          %ps35_0_bb = arith.addi %pbase, %ps35_0_b : index
+          %ps35_0_va = memref.load %partners[%ps35_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps35_0_vb = memref.load %partners[%ps35_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps35_0_gt = arith.cmpi sgt, %ps35_0_va, %ps35_0_vb : i32
+          %ps35_0_swap = arith.cmpi eq, %ps35_0_gt, %ps35_0_up : i1
+          %ps35_0_na = arith.select %ps35_0_swap, %ps35_0_vb, %ps35_0_va : i32
+          %ps35_0_nb = arith.select %ps35_0_swap, %ps35_0_va, %ps35_0_vb : i32
+          memref.store %ps35_0_na, %partners[%ps35_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps35_0_nb, %partners[%ps35_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps35_1_pair = arith.constant 32 : index
+          %ps35_1_tp = arith.addi %lane, %ps35_1_pair : index
+          %ps35_1_s = arith.constant 2 : index
+          %ps35_1_sm1 = arith.constant 1 : index
+          %ps35_1_low = arith.andi %ps35_1_tp, %ps35_1_sm1 : index
+          %ps35_1_twice = arith.addi %ps35_1_tp, %ps35_1_tp : index
+          %ps35_1_a = arith.subi %ps35_1_twice, %ps35_1_low : index
+          %ps35_1_b = arith.addi %ps35_1_a, %ps35_1_s : index
+          %ps35_1_sz = arith.constant 256 : index
+          %ps35_1_upb = arith.andi %ps35_1_a, %ps35_1_sz : index
+          %ps35_1_z = arith.constant 0 : index
+          %ps35_1_up = arith.cmpi eq, %ps35_1_upb, %ps35_1_z : index
+          %ps35_1_aa = arith.addi %pbase, %ps35_1_a : index
+          %ps35_1_bb = arith.addi %pbase, %ps35_1_b : index
+          %ps35_1_va = memref.load %partners[%ps35_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps35_1_vb = memref.load %partners[%ps35_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps35_1_gt = arith.cmpi sgt, %ps35_1_va, %ps35_1_vb : i32
+          %ps35_1_swap = arith.cmpi eq, %ps35_1_gt, %ps35_1_up : i1
+          %ps35_1_na = arith.select %ps35_1_swap, %ps35_1_vb, %ps35_1_va : i32
+          %ps35_1_nb = arith.select %ps35_1_swap, %ps35_1_va, %ps35_1_vb : i32
+          memref.store %ps35_1_na, %partners[%ps35_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps35_1_nb, %partners[%ps35_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps35_2_pair = arith.constant 64 : index
+          %ps35_2_tp = arith.addi %lane, %ps35_2_pair : index
+          %ps35_2_s = arith.constant 2 : index
+          %ps35_2_sm1 = arith.constant 1 : index
+          %ps35_2_low = arith.andi %ps35_2_tp, %ps35_2_sm1 : index
+          %ps35_2_twice = arith.addi %ps35_2_tp, %ps35_2_tp : index
+          %ps35_2_a = arith.subi %ps35_2_twice, %ps35_2_low : index
+          %ps35_2_b = arith.addi %ps35_2_a, %ps35_2_s : index
+          %ps35_2_sz = arith.constant 256 : index
+          %ps35_2_upb = arith.andi %ps35_2_a, %ps35_2_sz : index
+          %ps35_2_z = arith.constant 0 : index
+          %ps35_2_up = arith.cmpi eq, %ps35_2_upb, %ps35_2_z : index
+          %ps35_2_aa = arith.addi %pbase, %ps35_2_a : index
+          %ps35_2_bb = arith.addi %pbase, %ps35_2_b : index
+          %ps35_2_va = memref.load %partners[%ps35_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps35_2_vb = memref.load %partners[%ps35_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps35_2_gt = arith.cmpi sgt, %ps35_2_va, %ps35_2_vb : i32
+          %ps35_2_swap = arith.cmpi eq, %ps35_2_gt, %ps35_2_up : i1
+          %ps35_2_na = arith.select %ps35_2_swap, %ps35_2_vb, %ps35_2_va : i32
+          %ps35_2_nb = arith.select %ps35_2_swap, %ps35_2_va, %ps35_2_vb : i32
+          memref.store %ps35_2_na, %partners[%ps35_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps35_2_nb, %partners[%ps35_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps35_3_pair = arith.constant 96 : index
+          %ps35_3_tp = arith.addi %lane, %ps35_3_pair : index
+          %ps35_3_s = arith.constant 2 : index
+          %ps35_3_sm1 = arith.constant 1 : index
+          %ps35_3_low = arith.andi %ps35_3_tp, %ps35_3_sm1 : index
+          %ps35_3_twice = arith.addi %ps35_3_tp, %ps35_3_tp : index
+          %ps35_3_a = arith.subi %ps35_3_twice, %ps35_3_low : index
+          %ps35_3_b = arith.addi %ps35_3_a, %ps35_3_s : index
+          %ps35_3_sz = arith.constant 256 : index
+          %ps35_3_upb = arith.andi %ps35_3_a, %ps35_3_sz : index
+          %ps35_3_z = arith.constant 0 : index
+          %ps35_3_up = arith.cmpi eq, %ps35_3_upb, %ps35_3_z : index
+          %ps35_3_aa = arith.addi %pbase, %ps35_3_a : index
+          %ps35_3_bb = arith.addi %pbase, %ps35_3_b : index
+          %ps35_3_va = memref.load %partners[%ps35_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps35_3_vb = memref.load %partners[%ps35_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps35_3_gt = arith.cmpi sgt, %ps35_3_va, %ps35_3_vb : i32
+          %ps35_3_swap = arith.cmpi eq, %ps35_3_gt, %ps35_3_up : i1
+          %ps35_3_na = arith.select %ps35_3_swap, %ps35_3_vb, %ps35_3_va : i32
+          %ps35_3_nb = arith.select %ps35_3_swap, %ps35_3_va, %ps35_3_vb : i32
+          memref.store %ps35_3_na, %partners[%ps35_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps35_3_nb, %partners[%ps35_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+          %ps36_0_pair = arith.constant 0 : index
+          %ps36_0_tp = arith.addi %lane, %ps36_0_pair : index
+          %ps36_0_s = arith.constant 1 : index
+          %ps36_0_sm1 = arith.constant 0 : index
+          %ps36_0_low = arith.andi %ps36_0_tp, %ps36_0_sm1 : index
+          %ps36_0_twice = arith.addi %ps36_0_tp, %ps36_0_tp : index
+          %ps36_0_a = arith.subi %ps36_0_twice, %ps36_0_low : index
+          %ps36_0_b = arith.addi %ps36_0_a, %ps36_0_s : index
+          %ps36_0_sz = arith.constant 256 : index
+          %ps36_0_upb = arith.andi %ps36_0_a, %ps36_0_sz : index
+          %ps36_0_z = arith.constant 0 : index
+          %ps36_0_up = arith.cmpi eq, %ps36_0_upb, %ps36_0_z : index
+          %ps36_0_aa = arith.addi %pbase, %ps36_0_a : index
+          %ps36_0_bb = arith.addi %pbase, %ps36_0_b : index
+          %ps36_0_va = memref.load %partners[%ps36_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps36_0_vb = memref.load %partners[%ps36_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps36_0_gt = arith.cmpi sgt, %ps36_0_va, %ps36_0_vb : i32
+          %ps36_0_swap = arith.cmpi eq, %ps36_0_gt, %ps36_0_up : i1
+          %ps36_0_na = arith.select %ps36_0_swap, %ps36_0_vb, %ps36_0_va : i32
+          %ps36_0_nb = arith.select %ps36_0_swap, %ps36_0_va, %ps36_0_vb : i32
+          memref.store %ps36_0_na, %partners[%ps36_0_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps36_0_nb, %partners[%ps36_0_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps36_1_pair = arith.constant 32 : index
+          %ps36_1_tp = arith.addi %lane, %ps36_1_pair : index
+          %ps36_1_s = arith.constant 1 : index
+          %ps36_1_sm1 = arith.constant 0 : index
+          %ps36_1_low = arith.andi %ps36_1_tp, %ps36_1_sm1 : index
+          %ps36_1_twice = arith.addi %ps36_1_tp, %ps36_1_tp : index
+          %ps36_1_a = arith.subi %ps36_1_twice, %ps36_1_low : index
+          %ps36_1_b = arith.addi %ps36_1_a, %ps36_1_s : index
+          %ps36_1_sz = arith.constant 256 : index
+          %ps36_1_upb = arith.andi %ps36_1_a, %ps36_1_sz : index
+          %ps36_1_z = arith.constant 0 : index
+          %ps36_1_up = arith.cmpi eq, %ps36_1_upb, %ps36_1_z : index
+          %ps36_1_aa = arith.addi %pbase, %ps36_1_a : index
+          %ps36_1_bb = arith.addi %pbase, %ps36_1_b : index
+          %ps36_1_va = memref.load %partners[%ps36_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps36_1_vb = memref.load %partners[%ps36_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps36_1_gt = arith.cmpi sgt, %ps36_1_va, %ps36_1_vb : i32
+          %ps36_1_swap = arith.cmpi eq, %ps36_1_gt, %ps36_1_up : i1
+          %ps36_1_na = arith.select %ps36_1_swap, %ps36_1_vb, %ps36_1_va : i32
+          %ps36_1_nb = arith.select %ps36_1_swap, %ps36_1_va, %ps36_1_vb : i32
+          memref.store %ps36_1_na, %partners[%ps36_1_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps36_1_nb, %partners[%ps36_1_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps36_2_pair = arith.constant 64 : index
+          %ps36_2_tp = arith.addi %lane, %ps36_2_pair : index
+          %ps36_2_s = arith.constant 1 : index
+          %ps36_2_sm1 = arith.constant 0 : index
+          %ps36_2_low = arith.andi %ps36_2_tp, %ps36_2_sm1 : index
+          %ps36_2_twice = arith.addi %ps36_2_tp, %ps36_2_tp : index
+          %ps36_2_a = arith.subi %ps36_2_twice, %ps36_2_low : index
+          %ps36_2_b = arith.addi %ps36_2_a, %ps36_2_s : index
+          %ps36_2_sz = arith.constant 256 : index
+          %ps36_2_upb = arith.andi %ps36_2_a, %ps36_2_sz : index
+          %ps36_2_z = arith.constant 0 : index
+          %ps36_2_up = arith.cmpi eq, %ps36_2_upb, %ps36_2_z : index
+          %ps36_2_aa = arith.addi %pbase, %ps36_2_a : index
+          %ps36_2_bb = arith.addi %pbase, %ps36_2_b : index
+          %ps36_2_va = memref.load %partners[%ps36_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps36_2_vb = memref.load %partners[%ps36_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps36_2_gt = arith.cmpi sgt, %ps36_2_va, %ps36_2_vb : i32
+          %ps36_2_swap = arith.cmpi eq, %ps36_2_gt, %ps36_2_up : i1
+          %ps36_2_na = arith.select %ps36_2_swap, %ps36_2_vb, %ps36_2_va : i32
+          %ps36_2_nb = arith.select %ps36_2_swap, %ps36_2_va, %ps36_2_vb : i32
+          memref.store %ps36_2_na, %partners[%ps36_2_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps36_2_nb, %partners[%ps36_2_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps36_3_pair = arith.constant 96 : index
+          %ps36_3_tp = arith.addi %lane, %ps36_3_pair : index
+          %ps36_3_s = arith.constant 1 : index
+          %ps36_3_sm1 = arith.constant 0 : index
+          %ps36_3_low = arith.andi %ps36_3_tp, %ps36_3_sm1 : index
+          %ps36_3_twice = arith.addi %ps36_3_tp, %ps36_3_tp : index
+          %ps36_3_a = arith.subi %ps36_3_twice, %ps36_3_low : index
+          %ps36_3_b = arith.addi %ps36_3_a, %ps36_3_s : index
+          %ps36_3_sz = arith.constant 256 : index
+          %ps36_3_upb = arith.andi %ps36_3_a, %ps36_3_sz : index
+          %ps36_3_z = arith.constant 0 : index
+          %ps36_3_up = arith.cmpi eq, %ps36_3_upb, %ps36_3_z : index
+          %ps36_3_aa = arith.addi %pbase, %ps36_3_a : index
+          %ps36_3_bb = arith.addi %pbase, %ps36_3_b : index
+          %ps36_3_va = memref.load %partners[%ps36_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps36_3_vb = memref.load %partners[%ps36_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          %ps36_3_gt = arith.cmpi sgt, %ps36_3_va, %ps36_3_vb : i32
+          %ps36_3_swap = arith.cmpi eq, %ps36_3_gt, %ps36_3_up : i1
+          %ps36_3_na = arith.select %ps36_3_swap, %ps36_3_vb, %ps36_3_va : i32
+          %ps36_3_nb = arith.select %ps36_3_swap, %ps36_3_va, %ps36_3_vb : i32
+          memref.store %ps36_3_na, %partners[%ps36_3_aa] : memref<1024xi32, #gpu.address_space<workgroup>>
+          memref.store %ps36_3_nb, %partners[%ps36_3_bb] : memref<1024xi32, #gpu.address_space<workgroup>>
+          nvvm.bar.warp.sync %all : i32
+        }
+      }
+      // The range of the places of the partners: a candidate outside it has no
+      // excluded pair with the group, and is not searched for.
+      %has_partners = arith.cmpi ne, %np, %c0w : index
+      %np_last0 = arith.subi %np, %c1w : index
+      %np_last = arith.select %has_partners, %np_last0, %c0w : index
+      %pmin_at = arith.addi %pbase, %c0w : index
+      %pmax_at = arith.addi %pbase, %np_last : index
+      %pmin_key = memref.load %partners[%pmin_at] : memref<1024xi32, #gpu.address_space<workgroup>>
+      %pmax_key = memref.load %partners[%pmax_at] : memref<1024xi32, #gpu.address_space<workgroup>>
+      %four_p = arith.constant 4 : i32
+      %pmin = arith.shrsi %pmin_key, %four_p : i32
+      %pmax0 = arith.shrsi %pmax_key, %four_p : i32
+      %none_max = arith.constant -1 : i32
+      %pmax = arith.select %has_partners, %pmax0, %none_max : i32
+      // The cells of the grid within the reach of the box.
+      %ecx = arith.addf %hx, %freach : f32
+      %ecy = arith.addf %hy, %freach : f32
+      %ecz = arith.addf %hz, %freach : f32
+      %lox_f = arith.subf %cx, %ecx : f32
+      %loy_f = arith.subf %cy, %ecy : f32
+      %loz_f = arith.subf %cz, %ecz : f32
+      %hix_f = arith.addf %cx, %ecx : f32
+      %hiy_f = arith.addf %cy, %ecy : f32
+      %hiz_f = arith.addf %cz, %ecz : f32
+      %gnxf = arith.sitofp %gnx32 : i32 to f32
+      %gnyf = arith.sitofp %gny32 : i32 to f32
+      %gnzf = arith.sitofp %gnz32 : i32 to f32
+      %rsx0 = arith.mulf %lox_f, %filx : f32
+      %rsy0 = arith.mulf %loy_f, %fily : f32
+      %rsz0 = arith.mulf %loz_f, %filz : f32
+      %sx1 = arith.mulf %rsx0, %gnxf : f32
+      %sy1 = arith.mulf %rsy0, %gnyf : f32
+      %sz1 = arith.mulf %rsz0, %gnzf : f32
+      %rtx0 = arith.mulf %hix_f, %filx : f32
+      %rty0 = arith.mulf %hiy_f, %fily : f32
+      %rtz0 = arith.mulf %hiz_f, %filz : f32
+      %tx1 = arith.mulf %rtx0, %gnxf : f32
+      %ty1 = arith.mulf %rty0, %gnyf : f32
+      %tz1 = arith.mulf %rtz0, %gnzf : f32
+      %sxf = math.floor %sx1 : f32
+      %syf = math.floor %sy1 : f32
+      %szf = math.floor %sz1 : f32
+      %txf = math.floor %tx1 : f32
+      %tyf = math.floor %ty1 : f32
+      %tzf = math.floor %tz1 : f32
+      %c0x = arith.fptosi %sxf : f32 to i32
+      %c0y = arith.fptosi %syf : f32 to i32
+      %c0z = arith.fptosi %szf : f32 to i32
+      %c1x0 = arith.fptosi %txf : f32 to i32
+      %c1y0 = arith.fptosi %tyf : f32 to i32
+      %c1z0 = arith.fptosi %tzf : f32 to i32
+      // A range wider than the grid is the whole grid.
+      %wx = arith.subi %c1x0, %c0x : i32
+      %wy = arith.subi %c1y0, %c0y : i32
+      %wz = arith.subi %c1z0, %c0z : i32
+      %wide_x = arith.cmpi sge, %wx, %gnx32 : i32
+      %wide_y = arith.cmpi sge, %wy, %gny32 : i32
+      %wide_z = arith.cmpi sge, %wz, %gnz32 : i32
+      %gnx1 = arith.subi %gnx32, %one_i : i32
+      %gny1 = arith.subi %gny32, %one_i : i32
+      %gnz1 = arith.subi %gnz32, %one_i : i32
+      %fx0 = arith.select %wide_x, %zero_i, %c0x : i32
+      %fy0 = arith.select %wide_y, %zero_i, %c0y : i32
+      %fz0 = arith.select %wide_z, %zero_i, %c0z : i32
+      %fx1 = arith.select %wide_x, %gnx1, %c1x0 : i32
+      %fy1 = arith.select %wide_y, %gny1, %c1y0 : i32
+      %fz1 = arith.select %wide_z, %gnz1, %c1z0 : i32
+      %reach2 = arith.mulf %freach, %freach : f32
+      %lane_bit = arith.shli %one_i, %lane32 : i32
+      %below = arith.subi %lane_bit, %one_i : i32
+      %first16 = arith.addi %first32, %c16i : i32
+      %unit_capacity_w = memref.dim %units, %c0w : memref<?xi32, 1>
+      %none_block = arith.constant -1 : i32
+      %c63i_w = arith.constant 63 : i32
+      %c6i_w = arith.constant 6 : i32
+      %g32_w = arith.index_cast %g : index to i32
+      %fz1p = arith.addi %fz1, %one_i : i32
+      %fy1p = arith.addi %fy1, %one_i : i32
+      %img_count0 = memref.load %counts[%g] : memref<?xi32, 1>
+      %img_c6 = arith.constant 6 : index
+      %img_block0_f = memref.load %boxes[%g, %img_c6] : memref<?x8xf32, 1>
+      %img_block0 = arith.bitcast %img_block0_f : f32 to i32
+      %count_main, %block_main, %queued_all = scf.for %zz = %fz0 to %fz1p step %one_i iter_args(%cz_count = %img_count0, %czb = %img_block0, %czq = %zero_i) -> (i32, i32, i32) : i32 {
+        %zm = arith.remsi %zz, %gnz32 : i32
+        %zneg = arith.cmpi slt, %zm, %zero_i : i32
+        %zw = arith.addi %zm, %gnz32 : i32
+        %iz = arith.select %zneg, %zw, %zm : i32
+        %cy_count, %cy_block, %cy_queued = scf.for %yy = %fy0 to %fy1p step %one_i iter_args(%cy0 = %cz_count, %cyb0 = %czb, %cyq0 = %czq) -> (i32, i32, i32) : i32 {
+          %ym = arith.remsi %yy, %gny32 : i32
+          %yneg = arith.cmpi slt, %ym, %zero_i : i32
+          %yw = arith.addi %ym, %gny32 : i32
+          %iy = arith.select %yneg, %yw, %ym : i32
+          %rowz = arith.muli %iz, %gny32 : i32
+          %rowzy = arith.addi %rowz, %iy : i32
+          %row = arith.muli %rowzy, %gnx32 : i32
+          // The run along x, in one or two pieces around the edge.
+          %under = arith.cmpi slt, %fx0, %zero_i : i32
+          %over = arith.cmpi sge, %fx1, %gnx32 : i32
+          %a_from = arith.addi %fx0, %gnx32 : i32
+          %from1 = arith.select %under, %a_from, %fx0 : i32
+          %to1 = arith.select %under, %gnx1, %fx1 : i32
+          %to1b = arith.select %over, %gnx1, %to1 : i32
+          %two_pieces = arith.ori %under, %over : i1
+          %to2a = arith.subi %fx1, %gnx32 : i32
+          %to2 = arith.select %under, %fx1, %to2a : i32
+          %pieces = arith.select %two_pieces, %c2i, %one_i : i32
+          %cp_count, %cp_block, %cp_queued = scf.for %piece = %zero_i to %pieces step %one_i iter_args(%cp0 = %cy0, %cpb0 = %cyb0, %cpq0 = %cyq0) -> (i32, i32, i32) : i32 {
+            %is_second = arith.cmpi ne, %piece, %zero_i : i32
+            %from = arith.select %is_second, %zero_i, %from1 : i32
+            %to = arith.select %is_second, %to2, %to1b : i32
+            %cfrom = arith.addi %row, %from : i32
+            %to_next = arith.addi %to, %one_i : i32
+            %cto = arith.addi %row, %to_next : i32
+            %cfrom_i = arith.index_cast %cfrom : i32 to index
+            %cto_i = arith.index_cast %cto : i32 to index
+            %begin = memref.load %gstart[%cfrom_i] : memref<?xi32, 1>
+            %end = memref.load %gstart[%cto_i] : memref<?xi32, 1>
+            %cs_count, %cs_block, %cs_queued = scf.for %s0 = %begin to %end step %c32i iter_args(%cs_o = %cp0, %csb_o = %cpb0, %qn_o = %cpq0) -> (i32, i32, i32) : i32 {
+              // The candidates near the box go to the queue of the warp; the
+              // warp takes them 32 at a time, so that its lanes test them
+              // together against the particles of the group (D99).
+              %s = arith.addi %s0, %lane32 : i32
+              %in_run = arith.cmpi slt, %s, %end : i32
+              %none_q = arith.constant -1 : i32
+              // The distances from the box of the group, along each axis, of
+              // the image of the candidate nearest to its center and of the
+              // image on the other side of the boundary, L - |r| away. In a
+              // cell less wide than twice the reach and the extent of the
+              // group, a pair can need the second (D115).
+              %im_far = arith.constant 3.0e+38 : f32
+              %cand, %bdx, %bdy, %bdz, %adx, %ady, %adz = scf.if %in_run -> (i32, f32, f32, f32, f32, f32, f32) {
+                %si = arith.index_cast %s : i32 to index
+                %q = memref.load %gplace[%si] : memref<?xi32, 1>
+                %later = arith.cmpi sge, %q, %first32 : i32
+                %qa, %qbx, %qby, %qbz, %qax, %qay, %qaz = scf.if %later -> (i32, f32, f32, f32, f32, f32, f32) {
+                  %qi = arith.index_cast %q : i32 to index
+                  %xq = memref.load %xp[%qi, %c0w] : memref<?x4xf32, 1>
+                  %yq = memref.load %xp[%qi, %c1w] : memref<?x4xf32, 1>
+                  %zq = memref.load %xp[%qi, %c2w] : memref<?x4xf32, 1>
+                  %dx0 = arith.subf %xq, %cx : f32
+                  %dy0 = arith.subf %yq, %cy : f32
+                  %dz0 = arith.subf %zq, %cz : f32
+                  %rqx = func.call @mdrt_gpu_groups_image(%dx0, %flx, %filx) : (f32, f32, f32) -> f32
+                  %rqy = func.call @mdrt_gpu_groups_image(%dy0, %fly, %fily) : (f32, f32, f32) -> f32
+                  %rqz = func.call @mdrt_gpu_groups_image(%dz0, %flz, %filz) : (f32, f32, f32) -> f32
+                  %ax = math.absf %rqx : f32
+                  %ay = math.absf %rqy : f32
+                  %az = math.absf %rqz : f32
+                  %zero_f = arith.constant 0.0 : f32
+                  %bx0 = arith.subf %ax, %hx : f32
+                  %by0 = arith.subf %ay, %hy : f32
+                  %bz0 = arith.subf %az, %hz : f32
+                  %bxd = arith.maximumf %bx0, %zero_f : f32
+                  %byd = arith.maximumf %by0, %zero_f : f32
+                  %bzd = arith.maximumf %bz0, %zero_f : f32
+                  %ox0 = arith.subf %flx, %ax : f32
+                  %oy0 = arith.subf %fly, %ay : f32
+                  %oz0 = arith.subf %flz, %az : f32
+                  %ox1 = arith.subf %ox0, %hx : f32
+                  %oy1 = arith.subf %oy0, %hy : f32
+                  %oz1 = arith.subf %oz0, %hz : f32
+                  %oxd = arith.maximumf %ox1, %zero_f : f32
+                  %oyd = arith.maximumf %oy1, %zero_f : f32
+                  %ozd = arith.maximumf %oz1, %zero_f : f32
+                  scf.yield %q, %bxd, %byd, %bzd, %oxd, %oyd, %ozd : i32, f32, f32, f32, f32, f32, f32
+                } else {
+                  scf.yield %none_q, %im_far, %im_far, %im_far, %im_far, %im_far, %im_far : i32, f32, f32, f32, f32, f32, f32
+                }
+                scf.yield %qa, %qbx, %qby, %qbz, %qax, %qay, %qaz : i32, f32, f32, f32, f32, f32, f32
+              } else {
+                scf.yield %none_q, %im_far, %im_far, %im_far, %im_far, %im_far, %im_far : i32, f32, f32, f32, f32, f32, f32
+              }
+              %has_cand = arith.cmpi sge, %cand, %zero_i : i32
+              %alt_x = arith.cmpf ole, %adx, %freach : f32
+              %alt_y = arith.cmpf ole, %ady, %freach : f32
+              %alt_z = arith.cmpf ole, %adz, %freach : f32
+              %alt_xy = arith.ori %alt_x, %alt_y : i1
+              %alt_xyz = arith.ori %alt_xy, %alt_z : i1
+              %alt_any = arith.andi %alt_xyz, %has_cand : i1
+              %im_n8 = arith.constant 8 : i32
+              %im_true = arith.constant true
+              %im_c28q = arith.constant 28 : i32
+              // The images of the candidates, the nearest first, then those
+              // with the other side along the axes of the bits of img_s; a
+              // warp in a wide cell takes the first alone.
+              %s_count, %s_block, %s_queued = scf.for %img_s = %one_i to %im_n8 step %one_i iter_args(%cs = %cs_o, %csb = %csb_o, %qn = %qn_o) -> (i32, i32, i32) : i32 {
+              %isx0 = arith.andi %img_s, %one_i : i32
+              %im_two = arith.constant 2 : i32
+              %im_four = arith.constant 4 : i32
+              %isy0 = arith.andi %img_s, %im_two : i32
+              %isz0 = arith.andi %img_s, %im_four : i32
+              %isx = arith.cmpi ne, %isx0, %zero_i : i32
+              %isy = arith.cmpi ne, %isy0, %zero_i : i32
+              %isz = arith.cmpi ne, %isz0, %zero_i : i32
+              %nisx = arith.xori %isx, %im_true : i1
+              %nisy = arith.xori %isy, %im_true : i1
+              %nisz = arith.xori %isz, %im_true : i1
+              %okx = arith.ori %nisx, %alt_x : i1
+              %oky = arith.ori %nisy, %alt_y : i1
+              %okz = arith.ori %nisz, %alt_z : i1
+              %okxy = arith.andi %okx, %oky : i1
+              %okxyz = arith.andi %okxy, %okz : i1
+              %ok_img = arith.andi %okxyz, %has_cand : i1
+              %dsx = arith.select %isx, %adx, %bdx : f32
+              %dsy = arith.select %isy, %ady, %bdy : f32
+              %dsz = arith.select %isz, %adz, %bdz : f32
+              %dsx2 = arith.mulf %dsx, %dsx : f32
+              %dsy2 = arith.mulf %dsy, %dsy : f32
+              %dsz2 = arith.mulf %dsz, %dsz : f32
+              %dsxy = arith.addf %dsx2, %dsy2 : f32
+              %ds2 = arith.addf %dsxy, %dsz2 : f32
+              %near_img = arith.cmpf ole, %ds2, %reach2 : f32
+              %take_img = arith.andi %near_img, %ok_img : i1
+              %img_bits = arith.shli %img_s, %im_c28q : i32
+              %qimg = arith.ori %cand, %img_bits : i32
+              %nearq = arith.select %take_img, %qimg, %none_q : i32
+              %is_near = arith.cmpi sge, %nearq, %zero_i : i32
+              %near_bits = gpu.ballot %is_near : i32
+              %near_before = arith.andi %near_bits, %below : i32
+              %near_rank = math.ctpop %near_before : i32
+              %near_n = math.ctpop %near_bits : i32
+              scf.if %is_near {
+                %qslot0 = arith.addi %qn, %near_rank : i32
+                %qslot1 = arith.index_cast %qslot0 : i32 to index
+                %qslot = arith.addi %qbase, %qslot1 : index
+                memref.store %nearq, %queue[%qslot] : memref<256xi32, #gpu.address_space<workgroup>>
+              }
+              nvvm.bar.warp.sync %all : i32
+              %qn1 = arith.addi %qn, %near_n : i32
+              %full = arith.cmpi sge, %qn1, %c32i : i32
+              %r_count, %r_block, %r_queued = scf.if %full -> (i32, i32, i32) {
+                %qslot = arith.addi %qbase, %lane : index
+                %qv = memref.load %queue[%qslot] : memref<256xi32, #gpu.address_space<workgroup>>
+                %valid = arith.constant true
+                %bits = scf.if %valid -> (i32) {
+                  // The place, and in the bits from 28 the image of the
+                  // candidate: bit a takes the image on the other side of the
+                  // boundary along axis a (D115). Places are fewer than 2^28.
+                  %im_mask = arith.constant 268435455 : i32
+                  %q = arith.andi %qv, %im_mask : i32
+                  %im_c28 = arith.constant 28 : i32
+                  %img = arith.shrui %qv, %im_c28 : i32
+                  %qi = arith.index_cast %q : i32 to index
+                  %xq = memref.load %xp[%qi, %c0w] : memref<?x4xf32, 1>
+                  %yq = memref.load %xp[%qi, %c1w] : memref<?x4xf32, 1>
+                  %zq = memref.load %xp[%qi, %c2w] : memref<?x4xf32, 1>
+                  %dx0 = arith.subf %xq, %cx : f32
+                  %dy0 = arith.subf %yq, %cy : f32
+                  %dz0 = arith.subf %zq, %cz : f32
+                  %rqxb = func.call @mdrt_gpu_groups_image(%dx0, %flx, %filx) : (f32, f32, f32) -> f32
+                  %rqyb = func.call @mdrt_gpu_groups_image(%dy0, %fly, %fily) : (f32, f32, f32) -> f32
+                  %rqzb = func.call @mdrt_gpu_groups_image(%dz0, %flz, %filz) : (f32, f32, f32) -> f32
+                  // The image the queue asked for: the other side of the
+                  // boundary, a cell away from the image nearest to the center
+                  // of the box, along the axes of its bits (D115).
+                  %im_zero = arith.constant 0.0 : f32
+                  %im_one = arith.constant 1.0 : f32
+                  %im_mone = arith.constant -1.0 : f32
+                  %im_bitx = arith.constant 1 : i32
+                  %im_bity = arith.constant 2 : i32
+                  %im_bitz = arith.constant 4 : i32
+                  %im_bx0 = arith.andi %img, %im_bitx : i32
+                  %im_fx = arith.cmpi ne, %im_bx0, %zero_i : i32
+                  %im_nx = arith.cmpf olt, %rqxb, %im_zero : f32
+                  %im_sx = arith.select %im_nx, %im_mone, %im_one : f32
+                  %im_ox = arith.select %im_fx, %im_sx, %im_zero : f32
+                  %im_lx = arith.mulf %im_ox, %flx : f32
+                  %rqx = arith.subf %rqxb, %im_lx : f32
+                  %im_by0 = arith.andi %img, %im_bity : i32
+                  %im_fy = arith.cmpi ne, %im_by0, %zero_i : i32
+                  %im_ny = arith.cmpf olt, %rqyb, %im_zero : f32
+                  %im_sy = arith.select %im_ny, %im_mone, %im_one : f32
+                  %im_oy = arith.select %im_fy, %im_sy, %im_zero : f32
+                  %im_ly = arith.mulf %im_oy, %fly : f32
+                  %rqy = arith.subf %rqyb, %im_ly : f32
+                  %im_bz0 = arith.andi %img, %im_bitz : i32
+                  %im_fz = arith.cmpi ne, %im_bz0, %zero_i : i32
+                  %im_nz = arith.cmpf olt, %rqzb, %im_zero : f32
+                  %im_sz = arith.select %im_nz, %im_mone, %im_one : f32
+                  %im_oz = arith.select %im_fz, %im_sz, %im_zero : f32
+                  %im_lz = arith.mulf %im_oz, %flz : f32
+                  %rqz = arith.subf %rqzb, %im_lz : f32
+                  %ax = math.absf %rqx : f32
+                  %ay = math.absf %rqy : f32
+                  %az = math.absf %rqz : f32
+                  %zero_f = arith.constant 0.0 : f32
+                  %bx0 = arith.subf %ax, %hx : f32
+                  %by0 = arith.subf %ay, %hy : f32
+                  %bz0 = arith.subf %az, %hz : f32
+                  %bxd = arith.maximumf %bx0, %zero_f : f32
+                  %byd = arith.maximumf %by0, %zero_f : f32
+                  %bzd = arith.maximumf %bz0, %zero_f : f32
+                  %bx2 = arith.mulf %bxd, %bxd : f32
+                  %by2 = arith.mulf %byd, %byd : f32
+                  %bz2 = arith.mulf %bzd, %bzd : f32
+                  %bxy = arith.addf %bx2, %by2 : f32
+                  %bd2 = arith.addf %bxy, %bz2 : f32
+                  %near = arith.cmpf ole, %bd2, %reach2 : f32
+                  %b3 = scf.if %near -> (i32) {
+                    %own = arith.cmpi slt, %q, %first16 : i32
+                    %m = scf.for %u = %c0w to %c16w step %c1w iter_args(%mm = %zero_i) -> (i32) {
+                      %at = arith.addi %rel0, %u : index
+                      %gx_ = memref.load %rel_wg[%at, %c0w] : memref<64x4xf32, #gpu.address_space<workgroup>>
+                      %gy_ = memref.load %rel_wg[%at, %c1w] : memref<64x4xf32, #gpu.address_space<workgroup>>
+                      %gz_ = memref.load %rel_wg[%at, %c2w] : memref<64x4xf32, #gpu.address_space<workgroup>>
+                      %gflag = memref.load %rel_wg[%at, %c3w] : memref<64x4xf32, #gpu.address_space<workgroup>>
+                      %ex = arith.subf %rqx, %gx_ : f32
+                      %ey = arith.subf %rqy, %gy_ : f32
+                      %ez = arith.subf %rqz, %gz_ : f32
+                      %ex2 = arith.mulf %ex, %ex : f32
+                      %ey2 = arith.mulf %ey, %ey : f32
+                      %ez2 = arith.mulf %ez, %ez : f32
+                      %exy = arith.addf %ex2, %ey2 : f32
+                      %e2 = arith.addf %exy, %ez2 : f32
+                      %within = arith.cmpf ole, %e2, %reach2 : f32
+                      %u32 = arith.index_cast %u : index to i32
+                      %pu = arith.addi %first32, %u32 : i32
+                      %not_after = arith.cmpi sle, %q, %pu : i32
+                      %same = arith.andi %own, %not_after : i1
+                      %true = arith.constant true
+                      %distinct = arith.xori %same, %true : i1
+                      %half_f = arith.constant 0.5 : f32
+                      %is_real = arith.cmpf ogt, %gflag, %half_f : f32
+                      %ok0 = arith.andi %within, %distinct : i1
+                      %ok = arith.andi %ok0, %is_real : i1
+                      %bit0 = arith.shli %one_i, %u32 : i32
+                      %bit = arith.select %ok, %bit0, %zero_i : i32
+                      %nm = arith.ori %mm, %bit : i32
+                      scf.yield %nm : i32
+                    }
+                    // The excluded pairs. A group whose partners did not fit
+                    // the memory of the warp (D106) reads the rows of the
+                    // excluded pairs of its particles that the candidate pairs
+                    // with; the others search the sorted partners for the
+                    // first at the place q.
+                    %mex = scf.if %overflow -> (i32) {
+                      %sj = memref.load %order[%qi] : memref<?xi32, 1>
+                      %srows = memref.dim %excluded, %c0w : memref<?x?xi32, 1>
+                      %sm = scf.for %su = %c0w to %c16w step %c1w iter_args(%smm = %m) -> (i32) {
+                        %su32 = arith.index_cast %su : index to i32
+                        %sbit = arith.shli %one_i, %su32 : i32
+                        %sset0 = arith.andi %smm, %sbit : i32
+                        %sset = arith.cmpi ne, %sset0, %zero_i : i32
+                        %snm = scf.if %sset -> (i32) {
+                          %sp = arith.addi %first, %su : index
+                          %si = memref.load %order[%sp] : memref<?xi32, 1>
+                          %sii = arith.index_cast %si : i32 to index
+                          %sin = arith.cmpi ult, %sii, %srows : index
+                          %sfound = scf.if %sin -> (i1) {
+                            %sc32 = memref.load %excluded[%sii, %c0w] : memref<?x?xi32, 1>
+                            %sc = arith.index_cast %sc32 : i32 to index
+                            %sno = arith.constant false
+                            %sf = scf.for %sk = %c0w to %sc step %c1w iter_args(%sacc = %sno) -> (i1) {
+                              %spt = func.call @mdrt_gpu_groups_partner(%excluded, %sii, %sk) : (memref<?x?xi32, 1>, index, index) -> i32
+                              %seq = arith.cmpi eq, %spt, %sj : i32
+                              %sor = arith.ori %sacc, %seq : i1
+                              scf.yield %sor : i1
+                            }
+                            scf.yield %sf : i1
+                          } else {
+                            %sno2 = arith.constant false
+                            scf.yield %sno2 : i1
+                          }
+                          %sall = arith.constant -1 : i32
+                          %skeep = arith.xori %sbit, %sall : i32
+                          %scleared = arith.andi %smm, %skeep : i32
+                          %snext = arith.select %sfound, %scleared, %smm : i32
+                          scf.yield %snext : i32
+                        } else {
+                          scf.yield %smm : i32
+                        }
+                        scf.yield %snm : i32
+                      }
+                      scf.yield %sm : i32
+                    } else {
+                    %any_bits = arith.cmpi ne, %m, %zero_i : i32
+                    %from_min = arith.cmpi sge, %q, %pmin : i32
+                    %to_max = arith.cmpi sle, %q, %pmax : i32
+                    %in_range = arith.andi %from_min, %to_max : i1
+                    %any = arith.andi %any_bits, %in_range : i1
+                    %mex0 = scf.if %any -> (i32) {
+                      %four = arith.constant 4 : i32
+                      %lo_r, %hi_r = scf.while (%lo = %c0w, %hi = %np) : (index, index) -> (index, index) {
+                        %go = arith.cmpi ult, %lo, %hi : index
+                        scf.condition(%go) %lo, %hi : index, index
+                      } do {
+                      ^bb0(%lo: index, %hi: index):
+                        %sum = arith.addi %lo, %hi : index
+                        %mid = arith.divui %sum, %c2w : index
+                        %at = arith.addi %pbase, %mid : index
+                        %v = memref.load %partners[%at] : memref<1024xi32, #gpu.address_space<workgroup>>
+                        %vq = arith.shrsi %v, %four : i32
+                        %less = arith.cmpi slt, %vq, %q : i32
+                        %mid1 = arith.addi %mid, %c1w : index
+                        %nlo = arith.select %less, %mid1, %lo : index
+                        %nhi = arith.select %less, %hi, %mid : index
+                        scf.yield %nlo, %nhi : index, index
+                      }
+                      %cleared, %e_end = scf.while (%mm = %m, %e = %lo_r) : (i32, index) -> (i32, index) {
+                        %in = arith.cmpi ult, %e, %np : index
+                        %at = arith.addi %pbase, %e : index
+                        %safe = arith.select %in, %at, %pbase : index
+                        %v = memref.load %partners[%safe] : memref<1024xi32, #gpu.address_space<workgroup>>
+                        %vq = arith.shrsi %v, %four : i32
+                        %match = arith.cmpi eq, %vq, %q : i32
+                        %go = arith.andi %in, %match : i1
+                        scf.condition(%go) %mm, %e : i32, index
+                      } do {
+                      ^bb0(%mm: i32, %e: index):
+                        %at = arith.addi %pbase, %e : index
+                        %v = memref.load %partners[%at] : memref<1024xi32, #gpu.address_space<workgroup>>
+                        %fifteen = arith.constant 15 : i32
+                        %u = arith.andi %v, %fifteen : i32
+                        %bit = arith.shli %one_i, %u : i32
+                        %all_bits = arith.constant -1 : i32
+                        %keep = arith.xori %bit, %all_bits : i32
+                        %nm = arith.andi %mm, %keep : i32
+                        %e1 = arith.addi %e, %c1w : index
+                        scf.yield %nm, %e1 : i32, index
+                      }
+                      scf.yield %cleared : i32
+                    } else {
+                      scf.yield %m : i32
+                    }
+                    scf.yield %mex0 : i32
+                    }
+                    scf.yield %mex : i32
+                  } else {
+                    scf.yield %zero_i : i32
+                  }
+                  // The shift of the entry to the frame of the group, from that
+                  // of its own place, in cells: e = W_g − W_q − k, with W the
+                  // frame less the wrapped position of a place (the first of
+                  // the group for W_g) and k the cells between the candidate
+                  // and the center of the box, of the image that the entry
+                  // takes; -4 to 4 along each axis, (e + 4) in four bits each,
+                  // in bits 16 to 27 of its mask (D115).
+                  %pairs = arith.cmpi ne, %b3, %zero_i : i32
+                  %b3s = scf.if %pairs -> (i32) {
+                    %c3q = arith.constant 3 : index
+                    %wq_f = memref.load %xp[%qi, %c3q] : memref<?x4xf32, 1>
+                    %wq = arith.bitcast %wq_f : f32 to i32
+                    // In the packed form: e + 4 is 0 to 8 along each axis, so
+                    // the sum over the fields comes out with no carry.
+                    %kx0 = arith.mulf %dx0, %filx : f32
+                    %ky0 = arith.mulf %dy0, %fily : f32
+                    %kz0 = arith.mulf %dz0, %filz : f32
+                    %kx1r = math.roundeven %kx0 : f32
+                    %kx1 = arith.addf %kx1r, %im_ox : f32
+                    %ky1r = math.roundeven %ky0 : f32
+                    %ky1 = arith.addf %ky1r, %im_oy : f32
+                    %kz1r = math.roundeven %kz0 : f32
+                    %kz1 = arith.addf %kz1r, %im_oz : f32
+                    %f2p10 = arith.constant 1024.0 : f32
+                    %f2p20 = arith.constant 1048576.0 : f32
+                    %kyz = arith.mulf %kz1, %f2p20 : f32
+                    %kyy = arith.mulf %ky1, %f2p10 : f32
+                    %kxy = arith.addf %kx1, %kyy : f32
+                    %kp_f = arith.addf %kxy, %kyz : f32
+                    %kp = arith.fptosi %kp_f : f32 to i32
+                    %twos = arith.constant 4198404 : i32
+                    %wd = arith.subi %wfirst, %wq : i32
+                    %wd2 = arith.addi %wd, %twos : i32
+                    %ep = arith.subi %wd2, %kp : i32
+                    %fifteen_e = arith.constant 15 : i32
+                    %six_e = arith.constant 6 : i32
+                    %c240 = arith.constant 240 : i32
+                    %twelve_e = arith.constant 12 : i32
+                    %c3840 = arith.constant 3840 : i32
+                    %sixteen_s = arith.constant 16 : i32
+                    %eqx = arith.andi %ep, %fifteen_e : i32
+                    %eqy0 = arith.shrui %ep, %six_e : i32
+                    %eqy = arith.andi %eqy0, %c240 : i32
+                    %eqz0 = arith.shrui %ep, %twelve_e : i32
+                    %eqz = arith.andi %eqz0, %c3840 : i32
+                    %eq_xy = arith.ori %eqx, %eqy : i32
+                    %eq = arith.ori %eq_xy, %eqz : i32
+                    %eq16 = arith.shli %eq, %sixteen_s : i32
+                    %b3x = arith.ori %b3, %eq16 : i32
+                    scf.yield %b3x : i32
+                  } else {
+                    scf.yield %zero_i : i32
+                  }
+                  scf.yield %b3s : i32
+                } else {
+                  scf.yield %zero_i : i32
+                }
+              // The entries of the lanes that kept a candidate, in the order
+              // of the lanes.
+              %keep = arith.cmpi ne, %bits, %zero_i : i32
+              %kept = gpu.ballot %keep : i32
+              %before_bits = arith.andi %kept, %below : i32
+              %rank = math.ctpop %before_bits : i32
+              %slot = arith.addi %cs, %rank : i32
+              %n_kept = math.ctpop %kept : i32
+              %next = arith.addi %cs, %n_kept : i32
+              // The blocks of the slots of this round: the block of slot cs,
+              // new if cs begins one, and the next if the round runs into it.
+              // The first lane takes the new ones; the warp shares them.
+              %any = arith.cmpi ne, %n_kept, %zero_i : i32
+              %first_k = arith.shrui %cs, %c6i_w : i32
+              %last_slot = arith.subi %next, %one_i : i32
+              %last_k = arith.shrui %last_slot, %c6i_w : i32
+              %cs_mod = arith.andi %cs, %c63i_w : i32
+              %at_start = arith.cmpi eq, %cs_mod, %zero_i : i32
+              %need_a = arith.andi %any, %at_start : i1
+              %crosses = arith.cmpi ugt, %last_k, %first_k : i32
+              %need_b = arith.andi %any, %crosses : i1
+              %na = arith.extui %need_a : i1 to i32
+              %nb = arith.extui %need_b : i1 to i32
+              %taken = arith.addi %na, %nb : i32
+              %takes = arith.cmpi ne, %taken, %zero_i : i32
+              %lane_first = arith.cmpi eq, %lane32, %zero_i : i32
+              %allocates = arith.andi %takes, %lane_first : i1
+              %base0 = scf.if %allocates -> (i32) {
+                %bk_base = memref.extract_aligned_pointer_as_index %sizes_device : memref<5xi32, 1> -> index
+                %bk_bi = arith.index_cast %bk_base : index to i64
+                %bk_eight = arith.constant 8 : i64
+                %bk_addr = arith.addi %bk_bi, %bk_eight : i64
+                %bk_ptr = llvm.inttoptr %bk_addr : i64 to !llvm.ptr<1>
+                %base_new = llvm.atomicrmw add %bk_ptr, %taken syncscope("device") monotonic : !llvm.ptr<1>, i32
+                scf.yield %base_new : i32
+              } else {
+                scf.yield %zero_i : i32
+              }
+              %w32s = arith.constant 32 : i32
+              %taken_at, %taken_ok = gpu.shuffle idx %base0, %zero_i, %w32s : i32
+              %block_a = arith.select %need_a, %taken_at, %csb : i32
+              %taken_at1 = arith.addi %taken_at, %one_i : i32
+              %block_b = arith.select %need_a, %taken_at1, %taken_at : i32
+              %slot_k = arith.shrui %slot, %c6i_w : i32
+              %in_a = arith.cmpi eq, %slot_k, %first_k : i32
+              %slot_block = arith.select %in_a, %block_a, %block_b : i32
+              %slot_mod = arith.andi %slot, %c63i_w : i32
+              %slot_base = arith.shli %slot_block, %c6i_w : i32
+              %pos32 = arith.addi %slot_base, %slot_mod : i32
+              %slot_block_i = arith.index_cast %slot_block : i32 to index
+              %fits = arith.cmpi ult, %slot_block_i, %unit_capacity_w : index
+              %store = arith.andi %keep, %fits : i1
+              scf.if %store {
+                %pos = arith.index_cast %pos32 : i32 to index
+                %qplace_mask = arith.constant 268435455 : i32
+                %qplace = arith.andi %qv, %qplace_mask : i32
+                memref.store %qplace, %entries[%pos] : memref<?xi32, 1>
+                memref.store %bits, %masks[%pos] : memref<?xi32, 1>
+              }
+              // The first lane names the new blocks.
+              %name_a = arith.andi %need_a, %lane_first : i1
+              %a_i = arith.index_cast %block_a : i32 to index
+              %a_fits = arith.cmpi ult, %a_i, %unit_capacity_w : index
+              %write_a = arith.andi %name_a, %a_fits : i1
+              scf.if %write_a {
+                memref.store %g32_w, %units[%a_i] : memref<?xi32, 1>
+                memref.store %first_k, %ordinals[%a_i] : memref<?xi32, 1>
+              }
+              %name_b = arith.andi %need_b, %lane_first : i1
+              %b_i = arith.index_cast %block_b : i32 to index
+              %b_fits = arith.cmpi ult, %b_i, %unit_capacity_w : index
+              %write_b = arith.andi %name_b, %b_fits : i1
+              scf.if %write_b {
+                memref.store %g32_w, %units[%b_i] : memref<?xi32, 1>
+                memref.store %last_k, %ordinals[%b_i] : memref<?xi32, 1>
+              }
+              %next_block = arith.select %need_b, %block_b, %block_a : i32
+                // The rest of the queue to its front.
+                %rest = arith.subi %qn1, %c32i : i32
+                %moves = arith.cmpi slt, %lane32, %rest : i32
+                %from_slot = arith.addi %qslot, %c32w : index
+                %moved = scf.if %moves -> (i32) {
+                  %mv = memref.load %queue[%from_slot] : memref<256xi32, #gpu.address_space<workgroup>>
+                  scf.yield %mv : i32
+                } else {
+                  scf.yield %none_q : i32
+                }
+                nvvm.bar.warp.sync %all : i32
+                scf.if %moves {
+                  memref.store %moved, %queue[%qslot] : memref<256xi32, #gpu.address_space<workgroup>>
+                }
+                nvvm.bar.warp.sync %all : i32
+                scf.yield %next, %next_block, %rest : i32, i32, i32
+              } else {
+                scf.yield %cs, %csb, %qn1 : i32, i32, i32
+              }
+              scf.yield %r_count, %r_block, %r_queued : i32, i32, i32
+              }
+              scf.yield %s_count, %s_block, %s_queued : i32, i32, i32
+            }
+            scf.yield %cs_count, %cs_block, %cs_queued : i32, i32, i32
+          }
+          scf.yield %cp_count, %cp_block, %cp_queued : i32, i32, i32
+        }
+        scf.yield %cy_count, %cy_block, %cy_queued : i32, i32, i32
+      }
+      // What the queue holds at the end.
+      %left = arith.cmpi sgt, %queued_all, %zero_i : i32
+      %count_all, %block_all = scf.if %left -> (i32, i32) {
+        %cs = arith.addi %count_main, %zero_i : i32
+        %csb = arith.addi %block_main, %zero_i : i32
+        %valid = arith.cmpi slt, %lane32, %queued_all : i32
+        %qslot = arith.addi %qbase, %lane : index
+        %qv = memref.load %queue[%qslot] : memref<256xi32, #gpu.address_space<workgroup>>
+        %bits = scf.if %valid -> (i32) {
+                  // The place, and in the bits from 28 the image of the
+                  // candidate: bit a takes the image on the other side of the
+                  // boundary along axis a (D115). Places are fewer than 2^28.
+                  %im_mask = arith.constant 268435455 : i32
+                  %q = arith.andi %qv, %im_mask : i32
+                  %im_c28 = arith.constant 28 : i32
+                  %img = arith.shrui %qv, %im_c28 : i32
+                  %qi = arith.index_cast %q : i32 to index
+                  %xq = memref.load %xp[%qi, %c0w] : memref<?x4xf32, 1>
+                  %yq = memref.load %xp[%qi, %c1w] : memref<?x4xf32, 1>
+                  %zq = memref.load %xp[%qi, %c2w] : memref<?x4xf32, 1>
+                  %dx0 = arith.subf %xq, %cx : f32
+                  %dy0 = arith.subf %yq, %cy : f32
+                  %dz0 = arith.subf %zq, %cz : f32
+                  %rqxb = func.call @mdrt_gpu_groups_image(%dx0, %flx, %filx) : (f32, f32, f32) -> f32
+                  %rqyb = func.call @mdrt_gpu_groups_image(%dy0, %fly, %fily) : (f32, f32, f32) -> f32
+                  %rqzb = func.call @mdrt_gpu_groups_image(%dz0, %flz, %filz) : (f32, f32, f32) -> f32
+                  // The image the queue asked for: the other side of the
+                  // boundary, a cell away from the image nearest to the center
+                  // of the box, along the axes of its bits (D115).
+                  %im_zero = arith.constant 0.0 : f32
+                  %im_one = arith.constant 1.0 : f32
+                  %im_mone = arith.constant -1.0 : f32
+                  %im_bitx = arith.constant 1 : i32
+                  %im_bity = arith.constant 2 : i32
+                  %im_bitz = arith.constant 4 : i32
+                  %im_bx0 = arith.andi %img, %im_bitx : i32
+                  %im_fx = arith.cmpi ne, %im_bx0, %zero_i : i32
+                  %im_nx = arith.cmpf olt, %rqxb, %im_zero : f32
+                  %im_sx = arith.select %im_nx, %im_mone, %im_one : f32
+                  %im_ox = arith.select %im_fx, %im_sx, %im_zero : f32
+                  %im_lx = arith.mulf %im_ox, %flx : f32
+                  %rqx = arith.subf %rqxb, %im_lx : f32
+                  %im_by0 = arith.andi %img, %im_bity : i32
+                  %im_fy = arith.cmpi ne, %im_by0, %zero_i : i32
+                  %im_ny = arith.cmpf olt, %rqyb, %im_zero : f32
+                  %im_sy = arith.select %im_ny, %im_mone, %im_one : f32
+                  %im_oy = arith.select %im_fy, %im_sy, %im_zero : f32
+                  %im_ly = arith.mulf %im_oy, %fly : f32
+                  %rqy = arith.subf %rqyb, %im_ly : f32
+                  %im_bz0 = arith.andi %img, %im_bitz : i32
+                  %im_fz = arith.cmpi ne, %im_bz0, %zero_i : i32
+                  %im_nz = arith.cmpf olt, %rqzb, %im_zero : f32
+                  %im_sz = arith.select %im_nz, %im_mone, %im_one : f32
+                  %im_oz = arith.select %im_fz, %im_sz, %im_zero : f32
+                  %im_lz = arith.mulf %im_oz, %flz : f32
+                  %rqz = arith.subf %rqzb, %im_lz : f32
+                  %ax = math.absf %rqx : f32
+                  %ay = math.absf %rqy : f32
+                  %az = math.absf %rqz : f32
+                  %zero_f = arith.constant 0.0 : f32
+                  %bx0 = arith.subf %ax, %hx : f32
+                  %by0 = arith.subf %ay, %hy : f32
+                  %bz0 = arith.subf %az, %hz : f32
+                  %bxd = arith.maximumf %bx0, %zero_f : f32
+                  %byd = arith.maximumf %by0, %zero_f : f32
+                  %bzd = arith.maximumf %bz0, %zero_f : f32
+                  %bx2 = arith.mulf %bxd, %bxd : f32
+                  %by2 = arith.mulf %byd, %byd : f32
+                  %bz2 = arith.mulf %bzd, %bzd : f32
+                  %bxy = arith.addf %bx2, %by2 : f32
+                  %bd2 = arith.addf %bxy, %bz2 : f32
+                  %near = arith.cmpf ole, %bd2, %reach2 : f32
+                  %b3 = scf.if %near -> (i32) {
+                    %own = arith.cmpi slt, %q, %first16 : i32
+                    %m = scf.for %u = %c0w to %c16w step %c1w iter_args(%mm = %zero_i) -> (i32) {
+                      %at = arith.addi %rel0, %u : index
+                      %gx_ = memref.load %rel_wg[%at, %c0w] : memref<64x4xf32, #gpu.address_space<workgroup>>
+                      %gy_ = memref.load %rel_wg[%at, %c1w] : memref<64x4xf32, #gpu.address_space<workgroup>>
+                      %gz_ = memref.load %rel_wg[%at, %c2w] : memref<64x4xf32, #gpu.address_space<workgroup>>
+                      %gflag = memref.load %rel_wg[%at, %c3w] : memref<64x4xf32, #gpu.address_space<workgroup>>
+                      %ex = arith.subf %rqx, %gx_ : f32
+                      %ey = arith.subf %rqy, %gy_ : f32
+                      %ez = arith.subf %rqz, %gz_ : f32
+                      %ex2 = arith.mulf %ex, %ex : f32
+                      %ey2 = arith.mulf %ey, %ey : f32
+                      %ez2 = arith.mulf %ez, %ez : f32
+                      %exy = arith.addf %ex2, %ey2 : f32
+                      %e2 = arith.addf %exy, %ez2 : f32
+                      %within = arith.cmpf ole, %e2, %reach2 : f32
+                      %u32 = arith.index_cast %u : index to i32
+                      %pu = arith.addi %first32, %u32 : i32
+                      %not_after = arith.cmpi sle, %q, %pu : i32
+                      %same = arith.andi %own, %not_after : i1
+                      %true = arith.constant true
+                      %distinct = arith.xori %same, %true : i1
+                      %half_f = arith.constant 0.5 : f32
+                      %is_real = arith.cmpf ogt, %gflag, %half_f : f32
+                      %ok0 = arith.andi %within, %distinct : i1
+                      %ok = arith.andi %ok0, %is_real : i1
+                      %bit0 = arith.shli %one_i, %u32 : i32
+                      %bit = arith.select %ok, %bit0, %zero_i : i32
+                      %nm = arith.ori %mm, %bit : i32
+                      scf.yield %nm : i32
+                    }
+                    // The excluded pairs. A group whose partners did not fit
+                    // the memory of the warp (D106) reads the rows of the
+                    // excluded pairs of its particles that the candidate pairs
+                    // with; the others search the sorted partners for the
+                    // first at the place q.
+                    %mex = scf.if %overflow -> (i32) {
+                      %sj = memref.load %order[%qi] : memref<?xi32, 1>
+                      %srows = memref.dim %excluded, %c0w : memref<?x?xi32, 1>
+                      %sm = scf.for %su = %c0w to %c16w step %c1w iter_args(%smm = %m) -> (i32) {
+                        %su32 = arith.index_cast %su : index to i32
+                        %sbit = arith.shli %one_i, %su32 : i32
+                        %sset0 = arith.andi %smm, %sbit : i32
+                        %sset = arith.cmpi ne, %sset0, %zero_i : i32
+                        %snm = scf.if %sset -> (i32) {
+                          %sp = arith.addi %first, %su : index
+                          %si = memref.load %order[%sp] : memref<?xi32, 1>
+                          %sii = arith.index_cast %si : i32 to index
+                          %sin = arith.cmpi ult, %sii, %srows : index
+                          %sfound = scf.if %sin -> (i1) {
+                            %sc32 = memref.load %excluded[%sii, %c0w] : memref<?x?xi32, 1>
+                            %sc = arith.index_cast %sc32 : i32 to index
+                            %sno = arith.constant false
+                            %sf = scf.for %sk = %c0w to %sc step %c1w iter_args(%sacc = %sno) -> (i1) {
+                              %spt = func.call @mdrt_gpu_groups_partner(%excluded, %sii, %sk) : (memref<?x?xi32, 1>, index, index) -> i32
+                              %seq = arith.cmpi eq, %spt, %sj : i32
+                              %sor = arith.ori %sacc, %seq : i1
+                              scf.yield %sor : i1
+                            }
+                            scf.yield %sf : i1
+                          } else {
+                            %sno2 = arith.constant false
+                            scf.yield %sno2 : i1
+                          }
+                          %sall = arith.constant -1 : i32
+                          %skeep = arith.xori %sbit, %sall : i32
+                          %scleared = arith.andi %smm, %skeep : i32
+                          %snext = arith.select %sfound, %scleared, %smm : i32
+                          scf.yield %snext : i32
+                        } else {
+                          scf.yield %smm : i32
+                        }
+                        scf.yield %snm : i32
+                      }
+                      scf.yield %sm : i32
+                    } else {
+                    %any_bits = arith.cmpi ne, %m, %zero_i : i32
+                    %from_min = arith.cmpi sge, %q, %pmin : i32
+                    %to_max = arith.cmpi sle, %q, %pmax : i32
+                    %in_range = arith.andi %from_min, %to_max : i1
+                    %any = arith.andi %any_bits, %in_range : i1
+                    %mex0 = scf.if %any -> (i32) {
+                      %four = arith.constant 4 : i32
+                      %lo_r, %hi_r = scf.while (%lo = %c0w, %hi = %np) : (index, index) -> (index, index) {
+                        %go = arith.cmpi ult, %lo, %hi : index
+                        scf.condition(%go) %lo, %hi : index, index
+                      } do {
+                      ^bb0(%lo: index, %hi: index):
+                        %sum = arith.addi %lo, %hi : index
+                        %mid = arith.divui %sum, %c2w : index
+                        %at = arith.addi %pbase, %mid : index
+                        %v = memref.load %partners[%at] : memref<1024xi32, #gpu.address_space<workgroup>>
+                        %vq = arith.shrsi %v, %four : i32
+                        %less = arith.cmpi slt, %vq, %q : i32
+                        %mid1 = arith.addi %mid, %c1w : index
+                        %nlo = arith.select %less, %mid1, %lo : index
+                        %nhi = arith.select %less, %hi, %mid : index
+                        scf.yield %nlo, %nhi : index, index
+                      }
+                      %cleared, %e_end = scf.while (%mm = %m, %e = %lo_r) : (i32, index) -> (i32, index) {
+                        %in = arith.cmpi ult, %e, %np : index
+                        %at = arith.addi %pbase, %e : index
+                        %safe = arith.select %in, %at, %pbase : index
+                        %v = memref.load %partners[%safe] : memref<1024xi32, #gpu.address_space<workgroup>>
+                        %vq = arith.shrsi %v, %four : i32
+                        %match = arith.cmpi eq, %vq, %q : i32
+                        %go = arith.andi %in, %match : i1
+                        scf.condition(%go) %mm, %e : i32, index
+                      } do {
+                      ^bb0(%mm: i32, %e: index):
+                        %at = arith.addi %pbase, %e : index
+                        %v = memref.load %partners[%at] : memref<1024xi32, #gpu.address_space<workgroup>>
+                        %fifteen = arith.constant 15 : i32
+                        %u = arith.andi %v, %fifteen : i32
+                        %bit = arith.shli %one_i, %u : i32
+                        %all_bits = arith.constant -1 : i32
+                        %keep = arith.xori %bit, %all_bits : i32
+                        %nm = arith.andi %mm, %keep : i32
+                        %e1 = arith.addi %e, %c1w : index
+                        scf.yield %nm, %e1 : i32, index
+                      }
+                      scf.yield %cleared : i32
+                    } else {
+                      scf.yield %m : i32
+                    }
+                    scf.yield %mex0 : i32
+                    }
+                    scf.yield %mex : i32
+                  } else {
+                    scf.yield %zero_i : i32
+                  }
+                  // The shift of the entry to the frame of the group, from that
+                  // of its own place, in cells: e = W_g − W_q − k, with W the
+                  // frame less the wrapped position of a place (the first of
+                  // the group for W_g) and k the cells between the candidate
+                  // and the center of the box, of the image that the entry
+                  // takes; -4 to 4 along each axis, (e + 4) in four bits each,
+                  // in bits 16 to 27 of its mask (D115).
+                  %pairs = arith.cmpi ne, %b3, %zero_i : i32
+                  %b3s = scf.if %pairs -> (i32) {
+                    %c3q = arith.constant 3 : index
+                    %wq_f = memref.load %xp[%qi, %c3q] : memref<?x4xf32, 1>
+                    %wq = arith.bitcast %wq_f : f32 to i32
+                    // In the packed form: e + 4 is 0 to 8 along each axis, so
+                    // the sum over the fields comes out with no carry.
+                    %kx0 = arith.mulf %dx0, %filx : f32
+                    %ky0 = arith.mulf %dy0, %fily : f32
+                    %kz0 = arith.mulf %dz0, %filz : f32
+                    %kx1r = math.roundeven %kx0 : f32
+                    %kx1 = arith.addf %kx1r, %im_ox : f32
+                    %ky1r = math.roundeven %ky0 : f32
+                    %ky1 = arith.addf %ky1r, %im_oy : f32
+                    %kz1r = math.roundeven %kz0 : f32
+                    %kz1 = arith.addf %kz1r, %im_oz : f32
+                    %f2p10 = arith.constant 1024.0 : f32
+                    %f2p20 = arith.constant 1048576.0 : f32
+                    %kyz = arith.mulf %kz1, %f2p20 : f32
+                    %kyy = arith.mulf %ky1, %f2p10 : f32
+                    %kxy = arith.addf %kx1, %kyy : f32
+                    %kp_f = arith.addf %kxy, %kyz : f32
+                    %kp = arith.fptosi %kp_f : f32 to i32
+                    %twos = arith.constant 4198404 : i32
+                    %wd = arith.subi %wfirst, %wq : i32
+                    %wd2 = arith.addi %wd, %twos : i32
+                    %ep = arith.subi %wd2, %kp : i32
+                    %fifteen_e = arith.constant 15 : i32
+                    %six_e = arith.constant 6 : i32
+                    %c240 = arith.constant 240 : i32
+                    %twelve_e = arith.constant 12 : i32
+                    %c3840 = arith.constant 3840 : i32
+                    %sixteen_s = arith.constant 16 : i32
+                    %eqx = arith.andi %ep, %fifteen_e : i32
+                    %eqy0 = arith.shrui %ep, %six_e : i32
+                    %eqy = arith.andi %eqy0, %c240 : i32
+                    %eqz0 = arith.shrui %ep, %twelve_e : i32
+                    %eqz = arith.andi %eqz0, %c3840 : i32
+                    %eq_xy = arith.ori %eqx, %eqy : i32
+                    %eq = arith.ori %eq_xy, %eqz : i32
+                    %eq16 = arith.shli %eq, %sixteen_s : i32
+                    %b3x = arith.ori %b3, %eq16 : i32
+                    scf.yield %b3x : i32
+                  } else {
+                    scf.yield %zero_i : i32
+                  }
+                  scf.yield %b3s : i32
+                } else {
+                  scf.yield %zero_i : i32
+                }
+              // The entries of the lanes that kept a candidate, in the order
+              // of the lanes.
+              %keep = arith.cmpi ne, %bits, %zero_i : i32
+              %kept = gpu.ballot %keep : i32
+              %before_bits = arith.andi %kept, %below : i32
+              %rank = math.ctpop %before_bits : i32
+              %slot = arith.addi %cs, %rank : i32
+              %n_kept = math.ctpop %kept : i32
+              %next = arith.addi %cs, %n_kept : i32
+              // The blocks of the slots of this round: the block of slot cs,
+              // new if cs begins one, and the next if the round runs into it.
+              // The first lane takes the new ones; the warp shares them.
+              %any = arith.cmpi ne, %n_kept, %zero_i : i32
+              %first_k = arith.shrui %cs, %c6i_w : i32
+              %last_slot = arith.subi %next, %one_i : i32
+              %last_k = arith.shrui %last_slot, %c6i_w : i32
+              %cs_mod = arith.andi %cs, %c63i_w : i32
+              %at_start = arith.cmpi eq, %cs_mod, %zero_i : i32
+              %need_a = arith.andi %any, %at_start : i1
+              %crosses = arith.cmpi ugt, %last_k, %first_k : i32
+              %need_b = arith.andi %any, %crosses : i1
+              %na = arith.extui %need_a : i1 to i32
+              %nb = arith.extui %need_b : i1 to i32
+              %taken = arith.addi %na, %nb : i32
+              %takes = arith.cmpi ne, %taken, %zero_i : i32
+              %lane_first = arith.cmpi eq, %lane32, %zero_i : i32
+              %allocates = arith.andi %takes, %lane_first : i1
+              %base0 = scf.if %allocates -> (i32) {
+                %bk_base = memref.extract_aligned_pointer_as_index %sizes_device : memref<5xi32, 1> -> index
+                %bk_bi = arith.index_cast %bk_base : index to i64
+                %bk_eight = arith.constant 8 : i64
+                %bk_addr = arith.addi %bk_bi, %bk_eight : i64
+                %bk_ptr = llvm.inttoptr %bk_addr : i64 to !llvm.ptr<1>
+                %base_new = llvm.atomicrmw add %bk_ptr, %taken syncscope("device") monotonic : !llvm.ptr<1>, i32
+                scf.yield %base_new : i32
+              } else {
+                scf.yield %zero_i : i32
+              }
+              %w32s = arith.constant 32 : i32
+              %taken_at, %taken_ok = gpu.shuffle idx %base0, %zero_i, %w32s : i32
+              %block_a = arith.select %need_a, %taken_at, %csb : i32
+              %taken_at1 = arith.addi %taken_at, %one_i : i32
+              %block_b = arith.select %need_a, %taken_at1, %taken_at : i32
+              %slot_k = arith.shrui %slot, %c6i_w : i32
+              %in_a = arith.cmpi eq, %slot_k, %first_k : i32
+              %slot_block = arith.select %in_a, %block_a, %block_b : i32
+              %slot_mod = arith.andi %slot, %c63i_w : i32
+              %slot_base = arith.shli %slot_block, %c6i_w : i32
+              %pos32 = arith.addi %slot_base, %slot_mod : i32
+              %slot_block_i = arith.index_cast %slot_block : i32 to index
+              %fits = arith.cmpi ult, %slot_block_i, %unit_capacity_w : index
+              %store = arith.andi %keep, %fits : i1
+              scf.if %store {
+                %pos = arith.index_cast %pos32 : i32 to index
+                %qplace_mask = arith.constant 268435455 : i32
+                %qplace = arith.andi %qv, %qplace_mask : i32
+                memref.store %qplace, %entries[%pos] : memref<?xi32, 1>
+                memref.store %bits, %masks[%pos] : memref<?xi32, 1>
+              }
+              // The first lane names the new blocks.
+              %name_a = arith.andi %need_a, %lane_first : i1
+              %a_i = arith.index_cast %block_a : i32 to index
+              %a_fits = arith.cmpi ult, %a_i, %unit_capacity_w : index
+              %write_a = arith.andi %name_a, %a_fits : i1
+              scf.if %write_a {
+                memref.store %g32_w, %units[%a_i] : memref<?xi32, 1>
+                memref.store %first_k, %ordinals[%a_i] : memref<?xi32, 1>
+              }
+              %name_b = arith.andi %need_b, %lane_first : i1
+              %b_i = arith.index_cast %block_b : i32 to index
+              %b_fits = arith.cmpi ult, %b_i, %unit_capacity_w : index
+              %write_b = arith.andi %name_b, %b_fits : i1
+              scf.if %write_b {
+                memref.store %g32_w, %units[%b_i] : memref<?xi32, 1>
+                memref.store %last_k, %ordinals[%b_i] : memref<?xi32, 1>
+              }
+              %next_block = arith.select %need_b, %block_b, %block_a : i32
+        scf.yield %next, %next_block : i32, i32
+      } else {
+        scf.yield %count_main, %block_main : i32, i32
+      }
+      %lane0 = arith.cmpi eq, %lane, %c0w : index
+      scf.if %lane0 {
+        memref.store %count_all, %counts[%g] : memref<?xi32, 1>
+        // The block that the list ends in, where the kernel of the images
+        // continues it (D115), in the column of the box that is free.
+        %last_block_f = arith.bitcast %block_all : i32 to f32
+        %c6_last = arith.constant 6 : index
+        memref.store %last_block_f, %boxes[%g, %c6_last] : memref<?x8xf32, 1>
         %mx_base = memref.extract_aligned_pointer_as_index %sizes_device : memref<5xi32, 1> -> index
         %mx_bi = arith.index_cast %mx_base : index to i64
         %mx_four = arith.constant 4 : i64

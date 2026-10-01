@@ -185,10 +185,10 @@ wrapped into the cell, and the other members at their places relative to
 it. For each place $p$ the build stores the integer shift $\mathbf P_p
 \in \{-512, \dots, 511\}^3$, ten bits an axis, that moves the particle as
 it is kept (unwrapped) into the frame of its group; for each entry it
-stores in bits 16 to 24 of the mask the shift $\mathbf e \in \{-2, \dots,
-2\}^3$, three bits an axis, between the frame of the entry's own group and
-that of the list's group, including the minimum image of the pair. The
-loop then computes
+stores in bits 16 to 27 of the mask the shift $\mathbf e \in \{-4, \dots,
+4\}^3$, four bits an axis, between the frame of the entry's own group and
+that of the list's group, including the image of the candidate that the
+entry takes. The loop then computes
 
 $$
 \mathbf r_{uq} = \big(\mathbf x_{16g+u} + \mathbf P_{16g+u}\odot\mathbf L\big)
@@ -201,9 +201,37 @@ gathers the positions into the order of the places (D101): a position in
 its frame is then as exact as one in the cell, however far the particle
 has gone. A frame anchored on the first particle as it is kept, unwrapped,
 would let $\mathbf e$ grow with the drift of two groups apart and overflow
-its three bits; anchoring on the wrapped position bounds it. The template
+its bits; anchoring on the wrapped position bounds it. The template
 test places particles three cells out of the cell on either side to
 check it.
+
+**One entry for each image within the reach** (D115). One shift serves
+the 16 members of an entry, so an entry takes one image of its
+candidate. The build takes, for each candidate, the image nearest to the
+center $\mathbf c$ of the box of the group, of half-widths $\mathbf h$. A
+member $i$ is at most $h_a$ from $\mathbf c$ along axis $a$, and an image
+of $q$ within $R$ of $i$ is then within $R + h_a$ of $c_a$; it is the
+image nearest to $\mathbf c$ if $R + h_a \le L_a/2$. In a narrower cell
+the image of a pair can be the one on the other side of the boundary:
+on the argon–krypton mixture of `barostat.test` (23.2 Å, a reach of 10 Å,
+groups about 9 Å wide) a list held only the nearest image, and the
+potential energy at the start was $-497.7291$ kcal/mol against
+$-497.7298$ of the matrix, the virial $-1117.6307$ against $-1117.7782$.
+An image on the other side of the boundary can be within $R$ of the box
+only where $h_a + R \ge L_a/2$ along some axis. A second kernel takes
+just those groups, scans their candidates again, and adds to each list,
+from the block where the first kernel left it, an entry for each image
+on the other side whose distance from the box, $L_a - \lvert r_a\rvert -
+h_a$ along each such axis with $r_a$ that of the nearest image, is within
+$R$; it queues the candidate with the sides in bits 28 to 30, and each
+image becomes an entry with its own mask and shift. As the edges exceed
+$2R$, a pair has at most one image within the reach, so the masks of the
+entries of a candidate are disjoint and each pair within the reach is
+still in one list once. In the cells of the Amber suite no group needs
+it, and the second kernel is a launch of warps that return. A first
+version handled both cases in the list kernel, which then needed 128
+registers a thread instead of 64 and took 2259 µs a build on Cellulose
+instead of 1735.
 
 **The loop** (`emitGroupPairKernel`, `lib/Conversion/MDExecKernels/`).
 A warp takes a block. Lanes $u$ and $u+16$ hold the particle at place
