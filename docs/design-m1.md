@@ -1002,7 +1002,7 @@ with the count of D92, the bias with rigid groups (below) as on 1039
 waters (−234), and by −2.7 kcal/mol over the 120 ps with that of D116
 (the row above; 543.5 ns/day with the count of D92). GROMACS's moves at
 constant temperature without the barostat too, by +370 to +610
-kcal/mol/ns (`nsttcouple` 1 or 25, τ_T 1 or 10 ps, `nstcalcenergy` 25 or
+kcal/mol/ns (`nsttcouple` 1 or 25, τ_T 1 or 10 ps, `nstcalcenergy` 1 or
 100), against −70 for its total energy at constant energy; not
 investigated further.
 
@@ -1107,7 +1107,7 @@ the mean potential energy −4763.3 ± 4.1 against −4759.2 ± 2.6 kcal/mol
 (−1.00), the mean total energy −4055.5 ± 5.9 against −4049.4 ± 3.6
 (−0.88). The first run of this comparison, at the volume of tleap
 (about 0.6 g/cm³), relaxed over the whole 500 ps; its CPU run also
-found D117, a crash at the end of 275,000 steps.
+found D117, a crash at the end of 250,000 steps.
 
 ## 16. Decisions
 

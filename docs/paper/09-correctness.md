@@ -224,7 +224,7 @@ pressure with restraints, a run that exercises the loops over pairs, the
 fused kernels, the disjoint sets of SETTLE and SHAKE, the virtual sites,
 PME, the barostat, and the deferred reads of sums (`test/Sanitizer`). Short runs of the nine systems of the Amber
 suite check that every number of the log is finite (`test/Scale`).
-A run of 550 ps on the CPU with OpenMP crashed as it wrote its last
+A run of 500 ps on the CPU with OpenMP crashed as it wrote its last
 checkpoint: the variables of the reductions of OpenMP were allocas inside
 the loop of the steps, and the stack grew by 22 bytes a step until a call
 at the end overflowed it. They are now allocated once (D117), and the

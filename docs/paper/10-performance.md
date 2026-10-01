@@ -164,5 +164,5 @@ constant pressure changed by $5\times10^{-3}$ to $7\times10^{-3}$ at every
 tolerance of its buffer that was tried ($5\times10^{-3}$, $5\times10^{-4}$,
 and $5\times10^{-5}$ kJ/mol/ps per atom). Its thermostat alone, without
 the barostat, moves it by $+370$ to $+610$ kcal/mol/ns (`nsttcouple` 1 or
-25, $\tau_T$ 1 or 10 ps, `nstcalcenergy` 25 or 100), against $-70$ for its
+25, $\tau_T$ 1 or 10 ps, `nstcalcenergy` 1 or 100), against $-70$ for its
 total energy at constant energy; that was not investigated further.
