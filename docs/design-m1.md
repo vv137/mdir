@@ -575,7 +575,9 @@ The total momentum is removed where the velocities are drawn (M0). In a
 run it drifts: rounding in the forces, most in mixed precision, and the
 thermostat, which scales velocities, does not remove it.
 
-$$\mathbf v_i \leftarrow \mathbf v_i - \frac{\sum_j m_j \mathbf v_j}{\sum_j m_j} \qquad \text{every } \texttt{center\_of\_mass\_interval} \text{ steps}.$$
+$$\mathbf v_i \leftarrow \mathbf v_i - \frac{\sum_j m_j \mathbf v_j}{\sum_j m_j}$$
+
+every `center_of_mass_interval` steps.
 
 | Item | Proposal |
 |---|---|

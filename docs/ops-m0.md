@@ -422,12 +422,9 @@ Long-range dispersion corrections [[Shirts2007]](references.md#shirts2007) are n
 } : f64
 ```
 
-$$
-\begin{aligned}
-\texttt{md.sum\_particles}: \quad & S = \sum_{i \in P} k(i), \\
-\texttt{md.map\_particles}: \quad & b_i = k(i).
-\end{aligned}
-$$
+For `md.sum_particles` and `md.map_particles`:
+
+$$S = \sum_{i \in P} k(i), \qquad b_i = k(i).$$
 
 ### 4.10 `md.evaluate`
 
@@ -1224,7 +1221,7 @@ definitions must allow it.
 ```text
 for {i, j} in R:
     a_i += k(i, j)
-    a_j += s * k(i, j)        s = +1 for symmetric, -1 for antisymmetric
+    a_j += s · k(i, j)        s = +1 for symmetric, −1 for antisymmetric
     S   += k_S(i, j)          weight = 1
 ```
 

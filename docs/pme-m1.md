@@ -14,7 +14,7 @@ parameter $\beta$, in the units of MDIR with $f$ the Coulomb constant
 $$
 \begin{aligned}
 E &= E_\text{dir} + E_\text{rec} + E_\text{self} + E_\text{excl} + E_Q, \\
-E_\text{dir} &= f \sum_{i<j,\ \text{not excluded},\ r_{ij}<r_c} q_i q_j \Big(\frac{\operatorname{erfc}(\beta r_{ij})}{r_{ij}} - s\Big), \\
+E_\text{dir} &= f \sum_{i < j,\ \text{not excluded},\ r_{ij} < r_c} q_i q_j \Big(\frac{\operatorname{erfc}(\beta r_{ij})}{r_{ij}} - s\Big), \\
 E_\text{rec} &= \frac{f}{2\pi V} \sum_{\mathbf m \ne 0} \frac{\exp(-\pi^2 m^2/\beta^2)}{m^2}\, \lvert S(\mathbf m)\rvert^2, \\
 E_\text{self} &= -\frac{f\beta}{\sqrt\pi} \sum_i q_i^2, \\
 E_\text{excl} &= -f \sum_{(i,j)\ \text{excluded}} q_i q_j \frac{\operatorname{erf}(\beta r_{ij})}{r_{ij}}, \\

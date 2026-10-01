@@ -265,7 +265,7 @@ often, and its conserved energy drifts as much (−7.5 and −7.7 kcal/mol).
 
 `pruned_distance` in `[energy]` keeps a dual list: the structure of groups
 built with the reach R = `pairlist_distance` (the outer list) and an inner
-list pruned from it with the reach $R_\text{in} = \texttt{pruned\_distance}$, which the
+list pruned from it with the reach $R_\text{in}$ = `pruned_distance`, which the
 loops over pairs take. [tiles-m1.md](tiles-m1.md), Section 6, gives the
 validity and its proof; they do not depend on the layout of the list.
 
@@ -273,7 +273,7 @@ validity and its proof; they do not depend on the layout of the list.
 |---|---|
 | The tests | Two loops over particles, fused with the loop that moves them (`md-exec-expose-validity`): that of D80 against the configuration and the cell of the build, and the same against those of the last pruning with $R_\text{in}$ (`md_exec.reference_positions pruned`, `md_exec.reference_cell pruned`). Each scales by its own cell, $\mathbf m = \mathbf L \oslash \mathbf L^\text{ref}$ and $\mathbf m^p = \mathbf L \oslash \mathbf L^p$, per axis; the cells are orthorhombic, so a scaling has no shear |
 | The refresh | Where the outer list is not valid, it is built and the inner list pruned from it; where only the inner one is not, the inner one is pruned again. A pruning sets the configuration and the cell of the inner list only; those of the outer list change at a build only. Before the first pruning the cell of the inner list is not a number, so its test fails |
-| The pruning | Always from the outer list: the bits of an entry are those of the outer mask whose pairs are within $R_\text{in}$ now, $\text{inner} = \text{outer} \mathbin{\&} (r^2 \le R_\text{in}^2)$, so that a pair dropped once comes back when it is near again. The outer entries and masks are kept as the build left them |
+| The pruning | Always from the outer list: the bits of an entry are those of the outer mask whose pairs are within $R_\text{in}$ now, `inner = outer & (r^2 <= R_in^2)`, so that a pair dropped once comes back when it is near again. The outer entries and masks are kept as the build left them |
 | The distances | In f32, from positions moved into the frames of their groups as the loop takes them (D95), against $R_\text{in}$ widened by $3 \times 10^{-6}$ of the sum of the edges of the cell, as the build widens $R$: the rounding can keep a pair beyond $R_\text{in}$, never drop one within it |
 | The layout | A warp for each group takes the entries of the outer list of the group in their order, 32 at a time, and writes those with a bit left to the front of the blocks of the group, in their order (a ballot and a count of the bits below each lane), across the boundaries of the blocks; each block holds its number of entries. The inner list thus fills its blocks as a list built with $R_\text{in}$ would. A block that the inner list leaves empty writes nothing in the loop |
 | The order | The pruning keeps the order of the outer list and adds no order of its own. The order of the outer list, the blocks that the build takes with an atomic addition, and the atomic additions of the loop are as without a dual list: the sums still depend on the order of the threads, and the deterministic mode does not take groups |
