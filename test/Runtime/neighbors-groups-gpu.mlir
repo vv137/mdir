@@ -154,39 +154,72 @@ func.func @distance2(%x: memref<?x3xf64>, %i: index, %j: index,
   return %s : f64
 }
 
-// Excluded pairs (2k, 2k + 1), as an incidence structure: a row for each
-// particle with its number of pairs, then for each the number of the pair,
-// the place of the particle in it, and its two members.
-func.func @exclusions(%n: index) -> memref<?x?xi32> {
+// Excluded pairs (i, i + d), d = 1 .. k, around the ring of the particles,
+// as an incidence structure: a row for each particle with its number of
+// pairs, 2k, then for each the number of the pair, the place of the
+// particle in it, and its two members.
+func.func @exclusions(%n: index, %k: index) -> memref<?x?xi32> {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c2 = arith.constant 2 : index
   %c3 = arith.constant 3 : index
   %c4 = arith.constant 4 : index
-  %c5 = arith.constant 5 : index
-  %e = memref.alloc(%n, %c5) : memref<?x?xi32>
-  %one = arith.constant 1 : i32
+  %c8 = arith.constant 8 : index
+  %k8 = arith.muli %k, %c8 : index
+  %width = arith.addi %k8, %c1 : index
+  %e = memref.alloc(%n, %width) : memref<?x?xi32>
+  %k2 = arith.muli %k, %c2 : index
+  %k2_32 = arith.index_cast %k2 : index to i32
   scf.for %i = %c0 to %n step %c1 {
-    %half = arith.divui %i, %c2 : index
-    %s = arith.remui %i, %c2 : index
-    %first = arith.muli %half, %c2 : index
-    %second = arith.addi %first, %c1 : index
-    %h32 = arith.index_cast %half : index to i32
-    %s32 = arith.index_cast %s : index to i32
-    %f32 = arith.index_cast %first : index to i32
-    %g32 = arith.index_cast %second : index to i32
-    memref.store %one, %e[%i, %c0] : memref<?x?xi32>
-    memref.store %h32, %e[%i, %c1] : memref<?x?xi32>
-    memref.store %s32, %e[%i, %c2] : memref<?x?xi32>
-    memref.store %f32, %e[%i, %c3] : memref<?x?xi32>
-    memref.store %g32, %e[%i, %c4] : memref<?x?xi32>
+    memref.store %k2_32, %e[%i, %c0] : memref<?x?xi32>
+    scf.for %d1 = %c0 to %k step %c1 {
+      %d = arith.addi %d1, %c1 : index
+      // The pair (i, i + d), the particle first.
+      %id = arith.addi %i, %d : index
+      %j = arith.remui %id, %n : index
+      %num0 = arith.muli %i, %k : index
+      %num = arith.addi %num0, %d1 : index
+      %col0 = arith.muli %d1, %c4 : index
+      %col = arith.addi %col0, %c1 : index
+      %col1 = arith.addi %col, %c1 : index
+      %col2 = arith.addi %col, %c2 : index
+      %col3 = arith.addi %col, %c3 : index
+      %num32 = arith.index_cast %num : index to i32
+      %zero32 = arith.constant 0 : i32
+      %i32 = arith.index_cast %i : index to i32
+      %j32 = arith.index_cast %j : index to i32
+      memref.store %num32, %e[%i, %col] : memref<?x?xi32>
+      memref.store %zero32, %e[%i, %col1] : memref<?x?xi32>
+      memref.store %i32, %e[%i, %col2] : memref<?x?xi32>
+      memref.store %j32, %e[%i, %col3] : memref<?x?xi32>
+      // The pair (i - d, i), the particle second.
+      %in = arith.addi %i, %n : index
+      %ind = arith.subi %in, %d : index
+      %h = arith.remui %ind, %n : index
+      %hnum0 = arith.muli %h, %k : index
+      %hnum = arith.addi %hnum0, %d1 : index
+      %hd = arith.addi %d1, %k : index
+      %hcol0 = arith.muli %hd, %c4 : index
+      %hcol = arith.addi %hcol0, %c1 : index
+      %hcol1 = arith.addi %hcol, %c1 : index
+      %hcol2 = arith.addi %hcol, %c2 : index
+      %hcol3 = arith.addi %hcol, %c3 : index
+      %hnum32 = arith.index_cast %hnum : index to i32
+      %one32 = arith.constant 1 : i32
+      %h32 = arith.index_cast %h : index to i32
+      memref.store %hnum32, %e[%i, %hcol] : memref<?x?xi32>
+      memref.store %one32, %e[%i, %hcol1] : memref<?x?xi32>
+      memref.store %h32, %e[%i, %hcol2] : memref<?x?xi32>
+      memref.store %i32, %e[%i, %hcol3] : memref<?x?xi32>
+    }
   }
   return %e : memref<?x?xi32>
 }
 
-func.func @run(%length: f64, %reach: f64, %exclude: i1) {
+func.func @run(%length: f64, %reach: f64, %degree: index) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
+  %exclude = arith.cmpi ne, %degree, %c0 : index
   %c2 = arith.constant 2 : index
   %c3 = arith.constant 3 : index
   %c4 = arith.constant 4 : index
@@ -214,10 +247,12 @@ func.func @run(%length: f64, %reach: f64, %exclude: i1) {
   %t0 = gpu.wait async
   %t1 = gpu.memcpy async [%t0] %xd, %x : memref<?x3xf64, 1>, memref<?x3xf64>
   gpu.wait [%t1]
-  %excluded_host = call @exclusions(%count) : (index) -> memref<?x?xi32>
+  %excluded_host = call @exclusions(%count, %degree) : (index, index) -> memref<?x?xi32>
   %rows = arith.select %exclude, %count, %c0 : index
-  %c5 = arith.constant 5 : index
-  %excludedd = gpu.alloc (%rows, %c5) : memref<?x?xi32, 1>
+  %c8 = arith.constant 8 : index
+  %width0 = arith.muli %degree, %c8 : index
+  %width = arith.addi %width0, %c1 : index
+  %excludedd = gpu.alloc (%rows, %width) : memref<?x?xi32, 1>
   scf.if %exclude {
     %t2 = gpu.wait async
     %t3 = gpu.memcpy async [%t2] %excludedd, %excluded_host : memref<?x?xi32, 1>, memref<?x?xi32>
@@ -337,9 +372,11 @@ func.func @run(%length: f64, %reach: f64, %exclude: i1) {
     %wi = scf.for %j = %i1 to %count step %c1 iter_args(%ww = %w) -> (i64) {
       %d2 = func.call @distance2(%x, %i, %j, %length) : (memref<?x3xf64>, index, index, f64) -> f64
       %within = arith.cmpf ole, %d2, %reach2 : f64
-      %ih = arith.divui %i, %c2 : index
-      %jh = arith.divui %j, %c2 : index
-      %pair = arith.cmpi eq, %ih, %jh : index
+      // Excluded: within `degree` of each other around the ring.
+      %dij = arith.subi %j, %i : index
+      %dji = arith.subi %count, %dij : index
+      %dring = arith.minui %dij, %dji : index
+      %pair = arith.cmpi ule, %dring, %degree : index
       %is_excluded = arith.andi %pair, %exclude : i1
       %true = arith.constant true
       %kept = arith.xori %is_excluded, %true : i1
@@ -389,8 +426,9 @@ func.func @run(%length: f64, %reach: f64, %exclude: i1) {
 
 func.func @main() {
   %reach = arith.constant 1.5 : f64
-  %no = arith.constant false
-  %yes = arith.constant true
+  %none = arith.constant 0 : index
+  %one = arith.constant 1 : index
+  %nine = arith.constant 9 : index
 
   // Seven cells of the reach along each direction.
   // CHECK:      16352
@@ -398,14 +436,23 @@ func.func @main() {
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
   %l0 = arith.constant 12.0 : f64
-  call @run(%l0, %reach, %no) : (f64, f64, i1) -> ()
+  call @run(%l0, %reach, %none) : (f64, f64, index) -> ()
 
-  // With the excluded pairs (2k, 2k + 1): 4 of them are within the reach.
-  // CHECK-NEXT: 16348
+  // With the excluded pairs (i, i + 1): 15 of them are within the reach.
+  // CHECK-NEXT: 16337
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
-  call @run(%l0, %reach, %yes) : (f64, f64, i1) -> ()
+  call @run(%l0, %reach, %one) : (f64, f64, index) -> ()
+
+  // Nine excluded pairs a particle each way: 288 partners a group, more
+  // than the memory of a warp holds, so the lists take the excluded pairs
+  // from their rows (D106).
+  // CHECK-NEXT: 16200
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: {{^0$}}
+  call @run(%l0, %reach, %nine) : (f64, f64, index) -> ()
 
   // A denser cube: the grid of the candidates is 14 cells a side.
   // CHECK-NEXT: 24389
@@ -414,7 +461,7 @@ func.func @main() {
   // CHECK-NEXT: {{^0$}}
   %l1 = arith.constant 7.0 : f64
   %r1 = arith.constant 1.0 : f64
-  call @run(%l1, %r1, %no) : (f64, f64, i1) -> ()
+  call @run(%l1, %r1, %none) : (f64, f64, index) -> ()
 
   // A smaller reach in a smaller cube.
   // CHECK-NEXT: 21979
@@ -423,6 +470,6 @@ func.func @main() {
   // CHECK-NEXT: {{^0$}}
   %l2 = arith.constant 5.8 : f64
   %r2 = arith.constant 0.8 : f64
-  call @run(%l2, %r2, %no) : (f64, f64, i1) -> ()
+  call @run(%l2, %r2, %none) : (f64, f64, index) -> ()
   return
 }

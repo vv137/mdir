@@ -3883,7 +3883,8 @@ func.func private @mdrt_gpu_build_neighbors_groups(
         memref.store %flag, %rel_wg[%at, %c3w] : memref<64x4xf32, #gpu.address_space<workgroup>>
       }
       // The partners of the excluded pairs of the group: (place << 4) | u,
-      // sorted, 256 at most.
+      // sorted, 256 at most; a group with more takes its excluded pairs from
+      // their rows (D106).
       %c256 = arith.constant 256 : index
       %pbase = arith.muli %warp, %c256 : index
       %c64q = arith.constant 64 : index
@@ -3960,6 +3961,10 @@ func.func private @mdrt_gpu_build_neighbors_groups(
       }
       %np_all = arith.index_cast %total32 : i32 to index
       %np = arith.minui %np_all, %c256 : index
+      // Whether the partners did not all fit: then the lists take the excluded
+      // pairs from their rows (D106). The count came from one lane, so every
+      // lane sees the same.
+      %overflow = arith.cmpi ugt, %np_all, %c256 : index
       nvvm.bar.warp.sync %all : i32
       %c64s = arith.constant 64 : index
       %c128s = arith.constant 128 : index
@@ -9156,14 +9161,57 @@ func.func private @mdrt_gpu_build_neighbors_groups(
                       %nm = arith.ori %mm, %bit : i32
                       scf.yield %nm : i32
                     }
-                    // The excluded pairs: a binary search among the sorted
-                    // partners for the first at the place q.
+                    // The excluded pairs. A group whose partners did not fit
+                    // the memory of the warp (D106) reads the rows of the
+                    // excluded pairs of its particles that the candidate pairs
+                    // with; the others search the sorted partners for the
+                    // first at the place q.
+                    %mex = scf.if %overflow -> (i32) {
+                      %sj = memref.load %order[%qi] : memref<?xi32, 1>
+                      %srows = memref.dim %excluded, %c0w : memref<?x?xi32, 1>
+                      %sm = scf.for %su = %c0w to %c16w step %c1w iter_args(%smm = %m) -> (i32) {
+                        %su32 = arith.index_cast %su : index to i32
+                        %sbit = arith.shli %one_i, %su32 : i32
+                        %sset0 = arith.andi %smm, %sbit : i32
+                        %sset = arith.cmpi ne, %sset0, %zero_i : i32
+                        %snm = scf.if %sset -> (i32) {
+                          %sp = arith.addi %first, %su : index
+                          %si = memref.load %order[%sp] : memref<?xi32, 1>
+                          %sii = arith.index_cast %si : i32 to index
+                          %sin = arith.cmpi ult, %sii, %srows : index
+                          %sfound = scf.if %sin -> (i1) {
+                            %sc32 = memref.load %excluded[%sii, %c0w] : memref<?x?xi32, 1>
+                            %sc = arith.index_cast %sc32 : i32 to index
+                            %sno = arith.constant false
+                            %sf = scf.for %sk = %c0w to %sc step %c1w iter_args(%sacc = %sno) -> (i1) {
+                              %spt = func.call @mdrt_gpu_groups_partner(%excluded, %sii, %sk) : (memref<?x?xi32, 1>, index, index) -> i32
+                              %seq = arith.cmpi eq, %spt, %sj : i32
+                              %sor = arith.ori %sacc, %seq : i1
+                              scf.yield %sor : i1
+                            }
+                            scf.yield %sf : i1
+                          } else {
+                            %sno2 = arith.constant false
+                            scf.yield %sno2 : i1
+                          }
+                          %sall = arith.constant -1 : i32
+                          %skeep = arith.xori %sbit, %sall : i32
+                          %scleared = arith.andi %smm, %skeep : i32
+                          %snext = arith.select %sfound, %scleared, %smm : i32
+                          scf.yield %snext : i32
+                        } else {
+                          scf.yield %smm : i32
+                        }
+                        scf.yield %snm : i32
+                      }
+                      scf.yield %sm : i32
+                    } else {
                     %any_bits = arith.cmpi ne, %m, %zero_i : i32
                     %from_min = arith.cmpi sge, %q, %pmin : i32
                     %to_max = arith.cmpi sle, %q, %pmax : i32
                     %in_range = arith.andi %from_min, %to_max : i1
                     %any = arith.andi %any_bits, %in_range : i1
-                    %mex = scf.if %any -> (i32) {
+                    %mex0 = scf.if %any -> (i32) {
                       %four = arith.constant 4 : i32
                       %lo_r, %hi_r = scf.while (%lo = %c0w, %hi = %np) : (index, index) -> (index, index) {
                         %go = arith.cmpi ult, %lo, %hi : index
@@ -9206,6 +9254,8 @@ func.func private @mdrt_gpu_build_neighbors_groups(
                       scf.yield %cleared : i32
                     } else {
                       scf.yield %m : i32
+                    }
+                    scf.yield %mex0 : i32
                     }
                     scf.yield %mex : i32
                   } else {
@@ -9433,14 +9483,57 @@ func.func private @mdrt_gpu_build_neighbors_groups(
                       %nm = arith.ori %mm, %bit : i32
                       scf.yield %nm : i32
                     }
-                    // The excluded pairs: a binary search among the sorted
-                    // partners for the first at the place q.
+                    // The excluded pairs. A group whose partners did not fit
+                    // the memory of the warp (D106) reads the rows of the
+                    // excluded pairs of its particles that the candidate pairs
+                    // with; the others search the sorted partners for the
+                    // first at the place q.
+                    %mex = scf.if %overflow -> (i32) {
+                      %sj = memref.load %order[%qi] : memref<?xi32, 1>
+                      %srows = memref.dim %excluded, %c0w : memref<?x?xi32, 1>
+                      %sm = scf.for %su = %c0w to %c16w step %c1w iter_args(%smm = %m) -> (i32) {
+                        %su32 = arith.index_cast %su : index to i32
+                        %sbit = arith.shli %one_i, %su32 : i32
+                        %sset0 = arith.andi %smm, %sbit : i32
+                        %sset = arith.cmpi ne, %sset0, %zero_i : i32
+                        %snm = scf.if %sset -> (i32) {
+                          %sp = arith.addi %first, %su : index
+                          %si = memref.load %order[%sp] : memref<?xi32, 1>
+                          %sii = arith.index_cast %si : i32 to index
+                          %sin = arith.cmpi ult, %sii, %srows : index
+                          %sfound = scf.if %sin -> (i1) {
+                            %sc32 = memref.load %excluded[%sii, %c0w] : memref<?x?xi32, 1>
+                            %sc = arith.index_cast %sc32 : i32 to index
+                            %sno = arith.constant false
+                            %sf = scf.for %sk = %c0w to %sc step %c1w iter_args(%sacc = %sno) -> (i1) {
+                              %spt = func.call @mdrt_gpu_groups_partner(%excluded, %sii, %sk) : (memref<?x?xi32, 1>, index, index) -> i32
+                              %seq = arith.cmpi eq, %spt, %sj : i32
+                              %sor = arith.ori %sacc, %seq : i1
+                              scf.yield %sor : i1
+                            }
+                            scf.yield %sf : i1
+                          } else {
+                            %sno2 = arith.constant false
+                            scf.yield %sno2 : i1
+                          }
+                          %sall = arith.constant -1 : i32
+                          %skeep = arith.xori %sbit, %sall : i32
+                          %scleared = arith.andi %smm, %skeep : i32
+                          %snext = arith.select %sfound, %scleared, %smm : i32
+                          scf.yield %snext : i32
+                        } else {
+                          scf.yield %smm : i32
+                        }
+                        scf.yield %snm : i32
+                      }
+                      scf.yield %sm : i32
+                    } else {
                     %any_bits = arith.cmpi ne, %m, %zero_i : i32
                     %from_min = arith.cmpi sge, %q, %pmin : i32
                     %to_max = arith.cmpi sle, %q, %pmax : i32
                     %in_range = arith.andi %from_min, %to_max : i1
                     %any = arith.andi %any_bits, %in_range : i1
-                    %mex = scf.if %any -> (i32) {
+                    %mex0 = scf.if %any -> (i32) {
                       %four = arith.constant 4 : i32
                       %lo_r, %hi_r = scf.while (%lo = %c0w, %hi = %np) : (index, index) -> (index, index) {
                         %go = arith.cmpi ult, %lo, %hi : index
@@ -9483,6 +9576,8 @@ func.func private @mdrt_gpu_build_neighbors_groups(
                       scf.yield %cleared : i32
                     } else {
                       scf.yield %m : i32
+                    }
+                    scf.yield %mex0 : i32
                     }
                     scf.yield %mex : i32
                   } else {

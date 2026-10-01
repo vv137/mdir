@@ -221,7 +221,8 @@ a build of the matrix of 10 Å on Cellulose. What it took: a lane a
 candidate, testing it against the 16 particles of the group (taking the
 survivors two at a time took 53 ms); the partners of the excluded pairs of
 a group sorted, and a binary search for each candidate (a linear scan cost
-1 ms of 2.4); the candidate relative to the center of the box, once, and
+1 ms of 2.4; a group with more partners than the memory of its warp holds,
+256, reads the rows of the excluded pairs instead, D106); the candidate relative to the center of the box, once, and
 the particles of the group too (1.76 to 1.48 ms). A box is computed
 relative to the first particle of the group, in the minimum image.
 
