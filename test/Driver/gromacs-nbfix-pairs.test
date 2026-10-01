@@ -1,0 +1,101 @@
+# Pairs three bonds apart with gen-pairs take the parameters of
+# [ nonbond_params ] where it overrides the rule, as Amber takes NBFIX for
+# them: grompp generates the pairs from the matrix of the nonbonded
+# parameters after the overrides, scales epsilon by fudgeLJ, and then
+# applies [ pairtypes ] as they are (gen_pairs in topio.cpp of GROMACS
+# 2026.3). The chain A-B-B-A has its pair 1-4 of types A A at
+# r = 0.335410 nm, with 4 (0.5 ε) ((σ/r)^12 − (σ/r)^6):
+#   overridden to σ = 0.35 nm, ε = 0.5 kJ/mol   0.375797 kJ/mol
+#   by the rule, σ = 0.3, ε = 0.2              −0.099942 kJ/mol
+#   a [ pairtypes ] of σ = 0.32, ε = 0.3, as it is, 4 ε (...)
+#                                              −0.222505 kJ/mol
+# which a rerun of GROMACS 2026.3 gives to the digits shown.
+#
+# RUN: split-file %s %t
+# RUN: mdir run %t/run.toml | FileCheck %s --check-prefix=NBFIX
+# RUN: sed -i '/^  A  A  1  0.35  0.5$/d' %t/system.top
+# RUN: mdir run %t/run.toml | FileCheck %s --check-prefix=RULE
+# RUN: printf '[ pairtypes ]\n  A  A  1  0.32  0.3\n' > %t/pairtypes.itp
+# RUN: sed -i 's|^; pairtypes here|#include "pairtypes.itp"|' %t/system.top
+# RUN: mdir run %t/run.toml | FileCheck %s --check-prefix=PAIRTYPE
+
+# NBFIX:    MDIR:   Lennard-Jones 1-4              0.089817
+# RULE:     MDIR:   Lennard-Jones 1-4             -0.023887
+# PAIRTYPE: MDIR:   Lennard-Jones 1-4             -0.053180
+
+#--- run.toml
+[input]
+topology   = "system.top"
+coordinates = "system.gro"
+
+[output]
+energy_interval = 0
+[energy]
+cutoff       = 12.0
+pairlist_distance = 13.0
+electrostatics = "CUTOFF"
+
+[constraints]
+hydrogen_bonds = false
+
+[dynamics]
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.0001
+steps         = 1
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 0.0
+
+[boundary]
+type = "PERIODIC"
+#--- system.top
+[ defaults ]
+; nbfunc  comb-rule  gen-pairs  fudgeLJ  fudgeQQ
+  1       2          yes        0.5      0.8333
+
+[ atomtypes ]
+; name  at.num  mass     charge  ptype  sigma  epsilon
+  A     6       12.0100  0.0     A      0.3    0.2
+  B     6       12.0100  0.0     A      0.3    0.2
+
+[ nonbond_params ]
+; i  j  func  sigma  epsilon
+  A  A  1  0.35  0.5
+
+; pairtypes here
+
+[ moleculetype ]
+; name  nrexcl
+  CHAIN 3
+
+[ atoms ]
+; nr  type  resnr  residue  atom  cgnr  charge  mass
+  1   A     1      CHN      C1    1     0.0     12.0100
+  2   B     1      CHN      C2    1     0.0     12.0100
+  3   B     1      CHN      C3    1     0.0     12.0100
+  4   A     1      CHN      C4    1     0.0     12.0100
+
+[ bonds ]
+; i  j  func  b0    kb
+  1  2  1     0.15  0.0
+  2  3  1     0.15  0.0
+  3  4  1     0.15  0.0
+
+[ pairs ]
+; i  j  func
+  1  4  1
+
+[ system ]
+a chain
+
+[ molecules ]
+CHAIN  1
+#--- system.gro
+a chain
+    4
+    1CHN     C1    1   1.000   1.000   1.000
+    1CHN     C2    2   1.150   1.000   1.000
+    1CHN     C3    3   1.150   1.150   1.000
+    1CHN     C4    4   1.300   1.150   1.000
+   3.00000   3.00000   3.00000

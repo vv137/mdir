@@ -2,7 +2,7 @@
 
 A compiler that writes its own kernels must show that they compute the
 model. This section collects the evidence, each item marked by its kind:
-a check that runs with the tests (`lit`, 146 tests in `test/`), a value
+a check that runs with the tests (`lit`, 148 tests in `test/`), a value
 that a test pins after it was compared once with an independent program
 (the reference value is in the test's comment), or a measurement recorded
 in a decision. Where the log says that an energy "changed by" a fraction,
@@ -23,6 +23,7 @@ terms are multiplied by that factor before they are compared.*
 | Dipeptide in OPC with 387 extra points (`amber-opc.test`) | sander | Coulomb $-626.4365$ against $-626.4366$ | Pinned |
 | Same system with PME, same $\beta$, grid, and order, `influence = "OPTIMAL"` (`amber-pme.test`) | sander | $-4136.14362$ against $-4136.14360$ kcal/mol | Pinned |
 | Propane and water from a GROMACS topology, 224 particles, with macros, `#ifdef`, wildcards, and `nonbond_params` (`gromacs.test`) | GROMACS 2026.3 | Bonds, angles, dihedrals, both 1–4 terms, Lennard–Jones, and dispersion within $5\times10^{-6}$ relative, checked by a script at every run | `lit` |
+| Pairs three bonds apart with `[ nonbond_params ]` and gen-pairs, and with `[ pairtypes ]` (`gromacs-nbfix-pairs.test`); impropers in the order of LEaP (`gromacs-leap-order.test`) | GROMACS 2026.3 | To the printed digits ($10^{-6}$ kcal/mol) | `lit` |
 | The dipeptide from a topology converted to GROMACS format (`gromacs-dipeptide.test`) | MDIR's Amber reader | Eight terms within $2\times10^{-6}$ relative or $3\times10^{-4}$ kJ/mol | `lit` |
 | amber99sb-ildn, 99sb, 03, 14sb; 99sb-ildn with TIP4P-Ew; amber19sb (`scripts/validation/gromacs`) | GROMACS | Within $5\times10^{-6}$; amber19sb within $3\times10^{-6}$, its CMAP within $9\times10^{-7}$ | Recorded |
 | The dipeptide in TIP3P from its GROMACS topology, PME of the same $\beta$, grid, and order (`scripts/validation/forces`) | GROMACS 2026.3 | Reciprocal energy within $2.6\times10^{-6}$; the rest of the Coulomb energy within $1.1\times10^{-6}$ of its largest terms | Recorded |

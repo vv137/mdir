@@ -908,9 +908,12 @@ The two readers can be compared with each other when the same system is
 in both formats. ParmEd converts a topology of Amber to the format of
 GROMACS: the factors of the pairs three bonds apart become `fudgeQQ` and
 `fudgeLJ`, and NBFIX pairs go to `[ nonbond_params ]`. A system with more
-than one value of the factors does not convert faithfully, and whether
-GROMACS applies the NBFIX pairs to the pairs three bonds apart, as Amber
-does, is to be checked.
+than one value of the factors does not convert faithfully. GROMACS
+applies the NBFIX pairs to the pairs three bonds apart, as Amber does:
+with gen-pairs, grompp generates them from the matrix of the nonbonded
+parameters after `[ nonbond_params ]`, scales ε by `fudgeLJ`, and then
+applies `[ pairtypes ]` as they are; the reader does the same, and the
+three agree with a rerun of GROMACS 2026.3 (`gromacs-nbfix-pairs.test`).
 
 Neither engine is installed on the development machine. Both are built
 into the home directory.
