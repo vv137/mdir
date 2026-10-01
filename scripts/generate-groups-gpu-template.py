@@ -747,44 +747,93 @@ scf.if %real_group {{
     memref.store %largest_i, %partners[%at] : memref<1024xi32, {WG}>
   }}
   nvvm.bar.warp.sync %all : i32
+  // Each particle of the group in a lane of each half-warp: its partners
+  // at even k from the first half, at odd k from the second, from where
+  // the counts of the particles before it end (D105).
   %rows = memref.dim %excluded, %c0w : memref<?x?xi32, 1>
-  %np_all = scf.for %u = %c0w to %c16w step %c1w iter_args(%np = %c0w) -> (index) {{
-    %p = arith.addi %first, %u : index
-    %pi = memref.load %order[%p] : memref<?xi32, 1>
-    %pii = arith.index_cast %pi : i32 to index
-    %real = arith.cmpi sge, %pi, %zero_i : i32
-    %in_rows = arith.cmpi ult, %pii, %rows : index
-    %has = arith.andi %real, %in_rows : i1
-    %count = scf.if %has -> (index) {{
-      %c32v = memref.load %excluded[%pii, %c0w] : memref<?x?xi32, 1>
-      %cv = arith.index_cast %c32v : i32 to index
-      scf.yield %cv : index
-    }} else {{
-      scf.yield %c0w : index
-    }}
-    scf.for %k = %lane to %count step %c32w {{
-      %partner = func.call @mdrt_gpu_groups_partner(%excluded, %pii, %k) : (memref<?x?xi32, 1>, index, index) -> i32
-      %pj = arith.index_cast %partner : i32 to index
-      %q = memref.load %place_of[%pj] : memref<?xi32, 1>
-      %four = arith.constant 4 : i32
-      %shifted = arith.shli %q, %four : i32
-      %u32 = arith.index_cast %u : index to i32
-      %partner_key = arith.ori %shifted, %u32 : i32
-      %slot0 = arith.addi %np, %k : index
-      %fits = arith.cmpi ult, %slot0, %c256 : index
-      scf.if %fits {{
-        %at = arith.addi %pbase, %slot0 : index
-        memref.store %partner_key, %partners[%at] : memref<1024xi32, {WG}>
-      }}
-    }}
-    %next = arith.addi %np, %count : index
-    scf.yield %next : index
+  %u16 = arith.remui %lane, %c16w : index
+  %hk = arith.divui %lane, %c16w : index
+  %u16_32 = arith.index_cast %u16 : index to i32
+  %pe = arith.addi %first, %u16 : index
+  %pie = memref.load %order[%pe] : memref<?xi32, 1>
+  %piie = arith.index_cast %pie : i32 to index
+  %reale = arith.cmpi sge, %pie, %zero_i : i32
+  %in_rowse = arith.cmpi ult, %piie, %rows : index
+  %hase = arith.andi %reale, %in_rowse : i1
+  %counte = scf.if %hase -> (index) {{
+    %c32v = memref.load %excluded[%piie, %c0w] : memref<?x?xi32, 1>
+    %cv = arith.index_cast %c32v : i32 to index
+    scf.yield %cv : index
+  }} else {{
+    scf.yield %c0w : index
   }}
+  %count32e = arith.index_cast %counte : index to i32
+  // Shuffles over the whole warp: the halves hold the same counts, so a
+  // lane reads one of its own half (shuffles up by segments of 16 lost
+  // excluded pairs).
+  %wexcl = arith.constant 32 : i32
+  %pre0 = arith.addi %count32e, %zero_i : i32
+  %d1 = arith.constant 1 : i32
+  %up1, %upv1 = gpu.shuffle up %pre0, %d1, %wexcl : i32
+  %xfrom1 = arith.cmpi uge, %u16_32, %d1 : i32
+  %add1 = arith.select %xfrom1, %up1, %zero_i : i32
+  %pre1 = arith.addi %pre0, %add1 : i32
+  %d2 = arith.constant 2 : i32
+  %up2, %upv2 = gpu.shuffle up %pre1, %d2, %wexcl : i32
+  %xfrom2 = arith.cmpi uge, %u16_32, %d2 : i32
+  %add2 = arith.select %xfrom2, %up2, %zero_i : i32
+  %pre2 = arith.addi %pre1, %add2 : i32
+  %d4 = arith.constant 4 : i32
+  %up4, %upv4 = gpu.shuffle up %pre2, %d4, %wexcl : i32
+  %xfrom4 = arith.cmpi uge, %u16_32, %d4 : i32
+  %add4 = arith.select %xfrom4, %up4, %zero_i : i32
+  %pre3 = arith.addi %pre2, %add4 : i32
+  %d8 = arith.constant 8 : i32
+  %up8, %upv8 = gpu.shuffle up %pre3, %d8, %wexcl : i32
+  %xfrom8 = arith.cmpi uge, %u16_32, %d8 : i32
+  %add8 = arith.select %xfrom8, %up8, %zero_i : i32
+  %pre4 = arith.addi %pre3, %add8 : i32
+  %start32e = arith.subi %pre4, %count32e : i32
+  %starte = arith.index_cast %start32e : i32 to index
+  %c15i = arith.constant 15 : i32
+  %total32, %totalv = gpu.shuffle idx %pre4, %c15i, %wexcl : i32
+  scf.for %k = %hk to %counte step %c2w {{
+    %partner = func.call @mdrt_gpu_groups_partner(%excluded, %piie, %k) : (memref<?x?xi32, 1>, index, index) -> i32
+    %pj = arith.index_cast %partner : i32 to index
+    %q = memref.load %place_of[%pj] : memref<?xi32, 1>
+    %four = arith.constant 4 : i32
+    %shifted = arith.shli %q, %four : i32
+    %partner_key = arith.ori %shifted, %u16_32 : i32
+    %slot0 = arith.addi %starte, %k : index
+    %fits = arith.cmpi ult, %slot0, %c256 : index
+    scf.if %fits {{
+      %at = arith.addi %pbase, %slot0 : index
+      memref.store %partner_key, %partners[%at] : memref<1024xi32, {WG}>
+    }}
+  }}
+  %np_all = arith.index_cast %total32 : i32 to index
   %np = arith.minui %np_all, %c256 : index
   nvvm.bar.warp.sync %all : i32""")
-    inner = Lines()
-    sort_partners(inner, 256)
-    b(indent(inner.text(), 2).rstrip("\n"))
+    # The network of the fewest values that hold the partners (D105).
+    sorts = {}
+    for span in (64, 128, 256):
+        inner = Lines()
+        sort_partners(inner, span)
+        sorts[span] = indent(inner.text(), 6).rstrip("\n")
+    b(f"""\
+  %c64s = arith.constant 64 : index
+  %c128s = arith.constant 128 : index
+  %fits64 = arith.cmpi ule, %np, %c64s : index
+  %fits128 = arith.cmpi ule, %np, %c128s : index
+  scf.if %fits64 {{
+{sorts[64]}
+  }} else {{
+    scf.if %fits128 {{
+{sorts[128]}
+    }} else {{
+{sorts[256]}
+    }}
+  }}""")
     b(f"""\
   // The range of the places of the partners: a candidate outside it has no
   // excluded pair with the group, and is not searched for.
