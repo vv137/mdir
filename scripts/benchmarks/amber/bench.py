@@ -129,7 +129,7 @@ q.save({os.path.join(target, "system.top")!r}, format="gromacs",
 
 
 def write_mdir(name, system, target, steps=None, path="mdir.toml",
-               skin=SKIN, neighbor_structure=None):
+               skin=SKIN, neighbor_structure=None, barostat_work=None):
     npt = system["ensemble"] == "NPT"
     ensemble = (f"""ensemble    = "NPT"
 temperature = {TEMPERATURE}
@@ -143,7 +143,8 @@ interval      = 10
 [barostat]
 method        = "C-RESCALE"
 time_constant = 2.0
-""" if npt else f"""ensemble    = "NVE"
+""" + (f'work          = "{barostat_work}"\n' if barostat_work else "")
+        if npt else f"""ensemble    = "NVE"
 temperature = {TEMPERATURE}
 """)
     steps = steps or system["steps"]
@@ -324,7 +325,8 @@ def run(args):
         log = os.path.join(target, f"{args.engine}.out")
         if args.engine == "mdir":
             control = write_mdir(name, system, target, skin=args.skin,
-                                 neighbor_structure=args.neighbor_structure)
+                                 neighbor_structure=args.neighbor_structure,
+                                 barostat_work=args.barostat_work)
             with open(log, "w") as out:
                 _, shared = timed([args.mdir, "run", control], target, out)
             text = open(log).read()
@@ -408,6 +410,11 @@ def main():
                    help="of the neighbor structures of MDIR (Å)")
     p.add_argument("--neighbor-structure", choices=["MATRIX", "GROUPS"],
                    help="of MDIR on the device; its default if absent")
+    p.add_argument("--barostat-work",
+                   choices=["TROTTER", "TROTTER_FIRST_ORDER", "EXACT",
+                            "FIRST_ORDER"],
+                   help="how MDIR's barostat counts a scaling; its default "
+                        "if absent")
     p.add_argument("--gmx", default="gmx")
     p.add_argument("--threads", type=int, default=8,
                    help="OpenMP threads of GROMACS")
