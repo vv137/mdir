@@ -793,6 +793,19 @@ Error Reader::resolveCoupling() {
         "M1 the barostat acts when the thermostat does",
         path.str().c_str());
 
+  // The scaling of Trotter type is made in the step after the one whose
+  // pressure it takes, both in one period.
+  if (control.barostat && control.barostatWork == BarostatWork::Trotter &&
+      barostat < 2) {
+    if (control.barostatWorkGiven)
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "%s: 'work = \"TROTTER\"' in [barostat] needs an 'interval' of "
+          "2 steps or more",
+          path.str().c_str());
+    control.barostatWork = BarostatWork::Exact;
+  }
+
   // Coupling acts at the end of the step that completes a period, so the
   // periods of output and the number of steps are multiples of it.
   int64_t period = control.getCouplingPeriod();
@@ -874,9 +887,13 @@ Error Reader::readBarostat(const toml::table &table) {
   if (Error error =
           readPositive(table, "compressibility", control.compressibility))
     return error;
-  if (Error error = readChoice<bool>(table, "work", control.exactBarostatWork,
-                                     {{"EXACT", true}, {"FIRST_ORDER", false}}))
+  if (Error error = readChoice<BarostatWork>(
+          table, "work", control.barostatWork,
+          {{"TROTTER", BarostatWork::Trotter},
+           {"EXACT", BarostatWork::Exact},
+           {"FIRST_ORDER", BarostatWork::FirstOrder}}))
     return error;
+  control.barostatWorkGiven = table.contains("work");
   int coupling = 0;
   if (Error error = readChoice<int>(table, "coupling", coupling,
                                     {{"ISOTROPIC", 0}, {"SEMI_ISOTROPIC", 1}}))
@@ -1303,10 +1320,12 @@ method        = "C-RESCALE"     # stochastic cell rescaling
 time_constant = 2.0             # ps
 # compressibility = 4.56e-5     # 1/atm (4.5e-5 /bar)
 # coupling = "ISOTROPIC"        # ISOTROPIC
-# work     = "EXACT"            # EXACT: the energy of each scaling from the
-#                               # scaled positions, whose forces the next
-#                               # step takes; FIRST_ORDER: from the virial,
-#                               # as GROMACS does
+# work     = "TROTTER"          # TROTTER: the scaling within the drift of
+#                               # a step, its energy from the virials before
+#                               # and after; EXACT: the energy of each
+#                               # scaling from the scaled positions, whose
+#                               # forces the next step takes; FIRST_ORDER:
+#                               # from the virial, as GROMACS does
 # interval = 10                 # steps between its actions: those of the
 #                               # thermostat
 

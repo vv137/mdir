@@ -138,6 +138,12 @@ private:
 
   /// Whether the topology has virtual sites.
   bool hasSites() const { return !getSiteSets().empty(); }
+
+  /// Whether the barostat scales the cell within the drift of the last
+  /// step of a period (D92).
+  bool usesTrotter() const {
+    return control.barostat && control.barostatWork == BarostatWork::Trotter;
+  }
   /// The tuple sets of the virtual sites, those of Amber first.
   std::vector<const Program::TupleSet *> getSiteSets() const {
     std::vector<const Program::TupleSet *> sets;
@@ -213,7 +219,17 @@ private:
 
   /// What a coupling leaves: the positions, the velocities, and the forces
   /// of the positions.
-  struct Coupled {
+  /// The scaling of a period of coupling made within the drift of its last
+/// step (D92): its factor, the inverse, and the logarithm; the trace of
+/// the virial before it, with those of the constant terms and of the rigid
+/// groups; the volume after it, and its cell; and the kinetic energy of
+/// the velocities that it scaled.
+struct TrotterScaling {
+  std::string mu, muinv, logMu, workBefore, newVolume, cell, scale,
+      kineticHalf;
+};
+
+struct Coupled {
     std::string positions, velocities, forces;
   };
   /// Emits the coupling at the end of the step `step` of the positions
@@ -222,10 +238,41 @@ private:
   /// `trace`: the removal of the motion of the center of mass, the
   /// thermostat, and the barostat, which with the exact work evaluates the
   /// scaled positions and returns their forces (D77).
+  /// The groups that the constraints keep rigid: the waters of SETTLE and
+  /// the sets of SHAKE.
+  std::vector<const Program::TupleSet *> getRigidGroups() const;
+  /// `trace` with twice the kinetic energy of the motion within each rigid
+  /// group added: the trace of the virial of the groups, which scale with
+  /// their centers of mass.
+  std::string emitGroupTrace(StringRef indent, StringRef trace,
+                             StringRef positions, StringRef velocities,
+                             StringRef cell, StringRef masses,
+                             StringRef relations, StringRef tag);
+  /// `positions` scaled by `mu`, each rigid group with its center of mass,
+  /// keeping its shape (`oneMinusMu` is 1 − mu).
+  std::string emitGroupScaling(StringRef indent, StringRef positions,
+                               StringRef mu, StringRef oneMinusMu,
+                               StringRef cell, StringRef masses,
+                               StringRef relations, StringRef tag);
   Coupled emitCoupling(StringRef indent, StringRef positions,
                        StringRef velocities, StringRef forces,
                        StringRef energy, StringRef tag, StringRef step,
-                       StringRef trace);
+                       StringRef trace,
+                       const TrotterScaling *trotter = nullptr);
+  /// The pressure of the virial trace `trace` and the kinetic energy
+  /// `kinetic`, and the strain that the barostat takes from it: the scale
+  /// `%mu<tag>` of the positions, its inverse `%muinv<tag>`, its logarithm
+  /// `%bs3<tag>`, the volume before `%bv<tag>`, and the new cell, edges
+  /// `%bn<tag>_k`, which it stores where the loops take the cell from.
+  void emitStrain(StringRef indent, StringRef kinetic, StringRef trace,
+                  StringRef tag, StringRef step);
+  /// Before the step of a period of coupling that scales the cell within
+  /// its drift (the Trotter type of D92): the strain from the pressure of
+  /// the positions `positions` and the velocities `velocities` of the step
+  /// before, whose virial has the trace `trace`.
+  TrotterScaling emitTrotterStrain(StringRef indent, StringRef positions,
+                                   StringRef velocities, StringRef trace,
+                                   StringRef tag, StringRef step);
 
   /// The arguments that pass the fields of the parameters on: their
   /// declarations, their values, and their types, each after a comma.
@@ -1453,16 +1500,32 @@ void Builder::emitPrograms() {
   // energy returns the energy and the virial of the new positions, and
   // with leapfrog also the velocities of their time, which the energies
   // and the barostat take.
+  //
+  // With the barostat of Trotter type (D92), the last step of a period of
+  // coupling, `step_trotter`, scales the cell in the middle of its drift
+  // by the factor `%mu`: it drifts half, scales the positions by μ (each
+  // rigid group with its center of mass) and the velocities by 1/μ, and
+  // drifts the other half ([Bernetti2020], SI Sec. V.C, eq. S12a-d; its
+  // eq. S13a, which writes the four as one, leaves out the scaling of
+  // q(t) and has Δt for Δt/2). Leapfrog drifts with the velocities of the
+  // middle of the step as velocity Verlet does, so the scaling is the same.
+  // It returns as the step of energy does, and the kinetic energy of the
+  // velocities that it scaled.
   bool leapfrog = isLeapfrog();
-  for (bool withEnergy : {false, true}) {
+  bool trotter = usesTrotter();
+  for (int kind = 0; kind != (trotter ? 3 : 2); ++kind) {
+    bool withEnergy = kind != 0;
+    bool scales = kind == 2;
     bool returnsCurrent = leapfrog && withEnergy;
-    os << "dyn.program @" << (withEnergy ? "step_energy" : "step")
+    os << "dyn.program @"
+       << (scales ? "step_trotter" : withEnergy ? "step_energy" : "step")
        << "(%x: !vec, %v: !vec, %f: !vec, %m: !real,\n"
-       << "    %cell: !md.cell, %dt: f64" << getScaleParameter()
-       << getFieldParameters() << ")\n"
+       << "    %cell: !md.cell, %dt: f64" << (scales ? ", %mu: f64" : "")
+       << getScaleParameter() << getFieldParameters() << ")\n"
        << "    -> (!vec, !vec, !vec"
        << (withEnergy ? ", f64, vector<9xf64>" : "")
-       << (returnsCurrent ? ", !vec" : "") << ")\n"
+       << (returnsCurrent ? ", !vec" : "") << (scales ? ", f64" : "")
+       << ")\n"
        << "    attributes {"
        << (leapfrog ? "velocity_offset = -0.5,\n                " : "")
        << "provides = [\"symplectic\", \"time_reversible\"]} {\n"
@@ -1482,11 +1545,41 @@ void Builder::emitPrograms() {
     } else {
       os << "  %v1 = dyn.kick %v, %f, %m, %dt : !vec\n";
     }
-    os << "  %x1" << (sites || constraints ? "d" : "")
-       << " = dyn.drift %x, %v1, %dt : !vec\n";
+    std::string drifting = "%v1";
+    std::string drifted = sites || constraints ? "%x1d" : "%x1";
+    if (scales) {
+      os << "  %xh = dyn.drift %x, %v1, %half : !vec\n"
+         << "  %mu_unit = arith.constant 1.0 : f64\n"
+         << "  %mu_m1 = arith.subf %mu_unit, %mu : f64\n"
+         << "  %muinv = arith.divf %mu_unit, %mu : f64\n";
+      std::string scaled = emitGroupScaling("  ", "%xh", "%mu", "%mu_m1",
+                                            "%cell", "%m", "%r_", "_t");
+      // The kinetic energy of the velocities that the scaling takes.
+      os << "  %khalf = md.sum_particles gather(%v1, %m : !vec, !real) {\n"
+         << "  ^bb0(%kh_v: vector<3xf64>, %kh_m: f64):\n"
+         << "    %kh_c = arith.constant 5.0e-01 : f64\n"
+         << "    %kh_s = arith.mulf %kh_v, %kh_v : vector<3xf64>\n"
+         << "    %kh_r = vector.reduction <add>, %kh_s : vector<3xf64> into "
+            "f64\n"
+         << "    %kh_mr = arith.mulf %kh_m, %kh_r : f64\n"
+         << "    %kh_k = arith.mulf %kh_c, %kh_mr : f64\n"
+         << "    md.yield %kh_k : f64\n"
+         << "  } : f64\n";
+      os << "  %v1t = md.map_particles gather(%v1 : !vec) {\n"
+         << "  ^bb0(%v_i: vector<3xf64>):\n"
+         << "    %mib = vector.broadcast %muinv : f64 to vector<3xf64>\n"
+         << "    %v_s = arith.mulf %mib, %v_i : vector<3xf64>\n"
+         << "    md.yield %v_s : vector<3xf64>\n"
+         << "  } : !vec\n"
+         << "  " << drifted << " = dyn.drift " << scaled
+         << ", %v1t, %half : !vec\n";
+      drifting = "%v1t";
+    } else {
+      os << "  " << drifted << " = dyn.drift %x, %v1, %dt : !vec\n";
+    }
     // The constraints back to their lengths, and the velocities that take
     // the atoms there over the step (the first half of RATTLE).
-    std::string velocities = "%v1";
+    std::string velocities = drifting;
     std::vector<std::pair<const Program::TupleSet *, std::string>> changes;
     if (constraints) {
       std::string current = "%x1d";
@@ -1514,7 +1607,7 @@ void Builder::emitPrograms() {
       }
       os << "  %one = arith.constant 1.0 : f64\n"
          << "  %rate = arith.divf %one, %dt : f64\n"
-         << "  %v1c = md.map_particles gather(%v1, " << current
+         << "  %v1c = md.map_particles gather(" << drifting << ", " << current
          << ", %x1d : !vec, !vec, !vec) {\n"
          << "  ^bb0(%vs_v: vector<3xf64>, %vs_c: vector<3xf64>, "
             "%vs_u: vector<3xf64>):\n"
@@ -1573,9 +1666,11 @@ void Builder::emitPrograms() {
     std::string stored = leapfrog ? velocities : "%v2";
     if (withEnergy)
       os << "  dyn.return %x1, " << stored << ", %f1, %u1, " << virial
-         << (returnsCurrent ? ", %v2" : "") << "\n"
+         << (returnsCurrent ? ", %v2" : "") << (scales ? ", %khalf" : "")
+         << "\n"
          << "      : !vec, !vec, !vec, f64, vector<9xf64>"
-         << (returnsCurrent ? ", !vec" : "") << "\n";
+         << (returnsCurrent ? ", !vec" : "") << (scales ? ", f64" : "")
+         << "\n";
     else
       os << "  dyn.return %x1, %v2, %f1 : !vec, !vec, !vec\n";
     os << "}\n\n";
@@ -2655,10 +2750,11 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
     // counts (D76).
     auto getCoupled = [&](StringRef x, StringRef v, StringRef f,
                           StringRef energy, StringRef trace,
-                          StringRef current = "") {
+                          StringRef current = "",
+                          const TrotterScaling *trotter = nullptr) {
       Coupled coupled =
           emitCoupling(inner, x, current.empty() ? v : current, f, energy,
-                       here, "%step" + here, trace);
+                       here, "%step" + here, trace, trotter);
       std::string velocities = coupled.velocities;
       if (!current.empty()) {
         std::string behind = "%vh" + here;
@@ -2670,11 +2766,65 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       return coupled.positions + ", " + velocities + ", " + coupled.forces;
     };
     bool couplesBelow = levels[level + 1].name == "couple";
+    // The last two steps of a period with the barostat of Trotter type
+    // (D92): the step of energy whose pressure gives the strain, and the
+    // step that scales the cell within its drift, in the new cell; their
+    // results are named with `name`, as those of a step of energy, with
+    // the kinetic energy of the scaled velocities `%kh<name>`. Returns the
+    // scaling.
+    auto emitTrotterSteps = [&](StringRef name) {
+      std::string a = "j" + here, n = name.str();
+      bool leapfrog = isLeapfrog();
+      os << inner << getValues(a) << ", %u" << a << ", %w" << a
+         << (leapfrog ? ", %vc" + a : "") << " = dyn.step @step_energy(%x"
+         << last << ", %v" << last << ", %f" << last << ", " << massName
+         << ", " << cellName << ", %dt" << getScaleValue()
+         << getFieldValues(fieldPrefix) << ")\n"
+         << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
+         << getScaleType() << getFieldTypes()
+         << ") -> (!vec, !vec, !vec, f64, vector<9xf64>"
+         << (leapfrog ? ", !vec" : "") << ")\n";
+      emitTrace(os, "%tr" + a, "%w" + a, inner);
+      emitStep();
+      TrotterScaling scaling = emitTrotterStrain(
+          inner, "%x" + a, leapfrog ? "%vc" + a : "%v" + a, "%tr" + a,
+          here, "%step" + here);
+      std::string outerScale = scaleName;
+      if (!scaling.scale.empty())
+        scaleName = scaling.scale;
+      os << inner << "%x" << n << ", %v" << n << ", %f" << n << ", %u" << n
+         << ", %w" << n << (leapfrog ? ", %vc" + n : "") << ", %kh" << n
+         << " = dyn.step @step_trotter(%x" << a << ", %v" << a << ", %f"
+         << a << ", " << massName << ", " << scaling.cell << ", %dt, "
+         << scaling.mu << getScaleValue() << getFieldValues(fieldPrefix)
+         << ")\n"
+         << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64, f64"
+         << getScaleType() << getFieldTypes()
+         << ") -> (!vec, !vec, !vec, f64, vector<9xf64>"
+         << (leapfrog ? ", !vec" : "") << ", f64)\n";
+      scaleName = outerScale;
+      scaling.kineticHalf = "%kh" + n;
+      return scaling;
+    };
 
     if (current.name == "couple") {
       // The last step of the period, and the coupling after it. The
       // barostat needs the virial of the step.
       std::string trace;
+      if (usesTrotter()) {
+        std::string k = "k" + here;
+        TrotterScaling scaling = emitTrotterSteps(k);
+        trace = "%tr" + k;
+        emitTrace(os, trace, "%w" + k, inner);
+        std::string coupled =
+            getCoupled("%x" + k, "%v" + k, "%f" + k, "%u" + k, trace,
+                       isLeapfrog() ? "%vc" + k : "", &scaling);
+        os << inner << "scf.yield " << coupled << " : " << state << "\n";
+        os << indent << "}\n";
+        cellName = outerCell;
+        scaleName = outerScale;
+        return;
+      }
       if (control.barostat) {
         // With leapfrog the pressure takes the velocities of the time of
         // the positions, which the step of energy returns.
@@ -2740,17 +2890,28 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       // The last step of the interval, and the energies after it.
       // With leapfrog the step of energy also returns the velocities of
       // the time of the positions, which the kinetic energy takes.
-      std::string virialName = "%w";
-      os << inner << "%xl, %vl, %fl, %u, %w"
-         << (isLeapfrog() ? ", %vn" : "") << " = dyn.step @step_energy(%x"
-         << last << ", %v" << last << ", %f" << last << ", " << massName
-         << ", " << cellName << ", %dt" << getScaleValue()
-         << getFieldValues(fieldPrefix) << ")\n"
-         << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
-         << getScaleType() << getFieldTypes()
-         << ") -> (!vec, !vec, !vec, f64, vector<9xf64>"
-         << (isLeapfrog() ? ", !vec" : "") << ")\n";
-      emitKineticEnergy(os, "%k", isLeapfrog() ? "%vn" : "%vl", massName,
+      std::string virialName = "%w", energyName = "%u", now = "%vn";
+      // With the barostat of Trotter type the last period ends with the
+      // step that scales the cell (D92).
+      bool scalesHere = usesTrotter() && couplesBelow;
+      TrotterScaling scaling;
+      if (scalesHere) {
+        scaling = emitTrotterSteps("l");
+        virialName = "%wl";
+        energyName = "%ul";
+        now = "%vcl";
+      } else {
+        os << inner << "%xl, %vl, %fl, %u, %w"
+           << (isLeapfrog() ? ", %vn" : "") << " = dyn.step @step_energy(%x"
+           << last << ", %v" << last << ", %f" << last << ", " << massName
+           << ", " << cellName << ", %dt" << getScaleValue()
+           << getFieldValues(fieldPrefix) << ")\n"
+           << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
+           << getScaleType() << getFieldTypes()
+           << ") -> (!vec, !vec, !vec, f64, vector<9xf64>"
+           << (isLeapfrog() ? ", !vec" : "") << ")\n";
+      }
+      emitKineticEnergy(os, "%k", isLeapfrog() ? now : "%vl", massName,
                         inner);
       // With constraints the forces do not give the kinetic energies of
       // the half steps (Section 9 of design-m1.md); the log takes that of
@@ -2760,13 +2921,15 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       else
         emitForceSquare(os, "%g", "%fl", massName, inner);
       emitTrace(os, "%tr", virialName, inner);
-      emitStep();
-      os << inner << "func.call @mdrtWriteEnergies(%step" << here
-         << ", %u, %k, %g, %tr) : (i64, f64, f64, f64, f64) -> ()\n";
+      if (!scalesHere)
+        emitStep();
+      os << inner << "func.call @mdrtWriteEnergies(%step" << here << ", "
+         << energyName << ", %k, %g, %tr) : (i64, f64, f64, f64, f64) -> ()\n";
       std::string yielded =
           couplesBelow
-              ? getCoupled("%xl", "%vl", "%fl", "%u", "%tr",
-                           isLeapfrog() && control.barostat ? "%vn" : "")
+              ? getCoupled("%xl", "%vl", "%fl", energyName, "%tr",
+                           isLeapfrog() && control.barostat ? now : "",
+                           scalesHere ? &scaling : nullptr)
               : getValues("l");
       // The frame of the positions that the interval leaves, as a loop
       // over frames writes them.
@@ -2812,11 +2975,240 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
   }
 }
 
+std::vector<const Program::TupleSet *> Builder::getRigidGroups() const {
+  std::vector<const Program::TupleSet *> groups = getShakeSets();
+  for (const Program::TupleSet &set : program.tupleSets)
+    if (set.name == "settles")
+      groups.insert(groups.begin(), &set);
+  return groups;
+}
+
+std::string Builder::emitGroupTrace(StringRef indent, StringRef trace,
+                                    StringRef positions, StringRef velocities,
+                                    StringRef cell, StringRef masses,
+                                    StringRef relations, StringRef tag) {
+  std::string t = tag.str();
+  std::string inner = (indent + "  ").str();
+  std::string groupTrace = trace.str();
+  for (const Program::TupleSet *set : getRigidGroups()) {
+    unsigned count = set->arity - 1;
+    std::string arguments = "%vs_r: vector<3xf64>, ";
+    for (unsigned k = 0; k <= count; ++k)
+      arguments += "%vs_v" + std::to_string(k) + ": vector<3xf64>, ";
+    for (unsigned k = 0; k <= count; ++k)
+      arguments += "%vs_m" + std::to_string(k) + ": f64" +
+                   (k == count ? "" : ", ");
+    std::string internal = "%bki" + t + "_" + set->name;
+    os << indent << internal << " = md.sum_tuples " << relations
+       << set->name << ", " << positions << ", " << cell << "\n"
+       << indent << "    coordinates(displacement(1, 0))\n"
+       << indent << "    gather(" << velocities << ", " << masses
+       << " : !vec, !real) {\n"
+       << indent << "^bb0(" << arguments << "):\n";
+    SiteKernel k(os, inner);
+    std::string total = "%vs_m0";
+    std::string moment = k.scale("%vs_m0", "%vs_v0");
+    for (unsigned j = 1; j <= count; ++j) {
+      std::string n = std::to_string(j);
+      total = k.real("addf", total, "%vs_m" + n);
+      moment = k.vector("addf", moment, k.scale("%vs_m" + n, "%vs_v" + n));
+    }
+    std::string center =
+        k.scale(k.real("divf", k.constant(1.0), total), moment);
+    std::string twice;
+    for (unsigned j = 0; j <= count; ++j) {
+      std::string n = std::to_string(j);
+      std::string relative = k.vector("subf", "%vs_v" + n, center);
+      std::string term =
+          k.real("mulf", "%vs_m" + n, k.dot(relative, relative));
+      twice = twice.empty() ? term : k.real("addf", twice, term);
+    }
+    os << inner << "md.yield " << twice << " : f64\n"
+       << indent << "} : !rel_" << set->name << ", !vec -> f64\n";
+    std::string next = "%bgt" + t + "_" + set->name;
+    os << indent << next << " = arith.addf " << groupTrace << ", "
+       << internal << " : f64\n";
+    groupTrace = next;
+  }
+  return groupTrace;
+}
+
+std::string Builder::emitGroupScaling(StringRef indent, StringRef positions,
+                                      StringRef mu, StringRef oneMinusMu,
+                                      StringRef cell, StringRef masses,
+                                      StringRef relations, StringRef tag) {
+  std::string t = tag.str();
+  std::string inner = (indent + "  ").str();
+  std::string newPositions = "%xc" + t;
+  os << indent << newPositions << " = md.map_particles gather(" << positions
+     << " : !vec) {\n"
+     << indent << "^bb0(%x_i: vector<3xf64>):\n"
+     << indent << "  %mub = vector.broadcast " << mu
+     << " : f64 to vector<3xf64>\n"
+     << indent << "  %x_scaled = arith.mulf %mub, %x_i : vector<3xf64>\n"
+     << indent << "  md.yield %x_scaled : vector<3xf64>\n"
+     << indent << "} : !vec\n";
+  // A group that the constraints keep rigid moves with its center of
+  // mass, keeping its shape: each of its particles moves back by
+  // (μ − 1) times its place about the center. Were the bonds stretched,
+  // the constraints of the next step would take them back with a change
+  // of the velocities, and heat the system.
+  for (const Program::TupleSet *set : getRigidGroups()) {
+    unsigned count = set->arity - 1;
+    std::string coordinates, arguments;
+    for (unsigned k = 1; k <= count; ++k) {
+      coordinates += (k == 1 ? "" : ", ") +
+                     ("displacement(" + std::to_string(k) + ", 0)");
+      arguments += "%vs_r" + std::to_string(k) + ": vector<3xf64>, ";
+    }
+    for (unsigned k = 0; k <= count; ++k)
+      arguments += "%vs_m" + std::to_string(k) + ": f64" +
+                   (k == count ? "" : ", ");
+    std::string change = "%xg" + t + "_" + set->name;
+    os << indent << change << " = md.gather_tuples " << relations
+       << set->name << ", " << positions << ", " << cell << "\n"
+       << indent << "    coordinates(" << coordinates << ")\n"
+       << indent << "    gather(" << masses << " : !real) {\n"
+       << indent << "^bb0(" << arguments << "):\n";
+    SiteKernel k(os, inner);
+    std::string total = "%vs_m0", moment = k.zero();
+    for (unsigned j = 1; j <= count; ++j) {
+      std::string n = std::to_string(j);
+      total = k.real("addf", total, "%vs_m" + n);
+      moment = k.vector("addf", moment, k.scale("%vs_m" + n, "%vs_r" + n));
+    }
+    std::string one = k.constant(1.0);
+    std::string center = k.scale(k.real("divf", one, total), moment);
+    std::string yielded, types;
+    for (unsigned j = 0; j <= count; ++j) {
+      std::string place =
+          j == 0 ? k.negate(center)
+                 : k.vector("subf", "%vs_r" + std::to_string(j), center);
+      yielded += (j == 0 ? "" : ", ") + k.scale(oneMinusMu, place);
+      types += (j == 0 ? "" : ", ") + std::string("vector<3xf64>");
+    }
+    os << inner << "md.yield " << yielded << " : " << types << "\n"
+       << indent << "} : !rel_" << set->name << ", !vec -> !vec\n";
+    std::string moved = change + "_x";
+    os << indent << moved << " = md.map_particles gather(" << newPositions
+       << ", " << change << " : !vec, !vec) {\n"
+       << indent << "^bb0(%x_i: vector<3xf64>, %d_i: vector<3xf64>):\n"
+       << indent << "  %x_moved = arith.addf %x_i, %d_i : vector<3xf64>\n"
+       << indent << "  md.yield %x_moved : vector<3xf64>\n"
+       << indent << "} : !vec\n";
+    newPositions = moved;
+  }
+  return newPositions;
+}
+
+void Builder::emitStrain(StringRef indent, StringRef kinetic,
+                         StringRef trace, StringRef tag, StringRef step) {
+  std::string t = tag.str();
+  for (int k = 0; k != 3; ++k)
+    os << indent << "%be" << t << "_" << k << " = memref.load %box_memory"
+       << "[%c_edge" << k << "] : memref<3xf64>\n";
+  os << indent << "%bxy" << t << " = arith.mulf %be" << t << "_0, %be" << t
+     << "_1 : f64\n"
+     << indent << "%bv" << t << " = arith.mulf %bxy" << t << ", %be" << t
+     << "_2 : f64\n";
+  os << indent << "%bk2" << t << " = arith.addf " << kinetic << ", "
+     << kinetic << " : f64\n"
+     << indent << "%bw0" << t << " = arith.addf %bk2" << t << ", " << trace
+     << " : f64\n"
+     << indent << "%bwc" << t << " = arith.divf %baro_constant, %bv" << t
+     << " : f64\n"
+     << indent << "%bw" << t << " = arith.addf %bw0" << t << ", %bwc" << t
+     << " : f64\n"
+     << indent << "%b3v" << t << " = arith.mulf %c_three, %bv" << t
+     << " : f64\n"
+     << indent << "%bpi" << t << " = arith.divf %bw" << t << ", %b3v" << t
+     << " : f64\n"
+     << indent << "%bp" << t << " = arith.mulf %bpi" << t
+     << ", %c_bar : f64\n"
+     << indent << "%strain" << t
+     << " = func.call @mdrtBarostatStrain(%seed, " << step << ", %bp" << t
+     << ", %baro_target, %bv" << t
+     << ", %baro_kt, %baro_beta, %baro_rate)\n"
+     << indent << "    : (i64, i64, f64, f64, f64, f64, f64, f64) -> f64\n"
+     << indent << "%bs3" << t << " = arith.mulf %strain" << t
+     << ", %c_third : f64\n"
+     << indent << "%mu" << t << " = math.exp %bs3" << t << " : f64\n"
+     << indent << "%muinv" << t << " = arith.divf %c_unit, %mu" << t
+     << " : f64\n";
+  // The new cell, which the next iteration takes from memory.
+  for (int k = 0; k != 3; ++k)
+    os << indent << "%bn" << t << "_" << k << " = arith.mulf %be" << t
+       << "_" << k << ", %mu" << t << " : f64\n"
+       << indent << "memref.store %bn" << t << "_" << k
+       << ", %box_memory[%c_edge" << k << "] : memref<3xf64>\n";
+  os << indent << "func.call @mdrtSetBox(%bn" << t << "_0, %bn" << t
+     << "_1, %bn" << t << "_2) : (f64, f64, f64) -> ()\n";
+}
+
+Builder::TrotterScaling Builder::emitTrotterStrain(StringRef indent,
+                                         StringRef positions,
+                                         StringRef velocities,
+                                         StringRef trace, StringRef tag,
+                                         StringRef step) {
+  std::string t = tag.str();
+  // The kinetic energy of the pressure: that of the velocities of the
+  // step, without the center of mass.
+  std::string kinetic = "%tk" + t;
+  emitKineticEnergy(os, kinetic, velocities, massName, indent);
+  if (control.comPeriod > 0) {
+    os << indent << "%tpc" << t << " = md.sum_particles gather("
+       << velocities << ", " << massName << " : !vec, !real) {\n"
+       << indent << "^bb0(%v_i: vector<3xf64>, %m_i: f64):\n"
+       << indent << "  %mb = vector.broadcast %m_i : f64 to vector<3xf64>\n"
+       << indent << "  %p = arith.mulf %mb, %v_i : vector<3xf64>\n"
+       << indent << "  md.yield %p : vector<3xf64>\n"
+       << indent << "} : vector<3xf64>\n"
+       << indent << "%tvcm" << t << " = arith.divf %tpc" << t
+       << ", %total_mass : vector<3xf64>\n"
+       << indent << "%tpvs" << t << " = arith.mulf %tpc" << t << ", %tvcm"
+       << t << " : vector<3xf64>\n"
+       << indent << "%tpv" << t << " = vector.reduction <add>, %tpvs" << t
+       << " : vector<3xf64> into f64\n"
+       << indent << "%tkcm" << t << " = arith.mulf %couple_half, %tpv" << t
+       << " : f64\n"
+       << indent << "%tkt" << t << " = arith.subf " << kinetic << ", %tkcm"
+       << t << " : f64\n";
+    kinetic = "%tkt" + t;
+  }
+  emitStrain(indent, kinetic, trace, t, step);
+  std::string relations =
+      ("%r" + StringRef(fieldPrefix).drop_front(2)).str();
+  std::string groups =
+      emitGroupTrace(indent, trace, positions, velocities, cellName,
+                     massName, relations, "a" + t);
+  TrotterScaling scaling;
+  scaling.mu = "%mu" + t;
+  scaling.muinv = "%muinv" + t;
+  scaling.logMu = "%bs3" + t;
+  scaling.workBefore = "%tw" + t;
+  os << indent << scaling.workBefore << " = arith.addf " << groups
+     << ", %bwc" << t << " : f64\n";
+  scaling.newVolume = "%tvn" + t;
+  os << indent << "%tvn0" << t << " = arith.mulf %bn" << t << "_0, %bn" << t
+     << "_1 : f64\n"
+     << indent << scaling.newVolume << " = arith.mulf %tvn0" << t << ", %bn"
+     << t << "_2 : f64\n";
+  scaling.cell = "%tcell" + t;
+  os << indent << scaling.cell << " = md.orthorhombic_cell %bn" << t
+     << "_0, %bn" << t << "_1, %bn" << t << "_2\n";
+  if (scalesReference()) {
+    scaling.scale = "%tscale" + t;
+    os << indent << scaling.scale << " = arith.divf %bn" << t
+       << "_0, %rest_edge : f64\n";
+  }
+  return scaling;
+}
+
 Builder::Coupled
 Builder::emitCoupling(StringRef indent, StringRef positions,
                       StringRef velocities, StringRef forces,
                       StringRef energy, StringRef tag, StringRef step,
-                      StringRef trace) {
+                      StringRef trace, const TrotterScaling *trotter) {
   std::string newForces = forces.str();
   bool removesMotion = control.comPeriod > 0;
   std::string t = tag.str();
@@ -2871,186 +3263,86 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
   // μ = exp(ε/3), the velocities by 1/μ (design-m1.md, Section 11.4).
   std::string newPositions = positions.str();
   if (control.barostat) {
-    for (int k = 0; k != 3; ++k)
-      os << indent << "%be" << t << "_" << k << " = memref.load %box_memory"
-         << "[%c_edge" << k << "] : memref<3xf64>\n";
-    os << indent << "%bxy" << t << " = arith.mulf %be" << t << "_0, %be" << t
-       << "_1 : f64\n"
-       << indent << "%bv" << t << " = arith.mulf %bxy" << t << ", %be" << t
-       << "_2 : f64\n";
     // The kinetic energy of the pressure: that of the velocities of the
     // step, without the center of mass.
     std::string kinetic = removesMotion ? "%kt" + t : "%kc" + t;
-    os << indent << "%bk2" << t << " = arith.addf " << kinetic << ", "
-       << kinetic << " : f64\n"
-       << indent << "%bw0" << t << " = arith.addf %bk2" << t << ", " << trace
-       << " : f64\n"
-       << indent << "%bwc" << t << " = arith.divf %baro_constant, %bv" << t
-       << " : f64\n"
-       << indent << "%bw" << t << " = arith.addf %bw0" << t << ", %bwc" << t
-       << " : f64\n"
-       << indent << "%b3v" << t << " = arith.mulf %c_three, %bv" << t
-       << " : f64\n"
-       << indent << "%bpi" << t << " = arith.divf %bw" << t << ", %b3v" << t
-       << " : f64\n"
-       << indent << "%bp" << t << " = arith.mulf %bpi" << t
-       << ", %c_bar : f64\n"
-       << indent << "%strain" << t
-       << " = func.call @mdrtBarostatStrain(%seed, " << step << ", %bp" << t
-       << ", %baro_target, %bv" << t
-       << ", %baro_kt, %baro_beta, %baro_rate)\n"
-       << indent << "    : (i64, i64, f64, f64, f64, f64, f64, f64) -> f64\n"
-       << indent << "%bs3" << t << " = arith.mulf %strain" << t
-       << ", %c_third : f64\n"
-       << indent << "%mu" << t << " = math.exp %bs3" << t << " : f64\n"
-       << indent << "%muinv" << t << " = arith.divf %c_unit, %mu" << t
-       << " : f64\n";
-    // The new cell, which the next iteration takes from memory.
-    for (int k = 0; k != 3; ++k)
-      os << indent << "%bn" << t << "_" << k << " = arith.mulf %be" << t
-         << "_" << k << ", %mu" << t << " : f64\n"
-         << indent << "memref.store %bn" << t << "_" << k
-         << ", %box_memory[%c_edge" << k << "] : memref<3xf64>\n";
-    os << indent << "func.call @mdrtSetBox(%bn" << t << "_0, %bn" << t
-       << "_1, %bn" << t << "_2) : (f64, f64, f64) -> ()\n";
+    if (!trotter)
+      emitStrain(indent, kinetic, trace, t, step);
     // The energy that the scaling gives the system: exactly in the
     // velocities, (1/μ² − 1) K, and in the positions either exactly, from
     // the energy of the scaled positions (below), or to first order,
     // −(μ − 1) tr W, with W the sum of d (x) K over the pairs and the
     // virials of the constant terms.
-    bool exact = control.exactBarostatWork;
+    bool exact = control.barostatWork == BarostatWork::Exact;
     std::string after = control.thermostat ? "%kn" + t : kinetic;
-    // The groups that the constraints keep rigid move with their centers
-    // of mass (below). Their virial is W with twice the kinetic energy of
-    // the motion within them, Σ ½ m |v − V|² over each group.
-    std::vector<const Program::TupleSet *> groups = getShakeSets();
-    for (const Program::TupleSet &set : program.tupleSets)
-      if (set.name == "settles")
-        groups.insert(groups.begin(), &set);
     std::string relations =
         ("%r" + StringRef(fieldPrefix).drop_front(2)).str();
-    std::string inner = (indent + "  ").str();
-    std::string groupTrace = trace.str();
-    for (const Program::TupleSet *set : exact ? decltype(groups)() : groups) {
-      unsigned count = set->arity - 1;
-      std::string arguments = "%vs_r: vector<3xf64>, ";
-      for (unsigned k = 0; k <= count; ++k)
-        arguments += "%vs_v" + std::to_string(k) + ": vector<3xf64>, ";
-      for (unsigned k = 0; k <= count; ++k)
-        arguments += "%vs_m" + std::to_string(k) + ": f64" +
-                     (k == count ? "" : ", ");
-      std::string internal = "%bki" + t + "_" + set->name;
-      os << indent << internal << " = md.sum_tuples " << relations
-         << set->name << ", " << positions << ", " << cellName << "\n"
-         << indent << "    coordinates(displacement(1, 0))\n"
-         << indent << "    gather(" << velocities << ", " << massName
-         << " : !vec, !real) {\n"
-         << indent << "^bb0(" << arguments << "):\n";
-      SiteKernel k(os, inner);
-      std::string total = "%vs_m0";
-      std::string moment = k.scale("%vs_m0", "%vs_v0");
-      for (unsigned j = 1; j <= count; ++j) {
-        std::string n = std::to_string(j);
-        total = k.real("addf", total, "%vs_m" + n);
-        moment = k.vector("addf", moment, k.scale("%vs_m" + n, "%vs_v" + n));
-      }
-      std::string center =
-          k.scale(k.real("divf", k.constant(1.0), total), moment);
-      std::string twice;
-      for (unsigned j = 0; j <= count; ++j) {
-        std::string n = std::to_string(j);
-        std::string relative = k.vector("subf", "%vs_v" + n, center);
-        std::string term =
-            k.real("mulf", "%vs_m" + n, k.dot(relative, relative));
-        twice = twice.empty() ? term : k.real("addf", twice, term);
-      }
-      os << inner << "md.yield " << twice << " : f64\n"
-         << indent << "} : !rel_" << set->name << ", !vec -> f64\n";
-      std::string next = "%bgt" + t + "_" + set->name;
-      os << indent << next << " = arith.addf " << groupTrace << ", "
-         << internal << " : f64\n";
-      groupTrace = next;
+    if (trotter) {
+      // The scaling was made within the drift of the step (Trotter type,
+      // [Bernetti2020], SI Sec. V.C): the velocities of its middle by 1/μ,
+      // which changes their kinetic energy by (1/μ² − 1) K, and the
+      // positions by μ, which changes the potential energy by −ln μ tr W
+      // to first order: tr W, with the virials of the constant terms and
+      // of the motion within the rigid groups, is taken as the mean of
+      // those before and after the scaling, which makes the count exact
+      // to second order in the strain (D92).
+      std::string after =
+          emitGroupTrace(indent, trace, positions, velocities, cellName,
+                         massName, relations, t);
+      os << indent << "%bwca" << t << " = arith.divf %baro_constant, "
+         << trotter->newVolume << " : f64\n"
+         << indent << "%bwb" << t << " = arith.addf " << after << ", %bwca"
+         << t << " : f64\n"
+         << indent << "%bws" << t << " = arith.addf " << trotter->workBefore
+         << ", %bwb" << t << " : f64\n"
+         << indent << "%bwm" << t << " = arith.mulf %bws" << t
+         << ", %couple_half : f64\n"
+         << indent << "%bwork" << t << " = arith.mulf %bwm" << t << ", "
+         << trotter->logMu << " : f64\n"
+         << indent << "%bmi2" << t << " = arith.mulf " << trotter->muinv
+         << ", " << trotter->muinv << " : f64\n"
+         << indent << "%bmi21" << t << " = arith.subf %bmi2" << t
+         << ", %c_unit : f64\n"
+         << indent << "%bdk" << t << " = arith.mulf %bmi21" << t << ", "
+         << trotter->kineticHalf << " : f64\n"
+         << indent << "%bdku" << t << " = arith.subf %bdk" << t << ", %bwork"
+         << t << " : f64\n"
+         << indent << "%btake" << t << " = arith.subf " << bath << ", %bdku"
+         << t << " : f64\n";
+      bath = "%btake" + t;
     }
-    os << indent << "%bm1" << t << " = arith.subf %c_unit, %mu" << t
-       << " : f64\n";
-    if (!exact)
+    std::string groupTrace =
+        exact || trotter
+            ? trace.str()
+            : emitGroupTrace(indent, trace, positions, velocities,
+                             cellName, massName, relations, t);
+    if (!trotter)
+      os << indent << "%bm1" << t << " = arith.subf %c_unit, %mu" << t
+         << " : f64\n";
+    if (!exact && !trotter)
       os << indent << "%bwt" << t << " = arith.addf " << groupTrace
          << ", %bwc" << t << " : f64\n"
          << indent << "%bwork" << t << " = arith.mulf %bm1" << t << ", %bwt"
          << t << " : f64\n";
-    os << indent << "%bmi2" << t << " = arith.mulf %muinv" << t << ", %muinv"
-       << t << " : f64\n"
-       << indent << "%bmi21" << t << " = arith.subf %bmi2" << t
-       << ", %c_unit : f64\n"
-       << indent << "%bdk" << t << " = arith.mulf %bmi21" << t << ", " << after
-       << " : f64\n";
-    if (!exact) {
+    if (!trotter)
+      os << indent << "%bmi2" << t << " = arith.mulf %muinv" << t
+         << ", %muinv" << t << " : f64\n"
+         << indent << "%bmi21" << t << " = arith.subf %bmi2" << t
+         << ", %c_unit : f64\n"
+         << indent << "%bdk" << t << " = arith.mulf %bmi21" << t << ", "
+         << after << " : f64\n";
+    if (!exact && !trotter) {
       os << indent << "%bgain" << t << " = arith.addf %bwork" << t << ", %bdk"
          << t << " : f64\n"
          << indent << "%btake" << t << " = arith.subf " << bath << ", %bgain"
          << t << " : f64\n";
       bath = "%btake" + t;
     }
-    newPositions = "%xc" + t;
-    os << indent << newPositions << " = md.map_particles gather(" << positions
-       << " : !vec) {\n"
-       << indent << "^bb0(%x_i: vector<3xf64>):\n"
-       << indent << "  %mub = vector.broadcast %mu" << t
-       << " : f64 to vector<3xf64>\n"
-       << indent << "  %x_scaled = arith.mulf %mub, %x_i : vector<3xf64>\n"
-       << indent << "  md.yield %x_scaled : vector<3xf64>\n"
-       << indent << "} : !vec\n";
-    // A group that the constraints keep rigid moves with its center of
-    // mass, keeping its shape: each of its particles moves back by
-    // (μ − 1) times its place about the center. Were the bonds stretched,
-    // the constraints of the next step would take them back with a change
-    // of the velocities, and heat the system.
-    for (const Program::TupleSet *set : groups) {
-      unsigned count = set->arity - 1;
-      std::string coordinates, arguments;
-      for (unsigned k = 1; k <= count; ++k) {
-        coordinates += (k == 1 ? "" : ", ") +
-                       ("displacement(" + std::to_string(k) + ", 0)");
-        arguments += "%vs_r" + std::to_string(k) + ": vector<3xf64>, ";
-      }
-      for (unsigned k = 0; k <= count; ++k)
-        arguments += "%vs_m" + std::to_string(k) + ": f64" +
-                     (k == count ? "" : ", ");
-      std::string change = "%xg" + t + "_" + set->name;
-      os << indent << change << " = md.gather_tuples " << relations
-         << set->name << ", " << positions << ", " << cellName << "\n"
-         << indent << "    coordinates(" << coordinates << ")\n"
-         << indent << "    gather(" << massName << " : !real) {\n"
-         << indent << "^bb0(" << arguments << "):\n";
-      SiteKernel k(os, inner);
-      std::string total = "%vs_m0", moment = k.zero();
-      for (unsigned j = 1; j <= count; ++j) {
-        std::string n = std::to_string(j);
-        total = k.real("addf", total, "%vs_m" + n);
-        moment = k.vector("addf", moment, k.scale("%vs_m" + n, "%vs_r" + n));
-      }
-      std::string one = k.constant(1.0);
-      std::string center = k.scale(k.real("divf", one, total), moment);
-      std::string yielded, types;
-      for (unsigned j = 0; j <= count; ++j) {
-        std::string place =
-            j == 0 ? k.negate(center)
-                   : k.vector("subf", "%vs_r" + std::to_string(j), center);
-        yielded += (j == 0 ? "" : ", ") + k.scale("%bm1" + t, place);
-        types += (j == 0 ? "" : ", ") + std::string("vector<3xf64>");
-      }
-      os << inner << "md.yield " << yielded << " : " << types << "\n"
-         << indent << "} : !rel_" << set->name << ", !vec -> !vec\n";
-      std::string moved = change + "_x";
-      os << indent << moved << " = md.map_particles gather(" << newPositions
-         << ", " << change << " : !vec, !vec) {\n"
-         << indent << "^bb0(%x_i: vector<3xf64>, %d_i: vector<3xf64>):\n"
-         << indent << "  %x_moved = arith.addf %x_i, %d_i : vector<3xf64>\n"
-         << indent << "  md.yield %x_moved : vector<3xf64>\n"
-         << indent << "} : !vec\n";
-      newPositions = moved;
-    }
-    if (exact) {
+    if (!trotter)
+      newPositions = emitGroupScaling(indent, positions, "%mu" + t,
+                                      "%bm1" + t, cellName, massName,
+                                      relations, t);
+    if (exact && !trotter) {
       // The scaled positions in the new cell, with the virtual sites placed
       // on their atoms, and their energy and forces, which the next step
       // takes: the change of the potential energy is counted exactly, and
@@ -3116,7 +3408,7 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
        << " : vector<3xf64>\n";
     value = "%s";
   }
-  if (control.barostat) {
+  if (control.barostat && !trotter) {
     os << indent << "  %mib = vector.broadcast %muinv" << t
        << " : f64 to vector<3xf64>\n"
        << indent << "  %v_scaled = arith.mulf %mib, " << value
@@ -3627,7 +3919,7 @@ void Builder::emitEntry() {
   // the loop over energy intervals takes one step after its loop over
   // steps.
   // An iteration of the loop over the periods of coupling takes one as
-  // well, and one over energy intervals a whole period after its loop over
+  // well (two with the barostat of Trotter type), and one over energy intervals a whole period after its loop over
   // periods.
   int64_t steps = 1;
   for (unsigned i = levels.size(); i-- != 0;) {
@@ -3635,8 +3927,9 @@ void Builder::emitEntry() {
     steps *= levels[i].count;
     if (i == 0)
       continue;
+    // With the barostat of Trotter type, two steps (setSchedule).
     if (levels[i - 1].name == "couple")
-      steps += 1;
+      steps += usesTrotter() ? 2 : 1;
     else if (levels[i - 1].name == "energy")
       steps += levels[i].name == "couple" ? control.getCouplingPeriod() : 1;
   }
@@ -3894,19 +4187,23 @@ void Builder::setSchedule() {
   // of an interval between energies is. The loop over the periods of an
   // interval between energies leaves the last period to the interval,
   // which ends it with its step of energy.
+  // With the barostat of Trotter type the last two steps of a period are
+  // taken after its loop: the step whose pressure gives the strain, and
+  // the step that scales the cell within its drift (D92).
   int64_t coupling = control.getCouplingPeriod();
+  int64_t taken = usesTrotter() ? 2 : 1;
   if (energyPeriod > 0) {
     levels.push_back({"energy", steps / energyPeriod});
     steps = energyPeriod;
     if (coupling > 0) {
       levels.push_back({"couple", steps / coupling - 1});
-      levels.push_back({"step", coupling - 1});
+      levels.push_back({"step", coupling - taken});
     } else {
       levels.push_back({"step", steps - 1});
     }
   } else if (coupling > 0) {
     levels.push_back({"couple", steps / coupling});
-    levels.push_back({"step", coupling - 1});
+    levels.push_back({"step", coupling - taken});
   } else {
     levels.push_back({"step", steps});
   }

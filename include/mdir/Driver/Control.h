@@ -63,6 +63,7 @@ enum class Integrator { VelocityVerlet, Leapfrog };
 enum class Target { CPU, GPU };
 enum class Precision { Single, Mixed, Double };
 enum class NeighborStructure { Matrix, Groups };
+enum class BarostatWork { Trotter, Exact, FirstOrder };
 
 /// What a control file says. Lengths are in Å, energies in kcal/mol, times
 /// in ps, masses in amu, and temperatures in K.
@@ -172,12 +173,17 @@ struct Control {
   double pressure = 1.0;
   double tauP = 5.0;
   double compressibility = 4.5e-5 * 1.01325;
-  /// Whether the barostat counts the energy that a scaling gives the
-  /// positions exactly, from the potential energy of the scaled positions,
-  /// whose forces the next step then takes; or to first order in the
-  /// strain from the virial, as GROMACS does, keeping the forces of the
-  /// positions before the scaling (D77).
-  bool exactBarostatWork = true;
+  /// How the barostat integrates a scaling (D77, D92): within the drift of
+  /// the last step of a period, the integrator of Trotter type of
+  /// [Bernetti2020], with the energy of the scaling from the virials before
+  /// and after it (the default); exactly, from the potential energy of the
+  /// scaled positions, whose forces the next step then takes; or to first
+  /// order in the strain from the virial, keeping the forces of the
+  /// positions before the scaling, as GROMACS does. A period of one step
+  /// takes the exact work unless the Trotter type is asked for, which needs
+  /// two.
+  BarostatWork barostatWork = BarostatWork::Trotter;
+  bool barostatWorkGiven = false;
   int64_t barostatPeriod = 0;
 
   /// The interval at which the velocities are coupled: the removal of the

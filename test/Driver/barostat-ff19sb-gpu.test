@@ -22,19 +22,31 @@
 # RUN: sed -e 's|"VELOCITY_VERLET"|"LEAPFROG"|' -e 's|run.dcd|leap.dcd|' %t/run.toml > %t/leap.toml
 # RUN: mdir run %t/leap.toml | FileCheck %s --check-prefix=LEAP
 # RUN: %python %S/Inputs/check_bonds.py %t/ff19.prmtop %t/leap.dcd | FileCheck %s --check-prefix=BONDS
+#
+# With the work counted exactly, from the energy of the scaled positions
+# (D77), the conserved energy changes less.
+#
+# RUN: sed -e 's|^\[barostat\]$|[barostat]\nwork = "EXACT"|' -e 's|run.dcd|exact.dcd|' %t/run.toml > %t/exact.toml
+# RUN: mdir run %t/exact.toml | FileCheck %s --check-prefix=EXACT
 
 # The rigid groups move with their centers, and the work of the scaling is
 # counted, so the conserved energy changes little through the compression.
+# By default the cell scales within the drift of a step (Trotter type,
+# D92) and its work is counted from the virials before and after it, which
+# a compression of a fifth in 10 ps, with strains far larger than at
+# equilibrium, makes drift by about 1e-2 of the value; counted exactly, by
+# about 4e-3.
 #
 # CHECK:      INFO:         0 {{.*}} 28634.{{[0-9]+}}
 # CHECK:      INFO:      5000 {{.*}} {{2[0-3][0-9]{3}\.[0-9]+$}}
 # CHECK:      MDIR: the momentum at the end is {{[0-9.]+}}e-{{(0[4-9]|1[0-9])}} amu nm/ps
-# CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[3-9]}} of its value
+# CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[2-9]}} of its value
+# EXACT:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[3-9]}} of its value
 #
 # LEAP:       INFO:         0 {{.*}} 28634.{{[0-9]+}}
 # LEAP:       INFO:      5000 {{.*}} {{2[0-3][0-9]{3}\.[0-9]+$}}
 # LEAP:       MDIR: the momentum at the end is {{[0-9.]+}}e-{{(0[2-9]|1[0-9])}} amu nm/ps
-# LEAP:       MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[3-9]}} of its value
+# LEAP:       MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[2-9]}} of its value
 
 # The bonds of hydrogen keep their lengths in every frame, which has the
 # cell of its step.

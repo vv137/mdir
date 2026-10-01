@@ -14,6 +14,8 @@
 # RUN: FileCheck %s < %t/leap.log
 # RUN: sed -e 's|^\[barostat\]$|[barostat]\nwork = "FIRST_ORDER"|' %t/a.toml > %t/first.toml
 # RUN: mdir run %t/first.toml | FileCheck %s --check-prefix=FIRST
+# RUN: sed -e 's|^\[barostat\]$|[barostat]\nwork = "EXACT"|' %t/a.toml > %t/exact.toml
+# RUN: mdir run %t/exact.toml | FileCheck %s --check-prefix=EXACT
 # RUN: mdir emit %t/a.toml | FileCheck %s --check-prefix=MODULE
 
 # A pair is taken once, in the minimum image, so the cell must be wider
@@ -42,18 +44,21 @@
 # RUN: diff %t/a.row %t/leap.row
 
 # The energy that the thermostat and the barostat exchange with the bath is
-# added to the total energy, and the volume shrinks from 23.2^3 A^3. The
-# energy that the scaling gives the positions is that of the scaled
-# positions less that of the positions before, so the conserved energy
-# changes as at constant energy (D77). Counted to first order in μ − 1, as
-# GROMACS does, it drifts as the square of the strain, by about 2e-3 of its
-# value here (design-m1.md, Section 11.4).
+# added to the total energy, and the volume shrinks from 23.2^3 A^3. By
+# default the cell scales within the drift of the last step of a period
+# (Trotter type, D92), and the energy of the scaling is counted from the
+# virials before and after it: the conserved energy drifts by about 3e-4 of
+# its value here, growing with the period of coupling. Counted exactly,
+# from the energy of the scaled positions, it changes as at constant energy
+# (D77); counted to first order in μ − 1, as GROMACS does, it drifts as the
+# square of the strain, by about 2e-3 (design-m1.md, Section 11.4).
 #
 # CHECK:      INFO:      STEP {{.*}}PRESSURE      CONSERVED         VOLUME
 # CHECK-NEXT: INFO:         0         0.0000 {{ *}}[[TOTAL:-[0-9.]+]] {{.*}} [[TOTAL]]     12487.1680
 # CHECK-NEXT: INFO:      1000 {{.*}} {{11[0-9]{3}\.[0-9]+$}}
 # CHECK-NEXT: INFO:      2000 {{.*}} {{11[0-9]{3}\.[0-9]+$}}
-# CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
+# CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[4-9]}} of its value
+# EXACT:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
 # FIRST:      MDIR: the conserved energy changed by {{[0-9.]+}}e-03 of its value
 
 # Leapfrog takes the pressure from the velocities of the time of the
