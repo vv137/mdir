@@ -1400,7 +1400,12 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
   // the places of the last build; an empty place takes those of the
   // particle 0, which no pair reads. A position is moved by whole cells to
   // the frame of its group (the shift of its place, ten bits an axis from
-  // -512), so that the kernel takes no minimum image (D95).
+  // -512), so that the kernel takes no minimum image (D95). The positions
+  // come as they are stored, unwrapped and in f64 in mixed precision: the
+  // shift is added there, and the sum converted to the type of the kernel,
+  // so that a position in the frame is as exact however far the particle
+  // has gone.
+  Type computed = op.getKernel().front().getArgument(0).getType();
   Value places = arith::IndexCastOp::create(
       builder, loc, builder.getIndexType(),
       memref::LoadOp::create(builder, loc, structure.sizes,
@@ -1408,10 +1413,14 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
   SmallVector<Value> sources = {positions};
   llvm::append_range(sources, op.getIns());
   SmallVector<Value> targets;
-  for (Value source : sources)
-    targets.push_back(createDeviceBuffer(
-        builder, loc, cast<MemRefType>(source.getType()),
-        ValueRange{places}));
+  for (auto [index, source] : llvm::enumerate(sources)) {
+    auto type = cast<MemRefType>(source.getType());
+    if (index == 0)
+      type = MemRefType::get(type.getShape(), computed, type.getLayout(),
+                             type.getMemorySpace());
+    targets.push_back(
+        createDeviceBuffer(builder, loc, type, ValueRange{places}));
+  }
   launchOver(builder, loc, places, [&](OpBuilder &body, Value place) {
     Value at = memref::LoadOp::create(body, loc, buffers.order,
                                       ValueRange{place});
@@ -1451,7 +1460,9 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
       auto [source, target] = pair;
       Value value = loadElement(body, loc, source, particle);
       if (index == 0)
-        value = arith::AddFOp::create(body, loc, value, shift);
+        value = convertReal(
+            body, loc, arith::AddFOp::create(body, loc, value, shift),
+            computed);
       storeElement(body, loc, value, target, place);
     }
   });

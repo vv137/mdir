@@ -440,7 +440,10 @@ def AssignPrecision
     the positions, a loop over particles converts the positions to it once,
     and the loops over pairs and over tuples that are not disjoint (the
     terms of the potential, not the constraints) take that field
-    (`kernel-positions`; D79). Values are converted where they
+    (`kernel-positions`; D79); a loop over pairs that takes each pair once
+    (over groups) keeps the positions as they are stored, which its
+    lowering moves to the frames of the groups before converting them
+    (D101). Values are converted where they
     enter and leave a kernel. Global sums are accumulated in the type of
     `accumulator`.
 

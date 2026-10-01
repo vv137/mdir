@@ -87,6 +87,32 @@ func.func @forces(%positions: memref<?x3xf64>, %cell: !md.cell, %eps: f64)
   return %u, %f : f64, !vec
 }
 
+// A loop that takes each pair once, over groups, keeps the positions as
+// they are stored: its lowering moves them to the frames of the groups
+// before converting them (D101).
+
+// MIXED-LABEL: func.func @groups
+// MIXED-NOT:     md_exec.particle_for
+// MIXED:         md_exec.pair_for %{{.*}}, %{{.*}}, %{{.*}} outs(
+// MIXED-NEXT:    ^bb0(%{{.*}}: f32, %{{.*}}: vector<3xf32>):
+// MIXED:         } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> !md.field<@atoms, 3 x f32>
+func.func @groups(%positions: memref<?x3xf64>, %cell: !md.cell) -> !vec {
+  %x = mdrt.from_buffer %positions : memref<?x3xf64> to !vec
+  %nl0 = md_exec.empty_neighbors kind(groups) width(96) : !mdrt.neighbors<@atoms>
+  %nl = md_exec.refresh_neighbors %nl0, %x, %cell
+      cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
+      : !mdrt.neighbors<@atoms>, !vec
+  %f0 = md_exec.zeros : !vec
+  %f = md_exec.pair_for %nl, %x, %cell outs(%f0 : !vec) cutoff(2.5)
+      exchange [antisymmetric] policy(unique, atomic) {
+  ^bb0(%r2: f64, %d: vector<3xf64>):
+    %g = vector.broadcast %r2 : f64 to vector<3xf64>
+    %k = arith.mulf %g, %d : vector<3xf64>
+    md_exec.yield %k : vector<3xf64>
+  } : !mdrt.neighbors<@atoms>, !vec -> !vec
+  return %f : !vec
+}
+
 // A loop over particles computes in the type of the integrator. The kernel
 // receives the values of a field in the type that the field is stored in
 // and converts them.

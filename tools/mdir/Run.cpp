@@ -68,6 +68,11 @@ static std::string getPipeline(const Control &control,
   if (control.fastMath)
     os << "md-exec-simplify-distance{radial=true},";
   os << "canonicalize,cse,md-exec-fold-tables,canonicalize,cse,";
+  // Before the precision: a loop over groups keeps the positions as they
+  // are stored (D95).
+  if (control.target == Target::GPU &&
+      control.neighborStructure == NeighborStructure::Groups)
+    os << "md-exec-choose-neighbors{kind=groups},";
 
   StringRef mode = control.precision == Precision::Single
                        ? "single"
@@ -79,8 +84,6 @@ static std::string getPipeline(const Control &control,
 
   if (control.target == Target::GPU) {
     // Kernels in f32 look their tables up in f32.
-    if (control.neighborStructure == NeighborStructure::Groups)
-      os << "md-exec-choose-neighbors{kind=groups},";
     os << "md-exec-assign-storage{memory=device"
        << (control.precision == Precision::Double ? "" : " tables=f32")
        << "},md-exec-assign-streams,convert-md-exec-to-gpu{"

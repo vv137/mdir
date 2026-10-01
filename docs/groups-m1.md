@@ -181,7 +181,8 @@ each place the whole cells that move its particle, as it is kept, into
 that frame (ten bits an axis), and in the mask of each entry the cells
 that move the entry from the frame of its own group into that of the group
 whose list holds it (three bits an axis, −2 to 2, in bits 16 to 24). The
-gather adds the shift of the place in f64, the kernel that of the entry,
+gather adds the shift of the place to the positions as they are stored,
+in f64, and converts the sum (D101); the kernel adds that of the entry,
 and a displacement is then a subtraction. The kernel is the semantic kernel of the loop,
 lowered as for the matrix; the lowering adds the second accumulation and
 the atomic additions.

@@ -633,10 +633,15 @@ void Assigner::convertPositions() {
   // the positions of a cell of 60 Å are 4e-6 Å apart. The terms of the
   // potential take them so, as GROMACS does; the constraints, whose loops
   // are over disjoint tuples, keep the positions they are stored in (D79).
+  // A loop over groups takes the positions as they are stored: its
+  // lowering moves them to the frames of the groups first, then converts
+  // them (D95).
   SmallVector<Operation *> loops;
   function.walk([&](Operation *op) {
-    if (isa<PairForOp>(op))
-      loops.push_back(op);
+    if (auto pair = dyn_cast<PairForOp>(op)) {
+      if (pair.getTraversal() != Traversal::Unique)
+        loops.push_back(op);
+    }
     else if (auto tuple = dyn_cast<TupleForOp>(op))
       if (!tuple.getDisjoint())
         loops.push_back(op);
