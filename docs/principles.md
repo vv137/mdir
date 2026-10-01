@@ -41,6 +41,11 @@ static, a debug mode checks it at run time.
 - SHAKE by Newton: a fixed number of iterations reaches the rounding for a
   step no larger than the constraints were built for; a debug mode should
   check the residual.
+- The flags in mapped memory of the host (D118): a store of a kernel is
+  visible to the host after an event, and a store of the host to a kernel
+  launched after it; checked on x86-64 with an RTX 3090 and driver 595.84,
+  not on a platform whose mapped memory is not coherent, where the copy of
+  D113 is the fallback.
 
 ### Optimizations that reorder or overlap work
 
