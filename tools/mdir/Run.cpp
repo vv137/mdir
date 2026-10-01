@@ -63,7 +63,8 @@ static std::string getPipeline(const Control &control,
     os << "md-exec-rebuild-at-interval{interval=" << control.rebuildPeriod
        << "},";
   os << "md-exec-expose-validity,"
-     << "md-exec-fuse-loops,md-exec-accumulate-destinations,";
+     << "md-exec-fuse-loops,md-exec-accumulate-destinations,"
+     << "md-exec-narrow-sums,";
   if (control.fastMath)
     os << "md-exec-simplify-distance,";
   os << "canonicalize,cse,md-exec-fold-tables,canonicalize,cse,";

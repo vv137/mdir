@@ -490,11 +490,18 @@ LogicalResult DerivativeBuilder::buildVirial(Value &virial) {
       SmallVector<Value, 3> components;
       for (int64_t a = 0; a < 3; ++a)
         components.push_back(vector::ExtractOp::create(kernel, loc, d, a));
+      // d ⊗ (factor d): the vector factor d is that of the forces, which a
+      // loop that fuses the two computes once; factor (d_a d_b) would have
+      // the factor, a sum of terms, multiplied into each element.
+      Value broadcast = vector::BroadcastOp::create(
+          kernel, loc, d.getType(), factor);
+      Value scaled = emit.mul(broadcast, d);
       SmallVector<Value, 9> elements;
       for (int64_t a = 0; a < 3; ++a)
         for (int64_t b = 0; b < 3; ++b)
           elements.push_back(emit.mul(
-              factor, emit.mul(components[a], components[b])));
+              components[a],
+              vector::ExtractOp::create(kernel, loc, scaled, b)));
       contribution =
           vector::FromElementsOp::create(kernel, loc, virialType, elements);
     } else {

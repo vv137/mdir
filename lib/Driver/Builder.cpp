@@ -1534,17 +1534,32 @@ void Builder::emitPrograms() {
   // velocities that it scaled.
   bool leapfrog = isLeapfrog();
   bool trotter = usesTrotter();
-  for (int kind = 0; kind != (trotter ? 3 : 2); ++kind) {
-    bool withEnergy = kind != 0;
-    bool scales = kind == 2;
-    bool returnsCurrent = leapfrog && withEnergy;
-    os << "dyn.program @"
-       << (scales ? "step_trotter" : withEnergy ? "step_energy" : "step")
+  // The steps of the barostat of Trotter type need the virial, and the
+  // energy only where the log takes it: `step_virial` gives the pressure of
+  // the strain, `step_trotter` scales, `step_trotter_energy` scales at the
+  // end of an interval between energies.
+  struct Kind {
+    const char *name;
+    bool energy, virial, scales;
+  };
+  llvm::SmallVector<Kind> kinds = {{"step", false, false, false},
+                                   {"step_energy", true, true, false}};
+  if (trotter) {
+    if (!scalesEveryStep())
+      kinds.push_back({"step_virial", false, true, false});
+    kinds.push_back({"step_trotter", false, true, true});
+    kinds.push_back({"step_trotter_energy", true, true, true});
+  }
+  for (const Kind &kind : kinds) {
+    bool withEnergy = kind.energy, withVirial = kind.virial;
+    bool scales = kind.scales;
+    bool returnsCurrent = leapfrog && withVirial;
+    os << "dyn.program @" << kind.name
        << "(%x: !vec, %v: !vec, %f: !vec, %m: !real,\n"
        << "    %cell: !md.cell, %dt: f64" << (scales ? ", %mu: f64" : "")
        << getScaleParameter() << getFieldParameters() << ")\n"
-       << "    -> (!vec, !vec, !vec"
-       << (withEnergy ? ", f64, vector<9xf64>" : "")
+       << "    -> (!vec, !vec, !vec" << (withEnergy ? ", f64" : "")
+       << (withVirial ? ", vector<9xf64>" : "")
        << (returnsCurrent ? ", !vec" : "") << (scales ? ", f64" : "")
        << ")\n"
        << "    attributes {"
@@ -1554,7 +1569,7 @@ void Builder::emitPrograms() {
        << "  %half = arith.mulf %c, %dt : f64\n";
     if (!leapfrog) {
       os << "  %v1 = dyn.kick %v, %f, %m, %half : !vec\n";
-    } else if (withEnergy && constraints) {
+    } else if (withVirial && constraints) {
       // The velocities of the time of the positions, as velocity Verlet
       // has them, and its first half kick. The drift then takes the
       // positions where the kick of a whole step does, up to the
@@ -1648,23 +1663,25 @@ void Builder::emitPrograms() {
          << raw << " = " << evaluate
          << "\n      request [energy, forces, virial]\n"
          << "      : " << signature << " -> (f64, !vec, vector<9xf64>)\n";
+    else if (withVirial)
+      os << "  %f1" << held << raw << ", %w1" << held << raw << " = "
+         << evaluate << "\n      request [forces, virial]\n"
+         << "      : " << signature << " -> (!vec, vector<9xf64>)\n";
     else
       os << "  %f1" << held << raw << " = " << evaluate << " request [forces]\n"
          << "      : " << signature << " -> !vec\n";
     std::string virial = "%w1" + held;
     if (sites)
       virial = emitSpreadSites("  ", "%x1", "%f1" + held + "e", "%f1" + held,
-                               "%r_", withEnergy ? "%w1" + held + "e" : "",
+                               "%r_", withVirial ? "%w1" + held + "e" : "",
                                "%w1" + held);
     if (hasRestraints()) {
-      if (withEnergy)
-        emitRestraints("  ", "%x1", "%p_", "%f1p", "%f1", "%u1p", "%u1",
-                       virial, "%w1");
-      else
-        emitRestraints("  ", "%x1", "%p_", "%f1p", "%f1");
+      emitRestraints("  ", "%x1", "%p_", "%f1p", "%f1",
+                     withEnergy ? "%u1p" : "", withEnergy ? "%u1" : "",
+                     withVirial ? virial : "", withVirial ? "%w1" : "");
       virial = "%w1";
     }
-    if (leapfrog && !withEnergy) {
+    if (leapfrog && !withVirial) {
       os << "  dyn.return %x1, " << velocities
          << ", %f1 : !vec, !vec, !vec\n}\n\n";
       continue;
@@ -1675,23 +1692,24 @@ void Builder::emitPrograms() {
     os << "  %v2" << (constraints ? "u" : "") << " = dyn.kick " << velocities
        << ", %f1, %m, %half : !vec\n";
     // The virial of the constraints over the first half of the step.
-    if (constraints && withEnergy) {
+    if (constraints && withVirial) {
       unsigned index = 0;
       for (auto [set, change] : changes)
         virial = emitConstraintVirial("  ", *set, "%x", change, virial,
                                       "%w1x" + std::to_string(index++));
     }
     if (constraints)
-      virial = project("%x1", "%v2u", "%v2", withEnergy ? virial : "")
+      virial = project("%x1", "%v2u", "%v2", withVirial ? virial : "")
                    .second;
     std::string stored = leapfrog ? velocities : "%v2";
-    if (withEnergy)
-      os << "  dyn.return %x1, " << stored << ", %f1, %u1, " << virial
+    if (withVirial)
+      os << "  dyn.return %x1, " << stored << ", %f1"
+         << (withEnergy ? ", %u1" : "") << ", " << virial
          << (returnsCurrent ? ", %v2" : "") << (scales ? ", %khalf" : "")
          << "\n"
-         << "      : !vec, !vec, !vec, f64, vector<9xf64>"
-         << (returnsCurrent ? ", !vec" : "") << (scales ? ", f64" : "")
-         << "\n";
+         << "      : !vec, !vec, !vec" << (withEnergy ? ", f64" : "")
+         << ", vector<9xf64>" << (returnsCurrent ? ", !vec" : "")
+         << (scales ? ", f64" : "") << "\n";
     else
       os << "  dyn.return %x1, %v2, %f1 : !vec, !vec, !vec\n";
     os << "}\n\n";
@@ -2793,62 +2811,59 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
     // results are named with `name`, as those of a step of energy, with
     // the kinetic energy of the scaled velocities `%kh<name>`. Returns the
     // scaling.
-    auto emitTrotterSteps = [&](StringRef name) {
+    auto emitTrotterSteps = [&](StringRef name, bool withEnergy) {
       std::string a = "j" + here, n = name.str();
       bool leapfrog = isLeapfrog();
+      std::string kinetic, groups, trace, x, v;
       if (scalesEveryStep()) {
         // The pressure of the state that the step before left (D92).
         std::string m = "%tm" + here;
         for (int k = 0; k != 3; ++k)
           os << inner << m << "_" << k << " = memref.load %trotter_memory"
              << "[%c_edge" << k << "] : memref<3xf64>\n";
-        emitStep();
-        TrotterScaling scaling = emitTrotterStrain(
-            inner, "", "", m + "_0", here, "%step" + here, m + "_2",
-            m + "_1");
-        std::string outerScale = scaleName;
-        if (!scaling.scale.empty())
-          scaleName = scaling.scale;
-        os << inner << "%x" << n << ", %v" << n << ", %f" << n << ", %u"
-           << n << ", %w" << n << (leapfrog ? ", %vc" + n : "") << ", %kh"
-           << n << " = dyn.step @step_trotter(%x" << last << ", %v" << last
-           << ", %f" << last << ", " << massName << ", " << scaling.cell
-           << ", %dt, " << scaling.mu << getScaleValue()
+        trace = m + "_0";
+        groups = m + "_1";
+        kinetic = m + "_2";
+        x = "%x" + last;
+        v = "%v" + last;
+      } else {
+        // The step whose pressure gives the strain.
+        os << inner << getValues(a) << ", %w" << a
+           << (leapfrog ? ", %vc" + a : "") << " = dyn.step @step_virial(%x"
+           << last << ", %v" << last << ", %f" << last << ", " << massName
+           << ", " << cellName << ", %dt" << getScaleValue()
            << getFieldValues(fieldPrefix) << ")\n"
-           << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64, f64"
+           << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
            << getScaleType() << getFieldTypes()
-           << ") -> (!vec, !vec, !vec, f64, vector<9xf64>"
-           << (leapfrog ? ", !vec" : "") << ", f64)\n";
-        scaleName = outerScale;
-        scaling.kineticHalf = "%kh" + n;
-        return scaling;
+           << ") -> (!vec, !vec, !vec, vector<9xf64>"
+           << (leapfrog ? ", !vec" : "") << ")\n";
+        trace = "%tr" + a;
+        emitTrace(os, trace, "%w" + a, inner);
+        x = "%x" + a;
+        v = "%v" + a;
       }
-      os << inner << getValues(a) << ", %u" << a << ", %w" << a
-         << (leapfrog ? ", %vc" + a : "") << " = dyn.step @step_energy(%x"
-         << last << ", %v" << last << ", %f" << last << ", " << massName
-         << ", " << cellName << ", %dt" << getScaleValue()
-         << getFieldValues(fieldPrefix) << ")\n"
-         << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
-         << getScaleType() << getFieldTypes()
-         << ") -> (!vec, !vec, !vec, f64, vector<9xf64>"
-         << (leapfrog ? ", !vec" : "") << ")\n";
-      emitTrace(os, "%tr" + a, "%w" + a, inner);
       emitStep();
-      TrotterScaling scaling = emitTrotterStrain(
-          inner, "%x" + a, leapfrog ? "%vc" + a : "%v" + a, "%tr" + a,
-          here, "%step" + here);
+      TrotterScaling scaling =
+          scalesEveryStep()
+              ? emitTrotterStrain(inner, "", "", trace, here,
+                                  "%step" + here, kinetic, groups)
+              : emitTrotterStrain(inner, "%x" + a,
+                                  leapfrog ? "%vc" + a : "%v" + a, trace,
+                                  here, "%step" + here);
       std::string outerScale = scaleName;
       if (!scaling.scale.empty())
         scaleName = scaling.scale;
-      os << inner << "%x" << n << ", %v" << n << ", %f" << n << ", %u" << n
-         << ", %w" << n << (leapfrog ? ", %vc" + n : "") << ", %kh" << n
-         << " = dyn.step @step_trotter(%x" << a << ", %v" << a << ", %f"
-         << a << ", " << massName << ", " << scaling.cell << ", %dt, "
-         << scaling.mu << getScaleValue() << getFieldValues(fieldPrefix)
-         << ")\n"
+      os << inner << "%x" << n << ", %v" << n << ", %f" << n
+         << (withEnergy ? ", %u" + n : "") << ", %w" << n
+         << (leapfrog ? ", %vc" + n : "") << ", %kh" << n
+         << " = dyn.step @step_trotter" << (withEnergy ? "_energy" : "")
+         << "(" << x << ", " << v << ", %f"
+         << (scalesEveryStep() ? last : a) << ", " << massName << ", "
+         << scaling.cell << ", %dt, " << scaling.mu << getScaleValue()
+         << getFieldValues(fieldPrefix) << ")\n"
          << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64, f64"
-         << getScaleType() << getFieldTypes()
-         << ") -> (!vec, !vec, !vec, f64, vector<9xf64>"
+         << getScaleType() << getFieldTypes() << ") -> (!vec, !vec, !vec"
+         << (withEnergy ? ", f64" : "") << ", vector<9xf64>"
          << (leapfrog ? ", !vec" : "") << ", f64)\n";
       scaleName = outerScale;
       scaling.kineticHalf = "%kh" + n;
@@ -2861,11 +2876,11 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       std::string trace;
       if (usesTrotter()) {
         std::string k = "k" + here;
-        TrotterScaling scaling = emitTrotterSteps(k);
+        TrotterScaling scaling = emitTrotterSteps(k, /*withEnergy=*/false);
         trace = "%tr" + k;
         emitTrace(os, trace, "%w" + k, inner);
         std::string coupled =
-            getCoupled("%x" + k, "%v" + k, "%f" + k, "%u" + k, trace,
+            getCoupled("%x" + k, "%v" + k, "%f" + k, "", trace,
                        isLeapfrog() ? "%vc" + k : "", &scaling);
         os << inner << "scf.yield " << coupled << " : " << state << "\n";
         os << indent << "}\n";
@@ -2944,7 +2959,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       bool scalesHere = usesTrotter() && couplesBelow;
       TrotterScaling scaling;
       if (scalesHere) {
-        scaling = emitTrotterSteps("l");
+        scaling = emitTrotterSteps("l", /*withEnergy=*/true);
         virialName = "%wl";
         energyName = "%ul";
         now = "%vcl";
@@ -3538,22 +3553,23 @@ void Builder::emitRestraints(StringRef indent, StringRef x,
      << inner << "%fr_i = arith.subf %f_i, %pull_i : vector<3xf64>\n"
      << inner << "md.yield %fr_i : vector<3xf64>\n"
      << indent << "} : !vec\n";
-  if (u.empty())
+  if (u.empty() && w.empty())
     return;
   // Σ k d ⊙ d, whose sum is the energy and whose elements times −2 are the
   // diagonal of the virial.
-  std::string sum = (uResult + "_parts").str();
+  std::string sum = ((u.empty() ? wResult : uResult) + "_parts").str();
   os << indent << sum << " = md.sum_particles gather(" << x << ", " << fields
      << " : !vec, !real, !real, !real, !real) {\n"
      << indent << "^bb0(%x_i: vector<3xf64>, " << arguments << "):\n";
   emitOffset(inner);
   os << inner << "%kdd_i = arith.mulf %kd_i, %d_i : vector<3xf64>\n"
      << inner << "md.yield %kdd_i : vector<3xf64>\n"
-     << indent << "} : vector<3xf64>\n"
-     << indent << uResult << "_r = vector.reduction <add>, " << sum
-     << " : vector<3xf64> into f64\n"
-     << indent << uResult << " = arith.addf " << u << ", " << uResult
-     << "_r : f64\n";
+     << indent << "} : vector<3xf64>\n";
+  if (!u.empty())
+    os << indent << uResult << "_r = vector.reduction <add>, " << sum
+       << " : vector<3xf64> into f64\n"
+       << indent << uResult << " = arith.addf " << u << ", " << uResult
+       << "_r : f64\n";
   if (w.empty())
     return;
   std::string zero = (wResult + "_zero").str();

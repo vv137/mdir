@@ -231,6 +231,38 @@ def SimplifyDistance
                            "::mlir::math::MathDialect"];
 }
 
+def NarrowSums
+    : Pass<"md-exec-narrow-sums", "::mlir::ModuleOp"> {
+  let summary = "Sums only the elements of a vector sum that are used";
+  let description = [{
+    A loop that sums a vector over particles, pairs, or tuples sums every
+    element, but its users may take only some: the pressure of an isotropic
+    barostat and of the log takes the trace of the virial, three of its
+    nine elements. The pass follows each vector back from its users,
+    through elementwise arithmetic and `vector.extract`, to the sums of the
+    loops, and makes each loop sum only the elements used: its initial
+    value, the value its kernel yields, and its result shrink to them, and
+    a vector of the old type with zeros elsewhere replaces the result. A
+    user that the pass does not know uses every element.
+
+    The elements kept are summed as before, to the bit; the kernel no
+    longer computes the others, which canonicalization removes.
+
+    ```mlir
+    %w = md_exec.pair_for ... reduce(%w0 : vector<9xf64>) { ... }
+    %t0 = vector.extract %w[0] : f64 from vector<9xf64>
+    %t4 = vector.extract %w[4] : f64 from vector<9xf64>
+    %t8 = vector.extract %w[8] : f64 from vector<9xf64>
+    ```
+
+    ```mlir
+    %d = md_exec.pair_for ... reduce(%d0 : vector<3xf64>) { ... }
+    %w = vector.from_elements %d[0], %z, %z, %z, %d[1], %z, %z, %z, %d[2]
+    ```
+  }];
+  let dependentDialects = ["::mlir::vector::VectorDialect"];
+}
+
 def FoldTables
     : Pass<"md-exec-fold-tables", "::mlir::ModuleOp"> {
   let summary = "Computes what a kernel derives from tables once per entry "

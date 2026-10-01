@@ -8,6 +8,7 @@ add_mlir_dialect_library(MDIRMDExecTransforms
   ExposeValidity.cpp
   FoldTables.cpp
   FuseLoops.cpp
+  NarrowSums.cpp
   RebuildAtInterval.cpp
   ReuseNeighbors.cpp
   SimplifyDistance.cpp
