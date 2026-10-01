@@ -3804,7 +3804,7 @@ func.func private @mdrt_gpu_build_neighbors_groups(
   %grid_of_lists = func.call @mdrt_gpu_groups_grid(%list_threads, %block) : (index, index) -> index
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_of_lists, %gy = %c1, %gz = %c1)
              threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1)
-             workgroup(%rel_wg : memref<64x4xf32, #gpu.address_space<workgroup>>, %partners : memref<1024xi32, #gpu.address_space<workgroup>>) {
+             workgroup(%rel_wg : memref<64x4xf32, #gpu.address_space<workgroup>>, %partners : memref<1024xi32, #gpu.address_space<workgroup>>, %queue : memref<256xi32, #gpu.address_space<workgroup>>) {
     %base = arith.muli %bx, %block : index
     %item = arith.addi %base, %tx : index
     %c0w = arith.constant 0 : index
@@ -3886,6 +3886,8 @@ func.func private @mdrt_gpu_build_neighbors_groups(
       // sorted, 256 at most.
       %c256 = arith.constant 256 : index
       %pbase = arith.muli %warp, %c256 : index
+      %c64q = arith.constant 64 : index
+      %qbase = arith.muli %warp, %c64q : index
       %largest_i = arith.constant 2147483647 : i32
       scf.for %s = %lane to %c256 step %c32w {
         %at = arith.addi %pbase, %s : index
@@ -7195,12 +7197,12 @@ func.func private @mdrt_gpu_build_neighbors_groups(
       %g32_w = arith.index_cast %g : index to i32
       %fz1p = arith.addi %fz1, %one_i : i32
       %fy1p = arith.addi %fy1, %one_i : i32
-      %count_all, %block_all = scf.for %zz = %fz0 to %fz1p step %one_i iter_args(%cz_count = %zero_i, %czb = %none_block) -> (i32, i32) : i32 {
+      %count_main, %block_main, %queued_all = scf.for %zz = %fz0 to %fz1p step %one_i iter_args(%cz_count = %zero_i, %czb = %none_block, %czq = %zero_i) -> (i32, i32, i32) : i32 {
         %zm = arith.remsi %zz, %gnz32 : i32
         %zneg = arith.cmpi slt, %zm, %zero_i : i32
         %zw = arith.addi %zm, %gnz32 : i32
         %iz = arith.select %zneg, %zw, %zm : i32
-        %cy_count, %cy_block = scf.for %yy = %fy0 to %fy1p step %one_i iter_args(%cy0 = %cz_count, %cyb0 = %czb) -> (i32, i32) : i32 {
+        %cy_count, %cy_block, %cy_queued = scf.for %yy = %fy0 to %fy1p step %one_i iter_args(%cy0 = %cz_count, %cyb0 = %czb, %cyq0 = %czq) -> (i32, i32, i32) : i32 {
           %ym = arith.remsi %yy, %gny32 : i32
           %yneg = arith.cmpi slt, %ym, %zero_i : i32
           %yw = arith.addi %ym, %gny32 : i32
@@ -7219,7 +7221,7 @@ func.func private @mdrt_gpu_build_neighbors_groups(
           %to2a = arith.subi %fx1, %gnx32 : i32
           %to2 = arith.select %under, %fx1, %to2a : i32
           %pieces = arith.select %two_pieces, %c2i, %one_i : i32
-          %cp_count, %cp_block = scf.for %piece = %zero_i to %pieces step %one_i iter_args(%cp0 = %cy0, %cpb0 = %cyb0) -> (i32, i32) : i32 {
+          %cp_count, %cp_block, %cp_queued = scf.for %piece = %zero_i to %pieces step %one_i iter_args(%cp0 = %cy0, %cpb0 = %cyb0, %cpq0 = %cyq0) -> (i32, i32, i32) : i32 {
             %is_second = arith.cmpi ne, %piece, %zero_i : i32
             %from = arith.select %is_second, %zero_i, %from1 : i32
             %to = arith.select %is_second, %to2, %to1b : i32
@@ -7230,14 +7232,73 @@ func.func private @mdrt_gpu_build_neighbors_groups(
             %cto_i = arith.index_cast %cto : i32 to index
             %begin = memref.load %gstart[%cfrom_i] : memref<?xi32, 1>
             %end = memref.load %gstart[%cto_i] : memref<?xi32, 1>
-            %cs_count, %cs_block = scf.for %s0 = %begin to %end step %c32i iter_args(%cs = %cp0, %csb = %cpb0) -> (i32, i32) : i32 {
+            %cs_count, %cs_block, %cs_queued = scf.for %s0 = %begin to %end step %c32i iter_args(%cs = %cp0, %csb = %cpb0, %qn = %cpq0) -> (i32, i32, i32) : i32 {
+              // The candidates near the box go to the queue of the warp; the
+              // warp takes them 32 at a time, so that its lanes test them
+              // together against the particles of the group (D99).
               %s = arith.addi %s0, %lane32 : i32
               %in_run = arith.cmpi slt, %s, %end : i32
-              %bits = scf.if %in_run -> (i32) {
+              %none_q = arith.constant -1 : i32
+              %nearq = scf.if %in_run -> (i32) {
                 %si = arith.index_cast %s : i32 to index
                 %q = memref.load %gplace[%si] : memref<?xi32, 1>
                 %later = arith.cmpi sge, %q, %first32 : i32
-                %b2 = scf.if %later -> (i32) {
+                %qa = scf.if %later -> (i32) {
+                  %qi = arith.index_cast %q : i32 to index
+                  %xq = memref.load %xp[%qi, %c0w] : memref<?x4xf32, 1>
+                  %yq = memref.load %xp[%qi, %c1w] : memref<?x4xf32, 1>
+                  %zq = memref.load %xp[%qi, %c2w] : memref<?x4xf32, 1>
+                  %dx0 = arith.subf %xq, %cx : f32
+                  %dy0 = arith.subf %yq, %cy : f32
+                  %dz0 = arith.subf %zq, %cz : f32
+                  %rqx = func.call @mdrt_gpu_groups_image(%dx0, %flx, %filx) : (f32, f32, f32) -> f32
+                  %rqy = func.call @mdrt_gpu_groups_image(%dy0, %fly, %fily) : (f32, f32, f32) -> f32
+                  %rqz = func.call @mdrt_gpu_groups_image(%dz0, %flz, %filz) : (f32, f32, f32) -> f32
+                  %ax = math.absf %rqx : f32
+                  %ay = math.absf %rqy : f32
+                  %az = math.absf %rqz : f32
+                  %zero_f = arith.constant 0.0 : f32
+                  %bx0 = arith.subf %ax, %hx : f32
+                  %by0 = arith.subf %ay, %hy : f32
+                  %bz0 = arith.subf %az, %hz : f32
+                  %bxd = arith.maximumf %bx0, %zero_f : f32
+                  %byd = arith.maximumf %by0, %zero_f : f32
+                  %bzd = arith.maximumf %bz0, %zero_f : f32
+                  %bx2 = arith.mulf %bxd, %bxd : f32
+                  %by2 = arith.mulf %byd, %byd : f32
+                  %bz2 = arith.mulf %bzd, %bzd : f32
+                  %bxy = arith.addf %bx2, %by2 : f32
+                  %bd2 = arith.addf %bxy, %bz2 : f32
+                  %near = arith.cmpf ole, %bd2, %reach2 : f32
+                  %qn_sel = arith.select %near, %q, %none_q : i32
+                  scf.yield %qn_sel : i32
+                } else {
+                  scf.yield %none_q : i32
+                }
+                scf.yield %qa : i32
+              } else {
+                scf.yield %none_q : i32
+              }
+              %is_near = arith.cmpi sge, %nearq, %zero_i : i32
+              %near_bits = gpu.ballot %is_near : i32
+              %near_before = arith.andi %near_bits, %below : i32
+              %near_rank = math.ctpop %near_before : i32
+              %near_n = math.ctpop %near_bits : i32
+              scf.if %is_near {
+                %qslot0 = arith.addi %qn, %near_rank : i32
+                %qslot1 = arith.index_cast %qslot0 : i32 to index
+                %qslot = arith.addi %qbase, %qslot1 : index
+                memref.store %nearq, %queue[%qslot] : memref<256xi32, #gpu.address_space<workgroup>>
+              }
+              nvvm.bar.warp.sync %all : i32
+              %qn1 = arith.addi %qn, %near_n : i32
+              %full = arith.cmpi sge, %qn1, %c32i : i32
+              %r_count, %r_block, %r_queued = scf.if %full -> (i32, i32, i32) {
+                %qslot = arith.addi %qbase, %lane : index
+                %qv = memref.load %queue[%qslot] : memref<256xi32, #gpu.address_space<workgroup>>
+                %valid = arith.constant true
+                %bits = scf.if %valid -> (i32) {
+                  %q = arith.addi %qv, %zero_i : i32
                   %qi = arith.index_cast %q : i32 to index
                   %xq = memref.load %xp[%qi, %c0w] : memref<?x4xf32, 1>
                   %yq = memref.load %xp[%qi, %c1w] : memref<?x4xf32, 1>
@@ -7399,10 +7460,6 @@ func.func private @mdrt_gpu_build_neighbors_groups(
                 } else {
                   scf.yield %zero_i : i32
                 }
-                scf.yield %b2 : i32
-              } else {
-                scf.yield %zero_i : i32
-              }
               // The entries of the lanes that kept a candidate, in the order
               // of the lanes.
               %keep = arith.cmpi ne, %bits, %zero_i : i32
@@ -7456,10 +7513,8 @@ func.func private @mdrt_gpu_build_neighbors_groups(
               %fits = arith.cmpi ult, %slot_block_i, %unit_capacity_w : index
               %store = arith.andi %keep, %fits : i1
               scf.if %store {
-                %si = arith.index_cast %s : i32 to index
-                %q = memref.load %gplace[%si] : memref<?xi32, 1>
                 %pos = arith.index_cast %pos32 : i32 to index
-                memref.store %q, %entries[%pos] : memref<?xi32, 1>
+                memref.store %qv, %entries[%pos] : memref<?xi32, 1>
                 memref.store %bits, %masks[%pos] : memref<?xi32, 1>
               }
               // The first lane names the new blocks.
@@ -7480,13 +7535,282 @@ func.func private @mdrt_gpu_build_neighbors_groups(
                 memref.store %last_k, %ordinals[%b_i] : memref<?xi32, 1>
               }
               %next_block = arith.select %need_b, %block_b, %block_a : i32
-              scf.yield %next, %next_block : i32, i32
+                // The rest of the queue to its front.
+                %rest = arith.subi %qn1, %c32i : i32
+                %moves = arith.cmpi slt, %lane32, %rest : i32
+                %from_slot = arith.addi %qslot, %c32w : index
+                %moved = scf.if %moves -> (i32) {
+                  %mv = memref.load %queue[%from_slot] : memref<256xi32, #gpu.address_space<workgroup>>
+                  scf.yield %mv : i32
+                } else {
+                  scf.yield %none_q : i32
+                }
+                nvvm.bar.warp.sync %all : i32
+                scf.if %moves {
+                  memref.store %moved, %queue[%qslot] : memref<256xi32, #gpu.address_space<workgroup>>
+                }
+                nvvm.bar.warp.sync %all : i32
+                scf.yield %next, %next_block, %rest : i32, i32, i32
+              } else {
+                scf.yield %cs, %csb, %qn1 : i32, i32, i32
+              }
+              scf.yield %r_count, %r_block, %r_queued : i32, i32, i32
             }
-            scf.yield %cs_count, %cs_block : i32, i32
+            scf.yield %cs_count, %cs_block, %cs_queued : i32, i32, i32
           }
-          scf.yield %cp_count, %cp_block : i32, i32
+          scf.yield %cp_count, %cp_block, %cp_queued : i32, i32, i32
         }
-        scf.yield %cy_count, %cy_block : i32, i32
+        scf.yield %cy_count, %cy_block, %cy_queued : i32, i32, i32
+      }
+      // What the queue holds at the end.
+      %left = arith.cmpi sgt, %queued_all, %zero_i : i32
+      %count_all, %block_all = scf.if %left -> (i32, i32) {
+        %cs = arith.addi %count_main, %zero_i : i32
+        %csb = arith.addi %block_main, %zero_i : i32
+        %valid = arith.cmpi slt, %lane32, %queued_all : i32
+        %qslot = arith.addi %qbase, %lane : index
+        %qv = memref.load %queue[%qslot] : memref<256xi32, #gpu.address_space<workgroup>>
+        %bits = scf.if %valid -> (i32) {
+                  %q = arith.addi %qv, %zero_i : i32
+                  %qi = arith.index_cast %q : i32 to index
+                  %xq = memref.load %xp[%qi, %c0w] : memref<?x4xf32, 1>
+                  %yq = memref.load %xp[%qi, %c1w] : memref<?x4xf32, 1>
+                  %zq = memref.load %xp[%qi, %c2w] : memref<?x4xf32, 1>
+                  %dx0 = arith.subf %xq, %cx : f32
+                  %dy0 = arith.subf %yq, %cy : f32
+                  %dz0 = arith.subf %zq, %cz : f32
+                  %rqx = func.call @mdrt_gpu_groups_image(%dx0, %flx, %filx) : (f32, f32, f32) -> f32
+                  %rqy = func.call @mdrt_gpu_groups_image(%dy0, %fly, %fily) : (f32, f32, f32) -> f32
+                  %rqz = func.call @mdrt_gpu_groups_image(%dz0, %flz, %filz) : (f32, f32, f32) -> f32
+                  %ax = math.absf %rqx : f32
+                  %ay = math.absf %rqy : f32
+                  %az = math.absf %rqz : f32
+                  %zero_f = arith.constant 0.0 : f32
+                  %bx0 = arith.subf %ax, %hx : f32
+                  %by0 = arith.subf %ay, %hy : f32
+                  %bz0 = arith.subf %az, %hz : f32
+                  %bxd = arith.maximumf %bx0, %zero_f : f32
+                  %byd = arith.maximumf %by0, %zero_f : f32
+                  %bzd = arith.maximumf %bz0, %zero_f : f32
+                  %bx2 = arith.mulf %bxd, %bxd : f32
+                  %by2 = arith.mulf %byd, %byd : f32
+                  %bz2 = arith.mulf %bzd, %bzd : f32
+                  %bxy = arith.addf %bx2, %by2 : f32
+                  %bd2 = arith.addf %bxy, %bz2 : f32
+                  %near = arith.cmpf ole, %bd2, %reach2 : f32
+                  %b3 = scf.if %near -> (i32) {
+                    %own = arith.cmpi slt, %q, %first16 : i32
+                    %m = scf.for %u = %c0w to %c16w step %c1w iter_args(%mm = %zero_i) -> (i32) {
+                      %at = arith.addi %rel0, %u : index
+                      %gx_ = memref.load %rel_wg[%at, %c0w] : memref<64x4xf32, #gpu.address_space<workgroup>>
+                      %gy_ = memref.load %rel_wg[%at, %c1w] : memref<64x4xf32, #gpu.address_space<workgroup>>
+                      %gz_ = memref.load %rel_wg[%at, %c2w] : memref<64x4xf32, #gpu.address_space<workgroup>>
+                      %gflag = memref.load %rel_wg[%at, %c3w] : memref<64x4xf32, #gpu.address_space<workgroup>>
+                      %ex = arith.subf %rqx, %gx_ : f32
+                      %ey = arith.subf %rqy, %gy_ : f32
+                      %ez = arith.subf %rqz, %gz_ : f32
+                      %ex2 = arith.mulf %ex, %ex : f32
+                      %ey2 = arith.mulf %ey, %ey : f32
+                      %ez2 = arith.mulf %ez, %ez : f32
+                      %exy = arith.addf %ex2, %ey2 : f32
+                      %e2 = arith.addf %exy, %ez2 : f32
+                      %within = arith.cmpf ole, %e2, %reach2 : f32
+                      %u32 = arith.index_cast %u : index to i32
+                      %pu = arith.addi %first32, %u32 : i32
+                      %not_after = arith.cmpi sle, %q, %pu : i32
+                      %same = arith.andi %own, %not_after : i1
+                      %true = arith.constant true
+                      %distinct = arith.xori %same, %true : i1
+                      %half_f = arith.constant 0.5 : f32
+                      %is_real = arith.cmpf ogt, %gflag, %half_f : f32
+                      %ok0 = arith.andi %within, %distinct : i1
+                      %ok = arith.andi %ok0, %is_real : i1
+                      %bit0 = arith.shli %one_i, %u32 : i32
+                      %bit = arith.select %ok, %bit0, %zero_i : i32
+                      %nm = arith.ori %mm, %bit : i32
+                      scf.yield %nm : i32
+                    }
+                    // The excluded pairs: a binary search among the sorted
+                    // partners for the first at the place q.
+                    %any = arith.cmpi ne, %m, %zero_i : i32
+                    %mex = scf.if %any -> (i32) {
+                      %four = arith.constant 4 : i32
+                      %lo_r, %hi_r = scf.while (%lo = %c0w, %hi = %np) : (index, index) -> (index, index) {
+                        %go = arith.cmpi ult, %lo, %hi : index
+                        scf.condition(%go) %lo, %hi : index, index
+                      } do {
+                      ^bb0(%lo: index, %hi: index):
+                        %sum = arith.addi %lo, %hi : index
+                        %mid = arith.divui %sum, %c2w : index
+                        %at = arith.addi %pbase, %mid : index
+                        %v = memref.load %partners[%at] : memref<1024xi32, #gpu.address_space<workgroup>>
+                        %vq = arith.shrsi %v, %four : i32
+                        %less = arith.cmpi slt, %vq, %q : i32
+                        %mid1 = arith.addi %mid, %c1w : index
+                        %nlo = arith.select %less, %mid1, %lo : index
+                        %nhi = arith.select %less, %hi, %mid : index
+                        scf.yield %nlo, %nhi : index, index
+                      }
+                      %cleared, %e_end = scf.while (%mm = %m, %e = %lo_r) : (i32, index) -> (i32, index) {
+                        %in = arith.cmpi ult, %e, %np : index
+                        %at = arith.addi %pbase, %e : index
+                        %safe = arith.select %in, %at, %pbase : index
+                        %v = memref.load %partners[%safe] : memref<1024xi32, #gpu.address_space<workgroup>>
+                        %vq = arith.shrsi %v, %four : i32
+                        %match = arith.cmpi eq, %vq, %q : i32
+                        %go = arith.andi %in, %match : i1
+                        scf.condition(%go) %mm, %e : i32, index
+                      } do {
+                      ^bb0(%mm: i32, %e: index):
+                        %at = arith.addi %pbase, %e : index
+                        %v = memref.load %partners[%at] : memref<1024xi32, #gpu.address_space<workgroup>>
+                        %fifteen = arith.constant 15 : i32
+                        %u = arith.andi %v, %fifteen : i32
+                        %bit = arith.shli %one_i, %u : i32
+                        %all_bits = arith.constant -1 : i32
+                        %keep = arith.xori %bit, %all_bits : i32
+                        %nm = arith.andi %mm, %keep : i32
+                        %e1 = arith.addi %e, %c1w : index
+                        scf.yield %nm, %e1 : i32, index
+                      }
+                      scf.yield %cleared : i32
+                    } else {
+                      scf.yield %m : i32
+                    }
+                    scf.yield %mex : i32
+                  } else {
+                    scf.yield %zero_i : i32
+                  }
+                  // The shift of the entry to the frame of the group, from that
+                  // of its own place, in cells: e = W_g − W_q − k, with W the
+                  // frame less the wrapped position of a place (the first of
+                  // the group for W_g) and k the cells between the candidate
+                  // and the center of the box; -2 to 2 along each axis, (e + 2)
+                  // in three bits each, in bits 16 to 24 of its mask.
+                  %pairs = arith.cmpi ne, %b3, %zero_i : i32
+                  %b3s = scf.if %pairs -> (i32) {
+                    %c3q = arith.constant 3 : index
+                    %wq_f = memref.load %xp[%qi, %c3q] : memref<?x4xf32, 1>
+                    %wq = arith.bitcast %wq_f : f32 to i32
+                    // In the packed form: e + 2 is 0 to 4 along each axis, so
+                    // the sum over the fields comes out with no carry.
+                    %kx0 = arith.mulf %dx0, %filx : f32
+                    %ky0 = arith.mulf %dy0, %fily : f32
+                    %kz0 = arith.mulf %dz0, %filz : f32
+                    %kx1 = math.roundeven %kx0 : f32
+                    %ky1 = math.roundeven %ky0 : f32
+                    %kz1 = math.roundeven %kz0 : f32
+                    %f2p10 = arith.constant 1024.0 : f32
+                    %f2p20 = arith.constant 1048576.0 : f32
+                    %kyz = arith.mulf %kz1, %f2p20 : f32
+                    %kyy = arith.mulf %ky1, %f2p10 : f32
+                    %kxy = arith.addf %kx1, %kyy : f32
+                    %kp_f = arith.addf %kxy, %kyz : f32
+                    %kp = arith.fptosi %kp_f : f32 to i32
+                    %twos = arith.constant 2099202 : i32
+                    %wd = arith.subi %wfirst, %wq : i32
+                    %wd2 = arith.addi %wd, %twos : i32
+                    %ep = arith.subi %wd2, %kp : i32
+                    %seven = arith.constant 7 : i32
+                    %c56 = arith.constant 56 : i32
+                    %c448 = arith.constant 448 : i32
+                    %fourteen = arith.constant 14 : i32
+                    %sixteen_s = arith.constant 16 : i32
+                    %eqx = arith.andi %ep, %seven : i32
+                    %eqy0 = arith.shrui %ep, %seven : i32
+                    %eqy = arith.andi %eqy0, %c56 : i32
+                    %eqz0 = arith.shrui %ep, %fourteen : i32
+                    %eqz = arith.andi %eqz0, %c448 : i32
+                    %eq_xy = arith.ori %eqx, %eqy : i32
+                    %eq = arith.ori %eq_xy, %eqz : i32
+                    %eq16 = arith.shli %eq, %sixteen_s : i32
+                    %b3x = arith.ori %b3, %eq16 : i32
+                    scf.yield %b3x : i32
+                  } else {
+                    scf.yield %zero_i : i32
+                  }
+                  scf.yield %b3s : i32
+                } else {
+                  scf.yield %zero_i : i32
+                }
+              // The entries of the lanes that kept a candidate, in the order
+              // of the lanes.
+              %keep = arith.cmpi ne, %bits, %zero_i : i32
+              %kept = gpu.ballot %keep : i32
+              %before_bits = arith.andi %kept, %below : i32
+              %rank = math.ctpop %before_bits : i32
+              %slot = arith.addi %cs, %rank : i32
+              %n_kept = math.ctpop %kept : i32
+              %next = arith.addi %cs, %n_kept : i32
+              // The blocks of the slots of this round: the block of slot cs,
+              // new if cs begins one, and the next if the round runs into it.
+              // The first lane takes the new ones; the warp shares them.
+              %any = arith.cmpi ne, %n_kept, %zero_i : i32
+              %first_k = arith.shrui %cs, %c6i_w : i32
+              %last_slot = arith.subi %next, %one_i : i32
+              %last_k = arith.shrui %last_slot, %c6i_w : i32
+              %cs_mod = arith.andi %cs, %c63i_w : i32
+              %at_start = arith.cmpi eq, %cs_mod, %zero_i : i32
+              %need_a = arith.andi %any, %at_start : i1
+              %crosses = arith.cmpi ugt, %last_k, %first_k : i32
+              %need_b = arith.andi %any, %crosses : i1
+              %na = arith.extui %need_a : i1 to i32
+              %nb = arith.extui %need_b : i1 to i32
+              %taken = arith.addi %na, %nb : i32
+              %takes = arith.cmpi ne, %taken, %zero_i : i32
+              %lane_first = arith.cmpi eq, %lane32, %zero_i : i32
+              %allocates = arith.andi %takes, %lane_first : i1
+              %base0 = scf.if %allocates -> (i32) {
+                %bk_base = memref.extract_aligned_pointer_as_index %sizes_device : memref<3xi32, 1> -> index
+                %bk_bi = arith.index_cast %bk_base : index to i64
+                %bk_eight = arith.constant 8 : i64
+                %bk_addr = arith.addi %bk_bi, %bk_eight : i64
+                %bk_ptr = llvm.inttoptr %bk_addr : i64 to !llvm.ptr<1>
+                %base_new = llvm.atomicrmw add %bk_ptr, %taken syncscope("device") monotonic : !llvm.ptr<1>, i32
+                scf.yield %base_new : i32
+              } else {
+                scf.yield %zero_i : i32
+              }
+              %w32s = arith.constant 32 : i32
+              %taken_at, %taken_ok = gpu.shuffle idx %base0, %zero_i, %w32s : i32
+              %block_a = arith.select %need_a, %taken_at, %csb : i32
+              %taken_at1 = arith.addi %taken_at, %one_i : i32
+              %block_b = arith.select %need_a, %taken_at1, %taken_at : i32
+              %slot_k = arith.shrui %slot, %c6i_w : i32
+              %in_a = arith.cmpi eq, %slot_k, %first_k : i32
+              %slot_block = arith.select %in_a, %block_a, %block_b : i32
+              %slot_mod = arith.andi %slot, %c63i_w : i32
+              %slot_base = arith.shli %slot_block, %c6i_w : i32
+              %pos32 = arith.addi %slot_base, %slot_mod : i32
+              %slot_block_i = arith.index_cast %slot_block : i32 to index
+              %fits = arith.cmpi ult, %slot_block_i, %unit_capacity_w : index
+              %store = arith.andi %keep, %fits : i1
+              scf.if %store {
+                %pos = arith.index_cast %pos32 : i32 to index
+                memref.store %qv, %entries[%pos] : memref<?xi32, 1>
+                memref.store %bits, %masks[%pos] : memref<?xi32, 1>
+              }
+              // The first lane names the new blocks.
+              %name_a = arith.andi %need_a, %lane_first : i1
+              %a_i = arith.index_cast %block_a : i32 to index
+              %a_fits = arith.cmpi ult, %a_i, %unit_capacity_w : index
+              %write_a = arith.andi %name_a, %a_fits : i1
+              scf.if %write_a {
+                memref.store %g32_w, %units[%a_i] : memref<?xi32, 1>
+                memref.store %first_k, %ordinals[%a_i] : memref<?xi32, 1>
+              }
+              %name_b = arith.andi %need_b, %lane_first : i1
+              %b_i = arith.index_cast %block_b : i32 to index
+              %b_fits = arith.cmpi ult, %b_i, %unit_capacity_w : index
+              %write_b = arith.andi %name_b, %b_fits : i1
+              scf.if %write_b {
+                memref.store %g32_w, %units[%b_i] : memref<?xi32, 1>
+                memref.store %last_k, %ordinals[%b_i] : memref<?xi32, 1>
+              }
+              %next_block = arith.select %need_b, %block_b, %block_a : i32
+        scf.yield %next, %next_block : i32, i32
+      } else {
+        scf.yield %count_main, %block_main : i32, i32
       }
       %lane0 = arith.cmpi eq, %lane, %c0w : index
       scf.if %lane0 {

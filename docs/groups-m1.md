@@ -206,6 +206,11 @@ a group does not depend on the threads; the entries are written group by
 group, each group reserving its room with an atomic addition, and the loop
 takes the groups in any order.
 
+A lane tests its candidate against the box only; the candidates near it
+go to a queue of the warp, which takes them 32 at a time, a lane each,
+against the particles of the group (D99): tested where they lay, a third
+of the lanes worked.
+
 Trivial acceptance, which takes a candidate near the box for all the
 group without testing, was measured and dropped (Section 1).
 
