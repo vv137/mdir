@@ -104,6 +104,13 @@ private:
   LogicalResult convertFunction(func::FuncOp function);
   LogicalResult convertBlock(Block &block, Scope &scope);
   LogicalResult convertOp(Operation *op, Scope &scope, unsigned position);
+  /// Puts the table `table`, which the buffer of the host `buffer` holds,
+  /// where the loops that read it are: on the device, in f32 if the tables
+  /// are narrowed and no reciprocal sum reads it.
+  void placeTable(OpBuilder &builder, Location loc, Value table,
+                  Value buffer);
+  /// Computes the table of `op` on the host, entry by entry, and places it.
+  LogicalResult convertTabulate(TabulateOp op, Scope &scope);
 
   LogicalResult convertFor(scf::ForOp op, Scope &scope, unsigned position);
   LogicalResult convertYield(scf::YieldOp op, Scope &scope);
@@ -183,6 +190,8 @@ private:
   IRMapping mapping;
   /// Fields: the buffer that holds the field.
   llvm::DenseMap<Value, Value> buffers;
+  /// Tables: the buffer of the host that holds each.
+  llvm::DenseMap<Value, Value> hostTables;
   /// Neighbor structures: their storage.
   llvm::DenseMap<Value, Value> neighbors;
   /// Orders of the particles: the buffer that holds the order.
@@ -1084,74 +1093,137 @@ static LogicalResult checkStored(Operation *op, Type field, Type buffer) {
             "'md-exec-assign-precision' first";
 }
 
+void Assignment::placeTable(OpBuilder &builder, Location loc, Value table,
+                            Value buffer) {
+  if (!onDevice) {
+    mapping.map(table, buffer);
+    return;
+  }
+  auto host = cast<MemRefType>(buffer.getType());
+  SmallVector<Value, 2> sizes;
+  for (int64_t d = 0, e = host.getRank(); d != e; ++d)
+    sizes.push_back(memref::DimOp::create(
+        builder, loc, buffer,
+        arith::ConstantIndexOp::create(builder, loc, d)));
+  // Kernels that compute in f32 take the table in f32: a copy on the
+  // host, converted element by element, goes to the device.
+  // The factors of particle mesh Ewald stay in f64, as its kernels
+  // take them.
+  bool readByReciprocal = llvm::any_of(
+      table.getUsers(),
+      [](Operation *user) { return isa<ReciprocalOp>(user); });
+  if (narrowTables && host.getElementType().isF64() &&
+      !readByReciprocal) {
+    Type narrow = Float32Type::get(context);
+    auto copyType = MemRefType::get(host.getShape(), narrow);
+    Value copy =
+        memref::AllocOp::create(builder, loc, copyType, sizes);
+    Value zero = arith::ConstantIndexOp::create(builder, loc, 0);
+    Value one = arith::ConstantIndexOp::create(builder, loc, 1);
+    std::function<void(OpBuilder &, unsigned, SmallVector<Value, 2>)>
+        convert = [&](OpBuilder &b, unsigned d,
+                      SmallVector<Value, 2> indices) {
+          if (d == host.getRank()) {
+            Value value = memref::LoadOp::create(b, loc, buffer, indices);
+            Value narrowed =
+                arith::TruncFOp::create(b, loc, narrow, value);
+            memref::StoreOp::create(b, loc, narrowed, copy, indices);
+            return;
+          }
+          scf::ForOp::create(
+              b, loc, zero, sizes[d], one, ValueRange(),
+              [&](OpBuilder &inner, Location, Value i, ValueRange) {
+                SmallVector<Value, 2> next = indices;
+                next.push_back(i);
+                convert(inner, d + 1, next);
+                scf::YieldOp::create(inner, loc);
+              });
+        };
+    convert(builder, 0, {});
+    buffer = copy;
+    host = copyType;
+  }
+  MemRefType type = MemRefType::get(
+      host.getShape(), host.getElementType(), MemRefLayoutAttrInterface(),
+      IntegerAttr::get(IntegerType::get(context, 64), deviceSpace));
+  Value device =
+      gpu::AllocOp::create(builder, loc, type,
+                           /*asyncToken=*/Type(),
+                           /*asyncDependencies=*/ValueRange(), sizes,
+                           /*symbolOperands=*/ValueRange())
+          .getMemref();
+  createTransfer(builder, loc, device, buffer);
+  mapping.map(table, device);
+}
+
+LogicalResult Assignment::convertTabulate(TabulateOp op, Scope &scope) {
+  OpBuilder &builder = scope.builder;
+  Location loc = op.getLoc();
+  SmallVector<Value> inputs;
+  for (Value table : op.getTables()) {
+    Value buffer = hostTables.lookup(table);
+    if (!buffer)
+      return op.emitOpError()
+             << "a table that it comes from has no buffer on the host";
+    inputs.push_back(buffer);
+  }
+  // The new table has the shape of the first, on the host, in f64.
+  auto type = cast<MemRefType>(inputs.front().getType());
+  SmallVector<Value, 2> sizes;
+  for (int64_t d = 0, e = type.getRank(); d != e; ++d)
+    sizes.push_back(memref::DimOp::create(
+        builder, loc, inputs.front(),
+        arith::ConstantIndexOp::create(builder, loc, d)));
+  Value buffer = memref::AllocOp::create(
+      builder, loc,
+      MemRefType::get(type.getShape(), builder.getF64Type()), sizes);
+  Value zero = arith::ConstantIndexOp::create(builder, loc, 0);
+  Value one = arith::ConstantIndexOp::create(builder, loc, 1);
+  Block &kernel = op.getKernel().front();
+  std::function<void(OpBuilder &, unsigned, SmallVector<Value, 2>)> fill =
+      [&](OpBuilder &b, unsigned d, SmallVector<Value, 2> indices) {
+        if (d == type.getRank()) {
+          IRMapping values = mapping;
+          for (auto [argument, input] :
+               llvm::zip(kernel.getArguments(), inputs))
+            values.map(argument,
+                       memref::LoadOp::create(b, loc, input, indices));
+          for (Operation &nested : kernel.without_terminator())
+            b.clone(nested, values);
+          memref::StoreOp::create(
+              b, loc,
+              values.lookup(kernel.getTerminator()->getOperand(0)), buffer,
+              indices);
+          return;
+        }
+        scf::ForOp::create(
+            b, loc, zero, sizes[d], one, ValueRange(),
+            [&](OpBuilder &inner, Location, Value i, ValueRange) {
+              SmallVector<Value, 2> next = indices;
+              next.push_back(i);
+              fill(inner, d + 1, next);
+              scf::YieldOp::create(inner, loc);
+            });
+      };
+  fill(builder, 0, {});
+  hostTables[op.getResult()] = buffer;
+  placeTable(builder, loc, op.getResult(), buffer);
+  return success();
+}
+
 LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
                                     unsigned position) {
   OpBuilder &builder = scope.builder;
+
+  if (auto tabulate = dyn_cast<TabulateOp>(op))
+    return convertTabulate(tabulate, scope);
 
   if (auto from = dyn_cast<mdrt::FromBufferOp>(op)) {
     // A table is where the loops are that read it.
     if (isa<md::TableType>(from.getResult().getType())) {
       Value buffer = mapping.lookup(from.getBuffer());
-      if (!onDevice) {
-        mapping.map(from.getResult(), buffer);
-        return success();
-      }
-      auto host = cast<MemRefType>(buffer.getType());
-      Location loc = op->getLoc();
-      SmallVector<Value, 2> sizes;
-      for (int64_t d = 0, e = host.getRank(); d != e; ++d)
-        sizes.push_back(memref::DimOp::create(
-            builder, loc, buffer,
-            arith::ConstantIndexOp::create(builder, loc, d)));
-      // Kernels that compute in f32 take the table in f32: a copy on the
-      // host, converted element by element, goes to the device.
-      // The factors of particle mesh Ewald stay in f64, as its kernels
-      // take them.
-      bool readByReciprocal = llvm::any_of(
-          from.getResult().getUsers(),
-          [](Operation *user) { return isa<ReciprocalOp>(user); });
-      if (narrowTables && host.getElementType().isF64() &&
-          !readByReciprocal) {
-        Type narrow = Float32Type::get(context);
-        auto copyType = MemRefType::get(host.getShape(), narrow);
-        Value copy =
-            memref::AllocOp::create(builder, loc, copyType, sizes);
-        Value zero = arith::ConstantIndexOp::create(builder, loc, 0);
-        Value one = arith::ConstantIndexOp::create(builder, loc, 1);
-        std::function<void(OpBuilder &, unsigned, SmallVector<Value, 2>)>
-            convert = [&](OpBuilder &b, unsigned d,
-                          SmallVector<Value, 2> indices) {
-              if (d == host.getRank()) {
-                Value value = memref::LoadOp::create(b, loc, buffer, indices);
-                Value narrowed =
-                    arith::TruncFOp::create(b, loc, narrow, value);
-                memref::StoreOp::create(b, loc, narrowed, copy, indices);
-                return;
-              }
-              scf::ForOp::create(
-                  b, loc, zero, sizes[d], one, ValueRange(),
-                  [&](OpBuilder &inner, Location, Value i, ValueRange) {
-                    SmallVector<Value, 2> next = indices;
-                    next.push_back(i);
-                    convert(inner, d + 1, next);
-                    scf::YieldOp::create(inner, loc);
-                  });
-            };
-        convert(builder, 0, {});
-        buffer = copy;
-        host = copyType;
-      }
-      MemRefType type = MemRefType::get(
-          host.getShape(), host.getElementType(), MemRefLayoutAttrInterface(),
-          IntegerAttr::get(IntegerType::get(context, 64), deviceSpace));
-      Value device =
-          gpu::AllocOp::create(builder, op->getLoc(), type,
-                               /*asyncToken=*/Type(),
-                               /*asyncDependencies=*/ValueRange(), sizes,
-                               /*symbolOperands=*/ValueRange())
-              .getMemref();
-      createTransfer(builder, loc, device, buffer);
-      mapping.map(from.getResult(), device);
+      hostTables[from.getResult()] = buffer;
+      placeTable(builder, op->getLoc(), from.getResult(), buffer);
       return success();
     }
 

@@ -231,6 +231,42 @@ def SimplifyDistance
                            "::mlir::math::MathDialect"];
 }
 
+def FoldTables
+    : Pass<"md-exec-fold-tables", "::mlir::ModuleOp"> {
+  let summary = "Computes what a kernel derives from tables once per entry "
+                "of the tables";
+  let description = [{
+    A value of the kernel of a loop that depends only on tables, looked up
+    at the same indices, and on constants, such as 4 ε σ¹² of Lennard-Jones
+    from the tables of σ and ε of the pair of types, is the same for every
+    pair of particles of those types. The pass computes it once per entry,
+    into a new table (`md_exec.tabulate`), and the kernel looks it up
+    there: a load for the arithmetic of each pair of particles. The new
+    table is computed in f64, before `md-exec-assign-precision`, so a kernel
+    in f32 reads the value rounded once.
+
+    Only the values that the rest of the kernel uses are tabulated; a table
+    that serves two loops is made once. The pass runs on kernels in f64,
+    before the precision is assigned.
+
+    ```mlir
+    %s = md.lookup %sigma[%ti, %tj] : ... -> f64
+    %e = md.lookup %epsilon[%ti, %tj] : ... -> f64
+    %s2 = arith.mulf %s, %s : f64
+    ...
+    %a = arith.mulf %e, %s12 : f64
+    %force = arith.mulf %a, %r14 : f64
+    ```
+
+    ```mlir
+    %t = md_exec.tabulate (%sigma, %epsilon : ...) { ... } -> ...
+    ...
+    %a = md.lookup %t[%ti, %tj] : ... -> f64
+    %force = arith.mulf %a, %r14 : f64
+    ```
+  }];
+}
+
 def Approximate
     : Pass<"md-exec-approximate", "::mlir::ModuleOp"> {
   let summary = "Approximates divisions and erfc in the f32 kernels of "

@@ -622,11 +622,47 @@ def MDExec_JoinOp : MDExec_Op<"join"> {
 
 def MDExec_YieldOp : MDExec_Op<"yield", [
     Pure, Terminator, ReturnLike,
-    ParentOneOf<["PairForOp", "ParticleForOp", "TupleForOp"]>
+    ParentOneOf<["PairForOp", "ParticleForOp", "TabulateOp", "TupleForOp"]>
   ]> {
   let summary = "Yields the contributions of a kernel";
   let arguments = (ins Variadic<AnyType>:$values);
   let assemblyFormat = "attr-dict ($values^ `:` type($values))?";
+}
+
+def MDExec_TabulateOp : MDExec_Op<"tabulate", [
+    Pure, SingleBlock
+  ]> {
+  let summary = "A table computed entry by entry from other tables";
+  let description = [{
+    For every entry of the tables, which all have one rank and the same
+    number of types, the kernel takes the value of each table there and
+    yields the value of the new table. A kernel whose values depend on the
+    types of a pair through tables only computes them once per pair of
+    types this way (`md-exec-fold-tables`), not once per pair of
+    particles. The kernel computes in f64; the new table is symmetric if
+    every table it comes from is.
+
+    ```mlir
+    %a = md_exec.tabulate (%sigma, %epsilon : !md.table<2, f64, symmetric>,
+                                              !md.table<2, f64, symmetric>) {
+    ^bb0(%s: f64, %e: f64):
+      %s2 = arith.mulf %s, %s : f64
+      ...
+      md_exec.yield %a : f64
+    } -> !md.table<2, f64, symmetric>
+    ```
+
+    `md-exec-assign-storage` computes the table on the host, where the
+    tables it comes from are, and puts it where the loops that read it are.
+  }];
+  let arguments = (ins Variadic<MD_TableType>:$tables);
+  let results = (outs MD_TableType:$result);
+  let regions = (region SizedRegion<1>:$kernel);
+  let assemblyFormat = [{
+    `(` $tables `:` qualified(type($tables)) `)` $kernel attr-dict
+    `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
 }
 
 def MDExec_PairForOp : MDExec_Op<"pair_for", [

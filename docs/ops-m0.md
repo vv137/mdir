@@ -1131,7 +1131,7 @@ buffers. An op takes fields only or buffers only.
 | `md_exec.refresh_neighbors` | Rebuilds the structure where it is. The result is the structure that was given. |
 | `md_exec.reset_neighbors` | Storage form only. Makes the structure valid for no configuration. It stands where the value form has an empty structure inside a loop. |
 | `md_exec.join` | Storage form only. The op before it that is marked `md_exec.side` runs on a second stream beside the ops between the two, which must be independent of it; the ops after the join run after it (`md-exec-assign-streams`, D87). |
-| `md_exec.zeros`, `md_exec.empty`, `md_exec.build_cells`, `md_exec.build_neighbors` | Do not occur. A build is storage and a refresh with the policy `always`. |
+| `md_exec.zeros`, `md_exec.empty`, `md_exec.build_cells`, `md_exec.build_neighbors`, `md_exec.tabulate` | Do not occur. A table that `md_exec.tabulate` makes (`md-exec-fold-tables`, D91) is computed on the host, entry by entry, where its tables are, and is placed as they are. A build is storage and a refresh with the policy `always`. |
 
 The kernels are the same in both forms.
 

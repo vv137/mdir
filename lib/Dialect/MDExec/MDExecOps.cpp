@@ -729,6 +729,37 @@ void PairForOp::getEffects(
                  [&](unsigned index) { return !overwrites(index); });
 }
 
+LogicalResult TabulateOp::verify() {
+  if (getTables().empty())
+    return emitOpError() << "expected at least 1 table";
+  auto result = cast<md::TableType>(getResult().getType());
+  bool symmetric = true;
+  for (Value table : getTables()) {
+    auto type = cast<md::TableType>(table.getType());
+    if (type.getRank() != result.getRank())
+      return emitOpError() << "expected tables of rank " << result.getRank()
+                           << ", got " << type;
+    symmetric &= type.getSymmetric();
+  }
+  if (result.getSymmetric() && !symmetric)
+    return emitOpError()
+           << "the table is symmetric only if every table it comes from is";
+  if (!result.getElementType().isF64())
+    return emitOpError() << "expected a table of f64, got " << result;
+  Block &kernel = getKernel().front();
+  if (kernel.getNumArguments() != getTables().size())
+    return emitOpError() << "expected " << getTables().size()
+                         << " arguments of the kernel, one per table, got "
+                         << kernel.getNumArguments();
+  for (BlockArgument argument : kernel.getArguments())
+    if (!argument.getType().isF64())
+      return emitOpError() << "expected the arguments of the kernel in f64";
+  Operation *yield = kernel.getTerminator();
+  if (yield->getNumOperands() != 1 || !yield->getOperand(0).getType().isF64())
+    return emitOpError() << "expected the kernel to yield one f64";
+  return success();
+}
+
 mdir::md::Exchange PairForOp::getExchange(unsigned index) {
   std::optional<ArrayAttr> list = getExchange();
   if (!list || index >= list->size())

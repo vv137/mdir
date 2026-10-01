@@ -66,7 +66,7 @@ static std::string getPipeline(const Control &control,
      << "md-exec-fuse-loops,md-exec-accumulate-destinations,";
   if (control.fastMath)
     os << "md-exec-simplify-distance,";
-  os << "canonicalize,cse,";
+  os << "canonicalize,cse,md-exec-fold-tables,canonicalize,cse,";
 
   StringRef mode = control.precision == Precision::Single
                        ? "single"
