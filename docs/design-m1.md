@@ -1093,6 +1093,22 @@ against $417.2 \pm 1.0$ K (errors from ten blocks), differ by 1.8 and 1.6
 standard errors; the input, heating from 300 K as it relaxes, conserves
 its total energy to 1.0e-3 on the CPU and 7.7e-4 on the GPU.
 
+**The GPU against the CPU at 300 K** (2026-10-02,
+`scripts/validation/gpu-cpu/nvt.py`). The run above heats as it relaxes,
+and the means of a run that is not stationary are not comparable. The
+same system, equilibrated for 100 ps at 300 K and 1 atm on the GPU, then
+500 ps at constant volume on each in double precision (2 fs, SHAKE and
+SETTLE, the thermostat every 10 steps with a seed of its own, so that the
+two are independent), errors from samples spaced by their statistical
+inefficiency (65 and 133 independent samples of the potential energy):
+the mean potential energy −4763.3 ± 4.1 against −4759.2 ± 2.6 kcal/mol
+(−0.84 standard errors), its standard deviation 32.6 ± 2.9 against 30.1 ±
+1.9 (+0.72), the mean temperature 300.17 ± 0.72 against 301.03 ± 0.48 K
+(−1.00), the mean total energy −4055.5 ± 5.9 against −4049.4 ± 3.6
+(−0.88). The first run of this comparison, at the volume of tleap
+(about 0.6 g/cm³), relaxed over the whole 500 ps; its CPU run also
+found D117, a crash at the end of 275,000 steps.
+
 ## 16. Decisions
 
 | # | Question | Decision | Recorded as |

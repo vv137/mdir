@@ -231,13 +231,34 @@ at the end overflowed it. They are now allocated once (D117), and the
 stack of 100,000 steps stays at its size after the compilation
 (`hoist-allocas.mlir`).
 
-## 9.9 What is not yet verified
+## 9.9 The GPU against the CPU over long runs
 
-- The GPU against the CPU over long runs is a comparison of means: over
-  20 ps of the dipeptide in OPC in double precision the rows of the two
-  logs agree to every printed digit for 500 steps and then part as the
-  dynamics amplifies the rounding of sums in different orders (1.1
-  kcal/mol at 5 ps); the means of the potential energy and of the
-  temperature over the last 16 ps differ by 1.8 and 1.6 standard errors
-  (`scripts/validation/gpu-cpu`). A longer comparison, with errors from
-  the autocorrelation, is still to do.
+From one state the rows of the logs of the GPU and of the CPU agree to
+every printed digit for some hundreds of steps and then part, as the
+dynamics amplifies the rounding of sums added in different orders: over
+20 ps of the dipeptide in OPC in double precision, 500 steps of 1 fs, and
+1.1 kcal/mol apart at 5 ps (`scripts/validation/gpu-cpu/run.sh`). What
+must agree is then the distribution. The same system, equilibrated for
+100 ps at 300 K and 1 atm on the GPU, ran 500 ps at constant volume on
+each in double precision, 2 fs with SHAKE and SETTLE, stochastic velocity
+rescaling every 10 steps with a seed of its own
+(`scripts/validation/gpu-cpu/nvt.py`). With the errors of samples spaced
+by their statistical inefficiency (65 and 133 independent samples of the
+potential energy):
+
+*Table 9.3. The GPU against the CPU at 300 K, 500 ps each.*
+
+| Quantity | GPU | CPU | Difference |
+|---|---|---|---|
+| Mean potential energy, kcal/mol | $-4763.3 \pm 4.1$ | $-4759.2 \pm 2.6$ | $-0.84$ SE |
+| Its standard deviation, kcal/mol | $32.6 \pm 2.9$ | $30.1 \pm 1.9$ | $+0.72$ SE |
+| Mean temperature, K | $300.17 \pm 0.72$ | $301.03 \pm 0.48$ | $-1.00$ SE |
+| Mean total energy, kcal/mol | $-4055.5 \pm 5.9$ | $-4049.4 \pm 3.6$ | $-0.88$ SE |
+
+A first version of this comparison started from the file of tleap, whose
+water is at about 0.6 g/cm³; at constant volume it relaxed over the whole
+run, its potential energy fell by 26 to 30 kcal/mol from the first half to the
+second on both, and only 21 and 23 independent samples remained. A run with one
+seed for both shares the noise of the thermostat, and the errors above,
+which treat the two as independent, would overstate the error of their
+difference.
