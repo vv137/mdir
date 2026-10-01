@@ -58,8 +58,8 @@ paper describes the system that reaches it.
    constraints by giving each warp whole constraint groups, and
    asynchronous reads of flags that keep the device busy while the host
    decides.
-5. **Results** (Sections 9 and 10): agreement of the energy terms with
-   sander and GROMACS; conservation of energy over 2 ns of JAC better than
+5. **Results** (Sections 9 and 10): agreement of the energy terms and of
+   the force on every particle with sander and GROMACS; conservation of energy over 2 ns of JAC better than
    that of pmemd.cuda on the same input; and on an RTX 3090, a rate between 102%
    and 127% of pmemd.cuda's on every system of the Amber suite.
 

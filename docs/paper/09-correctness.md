@@ -9,7 +9,7 @@ in a decision. Where the log says that an energy "changed by" a fraction,
 it means $\lvert E_\text{last} - E_\text{first}\rvert/\lvert E_\text{first}\rvert$
 between the first and the last row, not the largest excursion.
 
-## 9.1 The terms against sander and GROMACS
+## 9.1 The terms and the forces against sander and GROMACS
 
 *Table 9.1. The energy terms at the start against other programs. MDIR
 uses the Coulomb constant of CODATA 2018 [[Tiesinga2021]](references.md#tiesinga2021), larger than
@@ -25,6 +25,26 @@ terms are multiplied by that factor before they are compared.*
 | Propane and water from a GROMACS topology, 224 particles, with macros, `#ifdef`, wildcards, and `nonbond_params` (`gromacs.test`) | GROMACS 2026.3 | Bonds, angles, dihedrals, both 1–4 terms, Lennard–Jones, and dispersion within $5\times10^{-6}$ relative, checked by a script at every run | `lit` |
 | The dipeptide from a topology converted to GROMACS format (`gromacs-dipeptide.test`) | MDIR's Amber reader | Eight terms within $2\times10^{-6}$ relative or $3\times10^{-4}$ kJ/mol | `lit` |
 | amber99sb-ildn, 99sb, 03, 14sb; 99sb-ildn with TIP4P-Ew; amber19sb (`scripts/validation/gromacs`) | GROMACS | Within $5\times10^{-6}$; amber19sb within $3\times10^{-6}$, its CMAP within $9\times10^{-7}$ | Recorded |
+| The dipeptide in TIP3P from its GROMACS topology, PME of the same $\beta$, grid, and order (`scripts/validation/forces`) | GROMACS 2026.3 | Reciprocal energy within $2.6\times10^{-6}$; the rest of the Coulomb energy within $1.1\times10^{-6}$ of its largest terms | Recorded |
+
+**Forces on every particle** (`scripts/validation/forces/run.sh`). MDIR in
+double precision writes the forces of the input coordinates into a
+checkpoint after one step of $10^{-9}$ ps from zero velocities; sander
+writes its own the same way, and GROMACS computes them again at the
+positions of MDIR. With sander's charges scaled to MDIR's Coulomb
+constant and its removal of the net force of PME turned off (`netfrc =
+0`), the differences, relative to the rms force, are:
+
+| System | Against | rms | Largest |
+|---|---|---|---|
+| Dipeptide in TIP3P, ff14SB, plain cutoff of 9 Å | sander | $2.0\times10^{-7}$ | $4.1\times10^{-6}$ |
+| Dipeptide in OPC, PME of the same $\beta$, grid, and order | sander | $1.3\times10^{-7}$ | $2.5\times10^{-6}$ |
+| Dipeptide in TIP3P from its GROMACS topology, the same PME | GROMACS, mixed precision | $6.2\times10^{-6}$ | $7.7\times10^{-5}$ |
+
+The first two are the rounding of sander's forces, which it writes in
+single precision; the third that of GROMACS in mixed precision (MDIR's
+own mixed mode differs from its double precision by $5\times10^{-6}$ on
+the same input).
 
 ## 9.2 Particle mesh Ewald against a direct Ewald sum
 
@@ -167,14 +187,14 @@ suite check that every number of the log is finite (`test/Scale`).
 
 ## 9.9 What is not yet verified
 
-- The forces against sander or GROMACS particle by particle; the terms of
-  the energy and the conservation of energy are compared, the forces only
-  through them.
-- The direct Coulomb sum and PME against GROMACS; GROMACS has no plain
-  cutoff to compare with, and the PME comparison has not been run.
 - The distributions that the thermostat and the barostat sample in a
   trajectory: the kinetic energy, the volume, and the density of water
   against reference values.
-- The GPU against the CPU over long runs: apart from the integration
-  kernel, the comparison is through the same values pinned in the tests
-  of both targets.
+- The GPU against the CPU over long runs is a comparison of means: over
+  20 ps of the dipeptide in OPC in double precision the rows of the two
+  logs agree to every printed digit for 500 steps and then part as the
+  dynamics amplifies the rounding of sums in different orders (1.1
+  kcal/mol at 5 ps); the means of the potential energy and of the
+  temperature over the last 16 ps differ by 1.8 and 1.6 standard errors
+  (`scripts/validation/gpu-cpu`). A longer comparison, with errors from
+  the autocorrelation, is still to do.

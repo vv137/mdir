@@ -894,6 +894,44 @@ does, is to be checked.
 Neither engine is installed on the development machine. Both are built
 into the home directory.
 
+**Forces on every particle** (2026-10-02, `scripts/validation/forces/run.sh`).
+MDIR in double precision on the CPU writes the forces of the input
+coordinates into a checkpoint after one step of $10^{-9}$ ps from zero
+velocities; sander writes its forces the same way (`ntwf`, in single
+precision), GROMACS by a rerun. For sander the charges of the topology
+that MDIR reads are scaled by $\sqrt{332.0522173/332.0637133}$, its
+Coulomb constant, and sander keeps the net force of particle mesh Ewald
+(`netfrc = 0`; by default it removes it, which shifted every force by
+the net force over the number of atoms, 3.5e-5 of the rms force). The
+differences, relative to the rms force:
+
+| System | Against | rms | Largest |
+|---|---|---|---|
+| Alanine dipeptide in TIP3P, ff14SB, a plain cutoff of 9 Å | sander | 2.0e-7 | 4.1e-6 |
+| Alanine dipeptide in OPC, particle mesh Ewald of the same β, grid, and order | sander | 1.25e-7 | 2.5e-6 |
+| The dipeptide in TIP3P from its topology of GROMACS, particle mesh Ewald of the same β, grid, and order | GROMACS 2026.3, mixed precision | 6.2e-6 | 7.7e-5 |
+
+The differences with sander are those of its forces in single precision.
+GROMACS computes again at the positions of MDIR after the step, which
+SETTLE moves: the waters of the `.gro`, rounded to 0.001 nm, are not
+rigid to 10⁻³ Å, and against the positions of the file the forces of the
+waters differed by 2.6e-4. Its reciprocal energy agrees to 2.6e-6, and the
+rest of its Coulomb energy to 1.1e-6 of its largest terms, the self
+energy and the excluded pairs, which cancel to 3%; MDIR in mixed
+precision on a device differs from MDIR in double precision by 5e-6
+(rms) on the same input.
+
+**The GPU against the CPU over 20 ps** (`scripts/validation/gpu-cpu/run.sh`).
+The dipeptide in OPC of `pme-settle.test`, 20,000 steps of 1 fs in double
+precision on each from the same state: the rows of the two logs agree to
+every printed digit for 500 steps, and then part as the dynamics amplifies
+the rounding of sums added in different orders, by 1.1 kcal/mol at 5 ps.
+Over the last 16 ps the mean potential energy, $-3807.9 \pm 2.5$ against
+$-3801.8 \pm 2.5$ kcal/mol, and the mean temperature, $419.6 \pm 1.0$
+against $417.2 \pm 1.0$ K (errors from ten blocks), differ by 1.8 and 1.6
+standard errors; the input, heating from 300 K as it relaxes, conserves
+its total energy to 1.0e-3 on the CPU and 7.7e-4 on the GPU.
+
 ## 16. Decisions
 
 | # | Question | Decision | Recorded as |
