@@ -1286,6 +1286,8 @@ checkpoint_interval = 50000     # steps between checkpoints
 [energy]
 cutoff            = 9.0         # of the direct terms (Å)
 pairlist_distance = 10.0        # reach of the neighbor structures (Å)
+# pruned_distance = 0           # reach of the inner list of a dual list,
+                                # pruned from the structure; needs GROUPS (Å)
 # rebuild_interval = 0          # 0: rebuild when a particle has moved half
                                 # the skin (default); N: every N steps, not
                                 # tested between; may miss pairs (opt-in)
@@ -1341,7 +1343,8 @@ time_constant = 2.0             # ps
 
 [constraints]
 hydrogen_bonds = true           # SHAKE and RATTLE on the bonds of hydrogen
-rigid_water    = true           # SETTLE on the waters
+rigid_water    = true           # rigid waters: SETTLE in DOUBLE,
+                                # M-SHAKE on their three distances below
 # water_residues = ["WAT"]      # names of the residues of rigid water
 
 [boundary]

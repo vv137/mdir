@@ -17,6 +17,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -330,7 +331,28 @@ def run(args):
         # The output of the commands; GROMACS writes its own log,
         # gromacs.log, where its rate is.
         log = os.path.join(target, f"{args.engine}.out")
-        if args.engine == "mdir":
+        if args.engine == "pmemd":
+            # The input of the suite as it is (mdin.GPU), in a directory of
+            # its own; the rate of all steps, from the timings at the end of
+            # the output of pmemd.
+            work = os.path.join(target, "pmemd")
+            os.makedirs(work, exist_ok=True)
+            source = os.path.join(args.work, "Amber24_Benchmark_Suite", "PME",
+                                  system["directory"])
+            for file in ("mdin.GPU", "prmtop", "inpcrd"):
+                shutil.copy(os.path.join(source, file), work)
+            with open(log, "w") as out:
+                _, shared = timed(
+                    [args.pmemd, "-O", "-i", "mdin.GPU", "-p", "prmtop", "-c",
+                     "inpcrd", "-o", "mdout", "-r", "restrt", "-x", "mdcrd",
+                     "-inf", "mdinfo"], work, out)
+            mdout = os.path.join(work, "mdout")
+            text = open(mdout).read() if os.path.exists(mdout) else ""
+            rates = re.findall(r"ns/day =\s+([0-9.]+)", text)
+            match = None
+            if rates:
+                match = re.match(r"(.*)", rates[-1])
+        elif args.engine == "mdir":
             control = write_mdir(name, system, target, skin=args.skin,
                                  neighbor_structure=args.neighbor_structure,
                                  barostat_work=args.barostat_work,
@@ -377,7 +399,7 @@ def run(args):
 def report(args):
     path = os.path.join(args.work, "results.json")
     results = json.load(open(path)) if os.path.exists(path) else {}
-    engines = [e for e in ("mdir", "gromacs") if e in results]
+    engines = [e for e in ("mdir", "gromacs", "pmemd") if e in results]
     print("| System | Atoms | " + " | ".join(engines) +
           " | pmemd.cuda (published) |")
     print("|---|---" + "|---" * len(engines) + "|---|")
@@ -410,7 +432,7 @@ def main():
     p.add_argument("--parmed-python", default="python3",
                    help="a Python that has ParmEd (AmberTools)")
     p = commands.add_parser("run")
-    p.add_argument("engine", choices=["mdir", "gromacs"])
+    p.add_argument("engine", choices=["mdir", "gromacs", "pmemd"])
     p.add_argument("systems", nargs="*", metavar="SYSTEM",
                    help="of " + ", ".join(SYSTEMS) + "; all by default")
     p.add_argument("--mdir", default="mdir")
@@ -428,6 +450,9 @@ def main():
                    help="how MDIR's barostat counts a scaling; its default "
                         "if absent")
     p.add_argument("--gmx", default="gmx")
+    p.add_argument("--pmemd", default="pmemd.cuda",
+                   help="pmemd.cuda of Amber, run on the input of the suite "
+                        "as it is")
     p.add_argument("--threads", type=int, default=8,
                    help="OpenMP threads of GROMACS")
     commands.add_parser("report")
