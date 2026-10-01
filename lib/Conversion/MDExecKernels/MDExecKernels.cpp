@@ -1182,9 +1182,16 @@ kernels::emitTuplesOnceWithSums(OpBuilder &builder, md_exec::TupleForOp op,
   return totals;
 }
 
+int64_t kernels::getIntegrationStride(const IntegrationRun &run) {
+  int64_t widest = 1;
+  for (md_exec::TupleForOp loop : run.loops)
+    widest = std::max<int64_t>(widest, loop.getArity());
+  return 32 - (widest - 1);
+}
+
 void kernels::emitIntegrationThread(
     OpBuilder &builder, const IntegrationRun &run, ArrayRef<Value> boxes,
-    ArrayRef<Value> inverses, Value thread, Value acrossList,
+    ArrayRef<Value> inverses, Value thread, Value span, Value acrossList,
     Value acrossCount, bool across,
     function_ref<void(OpBuilder &, Value, ArrayRef<Value>)> storeAfter) {
   md_exec::ParticleForOp before = run.before, after = run.after;
@@ -1347,13 +1354,15 @@ void kernels::emitIntegrationThread(
     Value inTuple, inWarp, useWarp, leaderLane, leadsAcross;
   };
   auto loadRows = [&](OpBuilder &b, Value particle, Value lane32,
-                      Value warpBase, Value warpEnd) {
+                      Value warpBase, Value warpEnd, Value valid) {
     SmallVector<Row> rows;
     for (auto [i, loop] : llvm::enumerate(loops)) {
       Row row;
       Value count = loadIndex(b, loc, loop.getIncidence(), particle, zero);
-      row.inTuple = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne,
-                                          count, zero);
+      row.inTuple = arith::AndIOp::create(
+          b, loc, valid,
+          arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne, count,
+                                zero));
       row.tuple = loadTuple(b, loop, loop.getIncidence(), particle, zero);
       Value inWarp;
       for (Value member : row.tuple.members) {
@@ -1386,31 +1395,29 @@ void kernels::emitIntegrationThread(
   };
 
   // The second kernel: the tuples that lie across warps, from the list
-  // the first kernel made. Their member at place 0 takes every member:
-  // the values of the loop before that the first kernel wrote, the tuple,
-  // and the loop after for each.
+  // the first kernel made, `span` threads in one block. Their member at
+  // place 0 takes every member: the values of the loop before that the
+  // first kernel wrote, the tuple, and the loop after for each. The block
+  // then clears the count for the next run.
   if (across) {
-    Value listed = arith::CmpIOp::create(
-        builder, loc, arith::CmpIPredicate::ult, thread,
-        arith::IndexCastOp::create(
-            builder, loc, builder.getIndexType(),
-            memref::LoadOp::create(builder, loc, acrossCount,
-                                   ValueRange{zero})));
-    scf::IfOp::create(builder, loc, listed, [&](OpBuilder &b, Location) {
+    Value count = arith::IndexCastOp::create(
+        builder, loc, builder.getIndexType(),
+        memref::LoadOp::create(builder, loc, acrossCount, ValueRange{zero}));
+    scf::ForOp::create(
+        builder, loc, thread, count, span, ValueRange(),
+        [&](OpBuilder &b, Location, Value entry, ValueRange) {
       Value particle = arith::IndexCastOp::create(
           b, loc, b.getIndexType(),
-          memref::LoadOp::create(b, loc, acrossList, ValueRange{thread}));
-      Value lane = arith::RemUIOp::create(b, loc, particle,
-                                          createIndex(b, loc, 32));
-      Value warpBase = arith::SubIOp::create(b, loc, particle, lane);
-      Value warpEnd =
-          arith::AddIOp::create(b, loc, warpBase, createIndex(b, loc, 32));
+          memref::LoadOp::create(b, loc, acrossList, ValueRange{entry}));
       SmallVector<Row> rows =
-          loadRows(b, particle, toI32(b, lane), warpBase, warpEnd);
+          loadRows(b, particle, toI32(b, zero), particle, particle, True(b));
       for (auto [i, loop] : llvm::enumerate(loops)) {
         Row &row = rows[i];
-        scf::IfOp::create(b, loc, row.leadsAcross, [&](OpBuilder &c,
-                                                       Location) {
+        Value leads = arith::AndIOp::create(
+            b, loc, row.inTuple,
+            arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq,
+                                  row.tuple.place, zero));
+        scf::IfOp::create(b, loc, leads, [&](OpBuilder &c, Location) {
           int64_t arity = loop.getArity();
           EvaluatedTuple evaluated = row.tuple;
           SmallVector<SmallVector<Value>, 4> values;
@@ -1454,20 +1461,93 @@ void kernels::emitIntegrationThread(
       }
       scf::YieldOp::create(b, loc);
     });
+    gpu::BarrierOp::create(builder, loc);
+    Value first = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq,
+                                        thread, zero);
+    scf::IfOp::create(builder, loc, first, [&](OpBuilder &b, Location) {
+      memref::StoreOp::create(
+          b, loc, arith::ConstantOp::create(b, loc, i32, b.getI32IntegerAttr(0)),
+          acrossCount, ValueRange{zero});
+      scf::YieldOp::create(b, loc);
+    });
     return;
   }
 
-  // The first kernel. Every thread: the loop before for its particle, in
-  // order.
-  Value particle = thread;
+  // The first kernel, over `span` particles. Warp w takes the particles
+  // from b(S w) to b(S (w + 1)), where S is 32 less the widest arity less
+  // one and b(n) is n moved up past the tuple that n is in if its members
+  // follow one another and n is not the first: a tuple whose members
+  // follow one another then lies in one warp, and a warp takes 32
+  // particles at most. The driver keeps the members of a group together
+  // (an order by anchors); the second kernel takes the other tuples that
+  // lie across warps.
+  Value c32 = createIndex(builder, loc, 32);
+  Value warp = arith::DivUIOp::create(builder, loc, thread, c32);
+  Value lane = arith::RemUIOp::create(builder, loc, thread, c32);
+  Value stride = createIndex(builder, loc, getIntegrationStride(run));
+  Value last = arith::SubIOp::create(builder, loc, span,
+                                     createIndex(builder, loc, 1));
+  auto boundary = [&](OpBuilder &b, Value n) -> Value {
+    Value inside =
+        arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult, n, span);
+    Value at = arith::SelectOp::create(b, loc, inside, n, last);
+    Value moved = at;
+    for (md_exec::TupleForOp loop : loops) {
+      Value count = loadIndex(b, loc, loop.getIncidence(), at, zero);
+      EvaluatedTuple tuple =
+          loadTuple(b, loop, loop.getIncidence(), at, zero);
+      Value low = tuple.members[0], high = tuple.members[0];
+      for (Value member : ArrayRef(tuple.members).drop_front()) {
+        low = arith::MinUIOp::create(b, loc, low, member);
+        high = arith::MaxUIOp::create(b, loc, high, member);
+      }
+      Value end = arith::AddIOp::create(b, loc, high,
+                                        createIndex(b, loc, 1));
+      Value together = arith::CmpIOp::create(
+          b, loc, arith::CmpIPredicate::eq,
+          arith::SubIOp::create(b, loc, end, low),
+          createIndex(b, loc, loop.getArity()));
+      Value straddles = arith::AndIOp::create(
+          b, loc,
+          arith::AndIOp::create(
+              b, loc,
+              arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne, count,
+                                    zero),
+              together),
+          arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult, low, at));
+      moved = arith::SelectOp::create(b, loc, straddles, end, moved);
+    }
+    return arith::SelectOp::create(b, loc, inside, moved, span);
+  };
+  Value warpBase =
+      boundary(builder, arith::MulIOp::create(builder, loc, warp, stride));
+  Value warpEnd = boundary(
+      builder,
+      arith::MulIOp::create(
+          builder, loc,
+          arith::AddIOp::create(builder, loc, warp,
+                                createIndex(builder, loc, 1)),
+          stride));
+  auto nonempty = scf::IfOp::create(
+      builder, loc,
+      arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ult, warpBase,
+                            warpEnd),
+      /*withElseRegion=*/false);
+  OpBuilder::InsertionGuard guard(builder);
+  builder.setInsertionPoint(nonempty.thenBlock()->getTerminator());
+
+  // Every lane: the loop before for its particle. A lane past the end of
+  // the particles of its warp takes the first one, takes part in the
+  // shuffles, and writes nothing.
+  Value candidate = arith::AddIOp::create(builder, loc, warpBase, lane);
+  Value valid = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ult,
+                                      candidate, warpEnd);
+  Value particle =
+      arith::SelectOp::create(builder, loc, valid, candidate, warpBase);
   SmallVector<Value> own = evalBefore(builder, particle);
-  Value lane = arith::RemUIOp::create(builder, loc, particle,
-                                      createIndex(builder, loc, 32));
   Value lane32 = toI32(builder, lane);
-  Value warpBase = arith::SubIOp::create(builder, loc, particle, lane);
-  Value warpEnd = arith::AddIOp::create(builder, loc, warpBase,
-                                        createIndex(builder, loc, 32));
-  SmallVector<Row> rows = loadRows(builder, particle, lane32, warpBase, warpEnd);
+  SmallVector<Row> rows =
+      loadRows(builder, particle, lane32, warpBase, warpEnd, valid);
 
   // The tuples whose members are in one warp: the member at place 0
   // gathers the values of every member from its lane, computes the
@@ -1698,7 +1778,10 @@ void kernels::emitIntegrationThread(
         scf::YieldOp::create(b, loc);
       },
       [&](OpBuilder &b, Location) {
-        evalAfter(b, particle, own, mine);
+        scf::IfOp::create(b, loc, valid, [&](OpBuilder &c, Location) {
+          evalAfter(c, particle, own, mine);
+          scf::YieldOp::create(c, loc);
+        });
         scf::YieldOp::create(b, loc);
       });
 }

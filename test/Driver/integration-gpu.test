@@ -1,0 +1,65 @@
+# The integration runs of a device (D110): the kick before the constraints,
+# the groups of SHAKE and SETTLE, and the loop after them in one kernel,
+# with a second for the groups whose members lie in two warps. Propane
+# with its hydrogens after its three carbons (Inputs/gromacs/scrambled.py)
+# has groups whose members do not follow one another, so the first kernel
+# cannot keep them in one warp, and some go to the second kernel. In
+# double precision and the deterministic mode, the run gives the energies
+# of the run with the three loops apart and of the CPU to the digits of
+# the log.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/gromacs/forcefield.itp %S/Inputs/gromacs/water.itp %t
+# RUN: %python %S/Inputs/gromacs/scrambled.py %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: sed 's|^target = "gpu"|target = "cpu"|' %t/run.toml > %t/cpu.toml
+# RUN: cd %t && mdir run run.toml > fused.log
+# RUN: cd %t && mdir emit run.toml --stage=pipeline \
+# RUN:     | sed 's|convert-md-exec-to-gpu{|convert-md-exec-to-gpu{fuse-integration=false |' > pipeline
+# RUN: FileCheck %s --check-prefix=PIPELINE < %t/pipeline
+# RUN: cd %t && sh -c 'MDIR_PIPELINE="$(cat pipeline)" mdir run run.toml' > apart.log
+# RUN: cd %t && mdir run cpu.toml > cpu.log
+# RUN: %python %S/Inputs/compare_logs.py %t/apart.log %t/fused.log 1e-9 | FileCheck %s
+# RUN: %python %S/Inputs/compare_logs.py %t/cpu.log %t/fused.log 1e-9 | FileCheck %s
+# RUN: FileCheck %s --check-prefix=FUSED < %t/fused.log
+
+# PIPELINE: convert-md-exec-to-gpu{fuse-integration=false
+# CHECK: logs agree
+# FUSED: MDIR: 855 particles, 200 steps of 0.002 ps
+# FUSED: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[2-9]}} of its value
+
+#--- run.toml
+[input]
+topology    = "scrambled.top"
+coordinates = "scrambled.gro"
+
+[output]
+energy_interval = 20
+
+[energy]
+cutoff            = 8.0
+pairlist_distance = 9.0
+electrostatics    = "PME"
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.002
+steps      = 200
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[constraints]
+hydrogen_bonds = true
+rigid_water    = true
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target = "gpu"
+deterministic = true
+#--- end

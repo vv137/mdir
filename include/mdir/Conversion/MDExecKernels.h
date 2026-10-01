@@ -165,6 +165,11 @@ struct IntegrationRun {
   llvm::SmallVector<llvm::SmallVector<bool, 2>, 4> keepOuts;
 };
 
+/// The particles that a warp of the first kernel of an integration run
+/// takes at most past the boundaries of the tuples: 32 less the widest
+/// arity less one.
+int64_t getIntegrationStride(const IntegrationRun &run);
+
 /// Emits what one thread of a kernel of an integration run (D110) does
 /// for `thread`: the loop before, the tuple of the particle if any (at
 /// most one over the loops, the sets being disjoint), and the loop after,
@@ -174,21 +179,24 @@ struct IntegrationRun {
 /// called for each particle whose values the thread writes, with the
 /// contributions of the loop after to its reductions, in their order.
 ///
-/// The run takes two kernels: the first (`across` false, a thread for
-/// each particle) handles the particles in no tuple and the tuples whose
-/// members lie in one warp, where the member at place 0 gathers the
-/// values of the loop before from the lanes of the members and the
-/// members take their values of the tuple from its lane, and lists in
-/// `acrossList` (counted in `acrossCount`, zero before) the members at
-/// place 0 of the tuples that lie across warps, whose members write their
-/// values of the loop before; the second (`across` true, a thread for
-/// each entry of the list) handles those tuples from those values. The
-/// list keeps those few in full warps: spread over the warps of the
-/// particles, they cost the latency of the tuple in each.
+/// The run takes two kernels. The first (`across` false, 32 threads for
+/// every `getIntegrationStride` of the `span` particles) handles the
+/// particles in no tuple and the tuples whose members lie in one warp,
+/// where the member at place 0 gathers the values of the loop before from
+/// the lanes of the members and the members take their values of the
+/// tuple from its lane; a warp takes whole tuples where their members
+/// follow one another. It lists in `acrossList` (counted in
+/// `acrossCount`, zero before) the members at place 0 of the other
+/// tuples that lie across warps, whose members write their values of the
+/// loop before. The second (`across` true, one block of `span` threads)
+/// handles those tuples from those values and clears the count. Spread
+/// over the warps of the first kernel, such tuples would hold each warp
+/// for the latency of a tuple.
 void emitIntegrationThread(
     mlir::OpBuilder &builder, const IntegrationRun &run,
     llvm::ArrayRef<mlir::Value> boxes, llvm::ArrayRef<mlir::Value> inverses,
-    mlir::Value thread, mlir::Value acrossList, mlir::Value acrossCount,
+    mlir::Value thread, mlir::Value span, mlir::Value acrossList,
+    mlir::Value acrossCount,
     bool across,
     llvm::function_ref<void(mlir::OpBuilder &, mlir::Value,
                             llvm::ArrayRef<mlir::Value>)>

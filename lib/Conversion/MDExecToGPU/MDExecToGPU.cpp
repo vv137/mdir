@@ -136,9 +136,11 @@ struct Flag {
 class Lowering {
 public:
   Lowering(ModuleOp module, int64_t blockSize, int64_t rowLanes,
-           bool fuseRows, bool deterministic, bool tuplesOnce)
+           bool fuseRows, bool fuseIntegration, bool deterministic,
+           bool tuplesOnce)
       : module(module), context(module.getContext()), blockSize(blockSize),
-        rowLanes(rowLanes), fuseRows(fuseRows), deterministic(deterministic),
+        rowLanes(rowLanes), fuseRows(fuseRows),
+        fuseIntegration(fuseIntegration), deterministic(deterministic),
         tuplesOnce(tuplesOnce) {}
 
   LogicalResult run();
@@ -315,6 +317,7 @@ private:
   int64_t rowLanes;
   /// Whether runs of loops over rows become one kernel (findRows).
   bool fuseRows;
+  bool fuseIntegration;
   /// Whether sums are added in an order that the threads do not decide
   /// (D84).
   bool deterministic;
@@ -881,7 +884,8 @@ void Lowering::findRows(func::FuncOp function) {
   // particles that it reads and one that reads it is an integration run,
   // one kernel with them (D110).
   auto finishDisjoint = [&](SmallVector<Operation *> &run) {
-    if (fuseRows && !run.empty() && recordIntegration(run))
+    if (fuseRows && fuseIntegration && !run.empty() &&
+        recordIntegration(run))
       run.clear();
     else
       finish(run);
@@ -1123,32 +1127,49 @@ LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &run) {
           }
   };
   // The particles in no tuple and the tuples within a warp, which list
-  // the tuples across warps; then those.
+  // the tuples across warps; then those. The count of the list is
+  // allocated once, where the function begins, and the second kernel
+  // leaves it zero.
   Type narrow = builder.getI32Type();
   Value acrossList = createDeviceBuffer(
       builder, loc, getDeviceType({ShapedType::kDynamic}, narrow),
       ValueRange{size});
-  Value acrossCount =
-      createDeviceBuffer(builder, loc, getDeviceType({1}, narrow), ValueRange());
-  launchOver(builder, loc, createIndex(builder, loc, 1),
-             [&](OpBuilder &body, Value) {
-               memref::StoreOp::create(
-                   body, loc,
-                   arith::ConstantOp::create(body, loc, narrow,
-                                             body.getI32IntegerAttr(0)),
-                   acrossCount, ValueRange{createIndex(body, loc, 0)});
-             });
-  for (bool across : {false, true})
-    launchOver(builder, loc, size, [&](OpBuilder &body, Value thread) {
-      kernels::emitIntegrationThread(body, run, boxes, inverses, thread,
-                                     acrossList, acrossCount, across,
-                                     storeAfter);
-    });
-  for (Value buffer : {acrossList, acrossCount}) {
-    auto type = cast<MemRefType>(buffer.getType());
+  Value acrossCount;
+  {
+    Block &entry = current.getBody().front();
+    OpBuilder atEntry(&entry, entry.begin());
+    acrossCount = createDeviceBuffer(atEntry, loc, getDeviceType({1}, narrow),
+                                     ValueRange());
+    launchOver(atEntry, loc, createIndex(atEntry, loc, 1),
+               [&](OpBuilder &body, Value) {
+                 memref::StoreOp::create(
+                     body, loc,
+                     arith::ConstantOp::create(body, loc, narrow,
+                                               body.getI32IntegerAttr(0)),
+                     acrossCount, ValueRange{createIndex(body, loc, 0)});
+               });
+  }
+  int64_t stride = kernels::getIntegrationStride(run);
+  Value warps = arith::CeilDivUIOp::create(builder, loc, size,
+                                           createIndex(builder, loc, stride));
+  Value slots = arith::MulIOp::create(builder, loc, warps,
+                                      createIndex(builder, loc, 32));
+  launchOver(builder, loc, slots, [&](OpBuilder &body, Value thread) {
+    kernels::emitIntegrationThread(body, run, boxes, inverses, thread, size,
+                                   acrossList, acrossCount, /*across=*/false,
+                                   storeAfter);
+  });
+  Value threads = createIndex(builder, loc, blockSize);
+  launchOver(builder, loc, threads, [&](OpBuilder &body, Value thread) {
+    kernels::emitIntegrationThread(body, run, boxes, inverses, thread,
+                                   threads, acrossList, acrossCount,
+                                   /*across=*/true, storeAfter);
+  });
+  {
+    auto type = cast<MemRefType>(acrossList.getType());
     Value plain = memref::MemorySpaceCastOp::create(
         builder, loc, MemRefType::get(type.getShape(), type.getElementType()),
-        buffer);
+        acrossList);
     gpu::DeallocOp::create(builder, loc, /*asyncToken=*/Type(),
                            /*asyncDependencies=*/ValueRange(), plain);
   }
@@ -3373,7 +3394,7 @@ public:
 
   void runOnOperation() final {
     Lowering lowering(getOperation(), blockSize, rowLanes, fuseRows,
-                      deterministic, tuplesOnce);
+                      fuseIntegration, deterministic, tuplesOnce);
     if (failed(lowering.run()))
       return signalPassFailure();
     // Products and sums in the kernels may become fused multiply-adds, as

@@ -113,6 +113,10 @@ def ConvertMDExecToGPU
     Option<"fuseRows", "fuse-rows", "bool", /*default=*/"true",
            "Whether consecutive loops over pairs and tuples of the same "
            "positions become one kernel">,
+    Option<"fuseIntegration", "fuse-integration", "bool", /*default=*/"true",
+           "Whether a loop over particles, the loops over the tuples of a "
+           "disjoint union that read it, and the loop over particles that "
+           "reads them become one kernel (D110)">,
     Option<"contract", "contract", "bool", /*default=*/"true",
            "Whether the arithmetic of the kernels may contract a product "
            "and a sum into a fused multiply-add, which rounds once "
