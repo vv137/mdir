@@ -144,6 +144,12 @@ private:
   bool usesTrotter() const {
     return control.barostat && control.barostatWork == BarostatWork::Trotter;
   }
+  /// Whether every step scales the cell (a period of one step): the
+  /// pressure is then that of the state that the step before left, which
+  /// the run keeps in `%trotter_memory` (D92).
+  bool scalesEveryStep() const {
+    return usesTrotter() && control.barostatPeriod == 1;
+  }
   /// The tuple sets of the virtual sites, those of Amber first.
   std::vector<const Program::TupleSet *> getSiteSets() const {
     std::vector<const Program::TupleSet *> sets;
@@ -270,9 +276,24 @@ struct Coupled {
   /// its drift (the Trotter type of D92): the strain from the pressure of
   /// the positions `positions` and the velocities `velocities` of the step
   /// before, whose virial has the trace `trace`.
+  /// `givenKinetic` and `givenGroups`, if given, are the kinetic energy
+  /// without the center of mass and the trace of the virial of the groups
+  /// (emitGroupTrace), computed before.
   TrotterScaling emitTrotterStrain(StringRef indent, StringRef positions,
                                    StringRef velocities, StringRef trace,
-                                   StringRef tag, StringRef step);
+                                   StringRef tag, StringRef step,
+                                   StringRef givenKinetic = "",
+                                   StringRef givenGroups = "");
+  TrotterScaling finishTrotterStrain(StringRef indent, StringRef groups,
+                                     StringRef tag);
+  /// The kinetic energy of `velocities` without that of the center of mass
+  /// if the run removes it.
+  std::string emitKineticWithoutCenter(StringRef indent, StringRef velocities,
+                                       StringRef masses, StringRef tag);
+  /// Stores the trace of the virial `trace`, that of the rigid groups
+  /// `groups`, and the kinetic energy `kinetic` in `%trotter_memory`.
+  void emitStoreTrotterState(StringRef indent, StringRef trace,
+                             StringRef groups, StringRef kinetic);
 
   /// The arguments that pass the fields of the parameters on: their
   /// declarations, their values, and their types, each after a comma.
@@ -2775,6 +2796,33 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
     auto emitTrotterSteps = [&](StringRef name) {
       std::string a = "j" + here, n = name.str();
       bool leapfrog = isLeapfrog();
+      if (scalesEveryStep()) {
+        // The pressure of the state that the step before left (D92).
+        std::string m = "%tm" + here;
+        for (int k = 0; k != 3; ++k)
+          os << inner << m << "_" << k << " = memref.load %trotter_memory"
+             << "[%c_edge" << k << "] : memref<3xf64>\n";
+        emitStep();
+        TrotterScaling scaling = emitTrotterStrain(
+            inner, "", "", m + "_0", here, "%step" + here, m + "_2",
+            m + "_1");
+        std::string outerScale = scaleName;
+        if (!scaling.scale.empty())
+          scaleName = scaling.scale;
+        os << inner << "%x" << n << ", %v" << n << ", %f" << n << ", %u"
+           << n << ", %w" << n << (leapfrog ? ", %vc" + n : "") << ", %kh"
+           << n << " = dyn.step @step_trotter(%x" << last << ", %v" << last
+           << ", %f" << last << ", " << massName << ", " << scaling.cell
+           << ", %dt, " << scaling.mu << getScaleValue()
+           << getFieldValues(fieldPrefix) << ")\n"
+           << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64, f64"
+           << getScaleType() << getFieldTypes()
+           << ") -> (!vec, !vec, !vec, f64, vector<9xf64>"
+           << (leapfrog ? ", !vec" : "") << ", f64)\n";
+        scaleName = outerScale;
+        scaling.kineticHalf = "%kh" + n;
+        return scaling;
+      }
       os << inner << getValues(a) << ", %u" << a << ", %w" << a
          << (leapfrog ? ", %vc" + a : "") << " = dyn.step @step_energy(%x"
          << last << ", %v" << last << ", %f" << last << ", " << massName
@@ -3145,19 +3193,36 @@ void Builder::emitStrain(StringRef indent, StringRef kinetic,
      << "_1, %bn" << t << "_2) : (f64, f64, f64) -> ()\n";
 }
 
-Builder::TrotterScaling Builder::emitTrotterStrain(StringRef indent,
-                                         StringRef positions,
-                                         StringRef velocities,
-                                         StringRef trace, StringRef tag,
-                                         StringRef step) {
+Builder::TrotterScaling Builder::emitTrotterStrain(
+    StringRef indent, StringRef positions, StringRef velocities,
+    StringRef trace, StringRef tag, StringRef step, StringRef givenKinetic,
+    StringRef givenGroups) {
   std::string t = tag.str();
   // The kinetic energy of the pressure: that of the velocities of the
   // step, without the center of mass.
+  std::string kinetic = givenKinetic.str();
+  if (kinetic.empty())
+    kinetic = emitKineticWithoutCenter(indent, velocities, massName, t);
+  emitStrain(indent, kinetic, trace, t, step);
+  std::string relations =
+      ("%r" + StringRef(fieldPrefix).drop_front(2)).str();
+  std::string groups = givenGroups.str();
+  if (groups.empty())
+    groups = emitGroupTrace(indent, trace, positions, velocities, cellName,
+                            massName, relations, "a" + t);
+  return finishTrotterStrain(indent, groups, t);
+}
+
+std::string Builder::emitKineticWithoutCenter(StringRef indent,
+                                              StringRef velocities,
+                                              StringRef masses,
+                                              StringRef tag) {
+  std::string t = tag.str();
   std::string kinetic = "%tk" + t;
-  emitKineticEnergy(os, kinetic, velocities, massName, indent);
+  emitKineticEnergy(os, kinetic, velocities, masses, indent);
   if (control.comPeriod > 0) {
     os << indent << "%tpc" << t << " = md.sum_particles gather("
-       << velocities << ", " << massName << " : !vec, !real) {\n"
+       << velocities << ", " << masses << " : !vec, !real) {\n"
        << indent << "^bb0(%v_i: vector<3xf64>, %m_i: f64):\n"
        << indent << "  %mb = vector.broadcast %m_i : f64 to vector<3xf64>\n"
        << indent << "  %p = arith.mulf %mb, %v_i : vector<3xf64>\n"
@@ -3175,12 +3240,24 @@ Builder::TrotterScaling Builder::emitTrotterStrain(StringRef indent,
        << t << " : f64\n";
     kinetic = "%tkt" + t;
   }
-  emitStrain(indent, kinetic, trace, t, step);
-  std::string relations =
-      ("%r" + StringRef(fieldPrefix).drop_front(2)).str();
-  std::string groups =
-      emitGroupTrace(indent, trace, positions, velocities, cellName,
-                     massName, relations, "a" + t);
+  return kinetic;
+}
+
+void Builder::emitStoreTrotterState(StringRef indent, StringRef trace,
+                                    StringRef groups, StringRef kinetic) {
+  StringRef values[] = {trace, groups, kinetic};
+  for (int k = 0; k != 3; ++k)
+    os << indent << "memref.store " << values[k]
+       << ", %trotter_memory[%c_edge" << k << "] : memref<3xf64>\n";
+  // The checkpoints keep it, so a run that continues takes the same.
+  os << indent << "func.call @mdrtSetBarostatState(" << trace << ", "
+     << groups << ", " << kinetic << ") : (f64, f64, f64) -> ()\n";
+}
+
+Builder::TrotterScaling Builder::finishTrotterStrain(StringRef indent,
+                                                     StringRef groups,
+                                                     StringRef tag) {
+  std::string t = tag.str();
   TrotterScaling scaling;
   scaling.mu = "%mu" + t;
   scaling.muinv = "%muinv" + t;
@@ -3289,6 +3366,11 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
       std::string after =
           emitGroupTrace(indent, trace, positions, velocities, cellName,
                          massName, relations, t);
+      // With a scaling every step, the state that the next one takes its
+      // pressure from: the kinetic energy after the thermostat.
+      if (scalesEveryStep())
+        emitStoreTrotterState(indent, trace, after,
+                              control.thermostat ? "%kn" + t : kinetic);
       os << indent << "%bwca" << t << " = arith.divf %baro_constant, "
          << trotter->newVolume << " : f64\n"
          << indent << "%bwb" << t << " = arith.addf " << after << ", %bwca"
@@ -3882,6 +3964,9 @@ void Builder::emitEntry() {
           "f64, f64) -> f64\n"
        << "func.func private @mdrtSetBox(f64, f64, f64)\n"
        << "    attributes {llvm.emit_c_interface}\n";
+  if (scalesEveryStep())
+    os << "func.func private @mdrtSetBarostatState(f64, f64, f64)\n"
+       << "    attributes {llvm.emit_c_interface}\n";
   if (control.checkpointPeriod > 0) {
     os << "func.func private @mdrtWriteCheckpoint(i64, memref<?x3x" << state
        << ">, memref<?x3x" << state << ">";
@@ -3929,7 +4014,7 @@ void Builder::emitEntry() {
       continue;
     // With the barostat of Trotter type, two steps (setSchedule).
     if (levels[i - 1].name == "couple")
-      steps += usesTrotter() ? 2 : 1;
+      steps += usesTrotter() && !scalesEveryStep() ? 2 : 1;
     else if (levels[i - 1].name == "energy")
       steps += levels[i].name == "couple" ? control.getCouplingPeriod() : 1;
   }
@@ -3942,6 +4027,11 @@ void Builder::emitEntry() {
   if (changesCell()) {
     // Where the barostat keeps the cell, on the host.
     os << "  %box_memory = memref.alloca() : memref<3xf64>\n";
+    // With a scaling every step, the trace of the virial, that of the
+    // rigid groups, and the kinetic energy without the center of mass of
+    // the state that the last step left (D92).
+    if (scalesEveryStep())
+      os << "  %trotter_memory = memref.alloca() : memref<3xf64>\n";
     for (int k = 0; k != 3; ++k)
       os << "  %c_edge" << k << " = arith.constant " << k << " : index\n"
          << "  memref.store %l" << "xyz"[k] << ", %box_memory[%c_edge" << k
@@ -4095,6 +4185,13 @@ void Builder::emitEntry() {
     os << "  call @mdrtWriteEnergies(%start, %u0, %k0, %g0, " << trace
        << ")\n"
        << "      : (i64, f64, f64, f64, f64) -> ()\n";
+    // The state that the first scaling takes its pressure from (D92).
+    if (scalesEveryStep())
+      emitStoreTrotterState(
+          "  ", trace,
+          emitGroupTrace("  ", trace, "%x0", velocities, "%cell", "%m",
+                         "%r_", "s0"),
+          emitKineticWithoutCenter("  ", velocities, "%m", "s0"));
 
     if (isLeapfrog()) {
       // v(-dt/2) = v(0) - (dt/2) F(0) / m.
@@ -4102,6 +4199,56 @@ void Builder::emitEntry() {
          << "  %behind = arith.mulf %back, %dt : f64\n"
          << "  %v0 = dyn.kick %vg, %f0, %m, %behind : !vec\n";
     }
+  }
+
+  if (isRestart() && scalesEveryStep() && !system.barostatState.empty()) {
+    // The state that the first scaling takes its pressure from, as the
+    // checkpoint keeps it (D92).
+    std::string names[3];
+    for (int k = 0; k != 3; ++k) {
+      names[k] = "%bstate" + std::to_string(k);
+      os << "  " << names[k] << " = arith.constant "
+         << formatReal(system.barostatState[k]) << " : f64\n";
+    }
+    emitStoreTrotterState("  ", names[0], names[1], names[2]);
+  } else if (isRestart() && scalesEveryStep()) {
+    // A checkpoint of a run that did not scale every step holds no virial:
+    // the state that the first scaling takes its pressure from is evaluated
+    // once (D92). With leapfrog the stored velocities are half a kick
+    // behind those of the time of the positions.
+    StringRef raw = hasSites() ? "e" : "";
+    std::string held = hasRestraints() ? "p" : "";
+    os << "  %ubs" << held << ", %fbs" << held << raw << ", %wbs" << held << raw
+       << " = md.evaluate @energy(%x0, %cell" << getFieldValues() << ")\n"
+       << "      request [energy, forces, virial]\n"
+       << "      : (!vec, !md.cell" << getFieldTypes()
+       << ") -> (f64, !vec, vector<9xf64>)\n";
+    std::string virial = "%wbs" + held;
+    if (hasSites())
+      virial = emitSpreadSites("  ", "%x0", "%fbs" + held + "e", "%fbs" + held,
+                               "%r_", "%wbs" + held + "e", "%wbs" + held);
+    if (hasRestraints()) {
+      emitRestraints("  ", "%x0", "%p_", "%fbsp", "%fbs", "%ubsp", "%ubs",
+                     virial, "%wbs");
+      virial = "%wbs";
+    }
+    std::string current = velocities;
+    if (isLeapfrog()) {
+      os << "  %ahead = arith.constant 5.0e-01 : f64\n"
+         << "  %ahead_dt = arith.mulf %ahead, %dt : f64\n"
+         << "  %vs_now = dyn.kick " << velocities
+         << ", %fbs, %m, %ahead_dt : !vec\n";
+      current = "%vs_now";
+    }
+    emitTrace(os, "%trs", virial, "  ");
+    std::string trace = "%trs";
+    if (hasConstraints())
+      trace = emitStartConstraintTrace("%x0", "%fbs", current, trace);
+    emitStoreTrotterState(
+        "  ", trace,
+        emitGroupTrace("  ", trace, "%x0", current, "%cell", "%m", "%r_",
+                       "s0"),
+        emitKineticWithoutCenter("  ", current, "%m", "s0"));
   }
 
   emitLevel(0, "  ");
@@ -4191,7 +4338,7 @@ void Builder::setSchedule() {
   // taken after its loop: the step whose pressure gives the strain, and
   // the step that scales the cell within its drift (D92).
   int64_t coupling = control.getCouplingPeriod();
-  int64_t taken = usesTrotter() ? 2 : 1;
+  int64_t taken = usesTrotter() && !scalesEveryStep() ? 2 : 1;
   if (energyPeriod > 0) {
     levels.push_back({"energy", steps / energyPeriod});
     steps = energyPeriod;

@@ -164,6 +164,11 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
 
 void _mlir_ciface_mdrtAddBath(double energy) { current->bath += energy; }
 
+void _mlir_ciface_mdrtSetBarostatState(double trace, double groups,
+                                       double kinetic) {
+  current->checkpoint.barostatState = {trace, groups, kinetic};
+}
+
 void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz) {
   Output &output = *current;
   output.box[0] = lx;

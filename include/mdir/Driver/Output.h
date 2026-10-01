@@ -177,6 +177,10 @@ void _mlir_ciface_mdrtWriteMinimization(int64_t step, double energy,
                                         void *ids);
 /// The cell after a barostat has changed it: its edges in nm.
 void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz);
+/// The state that the next scaling of a barostat that scales the cell every
+/// step takes its pressure from (D92), for the checkpoints.
+void _mlir_ciface_mdrtSetBarostatState(double trace, double groups,
+                                       double kinetic);
 void _mlir_ciface_mdrtWriteCheckpoint(int64_t step, void *positions,
                                       void *velocities, void *ids);
 void _mlir_ciface_mdrtWriteCheckpointWithForces(int64_t step,

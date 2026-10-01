@@ -48,6 +48,9 @@ struct System {
   /// Three numbers per particle.
   std::vector<double> positions;
   std::vector<double> velocities;
+  /// From a checkpoint: the state that the next scaling of a barostat that
+  /// scales the cell every step takes its pressure from (D92), or nothing.
+  std::vector<double> barostatState;
   /// The positions of the file of coordinates, which restraints hold the
   /// particles to; a checkpoint that the run begins from does not change
   /// them.

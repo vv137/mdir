@@ -356,6 +356,10 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
       writer.writeReal(mdir, "timestep", checkpoint.timestep);
       writer.writeAttribute(mdir, "seed", H5T_NATIVE_UINT64,
                             &checkpoint.seed);
+      if (!checkpoint.barostatState.empty())
+        writer.writeDataset(mdir, "barostat_state", H5T_NATIVE_DOUBLE,
+                            {checkpoint.barostatState.size()},
+                            checkpoint.barostatState.data(), "kJ mol-1");
     }
     failed = writer.hasFailed();
   }
@@ -416,6 +420,9 @@ mdir::driver::readCheckpoint(const std::string &path) {
                        checkpoint.timestep);
   reader.readAttribute("/parameters/mdir", "seed", H5T_NATIVE_UINT64,
                        checkpoint.seed);
+  if (reader.has("/parameters/mdir/barostat_state"))
+    reader.readDataset("/parameters/mdir/barostat_state", H5T_NATIVE_DOUBLE,
+                       3, checkpoint.barostatState);
 
   if (reader.hasFailed())
     return llvm::createStringError(llvm::inconvertibleErrorCode(),

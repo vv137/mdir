@@ -793,19 +793,6 @@ Error Reader::resolveCoupling() {
         "M1 the barostat acts when the thermostat does",
         path.str().c_str());
 
-  // The scaling of Trotter type is made in the step after the one whose
-  // pressure it takes, both in one period.
-  if (control.barostat && control.barostatWork == BarostatWork::Trotter &&
-      barostat < 2) {
-    if (control.barostatWorkGiven)
-      return llvm::createStringError(
-          llvm::inconvertibleErrorCode(),
-          "%s: 'work = \"TROTTER\"' in [barostat] needs an 'interval' of "
-          "2 steps or more",
-          path.str().c_str());
-    control.barostatWork = BarostatWork::Exact;
-  }
-
   // Coupling acts at the end of the step that completes a period, so the
   // periods of output and the number of steps are multiples of it.
   int64_t period = control.getCouplingPeriod();
@@ -893,7 +880,6 @@ Error Reader::readBarostat(const toml::table &table) {
            {"EXACT", BarostatWork::Exact},
            {"FIRST_ORDER", BarostatWork::FirstOrder}}))
     return error;
-  control.barostatWorkGiven = table.contains("work");
   int coupling = 0;
   if (Error error = readChoice<int>(table, "coupling", coupling,
                                     {{"ISOTROPIC", 0}, {"SEMI_ISOTROPIC", 1}}))

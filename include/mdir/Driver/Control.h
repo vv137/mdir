@@ -179,11 +179,8 @@ struct Control {
   /// and after it (the default); exactly, from the potential energy of the
   /// scaled positions, whose forces the next step then takes; or to first
   /// order in the strain from the virial, keeping the forces of the
-  /// positions before the scaling, as GROMACS does. A period of one step
-  /// takes the exact work unless the Trotter type is asked for, which needs
-  /// two.
+  /// positions before the scaling, as GROMACS does.
   BarostatWork barostatWork = BarostatWork::Trotter;
-  bool barostatWorkGiven = false;
   int64_t barostatPeriod = 0;
 
   /// The interval at which the velocities are coupled: the removal of the

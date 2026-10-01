@@ -19,6 +19,18 @@
 # RUN: FileCheck %s --check-prefix=LOG < %t/both.log
 # RUN: mdir checkpoint %t/whole.h5 %t/second.h5 | FileCheck %s
 # RUN: mdir emit %t/second.toml | FileCheck %s --check-prefix=GRID
+#
+# With the cell scaled every step (D92), the pressure of each scaling is
+# that of the state that the step before left, which the checkpoint keeps.
+#
+# RUN: sed -e 's|^interval = 10|interval = 1|' -e 's|whole.h5|whole1.h5|' %t/whole.toml > %t/whole1.toml
+# RUN: sed -e 's|^interval = 10|interval = 1|' -e 's|first.h5|first1.h5|' %t/first.toml > %t/first1.toml
+# RUN: sed -e 's|^interval = 10|interval = 1|' -e 's|first.h5|first1.h5|' -e 's|second.h5|second1.h5|' %t/second.toml > %t/second1.toml
+# RUN: mdir run %t/whole1.toml > %t/both1.log
+# RUN: mdir run %t/first1.toml
+# RUN: mdir run %t/second1.toml >> %t/both1.log
+# RUN: FileCheck %s --check-prefix=LOG < %t/both1.log
+# RUN: mdir checkpoint %t/whole1.h5 %t/second1.h5 | FileCheck %s
 
 # CHECK: the states are identical
 

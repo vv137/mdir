@@ -283,6 +283,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
 
     system->positions = checkpoint->positions;
     system->velocities = checkpoint->velocities;
+    system->barostatState = checkpoint->barostatState;
     forces = checkpoint->forces;
     firstStep = checkpoint->step;
     firstTime = checkpoint->time;
@@ -434,6 +435,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     add("_mlir_ciface_mdrtWriteTerms", (void *)&_mlir_ciface_mdrtWriteTerms);
     add("_mlir_ciface_mdrtAddBath", (void *)&_mlir_ciface_mdrtAddBath);
     add("_mlir_ciface_mdrtSetBox", (void *)&_mlir_ciface_mdrtSetBox);
+    add("_mlir_ciface_mdrtSetBarostatState",
+        (void *)&_mlir_ciface_mdrtSetBarostatState);
     add("_mlir_ciface_mdrtWriteMinimization",
         (void *)&_mlir_ciface_mdrtWriteMinimization);
     add("_mlir_ciface_mdrtFinish", (void *)&_mlir_ciface_mdrtFinish);

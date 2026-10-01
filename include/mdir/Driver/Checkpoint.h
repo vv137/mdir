@@ -44,6 +44,11 @@ struct Checkpoint {
   std::string precision;
   double timestep = 0.0;
   uint64_t seed = 0;
+  /// With a barostat that scales the cell every step (D92): the trace of
+  /// the virial, that of the rigid groups, and the kinetic energy without
+  /// the center of mass of the state, which the next scaling takes its
+  /// pressure from, in kJ/mol; empty otherwise.
+  std::vector<double> barostatState;
 };
 
 /// Returns true if the driver was built with the library that checkpoints
