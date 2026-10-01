@@ -669,13 +669,15 @@ def weights_kernels():
     scripts/experiments/neighbor-structures/spread.cu measured it: a kernel
     places each particle and computes its B-splines, a thread a particle,
     into arrays by component (component c of particle i at c n + i: the
-    first points along x, y, z as values, then the weights along x, y, z);
+    first points along x, y, z as values, then the weights along x, y, z,
+    then the fractions along x, y, z, which the gathering takes, D102);
     the charges are added with a warp a particle into a grid of bricks of
     4 x 4 points in x-y, z inside them, so that the points of a particle
     at one z are 16 consecutive values of at most 4 bricks; a kernel copies
     the bricks into the grid of the transform. The gathering computes its
     splines again: read from 27 arrays with their slopes, it took 155 to
-    158 us on Cellulose against 127 to 134 (2026-10-01)."""
+    158 us on Cellulose against 127 to 134 (2026-10-01); from the first
+    points and the fractions, see gather_weights."""
     # The weights.
     w = Body("      ")
     w("""\
@@ -695,6 +697,10 @@ def weights_kernels():
         start, frac = place(w, f"p{t}_", f"%{t}p", length, k, "%order")
         bspline(w, f"b{t}_", frac, "%order", f"%w{t}", None)
         w(f"""\
+%{t}fc = arith.constant {15 + axis} : index
+%{t}fn = arith.muli %n_all, %{t}fc : index
+%{t}fat = arith.addi %{t}fn, %i : index
+memref.store {frac}, %weights[%{t}fat] : memref<?x!pme_real, 1>
 %{t}start_i = arith.index_cast {start} : index to i32
 %{t}start_r = arith.sitofp %{t}start_i : i32 to !pme_real
 %{t}sn = arith.muli %n_all, %{t}c : index
@@ -1001,6 +1007,135 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
 """
 
 
+def gather_weights():
+    """The gathering of order 4 where the weights kernel has placed the
+    particles: the first points and the fractions are read from the
+    weights (components 0 to 2 and 15 to 17), the splines and their slopes
+    computed again in !pme_real, and the points of the grid numbered in
+    i32 (D102). The fractions are those that the spreading took, so the
+    forces are those of the same splines."""
+    body = Body("      ")
+    body("""\
+%lanes = arith.constant PME_LANES : index
+%i = arith.divui %item, %lanes : index
+%j3 = arith.remui %item, %lanes : index
+%i0 = arith.constant 0 : index
+%i1 = arith.constant 1 : index
+%i2 = arith.constant 2 : index
+%order = arith.constant 4 : index
+%wx = memref.alloca() : memref<8x!pme_real>
+%wy = memref.alloca() : memref<8x!pme_real>
+%wz = memref.alloca() : memref<8x!pme_real>
+%dx = memref.alloca() : memref<8x!pme_real>
+%dy = memref.alloca() : memref<8x!pme_real>
+%dz = memref.alloca() : memref<8x!pme_real>
+%qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
+%qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real""")
+    starts = []
+    for axis in range(3):
+        t = "xyz"[axis]
+        body(f"""\
+%{t}sc = arith.constant {axis} : index
+%{t}sn = arith.muli %count, %{t}sc : index
+%{t}sat = arith.addi %{t}sn, %i : index
+%{t}start_r = memref.load %weights[%{t}sat] : memref<?x!pme_real, 1>
+%{t}start = arith.fptosi %{t}start_r : !pme_real to i32
+%{t}fc = arith.constant {15 + axis} : index
+%{t}fn = arith.muli %count, %{t}fc : index
+%{t}fat = arith.addi %{t}fn, %i : index
+%{t}frac = memref.load %weights[%{t}fat] : memref<?x!pme_real, 1>""")
+        bspline(body, f"b{t}_", f"%{t}frac", "%order", f"%w{t}", f"%d{t}")
+        starts.append(f"%{t}start")
+    sx, sy, sz = starts
+    w3 = pick(body, "w3p_", "%wz", "%j3")
+    d3 = pick(body, "d3p_", "%dz", "%j3")
+    body(f"""\
+%gzero = arith.constant 0.0 : !pme_real
+%j0 = arith.constant 0 : index
+%j1c = arith.constant 1 : index
+%k1t = arith.index_cast %k1 : index to i32
+%k2t = arith.index_cast %k2 : index to i32
+%k3t = arith.index_cast %k3 : index to i32
+%j3t = arith.index_cast %j3 : index to i32
+%g3s = arith.addi {sz}, %j3t : i32
+%g3w = arith.subi %g3s, %k3t : i32
+%g3over = arith.cmpi uge, %g3s, %k3t : i32
+%g3 = arith.select %g3over, %g3w, %g3s : i32
+%sumx, %sumy, %sumz = scf.for %j1 = %j0 to %order step %j1c
+    iter_args(%ax = %gzero, %ay = %gzero, %az = %gzero) -> (!pme_real, !pme_real, !pme_real) {{
+  %j1t = arith.index_cast %j1 : index to i32
+  %g1s = arith.addi {sx}, %j1t : i32
+  %g1w = arith.subi %g1s, %k1t : i32
+  %g1over = arith.cmpi uge, %g1s, %k1t : i32
+  %g1 = arith.select %g1over, %g1w, %g1s : i32
+  %row1 = arith.muli %g1, %k2t : i32
+  %w1 = memref.load %wx[%j1] : memref<8x!pme_real>
+  %d1 = memref.load %dx[%j1] : memref<8x!pme_real>
+  %bx2, %by2, %bz2 = scf.for %j2 = %j0 to %order step %j1c
+      iter_args(%cx = %ax, %cy = %ay, %cz = %az) -> (!pme_real, !pme_real, !pme_real) {{
+    %j2t = arith.index_cast %j2 : index to i32
+    %g2s = arith.addi {sy}, %j2t : i32
+    %g2w = arith.subi %g2s, %k2t : i32
+    %g2over = arith.cmpi uge, %g2s, %k2t : i32
+    %g2 = arith.select %g2over, %g2w, %g2s : i32
+    %w2 = memref.load %wy[%j2] : memref<8x!pme_real>
+    %d2 = memref.load %dy[%j2] : memref<8x!pme_real>
+    %row = arith.addi %row1, %g2 : i32
+    %gbase = arith.muli %row, %k3t : i32
+    %at32 = arith.addi %gbase, %g3 : i32
+    %at = arith.index_cast %at32 : i32 to index
+    %p = memref.load %phi[%at] : memref<?x!pme_real, 1>
+    %d1w2 = arith.mulf %d1, %w2 : !pme_real
+    %w1d2 = arith.mulf %w1, %d2 : !pme_real
+    %w1w2 = arith.mulf %w1, %w2 : !pme_real
+    %px = arith.mulf %d1w2, {w3} : !pme_real
+    %py = arith.mulf %w1d2, {w3} : !pme_real
+    %pz = arith.mulf %w1w2, {d3} : !pme_real
+    %vx = arith.mulf %p, %px : !pme_real
+    %vy = arith.mulf %p, %py : !pme_real
+    %vz = arith.mulf %p, %pz : !pme_real
+    %nx = arith.addf %cx, %vx : !pme_real
+    %ny = arith.addf %cy, %vy : !pme_real
+    %nz = arith.addf %cz, %vz : !pme_real
+    scf.yield %nx, %ny, %nz : !pme_real, !pme_real, !pme_real
+  }}
+  scf.yield %bx2, %by2, %bz2 : !pme_real, !pme_real, !pme_real
+}}""")
+    return f"""
+// The forces from the weights of the particles, as @mdrt_gpu_pme_gather
+// gives them, of order 4: see gather_weights in the script.
+func.func private @mdrt_gpu_pme_gather_weights(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
+                                               %phi: memref<?x!pme_real, 1>, %box: vector<3xf64>,
+                                               %weights: memref<?x!pme_real, 1>,
+                                               %k1: index, %k2: index, %k3: index,
+                                               %f: memref<?x3x!pme_frc, 1>) {{
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c128 = arith.constant 128 : index
+  %lx = vector.extract %box[0] : f64 from vector<3xf64>
+  %ly = vector.extract %box[1] : f64 from vector<3xf64>
+  %lz = vector.extract %box[2] : f64 from vector<3xf64>
+  %k1i = arith.index_cast %k1 : index to i64
+  %k2i = arith.index_cast %k2 : index to i64
+  %k3i = arith.index_cast %k3 : index to i64
+  %k1f = arith.sitofp %k1i : i64 to f64
+  %k2f = arith.sitofp %k2i : i64 to f64
+  %k3f = arith.sitofp %k3i : i64 to f64
+  %rx = arith.divf %k1f, %lx : f64
+  %ry = arith.divf %k2f, %ly : f64
+  %rz = arith.divf %k3f, %lz : f64
+  %rxr = PME_F64_TO_REAL %rx : f64 to !pme_real
+  %ryr = PME_F64_TO_REAL %ry : f64 to !pme_real
+  %rzr = PME_F64_TO_REAL %rz : f64 to !pme_real
+  %count = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
+  %lanes_all = arith.constant PME_LANES : index
+  %points = arith.muli %count, %lanes_all : index
+  %last = arith.subi %count, %c1 : index
+{gather_launch(body.text())}  return
+}}
+"""
+
+
 def gather_launch(body_text):
     """The launch of the gather: every thread of a block takes part in the
     shuffles, so the threads beyond the last point compute for the last
@@ -1075,7 +1210,7 @@ def main():
     path = os.path.join(here, "..", "lib", "Runtime", "Templates", "PMEGPU.mlir")
     with open(path, "w") as file:
         file.write(HEADER + spread() + spread(fixed=False) + weights_kernels() + real() +
-                   convolve() + scale() + gather())
+                   convolve() + scale() + gather() + gather_weights())
 
 
 if __name__ == "__main__":

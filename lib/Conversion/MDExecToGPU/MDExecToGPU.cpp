@@ -1916,9 +1916,16 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                    k3});
   func::CallOp::create(builder, loc, backward,
                        ValueRange{complex, real, sizes[0], sizes[1], sizes[2]});
-  func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_gather"),
-                       ValueRange{positions, charges, real, box, k1, k2, k3,
-                                  order, forces});
+  // The gathering takes the places of the particles from the weights
+  // where it has them (D102).
+  if (usesWeights)
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_gather_weights"),
+                         ValueRange{positions, charges, real, box, weights,
+                                    k1, k2, k3, forces});
+  else
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_gather"),
+                         ValueRange{positions, charges, real, box, k1, k2, k3,
+                                    order, forces});
   if (side) {
     auto end = func::CallOp::create(
         builder, loc,
