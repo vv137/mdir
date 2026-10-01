@@ -1,0 +1,335 @@
+# 6. Dynamics
+
+A step is a program of the `dyn` dialect that the driver writes for the
+run (Section 3.1): kicks, drifts, the constraints and their projections,
+the placement of virtual sites, and one evaluation of the forces at its
+end. Couplings to a bath act between steps, at the end of a *period* of
+$N_T$ steps. Every derivation below is of what the generated code
+computes; $h = \Delta t/2$.
+
+## 6.1 Integrators
+
+**Velocity Verlet** [[Swope1982]](references.md#swope1982) with constraints, as written by
+`emitPrograms` in `lib/Driver/Builder.cpp`:
+
+$$
+\begin{aligned}
+\mathbf u &= \mathbf v_n + h\,\mathbf a_n, &
+\mathbf x' &= \mathbf x_n + \Delta t\,\mathbf u, &
+\mathbf x_{n+1} &= \mathcal C(\mathbf x'; \mathbf x_n),\\
+\mathbf v_{n+\frac12} &= \mathbf u + (\mathbf x_{n+1} - \mathbf x')/\Delta t, &
+\mathbf a_{n+1} &= \mathbf F(\mathbf x_{n+1})/m, &
+\mathbf v_{n+1} &= \mathcal P_{\mathbf x_{n+1}}\big(\mathbf v_{n+\frac12} + h\,\mathbf a_{n+1}\big),
+\end{aligned}
+$$
+
+where $\mathcal C$ solves the constraints on the positions from the
+unconstrained $\mathbf x'$, with the old configuration giving the
+directions of the corrections (Section 6.2), and $\mathcal P_\mathbf x$
+projects the velocities onto the tangent space of the constraints at
+$\mathbf x$ (RATTLE, [[Andersen1983]](references.md#andersen1983)). The term
+$(\mathbf x_{n+1} - \mathbf x')/\Delta t$ gives the velocity the change
+of the positions that the constraints made, so the velocity of the half
+step is consistent with the drift. Inside the step the order is: drift;
+the rigid waters; each set of SHAKE; the correction of the velocities;
+the placement of the virtual sites; the evaluation, with the spreading of
+the forces of the sites and the restraints; the half kick; and the
+projection, waters first. A particle without mass is a virtual site:
+`dyn.kick` leaves it alone.
+
+**Leapfrog** [[HockneyEastwood1988]](references.md#hockneyeastwood1988) stores $\mathbf v_{n-\frac12}$; its
+plain step is $\mathbf u = \mathbf v_{n-\frac12} + \Delta t\,\mathbf a_n$
+followed by the same drift, constraint, and correction, with no second
+kick. A step that needs the velocity at time $n$ (for the virial of the
+constraints, the log, or the barostat) computes
+$\mathbf u = \mathcal P_{\mathbf x_n}(\mathbf v_{n-\frac12} + h\mathbf
+a_n) + h\mathbf a_n$, the projected velocity of time $n$ kicked again,
+and continues as velocity Verlet; the two then give the same trajectory
+to rounding (`test/Driver/leapfrog-constraints.test` compares their logs
+to $10^{-7}$, D76). A run that starts leapfrog from velocities of time 0
+takes $\mathbf v_{-\frac12} = \mathbf v_0 - h\mathbf a_0$.
+
+**Precision.** In the mixed mode the positions, the velocities, and the
+loops over particles (the kicks, the drift, the correction) are f64; the
+kernels of the constraints compute in f32 on displacements taken in f64
+(Section 7.1). The kick, the drift, the constraints, and the correction
+are one kernel on a device (Section 8.2).
+
+## 6.2 Constraints
+
+The constraints are of two kinds: the bonds of hydrogen atoms in groups
+of SHAKE, a heavy atom 0 with one to three hydrogen atoms $k$, at lengths
+$d_k$; and rigid waters of three sites. Both sets are disjoint, and their
+union is an `md.disjoint_union` (Section 3.2).
+
+**Bonds by Newton's method** (M-SHAKE, [[Krautler2001]](references.md#krautler2001)). For a bond
+$l = (a, b)$ the correction moves $b$ by $+\lambda_l\mathbf s_l/m_b$ and $a$
+by $-\lambda_l\mathbf s_l/m_a$ along the old bond
+$\mathbf s_l = \mathbf x^n_b - \mathbf x^n_a$, which conserves the
+momentum of the group [[Ryckaert1977]](references.md#ryckaert1977). The new bond is
+
+$$
+\mathbf r_k(\boldsymbol\lambda) = \mathbf r'_k + \sum_l w_{kl}\,\lambda_l\,\mathbf s_l,
+$$
+
+with $\mathbf r'_k$ the bond of the unconstrained positions and $w_{kl}$
+what bond $l$ moves bond $k$ by per unit of $\lambda_l\mathbf s_l$: the
+inverse mass of each member that the two bonds share, with its sign. For
+a group of SHAKE, whose bonds all start at atom 0,
+$w_{kl} = \delta_{kl}/m_k + 1/m_0$. The constraints
+$g_k(\boldsymbol\lambda) = \lVert\mathbf r_k\rVert^2 - d_k^2 = 0$ are
+solved by Newton's method, each iteration solving the linearization at
+the current bonds exactly:
+
+$$
+\sum_l 2\,(\mathbf r_k\cdot\mathbf s_l)\,w_{kl}\;\delta\lambda_l = d_k^2 - \lVert\mathbf r_k\rVert^2 ,
+$$
+
+by Gaussian elimination of at most 3 × 3. The error squares with each
+iteration whatever the ratio of the masses; MDIR takes a fixed six
+iterations, with no test of convergence, so that the kernel has no
+divergent loop. The iteration of SHAKE by sweeps over the bonds converges
+at a rate set by $m_\text{H}/m_\text{X}$, which repartitioned masses of
+hydrogen make about $1/2$; with 12 sweeps steps of 4 fs were unstable
+(Section 12). The old bond is taken in the periodic image of the new
+one: with $\mathbf r^\text{mi}_l$ the new bond in the minimum image and
+$\mathbf n$ the stored positions,
+$\mathbf s_l = (\mathbf x^n_b - \mathbf x^n_a) + [\mathbf r^\text{mi}_l -
+(\mathbf n_b - \mathbf n_a)]$, so a group that straddles the boundary of
+the cell is solved in one image. The kernel carries the displacement of
+each member, starting from zero, rather than its position; Section 7.3
+explains why that matters in f32.
+
+**Rigid water.** In double precision, a water is solved by SETTLE
+[[Miyamoto1992]](references.md#miyamoto1992), in closed form: with $r_c = d_\text{HH}/2$, the height
+$h = (d_\text{OH}^2 - r_c^2)^{1/2}$, and the distances of O and of the
+hydrogens from the center of mass along it, $r_a = 2m_\text{H}h/(m_\text{O} +
+2m_\text{H})$ and $r_b = h - r_a$, the new positions follow from three
+rotations of the canonical triangle in a frame built from the old
+molecule and the new center of mass. Below double precision the same
+waters are solved by the Newton iteration above on their three
+distances, O–H₁, O–H₂, and H₁–H₂, with the full signed $3\times3$
+$w_{kl}$ (D112). Section 7.3 derives why: SETTLE computes absolute
+positions, whose rounding in f32 becomes, through
+$(\mathbf x_{n+1} - \mathbf x')/\Delta t$, a random error of the
+velocities that heats the system; M-SHAKE carries the change itself, whose
+rounding is relative to the change [[Jung2026]](references.md#jung2026).
+
+**Velocities.** After the second kick, the velocities of each group are
+projected so that every constrained distance has zero rate of change. For
+a group of SHAKE with unit bond vectors $\mathbf e_j$ at $\mathbf
+x_{n+1}$, the impulses $\tau_j$ along the bonds solve
+
+$$
+\sum_j A_{ij}\tau_j = -\mathbf e_i\cdot(\mathbf v_i - \mathbf v_0),
+\qquad
+A_{ij} = \frac{\delta_{ij}}{m_j} + \frac{\mathbf e_i\cdot\mathbf e_j}{m_0},
+$$
+
+and $\Delta\mathbf v_j = \tau_j\mathbf e_j/m_j$,
+$\Delta\mathbf v_0 = -\sum_j\tau_j\mathbf e_j/m_0$. For a water the three
+bonds O→H₁, O→H₂, H₁→H₂ give the same system with diagonal
+$1/m_\text{O} + 1/m_\text{H}$, $1/m_\text{O} + 1/m_\text{H}$, $2/m_\text{H}$
+and off-diagonal $\mathbf e_0\cdot\mathbf e_1/m_\text{O}$,
+$-\mathbf e_0\cdot\mathbf e_2/m_\text{H}$, $\mathbf e_1\cdot\mathbf
+e_2/m_\text{H}$, solved by Cramer's rule, in every precision.
+
+**The virial of the constraints.** In velocity Verlet the positions
+advance by $\tfrac{\Delta t^2}{2m}(\mathbf F + \mathbf G^\text{pos})$, so
+the move $\boldsymbol\Delta_j$ that the solver made is the effect of a
+force $\mathbf G^\text{pos}_j = 2m_j\boldsymbol\Delta_j/\Delta t^2$ over
+the first half of the step; likewise the projection is the effect of
+$\mathbf G^\text{vel}_j = 2m_j\Delta\mathbf v_j/\Delta t$ over the second
+half. The virial of the step is the mean of the two halves, each at the
+configuration where its force acts:
+
+$$
+\mathsf W_c = \tfrac12\Big[\sum_{j\ne 0}(\mathbf x^n_j - \mathbf x^n_0)\otimes\frac{2m_j\boldsymbol\Delta_j}{\Delta t^2}
++ \sum_{j\ne 0}(\mathbf x^{n+1}_j - \mathbf x^{n+1}_0)\otimes\frac{2m_j\Delta\mathbf v_j}{\Delta t}\Big].
+$$
+
+The forces of a group add to zero ($\sum_j m_j\boldsymbol\Delta_j = 0$),
+so the displacements may be taken from member 0, whose term vanishes. At
+the start, where no step has given the forces of the constraints, the log
+takes $\sum_k(\mathbf x_k - \mathbf x_0)\cdot\mathbf G^0_k - 2K_\text{int}$
+with $\mathbf G^0 = m\,\mathcal P(\mathbf F/m) - \mathbf F$, which keeps
+the accelerations on the constraints, and $K_\text{int}$ the kinetic
+energy of the motion within the group.
+
+**Degrees of freedom.** $N_f = 3N_{m>0} - N_c - 3$, with
+$N_c = 3N_\text{water} + \sum_\text{groups} n_\text{H}$; the three of the
+center of mass are always subtracted.
+
+## 6.3 The thermostat
+
+Velocity rescaling with a stochastic term [[Bussi2007]](references.md#bussi2007) acts at the end
+of each period of $N_T$ steps (10 by default). First the motion of the
+center of mass is removed, $\mathbf v_i \leftarrow \mathbf v_i - \mathbf
+V_\text{cm}$, and its kinetic energy $K_\text{cm}$ goes to the bath; then
+the kinetic energy $K_t$ of the remaining motion is rescaled. With
+$\bar K = \tfrac12 N_f k_BT_0$, $c = e^{-N_T\Delta t/\tau_T}$, a normal
+number $R_1$, and $S$ distributed as $\chi^2_{N_f-1}$,
+
+$$
+K' = K_t + (1 - c)\Big(\frac{\bar K(R_1^2 + S)}{N_f} - K_t\Big)
++ 2R_1\sqrt{\frac{c(1-c)\,K_t\bar K}{N_f}},
+\qquad
+\alpha = \sqrt{K'/K_t},
+$$
+
+which is the exact solution over the period of the stochastic
+differential equation of [[Bussi2007]](references.md#bussi2007) for $K$. $S$ is drawn as
+$2\,\Gamma(\tfrac{N_f-1}{2}, 1)$ by the method of [[Marsaglia2000]](references.md#marsaglia2000), so
+$N_f$ need not be an integer. One loop over particles applies
+$\mathbf v \leftarrow \alpha(\mathbf v - \mathbf V_\text{cm})$, and the
+bath takes $K_\text{cm} + (1 - \alpha^2)K_t$, which keeps the conserved
+energy, the total plus the bath, flat when the dynamics conserve the
+total. The velocity rescaled is that of time $n+1$ for velocity Verlet and
+for leapfrog with a barostat, and the stored $\mathbf v_{n+\frac12}$ for
+leapfrog alone. Without a thermostat the center of mass is removed only
+if `center_of_mass_interval` asks.
+
+## 6.4 The barostat
+
+Stochastic cell rescaling [[Bernetti2020]](references.md#bernetti2020) couples an isotropic cell to a
+pressure $P_0$ every $N_P$ steps; $N_P = N_T$, and a barostat requires the
+thermostat. The internal pressure for the strain is
+
+$$
+P = c\,\frac{2K_t + \operatorname{tr}\mathsf W + C/V}{3V},
+$$
+
+with $c = 16.6053906717$ bar nm³ mol/kJ, $K_t$ the kinetic energy of the
+step without the center of mass before the thermostat, $\mathsf W$ the
+virial with that of the constraints, and $C/V$ the virials of the
+dispersion correction and of the neutralizing background at the current
+volume (Section 5). With $\lambda = \sqrt V$, which makes the noise
+additive, and $f = \beta_T N_P\Delta t/\tau_P$ (compressibility $\beta_T$,
+time constant $\tau_P$), one step of Euler and Maruyama of eq. (S7) of
+[[Bernetti2020]](references.md#bernetti2020) is
+
+$$
+\lambda' = \lambda - \frac{f\lambda}{2}\Big(P_0 - P - \frac{k_BT\,c}{2V}\Big)
++ \sqrt{\frac{k_BT\,c\,f}{2}}\,R,
+\qquad
+\Delta\varepsilon = 2\ln\frac{\lambda'}{\lambda},\qquad \mu = e^{\Delta\varepsilon/3}.
+$$
+
+The edges of the cell are multiplied by $\mu$; a run stops if an edge
+falls below $2r_c$, where the minimum image would miss pairs.
+
+**Scaling.** A free particle moves to $\mu\mathbf x$; a water or a group
+of SHAKE moves with its center of mass, $\mathbf x_j \to \mu\mathbf X +
+(\mathbf x_j - \mathbf X)$, with $\mathbf X$ taken in the minimum image,
+since stretched bonds would be taken back by the next step's constraints
+with a change of the velocities that heats the system. Velocities are
+multiplied by $1/\mu$. The neighbor structures stay valid under the
+scaling if the test of Section 4.1 holds, so a change of the cell does not
+force a build (D80).
+
+**The work of a scaling.** The conserved energy must take away the energy
+a scaling gives the system. The default (`work = "TROTTER"`, D92) scales
+within the drift of the last step of a period, after eqs. (S12a–d) of
+[[Bernetti2020]](references.md#bernetti2020): the step kicks half, drifts half, scales the positions
+by $\mu$ and the velocities by $1/\mu$, drifts the other half,
+constrains, and evaluates in the new cell. The scaling changes the kinetic
+energy by $(\mu^{-2} - 1)K_{1/2}$, with $K_{1/2}$ that of the half-drifted
+velocities, and the potential energy by
+$\Delta U = -\int\mathcal W\,d\ln\mu$, which the trapezoid over the virials
+before and after gives to second order:
+
+$$
+\Delta E_\text{sys} = (\mu^{-2} - 1)K_{1/2} - \ln\mu\cdot\tfrac12(\mathcal W_b + \mathcal W_a),
+\qquad
+\mathcal W = \operatorname{tr}\mathsf W + 2K_\text{int} + C/V .
+$$
+
+$\mathcal W$ is the virial of groups that move as wholes,
+$\sum_g\mathbf X_g\cdot\mathbf F_g$ with $\mathbf F_g$ the total force on
+group $g$. It differs from the atomic virial with the constraints,
+$\sum_j\mathbf x_j\cdot\mathbf F_j$, by $-\sum_j(\mathbf x_j -
+\mathbf X)\cdot\mathbf F_j$ over each group. Since
+$\sum_j m_j(\mathbf x_j - \mathbf X) = 0$,
+
+$$
+\frac{d}{dt}\sum_j m_j(\mathbf x_j - \mathbf X)\cdot(\mathbf v_j - \mathbf V)
+= \sum_j m_j\lVert\mathbf v_j - \mathbf V\rVert^2 + \sum_j(\mathbf x_j - \mathbf X)\cdot\mathbf F_j ,
+$$
+
+and the left side is half the second derivative of the moment of
+inertia about the center, zero for a rigid group. So
+$-\sum_j(\mathbf x_j - \mathbf X)\cdot\mathbf F_j = 2K_\text{int}$, the
+term of $\mathcal W$. A water and a group of one bond are rigid; for a
+group of SHAKE with two or three hydrogens, whose angles bend, the
+identity is approximate. The virials before and after are those of the
+steps around the scaling, half a step from it, so the count is exact to
+second order in the strain but not in that offset, and the conserved
+energy drifts slowly, more with longer periods, as the effective energy
+of [[Bernetti2020]](references.md#bernetti2020) does (its Fig. 2c). Eqs. (S13a) and (S15) of that
+paper, which write the step as one formula, leave out the scaling of the
+positions and have $\Delta t$ for $\Delta t/2$; MDIR follows eqs.
+(S12a–d) (D92). Three other counts are available:
+`TROTTER_FIRST_ORDER` takes $\mathcal W_b$ alone and saves a virial;
+`EXACT` scales at the end of the period, evaluates $U$ at the scaled
+positions, and takes $U(\mathbf x') - U(\mathbf x) + (\mu^{-2} -
+1)\alpha^2K_t$, starting the next step from the forces it computed;
+`FIRST_ORDER`, as GROMACS does, takes $-(\mu - 1)\mathcal W + (\mu^{-2} -
+1)\alpha^2K_t$.
+
+**What the counts give.** On a Lennard–Jones mixture over 80 ps and five
+seeds at $\tau_P = 1$ ps, the conserved energy drifts per step by
+$(0.7\pm0.6)\times10^{-6}\,k_BT$ under the Trotter count at $N_P = 2$,
+$(3.6\pm2.4)\times10^{-6}$ at 10, and $(2.2\pm1.2)\times10^{-5}$ at 100;
+counted exactly, within $3\times10^{-7}$ of zero; counted to first order,
+about $4\times10^{-3}$ (D92). The first-order count leaves the second
+order of the change of the potential energy, whose mean over the noise is
+proportional to its variance and so to $f$: a drift that neither the step
+nor the period reduces, only $\tau_P$ (tri-alanine in 1218 OPC waters:
+2.13 kcal/mol/ps at $\tau_P$ = 2 ps, 0.52 at 8 ps, and 0.011 counted
+exactly, D77).
+
+**Schedule.** A period is $N_P - 2$ plain steps, a step that computes the
+virial (whose pressure gives $\mu$), and the Trotter step, followed by
+the removal of the motion of the center of mass and the thermostat. With
+$N_P = 1$ the pressure is that of the previous step, kept in memory and
+in checkpoints. Leapfrog with a barostat couples $\mathbf v_{n+1}$ and
+stores $\mathbf v' - h\mathbf a'$.
+
+## 6.5 What the log reports
+
+$K$ is the kinetic energy of $\mathbf v_{n+1}$. Without constraints the
+log corrects the estimates of the temperature and the pressure for the
+velocity of the integer step [[Jung2018]](references.md#jung2018) [[Jung2019]](references.md#jung2019): with
+$\epsilon = \tfrac{\Delta t^2}{8}\sum_i\lVert\mathbf F_i\rVert^2/m_i$,
+$K_T = K + \tfrac23\epsilon$ (the mean of $K_{n\pm\frac12}$ and $K_n$) and
+$K_P = K + \epsilon$. With constraints both are $K$. Then
+
+$$
+T = \frac{2K_T}{N_fk_B},
+\qquad
+P = \frac{2K_P + \operatorname{tr}\mathsf W}{3V},
+\qquad
+\mathsf W = \sum\mathbf d\otimes\mathbf K + \mathsf W_\text{tuples} + \mathsf W_\text{rec} + \mathsf W_c + \dots,
+$$
+
+with the sign of $\mathsf W$ that of $\sum_i\mathbf x_i\otimes\mathbf F_i$:
+positive for repulsion. $\mathsf W$ includes the virials of the
+constraints, of the virtual sites, of the restraints, of the dispersion
+correction ($6E_\text{disp}$), and of the neutralizing background
+($3E_Q$). The total energy is $U + K$; the conserved energy is the total
+plus what the bath has taken.
+
+## 6.6 Random numbers
+
+The thermostat and the barostat draw from Philox 4×32-10
+[[Salmon2011]](references.md#salmon2011), a counter-based generator, on the host: the key is the
+seed, the counter is (step, 0, stream ≪ 24 | block), with stream 0 for the
+thermostat and 1 for the barostat, and the step is that of the end of the
+period. A uniform number is $(\lfloor w/2^{11}\rfloor + \tfrac12)\,2^{-53}$
+from 64 bits $w$, and a normal number is the cosine branch of Box–Muller
+[[BoxMuller1958]](references.md#boxmuller1958). A draw depends only on the seed, the stream, and the
+step, so a run continued from a checkpoint draws what the uninterrupted
+run would have drawn, which makes restarts bitwise. Initial velocities
+are drawn from a Maxwell–Boltzmann distribution with xoshiro256**
+[[Blackman2021]](references.md#blackman2021), their components along the constraints and the motion
+of the center of mass removed, and scaled to $\tfrac12N_fk_BT$.

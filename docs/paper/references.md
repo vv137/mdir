@@ -1,0 +1,386 @@
+# References
+
+Each entry was checked against its DOI with `scripts/paper/verify-references.py`; entries without a DOI were checked against the page they link to.
+
+### Abraham2015
+
+M. J. Abraham, T. Murtola, R. Schulz, S. Páll, J. C. Smith, B. Hess,
+E. Lindahl, "GROMACS: High performance molecular simulations through
+multi-level parallelism from laptops to supercomputers," *SoftwareX*
+**1–2**, 19–25 (2015).
+[doi:10.1016/j.softx.2015.06.001](https://doi.org/10.1016/j.softx.2015.06.001)
+
+### AllenTildesley2017
+
+M. P. Allen, D. J. Tildesley, *Computer Simulation of Liquids*, 2nd ed.
+(Oxford University Press, Oxford, 2017).
+[doi:10.1093/oso/9780198803195.001.0001](https://doi.org/10.1093/oso/9780198803195.001.0001)
+
+### Andersen1983
+
+H. C. Andersen, "Rattle: A 'velocity' version of the shake algorithm for
+molecular dynamics calculations," *J. Comput. Phys.* **52**, 24–34 (1983).
+[doi:10.1016/0021-9991(83)90014-1](https://doi.org/10.1016/0021-9991(83)90014-1)
+
+### Anderson2020
+
+J. A. Anderson, J. Glaser, S. C. Glotzer, "HOOMD-blue: A Python package
+for high-performance molecular dynamics and hard particle Monte Carlo
+simulations," *Comput. Mater. Sci.* **173**, 109363 (2020).
+[doi:10.1016/j.commatsci.2019.109363](https://doi.org/10.1016/j.commatsci.2019.109363)
+
+### Ballenegger2012
+
+V. Ballenegger, J. J. Cerdà, C. Holm, "How to convert SPME to P3M:
+influence functions and error estimates," *J. Chem. Theory Comput.* **8**,
+936–947 (2012).
+[doi:10.1021/ct2001792](https://doi.org/10.1021/ct2001792)
+
+### Berendsen1984
+
+H. J. C. Berendsen, J. P. M. Postma, W. F. van Gunsteren, A. DiNola,
+J. R. Haak, "Molecular dynamics with coupling to an external bath,"
+*J. Chem. Phys.* **81**, 3684–3690 (1984).
+[doi:10.1063/1.448118](https://doi.org/10.1063/1.448118)
+
+### Bernetti2020
+
+M. Bernetti, G. Bussi, "Pressure control using stochastic cell
+rescaling," *J. Chem. Phys.* **153**, 114107 (2020).
+[doi:10.1063/5.0020514](https://doi.org/10.1063/5.0020514)
+
+### Blackman2021
+
+D. Blackman, S. Vigna, "Scrambled linear pseudorandom number generators,"
+*ACM Trans. Math. Softw.* **47**(4), 1–32 (2021).
+[doi:10.1145/3460772](https://doi.org/10.1145/3460772)
+
+### Blondel1996
+
+A. Blondel, M. Karplus, "New formulation for derivatives of torsion
+angles and improper torsion angles in molecular mechanics: Elimination of
+singularities," *J. Comput. Chem.* **17**, 1132–1141 (1996).
+[doi:10.1002/(SICI)1096-987X(19960715)17:9&lt;1132::AID-JCC5&gt;3.0.CO;2-T](https://doi.org/10.1002/(SICI)1096-987X(19960715)17:9%3C1132::AID-JCC5%3E3.0.CO;2-T)
+
+### BoxMuller1958
+
+G. E. P. Box, M. E. Muller, "A note on the generation of random normal
+deviates," *Ann. Math. Stat.* **29**, 610–611 (1958).
+[doi:10.1214/aoms/1177706645](https://doi.org/10.1214/aoms/1177706645)
+
+### Bussi2007
+
+G. Bussi, D. Donadio, M. Parrinello, "Canonical sampling through velocity
+rescaling," *J. Chem. Phys.* **126**, 014101 (2007).
+[doi:10.1063/1.2408420](https://doi.org/10.1063/1.2408420)
+
+### Darden1993
+
+T. Darden, D. York, L. Pedersen, "Particle mesh Ewald: An N⋅log(N)
+method for Ewald sums in large systems," *J. Chem. Phys.* **98**,
+10089–10092 (1993).
+[doi:10.1063/1.464397](https://doi.org/10.1063/1.464397)
+
+### deBuyl2014
+
+P. de Buyl, P. H. Colberg, F. Höfling, "H5MD: A structured, efficient, and
+portable file format for molecular data," *Comput. Phys. Commun.* **185**,
+1546–1553 (2014).
+[doi:10.1016/j.cpc.2014.01.018](https://doi.org/10.1016/j.cpc.2014.01.018)
+
+### Eastman2017
+
+P. Eastman, J. Swails, J. D. Chodera, et al., "OpenMM 7: Rapid
+development of high performance algorithms for molecular dynamics,"
+*PLoS Comput. Biol.* **13**, e1005659 (2017).
+[doi:10.1371/journal.pcbi.1005659](https://doi.org/10.1371/journal.pcbi.1005659)
+
+### Essmann1995
+
+U. Essmann, L. Perera, M. L. Berkowitz, T. Darden, H. Lee, L. G. Pedersen,
+"A smooth particle mesh Ewald method," *J. Chem. Phys.* **103**,
+8577–8593 (1995).
+[doi:10.1063/1.470117](https://doi.org/10.1063/1.470117)
+
+### Ewald1921
+
+P. P. Ewald, "Die Berechnung optischer und elektrostatischer
+Gitterpotentiale," *Ann. Phys.* **369**, 253–287 (1921).
+[doi:10.1002/andp.19213690304](https://doi.org/10.1002/andp.19213690304)
+
+### Gratl2022
+
+F. A. Gratl, S. Seckler, H.-J. Bungartz, P. Neumann, "N ways to simulate
+short-range particle systems: Automated algorithm selection with the
+node-level library AutoPas," *Comput. Phys. Commun.* **273**, 108262
+(2022).
+[doi:10.1016/j.cpc.2021.108262](https://doi.org/10.1016/j.cpc.2021.108262)
+
+### GromacsManual2025
+
+M. Abraham, A. Alekseenko, B. Andrews, et al., *GROMACS 2025.4 Manual*
+(Zenodo, 2025).
+[doi:10.5281/zenodo.17671776](https://doi.org/10.5281/zenodo.17671776)
+
+### HockneyEastwood1988
+
+R. W. Hockney, J. W. Eastwood, *Computer Simulation Using Particles*
+(IOP Publishing, Bristol, 1988).
+[doi:10.1887/0852743920](https://doi.org/10.1887/0852743920)
+
+### Hub2014
+
+J. S. Hub, B. L. de Groot, H. Grubmüller, G. Groenhof, "Quantifying
+artifacts in Ewald simulations of inhomogeneous systems with a net
+charge," *J. Chem. Theory Comput.* **10**, 381–390 (2014).
+[doi:10.1021/ct400626b](https://doi.org/10.1021/ct400626b)
+
+### Izadi2014
+
+S. Izadi, R. Anandakrishnan, A. V. Onufriev, "Building water models: A
+different approach," *J. Phys. Chem. Lett.* **5**, 3863–3871 (2014).
+[doi:10.1021/jz501780a](https://doi.org/10.1021/jz501780a)
+
+### Jung2018
+
+J. Jung, C. Kobayashi, Y. Sugita, "Kinetic energy definition in velocity
+Verlet integration for accurate pressure evaluation," *J. Chem. Phys.*
+**148**, 164109 (2018).
+[doi:10.1063/1.5008438](https://doi.org/10.1063/1.5008438)
+
+### Jung2019
+
+J. Jung, C. Kobayashi, Y. Sugita, "Optimal temperature evaluation in
+molecular dynamics simulations with a large time step," *J. Chem. Theory
+Comput.* **15**, 84–94 (2019).
+[doi:10.1021/acs.jctc.8b00874](https://doi.org/10.1021/acs.jctc.8b00874)
+
+### Jung2026
+
+J. Jung, D. Ugarte La Torre, C. Kobayashi, K. Ozaki, Y. Sugita,
+"Optimized M-SHAKE constraint implementations for GPU-accelerated
+molecular dynamics: Balancing precision and performance across
+architectures," *J. Comput. Chem.* **47**(25), e70492 (2026).
+[doi:10.1002/jcc.70492](https://doi.org/10.1002/jcc.70492)
+
+### Krautler2001
+
+V. Kräutler, W. F. van Gunsteren, P. H. Hünenberger, "A fast SHAKE
+algorithm to solve distance constraint equations for small molecules in
+molecular dynamics simulations," *J. Comput. Chem.* **22**(5), 501–508
+(2001).
+[doi:10.1002/1096-987X(20010415)22:5<501::AID-JCC1021>3.0.CO;2-V](https://doi.org/10.1002/1096-987X(20010415)22:5%3C501::AID-JCC1021%3E3.0.CO;2-V)
+
+### Lattner2021
+
+C. Lattner, M. Amini, U. Bondhugula, et al., "MLIR: Scaling compiler
+infrastructure for domain specific computation," in *2021 IEEE/ACM
+International Symposium on Code Generation and Optimization (CGO)*
+(IEEE, 2021), pp. 2–14.
+[doi:10.1109/CGO51591.2021.9370308](https://doi.org/10.1109/CGO51591.2021.9370308)
+
+### LeGrand2013
+
+S. Le Grand, A. W. Götz, R. C. Walker, "SPFP: Speed without
+compromise—A mixed precision model for GPU accelerated molecular dynamics
+simulations," *Comput. Phys. Commun.* **184**, 374–380 (2013).
+[doi:10.1016/j.cpc.2012.09.022](https://doi.org/10.1016/j.cpc.2012.09.022)
+
+### Louwerse2006
+
+M. J. Louwerse, E. J. Baerends, "Calculation of pressure in case of
+periodic boundary conditions," *Chem. Phys. Lett.* **421**, 138–141
+(2006).
+[doi:10.1016/j.cplett.2006.01.087](https://doi.org/10.1016/j.cplett.2006.01.087)
+
+### Maier2015
+
+J. A. Maier, C. Martinez, K. Kasavajhala, L. Wickstrom, K. E. Hauser,
+C. Simmerling, "ff14SB: Improving the accuracy of protein side chain and
+backbone parameters from ff99SB," *J. Chem. Theory Comput.* **11**,
+3696–3713 (2015).
+[doi:10.1021/acs.jctc.5b00255](https://doi.org/10.1021/acs.jctc.5b00255)
+
+### Marsaglia2000
+
+G. Marsaglia, W. W. Tsang, "A simple method for generating gamma
+variables," *ACM Trans. Math. Softw.* **26**, 363–372 (2000).
+[doi:10.1145/358407.358414](https://doi.org/10.1145/358407.358414)
+
+### Miyamoto1992
+
+S. Miyamoto, P. A. Kollman, "Settle: An analytical version of the SHAKE
+and RATTLE algorithm for rigid water models," *J. Comput. Chem.* **13**,
+952–962 (1992).
+[doi:10.1002/jcc.540130805](https://doi.org/10.1002/jcc.540130805)
+
+### Moses2020
+
+W. S. Moses, V. Churavy, "Instead of rewriting foreign code for machine
+learning, automatically synthesize fast gradients," in *Advances in
+Neural Information Processing Systems 33 (NeurIPS 2020)* (Curran
+Associates, 2020), pp. 12472–12485. No DOI;
+[proceedings page](https://proceedings.neurips.cc/paper_files/paper/2020/hash/9332c513ef44b682e9347822c2e457ac-Abstract.html).
+
+### Mudalige2012
+
+G. R. Mudalige, M. B. Giles, I. Reguly, C. Bertolli, P. H. J. Kelly,
+"OP2: An active library framework for solving unstructured mesh-based
+applications on multi-core and many-core architectures," in *2012
+Innovative Parallel Computing (InPar)* (IEEE, 2012), pp. 1–12.
+[doi:10.1109/InPar.2012.6339594](https://doi.org/10.1109/InPar.2012.6339594)
+
+### Musaelian2023
+
+A. Musaelian, S. Batzner, A. Johansson, et al., "Learning local
+equivariant representations for large-scale atomistic dynamics," *Nat.
+Commun.* **14**, 579 (2023).
+[doi:10.1038/s41467-023-36329-y](https://doi.org/10.1038/s41467-023-36329-y)
+
+### Pall2013
+
+S. Páll, B. Hess, "A flexible algorithm for calculating pair interactions
+on SIMD architectures," *Comput. Phys. Commun.* **184**, 2641–2650
+(2013).
+[doi:10.1016/j.cpc.2013.06.003](https://doi.org/10.1016/j.cpc.2013.06.003)
+
+### Pall2020
+
+S. Páll, A. Zhmurov, P. Bauer, et al., "Heterogeneous parallelization
+and acceleration of molecular dynamics simulations in GROMACS," *J. Chem.
+Phys.* **153**, 134110 (2020).
+[doi:10.1063/5.0018516](https://doi.org/10.1063/5.0018516)
+
+### Park2024
+
+Y. Park, J. Kim, S. Hwang, S. Han, "Scalable parallel algorithm for graph
+neural network interatomic potentials in molecular dynamics
+simulations," *J. Chem. Theory Comput.* **20**, 4857–4868 (2024).
+[doi:10.1021/acs.jctc.4c00190](https://doi.org/10.1021/acs.jctc.4c00190)
+
+### Quentrec1973
+
+B. Quentrec, C. Brot, "New method for searching for neighbors in
+molecular dynamics computations," *J. Comput. Phys.* **13**, 430–432
+(1973).
+[doi:10.1016/0021-9991(73)90046-6](https://doi.org/10.1016/0021-9991(73)90046-6)
+
+### Rathgeber2012
+
+F. Rathgeber, G. R. Markall, L. Mitchell, et al., "PyOP2: A high-level
+framework for performance-portable simulations on unstructured meshes,"
+in *2012 SC Companion: High Performance Computing, Networking Storage and
+Analysis* (IEEE, 2012), pp. 1116–1123.
+[doi:10.1109/SC.Companion.2012.134](https://doi.org/10.1109/SC.Companion.2012.134)
+
+### Reinecke2019
+
+M. Reinecke, "pocketfft," a library of fast Fourier transforms in C,
+Max-Planck-Society (2010–2019), under the 3-clause BSD license.
+[gitlab.mpcdf.mpg.de/mtr/pocketfft](https://gitlab.mpcdf.mpg.de/mtr/pocketfft)
+
+### Ryckaert1977
+
+J.-P. Ryckaert, G. Ciccotti, H. J. C. Berendsen, "Numerical integration
+of the cartesian equations of motion of a system with constraints:
+molecular dynamics of n-alkanes," *J. Comput. Phys.* **23**, 327–341
+(1977).
+[doi:10.1016/0021-9991(77)90098-5](https://doi.org/10.1016/0021-9991(77)90098-5)
+
+### Salmon2011
+
+J. K. Salmon, M. A. Moraes, R. O. Dror, D. E. Shaw, "Parallel random
+numbers: As easy as 1, 2, 3," in *Proceedings of 2011 International
+Conference for High Performance Computing, Networking, Storage and
+Analysis (SC '11)* (ACM, 2011), pp. 1–12.
+[doi:10.1145/2063384.2063405](https://doi.org/10.1145/2063384.2063405)
+
+### SalomonFerrer2013
+
+R. Salomon-Ferrer, A. W. Götz, D. Poole, S. Le Grand, R. C. Walker,
+"Routine microsecond molecular dynamics simulations with AMBER on GPUs.
+2. Explicit solvent particle mesh Ewald," *J. Chem. Theory Comput.* **9**,
+3878–3888 (2013).
+[doi:10.1021/ct400314y](https://doi.org/10.1021/ct400314y)
+
+### Saunders2018
+
+W. R. Saunders, J. Grant, E. H. Müller, "A domain specific language for
+performance portable molecular dynamics algorithms," *Comput. Phys.
+Commun.* **224**, 119–135 (2018).
+[doi:10.1016/j.cpc.2017.11.006](https://doi.org/10.1016/j.cpc.2017.11.006)
+
+### Schoenholz2020
+
+S. S. Schoenholz, E. D. Cubuk, "JAX MD: A framework for differentiable
+physics," in *Advances in Neural Information Processing Systems 33
+(NeurIPS 2020)* (Curran Associates, 2020), pp. 11428–11441. No DOI;
+[proceedings page](https://proceedings.neurips.cc/paper_files/paper/2020/hash/83d3d4b6c9579515e1679aca8cbc8033-Abstract.html).
+
+### Shirts2007
+
+M. R. Shirts, D. L. Mobley, J. D. Chodera, V. S. Pande, "Accurate and
+efficient corrections for missing dispersion interactions in molecular
+simulations," *J. Phys. Chem. B* **111**, 13052–13063 (2007).
+[doi:10.1021/jp0735987](https://doi.org/10.1021/jp0735987)
+
+### Slattery2022
+
+S. Slattery, S. T. Reeve, C. Junghans, et al., "Cabana: A performance
+portable library for particle-based simulations," *J. Open Source Softw.*
+**7**(72), 4115 (2022).
+[doi:10.21105/joss.04115](https://doi.org/10.21105/joss.04115)
+
+### Steinbach1994
+
+P. J. Steinbach, B. R. Brooks, "New spherical-cutoff methods for
+long-range forces in macromolecular simulation," *J. Comput. Chem.* **15**,
+667–683 (1994).
+[doi:10.1002/jcc.540150702](https://doi.org/10.1002/jcc.540150702)
+
+### Swope1982
+
+W. C. Swope, H. C. Andersen, P. H. Berens, K. R. Wilson, "A computer
+simulation method for the calculation of equilibrium constants for the
+formation of physical clusters of molecules: Application to small water
+clusters," *J. Chem. Phys.* **76**, 637–649 (1982).
+[doi:10.1063/1.442716](https://doi.org/10.1063/1.442716)
+
+### Thompson2009
+
+A. P. Thompson, S. J. Plimpton, W. Mattson, "General formulation of
+pressure and stress tensor for arbitrary many-body interaction potentials
+under periodic boundary conditions," *J. Chem. Phys.* **131**, 154107
+(2009).
+[doi:10.1063/1.3245303](https://doi.org/10.1063/1.3245303)
+
+### Thompson2022
+
+A. P. Thompson, H. M. Aktulga, R. Berger, et al., "LAMMPS - a flexible
+simulation tool for particle-based materials modeling at the atomic,
+meso, and continuum scales," *Comput. Phys. Commun.* **271**, 108171
+(2022).
+[doi:10.1016/j.cpc.2021.108171](https://doi.org/10.1016/j.cpc.2021.108171)
+
+### Tian2020
+
+C. Tian, K. Kasavajhala, K. A. A. Belfon, L. Raguette, H. Huang,
+A. N. Migues, J. Bickel, Y. Wang, J. Pincay, Q. Wu, C. Simmerling, "ff19SB:
+Amino-acid-specific protein backbone parameters trained against quantum
+mechanics energy surfaces in solution," *J. Chem. Theory Comput.* **16**,
+528–552 (2020).
+[doi:10.1021/acs.jctc.9b00591](https://doi.org/10.1021/acs.jctc.9b00591)
+
+### Tiesinga2021
+
+E. Tiesinga, P. J. Mohr, D. B. Newell, B. N. Taylor, "CODATA recommended
+values of the fundamental physical constants: 2018," *Rev. Mod. Phys.*
+**93**, 025010 (2021).
+[doi:10.1103/RevModPhys.93.025010](https://doi.org/10.1103/RevModPhys.93.025010)
+
+### Verlet1967
+
+L. Verlet, "Computer 'experiments' on classical fluids. I.
+Thermodynamical properties of Lennard-Jones molecules," *Phys. Rev.*
+**159**, 98–103 (1967).
+[doi:10.1103/PhysRev.159.98](https://doi.org/10.1103/PhysRev.159.98)
