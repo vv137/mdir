@@ -36,9 +36,12 @@
 // fixed room for each group.
 //
 // On return, `sizes` (on the host) holds the number of places, the largest
-// number of entries of a group, and the number of blocks. A number beyond
-// the capacity of its buffer means that the structure is not complete; the
-// caller makes more room and builds again.
+// number of entries of a group, the number of blocks, the number of groups
+// whose partners of excluded pairs did not fit the memory of a warp (D106),
+// and the number of positions that are not numbers, which get no place
+// (D107). A number of places or blocks beyond the capacity of its buffer
+// means that the structure is not complete; the caller makes more room and
+// builds again.
 //
 // A kernel runs in blocks of 128 threads, a thread or a warp an item. The
 // buffers are on the device; positions are in the cell `box`, orthorhombic
@@ -90,7 +93,7 @@ func.func private @mdrt_gpu_build_neighbors_groups(
     %place_of: memref<?xi32, 1>, %entries: memref<?xi32, 1>,
     %masks: memref<?xi32, 1>, %counts: memref<?xi32, 1>,
     %units: memref<?xi32, 1>, %ordinals: memref<?xi32, 1>,
-    %shift: memref<?xi32, 1>, %sizes: memref<3xi32>) {
+    %shift: memref<?xi32, 1>, %sizes: memref<5xi32>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %block = arith.constant 128 : index
@@ -194,7 +197,7 @@ func.func private @mdrt_gpu_build_neighbors_groups(
   %chunk_base = gpu.alloc (%columns1) : memref<?xi32, 1>
   %column_chunks = gpu.alloc (%columns) : memref<?xi32, 1>
   %grid_of_columns = func.call @mdrt_gpu_groups_grid(%columns, %block) : (index, index) -> index
-  %sizes_device = gpu.alloc () : memref<3xi32, 1>
+  %sizes_device = gpu.alloc () : memref<5xi32, 1>
   %xp = gpu.alloc (%capacity) : memref<?x4xf32, 1>
   %gkey = gpu.alloc (%capacity) : memref<?xi32, 1>
   %gcount = gpu.alloc (%gcells) : memref<?xi32, 1>
@@ -227,6 +230,17 @@ func.func private @mdrt_gpu_build_neighbors_groups(
       %v = arith.constant -1 : i32
       memref.store %v, %order[%item] : memref<?xi32, 1>
     }
+    gpu.terminator
+  }
+  // The counts of the positions that are not numbers (D107) and of the
+  // groups with too many excluded partners (D106), from zero.
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
+    %z_none = arith.constant 0 : i32
+    %z_i3 = arith.constant 3 : index
+    %z_i4 = arith.constant 4 : index
+    memref.store %z_none, %sizes_device[%z_i3] : memref<5xi32, 1>
+    memref.store %z_none, %sizes_device[%z_i4] : memref<5xi32, 1>
     gpu.terminator
   }
   // The key of each particle, and its position wrapped into the cell.
@@ -288,7 +302,27 @@ func.func private @mdrt_gpu_build_neighbors_groups(
       %col_z = arith.muli %column, %nzb : index
       %k = arith.addi %col_z, %kz : index
       %k32 = arith.index_cast %k : index to i32
-      memref.store %k32, %key[%item] : memref<?xi32, 1>
+      // A position that is not a number, or is beyond any cell, has no key and
+      // no place, so that the build completes, and is counted in the fifth size:
+      // the run stops after the build (D107).
+      %sum_xy = arith.addf %xi, %yi : f64
+      %sum_xyz = arith.addf %sum_xy, %zi : f64
+      %not_number = arith.cmpf uno, %sum_xyz, %sum_xyz : f64
+      %magnitude = math.absf %sum_xyz : f64
+      %far_off = arith.constant 1.0e100 : f64
+      %huge = arith.cmpf ogt, %magnitude, %far_off : f64
+      %bad = arith.ori %not_number, %huge : i1
+      scf.if %bad {
+        %no_key = arith.constant -1 : i32
+        memref.store %no_key, %key[%item] : memref<?xi32, 1>
+        %nn_base = memref.extract_aligned_pointer_as_index %sizes_device : memref<5xi32, 1> -> index
+        %nn_bi = arith.index_cast %nn_base : index to i64
+        %nn_sixteen = arith.constant 16 : i64
+        %nn_addr = arith.addi %nn_bi, %nn_sixteen : i64
+        %nn_ptr = llvm.inttoptr %nn_addr : i64 to !llvm.ptr<1>
+        %nn_old = llvm.atomicrmw add %nn_ptr, %one syncscope("device") monotonic : !llvm.ptr<1>, i32
+      } else {
+        memref.store %k32, %key[%item] : memref<?xi32, 1>
       %ka_base = memref.extract_aligned_pointer_as_index %key_count : memref<?xi32, 1> -> index
       %ka_bi = arith.index_cast %ka_base : index to i64
       %ka_ki = arith.index_cast %k : index to i64
@@ -297,6 +331,7 @@ func.func private @mdrt_gpu_build_neighbors_groups(
       %ka_addr = arith.addi %ka_bi, %ka_off : i64
       %ka_ptr = llvm.inttoptr %ka_addr : i64 to !llvm.ptr<1>
       %ka_old = llvm.atomicrmw add %ka_ptr, %one syncscope("device") monotonic : !llvm.ptr<1>, i32
+      }
     }
     gpu.terminator
   }
@@ -638,7 +673,10 @@ func.func private @mdrt_gpu_build_neighbors_groups(
     %inside = arith.cmpi ult, %item, %n : index
     scf.if %inside {
       %one = arith.constant 1 : i32
+      %zero_k = arith.constant 0 : i32
       %k32 = memref.load %key[%item] : memref<?xi32, 1>
+      %has_key = arith.cmpi sge, %k32, %zero_k : i32
+      scf.if %has_key {
       %k = arith.index_cast %k32 : i32 to index
       %kc_base = memref.extract_aligned_pointer_as_index %key_cursor : memref<?xi32, 1> -> index
       %kc_bi = arith.index_cast %kc_base : index to i64
@@ -651,6 +689,7 @@ func.func private @mdrt_gpu_build_neighbors_groups(
       %slot = arith.index_cast %slot32 : i32 to index
       %i32v = arith.index_cast %item : index to i32
       memref.store %i32v, %sorted[%slot] : memref<?xi32, 1>
+      }
     }
     gpu.terminator
   }
@@ -1048,9 +1087,9 @@ func.func private @mdrt_gpu_build_neighbors_groups(
     %chunks_all = memref.load %chunk_base[%columns] : memref<?xi32, 1>
     %sixty_four_i = arith.constant 64 : i32
     %places = arith.muli %chunks_all, %sixty_four_i : i32
-    memref.store %places, %sizes_device[%i0] : memref<3xi32, 1>
-    memref.store %none, %sizes_device[%i1] : memref<3xi32, 1>
-    memref.store %none, %sizes_device[%i2] : memref<3xi32, 1>
+    memref.store %places, %sizes_device[%i0] : memref<5xi32, 1>
+    memref.store %none, %sizes_device[%i1] : memref<5xi32, 1>
+    memref.store %none, %sizes_device[%i2] : memref<5xi32, 1>
     gpu.terminator
   }
   // The order: a warp a chunk of 64 particles. There are at most n / 32 +
@@ -1081,7 +1120,7 @@ func.func private @mdrt_gpu_build_neighbors_groups(
     %lane = arith.remui %tx, %c32w : index
     %lane32 = arith.index_cast %lane : index to i32
     %warp = arith.divui %tx, %c32w : index
-    %places32 = memref.load %sizes_device[%c0w] : memref<3xi32, 1>
+    %places32 = memref.load %sizes_device[%c0w] : memref<5xi32, 1>
     %places = arith.index_cast %places32 : i32 to index
     %total_chunks = arith.divui %places, %c64w : index
     %real_chunk = arith.cmpi ult, %t, %total_chunks : index
@@ -3109,7 +3148,7 @@ func.func private @mdrt_gpu_build_neighbors_groups(
       %i3 = arith.constant 3 : index
       %zero = arith.constant 0 : i32
       %one = arith.constant 1 : i32
-      %places32 = memref.load %sizes_device[%i0] : memref<3xi32, 1>
+      %places32 = memref.load %sizes_device[%i0] : memref<5xi32, 1>
       %places = arith.index_cast %places32 : i32 to index
       %used = arith.cmpi ult, %item, %places : index
       %pi = memref.load %order[%item] : memref<?xi32, 1>
@@ -3576,7 +3615,7 @@ func.func private @mdrt_gpu_build_neighbors_groups(
     %c2w = arith.constant 2 : index
     %c16w = arith.constant 16 : index
     %zero = arith.constant 0 : i32
-    %places32 = memref.load %sizes_device[%c0w] : memref<3xi32, 1>
+    %places32 = memref.load %sizes_device[%c0w] : memref<5xi32, 1>
     %places = arith.index_cast %places32 : i32 to index
     %groups = arith.divui %places, %c16w : index
     %g = arith.divui %item, %c16w : index
@@ -3824,7 +3863,7 @@ func.func private @mdrt_gpu_build_neighbors_groups(
     %lane = arith.remui %tx, %c32w : index
     %lane32 = arith.index_cast %lane : index to i32
     %warp = arith.divui %tx, %c32w : index
-    %places32 = memref.load %sizes_device[%c0w] : memref<3xi32, 1>
+    %places32 = memref.load %sizes_device[%c0w] : memref<5xi32, 1>
     %places = arith.index_cast %places32 : i32 to index
     %groups = arith.divui %places, %c16w : index
     %real_group = arith.cmpi ult, %g, %groups : index
@@ -3965,6 +4004,16 @@ func.func private @mdrt_gpu_build_neighbors_groups(
       // pairs from their rows (D106). The count came from one lane, so every
       // lane sees the same.
       %overflow = arith.cmpi ugt, %np_all, %c256 : index
+      %ov_lane0 = arith.cmpi eq, %lane, %c0w : index
+      %ov_count = arith.andi %overflow, %ov_lane0 : i1
+      scf.if %ov_count {
+        %ov_base = memref.extract_aligned_pointer_as_index %sizes_device : memref<5xi32, 1> -> index
+        %ov_bi = arith.index_cast %ov_base : index to i64
+        %ov_twelve = arith.constant 12 : i64
+        %ov_addr = arith.addi %ov_bi, %ov_twelve : i64
+        %ov_ptr = llvm.inttoptr %ov_addr : i64 to !llvm.ptr<1>
+        %ov_old = llvm.atomicrmw add %ov_ptr, %one_i syncscope("device") monotonic : !llvm.ptr<1>, i32
+      }
       nvvm.bar.warp.sync %all : i32
       %c64s = arith.constant 64 : index
       %c128s = arith.constant 128 : index
@@ -9341,7 +9390,7 @@ func.func private @mdrt_gpu_build_neighbors_groups(
               %lane_first = arith.cmpi eq, %lane32, %zero_i : i32
               %allocates = arith.andi %takes, %lane_first : i1
               %base0 = scf.if %allocates -> (i32) {
-                %bk_base = memref.extract_aligned_pointer_as_index %sizes_device : memref<3xi32, 1> -> index
+                %bk_base = memref.extract_aligned_pointer_as_index %sizes_device : memref<5xi32, 1> -> index
                 %bk_bi = arith.index_cast %bk_base : index to i64
                 %bk_eight = arith.constant 8 : i64
                 %bk_addr = arith.addi %bk_bi, %bk_eight : i64
@@ -9663,7 +9712,7 @@ func.func private @mdrt_gpu_build_neighbors_groups(
               %lane_first = arith.cmpi eq, %lane32, %zero_i : i32
               %allocates = arith.andi %takes, %lane_first : i1
               %base0 = scf.if %allocates -> (i32) {
-                %bk_base = memref.extract_aligned_pointer_as_index %sizes_device : memref<3xi32, 1> -> index
+                %bk_base = memref.extract_aligned_pointer_as_index %sizes_device : memref<5xi32, 1> -> index
                 %bk_bi = arith.index_cast %bk_base : index to i64
                 %bk_eight = arith.constant 8 : i64
                 %bk_addr = arith.addi %bk_bi, %bk_eight : i64
@@ -9717,7 +9766,7 @@ func.func private @mdrt_gpu_build_neighbors_groups(
       %lane0 = arith.cmpi eq, %lane, %c0w : index
       scf.if %lane0 {
         memref.store %count_all, %counts[%g] : memref<?xi32, 1>
-        %mx_base = memref.extract_aligned_pointer_as_index %sizes_device : memref<3xi32, 1> -> index
+        %mx_base = memref.extract_aligned_pointer_as_index %sizes_device : memref<5xi32, 1> -> index
         %mx_bi = arith.index_cast %mx_base : index to i64
         %mx_four = arith.constant 4 : i64
         %mx_addr = arith.addi %mx_bi, %mx_four : i64
@@ -9729,13 +9778,13 @@ func.func private @mdrt_gpu_build_neighbors_groups(
   }
   // The sizes, to the host.
   %copy_token0 = gpu.wait async
-  %copy_token = gpu.memcpy async [%copy_token0] %sizes, %sizes_device : memref<3xi32>, memref<3xi32, 1>
+  %copy_token = gpu.memcpy async [%copy_token0] %sizes, %sizes_device : memref<5xi32>, memref<5xi32, 1>
   gpu.wait [%copy_token]
 
   %wrapped_plain = memref.memory_space_cast %wrapped : memref<?x3xf32, 1> to memref<?x3xf32>
   gpu.dealloc %wrapped_plain : memref<?x3xf32>
-  %sizes_device_plain = memref.memory_space_cast %sizes_device : memref<3xi32, 1> to memref<3xi32>
-  gpu.dealloc %sizes_device_plain : memref<3xi32>
+  %sizes_device_plain = memref.memory_space_cast %sizes_device : memref<5xi32, 1> to memref<5xi32>
+  gpu.dealloc %sizes_device_plain : memref<5xi32>
   %xp_plain = memref.memory_space_cast %xp : memref<?x4xf32, 1> to memref<?x4xf32>
   gpu.dealloc %xp_plain : memref<?x4xf32>
   %gkey_plain = memref.memory_space_cast %gkey : memref<?xi32, 1> to memref<?xi32>

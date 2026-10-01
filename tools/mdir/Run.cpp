@@ -734,6 +734,12 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                  static_cast<long long>(used),
                  static_cast<long long>(readCount("mdrtGetGroupsCapacity")),
                  static_cast<long long>(readCount("mdrtGetGroupsLongest")));
+  if (int64_t over = readCount("mdrtGetGroupsOverflow"))
+    std::fprintf(output.log,
+                 "MDIR: %lld groups had more partners of excluded pairs than "
+                 "the memory of a warp holds, 256, and took their excluded "
+                 "pairs from the rows\n",
+                 static_cast<long long>(over));
 
   // The runtime has counted the builds of the neighbor structures.
   if (auto count = (*engine)->lookup("mdrtGetBuildCount")) {

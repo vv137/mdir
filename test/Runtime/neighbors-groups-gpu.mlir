@@ -216,7 +216,7 @@ func.func @exclusions(%n: index, %k: index) -> memref<?x?xi32> {
   return %e : memref<?x?xi32>
 }
 
-func.func @run(%length: f64, %reach: f64, %degree: index) {
+func.func @run(%length: f64, %reach: f64, %degree: index, %poison: i1) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %exclude = arith.cmpi ne, %degree, %c0 : index
@@ -228,6 +228,12 @@ func.func @run(%length: f64, %reach: f64, %degree: index) {
   %count = arith.constant 2000 : index
   %x = memref.alloc(%count) : memref<?x3xf64>
   call @fill(%x, %length) : (memref<?x3xf64>, f64) -> ()
+  // Poisoned, particle 7 has no position: the build leaves it out (D107).
+  scf.if %poison {
+    %c7 = arith.constant 7 : index
+    %nan = arith.constant 0x7FF8000000000000 : f64
+    memref.store %nan, %x[%c7, %c0] : memref<?x3xf64>
+  }
   %box = vector.broadcast %length : f64 to vector<3xf64>
 
   %capacity = arith.muli %count, %c4 : index
@@ -243,7 +249,7 @@ func.func @run(%length: f64, %reach: f64, %degree: index) {
   %unitsd = gpu.alloc (%unit_capacity) : memref<?xi32, 1>
   %ordinalsd = gpu.alloc (%unit_capacity) : memref<?xi32, 1>
   %shiftd = gpu.alloc (%capacity) : memref<?xi32, 1>
-  %sizes = memref.alloc() : memref<3xi32>
+  %sizes = memref.alloc() : memref<5xi32>
   %t0 = gpu.wait async
   %t1 = gpu.memcpy async [%t0] %xd, %x : memref<?x3xf64, 1>, memref<?x3xf64>
   gpu.wait [%t1]
@@ -264,7 +270,7 @@ func.func @run(%length: f64, %reach: f64, %degree: index) {
       : (memref<?x3xf64, 1>, vector<3xf64>, f64, memref<?x?xi32, 1>,
          memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>,
          memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>,
-         memref<?xi32, 1>, memref<?xi32, 1>, memref<3xi32>) -> ()
+         memref<?xi32, 1>, memref<?xi32, 1>, memref<5xi32>) -> ()
   %order = memref.alloc(%capacity) : memref<?xi32>
   %entries = memref.alloc(%entry_capacity) : memref<?xi32>
   %masks = memref.alloc(%entry_capacity) : memref<?xi32>
@@ -281,10 +287,10 @@ func.func @run(%length: f64, %reach: f64, %degree: index) {
   %t10 = gpu.memcpy async [%t9] %ordinals, %ordinalsd : memref<?xi32>, memref<?xi32, 1>
   %t11 = gpu.memcpy async [%t10] %shift, %shiftd : memref<?xi32>, memref<?xi32, 1>
   gpu.wait [%t11]
-  %blocks32 = memref.load %sizes[%c2] : memref<3xi32>
+  %blocks32 = memref.load %sizes[%c2] : memref<5xi32>
   %blocks = arith.index_cast %blocks32 : i32 to index
 
-  %places32 = memref.load %sizes[%c0] : memref<3xi32>
+  %places32 = memref.load %sizes[%c0] : memref<5xi32>
   %places = arith.index_cast %places32 : i32 to index
   %used_groups = arith.divui %places, %c16 : index
 
@@ -429,6 +435,8 @@ func.func @main() {
   %none = arith.constant 0 : index
   %one = arith.constant 1 : index
   %nine = arith.constant 9 : index
+  %no = arith.constant false
+  %yes = arith.constant true
 
   // Seven cells of the reach along each direction.
   // CHECK:      16352
@@ -436,14 +444,14 @@ func.func @main() {
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
   %l0 = arith.constant 12.0 : f64
-  call @run(%l0, %reach, %none) : (f64, f64, index) -> ()
+  call @run(%l0, %reach, %none, %no) : (f64, f64, index, i1) -> ()
 
   // With the excluded pairs (i, i + 1): 15 of them are within the reach.
   // CHECK-NEXT: 16337
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
-  call @run(%l0, %reach, %one) : (f64, f64, index) -> ()
+  call @run(%l0, %reach, %one, %no) : (f64, f64, index, i1) -> ()
 
   // Nine excluded pairs a particle each way: 288 partners a group, more
   // than the memory of a warp holds, so the lists take the excluded pairs
@@ -452,7 +460,16 @@ func.func @main() {
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
-  call @run(%l0, %reach, %nine) : (f64, f64, index) -> ()
+  call @run(%l0, %reach, %nine, %no) : (f64, f64, index, i1) -> ()
+
+  // A position that is not a number: its particle is left out of the
+  // lists and the build completes (D107); the 15 pairs of particle 7
+  // within the reach are missing.
+  // CHECK-NEXT: 16337
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: {{^0$}}
+  call @run(%l0, %reach, %none, %yes) : (f64, f64, index, i1) -> ()
 
   // A denser cube: the grid of the candidates is 14 cells a side.
   // CHECK-NEXT: 24389
@@ -461,7 +478,7 @@ func.func @main() {
   // CHECK-NEXT: {{^0$}}
   %l1 = arith.constant 7.0 : f64
   %r1 = arith.constant 1.0 : f64
-  call @run(%l1, %r1, %none) : (f64, f64, index) -> ()
+  call @run(%l1, %r1, %none, %no) : (f64, f64, index, i1) -> ()
 
   // A smaller reach in a smaller cube.
   // CHECK-NEXT: 21979
@@ -470,6 +487,6 @@ func.func @main() {
   // CHECK-NEXT: {{^0$}}
   %l2 = arith.constant 5.8 : f64
   %r2 = arith.constant 0.8 : f64
-  call @run(%l2, %r2, %none) : (f64, f64, index) -> ()
+  call @run(%l2, %r2, %none, %no) : (f64, f64, index, i1) -> ()
   return
 }

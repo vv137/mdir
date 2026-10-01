@@ -26,19 +26,42 @@ int64_t mdrtGetLateBuildCount(void) { return numLateBuilds; }
    groups of neighbors (D89) took, the blocks it had, and the longest list,
    for the log of the run. */
 static int64_t groupsBlocks = 0, groupsCapacity = 0, groupsLongest = 0;
+/* The groups, over all builds, whose partners of excluded pairs did not
+   fit the memory of a warp and took their excluded pairs from the rows
+   (D106), for the log of the run. */
+static int64_t groupsOverflow = 0;
 
-void mdrtNoteGroups(int64_t blocks, int64_t capacity, int64_t longest) {
+void mdrtNoteGroups(int64_t blocks, int64_t capacity, int64_t longest,
+                    int64_t overflow) {
   if (blocks > groupsBlocks) {
     groupsBlocks = blocks;
     groupsCapacity = capacity;
   }
   if (longest > groupsLongest)
     groupsLongest = longest;
+  groupsOverflow += overflow;
+}
+
+/* A build of a neighbor structure found positions that are not numbers:
+   the run has failed, whatever produced them (D107). */
+void mdrtStopNotNumbers(int64_t count) {
+  if (count == 1)
+    fprintf(stderr, "mdir: a position is not a number at a build of the "
+                    "neighbor structure; the run has failed (a time step too "
+                    "long, a bad contact, or a defect of mdir)\n");
+  else
+    fprintf(stderr,
+            "mdir: %lld positions are not numbers at a build of the neighbor "
+            "structure; the run has failed (a time step too long, a bad "
+            "contact, or a defect of mdir)\n",
+            (long long)count);
+  exit(1);
 }
 
 int64_t mdrtGetGroupsBlocks(void) { return groupsBlocks; }
 int64_t mdrtGetGroupsCapacity(void) { return groupsCapacity; }
 int64_t mdrtGetGroupsLongest(void) { return groupsLongest; }
+int64_t mdrtGetGroupsOverflow(void) { return groupsOverflow; }
 
 /*===----------------------------------------------------------------------===
  * Random numbers

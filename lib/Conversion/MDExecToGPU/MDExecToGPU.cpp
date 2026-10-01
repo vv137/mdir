@@ -183,6 +183,9 @@ private:
   LogicalResult emitBuild(OpBuilder &builder, Location loc,
                           const Neighbors &structure, Value positions,
                           Value box, double reach, double cellWidth);
+  /// Stops the run, through the runtime, if `notNumbers` positions, as a
+  /// build counted them, are not numbers (D107).
+  void emitStopNotNumbers(OpBuilder &builder, Location loc, Value notNumbers);
   LogicalResult emitGroupsBuild(OpBuilder &builder, Location loc,
                                 const Neighbors &structure, Value positions,
                                 Value box, double reach);
@@ -2071,8 +2074,11 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
     structure.placeOf = createDeviceBuffer(
         builder, loc, getDeviceType({ShapedType::kDynamic}, narrow),
         ValueRange{structure.size});
+    // The places, the longest list, the blocks, the groups whose excluded
+    // partners did not fit the memory of a warp (D106), and the positions
+    // that are not numbers (D107).
     structure.sizes =
-        memref::AllocOp::create(builder, loc, MemRefType::get({3}, narrow));
+        memref::AllocOp::create(builder, loc, MemRefType::get({5}, narrow));
   } else {
     structure.counts = createDeviceBuffer(
         builder, loc, getDeviceType({ShapedType::kDynamic}, narrow),
@@ -2130,6 +2136,26 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
   neighbors[op.getResult()] = structure;
 }
 
+void Lowering::emitStopNotNumbers(OpBuilder &builder, Location loc,
+                                  Value notNumbers) {
+  // A position that is not a number would send every particle into one
+  // bin of the build, which sorts a bin in one thread: the builds give such
+  // a position no place and count it, and the run, which has failed by
+  // then, stops with a word (D107).
+  Type wide = builder.getI64Type();
+  Value failed = arith::CmpIOp::create(
+      builder, loc, arith::CmpIPredicate::ne, notNumbers,
+      arith::ConstantOp::create(builder, loc, wide,
+                                builder.getI64IntegerAttr(0)));
+  scf::IfOp::create(builder, loc, failed, [&](OpBuilder &then, Location) {
+    func::CallOp::create(
+        then, loc,
+        getOrDeclare("mdrtStopNotNumbers", then.getFunctionType({wide}, {})),
+        ValueRange{notNumbers});
+    scf::YieldOp::create(then, loc);
+  });
+}
+
 LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
                                   const Neighbors &structure, Value positions,
                                   Value box, double reach,
@@ -2180,12 +2206,13 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
     Block *before = builder.createBlock(&again.getBefore());
     OpBuilder at = OpBuilder::atBlockEnd(before);
     Value entries = getMatrixEntries(at, loc, structure.handle);
-    Value largest =
-        func::CallOp::create(
-            at, loc, build,
-            ValueRange{positions, boxValue, reachValue, widthValue, excluded,
-                       structure.counts, entries, structure.order})
-            .getResult(0);
+    auto built = func::CallOp::create(
+        at, loc, build,
+        ValueRange{positions, boxValue, reachValue, widthValue, excluded,
+                   structure.counts, entries, structure.order});
+    Value largest = built.getResult(0);
+    emitStopNotNumbers(
+        at, loc, arith::IndexCastOp::create(at, loc, wide, built.getResult(1)));
     Value width =
         memref::DimOp::create(at, loc, entries, createIndex(at, loc, 1));
     Value tooMany = arith::CmpIOp::create(
@@ -2333,12 +2360,13 @@ LogicalResult Lowering::emitGroupsBuild(OpBuilder &builder, Location loc,
           ValueRange{structure.handle, places, blocks});
       scf::YieldOp::create(then, loc);
     });
-    // The runtime keeps the largest use of the blocks, for the log.
+    // The runtime keeps the largest use of the blocks and counts the
+    // groups with too many excluded partners, for the log.
     func::CallOp::create(
         at, loc,
         getOrDeclare(noteGroupsName,
-                     at.getFunctionType({wide, wide, wide}, {})),
-        ValueRange{blocks, capacity(buffers.units), load(1)});
+                     at.getFunctionType({wide, wide, wide, wide}, {})),
+        ValueRange{blocks, capacity(buffers.units), load(1), load(3)});
     scf::ConditionOp::create(at, loc, more, ValueRange());
     Block *after = builder.createBlock(&again.getAfter());
     OpBuilder close = OpBuilder::atBlockEnd(after);
@@ -2349,6 +2377,12 @@ LogicalResult Lowering::emitGroupsBuild(OpBuilder &builder, Location loc,
       builder, loc,
       getOrDeclare(countBuildName, builder.getFunctionType({}, {})),
       ValueRange());
+  emitStopNotNumbers(
+      builder, loc,
+      arith::ExtUIOp::create(
+          builder, loc, wide,
+          memref::LoadOp::create(builder, loc, structure.sizes,
+                                 ValueRange{createIndex(builder, loc, 4)})));
 
   if (noExcluded) {
     Value plain = memref::MemorySpaceCastOp::create(

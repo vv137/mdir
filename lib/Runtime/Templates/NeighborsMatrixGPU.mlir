@@ -15,8 +15,11 @@
 // places of the particles within `reach` of that particle, and `counts[p]`
 // holds their number, limited to the width of a row. The loops over pairs
 // run in this order, whose places are next to one another in space (D86).
-// The result is the largest number of neighbors that a particle has, which
-// may exceed the width; the caller can then tell that a row was too narrow.
+// The results are the largest number of neighbors that a particle has,
+// which may exceed the width (the caller can then tell that a row was too
+// narrow), and the number of positions that are not numbers, or are beyond
+// any cell, which get no cell and no place (D107): the caller stops the
+// run.
 //
 // The matrix is that of the template for the host in the order of the
 // cells: row `p` is its row `order[p]`, and an entry `q` is its entry
@@ -178,7 +181,7 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
     %x: memref<?x3xf64, 1>, %box: vector<3xf64>, %reach: f64,
     %cell_width: f64, %excluded: memref<?x?xi32, 1>,
     %counts: memref<?xi32, 1>, %index: memref<?x?xi32, 1>,
-    %order: memref<?xi32, 1>) -> index {
+    %order: memref<?xi32, 1>) -> (index, index) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %block = arith.constant 128 : index
@@ -265,8 +268,8 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
   %start = gpu.alloc (%cells1) : memref<?xi32, 1>
   %cursor = gpu.alloc (%cells) : memref<?xi32, 1>
   %cell_sums = gpu.alloc (%cell_chunks) : memref<?xi32, 1>
-  %result = gpu.alloc () : memref<1xi32, 1>
-  %host = memref.alloca() : memref<1xi32>
+  %result = gpu.alloc () : memref<2xi32, 1>
+  %host = memref.alloca() : memref<2xi32>
 
   //===--------------------------------------------------------------------===//
   // Counting sort of the particles by cell
@@ -284,7 +287,9 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
       %c0_first = arith.constant 0 : index
       %first_cell = arith.cmpi eq, %c, %c0_first : index
       scf.if %first_cell {
-        memref.store %none, %result[%c0_first] : memref<1xi32, 1>
+        memref.store %none, %result[%c0_first] : memref<2xi32, 1>
+        %c1_second = arith.constant 1 : index
+        memref.store %none, %result[%c1_second] : memref<2xi32, 1>
       }
     }
     gpu.terminator
@@ -361,16 +366,39 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
       %rows = arith.muli %row, %nx : index
       %k = arith.addi %rows, %cx : index
       %k32 = arith.index_cast %k : index to i32
-      memref.store %k32, %key[%i] : memref<?xi32, 1>
-      // A relaxed atomic at the scope of the device (see PMEGPU.mlir).
-      %rx1_base = memref.extract_aligned_pointer_as_index %held : memref<?xi32, 1> -> index
-      %rx1_bi = arith.index_cast %rx1_base : index to i64
-      %rx1_ki = arith.index_cast %k : index to i64
-      %rx1_four = arith.constant 4 : i64
-      %rx1_off = arith.muli %rx1_ki, %rx1_four : i64
-      %rx1_addr = arith.addi %rx1_bi, %rx1_off : i64
-      %rx1_ptr = llvm.inttoptr %rx1_addr : i64 to !llvm.ptr<1>
-      %old = llvm.atomicrmw add %rx1_ptr, %one syncscope("device") monotonic : !llvm.ptr<1>, i32
+      // No particle at any place yet: a place that stays empty, for want
+      // of a particle with a position, is skipped by the search.
+      %no_particle = arith.constant -1 : i32
+      memref.store %no_particle, %order[%i] : memref<?xi32, 1>
+      // A position that is not a number, or is beyond any cell, gets no
+      // cell, and is counted (D107).
+      %sum_xy = arith.addf %xi, %yi : f64
+      %sum_xyz = arith.addf %sum_xy, %zi : f64
+      %not_number = arith.cmpf uno, %sum_xyz, %sum_xyz : f64
+      %magnitude = math.absf %sum_xyz : f64
+      %far_off = arith.constant 1.0e100 : f64
+      %huge = arith.cmpf ogt, %magnitude, %far_off : f64
+      %bad = arith.ori %not_number, %huge : i1
+      scf.if %bad {
+        memref.store %no_particle, %key[%i] : memref<?xi32, 1>
+        %nn_base = memref.extract_aligned_pointer_as_index %result : memref<2xi32, 1> -> index
+        %nn_bi = arith.index_cast %nn_base : index to i64
+        %nn_four = arith.constant 4 : i64
+        %nn_addr = arith.addi %nn_bi, %nn_four : i64
+        %nn_ptr = llvm.inttoptr %nn_addr : i64 to !llvm.ptr<1>
+        %nn_old = llvm.atomicrmw add %nn_ptr, %one syncscope("device") monotonic : !llvm.ptr<1>, i32
+      } else {
+        memref.store %k32, %key[%i] : memref<?xi32, 1>
+        // A relaxed atomic at the scope of the device (see PMEGPU.mlir).
+        %rx1_base = memref.extract_aligned_pointer_as_index %held : memref<?xi32, 1> -> index
+        %rx1_bi = arith.index_cast %rx1_base : index to i64
+        %rx1_ki = arith.index_cast %k : index to i64
+        %rx1_four = arith.constant 4 : i64
+        %rx1_off = arith.muli %rx1_ki, %rx1_four : i64
+        %rx1_addr = arith.addi %rx1_bi, %rx1_off : i64
+        %rx1_ptr = llvm.inttoptr %rx1_addr : i64 to !llvm.ptr<1>
+        %old = llvm.atomicrmw add %rx1_ptr, %one syncscope("device") monotonic : !llvm.ptr<1>, i32
+      }
     }
     gpu.terminator
   }
@@ -450,6 +478,9 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
     scf.if %inside {
       %one = arith.constant 1 : i32
       %k32 = memref.load %key[%i] : memref<?xi32, 1>
+      %zero_key = arith.constant 0 : i32
+      %has_cell = arith.cmpi sge, %k32, %zero_key : i32
+      scf.if %has_cell {
       %k = arith.index_cast %k32 : i32 to index
       // A relaxed atomic at the scope of the device (see PMEGPU.mlir).
       %rx2_base = memref.extract_aligned_pointer_as_index %cursor : memref<?xi32, 1> -> index
@@ -463,6 +494,7 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
       %slot = arith.index_cast %slot32 : i32 to index
       %narrow = arith.index_cast %i : index to i32
       memref.store %narrow, %order[%slot] : memref<?xi32, 1>
+      }
     }
     gpu.terminator
   }
@@ -564,6 +596,9 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
       %p = arith.index_cast %p32 : i32 to index
       %i32 = memref.load %order[%p] : memref<?xi32, 1>
       %i = arith.index_cast %i32 : i32 to index
+      %zero_placed = arith.constant 0 : i32
+      %placed = arith.cmpi sge, %i32, %zero_placed : i32
+      scf.if %placed {
       %xi = memref.load %sorted[%p, %i0] : memref<?x3xf32, 1>
       %yi = memref.load %sorted[%p, %i1] : memref<?x3xf32, 1>
       %zi = memref.load %sorted[%p, %i2] : memref<?x3xf32, 1>
@@ -760,20 +795,23 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
         %limited = arith.minui %found, %row_width32 : i32
         memref.store %limited, %counts[%p] : memref<?xi32, 1>
         // A relaxed atomic at the scope of the device (see PMEGPU.mlir).
-        %rm_base = memref.extract_aligned_pointer_as_index %result : memref<1xi32, 1> -> index
+        %rm_base = memref.extract_aligned_pointer_as_index %result : memref<2xi32, 1> -> index
         %rm_addr = arith.index_cast %rm_base : index to i64
         %rm_ptr = llvm.inttoptr %rm_addr : i64 to !llvm.ptr<1>
         %rm_old = llvm.atomicrmw umax %rm_ptr, %found syncscope("device") monotonic : !llvm.ptr<1>, i32
+      }
       }
     }
     gpu.terminator
   }
 
   %t0 = gpu.wait async
-  %t1 = gpu.memcpy async [%t0] %host, %result : memref<1xi32>, memref<1xi32, 1>
+  %t1 = gpu.memcpy async [%t0] %host, %result : memref<2xi32>, memref<2xi32, 1>
   gpu.wait [%t1]
-  %largest32 = memref.load %host[%c0] : memref<1xi32>
+  %largest32 = memref.load %host[%c0] : memref<2xi32>
   %largest = arith.index_cast %largest32 : i32 to index
+  %not_numbers32 = memref.load %host[%c1] : memref<2xi32>
+  %not_numbers = arith.index_cast %not_numbers32 : i32 to index
 
   // The lowering of `gpu.dealloc` takes a buffer without a memory space.
   %key0 = memref.memory_space_cast %key
@@ -798,9 +836,9 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
       : memref<?xi32, 1> to memref<?xi32>
   gpu.dealloc %cell_sums0 : memref<?xi32>
   %result0 = memref.memory_space_cast %result
-      : memref<1xi32, 1> to memref<1xi32>
-  gpu.dealloc %result0 : memref<1xi32>
-  return %largest : index
+      : memref<2xi32, 1> to memref<2xi32>
+  gpu.dealloc %result0 : memref<2xi32>
+  return %largest, %not_numbers : index, index
 }
 
 // The order of the particles by cell: `order[k]` is the particle that comes
