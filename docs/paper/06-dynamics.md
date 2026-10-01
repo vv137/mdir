@@ -271,8 +271,15 @@ positions and have $\Delta t$ for $\Delta t/2$; MDIR follows eqs.
 (S12a–d) (D92). Three other counts are available:
 `TROTTER_FIRST_ORDER` takes $\mathcal W_b$ alone and saves a virial;
 `EXACT` scales at the end of the period, evaluates $U$ at the scaled
-positions, and takes $U(\mathbf x') - U(\mathbf x) + (\mu^{-2} -
-1)\alpha^2K_t$, starting the next step from the forces it computed;
+positions, and takes $U(\mathbf x') - U(\mathbf x) + C\,(1/V' - 1/V) +
+(\mu^{-2} - 1)\alpha^2K_t$, starting the next step from the forces it
+computed, where $C/V$ is the energy of the terms that are constants of
+the volume, the correction for the dispersion and the background of a
+net charge (Section 5), which `md.evaluate` leaves out. Before that term
+was counted, the conserved energy carried $E_c(V) - E_c(V_0)$: on the
+ff19SB peptide in OPC water compressed by the barostat, $-1.47$ kcal/mol
+after 2 ps, exactly the dispersion correction of $-30.24$ kcal/mol times
+$V_0/V - 1 = 0.0487$;
 `FIRST_ORDER`, as GROMACS does, takes $-(\mu - 1)\mathcal W + (\mu^{-2} -
 1)\alpha^2K_t$.
 

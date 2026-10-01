@@ -204,7 +204,30 @@ $$
 
 and the missing virial, from $\mathbf d\otimes\mathbf K$ over the same
 pairs, is $\operatorname{tr}\mathsf W_\text{disp} = 6E_\text{disp}$, a
-pressure of $2E_\text{disp}/V$. The repulsion is left out. For a run from
+pressure of $2E_\text{disp}/V$. The repulsion is left out.
+
+**Why the virial is $6E_\text{disp}$, not $3E_\text{disp}$.** As
+$E_\text{disp}\propto 1/V$, its own derivative gives only
+$-dE_\text{disp}/d\ln\mu = 3E_\text{disp}$ under a scaling of the cell by
+$\mu$. The rest is the boundary of the cutoff. A run with a correction
+for the dispersion takes a plain cutoff (the driver rejects a switch or a
+shift with it), so a pair that a scaling carries across $r_c$ changes the
+truncated energy by $u(r_c) = -C_6/r_c^6$, which the virial of the
+truncated sum does not see. At a uniform density, the pairs in the shell
+that a scaling by $\mu$ moves across are
+$\tfrac{N^2}{2V}\,4\pi r_c^2\cdot r_c\,d\ln\mu$, so the truncated energy
+changes by $\tfrac{2\pi N^2}{V}\tfrac{\langle C_6\rangle}{r_c^3}\,d\ln\mu =
+-3E_\text{disp}\,d\ln\mu$ beyond its virial. With the tail's own change,
+the energy outside the virial of the truncated sum changes by
+$-6E_\text{disp}\,d\ln\mu$, which is what
+$\operatorname{tr}\mathsf W_\text{disp} = 6E_\text{disp}$ counts. The
+counts of the work of the barostat that take the virial (Section 6.4) are
+therefore consistent with the energy of the log, while the exact count,
+which evaluates the truncated energy at the scaled positions and so sees
+the pairs that cross, adds the tail's change alone,
+$E_\text{disp}(V') - E_\text{disp}(V)$.
+
+For a run from
 a topology, $C_6 = 4\varepsilon\sigma^6$ and the average counts the pairs
 of types and subtracts the excluded pairs, as GROMACS does
 [[GromacsManual2025]](references.md#gromacsmanual2025):

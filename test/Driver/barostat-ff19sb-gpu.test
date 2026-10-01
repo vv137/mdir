@@ -35,7 +35,8 @@
 # D92) and its work is counted from the virials before and after it, which
 # a compression of a fifth in 10 ps, with strains far larger than at
 # equilibrium, makes drift by about 1e-2 of the value; counted exactly, by
-# about 4e-3.
+# about 3e-3 (4e-3 before the exact work counted the change of the
+# correction for the dispersion, barostat.test).
 #
 # CHECK:      INFO:         0 {{.*}} 28634.{{[0-9]+}}
 # CHECK:      INFO:      5000 {{.*}} {{2[0-3][0-9]{3}\.[0-9]+$}}

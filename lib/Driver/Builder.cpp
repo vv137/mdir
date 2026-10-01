@@ -3628,7 +3628,26 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
       cellName = outerCell;
       scaleName = outerScale;
       newForces = f;
-      os << indent << "%bdu" << t << " = arith.subf " << u << ", " << energy
+      // The constant terms of the energy, the correction for the
+      // dispersion and the background of a net charge, are proportional to
+      // 1 / V and not in `md.evaluate`: their change, C (1/V' - 1/V), is
+      // part of the work too, or the conserved energy would carry
+      // E_c(V) - E_c(V_0).
+      os << indent << "%bnxy" << t << " = arith.mulf %bn" << t << "_0, %bn"
+         << t << "_1 : f64\n"
+         << indent << "%bnv" << t << " = arith.mulf %bnxy" << t << ", %bn" << t
+         << "_2 : f64\n"
+         << indent << "%bnvi" << t << " = arith.divf %c_unit, %bnv" << t
+         << " : f64\n"
+         << indent << "%bovi" << t << " = arith.divf %c_unit, %bv" << t
+         << " : f64\n"
+         << indent << "%bdvi" << t << " = arith.subf %bnvi" << t << ", %bovi"
+         << t << " : f64\n"
+         << indent << "%bdc" << t << " = arith.mulf %baro_energy_constant, %bdvi"
+         << t << " : f64\n"
+         << indent << "%bdue" << t << " = arith.subf " << u << ", " << energy
+         << " : f64\n"
+         << indent << "%bdu" << t << " = arith.addf %bdue" << t << ", %bdc" << t
          << " : f64\n"
          << indent << "%bgain" << t << " = arith.addf %bdu" << t << ", %bdk"
          << t << " : f64\n"
@@ -4288,6 +4307,12 @@ void Builder::emitEntry() {
         double constant = (program.dispersionVirial +
                            program.pmeConstantVirial) *
                           volume;
+        // The energies of the same terms times the volume (the self term of
+        // particle mesh Ewald does not depend on it), for the exact work.
+        double energyConstant =
+            (program.dispersionEnergy + program.pmeConstantEnergy -
+             program.pmeSelfEnergy) *
+            volume;
         os << "  %baro_target = arith.constant "
            << formatReal(control.pressure * bar) << " : f64\n"
            << "  %baro_beta = arith.constant "
@@ -4300,6 +4325,8 @@ void Builder::emitEntry() {
            << formatReal(units::boltzmann * control.temperature) << " : f64\n"
            << "  %baro_constant = arith.constant " << formatReal(constant)
            << " : f64\n"
+           << "  %baro_energy_constant = arith.constant "
+           << formatReal(energyConstant) << " : f64\n"
            << "  %c_bar = arith.constant 16.6053906717 : f64\n"
            << "  %c_three = arith.constant 3.0 : f64\n"
            << "  %c_third = arith.constant "

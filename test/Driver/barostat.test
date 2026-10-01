@@ -16,6 +16,7 @@
 # RUN: mdir run %t/first.toml | FileCheck %s --check-prefix=FIRST
 # RUN: sed -e 's|^\[barostat\]$|[barostat]\nwork = "EXACT"|' %t/a.toml > %t/exact.toml
 # RUN: mdir run %t/exact.toml | FileCheck %s --check-prefix=EXACT
+# RUN: mdir emit %t/exact.toml | FileCheck %s --check-prefix=EXACT-WORK
 # RUN: sed -e 's|^\[barostat\]$|[barostat]\nwork = "TROTTER_FIRST_ORDER"|' %t/a.toml > %t/trotter1.toml
 # RUN: mdir run %t/trotter1.toml > %t/trotter1.log
 # RUN: FileCheck %s --check-prefix=FIRST < %t/trotter1.log
@@ -66,6 +67,17 @@
 # CHECK-NEXT: INFO:      2000 {{.*}} {{11[0-9]{3}\.[0-9]+$}}
 # CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[4-9]}} of its value
 # EXACT:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
+
+# The exact work counts the change of the constant terms of the energy as
+# well, the correction for the dispersion and the background of a net
+# charge, C (1/V' - 1/V), which md.evaluate leaves out: without it the
+# conserved energy carried E_c(V) - E_c(V_0), on the peptide of
+# barostat-ff19sb-gpu.test -1.47 kcal/mol after 2 ps (CPU, double), the
+# dispersion correction of -30.24 kcal/mol times V_0/V - 1 = 0.0487.
+#
+# EXACT-WORK: %baro_energy_constant = arith.constant
+# EXACT-WORK: %bdc{{[a-z0-9_]*}} = arith.mulf %baro_energy_constant, %bdvi
+# EXACT-WORK: %bdu{{[a-z0-9_]*}} = arith.addf %bdue
 # FIRST:      MDIR: the conserved energy changed by {{[0-9.]+}}e-03 of its value
 
 # Leapfrog takes the pressure from the velocities of the time of the
