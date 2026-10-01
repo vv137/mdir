@@ -108,6 +108,13 @@ P. P. Ewald, "Die Berechnung optischer und elektrostatischer
 Gitterpotentiale," *Ann. Phys.* **369**, 253–287 (1921).
 [doi:10.1002/andp.19213690304](https://doi.org/10.1002/andp.19213690304)
 
+### Fuchs2025
+
+P. Fuchs, W. Chen, S. Thaler, J. Zavadlav, "chemtrain-deploy: A parallel
+and scalable framework for machine learning potentials in million-atom
+MD simulations," *J. Chem. Theory Comput.* **21**(15), 7550–7560 (2025).
+[doi:10.1021/acs.jctc.5c00996](https://doi.org/10.1021/acs.jctc.5c00996)
+
 ### Gratl2022
 
 F. A. Gratl, S. Seckler, H.-J. Bungartz, P. Neumann, "N ways to simulate
@@ -121,6 +128,14 @@ node-level library AutoPas," *Comput. Phys. Commun.* **273**, 108262
 M. Abraham, A. Alekseenko, B. Andrews, et al., *GROMACS 2025.4 Manual*
 (Zenodo, 2025).
 [doi:10.5281/zenodo.17671776](https://doi.org/10.5281/zenodo.17671776)
+
+### He2024
+
+Y. He, A. Podobas, S. Markidis, "Leveraging MLIR for loop vectorization
+and GPU porting of FFT libraries," in *Euro-Par 2023: Parallel Processing
+Workshops*, Lecture Notes in Computer Science (Springer, Cham, 2024),
+pp. 207–218.
+[doi:10.1007/978-3-031-50684-0_16](https://doi.org/10.1007/978-3-031-50684-0_16)
 
 ### HockneyEastwood1988
 
@@ -272,6 +287,14 @@ framework for performance-portable simulations on unstructured meshes,"
 in *2012 SC Companion: High Performance Computing, Networking Storage and
 Analysis* (IEEE, 2012), pp. 1116–1123.
 [doi:10.1109/SC.Companion.2012.134](https://doi.org/10.1109/SC.Companion.2012.134)
+
+### ReactantJl
+
+EnzymeAD, "Reactant.jl," a compiler of Julia functions to MLIR, with
+automatic differentiation by EnzymeMLIR and executables for CPUs, GPUs,
+and TPUs through XLA, under the MIT license. No paper;
+[github.com/EnzymeAD/Reactant.jl](https://github.com/EnzymeAD/Reactant.jl)
+(read 2026-10-02).
 
 ### Reinecke2019
 

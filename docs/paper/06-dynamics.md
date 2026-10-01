@@ -323,7 +323,7 @@ plus what the bath has taken.
 
 The thermostat and the barostat draw from Philox 4×32-10
 [[Salmon2011]](references.md#salmon2011), a counter-based generator, on the host: the key is the
-seed, the counter is (step, 0, stream ≪ 24 | block), with stream 0 for the
+seed, the counter is $(\text{step}, 0, 2^{24}\,\text{stream} + \text{block})$, with stream 0 for the
 thermostat and 1 for the barostat, and the step is that of the end of the
 period. A uniform number is $(\lfloor w/2^{11}\rfloor + \tfrac12)\,2^{-53}$
 from 64 bits $w$, and a normal number is the cosine branch of Box–Muller

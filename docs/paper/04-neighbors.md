@@ -134,6 +134,25 @@ On a device, a loop over pairs whose kernel has an exchange contract runs
 over the second kind of structure, `groups` (D89; layout after
 [[SalomonFerrer2013]](references.md#salomonferrer2013)).
 
+**Why not tiles** (D82). The first design for the device took the cluster
+pair list of GROMACS [[Pall2013]](references.md#pall2013), tiles of 8
+particles with a mask of 64 bits for each pair of tiles, under MDIR's
+exact test. A standalone prototype on the loop over the pairs of JAC
+(Lennard–Jones and the direct sum in f32, 1000 launches, RTX 3090) found
+the tiles slower than the matrix at every reach: at 8.05 Å the matrix
+took 60.6 µs, tiles of 8 × 8 with a full list 142.1, and tiles of 8 × 4
+111.0, or 106.7 with a half list added in fixed point. Only 38 to 47% of
+the slots of the 8 × 4 tiles held a pair of the list, against 98% of the
+entries of the matrix at that reach, and the kernel was bound by the
+arithmetic of the pairs, so contiguous loads did not pay for the empty
+slots (`docs/tiles-m1.md`, Section 11). Groups of 16 that share a list of
+*particles* waste no slot on the side of the list, need a sixteenth of
+the entries of the matrix, and keep the bounding box of a group for the
+build: on Cellulose at a reach of 9 Å the loop took 1013 to 1034 µs
+against 1245 to 1267 for the matrix, and the tests of candidates that
+the boxes of groups avoid had taken 5.0 of the 8.0 ms of a build of the
+matrix.
+
 **Places and groups.** A build sorts the particles into a *compact
 order*: the columns of a grid in $x$–$y$, each about 64 particles wide,
 sorted by $z$; each column cut into chunks of 64, each chunk sorted by $x$

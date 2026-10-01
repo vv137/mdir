@@ -176,19 +176,22 @@ kernel, so it applies to any $u$.
 **Exchange contracts.** A pair kernel carries a contract that says how
 its value for $(j,i)$ relates to its value for $(i,j)$: `symmetric`,
 `antisymmetric`, or `none`, with a basis: `proof`, `derived`, or
-`asserted`. Since $\mathbf d_{ji} = -\mathbf d_{ij}$ and the factor in
-front of it depends on $r$ alone, $\mathbf K(j,i) = -\mathbf K(i,j)$: the
-force is `antisymmetric` and the energy and the virial `symmetric`, with
-the basis `derived`. A contract with the basis `proof`, such as that of a
-kernel written by a user, is proved by `md-check-exchange`, the first pass
-of every pipeline: it swaps the two particles in the kernel ($\mathbf d
-\to -\mathbf d$, the values gathered for $i$ and $j$ exchanged, tables
-looked up with their symmetry) and compares the kernel with itself
-structurally, commutative ops in either order. A contract that does not
-hold fails the compilation. The contracts are what makes each pair once
-legal: a loop over groups (Section 4.4) computes $\mathbf K(i,j)$ once and
-adds $\pm$ it to both particles, and `md-exec-choose-neighbors` chooses
-groups only when every destination of the loop has a contract.
+`asserted`. A sum over an unordered relation must be `symmetric`, and its
+basis is `proof` unless it says otherwise: every pair term that the driver
+writes, like one written by a user, is proved by `md-check-exchange`, the
+first pass of every pipeline. The pass swaps the two particles in the
+kernel ($\mathbf d \to -\mathbf d$, the values gathered for $i$ and $j$
+exchanged, tables looked up with their symmetry) and compares the kernel
+with itself structurally, commutative ops in either order; a contract
+that it cannot prove fails the compilation, with the hint that the
+author may assert it instead. What differentiation creates carries the
+basis `derived`: since $\mathbf d_{ji} = -\mathbf d_{ij}$ and the factor in
+front of it depends on $r$ alone, $\mathbf K(j,i) = -\mathbf K(i,j)$, so
+the force is `antisymmetric` and the virial `symmetric` by construction.
+The contracts are what makes each pair once legal: a loop over groups
+(Section 4.4) computes $\mathbf K(i,j)$ once and adds $\pm$ it to both
+particles, and `md-exec-choose-neighbors` chooses groups only when every
+destination of the loop has a contract.
 
 ## 3.4 From sums to loops, and the passes over loops
 

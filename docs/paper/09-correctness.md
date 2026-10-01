@@ -80,8 +80,8 @@ convergence):
 | `thermostat.test` | Mixture, NVT, 2000 × 4 fs | $10^{-4}$ (conserved energy) | |
 | `barostat.test` | Mixture compressed from 12,487 to about 11,000 Å³ | $10^{-3}$; $10^{-4}$ with `EXACT` | |
 
-Halving the step divides the change by four or more in each series, as
-a method of second order should.
+Halving the step divides the change by about four in each series, as a
+method of second order should.
 
 **Over 2 ns.** The figure of merit for production is the drift over a
 long run at the production step. JAC (23,558 atoms) at constant energy,

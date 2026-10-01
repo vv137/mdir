@@ -47,11 +47,20 @@ where the derivative of a sum over pairs or tuples is again a gather over
 the same relation and carries an exchange contract that later passes use.
 
 **Compilers on MLIR.** MLIR [[Lattner2021]](references.md#lattner2021) provides the infrastructure of
-dialects, passes, and lowerings that MDIR is built on; MDIR contributes
-dialects whose objects are those of molecular dynamics rather than tensors
-or loops.
+dialects, passes, and lowerings that MDIR is built on. Reactant.jl
+[[ReactantJl]](references.md#reactantjl) compiles Julia functions to MLIR, differentiates them at
+that level with EnzymeMLIR, and builds executables for CPUs, GPUs, and
+TPUs through XLA; FFTc [[He2024]](references.md#he2024) is a language for fast Fourier
+transforms on dialects of MLIR, which vectorizes them on CPUs to the
+performance of FFTW and ports them to NVIDIA GPUs. MDIR calls cuFFT and
+pocketfft for the transforms of PME, which such a dialect could replace.
+MDIR contributes dialects whose objects are those of molecular dynamics
+rather than tensors or loops.
 
-**Learned potentials.** Strictly local equivariant potentials such as
+**Learned potentials.** chemtrain-deploy [[Fuchs2025]](references.md#fuchs2025) runs any
+semi-local potential defined in JAX inside LAMMPS, on several GPUs and
+for millions of atoms, and was validated with MACE, Allegro, and PaiNN.
+Strictly local equivariant potentials such as
 Allegro [[Musaelian2023]](references.md#musaelian2023), and message-passing potentials whose features
 cross the boundaries of domains at each layer, as in [[Park2024]](references.md#park2024), set the
 requirements that a planned `mlff` dialect and a distributed lowering will

@@ -34,9 +34,21 @@ over three repeats. "Energy changed by" is the change of the total
 energy (NVE) or of the conserved energy (NPT) between the first and the
 last row of MDIR's log, relative to its value. The counts are the mean
 number of steps between builds of the outer list and between prunings of
-the inner list.*
+the inner list. The rates are from three repeats; the change of the
+energy, the counts, and the time of compilation from the last two, whose
+outputs were kept.*
 
-<!-- TABLE -->
+| System | Atoms | MDIR, ns/day | pmemd.cuda, ns/day | MDIR / pmemd.cuda | Energy changed by (MDIR) | Builds, prunings: every | Compiled in |
+|---|---|---|---|---|---|---|---|
+| `jac_nve` | 23,558 | 770.9 ± 3.8 | 615.9 ± 1.7 | 125.2 ± 0.4% | 1.0e-04 to 1.3e-04 | 16.3, 2.8 | 10–11 s |
+| `jac_nve_4fs` | 23,558 | 1452.6 ± 6.3 | 1147.0 ± 3.7 | 126.6 ± 0.1% | 3.1e-03 to 3.4e-03 | 10.7, 3.5 | 10–11 s |
+| `jac_npt` | 23,558 | 703.2 ± 3.4 | 583.4 ± 1.5 | 120.5 ± 0.6% | 3.5e-04 to 4.1e-04 | 16.4, 2.8 | 22 s |
+| `jac_npt_4fs` | 23,558 | 1365.2 ± 5.7 | 1127.5 ± 2.8 | 121.1 ± 0.8% | 8.8e-04 to 9.1e-04 | 12.7, 4.1 | 22 s |
+| `factorix_nve` | 90,906 | 284.3 ± 1.2 | 262.5 ± 0.1 | 108.3 ± 0.4% | 5.6e-06 to 9.5e-06 | 14.9, 2.7 | 10 s |
+| `factorix_npt` | 90,906 | 267.1 ± 1.3 | 250.2 ± 0.4 | 106.8 ± 0.6% | 2.7e-04 to 2.8e-04 | 14.8, 2.6 | 22 s |
+| `cellulose_nve` | 408,609 | 62.4 ± 0.3 | 61.1 ± 0.0 | 102.1 ± 0.5% | 6.4e-05 to 6.5e-05 | 13.7, 2.2 | 9 s |
+| `cellulose_npt` | 408,609 | 60.0 ± 0.2 | 58.1 ± 0.1 | 103.3 ± 0.3% | 8.3e-05 to 1.1e-04 | 13.8, 2.2 | 18–19 s |
+| `stmv_npt_4fs` | 1,067,095 | 41.4 ± 0.1 | 37.4 ± 0.1 | 110.6 ± 0.3% | 1.1e-04 to 1.2e-04 | 6.7, 2.1 | 22–23 s |
 
 ![Rates of MDIR and pmemd.cuda over the Amber suite](figures/suite.png)
 
@@ -69,7 +81,7 @@ is largest on the smallest system and smallest on Cellulose:
 ## 10.3 Energy in the measured runs
 
 A rate is reported with the conservation of the run that measured it
-(Section 12). The changes in Table 10.2 are over runs of 1 to 40 ps and
+(Section 12). The changes in Table 10.2 are over runs of 2 to 40 ps and
 include the transient of the start of each restart file (Section 13);
 they are not drifts. Over 2 ns, the rate of drift of JAC is 1.5
 kcal/mol/ns against 5.9 for pmemd.cuda (Section 9.4).

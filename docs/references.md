@@ -230,6 +230,16 @@ electrostatics," *J. Chem. Phys.* **124**, 234104 (2006).
 Used for: damped shifted force electrostatics, a cutoff-based
 alternative named in the design review.
 
+### Fuchs2025
+
+P. Fuchs, W. Chen, S. Thaler, J. Zavadlav, "chemtrain-deploy: A parallel
+and scalable framework for machine learning potentials in million-atom
+MD simulations," *J. Chem. Theory Comput.* **21**(15), 7550–7560 (2025).
+[doi:10.1021/acs.jctc.5c00996](https://doi.org/10.1021/acs.jctc.5c00996)
+
+Used for: related work, the deployment of potentials defined in JAX
+inside LAMMPS on several GPUs.
+
 ### Fukunishi2002
 
 H. Fukunishi, O. Watanabe, S. Takada, "On the Hamiltonian replica
@@ -273,6 +283,17 @@ illustrated by the Störmer–Verlet method," *Acta Numer.* **12**, 399–450
 
 Used for: the properties `symplectic` and `time_reversible` of velocity
 Verlet and leapfrog, and why neither conserves energy exactly (B9).
+
+### He2024
+
+Y. He, A. Podobas, S. Markidis, "Leveraging MLIR for loop vectorization
+and GPU porting of FFT libraries," in *Euro-Par 2023: Parallel Processing
+Workshops*, Lecture Notes in Computer Science (Springer, Cham, 2024),
+pp. 207–218.
+[doi:10.1007/978-3-031-50684-0_16](https://doi.org/10.1007/978-3-031-50684-0_16)
+
+Used for: related work, FFTc, a language for FFTs on dialects of MLIR;
+MDIR calls cuFFT and pocketfft for the transforms of PME.
 
 ### Hess2008
 
@@ -599,6 +620,17 @@ Analysis* (IEEE, 2012), pp. 1116–1123.
 [doi:10.1109/SC.Companion.2012.134](https://doi.org/10.1109/SC.Companion.2012.134)
 
 Used for: PyOP2, with OP2 the origin of loops with access descriptors.
+
+### ReactantJl
+
+EnzymeAD, "Reactant.jl," a compiler of Julia functions to MLIR, with
+automatic differentiation by EnzymeMLIR and executables for CPUs, GPUs,
+and TPUs through XLA, under the MIT license. No paper;
+[github.com/EnzymeAD/Reactant.jl](https://github.com/EnzymeAD/Reactant.jl)
+(read 2026-10-02).
+
+Used for: related work, a compiler on MLIR with differentiation at the
+level of MLIR.
 
 ### Reinecke2019
 
