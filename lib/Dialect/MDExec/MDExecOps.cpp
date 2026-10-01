@@ -4,6 +4,7 @@
 
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/OpImplementation.h"
 
 using namespace mlir;
@@ -744,8 +745,10 @@ LogicalResult TabulateOp::verify() {
   if (result.getSymmetric() && !symmetric)
     return emitOpError()
            << "the table is symmetric only if every table it comes from is";
-  if (!result.getElementType().isF64())
-    return emitOpError() << "expected a table of f64, got " << result;
+  Type element = result.getElementType();
+  if (!getElementTypeOrSelf(element).isF64())
+    return emitOpError() << "expected a table of f64 or of vectors of f64, got "
+                         << result;
   Block &kernel = getKernel().front();
   if (kernel.getNumArguments() != getTables().size())
     return emitOpError() << "expected " << getTables().size()
@@ -755,8 +758,8 @@ LogicalResult TabulateOp::verify() {
     if (!argument.getType().isF64())
       return emitOpError() << "expected the arguments of the kernel in f64";
   Operation *yield = kernel.getTerminator();
-  if (yield->getNumOperands() != 1 || !yield->getOperand(0).getType().isF64())
-    return emitOpError() << "expected the kernel to yield one f64";
+  if (yield->getNumOperands() != 1 || yield->getOperand(0).getType() != element)
+    return emitOpError() << "expected the kernel to yield one " << element;
   return success();
 }
 

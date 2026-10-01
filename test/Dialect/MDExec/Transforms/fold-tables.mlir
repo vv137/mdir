@@ -8,22 +8,26 @@ md.particle_set @atoms
 
 // The force of Lennard-Jones from the tables of σ and ε: 48 ε σ¹² and
 // 24 ε σ⁶ depend on the pair of types only, and become two tables, which
-// the loop of the energy shares where it computes the same.
+// the force reads as one table of vectors, with one lookup; the loop of the
+// energy takes the table of 48 ε σ¹² alone.
 //
 // CHECK-LABEL: func.func @lennard_jones(
 // CHECK:         %[[S:[0-9]+]] = mdrt.from_buffer %{{.*}} to !md.table<2, f64, symmetric>
 // CHECK:         %[[E:[0-9]+]] = mdrt.from_buffer %{{.*}} to !md.table<2, f64, symmetric>
-// CHECK:         %[[B:[0-9]+]] = md_exec.tabulate(%[[S]], %[[E]] :
-// CHECK:           arith.constant 2.400000e+01
-// CHECK:         } -> !md.table<2, f64, symmetric>
 // CHECK:         %[[A:[0-9]+]] = md_exec.tabulate(%[[S]], %[[E]] :
 // CHECK:           arith.constant 4.800000e+01
 // CHECK:         } -> !md.table<2, f64, symmetric>
+// CHECK:         %[[AB:[0-9]+]] = md_exec.tabulate(%[[S]], %[[E]] :
+// CHECK:           arith.constant 4.800000e+01
+// CHECK:           arith.constant 2.400000e+01
+// CHECK:           vector.from_elements
+// CHECK:         } -> !md.table<2, vector<2xf64>, symmetric>
 // CHECK-NOT:     md_exec.tabulate
 // CHECK:         md_exec.pair_for
-// CHECK:           md.lookup %[[A]][%{{.*}}, %{{.*}}]
-// CHECK:           md.lookup %[[B]][%{{.*}}, %{{.*}}]
-// CHECK-NOT:       md.lookup %[[S]]
+// CHECK:           %[[V:[0-9]+]] = md.lookup %[[AB]][%{{.*}}, %{{.*}}] {{.*}} -> vector<2xf64>
+// CHECK:           vector.extract %[[V]][0]
+// CHECK:           vector.extract %[[V]][1]
+// CHECK-NOT:       md.lookup
 // CHECK:         md_exec.pair_for
 // CHECK:           md.lookup %[[A]]
 func.func @lennard_jones(%x: !vec, %cell: !md.cell, %nl: !nl,

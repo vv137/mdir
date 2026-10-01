@@ -405,7 +405,7 @@ kernel makes one lookup. No mixing rule is left at run time.
 
 | Item | Proposal |
 |---|---|
-| The type | `!md.table<rank, E>`, with `symmetric` for a table of rank 2 that is |
+| The type | `!md.table<rank, E>`, with `symmetric` for a table of rank 2 that is; E is f64 or f32, or a vector of them for the tables that a kernel reads at the same entry (D96) |
 | Exchange | A lookup in a symmetric table with the two types of a pair is symmetric |
 | Differentiation | A lookup does not depend on the positions |
 | Storage | A buffer, on the device where the loops are |

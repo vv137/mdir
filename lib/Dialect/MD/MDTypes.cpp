@@ -107,8 +107,15 @@ LogicalResult TableType::verify(function_ref<InFlightDiagnostic()> emitError,
                                 bool symmetric) {
   if (rank != 1 && rank != 2)
     return emitError() << "expected a table of rank 1 or 2, got " << rank;
-  if (!elementType.isF64() && !elementType.isF32())
-    return emitError() << "expected element type f64 or f32, got "
+  // A vector holds the values of several tables at one entry, which a
+  // kernel reads with one load (`md-exec-fold-tables`).
+  Type scalar = elementType;
+  if (auto vector = dyn_cast<VectorType>(elementType))
+    if (vector.getRank() == 1 && !vector.isScalable())
+      scalar = vector.getElementType();
+  if (!scalar.isF64() && !scalar.isF32())
+    return emitError() << "expected element type f64 or f32, or a vector of "
+                          "them, got "
                        << elementType;
   if (symmetric && rank != 2)
     return emitError() << "only a table of rank 2 can be symmetric";

@@ -249,15 +249,16 @@ def MD_LookupOp : MD_Op<"lookup", [Pure]> {
              : !md.table<2, f64, symmetric>, i32, i32 -> f64
     ```
 
-    The result is a floating-point number: that of the table, or the type
-    that the kernel computes in once precision is assigned. After storage
-    is assigned, the table is the buffer that holds it.
+    The result is a floating-point number, or a vector of them for a table
+    of vectors: that of the table, or the type that the kernel computes in
+    once precision is assigned. After storage is assigned, the table is the
+    buffer that holds it.
   }];
   let arguments = (ins
     AnyType:$table,
     Variadic<AnyTypeOf<[Index, AnySignlessInteger]>>:$indices
   );
-  let results = (outs AnyFloat:$result);
+  let results = (outs AnyTypeOf<[AnyFloat, VectorOfRankAndType<[1], [AnyFloat]>]>:$result);
   let assemblyFormat = [{
     $table `[` $indices `]` attr-dict `:` qualified(type($table)) `,`
     type($indices) `->` type($result)

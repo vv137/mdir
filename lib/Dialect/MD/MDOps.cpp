@@ -4,6 +4,7 @@
 
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/Interfaces/FunctionImplementation.h"
 
@@ -512,7 +513,7 @@ LogicalResult LookupOp::verify() {
   if (auto table = dyn_cast<TableType>(type)) {
     rank = table.getRank();
   } else if (auto buffer = dyn_cast<MemRefType>(type)) {
-    if (!isa<FloatType>(buffer.getElementType()))
+    if (!isa<FloatType>(getElementTypeOrSelf(buffer.getElementType())))
       return emitOpError() << "expected a buffer of floating-point numbers, "
                               "got "
                            << type;

@@ -1123,8 +1123,8 @@ void kernels::lowerLookups(Operation *root) {
                                   .getResult());
     Value value =
         memref::LoadOp::create(builder, loc, op.getTable(), indices);
-    op.getResult().replaceAllUsesWith(
-        convertReal(builder, loc, value, op.getResult().getType()));
+    op.getResult().replaceAllUsesWith(convertReal(
+        builder, loc, value, getElementTypeOrSelf(op.getResult().getType())));
     op.erase();
   }
 }

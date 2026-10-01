@@ -292,8 +292,11 @@ def FoldTables
     in f32 reads the value rounded once.
 
     Only the values that the rest of the kernel uses are tabulated; a table
-    that serves two loops is made once. The pass runs on kernels in f64,
-    before the precision is assigned.
+    that serves two loops is made once. The tables that a kernel reads at
+    the same indices become one table of vectors, read with one lookup and
+    taken apart with `vector.extract`: one load of 8 bytes for the two
+    coefficients of Lennard-Jones, not two of 4. The pass runs on kernels in
+    f64, before the precision is assigned.
 
     ```mlir
     %s = md.lookup %sigma[%ti, %tj] : ... -> f64

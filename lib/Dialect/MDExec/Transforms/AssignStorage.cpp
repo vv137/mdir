@@ -1112,9 +1112,11 @@ void Assignment::placeTable(OpBuilder &builder, Location loc, Value table,
   bool readByReciprocal = llvm::any_of(
       table.getUsers(),
       [](Operation *user) { return isa<ReciprocalOp>(user); });
-  if (narrowTables && host.getElementType().isF64() &&
+  if (narrowTables && getElementTypeOrSelf(host.getElementType()).isF64() &&
       !readByReciprocal) {
     Type narrow = Float32Type::get(context);
+    if (auto vector = dyn_cast<VectorType>(host.getElementType()))
+      narrow = VectorType::get(vector.getShape(), narrow);
     auto copyType = MemRefType::get(host.getShape(), narrow);
     Value copy =
         memref::AllocOp::create(builder, loc, copyType, sizes);
@@ -1167,7 +1169,8 @@ LogicalResult Assignment::convertTabulate(TabulateOp op, Scope &scope) {
              << "a table that it comes from has no buffer on the host";
     inputs.push_back(buffer);
   }
-  // The new table has the shape of the first, on the host, in f64.
+  // The new table has the shape of the first, on the host, in f64 (or
+  // vectors of f64).
   auto type = cast<MemRefType>(inputs.front().getType());
   SmallVector<Value, 2> sizes;
   for (int64_t d = 0, e = type.getRank(); d != e; ++d)
@@ -1176,7 +1179,10 @@ LogicalResult Assignment::convertTabulate(TabulateOp op, Scope &scope) {
         arith::ConstantIndexOp::create(builder, loc, d)));
   Value buffer = memref::AllocOp::create(
       builder, loc,
-      MemRefType::get(type.getShape(), builder.getF64Type()), sizes);
+      MemRefType::get(type.getShape(),
+                      cast<md::TableType>(op.getResult().getType())
+                          .getElementType()),
+      sizes);
   Value zero = arith::ConstantIndexOp::create(builder, loc, 0);
   Value one = arith::ConstantIndexOp::create(builder, loc, 1);
   Block &kernel = op.getKernel().front();

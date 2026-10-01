@@ -9,6 +9,7 @@
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/OperationSupport.h"
@@ -45,6 +46,10 @@ bool isArithmetic(Operation *op) {
                       [](Type type) { return isa<FloatType>(type); });
 }
 
+/// Returns a made table equal to `table`, erasing it, or `table`, adding it
+/// to the made tables.
+TabulateOp reuse(TabulateOp table, SmallVectorImpl<TabulateOp> &made);
+
 class Folder {
 public:
   explicit Folder(Operation *loop) : loop(loop), kernel(loop->getRegion(0).front()) {}
@@ -56,6 +61,7 @@ public:
 private:
   Dependence getDependence(Value value);
   TabulateOp makeTable(Value value, SmallVectorImpl<TabulateOp> &made);
+  void mergeLookups(SmallVectorImpl<TabulateOp> &made);
 
   Operation *loop;
   Block &kernel;
@@ -177,10 +183,14 @@ TabulateOp Folder::makeTable(Value value, SmallVectorImpl<TabulateOp> &made) {
     builder.clone(*op, mapping);
   }
   YieldOp::create(builder, loc, ValueRange{mapping.lookup(value)});
+  return reuse(table, made);
+}
 
+TabulateOp reuse(TabulateOp table, SmallVectorImpl<TabulateOp> &made) {
   // A table that another loop made already serves this one.
   for (TabulateOp other : made)
-    if (other.getTables() == table.getTables() &&
+    if (other.getType() == table.getType() &&
+        other.getTables() == table.getTables() &&
         OperationEquivalence::isRegionEquivalentTo(
             &other.getKernel(), &table.getKernel(),
             OperationEquivalence::IgnoreLocations)) {
@@ -189,6 +199,97 @@ TabulateOp Folder::makeTable(Value value, SmallVectorImpl<TabulateOp> &made) {
     }
   made.push_back(table);
   return table;
+}
+
+void Folder::mergeLookups(SmallVectorImpl<TabulateOp> &made) {
+  // The lookups of made tables at the same indices, in the order of the
+  // kernel.
+  SmallVector<SmallVector<md::LookupOp>> groups;
+  for (Operation &op : kernel) {
+    auto lookup = dyn_cast<md::LookupOp>(op);
+    if (!lookup || !lookup.getTable().getDefiningOp<TabulateOp>() ||
+        !lookup.getType().isF64())
+      continue;
+    auto same = llvm::find_if(groups, [&](auto &group) {
+      return llvm::equal(group.front().getIndices(), lookup.getIndices());
+    });
+    if (same == groups.end())
+      groups.push_back({lookup});
+    else if (llvm::none_of(*same, [&](md::LookupOp other) {
+               return other.getTable() == lookup.getTable();
+             }))
+      same->push_back(lookup);
+  }
+  for (auto &group : groups) {
+    if (group.size() < 2)
+      continue;
+    // One table of vectors, its kernel the kernels of the tables one after
+    // another, on the tables that any of them comes from.
+    SmallVector<TabulateOp> parts;
+    llvm::SetVector<Value> tables;
+    TabulateOp last;
+    for (md::LookupOp lookup : group) {
+      auto part = lookup.getTable().getDefiningOp<TabulateOp>();
+      parts.push_back(part);
+      tables.insert(part.getTables().begin(), part.getTables().end());
+      if (!last || last->isBeforeInBlock(part))
+        last = part;
+    }
+    auto first = cast<md::TableType>(parts.front().getType());
+    bool symmetric = llvm::all_of(parts, [](TabulateOp part) {
+      return cast<md::TableType>(part.getType()).getSymmetric();
+    });
+    if (llvm::any_of(parts, [&](TabulateOp part) {
+          return cast<md::TableType>(part.getType()).getRank() !=
+                 first.getRank();
+        }))
+      continue;
+    OpBuilder builder(last->getContext());
+    builder.setInsertionPointAfter(last);
+    Location loc = last.getLoc();
+    Type f64 = builder.getF64Type();
+    auto vectorType =
+        VectorType::get({static_cast<int64_t>(parts.size())}, f64);
+    auto type = md::TableType::get(builder.getContext(), first.getRank(),
+                                   vectorType, symmetric);
+    auto table = TabulateOp::create(builder, loc, type, tables.getArrayRef());
+    Block *body = builder.createBlock(&table.getKernel());
+    for (Value unused : tables) {
+      (void)unused;
+      body->addArgument(f64, loc);
+    }
+    SmallVector<Value> values;
+    for (TabulateOp part : parts) {
+      IRMapping mapping;
+      Block &from = part.getKernel().front();
+      for (auto [argument, input] :
+           llvm::zip(from.getArguments(), part.getTables()))
+        mapping.map(argument,
+                    body->getArgument(llvm::find(tables, input) -
+                                      tables.begin()));
+      for (Operation &op : from.without_terminator())
+        builder.clone(op, mapping);
+      values.push_back(
+          mapping.lookupOrDefault(from.getTerminator()->getOperand(0)));
+    }
+    YieldOp::create(
+        builder, loc,
+        ValueRange{vector::FromElementsOp::create(builder, loc, vectorType,
+                                                  values)});
+    table = reuse(table, made);
+
+    // One lookup where the first was, each value taken from it.
+    OpBuilder at(group.front());
+    Value looked = md::LookupOp::create(at, group.front().getLoc(), vectorType,
+                                        table.getResult(),
+                                        group.front().getIndices());
+    for (auto [k, lookup] : llvm::enumerate(group)) {
+      OpBuilder here(lookup);
+      lookup.getResult().replaceAllUsesWith(vector::ExtractOp::create(
+          here, lookup.getLoc(), looked, static_cast<int64_t>(k)));
+      lookup.erase();
+    }
+  }
 }
 
 void Folder::run(SmallVectorImpl<TabulateOp> &made) {
@@ -218,6 +319,7 @@ void Folder::run(SmallVectorImpl<TabulateOp> &made) {
         getDependence(value).indices);
     value.replaceAllUsesWith(looked);
   }
+  mergeLookups(made);
   // What the kernel no longer uses, last first.
   SmallVector<Operation *> ops;
   for (Operation &op : kernel.without_terminator())
@@ -238,6 +340,10 @@ public:
     SmallVector<TabulateOp> made;
     for (Operation *loop : loops)
       Folder(loop).run(made);
+    // The tables that only merged tables use now.
+    for (TabulateOp table : llvm::reverse(made))
+      if (table->use_empty())
+        table.erase();
   }
 };
 } // namespace
