@@ -134,7 +134,8 @@ q.save({os.path.join(target, "system.top")!r}, format="gromacs",
 
 
 def write_mdir(name, system, target, steps=None, path="mdir.toml",
-               skin=SKIN, neighbor_structure=None, barostat_work=None):
+               skin=SKIN, neighbor_structure=None, barostat_work=None,
+               prune_skin=None):
     npt = system["ensemble"] == "NPT"
     ensemble = (f"""ensemble    = "NPT"
 temperature = {TEMPERATURE}
@@ -164,7 +165,8 @@ energy_interval = {max(steps // 2, 1)}
 [energy]
 cutoff            = {CUTOFF}
 pairlist_distance = {CUTOFF + skin}
-electrostatics    = "PME"
+""" + (f"pruned_distance   = {CUTOFF + prune_skin * system['timestep'] / 0.002:.2f}\n"
+       if prune_skin else "") + f"""electrostatics    = "PME"
 
 [pme]
 tolerance   = {tolerance(system)}
@@ -331,7 +333,8 @@ def run(args):
         if args.engine == "mdir":
             control = write_mdir(name, system, target, skin=args.skin,
                                  neighbor_structure=args.neighbor_structure,
-                                 barostat_work=args.barostat_work)
+                                 barostat_work=args.barostat_work,
+                                 prune_skin=args.prune_skin)
             with open(log, "w") as out:
                 _, shared = timed([args.mdir, "run", control], target, out)
             text = open(log).read()
@@ -413,6 +416,10 @@ def main():
     p.add_argument("--mdir", default="mdir")
     p.add_argument("--skin", type=float, default=SKIN,
                    help="of the neighbor structures of MDIR (Å)")
+    p.add_argument("--prune-skin", type=float,
+                   help="of the inner list of a dual list of MDIR (Å) at a "
+                        "step of 2 fs, in proportion to the step (D114); "
+                        "one list if absent")
     p.add_argument("--neighbor-structure", choices=["MATRIX", "GROUPS"],
                    help="of MDIR on the device; its default if absent")
     p.add_argument("--barostat-work",

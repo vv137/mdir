@@ -51,6 +51,8 @@ threads, and its counters reset halfway (`-resethway`).
 ```sh
 bench.py --work DIR prepare --parmed-python PYTHON_WITH_PARMED
 bench.py --work DIR run mdir [SYSTEM ...] --mdir PATH_TO_MDIR
+bench.py --work DIR run mdir --mdir PATH_TO_MDIR --neighbor-structure GROUPS \
+    --skin 3 --prune-skin 0.6        # a dual list, D114: the settings of the suite since
 bench.py --work DIR run gromacs [SYSTEM ...] --gmx PATH_TO_GMX
 bench.py --work DIR report
 ```
