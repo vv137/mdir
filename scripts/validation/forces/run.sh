@@ -109,8 +109,8 @@ sander_forces sander-pme opc.prmtop opc.inpcrd \
 echo "== particle mesh Ewald, against sander"
 "$python" "$here/compare.py" pme.h5 sander-pme.frc.nc --kind sander
 
-# 3. Particle mesh Ewald from the topology of GROMACS: GROMACS gives beta
-# from ewald-rtol, and MDIR takes it from its log; the grid is the same.
+# 3. Particle mesh Ewald from the topology of GROMACS: both solve
+# erfc(beta r_c) = ewald-rtol for beta; the grid is the same.
 cp "$inputs/dipeptide/dipeptide.top" "$inputs/dipeptide/dipeptide.gro" .
 cat > rerun.mdp <<MDP
 integrator      = md
@@ -139,11 +139,9 @@ MDP
   -nb cpu -ntmpi 1 -ntomp 8 > mdrun.log 2>&1
 echo 0 | "$engines/bin/gmx" traj -f rerun.trr -s rerun.tpr -of gmx-forces.xvg \
   > traj.log 2>&1
-width=$(grep -o "Gaussian width (1/beta) of [0-9.e+-]* nm" rerun.log | head -1 | awk '{print $5}')
-beta=$(python3 -c "print(1.0 / ($width * 10.0))")
 mdir_forces gromacs dipeptide.top dipeptide.gro "electrostatics = \"PME\"
 [pme]
-beta = $beta
+tolerance = 1e-5
 order = 4
 grid = [28, 30, 26]
 [constraints]
@@ -171,5 +169,5 @@ PY
   -nb cpu -ntmpi 1 -ntomp 8 > mdrun-at-mdir.log 2>&1
 echo 0 | "$engines/bin/gmx" traj -f at-mdir.trr -s rerun.tpr -of gmx-forces.xvg \
   > traj-at-mdir.log 2>&1
-echo "== particle mesh Ewald, against GROMACS (beta $beta 1/Å)"
+echo "== particle mesh Ewald, against GROMACS"
 "$python" "$here/compare.py" gromacs.h5 gmx-forces.xvg --kind gromacs
