@@ -109,3 +109,25 @@ func.func @left_alone(%x: !vec, %cell: !md.cell, %nl: !nl, %moved: i1,
       : !nl, memref<?x3xf64>
   return
 }
+
+// A dual list (D114) gets a second test: against the configuration and
+// the cell of the last pruning, with the reach of the inner list, the
+// cutoff plus `prune_skin`, here 1.6.
+//
+// CHECK-LABEL: func.func @dual(
+func.func @dual(%x: !vec, %cell: !md.cell, %nl: !nl) -> !nl {
+  // CHECK:      %[[REF:[0-9]+]] = md_exec.reference_positions %{{[a-z0-9]+}} : !mdrt.neighbors<@atoms>
+  // CHECK:      md_exec.reference_cell %{{[a-z0-9]+}} : !mdrt.neighbors<@atoms>
+  // CHECK:      %[[R:[a-z0-9_]+]] = arith.constant 1.750000e+00 : f64
+  // CHECK:      %[[MOVED:[0-9]+]] = md_exec.particle_for ins(%{{[a-z0-9]+}}, %[[REF]] :
+  // CHECK:      %[[PREF:[0-9]+]] = md_exec.reference_positions %{{[a-z0-9]+}} pruned : !mdrt.neighbors<@atoms>
+  // CHECK:      md_exec.reference_cell %{{[a-z0-9]+}} pruned : !mdrt.neighbors<@atoms>
+  // CHECK:      %[[RIN:[a-z0-9_]+]] = arith.constant 1.600000e+00 : f64
+  // CHECK:      %[[STALE:[0-9]+]] = md_exec.particle_for ins(%{{[a-z0-9]+}}, %[[PREF]] :
+  // CHECK:      md_exec.refresh_neighbors %{{[a-z0-9]+}}, %{{[a-z0-9]+}}, %{{[a-z0-9]+}} moved(%[[MOVED]]) stale(%[[STALE]])
+  // CHECK-SAME:   prune_skin(1.000000e-01)
+  %nl1 = md_exec.refresh_neighbors %nl, %x, %cell
+      cutoff(1.5) skin(0.25) prune_skin(0.1) cell_width(1.75) policy(check)
+      : !nl, !vec
+  return %nl1 : !nl
+}

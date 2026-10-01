@@ -14,10 +14,13 @@ using namespace mdir::md_exec;
 
 /// Emits, before `refresh`, the loop over particles that tells whether a
 /// particle has moved too far for the structure since it was built, and
-/// hands the result to `refresh`. A barostat scales the positions with the
-/// cell; the test compares them with the reference scaled as the cell was,
+/// returns its result. A barostat scales the positions with the cell; the
+/// test compares them with the reference scaled as the cell was,
 /// m ⊙ x_ref with m = L / L_ref, against half of min(m) R − r_c (D80).
-static void exposeTest(RefreshNeighborsOp refresh) {
+/// With `pruned`, the test of the inner list of a dual list: against the
+/// configuration and the cell of the last pruning, with the reach
+/// R_in = r_c + prune_skin (D114).
+static Value emitTest(RefreshNeighborsOp refresh, bool pruned) {
   Location loc = refresh.getLoc();
   OpBuilder builder(refresh);
   Value positions = refresh.getPositions();
@@ -25,18 +28,20 @@ static void exposeTest(RefreshNeighborsOp refresh) {
   Type real = field.getElementType();
 
   Value reference = ReferencePositionsOp::create(
-      builder, loc, field, refresh.getNeighbors());
+      builder, loc, field, refresh.getNeighbors(), pruned);
   auto edgesType = VectorType::get({3}, builder.getF64Type());
   Value edges = CellEdgesOp::create(builder, loc, edgesType,
                                     refresh.getCell());
   Value built = ReferenceCellOp::create(
-      builder, loc, refresh.getCell().getType(), refresh.getNeighbors());
+      builder, loc, refresh.getCell().getType(), refresh.getNeighbors(),
+      pruned);
   Value builtEdges = CellEdgesOp::create(builder, loc, edgesType, built);
   Value scale = arith::DivFOp::create(builder, loc, edges, builtEdges);
   Value least = vector::ReductionOp::create(
       builder, loc, vector::CombiningKind::MINNUMF, scale);
   double cutoff = refresh.getCutoff().convertToDouble();
-  double reach = cutoff + refresh.getSkin().convertToDouble();
+  double reach = cutoff + (pruned ? refresh.getPruneSkin()->convertToDouble()
+                                  : refresh.getSkin().convertToDouble());
   auto constant = [&](double value) -> Value {
     return arith::ConstantOp::create(builder, loc, builder.getF64Type(),
                                      builder.getF64FloatAttr(value));
@@ -77,8 +82,15 @@ static void exposeTest(RefreshNeighborsOp refresh) {
   Value far = arith::CmpFOp::create(kernel, loc, arith::CmpFPredicate::UGT,
                                     distance2, limit);
   YieldOp::create(kernel, loc, ValueRange{far});
+  return loop.getResult(0);
+}
 
-  refresh.getMovedMutable().assign(loop.getResult(0));
+/// Hands `refresh` the tests of its structure: of the outer list, and of
+/// the inner one of a dual list.
+static void exposeTest(RefreshNeighborsOp refresh) {
+  refresh.getMovedMutable().assign(emitTest(refresh, /*pruned=*/false));
+  if (refresh.getPruneSkin())
+    refresh.getStaleMutable().assign(emitTest(refresh, /*pruned=*/true));
 }
 
 namespace mdir {

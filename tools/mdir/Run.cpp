@@ -57,7 +57,10 @@ static std::string getPipeline(const Control &control,
      << "md-bypass-updates,";
   os << "convert-md-to-md-exec{skin=" << program.skin
      << " width=" << program.neighborWidth << "},";
-  os << "md-exec-reuse-neighbors,";
+  os << "md-exec-reuse-neighbors";
+  if (program.pruneSkin > 0.0)
+    os << "{prune-skin=" << program.pruneSkin << "}";
+  os << ",";
   // Opt-in only (D88): the structures may miss pairs; the run warns.
   if (control.rebuildPeriod > 0)
     os << "md-exec-rebuild-at-interval{interval=" << control.rebuildPeriod
@@ -753,6 +756,21 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                    static_cast<double>(control->numSteps) /
                        static_cast<double>(builds - 1));
     std::fprintf(output.log, "\n");
+  } else {
+    llvm::consumeError(count.takeError());
+  }
+  // The prunings of the inner lists of dual lists (D114).
+  if (auto count = (*engine)->lookup("mdrtGetPruneCount")) {
+    int64_t prunes = reinterpret_cast<int64_t (*)()>(*count)();
+    if (prunes > 0) {
+      std::fprintf(output.log, "MDIR: the inner lists were pruned %lld times",
+                   static_cast<long long>(prunes));
+      if (prunes > 1 && control->numSteps > 0)
+        std::fprintf(output.log, ", every %.1f steps on average",
+                     static_cast<double>(control->numSteps) /
+                         static_cast<double>(prunes - 1));
+      std::fprintf(output.log, "\n");
+    }
   } else {
     llvm::consumeError(count.takeError());
   }

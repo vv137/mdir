@@ -195,6 +195,9 @@ Section 9 measures them.
 
 ## 6. Validity, with a dual list
 
+Implemented for the groups of 16 (D114, [groups-m1.md](groups-m1.md),
+Section 6.2); the tiles remain on hold.
+
 A structure is valid for the positions $\mathbf x$ in the cell of edges
 $\mathbf L$ when no pair within the cutoff $r_c$ is left out. D80 gives the
 condition for a structure built at $\mathbf x^\text{ref}$ in the cell

@@ -4553,6 +4553,9 @@ llvm::Error Builder::build() {
 
   program.skin =
       (control.pairlistDistance - control.cutoffDistance) * units::length;
+  if (control.prunedDistance != 0.0)
+    program.pruneSkin =
+        (control.prunedDistance - control.cutoffDistance) * units::length;
   // Cells of half the reach of a neighbor structure: particles that are
   // neighbors are then a few cells apart in memory.
   program.reorders = control.reorder && !control.minimize;

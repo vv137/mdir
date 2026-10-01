@@ -261,6 +261,42 @@ run of `test/Driver/groups-gpu.test` gives the energies of the matrix to
 every digit of the log over 100 steps; JAC under NPT (400 steps) builds as
 often, and its conserved energy drifts as much (−7.5 and −7.7 kcal/mol).
 
+## 6.2 The dual list (D114)
+
+`pruned_distance` in `[energy]` keeps a dual list: the structure of groups
+built with the reach R = `pairlist_distance` (the outer list) and an inner
+list pruned from it with the reach R_in = `pruned_distance`, which the
+loops over pairs take. [tiles-m1.md](tiles-m1.md), Section 6, gives the
+validity and its proof; they do not depend on the layout of the list.
+
+| Item | Rule |
+|---|---|
+| The tests | Two loops over particles, fused with the loop that moves them (`md-exec-expose-validity`): that of D80 against the configuration and the cell of the build, and the same against those of the last pruning with R_in (`md_exec.reference_positions pruned`, `md_exec.reference_cell pruned`). Each scales by its own cell, `m = L / L_ref` and `m_p = L / L_p`, per axis; the cells are orthorhombic, so a scaling has no shear |
+| The refresh | Where the outer list is not valid, it is built and the inner list pruned from it; where only the inner one is not, the inner one is pruned again. A pruning sets the configuration and the cell of the inner list only; those of the outer list change at a build only. Before the first pruning the cell of the inner list is not a number, so its test fails |
+| The pruning | Always from the outer list: the bits of an entry are those of the outer mask whose pairs are within R_in now, `inner = outer & (r² ≤ R_in²)`, so that a pair dropped once comes back when it is near again. The outer entries and masks are kept as the build left them |
+| The distances | In f32, from positions moved into the frames of their groups as the loop takes them (D95), against R_in widened by 3e-6 of the sum of the edges of the cell, as the build widens R: the rounding can keep a pair beyond R_in, never drop one within it |
+| The layout | A warp for each group takes the entries of the outer list of the group in their order, 32 at a time, and writes those with a bit left to the front of the blocks of the group, in their order (a ballot and a count of the bits below each lane), across the boundaries of the blocks; each block holds its number of entries. The inner list thus fills its blocks as a list built with R_in would. A block that the inner list leaves empty writes nothing in the loop |
+| The order | The pruning keeps the order of the outer list and adds no order of its own. The order of the outer list, the blocks that the build takes with an atomic addition, and the atomic additions of the loop are as without a dual list: the sums still depend on the order of the threads, and the deterministic mode does not take groups |
+| The log | `the inner lists were pruned N times, every k steps on average`, the prunings that follow a build included |
+
+Measured (RTX 3090 at 300 W, mixed precision, one run each, ns/day):
+
+| System | One list, 9 Å | Dual, outer / inner |
+|---|---|---|
+| JAC | 734 | 779 (11 / 8.6 Å) |
+| JAC, 4 fs | 1352 | 1467 (11 / 9.0 Å) |
+| FactorIX | 273 | 286 (11 / 8.6 Å) |
+| Cellulose | 59.7 | 62.4 (12 / 8.6 Å) |
+| STMV, 4 fs | 37.8 | 39.9 (11 / 9.0 Å) |
+
+On Cellulose (11 / 9 Å) a pruning takes 347 µs in its main kernel (72
+registers a thread) and 35 µs to gather the positions and index the
+blocks, every 3.5 steps; the loop over the inner list takes 1060 µs, against
+1041 for a list built with 9 Å. The first version pruned each block of
+the outer list into the same block: the inner list kept the blocks of the
+outer one, partly filled, and the loop took 1320 µs; a pruning read the
+positions in f64 and took 933 µs.
+
 ## 7. Stages
 
 | Stage | What | Checked by |

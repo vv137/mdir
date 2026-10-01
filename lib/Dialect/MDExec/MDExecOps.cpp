@@ -474,6 +474,19 @@ LogicalResult RefreshNeighborsOp::verify() {
            << "'interval' belongs to the policy 'interval'";
   }
 
+  if (std::optional<APFloat> pruneSkin = getPruneSkin()) {
+    double prune = pruneSkin->convertToDouble();
+    if (!(prune > 0.0) || !(prune < skin))
+      return emitOpError() << "expected a 'prune_skin' above 0 and below "
+                              "the skin "
+                           << skin << ", got " << prune;
+    if (getPolicy() != RebuildPolicy::Check)
+      return emitOpError() << "a dual list ('prune_skin') belongs to the "
+                              "policy 'check'";
+  }
+  if (getStale() && !getPruneSkin())
+    return emitOpError() << "'stale' belongs to a dual list ('prune_skin')";
+
   if (getMoved()) {
     if (getPolicy() != RebuildPolicy::Check)
       return emitOpError()

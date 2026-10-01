@@ -723,8 +723,11 @@ void _mlir_ciface_mdrtCudaFFTBackward3DF32(DeviceBuffer1DF32 *complex,
    entries of each group (a group is 16 places), the entries and the masks
    in blocks of 64, the group and the number within its list of each
    block, and the shift of each place to the frame of its group (D95).
-   Compiled code takes a buffer where it uses it (`mdrtGroupsBuffer`), so a
-   buffer that grew is the one it takes. */
+   A dual list (D114) adds the entries and the masks of the inner list,
+   each block of the outer list pruned into the same block, and the number
+   of entries that each block keeps; they are allocated where compiled code
+   first asks for them. Compiled code takes a buffer where it uses it
+   (`mdrtGroupsBuffer`), so a buffer that grew is the one it takes. */
 enum {
   GROUPS_ORDER,
   GROUPS_COUNTS,
@@ -733,6 +736,9 @@ enum {
   GROUPS_UNIT_GROUPS,
   GROUPS_UNIT_ORDINALS,
   GROUPS_SHIFTS,
+  GROUPS_INNER_ENTRIES,
+  GROUPS_INNER_MASKS,
+  GROUPS_INNER_COUNTS,
   GROUPS_BUFFERS
 };
 
@@ -760,22 +766,33 @@ static int64_t getGroupsLength(const struct Groups *groups, int which) {
     return groups->places / 16;
   case GROUPS_ENTRIES:
   case GROUPS_MASKS:
+  case GROUPS_INNER_ENTRIES:
+  case GROUPS_INNER_MASKS:
     return groups->blocks * 64;
   default:
     return groups->blocks;
   }
 }
 
+static void allocateGroup(struct Groups *groups, int which) {
+  groups->data[which] = mgpuMemAlloc(
+      (uint64_t)getGroupsLength(groups, which) * sizeof(int32_t), NULL,
+      false);
+}
+
+/* The buffers of the outer list; those of the inner one wait for their
+   first use. */
 static void allocateGroups(struct Groups *groups) {
-  for (int which = 0; which != GROUPS_BUFFERS; ++which)
-    groups->data[which] = mgpuMemAlloc(
-        (uint64_t)getGroupsLength(groups, which) * sizeof(int32_t), NULL,
-        false);
+  for (int which = 0; which != GROUPS_INNER_ENTRIES; ++which)
+    allocateGroup(groups, which);
 }
 
 static void freeGroups(struct Groups *groups) {
-  for (int which = 0; which != GROUPS_BUFFERS; ++which)
-    mgpuMemFree(groups->data[which], NULL);
+  for (int which = 0; which != GROUPS_BUFFERS; ++which) {
+    if (groups->data[which])
+      mgpuMemFree(groups->data[which], NULL);
+    groups->data[which] = NULL;
+  }
 }
 
 /* A structure with room for `places` places (a multiple of 16) and
@@ -795,6 +812,8 @@ int64_t mdrtGroupsCreate(int64_t places, int64_t blocks) {
 void _mlir_ciface_mdrtGroupsBuffer(struct Buffer1 *result, int64_t handle,
                                    int64_t which) {
   struct Groups *groups = (struct Groups *)(intptr_t)handle;
+  if (!groups->data[which])
+    allocateGroup(groups, (int)which);
   result->allocated = groups->data[which];
   result->aligned = groups->data[which];
   result->offset = 0;

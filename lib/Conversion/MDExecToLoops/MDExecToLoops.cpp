@@ -588,6 +588,9 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
 
 LogicalResult
 Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
+  if (op.getPruneSkin())
+    return op.emitOpError() << "keeps a dual list (D114), which only a "
+                               "device lowers";
   Location loc = op.getLoc();
   OpBuilder builder(op);
 

@@ -367,12 +367,20 @@ SmallVector<Value> kernels::emitGroupPairKernel(
   Value k = memref::LoadOp::create(builder, loc, lists.ordinals,
                                    ValueRange{unit});
   Value groupIndex = toIndex(builder, group);
-  Value count = memref::LoadOp::create(builder, loc, lists.counts,
-                                       ValueRange{groupIndex});
-  Value begin = arith::MulIOp::create(builder, loc, k, constant32(builder, 64));
-  Value end = arith::MinSIOp::create(
-      builder, loc, count,
-      arith::AddIOp::create(builder, loc, begin, constant32(builder, 64)));
+  Value begin, end;
+  if (lists.blockCounts) {
+    // The inner list keeps its entries at the front of each block.
+    begin = constant32(builder, 0);
+    end = memref::LoadOp::create(builder, loc, lists.blockCounts,
+                                 ValueRange{unit});
+  } else {
+    Value count = memref::LoadOp::create(builder, loc, lists.counts,
+                                         ValueRange{groupIndex});
+    begin = arith::MulIOp::create(builder, loc, k, constant32(builder, 64));
+    end = arith::MinSIOp::create(
+        builder, loc, count,
+        arith::AddIOp::create(builder, loc, begin, constant32(builder, 64)));
+  }
 
   // The particle of this lane: place 16 g + u.
   Value lane32 = arith::IndexCastOp::create(builder, loc, i32, lane);
@@ -629,12 +637,18 @@ SmallVector<Value> kernels::emitGroupPairKernel(
   }
   Value particle32 = memref::LoadOp::create(builder, loc, lists.order,
                                             ValueRange{mine});
+  // A unit with no entries, a block that the inner list of a dual list
+  // leaves empty (D114), writes nothing.
   Value writes = arith::AndIOp::create(
       builder, loc,
-      arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq, half,
-                            constant32(builder, 0)),
-      arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::sge,
-                            particle32, constant32(builder, 0)));
+      arith::AndIOp::create(
+          builder, loc,
+          arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq, half,
+                                constant32(builder, 0)),
+          arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::sge,
+                                particle32, constant32(builder, 0))),
+      arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::slt, begin,
+                            end));
   if (numOuts != 0)
     scf::IfOp::create(builder, loc, writes, [&](OpBuilder &then, Location) {
       Value particle = toIndex(then, particle32);

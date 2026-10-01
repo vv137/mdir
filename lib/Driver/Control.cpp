@@ -468,7 +468,7 @@ Error Reader::readEnergy(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "energy",
           {"cutoff", "switch_distance", "pairlist_distance",
-           "rebuild_interval", "lennard_jones_modifier", "coulomb_modifier", "pair", "type",
+           "pruned_distance", "rebuild_interval", "lennard_jones_modifier", "coulomb_modifier", "pair", "type",
            "pair_override", "dispersion_correction", "electrostatics"},
           {}))
     return error;
@@ -495,6 +495,19 @@ Error Reader::readEnergy(const toml::table &table) {
     return fail(table, "'switch_distance' exceeds 'cutoff'");
   if (control.pairlistDistance < control.cutoffDistance)
     return fail(table, "'pairlist_distance' is less than 'cutoff'");
+  // A dual list (D114): the inner list, pruned from the structure of
+  // 'pairlist_distance', with the reach 'pruned_distance'.
+  if (Error error =
+          readPositive(table, "pruned_distance", control.prunedDistance))
+    return error;
+  if (control.prunedDistance != 0.0 &&
+      !(control.prunedDistance > control.cutoffDistance &&
+        control.prunedDistance < control.pairlistDistance))
+    return fail(table, "'pruned_distance' is not between 'cutoff' and "
+                       "'pairlist_distance'");
+  if (control.prunedDistance != 0.0 && control.rebuildPeriod > 0)
+    return fail(table, "'pruned_distance' and 'rebuild_interval' do not go "
+                       "together");
 
   enum class Modifier { None, PotentialShift, ForceSwitch };
   Modifier modifier = Modifier::None;
@@ -1136,6 +1149,13 @@ Error Reader::read(const toml::table &root) {
     if (Error error = readExecution(*table))
       return error;
 
+  if (control.prunedDistance != 0.0 &&
+      control.neighborStructure != NeighborStructure::Groups)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "%s: 'pruned_distance' keeps a dual list, which needs "
+        "'neighbor_structure = \"GROUPS\"'",
+        path.str().c_str());
   if (control.checkpointPeriod != 0 && control.restartOutput.empty())
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
@@ -1193,6 +1213,8 @@ trajectory_interval = 0         # steps between frames; 0: none
 cutoff            = 12.0        # Å
 switch_distance   = 10.0        # where switching begins (Å); the cutoff: none
 pairlist_distance = 13.5        # reach of the neighbor structures (Å)
+# pruned_distance = 0           # reach of the inner list of a dual list,
+                                # pruned from the structure; needs GROUPS (Å)
 # rebuild_interval = 0          # 0: rebuild when a particle has moved half
                                 # the skin (default); N: every N steps, not
                                 # tested between; may miss pairs (opt-in)

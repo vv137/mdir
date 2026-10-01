@@ -901,8 +901,8 @@ LogicalResult Assignment::convertBuildNeighbors(BuildNeighborsOp op,
   auto refresh = RefreshNeighborsOp::create(
       scope.builder, loc, storage.getType(), storage, positions,
       mapping.lookup(op.getCell()), /*scratch=*/ValueRange(),
-      /*moved=*/Value(), op.getCutoffAttr(), op.getSkinAttr(),
-      cells.getWidthAttr(),
+      /*moved=*/Value(), /*stale=*/Value(), op.getCutoffAttr(),
+      op.getSkinAttr(), /*prune_skin=*/FloatAttr(), cells.getWidthAttr(),
       RebuildPolicyAttr::get(scope.builder.getContext(), RebuildPolicy::Check),
       /*interval=*/IntegerAttr());
   refresh.setPolicy(RebuildPolicy::Always);
@@ -941,11 +941,12 @@ LogicalResult Assignment::convertRefreshNeighbors(RefreshNeighborsOp op,
       return failure();
   }
 
+  Value stale = op.getStale() ? mapping.lookup(op.getStale()) : Value();
   auto refresh = RefreshNeighborsOp::create(
       scope.builder, op.getLoc(), storage.getType(), storage, positions,
-      mapping.lookup(op.getCell()), scratch, moved, op.getCutoffAttr(),
-      op.getSkinAttr(), op.getCellWidthAttr(), op.getPolicyAttr(),
-      op.getIntervalAttr());
+      mapping.lookup(op.getCell()), scratch, moved, stale, op.getCutoffAttr(),
+      op.getSkinAttr(), op.getPruneSkinAttr(), op.getCellWidthAttr(),
+      op.getPolicyAttr(), op.getIntervalAttr());
   neighbors[op.getResult()] = refresh.getResult();
   for (Value buffer : scratch)
     scope.release(buffer);
@@ -1452,7 +1453,8 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
                             storage)))
       return failure();
     buffers[reference.getResult()] = ReferencePositionsOp::create(
-        builder, op->getLoc(), getStorageType(field), storage);
+        builder, op->getLoc(), getStorageType(field), storage,
+        reference.getPruned());
     return success();
   }
 
@@ -1470,7 +1472,8 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
       return failure();
     mapping.map(cell.getResult(),
                 ReferenceCellOp::create(builder, op->getLoc(),
-                                        cell.getResult().getType(), storage));
+                                        cell.getResult().getType(), storage,
+                                        cell.getPruned()));
     return success();
   }
   if (auto count = dyn_cast<RebuildCountOp>(op)) {

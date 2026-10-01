@@ -126,6 +126,8 @@ struct Program {
   /// neighbors that they hold per particle.
   double skin;
   int64_t neighborWidth;
+  /// The skin of the inner list of a dual list, in nm; 0 keeps one list.
+  double pruneSkin = 0.0;
 
   /// Whether the program puts the particles in the order of their
   /// positions, and the width of the cells that it orders them by, in nm.

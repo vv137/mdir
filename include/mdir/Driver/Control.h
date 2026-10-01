@@ -94,6 +94,9 @@ struct Control {
   double switchDistance = 10.0;
   double cutoffDistance = 12.0;
   double pairlistDistance = 13.5;
+  /// The reach of the inner list of a dual list (D114), between the cutoff
+  /// and `pairlistDistance`; 0 keeps one list.
+  double prunedDistance = 0.0;
   /// The interval of the rebuilds of the neighbor structures, in steps, or
   /// 0 for a rebuild when the test of validity at every step fails (the
   /// default). NOT A DEFAULT: at an interval, the structures are not

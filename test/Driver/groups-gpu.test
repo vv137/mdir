@@ -2,8 +2,10 @@
 # (D89), against the neighbor matrix: the run of pme-settle.test on a GPU.
 # In double precision the two give the energies of the log to their digits
 # over 100 steps, also when the buffers of the lists, or the rows of the
-# matrix, start with almost no room and the builds make them larger; in mixed precision they conserve
-# the energy as well.
+# matrix, start with almost no room and the builds make them larger, and
+# with a dual list (D114), whose inner list of 9.3 Å is pruned from an
+# outer one of 11 Å every few steps; in mixed precision they conserve the
+# energy as well.
 #
 # REQUIRES: cuda
 #
@@ -25,6 +27,22 @@
 # RUN: sed -e 's|^precision = "double"|precision = "double"\nneighbor_capacity = 1|' %t/matrix.toml > %t/narrow.toml
 # RUN: cd %t && mdir run narrow.toml | grep 'INFO: \|MDIR:   ' > narrow.log
 # RUN: diff %t/matrix.log %t/narrow.log
+# RUN: sed -e 's|^pairlist_distance = 10.0|pairlist_distance = 11.0\npruned_distance = 9.3|' %t/groups.toml > %t/dual.toml
+# RUN: cd %t && mdir run dual.toml > dual.out
+# RUN: grep 'INFO: \|MDIR:   ' %t/dual.out > %t/dual.log
+# RUN: diff %t/matrix.log %t/dual.log
+# RUN: FileCheck %s --check-prefix=DUAL < %t/dual.out
+# Under a barostat that compresses a mixture of argon and krypton
+# (barostat.test) the dual list gives the energies of one list until the
+# order of the atomic additions sets them apart, past 1000 steps.
+# RUN: cp %S/Inputs/mixture.pdb %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/barostat.test | sed '1d;$d' \
+# RUN:     | sed -e 's|energy_interval = 1000|energy_interval = 100|' -e 's|^steps *= 2000|steps = 1000|' > %t/npt.toml
+# RUN: printf '[execution]\ntarget = "gpu"\nprecision = "double"\nneighbor_structure = "GROUPS"\n' >> %t/npt.toml
+# RUN: sed -e 's|^pairlist_distance = 10.0|pairlist_distance = 10.6\npruned_distance = 9.3|' %t/npt.toml > %t/npt-dual.toml
+# RUN: cd %t && mdir run npt.toml | grep 'INFO: ' > npt.log
+# RUN: cd %t && mdir run npt-dual.toml | grep 'INFO: ' > npt-dual.log
+# RUN: diff %t/npt.log %t/npt-dual.log
 # RUN: cd %t && env MDIR_PRINT_AFTER=md-exec-choose-neighbors mdir run mixed.toml 2>&1 | FileCheck %s
 # RUN: sed -e 's|^target = "gpu"|target = "cpu"|' %t/groups.toml > %t/cpu.toml
 # RUN: not mdir run %t/cpu.toml 2>&1 | FileCheck %s --check-prefix=CPU
@@ -33,6 +51,8 @@
 # CHECK:     policy(unique, atomic)
 # CHECK:     INFO:       100
 # CHECK:     MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
+
+# DUAL: MDIR: the inner lists were pruned {{[0-9]+}} times
 
 # GROW: MDIR: the lists of groups took at most [[USED:[0-9]+]] of {{[0-9]+}} blocks of 64 entries
 

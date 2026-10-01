@@ -36,7 +36,17 @@ def ReuseNeighbors : Pass<"md-exec-reuse-neighbors", "::mlir::ModuleOp"> {
 
     The structure is empty when the loop begins, so the first iteration
     builds it.
+
+    With `prune-skin` above zero, each refresh with the policy `check`
+    keeps a dual list (D114): the inner list, which the loops over pairs
+    take, is pruned from the outer one with the reach `cutoff +
+    prune-skin` (`prune_skin` of `md_exec.refresh_neighbors`).
   }];
+  let options = [
+    Option<"pruneSkin", "prune-skin", "double", /*default=*/"0.0",
+           "The skin of the inner list of a dual list, in the units of "
+           "the cutoff; 0 keeps one list">
+  ];
   let dependentDialects = ["::mdir::md_exec::MDExecDialect",
                            "::mdir::mdrt::MDRTDialect"];
 }

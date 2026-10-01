@@ -213,8 +213,8 @@ static Value continueIn(Source source, Value current) {
     Value refreshed = RefreshNeighborsOp::create(
         builder, build.getLoc(), current.getType(), current,
         build.getPositions(), build.getCell(), /*scratch=*/ValueRange(),
-        /*moved=*/Value(), build.getCutoffAttr(), build.getSkinAttr(),
-        cells.getWidthAttr(),
+        /*moved=*/Value(), /*stale=*/Value(), build.getCutoffAttr(),
+        build.getSkinAttr(), /*prune_skin=*/FloatAttr(), cells.getWidthAttr(),
         RebuildPolicyAttr::get(builder.getContext(), RebuildPolicy::Check),
         /*interval=*/IntegerAttr());
     build.getResult().replaceAllUsesWith(refreshed);
@@ -307,6 +307,18 @@ public:
   using impl::ReuseNeighborsBase<ReuseNeighbors>::ReuseNeighborsBase;
 
   void runOnOperation() final {
+    reuseAll();
+    // The refreshes keep dual lists where the run asks for them (D114).
+    if (pruneSkin > 0.0)
+      getOperation()->walk([&](RefreshNeighborsOp refresh) {
+        if (refresh.getPolicy() == RebuildPolicy::Check &&
+            pruneSkin < refresh.getSkin().convertToDouble())
+          refresh.setPruneSkinAttr(
+              FloatAttr::get(Float64Type::get(&getContext()), pruneSkin));
+      });
+  }
+
+  void reuseAll() {
     // Loops inside other loops come first, so that a structure moves
     // outward one loop at a time. A loop is replaced when it takes a
     // structure, so the loops are looked up again after every change.

@@ -13,6 +13,14 @@ void mdrtCountBuild(void) { ++numBuilds; }
 
 int64_t mdrtGetBuildCount(void) { return numBuilds; }
 
+/* The number of times that compiled code has pruned the inner list of a
+   dual list from its outer one (D114). */
+static int64_t numPrunes = 0;
+
+void mdrtCountPrune(void) { ++numPrunes; }
+
+int64_t mdrtGetPruneCount(void) { return numPrunes; }
+
 /* The number of builds at a fixed interval that found the structure no
    longer valid: between the build before and this one, pairs within the
    cutoff may have been left out (the opt-in policy `interval`, D88). */

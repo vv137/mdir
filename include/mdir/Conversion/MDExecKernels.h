@@ -114,6 +114,9 @@ struct GroupLists {
   mlir::Value units;
   mlir::Value ordinals;
   mlir::Value order;
+  /// For the inner list of a dual list (D114): the entries that each block
+  /// keeps, at its front; `counts` is then not read.
+  mlir::Value blockCounts = {};
 };
 
 /// Emits what a warp does for the unit of work `unit` of a loop over pairs

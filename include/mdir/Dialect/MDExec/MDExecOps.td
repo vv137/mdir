@@ -430,6 +430,34 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
              cutoff(2.5) skin(0.3) cell_width(2.8) policy(check)
              : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
     ```
+
+    With `prune_skin` the structure is a dual list (D114,
+    docs/tiles-m1.md, Section 6): the outer list, built with the reach
+    `R = cutoff + skin` as above, and an inner one pruned from it, which
+    keeps the pairs of the outer list within `R_in = cutoff + prune_skin`
+    at the configuration `x_p` and the cell `L_p` of the pruning; the
+    loops over pairs take the inner one. With `m_p = L / L_p`, the inner
+    list holds every pair within the cutoff while the outer one is valid
+    and
+
+    ```text
+    2 max_i |x_i − m_p ⊙ x_p,i| ≤ min(m_p) R_in − r_c
+    ```
+
+    `stale` tells whether this condition fails for a particle; the loop
+    that computes it takes `md_exec.reference_positions` and
+    `md_exec.reference_cell` with `pruned`. Where the outer list is not
+    valid the op builds it and prunes the inner one from it; where only
+    `stale` is set it prunes again, which reads the outer list and the
+    positions and searches nothing. A pair dropped by one pruning may come
+    back, so the inner list is always pruned from the outer one.
+
+    ```mlir
+    %nl1 = md_exec.refresh_neighbors %nl, %x, %cell moved(%moved)
+             stale(%stale) cutoff(2.5) skin(0.6) prune_skin(0.2)
+             cell_width(2.8) policy(check)
+             : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+    ```
   }];
   let arguments = (ins
     MDRT_NeighborsType:$neighbors,
@@ -437,8 +465,10 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
     MD_CellType:$cell,
     Variadic<MDExec_Scratch>:$scratch,
     Optional<I1>:$moved,
+    Optional<I1>:$stale,
     F64Attr:$cutoff,
     F64Attr:$skin,
+    OptionalAttr<F64Attr>:$prune_skin,
     F64Attr:$cell_width,
     DefaultValuedAttr<MDExec_RebuildPolicy,
                       "::mdir::md_exec::RebuildPolicy::Check">:$policy,
@@ -448,8 +478,9 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
   let assemblyFormat = [{
     $neighbors `,` $positions `,` $cell
     (`scratch` `(` $scratch^ `:` type($scratch) `)`)?
-    (`moved` `(` $moved^ `)`)?
+    (`moved` `(` $moved^ `)`)? (`stale` `(` $stale^ `)`)?
     `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
+    (`prune_skin` `(` $prune_skin^ `)`)?
     `cell_width` `(` $cell_width `)` (`interval` `(` $interval^ `)`)?
     `policy` `(` $policy `)` attr-dict
     `:` qualified(type($neighbors)) `,` qualified(type($positions))
@@ -494,11 +525,14 @@ def MDExec_ReferencePositionsOp : MDExec_Op<"reference_positions", [Pure]> {
     %ref = md_exec.reference_positions %nl
              : !mdrt.neighbors<@atoms> -> memref<?x3xf64>
     ```
+
+    With `pruned`, the positions at which the inner list of a dual list
+    was last pruned (D114).
   }];
-  let arguments = (ins MDRT_NeighborsType:$neighbors);
+  let arguments = (ins MDRT_NeighborsType:$neighbors, UnitAttr:$pruned);
   let results = (outs MDExec_FieldOrBuffer:$result);
   let assemblyFormat = [{
-    $neighbors attr-dict
+    $neighbors (`pruned` $pruned^)? attr-dict
     `:` qualified(type($neighbors)) `->` qualified(type($result))
   }];
   let extraClassDeclaration = [{
@@ -520,11 +554,14 @@ def MDExec_ReferenceCellOp : MDExec_Op<"reference_cell", [Pure]> {
     ```mlir
     %cell0 = md_exec.reference_cell %nl : !mdrt.neighbors<@atoms>
     ```
+
+    With `pruned`, the cell in which the inner list of a dual list was last
+    pruned (D114).
   }];
-  let arguments = (ins MDRT_NeighborsType:$neighbors);
+  let arguments = (ins MDRT_NeighborsType:$neighbors, UnitAttr:$pruned);
   let results = (outs MD_CellType:$result);
   let assemblyFormat = [{
-    $neighbors attr-dict `:` qualified(type($neighbors))
+    $neighbors (`pruned` $pruned^)? attr-dict `:` qualified(type($neighbors))
   }];
 }
 
