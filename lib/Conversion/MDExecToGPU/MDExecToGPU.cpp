@@ -112,7 +112,7 @@ struct Neighbors {
 
 /// The buffers of a structure of groups, as the runtime holds them now.
 struct GroupBuffers {
-  Value order, counts, entries, masks, units, ordinals;
+  Value order, counts, entries, masks, units, ordinals, shifts;
 };
 
 /// Where the global sums and maxima of a loop arrive: numbers on the
@@ -1397,7 +1397,9 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
 
   // The positions and the fields that the kernel reads, in the order of
   // the places of the last build; an empty place takes those of the
-  // particle 0, which no pair reads.
+  // particle 0, which no pair reads. A position is moved by whole cells to
+  // the frame of its group (the shift of its place, ten bits an axis from
+  // -512), so that the kernel takes no minimum image (D95).
   Value places = arith::IndexCastOp::create(
       builder, loc, builder.getIndexType(),
       memref::LoadOp::create(builder, loc, structure.sizes,
@@ -1419,9 +1421,38 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
     Value particle = arith::SelectOp::create(
         body, loc, empty, createIndex(body, loc, 0),
         arith::IndexCastOp::create(body, loc, body.getIndexType(), at));
-    for (auto [source, target] : llvm::zip(sources, targets))
-      storeElement(body, loc, loadElement(body, loc, source, particle),
-                   target, place);
+    Value packed = memref::LoadOp::create(body, loc, buffers.shifts,
+                                          ValueRange{place});
+    auto positionType = cast<MemRefType>(sources.front().getType());
+    Type element = positionType.getElementType();
+    SmallVector<Value> cells;
+    for (int64_t k = 0; k != 3; ++k) {
+      Value bits = arith::AndIOp::create(
+          body, loc,
+          arith::ShRUIOp::create(
+              body, loc, packed,
+              arith::ConstantOp::create(body, loc, body.getI32Type(),
+                                        body.getI32IntegerAttr(10 * k))),
+          arith::ConstantOp::create(body, loc, body.getI32Type(),
+                                    body.getI32IntegerAttr(1023)));
+      Value count = arith::SubIOp::create(
+          body, loc, bits,
+          arith::ConstantOp::create(body, loc, body.getI32Type(),
+                                    body.getI32IntegerAttr(512)));
+      cells.push_back(arith::SIToFPOp::create(body, loc, element, count));
+    }
+    Value shift = arith::MulFOp::create(
+        body, loc,
+        vector::FromElementsOp::create(body, loc,
+                                       VectorType::get({3}, element), cells),
+        convertReal(body, loc, box, element));
+    for (auto [index, pair] : llvm::enumerate(llvm::zip(sources, targets))) {
+      auto [source, target] = pair;
+      Value value = loadElement(body, loc, source, particle);
+      if (index == 0)
+        value = arith::AddFOp::create(body, loc, value, shift);
+      storeElement(body, loc, value, target, place);
+    }
   });
   PairLayout layout;
   layout.order = buffers.order;
@@ -2191,6 +2222,7 @@ GroupBuffers Lowering::getGroupsBuffers(OpBuilder &builder, Location loc,
   buffers.masks = get(3);
   buffers.units = get(4);
   buffers.ordinals = get(5);
+  buffers.shifts = get(6);
   return buffers;
 }
 
@@ -2235,7 +2267,7 @@ LogicalResult Lowering::emitGroupsBuild(OpBuilder &builder, Location loc,
         ValueRange{positions, box, reachValue, excluded, buffers.order,
                    structure.placeOf, buffers.entries, buffers.masks,
                    buffers.counts, buffers.units, buffers.ordinals,
-                   structure.sizes});
+                   buffers.shifts, structure.sizes});
     auto load = [&](int64_t which) -> Value {
       return arith::ExtUIOp::create(
           at, loc, wide,

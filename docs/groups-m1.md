@@ -167,8 +167,15 @@ takes those of particle 0, which no bit reads.
 ## 4. What the loop reads
 
 The positions are read in the order of the places, as the matrix reads them
-(D86), and the entries hold places. The minimum image is taken for each
-pair as for the matrix. The kernel is the semantic kernel of the loop,
+(D86), and the entries hold places. No minimum image is taken (D95): the
+build puts each group in a frame of its own, its first particle where it
+is wrapped and the others at their places relative to it, and stores for
+each place the whole cells that move its particle, as it is kept, into
+that frame (ten bits an axis), and in the mask of each entry the cells
+that move the entry from the frame of its own group into that of the group
+whose list holds it (three bits an axis, −2 to 2, in bits 16 to 24). The
+gather adds the shift of the place in f64, the kernel that of the entry,
+and a displacement is then a subtraction. The kernel is the semantic kernel of the loop,
 lowered as for the matrix; the lowering adds the second accumulation and
 the atomic additions.
 
@@ -249,7 +256,7 @@ often, and its conserved energy drifts as much (−7.5 and −7.7 kcal/mol).
 | G2, under way: the default mode and the erfc of D90 done; the deterministic mode to come | The loop over groups, each pair once, both modes; the cheaper erfc of the direct sum under `fast_math`, with the accuracy of the force near the cutoff checked (it is what lets the loop over groups gain, Section 1) | Forces, energies, and virials against the matrix (to the rounding; to the bit in the deterministic mode, where the matrix sums in fixed point too); conservation over runs |
 | G3 | Groups by default on a device for the loops that allow them | The Amber suite against pmemd.cuda and GROMACS |
 | G4 | The reach of the list: a skin of 1 Å, once builds are cheap | Rates and intervals between builds |
-| G5, under way: the table of D94 done | The arithmetic of the kernel (a table for the erfc, the order of the entries) | The prototype first |
+| G5, under way: the table of D94 and the frames of D95 done | The arithmetic of the kernel (a table for the erfc, no minimum image, the order of the entries) | The prototype first |
 
 ## 8. Open questions
 

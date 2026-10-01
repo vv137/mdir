@@ -13,14 +13,17 @@
 // RUN: | FileCheck %s
 
 // Each case places 2000 particles in a periodic cube from a linear
-// congruential generator (the positions of neighbors-matrix-gpu.mlir) and
-// prints:
+// congruential generator (the positions of neighbors-matrix-gpu.mlir),
+// each moved by -3 to 3 edges of the cube along each axis as unwrapped
+// positions are, and prints:
 //
 //   - the number of pairs that the lists hold (bits of the masks);
 //   - the number of pairs within the reach (tested in f64 on the host)
 //     that are not in the lists exactly once, or excluded pairs that are;
 //   - the number of pairs in the lists farther apart than the reach, with a
-//     margin for the rounding of f32;
+//     margin for the rounding of f32, or whose displacement in the frames
+//     of the groups (the place shifts and the shift of the entry) is not
+//     that of the minimum image;
 //   - whether a group lies across two places that are not of one chunk (0).
 //
 // The build widens the reach by 3e-6 of the sum of the edges of the cell,
@@ -42,6 +45,8 @@ func.func @fill(%x: memref<?x3xf64>, %length: f64) {
   %m = arith.constant 2147483648 : i64
   %mf = arith.constant 2147483648.0 : f64
   %seed = arith.constant 42 : i64
+  %c7 = arith.constant 7 : index
+  %three_f = arith.constant 3.0 : f64
   %last = scf.for %i = %c0 to %n step %c1 iter_args(%s0 = %seed) -> (i64) {
     %s3 = scf.for %k = %c0 to %c3 step %c1 iter_args(%s = %s0) -> (i64) {
       %t0 = arith.muli %s, %a : i64
@@ -49,7 +54,16 @@ func.func @fill(%x: memref<?x3xf64>, %length: f64) {
       %t2 = arith.remui %t1, %m : i64
       %u = arith.sitofp %t2 : i64 to f64
       %f = arith.divf %u, %mf : f64
-      %v = arith.mulf %f, %length : f64
+      %v0 = arith.mulf %f, %length : f64
+      %ik = arith.addi %i, %k : index
+      %ik3 = arith.addi %ik, %k : index
+      %ik33 = arith.addi %ik3, %k : index
+      %r7 = arith.remui %ik33, %c7 : index
+      %r7i = arith.index_cast %r7 : index to i64
+      %r7f = arith.sitofp %r7i : i64 to f64
+      %boxes = arith.subf %r7f, %three_f : f64
+      %away = arith.mulf %boxes, %length : f64
+      %v = arith.addf %v0, %away : f64
       memref.store %v, %x[%i, %k] : memref<?x3xf64>
       scf.yield %t2 : i64
     }
@@ -59,6 +73,66 @@ func.func @fill(%x: memref<?x3xf64>, %length: f64) {
 }
 
 // The squared distance of i and j in the minimum image.
+// Whether the displacement of the pair (i at place p, j at place q) in the
+// frames of the groups, x_i + s_p L − (x_j + s_q L + e L), with the place
+// shifts s of `shift` and the shift e of the entry in bits 16 to 24 of its
+// mask `m`, differs from that of the minimum image.
+func.func @frame_mismatch(%x: memref<?x3xf64>, %shift: memref<?xi32>,
+                          %m: i32, %p: index, %q: index, %i: index,
+                          %j: index, %length: f64) -> i1 {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c3 = arith.constant 3 : index
+  %sp = memref.load %shift[%p] : memref<?xi32>
+  %sq = memref.load %shift[%q] : memref<?xi32>
+  %ten = arith.constant 10 : i32
+  %three = arith.constant 3 : i32
+  %sixteen = arith.constant 16 : i32
+  %mask10 = arith.constant 1023 : i32
+  %mask3 = arith.constant 7 : i32
+  %off = arith.constant 512 : i32
+  %two = arith.constant 2 : i32
+  %tol = arith.constant 1.0e-6 : f64
+  %no = arith.constant false
+  %bad = scf.for %k = %c0 to %c3 step %c1 iter_args(%b = %no) -> (i1) {
+    %k32 = arith.index_cast %k : index to i32
+    %bits10 = arith.muli %k32, %ten : i32
+    %bits3a = arith.muli %k32, %three : i32
+    %bits3 = arith.addi %bits3a, %sixteen : i32
+    %pp0 = arith.shrui %sp, %bits10 : i32
+    %pp1 = arith.andi %pp0, %mask10 : i32
+    %pp = arith.subi %pp1, %off : i32
+    %qq0 = arith.shrui %sq, %bits10 : i32
+    %qq1 = arith.andi %qq0, %mask10 : i32
+    %qq = arith.subi %qq1, %off : i32
+    %ee0 = arith.shrui %m, %bits3 : i32
+    %ee1 = arith.andi %ee0, %mask3 : i32
+    %ee = arith.subi %ee1, %two : i32
+    %ppf = arith.sitofp %pp : i32 to f64
+    %qqf = arith.sitofp %qq : i32 to f64
+    %eef = arith.sitofp %ee : i32 to f64
+    %xi = memref.load %x[%i, %k] : memref<?x3xf64>
+    %xj = memref.load %x[%j, %k] : memref<?x3xf64>
+    %ai0 = arith.mulf %ppf, %length : f64
+    %ai = arith.addf %xi, %ai0 : f64
+    %qe = arith.addf %qqf, %eef : f64
+    %aj0 = arith.mulf %qe, %length : f64
+    %aj = arith.addf %xj, %aj0 : f64
+    %df = arith.subf %ai, %aj : f64
+    %d = arith.subf %xi, %xj : f64
+    %dq = arith.divf %d, %length : f64
+    %dr = math.roundeven %dq : f64
+    %drl = arith.mulf %dr, %length : f64
+    %dm = arith.subf %d, %drl : f64
+    %diff = arith.subf %df, %dm : f64
+    %adiff = math.absf %diff : f64
+    %off_k = arith.cmpf ogt, %adiff, %tol : f64
+    %nb = arith.ori %b, %off_k : i1
+    scf.yield %nb : i1
+  }
+  return %bad : i1
+}
+
 func.func @distance2(%x: memref<?x3xf64>, %i: index, %j: index,
                      %length: f64) -> f64 {
   %c0 = arith.constant 0 : index
@@ -135,6 +209,7 @@ func.func @run(%length: f64, %reach: f64, %exclude: i1) {
   %countsd = gpu.alloc (%groups) : memref<?xi32, 1>
   %unitsd = gpu.alloc (%unit_capacity) : memref<?xi32, 1>
   %ordinalsd = gpu.alloc (%unit_capacity) : memref<?xi32, 1>
+  %shiftd = gpu.alloc (%capacity) : memref<?xi32, 1>
   %sizes = memref.alloc() : memref<3xi32>
   %t0 = gpu.wait async
   %t1 = gpu.memcpy async [%t0] %xd, %x : memref<?x3xf64, 1>, memref<?x3xf64>
@@ -150,17 +225,18 @@ func.func @run(%length: f64, %reach: f64, %exclude: i1) {
   }
   func.call @mdrt_gpu_build_neighbors_groups(%xd, %box, %reach, %excludedd,
       %orderd, %placed, %entriesd, %masksd, %countsd, %unitsd, %ordinalsd,
-      %sizes)
+      %shiftd, %sizes)
       : (memref<?x3xf64, 1>, vector<3xf64>, f64, memref<?x?xi32, 1>,
          memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>,
          memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>,
-         memref<?xi32, 1>, memref<3xi32>) -> ()
+         memref<?xi32, 1>, memref<?xi32, 1>, memref<3xi32>) -> ()
   %order = memref.alloc(%capacity) : memref<?xi32>
   %entries = memref.alloc(%entry_capacity) : memref<?xi32>
   %masks = memref.alloc(%entry_capacity) : memref<?xi32>
   %counts = memref.alloc(%groups) : memref<?xi32>
   %units = memref.alloc(%unit_capacity) : memref<?xi32>
   %ordinals = memref.alloc(%unit_capacity) : memref<?xi32>
+  %shift = memref.alloc(%capacity) : memref<?xi32>
   %t4 = gpu.wait async
   %t5 = gpu.memcpy async [%t4] %order, %orderd : memref<?xi32>, memref<?xi32, 1>
   %t6 = gpu.memcpy async [%t5] %entries, %entriesd : memref<?xi32>, memref<?xi32, 1>
@@ -168,7 +244,8 @@ func.func @run(%length: f64, %reach: f64, %exclude: i1) {
   %t8 = gpu.memcpy async [%t7] %counts, %countsd : memref<?xi32>, memref<?xi32, 1>
   %t9 = gpu.memcpy async [%t8] %units, %unitsd : memref<?xi32>, memref<?xi32, 1>
   %t10 = gpu.memcpy async [%t9] %ordinals, %ordinalsd : memref<?xi32>, memref<?xi32, 1>
-  gpu.wait [%t10]
+  %t11 = gpu.memcpy async [%t10] %shift, %shiftd : memref<?xi32>, memref<?xi32, 1>
+  gpu.wait [%t11]
   %blocks32 = memref.load %sizes[%c2] : memref<3xi32>
   %blocks = arith.index_cast %blocks32 : i32 to index
 
@@ -236,7 +313,9 @@ func.func @run(%length: f64, %reach: f64, %exclude: i1) {
           %new = arith.addi %old, %one8 : i8
           memref.store %new, %seen[%lo, %hi] : memref<?x?xi8>
           %d2 = func.call @distance2(%x, %i, %j, %length) : (memref<?x3xf64>, index, index, f64) -> f64
-          %out = arith.cmpf ogt, %d2, %far2 : f64
+          %out0 = arith.cmpf ogt, %d2, %far2 : f64
+          %framed = func.call @frame_mismatch(%x, %shift, %m, %p, %q, %i, %j, %length) : (memref<?x3xf64>, memref<?xi32>, i32, index, index, index, index, f64) -> i1
+          %out = arith.ori %out0, %framed : i1
           %o = arith.extui %out : i1 to i64
           %nb = arith.addi %bbb, %one64 : i64
           %nf = arith.addi %fff, %o : i64

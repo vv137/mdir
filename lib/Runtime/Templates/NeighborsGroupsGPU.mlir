@@ -90,7 +90,7 @@ func.func private @mdrt_gpu_build_neighbors_groups(
     %place_of: memref<?xi32, 1>, %entries: memref<?xi32, 1>,
     %masks: memref<?xi32, 1>, %counts: memref<?xi32, 1>,
     %units: memref<?xi32, 1>, %ordinals: memref<?xi32, 1>,
-    %sizes: memref<3xi32>) {
+    %shift: memref<?xi32, 1>, %sizes: memref<3xi32>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %block = arith.constant 128 : index
@@ -3704,6 +3704,76 @@ func.func private @mdrt_gpu_build_neighbors_groups(
     %bz_w3 = arith.constant 32 : i32
     %bz_o3, %bz_ok3 = gpu.shuffle xor %bz3, %bz_s3, %bz_w3 : f32
     %bz4 = arith.maximumf %bz3, %bz_o3 : f32
+    // The frame of a group: its first particle where it is wrapped, the others
+    // at their places relative to it, as the loops over the groups take it. The
+    // shift of the place to that frame, in cells, from its particle as it is
+    // kept, unwrapped: ten bits for each axis, from -512. The cells between the
+    // frame and the wrapped position, packed the same way, go in the fourth lane
+    // of the wrapped position, which the lists read with it; they are -1 to 1,
+    // so that the shifts of the entries stay small however far the particles
+    // have gone.
+    scf.if %real {
+      %qp = arith.index_cast %pi : i32 to index
+      %pxd = memref.load %x[%qp, %c0w] : memref<?x3xf64, 1>
+      %pyd = memref.load %x[%qp, %c1w] : memref<?x3xf64, 1>
+      %pzd = memref.load %x[%qp, %c2w] : memref<?x3xf64, 1>
+      %pxf = arith.truncf %pxd : f64 to f32
+      %pyf = arith.truncf %pyd : f64 to f32
+      %pzf = arith.truncf %pzd : f64 to f32
+      %tx0 = arith.addf %ox, %rx : f32
+      %ty0 = arith.addf %oy, %ry : f32
+      %tz0 = arith.addf %oz, %rz : f32
+      %sx0 = arith.subf %tx0, %pxf : f32
+      %sy0 = arith.subf %ty0, %pyf : f32
+      %sz0 = arith.subf %tz0, %pzf : f32
+      %sx1 = arith.mulf %sx0, %filx : f32
+      %sy1 = arith.mulf %sy0, %fily : f32
+      %sz1 = arith.mulf %sz0, %filz : f32
+      %sx2 = math.roundeven %sx1 : f32
+      %sy2 = math.roundeven %sy1 : f32
+      %sz2 = math.roundeven %sz1 : f32
+      %six = arith.fptosi %sx2 : f32 to i32
+      %siy = arith.fptosi %sy2 : f32 to i32
+      %siz = arith.fptosi %sz2 : f32 to i32
+      %wx0 = arith.subf %tx0, %vx : f32
+      %wy0 = arith.subf %ty0, %vy : f32
+      %wz0 = arith.subf %tz0, %vz : f32
+      %wx1 = arith.mulf %wx0, %filx : f32
+      %wy1 = arith.mulf %wy0, %fily : f32
+      %wz1 = arith.mulf %wz0, %filz : f32
+      %wx2 = math.roundeven %wx1 : f32
+      %wy2 = math.roundeven %wy1 : f32
+      %wz2 = math.roundeven %wz1 : f32
+      %wix = arith.fptosi %wx2 : f32 to i32
+      %wiy = arith.fptosi %wy2 : f32 to i32
+      %wiz = arith.fptosi %wz2 : f32 to i32
+      %off = arith.constant 512 : i32
+      %ten = arith.constant 10 : i32
+      %twenty = arith.constant 20 : i32
+      %six1 = arith.addi %six, %off : i32
+      %siy1 = arith.addi %siy, %off : i32
+      %siz1 = arith.addi %siz, %off : i32
+      %siy2 = arith.shli %siy1, %ten : i32
+      %siz2 = arith.shli %siz1, %twenty : i32
+      %sxy = arith.ori %six1, %siy2 : i32
+      %packed = arith.ori %sxy, %siz2 : i32
+      memref.store %packed, %shift[%p] : memref<?xi32, 1>
+      %wix1 = arith.addi %wix, %off : i32
+      %wiy1 = arith.addi %wiy, %off : i32
+      %wiz1 = arith.addi %wiz, %off : i32
+      %wiy2 = arith.shli %wiy1, %ten : i32
+      %wiz2 = arith.shli %wiz1, %twenty : i32
+      %wxy = arith.ori %wix1, %wiy2 : i32
+      %wpacked = arith.ori %wxy, %wiz2 : i32
+      %wpacked_f = arith.bitcast %wpacked : i32 to f32
+      %c3s = arith.constant 3 : index
+      memref.store %wpacked_f, %xp[%p, %c3s] : memref<?x4xf32, 1>
+    } else {
+      %none_shift = arith.constant 537395712 : i32
+      scf.if %inside {
+        memref.store %none_shift, %shift[%p] : memref<?xi32, 1>
+      }
+    }
     %lead = arith.cmpi eq, %u, %c0w : index
     %store = arith.andi %lead, %inside : i1
     scf.if %store {
@@ -3784,6 +3854,10 @@ func.func private @mdrt_gpu_build_neighbors_groups(
       %hx = arith.mulf %dif_x, %halff : f32
       %hy = arith.mulf %dif_y, %halff : f32
       %hz = arith.mulf %dif_z, %halff : f32
+      // The frame of the group less the wrapped positions, in cells, for its
+      // first particle (whose place shift is zero).
+      %wfirst_f = memref.load %xp[%first, %c3w] : memref<?x4xf32, 1>
+      %wfirst = arith.bitcast %wfirst_f : f32 to i32
       %rel0 = arith.muli %warp, %c16w : index
       %mine_lane = arith.cmpi ult, %lane, %c16w : index
       scf.if %mine_lane {
@@ -7273,7 +7347,55 @@ func.func private @mdrt_gpu_build_neighbors_groups(
                   } else {
                     scf.yield %zero_i : i32
                   }
-                  scf.yield %b3 : i32
+                  // The shift of the entry to the frame of the group, from that
+                  // of its own place, in cells: e = W_g − W_q − k, with W the
+                  // frame less the wrapped position of a place (the first of
+                  // the group for W_g) and k the cells between the candidate
+                  // and the center of the box; -2 to 2 along each axis, (e + 2)
+                  // in three bits each, in bits 16 to 24 of its mask.
+                  %pairs = arith.cmpi ne, %b3, %zero_i : i32
+                  %b3s = scf.if %pairs -> (i32) {
+                    %c3q = arith.constant 3 : index
+                    %wq_f = memref.load %xp[%qi, %c3q] : memref<?x4xf32, 1>
+                    %wq = arith.bitcast %wq_f : f32 to i32
+                    // In the packed form: e + 2 is 0 to 4 along each axis, so
+                    // the sum over the fields comes out with no carry.
+                    %kx0 = arith.mulf %dx0, %filx : f32
+                    %ky0 = arith.mulf %dy0, %fily : f32
+                    %kz0 = arith.mulf %dz0, %filz : f32
+                    %kx1 = math.roundeven %kx0 : f32
+                    %ky1 = math.roundeven %ky0 : f32
+                    %kz1 = math.roundeven %kz0 : f32
+                    %f2p10 = arith.constant 1024.0 : f32
+                    %f2p20 = arith.constant 1048576.0 : f32
+                    %kyz = arith.mulf %kz1, %f2p20 : f32
+                    %kyy = arith.mulf %ky1, %f2p10 : f32
+                    %kxy = arith.addf %kx1, %kyy : f32
+                    %kp_f = arith.addf %kxy, %kyz : f32
+                    %kp = arith.fptosi %kp_f : f32 to i32
+                    %twos = arith.constant 2099202 : i32
+                    %wd = arith.subi %wfirst, %wq : i32
+                    %wd2 = arith.addi %wd, %twos : i32
+                    %ep = arith.subi %wd2, %kp : i32
+                    %seven = arith.constant 7 : i32
+                    %c56 = arith.constant 56 : i32
+                    %c448 = arith.constant 448 : i32
+                    %fourteen = arith.constant 14 : i32
+                    %sixteen_s = arith.constant 16 : i32
+                    %eqx = arith.andi %ep, %seven : i32
+                    %eqy0 = arith.shrui %ep, %seven : i32
+                    %eqy = arith.andi %eqy0, %c56 : i32
+                    %eqz0 = arith.shrui %ep, %fourteen : i32
+                    %eqz = arith.andi %eqz0, %c448 : i32
+                    %eq_xy = arith.ori %eqx, %eqy : i32
+                    %eq = arith.ori %eq_xy, %eqz : i32
+                    %eq16 = arith.shli %eq, %sixteen_s : i32
+                    %b3x = arith.ori %b3, %eq16 : i32
+                    scf.yield %b3x : i32
+                  } else {
+                    scf.yield %zero_i : i32
+                  }
+                  scf.yield %b3s : i32
                 } else {
                   scf.yield %zero_i : i32
                 }

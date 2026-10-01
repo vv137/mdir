@@ -352,8 +352,7 @@ SmallVector<Value> kernels::emitGroupPairKernel(
   Type computed = kernel.getArgument(0).getType();
   double cutoff = op.getCutoff().convertToDouble();
   Value cutoff2 = createReal(builder, loc, computed, cutoff * cutoff);
-  Value boxComputed = convertReal(builder, loc, box, computed);
-  Value inverseComputed = convertReal(builder, loc, inverse, computed);
+  (void)inverse;
   Type i32 = builder.getI32Type();
   auto constant32 = [&](OpBuilder &b, int64_t v) -> Value {
     return arith::ConstantOp::create(b, loc, i32, b.getI32IntegerAttr(v));
@@ -448,7 +447,29 @@ SmallVector<Value> kernels::emitGroupPairKernel(
             memref::LoadOp::create(b, loc, lists.masks, ValueRange{at}),
             constant32(b, 0));
         Value place = toIndex(b, place32);
+        // The entry in the frame of the group: its position, in the frame
+        // of its own group, moved by the whole cells in bits 16 to 24 of
+        // its mask, (e + 2) in three bits an axis (D95).
         Value position = loadElement(b, loc, layout.positions, place);
+        {
+          auto positionType = cast<VectorType>(position.getType());
+          Type element = positionType.getElementType();
+          SmallVector<Value> cells;
+          for (int64_t axis = 0; axis != 3; ++axis) {
+            Value bits = arith::AndIOp::create(
+                b, loc,
+                arith::ShRUIOp::create(b, loc, mask,
+                                       constant32(b, 16 + 3 * axis)),
+                constant32(b, 7));
+            cells.push_back(arith::SIToFPOp::create(
+                b, loc, element,
+                arith::SubIOp::create(b, loc, bits, constant32(b, 2))));
+          }
+          Value shift = arith::MulFOp::create(
+              b, loc, vector::FromElementsOp::create(b, loc, positionType, cells),
+              convertReal(b, loc, box, element));
+          position = arith::AddFOp::create(b, loc, position, shift);
+        }
         SmallVector<Value> values;
         for (Value buffer : layout.ins)
           values.push_back(loadElement(b, loc, buffer, place));
@@ -474,17 +495,12 @@ SmallVector<Value> kernels::emitGroupPairKernel(
                   constant32(s, 1));
               Value paired = arith::CmpIOp::create(
                   s, loc, arith::CmpIPredicate::ne, bit, constant32(s, 0));
-              // The minimum-image displacement [AllenTildesley2017].
-              Value raw = convertReal(
+              // Both are in the frame of the group: the displacement is the
+              // minimum image without a rounding (D95).
+              Value d = convertReal(
                   s, loc,
                   arith::SubFOp::create(s, loc, myPosition, otherPosition),
                   computed);
-              Value images = arith::MulFOp::create(s, loc, raw,
-                                                   inverseComputed);
-              Value nearest = math::RoundEvenOp::create(s, loc, images);
-              Value shift = arith::MulFOp::create(s, loc, nearest,
-                                                  boxComputed);
-              Value d = arith::SubFOp::create(s, loc, raw, shift);
               Value squares = arith::MulFOp::create(s, loc, d, d);
               Value distance2 = vector::ReductionOp::create(
                   s, loc, vector::CombiningKind::ADD, squares);

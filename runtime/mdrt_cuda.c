@@ -682,9 +682,10 @@ void _mlir_ciface_mdrtCudaFFTBackward3DF32(DeviceBuffer1DF32 *complex,
 /* The buffers that a build of a structure of groups fills, which grow when
    a build finds them too small: the particle at each place, the number of
    entries of each group (a group is 16 places), the entries and the masks
-   in blocks of 64, and the group and the number within its list of each
-   block. Compiled code takes a buffer where it uses it
-   (`mdrtGroupsBuffer`), so a buffer that grew is the one it takes. */
+   in blocks of 64, the group and the number within its list of each
+   block, and the shift of each place to the frame of its group (D95).
+   Compiled code takes a buffer where it uses it (`mdrtGroupsBuffer`), so a
+   buffer that grew is the one it takes. */
 enum {
   GROUPS_ORDER,
   GROUPS_COUNTS,
@@ -692,6 +693,7 @@ enum {
   GROUPS_MASKS,
   GROUPS_UNIT_GROUPS,
   GROUPS_UNIT_ORDINALS,
+  GROUPS_SHIFTS,
   GROUPS_BUFFERS
 };
 
@@ -713,6 +715,7 @@ struct Buffer1 {
 static int64_t getGroupsLength(const struct Groups *groups, int which) {
   switch (which) {
   case GROUPS_ORDER:
+  case GROUPS_SHIFTS:
     return groups->places;
   case GROUPS_COUNTS:
     return groups->places / 16;
