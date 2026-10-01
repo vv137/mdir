@@ -819,17 +819,18 @@ func.func private @mdrt_gpu_pme_scale(%c: memref<?x!pme_real, 1>, %tables: memre
 """
 
 
-COMPONENTS = 18  # the first points (3), the weights (12), the fractions (3)
+COMPONENTS = 6  # the first points (3), the fractions (3)
 
 
 def weights_kernels():
-    """The spreading of order 4 from the weights of the particles, as
+    """The spreading of order 4 from the places of the particles, as
     scripts/experiments/neighbor-structures/spread.cu measured it: a kernel
-    places each particle and computes its B-splines, a thread a particle,
-    into arrays by component (component c of particle i at c n + i: the
-    first points along x, y, z as values, then the weights along x, y, z,
-    then the fractions along x, y, z, which the gathering takes, D102);
-    the charges are added with a warp a particle into a grid of bricks of
+    places each particle, a thread a particle, into arrays by component
+    (component c of particle i at c n + i: the first points along x, y, z
+    as values, then the fractions along x, y, z; the weights of the splines
+    come from the fractions in closed form where they are used, D109, so
+    that 6 values a particle are written and read, not 18); the charges
+    are added with a warp a particle into a grid of bricks of
     4 x 4 points in x-y, z inside them, so that the points of a particle
     at one z are 16 consecutive values of at most 4 bricks; a kernel copies
     the bricks into the grid of the transform. The gathering computes its
@@ -850,12 +851,10 @@ def weights_kernels():
 %{t}c = arith.constant {axis} : index
 %{t}s = memref.load %x[%i, %{t}c] : memref<?x3x!pme_pos, 1>
 %{t}p = PME_EXTEND_POS %{t}s : !pme_pos to f64
-%w{t} = memref.alloca() : memref<8x!pme_real>
 """)
         start, frac = place(w, f"p{t}_", f"%{t}p", length, k, "%order")
-        bspline(w, f"b{t}_", frac, "%order", f"%w{t}", None)
         w(f"""\
-%{t}fc = arith.constant {15 + axis} : index
+%{t}fc = arith.constant {3 + axis} : index
 %{t}fn = arith.muli %n_all, %{t}fc : index
 %{t}fat = arith.addi %{t}fn, %i : index
 memref.store {frac}, %weights[%{t}fat] : memref<?x!pme_real, 1>
@@ -864,16 +863,7 @@ memref.store {frac}, %weights[%{t}fat] : memref<?x!pme_real, 1>
 %{t}sn = arith.muli %n_all, %{t}c : index
 %{t}sat = arith.addi %{t}sn, %i : index
 memref.store %{t}start_r, %weights[%{t}sat] : memref<?x!pme_real, 1>""")
-        for e in range(4):
-            for kind, array, base in (("w", f"%w{t}", 3),):
-                c = base + 4 * axis + e
-                w(f"""\
-%{t}{kind}{e}i = arith.constant {e} : index
-%{t}{kind}{e} = memref.load {array}[%{t}{kind}{e}i] : memref<8x!pme_real>
-%{t}{kind}{e}c = arith.constant {c} : index
-%{t}{kind}{e}n = arith.muli %n_all, %{t}{kind}{e}c : index
-%{t}{kind}{e}at = arith.addi %{t}{kind}{e}n, %i : index
-memref.store %{t}{kind}{e}, %weights[%{t}{kind}{e}at] : memref<?x!pme_real, 1>""")
+
 
     # The additions into the bricks, counting in i32 (D85): a particle, a
     # point, and a brick of the grid are numbered in 32 bits, and the
@@ -914,15 +904,49 @@ memref.store %{t}{kind}{e}, %weights[%{t}{kind}{e}at] : memref<?x!pme_real, 1>""
         a(f"%t{axis}c = arith.constant {axis} : i32")
         load(f"st{t}_r", f"%t{axis}c")
         a(f"%st{t} = arith.fptosi %st{t}_r : !pme_real to i32")
+    # The weights of order 4 from the fractions, in closed form (D109): the
+    # recursion of the splines gives, for a fraction w, (1 - w)^3 / 6,
+    # (3 w^3 - 6 w^2 + 4) / 6, (-3 w^3 + 3 w^2 + 3 w + 1) / 6, w^3 / 6 at
+    # the points 0 to 3 from the first; a lane takes the one of its point.
+    for axis, t in enumerate("xyz"):
+        a(f"%f{axis}c = arith.constant {3 + axis} : i32")
+        load(f"fr{t}", f"%f{axis}c")
     a("""\
-%wx_c = arith.addi %t3, %xa : i32
-%wy_c = arith.addi %t7, %yb : i32
-%wz_c = arith.addi %t11, %zc : i32
-%wz2_c = arith.addi %t11, %zc2 : i32""")
-    load("wxa", "%wx_c")
-    load("wyb", "%wy_c")
-    load("wz0", "%wz_c")
-    load("wz1", "%wz2_c")
+%w_sixth = arith.constant 0.16666666666666666 : !pme_real
+%w_one = arith.constant 1.0 : !pme_real
+%w_three = arith.constant 3.0 : !pme_real
+%w_four = arith.constant 4.0 : !pme_real
+%w_six = arith.constant 6.0 : !pme_real
+%w_zero32 = arith.constant 0 : i32
+%w_one32 = arith.constant 1 : i32
+%w_two32 = arith.constant 2 : i32""")
+    def weight(name, frac, point):
+        a(f"""\
+%{name}_w2 = arith.mulf {frac}, {frac} : !pme_real
+%{name}_w3 = arith.mulf %{name}_w2, {frac} : !pme_real
+%{name}_omw = arith.subf %w_one, {frac} : !pme_real
+%{name}_omw2 = arith.mulf %{name}_omw, %{name}_omw : !pme_real
+%{name}_m0 = arith.mulf %{name}_omw2, %{name}_omw : !pme_real
+%{name}_a1 = arith.mulf %w_three, %{name}_w3 : !pme_real
+%{name}_b1 = arith.mulf %w_six, %{name}_w2 : !pme_real
+%{name}_c1 = arith.subf %{name}_a1, %{name}_b1 : !pme_real
+%{name}_m1 = arith.addf %{name}_c1, %w_four : !pme_real
+%{name}_a2 = arith.mulf %w_three, %{name}_w2 : !pme_real
+%{name}_b2 = arith.mulf %w_three, {frac} : !pme_real
+%{name}_c2 = arith.subf %{name}_a2, %{name}_a1 : !pme_real
+%{name}_d2 = arith.addf %{name}_c2, %{name}_b2 : !pme_real
+%{name}_m2 = arith.addf %{name}_d2, %w_one : !pme_real
+%{name}_is0 = arith.cmpi eq, {point}, %w_zero32 : i32
+%{name}_is1 = arith.cmpi eq, {point}, %w_one32 : i32
+%{name}_is2 = arith.cmpi eq, {point}, %w_two32 : i32
+%{name}_s2 = arith.select %{name}_is2, %{name}_m2, %{name}_w3 : !pme_real
+%{name}_s1 = arith.select %{name}_is1, %{name}_m1, %{name}_s2 : !pme_real
+%{name}_s0 = arith.select %{name}_is0, %{name}_m0, %{name}_s1 : !pme_real
+%{name} = arith.mulf %{name}_s0, %w_sixth : !pme_real""")
+    weight("wxa", "%frx", "%xa")
+    weight("wyb", "%fry", "%yb")
+    weight("wz0", "%frz", "%zc")
+    weight("wz1", "%frz", "%zc2")
     a("""\
 %qx = arith.mulf %qi, %wxa : !pme_real
 %qxy = arith.mulf %qx, %wyb : !pme_real
@@ -1257,7 +1281,7 @@ def gather_weights():
 %{t}sat = arith.addi %{t}sn, %i : index
 %{t}start_r = memref.load %weights[%{t}sat] : memref<?x!pme_real, 1>
 %{t}start = arith.fptosi %{t}start_r : !pme_real to i32
-%{t}fc = arith.constant {15 + axis} : index
+%{t}fc = arith.constant {3 + axis} : index
 %{t}fn = arith.muli %count, %{t}fc : index
 %{t}fat = arith.addi %{t}fn, %i : index
 %{t}frac = memref.load %weights[%{t}fat] : memref<?x!pme_real, 1>""")

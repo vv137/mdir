@@ -119,10 +119,10 @@ into a loop of compare-and-swap, four times slower; the template for `f32`
 takes PTX's own reduction, `red.relaxed.gpu.global.add.f32`.
 
 With splines of order 4 and the grid in `f32`, the default mode spreads
-in three kernels. The first places each particle and computes its
-B-splines, a thread a particle, into arrays by component (15 values a
-particle, the first points and the weights along x, y, z), a scratch of the
-op. The second adds the charges with a warp for each particle into a grid
+in three kernels. The first places each particle, a thread a particle,
+into arrays by component (6 values a particle, the first points and the
+fractions along x, y, z; the weights of the splines are computed from the
+fractions in closed form where they are used, D109), a scratch of the op. The second adds the charges with a warp for each particle into a grid
 of bricks: 4 × 4 points in x-y with z inside them, so that the points of a
 particle at one z are 16 consecutive values of at most 4 bricks, and lane
 4 b + a of an atomic adds point (a, b, c) or (a, b, c + 2); the bricks are
@@ -132,10 +132,10 @@ takes a brick and 32 of its slabs along z, reads the 512 values in order
 through a tile of the memory of the block, writes zeros back after the
 reads (written beside them, the reads waited on the stores, 204 µs), and a
 warp writes each row of the brick as 32 values along z in order. On
-Cellulose (408,609 atoms, grid 270 × 126 × 126, RTX 3090) they take 55,
-225, and 63 µs a step, 343 in all (from 47, 231 with 28 to clear the
+Cellulose (408,609 atoms, grid 270 × 126 × 126, RTX 3090) they take 27,
+214, and 63 µs a step, 304 in all (from 47, 231 with 28 to clear the
 bricks, and 61: the copy in the order of the grid read the bricks 64 bytes
-apart), against 553 for the spreading of a thread for each particle and
+apart, and the places held 18 values a particle), against 553 for the spreading of a thread for each particle and
 point along z; pmemd.cuda takes about 344 (93 for its weights, 207 for its
 additions, 44 for its copy). Standalone
 (`scripts/experiments/neighbor-structures/spread.cu`): the additions in the

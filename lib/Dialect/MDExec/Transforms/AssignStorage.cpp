@@ -804,14 +804,15 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
   if (onDevice) {
     scratch.push_back(
         allocate(Float64Type::get(context), grid[0] * grid[1] * 10));
-    // The weights of the particles, 18 values each, from which the
-    // spreading of order 4 adds the charges and the gathering takes the
-    // places of the particles (lowerReciprocal).
+    // The places of the particles, 6 values each (the first points and
+    // the fractions along the edges), from which the spreading of order 4
+    // adds the charges and the gathering takes them (lowerReciprocal,
+    // D109).
     auto type = MemRefType::get({ShapedType::kDynamic}, gridType,
                                 MemRefLayoutAttrInterface(), space);
     Value length = arith::MulIOp::create(
         root->builder, loc, size,
-        arith::ConstantIndexOp::create(root->builder, loc, 18));
+        arith::ConstantIndexOp::create(root->builder, loc, 6));
     scratch.push_back(gpu::AllocOp::create(root->builder, loc, type,
                                            /*asyncToken=*/Type(),
                                            /*asyncDependencies=*/ValueRange(),
