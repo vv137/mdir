@@ -163,53 +163,170 @@ def clear(grid, buffer, count, value="0"):
 memref.store %v, {buffer}[%item] : memref<?xi32, 1>"""))
 
 
+def block_scan(p, value, wg):
+    """The exclusive sum of the i32 `value` over the threads of a block of
+    256 before this one, `%{p}before`, and the sum over the block,
+    `%{p}total`, in every thread: a scan of each warp by shuffles, and of
+    the 8 sums of the warps by the first warp, through `wg`
+    (workgroup memory of 9 i32)."""
+    lines = [f"""\
+%{p}zero = arith.constant 0 : i32
+%{p}i0 = arith.constant 0 : index
+%{p}i7 = arith.constant 7 : index
+%{p}i8 = arith.constant 8 : index
+%{p}i31 = arith.constant 31 : index
+%{p}i32x = arith.constant 32 : index
+%{p}width = arith.constant 32 : i32
+%{p}lane = arith.remui %tx, %{p}i32x : index
+%{p}warp = arith.divui %tx, %{p}i32x : index
+%{p}lane32 = arith.index_cast %{p}lane : index to i32
+%{p}x0 = arith.addi {value}, %{p}zero : i32"""]
+    for k, o in enumerate([1, 2, 4, 8, 16]):
+        lines.append(f"""\
+%{p}o{k} = arith.constant {o} : i32
+%{p}y{k}, %{p}v{k} = gpu.shuffle up %{p}x{k}, %{p}o{k}, %{p}width : i32
+%{p}h{k} = arith.cmpi sge, %{p}lane32, %{p}o{k} : i32
+%{p}a{k} = arith.select %{p}h{k}, %{p}y{k}, %{p}zero : i32
+%{p}x{k + 1} = arith.addi %{p}x{k}, %{p}a{k} : i32""")
+    lines.append(f"""\
+%{p}last = arith.cmpi eq, %{p}lane, %{p}i31 : index
+scf.if %{p}last {{
+  memref.store %{p}x5, {wg}[%{p}warp] : memref<9xi32, #gpu.address_space<workgroup>>
+}}
+gpu.barrier
+%{p}first = arith.cmpi eq, %{p}warp, %{p}i0 : index
+scf.if %{p}first {{
+  %{p}in8 = arith.cmpi ult, %{p}lane, %{p}i8 : index
+  %{p}at = arith.select %{p}in8, %{p}lane, %{p}i0 : index
+  %{p}w = memref.load {wg}[%{p}at] : memref<9xi32, #gpu.address_space<workgroup>>
+  %{p}u0 = arith.select %{p}in8, %{p}w, %{p}zero : i32""")
+    for k, o in enumerate([1, 2, 4]):
+        lines.append(f"""\
+  %{p}wo{k} = arith.constant {o} : i32
+  %{p}wy{k}, %{p}wv{k} = gpu.shuffle up %{p}u{k}, %{p}wo{k}, %{p}width : i32
+  %{p}wh{k} = arith.cmpi sge, %{p}lane32, %{p}wo{k} : i32
+  %{p}wa{k} = arith.select %{p}wh{k}, %{p}wy{k}, %{p}zero : i32
+  %{p}u{k + 1} = arith.addi %{p}u{k}, %{p}wa{k} : i32""")
+    lines.append(f"""\
+  %{p}uex = arith.subi %{p}u3, %{p}u0 : i32
+  %{p}t7 = arith.cmpi eq, %{p}lane, %{p}i7 : index
+  scf.if %{p}in8 {{
+    memref.store %{p}uex, {wg}[%{p}lane] : memref<9xi32, #gpu.address_space<workgroup>>
+  }}
+  scf.if %{p}t7 {{
+    memref.store %{p}u3, {wg}[%{p}i8] : memref<9xi32, #gpu.address_space<workgroup>>
+  }}
+}}
+gpu.barrier
+%{p}woff = memref.load {wg}[%{p}warp] : memref<9xi32, #gpu.address_space<workgroup>>
+%{p}total = memref.load {wg}[%{p}i8] : memref<9xi32, #gpu.address_space<workgroup>>
+%{p}inwarp = arith.subi %{p}x5, {value} : i32
+%{p}before = arith.addi %{p}inwarp, %{p}woff : i32""")
+    return "\n".join(lines) + "\n"
+
+
 def scan(p, counts, start, cursor, n):
     """The exclusive sums of `counts` (`n` of them, i32) into `start` (n + 1)
-    and `cursor` (n): sums of chunks of 256 in parallel, the chunks in one
-    thread, then the offsets within each chunk."""
-    sums = per_item(f"%{p}chunks", f"""\
+    and, unless it is None, `cursor` (n): blocks of 256 threads, 4 counts a
+    thread, sum their 1024 counts; one block scans the sums of the blocks;
+    then each block scans its counts from the sum before it."""
+    wg = f"%{p}wg : memref<9xi32, #gpu.address_space<workgroup>>"
+    sums = f"""\
+%i0 = arith.constant 0 : index
 %i1 = arith.constant 1 : index
+%i4 = arith.constant 4 : index
 %none = arith.constant 0 : i32
-%begin = arith.muli %item, %chunk : index
-%full = arith.addi %begin, %chunk : index
-%short = arith.cmpi ult, {n}, %full : index
-%end = arith.select %short, {n}, %full : index
-%sum = scf.for %c = %begin to %end step %i1 iter_args(%s = %none) -> (i32) {{
-  %v = memref.load {counts}[%c] : memref<?xi32, 1>
+%per_block = arith.constant 1024 : index
+%block_base = arith.muli %bx, %per_block : index
+%thread_base = arith.muli %tx, %i4 : index
+%first = arith.addi %block_base, %thread_base : index
+%mine = scf.for %k = %i0 to %i4 step %i1 iter_args(%s = %none) -> (i32) {{
+  %c = arith.addi %first, %k : index
+  %in = arith.cmpi ult, %c, {n} : index
+  %safe = arith.select %in, %c, %i0 : index
+  %v0 = memref.load {counts}[%safe] : memref<?xi32, 1>
+  %v = arith.select %in, %v0, %none : i32
   %t = arith.addi %s, %v : i32
   scf.yield %t : i32
 }}
-memref.store %sum, %{p}sums[%item] : memref<?xi32, 1>""")
-    offsets = f"""\
+{block_scan("b_", "%mine", f"%{p}wg")}\
+%lead = arith.cmpi eq, %tx, %i0 : index
+scf.if %lead {{
+  memref.store %b_total, %{p}sums[%bx] : memref<?xi32, 1>
+}}"""
+    blocks = f"""\
 %i0 = arith.constant 0 : index
 %i1 = arith.constant 1 : index
 %none = arith.constant 0 : i32
-%total = scf.for %b = %i0 to %{p}chunks step %i1 iter_args(%before = %none) -> (i32) {{
-  %s = memref.load %{p}sums[%b] : memref<?xi32, 1>
-  memref.store %before, %{p}sums[%b] : memref<?xi32, 1>
-  %t = arith.addi %before, %s : i32
+%threads = arith.constant 256 : index
+%span0 = arith.addi %{p}blocks, %threads : index
+%span1 = arith.subi %span0, %i1 : index
+%span = arith.divui %span1, %threads : index
+%begin0 = arith.muli %tx, %span : index
+%begin = arith.minui %begin0, %{p}blocks : index
+%end0 = arith.addi %begin, %span : index
+%end = arith.minui %end0, %{p}blocks : index
+%mine = scf.for %b = %begin to %end step %i1 iter_args(%s = %none) -> (i32) {{
+  %v = memref.load %{p}sums[%b] : memref<?xi32, 1>
+  %t = arith.addi %s, %v : i32
   scf.yield %t : i32
 }}
-memref.store %total, {start}[{n}] : memref<?xi32, 1>"""
-    within = per_item(f"%{p}chunks", f"""\
-%i1 = arith.constant 1 : index
-%begin = arith.muli %item, %chunk : index
-%full = arith.addi %begin, %chunk : index
-%short = arith.cmpi ult, {n}, %full : index
-%end = arith.select %short, {n}, %full : index
-%first = memref.load %{p}sums[%item] : memref<?xi32, 1>
-%last = scf.for %c = %begin to %end step %i1 iter_args(%before = %first) -> (i32) {{
-  %v = memref.load {counts}[%c] : memref<?xi32, 1>
-  memref.store %before, {start}[%c] : memref<?xi32, 1>
-  memref.store %before, {cursor}[%c] : memref<?xi32, 1>
+{block_scan("c_", "%mine", f"%{p}wg")}\
+%last = scf.for %b = %begin to %end step %i1 iter_args(%before = %c_before) -> (i32) {{
+  %v = memref.load %{p}sums[%b] : memref<?xi32, 1>
+  memref.store %before, %{p}sums[%b] : memref<?xi32, 1>
   %t = arith.addi %before, %v : i32
   scf.yield %t : i32
-}}""")
-    head = (f"  %{p}chunks = func.call @mdrt_gpu_groups_grid({n}, %chunk) : (index, index) -> index\n"
-            f"  %{p}grid = func.call @mdrt_gpu_groups_grid(%{p}chunks, %block) : (index, index) -> index\n"
-            f"  %{p}sums = gpu.alloc (%{p}chunks) : memref<?xi32, 1>\n")
-    return (head + launch(f"%{p}grid", sums) + launch("%c1", offsets, threads="%c1")
-            + launch(f"%{p}grid", within)
+}}
+%lead = arith.cmpi eq, %tx, %i0 : index
+scf.if %lead {{
+  memref.store %c_total, {start}[{n}] : memref<?xi32, 1>
+}}"""
+    cursor_store = (f"\n  memref.store %before, {cursor}[%c] : memref<?xi32, 1>"
+                    if cursor else "")
+    within = f"""\
+%i0 = arith.constant 0 : index
+%i1 = arith.constant 1 : index
+%i4 = arith.constant 4 : index
+%none = arith.constant 0 : i32
+%per_block = arith.constant 1024 : index
+%block_base = arith.muli %bx, %per_block : index
+%thread_base = arith.muli %tx, %i4 : index
+%first = arith.addi %block_base, %thread_base : index
+%mine = scf.for %k = %i0 to %i4 step %i1 iter_args(%s = %none) -> (i32) {{
+  %c = arith.addi %first, %k : index
+  %in = arith.cmpi ult, %c, {n} : index
+  %safe = arith.select %in, %c, %i0 : index
+  %v0 = memref.load {counts}[%safe] : memref<?xi32, 1>
+  %v = arith.select %in, %v0, %none : i32
+  %t = arith.addi %s, %v : i32
+  scf.yield %t : i32
+}}
+{block_scan("d_", "%mine", f"%{p}wg")}\
+%offset = memref.load %{p}sums[%bx] : memref<?xi32, 1>
+%from = arith.addi %offset, %d_before : i32
+%end = scf.for %k = %i0 to %i4 step %i1 iter_args(%before = %from) -> (i32) {{
+  %c = arith.addi %first, %k : index
+  %in = arith.cmpi ult, %c, {n} : index
+  %safe = arith.select %in, %c, %i0 : index
+  %v0 = memref.load {counts}[%safe] : memref<?xi32, 1>
+  %v = arith.select %in, %v0, %none : i32
+  scf.if %in {{
+    memref.store %before, {start}[%c] : memref<?xi32, 1>{cursor_store}
+  }}
+  %t = arith.addi %before, %v : i32
+  scf.yield %t : i32
+}}"""
+    head = (f"  %{p}per_block = arith.constant 1024 : index\n"
+            f"  %{p}threads = arith.constant 256 : index\n"
+            f"  %{p}blocks0 = func.call @mdrt_gpu_groups_grid({n}, %{p}per_block) : (index, index) -> index\n"
+            f"  %{p}blocks = arith.maxui %{p}blocks0, %c1 : index\n"
+            f"  %{p}sums = gpu.alloc (%{p}blocks) : memref<?xi32, 1>\n")
+    return (head
+            + launch(f"%{p}blocks", sums, threads=f"%{p}threads", workgroup=wg)
+            + launch("%c1", blocks, threads=f"%{p}threads", workgroup=wg)
+            + launch(f"%{p}blocks", within, threads=f"%{p}threads",
+                     workgroup=wg)
             + f"  %{p}sums_plain = memref.memory_space_cast %{p}sums : memref<?xi32, 1> to memref<?xi32>\n"
             + f"  gpu.dealloc %{p}sums_plain : memref<?xi32>\n")
 
@@ -1009,7 +1126,10 @@ func.func private @mdrt_gpu_build_neighbors_groups(
   %key_start = gpu.alloc (%keys1) : memref<?xi32, 1>
   %key_cursor = gpu.alloc (%keys) : memref<?xi32, 1>
   %sorted = gpu.alloc (%n) : memref<?xi32, 1>
-  %chunk_base = gpu.alloc (%columns) : memref<?xi32, 1>
+  %columns1 = arith.addi %columns, %c1 : index
+  %chunk_base = gpu.alloc (%columns1) : memref<?xi32, 1>
+  %column_chunks = gpu.alloc (%columns) : memref<?xi32, 1>
+  %grid_of_columns = func.call @mdrt_gpu_groups_grid(%columns, %block) : (index, index) -> index
   %sizes_device = gpu.alloc () : memref<3xi32, 1>
   %xp = gpu.alloc (%capacity) : memref<?x4xf32, 1>
   %gkey = gpu.alloc (%capacity) : memref<?xi32, 1>
@@ -1097,31 +1217,31 @@ memref.store %k32, %key[%item] : memref<?xi32, 1>
 %i32v = arith.index_cast %item : index to i32
 memref.store %i32v, %sorted[%slot] : memref<?xi32, 1>""")))
     t.append(sort_bins("%grid_of_keys", "%key_start", "%sorted", "%keys"))
-    t.append("  // The first chunk of each column, in one thread, and the places.\n")
+    t.append("  // The chunks of each column, the first chunk of each, and the places.\n")
+    t.append(launch("%grid_of_columns", per_item("%columns", f"""\
+%i1 = arith.constant 1 : index
+%sixty_three = arith.constant 63 : i32
+%six = arith.constant 6 : i32
+%kb = arith.muli %item, %nzb : index
+%c1_ = arith.addi %item, %i1 : index
+%ke = arith.muli %c1_, %nzb : index
+%b32 = memref.load %key_start[%kb] : memref<?xi32, 1>
+%e32 = memref.load %key_start[%ke] : memref<?xi32, 1>
+%len = arith.subi %e32, %b32 : i32
+%len63 = arith.addi %len, %sixty_three : i32
+%nch = arith.shrsi %len63, %six : i32
+memref.store %nch, %column_chunks[%item] : memref<?xi32, 1>""")))
+    t.append(scan("cs_", "%column_chunks", "%chunk_base", None, "%columns"))
     t.append(launch("%c1", f"""\
 %i0 = arith.constant 0 : index
 %i1 = arith.constant 1 : index
+%i2 = arith.constant 2 : index
 %none = arith.constant 0 : i32
-%sixty_three = arith.constant 63 : i32
-%six = arith.constant 6 : i32
-%chunks_all = scf.for %c = %i0 to %columns step %i1 iter_args(%before = %none) -> (i32) {{
-  memref.store %before, %chunk_base[%c] : memref<?xi32, 1>
-  %kb = arith.muli %c, %nzb : index
-  %c1_ = arith.addi %c, %i1 : index
-  %ke = arith.muli %c1_, %nzb : index
-  %b32 = memref.load %key_start[%kb] : memref<?xi32, 1>
-  %e32 = memref.load %key_start[%ke] : memref<?xi32, 1>
-  %len = arith.subi %e32, %b32 : i32
-  %len63 = arith.addi %len, %sixty_three : i32
-  %nch = arith.shrsi %len63, %six : i32
-  %t = arith.addi %before, %nch : i32
-  scf.yield %t : i32
-}}
+%chunks_all = memref.load %chunk_base[%columns] : memref<?xi32, 1>
 %sixty_four_i = arith.constant 64 : i32
 %places = arith.muli %chunks_all, %sixty_four_i : i32
 memref.store %places, %sizes_device[%i0] : memref<3xi32, 1>
 memref.store %none, %sizes_device[%i1] : memref<3xi32, 1>
-%i2 = arith.constant 2 : index
 memref.store %none, %sizes_device[%i2] : memref<3xi32, 1>""", threads="%c1"))
     t.append("""\
   // The order: a warp a chunk of 64 particles. There are at most n / 32 +
@@ -1147,6 +1267,8 @@ memref.store %none, %sizes_device[%i2] : memref<3xi32, 1>""", threads="%c1"))
   gpu.dealloc %sorted_plain : memref<?xi32>
   %chunk_base_plain = memref.memory_space_cast %chunk_base : memref<?xi32, 1> to memref<?xi32>
   gpu.dealloc %chunk_base_plain : memref<?xi32>
+  %column_chunks_plain = memref.memory_space_cast %column_chunks : memref<?xi32, 1> to memref<?xi32>
+  gpu.dealloc %column_chunks_plain : memref<?xi32>
 
   //===--------------------------------------------------------------------===//
   // The positions of the places, and the grid of the candidates

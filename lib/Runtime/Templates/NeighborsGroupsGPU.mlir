@@ -185,7 +185,10 @@ func.func private @mdrt_gpu_build_neighbors_groups(
   %key_start = gpu.alloc (%keys1) : memref<?xi32, 1>
   %key_cursor = gpu.alloc (%keys) : memref<?xi32, 1>
   %sorted = gpu.alloc (%n) : memref<?xi32, 1>
-  %chunk_base = gpu.alloc (%columns) : memref<?xi32, 1>
+  %columns1 = arith.addi %columns, %c1 : index
+  %chunk_base = gpu.alloc (%columns1) : memref<?xi32, 1>
+  %column_chunks = gpu.alloc (%columns) : memref<?xi32, 1>
+  %grid_of_columns = func.call @mdrt_gpu_groups_grid(%columns, %block) : (index, index) -> index
   %sizes_device = gpu.alloc () : memref<3xi32, 1>
   %xp = gpu.alloc (%capacity) : memref<?x4xf32, 1>
   %gkey = gpu.alloc (%capacity) : memref<?xi32, 1>
@@ -296,63 +299,330 @@ func.func private @mdrt_gpu_build_neighbors_groups(
     }
     gpu.terminator
   }
-  %ks_chunks = func.call @mdrt_gpu_groups_grid(%keys, %chunk) : (index, index) -> index
-  %ks_grid = func.call @mdrt_gpu_groups_grid(%ks_chunks, %block) : (index, index) -> index
-  %ks_sums = gpu.alloc (%ks_chunks) : memref<?xi32, 1>
-  gpu.launch blocks(%bx, %by, %bz) in (%gx = %ks_grid, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
-    %base = arith.muli %bx, %block : index
-    %item = arith.addi %base, %tx : index
-    %inside = arith.cmpi ult, %item, %ks_chunks : index
-    scf.if %inside {
-      %i1 = arith.constant 1 : index
-      %none = arith.constant 0 : i32
-      %begin = arith.muli %item, %chunk : index
-      %full = arith.addi %begin, %chunk : index
-      %short = arith.cmpi ult, %keys, %full : index
-      %end = arith.select %short, %keys, %full : index
-      %sum = scf.for %c = %begin to %end step %i1 iter_args(%s = %none) -> (i32) {
-        %v = memref.load %key_count[%c] : memref<?xi32, 1>
-        %t = arith.addi %s, %v : i32
-        scf.yield %t : i32
+  %ks_per_block = arith.constant 1024 : index
+  %ks_threads = arith.constant 256 : index
+  %ks_blocks0 = func.call @mdrt_gpu_groups_grid(%keys, %ks_per_block) : (index, index) -> index
+  %ks_blocks = arith.maxui %ks_blocks0, %c1 : index
+  %ks_sums = gpu.alloc (%ks_blocks) : memref<?xi32, 1>
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %ks_blocks, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %ks_threads, %sy = %c1, %sz = %c1)
+             workgroup(%ks_wg : memref<9xi32, #gpu.address_space<workgroup>>) {
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i4 = arith.constant 4 : index
+    %none = arith.constant 0 : i32
+    %per_block = arith.constant 1024 : index
+    %block_base = arith.muli %bx, %per_block : index
+    %thread_base = arith.muli %tx, %i4 : index
+    %first = arith.addi %block_base, %thread_base : index
+    %mine = scf.for %k = %i0 to %i4 step %i1 iter_args(%s = %none) -> (i32) {
+      %c = arith.addi %first, %k : index
+      %in = arith.cmpi ult, %c, %keys : index
+      %safe = arith.select %in, %c, %i0 : index
+      %v0 = memref.load %key_count[%safe] : memref<?xi32, 1>
+      %v = arith.select %in, %v0, %none : i32
+      %t = arith.addi %s, %v : i32
+      scf.yield %t : i32
+    }
+    %b_zero = arith.constant 0 : i32
+    %b_i0 = arith.constant 0 : index
+    %b_i7 = arith.constant 7 : index
+    %b_i8 = arith.constant 8 : index
+    %b_i31 = arith.constant 31 : index
+    %b_i32x = arith.constant 32 : index
+    %b_width = arith.constant 32 : i32
+    %b_lane = arith.remui %tx, %b_i32x : index
+    %b_warp = arith.divui %tx, %b_i32x : index
+    %b_lane32 = arith.index_cast %b_lane : index to i32
+    %b_x0 = arith.addi %mine, %b_zero : i32
+    %b_o0 = arith.constant 1 : i32
+    %b_y0, %b_v0 = gpu.shuffle up %b_x0, %b_o0, %b_width : i32
+    %b_h0 = arith.cmpi sge, %b_lane32, %b_o0 : i32
+    %b_a0 = arith.select %b_h0, %b_y0, %b_zero : i32
+    %b_x1 = arith.addi %b_x0, %b_a0 : i32
+    %b_o1 = arith.constant 2 : i32
+    %b_y1, %b_v1 = gpu.shuffle up %b_x1, %b_o1, %b_width : i32
+    %b_h1 = arith.cmpi sge, %b_lane32, %b_o1 : i32
+    %b_a1 = arith.select %b_h1, %b_y1, %b_zero : i32
+    %b_x2 = arith.addi %b_x1, %b_a1 : i32
+    %b_o2 = arith.constant 4 : i32
+    %b_y2, %b_v2 = gpu.shuffle up %b_x2, %b_o2, %b_width : i32
+    %b_h2 = arith.cmpi sge, %b_lane32, %b_o2 : i32
+    %b_a2 = arith.select %b_h2, %b_y2, %b_zero : i32
+    %b_x3 = arith.addi %b_x2, %b_a2 : i32
+    %b_o3 = arith.constant 8 : i32
+    %b_y3, %b_v3 = gpu.shuffle up %b_x3, %b_o3, %b_width : i32
+    %b_h3 = arith.cmpi sge, %b_lane32, %b_o3 : i32
+    %b_a3 = arith.select %b_h3, %b_y3, %b_zero : i32
+    %b_x4 = arith.addi %b_x3, %b_a3 : i32
+    %b_o4 = arith.constant 16 : i32
+    %b_y4, %b_v4 = gpu.shuffle up %b_x4, %b_o4, %b_width : i32
+    %b_h4 = arith.cmpi sge, %b_lane32, %b_o4 : i32
+    %b_a4 = arith.select %b_h4, %b_y4, %b_zero : i32
+    %b_x5 = arith.addi %b_x4, %b_a4 : i32
+    %b_last = arith.cmpi eq, %b_lane, %b_i31 : index
+    scf.if %b_last {
+      memref.store %b_x5, %ks_wg[%b_warp] : memref<9xi32, #gpu.address_space<workgroup>>
+    }
+    gpu.barrier
+    %b_first = arith.cmpi eq, %b_warp, %b_i0 : index
+    scf.if %b_first {
+      %b_in8 = arith.cmpi ult, %b_lane, %b_i8 : index
+      %b_at = arith.select %b_in8, %b_lane, %b_i0 : index
+      %b_w = memref.load %ks_wg[%b_at] : memref<9xi32, #gpu.address_space<workgroup>>
+      %b_u0 = arith.select %b_in8, %b_w, %b_zero : i32
+      %b_wo0 = arith.constant 1 : i32
+      %b_wy0, %b_wv0 = gpu.shuffle up %b_u0, %b_wo0, %b_width : i32
+      %b_wh0 = arith.cmpi sge, %b_lane32, %b_wo0 : i32
+      %b_wa0 = arith.select %b_wh0, %b_wy0, %b_zero : i32
+      %b_u1 = arith.addi %b_u0, %b_wa0 : i32
+      %b_wo1 = arith.constant 2 : i32
+      %b_wy1, %b_wv1 = gpu.shuffle up %b_u1, %b_wo1, %b_width : i32
+      %b_wh1 = arith.cmpi sge, %b_lane32, %b_wo1 : i32
+      %b_wa1 = arith.select %b_wh1, %b_wy1, %b_zero : i32
+      %b_u2 = arith.addi %b_u1, %b_wa1 : i32
+      %b_wo2 = arith.constant 4 : i32
+      %b_wy2, %b_wv2 = gpu.shuffle up %b_u2, %b_wo2, %b_width : i32
+      %b_wh2 = arith.cmpi sge, %b_lane32, %b_wo2 : i32
+      %b_wa2 = arith.select %b_wh2, %b_wy2, %b_zero : i32
+      %b_u3 = arith.addi %b_u2, %b_wa2 : i32
+      %b_uex = arith.subi %b_u3, %b_u0 : i32
+      %b_t7 = arith.cmpi eq, %b_lane, %b_i7 : index
+      scf.if %b_in8 {
+        memref.store %b_uex, %ks_wg[%b_lane] : memref<9xi32, #gpu.address_space<workgroup>>
       }
-      memref.store %sum, %ks_sums[%item] : memref<?xi32, 1>
+      scf.if %b_t7 {
+        memref.store %b_u3, %ks_wg[%b_i8] : memref<9xi32, #gpu.address_space<workgroup>>
+      }
+    }
+    gpu.barrier
+    %b_woff = memref.load %ks_wg[%b_warp] : memref<9xi32, #gpu.address_space<workgroup>>
+    %b_total = memref.load %ks_wg[%b_i8] : memref<9xi32, #gpu.address_space<workgroup>>
+    %b_inwarp = arith.subi %b_x5, %mine : i32
+    %b_before = arith.addi %b_inwarp, %b_woff : i32
+    %lead = arith.cmpi eq, %tx, %i0 : index
+    scf.if %lead {
+      memref.store %b_total, %ks_sums[%bx] : memref<?xi32, 1>
     }
     gpu.terminator
   }
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
+             threads(%tx, %ty, %tz) in (%sx = %ks_threads, %sy = %c1, %sz = %c1)
+             workgroup(%ks_wg : memref<9xi32, #gpu.address_space<workgroup>>) {
     %i0 = arith.constant 0 : index
     %i1 = arith.constant 1 : index
     %none = arith.constant 0 : i32
-    %total = scf.for %b = %i0 to %ks_chunks step %i1 iter_args(%before = %none) -> (i32) {
-      %s = memref.load %ks_sums[%b] : memref<?xi32, 1>
-      memref.store %before, %ks_sums[%b] : memref<?xi32, 1>
-      %t = arith.addi %before, %s : i32
+    %threads = arith.constant 256 : index
+    %span0 = arith.addi %ks_blocks, %threads : index
+    %span1 = arith.subi %span0, %i1 : index
+    %span = arith.divui %span1, %threads : index
+    %begin0 = arith.muli %tx, %span : index
+    %begin = arith.minui %begin0, %ks_blocks : index
+    %end0 = arith.addi %begin, %span : index
+    %end = arith.minui %end0, %ks_blocks : index
+    %mine = scf.for %b = %begin to %end step %i1 iter_args(%s = %none) -> (i32) {
+      %v = memref.load %ks_sums[%b] : memref<?xi32, 1>
+      %t = arith.addi %s, %v : i32
       scf.yield %t : i32
     }
-    memref.store %total, %key_start[%keys] : memref<?xi32, 1>
+    %c_zero = arith.constant 0 : i32
+    %c_i0 = arith.constant 0 : index
+    %c_i7 = arith.constant 7 : index
+    %c_i8 = arith.constant 8 : index
+    %c_i31 = arith.constant 31 : index
+    %c_i32x = arith.constant 32 : index
+    %c_width = arith.constant 32 : i32
+    %c_lane = arith.remui %tx, %c_i32x : index
+    %c_warp = arith.divui %tx, %c_i32x : index
+    %c_lane32 = arith.index_cast %c_lane : index to i32
+    %c_x0 = arith.addi %mine, %c_zero : i32
+    %c_o0 = arith.constant 1 : i32
+    %c_y0, %c_v0 = gpu.shuffle up %c_x0, %c_o0, %c_width : i32
+    %c_h0 = arith.cmpi sge, %c_lane32, %c_o0 : i32
+    %c_a0 = arith.select %c_h0, %c_y0, %c_zero : i32
+    %c_x1 = arith.addi %c_x0, %c_a0 : i32
+    %c_o1 = arith.constant 2 : i32
+    %c_y1, %c_v1 = gpu.shuffle up %c_x1, %c_o1, %c_width : i32
+    %c_h1 = arith.cmpi sge, %c_lane32, %c_o1 : i32
+    %c_a1 = arith.select %c_h1, %c_y1, %c_zero : i32
+    %c_x2 = arith.addi %c_x1, %c_a1 : i32
+    %c_o2 = arith.constant 4 : i32
+    %c_y2, %c_v2 = gpu.shuffle up %c_x2, %c_o2, %c_width : i32
+    %c_h2 = arith.cmpi sge, %c_lane32, %c_o2 : i32
+    %c_a2 = arith.select %c_h2, %c_y2, %c_zero : i32
+    %c_x3 = arith.addi %c_x2, %c_a2 : i32
+    %c_o3 = arith.constant 8 : i32
+    %c_y3, %c_v3 = gpu.shuffle up %c_x3, %c_o3, %c_width : i32
+    %c_h3 = arith.cmpi sge, %c_lane32, %c_o3 : i32
+    %c_a3 = arith.select %c_h3, %c_y3, %c_zero : i32
+    %c_x4 = arith.addi %c_x3, %c_a3 : i32
+    %c_o4 = arith.constant 16 : i32
+    %c_y4, %c_v4 = gpu.shuffle up %c_x4, %c_o4, %c_width : i32
+    %c_h4 = arith.cmpi sge, %c_lane32, %c_o4 : i32
+    %c_a4 = arith.select %c_h4, %c_y4, %c_zero : i32
+    %c_x5 = arith.addi %c_x4, %c_a4 : i32
+    %c_last = arith.cmpi eq, %c_lane, %c_i31 : index
+    scf.if %c_last {
+      memref.store %c_x5, %ks_wg[%c_warp] : memref<9xi32, #gpu.address_space<workgroup>>
+    }
+    gpu.barrier
+    %c_first = arith.cmpi eq, %c_warp, %c_i0 : index
+    scf.if %c_first {
+      %c_in8 = arith.cmpi ult, %c_lane, %c_i8 : index
+      %c_at = arith.select %c_in8, %c_lane, %c_i0 : index
+      %c_w = memref.load %ks_wg[%c_at] : memref<9xi32, #gpu.address_space<workgroup>>
+      %c_u0 = arith.select %c_in8, %c_w, %c_zero : i32
+      %c_wo0 = arith.constant 1 : i32
+      %c_wy0, %c_wv0 = gpu.shuffle up %c_u0, %c_wo0, %c_width : i32
+      %c_wh0 = arith.cmpi sge, %c_lane32, %c_wo0 : i32
+      %c_wa0 = arith.select %c_wh0, %c_wy0, %c_zero : i32
+      %c_u1 = arith.addi %c_u0, %c_wa0 : i32
+      %c_wo1 = arith.constant 2 : i32
+      %c_wy1, %c_wv1 = gpu.shuffle up %c_u1, %c_wo1, %c_width : i32
+      %c_wh1 = arith.cmpi sge, %c_lane32, %c_wo1 : i32
+      %c_wa1 = arith.select %c_wh1, %c_wy1, %c_zero : i32
+      %c_u2 = arith.addi %c_u1, %c_wa1 : i32
+      %c_wo2 = arith.constant 4 : i32
+      %c_wy2, %c_wv2 = gpu.shuffle up %c_u2, %c_wo2, %c_width : i32
+      %c_wh2 = arith.cmpi sge, %c_lane32, %c_wo2 : i32
+      %c_wa2 = arith.select %c_wh2, %c_wy2, %c_zero : i32
+      %c_u3 = arith.addi %c_u2, %c_wa2 : i32
+      %c_uex = arith.subi %c_u3, %c_u0 : i32
+      %c_t7 = arith.cmpi eq, %c_lane, %c_i7 : index
+      scf.if %c_in8 {
+        memref.store %c_uex, %ks_wg[%c_lane] : memref<9xi32, #gpu.address_space<workgroup>>
+      }
+      scf.if %c_t7 {
+        memref.store %c_u3, %ks_wg[%c_i8] : memref<9xi32, #gpu.address_space<workgroup>>
+      }
+    }
+    gpu.barrier
+    %c_woff = memref.load %ks_wg[%c_warp] : memref<9xi32, #gpu.address_space<workgroup>>
+    %c_total = memref.load %ks_wg[%c_i8] : memref<9xi32, #gpu.address_space<workgroup>>
+    %c_inwarp = arith.subi %c_x5, %mine : i32
+    %c_before = arith.addi %c_inwarp, %c_woff : i32
+    %last = scf.for %b = %begin to %end step %i1 iter_args(%before = %c_before) -> (i32) {
+      %v = memref.load %ks_sums[%b] : memref<?xi32, 1>
+      memref.store %before, %ks_sums[%b] : memref<?xi32, 1>
+      %t = arith.addi %before, %v : i32
+      scf.yield %t : i32
+    }
+    %lead = arith.cmpi eq, %tx, %i0 : index
+    scf.if %lead {
+      memref.store %c_total, %key_start[%keys] : memref<?xi32, 1>
+    }
     gpu.terminator
   }
-  gpu.launch blocks(%bx, %by, %bz) in (%gx = %ks_grid, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
-    %base = arith.muli %bx, %block : index
-    %item = arith.addi %base, %tx : index
-    %inside = arith.cmpi ult, %item, %ks_chunks : index
-    scf.if %inside {
-      %i1 = arith.constant 1 : index
-      %begin = arith.muli %item, %chunk : index
-      %full = arith.addi %begin, %chunk : index
-      %short = arith.cmpi ult, %keys, %full : index
-      %end = arith.select %short, %keys, %full : index
-      %first = memref.load %ks_sums[%item] : memref<?xi32, 1>
-      %last = scf.for %c = %begin to %end step %i1 iter_args(%before = %first) -> (i32) {
-        %v = memref.load %key_count[%c] : memref<?xi32, 1>
-        memref.store %before, %key_start[%c] : memref<?xi32, 1>
-        memref.store %before, %key_cursor[%c] : memref<?xi32, 1>
-        %t = arith.addi %before, %v : i32
-        scf.yield %t : i32
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %ks_blocks, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %ks_threads, %sy = %c1, %sz = %c1)
+             workgroup(%ks_wg : memref<9xi32, #gpu.address_space<workgroup>>) {
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i4 = arith.constant 4 : index
+    %none = arith.constant 0 : i32
+    %per_block = arith.constant 1024 : index
+    %block_base = arith.muli %bx, %per_block : index
+    %thread_base = arith.muli %tx, %i4 : index
+    %first = arith.addi %block_base, %thread_base : index
+    %mine = scf.for %k = %i0 to %i4 step %i1 iter_args(%s = %none) -> (i32) {
+      %c = arith.addi %first, %k : index
+      %in = arith.cmpi ult, %c, %keys : index
+      %safe = arith.select %in, %c, %i0 : index
+      %v0 = memref.load %key_count[%safe] : memref<?xi32, 1>
+      %v = arith.select %in, %v0, %none : i32
+      %t = arith.addi %s, %v : i32
+      scf.yield %t : i32
+    }
+    %d_zero = arith.constant 0 : i32
+    %d_i0 = arith.constant 0 : index
+    %d_i7 = arith.constant 7 : index
+    %d_i8 = arith.constant 8 : index
+    %d_i31 = arith.constant 31 : index
+    %d_i32x = arith.constant 32 : index
+    %d_width = arith.constant 32 : i32
+    %d_lane = arith.remui %tx, %d_i32x : index
+    %d_warp = arith.divui %tx, %d_i32x : index
+    %d_lane32 = arith.index_cast %d_lane : index to i32
+    %d_x0 = arith.addi %mine, %d_zero : i32
+    %d_o0 = arith.constant 1 : i32
+    %d_y0, %d_v0 = gpu.shuffle up %d_x0, %d_o0, %d_width : i32
+    %d_h0 = arith.cmpi sge, %d_lane32, %d_o0 : i32
+    %d_a0 = arith.select %d_h0, %d_y0, %d_zero : i32
+    %d_x1 = arith.addi %d_x0, %d_a0 : i32
+    %d_o1 = arith.constant 2 : i32
+    %d_y1, %d_v1 = gpu.shuffle up %d_x1, %d_o1, %d_width : i32
+    %d_h1 = arith.cmpi sge, %d_lane32, %d_o1 : i32
+    %d_a1 = arith.select %d_h1, %d_y1, %d_zero : i32
+    %d_x2 = arith.addi %d_x1, %d_a1 : i32
+    %d_o2 = arith.constant 4 : i32
+    %d_y2, %d_v2 = gpu.shuffle up %d_x2, %d_o2, %d_width : i32
+    %d_h2 = arith.cmpi sge, %d_lane32, %d_o2 : i32
+    %d_a2 = arith.select %d_h2, %d_y2, %d_zero : i32
+    %d_x3 = arith.addi %d_x2, %d_a2 : i32
+    %d_o3 = arith.constant 8 : i32
+    %d_y3, %d_v3 = gpu.shuffle up %d_x3, %d_o3, %d_width : i32
+    %d_h3 = arith.cmpi sge, %d_lane32, %d_o3 : i32
+    %d_a3 = arith.select %d_h3, %d_y3, %d_zero : i32
+    %d_x4 = arith.addi %d_x3, %d_a3 : i32
+    %d_o4 = arith.constant 16 : i32
+    %d_y4, %d_v4 = gpu.shuffle up %d_x4, %d_o4, %d_width : i32
+    %d_h4 = arith.cmpi sge, %d_lane32, %d_o4 : i32
+    %d_a4 = arith.select %d_h4, %d_y4, %d_zero : i32
+    %d_x5 = arith.addi %d_x4, %d_a4 : i32
+    %d_last = arith.cmpi eq, %d_lane, %d_i31 : index
+    scf.if %d_last {
+      memref.store %d_x5, %ks_wg[%d_warp] : memref<9xi32, #gpu.address_space<workgroup>>
+    }
+    gpu.barrier
+    %d_first = arith.cmpi eq, %d_warp, %d_i0 : index
+    scf.if %d_first {
+      %d_in8 = arith.cmpi ult, %d_lane, %d_i8 : index
+      %d_at = arith.select %d_in8, %d_lane, %d_i0 : index
+      %d_w = memref.load %ks_wg[%d_at] : memref<9xi32, #gpu.address_space<workgroup>>
+      %d_u0 = arith.select %d_in8, %d_w, %d_zero : i32
+      %d_wo0 = arith.constant 1 : i32
+      %d_wy0, %d_wv0 = gpu.shuffle up %d_u0, %d_wo0, %d_width : i32
+      %d_wh0 = arith.cmpi sge, %d_lane32, %d_wo0 : i32
+      %d_wa0 = arith.select %d_wh0, %d_wy0, %d_zero : i32
+      %d_u1 = arith.addi %d_u0, %d_wa0 : i32
+      %d_wo1 = arith.constant 2 : i32
+      %d_wy1, %d_wv1 = gpu.shuffle up %d_u1, %d_wo1, %d_width : i32
+      %d_wh1 = arith.cmpi sge, %d_lane32, %d_wo1 : i32
+      %d_wa1 = arith.select %d_wh1, %d_wy1, %d_zero : i32
+      %d_u2 = arith.addi %d_u1, %d_wa1 : i32
+      %d_wo2 = arith.constant 4 : i32
+      %d_wy2, %d_wv2 = gpu.shuffle up %d_u2, %d_wo2, %d_width : i32
+      %d_wh2 = arith.cmpi sge, %d_lane32, %d_wo2 : i32
+      %d_wa2 = arith.select %d_wh2, %d_wy2, %d_zero : i32
+      %d_u3 = arith.addi %d_u2, %d_wa2 : i32
+      %d_uex = arith.subi %d_u3, %d_u0 : i32
+      %d_t7 = arith.cmpi eq, %d_lane, %d_i7 : index
+      scf.if %d_in8 {
+        memref.store %d_uex, %ks_wg[%d_lane] : memref<9xi32, #gpu.address_space<workgroup>>
       }
+      scf.if %d_t7 {
+        memref.store %d_u3, %ks_wg[%d_i8] : memref<9xi32, #gpu.address_space<workgroup>>
+      }
+    }
+    gpu.barrier
+    %d_woff = memref.load %ks_wg[%d_warp] : memref<9xi32, #gpu.address_space<workgroup>>
+    %d_total = memref.load %ks_wg[%d_i8] : memref<9xi32, #gpu.address_space<workgroup>>
+    %d_inwarp = arith.subi %d_x5, %mine : i32
+    %d_before = arith.addi %d_inwarp, %d_woff : i32
+    %offset = memref.load %ks_sums[%bx] : memref<?xi32, 1>
+    %from = arith.addi %offset, %d_before : i32
+    %end = scf.for %k = %i0 to %i4 step %i1 iter_args(%before = %from) -> (i32) {
+      %c = arith.addi %first, %k : index
+      %in = arith.cmpi ult, %c, %keys : index
+      %safe = arith.select %in, %c, %i0 : index
+      %v0 = memref.load %key_count[%safe] : memref<?xi32, 1>
+      %v = arith.select %in, %v0, %none : i32
+      scf.if %in {
+        memref.store %before, %key_start[%c] : memref<?xi32, 1>
+      memref.store %before, %key_cursor[%c] : memref<?xi32, 1>
+      }
+      %t = arith.addi %before, %v : i32
+      scf.yield %t : i32
     }
     gpu.terminator
   }
@@ -418,32 +688,367 @@ func.func private @mdrt_gpu_build_neighbors_groups(
     }
     gpu.terminator
   }
-  // The first chunk of each column, in one thread, and the places.
-  gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
-    %i0 = arith.constant 0 : index
-    %i1 = arith.constant 1 : index
-    %none = arith.constant 0 : i32
-    %sixty_three = arith.constant 63 : i32
-    %six = arith.constant 6 : i32
-    %chunks_all = scf.for %c = %i0 to %columns step %i1 iter_args(%before = %none) -> (i32) {
-      memref.store %before, %chunk_base[%c] : memref<?xi32, 1>
-      %kb = arith.muli %c, %nzb : index
-      %c1_ = arith.addi %c, %i1 : index
+  // The chunks of each column, the first chunk of each, and the places.
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_of_columns, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %block : index
+    %item = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %item, %columns : index
+    scf.if %inside {
+      %i1 = arith.constant 1 : index
+      %sixty_three = arith.constant 63 : i32
+      %six = arith.constant 6 : i32
+      %kb = arith.muli %item, %nzb : index
+      %c1_ = arith.addi %item, %i1 : index
       %ke = arith.muli %c1_, %nzb : index
       %b32 = memref.load %key_start[%kb] : memref<?xi32, 1>
       %e32 = memref.load %key_start[%ke] : memref<?xi32, 1>
       %len = arith.subi %e32, %b32 : i32
       %len63 = arith.addi %len, %sixty_three : i32
       %nch = arith.shrsi %len63, %six : i32
-      %t = arith.addi %before, %nch : i32
+      memref.store %nch, %column_chunks[%item] : memref<?xi32, 1>
+    }
+    gpu.terminator
+  }
+  %cs_per_block = arith.constant 1024 : index
+  %cs_threads = arith.constant 256 : index
+  %cs_blocks0 = func.call @mdrt_gpu_groups_grid(%columns, %cs_per_block) : (index, index) -> index
+  %cs_blocks = arith.maxui %cs_blocks0, %c1 : index
+  %cs_sums = gpu.alloc (%cs_blocks) : memref<?xi32, 1>
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %cs_blocks, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %cs_threads, %sy = %c1, %sz = %c1)
+             workgroup(%cs_wg : memref<9xi32, #gpu.address_space<workgroup>>) {
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i4 = arith.constant 4 : index
+    %none = arith.constant 0 : i32
+    %per_block = arith.constant 1024 : index
+    %block_base = arith.muli %bx, %per_block : index
+    %thread_base = arith.muli %tx, %i4 : index
+    %first = arith.addi %block_base, %thread_base : index
+    %mine = scf.for %k = %i0 to %i4 step %i1 iter_args(%s = %none) -> (i32) {
+      %c = arith.addi %first, %k : index
+      %in = arith.cmpi ult, %c, %columns : index
+      %safe = arith.select %in, %c, %i0 : index
+      %v0 = memref.load %column_chunks[%safe] : memref<?xi32, 1>
+      %v = arith.select %in, %v0, %none : i32
+      %t = arith.addi %s, %v : i32
       scf.yield %t : i32
     }
+    %b_zero = arith.constant 0 : i32
+    %b_i0 = arith.constant 0 : index
+    %b_i7 = arith.constant 7 : index
+    %b_i8 = arith.constant 8 : index
+    %b_i31 = arith.constant 31 : index
+    %b_i32x = arith.constant 32 : index
+    %b_width = arith.constant 32 : i32
+    %b_lane = arith.remui %tx, %b_i32x : index
+    %b_warp = arith.divui %tx, %b_i32x : index
+    %b_lane32 = arith.index_cast %b_lane : index to i32
+    %b_x0 = arith.addi %mine, %b_zero : i32
+    %b_o0 = arith.constant 1 : i32
+    %b_y0, %b_v0 = gpu.shuffle up %b_x0, %b_o0, %b_width : i32
+    %b_h0 = arith.cmpi sge, %b_lane32, %b_o0 : i32
+    %b_a0 = arith.select %b_h0, %b_y0, %b_zero : i32
+    %b_x1 = arith.addi %b_x0, %b_a0 : i32
+    %b_o1 = arith.constant 2 : i32
+    %b_y1, %b_v1 = gpu.shuffle up %b_x1, %b_o1, %b_width : i32
+    %b_h1 = arith.cmpi sge, %b_lane32, %b_o1 : i32
+    %b_a1 = arith.select %b_h1, %b_y1, %b_zero : i32
+    %b_x2 = arith.addi %b_x1, %b_a1 : i32
+    %b_o2 = arith.constant 4 : i32
+    %b_y2, %b_v2 = gpu.shuffle up %b_x2, %b_o2, %b_width : i32
+    %b_h2 = arith.cmpi sge, %b_lane32, %b_o2 : i32
+    %b_a2 = arith.select %b_h2, %b_y2, %b_zero : i32
+    %b_x3 = arith.addi %b_x2, %b_a2 : i32
+    %b_o3 = arith.constant 8 : i32
+    %b_y3, %b_v3 = gpu.shuffle up %b_x3, %b_o3, %b_width : i32
+    %b_h3 = arith.cmpi sge, %b_lane32, %b_o3 : i32
+    %b_a3 = arith.select %b_h3, %b_y3, %b_zero : i32
+    %b_x4 = arith.addi %b_x3, %b_a3 : i32
+    %b_o4 = arith.constant 16 : i32
+    %b_y4, %b_v4 = gpu.shuffle up %b_x4, %b_o4, %b_width : i32
+    %b_h4 = arith.cmpi sge, %b_lane32, %b_o4 : i32
+    %b_a4 = arith.select %b_h4, %b_y4, %b_zero : i32
+    %b_x5 = arith.addi %b_x4, %b_a4 : i32
+    %b_last = arith.cmpi eq, %b_lane, %b_i31 : index
+    scf.if %b_last {
+      memref.store %b_x5, %cs_wg[%b_warp] : memref<9xi32, #gpu.address_space<workgroup>>
+    }
+    gpu.barrier
+    %b_first = arith.cmpi eq, %b_warp, %b_i0 : index
+    scf.if %b_first {
+      %b_in8 = arith.cmpi ult, %b_lane, %b_i8 : index
+      %b_at = arith.select %b_in8, %b_lane, %b_i0 : index
+      %b_w = memref.load %cs_wg[%b_at] : memref<9xi32, #gpu.address_space<workgroup>>
+      %b_u0 = arith.select %b_in8, %b_w, %b_zero : i32
+      %b_wo0 = arith.constant 1 : i32
+      %b_wy0, %b_wv0 = gpu.shuffle up %b_u0, %b_wo0, %b_width : i32
+      %b_wh0 = arith.cmpi sge, %b_lane32, %b_wo0 : i32
+      %b_wa0 = arith.select %b_wh0, %b_wy0, %b_zero : i32
+      %b_u1 = arith.addi %b_u0, %b_wa0 : i32
+      %b_wo1 = arith.constant 2 : i32
+      %b_wy1, %b_wv1 = gpu.shuffle up %b_u1, %b_wo1, %b_width : i32
+      %b_wh1 = arith.cmpi sge, %b_lane32, %b_wo1 : i32
+      %b_wa1 = arith.select %b_wh1, %b_wy1, %b_zero : i32
+      %b_u2 = arith.addi %b_u1, %b_wa1 : i32
+      %b_wo2 = arith.constant 4 : i32
+      %b_wy2, %b_wv2 = gpu.shuffle up %b_u2, %b_wo2, %b_width : i32
+      %b_wh2 = arith.cmpi sge, %b_lane32, %b_wo2 : i32
+      %b_wa2 = arith.select %b_wh2, %b_wy2, %b_zero : i32
+      %b_u3 = arith.addi %b_u2, %b_wa2 : i32
+      %b_uex = arith.subi %b_u3, %b_u0 : i32
+      %b_t7 = arith.cmpi eq, %b_lane, %b_i7 : index
+      scf.if %b_in8 {
+        memref.store %b_uex, %cs_wg[%b_lane] : memref<9xi32, #gpu.address_space<workgroup>>
+      }
+      scf.if %b_t7 {
+        memref.store %b_u3, %cs_wg[%b_i8] : memref<9xi32, #gpu.address_space<workgroup>>
+      }
+    }
+    gpu.barrier
+    %b_woff = memref.load %cs_wg[%b_warp] : memref<9xi32, #gpu.address_space<workgroup>>
+    %b_total = memref.load %cs_wg[%b_i8] : memref<9xi32, #gpu.address_space<workgroup>>
+    %b_inwarp = arith.subi %b_x5, %mine : i32
+    %b_before = arith.addi %b_inwarp, %b_woff : i32
+    %lead = arith.cmpi eq, %tx, %i0 : index
+    scf.if %lead {
+      memref.store %b_total, %cs_sums[%bx] : memref<?xi32, 1>
+    }
+    gpu.terminator
+  }
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %cs_threads, %sy = %c1, %sz = %c1)
+             workgroup(%cs_wg : memref<9xi32, #gpu.address_space<workgroup>>) {
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %none = arith.constant 0 : i32
+    %threads = arith.constant 256 : index
+    %span0 = arith.addi %cs_blocks, %threads : index
+    %span1 = arith.subi %span0, %i1 : index
+    %span = arith.divui %span1, %threads : index
+    %begin0 = arith.muli %tx, %span : index
+    %begin = arith.minui %begin0, %cs_blocks : index
+    %end0 = arith.addi %begin, %span : index
+    %end = arith.minui %end0, %cs_blocks : index
+    %mine = scf.for %b = %begin to %end step %i1 iter_args(%s = %none) -> (i32) {
+      %v = memref.load %cs_sums[%b] : memref<?xi32, 1>
+      %t = arith.addi %s, %v : i32
+      scf.yield %t : i32
+    }
+    %c_zero = arith.constant 0 : i32
+    %c_i0 = arith.constant 0 : index
+    %c_i7 = arith.constant 7 : index
+    %c_i8 = arith.constant 8 : index
+    %c_i31 = arith.constant 31 : index
+    %c_i32x = arith.constant 32 : index
+    %c_width = arith.constant 32 : i32
+    %c_lane = arith.remui %tx, %c_i32x : index
+    %c_warp = arith.divui %tx, %c_i32x : index
+    %c_lane32 = arith.index_cast %c_lane : index to i32
+    %c_x0 = arith.addi %mine, %c_zero : i32
+    %c_o0 = arith.constant 1 : i32
+    %c_y0, %c_v0 = gpu.shuffle up %c_x0, %c_o0, %c_width : i32
+    %c_h0 = arith.cmpi sge, %c_lane32, %c_o0 : i32
+    %c_a0 = arith.select %c_h0, %c_y0, %c_zero : i32
+    %c_x1 = arith.addi %c_x0, %c_a0 : i32
+    %c_o1 = arith.constant 2 : i32
+    %c_y1, %c_v1 = gpu.shuffle up %c_x1, %c_o1, %c_width : i32
+    %c_h1 = arith.cmpi sge, %c_lane32, %c_o1 : i32
+    %c_a1 = arith.select %c_h1, %c_y1, %c_zero : i32
+    %c_x2 = arith.addi %c_x1, %c_a1 : i32
+    %c_o2 = arith.constant 4 : i32
+    %c_y2, %c_v2 = gpu.shuffle up %c_x2, %c_o2, %c_width : i32
+    %c_h2 = arith.cmpi sge, %c_lane32, %c_o2 : i32
+    %c_a2 = arith.select %c_h2, %c_y2, %c_zero : i32
+    %c_x3 = arith.addi %c_x2, %c_a2 : i32
+    %c_o3 = arith.constant 8 : i32
+    %c_y3, %c_v3 = gpu.shuffle up %c_x3, %c_o3, %c_width : i32
+    %c_h3 = arith.cmpi sge, %c_lane32, %c_o3 : i32
+    %c_a3 = arith.select %c_h3, %c_y3, %c_zero : i32
+    %c_x4 = arith.addi %c_x3, %c_a3 : i32
+    %c_o4 = arith.constant 16 : i32
+    %c_y4, %c_v4 = gpu.shuffle up %c_x4, %c_o4, %c_width : i32
+    %c_h4 = arith.cmpi sge, %c_lane32, %c_o4 : i32
+    %c_a4 = arith.select %c_h4, %c_y4, %c_zero : i32
+    %c_x5 = arith.addi %c_x4, %c_a4 : i32
+    %c_last = arith.cmpi eq, %c_lane, %c_i31 : index
+    scf.if %c_last {
+      memref.store %c_x5, %cs_wg[%c_warp] : memref<9xi32, #gpu.address_space<workgroup>>
+    }
+    gpu.barrier
+    %c_first = arith.cmpi eq, %c_warp, %c_i0 : index
+    scf.if %c_first {
+      %c_in8 = arith.cmpi ult, %c_lane, %c_i8 : index
+      %c_at = arith.select %c_in8, %c_lane, %c_i0 : index
+      %c_w = memref.load %cs_wg[%c_at] : memref<9xi32, #gpu.address_space<workgroup>>
+      %c_u0 = arith.select %c_in8, %c_w, %c_zero : i32
+      %c_wo0 = arith.constant 1 : i32
+      %c_wy0, %c_wv0 = gpu.shuffle up %c_u0, %c_wo0, %c_width : i32
+      %c_wh0 = arith.cmpi sge, %c_lane32, %c_wo0 : i32
+      %c_wa0 = arith.select %c_wh0, %c_wy0, %c_zero : i32
+      %c_u1 = arith.addi %c_u0, %c_wa0 : i32
+      %c_wo1 = arith.constant 2 : i32
+      %c_wy1, %c_wv1 = gpu.shuffle up %c_u1, %c_wo1, %c_width : i32
+      %c_wh1 = arith.cmpi sge, %c_lane32, %c_wo1 : i32
+      %c_wa1 = arith.select %c_wh1, %c_wy1, %c_zero : i32
+      %c_u2 = arith.addi %c_u1, %c_wa1 : i32
+      %c_wo2 = arith.constant 4 : i32
+      %c_wy2, %c_wv2 = gpu.shuffle up %c_u2, %c_wo2, %c_width : i32
+      %c_wh2 = arith.cmpi sge, %c_lane32, %c_wo2 : i32
+      %c_wa2 = arith.select %c_wh2, %c_wy2, %c_zero : i32
+      %c_u3 = arith.addi %c_u2, %c_wa2 : i32
+      %c_uex = arith.subi %c_u3, %c_u0 : i32
+      %c_t7 = arith.cmpi eq, %c_lane, %c_i7 : index
+      scf.if %c_in8 {
+        memref.store %c_uex, %cs_wg[%c_lane] : memref<9xi32, #gpu.address_space<workgroup>>
+      }
+      scf.if %c_t7 {
+        memref.store %c_u3, %cs_wg[%c_i8] : memref<9xi32, #gpu.address_space<workgroup>>
+      }
+    }
+    gpu.barrier
+    %c_woff = memref.load %cs_wg[%c_warp] : memref<9xi32, #gpu.address_space<workgroup>>
+    %c_total = memref.load %cs_wg[%c_i8] : memref<9xi32, #gpu.address_space<workgroup>>
+    %c_inwarp = arith.subi %c_x5, %mine : i32
+    %c_before = arith.addi %c_inwarp, %c_woff : i32
+    %last = scf.for %b = %begin to %end step %i1 iter_args(%before = %c_before) -> (i32) {
+      %v = memref.load %cs_sums[%b] : memref<?xi32, 1>
+      memref.store %before, %cs_sums[%b] : memref<?xi32, 1>
+      %t = arith.addi %before, %v : i32
+      scf.yield %t : i32
+    }
+    %lead = arith.cmpi eq, %tx, %i0 : index
+    scf.if %lead {
+      memref.store %c_total, %chunk_base[%columns] : memref<?xi32, 1>
+    }
+    gpu.terminator
+  }
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %cs_blocks, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %cs_threads, %sy = %c1, %sz = %c1)
+             workgroup(%cs_wg : memref<9xi32, #gpu.address_space<workgroup>>) {
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i4 = arith.constant 4 : index
+    %none = arith.constant 0 : i32
+    %per_block = arith.constant 1024 : index
+    %block_base = arith.muli %bx, %per_block : index
+    %thread_base = arith.muli %tx, %i4 : index
+    %first = arith.addi %block_base, %thread_base : index
+    %mine = scf.for %k = %i0 to %i4 step %i1 iter_args(%s = %none) -> (i32) {
+      %c = arith.addi %first, %k : index
+      %in = arith.cmpi ult, %c, %columns : index
+      %safe = arith.select %in, %c, %i0 : index
+      %v0 = memref.load %column_chunks[%safe] : memref<?xi32, 1>
+      %v = arith.select %in, %v0, %none : i32
+      %t = arith.addi %s, %v : i32
+      scf.yield %t : i32
+    }
+    %d_zero = arith.constant 0 : i32
+    %d_i0 = arith.constant 0 : index
+    %d_i7 = arith.constant 7 : index
+    %d_i8 = arith.constant 8 : index
+    %d_i31 = arith.constant 31 : index
+    %d_i32x = arith.constant 32 : index
+    %d_width = arith.constant 32 : i32
+    %d_lane = arith.remui %tx, %d_i32x : index
+    %d_warp = arith.divui %tx, %d_i32x : index
+    %d_lane32 = arith.index_cast %d_lane : index to i32
+    %d_x0 = arith.addi %mine, %d_zero : i32
+    %d_o0 = arith.constant 1 : i32
+    %d_y0, %d_v0 = gpu.shuffle up %d_x0, %d_o0, %d_width : i32
+    %d_h0 = arith.cmpi sge, %d_lane32, %d_o0 : i32
+    %d_a0 = arith.select %d_h0, %d_y0, %d_zero : i32
+    %d_x1 = arith.addi %d_x0, %d_a0 : i32
+    %d_o1 = arith.constant 2 : i32
+    %d_y1, %d_v1 = gpu.shuffle up %d_x1, %d_o1, %d_width : i32
+    %d_h1 = arith.cmpi sge, %d_lane32, %d_o1 : i32
+    %d_a1 = arith.select %d_h1, %d_y1, %d_zero : i32
+    %d_x2 = arith.addi %d_x1, %d_a1 : i32
+    %d_o2 = arith.constant 4 : i32
+    %d_y2, %d_v2 = gpu.shuffle up %d_x2, %d_o2, %d_width : i32
+    %d_h2 = arith.cmpi sge, %d_lane32, %d_o2 : i32
+    %d_a2 = arith.select %d_h2, %d_y2, %d_zero : i32
+    %d_x3 = arith.addi %d_x2, %d_a2 : i32
+    %d_o3 = arith.constant 8 : i32
+    %d_y3, %d_v3 = gpu.shuffle up %d_x3, %d_o3, %d_width : i32
+    %d_h3 = arith.cmpi sge, %d_lane32, %d_o3 : i32
+    %d_a3 = arith.select %d_h3, %d_y3, %d_zero : i32
+    %d_x4 = arith.addi %d_x3, %d_a3 : i32
+    %d_o4 = arith.constant 16 : i32
+    %d_y4, %d_v4 = gpu.shuffle up %d_x4, %d_o4, %d_width : i32
+    %d_h4 = arith.cmpi sge, %d_lane32, %d_o4 : i32
+    %d_a4 = arith.select %d_h4, %d_y4, %d_zero : i32
+    %d_x5 = arith.addi %d_x4, %d_a4 : i32
+    %d_last = arith.cmpi eq, %d_lane, %d_i31 : index
+    scf.if %d_last {
+      memref.store %d_x5, %cs_wg[%d_warp] : memref<9xi32, #gpu.address_space<workgroup>>
+    }
+    gpu.barrier
+    %d_first = arith.cmpi eq, %d_warp, %d_i0 : index
+    scf.if %d_first {
+      %d_in8 = arith.cmpi ult, %d_lane, %d_i8 : index
+      %d_at = arith.select %d_in8, %d_lane, %d_i0 : index
+      %d_w = memref.load %cs_wg[%d_at] : memref<9xi32, #gpu.address_space<workgroup>>
+      %d_u0 = arith.select %d_in8, %d_w, %d_zero : i32
+      %d_wo0 = arith.constant 1 : i32
+      %d_wy0, %d_wv0 = gpu.shuffle up %d_u0, %d_wo0, %d_width : i32
+      %d_wh0 = arith.cmpi sge, %d_lane32, %d_wo0 : i32
+      %d_wa0 = arith.select %d_wh0, %d_wy0, %d_zero : i32
+      %d_u1 = arith.addi %d_u0, %d_wa0 : i32
+      %d_wo1 = arith.constant 2 : i32
+      %d_wy1, %d_wv1 = gpu.shuffle up %d_u1, %d_wo1, %d_width : i32
+      %d_wh1 = arith.cmpi sge, %d_lane32, %d_wo1 : i32
+      %d_wa1 = arith.select %d_wh1, %d_wy1, %d_zero : i32
+      %d_u2 = arith.addi %d_u1, %d_wa1 : i32
+      %d_wo2 = arith.constant 4 : i32
+      %d_wy2, %d_wv2 = gpu.shuffle up %d_u2, %d_wo2, %d_width : i32
+      %d_wh2 = arith.cmpi sge, %d_lane32, %d_wo2 : i32
+      %d_wa2 = arith.select %d_wh2, %d_wy2, %d_zero : i32
+      %d_u3 = arith.addi %d_u2, %d_wa2 : i32
+      %d_uex = arith.subi %d_u3, %d_u0 : i32
+      %d_t7 = arith.cmpi eq, %d_lane, %d_i7 : index
+      scf.if %d_in8 {
+        memref.store %d_uex, %cs_wg[%d_lane] : memref<9xi32, #gpu.address_space<workgroup>>
+      }
+      scf.if %d_t7 {
+        memref.store %d_u3, %cs_wg[%d_i8] : memref<9xi32, #gpu.address_space<workgroup>>
+      }
+    }
+    gpu.barrier
+    %d_woff = memref.load %cs_wg[%d_warp] : memref<9xi32, #gpu.address_space<workgroup>>
+    %d_total = memref.load %cs_wg[%d_i8] : memref<9xi32, #gpu.address_space<workgroup>>
+    %d_inwarp = arith.subi %d_x5, %mine : i32
+    %d_before = arith.addi %d_inwarp, %d_woff : i32
+    %offset = memref.load %cs_sums[%bx] : memref<?xi32, 1>
+    %from = arith.addi %offset, %d_before : i32
+    %end = scf.for %k = %i0 to %i4 step %i1 iter_args(%before = %from) -> (i32) {
+      %c = arith.addi %first, %k : index
+      %in = arith.cmpi ult, %c, %columns : index
+      %safe = arith.select %in, %c, %i0 : index
+      %v0 = memref.load %column_chunks[%safe] : memref<?xi32, 1>
+      %v = arith.select %in, %v0, %none : i32
+      scf.if %in {
+        memref.store %before, %chunk_base[%c] : memref<?xi32, 1>
+      }
+      %t = arith.addi %before, %v : i32
+      scf.yield %t : i32
+    }
+    gpu.terminator
+  }
+  %cs_sums_plain = memref.memory_space_cast %cs_sums : memref<?xi32, 1> to memref<?xi32>
+  gpu.dealloc %cs_sums_plain : memref<?xi32>
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %none = arith.constant 0 : i32
+    %chunks_all = memref.load %chunk_base[%columns] : memref<?xi32, 1>
     %sixty_four_i = arith.constant 64 : i32
     %places = arith.muli %chunks_all, %sixty_four_i : i32
     memref.store %places, %sizes_device[%i0] : memref<3xi32, 1>
     memref.store %none, %sizes_device[%i1] : memref<3xi32, 1>
-    %i2 = arith.constant 2 : index
     memref.store %none, %sizes_device[%i2] : memref<3xi32, 1>
     gpu.terminator
   }
@@ -2473,6 +3078,8 @@ func.func private @mdrt_gpu_build_neighbors_groups(
   gpu.dealloc %sorted_plain : memref<?xi32>
   %chunk_base_plain = memref.memory_space_cast %chunk_base : memref<?xi32, 1> to memref<?xi32>
   gpu.dealloc %chunk_base_plain : memref<?xi32>
+  %column_chunks_plain = memref.memory_space_cast %column_chunks : memref<?xi32, 1> to memref<?xi32>
+  gpu.dealloc %column_chunks_plain : memref<?xi32>
 
   //===--------------------------------------------------------------------===//
   // The positions of the places, and the grid of the candidates
@@ -2561,63 +3168,330 @@ func.func private @mdrt_gpu_build_neighbors_groups(
     }
     gpu.terminator
   }
-  %gs_chunks = func.call @mdrt_gpu_groups_grid(%gcells, %chunk) : (index, index) -> index
-  %gs_grid = func.call @mdrt_gpu_groups_grid(%gs_chunks, %block) : (index, index) -> index
-  %gs_sums = gpu.alloc (%gs_chunks) : memref<?xi32, 1>
-  gpu.launch blocks(%bx, %by, %bz) in (%gx = %gs_grid, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
-    %base = arith.muli %bx, %block : index
-    %item = arith.addi %base, %tx : index
-    %inside = arith.cmpi ult, %item, %gs_chunks : index
-    scf.if %inside {
-      %i1 = arith.constant 1 : index
-      %none = arith.constant 0 : i32
-      %begin = arith.muli %item, %chunk : index
-      %full = arith.addi %begin, %chunk : index
-      %short = arith.cmpi ult, %gcells, %full : index
-      %end = arith.select %short, %gcells, %full : index
-      %sum = scf.for %c = %begin to %end step %i1 iter_args(%s = %none) -> (i32) {
-        %v = memref.load %gcount[%c] : memref<?xi32, 1>
-        %t = arith.addi %s, %v : i32
-        scf.yield %t : i32
+  %gs_per_block = arith.constant 1024 : index
+  %gs_threads = arith.constant 256 : index
+  %gs_blocks0 = func.call @mdrt_gpu_groups_grid(%gcells, %gs_per_block) : (index, index) -> index
+  %gs_blocks = arith.maxui %gs_blocks0, %c1 : index
+  %gs_sums = gpu.alloc (%gs_blocks) : memref<?xi32, 1>
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %gs_blocks, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %gs_threads, %sy = %c1, %sz = %c1)
+             workgroup(%gs_wg : memref<9xi32, #gpu.address_space<workgroup>>) {
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i4 = arith.constant 4 : index
+    %none = arith.constant 0 : i32
+    %per_block = arith.constant 1024 : index
+    %block_base = arith.muli %bx, %per_block : index
+    %thread_base = arith.muli %tx, %i4 : index
+    %first = arith.addi %block_base, %thread_base : index
+    %mine = scf.for %k = %i0 to %i4 step %i1 iter_args(%s = %none) -> (i32) {
+      %c = arith.addi %first, %k : index
+      %in = arith.cmpi ult, %c, %gcells : index
+      %safe = arith.select %in, %c, %i0 : index
+      %v0 = memref.load %gcount[%safe] : memref<?xi32, 1>
+      %v = arith.select %in, %v0, %none : i32
+      %t = arith.addi %s, %v : i32
+      scf.yield %t : i32
+    }
+    %b_zero = arith.constant 0 : i32
+    %b_i0 = arith.constant 0 : index
+    %b_i7 = arith.constant 7 : index
+    %b_i8 = arith.constant 8 : index
+    %b_i31 = arith.constant 31 : index
+    %b_i32x = arith.constant 32 : index
+    %b_width = arith.constant 32 : i32
+    %b_lane = arith.remui %tx, %b_i32x : index
+    %b_warp = arith.divui %tx, %b_i32x : index
+    %b_lane32 = arith.index_cast %b_lane : index to i32
+    %b_x0 = arith.addi %mine, %b_zero : i32
+    %b_o0 = arith.constant 1 : i32
+    %b_y0, %b_v0 = gpu.shuffle up %b_x0, %b_o0, %b_width : i32
+    %b_h0 = arith.cmpi sge, %b_lane32, %b_o0 : i32
+    %b_a0 = arith.select %b_h0, %b_y0, %b_zero : i32
+    %b_x1 = arith.addi %b_x0, %b_a0 : i32
+    %b_o1 = arith.constant 2 : i32
+    %b_y1, %b_v1 = gpu.shuffle up %b_x1, %b_o1, %b_width : i32
+    %b_h1 = arith.cmpi sge, %b_lane32, %b_o1 : i32
+    %b_a1 = arith.select %b_h1, %b_y1, %b_zero : i32
+    %b_x2 = arith.addi %b_x1, %b_a1 : i32
+    %b_o2 = arith.constant 4 : i32
+    %b_y2, %b_v2 = gpu.shuffle up %b_x2, %b_o2, %b_width : i32
+    %b_h2 = arith.cmpi sge, %b_lane32, %b_o2 : i32
+    %b_a2 = arith.select %b_h2, %b_y2, %b_zero : i32
+    %b_x3 = arith.addi %b_x2, %b_a2 : i32
+    %b_o3 = arith.constant 8 : i32
+    %b_y3, %b_v3 = gpu.shuffle up %b_x3, %b_o3, %b_width : i32
+    %b_h3 = arith.cmpi sge, %b_lane32, %b_o3 : i32
+    %b_a3 = arith.select %b_h3, %b_y3, %b_zero : i32
+    %b_x4 = arith.addi %b_x3, %b_a3 : i32
+    %b_o4 = arith.constant 16 : i32
+    %b_y4, %b_v4 = gpu.shuffle up %b_x4, %b_o4, %b_width : i32
+    %b_h4 = arith.cmpi sge, %b_lane32, %b_o4 : i32
+    %b_a4 = arith.select %b_h4, %b_y4, %b_zero : i32
+    %b_x5 = arith.addi %b_x4, %b_a4 : i32
+    %b_last = arith.cmpi eq, %b_lane, %b_i31 : index
+    scf.if %b_last {
+      memref.store %b_x5, %gs_wg[%b_warp] : memref<9xi32, #gpu.address_space<workgroup>>
+    }
+    gpu.barrier
+    %b_first = arith.cmpi eq, %b_warp, %b_i0 : index
+    scf.if %b_first {
+      %b_in8 = arith.cmpi ult, %b_lane, %b_i8 : index
+      %b_at = arith.select %b_in8, %b_lane, %b_i0 : index
+      %b_w = memref.load %gs_wg[%b_at] : memref<9xi32, #gpu.address_space<workgroup>>
+      %b_u0 = arith.select %b_in8, %b_w, %b_zero : i32
+      %b_wo0 = arith.constant 1 : i32
+      %b_wy0, %b_wv0 = gpu.shuffle up %b_u0, %b_wo0, %b_width : i32
+      %b_wh0 = arith.cmpi sge, %b_lane32, %b_wo0 : i32
+      %b_wa0 = arith.select %b_wh0, %b_wy0, %b_zero : i32
+      %b_u1 = arith.addi %b_u0, %b_wa0 : i32
+      %b_wo1 = arith.constant 2 : i32
+      %b_wy1, %b_wv1 = gpu.shuffle up %b_u1, %b_wo1, %b_width : i32
+      %b_wh1 = arith.cmpi sge, %b_lane32, %b_wo1 : i32
+      %b_wa1 = arith.select %b_wh1, %b_wy1, %b_zero : i32
+      %b_u2 = arith.addi %b_u1, %b_wa1 : i32
+      %b_wo2 = arith.constant 4 : i32
+      %b_wy2, %b_wv2 = gpu.shuffle up %b_u2, %b_wo2, %b_width : i32
+      %b_wh2 = arith.cmpi sge, %b_lane32, %b_wo2 : i32
+      %b_wa2 = arith.select %b_wh2, %b_wy2, %b_zero : i32
+      %b_u3 = arith.addi %b_u2, %b_wa2 : i32
+      %b_uex = arith.subi %b_u3, %b_u0 : i32
+      %b_t7 = arith.cmpi eq, %b_lane, %b_i7 : index
+      scf.if %b_in8 {
+        memref.store %b_uex, %gs_wg[%b_lane] : memref<9xi32, #gpu.address_space<workgroup>>
       }
-      memref.store %sum, %gs_sums[%item] : memref<?xi32, 1>
+      scf.if %b_t7 {
+        memref.store %b_u3, %gs_wg[%b_i8] : memref<9xi32, #gpu.address_space<workgroup>>
+      }
+    }
+    gpu.barrier
+    %b_woff = memref.load %gs_wg[%b_warp] : memref<9xi32, #gpu.address_space<workgroup>>
+    %b_total = memref.load %gs_wg[%b_i8] : memref<9xi32, #gpu.address_space<workgroup>>
+    %b_inwarp = arith.subi %b_x5, %mine : i32
+    %b_before = arith.addi %b_inwarp, %b_woff : i32
+    %lead = arith.cmpi eq, %tx, %i0 : index
+    scf.if %lead {
+      memref.store %b_total, %gs_sums[%bx] : memref<?xi32, 1>
     }
     gpu.terminator
   }
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
+             threads(%tx, %ty, %tz) in (%sx = %gs_threads, %sy = %c1, %sz = %c1)
+             workgroup(%gs_wg : memref<9xi32, #gpu.address_space<workgroup>>) {
     %i0 = arith.constant 0 : index
     %i1 = arith.constant 1 : index
     %none = arith.constant 0 : i32
-    %total = scf.for %b = %i0 to %gs_chunks step %i1 iter_args(%before = %none) -> (i32) {
-      %s = memref.load %gs_sums[%b] : memref<?xi32, 1>
-      memref.store %before, %gs_sums[%b] : memref<?xi32, 1>
-      %t = arith.addi %before, %s : i32
+    %threads = arith.constant 256 : index
+    %span0 = arith.addi %gs_blocks, %threads : index
+    %span1 = arith.subi %span0, %i1 : index
+    %span = arith.divui %span1, %threads : index
+    %begin0 = arith.muli %tx, %span : index
+    %begin = arith.minui %begin0, %gs_blocks : index
+    %end0 = arith.addi %begin, %span : index
+    %end = arith.minui %end0, %gs_blocks : index
+    %mine = scf.for %b = %begin to %end step %i1 iter_args(%s = %none) -> (i32) {
+      %v = memref.load %gs_sums[%b] : memref<?xi32, 1>
+      %t = arith.addi %s, %v : i32
       scf.yield %t : i32
     }
-    memref.store %total, %gstart[%gcells] : memref<?xi32, 1>
+    %c_zero = arith.constant 0 : i32
+    %c_i0 = arith.constant 0 : index
+    %c_i7 = arith.constant 7 : index
+    %c_i8 = arith.constant 8 : index
+    %c_i31 = arith.constant 31 : index
+    %c_i32x = arith.constant 32 : index
+    %c_width = arith.constant 32 : i32
+    %c_lane = arith.remui %tx, %c_i32x : index
+    %c_warp = arith.divui %tx, %c_i32x : index
+    %c_lane32 = arith.index_cast %c_lane : index to i32
+    %c_x0 = arith.addi %mine, %c_zero : i32
+    %c_o0 = arith.constant 1 : i32
+    %c_y0, %c_v0 = gpu.shuffle up %c_x0, %c_o0, %c_width : i32
+    %c_h0 = arith.cmpi sge, %c_lane32, %c_o0 : i32
+    %c_a0 = arith.select %c_h0, %c_y0, %c_zero : i32
+    %c_x1 = arith.addi %c_x0, %c_a0 : i32
+    %c_o1 = arith.constant 2 : i32
+    %c_y1, %c_v1 = gpu.shuffle up %c_x1, %c_o1, %c_width : i32
+    %c_h1 = arith.cmpi sge, %c_lane32, %c_o1 : i32
+    %c_a1 = arith.select %c_h1, %c_y1, %c_zero : i32
+    %c_x2 = arith.addi %c_x1, %c_a1 : i32
+    %c_o2 = arith.constant 4 : i32
+    %c_y2, %c_v2 = gpu.shuffle up %c_x2, %c_o2, %c_width : i32
+    %c_h2 = arith.cmpi sge, %c_lane32, %c_o2 : i32
+    %c_a2 = arith.select %c_h2, %c_y2, %c_zero : i32
+    %c_x3 = arith.addi %c_x2, %c_a2 : i32
+    %c_o3 = arith.constant 8 : i32
+    %c_y3, %c_v3 = gpu.shuffle up %c_x3, %c_o3, %c_width : i32
+    %c_h3 = arith.cmpi sge, %c_lane32, %c_o3 : i32
+    %c_a3 = arith.select %c_h3, %c_y3, %c_zero : i32
+    %c_x4 = arith.addi %c_x3, %c_a3 : i32
+    %c_o4 = arith.constant 16 : i32
+    %c_y4, %c_v4 = gpu.shuffle up %c_x4, %c_o4, %c_width : i32
+    %c_h4 = arith.cmpi sge, %c_lane32, %c_o4 : i32
+    %c_a4 = arith.select %c_h4, %c_y4, %c_zero : i32
+    %c_x5 = arith.addi %c_x4, %c_a4 : i32
+    %c_last = arith.cmpi eq, %c_lane, %c_i31 : index
+    scf.if %c_last {
+      memref.store %c_x5, %gs_wg[%c_warp] : memref<9xi32, #gpu.address_space<workgroup>>
+    }
+    gpu.barrier
+    %c_first = arith.cmpi eq, %c_warp, %c_i0 : index
+    scf.if %c_first {
+      %c_in8 = arith.cmpi ult, %c_lane, %c_i8 : index
+      %c_at = arith.select %c_in8, %c_lane, %c_i0 : index
+      %c_w = memref.load %gs_wg[%c_at] : memref<9xi32, #gpu.address_space<workgroup>>
+      %c_u0 = arith.select %c_in8, %c_w, %c_zero : i32
+      %c_wo0 = arith.constant 1 : i32
+      %c_wy0, %c_wv0 = gpu.shuffle up %c_u0, %c_wo0, %c_width : i32
+      %c_wh0 = arith.cmpi sge, %c_lane32, %c_wo0 : i32
+      %c_wa0 = arith.select %c_wh0, %c_wy0, %c_zero : i32
+      %c_u1 = arith.addi %c_u0, %c_wa0 : i32
+      %c_wo1 = arith.constant 2 : i32
+      %c_wy1, %c_wv1 = gpu.shuffle up %c_u1, %c_wo1, %c_width : i32
+      %c_wh1 = arith.cmpi sge, %c_lane32, %c_wo1 : i32
+      %c_wa1 = arith.select %c_wh1, %c_wy1, %c_zero : i32
+      %c_u2 = arith.addi %c_u1, %c_wa1 : i32
+      %c_wo2 = arith.constant 4 : i32
+      %c_wy2, %c_wv2 = gpu.shuffle up %c_u2, %c_wo2, %c_width : i32
+      %c_wh2 = arith.cmpi sge, %c_lane32, %c_wo2 : i32
+      %c_wa2 = arith.select %c_wh2, %c_wy2, %c_zero : i32
+      %c_u3 = arith.addi %c_u2, %c_wa2 : i32
+      %c_uex = arith.subi %c_u3, %c_u0 : i32
+      %c_t7 = arith.cmpi eq, %c_lane, %c_i7 : index
+      scf.if %c_in8 {
+        memref.store %c_uex, %gs_wg[%c_lane] : memref<9xi32, #gpu.address_space<workgroup>>
+      }
+      scf.if %c_t7 {
+        memref.store %c_u3, %gs_wg[%c_i8] : memref<9xi32, #gpu.address_space<workgroup>>
+      }
+    }
+    gpu.barrier
+    %c_woff = memref.load %gs_wg[%c_warp] : memref<9xi32, #gpu.address_space<workgroup>>
+    %c_total = memref.load %gs_wg[%c_i8] : memref<9xi32, #gpu.address_space<workgroup>>
+    %c_inwarp = arith.subi %c_x5, %mine : i32
+    %c_before = arith.addi %c_inwarp, %c_woff : i32
+    %last = scf.for %b = %begin to %end step %i1 iter_args(%before = %c_before) -> (i32) {
+      %v = memref.load %gs_sums[%b] : memref<?xi32, 1>
+      memref.store %before, %gs_sums[%b] : memref<?xi32, 1>
+      %t = arith.addi %before, %v : i32
+      scf.yield %t : i32
+    }
+    %lead = arith.cmpi eq, %tx, %i0 : index
+    scf.if %lead {
+      memref.store %c_total, %gstart[%gcells] : memref<?xi32, 1>
+    }
     gpu.terminator
   }
-  gpu.launch blocks(%bx, %by, %bz) in (%gx = %gs_grid, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
-    %base = arith.muli %bx, %block : index
-    %item = arith.addi %base, %tx : index
-    %inside = arith.cmpi ult, %item, %gs_chunks : index
-    scf.if %inside {
-      %i1 = arith.constant 1 : index
-      %begin = arith.muli %item, %chunk : index
-      %full = arith.addi %begin, %chunk : index
-      %short = arith.cmpi ult, %gcells, %full : index
-      %end = arith.select %short, %gcells, %full : index
-      %first = memref.load %gs_sums[%item] : memref<?xi32, 1>
-      %last = scf.for %c = %begin to %end step %i1 iter_args(%before = %first) -> (i32) {
-        %v = memref.load %gcount[%c] : memref<?xi32, 1>
-        memref.store %before, %gstart[%c] : memref<?xi32, 1>
-        memref.store %before, %gcursor[%c] : memref<?xi32, 1>
-        %t = arith.addi %before, %v : i32
-        scf.yield %t : i32
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %gs_blocks, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %gs_threads, %sy = %c1, %sz = %c1)
+             workgroup(%gs_wg : memref<9xi32, #gpu.address_space<workgroup>>) {
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i4 = arith.constant 4 : index
+    %none = arith.constant 0 : i32
+    %per_block = arith.constant 1024 : index
+    %block_base = arith.muli %bx, %per_block : index
+    %thread_base = arith.muli %tx, %i4 : index
+    %first = arith.addi %block_base, %thread_base : index
+    %mine = scf.for %k = %i0 to %i4 step %i1 iter_args(%s = %none) -> (i32) {
+      %c = arith.addi %first, %k : index
+      %in = arith.cmpi ult, %c, %gcells : index
+      %safe = arith.select %in, %c, %i0 : index
+      %v0 = memref.load %gcount[%safe] : memref<?xi32, 1>
+      %v = arith.select %in, %v0, %none : i32
+      %t = arith.addi %s, %v : i32
+      scf.yield %t : i32
+    }
+    %d_zero = arith.constant 0 : i32
+    %d_i0 = arith.constant 0 : index
+    %d_i7 = arith.constant 7 : index
+    %d_i8 = arith.constant 8 : index
+    %d_i31 = arith.constant 31 : index
+    %d_i32x = arith.constant 32 : index
+    %d_width = arith.constant 32 : i32
+    %d_lane = arith.remui %tx, %d_i32x : index
+    %d_warp = arith.divui %tx, %d_i32x : index
+    %d_lane32 = arith.index_cast %d_lane : index to i32
+    %d_x0 = arith.addi %mine, %d_zero : i32
+    %d_o0 = arith.constant 1 : i32
+    %d_y0, %d_v0 = gpu.shuffle up %d_x0, %d_o0, %d_width : i32
+    %d_h0 = arith.cmpi sge, %d_lane32, %d_o0 : i32
+    %d_a0 = arith.select %d_h0, %d_y0, %d_zero : i32
+    %d_x1 = arith.addi %d_x0, %d_a0 : i32
+    %d_o1 = arith.constant 2 : i32
+    %d_y1, %d_v1 = gpu.shuffle up %d_x1, %d_o1, %d_width : i32
+    %d_h1 = arith.cmpi sge, %d_lane32, %d_o1 : i32
+    %d_a1 = arith.select %d_h1, %d_y1, %d_zero : i32
+    %d_x2 = arith.addi %d_x1, %d_a1 : i32
+    %d_o2 = arith.constant 4 : i32
+    %d_y2, %d_v2 = gpu.shuffle up %d_x2, %d_o2, %d_width : i32
+    %d_h2 = arith.cmpi sge, %d_lane32, %d_o2 : i32
+    %d_a2 = arith.select %d_h2, %d_y2, %d_zero : i32
+    %d_x3 = arith.addi %d_x2, %d_a2 : i32
+    %d_o3 = arith.constant 8 : i32
+    %d_y3, %d_v3 = gpu.shuffle up %d_x3, %d_o3, %d_width : i32
+    %d_h3 = arith.cmpi sge, %d_lane32, %d_o3 : i32
+    %d_a3 = arith.select %d_h3, %d_y3, %d_zero : i32
+    %d_x4 = arith.addi %d_x3, %d_a3 : i32
+    %d_o4 = arith.constant 16 : i32
+    %d_y4, %d_v4 = gpu.shuffle up %d_x4, %d_o4, %d_width : i32
+    %d_h4 = arith.cmpi sge, %d_lane32, %d_o4 : i32
+    %d_a4 = arith.select %d_h4, %d_y4, %d_zero : i32
+    %d_x5 = arith.addi %d_x4, %d_a4 : i32
+    %d_last = arith.cmpi eq, %d_lane, %d_i31 : index
+    scf.if %d_last {
+      memref.store %d_x5, %gs_wg[%d_warp] : memref<9xi32, #gpu.address_space<workgroup>>
+    }
+    gpu.barrier
+    %d_first = arith.cmpi eq, %d_warp, %d_i0 : index
+    scf.if %d_first {
+      %d_in8 = arith.cmpi ult, %d_lane, %d_i8 : index
+      %d_at = arith.select %d_in8, %d_lane, %d_i0 : index
+      %d_w = memref.load %gs_wg[%d_at] : memref<9xi32, #gpu.address_space<workgroup>>
+      %d_u0 = arith.select %d_in8, %d_w, %d_zero : i32
+      %d_wo0 = arith.constant 1 : i32
+      %d_wy0, %d_wv0 = gpu.shuffle up %d_u0, %d_wo0, %d_width : i32
+      %d_wh0 = arith.cmpi sge, %d_lane32, %d_wo0 : i32
+      %d_wa0 = arith.select %d_wh0, %d_wy0, %d_zero : i32
+      %d_u1 = arith.addi %d_u0, %d_wa0 : i32
+      %d_wo1 = arith.constant 2 : i32
+      %d_wy1, %d_wv1 = gpu.shuffle up %d_u1, %d_wo1, %d_width : i32
+      %d_wh1 = arith.cmpi sge, %d_lane32, %d_wo1 : i32
+      %d_wa1 = arith.select %d_wh1, %d_wy1, %d_zero : i32
+      %d_u2 = arith.addi %d_u1, %d_wa1 : i32
+      %d_wo2 = arith.constant 4 : i32
+      %d_wy2, %d_wv2 = gpu.shuffle up %d_u2, %d_wo2, %d_width : i32
+      %d_wh2 = arith.cmpi sge, %d_lane32, %d_wo2 : i32
+      %d_wa2 = arith.select %d_wh2, %d_wy2, %d_zero : i32
+      %d_u3 = arith.addi %d_u2, %d_wa2 : i32
+      %d_uex = arith.subi %d_u3, %d_u0 : i32
+      %d_t7 = arith.cmpi eq, %d_lane, %d_i7 : index
+      scf.if %d_in8 {
+        memref.store %d_uex, %gs_wg[%d_lane] : memref<9xi32, #gpu.address_space<workgroup>>
       }
+      scf.if %d_t7 {
+        memref.store %d_u3, %gs_wg[%d_i8] : memref<9xi32, #gpu.address_space<workgroup>>
+      }
+    }
+    gpu.barrier
+    %d_woff = memref.load %gs_wg[%d_warp] : memref<9xi32, #gpu.address_space<workgroup>>
+    %d_total = memref.load %gs_wg[%d_i8] : memref<9xi32, #gpu.address_space<workgroup>>
+    %d_inwarp = arith.subi %d_x5, %mine : i32
+    %d_before = arith.addi %d_inwarp, %d_woff : i32
+    %offset = memref.load %gs_sums[%bx] : memref<?xi32, 1>
+    %from = arith.addi %offset, %d_before : i32
+    %end = scf.for %k = %i0 to %i4 step %i1 iter_args(%before = %from) -> (i32) {
+      %c = arith.addi %first, %k : index
+      %in = arith.cmpi ult, %c, %gcells : index
+      %safe = arith.select %in, %c, %i0 : index
+      %v0 = memref.load %gcount[%safe] : memref<?xi32, 1>
+      %v = arith.select %in, %v0, %none : i32
+      scf.if %in {
+        memref.store %before, %gstart[%c] : memref<?xi32, 1>
+      memref.store %before, %gcursor[%c] : memref<?xi32, 1>
+      }
+      %t = arith.addi %before, %v : i32
+      scf.yield %t : i32
     }
     gpu.terminator
   }
@@ -6472,63 +7346,330 @@ func.func private @mdrt_gpu_build_neighbors_groups(
     }
     gpu.terminator
   }
-  %us_chunks = func.call @mdrt_gpu_groups_grid(%group_capacity, %chunk) : (index, index) -> index
-  %us_grid = func.call @mdrt_gpu_groups_grid(%us_chunks, %block) : (index, index) -> index
-  %us_sums = gpu.alloc (%us_chunks) : memref<?xi32, 1>
-  gpu.launch blocks(%bx, %by, %bz) in (%gx = %us_grid, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
-    %base = arith.muli %bx, %block : index
-    %item = arith.addi %base, %tx : index
-    %inside = arith.cmpi ult, %item, %us_chunks : index
-    scf.if %inside {
-      %i1 = arith.constant 1 : index
-      %none = arith.constant 0 : i32
-      %begin = arith.muli %item, %chunk : index
-      %full = arith.addi %begin, %chunk : index
-      %short = arith.cmpi ult, %group_capacity, %full : index
-      %end = arith.select %short, %group_capacity, %full : index
-      %sum = scf.for %c = %begin to %end step %i1 iter_args(%s = %none) -> (i32) {
-        %v = memref.load %group_units[%c] : memref<?xi32, 1>
-        %t = arith.addi %s, %v : i32
-        scf.yield %t : i32
+  %us_per_block = arith.constant 1024 : index
+  %us_threads = arith.constant 256 : index
+  %us_blocks0 = func.call @mdrt_gpu_groups_grid(%group_capacity, %us_per_block) : (index, index) -> index
+  %us_blocks = arith.maxui %us_blocks0, %c1 : index
+  %us_sums = gpu.alloc (%us_blocks) : memref<?xi32, 1>
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %us_blocks, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %us_threads, %sy = %c1, %sz = %c1)
+             workgroup(%us_wg : memref<9xi32, #gpu.address_space<workgroup>>) {
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i4 = arith.constant 4 : index
+    %none = arith.constant 0 : i32
+    %per_block = arith.constant 1024 : index
+    %block_base = arith.muli %bx, %per_block : index
+    %thread_base = arith.muli %tx, %i4 : index
+    %first = arith.addi %block_base, %thread_base : index
+    %mine = scf.for %k = %i0 to %i4 step %i1 iter_args(%s = %none) -> (i32) {
+      %c = arith.addi %first, %k : index
+      %in = arith.cmpi ult, %c, %group_capacity : index
+      %safe = arith.select %in, %c, %i0 : index
+      %v0 = memref.load %group_units[%safe] : memref<?xi32, 1>
+      %v = arith.select %in, %v0, %none : i32
+      %t = arith.addi %s, %v : i32
+      scf.yield %t : i32
+    }
+    %b_zero = arith.constant 0 : i32
+    %b_i0 = arith.constant 0 : index
+    %b_i7 = arith.constant 7 : index
+    %b_i8 = arith.constant 8 : index
+    %b_i31 = arith.constant 31 : index
+    %b_i32x = arith.constant 32 : index
+    %b_width = arith.constant 32 : i32
+    %b_lane = arith.remui %tx, %b_i32x : index
+    %b_warp = arith.divui %tx, %b_i32x : index
+    %b_lane32 = arith.index_cast %b_lane : index to i32
+    %b_x0 = arith.addi %mine, %b_zero : i32
+    %b_o0 = arith.constant 1 : i32
+    %b_y0, %b_v0 = gpu.shuffle up %b_x0, %b_o0, %b_width : i32
+    %b_h0 = arith.cmpi sge, %b_lane32, %b_o0 : i32
+    %b_a0 = arith.select %b_h0, %b_y0, %b_zero : i32
+    %b_x1 = arith.addi %b_x0, %b_a0 : i32
+    %b_o1 = arith.constant 2 : i32
+    %b_y1, %b_v1 = gpu.shuffle up %b_x1, %b_o1, %b_width : i32
+    %b_h1 = arith.cmpi sge, %b_lane32, %b_o1 : i32
+    %b_a1 = arith.select %b_h1, %b_y1, %b_zero : i32
+    %b_x2 = arith.addi %b_x1, %b_a1 : i32
+    %b_o2 = arith.constant 4 : i32
+    %b_y2, %b_v2 = gpu.shuffle up %b_x2, %b_o2, %b_width : i32
+    %b_h2 = arith.cmpi sge, %b_lane32, %b_o2 : i32
+    %b_a2 = arith.select %b_h2, %b_y2, %b_zero : i32
+    %b_x3 = arith.addi %b_x2, %b_a2 : i32
+    %b_o3 = arith.constant 8 : i32
+    %b_y3, %b_v3 = gpu.shuffle up %b_x3, %b_o3, %b_width : i32
+    %b_h3 = arith.cmpi sge, %b_lane32, %b_o3 : i32
+    %b_a3 = arith.select %b_h3, %b_y3, %b_zero : i32
+    %b_x4 = arith.addi %b_x3, %b_a3 : i32
+    %b_o4 = arith.constant 16 : i32
+    %b_y4, %b_v4 = gpu.shuffle up %b_x4, %b_o4, %b_width : i32
+    %b_h4 = arith.cmpi sge, %b_lane32, %b_o4 : i32
+    %b_a4 = arith.select %b_h4, %b_y4, %b_zero : i32
+    %b_x5 = arith.addi %b_x4, %b_a4 : i32
+    %b_last = arith.cmpi eq, %b_lane, %b_i31 : index
+    scf.if %b_last {
+      memref.store %b_x5, %us_wg[%b_warp] : memref<9xi32, #gpu.address_space<workgroup>>
+    }
+    gpu.barrier
+    %b_first = arith.cmpi eq, %b_warp, %b_i0 : index
+    scf.if %b_first {
+      %b_in8 = arith.cmpi ult, %b_lane, %b_i8 : index
+      %b_at = arith.select %b_in8, %b_lane, %b_i0 : index
+      %b_w = memref.load %us_wg[%b_at] : memref<9xi32, #gpu.address_space<workgroup>>
+      %b_u0 = arith.select %b_in8, %b_w, %b_zero : i32
+      %b_wo0 = arith.constant 1 : i32
+      %b_wy0, %b_wv0 = gpu.shuffle up %b_u0, %b_wo0, %b_width : i32
+      %b_wh0 = arith.cmpi sge, %b_lane32, %b_wo0 : i32
+      %b_wa0 = arith.select %b_wh0, %b_wy0, %b_zero : i32
+      %b_u1 = arith.addi %b_u0, %b_wa0 : i32
+      %b_wo1 = arith.constant 2 : i32
+      %b_wy1, %b_wv1 = gpu.shuffle up %b_u1, %b_wo1, %b_width : i32
+      %b_wh1 = arith.cmpi sge, %b_lane32, %b_wo1 : i32
+      %b_wa1 = arith.select %b_wh1, %b_wy1, %b_zero : i32
+      %b_u2 = arith.addi %b_u1, %b_wa1 : i32
+      %b_wo2 = arith.constant 4 : i32
+      %b_wy2, %b_wv2 = gpu.shuffle up %b_u2, %b_wo2, %b_width : i32
+      %b_wh2 = arith.cmpi sge, %b_lane32, %b_wo2 : i32
+      %b_wa2 = arith.select %b_wh2, %b_wy2, %b_zero : i32
+      %b_u3 = arith.addi %b_u2, %b_wa2 : i32
+      %b_uex = arith.subi %b_u3, %b_u0 : i32
+      %b_t7 = arith.cmpi eq, %b_lane, %b_i7 : index
+      scf.if %b_in8 {
+        memref.store %b_uex, %us_wg[%b_lane] : memref<9xi32, #gpu.address_space<workgroup>>
       }
-      memref.store %sum, %us_sums[%item] : memref<?xi32, 1>
+      scf.if %b_t7 {
+        memref.store %b_u3, %us_wg[%b_i8] : memref<9xi32, #gpu.address_space<workgroup>>
+      }
+    }
+    gpu.barrier
+    %b_woff = memref.load %us_wg[%b_warp] : memref<9xi32, #gpu.address_space<workgroup>>
+    %b_total = memref.load %us_wg[%b_i8] : memref<9xi32, #gpu.address_space<workgroup>>
+    %b_inwarp = arith.subi %b_x5, %mine : i32
+    %b_before = arith.addi %b_inwarp, %b_woff : i32
+    %lead = arith.cmpi eq, %tx, %i0 : index
+    scf.if %lead {
+      memref.store %b_total, %us_sums[%bx] : memref<?xi32, 1>
     }
     gpu.terminator
   }
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
+             threads(%tx, %ty, %tz) in (%sx = %us_threads, %sy = %c1, %sz = %c1)
+             workgroup(%us_wg : memref<9xi32, #gpu.address_space<workgroup>>) {
     %i0 = arith.constant 0 : index
     %i1 = arith.constant 1 : index
     %none = arith.constant 0 : i32
-    %total = scf.for %b = %i0 to %us_chunks step %i1 iter_args(%before = %none) -> (i32) {
-      %s = memref.load %us_sums[%b] : memref<?xi32, 1>
-      memref.store %before, %us_sums[%b] : memref<?xi32, 1>
-      %t = arith.addi %before, %s : i32
+    %threads = arith.constant 256 : index
+    %span0 = arith.addi %us_blocks, %threads : index
+    %span1 = arith.subi %span0, %i1 : index
+    %span = arith.divui %span1, %threads : index
+    %begin0 = arith.muli %tx, %span : index
+    %begin = arith.minui %begin0, %us_blocks : index
+    %end0 = arith.addi %begin, %span : index
+    %end = arith.minui %end0, %us_blocks : index
+    %mine = scf.for %b = %begin to %end step %i1 iter_args(%s = %none) -> (i32) {
+      %v = memref.load %us_sums[%b] : memref<?xi32, 1>
+      %t = arith.addi %s, %v : i32
       scf.yield %t : i32
     }
-    memref.store %total, %unit_start[%group_capacity] : memref<?xi32, 1>
+    %c_zero = arith.constant 0 : i32
+    %c_i0 = arith.constant 0 : index
+    %c_i7 = arith.constant 7 : index
+    %c_i8 = arith.constant 8 : index
+    %c_i31 = arith.constant 31 : index
+    %c_i32x = arith.constant 32 : index
+    %c_width = arith.constant 32 : i32
+    %c_lane = arith.remui %tx, %c_i32x : index
+    %c_warp = arith.divui %tx, %c_i32x : index
+    %c_lane32 = arith.index_cast %c_lane : index to i32
+    %c_x0 = arith.addi %mine, %c_zero : i32
+    %c_o0 = arith.constant 1 : i32
+    %c_y0, %c_v0 = gpu.shuffle up %c_x0, %c_o0, %c_width : i32
+    %c_h0 = arith.cmpi sge, %c_lane32, %c_o0 : i32
+    %c_a0 = arith.select %c_h0, %c_y0, %c_zero : i32
+    %c_x1 = arith.addi %c_x0, %c_a0 : i32
+    %c_o1 = arith.constant 2 : i32
+    %c_y1, %c_v1 = gpu.shuffle up %c_x1, %c_o1, %c_width : i32
+    %c_h1 = arith.cmpi sge, %c_lane32, %c_o1 : i32
+    %c_a1 = arith.select %c_h1, %c_y1, %c_zero : i32
+    %c_x2 = arith.addi %c_x1, %c_a1 : i32
+    %c_o2 = arith.constant 4 : i32
+    %c_y2, %c_v2 = gpu.shuffle up %c_x2, %c_o2, %c_width : i32
+    %c_h2 = arith.cmpi sge, %c_lane32, %c_o2 : i32
+    %c_a2 = arith.select %c_h2, %c_y2, %c_zero : i32
+    %c_x3 = arith.addi %c_x2, %c_a2 : i32
+    %c_o3 = arith.constant 8 : i32
+    %c_y3, %c_v3 = gpu.shuffle up %c_x3, %c_o3, %c_width : i32
+    %c_h3 = arith.cmpi sge, %c_lane32, %c_o3 : i32
+    %c_a3 = arith.select %c_h3, %c_y3, %c_zero : i32
+    %c_x4 = arith.addi %c_x3, %c_a3 : i32
+    %c_o4 = arith.constant 16 : i32
+    %c_y4, %c_v4 = gpu.shuffle up %c_x4, %c_o4, %c_width : i32
+    %c_h4 = arith.cmpi sge, %c_lane32, %c_o4 : i32
+    %c_a4 = arith.select %c_h4, %c_y4, %c_zero : i32
+    %c_x5 = arith.addi %c_x4, %c_a4 : i32
+    %c_last = arith.cmpi eq, %c_lane, %c_i31 : index
+    scf.if %c_last {
+      memref.store %c_x5, %us_wg[%c_warp] : memref<9xi32, #gpu.address_space<workgroup>>
+    }
+    gpu.barrier
+    %c_first = arith.cmpi eq, %c_warp, %c_i0 : index
+    scf.if %c_first {
+      %c_in8 = arith.cmpi ult, %c_lane, %c_i8 : index
+      %c_at = arith.select %c_in8, %c_lane, %c_i0 : index
+      %c_w = memref.load %us_wg[%c_at] : memref<9xi32, #gpu.address_space<workgroup>>
+      %c_u0 = arith.select %c_in8, %c_w, %c_zero : i32
+      %c_wo0 = arith.constant 1 : i32
+      %c_wy0, %c_wv0 = gpu.shuffle up %c_u0, %c_wo0, %c_width : i32
+      %c_wh0 = arith.cmpi sge, %c_lane32, %c_wo0 : i32
+      %c_wa0 = arith.select %c_wh0, %c_wy0, %c_zero : i32
+      %c_u1 = arith.addi %c_u0, %c_wa0 : i32
+      %c_wo1 = arith.constant 2 : i32
+      %c_wy1, %c_wv1 = gpu.shuffle up %c_u1, %c_wo1, %c_width : i32
+      %c_wh1 = arith.cmpi sge, %c_lane32, %c_wo1 : i32
+      %c_wa1 = arith.select %c_wh1, %c_wy1, %c_zero : i32
+      %c_u2 = arith.addi %c_u1, %c_wa1 : i32
+      %c_wo2 = arith.constant 4 : i32
+      %c_wy2, %c_wv2 = gpu.shuffle up %c_u2, %c_wo2, %c_width : i32
+      %c_wh2 = arith.cmpi sge, %c_lane32, %c_wo2 : i32
+      %c_wa2 = arith.select %c_wh2, %c_wy2, %c_zero : i32
+      %c_u3 = arith.addi %c_u2, %c_wa2 : i32
+      %c_uex = arith.subi %c_u3, %c_u0 : i32
+      %c_t7 = arith.cmpi eq, %c_lane, %c_i7 : index
+      scf.if %c_in8 {
+        memref.store %c_uex, %us_wg[%c_lane] : memref<9xi32, #gpu.address_space<workgroup>>
+      }
+      scf.if %c_t7 {
+        memref.store %c_u3, %us_wg[%c_i8] : memref<9xi32, #gpu.address_space<workgroup>>
+      }
+    }
+    gpu.barrier
+    %c_woff = memref.load %us_wg[%c_warp] : memref<9xi32, #gpu.address_space<workgroup>>
+    %c_total = memref.load %us_wg[%c_i8] : memref<9xi32, #gpu.address_space<workgroup>>
+    %c_inwarp = arith.subi %c_x5, %mine : i32
+    %c_before = arith.addi %c_inwarp, %c_woff : i32
+    %last = scf.for %b = %begin to %end step %i1 iter_args(%before = %c_before) -> (i32) {
+      %v = memref.load %us_sums[%b] : memref<?xi32, 1>
+      memref.store %before, %us_sums[%b] : memref<?xi32, 1>
+      %t = arith.addi %before, %v : i32
+      scf.yield %t : i32
+    }
+    %lead = arith.cmpi eq, %tx, %i0 : index
+    scf.if %lead {
+      memref.store %c_total, %unit_start[%group_capacity] : memref<?xi32, 1>
+    }
     gpu.terminator
   }
-  gpu.launch blocks(%bx, %by, %bz) in (%gx = %us_grid, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
-    %base = arith.muli %bx, %block : index
-    %item = arith.addi %base, %tx : index
-    %inside = arith.cmpi ult, %item, %us_chunks : index
-    scf.if %inside {
-      %i1 = arith.constant 1 : index
-      %begin = arith.muli %item, %chunk : index
-      %full = arith.addi %begin, %chunk : index
-      %short = arith.cmpi ult, %group_capacity, %full : index
-      %end = arith.select %short, %group_capacity, %full : index
-      %first = memref.load %us_sums[%item] : memref<?xi32, 1>
-      %last = scf.for %c = %begin to %end step %i1 iter_args(%before = %first) -> (i32) {
-        %v = memref.load %group_units[%c] : memref<?xi32, 1>
-        memref.store %before, %unit_start[%c] : memref<?xi32, 1>
-        memref.store %before, %unit_cursor[%c] : memref<?xi32, 1>
-        %t = arith.addi %before, %v : i32
-        scf.yield %t : i32
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %us_blocks, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %us_threads, %sy = %c1, %sz = %c1)
+             workgroup(%us_wg : memref<9xi32, #gpu.address_space<workgroup>>) {
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i4 = arith.constant 4 : index
+    %none = arith.constant 0 : i32
+    %per_block = arith.constant 1024 : index
+    %block_base = arith.muli %bx, %per_block : index
+    %thread_base = arith.muli %tx, %i4 : index
+    %first = arith.addi %block_base, %thread_base : index
+    %mine = scf.for %k = %i0 to %i4 step %i1 iter_args(%s = %none) -> (i32) {
+      %c = arith.addi %first, %k : index
+      %in = arith.cmpi ult, %c, %group_capacity : index
+      %safe = arith.select %in, %c, %i0 : index
+      %v0 = memref.load %group_units[%safe] : memref<?xi32, 1>
+      %v = arith.select %in, %v0, %none : i32
+      %t = arith.addi %s, %v : i32
+      scf.yield %t : i32
+    }
+    %d_zero = arith.constant 0 : i32
+    %d_i0 = arith.constant 0 : index
+    %d_i7 = arith.constant 7 : index
+    %d_i8 = arith.constant 8 : index
+    %d_i31 = arith.constant 31 : index
+    %d_i32x = arith.constant 32 : index
+    %d_width = arith.constant 32 : i32
+    %d_lane = arith.remui %tx, %d_i32x : index
+    %d_warp = arith.divui %tx, %d_i32x : index
+    %d_lane32 = arith.index_cast %d_lane : index to i32
+    %d_x0 = arith.addi %mine, %d_zero : i32
+    %d_o0 = arith.constant 1 : i32
+    %d_y0, %d_v0 = gpu.shuffle up %d_x0, %d_o0, %d_width : i32
+    %d_h0 = arith.cmpi sge, %d_lane32, %d_o0 : i32
+    %d_a0 = arith.select %d_h0, %d_y0, %d_zero : i32
+    %d_x1 = arith.addi %d_x0, %d_a0 : i32
+    %d_o1 = arith.constant 2 : i32
+    %d_y1, %d_v1 = gpu.shuffle up %d_x1, %d_o1, %d_width : i32
+    %d_h1 = arith.cmpi sge, %d_lane32, %d_o1 : i32
+    %d_a1 = arith.select %d_h1, %d_y1, %d_zero : i32
+    %d_x2 = arith.addi %d_x1, %d_a1 : i32
+    %d_o2 = arith.constant 4 : i32
+    %d_y2, %d_v2 = gpu.shuffle up %d_x2, %d_o2, %d_width : i32
+    %d_h2 = arith.cmpi sge, %d_lane32, %d_o2 : i32
+    %d_a2 = arith.select %d_h2, %d_y2, %d_zero : i32
+    %d_x3 = arith.addi %d_x2, %d_a2 : i32
+    %d_o3 = arith.constant 8 : i32
+    %d_y3, %d_v3 = gpu.shuffle up %d_x3, %d_o3, %d_width : i32
+    %d_h3 = arith.cmpi sge, %d_lane32, %d_o3 : i32
+    %d_a3 = arith.select %d_h3, %d_y3, %d_zero : i32
+    %d_x4 = arith.addi %d_x3, %d_a3 : i32
+    %d_o4 = arith.constant 16 : i32
+    %d_y4, %d_v4 = gpu.shuffle up %d_x4, %d_o4, %d_width : i32
+    %d_h4 = arith.cmpi sge, %d_lane32, %d_o4 : i32
+    %d_a4 = arith.select %d_h4, %d_y4, %d_zero : i32
+    %d_x5 = arith.addi %d_x4, %d_a4 : i32
+    %d_last = arith.cmpi eq, %d_lane, %d_i31 : index
+    scf.if %d_last {
+      memref.store %d_x5, %us_wg[%d_warp] : memref<9xi32, #gpu.address_space<workgroup>>
+    }
+    gpu.barrier
+    %d_first = arith.cmpi eq, %d_warp, %d_i0 : index
+    scf.if %d_first {
+      %d_in8 = arith.cmpi ult, %d_lane, %d_i8 : index
+      %d_at = arith.select %d_in8, %d_lane, %d_i0 : index
+      %d_w = memref.load %us_wg[%d_at] : memref<9xi32, #gpu.address_space<workgroup>>
+      %d_u0 = arith.select %d_in8, %d_w, %d_zero : i32
+      %d_wo0 = arith.constant 1 : i32
+      %d_wy0, %d_wv0 = gpu.shuffle up %d_u0, %d_wo0, %d_width : i32
+      %d_wh0 = arith.cmpi sge, %d_lane32, %d_wo0 : i32
+      %d_wa0 = arith.select %d_wh0, %d_wy0, %d_zero : i32
+      %d_u1 = arith.addi %d_u0, %d_wa0 : i32
+      %d_wo1 = arith.constant 2 : i32
+      %d_wy1, %d_wv1 = gpu.shuffle up %d_u1, %d_wo1, %d_width : i32
+      %d_wh1 = arith.cmpi sge, %d_lane32, %d_wo1 : i32
+      %d_wa1 = arith.select %d_wh1, %d_wy1, %d_zero : i32
+      %d_u2 = arith.addi %d_u1, %d_wa1 : i32
+      %d_wo2 = arith.constant 4 : i32
+      %d_wy2, %d_wv2 = gpu.shuffle up %d_u2, %d_wo2, %d_width : i32
+      %d_wh2 = arith.cmpi sge, %d_lane32, %d_wo2 : i32
+      %d_wa2 = arith.select %d_wh2, %d_wy2, %d_zero : i32
+      %d_u3 = arith.addi %d_u2, %d_wa2 : i32
+      %d_uex = arith.subi %d_u3, %d_u0 : i32
+      %d_t7 = arith.cmpi eq, %d_lane, %d_i7 : index
+      scf.if %d_in8 {
+        memref.store %d_uex, %us_wg[%d_lane] : memref<9xi32, #gpu.address_space<workgroup>>
       }
+      scf.if %d_t7 {
+        memref.store %d_u3, %us_wg[%d_i8] : memref<9xi32, #gpu.address_space<workgroup>>
+      }
+    }
+    gpu.barrier
+    %d_woff = memref.load %us_wg[%d_warp] : memref<9xi32, #gpu.address_space<workgroup>>
+    %d_total = memref.load %us_wg[%d_i8] : memref<9xi32, #gpu.address_space<workgroup>>
+    %d_inwarp = arith.subi %d_x5, %mine : i32
+    %d_before = arith.addi %d_inwarp, %d_woff : i32
+    %offset = memref.load %us_sums[%bx] : memref<?xi32, 1>
+    %from = arith.addi %offset, %d_before : i32
+    %end = scf.for %k = %i0 to %i4 step %i1 iter_args(%before = %from) -> (i32) {
+      %c = arith.addi %first, %k : index
+      %in = arith.cmpi ult, %c, %group_capacity : index
+      %safe = arith.select %in, %c, %i0 : index
+      %v0 = memref.load %group_units[%safe] : memref<?xi32, 1>
+      %v = arith.select %in, %v0, %none : i32
+      scf.if %in {
+        memref.store %before, %unit_start[%c] : memref<?xi32, 1>
+      memref.store %before, %unit_cursor[%c] : memref<?xi32, 1>
+      }
+      %t = arith.addi %before, %v : i32
+      scf.yield %t : i32
     }
     gpu.terminator
   }
