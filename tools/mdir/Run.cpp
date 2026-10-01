@@ -66,7 +66,7 @@ static std::string getPipeline(const Control &control,
      << "md-exec-fuse-loops,md-exec-accumulate-destinations,"
      << "md-exec-narrow-sums,";
   if (control.fastMath)
-    os << "md-exec-simplify-distance,";
+    os << "md-exec-simplify-distance{radial=true},";
   os << "canonicalize,cse,md-exec-fold-tables,canonicalize,cse,";
 
   StringRef mode = control.precision == Precision::Single
@@ -75,7 +75,7 @@ static std::string getPipeline(const Control &control,
                                                                : "double";
   os << "md-exec-assign-precision{mode=" << mode << "},";
   if (control.fastMath)
-    os << "md-exec-approximate,canonicalize,cse,";
+    os << "md-exec-approximate,md-exec-expand-radial,canonicalize,cse,";
 
   if (control.target == Target::GPU) {
     // Kernels in f32 look their tables up in f32.

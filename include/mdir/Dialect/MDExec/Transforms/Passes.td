@@ -226,8 +226,22 @@ def SimplifyDistance
 
     The pass reassociates floating-point arithmetic, so results change in
     their last bits. It must not be run in the deterministic mode.
+
+    With `radial`, the terms of a value that share their factors that do
+    not depend on the distance, and whose part that does includes a
+    function other than a root or a power (an exponential, erfc), become
+    one term: those factors times `md_exec.radial` of a function of the
+    squared distance, which the module gains, `(f64) -> f64`. The screened
+    Coulomb force of Ewald summation becomes q_i q_j times one function of
+    r², which `md-exec-expand-radial` tabulates (D94).
   }];
+  let options = [
+    Option<"radial", "radial", "bool", /*default=*/"false",
+           "Separate the functions of the distance alone into "
+           "md_exec.radial">
+  ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
+                           "::mlir::func::FuncDialect",
                            "::mlir::math::MathDialect"];
 }
 
@@ -297,6 +311,40 @@ def FoldTables
     %force = arith.mulf %a, %r14 : f64
     ```
   }];
+}
+
+def ExpandRadial
+    : Pass<"md-exec-expand-radial", "::mlir::ModuleOp"> {
+  let summary = "Makes each md_exec.radial a table in f32, or its function "
+                "in f64";
+  let description = [{
+    In a kernel that computes in f32, `md_exec.radial` becomes a lookup in a
+    table of its function of the squared distance s: the intervals of s
+    that the bits of s as an f32 number name, with `bits` bits of its
+    significand (2^bits intervals for each power of two), from the cutoff
+    squared down to 2^-10 of it, and in each a polynomial of degree 3 in
+    u = s − (the start of the interval), fitted at four Chebyshev nodes in
+    f64. The index of an interval is the bits of s shifted, clamped to the
+    table; the start of the interval is exact in f32, and so is u. The pass
+    takes the fewest bits, from 4 to 12, whose polynomials are within a
+    tenth of `tolerance` of the function in f64, relative to the largest
+    value of the function on each interval, at 17 points of each, and fails
+    if those in f32, as a kernel evaluates them, are not within
+    `tolerance`.
+    The table, four f32 numbers for each interval, is a constant of the
+    module (`memref.global`), which a device reads with one load of 16
+    bytes.
+
+    In a kernel that computes in f64 the function is inlined.
+  }];
+  let options = [
+    Option<"tolerance", "tolerance", "double", /*default=*/"3.0e-7",
+           "The largest relative error of a table">
+  ];
+  let dependentDialects = ["::mlir::arith::ArithDialect",
+                           "::mlir::math::MathDialect",
+                           "::mlir::memref::MemRefDialect",
+                           "::mlir::vector::VectorDialect"];
 }
 
 def Approximate

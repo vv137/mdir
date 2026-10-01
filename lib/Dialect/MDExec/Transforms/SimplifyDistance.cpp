@@ -5,10 +5,14 @@
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/Matchers.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SetVector.h"
 
 using namespace mlir;
 using namespace mdir;
@@ -29,7 +33,8 @@ using Form = SmallVector<Term, 4>;
 /// Rewrites one kernel.
 class Rewriter {
 public:
-  Rewriter(PairForOp op) : op(op), builder(op.getContext()) {}
+  Rewriter(PairForOp op, bool radial)
+      : op(op), builder(op.getContext()), separates(radial) {}
 
   void run();
 
@@ -105,6 +110,21 @@ private:
   llvm::DenseMap<Value, Form> forms;
   llvm::DenseMap<Value, Value> emitted;
   llvm::DenseMap<Value, unsigned> places;
+
+  /// Whether terms that share their factors free of the distance become
+  /// those factors times a function of the distance (`radial`).
+  bool separates;
+  /// Whether a value of the new kernel depends on the distance alone, and
+  /// whether it computes more than roots and powers of it.
+  bool isRadial(Value value);
+  bool isCostly(Value value);
+  llvm::DenseMap<Value, bool> radial, costly;
+  /// The terms of `form` whose factors free of the distance are the same,
+  /// and whose part that depends on it is costly, as one term each.
+  Form separate(const Form &form, Location loc);
+  /// A function of the module, `(f64) -> f64`, of the squared distance,
+  /// that sums the terms `terms`, whose factors are radial.
+  func::FuncOp createRadialFunction(ArrayRef<Term> terms, Location loc);
 
   /// The squared distance, and what is derived from it on demand.
   Value r2;
@@ -257,7 +277,172 @@ Value Rewriter::emitTerm(const Term &term, Location loc, bool magnitude) {
   return numerator;
 }
 
-Value Rewriter::emit(const Form &form, Location loc) {
+bool Rewriter::isRadial(Value value) {
+  if (value == r2)
+    return true;
+  auto found = radial.find(value);
+  if (found != radial.end())
+    return found->second;
+  Operation *def = value.getDefiningOp();
+  bool result = false;
+  if (def && isa<arith::ConstantOp>(def)) {
+    result = true;
+  } else if (def && def->getBlock() == fresh && def->getNumRegions() == 0 &&
+             def->getNumResults() == 1 &&
+             isa<arith::ArithDialect, math::MathDialect>(def->getDialect())) {
+    result = llvm::all_of(def->getOperands(),
+                          [&](Value operand) { return isRadial(operand); });
+  }
+  radial[value] = result;
+  return result;
+}
+
+bool Rewriter::isCostly(Value value) {
+  auto found = costly.find(value);
+  if (found != costly.end())
+    return found->second;
+  Operation *def = value.getDefiningOp();
+  bool result = false;
+  if (def && def->getBlock() == fresh) {
+    result = isa<math::MathDialect>(def->getDialect()) &&
+             !isa<math::SqrtOp, math::FPowIOp, math::AbsFOp>(def);
+    for (Value operand : def->getOperands())
+      result |= isCostly(operand);
+  }
+  costly[value] = result;
+  return result;
+}
+
+func::FuncOp Rewriter::createRadialFunction(ArrayRef<Term> terms,
+                                            Location loc) {
+  auto module = op->getParentOfType<ModuleOp>();
+  OpBuilder top(module.getBodyRegion());
+  top.setInsertionPointToEnd(module.getBody());
+  Type f64 = top.getF64Type();
+  auto function = func::FuncOp::create(top, loc, "md_radial",
+                                       top.getFunctionType({f64}, {f64}));
+  function.setPrivate();
+  SymbolTable(module).insert(function);
+  Block *body = function.addEntryBlock();
+  OpBuilder b = OpBuilder::atBlockEnd(body);
+  Value s = body->getArgument(0);
+
+  // The ops that compute the factors, in the order of the kernel.
+  IRMapping values;
+  values.map(r2, s);
+  llvm::SetVector<Operation *> cone;
+  SmallVector<Value> pending;
+  for (const Term &term : terms)
+    for (auto [value, exponent] : term.factors)
+      pending.push_back(value);
+  while (!pending.empty()) {
+    Value value = pending.pop_back_val();
+    Operation *def = value.getDefiningOp();
+    if (!def || !cone.insert(def))
+      continue;
+    llvm::append_range(pending, def->getOperands());
+  }
+  for (Operation &nested : *fresh)
+    if (cone.contains(&nested))
+      b.clone(nested, values);
+  for (Operation *outer : cone)
+    if (outer->getBlock() != fresh)
+      values.map(outer->getResult(0), b.clone(*outer)->getResult(0));
+
+  auto constant = [&](double v) -> Value {
+    return arith::ConstantOp::create(b, loc, f64, b.getF64FloatAttr(v));
+  };
+  auto power = [&](Value base, int n) -> Value {
+    if (n == 1)
+      return base;
+    Value count = arith::ConstantOp::create(b, loc, b.getI32Type(),
+                                            b.getI32IntegerAttr(n));
+    return math::FPowIOp::create(b, loc, base, count);
+  };
+  Value total;
+  for (const Term &term : terms) {
+    Value value = constant(term.scale);
+    for (auto [factor, exponent] : term.factors) {
+      Value f = values.lookup(factor);
+      value = exponent > 0
+                  ? arith::MulFOp::create(b, loc, value, power(f, exponent))
+                        .getResult()
+                  : arith::DivFOp::create(b, loc, value, power(f, -exponent))
+                        .getResult();
+    }
+    // r^p = s^(p/2), with a square root for odd p.
+    if (term.power != 0) {
+      int half = term.power / 2, odd = term.power % 2;
+      Value r = math::SqrtOp::create(b, loc, s);
+      if (half > 0)
+        value = arith::MulFOp::create(b, loc, value, power(s, half));
+      else if (half < 0)
+        value = arith::DivFOp::create(b, loc, value, power(s, -half));
+      if (odd > 0)
+        value = arith::MulFOp::create(b, loc, value, r);
+      else if (odd < 0)
+        value = arith::DivFOp::create(b, loc, value, r);
+    }
+    total = total ? arith::AddFOp::create(b, loc, total, value).getResult()
+                  : value;
+  }
+  func::ReturnOp::create(b, loc, ValueRange{total});
+  return function;
+}
+
+Form Rewriter::separate(const Form &form, Location loc) {
+  // The terms by their factors free of the distance.
+  SmallVector<std::pair<SmallVector<std::pair<Value, int>, 4>,
+                        SmallVector<Term, 4>>,
+              4>
+      groups;
+  for (const Term &term : form) {
+    Term part;
+    part.scale = term.scale;
+    part.power = term.power;
+    SmallVector<std::pair<Value, int>, 4> free;
+    for (auto factor : term.factors) {
+      if (isRadial(factor.first))
+        part.factors.push_back(factor);
+      else
+        free.push_back(factor);
+    }
+    auto found = llvm::find_if(
+        groups, [&](const auto &group) { return group.first == free; });
+    if (found == groups.end()) {
+      groups.push_back({free, {}});
+      found = std::prev(groups.end());
+    }
+    found->second.push_back(part);
+  }
+  Form result;
+  for (auto &[free, parts] : groups) {
+    bool costs = llvm::any_of(parts, [&](const Term &part) {
+      return llvm::any_of(part.factors,
+                          [&](auto factor) { return isCostly(factor.first); });
+    });
+    if (!costs) {
+      for (Term part : parts) {
+        part.factors.append(free.begin(), free.end());
+        result.push_back(part);
+      }
+      continue;
+    }
+    func::FuncOp function = createRadialFunction(parts, loc);
+    Value value = RadialOp::create(
+        builder, loc, builder.getF64Type(), r2,
+        FlatSymbolRefAttr::get(builder.getContext(), function.getSymName()));
+    Term term;
+    term.factors = free;
+    term.factors.push_back({value, 1});
+    result.push_back(term);
+  }
+  normalize(result);
+  return result;
+}
+
+Value Rewriter::emit(const Form &given, Location loc) {
+  Form form = separates ? separate(given, loc) : given;
   if (form.empty())
     return createConstant(0.0, loc);
 
@@ -436,7 +621,7 @@ public:
     SmallVector<PairForOp> loops;
     getOperation()->walk([&](PairForOp loop) { loops.push_back(loop); });
     for (PairForOp loop : loops)
-      Rewriter(loop).run();
+      Rewriter(loop, radial).run();
   }
 };
 } // namespace

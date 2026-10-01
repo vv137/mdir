@@ -249,7 +249,7 @@ often, and its conserved energy drifts as much (−7.5 and −7.7 kcal/mol).
 | G2, under way: the default mode and the erfc of D90 done; the deterministic mode to come | The loop over groups, each pair once, both modes; the cheaper erfc of the direct sum under `fast_math`, with the accuracy of the force near the cutoff checked (it is what lets the loop over groups gain, Section 1) | Forces, energies, and virials against the matrix (to the rounding; to the bit in the deterministic mode, where the matrix sums in fixed point too); conservation over runs |
 | G3 | Groups by default on a device for the loops that allow them | The Amber suite against pmemd.cuda and GROMACS |
 | G4 | The reach of the list: a skin of 1 Å, once builds are cheap | Rates and intervals between builds |
-| G5 | The arithmetic of the kernel (a table for the erfc, the order of the entries) | The prototype first |
+| G5, under way: the table of D94 done | The arithmetic of the kernel (a table for the erfc, the order of the entries) | The prototype first |
 
 ## 8. Open questions
 

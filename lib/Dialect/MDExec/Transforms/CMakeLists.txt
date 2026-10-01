@@ -5,6 +5,7 @@ add_mlir_dialect_library(MDIRMDExecTransforms
   AssignStorage.cpp
   AssignStreams.cpp
   ChooseNeighbors.cpp
+  ExpandRadial.cpp
   ExposeValidity.cpp
   FoldTables.cpp
   FuseLoops.cpp

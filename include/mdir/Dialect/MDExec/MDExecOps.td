@@ -630,6 +630,28 @@ def MDExec_YieldOp : MDExec_Op<"yield", [
   let assemblyFormat = "attr-dict ($values^ `:` type($values))?";
 }
 
+def MDExec_RadialOp : MDExec_Op<"radial", [Pure]> {
+  let summary = "A function of the squared distance alone";
+  let description = [{
+    The value of the function `function`, of type `(f64) -> f64`, at the
+    squared distance `r2`: a part of a pair kernel that depends on the
+    distance only, such as the screened Coulomb force of Ewald summation
+    without its charges, which `md-exec-simplify-distance` separates under
+    `fast_math`. `md-exec-expand-radial` makes it a table of the function
+    in a kernel that computes in f32 (D94), and the function itself in one
+    that computes in f64.
+
+    ```mlir
+    %g = md_exec.radial @md_radial_0(%r2) : f32
+    ```
+  }];
+  let arguments = (ins AnyFloat:$r2, FlatSymbolRefAttr:$function);
+  let results = (outs AnyFloat:$result);
+  let assemblyFormat = [{
+    $function `(` $r2 `)` attr-dict `:` type($r2) `->` type($result)
+  }];
+}
+
 def MDExec_TabulateOp : MDExec_Op<"tabulate", [
     Pure, SingleBlock
   ]> {
