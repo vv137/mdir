@@ -60,3 +60,8 @@ Appendices: [A. The control file](A-control-file.md),
 | The references | `scripts/paper/build-references.py` links the citations and writes `references.md`; `scripts/paper/verify-references.py docs/paper/references.md` checks every DOI against Crossref and DataCite |
 | Table 10.2 and Figure 10.1 | `scripts/paper/run-suite-repeats.sh MDIR PMEMD LOGS 3`, then `scripts/paper/suite-table.py LOGS` and `scripts/paper/plot-suite.py LOGS figures/suite.png`, with the suite prepared by `scripts/benchmarks/amber/bench.py prepare` |
 | Figure 7.1 | `scripts/paper/plot-energy.py LOGS figures/energy-jac.png`, from the logs of the runs of D112 |
+| Appendix A | `scripts/paper/check-appendix.sh MDIR` checks that its example is what `mdir template amber` prints |
+| The PDF | `scripts/paper/build-pdf.sh OUT` writes each section to LaTeX with pandoc and builds `OUT/main.pdf` with tectonic, from the master file `tex/main.tex` |
+
+A change to a method, an algorithm, or an implementation of MDIR updates
+the sections of this paper that describe it.

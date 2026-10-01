@@ -62,15 +62,19 @@ The rates of the first comparison (2026-09-30, ns/day, RTX 3090):
 | Item | State |
 |---|---|
 | Equations in the Markdown documents written in TeX (`$...$`, `$$...$$`, which GitHub renders) instead of Unicode text | Done (2026-10-02): the equations of every document of `docs/` are TeX; numbers, units, and the sizes of grids and tiles stay as text |
-| A guide for contributors: building, the layers of the IR and where a feature goes, adding a term, a pass, or a lowering, the tiers of tests and the tools of debugging, the principles, how a change is reviewed | With the white paper (Section 3), and as `CONTRIBUTING.md` |
+| A guide for contributors: building, the layers of the IR and where a feature goes, adding a term, a pass, or a lowering, the tiers of tests and the tools of debugging, the principles, how a change is reviewed | Done in the white paper (Appendix B of `docs/paper/`); to do as `CONTRIBUTING.md` |
 
 ## 3. White paper, after the first milestone
 
 A paper that describes MDIR and what the first milestone shows, written
 when the milestone ends and the rates reach those of pmemd.cuda across the
-systems:
+systems. *Written 2026-10-02:* [docs/paper/](paper/README.md), in
+Markdown with equations in TeX, built as a PDF with pandoc and tectonic
+(`scripts/paper/build-pdf.sh`); a change to a method, an algorithm, or an
+implementation updates it. The performance is measured against
+pmemd.cuda only (the user, 2026-10-01). The outline:
 
-- A section of notation at the front (TODO): the symbols of positions,
+- A section of notation at the front (Done, Section 2): the symbols of positions,
   cells, images and their shifts, forces, the virial and its sign, units,
   and the types of the precision modes, fixed before the chapters and used
   in all of them.
@@ -78,7 +82,7 @@ systems:
   (TODO: keep the design documents complete in TeX as features land).
 - The design: the levels of the IR (`md`, `dyn`, `md_exec`), compilation of
   each run before it runs, the lowerings to CPUs and GPUs, the runtime.
-- The neighbor algorithms in detail (TODO): the matrix (neighbors-m0.md)
+- The neighbor algorithms in detail (Done, Section 4): the matrix (neighbors-m0.md)
   and the groups of 16 (groups-m1.md, D89 to D106): the compact order of
   the places, the frames that take no minimum image (D95), the masks and
   their ballots (D97), the queue of candidates and the ranges of partners
@@ -92,10 +96,12 @@ systems:
   the thermostat and the barostat), the target of D65 (ff19SB in OPC).
 - Performance: the Amber suite against GROMACS and pmemd.cuda, with the
   scripts that produce every number and figure.
-- The way from double to mixed precision (TODO, if it makes a story): what stays in `f64` and
+- The way from double to mixed precision (Done, Section 7): what stays in `f64` and
   why (the differences of positions, D75; the sums), what moved to `f32`
   (the kernels of pairs, PME), and what each step cost and gained.
-- Related work (TODO: survey): compilers and MLIR in molecular dynamics.
+- Related work (Done in part, Section 11: chemtrain-deploy, JAX MD,
+  Reactant.jl, and FFTc, each read at its source; the rest of the list
+  below is not yet checked): compilers and MLIR in molecular dynamics.
   To look up, read at the source, and verify before any claim is cited
   (the list came from a summary whose claims and links are unchecked; some
   links did not match their topics):
@@ -117,7 +123,8 @@ systems:
   compilers, while MDIR has dialects of MD itself (particle sets, neighbor
   structures, tuples, integrators) and lowers the whole step.
 - The principles of development and the defects that led to them.
-- A manual of the control file (TODO): every table and keyword, its
+- A manual of the control file (Done, Appendix A, checked by
+  `scripts/paper/check-appendix.sh`): every table and keyword, its
   units and default, and the combinations that are errors, checked
   against `mdir template` so that it follows the code.
 - How to take part: how the code is laid out, how a new term, pass, or

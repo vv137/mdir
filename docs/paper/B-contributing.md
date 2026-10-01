@@ -57,6 +57,8 @@ decision (Section 12).
 
 | Tool | What it does |
 |---|---|
+| `mdir check FILE` | Reads the input of a run and prints what it describes: particles, types, degrees of freedom, the integrator, the target |
+| `mdir template amber`, `mdir template md` | Prints a control file with every keyword and its default |
 | `mdir emit FILE --stage=STAGE` | Prints the program of a run as the driver built it (`module`), as lowered (`lowered`), or the passes (`pipeline`) |
 | `MDIR_PRINT_AFTER=<pass>` | Prints the module after each run of that pass |
 | `MDIR_PIPELINE=<passes>` | Replaces the pipeline, for example to turn one option off |
@@ -73,7 +75,10 @@ sanitizer points at the IR.
 A choice that changes a method, a structure, or a default is recorded as a
 decision in `docs/decisions.md`: what was decided, why, and the
 measurement before and after. The documents of the design
-(`docs/*.md`) describe what is implemented and are updated with the code.
+(`docs/*.md`) describe what is implemented and are updated with the code,
+and so is this paper: a change to a method, an algorithm, or an
+implementation updates the sections that describe it, their equations,
+numbers, and tables, in the same piece of work.
 Comments cite methods by the keys of `docs/references.md`, whose entries
 are checked against their DOIs (`scripts/paper/verify-references.py`).
 A review asks the questions of the checklist of `docs/principles.md`: what
