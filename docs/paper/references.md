@@ -347,6 +347,13 @@ efficient corrections for missing dispersion interactions in molecular
 simulations," *J. Phys. Chem. B* **111**, 13052–13063 (2007).
 [doi:10.1021/jp0735987](https://doi.org/10.1021/jp0735987)
 
+### Shirts2013
+
+M. R. Shirts, "Simple quantitative tests to validate sampling from
+thermodynamic ensembles," *J. Chem. Theory Comput.* **9**(2), 909–926
+(2013).
+[doi:10.1021/ct300688p](https://doi.org/10.1021/ct300688p)
+
 ### Slattery2022
 
 S. Slattery, S. T. Reeve, C. Junghans, et al., "Cabana: A performance

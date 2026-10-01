@@ -709,6 +709,17 @@ simulations," *J. Phys. Chem. B* **111**, 13052–13063 (2007).
 Used for: the correction for the dispersion beyond the cutoff, to the
 energy and the pressure (M1).
 
+### Shirts2013
+
+M. R. Shirts, "Simple quantitative tests to validate sampling from
+thermodynamic ensembles," *J. Chem. Theory Comput.* **9**(2), 909–926
+(2013).
+[doi:10.1021/ct300688p](https://doi.org/10.1021/ct300688p)
+
+Used for: the tests of the ensembles of the thermostat and the barostat,
+from the ratio of the distributions of two runs at different temperatures
+or pressures (`scripts/validation/ensembles`).
+
 ### Slattery2022
 
 S. Slattery, S. T. Reeve, C. Junghans, et al., "Cabana: A performance

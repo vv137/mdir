@@ -41,6 +41,16 @@ the spreading of PME has (D70), would close the gap.
   narrower than twice the reach and the extent of a group (Section 4.4,
   D115). The build now keeps an entry for each image within the reach,
   and the two agree to every printed digit.
+- *The conserved energy at constant pressure drifts with rigid groups.*
+  On 1039 rigid OPC waters the default count of the work of the barostat,
+  of Trotter type (Section 6.4), drifts by about $-200$ kcal/mol/ns, where
+  the exact count drifts by about $+10$ and GROMACS by $-0.4$; with
+  flexible water the counts agree. The bias is proportional to the time
+  and does not depend on the period of coupling, as a term of second order
+  in the strain would be. The sampling is right (Section 9.5); the count
+  that measures it is not, for rigid groups, and is to be derived again
+  for groups that scale by their centers while their velocities scale
+  particle by particle.
 - *The order of the state decays.* Over 2 ns of JAC the rate fell by 2%
   and then stayed flat: the state is sorted where a run or a segment
   begins (D44), and only the loops over pairs read it in an order renewed

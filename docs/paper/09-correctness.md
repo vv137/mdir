@@ -137,6 +137,16 @@ beside its rate.
   random.test`). These test the generators, not the distributions that a
   trajectory samples. Philox matches three known-answer tests of
   Random123 [[Salmon2011]](references.md#salmon2011).
+- **Ensembles** (`scripts/validation/ensembles`). On 1039 rigid OPC waters
+  with PME on the GPU in mixed precision, runs of 5 ns at 300 K and 306 K
+  give mean kinetic energies within 0.9 standard errors of $N_fk_BT/2$
+  and variances within 1.2 of $N_f(k_BT)^2/2$; the ratio of the
+  distributions of the potential energy at the two temperatures has the
+  slope $\beta_{300} - \beta_{306}$ within 0.17 standard errors, and that
+  of the volumes at 1 and 300 atm the slope $-\beta\Delta P$ within 0.66
+  [[Shirts2013]](references.md#shirts2013). At 1 atm the density, $0.99674 \pm 0.00031$ g/cm³, and
+  the compressibility, $(4.71 \pm 0.26)\times10^{-5}$ /bar, are within
+  one standard error of GROMACS with its own OPC.
 - **Equivalences.** The trajectory does not depend on how steps are
   grouped into periods, on velocity Verlet against leapfrog with
   constraints, or on how the work of the barostat is counted: the tests
@@ -187,9 +197,6 @@ suite check that every number of the log is finite (`test/Scale`).
 
 ## 9.9 What is not yet verified
 
-- The distributions that the thermostat and the barostat sample in a
-  trajectory: the kinetic energy, the volume, and the density of water
-  against reference values.
 - The GPU against the CPU over long runs is a comparison of means: over
   20 ps of the dipeptide in OPC in double precision the rows of the two
   logs agree to every printed digit for 500 steps and then part as the

@@ -921,6 +921,48 @@ energy and the excluded pairs, which cancel to 3%; MDIR in mixed
 precision on a device differs from MDIR in double precision by 5e-6
 (rms) on the same input.
 
+**The ensembles** (2026-10-02, `scripts/validation/ensembles/run.py` and
+`analyze.py`). A box of 1039 OPC waters from tleap, rigid (M-SHAKE in the
+mixed mode), particle mesh Ewald, a cutoff of 9 Å with the correction for
+the dispersion, 2 fs, groups and the dual list, the thermostat and the
+barostat every 25 steps ($\tau_T$ = 1 ps, $\tau_P$ = 2 ps), 5 ns for each
+run from one state equilibrated for 200 ps at 300 K and 1 atm, on the GPU
+in mixed precision. Samples are spaced by their statistical inefficiency;
+the slopes are maximum-likelihood estimates of $\ln P_2/P_1$ [[Shirts2013]](references.md#shirts2013).
+
+| Test | MDIR | Expected | Standard errors |
+|---|---|---|---|
+| Mean kinetic energy at 300 K, kcal/mol | 1856.98 ± 0.66 | 1857.34 ($N_f k_BT/2$, $N_f$ = 6231) | −0.55 |
+| Its variance at 300 K | 1103 ± 31 | 1107 ($N_f (k_BT)^2/2$) | −0.13 |
+| Mean kinetic energy at 306 K | 1893.86 ± 0.72 | 1894.49 | −0.87 |
+| Its variance at 306 K | 1194 ± 36 | 1152 | +1.16 |
+| Slope of $\ln P_{306}(U)/P_{300}(U)$, mol/kcal | 0.03315 ± 0.0016 | 0.03289 ($\beta_{300} - \beta_{306}$) | +0.17 |
+| Slope of $\ln P_{300\,\text{atm}}(V)/P_{1\,\text{atm}}(V)$, Å⁻³ | −0.00708 ± 0.00035 | −0.00731 ($-\beta\,\Delta P$) | +0.66 |
+
+At 300 K and 1 atm the density is 0.99674 ± 0.00031 g/cm³ and the
+compressibility (4.71 ± 0.26) × 10⁻⁵ /bar; GROMACS 2026.3 with its own
+OPC (amber19sb.ff, its update on the CPU, which virtual sites need), the
+same cutoff, PME, couplings, and length, gives 0.99698 ± 0.00030 g/cm³ and
+(4.41 ± 0.23) × 10⁻⁵ /bar, 0.6 and 0.9 standard errors apart.
+
+**The conserved energy at constant pressure drifts with rigid groups**
+(open). In the same runs the conserved energy at constant volume moved by
+−0.16 kcal/mol/ns, and at constant pressure by −234 kcal/mol/ns, where
+GROMACS's moved by −0.37. Runs of 100 ps from the same state: the default
+count of the work, of Trotter type, −16.3 kcal/mol (−18.0 in double
+precision, −22.1 with a period of 10 steps, −25.7 at 1 fs), the exact
+count +1.3, the first-order count +209; over 20 ps a period of one step
+drifts as much as one of 25 (−5.4 and −6.3). With flexible water at 0.5
+fs, the Trotter count, the exact count, and constant volume drift alike.
+So the Trotter count is biased when rigid groups scale by their centers:
+a bias proportional to the time, independent of the period, as a term of
+second order in the strain would be, about 2 × 10⁴ kcal/mol times the
+sum of $(\ln\mu)^2$. Twice the internal kinetic energy, which the count
+carries in $\mathcal W$ before and after the velocities are scaled,
+accounts for a twelfth of it. The sampling is not in question (the test
+of two pressures, the density, and the compressibility above); the count
+that measures it is.
+
 **The GPU against the CPU over 20 ps** (`scripts/validation/gpu-cpu/run.sh`).
 The dipeptide in OPC of `pme-settle.test`, 20,000 steps of 1 fs in double
 precision on each from the same state: the rows of the two logs agree to
