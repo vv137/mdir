@@ -78,6 +78,15 @@ systems:
   (TODO: keep the design documents complete in TeX as features land).
 - The design: the levels of the IR (`md`, `dyn`, `md_exec`), compilation of
   each run before it runs, the lowerings to CPUs and GPUs, the runtime.
+- The neighbor algorithms in detail (TODO): the matrix (neighbors-m0.md)
+  and the groups of 16 (groups-m1.md, D89 to D106): the compact order of
+  the places, the frames that take no minimum image (D95), the masks and
+  their ballots (D97), the queue of candidates and the ranges of partners
+  (D99, D100), the excluded pairs in the masks and their fallback (D105,
+  D106), the blocks of 64 entries and their pool, the exact test of
+  validity under scaling (D80) and of the dual list with its proof
+  (tiles-m1.md, Section 6), and why the tiles of D82 were set aside; with
+  the measurements behind each choice.
 - Correctness: agreement of the terms with sander and GROMACS, conservation
   of energy, the ensembles (the density of OPC water, the distributions of
   the thermostat and the barostat), the target of D65 (ff19SB in OPC).
