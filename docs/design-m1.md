@@ -1042,7 +1042,7 @@ weights sum to 1, and is added for the extra point of Amber.
 |---|---|---|
 | Constraints before the first step | None: the energies at the start are those of the file | SETTLE, with `continuation = no` |
 | Velocity of a site in its output | 0 | That of the placement |
-| Which atoms are sites | The atoms of type `EP`, with a frame chosen from the neighbors of the owner; MDIR takes the frame of water only | Those of particle type V or D, placed by a section of virtual sites |
+| Which atoms are sites | The atoms of type `EP`, with a frame chosen from the neighbors of the owner; MDIR takes the frame of water only | Those that a section of virtual sites places, whatever the particle type of their atom type says (V or D, and A in the OPC of amber19sb.ff, as grompp takes it), with no mass |
 
 Frames of lone pairs and of TIP5P in Amber, and the other kinds of
 virtual sites of GROMACS, are rejected.

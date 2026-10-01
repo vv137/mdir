@@ -912,6 +912,17 @@ llvm::Error TopologyReader::readLine(const Line &line, StringRef section) {
       return fail(line, "expected the two weights a and b in "
                         "[ virtual_sites3 ]; weights that grompp would "
                         "compute from the constraints are not supported");
+    // The particle that the section builds is a virtual site whatever the
+    // particle type of its atom type says, as grompp takes it: the OPC of
+    // amber19sb.ff gives its site the type A. It has no mass.
+    if (site.atoms[0] < molecule.atoms.size()) {
+      Atom &built = molecule.atoms[site.atoms[0]];
+      if (!built.virtualSite && built.mass != 0.0)
+        return fail(line, "the virtual site '" + built.name + "' has a mass "
+                          "of " + show(built.mass) + "; a virtual site has "
+                          "none");
+      built.virtualSite = true;
+    }
     return llvm::Error::success();
   }
   if (section == "settles") {
