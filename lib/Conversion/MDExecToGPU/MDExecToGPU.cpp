@@ -57,6 +57,7 @@ static const char *const buildNeighborsName =
 static const char *const countBuildName = "mdrtCountBuild";
 static const char *const flagStartName = "mdrtFlagStart";
 static const char *const flagFinishName = "mdrtFlagFinish";
+static const char *const flagMemoryName = "mdrtFlagMemory";
 /// Counts a build at an interval that found the structure no longer valid
 /// (D88).
 static const char *const countLateBuildName = "mdrtCountLateBuild";
@@ -143,12 +144,12 @@ struct Cell {
   int64_t capacity = 0;
 };
 
-/// A flag that the threads of a kernel set: one value on the device, and a
-/// buffer of the host that holds the value of a flag that is not set. The
-/// runtime reads it into memory of its own (mdrtFlagStart, D113).
+/// A flag that the threads of a kernel set: one value in memory of the host
+/// that the runtime maps for the device (mdrtFlagMemory, D118), which the
+/// runtime reads after an event and clears (mdrtFlagStart and
+/// mdrtFlagFinish, D113).
 struct Flag {
   Value device;
-  Value clear;
 };
 
 class Lowering {
@@ -359,6 +360,10 @@ private:
   /// and the line of the input that it comes from (nameKernel).
   std::string purpose = "kernel";
   int64_t numKernels = 0;
+  /// The flags of the module so far: each place that a function takes a
+  /// flag from has a number of its own, by which the runtime gives it the
+  /// same memory at every call (mdrtFlagMemory, D118).
+  int64_t numFlags = 0;
   void setPurpose(Operation *op);
   void nameKernel(gpu::LaunchOp launch);
 
@@ -553,15 +558,15 @@ Flag Lowering::getFlag(unsigned number, Location loc) {
   while (flags.size() <= number) {
     // Allocated once, where the function begins, and not set.
     Flag flag;
-    flag.device = createDeviceBuffer(builder, loc,
-                                     getDeviceType({1}, narrow), ValueRange());
-    flag.clear =
-        memref::AllocaOp::create(builder, loc, MemRefType::get({1}, narrow));
-    Value zero = arith::ConstantOp::create(builder, loc, narrow,
-                                           builder.getI32IntegerAttr(0));
-    memref::StoreOp::create(builder, loc, zero, flag.clear,
-                            ValueRange{createIndex(builder, loc, 0)});
-    createTransfer(builder, loc, flag.device, flag.clear);
+    Type wide = builder.getI64Type();
+    func::FuncOp memory = getOrDeclare(
+        flagMemoryName,
+        builder.getFunctionType({wide}, {getDeviceType({1}, narrow)}));
+    memory->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+    Value place = arith::ConstantOp::create(
+        builder, loc, wide, builder.getI64IntegerAttr(numFlags++));
+    flag.device = func::CallOp::create(builder, loc, memory, ValueRange{place})
+                      .getResult(0);
     flags.push_back(flag);
   }
   return flags[number];
@@ -607,11 +612,8 @@ void Lowering::replaceWithFlag(OpBuilder &builder, Location loc,
   Value isSet = arith::CmpIOp::create(
       wait, loc, arith::CmpIPredicate::ne, value,
       arith::ConstantOp::create(wait, loc, i32, wait.getI32IntegerAttr(0)));
-  // Few kernels set the flag, so it is cleared only where it was set.
-  scf::IfOp::create(wait, loc, isSet, [&](OpBuilder &then, Location) {
-    createTransfer(then, loc, flag.device, flag.clear);
-    scf::YieldOp::create(then, loc);
-  });
+  // The runtime clears the flag as it reads it (D118); a copy of a zero
+  // from the host waited for the reciprocal sum issued before it.
   result.replaceAllUsesWith(arith::OrIOp::create(wait, loc, start, isSet));
 }
 
@@ -1163,7 +1165,10 @@ LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &run) {
     return failure();
   SmallVector<Flag, 2> used;
   for (unsigned i = 0; i != numFlags; ++i)
-    used.push_back(getFlag(i, loc));
+    // A flag of its own for each loop: the runtime reads a flag after the
+    // kernels issued before the read, not at its place in the stream, so a
+    // later loop that shared it could set it before the read (D118).
+    used.push_back(getFlag(flags.size(), loc));
 
   Value size = createSize(builder, loc, before.getIns().front());
   auto storeAfter = [&](OpBuilder &b, Value member,
@@ -1511,7 +1516,10 @@ LogicalResult Lowering::lowerParticleFor(md_exec::ParticleForOp op) {
     return failure();
   SmallVector<Flag, 2> used;
   for (unsigned i = 0; i != numFlags; ++i)
-    used.push_back(getFlag(i, loc));
+    // A flag of its own for each loop: the runtime reads a flag after the
+    // kernels issued before the read, not at its place in the stream, so a
+    // later loop that shared it could set it before the read (D118).
+    used.push_back(getFlag(flags.size(), loc));
 
   Value size = createSize(builder, loc, op.getIns().empty()
                                             ? op.getOuts().front()

@@ -143,7 +143,18 @@ that sets it. The reciprocal sum of PME, which takes the positions only,
 moves before the test of the structure, so the device computes it while
 the host waits. On JAC the rate went from 695 to 739 ns/day at constant
 energy and from 522 to 600 at constant pressure, and the waits for the
-stream fell to the builds alone.
+stream fell to the builds alone. The flags are now memory of the host
+that is mapped for the device (D118): a kernel that sets one stores into
+it across the bus, the host waits for an event after the kernel and reads
+it, and clears it as it reads it. The copies are gone from the stream,
+where each held the device for some microseconds between two kernels, and
+so is the copy of a zero that cleared a flag where it was set, which
+waited for the whole stream, the reciprocal sum included, every time the
+inner list was pruned. Since a flag is read after the kernels issued
+before the read rather than at its place in the stream, each loop that
+sets a flag has one of its own. On ubiquitin in OPC the device stood idle
+49 µs of a step and now 29; the rates rose by 4% there, by 6 to 7% on JAC,
+and by 1 to 3% on FactorIX and Cellulose.
 
 **A second stream** (D81, D87). The reciprocal sum may run on a second
 stream beside the loops that follow it, with a join where its forces are

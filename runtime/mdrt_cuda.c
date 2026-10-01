@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 
 /* The kernel that was launched last, and its name, which a failure names:
@@ -342,6 +343,16 @@ void mdrtSideJoin(void) {
 
 void mgpuStreamDestroy(CUstream stream) { (void)stream; }
 
+/* The descriptor of a memref of one dimension, as the C interface of MLIR
+   passes it. */
+struct Buffer1 {
+  void *allocated;
+  void *aligned;
+  int64_t offset;
+  int64_t size;
+  int64_t stride;
+};
+
 /* Reads of flags of the device that do not wait for the work issued after
    them (D113): mdrtFlagStart copies the flag into memory of the host that
    the device writes while the host goes on, and marks the copy with an
@@ -352,7 +363,49 @@ void mgpuStreamDestroy(CUstream stream) { (void)stream; }
 enum { FLAG_SLOTS = 32 };
 static int32_t *flagSlots = NULL;
 static CUevent flagEvents[FLAG_SLOTS];
+static volatile int32_t *flagSources[FLAG_SLOTS];
 static int64_t nextFlagSlot = 0;
+
+/* The flags themselves are in memory of the host that is mapped for the
+   device (D118): a kernel stores 1 there across the bus, so a read needs no
+   copy on the stream, only an event after the kernels that set it. A copy
+   between two kernels held the device for some microseconds each, and the
+   two flags of a dual list cost 13 us a step on ubiquitin. The host clears
+   a flag when it reads it: no kernel that sets it is issued before the host
+   has decided on it. Each place of the module that takes a flag has a
+   number of its own and the same memory at every call of its function, so
+   that a function called many times, as a step of a minimization is, takes
+   no other function's flag. */
+enum { MAPPED_FLAGS = 1024 };
+static volatile int32_t *mappedFlags = NULL;
+static CUdeviceptr mappedDevice = 0;
+
+void _mlir_ciface_mdrtFlagMemory(struct Buffer1 *result, int64_t place) {
+  mgpuStreamCreate();
+  if (!mappedFlags) {
+    void *host = NULL;
+    check(cuMemHostAlloc(&host, MAPPED_FLAGS * sizeof(int32_t),
+                         CU_MEMHOSTALLOC_DEVICEMAP),
+          "cuMemHostAlloc");
+    memset(host, 0, MAPPED_FLAGS * sizeof(int32_t));
+    check(cuMemHostGetDevicePointer(&mappedDevice, host, 0),
+          "cuMemHostGetDevicePointer");
+    mappedFlags = (volatile int32_t *)host;
+  }
+  if (place < 0 || place >= MAPPED_FLAGS) {
+    fprintf(stderr, "mdrt: the module takes more than %d flags\n",
+            MAPPED_FLAGS);
+    exit(1);
+  }
+  int64_t slot = place;
+  mappedFlags[slot] = 0;
+  void *device = (void *)(uintptr_t)(mappedDevice + slot * sizeof(int32_t));
+  result->allocated = device;
+  result->aligned = device;
+  result->offset = 0;
+  result->size = 1;
+  result->stride = 1;
+}
 
 int64_t mdrtFlagStart(void *device) {
   mgpuStreamCreate();
@@ -366,9 +419,16 @@ int64_t mdrtFlagStart(void *device) {
   }
   /* The kernels that set flags run on the first stream. */
   int64_t slot = nextFlagSlot++ % FLAG_SLOTS;
-  check(cuMemcpyDtoHAsync(&flagSlots[slot], (CUdeviceptr)device,
-                          sizeof(*flagSlots), sharedStream),
-        "cuMemcpyDtoHAsync");
+  CUdeviceptr address = (CUdeviceptr)device;
+  if (mappedFlags && address >= mappedDevice &&
+      address < mappedDevice + MAPPED_FLAGS * sizeof(int32_t)) {
+    flagSources[slot] = mappedFlags + (address - mappedDevice) / sizeof(int32_t);
+  } else {
+    flagSources[slot] = NULL;
+    check(cuMemcpyDtoHAsync(&flagSlots[slot], address, sizeof(*flagSlots),
+                            sharedStream),
+          "cuMemcpyDtoHAsync");
+  }
   check(cuEventRecord(flagEvents[slot], sharedStream), "cuEventRecord");
   isPending = 1;
   return slot;
@@ -378,7 +438,12 @@ int32_t mdrtFlagFinish(int64_t slot) {
   double start = begin();
   check(cuEventSynchronize(flagEvents[slot]), "cuEventSynchronize");
   end(WAIT, start);
-  return flagSlots[slot];
+  volatile int32_t *source = flagSources[slot];
+  if (!source)
+    return flagSlots[slot];
+  int32_t value = *source;
+  *source = 0;
+  return value;
 }
 
 /* Waits until the device has run everything that was issued. */
@@ -749,14 +814,6 @@ struct Groups {
 };
 
 /* A memref of rank 1 as the C interface of MLIR passes it. */
-struct Buffer1 {
-  void *allocated;
-  void *aligned;
-  int64_t offset;
-  int64_t size;
-  int64_t stride;
-};
-
 static int64_t getGroupsLength(const struct Groups *groups, int which) {
   switch (which) {
   case GROUPS_ORDER:
