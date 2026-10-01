@@ -66,7 +66,7 @@ is in the row of `i`, then `i` is in the row of `j`.
 |---|---|---|
 | Parallel build | Each row is written independently | Needs a scan over row lengths first |
 | Inner loop | Fixed bound, no indirection for the row start | Variable bound |
-| Memory | `N × W`, sized for the densest particle | Exact |
+| Memory | $N \times W$, sized for the densest particle | Exact |
 | Overflow | Possible; the build is repeated with a larger `W` | Not possible |
 
 The matrix is proposed for M0 because the target is homogeneous systems

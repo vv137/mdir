@@ -188,11 +188,11 @@ carry, have no meaning for a tuple of a topology.
 
 | Coordinate | Value | Kernel argument |
 |---|---|---|
-| `distance(a, b)` | `|d_ab|` | `f64` |
-| `displacement(a, b)` | `d_ab = x_a − x_b`, in the minimum image [[AllenTildesley2017]](references.md#allentildesley2017) | `vector<3xf64>` |
-| `angle(a, b, c)` | The angle at `b` between `d_ab` and `d_cb`, from 0 to π | `f64` |
+| `distance(a, b)` | $\lVert\mathbf d_{ab}\rVert$ | `f64` |
+| `displacement(a, b)` | $\mathbf d_{ab} = \mathbf x_a - \mathbf x_b$, in the minimum image [[AllenTildesley2017]](references.md#allentildesley2017) | `vector<3xf64>` |
+| `angle(a, b, c)` | The angle at $b$ between $\mathbf d_{ab}$ and $\mathbf d_{cb}$, from $0$ to $\pi$ | `f64` |
 | `cosine(a, b, c)` | The cosine of that angle | `f64` |
-| `dihedral(a, b, c, d)` | The angle between the planes of `a, b, c` and of `b, c, d`, from −π to π | `f64` |
+| `dihedral(a, b, c, d)` | The angle between the planes of $a, b, c$ and of $b, c, d$, from $-\pi$ to $\pi$ | `f64` |
 
 `a`, `b`, `c`, and `d` are places in the tuple. An op may name several
 coordinates, such as the angle of three particles and the distance of the
@@ -225,11 +225,12 @@ fields of the particles is checked as in M0 (B3).
 
 ### 4.1 With respect to the positions
 
-```text
-F_m = − Σ_q (∂u/∂q) (∂q/∂x_m)          for every member m of the tuple
-W   = Σ_q Σ_m d_m ⊗ F_qm               with the displacement of m from one
-                                       member of the coordinate q
-```
+$$
+\begin{aligned}
+\mathbf F_m &= -\sum_q \frac{\partial u}{\partial q}\, \frac{\partial q}{\partial\mathbf x_m} && \text{for every member } m \text{ of the tuple}, \\
+\mathsf W &= \sum_q \sum_m \mathbf d_m \otimes \mathbf F_{qm} && \text{with the displacement of } m \text{ from one member of the coordinate } q.
+\end{aligned}
+$$
 
 The virial takes the form of Thompson, Plimpton, and Mattson
 [[Thompson2009]](references.md#thompson2009) for terms of more than two particles.
@@ -237,11 +238,11 @@ The virial takes the form of Thompson, Plimpton, and Mattson
 The forces of one coordinate add up to zero, so that the member that the
 displacements are taken from does not matter.
 
-| Coordinate | `∂q/∂x_m` |
+| Coordinate | $\partial q/\partial\mathbf x_m$ |
 |---|---|
-| `distance(a, b)` | `± d_ab / r` for `a` and `b` |
-| `cosine(a, b, c)` | For `a`: `(d_cb / |d_cb| − c · d_ab / |d_ab|) / |d_ab|`; for `c` likewise; for `b` the negative of their sum |
-| `angle(a, b, c)` | That of the cosine, times `−1 / sin θ` |
+| `distance(a, b)` | $\pm\mathbf d_{ab} / r$ for $a$ and $b$ |
+| `cosine(a, b, c)` | For $a$: $\big(\mathbf d_{cb} / \lVert\mathbf d_{cb}\rVert - c\, \mathbf d_{ab} / \lVert\mathbf d_{ab}\rVert\big) / \lVert\mathbf d_{ab}\rVert$ with $c$ the cosine; for $c$ likewise; for $b$ the negative of their sum |
+| `angle(a, b, c)` | That of the cosine, times $-1 / \sin\theta$ |
 | `dihedral(a, b, c, d)` | The form of Blondel and Karplus [[Blondel1996]](references.md#blondel1996), which has no singularity where three particles are in line |
 
 The derivative of `angle` is singular where the three particles are in
@@ -251,9 +252,7 @@ line. A term that is smooth there, such as the one above, should take
 `md-differentiate` produces, for a sum over tuples of arity `k`, an
 `md.gather_tuples` whose kernel yields `k` forces, one for each member:
 
-```text
-a_i = Σ_{t, s : t[s] = i} k(t)[s]
-```
+$$a_i = \sum_{t, s : t[s] = i} k(t)[s].$$
 
 The derivative of a coordinate is a function of displacements. The
 generated op takes them as further coordinates, after those of the sum:
@@ -349,9 +348,7 @@ B and C are choices for the planner later.
        : !vec -> !pairs
 ```
 
-```text
-N(x, h) = { {i, j} : i ≠ j, r_ij < r_c } \ E
-```
+$$N(\mathbf x, h) = \{ \{i, j\} : i \ne j,\ r_{ij} < r_c \} \setminus E.$$
 
 | Item | Proposal |
 |---|---|
@@ -421,42 +418,42 @@ Beyond the cutoff the attraction of Lennard-Jones is left out. The
 correction [[AllenTildesley2017]](references.md#allentildesley2017), [[Shirts2007]](references.md#shirts2007) adds its mean, for a uniform density beyond the cutoff, to
 the energy and the pressure:
 
-```text
-E_disp = − (2π N² / 3V) ⟨C6⟩ / r_c³        P_disp = 2 E_disp / V
-```
+$$E_\text{disp} = -\frac{2\pi N^2}{3V}\, \frac{\langle C_6\rangle}{r_c^3}, \qquad P_\text{disp} = \frac{2 E_\text{disp}}{V},$$
 
-with `⟨C6⟩` the mean of `C6 = 4 ε σ⁶` over the pairs of particles,
+with $\langle C_6\rangle$ the mean of $C_6 = 4\varepsilon\sigma^6$ over the pairs of particles,
 which the front end computes from the table and the counts of the types.
 It depends on the volume only, so it is a number on the host that
 changes with the cell. It is on by default when a topology is read, as in
 Amber; a control file asks for it with `dispersion_correction` in a pair term.
 
 As the engines do [[GromacsManual2025]](references.md#gromacsmanual2025),
-the correction takes the part of the term that decays as `r⁻⁶` and leaves
-the repulsion out. As GROMACS does, it takes `N² ⟨C6⟩`, with `⟨C6⟩` the
-mean of `C6` over the pairs of distinct particles that are not excluded;
+the correction takes the part of the term that decays as $r^{-6}$ and leaves
+the repulsion out. As GROMACS does, it takes $N^2 \langle C_6\rangle$, with $\langle C_6\rangle$ the
+mean of $C_6$ over the pairs of distinct particles that are not excluded;
 it agrees with GROMACS to 10⁻⁷. Its virial is six times its energy, so the pressure
-changes by `2 E_disp / V`. A switch or a shift of the potential inside the
+changes by $2 E_\text{disp} / V$. A switch or a shift of the potential inside the
 cutoff needs the integral of the change as well; M1 takes a plain cutoff
 only.
 
-sander leaves the repulsion out as well, but sums `N_a N_b C6_ab` over
+sander leaves the repulsion out as well, but sums $N_a N_b C_{6,ab}$ over
 all pairs of types, with no mean over the pairs that are not excluded
 (`vdw_correction` of `ew_setup.F90` in AmberTools). The two differ by
-some `N_excl / N²` of the correction, 4 × 10⁻⁴ of it for the dipeptide in
+some $N_\text{excl} / N^2$ of the correction, $4 \times 10^{-4}$ of it for the dipeptide in
 water; a comparison with sander states the difference.
 
 Not implemented, and kept here as an alternative: the correction from the
 whole expression of the term, integrated numerically beyond the cutoff,
 
-```text
-E = (2π / V) Σ_ab N_a N_b ∫_rc^∞ r² u_ab(r) dr
-W = (2π / V) Σ_ab N_a N_b ∫_rc^∞ r² (−r u_ab'(r)) dr
-```
+$$
+\begin{aligned}
+E &= \frac{2\pi}{V} \sum_{ab} N_a N_b \int_{r_c}^\infty r^2\, u_{ab}(r)\, dr, \\
+W &= \frac{2\pi}{V} \sum_{ab} N_a N_b \int_{r_c}^\infty r^2 \big(-r\, u_{ab}'(r)\big)\, dr,
+\end{aligned}
+$$
 
-over `x = r_c / r` in `(0, 1]`, which takes the repulsion and any term
-that decays faster than `r⁻³`. It differs from the correction above by
-`(σ / r_c)⁶ / 3` of it for Lennard-Jones, 10⁻³ at the cutoffs of M1, less
+over $x = r_c / r$ in $(0, 1]$, which takes the repulsion and any term
+that decays faster than $r^{-3}$. It differs from the correction above by
+$(\sigma / r_c)^6 / 3$ of it for Lennard-Jones, $10^{-3}$ at the cutoffs of M1, less
 than the error of the uniform density that both assume, and it would not
 agree with either engine. Lennard-Jones by particle mesh Ewald, for systems whose density
 beyond the cutoff is not uniform, such as membranes, is for later.
@@ -481,8 +478,8 @@ Designed in its own document when its stage begins. The parts:
 
 | Part | Where |
 |---|---|
-| The direct sum with `erfc(β r) / r` | A term over pairs, as any other |
-| The excluded pairs | A term over the tuples of `E` that takes `erf(β r) / r` out again (Section 6.1) |
+| The direct sum with $\operatorname{erfc}(\beta r) / r$ | A term over pairs, as any other |
+| The excluded pairs | A term over the tuples of $E$ that takes $\operatorname{erf}(\beta r) / r$ out again (Section 6.1) |
 | The self term | A number, from the charges |
 | The reciprocal sum | Spreading the charges to a grid with B-splines of order 4 [[Essmann1995]](references.md#essmann1995), a forward FFT, a product with the influence function, an inverse FFT, and the forces from the grid |
 | The virial | From the reciprocal energy of each wave vector, and from the direct sum as for pairs |
@@ -493,17 +490,17 @@ FFT, and differ in the influence function
 
 | Method | Cost | In MDIR |
 |---|---|---|
-| Ewald summation [[Ewald1921]](references.md#ewald1921), a sum over wave vectors | Of order N^(3/2) at best | The reference of the tests: a script with many wave vectors |
-| Smooth particle mesh Ewald [[Essmann1995]](references.md#essmann1995): B-splines, an FFT, and the forces from the gradient of the B-splines | N log N | The method of M1, as both engines use it |
-| P3M with forces from the potential (P3M-AD): the influence function that minimizes the error for the grid | N log N | A variant: another influence function in the same pipeline, when it is measured to help |
+| Ewald summation [[Ewald1921]](references.md#ewald1921), a sum over wave vectors | Of order $N^{3/2}$ at best | The reference of the tests: a script with many wave vectors |
+| Smooth particle mesh Ewald [[Essmann1995]](references.md#essmann1995): B-splines, an FFT, and the forces from the gradient of the B-splines | $N \log N$ | The method of M1, as both engines use it |
+| P3M with forces from the potential (P3M-AD): the influence function that minimizes the error for the grid | $N \log N$ | A variant: another influence function in the same pipeline, when it is measured to help |
 
 What the engines do differently, which MDIR must be able to do both ways
 to compare with them:
 
 | Item | GROMACS | Amber (sander, `eedmeth = 1`) | In MDIR |
 |---|---|---|---|
-| The direct sum at the cutoff | Shifted by a constant to zero, so that the energy is continuous | `erfc(β r) / r`, cut with no shift | A choice of the term, as the truncations of M0 are |
-| β | From `ewald-rtol`: the relative size of the direct sum at the cutoff | From `dsum_tol`, the same idea | From a tolerance, as both |
+| The direct sum at the cutoff | Shifted by a constant to zero, so that the energy is continuous | $\operatorname{erfc}(\beta r) / r$, cut with no shift | A choice of the term, as the truncations of M0 are |
+| $\beta$ | From `ewald-rtol`: the relative size of the direct sum at the cutoff | From `dsum_tol`, the same idea | From a tolerance, as both |
 | The grid | The largest spacing, `fourierspacing`, with sizes that the FFT handles fast | Grid sizes or a spacing | The same, with sizes of small prime factors |
 | The terms of the log | Coulomb (SR): the direct sum, the excluded pairs, and the self term; Coul. recip.: the reciprocal sum | Its own split | The terms kept apart, so that each can be compared |
 
@@ -513,10 +510,10 @@ Beside those:
   surface term (the dipole correction) is an option in both engines.
   Which one each applies by default is checked from their documentation
   before the stage begins.
-- The balance of the direct and the reciprocal sum (the cutoff, β, and
+- The balance of the direct and the reciprocal sum (the cutoff, $\beta$, and
   the grid) is tuned at run time by the engines. In MDIR it is a numeric
   parameter of the plan (A4), which a run can tune without compiling
-  again, since β and the grid enter the program as values.
+  again, since $\beta$ and the grid enter the program as values.
 - Methods of other kinds, such as fast multipole or multilevel summation,
   are not planned for M1; distributed particle mesh Ewald is M2c.
 
@@ -543,11 +540,11 @@ stage begins.
 
 | Item | Rule |
 |---|---|
-| Positions | After the drift, each water is brought back to its shape by the closed form of Miyamoto and Kollman [[Miyamoto1992]](references.md#miyamoto1992): the new triangle, about its center of mass, is the rigid one turned by three angles in the frame of the old plane. It is the solution of SHAKE with the constraint forces along the old bonds (checked against SHAKE converged to 10⁻¹⁵: 2 × 10⁻¹⁴ nm). The velocities take the change over the step, `Δx / dt`, as the first half of RATTLE [[Andersen1983]](references.md#andersen1983). |
+| Positions | After the drift, each water is brought back to its shape by the closed form of Miyamoto and Kollman [[Miyamoto1992]](references.md#miyamoto1992): the new triangle, about its center of mass, is the rigid one turned by three angles in the frame of the old plane. It is the solution of SHAKE with the constraint forces along the old bonds (checked against SHAKE converged to 10⁻¹⁵: 2 × 10⁻¹⁴ nm). The velocities take the change over the step, $\Delta\mathbf x / \Delta t$, as the first half of RATTLE [[Andersen1983]](references.md#andersen1983). |
 | Positions below double precision | M-SHAKE [[Krautler2001]](references.md#krautler2001) on the three bonds of the water, the two O–H and the H–H, with the iterations of Newton of the groups of SHAKE (D112). SETTLE computes the new positions, of the size of the water, and subtracts the old: in f32 the rounding of that change, about 10⁻⁷ Å, divided by the step, is an error of the velocities whose square adds kinetic energy at every step, the drift that [[Jung2026]](references.md#jung2026) finds for single precision. JAC NVE took 830 kcal/mol in 2 ns with SETTLE in f32 (after the fix of the divisions, 286), and 2 with M-SHAKE in f32, which carries the change itself; SETTLE in f64 also conserved the energy, at 581 against 724 ns/day. Both solve the same equations, SHAKE with the forces along the old bonds. |
 | Velocities | After the second kick, the impulses along the three bonds that leave no velocity along them: three linear equations, solved in closed form |
 | Old positions | Taken in the periods of the cell of the new ones: the bonds before the drift are moved by the same lattice vectors as the new bonds in the minimum image |
-| Virial | The mean of those of the forces of the constraints over the two halves of the step: `G_i = 2 m_i Δx_i / dt²` of the positions, with the bonds before the drift for arms, and `G_i = 2 m_i Δv_i / dt` of the velocities, with the bonds after it; `Σ (x_i − x_O) ⊗ G_i` of each. The mean is that of the pressure (D45). |
+| Virial | The mean of those of the forces of the constraints over the two halves of the step: $\mathbf G_i = 2 m_i \Delta\mathbf x_i / \Delta t^2$ of the positions, with the bonds before the drift for arms, and $\mathbf G_i = 2 m_i \Delta\mathbf v_i / \Delta t$ of the velocities, with the bonds after it; $\sum (\mathbf x_i - \mathbf x_O) \otimes \mathbf G_i$ of each. The mean is that of the pressure (D45). |
 | At the start | The drawn velocities have their parts along the bonds removed before they are scaled to the temperature. The positions are not constrained, as sander does not. |
 | Degrees of freedom | Three fewer for each water |
 | Temperature of the log | That of the velocities of the step: the forces do not give the kinetic energies of the half steps once the constraints act (D45) |
@@ -559,9 +556,9 @@ stage begins.
 | Item | Rule |
 |---|---|
 | Groups | With `hydrogen_bonds = true`, the bonds of hydrogen (`BONDS_INC_HYDROGEN` of Amber; a bond with an atom of atomic number 1 in GROMACS) outside the waters of SETTLE, grouped by their heavy atom: one to three hydrogens. A hydrogen bonded to two atoms, two hydrogens bonded to each other, and more than three hydrogens on an atom are errors. The bonds are dropped from the bond terms, as sander does with `ntf = 2`. |
-| Positions | SHAKE [[Ryckaert1977]]: the atoms move along the bonds before the drift, the hydrogens by λ_j s_j / m_j and the heavy atom by −Σ λ_j s_j / m_0. Each of 6 iterations of Newton solves the constraints linearized at the current bonds exactly, `Σ_j 2 (r_k · s_j)(δ_kj / m_j + 1 / m_0) λ_j = d_k² − r_k²`, by the elimination of RATTLE, so that the error squares with each; sweeps bond by bond shrink it only by about m_H / m_X, close to 1/2 with repartitioned masses of hydrogen, which 12 sweeps left at 10⁻⁴ of a bond and a step of 4 fs made unstable. The number is fixed, so the kernel has no test of convergence. |
-| Velocities | RATTLE [[Andersen1983]](references.md#andersen1983): the impulses along the bonds solve `A τ = −b` with `A_ij = δ_ij / m_j + e_i · e_j / m_0` exactly, by Gaussian elimination of at most 3 × 3 |
-| Virial, degrees of freedom, the start | As for SETTLE: the mean of the virials of the forces of the constraints over the two halves of the step, one degree of freedom less for each bond, and drawn velocities without parts along the bonds. The positions of the file are not constrained before the first step, as sander does not; the first step brings the bonds to their lengths. At the start, where no step has given the forces of the constraints, the log takes their virial as `Σ (x_k − x_0) · G⁰_k − 2 K_int` over each group: G⁰ = m P(F/m) − F keeps the accelerations on the constraints, and −2 K_int, twice the kinetic energy of the motion within the group, is the rest for a group that the constraints keep rigid (a water, a bond); for a group of SHAKE with two or three hydrogens it counts the bending as well, a few bar in a protein. |
+| Positions | SHAKE [[Ryckaert1977]]: the atoms move along the bonds before the drift, the hydrogens by $\lambda_j \mathbf s_j / m_j$ and the heavy atom by $-\sum_j \lambda_j \mathbf s_j / m_0$. Each of 6 iterations of Newton solves the constraints linearized at the current bonds exactly, $\sum_j 2 (\mathbf r_k \cdot \mathbf s_j)(\delta_{kj} / m_j + 1 / m_0)\, \lambda_j = d_k^2 - r_k^2$, by the elimination of RATTLE, so that the error squares with each; sweeps bond by bond shrink it only by about $m_H / m_X$, close to $1/2$ with repartitioned masses of hydrogen, which 12 sweeps left at 10⁻⁴ of a bond and a step of 4 fs made unstable. The number is fixed, so the kernel has no test of convergence. |
+| Velocities | RATTLE [[Andersen1983]](references.md#andersen1983): the impulses along the bonds solve $A \boldsymbol\tau = -\mathbf b$ with $A_{ij} = \delta_{ij} / m_j + \mathbf e_i \cdot \mathbf e_j / m_0$ exactly, by Gaussian elimination of at most $3 \times 3$ |
+| Virial, degrees of freedom, the start | As for SETTLE: the mean of the virials of the forces of the constraints over the two halves of the step, one degree of freedom less for each bond, and drawn velocities without parts along the bonds. The positions of the file are not constrained before the first step, as sander does not; the first step brings the bonds to their lengths. At the start, where no step has given the forces of the constraints, the log takes their virial as $\sum (\mathbf x_k - \mathbf x_0) \cdot \mathbf G^0_k - 2 K_\text{int}$ over each group: $\mathbf G^0 = m P(\mathbf F/m) - \mathbf F$ keeps the accelerations on the constraints, and $-2 K_\text{int}$, twice the kinetic energy of the motion within the group, is the rest for a group that the constraints keep rigid (a water, a bond); for a group of SHAKE with two or three hydrogens it counts the bending as well, a few bar in a protein. |
 | In the IR | An `md.gather_tuples` over a tuple set `shake1`, `shake2`, or `shake3`, the heavy atom first, for each half of the step; SETTLE comes first, then the groups of SHAKE, then the placement of the virtual sites |
 
 Three consequences reach other stages, and are recorded now:
@@ -578,9 +575,9 @@ The total momentum is removed where the velocities are drawn (M0). In a
 run it drifts: rounding in the forces, most in mixed precision, and the
 thermostat, which scales velocities, does not remove it.
 
-```text
-v_i ← v_i − (Σ_j m_j v_j) / (Σ_j m_j)       every `center_of_mass_interval` steps
-```
+$$\mathbf v_i \leftarrow \mathbf v_i - \frac{\sum_j m_j \mathbf v_j}{\sum_j m_j}$$
+
+every `center_of_mass_interval` steps.
 
 | Item | Proposal |
 |---|---|
@@ -660,22 +657,22 @@ Stochastic cell rescaling, isotropic, with velocity Verlet and leapfrog
 | Item | Rule |
 |---|---|
 | When | At the end of the step that completes a period of coupling, after the removal of the motion of the center of mass and the thermostat; `interval` equals `interval`. The last step of a period computes the virial for it. |
-| The pressure | `P = (2K + tr W) / (3V)`, with K the kinetic energy of the velocities of the step without that of the center of mass, W the virial of the step with those of the constraints (the mean of the two halves, Section 9.1), of the correction for the dispersion, and of the background of a net charge at the volume V of the cell before the scaling. No term k_B T / V. |
-| The change of the volume | One step of Euler and Maruyama over the period `Δt_p` of the equation for λ = √V, eq. (7) and eq. (S7) of [[Bernetti2020]](references.md#bernetti2020): `λ′ = λ − (f λ/2)(P0 − P − k_B T c/(2V)) + √(k_B T f c/2) R`, `Δε = 2 ln(λ′/λ)`, `f = β_T Δt_p / τ_p`. Its noise does not depend on the volume, which the paper's reversible integrators need; to first order it is the step of `dε = −(β_T/τ_p)(P0 − P) dt + √(2 k_B T β_T / (V τ_p)) dW`, eq. (5), which GROMACS takes. pressures in bar, `c = 16.6053906717` bar nm³ mol/kJ, T that of the bath. R is the normal number of stream 1 of the step (A13), drawn on the host (`mdrtBarostatStrain`). |
-| Scaling | The positions of every particle and the edges of the cell by `μ = exp(Δε/3)`, the velocities by `1/μ`; a group that the constraints keep rigid (a water of SETTLE, a group of SHAKE) moves with its center of mass and keeps its shape, since stretched bonds would be taken back by the constraints of the next step with a change of the velocities that heats the system. Virtual sites are placed again in the next step |
+| The pressure | $P = (2K + \operatorname{tr}\mathsf W) / (3V)$, with $K$ the kinetic energy of the velocities of the step without that of the center of mass, $\mathsf W$ the virial of the step with those of the constraints (the mean of the two halves, Section 9.1), of the correction for the dispersion, and of the background of a net charge at the volume $V$ of the cell before the scaling. No term $k_B T / V$. |
+| The change of the volume | One step of Euler and Maruyama over the period $\Delta t_p$ of the equation for $\lambda = \sqrt V$, eq. (7) and eq. (S7) of [[Bernetti2020]](references.md#bernetti2020): $\lambda' = \lambda - \tfrac12 f\lambda\, \big(P_0 - P - k_B T c/(2V)\big) + \sqrt{k_B T f c/2}\, R$, $\Delta\varepsilon = 2 \ln(\lambda'/\lambda)$, $f = \beta_T \Delta t_p / \tau_p$. Its noise does not depend on the volume, which the paper's reversible integrators need; to first order it is the step of $d\varepsilon = -(\beta_T/\tau_p)(P_0 - P)\, dt + \sqrt{2 k_B T \beta_T / (V \tau_p)}\, dW$, eq. (5), which GROMACS takes. Pressures in bar, $c = 16.6053906717$ bar nm³ mol/kJ, $T$ that of the bath. $R$ is the normal number of stream 1 of the step (A13), drawn on the host (`mdrtBarostatStrain`). |
+| Scaling | The positions of every particle and the edges of the cell by $\mu = \exp(\Delta\varepsilon/3)$, the velocities by $1/\mu$; a group that the constraints keep rigid (a water of SETTLE, a group of SHAKE) moves with its center of mass and keeps its shape, since stretched bonds would be taken back by the constraints of the next step with a change of the velocities that heats the system. Virtual sites are placed again in the next step |
 | The cell | Kept in memory on the host, where each iteration of a loop takes it, and the steps that follow a loop of periods in the same iteration take it again; the neighbor structures, whose test of validity compares the cell, are built again; the influence function of PME follows (pme-m1.md); the log and the trajectory take the new edges (`mdrtSetBox`); a checkpoint keeps them, and a restart takes them. A run stops if an edge becomes shorter than twice the cutoff, below which the minimum image misses pairs; a run that begins so is rejected |
 | The scaled positions | With `work = "EXACT"`, the default, the virtual sites are placed on the scaled positions, and those are evaluated in the new cell: their energy gives the work of the scaling, and their forces are those that the next step begins with (D77). With `"FIRST_ORDER"`, the next step begins with the forces of the positions before the scaling, and places the sites after its drift |
-| The conserved energy, exact | Takes away what the scaling gives: `U(x′) − U(x)`, the potential energy of the scaled positions less that of the positions before, and `(1/μ² − 1) K`, the change of the kinetic energy of the velocities it scales. Between scalings the dynamics is that of constant energy, so the conserved energy changes as there. On the mixture of `barostat.test`, 7.4 × 10⁻⁶ of its value over 8 ps instead of 2.2 × 10⁻³; on tri-alanine in 1218 OPC waters at 1 bar, 300 K, `time_constant = 2`, 2 fs, on a GPU in mixed precision (`examples/ala3`), 0.011 kcal/mol per ps instead of 2.1. The evaluation costs 0.13 ms per step at a period of coupling of 10 steps there, 20% of the rate (316 to 253 ns/day): the cost of the reversible integrator of [[Bernetti2020]](references.md#bernetti2020) (Table I; SI Sec. V.B), which this is but for the thermostat, applied once at the end of the period rather than in halves around the step. This conserved energy is not the paper's effective energy, which adds `P0 ΔV`, the terms of the noise, and the drift of eq. (7) to measure the violation of detailed balance (Sec. II.C); it tests the dynamics between scalings and the counting of the work, and the distribution of the volume tests the barostat |
-| The scaling of Trotter type, the default | The last two steps of a period follow its loop: the step of energy whose pressure gives the strain and the new cell, and `step_trotter`, which kicks half, drifts half, scales the positions by μ (the rigid groups with their centers) and the velocities by 1/μ, drifts the other half, and evaluates in the new cell with the virial ([[Bernetti2020]](references.md#bernetti2020), SI Sec. V.C, eqs. S12a–d; eqs. S13a and S15 have two misprints, D92). The conserved energy takes away `(1/μ² − 1) K` of the velocities scaled and `−ln μ (W_before + W_after) / 2`, the virials of the groups and the constant terms before and after the step. No evaluation is added; the count drifts with the period of coupling (D92) |
-| The period of coupling | The paper finds the fluctuations of the volume too large when `N_P Δt` is not small against `τ_p` (a TIP3P box at `τ_p` = 0.5 ps: σ²_V from 0.23 at `N_P` ≤ 10 to 0.45 nm⁶ at 100, Fig. 3b), with `N_P` = 10 as a compromise and little gain in rate beyond 20 to 40 in GROMACS (Fig. 4). A longer period that lowers the cost of the evaluation must keep `N_P Δt / τ_p` small |
-| The conserved energy, first order | Takes away `−(μ − 1) tr W_g`, the change of the potential energy to first order, as GROMACS does, and `(1/μ² − 1) K`, that of the kinetic energy, exactly. `W_g`, the virial of the rigid groups that move as wholes, is the W of the pressure above, which has the virial of the constraints, with twice the kinetic energy of the motion within the groups, `Σ ½ m |v − V|²` over each (the virial of the forces within a rigid group is minus that). What is left is the second order, `½ (μ − 1)² d²U/dμ²`, whose mean over the noise of Δε is proportional to its variance, and so to f: a drift that neither the time step nor the period of coupling reduces, only `time_constant`. On the mixture of `barostat.test` at 2 fs, 1.8 × 10⁻³ of the energy over 8 ps with `time_constant = 2`, 4.4 times less with `time_constant = 8`; on 1394 OPC waters with PME at 300 K and 1 bar, 2.1 kcal/mol per ps with `time_constant = 2` and 0.52 with `time_constant = 8`. The same runs at constant volume keep the conserved energy to 10⁻⁶ and 10⁻⁵ |
+| The conserved energy, exact | Takes away what the scaling gives: $U(\mathbf x') - U(\mathbf x)$, the potential energy of the scaled positions less that of the positions before, and $(1/\mu^2 - 1) K$, the change of the kinetic energy of the velocities it scales. Between scalings the dynamics is that of constant energy, so the conserved energy changes as there. On the mixture of `barostat.test`, 7.4 × 10⁻⁶ of its value over 8 ps instead of 2.2 × 10⁻³; on tri-alanine in 1218 OPC waters at 1 bar, 300 K, `time_constant = 2`, 2 fs, on a GPU in mixed precision (`examples/ala3`), 0.011 kcal/mol per ps instead of 2.1. The evaluation costs 0.13 ms per step at a period of coupling of 10 steps there, 20% of the rate (316 to 253 ns/day): the cost of the reversible integrator of [[Bernetti2020]](references.md#bernetti2020) (Table I; SI Sec. V.B), which this is but for the thermostat, applied once at the end of the period rather than in halves around the step. This conserved energy is not the paper's effective energy, which adds $P_0 \Delta V$, the terms of the noise, and the drift of eq. (7) to measure the violation of detailed balance (Sec. II.C); it tests the dynamics between scalings and the counting of the work, and the distribution of the volume tests the barostat |
+| The scaling of Trotter type, the default | The last two steps of a period follow its loop: the step of energy whose pressure gives the strain and the new cell, and `step_trotter`, which kicks half, drifts half, scales the positions by $\mu$ (the rigid groups with their centers) and the velocities by $1/\mu$, drifts the other half, and evaluates in the new cell with the virial ([[Bernetti2020]](references.md#bernetti2020), SI Sec. V.C, eqs. S12a–d; eqs. S13a and S15 have two misprints, D92). The conserved energy takes away $(1/\mu^2 - 1) K$ of the velocities scaled and $-\ln\mu\, (\mathsf W_\text{before} + \mathsf W_\text{after}) / 2$, the virials of the groups and the constant terms before and after the step. No evaluation is added; the count drifts with the period of coupling (D92) |
+| The period of coupling | The paper finds the fluctuations of the volume too large when $N_P \Delta t$ is not small against $\tau_p$ (a TIP3P box at $\tau_p = 0.5$ ps: $\sigma^2_V$ from 0.23 at $N_P \le 10$ to 0.45 nm⁶ at 100, Fig. 3b), with $N_P = 10$ as a compromise and little gain in rate beyond 20 to 40 in GROMACS (Fig. 4). A longer period that lowers the cost of the evaluation must keep $N_P \Delta t / \tau_p$ small |
+| The conserved energy, first order | Takes away $-(\mu - 1) \operatorname{tr}\mathsf W_g$, the change of the potential energy to first order, as GROMACS does, and $(1/\mu^2 - 1) K$, that of the kinetic energy, exactly. $\mathsf W_g$, the virial of the rigid groups that move as wholes, is the $\mathsf W$ of the pressure above, which has the virial of the constraints, with twice the kinetic energy of the motion within the groups, $\sum \tfrac12 m \lVert\mathbf v - \mathbf V\rVert^2$ over each (the virial of the forces within a rigid group is minus that). What is left is the second order, $\tfrac12 (\mu - 1)^2\, d^2U/d\mu^2$, whose mean over the noise of $\Delta\varepsilon$ is proportional to its variance, and so to $f$: a drift that neither the time step nor the period of coupling reduces, only `time_constant`. On the mixture of `barostat.test` at 2 fs, 1.8 × 10⁻³ of the energy over 8 ps with `time_constant = 2`, 4.4 times less with `time_constant = 8`; on 1394 OPC waters with PME at 300 K and 1 bar, 2.1 kcal/mol per ps with `time_constant = 2` and 0.52 with `time_constant = 8`. The same runs at constant volume keep the conserved energy to 10⁻⁶ and 10⁻⁵ |
 | Parameters of `[ensemble]` | `ensemble = "NPT"`, `barostat = "C-RESCALE"`, `pressure` in atm, `time_constant` in ps (5 by default), `compressibility` in 1/atm (4.5 × 10⁻⁵ /bar by default); `coupling = "ISOTROPIC"` only |
 
 The drift of the conserved energy on tri-alanine in 1218 OPC waters
 (`examples/ala3`, 4,905 particles, from its checkpoint after 100 ps at
 constant pressure; 100 ps of each, 2 fs, SETTLE and SHAKE, PME, an RTX
 3090, velocity Verlet, the barostat with the exact work and the step in
-λ, thermostat and barostat every 10 steps, `time_constant` 0.5 ps, `time_constant` 2 ps),
+$\lambda$, thermostat and barostat every 10 steps, `time_constant` 0.5 ps, `time_constant` 2 ps),
 from the slope of a line through the rows of the log:
 
 | Ensemble | Mixed: kcal/mol/ps | kJ/mol/ns per atom | ns/day | Double: kcal/mol/ps | kJ/mol/ns per atom | ns/day |
@@ -776,7 +773,7 @@ for the dispersion follows the volume.
 |---|---|
 | The readers | MDIR has readers of its own. They accept what the engines accept and share no code with them. The engines and their tools are under the GPL and the LGPL; their behavior is learned from their documentation and their code, and written down as a specification, from which the readers are written. |
 | What a reader hands on | A description of the system that does not depend on the format: particles, types, tuple sets with their parameters, the table of pairs of types, exclusions, pairs three bonds apart, constraints, the cell. A format is a reader more. |
-| Units and forms | A reader converts to the units and the forms of [conventions.md](conventions.md) (D62): for Amber, twice the force constants of bonds and angles, the charges divided by 18.2223, and `σ` and `ε` of Lennard-Jones from `ACOEF` and `BCOEF`. The control file stays in Å and kcal/mol (D36). |
+| Units and forms | A reader converts to the units and the forms of [conventions.md](conventions.md) (D62): for Amber, twice the force constants of bonds and angles, the charges divided by 18.2223, and $\sigma$ and $\varepsilon$ of Lennard-Jones from `ACOEF` and `BCOEF`. The control file stays in Å and kcal/mol (D36). |
 | What is an error | What M1 cannot run: CMAP, 10-12 terms, 12-6-4 terms, polarizability, virtual sites and extra points, cells that are not orthorhombic. Each with the milestone that brings it. |
 | Formats of other engines | Planned |
 
@@ -832,7 +829,7 @@ own right after the execution of terms over tuples (Section 18).
 | Test | Compared with | Tolerance |
 |---|---|---|
 | Energy, forces, and virial of each kind of bonded term, for chains of a few particles | A script that evaluates the definitions and checks its forces against finite differences | 1e-10 |
-| The same with particles in line and with a dihedral of π | The same | 1e-10 |
+| The same with particles in line and with a dihedral of $\pi$ | The same | 1e-10 |
 | A neighbor structure with exclusions | A search over all pairs | Exact |
 | Lookup in a table, pairs three bonds apart | A script | 1e-10 |
 | Particle mesh Ewald | An Ewald sum [[Ewald1921]](references.md#ewald1921) with many wave vectors, in a script | That of the parameters |
@@ -890,7 +887,7 @@ into the home directory.
 | 13 | An intermediate stage | Flexible water, a Coulomb cutoff, 0.5 fs, validated before particle mesh Ewald and constraints (Section 1.4) | D54 |
 | 14 | The motion of the center of mass | Removed every `center_of_mass_interval` steps (Section 10) | D60 |
 | 15 | The command line | One program with subcommands (Section 14) | D59 |
-| 16 | The forms of the terms and the meaning of their parameters | One convention, [conventions.md](conventions.md), which the readers convert into: `½ k` for bonds and angles, `σ` and `ε` for Lennard-Jones | D62 |
+| 16 | The forms of the terms and the meaning of their parameters | One convention, [conventions.md](conventions.md), which the readers convert into: $\tfrac12 k$ for bonds and angles, $\sigma$ and $\varepsilon$ for Lennard-Jones | D62 |
 | 17 | The molecules that SETTLE constrains | Chosen by `[ settles ]` or by `water_residues` (Section 9) | D63 |
 
 ## 17. Open questions
@@ -907,7 +904,7 @@ into the home directory.
 | M1a | Tuple sets, internal coordinates, differentiation, loops over tuples on the CPU and on a GPU | Chains of particles with bonds, angles, and dihedrals, at constant energy | Done: energy, forces, and virial agree with a reference in double and mixed precision, on the CPU, with OpenMP, and on a GPU; 200 steps of velocity Verlet agree to 1e-9. Loops over tuples are not fused with each other yet. |
 | M1b | The command line (Section 14) | The runs of M0 through `mdir run` | Done |
 | M1c | Exclusions in the neighbor build; pairs three bonds apart | Chains with Lennard-Jones | Done: energy, forces, and virial agree with a reference on the CPU, with OpenMP, and on a GPU |
-| M1d | Tables, NBFIX, the rule `product`, a Coulomb cutoff, the correction for the dispersion | A mixture of charged types | Done. The IR has `!md.table` and `md.lookup`. The driver takes `[[energy.pair_override]]`, which turns the parameters of a term into tables of pairs of types, the rule `product`, the name `coulomb` for the constant of CODATA 2018, and `dispersion_correction` for each pair term, with a plain cutoff. The correction takes the r⁻⁶ part of the term and the N(N − 1) ordered pairs, as GROMACS does; excluded pairs come out of the count once topologies are read (M1e). |
+| M1d | Tables, NBFIX, the rule `product`, a Coulomb cutoff, the correction for the dispersion | A mixture of charged types | Done. The IR has `!md.table` and `md.lookup`. The driver takes `[[energy.pair_override]]`, which turns the parameters of a term into tables of pairs of types, the rule `product`, the name `coulomb` for the constant of CODATA 2018, and `dispersion_correction` for each pair term, with a plain cutoff. The correction takes the $r^{-6}$ part of the term and the $N(N - 1)$ ordered pairs, as GROMACS does; excluded pairs come out of the count once topologies are read (M1e). |
 | M1e | The readers of both formats; renumbering of the members with the order | Alanine dipeptide in flexible water, at constant energy with 0.5 fs | In part. Both readers are done: the terms of a run from a topology agree with sander but for the conventions, and with GROMACS to 10⁻⁶ for amber99sb-ildn, amber99sb, amber03, and amber14sb and for a made-up topology that uses the preprocessor and the defaults of bonded types (Section 15). Done. A run from a topology puts the particles in the order of the positions where it begins and where each segment begins; `md_exec.renumber` gives the members of the tuples at their new places, from the members of the files and the numbers of the particles, and the incidence structures and the exclusions of the neighbor structures are built again for the segment. |
 | M1f | Comparison of the intermediate stage with AmberTools and GROMACS | | This completes the intermediate stage |
 | M1g | Removal of the motion of the center of mass, random numbers, the thermostat | At constant temperature | Done (D67). Philox 4×32-10 agrees with the known answers of Random123, and the factor of the thermostat samples the canonical distribution of the kinetic energy. On a mixture of Lennard-Jones, the conserved energy changes by 2.5 × 10⁻⁵ over 20000 steps at constant temperature, on the CPU and on a GPU; a trajectory is the same for any grouping of steps into loops and across a restart. A drift of every particle is removed to a momentum of 10⁻¹³ amu nm/ps. The schedule uses the driver's own loops and `func.call`s, not yet the `dyn` ops of Section 11.2. |
@@ -937,27 +934,29 @@ For a site `s` built from `i`, `j`, and `k`, with `d_ji = x_j − x_i` and
 
 The extra point of Amber depends only on the directions of the two bonds
 to the hydrogens. It lies where the linear rule puts it only when the two
-bonds have the lengths that `a` of GROMACS was computed for:
-`a = b = d / (2 r_OH cos(θ/2))`.
+bonds have the lengths that $a$ of GROMACS was computed for:
+$a = b = d / (2 r_\text{OH} \cos(\theta/2))$.
 
 ### 19.2 Forces and virial
 
 The force on a site goes to its atoms by the transpose of the derivative of
-its position, `F_k += (∂x_s/∂x_k)ᵀ F_s`, and the site keeps none. For the
-linear rule the atoms take `(1 − a − b) F_s`, `a F_s`, and `b F_s`. For the
-extra point of Amber, with `b̂ = (û + v̂) / |û + v̂|` and `P(n) = I − n nᵀ`:
+its position, $\mathbf F_k \mathrel{+}= (\partial\mathbf x_s/\partial\mathbf x_k)^{\mathsf T} \mathbf F_s$, and the site keeps none. For the
+linear rule the atoms take $(1 - a - b)\, \mathbf F_s$, $a\, \mathbf F_s$, and $b\, \mathbf F_s$. For the
+extra point of Amber, with $\hat{\mathbf b} = (\hat{\mathbf u} + \hat{\mathbf v}) / \lVert\hat{\mathbf u} + \hat{\mathbf v}\rVert$ and $P(\mathbf n) = I - \mathbf n \mathbf n^{\mathsf T}$:
 
-```text
-F_j = a / (|d_ji| |û + v̂|) · P(û) P(b̂) F_s
-F_k = a / (|d_ki| |û + v̂|) · P(v̂) P(b̂) F_s
-F_i = F_s − F_j − F_k
-```
+$$
+\begin{aligned}
+\mathbf F_j &= \frac{a}{\lVert\mathbf d_{ji}\rVert\, \lVert\hat{\mathbf u} + \hat{\mathbf v}\rVert}\, P(\hat{\mathbf u})\, P(\hat{\mathbf b})\, \mathbf F_s, \\
+\mathbf F_k &= \frac{a}{\lVert\mathbf d_{ki}\rVert\, \lVert\hat{\mathbf u} + \hat{\mathbf v}\rVert}\, P(\hat{\mathbf v})\, P(\hat{\mathbf b})\, \mathbf F_s, \\
+\mathbf F_i &= \mathbf F_s - \mathbf F_j - \mathbf F_k.
+\end{aligned}
+$$
 
 A hydrogen takes no force along its own bond: stretching the bond does
 not move the site.
 
 The virial of the pair terms is summed with the site as a particle. The
-sum over the atoms after the move differs by `Σ_k (x_k − x_s) ⊗ F_k` over
+sum over the atoms after the move differs by $\sum_k (\mathbf x_k - \mathbf x_s) \otimes \mathbf F_k$ over
 the three atoms of each site, which is 0 for the linear rule, since the
 weights sum to 1, and is added for the extra point of Amber.
 
@@ -991,17 +990,17 @@ virtual sites of GROMACS, are rejected.
 | Dipeptide in OPC, the terms at the start, against sander (`test/Driver/amber-opc.test`) | Agree but for the conventions of amber.test |
 | A peptide in TIP4P-Ew, against GROMACS (Section 15) | Agree to 4 × 10⁻⁶ |
 | Three OPC waters: the change of the total energy with the time step (`test/Driver/virtual-sites.test`) | Shrinks as its square, 6.8 × 10⁻⁴ at 0.1 fs and 1.7 × 10⁻⁴ at 0.05 fs |
-| The same: the trace of the virial against `−dU/dλ` under a uniform scaling of the atoms and the cell | Agree to 6 × 10⁻⁶; without the change of Section 19.2, 35.84 instead of 43.57 kcal/mol |
+| The same: the trace of the virial against $-dU/d\lambda$ under a uniform scaling of the atoms and the cell | Agree to 6 × 10⁻⁶; without the change of Section 19.2, 35.84 instead of 43.57 kcal/mol |
 | The order of the positions, against that of the files (`test/Driver/amber-opc-spatial_order.test`) | The same states to 2 × 10⁻¹⁵ |
 
 ## 20. CMAP
 
 A CMAP term [[MacKerell2004]](references.md#mackerell2004) is an energy of
-two dihedrals of five atoms, φ of atoms 1 to 4 and ψ of atoms 2 to 5, read
-from a map: a grid of n × n energies at φ and ψ from −180° in steps of
-h = 360°/n, with φ the slower index in both formats. ff19SB
+two dihedrals of five atoms, $\phi$ of atoms 1 to 4 and $\psi$ of atoms 2 to 5, read
+from a map: a grid of $n \times n$ energies at $\phi$ and $\psi$ from $-180°$ in steps of
+$h = 360°/n$, with $\phi$ the slower index in both formats. ff19SB
 [[Tian2020]](references.md#tian2020) has a map for each amino acid, of
-n = 24; amber19sb.ff of GROMACS has the same maps in kJ/mol.
+$n = 24$; amber19sb.ff of GROMACS has the same maps in kJ/mol.
 
 ### 20.1 The patches
 
@@ -1010,9 +1009,9 @@ from the values and three derivatives at its corners:
 
 | Item | Rule |
 |---|---|
-| Derivatives at the points | dE/dφ and dE/dψ from cubic splines along each line of the grid; the cross derivative from the splines of dE/dφ along ψ. A spline is **not periodic**: it is the natural spline through the line repeated to 2n points, from −360° to 345°, taken at its central n points. A periodic spline differs by up to 4.5 × 10⁻⁸ kcal/mol. |
-| The patch | The Hermite bicubic `E(t, u) = Σ c_ij t^i u^j` that matches the value, `h dE/dφ`, `h dE/dψ`, and `h² d²E/dφdψ` at the four corners, with t and u the places of φ and ψ in the cell, from 0 to 1: `C = M F Mᵀ` with `M = [[1, 0, 0, 0], [0, 0, 1, 0], [−3, 3, −2, −1], [2, −2, 1, 1]]` |
-| The cell | `a = ⌊(φ + 180°)/h⌋ mod n`, `t = (φ + 180°)/h − ⌊…⌋`, likewise for ψ; φ = 180° is the first cell with t = 0 |
+| Derivatives at the points | $\partial E/\partial\phi$ and $\partial E/\partial\psi$ from cubic splines along each line of the grid; the cross derivative from the splines of $\partial E/\partial\phi$ along $\psi$. A spline is **not periodic**: it is the natural spline through the line repeated to $2n$ points, from $-360°$ to $345°$, taken at its central $n$ points. A periodic spline differs by up to 4.5 × 10⁻⁸ kcal/mol. |
+| The patch | The Hermite bicubic $E(t, u) = \sum c_{ij} t^i u^j$ that matches the value, $h\, \partial E/\partial\phi$, $h\, \partial E/\partial\psi$, and $h^2\, \partial^2 E/\partial\phi\partial\psi$ at the four corners, with $t$ and $u$ the places of $\phi$ and $\psi$ in the cell, from $0$ to $1$: $C = M F M^{\mathsf T}$ with $M$ the matrix of rows $(1, 0, 0, 0)$, $(0, 0, 1, 0)$, $(-3, 3, -2, -1)$, $(2, -2, 1, 1)$ |
+| The cell | $a = \lfloor (\phi + 180°)/h \rfloor \bmod n$, $t = (\phi + 180°)/h - \lfloor (\phi + 180°)/h \rfloor$, likewise for $\psi$; $\phi = 180°$ is the first cell with $t = 0$ |
 | Units | kcal/mol in a `prmtop`, kJ/mol in `[ cmaptypes ]` |
 
 The driver computes the 16 coefficients of every cell of every map before
@@ -1039,7 +1038,7 @@ CMAP adds no exclusions and no pairs three bonds apart.
 
 sander computes a dihedral as the arccosine of its cosine, with the sign of
 its sine; near 0° and ±180° the rounding of the cosine becomes an error of
-the angle of about 10⁻¹² deg²/δ at δ degrees from them, up to 1.5 × 10⁻⁶
+the angle of about $10^{-12}\,\text{deg}^2/\delta$ at $\delta$ degrees from them, up to 1.5 × 10⁻⁶
 degrees. MDIR computes the dihedral as GROMACS does, accurately there, so
 its CMAP energies may differ from sander's by up to about 3 × 10⁻⁷
 kcal/mol within a few thousandths of a degree of 0° or ±180°, and by less
@@ -1052,11 +1051,11 @@ steepest descent (D73):
 
 | Item | Rule |
 |---|---|
-| Direction | `g = P (F / m)`: the force over the mass, 0 for virtual sites, with P the projection that RATTLE applies to velocities, which takes off the parts along the bonds of SETTLE and SHAKE at the current positions |
-| Step | `x' = x + h g / ‖g‖₁₆`, with `‖g‖₁₆ = r (Σ (|g_i| / r)¹⁶)^(1/16)` and r the root mean square of |g|; since `‖g‖₁₆ ≥ max |g_i|`, no particle moves farther than h. Then SETTLE and SHAKE take the groups back to their shapes from x, and the sites are placed |
-| Acceptance | The step is taken if the energy at x' is lower: h grows by 1.2, to at most 1 Å; otherwise x stays and h shrinks by 0.2. The choice is made particle by particle (a map that selects), so that the fields keep storage of their own |
+| Direction | $\mathbf g = P(\mathbf F / m)$: the force over the mass, $0$ for virtual sites, with $P$ the projection that RATTLE applies to velocities, which takes off the parts along the bonds of SETTLE and SHAKE at the current positions |
+| Step | $\mathbf x' = \mathbf x + h\, \mathbf g / \lVert\mathbf g\rVert_{16}$, with $\lVert\mathbf g\rVert_{16} = r \big(\sum_i (\lVert\mathbf g_i\rVert / r)^{16}\big)^{1/16}$ and $r$ the root mean square of $\lVert\mathbf g_i\rVert$; since $\lVert\mathbf g\rVert_{16} \ge \max_i \lVert\mathbf g_i\rVert$, no particle moves farther than $h$. Then SETTLE and SHAKE take the groups back to their shapes from $\mathbf x$, and the sites are placed |
+| Acceptance | The step is taken if the energy at $\mathbf x'$ is lower: $h$ grows by 1.2, to at most 1 Å; otherwise $\mathbf x$ stays and $h$ shrinks by 0.2. The choice is made particle by particle (a map that selects), so that the fields keep storage of their own |
 | Loops | Over the intervals between frames (one if there are none), over the intervals between energies in each, and over the steps; one `dyn.step @descend` per step, which evaluates the energy and the forces once |
-| Log | The potential energy with the constant terms, the root mean square and the largest of the forces `m g` without their parts along the constraints, in kcal/mol/Å, over the particles with mass, the particle of the largest, and h in Å |
+| Log | The potential energy with the constant terms, the root mean square and the largest of the forces $m\mathbf g$ without their parts along the constraints, in kcal/mol/Å, over the particles with mass, the particle of the largest, and $h$ in Å |
 | Checkpoint | At the end, with `checkpoint` of `[output]`: the positions, velocities of 0, and the integrator `MIN`. A run that reads it, a minimization or a run of dynamics, takes the positions and the cell and begins anew at step 0 with drawn velocities; a minimization takes the positions and the cell of any checkpoint |
 | Keywords | `method = "STEEPEST_DESCENT"`, `steps`, `energy_interval` (a divisor of `steps`), `trajectory_interval` (a multiple of it), `initial_step` in Å (0.1). No thermostat or barostat. A tolerance on the force is planned; in mixed precision the forces are rounded to about 10⁻⁵ of their size, which bounds how far a minimization can go |
 
@@ -1073,9 +1072,9 @@ the file of coordinates (D74):
 
 | Item | Rule |
 |---|---|
-| Energy | `k |x − x_ref|²` for each selected particle with mass, k in kcal/mol/Å² (`force_constant`), as Amber's `restraint_wt`; the constants of restraints that select the same particle add |
-| Reference | The positions of the file of coordinates of `[input]`, also when the run begins from a checkpoint. Under a barostat, those positions times L/L₀, the edge of the cell over that of the file, so that the reference follows the cell as the positions do |
-| Forces, energy, virial | After the evaluation of the potential and the spreading of the forces of virtual sites, in every step, at the start, and in a minimization: `F −= 2k d` with `d = x − x_ref`, `U += Σ k |d|²`, and `W += diag(Σ −2k d⊙d)`, whose trace, −2U, is exact; the off-diagonal elements are left out. The log lists the energy of the restraints among the terms |
+| Energy | $k \lVert\mathbf x - \mathbf x^\text{ref}\rVert^2$ for each selected particle with mass, $k$ in kcal/mol/Å² (`force_constant`), as Amber's `restraint_wt`; the constants of restraints that select the same particle add |
+| Reference | The positions of the file of coordinates of `[input]`, also when the run begins from a checkpoint. Under a barostat, those positions times $L/L_0$, the edge of the cell over that of the file, so that the reference follows the cell as the positions do |
+| Forces, energy, virial | After the evaluation of the potential and the spreading of the forces of virtual sites, in every step, at the start, and in a minimization: $\mathbf F \mathrel{-}= 2k\mathbf d$ with $\mathbf d = \mathbf x - \mathbf x^\text{ref}$, $U \mathrel{+}= \sum k \lVert\mathbf d\rVert^2$, and $\mathsf W \mathrel{+}= \operatorname{diag}\big(\sum -2k\, \mathbf d \odot \mathbf d\big)$, whose trace, $-2U$, is exact; the off-diagonal elements are left out. The log lists the energy of the restraints among the terms |
 | Selection | `selection`, a mask of Amber in part: `:` residues by numbers (from 1) or names, `@` atoms by numbers or names, `:res@atoms`, `*`, with `!`, `&`, `|` and parentheses, in that order of precedence, and `*` and `?` in names. `!:WAT & !@H*` is every heavy atom but those of the waters. A mask that selects no particle with mass is an error; a run from `coordinates` has no names to select by |
 
 On the target of D65, a run at constant energy with the heavy atoms of the
@@ -1117,16 +1116,16 @@ What each quantity is taken from:
 
 | Quantity | Velocity Verlet | Leapfrog |
 |---|---|---|
-| Energy, virial, pressure in the log | `x_{n+1}` and `v_{n+1}` of the step with energies | The same `x_{n+1}` and `v_{n+1}` |
-| Virial of the constraints | ½ of the impulses of the positions (`G = 2mΔ/dt²` for `x' = x_n + dt v_n + dt² f_n/2m`) and ½ of those of the velocities (Section 9) | The same: the step with energies drifts from `P(v_{n−½} + h f_n/m)`, the form above, so `Δ` has the same meaning. The plain step, whose drift is a whole kick, computes no virial |
-| Thermostat alone | Scales `v_n`, with its kinetic energy | Scales `v_{n−½}`, with its kinetic energy, as GROMACS does with leapfrog |
-| Barostat (and the thermostat with it) | Pressure from `v_{n+1}`; scales `x_{n+1}` by `μ` and `v_{n+1}` by `α/μ`; carries `f′ = F(x′_{n+1})` (D77) | Pressure from `v_{n+1}`; scales `x_{n+1}` by `μ` and `v_{n+1}` by `α/μ`; carries `f′` and stores `v'_{n+½} = v'_{n+1} − h f′/m`, so that the next step is that of velocity Verlet |
+| Energy, virial, pressure in the log | $\mathbf x_{n+1}$ and $\mathbf v_{n+1}$ of the step with energies | The same $\mathbf x_{n+1}$ and $\mathbf v_{n+1}$ |
+| Virial of the constraints | $\tfrac12$ of the impulses of the positions ($\mathbf G = 2m\boldsymbol\Delta/\Delta t^2$ for $\mathbf x' = \mathbf x_n + \Delta t\, \mathbf v_n + \Delta t^2 \mathbf f_n/2m$) and $\tfrac12$ of those of the velocities (Section 9) | The same: the step with energies drifts from $P(\mathbf v_{n-1/2} + h \mathbf f_n/m)$, the form above, so $\boldsymbol\Delta$ has the same meaning. The plain step, whose drift is a whole kick, computes no virial |
+| Thermostat alone | Scales $\mathbf v_n$, with its kinetic energy | Scales $\mathbf v_{n-1/2}$, with its kinetic energy, as GROMACS does with leapfrog |
+| Barostat (and the thermostat with it) | Pressure from $\mathbf v_{n+1}$; scales $\mathbf x_{n+1}$ by $\mu$ and $\mathbf v_{n+1}$ by $\alpha/\mu$; carries $\mathbf f' = \mathbf F(\mathbf x'_{n+1})$ (D77) | Pressure from $\mathbf v_{n+1}$; scales $\mathbf x_{n+1}$ by $\mu$ and $\mathbf v_{n+1}$ by $\alpha/\mu$; carries $\mathbf f'$ and stores $\mathbf v'_{n+1/2} = \mathbf v'_{n+1} - h \mathbf f'/m$, so that the next step is that of velocity Verlet |
 
 The barostat couples the velocities of the time of the positions: scaling
-the stored `v_{n+½}` by `1/μ` would leave the half kick `h f_{n+1}/m` in
-`v_{n+1}` unscaled, and the kinetic energy of the log would change by
-`(1/μ − 1) h Σ v_{n+½}·f_{n+1}` more than the work that the barostat
-counts. That term follows `dU/dt`; while the barostat compresses the target
+the stored $\mathbf v_{n+1/2}$ by $1/\mu$ would leave the half kick $h \mathbf f_{n+1}/m$ in
+$\mathbf v_{n+1}$ unscaled, and the kinetic energy of the log would change by
+$(1/\mu - 1)\, h \sum \mathbf v_{n+1/2} \cdot \mathbf f_{n+1}$ more than the work that the barostat
+counts. That term follows $dU/dt$; while the barostat compresses the target
 of D65 by a fifth over 10 ps, the conserved energy drifted by 4.3 × 10⁻³
 of its value with it, and by 1.3 × 10⁻³ without it, as with velocity
 Verlet (1.4 × 10⁻³), with the work counted to first order. With the exact
@@ -1137,7 +1136,7 @@ of velocity Verlet to the bit (`test/Driver/barostat.test`).
 The stored velocities are half a kick behind the ones the coupling leaves
 without the motion of the center of mass. The forces of PME do not sum to
 zero (their interpolation does not conserve momentum), so the momentum of
-the stored velocities is `−h Σ f`, 10⁻² amu nm/ps on the target of D65,
+the stored velocities is $-h \sum \mathbf f$, 10⁻² amu nm/ps on the target of D65,
 where that of velocity Verlet is at the rounding.
 
 A checkpoint of leapfrog holds the forces, as one of velocity Verlet does,

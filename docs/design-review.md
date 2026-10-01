@@ -49,7 +49,7 @@ and `ensemble`. See Section 5.
 
 ### 2.2 Differentiation is unassigned
 
-`md.evaluate` requests forces, virial, and `dH/dλ`, all of which are
+`md.evaluate` requests forces, virial, and $dH/d\lambda$, all of which are
 derivatives of the energy. The design never says which layer differentiates.
 This cannot be deferred, because it constrains the layers below:
 
@@ -100,13 +100,13 @@ bufferization.
 
 ### 2.4 Locality is richer than a radius
 
-"Support 5 Å implies halo ≥ 5 Å" holds only for a single-pass pair potential
+"Support 5 Å implies halo $\ge$ 5 Å" holds only for a single-pass pair potential
 with no list buffering. In general the halo depends on:
 
 | Source | Effect on halo |
 |---|---|
 | Verlet buffer (skin) [[Verlet1967]](references.md#verlet1967) | Halo is cutoff plus skin; skin is an execution choice. |
-| Message passing with L layers | Either a halo of L × cutoff with no per-layer exchange, or a halo of one cutoff with a feature exchange per layer. This is a cost-model decision. |
+| Message passing with $L$ layers | Either a halo of $L$ times the cutoff with no per-layer exchange, or a halo of one cutoff with a feature exchange per layer. This is a cost-model decision. |
 | Many-body terms (EAM [[Daw1984]](references.md#daw1984), Tersoff [[Tersoff1988]](references.md#tersoff1988)) | Intermediate per-particle fields must be communicated between passes. |
 | Bonded terms | Determined by the spatial extent of bonded groups, not by a cutoff. |
 | Constraints, virtual sites, rigid bodies | Coupled atoms must be co-located or communicated. These live in `dyn`, so `md_dist` needs input from `dyn` as well as `md`. |
@@ -235,15 +235,15 @@ and with reproducibility (Section 4).
   partition and the cell grid. This follows from Section 2.3 but deserves its
   own test case.
 - **Time-dependent Hamiltonians.** Metadynamics [[Laio2002]](references.md#laio2002) and other history-dependent
-  biases update Hamiltonian parameters from inside the dynamics. `H(x; θ)`
-  allows this only if something is permitted to write `θ`.
+  biases update Hamiltonian parameters from inside the dynamics. $H(\mathbf x; \theta)$
+  allows this only if something is permitted to write $\theta$.
 - **Front end.** The notes do not say how users produce `md` IR. Importers
   for existing force-field and topology formats are also what makes
   validation against reference engines possible.
 - **MLFF import.** Real models are trained in PyTorch. An `mlff` dialect
   needs an import path, and weights need a storage strategy. With an opaque
   `md.external_potential`, per-layer feature exchange is unavailable and the
-  halo must be L × cutoff.
+  halo must be $L$ times the cutoff.
 - **AoS layout.** A `memref` has a single element type, so an array of
   structures with mixed field types (for example `f32` position with `i32`
   species) cannot be one `memref`. SoA and AoSoA are unaffected.
