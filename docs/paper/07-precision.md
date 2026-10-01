@@ -205,8 +205,9 @@ order of $2^{-24}\lVert\Delta\mathbf x\rVert \approx 10^{-9}$ Å
 (Section 6.2 derives the iteration). Below double precision MDIR therefore
 constrains the water by M-SHAKE on its three distances (two O–H and the
 H–H), in f32; double precision keeps SETTLE, which is exact in closed
-form. Over 2 ns of JAC the total energy then fell by 5.7 kcal/mol in the
-first 40 ps, the transient of the start that Section 13 describes, and
+form. Over 2 ns of JAC the total energy then fell by 5.7 kcal/mol by the
+first row of the log at 40 ps, the transient of the first few ps that
+Section 13 traces to the input, which pmemd.cuda shows too, and
 afterward rose along a fitted line by 1.5 kcal/mol/ns, with rows scattered
 by 1.3 kcal/mol about it; pmemd.cuda on the same input rose by 5.9
 kcal/mol/ns (scatter 2.1). The rate was that of before, 722 ns/day over

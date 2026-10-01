@@ -87,7 +87,8 @@ method of second order should.
 long run at the production step. JAC (23,558 atoms) at constant energy,
 2 fs, SHAKE on the bonds of hydrogen and rigid water, in the mixed
 precision of the suite, ran 2 ns at 722 ns/day. Its total energy fell by
-5.7 kcal/mol in the first 40 ps and then rose by 1.5 kcal/mol/ns, a
+5.7 kcal/mol by the first row of the log at 40 ps, in the first few ps
+as finer logs show for both programs (Section 13), and then rose by 1.5 kcal/mol/ns, a
 slope fitted to the rows after 40 ps, $2.6\times10^{-4}$ kJ/mol/ns per
 atom; pmemd.cuda 26 (SPFP) on the same input rose by 5.9 kcal/mol/ns,
 $1.0\times10^{-3}$ kJ/mol/ns per atom (Figure 7.1, D112). MDIR in double precision did not drift

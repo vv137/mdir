@@ -17,20 +17,21 @@ the spreading of PME has (D70), would close the gap.
 
 **Open observations from the measurements of this paper.**
 
-- *A transient at the start of the runs of JAC.* From the restart files
-  of the suite, the total energy of JAC at 2 fs falls by 5.7 kcal/mol in
-  the first 40 ps and then stays within the scatter of the rows; the run
-  in double precision falls by as much (Figure 7.1, right), so the
-  transient comes from the input, not from the precision. At 4 fs
-  with repartitioned masses (`jac_nve_4fs`) the restart starts, by MDIR's
-  count of the degrees of freedom and masses, at 567 K; the total energy
-  jumps by about +154 kcal/mol in the first 1000 steps and stays flat
-  within $\pm 7$ kcal/mol over the remaining 9000. The jump is the same
-  with one list and with the dual list. Whether it comes from velocities
-  of the file that do not satisfy the constraints, or from the masses
-  with which they were written, is not yet established; the change of the
-  energy that Section 10 reports for these runs of 10,000 steps measures
-  the transient, not a drift.
+- *A transient at the start of the runs of JAC, explained.* It comes
+  from the inputs of the suite, and pmemd.cuda has it too. At 2 fs the
+  total energy falls by about 6 kcal/mol in the first 3 to 5 ps and is
+  then flat in both programs (MDIR from $-58163.7$ to about $-58169$;
+  pmemd.cuda from $-58134.4$ at 1 ps to about $-58140.5$), and in MDIR in
+  double precision as well (Figure 7.1, right). The input at 4 fs
+  (`JAC_production_NVE_4fs`) is the restart file of the input at 2 fs,
+  the same coordinates and velocities, with a topology whose hydrogen
+  masses are repartitioned: hydrogens of three times the mass move at the
+  speeds of light ones, so both programs start at 568 K. In the first 50
+  steps both relax to about 404 K, and the total energy rises by 160
+  kcal/mol in MDIR and 177 in pmemd.cuda (from its step 1), the error of a
+  step of 4 fs at that temperature, before both run flat at about 401 K.
+  The change of the energy that Section 10 reports for these runs
+  measures the transient, not a drift.
 - *Groups against the matrix with a switched Lennard–Jones potential.* On
   the argon–krypton mixture of `barostat.test` in double precision, the
   potential energy at step 0 differs between the groups and the matrix by
