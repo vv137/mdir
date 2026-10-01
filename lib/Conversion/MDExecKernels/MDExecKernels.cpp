@@ -513,9 +513,11 @@ SmallVector<Value> kernels::emitGroupPairKernel(
         for (unsigned i = 0; i != numOuts; ++i)
           carried.push_back(createZero(b, loc, yieldType(i)));
         carried.append(acc.begin(), acc.end());
+        // The counter in i32: an index is 64 bits on the device, two
+        // additions and two comparisons a step.
         auto steps = scf::ForOp::create(
-            b, loc, createIndex(b, loc, 0), createIndex(b, loc, 16),
-            createIndex(b, loc, 1), carried,
+            b, loc, constant32(b, 0), constant32(b, 16), constant32(b, 1),
+            carried,
             [&](OpBuilder &s, Location, Value, ValueRange state) {
               Value otherPosition = state[0];
               Value bits = state[1];

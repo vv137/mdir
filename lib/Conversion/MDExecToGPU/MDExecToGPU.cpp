@@ -18,6 +18,7 @@
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/GPU/Utils/GPUUtils.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/LLVMIR/NVVMDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -3039,6 +3040,28 @@ public:
                           flags | arith::FastMathFlags::contract));
         });
       });
+    // An approximate division in f32 is a product with an approximate
+    // reciprocal that flushes subnormal numbers (D98).
+    getOperation()->walk([](gpu::LaunchOp launch) {
+      SmallVector<arith::DivFOp> divisions;
+      launch.getBody().walk([&](arith::DivFOp op) {
+        if (op.getType().isF32() &&
+            arith::bitEnumContainsAll(op.getFastmath(),
+                                      arith::FastMathFlags::afn))
+          divisions.push_back(op);
+      });
+      for (arith::DivFOp op : divisions) {
+        OpBuilder builder(op);
+        Value reciprocal = NVVM::RcpApproxFtzF32Op::create(
+            builder, op.getLoc(), builder.getF32Type(), op.getRhs());
+        Value result = reciprocal;
+        if (!matchPattern(op.getLhs(), m_OneFloat()))
+          result = arith::MulFOp::create(builder, op.getLoc(), op.getLhs(),
+                                         reciprocal, op.getFastmath());
+        op.replaceAllUsesWith(result);
+        op.erase();
+      }
+    });
   }
 };
 } // namespace

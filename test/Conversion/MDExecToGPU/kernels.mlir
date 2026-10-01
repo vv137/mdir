@@ -391,6 +391,30 @@ func.func @deferred(%v: memref<?x3xf64, 1>, %a: memref<?xf64, 1>,
 }
 
 
+// An approximate division in f32 is a product with an approximate
+// reciprocal (D98); 1 / x is the reciprocal alone, and a division that may
+// not be approximated stays.
+//
+// CHECK-LABEL: func.func @reciprocal(
+// CHECK:         gpu.launch
+// CHECK:           %[[R:[0-9]+]] = nvvm.rcp.approx.ftz.f %{{.*}} : f32
+// CHECK-NOT:       arith.mulf %{{.*}}, %[[R]]
+// CHECK:           %[[S:[0-9]+]] = nvvm.rcp.approx.ftz.f %{{.*}} : f32
+// CHECK:           arith.mulf %{{.*}}, %[[S]] fastmath<afn>
+// CHECK:           arith.divf %{{.*}} : f32
+func.func @reciprocal(%a: memref<?xf32, 1>, %b: memref<?xf32, 1>) {
+  md_exec.particle_for ins(%a, %b : memref<?xf32, 1>, memref<?xf32, 1>)
+      outs(%a : memref<?xf32, 1>) {
+  ^bb0(%a_i: f32, %b_i: f32):
+    %one = arith.constant 1.0 : f32
+    %r = arith.divf %one, %b_i fastmath<afn> : f32
+    %q = arith.divf %a_i, %b_i fastmath<afn> : f32
+    %e = arith.divf %q, %r : f32
+    md_exec.yield %e : f32
+  }
+  return
+}
+
 // The template for devices is in the module.
 //
 // CHECK: func.func private @mdrt_gpu_build_neighbors_matrix(

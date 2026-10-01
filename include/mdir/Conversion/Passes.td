@@ -95,6 +95,12 @@ def ConvertMDExecToGPU
     iteration, the stack that the iteration has taken: the lowering of a
     launch puts the arguments on the stack.
 
+    A division in f32 that may be approximated (`afn`, from
+    `md-exec-approximate`) becomes a product with `nvvm.rcp.approx.ftz.f`,
+    which flushes subnormal numbers: the division of the backend,
+    `div.approx.f32`, scales its operands where they are subnormal or very
+    large, five instructions more (D98).
+
     The result is lowered further by the upstream pipeline
     `gpu-lower-to-nvvm-pipeline`.
   }];
@@ -125,6 +131,7 @@ def ConvertMDExecToGPU
                            "::mlir::func::FuncDialect",
                            "::mlir::gpu::GPUDialect",
                            "::mlir::LLVM::LLVMDialect",
+                           "::mlir::NVVM::NVVMDialect",
                            "::mlir::math::MathDialect",
                            "::mlir::memref::MemRefDialect",
                            "::mlir::scf::SCFDialect",
