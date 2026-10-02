@@ -95,8 +95,15 @@ DCD of the version of CHARMM (MDIR's are) as such unless told otherwise:
 truncated octahedron: without `ucell`, 29.608 Å and 91.28° for 29.604 Å
 and 109.47°). A rectangular cell reads the same either way. A checkpoint stores
 $H$ whole; one of M1, three edges, is read as a diagonal $H$. The log
-reports the volume $a_x b_y c_z$; `scripts/render/movie.py` and
-`scripts/benchmarks/mdbench/structure.py` take the angles of a DCD.
+reports the volume $a_x b_y c_z$. `scripts/render/movie.py` takes the
+angles of a DCD (and the PSF of CHARMM as a structure): it makes molecules
+whole and puts their centers in the image nearest to the center of the
+view with the minimum image in one pass, and draws the Wigner–Seitz cell of
+the lattice, the box of an orthorhombic cell, the truncated octahedron, the
+rhombic dodecahedron, or the hexagonal prism, from the planes halfway to
+the 26 nearest points of the lattice; an orthorhombic frame renders as
+before, pixel for pixel. Analyses with cpptraj read MDIR's triclinic frames
+with `ucell`, as above.
 
 ## 2. Invariants
 

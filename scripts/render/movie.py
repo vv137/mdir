@@ -1,22 +1,29 @@
 #!/usr/bin/env python3
 """Renders a trajectory of MDIR as a movie, with the edges of the cell:
 a lipid bilayer seen from the side, or a protein in water, with a camera
-that turns slowly about the normal of the bilayer (z) or the vertical.
+that turns slowly about the normal of the bilayer (z) or the vertical. The
+cell may be triclinic: a truncated octahedron, a rhombic dodecahedron, or
+the hexagonal prism of a membrane (docs/triclinic-m2.md).
 
     scripts/render/movie.py STRUCTURE TRAJECTORY.dcd... MOVIE.mp4
         [--mode membrane|protein] [--ps 10...] [--fps 25] [--stride 1]
         [--width 1280] [--height 720] [--jobs 8]
 
 STRUCTURE gives the names of the atoms and residues: an Amber topology
-(.prmtop, .parm7), or a .gro in the order of the topology, as `gmx
-editconf` or ParmEd writes it; each TRAJECTORY
-is a DCD with the cell in each frame, as `[output] trajectory` writes it,
-and they are played one after the other; PS is the time between the
-frames of each (one value for all, or one for each). Bonds are found once from the distances of
+(.prmtop, .parm7), a PSF of CHARMM, or a .gro in the order of the
+topology, as `gmx editconf` or ParmEd writes it; each TRAJECTORY
+is a DCD with the cell in each frame, as `[output] trajectory` writes it
+(the lengths and the cosines of its angles), and they are played one after
+the other; PS is the time between the frames of each (one value for all,
+or one for each). Bonds are found once from the distances of
 the first frame; each molecule is made whole along them in every frame and
-put into the cell by its center, so that what crosses a face of the cell
-stays whole and sticks out of it. Hydrogens and virtual sites are not
-drawn; waters are their oxygens.
+put into the cell by its center, the image of its center nearest to that
+of the view, so that what crosses a face of the cell stays whole and
+sticks out of it. The cell drawn is the region nearer to the center of the
+view than to any of its images (the Wigner-Seitz cell of the lattice): the
+box of an orthorhombic cell, the shape of a truncated octahedron or a
+rhombic dodecahedron, the hexagonal prism of a hexagonal cell. Hydrogens
+and virtual sites are not drawn; waters are their oxygens.
 
 Needs numpy, matplotlib, and ffmpeg on PATH (the environment ~/opt/render
 has them).
@@ -90,13 +97,87 @@ def read_prmtop(path):
             np.array(sections["ATOM_NAME"]))
 
 
+def read_psf(path):
+    """The same as read_gro from a PSF of CHARMM: a residue for each segment,
+    residue number, and name."""
+    lines = open(path).read().splitlines()
+    at = next(k for k, line in enumerate(lines) if "!NATOM" in line)
+    count = int(lines[at].split()[0])
+    index, residue_names, names, previous = [], [], [], None
+    for line in lines[at + 1:at + 1 + count]:
+        fields = line.split()
+        key = (fields[1], fields[2], fields[3])
+        if key != previous:
+            index.append(len(index) and index[-1] + 1)
+            previous = key
+        else:
+            index.append(index[-1])
+        residue_names.append(fields[3])
+        names.append(fields[4])
+    return np.array(index), np.array(residue_names), np.array(names)
+
+
 def element(name):
     letter = name.lstrip("0123456789")[:1].upper()
     return letter if letter in "CHNOPS" else "X"
 
 
+def lower_cell(a, cos_gamma, b, cos_beta, cos_alpha, c):
+    """The lower-triangular cell H, whose rows are the vectors a, b, c, of
+    the lengths and the cosines of the angles."""
+    bx = b * cos_gamma
+    by = np.sqrt(max(b * b - bx * bx, 0.0))
+    cx = c * cos_beta
+    cy = (b * c * cos_alpha - bx * cx) / by
+    cz = np.sqrt(max(c * c - cx * cx - cy * cy, 0.0))
+    return np.array([[a, 0.0, 0.0], [bx, by, 0.0], [cx, cy, cz]])
+
+
+def image(d, cell):
+    """The minimum image of the displacements d (..., 3) in the lower-
+    triangular cell: in one pass along c, b, and a, which for an
+    orthorhombic cell is the image of each axis."""
+    d = d.copy()
+    for k in (2, 1, 0):
+        d -= np.round(d[..., k:k + 1] / cell[k, k]) * cell[k]
+    return d
+
+
+def wigner_seitz(cell):
+    """The vertices of the region nearer to the origin than to any other
+    point of the lattice, and its edges (pairs of vertices): from the
+    planes halfway to the 26 points a lattice vector or less away along
+    each of a, b, and c, which are those of a reduced cell."""
+    steps = np.array([[i, j, k] for i in (-1, 0, 1) for j in (-1, 0, 1)
+                      for k in (-1, 0, 1) if (i, j, k) != (0, 0, 0)], float)
+    normals = steps @ cell
+    offsets = 0.5 * np.einsum("ij,ij->i", normals, normals)
+    scale = np.sqrt(offsets.max())
+    triples = np.array([(i, j, k) for i in range(26) for j in range(i + 1, 26)
+                        for k in range(j + 1, 26)])
+    m = normals[triples]
+    regular = np.abs(np.linalg.det(m)) > 1e-9 * scale ** 3
+    triples, m = triples[regular], m[regular]
+    points = np.linalg.solve(m, offsets[triples][..., None])[..., 0]
+    inside = np.all(points @ normals.T <= offsets + 1e-7 * scale ** 2, axis=1)
+    # Rounded, and with -0 made 0, which np.unique tells apart.
+    points = np.unique(np.round(points[inside] / scale, 9) + 0.0,
+                       axis=0) * scale
+    on = np.abs(points @ normals.T - offsets) <= 1e-7 * scale ** 2
+    # The faces: the planes that hold three vertices not on one line.
+    faces = []
+    for plane in range(26):
+        p = points[on[:, plane]]
+        if len(p) >= 3 and np.linalg.matrix_rank(p[1:] - p[0], tol=1e-6 * scale) == 2:
+            faces.append(plane)
+    edges = [(i, j) for i in range(len(points)) for j in range(i + 1, len(points))
+             if np.sum(on[i, faces] & on[j, faces]) >= 2]
+    return points, edges
+
+
 def read_dcd(path):
-    """The cells (Å, edges a, b, c) and the positions (Å) of the frames."""
+    """The cells (Å, lower-triangular, the rows the vectors a, b, c) and the
+    positions (Å) of the frames."""
     data = open(path, "rb").read()
     blocks, at = [], 0
     while at < len(data):
@@ -113,8 +194,9 @@ def read_dcd(path):
     frames = blocks[3:]
     cells, positions = [], []
     for start in range(0, len(frames) - 3, 4):
+        # The lengths and cosines, a, cos γ, b, cos β, cos α, c.
         values = struct.unpack_from("<6d", data, frames[start][0])
-        cells.append([values[0], values[2], values[5]])
+        cells.append(lower_cell(*values))
         xyz = [np.frombuffer(data, dtype="<f4", count=count, offset=o)
                for o, _ in frames[start + 1:start + 4]]
         positions.append(np.stack(xyz, axis=1))
@@ -130,8 +212,7 @@ def find_bonds(x, cell, residue, elements):
     for r in range(len(starts)):
         a = np.arange(starts[r], ends[min(r + 1, len(starts) - 1)])
         d = x[a][:, None, :] - x[a][None, :, :]
-        d -= cell * np.round(d / cell)
-        d = np.linalg.norm(d, axis=2)
+        d = np.linalg.norm(image(d, cell), axis=2)
         hydrogen = elements[a] == "H"
         limit = np.where(hydrogen[:, None] | hydrogen[None, :], 1.25, 1.95)
         site = elements[a] == "X"
@@ -206,7 +287,7 @@ def whole(x, cell, levels):
     x = x.copy()
     for level in levels:
         d = x[level[:, 1]] - x[level[:, 0]]
-        x[level[:, 1]] = x[level[:, 0]] + d - cell * np.round(d / cell)
+        x[level[:, 1]] = x[level[:, 0]] + image(d, cell)
     return x
 
 
@@ -281,10 +362,12 @@ class Scene:
             self.bonds = bonds[keep]
         # The extent of the view: the cell of the first frame from every
         # angle of the camera, with a margin.
-        L = cells[0]
-        radius = 0.5 * np.hypot(L[0], L[1])
+        corners, _ = wigner_seitz(cells[0])
+        across = np.hypot(corners[:, 0], corners[:, 1])
+        radius = across.max()
         tilt = np.radians(args.tilt)
-        half = 0.5 * L[2] * np.cos(tilt) + radius * np.sin(tilt)
+        half = np.max(np.abs(corners[:, 2]) * np.cos(tilt)
+                      + across * np.sin(tilt))
         self.half_height = 1.06 * max(half, radius * args.height / args.width)
         self.half_width = self.half_height * args.width / args.height
 
@@ -292,17 +375,20 @@ class Scene:
         cell = self.cells[index]
         x = whole(self.positions[index], cell, self.levels)
         # The center of the view: the protein, or the bilayer along z (the
-        # circular mean, since it may straddle a face).
+        # circular mean, since it may straddle a face), the middle of the
+        # cell along a and b.
         if self.args.mode == "protein":
             center = x[self.focus].mean(axis=0)
         else:
-            center = 0.5 * cell
-            center[2] = circular_mean(x[self.focus, 2], cell[2])
+            height = cell[2, 2]
+            z = circular_mean(x[self.focus, 2], height) if len(self.focus) \
+                else 0.5 * height
+            center = 0.5 * (cell[0] + cell[1]) + (z / height) * cell[2]
         centers = np.zeros((self.molecules, 3))
         np.add.at(centers, self.molecule, x)
         centers /= np.bincount(self.molecule)[:, None]
-        shift = cell * np.round((centers - center) / cell)
-        x -= shift[self.molecule]
+        offsets = centers - center
+        x -= (offsets - image(offsets, cell))[self.molecule]
         return x - center, cell
 
     def draw_protein(self, axes, x, project):
@@ -368,11 +454,7 @@ class Scene:
         axes.axis("off")
 
         # The edges of the cell, those behind the center under the atoms.
-        h = 0.5 * cell
-        corners = np.array([[i, j, k] for i in (-1, 1) for j in (-1, 1)
-                            for k in (-1, 1)]) * h
-        edges = [(a, b) for a in range(8) for b in range(a + 1, 8)
-                 if np.sum(corners[a] != corners[b]) == 1]
+        corners, edges = wigner_seitz(cell)
         cu, cv, cd = project(corners)
         for a, b in edges:
             front = cd[a] + cd[b] < 0
@@ -394,12 +476,12 @@ class Scene:
 
         time = self.times[index] / 1000
         if args.mode == "membrane":
-            area = cell[0] * cell[1]
+            area = cell[0, 0] * cell[1, 1]
             label = (f"{time:6.2f} ns   area {area / 100:6.2f} nm²   "
-                     f"height {cell[2] / 10:5.2f} nm")
+                     f"height {cell[2, 2] / 10:5.2f} nm")
         else:
             label = (f"{time:6.2f} ns   volume "
-                     f"{np.prod(cell) / 1000:6.2f} nm³")
+                     f"{np.prod(np.diag(cell)) / 1000:6.2f} nm³")
         axes.text(0.02, 0.97, label, transform=axes.transAxes,
                   color="white", fontsize=15, va="top", family="monospace",
                   zorder=6)
@@ -443,6 +525,8 @@ def main():
 
     if args.structure.endswith((".prmtop", ".parm7", ".top7")):
         residue, residue_names, names = read_prmtop(args.structure)
+    elif args.structure.endswith(".psf"):
+        residue, residue_names, names = read_psf(args.structure)
     else:
         residue, residue_names, names = read_gro(args.structure)
     steps = args.ps * len(args.trajectory) if len(args.ps) == 1 else args.ps
