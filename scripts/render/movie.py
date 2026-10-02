@@ -143,6 +143,23 @@ def image(d, cell):
     return d
 
 
+def nearest_image(d, cell):
+    """The image of the displacements d (..., 3) nearest to the origin: that
+    of `image` or one a lattice vector from it along each of a, b, and c.
+    `image` is the nearest only within half of the least of a_x, b_y, c_z;
+    the Wigner-Seitz cell of a truncated octahedron or a rhombic
+    dodecahedron reaches beyond, where it can take another image."""
+    d = image(d, cell)
+    steps = np.array([[i, j, k] for i in (-1, 0, 1) for j in (-1, 0, 1)
+                      for k in (-1, 0, 1)], float) @ cell
+    # The image itself first, so that a tie keeps it.
+    steps = steps[np.argsort(np.linalg.norm(steps, axis=1), kind="stable")]
+    candidates = d[..., None, :] - steps
+    lengths = np.einsum("...ij,...ij->...i", candidates, candidates)
+    best = np.argmin(lengths, axis=-1)
+    return np.take_along_axis(candidates, best[..., None, None], axis=-2)[..., 0, :]
+
+
 def wigner_seitz(cell):
     """The vertices of the region nearer to the origin than to any other
     point of the lattice, and its edges (pairs of vertices): from the
@@ -388,7 +405,7 @@ class Scene:
         np.add.at(centers, self.molecule, x)
         centers /= np.bincount(self.molecule)[:, None]
         offsets = centers - center
-        x -= (offsets - image(offsets, cell))[self.molecule]
+        x -= (offsets - nearest_image(offsets, cell))[self.molecule]
         return x - center, cell
 
     def draw_protein(self, axes, x, project):
