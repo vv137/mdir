@@ -58,7 +58,12 @@ struct PairOverride {
   std::vector<std::pair<std::string, double>> parameters;
 };
 
-enum class Truncation { None, Shift, Switch, ForceSwitch };
+/// How the Lennard-Jones term is truncated at the cutoff: not at all, shifted
+/// to 0, switched, or with its force switched, as a cubic polynomial added to
+/// the force (`force_switch` of the IR) or with the force of each inverse
+/// power switched on its own [Steinbach1994] (`PowerForceSwitch`, for the
+/// Lennard-Jones of a topology only).
+enum class Truncation { None, Shift, Switch, ForceSwitch, PowerForceSwitch };
 enum class Integrator { VelocityVerlet, Leapfrog };
 enum class Target { CPU, GPU };
 enum class Precision { Single, Mixed, Double };

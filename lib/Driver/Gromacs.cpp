@@ -1189,21 +1189,28 @@ llvm::Error TopologyReader::expandMolecule(const MoleculeType &molecule,
     topology.bonds.push_back(term);
   }
 
-  // Angles: function 1, ½ k (θ − θ0)², with θ0 in degrees then k.
+  // Angles: function 1, ½ k (θ − θ0)², with θ0 in degrees then k; function
+  // 5 adds ½ k_UB (r₁₃ − r13)² between the outer atoms (Urey–Bradley), with
+  // r13 then k_UB after them.
   for (const Interaction &angle : molecule.angles) {
-    if (angle.function != 1)
+    int function = angle.function;
+    if (function != 1 && function != 5)
       return fail(*angle.line,
-                  "only angles of function 1 are supported, not " +
-                      llvm::Twine(angle.function));
+                  "only angles of functions 1 and 5 are supported, not " +
+                      llvm::Twine(function));
     std::vector<double> p = angle.parameters;
     if (p.empty()) {
-      const BondedType *entry = lookup("angletypes:1", bonded(angle));
+      const BondedType *entry =
+          lookup("angletypes:" + std::to_string(function), bonded(angle));
       if (!entry)
         return fail(*angle.line, "no [ angletypes ] for this angle");
       p = entry->parameters;
     }
-    if (p.size() != 2 && p.size() != 4)
-      return fail(*angle.line, "expected 2 parameters of an angle");
+    size_t count = function == 5 ? 4 : 2;
+    if (p.size() != count && p.size() != 2 * count)
+      return fail(*angle.line, "expected " + llvm::Twine(count) +
+                                   " parameters of an angle of function " +
+                                   llvm::Twine(function));
     Topology::Angle term;
     term.i = offset + angle.atoms[0];
     term.j = offset + angle.atoms[1];
@@ -1211,17 +1218,45 @@ llvm::Error TopologyReader::expandMolecule(const MoleculeType &molecule,
     term.theta0 = p[0] * radiansPerDegree;
     term.force = p[1];
     topology.angles.push_back(term);
+    if (function == 5 && p[3] != 0.0)
+      topology.ureyBradleys.push_back(
+          {term.i, term.k, /*force=*/p[3], /*r0=*/p[2]});
   }
 
   // Dihedrals: functions 1, 4, and 9, k (1 + cos(n φ − φ0)), with φ0 in
-  // degrees, then k, then n.
+  // degrees, then k, then n; function 2, the harmonic improper
+  // ½ k (ξ − ξ0)², with ξ0 in degrees then k.
   for (const Interaction &dihedral : molecule.dihedrals) {
     int function = dihedral.function;
-    if (function != 1 && function != 4 && function != 9)
+    if (function != 1 && function != 2 && function != 4 && function != 9)
       return fail(*dihedral.line,
-                  "only periodic dihedrals (functions 1, 4, and 9) are "
-                  "supported, not " +
+                  "only periodic dihedrals (functions 1, 4, and 9) and "
+                  "harmonic impropers (function 2) are supported, not " +
                       llvm::Twine(function));
+    if (function == 2) {
+      std::vector<double> p = dihedral.parameters;
+      if (p.empty()) {
+        DihedralMatch match = matchDihedral(molecule, dihedral);
+        if (!match.list)
+          return fail(*dihedral.line,
+                      "no [ dihedraltypes ] for this dihedral");
+        p = (*match.list)[match.index].parameters;
+      }
+      if (p.size() != 2 && p.size() != 4)
+        return fail(*dihedral.line,
+                    "expected 2 parameters of a harmonic improper");
+      if (p[1] == 0.0)
+        continue;
+      Topology::HarmonicImproper term;
+      term.i = offset + dihedral.atoms[0];
+      term.j = offset + dihedral.atoms[1];
+      term.k = offset + dihedral.atoms[2];
+      term.l = offset + dihedral.atoms[3];
+      term.xi0 = p[0] * radiansPerDegree;
+      term.force = p[1];
+      topology.harmonicImpropers.push_back(term);
+      continue;
+    }
     std::vector<std::vector<double>> terms;
     if (!dihedral.parameters.empty()) {
       terms.push_back(dihedral.parameters);

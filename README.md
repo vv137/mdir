@@ -6,8 +6,10 @@ constraints, and the couplings are written in dialects of molecular
 dynamics, differentiated, fused, given a precision, and lowered to the CPU
 with OpenMP or to NVIDIA GPUs, specialized to the system at hand. The first
 milestone runs all-atom systems from Amber (`prmtop`) and GROMACS (`top`,
-`itp`, `gro`) topologies: bonded terms with CMAP, Lennard-Jones with the
-correction for the dispersion, particle mesh Ewald, SHAKE and SETTLE,
+`itp`, `gro`) topologies, the Amber and CHARMM force fields among them:
+bonded terms with CMAP and Urey–Bradley angles, Lennard-Jones with the
+correction for the dispersion or CHARMM's force switch, particle mesh
+Ewald, SHAKE and SETTLE,
 virtual sites, restraints, stochastic velocity rescaling, and stochastic
 cell rescaling, in single, mixed, or double precision. On an RTX 3090 it
 runs every system of the Amber GPU benchmark suite at 103% to 132% of the
@@ -26,6 +28,7 @@ paper of the first milestone is in [docs/paper/](docs/paper/README.md).
 | [docs/driver-m0.md](docs/driver-m0.md) | The driver and its control file |
 | [docs/neighbors-m0.md](docs/neighbors-m0.md) | How neighbor structures are built and kept valid, with measurements |
 | [docs/design-m1.md](docs/design-m1.md) | The design of the first milestone: bonded terms, exclusions, PME, constraints, virtual sites, thermostat, barostat, and their validation |
+| [docs/charmm-m1.md](docs/charmm-m1.md) | CHARMM force fields: what CHARMM computes (measured with CHARMM 51b1), the force switch of Steinbach and Brooks, converting CHARMM files, and the validation against CHARMM |
 | [docs/paper/](docs/paper/README.md) | The white paper of the first milestone, with derivations and measurements (`scripts/paper/build-pdf.sh` builds the PDF) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to build, test, and change MDIR |
 | [docs/decisions.md](docs/decisions.md) | Decisions and their status |

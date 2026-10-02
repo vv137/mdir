@@ -3,7 +3,10 @@
 **Scope of the first milestone.** MDIR runs on one device, a CPU with
 OpenMP or one NVIDIA GPU. Cells are orthorhombic; the barostat is
 isotropic or semi-isotropic, with no coupling of the shape of the cell
-(anisotropic or triclinic). Electrostatics are particle mesh Ewald or a cutoff; there
+(anisotropic or triclinic). Topologies are read in the formats of Amber and
+GROMACS; a CHARMM force field runs from a topology of GROMACS with its
+Urey–Bradley angles, harmonic impropers, and the force switch of CHARMM
+(D121), but the files of CHARMM itself are not read. Electrostatics are particle mesh Ewald or a cutoff; there
 is no implicit solvent, no polarizable model, and no learned potential.
 The distributed lowering (`md_dist`), the joint planner that would choose
 structures and layouts, and the `mlff` and `ensemble` dialects of the

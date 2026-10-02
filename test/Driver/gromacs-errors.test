@@ -9,7 +9,7 @@
 # RUN: not mdir check %t/type.toml 2>&1 | FileCheck %s --check-prefix=TYPE
 # RUN: not mdir check %t/missing.toml 2>&1 | FileCheck %s --check-prefix=MISSING
 
-# RB: rb.top:17: only periodic dihedrals (functions 1, 4, and 9) are supported, not 3
+# RB: rb.top:17: only periodic dihedrals (functions 1, 4, and 9) and harmonic impropers (function 2) are supported, not 3
 # CMAP: cmap.top:9: a map of 25 by 25 points is not supported; the numbers must be equal and even
 # ENDIF: endif.top:1: #endif without #ifdef in this file
 # INCLUDE: include.top:1: the included file 'nowhere.itp' is not found next to this file, in the include path, or in GMXLIB

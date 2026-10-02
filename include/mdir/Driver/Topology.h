@@ -74,9 +74,24 @@ struct Topology {
     double sigma, epsilon;
   };
 
+  /// `½ k (r − r0)²` between the outer atoms `i` and `k` of an angle: the
+  /// term of Urey and Bradley that CHARMM force fields add to some angles.
+  struct UreyBradley {
+    unsigned i, k;
+    double force, r0;
+  };
+  /// `½ k (ξ − ξ0)²` of the dihedral ξ of `i, j, k, l`, with the difference
+  /// taken in [−π, π): a harmonic improper.
+  struct HarmonicImproper {
+    unsigned i, j, k, l;
+    double force, xi0;
+  };
+
   std::vector<Bond> bonds;
   std::vector<Angle> angles;
+  std::vector<UreyBradley> ureyBradleys;
   std::vector<Dihedral> dihedrals;
+  std::vector<HarmonicImproper> harmonicImpropers;
   std::vector<Pair> pairs;
   /// Rigid waters of three sites that SETTLE constrains: the first atom,
   /// the oxygen, and the two after it, with the distances O–H and H–H.

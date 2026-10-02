@@ -169,9 +169,18 @@ For the force switch, with $F = -u'(r_c)$, $F' = -u''(r_c)$, and
 $\Delta = r_c - r_s$, a cubic added to the force makes the force and its
 slope vanish at $r_c$: $A = (F'\Delta - 3F)/\Delta^2$,
 $B = (2F - F'\Delta)/\Delta^3$, and $C = u(r_c) - \tfrac{A}{3}\Delta^3 -
-\tfrac{B}{4}\Delta^4$. For a power law this is the force switch of
-[[Steinbach1994]](references.md#steinbach1994); the pass derives $u'$ and $u''$ at $r_c$ from the
-kernel, so it applies to any $u$.
+\tfrac{B}{4}\Delta^4$. For a power law this is the force switch of the
+GROMACS manual [[GromacsManual2025]](references.md#gromacsmanual2025); the pass derives $u'$ and $u''$ at $r_c$
+from the kernel, so it applies to any $u$. It is not the force switch of
+Steinbach and Brooks [[Steinbach1994]](references.md#steinbach1994), CHARMM's VFSWITCH, which multiplies
+the force of each inverse power $r^{-n}$ by a switch linear in $r^{n/2}$:
+$\Phi_n = r^{-n} - (r_s r_c)^{-n/2}$ below $r_s$ and
+$\Phi_n = k_n (r^{-n/2} - r_c^{-n/2})^2$ above, with
+$k_n = r_c^{n/2}/(r_c^{n/2} - r_s^{n/2})$. Defined only for a sum of
+powers, it is not a kind of `truncation`; the driver writes it into the
+Lennard-Jones of a topology, where it is CHARMM's to $2.2\times10^{-9}$
+(D121). The two differ by a constant below $r_s$ and by up to 60% above
+it: 9.23 kcal/mol on 12,017 particles of CHARMM36m.
 
 **Exchange contracts.** A pair kernel carries a contract that says how
 its value for $(j,i)$ relates to its value for $(i,j)$: `symmetric`,

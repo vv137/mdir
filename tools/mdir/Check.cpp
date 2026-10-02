@@ -60,8 +60,13 @@ static int describeTopology(const Control &control, const System &system) {
   std::printf("bonds:              %zu, %zu with hydrogen\n",
               topology.bonds.size(), hydrogenBonds);
   std::printf("angles:             %zu\n", topology.angles.size());
+  if (!topology.ureyBradleys.empty())
+    std::printf("Urey-Bradley terms: %zu\n", topology.ureyBradleys.size());
   std::printf("dihedrals:          %zu, %zu improper\n",
               topology.dihedrals.size(), impropers);
+  if (!topology.harmonicImpropers.empty())
+    std::printf("harmonic impropers: %zu\n",
+                topology.harmonicImpropers.size());
   std::printf("pairs 1-4:          %zu\n", topology.pairs.size());
   std::printf("excluded pairs:     %zu\n", topology.exclusions.size());
   if (!topology.cmaps.empty())

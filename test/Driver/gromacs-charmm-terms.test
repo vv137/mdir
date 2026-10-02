@@ -1,0 +1,144 @@
+# The terms of CHARMM force fields in a topology of GROMACS: angles of
+# function 5 with their Urey–Bradley term, harmonic impropers (function 2)
+# whose difference from ξ0 is taken in [−π, π), and the modifiers of the
+# Lennard-Jones of a topology. The values are those of the formulas:
+#
+#   angle 1-2-3, θ = 109.6538°, θ0 = 100°, k = 300      1.017778 kcal/mol
+#   Urey–Bradley 1-3, r = 0.244131 nm, r0 = 0.25 nm,
+#     k = 20000                                         0.082323
+#   improper 1-2-3-4, ξ = −167.8072°, ξ0 = 170°: the
+#     difference wraps to 22.1928°, k = 500             8.964545
+#
+# The Lennard-Jones of σ = 3.76 / 2^(1/6) Å and ε = 238 kcal/mol (1000 times
+# the two particles of docs/charmm-m1.md), pairs at 6 and 11 Å, cutoff 12,
+# switch from 10:
+#
+#   none                     −27.955793 − 0.758632 = −28.714426
+#   POTENTIAL_SHIFT          −27.505556 − 0.308396 = −27.813952
+#   FORCE_SWITCH             −27.236828 − 0.095518 = −27.332346
+#   POWER_FORCE_SWITCH       −27.178052 − 0.094972 = −27.273024
+#
+# The last is CHARMM's VFSWITCH: CHARMM 51b1 gives −2.717805218e−02 and
+# −9.497203099e−05 kcal/mol for ε = 0.238. Only the power force switch
+# switches the pair three bonds apart (σ = 0.33 nm, ε = 0.4 kJ/mol at
+# 0.367594 nm), as CHARMM does: −0.095106 against −0.095392.
+#
+# RUN: split-file %s %t
+# RUN: mdir run %t/run.toml | FileCheck %s --check-prefixes=BONDED,NONE
+# RUN: sed -i 's/^# modifier$/switch_distance = 12.0\nlennard_jones_modifier = "POTENTIAL_SHIFT"\ndispersion_correction = "NONE"/' %t/run.toml
+# RUN: mdir run %t/run.toml | FileCheck %s --check-prefixes=BONDED,SHIFT
+# RUN: sed -i 's/^switch_distance = 12.0$/switch_distance = 10.0/; s/POTENTIAL_SHIFT/FORCE_SWITCH/' %t/run.toml
+# RUN: mdir run %t/run.toml | FileCheck %s --check-prefixes=BONDED,FSW
+# RUN: sed -i 's/"FORCE_SWITCH"/"POWER_FORCE_SWITCH"/' %t/run.toml
+# RUN: mdir run %t/run.toml | FileCheck %s --check-prefixes=BONDED,PFS
+# RUN: sed -i '/^dispersion_correction/d' %t/run.toml
+# RUN: not mdir run %t/run.toml 2>&1 | FileCheck %s --check-prefix=DISPERSION
+# RUN: sed -i '/^lennard_jones_modifier/d' %t/run.toml
+# RUN: not mdir run %t/run.toml 2>&1 | FileCheck %s --check-prefix=SWITCH
+
+# NONE:     MDIR:   Lennard-Jones                -28.714426
+# SHIFT:    MDIR:   Lennard-Jones                -27.813952
+# FSW:      MDIR:   Lennard-Jones                -27.332346
+# PFS:      MDIR:   Lennard-Jones                -27.273024
+# BONDED:   MDIR:   angles                         1.017778
+# NONE:     MDIR:   Lennard-Jones 1-4             -0.095392
+# SHIFT:    MDIR:   Lennard-Jones 1-4             -0.095392
+# FSW:      MDIR:   Lennard-Jones 1-4             -0.095392
+# PFS:      MDIR:   Lennard-Jones 1-4             -0.095106
+# BONDED:   MDIR:   Urey-Bradley                   0.082323
+# BONDED:   MDIR:   harmonic impropers             8.964545
+# DISPERSION: the correction for the dispersion needs a plain cutoff
+# SWITCH: a run from a topology switches its Lennard-Jones only with a 'lennard_jones_modifier'
+
+#--- run.toml
+[input]
+topology    = "system.top"
+coordinates = "system.gro"
+
+[output]
+energy_interval = 0
+
+[energy]
+cutoff            = 12.0
+# modifier
+pairlist_distance = 13.0
+electrostatics    = "CUTOFF"
+
+[constraints]
+hydrogen_bonds = false
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.0001
+steps      = 1
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 0.0
+
+[boundary]
+type = "PERIODIC"
+#--- system.top
+[ defaults ]
+; nbfunc  comb-rule  gen-pairs  fudgeLJ  fudgeQQ
+  1       2          yes        1.0      1.0
+
+[ atomtypes ]
+; name  at.num  mass     charge  ptype  sigma         epsilon
+  C     6       12.0100  0.0     A      0.3           0.0
+  XA    18      39.9480  0.0     A      0.33497791802 995.792
+
+[ moleculetype ]
+; name  nrexcl
+  IMP   3
+
+[ atoms ]
+; nr  type  resnr  residue  atom  cgnr  charge  mass
+  1   C     1      IMP      C1    1     0.0     12.0100
+  2   C     1      IMP      C2    1     0.0     12.0100
+  3   C     1      IMP      C3    1     0.0     12.0100
+  4   C     1      IMP      C4    1     0.0     12.0100
+
+[ bonds ]
+; i  j  func  b0    kb
+  1  2  1     0.15  0.0
+  2  3  1     0.15  0.0
+  3  4  1     0.15  0.0
+
+[ pairs ]
+; i  j  func  sigma  epsilon
+  1  4  1     0.33   0.4
+
+[ angles ]
+; i  j  k  func  theta0  k     r13   kUB
+  1  2  3  5     100.0   300.0 0.25  20000.0
+  2  3  4  5     110.0   0.0   0.25  0.0
+
+[ dihedrals ]
+; i  j  k  l  func  xi0    k
+  1  2  3  4  2     170.0  500.0
+
+[ moleculetype ]
+; name  nrexcl
+  XA    1
+
+[ atoms ]
+  1   XA    1      XA       XA    1     0.0     39.9480
+
+[ system ]
+terms of CHARMM
+
+[ molecules ]
+IMP  1
+XA   3
+#--- system.gro
+terms of CHARMM
+    7
+    1IMP     C1    1   1.000000   1.000000   1.000000
+    1IMP     C2    2   1.150000   1.000000   1.000000
+    1IMP     C3    3   1.200000   1.140000   1.000000
+    1IMP     C4    4   1.330000   1.160000   0.975000
+    2XA      XA    5   5.000000   5.000000   5.000000
+    3XA      XA    6   5.600000   5.000000   5.000000
+    4XA      XA    7   5.000000   6.100000   5.000000
+  10.00000  10.00000  10.00000

@@ -24,16 +24,22 @@ for line in out.stdout.splitlines():
     x = re.match(r"MDIR:   (.+?)\s+(-?[0-9.]+)$", line)
     if x:
         m[x.group(1)] = float(x.group(2)) * 4.184
-pairs = [("bonds", ["Bond"]), ("angles", ["Angle"]),
-         ("dihedrals", ["Proper Dih.", "Per. Imp. Dih.", "Improper Dih."]),
-         ("Lennard-Jones 1-4", ["LJ-14"]), ("Coulomb 1-4", ["Coulomb-14"]),
-         ("Lennard-Jones", ["LJ (SR)"]), ("dispersion", ["Disper. corr."]),
-         ("CMAP", ["CMAP Dih."])]
+# Each row: the terms of MDIR and those of GROMACS that make the same sum.
+# GROMACS has the angles of function 5 with their Urey-Bradley terms as
+# "U-B", and the harmonic impropers among its "Improper Dih.".
+pairs = [(["bonds"], ["Bond"]),
+         (["angles", "Urey-Bradley"], ["Angle", "U-B"]),
+         (["dihedrals", "harmonic impropers"],
+          ["Proper Dih.", "Per. Imp. Dih.", "Improper Dih."]),
+         (["Lennard-Jones 1-4"], ["LJ-14"]), (["Coulomb 1-4"], ["Coulomb-14"]),
+         (["Lennard-Jones"], ["LJ (SR)"]), (["dispersion"], ["Disper. corr."]),
+         (["CMAP"], ["CMAP Dih."])]
 print(f"{ff:16s} {'term':20s} {'MDIR kJ/mol':>16s} {'GROMACS':>16s} {'relative':>10s}")
-for mine, theirs in pairs:
-    if mine not in m:
+for names, theirs in pairs:
+    if names[0] not in m:
         continue
+    mine = " + ".join(n for n in names if n in m)
     ref = sum(g.get(t, 0.0) for t in theirs)
-    val = m[mine]
+    val = sum(m.get(n, 0.0) for n in names)
     rel = abs(val - ref) / max(abs(ref), 1e-12)
     print(f"{'':16s} {mine:20s} {val:16.4f} {ref:16.4f} {rel:10.1e}")

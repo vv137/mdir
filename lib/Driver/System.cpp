@@ -183,6 +183,10 @@ static llvm::Error checkSettles(Topology &topology) {
   llvm::erase_if(topology.angles, [&](const Topology::Angle &angle) {
     return inside({angle.i, angle.j, angle.k});
   });
+  llvm::erase_if(topology.ureyBradleys,
+                 [&](const Topology::UreyBradley &term) {
+                   return inside({term.i, term.k});
+                 });
   return llvm::Error::success();
 }
 

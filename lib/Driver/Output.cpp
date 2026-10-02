@@ -151,15 +151,21 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
   static const char *names[] = {
       "Lennard-Jones", "Coulomb", "bonds", "angles", "dihedrals",
       "Lennard-Jones 1-4", "Coulomb 1-4", "CMAP", "Coulomb excluded",
-      "Coulomb reciprocal", "restraints"};
-  // CMAP only where the topology has it, and the terms of particle mesh
-  // Ewald only with it; with it "Coulomb" is the direct sum.
-  bool cmap = output.system && output.system->topology &&
-              !output.system->topology->cmaps.empty();
+      "Coulomb reciprocal", "Urey-Bradley", "harmonic impropers",
+      "restraints"};
+  // CMAP, Urey–Bradley, and harmonic impropers only where the topology has
+  // them, and the terms of particle mesh Ewald only with it; with it
+  // "Coulomb" is the direct sum.
+  const Topology *topology =
+      output.system ? output.system->topology.get() : nullptr;
+  bool cmap = topology && !topology->cmaps.empty();
+  bool ureyBradley = topology && !topology->ureyBradleys.empty();
+  bool impropers = topology && !topology->harmonicImpropers.empty();
   std::fprintf(output.log, "MDIR: the terms at the start, in kcal/mol:\n");
   double total = output.getDispersionEnergy() + output.getPMEConstantEnergy();
   for (int i = 0, e = static_cast<int>(values->sizes[0]); i != e; ++i) {
-    if ((i == 7 && !cmap) || ((i == 8 || i == 9) && !output.pme))
+    if ((i == 7 && !cmap) || ((i == 8 || i == 9) && !output.pme) ||
+        (i == 10 && !ureyBradley) || (i == 11 && !impropers))
       continue;
     double value = values->data[i * values->strides[0]];
     total += value;

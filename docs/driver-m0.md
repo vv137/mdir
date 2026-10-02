@@ -82,7 +82,7 @@ regard to case.
 |---|---|---|
 | `[input]` | `topology` | The topology: of Amber (`.prmtop`, `.parm7`) or GROMACS (`.top`). Absent for a run from a PDB file, whose terms are in `[energy]`. |
 | | `coordinates` | The positions and the cell: of Amber (`.inpcrd`, `.rst7`), GROMACS (`.gro`), or a PDB file, in which the name of an atom selects its type. The reference of restraints. |
-| | `format` | `AUTO` (the default: from the names of the files), `AMBER`, `GROMACS`, or `PDB`; `CHARMM` is not supported yet. |
+| | `format` | `AUTO` (the default: from the names of the files), `AMBER`, `GROMACS`, or `PDB`. A CHARMM force field runs from a topology of GROMACS (D121, [charmm-m1.md](charmm-m1.md)); the files of CHARMM are not read yet. |
 | | `include_paths`, `defines` | With a GROMACS topology: the directories of `#include` and the names that `#define` gives. |
 | | `checkpoint` | The checkpoint of an earlier run, which the run continues, taking its cell (and warning on the standard error if the input has another); the input's cell still sets the grid of PME and the reference of restraints. One of a minimization gives the positions only. |
 | `[output]` | `trajectory` | Positions, in DCD (`.dcd`). |
@@ -92,8 +92,8 @@ regard to case.
 | | `pairlist_distance` | The reach of the neighbor structures; the skin is `pairlist_distance − cutoff`. |
 | | `pruned_distance` | A dual list (D114): the loops over pairs take an inner list, pruned from the structure of `pairlist_distance` with this reach, between `cutoff` and `pairlist_distance`, whenever a particle has moved too far for it. Needs `neighbor_structure = "GROUPS"`; not with `rebuild_interval`. The default, none, keeps one list. |
 | | `rebuild_interval` | **Opt-in, not a default.** 0 (the default): a structure is rebuilt when a particle has moved half the skin, tested at every step. `n`: rebuilt every `n` steps and not tested in between, so it may miss pairs within the cutoff (D88). The run warns at the start, on the standard error and in the log, and reports at the end how many rebuilds found a structure no longer valid, with a warning if any did. |
-| | `switch_distance` | `truncation(switch, from = ...)`; equal to `cutoff`: no switching. For terms in the control file. |
-| | `lennard_jones_modifier` | `NONE`, `POTENTIAL_SHIFT` (`truncation(shift)`), or `FORCE_SWITCH` (`truncation(force_switch, from = switch_distance)`). For terms in the control file. |
+| | `switch_distance` | For terms in the control file, `truncation(switch, from = ...)`; equal to `cutoff`: no switching. With a topology, where a force switch begins. |
+| | `lennard_jones_modifier` | `NONE`, `POTENTIAL_SHIFT` (`truncation(shift)`), `FORCE_SWITCH` (`truncation(force_switch, from = switch_distance)`), or, with a topology only, `POWER_FORCE_SWITCH`, the force switch of Steinbach and Brooks that CHARMM force fields take. With a topology the modifier applies to the Lennard-Jones only, and needs `dispersion_correction = "NONE"` (D121). |
 | | `electrostatics` | With a topology: `CUTOFF` or `PME`. |
 | | `coulomb_modifier` | With PME: `NONE`, or `POTENTIAL_SHIFT`, the direct sum shifted to zero at the cutoff. |
 | | `dispersion_correction` | `NONE` or `ENERGY_PRESSURE`; also in `[[energy.pair]]`. |

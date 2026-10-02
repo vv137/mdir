@@ -820,6 +820,17 @@ angle: in ubiquitin with amber19sb.ff, the order of the file gives
 impropers 0.896 kcal/mol above those of grompp, and the order of LEaP
 agrees with them to 5 × 10⁻⁵ kcal/mol (`gromacs-leap-order.test`).
 
+The functions read are those of the Amber and CHARMM force fields: bonds
+of function 1; angles of function 1, and of function 5, whose Urey–Bradley
+term ½ k_UB (r₁₃ − r13)² between the outer atoms becomes a set of pairs of
+its own; dihedrals of functions 1, 4, and 9, and of function 2, the
+harmonic improper ½ k (ξ − ξ0)² with ξ − ξ0 taken in [−π, π); pairs of
+function 1; CMAP of function 1 (D121, [charmm-m1.md](charmm-m1.md)). The
+Lennard-Jones of a topology takes `lennard_jones_modifier` in its kernel:
+`POTENTIAL_SHIFT`, `FORCE_SWITCH` (the polynomial of GROMACS), or
+`POWER_FORCE_SWITCH` (VFSWITCH of CHARMM, which also switches the pairs
+three bonds apart).
+
 A plain cutoff of the Coulomb term does not conserve the energy: a pair
 of charged particles that crosses the cutoff changes the energy by
 `f q_i q_j / r_c`, some 10 kcal/mol for two waters at 9 Å. sander shows
@@ -898,7 +909,7 @@ ships (`scripts/validation/gromacs/run.sh`):
 | amber99sb-ildn, amber99sb, amber03, amber14sb | Agree to 5 × 10⁻⁶ or better, each term |
 | amber99sb-ildn with TIP4P-Ew, whose sites are virtual (Section 19) | Agree to 4 × 10⁻⁶ or better, each term; the correction for the dispersion counts the sites among the particles in both |
 | amber19sb, with CMAP (Section 20) | Agree to 3 × 10⁻⁶ or better, each term; CMAP to 9 × 10⁻⁷ |
-| charmm27 | Rejected: Urey-Bradley angles (function 5) |
+| charmm27, with Urey–Bradley angles (function 5), harmonic impropers (function 2), and CMAP (D121) | Agree to 4.3 × 10⁻⁶ or better, each term; angles with their Urey–Bradley terms to 3.5 × 10⁻⁷, dihedrals with the impropers to 1.8 × 10⁻⁷ |
 | oplsaa | Rejected: Ryckaert-Bellemans dihedrals |
 | gromos54a7 | Rejected: bonds of function 2 |
 

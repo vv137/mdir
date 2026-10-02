@@ -370,7 +370,7 @@ crosses the cutoff. Energy is then not conserved, whatever the integrator.
 | `shift` | $u(r) - u(r_c)$ | Energy |
 | `force_shift` [[Stoddard1973]](references.md#stoddard1973) | $u(r) - u(r_c) - (r - r_c)\, u'(r_c)$ | Energy and force |
 | `switch`, from $r_s$ | $u(r)\, S(r)$ | Energy, force, and the derivative of the force |
-| `force_switch` [[Steinbach1994]](references.md#steinbach1994), from $r_s$ | $u(r) - P(r) - C$ | Energy, force, and the derivative of the force |
+| `force_switch` [[GromacsManual2025]](references.md#gromacsmanual2025), from $r_s$ | $u(r) - P(r) - C$ | Energy, force, and the derivative of the force |
 
 `r_c` is the cutoff of the neighborhood.
 
@@ -406,7 +406,12 @@ sum of terms equals applying it to each term.
 | `force_shift` | — | — |
 
 The GROMACS manual [[GromacsManual2025]](references.md#gromacsmanual2025) defines `force-switch` for a power law $r^{-\alpha}$. For that
-kernel the constants above reduce to the ones in the manual.
+kernel the constants above reduce to the ones in the manual. It is not the
+force switch of Steinbach and Brooks [[Steinbach1994]](references.md#steinbach1994), CHARMM's VFSWITCH,
+which switches the force of each inverse power by a function linear in
+$r^{n/2}$; that one is defined only for a sum of inverse powers, so it is
+not a `truncation` kind: the driver writes it into the Lennard-Jones of a
+topology (`POWER_FORCE_SWITCH`, D121, [charmm-m1.md](charmm-m1.md)).
 
 A pass expands the attribute into the kernel before differentiation. After
 the pass every relation sum has `truncation(none)` and an explicit kernel.

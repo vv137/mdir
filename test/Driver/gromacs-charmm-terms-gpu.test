@@ -1,0 +1,17 @@
+# The run of gromacs-charmm-terms.test on a GPU, in mixed precision with
+# groups: the Urey-Bradley angles, the harmonic impropers, and the power
+# force switch of the Lennard-Jones and of the pair three bonds apart, to
+# the digits that mixed precision keeps.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && split-file %S/gromacs-charmm-terms.test %t
+# RUN: sed -i 's/^# modifier$/switch_distance = 10.0\nlennard_jones_modifier = "POWER_FORCE_SWITCH"\ndispersion_correction = "NONE"/' %t/run.toml
+# RUN: printf '[execution]\ntarget = "gpu"\nprecision = "mixed"\nneighbor_structure = "GROUPS"\n' >> %t/run.toml
+# RUN: mdir run %t/run.toml | FileCheck %s
+
+# CHECK: MDIR:   Lennard-Jones                -27.2730
+# CHECK: MDIR:   angles                         1.0177
+# CHECK: MDIR:   Lennard-Jones 1-4             -0.0951
+# CHECK: MDIR:   Urey-Bradley                   0.0823
+# CHECK: MDIR:   harmonic impropers             8.9645
