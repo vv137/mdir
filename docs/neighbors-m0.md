@@ -45,7 +45,9 @@ The build is a template in IR:
 `lib/Runtime/Templates/NeighborsMatrix.mlir` for the host and
 `lib/Runtime/Templates/NeighborsMatrixGPU.mlir` for a device. The compiler
 adds the template to the module, where it is lowered with the rest of the
-code. The two templates build the same matrix, entry by entry.
+code. The two templates build the same matrix, entry by entry. Each has a
+build of its own for a triclinic cell, `_triclinic`, which bins the
+fractional coordinates (D123, D125).
 
 | Step | Work | On a device |
 |---|---|---|
