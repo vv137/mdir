@@ -24,7 +24,9 @@ correction for the dispersion, SETTLE on the waters, SHAKE and RATTLE on
 the bonds of hydrogen, and a GPU in mixed precision; stages 2 to 4 take
 the groups of 16 with a dual list (outer 13 Å, inner 10.6 Å), and the
 restraints are positional, on the phosphorus of each head group, with
-their reference scaled with the cell axis by axis. The thermostat and the
+their reference scaled with the cell axis by axis (`reference_scaling =
+"ALL"` in stage 3: restraints spread through the cell that kept the shape
+of their references would hold its area, D124). The thermostat and the
 barostat act every 25 steps, with time constants of 1 and 5 ps and a
 compressibility of $4.5\times10^{-5}$ /bar on both.
 

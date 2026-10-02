@@ -54,6 +54,12 @@
 # RUN: not mdir check %t/wrong3.toml 2>> %t/wrong.txt
 # RUN: sed -e 's/SELECTION/@/' %t/min.toml > %t/wrong4.toml
 # RUN: not mdir check %t/wrong4.toml 2>> %t/wrong.txt
+# RUN: sed -e 's/SELECTION/:1-2/' %t/min.toml > %t/wrong5.toml
+# RUN: printf '[[restraints]]\nselection = ":2"\nforce_constant = 1.0\nreference_scaling = "ALL"\n' >> %t/wrong5.toml
+# RUN: not mdir check %t/wrong5.toml 2>> %t/wrong.txt
+# RUN: sed -e 's/SELECTION/:2/' %t/min.toml > %t/wrong6.toml
+# RUN: printf 'reference_scaling = "COM"\n' >> %t/wrong6.toml
+# RUN: not mdir check %t/wrong6.toml 2>> %t/wrong.txt
 # RUN: FileCheck %s --check-prefix=WRONG < %t/wrong.txt
 #
 # WRONG:      mdir: in the mask ':1-', at 4: expected a number or a range such as 1-10, not '1-'
@@ -61,6 +67,8 @@
 # WRONG-NEXT: mdir: the restraint of ':XYZ' selects no particle with mass
 # WRONG-NEXT: mdir: in the mask '(:1', at 4: expected ')'
 # WRONG-NEXT: mdir: in the mask '@', at 2: expected a number, a range, or a name
+# WRONG-NEXT: mdir: the restraint of ':2' selects particle 7, which another restraint selects with another 'reference_scaling'
+# WRONG-NEXT: mdir: {{.*}}expected one of CENTER, ALL for 'reference_scaling', got 'COM'
 
 # A minimization with the heavy atoms of the peptide restrained, and a run
 # at constant energy from where it ends, which keeps the total energy with

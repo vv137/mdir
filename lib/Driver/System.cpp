@@ -112,8 +112,11 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
 
   // The restraints: their constants add where their selections overlap.
   // Particles without mass, the virtual sites, are placed, not restrained.
-  if (!control.restraints.empty())
+  if (!control.restraints.empty()) {
     system.restraintConstants.assign(system.masses.size(), 0.0);
+    system.restraintScaling.assign(system.masses.size(),
+                                   ReferenceScaling::Center);
+  }
   for (const Control::Restraint &restraint : control.restraints) {
     auto selected = selectParticles(restraint.selection, *topology);
     if (!selected)
@@ -122,6 +125,14 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
     for (size_t i = 0, e = system.masses.size(); i != e; ++i) {
       if (!(*selected)[i] || system.masses[i] == 0.0)
         continue;
+      if (system.restraintConstants[i] > 0.0 &&
+          system.restraintScaling[i] != restraint.scaling)
+        return llvm::createStringError(
+            llvm::inconvertibleErrorCode(),
+            "the restraint of '%s' selects particle %zu, which another "
+            "restraint selects with another 'reference_scaling'",
+            restraint.selection.c_str(), i + 1);
+      system.restraintScaling[i] = restraint.scaling;
       system.restraintConstants[i] += restraint.forceConstant *
                                       units::energy /
                                       (units::length * units::length);

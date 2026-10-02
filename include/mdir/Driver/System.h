@@ -61,6 +61,9 @@ struct System {
   /// The constant k of the restraint of each particle, `k |x − x_ref|²`,
   /// in kJ/mol/nm², or nothing if no particle is restrained.
   std::vector<double> restraintConstants;
+  /// How the reference of each particle follows a barostat (D124), with
+  /// `restraintConstants`.
+  std::vector<ReferenceScaling> restraintScaling;
   /// Whether the file of coordinates gave the velocities. If not, they are
   /// drawn at the temperature of the control file.
   bool givenVelocities = false;

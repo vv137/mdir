@@ -47,8 +47,9 @@ interval      = 25              # that of the thermostat
 coupling      = "SEMI_ISOTROPIC" # the area (x, y) and the height (z) apart
 
 [[restraints]]
-selection      = ":PC@P31"
-force_constant = 1.0
+selection         = ":PC@P31"
+force_constant    = 1.0
+reference_scaling = "ALL"       # spread through the cell, they follow it
 
 [constraints]
 hydrogen_bonds = true

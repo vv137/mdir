@@ -1,7 +1,8 @@
 # The target of barostat-ff19sb-gpu.test at constant pressure with the
 # heavy atoms of the peptide restrained, as in the equilibration of a
-# solvated molecule. The reference positions follow the cell, so that the
-# barostat scales them with the positions.
+# solvated molecule. The center of the reference positions follows the cell,
+# so that the barostat scales it with the positions, and the references keep
+# their shape about it (D124).
 #
 # REQUIRES: cuda
 #
@@ -18,10 +19,19 @@
 
 # The factors of the reference, the edges of the cell over those of the
 # file axis by axis (D119), are taken with the cell in each loop and passed
-# to the steps.
+# to the steps. They scale the centers of the references, and the fields
+# hold the offsets from them (D124); the virial adds the offsets to d.
 #
 # MODULE:     dyn.program @step(%x: !vec, %v: !vec, %f: !vec, %m: !real,
 # MODULE-NEXT:    %cell: !md.cell, %dt: f64, %rest_scale: vector<3xf64>,
+# MODULE:     %p_rest_cx: !real, %p_rest_cy: !real, %p_rest_cz: !real,
+# MODULE:     %rc_i = vector.from_elements %rcx_i, %rcy_i, %rcz_i : vector<3xf64>
+# MODULE-NEXT: %rcs_i = arith.mulf %rest_scale, %rc_i : vector<3xf64>
+# MODULE-NEXT: %refs_i = arith.addf %rcs_i, %ref_i : vector<3xf64>
+# MODULE-NEXT: %d_i = arith.subf %x_i, %refs_i : vector<3xf64>
+# MODULE:     _vparts = md.sum_particles gather(
+# MODULE:     %dpo_i = arith.addf %d_i, %ref_i : vector<3xf64>
+# MODULE-NEXT: %kdo_i = arith.mulf %kd_i, %dpo_i : vector<3xf64>
 # MODULE:     %rest_edges = vector.from_elements
 # MODULE:     %rest_scale{{[0-9]+}}_e = vector.from_elements %edge{{[0-9]+}}_0, %edge{{[0-9]+}}_1, %edge{{[0-9]+}}_2
 # MODULE-NEXT: %rest_scale{{[0-9]+}} = arith.divf %rest_scale{{[0-9]+}}_e, %rest_edges : vector<3xf64>

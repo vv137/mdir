@@ -134,8 +134,9 @@ invariant, a displacement scales as $\mathbf d\,\mathrm{diag}(\boldsymbol\mu)$,
 and so $|\mathbf d'| \ge \min_a \mu_a |\mathbf d|$: the test of validity of
 D80 holds unchanged, with $\mu_a$ the ratio of the diagonals of $H$ to those
 of the reference cell. The pressure of each axis is the diagonal of the
-virial over $a_x b_y c_z$, as now, and the reference positions of restraints
-scale by $\mathrm{diag}(H)/\mathrm{diag}(H_\text{file})$, as D74 has it. A
+virial over $a_x b_y c_z$, as now, and the center of the reference positions
+of restraints scales by $\mathrm{diag}(H)/\mathrm{diag}(H_\text{file})$, as
+D124 has it. A
 coupling of the shape of the cell (anisotropic, or OpenMM's flexible
 barostat) breaks I3 and is not in this work.
 

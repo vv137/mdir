@@ -69,6 +69,10 @@ enum class Target { CPU, GPU };
 enum class Precision { Single, Mixed, Double };
 enum class NeighborStructure { Matrix, Groups };
 enum class BarostatWork { Trotter, TrotterFirstOrder, Exact, FirstOrder };
+/// How the reference positions of restraints follow a barostat (D124): their
+/// center scales with the cell and the offsets from it stay, or each
+/// reference scales with the cell as the positions do.
+enum class ReferenceScaling { Center, All };
 
 /// What a control file says. Lengths are in Å, energies in kcal/mol, times
 /// in ps, masses in amu, and temperatures in K.
@@ -233,6 +237,7 @@ struct Control {
   struct Restraint {
     std::string selection;
     double forceConstant = 0.0;
+    ReferenceScaling scaling = ReferenceScaling::Center;
   };
   std::vector<Restraint> restraints;
 

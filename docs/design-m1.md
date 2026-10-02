@@ -859,7 +859,7 @@ output of `mdir template amber` (`scripts/paper/check-appendix.sh`).
 | `[thermostat]` | `method = "V-RESCALE"`, `time_constant`, `interval` |
 | `[barostat]` | `method = "C-RESCALE"`, `time_constant`, `compressibility`, `coupling = "ISOTROPIC"`, `work`, `interval` |
 | `[constraints]` | `hydrogen_bonds`, `rigid_water`, `water_residues`. A topology with SETTLE needs `rigid_water = false` to run its waters flexible, with their bonds |
-| `[[restraints]]` | `selection` (a mask of Amber), `force_constant` |
+| `[[restraints]]` | `selection` (a mask of Amber), `force_constant`, `reference_scaling` (`"CENTER"` or `"ALL"`, D124) |
 | `[boundary]` | `type`, `box` |
 | `[execution]` | `target`, `threads`, `precision`, `neighbor_capacity`, `fast_math`, `spatial_order`, `deterministic`, `neighbor_structure` |
 
@@ -1333,8 +1333,8 @@ the file of coordinates (D74):
 | Item | Rule |
 |---|---|
 | Energy | $k \lVert\mathbf x - \mathbf x^\text{ref}\rVert^2$ for each selected particle with mass, $k$ in kcal/mol/Å² (`force_constant`), as Amber's `restraint_wt`; the constants of restraints that select the same particle add |
-| Reference | The positions of the file of coordinates of `[input]`, also when the run begins from a checkpoint. Under a barostat, those positions times $L/L_0$, the edge of the cell over that of the file, so that the reference follows the cell as the positions do |
-| Forces, energy, virial | After the evaluation of the potential and the spreading of the forces of virtual sites, in every step, at the start, and in a minimization: $\mathbf F \mathrel{-}= 2k\mathbf d$ with $\mathbf d = \mathbf x - \mathbf x^\text{ref}$, $U \mathrel{+}= \sum k \lVert\mathbf d\rVert^2$, and $\mathsf W \mathrel{+}= \operatorname{diag}\big(\sum -2k\, \mathbf d \odot \mathbf d\big)$, whose trace, $-2U$, is exact; the off-diagonal elements are left out. The log lists the energy of the restraints among the terms |
+| Reference | The positions $\mathbf r$ of the file of coordinates of `[input]`, also when the run begins from a checkpoint. Under a barostat (D124), $\mathbf x^\text{ref} = \mathbf s \odot \mathbf c + \mathbf o$, with $\mathbf s$ the edges of the cell over those of the file, axis by axis, $\mathbf c$ the center, which follows the cell, and $\mathbf o = \mathbf r - \mathbf c$ the offset, which stays. With `reference_scaling = "CENTER"`, the default, $\mathbf c$ is the mean of the references of every particle so restrained, so that they keep their shape, as a restrained solute should; with `"ALL"`, $\mathbf c = \mathbf r$ and $\mathbf o = 0$, each reference following the cell as the positions do, as restraints spread through the cell need. A particle that two restraints select takes one scaling. The fields hold $\mathbf o$ and $\mathbf c$ (`rest_x`, …, `rest_cx`, …); without a barostat they hold $\mathbf r$ |
+| Forces, energy, virial | After the evaluation of the potential and the spreading of the forces of virtual sites, in every step, at the start, and in a minimization: $\mathbf F \mathrel{-}= 2k\mathbf d$ with $\mathbf d = \mathbf x - \mathbf x^\text{ref}$, $U \mathrel{+}= \sum k \lVert\mathbf d\rVert^2$, and $\mathsf W \mathrel{+}= \operatorname{diag}\big(\sum -2k\, \mathbf d \odot (\mathbf d + \mathbf o)\big)$, the derivative of the energy when the positions and the centers scale with the cell and the offsets do not; the off-diagonal elements are left out. Without a barostat $\mathbf o$ is taken as 0, and the trace, $-2U$, is exact. The log lists the energy of the restraints among the terms |
 | Selection | `selection`, a mask of Amber in part: `:` residues by numbers (from 1) or names, `@` atoms by numbers or names, `:res@atoms`, `*`, with `!`, `&`, `|` and parentheses, in that order of precedence, and `*` and `?` in names. `!:WAT & !@H*` is every heavy atom but those of the waters. A mask that selects no particle with mass is an error; a run from `coordinates` has no names to select by |
 
 On the target of D65, a run at constant energy with the heavy atoms of the
@@ -1342,6 +1342,26 @@ peptide restrained at 10 kcal/mol/Å² keeps the total energy to 4 × 10⁻⁴
 over 2 ps at 1 fs, as the same run without them does; at constant
 pressure the conserved energy drifts as it does without them, by the term
 of Section 11.4.
+
+Scaled about the origin with the cell, as before D124, the references of a
+restrained solute shrink with it. Ubiquitin in OPC from the end of stage 3
+of its tutorial, whose cell had become 0.926 of the file's in each edge,
+had its restrained heavy atoms at a radius of gyration of 11.33 Å, against
+11.73 Å for the file: the restraints pushed outward, and 100 ps more at
+1 bar held the cell at 200,900 Å³, where a run without restraints went to
+196,300 Å³ (the cell is at about −550 bar at 201,264 Å³). With the centers,
+the restrained run averages 196,262 ± 580 Å³ over its second half, the free
+one 196,293 ± 658: the same within the noise of runs still relaxing. On the
+peptide of D65 in double precision, compressed by 16% in 2 ps at
+$\tau_P$ = 0.5 ps with its heavy atoms at 100 kcal/mol/Å², the conserved
+energy of the Trotter count changes by −10.4 kcal/mol, −8.8 without the
+restraints, and −20.2 with the virial of the centers but without
+$\mathbf o$; counted exactly, −3.1 and −2.4. On the POPC bilayer of the
+tutorials, whose phosphorus atoms are restrained, `"CENTER"` holds the area
+of the file over stage 3: 66.4 Å² a lipid over its second half, against
+61.8 with `"ALL"`, and the barostat squeezes the height instead, the
+pressure of x and y less that of z at 74 ± 11 bar against −1 ± 5.
+Restraints spread through the cell take `"ALL"`.
 
 
 ## 23. Leapfrog

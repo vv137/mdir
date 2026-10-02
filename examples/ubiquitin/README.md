@@ -34,8 +34,9 @@ On an RTX 3090, stage 2 runs at about 570 ns/day and stages 3 and 4,
 with the barostat, at about 520: 28 minutes for the 10 ns of stage 4. The
 log reports the rate over the second half of each stage. At constant
 pressure the volume is the last column of the log and the conserved
-energy the column before it; over stage 3 the volume falls from 228,700 to
-about 201,000 Å³ as the water fills the corners of the box of tleap.
+energy the column before it; over stage 3 the volume falls from the
+253,300 Å³ of the box of tleap to about 195,700 Å³ as the water fills its
+corners.
 
 The trajectory renders as a movie with the cell, the backbone as a tube,
 and the side chains as balls and sticks (numpy, matplotlib, and ffmpeg):

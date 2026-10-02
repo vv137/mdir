@@ -789,12 +789,46 @@ llvm::Error Builder::collectTopology() {
     constants.name = "rest_k";
     constants.values = system.restraintConstants;
     program.fields.push_back(std::move(constants));
+    // Under a barostat each reference is its center c, which scales with
+    // the cell, plus its offset o from it, which stays (D124). The center of
+    // the references of `reference_scaling = "CENTER"` is their mean, so
+    // that their shape stays: scaled about the origin, the restraints would
+    // hold a solute as much smaller as the cell has become. That of `"ALL"`
+    // is the reference itself, with no offset. Without a barostat the
+    // offsets are the references.
+    size_t count = system.getNumParticles(), centered = 0;
+    double mean[3] = {0.0, 0.0, 0.0};
+    for (size_t i = 0; i != count; ++i)
+      if (system.restraintConstants[i] > 0.0 &&
+          system.restraintScaling[i] == ReferenceScaling::Center) {
+        ++centered;
+        for (int c = 0; c != 3; ++c)
+          mean[c] += system.referencePositions[3 * i + c];
+      }
+    for (int c = 0; c != 3; ++c)
+      mean[c] = centered ? mean[c] / centered : 0.0;
+    std::vector<double> centers(3 * count, 0.0);
+    if (scalesReference())
+      for (size_t i = 0; i != count; ++i)
+        for (int c = 0; c != 3; ++c)
+          centers[3 * i + c] =
+              system.restraintScaling[i] == ReferenceScaling::All
+                  ? system.referencePositions[3 * i + c]
+                  : mean[c];
     for (int c = 0; c != 3; ++c) {
       Program::Field reference;
       reference.name = std::string("rest_") + "xyz"[c];
-      for (size_t i = 0, e = system.getNumParticles(); i != e; ++i)
-        reference.values.push_back(system.referencePositions[3 * i + c]);
+      for (size_t i = 0; i != count; ++i)
+        reference.values.push_back(system.referencePositions[3 * i + c] -
+                                   centers[3 * i + c]);
       program.fields.push_back(std::move(reference));
+    }
+    for (int c = 0; scalesReference() && c != 3; ++c) {
+      Program::Field center;
+      center.name = std::string("rest_c") + "xyz"[c];
+      for (size_t i = 0; i != count; ++i)
+        center.values.push_back(centers[3 * i + c]);
+      program.fields.push_back(std::move(center));
     }
   }
 
@@ -4119,15 +4153,28 @@ void Builder::emitRestraints(StringRef indent, StringRef x,
   std::string fields = (prefix + "rest_k, " + prefix + "rest_x, " + prefix +
                         "rest_y, " + prefix + "rest_z")
                            .str();
+  std::string types = "!real, !real, !real, !real";
   std::string arguments = "%k_i: f64, %rx_i: f64, %ry_i: f64, %rz_i: f64";
-  // d = x − x_ref, and k d; the reference follows the cell.
+  if (scalesReference()) {
+    fields += (", " + prefix + "rest_cx, " + prefix + "rest_cy, " + prefix +
+               "rest_cz")
+                  .str();
+    types += ", !real, !real, !real";
+    arguments += ", %rcx_i: f64, %rcy_i: f64, %rcz_i: f64";
+  }
+  // d = x − x_ref, and k d. Under a barostat the fields hold the offsets o
+  // of the references from their centers c, and the center follows the cell
+  // while the offset stays, x_ref = s ⊙ c + o (D124).
   auto emitOffset = [&](StringRef inner) {
     std::string reference = "%ref_i";
     os << inner << reference << " = vector.from_elements %rx_i, %ry_i, %rz_i "
                    ": vector<3xf64>\n";
     if (scalesReference()) {
-      os << inner << "%refs_i = arith.mulf " << scaleName
-         << ", %ref_i : vector<3xf64>\n";
+      os << inner << "%rc_i = vector.from_elements %rcx_i, %rcy_i, %rcz_i "
+                     ": vector<3xf64>\n"
+         << inner << "%rcs_i = arith.mulf " << scaleName
+         << ", %rc_i : vector<3xf64>\n"
+         << inner << "%refs_i = arith.addf %rcs_i, %ref_i : vector<3xf64>\n";
       reference = "%refs_i";
     }
     os << inner << "%d_i = arith.subf %x_i, " << reference
@@ -4137,7 +4184,7 @@ void Builder::emitRestraints(StringRef indent, StringRef x,
   };
   std::string inner = (indent + "  ").str();
   os << indent << fResult << " = md.map_particles gather(" << x << ", " << f
-     << ", " << fields << " : !vec, !vec, !real, !real, !real, !real) {\n"
+     << ", " << fields << " : !vec, !vec, " << types << ") {\n"
      << indent << "^bb0(%x_i: vector<3xf64>, %f_i: vector<3xf64>, "
      << arguments << "):\n";
   emitOffset(inner);
@@ -4149,15 +4196,29 @@ void Builder::emitRestraints(StringRef indent, StringRef x,
   if (u.empty() && w.empty())
     return;
   // Σ k d ⊙ d, whose sum is the energy and whose elements times −2 are the
-  // diagonal of the virial.
+  // diagonal of the virial. Under a barostat the virial is Σ F ⊙ (x − s ⊙ c)
+  // = −2 Σ k d ⊙ (d + o), the derivative of the energy when the positions
+  // and the centers of the references scale and their offsets do not.
   std::string sum = ((u.empty() ? wResult : uResult) + "_parts").str();
   os << indent << sum << " = md.sum_particles gather(" << x << ", " << fields
-     << " : !vec, !real, !real, !real, !real) {\n"
+     << " : !vec, " << types << ") {\n"
      << indent << "^bb0(%x_i: vector<3xf64>, " << arguments << "):\n";
   emitOffset(inner);
   os << inner << "%kdd_i = arith.mulf %kd_i, %d_i : vector<3xf64>\n"
      << inner << "md.yield %kdd_i : vector<3xf64>\n"
      << indent << "} : vector<3xf64>\n";
+  std::string virialSum = sum;
+  if (!w.empty() && scalesReference()) {
+    virialSum = (wResult + "_vparts").str();
+    os << indent << virialSum << " = md.sum_particles gather(" << x << ", "
+       << fields << " : !vec, " << types << ") {\n"
+       << indent << "^bb0(%x_i: vector<3xf64>, " << arguments << "):\n";
+    emitOffset(inner);
+    os << inner << "%dpo_i = arith.addf %d_i, %ref_i : vector<3xf64>\n"
+       << inner << "%kdo_i = arith.mulf %kd_i, %dpo_i : vector<3xf64>\n"
+       << inner << "md.yield %kdo_i : vector<3xf64>\n"
+       << indent << "} : vector<3xf64>\n";
+  }
   if (!u.empty())
     os << indent << uResult << "_r = vector.reduction <add>, " << sum
        << " : vector<3xf64> into f64\n"
@@ -4171,8 +4232,8 @@ void Builder::emitRestraints(StringRef indent, StringRef x,
   std::string diagonal[3];
   for (int c = 0; c != 3; ++c) {
     diagonal[c] = (wResult + "_d" + std::to_string(c)).str();
-    os << indent << diagonal[c] << "_s = vector.extract " << sum << "[" << c
-       << "] : f64 from vector<3xf64>\n"
+    os << indent << diagonal[c] << "_s = vector.extract " << virialSum
+       << "[" << c << "] : f64 from vector<3xf64>\n"
        << indent << diagonal[c] << " = arith.mulf " << diagonal[c] << "_s, "
        << wResult << "_m2 : f64\n";
   }

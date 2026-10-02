@@ -1204,9 +1204,9 @@ Error Reader::read(const toml::table &root) {
       const toml::table *entry = element.as_table();
       if (!entry)
         return fail(element, "expected [[restraints]]");
-      if (Error error = checkKeywords(*entry, "restraints",
-                                      {"selection", "force_constant"},
-                                      {}))
+      if (Error error = checkKeywords(
+              *entry, "restraints",
+              {"selection", "force_constant", "reference_scaling"}, {}))
         return error;
       Control::Restraint restraint;
       if (Error error = readString(*entry, "selection", restraint.selection))
@@ -1218,6 +1218,11 @@ Error Reader::read(const toml::table &root) {
         return error;
       if (restraint.forceConstant == 0.0)
         return fail(*entry, "expected a 'force_constant' in [[restraints]]");
+      if (Error error = readChoice<ReferenceScaling>(
+              *entry, "reference_scaling", restraint.scaling,
+              {{"CENTER", ReferenceScaling::Center},
+               {"ALL", ReferenceScaling::All}}))
+        return error;
       control.restraints.push_back(restraint);
     }
   }
@@ -1455,7 +1460,8 @@ precision = "MIXED"             # SINGLE, MIXED, DOUBLE
 
 # Restraints to the positions of 'coordinates', any number of them.
 # [[restraints]]
-# selection      = "!:WAT & !@H*"  # a mask of Amber
-# force_constant = 10.0            # kcal/mol/Å²
+# selection         = "!:WAT & !@H*"  # a mask of Amber
+# force_constant    = 10.0            # kcal/mol/Å²
+# reference_scaling = "CENTER"        # or "ALL", under a barostat
 )TOML";
 }

@@ -368,6 +368,27 @@ $N_P = 1$ the pressure is that of the previous step, kept in memory and
 in checkpoints. Leapfrog with a barostat couples $\mathbf v_{n+1}$ and
 stores $\mathbf v' - h\mathbf a'$.
 
+**Restraints.** A positional restraint $k\lVert\mathbf x - \mathbf
+x^\text{ref}\rVert^2$ depends on where its reference is when the cell
+changes. MDIR writes the reference as a center that scales with the cell
+and an offset that does not, $\mathbf x^\text{ref} = \mathbf s \odot
+\mathbf c + \mathbf o$, $\mathbf s$ the edges of the cell over those of the
+file of coordinates (D124). By default $\mathbf c$ is the mean of the
+references of the restrained particles, so that a restrained solute keeps
+its shape; for restraints spread through the cell, such as the phosphorus
+atoms of a bilayer, each reference is its own center with no offset and
+follows the cell as the positions do (the options `com` and `all` of
+`refcoord-scaling` in GROMACS
+[[GromacsManual2025]](references.md#gromacsmanual2025)). The virial is the
+derivative of the energy when the positions and the centers scale,
+$\operatorname{diag}\sum -2k\,\mathbf d \odot (\mathbf d + \mathbf o)$
+with $\mathbf d = \mathbf x - \mathbf x^\text{ref}$. Scaling every
+reference about the origin shrank those of ubiquitin with a cell that had
+become 0.926 of the file's, and the restraints, pushing the protein
+outward, held the cell 2.3% larger than a run without them; scaled about
+their center, the two agree within the noise (196,262 ± 580 and 196,293 ±
+658 Å³).
+
 ## 6.5 What the log reports
 
 $K$ is the kinetic energy of $\mathbf v_{n+1}$. Without constraints the
