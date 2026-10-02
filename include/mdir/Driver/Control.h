@@ -5,6 +5,8 @@
 #ifndef MDIR_DRIVER_CONTROL_H
 #define MDIR_DRIVER_CONTROL_H
 
+#include "mdir/Driver/Topology.h"
+
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
@@ -127,6 +129,9 @@ struct Control {
   NeighborStructure neighborStructure = NeighborStructure::Matrix;
   Truncation truncation = Truncation::Switch;
   std::vector<PairTerm> pairs;
+  /// Terms over tuples of the topology given by expressions (D136):
+  /// [[energy.bond]], [[energy.angle]], and [[energy.dihedral]].
+  std::vector<TupleTerm> tupleTerms;
   std::vector<ParticleType> types;
   std::vector<PairOverride> overrides;
   /// The correction for the dispersion of a run from a topology.

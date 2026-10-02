@@ -16,6 +16,26 @@ namespace driver {
 
 /// A system of particles with bonded terms, in nm, kJ/mol, ps, amu, e, and
 /// radians. Particles are numbered from 0 in the order of the file.
+/// A term over tuples of particles, given by an expression in their
+/// internal coordinate, as the custom forces of OpenMM over bonds, angles,
+/// and torsions [Eastman2017] (D136): `r` in Å between the two particles of
+/// a tuple, `theta` in radians, the angle at the middle one of three and the
+/// dihedral of four, in (-pi, pi]. The energy is in kcal/mol, the units of
+/// the control file.
+struct TupleTerm {
+  std::string name;
+  std::string expression;
+  unsigned arity = 2;
+  /// The particles of the tuples, from 0, `arity` for each.
+  std::vector<unsigned> particles;
+  /// The parameters that the expression uses, one value for each tuple.
+  std::vector<std::pair<std::string, std::vector<double>>> parameters;
+
+  size_t size() const { return arity ? particles.size() / arity : 0; }
+  /// The name of the coordinate in the expression.
+  llvm::StringRef getVariable() const { return arity == 2 ? "r" : "theta"; }
+};
+
 struct Topology {
   //===--------------------------------------------------------------------===//
   // Particles
@@ -115,6 +135,9 @@ struct Topology {
     unsigned map;
   };
   std::vector<CMap> cmaps;
+  /// Terms given by expressions over tuples (D136): those of the control
+  /// file, and those that a reader gives so.
+  std::vector<TupleTerm> tupleTerms;
   /// The maps: `resolution²` energies each, in kJ/mol, at φ and ψ from
   /// −180° in steps of 360° / `resolution`, φ the slower index.
   unsigned cmapResolution = 0;

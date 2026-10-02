@@ -37,7 +37,7 @@ for spec in amber99sb-ildn:tip3p amber99sb:tip3p amber03:tip3p amber14sb:tip3p \
   gmx grompp -f "$here/single.mdp" -c solv.gro -p topol.top -o run.tpr \
       -maxwarn 5 > grompp.log 2>&1
   gmx mdrun -s run.tpr -deffnm run -nt 1 > mdrun.log 2>&1
-  printf 'Bond\nAngle\nU-B\nProper-Dih.\nPer.-Imp.-Dih.\nImproper-Dih.\nCMAP-Dih.\nLJ-14\nCoulomb-14\nLJ-(SR)\nDisper.-corr.\nCoulomb-(SR)\nPotential\n\n' \
+  printf 'Bond\nAngle\nU-B\nProper-Dih.\nPer.-Imp.-Dih.\nImproper-Dih.\nCMAP-Dih.\nRyckaert-Bell.\nLJ-14\nCoulomb-14\nLJ-(SR)\nDisper.-corr.\nCoulomb-(SR)\nPotential\n\n' \
       | gmx energy -f run.edr -o energy.xvg > energy.log 2>&1 || true
   sed "s|@TOP@|$top|" "$here/mdir.toml.in" > mdir.toml
   popd > /dev/null

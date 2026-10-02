@@ -2,8 +2,12 @@
 
 #include "mdir/Driver/Expression.h"
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/StringSwitch.h"
+
+#include <functional>
 
 #include <cmath>
 #include <cstdio>
@@ -21,6 +25,8 @@ struct Expression::Node {
   std::string name;
   std::unique_ptr<Node> lhs;
   std::unique_ptr<Node> rhs;
+  /// The arguments of a function.
+  std::vector<std::unique_ptr<Node>> arguments;
 };
 
 Expression::Expression() = default;
@@ -34,7 +40,8 @@ std::string mdir::driver::formatReal(double value) {
   return buffer;
 }
 
-/// The op that computes the function `name`, or an empty string.
+/// The op that computes the function `name` of one argument, or an empty
+/// string.
 static StringRef getFunctionOp(StringRef name) {
   return llvm::StringSwitch<StringRef>(name)
       .Case("sqrt", "math.sqrt")
@@ -43,11 +50,31 @@ static StringRef getFunctionOp(StringRef name) {
       .Case("sin", "math.sin")
       .Case("cos", "math.cos")
       .Case("tan", "math.tan")
+      .Case("asin", "math.asin")
+      .Case("acos", "math.acos")
+      .Case("atan", "math.atan")
+      .Case("sinh", "math.sinh")
+      .Case("cosh", "math.cosh")
       .Case("tanh", "math.tanh")
       .Case("abs", "math.absf")
+      .Case("floor", "math.floor")
+      .Case("ceil", "math.ceil")
       .Case("erf", "math.erf")
       .Case("erfc", "math.erfc")
       .Default("");
+}
+
+/// The number of arguments of the function `name`, or 0 if there is no
+/// such function. Those of the custom forces of OpenMM [Eastman2017] (D22).
+static unsigned getArity(StringRef name) {
+  if (!getFunctionOp(name).empty())
+    return 1;
+  return llvm::StringSwitch<unsigned>(name)
+      .Cases({"step", "delta", "square", "cube", "recip", "sec", "csc", "cot"},
+             1)
+      .Cases({"min", "max", "atan2"}, 2)
+      .Case("select", 3)
+      .Default(0);
 }
 
 namespace {
@@ -198,15 +225,24 @@ private:
           [](char c) { return llvm::isAlnum(c) || c == '_'; });
       rest = rest.drop_front(name.size());
       if (consume('(')) {
-        if (getFunctionOp(name).empty())
+        unsigned arity = getArity(name);
+        if (arity == 0)
           return fail("unknown function '" + name + "'");
-        auto argument = parseSum();
-        if (!argument)
-          return argument;
-        if (!consume(')'))
-          return fail("expected ')' after the argument of '" + name + "'");
-        auto node = create(Expression::Node::Call, std::move(*argument));
+        auto node = std::make_unique<Expression::Node>();
+        node->kind = Expression::Node::Call;
         node->name = name.str();
+        do {
+          auto argument = parseSum();
+          if (!argument)
+            return argument;
+          node->arguments.push_back(std::move(*argument));
+        } while (consume(','));
+        if (!consume(')'))
+          return fail("expected ')' after the arguments of '" + name + "'");
+        if (node->arguments.size() != arity)
+          return fail("'" + name + "' takes " + llvm::Twine(arity) +
+                      " argument" + (arity == 1 ? "" : "s") + ", not " +
+                      llvm::Twine(node->arguments.size()));
         return std::move(node);
       }
       auto node = std::make_unique<Expression::Node>();
@@ -227,8 +263,10 @@ private:
 class Emitter {
 public:
   Emitter(llvm::raw_ostream &os, const llvm::StringMap<std::string> &values,
+          const llvm::StringMap<const Expression::Node *> &definitions,
           StringRef prefix, StringRef indent)
-      : os(os), values(values), prefix(prefix), indent(indent) {}
+      : os(os), values(values), definitions(definitions), prefix(prefix),
+        indent(indent) {}
 
   std::string emit(const Expression::Node &node) {
     using Node = Expression::Node;
@@ -239,8 +277,17 @@ public:
          << formatReal(node.number) << " : f64\n";
       return result;
     }
-    case Node::Name:
-      return values.lookup(node.name);
+    case Node::Name: {
+      if (values.count(node.name))
+        return values.lookup(node.name);
+      // A name that the expression defines after a semicolon, computed once.
+      auto known = defined.find(node.name);
+      if (known != defined.end())
+        return known->second;
+      std::string value = emit(*definitions.lookup(node.name));
+      defined[node.name] = value;
+      return value;
+    }
     case Node::Negate:
       return emitOp("arith.negf", {emit(*node.lhs)});
     case Node::Add:
@@ -252,7 +299,7 @@ public:
     case Node::Divide:
       return emitBinary("arith.divf", node);
     case Node::Call:
-      return emitOp(getFunctionOp(node.name), {emit(*node.lhs)});
+      return emitCall(node);
     case Node::Power: {
       std::string base = emit(*node.lhs);
       // A power with a whole number is a product.
@@ -274,6 +321,60 @@ public:
 
 private:
   std::string next() { return (prefix + llvm::Twine(counter++)).str(); }
+
+  std::string constant(double value) {
+    std::string result = next();
+    os << indent << result << " = arith.constant " << formatReal(value)
+       << " : f64\n";
+    return result;
+  }
+
+  /// `select` of two values by a comparison of `x` with 0.
+  std::string compareWithZero(StringRef predicate, const std::string &x,
+                              const std::string &onTrue,
+                              const std::string &onFalse) {
+    std::string zero = constant(0.0), condition = next();
+    os << indent << condition << " = arith.cmpf " << predicate << ", " << x
+       << ", " << zero << " : f64\n";
+    std::string result = next();
+    os << indent << result << " = arith.select " << condition << ", "
+       << onTrue << ", " << onFalse << " : f64\n";
+    return result;
+  }
+
+  std::string emitCall(const Expression::Node &node) {
+    StringRef name = node.name;
+    std::vector<std::string> a;
+    for (const auto &argument : node.arguments)
+      a.push_back(emit(*argument));
+    StringRef op = getFunctionOp(name);
+    if (!op.empty())
+      return emitOp(op, {a[0]});
+    if (name == "min")
+      return emitOp("arith.minimumf", {a[0], a[1]});
+    if (name == "max")
+      return emitOp("arith.maximumf", {a[0], a[1]});
+    if (name == "atan2")
+      return emitOp("math.atan2", {a[0], a[1]});
+    if (name == "select")
+      return compareWithZero("une", a[0], a[1], a[2]);
+    if (name == "step")
+      return compareWithZero("oge", a[0], constant(1.0), constant(0.0));
+    if (name == "delta")
+      return compareWithZero("oeq", a[0], constant(1.0), constant(0.0));
+    if (name == "square")
+      return emitOp("arith.mulf", {a[0], a[0]});
+    if (name == "cube")
+      return emitOp("arith.mulf", {emitOp("arith.mulf", {a[0], a[0]}), a[0]});
+    std::string one = constant(1.0);
+    if (name == "recip")
+      return emitOp("arith.divf", {one, a[0]});
+    if (name == "sec")
+      return emitOp("arith.divf", {one, emitOp("math.cos", {a[0]})});
+    if (name == "csc")
+      return emitOp("arith.divf", {one, emitOp("math.sin", {a[0]})});
+    return emitOp("arith.divf", {one, emitOp("math.tan", {a[0]})});
+  }
 
   /// Returns true if `node` is a whole number, with or without a sign.
   static bool isWholeNumber(const Expression::Node &node, double &value) {
@@ -305,6 +406,8 @@ private:
 
   llvm::raw_ostream &os;
   const llvm::StringMap<std::string> &values;
+  const llvm::StringMap<const Expression::Node *> &definitions;
+  llvm::StringMap<std::string> defined;
   StringRef prefix;
   StringRef indent;
   unsigned counter = 0;
@@ -312,39 +415,117 @@ private:
 
 } // namespace
 
+/// Adds the names that `node` uses to `used`.
+static void collectNames(const Expression::Node &node,
+                         llvm::StringSet<> &used) {
+  if (node.kind == Expression::Node::Name)
+    used.insert(node.name);
+  for (const auto *child : {node.lhs.get(), node.rhs.get()})
+    if (child)
+      collectNames(*child, used);
+  for (const auto &argument : node.arguments)
+    collectNames(*argument, used);
+}
+
 llvm::Expected<Expression> Expression::parse(StringRef text) {
+  // The expression, then definitions of names after semicolons, as the
+  // custom forces of OpenMM write them: "k*d^2; d = r - r0".
+  llvm::SmallVector<StringRef> parts;
+  text.split(parts, ';');
   Expression expression;
-  Parser parser(text, expression.names);
+  std::vector<std::string> used;
+  Parser parser(parts.front(), used);
   auto root = parser.parse();
   if (!root)
     return root.takeError();
   expression.root = std::move(*root);
+  llvm::StringMap<const Node *> byName;
+  for (StringRef part : llvm::drop_begin(parts)) {
+    part = part.trim();
+    if (part.empty())
+      continue;
+    auto [name, body] = part.split('=');
+    name = name.trim();
+    auto fail = [&](const llvm::Twine &message) {
+      return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                     "in the expression '%s': %s",
+                                     text.str().c_str(),
+                                     message.str().c_str());
+    };
+    if (name.empty() || body.data() == nullptr ||
+        !(llvm::isAlpha(name.front()) || name.front() == '_') ||
+        !llvm::all_of(name, [](char c) { return llvm::isAlnum(c) || c == '_'; }))
+      return fail("expected 'name = expression' after ';', not '" + part +
+                  "'");
+    if (getArity(name) != 0 || byName.count(name))
+      return fail("'" + name + "' is defined twice or is a function");
+    Parser definition(body, used);
+    auto node = definition.parse();
+    if (!node)
+      return node.takeError();
+    byName[name] = node->get();
+    expression.definitions.push_back({name.str(), std::move(*node)});
+  }
+  // A definition may use names defined after it, but not itself: a search
+  // in depth marks a name 1 while it is on the path and 2 when it is done.
+  llvm::StringMap<int> mark;
+  std::function<bool(StringRef)> cyclic = [&](StringRef name) {
+    if (mark.lookup(name) == 1)
+      return true;
+    if (mark.lookup(name) == 2)
+      return false;
+    mark[name] = 1;
+    llvm::StringSet<> inner;
+    collectNames(*byName.lookup(name), inner);
+    for (const auto &entry : inner)
+      if (byName.count(entry.getKey()) && cyclic(entry.getKey()))
+        return true;
+    mark[name] = 2;
+    return false;
+  };
+  for (const auto &[name, node] : expression.definitions)
+    if (cyclic(name))
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "in the expression '%s': the definition of '%s' refers to itself",
+          text.str().c_str(), name.c_str());
+  for (const std::string &name : used)
+    if (!byName.count(name))
+      expression.names.push_back(name);
   return std::move(expression);
 }
 
-static double evaluateNode(const Expression::Node &node,
-                           const llvm::StringMap<double> &values) {
+static double
+evaluateNode(const Expression::Node &node,
+             const llvm::StringMap<double> &values,
+             const llvm::StringMap<const Expression::Node *> &definitions) {
   using Node = Expression::Node;
   switch (node.kind) {
   case Node::Number:
     return node.number;
   case Node::Name:
+    if (!values.count(node.name) && definitions.count(node.name))
+      return evaluateNode(*definitions.lookup(node.name), values, definitions);
     return values.lookup(node.name);
   case Node::Negate:
-    return -evaluateNode(*node.lhs, values);
+    return -evaluateNode(*node.lhs, values, definitions);
   case Node::Add:
-    return evaluateNode(*node.lhs, values) + evaluateNode(*node.rhs, values);
+    return evaluateNode(*node.lhs, values, definitions) + evaluateNode(*node.rhs, values, definitions);
   case Node::Subtract:
-    return evaluateNode(*node.lhs, values) - evaluateNode(*node.rhs, values);
+    return evaluateNode(*node.lhs, values, definitions) - evaluateNode(*node.rhs, values, definitions);
   case Node::Multiply:
-    return evaluateNode(*node.lhs, values) * evaluateNode(*node.rhs, values);
+    return evaluateNode(*node.lhs, values, definitions) * evaluateNode(*node.rhs, values, definitions);
   case Node::Divide:
-    return evaluateNode(*node.lhs, values) / evaluateNode(*node.rhs, values);
+    return evaluateNode(*node.lhs, values, definitions) / evaluateNode(*node.rhs, values, definitions);
   case Node::Power:
-    return std::pow(evaluateNode(*node.lhs, values),
-                    evaluateNode(*node.rhs, values));
+    return std::pow(evaluateNode(*node.lhs, values, definitions),
+                    evaluateNode(*node.rhs, values, definitions));
   case Node::Call: {
-    double x = evaluateNode(*node.lhs, values);
+    std::vector<double> a;
+    for (const auto &argument : node.arguments)
+      a.push_back(evaluateNode(*argument, values, definitions));
+    double x = a[0];
+    double y = a.size() > 1 ? a[1] : 0.0, z = a.size() > 2 ? a[2] : 0.0;
     return llvm::StringSwitch<double>(node.name)
         .Case("sqrt", std::sqrt(x))
         .Case("exp", std::exp(x))
@@ -352,22 +533,49 @@ static double evaluateNode(const Expression::Node &node,
         .Case("sin", std::sin(x))
         .Case("cos", std::cos(x))
         .Case("tan", std::tan(x))
+        .Case("asin", std::asin(x))
+        .Case("acos", std::acos(x))
+        .Case("atan", std::atan(x))
+        .Case("sinh", std::sinh(x))
+        .Case("cosh", std::cosh(x))
         .Case("tanh", std::tanh(x))
         .Case("abs", std::fabs(x))
+        .Case("floor", std::floor(x))
+        .Case("ceil", std::ceil(x))
         .Case("erf", std::erf(x))
         .Case("erfc", std::erfc(x))
+        .Case("step", x >= 0.0 ? 1.0 : 0.0)
+        .Case("delta", x == 0.0 ? 1.0 : 0.0)
+        .Case("square", x * x)
+        .Case("cube", x * x * x)
+        .Case("recip", 1.0 / x)
+        .Case("sec", 1.0 / std::cos(x))
+        .Case("csc", 1.0 / std::sin(x))
+        .Case("cot", 1.0 / std::tan(x))
+        .Case("min", std::fmin(x, y))
+        .Case("max", std::fmax(x, y))
+        .Case("atan2", std::atan2(x, y))
+        .Case("select", x != 0.0 ? y : z)
         .Default(std::nan(""));
   }
   }
   return std::nan("");
 }
 
+llvm::StringMap<const Expression::Node *> Expression::getDefinitions() const {
+  llvm::StringMap<const Node *> byName;
+  for (const auto &[name, node] : definitions)
+    byName[name] = node.get();
+  return byName;
+}
+
 double Expression::evaluate(const llvm::StringMap<double> &values) const {
-  return evaluateNode(*root, values);
+  return evaluateNode(*root, values, getDefinitions());
 }
 
 std::string Expression::emit(llvm::raw_ostream &os,
                              const llvm::StringMap<std::string> &values,
                              StringRef prefix, StringRef indent) const {
-  return Emitter(os, values, prefix, indent).emit(*root);
+  auto byName = getDefinitions();
+  return Emitter(os, values, byName, prefix, indent).emit(*root);
 }

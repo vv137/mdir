@@ -99,6 +99,7 @@ regard to case.
 | | `coulomb_modifier` | With PME: `NONE`, or `POTENTIAL_SHIFT`, the direct sum shifted to zero at the cutoff. |
 | | `dispersion_correction` | `NONE` or `ENERGY_PRESSURE`; also in `[[energy.pair]]`. |
 | | `[[energy.pair]]` | A pair term, given by an expression (D16, D22). |
+| | `[[energy.bond]]`, `[[energy.angle]]`, `[[energy.dihedral]]` | With a topology: a term over tuples of 2, 3, or 4 of its particles, given by an expression in `r` (Å) or `theta` (radians), with `name`, `expression`, `particles` (lists of particle numbers, from 1), and parameters, a number for all tuples or a list of one for each (D136). Restraints of distances, angles, and dihedrals, flat-bottomed with `max`, are such terms. |
 | | `[[energy.type]]` | A type of particle: its mass and its parameters. |
 | | `[[energy.pair_override]]` | Parameters of a term for one pair of types. |
 | `[pme]` | `tolerance`, `beta`, `max_spacing`, `grid`, `order`, `influence` | Particle mesh Ewald (D71): $\beta$ from $\operatorname{erfc}(\beta r_c) = \texttt{tolerance}$ or given; the grid from the largest spacing or given as three numbers of points; the order of the B-splines, 4, 6, or 8; the influence function, `SPME` or `OPTIMAL`. |
@@ -154,6 +155,14 @@ driver converts when it reads and when it writes.
 An expression is evaluated in the units of the control file: the kernel
 scales the distance before the expression and the energy after it. The
 driver need not know the dimension of a parameter.
+
+The syntax is that of the custom forces of OpenMM (D22, D136): numbers,
+names, `+ - * / ^`, parentheses, the functions `sqrt`, `exp`, `log`,
+`sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `sinh`, `cosh`, `tanh`,
+`abs`, `floor`, `ceil`, `erf`, `erfc`, `step` (1 for x ≥ 0), `delta` (1 for
+x = 0), `square`, `cube`, `recip`, `sec`, `csc`, `cot`, `min`, `max`,
+`atan2(y, x)`, and `select(x, a, b)` (a if x ≠ 0, else b), and definitions
+of names after semicolons: `k*d^2; d = r - r0`.
 
 ## 2. The driver
 

@@ -1,6 +1,7 @@
 // The control file of a run.
 
 #include "mdir/Driver/Control.h"
+#include "mdir/Driver/Expression.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -58,6 +59,14 @@ private:
 
   Error readEnergy(const toml::table &table);
   Error readPair(const toml::table &table);
+  /// [[energy.bond]], [[energy.angle]], or [[energy.dihedral]]: a term over
+  /// tuples of `arity` particles (D136).
+  Error readTupleTerm(const toml::table &table, unsigned arity);
+  Error readBond(const toml::table &table) { return readTupleTerm(table, 2); }
+  Error readAngle(const toml::table &table) { return readTupleTerm(table, 3); }
+  Error readDihedral(const toml::table &table) {
+    return readTupleTerm(table, 4);
+  }
   Error readOverride(const toml::table &table);
   Error readType(const toml::table &table);
   Error readDynamics(const toml::table &table);
@@ -205,6 +214,99 @@ Error Reader::readChoice(
 //===----------------------------------------------------------------------===//
 // Tables
 //===----------------------------------------------------------------------===//
+
+Error Reader::readTupleTerm(const toml::table &table, unsigned arity) {
+  static const char *const kinds[] = {"", "", "bond", "angle", "dihedral"};
+  std::string kind = std::string("[[energy.") + kinds[arity] + "]]";
+  TupleTerm term;
+  term.arity = arity;
+  if (Error error = readString(table, "name", term.name))
+    return error;
+  if (Error error = readString(table, "expression", term.expression))
+    return error;
+  if (term.name.empty())
+    return fail(table, "expected a 'name' in " + kind);
+  if (!llvm::all_of(term.name,
+                    [](char c) { return llvm::isAlnum(c) || c == '_'; }))
+    return fail(*table.get("name"), "a name of letters, digits, and '_', "
+                                    "not '" + term.name + "'");
+  for (const TupleTerm &other : control.tupleTerms)
+    if (other.name == term.name)
+      return fail(*table.get("name"),
+                  "another term has the name '" + term.name + "'");
+  if (term.expression.empty())
+    return fail(table, "expected an 'expression' in " + kind);
+
+  // The tuples: lists of the numbers of their particles, from 1.
+  const toml::node *node = table.get("particles");
+  const toml::array *tuples = node ? node->as_array() : nullptr;
+  if (!tuples || tuples->empty())
+    return fail(node ? *node : static_cast<const toml::node &>(table),
+                "expected 'particles' in " + kind + ": lists of " +
+                    llvm::Twine(arity) + " particle numbers, from 1");
+  for (const toml::node &element : *tuples) {
+    const toml::array *tuple = element.as_array();
+    if (!tuple || tuple->size() != arity)
+      return fail(element, "expected a list of " + llvm::Twine(arity) +
+                               " particle numbers");
+    std::vector<unsigned> members;
+    for (const toml::node &member : *tuple) {
+      std::optional<int64_t> number = member.value<int64_t>();
+      if (!member.is_integer() || !number || *number < 1)
+        return fail(member, "expected a particle number, from 1");
+      if (llvm::is_contained(members, static_cast<unsigned>(*number - 1)))
+        return fail(member, "a particle appears twice in a tuple");
+      members.push_back(static_cast<unsigned>(*number - 1));
+    }
+    term.particles.insert(term.particles.end(), members.begin(),
+                          members.end());
+  }
+  size_t count = term.size();
+
+  // Every other keyword is a parameter: a number for all tuples, or a list
+  // of one for each.
+  for (auto &&[key, value] : table) {
+    StringRef keyword = toRef(key.str());
+    if (keyword == "name" || keyword == "expression" || keyword == "particles")
+      continue;
+    std::vector<double> values;
+    if (std::optional<double> number = value.value<double>()) {
+      values.assign(count, *number);
+    } else if (const toml::array *list = value.as_array()) {
+      for (const toml::node &element : *list) {
+        std::optional<double> number = element.value<double>();
+        if (!number)
+          return fail(element, "expected a number");
+        values.push_back(*number);
+      }
+      if (values.size() != count)
+        return fail(value, "'" + keyword + "' has " +
+                               llvm::Twine(values.size()) +
+                               " values, and there are " +
+                               llvm::Twine(count) + " tuples");
+    } else {
+      return fail(value, "expected a number, or a list of one for each "
+                         "tuple, for the parameter '" +
+                             keyword + "'");
+    }
+    term.parameters.push_back({keyword.str(), std::move(values)});
+  }
+
+  // The expression uses the coordinate and the parameters only.
+  auto expression = Expression::parse(term.expression);
+  if (!expression)
+    return fail(*table.get("expression"),
+                llvm::toString(expression.takeError()));
+  for (const std::string &name : expression->getNames())
+    if (name != term.getVariable() &&
+        !llvm::any_of(term.parameters,
+                      [&](const auto &p) { return p.first == name; }))
+      return fail(*table.get("expression"),
+                  "the expression uses '" + name + "', which is neither '" +
+                      term.getVariable() + "' nor a parameter of the term");
+  control.tupleTerms.push_back(std::move(term));
+  return Error::success();
+}
 
 Error Reader::readPair(const toml::table &table) {
   PairTerm term;
@@ -495,7 +597,7 @@ Error Reader::readEnergy(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "energy",
           {"cutoff", "switch_distance", "pairlist_distance",
-           "pruned_distance", "rebuild_interval", "lennard_jones_modifier", "coulomb_modifier", "pair", "type",
+           "pruned_distance", "rebuild_interval", "lennard_jones_modifier", "coulomb_modifier", "pair", "bond", "angle", "dihedral", "type",
            "pair_override", "dispersion_correction", "electrostatics"},
           {}))
     return error;
@@ -583,6 +685,18 @@ Error Reader::readEnergy(const toml::table &table) {
     return error;
   if (Error error = readArray("pair", &Reader::readPair))
     return error;
+  if (Error error = readArray("bond", &Reader::readBond))
+    return error;
+  if (Error error = readArray("angle", &Reader::readAngle))
+    return error;
+  if (Error error = readArray("dihedral", &Reader::readDihedral))
+    return error;
+  if (!control.tupleTerms.empty() && !control.hasTopology())
+    return fail(*table.get(control.tupleTerms.front().arity == 2   ? "bond"
+                           : control.tupleTerms.front().arity == 3 ? "angle"
+                                                                   : "dihedral"),
+                "terms over tuples need a topology, whose particles they "
+                "number");
   if (Error error = readArray("pair_override", &Reader::readOverride))
     return error;
 

@@ -33,10 +33,13 @@ pairs = [(["bonds"], ["Bond"]),
           ["Proper Dih.", "Per. Imp. Dih.", "Improper Dih."]),
          (["Lennard-Jones 1-4"], ["LJ-14"]), (["Coulomb 1-4"], ["Coulomb-14"]),
          (["Lennard-Jones"], ["LJ (SR)"]), (["dispersion"], ["Disper. corr."]),
-         (["CMAP"], ["CMAP Dih."])]
+         (["CMAP"], ["CMAP Dih."]),
+         # Dihedrals of Ryckaert and Bellemans and Fourier, which MDIR takes
+         # as terms given by expressions (D136) and GROMACS as one term.
+         (["ryckaert_bellemans", "fourier"], ["Ryckaert-Bell."])]
 print(f"{ff:16s} {'term':20s} {'MDIR kJ/mol':>16s} {'GROMACS':>16s} {'relative':>10s}")
 for names, theirs in pairs:
-    if names[0] not in m:
+    if not any(n in m for n in names):
         continue
     mine = " + ".join(n for n in names if n in m)
     ref = sum(g.get(t, 0.0) for t in theirs)

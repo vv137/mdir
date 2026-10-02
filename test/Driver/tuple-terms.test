@@ -1,0 +1,95 @@
+# Terms over tuples given by expressions (D136): [[energy.bond]] in r (Å),
+# [[energy.angle]] and [[energy.dihedral]] in theta (radians), with
+# parameters of each tuple or of all, in kcal/mol, as the custom forces of
+# OpenMM over bonds, angles, and torsions. On the dipeptide: two harmonic
+# bonds, a flat-bottomed one, an angle, and two dihedrals of phases that are
+# not symmetric. check_tuple_terms.py computes their energies from the
+# coordinates, and the forces that they add against central differences of
+# its energies; the log prints each term under its name.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/terms.toml
+# RUN: sed -n '/^#--- run.toml/,/^#--- terms/p' %s | sed '1d;$d' | sed 's/terms.h5/plain.h5/' > %t/plain.toml
+# RUN: cd %t && mdir run plain.toml > /dev/null && mdir run terms.toml | FileCheck %s
+# RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
+# RUN: mdir checkpoint --print=forces %t/terms.h5 > %t/terms.forces
+# RUN: %python %S/Inputs/check_tuple_terms.py %t/dipeptide.inpcrd %t/plain.forces %t/terms.forces | FileCheck %s --check-prefix=PYTHON
+#
+# RUN: sed -e 's/^k  = \[100.0, 50.0\]/k  = [100.0]/' %t/terms.toml > %t/count.toml
+# RUN: not mdir check %t/count.toml 2>&1 | FileCheck %s --check-prefix=COUNT
+# RUN: sed -e 's/^expression = "k\*(theta - t0)^2"/expression = "k*(theta - theta0)^2"/' %t/terms.toml > %t/name.toml
+# RUN: not mdir check %t/name.toml 2>&1 | FileCheck %s --check-prefix=NAME
+# RUN: sed -e 's/^particles  = \[\[5, 7, 9\]\]/particles  = [[5, 7]]/' %t/terms.toml > %t/arity.toml
+# RUN: not mdir check %t/arity.toml 2>&1 | FileCheck %s --check-prefix=ARITY
+# RUN: sed -e 's/^particles  = \[\[2, 9\]\]/particles  = [[2, 9999]]/' %t/terms.toml > %t/range.toml
+# RUN: not mdir run %t/range.toml 2>&1 | FileCheck %s --check-prefix=RANGE
+
+# CHECK:      MDIR:   Coulomb 1-4                   48.937159
+# CHECK-NEXT: MDIR:   harmonic                       4.922562
+# CHECK-NEXT: MDIR:   flat                          65.476383
+# CHECK-NEXT: MDIR:   bend                           0.162709
+# CHECK-NEXT: MDIR:   twist                          1.479607
+
+# PYTHON:      harmonic 4.922562
+# PYTHON-NEXT: flat 65.476383
+# PYTHON-NEXT: bend 0.162709
+# PYTHON-NEXT: twist 1.479607
+# PYTHON-NEXT: forces against differences of the energy: ok
+
+# COUNT: 'k' has 1 values, and there are 2 tuples
+# NAME: the expression uses 'theta0', which is neither 'theta' nor a parameter of the term
+# ARITY: expected a list of 3 particle numbers
+# RANGE: the term 'flat' names the particle 9999, and the topology has 1168
+
+#--- run.toml
+[input]
+topology    = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+[output]
+energy_interval = 0
+checkpoint = "terms.h5"
+checkpoint_interval = 1
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "CUTOFF"
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 1e-9
+steps      = 1
+[ensemble]
+ensemble    = "NVE"
+temperature = 0.0
+[boundary]
+type = "PERIODIC"
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- terms
+[[energy.bond]]
+name       = "harmonic"
+expression = "k*(r - r0)^2"
+particles  = [[5, 7], [7, 9]]
+k  = [100.0, 50.0]
+r0 = 1.2
+[[energy.bond]]
+name       = "flat"
+expression = "k*max(0, r - r0)^2"
+particles  = [[2, 9]]
+k  = 20.0
+r0 = 2.0
+[[energy.angle]]
+name       = "bend"
+expression = "k*(theta - t0)^2"
+particles  = [[5, 7, 9]]
+k  = 10.0
+t0 = 2.0
+[[energy.dihedral]]
+name       = "twist"
+expression = "k*(1 + cos(n*theta - phase))"
+particles  = [[2, 5, 7, 9], [5, 7, 9, 11]]
+k = 1.5
+n = 2
+phase = [3.0, 0.5]
+#--- end

@@ -91,10 +91,11 @@ that continues with it, a stop on a signal or a limit of time that falls
 on a checkpoint so that the continuation stays exact, and the checkpoint
 before the last kept (D129 to D132); the log in a file of the run is
 next. Langevin dynamics by the middle scheme is in place (D135), without
-yet a conserved energy. Then the features that general molecular dynamics
-asks of MDIR: terms given by expressions over bonds, angles,
-dihedrals, positions, and pairs with parameters of their own and tabulated
-functions, which also give restraints beyond positions and the centers of
+yet a conserved energy, and so are terms given by expressions over bonds,
+angles, and dihedrals, which give restraints beyond positions and the
+dihedrals of OPLS-AA (D136). Then the features that general molecular
+dynamics asks of MDIR: such terms over positions and pairs, with
+parameters of their own and tabulated functions, and over the centers of
 groups that pulling restrains; a reaction field and runs without a
 periodic cell, and generalized Born solvation on them; outputs for
 analysis (velocities, a compressed trajectory, the pressure tensor);

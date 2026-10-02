@@ -76,10 +76,14 @@ private:
     CoulombReciprocal = 512,
     UreyBradleys = 1024,
     HarmonicImpropers = 2048,
-    AllTerms = 4095,
+    TupleTerms = 4096,
+    AllTerms = 8191,
   };
-  /// Emits the potential `name` of the terms `terms` of the topology.
-  void emitTopologyPotential(StringRef name, unsigned terms);
+  /// Emits the potential `name` of the terms `terms` of the topology; of
+  /// the terms over tuples given by expressions, only the one of index
+  /// `tupleTerm` if it is not -1.
+  void emitTopologyPotential(StringRef name, unsigned terms,
+                             int tupleTerm = -1);
   /// β, the grid, the influence function, and the constant terms of
   /// particle mesh Ewald (docs/pme-m1.md).
   llvm::Error collectPME();
@@ -955,6 +959,17 @@ llvm::Error Builder::collectTopology() {
       set.fields[xi0].values.push_back(term.xi0);
     }
   }
+  // The terms given by expressions (D136), with their parameters as fields
+  // of their tuples, in the units of the control file.
+  for (const TupleTerm &term : topology.tupleTerms) {
+    Program::TupleSet &set = addSet("custom_" + term.name, term.arity);
+    for (unsigned member : term.particles)
+      set.members.push_back(member);
+    for (const auto &[name, values] : term.parameters) {
+      size_t field = addField(set, name);
+      set.fields[field].values = values;
+    }
+  }
   if (!topology.pairs.empty()) {
     // The factors enter the parameters: ε s_LJ, and f q_i q_j s_C.
     Program::TupleSet &set = addSet("pairs14", 2);
@@ -1283,7 +1298,8 @@ llvm::Error Builder::collectPME() {
   return llvm::Error::success();
 }
 
-void Builder::emitTopologyPotential(StringRef name, unsigned terms) {
+void Builder::emitTopologyPotential(StringRef name, unsigned terms,
+                                    int tupleTerm) {
   double cutoff = control.cutoffDistance * units::length;
   auto has = [&](StringRef set) {
     return llvm::any_of(program.tupleSets, [&](const Program::TupleSet &s) {
@@ -1592,6 +1608,50 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms) {
        << "    md.yield %e : f64\n"
        << "  } : !rel_impropers, !vec -> f64\n";
     add("impropers");
+  }
+  // The terms given by expressions (D136), in the units of the control
+  // file: the distance in Å, the angles in radians, the energy in kcal/mol.
+  for (auto [index, term] : llvm::enumerate(system.topology->tupleTerms)) {
+    if (!(terms & TupleTerms) ||
+        (tupleTerm >= 0 && static_cast<int>(index) != tupleTerm))
+      continue;
+    static const char *const coordinates[] = {
+        "", "", "distance(0, 1)", "angle(0, 1, 2)", "dihedral(0, 1, 2, 3)"};
+    std::string set = "custom_" + term.name;
+    os << "  %u_" << set << " = md.sum_tuples %r_" << set
+       << ", %x, %cell coordinates(" << coordinates[term.arity] << ")";
+    if (!term.parameters.empty()) {
+      os << "\n      tuple(";
+      for (auto [k, parameter] : llvm::enumerate(term.parameters))
+        os << (k ? ", " : "") << "%f_" << set << "_" << parameter.first;
+      os << " : ";
+      for (size_t k = 0; k != term.parameters.size(); ++k)
+        os << (k ? ", " : "") << "!of_" << set;
+      os << ")";
+    }
+    os << " {\n  ^bb0(%c: f64";
+    for (const auto &parameter : term.parameters)
+      os << ", %cp_" << parameter.first << ": f64";
+    os << "):\n";
+    std::string variable = "%c";
+    if (term.arity == 2) {
+      os << "    %c_scale = arith.constant " << formatReal(1.0 / units::length)
+         << " : f64\n"
+         << "    %c_a = arith.mulf %c, %c_scale : f64\n";
+      variable = "%c_a";
+    }
+    llvm::StringMap<std::string> values;
+    values[term.getVariable()] = variable;
+    for (const auto &parameter : term.parameters)
+      values[parameter.first] = "%cp_" + parameter.first;
+    Expression expression = llvm::cantFail(Expression::parse(term.expression));
+    std::string energy = expression.emit(os, values, "%ce", "    ");
+    os << "    %c_kj = arith.constant " << formatReal(units::energy)
+       << " : f64\n"
+       << "    %c_e = arith.mulf " << energy << ", %c_kj : f64\n"
+       << "    md.yield %c_e : f64\n"
+       << "  } : !rel_" << set << ", !vec -> f64\n";
+    add(set);
   }
   bool lj14 = terms & LennardJones14, coulomb14 = terms & Coulomb14;
   if ((lj14 || coulomb14) && has("pairs14")) {
@@ -4868,7 +4928,9 @@ void Builder::emitTerms(StringRef x) {
     return;
   // The restraints, if any, last: their energy at the start is that of the
   // evaluation before the terms.
-  int size = hasRestraints() ? 13 : 12;
+  // The terms given by expressions follow those of the topology (D136).
+  int custom = static_cast<int>(system.topology->tupleTerms.size());
+  int size = 12 + custom + (hasRestraints() ? 1 : 0);
   std::string type = "memref<" + std::to_string(size) + "xf64>";
   os << "  %terms = memref.alloca() : " << type << "\n";
   int index = 0;
@@ -4885,8 +4947,17 @@ void Builder::emitTerms(StringRef x) {
        << "  memref.store %" << name << ", %terms[%i_" << name
        << "] : " << type << "\n";
   }
+  for (int k = 0; k != custom; ++k) {
+    std::string name = "term_custom" + std::to_string(k);
+    os << "  %" << name << " = md.evaluate @" << name << "(" << x << ", %cell"
+       << getFieldValues() << ") request [energy]\n"
+       << "      : (!vec, !md.cell" << getFieldTypes() << ") -> f64\n"
+       << "  %i_" << name << " = arith.constant " << index++ << " : index\n"
+       << "  memref.store %" << name << ", %terms[%i_" << name << "] : "
+       << type << "\n";
+  }
   if (hasRestraints())
-    os << "  %i_restraints = arith.constant 12 : index\n"
+    os << "  %i_restraints = arith.constant " << index << " : index\n"
        << "  memref.store %u0_r, %terms[%i_restraints] : " << type << "\n";
   os << "  %terms_cast = memref.cast %terms : " << type << " to "
         "memref<?xf64>\n"
@@ -5531,6 +5602,10 @@ llvm::Error Builder::build() {
             {"term_urey_bradley", UreyBradleys},
             {"term_impropers", HarmonicImpropers}})
         emitTopologyPotential(name, term);
+    if (!isRestart())
+      for (size_t k = 0, e = system.topology->tupleTerms.size(); k != e; ++k)
+        emitTopologyPotential("term_custom" + std::to_string(k), TupleTerms,
+                              static_cast<int>(k));
   }
   else if (llvm::Error error = emitPotential())
     return error;

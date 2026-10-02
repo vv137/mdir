@@ -95,6 +95,18 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
       return std::move(error);
 
   System system;
+  // The terms over tuples of the control file join those of the topology
+  // (D136), once their particles are known to exist.
+  for (const TupleTerm &term : control.tupleTerms) {
+    for (unsigned particle : term.particles)
+      if (particle >= topology->getNumParticles())
+        return llvm::createStringError(
+            llvm::inconvertibleErrorCode(),
+            "the term '%s' names the particle %u, and the topology has %zu",
+            term.name.c_str(), particle + 1, topology->getNumParticles());
+    topology->tupleTerms.push_back(term);
+  }
+
   system.types = topology->types;
   system.masses = topology->masses;
   system.positions = topology->positions;

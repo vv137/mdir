@@ -32,6 +32,7 @@ using llvm::StringRef;
 namespace {
 
 constexpr double radiansPerDegree = M_PI / 180.0;
+constexpr double kjPerKcal = 4.184;
 
 std::string show(double value) {
   char text[32];
@@ -1227,13 +1228,66 @@ llvm::Error TopologyReader::expandMolecule(const MoleculeType &molecule,
   // Dihedrals: functions 1, 4, and 9, k (1 + cos(n φ − φ0)), with φ0 in
   // degrees, then k, then n; function 2, the harmonic improper
   // ½ k (ξ − ξ0)², with ξ0 in degrees then k.
+  // Ryckaert-Bellemans dihedrals (function 3), sum over n of C_n cos^n psi
+  // with psi = phi - 180 degrees, and Fourier dihedrals (function 5), are
+  // terms given by expressions (D136), in kcal/mol, one for each function.
+  auto termOf = [&](StringRef name, StringRef expression,
+                    std::initializer_list<const char *> parameters)
+      -> TupleTerm & {
+    for (TupleTerm &term : topology.tupleTerms)
+      if (term.name == name)
+        return term;
+    TupleTerm term;
+    term.name = name.str();
+    term.expression = expression.str();
+    term.arity = 4;
+    for (const char *parameter : parameters)
+      term.parameters.push_back({parameter, {}});
+    topology.tupleTerms.push_back(std::move(term));
+    return topology.tupleTerms.back();
+  };
   for (const Interaction &dihedral : molecule.dihedrals) {
     int function = dihedral.function;
-    if (function != 1 && function != 2 && function != 4 && function != 9)
+    if (function != 1 && function != 2 && function != 3 && function != 4 &&
+        function != 5 && function != 9)
       return fail(*dihedral.line,
-                  "only periodic dihedrals (functions 1, 4, and 9) and "
-                  "harmonic impropers (function 2) are supported, not " +
+                  "only periodic dihedrals (functions 1, 4, and 9), "
+                  "harmonic impropers (function 2), and dihedrals of "
+                  "Ryckaert and Bellemans (3) and Fourier (5) are supported, "
+                  "not " +
                       llvm::Twine(function));
+    if (function == 3 || function == 5) {
+      std::vector<double> p = dihedral.parameters;
+      if (p.empty()) {
+        DihedralMatch match = matchDihedral(molecule, dihedral);
+        if (!match.list)
+          return fail(*dihedral.line,
+                      "no [ dihedraltypes ] for this dihedral");
+        p = (*match.list)[match.index].parameters;
+      }
+      size_t count = function == 3 ? 6 : 4;
+      if (p.size() != count && p.size() != 2 * count)
+        return fail(*dihedral.line, "expected " + llvm::Twine(count) +
+                                        " parameters of this dihedral");
+      if (llvm::all_of(llvm::ArrayRef<double>(p).take_front(count),
+                       [](double c) { return c == 0.0; }))
+        continue;
+      TupleTerm &term =
+          function == 3
+              ? termOf("ryckaert_bellemans",
+                       "c0 + c1*p + c2*p^2 + c3*p^3 + c4*p^4 + c5*p^5; "
+                       "p = -cos(theta)",
+                       {"c0", "c1", "c2", "c3", "c4", "c5"})
+              : termOf("fourier",
+                       "0.5*(f1*(1 + cos(theta)) + f2*(1 - cos(2*theta)) + "
+                       "f3*(1 + cos(3*theta)) + f4*(1 - cos(4*theta)))",
+                       {"f1", "f2", "f3", "f4"});
+      for (int a = 0; a != 4; ++a)
+        term.particles.push_back(offset + dihedral.atoms[a]);
+      for (size_t c = 0; c != count; ++c)
+        term.parameters[c].second.push_back(p[c] / kjPerKcal);
+      continue;
+    }
     if (function == 2) {
       std::vector<double> p = dihedral.parameters;
       if (p.empty()) {

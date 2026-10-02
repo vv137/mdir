@@ -871,7 +871,9 @@ The functions read are those of the Amber and CHARMM force fields: bonds
 of function 1; angles of function 1, and of function 5, whose Urey–Bradley
 term ½ k_UB (r₁₃ − r13)² between the outer atoms becomes a set of pairs of
 its own; dihedrals of functions 1, 4, and 9, and of function 2, the
-harmonic improper ½ k (ξ − ξ0)² with ξ − ξ0 taken in [−π, π); pairs of
+harmonic improper ½ k (ξ − ξ0)² with ξ − ξ0 taken in [−π, π), and of
+functions 3 (Ryckaert and Bellemans, $\sum_n C_n \cos^n(\varphi - \pi)$)
+and 5 (Fourier), as terms given by expressions (D136); pairs of
 function 1; CMAP of function 1 (D121, [charmm-m1.md](charmm-m1.md)). The
 Lennard-Jones of a topology takes `lennard_jones_modifier` in its kernel:
 `POTENTIAL_SHIFT`, `FORCE_SWITCH` (the polynomial of GROMACS), or
@@ -987,7 +989,7 @@ ships (`scripts/validation/gromacs/run.sh`):
 | amber99sb-ildn with TIP4P-Ew, whose sites are virtual (Section 19) | Agree to 4 × 10⁻⁶ or better, each term; the correction for the dispersion counts the sites among the particles in both |
 | amber19sb, with CMAP (Section 20) | Agree to 3 × 10⁻⁶ or better, each term; CMAP to 9 × 10⁻⁷ |
 | charmm27, with Urey–Bradley angles (function 5), harmonic impropers (function 2), and CMAP (D121) | Agree to 4.3 × 10⁻⁶ or better, each term; angles with their Urey–Bradley terms to 3.5 × 10⁻⁷, dihedrals with the impropers to 1.8 × 10⁻⁷ |
-| oplsaa | Rejected: Ryckaert-Bellemans dihedrals |
+| oplsaa | Agree to 4.3 × 10⁻⁶ or better, each term; the dihedrals of Ryckaert and Bellemans, terms given by an expression (D136), to 1.6 × 10⁻⁶ |
 | gromos54a7 | Rejected: bonds of function 2 |
 
 Coulomb (SR) is not compared: GROMACS has no plain cutoff for it, only

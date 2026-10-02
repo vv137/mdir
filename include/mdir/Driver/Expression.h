@@ -1,7 +1,8 @@
 // Energy expressions.
 //
 // An expression is written in the syntax of D22: numbers, names, the
-// operators + - * / ^, parentheses, and functions of one argument.
+// operators + - * / ^, parentheses, the functions of the custom forces of
+// OpenMM, and definitions of names after semicolons.
 
 #ifndef MDIR_DRIVER_EXPRESSION_H
 #define MDIR_DRIVER_EXPRESSION_H
@@ -29,7 +30,8 @@ public:
 
   static llvm::Expected<Expression> parse(llvm::StringRef text);
 
-  /// The names that the expression uses, in the order of their first use.
+  /// The names that the expression uses and does not define, in the order
+  /// of their first use.
   const std::vector<std::string> &getNames() const { return names; }
 
   /// Writes ops that compute the expression in `f64`, one on a line, each
@@ -45,8 +47,12 @@ public:
   double evaluate(const llvm::StringMap<double> &values) const;
 
 private:
+  llvm::StringMap<const Node *> getDefinitions() const;
+
   std::unique_ptr<Node> root;
   std::vector<std::string> names;
+  /// The names defined after semicolons, and their expressions.
+  std::vector<std::pair<std::string, std::unique_ptr<Node>>> definitions;
 };
 
 /// A number as MLIR reads a constant of a floating-point type.

@@ -247,13 +247,19 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
   bool impropers = topology && !topology->harmonicImpropers.empty();
   std::fprintf(output.log, "MDIR: the terms at the start, in kcal/mol:\n");
   double total = output.getDispersionEnergy() + output.getPMEConstantEnergy();
+  // The terms given by expressions (D136) follow those of the topology,
+  // under their names, and the restraints come last.
+  int custom = topology ? static_cast<int>(topology->tupleTerms.size()) : 0;
   for (int i = 0, e = static_cast<int>(values->sizes[0]); i != e; ++i) {
     if ((i == 7 && !cmap) || ((i == 8 || i == 9) && !output.pme) ||
         (i == 10 && !ureyBradley) || (i == 11 && !impropers))
       continue;
+    std::string name = i < 12             ? names[i]
+                       : i < 12 + custom ? topology->tupleTerms[i - 12].name
+                                          : names[12];
     double value = values->data[i * values->strides[0]];
     total += value;
-    std::fprintf(output.log, "MDIR:   %-22s %16.6f\n", names[i],
+    std::fprintf(output.log, "MDIR:   %-22s %16.6f\n", name.c_str(),
                  value / units::energy);
   }
   if (output.pme)
