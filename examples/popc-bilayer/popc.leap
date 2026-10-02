@@ -1,0 +1,10 @@
+# The bilayer that packmol packed (popc.pdb), with Lipid21 and TIP3P, in a
+# cell of 66 x 66 x 83 Å: the box that packmol filled, a margin of 1 Å on
+# each side. tleap reports the residues of a lipid (PA, PC, OL) as split
+# residues; that is how Lipid21 builds one.
+source leaprc.lipid21
+source leaprc.water.tip3p
+SYS = loadpdb popc.pdb
+set SYS box {66.0 66.0 83.0}
+saveamberparm SYS popc.prmtop popc.inpcrd
+quit

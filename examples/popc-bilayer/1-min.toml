@@ -1,0 +1,37 @@
+# 1. Minimization: steepest descent from the coordinates of packmol and
+#    tleap, which leave close contacts between lipids. A minimization
+#    begins from those positions taken onto the surface of the constraints
+#    (D120), so that the contacts come apart from the first step.
+
+[input]
+topology    = "popc.prmtop"
+coordinates = "popc.inpcrd"
+
+[output]
+checkpoint      = "min.h5"
+energy_interval = 500
+
+[energy]
+cutoff            = 10.0
+pairlist_distance = 12.0
+electrostatics    = "PME"
+
+[pme]
+tolerance   = 1e-05             # erfc(beta r_c)
+max_spacing = 1.0               # Å
+
+[minimize]
+method       = "STEEPEST_DESCENT"
+steps        = 5000
+initial_step = 0.01             # Å; the contacts are close
+
+[constraints]
+hydrogen_bonds = true           # SHAKE and RATTLE on the bonds of hydrogen
+rigid_water    = true           # SETTLE on the waters
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "GPU"               # or "CPU", with threads = <n>
+precision = "MIXED"

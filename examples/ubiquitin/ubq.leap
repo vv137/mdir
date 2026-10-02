@@ -1,0 +1,11 @@
+# Ubiquitin (PDB 1UBQ, its waters left out) with ff19SB in OPC water, in a
+# rectangular box 12 Å beyond the protein. The protein is neutral. Made
+# with tleap of AmberTools:
+#
+#   tleap -f ubq.leap
+source leaprc.protein.ff19SB
+source leaprc.water.opc
+ubq = loadpdb 1ubq-protein.pdb
+solvateBox ubq OPCBOX 12.0
+saveAmberParm ubq ubq.prmtop ubq.inpcrd
+quit

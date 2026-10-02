@@ -3,12 +3,13 @@
 a lipid bilayer seen from the side, or a protein in water, with a camera
 that turns slowly about the normal of the bilayer (z) or the vertical.
 
-    scripts/render/movie.py STRUCTURE.gro TRAJECTORY.dcd... MOVIE.mp4
+    scripts/render/movie.py STRUCTURE TRAJECTORY.dcd... MOVIE.mp4
         [--mode membrane|protein] [--ps 10...] [--fps 25] [--stride 1]
         [--width 1280] [--height 720] [--jobs 8]
 
-STRUCTURE gives the names of the atoms and residues (a .gro in the order
-of the topology, as `gmx editconf` or ParmEd writes it); each TRAJECTORY
+STRUCTURE gives the names of the atoms and residues: an Amber topology
+(.prmtop, .parm7), or a .gro in the order of the topology, as `gmx
+editconf` or ParmEd writes it; each TRAJECTORY
 is a DCD with the cell in each frame, as `[output] trajectory` writes it,
 and they are played one after the other; PS is the time between the
 frames of each (one value for all, or one for each). Bonds are found once from the distances of
@@ -58,6 +59,35 @@ def read_gro(path):
         else:
             index.append(index[-1])
     return np.array(index), np.array(residue_names), np.array(names)
+
+
+def read_prmtop(path):
+    """The same as read_gro from an Amber topology."""
+    sections, flag, width = {}, None, None
+    for line in open(path):
+        if line.startswith("%FLAG"):
+            flag = line.split()[1]
+            sections[flag] = []
+        elif line.startswith("%FORMAT"):
+            spec = line[line.index("(") + 1:line.index(")")]
+            letter = next(c for c in spec if c.isalpha())
+            width = int(spec.split(letter)[1].split(".")[0])
+        elif line.startswith("%") or flag is None:
+            continue
+        elif flag in ("ATOM_NAME", "RESIDUE_LABEL", "RESIDUE_POINTER",
+                      "POINTERS"):
+            text = line.rstrip("\n")
+            sections[flag] += [text[i:i + width].strip()
+                               for i in range(0, len(text), width)
+                               if text[i:i + width].strip()]
+    count = int(sections["POINTERS"][0])
+    pointers = [int(v) - 1 for v in sections["RESIDUE_POINTER"]] + [count]
+    labels = sections["RESIDUE_LABEL"]
+    residue = np.empty(count, dtype=int)
+    for r in range(len(labels)):
+        residue[pointers[r]:pointers[r + 1]] = r
+    return (residue, np.array([labels[r] for r in residue]),
+            np.array(sections["ATOM_NAME"]))
 
 
 def element(name):
@@ -411,7 +441,10 @@ def main():
     parser.add_argument("--jobs", type=int, default=8)
     args = parser.parse_args()
 
-    residue, residue_names, names = read_gro(args.structure)
+    if args.structure.endswith((".prmtop", ".parm7", ".top7")):
+        residue, residue_names, names = read_prmtop(args.structure)
+    else:
+        residue, residue_names, names = read_gro(args.structure)
     steps = args.ps * len(args.trajectory) if len(args.ps) == 1 else args.ps
     if len(steps) != len(args.trajectory):
         raise SystemExit("one --ps for all trajectories or one for each")

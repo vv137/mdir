@@ -1,0 +1,58 @@
+# 3. Equilibration at constant pressure: stochastic cell rescaling at
+#    1 bar for 200 ps, with weaker restraints.
+
+[input]
+topology    = "ubq.prmtop"
+coordinates = "ubq.inpcrd"
+checkpoint  = "nvt.h5"
+
+[output]
+checkpoint          = "npt.h5"
+energy_interval     = 5000
+checkpoint_interval = 100000
+
+[energy]
+cutoff            = 9.0
+pairlist_distance = 12.0        # the outer list of the groups, Å
+pruned_distance   = 9.6         # the inner list pruned from it, Å
+electrostatics    = "PME"
+
+[pme]
+tolerance   = 1e-05
+max_spacing = 1.0
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.002              # ps
+steps      = 100000
+
+[ensemble]
+ensemble    = "NPT"
+temperature = 300.0
+pressure    = 0.986923          # atm, 1 bar
+
+[thermostat]
+method        = "V-RESCALE"     # stochastic velocity rescaling
+time_constant = 1.0             # ps
+interval      = 25              # steps
+
+[barostat]
+method        = "C-RESCALE"     # stochastic cell rescaling
+time_constant = 2.0             # ps
+interval      = 25              # that of the thermostat
+
+[[restraints]]
+selection      = "!:WAT & !@H*"
+force_constant = 1.0
+
+[constraints]
+hydrogen_bonds = true
+rigid_water    = true
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "GPU"
+precision = "MIXED"
+neighbor_structure = "GROUPS"   # groups of 16 with a dual list (GPU only)

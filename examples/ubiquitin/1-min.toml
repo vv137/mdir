@@ -1,0 +1,38 @@
+# 1. Minimization: steepest descent from the coordinates of tleap, with the
+#    heavy atoms of the protein held at their places.
+
+[input]
+topology    = "ubq.prmtop"
+coordinates = "ubq.inpcrd"      # also the reference of the restraints
+
+[output]
+checkpoint      = "min.h5"
+energy_interval = 500
+
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "PME"
+
+[pme]
+tolerance   = 1e-05             # erfc(beta r_c)
+max_spacing = 1.0               # Å
+
+[minimize]
+method = "STEEPEST_DESCENT"
+steps  = 2000
+
+[[restraints]]
+selection      = "!:WAT & !@H*"
+force_constant = 10.0           # kcal/mol/Å²
+
+[constraints]
+hydrogen_bonds = true           # SHAKE and RATTLE on the bonds of hydrogen
+rigid_water    = true           # SETTLE on the waters
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "GPU"               # or "CPU", with threads = <n>
+precision = "MIXED"

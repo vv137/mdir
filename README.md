@@ -210,6 +210,8 @@ development.
 | Example | System | Shows |
 |---|---|---|
 | [examples/ala3](examples/ala3) | Tri-alanine with ff19SB in OPC water, 4,905 particles | A whole protocol from a topology of tleap: minimization, heating at constant volume, equilibration at constant pressure with restraints, and 1 ns of production, with PME, SETTLE, SHAKE, and the virtual sites of OPC |
+| [examples/ubiquitin](examples/ubiquitin) | Ubiquitin (1UBQ) with ff19SB in OPC water, 26,031 particles | A tutorial from the PDB file: tleap, minimization with restraints, heating, equilibration at constant pressure, and 10 ns of production with the groups and the dual list |
+| [examples/popc-bilayer](examples/popc-bilayer) | A bilayer of 126 POPC lipids of Lipid21 in TIP3P water, 31,680 atoms | A tutorial from nothing: PACKMOL-Memgen, PACKMOL, and tleap, minimization from the close contacts of the packing, relaxation, and 30 ns at semi-isotropic constant pressure, with the area per lipid from the frames |
 | [examples/argon](examples/argon) | Liquid argon, 864 atoms | A run from a PDB file with the terms in the control file, and the same system as a module written by hand |
 
 ```sh
