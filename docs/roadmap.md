@@ -171,8 +171,8 @@ they are needed:
 | # | Feature | State |
 |---|---|---|
 | F1 | Langevin dynamics (the middle scheme, BAOAB) | Missing; the thermostat of most runs of Amber and OpenMM, and of the inputs of MDBench. Random numbers by particle are in place (A13) |
-| F2 | Triclinic cells (the truncated octahedron and the rhombic dodecahedron of Amber and GROMACS, the hexagonal cells of CHARMM-GUI) | In part (D123, D125, D126, [triclinic-m2.md](triclinic-m2.md)): read, reduced, and run at constant volume on the CPU and on the device, with the matrix and the groups, validated against sander and GROMACS. Next: P4 (the barostat as H diag(μ), CHARMM's hexagonal cells), P5 (rates) |
-| F3 | CHARMM force fields | In part: from a topology of GROMACS (D121) and from the files of CHARMM (D122), validated against CHARMM 51b1. Missing: triclinic cells (F2), VSWITCH, lone pairs, the Drude model, LJ-PME |
+| F2 | Triclinic cells (the truncated octahedron and the rhombic dodecahedron of Amber and GROMACS, the hexagonal cells of CHARMM-GUI) | Done but the rates (D123, D125 to D127, [triclinic-m2.md](triclinic-m2.md)): read, reduced, and run on the CPU and on the device, with the matrix and the groups, at constant volume and pressure; validated against sander, GROMACS, and CHARMM 51b1 on a hexagonal cell. Next: P5 (the rates of a protein in an octahedron against its cube) |
+| F3 | CHARMM force fields | In part: from a topology of GROMACS (D121) and from the files of CHARMM (D122), with triclinic cells (D127), validated against CHARMM 51b1. Missing: VSWITCH, lone pairs, the Drude model, LJ-PME |
 | F4 | Outputs for analysis: frames of the velocities, XTC, the pressure tensor and the area in the log, observables in H5MD | Missing; frames of the velocities are what the test of equipartition needs |
 | F5 | Restraints beyond positions: distance, angle, dihedral, flat-bottomed | Missing; positional restraints only (D74) |
 | F6 | Coarse-grained models: tabulated potentials, Martini from GROMACS topologies, DPD | Missing; part of the purpose from the start |

@@ -1,4 +1,4 @@
-# Runs in a triclinic cell on a device (docs/triclinic-m2.md, P2 and P3):
+# Runs in a triclinic cell on a device (docs/triclinic-m2.md, P2 to P4):
 # the rhombic dodecahedron of triclinic.test. The neighbor matrix bins the
 # fractional coordinates and tests with the minimum image of the cell, and
 # PME places the particles by s = x H⁻¹, takes their forces through H⁻¹,
@@ -37,6 +37,15 @@
 # RUN: grep 'INFO: \|MDIR:   ' %t/dual.out > %t/dual.log
 # RUN: diff %t/matrix.log %t/dual.log
 # RUN: FileCheck %s --check-prefix=DUAL < %t/dual.out
+# At constant pressure, in mixed precision with the dual list, the barostat
+# keeps the shape of the cell (P4).
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/triclinic-npt.test | sed '1d;$d' \
+# RUN:     | sed -e 's/^target    = "CPU"/target    = "GPU"\nneighbor_structure = "GROUPS"/' \
+# RUN:           -e 's/^precision = "DOUBLE"/precision = "MIXED"/' -e 's/^steps      = 200/steps      = 2000/' \
+# RUN:           -e 's/^checkpoint_interval = 100/checkpoint_interval = 2000/' \
+# RUN:           -e 's/^pairlist_distance = 9.0/pairlist_distance = 9.0\npruned_distance = 8.4/' > %t/npt.toml
+# RUN: cd %t && mdir run npt.toml > /dev/null
+# RUN: mdir checkpoint %t/whole.h5 | %python %S/Inputs/check_cell.py 0 0.5 0.5 | FileCheck %s --check-prefix=SHAPE
 
 # CHECK:      MDIR:   Lennard-Jones               2915.050920
 # CHECK-NEXT: MDIR:   Coulomb                    -3460.248854
@@ -56,3 +65,4 @@
 # MIXED: Coulomb reciprocal 1
 # ORDER6: Coulomb reciprocal 1
 # DUAL: MDIR: the inner lists were pruned {{[0-9]+}} times
+# SHAPE: the shape of the cell is kept

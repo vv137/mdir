@@ -2,9 +2,9 @@
 
 **Scope of the first milestone.** MDIR runs on one device, a CPU with
 OpenMP or one NVIDIA GPU. Triclinic cells (truncated octahedra, rhombic
-dodecahedra) run at constant volume on the CPU and on the device, with the
-neighbor matrix or the groups (D123, D125, D126); the barostat for them is
-the rest of the plan of docs/triclinic-m2.md. The barostat
+dodecahedra, the hexagonal cells of CHARMM) run on the CPU and on the
+device, with the neighbor matrix or the groups, at constant volume and
+pressure (D123, D125 to D127). The barostat
 is isotropic or semi-isotropic, with no coupling of the shape of the
 cell. Topologies are read in the formats of Amber,
 GROMACS, and CHARMM; a CHARMM force field runs with its Urey–Bradley

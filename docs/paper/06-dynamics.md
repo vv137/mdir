@@ -259,6 +259,9 @@ noise depends on the volume; the step in $\lambda$ above does not, and
 the two agree to first order in the period. With the compressibility of z
 zero, the height is kept to the bit. Positions scale by $\mu_a$ along
 axis $a$ (rigid groups with their centers), velocities by $1/\mu_a$, and
+a triclinic cell by $H\,\mathrm{diag}(\boldsymbol\mu)$, each tilt with
+its column, so that the particles keep their lattice coordinates and the
+cell stays lower triangular and reduced (D127); and
 the work of a scaling below is a sum over the axes, with $K_a$ and the
 diagonal of the virial of the groups in place of $K$ and the trace.
 

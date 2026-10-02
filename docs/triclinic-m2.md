@@ -176,7 +176,7 @@ equivalent; the measurement is part of the validation.
 | P1 | Done (D123): the CPU, tuples, the matrix, PME | sander on Amber's octahedron; GROMACS on a rhombic dodecahedron; conservation |
 | P2 | Done (D125): the device with the neighbor matrix: the cell as on the CPU, the tuples and pairs with the shared minimum image, a triclinic build of the matrix in fractional coordinates, and the kernels of PME of `PMEGPUTriclinic.mlir` | P1 on the CPU: the terms and 200 steps to the printed digits in double precision |
 | P3 | Done (D126). The device: groups, the dual list, D115's images. The search of candidates wraps the indices of cells per axis, which is wrong across the face of z (or y) of a tilted cell, where a neighbor is displaced by $\mathbf c$ (or $\mathbf b$), $x$ and $y$ with it. As GROMACS does, each group searches with shifts $t_z, t_y \in \{-1, 0, 1\}$ and recomputes its window of columns for each; the image of an entry is the lattice shift $\mathbf n$ that the search found (I4), not one chosen per axis; the kernel of D115 and the gather take $\mathbf n H$ | The matrix of the device (P2), in the same precision |
-| P4 | The barostat (I3); CHARMM's hexagonal cells | Conservation at constant energy; the density of water against a rectangular cell; CHARMM 51b1 on a hexagonal cell in its frame |
+| P4 | Done (D127): the barostat (I3); CHARMM's hexagonal cells | Conservation at constant energy; the density of water against a rectangular cell; CHARMM 51b1 on a hexagonal cell in its frame |
 | P5 | The rates of a protein in an octahedron against its cube; docs and the white paper | pmemd.cuda and GROMACS on the same systems |
 
 The defect of the barostat with restraints (roadmap, Section 1), which

@@ -120,6 +120,12 @@ type = "PERIODIC"
 box  = [76.0, 40.0, 40.0]            # a CRD has no cell
 ```
 
+A cell that is not orthorhombic is given by its lengths and angles, as
+`crystal define` takes them, `box = [a, b, c, α, β, γ]`; CHARMM keeps it
+in a symmetric frame, the rows of $G^{1/2}$ for the metric $G$, and MDIR
+rotates the coordinates of the CRD into the lower-triangular frame of
+docs/triclinic-m2.md (D123, D127).
+
 `lib/Driver/Charmm.cpp` reads them as the documentation of CHARMM 51b1
 describes them (`doc/io.info`, `doc/parmfile.info`, `doc/rtop.info`),
 with the conventions that the documentation leaves open settled against
@@ -223,6 +229,16 @@ from `$CHARMM_TOPPAR`; nothing of CHARMM is copied.
   are those of the energy. From the files of CHARMM, with TIP3 rigid by
   SETTLE, the drift is −1.19 ± 0.20 kcal/mol/ns at 706 ns/day.
 
+The phase `hexagonal` of the script takes the 1417 waters of the build
+within a hexagonal cell of CHARMM (36, 36, 38 Å, γ = 120°), in its frame,
+minimizes them in CHARMM with PME, and evaluates the written coordinates:
+MDIR, from the PSF and the CRD with `box = [36, 36, 38, 90, 90, 120]`,
+agrees in the bonds and angles to the printed digits, in the
+Lennard-Jones to 10⁻⁹, and in each term of the electrostatics, real
+space, excluded pairs, reciprocal, and self, to 4 × 10⁻⁸ after the ratio
+of the Coulomb constants; the same on the device in double precision,
+and with the groups in mixed precision to 3 × 10⁻⁷ (D127).
+
 `charmm27.ff` of GROMACS, through `scripts/validation/gromacs/run.sh`,
 agrees with GROMACS within 4.3 × 10⁻⁶ in every term, angles with their
 Urey–Bradley terms and dihedrals with the harmonic impropers among them.
@@ -237,4 +253,3 @@ on a small topology against the formulas.
 | Types given by numbers in a PSF | Their meaning depends on the order of the RTF; CHARMM 51 and CHARMM-GUI write names |
 | VSWITCH | The potential switch of CHARMM (Section 2), for older inputs |
 | Lone pairs of CGenFF, the Drude model, LJ-PME of C36/LJ-PME | Virtual sites of other constructions, polarization, and the mesh for dispersion |
-| Triclinic cells | Roadmap F2; CHARMM-GUI writes hexagonal cells for membranes and truncated octahedra for solutes, and CHARMM keeps a cell as the symmetric square root of its metric, not in the frame of GROMACS and Amber, so its coordinates need a rotation ([triclinic-m2.md](triclinic-m2.md)) |

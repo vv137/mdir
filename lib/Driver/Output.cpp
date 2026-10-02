@@ -223,6 +223,16 @@ void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz) {
     }
 }
 
+void _mlir_ciface_mdrtSetTilt(double bx, double cx, double cy) {
+  Output &output = *current;
+  double tilts[3] = {bx / units::length, cx / units::length,
+                     cy / units::length};
+  output.trajectory.setTilt(tilts);
+  output.checkpoint.tilt[0] = bx;
+  output.checkpoint.tilt[1] = cx;
+  output.checkpoint.tilt[2] = cy;
+}
+
 void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
                                     double kinetic, double forceSquare,
                                     double virial) {

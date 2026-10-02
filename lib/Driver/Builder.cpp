@@ -119,7 +119,22 @@ private:
   bool isTriclinic() const {
     return system.tilt[0] != 0.0 || system.tilt[1] != 0.0 ||
            system.tilt[2] != 0.0;
+  }  /// The numbers that the barostat keeps of the cell: the edges, or the
+  /// diagonal and the tilts b_x, c_x, c_y of a triclinic cell.
+  int getCellSize() const { return isTriclinic() ? 6 : 3; }
+  std::string getBoxMemoryType() const {
+    return isTriclinic() ? "memref<6xf64>" : "memref<3xf64>";
   }
+  /// Emits `name` = the cell of the numbers `prefix`_0 to _2, or to _5 for
+  /// a triclinic cell.
+  void emitCellOf(StringRef indent, StringRef name, StringRef prefix) {
+    os << indent << name
+       << (isTriclinic() ? " = md.triclinic_cell " : " = md.orthorhombic_cell ");
+    for (int k = 0, e = getCellSize(); k != e; ++k)
+      os << (k ? ", " : "") << prefix << "_" << k;
+    os << "\n";
+  }
+
   bool hasRestraints() const { return !system.restraintConstants.empty(); }
   /// Whether the reference positions of the restraints follow the cell,
   /// which a barostat changes: they are those of the file times
@@ -3105,11 +3120,11 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
   std::string outerCell = cellName, outerScale = scaleName;
   if (changesCell()) {
     cellName = "%cell" + here;
-    for (int k = 0; k != 3; ++k)
+    for (int k = 0; k != getCellSize(); ++k)
       os << inner << "%edge" << here << "_" << k << " = memref.load "
-         << "%box_memory[%c_edge" << k << "] : memref<3xf64>\n";
-    os << inner << cellName << " = md.orthorhombic_cell %edge" << here
-       << "_0, %edge" << here << "_1, %edge" << here << "_2\n";
+         << "%box_memory[%c_edge" << k << "] : " << getBoxMemoryType()
+         << "\n";
+    emitCellOf(inner, cellName, "%edge" + here);
     if (scalesReference()) {
       scaleName = "%rest_scale" + here;
       emitReferenceScale(os, inner, scaleName, "%edge" + here + "_0",
@@ -3143,11 +3158,11 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
     // after it take the cell from where the barostat keeps it.
     if (changesCell()) {
       cellName = "%cellr" + here;
-      for (int k = 0; k != 3; ++k)
+      for (int k = 0; k != getCellSize(); ++k)
         os << inner << "%edger" << here << "_" << k << " = memref.load "
-           << "%box_memory[%c_edge" << k << "] : memref<3xf64>\n";
-      os << inner << cellName << " = md.orthorhombic_cell %edger" << here
-         << "_0, %edger" << here << "_1, %edger" << here << "_2\n";
+           << "%box_memory[%c_edge" << k << "] : " << getBoxMemoryType()
+           << "\n";
+      emitCellOf(inner, cellName, "%edger" + here);
       if (scalesReference()) {
         scaleName = "%rest_scaler" + here;
         emitReferenceScale(os, inner, scaleName, "%edger" + here + "_0",
@@ -3669,9 +3684,9 @@ std::string Builder::emitGroupScaling(StringRef indent, StringRef positions,
 void Builder::emitStrain(StringRef indent, StringRef kinetic,
                          StringRef diagonal, StringRef tag, StringRef step) {
   std::string t = tag.str();
-  for (int k = 0; k != 3; ++k)
+  for (int k = 0; k != getCellSize(); ++k)
     os << indent << "%be" << t << "_" << k << " = memref.load %box_memory"
-       << "[%c_edge" << k << "] : memref<3xf64>\n";
+       << "[%c_edge" << k << "] : " << getBoxMemoryType() << "\n";
   os << indent << "%bxy" << t << " = arith.mulf %be" << t << "_0, %be" << t
      << "_1 : f64\n"
      << indent << "%bv" << t << " = arith.mulf %bxy" << t << ", %be" << t
@@ -3746,16 +3761,25 @@ void Builder::emitStrain(StringRef indent, StringRef kinetic,
      << " : vector<3xf64>\n"
      << indent << "%muinv" << t << " = arith.divf %c_unit3, %mu" << t
      << " : vector<3xf64>\n";
-  // The new cell, which the next iteration takes from memory.
-  for (int k = 0; k != 3; ++k)
-    os << indent << "%bmu" << t << "_" << k << " = vector.extract %mu" << t
-       << "[" << k << "] : f64 from vector<3xf64>\n"
-       << indent << "%bn" << t << "_" << k << " = arith.mulf %be" << t
-       << "_" << k << ", %bmu" << t << "_" << k << " : f64\n"
+  // The new cell, which the next iteration takes from memory: H diag(μ),
+  // the tilts b_x and c_x of the column of x scaled by μ_x and c_y by μ_y
+  // (I3 of docs/triclinic-m2.md).
+  static const int column[] = {0, 1, 2, 0, 0, 1};
+  for (int k = 0; k != getCellSize(); ++k) {
+    if (k < 3)
+      os << indent << "%bmu" << t << "_" << k << " = vector.extract %mu" << t
+         << "[" << k << "] : f64 from vector<3xf64>\n";
+    os << indent << "%bn" << t << "_" << k << " = arith.mulf %be" << t
+       << "_" << k << ", %bmu" << t << "_" << column[k] << " : f64\n"
        << indent << "memref.store %bn" << t << "_" << k
-       << ", %box_memory[%c_edge" << k << "] : memref<3xf64>\n";
+       << ", %box_memory[%c_edge" << k << "] : " << getBoxMemoryType()
+       << "\n";
+  }
   os << indent << "func.call @mdrtSetBox(%bn" << t << "_0, %bn" << t
      << "_1, %bn" << t << "_2) : (f64, f64, f64) -> ()\n";
+  if (isTriclinic())
+    os << indent << "func.call @mdrtSetTilt(%bn" << t << "_3, %bn" << t
+       << "_4, %bn" << t << "_5) : (f64, f64, f64) -> ()\n";
 }
 
 Builder::TrotterScaling Builder::emitTrotterStrain(
@@ -3842,8 +3866,7 @@ Builder::TrotterScaling Builder::finishTrotterStrain(StringRef indent,
      << indent << scaling.newVolume << " = arith.mulf %tvn0" << t << ", %bn"
      << t << "_2 : f64\n";
   scaling.cell = "%tcell" + t;
-  os << indent << scaling.cell << " = md.orthorhombic_cell %bn" << t
-     << "_0, %bn" << t << "_1, %bn" << t << "_2\n";
+  emitCellOf(indent, scaling.cell, "%bn" + t);
   if (scalesReference()) {
     scaling.scale = "%tscale" + t;
     emitReferenceScale(os, indent, scaling.scale, "%bn" + t + "_0",
@@ -4056,8 +4079,7 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
       // takes: the change of the potential energy is counted exactly, and
       // no step begins with the forces of other positions (D77).
       std::string cell = "%bcell" + t;
-      os << indent << cell << " = md.orthorhombic_cell %bn" << t << "_0, %bn"
-         << t << "_1, %bn" << t << "_2\n";
+      emitCellOf(indent, cell, "%bn" + t);
       std::string outerCell = cellName, outerScale = scaleName;
       cellName = cell;
       if (scalesReference()) {
@@ -4690,6 +4712,8 @@ void Builder::emitEntry() {
        << "func.func private @mdrtBarostatStrainHeight(i64, i64, f64, f64, "
           "f64, f64, f64, f64) -> f64\n"
        << "func.func private @mdrtSetBox(f64, f64, f64)\n"
+       << "    attributes {llvm.emit_c_interface}\n"
+       << "func.func private @mdrtSetTilt(f64, f64, f64)\n"
        << "    attributes {llvm.emit_c_interface}\n";
   if (scalesEveryStep())
     os << "func.func private @mdrtSetBarostatState(f64, f64, f64, f64, f64, "
@@ -4754,16 +4778,27 @@ void Builder::emitEntry() {
   std::string given = program.reorders ? "_in" : "";
   if (changesCell()) {
     // Where the barostat keeps the cell, on the host.
-    os << "  %box_memory = memref.alloca() : memref<3xf64>\n";
+    os << "  %box_memory = memref.alloca() : " << getBoxMemoryType() << "\n";
     // With a scaling every step, the diagonals of the virial and of that of
     // the rigid groups, and the kinetic energy of each axis without the
     // center of mass, of the state that the last step left (D92, D119).
     if (scalesEveryStep())
       os << "  %trotter_memory = memref.alloca() : memref<9xf64>\n";
-    for (int k = 0; k != 3; ++k)
+    // A triclinic cell keeps its tilts after its diagonal (I3 of
+    // docs/triclinic-m2.md: the barostat scales them with their columns).
+    static const char *const initial[] = {"%lx", "%ly", "%lz",
+                                          "%tilt_bx", "%tilt_cx", "%tilt_cy"};
+    if (isTriclinic())
+      os << "  %tilt_bx = arith.constant " << formatReal(system.tilt[0])
+         << " : f64\n"
+         << "  %tilt_cx = arith.constant " << formatReal(system.tilt[1])
+         << " : f64\n"
+         << "  %tilt_cy = arith.constant " << formatReal(system.tilt[2])
+         << " : f64\n";
+    for (int k = 0; k != getCellSize(); ++k)
       os << "  %c_edge" << k << " = arith.constant " << k << " : index\n"
-         << "  memref.store %l" << "xyz"[k] << ", %box_memory[%c_edge" << k
-         << "] : memref<3xf64>\n";
+         << "  memref.store " << initial[k] << ", %box_memory[%c_edge" << k
+         << "] : " << getBoxMemoryType() << "\n";
   }
   if (scalesReference()) {
     // The edges of the cell of the file, which the reference positions of
@@ -4780,16 +4815,17 @@ void Builder::emitEntry() {
        << edges[1] << ", " << edges[2] << " : vector<3xf64>\n";
     emitReferenceScale(os, "  ", "%rest_scale", "%lx", "%ly", "%lz");
   }
-  if (isTriclinic())
-    os << "  %tilt_bx = arith.constant " << formatReal(system.tilt[0])
-       << " : f64\n"
-       << "  %tilt_cx = arith.constant " << formatReal(system.tilt[1])
-       << " : f64\n"
-       << "  %tilt_cy = arith.constant " << formatReal(system.tilt[2])
-       << " : f64\n"
-       << "  %cell = md.triclinic_cell %lx, %ly, %lz, %tilt_bx, %tilt_cx, "
+  if (isTriclinic()) {
+    if (!changesCell())
+      os << "  %tilt_bx = arith.constant " << formatReal(system.tilt[0])
+         << " : f64\n"
+         << "  %tilt_cx = arith.constant " << formatReal(system.tilt[1])
+         << " : f64\n"
+         << "  %tilt_cy = arith.constant " << formatReal(system.tilt[2])
+         << " : f64\n";
+    os << "  %cell = md.triclinic_cell %lx, %ly, %lz, %tilt_bx, %tilt_cx, "
           "%tilt_cy\n";
-  else
+  } else
     os << "  %cell = md.orthorhombic_cell %lx, %ly, %lz\n";
   os << "  %x" << (program.reorders ? "_in" : "0") << (hasSites() ? "u" : "")
      << " = mdrt.from_buffer %positions : memref<?x3x" << state
@@ -5140,13 +5176,10 @@ void Builder::setSchedule() {
 }
 
 llvm::Error Builder::build() {
-  // A triclinic cell runs at constant volume so far (docs/triclinic-m2.md,
-  // P1 to P3). The neighbor structures hold every pair within their reach
-  // while the reach is at most half of the least of a_x, b_y, c_z, the
-  // bound of the minimum image in one pass.
+  // The neighbor structures of a triclinic cell hold every pair within
+  // their reach while the reach is at most half of the least of a_x, b_y,
+  // c_z, the bound of the minimum image in one pass (docs/triclinic-m2.md).
   if (isTriclinic()) {
-    if (changesCell())
-      return makeError("a triclinic cell does not run with a barostat yet");
     double least = std::min({system.box[0], system.box[1], system.box[2]});
     double reach = control.pairlistDistance * units::length;
     if (reach > 0.5 * least)

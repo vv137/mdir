@@ -1,0 +1,80 @@
+# A triclinic cell at constant pressure (docs/triclinic-m2.md, P4): the
+# barostat scales the cell as H diag(μ), the tilts b_x and c_x with a_x
+# and c_y with b_y, so that the shape of the rhombic dodecahedron of
+# triclinic.test, c_x = a_x/2 and c_y = b_y/2, stays, with isotropic and
+# with semi-isotropic coupling. A run that continues from a checkpoint,
+# which keeps the tilts the barostat left, gives the log of one that does
+# not stop.
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/triclinic/water.top %S/Inputs/triclinic/dodecahedron.gro %t/
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/whole.toml
+# RUN: sed -e 's|^steps      = 200|steps      = 100|' -e 's|whole.h5|first.h5|' %t/whole.toml > %t/first.toml
+# RUN: sed -e 's|first.h5|second.h5|' -e 's|^coordinates = \(.*\)|coordinates = \1\ncheckpoint  = "first.h5"|' %t/first.toml > %t/second.toml
+# RUN: cd %t && mdir run whole.toml > both.log
+# RUN: cd %t && mdir run first.toml > /dev/null
+# RUN: cd %t && mdir run second.toml >> both.log
+# RUN: FileCheck %s --check-prefix=LOG < %t/both.log
+# RUN: mdir checkpoint %t/whole.h5 | %python %S/Inputs/check_cell.py 0 0.5 0.5 | FileCheck %s --check-prefix=SHAPE
+# RUN: sed -e 's|^method        = "C-RESCALE"|method        = "C-RESCALE"\ncoupling      = "SEMI_ISOTROPIC"|' -e 's|whole.h5|semi.h5|' %t/whole.toml > %t/semi.toml
+# RUN: cd %t && mdir run semi.toml > /dev/null
+# RUN: mdir checkpoint %t/semi.h5 | %python %S/Inputs/check_cell.py 0 0.5 0.5 | FileCheck %s --check-prefix=SHAPE
+
+# LOG:      INFO:       150         0.3000 {{ *}}[[ROW:-?[0-9.]+ +-?[0-9.]+ +-?[0-9.]+ +-?[0-9.]+ +-?[0-9.]+ +-?[0-9.]+]] {{ *}}{{-?[0-9.]+}} {{ *}}[[VOLUME:[0-9.]+]]
+# LOG:      MDIR: continues after step 100
+# LOG:      INFO:       150         0.3000 {{ *}}[[ROW]] {{ *}}{{-?[0-9.]+}} {{ *}}[[VOLUME]]
+# SHAPE: the shape of the cell is kept
+
+#--- run.toml
+[input]
+topology    = "water.top"
+coordinates = "dodecahedron.gro"
+format      = "GROMACS"
+
+[output]
+energy_interval     = 50
+checkpoint          = "whole.h5"
+checkpoint_interval = 100
+
+[energy]
+cutoff            = 8.0
+pairlist_distance = 9.0
+electrostatics    = "PME"
+
+[pme]
+tolerance = 1e-05
+order     = 4
+grid      = [28, 28, 28]
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.002
+steps      = 200
+
+[ensemble]
+ensemble    = "NPT"
+temperature = 300.0
+pressure    = 1.0
+
+[thermostat]
+method        = "V-RESCALE"
+time_constant = 0.5
+interval      = 10
+
+[barostat]
+method        = "C-RESCALE"
+time_constant = 1.0
+interval      = 10
+
+[constraints]
+rigid_water = true
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- end

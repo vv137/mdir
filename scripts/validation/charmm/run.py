@@ -3,7 +3,7 @@
 
     scripts/validation/charmm/run.py WORK --mdir MDIR [--charmm CHARMM]
         [--toppar DIR] [--gmx GMX] [--packmol PACKMOL]
-        [--parmed-python PYTHON] [--phases pair,build,convert,terms]
+        [--parmed-python PYTHON] [--phases pair,build,convert,terms,hexagonal]
 
 The topology and parameter files of CHARMM are read from DIR (default
 $CHARMM_TOPPAR); nothing of CHARMM is copied into the repository. The phases:
@@ -28,6 +28,12 @@ $CHARMM_TOPPAR); nothing of CHARMM is copied into the repository. The phases:
            double precision: from the PSF and the files of CHARMM
            (POWER_FORCE_SWITCH), and from the topology of GROMACS with each
            switch.
+  hexagonal  The waters of the build within a hexagonal cell of CHARMM, a =
+           b = 36 Å, c = 38 Å, γ = 120°, in its symmetric frame, the rows of
+           G^(1/2) for the metric G; minimized in CHARMM with PME (300
+           steps); the energy of the coordinates as written, term by term,
+           in CHARMM and in MDIR from the PSF and the CRD with the cell
+           given by its lengths and angles (docs/triclinic-m2.md).
 """
 import argparse
 import math
@@ -543,6 +549,184 @@ stop
           "less.")
 
 
+# --------------------------------------------------------------------------
+# hexagonal
+# --------------------------------------------------------------------------
+
+HEXAGONAL = (36.0, 36.0, 38.0, 90.0, 90.0, 120.0)
+HEXAGONAL_GRID = (36, 36, 40)
+
+
+def symmetric_cell(a, b, c, alpha, beta, gamma):
+    """The rows of G^(1/2), the cell of CHARMM in its symmetric frame, for
+    the metric G of the lengths and angles, by the iteration of Denman and
+    Beavers."""
+    ca, cb, cg = (math.cos(math.radians(t)) for t in (alpha, beta, gamma))
+    g = [[a * a, a * b * cg, a * c * cb],
+         [a * b * cg, b * b, b * c * ca],
+         [a * c * cb, b * c * ca, c * c]]
+
+    def inverse(m):
+        det = (m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+               - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+               + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]))
+        return [[(m[(j + 1) % 3][(i + 1) % 3] * m[(j + 2) % 3][(i + 2) % 3]
+                  - m[(j + 1) % 3][(i + 2) % 3] * m[(j + 2) % 3][(i + 1) % 3])
+                 / det for j in range(3)] for i in range(3)]
+
+    y, z = g, [[float(i == j) for j in range(3)] for i in range(3)]
+    for _ in range(60):
+        yi, zi = inverse(y), inverse(z)
+        y, z = ([[0.5 * (y[i][j] + zi[i][j]) for j in range(3)]
+                 for i in range(3)],
+                [[0.5 * (z[i][j] + yi[i][j]) for j in range(3)]
+                 for i in range(3)])
+    return y, inverse(y)
+
+
+def hexagonal(args, work):
+    w = os.path.join(work, "hexagonal")
+    os.makedirs(w, exist_ok=True)
+    cell, inv = symmetric_cell(*HEXAGONAL)
+    center = [0.5 * sum(cell[k][i] for k in range(3)) for i in range(3)]
+    origin = [0.5 * CELL[i] - center[i] for i in range(3)]
+    # The waters of the build whose oxygens are within the cell.
+    residues = {}
+    for line in open(os.path.join(work, "trpcage",
+                                  "system-charmm.crd")).read().splitlines()[4:]:
+        f = line.split()
+        if len(f) >= 9 and f[2] == "TIP3":
+            residues.setdefault((f[7], f[8]), []).append(f)
+    kept = []
+    for members in residues.values():
+        o = next(m for m in members if m[3] == "OH2")
+        x = [float(o[4 + i]) - origin[i] for i in range(3)]
+        frac = [sum(x[k] * inv[k][i] for k in range(3)) for i in range(3)]
+        if all(0.0 <= v < 1.0 for v in frac):
+            kept.append(members)
+    lines = ["* TIP3P WATERS IN A HEXAGONAL CELL", "*",
+             f"{3 * len(kept):10d}  EXT"]
+    atom = 0
+    for number, members in enumerate(kept, 1):
+        for m in members:
+            atom += 1
+            x = [float(m[4 + i]) - origin[i] for i in range(3)]
+            lines.append(f"{atom:10d}{number:10d}  {'TIP3':<8s}  {m[3]:<8s}"
+                         f"{x[0]:20.10f}{x[1]:20.10f}{x[2]:20.10f}  "
+                         f"{'WAT':<8s}  {number:<8d}{0.0:20.10f}")
+    write(os.path.join(w, "water.crd"), "\n".join(lines) + "\n")
+    crystal = ("crystal define hexagonal %.1f %.1f %.1f %.1f %.1f %.1f\n"
+               % HEXAGONAL
+               + "crystal build cutoff 16.0 noper 0\n"
+               "image byres xcen 0.0 ycen 0.0 zcen 0.0 select all end\n"
+               "nbonds atom vatom cdie eps 1.0 vfswitch cutnb 16.0 cutim 16.0 "
+               "ctofnb 12.0 ctonnb 10.0 -\n"
+               f"  ewald pmewald kappa {KAPPA} spline order {ORDER} "
+               f"fftx {HEXAGONAL_GRID[0]} ffty {HEXAGONAL_GRID[1]} "
+               f"fftz {HEXAGONAL_GRID[2]} inbfrq -1 imgfrq -1\n")
+    write(os.path.join(w, "build.inp"), f"""* waters in a hexagonal cell, minimized with PME
+*
+{toppar(args)}
+read sequence TIP3 {len(kept)}
+generate WAT setup noangle nodihedral
+read coor card name water.crd
+{crystal}
+mini sd nstep 300 nprint 100
+write psf card name hexa.psf
+* waters in a hexagonal cell
+*
+write coor card name hexa.crd
+* waters in a hexagonal cell
+*
+stop
+""")
+    run([args.charmm, "-i", "build.inp"], w, "build.out")
+    write(os.path.join(w, "energy.inp"), f"""* waters in a hexagonal cell: the energy of the coordinates as written
+*
+{toppar(args)}
+read psf card name hexa.psf
+read coor card name hexa.crd
+{crystal}
+energy
+echo TERMS BOND ?BOND ANGL ?ANGL VDW ?VDW IMNB ?IMNB ELEC ?ELEC IMEL ?IMEL
+echo TERMS EWKS ?EWKS EWSE ?EWSE EWEX ?EWEX
+stop
+""")
+    run([args.charmm, "-i", "energy.inp"], w, "energy.out")
+    c = {}
+    for line in re.findall(r"^\s*TERMS (.*)$",
+                           open(os.path.join(w, "energy.out")).read(), re.M):
+        f = line.split()
+        c.update({f[k]: float(f[k + 1]) for k in range(0, len(f), 2)})
+    charmm = {"bonds": c["BOND"], "angles": c["ANGL"],
+              "Lennard-Jones": c["VDW"] + c["IMNB"],
+              "Coulomb real": c["ELEC"] + c["IMEL"], "Coulomb excluded":
+              c["EWEX"], "Coulomb reciprocal": c["EWKS"],
+              "Coulomb self": c["EWSE"]}
+    files = ", ".join(f'"{args.toppar}/{f}"' for f in
+                      ("top_all36_prot.rtf", "par_all36m_prot.prm",
+                       "toppar_water_ions.str"))
+    write(os.path.join(w, "hexa.toml"), f"""[input]
+format      = "CHARMM"
+topology    = "hexa.psf"
+coordinates = "hexa.crd"
+parameters  = [{files}]
+
+[output]
+energy_interval = 0
+
+[energy]
+cutoff            = {CUTOFF}
+switch_distance   = {SWITCH}
+lennard_jones_modifier = "POWER_FORCE_SWITCH"
+dispersion_correction  = "NONE"
+pairlist_distance = {CUTOFF + 1.0}
+electrostatics    = "PME"
+
+[pme]
+beta  = {KAPPA}
+order = {ORDER}
+grid  = [{", ".join(str(v) for v in HEXAGONAL_GRID)}]
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.001
+steps      = 0
+
+[ensemble]
+ensemble = "NVE"
+
+[constraints]
+hydrogen_bonds = false
+rigid_water    = false
+
+[boundary]
+type = "PERIODIC"
+box  = [{", ".join(str(v) for v in HEXAGONAL)}]
+
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+""")
+    run([args.mdir, "run", "hexa.toml"], w, "hexa.log")
+    t = {m.group(1): float(m.group(2)) for m in re.finditer(
+        r"^MDIR:   (.+?)\s+(-?[0-9.]+)$",
+        open(os.path.join(w, "hexa.log")).read(), re.M)}
+    ours = {"bonds": t["bonds"], "angles": t["angles"],
+            "Lennard-Jones": t["Lennard-Jones"], "Coulomb real": t["Coulomb"],
+            "Coulomb excluded": t["Coulomb excluded"],
+            "Coulomb reciprocal": t["Coulomb reciprocal"],
+            "Coulomb self": t["Coulomb self"]}
+    ratio = 332.0716 / 332.0637
+    print(f"{len(kept)} waters in a hexagonal cell; kcal/mol, MDIR from the "
+          "PSF and the CRD against CHARMM; the electrostatics over the ratio "
+          f"of the Coulomb constants, {ratio:.7f}")
+    print(f"{'term':20s} {'CHARMM':>16s} {'MDIR':>16s} {'relative':>9s}")
+    for name, a in charmm.items():
+        b = ours[name] * (ratio if name.startswith("Coulomb") else 1.0)
+        print(f"{name:20s} {a:16.6f} {b:16.6f} {(b - a) / abs(a):9.1e}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
@@ -553,7 +737,8 @@ def main():
     parser.add_argument("--gmx", default="gmx")
     parser.add_argument("--packmol", default="packmol")
     parser.add_argument("--parmed-python", default="python3")
-    parser.add_argument("--phases", default="pair,build,convert,terms")
+    parser.add_argument("--phases",
+                        default="pair,build,convert,terms,hexagonal")
     args = parser.parse_args()
     if not args.toppar:
         sys.exit("give --toppar or CHARMM_TOPPAR: the directory of "
@@ -565,7 +750,8 @@ def main():
     os.makedirs(work, exist_ok=True)
     phases = args.phases.split(",")
     for phase, function in (("pair", pair), ("build", build),
-                            ("convert", convert), ("terms", terms)):
+                            ("convert", convert), ("terms", terms),
+                            ("hexagonal", hexagonal)):
         if phase in phases:
             function(args, work)
 

@@ -1,7 +1,8 @@
 # Triclinic cells are read into the reduced lower-triangular form of
 # docs/triclinic-m2.md (Section 1). They run on the CPU (triclinic.test)
-# and on a device (triclinic-gpu.test); a barostat and a reach of the list
-# beyond half of the least of a_x, b_y, c_z are refused. Amber's truncated octahedron of side 30 Å (angles
+# and on a device (triclinic-gpu.test), also at constant pressure
+# (triclinic-npt.test); a reach of the list beyond half of the least of a_x,
+# b_y, c_z is refused. Amber's truncated octahedron of side 30 Å (angles
 # 109.4712190°, as tleap writes it) lies on a bound of the reduced form,
 # c_y = −b_y/2, and is kept as it is; GROMACS's octahedron of the same side
 # (70.53°, 109.47°, 70.53° in .gro's nine numbers) is the same shape in a

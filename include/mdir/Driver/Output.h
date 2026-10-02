@@ -193,6 +193,9 @@ void _mlir_ciface_mdrtWriteMinimization(int64_t step, double energy,
                                         void *ids);
 /// The cell after a barostat has changed it: its edges in nm.
 void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz);
+/// The tilts b_x, c_x, c_y of a triclinic cell that a barostat has scaled,
+/// after mdrtSetBox (docs/triclinic-m2.md).
+void _mlir_ciface_mdrtSetTilt(double bx, double cx, double cy);
 /// The state that the next scaling of a barostat that scales the cell every
 /// step takes its pressure from (D92), for the checkpoints.
 /// The state of the last scaling of a barostat that scales every step

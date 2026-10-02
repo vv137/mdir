@@ -447,6 +447,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     add("_mlir_ciface_mdrtWriteVirial", (void *)&_mlir_ciface_mdrtWriteVirial);
     add("_mlir_ciface_mdrtAddBath", (void *)&_mlir_ciface_mdrtAddBath);
     add("_mlir_ciface_mdrtSetBox", (void *)&_mlir_ciface_mdrtSetBox);
+    add("_mlir_ciface_mdrtSetTilt", (void *)&_mlir_ciface_mdrtSetTilt);
     add("_mlir_ciface_mdrtSetBarostatState",
         (void *)&_mlir_ciface_mdrtSetBarostatState);
     add("_mlir_ciface_mdrtWriteMinimization",
