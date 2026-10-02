@@ -281,6 +281,18 @@ arXiv:2511.22951 (2025).
 Used for: related work, an engine with a Python interface over a core in
 C++, parallel with MPI, that runs learned potentials.
 
+### Gomez2022
+
+Y. K. Gomez, A. M. Natale, J. Lincoff, C. W. Wolgemuth, J. M. Rosenberg,
+M. Grabe, "Taking the Monte-Carlo gamble: How not to buckle under the
+pressure!," *J. Comput. Chem.* **43**, 431–434 (2022).
+[doi:10.1002/jcc.26798](https://doi.org/10.1002/jcc.26798)
+
+Used for: a Monte Carlo barostat accepts a scaling by the change of the
+energy, which jumps where a pair crosses a truncated cutoff, and the
+pressure of the virial does not see the jump; the volumes of the two
+differ unless the correction for the dispersion accounts for it.
+
 ### Gratl2022
 
 F. A. Gratl, S. Seckler, H.-J. Bungartz, P. Neumann, "N ways to simulate

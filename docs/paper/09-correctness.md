@@ -265,6 +265,31 @@ beside its rate.
   pressure of the integrators, with the forces of the rigid waters in
   them, differ at the step of production and agree as it goes to zero.
   The difference of the densities is that, not the coupling.
+- **Densities of the suite across programs** (`scripts/validation/suite/density.py`).
+  JAC and Factor IX at 300 K and 1 bar for 1 ns at 2 fs from the files of
+  the suite, as one model (D134); the mean volume over the second half,
+  with the error of ten blocks, in Å³:
+
+  | Program and barostat | JAC | Factor IX |
+  |---|---|---|
+  | MDIR, cell rescaling from the virial | 234,431 ± 95 | 911,547 ± 198 |
+  | OpenMM 8.6.1, Monte Carlo | 234,479 ± 41 | 911,100 ± 210 |
+  | pmemd.cuda 26, Monte Carlo | 234,929 ± 147 | 912,359 ± 193 |
+  | pmemd.cuda 26, Berendsen from the virial | 234,682 ± 38 (299.5 K) | 912,388 ± 57 (299.7 K) |
+  | GROMACS 2026.3, cell rescaling from the virial | 234,215 ± 73 | 910,469 ± 118 |
+
+  MDIR agrees with the Monte Carlo barostat of OpenMM within 0.02% and
+  0.05%; pmemd.cuda lies 0.1 to 0.2% above with either of its barostats
+  and GROMACS 0.1% below, the order of their pressures at 2 fs above.
+  Seeds of MDIR give 234,431 to 234,512. A Monte Carlo barostat accepts a
+  scaling by the change of the energy, which jumps where a pair crosses
+  the truncated cutoff, and the pressure of the virial does not see the
+  jump [[Gomez2022]](references.md#gomez2022): without the correction for
+  the dispersion, OpenMM gives JAC 237,223 ± 61 and MDIR 240,066 ± 96, 1.2%
+  apart. With it the two agree, since for the $r^{-6}$ part the jump that
+  the Monte Carlo barostat sees equals $E_\text{disp}/V$, the difference
+  between the pressure of the correction, $2E_\text{disp}/V$, and the
+  derivative of its energy.
 - **Equivalences.** The trajectory does not depend on how steps are
   grouped into periods, on velocity Verlet against leapfrog with
   constraints, or on how the work of the barostat is counted: the tests

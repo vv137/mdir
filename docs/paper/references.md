@@ -137,6 +137,13 @@ simulation package with machine learning potentials support,"
 arXiv:2511.22951 (2025).
 [doi:10.48550/arXiv.2511.22951](https://doi.org/10.48550/arXiv.2511.22951)
 
+### Gomez2022
+
+Y. K. Gomez, A. M. Natale, J. Lincoff, C. W. Wolgemuth, J. M. Rosenberg,
+M. Grabe, "Taking the Monte-Carlo gamble: How not to buckle under the
+pressure!," *J. Comput. Chem.* **43**, 431–434 (2022).
+[doi:10.1002/jcc.26798](https://doi.org/10.1002/jcc.26798)
+
 ### Gratl2022
 
 F. A. Gratl, S. Seckler, H.-J. Bungartz, P. Neumann, "N ways to simulate
