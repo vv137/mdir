@@ -8,9 +8,9 @@ MDIR and with GROMACS, under the settings of their Amber inputs.
     bench.py report [--work DIR]
 
 The inputs are not part of MDIR: `prepare` downloads the suite from
-ambermd.org into the work directory, writes each topology again with
-ParmEd (two of them are in the format before Amber 7, which MDIR does not
-read), and converts it for GROMACS. See README.md."""
+ambermd.org into the work directory and converts each system for GROMACS
+with ParmEd. MDIR and pmemd read the files of the suite as they are. See
+README.md."""
 
 import argparse
 import hashlib
@@ -105,10 +105,11 @@ def prepare(args):
         if os.path.exists(os.path.join(target, "system.top")):
             continue
         print(f"converting {name}")
-        # ParmEd writes the topology again in the current Amber format, and,
-        # from that, for GROMACS, with the coordinates, the velocities, and
-        # the cell of the restart file. (It cannot write coordinates of
-        # GROMACS from a topology of the old format that it has read.)
+        # For GROMACS: ParmEd writes the topology again in the current Amber
+        # format, and, from that, for GROMACS, with the coordinates, the
+        # velocities, and the cell of the restart file. (It cannot write
+        # coordinates of GROMACS from a topology of the old format that it
+        # has read.)
         parm = os.path.join(target, "system.parm7")
         rst = os.path.join(target, "system.rst7")
         # ParmEd takes the elements of a topology without atomic numbers
@@ -116,10 +117,31 @@ def prepare(args):
         # repartitioned, for helium; the topology is then made again from
         # the corrected atoms, so that the bonds of hydrogen are those
         # that SHAKE constrains.
+        #
+        # A topology in the format before Amber 7 (Factor IX) gives a
+        # dihedral of several terms with one entry: a negative periodicity
+        # of its type continues to the next type. ParmEd keeps the sign but
+        # not the order of the types when it writes them again, after which
+        # pmemd takes wrong terms (11,203 kcal/mol for the dihedrals of
+        # Factor IX instead of 2,259) and GROMACS only the first term
+        # (1,339). The terms are made explicit first, as LEaP writes them
+        # now: each its own entry, without a 1-4 pair.
         script = f"""
 import parmed
+from parmed.topologyobjects import Dihedral
 p = parmed.load_file({os.path.join(source, "prmtop")!r},
                      {os.path.join(source, "inpcrd")!r})
+types = list(p.dihedral_types)
+terms = []
+for d in p.dihedrals:
+    t = d.type
+    while t.per < 0:
+        t = types[t.idx + 1]
+        terms.append(Dihedral(d.atom1, d.atom2, d.atom3, d.atom4,
+                              improper=d.improper, ignore_end=True, type=t))
+p.dihedrals.extend(terms)
+for t in types:
+    t.per = abs(t.per)
 for atom in p.atoms:
     if atom.name.startswith("H") and 0.0 < atom.mass < 4.1:
         atom.atomic_number = 1
@@ -155,10 +177,14 @@ time_constant = 2.0
 temperature = {TEMPERATURE}
 """)
     steps = steps or system["steps"]
+    source = os.path.relpath(
+        os.path.join(os.path.dirname(target), "Amber24_Benchmark_Suite",
+                     "PME", system["directory"]), target)
     text = f"""# {name}: from {system['directory']} of the Amber benchmark suite.
 [input]
-topology    = "system.parm7"
-coordinates = "system.rst7"
+format      = "AMBER"
+topology    = "{source}/prmtop"
+coordinates = "{source}/inpcrd"
 
 [output]
 energy_interval = {energy_interval or max(steps // 2, 1)}
@@ -328,7 +354,7 @@ def run(args):
     for name in names:
         system = SYSTEMS[name]
         target = os.path.join(args.work, name)
-        if not os.path.exists(os.path.join(target, "system.parm7")):
+        if not os.path.exists(os.path.join(target, "system.top")):
             sys.exit(f"{name} is not prepared; run 'bench.py prepare'")
         # The output of the commands; GROMACS writes its own log,
         # gromacs.log, where its rate is.
@@ -412,14 +438,12 @@ def report(args):
             cells.append(f"{rate:.1f}" if rate else "")
         pmemd = system.get("pmemd")
         atoms = ""
-        parm = os.path.join(args.work, name, "system.parm7")
-        if os.path.exists(parm):
-            with open(parm) as file:
-                for line in file:
-                    if line.startswith("%FLAG POINTERS"):
-                        next(file)
-                        atoms = next(file).split()[0]
-                        break
+        coordinates = os.path.join(args.work, "Amber24_Benchmark_Suite", "PME",
+                                   system["directory"], "inpcrd")
+        if os.path.exists(coordinates):
+            with open(coordinates) as file:
+                next(file)
+                atoms = next(file).split()[0]
         print(f"| {name} | {atoms} | " + " | ".join(cells) +
               f" | {pmemd if pmemd else ''} |")
 

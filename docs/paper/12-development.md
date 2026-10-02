@@ -69,7 +69,11 @@ into one bin after positions had become NaN (D106, D107).
 **7. Inputs are varied on purpose.** The readers are tested with
 topologies in the format before Amber 7, without atomic numbers, with
 repartitioned masses, and as written by converters; a reader rejects what
-it cannot read with a message.
+it cannot read with a message. A comparison reads the files that the
+other program reads: a topology of Factor IX written again by a converter
+had lost 2283 dihedral terms, given in the format before Amber 7 by
+negative periodicities, and the rates of Factor IX up to D132 were of
+another model than pmemd's (D133).
 
 **8. Accuracy is a gate, not a by-product.** A change to a kernel is
 checked against the energies of the log in double precision and against

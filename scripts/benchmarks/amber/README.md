@@ -6,10 +6,16 @@ settings of their Amber inputs, and tabulates the rates in ns/day beside
 those that ambermd.org reports for pmemd.cuda.
 
 The inputs are not part of MDIR. `bench.py prepare` downloads the suite
-(`Amber24_Benchmark_Suite.tar.gz`) into a work directory, writes each
-topology again in the current Amber format with ParmEd (the JAC and
-Factor IX topologies are in the format before Amber 7), and converts them
-for GROMACS.
+(`Amber24_Benchmark_Suite.tar.gz`) into a work directory and converts each
+system for GROMACS with ParmEd. MDIR and pmemd read the files of the suite
+as they are, `prmtop` and `inpcrd` (D133): the JAC and Factor IX
+topologies are in the format before Amber 7, and Factor IX gives 2283
+dihedral terms by the convention of a negative periodicity, which a
+topology that ParmEd writes again loses. The conversion for GROMACS makes
+those terms explicit first.
+
+`scripts/validation/suite/run.py` compares the energy terms at the start
+and the forces of every system with pmemd on the CPU (or sander).
 
 ## Systems
 

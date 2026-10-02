@@ -107,7 +107,10 @@ Readers are tested with the variants that exist: topologies of the format
 before Amber 7, without `ATOMIC_NUMBER`, with repartitioned masses, and
 files that converters such as ParmEd write (which took hydrogens of 3 amu
 for helium). A reader rejects what it cannot read with a message; it never
-indexes past what it read.
+indexes past what it read. A comparison with another program reads the
+files that the other program reads, not a conversion of them: a topology
+that ParmEd wrote again lost 2283 dihedral terms of Factor IX, and every
+rate of Factor IX up to D132 was of another model than pmemd's (D133).
 
 ## 8. Checklist for a change to a pass or a lowering
 

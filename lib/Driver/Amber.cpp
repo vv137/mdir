@@ -67,6 +67,10 @@ private:
   }
 
   llvm::Error split(StringRef text);
+  /// Splits a topology of the format before Amber 7, which has no %FLAG
+  /// lines: a title, 30 pointers, and sections in a fixed order whose
+  /// lengths follow from the pointers.
+  llvm::Error splitOld(llvm::ArrayRef<StringRef> lines);
   llvm::Expected<Format> parseFormat(StringRef flag, StringRef text);
 
   /// The items of the section `flag`, `count` of them if `count` is not
@@ -94,6 +98,8 @@ private:
   std::string path;
   std::unique_ptr<llvm::MemoryBuffer> buffer;
   std::map<std::string, Section> sections;
+  /// Whether the file is of the format before Amber 7.
+  bool old = false;
 
   /// Lennard-Jones by the triangle of types that the 1-4 pairs use.
   std::vector<double> tableA, tableB;
@@ -162,6 +168,9 @@ static int inferAtomicNumber(double mass, StringRef name) {
 llvm::Error Reader::split(StringRef text) {
   llvm::SmallVector<StringRef> lines;
   text.split(lines, '\n');
+  if (!text.starts_with("%VERSION") && !text.starts_with("%FLAG") &&
+      !text.contains("\n%FLAG"))
+    return splitOld(lines);
   bool hasVersion = false;
   Section *current = nullptr;
   bool inData = false;
@@ -200,8 +209,103 @@ llvm::Error Reader::split(StringRef text) {
       current->lines.push_back(line);
   }
   if (!hasVersion)
-    return fail("no %VERSION line: a prmtop of the format before Amber 7 is "
-                "not supported; write the file again with tleap or ParmEd");
+    return fail("%FLAG lines without a %VERSION line");
+  return llvm::Error::success();
+}
+
+llvm::Error Reader::splitOld(llvm::ArrayRef<StringRef> all) {
+  old = true;
+  std::vector<StringRef> lines;
+  for (StringRef line : all)
+    lines.push_back(line.rtrim("\r"));
+  size_t next = 0;
+  // Takes the lines of `count` items of `kind`, at least one line: a
+  // Fortran read of no items still reads a record.
+  auto take = [&](StringRef flag, char kind, long count) -> llvm::Error {
+    long perLine = kind == 'I' ? 12 : kind == 'E' ? 5 : 20;
+    long numLines = count == 0 ? 1 : (count + perLine - 1) / perLine;
+    if (count < 0 || next + numLines > lines.size())
+      return fail("the file ends in the section " + flag +
+                  " of a topology of the format before Amber 7");
+    Section &section = sections[flag.str()];
+    section.format = kind == 'I' ? "12I6" : kind == 'E' ? "5E16.8" : "20a4";
+    for (long n = 0; n != numLines; ++n)
+      section.lines.push_back(lines[next++]);
+    return llvm::Error::success();
+  };
+  if (lines.empty())
+    return fail("the file is empty");
+  sections["TITLE"].format = "20a4";
+  sections["TITLE"].lines.push_back(lines[next++]);
+  if (llvm::Error error = take("POINTERS", 'I', 30))
+    return error;
+  std::vector<long> p;
+  if (llvm::Error error = readIntegers("POINTERS", 30, p))
+    return error;
+  long natom = p[0], ntypes = p[1], nres = p[11];
+  struct Entry {
+    const char *flag;
+    char kind;
+    long count;
+  };
+  const Entry entries[] = {
+      {"ATOM_NAME", 'A', natom},
+      {"CHARGE", 'E', natom},
+      {"MASS", 'E', natom},
+      {"ATOM_TYPE_INDEX", 'I', natom},
+      {"NUMBER_EXCLUDED_ATOMS", 'I', natom},
+      {"NONBONDED_PARM_INDEX", 'I', ntypes * ntypes},
+      {"RESIDUE_LABEL", 'A', nres},
+      {"RESIDUE_POINTER", 'I', nres},
+      {"BOND_FORCE_CONSTANT", 'E', p[15]},
+      {"BOND_EQUIL_VALUE", 'E', p[15]},
+      {"ANGLE_FORCE_CONSTANT", 'E', p[16]},
+      {"ANGLE_EQUIL_VALUE", 'E', p[16]},
+      {"DIHEDRAL_FORCE_CONSTANT", 'E', p[17]},
+      {"DIHEDRAL_PERIODICITY", 'E', p[17]},
+      {"DIHEDRAL_PHASE", 'E', p[17]},
+      {"SOLTY", 'E', p[18]},
+      {"LENNARD_JONES_ACOEF", 'E', ntypes * (ntypes + 1) / 2},
+      {"LENNARD_JONES_BCOEF", 'E', ntypes * (ntypes + 1) / 2},
+      {"BONDS_INC_HYDROGEN", 'I', 3 * p[2]},
+      {"BONDS_WITHOUT_HYDROGEN", 'I', 3 * p[12]},
+      {"ANGLES_INC_HYDROGEN", 'I', 4 * p[4]},
+      {"ANGLES_WITHOUT_HYDROGEN", 'I', 4 * p[13]},
+      {"DIHEDRALS_INC_HYDROGEN", 'I', 5 * p[6]},
+      {"DIHEDRALS_WITHOUT_HYDROGEN", 'I', 5 * p[14]},
+      {"EXCLUDED_ATOMS_LIST", 'I', p[10]},
+      {"HBOND_ACOEF", 'E', p[19]},
+      {"HBOND_BCOEF", 'E', p[19]},
+      {"HBCUT", 'E', p[19]},
+      {"AMBER_ATOM_TYPE", 'A', natom},
+      {"TREE_CHAIN_CLASSIFICATION", 'A', natom},
+      {"JOIN_ARRAY", 'I', natom},
+      {"IROTAT", 'I', natom},
+  };
+  for (const Entry &entry : entries)
+    if (llvm::Error error = take(entry.flag, entry.kind, entry.count))
+      return error;
+  // The cell and the molecules of the solvent.
+  if (p[27] != 0) {
+    if (llvm::Error error = take("SOLVENT_POINTERS", 'I', 3))
+      return error;
+    std::vector<long> solvent;
+    if (llvm::Error error = readIntegers("SOLVENT_POINTERS", 3, solvent))
+      return error;
+    if (llvm::Error error = take("ATOMS_PER_MOLECULE", 'I', solvent[1]))
+      return error;
+    if (llvm::Error error = take("BOX_DIMENSIONS", 'E', 4))
+      return error;
+  }
+  // A perturbed topology or a cap has more sections, which the checks of
+  // what MDIR supports refuse.
+  if (p[20] != 0 || p[29] != 0)
+    return llvm::Error::success();
+  for (; next != lines.size(); ++next)
+    if (!lines[next].trim().empty())
+      return fail("data after the last section of a topology of the "
+                  "format before Amber 7, at line " +
+                  llvm::Twine(next + 1));
   return llvm::Error::success();
 }
 
@@ -546,7 +650,10 @@ llvm::Error Reader::readTerms(Topology &topology,
   }
 
   // Dihedrals: k (1 + cos(n φ − φ0)); a negative third index leaves the
-  // 1-4 pair out, a negative fourth marks an improper.
+  // 1-4 pair out, a negative fourth marks an improper. A negative
+  // periodicity of a type means that the dihedral has the term of the next
+  // type as well, which may continue the same way: topologies in the format
+  // before Amber 7 give a dihedral of several terms so, with one entry.
   std::vector<double> dihedralK, dihedralN, dihedralPhase, scee, scnb;
   long numTypes = p[17];
   if (llvm::Error error =
@@ -593,16 +700,23 @@ llvm::Error Reader::readTerms(Topology &topology,
       long type = entry[4];
       if (type < 1 || type > numTypes)
         return fail("a dihedral type of " + flag + " is out of range");
-      double periodicity = std::fabs(dihedralN[type - 1]);
-      if (periodicity != std::round(periodicity))
-        return fail("a dihedral type has a periodicity that is not a whole "
-                    "number: " +
-                    show(dihedralN[type - 1]));
-      dihedral.force = dihedralK[type - 1] * kjPerKcal;
-      dihedral.n = static_cast<int>(periodicity);
-      dihedral.phase = dihedralPhase[type - 1];
       dihedral.improper = entry[3] < 0;
-      topology.dihedrals.push_back(dihedral);
+      for (long term = type;; ++term) {
+        if (term > numTypes)
+          return fail("the last dihedral type has a negative periodicity, "
+                      "which continues to a type that does not exist");
+        double periodicity = std::fabs(dihedralN[term - 1]);
+        if (periodicity != std::round(periodicity))
+          return fail("a dihedral type has a periodicity that is not a "
+                      "whole number: " +
+                      show(dihedralN[term - 1]));
+        dihedral.force = dihedralK[term - 1] * kjPerKcal;
+        dihedral.n = static_cast<int>(periodicity);
+        dihedral.phase = dihedralPhase[term - 1];
+        topology.dihedrals.push_back(dihedral);
+        if (dihedralN[term - 1] >= 0.0)
+          break;
+      }
 
       // The pair three bonds apart, with the factors of this entry.
       if (entry[2] < 0 || entry[3] < 0)
@@ -876,6 +990,9 @@ llvm::Expected<Topology> Reader::read() {
   std::vector<long> p;
   if (llvm::Error error = readIntegers("POINTERS", -1, p))
     return std::move(error);
+  // The format before Amber 7 has no extra points, nor their count.
+  if (old)
+    p.push_back(0);
   if (p.size() < 31)
     return fail("POINTERS has " + llvm::Twine(p.size()) +
                 " values; at least 31 are needed");

@@ -287,7 +287,7 @@ loops that compute the energy and the forces.
 | Part | Work | Depends on |
 |---|---|---|
 | Parser of the control file | TOML to a description of the run; errors with the line (`lib/Driver/Control.cpp`) | toml++ |
-| Readers of systems | PDB: positions and names (`System.cpp`). Amber: the topology (`prmtop`; one in the format before Amber 7 is rejected with a message) with CMAP, and coordinates and velocities from `inpcrd` or `rst7` (`Amber.cpp`, `CMap.cpp`). GROMACS: `top` and `itp` with `#include`, `#define`, `#ifdef`, wildcards of dihedral types, and the order of LEaP for the atoms of dihedrals when the force field asks for it, and coordinates from `gro` (`Gromacs.cpp`) | |
+| Readers of systems | PDB: positions and names (`System.cpp`). Amber: the topology (`prmtop`, also of the format before Amber 7, with dihedrals of several terms given by negative periodicities, D133) with CMAP, and coordinates and velocities from `inpcrd` or `rst7` (`Amber.cpp`, `CMap.cpp`). GROMACS: `top` and `itp` with `#include`, `#define`, `#ifdef`, wildcards of dihedral types, and the order of LEaP for the atoms of dihedrals when the force field asks for it, and coordinates from `gro` (`Gromacs.cpp`) | |
 | Selections | The masks of Amber for the atoms of restraints (`Selection.cpp`) | |
 | Builder | The description of the run to a module (`Builder.cpp`) | |
 | Energy expressions | The syntax of D22 to a kernel (`Expression.cpp`) | A parser of expressions |

@@ -1,0 +1,69 @@
+# A topology of the format before Amber 7, which has no %FLAG lines, and the
+# convention of both formats that a dihedral type of negative periodicity
+# continues to the next type: the dihedral has the terms of both. Two of
+# the topologies of the Amber benchmark suite (JAC, Factor IX) are of the
+# old format, and Factor IX gives 2283 terms this way; pmemd 26 gives its
+# dihedrals 2259.1587 kcal/mol at the coordinates of the suite, and the
+# first terms alone 1338.6415 (scripts/validation/suite).
+#
+# Inputs/old_prmtop.py adds a term (k = 0.5 kcal/mol, n = 3) to the first
+# dihedral without hydrogen of the dipeptide of amber.test in three ways:
+# chained by a negative periodicity, the same in the old format, and as an
+# entry of its own without a 1-4 pair. All three give the same terms, the
+# dihedrals 1.0 kcal/mol above those of amber.test (9.6440).
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/old_prmtop.py %S/Inputs/dipeptide/dipeptide.prmtop %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: sed 's/TOPOLOGY/chained.prmtop/' %t/run.toml > %t/chained.toml
+# RUN: sed 's/TOPOLOGY/old.prmtop/' %t/run.toml > %t/old.toml
+# RUN: sed 's/TOPOLOGY/explicit.prmtop/' %t/run.toml > %t/explicit.toml
+# RUN: mdir check %t/old.toml | FileCheck %s --check-prefix=CHECK-INPUT
+# RUN: mdir run %t/chained.toml | grep -A12 'terms at the start' > %t/chained.terms
+# RUN: mdir run %t/old.toml | grep -A12 'terms at the start' > %t/old.terms
+# RUN: mdir run %t/explicit.toml | grep -A12 'terms at the start' > %t/explicit.terms
+# RUN: diff %t/chained.terms %t/old.terms
+# RUN: diff %t/chained.terms %t/explicit.terms
+# RUN: FileCheck %s < %t/old.terms
+#
+# A negative periodicity of the last type continues to no type.
+# RUN: %python -c "import sys; t = open(sys.argv[1]).read(); i = t.index('%%FLAG DIHEDRAL_PERIODICITY'); j = t.index('%%FLAG DIHEDRAL_PHASE'); s = t[i:j].rstrip(); k = s.rindex(' 3.0'); open(sys.argv[2], 'w').write(t[:i] + s[:k] + '-3.0' + s[k + 4:] + chr(10) + t[j:])" %t/chained.prmtop %t/last.prmtop
+# RUN: sed 's/TOPOLOGY/last.prmtop/' %t/run.toml > %t/last.toml
+# RUN: not mdir check %t/last.toml 2>&1 | FileCheck %s --check-prefix=LAST
+
+# CHECK-INPUT: particles:          1168
+# CHECK-INPUT: dihedrals:          68, 4 improper
+# CHECK-INPUT: pairs 1-4:          41
+
+# CHECK:      MDIR:   dihedrals                     10.6439
+# CHECK:      MDIR:   Lennard-Jones 1-4              5.0156
+# CHECK-NEXT: MDIR:   Coulomb 1-4                   48.9371
+
+# LAST: the last dihedral type has a negative periodicity, which continues to a type that does not exist
+
+#--- run.toml
+[input]
+format      = "AMBER"
+topology    = "TOPOLOGY"
+coordinates = "dipeptide.inpcrd"
+
+[output]
+energy_interval = 0
+[energy]
+cutoff        = 9.0
+pairlist_distance = 10.0
+electrostatics = "CUTOFF"
+
+[dynamics]
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.0005
+steps         = 0
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PERIODIC"
+#--- end

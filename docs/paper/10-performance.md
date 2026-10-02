@@ -8,7 +8,7 @@
 |---|---|---|
 | Program | `mdir` at D118, built with LLVM and MLIR 23.1.2, PTX compiled by the driver at load | pmemd.cuda of Amber 26, SPFP [[LeGrand2013]](references.md#legrand2013), built with CUDA 13 |
 | Device | One NVIDIA RTX 3090 (GPU 0), power capped at 300 W, driver 595.84; the node's other GPUs ran other jobs, among them, during the third repeat of pmemd.cuda, runs of this work on GPU 1 | The same |
-| Inputs | The systems of the Amber 24 GPU benchmark suite (PME), each topology and restart file written again by ParmEd in the current Amber format (`scripts/benchmarks/amber/bench.py`) | The inputs of the suite as they are (`mdin.GPU`, `prmtop`, `inpcrd`) |
+| Inputs | The systems of the Amber 24 GPU benchmark suite (PME), the topologies and restart files of the suite as they are (`prmtop`, `inpcrd`; two topologies are in the format before Amber 7, D133), with the settings of `scripts/benchmarks/amber/bench.py` | The inputs of the suite as they are (`mdin.GPU`, `prmtop`, `inpcrd`) |
 | Model | Cutoff 8 Å; PME with $\operatorname{erfc}(\beta r_c) = 10^{-6}$ at constant energy and $10^{-5}$ at constant pressure, grid spacing at most 1 Å, order 4; SHAKE on the bonds of hydrogen and rigid water; the correction for the dispersion | The same, by the inputs |
 | Couplings (NPT) | Stochastic velocity rescaling [[Bussi2007]](references.md#bussi2007) and stochastic cell rescaling [[Bernetti2020]](references.md#bernetti2020), every 25 steps, $\tau_T$ = 1 ps, $\tau_P$ = 2 ps | Berendsen's thermostat [[Berendsen1984]](references.md#berendsen1984), $\tau$ = 10 ps; Monte Carlo barostat every 100 steps |
 | Neighbors | Groups of 16 (Section 4.4); dual list, outer reach 11 Å, inner 8.6 Å at 2 fs and 9.2 Å at 4 fs (Section 4.5) | Its own |
