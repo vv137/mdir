@@ -22,6 +22,7 @@ static llvm::Error findSettles(const Control &control, Topology &topology);
 static llvm::Error checkSettles(Topology &topology);
 static llvm::Error findShakes(Topology &topology);
 static llvm::Error findCenters(TupleTerm &term, const Topology &topology);
+static llvm::Error placeCell(const Control &control, System &system);
 
 /// The system of a topology and a file of coordinates.
 static llvm::Expected<System> readTopologySystem(const Control &control) {
@@ -48,7 +49,7 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
   // CHARMM keeps a cell as the symmetric root of its metric, whose frame
   // is turned from the one of MDIR; its positions are turned with it
   // (docs/triclinic-m2.md, Section 1).
-  if (charmm) {
+  if (charmm && control.periodic) {
     llvm::Expected<Cell> cell =
         makeCell(control.box[0] * 0.1, control.box[1] * 0.1,
                  control.box[2] * 0.1, control.angles[0], control.angles[1],
@@ -181,12 +182,43 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
 
   system.topology = std::make_shared<Topology>(std::move(*topology));
   system.keepsMomentum = !control.isLangevin() || control.comPeriod > 0;
+  if (llvm::Error error = placeCell(control, system))
+    return std::move(error);
   return std::move(system);
 }
 
 /// The settled waters of an Amber topology: every residue that
 /// 'water_residues' names, with an oxygen and two hydrogens first, and
 /// the distances of the bonds among them, as sander takes them.
+/// The cell of a run. A periodic one is that of the file of coordinates or
+/// of the control file, which must give one. Without one (D142), the
+/// particles are put in a cell that no image reaches: along each axis the
+/// extent of the particles and three times the reach of the neighbor
+/// structures, so that an image is farther than that reach while the
+/// particles spread less than twice it (Output, checkLimits).
+static llvm::Error placeCell(const Control &control, System &system) {
+  if (control.periodic) {
+    if (!(system.box[0] > 0.0 && system.box[1] > 0.0 && system.box[2] > 0.0))
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "the file of coordinates has no periodic cell; for a run without "
+          "one give 'type = \"NONE\"' in [boundary]");
+    return llvm::Error::success();
+  }
+  double reach = control.pairlistDistance * units::length;
+  const std::vector<double> &x = system.positions;
+  for (int k = 0; k != 3; ++k) {
+    double least = x[k], most = x[k];
+    for (size_t i = k; i < x.size(); i += 3) {
+      least = std::min(least, x[i]);
+      most = std::max(most, x[i]);
+    }
+    system.box[k] = most - least + 3.0 * reach;
+    system.tilt[k] = 0.0;
+  }
+  return llvm::Error::success();
+}
+
 /// The groups of a term over their centers (D139): the particles of each
 /// mask, their weights, and the particle in the middle of them by number,
 /// from which the others are taken in the minimum image. That gives the
@@ -457,6 +489,8 @@ llvm::Expected<System> mdir::driver::readSystem(const Control &control) {
         "a PDB file has none");
   system.velocities.assign(system.positions.size(), 0.0);
   system.keepsMomentum = !control.isLangevin() || control.comPeriod > 0;
+  if (llvm::Error error = placeCell(control, system))
+    return std::move(error);
   return std::move(system);
 }
 

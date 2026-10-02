@@ -952,7 +952,7 @@ output of `mdir template amber` (`scripts/paper/check-appendix.sh`).
 | `[barostat]` | `method = "C-RESCALE"`, `time_constant`, `compressibility`, `coupling = "ISOTROPIC"`, `work`, `interval` |
 | `[constraints]` | `hydrogen_bonds`, `rigid_water`, `water_residues`, `analytic_bonds`. A topology with SETTLE needs `rigid_water = false` to run its waters flexible, with their bonds |
 | `[[restraints]]` | `selection` (a mask of Amber), `force_constant`, `reference_scaling` (`"CENTER"` or `"ALL"`, D124) |
-| `[boundary]` | `type`, `box` |
+| `[boundary]` | `type` (`"PERIODIC"`, `"NONE"`, D142), `box` |
 | `[execution]` | `target`, `threads`, `precision`, `neighbor_capacity`, `fast_math`, `spatial_order`, `deterministic`, `neighbor_structure` |
 
 The thermostat and the removal of the motion of the center of mass are

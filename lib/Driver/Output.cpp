@@ -31,9 +31,13 @@ void mdir::driver::writeLogHeader(Output &output) {
                  "STEP_SIZE");
     return;
   }
-  std::fprintf(output.log, "INFO: %9s %14s %14s %14s %14s %14s %14s %14s",
+  std::fprintf(output.log, "INFO: %9s %14s %14s %14s %14s %14s %14s",
                "STEP", "TIME", "TOTAL_ENE", "POTENTIAL_ENE", "KINETIC_ENE",
-               "TEMPERATURE", "VIRIAL", "PRESSURE");
+               "TEMPERATURE", "VIRIAL");
+  // Without a periodic cell, the cell around the particles has no pressure
+  // (D142).
+  if (output.periodic)
+    std::fprintf(output.log, " %14s", "PRESSURE");
   if (output.couples)
     std::fprintf(output.log, " %14s", "CONSERVED");
   if (output.changesCell)
@@ -176,12 +180,12 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
   // `virial` is the trace of W, the sum of d (x) K over the pairs (B8).
   double pressure = (2.0 * half + virial) / (3.0 * output.volume);
   std::fprintf(output.log,
-               "INFO: %9lld %14.4f %14.4f %14.4f %14.4f %14.4f %14.4f "
-               "%14.4f",
+               "INFO: %9lld %14.4f %14.4f %14.4f %14.4f %14.4f %14.4f",
                static_cast<long long>(step), output.getTime(step),
                total / units::energy, potential / units::energy,
-               kinetic / units::energy, temperature, virial / units::energy,
-               pressure * units::pressure);
+               kinetic / units::energy, temperature, virial / units::energy);
+  if (output.periodic)
+    std::fprintf(output.log, " %14.4f", pressure * units::pressure);
   if (output.couples) {
     total += output.bath;
     std::fprintf(output.log, " %14.4f", total / units::energy);
@@ -264,12 +268,43 @@ void _mlir_ciface_mdrtWriteMinimization(int64_t step, double energy,
   output.lastTotal = energy;
 }
 
+/// Without a periodic cell (D142), stops the run if the particles have
+/// spread so far along an axis that an image could come within the reach
+/// of the neighbor structures: farther than the cell less that reach.
+static void checkSpread(const Output &output, const std::vector<double> &x,
+                        int64_t step) {
+  if (output.periodic)
+    return;
+  static const char axes[] = "xyz";
+  for (int k = 0; k != 3; ++k) {
+    double least = x[k], most = x[k];
+    for (size_t i = k; i < x.size(); i += 3) {
+      least = std::min(least, x[i]);
+      most = std::max(most, x[i]);
+    }
+    if (most - least > output.box[k] - output.listReach) {
+      std::fprintf(stderr,
+                   "mdir: at step %lld the particles spread %.4f Å along "
+                   "%c, more than the cell around them less the reach of "
+                   "the neighbor structures, %.4f Å; images of the "
+                   "particles would interact. The run stops; begin it "
+                   "again with a larger 'pairlist_distance', which places "
+                   "a larger cell (D142)\n",
+                   static_cast<long long>(step),
+                   (most - least) / units::length, axes[k],
+                   (output.box[k] - output.listReach) / units::length);
+      std::exit(1);
+    }
+  }
+}
+
 void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids) {
   Output &output = *current;
   if (!output.hasTrajectory)
     return;
   std::vector<double> values =
       readVectors(positions, ids, output.state, 1.0 / units::length);
+  checkSpread(output, readVectors(positions, ids, output.state), step);
   std::vector<float> narrow(values.begin(), values.end());
   output.trajectory->writeFrame(narrow.data(), step, output.getTime(step));
 }
@@ -280,6 +315,7 @@ void _mlir_ciface_mdrtFinish(void *positions, void *velocities,
   if (!output.system)
     return;
   output.system->positions = readVectors(positions, ids, output.state);
+  checkSpread(output, output.system->positions, output.endStep);
   output.system->velocities = readVectors(velocities, ids, output.state);
 }
 
@@ -294,6 +330,7 @@ static void writeState(int64_t step, void *positions, void *velocities,
   checkpoint.step = step;
   checkpoint.time = output.getTime(step);
   checkpoint.positions = readVectors(positions, ids, output.state);
+  checkSpread(output, checkpoint.positions, step);
   checkpoint.velocities = readVectors(velocities, ids, output.state);
   checkpoint.forces.clear();
   if (forces)

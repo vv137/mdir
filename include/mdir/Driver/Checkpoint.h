@@ -37,6 +37,9 @@ struct Checkpoint {
   double box[3] = {0.0, 0.0, 0.0};
   /// The tilts b_x, c_x, c_y of a triclinic cell (docs/triclinic-m2.md).
   double tilt[3] = {0.0, 0.0, 0.0};
+  /// Whether the cell is periodic; without one, `box` is the cell that the
+  /// run placed around the particles (D142), which a continued run keeps.
+  bool periodic = true;
 
   /// What is needed to continue the run as it was.
   std::string integrator;

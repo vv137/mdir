@@ -1,0 +1,15 @@
+# The peptide of no-cell.test without a periodic cell on a GPU in double
+# precision (D142), with both neighbor structures: given its drift it leaves
+# the cell placed around it, and the energies are those of the run on the
+# CPU and of the run in a periodic cell.
+#
+# REQUIRES: hdf5, cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/ff19sb/vacuum.prmtop %S/Inputs/ff19sb/vacuum.inpcrd %t
+# RUN: %python %S/Inputs/add_drift.py %t/vacuum.inpcrd %t/drift.rst7 500 300 -200
+# RUN: sed -n '/^#--- periodic.toml/,/^#--- two.toml/p' %S/no-cell.test | sed '1d;$d' | sed -e 's/vacuum.inpcrd/drift.rst7/' -e 's/periodic.h5/drift.h5/' -e 's/^steps         = 1$/steps         = 2000/' -e 's/= 1$/= 2000/' -e 's/^time_step     = 1e-9/time_step     = 0.0001/' -e 's/^type = "PERIODIC"/type = "NONE"/' -e '/^dispersion_correction/d' > %t/drift.toml
+# RUN: printf '[execution]\ntarget = "GPU"\nprecision = "DOUBLE"\nneighbor_structure = "MATRIX"\n' >> %t/drift.toml
+# RUN: sed -e 's/"MATRIX"/"GROUPS"/' %t/drift.toml > %t/groups.toml
+# RUN: cd %t && mdir run drift.toml | FileCheck %S/no-cell.test --check-prefix=DRIFT
+# RUN: cd %t && mdir run groups.toml | FileCheck %S/no-cell.test --check-prefix=DRIFT

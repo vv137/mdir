@@ -1720,7 +1720,14 @@ llvm::Error mdir::driver::readGromacsCoordinates(StringRef path,
   if (box.size() < 3)
     return fail(path, 3 + count, "expected the box");
   for (int k = 0; k != 3; ++k)
-    if (!readReal(box[k], topology.box[k]) || topology.box[k] <= 0.0)
+    if (!readReal(box[k], topology.box[k]) || topology.box[k] < 0.0)
+      return fail(path, 3 + count, "cannot read the box");
+  // A box of zeros, as GROMACS writes for no periodic cell (D142).
+  if (topology.box[0] == 0.0 && topology.box[1] == 0.0 &&
+      topology.box[2] == 0.0)
+    return llvm::Error::success();
+  for (int k = 0; k != 3; ++k)
+    if (topology.box[k] == 0.0)
       return fail(path, 3 + count, "cannot read the box");
   // v1(x) v2(y) v3(z) v1(y) v1(z) v2(x) v2(z) v3(x) v3(y): a cell with a
   // along x and b in the x-y plane, as GROMACS keeps it.

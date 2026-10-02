@@ -834,6 +834,7 @@ Error Reader::readEnergy(const toml::table &table) {
       return fail(*table.get(std::string_view(key)),
                   "'" + key + "' in [energy] is for a run from a topology; "
                   "without one, give the terms in [[energy.pair]]");
+  control.topologyDispersionGiven = table.contains("dispersion_correction");
   if (Error error = readChoice<DispersionCorrection>(
           table, "dispersion_correction", control.topologyDispersion,
           {{"NONE", DispersionCorrection::None},
@@ -1343,11 +1344,38 @@ Error Reader::readBoundary(const toml::table &table) {
   if (Error error = checkKeywords(table, "boundary", {"type", "box"}, {}))
     return error;
   int type = 0;
-  if (Error error = readChoice<int>(table, "type", type, {{"PERIODIC", 0}}))
+  if (Error error = readChoice<int>(table, "type", type,
+                                    {{"PERIODIC", 0}, {"NONE", 1}}))
     return error;
+  const toml::node *node = table.get("box");
+  // Without a periodic cell (D142) the run takes a cell around the
+  // particles that no image reaches, from their positions; the cell of a
+  // file of coordinates is ignored. What needs a periodic cell is refused.
+  if (type == 1) {
+    control.periodic = false;
+    if (node)
+      return fail(*node, "a run without a periodic cell takes no 'box'");
+    if (control.pme)
+      return fail(table, "particle mesh Ewald needs a periodic cell; "
+                         "without one, give 'electrostatics = \"CUTOFF\"' "
+                         "or \"REACTION_FIELD\"");
+    if (control.barostat)
+      return fail(table, "a barostat needs a periodic cell");
+    if (control.topologyDispersionGiven &&
+        control.topologyDispersion != DispersionCorrection::None)
+      return fail(table, "the correction for the dispersion takes a "
+                         "density, which a run without a periodic cell has "
+                         "not; give 'dispersion_correction = \"NONE\"'");
+    control.topologyDispersion = DispersionCorrection::None;
+    for (const PairTerm &term : control.pairs)
+      if (term.dispersion != DispersionCorrection::None)
+        return fail(table, "the pair term '" + term.name + "' corrects for "
+                           "the dispersion, which takes a density that a "
+                           "run without a periodic cell has not");
+    return Error::success();
+  }
   // With a topology, the box is that of the file of coordinates, except
   // for CHARMM, whose coordinates have none.
-  const toml::node *node = table.get("box");
   if (control.hasTopology() && control.charmmStructureFile.empty()) {
     if (node)
       return fail(*node, "'box' is not needed: the box comes from the file "
@@ -1819,7 +1847,8 @@ rigid_water    = true           # rigid waters: SETTLE in DOUBLE,
 # water_residues = ["WAT"]      # names of the residues of rigid water
 
 [boundary]
-type = "PERIODIC"               # the box is that of the coordinates
+type = "PERIODIC"               # the box is that of the coordinates;
+                                # NONE: no periodic cell
 
 [execution]
 target    = "GPU"               # CPU, GPU

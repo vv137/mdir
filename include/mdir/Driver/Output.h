@@ -68,6 +68,10 @@ struct Output {
   /// charge, which the program does not compute.
   bool pme = false;
   bool reactionField = false;
+  /// Whether the cell is periodic; without one (D142), the reach of the
+  /// neighbor structures in nm, within which no image may come.
+  bool periodic = true;
+  double listReach = 0.0;
   double coulombConstantEnergy = 0.0;
   double coulombConstantVirial = 0.0;
   /// Of which the self term, which does not depend on the volume.

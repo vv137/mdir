@@ -50,7 +50,7 @@ the output of `mdir template amber` at the commit of this paper.
 | `[barostat]` | `method`, `time_constant`, `compressibility`, `coupling`, `work`, `interval`, `compressibility_z`, `surface_tension`, `surfaces` | `C-RESCALE`, stochastic cell rescaling (D72, D77); ps; 1/atm; `ISOTROPIC` or `SEMI_ISOTROPIC` (x and y scale together from the mean of their pressures, z on its own, D119); `TROTTER` (the default; D92), `TROTTER_FIRST_ORDER` (its energy from the virial before the scaling only, a virial less a period), `EXACT`, or `FIRST_ORDER` (not with `SEMI_ISOTROPIC`), which count the work of the barostat in the conserved energy and leave the trajectory alone (a run that changes its volume fast is checked with `EXACT`: the Trotter count then drifts by a term of first order in the time step); the steps of the thermostat; with `SEMI_ISOTROPIC`, the compressibility of z in 1/atm (0 keeps the height; that of x and y by default), the tension of each surface normal to z in dyn/cm (0 by default), and their number (2). |
 | `[constraints]` | `hydrogen_bonds`, `rigid_water`, `water_residues`, `analytic_bonds` | SHAKE and RATTLE on the bonds of hydrogen; SETTLE on the waters in double precision, M-SHAKE on their three bonds below it (D112); the names of the residues of water (by default WAT for Amber, TIP3 for CHARMM). `analytic_bonds = true` enables the checked quadratic one-bond projection (D128); the default is `false`. |
 | `[[restraints]]` | `selection`, `force_constant`, `reference_scaling` | A mask of Amber, and kcal/mol/Å² (D74); under a barostat, `"CENTER"` (the default) scales the center of the references with the cell and keeps their shape, `"ALL"` scales each reference with the cell (D124). |
-| `[boundary]` | `type`, `box` | `PERIODIC`; the edges of the cell (Å), without a topology or with one of CHARMM, whose coordinates have no cell; for CHARMM also its angles α, β, γ (degrees), the cell taken from CHARMM's symmetric frame into MDIR's lower-triangular one (docs/triclinic-m2.md). |
+| `[boundary]` | `type`, `box` | `PERIODIC`, or `NONE`, a run without a periodic cell, which places a cell around the particles that keeps every image beyond the reach of the neighbor structures and stops if they spread too far, and refuses PME, a barostat, the correction for the dispersion, and `box` (D142); the edges of the cell (Å), without a topology or with one of CHARMM, whose coordinates have no cell; for CHARMM also its angles α, β, γ (degrees), the cell taken from CHARMM's symmetric frame into MDIR's lower-triangular one (docs/triclinic-m2.md). |
 | `[execution]` | `target`, `threads`, `precision` | `CPU` or `GPU`; the threads of the CPU; `SINGLE`, `MIXED`, or `DOUBLE`. |
 | | `neighbor_capacity` | Neighbors that a neighbor structure holds per particle at first; a build that finds more makes room. Absent: estimated from the configuration. |
 | | `fast_math` | Whether kernels are rewritten in ways that change rounding: the distance in powers of its square, fused multiply-adds, and in f32 approximate divisions and an approximation of erfc within 3.3e-7 (D90). The default is `true`. |
@@ -150,7 +150,8 @@ rigid_water    = true           # rigid waters: SETTLE in DOUBLE,
 # water_residues = ["WAT"]      # names of the residues of rigid water
 
 [boundary]
-type = "PERIODIC"               # the box is that of the coordinates
+type = "PERIODIC"               # the box is that of the coordinates;
+                                # NONE: no periodic cell
 
 [execution]
 target    = "GPU"               # CPU, GPU

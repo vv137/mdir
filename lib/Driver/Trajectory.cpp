@@ -56,8 +56,8 @@ void DCDWriter::writeHeader() {
   // The time step, in units of 48.88821 fs.
   float delta = static_cast<float>(timestep / 0.04888821);
   std::memcpy(&head.numbers[9], &delta, sizeof(delta));
-  // The frames hold the cell.
-  head.numbers[10] = 1;
+  // Whether the frames hold the cell.
+  head.numbers[10] = periodic ? 1 : 0;
   // The version of the format.
   head.numbers[19] = 24;
   writeRecord(file, &head, sizeof(head));
@@ -119,8 +119,9 @@ llvm::Expected<int64_t> DCDWriter::append(const std::string &path,
   bool read = readInt(size) && size == sizeof(head) &&
               std::fread(&head, sizeof(head), 1, file) == 1 && readInt(end) &&
               end == size && std::memcmp(head.tag, "CORD", 4) == 0;
-  if (!read || head.numbers[10] != 1 || head.numbers[19] != 24)
-    return fail("is not a trajectory that MDIR wrote");
+  if (!read || head.numbers[10] != (periodic ? 1 : 0) ||
+      head.numbers[19] != 24)
+    return fail("is not a trajectory that MDIR wrote for this boundary");
   read = readInt(size) && size == 84 &&
          std::fseek(file, size, SEEK_CUR) == 0 && readInt(end) &&
          end == size && readInt(size) && size == 4 && readInt(count) &&
@@ -137,8 +138,8 @@ llvm::Expected<int64_t> DCDWriter::append(const std::string &path,
 
   // The frames that the file holds in full: the cell, then x, y, and z.
   long header = std::ftell(file);
-  long frameSize =
-      (8 + 6 * sizeof(double)) + 3 * (8 + numParticles * sizeof(float));
+  long frameSize = (periodic ? 8 + 6 * sizeof(double) : 0) +
+                   3 * (8 + numParticles * sizeof(float));
   std::fseek(file, 0, SEEK_END);
   long length = std::ftell(file);
   int64_t held = (length - header) / frameSize;
@@ -177,7 +178,8 @@ void DCDWriter::writeFrame(const float *positions, int64_t, double) {
                     0.0,
                     c};
   cell[4] = (tilt[0] * tilt[1] + box[1] * tilt[2]) / (b * c);
-  writeRecord(file, cell, sizeof(cell));
+  if (periodic)
+    writeRecord(file, cell, sizeof(cell));
 
   std::vector<float> component(numParticles);
   for (int c = 0; c != 3; ++c) {
@@ -799,8 +801,9 @@ void XTCWriter::writeFrame(const float *positions, int64_t step,
   // c = (c_x, c_y, c_z).
   double vectors[9] = {box[0],  0.0,     0.0,    tilt[0], box[1],
                        0.0,     tilt[1], tilt[2], box[2]};
+  // Zeros without a periodic cell, as GROMACS writes them (D142).
   for (double value : vectors)
-    putFloat(out, static_cast<float>(value * 0.1));
+    putFloat(out, periodic ? static_cast<float>(value * 0.1) : 0.0f);
   std::vector<float> nm(3 * numParticles);
   for (size_t i = 0; i != nm.size(); ++i)
     nm[i] = positions[i] * 0.1f;

@@ -764,6 +764,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   output.dispersionEnergy = program->dispersionEnergy;
   output.dispersionVirial = program->dispersionVirial;
   output.pme = program->pme;
+  output.periodic = control->periodic;
+  output.listReach = control->pairlistDistance * units::length;
   output.reactionField = program->reactionField;
   output.coulombConstantEnergy = program->coulombConstantEnergy;
   output.coulombConstantVirial = program->coulombConstantVirial;
@@ -806,6 +808,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       trajectory = getPartPath(control->trajectoryFile, part);
     }
     output.trajectory = createTrajectoryWriter(control->trajectoryFormat);
+    output.trajectory->setPeriodic(control->periodic);
     if (appends) {
       auto removed = output.trajectory->append(
           trajectory, count, own->frames, control->framePeriod,
@@ -838,6 +841,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       checkpoint.box[i] = system->box[i];
       checkpoint.tilt[i] = system->tilt[i];
     }
+    checkpoint.periodic = control->periodic;
     checkpoint.integrator = integrator.str();
     checkpoint.velocityOffset = velocityOffset;
     checkpoint.precision =
@@ -867,6 +871,17 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     std::fprintf(output.log, "MDIR: %zu particles, %lld steps of %g ps\n",
                  count, static_cast<long long>(control->numSteps),
                  control->timestep);
+  if (!control->periodic)
+    std::fprintf(output.log,
+                 "MDIR: no periodic cell; the particles are in a cell of "
+                 "%.4f %.4f %.4f Å, whose images stay beyond the reach of "
+                 "the neighbor structures, %.4f Å, while the particles "
+                 "spread less than %.4f %.4f %.4f Å (D142)\n",
+                 system->box[0] / units::length, system->box[1] / units::length,
+                 system->box[2] / units::length, control->pairlistDistance,
+                 (system->box[0] - output.listReach) / units::length,
+                 (system->box[1] - output.listReach) / units::length,
+                 (system->box[2] - output.listReach) / units::length);
   if (control->rebuildPeriod > 0)
     std::fprintf(output.log,
                  "MDIR: warning: the neighbor structures are rebuilt every "

@@ -453,11 +453,9 @@ llvm::Error Reader::checkSupported(const std::vector<long> &p) {
   if (!ipol.empty() && ipol.front() > 0)
     return fail("a polarizable topology is not supported: IPOL = " +
                 llvm::Twine(ipol.front()));
-  if (p[27] == 0)
-    return fail("the topology has no periodic cell: IFBOX = 0");
-  // 1: rectangular, 2: truncated octahedron, 3: triclinic; the cell itself
+  // 0: no periodic cell, for a run without one (D142); 1: rectangular, 2: truncated octahedron, 3: triclinic; the cell itself
   // is that of the file of coordinates.
-  if (p[27] < 1 || p[27] > 3)
+  if (p[27] < 0 || p[27] > 3)
     return fail("the kind of periodic cell is not known: IFBOX = " +
                 llvm::Twine(p[27]));
   if (p[29] != 0)
@@ -1196,7 +1194,9 @@ llvm::Error mdir::driver::readAmberCoordinates(StringRef path,
   } else if (data == 2 * block + 1) {
     hasVelocities = hasBox = true;
   } else if (data == block || data == 2 * block) {
-    return fail("the file has no box; MDIR needs a periodic cell");
+    // No box: a run without a periodic cell (D142).
+    hasVelocities = data == 2 * block;
+    hasBox = false;
   } else {
     return fail("the file has " + llvm::Twine(data) + " lines of numbers, "
                 "which is not a layout of a file of coordinates");
@@ -1225,8 +1225,10 @@ llvm::Error mdir::driver::readAmberCoordinates(StringRef path,
                                       nmPerAngstrom * velocityFactor))
       return error;
 
+  if (!hasBox)
+    return llvm::Error::success();
   std::vector<double> box;
-  if (hasBox && !readLine(lines.back(), box))
+  if (!readLine(lines.back(), box))
     return fail("cannot read the box '" + lines.back() + "'");
   if (box.size() != 6 && box.size() != 3)
     return fail("expected the lengths and the angles of the box in '" +

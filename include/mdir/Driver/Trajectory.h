@@ -62,6 +62,10 @@ public:
     for (int i = 0; i != 3; ++i)
       tilt[i] = tilts[i];
   }
+  /// Without a periodic cell (D142) the frames hold none: the cell that the
+  /// run placed around the particles is not one of the system. Before
+  /// `open` or `append`.
+  void setPeriodic(bool value) { periodic = value; }
 
 protected:
   std::FILE *file = nullptr;
@@ -72,6 +76,7 @@ protected:
   double box[3] = {0.0, 0.0, 0.0};
   double tilt[3] = {0.0, 0.0, 0.0};
   int32_t numFrames = 0;
+  bool periodic = true;
 };
 
 /// The format DCD: positions in Å as 32-bit floating-point numbers, with

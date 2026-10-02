@@ -170,6 +170,8 @@ struct Control {
 
   DispersionCorrection topologyDispersion =
       DispersionCorrection::EnergyPressure;
+  /// Whether the control file gives `dispersion_correction`.
+  bool topologyDispersionGiven = false;
 
   // [constraints]
   /// Whether the bonds of hydrogen are constrained (SHAKE, later in M1),
@@ -275,6 +277,9 @@ struct Control {
   std::vector<Restraint> restraints;
 
   // [boundary]
+  /// Whether the cell is periodic. Without one (`type = "NONE"`, D142) the
+  /// run takes a cell around the particles that no image reaches.
+  bool periodic = true;
   /// The edges of the cell, and for a run from CHARMM's files its angles
   /// α, β, γ in degrees, 90 for a rectangular cell.
   double box[3] = {0.0, 0.0, 0.0};

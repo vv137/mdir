@@ -328,6 +328,9 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
         H5Tset_size(text, 9);
         H5Tset_strpad(text, H5T_STR_NULLTERM);
         char boundary[3][9] = {"periodic", "periodic", "periodic"};
+        if (!checkpoint.periodic)
+          for (auto &text : boundary)
+            std::strcpy(text, "none");
         writer.writeAttribute(box, "boundary", text, boundary, 3);
         // H5MD: the edges of a rectangular cell, or the matrix of the
         // edge vectors of a triclinic one, a row each.
@@ -383,6 +386,8 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
       writer.writeAttribute(mdir, "first_step", H5T_NATIVE_INT64,
                             &checkpoint.firstStep);
       writer.writeAttribute(mdir, "part", H5T_NATIVE_INT64, &checkpoint.part);
+      int periodic = checkpoint.periodic ? 1 : 0;
+      writer.writeAttribute(mdir, "periodic", H5T_NATIVE_INT, &periodic);
       writer.writeText(mdir, "trajectory", checkpoint.trajectory);
       writer.writeAttribute(mdir, "frames", H5T_NATIVE_INT64,
                             &checkpoint.frames);
@@ -477,6 +482,12 @@ mdir::driver::readCheckpoint(const std::string &path) {
                        checkpoint.seed);
   // The run that wrote the checkpoint. A checkpoint without it can begin a
   // run but not be continued by `mdir run --continue`.
+  if (reader.hasAttribute("/parameters/mdir", "periodic")) {
+    int periodic = 1;
+    reader.readAttribute("/parameters/mdir", "periodic", H5T_NATIVE_INT,
+                         periodic);
+    checkpoint.periodic = periodic != 0;
+  }
   if (reader.hasAttribute("/parameters/mdir", "first_step")) {
     reader.readAttribute("/parameters/mdir", "first_step", H5T_NATIVE_INT64,
                          checkpoint.firstStep);
