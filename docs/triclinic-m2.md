@@ -171,10 +171,10 @@ equivalent; the measurement is part of the validation.
 
 | Phase | Work | Oracle |
 |---|---|---|
-| P0 | The cell: readers (inpcrd, `IFBOX = 2`, `.gro`, `[boundary]` with angles, CHARMM's rotation), reduction, I2, writers (DCD, checkpoint, log) | Amber's `solvateOct` and GROMACS's octahedron give one lattice; a hexagonal cell of CHARMM round-trips through $R$ |
-| P1 | CPU: tuples, the matrix, PME | GROMACS by a rerun on TIP3P in a truncated octahedron and in a rhombic dodecahedron (double precision, terms and forces); sander on a protein from `solvateOct` |
-| P2 | GPU: the matrix and PME | P1 on the CPU |
-| P3 | GPU: groups, the dual list, D115's images | The matrix |
+| P0 | Done (D123): the cell, readers (inpcrd, `IFBOX = 2`, `.gro`, `[boundary]` with angles, CHARMM's rotation), reduction, I2, writers (DCD, checkpoint, log) | Amber's `solvateOct` and GROMACS's octahedron give the same shape |
+| P1 | Done (D123): the CPU, tuples, the matrix, PME | sander on Amber's octahedron; GROMACS on a rhombic dodecahedron; conservation |
+| P2 | The device: PME and the tuples (the minimum image of `emitMinimumImage` is shared already) | P1 on the CPU |
+| P3 | The device: groups, the dual list, D115's images. The search of candidates wraps the indices of cells per axis, which is wrong across the face of z (or y) of a tilted cell, where a neighbor is displaced by $\mathbf c$ (or $\mathbf b$), $x$ and $y$ with it. As GROMACS does, each group searches with shifts $t_z, t_y \in \{-1, 0, 1\}$ and recomputes its window of columns for each; the image of an entry is the lattice shift $\mathbf n$ that the search found (I4), not one chosen per axis; the kernel of D115 and the gather take $\mathbf n H$ | The CPU matrix of P1. The matrix of the device stays orthorhombic: the CPU is oracle enough |
 | P4 | The barostat (I3); CHARMM's hexagonal cells | Conservation at constant energy; the density of water against a rectangular cell; CHARMM 51b1 on a hexagonal cell in its frame |
 | P5 | The rates of a protein in an octahedron against its cube; docs and the white paper | pmemd.cuda and GROMACS on the same systems |
 
