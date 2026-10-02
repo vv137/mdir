@@ -31,5 +31,7 @@ done
 sed -n '/^## Abstract/,/^## Contents/p' "$paper/README.md" | sed '1d;$d' |
   "$pandoc" -f markdown+tex_math_dollars -t latex -o "$out/sections/abstract.tex"
 
+# Record when this PDF is compiled, independently of the paper's edition date.
+printf '\\newcommand{\\paperbuildtime}{%s}\n' "$(date -u '+%Y-%m-%d %H:%M:%S UTC')" > "$out/build-info.tex"
 cd "$out" && "$tectonic" -X compile --keep-logs main.tex
 echo "$out/main.pdf"
