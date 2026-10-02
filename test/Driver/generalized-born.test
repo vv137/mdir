@@ -1,0 +1,60 @@
+# Generalized Born of Onufriev, Bashford, and Case (D144):
+# `implicit_solvent = "OBC2"` with the radii and the screening of the
+# topology, the permittivities of the solvent and the solute, and
+# `surface_area_energy` for the nonpolar term. The peptide of
+# Inputs/gb/peptide.leap without a cell, with a cutoff that every pair is
+# within: the terms are those of OpenMM 8.6.1 (GBSAOBCForce, the Reference
+# platform), -600.3188 and 34.3707 kJ/mol, and of check_born.py, which
+# computes them from the formulas and the forces that they add against
+# central differences.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/gb/peptide.prmtop %S/Inputs/gb/peptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/born.toml
+# RUN: sed -e '/^implicit_solvent/d' -e '/^surface_area_energy/d' -e 's/born.h5/plain.h5/' %t/born.toml > %t/plain.toml
+# RUN: cd %t && mdir run plain.toml > /dev/null && mdir run born.toml | FileCheck %s
+# RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
+# RUN: mdir checkpoint --print=forces %t/born.h5 > %t/born.forces
+# RUN: %python %S/Inputs/check_born.py %t/peptide.prmtop %t/peptide.inpcrd %t/plain.forces %t/born.forces | FileCheck %s --check-prefix=PYTHON
+#
+# RUN: sed -e 's/^electrostatics    = "CUTOFF"/electrostatics    = "REACTION_FIELD"\nreaction_field_dielectric = 78.5/' %t/born.toml > %t/field.toml
+# RUN: not mdir check %t/field.toml 2>&1 | FileCheck %s --check-prefix=FIELD
+# RUN: sed -e '/^implicit_solvent/d' %t/born.toml > %t/stray.toml
+# RUN: not mdir check %t/stray.toml 2>&1 | FileCheck %s --check-prefix=STRAY
+
+# CHECK: MDIR:   generalized Born            -143.479635
+# CHECK: MDIR:   nonpolar surface               8.214797
+
+# PYTHON:      generalized Born -143.479635
+# PYTHON-NEXT: nonpolar surface 8.214797
+# PYTHON-NEXT: forces against differences of the energy: ok
+
+# FIELD: generalized Born takes the Coulomb of a plain cutoff, 'electrostatics = "CUTOFF"'; its continuum stands for the solvent
+# STRAY: 'surface_area_energy' is for 'implicit_solvent'
+
+#--- run.toml
+[input]
+topology    = "peptide.prmtop"
+coordinates = "peptide.inpcrd"
+[output]
+energy_interval = 1
+checkpoint = "born.h5"
+checkpoint_interval = 1
+[energy]
+cutoff            = 40.0
+pairlist_distance = 41.0
+electrostatics    = "CUTOFF"
+implicit_solvent  = "OBC2"
+surface_area_energy = 0.0054
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 1e-9
+steps      = 1
+[ensemble]
+ensemble    = "NVE"
+temperature = 0.0
+[constraints]
+hydrogen_bonds = false
+[boundary]
+type = "NONE"
+#--- end

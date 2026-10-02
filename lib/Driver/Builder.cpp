@@ -78,7 +78,9 @@ private:
     HarmonicImpropers = 2048,
     TupleTerms = 4096,
     PairTerms = 8192,
-    AllTerms = 16383,
+    GeneralizedBorn = 16384,
+    Surface = 32768,
+    AllTerms = 65535,
   };
   /// Emits the potential `name` of the terms `terms` of the topology; of
   /// the terms given by expressions over tuples or pairs, only the one of
@@ -88,6 +90,9 @@ private:
   /// Emits `%u_centroid_<name>`, the energy of the term `term` over the
   /// centers of groups, the term `index` over tuples (D139).
   void emitCentroidTerm(size_t index, const TupleTerm &term);
+  /// Emits generalized Born (D144), `%u_born` and `%u_surface` as `terms`
+  /// asks, and passes their names to `add`.
+  void emitBorn(unsigned terms, llvm::function_ref<void(StringRef)> add);
   /// β, the grid, the influence function, and the constant terms of
   /// particle mesh Ewald (docs/pme-m1.md).
   llvm::Error collectPME();
@@ -885,6 +890,24 @@ llvm::Error Builder::collectTopology() {
   for (unsigned type : topology.types)
     types.values.push_back(type);
   program.fields.push_back(std::move(types));
+  // Generalized Born (D144): the radius less its offset, 0.009 nm, the
+  // radius that screens the others, that times the scale of the particle,
+  // and the radius itself, in nm.
+  if (control.implicitSolvent != Control::ImplicitSolvent::None) {
+    Program::Field offset, scaled, radius;
+    offset.name = "gb_offset";
+    scaled.name = "gb_scaled";
+    radius.name = "gb_radius";
+    for (size_t i = 0; i != count; ++i) {
+      double rho = topology.bornRadii[i];
+      offset.values.push_back(rho - 0.009);
+      scaled.values.push_back(topology.bornScreens[i] * (rho - 0.009));
+      radius.values.push_back(rho);
+    }
+    program.fields.push_back(std::move(offset));
+    program.fields.push_back(std::move(scaled));
+    program.fields.push_back(std::move(radius));
+  }
   (void)count;
   // The restraints: the constant of each particle, 0 for one that is not
   // restrained, and its reference position, in nm.
@@ -1519,6 +1542,157 @@ void Builder::emitCentroidTerm(size_t index, const TupleTerm &term) {
      << kj << " : f64\n";
 }
 
+void Builder::emitBorn(unsigned terms,
+                       llvm::function_ref<void(StringRef)> add) {
+  // Every pair within the cutoff, those that the topology excludes as
+  // well.
+  double cutoff = control.cutoffDistance * units::length;
+  os << "  %ngb = md.neighborhood %x, %cell cutoff(" << formatReal(cutoff)
+     << ") : !vec -> !pairs\n";
+  // The integral of the descreening of i by the sphere of j of the radius
+  // s_j [Hawkins1996]: with L = max(ρ̃_i, |r − s_j|) and U = r + s_j,
+  //   ½ (1/L − 1/U + r/4 (1/U² − 1/L²) + ln(L/U) / (2r) + s_j²/(4r) (1/L² − 1/U²)),
+  // and 1/ρ̃_i − 1/L more where i lies within the sphere of j, 0 where the
+  // sphere does not reach it.
+  os << "  %gb_integral = md.gather_relation %ngb, %x, %cell gather("
+        "%p_gb_offset, %p_gb_scaled : !real, !real)\n"
+     << "      exchange(none) {\n"
+     << "  ^bb0(%r: f64, %d: vector<3xf64>, %ri: f64, %rj: f64, %si: f64, "
+        "%sj: f64):\n"
+     << "    %zero = arith.constant 0.0 : f64\n"
+     << "    %one = arith.constant 1.0 : f64\n"
+     << "    %two = arith.constant 2.0 : f64\n"
+     << "    %quarter = arith.constant 0.25 : f64\n"
+     << "    %half = arith.constant 0.5 : f64\n"
+     << "    %upper = arith.addf %r, %sj : f64\n"
+     << "    %gap = arith.subf %r, %sj : f64\n"
+     << "    %agap = math.absf %gap : f64\n"
+     << "    %lower = arith.maximumf %ri, %agap : f64\n"
+     << "    %l = arith.divf %one, %lower : f64\n"
+     << "    %u = arith.divf %one, %upper : f64\n"
+     << "    %l2 = arith.mulf %l, %l : f64\n"
+     << "    %u2 = arith.mulf %u, %u : f64\n"
+     << "    %t0 = arith.subf %l, %u : f64\n"
+     << "    %du = arith.subf %u2, %l2 : f64\n"
+     << "    %qr = arith.mulf %quarter, %r : f64\n"
+     << "    %t1 = arith.mulf %qr, %du : f64\n"
+     << "    %ratio = arith.divf %u, %l : f64\n"
+     << "    %log = math.log %ratio : f64\n"
+     << "    %hr = arith.divf %half, %r : f64\n"
+     << "    %t2 = arith.mulf %hr, %log : f64\n"
+     << "    %sj2 = arith.mulf %sj, %sj : f64\n"
+     << "    %qs = arith.mulf %quarter, %sj2 : f64\n"
+     << "    %qsr = arith.divf %qs, %r : f64\n"
+     << "    %dl = arith.subf %l2, %u2 : f64\n"
+     << "    %t3 = arith.mulf %qsr, %dl : f64\n"
+     << "    %a0 = arith.addf %t0, %t1 : f64\n"
+     << "    %a1 = arith.addf %a0, %t2 : f64\n"
+     << "    %a2 = arith.addf %a1, %t3 : f64\n"
+     << "    %inner = arith.subf %sj, %r : f64\n"
+     << "    %within = arith.cmpf olt, %ri, %inner : f64\n"
+     << "    %iri = arith.divf %one, %ri : f64\n"
+     << "    %e0 = arith.subf %iri, %l : f64\n"
+     << "    %e1 = arith.mulf %two, %e0 : f64\n"
+     << "    %a3 = arith.addf %a2, %e1 : f64\n"
+     << "    %a4 = arith.select %within, %a3, %a2 : f64\n"
+     << "    %reach = arith.cmpf olt, %ri, %upper : f64\n"
+     << "    %k = arith.select %reach, %a4, %zero : f64\n"
+     << "    md.yield %k : f64\n"
+     << "  } : !pairs, !vec -> !real\n";
+  // The Born radii [Onufriev2004]: with ψ = I ρ̃ / 2 (the factor ½ of the
+  // integral), B = 1 / (1/ρ̃ − tanh(α ψ − β ψ² + γ ψ³) / ρ).
+  bool first = control.implicitSolvent == Control::ImplicitSolvent::OBC1;
+  double alpha = first ? 0.8 : 1.0, beta = first ? 0.0 : 0.8,
+         gamma = first ? 2.909125 : 4.85;
+  os << "  %gb_born = md.map_particles gather(%gb_integral, %p_gb_offset, "
+        "%p_gb_radius : !real, !real, !real) {\n"
+     << "  ^bb0(%i: f64, %ri: f64, %r0: f64):\n"
+     << "    %half = arith.constant 0.5 : f64\n"
+     << "    %one = arith.constant 1.0 : f64\n"
+     << "    %alpha = arith.constant " << formatReal(alpha) << " : f64\n"
+     << "    %beta = arith.constant " << formatReal(beta) << " : f64\n"
+     << "    %gamma = arith.constant " << formatReal(gamma) << " : f64\n"
+     << "    %hi = arith.mulf %half, %i : f64\n"
+     << "    %psi = arith.mulf %hi, %ri : f64\n"
+     << "    %psi2 = arith.mulf %psi, %psi : f64\n"
+     << "    %psi3 = arith.mulf %psi2, %psi : f64\n"
+     << "    %a = arith.mulf %alpha, %psi : f64\n"
+     << "    %b = arith.mulf %beta, %psi2 : f64\n"
+     << "    %c = arith.mulf %gamma, %psi3 : f64\n"
+     << "    %s0 = arith.subf %a, %b : f64\n"
+     << "    %s1 = arith.addf %s0, %c : f64\n"
+     << "    %t = math.tanh %s1 : f64\n"
+     << "    %tr = arith.divf %t, %r0 : f64\n"
+     << "    %iri = arith.divf %one, %ri : f64\n"
+     << "    %den = arith.subf %iri, %tr : f64\n"
+     << "    %bi = arith.divf %one, %den : f64\n"
+     << "    md.yield %bi : f64\n"
+     << "  } : !real\n";
+  if (terms & GeneralizedBorn) {
+    // −τ f q_i q_j / f_GB over the pairs and −τ f q_i² / (2 B_i) for each
+    // particle, f_GB = sqrt(r² + B_i B_j exp(−r² / (4 B_i B_j))) and
+    // τ = 1/ε_solute − 1/ε_solvent.
+    double tau = 1.0 / control.soluteDielectric -
+                 1.0 / control.solventDielectric;
+    os << "  %u_gb_pairs = md.sum_relation %ngb, %x, %cell gather(%p_q, "
+          "%gb_born : !real, !real)\n"
+       << "      exchange(symmetric) {\n"
+       << "  ^bb0(%r: f64, %d: vector<3xf64>, %qi: f64, %qj: f64, %bi: f64, "
+          "%bj: f64):\n"
+       << "    %c = arith.constant " << formatReal(-tau * coulombInternal)
+       << " : f64\n"
+       << "    %quarter = arith.constant 0.25 : f64\n"
+       << "    %bb = arith.mulf %bi, %bj : f64\n"
+       << "    %r2 = arith.mulf %r, %r : f64\n"
+       << "    %bb4 = arith.divf %quarter, %bb : f64\n"
+       << "    %x0 = arith.mulf %r2, %bb4 : f64\n"
+       << "    %nx = arith.negf %x0 : f64\n"
+       << "    %ex = math.exp %nx : f64\n"
+       << "    %be = arith.mulf %bb, %ex : f64\n"
+       << "    %s = arith.addf %r2, %be : f64\n"
+       << "    %fgb = math.sqrt %s : f64\n"
+       << "    %qq = arith.mulf %qi, %qj : f64\n"
+       << "    %cq = arith.mulf %c, %qq : f64\n"
+       << "    %e = arith.divf %cq, %fgb : f64\n"
+       << "    md.yield %e : f64\n"
+       << "  } : !pairs, !vec -> f64\n"
+       << "  %u_gb_self = md.sum_particles gather(%p_q, %gb_born : !real, "
+          "!real) {\n"
+       << "  ^bb0(%qi: f64, %bi: f64):\n"
+       << "    %c = arith.constant " << formatReal(-0.5 * tau * coulombInternal)
+       << " : f64\n"
+       << "    %qq = arith.mulf %qi, %qi : f64\n"
+       << "    %cq = arith.mulf %c, %qq : f64\n"
+       << "    %e = arith.divf %cq, %bi : f64\n"
+       << "    md.yield %e : f64\n"
+       << "  } : f64\n"
+       << "  %u_born = arith.addf %u_gb_pairs, %u_gb_self : f64\n";
+    add("born");
+  }
+  if ((terms & Surface) && control.surfaceAreaEnergy > 0.0) {
+    // The nonpolar term of Schaefer et al., 4π γ (ρ + 0.14 nm)² (ρ/B)⁶,
+    // with γ from kcal/(mol Å²) in kJ/(mol nm²).
+    double tension = control.surfaceAreaEnergy * units::energy /
+                     (units::length * units::length);
+    os << "  %u_surface = md.sum_particles gather(%p_gb_radius, %gb_born : "
+          "!real, !real) {\n"
+       << "  ^bb0(%r0: f64, %bi: f64):\n"
+       << "    %c = arith.constant " << formatReal(4.0 * M_PI * tension)
+       << " : f64\n"
+       << "    %probe = arith.constant 0.14 : f64\n"
+       << "    %six = arith.constant 6 : i32\n"
+       << "    %rp = arith.addf %r0, %probe : f64\n"
+       << "    %rp2 = arith.mulf %rp, %rp : f64\n"
+       << "    %ratio = arith.divf %r0, %bi : f64\n"
+       << "    %r6 = math.fpowi %ratio, %six : f64, i32\n"
+       << "    %a = arith.mulf %c, %rp2 : f64\n"
+       << "    %e = arith.mulf %a, %r6 : f64\n"
+       << "    md.yield %e : f64\n"
+       << "  } : f64\n";
+    add("surface");
+  }
+}
+
 void Builder::emitTopologyPotential(StringRef name, unsigned terms,
                                     int tupleTerm, int pairTerm) {
   double cutoff = control.cutoffDistance * units::length;
@@ -1749,6 +1923,9 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
        << "  } : !pairs, !vec -> f64\n";
     add(set);
   }
+  if ((terms & (GeneralizedBorn | Surface)) &&
+      control.implicitSolvent != Control::ImplicitSolvent::None)
+    emitBorn(terms, add);
   if (lj || coulomb) {
     os << "  %u_nonbonded = md.sum_relation %n, %x, %cell gather(%p_type, "
           "%p_q : !ids, !real)\n"
@@ -5411,7 +5588,8 @@ void Builder::emitTerms(StringRef x) {
   // over tuples (D136) and then those over pairs (D137).
   int custom = static_cast<int>(system.topology->tupleTerms.size());
   int pairs = static_cast<int>(control.pairs.size());
-  int size = 12 + custom + pairs + (hasRestraints() ? 1 : 0);
+  int born = static_cast<int>(system.bornTermNames.size());
+  int size = 12 + custom + pairs + born + (hasRestraints() ? 1 : 0);
   std::string type = "memref<" + std::to_string(size) + "xf64>";
   os << "  %terms = memref.alloca() : " << type << "\n";
   int index = 0;
@@ -5428,9 +5606,12 @@ void Builder::emitTerms(StringRef x) {
        << "  memref.store %" << name << ", %terms[%i_" << name
        << "] : " << type << "\n";
   }
-  for (int k = 0; k != custom + pairs; ++k) {
+  for (int k = 0; k != custom + pairs + born; ++k) {
     std::string name = k < custom ? "term_custom" + std::to_string(k)
-                                  : "term_pair" + std::to_string(k - custom);
+                       : k < custom + pairs
+                           ? "term_pair" + std::to_string(k - custom)
+                       : k == custom + pairs ? "term_born"
+                                             : "term_surface";
     os << "  %" << name << " = md.evaluate @" << name << "(" << x << ", %cell"
        << getFieldValues() << ") request [energy]\n"
        << "      : (!vec, !md.cell" << getFieldTypes() << ") -> f64\n"
@@ -6107,6 +6288,11 @@ llvm::Error Builder::build() {
       for (size_t k = 0, e = control.pairs.size(); k != e; ++k)
         emitTopologyPotential("term_pair" + std::to_string(k), PairTerms, -1,
                               static_cast<int>(k));
+    if (!isRestart() && !system.bornTermNames.empty()) {
+      emitTopologyPotential("term_born", GeneralizedBorn);
+      if (system.bornTermNames.size() > 1)
+        emitTopologyPotential("term_surface", Surface);
+    }
   }
   else if (llvm::Error error = emitPotential())
     return error;

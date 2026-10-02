@@ -1053,6 +1053,16 @@ llvm::Expected<Topology> Reader::read() {
     topology.charges.push_back(charge / chargeFactor);
   if (llvm::Error error = readReals("MASS", natom, topology.masses))
     return std::move(error);
+  // The radii and the screening of generalized Born, in Å, if the
+  // topology has them (D144).
+  if (llvm::Error error =
+          readReals("RADII", natom, topology.bornRadii, false))
+    return std::move(error);
+  for (double &radius : topology.bornRadii)
+    radius *= nmPerAngstrom;
+  if (llvm::Error error =
+          readReals("SCREEN", natom, topology.bornScreens, false))
+    return std::move(error);
   std::vector<long> numbers;
   if (llvm::Error error = readIntegers("ATOMIC_NUMBER", natom, numbers, false))
     return std::move(error);

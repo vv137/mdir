@@ -180,6 +180,20 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
     system.pairTermNames.push_back(term.name);
   }
 
+  // Generalized Born (D144) takes the radii and the screening of the
+  // topology.
+  if (control.implicitSolvent != Control::ImplicitSolvent::None) {
+    if (topology->bornRadii.size() != topology->getNumParticles() ||
+        topology->bornScreens.size() != topology->getNumParticles())
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "generalized Born needs the radii and the screening of every "
+          "particle, the sections RADII and SCREEN of a topology of Amber");
+    system.bornTermNames.push_back("generalized Born");
+    if (control.surfaceAreaEnergy > 0.0)
+      system.bornTermNames.push_back("nonpolar surface");
+  }
+
   system.topology = std::make_shared<Topology>(std::move(*topology));
   system.keepsMomentum = !control.isLangevin() || control.comPeriod > 0;
   if (llvm::Error error = placeCell(control, system))

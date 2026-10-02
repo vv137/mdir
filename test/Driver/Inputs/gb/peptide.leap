@@ -1,0 +1,9 @@
+# ACE-ALA-GLY-SER-LYS-ASP-TRP-NME with ff19SB, without a cell, with the
+# radii mbondi2 of generalized Born, made with tleap of AmberTools 26:
+#
+#   tleap -f peptide.leap
+source leaprc.protein.ff19SB
+set default PBRadii mbondi2
+m = sequence { ACE ALA GLY SER LYS ASP TRP NME }
+saveAmberParm m peptide.prmtop peptide.inpcrd
+quit

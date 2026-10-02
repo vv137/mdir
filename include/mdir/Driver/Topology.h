@@ -64,6 +64,10 @@ struct Topology {
   std::vector<int> atomicNumbers;
   std::vector<double> masses;
   std::vector<double> charges;
+  /// The intrinsic radii (nm) and the scale factors of the screening of
+  /// generalized Born, where the topology gives them (D144).
+  std::vector<double> bornRadii;
+  std::vector<double> bornScreens;
   /// The type of Lennard-Jones of each particle, from 0.
   std::vector<unsigned> types;
   std::vector<std::string> typeNames;

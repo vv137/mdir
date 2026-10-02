@@ -82,6 +82,8 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
   int custom = topology ? static_cast<int>(topology->tupleTerms.size()) : 0;
   int pairs = topology ? static_cast<int>(output.system->pairTermNames.size())
                        : 0;
+  int born = topology ? static_cast<int>(output.system->bornTermNames.size())
+                      : 0;
   for (int i = 0, e = static_cast<int>(values->sizes[0]); i != e; ++i) {
     if ((i == 7 && !cmap) ||
         (i == 8 && !output.pme && !output.reactionField) ||
@@ -93,6 +95,8 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
         : i < 12 + custom ? topology->tupleTerms[i - 12].name
         : i < 12 + custom + pairs
             ? output.system->pairTermNames[i - 12 - custom]
+        : i < 12 + custom + pairs + born
+            ? output.system->bornTermNames[i - 12 - custom - pairs]
             : names[12];
     double value = values->data[i * values->strides[0]];
     total += value;

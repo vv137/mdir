@@ -1,0 +1,19 @@
+# Generalized Born of generalized-born.test on a GPU in double precision,
+# with both neighbor structures (D144): the same terms, and the forces that
+# check_born.py computes.
+#
+# REQUIRES: hdf5, cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/gb/peptide.prmtop %S/Inputs/gb/peptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/generalized-born.test | sed '1d;$d' > %t/born.toml
+# RUN: printf '[execution]\ntarget = "GPU"\nprecision = "DOUBLE"\nneighbor_structure = "MATRIX"\n' >> %t/born.toml
+# RUN: sed -e '/^implicit_solvent/d' -e '/^surface_area_energy/d' -e 's/born.h5/plain.h5/' %t/born.toml > %t/plain.toml
+# RUN: sed -e 's/"MATRIX"/"GROUPS"/' -e 's/born.h5/groups.h5/' %t/born.toml > %t/groups.toml
+# RUN: cd %t && mdir run plain.toml > /dev/null && mdir run born.toml | FileCheck %S/generalized-born.test
+# RUN: cd %t && mdir run groups.toml | FileCheck %S/generalized-born.test
+# RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
+# RUN: mdir checkpoint --print=forces %t/born.h5 > %t/born.forces
+# RUN: mdir checkpoint --print=forces %t/groups.h5 > %t/groups.forces
+# RUN: %python %S/Inputs/check_born.py %t/peptide.prmtop %t/peptide.inpcrd %t/plain.forces %t/born.forces | FileCheck %S/generalized-born.test --check-prefix=PYTHON
+# RUN: %python %S/Inputs/check_born.py %t/peptide.prmtop %t/peptide.inpcrd %t/plain.forces %t/groups.forces | FileCheck %S/generalized-born.test --check-prefix=PYTHON

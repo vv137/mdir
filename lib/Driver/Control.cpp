@@ -718,7 +718,7 @@ Error Reader::readEnergy(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "energy",
           {"cutoff", "switch_distance", "pairlist_distance",
-           "pruned_distance", "rebuild_interval", "lennard_jones_modifier", "coulomb_modifier", "reaction_field_dielectric", "pair", "bond", "angle", "dihedral", "function", "type",
+           "pruned_distance", "rebuild_interval", "lennard_jones_modifier", "coulomb_modifier", "reaction_field_dielectric", "implicit_solvent", "solvent_dielectric", "solute_dielectric", "surface_area_energy", "pair", "bond", "angle", "dihedral", "function", "type",
            "pair_override", "dispersion_correction", "electrostatics"},
           {}))
     return error;
@@ -828,8 +828,10 @@ Error Reader::readEnergy(const toml::table &table) {
   // With a topology, the correction for the dispersion is for the whole
   // run, and the electrostatics are a cutoff or particle mesh Ewald.
   bool hasTopology = control.hasTopology();
-  for (StringRef key : {"dispersion_correction", "electrostatics",
-                        "coulomb_modifier", "reaction_field_dielectric"})
+  for (StringRef key :
+       {"dispersion_correction", "electrostatics", "coulomb_modifier",
+        "reaction_field_dielectric", "implicit_solvent",
+        "solvent_dielectric", "solute_dielectric", "surface_area_energy"})
     if (!hasTopology && table.contains(std::string_view(key)))
       return fail(*table.get(std::string_view(key)),
                   "'" + key + "' in [energy] is for a run from a topology; "
@@ -866,6 +868,38 @@ Error Reader::readEnergy(const toml::table &table) {
   } else if (const toml::node *node = table.get("reaction_field_dielectric")) {
     return fail(*node, "'reaction_field_dielectric' is for "
                        "'electrostatics = \"REACTION_FIELD\"'");
+  }
+  // Generalized Born (D144), with the Coulomb of a cutoff, as the
+  // continuum stands for the solvent.
+  if (Error error = readChoice<Control::ImplicitSolvent>(
+          table, "implicit_solvent", control.implicitSolvent,
+          {{"NONE", Control::ImplicitSolvent::None},
+           {"OBC1", Control::ImplicitSolvent::OBC1},
+           {"OBC2", Control::ImplicitSolvent::OBC2}}))
+    return error;
+  bool born = control.implicitSolvent != Control::ImplicitSolvent::None;
+  for (StringRef key :
+       {"solvent_dielectric", "solute_dielectric", "surface_area_energy"})
+    if (!born && table.contains(std::string_view(key)))
+      return fail(*table.get(std::string_view(key)),
+                  "'" + key + "' is for 'implicit_solvent'");
+  if (born) {
+    if (control.pme || control.reactionField)
+      return fail(table, "generalized Born takes the Coulomb of a plain "
+                         "cutoff, 'electrostatics = \"CUTOFF\"'; its "
+                         "continuum stands for the solvent");
+    if (Error error = readPositive(table, "solvent_dielectric",
+                                   control.solventDielectric))
+      return error;
+    if (Error error = readPositive(table, "solute_dielectric",
+                                   control.soluteDielectric))
+      return error;
+    if (Error error = readReal(table, "surface_area_energy",
+                               control.surfaceAreaEnergy))
+      return error;
+    if (control.surfaceAreaEnergy < 0.0)
+      return fail(*table.get("surface_area_energy"),
+                  "expected 0 or a positive 'surface_area_energy'");
   }
   if (!control.pme && table.contains("coulomb_modifier"))
     return fail(*table.get("coulomb_modifier"),
