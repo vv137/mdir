@@ -39,7 +39,10 @@ pairs = [(["bonds"], ["Bond"]),
          (["CMAP"], ["CMAP Dih."]),
          # Dihedrals of Ryckaert and Bellemans and Fourier, which MDIR takes
          # as terms given by expressions (D136) and GROMACS as one term.
-         (["ryckaert_bellemans", "fourier"], ["Ryckaert-Bell."])]
+         (["ryckaert_bellemans", "fourier"], ["Ryckaert-Bell."]),
+         # The bonds and angles of GROMOS (functions 2), terms given by
+         # expressions as well.
+         (["gromos_bond"], ["G96Bond"]), (["gromos_angle"], ["G96Angle"])]
 print(f"{ff:16s} {'term':20s} {'MDIR kJ/mol':>16s} {'GROMACS':>16s} {'relative':>10s}")
 for names, theirs in pairs:
     if not any(n in m for n in names):

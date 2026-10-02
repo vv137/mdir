@@ -1,7 +1,7 @@
 #!/bin/bash
 # Compares the terms of the potential of MDIR with those of GROMACS for the
 # peptide of peptide.leap in water, with each force field that GROMACS
-# ships and MDIR should read, and shows what MDIR rejects for the others.
+# ships and MDIR should read.
 #
 # Usage: scripts/validation/gromacs/run.sh <work directory>
 #
@@ -37,7 +37,7 @@ for spec in amber99sb-ildn:tip3p amber99sb:tip3p amber03:tip3p amber14sb:tip3p \
   gmx grompp -f "$here/single.mdp" -c solv.gro -p topol.top -o run.tpr \
       -maxwarn 5 > grompp.log 2>&1
   gmx mdrun -s run.tpr -deffnm run -nt 1 > mdrun.log 2>&1
-  printf 'Bond\nAngle\nU-B\nProper-Dih.\nPer.-Imp.-Dih.\nImproper-Dih.\nCMAP-Dih.\nRyckaert-Bell.\nLJ-14\nCoulomb-14\nLJ-(SR)\nDisper.-corr.\nCoulomb-(SR)\nPotential\n\n' \
+  printf 'Bond\nG96Bond\nAngle\nG96Angle\nU-B\nProper-Dih.\nPer.-Imp.-Dih.\nImproper-Dih.\nCMAP-Dih.\nRyckaert-Bell.\nLJ-14\nCoulomb-14\nLJ-(SR)\nDisper.-corr.\nCoulomb-(SR)\nPotential\n\n' \
       | gmx energy -f run.edr -o energy.xvg > energy.log 2>&1 || true
   sed "s|@TOP@|$top|" "$here/mdir.toml.in" > mdir.toml
   popd > /dev/null

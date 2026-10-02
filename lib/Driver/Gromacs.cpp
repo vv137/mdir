@@ -1165,14 +1165,35 @@ llvm::Error TopologyReader::expandMolecule(const MoleculeType &molecule,
     return molecule.atoms[atom].mass < 1.2;
   };
 
-  // Bonds: function 1, ½ k (r − b0)², with b0 then k.
+  // The terms that MDIR takes as terms given by expressions (D136), in the
+  // units of the control file: Å, radians, kcal/mol. One for each function.
+  auto termOf = [&](StringRef name, StringRef expression, unsigned arity,
+                    std::initializer_list<const char *> parameters)
+      -> TupleTerm & {
+    for (TupleTerm &term : topology.tupleTerms)
+      if (term.name == name)
+        return term;
+    TupleTerm term;
+    term.name = name.str();
+    term.expression = expression.str();
+    term.arity = arity;
+    for (const char *parameter : parameters)
+      term.parameters.push_back({parameter, {}});
+    topology.tupleTerms.push_back(std::move(term));
+    return topology.tupleTerms.back();
+  };
+
+  // Bonds: function 1, ½ k (r − b0)², with b0 then k; function 2, the
+  // quartic bond of GROMOS, ¼ k (r² − b0²)², a term given by an expression.
   for (const Interaction &bond : molecule.bonds) {
-    if (bond.function != 1)
-      return fail(*bond.line, "only bonds of function 1 are supported, not " +
-                                  llvm::Twine(bond.function));
+    if (bond.function != 1 && bond.function != 2)
+      return fail(*bond.line,
+                  "only bonds of functions 1 and 2 are supported, not " +
+                      llvm::Twine(bond.function));
     std::vector<double> p = bond.parameters;
     if (p.empty()) {
-      const BondedType *entry = lookup("bondtypes:1", bonded(bond));
+      const BondedType *entry = lookup(
+          "bondtypes:" + std::to_string(bond.function), bonded(bond));
       if (!entry)
         return fail(*bond.line, "no [ bondtypes ] for this bond");
       p = entry->parameters;
@@ -1182,6 +1203,16 @@ llvm::Error TopologyReader::expandMolecule(const MoleculeType &molecule,
     if (p.size() == 4 && (p[2] != p[0] || p[3] != p[1]))
       return fail(*bond.line, "a bond of the state B (free energy) is not "
                               "supported");
+    if (bond.function == 2) {
+      // b0 in nm to Å, k in kJ/(mol nm⁴) to kcal/(mol Å⁴).
+      TupleTerm &term = termOf("gromos_bond", "0.25*kb*(r^2 - b0^2)^2", 2,
+                               {"b0", "kb"});
+      term.particles.push_back(offset + bond.atoms[0]);
+      term.particles.push_back(offset + bond.atoms[1]);
+      term.parameters[0].second.push_back(p[0] * 10.0);
+      term.parameters[1].second.push_back(p[1] / kjPerKcal * 1e-4);
+      continue;
+    }
     Topology::Bond term;
     term.i = offset + bond.atoms[0];
     term.j = offset + bond.atoms[1];
@@ -1196,9 +1227,9 @@ llvm::Error TopologyReader::expandMolecule(const MoleculeType &molecule,
   // r13 then k_UB after them.
   for (const Interaction &angle : molecule.angles) {
     int function = angle.function;
-    if (function != 1 && function != 5)
+    if (function != 1 && function != 2 && function != 5)
       return fail(*angle.line,
-                  "only angles of functions 1 and 5 are supported, not " +
+                  "only angles of functions 1, 2, and 5 are supported, not " +
                       llvm::Twine(function));
     std::vector<double> p = angle.parameters;
     if (p.empty()) {
@@ -1213,6 +1244,19 @@ llvm::Error TopologyReader::expandMolecule(const MoleculeType &molecule,
       return fail(*angle.line, "expected " + llvm::Twine(count) +
                                    " parameters of an angle of function " +
                                    llvm::Twine(function));
+    if (function == 2) {
+      // The angle of GROMOS in its cosine, ½ k (cos θ − cos θ0)², a term
+      // given by an expression: θ0 in degrees to radians, k in kJ/mol to
+      // kcal/mol.
+      TupleTerm &term = termOf("gromos_angle",
+                               "0.5*ka*(cos(theta) - cos(t0))^2", 3,
+                               {"t0", "ka"});
+      for (int a = 0; a != 3; ++a)
+        term.particles.push_back(offset + angle.atoms[a]);
+      term.parameters[0].second.push_back(p[0] * radiansPerDegree);
+      term.parameters[1].second.push_back(p[1] / kjPerKcal);
+      continue;
+    }
     Topology::Angle term;
     term.i = offset + angle.atoms[0];
     term.j = offset + angle.atoms[1];
@@ -1231,21 +1275,6 @@ llvm::Error TopologyReader::expandMolecule(const MoleculeType &molecule,
   // Ryckaert-Bellemans dihedrals (function 3), sum over n of C_n cos^n psi
   // with psi = phi - 180 degrees, and Fourier dihedrals (function 5), are
   // terms given by expressions (D136), in kcal/mol, one for each function.
-  auto termOf = [&](StringRef name, StringRef expression,
-                    std::initializer_list<const char *> parameters)
-      -> TupleTerm & {
-    for (TupleTerm &term : topology.tupleTerms)
-      if (term.name == name)
-        return term;
-    TupleTerm term;
-    term.name = name.str();
-    term.expression = expression.str();
-    term.arity = 4;
-    for (const char *parameter : parameters)
-      term.parameters.push_back({parameter, {}});
-    topology.tupleTerms.push_back(std::move(term));
-    return topology.tupleTerms.back();
-  };
   for (const Interaction &dihedral : molecule.dihedrals) {
     int function = dihedral.function;
     if (function != 1 && function != 2 && function != 3 && function != 4 &&
@@ -1277,11 +1306,11 @@ llvm::Error TopologyReader::expandMolecule(const MoleculeType &molecule,
               ? termOf("ryckaert_bellemans",
                        "c0 + c1*p + c2*p^2 + c3*p^3 + c4*p^4 + c5*p^5; "
                        "p = -cos(theta)",
-                       {"c0", "c1", "c2", "c3", "c4", "c5"})
+                       4, {"c0", "c1", "c2", "c3", "c4", "c5"})
               : termOf("fourier",
                        "0.5*(f1*(1 + cos(theta)) + f2*(1 - cos(2*theta)) + "
                        "f3*(1 + cos(3*theta)) + f4*(1 - cos(4*theta)))",
-                       {"f1", "f2", "f3", "f4"});
+                       4, {"f1", "f2", "f3", "f4"});
       for (int a = 0; a != 4; ++a)
         term.particles.push_back(offset + dihedral.atoms[a]);
       for (size_t c = 0; c != count; ++c)

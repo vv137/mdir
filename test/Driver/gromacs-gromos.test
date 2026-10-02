@@ -1,0 +1,62 @@
+# The quartic bond of GROMOS (bond function 2), ¼ k (r² − b0²)², and its
+# angle in the cosine (angle function 2), ½ k (cos θ − cos θ0)², which MDIR
+# takes as terms given by expressions (D136), gromos_bond and gromos_angle.
+# Three atoms without charges or Lennard-Jones: two bonds of b0 = 0.14 nm
+# and k = 1e7 kJ/(mol nm⁴), at 0.15 and 0.1487 nm, 21.025 and 15.625 kJ/mol,
+# and an angle of θ0 = 100° and k = 500 kJ/mol, 6.6168 kJ/mol.
+#
+# RUN: rm -rf %t && mkdir -p %t && split-file %s %t
+# RUN: cd %t && mdir run run.toml | FileCheck %s
+
+# CHECK: MDIR:   gromos_bond                    8.759560
+# CHECK: MDIR:   gromos_angle                   1.581468
+
+#--- run.toml
+[input]
+topology    = "three.top"
+coordinates = "three.gro"
+[output]
+energy_interval = 0
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "CUTOFF"
+dispersion_correction = "NONE"
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.0005
+steps      = 0
+[ensemble]
+ensemble    = "NVE"
+temperature = 0.0
+[constraints]
+hydrogen_bonds = false
+[boundary]
+type = "PERIODIC"
+#--- three.top
+[ defaults ]
+1 1 no 1.0 1.0
+[ atomtypes ]
+C 6 12.011 0.0 A 0.0 0.0
+[ moleculetype ]
+M 3
+[ atoms ]
+1 C 1 M C1 1 0.0 12.011
+2 C 1 M C2 1 0.0 12.011
+3 C 1 M C3 1 0.0 12.011
+[ bonds ]
+1 2 2 0.14 1.0e7
+2 3 2 0.14 1.0e7
+[ angles ]
+1 2 3 2 100.0 500.0
+[ system ]
+three
+[ molecules ]
+M 1
+#--- three.gro
+Three atoms
+    3
+    1M       C1    1   0.100   0.100   0.100
+    1M       C2    2   0.250   0.100   0.100
+    1M       C3    3   0.300   0.240   0.100
+   3.00000   3.00000   3.00000
