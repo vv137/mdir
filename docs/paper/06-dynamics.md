@@ -4,7 +4,8 @@ A step is a program of the `dyn` dialect that the driver writes for the
 run (Section 3.1): kicks, drifts, the constraints and their projections,
 the placement of virtual sites, and one evaluation of the forces at its
 end. Couplings to a bath act between steps, at the end of a *period* of
-$N_T$ steps. Every derivation below is of what the generated code
+$N_T$ steps. A minimization replaces the step by one of steepest descent
+(Section 6.7). Every derivation below is of what the generated code
 computes; $h = \Delta t/2$.
 
 ## 6.1 Integrators
@@ -463,3 +464,58 @@ run would have drawn, which makes restarts bitwise. Initial velocities
 are drawn from a Maxwell–Boltzmann distribution with xoshiro256**
 [[Blackman2021]](references.md#blackman2021), their components along the constraints and the motion
 of the center of mass removed, and scaled to $\tfrac12N_fk_BT$.
+
+## 6.7 Minimization
+
+`[minimize]` in place of `[dynamics]` lowers the potential energy by
+steepest descent in the metric of the masses, on the surface of the
+constraints (D73). The direction is the acceleration with its parts along
+the constraints taken off, $\mathbf g = P(\mathbf F/m)$, where $P$ is the
+projection that RATTLE applies to velocities at the current positions and
+$\mathbf g_i = 0$ for a virtual site. Weighting by the masses is what keeps
+the step downhill once SETTLE and SHAKE, which weigh the particles by
+their masses, take the groups back to their shapes: without it the steps
+went uphill after 50 steps on the target of D65, and the step size fell
+to 0. A trial of step length $\ell$ is
+
+$$
+\mathbf x' = C\!\left(\mathbf x + \ell\,\frac{\mathbf g}{\lVert\mathbf g\rVert_{16}}\right),
+\qquad
+\lVert\mathbf g\rVert_{16} = r\Big(\sum_i \big(\lVert\mathbf g_i\rVert/r\big)^{16}\Big)^{1/16},
+$$
+
+with $r$ the root mean square of the $\lVert\mathbf g_i\rVert$, $C$ the
+constraints applied from $\mathbf x$, and the sites placed again. Since
+$\lVert\mathbf g\rVert_{16} \ge \max_i\lVert\mathbf g_i\rVert$, no particle
+moves farther than $\ell$, and no reduction to a maximum is needed. A trial
+that lowers the energy is taken and $\ell$ grows by a factor 1.2, to at most
+1 Å; otherwise $\mathbf x$ stays and $\ell$ shrinks by a factor 0.2. The
+choice is a select of each particle, so each field keeps its own storage.
+A step is one `dyn.step @descend`, which evaluates the energy and the
+forces once.
+
+**The start** (D120). The positions of the file are first taken onto the
+surface of the constraints, by SETTLE (M-SHAKE below double precision) and
+SHAKE with themselves as the reference, and the sites are placed again,
+before the first evaluation. From positions off the surface, every trial
+carries besides the step the change that takes the groups to their shapes,
+which does not shrink with $\ell$. A bilayer of 126 POPC of Lipid21
+[[Dickson2022]](references.md#dickson2022) in TIP3P built by PACKMOL
+[[Martinez2009]](references.md#martinez2009) had bonds of hydrogen up to 0.021 Å off their lengths and
+hydrogens of different lipids 0.13 Å apart; that change brought one such
+pair from 0.128 to 0.097 Å, raising the Lennard-Jones energy by
+$5.6\times10^{15}$ kcal/mol, so no trial was ever taken and $\ell$ shrank to
+0. Taken onto the surface first, the bilayer went from $1.05\times10^{16}$
+to $-85{,}425$ kcal/mol in 5000 steps (`minimize-clash.test` runs four of
+its lipids, from $2.9\times10^{15}$ to $-551$ kcal/mol in 200 steps). On
+the target of D65 (`minimize.test`), whose bonds of hydrogen from tleap
+are also off their lengths, the energy at the start is $-5348.8659$
+kcal/mol on the surface rather than $-5348.4328$ off it.
+
+The log gives the potential energy, the root mean square and the largest
+of the forces $m\mathbf g$ over the particles with mass, in kcal/mol/Å, and
+$\ell$. A minimization ends with a checkpoint of the positions and zero
+velocities; a run that reads it begins anew at step 0, with drawn
+velocities. In mixed precision the forces are rounded to about $10^{-5}$ of
+their size, which bounds how far a minimization can go; a tolerance on the
+force is planned.

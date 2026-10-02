@@ -83,10 +83,25 @@ power and host were. The cap matters: under it, MDIR's kernels ran at a
 lower clock than pmemd.cuda's (about 1590 against 1695 MHz on Cellulose),
 so a kernel that does the same work with less power gains speed.
 
-**Next steps.** The white paper closes the first milestone. The next
-milestones are the distributed lowering with a domain decomposition (in
-which the disjoint union of the constraints is the unit of ownership,
-D83), learned potentials with a halo strategy chosen per model, the
-deterministic loop over groups, and a Python interface whose buffers
-follow DLPack, so that the state is shared with machine-learning
-frameworks without copies.
+**Next steps.** The white paper closes the first milestone; the roadmap
+(`docs/roadmap.md`) orders what follows. First what a production run on a
+cluster needs: `steps` as the total of a run with a command that
+continues it, outputs that continue with it, a stop on a signal or a
+limit of time that falls on a checkpoint so that the continuation stays
+exact, and the checkpoint before the last kept. Then the features that
+general molecular dynamics asks of MDIR: Langevin dynamics, outputs for
+analysis (velocities, a compressed trajectory, the pressure tensor),
+restraints beyond positions, coarse-grained models with tabulated
+potentials, and free energy, whose $dH/d\lambda$ the differentiation of
+the IR is designed to give (D2). A Python interface whose buffers follow DLPack
+shares the state with machine-learning frameworks without copies, from
+the same IR and validation as the control file. The distributed work
+begins with a graph of the dependencies of the `md` ops, ownership and
+freshness of fields, and a verifier of two domains (in which the
+disjoint union of the constraints is the unit of ownership, D83), then
+a potential with an intermediate field and learned potentials behind a
+versioned interface. The deterministic loop over groups is open as well.
+Analysis comes last: frames correct by construction (molecules whole,
+the solute in one image) and observables compiled into the run, sharing
+its loops; on one trajectory compared across analysis programs, what went
+wrong was images and conventions, never the arithmetic.

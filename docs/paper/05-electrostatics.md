@@ -5,7 +5,11 @@ mesh Ewald (PME) in the smooth form of [[Essmann1995]](references.md#essmann1995
 [[Darden1993]](references.md#darden1993). This section derives the terms as they are implemented,
 the forces and the virial of the reciprocal sum, and how the sum runs on a
 device. Internally the energies are in kJ/mol and the Coulomb constant is
-$f = 138.935457644$ kJ nm/(mol e²).
+$f = 138.935457644$ kJ nm/(mol e²), that of CODATA 2018
+[[Tiesinga2021]](references.md#tiesinga2021), whatever the format of the
+input: Amber's constant is smaller by a factor 1.0000346 and CHARMM's
+larger by 1.0000238, so the electrostatic terms of the same charges differ
+from those programs' by these factors (Section 9.1).
 
 ## 5.1 The splitting
 

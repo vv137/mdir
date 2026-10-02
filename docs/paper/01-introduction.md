@@ -44,9 +44,9 @@ paper describes the system that reaches it.
 2. **Exact neighbor structures** (Section 4): a test of validity that
    holds under the scaling of a barostat (with proof); groups of 16
    particles that compute each pair once, in frames that need no minimum
-   image; and a dual list whose inner list is pruned from the outer one
-   whenever its own exact test asks, packed in the order of the outer
-   list.
+   image, in orthorhombic and triclinic cells; and a dual list whose
+   inner list is pruned from the outer one whenever its own exact test
+   asks, packed in the order of the outer list.
 3. **Numerics of mixed precision** (Section 7): a policy that assigns a
    type and the license to approximate to each role of a value; and the
    analysis and removal of a drift of the energy, which showed that a
@@ -59,7 +59,8 @@ paper describes the system that reaches it.
    asynchronous reads of flags that keep the device busy while the host
    decides.
 5. **Results** (Sections 9 and 10): agreement of the energy terms and of
-   the force on every particle with sander and GROMACS; conservation of energy over 2 ns of JAC better than
+   the force on every particle with sander and GROMACS, and of the terms
+   with CHARMM and, in triclinic cells, with all three; conservation of energy over 2 ns of JAC better than
    that of pmemd.cuda on the same input; on an RTX 3090, a rate between 103%
    and 132% of pmemd.cuda's on every system of the Amber suite; and on
    ubiquitin in OPC, 66% to 72% of the rate of GROMACS, with the loop over
@@ -70,7 +71,8 @@ paper describes the system that reaches it.
 Section 2 fixes the notation. Section 3 describes the design of the
 compiler and its runtime. Sections 4 to 6 derive the methods as they are
 implemented: neighbor structures, the electrostatics of Ewald summation,
-and the integrators with their constraints and couplings. Section 7 states
+and the integrators with their constraints and couplings, and
+minimization. Section 7 states
 the precision policy and the drift that shaped it, and Section 8 the
 lowering to a GPU. Section 9 collects the evidence of correctness and
 Section 10 the measurements of performance. Section 11 places MDIR among
