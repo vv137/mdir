@@ -290,6 +290,17 @@ beside its rate.
   the Monte Carlo barostat sees equals $E_\text{disp}/V$, the difference
   between the pressure of the correction, $2E_\text{disp}/V$, and the
   derivative of its energy.
+- **Langevin dynamics** (D135; `scripts/validation/ensembles/run.py
+  --thermostat langevin`), the same box with $\gamma$ = 1/ps: the density
+  at 1 atm is $0.99611 \pm 0.00030$ g/cm³, within 1.5 standard errors of
+  that of velocity rescaling, the slope of two pressures within 0.9 and
+  that of two temperatures within 2.0 standard errors. The kinetic energy
+  of the end of the step is 0.13% below $N_fk_BT/2$, so its distribution
+  fails the test of Kolmogorov and Smirnov: the middle scheme samples the
+  velocities of the middle of the step, not those of its end. Before the
+  forces of the constraints were taken at the end of the step, their
+  virial raised the pressure by 39 bar per 1/ps of friction and the
+  density was 0.15% low.
 - **Equivalences.** The trajectory does not depend on how steps are
   grouped into periods, on velocity Verlet against leapfrog with
   constraints, or on how the work of the barostat is counted: the tests

@@ -796,7 +796,16 @@ forces, on the CPU and on a GPU in double and mixed precision
 $2\gamma$ = 10/ps; its mean kinetic energy over 50 ps is 228.0 ± 0.8
 kcal/mol against 228.9. A run stopped at its checkpoints and continued
 ends in the state of one that does not stop, bit for bit, on the CPU and
-on a GPU.
+on a GPU. The tests of the ensembles of 1039 OPC waters at 2 fs with
+$\gamma$ = 1/ps (`scripts/validation/ensembles/run.py --thermostat
+langevin`, 5 ns a run): the density at 1 atm with cell rescaling
+0.99611 ± 0.00030 g/cm³ against 0.99674 ± 0.00031 with velocity rescaling,
+the slope of two pressures within 0.9 standard errors, that of two
+temperatures within 2.0; the kinetic energy of the end of the step is
+0.13% below $N_fk_BT/2$ (4 to 6 standard errors), so that its distribution
+fails the test of Kolmogorov and Smirnov: at 2 fs the velocities of the end
+of a step of the middle scheme are not those that it samples exactly,
+which are those of the middle.
 
 ## 12. A cell that changes
 
