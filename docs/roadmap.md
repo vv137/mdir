@@ -134,8 +134,91 @@ against pmemd.cuda (the user, 2026-10-01); the comparison on a protein
 Every citation is checked against its source (docs/references.md), and the
 figures are generated from the logs by scripts in the repository.
 
-## 4. Later (TODO)
+## 4. Usability (after the first milestone)
 
-| Item | Notes |
+From a review of how a researcher meets MDIR (2026-10-02), checked against
+the code. The order is that of the work; P0 is what a production run on a
+cluster needs.
+
+| # | Item | Priority | State and scope |
+|---|---|---|---|
+| U1 | `steps` as the total of a run, and `mdir run --continue` | P0 | Missing: a run from a checkpoint adds `steps` (`%end = %start + steps`). The total makes the same command line resubmit a job until it is done; the intervals are checked against what remains |
+| U2 | Output that continues with the run | P0 | Missing: the DCD is opened anew. The checkpoint records the frames written; a continued run truncates the trajectory to them, rewrites the count of the header, and appends, and refuses on a mismatch; `--no-append` writes parts |
+| U3 | A stop on SIGTERM, SIGINT, or `--max-walltime` | P0 | Missing, and a change of the compiler: the schedule is `scf.for` with constant counts, so a host call must return a flag that the loop of checkpoints tests. The stop falls on a checkpoint, which keeps the continuation exact (R1); a stop anywhere else would not |
+| U4 | Keep the previous checkpoint | P0 | Partial: the write is atomic (a part, then a rename), but the one before is replaced. Rename it to `.prev` first |
+| U5 | A directory for a run: the log in a file as well, protection against overwriting, a manifest | P1 | Missing: the log goes to the standard output only. The manifest (version, hashes of the inputs, device, times) reuses the provenance of `mdir bug-report` |
+| U6 | `mdir check` as a preflight | P1 | Partial: it reads the control file and prints the topology. It should print the run (ensemble, step and length in ns, PME, constraints, target and precision, outputs), warn on outputs that exist and on risky settings, and give `--json` |
+| U7 | Errors that say what to do | P1 | Partial: errors name the line, and enums list their values. Add the nearest valid key (edit distance over the known keys), the keys of a table, and a line of what to try |
+| U8 | A quickstart first in the README, and `mdir doctor` | P1 | Missing: the README leads with the compiler. `doctor` extends `version` with a probe of the device and the driver and a short run on each target |
+| U9 | Control files of the standard pipeline from `mdir template` | P2 | The stages of `examples/` (minimization, equilibration, constant pressure with restraints, production) as kinds of `template`, not as a new command: no aliases before a release |
+| U10 | Distribution | P2 | After the release of M1: an Apptainer or OCI image. A container needs the cubin of its kernels, not PTX that a driver older than the toolkit cannot compile |
+| U11 | Many runs of one plan (as `-multidir`) | Later | With `ensemble` |
+
+Not taken: `target = "AUTO"` (a check would pass on one machine and fail
+on another, and a large run could fall back to the CPU without a word; a
+clear failure is better), runs without a number of steps (the counts of the
+schedule are constants of the program), and checkpoints by the clock (they
+would break the exact continuation).
+
+## 5. Features for the purpose of MDIR
+
+MDIR is for general MD, all-atom and coarse-grained, on workstations and
+clusters ([decisions.md](decisions.md), Section 1, C1 and C2). What runs of that kind still lack, in the order of how often
+they are needed:
+
+| # | Feature | State |
+|---|---|---|
+| F1 | Langevin dynamics (the middle scheme, BAOAB) | Missing; the thermostat of most runs of Amber and OpenMM, and of the inputs of MDBench. Random numbers by particle are in place (A13) |
+| F2 | Triclinic cells (the truncated octahedron and the rhombic dodecahedron of Amber and GROMACS) | Missing; cells are orthorhombic. Touches the minimum image, the groups, PME, and the barostat |
+| F3 | CHARMM force fields | Planned above (the switch of the force, Urey–Bradley, NBFIX): the membranes of CHARMM-GUI |
+| F4 | Outputs for analysis: frames of the velocities, XTC, the pressure tensor and the area in the log, observables in H5MD | Missing; frames of the velocities are what the test of equipartition needs |
+| F5 | Restraints beyond positions: distance, angle, dihedral, flat-bottomed | Missing; positional restraints only (D74) |
+| F6 | Coarse-grained models: tabulated potentials, Martini from GROMACS topologies, DPD | Missing; part of the purpose from the start |
+| F7 | Free energy and enhanced sampling: alchemical $\lambda$ with $dH/d\lambda$ (D2), collective variables, replica exchange | Not designed; neither [future-architecture-plan.md](future-architecture-plan.md) nor this roadmap has a design. The architecture names `ensemble` and replica exchange as a driver event (P4) |
+| F8 | Learned potentials | Section 7 |
+
+## 6. Python API
+
+The design follows a reading of OpenMM's Python layer (2026-10-02,
+`openmm/openmm` at 5ee2cba): its vocabulary and its reporters fit MDIR,
+its copies and its silent caching do not. Both front ends, the control file
+and Python, must produce the same IR and share one validation.
+
+| Item | Design |
 |---|---|
-| A Python API whose buffers follow DLPack | The state (positions, velocities, forces) and the fields shared with frameworks such as PyTorch and JAX without copies, through `__dlpack__` and `__dlpack_device__`, in both directions (for example forces from a learned potential into a step). To decide: the order of the particles when the run keeps them in the order of their positions (a permuted view, or the numbers of the particles alongside), the lifetime of a buffer that the caching allocator of the runtime owns, the stream on which a consumer may read, and the types of the mixed mode (forces in `f32`, the state in `f64`) |
+| Loading | `mdir.load_amber`, `mdir.load_gromacs`: topology, parameters, positions, cell; nothing about the run. Later an import of an OpenMM `System` for the supported subset, which reuses its force fields and its builders |
+| Physics apart from execution | `System` (terms, cutoff, PME, constraints, custom potentials as expressions with per-particle and global parameters); the integrator and the ensemble; `Execution` (target, device, precision) as typed objects, not strings |
+| An explicit compile | `mdir.compile(...)` returns an immutable program and its plan; changing the system afterwards marks it stale rather than being ignored. Parameters declared tunable are read from a buffer, so setting them does not recompile |
+| Runs and reporters | `sim.run(n)` runs segments to the next report of any reporter (OpenMM's protocol), with the writers of the driver in C++ and the GIL released; a stop is polled between segments |
+| State | `state()`: host copies in the order of the input, in the units of MD (nm, ps, kJ/mol, bar) as plain arrays. `view()`: DLPack tensors of the device in the order of the run with the index of each row, valid until the next run, on a stated stream, whose type is that of the buffer (`f32` forces in the mixed mode). Writes through a view advance the version of the state (P16) |
+| Errors | Typed: input (file, line, term), compile (the diagnostic with its location), unsupported (feature, target), simulation (step, particle, quantity) |
+| Checkpoints | The H5MD checkpoint of the driver, exact and portable, with the hashes of the model and the plan; one format, not two |
+
+Still to decide for DLPack: the order of the particles when the run keeps them in the order of their positions (a permuted view, or the numbers of the particles alongside), the lifetime of a buffer that the caching allocator of the runtime owns, the stream on which a consumer may read, and the types of the mixed mode (forces in `f32`, the state in `f64`).
+
+## 7. Distributed execution and learned potentials
+
+[future-architecture-plan.md](future-architecture-plan.md) orders this
+work; none of it has started. After U1 to U4 and a first Python API:
+
+| Step | Work | Acceptance |
+|---|---|---|
+| 1 | A graph of the dependencies of the current `md` ops (pairs, tuples, their derivatives, the reciprocal sum), with a dump of the schedule | The schema written out for LJ, EAM, bonded terms, PME, and one layer of message passing; execution unchanged |
+| 2 | Ownership, geometric coverage, and freshness of fields kept apart; particle numbers, images, invalidation | On step 1 |
+| 3 | LJ on two domains with a fixed plan and a distributed verifier: two ranks on the CPU, then two GPUs | The results of one domain; tests that catch a stale field or a missing transfer |
+| 4 | EAM, the first potential with an intermediate field ($\psi$ exchanged after the density) | One node, then two domains |
+| 5 | The reverse routing of contributions (unique pairs across domains) | An adjoint test of sums and replication |
+| 6 | `md.external_potential` behind a versioned C ABI, an optional adapter for metatomic, and a semantic path for one small model with the same weights | The same forces by both paths |
+| 7 | A persistent kernel cache keyed by content, not by the number of ranks, and a compiled artifact that starts without compiling (cubin) | Replanning does not recompile |
+| 8 | A bounded choice among a few legal plans, with measured overlap | Before any wider search |
+
+To bring into line with that plan: [architecture.md](architecture.md),
+Section 6 still calls the plan an ordered list of stages, where the plan
+makes the graph primary; its Section 4.3 names spherical harmonics as op
+families and asks the halo to cover the receptive field of the energy,
+where the plan is agnostic of the basis and separates the support of the
+forces from that of the energy; its milestones (Section 12) have neither
+EAM, the verifier, nor the adapter. [decisions.md](decisions.md), Section
+7 still tags the dependency interface M2b, which A14 moved into M1. The
+plan's line that the roadmap "prioritizes single-node classical MD ...
+before a white paper" predates the paper.
