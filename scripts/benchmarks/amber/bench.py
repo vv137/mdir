@@ -15,6 +15,7 @@ README.md."""
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -32,36 +33,43 @@ SUITE_SHA256 = "0c23da4d8b72ca76e764a82c4bfadd983feeeaa5a3931b0d4f7f93bac273a148
 # ambermd.org/GPUPerformance.php reports, in ns/day, where it reports one.
 SYSTEMS = {
     "jac_nve": dict(directory="JAC_production_NVE", ensemble="NVE",
-                    timestep=0.002, steps=10000, pmemd=632.19),
+                    timestep=0.002, steps=10000, pmemd=632.19,
+                    grid=(64, 64, 64)),
     "jac_nve_4fs": dict(directory="JAC_production_NVE_4fs", ensemble="NVE",
-                        timestep=0.004, steps=10000, pmemd=1196.50),
+                        timestep=0.004, steps=10000, pmemd=1196.50,
+                        grid=(64, 64, 64)),
     "jac_npt": dict(directory="JAC_production_NPT", ensemble="NPT",
-                    timestep=0.002, steps=10000),
+                    timestep=0.002, steps=10000, grid=(64, 64, 64)),
     "jac_npt_4fs": dict(directory="JAC_production_NPT_4fs", ensemble="NPT",
-                        timestep=0.004, steps=10000),
+                        timestep=0.004, steps=10000, grid=(64, 64, 64)),
     "factorix_nve": dict(directory="FactorIX_production_NVE", ensemble="NVE",
-                         timestep=0.002, steps=4000, pmemd=264.78),
+                         timestep=0.002, steps=4000, pmemd=264.78,
+                         grid=(144, 84, 80)),
     "factorix_npt": dict(directory="FactorIX_production_NPT", ensemble="NPT",
-                         timestep=0.002, steps=4000),
+                         timestep=0.002, steps=4000, grid=(144, 84, 80)),
     "cellulose_nve": dict(directory="Cellulose_production_NVE",
                           ensemble="NVE", timestep=0.002, steps=1000,
-                          pmemd=63.23),
+                          pmemd=63.23, grid=(256, 128, 128)),
     "cellulose_npt": dict(directory="Cellulose_production_NPT",
-                          ensemble="NPT", timestep=0.002, steps=1000),
+                          ensemble="NPT", timestep=0.002, steps=1000,
+                          grid=(256, 128, 128)),
     "stmv_npt_4fs": dict(directory="STMV_production_NPT_4fs", ensemble="NPT",
-                         timestep=0.004, steps=500, pmemd=38.65),
+                         timestep=0.004, steps=500, pmemd=38.65,
+                         grid=(224, 224, 240)),
 }
 
 # The settings of the Amber inputs of the suite (mdin.GPU): a cutoff of
 # 8 Å, SHAKE of the bonds of hydrogen and rigid water, particle mesh Ewald
 # with the tolerance of the direct sum 1e-6 for NVE and the default 1e-5
-# for NPT, the correction for the dispersion; NPT at 300 K and 1 bar. The
-# couplings differ: Amber uses the thermostat of Berendsen and a Monte
+# for NPT, the correction for the dispersion; NPT at 300 K and 1 bar. All
+# three programs take the beta of pmemd, erfc(beta r_c) / r_c = dsum_tol,
+# and the grid of pmemd.cuda (`grid` of SYSTEMS, from its output), and MDIR
+# the influence function of Amber ("OPTIMAL"), so that they compute one
+# model (D134). The couplings differ: Amber uses the thermostat of Berendsen and a Monte
 # Carlo barostat, MDIR and GROMACS stochastic velocity rescaling and cell
 # rescaling. The neighbor lists reach 10 Å, a skin of 2 Å.
 CUTOFF = 8.0
 SKIN = 2.0
-GRID_SPACING = 1.0
 TEMPERATURE = 300.0
 # The steps between the actions of the thermostat and of the barostat,
 # which act together: those that GROMACS takes for the pressure on these
@@ -71,7 +79,20 @@ COUPLING_INTERVAL = 25
 
 
 def tolerance(system):
+    """dsum_tol of the Amber input: erfc(beta r_c) / r_c, r_c in Å."""
     return 1e-6 if system["ensemble"] == "NVE" else 1e-5
+
+
+def ewald_beta(system):
+    """The beta of pmemd, in 1/Å: erfc(beta r_c) / r_c = dsum_tol."""
+    low, high = 0.0, 2.0
+    for _ in range(200):
+        middle = 0.5 * (low + high)
+        if math.erfc(middle * CUTOFF) / CUTOFF > tolerance(system):
+            low = middle
+        else:
+            high = middle
+    return 0.5 * (low + high)
 
 
 def sha256(path):
@@ -196,8 +217,10 @@ pairlist_distance = {CUTOFF + skin}
        if prune_skin else "") + f"""electrostatics    = "PME"
 
 [pme]
-tolerance   = {tolerance(system)}
-max_spacing = {GRID_SPACING}
+beta      = {ewald_beta(system)!r}
+grid      = [{", ".join(str(n) for n in system["grid"])}]
+order     = 4
+influence = "OPTIMAL"
 
 [dynamics]
 integrator = "VELOCITY_VERLET"
@@ -272,8 +295,10 @@ cutoff-scheme    = Verlet
 rcoulomb         = {CUTOFF / 10}
 rvdw             = {CUTOFF / 10}
 coulombtype      = PME
-ewald-rtol       = {tolerance(system)}
-fourierspacing   = {GRID_SPACING / 10}
+ewald-rtol       = {math.erfc(ewald_beta(system) * CUTOFF)!r}
+fourier-nx       = {system["grid"][0]}
+fourier-ny       = {system["grid"][1]}
+fourier-nz       = {system["grid"][2]}
 pme-order        = 4
 vdwtype          = Cut-off
 DispCorr         = EnerPres

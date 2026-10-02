@@ -265,6 +265,11 @@ def run(name, args):
 
 
 def main():
+    # `run.py --scale-only SOURCE TARGET` only writes the topology with its
+    # charges scaled, for scripts/validation/nve.
+    if len(sys.argv) == 4 and sys.argv[1] == "--scale-only":
+        scale_charges(sys.argv[2], sys.argv[3])
+        return
     parser = argparse.ArgumentParser()
     parser.add_argument("work")
     parser.add_argument("--mdir", required=True)

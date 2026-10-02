@@ -2,7 +2,7 @@
 
 A compiler that writes its own kernels must show that they compute the
 model. This section collects the evidence, each item marked by its kind:
-a check that runs with the tests (`lit`, 163 tests in `test/`), a value
+a check that runs with the tests (`lit`, 167 tests in `test/`), a value
 that a test pins after it was compared once with an independent program
 (the reference value is in the test's comment), or a measurement recorded
 in a decision. Where the log says that an energy "changed by" a fraction,
@@ -30,7 +30,19 @@ terms are multiplied by that factor before they are compared.*
 | Trp-cage in CHARMM36m, 3900 TIP3P, 6 Na⁺, 7 Cl⁻, 12,017 particles, PME of the same $\beta$, grid, and order, VFSWITCH (`scripts/validation/charmm`) | CHARMM 51b1 | From the files of CHARMM (D122): bonded terms, Urey–Bradley, impropers, and CMAP within $10^{-7}$, Lennard-Jones within $5\times10^{-10}$; through a topology of GROMACS (D121), Lennard-Jones within $2.2\times10^{-7}$; Coulomb by the ratio of the constants, $2.38\times10^{-5}$ | Recorded |
 | A synthetic PSF with wildcards of dihedrals and impropers, a dihedral of two terms, NBFIX, special 1-4 parameters, and CMAP of $4\times4$ (`charmm.test`) | CHARMM 51b1 | To the printed digits ($10^{-6}$ kcal/mol) | `lit` |
 | The dipeptide in TIP3P from its GROMACS topology, PME of the same $\beta$, grid, and order (`scripts/validation/forces`) | GROMACS 2026.3 | Reciprocal energy within $2.6\times10^{-6}$; the rest of the Coulomb energy within $1.1\times10^{-6}$ of its largest terms | Recorded |
+| The nine systems of the Amber benchmark suite, 23,558 to 1,067,095 particles, from the files of the suite as they are (two topologies in the format before Amber 7, D133), PME of the same $\beta$, even grid, and order, without the correction for the dispersion (`scripts/validation/suite`) | pmemd 26 on the CPU in double precision (JAC also sander) | Every term within $3.4\times10^{-8}$ relative; the forces within $4.0\times10^{-7}$ of the rms force, rms, and $7.4\times10^{-6}$ at most | Recorded |
 | Ubiquitin in 5700 OPC waters, amber19sb.ff from `pdb2gmx`, 24,031 particles, PME of the same $\beta$, grid, and order (`scripts/validation/protein`) | GROMACS 2026.3 | Bonds, angles, dihedrals, CMAP, both 1–4 terms, Lennard–Jones, and dispersion within $1.7\times10^{-6}$ each; Coulomb within $1.9\times10^{-6}$ of GROMACS with tables of the Ewald correction ($6.6\times10^{-6}$ with its SIMD kernels, below) | Recorded |
+
+The comparison of the suite found two things. The topology of Factor IX
+that the benchmark had written again with a converter had lost 2283
+dihedral terms, which the format before Amber 7 gives by negative
+periodicities: its dihedrals were 1338.6 kcal/mol where pmemd takes 2259.2
+from the file of the suite, so the rates of Factor IX before D133 were of
+another model. And on a grid of an odd number of points the aliasing
+factor of Amber's influence function takes another frequency at one
+index (`docs/pme-m1.md`, Section 1.1): on Cellulose with 270 × 125 × 125
+points the electrostatic energies differ by $1.6\times10^{-6}$, with
+270 × 128 × 128 by $2\times10^{-9}$. MDIR chooses even grids.
 
 **Forces on every particle** (`scripts/validation/forces/run.sh`). MDIR in
 double precision writes the forces of the input coordinates into a
@@ -135,6 +147,16 @@ convergence):
 
 Halving the step divides the change by about four in each series, as a
 method of second order should.
+
+**Flexible water against sander** (`scripts/validation/nve`). The
+dipeptide in TIP3P without constraints, particle mesh Ewald, 2 ps from the
+same positions and velocities in both programs, MDIR in double precision.
+At 0.5 fs the total energy of MDIR fluctuates with a standard deviation of
+1.56 kcal/mol and drifts by −0.50 kcal/mol/ps (a line fitted to it), that
+of sander by 1.32 and −0.95; at 0.25 fs, 0.47 and −0.39 against 0.66 and
+−0.71. The fluctuation of MDIR's velocity Verlet falls by 3.3 when the
+step is halved; sander's leapfrog reports a kinetic energy averaged over
+the half steps, whose fluctuation falls by 2.0.
 
 **Over 2 ns.** The figure of merit for production is the drift over a
 long run at the production step. JAC (23,558 atoms) at constant energy,

@@ -38,15 +38,19 @@ As in `mdin.GPU` of each system:
 |---|---|---|---|
 | Cutoff | `cut=8.` | `cutoff = 8` | `rcoulomb = rvdw = 0.8` |
 | Neighbor lists | skin of 2 Å (pmemd) | `pairlist_distance = 10` | Verlet buffer from its tolerance |
-| Particle mesh Ewald | `dsum_tol` 1e-6 (NVE), 1e-5 (NPT) | `tolerance`, spacing 1 Å, order 4 | `ewald-rtol`, `fourierspacing = 0.1`, order 4; `-notunepme` |
+| Particle mesh Ewald | `dsum_tol` 1e-6 (NVE), 1e-5 (NPT): $\beta$ from $\operatorname{erfc}(\beta r_c)/r_c$ = `dsum_tol`, 0.39467 and 0.34864 Å⁻¹; pmemd.cuda's grid, order 4 | the same `beta` and `grid`, order 4, `influence = "OPTIMAL"` (D134) | `ewald-rtol` = $\operatorname{erfc}(\beta r_c)$ of the same $\beta$, `fourier-nx`, `-ny`, `-nz` of the same grid, order 4; `-notunepme` |
 | Dispersion | correction of energy and pressure | the same | `DispCorr = EnerPres` |
 | Constraints | SHAKE of the bonds of hydrogen, rigid water | SHAKE, RATTLE, SETTLE | LINCS, SETTLE |
 | NVE | velocities of the restart file | the same | `continuation = yes` |
 | NPT | Berendsen thermostat, `tautp=10`; Monte Carlo barostat | Bussi thermostat, 1 ps; stochastic cell rescaling, 2 ps | `v-rescale`, 1 ps; `c-rescale`, 2 ps |
 | Coupling interval | Monte Carlo barostat every 100 steps (`mcbarint`) | Both every 25 steps | `nsttcouple = 100`, `nstpcouple = 25`, its own choices for these inputs |
 
-`erfc(β rc)` is the tolerance of MDIR and of GROMACS; Amber's `dsum_tol`
-is `erfc(β rc) / rc`, which gives a slightly smaller β.
+The grids are those that pmemd.cuda takes (`grid` of `SYSTEMS` in
+`bench.py`): 64³ for JAC, 144 × 84 × 80 for Factor IX, 256 × 128 × 128
+for Cellulose (where MDIR's own rule would take 270 × 126 × 126), and
+224 × 224 × 240 for STMV. Until D134 MDIR and GROMACS took $\beta$ from
+$\operatorname{erfc}(\beta r_c)$ = `dsum_tol`, larger than Amber's, and
+grids of their own.
 
 MDIR runs on a GPU in mixed precision. GROMACS runs with the nonbonded
 forces, PME, the bonded forces, and the update on the GPU, 8 OpenMP
