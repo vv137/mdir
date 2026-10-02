@@ -53,10 +53,14 @@ public:
       std::function<mlir::LogicalResult(mlir::Value value,
                                         mlir::Value &tangent)>;
 
+  /// The derivative with respect to `variable`; for a vector, along
+  /// `seed`, a vector of its type that dominates the derivative (a unit
+  /// vector gives the derivative with respect to one component).
   ScalarDerivative(mlir::OpBuilder &builder, mlir::Value variable,
-                   LeafHandler leafHandler = nullptr)
+                   LeafHandler leafHandler = nullptr,
+                   mlir::Value seed = mlir::Value())
       : builder(builder), variable(variable),
-        leafHandler(std::move(leafHandler)) {}
+        leafHandler(std::move(leafHandler)), seed(seed) {}
 
   /// Sets `tangent` to the derivative of `value`, or to null if the
   /// derivative is zero. Emits a diagnostic and returns failure if an op has
@@ -69,6 +73,7 @@ private:
   mlir::OpBuilder &builder;
   mlir::Value variable;
   LeafHandler leafHandler;
+  mlir::Value seed;
   llvm::DenseMap<mlir::Value, mlir::Value> tangents;
 };
 

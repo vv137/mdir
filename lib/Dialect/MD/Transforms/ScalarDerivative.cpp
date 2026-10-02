@@ -129,6 +129,10 @@ LogicalResult ScalarDerivative::compute(Value value, Value &tangent) {
   tangent = Value();
 
   if (value == variable) {
+    if (seed) {
+      tangent = seed;
+      return success();
+    }
     ScalarEmitter emit(builder, value.getLoc());
     tangent = emit.constantLike(1.0, value);
     return success();
@@ -421,6 +425,20 @@ LogicalResult ScalarDerivative::compute(Value value, Value &tangent) {
     if (operand)
       tangent =
           vector::BroadcastOp::create(builder, loc, value.getType(), operand);
+    return success();
+  }
+
+  // A component of a vector: the same component of its derivative.
+  if (auto extract = dyn_cast<vector::ExtractOp>(op)) {
+    if (!extract.getDynamicPosition().empty())
+      return op->emitError() << "no derivative rule for '" << op->getName()
+                             << "' at a position that is not constant";
+    Value operand;
+    if (failed(operandTangent(0, operand)))
+      return failure();
+    if (operand)
+      tangent = vector::ExtractOp::create(builder, loc, operand,
+                                          extract.getStaticPosition());
     return success();
   }
 

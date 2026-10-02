@@ -120,14 +120,6 @@ LogicalResult DerivativeBuilder::checkPositionUses() {
              << "cannot differentiate a sum whose result is not f64";
   }
   for (SumTuplesOp sum : tupleSums) {
-    Block &kernel = sum.getKernel().front();
-    for (auto [index, coordinate] : llvm::enumerate(sum.getCoordinates()))
-      if (coordinate.kind == CoordinateKind::Displacement &&
-          !kernel.getArgument(index).use_empty())
-        return sum.emitOpError()
-               << "cannot differentiate a kernel that uses a displacement; "
-                  "only kernels that depend on distances, angles, cosines, "
-                  "and dihedrals are supported";
     if (!sum.getResult().getType().isF64())
       return sum.emitOpError()
              << "cannot differentiate a sum whose result is not f64";
@@ -264,9 +256,59 @@ LogicalResult DerivativeBuilder::emitTupleForces(Operation *op, Value weight,
 
   ScalarEmitter emit(kernel, loc);
   SmallVector<Value, 9> elements(9, Value());
+  // W += arm ⊗ force.
+  auto addVirial = [&](Value arm, Value force) {
+    if (!virial || !arm)
+      return;
+    SmallVector<Value, 3> armComponents, forceComponents;
+    for (int64_t a = 0; a < 3; ++a) {
+      armComponents.push_back(vector::ExtractOp::create(kernel, loc, arm, a));
+      forceComponents.push_back(
+          vector::ExtractOp::create(kernel, loc, force, a));
+    }
+    for (int64_t a = 0; a < 3; ++a)
+      for (int64_t b = 0; b < 3; ++b)
+        elements[3 * a + b] =
+            emit.add(elements[3 * a + b],
+                     emit.mul(armComponents[a], forceComponents[b]));
+  };
   for (auto [index, coordinate] : llvm::enumerate(coordinates)) {
-    if (coordinate.kind == CoordinateKind::Displacement)
+    if (coordinate.kind == CoordinateKind::Displacement) {
+      // d = x_a − x_b: F_a = −weight · ∂u/∂d and F_b = −F_a, the gradient
+      // a component at a time, each along its unit vector.
+      Value d = block.getArgument(index);
+      if (d.use_empty())
+        continue;
+      Type type = d.getType();
+      Type element = cast<VectorType>(type).getElementType();
+      SmallVector<Value, 3> components;
+      bool any = false;
+      for (int64_t c = 0; c < 3; ++c) {
+        SmallVector<double, 3> unit(3, 0.0);
+        unit[c] = 1.0;
+        Value seed = arith::ConstantOp::create(
+            kernel, loc, type,
+            DenseElementsAttr::get(cast<ShapedType>(type),
+                                   ArrayRef<double>(unit)));
+        ScalarDerivative derivative(kernel, d, nullptr, seed);
+        Value slope;
+        if (failed(derivative.get(tupleEnergy, slope)))
+          return failure();
+        Value component = emit.neg(emit.mul(weight, slope));
+        any |= static_cast<bool>(component);
+        components.push_back(component ? component
+                                       : emit.constant(0.0, element));
+      }
+      if (!any)
+        continue;
+      Value force = vector::FromElementsOp::create(kernel, loc, type,
+                                                   components);
+      int64_t a = coordinate.members[0], b = coordinate.members[1];
+      forces[a] = emit.add(forces[a], force);
+      forces[b] = emit.sub(forces[b], force);
+      addVirial(d, force);
       continue;
+    }
 
     // F_m = −weight · (∂u/∂q) (∂q/∂x_m)
     ScalarDerivative derivative(kernel, block.getArgument(index));
@@ -290,21 +332,7 @@ LogicalResult DerivativeBuilder::emitTupleForces(Operation *op, Value weight,
       // W = Σ_m d_m ⊗ F_m, with the displacement of m from one of the
       // members. The sum of the forces of a coordinate is zero, so that
       // the member does not matter.
-      Value arm = gradient.arms[place];
-      if (!virial || !arm)
-        continue;
-      SmallVector<Value, 3> armComponents, forceComponents;
-      for (int64_t a = 0; a < 3; ++a) {
-        armComponents.push_back(
-            vector::ExtractOp::create(kernel, loc, arm, a));
-        forceComponents.push_back(
-            vector::ExtractOp::create(kernel, loc, force, a));
-      }
-      for (int64_t a = 0; a < 3; ++a)
-        for (int64_t b = 0; b < 3; ++b)
-          elements[3 * a + b] =
-              emit.add(elements[3 * a + b],
-                       emit.mul(armComponents[a], forceComponents[b]));
+      addVirial(gradient.arms[place], force);
     }
   }
 

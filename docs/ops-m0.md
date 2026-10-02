@@ -531,6 +531,7 @@ derivative of the argument.
 | `select(c, a, b)` | `select(c, a', b')`. The condition is not differentiated. |
 | `step(x)`, `delta(x)`, `floor(x)`, `ceil(x)` | 0 |
 | `abs(x)` | `x'` if $x \ge 0$, else `−x'` |
+| `vector.extract` of a component | The same component of the derivative of the vector |
 | `min(a, b)` | `a'` if `a < b`, else `b'` |
 | `max(a, b)` | `a'` if `a > b`, else `b'` |
 
@@ -576,7 +577,7 @@ Restrictions of the current implementation:
 
 | Restriction | Reason |
 |---|---|
-| A kernel that uses the displacement `d` cannot be differentiated with respect to positions. | Only the geometry rule for the distance exists. |
+| A pair kernel that uses the displacement `d` cannot be differentiated with respect to positions. | Only the geometry rule for the distance exists for pairs. A kernel over tuples may use a displacement through its components (`vector.extract` at constant places): its gradient is taken a component at a time, along each unit vector, and with $\mathbf d = \mathbf x_a - \mathbf x_b$ the forces are $\mp\,\partial u/\partial\mathbf d$ on $a$ and $b$ and the virial $\mathbf d \otimes \mathbf F_a$ (D139; `test/Dialect/MD/Transforms/differentiate-displacement-values.mlir`). |
 | A parameter derivative is taken with respect to a scalar argument only. | Per-particle parameters would need a field-valued result. |
 | The body of a potential must be a single block. | |
 
