@@ -259,7 +259,9 @@ The GPU tests run under compute-sanitizer with memcheck, initcheck, and
 racecheck, with no error over 20 steps of the ff19SB system at constant
 pressure with restraints, a run that exercises the loops over pairs, the
 fused kernels, the disjoint sets of SETTLE and SHAKE, the virtual sites,
-PME, the barostat, and the deferred reads of sums (`test/Sanitizer`). Short runs of the nine systems of the Amber
+PME, the barostat, and the deferred reads of sums, and over 20 steps of a
+rhombic dodecahedron, which exercises the kernels of a triclinic cell
+(D125; `test/Sanitizer`). Short runs of the nine systems of the Amber
 suite check that every number of the log is finite (`test/Scale`).
 A run of 500 ps on the CPU with OpenMP crashed as it wrote its last
 checkpoint: the variables of the reductions of OpenMP were allocas inside

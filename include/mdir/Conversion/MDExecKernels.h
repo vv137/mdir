@@ -55,6 +55,13 @@ mlir::Value emitMinimumImage(mlir::OpBuilder &builder, mlir::Location loc,
                              mlir::Value raw, mlir::Value box,
                              mlir::Value inverse);
 
+/// The widths of the triclinic cell `box` between its faces, the distances
+/// between the planes of constant fractional coordinates: V / |b × c|,
+/// b_y c_z / |(c_y, c_z)|, and c_z, in the element type of `box`. The
+/// neighbor matrix bins its fractional coordinates with them.
+mlir::Value emitFaceWidths(mlir::OpBuilder &builder, mlir::Location loc,
+                           mlir::Value box);
+
 /// The value that `buffer` holds for the particle `particle`.
 mlir::Value loadElement(mlir::OpBuilder &builder, mlir::Location loc,
                         mlir::Value buffer, mlir::Value particle);

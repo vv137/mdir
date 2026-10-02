@@ -1,0 +1,49 @@
+# Runs in a triclinic cell on a device (docs/triclinic-m2.md, P2): the
+# rhombic dodecahedron of triclinic.test. The neighbor matrix bins the
+# fractional coordinates and tests with the minimum image of the cell, and
+# PME places the particles by s = x H⁻¹, takes their forces through H⁻¹,
+# and computes its Gaussian at each k = H⁻¹ n. In double precision the
+# terms are those of the CPU to the printed digits, and so are 200 steps.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/triclinic/water.top %S/Inputs/triclinic/dodecahedron.gro %t/
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/triclinic.test | sed '1d;$d' > %t/cpu.toml
+# RUN: sed -e 's/^target    = "CPU"/target    = "GPU"/' %t/cpu.toml > %t/run.toml
+# RUN: mdir run %t/run.toml | FileCheck %s
+# RUN: sed -e 's/^steps      = 0/steps      = 200/' -e 's/^energy_interval = 0/energy_interval = 200/' %t/run.toml > %t/steps.toml
+# RUN: mdir run %t/steps.toml | FileCheck %s --check-prefix=STEPS
+# In mixed precision, by the weights of order 4 (D102), in the
+# deterministic mode, and with order 6, the terms agree with those of
+# double precision to 1e-5.
+# RUN: sed 's/^precision = "DOUBLE"/precision = "MIXED"/' %t/run.toml > %t/mixed.toml
+# RUN: printf 'Lennard-Jones 12196.573049\nbonds 3760.154122\nangles 949.459380\nCoulomb reciprocal 1058.337926\n' > %t/double.txt
+# RUN: mdir run %t/mixed.toml | %python %S/Inputs/check_terms.py %t/double.txt 1e-5 | FileCheck %s --check-prefix=MIXED
+# RUN: sed 's/^\[execution\]/[execution]\ndeterministic = true/' %t/mixed.toml > %t/deterministic.toml
+# RUN: mdir run %t/deterministic.toml | %python %S/Inputs/check_terms.py %t/double.txt 1e-5 | FileCheck %s --check-prefix=MIXED
+# RUN: sed 's/^order     = 4/order     = 6/' %t/mixed.toml > %t/order6.toml
+# RUN: printf 'Coulomb reciprocal 1061.060128\n' > %t/order6.txt
+# RUN: mdir run %t/order6.toml | %python %S/Inputs/check_terms.py %t/order6.txt 1e-5 | FileCheck %s --check-prefix=ORDER6
+# The structure of groups takes no triclinic cell yet (P3).
+# RUN: sed 's/^\[execution\]/[execution]\nneighbor_structure = "GROUPS"/' %t/mixed.toml > %t/groups.toml
+# RUN: not mdir run %t/groups.toml 2>&1 | FileCheck %s --check-prefix=GROUPS
+
+# CHECK:      MDIR:   Lennard-Jones               2915.050920
+# CHECK-NEXT: MDIR:   Coulomb                    -3460.248854
+# CHECK-NEXT: MDIR:   bonds                        898.698404
+# CHECK-NEXT: MDIR:   angles                       226.926238
+# CHECK:      MDIR:   Coulomb excluded           29997.892113
+# CHECK-NEXT: MDIR:   Coulomb reciprocal           252.948835
+# CHECK-NEXT: MDIR:   Coulomb self              -30754.902526
+# CHECK-NEXT: MDIR:   dispersion                   -31.808995
+# CHECK-NEXT: MDIR:   total                         44.556135
+# CHECK-NEXT: MDIR: the diagonal of the virial at the start
+# CHECK-NEXT: MDIR:       -4874.182854      2569.824183       487.863639
+# STEPS:      INFO:       200         0.1000        16.6708     -2740.9437      2757.6144
+# MIXED: Lennard-Jones 1
+# MIXED: bonds 1
+# MIXED: angles 1
+# MIXED: Coulomb reciprocal 1
+# ORDER6: Coulomb reciprocal 1
+# GROUPS: mdir: a triclinic cell does not run with 'neighbor_structure = "GROUPS"' yet

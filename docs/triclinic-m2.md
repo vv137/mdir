@@ -153,7 +153,7 @@ From the survey of M1 (line counts are of today's tree):
 | Groups (GPU) | Columns in $x$-$y$, sorted in $z$; an entry carries $e \in [-4, 4]$ per axis, applied as $\mathbf e \odot \mathbf L$ in the gather and the pruning; D115 adds images when $2(h_a + R) \ge L_a$ | Columns of the brick, as GROMACS and OpenMM keep them; $\mathbf e$ read as $\mathbf n$ and applied as $\mathbf n H$: five multiply-adds once per entry, nothing per pair; the image of a candidate chosen by the pass around the center of the group; D115's condition on $a_x$, $b_y$, $c_z$ |
 | PME | Fractional coordinates $x/L$; $\mathbf k = \mathbf m / \mathbf L$; the Gaussian $\exp(-\pi^2 k^2/\beta^2)$ as a product of tables of each axis (D104) | $\mathbf s = \mathbf x H^{-1}$, three multiply-adds more, $H^{-1}$ triangular; $\mathbf k = \mathbf m H^{-\mathsf T}$; forces through $H^{-\mathsf T}$; the Gaussian computed directly, since $k^2$ is no longer a sum of one term per axis; the grid from $|\mathbf a|, |\mathbf b|, |\mathbf c|$; the virial keeps its form, $\delta - 2(1/k^2 + \pi^2/\beta^2)\,\mathbf k \otimes \mathbf k$ |
 | Barostat | Edges times $\boldsymbol\mu$; volume $L_xL_yL_z$ | $H\,\mathrm{diag}(\boldsymbol\mu)$ (I3); volume $a_xb_yc_z$; the tilts scale with their columns |
-| Restraints | References times the edges over those of the file | The same with the diagonal of $H$ (I3) |
+| Restraints | Centers of the references times the edges over those of the file (D124) | The same with the diagonal of $H$ (I3) |
 | Readers | inpcrd angles parsed and refused; `.gro` off-diagonals refused; `IFBOX = 2` refused | Accepted, converted, and reduced (Section 1) |
 | Writers | DCD cosines 0; checkpoint of three edges | Section 1 |
 
@@ -174,10 +174,10 @@ equivalent; the measurement is part of the validation.
 |---|---|---|
 | P0 | Done (D123): the cell, readers (inpcrd, `IFBOX = 2`, `.gro`, `[boundary]` with angles, CHARMM's rotation), reduction, I2, writers (DCD, checkpoint, log) | Amber's `solvateOct` and GROMACS's octahedron give the same shape |
 | P1 | Done (D123): the CPU, tuples, the matrix, PME | sander on Amber's octahedron; GROMACS on a rhombic dodecahedron; conservation |
-| P2 | The device: PME and the tuples (the minimum image of `emitMinimumImage` is shared already) | P1 on the CPU |
-| P3 | The device: groups, the dual list, D115's images. The search of candidates wraps the indices of cells per axis, which is wrong across the face of z (or y) of a tilted cell, where a neighbor is displaced by $\mathbf c$ (or $\mathbf b$), $x$ and $y$ with it. As GROMACS does, each group searches with shifts $t_z, t_y \in \{-1, 0, 1\}$ and recomputes its window of columns for each; the image of an entry is the lattice shift $\mathbf n$ that the search found (I4), not one chosen per axis; the kernel of D115 and the gather take $\mathbf n H$ | The CPU matrix of P1. The matrix of the device stays orthorhombic: the CPU is oracle enough |
+| P2 | Done (D125): the device with the neighbor matrix: the cell as on the CPU, the tuples and pairs with the shared minimum image, a triclinic build of the matrix in fractional coordinates, and the kernels of PME of `PMEGPUTriclinic.mlir` | P1 on the CPU: the terms and 200 steps to the printed digits in double precision |
+| P3 | The device: groups, the dual list, D115's images. The search of candidates wraps the indices of cells per axis, which is wrong across the face of z (or y) of a tilted cell, where a neighbor is displaced by $\mathbf c$ (or $\mathbf b$), $x$ and $y$ with it. As GROMACS does, each group searches with shifts $t_z, t_y \in \{-1, 0, 1\}$ and recomputes its window of columns for each; the image of an entry is the lattice shift $\mathbf n$ that the search found (I4), not one chosen per axis; the kernel of D115 and the gather take $\mathbf n H$ | The matrix of the device (P2), in the same precision |
 | P4 | The barostat (I3); CHARMM's hexagonal cells | Conservation at constant energy; the density of water against a rectangular cell; CHARMM 51b1 on a hexagonal cell in its frame |
 | P5 | The rates of a protein in an octahedron against its cube; docs and the white paper | pmemd.cuda and GROMACS on the same systems |
 
-The defect of the barostat with restraints (roadmap, Section 1) touches the
-same code as P4 and is fixed before it.
+The defect of the barostat with restraints (roadmap, Section 1), which
+touches the same code as P4, was fixed before it (D124).

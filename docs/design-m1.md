@@ -61,7 +61,7 @@ energy, temperature, and pressure.
 | Particle mesh Ewald on more than one device or process | M2c and later | |
 | The repartitioning of the mass of hydrogen | Later | The time step stays at 2 fs |
 | Polarizable force fields, 12-6-4 terms [[Li2014]](references.md#li2014) | Later | The readers reject topologies that have them |
-| Cells that are not orthorhombic | In part (D123) | Triclinic cells run on the CPU at constant volume; the device and the barostat follow (docs/triclinic-m2.md) |
+| Cells that are not orthorhombic | In part (D123, D125) | Triclinic cells run at constant volume on the CPU and on the device with the neighbor matrix; the groups and the barostat follow (docs/triclinic-m2.md) |
 | Random numbers for each particle, as Langevin dynamics needs them | Open | The thermostat of M1 takes a few random numbers for each step |
 | Groups with a thermostat each | Later | One group |
 

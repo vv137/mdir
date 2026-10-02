@@ -507,35 +507,8 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
   // have the widths of the cell between its faces: V / |b × c|,
   // b_y c_z / |(c_y, c_z)|, and c_z.
   bool tilted = isTriclinic(box);
-  Value widthsValue = boxValue;
-  if (tilted) {
-    auto element = [&](int64_t k) -> Value {
-      return vector::ExtractOp::create(builder, loc, boxValue, k);
-    };
-    auto mul = [&](Value a, Value b) -> Value {
-      return arith::MulFOp::create(builder, loc, a, b);
-    };
-    Value ax = element(0), by = element(1), cz = element(2), bx = element(3),
-          cx = element(4), cy = element(5);
-    // b × c = (b_y c_z, −b_x c_z, b_x c_y − b_y c_x).
-    Value n0 = mul(by, cz), n1 = mul(bx, cz),
-          n2 = arith::SubFOp::create(builder, loc, mul(bx, cy), mul(by, cx));
-    Value norm = math::SqrtOp::create(
-        builder, loc,
-        arith::AddFOp::create(
-            builder, loc,
-            arith::AddFOp::create(builder, loc, mul(n0, n0), mul(n1, n1)),
-            mul(n2, n2)));
-    Value volume = mul(mul(ax, by), cz);
-    Value wa = arith::DivFOp::create(builder, loc, volume, norm);
-    Value wb = arith::DivFOp::create(
-        builder, loc, mul(by, cz),
-        math::SqrtOp::create(
-            builder, loc,
-            arith::AddFOp::create(builder, loc, mul(cy, cy), mul(cz, cz))));
-    widthsValue = vector::FromElementsOp::create(
-        builder, loc, VectorType::get({3}, real), ValueRange{wa, wb, cz});
-  }
+  Value widthsValue =
+      tilted ? emitFaceWidths(builder, loc, boxValue) : boxValue;
 
   // The width of the cells follows from the density, which is known when
   // the structure is built.

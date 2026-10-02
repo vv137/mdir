@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Writes lib/Runtime/Templates/PMEGPU.mlir, the template of the reciprocal
-sum of particle mesh Ewald on a device.
+sum of particle mesh Ewald on a device, and PMEGPUTriclinic.mlir, its
+kernels for a triclinic cell.
 
     python3 scripts/generate-pme-gpu-template.py
 
@@ -11,6 +12,12 @@ kernel that needs them; this script writes them. Edit the script, not the
 template."""
 
 import os
+import re
+
+# Whether the kernels being written are those of a triclinic cell, whose
+# fractional coordinates are s = x H⁻¹ and whose wave vectors are k = H⁻¹ m
+# (docs/triclinic-m2.md); main writes them to a template of their own.
+TILTED = False
 
 HEADER = """\
 // The reciprocal sum of smooth particle mesh Ewald on a device
@@ -168,6 +175,23 @@ def place(body, p, x, length, k, n):
     return f"%{p}start", f"%{p}w"
 
 
+def fractions(body, x, y, z):
+    """The fractional coordinates s = x H⁻¹ of a triclinic cell, with H⁻¹
+    lower triangular, as places for `place`: each with one as its length."""
+    body(f"""\
+%fr_one = arith.constant 1.0 : f64
+%fr_z = arith.mulf {z}, %h22 : f64
+%fr_y1 = arith.mulf {y}, %h11 : f64
+%fr_y2 = arith.mulf {z}, %h21 : f64
+%fr_y = arith.addf %fr_y1, %fr_y2 : f64
+%fr_x1 = arith.mulf {x}, %h00 : f64
+%fr_x2 = arith.mulf {y}, %h10 : f64
+%fr_x3 = arith.mulf {z}, %h20 : f64
+%fr_x12 = arith.addf %fr_x1, %fr_x2 : f64
+%fr_x = arith.addf %fr_x12, %fr_x3 : f64""")
+    return (("%fr_x", "%fr_one"), ("%fr_y", "%fr_one"), ("%fr_z", "%fr_one"))
+
+
 def particle_prologue(body, slopes):
     """The splines of particle %i along the three edges."""
     body("""\
@@ -194,10 +218,13 @@ def particle_prologue(body, slopes):
 %yi = PME_EXTEND_POS %ys : !pme_pos to f64
 %zi = PME_EXTEND_POS %zs : !pme_pos to f64
 %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real""")
+    places = (("%xi", "%ilx"), ("%yi", "%ily"), ("%zi", "%ilz"))
+    if TILTED:
+        places = fractions(body, "%xi", "%yi", "%zi")
     starts = []
-    for axis, (coordinate, length, k, w, d) in enumerate(
-        (("%xi", "%ilx", "%k1", "%wx", "%dx"), ("%yi", "%ily", "%k2", "%wy", "%dy"),
-         ("%zi", "%ilz", "%k3", "%wz", "%dz"))):
+    for axis, ((coordinate, length), k, w, d) in enumerate(
+        zip(places, ("%k1", "%k2", "%k3"), ("%wx", "%wy", "%wz"),
+            ("%dx", "%dy", "%dz"))):
         tag = "xyz"[axis]
         start, fraction = place(body, f"p{tag}_", coordinate, length, k, "%order")
         bspline(body, f"b{tag}_", fraction, "%order", w, d if slopes else None)
@@ -374,6 +401,90 @@ def wave(body, p, k, count, length, real="f64"):
     return f"%{p}m"
 
 
+INFLUENCE_ORTHORHOMBIC = """\
+%tbx1 = arith.addi %a, %k1 : index
+%tbx2 = arith.addi %tbx1, %k1 : index
+%m1 = memref.load %tables[%a] : memref<?x!pme_real, 1>
+%m1s = memref.load %tables[%tbx1] : memref<?x!pme_real, 1>
+%t1 = memref.load %tables[%tbx2] : memref<?x!pme_real, 1>
+%tby0 = arith.addi %ty0, %b : index
+%tby1 = arith.addi %tby0, %k2 : index
+%tby2 = arith.addi %tby1, %k2 : index
+%m2 = memref.load %tables[%tby0] : memref<?x!pme_real, 1>
+%m2s = memref.load %tables[%tby1] : memref<?x!pme_real, 1>
+%t2 = memref.load %tables[%tby2] : memref<?x!pme_real, 1>
+%tbz0 = arith.addi %tz0, %z : index
+%tbz1 = arith.addi %tbz0, %k3 : index
+%tbz2 = arith.addi %tbz1, %k3 : index
+%m3 = memref.load %tables[%tbz0] : memref<?x!pme_real, 1>
+%m3s = memref.load %tables[%tbz1] : memref<?x!pme_real, 1>
+%t3 = memref.load %tables[%tbz2] : memref<?x!pme_real, 1>
+%m12 = arith.addf %m1s, %m2s : !pme_real
+%msqr = arith.addf %m12, %m3s : !pme_real
+%origin = arith.cmpf oeq, %msqr, %rzero : !pme_real
+%safe = arith.select %origin, %rone, %msqr : !pme_real
+%inverse = arith.divf %rone, %safe : !pme_real
+// The influence function from the tables of the edges (D104): each factor
+// computed in f64 and rounded once.
+%tt12 = arith.mulf %t1, %t2 : !pme_real
+%tt123 = arith.mulf %tt12, %t3 : !pme_real
+%bc0 = arith.mulf %tt123, %inverse : !pme_real
+%bc = arith.select %origin, %rzero, %bc0 : !pme_real
+"""
+
+# A triclinic cell: the tables hold the signed numbers n of the points and
+# the factors of the B-splines; k = H⁻¹ n, and the Gaussian is computed at
+# each point, since k² is not a sum of a term for each axis.
+INFLUENCE_TRICLINIC = """\
+%tbx2 = arith.addi %a, %k1 : index
+%tbx2b = arith.addi %tbx2, %k1 : index
+%n1 = memref.load %tables[%a] : memref<?x!pme_real, 1>
+%t1 = memref.load %tables[%tbx2b] : memref<?x!pme_real, 1>
+%tby0 = arith.addi %ty0, %b : index
+%tby1 = arith.addi %tby0, %k2 : index
+%tby2 = arith.addi %tby1, %k2 : index
+%n2 = memref.load %tables[%tby0] : memref<?x!pme_real, 1>
+%t2 = memref.load %tables[%tby2] : memref<?x!pme_real, 1>
+%tbz0 = arith.addi %tz0, %z : index
+%tbz1 = arith.addi %tbz0, %k3 : index
+%tbz2 = arith.addi %tbz1, %k3 : index
+%n3 = memref.load %tables[%tbz0] : memref<?x!pme_real, 1>
+%t3 = memref.load %tables[%tbz2] : memref<?x!pme_real, 1>
+%m1 = arith.mulf %h00r, %n1 : !pme_real
+%m2a = arith.mulf %h10r, %n1 : !pme_real
+%m2b = arith.mulf %h11r, %n2 : !pme_real
+%m2 = arith.addf %m2a, %m2b : !pme_real
+%m3a = arith.mulf %h20r, %n1 : !pme_real
+%m3b = arith.mulf %h21r, %n2 : !pme_real
+%m3c = arith.mulf %h22r, %n3 : !pme_real
+%m3ab = arith.addf %m3a, %m3b : !pme_real
+%m3 = arith.addf %m3ab, %m3c : !pme_real
+%m1s = arith.mulf %m1, %m1 : !pme_real
+%m2s = arith.mulf %m2, %m2 : !pme_real
+%m3s = arith.mulf %m3, %m3 : !pme_real
+%m12 = arith.addf %m1s, %m2s : !pme_real
+%msqr = arith.addf %m12, %m3s : !pme_real
+%origin = arith.cmpf oeq, %msqr, %rzero : !pme_real
+%safe = arith.select %origin, %rone, %msqr : !pme_real
+%inverse = arith.divf %rone, %safe : !pme_real
+%gk = arith.mulf %gaussr, %msqr : !pme_real
+%ngk = arith.negf %gk : !pme_real
+%ek = math.exp %ngk : !pme_real
+%tt12 = arith.mulf %t1, %t2 : !pme_real
+%tt123 = arith.mulf %tt12, %t3 : !pme_real
+%tte = arith.mulf %tt123, %ek : !pme_real
+%bc0 = arith.mulf %tte, %inverse : !pme_real
+%bc = arith.select %origin, %rzero, %bc0 : !pme_real
+"""
+
+
+def influence():
+    """The influence function at the point (%a, %b, %z) of the half-complex
+    transform, %bc, and the wave vector %m1, %m2, %m3 with its square %msqr
+    and its inverse %inverse, which the virial takes."""
+    return (INFLUENCE_TRICLINIC if TILTED else INFLUENCE_ORTHORHOMBIC).rstrip("\n")
+
+
 def convolve():
     """The product with the influence function where the energy and the
     virial are needed (D104): a thread for points of the grid, as `scale`
@@ -413,35 +524,8 @@ def convolve():
     %a = arith.index_cast %a32 : i32 to index
     %b = arith.index_cast %b32 : i32 to index""")
     inner = Body("    ")
-    inner("""\
-%tbx1 = arith.addi %a, %k1 : index
-%tbx2 = arith.addi %tbx1, %k1 : index
-%m1 = memref.load %tables[%a] : memref<?x!pme_real, 1>
-%m1s = memref.load %tables[%tbx1] : memref<?x!pme_real, 1>
-%t1 = memref.load %tables[%tbx2] : memref<?x!pme_real, 1>
-%tby0 = arith.addi %ty0, %b : index
-%tby1 = arith.addi %tby0, %k2 : index
-%tby2 = arith.addi %tby1, %k2 : index
-%m2 = memref.load %tables[%tby0] : memref<?x!pme_real, 1>
-%m2s = memref.load %tables[%tby1] : memref<?x!pme_real, 1>
-%t2 = memref.load %tables[%tby2] : memref<?x!pme_real, 1>
-%tbz0 = arith.addi %tz0, %z : index
-%tbz1 = arith.addi %tbz0, %k3 : index
-%tbz2 = arith.addi %tbz1, %k3 : index
-%m3 = memref.load %tables[%tbz0] : memref<?x!pme_real, 1>
-%m3s = memref.load %tables[%tbz1] : memref<?x!pme_real, 1>
-%t3 = memref.load %tables[%tbz2] : memref<?x!pme_real, 1>
-%m12 = arith.addf %m1s, %m2s : !pme_real
-%msqr = arith.addf %m12, %m3s : !pme_real
-%origin = arith.cmpf oeq, %msqr, %rzero : !pme_real
-%safe = arith.select %origin, %rone, %msqr : !pme_real
-%inverse = arith.divf %rone, %safe : !pme_real
-// The influence function from the tables of the edges (D104): each factor
-// computed in f64 and rounded once.
-%tt12 = arith.mulf %t1, %t2 : !pme_real
-%tt123 = arith.mulf %tt12, %t3 : !pme_real
-%bc0 = arith.mulf %tt123, %inverse : !pme_real
-%bc = arith.select %origin, %rzero, %bc0 : !pme_real
+    inner(f"""\
+{influence()}
 """)
     m1, m2 = "%m1", "%m2"
     inner(f"""\
@@ -636,6 +720,27 @@ func.func private @mdrt_gpu_pme_convolve(%c: memref<?x!pme_real, 1>, %tables: me
 """
 
 
+TABLE_LENGTH_ORTHORHOMBIC = """\
+%l0 = arith.select %on_y, %ily, %ilx : f64
+%l = arith.select %on_z, %ilz, %l0 : f64
+"""
+TABLE_LENGTH_TRICLINIC = """\
+%l = arith.constant 1.0 : f64
+"""
+TABLE_FACTOR_ORTHORHOMBIC = """\
+%gm = arith.mulf %gauss, %m2 : f64
+%ngm = arith.negf %gm : f64
+%ex = math.exp %ngm : f64
+%mod = memref.load %moduli[%axis, %k] : memref<?x?xf64, 1>
+%factor0 = arith.mulf %ex, %mod : f64
+"""
+TABLE_FACTOR_TRICLINIC = """\
+%mod = memref.load %moduli[%axis, %k] : memref<?x?xf64, 1>
+%fzero = arith.constant 0.0 : f64
+%factor0 = arith.addf %mod, %fzero : f64
+"""
+
+
 def tables():
     """The factors of the influence function along each edge (D104), for
     `scale` and `convolve`: for each point k of an edge of K points, the
@@ -645,7 +750,7 @@ def tables():
     !pme_real. Edge a holds 3 K_a values from 3 times the points of the
     edges before it: m, then m^2, then the factor."""
     body = Body("      ")
-    body("""\
+    body(f"""\
 %c0t = arith.constant 0 : index
 %c1t = arith.constant 1 : index
 %c2t = arith.constant 2 : index
@@ -658,9 +763,7 @@ def tables():
 %from = arith.select %on_z, %k12, %from0 : index
 %kk0 = arith.select %on_y, %k2, %k1 : index
 %kk = arith.select %on_z, %k3, %kk0 : index
-%l0 = arith.select %on_y, %ily, %ilx : f64
-%l = arith.select %on_z, %ilz, %l0 : f64
-%k = arith.subi %item, %from : index
+{TABLE_LENGTH_TRICLINIC if TILTED else TABLE_LENGTH_ORTHORHOMBIC}%k = arith.subi %item, %from : index
 %half = arith.divui %kk, %c2t : index
 %ki = arith.index_cast %k : index to i64
 %ni = arith.index_cast %kk : index to i64
@@ -670,12 +773,7 @@ def tables():
 %sf = arith.sitofp %signed : i64 to f64
 %m = arith.mulf %sf, %l : f64
 %m2 = arith.mulf %m, %m : f64
-%gm = arith.mulf %gauss, %m2 : f64
-%ngm = arith.negf %gm : f64
-%ex = math.exp %ngm : f64
-%mod = memref.load %moduli[%axis, %k] : memref<?x?xf64, 1>
-%factor0 = arith.mulf %ex, %mod : f64
-%first_axis = arith.cmpi eq, %axis, %c0t : index
+{TABLE_FACTOR_TRICLINIC if TILTED else TABLE_FACTOR_ORTHORHOMBIC}%first_axis = arith.cmpi eq, %axis, %c0t : index
 %scaled = arith.mulf %factor0, %prefactor : f64
 %factor = arith.select %first_axis, %scaled, %factor0 : f64
 %tstart = arith.muli %from, %c3 : index
@@ -737,37 +835,10 @@ def scale():
 %z = arith.index_cast %z32 : i32 to index
 %a = arith.index_cast %a32 : i32 to index
 %b = arith.index_cast %b32 : i32 to index""")
-    body("""\
+    body(f"""\
 %rzero = arith.constant 0.0 : !pme_real
 %rone = arith.constant 1.0 : !pme_real
-%tbx1 = arith.addi %a, %k1 : index
-%tbx2 = arith.addi %tbx1, %k1 : index
-%m1 = memref.load %tables[%a] : memref<?x!pme_real, 1>
-%m1s = memref.load %tables[%tbx1] : memref<?x!pme_real, 1>
-%t1 = memref.load %tables[%tbx2] : memref<?x!pme_real, 1>
-%tby0 = arith.addi %ty0, %b : index
-%tby1 = arith.addi %tby0, %k2 : index
-%tby2 = arith.addi %tby1, %k2 : index
-%m2 = memref.load %tables[%tby0] : memref<?x!pme_real, 1>
-%m2s = memref.load %tables[%tby1] : memref<?x!pme_real, 1>
-%t2 = memref.load %tables[%tby2] : memref<?x!pme_real, 1>
-%tbz0 = arith.addi %tz0, %z : index
-%tbz1 = arith.addi %tbz0, %k3 : index
-%tbz2 = arith.addi %tbz1, %k3 : index
-%m3 = memref.load %tables[%tbz0] : memref<?x!pme_real, 1>
-%m3s = memref.load %tables[%tbz1] : memref<?x!pme_real, 1>
-%t3 = memref.load %tables[%tbz2] : memref<?x!pme_real, 1>
-%m12 = arith.addf %m1s, %m2s : !pme_real
-%msqr = arith.addf %m12, %m3s : !pme_real
-%origin = arith.cmpf oeq, %msqr, %rzero : !pme_real
-%safe = arith.select %origin, %rone, %msqr : !pme_real
-%inverse = arith.divf %rone, %safe : !pme_real
-// The influence function from the tables of the edges (D104): each factor
-// computed in f64 and rounded once.
-%tt12 = arith.mulf %t1, %t2 : !pme_real
-%tt123 = arith.mulf %tt12, %t3 : !pme_real
-%bc0 = arith.mulf %tt123, %inverse : !pme_real
-%bc = arith.select %origin, %rzero, %bc0 : !pme_real
+{influence()}
 %re_at = arith.muli %item, %cc2 : index
 %im_at = arith.addi %re_at, %cc1 : index
 %re = memref.load %c[%re_at] : memref<?x!pme_real, 1>
@@ -847,14 +918,23 @@ def weights_kernels():
 %i1 = arith.constant 1 : index
 %i2 = arith.constant 2 : index
 %order = arith.constant 4 : index""")
-    for axis, (length, k) in enumerate((("%ilx", "%k1"), ("%ily", "%k2"), ("%ilz", "%k3"))):
+    places = [(f"%{t}p", length) for t, length in zip("xyz", ("%ilx", "%ily", "%ilz"))]
+    if TILTED:
+        for axis, t in enumerate("xyz"):
+            w(f"""\
+%{t}c = arith.constant {axis} : index
+%{t}s = memref.load %x[%i, %{t}c] : memref<?x3x!pme_pos, 1>
+%{t}p = PME_EXTEND_POS %{t}s : !pme_pos to f64""")
+        places = fractions(w, "%xp", "%yp", "%zp")
+    for axis, ((coordinate, length), k) in enumerate(zip(places, ("%k1", "%k2", "%k3"))):
         t = "xyz"[axis]
-        w(f"""\
+        if not TILTED:
+            w(f"""\
 %{t}c = arith.constant {axis} : index
 %{t}s = memref.load %x[%i, %{t}c] : memref<?x3x!pme_pos, 1>
 %{t}p = PME_EXTEND_POS %{t}s : !pme_pos to f64
 """)
-        start, frac = place(w, f"p{t}_", f"%{t}p", length, k, "%order")
+        start, frac = place(w, f"p{t}_", coordinate, length, k, "%order")
         w(f"""\
 %{t}fc = arith.constant {3 + axis} : index
 %{t}fn = arith.muli %n_all, %{t}fc : index
@@ -1379,6 +1459,38 @@ func.func private @mdrt_gpu_pme_gather_weights(%x: memref<?x3x!pme_pos, 1>, %q: 
 """
 
 
+def forces(tilted):
+    """The forces of a particle from the sums of its derivatives along the
+    three axes of the grid: -q K_a / L_a times each, or for a triclinic cell
+    -q H⁻¹ (K_a times each), x from a alone, y from a and b, z from all."""
+    if not tilted:
+        return """\
+        %sxq = arith.mulf %mq, %rxr : !pme_real
+        %syq = arith.mulf %mq, %ryr : !pme_real
+        %szq = arith.mulf %mq, %rzr : !pme_real
+        %fx64 = arith.mulf %sxq, %allx : !pme_real
+        %fy64 = arith.mulf %syq, %ally : !pme_real
+        %fz64 = arith.mulf %szq, %allz : !pme_real
+"""
+    return """\
+        %ka1 = arith.mulf %k1fr, %allx : !pme_real
+        %ka2 = arith.mulf %k2fr, %ally : !pme_real
+        %ka3 = arith.mulf %k3fr, %allz : !pme_real
+        %fxh = arith.mulf %h00r, %ka1 : !pme_real
+        %fyh1 = arith.mulf %h10r, %ka1 : !pme_real
+        %fyh2 = arith.mulf %h11r, %ka2 : !pme_real
+        %fyh = arith.addf %fyh1, %fyh2 : !pme_real
+        %fzh1 = arith.mulf %h20r, %ka1 : !pme_real
+        %fzh2 = arith.mulf %h21r, %ka2 : !pme_real
+        %fzh3 = arith.mulf %h22r, %ka3 : !pme_real
+        %fzh12 = arith.addf %fzh1, %fzh2 : !pme_real
+        %fzh = arith.addf %fzh12, %fzh3 : !pme_real
+        %fx64 = arith.mulf %mq, %fxh : !pme_real
+        %fy64 = arith.mulf %mq, %fyh : !pme_real
+        %fz64 = arith.mulf %mq, %fzh : !pme_real
+"""
+
+
 def gather_launch(body_text):
     """The launch of the gather: every thread of a block takes part in the
     shuffles, so the threads beyond the last point compute for the last
@@ -1430,13 +1542,7 @@ def gather_launch(body_text):
       %stores = arith.andi %inside, %first : i1
       scf.if %stores {{
         %mq = arith.negf %qi : !pme_real
-        %sxq = arith.mulf %mq, %rxr : !pme_real
-        %syq = arith.mulf %mq, %ryr : !pme_real
-        %szq = arith.mulf %mq, %rzr : !pme_real
-        %fx64 = arith.mulf %sxq, %allx : !pme_real
-        %fy64 = arith.mulf %syq, %ally : !pme_real
-        %fz64 = arith.mulf %szq, %allz : !pme_real
-        %fxs = PME_REAL_TO_FRC %fx64 : !pme_real to !pme_frc
+{forces(TILTED)}        %fxs = PME_REAL_TO_FRC %fx64 : !pme_real to !pme_frc
         %fys = PME_REAL_TO_FRC %fy64 : !pme_real to !pme_frc
         %fzs = PME_REAL_TO_FRC %fz64 : !pme_real to !pme_frc
         memref.store %fxs, %f[%i, %i0] : memref<?x3x!pme_frc, 1>
@@ -1448,12 +1554,103 @@ def gather_launch(body_text):
 """
 
 
+HEADER_TRICLINIC = """\
+// The kernels of the reciprocal sum of smooth particle mesh Ewald on a
+// device [Essmann1995] for a triclinic cell (docs/triclinic-m2.md): those
+// of PMEGPU.mlir that depend on the cell, with `box` the vector of six,
+// a_x, b_y, c_z, b_x, c_x, c_y, of the lower-triangular cell H. The
+// particles are placed by their fractional coordinates s = x H⁻¹; the
+// forces are those of s taken through H⁻¹; the wave vector of the point n
+// is k = H⁻¹ n, and the Gaussian exp(-π² k² / β²) is computed at each
+// point, since k² is not a sum of a term for each axis. The kernels that
+// do not depend on the cell, the conversion of the grid from fixed point
+// and the spreading into bricks, are those of PMEGPU.mlir, which the
+// compiler adds as well. The keys are those of docs/references.md.
+//
+// Generated by scripts/generate-pme-gpu-template.py. Do not edit.
+
+!pme_pos = f64
+!pme_chg = f64
+!pme_frc = f64
+!pme_real = f64
+
+func.func private @mdrt_gpu_pme_blocks_triclinic(%count: index) -> index {
+  %c127 = arith.constant 127 : index
+  %c128 = arith.constant 128 : index
+  %padded = arith.addi %count, %c127 : index
+  %result = arith.divui %padded, %c128 : index
+  return %result : index
+}
+"""
+
+# H⁻¹ of the lower-triangular cell, also lower triangular, in f64 and in
+# !pme_real: h00 = 1/a_x, h11 = 1/b_y, h22 = 1/c_z, h10 = -b_x/(a_x b_y),
+# h21 = -c_y/(b_y c_z), h20 = (b_x c_y - b_y c_x)/(a_x b_y c_z).
+INVERSE = """\
+  %tbx = vector.extract %box[3] : f64 from vector<6xf64>
+  %tcx = vector.extract %box[4] : f64 from vector<6xf64>
+  %tcy = vector.extract %box[5] : f64 from vector<6xf64>
+  %hunit = arith.constant 1.0 : f64
+  %h00 = arith.divf %hunit, %lx : f64
+  %h11 = arith.divf %hunit, %ly : f64
+  %h22 = arith.divf %hunit, %lz : f64
+  %h10a = arith.mulf %tbx, %h00 : f64
+  %h10b = arith.mulf %h10a, %h11 : f64
+  %h10 = arith.negf %h10b : f64
+  %h21a = arith.mulf %tcy, %h11 : f64
+  %h21b = arith.mulf %h21a, %h22 : f64
+  %h21 = arith.negf %h21b : f64
+  %h20a = arith.mulf %tbx, %tcy : f64
+  %h20b = arith.mulf %ly, %tcx : f64
+  %h20c = arith.subf %h20a, %h20b : f64
+  %h20d = arith.mulf %h20c, %h00 : f64
+  %h20e = arith.mulf %h20d, %h11 : f64
+  %h20 = arith.mulf %h20e, %h22 : f64
+  %h00r = PME_F64_TO_REAL %h00 : f64 to !pme_real
+  %h10r = PME_F64_TO_REAL %h10 : f64 to !pme_real
+  %h11r = PME_F64_TO_REAL %h11 : f64 to !pme_real
+  %h20r = PME_F64_TO_REAL %h20 : f64 to !pme_real
+  %h21r = PME_F64_TO_REAL %h21 : f64 to !pme_real
+  %h22r = PME_F64_TO_REAL %h22 : f64 to !pme_real
+"""
+
+
+def triclinic():
+    """The kernels of a triclinic cell, from those of an orthorhombic one
+    written with TILTED: named with `_triclinic`, taking the cell of six,
+    with H⁻¹ after its diagonal, and in the gathers the numbers of points
+    of the axes in !pme_real."""
+    global TILTED
+    TILTED = True
+    weights = weights_kernels()
+    weights = weights[:weights.index("\n// Adds the charges to `bricks`")] + "\n"
+    text = (spread() + spread(fixed=False) + weights + tables() + convolve() + scale() +
+            gather() + gather_weights())
+    TILTED = False
+    text = re.sub(r"func\.func private @mdrt_gpu_pme_(\w+)\(",
+                  r"func.func private @mdrt_gpu_pme_\1_triclinic(", text)
+    text = text.replace("@mdrt_gpu_pme_blocks(", "@mdrt_gpu_pme_blocks_triclinic(")
+    text = text.replace("%box: vector<3xf64>", "%box: vector<6xf64>")
+    text = text.replace(": f64 from vector<3xf64>", ": f64 from vector<6xf64>")
+    last = "  %lz = vector.extract %box[2] : f64 from vector<6xf64>\n"
+    text = text.replace(last, last + INVERSE)
+    numbers = "  %rzr = PME_F64_TO_REAL %rz : f64 to !pme_real\n"
+    text = text.replace(numbers, numbers + """\
+  %k1fr = PME_F64_TO_REAL %k1f : f64 to !pme_real
+  %k2fr = PME_F64_TO_REAL %k2f : f64 to !pme_real
+  %k3fr = PME_F64_TO_REAL %k3f : f64 to !pme_real
+""")
+    return HEADER_TRICLINIC + text
+
+
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
-    path = os.path.join(here, "..", "lib", "Runtime", "Templates", "PMEGPU.mlir")
-    with open(path, "w") as file:
+    templates = os.path.join(here, "..", "lib", "Runtime", "Templates")
+    with open(os.path.join(templates, "PMEGPU.mlir"), "w") as file:
         file.write(HEADER + spread() + spread(fixed=False) + weights_kernels() + real() +
                    tables() + convolve() + scale() + gather() + gather_weights())
+    with open(os.path.join(templates, "PMEGPUTriclinic.mlir"), "w") as file:
+        file.write(triclinic())
 
 
 if __name__ == "__main__":

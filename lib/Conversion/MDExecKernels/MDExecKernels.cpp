@@ -51,9 +51,15 @@ bool kernels::isTriclinic(Value box) {
 Value kernels::getEdges(OpBuilder &builder, Location loc, Value box) {
   if (!isTriclinic(box))
     return box;
-  return vector::ExtractStridedSliceOp::create(
-      builder, loc, box, ArrayRef<int64_t>{0}, ArrayRef<int64_t>{3},
-      ArrayRef<int64_t>{1});
+  // Three extractions rather than a strided slice, which the pipeline of a
+  // device does not lower.
+  SmallVector<Value, 3> diagonal;
+  for (int64_t k = 0; k != 3; ++k)
+    diagonal.push_back(vector::ExtractOp::create(builder, loc, box, k));
+  return vector::FromElementsOp::create(
+      builder, loc,
+      VectorType::get({3}, cast<VectorType>(box.getType()).getElementType()),
+      diagonal);
 }
 
 Value kernels::emitMinimumImage(OpBuilder &builder, Location loc, Value raw,
@@ -86,6 +92,34 @@ Value kernels::emitMinimumImage(OpBuilder &builder, Location loc, Value raw,
   take(d[0], element(inverse, 0), {{0, ax}});
   return vector::FromElementsOp::create(builder, loc, raw.getType(),
                                         ValueRange{d[0], d[1], d[2]});
+}
+
+Value kernels::emitFaceWidths(OpBuilder &builder, Location loc, Value box) {
+  auto element = [&](int64_t k) -> Value {
+    return vector::ExtractOp::create(builder, loc, box, k);
+  };
+  auto mul = [&](Value a, Value b) -> Value {
+    return arith::MulFOp::create(builder, loc, a, b);
+  };
+  auto add = [&](Value a, Value b) -> Value {
+    return arith::AddFOp::create(builder, loc, a, b);
+  };
+  Value ax = element(0), by = element(1), cz = element(2), bx = element(3),
+        cx = element(4), cy = element(5);
+  // b × c = (b_y c_z, −b_x c_z, b_x c_y − b_y c_x).
+  Value n0 = mul(by, cz), n1 = mul(bx, cz),
+        n2 = arith::SubFOp::create(builder, loc, mul(bx, cy), mul(by, cx));
+  Value norm = math::SqrtOp::create(
+      builder, loc, add(add(mul(n0, n0), mul(n1, n1)), mul(n2, n2)));
+  Value volume = mul(mul(ax, by), cz);
+  Value wa = arith::DivFOp::create(builder, loc, volume, norm);
+  Value wb = arith::DivFOp::create(
+      builder, loc, mul(by, cz),
+      math::SqrtOp::create(builder, loc, add(mul(cy, cy), mul(cz, cz))));
+  return vector::FromElementsOp::create(
+      builder, loc,
+      VectorType::get({3}, cast<VectorType>(box.getType()).getElementType()),
+      ValueRange{wa, wb, cz});
 }
 
 Value kernels::convertReal(OpBuilder &builder, Location loc, Value value,

@@ -47,6 +47,8 @@ namespace mdir {
 extern const char *const neighborsMatrixGPUTemplate;
 /// The text of the template of particle mesh Ewald on a device.
 extern const char *const pmeGPUTemplate;
+/// The text of its kernels for a triclinic cell.
+extern const char *const pmeGPUTriclinicTemplate;
 extern const char *const neighborsGroupsGPUTemplate;
 } // namespace mdir
 
@@ -160,7 +162,11 @@ public:
       : module(module), context(module.getContext()), blockSize(blockSize),
         rowLanes(rowLanes), fuseRows(fuseRows),
         fuseIntegration(fuseIntegration), deterministic(deterministic),
-        tuplesOnce(tuplesOnce) {}
+        tuplesOnce(tuplesOnce) {
+    // A module with a triclinic cell lowers every cell to the vector of six,
+    // a_x, b_y, c_z, b_x, c_x, c_y; one without, to the three edges.
+    module.walk([&](md::TriclinicCellOp) { triclinic = true; });
+  }
 
   LogicalResult run();
   /// Returns true if `op`, an op inside it, or a function that it calls
@@ -337,8 +343,10 @@ private:
   LogicalResult addTemplates(Type real);
   LogicalResult addGroupsTemplates();
   func::FuncOp getOrDeclare(StringRef name, FunctionType type);
+  /// Adds the template of particle mesh Ewald for these types, and with
+  /// `tilted` the kernels of a triclinic cell as well.
   LogicalResult addPMETemplates(Type position, Type charge, Type force,
-                                int64_t order);
+                                int64_t order, bool tilted);
   LogicalResult lowerReciprocal(md_exec::ReciprocalOp op);
 
   ModuleOp module;
@@ -352,6 +360,10 @@ private:
   /// Whether sums are added in an order that the threads do not decide
   /// (D84).
   bool deterministic;
+  /// Whether the module has a triclinic cell.
+  bool triclinic = false;
+  /// The number of elements of a cell lowered to a vector.
+  int64_t getCellSize() const { return triclinic ? 6 : 3; }
   bool tuplesOnce;
 
   /// The function that is being lowered.
@@ -2136,15 +2148,23 @@ static void unrollSmallLoops(Operation *root, int64_t limit) {
 }
 
 LogicalResult Lowering::addPMETemplates(Type position, Type charge,
-                                        Type force, int64_t order) {
+                                        Type force, int64_t order,
+                                        bool tilted) {
+  // A triclinic cell takes the kernels of its own as well, which only it
+  // parses and specializes (docs/triclinic-m2.md).
+  if (tilted && failed(addPMETemplates(position, charge, force, order,
+                                       /*tilted=*/false)))
+    return failure();
   if (SymbolTable::lookupSymbolIn(
-          module, getPMEInstanceName("mdrt_gpu_pme_spread", position, charge,
-                                     force, order)))
+          module, getPMEInstanceName(tilted ? "mdrt_gpu_pme_spread_triclinic"
+                                            : "mdrt_gpu_pme_spread",
+                                     position, charge, force, order)))
     return success();
   ParserConfig config(context);
   OwningOpRef<ModuleOp> templates = parseSourceString<ModuleOp>(
-      instantiatePMETemplates(pmeGPUTemplate, position, charge, force,
-                              order),
+      instantiatePMETemplates(tilted ? pmeGPUTriclinicTemplate
+                                     : pmeGPUTemplate,
+                              position, charge, force, order),
       config);
   if (!templates)
     return module.emitError()
@@ -2195,11 +2215,18 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   };
   Type position = elementOf(positions), charge = elementOf(charges),
        force = elementOf(forces);
-  if (failed(addPMETemplates(position, charge, force, op.getOrder())))
+  // A triclinic cell takes the kernels of its own where they depend on the
+  // cell (docs/triclinic-m2.md).
+  bool tilted = isTriclinic(op.getCellMutable().get());
+  if (failed(addPMETemplates(position, charge, force, op.getOrder(), tilted)))
     return failure();
   auto instance = [&](StringRef name) {
+    bool own = tilted && name != "mdrt_gpu_pme_real" &&
+               name != "mdrt_gpu_pme_spread_bricks";
+    std::string full = own ? (name + "_triclinic").str() : name.str();
     return cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
-        module, getPMEInstanceName(name, position, charge, force, op.getOrder())));
+        module,
+        getPMEInstanceName(full, position, charge, force, op.getOrder())));
   };
 
   ArrayRef<int64_t> grid = op.getGrid();
@@ -2477,7 +2504,7 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
 
   // The state of the structure is on the host.
   structure.box = memref::AllocOp::create(
-      builder, loc, MemRefType::get({3}, builder.getF64Type()));
+      builder, loc, MemRefType::get({getCellSize()}, builder.getF64Type()));
   // The configuration and the cell of the last pruning of a dual list
   // (D114). The cell is not a number until then, so that the test of the
   // inner list fails before the first pruning.
@@ -2485,11 +2512,11 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
     structure.prunedReference = createDeviceBuffer(
         builder, loc, positions, ValueRange{structure.size});
     structure.prunedBox = memref::AllocOp::create(
-        builder, loc, MemRefType::get({3}, builder.getF64Type()));
+        builder, loc, MemRefType::get({getCellSize()}, builder.getF64Type()));
     Value notNumber = arith::ConstantOp::create(
         builder, loc, builder.getF64Type(),
         builder.getF64FloatAttr(std::numeric_limits<double>::quiet_NaN()));
-    for (int64_t c = 0; c < 3; ++c)
+    for (int64_t c = 0; c < getCellSize(); ++c)
       memref::StoreOp::create(builder, loc, notNumber, structure.prunedBox,
                               ValueRange{createIndex(builder, loc, c)});
     Value pruned = structure.prunedReference;
@@ -2543,6 +2570,9 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
                                   Value box, double reach,
                                   double cellWidth) {
   if (structure.groups) {
+    if (isTriclinic(box))
+      return emitError(loc) << "a structure of groups does not take a "
+                               "triclinic cell yet (docs/triclinic-m2.md, P3)";
     if (failed(emitGroupsBuild(builder, loc, structure, positions, box,
                                reach)))
       return failure();
@@ -2555,6 +2585,11 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
   Value reachValue = createReal(builder, loc, real, reach);
   Value leastValue = createReal(builder, loc, real, cellWidth);
   Value boxValue = convertReal(builder, loc, box, real);
+  // A triclinic cell is searched in its fractional coordinates, whose cells
+  // have the widths of the cell between its faces.
+  bool tilted = isTriclinic(box);
+  Value widthsValue =
+      tilted ? emitFaceWidths(builder, loc, boxValue) : boxValue;
 
   // The width of the cells follows from the density, which is known when
   // the structure is built.
@@ -2562,7 +2597,7 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
       module, getInstanceName(cellWidthName, real)));
   Value widthValue =
       func::CallOp::create(builder, loc, choose,
-                           ValueRange{structure.size, boxValue, reachValue,
+                           ValueRange{structure.size, widthsValue, reachValue,
                                       leastValue})
           .getResult(0);
 
@@ -2579,7 +2614,10 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
     excluded = noExcluded;
   }
   auto build = cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
-      module, getInstanceName(buildNeighborsName, real)));
+      module,
+      getInstanceName(tilted ? std::string(buildNeighborsName) + "_triclinic"
+                             : std::string(buildNeighborsName),
+                      real)));
   // Build; if a row was too narrow to hold the neighbors of a particle,
   // the runtime makes the rows wider, and the build is made again.
   Type wide = builder.getI64Type();
@@ -2588,10 +2626,12 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
     Block *before = builder.createBlock(&again.getBefore());
     OpBuilder at = OpBuilder::atBlockEnd(before);
     Value entries = getMatrixEntries(at, loc, structure.handle);
-    auto built = func::CallOp::create(
-        at, loc, build,
-        ValueRange{positions, boxValue, reachValue, widthValue, excluded,
-                   structure.counts, entries, structure.order});
+    SmallVector<Value, 9> operands = {positions, boxValue};
+    if (tilted)
+      operands.push_back(widthsValue);
+    operands.append({reachValue, widthValue, excluded, structure.counts,
+                     entries, structure.order});
+    auto built = func::CallOp::create(at, loc, build, operands);
     Value largest = built.getResult(0);
     emitStopNotNumbers(
         at, loc, arith::IndexCastOp::create(at, loc, wide, built.getResult(1)));
@@ -2704,7 +2744,7 @@ void Lowering::emitGroupsPrune(OpBuilder &builder, Location loc,
   auto vector3 = VectorType::get({3}, f32);
   // Remember the configuration and the cell of the pruning.
   createTransfer(builder, loc, structure.prunedReference, positions);
-  for (int64_t c = 0; c < 3; ++c)
+  for (int64_t c = 0; c < getCellSize(); ++c)
     memref::StoreOp::create(builder, loc,
                             vector::ExtractOp::create(builder, loc, box, c),
                             structure.prunedBox,
@@ -3084,7 +3124,7 @@ LogicalResult Lowering::finishBuild(OpBuilder &builder, Location loc,
   Type wide = builder.getI64Type();
   // Remember the configuration that the structure was built at.
   createTransfer(builder, loc, structure.reference, positions);
-  for (int64_t c = 0; c < 3; ++c) {
+  for (int64_t c = 0; c < getCellSize(); ++c) {
     Value edge = vector::ExtractOp::create(builder, loc, box, c);
     memref::StoreOp::create(builder, loc, edge, structure.box,
                             ValueRange{createIndex(builder, loc, c)});
@@ -3152,7 +3192,7 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
       builtEdges.push_back(memref::LoadOp::create(
           at, loc, structure.box, ValueRange{createIndex(at, loc, c)}));
     Value scale = arith::DivFOp::create(
-        at, loc, box,
+        at, loc, getEdges(at, loc, box),
         vector::FromElementsOp::create(
             at, loc, VectorType::get({3}, at.getF64Type()), builtEdges));
     Value least = vector::ReductionOp::create(
@@ -3317,8 +3357,11 @@ LogicalResult Lowering::lowerSpatialOrder(md_exec::SpatialOrderOp op) {
   if (failed(addTemplates(real)))
     return failure();
 
-  // The cell has become the vector of its edge lengths.
-  Value box = convertReal(builder, loc, op.getCellMutable().get(), real);
+  // The cell has become the vector of its edge lengths; a triclinic one
+  // orders the particles by the cells of its diagonal, which only their
+  // locality depends on.
+  Value box = convertReal(
+      builder, loc, getEdges(builder, loc, op.getCellMutable().get()), real);
   Value width =
       createReal(builder, loc, real, op.getWidth().convertToDouble());
   auto order = cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
@@ -3401,16 +3444,20 @@ LogicalResult Lowering::lowerOp(Operation *op) {
                 "a structure of groups keeps";
     OpBuilder builder(op);
     Location loc = op->getLoc();
-    SmallVector<Value, 3> edges;
-    for (int64_t c = 0; c < 3; ++c)
+    SmallVector<Value, 6> edges;
+    for (int64_t c = 0; c < getCellSize(); ++c)
       edges.push_back(memref::LoadOp::create(
           builder, loc, cell.getPruned() ? structure.prunedBox : structure.box,
           ValueRange{createIndex(builder, loc, c)}));
     cell->getResult(0).replaceAllUsesWith(vector::FromElementsOp::create(
-        builder, loc, VectorType::get({3}, builder.getF64Type()), edges));
+        builder, loc, VectorType::get({getCellSize()}, builder.getF64Type()),
+        edges));
   } else if (auto edges = dyn_cast<md_exec::CellEdgesOp>(op)) {
-    // The cell is the vector of its edges by now.
-    edges.getResult().replaceAllUsesWith(edges->getOperand(0));
+    // The cell is the vector of its edges by now, or of its diagonal and
+    // tilts.
+    OpBuilder builder(op);
+    edges.getResult().replaceAllUsesWith(
+        getEdges(builder, op->getLoc(), edges->getOperand(0)));
   } else if (auto reference = dyn_cast<md_exec::ReferencePositionsOp>(op)) {
     Neighbors structure;
     if (failed(getNeighbors(op, reference.getNeighbors(), structure)))
@@ -3477,16 +3524,24 @@ LogicalResult Lowering::lowerOp(Operation *op) {
   } else if (auto reciprocal = dyn_cast<md_exec::ReciprocalOp>(op)) {
     if (failed(lowerReciprocal(reciprocal)))
       return failure();
-  } else if (isa<md::TriclinicCellOp>(op)) {
-    return op->emitOpError()
-           << "a triclinic cell is not lowered to a device yet "
-              "(docs/triclinic-m2.md, P2)";
   } else if (auto cell = dyn_cast<md::OrthorhombicCellOp>(op)) {
     OpBuilder builder(op);
     Type real = builder.getF64Type();
+    SmallVector<Value, 6> values = {cell.getLx(), cell.getLy(), cell.getLz()};
+    // In a module with a triclinic cell, an orthorhombic one has no tilts.
+    if (triclinic)
+      values.append(3, createReal(builder, op->getLoc(), real, 0.0));
     cell->getResult(0).replaceAllUsesWith(vector::FromElementsOp::create(
-        builder, op->getLoc(), VectorType::get({3}, real),
-        ValueRange{cell.getLx(), cell.getLy(), cell.getLz()}));
+        builder, op->getLoc(),
+        VectorType::get({static_cast<int64_t>(values.size())}, real),
+        values));
+  } else if (auto cell = dyn_cast<md::TriclinicCellOp>(op)) {
+    OpBuilder builder(op);
+    Type real = builder.getF64Type();
+    cell->getResult(0).replaceAllUsesWith(vector::FromElementsOp::create(
+        builder, op->getLoc(), VectorType::get({6}, real),
+        ValueRange{cell.getLx(), cell.getLy(), cell.getLz(), cell.getBx(),
+                   cell.getCx(), cell.getCy()}));
   } else if (isa<md::MDDialect>(op->getDialect()) ||
              isa<md_exec::MDExecDialect>(op->getDialect()) ||
              isa<mdrt::MDRTDialect>(op->getDialect()) ||
@@ -3637,7 +3692,7 @@ static void deferReadbacks(func::FuncOp function) {
 
 LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   FunctionType type = function.getFunctionType();
-  Type box = VectorType::get({3}, Float64Type::get(context));
+  Type box = VectorType::get({getCellSize()}, Float64Type::get(context));
   auto convertType = [&](Type type) -> Type {
     return isa<md::CellType>(type) ? box : type;
   };

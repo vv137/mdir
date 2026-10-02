@@ -65,7 +65,9 @@ With the structure factor $S(\mathbf m) = \sum_j q_j e^{2\pi
 i\,\mathbf m\cdot\mathbf x_j}$ over the reciprocal vectors $\mathbf m$ of
 the cell, which for an orthorhombic cell are $m_a = k_a/L_a$ with integer
 $k_a$ and for a triclinic one, whose vectors are the rows of the
-lower-triangular $H$, $\mathbf m = H^{-1}\mathbf k$ (on the CPU, D123),
+lower-triangular $H$, $\mathbf m = H^{-1}\mathbf k$ (D123, D125; on a device the
+Gaussian is computed at each point, as it is not a product of a factor for
+each axis),
 
 $$
 E_\text{rec} = \frac{f}{2\pi V}\sum_{\mathbf m\neq 0}
