@@ -177,6 +177,24 @@ beside its rate.
   [[Shirts2013]](references.md#shirts2013). At 1 atm the density, $0.99674 \pm 0.00031$ g/cm³, and
   the compressibility, $(4.71 \pm 0.26)\times10^{-5}$ /bar, are within
   one standard error of GROMACS with its own OPC.
+- **Semi-isotropic coupling** (D119, `scripts/validation/barostat-semi`).
+  On the 1039 OPC waters over 2 ns, isotropic, semi-isotropic, and
+  semi-isotropic coupling with the height held give the density $0.99682
+  \pm 0.00045$, $0.99664 \pm 0.00044$, and $0.99667 \pm 0.00054$ g/cm³
+  and the compressibility $5.11 \pm 0.40$, $4.66 \pm 0.37$, and $4.78 \pm
+  0.46\times10^{-5}$ /bar: a liquid has no shape, so the three must agree.
+  On a bilayer of 126 POPC of Lipid21 [[Dickson2022]](references.md#dickson2022) in TIP3P against
+  GROMACS on the same model, over 20 ns each, the area per lipid is
+  $66.70 \pm 0.63$ Å² against $63.62 \pm 0.37$ with four to seven
+  independent samples of it in each run, and the densities 1.0211 and
+  1.0235 g/cm³. In one cell the two give the same difference of the
+  lateral and normal pressures, $-5.4 \pm 3.7$ and $-5.4 \pm 4.4$ bar,
+  which sets the area; their pressures differ by 43 bar, which sets the
+  volume. Their virials of the forces agree per axis to $10^{-5}$ on the
+  same positions, and GROMACS's pressure in that cell moves by 22 bar
+  between LINCS of its default order and bonds of hydrogen left flexible,
+  where MDIR's does not move: the difference is in how the constraints
+  enter the pressure of a step, not in the split by axis.
 - **Equivalences.** The trajectory does not depend on how steps are
   grouped into periods, on velocity Verlet against leapfrog with
   constraints, or on how the work of the barostat is counted: the tests

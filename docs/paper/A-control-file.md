@@ -41,7 +41,7 @@ the output of `mdir template amber` at the commit of this paper.
 | `[ensemble]` | `ensemble` | `NVE`, `NVT` (with `[thermostat]`), or `NPT` (with `[thermostat]` and `[barostat]`). |
 | | `temperature`, `pressure` | K, of the initial velocities and the bath; atm, with `NPT`. |
 | `[thermostat]` | `method`, `time_constant`, `interval` | `V-RESCALE`, stochastic velocity rescaling; ps; steps between its actions (10 by default). |
-| `[barostat]` | `method`, `time_constant`, `compressibility`, `coupling`, `work`, `interval` | `C-RESCALE`, stochastic cell rescaling (D72, D77); ps; 1/atm; `ISOTROPIC`; `TROTTER` (the default; D92), `TROTTER_FIRST_ORDER` (its energy from the virial before the scaling only, a virial less a period), `EXACT`, or `FIRST_ORDER`; the steps of the thermostat. |
+| `[barostat]` | `method`, `time_constant`, `compressibility`, `coupling`, `work`, `interval`, `compressibility_z`, `surface_tension`, `surfaces` | `C-RESCALE`, stochastic cell rescaling (D72, D77); ps; 1/atm; `ISOTROPIC` or `SEMI_ISOTROPIC` (x and y scale together from the mean of their pressures, z on its own, D119); `TROTTER` (the default; D92), `TROTTER_FIRST_ORDER` (its energy from the virial before the scaling only, a virial less a period), `EXACT`, or `FIRST_ORDER` (not with `SEMI_ISOTROPIC`); the steps of the thermostat; with `SEMI_ISOTROPIC`, the compressibility of z in 1/atm (0 keeps the height; that of x and y by default), the tension of each surface normal to z in dyn/cm (0 by default), and their number (2). |
 | `[constraints]` | `hydrogen_bonds`, `rigid_water`, `water_residues` | SHAKE and RATTLE on the bonds of hydrogen; SETTLE on the waters in double precision, M-SHAKE on their three bonds below it (D112); the names of the residues of water. |
 | `[[restraints]]` | `selection`, `force_constant` | A mask of Amber, and kcal/mol/Å² (D74). |
 | `[boundary]` | `type`, `box` | `PERIODIC`; the edges of the cell (Å), without a topology. |
@@ -116,7 +116,12 @@ interval      = 10              # steps between its actions
 method        = "C-RESCALE"     # stochastic cell rescaling
 time_constant = 2.0             # ps
 # compressibility = 4.56e-5     # 1/atm (4.5e-5 /bar)
-# coupling = "ISOTROPIC"        # ISOTROPIC
+# coupling = "ISOTROPIC"        # ISOTROPIC; SEMI_ISOTROPIC: x and y
+#                               # together, z on its own
+# compressibility_z = 4.56e-5   # 1/atm, of z with SEMI_ISOTROPIC (0 keeps
+#                               # the height); compressibility by default
+# surface_tension = 0.0         # dyn/cm, of each surface normal to z,
+# surfaces        = 2           # with SEMI_ISOTROPIC
 # work     = "TROTTER"          # TROTTER: the scaling within the drift of
 #                               # a step, its energy from the virials before
 #                               # and after; TROTTER_FIRST_ORDER: from the

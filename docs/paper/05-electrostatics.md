@@ -140,7 +140,8 @@ W_{ab} = \sum_{\mathbf m\neq 0} E_\mathbf m\Big[\delta_{ab} - 2\Big(\frac{1}{m^2
 \operatorname{tr}\mathsf W = \sum_{\mathbf m\neq0}E_\mathbf m\Big(1 - \frac{2\pi^2m^2}{\beta^2}\Big).
 $$
 
-The isotropic barostat and the log use the trace.
+The isotropic barostat and the log use the trace, the semi-isotropic
+barostat the diagonal (Section 6.4).
 
 **Separable factors** (D104). For an orthorhombic cell the Gaussian
 factorizes, $e^{-\pi^2m^2/\beta^2} = \prod_a e^{-\pi^2m_a^2/\beta^2}$, and

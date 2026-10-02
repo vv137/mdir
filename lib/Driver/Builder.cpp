@@ -99,7 +99,8 @@ private:
   /// that keep the accelerations on the constraints and K_int the kinetic
   /// energy of the motion within the group.
   std::string emitStartConstraintTrace(StringRef x, StringRef f,
-                                       StringRef v, StringRef trace);
+                                       StringRef v, StringRef trace,
+                                       bool axes = false);
   /// Sets `levels`, the loops of the schedule of a run of dynamics.
   void setSchedule();
   void emitMinimization();
@@ -121,10 +122,10 @@ private:
     return scalesReference() ? ", " + scaleName : "";
   }
   std::string getScaleType() const {
-    return scalesReference() ? ", f64" : "";
+    return scalesReference() ? ", vector<3xf64>" : "";
   }
   std::string getScaleParameter() const {
-    return scalesReference() ? ", %rest_scale: f64" : "";
+    return scalesReference() ? ", %rest_scale: vector<3xf64>" : "";
   }
   /// Emits the restraints at the positions `x`, with the fields of the
   /// prefix `prefix`: `fResult`, the forces `f` with theirs added, and, if
@@ -283,19 +284,19 @@ struct Coupled {
                              StringRef positions, StringRef velocities,
                              StringRef cell, StringRef masses,
                              StringRef relations, StringRef tag);
-  /// `trace`, the trace of the virial of the forces `forces` at the
+  /// `diagonal`, the diagonal of the virial of the forces `forces` at the
   /// positions `positions` without that of the constraints, less
-  /// Σ (x_j − X)·F_j over the particles of each rigid group about its
-  /// center of mass X: the trace of the virial of the groups,
-  /// Σ X·F_group, which is −dU/d ln μ when they scale with their centers
-  /// (D116). The forces of the constraints, internal to the groups, drop
-  /// out of it.
-  std::string emitMolecularTrace(StringRef indent, StringRef trace,
+  /// Σ (x_j − X) ⊙ F_j over the particles of each rigid group about its
+  /// center of mass X: the diagonal of the virial of the groups,
+  /// Σ X ⊙ F_group, whose element a is −dU/d ln μ_a when they scale with
+  /// their centers along axis a (D116, D119). The forces of the
+  /// constraints, internal to the groups, drop out of it.
+  std::string emitMolecularDiagonal(StringRef indent, StringRef diagonal,
                                  StringRef positions, StringRef forces,
                                  StringRef cell, StringRef masses,
                                  StringRef relations, StringRef tag);
-  /// `positions` scaled by `mu`, each rigid group with its center of mass,
-  /// keeping its shape (`oneMinusMu` is 1 − mu).
+  /// `positions` scaled by `mu`, a scale for each axis, each rigid group
+  /// with its center of mass, keeping its shape (`oneMinusMu` is 1 − mu).
   std::string emitGroupScaling(StringRef indent, StringRef positions,
                                StringRef mu, StringRef oneMinusMu,
                                StringRef cell, StringRef masses,
@@ -1541,6 +1542,53 @@ llvm::Error Builder::emitPotential() {
   return llvm::Error::success();
 }
 
+/// The diagonal of the virial `virial`, a vector of three, whose elements
+/// enter the pressure of each axis.
+static void emitDiagonal(llvm::raw_ostream &os, StringRef result,
+                         StringRef virial, StringRef indent) {
+  for (StringRef part : {"0", "4", "8"})
+    os << indent << result << "_" << part << " = vector.extract " << virial
+       << "[" << part << "] : f64 from vector<9xf64>\n";
+  os << indent << result << " = vector.from_elements " << result << "_0, "
+     << result << "_4, " << result << "_8 : vector<3xf64>\n";
+}
+
+/// The kinetic energy of the velocities `velocities` along each axis,
+/// Σ m v ⊙ v / 2, a vector of three.
+static void emitKineticVector(llvm::raw_ostream &os, StringRef result,
+                              StringRef velocities, StringRef masses,
+                              StringRef indent) {
+  os << indent << result << " = md.sum_particles gather(" << velocities
+     << ", " << masses << " : !vec, !real) {\n"
+     << indent << "^bb0(%kv_v: vector<3xf64>, %kv_m: f64):\n"
+     << indent << "  %kv_c = arith.constant 5.0e-01 : f64\n"
+     << indent << "  %kv_hm = arith.mulf %kv_c, %kv_m : f64\n"
+     << indent << "  %kv_hmb = vector.broadcast %kv_hm : f64 to vector<3xf64>\n"
+     << indent << "  %kv_sq = arith.mulf %kv_v, %kv_v : vector<3xf64>\n"
+     << indent << "  %kv_ke = arith.mulf %kv_hmb, %kv_sq : vector<3xf64>\n"
+     << indent << "  md.yield %kv_ke : vector<3xf64>\n"
+     << indent << "} : vector<3xf64>\n";
+}
+
+/// `result`, the scale of each axis of the reference positions of the
+/// restraints: the edges of the cell over those of the file
+/// (`%rest_edges`).
+static void emitReferenceScale(llvm::raw_ostream &os, StringRef indent,
+                               StringRef result, const std::string &e0,
+                               const std::string &e1, const std::string &e2) {
+  os << indent << result << "_e = vector.from_elements " << e0 << ", " << e1
+     << ", " << e2 << " : vector<3xf64>\n"
+     << indent << result << " = arith.divf " << result
+     << "_e, %rest_edges : vector<3xf64>\n";
+}
+
+/// The sum of the elements of the vector of three `vector`.
+static void emitSum3(llvm::raw_ostream &os, StringRef result,
+                     StringRef vector, StringRef indent) {
+  os << indent << result << " = vector.reduction <add>, " << vector
+     << " : vector<3xf64> into f64\n";
+}
+
 /// The trace of the virial `virial`, which enters the pressure.
 static void emitTrace(llvm::raw_ostream &os, StringRef result,
                       StringRef virial, StringRef indent) {
@@ -1652,12 +1700,14 @@ void Builder::emitPrograms() {
                      (scales || StringRef(kind.name) == "step_virial");
     os << "dyn.program @" << kind.name
        << "(%x: !vec, %v: !vec, %f: !vec, %m: !real,\n"
-       << "    %cell: !md.cell, %dt: f64" << (scales ? ", %mu: f64" : "")
+       << "    %cell: !md.cell, %dt: f64"
+       << (scales ? ", %mu: vector<3xf64>" : "")
        << getScaleParameter() << getFieldParameters() << ")\n"
        << "    -> (!vec, !vec, !vec" << (withEnergy ? ", f64" : "")
-       << (withVirial ? ", vector<9xf64>" : "") << (molecular ? ", f64" : "")
-       << (returnsCurrent ? ", !vec" : "") << (scales ? ", f64" : "")
-       << ")\n"
+       << (withVirial ? ", vector<9xf64>" : "")
+       << (molecular ? ", vector<3xf64>" : "")
+       << (returnsCurrent ? ", !vec" : "")
+       << (scales ? ", vector<3xf64>" : "") << ")\n"
        << "    attributes {"
        << (leapfrog ? "velocity_offset = -0.5,\n                " : "")
        << "provides = [\"symplectic\", \"time_reversible\"]} {\n"
@@ -1680,27 +1730,20 @@ void Builder::emitPrograms() {
     std::string drifting = "%v1";
     std::string drifted = sites || constraints ? "%x1d" : "%x1";
     if (scales) {
+      // The scale of each axis, μ, the same for the three with isotropic
+      // coupling (D119).
       os << "  %xh = dyn.drift %x, %v1, %half : !vec\n"
-         << "  %mu_unit = arith.constant 1.0 : f64\n"
-         << "  %mu_m1 = arith.subf %mu_unit, %mu : f64\n"
-         << "  %muinv = arith.divf %mu_unit, %mu : f64\n";
+         << "  %mu_unit = arith.constant dense<1.0> : vector<3xf64>\n"
+         << "  %mu_m1 = arith.subf %mu_unit, %mu : vector<3xf64>\n"
+         << "  %muinv = arith.divf %mu_unit, %mu : vector<3xf64>\n";
       std::string scaled = emitGroupScaling("  ", "%xh", "%mu", "%mu_m1",
                                             "%cell", "%m", "%r_", "_t");
-      // The kinetic energy of the velocities that the scaling takes.
-      os << "  %khalf = md.sum_particles gather(%v1, %m : !vec, !real) {\n"
-         << "  ^bb0(%kh_v: vector<3xf64>, %kh_m: f64):\n"
-         << "    %kh_c = arith.constant 5.0e-01 : f64\n"
-         << "    %kh_s = arith.mulf %kh_v, %kh_v : vector<3xf64>\n"
-         << "    %kh_r = vector.reduction <add>, %kh_s : vector<3xf64> into "
-            "f64\n"
-         << "    %kh_mr = arith.mulf %kh_m, %kh_r : f64\n"
-         << "    %kh_k = arith.mulf %kh_c, %kh_mr : f64\n"
-         << "    md.yield %kh_k : f64\n"
-         << "  } : f64\n";
+      // The kinetic energy of each axis of the velocities that the
+      // scaling takes.
+      emitKineticVector(os, "%khalf", "%v1", "%m", "  ");
       os << "  %v1t = md.map_particles gather(%v1 : !vec) {\n"
          << "  ^bb0(%v_i: vector<3xf64>):\n"
-         << "    %mib = vector.broadcast %muinv : f64 to vector<3xf64>\n"
-         << "    %v_s = arith.mulf %mib, %v_i : vector<3xf64>\n"
+         << "    %v_s = arith.mulf %muinv, %v_i : vector<3xf64>\n"
          << "    md.yield %v_s : vector<3xf64>\n"
          << "  } : !vec\n"
          << "  " << drifted << " = dyn.drift " << scaled
@@ -1779,9 +1822,9 @@ void Builder::emitPrograms() {
     }
     std::string groups;
     if (molecular) {
-      emitTrace(os, "%gt1", virial, "  ");
-      groups = emitMolecularTrace("  ", "%gt1", "%x1", "%f1", "%cell", "%m",
-                                  "%r_", "1");
+      emitDiagonal(os, "%gd1", virial, "  ");
+      groups = emitMolecularDiagonal("  ", "%gd1", "%x1", "%f1", "%cell",
+                                     "%m", "%r_", "1");
     }
     if (leapfrog && !withVirial && !scales) {
       os << "  dyn.return %x1, " << velocities
@@ -1813,9 +1856,9 @@ void Builder::emitPrograms() {
          << "\n"
          << "      : !vec, !vec, !vec" << (withEnergy ? ", f64" : "")
          << (withVirial ? ", vector<9xf64>" : "")
-         << (molecular ? ", f64" : "")
-         << (returnsCurrent ? ", !vec" : "") << (scales ? ", f64" : "")
-         << "\n";
+         << (molecular ? ", vector<3xf64>" : "")
+         << (returnsCurrent ? ", !vec" : "")
+         << (scales ? ", vector<3xf64>" : "") << "\n";
     else
       os << "  dyn.return %x1, %v2, %f1 : !vec, !vec, !vec\n";
     os << "}\n\n";
@@ -2852,8 +2895,8 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
        << "_0, %edge" << here << "_1, %edge" << here << "_2\n";
     if (scalesReference()) {
       scaleName = "%rest_scale" + here;
-      os << inner << scaleName << " = arith.divf %edge" << here
-         << "_0, %rest_edge : f64\n";
+      emitReferenceScale(os, inner, scaleName, "%edge" + here + "_0",
+                         "%edge" + here + "_1", "%edge" + here + "_2");
     }
   }
 
@@ -2890,8 +2933,8 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
          << "_0, %edger" << here << "_1, %edger" << here << "_2\n";
       if (scalesReference()) {
         scaleName = "%rest_scaler" + here;
-        os << inner << scaleName << " = arith.divf %edger" << here
-           << "_0, %rest_edge : f64\n";
+        emitReferenceScale(os, inner, scaleName, "%edger" + here + "_0",
+                           "%edger" + here + "_1", "%edger" + here + "_2");
       }
     }
 
@@ -2979,14 +3022,28 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       bool leapfrog = isLeapfrog();
       std::string kinetic, groups, trace, x, v;
       if (scalesEveryStep()) {
-        // The pressure of the state that the step before left (D92).
+        // The pressure of the state that the step before left (D92): the
+        // diagonals of the virial and of the virial of the groups, and the
+        // kinetic energy of each axis.
         std::string m = "%tm" + here;
-        for (int k = 0; k != 3; ++k)
-          os << inner << m << "_" << k << " = memref.load %trotter_memory"
-             << "[%c_edge" << k << "] : memref<3xf64>\n";
-        trace = m + "_0";
-        groups = m + "_1";
-        kinetic = m + "_2";
+        std::string loaded[9];
+        for (int slot = 0; slot != 9; ++slot) {
+          loaded[slot] = m + "_" + std::to_string(slot);
+          os << inner << m << "_i" << slot << " = arith.constant " << slot
+             << " : index\n"
+             << inner << loaded[slot] << " = memref.load %trotter_memory["
+             << m << "_i" << slot << "] : memref<9xf64>\n";
+        }
+        std::string vectors[3];
+        for (int v = 0; v != 3; ++v) {
+          vectors[v] = m + "_v" + std::to_string(v);
+          os << inner << vectors[v] << " = vector.from_elements "
+             << loaded[3 * v] << ", " << loaded[3 * v + 1] << ", "
+             << loaded[3 * v + 2] << " : vector<3xf64>\n";
+        }
+        trace = vectors[0];
+        groups = vectors[1];
+        kinetic = vectors[2];
         x = "%x" + last;
         v = "%v" + last;
       } else {
@@ -2998,10 +3055,10 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
            << getFieldValues(fieldPrefix) << ")\n"
            << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
            << getScaleType() << getFieldTypes()
-           << ") -> (!vec, !vec, !vec, vector<9xf64>, f64"
+           << ") -> (!vec, !vec, !vec, vector<9xf64>, vector<3xf64>"
            << (leapfrog ? ", !vec" : "") << ")\n";
-        trace = "%tr" + a;
-        emitTrace(os, trace, "%w" + a, inner);
+        trace = "%dg" + a;
+        emitDiagonal(os, trace, "%w" + a, inner);
         groups = "%gw" + a;
         x = "%x" + a;
         v = "%v" + a;
@@ -3026,11 +3083,12 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
          << (scalesEveryStep() ? last : a) << ", " << massName << ", "
          << scaling.cell << ", %dt, " << scaling.mu << getScaleValue()
          << getFieldValues(fieldPrefix) << ")\n"
-         << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64, f64"
+         << inner
+         << "    : (!vec, !vec, !vec, !real, !md.cell, f64, vector<3xf64>"
          << getScaleType() << getFieldTypes() << ") -> (!vec, !vec, !vec"
          << (withEnergy ? ", f64" : "")
-         << (virial ? ", vector<9xf64>, f64" : "")
-         << (leapfrog ? ", !vec" : "") << ", f64)\n";
+         << (virial ? ", vector<9xf64>, vector<3xf64>" : "")
+         << (leapfrog ? ", !vec" : "") << ", vector<3xf64>)\n";
       scaleName = outerScale;
       scaling.kineticHalf = "%kh" + n;
       if (virial)
@@ -3046,8 +3104,8 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         std::string k = "k" + here;
         TrotterScaling scaling = emitTrotterSteps(k, /*withEnergy=*/false);
         if (countsAfterScaling()) {
-          trace = "%tr" + k;
-          emitTrace(os, trace, "%w" + k, inner);
+          trace = "%dg" + k;
+          emitDiagonal(os, trace, "%w" + k, inner);
         }
         std::string coupled =
             getCoupled("%x" + k, "%v" + k, "%f" + k, "", trace,
@@ -3071,8 +3129,8 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
            << getFieldTypes()
            << ") -> (!vec, !vec, !vec, f64, vector<9xf64>"
            << (isLeapfrog() ? ", !vec" : "") << ")\n";
-        trace = "%trk" + here;
-        emitTrace(os, trace, "%wk" + here, inner);
+        trace = "%dgk" + here;
+        emitDiagonal(os, trace, "%wk" + here, inner);
         emitStep();
         std::string coupled =
             getCoupled("%xk" + here, "%vk" + here, "%fk" + here,
@@ -3154,13 +3212,16 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       else
         emitForceSquare(os, "%g", "%fl", massName, inner);
       emitTrace(os, "%tr", virialName, inner);
+      if (couplesBelow && control.barostat)
+        emitDiagonal(os, "%dg", virialName, inner);
       if (!scalesHere)
         emitStep();
       os << inner << "func.call @mdrtWriteEnergies(%step" << here << ", "
          << energyName << ", %k, %g, %tr) : (i64, f64, f64, f64, f64) -> ()\n";
       std::string yielded =
           couplesBelow
-              ? getCoupled("%xl", "%vl", "%fl", energyName, "%tr",
+              ? getCoupled("%xl", "%vl", "%fl", energyName,
+                           control.barostat ? "%dg" : "",
                            isLeapfrog() && control.barostat ? now : "",
                            scalesHere ? &scaling : nullptr)
               : getValues("l");
@@ -3266,13 +3327,14 @@ std::string Builder::emitGroupTrace(StringRef indent, StringRef trace,
   return groupTrace;
 }
 
-std::string Builder::emitMolecularTrace(StringRef indent, StringRef trace,
+std::string Builder::emitMolecularDiagonal(StringRef indent,
+                                           StringRef diagonal,
                                         StringRef positions, StringRef forces,
                                         StringRef cell, StringRef masses,
                                         StringRef relations, StringRef tag) {
   std::string t = tag.str();
   std::string inner = (indent + "  ").str();
-  std::string molecular = trace.str();
+  std::string molecular = diagonal.str();
   for (const Program::TupleSet *set : getRigidGroups()) {
     unsigned count = set->arity - 1;
     std::string coordinates, arguments;
@@ -3287,7 +3349,7 @@ std::string Builder::emitMolecularTrace(StringRef indent, StringRef trace,
       arguments += "%vs_m" + std::to_string(k) + ": f64" +
                    (k == count ? "" : ", ");
     // With the places r_k about the first particle and c the center of
-    // mass about it, Σ (r_k − c)·F_k = Σ r_k·F_k − c·Σ F_k.
+    // mass about it, Σ (r_k − c) ⊙ F_k = Σ r_k ⊙ F_k − c ⊙ Σ F_k.
     std::string internal = "%bgi" + t + "_" + set->name;
     os << indent << internal << " = md.sum_tuples " << relations
        << set->name << ", " << positions << ", " << cell << "\n"
@@ -3297,22 +3359,24 @@ std::string Builder::emitMolecularTrace(StringRef indent, StringRef trace,
        << indent << "^bb0(" << arguments << "):\n";
     SiteKernel k(os, inner);
     std::string total = "%vs_m0", moment = k.zero(), sum = "%vs_f0",
-                places = k.constant(0.0);
+                places = k.zero();
     for (unsigned j = 1; j <= count; ++j) {
       std::string n = std::to_string(j);
       total = k.real("addf", total, "%vs_m" + n);
       moment = k.vector("addf", moment, k.scale("%vs_m" + n, "%vs_r" + n));
       sum = k.vector("addf", sum, "%vs_f" + n);
-      places = k.real("addf", places, k.dot("%vs_r" + n, "%vs_f" + n));
+      places = k.vector("addf", places,
+                        k.vector("mulf", "%vs_r" + n, "%vs_f" + n));
     }
     std::string center =
         k.scale(k.real("divf", k.constant(1.0), total), moment);
-    std::string about = k.real("subf", places, k.dot(center, sum));
-    os << inner << "md.yield " << about << " : f64\n"
-       << indent << "} : !rel_" << set->name << ", !vec -> f64\n";
+    std::string about =
+        k.vector("subf", places, k.vector("mulf", center, sum));
+    os << inner << "md.yield " << about << " : vector<3xf64>\n"
+       << indent << "} : !rel_" << set->name << ", !vec -> vector<3xf64>\n";
     std::string next = "%bgm" + t + "_" + set->name;
     os << indent << next << " = arith.subf " << molecular << ", " << internal
-       << " : f64\n";
+       << " : vector<3xf64>\n";
     molecular = next;
   }
   return molecular;
@@ -3328,9 +3392,8 @@ std::string Builder::emitGroupScaling(StringRef indent, StringRef positions,
   os << indent << newPositions << " = md.map_particles gather(" << positions
      << " : !vec) {\n"
      << indent << "^bb0(%x_i: vector<3xf64>):\n"
-     << indent << "  %mub = vector.broadcast " << mu
-     << " : f64 to vector<3xf64>\n"
-     << indent << "  %x_scaled = arith.mulf %mub, %x_i : vector<3xf64>\n"
+     << indent << "  %x_scaled = arith.mulf " << mu
+     << ", %x_i : vector<3xf64>\n"
      << indent << "  md.yield %x_scaled : vector<3xf64>\n"
      << indent << "} : !vec\n";
   // A group that the constraints keep rigid moves with its center of
@@ -3369,7 +3432,7 @@ std::string Builder::emitGroupScaling(StringRef indent, StringRef positions,
       std::string place =
           j == 0 ? k.negate(center)
                  : k.vector("subf", "%vs_r" + std::to_string(j), center);
-      yielded += (j == 0 ? "" : ", ") + k.scale(oneMinusMu, place);
+      yielded += (j == 0 ? "" : ", ") + k.vector("mulf", oneMinusMu, place);
       types += (j == 0 ? "" : ", ") + std::string("vector<3xf64>");
     }
     os << inner << "md.yield " << yielded << " : " << types << "\n"
@@ -3387,7 +3450,7 @@ std::string Builder::emitGroupScaling(StringRef indent, StringRef positions,
 }
 
 void Builder::emitStrain(StringRef indent, StringRef kinetic,
-                         StringRef trace, StringRef tag, StringRef step) {
+                         StringRef diagonal, StringRef tag, StringRef step) {
   std::string t = tag.str();
   for (int k = 0; k != 3; ++k)
     os << indent << "%be" << t << "_" << k << " = memref.load %box_memory"
@@ -3396,34 +3459,82 @@ void Builder::emitStrain(StringRef indent, StringRef kinetic,
      << "_1 : f64\n"
      << indent << "%bv" << t << " = arith.mulf %bxy" << t << ", %be" << t
      << "_2 : f64\n";
+  // The pressure of each axis, in bar: (2 K_a + W_aa + C / (3 V)) / V, with
+  // C / V the trace of the virials of the constant terms.
   os << indent << "%bk2" << t << " = arith.addf " << kinetic << ", "
-     << kinetic << " : f64\n"
-     << indent << "%bw0" << t << " = arith.addf %bk2" << t << ", " << trace
-     << " : f64\n"
+     << kinetic << " : vector<3xf64>\n"
+     << indent << "%bw0" << t << " = arith.addf %bk2" << t << ", "
+     << diagonal << " : vector<3xf64>\n"
      << indent << "%bwc" << t << " = arith.divf %baro_constant, %bv" << t
      << " : f64\n"
-     << indent << "%bw" << t << " = arith.addf %bw0" << t << ", %bwc" << t
-     << " : f64\n"
-     << indent << "%b3v" << t << " = arith.mulf %c_three, %bv" << t
-     << " : f64\n"
-     << indent << "%bpi" << t << " = arith.divf %bw" << t << ", %b3v" << t
-     << " : f64\n"
-     << indent << "%bp" << t << " = arith.mulf %bpi" << t
-     << ", %c_bar : f64\n"
-     << indent << "%strain" << t
-     << " = func.call @mdrtBarostatStrain(%seed, " << step << ", %bp" << t
-     << ", %baro_target, %bv" << t
-     << ", %baro_kt, %baro_beta, %baro_rate)\n"
-     << indent << "    : (i64, i64, f64, f64, f64, f64, f64, f64) -> f64\n"
-     << indent << "%bs3" << t << " = arith.mulf %strain" << t
+     << indent << "%bwc3" << t << " = arith.mulf %bwc" << t
      << ", %c_third : f64\n"
-     << indent << "%mu" << t << " = math.exp %bs3" << t << " : f64\n"
-     << indent << "%muinv" << t << " = arith.divf %c_unit, %mu" << t
-     << " : f64\n";
+     << indent << "%bwcb" << t << " = vector.broadcast %bwc3" << t
+     << " : f64 to vector<3xf64>\n"
+     << indent << "%bw" << t << " = arith.addf %bw0" << t << ", %bwcb" << t
+     << " : vector<3xf64>\n"
+     << indent << "%bpc" << t << " = arith.divf %c_bar, %bv" << t
+     << " : f64\n"
+     << indent << "%bpcb" << t << " = vector.broadcast %bpc" << t
+     << " : f64 to vector<3xf64>\n"
+     << indent << "%bp3" << t << " = arith.mulf %bw" << t << ", %bpcb" << t
+     << " : vector<3xf64>\n";
+  if (!control.semiIsotropic) {
+    // Isotropic: the mean pressure gives ε, the change of ln V, by a step
+    // of λ = √V (eq. S7 of [Bernetti2020]); each axis scales by ε / 3.
+    emitSum3(os, "%bps" + t, "%bp3" + t, indent);
+    os << indent << "%bp" << t << " = arith.mulf %bps" << t
+       << ", %c_third : f64\n"
+       << indent << "%strain" << t
+       << " = func.call @mdrtBarostatStrain(%seed, " << step << ", %bp" << t
+       << ", %baro_target, %bv" << t
+       << ", %baro_kt, %baro_beta, %baro_rate)\n"
+       << indent << "    : (i64, i64, f64, f64, f64, f64, f64, f64) -> f64\n"
+       << indent << "%bsa" << t << " = arith.mulf %strain" << t
+       << ", %c_third : f64\n"
+       << indent << "%bs3" << t << " = vector.broadcast %bsa" << t
+       << " : f64 to vector<3xf64>\n";
+  } else {
+    // Semi-isotropic: the mean pressure of x and y gives the change of
+    // ln A, that of z the change of ln L, by eqs. (9a) and (9b) of
+    // [Bernetti2020] with their own noises (D119); x and y scale by half
+    // the first, z by the second.
+    os << indent << "%bpx" << t << " = vector.extract %bp3" << t
+       << "[0] : f64 from vector<3xf64>\n"
+       << indent << "%bpy" << t << " = vector.extract %bp3" << t
+       << "[1] : f64 from vector<3xf64>\n"
+       << indent << "%bpz" << t << " = vector.extract %bp3" << t
+       << "[2] : f64 from vector<3xf64>\n"
+       << indent << "%bpxys" << t << " = arith.addf %bpx" << t << ", %bpy"
+       << t << " : f64\n"
+       << indent << "%bpxy" << t << " = arith.mulf %bpxys" << t
+       << ", %couple_half : f64\n"
+       << indent << "%strainxy" << t
+       << " = func.call @mdrtBarostatStrainArea(%seed, " << step << ", %bpxy"
+       << t << ", %baro_target, %bv" << t << ", %be" << t
+       << "_2, %baro_kt, %baro_beta, %baro_rate, %baro_tension)\n"
+       << indent
+       << "    : (i64, i64, f64, f64, f64, f64, f64, f64, f64, f64) -> f64\n"
+       << indent << "%strainz" << t
+       << " = func.call @mdrtBarostatStrainHeight(%seed, " << step
+       << ", %bpz" << t << ", %baro_target, %bv" << t
+       << ", %baro_kt, %baro_beta_z, %baro_rate)\n"
+       << indent << "    : (i64, i64, f64, f64, f64, f64, f64, f64) -> f64\n"
+       << indent << "%bsxy" << t << " = arith.mulf %strainxy" << t
+       << ", %couple_half : f64\n"
+       << indent << "%bs3" << t << " = vector.from_elements %bsxy" << t
+       << ", %bsxy" << t << ", %strainz" << t << " : vector<3xf64>\n";
+  }
+  os << indent << "%mu" << t << " = math.exp %bs3" << t
+     << " : vector<3xf64>\n"
+     << indent << "%muinv" << t << " = arith.divf %c_unit3, %mu" << t
+     << " : vector<3xf64>\n";
   // The new cell, which the next iteration takes from memory.
   for (int k = 0; k != 3; ++k)
-    os << indent << "%bn" << t << "_" << k << " = arith.mulf %be" << t
-       << "_" << k << ", %mu" << t << " : f64\n"
+    os << indent << "%bmu" << t << "_" << k << " = vector.extract %mu" << t
+       << "[" << k << "] : f64 from vector<3xf64>\n"
+       << indent << "%bn" << t << "_" << k << " = arith.mulf %be" << t
+       << "_" << k << ", %bmu" << t << "_" << k << " : f64\n"
        << indent << "memref.store %bn" << t << "_" << k
        << ", %box_memory[%c_edge" << k << "] : memref<3xf64>\n";
   os << indent << "func.call @mdrtSetBox(%bn" << t << "_0, %bn" << t
@@ -3431,15 +3542,16 @@ void Builder::emitStrain(StringRef indent, StringRef kinetic,
 }
 
 Builder::TrotterScaling Builder::emitTrotterStrain(
-    StringRef indent, StringRef velocities, StringRef trace, StringRef groups,
-    StringRef tag, StringRef step, StringRef givenKinetic) {
+    StringRef indent, StringRef velocities, StringRef diagonal,
+    StringRef groups, StringRef tag, StringRef step,
+    StringRef givenKinetic) {
   std::string t = tag.str();
-  // The kinetic energy of the pressure: that of the velocities of the
-  // step, without the center of mass.
+  // The kinetic energy of the pressure, axis by axis: that of the
+  // velocities of the step, without the center of mass.
   std::string kinetic = givenKinetic.str();
   if (kinetic.empty())
     kinetic = emitKineticWithoutCenter(indent, velocities, massName, t);
-  emitStrain(indent, kinetic, trace, t, step);
+  emitStrain(indent, kinetic, diagonal, t, step);
   return finishTrotterStrain(indent, groups, t);
 }
 
@@ -3449,7 +3561,7 @@ std::string Builder::emitKineticWithoutCenter(StringRef indent,
                                               StringRef tag) {
   std::string t = tag.str();
   std::string kinetic = "%tk" + t;
-  emitKineticEnergy(os, kinetic, velocities, masses, indent);
+  emitKineticVector(os, kinetic, velocities, masses, indent);
   if (control.comPeriod > 0) {
     os << indent << "%tpc" << t << " = md.sum_particles gather("
        << velocities << ", " << masses << " : !vec, !real) {\n"
@@ -3462,26 +3574,38 @@ std::string Builder::emitKineticWithoutCenter(StringRef indent,
        << ", %total_mass : vector<3xf64>\n"
        << indent << "%tpvs" << t << " = arith.mulf %tpc" << t << ", %tvcm"
        << t << " : vector<3xf64>\n"
-       << indent << "%tpv" << t << " = vector.reduction <add>, %tpvs" << t
-       << " : vector<3xf64> into f64\n"
-       << indent << "%tkcm" << t << " = arith.mulf %couple_half, %tpv" << t
-       << " : f64\n"
+       << indent << "%tkcm" << t << " = arith.mulf %c_half3, %tpvs" << t
+       << " : vector<3xf64>\n"
        << indent << "%tkt" << t << " = arith.subf " << kinetic << ", %tkcm"
-       << t << " : f64\n";
+       << t << " : vector<3xf64>\n";
     kinetic = "%tkt" + t;
   }
   return kinetic;
 }
 
-void Builder::emitStoreTrotterState(StringRef indent, StringRef trace,
+void Builder::emitStoreTrotterState(StringRef indent, StringRef diagonal,
                                     StringRef groups, StringRef kinetic) {
-  StringRef values[] = {trace, groups, kinetic};
-  for (int k = 0; k != 3; ++k)
-    os << indent << "memref.store " << values[k]
-       << ", %trotter_memory[%c_edge" << k << "] : memref<3xf64>\n";
+  static unsigned stores = 0;
+  std::string t = std::to_string(stores++);
+  StringRef vectors[] = {diagonal, groups, kinetic};
+  std::string values[9];
+  for (int v = 0; v != 3; ++v)
+    for (int k = 0; k != 3; ++k) {
+      int slot = 3 * v + k;
+      values[slot] = "%tms" + t + "_" + std::to_string(slot);
+      os << indent << values[slot] << " = vector.extract " << vectors[v]
+         << "[" << k << "] : f64 from vector<3xf64>\n"
+         << indent << "%tmi" << t << "_" << slot << " = arith.constant "
+         << slot << " : index\n"
+         << indent << "memref.store " << values[slot]
+         << ", %trotter_memory[%tmi" << t << "_" << slot
+         << "] : memref<9xf64>\n";
+    }
   // The checkpoints keep it, so a run that continues takes the same.
-  os << indent << "func.call @mdrtSetBarostatState(" << trace << ", "
-     << groups << ", " << kinetic << ") : (f64, f64, f64) -> ()\n";
+  os << indent << "func.call @mdrtSetBarostatState(";
+  for (int slot = 0; slot != 9; ++slot)
+    os << (slot ? ", " : "") << values[slot];
+  os << ") : (f64, f64, f64, f64, f64, f64, f64, f64, f64) -> ()\n";
 }
 
 Builder::TrotterScaling Builder::finishTrotterStrain(StringRef indent,
@@ -3494,7 +3618,7 @@ Builder::TrotterScaling Builder::finishTrotterStrain(StringRef indent,
   scaling.logMu = "%bs3" + t;
   scaling.workBefore = "%tw" + t;
   os << indent << scaling.workBefore << " = arith.addf " << groups
-     << ", %bwc" << t << " : f64\n";
+     << ", %bwcb" << t << " : vector<3xf64>\n";
   scaling.newVolume = "%tvn" + t;
   os << indent << "%tvn0" << t << " = arith.mulf %bn" << t << "_0, %bn" << t
      << "_1 : f64\n"
@@ -3505,8 +3629,8 @@ Builder::TrotterScaling Builder::finishTrotterStrain(StringRef indent,
      << "_0, %bn" << t << "_1, %bn" << t << "_2\n";
   if (scalesReference()) {
     scaling.scale = "%tscale" + t;
-    os << indent << scaling.scale << " = arith.divf %bn" << t
-       << "_0, %rest_edge : f64\n";
+    emitReferenceScale(os, indent, scaling.scale, "%bn" + t + "_0",
+                       "%bn" + t + "_1", "%bn" + t + "_2");
   }
   return scaling;
 }
@@ -3515,7 +3639,7 @@ Builder::Coupled
 Builder::emitCoupling(StringRef indent, StringRef positions,
                       StringRef velocities, StringRef forces,
                       StringRef energy, StringRef tag, StringRef step,
-                      StringRef trace, const TrotterScaling *trotter) {
+                      StringRef diagonal, const TrotterScaling *trotter) {
   std::string newForces = forces.str();
   bool removesMotion = control.comPeriod > 0;
   std::string t = tag.str();
@@ -3543,9 +3667,29 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
   // The energy that the coupling takes: that of the center of mass, and
   // what the thermostat takes from the rest.
   std::string bath = "%kcm" + t;
+  std::string kineticAxes;
+  if (control.barostat) {
+    // The kinetic energy of each axis, which the pressure of each axis
+    // takes, and of the center of mass; their sums for the thermostat.
+    os << indent << "// The kinetic energy of each axis.\n";
+    emitKineticVector(os, "%kv" + t, velocities, massName, indent);
+    emitSum3(os, "%kc" + t, "%kv" + t, indent);
+    std::string vector = "%kv" + t;
+    if (removesMotion) {
+      os << indent << "%pvv" << t << " = arith.mulf %pc" << t << ", %vcm" << t
+         << " : vector<3xf64>\n"
+         << indent << "%kcmv" << t << " = arith.mulf %c_half3, %pvv" << t
+         << " : vector<3xf64>\n"
+         << indent << "%ktv" << t << " = arith.subf %kv" << t << ", %kcmv"
+         << t << " : vector<3xf64>\n";
+      vector = "%ktv" + t;
+    }
+    kineticAxes = vector;
+  }
   if (control.thermostat) {
     std::string kinetic = "%kc" + t;
-    emitKineticEnergy(os, kinetic, velocities, massName, indent);
+    if (!control.barostat)
+      emitKineticEnergy(os, kinetic, velocities, massName, indent);
     if (removesMotion) {
       os << indent << "%kt" << t << " = arith.subf %kc" << t << ", %kcm" << t
          << " : f64\n";
@@ -3572,83 +3716,112 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
   if (control.barostat) {
     // The kinetic energy of the pressure: that of the velocities of the
     // step, without the center of mass.
-    std::string kinetic = removesMotion ? "%kt" + t : "%kc" + t;
+    std::string kinetic = kineticAxes;
     if (!trotter)
-      emitStrain(indent, kinetic, trace, t, step);
-    // The energy that the scaling gives the system: exactly in the
-    // velocities, (1/μ² − 1) K, and in the positions either exactly, from
-    // the energy of the scaled positions (below), or to first order,
-    // −(μ − 1) tr W, with W the sum of d (x) K over the pairs and the
-    // virials of the constant terms.
+      emitStrain(indent, kinetic, diagonal, t, step);
+    // The energy that the scaling gives the system, summed over the axes:
+    // exactly in the velocities, (1/μ_a² − 1) K_a, and in the positions
+    // either exactly, from the energy of the scaled positions (below), or
+    // to first order, −(μ_a − 1) W_aa, with W the virial of the groups and
+    // of the constant terms.
     bool exact = control.barostatWork == BarostatWork::Exact;
-    std::string after = control.thermostat ? "%kn" + t : kinetic;
+    // The kinetic energy of each axis after the thermostat.
+    std::string after = kinetic;
+    if (control.thermostat) {
+      os << indent << "%alpha2b" << t << " = vector.broadcast %alpha2" << t
+         << " : f64 to vector<3xf64>\n"
+         << indent << "%knv" << t << " = arith.mulf %alpha2b" << t << ", "
+         << kinetic << " : vector<3xf64>\n";
+      after = "%knv" + t;
+    }
     std::string relations =
         ("%r" + StringRef(fieldPrefix).drop_front(2)).str();
     if (trotter) {
       // The scaling was made within the drift of the step (Trotter type,
-      // [Bernetti2020], SI Sec. V.C): the velocities of its middle by 1/μ,
-      // which changes their kinetic energy by (1/μ² − 1) K, and the
-      // positions by μ, which changes the potential energy by −ln μ W to
-      // first order, W the trace of the virial of the groups, Σ X·F_group,
-      // with those of the constant terms. W is taken as the mean of those
-      // of the evaluations before and after the scaling, which makes the
-      // count exact to second order in the strain (D92). The virial of the
-      // step with twice the internal kinetic energy would not do: the
-      // constraints of the step that scales straddle the scaling, and the
-      // count was biased by the square of the strain (D116).
+      // [Bernetti2020], SI Sec. V.C): the velocities of its middle by 1/μ_a
+      // along axis a, which changes their kinetic energy by
+      // Σ (1/μ_a² − 1) K_a, and the positions by μ_a, which changes the
+      // potential energy by −Σ ln μ_a W_aa to first order, W the virial of
+      // the groups, Σ X ⊙ F_group, with those of the constant terms. W is
+      // taken as the mean of those of the evaluations before and after the
+      // scaling, which makes the count exact to second order in the strain
+      // (D92). The virial of the step with twice the internal kinetic
+      // energy would not do: the constraints of the step that scales
+      // straddle the scaling, and the count was biased by the square of the
+      // strain (D116).
       // To first order, from the virial before the scaling only.
-      if (!countsAfterScaling())
-        os << indent << "%bwork" << t << " = arith.mulf "
-           << trotter->workBefore << ", " << trotter->logMu << " : f64\n";
-      std::string after = countsAfterScaling() ? trotter->groupsAfter : "";
+      if (!countsAfterScaling()) {
+        os << indent << "%bwl" << t << " = arith.mulf "
+           << trotter->workBefore << ", " << trotter->logMu
+           << " : vector<3xf64>\n";
+        emitSum3(os, "%bwork" + t, "%bwl" + t, indent);
+      }
+      std::string groups = countsAfterScaling() ? trotter->groupsAfter : "";
       // With a scaling every step, the state that the next one takes its
       // pressure from: the kinetic energy after the thermostat.
       if (scalesEveryStep())
-        emitStoreTrotterState(indent, trace, after,
-                              control.thermostat ? "%kn" + t : kinetic);
-      if (countsAfterScaling())
+        emitStoreTrotterState(indent, diagonal, groups, after);
+      if (countsAfterScaling()) {
         os << indent << "%bwca" << t << " = arith.divf %baro_constant, "
            << trotter->newVolume << " : f64\n"
-           << indent << "%bwb" << t << " = arith.addf " << after << ", %bwca"
-           << t << " : f64\n"
+           << indent << "%bwca3" << t << " = arith.mulf %bwca" << t
+           << ", %c_third : f64\n"
+           << indent << "%bwcab" << t << " = vector.broadcast %bwca3" << t
+           << " : f64 to vector<3xf64>\n"
+           << indent << "%bwb" << t << " = arith.addf " << groups << ", %bwcab"
+           << t << " : vector<3xf64>\n"
            << indent << "%bws" << t << " = arith.addf " << trotter->workBefore
-           << ", %bwb" << t << " : f64\n"
+           << ", %bwb" << t << " : vector<3xf64>\n"
            << indent << "%bwm" << t << " = arith.mulf %bws" << t
-           << ", %couple_half : f64\n"
-           << indent << "%bwork" << t << " = arith.mulf %bwm" << t << ", "
-           << trotter->logMu << " : f64\n";
+           << ", %c_half3 : vector<3xf64>\n"
+           << indent << "%bwl" << t << " = arith.mulf %bwm" << t << ", "
+           << trotter->logMu << " : vector<3xf64>\n";
+        emitSum3(os, "%bwork" + t, "%bwl" + t, indent);
+      }
       os << indent << "%bmi2" << t << " = arith.mulf " << trotter->muinv
-         << ", " << trotter->muinv << " : f64\n"
+         << ", " << trotter->muinv << " : vector<3xf64>\n"
          << indent << "%bmi21" << t << " = arith.subf %bmi2" << t
-         << ", %c_unit : f64\n"
-         << indent << "%bdk" << t << " = arith.mulf %bmi21" << t << ", "
-         << trotter->kineticHalf << " : f64\n"
+         << ", %c_unit3 : vector<3xf64>\n"
+         << indent << "%bdkv" << t << " = arith.mulf %bmi21" << t << ", "
+         << trotter->kineticHalf << " : vector<3xf64>\n";
+      emitSum3(os, "%bdk" + t, "%bdkv" + t, indent);
+      os
          << indent << "%bdku" << t << " = arith.subf %bdk" << t << ", %bwork"
          << t << " : f64\n"
          << indent << "%btake" << t << " = arith.subf " << bath << ", %bdku"
          << t << " : f64\n";
       bath = "%btake" + t;
     }
-    std::string groupTrace =
-        exact || trotter
-            ? trace.str()
-            : emitGroupTrace(indent, trace, positions, velocities,
-                             cellName, massName, relations, t);
     if (!trotter)
-      os << indent << "%bm1" << t << " = arith.subf %c_unit, %mu" << t
-         << " : f64\n";
-    if (!exact && !trotter)
+      os << indent << "%bm1" << t << " = arith.subf %c_unit3, %mu" << t
+         << " : vector<3xf64>\n";
+    if (!exact && !trotter) {
+      // To first order, isotropic only (Control): the trace of the virial
+      // of the step with twice the internal kinetic energy, a third to
+      // each axis.
+      emitSum3(os, "%dtr" + t, diagonal, indent);
+      std::string groupTrace =
+          emitGroupTrace(indent, "%dtr" + t, positions, velocities, cellName,
+                         massName, relations, t);
       os << indent << "%bwt" << t << " = arith.addf " << groupTrace
          << ", %bwc" << t << " : f64\n"
-         << indent << "%bwork" << t << " = arith.mulf %bm1" << t << ", %bwt"
-         << t << " : f64\n";
-    if (!trotter)
+         << indent << "%bwt3" << t << " = arith.mulf %bwt" << t
+         << ", %c_third : f64\n"
+         << indent << "%bwtb" << t << " = vector.broadcast %bwt3" << t
+         << " : f64 to vector<3xf64>\n"
+         << indent << "%bwl" << t << " = arith.mulf %bm1" << t << ", %bwtb"
+         << t << " : vector<3xf64>\n";
+      emitSum3(os, "%bwork" + t, "%bwl" + t, indent);
+    }
+    if (!trotter) {
       os << indent << "%bmi2" << t << " = arith.mulf %muinv" << t
-         << ", %muinv" << t << " : f64\n"
+         << ", %muinv" << t << " : vector<3xf64>\n"
          << indent << "%bmi21" << t << " = arith.subf %bmi2" << t
-         << ", %c_unit : f64\n"
-         << indent << "%bdk" << t << " = arith.mulf %bmi21" << t << ", "
-         << after << " : f64\n";
+         << ", %c_unit3 : vector<3xf64>\n"
+         << indent << "%bdkv" << t << " = arith.mulf %bmi21" << t << ", "
+         << after << " : vector<3xf64>\n";
+      emitSum3(os, "%bdk" + t, "%bdkv" + t, indent);
+    }
     if (!exact && !trotter) {
       os << indent << "%bgain" << t << " = arith.addf %bwork" << t << ", %bdk"
          << t << " : f64\n"
@@ -3672,8 +3845,8 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
       cellName = cell;
       if (scalesReference()) {
         scaleName = "%bscale" + t;
-        os << indent << scaleName << " = arith.divf %bn" << t
-           << "_0, %rest_edge : f64\n";
+        emitReferenceScale(os, indent, scaleName, "%bn" + t + "_0",
+                           "%bn" + t + "_1", "%bn" + t + "_2");
       }
       if (hasSites()) {
         std::string placed = "%xcs" + t;
@@ -3746,9 +3919,7 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
     value = "%s";
   }
   if (control.barostat && !trotter) {
-    os << indent << "  %mib = vector.broadcast %muinv" << t
-       << " : f64 to vector<3xf64>\n"
-       << indent << "  %v_scaled = arith.mulf %mib, " << value
+    os << indent << "  %v_scaled = arith.mulf %muinv" << t << ", " << value
        << " : vector<3xf64>\n";
     value = "%v_scaled";
   }
@@ -3772,9 +3943,8 @@ void Builder::emitRestraints(StringRef indent, StringRef x,
     os << inner << reference << " = vector.from_elements %rx_i, %ry_i, %rz_i "
                    ": vector<3xf64>\n";
     if (scalesReference()) {
-      os << inner << "%sb_i = vector.broadcast " << scaleName
-         << " : f64 to vector<3xf64>\n"
-         << inner << "%refs_i = arith.mulf %sb_i, %ref_i : vector<3xf64>\n";
+      os << inner << "%refs_i = arith.mulf " << scaleName
+         << ", %ref_i : vector<3xf64>\n";
       reference = "%refs_i";
     }
     os << inner << "%d_i = arith.subf %x_i, " << reference
@@ -3872,8 +4042,16 @@ void Builder::emitConstrainedDescent(StringRef indent, StringRef x,
 }
 
 std::string Builder::emitStartConstraintTrace(StringRef x, StringRef f,
-                                              StringRef v, StringRef trace) {
-  emitConstrainedDescent("  ", x, f, "%gc0");
+                                              StringRef v, StringRef trace,
+                                              bool axes) {
+  // With `axes`, the diagonal instead of the trace, each axis with twice
+  // its own internal kinetic energy: the identity holds for the trace, and
+  // for each axis only in the mean, which serves the first scaling of a
+  // run (D119).
+  std::string name = axes ? "%dgc0" : "%trc0";
+  std::string type = axes ? "vector<3xf64>" : "f64";
+  std::string descent = axes ? "%gc0d" : "%gc0";
+  emitConstrainedDescent("  ", x, f, descent);
   std::vector<const Program::TupleSet *> groups = getShakeSets();
   for (const Program::TupleSet &set : program.tupleSets)
     if (set.name == "settles")
@@ -3894,11 +4072,11 @@ std::string Builder::emitStartConstraintTrace(StringRef x, StringRef f,
     for (unsigned k = 0; k <= count; ++k)
       arguments += "%vs_m" + std::to_string(k) + ": f64" +
                    (k == count ? "" : ", ");
-    std::string sum = "%trc0_" + set->name;
+    std::string sum = name + "_" + set->name;
     os << "  " << sum << " = md.sum_tuples %r_" << set->name << ", " << x
        << ", %cell\n"
        << "    coordinates(" << coordinates << ")\n"
-       << "    gather(%gc0, " << f << ", " << v
+       << "    gather(" << descent << ", " << f << ", " << v
        << ", %m : !vec, !vec, !vec, !real) {\n"
        << "  ^bb0(" << arguments << "):\n";
     SiteKernel k(os, "    ");
@@ -3909,8 +4087,11 @@ std::string Builder::emitStartConstraintTrace(StringRef x, StringRef f,
       std::string n = std::to_string(j);
       std::string force = k.vector(
           "subf", k.scale("%vs_m" + n, "%vs_g" + n), "%vs_f" + n);
-      std::string term = k.dot("%vs_r" + n, force);
-      arms = arms.empty() ? term : k.real("addf", arms, term);
+      std::string term = axes ? k.vector("mulf", "%vs_r" + n, force)
+                              : k.dot("%vs_r" + n, force);
+      arms = arms.empty() ? term
+                          : axes ? k.vector("addf", arms, term)
+                                 : k.real("addf", arms, term);
     }
     // 2 K_int = Σ m |v − V|².
     std::string total = "%vs_m0", moment = k.scale("%vs_m0", "%vs_v0");
@@ -3925,15 +4106,20 @@ std::string Builder::emitStartConstraintTrace(StringRef x, StringRef f,
     for (unsigned j = 0; j <= count; ++j) {
       std::string n = std::to_string(j);
       std::string relative = k.vector("subf", "%vs_v" + n, center);
-      std::string term = k.real("mulf", "%vs_m" + n, k.dot(relative, relative));
-      twice = twice.empty() ? term : k.real("addf", twice, term);
+      std::string term =
+          axes ? k.scale("%vs_m" + n, k.vector("mulf", relative, relative))
+               : k.real("mulf", "%vs_m" + n, k.dot(relative, relative));
+      twice = twice.empty() ? term
+                            : axes ? k.vector("addf", twice, term)
+                                   : k.real("addf", twice, term);
     }
-    std::string virial = k.real("subf", arms, twice);
-    os << "    md.yield " << virial << " : f64\n"
-       << "  } : !rel_" << set->name << ", !vec -> f64\n";
-    std::string next = "%trc0_" + set->name + "_sum";
+    std::string virial = axes ? k.vector("subf", arms, twice)
+                              : k.real("subf", arms, twice);
+    os << "    md.yield " << virial << " : " << type << "\n"
+       << "  } : !rel_" << set->name << ", !vec -> " << type << "\n";
+    std::string next = name + "_" + set->name + "_sum";
     os << "  " << next << " = arith.addf " << current << ", " << sum
-       << " : f64\n";
+       << " : " << type << "\n";
     current = next;
   }
   return current;
@@ -4234,6 +4420,8 @@ void Builder::emitEntry() {
      << "    attributes {llvm.emit_c_interface}\n"
      << "func.func private @mdrtWriteTerms(memref<?xf64>)\n"
      << "    attributes {llvm.emit_c_interface}\n"
+     << "func.func private @mdrtWriteVirial(f64, f64, f64)\n"
+     << "    attributes {llvm.emit_c_interface}\n"
      << "func.func private @mdrtWriteFrame(i64, memref<?x3x" << state
      << ">, memref<?xi32>)\n    attributes {llvm.emit_c_interface}\n"
      << "func.func private @mdrtFinish(memref<?x3x" << state
@@ -4252,10 +4440,15 @@ void Builder::emitEntry() {
   if (control.barostat)
     os << "func.func private @mdrtBarostatStrain(i64, i64, f64, f64, f64, f64, "
           "f64, f64) -> f64\n"
+       << "func.func private @mdrtBarostatStrainArea(i64, i64, f64, f64, f64, "
+          "f64, f64, f64, f64, f64) -> f64\n"
+       << "func.func private @mdrtBarostatStrainHeight(i64, i64, f64, f64, "
+          "f64, f64, f64, f64) -> f64\n"
        << "func.func private @mdrtSetBox(f64, f64, f64)\n"
        << "    attributes {llvm.emit_c_interface}\n";
   if (scalesEveryStep())
-    os << "func.func private @mdrtSetBarostatState(f64, f64, f64)\n"
+    os << "func.func private @mdrtSetBarostatState(f64, f64, f64, f64, f64, "
+          "f64, f64, f64, f64)\n"
        << "    attributes {llvm.emit_c_interface}\n";
   if (control.checkpointPeriod > 0) {
     os << "func.func private @mdrtWriteCheckpoint(i64, memref<?x3x" << state
@@ -4317,23 +4510,30 @@ void Builder::emitEntry() {
   if (changesCell()) {
     // Where the barostat keeps the cell, on the host.
     os << "  %box_memory = memref.alloca() : memref<3xf64>\n";
-    // With a scaling every step, the trace of the virial, that of the
-    // rigid groups, and the kinetic energy without the center of mass of
-    // the state that the last step left (D92).
+    // With a scaling every step, the diagonals of the virial and of that of
+    // the rigid groups, and the kinetic energy of each axis without the
+    // center of mass, of the state that the last step left (D92, D119).
     if (scalesEveryStep())
-      os << "  %trotter_memory = memref.alloca() : memref<3xf64>\n";
+      os << "  %trotter_memory = memref.alloca() : memref<9xf64>\n";
     for (int k = 0; k != 3; ++k)
       os << "  %c_edge" << k << " = arith.constant " << k << " : index\n"
          << "  memref.store %l" << "xyz"[k] << ", %box_memory[%c_edge" << k
          << "] : memref<3xf64>\n";
   }
   if (scalesReference()) {
-    // The edge of the cell of the file, which the reference positions of
-    // the restraints are for.
-    double edge = system.inputBox[0] > 0.0 ? system.inputBox[0]
-                                           : system.box[0];
-    os << "  %rest_edge = arith.constant " << formatReal(edge) << " : f64\n"
-       << "  %rest_scale = arith.divf %lx, %rest_edge : f64\n";
+    // The edges of the cell of the file, which the reference positions of
+    // the restraints are for; they scale with the cell, axis by axis.
+    std::string edges[3];
+    for (int k = 0; k != 3; ++k) {
+      double edge = system.inputBox[k] > 0.0 ? system.inputBox[k]
+                                             : system.box[k];
+      edges[k] = "%rest_edge" + std::to_string(k);
+      os << "  " << edges[k] << " = arith.constant " << formatReal(edge)
+         << " : f64\n";
+    }
+    os << "  %rest_edges = vector.from_elements " << edges[0] << ", "
+       << edges[1] << ", " << edges[2] << " : vector<3xf64>\n";
+    emitReferenceScale(os, "  ", "%rest_scale", "%lx", "%ly", "%lz");
   }
   os << "  %cell = md.orthorhombic_cell %lx, %ly, %lz\n"
      << "  %x" << (program.reorders ? "_in" : "0") << (hasSites() ? "u" : "")
@@ -4437,7 +4637,15 @@ void Builder::emitEntry() {
            << "  %c_three = arith.constant 3.0 : f64\n"
            << "  %c_third = arith.constant "
            << formatReal(1.0 / 3.0) << " : f64\n"
-           << "  %c_unit = arith.constant 1.0 : f64\n";
+           << "  %c_unit = arith.constant 1.0 : f64\n"
+           << "  %c_unit3 = arith.constant dense<1.0> : vector<3xf64>\n"
+           << "  %c_half3 = arith.constant dense<5.0e-01> : vector<3xf64>\n"
+           << "  %baro_beta_z = arith.constant "
+           << formatReal(control.compressibilityZ / bar) << " : f64\n"
+           << "  %baro_tension = arith.constant "
+           << formatReal(control.surfaceTension * control.surfaces *
+                         units::dynePerCmToBarNm)
+           << " : f64\n";
       }
       os << "  %seed = arith.constant " << static_cast<int64_t>(control.seed)
          << " : i64\n"
@@ -4471,6 +4679,13 @@ void Builder::emitEntry() {
       virial = "%w0";
     }
     emitTerms();
+    // The diagonal of the virial, which semi-isotropic coupling takes axis
+    // by axis, for comparison with other programs (D119).
+    if (system.topology) {
+      emitDiagonal(os, "%dgw0", virial, "  ");
+      os << "  call @mdrtWriteVirial(%dgw0_0, %dgw0_4, %dgw0_8)"
+            " : (f64, f64, f64) -> ()\n";
+    }
     emitKineticEnergy(os, "%k0", velocities, "%m", "  ");
     if (hasConstraints())
       os << "  %g0 = arith.constant 0.0 : f64\n";
@@ -4483,13 +4698,20 @@ void Builder::emitEntry() {
     os << "  call @mdrtWriteEnergies(%start, %u0, %k0, %g0, " << trace
        << ")\n"
        << "      : (i64, f64, f64, f64, f64) -> ()\n";
-    // The state that the first scaling takes its pressure from (D92).
-    if (scalesEveryStep())
+    // The state that the first scaling takes its pressure from (D92), by
+    // axes.
+    if (scalesEveryStep()) {
+      emitDiagonal(os, "%dg0", virial, "  ");
+      std::string diagonal = "%dg0";
+      if (hasConstraints())
+        diagonal = emitStartConstraintTrace("%x0", "%f0", velocities,
+                                            diagonal, /*axes=*/true);
       emitStoreTrotterState(
-          "  ", trace,
-          emitMolecularTrace("  ", "%tr0", "%x0", "%f0", "%cell", "%m",
-                             "%r_", "s0"),
+          "  ", diagonal,
+          emitMolecularDiagonal("  ", "%dg0", "%x0", "%f0", "%cell", "%m",
+                                "%r_", "s0"),
           emitKineticWithoutCenter("  ", velocities, "%m", "s0"));
+    }
 
     if (isLeapfrog()) {
       // v(-dt/2) = v(0) - (dt/2) F(0) / m.
@@ -4499,16 +4721,23 @@ void Builder::emitEntry() {
     }
   }
 
-  if (isRestart() && scalesEveryStep() && !system.barostatState.empty()) {
+  if (isRestart() && scalesEveryStep() &&
+      system.barostatState.size() == 9) {
     // The state that the first scaling takes its pressure from, as the
     // checkpoint keeps it (D92).
-    std::string names[3];
-    for (int k = 0; k != 3; ++k) {
-      names[k] = "%bstate" + std::to_string(k);
-      os << "  " << names[k] << " = arith.constant "
-         << formatReal(system.barostatState[k]) << " : f64\n";
+    std::string vectors[3];
+    for (int v = 0; v != 3; ++v) {
+      std::string names[3];
+      for (int k = 0; k != 3; ++k) {
+        names[k] = "%bstate" + std::to_string(3 * v + k);
+        os << "  " << names[k] << " = arith.constant "
+           << formatReal(system.barostatState[3 * v + k]) << " : f64\n";
+      }
+      vectors[v] = "%bstatev" + std::to_string(v);
+      os << "  " << vectors[v] << " = vector.from_elements " << names[0]
+         << ", " << names[1] << ", " << names[2] << " : vector<3xf64>\n";
     }
-    emitStoreTrotterState("  ", names[0], names[1], names[2]);
+    emitStoreTrotterState("  ", vectors[0], vectors[1], vectors[2]);
   } else if (isRestart() && scalesEveryStep()) {
     // A checkpoint of a run that did not scale every step holds no virial:
     // the state that the first scaling takes its pressure from is evaluated
@@ -4538,14 +4767,15 @@ void Builder::emitEntry() {
          << ", %fbs, %m, %ahead_dt : !vec\n";
       current = "%vs_now";
     }
-    emitTrace(os, "%trs", virial, "  ");
-    std::string trace = "%trs";
+    emitDiagonal(os, "%dgs", virial, "  ");
+    std::string diagonal = "%dgs";
     if (hasConstraints())
-      trace = emitStartConstraintTrace("%x0", "%fbs", current, trace);
+      diagonal = emitStartConstraintTrace("%x0", "%fbs", current, diagonal,
+                                          /*axes=*/true);
     emitStoreTrotterState(
-        "  ", trace,
-        emitMolecularTrace("  ", "%trs", "%x0", "%fbs", "%cell", "%m", "%r_",
-                           "s0"),
+        "  ", diagonal,
+        emitMolecularDiagonal("  ", "%dgs", "%x0", "%fbs", "%cell", "%m",
+                              "%r_", "s0"),
         emitKineticWithoutCenter("  ", current, "%m", "s0"));
   }
 

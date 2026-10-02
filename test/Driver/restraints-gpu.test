@@ -16,13 +16,15 @@
 # CHECK:      INFO:      2000 {{.*}} {{2[4-8][0-9]{3}\.[0-9]+$}}
 # CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[3-9]}} of its value
 
-# The factor of the reference, the edge of the cell over that of the file,
-# is taken with the cell in each loop and passed to the steps.
+# The factors of the reference, the edges of the cell over those of the
+# file axis by axis (D119), are taken with the cell in each loop and passed
+# to the steps.
 #
 # MODULE:     dyn.program @step(%x: !vec, %v: !vec, %f: !vec, %m: !real,
-# MODULE-NEXT:    %cell: !md.cell, %dt: f64, %rest_scale: f64,
-# MODULE:     %rest_edge = arith.constant
-# MODULE:     %rest_scale{{[0-9]+}} = arith.divf %edge{{[0-9]+}}_0, %rest_edge : f64
+# MODULE-NEXT:    %cell: !md.cell, %dt: f64, %rest_scale: vector<3xf64>,
+# MODULE:     %rest_edges = vector.from_elements
+# MODULE:     %rest_scale{{[0-9]+}}_e = vector.from_elements %edge{{[0-9]+}}_0, %edge{{[0-9]+}}_1, %edge{{[0-9]+}}_2
+# MODULE-NEXT: %rest_scale{{[0-9]+}} = arith.divf %rest_scale{{[0-9]+}}_e, %rest_edges : vector<3xf64>
 
 # BONDS: bonds ok
 

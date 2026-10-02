@@ -440,6 +440,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         (void *)&_mlir_ciface_mdrtWriteEnergies);
     add("_mlir_ciface_mdrtWriteFrame", (void *)&_mlir_ciface_mdrtWriteFrame);
     add("_mlir_ciface_mdrtWriteTerms", (void *)&_mlir_ciface_mdrtWriteTerms);
+    add("_mlir_ciface_mdrtWriteVirial", (void *)&_mlir_ciface_mdrtWriteVirial);
     add("_mlir_ciface_mdrtAddBath", (void *)&_mlir_ciface_mdrtAddBath);
     add("_mlir_ciface_mdrtSetBox", (void *)&_mlir_ciface_mdrtSetBox);
     add("_mlir_ciface_mdrtSetBarostatState",
@@ -792,6 +793,22 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
             late, control->rebuildPeriod));
     } else {
       llvm::consumeError(count.takeError());
+    }
+  }
+  // The pressures that semi-isotropic coupling took, which a bilayer at
+  // its tension balances (D119).
+  if (control->barostat && control->semiIsotropic) {
+    if (auto get = (*engine)->lookup("mdrtGetSemiPressures")) {
+      double p[6];
+      int64_t n = reinterpret_cast<int64_t (*)(double *)>(*get)(p);
+      std::fprintf(output.log,
+                   "MDIR: the pressures of the barostat over %lld periods, "
+                   "in bar: x and y %.2f ± %.2f, z %.2f ± %.2f, the "
+                   "difference %.2f ± %.2f\n",
+                   static_cast<long long>(n), p[0], p[3], p[1], p[4], p[2],
+                   p[5]);
+    } else {
+      llvm::consumeError(get.takeError());
     }
   }
   // The momentum of the state at the end, which the removal of the motion

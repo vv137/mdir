@@ -176,6 +176,16 @@ struct Control {
   double pressure = 1.0;
   double tauP = 5.0;
   double compressibility = 4.5e-5 * 1.01325;
+  /// Semi-isotropic coupling (D119): x and y scale together, by the strain
+  /// of the area from the mean of their pressures, and z by its own, eqs.
+  /// (9a) and (9b) of [Bernetti2020] with independent noises. The
+  /// compressibility of z `compressibilityZ` in 1/atm (0 keeps the height),
+  /// and the tension `surfaceTension` in dyn/cm of each of `surfaces`
+  /// surfaces normal to z.
+  bool semiIsotropic = false;
+  double compressibilityZ = 4.5e-5 * 1.01325;
+  double surfaceTension = 0.0;
+  int64_t surfaces = 2;
   /// How the barostat integrates a scaling (D77, D92): within the drift of
   /// the last step of a period, the integrator of Trotter type of
   /// [Bernetti2020], with the energy of the scaling from the virials before

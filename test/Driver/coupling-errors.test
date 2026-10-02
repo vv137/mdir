@@ -13,7 +13,6 @@
 # RUN: not mdir run %t/tau.toml 2>&1 | FileCheck %s --check-prefix=TAU
 # RUN: not mdir run %t/baroperiod.toml 2>&1 | FileCheck %s --check-prefix=BAROPERIOD
 # RUN: not mdir run %t/pressure.toml 2>&1 | FileCheck %s --check-prefix=PRESSURE
-# RUN: not mdir run %t/semi.toml 2>&1 | FileCheck %s --check-prefix=SEMI
 
 # NVT: nvt.toml:{{[0-9]+}}: 'ensemble = "NVT"' needs a [thermostat]
 # NVE: nve.toml:{{[0-9]+}}: a [thermostat] needs 'ensemble = "NVT"' or "NPT" in [ensemble]
@@ -25,7 +24,6 @@
 # TAU: tau.toml:{{[0-9]+}}: expected a positive number for 'time_constant'
 # BAROPERIOD: baroperiod.toml: 'interval' in [barostat] differs from that in [thermostat]
 # PRESSURE: pressure.toml:{{[0-9]+}}: 'pressure' is for 'ensemble = "NPT"'
-# SEMI: semi.toml:{{[0-9]+}}: 'coupling = "SEMI_ISOTROPIC"' is not supported yet
 
 #--- one.pdb
 HETATM    1  AR  AR  A   1       1.000   1.000   1.000  1.00  0.00          AR
@@ -212,25 +210,3 @@ steps  = 100
 [ensemble]
 ensemble = "NVE"
 pressure = 1.0
-#--- semi.toml
-[input]
-coordinates = "one.pdb"
-[energy]
-cutoff     = 9.0
-[[energy.pair]]
-expression = "epsilon/r"
-[[energy.type]]
-name = "AR"
-mass = 39.95
-epsilon = 0.2
-[dynamics]
-steps  = 100
-[ensemble]
-ensemble = "NPT"
-
-[thermostat]
-method = "V-RESCALE"
-
-[barostat]
-method   = "C-RESCALE"
-coupling = "SEMI_ISOTROPIC"

@@ -1,0 +1,111 @@
+# Semi-isotropic stochastic cell rescaling (D119) on the mixture of
+# barostat.test: x and y scale together, by the strain of the area from the
+# mean of their pressures, and z by its own, eqs. (9a) and (9b) of
+# Bernetti and Bussi (2020). The cell stays square in x and y, and the
+# conserved energy changes as little as with isotropic coupling.
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/mixture.pdb %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/semi.toml
+# RUN: mdir run %t/semi.toml | FileCheck %s
+# RUN: mdir checkpoint %t/semi.h5 > %t/semi.box
+# RUN: FileCheck %s --check-prefix=SQUARE < %t/semi.box
+#
+# With the compressibility of z 0 the height stays that of the file, to
+# the bit, and the area takes the whole change of the volume.
+#
+# RUN: sed -e 's|^coupling *= "SEMI_ISOTROPIC"|coupling = "SEMI_ISOTROPIC"\ncompressibility_z = 0.0|' -e 's|semi.h5|frozen.h5|' %t/semi.toml > %t/frozen.toml
+# RUN: mdir run %t/frozen.toml | FileCheck %s
+# RUN: mdir checkpoint %t/frozen.h5 | FileCheck %s --check-prefix=FROZEN
+#
+# The work of a scaling counted exactly, axis by axis.
+#
+# RUN: sed -e 's|^\[barostat\]$|[barostat]\nwork = "EXACT"|' -e 's|semi.h5|exact.h5|' %t/semi.toml > %t/exact.toml
+# RUN: mdir run %t/exact.toml | FileCheck %s --check-prefix=EXACT
+#
+# A tension of the surfaces normal to z widens the area: 50 dyn/cm on
+# each of two surfaces against none.
+#
+# RUN: sed -e 's|^coupling *= "SEMI_ISOTROPIC"|coupling = "SEMI_ISOTROPIC"\nsurface_tension = 50.0|' -e 's|semi.h5|tension.h5|' %t/semi.toml > %t/tension.toml
+# RUN: mdir run %t/tension.toml | FileCheck %s --check-prefix=TENSION
+# RUN: mdir checkpoint %t/tension.h5 > %t/tension.box
+# RUN: FileCheck %s --check-prefix=SQUARE < %t/tension.box
+# RUN: %python -c "import re,sys; e=lambda f: [float(v) for v in re.search(r'box: +(\S+) (\S+) (\S+) nm', open(f).read()).groups()]; a=e(sys.argv[1]); b=e(sys.argv[2]); print('wider' if a[0] > b[0] else 'not wider')" %t/tension.box %t/semi.box | FileCheck %s --check-prefix=WIDER
+#
+# The keys of semi-isotropic coupling need it, and the count to first
+# order holds for the trace of the virial only.
+#
+# RUN: sed -e 's|^coupling *= "SEMI_ISOTROPIC"|compressibility_z = 1.0e-5|' %t/semi.toml > %t/isotropic.toml
+# RUN: not mdir check %t/isotropic.toml 2>&1 | FileCheck %s --check-prefix=ONLY
+# RUN: sed -e 's|^\[barostat\]$|[barostat]\nwork = "FIRST_ORDER"|' %t/semi.toml > %t/first.toml
+# RUN: not mdir check %t/first.toml 2>&1 | FileCheck %s --check-prefix=FIRST
+
+# CHECK:      INFO:         0         0.0000 {{ *}}[[TOTAL:-[0-9.]+]] {{.*}} [[TOTAL]]     12487.1680
+# CHECK:      INFO:      2000 {{.*}} {{11[0-9]{3}\.[0-9]+$}}
+# CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[4-9]}} of its value
+# EXACT:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
+# TENSION:    MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[4-9]}} of its value
+
+# SQUARE: box: {{ *}}[[XY:[0-9.]+]] [[XY]] {{[0-9.]+}} nm
+# FROZEN: box: {{ *}}{{[0-9.]+}} {{[0-9.]+}} 2.32 nm
+# WIDER: wider
+
+# ONLY: 'compressibility_z' needs 'coupling = "SEMI_ISOTROPIC"'
+# FIRST: 'work = "FIRST_ORDER"' counts the work from the trace of the virial
+
+#--- run.toml
+[input]
+coordinates = "mixture.pdb"
+
+[output]
+energy_interval = 1000
+checkpoint = "semi.h5"
+checkpoint_interval = 2000
+[energy]
+switch_distance = 7.5
+cutoff       = 9.0
+pairlist_distance = 10.0
+
+[[energy.pair]]
+name       = "lj"
+expression = "4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+mixing     = "lorentz-berthelot"
+
+[[energy.type]]
+name    = "AR"
+mass    = 39.95
+epsilon = 0.238465
+sigma   = 3.4
+
+[[energy.type]]
+name    = "KR"
+mass    = 83.80
+epsilon = 0.3253
+sigma   = 3.65
+
+[dynamics]
+integrator        = "VELOCITY_VERLET"
+time_step         = 0.004
+steps             = 2000
+
+[ensemble]
+ensemble    = "NPT"
+temperature = 100.0
+pressure    = 200.0
+
+[thermostat]
+method = "V-RESCALE"
+interval = 10
+time_constant = 0.5
+
+[barostat]
+method = "C-RESCALE"
+time_constant = 2.0
+coupling = "SEMI_ISOTROPIC"
+
+[boundary]
+type       = "PERIODIC"
+box = [23.2, 23.2, 23.2]
+#--- end

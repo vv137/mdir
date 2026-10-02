@@ -200,6 +200,16 @@ Comput.* **9**, 687–697 (2013).
 Used for: Martini 2.2, the force field of the first target of M1 (D46),
 now deferred (D53).
 
+### Dickson2022
+
+C. J. Dickson, R. C. Walker, I. R. Gould, "Lipid21: Complex lipid membrane
+simulations with AMBER," *J. Chem. Theory Comput.* **18**, 1726–1736
+(2022).
+[doi:10.1021/acs.jctc.1c01217](https://doi.org/10.1021/acs.jctc.1c01217)
+
+Used for: Lipid21, the force field of the POPC bilayer on which the
+semi-isotropic barostat is compared with GROMACS (D119).
+
 ### Eastman2017
 
 P. Eastman, J. Swails, J. D. Chodera, et al., "OpenMM 7: Rapid
@@ -537,6 +547,16 @@ simulations," *J. Phys. Chem. B* **111**, 7812–7824 (2007).
 Used for: the Martini 2 force field, including its lipids, deferred
 (D53).
 
+### Martinez2009
+
+L. Martínez, R. Andrade, E. G. Birgin, J. M. Martínez, "PACKMOL: A package
+for building initial configurations for molecular dynamics simulations,"
+*J. Comput. Chem.* **30**, 2157–2164 (2009).
+[doi:10.1002/jcc.21224](https://doi.org/10.1002/jcc.21224)
+
+Used for: packing the POPC bilayer of the comparison of D119, whose close
+contacts led to D120.
+
 ### Marsaglia2000
 
 G. Marsaglia, W. W. Tsang, "A simple method for generating gamma
@@ -739,6 +759,15 @@ physics," in *Advances in Neural Information Processing Systems 33
 Used for: identifying JAX-MD, a system discussed in
 [prior-art.md](prior-art.md).
 
+### SchottVerdugo2019
+
+S. Schott-Verdugo, H. Gohlke, "PACKMOL-Memgen: A simple-to-use,
+generalized workflow for membrane-protein–lipid-bilayer system building,"
+*J. Chem. Inf. Model.* **59**, 2522–2528 (2019).
+[doi:10.1021/acs.jcim.9b00269](https://doi.org/10.1021/acs.jcim.9b00269)
+
+Used for: the input of PACKMOL for the POPC bilayer of D119.
+
 ### Shirts2007
 
 M. R. Shirts, D. L. Mobley, J. D. Chodera, V. S. Pande, "Accurate and
@@ -827,6 +856,16 @@ covalent systems," *Phys. Rev. B* **37**, 6991–7000 (1988).
 
 Used for: the Tersoff potential, an example of a many-body term.
 
+### Thaler2026
+
+F. Thaler, S. Keller, "GPU-native compressed neighbor lists with a
+space-filling-curve data layout," arXiv:2602.19873 (2026).
+[doi:10.48550/arXiv.2602.19873](https://doi.org/10.48550/arXiv.2602.19873)
+
+Used for: lists of clusters along a Hilbert curve whose indices are
+stored as deltas in nibbles, 3.6 bytes a particle against 12 for GROMACS;
+weighed against the lists of groups in the roadmap (Section 2).
+
 ### Thompson2009
 
 A. P. Thompson, S. J. Plimpton, W. Mattson, "General formulation of
@@ -893,6 +932,15 @@ Thermodynamical properties of Lennard-Jones molecules," *Phys. Rev.*
 Used for: the Verlet integrator, of which velocity Verlet and leapfrog
 are forms, and the neighbor list built with a cutoff plus a skin (the
 Verlet list).
+
+### VijayKumar1987
+
+S. Vijay-Kumar, C. E. Bugg, W. J. Cook, "Structure of ubiquitin refined at
+1.8 Å resolution," *J. Mol. Biol.* **194**, 531–544 (1987).
+[doi:10.1016/0022-2836(87)90679-6](https://doi.org/10.1016/0022-2836(87)90679-6)
+
+Used for: PDB entry 1UBQ, the protein of the comparison with GROMACS
+(white paper, Section 10.6) and of the tutorial `examples/ubiquitin`.
 
 ### Wang2011
 

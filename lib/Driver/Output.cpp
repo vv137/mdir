@@ -132,6 +132,19 @@ void mdir::driver::writeLogHeader(Output &output) {
   std::fprintf(output.log, "\n");
 }
 
+void _mlir_ciface_mdrtWriteVirial(double xx, double yy, double zz) {
+  Output &output = *current;
+  // The virials of the correction for the dispersion and of the background
+  // of a net charge are isotropic: a third of each on each axis.
+  double constant =
+      (output.getDispersionVirial() + output.getPMEConstantVirial()) / 3.0;
+  std::fprintf(output.log,
+               "MDIR: the diagonal of the virial at the start, without the "
+               "constraints, in kcal/mol:\nMDIR:   %16.6f %16.6f %16.6f\n",
+               (xx + constant) / units::energy, (yy + constant) / units::energy,
+               (zz + constant) / units::energy);
+}
+
 void _mlir_ciface_mdrtWriteTerms(void *terms) {
   Output &output = *current;
   auto *values = static_cast<StridedMemRefType<double, 1> *>(terms);
@@ -164,9 +177,10 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
 
 void _mlir_ciface_mdrtAddBath(double energy) { current->bath += energy; }
 
-void _mlir_ciface_mdrtSetBarostatState(double trace, double groups,
-                                       double kinetic) {
-  current->checkpoint.barostatState = {trace, groups, kinetic};
+void _mlir_ciface_mdrtSetBarostatState(double w0, double w1, double w2,
+                                       double g0, double g1, double g2,
+                                       double k0, double k1, double k2) {
+  current->checkpoint.barostatState = {w0, w1, w2, g0, g1, g2, k0, k1, k2};
 }
 
 void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz) {

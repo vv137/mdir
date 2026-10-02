@@ -871,7 +871,7 @@ Error Reader::readBarostat(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "barostat",
           {"method", "time_constant", "compressibility", "coupling", "work",
-           "interval"},
+           "interval", "compressibility_z", "surface_tension", "surfaces"},
           {}))
     return error;
   int method = -1;
@@ -898,10 +898,32 @@ Error Reader::readBarostat(const toml::table &table) {
   if (Error error = readChoice<int>(table, "coupling", coupling,
                                     {{"ISOTROPIC", 0}, {"SEMI_ISOTROPIC", 1}}))
     return error;
-  if (coupling != 0)
-    return fail(*table.get("coupling"),
-                "'coupling = \"SEMI_ISOTROPIC\"' is not supported yet; it "
-                "is planned for M1");
+  control.semiIsotropic = coupling == 1;
+  // The keys of semi-isotropic coupling (D119).
+  for (const char *key : {"compressibility_z", "surface_tension", "surfaces"})
+    if (const toml::node *node = table.get(key); node && coupling != 1)
+      return fail(*node, "'" + llvm::Twine(key) +
+                             "' needs 'coupling = \"SEMI_ISOTROPIC\"'");
+  control.compressibilityZ = control.compressibility;
+  if (Error error =
+          readReal(table, "compressibility_z", control.compressibilityZ))
+    return error;
+  if (const toml::node *node = table.get("compressibility_z");
+      node && control.compressibilityZ < 0.0)
+    return fail(*node, "expected 0 or a positive number for "
+                       "'compressibility_z'");
+  if (Error error = readReal(table, "surface_tension", control.surfaceTension))
+    return error;
+  if (Error error = readCount(table, "surfaces", control.surfaces, 1))
+    return error;
+  if (control.semiIsotropic &&
+      control.barostatWork == BarostatWork::FirstOrder)
+    return fail(*table.get("work"),
+                "'work = \"FIRST_ORDER\"' counts the work from the trace of "
+                "the virial of the step with twice the internal kinetic "
+                "energy, which holds for the trace only; with "
+                "'coupling = \"SEMI_ISOTROPIC\"' use \"TROTTER\", "
+                "\"TROTTER_FIRST_ORDER\", or \"EXACT\"");
   if (Error error = readCount(table, "interval", control.barostatPeriod, 0))
     return error;
   return Error::success();
@@ -1330,7 +1352,12 @@ interval      = 10              # steps between its actions
 method        = "C-RESCALE"     # stochastic cell rescaling
 time_constant = 2.0             # ps
 # compressibility = 4.56e-5     # 1/atm (4.5e-5 /bar)
-# coupling = "ISOTROPIC"        # ISOTROPIC
+# coupling = "ISOTROPIC"        # ISOTROPIC; SEMI_ISOTROPIC: x and y
+#                               # together, z on its own
+# compressibility_z = 4.56e-5   # 1/atm, of z with SEMI_ISOTROPIC (0 keeps
+#                               # the height); compressibility by default
+# surface_tension = 0.0         # dyn/cm, of each surface normal to z,
+# surfaces        = 2           # with SEMI_ISOTROPIC
 # work     = "TROTTER"          # TROTTER: the scaling within the drift of
 #                               # a step, its energy from the virials before
 #                               # and after; TROTTER_FIRST_ORDER: from the

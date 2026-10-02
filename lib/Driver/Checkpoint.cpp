@@ -420,9 +420,13 @@ mdir::driver::readCheckpoint(const std::string &path) {
                        checkpoint.timestep);
   reader.readAttribute("/parameters/mdir", "seed", H5T_NATIVE_UINT64,
                        checkpoint.seed);
+  // The state of the last scaling of a barostat that scales every step:
+  // nine numbers since D119, which a run takes; another size, from before,
+  // is read and left for the run to evaluate the state once.
   if (reader.has("/parameters/mdir/barostat_state"))
     reader.readDataset("/parameters/mdir/barostat_state", H5T_NATIVE_DOUBLE,
-                       3, checkpoint.barostatState);
+                       reader.getSize("/parameters/mdir/barostat_state"),
+                       checkpoint.barostatState);
 
   if (reader.hasFailed())
     return llvm::createStringError(llvm::inconvertibleErrorCode(),

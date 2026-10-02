@@ -2,8 +2,8 @@
 
 **Scope of the first milestone.** MDIR runs on one device, a CPU with
 OpenMP or one NVIDIA GPU. Cells are orthorhombic; the barostat is
-isotropic (a semi-isotropic coupling is designed but stops with "not
-supported yet"). Electrostatics are particle mesh Ewald or a cutoff; there
+isotropic or semi-isotropic, with no coupling of the shape of the cell
+(anisotropic or triclinic). Electrostatics are particle mesh Ewald or a cutoff; there
 is no implicit solvent, no polarizable model, and no learned potential.
 The distributed lowering (`md_dist`), the joint planner that would choose
 structures and layouts, and the `mlff` and `ensemble` dialects of the

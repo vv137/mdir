@@ -191,7 +191,7 @@ if `center_of_mass_interval` asks.
 
 ## 6.4 The barostat
 
-Stochastic cell rescaling [[Bernetti2020]](references.md#bernetti2020) couples an isotropic cell to a
+Stochastic cell rescaling [[Bernetti2020]](references.md#bernetti2020) couples the cell to a
 pressure $P_0$ every $N_P$ steps; $N_P = N_T$, and a barostat requires the
 thermostat. The internal pressure for the strain is
 
@@ -217,6 +217,50 @@ $$
 
 The edges of the cell are multiplied by $\mu$; a run stops if an edge
 falls below $2r_c$, where the minimum image would miss pairs.
+
+**Semi-isotropic coupling** (D119). A bilayer normal to $z$ needs its
+area and its height coupled apart: x and y scale together by the strain
+of the area $\varepsilon_{xy} = \ln A$, from the mean of their pressures,
+and z by that of the height $\varepsilon_z = \ln L_z$, from its own, by
+eqs. (9a) and (9b) of [[Bernetti2020]](references.md#bernetti2020). The pressure of axis $a$ is
+
+$$
+P_{aa} = c\,\frac{2K_a + W_{aa} + C/(3V)}{V},
+$$
+
+with $K_a$ the kinetic energy along $a$ without the center of mass, and
+one step of Euler and Maruyama over the period is
+
+$$
+\Delta\varepsilon_{xy} = -\frac{2f}{3}\Big(P_0 - \frac{\gamma}{L_z} - \frac{P_{xx} + P_{yy}}{2}\Big) + \sqrt{\frac{4k_BT\,c\,f}{3V}}\,R_0,
+\qquad
+\Delta\varepsilon_z = -\frac{f_z}{3}\big(P_0 - P_{zz}\big) + \sqrt{\frac{2k_BT\,c\,f_z}{3V}}\,R_1,
+$$
+
+$\mu = (e^{\Delta\varepsilon_{xy}/2}, e^{\Delta\varepsilon_{xy}/2}, e^{\Delta\varepsilon_z})$,
+with $f_z$ from the compressibility of z, $\gamma$ the surface tension
+times the number of surfaces (1 dyn/cm = 10 bar nm), and $R_0$, $R_1$ the
+first two normal numbers of the step. The stationary density of the pair
+follows from the equation of Fokker and Planck: with
+$D_{xy} = 2k_BT\beta/(3V\tau_P)$ and the drift $A_{xy}$ of the first,
+zero flux, $A_{xy}\rho = \partial_{\varepsilon_{xy}}(D_{xy}\rho)$, holds for
+
+$$
+\rho(\varepsilon_{xy}, \varepsilon_z) \propto A L_z\,e^{-(P_0V - \gamma A + F)/k_BT},
+$$
+
+since $\partial_{\varepsilon_{xy}}(P_0V - \gamma A + F) = V(P_0 - \gamma/L_z -
+P_\parallel)$ with $P_\parallel = -L_z^{-1}\partial F/\partial A$, the mean of
+$(P_{xx} + P_{yy})/2$ over the particles, and in the same way for the
+height; $A L_z$ is the Jacobian of $(\ln A, \ln L_z)$. That is the
+ensemble at constant normal pressure and surface tension. Without
+tension the sum of the two steps is the step in $\ln V$ of eq. (5), whose
+noise depends on the volume; the step in $\lambda$ above does not, and
+the two agree to first order in the period. With the compressibility of z
+zero, the height is kept to the bit. Positions scale by $\mu_a$ along
+axis $a$ (rigid groups with their centers), velocities by $1/\mu_a$, and
+the work of a scaling below is a sum over the axes, with $K_a$ and the
+diagonal of the virial of the groups in place of $K$ and the trace.
 
 **Scaling.** A free particle moves to $\mu\mathbf x$; a water or a group
 of SHAKE moves with its center of mass, $\mathbf x_j \to \mu\mathbf X +
@@ -301,7 +345,9 @@ ff19SB peptide in OPC water compressed by the barostat, $-1.47$ kcal/mol
 after 2 ps, exactly the dispersion correction of $-30.24$ kcal/mol times
 $V_0/V - 1 = 0.0487$;
 `FIRST_ORDER`, as GROMACS does, takes $-(\mu - 1)\mathcal W + (\mu^{-2} -
-1)\alpha^2K_t$.
+1)\alpha^2K_t$, from the trace of the virial of the step with twice the
+internal kinetic energy, an identity of the trace that holds for each
+axis only in the mean, and is for isotropic coupling only.
 
 **What the counts give.** On a Lennard–Jones mixture over 80 ps and five
 seeds at $\tau_P = 1$ ps, the conserved energy drifts per step by
@@ -344,7 +390,12 @@ positive for repulsion. $\mathsf W$ includes the virials of the
 constraints, of the virtual sites, of the restraints, of the dispersion
 correction ($6E_\text{disp}$), and of the neutralizing background
 ($3E_Q$). The total energy is $U + K$; the conserved energy is the total
-plus what the bath has taken.
+plus what the bath has taken. At the start the log gives the diagonal of
+$\mathsf W$ without the virials of the constraints, which other programs
+give for the same positions; at the end of a run with semi-isotropic
+coupling, the means of the pressures of x and y and of z that the
+barostat took and of their difference, with errors from blocks of 100
+periods (D119).
 
 ## 6.6 Random numbers
 

@@ -166,6 +166,9 @@ void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids);
 /// Lennard-Jones, Coulomb, bonds, angles, dihedrals, the pairs three bonds
 /// apart, Lennard-Jones and Coulomb, and CMAP.
 void _mlir_ciface_mdrtWriteTerms(void *terms);
+/// The diagonal of the virial of the forces at the start, without those of
+/// the constraints, in kJ/mol; the constant terms are added here.
+void _mlir_ciface_mdrtWriteVirial(double xx, double yy, double zz);
 /// The energy that a coupling of the velocities has just taken from the
 /// system, in kJ/mol.
 void _mlir_ciface_mdrtAddBath(double energy);
@@ -179,8 +182,12 @@ void _mlir_ciface_mdrtWriteMinimization(int64_t step, double energy,
 void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz);
 /// The state that the next scaling of a barostat that scales the cell every
 /// step takes its pressure from (D92), for the checkpoints.
-void _mlir_ciface_mdrtSetBarostatState(double trace, double groups,
-                                       double kinetic);
+/// The state of the last scaling of a barostat that scales every step
+/// (D92, D119): the diagonals of the virial and of the virial of the rigid
+/// groups, and the kinetic energy of each axis without the center of mass.
+void _mlir_ciface_mdrtSetBarostatState(double w0, double w1, double w2,
+                                       double g0, double g1, double g2,
+                                       double k0, double k1, double k2);
 void _mlir_ciface_mdrtWriteCheckpoint(int64_t step, void *positions,
                                       void *velocities, void *ids);
 void _mlir_ciface_mdrtWriteCheckpointWithForces(int64_t step,

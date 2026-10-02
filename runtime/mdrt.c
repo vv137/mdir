@@ -225,6 +225,98 @@ double mdrtBarostatStrain(int64_t seed, int64_t step, double pressure,
   return 2.0 * log(next / lambda);
 }
 
+/* Semi-isotropic stochastic cell rescaling (D119): one Euler-Maruyama step
+   of eqs. (9a) and (9b) of Bernetti and Bussi, J. Chem. Phys. 153, 114107
+   (2020), for e_xy = ln A and e_z = ln L, with their own normal numbers of
+   stream 1 of the step: the first for the area, which the isotropic
+   coupling takes as well, and the second for the height. The pressures and
+   the target in bar; the tension, of a surface times their number, in
+   bar nm; the volume and the height in nm^3 and nm; kT in kJ/mol; the
+   compressibility in 1/bar; rate, the period over the time constant. With
+   no tension the sum of the two is the step of e = ln V of eq. (5). */
+/* The pressures that semi-isotropic coupling took over the run, that of x
+   and y, that of z, and their difference, summed over the periods and over
+   blocks of 100 periods, whose spread gives the errors of the means; the
+   driver reports them at the end (mdrtGetSemiPressures). */
+enum { SEMI_BLOCK = 100 };
+static struct {
+  double lateral, sum[3], block[3], blockSum[3], blockSquares[3];
+  int64_t count, inBlock, blocks;
+} semiPressures;
+
+static void addSemiPressures(double normal) {
+  double values[3] = {semiPressures.lateral, normal,
+                      semiPressures.lateral - normal};
+  for (int k = 0; k != 3; ++k) {
+    semiPressures.sum[k] += values[k];
+    semiPressures.block[k] += values[k];
+  }
+  ++semiPressures.count;
+  if (++semiPressures.inBlock == SEMI_BLOCK) {
+    for (int k = 0; k != 3; ++k) {
+      double mean = semiPressures.block[k] / SEMI_BLOCK;
+      semiPressures.blockSum[k] += mean;
+      semiPressures.blockSquares[k] += mean * mean;
+      semiPressures.block[k] = 0.0;
+    }
+    semiPressures.inBlock = 0;
+    ++semiPressures.blocks;
+  }
+}
+
+/* The means of the pressures of x and y, of z, and of their difference, in
+   bar, in out[0..2], and the errors of the means from the blocks in
+   out[3..5] (0 with fewer than two blocks). Returns the number of periods. */
+int64_t mdrtGetSemiPressures(double *out) {
+  int64_t n = semiPressures.count, b = semiPressures.blocks;
+  for (int k = 0; k != 3; ++k) {
+    out[k] = n > 0 ? semiPressures.sum[k] / (double)n : 0.0;
+    double error = 0.0;
+    if (b > 1) {
+      double mean = semiPressures.blockSum[k] / (double)b;
+      double var = (semiPressures.blockSquares[k] - b * mean * mean) /
+                   (double)(b - 1);
+      error = var > 0.0 ? sqrt(var / (double)b) : 0.0;
+    }
+    out[3 + k] = error;
+  }
+  return n;
+}
+
+static void drawSemi(int64_t seed, int64_t step, double *r) {
+  Draws draws;
+  initDraws(&draws, (uint64_t)seed, step, /*entity=*/0, /*stream=*/1);
+  r[0] = drawNormal(&draws);
+  r[1] = drawNormal(&draws);
+}
+
+double mdrtBarostatStrainArea(int64_t seed, int64_t step, double pressure,
+                              double target, double volume, double height,
+                              double kT, double compressibility, double rate,
+                              double tension) {
+  const double conversion = 16.6053906717;
+  double r[2];
+  drawSemi(seed, step, r);
+  double f = compressibility * rate;
+  double thermal = kT * conversion;
+  semiPressures.lateral = pressure;
+  return -(2.0 * f / 3.0) * (target - tension / height - pressure) +
+         sqrt(4.0 * thermal * f / (3.0 * volume)) * r[0];
+}
+
+double mdrtBarostatStrainHeight(int64_t seed, int64_t step, double pressure,
+                                double target, double volume, double kT,
+                                double compressibility, double rate) {
+  const double conversion = 16.6053906717;
+  double r[2];
+  drawSemi(seed, step, r);
+  double f = compressibility * rate;
+  double thermal = kT * conversion;
+  addSemiPressures(pressure);
+  return -(f / 3.0) * (target - pressure) +
+         sqrt(2.0 * thermal * f / (3.0 * volume)) * r[1];
+}
+
 /*===----------------------------------------------------------------------===
  * FFT of particle mesh Ewald on the host
  *===----------------------------------------------------------------------===*/

@@ -95,6 +95,13 @@ portable file format for molecular data," *Comput. Phys. Commun.* **185**,
 1546–1553 (2014).
 [doi:10.1016/j.cpc.2014.01.018](https://doi.org/10.1016/j.cpc.2014.01.018)
 
+### Dickson2022
+
+C. J. Dickson, R. C. Walker, I. R. Gould, "Lipid21: Complex lipid membrane
+simulations with AMBER," *J. Chem. Theory Comput.* **18**, 1726–1736
+(2022).
+[doi:10.1021/acs.jctc.1c01217](https://doi.org/10.1021/acs.jctc.1c01217)
+
 ### Eastman2017
 
 P. Eastman, J. Swails, J. D. Chodera, et al., "OpenMM 7: Rapid

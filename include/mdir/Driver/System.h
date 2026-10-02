@@ -22,6 +22,9 @@ constexpr double pressure = 16.6053906717 / 1.01325;
 constexpr double length = 0.1;
 /// kJ/mol per kcal/mol.
 constexpr double energy = 4.184;
+/// A surface tension: bar nm in one dyn/cm (1 dyn/cm is 1e-3 N/m, and
+/// 1 bar nm is 1e-4 N/m).
+constexpr double dynePerCmToBarNm = 10.0;
 /// The Boltzmann constant in kJ/(mol K): k_B N_A, exact since the SI of 2019.
 /// See Tiesinga et al., Rev. Mod. Phys. 93, 025010 (2021).
 constexpr double boltzmann = 0.0083144626181532;
