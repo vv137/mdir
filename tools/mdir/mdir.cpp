@@ -42,7 +42,7 @@ static llvm::cl::opt<bool> continueRun(
 static llvm::cl::opt<bool> noAppend(
     "no-append",
     llvm::cl::desc("With --continue, write the frames that follow to a part "
-                   "of their own, <trajectory>.partNNNN.dcd"),
+                   "of their own, <trajectory>.partNNNN.dcd (or .xtc)"),
     llvm::cl::sub(runCommand));
 
 static llvm::cl::opt<std::string> maxWalltime(

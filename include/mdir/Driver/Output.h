@@ -7,6 +7,7 @@
 #include "mdir/Driver/Checkpoint.h"
 #include "mdir/Driver/Control.h"
 #include "mdir/Driver/System.h"
+#include "mdir/Driver/Trajectory.h"
 
 #include "llvm/Support/Error.h"
 
@@ -19,69 +20,11 @@
 namespace mdir {
 namespace driver {
 
-/// Writes trajectories in the DCD format: positions in Å, as 32-bit
-/// floating-point numbers, with the cell.
-class DCDWriter {
-public:
-  ~DCDWriter();
-
-  /// `first` is the step of the first frame, `period` the number of steps
-  /// between two frames, and `timestep` the time step in ps.
-  llvm::Error open(const std::string &path, size_t numParticles,
-                   int64_t first, int64_t period, double timestep,
-                   const double box[3]);
-  /// Continues the trajectory at `path`, written by MDIR, after its first
-  /// `frames` frames (D130): the frames after them, which a run wrote past
-  /// its last checkpoint, are removed, and the header counts `frames`.
-  /// Fails if the file holds fewer frames, other particles, or another
-  /// period. Returns the number of frames removed.
-  llvm::Expected<int64_t> append(const std::string &path,
-                                 size_t numParticles, int64_t frames,
-                                 int64_t period, double timestep,
-                                 const double box[3]);
-  /// The number of frames that the file holds.
-  int64_t getNumFrames() const { return numFrames; }
-
-  /// Writes a frame. `positions` holds three numbers per particle, in Å.
-  void writeFrame(const float *positions);
-  /// The edges of the cell of the frames that follow, in Å: of an
-  /// orthorhombic cell, or the diagonal of a triclinic one, whose tilts
-  /// scale with the columns of the cell (docs/triclinic-m2.md, I3).
-  void setBox(const double edges[3]) {
-    if (box[0] > 0.0) {
-      tilt[0] *= edges[0] / box[0];
-      tilt[1] *= edges[0] / box[0];
-      tilt[2] *= edges[1] / box[1];
-    }
-    for (int i = 0; i != 3; ++i)
-      box[i] = edges[i];
-  }
-  /// The tilts b_x, c_x, c_y of a triclinic cell, in Å.
-  void setTilt(const double tilts[3]) {
-    for (int i = 0; i != 3; ++i)
-      tilt[i] = tilts[i];
-  }
-
-  void close();
-
-private:
-  void writeHeader();
-
-  std::FILE *file = nullptr;
-  size_t numParticles = 0;
-  int64_t first = 0;
-  int64_t period = 0;
-  double timestep = 0.0;
-  double box[3] = {0.0, 0.0, 0.0};
-  double tilt[3] = {0.0, 0.0, 0.0};
-  int32_t numFrames = 0;
-};
-
 /// The output of the run that is under way. The functions that compiled
 /// code calls write to it.
 struct Output {
   std::FILE *log = stdout;
-  DCDWriter trajectory;
+  std::unique_ptr<TrajectoryWriter> trajectory;
   bool hasTrajectory = false;
 
   /// The types that the buffers of the state and of the forces hold.

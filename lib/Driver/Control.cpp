@@ -671,16 +671,34 @@ Error Reader::readInput(const toml::table &table) {
 Error Reader::readOutput(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "output",
-          {"trajectory", "checkpoint", "energy_interval",
+          {"trajectory", "trajectory_format", "checkpoint", "energy_interval",
            "trajectory_interval", "checkpoint_interval"},
           {}))
     return error;
-  if (Error error = readPath(table, "trajectory", control.dcdFile))
+  if (Error error = readPath(table, "trajectory", control.trajectoryFile))
     return error;
-  if (!control.dcdFile.empty() &&
-      !llvm::sys::path::extension(control.dcdFile).equals_insensitive(".dcd"))
-    return fail(*table.get("trajectory"),
-                "expected a trajectory in DCD, a name that ends in '.dcd'");
+  // The format: from the extension of the name (AUTO, the default), or as
+  // the file says (D141).
+  enum class Format { Auto, DCD, XTC };
+  Format format = Format::Auto;
+  if (Error error = readChoice<Format>(
+          table, "trajectory_format", format,
+          {{"AUTO", Format::Auto}, {"DCD", Format::DCD}, {"XTC", Format::XTC}}))
+    return error;
+  if (format == Format::Auto && !control.trajectoryFile.empty()) {
+    StringRef extension = llvm::sys::path::extension(control.trajectoryFile);
+    if (extension.equals_insensitive(".dcd"))
+      format = Format::DCD;
+    else if (extension.equals_insensitive(".xtc"))
+      format = Format::XTC;
+    else
+      return fail(*table.get("trajectory"),
+                  "the format of the trajectory '" + control.trajectoryFile +
+                      "' is not known from its extension; name a file that "
+                      "ends in '.dcd' or '.xtc', or give 'trajectory_format'");
+  }
+  control.trajectoryFormat =
+      format == Format::XTC ? TrajectoryFormat::XTC : TrajectoryFormat::DCD;
   if (Error error = readPath(table, "checkpoint", control.restartOutput))
     return error;
   if (Error error =
@@ -1609,7 +1627,7 @@ Error Reader::read(const toml::table &root) {
         "%s: [output] names a 'checkpoint', but 'checkpoint_interval' is "
         "not given",
         path.str().c_str());
-  if (control.framePeriod != 0 && control.dcdFile.empty())
+  if (control.framePeriod != 0 && control.trajectoryFile.empty())
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
         "%s: 'trajectory_interval' is given, but [output] names no "
@@ -1642,7 +1660,7 @@ coordinates = "system.pdb"      # positions; the name of an atom is its type
 #                               # step
 
 [output]
-trajectory          = "run.dcd" # positions, in DCD
+trajectory          = "run.dcd" # positions, in DCD or XTC (.xtc)
 # checkpoint        = "run.h5"  # the state, with checkpoint_interval;
 #                               # mdir run --continue goes on from it
 energy_interval     = 10        # steps between energies in the log; 0: none
@@ -1721,7 +1739,7 @@ coordinates = "system.inpcrd"   # and the box; the reference of restraints
 #                               # positions
 
 [output]
-trajectory          = "run.dcd" # positions, in DCD
+trajectory          = "run.dcd" # positions, in DCD or XTC (.xtc)
 checkpoint          = "run.h5"  # the state; mdir run --continue goes on
 #                               # from it, and the one before is run.h5.prev
 energy_interval     = 5000      # steps between energies in the log

@@ -31,6 +31,7 @@ add_mlir_library(MDIRDriver
   Output.cpp
   Selection.cpp
   System.cpp
+  Trajectory.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mdir/Driver

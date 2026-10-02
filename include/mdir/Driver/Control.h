@@ -7,6 +7,7 @@
 
 #include "mdir/Driver/Expression.h"
 #include "mdir/Driver/Topology.h"
+#include "mdir/Driver/Trajectory.h"
 
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
@@ -112,7 +113,9 @@ struct Control {
   std::string restartInput;
 
   // [output]
-  std::string dcdFile;
+  std::string trajectoryFile;
+  /// The format of the trajectory, DCD or XTC (D141).
+  TrajectoryFormat trajectoryFormat = TrajectoryFormat::DCD;
   std::string restartOutput;
 
   // [energy]

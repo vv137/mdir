@@ -20,7 +20,8 @@ the output of `mdir template amber` at the commit of this paper.
 | | `parameters` | With a PSF: the files of topology (`.rtf`), parameters (`.prm`), and streams (`.str`), in the order that CHARMM reads them; a later file replaces what an earlier one defines. |
 | | `include_paths`, `defines` | With a GROMACS topology: the directories of `#include` and the names that `#define` gives. |
 | | `checkpoint` | The checkpoint of an earlier run, whose state the run begins from, at its step and time (D129), taking its cell (and warning on the standard error if the input has another); the input's cell still sets the grid of PME and the reference of restraints. One of a minimization gives the positions only, and the run begins at step 0. |
-| `[output]` | `trajectory` | Positions, in DCD (`.dcd`). |
+| `[output]` | `trajectory` | Positions, in DCD (`.dcd`, Å) or in the compressed XTC of GROMACS (`.xtc`, nm to a thousandth), by the extension of the name (D141). |
+| | `trajectory_format` | `AUTO` (the default, from the extension), `DCD`, or `XTC`. |
 | | `checkpoint` | The checkpoint (D26), written every `checkpoint_interval` steps in place of the one before, which stays as `<checkpoint>.prev` (D132), and at the end of a minimization. `mdir run --continue` continues the run from it (A.3). |
 | | `energy_interval`, `trajectory_interval`, `checkpoint_interval` | Steps between the rows of the log, the frames, and the checkpoints. The intervals nest, either way for energies and frames. |
 | `[energy]` | `cutoff` | The cutoff of `md.neighborhood` (Å). |
@@ -69,7 +70,7 @@ coordinates = "system.inpcrd"   # and the box; the reference of restraints
 #                               # positions
 
 [output]
-trajectory          = "run.dcd" # positions, in DCD
+trajectory          = "run.dcd" # positions, in DCD or XTC (.xtc)
 checkpoint          = "run.h5"  # the state; mdir run --continue goes on
 #                               # from it, and the one before is run.h5.prev
 energy_interval     = 5000      # steps between energies in the log
@@ -179,7 +180,7 @@ cluster (docs/driver-m0.md, Section 2.7):
 | Option | Meaning |
 |---|---|
 | `--continue` | Continues the run from the checkpoint of `[output]` until it has taken its `steps`, counted from the step it began at; without a checkpoint the run begins, and a complete run exits with 0 (D129). |
-| `--no-append` | With `--continue`, writes the frames that follow to `<trajectory>.partNNNN.dcd` rather than appending them to the trajectory, which is first cut to the frames that the checkpoint counts (D130). |
+| `--no-append` | With `--continue`, writes the frames that follow to `<trajectory>.partNNNN.dcd` (or `.xtc`) rather than appending them to the trajectory, which is first cut to the frames that the checkpoint counts (D130). |
 | `--max-walltime <time>` | Stops at the last checkpoint that leaves time for one more interval between checkpoints, in hours or as `H:MM[:SS]` (D131). |
 
 SIGTERM and SIGINT stop a run at its next checkpoint, and a second signal

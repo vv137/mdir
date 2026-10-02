@@ -15,181 +15,6 @@
 using namespace mdir::driver;
 
 //===----------------------------------------------------------------------===//
-// DCD
-//===----------------------------------------------------------------------===//
-
-/// Writes a record: its length in bytes, the bytes, and the length again.
-static void writeRecord(std::FILE *file, const void *data, int32_t size) {
-  std::fwrite(&size, sizeof(size), 1, file);
-  std::fwrite(data, 1, size, file);
-  std::fwrite(&size, sizeof(size), 1, file);
-}
-
-DCDWriter::~DCDWriter() { close(); }
-
-void DCDWriter::writeHeader() {
-  // The first record: the tag, and 20 numbers that describe the file.
-  struct {
-    char tag[4];
-    int32_t numbers[20];
-  } head;
-  std::memcpy(head.tag, "CORD", 4);
-  std::memset(head.numbers, 0, sizeof(head.numbers));
-  head.numbers[0] = numFrames;
-  head.numbers[1] = static_cast<int32_t>(first);
-  head.numbers[2] = static_cast<int32_t>(period);
-  head.numbers[3] = numFrames * static_cast<int32_t>(period);
-  // The time step, in units of 48.88821 fs.
-  float delta = static_cast<float>(timestep / 0.04888821);
-  std::memcpy(&head.numbers[9], &delta, sizeof(delta));
-  // The frames hold the cell.
-  head.numbers[10] = 1;
-  // The version of the format.
-  head.numbers[19] = 24;
-  writeRecord(file, &head, sizeof(head));
-
-  struct {
-    int32_t count;
-    char line[80];
-  } title;
-  title.count = 1;
-  std::memset(title.line, ' ', sizeof(title.line));
-  const char *text = "Written by MDIR";
-  std::memcpy(title.line, text, std::strlen(text));
-  writeRecord(file, &title, sizeof(title));
-
-  int32_t count = static_cast<int32_t>(numParticles);
-  writeRecord(file, &count, sizeof(count));
-}
-
-llvm::Error DCDWriter::open(const std::string &path, size_t numParticles,
-                            int64_t first, int64_t period, double timestep,
-                            const double box[3]) {
-  file = std::fopen(path.c_str(), "wb");
-  if (!file)
-    return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                   "cannot write '%s'", path.c_str());
-  this->numParticles = numParticles;
-  this->first = first;
-  this->period = period;
-  this->timestep = timestep;
-  for (int i = 0; i != 3; ++i)
-    this->box[i] = box[i];
-  writeHeader();
-  return llvm::Error::success();
-}
-
-llvm::Expected<int64_t> DCDWriter::append(const std::string &path,
-                                          size_t numParticles,
-                                          int64_t frames, int64_t period,
-                                          double timestep,
-                                          const double box[3]) {
-  auto fail = [&](const llvm::Twine &message) -> llvm::Error {
-    close();
-    return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                                   "'" + path + "' " + message);
-  };
-  file = std::fopen(path.c_str(), "r+b");
-  if (!file)
-    return fail("cannot be opened to continue it");
-  // The records that writeHeader writes: the description, the title, and
-  // the number of particles.
-  auto readInt = [&](int32_t &value) {
-    return std::fread(&value, sizeof(value), 1, file) == 1;
-  };
-  int32_t size, end, count;
-  struct {
-    char tag[4];
-    int32_t numbers[20];
-  } head;
-  bool read = readInt(size) && size == sizeof(head) &&
-              std::fread(&head, sizeof(head), 1, file) == 1 && readInt(end) &&
-              end == size && std::memcmp(head.tag, "CORD", 4) == 0;
-  if (!read || head.numbers[10] != 1 || head.numbers[19] != 24)
-    return fail("is not a trajectory that MDIR wrote");
-  read = readInt(size) && size == 84 &&
-         std::fseek(file, size, SEEK_CUR) == 0 && readInt(end) &&
-         end == size && readInt(size) && size == 4 && readInt(count) &&
-         readInt(end) && end == size;
-  if (!read)
-    return fail("is not a trajectory that MDIR wrote");
-  if (count != static_cast<int32_t>(numParticles))
-    return fail("holds " + llvm::Twine(count) + " particles, and the run " +
-                llvm::Twine(numParticles));
-  if (head.numbers[2] != static_cast<int32_t>(period))
-    return fail("has a frame every " + llvm::Twine(head.numbers[2]) +
-                " steps, and the run writes one every " +
-                llvm::Twine(period));
-
-  // The frames that the file holds in full: the cell, then x, y, and z.
-  long header = std::ftell(file);
-  long frameSize =
-      (8 + 6 * sizeof(double)) + 3 * (8 + numParticles * sizeof(float));
-  std::fseek(file, 0, SEEK_END);
-  long length = std::ftell(file);
-  int64_t held = (length - header) / frameSize;
-  if (held < frames)
-    return fail("holds " + llvm::Twine(held) + " frames, fewer than the " +
-                llvm::Twine(frames) + " that the checkpoint counts");
-  long kept = header + frames * frameSize;
-  std::fflush(file);
-  if (kept != length && ::ftruncate(::fileno(file), kept) != 0)
-    return fail("cannot be cut to the frames that the checkpoint counts");
-
-  this->numParticles = numParticles;
-  this->first = head.numbers[1];
-  this->period = period;
-  this->timestep = timestep;
-  for (int i = 0; i != 3; ++i)
-    this->box[i] = box[i];
-  numFrames = static_cast<int32_t>(frames);
-  std::rewind(file);
-  writeHeader();
-  std::fseek(file, kept, SEEK_SET);
-  std::fflush(file);
-  return held - frames;
-}
-
-void DCDWriter::writeFrame(const float *positions) {
-  // The cell: a, cos γ, b, cos β, cos α, c, as NAMD and OpenMM write it
-  // (docs/triclinic-m2.md, Section 1); right angles for an orthorhombic
-  // cell.
-  double b = std::sqrt(tilt[0] * tilt[0] + box[1] * box[1]);
-  double c = std::sqrt(tilt[1] * tilt[1] + tilt[2] * tilt[2] + box[2] * box[2]);
-  double cell[6] = {box[0],
-                    tilt[0] / b,
-                    b,
-                    tilt[1] / c,
-                    0.0,
-                    c};
-  cell[4] = (tilt[0] * tilt[1] + box[1] * tilt[2]) / (b * c);
-  writeRecord(file, cell, sizeof(cell));
-
-  std::vector<float> component(numParticles);
-  for (int c = 0; c != 3; ++c) {
-    for (size_t i = 0; i != numParticles; ++i)
-      component[i] = positions[3 * i + c];
-    writeRecord(file, component.data(),
-                static_cast<int32_t>(numParticles * sizeof(float)));
-  }
-
-  // Keep the number of frames in the header up to date, so that the file
-  // can be read if the run ends early.
-  ++numFrames;
-  long end = std::ftell(file);
-  std::rewind(file);
-  writeHeader();
-  std::fseek(file, end, SEEK_SET);
-  std::fflush(file);
-}
-
-void DCDWriter::close() {
-  if (file)
-    std::fclose(file);
-  file = nullptr;
-}
-
-//===----------------------------------------------------------------------===//
 // The log
 //===----------------------------------------------------------------------===//
 
@@ -295,7 +120,8 @@ void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz) {
   output.volume = lx * ly * lz;
   double edges[3] = {lx / units::length, ly / units::length,
                      lz / units::length};
-  output.trajectory.setBox(edges);
+  if (output.trajectory)
+    output.trajectory->setBox(edges);
   output.checkpoint.box[0] = lx;
   output.checkpoint.box[1] = ly;
   output.checkpoint.box[2] = lz;
@@ -316,7 +142,8 @@ void _mlir_ciface_mdrtSetTilt(double bx, double cx, double cy) {
   Output &output = *current;
   double tilts[3] = {bx / units::length, cx / units::length,
                      cy / units::length};
-  output.trajectory.setTilt(tilts);
+  if (output.trajectory)
+    output.trajectory->setTilt(tilts);
   output.checkpoint.tilt[0] = bx;
   output.checkpoint.tilt[1] = cx;
   output.checkpoint.tilt[2] = cy;
@@ -437,14 +264,14 @@ void _mlir_ciface_mdrtWriteMinimization(int64_t step, double energy,
   output.lastTotal = energy;
 }
 
-void _mlir_ciface_mdrtWriteFrame(int64_t, void *positions, void *ids) {
+void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids) {
   Output &output = *current;
   if (!output.hasTrajectory)
     return;
   std::vector<double> values =
       readVectors(positions, ids, output.state, 1.0 / units::length);
   std::vector<float> narrow(values.begin(), values.end());
-  output.trajectory.writeFrame(narrow.data());
+  output.trajectory->writeFrame(narrow.data(), step, output.getTime(step));
 }
 
 void _mlir_ciface_mdrtFinish(void *positions, void *velocities,
@@ -472,7 +299,7 @@ static void writeState(int64_t step, void *positions, void *velocities,
   if (forces)
     checkpoint.forces = readVectors(forces, ids, output.force);
 
-  checkpoint.frames = output.hasTrajectory ? output.trajectory.getNumFrames()
+  checkpoint.frames = output.hasTrajectory ? output.trajectory->getNumFrames()
                                            : 0;
   checkpoint.bath = output.bath;
 
@@ -507,7 +334,8 @@ static void writeState(int64_t step, void *positions, void *velocities,
     reason = "the wall time";
   if (!reason)
     return;
-  output.trajectory.close();
+  if (output.trajectory)
+    output.trajectory->close();
   std::fprintf(output.log,
                "MDIR: stopped after step %lld on %s; '%s' holds the state, "
                "and `mdir run --continue` goes on from it\n",

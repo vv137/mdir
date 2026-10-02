@@ -778,10 +778,10 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     // A continued run appends its frames to the file that its checkpoint
     // counts them in, cut to those frames, or writes them to a part of
     // their own (D130).
-    std::string trajectory = control->dcdFile;
+    std::string trajectory = control->trajectoryFile;
     bool appends = false;
     if (own && options.appends && !own->trajectory.empty()) {
-      StringRef name = llvm::sys::path::filename(control->dcdFile);
+      StringRef name = llvm::sys::path::filename(control->trajectoryFile);
       StringRef extension = llvm::sys::path::extension(name);
       StringRef recorded = own->trajectory;
       std::string stem = (name.drop_back(extension.size()) + ".part").str();
@@ -791,7 +791,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                     recorded + "', which is not the trajectory of the "
                     "control file, '" + name + "', or a part of it");
       llvm::SmallString<256> counted(
-          llvm::sys::path::parent_path(control->dcdFile));
+          llvm::sys::path::parent_path(control->trajectoryFile));
       llvm::sys::path::append(counted, recorded);
       trajectory = std::string(counted);
       if (llvm::sys::fs::exists(trajectory)) {
@@ -803,10 +803,11 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                     "writes the frames that follow to a part of their own");
       }
     } else if (own && !options.appends) {
-      trajectory = getPartPath(control->dcdFile, part);
+      trajectory = getPartPath(control->trajectoryFile, part);
     }
+    output.trajectory = createTrajectoryWriter(control->trajectoryFormat);
     if (appends) {
-      auto removed = output.trajectory.append(
+      auto removed = output.trajectory->append(
           trajectory, count, own->frames, control->framePeriod,
           control->timestep, cell);
       if (!removed)
@@ -816,7 +817,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                      "MDIR: removed %lld frames past the checkpoint from "
                      "'%s'\n",
                      static_cast<long long>(*removed), trajectory.c_str());
-    } else if (llvm::Error error = output.trajectory.open(
+    } else if (llvm::Error error = output.trajectory->open(
                    trajectory, count, firstStep + control->framePeriod,
                    control->framePeriod, control->timestep, cell)) {
       return fail(std::move(error));
@@ -825,7 +826,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     double tilts[3];
     for (int k = 0; k != 3; ++k)
       tilts[k] = system->tilt[k] / units::length;
-    output.trajectory.setTilt(tilts);
+    output.trajectory->setTilt(tilts);
     output.hasTrajectory = true;
   }
   if (writesCheckpoints) {
@@ -907,7 +908,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   double runTime = std::chrono::duration<double>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
-  output.trajectory.close();
+  if (output.trajectory)
+    output.trajectory->close();
 
   std::fprintf(output.log, "MDIR: ran in %.2f s", runTime);
   if (!control->minimize && control->numSteps > 0 && runTime > 0.0) {

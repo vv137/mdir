@@ -86,7 +86,8 @@ regard to case.
 | | `parameters` | With a PSF: the files of topology (`.rtf`), parameters (`.prm`), and streams (`.str`), in the order that CHARMM reads them; a later file replaces what an earlier one defines. |
 | | `include_paths`, `defines` | With a GROMACS topology: the directories of `#include` and the names that `#define` gives. |
 | | `checkpoint` | The checkpoint of an earlier run, whose state the run begins from, at its step and time (D129), taking its cell (and warning on the standard error if the input has another); the input's cell still sets the grid of PME and the reference of restraints. One of a minimization gives the positions only, and the run begins at step 0. |
-| `[output]` | `trajectory` | Positions, in DCD (`.dcd`). |
+| `[output]` | `trajectory` | Positions, in DCD (`.dcd`, Å) or in the compressed XTC of GROMACS (`.xtc`, nm to a thousandth), by the extension of the name (D141). |
+| | `trajectory_format` | `AUTO` (the default, from the extension), `DCD`, or `XTC`. |
 | | `checkpoint` | The checkpoint (D26), written every `checkpoint_interval` steps in place of the one before, which stays as `<checkpoint>.prev` (D132), and at the end of a minimization. `mdir run --continue` continues the run from it (Section 2.7). |
 | | `energy_interval`, `trajectory_interval`, `checkpoint_interval` | Steps between the rows of the log, the frames, and the checkpoints (Section 2.2). The intervals nest, either way for energies and frames. |
 | `[energy]` | `cutoff` | The cutoff of `md.neighborhood` (Å). |
@@ -304,7 +305,7 @@ loops that compute the energy and the forces.
 | Energy expressions | The syntax of D22 to a kernel (`Expression.cpp`) | A parser of expressions |
 | Compile and run | Passes in the process, the execution engine (`tools/mdir/Run.cpp`) | MLIR libraries, linked into the tool |
 | Output | `mdrt.host_call` to functions of the driver that the execution engine registers: `mdrtWriteEnergies`, `mdrtWriteFrame`, `mdrtWriteCheckpoint`, `mdrtWriteMinimization` (`Output.cpp`) | |
-| Writers | Trajectories in DCD; checkpoints in H5MD (`Checkpoint.cpp`). XTC is not implemented | HDF5 for H5MD |
+| Writers | Trajectories in DCD and XTC (`Trajectory.cpp`, D141); checkpoints in H5MD (`Checkpoint.cpp`) | HDF5 for H5MD |
 | Initial velocities | From `temperature` and `seed`: normal numbers from xoshiro256** seeded by splitmix64, without the components along the constraints and with the center of mass at rest, scaled to the temperature (`System.cpp`) | |
 
 ### 2.5 What the driver builds
@@ -390,7 +391,7 @@ mdir run --continue --max-walltime 23:50 md.toml
 | Option | What it does |
 |---|---|
 | `--continue` | Continues the run from the checkpoint of `[output]` until it has taken `steps` steps from the step it began at (D129). Without a checkpoint the run begins; with one that holds the last step it says that the run is complete and exits with 0. It refuses a checkpoint of another time step or seed, and steps that remain if they are not whole intervals of the outputs and of the coupling. Raising `steps` extends a run. |
-| `--no-append` | With `--continue`, writes the frames that follow to `<trajectory>.partNNNN.dcd`, NNNN the part of the run; later continuations append to that part. Without it, the frames are appended to the trajectory that the checkpoint counts them in, after the frames past the checkpoint are removed (D130). |
+| `--no-append` | With `--continue`, writes the frames that follow to `<trajectory>.partNNNN.dcd` (or `.xtc`), NNNN the part of the run; later continuations append to that part. Without it, the frames are appended to the trajectory that the checkpoint counts them in, after the frames past the checkpoint are removed (D130). |
 | `--max-walltime <time>` | Stops at the last checkpoint that leaves time, within `<time>` from the start of `mdir`, for one more interval between checkpoints as long as the longest so far (D131). In hours (`23.5`) or as `H:MM[:SS]`. |
 
 SIGTERM and SIGINT ask a run of dynamics that writes checkpoints to stop
@@ -418,7 +419,7 @@ run it began from is not changed.
 |---|---|---|
 | 1 | The tables and keywords of the control file | As in Section 1 (D35) |
 | 2 | The units of the control file | Å, kcal/mol, ps (D36) |
-| 3 | The trajectory format | DCD first; XTC follows (D37) |
+| 3 | The trajectory format | DCD first (D37); XTC as well (D141) |
 | 4 | The checkpoint | H5MD (D26, D40), with HDF5 1.14.6, which `scripts/build-hdf5.sh` installs |
 | 5 | The TOML library | toml++, in the repository (D38) |
 | 6 | The schedule | Compiled (D39) |
@@ -433,6 +434,7 @@ run it began from is not changed.
 | Compile and run in the process, on the CPU and on a GPU | Implemented |
 | Log, with the virial and the pressure | Implemented |
 | Trajectory in the DCD format | Implemented |
+| Trajectory in the XTC format | Implemented (D141) |
 | Initial velocities | Implemented. The sequence of random numbers is fixed by the seed and does not depend on a library. |
 | Checkpoints in H5MD, and runs that continue from one | Implemented |
 | The number of builds of the neighbor structures, in the log | Implemented |

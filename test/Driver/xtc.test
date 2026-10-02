@@ -1,0 +1,68 @@
+# Trajectories in XTC (D141): a name that ends in `.xtc` gives the format of
+# GROMACS, positions in nm to a thousandth, compressed, with the step, the
+# time, and the cell of each frame; `trajectory_format` names the format
+# where the extension does not. read_xtc.py decodes the frames of the
+# dipeptide on its own and finds them those of the same run in DCD. A run
+# continued from its checkpoints appends to its XTC, cut to the frames that
+# the checkpoint counts, as it does to a DCD (D130): the file is that of the
+# run that was not interrupted, byte for byte.
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/dcd.toml
+# RUN: sed -e 's/run.dcd/run.xtc/' %t/dcd.toml > %t/xtc.toml
+# RUN: cd %t && mdir run dcd.toml > /dev/null && mdir run xtc.toml > /dev/null
+# RUN: %python %S/Inputs/read_xtc.py %t/run.xtc %t/run.dcd 10 0.001 | FileCheck %s
+#
+# RUN: sed -e 's/run.dcd/run.trajectory/' -e 's/^trajectory_interval/trajectory_format = "XTC"\n&/' %t/dcd.toml > %t/named.toml
+# RUN: cd %t && mdir run named.toml > /dev/null && cmp %t/run.trajectory %t/run.xtc
+# RUN: sed -e 's/run.dcd/run.trajectory/' %t/dcd.toml > %t/unknown.toml
+# RUN: not mdir check %t/unknown.toml 2>&1 | FileCheck %s --check-prefix=UNKNOWN
+#
+# RUN: sed -e 's|Inputs/|%S/Inputs/|' -e 's|^steps *= 200|steps = 400|' \
+# RUN:     %S/mixture.toml > %t/whole.toml
+# RUN: printf 'trajectory = "whole.xtc"\ntrajectory_interval = 50\ncheckpoint = "whole.h5"\ncheckpoint_interval = 100\n' >> %t/whole.toml
+# RUN: sed -e 's|whole|part|g' %t/whole.toml > %t/part.toml
+# RUN: mdir run %t/whole.toml > /dev/null
+# RUN: %python %S/Inputs/exit_status.py mdir run --continue --max-walltime 0.000001 %t/part.toml > /dev/null
+# RUN: %python %S/Inputs/exit_status.py mdir run --continue --max-walltime 0.000001 %t/part.toml > /dev/null
+# RUN: cp %t/part.h5.prev %t/part.h5
+# RUN: mdir run --continue %t/part.toml | FileCheck %s --check-prefix=CUT
+# RUN: cmp %t/whole.xtc %t/part.xtc
+
+# CHECK:      frames 5 5
+# CHECK-NEXT: steps and times: ok
+# CHECK-NEXT: cells: ok
+# CHECK-NEXT: positions within 0.0005 nm: ok
+
+# UNKNOWN: the format of the trajectory '{{.*}}run.trajectory' is not known from its extension; name a file that ends in '.dcd' or '.xtc', or give 'trajectory_format'
+
+# CUT: MDIR: removed 2 frames past the checkpoint from '{{.*}}part.xtc'
+
+#--- run.toml
+[input]
+topology    = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+[output]
+trajectory = "run.dcd"
+trajectory_interval = 10
+energy_interval = 10
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "PME"
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.001
+steps      = 50
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+[constraints]
+hydrogen_bonds = true
+rigid_water    = true
+[boundary]
+type = "PERIODIC"
+#--- end
