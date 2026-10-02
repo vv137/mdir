@@ -151,12 +151,27 @@ method of second order should.
 **Flexible water against sander** (`scripts/validation/nve`). The
 dipeptide in TIP3P without constraints, particle mesh Ewald, 2 ps from the
 same positions and velocities in both programs, MDIR in double precision.
-At 0.5 fs the total energy of MDIR fluctuates with a standard deviation of
-1.56 kcal/mol and drifts by −0.50 kcal/mol/ps (a line fitted to it), that
-of sander by 1.32 and −0.95; at 0.25 fs, 0.47 and −0.39 against 0.66 and
-−0.71. The fluctuation of MDIR's velocity Verlet falls by 3.3 when the
-step is halved; sander's leapfrog reports a kinetic energy averaged over
-the half steps, whose fluctuation falls by 2.0.
+The stretch of O–H has a period of about 9 fs, so at 0.5 fs, the step
+usual for flexible water, the error of the integrator in each bond is some
+$(\omega\Delta t)^2/8 = 1.5\%$ of its energy, and the comparison needs
+smaller steps. The standard deviation of the total energy about a fitted
+line, in kcal/mol, with its ratio to that of the step twice as long:
+
+| Step | MDIR | sander | MDIR, terms shifted to 0 at the cutoff |
+|---|---|---|---|
+| 0.5 fs | 1.53 | 1.21 | 1.527 |
+| 0.25 fs | 0.415 (3.7) | 0.52 (2.3) | 0.368 (4.16) |
+| 0.125 fs | 0.143 (2.9) | 0.34 (1.6) | 0.092 (4.00) |
+| 0.0625 fs | 0.165 (0.9) | 0.27 (1.2) | 0.023 (4.04) |
+
+With the cutoff of 9 Å as Amber takes it, the energy of a pair jumps when
+it crosses the cutoff, and both programs reach a floor that does not fall
+with the step, MDIR at 0.15 kcal/mol and sander at 0.27 (whose leapfrog
+reports a kinetic energy averaged over the half steps), with drifts of
+$-0.2$ to $-0.5$ kcal/mol/ps in MDIR and $-0.2$ to $-0.95$ in sander. With
+both terms shifted to 0 at the cutoff, which sander does not take, the
+fluctuation of MDIR falls by 4.0 to 4.2 with each halving of the step, as
+a method of second order should, and the drift is below 0.005 kcal/mol/ps.
 
 **Over 2 ns.** The figure of merit for production is the drift over a
 long run at the production step. JAC (23,558 atoms) at constant energy,

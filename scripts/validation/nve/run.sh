@@ -1,13 +1,20 @@
 #!/bin/bash
 # Conservation of energy at constant energy against sander: alanine
 # dipeptide in flexible TIP3P water (test/Driver/Inputs/dipeptide), particle
-# mesh Ewald, no constraints, 2 ps at 0.5 and 0.25 fs, both programs from the
-# same positions and velocities (a step of sander at 300 K, written in
-# ASCII). MDIR runs on the CPU in double precision from the topology with
+# mesh Ewald, no constraints, 2 ps at 0.5, 0.25, 0.125, and 0.0625 fs, both
+# programs from the same positions and velocities (a step of sander at
+# 300 K, written in ASCII). The stretch of O-H has a period of about 9 fs,
+# so at 0.5 fs the error of the integrator in each bond is some
+# (omega dt)^2 / 8 = 1.5% of its energy; the fluctuation of the total
+# energy falls as dt^2 only below that, and what does not fall with the step
+# comes from the truncations at the cutoff: MDIR runs the four steps again
+# with both terms shifted to 0 at the cutoff (`lennard_jones_modifier` and
+# `coulomb_modifier`, "POTENTIAL_SHIFT"), which sander does not take. MDIR runs on the CPU in double precision from the topology with
 # its charges scaled to Amber's Coulomb constant; both take the same beta,
 # grid, order, and influence function, and no correction for the
 # dispersion. Prints, for each program and step, the change of the total
-# energy, its standard deviation, and the slope of a line fitted to it.
+# energy, the slope of a line fitted to it, and the standard deviation about
+# that line, with its ratio to that of the step twice as long.
 #
 #   scripts/validation/nve/run.sh WORK MDIR ENGINES
 #
@@ -34,7 +41,7 @@ $ewald
 IN
 "$engines/bin/sander" -O -i start.in -p dipeptide.prmtop -c dipeptide.inpcrd \
   -o start.out -r start.rst7
-for dt in 0.0005 0.00025; do
+for dt in 0.0005 0.00025 0.000125 0.0000625; do
   steps=$(python3 -c "print(round(2.0 / $dt))")
   every=$(python3 -c "print(round(0.005 / $dt))")
   cat > sander-$dt.in <<IN
@@ -79,6 +86,9 @@ precision = "DOUBLE"
 threads   = 4
 TOML
   "$mdir" run mdir-$dt.toml > mdir-$dt.log
+  sed 's/^dispersion_correction = "NONE"/&\nlennard_jones_modifier = "POTENTIAL_SHIFT"\ncoulomb_modifier = "POTENTIAL_SHIFT"/' \
+    mdir-$dt.toml > shifted-$dt.toml
+  "$mdir" run shifted-$dt.toml > shifted-$dt.log
 done
 wait
 "$engines/bin/python" - <<'PY'
@@ -99,11 +109,16 @@ def mdir(path):
                      if len(f) > 4 and f[0] == "INFO:" and f[1].isdigit()])
 
 
-for dt in ("0.0005", "0.00025"):
+before = {}
+for dt in ("0.0005", "0.00025", "0.000125", "0.0000625"):
     for name, data in (("sander", sander(f"sander-{dt}.out")),
-                       ("MDIR", mdir(f"mdir-{dt}.log"))):
-        t, e = data[:, 0], data[:, 1]
-        slope = np.polyfit(t - t[0], e, 1)[0]
-        print(f"{float(dt) * 1000:.2f} fs {name:6s} change {e[-1] - e[0]:+8.4f}"
-              f"  std {e.std():.4f}  slope {slope:+.3f} kcal/mol/ps")
+                       ("MDIR", mdir(f"mdir-{dt}.log")),
+                       ("MDIR, shifted", mdir(f"shifted-{dt}.log"))):
+        t, e = data[:, 0] - data[0, 0], data[:, 1]
+        line = np.polyfit(t, e, 1)
+        std = (e - np.polyval(line, t)).std()
+        ratio = f"{before[name] / std:5.2f}" if name in before else "     "
+        before[name] = std
+        print(f"{float(dt) * 1000:6.4f} fs {name:13s} change {e[-1] - e[0]:+8.4f}"
+              f"  slope {line[0]:+.3f} kcal/mol/ps  std {std:.4f} {ratio}")
 PY
