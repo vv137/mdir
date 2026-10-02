@@ -107,9 +107,13 @@ members do not follow one another are listed by their member at place 0,
 their members write their values of the loop before, and a second kernel
 of one block takes them and clears its count for the next step. For the
 members of a group to follow one another, the driver orders the particles
-by the position of an *anchor*, the heavy atom of the group (Section 4.2);
-every group of the Amber suite is then contiguous, and the second kernel
-finds nothing to do. `test/Driver/integration-gpu.test` runs propane with
+by the position of an *anchor*, the heavy atom of the group (Section 4.2),
+and a virtual site by that of the first atom that places it; every group
+of the Amber suite is then contiguous, and the second kernel finds nothing
+to do. Without the sites, the extra point of an OPC water near a face of a
+cell of the order went to another cell than its atoms: ubiquitin in 5700
+OPC waters listed 232 tuples a step, 13.8 µs of one block, against 1.5
+with them (525 to 543 ns/day). `test/Driver/integration-gpu.test` runs propane with
 its hydrogens numbered after its carbons, whose groups are not contiguous,
 against the loops apart and the CPU.
 
