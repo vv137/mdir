@@ -7,6 +7,8 @@
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/Path.h"
 
+#include <algorithm>
+#include <cmath>
 #include <optional>
 
 #define TOML_EXCEPTIONS 0
@@ -377,6 +379,15 @@ Error Reader::readPair(const toml::table &table) {
       }
       continue;
     }
+    if (keyword == "groups") {
+      const toml::array *list = node.as_array();
+      if (!list || list->size() != 2 ||
+          !llvm::all_of(*list, [](const toml::node &e) { return e.is_string(); }))
+        return fail(node, "expected 'groups' as two masks of particles");
+      for (const toml::node &mask : *list)
+        term.groups.push_back(*mask.value<std::string>());
+      continue;
+    }
     // Any other keyword names a number that the expression uses.
     if (!node.is_number())
       return fail(node, "expected a number for '" + keyword + "'");
@@ -745,15 +756,84 @@ Error Reader::readEnergy(const toml::table &table) {
                        "topology; for terms in the control file use "
                        "\"FORCE_SWITCH\"");
 
-  // A topology gives the types and the terms.
+  // A topology gives the types and the terms. A pair term adds to them,
+  // with the parameters of the topology (D137).
   if (control.hasTopology()) {
-    if (!control.types.empty() || !control.pairs.empty() ||
-        !control.overrides.empty())
-      return fail(table, "[[energy.type]], [[energy.pair]], and "
-                         "[[energy.pair_override]] are for a system without a "
-                         "topology; the topology gives them");
+    if (!control.types.empty() || !control.overrides.empty())
+      return fail(table, "[[energy.type]] and [[energy.pair_override]] are "
+                         "for a system without a topology; the topology "
+                         "gives them");
+    const toml::array *pairs = table.get("pair") ? table.get("pair")->as_array()
+                                                 : nullptr;
+    if (pairs && control.truncation == Truncation::PowerForceSwitch)
+      return fail(*pairs, "a pair term is truncated as the whole of its "
+                          "energy, which \"POWER_FORCE_SWITCH\" does not "
+                          "say; use \"FORCE_SWITCH\"");
+    for (auto [index, term] : llvm::enumerate(control.pairs)) {
+      const toml::node &node = (*pairs)[index];
+      if (!term.mixing.empty() ||
+          term.dispersion != DispersionCorrection::None)
+        return fail(node, "with a topology a pair term takes the parameters "
+                          "of the topology, not 'mixing' or "
+                          "'dispersion_correction'");
+      if (!llvm::all_of(term.name, [](char c) {
+            return llvm::isAlnum(c) || c == '_';
+          }))
+        return fail(node, "a name of letters, digits, and '_', not '" +
+                              term.name + "'");
+      auto expression = Expression::parse(term.expression);
+      if (!expression)
+        return fail(node, llvm::toString(expression.takeError()));
+      static const char *const known[] = {
+          "r", "q1", "q2", "sigma", "epsilon", "sigma1", "sigma2",
+          "epsilon1", "epsilon2", "coulomb"};
+      for (const std::string &name : expression->getNames())
+        if (!llvm::is_contained(known, StringRef(name)) &&
+            !llvm::any_of(term.constants,
+                          [&](const auto &c) { return c.first == name; }))
+          return fail(node, "the expression uses '" + name +
+                                "', which is not r, q1, q2, sigma, epsilon, "
+                                "sigma1, sigma2, epsilon1, epsilon2, coulomb, "
+                                "or a constant of the term");
+      // The energy of a pair cannot depend on which particle comes first.
+      // No structure of the expression shows that in general, so it is
+      // tested at a few points, and the kernel states the symmetry as
+      // asserted.
+      const double samples[][7] = {{3.7, 0.41, -0.83, 3.1, 1.7, 0.21, 0.07},
+                                   {5.3, -0.62, 0.35, 2.2, 3.4, 0.13, 0.48},
+                                   {8.9, 0.97, 0.12, 1.3, 2.6, 0.92, 0.35}};
+      for (const double *s : samples) {
+        llvm::StringMap<double> values, swapped;
+        for (const auto &[name, value] : term.constants)
+          values[name] = swapped[name] = value;
+        values["coulomb"] = swapped["coulomb"] = 332.0637;
+        values["r"] = swapped["r"] = s[0];
+        values["sigma"] = swapped["sigma"] = 0.5 * (s[3] + s[4]);
+        values["epsilon"] = swapped["epsilon"] = std::sqrt(s[5] * s[6]);
+        const char *pairs[][2] = {
+            {"q1", "q2"}, {"sigma1", "sigma2"}, {"epsilon1", "epsilon2"}};
+        for (auto [k, names] : llvm::enumerate(pairs)) {
+          values[names[0]] = swapped[names[1]] = s[1 + 2 * k];
+          values[names[1]] = swapped[names[0]] = s[2 + 2 * k];
+        }
+        double a = expression->evaluate(values);
+        double b = expression->evaluate(swapped);
+        if (std::isnan(a) && std::isnan(b))
+          continue;
+        if (!(std::abs(a - b) <=
+              1e-12 * std::max({std::abs(a), std::abs(b), 1e-300})))
+          return fail(node, "the energy of a pair must not change when its "
+                            "two particles are exchanged (q1 with q2, sigma1 "
+                            "with sigma2, epsilon1 with epsilon2), and this "
+                            "expression does");
+      }
+    }
     return Error::success();
   }
+  for (const PairTerm &term : control.pairs)
+    if (!term.groups.empty())
+      return fail(table, "'groups' of a pair term need a topology, whose "
+                         "particles the masks select");
   if (control.types.empty())
     return fail(table, "expected at least one [[energy.type]]");
   if (control.pairs.empty())

@@ -44,6 +44,11 @@ struct System {
     return 3.0 * static_cast<double>(massive) -
            static_cast<double>(numConstraints) - (keepsMomentum ? 3.0 : 0.0);
   }
+  /// For each pair term of a topology, its two interaction groups, a flag
+  /// for each particle, or none if it acts on all pairs (D137).
+  std::vector<std::vector<std::vector<bool>>> pairGroups;
+  /// The names of those terms, for the log.
+  std::vector<std::string> pairTermNames;
   /// Whether the run keeps the momentum of the center of mass: not under
   /// Langevin dynamics unless its motion is removed (D135).
   bool keepsMomentum = true;

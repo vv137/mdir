@@ -178,6 +178,7 @@ they are needed:
 | F6 | Coarse-grained models: tabulated potentials, Martini from GROMACS topologies, DPD | Missing; part of the purpose from the start |
 | F7 | Free energy and enhanced sampling: alchemical $\lambda$ with $dH/d\lambda$ (D2), collective variables, replica exchange | Not designed; neither [future-architecture-plan.md](future-architecture-plan.md) nor this roadmap has a design. The architecture names `ensemble` and replica exchange as a driver event (P4) |
 | F8 | Learned potentials | Section 7 |
+| F9 | The custom forces of OpenMM beyond tuples: pairs with a topology, tabulated functions, centers of groups (pulling), generalized Born | In progress: pair terms over the pairs of a topology, in its charges and Lennard-Jones parameters, with interaction groups (D137). Next: tabulated functions in expressions, parameters of each particle, terms over centers of groups, then the reaction field, runs without a periodic cell, and generalized Born (OBC) |
 
 ## 6. Python API
 

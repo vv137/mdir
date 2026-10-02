@@ -157,6 +157,24 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
           restraint.selection.c_str());
   }
 
+  // The interaction groups of the pair terms, by their masks (D137).
+  for (const PairTerm &term : control.pairs) {
+    std::vector<std::vector<bool>> groups;
+    for (const std::string &mask : term.groups) {
+      auto selected = selectParticles(mask, *topology);
+      if (!selected)
+        return selected.takeError();
+      if (llvm::none_of(*selected, [](bool b) { return b; }))
+        return llvm::createStringError(
+            llvm::inconvertibleErrorCode(),
+            "the group '%s' of the pair term '%s' selects no particle",
+            mask.c_str(), term.name.c_str());
+      groups.push_back(std::move(*selected));
+    }
+    system.pairGroups.push_back(std::move(groups));
+    system.pairTermNames.push_back(term.name);
+  }
+
   system.topology = std::make_shared<Topology>(std::move(*topology));
   system.keepsMomentum = !control.isLangevin() || control.comPeriod > 0;
   return std::move(system);

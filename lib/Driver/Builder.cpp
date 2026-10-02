@@ -77,13 +77,14 @@ private:
     UreyBradleys = 1024,
     HarmonicImpropers = 2048,
     TupleTerms = 4096,
-    AllTerms = 8191,
+    PairTerms = 8192,
+    AllTerms = 16383,
   };
   /// Emits the potential `name` of the terms `terms` of the topology; of
-  /// the terms over tuples given by expressions, only the one of index
-  /// `tupleTerm` if it is not -1.
+  /// the terms given by expressions over tuples or pairs, only the one of
+  /// index `tupleTerm` or `pairTerm` if it is not -1.
   void emitTopologyPotential(StringRef name, unsigned terms,
-                             int tupleTerm = -1);
+                             int tupleTerm = -1, int pairTerm = -1);
   /// β, the grid, the influence function, and the constant terms of
   /// particle mesh Ewald (docs/pme-m1.md).
   llvm::Error collectPME();
@@ -483,6 +484,25 @@ struct Coupled {
 };
 
 } // namespace
+
+/// The attribute of an md.sum_relation that truncates its energy at the
+/// cutoff as `control` says; the power force switch is for the
+/// Lennard-Jones of a topology only, and the reader rejects it elsewhere.
+static std::string getTruncation(const Control &control) {
+  double from = control.switchDistance * units::length;
+  switch (control.truncation) {
+  case Truncation::None:
+  case Truncation::PowerForceSwitch:
+    return "";
+  case Truncation::Shift:
+    return " truncation(shift)";
+  case Truncation::Switch:
+    return " truncation(switch, from = " + formatReal(from) + ")";
+  case Truncation::ForceSwitch:
+    return " truncation(force_switch, from = " + formatReal(from) + ")";
+  }
+  llvm_unreachable("unknown truncation");
+}
 
 std::string Builder::getFieldParameters() const {
   std::string text;
@@ -898,6 +918,17 @@ llvm::Error Builder::collectTopology() {
     }
   }
 
+  // The interaction groups of the pair terms, a flag for each particle
+  // (D137).
+  for (auto [k, groups] : llvm::enumerate(system.pairGroups))
+    for (auto [g, flags] : llvm::enumerate(groups)) {
+      Program::Field field;
+      field.name = "pg" + std::to_string(k) + (g == 0 ? "a" : "b");
+      for (bool flag : flags)
+        field.values.push_back(flag ? 1.0 : 0.0);
+      program.fields.push_back(std::move(field));
+    }
+
   // Lennard-Jones for each pair of types.
   unsigned numTypes = topology.getNumTypes();
   program.tables.push_back({"lj_sigma", numTypes, topology.sigma});
@@ -1310,7 +1341,7 @@ llvm::Error Builder::collectPME() {
 }
 
 void Builder::emitTopologyPotential(StringRef name, unsigned terms,
-                                    int tupleTerm) {
+                                    int tupleTerm, int pairTerm) {
   double cutoff = control.cutoffDistance * units::length;
   auto has = [&](StringRef set) {
     return llvm::any_of(program.tupleSets, [&](const Program::TupleSet &s) {
@@ -1448,13 +1479,99 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
   // Lennard-Jones and Coulomb, both cut at the cutoff with no shift, over
   // the pairs that are not excluded.
   bool lj = terms & LennardJones, coulomb = terms & Coulomb;
-  if (lj || coulomb) {
+  bool pairTerms = (terms & PairTerms) && !control.pairs.empty();
+  if (lj || coulomb || pairTerms) {
     os << "  %n = md.neighborhood %x, %cell cutoff(" << formatReal(cutoff)
        << ")";
     if (has("excluded"))
       os << " exclude(%r_excluded : !rel_excluded)";
-    os << " : !vec -> !pairs\n"
-       << "  %u_nonbonded = md.sum_relation %n, %x, %cell gather(%p_type, "
+    os << " : !vec -> !pairs\n";
+  }
+  // The pair terms given by expressions (D137), over the pairs of the
+  // topology that are not excluded, truncated at the cutoff as the
+  // Lennard-Jones is, in the units of the control file: r, sigma in Å, q
+  // in e, epsilon and the energy in kcal/mol. The reader has tested that
+  // the expression is symmetric in the two particles, which the kernel
+  // then asserts; sigma and
+  // epsilon those of the pair, with the pairs of types set apart, and
+  // sigma1, epsilon1 those of the type of each particle with itself.
+  for (auto [k, term] : llvm::enumerate(control.pairs)) {
+    if (!pairTerms || (pairTerm >= 0 && static_cast<int>(k) != pairTerm))
+      continue;
+    bool grouped = k < system.pairGroups.size() && !system.pairGroups[k].empty();
+    std::string g = std::to_string(k), set = "pair_" + term.name;
+    Expression expression = llvm::cantFail(Expression::parse(term.expression));
+    const std::vector<std::string> &used = expression.getNames();
+    auto uses = [&](StringRef name) { return llvm::is_contained(used, name); };
+    os << "  %u_" << set << " = md.sum_relation %n, %x, %cell gather(%p_type, "
+       << "%p_q" << (grouped ? ", %p_pg" + g + "a, %p_pg" + g + "b" : "")
+       << " : !ids, !real" << (grouped ? ", !real, !real" : "") << ")\n"
+       << "      exchange(symmetric, asserted)" << getTruncation(control)
+       << " {\n"
+       << "  ^bb0(%r: f64, %d: vector<3xf64>, %type_i: i32, %type_j: i32, "
+       << "%q_i: f64, %q_j: f64"
+       << (grouped ? ", %ga_i: f64, %ga_j: f64, %gb_i: f64, %gb_j: f64" : "")
+       << "):\n"
+       << "    %pt_angstrom = arith.constant " << formatReal(1.0 / units::length)
+       << " : f64\n"
+       << "    %pt_kcal = arith.constant " << formatReal(1.0 / units::energy)
+       << " : f64\n"
+       << "    %pt_r = arith.mulf %r, %pt_angstrom : f64\n";
+    llvm::StringMap<std::string> values;
+    values["r"] = "%pt_r";
+    values["q1"] = "%q_i";
+    values["q2"] = "%q_j";
+    auto lookup = [&](StringRef variable, StringRef table, StringRef a,
+                      StringRef b, StringRef factor) {
+      if (!uses(variable))
+        return;
+      std::string raw = ("%pt_" + variable + "_raw").str();
+      std::string value = ("%pt_" + variable).str();
+      os << "    " << raw << " = md.lookup %t_" << table << "[" << a << ", "
+         << b << "] : !table, i32, i32 -> f64\n"
+         << "    " << value << " = arith.mulf " << raw << ", " << factor
+         << " : f64\n";
+      values[variable] = value;
+    };
+    lookup("sigma", "lj_sigma", "%type_i", "%type_j", "%pt_angstrom");
+    lookup("epsilon", "lj_epsilon", "%type_i", "%type_j", "%pt_kcal");
+    lookup("sigma1", "lj_sigma", "%type_i", "%type_i", "%pt_angstrom");
+    lookup("sigma2", "lj_sigma", "%type_j", "%type_j", "%pt_angstrom");
+    lookup("epsilon1", "lj_epsilon", "%type_i", "%type_i", "%pt_kcal");
+    lookup("epsilon2", "lj_epsilon", "%type_j", "%type_j", "%pt_kcal");
+    if (uses("coulomb")) {
+      os << "    %pt_coulomb = arith.constant " << formatReal(coulombConstant)
+         << " : f64\n";
+      values["coulomb"] = "%pt_coulomb";
+    }
+    for (auto [c, constant] : llvm::enumerate(term.constants)) {
+      std::string value = "%pt_c" + std::to_string(c);
+      os << "    " << value << " = arith.constant "
+         << formatReal(constant.second) << " : f64\n";
+      values[constant.first] = value;
+    }
+    std::string energy = expression.emit(os, values, "%pte", "    ");
+    os << "    %pt_kj = arith.constant " << formatReal(units::energy)
+       << " : f64\n"
+       << "    %pt_e = arith.mulf " << energy << ", %pt_kj : f64\n";
+    std::string value = "%pt_e";
+    if (grouped) {
+      // A pair of a particle of each group, counted once even if both are
+      // in both.
+      os << "    %pt_ab = arith.mulf %ga_i, %gb_j : f64\n"
+         << "    %pt_ba = arith.mulf %ga_j, %gb_i : f64\n"
+         << "    %pt_either = arith.addf %pt_ab, %pt_ba : f64\n"
+         << "    %pt_one = arith.constant 1.0 : f64\n"
+         << "    %pt_mask = arith.minimumf %pt_either, %pt_one : f64\n"
+         << "    %pt_masked = arith.mulf %pt_e, %pt_mask : f64\n";
+      value = "%pt_masked";
+    }
+    os << "    md.yield " << value << " : f64\n"
+       << "  } : !pairs, !vec -> f64\n";
+    add(set);
+  }
+  if (lj || coulomb) {
+    os << "  %u_nonbonded = md.sum_relation %n, %x, %cell gather(%p_type, "
           "%p_q : !ids, !real)\n"
        << "      exchange(symmetric) {\n"
        << "  ^bb0(%r: f64, %d: vector<3xf64>, %type_i: i32, %type_j: i32, "
@@ -1763,25 +1880,11 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
 
 llvm::Error Builder::emitPotential() {
   double cutoff = control.cutoffDistance * units::length;
-  double from = control.switchDistance * units::length;
 
-  std::string truncation;
-  switch (control.truncation) {
-  case Truncation::None:
-    break;
-  case Truncation::Shift:
-    truncation = " truncation(shift)";
-    break;
-  case Truncation::Switch:
-    truncation = " truncation(switch, from = " + formatReal(from) + ")";
-    break;
-  case Truncation::ForceSwitch:
-    truncation = " truncation(force_switch, from = " + formatReal(from) + ")";
-    break;
-  case Truncation::PowerForceSwitch:
+  if (control.truncation == Truncation::PowerForceSwitch)
     return makeError("the power force switch is for the Lennard-Jones of a "
                      "topology");
-  }
+  std::string truncation = getTruncation(control);
 
   os << "md.potential @energy(%x: !vec, %cell: !md.cell"
      << getFieldParameters() << ") -> f64 {\n";
@@ -5081,9 +5184,11 @@ void Builder::emitTerms(StringRef x) {
     return;
   // The restraints, if any, last: their energy at the start is that of the
   // evaluation before the terms.
-  // The terms given by expressions follow those of the topology (D136).
+  // The terms given by expressions follow those of the topology, those
+  // over tuples (D136) and then those over pairs (D137).
   int custom = static_cast<int>(system.topology->tupleTerms.size());
-  int size = 12 + custom + (hasRestraints() ? 1 : 0);
+  int pairs = static_cast<int>(control.pairs.size());
+  int size = 12 + custom + pairs + (hasRestraints() ? 1 : 0);
   std::string type = "memref<" + std::to_string(size) + "xf64>";
   os << "  %terms = memref.alloca() : " << type << "\n";
   int index = 0;
@@ -5100,8 +5205,9 @@ void Builder::emitTerms(StringRef x) {
        << "  memref.store %" << name << ", %terms[%i_" << name
        << "] : " << type << "\n";
   }
-  for (int k = 0; k != custom; ++k) {
-    std::string name = "term_custom" + std::to_string(k);
+  for (int k = 0; k != custom + pairs; ++k) {
+    std::string name = k < custom ? "term_custom" + std::to_string(k)
+                                  : "term_pair" + std::to_string(k - custom);
     os << "  %" << name << " = md.evaluate @" << name << "(" << x << ", %cell"
        << getFieldValues() << ") request [energy]\n"
        << "      : (!vec, !md.cell" << getFieldTypes() << ") -> f64\n"
@@ -5758,6 +5864,10 @@ llvm::Error Builder::build() {
     if (!isRestart())
       for (size_t k = 0, e = system.topology->tupleTerms.size(); k != e; ++k)
         emitTopologyPotential("term_custom" + std::to_string(k), TupleTerms,
+                              static_cast<int>(k));
+    if (!isRestart())
+      for (size_t k = 0, e = control.pairs.size(); k != e; ++k)
+        emitTopologyPotential("term_pair" + std::to_string(k), PairTerms, -1,
                               static_cast<int>(k));
   }
   else if (llvm::Error error = emitPotential())

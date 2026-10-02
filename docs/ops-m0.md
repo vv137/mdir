@@ -353,8 +353,10 @@ distance is unchanged, the displacement is negated, the two values of each
 gathered field are swapped, a lookup in a table marked `symmetric` gives
 the same value with its indices swapped, and commutative ops are compared
 in either operand order. If the proof fails, the op is rejected, with a
-note that the contract may be stated as `asserted` if it holds. The pass
-runs first in every pipeline of `mdir run`
+note that the contract may be stated as `asserted` if it holds. The driver
+states `asserted` for the pair terms that a control file adds to a
+topology, whose expressions it tests by exchanging the particles at a few
+points (D137). The pass runs first in every pipeline of `mdir run`
 (`lib/Dialect/MD/Transforms/CheckExchange.cpp`,
 `test/Dialect/MD/Transforms/check-exchange.mlir`).
 

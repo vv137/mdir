@@ -93,10 +93,11 @@ before the last kept (D129 to D132); the log in a file of the run is
 next. Langevin dynamics by the middle scheme is in place (D135), without
 yet a conserved energy, and so are terms given by expressions over bonds,
 angles, and dihedrals, which give restraints beyond positions and the
-dihedrals of OPLS-AA (D136). Then the features that general molecular
-dynamics asks of MDIR: such terms over positions and pairs, with
-parameters of their own and tabulated functions, and over the centers of
-groups that pulling restrains; a reaction field and runs without a
+dihedrals of OPLS-AA (D136), and terms over the pairs of a topology, in
+its charges and Lennard-Jones parameters and between interaction groups
+(D137). Then the features that general molecular dynamics asks of MDIR:
+such terms over positions, with tabulated functions and parameters of
+each particle, and over the centers of groups that pulling restrains; a reaction field and runs without a
 periodic cell, and generalized Born solvation on them; outputs for
 analysis (velocities, a compressed trajectory, the pressure tensor);
 coarse-grained models; and free energy, whose $dH/d\lambda$ the
