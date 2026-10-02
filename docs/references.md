@@ -566,6 +566,16 @@ variables," *ACM Trans. Math. Softw.* **26**, 363–372 (2000).
 Used for: the sum of the squares of normal deviates that the thermostat
 takes, drawn as a gamma deviate (`runtime/mdrt.c`).
 
+### McGibbon2015
+
+R. T. McGibbon, K. A. Beauchamp, M. P. Harrigan, et al., "MDTraj: A modern
+open library for the analysis of molecular dynamics trajectories,"
+*Biophys. J.* **109**, 1528–1532 (2015).
+[doi:10.1016/j.bpj.2015.08.015](https://doi.org/10.1016/j.bpj.2015.08.015)
+
+Used for: MDTraj, one of the programs of analysis compared in the roadmap
+(Section 8).
+
 ### Merz2018
 
 P. T. Merz, M. R. Shirts, "Testing for physical validity in molecular
@@ -586,6 +596,16 @@ E. Teller, "Equation of state calculations by fast computing machines,"
 [doi:10.1063/1.1699114](https://doi.org/10.1063/1.1699114)
 
 Used for: the Metropolis acceptance test (`dyn.metropolis`).
+
+### MichaudAgrawal2011
+
+N. Michaud-Agrawal, E. J. Denning, T. B. Woolf, O. Beckstein, "MDAnalysis: A
+toolkit for the analysis of molecular dynamics simulations," *J. Comput.
+Chem.* **32**, 2319–2327 (2011).
+[doi:10.1002/jcc.21787](https://doi.org/10.1002/jcc.21787)
+
+Used for: MDAnalysis, one of the programs of analysis compared in the
+roadmap (Section 8).
 
 ### Miyamoto1992
 
@@ -711,6 +731,17 @@ Max-Planck-Society (2010–2019), under the 3-clause BSD license.
 [gitlab.mpcdf.mpg.de/mtr/pocketfft](https://gitlab.mpcdf.mpg.de/mtr/pocketfft)
 
 Used for: the FFT of particle mesh Ewald on the host (D64, pme-m1.md).
+
+### Roe2013
+
+D. R. Roe, T. E. Cheatham III, "PTRAJ and CPPTRAJ: Software for processing
+and analysis of molecular dynamics trajectory data," *J. Chem. Theory
+Comput.* **9**, 3084–3095 (2013).
+[doi:10.1021/ct400341p](https://doi.org/10.1021/ct400341p)
+
+Used for: cpptraj, the program of analysis of the comparisons of
+`scripts/benchmarks/mdbench/structure.py`, and one of those compared in the
+roadmap (Section 8).
 
 ### Ryckaert1977
 
@@ -877,6 +908,15 @@ space-filling-curve data layout," arXiv:2602.19873 (2026).
 Used for: lists of clusters along a Hilbert curve whose indices are
 stored as deltas in nibbles, 3.6 bytes a particle against 12 for GROMACS;
 weighed against the lists of groups in the roadmap (Section 2).
+
+### Theobald2005
+
+D. L. Theobald, "Rapid calculation of RMSDs using a quaternion-based
+characteristic polynomial," *Acta Crystallogr. A* **61**, 478–480 (2005).
+[doi:10.1107/S0108767305015266](https://doi.org/10.1107/S0108767305015266)
+
+Used for: the superposition of RMSD (QCP) that MDTraj takes, and the method
+for the matrix of RMSDs between frames on a device (roadmap, Section 8).
 
 ### Thompson2009
 

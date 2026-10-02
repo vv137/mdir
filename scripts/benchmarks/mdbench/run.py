@@ -5,7 +5,7 @@ that MDBench gives for it, and reports the rates and what the runs sampled.
 
     scripts/benchmarks/mdbench/run.py DATA WORK --mdir MDIR [--steps 30000]
         [--engines pmemd,gromacs,openmm,mdir] [--pmemd PMEMD] [--gmx GMX]
-        [--openmm-python PYTHON]
+        [--openmm-python PYTHON] [--frames STEPS]
 
 DATA holds benchmark_<name>_{pmemd,gromacs,openmm} as MDBench's tarballs
 unpack them. Each engine runs STEPS steps of its MDBench input in WORK/<engine>,
@@ -21,7 +21,9 @@ stochastic velocity and cell rescaling every 25 steps, PME with
 erfc(beta r_c) = 1e-5, groups with a dual list (11 / 8.6 Å), mixed
 precision, timed over the second half, past its compilation. The rates
 are each program's own; the temperature and the density are means over
-the second half of each run.
+the second half of each run. With --frames, each engine writes a frame every
+STEPS steps (pmemd.cuda mdcrd.nc, GROMACS traj_comp.xtc, OpenMM
+trajectory.nc, MDIR md.dcd), for structure.py; without it, none.
 """
 import argparse
 import os
@@ -36,7 +38,7 @@ coordinates = "restart.rst7"
 
 [output]
 energy_interval = {interval}
-
+{trajectory}
 [energy]
 cutoff            = 8.0
 pairlist_distance = 11.0
@@ -111,10 +113,14 @@ def pmemd(args, data, work):
     stage(os.path.join(data, "pmemd"), work)
     path = os.path.join(work, "pmemd_prod.in")
     text = re.sub(r"nstlim=\d+", f"nstlim={args.steps}", open(path).read())
+    frames = []
+    if args.frames:
+        text = re.sub(r"ntwx=\d+", f"ntwx={args.frames}", text)
+        frames = ["-x", "mdcrd.nc"]
     open(path, "w").write(text)
     run([args.pmemd, "-O", "-i", "pmemd_prod.in", "-p", "prmtop.parm7", "-c",
-         "restart.rst7", "-o", "mdout", "-r", "restrt", "-inf", "mdinfo"],
-        work, "pmemd.out")
+         "restart.rst7", "-o", "mdout", "-r", "restrt", "-inf", "mdinfo"]
+        + frames, work, "pmemd.out")
     text = open(os.path.join(work, "mdout")).read()
     rate = re.findall(r"ns/day =\s+([0-9.]+)", text)
     averages = text.split("A V E R A G E S")[1] if "A V E R A G E S" in text \
@@ -131,8 +137,8 @@ def gromacs(args, data, work):
     path = os.path.join(work, "gromacs_production.mdp")
     text = re.sub(r"(?m)^nsteps\s*=.*$", f"nsteps = {args.steps}",
                   open(path).read())
-    text = re.sub(r"(?m)^nstxout-compressed\s*=.*$", "nstxout-compressed = 0",
-                  text)
+    text = re.sub(r"(?m)^nstxout-compressed\s*=.*$",
+                  f"nstxout-compressed = {args.frames}", text)
     open(path, "w").write(text)
     run([args.gmx, "grompp", "-p", "topol.top", "-c", "restart.gro", "-t",
          "restart.trr", "-f", "gromacs_production.mdp", "-o", "topol.tpr",
@@ -161,6 +167,11 @@ def openmm(args, data, work):
     path = os.path.join(work, "openmm_input.py")
     text = re.sub(r"(?m)^nsteps=\d+", f"nsteps={args.steps}",
                   open(path).read())
+    # The interval of the NetCDF reporter, past the end of the run without
+    # --frames.
+    text = re.sub(r'("trajectory\.nc",\s*)\d+',
+                  lambda m: m.group(1) + str(args.frames or args.steps + 1),
+                  text)
     open(path, "w").write(text)
     run([args.openmm_python, "openmm_input.py"], work, "openmm.out")
     out = open(os.path.join(work, "openmm.out")).read()
@@ -179,9 +190,11 @@ def openmm(args, data, work):
 def mdir(args, data, work):
     stage(os.path.join(data, "pmemd"), work)
     with open(os.path.join(work, "mdir.toml"), "w") as file:
-        file.write(MDIR_CONTROL.format(steps=args.steps,
-                                       interval=1000 if args.steps % 1000 == 0
-                                       else args.steps // 10))
+        file.write(MDIR_CONTROL.format(
+            steps=args.steps,
+            interval=1000 if args.steps % 1000 == 0 else args.steps // 10,
+            trajectory=f'trajectory = "md.dcd"\ntrajectory_interval = '
+                       f'{args.frames}\n' if args.frames else ""))
     run([args.mdir, "run", "mdir.toml"], work, "mdir.log")
     log = open(os.path.join(work, "mdir.log")).read()
     rate = re.search(r"([0-9.]+) ns per day", log)
@@ -204,6 +217,8 @@ def main():
     parser.add_argument("--openmm-python", default="python3")
     parser.add_argument("--steps", type=int, default=30000)
     parser.add_argument("--engines", default="pmemd,gromacs,openmm,mdir")
+    parser.add_argument("--frames", type=int, default=0,
+                        help="steps between frames of the trajectories")
     args = parser.parse_args()
     data = os.path.abspath(args.data)
     name = os.path.basename(data.rstrip("/"))

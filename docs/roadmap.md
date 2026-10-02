@@ -37,7 +37,7 @@ follows are in [principles.md](principles.md).
 | Physical validity (Merz and Shirts 2018 [[Merz2018]](references.md#merz2018)) | Done: the mean and the variance of the kinetic energy and the ensemble tests at two temperatures and two pressures on OPC water (white paper, Section 9.5), isotropic. Done (2026-10-02): the Kolmogorov–Smirnov test of the whole distribution of the kinetic energy against the gamma distribution of the bath, $p = 0.26$ and 0.61 at 300 and 306 K (`scripts/validation/ensembles/analyze.py`). Done (2026-10-02): the test at two pressures with semi-isotropic coupling, within 0.08 standard errors, and with the height held, within 0.36, on water, whose volume (not shape) has a distribution (white paper, Section 9.5). Next, in order: a test at two tensions, which needs a bilayer and runs of 100 ns or more; (3) frames of the velocities and equipartition between solute and solvent and among translation, rotation, and internal motion, where the constraints of mixed precision would show; (4) the fluctuation of the total energy at constant energy against the step, $\sigma_E \propto \Delta t^2$, with the forces switched to zero at the cutoff, since a plain cutoff breaks it. The `physical_validation` package of that paper takes the series as they are, through an adapter for the log and the frames of MDIR |
 | Periodic reordering of the state | TODO: the state is sorted in space only where a run begins (white paper, Section 4.2); the loops over pairs read the order of the last build (D86), but the gathers of positions and the scatters of forces follow the order of the state, which diffusion scrambles (water moves about 37 Å in 1 ns). Measured so far: JAC fell from 726 to 722 ns/day over 2 ns, 0.5%, then stayed flat (Section 10.5). First measure the loss over 10 ns of a large system (STMV, or 6n4o of MDBench at 239,131 atoms); if it exceeds about 1%, permute the state and renumber the relations every N builds, as GROMACS sorts its local state at each search |
 | Pairs and lists, next | Measure first: the mean count of bits of the masks of the inner list, the share of the 16 pairs of an entry that are work (the cost of groups over single pairs), and whether a pruning is bound by its loads or its arithmetic. Then: in the pruning, a test of the box of the group that keeps or drops an entry whole when its candidate is within $R_\text{in} - a$ or beyond $R_\text{in} + a$ of the center, $a$ the half-diagonal of the box (about 4.7 Å for 16 atoms of water), before its 16 distances; by the volume of the shell, a third or more of the outer entries lie beyond, and a pruning is about 6% of a step of Cellulose. The forces of the loop over groups accumulated in 64-bit fixed point, as the grid of PME (D70), which makes groups deterministic (white paper, Section 13). Not now: lists of clusters along a Hilbert curve with indices stored as deltas in nibbles [[Thaler2026]](references.md#thaler2026), 3.6 bytes a particle against 12 for GROMACS, but on a GH200 no faster than GROMACS and slower than a full list; the loop over groups is bound by the pipe of loads and shuffles (92% of its peak on Cellulose, white paper, Section 10.2), not by the bytes of its list, and the lists fit (Cellulose: 153,517 blocks of 64 entries of 8 bytes, 190 bytes a particle). For many devices and systems of hundreds of millions |
-| Other engines on MDBench | Preliminary (2026-10-02, one run each on GPU 1 beside another job, 30 ps at 1 fs; `scripts/benchmarks/mdbench/run.py`): 6n4o (Argonaute2 with miR-122, ff14SB and OL3 in TIP3P, 239,131 atoms, a cutoff of 8 Å), each engine with the input of MDBench and MDIR with its own couplings: MDIR 55.1 ns/day, GROMACS 2026.3 53.0 (over all steps, with its tuning of PME), pmemd.cuda 26 43.3, OpenMM 8.6.1 32.5 (mixed). Next: three repeats on GPU 0 alone, and 9naw (3,023,780 atoms) |
+| Other engines on MDBench | Preliminary (2026-10-02, one run each on GPU 1 beside another job, 30 ps at 1 fs; `scripts/benchmarks/mdbench/run.py`): 6n4o (Argonaute2 with miR-122, ff14SB and OL3 in TIP3P, 239,131 atoms, a cutoff of 8 Å), each engine with the input of MDBench and MDIR with its own couplings: MDIR 55.1 ns/day, GROMACS 2026.3 53.0 (over all steps, with its tuning of PME), pmemd.cuda 26 43.3, OpenMM 8.6.1 32.5 (mixed). Next: three repeats on GPU 0 alone, and 9naw (3,023,780 atoms). Done (2026-10-02): 2 ns of each with a frame every 10 ps (`run.py --frames 10000 --steps 2000000`), compared by `structure.py` with cpptraj: the radius of gyration of the complex is 30.9 to 31.3 Å in all four, the RMSF of the CA 0.77 to 0.85 Å, and the profiles of the RMSF by residue correlate between MDIR and each other engine (0.86 to 0.92) as the others do among themselves (0.79 to 0.95). MDIR's backbone RMSD over the second ns is the largest, 2.00 Å against 1.34 to 1.56, but over the 711 residues whose RMSF is below 1.2 Å in every engine it is 1.25 against 0.92 to 1.11: the rest is in the flexible loops, and one run of each cannot tell it from the spread between runs. Next: three runs of each with other seeds, MDIR and GROMACS first (both stochastic velocity rescaling) |
 | Semi-isotropic barostat | Done (D119): `coupling = "SEMI_ISOTROPIC"`, eqs. (9a, 9b) of [[Bernetti2020]](references.md#bernetti2020) with a surface tension and a held height, the kinetic energy, the virials, and the scaling by axis. Water samples the same volume as with isotropic coupling; on a POPC bilayer of Lipid21 the split of the pressure by axis agrees with GROMACS's in one cell. The pressure of that cell differs from GROMACS's by 43 bar (0.24% in density): on TIP3P water the pressures of MDIR, GROMACS, and pmemd.cuda at 2 fs are 52.7, 34.4, and 61.6 bar and agree near 45 bar at 0.25 fs, so it is the error of each integrator's estimator of the pressure at the step, not the coupling (D119). The area per lipid needs runs of 100 ns or more to compare to 1 Å²
 
 The order: leapfrog, then performance. The goal of performance for the
@@ -222,3 +222,43 @@ EAM, the verifier, nor the adapter. [decisions.md](decisions.md), Section
 7 still tags the dependency interface M2b, which A14 moved into M1. The
 plan's line that the roadmap "prioritizes single-node classical MD ...
 before a white paper" predates the paper.
+
+## 8. Analysis
+
+Measured on 2026-10-02 on the 2 ns of 6n4o of MDBench (239,131 particles,
+200 frames; `scripts/benchmarks/analysis/tools.py`): the same work, a fit
+of the backbone of the protein, its RMSD per frame, the RMSF of each CA,
+and the radius of gyration of its heavy atoms, read from the 574 MB DCD of
+MDIR in the page cache. cpptraj [[Roe2013]](references.md#roe2013) took 0.5 s,
+MDTraj [[McGibbon2015]](references.md#mcgibbon2015) 3.4 s, and MDAnalysis
+[[MichaudAgrawal2011]](references.md#michaudagrawal2011) 6.9 s; the three agree to
+5 × 10⁻⁵ Å, the rounding of frames in `f32`. GROMACS's `rms`, `rmsf`, and
+`gyrate` took 8.8 s on its own XTC of the same length, three passes that
+each decompress it. Simple observables run at the speed of reading the
+file (1.1 GB/s for cpptraj here).
+
+What went wrong in the comparisons of this work was never the arithmetic:
+
+- `unwrap` of cpptraj from a reference in another image gave the RNA of
+  6n4o an RMSD of 20 to 35 Å and the complex a radius of gyration of 64 Å,
+  against 1.3 to 1.9 and 31, without a warning. MDIR writes the image of
+  its sorted state, with the RNA 178 Å from the protein; the restart of
+  MDBench has it in another; GROMACS writes whole molecules. Imaging each
+  molecule next to the protein (`autoimage`) gave the right numbers.
+- GROMACS writes a frame of step 0 and the others do not, so frames of the
+  same index differ by one interval.
+- The columns of `gmx energy` and of ParmEd's reporter for OpenMM come in
+  their own order, not that of the request; they were misread three times.
+- Definitions differ between programs: the weights of the radius of
+  gyration, the reference of a fit, nm against Å.
+
+| # | Item | State |
+|---|---|---|
+| A1 | Frames correct by construction: molecules whole and the solute in one image, from the graph of bonds and constraints that MDIR holds; the step, the time, and the cell in each frame; the count of images of each molecule for an exact unwrapping (mean square displacements); velocities on request (F4) | Missing; with U2 |
+| A2 | Observables of the run, compiled into the program and sharing its loops: radial distributions from the pair list, density profiles along an axis, the pressure tensor and the lateral pressure profile, order parameters, the interaction energy between two selections (protein and RNA), the distribution of the kinetic energy for the tests of [[Merz2018]](references.md#merz2018); summed in `f64`, with block averages and their errors | Missing. The interaction energy and the lateral pressure need the forces of the run, which a program of analysis has only through a rerun |
+| A3 | `mdir analyze`: the same kernels over frames read from files: the energies of frames term by term (a rerun), observables of pairs on the device, the matrix of RMSDs between frames by QCP [[Theobald2005]](references.md#theobald2005) on the device | Missing |
+| A4 | Exchange rather than reimplementation: frames to MDTraj, MDAnalysis, and PyTorch through the DLPack views of the Python API (Section 6); each observable of A2 and A3 validated against cpptraj and GROMACS as the terms are, its definition written down | Missing |
+
+Not taken: reimplementing the actions of cpptraj. A device pays where pairs
+are involved, where all pairs of frames are (clustering), or where the
+frames never reach a file.
