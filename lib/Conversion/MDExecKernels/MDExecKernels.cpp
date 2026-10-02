@@ -36,11 +36,56 @@ Value kernels::createReal(OpBuilder &builder, Location loc, Type real,
 }
 
 Value kernels::createInverse(OpBuilder &builder, Location loc, Value box) {
-  auto type = cast<VectorType>(box.getType());
+  Value edges = getEdges(builder, loc, box);
+  auto type = cast<VectorType>(edges.getType());
   FloatAttr one = builder.getFloatAttr(type.getElementType(), 1.0);
   Value ones = arith::ConstantOp::create(
       builder, loc, type, DenseElementsAttr::get(type, one.getValue()));
-  return arith::DivFOp::create(builder, loc, ones, box);
+  return arith::DivFOp::create(builder, loc, ones, edges);
+}
+
+bool kernels::isTriclinic(Value box) {
+  return cast<VectorType>(box.getType()).getNumElements() == 6;
+}
+
+Value kernels::getEdges(OpBuilder &builder, Location loc, Value box) {
+  if (!isTriclinic(box))
+    return box;
+  return vector::ExtractStridedSliceOp::create(
+      builder, loc, box, ArrayRef<int64_t>{0}, ArrayRef<int64_t>{3},
+      ArrayRef<int64_t>{1});
+}
+
+Value kernels::emitMinimumImage(OpBuilder &builder, Location loc, Value raw,
+                                Value box, Value inverse) {
+  if (!isTriclinic(box)) {
+    Value images = arith::MulFOp::create(builder, loc, raw, inverse);
+    Value nearest = math::RoundEvenOp::create(builder, loc, images);
+    Value shift = arith::MulFOp::create(builder, loc, nearest, box);
+    return arith::SubFOp::create(builder, loc, raw, shift);
+  }
+  auto element = [&](Value vector, int64_t k) -> Value {
+    return vector::ExtractOp::create(builder, loc, vector, k);
+  };
+  Value d[3] = {element(raw, 0), element(raw, 1), element(raw, 2)};
+  Value ax = element(box, 0), by = element(box, 1), cz = element(box, 2),
+        bx = element(box, 3), cx = element(box, 4), cy = element(box, 5);
+  // n = round(d_a / h_aa), d −= n times the row of H, from c up to a.
+  auto take = [&](Value along, Value inverseDiagonal,
+                  ArrayRef<std::pair<int, Value>> row) {
+    Value n = math::RoundEvenOp::create(
+        builder, loc, arith::MulFOp::create(builder, loc, along,
+                                            inverseDiagonal));
+    for (auto [axis, component] : row)
+      d[axis] = arith::SubFOp::create(
+          builder, loc, d[axis],
+          arith::MulFOp::create(builder, loc, n, component));
+  };
+  take(d[2], element(inverse, 2), {{0, cx}, {1, cy}, {2, cz}});
+  take(d[1], element(inverse, 1), {{0, bx}, {1, by}});
+  take(d[0], element(inverse, 0), {{0, ax}});
+  return vector::FromElementsOp::create(builder, loc, raw.getType(),
+                                        ValueRange{d[0], d[1], d[2]});
 }
 
 Value kernels::convertReal(OpBuilder &builder, Location loc, Value value,
@@ -208,11 +253,8 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
             pair, loc,
             arith::SubFOp::create(pair, loc, centralPosition, otherPosition),
             computed);
-        Value images =
-            arith::MulFOp::create(pair, loc, raw, inverseComputed);
-        Value nearest = math::RoundEvenOp::create(pair, loc, images);
-        Value shift = arith::MulFOp::create(pair, loc, nearest, boxComputed);
-        Value d = arith::SubFOp::create(pair, loc, raw, shift);
+        Value d = emitMinimumImage(pair, loc, raw, boxComputed,
+                                   inverseComputed);
         Value squares = arith::MulFOp::create(pair, loc, d, d);
         Value r2 = vector::ReductionOp::create(
             pair, loc, vector::CombiningKind::ADD, squares);
@@ -813,10 +855,7 @@ static void evaluateMembers(OpBuilder &b, md_exec::TupleForOp op,
         arith::SubFOp::create(b, loc, positionOf(coordinate.members[0]),
                               positionOf(coordinate.members[1])),
         computed);
-    Value images = arith::MulFOp::create(b, loc, raw, inverse);
-    Value nearest = math::RoundEvenOp::create(b, loc, images);
-    Value shift = arith::MulFOp::create(b, loc, nearest, box);
-    Value d = arith::SubFOp::create(b, loc, raw, shift);
+    Value d = emitMinimumImage(b, loc, raw, box, inverse);
     inside.map(kernel.getArgument(index), d);
   }
   // A value that the kernel narrows at once is loaded narrowed, and the

@@ -3477,6 +3477,10 @@ LogicalResult Lowering::lowerOp(Operation *op) {
   } else if (auto reciprocal = dyn_cast<md_exec::ReciprocalOp>(op)) {
     if (failed(lowerReciprocal(reciprocal)))
       return failure();
+  } else if (isa<md::TriclinicCellOp>(op)) {
+    return op->emitOpError()
+           << "a triclinic cell is not lowered to a device yet "
+              "(docs/triclinic-m2.md, P2)";
   } else if (auto cell = dyn_cast<md::OrthorhombicCellOp>(op)) {
     OpBuilder builder(op);
     Type real = builder.getF64Type();

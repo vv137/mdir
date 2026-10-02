@@ -191,6 +191,25 @@ def MD_OrthorhombicCellOp : MD_Op<"orthorhombic_cell", [Pure]> {
   let assemblyFormat = "$lx `,` $ly `,` $lz attr-dict";
 }
 
+def MD_TriclinicCellOp : MD_Op<"triclinic_cell", [Pure]> {
+  let summary = "A periodic cell of three lattice vectors";
+  let description = [{
+    The cell is periodic in all three directions, with the lattice vectors
+    a = (lx, 0, 0), b = (bx, ly, 0), and c = (cx, cy, lz), the rows of a
+    lower-triangular matrix in the reduced form |bx| <= lx/2, |cx| <= lx/2,
+    |cy| <= ly/2 (docs/triclinic-m2.md). The operands are its diagonal and
+    then its tilts.
+
+    ```mlir
+    %cell = md.triclinic_cell %lx, %ly, %lz, %bx, %cx, %cy
+    ```
+  }];
+  let arguments = (ins F64:$lx, F64:$ly, F64:$lz, F64:$bx, F64:$cx,
+                       F64:$cy);
+  let results = (outs MD_CellType:$result);
+  let assemblyFormat = "$lx `,` $ly `,` $lz `,` $bx `,` $cx `,` $cy attr-dict";
+}
+
 //===----------------------------------------------------------------------===//
 // Relations
 //===----------------------------------------------------------------------===//

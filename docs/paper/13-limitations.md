@@ -1,9 +1,12 @@
 # 13. Limitations and next steps
 
 **Scope of the first milestone.** MDIR runs on one device, a CPU with
-OpenMP or one NVIDIA GPU. Cells are orthorhombic; the barostat is
-isotropic or semi-isotropic, with no coupling of the shape of the cell
-(anisotropic or triclinic). Topologies are read in the formats of Amber,
+OpenMP or one NVIDIA GPU. Cells are orthorhombic on the device;
+triclinic cells (truncated octahedra, rhombic dodecahedra) run on the CPU
+at constant volume (D123), and their lowering to the device, with the
+groups and the barostat, is the plan of docs/triclinic-m2.md. The barostat
+is isotropic or semi-isotropic, with no coupling of the shape of the
+cell. Topologies are read in the formats of Amber,
 GROMACS, and CHARMM; a CHARMM force field runs with its Urey–Bradley
 angles, harmonic impropers, and force switch (D121, D122), but not with
 lone pairs or the Drude model. Electrostatics are particle mesh Ewald or a cutoff; there

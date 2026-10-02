@@ -319,8 +319,22 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
         H5Tset_strpad(text, H5T_STR_NULLTERM);
         char boundary[3][9] = {"periodic", "periodic", "periodic"};
         writer.writeAttribute(box, "boundary", text, boundary, 3);
-        writer.writeDataset(box, "edges", H5T_NATIVE_DOUBLE, {3},
-                            checkpoint.box, "nm");
+        // H5MD: the edges of a rectangular cell, or the matrix of the
+        // edge vectors of a triclinic one, a row each.
+        bool triclinic = checkpoint.tilt[0] != 0.0 ||
+                         checkpoint.tilt[1] != 0.0 ||
+                         checkpoint.tilt[2] != 0.0;
+        if (triclinic) {
+          double matrix[9] = {checkpoint.box[0], 0.0, 0.0,
+                              checkpoint.tilt[0], checkpoint.box[1], 0.0,
+                              checkpoint.tilt[1], checkpoint.tilt[2],
+                              checkpoint.box[2]};
+          writer.writeDataset(box, "edges", H5T_NATIVE_DOUBLE, {3, 3},
+                              matrix, "nm");
+        } else {
+          writer.writeDataset(box, "edges", H5T_NATIVE_DOUBLE, {3},
+                              checkpoint.box, "nm");
+        }
       }
 
       // With leapfrog the velocities are of another time than the
@@ -405,8 +419,10 @@ mdir::driver::readCheckpoint(const std::string &path) {
 
   std::vector<double> edges, time;
   std::vector<int64_t> step;
-  reader.readDataset("/particles/all/box/edges", H5T_NATIVE_DOUBLE, 3,
-                     edges);
+  // Three edges, or the matrix of a triclinic cell.
+  int64_t edgeCount = reader.getSize("/particles/all/box/edges");
+  reader.readDataset("/particles/all/box/edges", H5T_NATIVE_DOUBLE,
+                     edgeCount == 9 ? 9 : 3, edges);
   reader.readDataset("/particles/all/position/step", H5T_NATIVE_INT64, 1,
                      step);
   reader.readDataset("/particles/all/position/time", H5T_NATIVE_DOUBLE, 1,
@@ -432,8 +448,17 @@ mdir::driver::readCheckpoint(const std::string &path) {
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                    "in '%s': %s", path.c_str(),
                                    reader.getFailure().c_str());
-  for (int i = 0; i != 3; ++i)
-    checkpoint.box[i] = edges[i];
+  if (edges.size() == 9) {
+    checkpoint.box[0] = edges[0];
+    checkpoint.box[1] = edges[4];
+    checkpoint.box[2] = edges[8];
+    checkpoint.tilt[0] = edges[3];
+    checkpoint.tilt[1] = edges[6];
+    checkpoint.tilt[2] = edges[7];
+  } else {
+    for (int i = 0; i != 3; ++i)
+      checkpoint.box[i] = edges[i];
+  }
   checkpoint.step = step[0];
   checkpoint.time = time[0];
   return std::move(checkpoint);

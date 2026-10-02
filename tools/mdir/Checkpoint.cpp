@@ -32,6 +32,10 @@ int mdir::tool::describeCheckpoints(llvm::ArrayRef<std::string> files) {
     std::printf("time:            %g ps\n", first->time);
     std::printf("box:             %g %g %g nm\n", first->box[0],
                 first->box[1], first->box[2]);
+    if (first->tilt[0] != 0.0 || first->tilt[1] != 0.0 ||
+        first->tilt[2] != 0.0)
+      std::printf("tilts:           %g %g %g nm (b_x, c_x, c_y)\n",
+                  first->tilt[0], first->tilt[1], first->tilt[2]);
     std::printf("forces:          %s\n", first->forces.empty() ? "no" : "yes");
     std::printf("integrator:      %s\n", first->integrator.c_str());
     std::printf("velocity offset: %g time steps\n", first->velocityOffset);

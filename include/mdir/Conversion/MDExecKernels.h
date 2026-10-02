@@ -37,6 +37,24 @@ mlir::Value convertReal(mlir::OpBuilder &builder, mlir::Location loc,
 mlir::Value createInverse(mlir::OpBuilder &builder, mlir::Location loc,
                           mlir::Value box);
 
+/// Whether `box`, a cell lowered to a vector, is triclinic: the vector of six,
+/// a_x, b_y, c_z, b_x, c_x, c_y (docs/triclinic-m2.md), rather than the three
+/// edges of an orthorhombic cell.
+bool isTriclinic(mlir::Value box);
+
+/// The edges of `box`, or its diagonal a_x, b_y, c_z if it is triclinic.
+mlir::Value getEdges(mlir::OpBuilder &builder, mlir::Location loc,
+                     mlir::Value box);
+
+/// The minimum image of the displacement `raw`, with `inverse` from
+/// `createInverse`: per edge for an orthorhombic cell, and for a triclinic
+/// one in one pass along c, b, and a, which is exact for displacements
+/// whose nearest image is within half of the least of a_x, b_y, c_z
+/// (docs/triclinic-m2.md, Section 2).
+mlir::Value emitMinimumImage(mlir::OpBuilder &builder, mlir::Location loc,
+                             mlir::Value raw, mlir::Value box,
+                             mlir::Value inverse);
+
 /// The value that `buffer` holds for the particle `particle`.
 mlir::Value loadElement(mlir::OpBuilder &builder, mlir::Location loc,
                         mlir::Value buffer, mlir::Value particle);

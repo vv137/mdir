@@ -1,10 +1,18 @@
 # Triclinic cells (M2)
 
-Status: 2026-10-02. P0 in part: the readers take triclinic cells (Amber's
-angles and `IFBOX` 2 and 3, the nine numbers of `.gro`, six numbers of
-`[boundary] box` for CHARMM with the rotation of its frame), reduce them,
-and `mdir check` prints them (`triclinic-cell.test`); the build refuses
-them until P1. Cells are orthorhombic in M1. This document
+Status: 2026-10-02. P0 and P1 done (D123): the readers take triclinic
+cells (Amber's angles and `IFBOX` 2 and 3, the nine numbers of `.gro`, six
+numbers of `[boundary] box` for CHARMM with the rotation of its frame) and
+reduce them; on the CPU, the minimum image in one pass, the neighbor matrix
+in fractional coordinates, and PME through $H^{-1}$ run them at constant
+volume. A truncated octahedron of Amber (549 TIP3P, Na⁺, Cl⁻) agrees with
+sander in every term, the electrostatics to the ratio of the Coulomb
+constants; a rhombic dodecahedron of GROMACS (631 TIP3P) agrees with a rerun
+of GROMACS to $4\times10^{-7}$ in the bonded terms and the Lennard-Jones and
+$4.5\times10^{-6}$ in Coulomb, its single precision; 10 ps at constant
+energy in the octahedron conserve it (`triclinic.test`,
+`triclinic-cell.test`). The device (P2, P3) and the barostat (P4) refuse
+them. Cells are orthorhombic in M1. This document
 plans general triclinic cells: the truncated octahedra and rhombic
 dodecahedra of solutes (Amber's `solvateOct`, GROMACS's `editconf -bt`),
 and the hexagonal cells of CHARMM-GUI's membranes. It rests on a survey of
@@ -80,8 +88,12 @@ $\mathbf a = (20, 0, 0)$. A trajectory of MDIR is in its own frame; a user
 who takes it back to CHARMM applies $R^{-1}$.
 
 **Writers.** A DCD frame stores $a$, $\cos\gamma$, $b$, $\cos\beta$,
-$\cos\alpha$, $c$, as NAMD and OpenMM write it and as cpptraj, MDTraj, and
-VMD read it (CHARMM's own DCDs store $H_s$ instead). A checkpoint stores
+$\cos\alpha$, $c$, as NAMD and OpenMM write it and as MDTraj, MDAnalysis,
+and VMD read it. CHARMM's own DCDs store $H_s$ instead, and cpptraj reads a
+DCD of the version of CHARMM (MDIR's are) as such unless told otherwise:
+`trajin md.dcd ucell` reads MDIR's triclinic frames right (checked on a
+truncated octahedron: without `ucell`, 29.608 Å and 91.28° for 29.604 Å
+and 109.47°). A rectangular cell reads the same either way. A checkpoint stores
 $H$ whole; one of M1, three edges, is read as a diagonal $H$. The log
 reports the volume $a_x b_y c_z$; `scripts/render/movie.py` and
 `scripts/benchmarks/mdbench/structure.py` take the angles of a DCD.

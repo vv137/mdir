@@ -177,7 +177,8 @@ static void warnAboutCell(const Checkpoint &checkpoint, const System &system,
                           StringRef path) {
   bool same = true;
   for (int i = 0; i != 3; ++i)
-    same &= checkpoint.box[i] == system.box[i];
+    same &= checkpoint.box[i] == system.box[i] &&
+            checkpoint.tilt[i] == system.tilt[i];
   if (same)
     return;
   warn(llvm::formatv("the cell of '{0}', {1:F4} {2:F4} {3:F4} Å, differs "
@@ -259,8 +260,10 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     if (control->minimize || checkpoint->integrator == "MINIMIZATION") {
       system->positions = checkpoint->positions;
       warnAboutCell(*checkpoint, *system, path);
-      for (int i = 0; i != 3; ++i)
+      for (int i = 0; i != 3; ++i) {
         system->box[i] = checkpoint->box[i];
+        system->tilt[i] = checkpoint->tilt[i];
+      }
       std::fprintf(stdout, "MDIR: begins at the positions of '%s'\n",
                    path.c_str());
       isRestart = false;
@@ -283,6 +286,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     for (int i = 0; i != 3; ++i) {
       system->inputBox[i] = system->box[i];
       system->box[i] = checkpoint->box[i];
+      system->tilt[i] = checkpoint->tilt[i];
     }
     if (checkpoint->forces.empty())
       return fail("'" + path + "' holds no forces, which a step begins "
@@ -637,6 +641,10 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
             control->dcdFile, count, firstStep + control->framePeriod,
             control->framePeriod, control->timestep, cell))
       return fail(std::move(error));
+    double tilts[3];
+    for (int k = 0; k != 3; ++k)
+      tilts[k] = system->tilt[k] / units::length;
+    output.trajectory.setTilt(tilts);
     output.hasTrajectory = true;
   }
   if (writesCheckpoints) {
@@ -644,8 +652,10 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     Checkpoint &checkpoint = output.checkpoint;
     checkpoint.masses = system->masses;
     checkpoint.species.assign(system->types.begin(), system->types.end());
-    for (int i = 0; i != 3; ++i)
+    for (int i = 0; i != 3; ++i) {
       checkpoint.box[i] = system->box[i];
+      checkpoint.tilt[i] = system->tilt[i];
+    }
     checkpoint.integrator = integrator.str();
     checkpoint.velocityOffset = velocityOffset;
     checkpoint.precision =

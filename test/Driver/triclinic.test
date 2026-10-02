@@ -1,0 +1,87 @@
+# Runs in a triclinic cell on the CPU (docs/triclinic-m2.md, P1): 403 TIP3P
+# waters in a rhombic dodecahedron of 2.6 nm from `gmx editconf -bt
+# dodecahedron` and `gmx solvate`, whose tilts c_x = c_y = 1.3 nm lie on
+# the bounds of the reduced form. The terms in double precision, against a
+# rerun of GROMACS 2026.3 (mixed precision) with the same cutoff of 8 Å,
+# grid of 28, order 4, and β:
+#
+#   bonds        898.698404 against 898.699321
+#   angles       226.926238 against 226.926056
+#   Lennard-Jones 2915.050920 against 2915.050966
+#   dispersion   −31.808995 against −31.808999
+#   Coulomb      −3964.310432 against −3964.362617 (1.3e−5 of the sum,
+#                2e−6 of its largest parts, the precision of GROMACS)
+#
+# A truncated octahedron of Amber agrees with sander to the ratio of the
+# Coulomb constants (1.0000346) in its electrostatics, and in the rest to the
+# printed digits (docs/triclinic-m2.md).
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/triclinic/water.top %S/Inputs/triclinic/dodecahedron.gro %t/
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: mdir run %t/run.toml | FileCheck %s
+# In mixed precision, where the minimum image is taken in f32, the terms
+# agree with those of double precision to 1e-5.
+# RUN: sed 's/^precision = "DOUBLE"/precision = "MIXED"/' %t/run.toml > %t/mixed.toml
+# RUN: printf 'Lennard-Jones 12196.573049\nbonds 3760.154122\nangles 949.459380\nCoulomb reciprocal 1058.337926\n' > %t/double.txt
+# RUN: mdir run %t/mixed.toml | %python %S/Inputs/check_terms.py %t/double.txt 1e-5 | FileCheck %s --check-prefix=MIXED
+# A checkpoint keeps the cell whole, as H5MD's matrix of its edge vectors.
+# RUN: sed -e 's/^steps      = 0/steps      = 20/' -e 's/^energy_interval = 0/energy_interval = 10\ncheckpoint = "end.h5"\ncheckpoint_interval = 20/' %t/mixed.toml > %t/checkpoint.toml
+# RUN: mdir run %t/checkpoint.toml > /dev/null
+# RUN: mdir checkpoint %t/end.h5 | FileCheck %s --check-prefix=CELL
+
+# CHECK:      MDIR:   Lennard-Jones               2915.050920
+# CHECK-NEXT: MDIR:   Coulomb                    -3460.248854
+# CHECK-NEXT: MDIR:   bonds                        898.698404
+# CHECK-NEXT: MDIR:   angles                       226.926238
+# CHECK:      MDIR:   Coulomb excluded           29997.892113
+# CHECK-NEXT: MDIR:   Coulomb reciprocal           252.948835
+# CHECK-NEXT: MDIR:   Coulomb self              -30754.902526
+# CHECK-NEXT: MDIR:   dispersion                   -31.808995
+# CELL: box:             2.6 2.6 1.83848 nm
+# CELL-NEXT: tilts:           0 1.3 1.3 nm (b_x, c_x, c_y)
+# MIXED: Lennard-Jones 1
+# MIXED: bonds 1
+# MIXED: angles 1
+# MIXED: Coulomb reciprocal 1
+
+#--- run.toml
+[input]
+topology    = "water.top"
+coordinates = "dodecahedron.gro"
+format      = "GROMACS"
+defines     = ["FLEXIBLE"]
+
+[output]
+energy_interval = 0
+
+[energy]
+cutoff            = 8.0
+pairlist_distance = 9.0
+electrostatics    = "PME"
+
+[pme]
+tolerance = 1e-05
+order     = 4
+grid      = [28, 28, 28]
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.0005
+steps      = 0
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 0.0
+
+[constraints]
+hydrogen_bonds = false
+rigid_water    = false
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- end

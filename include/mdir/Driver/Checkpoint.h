@@ -35,6 +35,8 @@ struct Checkpoint {
   /// For every particle, the position of its type in the control file.
   std::vector<int32_t> species;
   double box[3] = {0.0, 0.0, 0.0};
+  /// The tilts b_x, c_x, c_y of a triclinic cell (docs/triclinic-m2.md).
+  double tilt[3] = {0.0, 0.0, 0.0};
 
   /// What is needed to continue the run as it was.
   std::string integrator;

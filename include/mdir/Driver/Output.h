@@ -31,10 +31,22 @@ public:
 
   /// Writes a frame. `positions` holds three numbers per particle, in Å.
   void writeFrame(const float *positions);
-  /// The edges of the cell of the frames that follow, in Å.
+  /// The edges of the cell of the frames that follow, in Å: of an
+  /// orthorhombic cell, or the diagonal of a triclinic one, whose tilts
+  /// scale with the columns of the cell (docs/triclinic-m2.md, I3).
   void setBox(const double edges[3]) {
+    if (box[0] > 0.0) {
+      tilt[0] *= edges[0] / box[0];
+      tilt[1] *= edges[0] / box[0];
+      tilt[2] *= edges[1] / box[1];
+    }
     for (int i = 0; i != 3; ++i)
       box[i] = edges[i];
+  }
+  /// The tilts b_x, c_x, c_y of a triclinic cell, in Å.
+  void setTilt(const double tilts[3]) {
+    for (int i = 0; i != 3; ++i)
+      tilt[i] = tilts[i];
   }
 
   void close();
@@ -48,6 +60,7 @@ private:
   int64_t period = 0;
   double timestep = 0.0;
   double box[3] = {0.0, 0.0, 0.0};
+  double tilt[3] = {0.0, 0.0, 0.0};
   int32_t numFrames = 0;
 };
 

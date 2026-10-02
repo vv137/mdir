@@ -115,6 +115,11 @@ private:
   /// Whether the cell changes in the run, which a barostat does.
   bool changesCell() const { return control.barostat; }
   /// Whether particles are restrained to reference positions.
+  /// Whether the cell is triclinic (docs/triclinic-m2.md).
+  bool isTriclinic() const {
+    return system.tilt[0] != 0.0 || system.tilt[1] != 0.0 ||
+           system.tilt[2] != 0.0;
+  }
   bool hasRestraints() const { return !system.restraintConstants.empty(); }
   /// Whether the reference positions of the restraints follow the cell,
   /// which a barostat changes: they are those of the file times
@@ -1116,6 +1121,13 @@ llvm::Error Builder::collectPME() {
   for (int k = 0; k != 3; ++k) {
     grid[k] = control.pmeGrid[k];
     double edge = system.inputBox[k] > 0.0 ? system.inputBox[k] : system.box[k];
+    // A triclinic cell is spaced along its vectors: |a|, |b|, |c|.
+    if (isTriclinic())
+      edge = k == 0 ? system.box[0]
+             : k == 1 ? std::hypot(system.tilt[0], system.box[1])
+                      : std::sqrt(system.tilt[1] * system.tilt[1] +
+                                  system.tilt[2] * system.tilt[2] +
+                                  system.box[2] * system.box[2]);
     if (grid[k] == 0)
       grid[k] = getSmoothSize(static_cast<int64_t>(std::ceil(
           edge / (control.pmeMaxSpacing * units::length) - 1e-9)));
@@ -4707,8 +4719,18 @@ void Builder::emitEntry() {
        << edges[1] << ", " << edges[2] << " : vector<3xf64>\n";
     emitReferenceScale(os, "  ", "%rest_scale", "%lx", "%ly", "%lz");
   }
-  os << "  %cell = md.orthorhombic_cell %lx, %ly, %lz\n"
-     << "  %x" << (program.reorders ? "_in" : "0") << (hasSites() ? "u" : "")
+  if (isTriclinic())
+    os << "  %tilt_bx = arith.constant " << formatReal(system.tilt[0])
+       << " : f64\n"
+       << "  %tilt_cx = arith.constant " << formatReal(system.tilt[1])
+       << " : f64\n"
+       << "  %tilt_cy = arith.constant " << formatReal(system.tilt[2])
+       << " : f64\n"
+       << "  %cell = md.triclinic_cell %lx, %ly, %lz, %tilt_bx, %tilt_cx, "
+          "%tilt_cy\n";
+  else
+    os << "  %cell = md.orthorhombic_cell %lx, %ly, %lz\n";
+  os << "  %x" << (program.reorders ? "_in" : "0") << (hasSites() ? "u" : "")
      << " = mdrt.from_buffer %positions : memref<?x3x" << state
      << "> to !vec\n"
      << "  " << (program.reorders ? "%v_in" : velocities)
@@ -5057,15 +5079,24 @@ void Builder::setSchedule() {
 }
 
 llvm::Error Builder::build() {
-  // The kernels take an orthorhombic cell; a triclinic one is read, and
-  // runs with phase P1 of docs/triclinic-m2.md.
-  if (system.tilt[0] != 0.0 || system.tilt[1] != 0.0 || system.tilt[2] != 0.0)
-    return llvm::createStringError(
-        llvm::inconvertibleErrorCode(),
-        "the cell is triclinic (tilts %g, %g, %g Å); runs in triclinic "
-        "cells are not supported yet",
-        system.tilt[0] / units::length, system.tilt[1] / units::length,
-        system.tilt[2] / units::length);
+  // A triclinic cell runs on the CPU, at constant volume, so far
+  // (docs/triclinic-m2.md, P1). Its neighbor matrix holds every pair within
+  // its reach while the reach is at most half of the least of a_x, b_y,
+  // c_z, the bound of the minimum image in one pass.
+  if (isTriclinic()) {
+    if (control.target == Target::GPU)
+      return makeError("a triclinic cell does not run on a GPU yet");
+    if (changesCell())
+      return makeError("a triclinic cell does not run with a barostat yet");
+    double least = std::min({system.box[0], system.box[1], system.box[2]});
+    double reach = control.pairlistDistance * units::length;
+    if (reach > 0.5 * least)
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "'pairlist_distance', %g Å, exceeds half of the least of a_x, b_y, "
+          "c_z of the triclinic cell, %g Å",
+          control.pairlistDistance, 0.5 * least / units::length);
+  }
   // A pair is taken once, in the minimum image, which holds every image
   // within the cutoff only while the cell is wider than twice the cutoff:
   // for a triclinic cell, its diagonal (I2 of docs/triclinic-m2.md).

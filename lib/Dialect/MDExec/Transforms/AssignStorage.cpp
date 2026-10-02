@@ -1535,7 +1535,7 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
   }
 
   // Ops on cells hold no fields, and are copied as they are.
-  bool isCell = isa<md::OrthorhombicCellOp, CellEdgesOp>(op);
+  bool isCell = isa<md::OrthorhombicCellOp, md::TriclinicCellOp, CellEdgesOp>(op);
   if (!isCell && (isa<md::MDDialect>(op->getDialect()) ||
                   isa<MDExecDialect>(op->getDialect()) ||
                   op->getName().getDialectNamespace() == "dyn"))

@@ -78,9 +78,18 @@ llvm::Error DCDWriter::open(const std::string &path, size_t numParticles,
 }
 
 void DCDWriter::writeFrame(const float *positions) {
-  // The cell: the three edge lengths, and between them the cosines of the
-  // angles, which are right angles.
-  double cell[6] = {box[0], 0.0, box[1], 0.0, 0.0, box[2]};
+  // The cell: a, cos γ, b, cos β, cos α, c, as NAMD and OpenMM write it
+  // (docs/triclinic-m2.md, Section 1); right angles for an orthorhombic
+  // cell.
+  double b = std::sqrt(tilt[0] * tilt[0] + box[1] * box[1]);
+  double c = std::sqrt(tilt[1] * tilt[1] + tilt[2] * tilt[2] + box[2] * box[2]);
+  double cell[6] = {box[0],
+                    tilt[0] / b,
+                    b,
+                    tilt[1] / c,
+                    0.0,
+                    c};
+  cell[4] = (tilt[0] * tilt[1] + box[1] * tilt[2]) / (b * c);
   writeRecord(file, cell, sizeof(cell));
 
   std::vector<float> component(numParticles);

@@ -1483,7 +1483,7 @@ decides nothing about buffers.
 | `md_exec.refresh_neighbors` | The test of validity and, where it fails, a call to the neighbor build template |
 | `md_exec.reset_neighbors` | Two stores |
 | `md_exec.rebuild_count` | A load |
-| A cell | `vector<3xf64>`, the edge lengths of an orthorhombic cell |
+| A cell | `vector<3xf64>`, the edge lengths of an orthorhombic cell; in a module with an `md.triclinic_cell`, `vector<6xf64>`, its diagonal $a_x, b_y, c_z$ and tilts $b_x, c_x, c_y$, which the kernels of the CPU take with the minimum image in one pass and the triclinic functions of the templates (docs/triclinic-m2.md); `md_exec.cell_edges` gives its diagonal |
 
 ### 10.8 From the storage form to GPU kernels
 
