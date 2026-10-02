@@ -68,6 +68,31 @@ private:
 
   LogicalResult buildForces(Value &forces);
   LogicalResult buildVirial(Value &virial);
+
+  //===--------------------------------------------------------------------===//
+  // Intermediate fields
+  //===--------------------------------------------------------------------===//
+  //
+  // A field that the potential computes from the positions, the result of a
+  // gather over pairs or of a map over particles that reads one, enters the
+  // energy through sums that read it. The derivative of the energy with
+  // respect to such a field, its adjoint, is a field as well, which flows
+  // back from the sums to the gathers, where it gives forces.
+
+  /// Whether `field` depends on the positions.
+  bool isPositional(Value field);
+  /// Sets `adjoints` for every positional field the energy depends on.
+  LogicalResult buildAdjoints();
+  /// `fields` added particle by particle.
+  Value addFields(ArrayRef<Value> fields);
+  /// The forces, or with `virial` the virial, that the gather `gather`
+  /// gives through the adjoint `adjoint` of its result.
+  LogicalResult emitGatherTerm(GatherRelationOp gather, Value adjoint,
+                               bool virial, Value &result);
+
+  llvm::DenseMap<Value, bool> positional;
+  llvm::DenseMap<Value, Value> adjoints;
+  bool adjointsBuilt = false;
   LogicalResult buildParameterDerivative(int64_t argument, Value &result);
 
   PotentialOp potential;
@@ -103,7 +128,8 @@ LogicalResult DerivativeBuilder::checkPositionUses() {
     Operation *user = use.getOwner();
     unsigned index = use.getOperandNumber();
     bool known = (isa<NeighborhoodOp, ReciprocalOp>(user) && index == 0) ||
-                 (isa<SumRelationOp, SumTuplesOp>(user) && index == 1);
+                 (isa<SumRelationOp, SumTuplesOp, GatherRelationOp>(user) &&
+                  index == 1);
     if (!known)
       return user->emitError()
              << "cannot differentiate with respect to the positions through "
@@ -118,6 +144,20 @@ LogicalResult DerivativeBuilder::checkPositionUses() {
     if (!sum.getResult().getType().isF64())
       return sum.emitOpError()
              << "cannot differentiate a sum whose result is not f64";
+  }
+  for (Operation &op : *body) {
+    auto gather = dyn_cast<GatherRelationOp>(&op);
+    if (!gather || !isPositional(gather.getResult()))
+      continue;
+    if (!gather.getKernel().front().getArgument(1).use_empty())
+      return gather.emitOpError()
+             << "cannot differentiate a field gathered from a kernel that "
+                "uses the displacement; only kernels that depend on the "
+                "distance are supported";
+    auto type = cast<FieldType>(gather.getResult().getType());
+    if (!type.getKernelValueType().isF64())
+      return gather.emitOpError()
+             << "cannot differentiate a gathered field that is not of f64";
   }
   for (SumTuplesOp sum : tupleSums) {
     if (!sum.getResult().getType().isF64())
@@ -343,6 +383,249 @@ LogicalResult DerivativeBuilder::emitTupleForces(Operation *op, Value weight,
 }
 
 //===----------------------------------------------------------------------===//
+// Intermediate fields
+//===----------------------------------------------------------------------===//
+
+bool DerivativeBuilder::isPositional(Value field) {
+  auto found = positional.find(field);
+  if (found != positional.end())
+    return found->second;
+  bool result = false;
+  Operation *op = field.getDefiningOp();
+  if (auto gather = dyn_cast_or_null<GatherRelationOp>(op))
+    result = gather.getPositions() == body->getArgument(0);
+  else if (auto map = dyn_cast_or_null<MapParticlesOp>(op))
+    result = llvm::any_of(map.getGathered(),
+                          [&](Value input) { return isPositional(input); });
+  positional[field] = result;
+  return result;
+}
+
+Value DerivativeBuilder::addFields(ArrayRef<Value> fields) {
+  if (fields.empty())
+    return Value();
+  if (fields.size() == 1)
+    return fields.front();
+  Type fieldType = fields.front().getType();
+  Type valueType = cast<FieldType>(fieldType).getKernelValueType();
+  OperationState state(loc, MapParticlesOp::getOperationName());
+  state.addOperands(fields);
+  state.addRegion();
+  state.addTypes(fieldType);
+  Operation *map = builder.create(state);
+  Block *block = new Block();
+  map->getRegion(0).push_back(block);
+  for (size_t i = 0, e = fields.size(); i != e; ++i)
+    block->addArgument(valueType, loc);
+  OpBuilder kernel = OpBuilder::atBlockEnd(block);
+  ScalarEmitter emit(kernel, loc);
+  Value total;
+  for (BlockArgument argument : block->getArguments())
+    total = emit.add(total, argument);
+  YieldOp::create(kernel, loc, ValueRange{total});
+  return map->getResult(0);
+}
+
+/// Copies the ops of `source`, a kernel, to the end of `target` with
+/// `mapping`, and returns the value that it yields there.
+static Value inlineKernel(Block &source, Block &target, IRMapping &mapping) {
+  OpBuilder builder = OpBuilder::atBlockEnd(&target);
+  for (Operation &op : source.without_terminator())
+    builder.clone(op, mapping);
+  return mapping.lookupOrDefault(
+      cast<YieldOp>(source.getTerminator()).getOperand(0));
+}
+
+LogicalResult DerivativeBuilder::buildAdjoints() {
+  if (adjointsBuilt)
+    return success();
+  adjointsBuilt = true;
+  // The fields in the reverse order of the body, so that the adjoint of a
+  // map is there before those of the fields it reads.
+  SmallVector<Operation *> producers;
+  for (Operation &op : *body)
+    if (isa<GatherRelationOp, MapParticlesOp>(op) &&
+        isPositional(op.getResult(0)))
+      producers.push_back(&op);
+  for (Operation *producer : llvm::reverse(producers)) {
+    Value field = producer->getResult(0);
+    Type fieldType = field.getType();
+    Type valueType = cast<FieldType>(fieldType).getKernelValueType();
+    SmallVector<Value> parts;
+    // The uses before the ops of the derivative, which read the field as
+    // well, are added.
+    SmallVector<std::pair<Operation *, unsigned>> uses;
+    for (OpOperand &use : field.getUses())
+      uses.push_back({use.getOwner(), use.getOperandNumber()});
+    for (auto [user, operand] : uses) {
+      if (auto sum = dyn_cast<SumRelationOp>(user)) {
+        // ∂E/∂F_i = w Σ_j ∂u(i, j)/∂F_i, the kernel with i at its centre.
+        unsigned place = operand - 3;
+        Value weight;
+        if (failed(getWeight(sum.getResult(), weight)))
+          return failure();
+        if (!weight)
+          continue;
+        Operation *op = createPairOp(GatherRelationOp::getOperationName(),
+                                     sum, Exchange::None, fieldType);
+        Block &block = op->getRegion(0).front();
+        OpBuilder kernel(block.getTerminator());
+        Value energy = cast<YieldOp>(block.getTerminator()).getOperand(0);
+        ScalarDerivative derivative(kernel, block.getArgument(2 + 2 * place));
+        Value slope;
+        if (failed(derivative.get(energy, slope)))
+          return failure();
+        ScalarEmitter emit(kernel, loc);
+        Value value = emit.mul(weight, slope);
+        setYield(block, value ? value : emit.constant(0.0, valueType));
+        parts.push_back(op->getResult(0));
+        continue;
+      }
+      if (isa<SumParticlesOp, MapParticlesOp>(user)) {
+        // ∂E/∂F_i = w ∂k/∂F_i for a sum over particles, and Ḡ_i ∂g/∂F_i for
+        // a map G = g(F, ...).
+        unsigned place = operand;
+        Value weight;
+        if (isa<SumParticlesOp>(user)) {
+          if (failed(getWeight(user->getResult(0), weight)))
+            return failure();
+        } else {
+          weight = adjoints.lookup(user->getResult(0));
+        }
+        if (!weight)
+          continue;
+        bool isField = isa<MapParticlesOp>(user);
+        OperationState state(loc, MapParticlesOp::getOperationName());
+        state.addOperands(user->getOperands());
+        if (isField)
+          state.addOperands(weight);
+        state.addRegion();
+        state.addTypes(fieldType);
+        Operation *op = builder.create(state);
+        Block *block = new Block();
+        op->getRegion(0).push_back(block);
+        Block &source = user->getRegion(0).front();
+        IRMapping mapping;
+        for (BlockArgument argument : source.getArguments())
+          mapping.map(argument,
+                      block->addArgument(argument.getType(), loc));
+        Value adjoint;
+        if (isField)
+          adjoint = block->addArgument(valueType, loc);
+        Value value = inlineKernel(source, *block, mapping);
+        OpBuilder kernel = OpBuilder::atBlockEnd(block);
+        ScalarDerivative derivative(kernel, block->getArgument(place));
+        Value slope;
+        if (failed(derivative.get(value, slope)))
+          return failure();
+        ScalarEmitter emit(kernel, loc);
+        Value result = emit.mul(isField ? adjoint : weight, slope);
+        YieldOp::create(kernel, loc,
+                        ValueRange{result ? result
+                                          : emit.constant(0.0, valueType)});
+        eraseDeadOps(*block);
+        parts.push_back(op->getResult(0));
+        continue;
+      }
+      return user->emitError()
+             << "cannot differentiate through this use of a field that "
+                "depends on the positions";
+    }
+    if (Value total = addFields(parts))
+      adjoints[field] = total;
+  }
+  return success();
+}
+
+LogicalResult DerivativeBuilder::emitGatherTerm(GatherRelationOp gather,
+                                                Value adjoint, bool virial,
+                                                Value &result) {
+  // G_a = Σ_b k(a, b) with a at the centre gives the particle m the force
+  // F_m = −Σ_b (Ḡ_m k'(m, b) + Ḡ_b k'(b, m)) d_mb / r, the kernel evaluated
+  // from both ends of each pair; the factor of d is symmetric, so that the
+  // force is antisymmetric, and the virial is Σ d ⊗ F over the pairs.
+  Type fieldType = body->getArgument(0).getType();
+  Type vectorType = cast<FieldType>(fieldType).getKernelValueType();
+  Type virialType = VectorType::get({9}, builder.getF64Type());
+  StringRef opName = virial ? SumRelationOp::getOperationName()
+                            : GatherRelationOp::getOperationName();
+  MLIRContext *context = builder.getContext();
+  OperationState state(loc, opName);
+  state.addOperands(
+      {gather.getRelation(), gather.getPositions(), gather.getCell()});
+  state.addOperands(gather.getGathered());
+  state.addOperands(adjoint);
+  state.addAttribute("exchange",
+                     ExchangeAttr::get(context, virial ? Exchange::Symmetric
+                                                       : Exchange::Antisymmetric));
+  state.addAttribute("exchange_basis",
+                     ExchangeBasisAttr::get(context, ExchangeBasis::Derived));
+  state.addRegion();
+  state.addTypes(virial ? virialType : fieldType);
+  Operation *op = builder.create(state);
+  Block *block = new Block();
+  op->getRegion(0).push_back(block);
+  Block &source = gather.getKernel().front();
+  Value r = block->addArgument(source.getArgument(0).getType(), loc);
+  Value d = block->addArgument(source.getArgument(1).getType(), loc);
+  unsigned count = gather.getGathered().size();
+  SmallVector<Value> ends;
+  for (unsigned k = 0; k != 2 * count; ++k)
+    ends.push_back(block->addArgument(source.getArgument(2 + k).getType(),
+                                      loc));
+  Type real = builder.getF64Type();
+  Value adjointI = block->addArgument(real, loc);
+  Value adjointJ = block->addArgument(real, loc);
+
+  // The kernel with i at its centre, and with j.
+  IRMapping forward, backward;
+  forward.map(source.getArgument(0), r);
+  backward.map(source.getArgument(0), r);
+  forward.map(source.getArgument(1), d);
+  backward.map(source.getArgument(1), d);
+  for (unsigned k = 0; k != count; ++k) {
+    forward.map(source.getArgument(2 + 2 * k), ends[2 * k]);
+    forward.map(source.getArgument(3 + 2 * k), ends[2 * k + 1]);
+    backward.map(source.getArgument(2 + 2 * k), ends[2 * k + 1]);
+    backward.map(source.getArgument(3 + 2 * k), ends[2 * k]);
+  }
+  Value fromI = inlineKernel(source, *block, forward);
+  Value fromJ = inlineKernel(source, *block, backward);
+  OpBuilder kernel = OpBuilder::atBlockEnd(block);
+  ScalarDerivative derivative(kernel, r);
+  Value slopeI, slopeJ;
+  if (failed(derivative.get(fromI, slopeI)) ||
+      failed(derivative.get(fromJ, slopeJ)))
+    return failure();
+  ScalarEmitter emit(kernel, loc);
+  Value both = emit.add(emit.mul(adjointI, slopeI), emit.mul(adjointJ, slopeJ));
+  Value factor = both ? emit.neg(emit.div(both, r)) : Value();
+  Value yielded;
+  if (!factor) {
+    yielded = emit.constant(0.0, virial ? virialType : vectorType);
+  } else {
+    Value force = emit.mul(
+        vector::BroadcastOp::create(kernel, loc, vectorType, factor), d);
+    if (!virial) {
+      yielded = force;
+    } else {
+      SmallVector<Value, 9> elements;
+      for (int64_t a = 0; a < 3; ++a)
+        for (int64_t b = 0; b < 3; ++b)
+          elements.push_back(
+              emit.mul(vector::ExtractOp::create(kernel, loc, d, a),
+                       vector::ExtractOp::create(kernel, loc, force, b)));
+      yielded =
+          vector::FromElementsOp::create(kernel, loc, virialType, elements);
+    }
+  }
+  YieldOp::create(kernel, loc, ValueRange{yielded});
+  eraseDeadOps(*block);
+  result = op->getResult(0);
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // Forces
 //===----------------------------------------------------------------------===//
 
@@ -451,6 +734,25 @@ LogicalResult DerivativeBuilder::buildForces(Value &forces) {
     if (!weight)
       continue;
     terms.push_back(scaleField(reciprocal.getForces(), weight));
+  }
+
+  // The forces through the fields that depend on the positions.
+  if (failed(buildAdjoints()))
+    return failure();
+  SmallVector<GatherRelationOp> gathers;
+  for (Operation &op : *body)
+    if (auto gather = dyn_cast<GatherRelationOp>(&op))
+      if (isPositional(gather.getResult()) &&
+          adjoints.count(gather.getResult()))
+        gathers.push_back(gather);
+  for (GatherRelationOp gather : gathers) {
+    Value adjoint = adjoints.lookup(gather.getResult());
+    if (!adjoint)
+      continue;
+    Value term;
+    if (failed(emitGatherTerm(gather, adjoint, /*virial=*/false, term)))
+      return failure();
+    terms.push_back(term);
   }
 
   if (terms.empty())
@@ -575,6 +877,24 @@ LogicalResult DerivativeBuilder::buildVirial(Value &virial) {
           vector::BroadcastOp::create(builder, loc, virialType, weight);
       term = outer.mul(broadcast, term);
     }
+    total = outer.add(total, term);
+  }
+
+  if (failed(buildAdjoints()))
+    return failure();
+  SmallVector<GatherRelationOp> gathers;
+  for (Operation &op : *body)
+    if (auto gather = dyn_cast<GatherRelationOp>(&op))
+      if (isPositional(gather.getResult()) &&
+          adjoints.count(gather.getResult()))
+        gathers.push_back(gather);
+  for (GatherRelationOp gather : gathers) {
+    Value adjoint = adjoints.lookup(gather.getResult());
+    if (!adjoint)
+      continue;
+    Value term;
+    if (failed(emitGatherTerm(gather, adjoint, /*virial=*/true, term)))
+      return failure();
     total = outer.add(total, term);
   }
 
@@ -722,6 +1042,10 @@ FunctionOp DerivativeBuilder::build(ArrayRef<int32_t> kinds,
     return fail();
 
   builder.setInsertionPoint(oldReturn);
+  // The adjoints of the fields that depend on the positions, from the uses
+  // of the potential alone, before the derivatives add their own.
+  if (needsPositions && failed(buildAdjoints()))
+    return fail();
   SmallVector<Value> results;
   for (unsigned i = 0, e = kinds.size(); i != e; ++i) {
     Value result;

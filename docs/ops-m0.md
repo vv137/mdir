@@ -573,12 +573,34 @@ When the energy combines several sums, each sum is weighted by the derivative
 of the energy with respect to that sum, and the force fields of the sums are
 added with `md.map_particles`.
 
+**Intermediate fields (D143).** A potential may compute a field from the
+positions, `md.gather_relation` over pairs, any kernel of the distance and
+of the fields of both ends, `exchange(none)` if it is not symmetric, and
+fields from it with `md.map_particles`, and sum them in its energy with
+`md.sum_relation`, which gathers them, and `md.sum_particles`. The pass takes
+the derivative of the energy with respect to each such field, its adjoint
+$\bar F_i = \partial E/\partial F_i$, from the last field to the first: a sum
+over pairs that reads $F$ gives $w \sum_j \partial u(i, j)/\partial F_i$, a
+gather with $i$ at the centre; a sum over particles $w\, \partial k/\partial F_i$,
+and a map $G = g(F, \dots)$ gives $\bar G_i\, \partial g/\partial F_i$, maps over
+particles. A gather $G_a = \sum_b k(a, b)$ then gives the forces
+
+$$\mathbf F_m = -\sum_b \big(\bar G_m\, k'(m, b) + \bar G_b\, k'(b, m)\big)\,
+\frac{\mathbf d_{mb}}{r},$$
+
+a gather whose kernel is that of $G$ evaluated from both ends of each pair,
+antisymmetric since its factor of $\mathbf d$ is symmetric, and the virial
+$\sum \mathbf d \otimes \mathbf K$ over the pairs. The forces of the sums treat
+the fields as numbers, as before. Generalized Born is the first potential of
+this kind (`test/Integration/obc.mlir`).
+
 Restrictions of the current implementation:
 
 | Restriction | Reason |
 |---|---|
 | A pair kernel that uses the displacement `d` cannot be differentiated with respect to positions. | Only the geometry rule for the distance exists for pairs. A kernel over tuples may use a displacement through its components (`vector.extract` at constant places): its gradient is taken a component at a time, along each unit vector, and with $\mathbf d = \mathbf x_a - \mathbf x_b$ the forces are $\mp\,\partial u/\partial\mathbf d$ on $a$ and $b$ and the virial $\mathbf d \otimes \mathbf F_a$ (D139; `test/Dialect/MD/Transforms/differentiate-displacement-values.mlir`). |
 | A parameter derivative is taken with respect to a scalar argument only. | Per-particle parameters would need a field-valued result. |
+| An intermediate field is gathered over pairs from a kernel of the distance and of fields, of `f64`, and read by sums over pairs and particles and by maps; a gather that reads such a field, and a sum over tuples that does, are not differentiated yet. | The adjoint of a gather that reads a field needs the kernel from both ends as well; generalized Born does not take it. |
 | The body of a potential must be a single block. | |
 
 The numerical values of the generated kernels are tested. A test pass turns

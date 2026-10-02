@@ -336,6 +336,17 @@ illustrated by the Störmer–Verlet method," *Acta Numer.* **12**, 399–450
 Used for: the properties `symplectic` and `time_reversible` of velocity
 Verlet and leapfrog, and why neither conserves energy exactly (B9).
 
+### Hawkins1996
+
+G. D. Hawkins, C. J. Cramer, D. G. Truhlar, "Parametrized models of
+aqueous free energies of solvation based on pairwise descreening of solute
+atomic charges from a dielectric medium," *J. Phys. Chem.* **100**,
+19824–19839 (1996).
+[doi:10.1021/jp961710n](https://doi.org/10.1021/jp961710n)
+
+Used for: the integral of the descreening of a charge by its neighbors in
+generalized Born (D143).
+
 ### He2024
 
 Y. He, A. Podobas, S. Markidis, "Leveraging MLIR for loop vectorization
@@ -687,6 +698,16 @@ Commun.* **14**, 579 (2023).
 [doi:10.1038/s41467-023-36329-y](https://doi.org/10.1038/s41467-023-36329-y)
 
 Used for: Allegro, the example of a strictly local learned potential.
+
+### Onufriev2004
+
+A. Onufriev, D. Bashford, D. A. Case, "Exploring protein native states and
+large-scale conformational changes with a modified generalized Born
+model," *Proteins* **55**, 383–394 (2004).
+[doi:10.1002/prot.20033](https://doi.org/10.1002/prot.20033)
+
+Used for: the Born radii of OBC from the integral of the descreening, and
+its parameters α, β, γ (D143).
 
 ### Pall2013
 
