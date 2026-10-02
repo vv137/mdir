@@ -5,6 +5,7 @@
 // docs/decisions.md.
 
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
+#include "mdir/Dialect/MDExec/Transforms/Radial.h"
 
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -32,54 +33,86 @@ namespace md_exec {
 #define GEN_PASS_DEF_EXPANDRADIAL
 #include "mdir/Dialect/MDExec/Transforms/Passes.h.inc"
 
+std::optional<double> evaluateRadialOp(Operation *op,
+                                       llvm::ArrayRef<double> a) {
+  if (auto constant = dyn_cast<arith::ConstantOp>(op)) {
+    if (auto real = dyn_cast<FloatAttr>(constant.getValue()))
+      return real.getValueAsDouble();
+    if (auto integer = dyn_cast<IntegerAttr>(constant.getValue()))
+      return static_cast<double>(integer.getInt());
+    return std::nullopt;
+  }
+  if (isa<arith::AddFOp>(op))
+    return a[0] + a[1];
+  if (isa<arith::SubFOp>(op))
+    return a[0] - a[1];
+  if (isa<arith::MulFOp>(op))
+    return a[0] * a[1];
+  if (isa<arith::DivFOp>(op))
+    return a[0] / a[1];
+  if (isa<arith::NegFOp>(op))
+    return -a[0];
+  if (isa<math::PowFOp, math::FPowIOp>(op))
+    return std::pow(a[0], a[1]);
+  if (isa<math::Atan2Op>(op))
+    return std::atan2(a[0], a[1]);
+  double x = a.empty() ? 0.0 : a[0];
+  if (isa<math::SqrtOp>(op))
+    return std::sqrt(x);
+  if (isa<math::ExpOp>(op))
+    return std::exp(x);
+  if (isa<math::ErfcOp>(op))
+    return std::erfc(x);
+  if (isa<math::ErfOp>(op))
+    return std::erf(x);
+  if (isa<math::LogOp>(op))
+    return std::log(x);
+  if (isa<math::AbsFOp>(op))
+    return std::fabs(x);
+  if (isa<math::TanhOp>(op))
+    return std::tanh(x);
+  if (isa<math::SinOp>(op))
+    return std::sin(x);
+  if (isa<math::CosOp>(op))
+    return std::cos(x);
+  if (isa<math::TanOp>(op))
+    return std::tan(x);
+  if (isa<math::AsinOp>(op))
+    return std::asin(x);
+  if (isa<math::AcosOp>(op))
+    return std::acos(x);
+  if (isa<math::AtanOp>(op))
+    return std::atan(x);
+  if (isa<math::SinhOp>(op))
+    return std::sinh(x);
+  if (isa<math::CoshOp>(op))
+    return std::cosh(x);
+  return std::nullopt;
+}
+
+bool isRadialOp(Operation *op) {
+  if (op->getNumResults() != 1 || op->getNumRegions() != 0)
+    return false;
+  // The operands do not matter for whether the op is known.
+  SmallVector<double, 2> zeros(op->getNumOperands(), 1.0);
+  return evaluateRadialOp(op, zeros).has_value();
+}
+
 namespace {
 /// Evaluates the function `function`, (f64) -> f64, at `s`, op by op.
-/// Returns NaN for an op it does not know.
 double evaluate(func::FuncOp function, double s) {
   llvm::DenseMap<Value, double> values;
   Block &body = function.getBody().front();
   values[body.getArgument(0)] = s;
   for (Operation &op : body) {
-    auto get = [&](unsigned i) { return values.lookup(op.getOperand(i)); };
-    double result = NAN;
     if (auto ret = dyn_cast<func::ReturnOp>(op))
       return values.lookup(ret.getOperand(0));
-    if (auto constant = dyn_cast<arith::ConstantOp>(op)) {
-      if (auto real = dyn_cast<FloatAttr>(constant.getValue()))
-        result = real.getValueAsDouble();
-      else if (auto integer = dyn_cast<IntegerAttr>(constant.getValue()))
-        result = static_cast<double>(integer.getInt());
-    } else if (isa<arith::AddFOp>(op)) {
-      result = get(0) + get(1);
-    } else if (isa<arith::SubFOp>(op)) {
-      result = get(0) - get(1);
-    } else if (isa<arith::MulFOp>(op)) {
-      result = get(0) * get(1);
-    } else if (isa<arith::DivFOp>(op)) {
-      result = get(0) / get(1);
-    } else if (isa<arith::NegFOp>(op)) {
-      result = -get(0);
-    } else if (isa<math::SqrtOp>(op)) {
-      result = std::sqrt(get(0));
-    } else if (isa<math::ExpOp>(op)) {
-      result = std::exp(get(0));
-    } else if (isa<math::ErfcOp>(op)) {
-      result = std::erfc(get(0));
-    } else if (isa<math::ErfOp>(op)) {
-      result = std::erf(get(0));
-    } else if (isa<math::LogOp>(op)) {
-      result = std::log(get(0));
-    } else if (isa<math::AbsFOp>(op)) {
-      result = std::abs(get(0));
-    } else if (isa<math::TanhOp>(op)) {
-      result = std::tanh(get(0));
-    } else if (isa<math::PowFOp>(op)) {
-      result = std::pow(get(0), get(1));
-    } else if (isa<math::FPowIOp>(op)) {
-      result = std::pow(get(0), get(1));
-    }
+    SmallVector<double, 2> operands;
+    for (Value operand : op.getOperands())
+      operands.push_back(values.lookup(operand));
+    std::optional<double> result = evaluateRadialOp(&op, operands);
     if (op.getNumResults() == 1)
-      values[op.getResult(0)] = result;
+      values[op.getResult(0)] = result.value_or(NAN);
   }
   return NAN;
 }
@@ -226,6 +259,15 @@ public:
           table = fit(function, low, high, bits);
           if (table.fitError <= 0.1 * tolerance)
             break;
+        }
+        // A value that the evaluation does not know is NaN, and would
+        // pass the test of the error below unseen.
+        if (!llvm::all_of(table.coefficients,
+                          [](float c) { return std::isfinite(c); })) {
+          op.emitOpError() << "cannot tabulate " << op.getFunction()
+                           << ": it is not finite on (" << low << ", "
+                           << high << "]";
+          return signalPassFailure();
         }
         if (!(table.error <= tolerance)) {
           op.emitOpError() << "cannot tabulate " << op.getFunction()

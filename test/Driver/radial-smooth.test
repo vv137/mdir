@@ -1,0 +1,14 @@
+# A function of the distance that md-exec-expand-radial tabulates in f32
+# holds smooth ops only, which its fit evaluates (D94, amended): a pair term
+# in cos(r) and exp(-r) runs in mixed precision with the energy of double
+# precision, -497.8417 kcal/mol at the start, where the fit had taken cos
+# as NaN; and a function with floor, as a tabulated function has, stays in
+# the kernel (tabulated-functions.test).
+#
+# RUN: rm -rf %t && mkdir -p %t && cp %S/Inputs/mixture.pdb %t
+# RUN: sed -e 's|^expression = .*|expression = "4*epsilon*((sigma/r)^12 - (sigma/r)^6) + 0.01*cos(r)*exp(-r)"|' -e 's|"Inputs/|"|' %S/mixture.toml | grep -v '^#' > %t/run.toml
+# RUN: printf '\n[execution]\nprecision = "MIXED"\n' >> %t/run.toml
+# RUN: cd %t && mdir run run.toml | FileCheck %s
+
+# CHECK:      INFO:         0         0.0000 {{ *-[0-9.]+}} {{ *}}-497.84{{[0-9]+}} {{ *[0-9.]+}} {{ *}}120.0020
+# CHECK:      MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value

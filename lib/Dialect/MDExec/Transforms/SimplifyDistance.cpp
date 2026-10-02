@@ -1,6 +1,7 @@
 // Rewriting of pair kernels in powers of the squared distance.
 
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
+#include "mdir/Dialect/MDExec/Transforms/Radial.h"
 
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
@@ -287,9 +288,7 @@ bool Rewriter::isRadial(Value value) {
   bool result = false;
   if (def && isa<arith::ConstantOp>(def)) {
     result = true;
-  } else if (def && def->getBlock() == fresh && def->getNumRegions() == 0 &&
-             def->getNumResults() == 1 &&
-             isa<arith::ArithDialect, math::MathDialect>(def->getDialect())) {
+  } else if (def && def->getBlock() == fresh && isRadialOp(def)) {
     result = llvm::all_of(def->getOperands(),
                           [&](Value operand) { return isRadial(operand); });
   }
