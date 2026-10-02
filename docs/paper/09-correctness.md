@@ -193,8 +193,12 @@ beside its rate.
   volume. Their virials of the forces agree per axis to $10^{-5}$ on the
   same positions, and GROMACS's pressure in that cell moves by 22 bar
   between LINCS of its default order and bonds of hydrogen left flexible,
-  where MDIR's does not move: the difference is in how the constraints
-  enter the pressure of a step, not in the split by axis.
+  where MDIR's does not move. On TIP3P water in one cell the pressures of
+  MDIR, GROMACS, and pmemd.cuda at 2 fs are 52.7, 34.4, and 61.6 bar and
+  at 0.25 fs 45.1, 46.9, and 43.8 ($\pm 3$ to 4): the estimators of the
+  pressure of the integrators, with the forces of the rigid waters in
+  them, differ at the step of production and agree as it goes to zero.
+  The difference of the densities is that, not the coupling.
 - **Equivalences.** The trajectory does not depend on how steps are
   grouped into periods, on velocity Verlet against leapfrog with
   constraints, or on how the work of the barostat is counted: the tests
