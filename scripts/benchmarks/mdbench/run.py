@@ -218,11 +218,15 @@ def main():
                 os.symlink(os.path.join(data, entry), target)
     engines = {"pmemd": pmemd, "gromacs": gromacs, "openmm": openmm,
                "mdir": mdir}
+    with open(os.path.join(links, "pmemd", "prmtop.parm7")) as file:
+        lines = file.read().split("%FLAG POINTERS")[1].splitlines()
+    atoms = int(lines[2].split()[0])
+    print(f"{name}: {atoms:,} atoms", flush=True)
     for engine in args.engines.split(","):
         result = engines[engine](args, links,
                                  os.path.join(os.path.abspath(args.work),
                                               engine))
-        print(f"{name} {engine:8s} " + " ".join(
+        print(f"{name} ({atoms:,} atoms) {engine:8s} " + " ".join(
             f"{k} {v:.4g}" if isinstance(v, float) else f"{k} {v}"
             for k, v in result.items()), flush=True)
 

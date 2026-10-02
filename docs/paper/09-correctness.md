@@ -170,7 +170,13 @@ beside its rate.
 - **Ensembles** (`scripts/validation/ensembles`). On 1039 rigid OPC waters
   with PME on the GPU in mixed precision, runs of 5 ns at 300 K and 306 K
   give mean kinetic energies within 0.9 standard errors of $N_fk_BT/2$
-  and variances within 1.2 of $N_f(k_BT)^2/2$; the ratio of the
+  and variances within 1.2 of $N_f(k_BT)^2/2$, and the whole
+  distribution of the kinetic energy passes a one-sample
+  Kolmogorov–Smirnov test against the gamma distribution of $N_f/2$ and
+  $k_BT$ of the bath, not fitted ($D = 0.020$, $p = 0.26$ at 300 K and
+  $D = 0.016$, $p = 0.61$ at 306 K, from 2500 and 2143 samples spaced by
+  their statistical inefficiency), the test of [[Merz2018]](references.md#merz2018) that a
+  distribution 10% too narrow fails at $p = 0.006$; the ratio of the
   distributions of the potential energy at the two temperatures has the
   slope $\beta_{300} - \beta_{306}$ within 0.17 standard errors, and that
   of the volumes at 1 and 300 atm the slope $-\beta\Delta P$ within 0.66

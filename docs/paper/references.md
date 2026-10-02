@@ -250,6 +250,12 @@ G. Marsaglia, W. W. Tsang, "A simple method for generating gamma
 variables," *ACM Trans. Math. Softw.* **26**, 363–372 (2000).
 [doi:10.1145/358407.358414](https://doi.org/10.1145/358407.358414)
 
+### Merz2018
+
+P. T. Merz, M. R. Shirts, "Testing for physical validity in molecular
+simulations," *PLOS ONE* **13**, e0202764 (2018).
+[doi:10.1371/journal.pone.0202764](https://doi.org/10.1371/journal.pone.0202764)
+
 ### Miyamoto1992
 
 S. Miyamoto, P. A. Kollman, "Settle: An analytical version of the SHAKE

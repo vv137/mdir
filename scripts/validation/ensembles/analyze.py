@@ -4,7 +4,8 @@ writes in WORK:
 
   - the kinetic energy at constant volume against the canonical
     distribution, a gamma distribution of N_f / 2 and k_B T: its mean
-    N_f k_B T / 2 and its variance N_f (k_B T)^2 / 2;
+    N_f k_B T / 2, its variance N_f (k_B T)^2 / 2, and the whole
+    distribution by a one-sample Kolmogorov-Smirnov test [Merz2018];
   - two temperatures: the potential energies of runs at T1 and T2 have
     ln P2(U) / P1(U) = (beta1 - beta2) U + c [Shirts2013];
   - two pressures: the volumes of runs at P1 and P2 and one temperature
@@ -110,6 +111,55 @@ def logistic(x1, x2):
     return w[1] / sd, math.sqrt(cov[1, 1]) / sd
 
 
+def gamma_cdf(x, shape, scale):
+    """The regularized lower incomplete gamma function P(shape, x/scale),
+    by its series below shape + 1 and its continued fraction above
+    (Press et al., Numerical Recipes, Sec. 6.2)."""
+    z = x / scale
+    if z <= 0.0:
+        return 0.0
+    log_front = shape * math.log(z) - z - math.lgamma(shape)
+    if z < shape + 1.0:
+        term = total = 1.0 / shape
+        a = shape
+        for _ in range(100000):
+            a += 1.0
+            term *= z / a
+            total += term
+            if abs(term) < abs(total) * 1e-15:
+                break
+        return total * math.exp(log_front)
+    b = z + 1.0 - shape
+    c, d = 1.0 / 1e-300, 1.0 / b
+    h = d
+    for i in range(1, 100000):
+        an = -i * (i - shape)
+        b += 2.0
+        d = an * d + b
+        d = 1e-300 if abs(d) < 1e-300 else d
+        c = b + an / c
+        c = 1e-300 if abs(c) < 1e-300 else c
+        d = 1.0 / d
+        delta = d * c
+        h *= delta
+        if abs(delta - 1.0) < 1e-15:
+            break
+    return 1.0 - math.exp(log_front) * h
+
+
+def kolmogorov_smirnov(samples, cdf):
+    """The statistic D of a one-sample Kolmogorov-Smirnov test and its p
+    value, from the asymptotic Kolmogorov distribution."""
+    x = np.sort(samples)
+    n = len(x)
+    f = np.array([cdf(v) for v in x])
+    d = max(np.max(np.arange(1, n + 1) / n - f), np.max(f - np.arange(n) / n))
+    lam = (math.sqrt(n) + 0.12 + 0.11 / math.sqrt(n)) * d
+    p = 2.0 * sum((-1) ** (k - 1) * math.exp(-2.0 * k * k * lam * lam)
+                  for k in range(1, 101))
+    return d, min(max(p, 0.0), 1.0)
+
+
 def report(name, estimate, error, theory):
     print(f"{name}: {estimate:.6g} +- {error:.2g}, expected {theory:.6g}, "
           f"{(estimate - theory) / error:+.2f} standard errors")
@@ -132,6 +182,13 @@ def main():
         var_err = var * math.sqrt(2.0 / (len(k_sub) - 1))
         report("  variance of the kinetic energy", var, var_err,
                0.5 * FREEDOM * (KB * t) ** 2)
+        # The whole distribution against Gamma(N_f / 2, k_B T), from the
+        # samples spaced by their statistical inefficiency [Merz2018]; the
+        # parameters are those of the bath, not fitted.
+        d, p = kolmogorov_smirnov(
+            k_sub, lambda v: gamma_cdf(v, 0.5 * FREEDOM, KB * t))
+        print(f"  Kolmogorov-Smirnov against Gamma(N_f/2, k_B T), "
+              f"{len(k_sub)} samples: D = {d:.4f}, p = {p:.3f}")
     u1, _ = subsample(a["POTENTIAL_ENE"])
     u2, _ = subsample(b["POTENTIAL_ENE"])
     slope, err = logistic(u1, u2)
