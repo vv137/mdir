@@ -1,0 +1,76 @@
+# The tests of langevin.test on a GPU (D135): the noise against Philox of
+# the runtime, in double and in mixed precision, and a run continued over
+# checkpoints that ends in the state of one that does not stop. The
+# dipeptide in OPC, with SETTLE and its extra points, at constant
+# pressure, compiles and runs with Langevin dynamics.
+#
+# REQUIRES: hdf5, cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %t/
+# RUN: %python %S/Inputs/zero_velocities.py %S/Inputs/dipeptide/dipeptide.inpcrd > %t/still.rst7
+# RUN: sed -n '/^#--- noise.toml/,/^#--- end/p' %S/langevin.test | sed '1d;$d' \
+# RUN:     | sed -e 's/^target    = "CPU"/target    = "GPU"/' > %t/double.toml
+# RUN: sed -e 's/^precision = "DOUBLE"/precision = "MIXED"/' -e 's/noise.h5/mixed.h5/' %t/double.toml > %t/mixed.toml
+# RUN: cd %t && mdir run double.toml > /dev/null && mdir run mixed.toml > /dev/null
+# RUN: mdir checkpoint --print=velocities %t/noise.h5 \
+# RUN: | %python %S/Inputs/check_langevin_noise.py %mdrt 2718 1 300.0 | FileCheck %s --check-prefix=NOISE
+# RUN: mdir checkpoint --print=velocities %t/mixed.h5 \
+# RUN: | %python %S/Inputs/check_langevin_noise.py %mdrt 2718 1 300.0 | FileCheck %s --check-prefix=NOISE
+#
+# RUN: cp %S/Inputs/mixture.pdb %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/thermostat.test | sed '1d;$d' \
+# RUN:     | sed -e 's|^method = "V-RESCALE"|method = "LANGEVIN"\nfriction = 1.0|' -e '/^time_constant = 0.5/d' -e '/^interval = 10/d' \
+# RUN:           -e 's|energy_interval = 1000|energy_interval = 500\ncheckpoint = "whole.h5"\ncheckpoint_interval = 500|' \
+# RUN:     > %t/whole.toml
+# RUN: printf '[execution]\ntarget = "gpu"\nprecision = "mixed"\n' >> %t/whole.toml
+# RUN: sed -e 's|whole|part|g' %t/whole.toml > %t/part.toml
+# RUN: mdir run %t/whole.toml > %t/whole.log
+# RUN: not mdir run --continue --max-walltime 0.000001 %t/part.toml > /dev/null
+# RUN: not mdir run --continue --max-walltime 0.000001 %t/part.toml > /dev/null
+# RUN: not mdir run --continue --max-walltime 0.000001 %t/part.toml > /dev/null
+# RUN: mdir run --continue --max-walltime 0.000001 %t/part.toml > /dev/null
+# RUN: mdir checkpoint %t/whole.h5 %t/part.h5 | FileCheck %s --check-prefix=SAME
+#
+# RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t/
+# RUN: sed -n '/^#--- opc.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/opc.toml
+# RUN: mdir run %t/opc.toml | FileCheck %s --check-prefix=OPC
+
+# NOISE: 1168 particles, largest difference {{.*}} of sqrt(kT/m): ok
+# SAME: the states are identical
+# OPC: INFO:      STEP           TIME      TOTAL_ENE  POTENTIAL_ENE    KINETIC_ENE    TEMPERATURE         VIRIAL       PRESSURE         VOLUME
+# OPC: INFO:       400         0.8000
+# OPC-NOT: nan
+
+#--- opc.toml
+[input]
+topology    = "opc.prmtop"
+coordinates = "opc.inpcrd"
+[output]
+energy_interval = 200
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "PME"
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.002
+steps      = 400
+[ensemble]
+ensemble    = "NPT"
+temperature = 300.0
+pressure    = 1.0
+[thermostat]
+method   = "LANGEVIN"
+friction = 1.0
+[barostat]
+method        = "C-RESCALE"
+time_constant = 2.0
+[constraints]
+rigid_water = true
+[boundary]
+type = "PERIODIC"
+[execution]
+target    = "GPU"
+precision = "MIXED"
+#--- end

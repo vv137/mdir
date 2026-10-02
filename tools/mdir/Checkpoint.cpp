@@ -15,7 +15,8 @@ static int fail(llvm::Error error) {
   return 2;
 }
 
-int mdir::tool::describeCheckpoints(llvm::ArrayRef<std::string> files) {
+int mdir::tool::describeCheckpoints(llvm::ArrayRef<std::string> files,
+                                    llvm::StringRef field) {
   if (files.empty() || files.size() > 2) {
     llvm::errs() << "mdir: expected one checkpoint or two\n";
     return 2;
@@ -24,6 +25,33 @@ int mdir::tool::describeCheckpoints(llvm::ArrayRef<std::string> files) {
   auto first = readCheckpoint(files[0]);
   if (!first)
     return fail(first.takeError());
+
+  if (!field.empty()) {
+    if (files.size() != 1) {
+      llvm::errs() << "mdir: --print takes one checkpoint\n";
+      return 2;
+    }
+    const std::vector<double> *values =
+        field == "positions"    ? &first->positions
+        : field == "velocities" ? &first->velocities
+        : field == "forces"     ? &first->forces
+                                : nullptr;
+    if (!values) {
+      llvm::errs() << "mdir: --print takes positions, velocities, or "
+                      "forces, not '"
+                   << field << "'\n";
+      return 2;
+    }
+    if (values->empty()) {
+      llvm::errs() << "mdir: the checkpoint holds no " << field << "\n";
+      return 2;
+    }
+    for (size_t i = 0, e = first->getNumParticles(); i != e; ++i)
+      std::printf("%zu %.17g %.17g %.17g %.17g\n", i, first->masses[i],
+                  (*values)[3 * i], (*values)[3 * i + 1],
+                  (*values)[3 * i + 2]);
+    return 0;
+  }
 
   if (files.size() == 1) {
     std::printf("particles:       %zu\n", first->getNumParticles());

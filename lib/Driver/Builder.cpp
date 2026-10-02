@@ -149,6 +149,37 @@ private:
   std::string getScaleParameter() const {
     return scalesReference() ? ", %rest_scale: vector<3xf64>" : "";
   }
+  /// Langevin dynamics (D135): the programs of the steps take the number of
+  /// the step that they take and the numbers of the particles, which key the
+  /// random numbers of each particle (A13).
+  std::string getNoiseParameter() const {
+    return control.isLangevin() ? ", %noise_step: i64, %noise_ids: !ids"
+                                : "";
+  }
+  std::string getNoiseType() const {
+    return control.isLangevin() ? ", i64, !ids" : "";
+  }
+  /// Emits the number of the step about to be taken, from the counter on
+  /// the host that each step advances, and returns the operands that a
+  /// program of a step takes for it.
+  std::string emitNoiseValue(StringRef indent) {
+    if (!control.isLangevin())
+      return "";
+    std::string name = "%noise" + std::to_string(numNoiseSteps++);
+    os << indent << name << "_last = memref.load %noise_memory[%c0]"
+       << " : memref<1xi64>\n"
+       << indent << name << " = arith.addi " << name << "_last, %noise_one"
+       << " : i64\n"
+       << indent << "memref.store " << name << ", %noise_memory[%c0]"
+       << " : memref<1xi64>\n";
+    return ", " + name + ", " + idName;
+  }
+  unsigned numNoiseSteps = 0;
+  /// Whether the thermostat rescales the velocities at the end of a period,
+  /// rather than acting in every step.
+  bool rescalesVelocities() const {
+    return control.thermostat && !control.isLangevin();
+  }
   /// Emits the restraints at the positions `x`, with the fields of the
   /// prefix `prefix`: `fResult`, the forces `f` with theirs added, and, if
   /// `u` is given, `uResult` and `wResult`, the energy `u` and the virial
@@ -195,6 +226,11 @@ private:
   /// Emits the positions `result`: the positions `x` with the virtual sites
   /// placed from the members of the tuples of `relations`, the prefix of
   /// the names of the relations.
+  /// Emits the friction and the noise of Langevin dynamics (D135) on the
+  /// velocities `velocities` into `result`, in a program of a step that has
+  /// `%m`, `%noise_step`, and `%noise_ids`.
+  void emitLangevin(StringRef indent, StringRef velocities,
+                    StringRef result);
   void emitPlaceSites(StringRef indent, StringRef x, StringRef result,
                       StringRef relations);
   /// Emits the forces `result`: the forces `f` at the positions `x` with
@@ -1940,7 +1976,8 @@ void Builder::emitPrograms() {
        << "(%x: !vec, %v: !vec, %f: !vec, %m: !real,\n"
        << "    %cell: !md.cell, %dt: f64"
        << (scales ? ", %mu: vector<3xf64>" : "")
-       << getScaleParameter() << getFieldParameters() << ")\n"
+       << getScaleParameter() << getFieldParameters() << getNoiseParameter()
+       << ")\n"
        << "    -> (!vec, !vec, !vec" << (withEnergy ? ", f64" : "")
        << (withVirial ? ", vector<9xf64>" : "")
        << (molecular ? ", vector<3xf64>" : "")
@@ -1974,12 +2011,19 @@ void Builder::emitPrograms() {
          << "  %mu_unit = arith.constant dense<1.0> : vector<3xf64>\n"
          << "  %mu_m1 = arith.subf %mu_unit, %mu : vector<3xf64>\n"
          << "  %muinv = arith.divf %mu_unit, %mu : vector<3xf64>\n";
+      // Langevin dynamics acts before the scaling, which takes the kinetic
+      // energy of the velocities that it scales.
+      std::string middle = "%v1";
+      if (control.isLangevin()) {
+        emitLangevin("  ", "%v1", "%v1o");
+        middle = "%v1o";
+      }
       std::string scaled = emitGroupScaling("  ", "%xh", "%mu", "%mu_m1",
                                             "%cell", "%m", "%r_", "_t");
       // The kinetic energy of each axis of the velocities that the
       // scaling takes.
-      emitKineticVector(os, "%khalf", "%v1", "%m", "  ");
-      os << "  %v1t = md.map_particles gather(%v1 : !vec) {\n"
+      emitKineticVector(os, "%khalf", middle, "%m", "  ");
+      os << "  %v1t = md.map_particles gather(" << middle << " : !vec) {\n"
          << "  ^bb0(%v_i: vector<3xf64>):\n"
          << "    %v_s = arith.mulf %muinv, %v_i : vector<3xf64>\n"
          << "    md.yield %v_s : vector<3xf64>\n"
@@ -1987,6 +2031,13 @@ void Builder::emitPrograms() {
          << "  " << drifted << " = dyn.drift " << scaled
          << ", %v1t, %half : !vec\n";
       drifting = "%v1t";
+    } else if (control.isLangevin()) {
+      // The middle scheme: half a drift, the friction and the noise, and
+      // the other half ([Zhang2019]; BAOAB of [Leimkuhler2013]).
+      os << "  %xh = dyn.drift %x, %v1, %half : !vec\n";
+      emitLangevin("  ", "%v1", "%v1o");
+      os << "  " << drifted << " = dyn.drift %xh, %v1o, %half : !vec\n";
+      drifting = "%v1o";
     } else {
       os << "  " << drifted << " = dyn.drift %x, %v1, %dt : !vec\n";
     }
@@ -2101,6 +2152,109 @@ void Builder::emitPrograms() {
       os << "  dyn.return %x1, %v2, %f1 : !vec, !vec, !vec\n";
     os << "}\n\n";
   }
+}
+
+void Builder::emitLangevin(StringRef indent, StringRef velocities,
+                           StringRef result) {
+  // v' = c v + sqrt((1 - c^2) k_B T / m) R, with c = exp(-gamma dt) and R
+  // three standard normal numbers. They come from one block of Philox
+  // 4x32-10 [Salmon2011] under the key of A13: the seed; the counter of the
+  // step, the number of the particle, and stream 2 in the high byte of the
+  // last word. The four words give four uniform numbers, (w + 1/2) 2^-32,
+  // and the method of Box and Muller two pairs of normal numbers, of which
+  // the first three are taken. A particle of mass 0 keeps its velocity.
+  double c = std::exp(-control.friction * control.timestep);
+  double kT = units::boltzmann * control.temperature;
+  double spread = std::sqrt((1.0 - c * c) * kT);
+  auto i32 = [](uint32_t value) {
+    return std::to_string(static_cast<int32_t>(value));
+  };
+  std::string in = (indent + "  ").str();
+  os << indent << result << " = md.map_particles gather(" << velocities
+     << ", %m, %noise_ids : !vec, !real, !ids) {\n"
+     << indent << "^bb0(%lv: vector<3xf64>, %lm: f64, %lid: i32):\n"
+     << in << "%l32 = arith.constant 32 : i64\n"
+     << in << "%lshift = arith.shrui %noise_step, %l32 : i64\n"
+     << in << "%lc0_0 = arith.trunci %noise_step : i64 to i32\n"
+     << in << "%lc1_0 = arith.trunci %lshift : i64 to i32\n"
+     << in << "%lc3_0 = arith.constant " << i32(2u << 24) << " : i32\n"
+     << in << "%lma = arith.constant " << i32(0xD2511F53u) << " : i32\n"
+     << in << "%lmb = arith.constant " << i32(0xCD9E8D57u) << " : i32\n";
+  uint32_t k0 = static_cast<uint32_t>(control.seed);
+  uint32_t k1 = static_cast<uint32_t>(control.seed >> 32);
+  std::string c0 = "%lc0_0", c1 = "%lc1_0", c2 = "%lid", c3 = "%lc3_0";
+  for (int round = 0; round != 10; ++round) {
+    if (round != 0) {
+      k0 += 0x9E3779B9u;
+      k1 += 0xBB67AE85u;
+    }
+    std::string r = std::to_string(round);
+    os << in << "%llo0_" << r << ", %lhi0_" << r
+       << " = arith.mului_extended %lma, " << c0 << " : i32\n"
+       << in << "%llo1_" << r << ", %lhi1_" << r
+       << " = arith.mului_extended %lmb, " << c2 << " : i32\n"
+       << in << "%lk0_" << r << " = arith.constant " << i32(k0)
+       << " : i32\n"
+       << in << "%lk1_" << r << " = arith.constant " << i32(k1)
+       << " : i32\n"
+       << in << "%la_" << r << " = arith.xori %lhi1_" << r << ", " << c1
+       << " : i32\n"
+       << in << "%lb_" << r << " = arith.xori %la_" << r << ", %lk0_" << r
+       << " : i32\n"
+       << in << "%lc_" << r << " = arith.xori %lhi0_" << r << ", " << c3
+       << " : i32\n"
+       << in << "%ld_" << r << " = arith.xori %lc_" << r << ", %lk1_" << r
+       << " : i32\n";
+    c0 = "%lb_" + r;
+    c1 = "%llo1_" + r;
+    c2 = "%ld_" + r;
+    c3 = "%llo0_" + r;
+  }
+  os << in << "%lhalf = arith.constant 5.0e-01 : f64\n"
+     << in << "%lscale = arith.constant 0x3DF0000000000000 : f64\n"
+     << in << "%lminus2 = arith.constant -2.0 : f64\n"
+     << in << "%ltwopi = arith.constant 6.283185307179586 : f64\n";
+  std::string words[] = {c0, c1, c2, c3};
+  for (int w = 0; w != 4; ++w) {
+    std::string n = std::to_string(w);
+    os << in << "%lf" << n << " = arith.uitofp " << words[w]
+       << " : i32 to f64\n"
+       << in << "%lg" << n << " = arith.addf %lf" << n << ", %lhalf : f64\n"
+       << in << "%lu" << n << " = arith.mulf %lg" << n << ", %lscale : f64\n";
+  }
+  for (int pair = 0; pair != 2; ++pair) {
+    std::string a = std::to_string(2 * pair), b = std::to_string(2 * pair + 1),
+                p = std::to_string(pair);
+    os << in << "%llog" << p << " = math.log %lu" << a << " : f64\n"
+       << in << "%lsq" << p << " = arith.mulf %lminus2, %llog" << p
+       << " : f64\n"
+       << in << "%lr" << p << " = math.sqrt %lsq" << p << " : f64\n"
+       << in << "%lt" << p << " = arith.mulf %ltwopi, %lu" << b << " : f64\n"
+       << in << "%lcos" << p << " = math.cos %lt" << p << " : f64\n"
+       << in << "%lncos" << p << " = arith.mulf %lr" << p << ", %lcos" << p
+       << " : f64\n";
+    if (pair == 0)
+      os << in << "%lsin0 = math.sin %lt0 : f64\n"
+         << in << "%lnsin0 = arith.mulf %lr0, %lsin0 : f64\n";
+  }
+  os << in << "%lnoise = vector.from_elements %lncos0, %lnsin0, %lncos1"
+     << " : vector<3xf64>\n"
+     << in << "%lzero = arith.constant 0.0 : f64\n"
+     << in << "%lmassive = arith.cmpf ogt, %lm, %lzero : f64\n"
+     << in << "%lone = arith.constant 1.0 : f64\n"
+     << in << "%lsafe = arith.select %lmassive, %lm, %lone : f64\n"
+     << in << "%lspread = arith.constant " << formatReal(spread) << " : f64\n"
+     << in << "%lroot = math.sqrt %lsafe : f64\n"
+     << in << "%lsigma = arith.divf %lspread, %lroot : f64\n"
+     << in << "%lsigmab = vector.broadcast %lsigma : f64 to vector<3xf64>\n"
+     << in << "%lkick = arith.mulf %lsigmab, %lnoise : vector<3xf64>\n"
+     << in << "%lc = arith.constant dense<" << formatReal(c)
+     << "> : vector<3xf64>\n"
+     << in << "%ldamped = arith.mulf %lc, %lv : vector<3xf64>\n"
+     << in << "%lnew = arith.addf %ldamped, %lkick : vector<3xf64>\n"
+     << in << "%lout = arith.select %lmassive, %lnew, %lv : vector<3xf64>\n"
+     << in << "md.yield %lout : vector<3xf64>\n"
+     << indent << "} : !vec\n";
 }
 
 namespace {
@@ -3195,12 +3349,13 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
   }
 
   if (isStepLoop) {
+    std::string noise1 = emitNoiseValue(inner);
     os << inner << getValues("b" + here) << " = dyn.step @step(";
     os << "%xa" << here << ", %va" << here << ", %fa" << here << ", "
-         << massName << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix)
+         << massName << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << noise1
          << ")\n"
          << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
-         << getFieldTypes() << ") -> (!vec, !vec, !vec)\n";
+         << getFieldTypes() << getNoiseType() << ") -> (!vec, !vec, !vec)\n";
     os << inner << "scf.yield " << getValues("b" + here) << " : " << state
        << "\n";
   } else {
@@ -3333,13 +3488,14 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         v = "%v" + last;
       } else {
         // The step whose pressure gives the strain.
+        std::string noise2 = emitNoiseValue(inner);
         os << inner << getValues(a) << ", %w" << a << ", %gw" << a
            << (leapfrog ? ", %vc" + a : "") << " = dyn.step @step_virial(%x"
            << last << ", %v" << last << ", %f" << last << ", " << massName
            << ", " << cellName << ", %dt" << getScaleValue()
-           << getFieldValues(fieldPrefix) << ")\n"
+           << getFieldValues(fieldPrefix) << noise2 << ")\n"
            << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
-           << getScaleType() << getFieldTypes()
+           << getScaleType() << getFieldTypes() << getNoiseType()
            << ") -> (!vec, !vec, !vec, vector<9xf64>, vector<3xf64>"
            << (leapfrog ? ", !vec" : "") << ")\n";
         trace = "%dg" + a;
@@ -3359,6 +3515,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       if (!scaling.scale.empty())
         scaleName = scaling.scale;
       bool virial = withEnergy || countsAfterScaling();
+      std::string noise3 = emitNoiseValue(inner);
       os << inner << "%x" << n << ", %v" << n << ", %f" << n
          << (withEnergy ? ", %u" + n : "") << (virial ? ", %w" + n : "")
          << (virial ? ", %gw" + n : "")
@@ -3367,10 +3524,10 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
          << "(" << x << ", " << v << ", %f"
          << (scalesEveryStep() ? last : a) << ", " << massName << ", "
          << scaling.cell << ", %dt, " << scaling.mu << getScaleValue()
-         << getFieldValues(fieldPrefix) << ")\n"
+         << getFieldValues(fieldPrefix) << noise3 << ")\n"
          << inner
          << "    : (!vec, !vec, !vec, !real, !md.cell, f64, vector<3xf64>"
-         << getScaleType() << getFieldTypes() << ") -> (!vec, !vec, !vec"
+         << getScaleType() << getFieldTypes() << getNoiseType() << ") -> (!vec, !vec, !vec"
          << (withEnergy ? ", f64" : "")
          << (virial ? ", vector<9xf64>, vector<3xf64>" : "")
          << (leapfrog ? ", !vec" : "") << ", vector<3xf64>)\n";
@@ -3405,13 +3562,14 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         // With leapfrog the pressure takes the velocities of the time of
         // the positions, which the step of energy returns.
         std::string current = isLeapfrog() ? "%vck" + here : "";
+        std::string noise4 = emitNoiseValue(inner);
         os << inner << getValues("k" + here) << ", %uk" << here << ", %wk"
            << here << (isLeapfrog() ? ", " + current : "")
            << " = dyn.step @step_energy(%x" << last << ", %v" << last
            << ", %f" << last << ", " << massName << ", " << cellName
-           << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << ")\n"
+           << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << noise4 << ")\n"
            << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
-           << getFieldTypes()
+           << getFieldTypes() << getNoiseType()
            << ") -> (!vec, !vec, !vec, f64, vector<9xf64>"
            << (isLeapfrog() ? ", !vec" : "") << ")\n";
         trace = "%dgk" + here;
@@ -3426,12 +3584,13 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         scaleName = outerScale;
         return;
       }
+      std::string noise5 = emitNoiseValue(inner);
       os << inner << getValues("k" + here) << " = dyn.step @step(";
       os << "%x" << last << ", %v" << last << ", %f" << last << ", "
-           << massName << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix)
+           << massName << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << noise5
            << ")\n"
            << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
-           << getFieldTypes() << ") -> (!vec, !vec, !vec)\n";
+           << getFieldTypes() << getNoiseType() << ") -> (!vec, !vec, !vec)\n";
       emitStep();
       std::string coupled =
           getCoupled("%xk" + here, "%vk" + here, "%fk" + here, "", "");
@@ -3450,12 +3609,13 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
          << " = %c0 to %n" << steps << " step %c1\n"
          << inner << "    iter_args(" << getInits("p" + here, last) << ")\n"
          << inner << "    -> (" << state << ") {\n";
+      std::string noise6 = emitNoiseValue((inner + "  "));
       os << inner << "  " << getValues("r" + here) << " = dyn.step @step(";
       os << "%xp" << here << ", %vp" << here << ", %fp" << here << ", "
-           << massName << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix)
+           << massName << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << noise6
            << ")\n"
            << inner << "      : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
-           << getFieldTypes() << ") -> (!vec, !vec, !vec)\n";
+           << getFieldTypes() << getNoiseType() << ") -> (!vec, !vec, !vec)\n";
       os << inner << "  scf.yield " << getValues("r" + here) << " : "
          << state << "\n"
          << inner << "}\n";
@@ -3477,13 +3637,14 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         energyName = "%ul";
         now = "%vcl";
       } else {
+        std::string noise7 = emitNoiseValue(inner);
         os << inner << "%xl, %vl, %fl, %u, %w"
            << (isLeapfrog() ? ", %vn" : "") << " = dyn.step @step_energy(%x"
            << last << ", %v" << last << ", %f" << last << ", " << massName
            << ", " << cellName << ", %dt" << getScaleValue()
-           << getFieldValues(fieldPrefix) << ")\n"
+           << getFieldValues(fieldPrefix) << noise7 << ")\n"
            << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
-           << getScaleType() << getFieldTypes()
+           << getScaleType() << getFieldTypes() << getNoiseType()
            << ") -> (!vec, !vec, !vec, f64, vector<9xf64>"
            << (isLeapfrog() ? ", !vec" : "") << ")\n";
       }
@@ -3957,6 +4118,8 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
        << " : vector<3xf64> into f64\n"
        << indent << "%kcm" << t << " = arith.mulf %couple_half, %pv" << t
        << " : f64\n";
+  else
+    os << indent << "%kcm" << t << " = arith.constant 0.0 : f64\n";
   // The energy that the coupling takes: that of the center of mass, and
   // what the thermostat takes from the rest.
   std::string bath = "%kcm" + t;
@@ -3979,7 +4142,7 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
     }
     kineticAxes = vector;
   }
-  if (control.thermostat) {
+  if (rescalesVelocities()) {
     std::string kinetic = "%kc" + t;
     if (!control.barostat)
       emitKineticEnergy(os, kinetic, velocities, massName, indent);
@@ -4020,7 +4183,7 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
     bool exact = control.barostatWork == BarostatWork::Exact;
     // The kinetic energy of each axis after the thermostat.
     std::string after = kinetic;
-    if (control.thermostat) {
+    if (rescalesVelocities()) {
       os << indent << "%alpha2b" << t << " = vector.broadcast %alpha2" << t
          << " : f64 to vector<3xf64>\n"
          << indent << "%knv" << t << " = arith.mulf %alpha2b" << t << ", "
@@ -4203,7 +4366,7 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
        << " : vector<3xf64>\n";
     value = "%d";
   }
-  if (control.thermostat) {
+  if (rescalesVelocities()) {
     os << indent << "  %ab = vector.broadcast %alpha" << t
        << " : f64 to vector<3xf64>\n"
        << indent << "  %s = arith.mulf %ab, " << value
@@ -4751,7 +4914,7 @@ void Builder::emitEntry() {
     os << "func.func private @mdrtWriteMinimization(i64, f64, f64, memref<?x3x"
        << force << ">, memref<?xi32>)\n"
        << "    attributes {llvm.emit_c_interface}\n";
-  if (control.thermostat)
+  if (rescalesVelocities())
     os << "func.func private @mdrtBussiFactor(i64, i64, f64, f64, f64, f64) "
           "-> f64\n";
   if (control.getCouplingPeriod() > 0)
@@ -4802,6 +4965,12 @@ void Builder::emitEntry() {
 
   os << "  %c0 = arith.constant 0 : index\n"
      << "  %c1 = arith.constant 1 : index\n";
+  // The number of the last step taken, which keys the random numbers of
+  // Langevin dynamics (D135).
+  if (control.isLangevin())
+    os << "  %noise_memory = memref.alloca() : memref<1xi64>\n"
+       << "  memref.store %start, %noise_memory[%c0] : memref<1xi64>\n"
+       << "  %noise_one = arith.constant 1 : i64\n";
   for (auto [index, level] : llvm::enumerate(levels))
     os << "  %n" << index << " = arith.constant " << level.count
        << " : index\n";

@@ -236,6 +236,13 @@ compromise—A mixed precision model for GPU accelerated molecular dynamics
 simulations," *Comput. Phys. Commun.* **184**, 374–380 (2013).
 [doi:10.1016/j.cpc.2012.09.022](https://doi.org/10.1016/j.cpc.2012.09.022)
 
+### Leimkuhler2013
+
+B. Leimkuhler, C. Matthews, "Rational construction of stochastic numerical
+methods for molecular sampling," *Appl. Math. Res. Express* **2013**(1), 34
+(2013).
+[doi:10.1093/amrx/abs010](https://doi.org/10.1093/amrx/abs010)
+
 ### Louwerse2006
 
 M. J. Louwerse, E. J. Baerends, "Calculation of pressure in case of
@@ -469,3 +476,11 @@ L. Verlet, "Computer 'experiments' on classical fluids. I.
 Thermodynamical properties of Lennard-Jones molecules," *Phys. Rev.*
 **159**, 98–103 (1967).
 [doi:10.1103/PhysRev.159.98](https://doi.org/10.1103/PhysRev.159.98)
+
+### Zhang2019
+
+Z. Zhang, X. Liu, K. Yan, M. E. Tuckerman, J. Liu, "Unified efficient
+thermostat scheme for the canonical ensemble with holonomic or isokinetic
+constraints via molecular dynamics," *J. Phys. Chem. A* **123**, 6056–6079
+(2019).
+[doi:10.1021/acs.jpca.9b02771](https://doi.org/10.1021/acs.jpca.9b02771)

@@ -489,6 +489,26 @@ simulations," *Comput. Phys. Commun.* **184**, 374–380 (2013).
 Used for: accumulation in fixed point with integer atomic additions,
 whose result does not depend on the order of the threads.
 
+### Leimkuhler2013
+
+B. Leimkuhler, C. Matthews, "Rational construction of stochastic numerical
+methods for molecular sampling," *Appl. Math. Res. Express* **2013**(1), 34
+(2013).
+[doi:10.1093/amrx/abs010](https://doi.org/10.1093/amrx/abs010)
+
+Used for: the splitting BAOAB of Langevin dynamics, whose positions sample
+the canonical distribution to second order in the step (F1).
+
+### Leimkuhler2016
+
+B. Leimkuhler, C. Matthews, "Efficient molecular dynamics using geodesic
+integration and solvent–solute splitting," *Proc. R. Soc. A* **472**,
+20160138 (2016).
+[doi:10.1098/rspa.2016.0138](https://doi.org/10.1098/rspa.2016.0138)
+
+Used for: BAOAB with holonomic constraints, the projection of the
+velocities after each part of the step (F1).
+
 ### Li2014
 
 P. Li, K. M. Merz, "Taking into account the ion-induced dipole
@@ -1014,3 +1034,14 @@ tempering (REST2)," *J. Phys. Chem. B* **115**, 9431–9438 (2011).
 [doi:10.1021/jp204407d](https://doi.org/10.1021/jp204407d)
 
 Used for: REST2, a protocol of `ensemble`.
+
+### Zhang2019
+
+Z. Zhang, X. Liu, K. Yan, M. E. Tuckerman, J. Liu, "Unified efficient
+thermostat scheme for the canonical ensemble with holonomic or isokinetic
+constraints via molecular dynamics," *J. Phys. Chem. A* **123**, 6056–6079
+(2019).
+[doi:10.1021/acs.jpca.9b02771](https://doi.org/10.1021/acs.jpca.9b02771)
+
+Used for: the middle scheme of Langevin dynamics with constraints, the
+thermostat between the two halves of the drift (F1).

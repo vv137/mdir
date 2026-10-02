@@ -594,6 +594,7 @@ every `center_of_mass_interval` steps.
 | | Proposal | Reason |
 |---|---|---|
 | Thermostat | Stochastic velocity rescaling (Bussi, Donadio, and Parrinello 2007 [[Bussi2007]](references.md#bussi2007)) | It samples the canonical distribution, and it takes the kinetic energy and a few random numbers for each step, not one for each particle. |
+| Thermostat, the other | Langevin dynamics by the middle scheme ([[Zhang2019]](references.md#zhang2019); BAOAB of [[Leimkuhler2013]](references.md#leimkuhler2013)), `method = "LANGEVIN"` (D135, Section 11.6) | The thermostat of most runs of Amber and OpenMM; it acts on each particle in every step, with three random numbers for each. |
 | Barostat | Stochastic cell rescaling (Bernetti and Bussi 2020 [[Bernetti2020]](references.md#bernetti2020)), isotropic; semi-isotropic, with the pressure in a plane apart from that along its normal, as an option | It samples the distribution at constant pressure and is of first order: it has no momentum of the cell to store. |
 
 Both carry the statement that they preserve the target distribution
@@ -657,7 +658,7 @@ dyn.program @step(...) attributes {
 | Where it runs | On the host, in `libmdrt`: the thermostat and the barostat take numbers for the system, not for a particle |
 | Streams | 0 for the thermostat, 1 for the barostat. The draw index counts the numbers of one step. |
 | Entity | A fixed key, as for a global move (A5) |
-| Random numbers in kernels | Not in M1. They need the generator as a template in IR, as the neighbor build is one. |
+| Random numbers in kernels | For Langevin dynamics (D135): Philox emitted by the driver as `arith` ops in the kernel of the step, one block for each particle and step, stream 2, the entity the number of the particle in the input. A block gives four words, four uniform numbers $(w + \tfrac12)\,2^{-32}$, and by Box and Muller two pairs of normal numbers, of which three are taken. It agrees with the generator of the host to the last bit (`langevin.test`). |
 
 ### 11.4 The barostat as it is
 
@@ -750,6 +751,51 @@ of mass it is the molecular pressure; at the scaled positions MDIR has the
 atomic virial without the constraints, so the molecular one needs
 $\sum_\text{groups}\sum_i (\mathbf r_i - \mathbf R)\cdot\mathbf F_i$
 as well. Without constraints the atomic pressure serves.
+
+### 11.6 Langevin dynamics
+
+`method = "LANGEVIN"` of `[thermostat]`, with `friction` $\gamma$ in 1/ps
+(D135). Each step is that of velocity Verlet with the friction and the
+noise between the two halves of its drift, the middle scheme
+[[Zhang2019]](references.md#zhang2019), BAOAB in the terms of
+[[Leimkuhler2013]](references.md#leimkuhler2013):
+
+$$
+\begin{aligned}
+\mathbf v &\leftarrow \mathbf v + \tfrac{\Delta t}{2}\,\mathbf F/m, &
+\mathbf x &\leftarrow \mathbf x + \tfrac{\Delta t}{2}\,\mathbf v, \\
+\mathbf v &\leftarrow c\,\mathbf v + \sqrt{(1 - c^2)\,k_B T/m}\;\mathbf R, &
+\mathbf x &\leftarrow \mathbf x + \tfrac{\Delta t}{2}\,\mathbf v,
+\end{aligned}
+$$
+
+with $c = e^{-\gamma\Delta t}$ and $\mathbf R$ three normal numbers of the
+particle (Section 11.3), then the constraints of the positions, the
+velocities that take the atoms there over the step, the evaluation, the
+second half kick, and RATTLE, as in a step without it. With constraints
+the noise has a part along them, which the constraints of the positions
+and the velocities of the change remove, as the middle scheme of OpenMM
+does; [[Leimkuhler2016]](references.md#leimkuhler2016) projects after
+each part instead. Leapfrog takes the same step, whose stored velocities
+are those of its middle. A particle of mass 0 keeps its velocity.
+
+| Item | Rule |
+|---|---|
+| Where | In every program of a step: `step`, `step_energy`, `step_virial`, and `step_trotter`, which scales the cell after the friction and the noise, so that the kinetic energy of the count of its work is that of the velocities it scales |
+| The key | The seed; the number of the step, from a counter on the host that every step advances from the first step of the run (D129), so that a continued run takes the numbers of one that does not stop; the number of the particle in the input, so that the order of the positions does not change them |
+| The momentum | Not kept: the degrees of freedom are $3N - N_c$, less 3 only if `center_of_mass_interval` removes the motion of the center of mass |
+| `interval` | Paces the removal of the motion of the center of mass and the barostat, which act at the end of a period; 10 by default with a barostat, otherwise none |
+| The log | No conserved energy: the run does not count the energy that the friction and the noise exchange with the bath (the roadmap) |
+
+**Measured.** The noise of one step from velocities of 0 against Philox
+of the host: within $5\times10^{-7}$ of $\sqrt{k_B T/m}$, the part of the
+forces, on the CPU and on a GPU in double and mixed precision
+(`langevin.test`, `langevin-gpu.test`). An ideal gas of 256 particles at
+10 K coupled to 300 K with $\gamma$ = 5/ps relaxes at 9.6 ± 0.3/ps, against
+$2\gamma$ = 10/ps; its mean kinetic energy over 50 ps is 228.0 ± 0.8
+kcal/mol against 228.9. A run stopped at its checkpoints and continued
+ends in the state of one that does not stop, bit for bit, on the CPU and
+on a GPU.
 
 ## 12. A cell that changes
 

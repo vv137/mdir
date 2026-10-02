@@ -35,14 +35,18 @@ struct System {
   size_t getNumParticles() const { return types.size(); }
 
   /// The number of degrees of freedom: three per particle with a mass, less
-  /// one for each constraint and three for the center of mass. The log and the thermostat both take it.
+  /// one for each constraint and three for the center of mass where its
+  /// momentum is kept. The log and the thermostat both take it.
   double getDegreesOfFreedom() const {
     size_t massive = 0;
     for (double mass : masses)
       massive += mass > 0.0;
     return 3.0 * static_cast<double>(massive) -
-           static_cast<double>(numConstraints) - 3.0;
+           static_cast<double>(numConstraints) - (keepsMomentum ? 3.0 : 0.0);
   }
+  /// Whether the run keeps the momentum of the center of mass: not under
+  /// Langevin dynamics unless its motion is removed (D135).
+  bool keepsMomentum = true;
   /// The number of distances that constraints keep.
   size_t numConstraints = 0;
 

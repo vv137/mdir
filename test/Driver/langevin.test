@@ -1,0 +1,104 @@
+# Langevin dynamics by the middle scheme (D135): `method = "LANGEVIN"` of
+# [thermostat] with `friction` in 1/ps. In each step the velocities of the
+# middle of the drift take c v + sqrt((1 - c^2) k_B T / m) R, with
+# c = exp(-gamma dt) and R three normal numbers of the particle, which a
+# block of Philox 4x32-10 gives under the key of A13 (stream 2).
+#
+# The noise: from velocities of 0, one step of 1e-9 ps with a friction of
+# 1e9/ps (c = 1/e), whose forces move the velocities by less than 1e-6 of
+# sqrt(k_B T / m), leaves each velocity at the noise, which
+# check_langevin_noise.py computes with Philox of the runtime for the
+# seed, the step 1, and the number of the particle.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %t/
+# RUN: %python %S/Inputs/zero_velocities.py %S/Inputs/dipeptide/dipeptide.inpcrd > %t/still.rst7
+# RUN: sed -n '/^#--- noise.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/noise.toml
+# RUN: cd %t && mdir run noise.toml > /dev/null
+# RUN: mdir checkpoint --print=velocities %t/noise.h5 \
+# RUN: | %python %S/Inputs/check_langevin_noise.py %mdrt 2718 1 300.0 | FileCheck %s --check-prefix=NOISE
+#
+# Langevin dynamics does not keep the momentum: the degrees of freedom are
+# three per atom, with no three for the center of mass unless its motion is
+# removed (3504 for the 1168 atoms; 3501 with 'center_of_mass_interval').
+# RUN: mdir check %t/noise.toml | FileCheck %s --check-prefix=FREEDOM
+# RUN: sed -e 's/^seed = 2718/seed = 2718\ncenter_of_mass_interval = 1/' %t/noise.toml > %t/removed.toml
+# RUN: mdir check %t/removed.toml | FileCheck %s --check-prefix=REMOVED
+#
+# RUN: sed -e 's/^friction = 1e9/friction = 1e9\ntime_constant = 1.0/' %t/noise.toml > %t/both.toml
+# RUN: not mdir check %t/both.toml 2>&1 | FileCheck %s --check-prefix=TIME
+# RUN: sed -e '/^friction/d' %t/noise.toml > %t/none.toml
+# RUN: not mdir check %t/none.toml 2>&1 | FileCheck %s --check-prefix=FRICTION
+# RUN: sed -e 's/"LANGEVIN"/"V-RESCALE"/' %t/noise.toml > %t/rescale.toml
+# RUN: not mdir check %t/rescale.toml 2>&1 | FileCheck %s --check-prefix=RESCALE
+#
+# A run continued over checkpoints takes the random numbers of one that
+# does not stop, keyed by the number of the step and of the particle: the
+# mixture of thermostat.test at 150 K with a friction of 1/ps, stopped at
+# each of its checkpoints on the wall time and continued, ends in the state
+# of the run that did not stop, bit for bit.
+# RUN: cp %S/Inputs/mixture.pdb %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/thermostat.test | sed '1d;$d' \
+# RUN:     | sed -e 's|^method = "V-RESCALE"|method = "LANGEVIN"\nfriction = 1.0|' -e '/^time_constant = 0.5/d' -e '/^interval = 10/d' \
+# RUN:           -e 's|energy_interval = 1000|energy_interval = 500\ncheckpoint = "whole.h5"\ncheckpoint_interval = 500|' \
+# RUN:     > %t/whole.toml
+# RUN: sed -e 's|whole|part|g' %t/whole.toml > %t/part.toml
+# RUN: mdir run %t/whole.toml > %t/whole.log
+# RUN: not mdir run --continue --max-walltime 0.000001 %t/part.toml > /dev/null
+# RUN: not mdir run --continue --max-walltime 0.000001 %t/part.toml > /dev/null
+# RUN: not mdir run --continue --max-walltime 0.000001 %t/part.toml > /dev/null
+# RUN: mdir run --continue --max-walltime 0.000001 %t/part.toml > /dev/null
+# RUN: mdir checkpoint %t/whole.h5 %t/part.h5 | FileCheck %s --check-prefix=SAME
+#
+# The friction: the mixture as an ideal gas (epsilon 1e-12), cooled to
+# 10 K and then coupled to a bath of 300 K with a friction of 5/ps, takes
+# the kinetic energy of the bath at the rate 2 gamma = 10/ps, which the
+# mean of its 256 particles shows within 1/ps over the first 0.3 ps.
+# RUN: sed -e 's/^epsilon = .*/epsilon = 1e-12/' -e 's/^friction = 1.0/friction = 5.0/' \
+# RUN:     -e 's/^temperature = 150.0/temperature = 10.0/' -e 's/^steps             = 2000/steps = 100/' \
+# RUN:     -e 's/^energy_interval = 500/energy_interval = 100/' -e 's/^checkpoint_interval = 500/checkpoint_interval = 100/' \
+# RUN:     -e 's/whole/cold/g' %t/whole.toml > %t/cold.toml
+# RUN: sed -e 's/^temperature = 10.0/temperature = 300.0/' -e 's/^steps = 100/steps = 100/' \
+# RUN:     -e 's/^energy_interval = 100/energy_interval = 5/' -e '/^checkpoint/d' \
+# RUN:     -e 's|^coordinates = "mixture.pdb"|coordinates = "mixture.pdb"\ncheckpoint = "cold.h5"|' %t/cold.toml > %t/warm.toml
+# RUN: cd %t && mdir run cold.toml > cold.log && mdir run warm.toml > warm.log
+# RUN: %python %S/Inputs/fit_relaxation.py %t/cold.log %t/warm.log 256 300 0.3 10.0 1.0 | FileCheck %s --check-prefix=RATE
+
+# NOISE: 1168 particles, largest difference {{.*}} of sqrt(kT/m): ok
+# FREEDOM: degrees of freedom: 3504
+# REMOVED: degrees of freedom: 3501
+# TIME: 'time_constant' is for "V-RESCALE"; Langevin dynamics takes 'friction', in 1/ps
+# FRICTION: expected 'friction' in [thermostat], in 1/ps
+# RESCALE: 'friction' is for "LANGEVIN"; stochastic velocity rescaling takes 'time_constant', in ps
+# SAME: the states are identical
+# RATE: rate {{[0-9.]+}} /ps from {{[0-9]+}} rows: ok
+
+#--- noise.toml
+[input]
+topology    = "dipeptide.prmtop"
+coordinates = "still.rst7"
+[output]
+energy_interval = 0
+checkpoint = "noise.h5"
+checkpoint_interval = 1
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "PME"
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 1e-9
+steps      = 1
+seed = 2718
+[ensemble]
+ensemble    = "NVT"
+temperature = 300.0
+[thermostat]
+method = "LANGEVIN"
+friction = 1e9
+[boundary]
+type = "PERIODIC"
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- end

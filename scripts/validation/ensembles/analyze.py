@@ -17,7 +17,10 @@ The slopes are estimated by maximum likelihood (a logistic regression of
 which run a sample came from on the quantity), from samples spaced by
 their statistical inefficiency, with the standard error of the estimate.
 
-    scripts/validation/ensembles/analyze.py WORK
+    scripts/validation/ensembles/analyze.py WORK [--langevin]
+
+With --langevin, the runs of run.py --thermostat langevin, which keep no
+momentum of the center of mass: three degrees of freedom more (D135).
 
 Needs numpy.
 """
@@ -166,7 +169,10 @@ def report(name, estimate, error, theory):
 
 
 def main():
+    global FREEDOM
     work = sys.argv[1]
+    if "--langevin" in sys.argv[2:]:
+        FREEDOM += 3
     t1, t2 = 300.0, 306.0
     a = read_mdir(os.path.join(work, "nvt-300.log"))
     b = read_mdir(os.path.join(work, "nvt-306.log"))

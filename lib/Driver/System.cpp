@@ -146,6 +146,7 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
   }
 
   system.topology = std::make_shared<Topology>(std::move(*topology));
+  system.keepsMomentum = !control.isLangevin() || control.comPeriod > 0;
   return std::move(system);
 }
 
@@ -352,6 +353,7 @@ llvm::Expected<System> mdir::driver::readSystem(const Control &control) {
         "restraints select particles by the names of a topology; a run from "
         "a PDB file has none");
   system.velocities.assign(system.positions.size(), 0.0);
+  system.keepsMomentum = !control.isLangevin() || control.comPeriod > 0;
   return std::move(system);
 }
 

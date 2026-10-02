@@ -218,6 +218,30 @@ for leapfrog with a barostat, and the stored $\mathbf v_{n+\frac12}$ for
 leapfrog alone. Without a thermostat the center of mass is removed only
 if `center_of_mass_interval` asks.
 
+**Langevin dynamics** (`method = "LANGEVIN"`, D135) acts in every step
+instead, between the two halves of the drift: the middle scheme of
+[[Zhang2019]](references.md#zhang2019), BAOAB in the terms of
+[[Leimkuhler2013]](references.md#leimkuhler2013),
+
+$$
+\mathbf v \leftarrow \mathbf v + \tfrac{\Delta t}{2}\frac{\mathbf F}{m},\quad
+\mathbf x \leftarrow \mathbf x + \tfrac{\Delta t}{2}\mathbf v,\quad
+\mathbf v \leftarrow c\,\mathbf v + \sqrt{(1-c^2)\frac{k_BT}{m}}\,\mathbf R,\quad
+\mathbf x \leftarrow \mathbf x + \tfrac{\Delta t}{2}\mathbf v,
+$$
+
+with $c = e^{-\gamma\Delta t}$ for the friction $\gamma$ and three normal
+numbers $\mathbf R$ of the particle, then the constraints, the evaluation,
+and the second half kick of Section 6.1. The constraints of the positions
+and the velocities of the change remove the part of the noise along the
+constraints, and the step that scales the cell (Section 6.4) scales after
+the noise. The momentum of the center of mass is not kept, so
+$N_f = 3N - N_c$ unless its motion is removed, and the log has no conserved
+energy: the run does not count the energy that the friction and the noise
+exchange with the bath. An ideal gas of 256 particles warmed from 10 K by a
+bath of 300 K with $\gamma$ = 5/ps relaxes its kinetic energy at 9.6 ± 0.3/ps,
+against $2\gamma$ = 10/ps.
+
 ## 6.4 The barostat
 
 Stochastic cell rescaling [[Bernetti2020]](references.md#bernetti2020) couples the cell to a
@@ -460,7 +484,14 @@ period. A uniform number is $(\lfloor w/2^{11}\rfloor + \tfrac12)\,2^{-53}$
 from 64 bits $w$, and a normal number is the cosine branch of Box–Muller
 [[BoxMuller1958]](references.md#boxmuller1958). A draw depends only on the seed, the stream, and the
 step, so a run continued from a checkpoint draws what the uninterrupted
-run would have drawn, which makes restarts bitwise. Initial velocities
+run would have drawn, which makes restarts bitwise. Langevin dynamics
+draws in the kernel of the step, with Philox emitted as operations of the
+IR: one block of four words for each particle and step, the counter
+$(\text{step}, \text{particle}, 2^{25})$ (stream 2) with the number of the
+particle in the input and the step from a counter that each step advances,
+the words $w$ made uniform as $(w + \tfrac12)\,2^{-32}$, and both branches
+of Box–Muller of two pairs, of which three numbers are taken. It agrees
+with the generator of the host to the last bit. Initial velocities
 are drawn from a Maxwell–Boltzmann distribution with xoshiro256**
 [[Blackman2021]](references.md#blackman2021), their components along the constraints and the motion
 of the center of mass removed, and scaled to $\tfrac12N_fk_BT$.

@@ -43,7 +43,7 @@ the output of `mdir template amber` at the commit of this paper.
 | `[minimize]` | `method`, `steps`, `initial_step` | `STEEPEST_DESCENT`, the number of steps, and the first step (Å) (D73). Instead of `[dynamics]`. |
 | `[ensemble]` | `ensemble` | `NVE`, `NVT` (with `[thermostat]`), or `NPT` (with `[thermostat]` and `[barostat]`). |
 | | `temperature`, `pressure` | K, of the initial velocities and the bath; atm, with `NPT`. |
-| `[thermostat]` | `method`, `time_constant`, `interval` | `V-RESCALE`, stochastic velocity rescaling; ps; steps between its actions (10 by default). |
+| `[thermostat]` | `method`, `time_constant`, `friction`, `interval` | `V-RESCALE`, stochastic velocity rescaling, with `time_constant` in ps; or `LANGEVIN`, Langevin dynamics by the middle scheme in every step, with `friction` in 1/ps (D135), either key in the other an error; steps between its actions (10 by default), under `LANGEVIN` those of the removal of the motion of the center of mass and of the barostat (10 by default with a barostat, otherwise none). Langevin dynamics keeps no momentum, so its degrees of freedom have no three for the center of mass unless `center_of_mass_interval` removes it, and its log has no conserved energy. |
 | `[barostat]` | `method`, `time_constant`, `compressibility`, `coupling`, `work`, `interval`, `compressibility_z`, `surface_tension`, `surfaces` | `C-RESCALE`, stochastic cell rescaling (D72, D77); ps; 1/atm; `ISOTROPIC` or `SEMI_ISOTROPIC` (x and y scale together from the mean of their pressures, z on its own, D119); `TROTTER` (the default; D92), `TROTTER_FIRST_ORDER` (its energy from the virial before the scaling only, a virial less a period), `EXACT`, or `FIRST_ORDER` (not with `SEMI_ISOTROPIC`), which count the work of the barostat in the conserved energy and leave the trajectory alone (a run that changes its volume fast is checked with `EXACT`: the Trotter count then drifts by a term of first order in the time step); the steps of the thermostat; with `SEMI_ISOTROPIC`, the compressibility of z in 1/atm (0 keeps the height; that of x and y by default), the tension of each surface normal to z in dyn/cm (0 by default), and their number (2). |
 | `[constraints]` | `hydrogen_bonds`, `rigid_water`, `water_residues`, `analytic_bonds` | SHAKE and RATTLE on the bonds of hydrogen; SETTLE on the waters in double precision, M-SHAKE on their three bonds below it (D112); the names of the residues of water (by default WAT for Amber, TIP3 for CHARMM). `analytic_bonds = true` enables the checked quadratic one-bond projection (D128); the default is `false`. |
 | `[[restraints]]` | `selection`, `force_constant`, `reference_scaling` | A mask of Amber, and kcal/mol/Å² (D74); under a barostat, `"CENTER"` (the default) scales the center of the references with the cell and keeps their shape, `"ALL"` scales each reference with the cell (D124). |
@@ -113,8 +113,10 @@ temperature = 300.0             # of the velocities and the bath (K)
 pressure    = 1.0               # atm, with NPT
 
 [thermostat]
-method        = "V-RESCALE"     # stochastic velocity rescaling
-time_constant = 0.5             # ps
+method        = "V-RESCALE"     # stochastic velocity rescaling, or
+                                # "LANGEVIN", Langevin dynamics
+time_constant = 0.5             # ps, with V-RESCALE
+# friction    = 1.0             # 1/ps, with LANGEVIN
 interval      = 10              # steps between its actions
 
 [barostat]

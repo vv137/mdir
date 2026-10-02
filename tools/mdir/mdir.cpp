@@ -81,6 +81,13 @@ static llvm::cl::opt<std::string>
 static llvm::cl::list<std::string> checkpointFiles(
     llvm::cl::Positional, llvm::cl::desc("<checkpoint> [<checkpoint>]"),
     llvm::cl::OneOrMore, llvm::cl::sub(checkpointCommand));
+static llvm::cl::opt<std::string> checkpointField(
+    "print",
+    llvm::cl::desc("Print a field of each particle in the order of the "
+                   "input: its mass and its positions (nm), velocities "
+                   "(nm/ps), or forces (kJ/mol/nm)"),
+    llvm::cl::value_desc("positions|velocities|forces"),
+    llvm::cl::sub(checkpointCommand));
 
 int main(int argc, char **argv) {
   llvm::InitLLVM init(argc, argv);
@@ -92,7 +99,8 @@ int main(int argc, char **argv) {
       "  mdir emit <control file> [--stage=module|lowered|pipeline]\n"
       "  mdir check <control file>\n"
       "  mdir template md|amber\n"
-      "  mdir checkpoint <checkpoint> [<checkpoint>]\n"
+      "  mdir checkpoint <checkpoint> [<checkpoint>] "
+      "[--print=positions|velocities|forces]\n"
       "  mdir bug-report <control file> [-o <directory>] [--run]\n"
       "  mdir version\n");
 
@@ -133,7 +141,7 @@ int main(int argc, char **argv) {
     return 1;
   }
   if (checkpointCommand)
-    return describeCheckpoints(checkpointFiles);
+    return describeCheckpoints(checkpointFiles, checkpointField);
   if (bugReportCommand)
     return writeBugReport(controlFile, reportDirectory, reportRuns, argv[0]);
   if (versionCommand) {

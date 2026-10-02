@@ -73,6 +73,10 @@ enum class BarostatWork { Trotter, TrotterFirstOrder, Exact, FirstOrder };
 /// center scales with the cell and the offsets from it stay, or each
 /// reference scales with the cell as the positions do.
 enum class ReferenceScaling { Center, All };
+/// How the thermostat couples the velocities to the bath: stochastic
+/// velocity rescaling at the end of a period, or Langevin dynamics in the
+/// middle of the drift of every step (D135).
+enum class ThermostatMethod { VRescale, Langevin };
 
 /// What a control file says. Lengths are in Å, energies in kcal/mol, times
 /// in ps, masses in amu, and temperatures in K.
@@ -184,9 +188,16 @@ struct Control {
   // [ensemble]
   double temperature = 298.15;
   /// Stochastic velocity rescaling (Bussi, Donadio, and Parrinello 2007) at
-  /// `temperature` with the time constant `tauT`, in ps.
+  /// `temperature` with the time constant `tauT`, in ps; or Langevin
+  /// dynamics with the friction `friction`, in 1/ps, by the middle scheme
+  /// (Zhang et al. 2019; D135).
   bool thermostat = false;
+  ThermostatMethod thermostatMethod = ThermostatMethod::VRescale;
   double tauT = 1.0;
+  double friction = 0.0;
+  bool isLangevin() const {
+    return thermostat && thermostatMethod == ThermostatMethod::Langevin;
+  }
   /// Stochastic cell rescaling (Bernetti and Bussi 2020), isotropic, at
   /// `pressure` in atm with the time constant `tauP` in ps and the
   /// isothermal compressibility `compressibility` in 1/atm.

@@ -4,6 +4,7 @@ analyze.py makes, and GROMACS on the same box for its density.
 
     scripts/validation/ensembles/run.py WORK --mdir MDIR [--gmx GMX]
         [--ns 5] [--tleap TLEAP] [--parmed-python PYTHON]
+        [--thermostat v-rescale|langevin]
 
 WORK receives the box, made by tleap from leaprc.water.opc (1039 waters,
 solvateBox with a buffer of 14.5 Å), and the logs:
@@ -21,7 +22,9 @@ solvateBox with a buffer of 14.5 Å), and the logs:
 MDIR runs in mixed precision on the GPU with groups and the dual list,
 SETTLE (M-SHAKE below double precision), particle mesh Ewald, a cutoff of
 9 Å with the correction for the dispersion, 2 fs, stochastic velocity
-rescaling and cell rescaling every 25 steps (tau_T 1 ps, tau_P 2 ps).
+rescaling and cell rescaling every 25 steps (tau_T 1 ps, tau_P 2 ps); with
+--thermostat langevin, Langevin dynamics with a friction of 1/ps in place of
+the velocity rescaling (D135), and analyze.py takes --langevin.
 """
 import argparse
 import os
@@ -65,10 +68,7 @@ seed       = {seed}
 ensemble    = "{ensemble}"
 temperature = {temperature}
 {pressure}
-[thermostat]
-method        = "V-RESCALE"
-time_constant = 1.0
-interval      = 25
+{thermostat}
 {barostat}
 [constraints]
 rigid_water = true
@@ -81,6 +81,19 @@ target    = "GPU"
 precision = "MIXED"
 neighbor_structure = "GROUPS"
 """
+
+THERMOSTATS = {
+    "v-rescale": """[thermostat]
+method        = "V-RESCALE"
+time_constant = 1.0
+interval      = 25
+""",
+    "langevin": """[thermostat]
+method        = "LANGEVIN"
+friction      = 1.0
+interval      = 25
+""",
+}
 
 BAROSTAT = """
 [barostat]
@@ -144,6 +157,7 @@ def mdir_run(args, name, ensemble, temperature, pressure, steps, seed,
         checkpoint_in=f'checkpoint  = "{checkpoint}"\n' if checkpoint else "",
         energy_interval=energy_interval, name=name, steps=steps, seed=seed,
         ensemble=ensemble, temperature=temperature,
+        thermostat=THERMOSTATS[args.thermostat],
         pressure=f"pressure    = {pressure}\n" if pressure else "",
         barostat=BAROSTAT + coupling if ensemble == "NPT" else "")
     path = os.path.join(args.work, name + ".toml")
@@ -159,6 +173,8 @@ def main():
     parser.add_argument("--gmx")
     parser.add_argument("--tleap", default="tleap")
     parser.add_argument("--ns", type=float, default=5.0)
+    parser.add_argument("--thermostat", choices=sorted(THERMOSTATS),
+                        default="v-rescale")
     parser.add_argument("--equil-steps", type=int, default=100000)
     parser.add_argument("--gmx-only", action="store_true",
                         help="run GROMACS alone, on the box already made")

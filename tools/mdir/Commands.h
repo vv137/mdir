@@ -55,7 +55,10 @@ int checkControl(llvm::StringRef controlFile);
 
 /// Describes a checkpoint, or compares the states of two. Returns the exit
 /// status: 0 if the states are identical, 1 if they differ, 2 on an error.
-int describeCheckpoints(llvm::ArrayRef<std::string> files);
+/// Describes a checkpoint, compares two, or prints a field of one: the
+/// mass and the three numbers of `field` of each particle.
+int describeCheckpoints(llvm::ArrayRef<std::string> files,
+                        llvm::StringRef field = "");
 
 /// Prints the version of MDIR, the commit it was built from, and what the
 /// build supports.

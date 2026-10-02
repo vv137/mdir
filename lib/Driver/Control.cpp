@@ -809,8 +809,27 @@ Error Reader::resolveCoupling() {
   // The thermostat acts every 10 steps and the motion of the center of mass
   // is removed with it, unless one period is given: then both take it.
   // Without a thermostat the motion is removed only if
-  // 'center_of_mass_interval' asks.
-  if (control.thermostat) {
+  // 'center_of_mass_interval' asks. Langevin dynamics acts in every step
+  // and does not keep the momentum, so the motion is removed only if asked;
+  // 'interval' then paces the removal and the barostat, every 10 steps by
+  // default where there is one (D135).
+  if (control.isLangevin()) {
+    if (thermostat < 0)
+      thermostat = com > 0 ? com : control.barostat ? 10 : 0;
+    if (com < 0)
+      com = 0;
+    if (thermostat == 0 && control.barostat)
+      return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                     "%s: 'interval' in [thermostat] is 0",
+                                     path.str().c_str());
+    if (com != 0 && com != thermostat)
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "%s: 'center_of_mass_interval' differs from 'interval' in "
+          "[thermostat]; in M1 the motion of the center of mass is removed "
+          "when the barostat acts, or never",
+          path.str().c_str());
+  } else if (control.thermostat) {
     if (thermostat < 0)
       thermostat = com > 0 ? com : 10;
     if (thermostat == 0)
@@ -893,17 +912,33 @@ Error Reader::readEnsemble(const toml::table &table) {
 
 Error Reader::readThermostat(const toml::table &table) {
   if (Error error = checkKeywords(table, "thermostat",
-                                  {"method", "time_constant", "interval"},
+                                  {"method", "time_constant", "friction",
+                                   "interval"},
                                   {}))
     return error;
   int method = -1;
   if (Error error = readChoice<int>(table, "method", method,
-                                    {{"V-RESCALE", 0}}))
+                                    {{"V-RESCALE", 0}, {"LANGEVIN", 1}}))
     return error;
   if (method < 0)
     return fail(table, "expected 'method' in [thermostat]: \"V-RESCALE\", "
-                       "stochastic velocity rescaling");
+                       "stochastic velocity rescaling, or \"LANGEVIN\", "
+                       "Langevin dynamics");
   control.thermostat = true;
+  if (method == 1) {
+    control.thermostatMethod = ThermostatMethod::Langevin;
+    if (const toml::node *node = table.get("time_constant"))
+      return fail(*node, "'time_constant' is for \"V-RESCALE\"; Langevin "
+                         "dynamics takes 'friction', in 1/ps");
+    if (!table.get("friction"))
+      return fail(table, "expected 'friction' in [thermostat], in 1/ps");
+    control.friction = 0.0;
+    if (Error error = readPositive(table, "friction", control.friction))
+      return error;
+  } else if (const toml::node *node = table.get("friction")) {
+    return fail(*node, "'friction' is for \"LANGEVIN\"; stochastic velocity "
+                       "rescaling takes 'time_constant', in ps");
+  }
   if (Error error = readPositive(table, "time_constant", control.tauT))
     return error;
   if (Error error =
@@ -1339,8 +1374,10 @@ temperature = 298.15            # of the velocities and the bath (K)
 
 # With 'ensemble = "NVT"':
 # [thermostat]
-# method        = "V-RESCALE"   # stochastic velocity rescaling
-# time_constant = 1.0           # ps
+# method        = "V-RESCALE"   # stochastic velocity rescaling, or
+#                               # "LANGEVIN", Langevin dynamics
+# time_constant = 1.0           # ps, with V-RESCALE
+# friction      = 1.0           # 1/ps, with LANGEVIN
 # interval      = 10            # steps between its actions
 
 [boundary]
@@ -1418,8 +1455,10 @@ temperature = 300.0             # of the velocities and the bath (K)
 pressure    = 1.0               # atm, with NPT
 
 [thermostat]
-method        = "V-RESCALE"     # stochastic velocity rescaling
-time_constant = 0.5             # ps
+method        = "V-RESCALE"     # stochastic velocity rescaling, or
+                                # "LANGEVIN", Langevin dynamics
+time_constant = 0.5             # ps, with V-RESCALE
+# friction    = 1.0             # 1/ps, with LANGEVIN
 interval      = 10              # steps between its actions
 
 [barostat]

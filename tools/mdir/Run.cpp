@@ -750,7 +750,9 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   output.energyPeriod = control->energyPeriod;
   output.firstTime = firstTime;
   output.timestep = control->timestep;
-  output.couples = control->getCouplingPeriod() > 0;
+  // Langevin dynamics exchanges energy with the bath in every step, which
+  // the run does not count (D135): its log has no conserved energy.
+  output.couples = control->getCouplingPeriod() > 0 && !control->isLangevin();
   output.changesCell = control->barostat;
   output.minimizes = control->minimize;
   output.leastEdge = 2.0 * control->cutoffDistance * units::length;
@@ -1048,6 +1050,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                    output.lastTotal / units::energy);
     return 0;
   }
+  if (control->isLangevin())
+    return 0;
   if (output.hasEnergies && output.firstTotal != 0.0)
     std::fprintf(output.log,
                  "MDIR: the %s energy changed by %.3e of its value\n",

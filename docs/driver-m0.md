@@ -109,7 +109,7 @@ regard to case.
 | `[minimize]` | `method`, `steps`, `initial_step` | `STEEPEST_DESCENT`, the number of steps, and the first step (Å) (D73). Instead of `[dynamics]`. |
 | `[ensemble]` | `ensemble` | `NVE`, `NVT` (with `[thermostat]`), or `NPT` (with `[thermostat]` and `[barostat]`). |
 | | `temperature`, `pressure` | K, of the initial velocities and the bath; atm, with `NPT`. |
-| `[thermostat]` | `method`, `time_constant`, `interval` | `V-RESCALE`, stochastic velocity rescaling; ps; steps between its actions (10 by default). |
+| `[thermostat]` | `method`, `time_constant`, `friction`, `interval` | `V-RESCALE`, stochastic velocity rescaling, with `time_constant` in ps; or `LANGEVIN`, Langevin dynamics by the middle scheme in every step, with `friction` in 1/ps (D135); steps between its actions (10 by default), under `LANGEVIN` those of the removal of the motion of the center of mass and of the barostat (10 by default with a barostat, otherwise none). Langevin dynamics keeps no momentum: its degrees of freedom have no three for the center of mass unless `center_of_mass_interval` removes its motion, and its log no conserved energy. |
 | `[barostat]` | `method`, `time_constant`, `compressibility`, `coupling`, `work`, `interval` | `C-RESCALE`, stochastic cell rescaling (D72, D77); ps; 1/atm; `ISOTROPIC`; `TROTTER` (the default; D92), `TROTTER_FIRST_ORDER` (its energy from the virial before the scaling only, a virial less a period), `EXACT`, or `FIRST_ORDER`, which count the work of the barostat in the conserved energy and leave the trajectory alone; under a fast change of the volume the Trotter count drifts by a term of first order in the time step, so such a run is checked with `EXACT`; the steps of the thermostat. |
 | `[constraints]` | `hydrogen_bonds`, `rigid_water`, `water_residues`, `analytic_bonds` | SHAKE and RATTLE on the bonds of hydrogen; SETTLE on the waters in double precision, M-SHAKE on their three bonds below it (D112); the names of the residues of water (by default WAT for Amber, TIP3 for CHARMM). `analytic_bonds = true` opts into the checked quadratic projection for one-bond groups (D128); the default is `false`. |
 | `[[restraints]]` | `selection`, `force_constant`, `reference_scaling` | A mask of Amber, and kcal/mol/Å² (D74); under a barostat, `"CENTER"` (the default) scales the center of the references with the cell and keeps their shape, `"ALL"` scales each reference with the cell (D124). |
@@ -362,7 +362,10 @@ A run cannot continue with another integrator: the velocities of the two
 are not of the same time. It cannot continue in another box.
 
 `mdir checkpoint file.h5` describes a checkpoint, and `mdir checkpoint
-first.h5 second.h5` compares the states of two.
+first.h5 second.h5` compares the states of two. `mdir checkpoint
+--print=positions|velocities|forces file.h5` writes a line for each
+particle in the order of the input: its number, its mass, and the three
+numbers of the field (nm, nm/ps, kJ/mol/nm).
 
 ### 2.7 Runs longer than a job
 
