@@ -649,7 +649,7 @@ llvm::Error Builder::collectParameters() {
   }
 
   for (const PairTerm &term : control.pairs) {
-    auto expression = Expression::parse(term.expression);
+    auto expression = Expression::parse(term.expression, control.functions);
     if (!expression)
       return expression.takeError();
     std::vector<const PairOverride *> overrides = getOverrides(control, term);
@@ -1500,7 +1500,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
       continue;
     bool grouped = k < system.pairGroups.size() && !system.pairGroups[k].empty();
     std::string g = std::to_string(k), set = "pair_" + term.name;
-    Expression expression = llvm::cantFail(Expression::parse(term.expression));
+    Expression expression = llvm::cantFail(Expression::parse(term.expression, control.functions));
     const std::vector<std::string> &used = expression.getNames();
     auto uses = [&](StringRef name) { return llvm::is_contained(used, name); };
     os << "  %u_" << set << " = md.sum_relation %n, %x, %cell gather(%p_type, "
@@ -1772,7 +1772,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     values[term.getVariable()] = variable;
     for (const auto &parameter : term.parameters)
       values[parameter.first] = "%cp_" + parameter.first;
-    Expression expression = llvm::cantFail(Expression::parse(term.expression));
+    Expression expression = llvm::cantFail(Expression::parse(term.expression, control.functions));
     std::string energy = expression.emit(os, values, "%ce", "    ");
     os << "    %c_kj = arith.constant " << formatReal(units::energy)
        << " : f64\n"
@@ -5801,6 +5801,21 @@ llvm::Error Builder::build() {
       return error;
   } else if (llvm::Error error = collectParameters()) {
     return error;
+  }
+  // The cubics of the tabulated functions, four numbers for each interval
+  // (D138).
+  for (const TabulatedFunction &function : control.functions) {
+    Program::Table table;
+    table.name = function.getTableName();
+    if (llvm::any_of(program.tables, [&](const Program::Table &other) {
+          return other.name == table.name;
+        }))
+      return makeError("the table of the function '" + function.name +
+                       "' takes the name of another; rename the function");
+    table.values = function.getCoefficients();
+    table.columns = 4;
+    table.count = table.values.size() / 4;
+    program.tables.push_back(std::move(table));
   }
 
   os << "!vec   = !md.field<@atoms, 3 x f64>\n"

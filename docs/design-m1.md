@@ -940,7 +940,7 @@ output of `mdir template amber` (`scripts/paper/check-appendix.sh`).
 |---|---|
 | `[input]` | `topology`, `coordinates`, `format`, `checkpoint`, `include_paths` (directories of includes of GROMACS), `defines` (macros, as `-D` of grompp) |
 | `[output]` | `trajectory`, `checkpoint`, `energy_interval`, `trajectory_interval`, `checkpoint_interval` |
-| `[energy]` | `cutoff`, `switch_distance`, `pairlist_distance`, `pruned_distance`, `rebuild_interval`, `lennard_jones_modifier`, `coulomb_modifier` (`"NONE"`, `"POTENTIAL_SHIFT"`), `dispersion_correction`, `electrostatics` (`"CUTOFF"`, `"PME"`), `[[energy.pair]]` (with a topology over its pairs, with `groups`, D137), and for a system without a topology `[[energy.type]]`, `[[energy.pair_override]]` |
+| `[energy]` | `cutoff`, `switch_distance`, `pairlist_distance`, `pruned_distance`, `rebuild_interval`, `lennard_jones_modifier`, `coulomb_modifier` (`"NONE"`, `"POTENTIAL_SHIFT"`), `dispersion_correction`, `electrostatics` (`"CUTOFF"`, `"PME"`), `[[energy.pair]]` (with a topology over its pairs, with `groups`, D137), `[[energy.function]]` (D138), and for a system without a topology `[[energy.type]]`, `[[energy.pair_override]]` |
 | `[pme]` | `tolerance`, `beta`, `max_spacing`, `grid`, `order` (4, 6, 8), `influence` (`"SPME"`, `"OPTIMAL"`) |
 | `[dynamics]` | `integrator`, `time_step`, `steps`, `seed`, `center_of_mass_interval` |
 | `[minimize]` | `method`, `steps`, `initial_step` |

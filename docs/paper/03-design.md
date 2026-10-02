@@ -27,8 +27,8 @@ A term of the potential is written once, as an expression of its
 coordinate and its parameters, and the driver writes every term of a run
 into one `md.potential`. The terms of a topology are written by the
 driver; a control file adds terms over pairs, bonds, angles, and dihedrals
-as expressions in the syntax of the custom forces of OpenMM (D22, D136,
-D137),
+as expressions in the syntax of the custom forces of OpenMM, with
+tabulated functions (D22, D136 to D138),
 which compile into the same loops as the terms of the topology and whose
 forces the same differentiation gives. Below is the potential of the test of a mixture
 of two Lennard–Jones types (`test/Driver/mixture.toml`), as `mdir emit`

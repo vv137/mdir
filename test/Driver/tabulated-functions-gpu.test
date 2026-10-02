@@ -1,0 +1,14 @@
+# The tabulated functions of tabulated-functions.test on a GPU in double
+# precision (D138): the same energies, and the forces that they add against
+# central differences of the energies that check_tabulated.py computes.
+#
+# REQUIRES: hdf5, cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/tabulated-functions.test | sed '1d;$d' | sed 's/^target    = "CPU"/target    = "GPU"/' > %t/terms.toml
+# RUN: sed -n '/^#--- run.toml/,/^#--- terms/p' %S/tabulated-functions.test | sed '1d;$d' | sed -e 's/terms.h5/plain.h5/' -e 's/^target    = "CPU"/target    = "GPU"/' > %t/plain.toml
+# RUN: cd %t && mdir run plain.toml > /dev/null && mdir run terms.toml | FileCheck %S/tabulated-functions.test
+# RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
+# RUN: mdir checkpoint --print=forces %t/terms.h5 > %t/terms.forces
+# RUN: %python %S/Inputs/check_tabulated.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/plain.forces %t/terms.forces | FileCheck %S/tabulated-functions.test --check-prefix=PYTHON

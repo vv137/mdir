@@ -1,0 +1,110 @@
+# Tabulated functions (D138): [[energy.function]] gives a function of one
+# argument by its values at evenly spaced points from min to max, a natural
+# cubic spline between them, and zero outside, which any expression calls
+# by its name, as the continuous tabulated functions of OpenMM. On the
+# dipeptide: a pair term of the topology over two groups in a function of
+# r that ends at 7 Å, before the cutoff, and a dihedral term in a periodic
+# function of theta, called a turn beyond its range, which it takes modulo
+# max - min, with the spline smooth across the end at a dihedral within
+# 2e-6 of π. check_tabulated.py solves the splines on its own and computes
+# the energies and, against central differences of them, the forces that
+# the terms add. Then mixture.toml with its Lennard-Jones as a function of
+# r/sigma, a term without a topology: the energy, the virial, and the
+# conservation of mixture.toml.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/terms.toml
+# RUN: sed -n '/^#--- run.toml/,/^#--- terms/p' %s | sed '1d;$d' | sed 's/terms.h5/plain.h5/' > %t/plain.toml
+# RUN: cd %t && mdir run plain.toml > /dev/null && mdir run terms.toml | FileCheck %s
+# RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
+# RUN: mdir checkpoint --print=forces %t/terms.h5 > %t/terms.forces
+# RUN: %python %S/Inputs/check_tabulated.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/plain.forces %t/terms.forces | FileCheck %s --check-prefix=PYTHON
+# In mixed precision the spline stays in the kernel, in f32 (D94, amended).
+# RUN: sed -e 's/^precision = "DOUBLE"/precision = "MIXED"/' %t/terms.toml > %t/mixed.toml
+# RUN: cd %t && mdir run mixed.toml | FileCheck %s --check-prefix=MIXED
+# RUN: cp %S/Inputs/mixture.pdb %t && %python %S/Inputs/tabulated_mixture.py %S/mixture.toml > %t/mixture.toml
+# RUN: cd %t && mdir run mixture.toml | FileCheck %s --check-prefix=MIXTURE
+#
+# RUN: sed -e 's/scale\*wave(r)/scale*wave(r, r)/' %t/terms.toml > %t/arity.toml
+# RUN: not mdir check %t/arity.toml 2>&1 | FileCheck %s --check-prefix=ARITY
+# RUN: sed -e 's/scale\*wave(r)/scale*wav(r)/' %t/terms.toml > %t/unknown.toml
+# RUN: not mdir check %t/unknown.toml 2>&1 | FileCheck %s --check-prefix=UNKNOWN
+# RUN: sed -e 's/^name   = "wave"/name   = "sin"/' %t/terms.toml > %t/builtin.toml
+# RUN: not mdir check %t/builtin.toml 2>&1 | FileCheck %s --check-prefix=BUILTIN
+# RUN: sed -e 's/^values = \[-0.224526.*/values = [1.0]/' %t/terms.toml > %t/one.toml
+# RUN: not mdir check %t/one.toml 2>&1 | FileCheck %s --check-prefix=ONE
+# RUN: sed -e 's/^max    = 7.0/max    = 1.5/' %t/terms.toml > %t/range.toml
+# RUN: not mdir check %t/range.toml 2>&1 | FileCheck %s --check-prefix=RANGE
+# RUN: sed -e 's/^values = \[1.955336, /values = [1.955337, /' %t/terms.toml > %t/ends.toml
+# RUN: not mdir check %t/ends.toml 2>&1 | FileCheck %s --check-prefix=ENDS
+
+# CHECK:      MDIR:   twist                          4.100384
+# CHECK-NEXT: MDIR:   tabulated                     14.826807
+
+# PYTHON:      tabulated 14.826807
+# PYTHON-NEXT: twist 4.100384
+# PYTHON-NEXT: forces against differences of the energy: ok
+
+# MIXED:      MDIR:   twist                          4.10038{{[0-9]}}
+# MIXED-NEXT: MDIR:   tabulated                     14.8268{{[0-9]+}}
+
+# MIXTURE:      INFO:         0         0.0000 {{ *-[0-9.]+}} {{ *}}-497.7298 {{ *[0-9.]+}} {{ *}}120.0020 {{ *}}-1117.7782
+# MIXTURE:      MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
+
+# ARITY: 'wave' takes 1 argument, not 2
+# UNKNOWN: unknown function 'wav'
+# BUILTIN: the function 'sin' exists already
+# ONE: expected 'values', a list of at least two numbers
+# RANGE: 'max' is not greater than 'min'
+# ENDS: a periodic function needs at least four values, and the last equal to the first
+
+#--- run.toml
+[input]
+topology    = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+[output]
+energy_interval = 0
+checkpoint = "terms.h5"
+checkpoint_interval = 1
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "CUTOFF"
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 1e-9
+steps      = 1
+[ensemble]
+ensemble    = "NVE"
+temperature = 0.0
+[boundary]
+type = "PERIODIC"
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- terms
+# The functions may follow the terms that call them.
+[[energy.pair]]
+name       = "tabulated"
+expression = "scale*wave(r)"
+groups     = [":1-3", ":1-20"]
+scale      = 2.0
+[[energy.dihedral]]
+name       = "twist"
+expression = "k*torsion(theta + turn)"
+particles  = [[2, 5, 7, 9], [5, 7, 9, 11]]
+k          = 1.5
+turn       = 6.283185307179586
+[[energy.function]]
+name   = "wave"
+min    = 1.5
+max    = 7.0
+values = [-0.224526, -0.347892, -0.426424, -0.459919, -0.451822, -0.408461, -0.338136, -0.250186, -0.154095, -0.058709, 0.028391, 0.101323, 0.156150, 0.190928, 0.205593, 0.201708, 0.182117, 0.150538, 0.111150, 0.068188, 0.025598, -0.013242, -0.045718, -0.070084, -0.085484, -0.091902]
+[[energy.function]]
+name   = "torsion"
+min    = -3.141592653589793
+max    = 3.141592653589793
+periodic = true
+values = [1.955336, 1.998797, 1.921787, 1.733596, 1.456923, 1.125138, 0.778260, 0.458127, 0.203351, 0.044664, 0.001203, 0.078213, 0.266404, 0.543077, 0.874862, 1.221740, 1.541873, 1.796649, 1.955336, 1.998797, 1.921787, 1.733596, 1.456923, 1.125138, 0.778260, 0.458127, 0.203351, 0.044664, 0.001203, 0.078213, 0.266404, 0.543077, 0.874862, 1.221740, 1.541873, 1.796649, 1.955336]
+#--- end

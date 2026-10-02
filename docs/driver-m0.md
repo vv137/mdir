@@ -100,6 +100,7 @@ regard to case.
 | | `dispersion_correction` | `NONE` or `ENERGY_PRESSURE`; also in `[[energy.pair]]`. |
 | | `[[energy.pair]]` | A pair term, given by an expression (D16, D22). With a topology, over its pairs that are not excluded, in `r` (Å), `q1`, `q2`, `sigma`, `epsilon` of the pair, `sigma1`, `sigma2`, `epsilon1`, `epsilon2` of each particle (Å, kcal/mol), `coulomb`, and constants, truncated as the Lennard-Jones; `groups = [mask, mask]` keeps the pairs between two masks of Amber (D137). |
 | | `[[energy.bond]]`, `[[energy.angle]]`, `[[energy.dihedral]]` | With a topology: a term over tuples of 2, 3, or 4 of its particles, given by an expression in `r` (Å) or `theta` (radians), with `name`, `expression`, `particles` (lists of particle numbers, from 1), and parameters, a number for all tuples or a list of one for each (D136). Restraints of distances, angles, and dihedrals, flat-bottomed with `max`, are such terms. |
+| | `[[energy.function]]` | A function of one argument that every expression may call by its `name`: `values` at evenly spaced points from `min` to `max`, a natural cubic spline between them and zero outside, or with `periodic = true` a periodic spline, the first and last value equal and the argument taken modulo `max - min` (D138). |
 | | `[[energy.type]]` | A type of particle: its mass and its parameters. |
 | | `[[energy.pair_override]]` | Parameters of a term for one pair of types. |
 | `[pme]` | `tolerance`, `beta`, `max_spacing`, `grid`, `order`, `influence` | Particle mesh Ewald (D71): $\beta$ from $\operatorname{erfc}(\beta r_c) = \texttt{tolerance}$ or given; the grid from the largest spacing or given as three numbers of points; the order of the B-splines, 4, 6, or 8; the influence function, `SPME` or `OPTIMAL`. |
@@ -161,8 +162,9 @@ names, `+ - * / ^`, parentheses, the functions `sqrt`, `exp`, `log`,
 `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `sinh`, `cosh`, `tanh`,
 `abs`, `floor`, `ceil`, `erf`, `erfc`, `step` (1 for x ≥ 0), `delta` (1 for
 x = 0), `square`, `cube`, `recip`, `sec`, `csc`, `cot`, `min`, `max`,
-`atan2(y, x)`, and `select(x, a, b)` (a if x ≠ 0, else b), and definitions
-of names after semicolons: `k*d^2; d = r - r0`.
+`atan2(y, x)`, and `select(x, a, b)` (a if x ≠ 0, else b), the tabulated
+functions of `[[energy.function]]` (D138), and definitions of names after
+semicolons: `k*d^2; d = r - r0`.
 
 ## 2. The driver
 

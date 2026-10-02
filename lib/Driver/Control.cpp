@@ -61,6 +61,8 @@ private:
 
   Error readEnergy(const toml::table &table);
   Error readPair(const toml::table &table);
+  /// [[energy.function]]: a tabulated function (D138).
+  Error readFunction(const toml::table &table);
   /// [[energy.bond]], [[energy.angle]], or [[energy.dihedral]]: a term over
   /// tuples of `arity` particles (D136).
   Error readTupleTerm(const toml::table &table, unsigned arity);
@@ -295,7 +297,7 @@ Error Reader::readTupleTerm(const toml::table &table, unsigned arity) {
   }
 
   // The expression uses the coordinate and the parameters only.
-  auto expression = Expression::parse(term.expression);
+  auto expression = Expression::parse(term.expression, control.functions);
   if (!expression)
     return fail(*table.get("expression"),
                 llvm::toString(expression.takeError()));
@@ -307,6 +309,56 @@ Error Reader::readTupleTerm(const toml::table &table, unsigned arity) {
                   "the expression uses '" + name + "', which is neither '" +
                       term.getVariable() + "' nor a parameter of the term");
   control.tupleTerms.push_back(std::move(term));
+  return Error::success();
+}
+
+Error Reader::readFunction(const toml::table &table) {
+  if (Error error = checkKeywords(table, "[energy.function]",
+                                  {"name", "values", "min", "max",
+                                   "periodic"}))
+    return error;
+  TabulatedFunction function;
+  if (Error error = readString(table, "name", function.name))
+    return error;
+  if (function.name.empty() ||
+      !(llvm::isAlpha(function.name.front()) || function.name.front() == '_') ||
+      !llvm::all_of(function.name,
+                    [](char c) { return llvm::isAlnum(c) || c == '_'; }))
+    return fail(table, "expected a 'name' of letters, digits, and '_' in "
+                       "[[energy.function]]");
+  if (Expression::isFunction(function.name) ||
+      llvm::any_of(control.functions, [&](const TabulatedFunction &other) {
+        return other.name == function.name;
+      }))
+    return fail(*table.get("name"), "the function '" + function.name +
+                                        "' exists already");
+  const toml::node *values = table.get("values");
+  const toml::array *list = values ? values->as_array() : nullptr;
+  if (!list || list->size() < 2)
+    return fail(values ? *values : static_cast<const toml::node &>(table),
+                "expected 'values', a list of at least two numbers");
+  for (const toml::node &value : *list) {
+    std::optional<double> number = value.value<double>();
+    if (!number || !std::isfinite(*number))
+      return fail(value, "expected a number in 'values'");
+    function.values.push_back(*number);
+  }
+  for (StringRef key : {"min", "max"})
+    if (!table.contains(std::string_view(key)))
+      return fail(table, "expected '" + key + "' in [[energy.function]]");
+  if (Error error = readReal(table, "min", function.min))
+    return error;
+  if (Error error = readReal(table, "max", function.max))
+    return error;
+  if (!(function.min < function.max))
+    return fail(*table.get("max"), "'max' is not greater than 'min'");
+  if (Error error = readBool(table, "periodic", function.periodic))
+    return error;
+  if (function.periodic && (function.values.size() < 4 ||
+                            function.values.front() != function.values.back()))
+    return fail(*values, "a periodic function needs at least four values, "
+                         "and the last equal to the first");
+  control.functions.push_back(std::move(function));
   return Error::success();
 }
 
@@ -608,7 +660,7 @@ Error Reader::readEnergy(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "energy",
           {"cutoff", "switch_distance", "pairlist_distance",
-           "pruned_distance", "rebuild_interval", "lennard_jones_modifier", "coulomb_modifier", "pair", "bond", "angle", "dihedral", "type",
+           "pruned_distance", "rebuild_interval", "lennard_jones_modifier", "coulomb_modifier", "pair", "bond", "angle", "dihedral", "function", "type",
            "pair_override", "dispersion_correction", "electrostatics"},
           {}))
     return error;
@@ -692,6 +744,10 @@ Error Reader::readEnergy(const toml::table &table) {
     }
     return Error::success();
   };
+  // The functions first, so that the expressions of the terms may call
+  // them wherever they stand in the file.
+  if (Error error = readArray("function", &Reader::readFunction))
+    return error;
   if (Error error = readArray("type", &Reader::readType))
     return error;
   if (Error error = readArray("pair", &Reader::readPair))
@@ -781,7 +837,7 @@ Error Reader::readEnergy(const toml::table &table) {
           }))
         return fail(node, "a name of letters, digits, and '_', not '" +
                               term.name + "'");
-      auto expression = Expression::parse(term.expression);
+      auto expression = Expression::parse(term.expression, control.functions);
       if (!expression)
         return fail(node, llvm::toString(expression.takeError()));
       static const char *const known[] = {

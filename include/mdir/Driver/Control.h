@@ -5,6 +5,7 @@
 #ifndef MDIR_DRIVER_CONTROL_H
 #define MDIR_DRIVER_CONTROL_H
 
+#include "mdir/Driver/Expression.h"
 #include "mdir/Driver/Topology.h"
 
 #include "llvm/ADT/StringMap.h"
@@ -135,6 +136,9 @@ struct Control {
   /// Terms over tuples of the topology given by expressions (D136):
   /// [[energy.bond]], [[energy.angle]], and [[energy.dihedral]].
   std::vector<TupleTerm> tupleTerms;
+  /// Functions of one argument by their values, which every expression may
+  /// call (D138): [[energy.function]].
+  std::vector<TabulatedFunction> functions;
   std::vector<ParticleType> types;
   std::vector<PairOverride> overrides;
   /// The correction for the dispersion of a run from a topology.
