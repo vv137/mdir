@@ -1171,13 +1171,15 @@ Error Reader::read(const toml::table &root) {
   if (table) {
     if (Error error = checkKeywords(*table, "constraints",
                                     {"hydrogen_bonds", "rigid_water",
-                                     "water_residues"},
+                                     "water_residues", "analytic_bonds"},
                                     {}))
       return error;
     if (Error error =
             readBool(*table, "hydrogen_bonds", control.rigidBonds))
       return error;
     if (Error error = readBool(*table, "rigid_water", control.fastWater))
+      return error;
+    if (Error error = readBool(*table, "analytic_bonds", control.analyticBonds))
       return error;
     if (const toml::node *node = table->get("water_residues")) {
       const toml::array *array = node->as_array();
@@ -1438,6 +1440,7 @@ time_constant = 2.0             # ps
 
 [constraints]
 hydrogen_bonds = true           # SHAKE and RATTLE on the bonds of hydrogen
+analytic_bonds = false          # checked quadratic solve for one-bond groups
 rigid_water    = true           # rigid waters: SETTLE in DOUBLE,
                                 # M-SHAKE on their three distances below
 # water_residues = ["WAT"]      # names of the residues of rigid water

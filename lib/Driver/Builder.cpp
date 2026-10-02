@@ -2699,6 +2699,47 @@ void Builder::emitBondConstraints(StringRef indent, StringRef setName,
         "addf", k.vector("subf", "%vs_o" + b, "%vs_o" + a), shift));
   }
   std::string zero = k.zero();
+  // For one bond the fixed-old-direction projection is a quadratic.
+  // With r the predicted bond, s the old bond, and r' = r + t s,
+  // t = (d²-r²)/(r·s + sqrt((r·s)² + s²(d²-r²))). Rationalizing the
+  // near root avoids subtracting nearly equal numbers. Keep the same
+  // mass-weighted impulses, periodic image, and small-change storage as
+  // M-SHAKE. A checked fast path falls back to the existing Newton solve.
+  bool analytic = control.analyticBonds && count == 1;
+  if (analytic) {
+    const auto &bond = bonds.front();
+    std::string r = "%vs_r0", s = olds.front();
+    std::string d2 = k.real("mulf", bond.length, bond.length);
+    std::string error = k.real("subf", d2, k.dot(r, r));
+    std::string rs = k.dot(r, s);
+    std::string discriminant = k.real(
+        "addf", k.real("mulf", rs, rs), k.real("mulf", k.dot(s, s), error));
+    std::string t = k.real("divf", error,
+                           k.real("addf", rs, k.root(discriminant)));
+    std::string lambda = k.real(
+        "divf", t, k.real("addf", inverse[bond.first], inverse[bond.second]));
+    std::string push = k.scale(lambda, s);
+    std::string da = k.negate(k.scale(inverse[bond.first], push));
+    std::string db = k.scale(inverse[bond.second], push);
+    std::string corrected = k.vector("subf", k.vector("addf", r, db), da);
+    std::string residual = k.real("subf", k.dot(corrected, corrected), d2);
+    std::string tolerance = k.real(
+        "mulf", d2, k.constant(control.precision == Precision::Double
+                                   ? 1.0e-12 : 1.0e-6));
+    std::string scalarZero = k.constant(0.0);
+    os << inner << "%vs_residual = math.absf " << residual << " : f64\n"
+       << inner << "%vs_accurate = arith.cmpf ole, %vs_residual, "
+       << tolerance << " : f64\n"
+       << inner << "%vs_forward = arith.cmpf ogt, " << rs << ", "
+       << scalarZero << " : f64\n"
+       << inner << "%vs_analytic = arith.andi %vs_accurate, %vs_forward : i1\n"
+       << inner << "%vs_checked0, %vs_checked1 = scf.if %vs_analytic -> "
+                   "(vector<3xf64>, vector<3xf64>) {\n"
+       << inner << "  scf.yield " << da << ", " << db
+       << " : vector<3xf64>, vector<3xf64>\n"
+       << inner << "} else {\n";
+    inner += "  ";
+  }
   // The members move along the old bonds s_l: for each bond l = (a, b),
   // b by λ_l s_l / m_b and a by −λ_l s_l / m_a. Each iteration of Newton
   // solves the constraints linearized at the current bonds r_k exactly,
@@ -2777,8 +2818,14 @@ void Builder::emitBondConstraints(StringRef indent, StringRef setName,
   for (unsigned j = 0; j != arity; ++j)
     yielded += (j == 0 ? "" : ", ") + moved[j];
   os << inner << "  scf.yield " << yielded << " : " << types << "\n"
-     << inner << "}\n"
-     << inner << "md.yield " << results << " : " << types << "\n"
+     << inner << "}\n";
+  if (analytic) {
+    os << inner << "scf.yield " << results << " : " << types << "\n";
+    inner.resize(inner.size() - 2);
+    os << inner << "}\n";
+    results = "%vs_checked0, %vs_checked1";
+  }
+  os << inner << "md.yield " << results << " : " << types << "\n"
      << indent << "} : !rel_" << setName << ", !vec -> !vec\n";
 }
 

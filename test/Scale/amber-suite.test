@@ -9,6 +9,7 @@
 # REQUIRES: cuda, amber-suite
 #
 # RUN: %bench --work %amber_suite smoke --mdir mdir | FileCheck %s
+# RUN: %bench --work %amber_suite smoke --mdir mdir --analytic-bonds | FileCheck %s
 
 # CHECK: jac_nve: ok, 2 rows
 # CHECK: jac_nve_4fs: ok, 2 rows

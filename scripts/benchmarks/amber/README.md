@@ -61,3 +61,8 @@ The work directory defaults to `$MDIR_BENCH_DIR`, or `~/mdir-benchmarks`.
 Each system has a directory there with the converted inputs, the control
 file and the `.mdp` that a run writes, and the logs; `results.json` keeps
 the rates.
+
+`bench.py --work DIR smoke --mdir PATH_TO_MDIR` runs 50 steps (two
+coupling periods), with energy output only at the start and end. Add
+`--analytic-bonds` to exercise the optional one-bond projection. The scale
+test runs both variants; a custom `--steps` must respect coupling periods.

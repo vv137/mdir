@@ -2,7 +2,7 @@
 
 A compiler that writes its own kernels must show that they compute the
 model. This section collects the evidence, each item marked by its kind:
-a check that runs with the tests (`lit`, 148 tests in `test/`), a value
+a check that runs with the tests (`lit`, 163 tests in `test/`), a value
 that a test pins after it was compared once with an independent program
 (the reference value is in the test's comment), or a measurement recorded
 in a decision. Where the log says that an energy "changed by" a fraction,
@@ -161,6 +161,20 @@ beside its rate.
   with the separate loops and with the CPU column by column to $10^{-9}$
   in double precision on 855 particles whose groups were placed apart
   in memory (`integration-gpu.test`).
+- **Analytic one-bond option (D128).** The emitted kernel is checked on
+  67 cases for squared bond length, mass-weighted displacement, and the
+  fixed old correction direction. Cases cover equal and repartitioned
+  masses, tiny corrections, near tangency, lattice image shifts, and the
+  backward predictor's Newton fallback (`analytic-bonds.test`). The
+  driver compares energy, pressure and virial logs with the default
+  Newton solver on CPU and GPU in double and mixed precision. A hydrogen
+  translated by a tilted lattice vector exercises the triclinic path,
+  including GPU groups (`analytic-bonds-triclinic.test`). All nine Amber
+  scale systems run with both options, including repartitioned masses at
+  4 fs and the million-atom STMV case. The fused analytic path is also
+  checked by memcheck, initcheck and racecheck. These checks establish
+  equivalence on the tested inputs; the fallback retains the original
+  fixed-iteration solver's limitations (Section 6.2).
 - **Thermostat and barostat.** The factor of the thermostat, iterated
   over chains of 200,000 steps for four combinations of $N_f$ and of the
   decay $c$, has a mean of $K$ within 2% of its target and a variance

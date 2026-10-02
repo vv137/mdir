@@ -153,6 +153,8 @@ struct Control {
   /// the control file says `rigid_water = false`, which a topology of
   /// GROMACS with SETTLE needs to run flexible.
   bool rigidBonds = false;
+  /// Use a checked quadratic solution for isolated one-bond groups.
+  bool analyticBonds = false;
   bool fastWater = false;
   bool statesFlexible = false;
   /// The residues of an Amber or CHARMM topology that SETTLE constrains
