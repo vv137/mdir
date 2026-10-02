@@ -1,0 +1,14 @@
+# The reaction field of reaction-field.test on a GPU in double precision
+# (D140): the same terms, and the forces that the field adds against
+# central differences of the sums of check_reaction_field.py.
+#
+# REQUIRES: hdf5, cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/reaction-field.test | sed '1d;$d' | sed 's/^target    = "CPU"/target    = "GPU"/' > %t/plain.toml
+# RUN: sed -e 's/plain.h5/field.h5/' -e 's/^electrostatics    = "CUTOFF"/electrostatics    = "REACTION_FIELD"\nreaction_field_dielectric = 78.5/' %t/plain.toml > %t/field.toml
+# RUN: cd %t && mdir run plain.toml > /dev/null && mdir run field.toml | FileCheck %S/reaction-field.test
+# RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
+# RUN: mdir checkpoint --print=forces %t/field.h5 > %t/field.forces
+# RUN: %python %S/Inputs/check_reaction_field.py %t/dipeptide.prmtop %t/dipeptide.inpcrd 78.5 %t/plain.forces %t/field.forces | FileCheck %S/reaction-field.test --check-prefix=PYTHON

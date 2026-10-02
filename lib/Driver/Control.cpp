@@ -700,7 +700,7 @@ Error Reader::readEnergy(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "energy",
           {"cutoff", "switch_distance", "pairlist_distance",
-           "pruned_distance", "rebuild_interval", "lennard_jones_modifier", "coulomb_modifier", "pair", "bond", "angle", "dihedral", "function", "type",
+           "pruned_distance", "rebuild_interval", "lennard_jones_modifier", "coulomb_modifier", "reaction_field_dielectric", "pair", "bond", "angle", "dihedral", "function", "type",
            "pair_override", "dispersion_correction", "electrostatics"},
           {}))
     return error;
@@ -810,8 +810,8 @@ Error Reader::readEnergy(const toml::table &table) {
   // With a topology, the correction for the dispersion is for the whole
   // run, and the electrostatics are a cutoff or particle mesh Ewald.
   bool hasTopology = control.hasTopology();
-  for (StringRef key :
-       {"dispersion_correction", "electrostatics", "coulomb_modifier"})
+  for (StringRef key : {"dispersion_correction", "electrostatics",
+                        "coulomb_modifier", "reaction_field_dielectric"})
     if (!hasTopology && table.contains(std::string_view(key)))
       return fail(*table.get(std::string_view(key)),
                   "'" + key + "' in [energy] is for a run from a topology; "
@@ -822,10 +822,32 @@ Error Reader::readEnergy(const toml::table &table) {
            {"ENERGY_PRESSURE", DispersionCorrection::EnergyPressure}}))
     return error;
   int electrostatic = 0;
-  if (Error error = readChoice<int>(table, "electrostatics", electrostatic,
-                                    {{"CUTOFF", 0}, {"PME", 1}}))
+  if (Error error = readChoice<int>(
+          table, "electrostatics", electrostatic,
+          {{"CUTOFF", 0}, {"PME", 1}, {"REACTION_FIELD", 2}}))
     return error;
   control.pme = electrostatic == 1;
+  control.reactionField = electrostatic == 2;
+  // The reaction field (D140): the permittivity beyond the cutoff, 1 or
+  // more, or 0 for a conductor, as the file must say.
+  if (control.reactionField) {
+    const toml::node *node = table.get("reaction_field_dielectric");
+    if (!node)
+      return fail(table, "expected 'reaction_field_dielectric' with "
+                         "'electrostatics = \"REACTION_FIELD\"': the "
+                         "relative permittivity beyond the cutoff, or 0 for "
+                         "a conductor");
+    if (Error error = readReal(table, "reaction_field_dielectric",
+                               control.reactionFieldDielectric))
+      return error;
+    if (!(control.reactionFieldDielectric == 0.0 ||
+          control.reactionFieldDielectric >= 1.0))
+      return fail(*node, "'reaction_field_dielectric' is 1 or more, or 0 "
+                         "for a conductor");
+  } else if (const toml::node *node = table.get("reaction_field_dielectric")) {
+    return fail(*node, "'reaction_field_dielectric' is for "
+                       "'electrostatics = \"REACTION_FIELD\"'");
+  }
   if (!control.pme && table.contains("coulomb_modifier"))
     return fail(*table.get("coulomb_modifier"),
                 "'coulomb_modifier' is for 'electrostatics = \"PME\"'");

@@ -221,7 +221,7 @@ void _mlir_ciface_mdrtWriteVirial(double xx, double yy, double zz) {
   // The virials of the correction for the dispersion and of the background
   // of a net charge are isotropic: a third of each on each axis.
   double constant =
-      (output.getDispersionVirial() + output.getPMEConstantVirial()) / 3.0;
+      (output.getDispersionVirial() + output.getCoulombConstantVirial()) / 3.0;
   std::fprintf(output.log,
                "MDIR: the diagonal of the virial at the start, without the "
                "constraints, in kcal/mol:\nMDIR:   %16.6f %16.6f %16.6f\n",
@@ -246,7 +246,7 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
   bool ureyBradley = topology && !topology->ureyBradleys.empty();
   bool impropers = topology && !topology->harmonicImpropers.empty();
   std::fprintf(output.log, "MDIR: the terms at the start, in kcal/mol:\n");
-  double total = output.getDispersionEnergy() + output.getPMEConstantEnergy();
+  double total = output.getDispersionEnergy() + output.getCoulombConstantEnergy();
   // The terms given by expressions follow those of the topology under
   // their names, those over tuples (D136) and then those over pairs (D137),
   // and the restraints come last.
@@ -254,7 +254,9 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
   int pairs = topology ? static_cast<int>(output.system->pairTermNames.size())
                        : 0;
   for (int i = 0, e = static_cast<int>(values->sizes[0]); i != e; ++i) {
-    if ((i == 7 && !cmap) || ((i == 8 || i == 9) && !output.pme) ||
+    if ((i == 7 && !cmap) ||
+        (i == 8 && !output.pme && !output.reactionField) ||
+        (i == 9 && !output.pme) ||
         (i == 10 && !ureyBradley) || (i == 11 && !impropers))
       continue;
     std::string name =
@@ -268,9 +270,9 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
     std::fprintf(output.log, "MDIR:   %-22s %16.6f\n", name.c_str(),
                  value / units::energy);
   }
-  if (output.pme)
+  if (output.pme || output.reactionField)
     std::fprintf(output.log, "MDIR:   %-22s %16.6f\n", "Coulomb self",
-                 output.getPMEConstantEnergy() / units::energy);
+                 output.getCoulombConstantEnergy() / units::energy);
   std::fprintf(output.log, "MDIR:   %-22s %16.6f\n", "dispersion",
                output.getDispersionEnergy() / units::energy);
   std::fprintf(output.log, "MDIR:   %-22s %16.6f\n", "total",
@@ -330,8 +332,8 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
   // `kinetic` is that of the velocities at the step. The total energy has
   // it, because that sum varies least.
   // The correction for the dispersion is a number of the volume.
-  potential += output.getDispersionEnergy() + output.getPMEConstantEnergy();
-  virial += output.getDispersionVirial() + output.getPMEConstantVirial();
+  potential += output.getDispersionEnergy() + output.getCoulombConstantEnergy();
+  virial += output.getDispersionVirial() + output.getCoulombConstantVirial();
   double total = potential + kinetic;
 
   // The mean of the kinetic energies half a step before and after exceeds
@@ -423,7 +425,7 @@ void _mlir_ciface_mdrtWriteMinimization(int64_t step, double energy,
   }
   double scale = units::energy / units::length;
   double rms = counted ? std::sqrt(square / counted) : 0.0;
-  energy += output.getDispersionEnergy() + output.getPMEConstantEnergy();
+  energy += output.getDispersionEnergy() + output.getCoulombConstantEnergy();
   std::fprintf(output.log, "INFO: %9lld %14.4f %14.4f %14.4f %9zu %14.6f\n",
                static_cast<long long>(step), energy / units::energy,
                rms / scale, std::sqrt(largest) / scale, where + 1,

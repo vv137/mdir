@@ -74,6 +74,15 @@ Used for: influence functions of mesh Ewald other than that of smooth
 particle mesh Ewald, of which `influence = "OPTIMAL"` takes a factor
 for each edge (pme-m1.md, Section 1.1).
 
+### Barker1973
+
+J. A. Barker, R. O. Watts, "Monte Carlo studies of the dielectric
+properties of water-like models," *Mol. Phys.* **26**, 789–792 (1973).
+[doi:10.1080/00268977300102101](https://doi.org/10.1080/00268977300102101)
+
+Used for: the reaction field of a dielectric continuum beyond the cutoff
+(D140).
+
 ### Berendsen1984
 
 H. J. C. Berendsen, J. P. M. Postma, W. F. van Gunsteren, A. DiNola,
@@ -1003,8 +1012,8 @@ reaction field method for molecular dynamics simulations," *J. Chem.
 Phys.* **102**, 5451–5459 (1995).
 [doi:10.1063/1.469273](https://doi.org/10.1063/1.469273)
 
-Used for: reaction-field electrostatics, a cutoff-based alternative named
-in the design review.
+Used for: the reaction field with its potential shifted to zero at the
+cutoff, `electrostatics = "REACTION_FIELD"` (D140).
 
 ### Verlet1967
 

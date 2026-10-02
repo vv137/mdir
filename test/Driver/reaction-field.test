@@ -1,0 +1,76 @@
+# The reaction field (D140): with `electrostatics = "REACTION_FIELD"` the
+# Coulomb terms of a topology are f q_i q_j (1/r + k r² − c) over the pairs
+# within the cutoff that are not excluded, f q_i q_j (k r² − c) over the
+# excluded pairs within it, and the self term −c f Σ q² / 2, with
+# k = (ε − 1) / ((2ε + 1) r_c³), k = 1 / (2 r_c³) for a conductor (ε = 0),
+# and c = 1/r_c + k r_c², as GROMACS has them. check_reaction_field.py sums
+# them over the pairs of the dipeptide, with ε = 78.5 and with a conductor,
+# and the forces that the field adds against central differences.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/plain.toml
+# RUN: sed -e 's/plain.h5/field.h5/' -e 's/^electrostatics    = "CUTOFF"/electrostatics    = "REACTION_FIELD"\nreaction_field_dielectric = 78.5/' %t/plain.toml > %t/field.toml
+# RUN: sed -e 's/field.h5/conductor.h5/' -e 's/^reaction_field_dielectric = 78.5/reaction_field_dielectric = 0/' %t/field.toml > %t/conductor.toml
+# RUN: cd %t && mdir run plain.toml > /dev/null && mdir run field.toml | FileCheck %s
+# RUN: mdir run %t/conductor.toml | FileCheck %s --check-prefix=CONDUCTOR
+# RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
+# RUN: mdir checkpoint --print=forces %t/field.h5 > %t/field.forces
+# RUN: mdir checkpoint --print=forces %t/conductor.h5 > %t/conductor.forces
+# RUN: %python %S/Inputs/check_reaction_field.py %t/dipeptide.prmtop %t/dipeptide.inpcrd 78.5 %t/plain.forces %t/field.forces | FileCheck %s --check-prefix=PYTHON
+# RUN: %python %S/Inputs/check_reaction_field.py %t/dipeptide.prmtop %t/dipeptide.inpcrd 0 %t/plain.forces %t/conductor.forces | FileCheck %s --check-prefix=PYTHON-CONDUCTOR
+#
+# RUN: sed -e '/^reaction_field_dielectric/d' %t/field.toml > %t/missing.toml
+# RUN: not mdir check %t/missing.toml 2>&1 | FileCheck %s --check-prefix=MISSING
+# RUN: sed -e 's/^reaction_field_dielectric = 78.5/reaction_field_dielectric = 0.5/' %t/field.toml > %t/range.toml
+# RUN: not mdir check %t/range.toml 2>&1 | FileCheck %s --check-prefix=RANGE
+# RUN: sed -e 's/^electrostatics    = "CUTOFF"/&\nreaction_field_dielectric = 78.5/' %t/plain.toml > %t/stray.toml
+# RUN: not mdir check %t/stray.toml 2>&1 | FileCheck %s --check-prefix=STRAY
+
+# CHECK:      MDIR:   Coulomb                    -3130.389970
+# CHECK:      MDIR:   Coulomb excluded           10956.303882
+# CHECK:      MDIR:   Coulomb self              -11017.441847
+
+# PYTHON:      Coulomb -3130.389970
+# PYTHON-NEXT: Coulomb excluded 10956.303882
+# PYTHON-NEXT: Coulomb self -11017.441847
+# PYTHON-NEXT: forces against differences of the energy: ok
+
+# CONDUCTOR:      MDIR:   Coulomb                    -3131.239595
+# CONDUCTOR:      MDIR:   Coulomb excluded           11025.847183
+# CONDUCTOR:      MDIR:   Coulomb self              -11087.616636
+
+# PYTHON-CONDUCTOR:      Coulomb -3131.239595
+# PYTHON-CONDUCTOR-NEXT: Coulomb excluded 11025.847183
+# PYTHON-CONDUCTOR-NEXT: Coulomb self -11087.616636
+# PYTHON-CONDUCTOR-NEXT: forces against differences of the energy: ok
+
+# MISSING: expected 'reaction_field_dielectric' with 'electrostatics = "REACTION_FIELD"': the relative permittivity beyond the cutoff, or 0 for a conductor
+# RANGE: 'reaction_field_dielectric' is 1 or more, or 0 for a conductor
+# STRAY: 'reaction_field_dielectric' is for 'electrostatics = "REACTION_FIELD"'
+
+#--- run.toml
+[input]
+topology    = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+[output]
+energy_interval = 0
+checkpoint = "plain.h5"
+checkpoint_interval = 1
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "CUTOFF"
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 1e-9
+steps      = 1
+[ensemble]
+ensemble    = "NVE"
+temperature = 0.0
+[boundary]
+type = "PERIODIC"
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- end

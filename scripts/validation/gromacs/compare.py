@@ -33,6 +33,9 @@ pairs = [(["bonds"], ["Bond"]),
           ["Proper Dih.", "Per. Imp. Dih.", "Improper Dih."]),
          (["Lennard-Jones 1-4"], ["LJ-14"]), (["Coulomb 1-4"], ["Coulomb-14"]),
          (["Lennard-Jones"], ["LJ (SR)"]), (["dispersion"], ["Disper. corr."]),
+         # The reaction field: GROMACS has the excluded pairs and the self
+         # term in Coulomb (SR) (D140).
+         (["Coulomb", "Coulomb excluded", "Coulomb self"], ["Coulomb (SR)"]),
          (["CMAP"], ["CMAP Dih."]),
          # Dihedrals of Ryckaert and Bellemans and Fourier, which MDIR takes
          # as terms given by expressions (D136) and GROMACS as one term.

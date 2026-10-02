@@ -10,6 +10,8 @@ energy_interval = 0
 [energy]
 cutoff            = 9.0
 pairlist_distance = 10.0
+electrostatics    = "REACTION_FIELD"
+reaction_field_dielectric = 78.5
 
 [constraints]
 hydrogen_bonds = false

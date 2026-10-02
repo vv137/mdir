@@ -8,9 +8,9 @@
 # Needs tleap of AmberTools and gmx of GROMACS on PATH or in ENGINES/bin,
 # and mdir in MDIR (default: ~/build/mdir/bin/mdir). The energies of
 # GROMACS are those of a run of zero steps with single.mdp: flexible water
-# (-DFLEXIBLE), Lennard-Jones cut at 0.9 nm with no shift, and the
-# correction for the dispersion. Coulomb (SR) is not compared: GROMACS has
-# no plain cutoff for it.
+# (-DFLEXIBLE), Lennard-Jones cut at 0.9 nm with no shift, the correction
+# for the dispersion, and the reaction field with a permittivity of 78.5
+# beyond the cutoff (D140).
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 work=${1:?usage: run.sh <work directory>}

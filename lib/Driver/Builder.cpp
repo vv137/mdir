@@ -488,6 +488,21 @@ struct Coupled {
 
 } // namespace
 
+/// The constants of the reaction field at the cutoff r_c, in nm (D140): k,
+/// with which the field adds f q q k r² to a pair, and c, with which the
+/// potential f q q (1/r + k r² − c) is 0 at r_c [Barker1973, Tironi1995].
+/// With the relative permittivity ε beyond the cutoff,
+/// k = (ε − 1) / ((2ε + 1) r_c³); a conductor, ε = 0 in the control file,
+/// has the limit 1 / (2 r_c³).
+static std::pair<double, double> getReactionField(const Control &control) {
+  double rc = control.cutoffDistance * units::length;
+  double epsilon = control.reactionFieldDielectric;
+  double k = epsilon == 0.0
+                 ? 1.0 / (2.0 * rc * rc * rc)
+                 : (epsilon - 1.0) / ((2.0 * epsilon + 1.0) * rc * rc * rc);
+  return {k, 1.0 / rc + k * rc * rc};
+}
+
 /// The attribute of an md.sum_relation that truncates its energy at the
 /// cutoff as `control` says; the power force switch is for the
 /// Lennard-Jones of a topology only, and the reader rejects it elsewhere.
@@ -1174,6 +1189,19 @@ llvm::Error Builder::collectTopology() {
   if (control.pme)
     if (llvm::Error error = collectPME())
       return error;
+  // The reaction field (D140): its self term, −c f Σ q² / 2, which with
+  // the terms of the excluded pairs makes the field act on every pair of
+  // charges within the cutoff, those of one molecule as well.
+  if (control.reactionField) {
+    double squares = 0.0;
+    for (double q : topology.charges)
+      squares += q * q;
+    double self =
+        -0.5 * getReactionField(control).second * coulombInternal * squares;
+    program.reactionField = true;
+    program.coulombConstantEnergy = self;
+    program.coulombSelfEnergy = self;
+  }
 
   // The correction for the dispersion (Section 7.2 of design-m1.md): N²
   // times the mean of C6 over the pairs of distinct particles that are not
@@ -1364,9 +1392,9 @@ llvm::Error Builder::collectPME() {
   double background =
       -coulombInternal * M_PI * net * net / (2.0 * volume * beta * beta);
   program.pme = true;
-  program.pmeConstantEnergy = self + background;
-  program.pmeSelfEnergy = self;
-  program.pmeConstantVirial = 3.0 * background;
+  program.coulombConstantEnergy = self + background;
+  program.coulombSelfEnergy = self;
+  program.coulombConstantVirial = 3.0 * background;
   program.pmeBeta = beta;
   for (int k = 0; k != 3; ++k)
     program.pmeGrid[k] = grid[k];
@@ -1757,6 +1785,18 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
           kernel = "%shifted";
         }
         os << "    %coulomb = arith.mulf %fqq, " << kernel << " : f64\n";
+      } else if (program.reactionField) {
+        // f q q (1/r + k r² − c), 0 at the cutoff (D140).
+        auto [k, c] = getReactionField(control);
+        os << "    %one = arith.constant 1.0 : f64\n"
+           << "    %krf = arith.constant " << formatReal(k) << " : f64\n"
+           << "    %crf = arith.constant " << formatReal(c) << " : f64\n"
+           << "    %inverse = arith.divf %one, %r : f64\n"
+           << "    %rr = arith.mulf %r, %r : f64\n"
+           << "    %field = arith.mulf %krf, %rr : f64\n"
+           << "    %near = arith.addf %inverse, %field : f64\n"
+           << "    %rf = arith.subf %near, %crf : f64\n"
+           << "    %coulomb = arith.mulf %fqq, %rf : f64\n";
       } else {
         os << "    %coulomb = arith.divf %fqq, %r : f64\n";
       }
@@ -1789,6 +1829,33 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
        << "    %erf = math.erf %br : f64\n"
        << "    %shielded = arith.divf %erf, %r : f64\n"
        << "    %e = arith.mulf %fqq, %shielded : f64\n"
+       << "    md.yield %e : f64\n"
+       << "  } : !rel_excluded, !vec -> f64\n";
+    add("excluded");
+  }
+  if (program.reactionField && (terms & CoulombExcluded) &&
+      has("excluded")) {
+    // The field acts on the excluded pairs within the cutoff as well:
+    // f q_i q_j (k r² − c), as GROMACS has it (D140).
+    auto [k, c] = getReactionField(control);
+    os << "  %u_excluded = md.sum_tuples %r_excluded, %x, %cell coordinates("
+          "distance(0, 1))\n"
+       << "      gather(%p_q : !real) {\n"
+       << "  ^bb0(%r: f64, %q_i: f64, %q_j: f64):\n"
+       << "    %f = arith.constant " << formatReal(coulombInternal)
+       << " : f64\n"
+       << "    %krf = arith.constant " << formatReal(k) << " : f64\n"
+       << "    %crf = arith.constant " << formatReal(c) << " : f64\n"
+       << "    %rc = arith.constant " << formatReal(cutoff) << " : f64\n"
+       << "    %zero = arith.constant 0.0 : f64\n"
+       << "    %qq = arith.mulf %q_i, %q_j : f64\n"
+       << "    %fqq = arith.mulf %f, %qq : f64\n"
+       << "    %rr = arith.mulf %r, %r : f64\n"
+       << "    %field = arith.mulf %krf, %rr : f64\n"
+       << "    %rf = arith.subf %field, %crf : f64\n"
+       << "    %all = arith.mulf %fqq, %rf : f64\n"
+       << "    %inside = arith.cmpf olt, %r, %rc : f64\n"
+       << "    %e = arith.select %inside, %all, %zero : f64\n"
        << "    md.yield %e : f64\n"
        << "  } : !rel_excluded, !vec -> f64\n";
     add("excluded");
@@ -5610,13 +5677,13 @@ void Builder::emitEntry() {
         double bar = 1.01325;
         double volume = system.box[0] * system.box[1] * system.box[2];
         double constant = (program.dispersionVirial +
-                           program.pmeConstantVirial) *
+                           program.coulombConstantVirial) *
                           volume;
         // The energies of the same terms times the volume (the self term of
         // particle mesh Ewald does not depend on it), for the exact work.
         double energyConstant =
-            (program.dispersionEnergy + program.pmeConstantEnergy -
-             program.pmeSelfEnergy) *
+            (program.dispersionEnergy + program.coulombConstantEnergy -
+             program.coulombSelfEnergy) *
             volume;
         os << "  %baro_target = arith.constant "
            << formatReal(control.pressure * bar) << " : f64\n"

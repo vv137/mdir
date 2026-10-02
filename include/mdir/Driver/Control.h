@@ -159,6 +159,11 @@ struct Control {
   /// or that of Essmann et al. alone, as GROMACS has it
   /// (docs/pme-m1.md, Section 1.1).
   bool pmeOptimal = false;
+  /// The reaction field beyond the cutoff in place of particle mesh Ewald
+  /// (D140), with the relative permittivity of the medium beyond it; 0
+  /// for a conductor.
+  bool reactionField = false;
+  double reactionFieldDielectric = 0.0;
 
   DispersionCorrection topologyDispersion =
       DispersionCorrection::EnergyPressure;

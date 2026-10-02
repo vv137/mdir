@@ -111,13 +111,16 @@ struct Program {
   double dispersionEnergy = 0.0;
   double dispersionVirial = 0.0;
 
-  /// Particle mesh Ewald: whether the program has it, and the energy of
-  /// the self term and of the background of a net charge, in kJ/mol, with
-  /// what the background adds to the trace of the virial.
+  /// Particle mesh Ewald or the reaction field: whether the program has
+  /// it, and the constant energy of its Coulomb terms in kJ/mol: for
+  /// particle mesh Ewald the self term and the background of a net charge,
+  /// with what the background adds to the trace of the virial; for the
+  /// reaction field its self term (D140).
   bool pme = false;
-  double pmeConstantEnergy = 0.0;
-  double pmeConstantVirial = 0.0;
-  double pmeSelfEnergy = 0.0;
+  bool reactionField = false;
+  double coulombConstantEnergy = 0.0;
+  double coulombConstantVirial = 0.0;
+  double coulombSelfEnergy = 0.0;
   /// β in nm⁻¹ and the numbers of points of the grid, for the log.
   double pmeBeta = 0.0;
   int64_t pmeGrid[3] = {0, 0, 0};

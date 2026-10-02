@@ -124,10 +124,11 @@ struct Output {
   /// Particle mesh Ewald: the self term and the background of a net
   /// charge, which the program does not compute.
   bool pme = false;
-  double pmeConstantEnergy = 0.0;
-  double pmeConstantVirial = 0.0;
+  bool reactionField = false;
+  double coulombConstantEnergy = 0.0;
+  double coulombConstantVirial = 0.0;
   /// Of which the self term, which does not depend on the volume.
-  double pmeSelfEnergy = 0.0;
+  double coulombSelfEnergy = 0.0;
 
   /// The constants at the volume `volume`.
   double getDispersionEnergy() const {
@@ -136,12 +137,12 @@ struct Output {
   double getDispersionVirial() const {
     return dispersionVirial * firstVolume / volume;
   }
-  double getPMEConstantEnergy() const {
-    return pmeSelfEnergy +
-           (pmeConstantEnergy - pmeSelfEnergy) * firstVolume / volume;
+  double getCoulombConstantEnergy() const {
+    return coulombSelfEnergy +
+           (coulombConstantEnergy - coulombSelfEnergy) * firstVolume / volume;
   }
-  double getPMEConstantVirial() const {
-    return pmeConstantVirial * firstVolume / volume;
+  double getCoulombConstantVirial() const {
+    return coulombConstantVirial * firstVolume / volume;
   }
 
   /// Whether the velocities are coupled, and the energy that the coupling

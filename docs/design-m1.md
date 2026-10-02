@@ -940,7 +940,7 @@ output of `mdir template amber` (`scripts/paper/check-appendix.sh`).
 |---|---|
 | `[input]` | `topology`, `coordinates`, `format`, `checkpoint`, `include_paths` (directories of includes of GROMACS), `defines` (macros, as `-D` of grompp) |
 | `[output]` | `trajectory`, `checkpoint`, `energy_interval`, `trajectory_interval`, `checkpoint_interval` |
-| `[energy]` | `cutoff`, `switch_distance`, `pairlist_distance`, `pruned_distance`, `rebuild_interval`, `lennard_jones_modifier`, `coulomb_modifier` (`"NONE"`, `"POTENTIAL_SHIFT"`), `dispersion_correction`, `electrostatics` (`"CUTOFF"`, `"PME"`), `[[energy.pair]]` (with a topology over its pairs, with `groups`, D137), `[[energy.function]]` (D138), `[[energy.bond]]`, `[[energy.angle]]`, `[[energy.dihedral]]` over particles or the centers of groups (D136, D139), and for a system without a topology `[[energy.type]]`, `[[energy.pair_override]]` |
+| `[energy]` | `cutoff`, `switch_distance`, `pairlist_distance`, `pruned_distance`, `rebuild_interval`, `lennard_jones_modifier`, `coulomb_modifier` (`"NONE"`, `"POTENTIAL_SHIFT"`), `dispersion_correction`, `electrostatics` (`"CUTOFF"`, `"PME"`, `"REACTION_FIELD"` with `reaction_field_dielectric`, D140), `[[energy.pair]]` (with a topology over its pairs, with `groups`, D137), `[[energy.function]]` (D138), `[[energy.bond]]`, `[[energy.angle]]`, `[[energy.dihedral]]` over particles or the centers of groups (D136, D139), and for a system without a topology `[[energy.type]]`, `[[energy.pair_override]]` |
 | `[pme]` | `tolerance`, `beta`, `max_spacing`, `grid`, `order` (4, 6, 8), `influence` (`"SPME"`, `"OPTIMAL"`) |
 | `[dynamics]` | `integrator`, `time_step`, `steps`, `seed`, `center_of_mass_interval` |
 | `[minimize]` | `method`, `steps`, `initial_step` |
@@ -1002,8 +1002,10 @@ ships (`scripts/validation/gromacs/run.sh`):
 | oplsaa | Agree to 4.3 × 10⁻⁶ or better, each term; the dihedrals of Ryckaert and Bellemans, terms given by an expression (D136), to 1.6 × 10⁻⁶ |
 | gromos54a7 | Rejected: bonds of function 2 |
 
-Coulomb (SR) is not compared: GROMACS has no plain cutoff for it, only
-a reaction field.
+Coulomb (SR) is compared with MDIR's reaction field at a permittivity of
+78.5 (D140): `Coulomb`, `Coulomb excluded`, and `Coulomb self` agree with
+it within 2.4 × 10⁻⁵ for every force field, and with OpenMM in double
+precision within 1.5 × 10⁻⁹.
 
 The two readers can be compared with each other when the same system is
 in both formats. ParmEd converts a topology of Amber to the format of

@@ -764,9 +764,10 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   output.dispersionEnergy = program->dispersionEnergy;
   output.dispersionVirial = program->dispersionVirial;
   output.pme = program->pme;
-  output.pmeConstantEnergy = program->pmeConstantEnergy;
-  output.pmeConstantVirial = program->pmeConstantVirial;
-  output.pmeSelfEnergy = program->pmeSelfEnergy;
+  output.reactionField = program->reactionField;
+  output.coulombConstantEnergy = program->coulombConstantEnergy;
+  output.coulombConstantVirial = program->coulombConstantVirial;
+  output.coulombSelfEnergy = program->coulombSelfEnergy;
   output.system = &*system;
   if (control->framePeriod > 0) {
     // The cell in Å, from the system: a topology gives it with the
