@@ -994,11 +994,11 @@ list (`verlet-buffer-tolerance` 0.005 kJ/mol/ps per atom):
 
 | Ensemble | MDIR, ns/day | GROMACS, ns/day | MDIR / GROMACS | Energy changed by: MDIR | GROMACS |
 |---|---|---|---|---|---|
-| NVE | 585.1 ± 0.6 | 842.0 ± 2.2 with nstlist 80; 689.7 with the nstlist 10 that it keeps at constant energy | 69.5 ± 0.2% | 1.3e-5 to 6.0e-5 | 1.0e-4 to 1.4e-4 |
-| NPT | 549.2 ± 0.4 | 862.8 ± 3.4; 771.8 at a tolerance of 5e-5 | 63.6 ± 0.2% | 6.2e-5 to 1.4e-4 (conserved energy) | 6.5e-3 to 7.2e-3 (conserved energy; 5.3e-3 to 6.9e-3 at tolerances of 5e-4 and 5e-5) |
+| NVE | 605.2 ± 0.4 | 842.9 ± 2.9 with nstlist 80 (two repeats; the third lost 0.4 s to writing its output); 689.7 with the nstlist 10 that it keeps at constant energy | 71.8 ± 0.2% | 2.4e-5 to 4.4e-5 | 1.7e-4 to 2.0e-4 |
+| NPT | 571.5 ± 0.7 | 865.5 ± 4.4; 771.8 at a tolerance of 5e-5 | 66.0 ± 0.4% | 1.6e-6 to 1.2e-4 (conserved energy) | 6.7e-3 to 7.1e-3 (conserved energy; 5.3e-3 to 6.9e-3 at tolerances of 5e-4 and 5e-5) |
 
 The rates are means and sample standard deviations over three repeats
-(2026-10-02, each program after the other); the other settings of GROMACS
+(2026-10-02, at D118, each program after the other); the other settings of GROMACS
 are from one run each.
 
 MDIR's conserved energy at constant pressure moved by −228 kcal/mol/ns

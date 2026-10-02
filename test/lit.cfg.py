@@ -12,9 +12,12 @@ config.test_exec_root = os.path.join(config.mdir_obj_root, "test")
 config.excludes = ["CMakeLists.txt", "lit.cfg.py", "lit.site.cfg.py.in", "lib", "Inputs"]
 
 # The options of the sanitizers reach the tests of a sanitized build
-# (scripts/build-sanitized.sh).
+# (scripts/build-sanitized.sh), and the choice of the device reaches the
+# tests that run on one: without it they took the first device whatever
+# the shell chose, and shared it with a benchmark there.
 llvm_config.with_system_environment(
-    ["HOME", "TMP", "TEMP", "ASAN_OPTIONS", "UBSAN_OPTIONS"])
+    ["HOME", "TMP", "TEMP", "ASAN_OPTIONS", "UBSAN_OPTIONS",
+     "CUDA_VISIBLE_DEVICES"])
 llvm_config.use_default_substitutions()
 
 config.mdir_tools_dir = os.path.join(config.mdir_obj_root, "bin")

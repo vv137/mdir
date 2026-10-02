@@ -55,8 +55,8 @@ the spreading of PME has (D70), would close the gap.
   sampling was never in question (Section 9.5): the count changes nothing
   in the trajectory.
 - *Slower than GROMACS on a protein in OPC.* On ubiquitin in OPC with a
-  cutoff of 9 Å (Section 10.6) MDIR's rate is 70% of GROMACS's at constant
-  energy and 64% at constant pressure, though its loop over pairs costs
+  cutoff of 9 Å (Section 10.6) MDIR's rate is 72% of GROMACS's at constant
+  energy and 66% at constant pressure, though its loop over pairs costs
   the same as GROMACS's nonbonded kernel and its PME less. GROMACS runs
   PME beside its nonbonded kernel and the bonded terms, the update, and
   the constraints on the host; MDIR runs them in series on the device

@@ -10,7 +10,7 @@ milestone runs all-atom systems from Amber (`prmtop`) and GROMACS (`top`,
 correction for the dispersion, particle mesh Ewald, SHAKE and SETTLE,
 virtual sites, restraints, stochastic velocity rescaling, and stochastic
 cell rescaling, in single, mixed, or double precision. On an RTX 3090 it
-runs every system of the Amber GPU benchmark suite at 102% to 127% of the
+runs every system of the Amber GPU benchmark suite at 103% to 132% of the
 rate of pmemd.cuda. A driver reads a control file and writes a log, a
 trajectory, and checkpoints, from which a run continues exactly. The white
 paper of the first milestone is in [docs/paper/](docs/paper/README.md).

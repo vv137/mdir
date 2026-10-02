@@ -49,7 +49,7 @@ JAC 84–85% (NVE), 63–64% (NPT); FactorIX 60%, 47%; Cellulose 49%, 40%;
 STMV 38%.
 
 The goal was reached on 2026-10-02 (D114): MDIR runs every system of the
-suite at 102% to 127% of the rate of pmemd.cuda (white paper, Table 10.2).
+suite at 102% to 127% of the rate of pmemd.cuda, and at 103% to 132% after D118 (white paper, Table 10.2).
 The rates of the first comparison, kept for the record (2026-09-30,
 ns/day, RTX 3090):
 

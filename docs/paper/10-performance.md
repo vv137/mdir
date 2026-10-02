@@ -6,8 +6,8 @@
 
 | Item | MDIR | pmemd.cuda |
 |---|---|---|
-| Program | `mdir` at D114, built with LLVM and MLIR 23.1.2, PTX compiled by the driver at load | pmemd.cuda of Amber 26, SPFP [[LeGrand2013]](references.md#legrand2013), built with CUDA 13 |
-| Device | One NVIDIA RTX 3090 (GPU 0), power capped at 300 W, driver 595.84; the node's other three GPUs ran other users' jobs | The same |
+| Program | `mdir` at D118, built with LLVM and MLIR 23.1.2, PTX compiled by the driver at load | pmemd.cuda of Amber 26, SPFP [[LeGrand2013]](references.md#legrand2013), built with CUDA 13 |
+| Device | One NVIDIA RTX 3090 (GPU 0), power capped at 300 W, driver 595.84; the node's other GPUs ran other jobs, among them, during the third repeat of pmemd.cuda, runs of this work on GPU 1 | The same |
 | Inputs | The systems of the Amber 24 GPU benchmark suite (PME), each topology and restart file written again by ParmEd in the current Amber format (`scripts/benchmarks/amber/bench.py`) | The inputs of the suite as they are (`mdin.GPU`, `prmtop`, `inpcrd`) |
 | Model | Cutoff 8 Å; PME with $\operatorname{erfc}(\beta r_c) = 10^{-6}$ at constant energy and $10^{-5}$ at constant pressure, grid spacing at most 1 Å, order 4; SHAKE on the bonds of hydrogen and rigid water; the correction for the dispersion | The same, by the inputs |
 | Couplings (NPT) | Stochastic velocity rescaling [[Bussi2007]](references.md#bussi2007) and stochastic cell rescaling [[Bernetti2020]](references.md#bernetti2020), every 25 steps, $\tau_T$ = 1 ps, $\tau_P$ = 2 ps | Berendsen's thermostat [[Berendsen1984]](references.md#berendsen1984), $\tau$ = 10 ps; Monte Carlo barostat every 100 steps |
@@ -34,23 +34,20 @@ over three repeats. "Energy changed by" is the change of the total
 energy (NVE) or of the conserved energy (NPT) between the first and the
 last row of MDIR's log, relative to its value. The counts are the mean
 number of steps between builds of the outer list and between prunings of
-the inner list. The rates are from three repeats; the change of the
-energy, the counts, and the time of compilation from the last two, whose
-outputs were kept. The changes at constant pressure are from two later
-runs with the count of the work of D116, whose rates were within 2% of
-those of the table and whose counts were the same.*
+the inner list. The rates, the changes of the energy, the counts, and the
+times of compilation are from the same three repeats, at D118.*
 
 | System | Atoms | MDIR, ns/day | pmemd.cuda, ns/day | MDIR / pmemd.cuda | Energy changed by (MDIR) | Builds, prunings: every | Compiled in |
 |---|---|---|---|---|---|---|---|
-| `jac_nve` | 23,558 | 770.9 ± 3.8 | 615.9 ± 1.7 | 125.2 ± 0.4% | 1.0e-04 to 1.3e-04 | 16.3, 2.8 | 10–11 s |
-| `jac_nve_4fs` | 23,558 | 1452.6 ± 6.3 | 1147.0 ± 3.7 | 126.6 ± 0.1% | 3.1e-03 to 3.4e-03 | 10.7, 3.5 | 10–11 s |
-| `jac_npt` | 23,558 | 703.2 ± 3.4 | 583.4 ± 1.5 | 120.5 ± 0.6% | 3.0e-04 to 4.2e-04 | 16.4, 2.8 | 22 s |
-| `jac_npt_4fs` | 23,558 | 1365.2 ± 5.7 | 1127.5 ± 2.8 | 121.1 ± 0.8% | 6.5e-04 to 6.8e-04 | 12.7, 4.1 | 22 s |
-| `factorix_nve` | 90,906 | 284.3 ± 1.2 | 262.5 ± 0.1 | 108.3 ± 0.4% | 5.6e-06 to 9.5e-06 | 14.9, 2.7 | 10 s |
-| `factorix_npt` | 90,906 | 267.1 ± 1.3 | 250.2 ± 0.4 | 106.8 ± 0.6% | 2.6e-04 to 3.0e-04 | 14.8, 2.6 | 22 s |
-| `cellulose_nve` | 408,609 | 62.4 ± 0.3 | 61.1 ± 0.0 | 102.1 ± 0.5% | 6.4e-05 to 6.5e-05 | 13.7, 2.2 | 9 s |
-| `cellulose_npt` | 408,609 | 60.0 ± 0.2 | 58.1 ± 0.1 | 103.3 ± 0.3% | 1.2e-04 to 1.3e-04 | 13.8, 2.2 | 18–19 s |
-| `stmv_npt_4fs` | 1,067,095 | 41.4 ± 0.1 | 37.4 ± 0.1 | 110.6 ± 0.3% | 6.4e-05 to 8.7e-05 | 6.7, 2.1 | 22–23 s |
+| `jac_nve` | 23,558 | 816.9 ± 0.8 | 621.0 ± 1.2 | 131.5 ± 0.4% | 6.9e-05 to 1.5e-04 | 16.4, 2.8 | 11–12 s |
+| `jac_nve_4fs` | 23,558 | 1525.9 ± 2.5 | 1154.6 ± 2.0 | 132.2 ± 0.3% | 3.3e-03 to 3.4e-03 | 10.7, 3.6 | 11–12 s |
+| `jac_npt` | 23,558 | 753.8 ± 1.1 | 588.9 ± 1.4 | 128.0 ± 0.1% | 3.6e-04 to 4.1e-04 | 16.2, 2.8 | 21–22 s |
+| `jac_npt_4fs` | 23,558 | 1454.3 ± 1.0 | 1137.4 ± 3.6 | 127.9 ± 0.5% | 5.6e-04 to 7.6e-04 | 12.7, 4.1 | 21–22 s |
+| `factorix_nve` | 90,906 | 291.6 ± 0.4 | 265.7 ± 0.3 | 109.8 ± 0.1% | 1.8e-06 to 1.9e-05 | 14.8, 2.7 | 11 s |
+| `factorix_npt` | 90,906 | 276.5 ± 0.5 | 252.3 ± 0.5 | 109.6 ± 0.0% | 2.7e-04 to 2.8e-04 | 14.8, 2.7 | 22 s |
+| `cellulose_nve` | 408,609 | 63.3 ± 0.0 | 61.6 ± 0.1 | 102.7 ± 0.2% | 7.5e-05 to 8.1e-05 | 13.8, 2.2 | 9–10 s |
+| `cellulose_npt` | 408,609 | 60.9 ± 0.1 | 58.5 ± 0.0 | 104.0 ± 0.1% | 7.8e-05 to 1.1e-04 | 13.7, 2.2 | 18 s |
+| `stmv_npt_4fs` | 1,067,095 | 42.0 ± 0.1 | 37.5 ± 0.2 | 111.8 ± 0.6% | 4.5e-05 to 7.9e-05 | 6.7, 2.1 | 21–22 s |
 
 ![Rates of MDIR and pmemd.cuda over the Amber suite](figures/suite.png)
 
@@ -60,12 +57,13 @@ ratio of the means above each pair.*
 MDIR is faster than pmemd.cuda on every system of the suite. The margin
 is largest on the smallest system and smallest on Cellulose:
 
-- **JAC** (23,558 atoms; a step of about 225 µs at 2 fs). A step of this
+- **JAC** (23,558 atoms; a step of about 210 µs at 2 fs). A step of this
   size has few warps of work per kernel and many kernels, so what the
   host and the launches cost matters as much as the arithmetic. The
   integration kernel (Section 8.2) does in one launch what took three,
   the flags of the tests reach the host without waiting for the stream
-  (Section 8.3, from 695 to 739 ns/day), and the dual list keeps an
+  (Section 8.3, from 695 to 739 ns/day, and with mapped memory of the
+  host from 771 to 817), and the dual list keeps an
   inner list of reach 8.6 Å, pruned every 2.8 steps, under an outer list
   of 11 Å built every 16, so the loop over pairs reads the pairs within
   8.6 Å rather than within the 10 Å of one list (Section 4.5).
@@ -123,21 +121,26 @@ reaches of 12 and 9.6 Å, within 0.4% of the best of 11 to 12 Å and 9.4 to
 9.8 Å; GROMACS its own list, its nonbonded terms and PME on the GPU, and
 its update on the CPU, which virtual sites need.
 
-*Table 10.3. Ubiquitin in OPC, RTX 3090 at 300 W, mean ± sample standard
-deviation over three repeats, each program after the other on the device.
-"Energy changed by" as in Table 10.2, over 120 ps, the range of the three.
-At constant pressure MDIR counts the work of the barostat from the virial
-of the groups (D116); with the count before it, $-228$ kcal/mol/ns
-(Section 13). The other settings of GROMACS are from one run each.*
+*Table 10.3. Ubiquitin in OPC, RTX 3090 at 300 W, at D118, mean ± sample
+standard deviation over three repeats, each program after the other on
+the device, with nothing else on the host. GROMACS at constant energy over
+two of them: the third gave 789.6 ns/day, having spent 0.45 s writing its
+output against 0.04 s in the other two ("Write traj." of its accounting of
+cycles, a stall of the shared file system). "Energy changed by" as in
+Table 10.2, over 120 ps, the range of the three. At constant pressure MDIR
+counts the work of the barostat from the virial of the groups (D116); with
+the count before it, $-228$ kcal/mol/ns (Section 13). The other settings
+of GROMACS are from one run each, before D118.*
 
 | Ensemble | MDIR, ns/day | GROMACS, ns/day | MDIR / GROMACS | Energy changed by: MDIR | GROMACS |
 |---|---|---|---|---|---|
-| NVE | 585.1 ± 0.6 | 842.0 ± 2.2 (nstlist 80; 689.7 with the nstlist of 10 that it keeps at constant energy) | 69.5 ± 0.2% | $1.3\times10^{-5}$ to $6.0\times10^{-5}$ | $1.0\times10^{-4}$ to $1.4\times10^{-4}$ |
-| NPT | 549.2 ± 0.4 | 862.8 ± 3.4 (771.8 with `verlet-buffer-tolerance` $5\times10^{-5}$) | 63.6 ± 0.2% | $6.2\times10^{-5}$ to $1.4\times10^{-4}$ | $6.5\times10^{-3}$ to $7.2\times10^{-3}$ |
+| NVE | 605.2 ± 0.4 | 842.9 ± 2.9 (nstlist 80; 689.7 with the nstlist of 10 that it keeps at constant energy) | 71.8 ± 0.2% | $2.4\times10^{-5}$ to $4.4\times10^{-5}$ | $1.7\times10^{-4}$ to $2.0\times10^{-4}$ |
+| NPT | 571.5 ± 0.7 | 865.5 ± 4.4 (771.8 with `verlet-buffer-tolerance` $5\times10^{-5}$) | 66.0 ± 0.4% | $1.6\times10^{-6}$ to $1.2\times10^{-4}$ | $6.7\times10^{-3}$ to $7.1\times10^{-3}$ |
 
 *Table 10.4. The device time of a step, NVE, from nsys: MDIR over 20,000
-steps, GROMACS over the 3528 steps that the profile captured. MDIR's
-kernels are sorted by their kind.*
+steps before D118, GROMACS over the 3528 steps that the profile captured.
+MDIR's kernels are sorted by their kind. D118 changed none of them; it
+took the time the device stood idle in a step from 49 to 29 µs.*
 
 | Part | MDIR, µs | GROMACS, µs |
 |---|---|---|
@@ -157,10 +160,10 @@ constraints on the 64 threads of the host. MDIR runs every part on one
 stream; its loops over particles and over tuples and its builds and
 prunings take 123 µs of the device in a step, and the host's time between
 its launches 48 µs of the 310. Its own second stream for the reciprocal
-sum (D81, D87), tried on this system, gives 580.8 ns/day against 584.0
-without. On JAC, with three sites per water and a cutoff of 8 Å, the same
+sum (D81, D87), tried on this system, gives 597 ns/day against 609
+without (D118). On JAC, with three sites per water and a cutoff of 8 Å, the same
 structure is 25% faster than pmemd.cuda (Table 10.2); on this system its
-rate is 64% to 70% of GROMACS's, and the measurements place the
+rate is 66% to 72% of GROMACS's, and the measurements place the
 difference outside the loop over pairs. GROMACS's conserved energy at
 constant pressure changed by $5\times10^{-3}$ to $7\times10^{-3}$ at every
 tolerance of its buffer that was tried ($5\times10^{-3}$, $5\times10^{-4}$,
