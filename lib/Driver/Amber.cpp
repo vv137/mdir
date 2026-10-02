@@ -165,6 +165,23 @@ static int inferAtomicNumber(double mass, StringRef name) {
   return best;
 }
 
+/// The phase of a dihedral as Amber takes it from a topology, which holds
+/// it to 8 digits (3.141594 for π in older files): a phase within 10⁻³ of
+/// ±π is ±π, and one whose cosine or sine is below 10⁻⁶ in magnitude has
+/// that cosine or sine 0.
+static double snapPhase(double phase) {
+  if (std::fabs(phase - M_PI) < 1e-3)
+    phase = M_PI;
+  else if (std::fabs(phase + M_PI) < 1e-3)
+    phase = -M_PI;
+  double c = std::cos(phase), s = std::sin(phase);
+  if (std::fabs(c) < 1e-6)
+    c = 0.0;
+  if (std::fabs(s) < 1e-6)
+    s = 0.0;
+  return std::atan2(s, c);
+}
+
 llvm::Error Reader::split(StringRef text) {
   llvm::SmallVector<StringRef> lines;
   text.split(lines, '\n');
@@ -701,6 +718,7 @@ llvm::Error Reader::readTerms(Topology &topology,
       if (type < 1 || type > numTypes)
         return fail("a dihedral type of " + flag + " is out of range");
       dihedral.improper = entry[3] < 0;
+      long last = type;
       for (long term = type;; ++term) {
         if (term > numTypes)
           return fail("the last dihedral type has a negative periodicity, "
@@ -712,20 +730,23 @@ llvm::Error Reader::readTerms(Topology &topology,
                       show(dihedralN[term - 1]));
         dihedral.force = dihedralK[term - 1] * kjPerKcal;
         dihedral.n = static_cast<int>(periodicity);
-        dihedral.phase = dihedralPhase[term - 1];
+        dihedral.phase = snapPhase(dihedralPhase[term - 1]);
         topology.dihedrals.push_back(dihedral);
+        last = term;
         if (dihedralN[term - 1] >= 0.0)
           break;
       }
 
-      // The pair three bonds apart, with the factors of this entry.
-      if (entry[2] < 0 || entry[3] < 0)
+      // The pair three bonds apart, with the factors of the last type of
+      // the entry, the first of positive periodicity; a type of periodicity
+      // 0 carries none, as in Amber.
+      if (entry[2] < 0 || entry[3] < 0 || dihedralN[last - 1] == 0.0)
         continue;
-      double e = scee[type - 1], v = scnb[type - 1];
+      double e = scee[last - 1], v = scnb[last - 1];
       if (e == 0.0 || v == 0.0)
         return fail("a dihedral that carries a 1-4 pair has a factor of 0 "
                     "in SCEE_SCALE_FACTOR or SCNB_SCALE_FACTOR (type " +
-                    llvm::Twine(type) + ")");
+                    llvm::Twine(last) + ")");
       unsigned i = dihedral.i, l = dihedral.l;
       if (!pairs14.insert({std::min(i, l), std::max(i, l)}).second)
         return fail("the 1-4 pair of atoms " + llvm::Twine(i + 1) + " and " +
@@ -755,10 +776,33 @@ llvm::Error Reader::readTerms(Topology &topology,
   if (llvm::Error error = readCMaps(topology))
     return error;
 
-  // The exclusions of a periodic run: the members of the bonds, the ends of
-  // the angles, and the ends of every dihedral. An extra point is excluded
-  // from its owner and from what its owner is excluded from, as sander
-  // rebuilds the exclusions (design-m1.md, Section 19).
+  // Without extra points, the exclusions are those of the file, as Amber
+  // takes them. With extra points Amber builds them again: the members of
+  // the bonds, the ends of the angles, and the ends of every dihedral, and
+  // an extra point is excluded from its owner and from what its owner is
+  // excluded from (design-m1.md, Section 19).
+  if (topology.virtualSites.empty()) {
+    std::set<std::pair<unsigned, unsigned>> listed;
+    size_t next = 0;
+    for (size_t i = 0, e = numExcluded.size(); i != e; ++i) {
+      for (long n = 0; n != numExcluded[i]; ++n, ++next) {
+        if (next >= excludedList.size())
+          return fail("EXCLUDED_ATOMS_LIST is shorter than "
+                      "NUMBER_EXCLUDED_ATOMS says");
+        long j = excludedList[next];
+        if (j == 0)
+          continue;
+        if (j < 1 || j > static_cast<long>(topology.getNumParticles()) ||
+            static_cast<size_t>(j - 1) == i)
+          return fail("EXCLUDED_ATOMS_LIST names the atom " + llvm::Twine(j) +
+                      " for the atom " + llvm::Twine(i + 1));
+        unsigned a = i, b = j - 1;
+        listed.insert({std::min(a, b), std::max(a, b)});
+      }
+    }
+    topology.exclusions.assign(listed.begin(), listed.end());
+    return llvm::Error::success();
+  }
   std::vector<std::vector<unsigned>> extras(topology.getNumParticles());
   for (const Topology::VirtualSite &site : topology.virtualSites)
     extras[site.i].push_back(site.site);
@@ -968,8 +1012,9 @@ llvm::Error Reader::checkExclusions(const Topology &topology) {
       if (!known.count({std::min(a, b), std::max(a, b)}))
         return fail("EXCLUDED_ATOMS_LIST excludes the atoms " +
                     llvm::Twine(i + 1) + " and " + llvm::Twine(j) +
-                    ", which no bond, angle, or dihedral joins; a periodic "
-                    "run of Amber would not exclude them");
+                    ", which no bond, angle, or dihedral joins; Amber builds "
+                    "the exclusions of a topology with extra points again "
+                    "and would not exclude them");
     }
   }
   return llvm::Error::success();

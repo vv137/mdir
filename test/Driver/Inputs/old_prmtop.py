@@ -1,17 +1,25 @@
 """Writes three topologies of Amber from one, each with the same dihedral of
-two terms, the second term (k = 0.5 kcal/mol, n = 3, phase 0) added to the
-first dihedral without hydrogen:
+two terms, the second term (k = 50 kcal/mol, n = 2, phase π) added to the
+second dihedral without hydrogen (C-N-CA-CB of the dipeptide, at 60°, which
+carries a 1-4 pair):
 
   chained.prmtop  the term given by the convention of a negative
                   periodicity: the first term's type, its periodicity
-                  negated, followed by the second term's type;
+                  negated and its SCEE 99, followed by the second term's
+                  type, whose phase is written 3.141594, as older files
+                  write π, and whose SCEE is the first term's;
   old.prmtop      the same in the format before Amber 7, without %FLAG
                   lines, without the sections that format lacks;
   explicit.prmtop the second term as an entry of its own, whose negative
-                  third index leaves its 1-4 pair out.
+                  third index leaves its 1-4 pair out, with the phase π to
+                  the digits of the format.
+
+The three agree if a phase within 1e-3 of π is π and a chain takes the
+factors of its 1-4 pair from its last type.
 
     old_prmtop.py topology.prmtop DIRECTORY"""
 
+import math
 import os
 import sys
 
@@ -51,7 +59,8 @@ k, n, phase = (reals(f) for f in ("DIHEDRAL_FORCE_CONSTANT",
                                   "DIHEDRAL_PERIODICITY", "DIHEDRAL_PHASE"))
 scee, scnb = reals("SCEE_SCALE_FACTOR"), reals("SCNB_SCALE_FACTOR")
 dihedrals = ints("DIHEDRALS_WITHOUT_HYDROGEN")
-t = dihedrals[4]
+ENTRY = 5 * 1
+t = dihedrals[ENTRY + 4]
 
 
 def write_new(path, p, k, n, phase, scee, scnb, dihedrals):
@@ -86,10 +95,11 @@ def block(items, form):
 # followed by the second term.
 pc = list(p)
 pc[17] += 2
-kc, nc, phc = k + [k[t - 1], 0.5], n + [-n[t - 1], 3.0], phase + [phase[t - 1], 0.0]
-sc, sn = scee + [scee[t - 1]] * 2, scnb + [scnb[t - 1]] * 2
+kc, nc = k + [k[t - 1], 50.0], n + [-n[t - 1], 2.0]
+phc = phase + [phase[t - 1], 3.141594]
+sc, sn = scee + [99.0, scee[t - 1]], scnb + [scnb[t - 1]] * 2
 dc = list(dihedrals)
-dc[4] = len(k) + 1
+dc[ENTRY + 4] = len(k) + 1
 write_new(os.path.join(out, "chained.prmtop"), pc, kc, nc, phc, sc, sn, dc)
 
 # Explicit: the second term as its own entry, without a 1-4 pair.
@@ -97,10 +107,11 @@ pe = list(p)
 pe[17] += 1
 pe[7] += 1
 pe[14] += 1
-de = list(dihedrals) + [dihedrals[0], dihedrals[1], -abs(dihedrals[2]),
-                        dihedrals[3], len(k) + 1]
-write_new(os.path.join(out, "explicit.prmtop"), pe, k + [0.5], n + [3.0],
-          phase + [0.0], scee + [scee[t - 1]], scnb + [scnb[t - 1]], de)
+de = list(dihedrals) + [dihedrals[ENTRY], dihedrals[ENTRY + 1],
+                        -abs(dihedrals[ENTRY + 2]), dihedrals[ENTRY + 3],
+                        len(k) + 1]
+write_new(os.path.join(out, "explicit.prmtop"), pe, k + [50.0], n + [2.0],
+          phase + [math.pi], scee + [scee[t - 1]], scnb + [scnb[t - 1]], de)
 
 # The format before Amber 7: a title, 30 pointers in lines of 12, and the
 # sections in their fixed order, from the chained topology.

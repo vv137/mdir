@@ -38,7 +38,7 @@
 # SAME: the states are identical
 # SIDE: md_exec.reciprocal {{.*}} {md_exec.side}
 # SIDE: md_exec.join
-# DOUBLE: INFO:       500         0.5000 {{ *}}-2811.6418 {{ *}}-3754.0064 {{ *}}942.3645
+# DOUBLE: INFO:       500         0.5000 {{ *}}-2811.6418 {{ *}}-3754.0060 {{ *}}942.3642
 # DOUBLE: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
 # MIXED:  MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
 

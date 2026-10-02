@@ -790,7 +790,7 @@ for the dispersion follows the volume.
 | The readers | MDIR has readers of its own. They accept what the engines accept and share no code with them. The engines and their tools are under the GPL and the LGPL; their behavior is learned from their documentation and their code, and written down as a specification, from which the readers are written. |
 | What a reader hands on | A description of the system that does not depend on the format: particles, types, tuple sets with their parameters, the table of pairs of types, exclusions, pairs three bonds apart, constraints, the cell. A format is a reader more. |
 | Units and forms | A reader converts to the units and the forms of [conventions.md](conventions.md) (D62): for Amber, twice the force constants of bonds and angles, the charges divided by 18.2223, and $\sigma$ and $\varepsilon$ of Lennard-Jones from `ACOEF` and `BCOEF`. The control file stays in Å and kcal/mol (D36). |
-| What is an error | What M1 cannot run: CMAP, 10-12 terms, 12-6-4 terms, polarizability, virtual sites and extra points, cells that are not orthorhombic. Each with the milestone that brings it. |
+| What is an error | What M1 cannot run: 10-12 terms, 12-6-4 terms, polarizability, virtual sites other than those of water of four sites. Each with the milestone that brings it. |
 | Formats of other engines | Planned |
 
 The GROMACS preprocessor and sections are as in the specification of the
@@ -831,6 +831,36 @@ Lennard-Jones of a topology takes `lennard_jones_modifier` in its kernel:
 `POTENTIAL_SHIFT`, `FORCE_SWITCH` (the polynomial of GROMACS), or
 `POWER_FORCE_SWITCH` (VFSWITCH of CHARMM, which also switches the pairs
 three bonds apart).
+
+A topology of Amber is read in either format (D133): with `%FLAG` lines,
+or in the format before Amber 7, a title, 30 pointers in lines of 12, and
+the sections in a fixed order whose lengths the pointers give (a section
+of no items is a blank line), then the solvent pointers, the molecules,
+and the box when IFBOX is set; that format has no NUMEXTRA, no SCEE and
+SCNB (1.2 and 2.0), and no atomic numbers (from the masses). The reader
+takes the conventions that pmemd 26 follows, read from its source for
+compatibility:
+
+| Item | Rule |
+|---|---|
+| Negative periodicity | A dihedral whose type has a negative periodicity also has the term of the next type, and so on up to the first type of positive periodicity |
+| Phase | A phase within $10^{-3}$ of $\pm\pi$ is $\pm\pi$; a cosine or sine of the phase below $10^{-6}$ in magnitude is 0. Topologies write $\pi$ as 3.141594 or 3.1415927; JAC's dihedrals are 965.2152 kcal/mol so and 965.2154 without |
+| 1-4 pairs | From the entries with positive third and fourth indices, with SCEE and SCNB of the last type of the entry's chain; a type of periodicity 0 carries none. Two entries of the same pair, or a factor of 0, are errors, where Amber counts the pair twice or drops its Coulomb term |
+| Exclusions | Without extra points those of the file; with them built again from the bonds, the ends of the angles and of every dihedral, an extra point taking those of its owner (Section 19) |
+
+What still differs from pmemd, by design: the cosine of an angle is not
+clamped to $\pm0.999$ (pmemd evaluates an angle within 2.56° of linear at
+that bound); a dihedral whose cross products are below $10^{-3}$ Å² is not
+dropped; a net charge below 0.01 e is not spread over the atoms to make
+the system neutral (Factor IX: $3.1	imes10^{-4}$ e, below the printed
+digits); water is found by its residue and atomic numbers (O, H, H), not
+by the names O, H1, H2 in any order; and on an odd grid the aliasing
+factor of `influence = "OPTIMAL"` takes the principal frequency at the
+index $(N-1)/2$, where pmemd takes $-(N+1)/2$ ([pme-m1.md](pme-m1.md),
+Section 1.1). The Coulomb
+constant, $eta$ from $\operatorname{erfc}(eta r_c)$ rather than
+$\operatorname{erfc}(eta r_c)/r_c$, and the average of the correction
+for the dispersion are conventions of MDIR (Sections 7.2 and 8).
 
 A plain cutoff of the Coulomb term does not conserve the energy: a pair
 of charged particles that crosses the cutoff changes the energy by

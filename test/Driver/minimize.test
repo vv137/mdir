@@ -22,7 +22,7 @@
 # CHECK:      MDIR: 2332 particles, 100 steps of steepest descent
 # CHECK:      INFO:      STEP  POTENTIAL_ENE      RMS_FORCE      MAX_FORCE  MAX_ATOM      STEP_SIZE
 # CHECK:      INFO:         0     -5348.8659         8.6909        51.7726        35       0.100000
-# CHECK-NEXT: INFO:        50     -6587.5294         2.3869        32.3543        24       0.117032
+# CHECK-NEXT: INFO:        50     -6587.5297         2.3872        32.3614        24       0.117032
 # CHECK-NEXT: INFO:       100     [[LAST:-[0-9]+\.[0-9]+]]
 # CHECK:      MDIR: wrote 1 checkpoints to '{{.*}}min.h5'
 # CHECK:      MDIR: the potential energy went from -5348.8659 to [[LAST]] kcal/mol

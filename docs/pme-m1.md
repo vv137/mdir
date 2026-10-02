@@ -68,9 +68,13 @@ the Ewald sum as the grid and the order grow. MDIR takes the one of the
 literature by default.
 
 For a number of points $K$ that is odd, MDIR takes $m$ from $-(K - 1)/2$ to
-$(K - 1)/2$; sander takes the index $(K - 1)/2$ as $m = -(K + 1)/2$ in
-the factor $\lambda$, so that the two differ on odd grids. On even grids they
-agree.
+$(K - 1)/2$; sander and pmemd take the index $(K - 1)/2$ as
+$m = -(K + 1)/2$ in the factor $\lambda$, so that the two differ on odd
+grids: on Cellulose with 270 × 125 × 125 points the electrostatic energy
+of MDIR differs from pmemd's by $1.6\times10^{-6}$ of it and the forces
+by $10^{-3}$ of the rms force, with 270 × 128 × 128 points by
+$2\times10^{-9}$ and $1.5\times10^{-7}$ (`scripts/validation/suite`). On
+even grids they agree. MDIR chooses even grids itself.
 
 ### 1.2 The virial
 

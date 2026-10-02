@@ -1,16 +1,22 @@
 # A topology of the format before Amber 7, which has no %FLAG lines, and the
-# convention of both formats that a dihedral type of negative periodicity
-# continues to the next type: the dihedral has the terms of both. Two of
-# the topologies of the Amber benchmark suite (JAC, Factor IX) are of the
-# old format, and Factor IX gives 2283 terms this way; pmemd 26 gives its
-# dihedrals 2259.1587 kcal/mol at the coordinates of the suite, and the
-# first terms alone 1338.6415 (scripts/validation/suite).
+# conventions of both formats that Amber follows (D133): a dihedral type of
+# negative periodicity continues to the next type, so that the dihedral has
+# the terms of both and one 1-4 pair with the factors of the last type; and
+# a phase within 1e-3 of π is π. Two of the topologies of the Amber
+# benchmark suite (JAC, Factor IX) are of the old format, and Factor IX
+# gives 2283 terms this way; pmemd 26 gives its dihedrals 2259.1587 kcal/mol
+# at the coordinates of the suite, and the first terms alone 1338.6415
+# (scripts/validation/suite). JAC's phases are written 3.141594; snapped,
+# its dihedrals are 965.2152 as pmemd's, unsnapped 965.2154.
 #
-# Inputs/old_prmtop.py adds a term (k = 0.5 kcal/mol, n = 3) to the first
-# dihedral without hydrogen of the dipeptide of amber.test in three ways:
-# chained by a negative periodicity, the same in the old format, and as an
-# entry of its own without a 1-4 pair. All three give the same terms, the
-# dihedrals 1.0 kcal/mol above those of amber.test (9.6440).
+# Inputs/old_prmtop.py adds a term (k = 50 kcal/mol, n = 2, phase π) to the
+# dihedral C-N-CA-CB (60°) of the dipeptide of amber.test in three ways:
+# chained by a negative periodicity, with the SCEE of the first type 99 and
+# the phase written 3.141594; the same in the old format; and as an entry of
+# its own without a 1-4 pair, with the phase π to the digits of the format.
+# All three give the same terms, the dihedrals 75.0003 kcal/mol above those
+# of amber.test (9.6440); unsnapped, the chained term would differ by 6e-5,
+# and with the factors of the first type the Coulomb 1-4 would.
 #
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %python %S/Inputs/old_prmtop.py %S/Inputs/dipeptide/dipeptide.prmtop %t
@@ -28,7 +34,7 @@
 # RUN: FileCheck %s < %t/old.terms
 #
 # A negative periodicity of the last type continues to no type.
-# RUN: %python -c "import sys; t = open(sys.argv[1]).read(); i = t.index('%%FLAG DIHEDRAL_PERIODICITY'); j = t.index('%%FLAG DIHEDRAL_PHASE'); s = t[i:j].rstrip(); k = s.rindex(' 3.0'); open(sys.argv[2], 'w').write(t[:i] + s[:k] + '-3.0' + s[k + 4:] + chr(10) + t[j:])" %t/chained.prmtop %t/last.prmtop
+# RUN: %python -c "import sys; t = open(sys.argv[1]).read(); i = t.index('%%FLAG DIHEDRAL_PERIODICITY'); j = t.index('%%FLAG DIHEDRAL_PHASE'); s = t[i:j].rstrip(); k = s.rindex(' 2.0'); open(sys.argv[2], 'w').write(t[:i] + s[:k] + '-2.0' + s[k + 4:] + chr(10) + t[j:])" %t/chained.prmtop %t/last.prmtop
 # RUN: sed 's/TOPOLOGY/last.prmtop/' %t/run.toml > %t/last.toml
 # RUN: not mdir check %t/last.toml 2>&1 | FileCheck %s --check-prefix=LAST
 
@@ -36,7 +42,7 @@
 # CHECK-INPUT: dihedrals:          68, 4 improper
 # CHECK-INPUT: pairs 1-4:          41
 
-# CHECK:      MDIR:   dihedrals                     10.6439
+# CHECK:      MDIR:   dihedrals                     84.6442
 # CHECK:      MDIR:   Lennard-Jones 1-4              5.0156
 # CHECK-NEXT: MDIR:   Coulomb 1-4                   48.9371
 
