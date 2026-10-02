@@ -33,14 +33,17 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <chrono>
 #include <cmath>
+#include <csignal>
 #include <cstdlib>
 #include <cstring>
 #include <optional>
+#include <unistd.h>
 
 using namespace mdir;
 using namespace mdir::driver;
@@ -196,8 +199,52 @@ static void warnAboutCell(const Checkpoint &checkpoint, const System &system,
 /// A function of this program, whose address tells where the program is.
 static void anchor() {}
 
+double mdir::tool::parseWalltime(StringRef text) {
+  text = text.trim();
+  if (!text.contains(':')) {
+    double hours;
+    if (text.getAsDouble(hours) || !(hours > 0.0))
+      return -1.0;
+    return 3600.0 * hours;
+  }
+  SmallVector<StringRef, 3> parts;
+  text.split(parts, ':');
+  if (parts.size() > 3)
+    return -1.0;
+  double seconds = 0.0;
+  for (auto [index, part] : llvm::enumerate(parts)) {
+    unsigned value;
+    if (part.getAsInteger(10, value) || (index != 0 && value >= 60))
+      return -1.0;
+    seconds += value * (index == 0 ? 3600.0 : index == 1 ? 60.0 : 1.0);
+  }
+  return seconds;
+}
+
+/// Asks the run to stop at its next checkpoint (D131). The handler is reset
+/// when it runs, so that a second signal of the same kind ends the run at
+/// once. Only what is safe in a handler: a flag and write(2).
+static void requestStop(int signal) {
+  driver::stopSignal = signal;
+  static const char message[] =
+      "mdir: stopping at the next checkpoint; signal again to stop now\n";
+  ssize_t written = ::write(STDERR_FILENO, message, sizeof(message) - 1);
+  (void)written;
+}
+
+/// The name of the part `part` of the trajectory `path`:
+/// `run.dcd` becomes `run.part0002.dcd` (D130).
+static std::string getPartPath(StringRef path, int64_t part) {
+  StringRef extension = llvm::sys::path::extension(path);
+  return (path.drop_back(extension.size()) +
+          llvm::formatv(".part{0:D4}", part) + extension)
+      .str();
+}
+
 int mdir::tool::runControl(StringRef controlFile, Emit emit,
-                           const char *argv0) {
+                           const char *argv0, const RunOptions &options) {
+  auto began = std::chrono::steady_clock::now();
+
   //===--------------------------------------------------------------------===//
   // Read
   //===--------------------------------------------------------------------===//
@@ -205,6 +252,88 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   auto control = readControl(controlFile);
   if (!control)
     return fail(control.takeError());
+
+  // A stop lands on a checkpoint, from which the run continues exactly
+  // (D131); a run without checkpoints has nowhere to stop.
+  bool stops = control->checkpointPeriod > 0 && !control->minimize;
+  if (options.maxWalltime > 0.0 && !stops)
+    return fail("--max-walltime stops a run of dynamics at a checkpoint, "
+                "and this run writes none ('checkpoint_interval' in "
+                "[output])");
+
+  // `mdir run --continue` (D129): the run goes on from its own checkpoint
+  // until it has taken `steps` steps from the step it began at, which the
+  // checkpoint records. Without a checkpoint it begins, so that the same
+  // command line starts a run and continues it until it is complete.
+  std::optional<Checkpoint> own;
+  int64_t total = control->numSteps;
+  if (options.continues) {
+    if (control->restartOutput.empty())
+      return fail("--continue goes on from the checkpoint of the run, and "
+                  "[output] names no 'checkpoint'");
+    const std::string &path = control->restartOutput;
+    std::string previous = getPreviousCheckpointPath(path);
+    if (llvm::sys::fs::exists(path)) {
+      auto read = readCheckpoint(path);
+      if (!read)
+        return fail(llvm::toString(read.takeError()) + "; '" + previous +
+                    "' holds the checkpoint before it, if there is one");
+      own = std::move(*read);
+      if (!own->hasRun)
+        return fail("'" + path + "' does not record the run that wrote it "
+                    "and cannot be continued; it can begin another run as "
+                    "'checkpoint' of [input]");
+      int64_t end = own->firstStep + total;
+      if (own->step >= end) {
+        std::fprintf(stdout,
+                     "MDIR: the run is complete: '%s' holds step %lld, and "
+                     "the run began at step %lld and takes %lld steps\n",
+                     path.c_str(), static_cast<long long>(own->step),
+                     static_cast<long long>(own->firstStep),
+                     static_cast<long long>(total));
+        return 0;
+      }
+      if (own->timestep != control->timestep) {
+        std::string message;
+        llvm::raw_string_ostream(message)
+            << llvm::format("'%s' was written with a time step of %g ps, "
+                            "and the control file has %g ps",
+                            path.c_str(), own->timestep, control->timestep);
+        return fail(message);
+      }
+      if (own->seed != control->seed)
+        return fail(llvm::formatv("'{0}' was written with the seed {1}, and "
+                                  "the control file has {2}; the random "
+                                  "numbers of the run follow the seed",
+                                  path, own->seed, control->seed)
+                        .str());
+      // What remains must hold whole intervals of each output and of the
+      // coupling, which are counted from where the run began.
+      int64_t remaining = end - own->step;
+      for (auto [name, period] :
+           {std::pair<StringRef, int64_t>{"'energy_interval'",
+                                          control->energyPeriod},
+            {"'trajectory_interval'", control->framePeriod},
+            {"'checkpoint_interval'", control->checkpointPeriod},
+            {"the interval of coupling", control->getCouplingPeriod()}})
+        if (period > 0 && remaining % period != 0)
+          return fail(llvm::formatv(
+                          "the {0} steps that remain after step {1} of '{2}' "
+                          "are not a multiple of {3}, {4}",
+                          remaining, own->step, path, name, period)
+                          .str());
+      control->restartInput = path;
+      control->numSteps = remaining;
+    } else if (llvm::sys::fs::exists(previous)) {
+      return fail("'" + path + "' is missing, but '" + previous + "' is "
+                  "there: the run stopped while it replaced its checkpoint. "
+                  "Rename '" + previous + "' to '" + path + "' to continue "
+                  "from it");
+    } else {
+      std::fprintf(stdout, "MDIR: no checkpoint '%s' yet; the run begins\n",
+                   path.c_str());
+    }
+  }
   // The policy of a fixed interval of rebuilds is opt-in and not a
   // default: the structures are not tested between builds and may leave out
   // pairs within the cutoff, whose forces are then missing (D88). Warn at
@@ -307,6 +436,11 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // checkpoint does not continue it.
   if (fromPositions)
     control->restartInput.clear();
+  // The step that the run began at, from which `steps` counts, and its
+  // part: a run that begins from the checkpoint of another begins at its
+  // step, whose counter and time it continues (D129).
+  int64_t runFirstStep = own ? own->firstStep : firstStep;
+  int64_t part = own ? own->part + 1 : 1;
 
   auto program = buildProgram(*control, *system);
   if (!program)
@@ -426,11 +560,11 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     if (!llvm::sys::fs::exists(path))
       return fail("cannot find '" + path + "'");
 
-  mlir::ExecutionEngineOptions options;
+  mlir::ExecutionEngineOptions engineOptions;
   SmallVector<StringRef> sharedLibraries(paths.begin(), paths.end());
-  options.sharedLibPaths = sharedLibraries;
-  options.jitCodeGenOptLevel = llvm::CodeGenOptLevel::Aggressive;
-  auto engine = mlir::ExecutionEngine::create(*module, options);
+  engineOptions.sharedLibPaths = sharedLibraries;
+  engineOptions.jitCodeGenOptLevel = llvm::CodeGenOptLevel::Aggressive;
+  auto engine = mlir::ExecutionEngine::create(*module, engineOptions);
   if (!engine)
     return fail(engine.takeError());
 
@@ -638,10 +772,53 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     double cell[3];
     for (int k = 0; k != 3; ++k)
       cell[k] = system->box[k] / units::length;
-    if (llvm::Error error = output.trajectory.open(
-            control->dcdFile, count, firstStep + control->framePeriod,
-            control->framePeriod, control->timestep, cell))
+    // A continued run appends its frames to the file that its checkpoint
+    // counts them in, cut to those frames, or writes them to a part of
+    // their own (D130).
+    std::string trajectory = control->dcdFile;
+    bool appends = false;
+    if (own && options.appends && !own->trajectory.empty()) {
+      StringRef name = llvm::sys::path::filename(control->dcdFile);
+      StringRef extension = llvm::sys::path::extension(name);
+      StringRef recorded = own->trajectory;
+      std::string stem = (name.drop_back(extension.size()) + ".part").str();
+      if (recorded != name &&
+          !(recorded.starts_with(stem) && recorded.ends_with(extension)))
+        return fail("'" + control->restartOutput + "' counts the frames of '" +
+                    recorded + "', which is not the trajectory of the "
+                    "control file, '" + name + "', or a part of it");
+      llvm::SmallString<256> counted(
+          llvm::sys::path::parent_path(control->dcdFile));
+      llvm::sys::path::append(counted, recorded);
+      trajectory = std::string(counted);
+      if (llvm::sys::fs::exists(trajectory)) {
+        appends = true;
+      } else if (own->frames > 0) {
+        return fail("'" + trajectory + "' is missing, and '" +
+                    control->restartOutput + "' counts " +
+                    llvm::Twine(own->frames) + " frames in it; --no-append "
+                    "writes the frames that follow to a part of their own");
+      }
+    } else if (own && !options.appends) {
+      trajectory = getPartPath(control->dcdFile, part);
+    }
+    if (appends) {
+      auto removed = output.trajectory.append(
+          trajectory, count, own->frames, control->framePeriod,
+          control->timestep, cell);
+      if (!removed)
+        return fail(removed.takeError());
+      if (*removed > 0)
+        std::fprintf(stdout,
+                     "MDIR: removed %lld frames past the checkpoint from "
+                     "'%s'\n",
+                     static_cast<long long>(*removed), trajectory.c_str());
+    } else if (llvm::Error error = output.trajectory.open(
+                   trajectory, count, firstStep + control->framePeriod,
+                   control->framePeriod, control->timestep, cell)) {
       return fail(std::move(error));
+    }
+    output.trajectoryName = llvm::sys::path::filename(trajectory).str();
     double tilts[3];
     for (int k = 0; k != 3; ++k)
       tilts[k] = system->tilt[k] / units::length;
@@ -665,7 +842,17 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
             : control->precision == Precision::Mixed ? "mixed" : "double";
     checkpoint.timestep = control->timestep;
     checkpoint.seed = control->seed;
+    checkpoint.firstStep = runFirstStep;
+    checkpoint.part = part;
+    checkpoint.trajectory = output.trajectoryName;
   }
+  output.endStep = firstStep + control->numSteps;
+  // A continued run counts the energy that the coupling has taken from
+  // where its checkpoint left it, so that its conserved energy continues.
+  if (own)
+    output.bath = own->bath;
+  output.began = began;
+  output.maxWalltime = options.maxWalltime;
   setOutput(&output);
 
   if (control->minimize)
@@ -682,7 +869,15 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                  "%lld steps and not tested in between (rebuild_interval, "
                  "opt-in); they may miss pairs within the cutoff\n",
                  static_cast<long long>(control->rebuildPeriod));
-  if (isRestart)
+  if (own)
+    std::fprintf(output.log,
+                 "MDIR: continues the run after step %lld, from '%s', to "
+                 "step %lld (part %lld)\n",
+                 static_cast<long long>(firstStep),
+                 control->restartInput.c_str(),
+                 static_cast<long long>(output.endStep),
+                 static_cast<long long>(part));
+  else if (isRestart)
     std::fprintf(output.log, "MDIR: continues after step %lld, from '%s'\n",
                  static_cast<long long>(firstStep),
                  control->restartInput.c_str());
@@ -693,7 +888,18 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   std::fprintf(output.log, "MDIR: compiled in %.2f s\n", compileTime);
   writeLogHeader(output);
 
+  // SIGTERM and SIGINT ask the run to stop at its next checkpoint (D131).
+  if (stops) {
+    struct sigaction action = {};
+    action.sa_handler = requestStop;
+    action.sa_flags = SA_RESETHAND;
+    sigemptyset(&action.sa_mask);
+    sigaction(SIGTERM, &action, nullptr);
+    sigaction(SIGINT, &action, nullptr);
+  }
+
   begin = std::chrono::steady_clock::now();
+  output.lastCheckpoint = begin;
   (*function)(arguments.data());
   double runTime = std::chrono::duration<double>(
                        std::chrono::steady_clock::now() - begin)

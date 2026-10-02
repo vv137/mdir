@@ -30,6 +30,12 @@ set `target = "CPU"` with `threads = <n>` in `[execution]`, remove
 examples/ubiquitin/run.sh ubiquitin-run build/bin/mdir
 ```
 
+On a cluster, where a job ends before a long stage does, run a stage as
+`mdir run --continue --max-walltime <time> 4-md.toml` in each job: it
+continues the stage from its checkpoint, appends to its trajectory, stops
+at a checkpoint before the wall time with the exit status 75, and exits
+with 0 once the stage is complete (docs/driver-m0.md, Section 2.7).
+
 On an RTX 3090, stage 2 runs at about 570 ns/day and stages 3 and 4,
 with the barostat, at about 520: 28 minutes for the 10 ns of stage 4. The
 log reports the rate over the second half of each stage. At constant

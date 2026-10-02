@@ -32,6 +32,26 @@ static llvm::cl::opt<std::string>
                 llvm::cl::sub(emitCommand), llvm::cl::sub(checkCommand),
                 llvm::cl::sub(bugReportCommand));
 
+static llvm::cl::opt<bool> continueRun(
+    "continue",
+    llvm::cl::desc("Continue the run from the checkpoint of its [output] "
+                   "until it has taken its 'steps', or begin it if there is "
+                   "none; a complete run exits with 0"),
+    llvm::cl::sub(runCommand));
+
+static llvm::cl::opt<bool> noAppend(
+    "no-append",
+    llvm::cl::desc("With --continue, write the frames that follow to a part "
+                   "of their own, <trajectory>.partNNNN.dcd"),
+    llvm::cl::sub(runCommand));
+
+static llvm::cl::opt<std::string> maxWalltime(
+    "max-walltime",
+    llvm::cl::desc("Stop at the last checkpoint that leaves time for the "
+                   "next interval within this wall time, given in hours or "
+                   "as H:MM[:SS]; a run that stops exits with 75"),
+    llvm::cl::value_desc("time"), llvm::cl::sub(runCommand));
+
 static llvm::cl::opt<std::string>
     reportDirectory("o", llvm::cl::desc("The directory of the report"),
                     llvm::cl::value_desc("directory"),
@@ -67,7 +87,8 @@ int main(int argc, char **argv) {
   llvm::cl::ParseCommandLineOptions(
       argc, argv,
       "MDIR: compiles and runs molecular dynamics\n\n"
-      "  mdir run <control file>\n"
+      "  mdir run <control file> [--continue [--no-append]] "
+      "[--max-walltime=<time>]\n"
       "  mdir emit <control file> [--stage=module|lowered|pipeline]\n"
       "  mdir check <control file>\n"
       "  mdir template md|amber\n"
@@ -75,8 +96,25 @@ int main(int argc, char **argv) {
       "  mdir bug-report <control file> [-o <directory>] [--run]\n"
       "  mdir version\n");
 
-  if (runCommand)
-    return runControl(controlFile, Emit::Run, argv[0]);
+  if (runCommand) {
+    RunOptions options;
+    options.continues = continueRun;
+    options.appends = !noAppend;
+    if (noAppend && !continueRun) {
+      llvm::errs() << "mdir: --no-append goes with --continue\n";
+      return 1;
+    }
+    if (!maxWalltime.empty()) {
+      options.maxWalltime = parseWalltime(maxWalltime);
+      if (options.maxWalltime <= 0.0) {
+        llvm::errs() << "mdir: expected a wall time in hours or as "
+                        "H:MM[:SS], got '"
+                     << maxWalltime << "'\n";
+        return 1;
+      }
+    }
+    return runControl(controlFile, Emit::Run, argv[0], options);
+  }
   if (emitCommand)
     return runControl(controlFile, stage, argv[0]);
   if (checkCommand)

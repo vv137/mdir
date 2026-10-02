@@ -24,11 +24,30 @@ enum class Emit {
   Run,
 };
 
+/// How `mdir run` treats a run that one job may not finish (D129 to D131).
+struct RunOptions {
+  /// Continue the run from its own checkpoint, if there is one, until it
+  /// has taken its `steps`; begin it if there is none.
+  bool continues = false;
+  /// Append the frames of a continued run to its trajectory, rather than
+  /// write them to a part of their own.
+  bool appends = true;
+  /// The wall time that the run may take, in s, or 0 for no limit. The run
+  /// stops at the last checkpoint that leaves time for the next interval.
+  double maxWalltime = 0.0;
+};
+
 /// Reads the control file `controlFile`, builds the program of the run,
 /// and compiles and executes it or prints it. `argv0` is the name that the
 /// program was started with, which tells where the runtime is. Returns the
 /// exit status.
-int runControl(llvm::StringRef controlFile, Emit emit, const char *argv0);
+int runControl(llvm::StringRef controlFile, Emit emit, const char *argv0,
+               const RunOptions &options = {});
+
+/// Reads a wall time: a number of hours, or hours and minutes, and
+/// optionally seconds, as `H:MM[:SS]`. Returns the seconds, or a negative
+/// number if `text` is neither.
+double parseWalltime(llvm::StringRef text);
 
 /// Reads the control file and the input that it names, and prints what
 /// they describe. Returns the exit status.

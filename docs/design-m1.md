@@ -874,7 +874,7 @@ subcommands; `mdir-opt` stays a program for developers.
 
 | Command | Does |
 |---|---|
-| `mdir run control.toml` | Reads the input, compiles the run, and runs it (`mdir-run` of M0) |
+| `mdir run control.toml` | Reads the input, compiles the run, and runs it (`mdir-run` of M0). `--continue`, `--no-append`, and `--max-walltime` carry a run over more than one job (D129 to D132, driver-m0.md, Section 2.7) |
 | `mdir template md` | Prints a control file with every keyword |
 | `mdir check control.toml` | Reads the input and prints what it found: particles, types, the mass and the density, the cell, the degrees of freedom, the integrator and the target; with a topology also the tuples of each kind, the charges and their sum. Compiles nothing, so it gives no energies: a run of zero steps does. |
 | `mdir emit control.toml --stage=<module\|lowered>` | Prints the program of the run, as `--emit` does in M0 |

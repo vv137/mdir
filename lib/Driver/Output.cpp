@@ -4,10 +4,12 @@
 
 #include "mlir/ExecutionEngine/CRunnerUtils.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <unistd.h>
 #include <vector>
 
 using namespace mdir::driver;
@@ -77,6 +79,77 @@ llvm::Error DCDWriter::open(const std::string &path, size_t numParticles,
   return llvm::Error::success();
 }
 
+llvm::Expected<int64_t> DCDWriter::append(const std::string &path,
+                                          size_t numParticles,
+                                          int64_t frames, int64_t period,
+                                          double timestep,
+                                          const double box[3]) {
+  auto fail = [&](const llvm::Twine &message) -> llvm::Error {
+    close();
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "'" + path + "' " + message);
+  };
+  file = std::fopen(path.c_str(), "r+b");
+  if (!file)
+    return fail("cannot be opened to continue it");
+  // The records that writeHeader writes: the description, the title, and
+  // the number of particles.
+  auto readInt = [&](int32_t &value) {
+    return std::fread(&value, sizeof(value), 1, file) == 1;
+  };
+  int32_t size, end, count;
+  struct {
+    char tag[4];
+    int32_t numbers[20];
+  } head;
+  bool read = readInt(size) && size == sizeof(head) &&
+              std::fread(&head, sizeof(head), 1, file) == 1 && readInt(end) &&
+              end == size && std::memcmp(head.tag, "CORD", 4) == 0;
+  if (!read || head.numbers[10] != 1 || head.numbers[19] != 24)
+    return fail("is not a trajectory that MDIR wrote");
+  read = readInt(size) && size == 84 &&
+         std::fseek(file, size, SEEK_CUR) == 0 && readInt(end) &&
+         end == size && readInt(size) && size == 4 && readInt(count) &&
+         readInt(end) && end == size;
+  if (!read)
+    return fail("is not a trajectory that MDIR wrote");
+  if (count != static_cast<int32_t>(numParticles))
+    return fail("holds " + llvm::Twine(count) + " particles, and the run " +
+                llvm::Twine(numParticles));
+  if (head.numbers[2] != static_cast<int32_t>(period))
+    return fail("has a frame every " + llvm::Twine(head.numbers[2]) +
+                " steps, and the run writes one every " +
+                llvm::Twine(period));
+
+  // The frames that the file holds in full: the cell, then x, y, and z.
+  long header = std::ftell(file);
+  long frameSize =
+      (8 + 6 * sizeof(double)) + 3 * (8 + numParticles * sizeof(float));
+  std::fseek(file, 0, SEEK_END);
+  long length = std::ftell(file);
+  int64_t held = (length - header) / frameSize;
+  if (held < frames)
+    return fail("holds " + llvm::Twine(held) + " frames, fewer than the " +
+                llvm::Twine(frames) + " that the checkpoint counts");
+  long kept = header + frames * frameSize;
+  std::fflush(file);
+  if (kept != length && ::ftruncate(::fileno(file), kept) != 0)
+    return fail("cannot be cut to the frames that the checkpoint counts");
+
+  this->numParticles = numParticles;
+  this->first = head.numbers[1];
+  this->period = period;
+  this->timestep = timestep;
+  for (int i = 0; i != 3; ++i)
+    this->box[i] = box[i];
+  numFrames = static_cast<int32_t>(frames);
+  std::rewind(file);
+  writeHeader();
+  std::fseek(file, kept, SEEK_SET);
+  std::fflush(file);
+  return held - frames;
+}
+
 void DCDWriter::writeFrame(const float *positions) {
   // The cell: a, cos γ, b, cos β, cos α, c, as NAMD and OpenMM write it
   // (docs/triclinic-m2.md, Section 1); right angles for an orthorhombic
@@ -121,6 +194,8 @@ void DCDWriter::close() {
 //===----------------------------------------------------------------------===//
 
 static Output *current = nullptr;
+
+volatile std::sig_atomic_t mdir::driver::stopSignal = 0;
 
 void mdir::driver::setOutput(Output *output) { current = output; }
 
@@ -383,6 +458,10 @@ static void writeState(int64_t step, void *positions, void *velocities,
   if (forces)
     checkpoint.forces = readVectors(forces, ids, output.force);
 
+  checkpoint.frames = output.hasTrajectory ? output.trajectory.getNumFrames()
+                                           : 0;
+  checkpoint.bath = output.bath;
+
   if (llvm::Error error =
           writeCheckpoint(output.checkpointPath, checkpoint)) {
     std::fprintf(stderr, "mdir: %s\n",
@@ -390,6 +469,43 @@ static void writeState(int64_t step, void *positions, void *velocities,
     std::exit(1);
   }
   ++output.numCheckpoints;
+
+  // A stop that a signal or the wall time asks for is taken here, where
+  // the run continues exactly from what it has just written (D131), and
+  // not at the last step, where the run ends anyway. The wall time must
+  // leave room for one more interval between checkpoints, as long as the
+  // longest so far.
+  if (step >= output.endStep)
+    return;
+  auto now = std::chrono::steady_clock::now();
+  double segment =
+      std::chrono::duration<double>(now - output.lastCheckpoint).count();
+  output.lastCheckpoint = now;
+  output.longestSegment = std::max(output.longestSegment, segment);
+  double elapsed = std::chrono::duration<double>(now - output.began).count();
+  const char *reason = nullptr;
+  if (stopSignal == SIGTERM)
+    reason = "SIGTERM";
+  else if (stopSignal == SIGINT)
+    reason = "SIGINT";
+  else if (output.maxWalltime > 0.0 &&
+           elapsed + output.longestSegment > output.maxWalltime)
+    reason = "the wall time";
+  if (!reason)
+    return;
+  output.trajectory.close();
+  std::fprintf(output.log,
+               "MDIR: stopped after step %lld on %s; '%s' holds the state, "
+               "and `mdir run --continue` goes on from it\n",
+               static_cast<long long>(step), reason,
+               output.checkpointPath.c_str());
+  std::fflush(output.log);
+  if (output.log != stdout)
+    std::fflush(stdout);
+  std::fprintf(stderr, "mdir: stopped after step %lld of %lld on %s\n",
+               static_cast<long long>(step),
+               static_cast<long long>(output.endStep), reason);
+  std::exit(StoppedStatus);
 }
 
 void _mlir_ciface_mdrtWriteCheckpoint(int64_t step, void *positions,

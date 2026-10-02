@@ -311,4 +311,9 @@ in order plus an optional second one, slots of pinned memory for flags,
 a caching allocator whose frees do not wait, plans of cuFFT, and growable
 buffers for neighbor structures). The driver registers callbacks for the
 log, the trajectory (DCD), and checkpoints (H5MD 1.1 [[deBuyl2014]](references.md#debuyl2014), all
-values in 64 bits, from which a run continues bitwise).
+values in 64 bits, from which a run continues bitwise). A checkpoint
+records the step at which its run began, the frames written, and the
+energy that the coupling has taken, so that `mdir run --continue` carries
+one run over as many jobs as it takes, appending to its trajectory; a
+signal or the wall time stops a run after a checkpoint is written, with
+the exit status 75 (D129 to D132; Appendix A.3).

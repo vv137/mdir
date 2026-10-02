@@ -198,7 +198,7 @@ See [docs/driver-m0.md](docs/driver-m0.md).
 
 | Command | Does |
 |---|---|
-| `mdir run <control file>` | Compiles the run and executes it |
+| `mdir run <control file> [--continue [--no-append]] [--max-walltime=<time>]` | Compiles the run and executes it; `--continue` goes on from its checkpoint until it is complete, and a run stops at a checkpoint on SIGTERM or at the wall time with the exit status 75 ([docs/driver-m0.md](docs/driver-m0.md), Section 2.7) |
 | `mdir emit <control file> [--stage=module\|lowered\|pipeline]` | Prints the program of the run, as it is built or as it is executed, or the passes between |
 | `mdir check <control file>` | Reads the input and prints what it describes, without compiling |
 | `mdir template md\|amber` | Prints a control file with every keyword, for terms in the control file or for an Amber topology |

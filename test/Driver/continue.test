@@ -1,0 +1,147 @@
+# `mdir run --continue` continues a run from its own checkpoint until it
+# has taken its `steps` (D129), appends its frames to the trajectory that the
+# checkpoint counts them in (D130), and stops at a checkpoint when the wall
+# time asks for it, with the exit status 75 (D131). The checkpoint before
+# stays as `.prev` (D132). A run of 400 steps that stops at every checkpoint
+# and is continued three times arrives at the state and the frames of the
+# run that was not interrupted, bit for bit.
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: sed -e 's|Inputs/|%S/Inputs/|' -e 's|^steps *= 200|steps = 400|' \
+# RUN:     %S/mixture.toml > %t/whole.toml
+# RUN: printf 'trajectory = "whole.dcd"\ntrajectory_interval = 50\ncheckpoint = "whole.h5"\ncheckpoint_interval = 100\n[execution]\nprecision = "mixed"\n' >> %t/whole.toml
+# RUN: sed -e 's|whole|part|g' %t/whole.toml > %t/part.toml
+# RUN: mdir run %t/whole.toml > %t/whole.log
+#
+# A wall time shorter than the compilation stops the run at its first
+# checkpoint, every time.
+#
+# RUN: %python %S/Inputs/exit_status.py mdir run --continue \
+# RUN:     --max-walltime 0.000001 %t/part.toml 2>&1 \
+# RUN: | FileCheck %s --check-prefix=FIRST
+# RUN: %python %S/Inputs/exit_status.py mdir run --continue \
+# RUN:     --max-walltime 0.000001 %t/part.toml 2>&1 \
+# RUN: | FileCheck %s --check-prefix=SECOND
+# RUN: mdir checkpoint %t/part.h5.prev | FileCheck %s --check-prefix=PREVIOUS
+# RUN: mdir checkpoint %t/part.h5 | FileCheck %s --check-prefix=AT200
+
+# FIRST:      MDIR: no checkpoint '{{.*}}part.h5' yet; the run begins
+# FIRST:      INFO:         0
+# FIRST:      MDIR: stopped after step 100 on the wall time; '{{.*}}part.h5' holds the state, and `mdir run --continue` goes on from it
+# FIRST:      mdir: stopped after step 100 of 400 on the wall time
+# FIRST:      exit status 75
+
+# SECOND:      MDIR: continues the run after step 100, from '{{.*}}part.h5', to step 400 (part 2)
+# SECOND:      INFO:      STEP
+# SECOND-NEXT: INFO:       150
+# SECOND-NEXT: INFO:       200
+# SECOND-NEXT: MDIR: stopped after step 200 on the wall time
+# SECOND:      exit status 75
+
+# PREVIOUS:      step:            100
+# PREVIOUS:      run began at:    step 0
+# PREVIOUS-NEXT: part:            1
+# PREVIOUS-NEXT: trajectory:      part.dcd, 2 frames
+# AT200:         step:            200
+# AT200:         run began at:    step 0
+# AT200-NEXT:    part:            2
+# AT200-NEXT:    trajectory:      part.dcd, 4 frames
+
+# With the checkpoint before put back, the trajectory holds two frames past
+# it, as that of a run that ended between checkpoints does. The run removes
+# them and writes them again.
+#
+# RUN: cp %t/part.h5.prev %t/part.h5
+# RUN: %python %S/Inputs/exit_status.py mdir run --continue %t/part.toml \
+# RUN: | FileCheck %s --check-prefix=CUT
+# RUN: mdir checkpoint %t/whole.h5 %t/part.h5 | FileCheck %s
+# RUN: %python %S/Inputs/dcd_frames.py %t/whole.dcd %t/part.dcd \
+# RUN: | FileCheck %s --check-prefix=FRAMES
+# RUN: %python %S/Inputs/exit_status.py mdir run --continue %t/part.toml \
+# RUN: | FileCheck %s --check-prefix=COMPLETE
+
+# CUT:      MDIR: removed 2 frames past the checkpoint from '{{.*}}part.dcd'
+# CUT:      MDIR: continues the run after step 100, from '{{.*}}part.h5', to step 400 (part 2)
+# CUT:      INFO:       400
+# CUT:      MDIR: wrote 3 checkpoints to
+# CUT:      exit status 0
+# CHECK:    the states are identical
+# FRAMES:   part.dcd: 8 frames from step 50
+# FRAMES:   the 8 frames are identical
+# COMPLETE:      MDIR: the run is complete: '{{.*}}part.h5' holds step 400, and the run began at step 0 and takes 400 steps
+# COMPLETE-NEXT: exit status 0
+
+# With --no-append the frames that follow go to a part of their own, named
+# after the part of the run, and later continuations append to it.
+#
+# RUN: sed -e 's|whole|piece|g' %t/whole.toml > %t/piece.toml
+# RUN: not mdir run --continue --max-walltime 0.000001 %t/piece.toml > /dev/null
+# RUN: not mdir run --continue --no-append --max-walltime 0.000001 \
+# RUN:     %t/piece.toml > /dev/null
+# RUN: mdir checkpoint %t/piece.h5 | FileCheck %s --check-prefix=PIECE
+# RUN: mdir run --continue %t/piece.toml > /dev/null
+# RUN: mdir checkpoint %t/whole.h5 %t/piece.h5 | FileCheck %s
+# RUN: %python %S/Inputs/dcd_frames.py %t/whole.dcd %t/piece.dcd \
+# RUN:     %t/piece.part0002.dcd | FileCheck %s --check-prefix=PARTS
+
+# PIECE:      run began at:    step 0
+# PIECE-NEXT: part:            2
+# PIECE-NEXT: trajectory:      piece.part0002.dcd, 2 frames
+# PARTS:      piece.dcd: 2 frames from step 50
+# PARTS-NEXT: piece.part0002.dcd: 6 frames from step 150
+# PARTS-NEXT: the 8 frames are identical
+
+# What a continuation refuses.
+#
+# RUN: sed -e 's|whole|short|g' %t/whole.toml > %t/short.toml
+# RUN: not mdir run --continue --max-walltime 0.000001 %t/short.toml > /dev/null
+# RUN: sed -e 's|^time_step *= 0.004|time_step = 0.002|' %t/short.toml \
+# RUN:     > %t/timestep.toml
+# RUN: not mdir run --continue %t/timestep.toml 2>&1 \
+# RUN: | FileCheck %s --check-prefix=TIMESTEP
+# RUN: sed -e 's|^checkpoint_interval = 100|checkpoint_interval = 200|' \
+# RUN:     %t/short.toml > %t/interval.toml
+# RUN: not mdir run --continue %t/interval.toml 2>&1 \
+# RUN: | FileCheck %s --check-prefix=INTERVAL
+# RUN: sed -e 's|^trajectory = "short.dcd"|trajectory = "other.dcd"|' \
+# RUN:     %t/short.toml > %t/other.toml
+# RUN: not mdir run --continue %t/other.toml 2>&1 \
+# RUN: | FileCheck %s --check-prefix=OTHER
+# RUN: cp %t/short.dcd %t/short.dcd.kept
+# RUN: truncate -s 196 %t/short.dcd
+# RUN: not mdir run --continue %t/short.toml 2>&1 \
+# RUN: | FileCheck %s --check-prefix=FEWER
+# RUN: rm %t/short.dcd
+# RUN: not mdir run --continue %t/short.toml 2>&1 \
+# RUN: | FileCheck %s --check-prefix=MISSING
+# RUN: mv %t/short.dcd.kept %t/short.dcd
+# RUN: mv %t/short.h5 %t/short.h5.moved
+# RUN: cp %t/short.h5.moved %t/short.h5.prev
+# RUN: not mdir run --continue %t/short.toml 2>&1 \
+# RUN: | FileCheck %s --check-prefix=PREVONLY
+
+# TIMESTEP: mdir: '{{.*}}short.h5' was written with a time step of 0.004 ps, and the control file has 0.002 ps
+# INTERVAL: mdir: the 300 steps that remain after step 100 of '{{.*}}short.h5' are not a multiple of 'checkpoint_interval', 200
+# OTHER:    mdir: '{{.*}}short.h5' counts the frames of 'short.dcd', which is not the trajectory of the control file, 'other.dcd', or a part of it
+# FEWER:    mdir: '{{.*}}short.dcd' holds 0 frames, fewer than the 2 that the checkpoint counts
+# MISSING:  mdir: '{{.*}}short.dcd' is missing, and '{{.*}}short.h5' counts 2 frames in it; --no-append writes the frames that follow to a part of their own
+# PREVONLY: mdir: '{{.*}}short.h5' is missing, but '{{.*}}short.h5.prev' is there: the run stopped while it replaced its checkpoint. Rename '{{.*}}short.h5.prev' to '{{.*}}short.h5' to continue from it
+
+# The options themselves.
+#
+# RUN: sed -e 's|Inputs/|%S/Inputs/|' %S/mixture.toml > %t/plain.toml
+# RUN: not mdir run --no-append %t/part.toml 2>&1 \
+# RUN: | FileCheck %s --check-prefix=NOAPPEND
+# RUN: not mdir run --max-walltime 1:75 %t/part.toml 2>&1 \
+# RUN: | FileCheck %s --check-prefix=WALLTIME
+# RUN: not mdir run --max-walltime 2 %t/plain.toml 2>&1 \
+# RUN: | FileCheck %s --check-prefix=NOWHERE
+# RUN: not mdir run --continue %t/plain.toml 2>&1 \
+# RUN: | FileCheck %s --check-prefix=NOCHECKPOINT
+
+# NOAPPEND:     mdir: --no-append goes with --continue
+# WALLTIME:     mdir: expected a wall time in hours or as H:MM[:SS], got '1:75'
+# NOWHERE:      mdir: --max-walltime stops a run of dynamics at a checkpoint, and this run writes none ('checkpoint_interval' in [output])
+# NOCHECKPOINT: mdir: --continue goes on from the checkpoint of the run, and [output] names no 'checkpoint'

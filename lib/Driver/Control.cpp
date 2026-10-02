@@ -1291,11 +1291,13 @@ llvm::Expected<Control> mdir::driver::readControl(StringRef path) {
 std::string mdir::driver::getControlTemplate() {
   return R"TOML([input]
 coordinates = "system.pdb"      # positions; the name of an atom is its type
-# checkpoint = "earlier.h5"     # the state that the run continues from
+# checkpoint = "earlier.h5"     # the state that the run begins from, at its
+#                               # step
 
 [output]
 trajectory          = "run.dcd" # positions, in DCD
-# checkpoint        = "run.h5"  # the state, with checkpoint_interval
+# checkpoint        = "run.h5"  # the state, with checkpoint_interval;
+#                               # mdir run --continue goes on from it
 energy_interval     = 10        # steps between energies in the log; 0: none
 trajectory_interval = 0         # steps between frames; 0: none
 # checkpoint_interval = 0       # steps between checkpoints
@@ -1326,7 +1328,7 @@ sigma   = 3.4                   # Å
 [dynamics]
 integrator = "VELOCITY_VERLET"  # VELOCITY_VERLET, LEAPFROG
 time_step  = 0.001              # ps
-steps      = 100
+steps      = 100                # of the run; --continue runs to them
 seed       = 314159             # of the velocities and the thermostat
 # center_of_mass_interval = 0   # steps between removals of the motion of
 #                               # the center of mass; 0: none
@@ -1365,12 +1367,14 @@ std::string mdir::driver::getAmberControlTemplate() {
 topology    = "system.prmtop"   # of Amber (tleap, ParmEd)
 coordinates = "system.inpcrd"   # and the box; the reference of restraints
 # format    = "AUTO"            # AUTO (from the names), AMBER, GROMACS, PDB
-# checkpoint = "earlier.h5"     # the state that the run continues from; one
-#                               # of a minimization gives only positions
+# checkpoint = "earlier.h5"     # the state that the run begins from, at its
+#                               # step; one of a minimization gives only
+#                               # positions
 
 [output]
 trajectory          = "run.dcd" # positions, in DCD
-checkpoint          = "run.h5"  # the state
+checkpoint          = "run.h5"  # the state; mdir run --continue goes on
+#                               # from it, and the one before is run.h5.prev
 energy_interval     = 5000      # steps between energies in the log
 trajectory_interval = 5000      # steps between frames
 checkpoint_interval = 50000     # steps between checkpoints
@@ -1401,7 +1405,7 @@ coulomb_modifier  = "POTENTIAL_SHIFT"  # NONE, POTENTIAL_SHIFT: the direct
 integrator = "VELOCITY_VERLET"  # VELOCITY_VERLET, LEAPFROG (velocities
                                 # half a step behind)
 time_step  = 0.002              # ps
-steps      = 500000
+steps      = 500000             # of the run; --continue runs to them
 seed       = 314159             # of the velocities and the coupling
 # center_of_mass_interval = 10  # steps between removals of the motion of
 #                               # the center of mass: with a thermostat,

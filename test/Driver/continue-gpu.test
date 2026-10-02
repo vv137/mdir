@@ -1,0 +1,38 @@
+# The test of continue.test on a GPU, at constant temperature: a run that
+# stops at each checkpoint on the wall time and is continued takes the same
+# random numbers as one that does not stop, and arrives at its state and
+# frames, bit for bit. The conserved energy of a continued run counts on
+# from the energy that the thermostat had taken at its checkpoint, so its
+# rows are those of the run that did not stop (D129).
+#
+# REQUIRES: hdf5, cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/mixture.pdb %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/thermostat.test | sed '1d;$d' \
+# RUN:     | sed -e 's|energy_interval = 1000|energy_interval = 500\ntrajectory = "whole.dcd"\ntrajectory_interval = 500\ncheckpoint = "whole.h5"\ncheckpoint_interval = 500|' \
+# RUN:     > %t/whole.toml
+# RUN: printf '[execution]\ntarget = "gpu"\nprecision = "mixed"\n' >> %t/whole.toml
+# RUN: sed -e 's|whole|part|g' %t/whole.toml > %t/part.toml
+# RUN: mdir run %t/whole.toml > %t/both.log
+# RUN: not mdir run --continue --max-walltime 0.000001 %t/part.toml > /dev/null
+# RUN: not mdir run --continue --max-walltime 0.000001 %t/part.toml > /dev/null
+# RUN: not mdir run --continue --max-walltime 0.000001 %t/part.toml >> %t/both.log
+# RUN: mdir run --continue --max-walltime 0.000001 %t/part.toml >> %t/both.log
+# RUN: FileCheck %s --check-prefix=LOG < %t/both.log
+# RUN: mdir checkpoint %t/whole.h5 %t/part.h5 | FileCheck %s
+# RUN: %python %S/Inputs/dcd_frames.py %t/whole.dcd %t/part.dcd \
+# RUN: | FileCheck %s --check-prefix=FRAMES
+
+# CHECK: the states are identical
+
+# LOG:      INFO:      1500         6.0000 {{ *}}[[ROW1500:-?[0-9.]+ +-?[0-9.]+ +-?[0-9.]+ +-?[0-9.]+ +-?[0-9.]+ +-?[0-9.]+ +-?[0-9.]+]]
+# LOG-NEXT: INFO:      2000         8.0000 {{ *}}[[ROW2000:-?[0-9.]+ +-?[0-9.]+ +-?[0-9.]+ +-?[0-9.]+ +-?[0-9.]+ +-?[0-9.]+ +-?[0-9.]+]]
+# LOG:      MDIR: continues the run after step 1000, from '{{.*}}part.h5', to step 2000 (part 3)
+# LOG:      INFO:      1500         6.0000 {{ *}}[[ROW1500]]
+# LOG-NEXT: MDIR: stopped after step 1500 on the wall time
+# LOG:      MDIR: continues the run after step 1500, from '{{.*}}part.h5', to step 2000 (part 4)
+# LOG:      INFO:      2000         8.0000 {{ *}}[[ROW2000]]
+
+# FRAMES: part.dcd: 4 frames from step 500
+# FRAMES: the 4 frames are identical

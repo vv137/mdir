@@ -1,0 +1,26 @@
+# SIGTERM and SIGINT stop a run at its next checkpoint, from which it
+# continues exactly, with the exit status 75 (D131): the checkpoint holds
+# the state of a run of as many steps that was not interrupted, bit for
+# bit. A second signal of the same kind ends the run at once.
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: sed -e 's|Inputs/|%S/Inputs/|' -e 's|^steps *= 200|steps = 100000|' \
+# RUN:     %S/mixture.toml > %t/run.toml
+# RUN: printf 'checkpoint = "run.h5"\ncheckpoint_interval = 100\n[execution]\nprecision = "mixed"\n' >> %t/run.toml
+#
+# RUN: %python %S/Inputs/stop_by_signal.py mdir %t/run.toml 200 SIGTERM \
+# RUN: | FileCheck %s --check-prefix=TERM
+# RUN: %python %S/Inputs/stop_by_signal.py mdir %t/run.toml 200 SIGINT 2 \
+# RUN: | FileCheck %s --check-prefix=INT
+
+# TERM:      INFO:       200
+# TERM:      mdir: stopping at the next checkpoint; signal again to stop now
+# TERM:      MDIR: stopped after step {{[0-9]+}}00 on SIGTERM; '{{.*}}run.h5' holds the state, and `mdir run --continue` goes on from it
+# TERM:      exit status 75
+# TERM-NEXT: against {{[0-9]+}}00 steps not interrupted: the states are identical
+
+# INT:     mdir: stopping at the next checkpoint; signal again to stop now
+# INT-NOT: MDIR: stopped
+# INT:     ended by SIGINT

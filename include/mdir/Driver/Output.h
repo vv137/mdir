@@ -10,6 +10,8 @@
 
 #include "llvm/Support/Error.h"
 
+#include <chrono>
+#include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <string>
@@ -28,6 +30,17 @@ public:
   llvm::Error open(const std::string &path, size_t numParticles,
                    int64_t first, int64_t period, double timestep,
                    const double box[3]);
+  /// Continues the trajectory at `path`, written by MDIR, after its first
+  /// `frames` frames (D130): the frames after them, which a run wrote past
+  /// its last checkpoint, are removed, and the header counts `frames`.
+  /// Fails if the file holds fewer frames, other particles, or another
+  /// period. Returns the number of frames removed.
+  llvm::Expected<int64_t> append(const std::string &path,
+                                 size_t numParticles, int64_t frames,
+                                 int64_t period, double timestep,
+                                 const double box[3]);
+  /// The number of frames that the file holds.
+  int64_t getNumFrames() const { return numFrames; }
 
   /// Writes a frame. `positions` holds three numbers per particle, in Å.
   void writeFrame(const float *positions);
@@ -83,6 +96,20 @@ struct Output {
   int64_t energyPeriod = 0;
   double timestep = 0.0;
   double degreesOfFreedom = 0.0;
+  /// The last step of the run, and where it stops if a signal or the wall
+  /// time asks for a stop: at the next checkpoint before the last step
+  /// (D131). `began` is when the run began, `lastCheckpoint` when the last
+  /// checkpoint was written, and `longestSegment` the longest time in s
+  /// between two checkpoints, which the wall time `maxWalltime` in s, if
+  /// not 0, must leave for the next.
+  int64_t endStep = 0;
+  double maxWalltime = 0.0;
+  std::chrono::steady_clock::time_point began;
+  std::chrono::steady_clock::time_point lastCheckpoint;
+  double longestSegment = 0.0;
+  /// The trajectory without the directory, which checkpoints record.
+  std::string trajectoryName;
+
   /// The volume of the cell, in nm^3, and the edges, which a barostat
   /// changes (mdrtSetBox).
   double volume = 0.0;
@@ -158,6 +185,15 @@ struct Output {
 
 /// Sets the output that the functions below write to.
 void setOutput(Output *output);
+
+/// The signal that has asked the run to stop, or 0. A handler of SIGTERM
+/// and SIGINT sets it; the run stops at its next checkpoint (D131).
+extern volatile std::sig_atomic_t stopSignal;
+
+/// The exit status of a run that stopped at a checkpoint before its last
+/// step on a signal or at the wall time: EX_TEMPFAIL of sysexits.h, a
+/// failure that a later attempt may get past (D131).
+constexpr int StoppedStatus = 75;
 
 void writeLogHeader(Output &output);
 

@@ -46,6 +46,23 @@ struct Checkpoint {
   std::string precision;
   double timestep = 0.0;
   uint64_t seed = 0;
+  /// The run that wrote the checkpoint (D129): the step it began at, which
+  /// `mdir run --continue` counts its `steps` from; the part of the run,
+  /// 1 for the first and one more for each continuation; and the file
+  /// name of the trajectory that its frames went to, with the number of
+  /// frames that file holds at this state (D130). Without a trajectory the
+  /// name is empty.
+  int64_t firstStep = 0;
+  int64_t part = 1;
+  std::string trajectory;
+  int64_t frames = 0;
+  /// The energy that the coupling of the velocities has taken from the
+  /// system since the run began, in kJ/mol, which the conserved energy of
+  /// a continued run counts on from.
+  double bath = 0.0;
+  /// Whether the file holds the above; one written before D129 does not.
+  bool hasRun = false;
+
   /// With a barostat that scales the cell every step (D92): the trace of
   /// the virial, that of the rigid groups, and the kinetic energy without
   /// the center of mass of the state, which the next scaling takes its
@@ -58,9 +75,14 @@ struct Checkpoint {
 bool hasCheckpointSupport();
 
 /// Writes `checkpoint` to `path`. The file appears under its name only
-/// when it is complete.
+/// when it is complete, and the one it replaces stays as `path` with
+/// `.prev` appended (D132).
 llvm::Error writeCheckpoint(const std::string &path,
                             const Checkpoint &checkpoint);
+
+/// The name under which `writeCheckpoint` keeps the checkpoint before the
+/// last.
+std::string getPreviousCheckpointPath(const std::string &path);
 
 llvm::Expected<Checkpoint> readCheckpoint(const std::string &path);
 

@@ -11,7 +11,8 @@
 //   /particles/all/id             the numbers of the particles
 //   /particles/all/species        the types of the particles
 //   /particles/all/mass
-//   /parameters/mdir              what MDIR needs to continue the run
+//   /parameters/mdir              what MDIR needs to continue the run, and
+//                                 the run that wrote it (D129, D130)
 //
 // A quantity that changes with time has one frame: the state that the
 // checkpoint holds.
@@ -19,12 +20,14 @@
 #include "mdir/Driver/Checkpoint.h"
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/FileSystem.h"
 
 #include <cstdio>
 #include <cstring>
 
 #if MDIR_HAS_HDF5
 #include <hdf5.h>
+#include <unistd.h>
 #endif
 
 using namespace mdir::driver;
@@ -71,6 +74,10 @@ std::string mdir::driver::compareCheckpoints(const Checkpoint &first,
       return difference;
   }
   return "";
+}
+
+std::string mdir::driver::getPreviousCheckpointPath(const std::string &path) {
+  return path + ".prev";
 }
 
 #if !MDIR_HAS_HDF5
@@ -202,6 +209,9 @@ public:
 
   bool has(const char *path) {
     return H5Lexists(file, path, H5P_DEFAULT) > 0;
+  }
+  bool hasAttribute(const char *path, const char *name) {
+    return H5Aexists_by_name(file, path, name, H5P_DEFAULT) > 0;
   }
 
   /// Reads the dataset at `path`, which holds `count` values.
@@ -370,6 +380,13 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
       writer.writeReal(mdir, "timestep", checkpoint.timestep);
       writer.writeAttribute(mdir, "seed", H5T_NATIVE_UINT64,
                             &checkpoint.seed);
+      writer.writeAttribute(mdir, "first_step", H5T_NATIVE_INT64,
+                            &checkpoint.firstStep);
+      writer.writeAttribute(mdir, "part", H5T_NATIVE_INT64, &checkpoint.part);
+      writer.writeText(mdir, "trajectory", checkpoint.trajectory);
+      writer.writeAttribute(mdir, "frames", H5T_NATIVE_INT64,
+                            &checkpoint.frames);
+      writer.writeReal(mdir, "bath", checkpoint.bath);
       if (!checkpoint.barostatState.empty())
         writer.writeDataset(mdir, "barostat_state", H5T_NATIVE_DOUBLE,
                             {checkpoint.barostatState.size()},
@@ -378,7 +395,29 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
     failed = writer.hasFailed();
   }
 
-  if (failed || std::rename(partial.c_str(), path.c_str()) != 0) {
+  if (failed) {
+    std::remove(partial.c_str());
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "cannot write '%s'", path.c_str());
+  }
+  // The checkpoint before stays as `.prev` (D132). A second name for it is
+  // made before the rename that replaces it, so that `path` holds a
+  // complete state at every moment. Where the file system has no hard
+  // links, the checkpoint before is renamed instead, and for a moment only
+  // `.prev` holds a state; `mdir run --continue` then refuses rather than
+  // begin the run anew.
+  std::string previous = getPreviousCheckpointPath(path);
+  if (llvm::sys::fs::exists(path)) {
+    std::remove(previous.c_str());
+    if (::link(path.c_str(), previous.c_str()) != 0 &&
+        std::rename(path.c_str(), previous.c_str()) != 0) {
+      std::remove(partial.c_str());
+      return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                     "cannot keep '%s' as '%s'", path.c_str(),
+                                     previous.c_str());
+    }
+  }
+  if (std::rename(partial.c_str(), path.c_str()) != 0) {
     std::remove(partial.c_str());
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                    "cannot write '%s'", path.c_str());
@@ -436,6 +475,20 @@ mdir::driver::readCheckpoint(const std::string &path) {
                        checkpoint.timestep);
   reader.readAttribute("/parameters/mdir", "seed", H5T_NATIVE_UINT64,
                        checkpoint.seed);
+  // The run that wrote the checkpoint. A checkpoint without it can begin a
+  // run but not be continued by `mdir run --continue`.
+  if (reader.hasAttribute("/parameters/mdir", "first_step")) {
+    reader.readAttribute("/parameters/mdir", "first_step", H5T_NATIVE_INT64,
+                         checkpoint.firstStep);
+    reader.readAttribute("/parameters/mdir", "part", H5T_NATIVE_INT64,
+                         checkpoint.part);
+    reader.readText("/parameters/mdir", "trajectory", checkpoint.trajectory);
+    reader.readAttribute("/parameters/mdir", "frames", H5T_NATIVE_INT64,
+                         checkpoint.frames);
+    reader.readAttribute("/parameters/mdir", "bath", H5T_NATIVE_DOUBLE,
+                         checkpoint.bath);
+    checkpoint.hasRun = true;
+  }
   // The state of the last scaling of a barostat that scales every step:
   // nine numbers since D119, which a run takes; another size, from before,
   // is read and left for the run to evaluate the state once.

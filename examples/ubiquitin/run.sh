@@ -6,7 +6,8 @@
 #
 # The directory is ubiquitin-run by default, and mdir is found on PATH or
 # given. tleap of AmberTools must be on PATH. Each stage begins from the
-# checkpoint of the one before; a stage that ended is skipped.
+# checkpoint of the one before; run again, the script continues a stage
+# that stopped and skips one that is complete.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 work=${1:-ubiquitin-run}
@@ -20,10 +21,8 @@ if [ ! -f ubq.prmtop ]; then
   grep -E "^(Error|FATAL)" leap.log && exit 1 || true
 fi
 for name in 1-min 2-nvt 3-npt 4-md; do
-  # A stage is done when it ended, not when its checkpoint exists: a run
-  # writes checkpoints as it goes, and one that stopped has one too.
-  [ -f "$name.done" ] && { echo "== $name (done)"; continue; }
+  # A stage that stopped goes on from its checkpoint, and one that is
+  # complete says so (docs/driver-m0.md, Section 2.7).
   echo "== $name"
-  "$mdir" run "$name.toml" | tee "$name.log"
-  touch "$name.done"
+  "$mdir" run --continue "$name.toml" | tee -a "$name.log"
 done

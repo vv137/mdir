@@ -41,6 +41,16 @@ int mdir::tool::describeCheckpoints(llvm::ArrayRef<std::string> files) {
     std::printf("velocity offset: %g time steps\n", first->velocityOffset);
     std::printf("precision:       %s\n", first->precision.c_str());
     std::printf("time step:       %g ps\n", first->timestep);
+    if (first->hasRun) {
+      std::printf("run began at:    step %lld\n",
+                  static_cast<long long>(first->firstStep));
+      std::printf("part:            %lld\n",
+                  static_cast<long long>(first->part));
+      if (!first->trajectory.empty())
+        std::printf("trajectory:      %s, %lld frames\n",
+                    first->trajectory.c_str(),
+                    static_cast<long long>(first->frames));
+    }
     return 0;
   }
 

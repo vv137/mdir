@@ -24,6 +24,7 @@
 # RUN: mdir run %t.second.toml | FileCheck %s --check-prefix=SECOND
 # RUN: mdir checkpoint %t.whole.h5 %t.second.h5 | FileCheck %s
 # RUN: mdir checkpoint %t.whole.h5 | FileCheck %s --check-prefix=ABOUT
+# RUN: mdir checkpoint %t.second.h5 | FileCheck %s --check-prefix=STAGE
 # RUN: not mdir checkpoint %t.whole.h5 %t.first.h5 \
 # RUN: | FileCheck %s --check-prefix=DIFFERENT
 
@@ -54,3 +55,11 @@
 # ABOUT-NEXT: time step:       0.004 ps
 
 # DIFFERENT: the steps differ: 200 and 100
+
+# A run that begins from the checkpoint of another begins at its step
+# (D129): `steps` counts from there, and `mdir run --continue` of the second
+# run would continue it to step 200.
+#
+# STAGE:      step:            200
+# STAGE:      run began at:    step 100
+# STAGE-NEXT: part:            1

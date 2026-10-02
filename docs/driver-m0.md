@@ -85,9 +85,9 @@ regard to case.
 | | `format` | `AUTO` (the default: from the names of the files), `AMBER`, `GROMACS`, `CHARMM`, or `PDB`. A CHARMM force field runs from its own files (D122, [charmm-m1.md](charmm-m1.md)) or from a topology of GROMACS (D121). |
 | | `parameters` | With a PSF: the files of topology (`.rtf`), parameters (`.prm`), and streams (`.str`), in the order that CHARMM reads them; a later file replaces what an earlier one defines. |
 | | `include_paths`, `defines` | With a GROMACS topology: the directories of `#include` and the names that `#define` gives. |
-| | `checkpoint` | The checkpoint of an earlier run, which the run continues, taking its cell (and warning on the standard error if the input has another); the input's cell still sets the grid of PME and the reference of restraints. One of a minimization gives the positions only. |
+| | `checkpoint` | The checkpoint of an earlier run, whose state the run begins from, at its step and time (D129), taking its cell (and warning on the standard error if the input has another); the input's cell still sets the grid of PME and the reference of restraints. One of a minimization gives the positions only, and the run begins at step 0. |
 | `[output]` | `trajectory` | Positions, in DCD (`.dcd`). |
-| | `checkpoint` | The checkpoint (D26), written every `checkpoint_interval` steps in place of the one before, and at the end of a minimization. |
+| | `checkpoint` | The checkpoint (D26), written every `checkpoint_interval` steps in place of the one before, which stays as `<checkpoint>.prev` (D132), and at the end of a minimization. `mdir run --continue` continues the run from it (Section 2.7). |
 | | `energy_interval`, `trajectory_interval`, `checkpoint_interval` | Steps between the rows of the log, the frames, and the checkpoints (Section 2.2). The intervals nest, either way for energies and frames. |
 | `[energy]` | `cutoff` | The cutoff of `md.neighborhood` (Å). |
 | | `pairlist_distance` | The reach of the neighbor structures; the skin is `pairlist_distance − cutoff`. |
@@ -103,7 +103,7 @@ regard to case.
 | | `[[energy.pair_override]]` | Parameters of a term for one pair of types. |
 | `[pme]` | `tolerance`, `beta`, `max_spacing`, `grid`, `order`, `influence` | Particle mesh Ewald (D71): $\beta$ from $\operatorname{erfc}(\beta r_c) = \texttt{tolerance}$ or given; the grid from the largest spacing or given as three numbers of points; the order of the B-splines, 4, 6, or 8; the influence function, `SPME` or `OPTIMAL`. |
 | `[dynamics]` | `integrator` | `VELOCITY_VERLET` or `LEAPFROG`: the `dyn.program` (D76). |
-| | `time_step`, `steps` | In ps, and the number of steps. |
+| | `time_step`, `steps` | In ps, and the number of steps of the run, counted from the step it begins at: 0, or the step of the checkpoint of `[input]`. `mdir run --continue` continues the run until it has taken them (D129). |
 | | `seed` | Of the initial velocities and of the coupling. |
 | | `center_of_mass_interval` | Steps between removals of the motion of the center of mass; with a thermostat, when it acts. |
 | `[minimize]` | `method`, `steps`, `initial_step` | `STEEPEST_DESCENT`, the number of steps, and the first step (Å) (D73). Instead of `[dynamics]`. |
@@ -171,7 +171,8 @@ mdir run control.toml
 ```
 
 The driver is the subcommand `run` of the C++ program `tools/mdir`
-(D59). It runs the passes in its own process and executes the code with
+(D59); `--continue`, `--no-append`, and `--max-walltime` carry a run over
+more than one job (Section 2.7). It runs the passes in its own process and executes the code with
 the execution engine of MLIR. The
 Python library (C5) comes later and calls the same steps.
 
@@ -333,7 +334,9 @@ A checkpoint is a file in the H5MD format [[deBuyl2014]](references.md#debuyl201
 /particles/all/species        the types of the particles
 /particles/all/mass
 /parameters/mdir              format, integrator, velocity_offset,
-                              precision, timestep, seed
+                              precision, timestep, seed, barostat_state;
+                              the run that wrote it: first_step, part,
+                              trajectory, frames, bath (D129, D130)
 ```
 
 The units are those inside MDIR and are written with the data: nm, ps, u,
@@ -346,6 +349,8 @@ and kJ/mol.
 | With leapfrog the time of the velocities is half a step before that of the positions. | The file says what it holds. |
 | Neighbor structures start empty after every checkpoint (R1). | The run that continues builds its structure at the first step. The run that was not interrupted must build there too. |
 | The file appears under its name only when it is complete. | A run that ends while it writes leaves the checkpoint before. |
+| The checkpoint before stays as `<checkpoint>.prev`, a second name made before the rename (D132). | A checkpoint that is damaged after it was written leaves one to go back to; the name of the checkpoint holds a complete state at every moment. |
+| It records the step that its run began at, its part, the trajectory and the frames written to it, and the energy that the coupling has taken. | `mdir run --continue` continues the run to its `steps`, its trajectory, and its conserved energy (Section 2.7). |
 | The particles are in the order of the input, whatever order the run keeps them in. | The file does not depend on the plan of the run. The run that continues puts the particles in order where it begins, and arrives at the order of the run that was not interrupted (D44). |
 
 A run that continues from a checkpoint arrives at the state of the run that
@@ -358,6 +363,40 @@ are not of the same time. It cannot continue in another box.
 
 `mdir checkpoint file.h5` describes a checkpoint, and `mdir checkpoint
 first.h5 second.h5` compares the states of two.
+
+### 2.7 Runs longer than a job
+
+A run on a cluster outlasts the wall time of a job. The same command line
+starts it and continues it until it is complete:
+
+```sh
+mdir run --continue --max-walltime 23:50 md.toml
+```
+
+| Option | What it does |
+|---|---|
+| `--continue` | Continues the run from the checkpoint of `[output]` until it has taken `steps` steps from the step it began at (D129). Without a checkpoint the run begins; with one that holds the last step it says that the run is complete and exits with 0. It refuses a checkpoint of another time step or seed, and steps that remain if they are not whole intervals of the outputs and of the coupling. Raising `steps` extends a run. |
+| `--no-append` | With `--continue`, writes the frames that follow to `<trajectory>.partNNNN.dcd`, NNNN the part of the run; later continuations append to that part. Without it, the frames are appended to the trajectory that the checkpoint counts them in, after the frames past the checkpoint are removed (D130). |
+| `--max-walltime <time>` | Stops at the last checkpoint that leaves time, within `<time>` from the start of `mdir`, for one more interval between checkpoints as long as the longest so far (D131). In hours (`23.5`) or as `H:MM[:SS]`. |
+
+SIGTERM and SIGINT ask a run of dynamics that writes checkpoints to stop
+at its next checkpoint; a second signal of the same kind ends it at once
+(D131). A stop is taken after a checkpoint is written, so the run
+continues from it exactly; a scheduler's warning signal (for SLURM,
+`--signal=TERM@<seconds>`) must leave time for an interval between
+checkpoints.
+
+| Exit status | Meaning |
+|---|---|
+| 0 | The run is complete |
+| 75 | The run stopped at a checkpoint before its last step, on a signal or at the wall time; `--continue` goes on |
+| 1 | An error, which the standard error describes |
+
+A run that begins from the checkpoint of another run, as the stages of
+`examples/` do, is a new run that begins at the step of that checkpoint
+(D129): its step and its time continue, so that the random numbers of the
+stages differ, and its `steps` count from there. The checkpoint of the
+run it began from is not changed.
 
 ## 3. Decided
 
