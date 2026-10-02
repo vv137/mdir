@@ -136,7 +136,7 @@ q.save({os.path.join(target, "system.top")!r}, format="gromacs",
 
 def write_mdir(name, system, target, steps=None, path="mdir.toml",
                skin=SKIN, neighbor_structure=None, barostat_work=None,
-               prune_skin=None):
+               prune_skin=None, energy_interval=None, analytic_bonds=False):
     npt = system["ensemble"] == "NPT"
     ensemble = (f"""ensemble    = "NPT"
 temperature = {TEMPERATURE}
@@ -161,7 +161,7 @@ topology    = "system.parm7"
 coordinates = "system.rst7"
 
 [output]
-energy_interval = {max(steps // 2, 1)}
+energy_interval = {energy_interval or max(steps // 2, 1)}
 
 [energy]
 cutoff            = {CUTOFF}
@@ -183,6 +183,7 @@ steps      = {steps}
 [constraints]
 hydrogen_bonds = true
 rigid_water    = true
+analytic_bonds = {str(analytic_bonds).lower()}
 
 [boundary]
 type = "PERIODIC"
@@ -208,7 +209,8 @@ def smoke(args):
         system = SYSTEMS[name]
         target = os.path.join(args.work, name)
         control = write_mdir(name, system, target, steps=args.steps,
-                             path="smoke.toml")
+                             path="smoke.toml", energy_interval=args.steps,
+                             analytic_bonds=args.analytic_bonds)
         done = subprocess.run([args.mdir, "run", control], cwd=target,
                               capture_output=True, text=True)
         rows = [line.split() for line in done.stdout.splitlines()
@@ -459,7 +461,8 @@ def main():
     p = commands.add_parser("smoke")
     p.add_argument("systems", nargs="*", metavar="SYSTEM")
     p.add_argument("--mdir", default="mdir")
-    p.add_argument("--steps", type=int, default=20)
+    p.add_argument("--steps", type=int, default=2 * COUPLING_INTERVAL)
+    p.add_argument("--analytic-bonds", action="store_true")
     args = parser.parse_args()
     {"prepare": prepare, "run": run, "report": report,
      "smoke": smoke}[args.command](args)

@@ -1,0 +1,26 @@
+{
+  "ms_per_step": {
+    "newton": [
+      0.212,
+      0.211,
+      0.211
+    ],
+    "analytic": [
+      0.211,
+      0.211,
+      0.212
+    ]
+  },
+  "median_speedup": 1.0,
+  "synthetic": false,
+  "cuda_visible_devices": "1",
+  "note": "Complete MD stage, excluding compilation; verify device contention separately.",
+  "date": "2026-10-02",
+  "target": "GPU",
+  "precision": "MIXED",
+  "atoms": 23558,
+  "steps": 10000,
+  "timestep_ps": 0.002,
+  "hardware": "NVIDIA RTX 3090",
+  "shared_gpu": false
+}

@@ -1,0 +1,20 @@
+# The opt-in quadratic projection preserves the same discrete RATTLE
+# trajectory and constraint virial as the six-step Newton solver.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/ff19sb/vacuum.prmtop %S/Inputs/ff19sb/vacuum.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/shake.test | sed '1d;$d' > %t/newton.toml
+# RUN: sed '/hydrogen_bonds = true/a analytic_bonds = true' %t/newton.toml > %t/analytic.toml
+# RUN: mdir run %t/newton.toml > %t/newton.log
+# RUN: mdir run %t/analytic.toml > %t/analytic.log
+# RUN: %python %S/Inputs/compare_logs.py %t/newton.log %t/analytic.log 1e-7 | FileCheck %s
+# RUN: %python %S/Inputs/check_bonds.py %t/vacuum.prmtop %t/shake.dcd | FileCheck %s --check-prefix=BONDS
+# RUN: mdir emit %t/analytic.toml > %t/analytic.mlir
+# RUN: %python %S/Inputs/analytic_bonds.py emit %t/analytic.mlir > %t/kernel.mlir
+# RUN: mlir-opt %t/kernel.mlir --convert-scf-to-cf %lower_to_llvm --convert-cf-to-llvm --reconcile-unrealized-casts | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils > %t/kernel.log
+# RUN: %python %S/Inputs/analytic_bonds.py check %t/kernel.log | FileCheck %s --check-prefix=KERNEL
+# RUN: sed 's/analytic_bonds = true/analytic_bonds = "yes"/' %t/analytic.toml > %t/bad.toml
+# RUN: not mdir check %t/bad.toml 2>&1 | FileCheck %s --check-prefix=BAD
+# CHECK: logs agree
+# BONDS: bonds ok
+# KERNEL: analytic bond invariants pass
+# BAD: expected true or false for 'analytic_bonds'
