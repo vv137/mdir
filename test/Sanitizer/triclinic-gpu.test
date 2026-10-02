@@ -1,8 +1,9 @@
 # The kernels of a triclinic cell on a device under compute-sanitizer: the
 # build of the neighbor matrix in fractional coordinates and the kernels of
 # PME of PMEGPUTriclinic.mlir (docs/triclinic-m2.md, P2), with the weights of
-# order 4 in mixed precision, over 20 steps of the rhombic dodecahedron of
-# test/Driver/triclinic.test.
+# order 4 in mixed precision, and the build of the groups of
+# NeighborsGroupsGPUTriclinic.mlir with a dual list (P3), over 20 steps of
+# the rhombic dodecahedron of test/Driver/triclinic.test.
 #
 # REQUIRES: cuda, compute-sanitizer
 #
@@ -16,6 +17,14 @@
 # RUN: %compute_sanitizer --tool initcheck --error-exitcode 1 mdir run %t/run.toml 2>&1 \
 # RUN:   | FileCheck %s
 # RUN: %compute_sanitizer --tool racecheck --error-exitcode 1 mdir run %t/run.toml 2>&1 \
+# RUN:   | FileCheck %s --check-prefix=RACE
+# RUN: sed -e 's/^target = "GPU"/target = "GPU"\nneighbor_structure = "GROUPS"/' \
+# RUN:     -e 's/^pairlist_distance = 9.0/pairlist_distance = 9.0\npruned_distance = 8.4/' %t/run.toml > %t/groups.toml
+# RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run %t/groups.toml 2>&1 \
+# RUN:   | FileCheck %s
+# RUN: %compute_sanitizer --tool initcheck --error-exitcode 1 mdir run %t/groups.toml 2>&1 \
+# RUN:   | FileCheck %s
+# RUN: %compute_sanitizer --tool racecheck --error-exitcode 1 mdir run %t/groups.toml 2>&1 \
 # RUN:   | FileCheck %s --check-prefix=RACE
 
 # CHECK: ERROR SUMMARY: 0 errors

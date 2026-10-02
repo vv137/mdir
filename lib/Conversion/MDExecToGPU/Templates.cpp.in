@@ -17,4 +17,8 @@ extern const char *const neighborsGroupsGPUTemplate;
 const char *const neighborsGroupsGPUTemplate = R"MDIRTEMPLATE(
 @NEIGHBORS_GROUPS_GPU_TEMPLATE@
 )MDIRTEMPLATE";
+extern const char *const neighborsGroupsGPUTriclinicTemplate;
+const char *const neighborsGroupsGPUTriclinicTemplate = R"MDIRTEMPLATE(
+@NEIGHBORS_GROUPS_GPU_TRICLINIC_TEMPLATE@
+)MDIRTEMPLATE";
 } // namespace mdir

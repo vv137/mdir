@@ -94,6 +94,28 @@ Value kernels::emitMinimumImage(OpBuilder &builder, Location loc, Value raw,
                                         ValueRange{d[0], d[1], d[2]});
 }
 
+Value kernels::emitLatticeShift(OpBuilder &builder, Location loc, Value cells,
+                               Value box) {
+  if (!isTriclinic(box))
+    return arith::MulFOp::create(builder, loc, cells, box);
+  auto element = [&](Value vector, int64_t k) -> Value {
+    return vector::ExtractOp::create(builder, loc, vector, k);
+  };
+  auto mul = [&](Value a, Value b) -> Value {
+    return arith::MulFOp::create(builder, loc, a, b);
+  };
+  auto add = [&](Value a, Value b) -> Value {
+    return arith::AddFOp::create(builder, loc, a, b);
+  };
+  Value na = element(cells, 0), nb = element(cells, 1), nc = element(cells, 2);
+  Value ax = element(box, 0), by = element(box, 1), cz = element(box, 2),
+        bx = element(box, 3), cx = element(box, 4), cy = element(box, 5);
+  return vector::FromElementsOp::create(
+      builder, loc, cells.getType(),
+      ValueRange{add(add(mul(na, ax), mul(nb, bx)), mul(nc, cx)),
+                 add(mul(nb, by), mul(nc, cy)), mul(nc, cz)});
+}
+
 Value kernels::emitFaceWidths(OpBuilder &builder, Location loc, Value box) {
   auto element = [&](int64_t k) -> Value {
     return vector::ExtractOp::create(builder, loc, box, k);
@@ -533,23 +555,27 @@ SmallVector<Value> kernels::emitGroupPairKernel(
         Value place = toIndex(b, place32);
         // The entry in the frame of the group: its position, in the frame
         // of its own group, moved by the whole cells in bits 16 to 27 of
-        // its mask, (e + 4) in four bits an axis (D95, D115).
+        // its mask, (e + 4) in four bits an axis, or by the lattice vectors
+        // in bits 16 to 30, (e + 16) in five bits each, for a triclinic
+        // cell (D95, D115).
         Value position = loadElement(b, loc, layout.positions, place);
         {
           auto positionType = cast<VectorType>(position.getType());
           Type element = positionType.getElementType();
+          int64_t width = getEntryShiftBits(isTriclinic(box));
+          int64_t offset = getEntryShiftOffset(isTriclinic(box));
           SmallVector<Value> cells;
           for (int64_t axis = 0; axis != 3; ++axis) {
             Value bits = arith::AndIOp::create(
                 b, loc,
                 arith::ShRUIOp::create(b, loc, mask,
-                                       constant32(b, 16 + 4 * axis)),
-                constant32(b, 15));
+                                       constant32(b, 16 + width * axis)),
+                constant32(b, (1 << width) - 1));
             cells.push_back(arith::SIToFPOp::create(
                 b, loc, element,
-                arith::SubIOp::create(b, loc, bits, constant32(b, 4))));
+                arith::SubIOp::create(b, loc, bits, constant32(b, offset))));
           }
-          Value shift = arith::MulFOp::create(
+          Value shift = emitLatticeShift(
               b, loc, vector::FromElementsOp::create(b, loc, positionType, cells),
               convertReal(b, loc, box, element));
           position = arith::AddFOp::create(b, loc, position, shift);

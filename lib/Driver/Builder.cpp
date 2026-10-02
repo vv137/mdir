@@ -5140,14 +5140,11 @@ void Builder::setSchedule() {
 }
 
 llvm::Error Builder::build() {
-  // A triclinic cell runs at constant volume, with the neighbor matrix,
-  // so far (docs/triclinic-m2.md, P1 and P2). The matrix holds every pair
-  // within its reach while the reach is at most half of the least of a_x,
-  // b_y, c_z, the bound of the minimum image in one pass.
+  // A triclinic cell runs at constant volume so far (docs/triclinic-m2.md,
+  // P1 to P3). The neighbor structures hold every pair within their reach
+  // while the reach is at most half of the least of a_x, b_y, c_z, the
+  // bound of the minimum image in one pass.
   if (isTriclinic()) {
-    if (control.neighborStructure == NeighborStructure::Groups)
-      return makeError("a triclinic cell does not run with "
-                       "'neighbor_structure = \"GROUPS\"' yet");
     if (changesCell())
       return makeError("a triclinic cell does not run with a barostat yet");
     double least = std::min({system.box[0], system.box[1], system.box[2]});

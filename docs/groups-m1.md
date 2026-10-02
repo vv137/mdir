@@ -242,6 +242,25 @@ In a wide cell the second kernel is warps that return; in the list kernel,
 the same code took 128 registers instead of 64 and the build of Cellulose
 30% more time.
 
+## 5.1 Triclinic cells (D126)
+
+A triclinic cell (docs/triclinic-m2.md) takes the build of
+`NeighborsGroupsGPUTriclinic.mlir`, written by the same script with
+`TILTED`; only a module with a triclinic cell parses it.
+
+| Part | Orthorhombic | Triclinic |
+|---|---|---|
+| Wrapped positions | Into $[0, L)$ along each axis | Into the brick $[0,a_x)\times[0,b_y)\times[0,c_z)$, along c, then b, then a; the order, the columns, and the grid of the candidates are those of the brick |
+| Minimum image | Per axis | One pass along c, b, and a (`@mdrt_gpu_groups_image_triclinic`), which gives the lattice shift $\mathbf n$ with it; exact within half of the least of $a_x, b_y, c_z$, which bounds the reach |
+| Windows of the search | Per axis, wrapped per axis | A row of z $t_z$ cells beyond the grid is that of $t_z\mathbf c$ away: its window of y moves by $-t_z c_y$; a row of y $t_y$ beyond, by $t_y\mathbf b$: its window of x moves by $-t_z c_x - t_y b_x$, and by whole periods of a back into the grid, so that the run along x goes around the edge once at most. A range of z wider than the grid makes y and x whole, and one of y makes x whole: every cell once |
+| Shifts of the frames and of the entries | Cells per axis, times the edges | Lattice vectors, times $H$ (`kernels::emitLatticeShift`): five multiply-adds once per entry |
+| Shift of an entry in its mask | $(e + 4)$ in four bits an axis, bits 16 to 27 | $(e + 16)$ in five bits a vector, bits 16 to 30: the brick spans up to 3.5 periods of a in lattice coordinates |
+| Images of D115 | The other side along the axes of three bits | The 27 codes a lattice vector away: $\Delta n_c \in \{-1, 0, 1\}$, then y rounded again and $\Delta n_b$, then x and $\Delta n_a$; the queue holds the code in bits 26 to 30 and the place below |
+
+`test/Runtime/neighbors-groups-triclinic-gpu.mlir` checks the lists of an
+octahedron, a dodecahedron, a hexagonal cell, and a cell of D115 against
+every pair in f64.
+
 ## 6. In the IR
 
 - `md_exec.NeighborKind` gains `groups`: `md_exec.empty_neighbors

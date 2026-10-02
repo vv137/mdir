@@ -3,7 +3,9 @@
 # no access beyond a buffer, no read of memory that nothing has written, and
 # no race in shared memory. The run exercises the loops over pairs, the
 # fused kernels, the disjoint sets of SETTLE and SHAKE, the virtual sites,
-# particle mesh Ewald, the barostat, and the deferred readbacks of sums.
+# particle mesh Ewald, the barostat, and the deferred readbacks of sums;
+# and again with the groups of 16 and a dual list (D89, D114), whose build
+# in a cell this small takes images on both sides of a boundary (D115).
 #
 # REQUIRES: cuda, compute-sanitizer
 #
@@ -17,6 +19,14 @@
 # RUN: %compute_sanitizer --tool initcheck --error-exitcode 1 mdir run %t/run.toml 2>&1 \
 # RUN:   | FileCheck %s
 # RUN: %compute_sanitizer --tool racecheck --error-exitcode 1 mdir run %t/run.toml 2>&1 \
+# RUN:   | FileCheck %s --check-prefix=RACE
+# RUN: sed -e 's/^precision = "mixed"/precision = "mixed"\nneighbor_structure = "GROUPS"/' \
+# RUN:     -e 's/^pairlist_distance = 10.0/pairlist_distance = 11.0\npruned_distance = 9.5/' %t/run.toml > %t/groups.toml
+# RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run %t/groups.toml 2>&1 \
+# RUN:   | FileCheck %s
+# RUN: %compute_sanitizer --tool initcheck --error-exitcode 1 mdir run %t/groups.toml 2>&1 \
+# RUN:   | FileCheck %s
+# RUN: %compute_sanitizer --tool racecheck --error-exitcode 1 mdir run %t/groups.toml 2>&1 \
 # RUN:   | FileCheck %s --check-prefix=RACE
 
 # CHECK: ERROR SUMMARY: 0 errors

@@ -286,6 +286,26 @@ $\varepsilon$. The rounding can therefore keep a pair a little beyond $R$
 but never drop one within it; `test/Runtime/neighbors-groups-gpu.mlir`
 checks the lists against every pair computed in f64.
 
+**Triclinic cells** (D126). The build of a triclinic cell wraps the
+positions into the brick $[0,a_x)\times[0,b_y)\times[0,c_z)$ of the
+lower-triangular cell $H$, along $\mathbf c$, $\mathbf b$, and $\mathbf
+a$, which is a whole cell, and keeps the compact order and the grid of the
+candidates in it. The grid is periodic along x alone: a row of the grid
+$t_z$ cells beyond a face of z holds the particles of $t_z\mathbf c$ away,
+x and y with them, and one $t_y$ beyond a face of y those of $t_y\mathbf
+b$, so the window of y moves by $-t_z c_y$ in each row of z and that of x
+by $-t_z c_x - t_y b_x$ in each row of y. The minimum image is taken in
+one pass along $\mathbf c$, $\mathbf b$, and $\mathbf a$, exact for a
+displacement whose nearest image is within half of the least of $a_x$,
+$b_y$, $c_z$, which bounds the reach; the shifts of the frames and of the
+entries become lattice vectors $\mathbf n$, applied as $\mathbf n H$, five
+multiply-adds once per entry and nothing per pair. The images of D115 are
+those a lattice vector away: as every nonzero lattice vector of a reduced
+cell is at least as long as the least of $a_x, b_y, c_z$, an image within
+the reach of a box differs from the nearest by $-1$, $0$, or $1$ along
+each of $\mathbf c$, $\mathbf b$ (rounded again), and $\mathbf a$
+(rounded again), 27 in all.
+
 ## 4.5 The dual list
 
 **Why.** A single list trades the build against the loop over pairs.

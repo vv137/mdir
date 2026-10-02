@@ -1,9 +1,11 @@
-# Runs in a triclinic cell on a device (docs/triclinic-m2.md, P2): the
-# rhombic dodecahedron of triclinic.test. The neighbor matrix bins the
+# Runs in a triclinic cell on a device (docs/triclinic-m2.md, P2 and P3):
+# the rhombic dodecahedron of triclinic.test. The neighbor matrix bins the
 # fractional coordinates and tests with the minimum image of the cell, and
 # PME places the particles by s = x H⁻¹, takes their forces through H⁻¹,
 # and computes its Gaussian at each k = H⁻¹ n. In double precision the
 # terms are those of the CPU to the printed digits, and so are 200 steps.
+# The groups, built in the brick of the cell with lattice shifts, give the
+# log of the matrix over those steps, also with a dual list.
 #
 # REQUIRES: cuda
 #
@@ -25,9 +27,16 @@
 # RUN: sed 's/^order     = 4/order     = 6/' %t/mixed.toml > %t/order6.toml
 # RUN: printf 'Coulomb reciprocal 1061.060128\n' > %t/order6.txt
 # RUN: mdir run %t/order6.toml | %python %S/Inputs/check_terms.py %t/order6.txt 1e-5 | FileCheck %s --check-prefix=ORDER6
-# The structure of groups takes no triclinic cell yet (P3).
-# RUN: sed 's/^\[execution\]/[execution]\nneighbor_structure = "GROUPS"/' %t/mixed.toml > %t/groups.toml
-# RUN: not mdir run %t/groups.toml 2>&1 | FileCheck %s --check-prefix=GROUPS
+# RUN: sed -e 's/^energy_interval = 200/energy_interval = 20/' %t/steps.toml > %t/matrix.toml
+# RUN: cd %t && mdir run matrix.toml | grep 'INFO: \|MDIR:   ' > matrix.log
+# RUN: sed 's/^\[execution\]/[execution]\nneighbor_structure = "GROUPS"/' %t/matrix.toml > %t/groups.toml
+# RUN: cd %t && mdir run groups.toml | grep 'INFO: \|MDIR:   ' > groups.log
+# RUN: diff %t/matrix.log %t/groups.log
+# RUN: sed 's/^pairlist_distance = 9.0/pairlist_distance = 9.0\npruned_distance = 8.4/' %t/groups.toml > %t/dual.toml
+# RUN: cd %t && mdir run dual.toml > dual.out
+# RUN: grep 'INFO: \|MDIR:   ' %t/dual.out > %t/dual.log
+# RUN: diff %t/matrix.log %t/dual.log
+# RUN: FileCheck %s --check-prefix=DUAL < %t/dual.out
 
 # CHECK:      MDIR:   Lennard-Jones               2915.050920
 # CHECK-NEXT: MDIR:   Coulomb                    -3460.248854
@@ -46,4 +55,4 @@
 # MIXED: angles 1
 # MIXED: Coulomb reciprocal 1
 # ORDER6: Coulomb reciprocal 1
-# GROUPS: mdir: a triclinic cell does not run with 'neighbor_structure = "GROUPS"' yet
+# DUAL: MDIR: the inner lists were pruned {{[0-9]+}} times

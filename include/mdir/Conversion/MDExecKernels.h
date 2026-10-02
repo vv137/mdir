@@ -55,6 +55,21 @@ mlir::Value emitMinimumImage(mlir::OpBuilder &builder, mlir::Location loc,
                              mlir::Value raw, mlir::Value box,
                              mlir::Value inverse);
 
+/// The displacement of `cells`, a vector of three whole numbers of the type
+/// of `box`: the cells times the edges of an orthorhombic cell, or for a
+/// triclinic one the lattice vector n H, n_a a + n_b b + n_c c.
+mlir::Value emitLatticeShift(mlir::OpBuilder &builder, mlir::Location loc,
+                             mlir::Value cells, mlir::Value box);
+
+/// The bits a lattice vector of the shift of an entry of a list of groups,
+/// from bit 16 of its mask, and the offset that makes it whole (D95, D115):
+/// four bits and 4 for an orthorhombic cell, five and 16 for a triclinic
+/// one (docs/triclinic-m2.md).
+inline int64_t getEntryShiftBits(bool triclinic) { return triclinic ? 5 : 4; }
+inline int64_t getEntryShiftOffset(bool triclinic) {
+  return triclinic ? 16 : 4;
+}
+
 /// The widths of the triclinic cell `box` between its faces, the distances
 /// between the planes of constant fractional coordinates: V / |b × c|,
 /// b_y c_z / |(c_y, c_z)|, and c_z, in the element type of `box`. The

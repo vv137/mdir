@@ -50,6 +50,7 @@ extern const char *const pmeGPUTemplate;
 /// The text of its kernels for a triclinic cell.
 extern const char *const pmeGPUTriclinicTemplate;
 extern const char *const neighborsGroupsGPUTemplate;
+extern const char *const neighborsGroupsGPUTriclinicTemplate;
 } // namespace mdir
 
 static const char *const spatialOrderName = "mdrt_gpu_spatial_order";
@@ -341,7 +342,9 @@ private:
 
   /// Adds the templates for positions of the type `real` to the module.
   LogicalResult addTemplates(Type real);
-  LogicalResult addGroupsTemplates();
+  /// Adds the template that builds groups, or with `tilted` that of a
+  /// triclinic cell.
+  LogicalResult addGroupsTemplates(bool tilted);
   func::FuncOp getOrDeclare(StringRef name, FunctionType type);
   /// Adds the template of particle mesh Ewald for these types, and with
   /// `tilted` the kernels of a triclinic cell as well.
@@ -1821,7 +1824,7 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
                                     body.getI32IntegerAttr(512)));
       cells.push_back(arith::SIToFPOp::create(body, loc, element, count));
     }
-    Value shift = arith::MulFOp::create(
+    Value shift = emitLatticeShift(
         body, loc,
         vector::FromElementsOp::create(body, loc,
                                        VectorType::get({3}, element), cells),
@@ -2092,12 +2095,15 @@ LogicalResult Lowering::addTemplates(Type real) {
   return success();
 }
 
-LogicalResult Lowering::addGroupsTemplates() {
-  if (SymbolTable::lookupSymbolIn(module, buildGroupsName))
+LogicalResult Lowering::addGroupsTemplates(bool tilted) {
+  if (SymbolTable::lookupSymbolIn(
+          module, tilted ? std::string(buildGroupsName) + "_triclinic"
+                         : std::string(buildGroupsName)))
     return success();
   ParserConfig config(context);
-  OwningOpRef<ModuleOp> templates =
-      parseSourceString<ModuleOp>(neighborsGroupsGPUTemplate, config);
+  OwningOpRef<ModuleOp> templates = parseSourceString<ModuleOp>(
+      tilted ? neighborsGroupsGPUTriclinicTemplate : neighborsGroupsGPUTemplate,
+      config);
   if (!templates)
     return module.emitError()
            << "cannot parse the template that builds groups of neighbors";
@@ -2570,9 +2576,6 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
                                   Value box, double reach,
                                   double cellWidth) {
   if (structure.groups) {
-    if (isTriclinic(box))
-      return emitError(loc) << "a structure of groups does not take a "
-                               "triclinic cell yet (docs/triclinic-m2.md, P3)";
     if (failed(emitGroupsBuild(builder, loc, structure, positions, box,
                                reach)))
       return failure();
@@ -2773,15 +2776,20 @@ void Lowering::emitGroupsPrune(OpBuilder &builder, Location loc,
   // The reach widened as the build widens it: by 3e-6 of the sum of the
   // edges, far more than the rounding of the positions to f32 can move a
   // distance, so that every pair within the reach in f64 is kept.
-  Value sum = vector::ReductionOp::create(builder, loc,
-                                          vector::CombiningKind::ADD, box);
+  // For a triclinic cell, the diagonal and the magnitudes of the tilts.
+  Value sum = vector::ReductionOp::create(
+      builder, loc, vector::CombiningKind::ADD,
+      isTriclinic(box) ? Value(math::AbsFOp::create(builder, loc, box)) : box);
   Value widened = arith::AddFOp::create(
       builder, loc, createReal(builder, loc, f64, reach),
       arith::MulFOp::create(builder, loc, sum,
                             createReal(builder, loc, f64, 3.0e-6)));
   Value reach2 = arith::TruncFOp::create(
       builder, loc, f32, arith::MulFOp::create(builder, loc, widened, widened));
-  Value box32 = arith::TruncFOp::create(builder, loc, vector3, box);
+  Value box32 = arith::TruncFOp::create(
+      builder, loc,
+      VectorType::get({cast<VectorType>(box.getType()).getNumElements()}, f32),
+      box);
   auto constant32 = [&](OpBuilder &b, int64_t v) -> Value {
     return arith::ConstantOp::create(b, loc, i32, b.getI32IntegerAttr(v));
   };
@@ -2828,7 +2836,7 @@ void Lowering::emitGroupsPrune(OpBuilder &builder, Location loc,
           c, loc, f64,
           arith::SubIOp::create(c, loc, bits, constant32(c, 512))));
     }
-    Value shift = arith::MulFOp::create(
+    Value shift = emitLatticeShift(
         c, loc,
         vector::FromElementsOp::create(c, loc, VectorType::get({3}, f64),
                                        cells),
@@ -2915,25 +2923,29 @@ void Lowering::emitGroupsPrune(OpBuilder &builder, Location loc,
                                          ValueRange{at}),
                   constant32(c, 0));
               // The entry in the frame of the group: moved by the whole
-              // cells in bits 16 to 27 of its mask (D95, D115).
+              // cells, or lattice vectors, of the shift in its mask (D95,
+              // D115).
               Value position = loadElement(
                   c, loc, placed,
                   toIndex(c, arith::SelectOp::create(c, loc, has, entry,
                                                      constant32(c, 0))));
+              int64_t width = getEntryShiftBits(isTriclinic(box));
+              int64_t offset = getEntryShiftOffset(isTriclinic(box));
               SmallVector<Value> cells;
               for (int64_t axis = 0; axis != 3; ++axis) {
                 Value bits = arith::AndIOp::create(
                     c, loc,
                     arith::ShRUIOp::create(c, loc, mask,
-                                           constant32(c, 16 + 4 * axis)),
-                    constant32(c, 15));
+                                           constant32(c, 16 + width * axis)),
+                    constant32(c, (1 << width) - 1));
                 cells.push_back(arith::SIToFPOp::create(
                     c, loc, f32,
-                    arith::SubIOp::create(c, loc, bits, constant32(c, 4))));
+                    arith::SubIOp::create(c, loc, bits,
+                                          constant32(c, offset))));
               }
               position = arith::AddFOp::create(
                   c, loc, position,
-                  arith::MulFOp::create(
+                  emitLatticeShift(
                       c, loc,
                       vector::FromElementsOp::create(c, loc, vector3, cells),
                       box32));
@@ -3024,7 +3036,9 @@ LogicalResult Lowering::emitGroupsBuild(OpBuilder &builder, Location loc,
            << "structures of groups of neighbors are built from positions "
               "in f64, not "
            << real;
-  if (failed(addGroupsTemplates()))
+  // A triclinic cell takes the build of its own (docs/triclinic-m2.md).
+  bool tilted = isTriclinic(box);
+  if (failed(addGroupsTemplates(tilted)))
     return failure();
 
   // Without excluded pairs the build takes a buffer with no rows.
@@ -3038,8 +3052,9 @@ LogicalResult Lowering::emitGroupsBuild(OpBuilder &builder, Location loc,
         ValueRange{createIndex(builder, loc, 0), createIndex(builder, loc, 1)});
     excluded = noExcluded;
   }
-  auto build = cast<func::FuncOp>(
-      SymbolTable::lookupSymbolIn(module, buildGroupsName));
+  auto build = cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
+      module, tilted ? std::string(buildGroupsName) + "_triclinic"
+                     : std::string(buildGroupsName)));
   Type wide = builder.getI64Type();
   Value reachValue = createReal(builder, loc, builder.getF64Type(), reach);
 
