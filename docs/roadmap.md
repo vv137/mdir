@@ -24,8 +24,8 @@ follows are in [principles.md](principles.md).
 
 | Stage | Work |
 |---|---|
-| M1e | What remains of the readers and renumbering (design-m1.md, Section 18) |
-| M1f | The terms and dynamics of the intermediate stage against AmberTools and GROMACS |
+| M1e | Done (2026-10-02): the readers and renumbering; the format before Amber 7 and Amber's conventions (D133); flexible water at constant energy against sander, second order down to 0.0625 fs with the terms shifted at the cutoff (design-m1.md, Section 18) |
+| M1f | Done: the terms and dynamics of the intermediate stage against AmberTools, GROMACS, and CHARMM (white paper, Section 9) |
 | M1k | The Amber suite against pmemd.cuda (published) and GROMACS 2026.3 with CUDA, on an RTX 3090: energies term by term against sander at the start, conservation and ensembles over runs, and rates |
 | Integrators | Done: leapfrog does what velocity Verlet does: constraints (SHAKE, SETTLE), virtual sites, the thermostats, the barostat, restraints (D76) |
 | Comparison on a protein | Done (2026-10-02, `scripts/validation/protein`): ubiquitin in 5700 OPC waters with amber19sb.ff from `pdb2gmx` (ParmEd collapsed the 13 residue-specific maps of CMAP into one and was set aside). The terms agree with a rerun of GROMACS 2026.3 to 1.7e-6 each, Coulomb to 1.9e-6 against its tabulated kernels; the reader now puts the atoms of dihedrals in the order of LEaP, as grompp does. MDIR's rate is 70% of GROMACS's at constant energy and 64% at constant pressure: its loop over pairs is as fast and its PME faster, and the rest of the step runs in series on the device (white paper, Section 10.6) |
@@ -55,7 +55,7 @@ JAC 84–85% (NVE), 63–64% (NPT); FactorIX 60%, 47%; Cellulose 49%, 40%;
 STMV 38%.
 
 The goal was reached on 2026-10-02 (D114): MDIR runs every system of the
-suite at 102% to 127% of the rate of pmemd.cuda, and at 103% to 132% after D118 (white paper, Table 10.2).
+suite at 102% to 127% of the rate of pmemd.cuda, at 103% to 132% after D118, and at 104% to 132% as one model with pmemd.cuda, with all the dihedral terms of Factor IX (D133, D134; white paper, Table 10.2).
 The rates of the first comparison, kept for the record (2026-09-30,
 ns/day, RTX 3090):
 

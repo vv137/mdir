@@ -6,10 +6,10 @@
 
 | Item | MDIR | pmemd.cuda |
 |---|---|---|
-| Program | `mdir` at D118, built with LLVM and MLIR 23.1.2, PTX compiled by the driver at load | pmemd.cuda of Amber 26, SPFP [[LeGrand2013]](references.md#legrand2013), built with CUDA 13 |
-| Device | One NVIDIA RTX 3090 (GPU 0), power capped at 300 W, driver 595.84; the node's other GPUs ran other jobs, among them, during the third repeat of pmemd.cuda, runs of this work on GPU 1 | The same |
+| Program | `mdir` at D134, built with LLVM and MLIR 23.1.2, PTX compiled by the driver at load | pmemd.cuda of Amber 26, SPFP [[LeGrand2013]](references.md#legrand2013), built with CUDA 13 |
+| Device | One NVIDIA RTX 3090 (GPU 0), power capped at 300 W, driver 595.84; the node's other GPUs ran other jobs, among them, during the first two repeats, runs of this work on GPU 1 and on the CPU | The same |
 | Inputs | The systems of the Amber 24 GPU benchmark suite (PME), the topologies and restart files of the suite as they are (`prmtop`, `inpcrd`; two topologies are in the format before Amber 7, D133), with the settings of `scripts/benchmarks/amber/bench.py` | The inputs of the suite as they are (`mdin.GPU`, `prmtop`, `inpcrd`) |
-| Model | Cutoff 8 Å; PME with $\operatorname{erfc}(\beta r_c) = 10^{-6}$ at constant energy and $10^{-5}$ at constant pressure, grid spacing at most 1 Å, order 4; SHAKE on the bonds of hydrogen and rigid water; the correction for the dispersion | The same, by the inputs |
+| Model | Cutoff 8 Å; PME with the $\beta$ of pmemd, $\operatorname{erfc}(\beta r_c)/r_c = 10^{-6}$ at constant energy and $10^{-5}$ at constant pressure (0.39467 and 0.34864 Å⁻¹), the grids of pmemd.cuda (64³; 144 × 84 × 80; 256 × 128 × 128; 224 × 224 × 240), order 4, and Amber's influence function (D134); SHAKE on the bonds of hydrogen and rigid water; the correction for the dispersion | The same, by the inputs |
 | Couplings (NPT) | Stochastic velocity rescaling [[Bussi2007]](references.md#bussi2007) and stochastic cell rescaling [[Bernetti2020]](references.md#bernetti2020), every 25 steps, $\tau_T$ = 1 ps, $\tau_P$ = 2 ps | Berendsen's thermostat [[Berendsen1984]](references.md#berendsen1984), $\tau$ = 10 ps; Monte Carlo barostat every 100 steps |
 | Neighbors | Groups of 16 (Section 4.4); dual list, outer reach 11 Å, inner 8.6 Å at 2 fs and 9.2 Å at 4 fs (Section 4.5) | Its own |
 | Precision | Mixed (Table 7.1), `fast_math` | SPFP |
@@ -35,19 +35,20 @@ energy (NVE) or of the conserved energy (NPT) between the first and the
 last row of MDIR's log, relative to its value. The counts are the mean
 number of steps between builds of the outer list and between prunings of
 the inner list. The rates, the changes of the energy, the counts, and the
-times of compilation are from the same three repeats, at D118.*
+times of compilation are from the same three repeats, at D134, with the
+$\beta$, the grid, and the influence function of pmemd.cuda (Table 10.1).*
 
 | System | Atoms | MDIR, ns/day | pmemd.cuda, ns/day | MDIR / pmemd.cuda | Energy changed by (MDIR) | Builds, prunings: every | Compiled in |
 |---|---|---|---|---|---|---|---|
-| `jac_nve` | 23,558 | 816.9 ± 0.8 | 621.0 ± 1.2 | 131.5 ± 0.4% | 6.9e-05 to 1.5e-04 | 16.4, 2.8 | 11–12 s |
-| `jac_nve_4fs` | 23,558 | 1525.9 ± 2.5 | 1154.6 ± 2.0 | 132.2 ± 0.3% | 3.3e-03 to 3.4e-03 | 10.7, 3.6 | 11–12 s |
-| `jac_npt` | 23,558 | 753.8 ± 1.1 | 588.9 ± 1.4 | 128.0 ± 0.1% | 3.6e-04 to 4.1e-04 | 16.2, 2.8 | 21–22 s |
-| `jac_npt_4fs` | 23,558 | 1454.3 ± 1.0 | 1137.4 ± 3.6 | 127.9 ± 0.5% | 5.6e-04 to 7.6e-04 | 12.7, 4.1 | 21–22 s |
-| `factorix_nve` | 90,906 | 291.6 ± 0.4 | 265.7 ± 0.3 | 109.8 ± 0.1% | 1.8e-06 to 1.9e-05 | 14.8, 2.7 | 11 s |
-| `factorix_npt` | 90,906 | 276.5 ± 0.5 | 252.3 ± 0.5 | 109.6 ± 0.0% | 2.7e-04 to 2.8e-04 | 14.8, 2.7 | 22 s |
-| `cellulose_nve` | 408,609 | 63.3 ± 0.0 | 61.6 ± 0.1 | 102.7 ± 0.2% | 7.5e-05 to 8.1e-05 | 13.8, 2.2 | 9–10 s |
-| `cellulose_npt` | 408,609 | 60.9 ± 0.1 | 58.5 ± 0.0 | 104.0 ± 0.1% | 7.8e-05 to 1.1e-04 | 13.7, 2.2 | 18 s |
-| `stmv_npt_4fs` | 1,067,095 | 42.0 ± 0.1 | 37.5 ± 0.2 | 111.8 ± 0.6% | 4.5e-05 to 7.9e-05 | 6.7, 2.1 | 21–22 s |
+| `jac_nve` | 23,558 | 814.6 ± 1.2 | 619.3 ± 1.2 | 131.5 ± 0.4% | 6.2e-05 to 1.3e-04 | 16.3, 2.8 | 11–12 s |
+| `jac_nve_4fs` | 23,558 | 1520.3 ± 3.0 | 1153.3 ± 1.3 | 131.8 ± 0.2% | 3.1e-03 to 3.4e-03 | 10.7, 3.5 | 11 s |
+| `jac_npt` | 23,558 | 745.2 ± 1.5 | 587.7 ± 0.6 | 126.8 ± 0.3% | 3.5e-04 to 4.5e-04 | 16.3, 2.8 | 23–32 s |
+| `jac_npt_4fs` | 23,558 | 1437.7 ± 2.4 | 1133.3 ± 2.1 | 126.9 ± 0.4% | 4.2e-04 to 7.3e-04 | 12.7, 4.1 | 23 s |
+| `factorix_nve` | 90,906 | 290.4 ± 0.6 | 264.1 ± 0.3 | 110.0 ± 0.1% | 3.5e-06 to 5.6e-06 | 14.8, 2.7 | 11–12 s |
+| `factorix_npt` | 90,906 | 273.4 ± 0.6 | 250.4 ± 0.7 | 109.2 ± 0.5% | 2.8e-04 to 3.0e-04 | 14.8, 2.6 | 22–23 s |
+| `cellulose_nve` | 408,609 | 64.0 ± 0.1 | 61.3 ± 0.0 | 104.4 ± 0.1% | 3.1e-05 to 5.6e-05 | 13.7, 2.2 | 10 s |
+| `cellulose_npt` | 408,609 | 61.4 ± 0.2 | 58.3 ± 0.1 | 105.3 ± 0.3% | 8.3e-05 to 1.4e-04 | 13.6, 2.1 | 19–28 s |
+| `stmv_npt_4fs` | 1,067,095 | 41.6 ± 0.1 | 37.5 ± 0.0 | 111.0 ± 0.4% | 3.7e-05 to 7.1e-05 | 6.7, 2.1 | 23–25 s |
 
 ![Rates of MDIR and pmemd.cuda over the Amber suite](figures/suite.png)
 

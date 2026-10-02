@@ -61,7 +61,7 @@ paper describes the system that reaches it.
 5. **Results** (Sections 9 and 10): agreement of the energy terms and of
    the force on every particle with sander and GROMACS, and of the terms
    with CHARMM and, in triclinic cells, with all three; conservation of energy over 2 ns of JAC better than
-   that of pmemd.cuda on the same input; on an RTX 3090, a rate between 103%
+   that of pmemd.cuda on the same input; on an RTX 3090, a rate between 104%
    and 132% of pmemd.cuda's on every system of the Amber suite; and on
    ubiquitin in OPC, 66% to 72% of the rate of GROMACS, with the loop over
    pairs as fast as GROMACS's and the difference in the rest of the step.
