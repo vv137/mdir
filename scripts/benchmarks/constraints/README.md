@@ -69,7 +69,7 @@ Initial measurements on 2026-10-02 (Release, GCC 9.5, LLVM 23.1.2):
 
 | System | Target | Newton ms/step | Analytic ms/step | Median ratio |
 |---|---|---:|---:|---:|
-| 1,728 diatomics, 5,000 steps, 3 repeats | Threadripper PRO 3995WX, one thread, double | 0.432 | 0.252 | 1.71 |
+| 1,728 diatomics, 5,000 steps, 3 repeats | Threadripper PRO 3995WX, one thread, double | 0.413 | 0.252 | 1.64 |
 | Vacuum peptide, 10,000 steps, 5 repeats | Threadripper PRO 3995WX, one thread, double | 0.071 | 0.070 | 1.014 |
 | 1,728 diatomics, 10,000 steps, 5 repeats | RTX 3090, mixed | 0.043 | 0.043 | 1.00 |
 | JAC protein/water, 23,558 atoms, 10,000 steps, 3 repeats | RTX 3090, mixed | 0.211 | 0.211 | 1.00 |
@@ -123,7 +123,7 @@ one-bond topology is a specialization of the existing discrete solve.
 ## Validation
 
 `test/Driver/analytic-bonds.test` executes the generated MLIR kernel on
-66 cases and checks independent bond, momentum, direction, and root
+67 cases and checks independent bond, momentum, direction, and root
 invariants. Cases include unequal/equal/repartitioned masses, tiny and
 large corrections, periodic images, near tangency and the backward
 predictor's Newton fallback. It also compares the complete vacuum-peptide
@@ -132,10 +132,17 @@ lengths. `analytic-bonds-gpu.test` compares a solvated peptide in double
 and mixed precision. `test/Sanitizer/analytic-bonds-gpu.test` exercises
 the fused integration under memcheck, initcheck and racecheck.
 
-Validation on 2026-10-02: all 152 non-scale lit tests passed with
-`CUDA_VISIBLE_DEVICES=1` and `-Dsanitize=1`; the corrected scale test
-passed all nine Amber systems with each variant (18 runs, 50 steps),
-including the 4 fs repartitioned-mass cases and 1,067,095-atom STMV.
-The initial scale failure was the pre-existing harness's incompatible
-20-step horizon and incorrect expectation of two output rows; its
-50-step start/end-output configuration is now part of the regression.
+Validation on 2026-10-02 after merging main: all 163 lit tests passed
+with `CUDA_VISIBLE_DEVICES=1`, `-Dsanitize=1`, and the Amber suite enabled.
+This includes all nine Amber systems with each variant (18 runs,
+50 steps), the 4 fs repartitioned-mass cases, 1,067,095-atom STMV, and
+triclinic cells. The smoke harness uses a 50-step horizon and start/end
+output to respect its coupling periods and two-row check.
+
+After merging main through `a74977f` (triclinic support and virtual-site
+ordering), the synthetic CPU comparison was repeated: median 0.413 versus
+0.252 ms/step, 1.64×, as recorded above. The other timing samples predate
+that merge; each result names its base commit. The added
+`analytic-bonds-triclinic.test` shifts an isolated-bond hydrogen by a
+tilted lattice vector and compares CPU, GPU matrix/double, and GPU
+groups/mixed runs with the Newton solver. Those comparisons pass.

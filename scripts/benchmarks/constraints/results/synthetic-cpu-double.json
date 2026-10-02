@@ -1,17 +1,17 @@
 {
   "ms_per_step": {
     "newton": [
-      0.444,
-      0.414,
-      0.432
+      0.413,
+      0.445,
+      0.413
     ],
     "analytic": [
       0.252,
       0.252,
-      0.252
+      0.251
     ]
   },
-  "median_speedup": 1.7142857142857142,
+  "median_speedup": 1.6388888888888888,
   "synthetic": true,
   "cuda_visible_devices": null,
   "note": "Complete MD stage, excluding compilation; verify device contention separately.",
@@ -22,5 +22,6 @@
   "steps": 5000,
   "timestep_ps": 0.002,
   "hardware": "AMD Ryzen Threadripper PRO 3995WX, one thread",
-  "shared_gpu": null
+  "shared_gpu": null,
+  "base_commit": "a74977f"
 }

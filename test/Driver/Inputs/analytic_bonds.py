@@ -30,6 +30,7 @@ def cases():
         new = [x + rng.uniform(-0.03, 0.03) for x in old]
         result.append((new, old, (12., 1.), 1.09, 30. if i % 2 else 0.))
     result.append(([0.1, 0.999, 0.], [1., 0., 0.], (9., 4.), 1., 30.))
+    result.append(([1.02, 0.03, 0.02], [1., 0., 0.], (12., 1.), 1., [-10., 28.28, 0.]))
     return result
 
 
@@ -44,11 +45,12 @@ def emit(path):
     print(f'func.func @project({args}) -> (vector<3xf64>, vector<3xf64>) {{\n{body}\n}}')
     print('func.func @main() {')
     for i, (new, old, masses, length, shift) in enumerate(cases()):
-        # The raw old and new second atom lie one cell farther in x;
+        # The raw old and new second atom lie one lattice vector away;
         # the supplied displacement is already minimum-image.
         origin = [17., -4., 6.]
-        vectors = [new, origin, [origin[j] + old[j] + (shift if j == 0 else 0.) for j in range(3)],
-                   origin, [origin[j] + new[j] + (shift if j == 0 else 0.) for j in range(3)]]
+        shift = shift if isinstance(shift, list) else [shift, 0., 0.]
+        vectors = [new, origin, [origin[j] + old[j] + shift[j] for j in range(3)],
+                   origin, [origin[j] + new[j] + shift[j] for j in range(3)]]
         names = []
         types = ['vector<3xf64>'] * 5 + ['f64'] * 3
         for j, value in enumerate(vectors + list(masses) + [length]):

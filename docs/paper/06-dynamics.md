@@ -100,7 +100,6 @@ the cell is solved in one image. The kernel carries the displacement of
 each member, starting from zero, rather than its position; Section 7.3
 explains why that matters in f32.
 
-
 For an isolated one-bond group, `analytic_bonds = true` enables a
 quadratic specialization (D128). With $\mathbf r$ the predicted bond,
 $\mathbf s$ the old bond, $e=d^2-\mathbf r\cdot\mathbf r$, and
@@ -121,10 +120,13 @@ NaNs; other candidates use the existing six-step Newton solver. This
 fallback retains the default solver's fixed-iteration limitations and
 does not add a general convergence guarantee. The option defaults to
 false. On a synthetic gas of 1,728 noninteracting diatomics, the CPU
-complete-stage median changed from 0.432 to 0.252 ms/step (1.71 times);
-the small GPU case and the 23,558-atom JAC protein/water case showed no resolved improvement. These measurements do
-not establish a speedup for solvated proteins; the benchmark inputs and
-results are in `scripts/benchmarks/constraints/`.
+complete-stage median changed from 0.413 to 0.252 ms/step (1.64 times);
+the small GPU case and the 23,558-atom JAC protein/water case showed no
+resolved improvement. These measurements do not establish a speedup for solvated proteins; the benchmark inputs and
+results, tagged with the base commit of each comparison, are in
+`scripts/benchmarks/constraints/`. The old-bond image construction also
+applies to triclinic cells; the tilted-face regression in Section 9.5
+compares the analytic and Newton projections on CPU and GPU.
 
 **Rigid water.** In double precision, a water is solved by SETTLE
 [[Miyamoto1992]](references.md#miyamoto1992), in closed form: with $r_c = d_\text{HH}/2$, the height

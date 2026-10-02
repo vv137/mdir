@@ -26,5 +26,6 @@
   "steps": 10000,
   "timestep_ps": 0.002,
   "hardware": "NVIDIA RTX 3090",
-  "shared_gpu": true
+  "shared_gpu": true,
+  "base_commit": "2195059"
 }

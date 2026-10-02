@@ -43,7 +43,7 @@ the output of `mdir template amber` at the commit of this paper.
 | | `temperature`, `pressure` | K, of the initial velocities and the bath; atm, with `NPT`. |
 | `[thermostat]` | `method`, `time_constant`, `interval` | `V-RESCALE`, stochastic velocity rescaling; ps; steps between its actions (10 by default). |
 | `[barostat]` | `method`, `time_constant`, `compressibility`, `coupling`, `work`, `interval`, `compressibility_z`, `surface_tension`, `surfaces` | `C-RESCALE`, stochastic cell rescaling (D72, D77); ps; 1/atm; `ISOTROPIC` or `SEMI_ISOTROPIC` (x and y scale together from the mean of their pressures, z on its own, D119); `TROTTER` (the default; D92), `TROTTER_FIRST_ORDER` (its energy from the virial before the scaling only, a virial less a period), `EXACT`, or `FIRST_ORDER` (not with `SEMI_ISOTROPIC`); the steps of the thermostat; with `SEMI_ISOTROPIC`, the compressibility of z in 1/atm (0 keeps the height; that of x and y by default), the tension of each surface normal to z in dyn/cm (0 by default), and their number (2). |
-| `[constraints]` | `hydrogen_bonds`, `rigid_water`, `water_residues` | SHAKE and RATTLE on the bonds of hydrogen; SETTLE on the waters in double precision, M-SHAKE on their three bonds below it (D112); the names of the residues of water (by default WAT for Amber, TIP3 for CHARMM). |
+| `[constraints]` | `hydrogen_bonds`, `rigid_water`, `water_residues`, `analytic_bonds` | SHAKE and RATTLE on the bonds of hydrogen; SETTLE on the waters in double precision, M-SHAKE on their three bonds below it (D112); the names of the residues of water (by default WAT for Amber, TIP3 for CHARMM). `analytic_bonds = true` enables the checked quadratic one-bond projection (D128); the default is `false`. |
 | `[[restraints]]` | `selection`, `force_constant`, `reference_scaling` | A mask of Amber, and kcal/mol/Å² (D74); under a barostat, `"CENTER"` (the default) scales the center of the references with the cell and keeps their shape, `"ALL"` scales each reference with the cell (D124). |
 | `[boundary]` | `type`, `box` | `PERIODIC`; the edges of the cell (Å), without a topology or with one of CHARMM, whose coordinates have no cell; for CHARMM also its angles α, β, γ (degrees), the cell taken from CHARMM's symmetric frame into MDIR's lower-triangular one (docs/triclinic-m2.md). |
 | `[execution]` | `target`, `threads`, `precision` | `CPU` or `GPU`; the threads of the CPU; `SINGLE`, `MIXED`, or `DOUBLE`. |
@@ -135,6 +135,7 @@ time_constant = 2.0             # ps
 
 [constraints]
 hydrogen_bonds = true           # SHAKE and RATTLE on the bonds of hydrogen
+analytic_bonds = false          # checked quadratic solve for one-bond groups
 rigid_water    = true           # rigid waters: SETTLE in DOUBLE,
                                 # M-SHAKE on their three distances below
 # water_residues = ["WAT"]      # names of the residues of rigid water
