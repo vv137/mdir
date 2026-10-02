@@ -1,5 +1,6 @@
-// Fusion of loops: of loops over the pairs of one neighbor structure, and
-// of loops over the particles of one set.
+// Fusion of loops: of loops over the pairs of one neighbor structure, of
+// loops over the tuples of one set, and of loops over the particles of one
+// set.
 
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
 
@@ -411,7 +412,7 @@ static bool fuseParticleLoopsOnce(Block &block) {
 /// value that it or its kernel uses is defined before `first`, inside
 /// `second`, or by a pure op without operands (a constant, a field of
 /// zeros), which `moved` receives to move along.
-static bool canMoveAfter(PairForOp second, PairForOp first,
+static bool canMoveAfter(Operation *second, Operation *first,
                          SmallVectorImpl<Operation *> &moved) {
   bool movable = true;
   second->walk([&](Operation *nested) {
@@ -436,6 +437,186 @@ static bool canMoveAfter(PairForOp second, PairForOp first,
     }
   });
   return movable;
+}
+
+//===----------------------------------------------------------------------===//
+// Loops over tuples
+//===----------------------------------------------------------------------===//
+
+/// Returns true if `a` and `b` run over the same tuples in the same way.
+static bool haveSameDomain(TupleForOp a, TupleForOp b) {
+  return a.getIncidence() == b.getIncidence() &&
+         a.getPositions() == b.getPositions() && a.getCell() == b.getCell() &&
+         a.getArity() == b.getArity() && a.getDisjoint() == b.getDisjoint() &&
+         !a.getOverwrite() && !b.getOverwrite();
+}
+
+/// Replaces `first` and `second` with one loop, placed where `second` is.
+/// The kernel takes the displacements of both, each once, then the values
+/// of the fields of the first and of the second, then the parameters of the
+/// tuples of the first and of the second; it yields the destinations of
+/// the first and of the second, then the sums of the first and of the
+/// second.
+static void fuse(TupleForOp first, TupleForOp second) {
+  OpBuilder builder(second);
+  Location loc = second.getLoc();
+  int64_t arity = first.getArity();
+
+  SmallVector<md::Coordinate, 4> coordinates(first.getCoordinates());
+  auto place = [&](const md::Coordinate &wanted) -> unsigned {
+    for (auto [index, known] : llvm::enumerate(coordinates))
+      if (known.kind == wanted.kind && known.members == wanted.members)
+        return index;
+    coordinates.push_back(wanted);
+    return coordinates.size() - 1;
+  };
+  SmallVector<unsigned, 4> secondPlaces;
+  for (const md::Coordinate &coordinate : second.getCoordinates())
+    secondPlaces.push_back(place(coordinate));
+  DenseI32ArrayAttr kinds;
+  DenseI64ArrayAttr members;
+  md::getCoordinateAttrs(builder, coordinates, kinds, members);
+
+  auto join = [](auto a, auto b) {
+    SmallVector<Value> all(a.begin(), a.end());
+    all.append(b.begin(), b.end());
+    return all;
+  };
+  SmallVector<Value> ins = join(first.getIns(), second.getIns());
+  SmallVector<Value> parameters =
+      join(first.getParameters(), second.getParameters());
+  SmallVector<Value> outs = join(first.getOuts(), second.getOuts());
+  SmallVector<Value> reduce = join(first.getReduce(), second.getReduce());
+  SmallVector<Type> resultTypes;
+  for (Value value : llvm::concat<Value>(outs, reduce))
+    resultTypes.push_back(value.getType());
+
+  auto fused = TupleForOp::create(
+      builder, loc, resultTypes, first.getIncidence(), first.getPositions(),
+      first.getCell(), ins, parameters, outs, reduce,
+      /*scratch=*/ValueRange(), kinds, members, first.getArityAttr(),
+      /*overwrite=*/DenseBoolArrayAttr(), first.getDisjointAttr());
+
+  // The arguments of a kernel: its displacements, its values of fields,
+  // and its parameters.
+  struct Layout {
+    unsigned coordinates, values, parameters;
+  };
+  auto layout = [](TupleForOp op) {
+    Block &kernel = op.getKernel().front();
+    unsigned coordinates = op.getCoordinates().size();
+    unsigned parameters = op.getParameters().size();
+    return Layout{coordinates,
+                  kernel.getNumArguments() - coordinates - parameters,
+                  parameters};
+  };
+  Layout a = layout(first), b = layout(second);
+  Block *block = new Block();
+  fused.getKernel().push_back(block);
+  Block &firstKernel = first.getKernel().front();
+  Block &secondKernel = second.getKernel().front();
+  for (unsigned i = 0, e = coordinates.size(); i != e; ++i)
+    block->addArgument(VectorType::get({3}, builder.getF64Type()), loc);
+  auto addArguments = [&](Block &source, unsigned from, unsigned count) {
+    for (unsigned i = 0; i != count; ++i)
+      block->addArgument(source.getArgument(from + i).getType(), loc);
+  };
+  unsigned firstValues = block->getNumArguments();
+  addArguments(firstKernel, a.coordinates, a.values);
+  unsigned secondValues = block->getNumArguments();
+  addArguments(secondKernel, b.coordinates, b.values);
+  unsigned firstParameters = block->getNumArguments();
+  addArguments(firstKernel, a.coordinates + a.values, a.parameters);
+  unsigned secondParameters = block->getNumArguments();
+  addArguments(secondKernel, b.coordinates + b.values, b.parameters);
+  // The displacements arrive in the type of the kernel.
+  for (unsigned i = 0, e = coordinates.size(); i != e; ++i) {
+    Type type = i < a.coordinates
+                    ? firstKernel.getArgument(i).getType()
+                    : secondKernel
+                          .getArgument(llvm::find(secondPlaces, i) -
+                                       secondPlaces.begin())
+                          .getType();
+    block->getArgument(i).setType(type);
+  }
+
+  OpBuilder kernel(builder.getContext());
+  kernel.setInsertionPointToEnd(block);
+  SmallVector<Value> yieldedOuts, yieldedSums;
+  auto addKernel = [&](TupleForOp op, Layout shape, ArrayRef<unsigned> places,
+                       unsigned values, unsigned parameters) {
+    Block &source = op.getKernel().front();
+    IRMapping mapping;
+    for (unsigned i = 0; i != shape.coordinates; ++i)
+      mapping.map(source.getArgument(i),
+                  block->getArgument(places.empty() ? i : places[i]));
+    for (unsigned i = 0; i != shape.values; ++i)
+      mapping.map(source.getArgument(shape.coordinates + i),
+                  block->getArgument(values + i));
+    for (unsigned i = 0; i != shape.parameters; ++i)
+      mapping.map(source.getArgument(shape.coordinates + shape.values + i),
+                  block->getArgument(parameters + i));
+    for (Operation &nested : source.without_terminator())
+      kernel.clone(nested, mapping);
+    Operation *yield = source.getTerminator();
+    unsigned numOuts = op.getOuts().size() * arity;
+    for (unsigned i = 0, e = yield->getNumOperands(); i != e; ++i) {
+      Value value = mapping.lookupOrDefault(yield->getOperand(i));
+      (i < numOuts ? yieldedOuts : yieldedSums).push_back(value);
+    }
+  };
+  addKernel(first, a, {}, firstValues, firstParameters);
+  addKernel(second, b, secondPlaces, secondValues, secondParameters);
+  SmallVector<Value> yielded(yieldedOuts);
+  yielded.append(yieldedSums);
+  YieldOp::create(kernel, loc, yielded);
+
+  unsigned firstOuts = first.getOuts().size();
+  unsigned secondOuts = second.getOuts().size();
+  unsigned firstSums = first.getReduce().size();
+  unsigned allOuts = firstOuts + secondOuts;
+  for (unsigned i = 0, e = first.getNumResults(); i != e; ++i) {
+    unsigned target = i < firstOuts ? i : allOuts + (i - firstOuts);
+    first.getResult(i).replaceAllUsesWith(fused.getResult(target));
+  }
+  for (unsigned i = 0, e = second.getNumResults(); i != e; ++i) {
+    unsigned target = i < secondOuts
+                          ? firstOuts + i
+                          : allOuts + firstSums + (i - secondOuts);
+    second.getResult(i).replaceAllUsesWith(fused.getResult(target));
+  }
+  first.erase();
+  second.erase();
+}
+
+/// Fuses two loops over tuples of `block`, if two can be fused. Returns
+/// true if it did.
+static bool fuseTupleLoopsOnce(Block &block) {
+  SmallVector<TupleForOp> loops;
+  for (Operation &op : block)
+    if (auto loop = dyn_cast<TupleForOp>(&op))
+      if (!loop.isStorageForm())
+        loops.push_back(loop);
+
+  for (unsigned i = 0, e = loops.size(); i != e; ++i) {
+    for (unsigned j = i + 1; j != e; ++j) {
+      TupleForOp first = loops[i];
+      TupleForOp second = loops[j];
+      if (!haveSameDomain(first, second) || uses(second, first))
+        continue;
+      if (!usersComeAfter(first, second)) {
+        SmallVector<Operation *> moved;
+        if (!canMoveAfter(second, first, moved))
+          continue;
+        second->moveAfter(first);
+        for (Operation *op : moved)
+          op->moveBefore(second);
+      }
+      fuse(first, second);
+      return true;
+    }
+  }
+  return false;
 }
 
 /// Fuses two loops of `block`, if two can be fused. Returns true if it did.
@@ -493,6 +674,8 @@ public:
     });
     for (Block *block : blocks) {
       while (fuseOnce(*block))
+        ;
+      while (fuseTupleLoopsOnce(*block))
         ;
       while (fuseParticleLoopsOnce(*block))
         ;

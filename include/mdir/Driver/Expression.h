@@ -62,6 +62,9 @@ public:
   /// of their first use.
   const std::vector<std::string> &getNames() const { return names; }
 
+  /// Whether the expression calls a tabulated function.
+  bool callsTabulated() const { return !splines.empty(); }
+
   /// Writes ops that compute the expression in `f64`, one on a line, each
   /// after `indent`. `values` gives the SSA value of every name. The values
   /// that the ops define begin with `prefix`. Returns the value of the

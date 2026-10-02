@@ -31,7 +31,26 @@ struct TupleTerm {
   /// The parameters that the expression uses, one value for each tuple.
   std::vector<std::pair<std::string, std::vector<double>>> parameters;
 
-  size_t size() const { return arity ? particles.size() / arity : 0; }
+  /// Instead of particles, the masks of `arity` groups, whose centers are
+  /// the members of the one tuple of the term (D139).
+  std::vector<std::string> groups;
+  /// Whether a center weighs its particles by their masses, or alike.
+  bool massWeighted = true;
+  /// A group: its particles, the weight of each, which add to 1, and the
+  /// particle from which the others are taken in the minimum image.
+  struct Center {
+    std::vector<unsigned> members;
+    std::vector<double> weights;
+    unsigned reference = 0;
+  };
+  std::vector<Center> centers;
+
+  bool isCentroid() const { return !groups.empty(); }
+  size_t size() const {
+    if (isCentroid())
+      return 1;
+    return arity ? particles.size() / arity : 0;
+  }
   /// The name of the coordinate in the expression.
   llvm::StringRef getVariable() const { return arity == 2 ? "r" : "theta"; }
 };

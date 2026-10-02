@@ -21,6 +21,7 @@ using llvm::StringRef;
 static llvm::Error findSettles(const Control &control, Topology &topology);
 static llvm::Error checkSettles(Topology &topology);
 static llvm::Error findShakes(Topology &topology);
+static llvm::Error findCenters(TupleTerm &term, const Topology &topology);
 
 /// The system of a topology and a file of coordinates.
 static llvm::Expected<System> readTopologySystem(const Control &control) {
@@ -97,14 +98,17 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
   System system;
   // The terms over tuples of the control file join those of the topology
   // (D136), once their particles are known to exist.
-  for (const TupleTerm &term : control.tupleTerms) {
+  for (TupleTerm term : control.tupleTerms) {
     for (unsigned particle : term.particles)
       if (particle >= topology->getNumParticles())
         return llvm::createStringError(
             llvm::inconvertibleErrorCode(),
             "the term '%s' names the particle %u, and the topology has %zu",
             term.name.c_str(), particle + 1, topology->getNumParticles());
-    topology->tupleTerms.push_back(term);
+    if (term.isCentroid())
+      if (llvm::Error error = findCenters(term, *topology))
+        return std::move(error);
+    topology->tupleTerms.push_back(std::move(term));
   }
 
   system.types = topology->types;
@@ -183,6 +187,75 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
 /// The settled waters of an Amber topology: every residue that
 /// 'water_residues' names, with an oxygen and two hydrogens first, and
 /// the distances of the bonds among them, as sander takes them.
+/// The groups of a term over their centers (D139): the particles of each
+/// mask, their weights, and the particle in the middle of them by number,
+/// from which the others are taken in the minimum image. That gives the
+/// center only while every particle of the group lies within half the cell
+/// of it along each edge. The coordinates of the input must show each
+/// within 0.45 of the cell, a tenth of the half to spare, as the minimum
+/// image cannot tell a particle beyond the half from one within it.
+static llvm::Error findCenters(TupleTerm &term, const Topology &topology) {
+  const double *box = topology.box, *tilt = topology.tilt;
+  bool periodic = box[0] > 0.0 && box[1] > 0.0 && box[2] > 0.0;
+  const std::vector<double> &x = topology.positions;
+  for (const std::string &mask : term.groups) {
+    auto selected = selectParticles(mask, topology);
+    if (!selected)
+      return selected.takeError();
+    TupleTerm::Center center;
+    double total = 0.0;
+    for (size_t i = 0, e = selected->size(); i != e; ++i) {
+      if (!(*selected)[i])
+        continue;
+      double weight = term.massWeighted ? topology.masses[i] : 1.0;
+      center.members.push_back(static_cast<unsigned>(i));
+      center.weights.push_back(weight);
+      total += weight;
+    }
+    if (center.members.empty())
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "the group '%s' of the term '%s' selects no particle",
+          mask.c_str(), term.name.c_str());
+    if (!(total > 0.0))
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "the group '%s' of the term '%s' has no mass to weigh its center "
+          "by; give 'weighting = \"NONE\"'",
+          mask.c_str(), term.name.c_str());
+    for (double &weight : center.weights)
+      weight /= total;
+    center.reference = center.members[(center.members.size() - 1) / 2];
+    unsigned r = center.reference;
+    for (unsigned i : center.members) {
+      if (!periodic)
+        break;
+      // The displacement in fractions of the edges a = (a_x, 0, 0),
+      // b = (b_x, b_y, 0), c = (c_x, c_y, c_z), in the minimum image.
+      double d[3];
+      for (int k = 0; k != 3; ++k)
+        d[k] = x[3 * i + k] - x[3 * r + k];
+      double fc = d[2] / box[2];
+      fc -= std::round(fc);
+      double fb = (d[1] - fc * tilt[2]) / box[1];
+      fb -= std::round(fb);
+      double fa = (d[0] - fc * tilt[1] - fb * tilt[0]) / box[0];
+      fa -= std::round(fa);
+      double most = std::max({std::abs(fa), std::abs(fb), std::abs(fc)});
+      if (most > 0.45)
+        return llvm::createStringError(
+            llvm::inconvertibleErrorCode(),
+            "the particle %u of the group '%s' of the term '%s' is %.3f of "
+            "the cell along an edge from the particle %u, from which the "
+            "center is taken in the minimum image; a group must lie within "
+            "0.45 of the cell around it",
+            i + 1, mask.c_str(), term.name.c_str(), most, r + 1);
+    }
+    term.centers.push_back(std::move(center));
+  }
+  return llvm::Error::success();
+}
+
 static llvm::Error findSettles(const Control &control, Topology &topology) {
   bool charmm = !control.charmmStructureFile.empty();
   const std::string &path =

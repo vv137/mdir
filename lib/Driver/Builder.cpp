@@ -85,6 +85,9 @@ private:
   /// index `tupleTerm` or `pairTerm` if it is not -1.
   void emitTopologyPotential(StringRef name, unsigned terms,
                              int tupleTerm = -1, int pairTerm = -1);
+  /// Emits `%u_centroid_<name>`, the energy of the term `term` over the
+  /// centers of groups, the term `index` over tuples (D139).
+  void emitCentroidTerm(size_t index, const TupleTerm &term);
   /// β, the grid, the influence function, and the constant terms of
   /// particle mesh Ewald (docs/pme-m1.md).
   llvm::Error collectPME();
@@ -1004,6 +1007,37 @@ llvm::Error Builder::collectTopology() {
   // The terms given by expressions (D136), with their parameters as fields
   // of their tuples, in the units of the control file.
   for (const TupleTerm &term : topology.tupleTerms) {
+    // A term over the centers of groups (D139): for each group the pairs
+    // of a member and the reference of the group, with the weight of the
+    // member, and for each group after the first the pair of its reference
+    // and that of the first.
+    if (term.isCentroid()) {
+      for (auto [g, center] : llvm::enumerate(term.centers)) {
+        std::string suffix = term.name + "_" + std::to_string(g);
+        if (center.members.size() > 1) {
+          Program::TupleSet &set = addSet("cg_" + suffix, 2);
+          set.oriented = true;
+          set.reversible = false;
+          size_t w = addField(set, "w");
+          for (auto [i, weight] :
+               llvm::zip_equal(center.members, center.weights)) {
+            if (i == center.reference)
+              continue;
+            set.members.push_back(i);
+            set.members.push_back(center.reference);
+            set.fields[w].values.push_back(weight);
+          }
+        }
+        if (g > 0) {
+          Program::TupleSet &set = addSet("cl_" + suffix, 2);
+          set.oriented = true;
+          set.reversible = false;
+          set.members.push_back(center.reference);
+          set.members.push_back(term.centers.front().reference);
+        }
+      }
+      continue;
+    }
     Program::TupleSet &set = addSet("custom_" + term.name, term.arity);
     for (unsigned member : term.particles)
       set.members.push_back(member);
@@ -1338,6 +1372,131 @@ llvm::Error Builder::collectPME() {
   for (int k = 0; k != 3; ++k)
     program.pmeGrid[k] = grid[k];
   return llvm::Error::success();
+}
+
+void Builder::emitCentroidTerm(size_t index, const TupleTerm &term) {
+  // Numbers outside the kernels, named after the term.
+  std::string prefix = "%cb" + std::to_string(index) + "_";
+  unsigned counter = 0;
+  auto next = [&]() { return prefix + std::to_string(counter++); };
+  auto op = [&](StringRef name, std::initializer_list<std::string> operands) {
+    std::string result = next();
+    os << "  " << result << " = " << name << " " << llvm::join(operands, ", ")
+       << " : f64\n";
+    return result;
+  };
+  auto constant = [&](double value) {
+    std::string result = next();
+    os << "  " << result << " = arith.constant " << formatReal(value)
+       << " : f64\n";
+    return result;
+  };
+  // One component of the displacements of the pairs of `set`, weighted by
+  // the field `w` if `weighted`, summed.
+  auto sum = [&](const std::string &set, int component, bool weighted) {
+    std::string result = next();
+    os << "  " << result << " = md.sum_tuples %r_" << set
+       << ", %x, %cell coordinates(displacement(0, 1))";
+    if (weighted)
+      os << "\n      tuple(%f_" << set << "_w : !of_" << set << ")";
+    os << " {\n  ^bb0(%gd: vector<3xf64>" << (weighted ? ", %gw: f64" : "")
+       << "):\n"
+       << "    %gdc = vector.extract %gd[" << component
+       << "] : f64 from vector<3xf64>\n";
+    if (weighted)
+      os << "    %ge = arith.mulf %gw, %gdc : f64\n"
+         << "    md.yield %ge : f64\n";
+    else
+      os << "    md.yield %gdc : f64\n";
+    os << "  } : !rel_" << set << ", !vec -> f64\n";
+    return result;
+  };
+
+  // The center of each group from the reference of the first, in Å: the
+  // displacement of its reference from that one, and the weighted
+  // displacements of its members from its reference. Both are minimum
+  // images; their sum is the center while each group lies within half the
+  // least width of the cell around its reference (System.cpp).
+  using Vector = std::array<std::string, 3>;
+  std::string angstrom = constant(1.0 / units::length);
+  std::vector<Vector> centers;
+  for (auto [g, center] : llvm::enumerate(term.centers)) {
+    std::string suffix = term.name + "_" + std::to_string(g);
+    Vector position;
+    for (int c = 0; c != 3; ++c) {
+      std::string value;
+      if (g > 0)
+        value = sum("cl_" + suffix, c, /*weighted=*/false);
+      if (center.members.size() > 1) {
+        std::string spread = sum("cg_" + suffix, c, /*weighted=*/true);
+        value = value.empty() ? spread : op("arith.addf", {value, spread});
+      }
+      position[c] = value.empty() ? constant(0.0)
+                                  : op("arith.mulf", {value, angstrom});
+    }
+    centers.push_back(position);
+  }
+  auto subtract = [&](const Vector &u, const Vector &v) {
+    Vector w;
+    for (int c = 0; c != 3; ++c)
+      w[c] = op("arith.subf", {u[c], v[c]});
+    return w;
+  };
+  auto dot = [&](const Vector &u, const Vector &v) {
+    std::string total = op("arith.mulf", {u[0], v[0]});
+    for (int c = 1; c != 3; ++c)
+      total = op("arith.addf", {total, op("arith.mulf", {u[c], v[c]})});
+    return total;
+  };
+  auto cross = [&](const Vector &u, const Vector &v) {
+    Vector w;
+    for (int c = 0; c != 3; ++c) {
+      int i = (c + 1) % 3, j = (c + 2) % 3;
+      w[c] = op("arith.subf", {op("arith.mulf", {u[i], v[j]}),
+                               op("arith.mulf", {u[j], v[i]})});
+    }
+    return w;
+  };
+  auto scale = [&](const std::string &factor, const Vector &u) {
+    Vector w;
+    for (int c = 0; c != 3; ++c)
+      w[c] = op("arith.mulf", {factor, u[c]});
+    return w;
+  };
+  auto norm = [&](const Vector &u) { return op("math.sqrt", {dot(u, u)}); };
+
+  // The coordinate, as the terms over particles take it: the distance and
+  // the vector from the first center to the second; the angle at the
+  // second center, as atan2(|u × v|, u · v); the dihedral with trans at π.
+  llvm::StringMap<std::string> values;
+  if (term.arity == 2) {
+    Vector d = subtract(centers[1], centers[0]);
+    values["dx"] = d[0];
+    values["dy"] = d[1];
+    values["dz"] = d[2];
+    values["r"] = norm(d);
+  } else if (term.arity == 3) {
+    Vector u = subtract(centers[0], centers[1]);
+    Vector v = subtract(centers[2], centers[1]);
+    values["theta"] = op("math.atan2", {norm(cross(u, v)), dot(u, v)});
+  } else {
+    Vector b0 = subtract(centers[0], centers[1]);
+    Vector b1 = subtract(centers[2], centers[1]);
+    Vector b2 = subtract(centers[3], centers[2]);
+    Vector axis = scale(op("arith.divf", {constant(1.0), norm(b1)}), b1);
+    Vector v = subtract(b0, scale(dot(b0, axis), axis));
+    Vector w = subtract(b2, scale(dot(b2, axis), axis));
+    values["theta"] =
+        op("math.atan2", {dot(cross(axis, v), w), dot(v, w)});
+  }
+  for (const auto &[name, parameter] : term.parameters)
+    values[name] = constant(parameter.front());
+  Expression expression = llvm::cantFail(
+      Expression::parse(term.expression, control.functions));
+  std::string energy = expression.emit(os, values, prefix + "e", "  ");
+  std::string kj = constant(units::energy);
+  os << "  %u_centroid_" << term.name << " = arith.mulf " << energy << ", "
+     << kj << " : f64\n";
 }
 
 void Builder::emitTopologyPotential(StringRef name, unsigned terms,
@@ -1743,6 +1902,11 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     if (!(terms & TupleTerms) ||
         (tupleTerm >= 0 && static_cast<int>(index) != tupleTerm))
       continue;
+    if (term.isCentroid()) {
+      emitCentroidTerm(index, term);
+      add("centroid_" + term.name);
+      continue;
+    }
     static const char *const coordinates[] = {
         "", "", "distance(0, 1)", "angle(0, 1, 2)", "dihedral(0, 1, 2, 3)"};
     std::string set = "custom_" + term.name;

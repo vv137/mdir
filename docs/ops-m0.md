@@ -1259,6 +1259,16 @@ removes what the two compute twice.
 Fusion does not change any result: every sum receives the same
 contributions in the same order.
 
+Two `md_exec.tuple_for` ops are fused under the same conditions, when they
+run over the same incidence, positions, and cell: the fused kernel takes the
+displacements of both, a displacement that both take once, then the values
+of the fields of the first and of the second, then their parameters, and
+yields the destinations of both, then the sums of both. The three sums of
+the components of a center of a group, and the three loops of their forces,
+become one loop each (D139); a loop of forces whose weight is computed from
+a sum stays after it, since everything it uses must be there where the
+first is.
+
 The pass fuses two `md_exec.particle_for` ops as well, when they run over
 the particles of one set. Here the second may read a field that the first
 writes. A loop over particles computes the values of a particle from the

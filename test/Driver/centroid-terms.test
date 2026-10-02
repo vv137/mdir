@@ -1,0 +1,114 @@
+# Terms over the centers of groups (D139): [[energy.bond]],
+# [[energy.angle]], and [[energy.dihedral]] with `groups`, masks of Amber,
+# in place of `particles`, whose centers, weighted by mass or alike, are the
+# members of one tuple; a bond takes the components dx, dy, dz of the vector
+# from the first center to the second besides r. Each center is the
+# weighted mean of its particles in the minimum image from the one in the
+# middle of them by number, and the centers are taken from the first, so
+# that a group that lies across a face of the cell has its center. The
+# energy is a function of sums over pairs of particles, and its forces and
+# virial follow from the derivatives of the energy with respect to the sums
+# (D2). On the dipeptide: a bond between the centers of mass of the peptide
+# and of a water, in r and dz; an angle between the centers of geometry of
+# its three residues; and a dihedral with the fifth residue. Then the same
+# with the coordinates moved by half the box and folded into it, which puts
+# the peptide across three faces: the same energies. check_centroid.py
+# computes the energies, the forces on every particle of a group against
+# central differences, and the virial, from the forces of each term and the
+# images that it takes.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/terms.toml
+# RUN: sed -n '/^#--- run.toml/,/^#--- terms/p' %s | sed '1d;$d' | sed 's/terms.h5/plain.h5/' > %t/plain.toml
+# RUN: cd %t && mdir run plain.toml > plain.log && mdir run terms.toml > terms.log
+# RUN: FileCheck %s < %t/terms.log
+# RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
+# RUN: mdir checkpoint --print=forces %t/terms.h5 > %t/terms.forces
+# RUN: %python %S/Inputs/check_centroid.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/plain.forces %t/terms.forces %t/plain.log %t/terms.log | FileCheck %s --check-prefix=PYTHON
+#
+# RUN: %python %S/Inputs/shift_inpcrd.py %t/dipeptide.inpcrd > %t/shifted.inpcrd
+# RUN: sed -e 's/dipeptide.inpcrd/shifted.inpcrd/' -e 's/terms.h5/shifted.h5/' %t/terms.toml > %t/shifted.toml
+# RUN: sed -e 's/dipeptide.inpcrd/shifted.inpcrd/' -e 's/plain.h5/shifted-plain.h5/' %t/plain.toml > %t/shifted-plain.toml
+# RUN: cd %t && mdir run shifted-plain.toml > shifted-plain.log && mdir run shifted.toml > shifted.log
+# RUN: FileCheck %s < %t/shifted.log
+# RUN: mdir checkpoint --print=forces %t/shifted-plain.h5 > %t/shifted-plain.forces
+# RUN: mdir checkpoint --print=forces %t/shifted.h5 > %t/shifted.forces
+# RUN: %python %S/Inputs/check_centroid.py %t/dipeptide.prmtop %t/shifted.inpcrd %t/shifted-plain.forces %t/shifted.forces %t/shifted-plain.log %t/shifted.log | FileCheck %s --check-prefix=PYTHON
+#
+# RUN: sed -e 's/^groups     = \[":1-3", ":4"\]/groups     = [":1-3", ":9999"]/' %t/terms.toml > %t/empty.toml
+# RUN: not mdir run %t/empty.toml 2>&1 | FileCheck %s --check-prefix=EMPTY
+# RUN: sed -e 's/^groups     = \[":1-3", ":4"\]/groups     = [":1-3", ":4-400"]/' %t/terms.toml > %t/wide.toml
+# RUN: not mdir run %t/wide.toml 2>&1 | FileCheck %s --check-prefix=WIDE
+# RUN: sed -e 's/^groups     = \[":1-3", ":4"\]/groups     = [":1-3"]/' %t/terms.toml > %t/count.toml
+# RUN: not mdir check %t/count.toml 2>&1 | FileCheck %s --check-prefix=COUNT
+# RUN: sed -e 's/^weighting  = "NONE"/weighting  = "CHARGE"/' %t/terms.toml > %t/weighting.toml
+# RUN: not mdir check %t/weighting.toml 2>&1 | FileCheck %s --check-prefix=WEIGHTING
+# RUN: sed -e 's/^expression = "k\*(theta - t0)^2"/expression = "k*(theta - t0)^2 + dx"/' %t/terms.toml > %t/name.toml
+# RUN: not mdir check %t/name.toml 2>&1 | FileCheck %s --check-prefix=NAME
+# RUN: sed -e 's/^groups     = \[":1-3", ":4"\]/&\nparticles  = [[1, 2]]/' %t/terms.toml > %t/both.toml
+# RUN: not mdir check %t/both.toml 2>&1 | FileCheck %s --check-prefix=BOTH
+
+# CHECK:      MDIR:   pull                         247.012569
+# CHECK-NEXT: MDIR:   bend                           2.234300
+# CHECK-NEXT: MDIR:   twist                          1.161051
+
+# PYTHON:      pull 247.012569
+# PYTHON-NEXT: bend 2.234300
+# PYTHON-NEXT: twist 1.161051
+# PYTHON-NEXT: forces against differences of the energy: ok
+# PYTHON-NEXT: virial: ok
+
+# EMPTY: the group ':9999' of the term 'pull' selects no particle
+# WIDE: of the group ':4-400' of the term 'pull' is 0.{{[0-9]+}} of the cell along an edge from the particle {{[0-9]+}}, from which the center is taken in the minimum image; a group must lie within 0.45 of the cell around it
+# COUNT: expected 'groups' as 2 masks of particles
+# WEIGHTING: expected 'weighting' as "MASS" or "NONE"
+# NAME: the expression uses 'dx', which is neither 'theta' nor a parameter of the term
+# BOTH: a term takes 'particles' or 'groups', not both
+
+#--- run.toml
+[input]
+topology    = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+[output]
+energy_interval = 0
+checkpoint = "terms.h5"
+checkpoint_interval = 1
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "CUTOFF"
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 1e-9
+steps      = 1
+[ensemble]
+ensemble    = "NVE"
+temperature = 0.0
+[boundary]
+type = "PERIODIC"
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- terms
+[[energy.bond]]
+name       = "pull"
+expression = "k*(r - r0)^2 + c*dz"
+groups     = [":1-3", ":4"]
+k  = 2.0
+r0 = 6.0
+c  = 0.3
+[[energy.angle]]
+name       = "bend"
+expression = "k*(theta - t0)^2"
+groups     = [":1", ":2", ":3"]
+weighting  = "NONE"
+k  = 5.0
+t0 = 2.0
+[[energy.dihedral]]
+name       = "twist"
+expression = "k*(1 + cos(theta - p))"
+groups     = [":1", ":2", ":3", ":5"]
+k = 1.0
+p = 0.5
+#--- end

@@ -241,14 +241,40 @@ Error Reader::readTupleTerm(const toml::table &table, unsigned arity) {
   if (term.expression.empty())
     return fail(table, "expected an 'expression' in " + kind);
 
+  // The centers of groups (D139): masks of Amber, one for each member of
+  // the one tuple.
+  if (const toml::node *node = table.get("groups")) {
+    if (table.contains("particles"))
+      return fail(*node, "a term takes 'particles' or 'groups', not both");
+    const toml::array *masks = node->as_array();
+    if (!masks || masks->size() != arity ||
+        !llvm::all_of(*masks, [](const toml::node &e) { return e.is_string(); }))
+      return fail(*node, "expected 'groups' as " + llvm::Twine(arity) +
+                             " masks of particles");
+    for (const toml::node &mask : *masks)
+      term.groups.push_back(*mask.value<std::string>());
+    std::string weighting = "MASS";
+    if (Error error = readString(table, "weighting", weighting))
+      return error;
+    if (weighting != "MASS" && weighting != "NONE")
+      return fail(*table.get("weighting"),
+                  "expected 'weighting' as \"MASS\" or \"NONE\"");
+    term.massWeighted = weighting == "MASS";
+  } else if (table.contains("weighting")) {
+    return fail(*table.get("weighting"),
+                "'weighting' is for the centers of 'groups'");
+  }
+
   // The tuples: lists of the numbers of their particles, from 1.
   const toml::node *node = table.get("particles");
   const toml::array *tuples = node ? node->as_array() : nullptr;
-  if (!tuples || tuples->empty())
+  if (!term.isCentroid() && (!tuples || tuples->empty()))
     return fail(node ? *node : static_cast<const toml::node &>(table),
                 "expected 'particles' in " + kind + ": lists of " +
-                    llvm::Twine(arity) + " particle numbers, from 1");
-  for (const toml::node &element : *tuples) {
+                    llvm::Twine(arity) + " particle numbers, from 1, or "
+                    "'groups'");
+  const toml::array none;
+  for (const toml::node &element : term.isCentroid() ? none : *tuples) {
     const toml::array *tuple = element.as_array();
     if (!tuple || tuple->size() != arity)
       return fail(element, "expected a list of " + llvm::Twine(arity) +
@@ -271,7 +297,9 @@ Error Reader::readTupleTerm(const toml::table &table, unsigned arity) {
   // of one for each.
   for (auto &&[key, value] : table) {
     StringRef keyword = toRef(key.str());
-    if (keyword == "name" || keyword == "expression" || keyword == "particles")
+    if (keyword == "name" || keyword == "expression" ||
+        keyword == "particles" || keyword == "groups" ||
+        keyword == "weighting")
       continue;
     std::vector<double> values;
     if (std::optional<double> number = value.value<double>()) {
@@ -301,13 +329,25 @@ Error Reader::readTupleTerm(const toml::table &table, unsigned arity) {
   if (!expression)
     return fail(*table.get("expression"),
                 llvm::toString(expression.takeError()));
+  // The energy of centers is computed outside the loops over tuples, where
+  // the tables of the functions are not read.
+  if (term.isCentroid() && expression->callsTabulated())
+    return fail(*table.get("expression"),
+                "a term over the centers of groups cannot call a tabulated "
+                "function yet");
+  // Between the centers of two groups, the components of the vector from
+  // the first to the second as well.
+  bool components = term.isCentroid() && arity == 2;
   for (const std::string &name : expression->getNames())
     if (name != term.getVariable() &&
+        !(components && (name == "dx" || name == "dy" || name == "dz")) &&
         !llvm::any_of(term.parameters,
                       [&](const auto &p) { return p.first == name; }))
       return fail(*table.get("expression"),
                   "the expression uses '" + name + "', which is neither '" +
-                      term.getVariable() + "' nor a parameter of the term");
+                      term.getVariable() + "'" +
+                      (components ? ", 'dx', 'dy', 'dz'," : "") +
+                      " nor a parameter of the term");
   control.tupleTerms.push_back(std::move(term));
   return Error::success();
 }
