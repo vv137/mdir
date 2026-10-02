@@ -129,14 +129,23 @@ def run(command, cwd, log):
         sys.exit(f"{' '.join(command)} failed; see {log}")
 
 
+COUPLINGS = {
+    # Semi-isotropic coupling (D119): the volume, not the shape, of a
+    # liquid has a distribution, so the test of two pressures holds for it;
+    # with the height held the area takes the change of the volume.
+    "semi": 'coupling      = "SEMI_ISOTROPIC"\n',
+    "held": 'coupling      = "SEMI_ISOTROPIC"\ncompressibility_z = 0.0\n',
+}
+
+
 def mdir_run(args, name, ensemble, temperature, pressure, steps, seed,
-             checkpoint=None, energy_interval=50):
+             checkpoint=None, energy_interval=50, coupling=""):
     text = CONTROL.format(
         checkpoint_in=f'checkpoint  = "{checkpoint}"\n' if checkpoint else "",
         energy_interval=energy_interval, name=name, steps=steps, seed=seed,
         ensemble=ensemble, temperature=temperature,
         pressure=f"pressure    = {pressure}\n" if pressure else "",
-        barostat=BAROSTAT if ensemble == "NPT" else "")
+        barostat=BAROSTAT + coupling if ensemble == "NPT" else "")
     path = os.path.join(args.work, name + ".toml")
     with open(path, "w") as file:
         file.write(text)
@@ -153,11 +162,22 @@ def main():
     parser.add_argument("--equil-steps", type=int, default=100000)
     parser.add_argument("--gmx-only", action="store_true",
                         help="run GROMACS alone, on the box already made")
+    parser.add_argument("--semi-only", default="",
+                        help="run the two pressures with the couplings "
+                        "named (semi, held; comma-separated) from equil.h5")
     args = parser.parse_args()
     os.makedirs(args.work, exist_ok=True)
     steps = int(round(args.ns * 500000))
     if args.gmx_only:
         gromacs(args, steps)
+        return
+    if args.semi_only:
+        for tag in args.semi_only.split(","):
+            coupling = COUPLINGS[tag]
+            mdir_run(args, f"npt-1-{tag}", "NPT", 300.0, 1.0, steps, 41,
+                     "equil.h5", coupling=coupling)
+            mdir_run(args, f"npt-300-{tag}", "NPT", 300.0, 300.0, steps, 42,
+                     "equil.h5", coupling=coupling)
         return
     with open(os.path.join(args.work, "box.leap"), "w") as file:
         file.write(LEAP)

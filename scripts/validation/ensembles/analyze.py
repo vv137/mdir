@@ -205,6 +205,21 @@ def main():
     report("  slope of ln P2(V)/P1(V) (1/Å^3)", slope, err,
            -(300.0 - 1.0) * ATM / (KB * t1))
 
+    # The same test with semi-isotropic coupling, and with the height
+    # held, if run.py --semi-only ran them (D119).
+    for tag, what in (("semi", "semi-isotropic coupling"),
+                      ("held", "semi-isotropic coupling, the height held")):
+        paths = [os.path.join(work, f"npt-{p}-{tag}.log") for p in (1, 300)]
+        if not all(os.path.exists(path) for path in paths):
+            continue
+        w1, _ = subsample(read_mdir(paths[0])["VOLUME"])
+        w2, _ = subsample(read_mdir(paths[1])["VOLUME"])
+        slope, err = logistic(w1, w2)
+        print(f"Two pressures with {what}, {len(w1)} and {len(w2)} "
+              f"independent samples:")
+        report("  slope of ln P2(V)/P1(V) (1/Å^3)", slope, err,
+               -(300.0 - 1.0) * ATM / (KB * t1))
+
     def density(v):
         return MASS / (6.02214076e23 * v * 1e-24)
 

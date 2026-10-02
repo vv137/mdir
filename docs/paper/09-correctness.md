@@ -189,6 +189,12 @@ beside its rate.
   \pm 0.00045$, $0.99664 \pm 0.00044$, and $0.99667 \pm 0.00054$ g/cm³
   and the compressibility $5.11 \pm 0.40$, $4.66 \pm 0.37$, and $4.78 \pm
   0.46\times10^{-5}$ /bar: a liquid has no shape, so the three must agree.
+  Its volume has a distribution all the same, and the test of two
+  pressures [[Shirts2013]](references.md#shirts2013) (1 and 300 atm, 5 ns each) gives the slope of
+  $\ln P_2(V)/P_1(V)$ within 0.08 standard errors of $-\beta\Delta P$
+  with semi-isotropic coupling and within 0.36 with the height held
+  (0.66 with isotropic coupling): the test of [[Merz2018]](references.md#merz2018), which that
+  paper applied to isotropic coupling only.
   On a bilayer of 126 POPC of Lipid21 [[Dickson2022]](references.md#dickson2022) in TIP3P against
   GROMACS on the same model, over 20 ns each, the area per lipid is
   $66.70 \pm 0.63$ Å² against $63.62 \pm 0.37$ with four to seven
