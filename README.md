@@ -20,7 +20,7 @@ paper of the first milestone is in [docs/paper/](docs/paper/README.md).
 | Document | Contents |
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | The design |
-| [docs/future-architecture-plan.md](docs/future-architecture-plan.md) | Future plan: architecture review against Cornel and P4IRS, with staged dependencies, MLIP semantics, and model interoperability |
+| [docs/future-architecture-plan.md](docs/future-architecture-plan.md) | Future plan: architecture review against Saunders, Cornel, and P4IRS, with staged dependencies, MLIP semantics, and model interoperability |
 | [docs/ops-m0.md](docs/ops-m0.md) | Types and ops for the first milestone |
 | [docs/mdrt-m0.md](docs/mdrt-m0.md) | Proposal for the runtime and execution of the first milestone |
 | [docs/driver-m0.md](docs/driver-m0.md) | The driver and its control file |

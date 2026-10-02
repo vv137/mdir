@@ -1,16 +1,18 @@
-# MDIR Architecture Compared with Cornel and P4IRS
+# MDIR Future Architecture Plan: Saunders, Cornel, and P4IRS
 
-Review date: October 1, 2026. Sources: the two supplied PDFs, the current repository including the working tree, and primary documentation for the model interfaces discussed below. This report distinguishes implemented behavior, documented plans, and recommendations. It is an architecture review; it does not reproduce benchmark results or execute the test suite.
+Initial architecture review: October 1, 2026. Updated October 2, 2026 after reading William Robert Saunders's doctoral thesis. Sources: the three supplied theses/papers, the repository, and primary documentation for the model interfaces discussed below. The implementation survey records the October 1 baseline; the Saunders additions refine the future plan rather than claim a new implementation audit. This document distinguishes implemented behavior, documented plans, and recommendations. It does not reproduce benchmark results or execute the test suite.
 
 MDIR's separation of potential semantics, dynamics, distribution, and traversal is a sound basis for combining classical force fields with machine-learned interatomic potentials (MLIPs). The strongest research direction is to preserve spatial and topological dependencies through differentiation, then use those dependencies to select communication and traversal together. The repository already provides useful foundations: semantic differentiation, explicit relations, exchange contracts, neighbor validity, storage assignment, and CPU/GPU lowering. The staged dependency interface and distributed planner that would connect them remain proposals.
 
-Cornel establishes a substantial precedent for particle IRs with automatic communication placement. P4IRS establishes a substantial precedent for generating different neighbor algorithms and parallel implementations from one particle computation. Current MLIP engines already demonstrate model-dependent distributed execution. Consequently, separating semantics from execution, generating CPU/GPU code, or communicating only fields that kernels read would be insufficient contribution claims by themselves. The proposed combination of staged dependencies, derivative-aware communication, and joint planning is worth pursuing, but this review cannot establish its novelty across the literature.
+Saunders establishes precedents for access-directed field-halo reuse, multistage structural analysis, collective Ewald evaluation, and hierarchical distributed electrostatics. Cornel establishes a substantial precedent for particle IRs with automatic communication placement. P4IRS establishes a substantial precedent for generating different neighbor algorithms and parallel implementations from one particle computation. Current MLIP engines already demonstrate model-dependent distributed execution. Consequently, separating semantics from execution, generating CPU/GPU code, or communicating only fields that kernels read would be insufficient contribution claims by themselves. The proposed combination of staged dependencies, derivative-aware communication, and joint planning is worth pursuing, but this review cannot establish its novelty across the literature.
 
 The recommended extension has two complementary parts: an atomistic/equivariant computation IR that preserves information needed for optimization, and compatibility tiers that accept existing model artifacts without requiring a complete importer. Use community model interfaces where possible. MDIR's role is to compile potential semantics into a verified execution plan, rather than to require one implementation or packaging format for every potential.
 
 Use metatomic as the reference MLIP interoperability interface while keeping its adapter optional and MDIR's compiler types, dependency graph, and ABI versions independent. Retain the planned OpenMM-like scientific API above the compiler: users compose systems, potentials, and dynamics; the compiler derives and realizes their dependencies. These are complementary public boundaries.
 
 Treat the batch/HPC CLI as an equally important entry point to that scientific model. Staged compilation, inspectable run artifacts, and restart independent of rank-local layouts should constrain the design early, even while their implementation follows the dependency and distributed-correctness milestones.
+
+The Saunders reading strengthens five planning requirements: distinguish exact semantic support from candidate traversal; describe reductions and data distribution explicitly; support versioned analysis intermediates as well as energies; admit hierarchical entity/ownership maps; and make approximation accuracy a constraint on legal plans. It also argues for bounded tuning and explicit host-access costs. The detailed evidence and proposed changes appear in [the Saunders review](#architecture-lessons-from-saunders).
 
 ## Evidence and corrections to the starting assessment
 
@@ -141,21 +143,121 @@ The paper evaluates generated LJ code against MD-Bench and generated DEM code ag
 
 The useful lesson is methodological: compare generated variants against strong implementations, measure neighborhood construction and communication alongside the force kernel, and evaluate different workloads. The paper's throughput values cannot be directly compared with MDIR's repository measurements because hardware, precision, systems, and execution policies differ.
 
+## Architecture lessons from Saunders
+
+William Robert Saunders, *Development of a Performance-Portable Framework for Atomistic Simulations*, University of Bath, December 2018; the supplied portal cover records a 2019 award. The local copy has 197 PDF pages. References below use printed thesis pages. Chapters 2–3 develop the PPMD abstraction and code generation; Chapters 4–5 develop electrostatic algorithms and implementations; Chapter 6 identifies limitations and future work. This review reads the thesis directly and extends the narrower PPMD paper analysis. See [source details](#saunders-thesis-source).
+
+### Candidate traversal is not the semantic relation
+
+Definition 2.6 guarantees that a local pair loop includes pairs within its cutoff but permits additional, more distant pairs. The kernel performs the actual distance test. Chapter 3 makes this distinction concrete through cell traversal and buffered neighbor lists. Thus the abstraction promises coverage, not that every enumerated edge is an interaction. (Saunders, Sections 2.2 and 3.1.5, pp. 35–37 and 59–65.)
+
+**MDIR consequence:** distinguish the exact relation requested by a computation, the candidate structure used to enumerate it, and the predicate/certificate establishing complete coverage. A skin changes candidate construction, not the physical cutoff. Every realization must apply the semantic predicate before contributing; this matters for neighbor counts, angular features, and learned messages as much as for forces. Fusion may share candidates while retaining different per-term cutoffs and exclusions. An external neighbor contract must state whether the supplied list is exact or overinclusive and which side applies the final predicate.
+
+This prevents a false unification of FMM near-field interactions with radius-local forces. Saunders's FMM near field covers the containing cube and its 26 adjacent cubes, while expansions cover the complementary far field. A conservative radius can help enumerate candidates, but cannot replace the actual near/far partition without changing or double counting the result. (Section 5.3.2, pp. 136–137.) Retain cell membership and interaction-list predicates in the support vocabulary.
+
+### Access descriptors are an execution contract, not an energy model
+
+PPMD separates per-particle data, rank-local scalar arrays, and globally reduced arrays. Its `READ`, `WRITE`, `RW`, `INC`, and `INC_ZERO` descriptors govern generated access, halo invalidation, and reduction handling. Consecutive readers can reuse a halo; writes invalidate copies. The `State` object migrates attached particle properties together. Kernel bodies remain user-written C. (Sections 2.3.1 and 3.1.2–3.1.3, pp. 38–46 and 54–56.)
+
+**MDIR consequence:** retain a small declared effect/support contract for opaque kernels and adapters; derive and verify the same facts for visible regions. Do not require every useful computation to be differentiable or reconstruct an energy from arbitrary C. The semantic layer supplies what PPMD does not: an energy definition and supported differentiation whose output dependencies remain inspectable.
+
+Saunders also proposes a UFL-inspired symbolic kernel language to lower the barrier created by user-written C, but does not implement it. (Section 6.2, pp. 144–145.) This supports MDIR's scientific API and declarative front end: preserve symbolic energy where available while allowing opaque kernels. A symbolic front end alone is another insufficient novelty claim; differentiation and the resulting distributed dependencies are the stronger target.
+
+Accumulation needs more detail than `INC`. Distinguish reading an old owned accumulator, adding independent contributions, initializing a new reduction, and reading a completed result from neighbors. `INC_ZERO` suggests an explicit initialization phase: zero once per logical accumulation, not separately for every energy term or interior/boundary kernel. Reject a second reset that discards another producer's contribution. Floating-point reassociation needs its own policy; mathematical order independence is not a bitwise guarantee.
+
+Host edits and migration are invalidation events even for previously constant fields. A cache key needs the logical field version, relevant support/coverage, ownership or indexing epoch, and representation, rather than one `dirty` bit. This extends PPMD's useful contract while preserving the separate ownership, relation-validity, and freshness states.
+
+### Structural analysis is a decisive staged test case
+
+Bond-order analysis accumulates spherical-harmonic moments and neighbor counts, then computes local invariants. Common-neighbor analysis (CNA) uses three pair loops: direct adjacency, indirect environmental bonds, and graph-based classification. Later loops consume per-particle structures formed earlier, including a neighbor's adjacency data. These are already staged particle computations beyond force evaluation. (Section 2.3.2, pp. 46–51, Algorithms 2–6.)
+
+A proposed distributed CNA realization makes the dependency visible:
+
+```text
+positions and stable IDs
+    -> direct adjacency A on owned centers
+    -> refresh remote A needed by the next node
+    -> environmental bonds B on owned centers
+    -> refresh remote B needed by classification
+    -> owned classifications and optional global histogram
+```
+
+This is an MDIR design example, not an extracted PPMD schedule. The thesis stores adjacency and environment information in a shared per-particle buffer with distinct prefixes. MDIR should expose immutable logical intermediates or verified subfield access so an in-place extension preserves information consumed by another center. Stable IDs distinguish graph identity from reordered storage. Variable-size relations require checked capacity or dynamic storage; the thesis's fixed maximum neighbor/bond capacities are not a generally safe ABI assumption.
+
+**MDIR consequence:** observations should use the same relation, version, ownership, and reduction analysis as potentials. A tiny two-stage neighbor statistic can test an intermediate-field exchange before EAM without a tensor framework. Keep EAM as the first staged potential and the main classical demonstration. Bond-order analysis also offers a nonlearned test of reusable angular algebra. Neither staged analysis nor spherical harmonics in particle computations is, by itself, a new contribution.
+
+On-the-fly observables can avoid trajectory output and offline analysis, but should be demand-driven: record the requested cadence and produce only needed fields/results. Reuse a force calculation's halo or geometry only when versions, support, and periodic-image conventions agree. If an observable feeds back into parameters or dynamics, model that update and its invalidations explicitly. (Sections 1.3.3 and 3.3.2, pp. 31 and 83–85.)
+
+### Ewald exposes collective dependencies and replication semantics
+
+Saunders implements classical particle Ewald using a short-range pair loop and two particle loops separated by a global reduction of Fourier coefficients. Each rank holds the complete reciprocal vector; reciprocal modes are not distributed. This is direct Ewald, not PME, and the reported implementation is CPU-based. The thesis explains why directly transferring its optimized loop mapping to GPUs would introduce contention or lose the recurrence optimization. (Sections 5.1–5.2, pp. 126–132.)
+
+**MDIR consequence:** entity domain and data distribution are distinct. Represent local partial coefficients, the sum over a specified participant set, and the replicated result as different values/states. A collective contract needs its operation, participating domains, result placement, numerical policy, and completion. Do not infer a collective merely because a value is called global, or confuse replicated copies of one logical quantity with independent contributions.
+
+Differentiation must preserve that logical meaning. Reverse communication follows the actual sum, replication, and consumer maps; treating every physical copy of a global energy as an independent energy can multiply gradients by the rank count. Add a small collective graph to verifier/adjoint tests alongside owner-to-ghost copy tests. Direct Ewald can be a small reference or abstract test graph without replacing the implemented PME backend or becoming another near-term production solver.
+
+### FMM requires entity hierarchies and phase-specific ownership
+
+The FMM implementation has particle-to-leaf accumulation, child-to-parent multipole translations, same-level interaction-list exchanges, parent-to-child local translations, and leaf-to-particle evaluation. Only some ranks own cells on coarse levels; each level has ownership/index maps and its own participating communicator. The implementation combines particle data/halo machinery with specialized tree storage and handwritten C translation/direct-interaction routines. It does not demonstrate that the original two particle loops express the complete solver efficiently. (Sections 4.3.2 and 5.3, pp. 112–125 and 132–137.)
+
+**MDIR consequence:** admit entities beyond atoms: cells on a named level, expansion fields, and relations between levels. Record ownership per entity domain and phase, not one universal owner map. Transfer, reduce, and redistribute are related but distinct operations. A verifier must allow ranks with no work on a level while enforcing that level's communication-participation contract.
+
+Saunders identifies coarse-level underutilization and proposes concurrent multipole-to-local work across levels after the upward pass, then combining it with the ordered local-to-local pass. This is future work, not a demonstrated asynchronous scheduler. (Sections 5.4 and 6.2, pp. 139–141 and 146.) It strengthens the partial-order graph and critical-path objective: serializing every level hides legal parallelism. Repartitioning to exploit it can cost more than it saves and must appear in the measured plan.
+
+Do not implement a full FMM dialect now. Add a synthetic hierarchy to contract/verifier tests and keep PME as the practical nonparticle reference. Shared spherical-harmonic/rotation machinery could later reuse geometric algebra with MLIPs, but electrostatic translation, correlation, and learned tensor products need their own verified semantics; a common basis does not justify substitution.
+
+### Accuracy must constrain solver and plan choices
+
+The Ewald split balances real-space and reciprocal work under error estimates. Its cost parameters are machine-dependent, and decomposition constrains usable cutoffs. The FMM evaluation selects expansion order by matching measured output error to the reference solver, then adjusts tree depth to balance direct and indirect work. Its uniform hierarchy and selected order are part of the experimental setup. (Sections 4.2.1, 5.2.2, and 5.4, pp. 96–98, 131–132, and 137–141.)
+
+**MDIR consequence:** add an approximation contract alongside floating-point precision and reproducibility. Name requested energy/force/virial accuracy, the reference or estimator, boundary/periodicity convention, and admissible algorithm parameters. Check force error as well as energy error; small global energy error can hide local errors or cancellation. The homogeneous test's error behavior is not a universal guarantee for a learned model, an inhomogeneous system, or changing cells.
+
+Permit backend choices only within that scientific/numerical contract. Changing a physical cutoff is different from tuning a skin. Adjusting an Ewald split requires consistent real, reciprocal, and correction terms. Selecting PME versus a future FMM also requires matching boundary conditions, self terms, exclusions, and outputs, rather than merely comparing complexity labels.
+
+Saunders accelerates the dominant multipole-to-local translation through rotations while leaving other translations unchanged. The implementation remains asymptotically $O(Np^4)$ even though its frequently executed translation becomes $O(p^3)$. (Section 4.3.2, pp. 123–125.) Preserve operator structure to specialize expensive work, and report full-step cost and achieved accuracy rather than one operation's asymptotic improvement.
+
+### Specialization and caching need explicit invalidation
+
+The thesis precomputes translation/rotation data and discusses persistent reuse of angular constants. Its future-work example distinguishes fixed from moving particles, allowing constant interactions to be computed once instead of repeatedly exchanging and evaluating them. (Sections 5.3.1 and 6.2, pp. 135–136 and 144–145.)
+
+**MDIR consequence:** static binding applies to dependency subsets, not just an entire potential. Keep species masks, active/fixed selections, parameter versions, and cell dependencies inspectable. Species alone does not establish immobility. Fixed Cartesian positions do not make an interaction invariant if the cell, parameters, charges, or boundary mapping changes. A fixed source's interaction with a moving target remains dynamic.
+
+For staged compilation, separate immutable coefficient tables from version-dependent execution caches. Include basis/order/normalization and relevant geometry/solver parameters in cache identity. A barostat or new Ewald split can invalidate data constant in a fixed-cell setup. Predicted charges make charge-dependent self-energy dynamic unless its inputs prove otherwise. No cache should survive migration or restart solely because its bytes are unchanged.
+
+### Performance portability requires end-to-end evidence
+
+The thesis reports competitive homogeneous LJ results on the contemporary CPU/GPU systems, with stronger CPU than GPU weak scaling, and successful CPU electrostatic evaluations. Its force loop accounts for only part of step time. Dense occupancy storage can waste memory for clustered distributions, while coarse FMM levels create another imbalance source. The historical Python launch estimate is about 10–20 microseconds; GPU wrapper examples synchronize the device after each loop. Fusion, overlap, automatic algorithm choice, and GPU FMM remain future work. (Sections 3.1.4, 3.3, 5.4, 6.2, and Appendix A.8, pp. 57–59, 77–85, 137–146, and 153–163.)
+
+**MDIR consequence:** measure construction, packing, transport, synchronization, reductions, launch, and observations as well as force/tensor kernels. Record memory amplification from maximum occupancy and feature width, not only mean neighbor count. Faster GPU computation can expose communication or dispatch overhead and lower scaling efficiency even while reducing elapsed time. Small local domains and wide MLIP features need separate experiments from large homogeneous LJ. Historical results motivate hypotheses; they do not predict current-hardware speedups.
+
+Saunders already proposes trying a few implementations during initial iterations. Adopt bounded selection as engineering precedent, not novelty. Tuning must execute equivalent work, coordinate ranks, avoid advancing scientific state more than intended, and report setup cost. The strict HPC path can use offline measurements or reproducible presets; a short startup budget can disable runtime exploration. The research question is whether preserved semantics generate better legal alternatives, not whether MDIR can implement a general autotuner.
+
+### Decisions carried into the future plan
+
+| Decision | First concrete acceptance criterion | Scope |
+|---|---|---|
+| Exact relation, candidates, and coverage are separate | Buffered lists do not change neighbor counts or admit excluded interactions | Relation/neighbor contract |
+| Initialization, contributions, completion, and distribution are explicit | Two terms accumulate without resetting each other; replicated collectives do not multiply energy/adjoints | Dependency graph and verifier |
+| Analysis shares the dependency mechanism | A small intermediate neighbor statistic works across two domains with the required exchange | Early debug case; EAM remains the first staged potential |
+| Entity hierarchies and ownership scopes are representable | A synthetic two-level graph validates empty-rank participation and parent/child maps | Contract coverage; full FMM deferred |
+| Approximation and cache validity constrain planning | Unsupported accuracy changes and stale geometry-dependent caches are rejected | Legal-plan and artifact contracts |
+| Tuning includes end-to-end cost and a budget | Fixed and selected plans report comparable outputs, setup cost, memory, and full-step time | Bounded selection; no broad search framework |
+
 ## Four-way architectural comparison
 
-PPMD is included here through the repository's existing analysis of its paper. That analysis is useful context, but this review does not independently re-audit the PPMD source publication. [Existing PPMD review](prior-art.md#1-ppmd-saunders-grant-müller-2018).
+PPMD is now considered through both the [existing paper analysis](prior-art.md#1-ppmd-saunders-grant-müller-2018) and the directly read Saunders thesis. The thesis supplies additional collective and hierarchical evidence; its handwritten FMM routines and proposed future optimizations are distinguished from generated particle-loop implementations.
 
-| Dimension | PPMD as reviewed in this repo | Cornel | P4IRS | MDIR |
+| Dimension | PPMD paper and Saunders thesis | Cornel | P4IRS | MDIR |
 |---|---|---|---|---|
 | Primary abstraction | Particle/pair loops with opaque C kernels and access descriptors | Particle updates and neighbor reductions, specialized to distributed particle sets | Particle computations and domain-specific AST nodes plus a user schedule | Energy and relations plus dynamics; explicit traversal below them |
-| Communication information | Declared access modes and runtime tracking | Analyzed reads/changes, ownership and neighbor staleness, liveness, external-call contracts | Neighbor property accesses, volatility, and changes across steps | Current: effects and aliases for local overlap. Proposed: stage support, reads/writes, freshness, and accumulation |
+| Communication information | Declared access modes and runtime tracking; collective coefficient reduction and specialized tree-level maps | Analyzed reads/changes, ownership and neighbor staleness, liveness, external-call contracts | Neighbor property accesses, volatility, and changes across steps | Current: effects and aliases for local overlap. Proposed: stage support, reads/writes, freshness, and accumulation |
 | Physical neighborhoods | Runtime structures selected for targets | Cell-list/local-domain companion dialects; Verlet proposed | Generated Linked Cells/Verlet variants, half/full lists, per-cell lists | Matrix implemented; optional GPU groups path; general joint choice proposed |
 | Energy differentiation | No semantic energy layer in the reviewed abstraction | Not demonstrated by the thesis | Force-kernel descriptions; no derivative-aware stage planner demonstrated | Supported symbolic pair/tuple derivatives implemented; MLIP reverse mode proposed |
 | Distribution/execution boundary | Framework and runtime | `particles_dist` specialization combines distributed and traversal information with companion dialects | Generated communication and traversal plus runtime partitioner interface | Proposed peer `md_dist` and `md_exec` dialects, driven by one planner |
-| Evidence for staged classical/ML unification | Existing review notes multistage analysis kernels | Repeated particle computations are possible; no unified differentiated model demonstrated | Many-body syntax is discussed; no unified differentiated model demonstrated | Architecture proposal; no EAM/MLIP distributed demonstration yet |
-| Performance evidence relevant here | Repository summarizes homogeneous LJ benchmarks | OpenFPM CPU/GPU comparisons on one machine | LJ/DEM CPU/GPU comparisons and cluster weak scaling | Source, tests, and repository measurements for single-node classical MD; no new measurements in this review |
+| Evidence for staged classical/ML unification | Thesis demonstrates multistage analysis and collective Ewald; no learned/differentiated unification | Repeated particle computations are possible; no unified differentiated model demonstrated | Many-body syntax is discussed; no unified differentiated model demonstrated | Architecture proposal; no EAM/MLIP distributed demonstration yet |
+| Performance evidence relevant here | CPU/GPU LJ scaling; CPU direct Ewald and distributed FMM, including limitations | OpenFPM CPU/GPU comparisons on one machine | LJ/DEM CPU/GPU comparisons and cluster weak scaling | Source, tests, and repository measurements for single-node classical MD; no new measurements in this review |
 
-The concise mapping remains useful if interpreted as emphasis rather than exclusivity: PPMD contributes execution abstractions; Cornel contributes analyzable particle state and communication placement; P4IRS contributes algorithmic code generation and performance portability. MDIR's proposed extension is semantic dependency preservation through differentiation and joint distributed/execution planning.
+The concise mapping remains useful if interpreted as emphasis rather than exclusivity: Saunders/PPMD contributes execution contracts, staged analysis, and collective/hierarchical algorithm experience; Cornel contributes analyzable particle state and communication placement; P4IRS contributes algorithmic code generation and performance portability. MDIR's proposed extension is semantic dependency preservation through differentiation and joint distributed/execution planning.
 
 ## Cornel to MDIR correspondence
 
@@ -185,9 +287,11 @@ The proposed fields—`support`, `reads`, `writes`, `accumulation`, and `freshne
 
 ### Versions, ownership, and support
 
-A stage should identify the versions of its input and output fields, the entities on which it executes, and where contributions belong. Reading positions for neighbors is different from reading the central particle's position. Writing one owned output is different from contributing to all members of a tuple or to ghosts. An additive contribution must include its reduction identity and a permitted accumulation policy; an overwrite must have a unique producer or an explicit resolution rule.
+A stage should identify the versions of its input and output fields, the entities on which it executes, and where contributions belong. Reading positions for neighbors is different from reading the central particle's position. Writing one owned output is different from contributing to all members of a tuple or to ghosts. An additive contribution must include its reduction identity, initialization scope, completion requirement, and permitted accumulation policy; an overwrite must have a unique producer or an explicit resolution rule. Field summaries should distinguish old-value reads from contributions to a new value and represent verified subfield/prefix accesses when needed.
 
-`support` should describe a relation, not merely a scalar radius. Useful forms include local particles, radius neighborhoods, explicit topological tuples, composed relations, particle-to-grid maps, grid stencils, and collectives.
+`support` should describe a relation, not merely a scalar radius. Useful forms include local particles, radius neighborhoods, explicit topological tuples, composed relations, particle-to-grid maps, grid stencils, collectives, cell interaction lists, and parent/child maps on named hierarchy levels. Exact semantic support remains distinct from candidate enumeration and its coverage guarantee. Variable-cardinality relations must declare their storage/capacity contract rather than assume a universal maximum neighbor count.
+
+Record distribution independently of entity type: a value can be an owned field, a local partial reduction, a replicated logical result, or a sharded mesh/tree field. Collective summaries specify participants and result placement. Ownership maps may differ between particles, mesh domains, and hierarchy levels. These are requirements for a common contract, not a commitment to implement every solver in the initial prototype.
 
 Make **nodes and dependencies the primary contract**, with a stage understood as a computation node in a partial order. Field-version producer/consumer edges establish data dependencies; summarized effects, contribution completion, and communication participation can impose additional ordering. An ordered stage list is one possible schedule of that graph, not its definition. Geometry can feed independent radial and angular branches before a coupled product, and local real-space and reciprocal-space energy branches can proceed independently until their outputs are combined. Do not infer an execution order from the order in which nodes appear in metadata.
 
@@ -251,6 +355,8 @@ The key observation is that refreshing positions once does not satisfy the later
 For an owner-to-ghost copy in the forward graph, the corresponding adjoint operation sums ghost contributions back to their owners. A message-passing layer can therefore require a forward feature exchange and a reverse accumulation when forces are obtained by differentiating the energy. Reverse mode also needs forward activations or a legal recomputation policy. These requirements should be derived before communication is lowered into transport calls, as the MDIR architecture already proposes. [Semantic differentiation proposal](architecture.md#5-semantic-differentiation).
 
 This answers the third Cornel comparison question: one representation can express both directions if it records the ownership map, field versions, contribution targets, and accumulation semantics. `reads` and `writes` alone are insufficient. The implementation must also avoid counting ghost-centered energies twice and must preserve the mapping through particle reordering.
+
+Collective graphs require the same care. Record whether an energy or intermediate is a local contribution, a sharded field, or one logical value replicated across participants. Derive adjoints from the reduction/replication maps and consumers, rather than counting physical replicas as independent outputs. Saunders's direct Ewald graph is a useful small test of this distinction before generalizing differentiation to mesh or tree solvers.
 
 Allegro's strict locality does not make reverse force accumulation disappear automatically. If a rank evaluates energies centered on owned particles and differentiates them with respect to all environment coordinates, some resulting forces belong to remote particles. The plan must return those contributions or use a different, explicitly justified force-evaluation strategy.
 
@@ -402,7 +508,7 @@ At the source API level, the user's `PotentialPlugin` shape is appropriate: `cap
 |---|---|---|
 | Potential ABI | API version, instance lifecycle, supported outputs, required inputs, error behavior | Batched evaluation, completion handles and profiling hooks |
 | System view | Species mapping, positions, cell and periodicity, owned/ghost selection, particle and image identity, dtype/layout/device, borrowed-buffer lifetime | Additional fields and parameter updates |
-| Neighbor ABI | Directed edge convention, periodic shifts, center selection, cutoff and full/half-list semantics, completeness, indexing and validity | Alternative layouts and multiple requested relations |
+| Neighbor ABI | Directed edge convention, periodic shifts, center selection, cutoff and full/half-list semantics, exact versus candidate-list meaning, completeness, indexing and validity | Alternative layouts and multiple requested relations |
 | Output view | Requested outputs, overwrite versus accumulation, owned-center energy accounting, force contribution destinations, units and virial/stress convention | Additional derivatives and observables |
 | Capability description | Enough support and execution requirements to run the whole call correctly | Detailed dependency graph and supported distributed protocols |
 | Stage execution extension | Not required for opaque execution | Stage entry points or communication hooks, intermediate field access, forward/backward ownership and completion |
@@ -573,7 +679,7 @@ The dynamic documentation cited in this section was checked on the review date. 
 
 ### A legality engine before a cost model
 
-The second Cornel comparison question has a positive architectural answer: communication placement, neighbor structure, skin, pair policy, and overlap can form a joint optimization problem. MDIR should first separate legal realizations from performance selection. A planner must never trade away freshness, complete interaction coverage, correct accumulation, or a requested reproducibility guarantee to reduce estimated time.
+The second Cornel comparison question has a positive architectural answer: communication placement, neighbor structure, skin, pair policy, and overlap can form a joint optimization problem. MDIR should first separate legal realizations from performance selection. A planner must never trade away freshness, complete interaction coverage, correct accumulation, an approximation-accuracy contract, or a requested reproducibility guarantee to reduce estimated time.
 
 For a legal plan, a useful conceptual objective is the critical-path time of the schedule, including neighbor builds, packing, communication, computation, reductions, and synchronization. Amortized build time matters over multiple steps. Overlap means these costs cannot always be added independently.
 
@@ -588,8 +694,12 @@ For the first research prototype, use a bounded procedure: enumerate a few legal
 | Interior/boundary split | Creates potential overlap but depends on each stage's support and the availability of all inputs. |
 | Decomposition | Changes local work, halo surface area, imbalance, topological cuts, and mesh redistribution. |
 | Precision and reproducibility | Change arithmetic/storage costs and rule out some accumulation orders or strategies. |
+| Approximation parameters | Couple real/reciprocal or direct/indirect work and must satisfy the requested error and boundary-condition contract; they are distinct from physical cutoff changes and floating-point precision. |
+| Entity distribution and memory budget | Particle, mesh, and hierarchy decompositions can differ; communication, coarse-level utilization, maximum occupancy, and feature width constrain feasible layouts. |
 
 The architecture already separates an immutable `ExecutionPlan` from mutable `ExecutionTuningState`. Keep that distinction, but specify a compiler-visible ABI for each tunable parameter. Updating skin without recompilation is possible only when the generated validity tests, builds, and halo coverage use the updated value consistently. A number described as tunable in a document can still be compiled as a constant today. [Plan proposal](architecture.md#71-plan-and-tuning-state), [current pipeline options](../tools/mdir/Run.cpp).
+
+Give tuning an explicit startup/runtime budget and deterministic fixed-plan fallback. Cache measurements by relevant model, hardware, numerical, and workload characteristics. Trials must preserve the scientific trajectory or use a controlled replay/reference state; measuring multiple variants must not accidentally apply a time step multiple times. Saunders's proposed early-iteration trials support this bounded approach, while strict batch launches can choose precompiled variants using offline profiles without exploration.
 
 ### Distribution and traversal as peers
 
@@ -603,6 +713,8 @@ The fourth Cornel comparison question also has a positive architectural answer. 
 
 That separation must define observable semantics. A forward halo needs an ownership/communication map, a field version, a supported region, and completion that guarantees the consumer can read the data. Reverse accumulation needs the inverse ownership mapping and a reduction rule. Migration must preserve global identity and topology while invalidating stale local-index maps. The runtime must preserve buffer lifetime and completion across asynchronous work.
 
+Saunders's six directional exchanges reach face, edge, and corner neighbors by forwarding data received in earlier exchanges. (Section 3.1.3, pp. 55–56.) A transfer realization may therefore contain intermediate forwarding domains, not just a direct owner/consumer edge. Preserve origin and periodic-image identity through that route, verify completion and coverage at the final consumer, and route reverse contributions back to the correct owner without duplication. Keep the logical requirement independent of whether a backend chooses direct exchanges or staged forwarding; neither protocol is universally optimal.
+
 Distributed guards also need compatible behavior across participating ranks. A local stale predicate cannot blindly guard a collective or a matching send/receive sequence. The plan must specify whether a guard is globally agreed or whether the communication protocol permits independent participation. This is a proposed verifier responsibility, especially when adapting Cornel-style `maybe_X` reasoning to new transports.
 
 The existing second-stream mechanism is a useful local prototype, but a transport-independent `!mdrt.event` implementation needs more than a type declaration: event-producing operations, wait/join semantics, memory visibility, and lifetime rules must be implemented and verified.
@@ -611,9 +723,9 @@ The existing second-stream mechanism is a useful local prototype, but a transpor
 
 | Candidate | Prior-art overlap | Evidence required before claiming it |
 |---|---|---|
-| Staged semantic dependency contract shared by classical terms and MLIPs | Cornel analyzes particle dependencies and freshness; PPMD includes multistage analysis computations; P4IRS preserves particle AST nodes. | Extract and verify one common contract for LJ, EAM, a topological term, and a visible message-passing model. Show which semantic information survives lowering. |
+| Staged semantic dependency contract shared by classical terms and MLIPs | Cornel analyzes dependencies and freshness; Saunders demonstrates staged analysis, collective Ewald, and specialized FMM hierarchy maps; P4IRS preserves particle AST nodes. | Extract and verify one common contract for LJ, EAM, a topological term, and a visible message-passing model. Show energy/derivative semantics surviving lowering, rather than claim staged computations themselves. |
 | Derivative-aware distributed realization | Cornel lists ghost put as future work; the supplied P4IRS paper does not demonstrate differentiated stage planning. Existing MLIP engines already expose communication-aware execution. | Derive forward exchanges and reverse accumulations from an energy graph; compare energies/forces against a single-domain reference across decompositions. |
-| Joint communication and traversal planning | P4IRS exposes schedules and multiple physical variants; Cornel optimizes communication bundling; the repo also cites AutoPas tuning. | Show that a coupled choice beats fixed or independently tuned choices on measured total time, while using identical physical semantics. |
+| Joint communication and traversal planning | P4IRS exposes schedules and physical variants; Cornel optimizes bundling; Saunders analyzes hardware-dependent cost/accuracy choices and proposes bounded trials and overlap; the repo also cites AutoPas. | Show that coupled selection beats fixed or independent choices on measured total time, with matching physical semantics, output accuracy, and a reported tuning budget. |
 | Opaque versus visible MLIP comparison | Metatomic already standardizes model consumption; DeePMD documents local and message-passing multirank paths. | Same weights, outputs, precision, and force ownership; report bytes, duplicate work, memory, and elapsed time as layer count and decomposition vary. |
 | Transport-independent distributed IR | Cornel already separates root semantics from an OpenFPM specialization. | Define the distributed semantics and demonstrate at least two realizations, or present a clearly delimited single-backend prototype without claiming portability results. |
 
@@ -625,23 +737,23 @@ The current roadmap prioritizes single-node classical MD correctness and perform
 
 ## Recommended implementation sequence
 
-1. **Define and verify the dependency graph on current operations.** Start with requested pair/tuple derivatives and specialized reciprocal evaluation. Record nodes, dependency edges, entity support, field versions, contribution ownership, and reductions. Preserve current execution behavior while making the analysis inspectable.
+1. **Define and verify the dependency graph on current operations.** Start with requested pair/tuple derivatives and specialized reciprocal evaluation. Record nodes, edges, exact support versus candidates/coverage, field versions, ownership, reduction initialization/completion, and data distribution. Specify approximation and numerical contracts without adding a new solver. Preserve current execution behavior while making the analysis inspectable.
 
 2. **Separate ownership, geometric coverage, and field freshness.** Model particle IDs and periodic images explicitly. Connect neighbor validity to distributed coverage and distinguish those facts from current ghost values. Specify external mutation and parameter-version invalidation.
 
 3. **Implement a fixed two-domain LJ realization.** Use the existing directed, owner-only baseline with synchronous halos and a fixed plan. Verify decomposition independence within the declared numerical tolerance before introducing policy search.
 
-4. **Add a distributed verifier and inspectable schedule.** Before extending LJ to intermediate fields, dump each domain's requirements, transfers, ownership mappings, and completion edges. Detect missing producers, stale versions, incomplete coverage, and incompatible communication participation. Use the same representation to explain a failing run and to illustrate a legal schedule.
+4. **Add a distributed verifier and inspectable schedule.** Before EAM, dump domain requirements, transfers, ownership mappings, and completion edges. Exercise a tiny two-stage neighbor statistic with a required intermediate exchange; add synthetic collective and two-level hierarchy graphs to check contract coverage without building an FMM runtime. Detect missing producers, stale versions, incomplete coverage, duplicate initialization, and incompatible participation. Reuse this representation for diagnostics and legal schedule illustrations.
 
 5. **Add EAM as the first intermediate-field case.** Demonstrate the position and embedding-derivative exchange boundaries. This directly tests the proposed stage abstraction with a classical potential before adding a tensor framework.
 
-6. **Implement reverse contribution routing.** Cover unique cross-domain pairs or a small differentiated neighbor computation. Verify returned forces, ghost energy accounting, reordered IDs, and conservation properties.
+6. **Implement reverse contribution routing.** Cover unique cross-domain pairs or a small differentiated neighbor computation. Verify returned forces, ghost energy accounting, reordered IDs, and conservation properties. Add a small sum/replication case to establish that logical global values do not introduce a rank-count factor in adjoints.
 
 7. **Add a metatomic opaque adapter and a semantic path for the same model.** Start with a versioned potential/neighbor contract aligned with community terminology and keep the metatomic dependency optional. Define support per requested output and runtime buffer/completion rules; expose stage calls or communication hooks where per-layer planning is required. Keep native import outside the stable plugin ABI. A small reference model is sufficient to compare the interoperability and optimization paths with identical weights; supporting every MLIP family is unnecessary for the first demonstration.
 
-8. **Introduce bounded legal-plan selection and measured overlap.** Choose among a small legal set, such as directed/unique pairs, a few skins, and bundled/per-stage exchange. Use reproducible fixed-plan baselines and measure critical-path time before expanding the search space or transports.
+8. **Introduce bounded legal-plan selection and measured overlap.** Choose among a small legal set, such as directed/unique pairs, a few skins, and bundled/per-stage exchange. Use fixed-plan baselines, a tuning budget, and matching physical/numerical contracts. Measure critical-path and full-step time, memory, and setup cost before expanding the search space or transports.
 
-PME should be included in the support vocabulary now, because its existing implementation already demonstrates that particle computation is not exclusively a radius-neighbor loop. Distributed mesh lowering can remain a later milestone. Likewise, constraints should be recognized as iterative topological computations even if the first distributed prototype excludes them explicitly.
+PME should be included in the support vocabulary now, because its existing implementation already demonstrates that particle computation is not exclusively a radius-neighbor loop. Saunders's FMM adds hierarchical support and level-specific ownership as contract test cases, not a requirement to implement FMM now. Distributed mesh/tree lowering can remain later milestones. Likewise, constraints should be recognized as iterative topological computations even if the first distributed prototype excludes them explicitly.
 
 Treat artifact identity, restart boundaries, and scheduler stop points as design constraints throughout these milestones. A first batch prototype can serialize one fixed target/plan and exercise same-plan continuation before adding variant selection or rank-count changes. This companion workflow should reuse the dependency and ownership contracts rather than become a second execution system.
 
@@ -675,9 +787,17 @@ Use negative checks that remove a required transfer, substitute an old field ver
 |---|---|---|
 | Is a generated schedule correct? | Compare single-domain and two-domain LJ/EAM, including particles crossing ownership boundaries | Per-term energy, forces, virial, field versions, list/halo coverage, tolerance and precision |
 | Does the distributed verifier explain incorrect schedules? | Remove an exchange, use an old version, or reorder consumption before completion in a small debug case | Consumer-specific diagnostics, matching transfer records, ownership epoch and coverage checks |
+| Are candidate traversal and exact support distinct? | Compute neighbor counts with different skins and overinclusive lists, including exclusions and periodic images | Identical logical counts/edges, complete coverage, preserved per-term predicates |
+| Is accumulation initialized exactly once? | Sum two energy/force terms and split one term into interior/boundary kernels; inject a second reset | Matching results, producer/completion graph, rejection of discarded contributions |
+| Does staged analysis share the potential contract? | Two-stage neighbor statistic over a domain boundary, then optional BOA/CNA examples | Intermediate versions and payloads, stable graph IDs, checked capacity, single-domain agreement |
+| Do collectives preserve logical distribution? | Reduce rank-local coefficients, replicate the result, and evaluate local consumers with a small differentiated graph | Correct participants/result placement, output agreement, adjoints independent of physical replica count |
+| Can the contract express hierarchy ownership? | Synthetic parent/child and same-level graph, including ranks owning no coarse cells | Valid transfer/reduction maps, per-level participation, permitted partial order; no FMM performance claim |
 | Are stage boundaries necessary and sufficient? | EAM with inspected schedules and a deliberately stale intermediate in a negative verifier/runtime test | Exchange location, payload fields, rejection or detected mismatch |
 | Does reverse routing work? | A differentiated neighbor model with an environment spanning domains | Adjoint/force agreement, contribution counts, global-ID and periodic-image mapping |
 | Does joint planning improve performance? | Fixed directed/unique policies and a small skin sweep, followed by planner selection | Total step time, amortized builds, bytes/messages, scatter cost, selected plan |
+| Are approximation choices compared fairly? | Where multiple approximations are implemented, compare against a converged reference under fixed scientific conventions | Energy and per-particle force errors, virial when requested, estimator conditions, total time and admissible parameters |
+| Are static caches invalidated correctly? | Change cell, charges, parameters, ownership, or selection while reusing cached geometry/coefficients | Dependency-specific invalidation, reference output agreement, declared persistent versus reconstructed state |
+| Does tuning remain bounded and state-preserving? | Compare fixed-plan and short-budget selection from equivalent states on all ranks | Setup cost, budget/fallback, identical step count and numerical contract, full-step timing |
 | Is overlap real? | Identical plan with synchronous versus interior/boundary asynchronous execution | Timeline, critical path, synchronization and transfer overhead |
 | Is visible MLIP staging useful? | Same model and outputs, opaque full-environment versus staged execution | Force agreement, halo bytes, duplicated work, activation memory, total time |
 | Does geometric IR preserve model semantics? | Compare imported and original energies/forces under rotations, reflections when promised, and atom permutations | Equivariance/invariance error, basis/normalization agreement, derivative tolerances |
@@ -689,6 +809,7 @@ Use negative checks that remove a required transfer, substitute an old field ver
 | Are stop and continuation semantics correct? | Compare uninterrupted and checkpointed runs; inject a stop request and a failed checkpoint write | Required algorithm/RNG state, output append validation, preserved previous checkpoint, documented continuation tolerance or bitwise guarantee |
 | Is restart independent of rank-local layout? | Once distributed restart exists, restore on the same and a different rank count with rebuilding/replanning | Stable-ID state agreement, invalidated ghost/cache state, complete reconstructed coverage, legal available variant, explicit reproducibility scope |
 | Do conclusions extend beyond homogeneous LJ? | Add an inhomogeneous system and a topological boundary case | Load imbalance, boundary fraction, migration cost, correctness |
+| Does a layout remain feasible for heterogeneous work? | Cluster particles or use a wide-feature staged model with small local domains | Maximum occupancy, padding/capacity failures, allocated bytes, packing/reduction/launch costs, critical path |
 
 Keep schedule legality tests distinct from performance experiments. Record compiler/runtime revisions, plan parameters, hardware, precision, and rebuild policy with each result. Warm up consistently and report both force-kernel time and full-step time. The reviewed papers show why a faster inner kernel, successful fusion, or good homogeneous weak scaling alone cannot establish end-to-end performance portability.
 
@@ -698,6 +819,7 @@ No measurements in this report were newly reproduced. Existing tests provide imp
 
 | Source | Locations used | Role in this report |
 |---|---|---|
+| [Saunders doctoral thesis](#saunders-thesis-source), December 2018; award recorded as 2019 | Sections 2.2–2.3; 3.1–3.3; 4.2.1; 4.3.2; 5.1–5.4; 6.2; Appendix A.8 | Direct reading of the supplied thesis: exact/candidate support, access contracts, staged analysis, collective Ewald, specialized FMM hierarchy, accuracy/cost choices, and stated future work. |
 | [Matthias Cornel, Development of a Custom Compilation Workflow With MLIR Leveraging OpenFPM to Accelerate Particle Simulations](https://cfaed.tu-dresden.de/publications?pubId=3851), master's thesis submitted August 18, 2025 | Sections 3.2–3.4; 4.1–4.5; 5.1–5.2; 6.3; 7.3; 8; 9; 10 | Dialect structure, state semantics, communication placement, runtime integration, and evaluation limits. Page numbers above refer to printed thesis pages, not PDF viewer indices. |
 | [Ravedutti Lucio Machado, Eitzinger, and Köstler, P4IRS](https://journals.sagepub.com/doi/10.1177/10943420251405928), IJHPCA 40(5), 621–642 | Pages 626–632, Figures 2–4; pages 633–640, evaluation; pages 640–641, outlook and notes | AST/code generation, physical variants, communication selection, and benchmark scope. |
 | [P4IRS publisher record](https://journals.sagepub.com/doi/10.1177/10943420251405928) | Publication metadata | Online-first date and issue identification. |
@@ -713,4 +835,10 @@ No measurements in this report were newly reproduced. Existing tests provide imp
 | [DPA4](https://docs.deepmodeling.org/projects/deepmd/en/latest/model/dpa4.html), [DPA4C](https://docs.deepmodeling.org/projects/deepmd/en/latest/model/dpa4c.html), [MACE ML-IAP](https://mace-docs.readthedocs.io/en/latest/guide/lammps_mliap.html), [DeePMD training](https://docs.deepmodeling.org/projects/deepmd/en/latest/train/parallel-training.html) | Official deployment/training documentation | Current documented multirank behavior and its distinction from training. |
 | [Hugging Face Hub](https://huggingface.co/docs/hub/repositories-getting-started), [Accelerate](https://huggingface.co/docs/accelerate/en/index) | Ecosystem interfaces | A limited interoperability analogy, not evidence of particle-domain execution. |
 
-Paper citations link to Cornel's institutional publication page and the P4IRS publisher page. The P4IRS paper's repository URL was attempted during review but could not be fetched, so no claim about its current code or maintenance is made.
+### Saunders thesis source
+
+William Robert Saunders, *Development of a Performance-Portable Framework for Atomistic Simulations*, doctoral thesis, University of Bath, submitted December 2018. The supplied copy's portal cover records the award as 2019; its title page and internal bibliographic page use 2018. The [Bath Numerical Analysis thesis catalog](https://bath-numerical-analysis.github.io/research/phd.html) also lists it under 2018. The detailed review above comes from the supplied thesis, not the catalog summary or an audit of today's PPMD repository.
+
+The local reading copy is `references/saunders-2018-performance-portable-atomistic-thesis.pdf`, retained in the ignored reference collection. The copy has 197 PDF pages; architecture citations use printed page numbers. The legacy institutional publication URL embedded in this edition could not be resolved during review; the catalog link above provides an accessible bibliographic reference.
+
+Cornel and P4IRS citations retain their institutional publication and publisher links. The P4IRS paper's repository URL was attempted during the original review but could not be fetched, so no claim about its current code or maintenance is made.
