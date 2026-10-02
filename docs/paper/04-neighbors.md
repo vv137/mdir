@@ -91,8 +91,10 @@ Neighbors in space should be neighbors in memory. MDIR keeps two orders.
   particles are sorted by the cell of a grid of half the reach and, within
   a cell, by their number in the input; the members of every tuple set
   are renumbered on the host. Since D110 a particle is sorted by the
-  position of its *anchor*, the heavy atom of its constraint group, so
-  that the members of a group of SHAKE or a water are contiguous
+  position of its *anchor*, the heavy atom of its constraint group or,
+  for a virtual site, that of the first atom that places it, so
+  that the members of a group of SHAKE or a water, with its extra point,
+  are contiguous
   (Section 8.2). The order does not depend on the order the particles are
   in, so a run continued from a checkpoint is exact, and the files of a
   run are written in the order of the input.

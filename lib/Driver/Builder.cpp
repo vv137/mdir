@@ -992,10 +992,14 @@ llvm::Error Builder::collectTopology() {
     }
   }
   // The anchor of each particle: the oxygen of its rigid water, the heavy
-  // atom of its SHAKE group, or itself. The order of the particles puts a
-  // particle where its anchor is (emitReorder), so that the members of a
-  // group stay together, in one warp of a device for most (D110).
-  if (!topology.settles.empty() || !topology.shakes.empty()) {
+  // atom of its SHAKE group, that of the first atom that places a virtual
+  // site, or itself. The order of the particles puts a particle where its
+  // anchor is (emitReorder), so that the members of a group stay together,
+  // in one warp of a device for most (D110). A virtual site ordered by its
+  // own position fell into another cell than its atoms where they were near
+  // a face of one: an extra point of OPC in 25 waters of 1000.
+  if (!topology.settles.empty() || !topology.shakes.empty() ||
+      !topology.virtualSites.empty()) {
     std::vector<int32_t> anchors(count);
     for (size_t i = 0; i != count; ++i)
       anchors[i] = i;
@@ -1005,6 +1009,8 @@ llvm::Error Builder::collectTopology() {
     for (const Topology::Shake &shake : topology.shakes)
       for (int32_t hydrogen : shake.hydrogens)
         anchors[hydrogen] = shake.center;
+    for (const Topology::VirtualSite &site : topology.virtualSites)
+      anchors[site.site] = anchors[site.i];
     Program::TupleSet &set = addSet("anchors", 2);
     set.reversible = false;
     set.oriented = true;
