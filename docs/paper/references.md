@@ -250,6 +250,13 @@ G. Marsaglia, W. W. Tsang, "A simple method for generating gamma
 variables," *ACM Trans. Math. Softw.* **26**, 363–372 (2000).
 [doi:10.1145/358407.358414](https://doi.org/10.1145/358407.358414)
 
+### Martinez2009
+
+L. Martínez, R. Andrade, E. G. Birgin, J. M. Martínez, "PACKMOL: A package
+for building initial configurations for molecular dynamics simulations,"
+*J. Comput. Chem.* **30**, 2157–2164 (2009).
+[doi:10.1002/jcc.21224](https://doi.org/10.1002/jcc.21224)
+
 ### Merz2018
 
 P. T. Merz, M. R. Shirts, "Testing for physical validity in molecular

@@ -158,7 +158,16 @@ inner list was pruned. Since a flag is read after the kernels issued
 before the read rather than at its place in the stream, each loop that
 sets a flag has one of its own. On ubiquitin in OPC the device stood idle
 49 µs of a step and now 29; the rates rose by 4% there, by 6 to 7% on JAC,
-and by 1 to 3% on FactorIX and Cellulose.
+and by 1 to 3% on FactorIX and Cellulose. The argument (Section 12,
+principle 2): the value the host reads is the value the flag had at its
+place in the stream, given that only one loop sets the flag, that no
+launch of that loop is issued between the event and the read, and that a
+store of a kernel to mapped memory of the host is visible to the host once
+an event recorded after the kernel has completed, and a store of the host
+to a kernel launched after it. The last premise holds for pinned memory
+mapped for the device on x86-64 with an RTX 3090 and driver 595.84, where
+it was checked; on a platform whose mapped memory is not coherent, the
+copy of D113, which the runtime keeps, is the fallback.
 
 **A second stream** (D81, D87). The reciprocal sum may run on a second
 stream beside the loops that follow it, with a join where its forces are

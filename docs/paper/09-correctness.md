@@ -280,7 +280,10 @@ groups (D125, D126; `test/Sanitizer`). Run on the groups, they found two
 defects of their build: the kernel of D115 read the box of a group past
 the last before it tested the group, and the scan of a block let the lanes
 of the first warp read a sum that another lane then overwrote, which
-racecheck reports without a barrier between. Short runs of the nine systems of the Amber
+racecheck reports without a barrier between. Initcheck found that the
+host copied back ten values of the total of the reciprocal sum, of which
+the kernels write seven, the energy and the six components of the virial;
+the copy now takes seven. Short runs of the nine systems of the Amber
 suite check that every number of the log is finite (`test/Scale`).
 A run of 500 ps on the CPU with OpenMP crashed as it wrote its last
 checkpoint: the variables of the reductions of OpenMP were allocas inside
@@ -320,3 +323,46 @@ second on both, and only 21 and 23 independent samples remained. A run with one
 seed for both shares the noise of the thermostat, and the errors above,
 which treat the two as independent, would overstate the error of their
 difference.
+
+## 9.10 Triclinic cells
+
+A triclinic cell (Sections 4.4 and 5.2) is checked against other programs
+and against the paths of the orthorhombic cell:
+
+- **The terms.** A rhombic dodecahedron of 403 TIP3P waters from GROMACS,
+  whose tilts lie on the bounds of the reduced form, against a rerun of
+  GROMACS 2026.3 with the same cutoff, grid, order, and $\beta$: bonds,
+  angles, Lennard-Jones, and the dispersion correction within $10^{-6}$,
+  Coulomb within $1.3\times10^{-5}$ of the sum and $2\times10^{-6}$ of its
+  largest parts, the single precision of GROMACS (`triclinic.test`). A
+  truncated octahedron of Amber (549 TIP3P, Na⁺, Cl⁻) agrees with sander
+  in every term to the printed digits, the electrostatics after the ratio
+  of the Coulomb constants (D123). 1417 TIP3P waters in a hexagonal cell
+  of CHARMM (36, 36, 38 Å, $\gamma = 120°$), evaluated by CHARMM 51b1 in
+  its symmetric frame and by MDIR from the PSF and the CRD with the cell
+  given by its lengths and angles, agree in the bonds and angles to the
+  printed digits, in the Lennard-Jones to $10^{-9}$, and in each part of
+  the electrostatics, real space, excluded, reciprocal, and self, to
+  $4\times10^{-8}$ after the ratio of the constants
+  (`scripts/validation/charmm/run.py`, D127).
+- **The device against the CPU.** On the dodecahedron, double precision
+  on the device gives the terms, the virial, and 200 steps of the CPU to
+  the printed digits; mixed precision, the deterministic mode, and order 6
+  agree to $10^{-5}$ (`triclinic-gpu.test`, D125). The groups give the log
+  of the matrix over 200 steps in double precision, with one list and
+  with a dual list (D126).
+- **The lists of the groups.** Every pair is checked against f64 in an
+  octahedron, a dodecahedron, a hexagonal cell, and a cell narrow enough
+  to need the images of D115: no pair within the reach missing or
+  duplicated, none beyond it or in the wrong image
+  (`neighbors-groups-triclinic-gpu.mlir`).
+- **Conservation.** Amber's truncated octahedron in OPC conserves 10 ps
+  at constant energy on the device as on the CPU ($6.3\times10^{-4}$
+  against $5.8\times10^{-4}$), and with the groups as with the matrix
+  (D125, D126).
+- **The barostat** (D127). TIP3P water in a truncated octahedron of 1589
+  waters and in a box of 1391, 400 ps at 1 bar and 300 K, has the
+  densities $0.9850 \pm 0.0007$ and $0.9848 \pm 0.0008$ g/cm³ over the
+  last 300 ps; the shape of the cell stays to the printed digits, and a
+  run continued from a checkpoint gives the log of one that does not stop
+  (`triclinic-npt.test`).
