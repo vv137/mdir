@@ -1,11 +1,12 @@
 # 1. Minimization: steepest descent from the coordinates of packmol and
-#    tleap, which leave close contacts between lipids. A minimization
-#    begins from those positions taken onto the surface of the constraints
-#    (D120), so that the contacts come apart from the first step.
+#    tleap, which leave close contacts between lipids, with the phosphorus
+#    atoms of the head groups held at their places. A minimization begins
+#    from those positions taken onto the surface of the constraints (D120),
+#    so that the contacts come apart from the first step.
 
 [input]
 topology    = "popc.prmtop"
-coordinates = "popc.inpcrd"
+coordinates = "popc.inpcrd"      # also the reference of the restraints
 
 [output]
 checkpoint      = "min.h5"
@@ -24,6 +25,10 @@ max_spacing = 1.0               # Å
 method       = "STEEPEST_DESCENT"
 steps        = 5000
 initial_step = 0.01             # Å; the contacts are close
+
+[[restraints]]
+selection      = ":PC@P31"       # the phosphorus of each head group
+force_constant = 10.0           # kcal/mol/Å²
 
 [constraints]
 hydrogen_bonds = true           # SHAKE and RATTLE on the bonds of hydrogen

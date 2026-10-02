@@ -13,31 +13,33 @@ stochastic cell rescaling (D119).
 | Stage | File | What |
 |---|---|---|
 | 0 | `build.sh`, `popc.leap` | The input of PACKMOL from PACKMOL-Memgen, the packing (about ten minutes), and `popc.prmtop` and `popc.inpcrd` |
-| 1 | `1-min.toml` | Steepest descent, 5000 steps from the close contacts that PACKMOL leaves |
-| 2 | `2-relax.toml` | Velocities at 303 K, 100 ps of 1 fs at 1 bar: the gaps of the packing close, and the cell loses about a sixth of its volume |
-| 3 | `3-equil.toml` | 10 ns at 1 bar, in which the area per lipid settles |
-| 4 | `4-md.toml` | 20 ns at 1 bar, a frame every 20 ps |
+| 1 | `1-min.toml` | Steepest descent, 5000 steps from the close contacts that PACKMOL leaves, the phosphorus atoms restrained at 10 kcal/mol/Å² |
+| 2 | `2-nvt.toml` | Velocities at 303 K, 100 ps of 1 fs at constant volume with stochastic velocity rescaling, the same restraints |
+| 3 | `3-npt.toml` | 500 ps of 1 fs at 1 bar, semi-isotropic, restraints at 1 kcal/mol/Å²: the gaps of the packing close, and the cell loses about a sixth of its volume |
+| 4 | `4-md.toml` | 30 ns at 1 bar without restraints, a frame every 20 ps; the area per lipid settles over the first 10 ns |
 
 Each stage begins from the checkpoint of the one before. All use PME with
 $\operatorname{erfc}(\beta r_c) = 10^{-5}$ and a cutoff of 10 Å with the
 correction for the dispersion, SETTLE on the waters, SHAKE and RATTLE on
 the bonds of hydrogen, and a GPU in mixed precision; stages 2 to 4 take
-the groups of 16 with a dual list (outer 13 Å, inner 10.6 Å). The
-thermostat and the barostat act every 25 steps, with time constants of 1
-and 5 ps and a compressibility of $4.5\times10^{-5}$ /bar on both.
+the groups of 16 with a dual list (outer 13 Å, inner 10.6 Å), and the
+restraints are positional, on the phosphorus of each head group, with
+their reference scaled with the cell axis by axis. The thermostat and the
+barostat act every 25 steps, with time constants of 1 and 5 ps and a
+compressibility of $4.5\times10^{-5}$ /bar on both.
 
 ```sh
 examples/popc-bilayer/run.sh popc-run build/bin/mdir
 ```
 
-On an RTX 3090, stage 2 runs at about 230 ns/day at its step of 1 fs,
-and stages 3 and 4 at about 440 ns/day: 35 minutes for 10 ns. The log
+On an RTX 3090, stages 2 and 3 run at about 230 ns/day at their step of
+1 fs, and stage 4 at about 440 ns/day: 35 minutes for 10 ns. The log
 has the volume in its last column, but not the area; the frames have the
 cell, and `area.py` gives the area per lipid, the height, and the modulus
 of the area from them:
 
 ```sh
-python examples/popc-bilayer/area.py popc-run/md.dcd
+python examples/popc-bilayer/area.py popc-run/md.dcd --skip 10000
 ```
 
 The area of a bilayer this size is correlated over some nanoseconds, so 20
@@ -50,6 +52,6 @@ The stages render as a movie with the cell, seen from the side, with the
 area and the height of each frame (numpy, matplotlib, and ffmpeg):
 
 ```sh
-python scripts/render/movie.py popc-run/popc.prmtop popc-run/relax.dcd \
-    popc-run/equil.dcd bilayer.mp4 --mode membrane --ps 2 20
+python scripts/render/movie.py popc-run/popc.prmtop popc-run/npt.dcd \
+    popc-run/md.dcd bilayer.mp4 --mode membrane --ps 5 20
 ```

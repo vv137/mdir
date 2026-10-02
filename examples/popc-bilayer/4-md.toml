@@ -1,10 +1,11 @@
-# 4. Production: 20 ns at 1 bar, semi-isotropic, a frame every 20 ps,
-#    from which area.py gives the area per lipid.
+# 4. Production: 30 ns at 1 bar, semi-isotropic, without restraints, a
+#    frame every 20 ps. The area per lipid settles over the first 10 ns;
+#    area.py leaves them out.
 
 [input]
 topology    = "popc.prmtop"
 coordinates = "popc.inpcrd"
-checkpoint  = "equil.h5"
+checkpoint  = "npt.h5"
 
 [output]
 energy_interval     = 5000
@@ -26,7 +27,7 @@ max_spacing = 1.0
 [dynamics]
 integrator = "VELOCITY_VERLET"
 time_step  = 0.002              # ps
-steps      = 10000000
+steps      = 15000000
 
 [ensemble]
 ensemble    = "NPT"

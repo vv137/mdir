@@ -566,6 +566,18 @@ variables," *ACM Trans. Math. Softw.* **26**, 363–372 (2000).
 Used for: the sum of the squares of normal deviates that the thermostat
 takes, drawn as a gamma deviate (`runtime/mdrt.c`).
 
+### Merz2018
+
+P. T. Merz, M. R. Shirts, "Testing for physical validity in molecular
+simulations," *PLOS ONE* **13**, e0202764 (2018).
+[doi:10.1371/journal.pone.0202764](https://doi.org/10.1371/journal.pone.0202764)
+
+Used for: the tests of physical validity that the roadmap plans for the
+mixed precision and the couplings: the convergence of the fluctuation of
+the energy with the step, the distribution of the kinetic energy and its
+equipartition, and the ensemble tests at two states, which that paper
+applies to isotropic coupling only.
+
 ### Metropolis1953
 
 N. Metropolis, A. W. Rosenbluth, M. N. Rosenbluth, A. H. Teller,

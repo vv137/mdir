@@ -19,10 +19,10 @@ if [ ! -f popc.prmtop ]; then
   echo "== 0-build"
   "$here"/build.sh
 fi
-for stage in 1-min:min 2-relax:relax 3-equil:equil 4-md:md; do
+for stage in 1-min:min 2-nvt:nvt 3-npt:npt 4-md:md; do
   name=${stage%%:*} checkpoint=${stage##*:}.h5
   [ -f "$checkpoint" ] && { echo "== $name (done)"; continue; }
   echo "== $name"
   "$mdir" run "$name.toml" | tee "$name.log"
 done
-python3 "$here"/area.py md.dcd
+python3 "$here"/area.py md.dcd --skip 10000

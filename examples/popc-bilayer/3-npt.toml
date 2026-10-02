@@ -1,18 +1,19 @@
-# 2. Relaxation: velocities drawn at 303 K, 100 ps of 1 fs at 1 bar with
-#    semi-isotropic coupling. The water and the lipids close the gaps that
-#    packmol left, and the cell shrinks by about a sixth of its volume.
+# 3. Equilibration at constant pressure: 500 ps of 1 fs at 1 bar with
+#    semi-isotropic coupling and weaker restraints. The water and the
+#    lipids close the gaps of the packing, and the cell loses about a sixth
+#    of its volume, most of it in the first 50 ps.
 
 [input]
 topology    = "popc.prmtop"
 coordinates = "popc.inpcrd"
-checkpoint  = "min.h5"          # begins at the minimized positions
+checkpoint  = "nvt.h5"
 
 [output]
-energy_interval     = 1000
-trajectory          = "relax.dcd"
-trajectory_interval = 2000
-checkpoint          = "relax.h5"
-checkpoint_interval = 100000
+energy_interval     = 5000
+trajectory          = "npt.dcd"
+trajectory_interval = 5000
+checkpoint          = "npt.h5"
+checkpoint_interval = 500000
 
 [energy]
 cutoff            = 10.0
@@ -27,7 +28,7 @@ max_spacing = 1.0
 [dynamics]
 integrator = "VELOCITY_VERLET"
 time_step  = 0.001              # ps
-steps      = 100000
+steps      = 500000
 
 [ensemble]
 ensemble    = "NPT"
@@ -44,6 +45,10 @@ method        = "C-RESCALE"     # stochastic cell rescaling
 time_constant = 5.0             # ps
 interval      = 25              # that of the thermostat
 coupling      = "SEMI_ISOTROPIC" # the area (x, y) and the height (z) apart
+
+[[restraints]]
+selection      = ":PC@P31"
+force_constant = 1.0
 
 [constraints]
 hydrogen_bonds = true
