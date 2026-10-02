@@ -9,11 +9,11 @@ cited.
 
 ## 1. What runs
 
-A CHARMM system runs from a topology of GROMACS: the one that CHARMM-GUI
-writes, a port of a force field such as `charmm27.ff` of GROMACS, or a
-conversion of a PSF by ParmEd with the correction of Section 4. The files
-of CHARMM itself (PSF, RTF, PRM, stream files) are not read yet
-(Section 6).
+A CHARMM system runs from its own files, a PSF with the files of its
+parameters and a CRD (Section 4), or from a topology of GROMACS: the one
+that CHARMM-GUI writes, a port of a force field such as `charmm27.ff` of
+GROMACS, or a conversion of a PSF by ParmEd with the correction of
+Section 4.
 
 | Term | In the topology of GROMACS | In MDIR |
 |---|---|---|
@@ -105,7 +105,59 @@ subtracts the value at the cutoff of each power; with a topology, each
 modifies the Lennard-Jones only, not the direct sum of PME, and takes
 `dispersion_correction = "NONE"`.
 
-## 4. Converting the files of CHARMM
+## 4. Reading the files of CHARMM, and converting them
+
+```toml
+[input]
+format      = "CHARMM"               # or from the extension .psf
+topology    = "system.psf"
+coordinates = "system.crd"
+parameters  = ["top_all36_prot.rtf", "par_all36m_prot.prm",
+               "toppar_water_ions.str"]
+
+[boundary]
+type = "PERIODIC"
+box  = [76.0, 40.0, 40.0]            # a CRD has no cell
+```
+
+`lib/Driver/Charmm.cpp` reads them as the documentation of CHARMM 51b1
+describes them (`doc/io.info`, `doc/parmfile.info`, `doc/rtop.info`),
+with the conventions that the documentation leaves open settled against
+CHARMM's energies (D122):
+
+- **The PSF** of the XPLOR kind, which CHARMM 51 writes by default and
+  CHARMM-GUI writes (`PSF EXT CMAP XPLOR`): the atoms (segment, residue,
+  names, the name of the type, charge, mass) by fields, the bonds, angles,
+  dihedrals, impropers, the excluded pairs of `!NNB`, and the cross-terms
+  of CMAP (`!NCRTERM`). A PSF whose types are numbers, whose meaning
+  depends on the order the RTF was read in, is refused, as are lone pairs
+  (`!NUMLP`) and the Drude model.
+- **The CRD**, standard or extended (`count EXT`), by fields; the names of
+  the atoms must be those of the PSF.
+- **Files of topology, parameters, and streams**, read in the order given;
+  what a later file defines replaces what an earlier one did. From an RTF
+  only the masses; a PRM by its sections (`ATOMS`, `BONDS`, `ANGLES` with
+  Urey–Bradley terms, `DIHEDRALS`, `IMPROPER`, `CMAP`, `NONBONDED` with
+  the special 1-4 parameters and `E14FAC` in its options, `NBFIX` with
+  optional 1-4 values); a stream file by its `read rtf card` and
+  `read para card` blocks, skipping the other commands and stopping at the
+  first `return`, which takes the first of two alternatives where CHARMM
+  takes the one whose condition holds.
+- **Wildcards.** Lines of the same dihedral types that follow one another
+  make one set of terms; a later set of those types replaces it whole, and
+  a set of the four types takes precedence over the set `X B C X`.
+  Impropers try the four types, then `A X X D`, `X B C D`, `X B C X`, and
+  `X X C D`, each in either direction; an improper of multiplicity 0 is
+  harmonic, of another a periodic term.
+- **Exclusions and pairs three bonds apart** from the graph of the bonds,
+  as `NBXMOD 5`: the pairs one, two, and three bonds apart are excluded,
+  those exactly three apart take their own Lennard-Jones (and NBFIX's 1-4
+  values) and the Coulomb term times `E14FAC`, and the power force switch
+  switches them too.
+- **Units**: the energies of CHARMM are K (x − x0)² for bonds, angles,
+  Urey–Bradley terms, and impropers; MDIR takes ½ k (x − x0)² with k = 2K.
+  Rigid water is the residues `TIP3` by default, with the length H–H from
+  the bond that TIP3P carries for SHAKE.
 
 ParmEd 4 converts a PSF with its parameters to a topology of GROMACS, with
 two defects found here:
@@ -154,12 +206,22 @@ from `$CHARMM_TOPPAR`; nothing of CHARMM is copied.
   not examined further.
 - On the device in mixed precision with groups, the Lennard-Jones is
   7920.937481, and the bonded terms are within 2 × 10⁻⁶ of the CPU.
+- From the files of CHARMM (the PSF, the CRD, and the three files of
+  parameters), the Lennard-Jones is 7920.937169 against CHARMM's
+  7920.937173 (5 × 10⁻¹⁰), with the parameters as CHARMM reads them, and
+  every other term is that of the topology of GROMACS. Two POPC of
+  CHARMM36 (the files of lipids appended to those of proteins) agree in
+  every bonded term to the printed digits and in the Lennard-Jones to
+  −6.334391 against −6.33439096; a synthetic system with wildcards of both
+  kinds, a dihedral type of two terms, NBFIX, and a CMAP of 4 × 4 is
+  `test/Driver/charmm.test`, its values those of CHARMM.
 - From 50 ps of equilibration at 300 K (steps of 2 fs, SHAKE and SETTLE,
   mixed precision, 707 ns/day on one RTX 3090), 1 ns at constant energy
   drifts by +0.03 ± 0.23 kcal/mol/ns with the power force switch,
   −0.78 ± 0.23 with the force switch of GROMACS, and −0.92 ± 0.21 with a
   plain cutoff of the Lennard-Jones: the forces that differentiation gives
-  are those of the energy.
+  are those of the energy. From the files of CHARMM, with TIP3 rigid by
+  SETTLE, the drift is −1.19 ± 0.20 kcal/mol/ns at 706 ns/day.
 
 `charmm27.ff` of GROMACS, through `scripts/validation/gromacs/run.sh`,
 agrees with GROMACS within 4.3 × 10⁻⁶ in every term, angles with their
@@ -171,7 +233,8 @@ on a small topology against the formulas.
 
 | Item | Note |
 |---|---|
-| Reading PSF, RTF, PRM, and stream files | The format of OpenMM's and CHARMM-GUI's runs; the parameters as CHARMM reads them, with no conversion that could lose them (Section 4) |
+| The cell from CHARMM-GUI's files | The box of a run from a PSF comes from `[boundary]`; CHARMM-GUI gives it in `step3_pbcsetup.str` and `sysinfo.dat` |
+| Types given by numbers in a PSF | Their meaning depends on the order of the RTF; CHARMM 51 and CHARMM-GUI write names |
 | VSWITCH | The potential switch of CHARMM (Section 2), for older inputs |
 | Lone pairs of CGenFF, the Drude model, LJ-PME of C36/LJ-PME | Virtual sites of other constructions, polarization, and the mesh for dispersion |
-| Triclinic cells | Roadmap F2; CHARMM-GUI writes rectangular cells for membranes, truncated octahedra for some solutes |
+| Triclinic cells | Roadmap F2; CHARMM-GUI writes hexagonal cells for membranes and truncated octahedra for solutes, and CHARMM keeps a cell as the symmetric square root of its metric, not in the frame of GROMACS and Amber, so its coordinates need a rotation ([triclinic-m2.md](triclinic-m2.md)) |

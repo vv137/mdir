@@ -183,6 +183,18 @@ readGromacsTopology(llvm::StringRef path,
 /// `topology` from a `.gro` file.
 llvm::Error readGromacsCoordinates(llvm::StringRef path, Topology &topology);
 
+/// Reads a protein structure file of CHARMM (PSF, with the types named, as
+/// `write psf card xplor` and CHARMM-GUI write it) and assigns it the
+/// parameters of `parameterFiles`: files of topology (RTF), of parameters
+/// (PRM), and stream files, read in order (docs/charmm-m1.md).
+llvm::Expected<Topology>
+readCharmmTopology(llvm::StringRef path,
+                   llvm::ArrayRef<std::string> parameterFiles);
+
+/// Reads the positions of `topology` from a coordinate file of CHARMM
+/// (CRD, standard or extended); it has no cell.
+llvm::Error readCharmmCoordinates(llvm::StringRef path, Topology &topology);
+
 } // namespace driver
 } // namespace mdir
 

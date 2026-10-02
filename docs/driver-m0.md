@@ -80,9 +80,10 @@ regard to case.
 
 | Table | Keyword | Meaning |
 |---|---|---|
-| `[input]` | `topology` | The topology: of Amber (`.prmtop`, `.parm7`) or GROMACS (`.top`). Absent for a run from a PDB file, whose terms are in `[energy]`. |
-| | `coordinates` | The positions and the cell: of Amber (`.inpcrd`, `.rst7`), GROMACS (`.gro`), or a PDB file, in which the name of an atom selects its type. The reference of restraints. |
-| | `format` | `AUTO` (the default: from the names of the files), `AMBER`, `GROMACS`, or `PDB`. A CHARMM force field runs from a topology of GROMACS (D121, [charmm-m1.md](charmm-m1.md)); the files of CHARMM are not read yet. |
+| `[input]` | `topology` | The topology: of Amber (`.prmtop`, `.parm7`), GROMACS (`.top`), or CHARMM (`.psf`, of the XPLOR kind, with the names of the types). Absent for a run from a PDB file, whose terms are in `[energy]`. |
+| | `coordinates` | The positions and the cell: of Amber (`.inpcrd`, `.rst7`), GROMACS (`.gro`), CHARMM (`.crd`, standard or extended; it has no cell), or a PDB file, in which the name of an atom selects its type. The reference of restraints. |
+| | `format` | `AUTO` (the default: from the names of the files), `AMBER`, `GROMACS`, `CHARMM`, or `PDB`. A CHARMM force field runs from its own files (D122, [charmm-m1.md](charmm-m1.md)) or from a topology of GROMACS (D121). |
+| | `parameters` | With a PSF: the files of topology (`.rtf`), parameters (`.prm`), and streams (`.str`), in the order that CHARMM reads them; a later file replaces what an earlier one defines. |
 | | `include_paths`, `defines` | With a GROMACS topology: the directories of `#include` and the names that `#define` gives. |
 | | `checkpoint` | The checkpoint of an earlier run, which the run continues, taking its cell (and warning on the standard error if the input has another); the input's cell still sets the grid of PME and the reference of restraints. One of a minimization gives the positions only. |
 | `[output]` | `trajectory` | Positions, in DCD (`.dcd`). |
@@ -110,9 +111,9 @@ regard to case.
 | | `temperature`, `pressure` | K, of the initial velocities and the bath; atm, with `NPT`. |
 | `[thermostat]` | `method`, `time_constant`, `interval` | `V-RESCALE`, stochastic velocity rescaling; ps; steps between its actions (10 by default). |
 | `[barostat]` | `method`, `time_constant`, `compressibility`, `coupling`, `work`, `interval` | `C-RESCALE`, stochastic cell rescaling (D72, D77); ps; 1/atm; `ISOTROPIC`; `TROTTER` (the default; D92), `TROTTER_FIRST_ORDER` (its energy from the virial before the scaling only, a virial less a period), `EXACT`, or `FIRST_ORDER`; the steps of the thermostat. |
-| `[constraints]` | `hydrogen_bonds`, `rigid_water`, `water_residues` | SHAKE and RATTLE on the bonds of hydrogen; SETTLE on the waters in double precision, M-SHAKE on their three bonds below it (D112); the names of the residues of water. |
+| `[constraints]` | `hydrogen_bonds`, `rigid_water`, `water_residues` | SHAKE and RATTLE on the bonds of hydrogen; SETTLE on the waters in double precision, M-SHAKE on their three bonds below it (D112); the names of the residues of water (by default WAT for Amber, TIP3 for CHARMM). |
 | `[[restraints]]` | `selection`, `force_constant` | A mask of Amber, and kcal/mol/Å² (D74). |
-| `[boundary]` | `type`, `box` | `PERIODIC`; the edges of the cell (Å), without a topology. |
+| `[boundary]` | `type`, `box` | `PERIODIC`; the edges of the cell (Å), without a topology or with one of CHARMM, whose coordinates have no cell. |
 | `[execution]` | `target`, `threads`, `precision` | `CPU` or `GPU`; the threads of the CPU; `SINGLE`, `MIXED`, or `DOUBLE`. |
 | | `neighbor_capacity` | Neighbors that a neighbor structure holds per particle at first; a build that finds more makes room. Absent: estimated from the configuration. |
 | | `fast_math` | Whether kernels are rewritten in ways that change rounding: the distance in powers of its square, fused multiply-adds, and in f32 approximate divisions and an approximation of erfc within 3.3e-7 (D90). The default is `true`. |

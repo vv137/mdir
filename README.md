@@ -5,8 +5,9 @@ It compiles each run before it runs: the potential, the integrator, the
 constraints, and the couplings are written in dialects of molecular
 dynamics, differentiated, fused, given a precision, and lowered to the CPU
 with OpenMP or to NVIDIA GPUs, specialized to the system at hand. The first
-milestone runs all-atom systems from Amber (`prmtop`) and GROMACS (`top`,
-`itp`, `gro`) topologies, the Amber and CHARMM force fields among them:
+milestone runs all-atom systems from Amber (`prmtop`), GROMACS (`top`,
+`itp`, `gro`), and CHARMM (`psf`, `crd`, `rtf`, `prm`, `str`) topologies,
+the Amber and CHARMM force fields among them:
 bonded terms with CMAP and Urey–Bradley angles, Lennard-Jones with the
 correction for the dispersion or CHARMM's force switch, particle mesh
 Ewald, SHAKE and SETTLE,

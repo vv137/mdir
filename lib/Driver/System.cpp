@@ -23,8 +23,11 @@ static llvm::Error findShakes(Topology &topology);
 
 /// The system of a topology and a file of coordinates.
 static llvm::Expected<System> readTopologySystem(const Control &control) {
+  bool charmm = !control.charmmStructureFile.empty();
   llvm::Expected<Topology> topology =
-      control.prmtopFile.empty()
+      charmm ? readCharmmTopology(control.charmmStructureFile,
+                                  control.charmmParameterFiles)
+      : control.prmtopFile.empty()
           ? readGromacsTopology(control.gromacsTopologyFile,
                                 control.gromacsIncludes,
                                 control.gromacsDefines)
@@ -32,17 +35,24 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
   if (!topology)
     return topology.takeError();
   if (llvm::Error error =
-          control.prmtopFile.empty()
+          charmm ? readCharmmCoordinates(control.charmmCoordinateFile,
+                                         *topology)
+          : control.prmtopFile.empty()
               ? readGromacsCoordinates(control.gromacsCoordinateFile,
                                        *topology)
               : readAmberCoordinates(control.amberCoordinateFile, *topology))
     return std::move(error);
+  // A coordinate file of CHARMM has no cell; the control file gives it.
+  if (charmm)
+    for (int k = 0; k != 3; ++k)
+      topology->box[k] = control.box[k] * 0.1;
 
   // The waters that SETTLE constrains (D63): those of [ settles ] of
-  // GROMACS, and the residues of Amber named in 'water_residues'. A run
-  // leaves them flexible only when it says so, and they then need bonds.
+  // GROMACS, and the residues of Amber or CHARMM named in 'water_residues'.
+  // A run leaves them flexible only when it says so, and they then need
+  // bonds.
   if (control.fastWater) {
-    if (!control.prmtopFile.empty())
+    if (!control.prmtopFile.empty() || charmm)
       if (llvm::Error error = findSettles(control, *topology))
         return std::move(error);
   } else if (!topology->settles.empty()) {
@@ -107,11 +117,16 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
 /// 'water_residues' names, with an oxygen and two hydrogens first, and
 /// the distances of the bonds among them, as sander takes them.
 static llvm::Error findSettles(const Control &control, Topology &topology) {
+  bool charmm = !control.charmmStructureFile.empty();
+  const std::string &path =
+      charmm ? control.charmmStructureFile : control.prmtopFile;
   auto fail = [&](const llvm::Twine &message) {
     return llvm::createStringError(llvm::inconvertibleErrorCode(), "%s: %s",
-                                   control.prmtopFile.c_str(),
-                                   message.str().c_str());
+                                   path.c_str(), message.str().c_str());
   };
+  std::vector<std::string> residues = control.settleResidues;
+  if (residues.empty())
+    residues = {charmm ? "TIP3" : "WAT"};
   std::map<std::pair<unsigned, unsigned>, double> lengths;
   for (const Topology::Bond &bond : topology.bonds)
     lengths[{std::min(bond.i, bond.j), std::max(bond.i, bond.j)}] = bond.r0;
@@ -121,7 +136,7 @@ static llvm::Error findSettles(const Control &control, Topology &topology) {
   size_t count = topology.getNumParticles();
   for (size_t r = 0, e = topology.residueNames.size(); r != e; ++r) {
     StringRef name = StringRef(topology.residueNames[r]).trim();
-    if (!llvm::is_contained(control.settleResidues, name))
+    if (!llvm::is_contained(residues, name))
       continue;
     unsigned first = topology.residueStarts[r];
     unsigned end = r + 1 < e ? topology.residueStarts[r + 1] : count;

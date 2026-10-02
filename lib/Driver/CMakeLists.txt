@@ -21,6 +21,7 @@ endif()
 add_mlir_library(MDIRDriver
   Amber.cpp
   Builder.cpp
+  Charmm.cpp
   CMap.cpp
   Checkpoint.cpp
   Control.cpp

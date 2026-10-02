@@ -25,7 +25,9 @@ $CHARMM_TOPPAR); nothing of CHARMM is copied into the repository. The phases:
   terms    The energy of the coordinates as written, term by term: CHARMM
            (PME with kappa 0.34, grid 80 x 40 x 40, order 6; VFSWITCH),
            GROMACS 2026 by a rerun (force-switch), and MDIR on the CPU in
-           double precision with POWER_FORCE_SWITCH and with FORCE_SWITCH.
+           double precision: from the PSF and the files of CHARMM
+           (POWER_FORCE_SWITCH), and from the topology of GROMACS with each
+           switch.
 """
 import argparse
 import math
@@ -476,14 +478,32 @@ stop
         "CMAP": g["CMAP Dih."], "Lennard-Jones": g["LJ-14"] + g["LJ (SR)"],
         "Coulomb": g["Coulomb-14"] + g["Coulomb (SR)"] + g["Coul. recip."]}
 
-    # MDIR, with each force switch.
+    # MDIR, from the files of CHARMM and from the topology of GROMACS with
+    # each force switch.
     mdir = {}
-    for modifier in ("POWER_FORCE_SWITCH", "FORCE_SWITCH"):
+    native = MDIR.format(
+        cutoff=CUTOFF, switch=SWITCH, modifier="POWER_FORCE_SWITCH",
+        pairlist=CUTOFF + 1.0, kappa=KAPPA, order=ORDER,
+        grid=", ".join(str(v) for v in GRID))
+    files = ", ".join(f'"{args.toppar}/{f}"' for f in
+                      ("top_all36_prot.rtf", "par_all36m_prot.prm",
+                       "toppar_water_ions.str"))
+    native = native.replace(
+        'topology    = "system.top"\ncoordinates = "system.gro"\n'
+        'format      = "GROMACS"\ndefines     = ["FLEXIBLE"]\n',
+        'topology    = "system.psf"\ncoordinates = "system-charmm.crd"\n'
+        f'format      = "CHARMM"\nparameters  = [{files}]\n')
+    native = native.replace('type = "PERIODIC"\n',
+                            'type = "PERIODIC"\nbox  = [%s]\n' %
+                            ", ".join(str(v) for v in CELL))
+    write(os.path.join(w, "native.toml"), native)
+    for modifier in ("NATIVE", "POWER_FORCE_SWITCH", "FORCE_SWITCH"):
         name = modifier.lower()
-        write(os.path.join(w, f"{name}.toml"), MDIR.format(
-            cutoff=CUTOFF, switch=SWITCH, modifier=modifier,
-            pairlist=CUTOFF + 1.0, kappa=KAPPA, order=ORDER,
-            grid=", ".join(str(v) for v in GRID)))
+        if modifier != "NATIVE":
+            write(os.path.join(w, f"{name}.toml"), MDIR.format(
+                cutoff=CUTOFF, switch=SWITCH, modifier=modifier,
+                pairlist=CUTOFF + 1.0, kappa=KAPPA, order=ORDER,
+                grid=", ".join(str(v) for v in GRID)))
         run([args.mdir, "run", f"{name}.toml"], w, f"{name}.log")
         t = {m.group(1): float(m.group(2)) for m in re.finditer(
             r"^MDIR:   (.+?)\s+(-?[0-9.]+)$",
@@ -497,9 +517,11 @@ stop
             "Coulomb": t["Coulomb"] + t["Coulomb 1-4"] + t["Coulomb excluded"]
             + t["Coulomb reciprocal"] + t["Coulomb self"]}
 
-    ours = mdir["POWER_FORCE_SWITCH"]
-    print("kcal/mol; MDIR with POWER_FORCE_SWITCH against CHARMM (VFSWITCH),")
-    print("MDIR with FORCE_SWITCH against GROMACS (force-switch)")
+    ours = mdir["NATIVE"]
+    print("kcal/mol; MDIR from the PSF and the files of CHARMM against "
+          "CHARMM (VFSWITCH),")
+    print("MDIR from the topology of GROMACS with FORCE_SWITCH against "
+          "GROMACS (force-switch)")
     print(f"{'term':16s} {'CHARMM':>14s} {'MDIR':>14s} {'relative':>9s}"
           f" {'GROMACS':>14s} {'MDIR':>14s} {'relative':>9s}")
     theirs = mdir["FORCE_SWITCH"]

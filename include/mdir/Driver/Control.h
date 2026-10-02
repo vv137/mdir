@@ -85,9 +85,15 @@ struct Control {
   std::string gromacsCoordinateFile;
   std::vector<std::string> gromacsIncludes;
   std::vector<std::string> gromacsDefines;
+  /// A protein structure file of CHARMM, its coordinates, and the files of
+  /// topology, parameters, and streams that give its parameters, in order.
+  std::string charmmStructureFile;
+  std::string charmmCoordinateFile;
+  std::vector<std::string> charmmParameterFiles;
 
   bool hasTopology() const {
-    return !prmtopFile.empty() || !gromacsTopologyFile.empty();
+    return !prmtopFile.empty() || !gromacsTopologyFile.empty() ||
+           !charmmStructureFile.empty();
   }
   std::string restartInput;
 
@@ -145,8 +151,9 @@ struct Control {
   bool rigidBonds = false;
   bool fastWater = false;
   bool statesFlexible = false;
-  /// The residues of an Amber topology that SETTLE constrains (D63).
-  std::vector<std::string> settleResidues = {"WAT"};
+  /// The residues of an Amber or CHARMM topology that SETTLE constrains
+  /// (D63); empty, those of the format: WAT for Amber, TIP3 for CHARMM.
+  std::vector<std::string> settleResidues;
 
   // [minimize], in place of [dynamics]: steepest descent over `numSteps`
   // steps, the first of which moves no particle farther than

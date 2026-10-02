@@ -1,0 +1,250 @@
+# The reader of CHARMM's formats: a PSF of the XPLOR kind, a CRD, and the
+# files of topology and parameters, on a synthetic system: a chain of five
+# carbons with a hydrogen and an oxygen, Na+ and Cl-. The parameters exercise
+# a dihedral type of two terms, wildcards of dihedrals and impropers, a type
+# that overrides a wildcard, Urey-Bradley terms, special parameters of the
+# pairs three bonds apart, NBFIX, and CMAP on a grid of 4 x 4. The values are
+# those of CHARMM 51b1 for the same files, in a cubic cell of 32 Å, PME with
+# kappa 0.34, grid 32, order 6, and VFSWITCH from 10 to 12 Å:
+#
+#   BOND 19.5573573  ANGL 3.71588694  UREY 1.72141609  DIHE 2.78360528
+#   IMPR 0.02408051654  CMAP -0.303797607  VDW -0.23425889
+#   ELEC + EWKS + EWSE + EWEX = -42.38043
+#
+# MDIR's Lennard-Jones and its 1-4 part add to VDW; its Coulomb terms add to
+# -42.379423, CHARMM's times 332.0637 / 332.0716, the ratio of the Coulomb
+# constants of CODATA and of CHARMM (docs/charmm-m1.md, Section 2).
+#
+# RUN: split-file %s %t
+# RUN: mdir run %t/run.toml | FileCheck %s
+# RUN: mdir check %t/run.toml | FileCheck %s --check-prefix=CHECK-TOPOLOGY
+# RUN: sed '/^box/d' %t/run.toml > %t/nobox.toml
+# RUN: not mdir run %t/nobox.toml 2>&1 | FileCheck %s --check-prefix=NOBOX
+# RUN: sed '/^parameters/d' %t/run.toml > %t/noparameters.toml
+# RUN: not mdir run %t/noparameters.toml 2>&1 | FileCheck %s --check-prefix=NOPARAMETERS
+# RUN: sed 's/^CB1  CB1  CB1    45.0  114.0$//' %t/toy.prm > %t/missing.prm
+# RUN: sed 's/"toy.prm"/"missing.prm"/' %t/run.toml > %t/missing.toml
+# RUN: not mdir run %t/missing.toml 2>&1 | FileCheck %s --check-prefix=MISSING
+
+# CHECK:      MDIR:   Lennard-Jones                 -0.149219
+# CHECK:      MDIR:   bonds                         19.557357
+# CHECK-NEXT: MDIR:   angles                         3.715887
+# CHECK-NEXT: MDIR:   dihedrals                      2.783605
+# CHECK-NEXT: MDIR:   Lennard-Jones 1-4             -0.085040
+# CHECK:      MDIR:   CMAP                          -0.303798
+# CHECK:      MDIR:   Urey-Bradley                   1.721416
+# CHECK-NEXT: MDIR:   harmonic impropers             0.024081
+# CHECK:      MDIR:   total                        -15.115133
+
+# CHECK-TOPOLOGY: particles:          9
+# CHECK-TOPOLOGY: Urey-Bradley terms: 3
+# CHECK-TOPOLOGY: dihedrals:          8, 0 improper
+# CHECK-TOPOLOGY: harmonic impropers: 1
+# CHECK-TOPOLOGY: pairs 1-4:          6
+# CHECK-TOPOLOGY: CMAP terms:         1, 1 maps
+
+# NOBOX: expected 'box' in [boundary], the edges of the cell in Å: a coordinate file of CHARMM has no cell
+# NOPARAMETERS: a PSF needs 'parameters' in [input]
+# MISSING: no ANGLES parameters for CB1(2) CB1(4) CB1(6)
+
+#--- run.toml
+[input]
+format      = "CHARMM"
+topology    = "toy.psf"
+coordinates = "toy.crd"
+parameters  = ["toy.rtf", "toy.prm"]
+
+[output]
+energy_interval = 0
+
+[energy]
+cutoff            = 12.0
+switch_distance   = 10.0
+lennard_jones_modifier = "POWER_FORCE_SWITCH"
+dispersion_correction  = "NONE"
+pairlist_distance = 13.0
+electrostatics    = "PME"
+
+[pme]
+beta  = 0.34
+order = 6
+grid  = [32, 32, 32]
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.001
+steps      = 0
+
+[ensemble]
+ensemble = "NVE"
+
+[constraints]
+hydrogen_bonds = false
+
+[boundary]
+type = "PERIODIC"
+box  = [32.0, 32.0, 32.0]
+
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- toy.psf
+PSF CMAP XPLOR
+
+       1 !NTITLE
+* a synthetic system for the reader of MDIR
+
+       9 !NATOM
+       1 TOY  1    TOY  C1   CA1   -0.200000       12.0110           0
+       2 TOY  1    TOY  C2   CB1    0.100000       12.0110           0
+       3 TOY  1    TOY  H2   HX     0.100000       1.00800           0
+       4 TOY  1    TOY  C3   CB1    0.400000       12.0110           0
+       5 TOY  1    TOY  O3   OX    -0.400000       15.9994           0
+       6 TOY  1    TOY  C4   CB1   -0.100000       12.0110           0
+       7 TOY  1    TOY  C5   CA1    0.100000       12.0110           0
+       8 NA   1    NAX  NA   NAX     1.00000       22.9898           0
+       9 CL   1    CLX  CL   CLX    -1.00000       35.4500           0
+
+       6 !NBOND: bonds
+       1       2       2       4       4       6       6       7
+       2       3       4       5
+
+       7 !NTHETA: angles
+       1       2       3       1       2       4       3       2       4
+       2       4       5       2       4       6       5       4       6
+       4       6       7
+
+       6 !NPHI: dihedrals
+       1       2       4       5       1       2       4       6
+       2       4       6       7       3       2       4       5
+       3       2       4       6       5       4       6       7
+
+       1 !NIMPHI: impropers
+       4       2       6       5
+
+       0 !NDON: donors
+
+
+       0 !NACC: acceptors
+
+
+       0 !NNB
+
+       0       0       0       0       0       0       0       0
+       0
+
+       3       0 !NGRP NST2
+       0       1       0       7       2       0       8       2       0
+
+       0       0 !NUMLP NUMLPH
+
+       1 !NCRTERM: cross-terms
+       1       2       4       6       2       4       6       7
+#--- toy.crd
+* a synthetic system for the reader of MDIR
+*
+    9
+    1    1 TOY  C1    20.00000  20.00000  20.00000 TOY  1      0.00000
+    2    1 TOY  C2    21.30000  20.80000  20.10000 TOY  1      0.00000
+    3    1 TOY  H2    21.20000  21.90000  20.00000 TOY  1      0.00000
+    4    1 TOY  C3    22.70000  20.10000  20.30000 TOY  1      0.00000
+    5    1 TOY  O3    22.80000  18.90000  20.90000 TOY  1      0.00000
+    6    1 TOY  C4    24.00000  20.90000  19.80000 TOY  1      0.00000
+    7    1 TOY  C5    25.40000  20.30000  20.60000 TOY  1      0.00000
+    8    2 NAX  NA    23.10000  16.00000  22.40000 NA   1      0.00000
+    9    3 CLX  CL    30.00000  24.00000  28.00000 CL   1      0.00000
+#--- toy.rtf
+* a synthetic topology for a test of the reader of MDIR
+*
+36 1
+MASS  -1  CA1   12.01100 ! C
+MASS  -1  CB1   12.01100 ! C
+MASS  -1  HX     1.00800 ! H
+MASS  -1  OX    15.99940 ! O
+MASS  -1  NAX   22.98977 ! NA
+MASS  -1  CLX   35.45000 ! CL
+
+AUTO ANGLES DIHE
+
+RESI TOY  0.000
+GROUP
+ATOM C1  CA1  -0.20
+ATOM C2  CB1   0.10
+ATOM H2  HX    0.10
+ATOM C3  CB1   0.40
+ATOM O3  OX   -0.40
+ATOM C4  CB1  -0.10
+ATOM C5  CA1   0.10
+BOND C1 C2  C2 C3  C3 C4  C4 C5  C2 H2  C3 O3
+IMPR C3 C2 C4 O3
+CMAP C1 C2 C3 C4  C2 C3 C4 C5
+
+RESI NAX  1.000
+ATOM NA  NAX  1.00
+
+RESI CLX -1.000
+ATOM CL  CLX -1.00
+END
+#--- toy.prm
+* synthetic parameters for a test of the reader of MDIR
+*
+
+ATOMS
+MASS  -1  CA1   12.01100 ! C
+MASS  -1  CB1   12.01100 ! C
+MASS  -1  HX     1.00800 ! H
+MASS  -1  OX    15.99940 ! O
+MASS  -1  NAX   22.98977 ! NA
+MASS  -1  CLX   35.45000 ! CL
+
+BONDS
+CA1  CB1   300.0  1.52
+CB1  CB1   250.0  1.54
+CB1  HX    330.0  1.10
+CB1  OX    450.0  1.23
+
+ANGLES
+CA1  CB1  CB1    50.0  112.0   20.0  2.52
+CB1  CB1  HX     35.0  110.0
+CA1  CB1  HX     33.0  109.5   22.5  2.18
+CB1  CB1  OX     60.0  121.0
+CB1  CB1  CB1    45.0  114.0
+
+DIHEDRALS
+X    CB1  CB1  X      0.20  3    0.0
+CA1  CB1  CB1  CB1    0.15  1  180.0
+CA1  CB1  CB1  CB1    0.40  2    0.0
+HX   CB1  CB1  OX     0.05  3    0.0
+
+IMPROPER
+OX   X    X    CB1   80.0  0    0.0
+
+CMAP
+CA1  CB1  CB1  CB1  CB1  CB1  CB1  CA1   4
+
+!-180
+ -0.5000  -0.8000  -0.5000  -0.2000
+
+!-90
+ -0.0000  -0.2000   0.2000   0.6000
+
+!0
+  0.5000   0.4000   0.9000   1.4000
+
+!90
+ -0.0000   0.0000   0.6000   1.2000
+
+NONBONDED nbxmod  5 atom cdiel fshift vatom vdistance vfswitch -
+cutnb 14.0 ctofnb 12.0 ctonnb 10.0 eps 1.0 e14fac 1.0 wmin 1.5
+CA1    0.0  -0.070  2.000   0.0  -0.010  1.900
+CB1    0.0  -0.050  2.100
+HX     0.0  -0.030  1.300
+OX     0.0  -0.120  1.700   0.0  -0.120  1.400
+NAX    0.0  -0.047  1.410
+CLX    0.0  -0.150  2.270
+
+NBFIX
+NAX  CLX  -0.083  3.731
+OX   NAX  -0.075  3.190
+
+END

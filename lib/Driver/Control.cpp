@@ -342,7 +342,7 @@ Error Reader::readInput(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "input",
           {"topology", "coordinates", "format", "checkpoint", "include_paths",
-           "defines"},
+           "defines", "parameters"},
           {}))
     return error;
   std::string topology, coordinates;
@@ -366,10 +366,6 @@ Error Reader::readInput(const toml::table &table) {
                                         {"CHARMM", Format::Charmm},
                                         {"PDB", Format::PDB}}))
     return error;
-  if (format == Format::Charmm)
-    return fail(*table.get("format"),
-                "'format = \"CHARMM\"' is not supported yet: MDIR reads "
-                "topologies of Amber and GROMACS");
   if (format == Format::Unknown) {
     StringRef extension =
         llvm::sys::path::extension(topology.empty() ? coordinates : topology);
@@ -378,13 +374,15 @@ Error Reader::readInput(const toml::table &table) {
       format = Format::Amber;
     else if (extension.equals_insensitive(".top"))
       format = Format::Gromacs;
+    else if (extension.equals_insensitive(".psf"))
+      format = Format::Charmm;
     else if (topology.empty() && extension.equals_insensitive(".pdb"))
       format = Format::PDB;
     else
       return fail(table, "cannot tell the format from the name '" +
                              (topology.empty() ? coordinates : topology) +
                              "'; give 'format' in [input]: \"AMBER\", "
-                             "\"GROMACS\", or \"PDB\"");
+                             "\"GROMACS\", \"CHARMM\", or \"PDB\"");
   }
   if (format == Format::PDB && !topology.empty())
     return fail(table, "a run from a PDB file takes no 'topology': the "
@@ -400,11 +398,40 @@ Error Reader::readInput(const toml::table &table) {
     control.gromacsTopologyFile = topology;
     control.gromacsCoordinateFile = coordinates;
     break;
-  case Format::PDB:
   case Format::Charmm:
+    control.charmmStructureFile = topology;
+    control.charmmCoordinateFile = coordinates;
+    break;
+  case Format::PDB:
   case Format::Unknown:
     control.pdbFile = coordinates;
     break;
+  }
+
+  // The files of the parameters of a PSF, relative to the control file.
+  if (const toml::node *node = table.get("parameters")) {
+    if (format != Format::Charmm)
+      return fail(*node, "'parameters' is for a PSF of CHARMM");
+    const toml::array *array = node->as_array();
+    if (!array || array->empty())
+      return fail(*node, "expected a list of the files of topology, "
+                         "parameters, and streams for 'parameters'");
+    for (const toml::node &element : *array) {
+      if (!element.is_string())
+        return fail(element, "expected a list of file names for "
+                             "'parameters'");
+      std::string value = *element.value<std::string>();
+      llvm::SmallString<256> full(llvm::sys::path::parent_path(path));
+      if (llvm::sys::path::is_absolute(value))
+        full = value;
+      else
+        llvm::sys::path::append(full, value);
+      control.charmmParameterFiles.push_back(std::string(full));
+    }
+  } else if (format == Format::Charmm) {
+    return fail(table, "a PSF needs 'parameters' in [input]: the files of "
+                       "topology, parameters, and streams, in the order "
+                       "CHARMM reads them");
   }
 
   for (StringRef key : {"include_paths", "defines"}) {
@@ -953,17 +980,22 @@ Error Reader::readBoundary(const toml::table &table) {
   int type = 0;
   if (Error error = readChoice<int>(table, "type", type, {{"PERIODIC", 0}}))
     return error;
-  // With a topology, the box is that of the file of coordinates.
+  // With a topology, the box is that of the file of coordinates, except
+  // for CHARMM, whose coordinates have none.
   const toml::node *node = table.get("box");
-  if (control.hasTopology()) {
+  if (control.hasTopology() && control.charmmStructureFile.empty()) {
     if (node)
       return fail(*node, "'box' is not needed: the box comes from the file "
                          "of coordinates");
     return Error::success();
   }
   if (!node)
-    return fail(table, "expected 'box' in [boundary], the edges of the "
-                       "cell in Å");
+    return fail(table, control.charmmStructureFile.empty()
+                           ? "expected 'box' in [boundary], the edges of the "
+                             "cell in Å"
+                           : "expected 'box' in [boundary], the edges of the "
+                             "cell in Å: a coordinate file of CHARMM has no "
+                             "cell");
   const toml::array *box = node->as_array();
   if (!box || box->size() != 3)
     return fail(*node, "expected the three edges of the cell for 'box'");
