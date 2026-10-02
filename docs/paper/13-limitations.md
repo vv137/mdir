@@ -96,8 +96,8 @@ angles, and dihedrals, which give restraints beyond positions and the
 dihedrals of OPLS-AA (D136), and terms over the pairs of a topology, in
 its charges and Lennard-Jones parameters and between interaction groups
 (D137), with tabulated functions of one argument (D138), and terms over
-the centers of groups, which restrain pull groups (D139), still with a
-read of their sums by the host at every step. Then the features that
+the centers of groups, which restrain pull groups (D139), whose loops
+still run over every particle of the system. Then the features that
 general molecular dynamics asks of MDIR: such terms over positions, with
 parameters of each particle, and pulling at a rate; a reaction field and runs without a
 periodic cell, and generalized Born solvation on them; outputs for

@@ -1007,34 +1007,33 @@ llvm::Error Builder::collectTopology() {
   // The terms given by expressions (D136), with their parameters as fields
   // of their tuples, in the units of the control file.
   for (const TupleTerm &term : topology.tupleTerms) {
-    // A term over the centers of groups (D139): for each group the pairs
-    // of a member and the reference of the group, with the weight of the
-    // member, and for each group after the first the pair of its reference
-    // and that of the first.
+    // A term over the centers of groups (D139), one set of pairs: for
+    // each group the pairs of a member and the reference of the group, and
+    // for each group after the first the pair of its reference and that of
+    // the first. A field for each group and each such link, `w<k>`, holds
+    // the weight of the member in its pairs, 1 in the pair of the link,
+    // and 0 elsewhere, so that one loop gives all the sums.
     if (term.isCentroid()) {
+      size_t groups = term.centers.size();
+      Program::TupleSet &set = addSet("cg_" + term.name, 2);
+      set.oriented = true;
+      set.reversible = false;
+      for (size_t k = 0; k != 2 * groups - 1; ++k)
+        addField(set, "w" + std::to_string(k));
+      auto addPair = [&](unsigned i, unsigned j, size_t slot, double weight) {
+        set.members.push_back(i);
+        set.members.push_back(j);
+        for (size_t k = 0; k != 2 * groups - 1; ++k)
+          set.fields[k].values.push_back(k == slot ? weight : 0.0);
+      };
       for (auto [g, center] : llvm::enumerate(term.centers)) {
-        std::string suffix = term.name + "_" + std::to_string(g);
-        if (center.members.size() > 1) {
-          Program::TupleSet &set = addSet("cg_" + suffix, 2);
-          set.oriented = true;
-          set.reversible = false;
-          size_t w = addField(set, "w");
-          for (auto [i, weight] :
-               llvm::zip_equal(center.members, center.weights)) {
-            if (i == center.reference)
-              continue;
-            set.members.push_back(i);
-            set.members.push_back(center.reference);
-            set.fields[w].values.push_back(weight);
-          }
-        }
-        if (g > 0) {
-          Program::TupleSet &set = addSet("cl_" + suffix, 2);
-          set.oriented = true;
-          set.reversible = false;
-          set.members.push_back(center.reference);
-          set.members.push_back(term.centers.front().reference);
-        }
+        for (auto [i, weight] :
+             llvm::zip_equal(center.members, center.weights))
+          if (i != center.reference)
+            addPair(i, center.reference, g, weight);
+        if (g > 0)
+          addPair(center.reference, term.centers.front().reference,
+                  groups + g - 1, 1.0);
       }
       continue;
     }
@@ -1391,24 +1390,22 @@ void Builder::emitCentroidTerm(size_t index, const TupleTerm &term) {
        << " : f64\n";
     return result;
   };
-  // One component of the displacements of the pairs of `set`, weighted by
-  // the field `w` if `weighted`, summed.
-  auto sum = [&](const std::string &set, int component, bool weighted) {
+  // One component of the displacements of the pairs of the set of the
+  // term, weighted by the field `w<slot>`, summed. The sums over the one
+  // set become one loop (md-exec-fuse-loops).
+  std::string set = "cg_" + term.name;
+  auto sum = [&](size_t slot, int component) {
     std::string result = next();
+    std::string field = "%f_" + set + "_w" + std::to_string(slot);
     os << "  " << result << " = md.sum_tuples %r_" << set
-       << ", %x, %cell coordinates(displacement(0, 1))";
-    if (weighted)
-      os << "\n      tuple(%f_" << set << "_w : !of_" << set << ")";
-    os << " {\n  ^bb0(%gd: vector<3xf64>" << (weighted ? ", %gw: f64" : "")
-       << "):\n"
+       << ", %x, %cell coordinates(displacement(0, 1))\n"
+       << "      tuple(" << field << " : !of_" << set << ") {\n"
+       << "  ^bb0(%gd: vector<3xf64>, %gw: f64):\n"
        << "    %gdc = vector.extract %gd[" << component
-       << "] : f64 from vector<3xf64>\n";
-    if (weighted)
-      os << "    %ge = arith.mulf %gw, %gdc : f64\n"
-         << "    md.yield %ge : f64\n";
-    else
-      os << "    md.yield %gdc : f64\n";
-    os << "  } : !rel_" << set << ", !vec -> f64\n";
+       << "] : f64 from vector<3xf64>\n"
+       << "    %ge = arith.mulf %gw, %gdc : f64\n"
+       << "    md.yield %ge : f64\n"
+       << "  } : !rel_" << set << ", !vec -> f64\n";
     return result;
   };
 
@@ -1420,19 +1417,14 @@ void Builder::emitCentroidTerm(size_t index, const TupleTerm &term) {
   using Vector = std::array<std::string, 3>;
   std::string angstrom = constant(1.0 / units::length);
   std::vector<Vector> centers;
-  for (auto [g, center] : llvm::enumerate(term.centers)) {
-    std::string suffix = term.name + "_" + std::to_string(g);
+  size_t groups = term.centers.size();
+  for (size_t g = 0; g != groups; ++g) {
     Vector position;
     for (int c = 0; c != 3; ++c) {
-      std::string value;
+      std::string value = sum(g, c);
       if (g > 0)
-        value = sum("cl_" + suffix, c, /*weighted=*/false);
-      if (center.members.size() > 1) {
-        std::string spread = sum("cg_" + suffix, c, /*weighted=*/true);
-        value = value.empty() ? spread : op("arith.addf", {value, spread});
-      }
-      position[c] = value.empty() ? constant(0.0)
-                                  : op("arith.mulf", {value, angstrom});
+        value = op("arith.addf", {sum(groups + g - 1, c), value});
+      position[c] = op("arith.mulf", {value, angstrom});
     }
     centers.push_back(position);
   }
