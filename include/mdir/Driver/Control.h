@@ -237,7 +237,10 @@ struct Control {
   std::vector<Restraint> restraints;
 
   // [boundary]
+  /// The edges of the cell, and for a run from CHARMM's files its angles
+  /// α, β, γ in degrees, 90 for a rectangular cell.
   double box[3] = {0.0, 0.0, 0.0};
+  double angles[3] = {90.0, 90.0, 90.0};
 
   // [execution]
   Target target = Target::CPU;

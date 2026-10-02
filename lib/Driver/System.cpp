@@ -2,6 +2,7 @@
 
 #include "mdir/Driver/System.h"
 
+#include "mdir/Driver/Cell.h"
 #include "mdir/Driver/Selection.h"
 
 #include <algorithm>
@@ -43,9 +44,31 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
               : readAmberCoordinates(control.amberCoordinateFile, *topology))
     return std::move(error);
   // A coordinate file of CHARMM has no cell; the control file gives it.
-  if (charmm)
-    for (int k = 0; k != 3; ++k)
-      topology->box[k] = control.box[k] * 0.1;
+  // CHARMM keeps a cell as the symmetric root of its metric, whose frame
+  // is turned from the one of MDIR; its positions are turned with it
+  // (docs/triclinic-m2.md, Section 1).
+  if (charmm) {
+    llvm::Expected<Cell> cell =
+        makeCell(control.box[0] * 0.1, control.box[1] * 0.1,
+                 control.box[2] * 0.1, control.angles[0], control.angles[1],
+                 control.angles[2]);
+    if (!cell)
+      return cell.takeError();
+    for (int k = 0; k != 3; ++k) {
+      topology->box[k] = cell->diagonal[k];
+      topology->tilt[k] = cell->tilt[k];
+    }
+    if (!cell->isOrthorhombic()) {
+      std::array<double, 9> r = getSymmetricFrameRotation(*cell);
+      std::vector<double> &x = topology->positions;
+      for (size_t i = 0; i + 2 < x.size(); i += 3) {
+        double s[3] = {x[i], x[i + 1], x[i + 2]};
+        for (int k = 0; k != 3; ++k)
+          x[i + k] = s[0] * r[3 * k] + s[1] * r[3 * k + 1] +
+                     s[2] * r[3 * k + 2];
+      }
+    }
+  }
 
   // The waters that SETTLE constrains (D63): those of [ settles ] of
   // GROMACS, and the residues of Amber or CHARMM named in 'water_residues'.
@@ -82,8 +105,10 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
     system.numConstraints += shake.hydrogens.size();
   if (system.velocities.empty())
     system.velocities.assign(system.positions.size(), 0.0);
-  for (int i = 0; i != 3; ++i)
+  for (int i = 0; i != 3; ++i) {
     system.box[i] = topology->box[i];
+    system.tilt[i] = topology->tilt[i];
+  }
 
   // The restraints: their constants add where their selections overlap.
   // Particles without mass, the virtual sites, are placed, not restrained.

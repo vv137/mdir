@@ -1,6 +1,10 @@
 # Triclinic cells (M2)
 
-Status: design, 2026-10-02. Cells are orthorhombic in M1. This document
+Status: 2026-10-02. P0 in part: the readers take triclinic cells (Amber's
+angles and `IFBOX` 2 and 3, the nine numbers of `.gro`, six numbers of
+`[boundary] box` for CHARMM with the rotation of its frame), reduce them,
+and `mdir check` prints them (`triclinic-cell.test`); the build refuses
+them until P1. Cells are orthorhombic in M1. This document
 plans general triclinic cells: the truncated octahedra and rhombic
 dodecahedra of solutes (Amber's `solvateOct`, GROMACS's `editconf -bt`),
 and the hexagonal cells of CHARMM-GUI's membranes. It rests on a survey of

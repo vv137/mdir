@@ -1,0 +1,33 @@
+# Triclinic cells are read into the reduced lower-triangular form of
+# docs/triclinic-m2.md (Section 1), and refused by the build until the
+# kernels take them. Amber's truncated octahedron of side 30 Å (angles
+# 109.4712190°, as tleap writes it) lies on a bound of the reduced form,
+# c_y = −b_y/2, and is kept as it is; GROMACS's octahedron of the same side
+# (70.53°, 109.47°, 70.53° in .gro's nine numbers) is the same shape in a
+# mirrored basis. Both have the volume 4√3/9 a³ = 20,784.6 Å³.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %t/
+# RUN: sed '$s/.*/  30.0000000  30.0000000  30.0000000 109.4712190 109.4712190 109.4712190/' %S/Inputs/dipeptide/dipeptide.inpcrd > %t/dipeptide.inpcrd
+# RUN: printf '[input]\ntopology = "dipeptide.prmtop"\ncoordinates = "dipeptide.inpcrd"\n[energy]\ncutoff = 9.0\npairlist_distance = 10.0\n[dynamics]\nintegrator = "VELOCITY_VERLET"\ntime_step = 0.001\nsteps = 10\n[ensemble]\nensemble = "NVE"\ntemperature = 0.0\n[boundary]\ntype = "PERIODIC"\n' > %t/amber.toml
+# RUN: mdir check %t/amber.toml | FileCheck %s --check-prefix=AMBER
+# RUN: not mdir run %t/amber.toml 2>&1 | FileCheck %s --check-prefix=REFUSED
+#
+# RUN: cp %S/Inputs/gromacs/system.top %S/Inputs/gromacs/forcefield.itp %S/Inputs/gromacs/water.itp %t/
+# RUN: sed '$s/.*/   3.00000   2.82843   2.44949   0.00000   0.00000   1.00000   0.00000  -1.00000   1.41421/' %S/Inputs/gromacs/system.gro > %t/system.gro
+# RUN: printf '[input]\ntopology = "system.top"\ncoordinates = "system.gro"\n[energy]\ncutoff = 9.0\npairlist_distance = 10.0\n[dynamics]\nintegrator = "VELOCITY_VERLET"\ntime_step = 0.001\nsteps = 10\n[ensemble]\nensemble = "NVE"\ntemperature = 0.0\n[constraints]\nrigid_water = true\n[boundary]\ntype = "PERIODIC"\n' > %t/gromacs.toml
+# RUN: mdir check %t/gromacs.toml | FileCheck %s --check-prefix=GROMACS
+# RUN: sed '$s/.*/   3.00000   2.82843   2.44949   0.10000   0.00000   1.00000   0.00000  -1.00000   1.41421/' %S/Inputs/gromacs/system.gro > %t/system.gro
+# RUN: not mdir check %t/gromacs.toml 2>&1 | FileCheck %s --check-prefix=FRAME
+# A cell past a bound of the reduced form is reduced: b_x = 2.2 nm of a_x = 3
+# becomes −0.8.
+# RUN: sed '$s/.*/   3.00000   2.82843   2.44949   0.00000   0.00000   2.20000   0.00000  -1.00000   1.41421/' %S/Inputs/gromacs/system.gro > %t/system.gro
+# RUN: mdir check %t/gromacs.toml | FileCheck %s --check-prefix=REDUCED
+
+# AMBER:   box:                30 30 30 Å, angles 109.471 109.471 109.471
+# AMBER:   cell vectors:       a (30, 0, 0), b (-10, 28.2843, 0), c (-10, -14.1421, 24.4949) Å
+# REFUSED: the cell is triclinic (tilts -10, -10, -14.1421 Å); runs in triclinic cells are not supported yet
+# GROMACS: box:                30 30 30 Å, angles 70.5288 109.471 70.5288
+# GROMACS: cell vectors:       a (30, 0, 0), b (10, 28.2843, 0), c (-10, 14.1421, 24.4949) Å
+# FRAME:   a cell needs a along x and b in the x-y plane
+# REDUCED: cell vectors:       a (30, 0, 0), b (-8, 28.2843, 0), c (-10, 14.1421, 24.4949) Å

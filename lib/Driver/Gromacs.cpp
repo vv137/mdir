@@ -7,6 +7,7 @@
 // supports: harmonic bonds and angles with ½ k, periodic dihedrals, and
 // Lennard-Jones in σ and ε.
 
+#include "mdir/Driver/Cell.h"
 #include "mdir/Driver/Topology.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -1638,11 +1639,22 @@ llvm::Error mdir::driver::readGromacsCoordinates(StringRef path,
   for (int k = 0; k != 3; ++k)
     if (!readReal(box[k], topology.box[k]) || topology.box[k] <= 0.0)
       return fail(path, 3 + count, "cannot read the box");
-  for (size_t k = 3; k < box.size() && k < 9; ++k) {
-    double value;
-    if (!readReal(box[k], value) || value != 0.0)
-      return fail(path, 3 + count, "only an orthorhombic cell is supported; "
-                                   "the box has off-diagonal elements");
-  }
+  // v1(x) v2(y) v3(z) v1(y) v1(z) v2(x) v2(z) v3(x) v3(y): a cell with a
+  // along x and b in the x-y plane, as GROMACS keeps it.
+  double rest[6] = {0, 0, 0, 0, 0, 0};
+  for (size_t k = 3; k < box.size() && k < 9; ++k)
+    if (!readReal(box[k], rest[k - 3]))
+      return fail(path, 3 + count, "cannot read the box");
+  if (rest[0] != 0.0 || rest[1] != 0.0 || rest[3] != 0.0)
+    return fail(path, 3 + count, "a cell needs a along x and b in the x-y "
+                                 "plane, as GROMACS keeps it: v1(y), v1(z), "
+                                 "and v2(z) must be 0");
+  Cell cell;
+  cell.diagonal = {topology.box[0], topology.box[1], topology.box[2]};
+  cell.tilt = {rest[2], rest[4], rest[5]};
+  if (llvm::Error error = reduceCell(cell))
+    return fail(path, 3 + count, llvm::toString(std::move(error)));
+  for (int k = 0; k != 3; ++k)
+    topology.tilt[k] = cell.tilt[k];
   return llvm::Error::success();
 }

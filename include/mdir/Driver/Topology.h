@@ -145,8 +145,11 @@ struct Topology {
   // Configuration
   //===--------------------------------------------------------------------===//
 
-  /// The edges of the orthorhombic cell.
+  /// The cell (docs/triclinic-m2.md): its diagonal a_x, b_y, c_z, which are
+  /// the edges of an orthorhombic cell, and its tilts b_x, c_x, c_y, which
+  /// are 0 for one.
   double box[3] = {0.0, 0.0, 0.0};
+  double tilt[3] = {0.0, 0.0, 0.0};
   std::vector<double> positions;
   /// Empty if the file has no velocities.
   std::vector<double> velocities;

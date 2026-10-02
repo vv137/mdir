@@ -65,8 +65,10 @@ struct System {
   /// drawn at the temperature of the control file.
   bool givenVelocities = false;
   std::vector<double> masses;
-  /// The edge lengths of the cell.
+  /// The edge lengths of the cell: its diagonal a_x, b_y, c_z, with the
+  /// tilts b_x, c_x, c_y of a triclinic one (docs/triclinic-m2.md).
   double box[3];
+  double tilt[3] = {0.0, 0.0, 0.0};
   /// Those of the file of coordinates, where a run that continues with a
   /// barostat takes `box` from the checkpoint; 0 if they are those of
   /// `box`. The automatic grid of particle mesh Ewald follows them, so

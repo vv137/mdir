@@ -24,11 +24,11 @@
 # RUN: not mdir check %t/run.toml 2>&1 | FileCheck %s --check-prefix=UNKNOWN
 # UNKNOWN: the section NEW_PHYSICS is not known to MDIR and holds data that may change the physics
 
-# A cell that is not orthorhombic.
+# Angles that make no cell (triclinic cells are read: triclinic-cell.test).
 # RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %t/dipeptide.prmtop
-# RUN: sed '$ s/90.0000000  90.0000000  90.0000000/90.0000000 109.4712190  90.0000000/' %S/Inputs/dipeptide/dipeptide.inpcrd > %t/dipeptide.inpcrd
+# RUN: sed '$ s/  90.0000000  90.0000000  90.0000000/ 150.0000000 150.0000000 150.0000000/' %S/Inputs/dipeptide/dipeptide.inpcrd > %t/dipeptide.inpcrd
 # RUN: not mdir check %t/run.toml 2>&1 | FileCheck %s --check-prefix=CELL
-# CELL: only an orthorhombic cell is supported; the box has the angles 90, 109.471, 90
+# CELL: the angles 150, 150, 150 do not make a cell
 
 # A file of coordinates with another number of atoms.
 # RUN: cp %S/Inputs/dipeptide/dipeptide.inpcrd %t/dipeptide.inpcrd

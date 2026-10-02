@@ -3,6 +3,7 @@
 
 #include "Commands.h"
 
+#include "mdir/Driver/Cell.h"
 #include "mdir/Driver/Control.h"
 #include "mdir/Driver/System.h"
 
@@ -79,10 +80,23 @@ static int describeTopology(const Control &control, const System &system) {
     std::printf("virtual sites:      %zu\n", topology.virtualSites.size());
   std::printf("total charge:       %.6f e\n", totalCharge);
   std::printf("total mass:         %g amu\n", totalMass);
-  std::printf("box:                %g %g %g Å\n",
-              topology.box[0] / units::length,
-              topology.box[1] / units::length,
-              topology.box[2] / units::length);
+  Cell cell;
+  for (int k = 0; k != 3; ++k) {
+    cell.diagonal[k] = topology.box[k] / units::length;
+    cell.tilt[k] = topology.tilt[k] / units::length;
+  }
+  if (cell.isOrthorhombic()) {
+    std::printf("box:                %g %g %g Å\n", cell.diagonal[0],
+                cell.diagonal[1], cell.diagonal[2]);
+  } else {
+    std::array<double, 6> shape = cell.getLengthsAndAngles();
+    std::printf("box:                %g %g %g Å, angles %g %g %g\n",
+                shape[0], shape[1], shape[2], shape[3], shape[4], shape[5]);
+    std::printf("cell vectors:       a (%g, 0, 0), b (%g, %g, 0), "
+                "c (%g, %g, %g) Å\n",
+                cell.diagonal[0], cell.tilt[0], cell.diagonal[1],
+                cell.tilt[1], cell.tilt[2], cell.diagonal[2]);
+  }
   std::printf("density:            %g g/cm³\n",
               totalMass / volume * 1.66053906660e-3);
   std::printf("velocities:         %s\n",

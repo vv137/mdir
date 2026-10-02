@@ -997,13 +997,25 @@ Error Reader::readBoundary(const toml::table &table) {
                              "cell in Å: a coordinate file of CHARMM has no "
                              "cell");
   const toml::array *box = node->as_array();
-  if (!box || box->size() != 3)
-    return fail(*node, "expected the three edges of the cell for 'box'");
+  bool charmm = !control.charmmStructureFile.empty();
+  if (!box || (box->size() != 3 && !(charmm && box->size() == 6)))
+    return fail(*node, charmm ? "expected the three edges of the cell for "
+                                "'box', in Å, and its angles α, β, γ in "
+                                "degrees if they are not right angles"
+                              : "expected the three edges of the cell for "
+                                "'box'");
   for (int i = 0; i != 3; ++i) {
     std::optional<double> edge = (*box)[i].value<double>();
     if (!edge || !(*edge > 0.0))
       return fail(*node, "expected positive edges of the cell for 'box'");
     control.box[i] = *edge;
+  }
+  for (size_t i = 3; i < box->size(); ++i) {
+    std::optional<double> angle = (*box)[i].value<double>();
+    if (!angle || !(*angle > 0.0 && *angle < 180.0))
+      return fail(*node, "expected angles between 0 and 180 degrees for "
+                         "'box'");
+    control.angles[i - 3] = *angle;
   }
   return Error::success();
 }

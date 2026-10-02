@@ -5,6 +5,7 @@
 // code of Amber or of its tools. The terms are converted to the forms of
 // docs/conventions.md.
 
+#include "mdir/Driver/Cell.h"
 #include "mdir/Driver/Topology.h"
 
 #include "llvm/ADT/DenseSet.h"
@@ -333,8 +334,10 @@ llvm::Error Reader::checkSupported(const std::vector<long> &p) {
                 llvm::Twine(ipol.front()));
   if (p[27] == 0)
     return fail("the topology has no periodic cell: IFBOX = 0");
-  if (p[27] != 1)
-    return fail("only an orthorhombic cell is supported: IFBOX = " +
+  // 1: rectangular, 2: truncated octahedron, 3: triclinic; the cell itself
+  // is that of the file of coordinates.
+  if (p[27] < 1 || p[27] > 3)
+    return fail("the kind of periodic cell is not known: IFBOX = " +
                 llvm::Twine(p[27]));
   if (p[29] != 0)
     return fail("a solvent cap is not supported: IFCAP = " +
@@ -1066,14 +1069,21 @@ llvm::Error mdir::driver::readAmberCoordinates(StringRef path,
   if (box.size() != 6 && box.size() != 3)
     return fail("expected the lengths and the angles of the box in '" +
                 lines.back() + "'");
+  // The angles: 90 for a right angle, as some files write it, or 0.
+  double angles[3] = {90.0, 90.0, 90.0};
   if (box.size() == 6)
-    for (int k = 3; k != 6; ++k)
-      if (std::fabs(box[k] - 90.0) > 1.0e-5 && box[k] != 0.0)
-        return fail("only an orthorhombic cell is supported; the box has "
-                    "the angles " +
-                    show(box[3]) + ", " + show(box[4]) + ", " +
-                    show(box[5]));
-  for (int k = 0; k != 3; ++k)
-    topology.box[k] = box[k] * nmPerAngstrom;
+    for (int k = 0; k != 3; ++k)
+      if (box[3 + k] != 0.0 && std::fabs(box[3 + k] - 90.0) > 1.0e-5)
+        angles[k] = box[3 + k];
+  llvm::Expected<Cell> cell =
+      makeCell(box[0] * nmPerAngstrom, box[1] * nmPerAngstrom,
+               box[2] * nmPerAngstrom, angles[0], angles[1], angles[2]);
+  if (!cell)
+    return fail("the box '" + lines.back() + "': " +
+                llvm::toString(cell.takeError()));
+  for (int k = 0; k != 3; ++k) {
+    topology.box[k] = cell->diagonal[k];
+    topology.tilt[k] = cell->tilt[k];
+  }
   return llvm::Error::success();
 }

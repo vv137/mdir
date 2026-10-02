@@ -5057,8 +5057,18 @@ void Builder::setSchedule() {
 }
 
 llvm::Error Builder::build() {
+  // The kernels take an orthorhombic cell; a triclinic one is read, and
+  // runs with phase P1 of docs/triclinic-m2.md.
+  if (system.tilt[0] != 0.0 || system.tilt[1] != 0.0 || system.tilt[2] != 0.0)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "the cell is triclinic (tilts %g, %g, %g Å); runs in triclinic "
+        "cells are not supported yet",
+        system.tilt[0] / units::length, system.tilt[1] / units::length,
+        system.tilt[2] / units::length);
   // A pair is taken once, in the minimum image, which holds every image
-  // within the cutoff only while the cell is wider than twice the cutoff.
+  // within the cutoff only while the cell is wider than twice the cutoff:
+  // for a triclinic cell, its diagonal (I2 of docs/triclinic-m2.md).
   static const char axes[] = "xyz";
   for (int k = 0; k != 3; ++k)
     if (system.box[k] < 2.0 * control.cutoffDistance * units::length)
