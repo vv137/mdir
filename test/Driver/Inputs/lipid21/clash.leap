@@ -1,0 +1,12 @@
+# Four POPC lipids of Lipid21 cut from a bilayer of 126 that packmol left
+# with close contacts (scripts/validation/barostat-semi/membrane.py, phase
+# build): residues 19-21, 79-81, 88-90, and 139-141 of popc.prmtop, each
+# lipid made whole and the four centered in a cell of 50 Å, written as
+# clash.pdb by ParmEd. Two pairs of hydrogens of different lipids are
+# 0.13 Å apart, and the bonds of hydrogen are up to 0.02 Å off their
+# lengths. The files are compressed with gzip -9.
+source leaprc.lipid21
+SYS = loadpdb clash.pdb
+set SYS box {50.0 50.0 50.0}
+saveamberparm SYS clash.prmtop clash.inpcrd
+quit

@@ -1297,6 +1297,7 @@ steepest descent (D73):
 
 | Item | Rule |
 |---|---|
+| Start | The positions of the file taken onto the surface of the constraints, SETTLE (M-SHAKE below double precision) and SHAKE with the positions themselves as the reference, and the sites placed again, before the first evaluation (D120); the energy at the start in the log and the terms are of these positions |
 | Direction | $\mathbf g = P(\mathbf F / m)$: the force over the mass, $0$ for virtual sites, with $P$ the projection that RATTLE applies to velocities, which takes off the parts along the bonds of SETTLE and SHAKE at the current positions |
 | Step | $\mathbf x' = \mathbf x + h\, \mathbf g / \lVert\mathbf g\rVert_{16}$, with $\lVert\mathbf g\rVert_{16} = r \big(\sum_i (\lVert\mathbf g_i\rVert / r)^{16}\big)^{1/16}$ and $r$ the root mean square of $\lVert\mathbf g_i\rVert$; since $\lVert\mathbf g\rVert_{16} \ge \max_i \lVert\mathbf g_i\rVert$, no particle moves farther than $h$. Then SETTLE and SHAKE take the groups back to their shapes from $\mathbf x$, and the sites are placed |
 | Acceptance | The step is taken if the energy at $\mathbf x'$ is lower: $h$ grows by 1.2, to at most 1 Å; otherwise $\mathbf x$ stays and $h$ shrinks by 0.2. The choice is made particle by particle (a map that selects), so that the fields keep storage of their own |
@@ -1306,7 +1307,8 @@ steepest descent (D73):
 | Keywords | `method = "STEEPEST_DESCENT"`, `steps`, `energy_interval` (a divisor of `steps`), `trajectory_interval` (a multiple of it), `initial_step` in Å (0.1). No thermostat or barostat. A tolerance on the force is planned; in mixed precision the forces are rounded to about 10⁻⁵ of their size, which bounds how far a minimization can go |
 
 On the target of D65 on the CPU in double precision, 500 steps take the
-energy from −5348 to −7137 kcal/mol and the root mean square of the
+energy from −5348 to −7137 kcal/mol (from the positions of the file before
+D120) and the root mean square of the
 constrained forces from 8.7 to 2.1 kcal/mol/Å (`test/Driver/minimize.test`
 takes 100). Without the masses in the direction, the steps that SHAKE and
 SETTLE correct went uphill after 50 steps, and h fell to 0.

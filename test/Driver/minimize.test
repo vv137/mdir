@@ -15,14 +15,17 @@
 
 # The log has the forces without their parts along the constraints. Each
 # step that raises the energy is not taken, and the next one is shorter.
+# The minimization begins from the positions of the file on the surface of
+# the constraints: the bonds of hydrogen of tleap are not at their lengths,
+# and taken there the energy is -5348.8659 rather than -5348.4328.
 #
 # CHECK:      MDIR: 2332 particles, 100 steps of steepest descent
 # CHECK:      INFO:      STEP  POTENTIAL_ENE      RMS_FORCE      MAX_FORCE  MAX_ATOM      STEP_SIZE
-# CHECK:      INFO:         0     -5348.4328         8.6905        51.7717        35       0.100000
-# CHECK-NEXT: INFO:        50     -6587.1388         2.2776        28.6500        24       0.117032
+# CHECK:      INFO:         0     -5348.8659         8.6909        51.7726        35       0.100000
+# CHECK-NEXT: INFO:        50     -6587.5294         2.3869        32.3543        24       0.117032
 # CHECK-NEXT: INFO:       100     [[LAST:-[0-9]+\.[0-9]+]]
 # CHECK:      MDIR: wrote 1 checkpoints to '{{.*}}min.h5'
-# CHECK:      MDIR: the potential energy went from -5348.4328 to [[LAST]] kcal/mol
+# CHECK:      MDIR: the potential energy went from -5348.8659 to [[LAST]] kcal/mol
 
 # The run of dynamics takes the positions, and draws velocities.
 #

@@ -1,0 +1,53 @@
+# Steepest descent from positions whose bonds of hydrogen are off their
+# lengths and whose hydrogens clash: four POPC lipids of Lipid21 cut from a
+# bilayer that packmol left with two pairs of hydrogens of different lipids
+# 0.13 Å apart. The minimization begins from the positions of the file
+# taken onto the surface of the constraints (D120). From the file itself,
+# every trial carried the change that takes the bonds to their lengths,
+# which brings the hydrogens of one pair from 0.128 to 0.097 Å, more than
+# the step, scaled by the force of the other pair, takes them apart; the
+# energy stayed at 2.9e15 kcal/mol and the step shrank to 0.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python -c "import gzip, shutil; [shutil.copyfileobj(gzip.open('%S/Inputs/lipid21/clash.' + e + '.gz'), open('%t/clash.' + e, 'wb')) for e in ('prmtop', 'inpcrd')]"
+# RUN: sed -n '/^#--- min.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/min.toml
+# RUN: mdir run %t/min.toml | FileCheck %s
+# RUN: %python %S/Inputs/check_bonds.py %t/clash.prmtop %t/min.dcd | FileCheck %s --check-prefix=BONDS
+
+# CHECK:      MDIR: 536 particles, 200 steps of steepest descent
+# CHECK:      INFO:         0 {{ *}}{{[1-9][0-9]+}}.{{[0-9]+}}
+# CHECK:      INFO:       200 {{ *}}-{{[0-9]+}}.{{[0-9]+}}
+# CHECK:      MDIR: the potential energy went from {{[0-9]+}}.{{[0-9]+}} to -{{[0-9]+}}.{{[0-9]+}} kcal/mol
+
+# BONDS: bonds ok
+
+#--- min.toml
+[input]
+topology    = "clash.prmtop"
+coordinates = "clash.inpcrd"
+
+[output]
+energy_interval     = 100
+trajectory          = "min.dcd"
+trajectory_interval = 100
+
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "PME"
+
+[minimize]
+steps        = 200
+initial_step = 0.01
+
+[constraints]
+hydrogen_bonds = true
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "CPU"
+precision = "MIXED"
+threads   = 2
+#--- end

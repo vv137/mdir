@@ -103,8 +103,8 @@ private:
   /// Sets `levels`, the loops of the schedule of a run of dynamics.
   void setSchedule();
   void emitMinimization();
-  /// Emits the energy of each term at the positions `%x0`, for the log.
-  void emitTerms();
+  /// Emits the energy of each term at the positions `x`, for the log.
+  void emitTerms(StringRef x = "%x0");
 
   /// Emits the loops of the schedule, from `level` inward, and returns the
   /// values that the loop of `level` results in.
@@ -4036,21 +4036,54 @@ void Builder::emitDescend() {
 }
 
 void Builder::emitMinimization() {
+  // The positions of the file on the surface of the constraints first. A
+  // step is taken from positions on it and is constrained again, so a
+  // start off it would put into every trial the change that takes the
+  // groups to their shapes, which does not shrink with the step: where
+  // the file has close contacts (a bilayer from packmol, bonds to
+  // hydrogens 0.02 Å from their lengths) that change alone can raise the
+  // energy, and no step is ever taken.
+  std::string x0 = "%x0";
+  bool settles = hasSettles();
+  std::vector<const Program::TupleSet *> shakeSets = getShakeSets();
+  if (settles || !shakeSets.empty()) {
+    std::string current = "%x0";
+    unsigned steps = (settles ? 1 : 0) + shakeSets.size(), step = 0;
+    std::string constrained = hasSites() ? "%x0ks" : "%x0k";
+    auto next = [&]() {
+      ++step;
+      return step == steps ? constrained : "%x0k" + std::to_string(step);
+    };
+    if (settles) {
+      std::string result = next();
+      emitSettlePositions("  ", "%x0", current, "%dx0k", result);
+      current = result;
+    }
+    for (const Program::TupleSet *set : shakeSets) {
+      std::string result = next();
+      emitShakePositions("  ", "%x0", current, *set, result);
+      current = result;
+    }
+    if (hasSites())
+      emitPlaceSites("  ", "%x0ks", "%x0k", "%r_");
+    x0 = "%x0k";
+  }
   // The energy and the forces at the start, and the terms.
   std::string raw = hasSites() ? "e" : "";
   std::string held = hasRestraints() ? "p" : "";
   os << "  %u0" << held << ", %f0" << held << raw
-     << " = md.evaluate @energy(%x0, %cell" << getFieldValues() << ")\n"
+     << " = md.evaluate @energy(" << x0 << ", %cell" << getFieldValues()
+     << ")\n"
      << "      request [energy, forces]\n"
      << "      : (!vec, !md.cell" << getFieldTypes() << ") -> (f64, !vec)\n";
   if (hasSites())
-    emitSpreadSites("  ", "%x0", "%f0" + held + "e", "%f0" + held, "%r_");
+    emitSpreadSites("  ", x0, "%f0" + held + "e", "%f0" + held, "%r_");
   if (hasRestraints()) {
     os << "  %w0z = arith.constant dense<0.0> : vector<9xf64>\n";
-    emitRestraints("  ", "%x0", "%p_", "%f0p", "%f0", "%u0p", "%u0", "%w0z",
+    emitRestraints("  ", x0, "%p_", "%f0p", "%f0", "%u0p", "%u0", "%w0z",
                    "%w0r");
   }
-  emitTerms();
+  emitTerms(x0);
   os << "  %h0 = arith.constant "
      << formatReal(control.minimizeStep * units::length) << " : f64\n"
      << "  %h_most = arith.constant " << formatReal(1.0 * units::length)
@@ -4076,7 +4109,7 @@ void Builder::emitMinimization() {
        << indent << "} : !vec\n";
     return reported;
   };
-  std::string reported = emitReported("  ", "%x0", "%f0", "0");
+  std::string reported = emitReported("  ", x0, "%f0", "0");
   os << "  mdrt.host_call @mdrtWriteMinimization(%start, %u0, %h0, "
      << reported << ", %id)\n"
      << "      : (i64, f64, f64, !vec, !ids)\n";
@@ -4095,7 +4128,8 @@ void Builder::emitMinimization() {
      << "  %n2 = arith.constant " << period << " : index\n"
      << "  %per0 = arith.constant " << framePeriod << " : index\n"
      << "  %xe0, %fe0, %ue0, %he0 = scf.for %i0 = %c0 to %n0 step %c1\n"
-     << "      iter_args(%xa0 = %x0, %fa0 = %f0, %ua0 = %u0, %ha0 = %h0)\n"
+     << "      iter_args(%xa0 = " << x0
+     << ", %fa0 = %f0, %ua0 = %u0, %ha0 = %h0)\n"
      << "      -> (" << state << ") {\n"
      << "    %xe1, %fe1, %ue1, %he1 = scf.for %i1 = %c0 to %n1 step %c1\n"
      << "        iter_args(%xa1 = %xa0, %fa1 = %fa0, %ua1 = %ua0, "
@@ -4161,7 +4195,7 @@ void Builder::emitMinimization() {
      << "  return\n}\n";
 }
 
-void Builder::emitTerms() {
+void Builder::emitTerms(StringRef x) {
   if (!system.topology)
     return;
   // The restraints, if any, last: their energy at the start is that of the
@@ -4174,7 +4208,7 @@ void Builder::emitTerms() {
        {"term_lj", "term_coulomb", "term_bonds", "term_angles",
         "term_dihedrals", "term_lj14", "term_coulomb14", "term_cmap",
         "term_excluded", "term_reciprocal"}) {
-    os << "  %" << name << " = md.evaluate @" << name << "(%x0, %cell"
+    os << "  %" << name << " = md.evaluate @" << name << "(" << x << ", %cell"
        << getFieldValues() << ") request [energy]\n"
        << "      : (!vec, !md.cell" << getFieldTypes() << ") -> f64\n"
        << "  %i_" << name << " = arith.constant " << index++

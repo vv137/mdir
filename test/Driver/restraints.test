@@ -72,7 +72,7 @@
 # RUN: FileCheck %s < %t/both.log
 #
 # CHECK:      MDIR:   restraints                     0.000000
-# CHECK:      MDIR: the potential energy went from -5348.4328 to [[LAST:-[0-9.]+]] kcal/mol
+# CHECK:      MDIR: the potential energy went from -5348.8659 to [[LAST:-[0-9.]+]] kcal/mol
 # CHECK:      MDIR:   restraints {{ *}}[[REST:[0-9.]+]]
 # CHECK:      INFO:         0         0.0000 {{ *}}{{-[0-9.]+}} {{ *}}[[LAST]]{{[0-9]*}}
 # CHECK:      MDIR: the total energy changed by {{[0-9.]+}}e-0{{[4-9]}} of its value
