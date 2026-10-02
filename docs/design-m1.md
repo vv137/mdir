@@ -786,6 +786,7 @@ are those of its middle. A particle of mass 0 keeps its velocity.
 | The momentum | Not kept: the degrees of freedom are $3N - N_c$, less 3 only if `center_of_mass_interval` removes the motion of the center of mass |
 | `interval` | Paces the removal of the motion of the center of mass and the barostat, which act at the end of a period; 10 by default with a barostat, otherwise none |
 | The log | No conserved energy: the run does not count the energy that the friction and the noise exchange with the bath (the roadmap) |
+| The virial of the constraints | That of the forces that keep the bonds at their lengths at the end of the step, solved from its positions, velocities, and forces, $\mathbf e\cdot(\mathbf a_q - \mathbf a_p) = -\lvert\mathbf v_q - \mathbf v_p\rvert^2/d$, with the matrix of RATTLE; the changes of SHAKE and RATTLE within the step hold the friction and would give a pressure higher by $\gamma\Delta t/2$ of the virial of the constraints, 39 bar per 1/ps for water at 2 fs |
 
 **Measured.** The noise of one step from velocities of 0 against Philox
 of the host: within $5\times10^{-7}$ of $\sqrt{k_B T/m}$, the part of the

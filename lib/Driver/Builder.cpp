@@ -300,6 +300,17 @@ private:
                                   const Program::TupleSet &set,
                                   StringRef result, StringRef virial,
                                   StringRef virialResult);
+  /// Returns the virial `virial` with that of the forces of the constraints
+  /// at the positions `x`, the velocities `v` (with none along the bonds),
+  /// and the forces `f` added: the forces G along the bonds that keep them
+  /// at their lengths, e·(a_q − a_p) = −|v_q − v_p|²/d with a = (F + G)/m,
+  /// and Σ (x_j − x_0) ⊗ G_j, for the rigid waters and each set of SHAKE.
+  /// Under Langevin dynamics the changes that the constraints make within a
+  /// step hold part of the friction and the noise, and these forces do not
+  /// (D135).
+  std::string emitConstraintForceVirial(StringRef indent, StringRef x,
+                                        StringRef v, StringRef f,
+                                        StringRef virial);
   /// Emits `result`, the positions `x` with the rigid waters brought back
   /// to their shape from `old`, the positions before the drift, and
   /// `change`, what that adds to the positions [Miyamoto1992].
@@ -2185,16 +2196,27 @@ void Builder::emitPrograms() {
     // the energies with leapfrog.
     os << "  %v2" << (constraints ? "u" : "") << " = dyn.kick " << velocities
        << ", %f1, %m, %half : !vec\n";
-    // The virial of the constraints over the first half of the step.
-    if (constraints && withVirial) {
+    // The virial of the constraints: the mean of those of the two halves of
+    // the step, or, under Langevin dynamics, whose friction and noise act
+    // within the drift, that of their forces at its end (D135).
+    bool instantaneous = control.isLangevin();
+    if (constraints && withVirial && !instantaneous) {
       unsigned index = 0;
       for (auto [set, change] : changes)
         virial = emitConstraintVirial("  ", *set, "%x", change, virial,
                                       "%w1x" + std::to_string(index++));
     }
-    if (constraints)
-      virial = project("%x1", "%v2u", "%v2", withVirial ? virial : "")
-                   .second;
+    if (constraints) {
+      std::string halves =
+          project("%x1", "%v2u", "%v2",
+                  withVirial && !instantaneous ? virial : "")
+              .second;
+      if (withVirial)
+        virial = instantaneous
+                     ? emitConstraintForceVirial("  ", "%x1", "%v2", "%f1",
+                                                 virial)
+                     : halves;
+    }
     std::string stored = leapfrog ? velocities : "%v2";
     if (withVirial || scales)
       os << "  dyn.return %x1, " << stored << ", %f1"
@@ -3165,6 +3187,137 @@ std::string Builder::emitShakeVelocities(StringRef indent, StringRef x,
      << inner << "md.yield %vs_sum : vector<3xf64>\n"
      << indent << "} : !vec\n";
   return virialName;
+}
+
+std::string Builder::emitConstraintForceVirial(StringRef indent,
+                                               StringRef x, StringRef v,
+                                               StringRef f,
+                                               StringRef virial) {
+  std::string inner = (indent + "  ").str();
+  std::string current = virial.str();
+  unsigned count = 0;
+  // A group of `members` particles and its bonds (p, q), with the
+  // displacements of the members from the first.
+  auto emitGroup = [&](StringRef setName, unsigned members,
+                       llvm::ArrayRef<std::pair<unsigned, unsigned>> bonds,
+                       StringRef tupleFields, StringRef tupleTypes,
+                       unsigned numTupleFields) {
+    std::string coordinates, arguments;
+    for (unsigned j = 1; j != members; ++j) {
+      coordinates += (j == 1 ? "" : ", ") +
+                     ("displacement(" + std::to_string(j) + ", 0)");
+      arguments += "%cf_r" + std::to_string(j) + ": vector<3xf64>, ";
+    }
+    for (StringRef field : {"v", "f"})
+      for (unsigned j = 0; j != members; ++j)
+        arguments += ("%cf_" + field + std::to_string(j) + ": vector<3xf64>, ").str();
+    for (unsigned j = 0; j != members; ++j)
+      arguments += "%cf_m" + std::to_string(j) + ": f64, ";
+    for (unsigned j = 0; j != numTupleFields; ++j)
+      arguments += "%cf_t" + std::to_string(j) + ": f64, ";
+    arguments.resize(arguments.size() - 2);
+    std::string sum = "%cfw" + std::to_string(count++);
+    os << indent << sum << " = md.sum_tuples %r_" << setName << ", " << x
+       << ", %cell\n"
+       << indent << "    coordinates(" << coordinates << ")\n"
+       << indent << "    gather(" << v << ", " << f << ", %m : !vec, !vec, "
+       << "!real)\n";
+    if (numTupleFields)
+      os << indent << "    tuple(" << tupleFields << " : " << tupleTypes
+         << ")";
+    os << " {\n" << indent << "^bb0(" << arguments << "):\n";
+    SiteKernel k(os, inner, "%cfk");
+    std::string zero = k.constant(0.0), one = k.constant(1.0);
+    // The position of member j relative to the first, and its velocity,
+    // acceleration without the constraints, and inverse mass.
+    auto position = [&](unsigned j) { return "%cf_r" + std::to_string(j); };
+    std::vector<std::string> u, inverse;
+    for (unsigned j = 0; j != members; ++j) {
+      std::string n = std::to_string(j);
+      inverse.push_back(k.real("divf", one, "%cf_m" + n));
+      u.push_back(k.scale(inverse.back(), "%cf_f" + n));
+    }
+    std::vector<std::string> units, rhs;
+    for (auto [p, q] : bonds) {
+      std::string d = p == 0 ? position(q)
+                             : k.vector("subf", position(q), position(p));
+      std::string length = k.norm(d);
+      units.push_back(k.unit(d));
+      std::string relative = k.vector("subf", "%cf_v" + std::to_string(q),
+                                      "%cf_v" + std::to_string(p));
+      std::string centripetal =
+          k.real("divf", k.dot(relative, relative), length);
+      std::string along =
+          k.dot(units.back(), k.vector("subf", u[q], u[p]));
+      rhs.push_back(k.real("subf", zero, k.real("addf", along, centripetal)));
+    }
+    // A_bc: what a unit force along bond c, +e_c on q_c and -e_c on p_c,
+    // does to the acceleration along bond b.
+    size_t n = bonds.size();
+    std::vector<std::vector<std::string>> A(n, std::vector<std::string>(n));
+    for (size_t b = 0; b != n; ++b)
+      for (size_t c = 0; c != n; ++c) {
+        auto [pb, qb] = bonds[b];
+        auto [pc, qc] = bonds[c];
+        auto on = [&](unsigned x) {
+          return (x == qc ? 1 : 0) - (x == pc ? 1 : 0);
+        };
+        std::string coefficient = zero;
+        if (on(qb) != 0)
+          coefficient = k.real(on(qb) > 0 ? "addf" : "subf", coefficient,
+                               inverse[qb]);
+        if (on(pb) != 0)
+          coefficient = k.real(on(pb) > 0 ? "subf" : "addf", coefficient,
+                               inverse[pb]);
+        A[b][c] = k.real("mulf", k.dot(units[b], units[c]), coefficient);
+      }
+    std::vector<std::string> tension = emitSmallSolve(k, A, rhs);
+    // The force on each member but the first, and the virial.
+    std::string elements;
+    std::vector<std::string> forces(members, "");
+    for (unsigned j = 1; j != members; ++j) {
+      std::string force = k.zero();
+      for (size_t c = 0; c != n; ++c) {
+        auto [pc, qc] = bonds[c];
+        if (j != pc && j != qc)
+          continue;
+        std::string push = k.scale(tension[c], units[c]);
+        force = k.vector(j == qc ? "addf" : "subf", force, push);
+      }
+      forces[j] = force;
+    }
+    for (int a = 0; a != 3; ++a) {
+      std::string row;
+      for (unsigned j = 1; j != members; ++j) {
+        std::string term = k.scale(k.component(position(j), a), forces[j]);
+        row = row.empty() ? term : k.vector("addf", row, term);
+      }
+      for (int b = 0; b != 3; ++b)
+        elements += (elements.empty() ? "" : ", ") + k.component(row, b);
+    }
+    os << inner << "%cf_w = vector.from_elements " << elements
+       << " : vector<9xf64>\n"
+       << inner << "md.yield %cf_w : vector<9xf64>\n"
+       << indent << "} : !rel_" << setName << ", !vec -> vector<9xf64>\n";
+    std::string next = sum + "_total";
+    os << indent << next << " = arith.addf " << current << ", " << sum
+       << " : vector<9xf64>\n";
+    current = next;
+  };
+  for (const Program::TupleSet &set : program.tupleSets) {
+    if (set.name == "settles") {
+      static const std::pair<unsigned, unsigned> bonds[] = {
+          {0, 1}, {0, 2}, {1, 2}};
+      emitGroup(set.name, 3, bonds, "", "", 0);
+    }
+  }
+  for (const Program::TupleSet *set : getShakeSets()) {
+    std::vector<std::pair<unsigned, unsigned>> bonds;
+    for (unsigned j = 1; j != set->arity; ++j)
+      bonds.push_back({0, j});
+    emitGroup(set->name, set->arity, bonds, "", "", 0);
+  }
+  return current;
 }
 
 std::string Builder::emitSettleVelocities(StringRef indent, StringRef x,

@@ -2,14 +2,14 @@
 # message that names the file, the line, and what it has.
 #
 # RUN: rm -rf %t && mkdir -p %t && split-file %s %t
-# RUN: not mdir check %t/rb.toml 2>&1 | FileCheck %s --check-prefix=RB
+# RUN: not mdir check %t/rb.toml 2>&1 | FileCheck %s --check-prefix=DIHEDRAL
 # RUN: not mdir check %t/cmap.toml 2>&1 | FileCheck %s --check-prefix=CMAP
 # RUN: not mdir check %t/endif.toml 2>&1 | FileCheck %s --check-prefix=ENDIF
 # RUN: not mdir check %t/include.toml 2>&1 | FileCheck %s --check-prefix=INCLUDE
 # RUN: not mdir check %t/type.toml 2>&1 | FileCheck %s --check-prefix=TYPE
 # RUN: not mdir check %t/missing.toml 2>&1 | FileCheck %s --check-prefix=MISSING
 
-# RB: rb.top:17: only periodic dihedrals (functions 1, 4, and 9) and harmonic impropers (function 2) are supported, not 3
+# DIHEDRAL: rb.top:17: only periodic dihedrals (functions 1, 4, and 9), harmonic impropers (function 2), and dihedrals of Ryckaert and Bellemans (3) and Fourier (5) are supported, not 8
 # CMAP: cmap.top:9: a map of 25 by 25 points is not supported; the numbers must be equal and even
 # ENDIF: endif.top:1: #endif without #ifdef in this file
 # INCLUDE: include.top:1: the included file 'nowhere.itp' is not found next to this file, in the include path, or in GMXLIB
@@ -105,7 +105,7 @@ M 3
 2 3 1 0.15 200000
 3 4 1 0.15 200000
 [ dihedrals ]
-1 2 3 4 3 1 1 1 1 1 1
+1 2 3 4 8 0 1.0
 [ system ]
 x
 [ molecules ]

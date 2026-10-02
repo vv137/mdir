@@ -238,7 +238,13 @@ constraints, and the step that scales the cell (Section 6.4) scales after
 the noise. The momentum of the center of mass is not kept, so
 $N_f = 3N - N_c$ unless its motion is removed, and the log has no conserved
 energy: the run does not count the energy that the friction and the noise
-exchange with the bath. An ideal gas of 256 particles warmed from 10 K by a
+exchange with the bath. With constraints, the virial of their forces is
+that of the forces that keep the bonds at their lengths at the end of the
+step, $\mathbf e\cdot(\mathbf a_q - \mathbf a_p) = -\lvert\mathbf v_q -
+\mathbf v_p\rvert^2/d$, solved with the matrix of RATTLE, rather than the
+mean of the changes of SHAKE and RATTLE within the step, which the
+friction makes smaller by $\gamma\Delta t/2$: those raised the pressure of
+water at one volume by 39 bar per 1/ps of friction at 2 fs. An ideal gas of 256 particles warmed from 10 K by a
 bath of 300 K with $\gamma$ = 5/ps relaxes its kinetic energy at 9.6 ± 0.3/ps,
 against $2\gamma$ = 10/ps.
 
