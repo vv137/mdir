@@ -305,7 +305,7 @@ The interface should derive summaries from generated regions where possible, usi
 
 | State | Question | Example |
 |---|---|---|
-| Ownership and identity | Which domain owns this particle, and how does its global identity map to local storage? | Migration changes owner/local index even if species does not change. |
+| Layout and identity | Which materializations and local indices correspond to this logical entity? | Migration or reindex changes the layout independently of a species or coordinate value version. |
 | Neighborhood validity | Does the stored relation still contain every interaction needed now? | A Verlet list may remain valid through several position updates within the skin. |
 | Field freshness | Does a ghost or cached view contain the requested field version? | Ghost positions change each step even when the neighbor list remains valid. |
 
@@ -948,6 +948,16 @@ The compiler research claim rests on verified alternatives and measured
 whole-step tradeoffs for the same model, not the count of supported models.
 
 ## Recommended implementation sequence
+
+The CPU execution-contract track now has a tested fixed-layout Cartesian LJ
+baseline with synchronous/async payload execution; see
+[cpu-cartesian-async.md](cpu-cartesian-async.md). It is separate from the MLIP
+sequence below. Its next gates are source-derived placement/completion
+contracts ([#37](https://github.com/vv137/mdir/issues/37)), temporal validity and
+migration ([#38](https://github.com/vv137/mdir/issues/38)), topology-derived
+support and contribution return, and a separately placed PP/PME reference
+execution. Production readiness requires moving-state and trajectory validation;
+fixed-snapshot replay alone does not meet that gate.
 
 This sequence implements D166 and D167 and the milestones in
 [roadmap Section 7](roadmap.md#7-distributed-execution-and-learned-potentials).
