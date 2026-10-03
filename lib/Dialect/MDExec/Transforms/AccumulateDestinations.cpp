@@ -152,6 +152,63 @@ static void mergeOuts(TupleForOp loop, unsigned into, unsigned from) {
     zeros->erase();
 }
 
+/// Replaces the loop over pairs `loop` with one whose destination `into`
+/// holds the sum of its destinations `into` and `from`, which have the same
+/// contract of exchange, and that has no destination `from`: the kernel
+/// yields the sum of the two contributions of each pair (D157). `from`
+/// must have no use.
+static void mergeOuts(PairForOp loop, unsigned into, unsigned from) {
+  OpBuilder builder(loop);
+  Location loc = loop.getLoc();
+  unsigned numOuts = loop.getOuts().size();
+
+  SmallVector<Value> outs(loop.getOuts().begin(), loop.getOuts().end());
+  Value dropped = outs[from];
+  outs.erase(outs.begin() + from);
+  SmallVector<Type> resultTypes;
+  for (Value value : llvm::concat<Value>(outs, loop.getReduce()))
+    resultTypes.push_back(value.getType());
+  ArrayAttr exchange;
+  if (loop.getExchange()) {
+    SmallVector<Attribute> kinds(loop.getExchange()->begin(),
+                                 loop.getExchange()->end());
+    kinds.erase(kinds.begin() + from);
+    exchange = builder.getArrayAttr(kinds);
+  }
+  auto merged = PairForOp::create(
+      builder, loc, resultTypes, loop.getNeighbors(), loop.getPositions(),
+      loop.getCell(), loop.getIns(), outs, loop.getReduce(),
+      /*scratch=*/ValueRange(), loop.getCutoffAttr(), loop.getWeightsAttr(),
+      /*overwrite=*/DenseBoolArrayAttr(), loop.getTraversalAttr(),
+      loop.getConflictAttr(), exchange);
+  merged.getKernel().takeBody(loop.getKernel());
+
+  auto yield = cast<YieldOp>(merged.getKernel().front().getTerminator());
+  OpBuilder kernel(yield);
+  SmallVector<Value> values(yield->getOperands());
+  SmallVector<Value> yielded;
+  for (unsigned out = 0; out != numOuts; ++out) {
+    if (out == from)
+      continue;
+    Value value = values[out];
+    if (out == into)
+      value = arith::AddFOp::create(kernel, loc, value, values[from]);
+    yielded.push_back(value);
+  }
+  yielded.append(values.begin() + numOuts, values.end());
+  yield->setOperands(yielded);
+
+  for (unsigned i = 0, e = loop->getNumResults(); i != e; ++i) {
+    if (i == from)
+      continue;
+    loop->getResult(i).replaceAllUsesWith(
+        merged->getResult(i < from ? i : i - 1));
+  }
+  loop->erase();
+  if (Operation *zeros = dropped.getDefiningOp(); zeros && zeros->use_empty())
+    zeros->erase();
+}
+
 /// Merges two destinations of one loop over tuples that a chain of sums of
 /// `op` adds one after the other, as the forces of the sums over the
 /// centers of groups that one loop gives (D139): the loop gives their sum
@@ -168,7 +225,14 @@ static bool mergeOnce(ParticleForOp op) {
         continue;
       std::optional<Term> a = getTerm(op.getIns()[before], op);
       std::optional<Term> b = getTerm(op.getIns()[after], op);
-      if (!a || !b || a->loop != b->loop || !isa<TupleForOp>(a->loop))
+      if (!a || !b || a->loop != b->loop)
+        continue;
+      // Two destinations of a loop over pairs merge when the pair gives
+      // them by the same contract, as the forces of two terms over the
+      // pairs of one neighborhood do (D157).
+      auto pair = dyn_cast<PairForOp>(a->loop);
+      if (pair && (pair.getOverwrite() ||
+                   pair.getExchange(a->out) != pair.getExchange(b->out)))
         continue;
       // The chain adds argument `after` no longer.
       arith::AddFOp sum = chain.sums[k - 1];
@@ -176,7 +240,10 @@ static bool mergeOnce(ParticleForOp op) {
       sum->erase();
       op.getInsMutable().erase(after);
       kernel.eraseArgument(after);
-      mergeOuts(cast<TupleForOp>(a->loop), a->out, b->out);
+      if (pair)
+        mergeOuts(pair, a->out, b->out);
+      else
+        mergeOuts(cast<TupleForOp>(a->loop), a->out, b->out);
       return true;
     }
   }
