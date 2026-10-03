@@ -517,6 +517,9 @@ struct Coupled {
     return control.integrator == Integrator::Leapfrog;
   }
   bool isRestart() const { return !control.restartInput.empty(); }
+  /// Whether a run from a checkpoint evaluates the forces of its first step
+  /// (D[checkpoint-fingerprint]).
+  bool recomputes() const { return isRestart() && control.restartRecomputes; }
 
   const Control &control;
   const System &system;
@@ -6950,8 +6953,9 @@ void Builder::emitEntry() {
     os << "  %c_half_back = arith.constant -5.0e-01 : f64\n"
        << "  %half_back = arith.mulf %c_half_back, %dt : f64\n";
 
-  if (!isRestart()) {
-    // The energies at the start.
+  // The energy, the forces, and the virial of the state at the start, as
+  // %u0, %f0, and %w0; returns the name of the virial.
+  auto emitStartForces = [&]() -> std::string {
     StringRef raw = hasSites() ? "e" : "";
     std::string held = hasRestraints() ? "p" : "";
     os << "  %u0" << held << ", %f0" << held << raw << ", %w0" << held << raw
@@ -6969,6 +6973,18 @@ void Builder::emitEntry() {
                      virial, "%w0");
       virial = "%w0";
     }
+    return virial;
+  };
+
+  // A run that begins from the checkpoint of a run of other physics
+  // evaluates the forces of its first step rather than take those of the
+  // checkpoint (D[checkpoint-fingerprint]).
+  if (recomputes())
+    emitStartForces();
+
+  if (!isRestart()) {
+    // The energies at the start.
+    std::string virial = emitStartForces();
     emitTerms();
     // The diagonal of the virial, which semi-isotropic coupling takes axis
     // by axis, for comparison with other programs (D119).
@@ -7219,7 +7235,7 @@ llvm::Error Builder::build() {
   }
   // Velocity Verlet begins a step with the forces of the step before.
   program.writesForces = !control.minimize;
-  program.takesForces = isRestart() && !control.minimize;
+  program.takesForces = isRestart() && !recomputes() && !control.minimize;
 
   program.skin =
       (control.pairlistDistance - control.cutoffDistance) * units::length;

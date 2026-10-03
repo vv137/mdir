@@ -43,6 +43,7 @@ add_mlir_library(MDIRDriver
   Checkpoint.cpp
   Control.cpp
   Expression.cpp
+  Fingerprint.cpp
   Gromacs.cpp
   Output.cpp
   Selection.cpp

@@ -148,6 +148,11 @@ struct Control {
            !charmmStructureFile.empty();
   }
   std::string restartInput;
+  /// Set by the driver, not by a key: the run takes the positions,
+  /// velocities, and cell of `restartInput`, but evaluates the forces of its
+  /// first step, since the checkpoint was written by a run of other physics
+  /// or coupling (D[checkpoint-fingerprint]).
+  bool restartRecomputes = false;
 
   // [output] (D149)
   std::string trajectoryFile;

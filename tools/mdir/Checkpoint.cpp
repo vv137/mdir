@@ -31,14 +31,21 @@ int mdir::tool::describeCheckpoints(llvm::ArrayRef<std::string> files,
       llvm::errs() << "mdir: --print takes one checkpoint\n";
       return 2;
     }
+    // What defined the run (D[checkpoint-fingerprint]), an entry a line.
+    if (field == "fingerprint") {
+      for (const FingerprintEntry &entry : first->fingerprint)
+        std::printf("%s %s = %s\n", entry.group.c_str(), entry.name.c_str(),
+                    entry.value.c_str());
+      return 0;
+    }
     const std::vector<double> *values =
         field == "positions"    ? &first->positions
         : field == "velocities" ? &first->velocities
         : field == "forces"     ? &first->forces
                                 : nullptr;
     if (!values) {
-      llvm::errs() << "mdir: --print takes positions, velocities, or "
-                      "forces, not '"
+      llvm::errs() << "mdir: --print takes positions, velocities, forces, "
+                      "or fingerprint, not '"
                    << field << "'\n";
       return 2;
     }
@@ -54,6 +61,8 @@ int mdir::tool::describeCheckpoints(llvm::ArrayRef<std::string> files,
   }
 
   if (files.size() == 1) {
+    std::printf("format:          %d, written by %s %s\n", checkpointFormat,
+                first->creator.c_str(), first->creatorVersion.c_str());
     std::printf("particles:       %zu\n", first->getNumParticles());
     std::printf("step:            %lld\n",
                 static_cast<long long>(first->step));
@@ -69,19 +78,18 @@ int mdir::tool::describeCheckpoints(llvm::ArrayRef<std::string> files,
     std::printf("velocity offset: %g time steps\n", first->velocityOffset);
     std::printf("precision:       %s\n", first->precision.c_str());
     std::printf("time step:       %g ps\n", first->timestep);
-    if (first->hasRun) {
-      std::printf("run began at:    step %lld\n",
-                  static_cast<long long>(first->firstStep));
-      std::printf("part:            %lld\n",
-                  static_cast<long long>(first->part));
-      if (first->outputsPart > 0)
-        std::printf("outputs to part: %lld\n",
-                    static_cast<long long>(first->outputsPart));
-      if (!first->trajectory.empty())
-        std::printf("trajectory:      %s, %lld frames\n",
-                    first->trajectory.c_str(),
-                    static_cast<long long>(first->frames));
-    }
+    std::printf("run began at:    step %lld\n",
+                static_cast<long long>(first->firstStep));
+    std::printf("part:            %lld\n", static_cast<long long>(first->part));
+    if (first->outputsPart > 0)
+      std::printf("outputs to part: %lld\n",
+                  static_cast<long long>(first->outputsPart));
+    if (!first->trajectory.empty())
+      std::printf("trajectory:      %s, %lld frames\n",
+                  first->trajectory.c_str(),
+                  static_cast<long long>(first->frames));
+    std::printf("fingerprint:     %zu entries (--print=fingerprint)\n",
+                first->fingerprint.size());
     return 0;
   }
 

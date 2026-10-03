@@ -17,6 +17,7 @@
 #include "mdir/Driver/Builder.h"
 #include "mdir/Driver/Checkpoint.h"
 #include "mdir/Driver/Control.h"
+#include "mdir/Driver/Fingerprint.h"
 #include "mdir/Driver/Output.h"
 #include "mdir/Driver/System.h"
 
@@ -318,10 +319,6 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         return fail(llvm::toString(read.takeError()) + "; '" + previous +
                     "' holds the checkpoint before it, if there is one");
       own = std::move(*read);
-      if (!own->hasRun)
-        return fail("'" + path + "' does not record the run that wrote it "
-                    "and cannot be continued; it can begin another run as "
-                    "'checkpoint' of [input]");
       int64_t end = own->firstStep + total;
       if (own->step >= end) {
         output.log.print(
@@ -332,20 +329,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                      static_cast<long long>(total));
         return 0;
       }
-      if (own->timestep != control->timestep) {
-        std::string message;
-        llvm::raw_string_ostream(message)
-            << llvm::format("'%s' was written with a time step of %g ps, "
-                            "and the control file has %g ps",
-                            path.c_str(), own->timestep, control->timestep);
-        return fail(message);
-      }
-      if (own->seed != control->seed)
-        return fail(llvm::formatv("'{0}' was written with the seed {1}, and "
-                                  "the control file has {2}; the random "
-                                  "numbers of the run follow the seed",
-                                  path, own->seed, control->seed)
-                        .str());
+      // The physics and the coupling of the run are compared with those of
+      // the checkpoint once the system is read (D[checkpoint-fingerprint]).
       // What remains must hold whole intervals of each output and of the
       // coupling, which are counted from where the run began.
       int64_t remaining = end - own->step;
@@ -404,6 +389,47 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   if ((writesCheckpoints || isRestart) && !hasCheckpointSupport())
     return fail("this build of MDIR has no HDF5, which checkpoints need");
 
+  // What defines this run, which its checkpoints record and a checkpoint
+  // that it takes is compared with (D[checkpoint-fingerprint]).
+  Fingerprint fingerprint;
+  if (writesCheckpoints || isRestart) {
+    auto computed = getRunFingerprint(controlFile, *control, *system);
+    if (!computed)
+      return fail(computed.takeError());
+    fingerprint = std::move(*computed);
+  }
+  // Notes for the log, which is not open yet.
+  std::vector<std::string> notes;
+  auto describe = [](const std::vector<FingerprintChange> &changes) {
+    std::string text;
+    for (const FingerprintChange &change : changes)
+      text += "\n  " + change.name + ": " + change.before + " -> " +
+              change.after;
+    return text;
+  };
+  if (own) {
+    // A run continues as it was: another physics or coupling is another
+    // run, which begins from the checkpoint as 'checkpoint' of [input].
+    std::vector<FingerprintChange> changes =
+        compareFingerprints(own->fingerprint, fingerprint, "physics");
+    std::vector<FingerprintChange> coupling =
+        compareFingerprints(own->fingerprint, fingerprint, "coupling");
+    changes.insert(changes.end(), coupling.begin(), coupling.end());
+    if (!changes.empty())
+      return fail("'" + control->restartInput + "' was written by a run of "
+                  "other physics or coupling, which --continue does not "
+                  "change; begin a new run from it as 'checkpoint' of "
+                  "[input] instead. What differs (checkpoint -> control "
+                  "file):" + describe(changes));
+    std::vector<FingerprintChange> execution =
+        compareFingerprints(own->fingerprint, fingerprint, "execution");
+    if (!execution.empty())
+      notes.push_back("the run continues with other settings of its "
+                      "execution, whose bits follow them (checkpoint -> "
+                      "control file):" +
+                      describe(execution));
+  }
+
   StringRef integrator =
       control->minimize ? "MINIMIZATION"
       : control->integrator == Integrator::Leapfrog ? "LEAPFROG"
@@ -422,7 +448,9 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   if (isRestart) {
     auto read = readCheckpoint(control->restartInput);
     if (!read)
-      return fail(read.takeError());
+      return fail(llvm::toString(read.takeError()) + "; '" +
+                  getPreviousCheckpointPath(control->restartInput) +
+                  "' holds the checkpoint before it, if there is one");
     checkpoint = std::move(*read);
     const std::string &path = control->restartInput;
     if (checkpoint->getNumParticles() != system->getNumParticles())
@@ -456,12 +484,12 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                   checkpoint->integrator + ", and the run uses " +
                   integrator + "; the velocities of the two are not of the "
                   "same time");
-    // With a barostat the cell of the checkpoint is where the run left it;
-    // otherwise it is that of the input.
     // The cell is where the run that wrote the checkpoint left it, which a
     // barostat may have changed; the input keeps its own for what depends
-    // on it (the grid of PME, the reference of restraints).
-    warnAboutCell(*checkpoint, *system, path);
+    // on it (the grid of PME, the reference of restraints). A run's own
+    // barostat moving its cell is no news.
+    if (!own)
+      warnAboutCell(*checkpoint, *system, path);
     for (int i = 0; i != 3; ++i) {
       system->inputBox[i] = system->box[i];
       system->box[i] = checkpoint->box[i];
@@ -476,6 +504,39 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     system->barostatState = checkpoint->barostatState;
     system->thermostatState = checkpoint->thermostatState;
     forces = checkpoint->forces;
+    // The checkpoint of another run: its forces, the state of its barostat,
+    // and its thermostat chain are those of its own physics and coupling,
+    // and are taken only where this run has the same
+    // (D[checkpoint-fingerprint]). Otherwise the run evaluates them at its
+    // first step, as production after equilibration with restraints must.
+    if (!own) {
+      std::vector<FingerprintChange> physics =
+          compareFingerprints(checkpoint->fingerprint, fingerprint, "physics");
+      std::vector<FingerprintChange> coupling = compareFingerprints(
+          checkpoint->fingerprint, fingerprint, "coupling");
+      if (!physics.empty() || !coupling.empty()) {
+        std::vector<FingerprintChange> changes = physics;
+        changes.insert(changes.end(), coupling.begin(), coupling.end());
+        notes.push_back("'" + path + "' was written by a run of other "
+                        "physics or coupling; the run evaluates the forces "
+                        "and the state of the barostat at its first step "
+                        "(checkpoint -> control file):" +
+                        describe(changes));
+        control->restartRecomputes = true;
+        forces.clear();
+        system->barostatState.clear();
+      }
+      bool otherThermostat = llvm::any_of(
+          coupling, [](const FingerprintChange &change) {
+            return StringRef(change.name).starts_with("[thermostat]") ||
+                   StringRef(change.name).starts_with("[ensemble]");
+          });
+      if (otherThermostat && !system->thermostatState.empty()) {
+        notes.push_back("the thermostat differs from that of '" + path +
+                        "'; its chain begins at rest");
+        system->thermostatState.clear();
+      }
+    }
     firstStep = checkpoint->step;
     firstTime = checkpoint->time;
   } else if (control->minimize) {
@@ -1075,6 +1136,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     checkpoint.part = part;
     checkpoint.outputsPart = outputsPart;
     checkpoint.trajectory = output.trajectoryName;
+    checkpoint.fingerprint = fingerprint;
+    checkpoint.creatorVersion = getBuildVersion();
   }
   output.endStep = firstStep + control->numSteps;
   // A continued run counts the energy that the coupling has taken from
@@ -1153,6 +1216,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     output.log.print(
                  "MDIR: the velocities are those of the file of "
                  "coordinates\n");
+  for (const std::string &note : notes)
+    output.log.print("MDIR: note: %s\n", note.c_str());
   output.log.print("MDIR: compiled in %.2f s\n", compileTime);
   writeLogHeader(output);
 

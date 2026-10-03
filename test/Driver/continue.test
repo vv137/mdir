@@ -123,7 +123,8 @@
 # RUN: not mdir run --continue %t/short.toml 2>&1 \
 # RUN: | FileCheck %s --check-prefix=PREVONLY
 
-# TIMESTEP: mdir: '{{.*}}short.h5' was written with a time step of 0.004 ps, and the control file has 0.002 ps
+# TIMESTEP:      mdir: '{{.*}}short.h5' was written by a run of other physics or coupling, which --continue does not change; begin a new run from it as 'checkpoint' of [input] instead. What differs (checkpoint -> control file):
+# TIMESTEP-NEXT:   [dynamics] time_step: 0.004 -> 0.002
 # INTERVAL: mdir: the 300 steps that remain after step 100 of '{{.*}}short.h5' are not a multiple of 'checkpoint_interval', 200
 # OTHER:    mdir: '{{.*}}short.h5' counts the frames of 'short.dcd', which is not the trajectory that the run writes, 'other.dcd'
 # FEWER:    mdir: '{{.*}}short.dcd' holds 0 frames, fewer than the 2 that the checkpoint counts
