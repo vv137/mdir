@@ -2866,8 +2866,9 @@ precision     = "DOUBLE"        # SINGLE, MIXED, DOUBLE
 fast_math     = true            # allow rewrites that change rounding
 spatial_order = true            # keep the particles in the order of their
                                 # positions
-deterministic = false           # sums in an order the threads do not decide:
-                                # the same bits from run to run
+deterministic = false           # on a GPU, sums in an order the threads do
+                                # not decide: the same bits from run to run
+                                # (on the CPU they always are)
 # neighbor_capacity = 160       # neighbors per particle at first; grows
 # neighbor_structure = "MATRIX" # MATRIX, GROUPS: groups of 16 that share
                                 # a list, each pair once (GPU only)

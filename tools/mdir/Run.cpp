@@ -115,7 +115,9 @@ static std::string getPipeline(const Control &control,
     return pipeline;
   }
 
-  os << "md-exec-assign-storage,convert-md-exec-to-loops,";
+  // Reductions summed over fixed chunks in a fixed order: the same bits
+  // from run to run and for any number of threads (D[threaded-determinism]).
+  os << "md-exec-assign-storage,convert-md-exec-to-loops,fixed-order-reductions,";
   bool threaded = control.threads > 1;
   if (threaded)
     os << "convert-scf-to-openmp,hoist-static-allocas,canonicalize,";

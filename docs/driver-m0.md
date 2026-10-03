@@ -512,9 +512,17 @@ and kJ/mol.
 | The particles are in the order of the input, whatever order the run keeps them in. | The file does not depend on the plan of the run. The run that continues puts the particles in order where it begins, and arrives at the order of the run that was not interrupted (D44). |
 
 A run that continues from a checkpoint arrives at the state of the run that
-was not interrupted, bit for bit. This holds on the CPU and on a GPU, in
-every precision mode, and for both integrators; the tests compare the
-states. The two runs must have the same `checkpoint_interval`.
+was not interrupted, bit for bit, in every precision mode and for both
+integrators; the tests compare the states. On the CPU this holds for any
+number of threads: the sums of the parallel loops (the energies, the
+virial, the kinetic energy that the coupling reads) are added over a fixed
+partition into chunks and in a fixed order (D[threaded-determinism]), so a
+run gives the same bits from run to run and with any number of threads. On
+a GPU it holds in the deterministic mode. Without it, the sums that a
+device adds with floating-point atomics (the charges of PME, the loops over
+groups, D84) can differ in their last bits from run to run, and a run with
+a thermostat or a barostat carries the difference into its state. The two
+runs must have the same `checkpoint_interval`.
 
 A run cannot continue with another integrator: the velocities of the two
 are not of the same time. It cannot continue in another box.

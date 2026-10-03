@@ -15,6 +15,7 @@ configure_file(
   @ONLY)
 
 add_mlir_conversion_library(MDIRMDExecToLoops
+  FixedOrderReductions.cpp
   HoistAllocas.cpp
   MDExecToLoops.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/Templates.cpp

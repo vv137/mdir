@@ -1,0 +1,162 @@
+# Runs on the CPU with several threads and a thermostat or a barostat are
+# reproducible (D[threaded-determinism]). The kinetic energy and the virial
+# that set the coupling are sums of a parallel loop; summed by the OpenMP
+# runtime in the order in which the threads finished, they differed in
+# their last bits from run to run, and the coupling carried the difference
+# into the positions (before the change, 111 to 292 positions of the
+# mixture differed after 200 steps). Summed over fixed chunks in a fixed
+# order, the state after 200 steps is the same bits with 1 and 4 threads,
+# from run to run, and when the run continues from a checkpoint.
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && split-file %s %t && cp %S/Inputs/mixture.pdb %t
+# RUN: cd %t
+#
+# Anisotropic C-rescale with V-rescale, velocity Verlet.
+# RUN: sed -e 's|"OUT"|"aniso-4.h5"|' aniso.toml > aniso-4.toml
+# RUN: sed -e 's|"OUT"|"aniso-4b.h5"|' aniso.toml > aniso-4b.toml
+# RUN: sed -e 's|"OUT"|"aniso-1.h5"|' -e 's|threads = 4|threads = 1|' aniso.toml > aniso-1.toml
+# RUN: sed -e 's|"OUT"|"aniso-c.h5"|' -e 's|steps = 200|steps = 100|' aniso.toml > aniso-c1.toml
+# RUN: sed -e 's|"OUT"|"aniso-c.h5"|' aniso.toml > aniso-c2.toml
+# RUN: mdir run aniso-4.toml > /dev/null
+# RUN: mdir run aniso-4b.toml > /dev/null
+# RUN: mdir run aniso-1.toml > /dev/null
+# RUN: mdir run aniso-c1.toml > /dev/null
+# RUN: mdir run aniso-c2.toml --continue > /dev/null
+# RUN: mdir checkpoint aniso-4.h5 aniso-4b.h5 | FileCheck %s
+# RUN: mdir checkpoint aniso-4.h5 aniso-1.h5 | FileCheck %s
+# RUN: mdir checkpoint aniso-4.h5 aniso-c.h5 | FileCheck %s
+#
+# A Nose-Hoover chain with the leapfrog.
+# RUN: sed -e 's|"OUT"|"nhc-4.h5"|' nhc.toml > nhc-4.toml
+# RUN: sed -e 's|"OUT"|"nhc-4b.h5"|' nhc.toml > nhc-4b.toml
+# RUN: sed -e 's|"OUT"|"nhc-1.h5"|' -e 's|threads = 4|threads = 1|' nhc.toml > nhc-1.toml
+# RUN: sed -e 's|"OUT"|"nhc-c.h5"|' -e 's|steps = 200|steps = 100|' nhc.toml > nhc-c1.toml
+# RUN: sed -e 's|"OUT"|"nhc-c.h5"|' nhc.toml > nhc-c2.toml
+# RUN: mdir run nhc-4.toml > /dev/null
+# RUN: mdir run nhc-4b.toml > /dev/null
+# RUN: mdir run nhc-1.toml > /dev/null
+# RUN: mdir run nhc-c1.toml > /dev/null
+# RUN: mdir run nhc-c2.toml --continue > /dev/null
+# RUN: mdir checkpoint nhc-4.h5 nhc-4b.h5 | FileCheck %s
+# RUN: mdir checkpoint nhc-4.h5 nhc-1.h5 | FileCheck %s
+# RUN: mdir checkpoint nhc-4.h5 nhc-c.h5 | FileCheck %s
+#
+# The pipeline of the CPU orders the sums before OpenMP lowers the loops.
+# RUN: mdir emit aniso-4.toml --stage=pipeline | FileCheck %s --check-prefix=PIPELINE
+
+# CHECK: the states are identical
+
+# PIPELINE: convert-md-exec-to-loops,fixed-order-reductions,convert-scf-to-openmp,
+
+#--- aniso.toml
+[input]
+coordinates = "mixture.pdb"
+
+[energy]
+switch_distance   = 7.5
+cutoff            = 9.0
+pairlist_distance = 10.0
+
+[[energy.pair]]
+name       = "lj"
+expression = "4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+mixing     = "lorentz-berthelot"
+
+[[energy.type]]
+name    = "AR"
+mass    = 39.95
+epsilon = 0.238465
+sigma   = 3.4
+
+[[energy.type]]
+name    = "KR"
+mass    = 83.80
+epsilon = 0.3253
+sigma   = 3.65
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.004
+steps = 200
+
+[boundary]
+type = "PERIODIC"
+box  = [23.2, 23.2, 23.2]
+
+[output]
+checkpoint          = "OUT"
+checkpoint_interval = 100
+energy_interval     = 50
+
+[ensemble]
+ensemble    = "NPT"
+temperature = 120.0
+pressure    = 200.0
+
+[thermostat]
+method        = "V-RESCALE"
+interval      = 10
+time_constant = 0.5
+
+[barostat]
+method        = "C-RESCALE"
+time_constant = 2.0
+coupling      = "ANISOTROPIC"
+
+[execution]
+threads = 4
+precision = "double"
+#--- nhc.toml
+[input]
+coordinates = "mixture.pdb"
+
+[energy]
+switch_distance   = 7.5
+cutoff            = 9.0
+pairlist_distance = 10.0
+
+[[energy.pair]]
+name       = "lj"
+expression = "4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+mixing     = "lorentz-berthelot"
+
+[[energy.type]]
+name    = "AR"
+mass    = 39.95
+epsilon = 0.238465
+sigma   = 3.4
+
+[[energy.type]]
+name    = "KR"
+mass    = 83.80
+epsilon = 0.3253
+sigma   = 3.65
+
+[dynamics]
+integrator = "LEAPFROG"
+time_step  = 0.004
+steps = 200
+
+[boundary]
+type = "PERIODIC"
+box  = [23.2, 23.2, 23.2]
+
+[output]
+checkpoint          = "OUT"
+checkpoint_interval = 100
+energy_interval     = 50
+
+[ensemble]
+ensemble    = "NVT"
+temperature = 120.0
+
+[thermostat]
+method        = "NOSE-HOOVER"
+interval      = 10
+time_constant = 1.0
+
+[execution]
+threads = 4
+precision = "double"

@@ -56,7 +56,16 @@ accumulated in f64, in a fixed order, from partial sums in the type of
 the kernel over a block. The charges of particle mesh Ewald are spread in
 fixed point in the deterministic mode, with 64-bit integers at the scale
 $2^{40}$ [[LeGrand2013]](references.md#legrand2013) (D70), whose sum does not depend on the order of
-the threads; by default they are added with f32 atomics (D84).
+the threads; by default they are added with f32 atomics (D84). On the
+CPU every reduction of a parallel loop is added over a fixed number of
+chunks of contiguous particles, each in order, and the chunks in their
+order (D[threaded-determinism]): the sum depends on the number of particles
+alone, not on the threads or how many there are. Before, the OpenMP
+runtime combined the partial sums of the threads in the order in which
+they finished; with a thermostat or a barostat, whose coupling reads the
+kinetic energy and the virial, two runs with four threads then differed in
+up to 1.3e-15 of the positions after 200 steps, and the deterministic mode
+did not prevent it.
 
 ## 7.2 What is approximated, and within what bound
 
