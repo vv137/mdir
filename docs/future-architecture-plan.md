@@ -1,6 +1,6 @@
 # MDIR Future Architecture Plan: Saunders, Cornel, and P4IRS
 
-Initial architecture review: October 1, 2026. Updated October 2, 2026 after reading William Robert Saunders's doctoral thesis. Sources: the three supplied theses/papers, the repository, and primary documentation for the model interfaces discussed below. The implementation survey records the October 1 baseline; the Saunders additions refine the future plan rather than claim a new implementation audit. This document distinguishes implemented behavior, documented plans, and recommendations. It does not reproduce benchmark results or execute the test suite.
+Initial architecture review: October 1, 2026. Updated October 2, 2026 after reading William Robert Saunders's doctoral thesis. Sources: the three supplied theses/papers, the repository, and primary documentation for the model interfaces discussed below. The implementation survey records the October 1 baseline; the Saunders additions refine the future plan rather than claim a new implementation audit. On October 3, 2026, D159 adopts the MLIP integration and distributed validation sequence below; that decision changes the plan, not the implementation status. This document distinguishes implemented behavior, documented plans, and recommendations. It does not reproduce benchmark results or execute the test suite.
 
 MDIR's separation of potential semantics, dynamics, distribution, and traversal is a sound basis for combining classical force fields with machine-learned interatomic potentials (MLIPs). The strongest research direction is to preserve spatial and topological dependencies through differentiation, then use those dependencies to select communication and traversal together. The repository already provides useful foundations: semantic differentiation, explicit relations, exchange contracts, neighbor validity, storage assignment, and CPU/GPU lowering. The staged dependency interface and distributed planner that would connect them remain proposals.
 
@@ -669,7 +669,7 @@ Training parallelism is a separate problem. DeePMD documents PyTorch distributed
 
 These sources strengthen the motivation for the dependency abstraction, but also narrow the contribution claim: intermediate-feature communication and distributed MLIP inference already exist. MDIR's opportunity is to derive legal alternatives from shared semantic structure and select among them, including classical potentials, rather than to claim the first implementation of layer-aware communication.
 
-Treat multirank execution as an early architectural acceptance criterion, even if the immediate repository milestone remains single-node classical performance. A small two-rank CPU reference can test the ownership and stage protocol before GPU transport is available. A two-GPU run can then validate device buffers and completion; multinode evaluation is needed to establish the cluster claim. Single-GPU improvements alone cannot validate the distributed research story.
+Treat multirank execution as an early architectural acceptance criterion, even though ML1 begins with a single-GPU adapter. A small two-rank CPU reference can test the ownership and stage protocol before GPU transport is available. A two-GPU run can then validate device buffers and completion; multinode evaluation is needed to establish the cluster claim. Single-GPU improvements alone cannot validate the distributed research story.
 
 For one fixed model, compare enlarged coordinate halos, per-layer feature halos, redundant boundary computation, and overlap. These are not necessarily four mutually exclusive strategies: overlap can improve either of the first two, and redundant computation can cover selected stages. Use factorial or carefully controlled comparisons, hold weights/outputs/precision constant, and report both strong and weak scaling. DPA4 versus DPA4C demonstrates different dependency classes; comparing their speed directly would not isolate a communication strategy because the models themselves differ.
 
@@ -733,29 +733,145 @@ These are contribution candidates, not established novelty claims. “MLIR for p
 
 A defensible future claim, contingent on implementation and evaluation, is: **MDIR preserves staged particle dependencies through energy differentiation and uses them to construct and optimize both communication and physical traversal for classical and learned potentials.** The current repository supports the foundation of that claim; it does not yet demonstrate the complete result.
 
-The current roadmap prioritizes single-node classical MD correctness and performance before a white paper. That remains a distinct, defensible scope. A paper about the implemented compiler should report the staged/distributed design as future work. A paper centered on classical/MLIP unification needs the additional implementation and experiments listed above. [Current roadmap](roadmap.md).
+The first-milestone white paper is written. Its validation and preparation for publication remain separate from this extension; they do not wait for MLIP or distributed execution. The paper about the implemented compiler should report the staged/distributed design as future work. A paper centered on classical/MLIP unification needs the additional implementation and experiments listed above. [Current roadmap](roadmap.md#7-distributed-execution-and-learned-potentials).
+
+## Adopted scope and first deliverable
+
+D159 adopts this direction on October 3, 2026. **The first deliverable is
+one existing MLIP artifact, validated on one GPU and then on two GPUs
+partitioning the same physical system.** Select a finite-range, strictly
+local model whose energy, force, and stress conventions can be checked
+against its original backend. Record the artifact hash, backend and
+adapter versions, supported species, units, precision, and output
+capabilities before implementation. Model loading, staged execution, and
+an optimized distributed plan are separate capabilities; none is currently
+implemented in MDIR.
+
+The optional metatomic adapter is the first compatibility path. It can
+start before the distributed compiler or the Python API is complete,
+through the existing driver. Keep the model's external execution path
+working when a stage interface or semantic importer is added later. The
+MDIR core must still build and run classical systems without the adapter's
+tensor framework. Dense tensor operations may remain in an external
+backend; importing all PyTorch/JAX programs, retraining models, and writing
+a replacement tensor compiler are outside this deliverable.
+
+Distinguish the three user objectives:
+
+| Objective | Execution requirement | Evidence |
+|---|---|---|
+| Evaluate many independent systems or trajectories | Independent runs assigned to GPUs | Aggregate throughput; this does not establish domain-decomposed correctness or scaling |
+| Fit a larger physical system in memory | Partition its atoms and environments over GPUs | Peak memory per GPU, complete dependencies, and energy/force/virial agreement |
+| Advance one trajectory faster | Partition the system with a net reduction in full-step time | Strong scaling including communication, synchronization, and output costs |
+
+A two-GPU correctness result does not promise a speedup. Publish the
+measured overhead and the system sizes where distributing helps or hurts.
+The first scope is one node, short-range local interactions, and a fixed
+cell without constraints. Distributed PME, global attention or charge
+solvers, constraints spanning domains, general model import, and multihost
+execution remain later work. The dependency vocabulary must accommodate
+them without claiming their implementation. Stress/virial correctness is
+still required, checked by deformation even before an NPT run is enabled.
+
+The research opportunity is to derive and verify communication from energy
+and derivative dependencies, then choose execution strategies for the same
+model. Interoperability and intermediate-feature communication already
+exist elsewhere: metatomic provides the model/engine interface, and
+chemtrain-deploy documents multirank execution with intermediate-value
+exchange. Neither feature alone establishes MDIR's novelty. [Metatomic
+interface](https://docs.metatensor.org/metatomic/latest/index.html),
+[chemtrain-deploy communication](https://chemtrain.readthedocs.io/en/latest/chemtrain-deploy/lammps.html).
 
 ## Recommended implementation sequence
 
-1. **Define and verify the dependency graph on current operations.** Start with requested pair/tuple derivatives and specialized reciprocal evaluation. Record nodes, edges, exact support versus candidates/coverage, field versions, ownership, reduction initialization/completion, and data distribution. Specify approximation and numerical contracts without adding a new solver. Preserve current execution behavior while making the analysis inspectable.
+This sequence implements D159 and the milestones in
+[roadmap Section 7](roadmap.md#7-distributed-execution-and-learned-potentials).
+The first local MLIP on two GPUs completes ML1 through ML3; message-passing
+optimization follows as ML4 and ML5.
 
-2. **Separate ownership, geometric coverage, and field freshness.** Model particle IDs and periodic images explicitly. Connect neighbor validity to distributed coverage and distinguish those facts from current ghost values. Specify external mutation and parameter-version invalidation.
+1. **Validate one opaque model on one GPU (ML1).** Define the versioned
+   potential/neighbor contract and implement an optional metatomic adapter.
+   Preserve the artifact and its backend; do not require conversion to a
+   new model format. Check species and units, particle/image mapping,
+   neighbor derivative registration, requested outputs, and buffer lifetime
+   and completion. Reject unsupported requests explicitly. Compare energy,
+   every force component, and converted stress/virial with the original
+   backend on identical configurations; test coordinate and cell finite
+   differences and a short NVE trajectory. Record boundary copies and
+   synchronization separately from model computation.
 
-3. **Implement a fixed two-domain LJ realization.** Use the existing directed, owner-only baseline with synchronous halos and a fixed plan. Verify decomposition independence within the declared numerical tolerance before introducing policy search.
+2. **Define and verify dependencies and ownership (ML2).** On current
+   pair/tuple operations, their derivatives, and specialized reciprocal
+   evaluation, record exact support versus candidate coverage, field
+   versions, ownership, reduction initialization/completion, and data
+   distribution. Keep particle IDs and periodic images explicit; distinguish
+   geometric coverage from field freshness. Specify external mutation and
+   parameter invalidation. Preserve current execution while exposing the
+   analysis. Declare external-model support per output: energy support
+   alone does not establish a complete force environment.
 
-4. **Add a distributed verifier and inspectable schedule.** Before EAM, dump domain requirements, transfers, ownership mappings, and completion edges. Exercise a tiny two-stage neighbor statistic with a required intermediate exchange; add synthetic collective and two-level hierarchy graphs to check contract coverage without building an FMM runtime. Detect missing producers, stale versions, incomplete coverage, duplicate initialization, and incompatible participation. Reuse this representation for diagnostics and legal schedule illustrations.
+3. **Implement two-domain LJ with a distributed verifier (ML2).** Start
+   with directed, owner-only traversal, synchronous halos, and a fixed plan:
+   two CPU ranks, then two GPUs. Dump requirements, transfers, identity
+   mappings, and completion edges. Test migration, neighbor rebuilds,
+   periodic boundaries, reordered IDs, and uneven or empty domains. Negative
+   tests must diagnose missing transfers, stale fields, incomplete coverage,
+   duplicate initialization, and incompatible participation. Synthetic
+   collectives and hierarchy graphs check the contract without requiring
+   distributed PME or FMM.
 
-5. **Add EAM as the first intermediate-field case.** Demonstrate the position and embedding-derivative exchange boundaries. This directly tests the proposed stage abstraction with a classical potential before adding a tensor framework.
+4. **Add EAM as the intermediate-field case (ML2).** Compare one domain
+   and two domains: exchange positions before calculating densities, then
+   embedding derivatives before calculating forces. A stale intermediate
+   must be diagnosed. This validates stage boundaries independently of a
+   tensor framework.
 
-6. **Implement reverse contribution routing.** Cover unique cross-domain pairs or a small differentiated neighbor computation. Verify returned forces, ghost energy accounting, reordered IDs, and conservation properties. Add a small sum/replication case to establish that logical global values do not introduce a rank-count factor in adjoints.
+5. **Implement reverse contribution routing (ML2).** Cover unique pairs
+   crossing domains and a small differentiated neighbor computation. Check
+   force contributions returned to owners, exactly-once energy accounting,
+   migration, and conservation. A sum/replication adjoint test must show that
+   physical replicas do not introduce a rank-count factor. Test completion
+   dependencies before any asynchronous overlap.
 
-7. **Add a metatomic opaque adapter and a semantic path for the same model.** Start with a versioned potential/neighbor contract aligned with community terminology and keep the metatomic dependency optional. Define support per requested output and runtime buffer/completion rules; expose stage calls or communication hooks where per-layer planning is required. Keep native import outside the stable plugin ABI. A small reference model is sufficient to compare the interoperability and optimization paths with identical weights; supporting every MLIP family is unnecessary for the first demonstration.
+6. **Run the same local MLIP on two GPUs (ML3).** Reuse the ML1 artifact,
+   backend, units, precision, and requested outputs, with complete local
+   environments and declared derivative ownership. Compare against both
+   the original backend and the one-GPU adapter, including particles moving
+   across domain boundaries. Record energy, per-particle forces, virial,
+   short-run conservation, peak memory, and full-step time. Fix tolerances
+   from the precision and reference before judging results. This milestone
+   requires correctness on one and two GPUs; a four-GPU scaling measurement
+   is a subsequent experiment, not a condition for its completion.
 
-8. **Introduce bounded legal-plan selection and measured overlap.** Choose among a small legal set, such as directed/unique pairs, a few skins, and bundled/per-stage exchange. Use fixed-plan baselines, a tuning budget, and matching physical/numerical contracts. Measure critical-path and full-step time, memory, and setup cost before expanding the search space or transports.
+7. **Expose one message-passing model's stages (ML4).** Keep an opaque
+   execution path and add stage calls or a semantic importer for the same
+   model. Make forward field dependencies and reverse derivative routing
+   explicit. Compare enlarged coordinate halos with per-layer feature
+   exchange, including redundant boundary work and reverse communication.
+   Keep weights, precision, outputs, and physical settings identical; a
+   comparison of different model architectures does not isolate the
+   execution strategy. No universal halo formula or speedup is assumed.
 
-PME should be included in the support vocabulary now, because its existing implementation already demonstrates that particle computation is not exclusively a radius-neighbor loop. Saunders's FMM adds hierarchical support and level-specific ownership as contract test cases, not a requirement to implement FMM now. Distributed mesh/tree lowering can remain later milestones. Likewise, constraints should be recognized as iterative topological computations even if the first distributed prototype excludes them explicitly.
+8. **Select among a bounded set of legal plans (ML5).** Begin with fixed
+   baselines, then a few traversal, skin, exchange, and overlap choices.
+   Record the tuning budget, bytes/messages, duplicated work, memory,
+   setup/compilation cost, and full-step time. Measure strong and weak
+   scaling on one, two, and four GPUs; a cluster claim also needs multiple
+   nodes. Each optimization states its checked preconditions, has a switch,
+   and is compared with the baseline under the numerical contract, as
+   [the principles](principles.md) require. Reordering and overlap also
+   require an argument that the result is unchanged, with every premise
+   tied to its verifier or runtime check; measurements alone do not prove
+   freedom from races. Measured benefits, rather than supported model count,
+   decide whether to expand the planner.
 
-Treat artifact identity, restart boundaries, and scheduler stop points as design constraints throughout these milestones. A first batch prototype can serialize one fixed target/plan and exercise same-plan continuation before adding variant selection or rank-count changes. This companion workflow should reuse the dependency and ownership contracts rather than become a second execution system.
+Artifact identity, restart boundaries, and scheduler stop points constrain
+all stages. A first prototype may support same-plan continuation only;
+rank-count changes need explicit validation later. Persistent compilation
+caches and runnable artifacts remain companion work: keys distinguish
+model/backend identity from code-affecting plan choices, allowing changes
+that leave generated code unchanged to reuse it. Neither a cache nor the
+full Python API blocks the first adapter or two-GPU correctness milestone.
 
 ## Validation and experimental design
 

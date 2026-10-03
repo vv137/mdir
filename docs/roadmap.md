@@ -1,6 +1,6 @@
 # Roadmap
 
-Status: 2026-10-02. The stages of the first milestone are in
+Status: 2026-10-03. The stages of the first milestone are in
 [design-m1.md](design-m1.md), Section 18; the principles that the work
 follows are in [principles.md](principles.md).
 
@@ -210,30 +210,49 @@ Still to decide for DLPack: the order of the particles when the run keeps them i
 
 ## 7. Distributed execution and learned potentials
 
-[future-architecture-plan.md](future-architecture-plan.md) orders this
-work; none of it has started. After U1 to U4 and a first Python API:
+Direction adopted in D159 (2026-10-03); all milestones below are planned,
+not implemented. [The architecture plan](future-architecture-plan.md#adopted-scope-and-first-deliverable)
+holds the contracts and detailed sequence. The first deliverable is **one
+existing local MLIP, validated on one GPU and then on two GPUs sharing one
+physical system**. Independent trajectories on separate GPUs are useful
+but do not validate this decomposition.
 
-| Step | Work | Acceptance |
+Start the optional metatomic adapter through the existing driver before
+the distributed compiler and full Python API are complete. The first
+scope is finite-range local interactions, a fixed cell, no constraints,
+and one node. Keep the first-milestone classical MD paper's validation and
+publication independent of this work. An adapter, distributed inference,
+and compiler optimization are separate outcomes; none alone establishes
+novelty or a speedup.
+
+| Milestone | Work | Completion evidence |
 |---|---|---|
-| 1 | A graph of the dependencies of the current `md` ops (pairs, tuples, their derivatives, the reciprocal sum), with a dump of the schedule | The schema written out for LJ, EAM, bonded terms, PME, and one layer of message passing; execution unchanged |
-| 2 | Ownership, geometric coverage, and freshness of fields kept apart; particle numbers, images, invalidation | On step 1 |
-| 3 | LJ on two domains with a fixed plan and a distributed verifier: two ranks on the CPU, then two GPUs | The results of one domain; tests that catch a stale field or a missing transfer |
-| 4 | EAM, the first potential with an intermediate field ($\psi$ exchanged after the density) | One node, then two domains |
-| 5 | The reverse routing of contributions (unique pairs across domains) | An adjoint test of sums and replication |
-| 6 | `md.external_potential` behind a versioned C ABI, an optional adapter for metatomic, and a semantic path for one small model with the same weights | The same forces by both paths |
-| 7 | A persistent kernel cache keyed by content, not by the number of ranks, and a compiled artifact that starts without compiling (cubin) | Replanning does not recompile |
-| 8 | A bounded choice among a few legal plans, with measured overlap | Before any wider search |
+| ML1 | One existing metatomic artifact through an optional adapter and versioned potential/neighbor contract; retain its external backend | On one GPU, energy, per-particle forces, and stress/virial agree with the original backend under declared tolerances; coordinate/cell finite differences and short NVE run; record artifact/backend identity, units, species, precision, copies, and synchronization; unsupported outputs rejected; classical builds still work without the adapter |
+| ML2 | Dependency graph, ownership and periodic images, coverage and freshness; fixed two-domain LJ, then EAM and reverse contribution routing; CPU ranks before GPUs | Energy, forces, and virial agree with one domain; migration, rebuilds, boundaries, uneven/empty domains, and exactly-once accumulation tested; inspectable schedules and negative tests for missing transfers, stale intermediates, and invalid completion |
+| ML3 | The ML1 local model on two GPUs using the ML2 ownership and transfer contract | Same artifact, weights, precision, and outputs as ML1; one/two-GPU agreement against the original backend including migration and short-run conservation; peak memory and full-step time recorded, without requiring a speedup; completes the first deliverable |
+| ML4 | One message-passing model with both an opaque path and exposed stages or semantic import | Same-model comparison of enlarged coordinate halos and per-layer feature exchange, including reverse derivatives; energy/force/virial agreement and measurements of bytes, messages, redundant work, memory, and full-step time |
+| ML5 | Bounded legal-plan selection and measured overlap | Fixed-plan baselines and tuning cost reported; one/two/four-GPU strong and weak scaling; multiple nodes before a cluster claim; checked preconditions and an off switch for each optimization |
 
-To bring into line with that plan: [architecture.md](architecture.md),
+A four-GPU measurement follows ML3's one/two-GPU correctness gate; it is
+not required to complete that first deliverable. Distributed PME, global
+attention or charge solvers, constraints across domains, training, and
+arbitrary PyTorch/JAX import remain outside it. The dependency vocabulary
+must leave room for these cases without claiming support.
+
+A persistent kernel cache and runnable compiled artifacts remain companion
+work. Cache keys include the model/backend and code-affecting plan choices;
+replanning that does not change generated code can reuse it. Preserve
+artifact identity and restart contracts from ML1, initially with same-plan
+continuation; changes of rank count require later validation.
+
+To bring into line with the detailed plan: [architecture.md](architecture.md),
 Section 6 still calls the plan an ordered list of stages, where the plan
 makes the graph primary; its Section 4.3 names spherical harmonics as op
 families and asks the halo to cover the receptive field of the energy,
 where the plan is agnostic of the basis and separates the support of the
 forces from that of the energy; its milestones (Section 12) have neither
 EAM, the verifier, nor the adapter. [decisions.md](decisions.md), Section
-7 still tags the dependency interface M2b, which A14 moved into M1. The
-plan's line that the roadmap "prioritizes single-node classical MD ...
-before a white paper" predates the paper.
+7 still tags the dependency interface M2b, which A14 moved into M1.
 
 ## 8. Analysis
 
