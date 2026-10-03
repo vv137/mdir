@@ -101,7 +101,10 @@ Every PR adds its entry to the Unreleased section of
 [CHANGELOG.md](../CHANGELOG.md), under Added, Changed, Fixed, or Removed,
 with its decision label. A change that breaks a control file, a checkpoint,
 or an output of an earlier release says so there, with what a user has to
-do.
+do. The entry is part of what the review checks before it labels the PR
+`merge-recommended`. Whether a change counts as breaking, when that is in
+doubt, is a design question for the maintainer: ask it in a PR comment and
+label the PR `needs-decision`.
 
 PR titles, descriptions, comments, and commit messages are in American
 English. Commits carry no trailers (no `Co-Authored-By`, no
@@ -174,10 +177,13 @@ The coordinator merges only PRs labeled `approved` by the maintainer:
 5. Fast-forward `main` and push it. The PRs then show as merged; the
    label `approved` is the maintainer's approval of this push.
 6. Rebuild the white paper (`scripts/paper/build-pdf.sh`).
-
-A release moves the Unreleased section of the changelog under the new
-version and its date, sets `project(mdir VERSION ...)` in `CMakeLists.txt`,
-and is tagged `v<version>` by the maintainer, who publishes the GitHub
-Release with its notes (`docs/release-notes/`) and the white paper's PDF.
 7. Remove the merged worktrees, branches, and build trees, and ask the
    authors of the open PRs to rebase on the new `main`.
+
+## Releases
+
+A release moves the Unreleased section of the changelog under the new
+version and its date, and sets `project(mdir VERSION ...)` in
+`CMakeLists.txt`, in a PR that goes through the labels like any other. The
+maintainer then tags `v<version>` and publishes the GitHub Release, with
+its notes (`docs/release-notes/`) and the white paper's PDF.
