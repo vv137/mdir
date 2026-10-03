@@ -40,11 +40,21 @@ OPENMM = {
     'PME': [(-0.269445, 3.926729, 0.0), (-0.273035, 3.926729, 0.135620),
             (-0.276625, 3.926729, 0.273035), (-0.276625, 3.850620, -0.893522),
             (-0.276625, 3.752466, -2.413999), (-0.276625, 3.681771, -3.529069)],
+    # The reaction field with the Lennard-Jones shifted to 0 at the cutoff,
+    # the shift of the soft-core taken at the cutoff, in σ.
+    'RF_SHIFT': [(-0.349729, 3.524760, 0.0), (-0.349729, 3.524760, 0.174864),
+                 (-0.349729, 3.524760, 0.349729),
+                 (-0.349729, 3.448651, -0.696237),
+                 (-0.349729, 3.350496, -2.055926),
+                 (-0.349729, 3.279802, -3.050406)],
 }
 ELECTROSTATICS = {
     'RF': 'electrostatics = "REACTION_FIELD"\nreaction_field_dielectric = 78.3\n',
     'PME': 'electrostatics = "PME"\n[pme]\nbeta = 0.32\ngrid = [32, 32, 32]\n'
            'influence = "SPME"\n',
+    'RF_SHIFT': 'electrostatics = "REACTION_FIELD"\n'
+                'reaction_field_dielectric = 78.3\n'
+                'lennard_jones_modifier = "POTENTIAL_SHIFT"\n',
 }
 
 
@@ -106,6 +116,7 @@ def report(label, worst, tolerance):
 # Against OpenMM. In mixed precision the kernels of the pairs are in f32.
 mixed = precision == 'MIXED'
 for electrostatics, tolerance in (('RF', 5e-5 if mixed else 3e-6),
+                                  ('RF_SHIFT', 5e-5 if mixed else 3e-6),
                                   ('PME', 4e-3)):
     coulomb = [s[0] for s in STATES]
     vdw = [s[1] for s in STATES]
@@ -164,3 +175,76 @@ report('dH/dl against central differences', worst,
 worst = max(abs(runs[k][f'dU.{j}'] + runs[j][f'dU.{k}'])
             for k in runs for j in runs)
 report('the energies of the other states', worst, 1e-4 if mixed else 3e-6)
+
+# At λ = 0 the run is the run without [free_energy]: its potential energy
+# at every row of the log, with each electrostatics and each modifier of
+# the Lennard-Jones that [free_energy] takes.
+IDENTITY = '''[input]
+topology = "eth_wat.prmtop"
+coordinates = "eth_wat.inpcrd"
+[output]
+energy_interval = 2
+energy = "{name}.energy"
+{free}
+[energy]
+cutoff = 9.0
+switch_distance = 9.0
+pairlist_distance = 10.0
+{electrostatics}
+{modifier}
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step = 0.001
+steps = 6
+[ensemble]
+ensemble = "NVE"
+temperature = 300.0
+[boundary]
+type = "PERIODIC"
+[execution]
+target = "{target}"
+precision = "{precision}"
+'''
+FREE = """[free_energy]
+couple = ":LIG"
+state = 0
+[free_energy.lambdas]
+coulomb = [0.0, 1.0]
+vdw = [0.0, 1.0]
+"""
+
+
+def potentials(name, free, electrostatics, modifier):
+    text = IDENTITY.format(name=name, free=free, target=target,
+                           precision=precision, modifier=modifier,
+                           electrostatics=electrostatics)
+    with open(os.path.join(directory, name + '.toml'), 'w') as file:
+        file.write(text)
+    result = subprocess.run([mdir, 'run', name + '.toml'], cwd=directory,
+                            capture_output=True, text=True)
+    if result.returncode:
+        sys.exit(f'mdir run {name}.toml failed:\n{result.stdout}\n'
+                 f'{result.stderr}')
+    with open(os.path.join(directory, name + '.energy')) as file:
+        header = file.readline().split()[1:]
+        file.readline()
+        column = header.index('potential')
+        return [float(line.split()[column]) for line in file]
+
+
+worst = 0.0
+for label, electrostatics in (
+        ('cutoff', 'electrostatics = "CUTOFF"'),
+        ('pme', 'electrostatics = "PME"'),
+        ('rf', ELECTROSTATICS['RF'])):
+    for modifier in ('', 'lennard_jones_modifier = "POTENTIAL_SHIFT"\n'
+                         'dispersion_correction = "NONE"'):
+        name = f'identity_{label}_{"shift" if modifier else "none"}'
+        plain = potentials(name + '_plain', '', electrostatics, modifier)
+        free = potentials(name + '_free', FREE, electrostatics, modifier)
+        if len(plain) != len(free):
+            worst = float('inf')
+            continue
+        worst = max([worst] + [abs(a - b) for a, b in zip(plain, free)])
+report('lambda = 0 against no [free_energy]', worst,
+       1e-4 if mixed else 1e-6)

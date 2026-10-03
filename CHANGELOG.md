@@ -34,6 +34,10 @@ format, or the outputs; every such change is listed under **Changed** or
   component and the energy of every state relative to the run's at every
   energy; `scripts/free-energy.py` gives the free energy by thermodynamic
   integration and MBAR. Checkpoints record the states and the run's state.
+  The Lennard-Jones takes a plain cutoff or the potential shift; a switch
+  (`switch_distance` below `cutoff`, `FORCE_SWITCH`, `POWER_FORCE_SWITCH`,
+  `SQUARED_DISTANCE_SWITCH`), implicit solvent, and `lennard_jones = "PME"`
+  are refused with `couple`.
 - `--md-differentiate=remarks=true` lists the ops that a derivative with
   respect to a parameter takes as independent of it (D161).
 

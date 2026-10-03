@@ -8,9 +8,11 @@
 # RUN: %python %S/Inputs/check_free_energy.py %t CPU DOUBLE mdir | FileCheck %s
 #
 # CHECK: RF against OpenMM: ok
+# CHECK: RF_SHIFT against OpenMM: ok
 # CHECK: PME against OpenMM: ok
 # CHECK: dH/dl against central differences: ok
 # CHECK: the energies of the other states: ok
+# CHECK: lambda = 0 against no [free_energy]: ok
 
 # The columns of the file, and the warning of a state that softens the
 # Lennard-Jones of particles that keep a charge.
@@ -48,6 +50,9 @@
 # RUN: sed 's/^expression = "k \* (r - r0)^2"/expression = "lambda_other * k * (r - r0)^2"/' %t/run.toml > %t/unknown.toml
 # RUN: not mdir run %t/unknown.toml 2>&1 | FileCheck %s --check-prefix=UNKNOWN
 # UNKNOWN: the expression uses 'lambda_other'
+# RUN: sed 's/^electrostatics    = "PME"/electrostatics    = "PME"\nswitch_distance = 8.0\nlennard_jones_modifier = "FORCE_SWITCH"\ndispersion_correction = "NONE"/' %t/run.toml > %t/switch.toml
+# RUN: not mdir run %t/switch.toml 2>&1 | FileCheck %s --check-prefix=SWITCH
+# SWITCH: [free_energy] decouples particles with the Lennard-Jones of a plain cutoff or 'lennard_jones_modifier = "POTENTIAL_SHIFT"', not with a switch
 
 #--- run.toml
 [input]

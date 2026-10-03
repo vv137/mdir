@@ -2904,6 +2904,19 @@ Error Reader::read(const toml::table &root) {
           "%s: [free_energy] does not decouple particles with "
           "'lennard_jones = \"PME\"' yet",
           path.str().c_str());
+    // The soft-core is validated with a plain cutoff and the potential
+    // shift; the switches would act on r_A, which no test checks yet.
+    if (!control.freeEnergy.couple.empty() &&
+        control.truncation != Truncation::None &&
+        control.truncation != Truncation::Shift)
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "%s: [free_energy] decouples particles with the Lennard-Jones of "
+          "a plain cutoff or 'lennard_jones_modifier = \"POTENTIAL_SHIFT\"', "
+          "not with a switch ('switch_distance' below 'cutoff', or "
+          "\"FORCE_SWITCH\", \"POWER_FORCE_SWITCH\", or "
+          "\"SQUARED_DISTANCE_SWITCH\")",
+          path.str().c_str());
   }
   if (!control.energyFile.empty() && control.energyPeriod == 0)
     return llvm::createStringError(

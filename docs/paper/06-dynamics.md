@@ -904,7 +904,10 @@ r_A^6 = c_{ij}\,\alpha_\text{sc}\,\sigma_{ij}^6\,\lambda_\text{V}^p + r_{ij}^6,
 $$
 
 the soft-core form of Beutler et al. [[Beutler1994]](references.md#beutler1994),
-with the modifier of the cutoff taken in $r_A$: as $\lambda_\text{V} \to 1$
+with a plain cutoff or the potential shift, the shift
+$4\varepsilon_{ij}\big((\sigma_{ij}/r_c)^{12} - (\sigma_{ij}/r_c)^6\big)$
+taken at the cutoff in $\sigma$ (a switch is refused until it is
+validated in $r_A$): as $\lambda_\text{V} \to 1$
 the decoupled pairs may overlap, and $u_\text{LJ}(r_A)$ stays finite where
 $u_\text{LJ}(r)$ diverges. The charges of the selection scale,
 $q_i(\lambda_\text{C}) = (1 - a_i\lambda_\text{C})\,q_i$, but the interactions
