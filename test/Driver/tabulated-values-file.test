@@ -5,9 +5,10 @@
 # RUN: rm -rf %t
 # RUN: %python %S/Inputs/check_function_files.py %S %t CPU mdir > %t.report
 # RUN: FileCheck %s < %t.report
-# CHECK: 1d-cpu-double: identical IR, energies, forces; independent oracle passed
-# CHECK: 1d-cpu-mixed: identical IR, energies, forces; independent oracle passed
-# CHECK: nd-cpu-double: identical IR, energies, forces; independent oracle passed
+# CHECK: 1d-cpu-double: identical IR; equivalent energies and forces; independent oracle passed
+# CHECK: 1d-cpu-mixed: identical IR; equivalent energies and forces; independent oracle passed
+# CHECK: nd-cpu-double: identical IR; equivalent energies and forces; independent oracle passed
 # CHECK: manifest hashes and continuation grid changes: passed
-# CHECK: nd-cpu-mixed: identical IR, energies, forces; independent oracle passed
+# CHECK: nd-cpu-mixed: identical IR; equivalent energies and forces; independent oracle passed
+# CHECK: 2-by-3 file order matches inline nested lists: passed
 # CHECK: malformed files, dimensions, periodic endpoints, and output collisions: passed

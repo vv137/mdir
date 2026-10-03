@@ -29,7 +29,7 @@ def invoke(*args, expected=0, working=None):
 
 
 def convert(text, prefix):
-    """Transpose nested argument indices into an explicitly ordered text grid."""
+    """Write nested lists in their existing order, the last argument fastest."""
     current = ''
     grids = []
     out = []
@@ -47,16 +47,15 @@ def convert(text, prefix):
             while isinstance(inner, list):
                 sizes.append(len(inner))
                 inner = inner[0]
-            flat = []
-            for offset in range(math.prod(sizes)):
-                inner = values
-                at = offset
-                for size in sizes:
-                    inner = inner[at % size]
-                    at //= size
-                flat.append(inner)
+            def flatten(rows):
+                if isinstance(rows, list):
+                    for row in rows:
+                        yield from flatten(row)
+                else:
+                    yield rows
+            flat = list(flatten(values))
             path = f'{prefix}-{name}.dat'
-            data = '# The first argument varies fastest.\n\n' + ''.join(
+            data = '# The last argument varies fastest.\n\n' + ''.join(
                 f'  {v:+.17e}\t# value {i}\n' for i, v in enumerate(flat))
             (scratch / path).write_text(data)
             grids.append((path, sizes, flat))
@@ -93,10 +92,26 @@ for dimension, fixture, oracle in (
         inline_forces = invoke(mdir, 'checkpoint', '--print=forces', f'{label}.h5')
         file_log = invoke(mdir, 'run', 'file.toml')
         file_forces = invoke(mdir, 'checkpoint', '--print=forces', f'{label}.h5')
-        assert inline_forces == file_forces, 'loaded grid changed forces'
+        inline_numbers = [float(v) for line in inline_forces.splitlines()
+                          for v in line.split()[2:5]]
+        file_numbers = [float(v) for line in file_forces.splitlines()
+                        for v in line.split()[2:5]]
+        assert len(inline_numbers) == len(file_numbers)
+        repeat_difference = max(abs(a-b) for a, b in zip(inline_numbers, file_numbers))
+        scale = max(1.0, max(map(abs, inline_numbers)))
+        repeat_tolerance = (1e-12 if precision == 'DOUBLE' else 2e-6) * scale
+        if target == 'CPU':
+            assert inline_forces == file_forces, 'loaded grid changed CPU forces'
+        else:
+            # GPU reductions need not produce the same final bit twice.
+            assert repeat_difference <= repeat_tolerance, (repeat_difference, repeat_tolerance)
         inline_energies = re.findall(r'^MDIR:\s+(\w+)\s+(-?[\d.]+)$', inline_log, re.M)
         file_energies = re.findall(r'^MDIR:\s+(\w+)\s+(-?[\d.]+)$', file_log, re.M)
-        assert file_energies == inline_energies, 'loaded grid changed energies'
+        assert dict(file_energies).keys() == dict(inline_energies).keys()
+        for name, actual in file_energies:
+            reference = float(dict(inline_energies)[name])
+            bound = (1e-6 if precision == 'DOUBLE' else 2e-5) * max(1.0, abs(reference))
+            assert abs(float(actual) - reference) <= bound, (name, actual, reference)
         (scratch / 'terms.forces').write_text(file_forces)
         (scratch / 'plain.forces').write_text(invoke(mdir, 'checkpoint', '--print=forces', 'plain.h5'))
         tolerance = '1e-6' if precision == 'DOUBLE' else '2e-5'
@@ -114,7 +129,8 @@ for dimension, fixture, oracle in (
             bound = float(tolerance) * max(1.0, abs(reference))
             assert abs(actual - reference) <= bound, (name, actual, reference, bound)
             print(f'{label} {name}: reference {reference:.6f}, difference {actual-reference:.9g}, tolerance {bound:.9g} kcal/mol')
-        print(label + ': identical IR, energies, forces; independent oracle passed')
+        print(label + ': identical IR; equivalent energies and forces; independent oracle passed')
+        print(f'inline/file force difference {repeat_difference:.9g}; tolerance {repeat_tolerance:.9g} kJ/mol/nm')
         print(report.strip())
         if dimension == 'nd' and precision == 'DOUBLE':
             records = [json.loads(line) for line in (scratch / 'inputs.jsonl').read_text().splitlines()]
@@ -139,6 +155,21 @@ for dimension, fixture, oracle in (
             (scratch / 'file.toml').write_text(changed.replace(path, moved))
             invoke(mdir, 'run', '--continue', 'file.toml')
             print('manifest hashes and continuation grid changes: passed')
+
+# An asymmetric 2-by-3 grid makes a silent transpose observable in the IR.
+example = text.split('#--- terms')[0] + '\n'.join((
+    '\n[[energy.function]]', 'name = "order"', 'discrete = true',
+    'values = [[11, 12, 13], [21, 22, 23]]', '',
+))
+file_example, grids_example = convert(example, 'order')
+assert grids_example[0][1:] == ([2, 3], [11, 12, 13, 21, 22, 23])
+(scratch / 'order-inline.toml').write_text(example)
+(scratch / 'order-file.toml').write_text(file_example)
+inline_ir = invoke(mdir, 'emit', 'order-inline.toml')
+file_ir = invoke(mdir, 'emit', 'order-file.toml')
+assert inline_ir == file_ir
+assert 'fn_order' in file_ir
+print('2-by-3 file order matches inline nested lists: passed')
 
 # Input errors are checked once on the CPU; they precede compilation.
 if target == 'CPU':

@@ -277,7 +277,9 @@ axis order as the inline table, so it gives the same spline coefficients,
 $U$, and $-\partial U/\partial\mathbf x_i$. The canonical weight
 $\exp[-(K+U)/(k_BT)]$ and its partition function $Z$ therefore remain
 the same. A file is decoded and checked before the IR is built, with the
-first argument varying fastest and its shape supplied explicitly; it
+last argument varying fastest as in inline nested lists, its shape
+supplied explicitly, and its values reordered into the internal table
+layout before fitting the splines; it
 introduces no reading or interpolation inside the loop of steps. The
 fingerprint of a continuation records the resolved values in the inline
 representation, because changing a grid changes $U$ even if its filename

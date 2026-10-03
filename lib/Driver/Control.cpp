@@ -5,15 +5,15 @@
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
-#include "llvm/Support/Format.h"
 #include "llvm/Support/FileSystem.h"
-#include "llvm/Support/Path.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Support/Path.h"
 
 #include <algorithm>
 #include <cmath>
-#include <optional>
 #include <limits>
+#include <optional>
 
 #define TOML_EXCEPTIONS 0
 #define TOML_ENABLE_FORMATTERS 0
@@ -895,8 +895,9 @@ Error Reader::readCompound(const toml::table &table) {
   return Error::success();
 }
 
-// File-backed grids use the same first-argument-fastest storage as the
-// spline coefficients (D[tabulated-values-file]). No file data reaches a
+// File-backed grids follow inline nested lists, the last argument fastest.
+// The spline coefficients use the first argument fastest, so the reader
+// transposes the input (D[tabulated-values-file]). No file data reaches a
 // compiler or kernel until its shape and every value have been checked.
 Error Reader::readFunctionFile(const toml::table &table,
                                 TabulatedFunction &function) {
@@ -958,6 +959,21 @@ Error Reader::readFunctionFile(const toml::table &table,
     return fail(fileNode, function.valuesFile + ": expected " +
                              llvm::Twine(total) + " values for 'shape', found " +
                              llvm::Twine(function.values.size()));
+  if (function.sizes.size() > 1) {
+    std::vector<double> input = std::move(function.values);
+    function.values.resize(total);
+    std::vector<size_t> stride(function.sizes.size(), 1);
+    for (size_t k = 1; k < stride.size(); ++k)
+      stride[k] = stride[k - 1] * function.sizes[k - 1];
+    for (size_t offset = 0; offset < total; ++offset) {
+      size_t remaining = offset, at = 0;
+      for (size_t k = function.sizes.size(); k-- != 0;) {
+        at += (remaining % function.sizes[k]) * stride[k];
+        remaining /= function.sizes[k];
+      }
+      function.values[at] = input[offset];
+    }
+  }
   return Error::success();
 }
 
