@@ -2134,7 +2134,25 @@ memref.store %fz, %wrapped[%item, %i2] : memref<?x3xf32, 1>
 %not_number = arith.cmpf uno, %magnitude, %magnitude : f64
 %far_off = arith.constant 1.0e100 : f64
 %huge = arith.cmpf ogt, %magnitude, %far_off : f64
-%bad = arith.ori %not_number, %huge : i1
+// A position whose wrap does not land in the cell, which happens once its
+// distance from the cell is beyond what the wrap computes exactly (about
+// 10^16 cells), is beyond any cell as well: its wrapped position would
+// send the later stages of the build outside their tables.
+%u_low = arith.constant -1.0e-6 : f64
+%u_high = arith.constant 1.000001 : f64
+%ux_low = arith.cmpf olt, %ux, %u_low : f64
+%ux_high = arith.cmpf ogt, %ux, %u_high : f64
+%uy_low = arith.cmpf olt, %uy, %u_low : f64
+%uy_high = arith.cmpf ogt, %uy, %u_high : f64
+%uz_low = arith.cmpf olt, %uz, %u_low : f64
+%uz_high = arith.cmpf ogt, %uz, %u_high : f64
+%out_x = arith.ori %ux_low, %ux_high : i1
+%out_y = arith.ori %uy_low, %uy_high : i1
+%out_z = arith.ori %uz_low, %uz_high : i1
+%out_xy = arith.ori %out_x, %out_y : i1
+%outside = arith.ori %out_xy, %out_z : i1
+%huge_or_outside = arith.ori %huge, %outside : i1
+%bad = arith.ori %not_number, %huge_or_outside : i1
 scf.if %bad {{
   %no_key = arith.constant -1 : i32
   memref.store %no_key, %key[%item] : memref<?xi32, 1>
