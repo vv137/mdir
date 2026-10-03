@@ -1,0 +1,17 @@
+# The Nose-Hoover chain of nose-hoover.test on a GPU, in mixed precision:
+# the coupling sums the kinetic energy on the device, and the host moves
+# the chain (D163a).
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/mixture.pdb %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/thermostat.test | sed '1d;$d' \
+# RUN:     | sed -e 's|"V-RESCALE"|"NOSE-HOOVER"|' -e 's|time_constant = 0.5|time_constant = 1.0|' \
+# RUN:     > %t/run.toml
+# RUN: printf '[execution]\ntarget = "gpu"\nprecision = "mixed"\n' >> %t/run.toml
+# RUN: mdir run %t/run.toml | FileCheck %s
+
+# CHECK:      INFO:         0         0.0000 {{ *}}[[TOTAL:-[0-9.]+]] {{.*}} [[TOTAL]]
+# CHECK:      MDIR: the momentum at the end is {{[0-9.]+}}e-{{(0[5-9]|1[0-9])}} amu nm/ps
+# CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value

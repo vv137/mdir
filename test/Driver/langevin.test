@@ -67,9 +67,9 @@
 # NOISE: 1168 particles, largest difference {{.*}} of sqrt(kT/m): ok
 # FREEDOM: degrees of freedom: 3504
 # REMOVED: degrees of freedom: 3501
-# TIME: 'time_constant' is for "V-RESCALE"; Langevin dynamics takes 'friction', in 1/ps
+# TIME: 'time_constant' is for "V-RESCALE" and "NOSE-HOOVER"; Langevin dynamics takes 'friction', in 1/ps
 # FRICTION: expected 'friction' in [thermostat], in 1/ps
-# RESCALE: 'friction' is for "LANGEVIN"; stochastic velocity rescaling takes 'time_constant', in ps
+# RESCALE: 'friction' is for "LANGEVIN"; this thermostat takes 'time_constant', in ps
 # SAME: the states are identical
 # RATE: rate {{[0-9.]+}} /ps from {{[0-9]+}} rows: ok
 

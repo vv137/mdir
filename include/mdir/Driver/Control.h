@@ -106,7 +106,8 @@ struct PairOverride {
 /// power switched on its own [Steinbach1994] (`PowerForceSwitch`, for the
 /// Lennard-Jones of a topology only).
 enum class Truncation { None, Shift, Switch, ForceSwitch, PowerForceSwitch };
-enum class Integrator { VelocityVerlet, Leapfrog };
+/// Brownian dynamics (D163b) moves the positions only, overdamped.
+enum class Integrator { VelocityVerlet, Leapfrog, Brownian };
 enum class Target { CPU, GPU };
 enum class Precision { Single, Mixed, Double };
 enum class NeighborStructure { Matrix, Groups };
@@ -116,9 +117,10 @@ enum class BarostatWork { Trotter, TrotterFirstOrder, Exact, FirstOrder };
 /// reference scales with the cell as the positions do.
 enum class ReferenceScaling { Center, All };
 /// How the thermostat couples the velocities to the bath: stochastic
-/// velocity rescaling at the end of a period, or Langevin dynamics in the
-/// middle of the drift of every step (D135).
-enum class ThermostatMethod { VRescale, Langevin };
+/// velocity rescaling at the end of a period, Langevin dynamics in the
+/// middle of the drift of every step (D135), or a Nose-Hoover chain at the
+/// end of a period (D163a).
+enum class ThermostatMethod { VRescale, Langevin, NoseHoover };
 
 /// What a control file says. Lengths are in Å, energies in kcal/mol, times
 /// in ps, masses in amu, and temperatures in K.
@@ -308,6 +310,15 @@ struct Control {
   bool isLangevin() const {
     return thermostat && thermostatMethod == ThermostatMethod::Langevin;
   }
+  /// Brownian dynamics (D163b), with the friction `friction` of [dynamics]
+  /// in 1/ps and no [thermostat].
+  bool isBrownian() const { return integrator == Integrator::Brownian; }
+  /// A Nose-Hoover chain of `chainLength` thermostats (Martyna, Klein, and
+  /// Tuckerman 1992; D163a) with the period `tauT`, in ps.
+  int64_t chainLength = 3;
+  bool isNoseHoover() const {
+    return thermostat && thermostatMethod == ThermostatMethod::NoseHoover;
+  }
   /// Stochastic cell rescaling (Bernetti and Bussi 2020), isotropic, at
   /// `pressure` in atm with the time constant `tauP` in ps and the
   /// isothermal compressibility `compressibility` in 1/atm.
@@ -322,6 +333,12 @@ struct Control {
   /// and the tension `surfaceTension` in dyn/cm of each of `surfaces`
   /// surfaces normal to z.
   bool semiIsotropic = false;
+  /// Anisotropic coupling (D163c): each axis scales by its own strain, from
+  /// its own pressure and noise, with the compressibility of the axis in
+  /// `compressibilities`, 1/atm (0 keeps the axis).
+  bool anisotropic = false;
+  double compressibilities[3] = {4.5e-5 * 1.01325, 4.5e-5 * 1.01325,
+                                 4.5e-5 * 1.01325};
   double compressibilityZ = 4.5e-5 * 1.01325;
   double surfaceTension = 0.0;
   int64_t surfaces = 2;

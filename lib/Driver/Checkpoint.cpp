@@ -398,6 +398,10 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
         writer.writeDataset(mdir, "barostat_state", H5T_NATIVE_DOUBLE,
                             {checkpoint.barostatState.size()},
                             checkpoint.barostatState.data(), "kJ mol-1");
+      if (!checkpoint.thermostatState.empty())
+        writer.writeDataset(mdir, "thermostat_state", H5T_NATIVE_DOUBLE,
+                            {checkpoint.thermostatState.size()},
+                            checkpoint.thermostatState.data(), "");
     }
     failed = writer.hasFailed();
   }
@@ -512,6 +516,12 @@ mdir::driver::readCheckpoint(const std::string &path) {
     reader.readDataset("/parameters/mdir/barostat_state", H5T_NATIVE_DOUBLE,
                        reader.getSize("/parameters/mdir/barostat_state"),
                        checkpoint.barostatState);
+  // The state of a Nose-Hoover chain (D163a).
+  if (reader.has("/parameters/mdir/thermostat_state"))
+    reader.readDataset("/parameters/mdir/thermostat_state",
+                       H5T_NATIVE_DOUBLE,
+                       reader.getSize("/parameters/mdir/thermostat_state"),
+                       checkpoint.thermostatState);
 
   if (reader.hasFailed())
     return llvm::createStringError(llvm::inconvertibleErrorCode(),

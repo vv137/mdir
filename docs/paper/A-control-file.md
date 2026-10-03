@@ -56,15 +56,16 @@ terms and types remain valid.
 | | `[[energy.pair_override]]` | Parameters of a term for one pair of types. |
 | `[pme]` | `tolerance`, `beta`, `max_spacing`, `grid`, `order`, `influence` | Particle mesh Ewald (D71): β from `erfc(β r_c) = tolerance` or given; the grid from the largest spacing or given as three numbers of points; the order of the B-splines, 4, 6, or 8; the influence function, `SPME` or `OPTIMAL`. |
 | `[lj_pme]` | `tolerance`, `beta`, `max_spacing`, `grid`, `order` | Particle mesh Ewald for the dispersion, with `lennard_jones = "PME"` (D162): β from $g(\beta r_c)$ = `tolerance` (default $10^{-3}$), $g(x) = e^{-x^2}(1 + x^2 + x^4/2)$, or given; the grid from the largest spacing (1.2 Å) or given; the order, 4, 6, or 8. |
-| `[dynamics]` | `integrator` | `VELOCITY_VERLET` or `LEAPFROG`: the `dyn.program` (D76). |
+| `[dynamics]` | `integrator` | `VELOCITY_VERLET`, `LEAPFROG`, or `BROWNIAN`: the `dyn.program` (D76). `BROWNIAN` is overdamped Langevin dynamics, the positions only, with `friction` and the temperature of `ensemble = "NVT"`, without a `[thermostat]` (D163b). Its log and file of energies have no total, kinetic energy, temperature, or conserved energy (the velocities are displacements over a step), and its pressure takes the kinetic energy of the bath, $\tfrac12N_fk_BT$. **With constraints, the step must be short:** the mobility $1/(m\gamma)$ moves hydrogens furthest, and a step that moves the lightest atom more than 0.005 nm at random, $\sqrt{2k_BT\Delta t/(m\gamma)}$, is warned of (`brownian_step`); a dipeptide in water at $\gamma$ = 50/ps needs about 0.1 fs, where 2 fs breaks the constraints. |
+| | `friction` | With `BROWNIAN` only: the friction $\gamma$ in 1/ps; the mobility of a particle is $1/(m\gamma)$. |
 | | `time_step`, `steps` | In ps, and the number of steps of the run, counted from the step it begins at: 0, or the step of the checkpoint of `[input]`. `mdir run --continue` continues the run until it has taken them (D129). |
 | | `seed` | Of the initial velocities and of the coupling. |
 | | `center_of_mass_interval` | Steps between removals of the motion of the center of mass; with a thermostat, when it acts. |
 | `[minimize]` | `method`, `steps`, `initial_step` | `STEEPEST_DESCENT`, the number of steps, and the first step (Å) (D73). Instead of `[dynamics]`. |
 | `[ensemble]` | `ensemble` | `NVE`, `NVT` (with `[thermostat]`), or `NPT` (with `[thermostat]` and `[barostat]`). |
 | | `temperature`, `pressure` | K, of the initial velocities and the bath; atm, with `NPT`. |
-| `[thermostat]` | `method`, `time_constant`, `friction`, `interval` | `V-RESCALE`, stochastic velocity rescaling, with `time_constant` in ps; or `LANGEVIN`, Langevin dynamics by the middle scheme in every step, with `friction` in 1/ps (D135), either key in the other an error; steps between its actions (10 by default), under `LANGEVIN` those of the removal of the motion of the center of mass and of the barostat (10 by default with a barostat, otherwise none). Langevin dynamics keeps no momentum, so its degrees of freedom have no three for the center of mass unless `center_of_mass_interval` removes it, and its log has no conserved energy. |
-| `[barostat]` | `method`, `time_constant`, `compressibility`, `coupling`, `work`, `interval`, `compressibility_z`, `surface_tension`, `surfaces` | `C-RESCALE`, stochastic cell rescaling (D72, D77); ps; 1/atm; `ISOTROPIC` or `SEMI_ISOTROPIC` (x and y scale together from the mean of their pressures, z on its own, D119); `TROTTER` (the default; D92), `TROTTER_FIRST_ORDER` (its energy from the virial before the scaling only, a virial less a period), `EXACT`, or `FIRST_ORDER` (not with `SEMI_ISOTROPIC`), which count the work of the barostat in the conserved energy and leave the trajectory alone (a run that changes its volume fast is checked with `EXACT`: the Trotter count then drifts by a term of first order in the time step); the steps of the thermostat; with `SEMI_ISOTROPIC`, the compressibility of z in 1/atm (0 keeps the height; that of x and y by default), the tension of each surface normal to z in dyn/cm (0 by default), and their number (2). |
+| `[thermostat]` | `method`, `time_constant`, `friction`, `chain_length`, `interval` | `V-RESCALE`, stochastic velocity rescaling, with `time_constant` in ps; `NOSE-HOOVER`, a Nosé–Hoover chain of `chain_length` thermostats (3 by default) with the period `time_constant` in ps, whose energy the conserved energy holds and the checkpoints keep (D163a); a `time_constant` below 20 periods of `interval` is warned of (`short_thermostat_period`); or `LANGEVIN`, Langevin dynamics by the middle scheme in every step, with `friction` in 1/ps (D135), either key in the other an error; steps between its actions (10 by default), under `LANGEVIN` those of the removal of the motion of the center of mass and of the barostat (10 by default with a barostat, otherwise none). Langevin dynamics keeps no momentum, so its degrees of freedom have no three for the center of mass unless `center_of_mass_interval` removes it, and its log has no conserved energy. |
+| `[barostat]` | `method`, `time_constant`, `compressibility`, `coupling`, `work`, `interval`, `compressibility_z`, `surface_tension`, `surfaces` | `C-RESCALE`, stochastic cell rescaling (D72, D77); ps; 1/atm; `ISOTROPIC`, `SEMI_ISOTROPIC` (x and y scale together from the mean of their pressures, z on its own, D119), or `ANISOTROPIC` (each axis from its own pressure and noise, with `compressibility` one number or three, those of x, y, and z, 0 keeping an edge; the pressures of the axes at the end of the log; a liquid has no stiffness of shape and its edges wander, so this is for solids and cells under unequal stresses, D163c); `TROTTER` (the default; D92), `TROTTER_FIRST_ORDER` (its energy from the virial before the scaling only, a virial less a period), `EXACT`, or `FIRST_ORDER` (not with `SEMI_ISOTROPIC` or `ANISOTROPIC`), which count the work of the barostat in the conserved energy and leave the trajectory alone (a run that changes its volume fast is checked with `EXACT`: the Trotter count then drifts by a term of first order in the time step); the steps of the thermostat; with `SEMI_ISOTROPIC`, the compressibility of z in 1/atm (0 keeps the height; that of x and y by default), the tension of each surface normal to z in dyn/cm (0 by default), and their number (2). |
 | `[constraints]` | `hydrogen_bonds`, `rigid_water`, `water_residues`, `analytic_bonds` | SHAKE and RATTLE on the bonds of hydrogen; SETTLE on the waters in double precision, M-SHAKE on their three bonds below it (D112); the names of the residues of water (by default WAT for Amber, TIP3 for CHARMM); without `rigid_water` the waters of an Amber or CHARMM topology run flexible, with a warning (D153). `analytic_bonds = true` enables the checked quadratic one-bond projection (D128); the default is `false`. |
 | `[[restraints]]` | `selection`, `force_constant`, `reference_scaling` | A mask of Amber, and kcal/mol/Å² (D74); under a barostat, `"CENTER"` (the default) scales the center of the references with the cell and keeps their shape, `"ALL"` scales each reference with the cell (D124). |
 | `[boundary]` | `type`, `box` | `PERIODIC`, or `NONE`, a run without a periodic cell, which places a cell around the particles that keeps every image beyond the reach of the neighbor structures and stops if they spread too far, and refuses PME, a barostat, the correction for the dispersion, and `box` (D142); the edges of the cell (Å), without a topology or with one of CHARMM, whose coordinates have no cell; for CHARMM also its angles α, β, γ (degrees), the cell taken from CHARMM's symmetric frame into MDIR's lower-triangular one (docs/triclinic-m2.md). |
@@ -132,7 +133,8 @@ coulomb_modifier  = "POTENTIAL_SHIFT"  # NONE, POTENTIAL_SHIFT: the direct
 
 [dynamics]
 integrator = "VELOCITY_VERLET"  # VELOCITY_VERLET, LEAPFROG (velocities
-                                # half a step behind)
+                                # half a step behind), BROWNIAN (with
+                                # friction, 1/ps, and no [thermostat])
 time_step  = 0.002              # ps
 steps      = 500000             # of the run; --continue runs to them
 seed       = 314159             # of the velocities and the coupling
@@ -147,10 +149,12 @@ temperature = 300.0             # of the velocities and the bath (K)
 pressure    = 1.0               # atm, with NPT
 
 [thermostat]
-method        = "V-RESCALE"     # stochastic velocity rescaling, or
-                                # "LANGEVIN", Langevin dynamics
-time_constant = 0.5             # ps, with V-RESCALE
+method        = "V-RESCALE"     # stochastic velocity rescaling,
+                                # "LANGEVIN", Langevin dynamics, or
+                                # "NOSE-HOOVER", a Nose-Hoover chain
+time_constant = 0.5             # ps, with V-RESCALE or NOSE-HOOVER
 # friction    = 1.0             # 1/ps, with LANGEVIN
+# chain_length = 3              # thermostats, with NOSE-HOOVER
 interval      = 10              # steps between its actions
 
 [barostat]
@@ -158,7 +162,9 @@ method        = "C-RESCALE"     # stochastic cell rescaling
 time_constant = 2.0             # ps
 # compressibility = 4.56e-5     # 1/atm (4.5e-5 /bar)
 # coupling = "ISOTROPIC"        # ISOTROPIC; SEMI_ISOTROPIC: x and y
-#                               # together, z on its own
+#                               # together, z on its own; ANISOTROPIC:
+#                               # each axis on its own, with a number or
+#                               # three for compressibility
 # compressibility_z = 4.56e-5   # 1/atm, of z with SEMI_ISOTROPIC (0 keeps
 #                               # the height); compressibility by default
 # surface_tension = 0.0         # dyn/cm, of each surface normal to z,

@@ -1,0 +1,122 @@
+# Brownian dynamics (D163b): 125 atoms in harmonic wells of their own, too
+# far apart to interact, x' = (1 - a) x + sqrt(2 kT dt / (m gamma)) R with
+# a = k dt / (m gamma) = 0.21. The mean energy of the wells is that of the
+# stationary distribution of the discrete step, (3/2) N kT / (1 - a/2), 11%
+# above the canonical one, and the energies 10 steps apart are correlated by
+# (1 - a)^20, which the mobility 1 / (m gamma) sets: 0.009 at gamma = 1/ps,
+# and 0.655 at gamma = 10/ps, a = 0.021.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/brownian_wells.py write %t 125
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/base.toml
+# RUN: cat %t/base.toml %t/wells.toml > %t/run.toml
+# RUN: cd %t && mdir run run.toml > run.log
+# RUN: %python %S/Inputs/brownian_wells.py check %t/run.log 2.0 150 0.01 1.0 39.948 125 | FileCheck %s
+# RUN: sed -e 's|^friction   = 1.0|friction   = 10.0|' -e 's|^steps      = 10000|steps      = 40000|' %t/run.toml > %t/slow.toml
+# RUN: cd %t && mdir run slow.toml > slow.log
+# RUN: %python %S/Inputs/brownian_wells.py check %t/slow.log 2.0 150 0.01 10.0 39.948 125 | FileCheck %s
+# RUN: FileCheck %s --check-prefix=LOG < %t/run.log
+# RUN: cd %t && mdir emit run.toml | FileCheck %s --check-prefix=MODULE
+
+# CHECK: within 4 errors of the discrete step: yes
+# CHECK: correlation 10 steps apart {{.*}}: agrees
+
+# The log has no kinetic energy, temperature, total, or conserved energy:
+# the velocities are the displacements of a step, Δx / Δt. The pressure
+# takes the kinetic energy of the bath.
+#
+# LOG:     INFO: STEP TIME POTENTIAL_ENE VIRIAL PRESSURE
+# LOG-NOT: changed by
+# LOG:     MDIR: the momentum at the end
+
+# The step takes the noise of stream 2 for the displacement and no kick.
+#
+# MODULE:     dyn.program @step(
+# MODULE:     provides = ["thermostatting"]
+# MODULE:     %v1_drift = md.map_particles gather(%f, %v, %m
+# MODULE-NOT: dyn.kick
+# MODULE:     %x1 = dyn.drift %x, %v1, %dt
+
+# With constraints, a step that moves the lightest atom more than 0.005 nm
+# at random is warned of: hydrogens at 2 fs and 50/ps, not at 0.1 fs.
+#
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- dipeptide.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/dipeptide.toml
+# RUN: cd %t && mdir check dipeptide.toml 2>&1 | FileCheck %s --check-prefix=STEP
+# RUN: sed -e 's|^time_step  = 0.002|time_step  = 0.0001|' %t/dipeptide.toml > %t/short.toml
+# RUN: cd %t && mdir check short.toml 2>&1 | FileCheck %s --check-prefix=SHORT
+#
+# STEP: warning: Brownian dynamics with constraints moves an atom of mass 1.008 by 0.0141 nm a step at random, more than 0.005 nm; constraints may fail; give a 'time_step' of at most 0.000253 ps or a larger 'friction'
+# SHORT-NOT: Brownian dynamics with constraints
+
+# What is wrong with the keys of Brownian dynamics is reported.
+#
+# RUN: sed -e 's|^friction .*||' %t/run.toml > %t/nofriction.toml
+# RUN: not mdir run %t/nofriction.toml 2>&1 | FileCheck %s --check-prefix=NOFRICTION
+# RUN: sed -e 's|"BROWNIAN"|"VELOCITY_VERLET"|' %t/run.toml > %t/verlet.toml
+# RUN: not mdir run %t/verlet.toml 2>&1 | FileCheck %s --check-prefix=VERLET
+# RUN: printf '[thermostat]\nmethod = "V-RESCALE"\n' >> %t/thermostat.toml
+# RUN: cat %t/run.toml %t/thermostat.toml > %t/withthermostat.toml
+# RUN: not mdir run %t/withthermostat.toml 2>&1 | FileCheck %s --check-prefix=THERMOSTAT
+# RUN: sed -e 's|"NVT"|"NVE"|' %t/run.toml > %t/nve.toml
+# RUN: not mdir run %t/nve.toml 2>&1 | FileCheck %s --check-prefix=NVE
+# RUN: sed -e 's|^integrator = "BROWNIAN"|integrator = "BROWNIAN"\ncenter_of_mass_interval = 10|' %t/run.toml > %t/com.toml
+# RUN: not mdir run %t/com.toml 2>&1 | FileCheck %s --check-prefix=MOMENTUM
+#
+# NOFRICTION: nofriction.toml:{{[0-9]+}}: expected 'friction' in [dynamics], in 1/ps, with 'integrator = "BROWNIAN"'
+# VERLET: verlet.toml:{{[0-9]+}}: 'friction' in [dynamics] is for 'integrator = "BROWNIAN"'; Langevin dynamics takes 'friction' in [thermostat]
+# THERMOSTAT: withthermostat.toml:{{[0-9]+}}: 'integrator = "BROWNIAN"' takes no [thermostat]: Brownian dynamics is coupled to the bath by its 'friction' in [dynamics]
+# NVE: nve.toml:{{[0-9]+}}: 'integrator = "BROWNIAN"' needs 'ensemble = "NVT"' in [ensemble], whose 'temperature' is that of the bath
+# MOMENTUM: com.toml:{{[0-9]+}}: Brownian dynamics has no momentum to remove: 'center_of_mass_interval' is not for 'integrator = "BROWNIAN"'
+
+#--- run.toml
+[input]
+topology    = "wells.top"
+coordinates = "wells.gro"
+
+[output]
+energy_interval = 10
+
+[energy]
+cutoff = 9.0
+
+[dynamics]
+integrator = "BROWNIAN"
+friction   = 1.0
+time_step  = 0.01
+steps      = 10000
+
+[ensemble]
+ensemble    = "NVT"
+temperature = 150.0
+
+[boundary]
+type = "PERIODIC"
+#--- end
+
+#--- dipeptide.toml
+[input]
+topology    = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+
+[energy]
+cutoff         = 9.0
+electrostatics = "PME"
+
+[dynamics]
+integrator = "BROWNIAN"
+friction   = 50.0
+time_step  = 0.002
+steps      = 10
+
+[ensemble]
+ensemble    = "NVT"
+temperature = 300.0
+
+[constraints]
+rigid_water    = true
+hydrogen_bonds = true
+
+[boundary]
+type = "PERIODIC"
+#--- end

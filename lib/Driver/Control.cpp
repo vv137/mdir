@@ -1999,15 +1999,35 @@ Error Reader::readDynamics(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "dynamics",
           {"integrator", "time_step", "steps", "seed",
-           "center_of_mass_interval"},
+           "center_of_mass_interval", "friction"},
           {}))
     return error;
 
   if (Error error = readChoice<Integrator>(
           table, "integrator", control.integrator,
           {{"VELOCITY_VERLET", Integrator::VelocityVerlet},
-           {"LEAPFROG", Integrator::Leapfrog}}))
+           {"LEAPFROG", Integrator::Leapfrog},
+           {"BROWNIAN", Integrator::Brownian}}))
     return error;
+  // Brownian dynamics takes its friction here; the friction of Langevin
+  // dynamics is that of its [thermostat] (D163b).
+  if (const toml::node *node = table.get("friction");
+      node && !control.isBrownian())
+    return fail(*node, "'friction' in [dynamics] is for 'integrator = "
+                       "\"BROWNIAN\"'; Langevin dynamics takes 'friction' "
+                       "in [thermostat]");
+  if (control.isBrownian()) {
+    if (!table.get("friction"))
+      return fail(table, "expected 'friction' in [dynamics], in 1/ps, with "
+                         "'integrator = \"BROWNIAN\"'");
+    control.friction = 0.0;
+    if (Error error = readPositive(table, "friction", control.friction))
+      return error;
+    if (const toml::node *node = table.get("center_of_mass_interval"))
+      return fail(*node, "Brownian dynamics has no momentum to remove: "
+                         "'center_of_mass_interval' is not for 'integrator "
+                         "= \"BROWNIAN\"'");
+  }
   if (Error error = readPositive(table, "time_step", control.timestep))
     return error;
   if (Error error = readCount(table, "steps", control.numSteps, 0))
@@ -2171,32 +2191,41 @@ Error Reader::readEnsemble(const toml::table &table) {
 Error Reader::readThermostat(const toml::table &table) {
   if (Error error = checkKeywords(table, "thermostat",
                                   {"method", "time_constant", "friction",
-                                   "interval"},
+                                   "interval", "chain_length"},
                                   {}))
     return error;
   int method = -1;
-  if (Error error = readChoice<int>(table, "method", method,
-                                    {{"V-RESCALE", 0}, {"LANGEVIN", 1}}))
+  if (Error error = readChoice<int>(
+          table, "method", method,
+          {{"V-RESCALE", 0}, {"LANGEVIN", 1}, {"NOSE-HOOVER", 2}}))
     return error;
   if (method < 0)
     return fail(table, "expected 'method' in [thermostat]: \"V-RESCALE\", "
-                       "stochastic velocity rescaling, or \"LANGEVIN\", "
-                       "Langevin dynamics");
+                       "stochastic velocity rescaling, \"LANGEVIN\", "
+                       "Langevin dynamics, or \"NOSE-HOOVER\", a "
+                       "Nose-Hoover chain");
   control.thermostat = true;
   if (method == 1) {
     control.thermostatMethod = ThermostatMethod::Langevin;
     if (const toml::node *node = table.get("time_constant"))
-      return fail(*node, "'time_constant' is for \"V-RESCALE\"; Langevin "
-                         "dynamics takes 'friction', in 1/ps");
+      return fail(*node, "'time_constant' is for \"V-RESCALE\" and "
+                         "\"NOSE-HOOVER\"; Langevin dynamics takes "
+                         "'friction', in 1/ps");
     if (!table.get("friction"))
       return fail(table, "expected 'friction' in [thermostat], in 1/ps");
     control.friction = 0.0;
     if (Error error = readPositive(table, "friction", control.friction))
       return error;
   } else if (const toml::node *node = table.get("friction")) {
-    return fail(*node, "'friction' is for \"LANGEVIN\"; stochastic velocity "
-                       "rescaling takes 'time_constant', in ps");
+    return fail(*node, "'friction' is for \"LANGEVIN\"; this thermostat "
+                       "takes 'time_constant', in ps");
   }
+  if (method == 2)
+    control.thermostatMethod = ThermostatMethod::NoseHoover;
+  if (const toml::node *node = table.get("chain_length"); node && method != 2)
+    return fail(*node, "'chain_length' is for \"NOSE-HOOVER\"");
+  if (Error error = readCount(table, "chain_length", control.chainLength, 1))
+    return error;
   if (Error error = readPositive(table, "time_constant", control.tauT))
     return error;
   if (Error error =
@@ -2222,9 +2251,15 @@ Error Reader::readBarostat(const toml::table &table) {
   control.barostat = true;
   if (Error error = readPositive(table, "time_constant", control.tauP))
     return error;
-  if (Error error =
-          readPositive(table, "compressibility", control.compressibility))
-    return error;
+  // With anisotropic coupling the compressibility may be one of each axis
+  // (D163c); otherwise it is one number.
+  const toml::node *compressibility = table.get("compressibility");
+  const toml::array *axes =
+      compressibility ? compressibility->as_array() : nullptr;
+  if (!axes)
+    if (Error error =
+            readPositive(table, "compressibility", control.compressibility))
+      return error;
   if (Error error = readChoice<BarostatWork>(
           table, "work", control.barostatWork,
           {{"TROTTER", BarostatWork::Trotter},
@@ -2233,10 +2268,36 @@ Error Reader::readBarostat(const toml::table &table) {
            {"FIRST_ORDER", BarostatWork::FirstOrder}}))
     return error;
   int coupling = 0;
-  if (Error error = readChoice<int>(table, "coupling", coupling,
-                                    {{"ISOTROPIC", 0}, {"SEMI_ISOTROPIC", 1}}))
+  if (Error error = readChoice<int>(
+          table, "coupling", coupling,
+          {{"ISOTROPIC", 0}, {"SEMI_ISOTROPIC", 1}, {"ANISOTROPIC", 2}}))
     return error;
   control.semiIsotropic = coupling == 1;
+  control.anisotropic = coupling == 2;
+  for (double &value : control.compressibilities)
+    value = control.compressibility;
+  if (axes) {
+    if (coupling != 2)
+      return fail(*compressibility,
+                  "a 'compressibility' of each axis needs 'coupling = "
+                  "\"ANISOTROPIC\"'; give one number");
+    bool any = false;
+    for (size_t k = 0; k != 3; ++k) {
+      const toml::node *item = k < axes->size() ? axes->get(k) : nullptr;
+      std::optional<double> value =
+          item && item->is_number() ? item->value<double>() : std::nullopt;
+      if (axes->size() != 3 || !value || *value < 0.0)
+        return fail(*compressibility,
+                    "expected three numbers that are not negative for "
+                    "'compressibility', those of x, y, and z, in 1/atm");
+      control.compressibilities[k] = *value;
+      any |= *value > 0.0;
+    }
+    if (!any)
+      return fail(*compressibility,
+                  "a barostat whose compressibilities are all 0 keeps the "
+                  "cell; give one that is not 0");
+  }
   // The keys of semi-isotropic coupling (D119).
   for (const char *key : {"compressibility_z", "surface_tension", "surfaces"})
     if (const toml::node *node = table.get(key); node && coupling != 1)
@@ -2254,13 +2315,14 @@ Error Reader::readBarostat(const toml::table &table) {
     return error;
   if (Error error = readCount(table, "surfaces", control.surfaces, 1))
     return error;
-  if (control.semiIsotropic &&
+  if ((control.semiIsotropic || control.anisotropic) &&
       control.barostatWork == BarostatWork::FirstOrder)
     return fail(*table.get("work"),
                 "'work = \"FIRST_ORDER\"' counts the work from the trace of "
                 "the virial of the step with twice the internal kinetic "
                 "energy, which holds for the trace only; with "
-                "'coupling = \"SEMI_ISOTROPIC\"' use \"TROTTER\", "
+                "'coupling = \"SEMI_ISOTROPIC\"' or \"ANISOTROPIC\" use "
+                "\"TROTTER\", "
                 "\"TROTTER_FIRST_ORDER\", or \"EXACT\"");
   if (Error error = readCount(table, "interval", control.barostatPeriod, 0))
     return error;
@@ -2474,13 +2536,27 @@ Error Reader::read(const toml::table &root) {
     return fail(thermostat ? *thermostat : *barostat,
                 "a minimization has no thermostat or barostat");
   static const char *const names[] = {"NVE", "NVT", "NPT"};
+  // Brownian dynamics is coupled to the bath by its own friction (D163b).
+  if (control.isBrownian() && !control.minimize) {
+    if (thermostat)
+      return fail(*thermostat,
+                  "'integrator = \"BROWNIAN\"' takes no [thermostat]: "
+                  "Brownian dynamics is coupled to the bath by its "
+                  "'friction' in [dynamics]");
+    if (barostat)
+      return fail(*barostat, "Brownian dynamics has no barostat");
+    if (ensembleKind != 1)
+      return fail(ensembleTable ? *ensembleTable : root,
+                  "'integrator = \"BROWNIAN\"' needs 'ensemble = \"NVT\"' "
+                  "in [ensemble], whose 'temperature' is that of the bath");
+  }
   if (thermostat && ensembleKind == 0)
     return fail(*thermostat, "a [thermostat] needs 'ensemble = \"NVT\"' or "
                              "\"NPT\" in [ensemble]");
   if (barostat && ensembleKind != 2)
     return fail(*barostat,
                 "a [barostat] needs 'ensemble = \"NPT\"' in [ensemble]");
-  if (!thermostat && ensembleKind != 0)
+  if (!thermostat && ensembleKind != 0 && !control.isBrownian())
     return fail(*ensembleTable, llvm::Twine("'ensemble = \"") +
                                     names[ensembleKind] +
                                     "\"' needs a [thermostat]");
@@ -2754,7 +2830,7 @@ epsilon = 0.2385                # kcal/mol
 sigma   = 3.4                   # Å
 
 [dynamics]
-integrator = "VELOCITY_VERLET"  # VELOCITY_VERLET, LEAPFROG
+integrator = "VELOCITY_VERLET"  # VELOCITY_VERLET, LEAPFROG, BROWNIAN
 time_step  = 0.001              # ps
 steps      = 100                # of the run; --continue runs to them
 seed       = 314159             # of the velocities and the thermostat
@@ -2767,10 +2843,12 @@ temperature = 298.15            # of the velocities and the bath (K)
 
 # With 'ensemble = "NVT"':
 # [thermostat]
-# method        = "V-RESCALE"   # stochastic velocity rescaling, or
-#                               # "LANGEVIN", Langevin dynamics
-# time_constant = 1.0           # ps, with V-RESCALE
+# method        = "V-RESCALE"   # stochastic velocity rescaling,
+#                               # "LANGEVIN", Langevin dynamics, or
+#                               # "NOSE-HOOVER", a Nose-Hoover chain
+# time_constant = 1.0           # ps, with V-RESCALE or NOSE-HOOVER
 # friction      = 1.0           # 1/ps, with LANGEVIN
+# chain_length  = 3             # thermostats, with NOSE-HOOVER
 # interval      = 10            # steps between its actions
 
 [boundary]
@@ -2847,7 +2925,8 @@ coulomb_modifier  = "POTENTIAL_SHIFT"  # NONE, POTENTIAL_SHIFT: the direct
 
 [dynamics]
 integrator = "VELOCITY_VERLET"  # VELOCITY_VERLET, LEAPFROG (velocities
-                                # half a step behind)
+                                # half a step behind), BROWNIAN (with
+                                # friction, 1/ps, and no [thermostat])
 time_step  = 0.002              # ps
 steps      = 500000             # of the run; --continue runs to them
 seed       = 314159             # of the velocities and the coupling
@@ -2862,10 +2941,12 @@ temperature = 300.0             # of the velocities and the bath (K)
 pressure    = 1.0               # atm, with NPT
 
 [thermostat]
-method        = "V-RESCALE"     # stochastic velocity rescaling, or
-                                # "LANGEVIN", Langevin dynamics
-time_constant = 0.5             # ps, with V-RESCALE
+method        = "V-RESCALE"     # stochastic velocity rescaling,
+                                # "LANGEVIN", Langevin dynamics, or
+                                # "NOSE-HOOVER", a Nose-Hoover chain
+time_constant = 0.5             # ps, with V-RESCALE or NOSE-HOOVER
 # friction    = 1.0             # 1/ps, with LANGEVIN
+# chain_length = 3              # thermostats, with NOSE-HOOVER
 interval      = 10              # steps between its actions
 
 [barostat]
@@ -2873,7 +2954,9 @@ method        = "C-RESCALE"     # stochastic cell rescaling
 time_constant = 2.0             # ps
 # compressibility = 4.56e-5     # 1/atm (4.5e-5 /bar)
 # coupling = "ISOTROPIC"        # ISOTROPIC; SEMI_ISOTROPIC: x and y
-#                               # together, z on its own
+#                               # together, z on its own; ANISOTROPIC:
+#                               # each axis on its own, with a number or
+#                               # three for compressibility
 # compressibility_z = 4.56e-5   # 1/atm, of z with SEMI_ISOTROPIC (0 keeps
 #                               # the height); compressibility by default
 # surface_tension = 0.0         # dyn/cm, of each surface normal to z,

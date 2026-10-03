@@ -50,6 +50,51 @@ to rounding (`test/Driver/leapfrog-constraints.test` compares their logs
 to $10^{-7}$, D76). A run that starts leapfrog from velocities of time 0
 takes $\mathbf v_{-\frac12} = \mathbf v_0 - h\mathbf a_0$.
 
+**Brownian dynamics** (`integrator = "BROWNIAN"`, D163b) is the limit of
+Langevin dynamics in which the friction damps the momenta faster than the
+forces change. Langevin's equation for particle $i$,
+$m_i\,d\mathbf v_i = \mathbf F_i\,dt - m_i\gamma\,\mathbf v_i\,dt +
+\sqrt{2m_i\gamma k_BT_0}\,d\mathbf W_i$, with the inertial term dropped
+gives the overdamped equation
+
+$$
+d\mathbf x_i = \frac{\mathbf F_i}{m_i\gamma}\,dt + \sqrt{2D_i}\,d\mathbf W_i,
+\qquad D_i = \frac{k_BT_0}{m_i\gamma},
+$$
+
+whose density obeys the Smoluchowski equation $\partial_t p =
+\sum_i \nabla_i\cdot D_i(\nabla_i p - \beta\mathbf F_i\,p)$ with
+$\beta = 1/k_BT_0$. Its flux vanishes for $p \propto e^{-\beta U}$, so the
+positions are sampled canonically; the momenta are not variables of the
+dynamics. The friction $\gamma$ (`friction` of `[dynamics]`, 1/ps) and the
+mass set the mobility $1/(m_i\gamma)$: like Langevin dynamics with one
+friction, light atoms move fastest. The step is that of Euler and
+Maruyama, the step of [[Ermak1978]](references.md#ermak1978) without hydrodynamic interactions,
+$\mathbf x' = \mathbf x_n + \Delta t\,\mathbf F_i(\mathbf x_n)/(m_i\gamma) +
+\sqrt{2D_i\Delta t}\,\mathbf R_i$, with $\mathbf R_i$ three normal numbers
+of the particle and the step from stream 2 (Section 6.6), written as a
+velocity $\mathbf u$ that the drift takes over $\Delta t$; then the
+constraints $\mathcal C$, the correction $(\mathbf x_{n+1} -
+\mathbf x')/\Delta t$, and the placement of the virtual sites, as above,
+and no kick. The velocities stored are $(\mathbf x_{n+1} - \mathbf
+x_n)/\Delta t$, whose kinetic energy is about $2/(\gamma\Delta t)$ times
+$\tfrac12N_fk_BT_0$; the log therefore has no kinetic energy, temperature,
+total, or conserved energy, and the pressure takes the kinetic energy of
+the momenta that the limit leaves Maxwellian at $T_0$, $\tfrac12N_fk_BT_0$.
+The drift and the noise of a step grow as $1/(m_i\gamma)$, so with
+constraints the hydrogens limit the step: a random displacement of the
+lightest atom beyond 0.005 nm is warned of. The step is accurate to
+first order in $\Delta t$: in a harmonic well $U = \tfrac k2\lvert\mathbf
+x\rvert^2$ it is $\mathbf x' = (1 - a)\mathbf x + \sqrt{2D\Delta t}\,
+\mathbf R$ with $a = k\Delta t/(m\gamma)$, whose stationary variance along
+each axis, $\sigma^2 = 2D\Delta t/(1 - (1-a)^2) = (k_BT_0/k)/(1 - a/2)$,
+exceeds the canonical $k_BT_0/k$ by a fraction $a/2$. On 125 atoms in
+wells of their own at 150 K the mean energy of the wells is 62.38 ± 0.16
+kcal/mol at $a = 0.21$ against 62.43 for the step and 55.89 canonically,
+and 56.38 ± 0.15 at $a = 0.021$ against 56.48; the energies 10 steps
+apart are correlated by 0.657 ± 0.012 at $a = 0.021$, against
+$(1-a)^{20} = 0.655$ (`brownian.test`).
+
 **Precision.** In the mixed mode the positions, the velocities, and the
 loops over particles (the kicks, the drift, the correction) are f64; the
 kernels of the constraints compute in f32 on displacements taken in f64
@@ -248,6 +293,85 @@ water at one volume by 39 bar per 1/ps of friction at 2 fs. An ideal gas of 256 
 bath of 300 K with $\gamma$ = 5/ps relaxes its kinetic energy at 9.6 ± 0.3/ps,
 against $2\gamma$ = 10/ps.
 
+**Nosé–Hoover chains** (`method = "NOSE-HOOVER"`, D163a) are the
+deterministic thermostat. A chain of $M$ thermostats (`chain_length`, 3 by
+default) with positions $\eta_j$, momenta $p_{\eta_j}$, and masses $Q_j$
+extends the system [[Martyna1992]](references.md#martyna1992):
+
+$$
+\dot{\mathbf x}_i = \frac{\mathbf p_i}{m_i},\quad
+\dot{\mathbf p}_i = \mathbf F_i - \frac{p_{\eta_1}}{Q_1}\mathbf p_i,\quad
+\dot\eta_j = \frac{p_{\eta_j}}{Q_j},\quad
+\dot p_{\eta_j} = G_j - \frac{p_{\eta_{j+1}}}{Q_{j+1}}\,p_{\eta_j},
+$$
+
+with $G_1 = 2K - N_fk_BT_0$, $G_j = p_{\eta_{j-1}}^2/Q_{j-1} - k_BT_0$
+for $j > 1$, and no last term for $j = M$. These are not Hamiltonian, but
+they conserve
+
+$$
+H' = U + K + \sum_{j=1}^M \frac{p_{\eta_j}^2}{2Q_j} + N_fk_BT_0\,\eta_1
++ k_BT_0\sum_{j=2}^M \eta_j ,
+$$
+
+and the compressibility of their flow, $\kappa = \nabla\cdot\dot{\mathbf
+\Gamma} = -N_f\dot\eta_1 - \sum_{j\ge2}\dot\eta_j$ (the $N_f$ momenta that
+the first thermostat damps, each later one damping the one before), is the
+time derivative of $-(H' - U - K - \sum_j p_{\eta_j}^2/2Q_j)/k_BT_0$. The
+invariant measure of a flow with compressibility $\kappa = -\dot w$ is
+$e^{w}\,d\boldsymbol\Gamma$ [[Tuckerman1999]](references.md#tuckerman1999), so the stationary density
+on the surface $H' = E$ is $\delta(H' - E)\,e^{N_f\eta_1 + \sum_{j\ge2}
+\eta_j}$. Integrating out $\eta_1$ with the delta function leaves
+$e^{(E - U - K - \sum_j p_{\eta_j}^2/2Q_j)/k_BT_0}$: the particles are
+distributed as $e^{-(U + K)/k_BT_0}$, canonically, and each $p_{\eta_j}$ as
+a Gaussian of variance $Q_jk_BT_0$, provided the dynamics are ergodic,
+which the chain secures where a single thermostat ($M = 1$, the
+Nosé–Hoover equations [[Nose1984]](references.md#nose1984), [[Hoover1985]](references.md#hoover1985)) does not, as on a
+harmonic oscillator. With $N_f$ the degrees of freedom of Section 6.2 the
+momentum of the center of mass, which the coupling removes, is left out of
+$K$, as it is from the stochastic thermostats.
+
+The masses take the form of [[Martyna1992]](references.md#martyna1992),
+$Q_1 = N_fk_BT_0/\omega^2$ and $Q_j = k_BT_0/\omega^2$, with
+$\omega = 2\pi/\tau_T$ for the period $\tau_T$ (`time_constant`).
+Linearized about $\bar K$, with the work of the forces left out,
+$\dot K \approx -2\bar K p_{\eta_1}/Q_1$ and $\dot p_{\eta_1} = 2\,\delta K$
+give $\ddot{\delta K} = -(2N_fk_BT_0/Q_1)\,\delta K$: the kinetic energy
+exchanges with the first thermostat with the period $\tau_T/\sqrt2$.
+
+The chain acts where velocity rescaling does, at the end of each period of
+$N_T$ steps: the Liouville operator of the chain, $iL_\text{NHC}$, which
+holds every term above with $p_{\eta}$ or $G$ and the friction on
+$\mathbf p$, is split from that of the particles symmetrically,
+$e^{iL\,N_T\Delta t} \approx e^{iL_\text{NHC}h/2}\,(e^{iL_\text{VV}\Delta
+t})^{N_T}\,e^{iL_\text{NHC}h/2}$ with $h = N_T\Delta t$, and the halves of
+consecutive periods join into one action over $h$. That action is itself
+factorized [[Martyna1996]](references.md#martyna1996) into $n_c$ equal parts, each
+a sequence of seven over $w_kh/n_c$ with the Suzuki–Yoshida weights of
+order six ($w_1 = w_7 = 0.78451361047756$, $w_2 = w_6 = 0.235573213359357$,
+$w_3 = w_5 = -1.17767998417887$, $w_4 = 1 - 2(w_1 + w_2 + w_3)$), and each
+of those, of length $s$, the symmetric sequence: $p_{\eta_M}$ by
+$\tfrac s2 G_M$; for $j = M-1, \dots, 1$, $p_{\eta_j} \leftarrow
+p_{\eta_j}e^{-s\dot\eta_{j+1}/2} + \tfrac s2G_j e^{-s\dot\eta_{j+1}/4}$;
+the velocities of the particles by $e^{-s\,p_{\eta_1}/Q_1}$, and so
+$K$ by its square; $\eta_j \leftarrow \eta_j + s\,p_{\eta_j}/Q_j$; then the
+momenta again from $j = 1$ to $M$. The parts are $n_c = \lceil 50h/\tau_T
+\rceil$: one part of $h$ = 40 fs at $\tau_T$ = 0.5 ps took the later
+thermostats of a liquid far from $T_0$ beyond what the factorization
+follows, and the run failed. Beyond the stability of the parts, a chain
+acting once a period follows a period $\tau_T$ shorter than about 20
+periods of coupling poorly, which the run warns of. The chain is a few numbers, moved on the host,
+which returns $\alpha$ for the loop over particles; the bath takes the
+change of the energy of the chain, the last three terms of $H'$, so the
+log's conserved energy is $H'$ less its value at the start of the run.
+The checkpoints keep the chain. On the mixture of 256 particles of
+`thermostat.test` at 150 K ($N_f = 765$, $\tau_T$ = 1 ps, $N_T = 10$,
+$\Delta t$ = 4 fs, 400 ps after 80 of equilibration), the mean kinetic
+energy is $0.9997\,\bar K$ and its standard deviation $1.017$ times the
+canonical $\sqrt{N_f/2}\,k_BT_0$, and the samples are those of
+$\Gamma(N_f/2, k_BT_0)$ by a test of Kolmogorov and Smirnov ($p = 0.11$);
+$H'$ drifts by $1.9\times10^{-4}\,k_BT_0$ per particle per ns.
+
 ## 6.4 The barostat
 
 Stochastic cell rescaling [[Bernetti2020]](references.md#bernetti2020) couples the cell to a
@@ -323,6 +447,39 @@ its column, so that the particles keep their lattice coordinates and the
 cell stays lower triangular and reduced (D127); and
 the work of a scaling below is a sum over the axes, with $K_a$ and the
 diagonal of the virial of the groups in place of $K$ and the trace.
+
+**Anisotropic coupling** (`coupling = "ANISOTROPIC"`, D163c) scales each
+axis by the strain of its own edge, $\varepsilon_a = \ln L_a$, from its own
+pressure and noise, the step of z above on each axis:
+
+$$
+\Delta\varepsilon_a = -\frac{f_a}{3}\big(P_0 - P_{aa}\big) + \sqrt{\frac{2k_BT\,c\,f_a}{3V}}\,R_a,
+\qquad \mu_a = e^{\Delta\varepsilon_a},
+$$
+
+with $f_a$ from the compressibility $\beta_a$ of the axis (`compressibility`
+as three numbers; 0 keeps the edge to the bit) and $R_a$ the first three
+normal numbers of the step. With $D_a = k_BTc\,f_a/(3V)$ and the density
+$\rho \propto V e^{-(P_0V + F)/k_BT}$ in $(\varepsilon_x, \varepsilon_y,
+\varepsilon_z)$, whose factor $V = L_xL_yL_z$ is the Jacobian of the
+strains, $\partial_{\varepsilon_a}\ln\rho = 1 + V(P_{aa} - P_0)/k_BT$ with
+$P_{aa} = -L_a\,\partial F/\partial L_a/V$ in the mean; the zero flux,
+$A_a\rho = \partial_{\varepsilon_a}(D_a\rho)$, then requires $A_a =
+D_a\partial_{\varepsilon_a}\ln\rho + \partial_{\varepsilon_a}D_a =
+D_aV(P_{aa} - P_0)/k_BT$, since $D_a \propto 1/V$ falls along
+$\varepsilon_a$ by exactly what the factor $V$ of $\rho$ adds: the drift
+above. That is the ensemble at constant pressure in a cell whose three
+edges are free, with no term in $k_BT/V$. The three steps sum to a step in
+$\ln V$ with the drift and the noise of isotropic coupling. A liquid has no
+stiffness against a change of shape at constant volume, so its edges
+wander, $\ln(L_x/L_y)$ diffusing freely: anisotropic coupling is for solids,
+membranes with a crystal, or a cell under different stresses, and a liquid
+run long enough reaches an edge of $2r_c$, where the run stops. A flexible
+cell, with shear, needs the off-diagonal virial and is another decision. An
+argon crystal of 864 atoms at 40 K keeps its cubic shape, edges within
+0.03 Å of the isotropic 32.100 Å and of those of OpenMM's anisotropic
+Monte Carlo barostat, with the volume and its spread of isotropic coupling
+(D163c).
 
 **Scaling.** A free particle moves to $\mu\mathbf x$; a water or a group
 of SHAKE moves with its center of mass, $\mathbf x_j \to \mu\mathbf X +

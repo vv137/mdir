@@ -72,6 +72,9 @@ struct System {
   /// From a checkpoint: the state that the next scaling of a barostat that
   /// scales the cell every step takes its pressure from (D92), or nothing.
   std::vector<double> barostatState;
+  /// From a checkpoint: the state of a Nose-Hoover chain (D163a), or
+  /// nothing.
+  std::vector<double> thermostatState;
   /// The positions of the file of coordinates, which restraints hold the
   /// particles to; a checkpoint that the run begins from does not change
   /// them.

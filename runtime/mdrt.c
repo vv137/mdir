@@ -317,6 +317,73 @@ double mdrtBarostatStrainHeight(int64_t seed, int64_t step, double pressure,
          sqrt(2.0 * thermal * f / (3.0 * volume)) * r[1];
 }
 
+/* Anisotropic stochastic cell rescaling (D163c): one Euler-Maruyama step
+   of the strain of axis `axis`, e_a = ln L_a, with its own normal number,
+   the number `axis` of stream 1 of the step (the first two are those of
+   semi-isotropic coupling):
+
+     de_a = -(f_a / 3)(P0 - P_aa) + sqrt(2 kT c f_a / (3 V)) R_a,
+
+   f_a = beta_a * rate. For each axis this is the step of z of eq. (9b) of
+   Bernetti and Bussi, J. Chem. Phys. 153, 114107 (2020); with the density
+   V exp(-(P0 V + F) / kT) in the three strains, whose derivative along e_a
+   is 1 + V (P_aa - P0) / kT, the drift of the zero flux is the one above,
+   since the diffusion, proportional to 1 / V, falls along e_a by as much
+   as the factor V of the density adds. Units as for semi-isotropic
+   coupling. The pressures of the axes are summed for the means at the
+   end, as those of semi-isotropic coupling are. */
+static struct {
+  double sum[3], block[3], blockSum[3], blockSquares[3];
+  int64_t count[3], inBlock[3], blocks[3];
+} axisPressures;
+
+double mdrtBarostatStrainAxis(int64_t seed, int64_t step, int64_t axis,
+                              double pressure, double target, double volume,
+                              double kT, double compressibility,
+                              double rate) {
+  const double conversion = 16.6053906717;
+  Draws draws;
+  initDraws(&draws, (uint64_t)seed, step, /*entity=*/0, /*stream=*/1);
+  double r = 0.0;
+  for (int64_t k = 0; k <= axis; ++k)
+    r = drawNormal(&draws);
+  int a = (int)axis;
+  axisPressures.sum[a] += pressure;
+  axisPressures.block[a] += pressure;
+  ++axisPressures.count[a];
+  if (++axisPressures.inBlock[a] == SEMI_BLOCK) {
+    double mean = axisPressures.block[a] / SEMI_BLOCK;
+    axisPressures.blockSum[a] += mean;
+    axisPressures.blockSquares[a] += mean * mean;
+    axisPressures.block[a] = 0.0;
+    axisPressures.inBlock[a] = 0;
+    ++axisPressures.blocks[a];
+  }
+  double f = compressibility * rate;
+  double thermal = kT * conversion;
+  return -(f / 3.0) * (target - pressure) +
+         sqrt(2.0 * thermal * f / (3.0 * volume)) * r;
+}
+
+/* The means of the pressures of x, y, and z that anisotropic coupling took,
+   in bar, in out[0..2], and the errors of the means from blocks of 100
+   periods in out[3..5]. Returns the number of periods. */
+int64_t mdrtGetAxisPressures(double *out) {
+  for (int k = 0; k != 3; ++k) {
+    int64_t n = axisPressures.count[k], b = axisPressures.blocks[k];
+    out[k] = n > 0 ? axisPressures.sum[k] / (double)n : 0.0;
+    double error = 0.0;
+    if (b > 1) {
+      double mean = axisPressures.blockSum[k] / (double)b;
+      double var = (axisPressures.blockSquares[k] - b * mean * mean) /
+                   (double)(b - 1);
+      error = var > 0.0 ? sqrt(var / (double)b) : 0.0;
+    }
+    out[3 + k] = error;
+  }
+  return axisPressures.count[0];
+}
+
 /*===----------------------------------------------------------------------===
  * FFT of particle mesh Ewald on the host
  *===----------------------------------------------------------------------===*/

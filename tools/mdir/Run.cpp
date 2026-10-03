@@ -374,6 +374,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   StringRef integrator =
       control->minimize ? "MINIMIZATION"
       : control->integrator == Integrator::Leapfrog ? "LEAPFROG"
+      : control->integrator == Integrator::Brownian ? "BROWNIAN"
                                                    : "VELOCITY_VERLET";
   double velocityOffset =
       control->integrator == Integrator::Leapfrog ? -0.5 : 0.0;
@@ -440,6 +441,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     system->positions = checkpoint->positions;
     system->velocities = checkpoint->velocities;
     system->barostatState = checkpoint->barostatState;
+    system->thermostatState = checkpoint->thermostatState;
     forces = checkpoint->forces;
     firstStep = checkpoint->step;
     firstTime = checkpoint->time;
@@ -651,6 +653,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     add("_mlir_ciface_mdrtWriteTerms", (void *)&_mlir_ciface_mdrtWriteTerms);
     add("_mlir_ciface_mdrtWriteVirial", (void *)&_mlir_ciface_mdrtWriteVirial);
     add("_mlir_ciface_mdrtAddBath", (void *)&_mlir_ciface_mdrtAddBath);
+    add("mdrtNoseHooverFactor", (void *)&mdrtNoseHooverFactor);
     add("_mlir_ciface_mdrtWritePull", (void *)&_mlir_ciface_mdrtWritePull);
     add("_mlir_ciface_mdrtSetBox", (void *)&_mlir_ciface_mdrtSetBox);
     add("_mlir_ciface_mdrtSetTilt", (void *)&_mlir_ciface_mdrtSetTilt);
@@ -827,6 +830,9 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // the run does not count (D135): its log has no conserved energy.
   output.couples = control->getCouplingPeriod() > 0 && !control->isLangevin();
   output.changesCell = control->barostat;
+  output.overdamped = control->isBrownian();
+  output.bathKinetic = 0.5 * system->getDegreesOfFreedom() *
+                       units::boltzmann * control->temperature;
   output.minimizes = control->minimize;
   output.leastEdge = 2.0 * control->cutoffDistance * units::length;
   output.degreesOfFreedom = system->getDegreesOfFreedom();
@@ -966,6 +972,33 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // where its checkpoint left it, so that its conserved energy continues.
   if (own)
     output.bath = own->bath;
+  if (control->isNoseHoover()) {
+    // A Nose-Hoover chain (D163a): the masses of Martyna, Klein, and
+    // Tuckerman (1992), Q_1 = N_f k_B T / ω² and Q_j = k_B T / ω², with
+    // ω = 2π / τ, the frequency of the period τ; the chain at rest, or as
+    // the checkpoint left it.
+    double kT = units::boltzmann * control->temperature;
+    double omega = 2.0 * M_PI / control->tauT;
+    size_t m = static_cast<size_t>(control->chainLength);
+    output.chainKT = kT;
+    output.chainFreedom = system->getDegreesOfFreedom();
+    output.chainTime =
+        static_cast<double>(control->getCouplingPeriod()) * control->timestep;
+    // The action of the chain over the period is split into equal parts of
+    // at most τ / 50: with one part, a period of 10 steps of 4 fs and
+    // τ = 0.5 ps, a liquid far from the temperature of the bath drove the
+    // later thermostats beyond what the factorization follows, and the run
+    // failed.
+    output.chainSubsteps = std::max<int>(
+        1, static_cast<int>(std::ceil(50.0 * output.chainTime /
+                                      control->tauT - 1e-9)));
+    output.chainMasses.assign(m, kT / (omega * omega));
+    output.chainMasses[0] *= output.chainFreedom;
+    output.chain.assign(2 * m, 0.0);
+    if (system->thermostatState.size() == 2 * m)
+      output.chain = system->thermostatState;
+    output.checkpoint.thermostatState = output.chain;
+  }
   output.began = began;
   output.maxWalltime = options.maxWalltime;
   setOutput(&output);
@@ -1155,6 +1188,19 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       llvm::consumeError(get.takeError());
     }
   }
+  // The pressures of the axes that anisotropic coupling took (D163c).
+  if (control->barostat && control->anisotropic) {
+    if (auto get = (*engine)->lookup("mdrtGetAxisPressures")) {
+      double p[6];
+      int64_t n = reinterpret_cast<int64_t (*)(double *)>(*get)(p);
+      output.log.print(
+          "MDIR: the pressures of the barostat over %lld periods, in bar: "
+          "x %.2f ± %.2f, y %.2f ± %.2f, z %.2f ± %.2f\n",
+          static_cast<long long>(n), p[0], p[3], p[1], p[4], p[2], p[5]);
+    } else {
+      llvm::consumeError(get.takeError());
+    }
+  }
   // The momentum of the state at the end, which the removal of the motion
   // of the center of mass keeps at 0.
   double momentum[3] = {0.0, 0.0, 0.0};
@@ -1175,7 +1221,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                    output.lastTotal / units::energy);
     return 0;
   }
-  if (control->isLangevin())
+  if (control->isLangevin() || control->isBrownian())
     return 0;
   if (output.hasEnergies && output.firstTotal != 0.0)
     output.log.print(
