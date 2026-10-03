@@ -6916,8 +6916,9 @@ llvm::Error Builder::build() {
   } else if (llvm::Error error = collectParameters()) {
     return error;
   }
-  // The cubics of the tabulated functions, four numbers for each interval
-  // (D138).
+  // The polynomials of the tabulated functions, a row of 4ⁿ numbers for
+  // each cell of a function of n arguments (D138, D165), or the values of a
+  // discrete one.
   for (const TabulatedFunction &function : control.functions) {
     Program::Table table;
     table.name = function.getTableName();
@@ -6927,8 +6928,8 @@ llvm::Error Builder::build() {
       return makeError("the table of the function '" + function.name +
                        "' takes the name of another; rename the function");
     table.values = function.getCoefficients();
-    table.columns = 4;
-    table.count = table.values.size() / 4;
+    table.columns = function.getColumns();
+    table.count = table.values.size() / table.columns;
     program.tables.push_back(std::move(table));
   }
 

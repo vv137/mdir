@@ -21,21 +21,38 @@
 namespace mdir {
 namespace driver {
 
-/// A function of one argument given by its values at evenly spaced points
-/// from `min` to `max`, a natural cubic spline between them, and zero
-/// outside; or, if `periodic`, a periodic spline, with the first and the
-/// last value equal, and the argument taken modulo `max - min`: the
-/// continuous tabulated function of OpenMM (D138).
+/// A tabulated function of one, two, or three arguments. A continuous one
+/// is given by its values at evenly spaced points from `mins` to `maxs`
+/// along each argument: of one argument a natural cubic spline between them
+/// (D138), of two or three the bicubic or tricubic patch of each cell that
+/// matches the values and the derivatives at its corners, the derivatives
+/// taken from natural splines along the axes (D165); zero outside, or, if
+/// `periodic`, with periodic splines, the first and the last value along
+/// each axis equal, and each argument taken modulo `maxs - mins`: the
+/// continuous tabulated functions of OpenMM [Eastman2017]. A `discrete`
+/// one is the value at the nearest point, the arguments rounded to whole
+/// numbers from 0 and clamped to the table: the discrete functions of
+/// OpenMM.
 struct TabulatedFunction {
   std::string name;
+  /// The values, the first argument varying fastest.
   std::vector<double> values;
-  double min = 0.0;
-  double max = 0.0;
+  /// The number of points along each argument.
+  std::vector<unsigned> sizes;
+  std::vector<double> mins;
+  std::vector<double> maxs;
   bool periodic = false;
+  bool discrete = false;
 
-  /// The cubic of each interval in the place t in it, from 0 to 1: four
-  /// numbers c0, c1, c2, c3 of c0 + c1 t + c2 t² + c3 t³ for each.
+  unsigned getNumArguments() const { return sizes.size(); }
+  /// The polynomial of each cell, in the places t, u, v in it, each from 0
+  /// to 1: 4ⁿ numbers c[a + 4b + 16c] of Σ c tᵃ uᵇ vᶜ for each cell, the
+  /// first argument varying fastest; or, if `discrete`, the values.
   std::vector<double> getCoefficients() const;
+  /// The numbers of each row of the table: 4ⁿ, or 1 if `discrete`.
+  unsigned getColumns() const {
+    return discrete ? 1u : 1u << (2 * getNumArguments());
+  }
   /// The name of the table of the coefficients in the IR.
   std::string getTableName() const { return "fn_" + name; }
 };
@@ -85,19 +102,25 @@ public:
   double evaluate(const llvm::StringMap<double> &values) const;
 
   /// A tabulated function that the expression calls: its table in the IR,
-  /// and the coefficients of TabulatedFunction::getCoefficients.
+  /// and the rows of TabulatedFunction::getCoefficients.
   struct Spline {
     std::string name;
     std::string table;
-    double min = 0.0;
-    /// The intervals per unit of the argument.
-    double scale = 0.0;
-    double max = 0.0;
+    std::vector<double> mins;
+    std::vector<double> maxs;
+    /// Along each argument, the intervals per unit of it, and the number of
+    /// intervals, or, if `discrete`, of points.
+    std::vector<double> scales;
+    std::vector<unsigned> counts;
     bool periodic = false;
+    bool discrete = false;
     std::vector<double> coefficients;
 
-    unsigned getNumIntervals() const { return coefficients.size() / 4; }
-    double evaluate(double x) const;
+    unsigned getNumArguments() const { return counts.size(); }
+    unsigned getColumns() const {
+      return discrete ? 1u : 1u << (2 * getNumArguments());
+    }
+    double evaluate(llvm::ArrayRef<double> x) const;
   };
 
 private:

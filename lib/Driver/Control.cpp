@@ -677,7 +677,7 @@ Error Reader::readTupleTerm(const toml::table &table, unsigned arity) {
 Error Reader::readFunction(const toml::table &table) {
   if (Error error = checkKeywords(table, "[energy.function]",
                                   {"name", "values", "min", "max",
-                                   "periodic"}))
+                                   "periodic", "discrete"}))
     return error;
   TabulatedFunction function;
   if (Error error = readString(table, "name", function.name))
@@ -694,32 +694,131 @@ Error Reader::readFunction(const toml::table &table) {
       }))
     return fail(*table.get("name"), "the function '" + function.name +
                                         "' exists already");
+  if (Error error = readBool(table, "discrete", function.discrete))
+    return error;
+
+  // The values: a list of numbers for a function of one argument, a list
+  // of lists for two, of lists of lists for three, `values[i][j]` the value
+  // at the i-th point of the first argument and the j-th of the second (D165).
   const toml::node *values = table.get("values");
   const toml::array *list = values ? values->as_array() : nullptr;
-  if (!list || list->size() < 2)
+  if (!list || list->empty())
     return fail(values ? *values : static_cast<const toml::node &>(table),
-                "expected 'values', a list of at least two numbers");
-  for (const toml::node &value : *list) {
-    std::optional<double> number = value.value<double>();
-    if (!number || !std::isfinite(*number))
-      return fail(value, "expected a number in 'values'");
-    function.values.push_back(*number);
+                "expected 'values', a list of numbers, or of lists of them "
+                "for a function of two or three arguments");
+  const toml::array *inner = list;
+  while (inner && !inner->empty() && inner->front().is_array()) {
+    function.sizes.push_back(inner->size());
+    inner = inner->front().as_array();
   }
-  for (StringRef key : {"min", "max"})
-    if (!table.contains(std::string_view(key)))
+  if (!inner || inner->empty())
+    return fail(*values, "expected 'values' as lists of numbers");
+  function.sizes.push_back(inner->size());
+  unsigned dimensions = function.sizes.size();
+  if (dimensions > 3)
+    return fail(*values, "a function takes at most three arguments; "
+                         "'values' nests deeper");
+  // In the table the first argument varies fastest.
+  size_t total = 1;
+  for (unsigned size : function.sizes)
+    total *= size;
+  function.values.assign(total, 0.0);
+  std::vector<size_t> stride(dimensions, 1);
+  for (unsigned k = 1; k < dimensions; ++k)
+    stride[k] = stride[k - 1] * function.sizes[k - 1];
+  std::function<Error(const toml::node &, unsigned, size_t)> read =
+      [&](const toml::node &node, unsigned depth, size_t offset) -> Error {
+    if (depth == dimensions) {
+      std::optional<double> number = node.value<double>();
+      if (!number || !std::isfinite(*number))
+        return fail(node, "expected a number in 'values'");
+      function.values[offset] = *number;
+      return Error::success();
+    }
+    const toml::array *row = node.as_array();
+    if (!row || row->size() != function.sizes[depth])
+      return fail(node, "expected 'values' as lists of " +
+                            llvm::Twine(function.sizes[depth]) +
+                            (depth + 1 == dimensions ? " numbers"
+                                                     : " lists") +
+                            ", the same length at each level");
+    for (size_t i = 0; i != row->size(); ++i)
+      if (Error error = read((*row)[i], depth + 1, offset + i * stride[depth]))
+        return error;
+    return Error::success();
+  };
+  if (Error error = read(*values, 0, 0))
+    return error;
+
+  if (function.discrete) {
+    for (StringRef key : {"min", "max", "periodic"})
+      if (table.contains(std::string_view(key)))
+        return fail(*table.get(std::string_view(key)),
+                    "a discrete function takes its arguments as the indices "
+                    "of its values, from 0, without '" + key + "'");
+    function.mins.assign(dimensions, 0.0);
+    for (unsigned size : function.sizes)
+      function.maxs.push_back(size - 1.0);
+    control.functions.push_back(std::move(function));
+    return Error::success();
+  }
+
+  // The range of each argument: numbers for one, lists for more.
+  for (StringRef key : {"min", "max"}) {
+    const toml::node *node = table.get(std::string_view(key));
+    if (!node)
       return fail(table, "expected '" + key + "' in [[energy.function]]");
-  if (Error error = readReal(table, "min", function.min))
-    return error;
-  if (Error error = readReal(table, "max", function.max))
-    return error;
-  if (!(function.min < function.max))
-    return fail(*table.get("max"), "'max' is not greater than 'min'");
+    std::vector<double> &range = key == "min" ? function.mins : function.maxs;
+    if (dimensions == 1) {
+      std::optional<double> number = node->value<double>();
+      if (!number || !std::isfinite(*number))
+        return fail(*node, "expected '" + key + "' as a number");
+      range.push_back(*number);
+      continue;
+    }
+    const toml::array *bounds = node->as_array();
+    if (!bounds || bounds->size() != dimensions)
+      return fail(*node, "expected '" + key + "' as a list of " +
+                             llvm::Twine(dimensions) +
+                             " numbers, one for each argument");
+    for (const toml::node &bound : *bounds) {
+      std::optional<double> number = bound.value<double>();
+      if (!number || !std::isfinite(*number))
+        return fail(bound, "expected a number");
+      range.push_back(*number);
+    }
+  }
+  for (unsigned k = 0; k != dimensions; ++k) {
+    if (!(function.mins[k] < function.maxs[k]))
+      return fail(*table.get("max"), "'max' is not greater than 'min'");
+    if (function.sizes[k] < 2)
+      return fail(*values, dimensions == 1
+                               ? "expected 'values', a list of at least two "
+                                 "numbers"
+                               : "a continuous function needs at least two "
+                                 "values along each argument");
+  }
   if (Error error = readBool(table, "periodic", function.periodic))
     return error;
-  if (function.periodic && (function.values.size() < 4 ||
-                            function.values.front() != function.values.back()))
-    return fail(*values, "a periodic function needs at least four values, "
-                         "and the last equal to the first");
+  if (function.periodic) {
+    // At least four points along each axis, and the first and the last
+    // slab along each the same.
+    for (unsigned k = 0; k != dimensions; ++k) {
+      if (function.sizes[k] < 4)
+        return fail(*values, "a periodic function needs at least four "
+                             "values along each argument");
+      size_t last = (function.sizes[k] - 1) * stride[k];
+      for (size_t i = 0; i != total; ++i)
+        if ((i / stride[k]) % function.sizes[k] == 0 &&
+            function.values[i] != function.values[i + last])
+          return fail(*values,
+                      dimensions == 1
+                          ? "a periodic function needs at least four values, "
+                            "and the last equal to the first"
+                          : "a periodic function needs the last values "
+                            "along each argument equal to the first");
+    }
+  }
   control.functions.push_back(std::move(function));
   return Error::success();
 }

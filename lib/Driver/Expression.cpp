@@ -94,15 +94,15 @@ static std::vector<double> solveTridiagonal(std::vector<double> right) {
   return m;
 }
 
-std::vector<double> TabulatedFunction::getCoefficients() const {
-  // The second derivatives m of the cubic spline through the values y at
-  // the spacing h, from
-  //   m[i-1] + 4 m[i] + m[i+1] = 6 (y[i-1] - 2 y[i] + y[i+1]) / h²:
-  // natural, m = 0 at both ends, or periodic, the indices of the n - 1
-  // intervals taken modulo n - 1, a cyclic system solved by the formula of
-  // Sherman and Morrison from two tridiagonal ones.
+/// The second derivatives m of the cubic spline through `values` at the
+/// spacing h, from
+///   m[i-1] + 4 m[i] + m[i+1] = 6 (y[i-1] - 2 y[i] + y[i+1]) / h²:
+/// natural, m = 0 at both ends, or periodic, the indices of the n - 1
+/// intervals taken modulo n - 1, a cyclic system solved by the formula of
+/// Sherman and Morrison from two tridiagonal ones.
+static std::vector<double> getCurvatures(llvm::ArrayRef<double> values,
+                                         double h, bool periodic) {
   size_t n = values.size();
-  double h = (max - min) / static_cast<double>(n - 1);
   auto curvature = [&](size_t before, size_t i, size_t after) {
     return 6.0 * (values[before] - 2.0 * values[i] + values[after]) / (h * h);
   };
@@ -113,63 +113,203 @@ std::vector<double> TabulatedFunction::getCoefficients() const {
       right.push_back(curvature(i - 1, i, i + 1));
     std::vector<double> inner = solveTridiagonal(right);
     std::copy(inner.begin(), inner.end(), m.begin() + 1);
-  } else {
-    // A = T + u vᵀ with T tridiagonal, u = (γ, 0, ..., 0, 1), and
-    // v = (1, 0, ..., 0, 1/γ), γ = -4, so that the corners of A are 1 and
-    // the first and last diagonal of T are 4 - γ and 4 - 1/γ.
-    size_t count = n - 1;
-    std::vector<double> right(count);
-    for (size_t i = 0; i != count; ++i)
-      right[i] = curvature((i + count - 1) % count, i, i + 1);
-    double gamma = -4.0;
-    auto solve = [&](std::vector<double> b) {
-      // T x = b, with the first and last diagonal changed.
-      std::vector<double> diagonal(count, 4.0), x(count, 0.0);
-      diagonal.front() -= gamma;
-      diagonal.back() -= 1.0 / gamma;
-      for (size_t i = 1; i < count; ++i) {
-        double factor = 1.0 / diagonal[i - 1];
-        diagonal[i] -= factor;
-        b[i] -= factor * b[i - 1];
-      }
-      for (size_t i = count; i-- > 0;)
-        x[i] = (b[i] - (i + 1 < count ? x[i + 1] : 0.0)) / diagonal[i];
-      return x;
-    };
-    std::vector<double> u(count, 0.0);
-    u.front() = gamma;
-    u.back() = 1.0;
-    std::vector<double> x = solve(right), z = solve(u);
-    double factor = (x.front() + x.back() / gamma) /
-                    (1.0 + z.front() + z.back() / gamma);
-    for (size_t i = 0; i != count; ++i)
-      m[i] = x[i] - factor * z[i];
-    m[count] = m[0];
+    return m;
   }
-  // On [x_i, x_i + h], with t = (x - x_i) / h,
-  //   y = (1 - t) y_i + t y_i+1 + h²/6 (((1 - t)³ - (1 - t)) m_i + (t³ - t) m_i+1).
-  std::vector<double> coefficients;
-  for (size_t i = 0; i + 1 < n; ++i) {
-    double a = h * h / 6.0;
-    coefficients.push_back(values[i]);
-    coefficients.push_back(values[i + 1] - values[i] - a * (2.0 * m[i] + m[i + 1]));
-    coefficients.push_back(3.0 * a * m[i]);
-    coefficients.push_back(a * (m[i + 1] - m[i]));
+  // A = T + u vᵀ with T tridiagonal, u = (γ, 0, ..., 0, 1), and
+  // v = (1, 0, ..., 0, 1/γ), γ = -4, so that the corners of A are 1 and
+  // the first and last diagonal of T are 4 - γ and 4 - 1/γ.
+  size_t count = n - 1;
+  std::vector<double> right(count);
+  for (size_t i = 0; i != count; ++i)
+    right[i] = curvature((i + count - 1) % count, i, i + 1);
+  double gamma = -4.0;
+  auto solve = [&](std::vector<double> b) {
+    // T x = b, with the first and last diagonal changed.
+    std::vector<double> diagonal(count, 4.0), x(count, 0.0);
+    diagonal.front() -= gamma;
+    diagonal.back() -= 1.0 / gamma;
+    for (size_t i = 1; i < count; ++i) {
+      double factor = 1.0 / diagonal[i - 1];
+      diagonal[i] -= factor;
+      b[i] -= factor * b[i - 1];
+    }
+    for (size_t i = count; i-- > 0;)
+      x[i] = (b[i] - (i + 1 < count ? x[i + 1] : 0.0)) / diagonal[i];
+    return x;
+  };
+  std::vector<double> u(count, 0.0);
+  u.front() = gamma;
+  u.back() = 1.0;
+  std::vector<double> x = solve(right), z = solve(u);
+  double factor = (x.front() + x.back() / gamma) /
+                  (1.0 + z.front() + z.back() / gamma);
+  for (size_t i = 0; i != count; ++i)
+    m[i] = x[i] - factor * z[i];
+  m[count] = m[0];
+  return m;
+}
+
+/// The derivative of the spline of getCurvatures at each of its points:
+/// that of the interval that begins there, and of the last interval at the
+/// last point.
+static std::vector<double> getSlopes(llvm::ArrayRef<double> values, double h,
+                                     bool periodic) {
+  std::vector<double> m = getCurvatures(values, h, periodic);
+  size_t n = values.size();
+  std::vector<double> slopes(n);
+  for (size_t i = 0; i + 1 < n; ++i)
+    slopes[i] = (values[i + 1] - values[i]) / h - h * (2.0 * m[i] + m[i + 1]) / 6.0;
+  slopes[n - 1] = (values[n - 1] - values[n - 2]) / h +
+                  h * (m[n - 2] + 2.0 * m[n - 1]) / 6.0;
+  return slopes;
+}
+
+std::vector<double> TabulatedFunction::getCoefficients() const {
+  if (discrete)
+    return values;
+  unsigned dimensions = getNumArguments();
+  std::vector<double> h(dimensions);
+  for (unsigned k = 0; k != dimensions; ++k)
+    h[k] = (maxs[k] - mins[k]) / static_cast<double>(sizes[k] - 1);
+  if (dimensions == 1) {
+    // On [x_i, x_i + h], with t = (x - x_i) / h,
+    //   y = (1 - t) y_i + t y_i+1 + h²/6 (((1 - t)³ - (1 - t)) m_i + (t³ - t) m_i+1).
+    std::vector<double> m = getCurvatures(values, h[0], periodic);
+    std::vector<double> coefficients;
+    for (size_t i = 0; i + 1 < values.size(); ++i) {
+      double a = h[0] * h[0] / 6.0;
+      coefficients.push_back(values[i]);
+      coefficients.push_back(values[i + 1] - values[i] -
+                             a * (2.0 * m[i] + m[i + 1]));
+      coefficients.push_back(3.0 * a * m[i]);
+      coefficients.push_back(a * (m[i + 1] - m[i]));
+    }
+    return coefficients;
+  }
+
+  // The derivatives at the points of the grid along each set of axes, a
+  // bit of `mask` for each, as the continuous functions of two and three
+  // arguments of OpenMM take them [Eastman2017]: along one axis from the
+  // spline through the values on each line of the grid, and along more
+  // than one from the spline through those along fewer, in the order
+  // below, which the result depends on at the level of the error of the
+  // splines.
+  std::vector<unsigned> stride(dimensions, 1);
+  for (unsigned k = 1; k != dimensions; ++k)
+    stride[k] = stride[k - 1] * sizes[k - 1];
+  size_t total = values.size();
+  std::vector<std::vector<double>> derivatives(1u << dimensions);
+  derivatives[0] = values;
+  auto differentiate = [&](unsigned mask, unsigned axis, unsigned from) {
+    std::vector<double> &result = derivatives[mask];
+    result.assign(total, 0.0);
+    const std::vector<double> &source = derivatives[from];
+    for (size_t start = 0; start != total; ++start) {
+      if ((start / stride[axis]) % sizes[axis] != 0)
+        continue;
+      std::vector<double> line(sizes[axis]);
+      for (unsigned i = 0; i != sizes[axis]; ++i)
+        line[i] = source[start + i * stride[axis]];
+      std::vector<double> slopes = getSlopes(line, h[axis], periodic);
+      for (unsigned i = 0; i != sizes[axis]; ++i)
+        result[start + i * stride[axis]] = slopes[i];
+    }
+  };
+  // (mask, axis, from): ∂x, ∂y, ∂z, ∂x∂y = x of ∂y, ∂x∂z = z of ∂x,
+  // ∂y∂z = y of ∂z, ∂x∂y∂z = x of ∂y∂z.
+  static const unsigned order[][3] = {{1, 0, 0}, {2, 1, 0}, {4, 2, 0},
+                                      {3, 0, 2}, {5, 2, 1}, {6, 1, 4},
+                                      {7, 0, 6}};
+  for (const auto &[mask, axis, from] : order)
+    if (mask < derivatives.size())
+      differentiate(mask, axis, from);
+
+  // The patch of each cell: the product of the cubics of Hermite along the
+  // axes, which match the values, the derivatives along each axis, and the
+  // mixed ones at the corners, the bicubic of Press et al. and the
+  // tricubic of Lekien and Marsden [Press2007, Lekien2005]. Along an axis,
+  // the cubic of p0, p1 and of the derivatives d0, d1 times the spacing
+  // has the coefficients (p0, d0, 3 (p1 - p0) - 2 d0 - d1,
+  // 2 (p0 - p1) + d0 + d1); `hermite[a][q]` is the factor of the q-th of
+  // (p0, p1, d0, d1) in the coefficient of the power a.
+  static const double hermite[4][4] = {
+      {1, 0, 0, 0}, {0, 0, 1, 0}, {-3, 3, -2, -1}, {2, -2, 1, 1}};
+  unsigned columns = getColumns();
+  std::vector<unsigned> cells(dimensions);
+  size_t numCells = 1;
+  for (unsigned k = 0; k != dimensions; ++k) {
+    cells[k] = sizes[k] - 1;
+    numCells *= cells[k];
+  }
+  std::vector<double> coefficients(numCells * columns, 0.0);
+  for (size_t cell = 0; cell != numCells; ++cell) {
+    std::vector<unsigned> corner(dimensions);
+    for (size_t rest = cell, k = 0; k != dimensions; ++k) {
+      corner[k] = rest % cells[k];
+      rest /= cells[k];
+    }
+    // q[k] in 0..3 picks along axis k p0, p1, d0, or d1.
+    for (unsigned column = 0; column != columns; ++column) {
+      double sum = 0.0;
+      for (unsigned qs = 0; qs != columns; ++qs) {
+        double factor = 1.0;
+        unsigned mask = 0;
+        size_t point = 0;
+        for (unsigned k = 0; k != dimensions; ++k) {
+          unsigned a = (column >> (2 * k)) & 3, q = (qs >> (2 * k)) & 3;
+          factor *= hermite[a][q];
+          if (q >= 2) {
+            mask |= 1u << k;
+            factor *= h[k];
+          }
+          point += (corner[k] + (q & 1)) * stride[k];
+        }
+        if (factor != 0.0)
+          sum += factor * derivatives[mask][point];
+      }
+      coefficients[cell * columns + column] = sum;
+    }
   }
   return coefficients;
 }
 
-double Expression::Spline::evaluate(double x) const {
-  if (periodic)
-    x -= (max - min) * std::floor((x - min) / (max - min));
-  else if (x < min || x > max)
-    return 0.0;
-  double u = (x - min) * scale;
-  double cell = std::min(std::max(std::floor(u), 0.0),
-                         static_cast<double>(getNumIntervals() - 1));
-  double t = u - cell;
-  const double *c = &coefficients[4 * static_cast<size_t>(cell)];
-  return c[0] + t * (c[1] + t * (c[2] + t * c[3]));
+double Expression::Spline::evaluate(llvm::ArrayRef<double> arguments) const {
+  unsigned dimensions = getNumArguments();
+  std::vector<double> t(dimensions);
+  size_t row = 0, stride = 1;
+  for (unsigned k = 0; k != dimensions; ++k) {
+    double x = arguments[k];
+    double place;
+    if (discrete) {
+      place = std::min(std::max(std::floor(x + 0.5), 0.0),
+                       static_cast<double>(counts[k] - 1));
+    } else {
+      if (periodic)
+        x -= (maxs[k] - mins[k]) * std::floor((x - mins[k]) / (maxs[k] - mins[k]));
+      else if (x < mins[k] || x > maxs[k])
+        return 0.0;
+      double u = (x - mins[k]) * scales[k];
+      place = std::min(std::max(std::floor(u), 0.0),
+                       static_cast<double>(counts[k] - 1));
+      t[k] = u - place;
+    }
+    row += static_cast<size_t>(place) * stride;
+    stride *= counts[k];
+  }
+  unsigned columns = getColumns();
+  const double *c = &coefficients[row * columns];
+  if (discrete)
+    return c[0];
+  // Horner's rule along the last argument first.
+  std::function<double(unsigned, unsigned)> sum = [&](unsigned k,
+                                                      unsigned offset) {
+    double p = 0.0;
+    for (int a = 3; a >= 0; --a)
+      p = p * t[k] + (k == 0 ? c[offset + a]
+                             : sum(k - 1, offset + (a << (2 * k))));
+    return p;
+  };
+  return sum(dimensions - 1, 0);
 }
 
 namespace {
@@ -324,10 +464,12 @@ private:
       rest = rest.drop_front(name.size());
       if (consume('(')) {
         unsigned arity = getArity(name);
-        if (arity == 0 && llvm::any_of(functions, [&](const auto &function) {
-              return function.name == name;
-            })) {
-          arity = 1;
+        const TabulatedFunction *tabulated = nullptr;
+        for (const TabulatedFunction &function : functions)
+          if (function.name == name)
+            tabulated = &function;
+        if (arity == 0 && tabulated) {
+          arity = tabulated->getNumArguments();
           if (!llvm::is_contained(called, name))
             called.push_back(name.str());
         }
@@ -451,57 +593,105 @@ private:
     return result;
   }
 
-  /// A tabulated function at `x`: the cubic of the interval of x, whose
-  /// index is clamped so that the lookup stays in the table, and zero
-  /// outside the range. The place t in the interval carries the
-  /// derivative; the index, the lookups, and the comparisons do not.
+  /// A tabulated function at the arguments `x`: the polynomial of the cell
+  /// of x, whose index along each argument is clamped so that the lookup
+  /// stays in the table, and zero outside the range; or the value at the
+  /// nearest point. The places in the cell carry the derivative; the
+  /// indices, the lookups, and the comparisons do not.
   std::string emitSpline(const Expression::Spline &spline,
-                         std::string x) {
-    std::string low = constant(spline.min);
-    // A periodic function takes x less the periods from min to it; the
-    // floor of that number has no derivative.
-    if (spline.periodic) {
-      std::string period = constant(spline.max - spline.min);
-      std::string turns = emitOp(
-          "math.floor",
-          {emitOp("arith.divf", {emitOp("arith.subf", {x, low}), period})});
-      x = emitOp("arith.subf", {x, emitOp("arith.mulf", {turns, period})});
-    }
-    std::string u = emitOp("arith.mulf", {emitOp("arith.subf", {x, low}),
-                                          constant(spline.scale)});
+                         std::vector<std::string> x) {
+    unsigned dimensions = spline.getNumArguments();
     std::string zero = constant(0.0);
-    std::string cell = emitOp(
-        "arith.minimumf",
-        {emitOp("arith.maximumf", {emitOp("math.floor", {u}), zero}),
-         constant(spline.getNumIntervals() - 1)});
-    std::string t = emitOp("arith.subf", {u, cell});
+    std::vector<std::string> t(dimensions);
+    std::string row, outside;
+    double stride = 1.0;
+    for (unsigned k = 0; k != dimensions; ++k) {
+      std::string place;
+      if (spline.discrete) {
+        // The nearest whole number: floor(x + 1/2), which differs from
+        // rounding half away from zero only below 0, where it is clamped.
+        place = emitOp(
+            "arith.minimumf",
+            {emitOp("arith.maximumf",
+                    {emitOp("math.floor",
+                            {emitOp("arith.addf", {x[k], constant(0.5)})}),
+                     zero}),
+             constant(spline.counts[k] - 1)});
+      } else {
+        std::string low = constant(spline.mins[k]);
+        // A periodic function takes x less the periods from min to it;
+        // the floor of that number has no derivative.
+        if (spline.periodic) {
+          std::string period = constant(spline.maxs[k] - spline.mins[k]);
+          std::string turns = emitOp(
+              "math.floor",
+              {emitOp("arith.divf", {emitOp("arith.subf", {x[k], low}),
+                                     period})});
+          x[k] = emitOp("arith.subf",
+                        {x[k], emitOp("arith.mulf", {turns, period})});
+        } else {
+          // Outside [min, max] along this argument.
+          std::string below = next(), above = next(), either = next();
+          os << indent << below << " = arith.cmpf olt, " << x[k] << ", "
+             << low << " : f64\n";
+          std::string high = constant(spline.maxs[k]);
+          os << indent << above << " = arith.cmpf ogt, " << x[k] << ", "
+             << high << " : f64\n"
+             << indent << either << " = arith.ori " << below << ", "
+             << above << " : i1\n";
+          if (outside.empty()) {
+            outside = either;
+          } else {
+            std::string any = next();
+            os << indent << any << " = arith.ori " << outside << ", "
+               << either << " : i1\n";
+            outside = any;
+          }
+        }
+        std::string u = emitOp(
+            "arith.mulf",
+            {emitOp("arith.subf", {x[k], low}), constant(spline.scales[k])});
+        place = emitOp(
+            "arith.minimumf",
+            {emitOp("arith.maximumf", {emitOp("math.floor", {u}), zero}),
+             constant(spline.counts[k] - 1)});
+        t[k] = emitOp("arith.subf", {u, place});
+      }
+      std::string term =
+          k == 0 ? place : emitOp("arith.mulf", {place, constant(stride)});
+      row = k == 0 ? term : emitOp("arith.addf", {row, term});
+      stride *= spline.counts[k];
+    }
     std::string index = next();
-    os << indent << index << " = arith.fptosi " << cell << " : f64 to i32\n";
-    std::vector<std::string> c;
-    for (int k = 0; k != 4; ++k) {
+    os << indent << index << " = arith.fptosi " << row << " : f64 to i32\n";
+    auto lookup = [&](unsigned k) {
       std::string column = next(), value = next();
       os << indent << column << " = arith.constant " << k << " : i32\n"
          << indent << value << " = md.lookup %t_" << spline.table << "["
          << index << ", " << column << "] : !grid, i32, i32 -> f64\n";
-      c.push_back(value);
-    }
-    std::string p = c[3];
-    for (int k = 2; k >= 0; --k)
-      p = emitOp("arith.addf", {emitOp("arith.mulf", {p, t}), c[k]});
-    if (spline.periodic)
+      return value;
+    };
+    if (spline.discrete)
+      return lookup(0);
+    // Horner's rule along the last argument first.
+    std::function<std::string(unsigned, unsigned)> sum =
+        [&](unsigned k, unsigned offset) {
+          std::string p;
+          for (int a = 3; a >= 0; --a) {
+            std::string c = k == 0 ? lookup(offset + a)
+                                   : sum(k - 1, offset + (a << (2 * k)));
+            p = p.empty() ? c
+                          : emitOp("arith.addf",
+                                   {emitOp("arith.mulf", {p, t[k]}), c});
+          }
+          return p;
+        };
+    std::string p = sum(dimensions - 1, 0);
+    if (outside.empty())
       return p;
-    std::string below = next(), above = next();
-    os << indent << below << " = arith.cmpf olt, " << x << ", " << low
-       << " : f64\n";
-    std::string inside = next();
-    os << indent << inside << " = arith.select " << below << ", " << zero
-       << ", " << p << " : f64\n";
-    std::string high = constant(spline.max);
-    os << indent << above << " = arith.cmpf ogt, " << x << ", " << high
-       << " : f64\n";
     std::string result = next();
-    os << indent << result << " = arith.select " << above << ", " << zero
-       << ", " << inside << " : f64\n";
+    os << indent << result << " = arith.select " << outside << ", " << zero
+       << ", " << p << " : f64\n";
     return result;
   }
 
@@ -512,7 +702,7 @@ private:
       a.push_back(emit(*argument));
     for (const Expression::Spline &spline : splines)
       if (spline.name == name)
-        return emitSpline(spline, a[0]);
+        return emitSpline(spline, a);
     StringRef op = getFunctionOp(name);
     if (!op.empty())
       return emitOp(op, {a[0]});
@@ -668,11 +858,19 @@ Expression::parse(StringRef text, llvm::ArrayRef<TabulatedFunction> functions) {
     Spline spline;
     spline.name = name;
     spline.table = function.getTableName();
-    spline.min = function.min;
-    spline.max = function.max;
+    spline.mins = function.mins;
+    spline.maxs = function.maxs;
     spline.periodic = function.periodic;
-    spline.scale = static_cast<double>(function.values.size() - 1) /
-                   (function.max - function.min);
+    spline.discrete = function.discrete;
+    for (unsigned k = 0; k != function.getNumArguments(); ++k) {
+      unsigned intervals = function.sizes[k] - 1;
+      spline.counts.push_back(function.discrete ? function.sizes[k]
+                                                : intervals);
+      spline.scales.push_back(
+          function.discrete ? 1.0
+                            : static_cast<double>(intervals) /
+                                  (function.maxs[k] - function.mins[k]));
+    }
     spline.coefficients = function.getCoefficients();
     expression.splines.push_back(std::move(spline));
   }
@@ -712,7 +910,7 @@ evaluateNode(const Expression::Node &node,
     double x = a[0];
     for (const Expression::Spline &spline : splines)
       if (spline.name == node.name)
-        return spline.evaluate(x);
+        return spline.evaluate(a);
     double y = a.size() > 1 ? a[1] : 0.0, z = a.size() > 2 ? a[2] : 0.0;
     return llvm::StringSwitch<double>(node.name)
         .Case("sqrt", std::sqrt(x))
