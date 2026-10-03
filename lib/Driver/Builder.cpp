@@ -596,6 +596,7 @@ static std::string getTruncation(const Control &control) {
   switch (control.truncation) {
   case Truncation::None:
   case Truncation::PowerForceSwitch:
+  case Truncation::SquaredDistanceSwitch:
     return "";
   case Truncation::Shift:
     return " truncation(shift)";
@@ -2338,12 +2339,41 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     os << "    %c4 = arith.constant 4.0 : f64\n"
        << "    %e4 = arith.mulf %c4, " << epsilon << " : f64\n"
        << "    %sr = arith.divf " << sigma << ", %r : f64\n";
-    if (modifier == Truncation::None) {
+    if (modifier == Truncation::None ||
+        modifier == Truncation::SquaredDistanceSwitch) {
       os << "    %i6 = arith.constant 6 : i32\n"
          << "    %s6 = math.fpowi %sr, %i6 : f64, i32\n"
          << "    %s12 = arith.mulf %s6, %s6 : f64\n"
          << "    %t = arith.subf %s12, %s6 : f64\n"
-         << "    " << result << " = arith.mulf %e4, %t : f64\n";
+         << "    " << (modifier == Truncation::SquaredDistanceSwitch
+                            ? StringRef("%lj_raw") : result)
+         << " = arith.mulf %e4, %t : f64\n";
+      if (modifier == Truncation::SquaredDistanceSwitch) {
+        // The cubic switching potential in r² [Brooks1983]. Write it
+        // as (1-y)²(1+2y), y=(r²-rs²)/(rc²-rs²), to avoid cancellation
+        // near rc. Clamping y gives the constant branches and a zero
+        // derivative at both ends. AD differentiates the full product.
+        os << "    %sw_rs2 = arith.constant " << formatReal(from * from)
+           << " : f64\n"
+           << "    %sw_width_inv = arith.constant "
+           << formatReal(1.0 / (cutoff * cutoff - from * from)) << " : f64\n"
+           << "    %sw_zero = arith.constant 0.0 : f64\n"
+           << "    %sw_one = arith.constant 1.0 : f64\n"
+           << "    %sw_two = arith.constant 2.0 : f64\n"
+           << "    %sw_r2 = arith.mulf %r, %r : f64\n"
+           << "    %sw_dr2 = arith.subf %sw_r2, %sw_rs2 : f64\n"
+           << "    %sw_y_raw = arith.mulf %sw_dr2, %sw_width_inv : f64\n"
+           << "    %sw_below = arith.cmpf olt, %sw_y_raw, %sw_zero : f64\n"
+           << "    %sw_y_lo = arith.select %sw_below, %sw_zero, %sw_y_raw : f64\n"
+           << "    %sw_above = arith.cmpf ogt, %sw_y_lo, %sw_one : f64\n"
+           << "    %sw_y = arith.select %sw_above, %sw_one, %sw_y_lo : f64\n"
+           << "    %sw_complement = arith.subf %sw_one, %sw_y : f64\n"
+           << "    %sw_square = arith.mulf %sw_complement, %sw_complement : f64\n"
+           << "    %sw_twice = arith.mulf %sw_two, %sw_y : f64\n"
+           << "    %sw_factor = arith.addf %sw_one, %sw_twice : f64\n"
+           << "    %sw_s = arith.mulf %sw_square, %sw_factor : f64\n"
+           << "    " << result << " = arith.mulf %lj_raw, %sw_s : f64\n";
+      }
       return;
     }
     os << "    %i3 = arith.constant 3 : i32\n"
@@ -2966,10 +2996,11 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     std::string value;
     if (lj14) {
       // The pairs three bonds apart as they are, except under the power
-      // force switch, which switches them as it does the other pairs.
+      // force or squared-distance switch, which also switches these pairs.
       emitLennardJones("%sigma", "%epsilon", "%lj",
-                       control.truncation == Truncation::PowerForceSwitch
-                           ? Truncation::PowerForceSwitch
+                       (control.truncation == Truncation::PowerForceSwitch ||
+                        control.truncation == Truncation::SquaredDistanceSwitch)
+                           ? control.truncation
                            : Truncation::None);
       value = "%lj";
     }

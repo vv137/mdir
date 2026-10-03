@@ -1,0 +1,9 @@
+# The new potential and its differentiated forces in f32, in the pair
+# kernel of groups and the tuple kernel of 1-4 pairs, under the sanitizer.
+# REQUIRES: cuda, hdf5, compute-sanitizer
+# RUN: %python %S/../Driver/Inputs/check_squared_switch.py mdir %t/mixed gpu mixed GROUPS --prepare-only
+# RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run %t/mixed/run.toml 2>&1 | FileCheck %s
+# RUN: %compute_sanitizer --tool initcheck --error-exitcode 1 mdir run %t/mixed/run.toml 2>&1 | FileCheck %s
+# RUN: %compute_sanitizer --tool racecheck --error-exitcode 1 mdir run %t/mixed/run.toml 2>&1 | FileCheck %s --check-prefix=RACE
+# CHECK: ERROR SUMMARY: 0 errors
+# RACE: RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)

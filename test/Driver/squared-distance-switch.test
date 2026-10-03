@@ -1,0 +1,22 @@
+# Independent polynomial energy and slope, including ordinary and 1-4
+# pairs below/at/above the switch and cutoff; Coulomb stays unswitched.
+# REQUIRES: hdf5
+# RUN: %python %S/Inputs/check_squared_switch.py mdir %t/double cpu double MATRIX | FileCheck %s
+# RUN: %python %S/Inputs/check_squared_switch.py mdir %t/mixed cpu mixed MATRIX | FileCheck %s
+# RUN: sed 's/switch_distance = 10.0/switch_distance = 12.0/' %t/double/run.toml > %t/double/no-width.toml
+# RUN: not mdir check %t/double/no-width.toml 2>&1 | FileCheck %s --check-prefix=WIDTH
+# RUN: sed 's/dispersion_correction = "NONE"/dispersion_correction = "ENERGY_PRESSURE"/' %t/double/run.toml > %t/double/dispersion.toml
+# RUN: not mdir check %t/double/dispersion.toml 2>&1 | FileCheck %s --check-prefix=DISPERSION
+# RUN: sed '/^electrostatics/a lennard_jones = "PME"' %t/double/run.toml > %t/double/ljpme.toml
+# RUN: not mdir check %t/double/ljpme.toml 2>&1 | FileCheck %s --check-prefix=LJPME
+# RUN: cp %t/double/run.toml %t/double/pair.toml
+# RUN: printf '\n[[energy.pair]]\nname = "extra"\nexpression = "r"\n' >> %t/double/pair.toml
+# RUN: not mdir check %t/double/pair.toml 2>&1 | FileCheck %s --check-prefix=PAIR
+# RUN: sed -e 's/^topology =.*/format = "PDB"/' -e '/^electrostatics/d' -e '/^dispersion_correction/d' %t/double/run.toml > %t/double/no-topology.toml
+# RUN: not mdir check %t/double/no-topology.toml 2>&1 | FileCheck %s --check-prefix=TOPOLOGY
+# CHECK: squared-distance switch: energy, forces, virial, boundaries, 1-4 pairs, and finite differences passed
+# WIDTH: a squared-distance switch needs a 'switch_distance' that is less than 'cutoff'
+# DISPERSION: the correction for the dispersion needs a plain cutoff
+# LJPME: 'lennard_jones = "PME"' takes 'lennard_jones_modifier = "NONE"' or "POTENTIAL_SHIFT"
+# PAIR: custom pair terms cannot accompany "SQUARED_DISTANCE_SWITCH"
+# TOPOLOGY: 'lennard_jones_modifier = "SQUARED_DISTANCE_SWITCH"' is for the Lennard-Jones of a topology

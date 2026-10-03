@@ -1,0 +1,6 @@
+# REQUIRES: cuda, hdf5
+# RUN: %python %S/Inputs/check_squared_switch.py mdir %t/mixed gpu mixed GROUPS | FileCheck %s
+# RUN: %python %S/Inputs/check_squared_switch.py mdir %t/double gpu double MATRIX | FileCheck %s
+# RUN: %python %S/Inputs/check_squared_switch.py mdir %t/mixed-matrix gpu mixed MATRIX | FileCheck %s
+# RUN: %python %S/Inputs/check_squared_switch.py mdir %t/double-groups gpu double GROUPS | FileCheck %s
+# CHECK: squared-distance switch: energy, forces, virial, boundaries, 1-4 pairs, and finite differences passed

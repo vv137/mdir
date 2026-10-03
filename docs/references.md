@@ -159,6 +159,16 @@ simulation of molecular systems," arXiv:2505.22397 (2025).
 Used for: related work, a library of learned potentials (MACE, NequIP,
 ViSNet) with wrappers for ASE and JAX MD.
 
+
+### Brooks1983
+
+B. R. Brooks, R. E. Bruccoleri, B. D. Olafson, D. J. States,
+S. Swaminathan, M. Karplus, "CHARMM: A program for macromolecular energy,
+minimization, and dynamics," *J. Comput. Chem.* **4**, 187–217 (1983).
+[doi:10.1002/jcc.540040211](https://doi.org/10.1002/jcc.540040211)
+
+Used for: the squared-distance switching potential (VSWITCH).
+
 ### Bussi2007
 
 G. Bussi, D. Donadio, M. Parrinello, "Canonical sampling through velocity
