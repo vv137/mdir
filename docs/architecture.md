@@ -722,15 +722,15 @@ end on a single node:
 md → semantic differentiation → md_exec → scf / vector → llvm
 ```
 
-Milestones (P3) and what each one adds:
+Milestones (P3, as amended by D169) and what each one adds:
 
 | Milestone | System | Adds |
 |---|---|---|
 | M0 | Lennard-Jones fluid, NVE | Whole pipeline on CPU and GPU, JIT, validation |
 | M1 | AA protein and water with an Amber force field | Bonded terms executed by the particles, exclusions and scaled pairs, tables of pairs of types, PME on one node, constraints, removal of the motion of the center of mass, thermostat, barostat, readers of Amber and GROMACS topologies, the `mdir` command (D53) |
-| M2a | AA protein and water | Virtual sites |
-| M2c | AA protein and water | Distributed PME: a mesh decomposition beside the particle decomposition |
+| M2 | Python API | An object API over the same IR as the control file (D169); virtual sites, formerly M2a, shipped with M1 |
+| M3 | Learned potentials on one GPU | External AD and tensor execution (D167), the potential and neighbor contract |
+| M4 | Distributed execution | Ownership, halos, reverse accumulation, distributed PME (formerly M2c) |
 | Later | Martini [[Marrink2007]](references.md#marrink2007) CG membrane and water | Deferred (D53) |
-| M3 | MLFF | Reverse mode, reverse accumulation, feature halo exchange |
 
 The v0 performance target is homogeneous systems at finite density (C7).

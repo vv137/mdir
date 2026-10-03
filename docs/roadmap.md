@@ -4,6 +4,17 @@ Status: 2026-10-03. The stages of the first milestone are in
 [design-m1.md](design-m1.md), Section 18; the principles that the work
 follows are in [principles.md](principles.md).
 
+**Milestones** (D169):
+
+| Milestone | Scope | Status |
+|---|---|---|
+| M1 | An all-atom protein in water with an Amber force field, on one node, CPU and GPU; at least the rate of pmemd.cuda on every system of the Amber suite | Done (D114, 2026-10-02); release in preparation |
+| M2 | The Python API (Section 6) | Next |
+| M3 | Learned potentials on one GPU: ML1, then the single-GPU stage of ML4 (Section 7) | Planned |
+| M4 | Distributed execution: ML2, ML3, ML5, and distributed particle mesh Ewald (Section 7) | Planned |
+
+Features of classical MD (Section 5) continue between milestones.
+
 ## 1. Robustness (under way)
 
 | Item | State |
@@ -190,7 +201,7 @@ they are needed:
 | F9 | The custom forces of OpenMM beyond tuples: pairs with a topology, tabulated functions, centers of groups (pulling), generalized Born | In progress: pair terms over the pairs of a topology, in its charges and Lennard-Jones parameters, with interaction groups (D137); tabulated functions of one argument, natural or periodic splines, in every expression (D138); terms over the centers of groups (D139), 0.21 to 0.24 ms a step on JAC with a bond and 0.26 with a dihedral since the sums of a block are added in one pass, a set of few tuples is reduced by one block, and the forces of a term are one field evaluated once per tuple (D150). The reaction field as GROMACS has it (D140); runs without a periodic cell, in a cell that no image reaches (D142). Intermediate fields, the derivative of the energy carried back through fields computed from the positions (D143), and generalized Born, OBC I and II, from a topology of Amber (D144), and HCT, salt, a cutoff of the descreening, and the radii of mbondi2 for a topology of GROMACS or CHARMM (D152). Terms over the triplets centered on each particle, the three-body term of Stillinger-Weber and mW water, `[[energy.triplet]]` without a topology on the CPU, its members written at every step from the neighbor matrix (D160); their GPU kernel, the selections `center` and `ends`, a topology, the exclusion of a far leg, and bond order (Tersoff) follow. Parameters of each particle, by masks of Amber, for the pair terms, the terms over tuples, and those of the positions, tabulated functions of two and three arguments and discrete ones, and terms over tuples of any length in their distances, angles, and dihedrals, as OpenMM's (D165). Next: the first reduction inside the loop of the sums (D150) and an open cell if a system needs one; later tables from files (the tables of GROMACS for F6) |
 | F10 | Thermostats, integrators, and barostats beyond M1: a deterministic thermostat, Brownian dynamics, anisotropic and flexible cells, multiple time steps | In progress (D163): Nosé–Hoover chains (D163a), Brownian dynamics (D163b), anisotropic cell rescaling (D163c). Next, as a design only: multiple time steps (r-RESPA, [[Tuckerman1992]](references.md#tuckerman1992)), the energy split into a fast part (bonded terms, the direct sum within a short cutoff) and a slow part (the rest, the reciprocal sum), the slow forces kicking half an outer step at its ends and the fast ones integrated by velocity Verlet within it; in MDIR two `md.evaluate` of two `@energy` functions that the terms are partitioned into, a program of an outer step that loops over inner ones, and a check of the resonance of the outer step with the fastest motions, which limits it to about 4 fs with constraints; a flexible cell, with shear, needs the off-diagonal virial and the pressure tensor (F4), a decision of its own |
 
-## 6. Python API
+## 6. Python API (M2)
 
 The design follows a reading of OpenMM's Python layer (2026-10-02,
 `openmm/openmm` at 5ee2cba): its vocabulary and its reporters fit MDIR,
@@ -209,7 +220,11 @@ and Python, must produce the same IR and share one validation.
 
 Still to decide for DLPack: the order of the particles when the run keeps them in the order of their positions (a permuted view, or the numbers of the particles alongside), the lifetime of a buffer that the caching allocator of the runtime owns, the stream on which a consumer may read, and the types of the mixed mode (forces in `f32`, the state in `f64`).
 
-## 7. Distributed execution and learned potentials
+## 7. Learned potentials (M3) and distributed execution (M4)
+
+D169 splits this section between two milestones: ML1 and the
+single-GPU stage of ML4 close M3; ML2, ML3, ML5, and distributed particle
+mesh Ewald close M4.
 
 Classical MD remains a core use case. This extension preserves its existing
 features, validation, and performance baselines, with no required MLIP
