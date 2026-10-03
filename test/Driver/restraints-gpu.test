@@ -14,7 +14,7 @@
 # RUN: %python %S/Inputs/check_bonds.py %t/ff19.prmtop %t/run.dcd | FileCheck %s --check-prefix=BONDS
 
 # CHECK:      MDIR:   restraints                     0.000000
-# CHECK:      INFO:      2000 {{.*}} {{2[4-8][0-9]{3}\.[0-9]+$}}
+# CHECK:      INFO:      2000 {{.*}} {{2[4-8][0-9]{3}\.[0-9]+}} {{[0-9.]+$}}
 # CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[3-9]}} of its value
 
 # The factors of the reference, the edges of the cell over those of the

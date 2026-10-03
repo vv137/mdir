@@ -88,7 +88,7 @@ regard to case.
 | | `checkpoint` | The checkpoint of an earlier run, whose state the run begins from, at its step and time (D129), taking its cell (and warning on the standard error if the input has another); the input's cell still sets the grid of PME and the reference of restraints. One of a minimization gives the positions only, and the run begins at step 0. |
 | `[output]` | `log` | The log in a file as well as on the standard output: every line that the run prints there, from its start; a continued run appends to it (D149). |
 | | `manifest` | Optional execution history in version-1 JSON Lines (D168): build and input hashes, resolved settings, device, warnings, and start/end events. Disabled if omitted; fresh runs back up an existing file, continuations append history, and `--no-append` uses the part filename. |
-| | `energy` | The rows of the log as a file of columns: a line of names, a line of units, and a row for each output (D149). |
+| | `energy` | The rows of the log as a file of columns: a line of names, a line of units, and a row for each output (D149). With a barostat, `volume` (Å³) and `area_xy` (Å²), the xy face spanned by the first two cell vectors, follow the energy columns (D[cell-area]). |
 | | `trajectory` | Positions, in DCD (`.dcd`, Å) or in the compressed XTC of GROMACS (`.xtc`, nm to a thousandth), by the extension of the name (D141). |
 | | `trajectory_format` | `AUTO` (the default, from the extension), `DCD`, or `XTC`. |
 | | `pull` | A file of columns of the terms over the centers of groups at every energy of the log: the step, the time, and for each term its coordinates (`r`, `dx`, `dy`, `dz` in Å, or `theta`), its energy (kcal/mol), and its force, along the distance and on the second center, or $-\partial E/\partial\theta$; continued with the run (D145, D149). |
@@ -386,6 +386,7 @@ The line shows the last row of `examples/argon/argon.toml`.
 | `PRESSURE` | atm | $(2 K_P + \operatorname{tr}\mathsf W) / (3V)$, with $K_P$ as below |
 | `CONSERVED` | kcal/mol | With a thermostat or a barostat: the total energy plus what the couplings have taken from the system |
 | `VOLUME` | Å³ | With a barostat: the volume of the cell |
+| `AREA_XY` | Å² | With a barostat: the area of the xy face spanned by the first two cell vectors (D[cell-area]); not area per lipid |
 
 The potential energy and the virial include the correction for the
 dispersion beyond the cutoff and the energy of the background that
@@ -644,7 +645,7 @@ the other values with six decimals, separated by single spaces. The names
 are in lower case; a quantity of a term is `<term>.<quantity>`. The file
 of the energies has the columns of the log: `step time total potential
 kinetic temperature virial`, then `pressure` with a periodic cell,
-`conserved` with a coupling, and `volume` with a barostat; that of a
+`conserved` with a coupling, and `volume area_xy` with a barostat; that of a
 minimization `step potential rms_force max_force max_atom step_size`.
 
 **Continuation.** `mdir run --continue` continues the outputs of its run

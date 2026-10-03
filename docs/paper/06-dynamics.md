@@ -448,6 +448,18 @@ cell stays lower triangular and reduced (D127); and
 the work of a scaling below is a sum over the axes, with $K_a$ and the
 diagonal of the virial of the groups in place of $K$ and the trace.
 
+The log and the file of energies report the cell area beside its volume
+for every barostat coupling (D[cell-area]), labeled `AREA_XY` in the
+log and `area_xy` in the column file. This is the geometric area
+$A = \lVert \mathbf a \times \mathbf b \rVert$ of the face spanned by
+the first two cell vectors, in Å². In the reduced triangular frame,
+$\mathbf a = (L_x, 0, 0)$ and $\mathbf b = (b_x, L_y, 0)$, so
+$A = L_x L_y$ even when $b_x$ is nonzero. It is the area that the
+semi-isotropic strain scales; an area per lipid additionally needs the
+number of lipids in each leaflet, which the output does not infer. For
+membrane analysis, this face is the membrane area only when its normal
+is along z.
+
 **Anisotropic coupling** (`coupling = "ANISOTROPIC"`, D163c) scales each
 axis by the strain of its own edge, $\varepsilon_a = \ln L_a$, from its own
 pressure and noise, the step of z above on each axis:

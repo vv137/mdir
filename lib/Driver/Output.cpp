@@ -206,7 +206,7 @@ void mdir::driver::writeLogHeader(Output &output) {
   if (output.couples)
     output.log.print(" %14s", "CONSERVED");
   if (output.changesCell)
-    output.log.print(" %14s", "VOLUME");
+    output.log.print(" %14s %14s", "VOLUME", "AREA_XY");
   output.log.print("\n");
 }
 
@@ -231,8 +231,10 @@ mdir::driver::getEnergyColumns(const Output &output) {
     columns.push_back({"pressure", "atm"});
   if (output.couples)
     columns.push_back({"conserved", "kcal/mol"});
-  if (output.changesCell)
+  if (output.changesCell) {
     columns.push_back({"volume", "Å^3"});
+    columns.push_back({"area_xy", "Å^2"});
+  }
   return columns;
 }
 
@@ -501,9 +503,14 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
     total += output.bath;
     row.push_back(total / units::energy);
   }
-  if (output.changesCell)
+  if (output.changesCell) {
     row.push_back(output.volume /
                   (units::length * units::length * units::length));
+    // The reduced cell has a = (Lx, 0, 0), b = (bx, Ly, 0), so
+    // |a × b| = Lx Ly even with a tilt (D[cell-area]).
+    row.push_back(output.box[0] * output.box[1] /
+                  (units::length * units::length));
+  }
   output.log.print("INFO: %9lld", static_cast<long long>(step));
   for (double value : row)
     output.log.print(" %14.4f", value);
