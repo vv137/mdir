@@ -47,6 +47,10 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- A run whose positions became NaN or far beyond the cell could abort on a
+  GPU, with or without a message, instead of stopping with "positions are
+  not numbers"; the groups build now counts such positions and the run
+  always stops with the message (D176, #22).
 - A Lennard-Jones pair of epsilon 0 gave NaN in mixed precision where two
   particles all but meet; it now contributes exactly 0, also under a
   switch (#18).

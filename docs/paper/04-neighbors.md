@@ -281,7 +281,7 @@ into the cell does not land in it, a fraction outside
 $[-10^{-6}, 1 + 10^{-6}]$, which a run that has failed reaches on its
 way to NaN: beyond about $10^{16}$ cells the wrap errs by more than a cell,
 and its cell would index outside the tables of the build
-(D[far-positions]).
+(D176).
 
 The positions of the build are wrapped into the cell and tested in f32
 against the reach widened by $\varepsilon = 3\times 10^{-6}\,(L_x + L_y +
