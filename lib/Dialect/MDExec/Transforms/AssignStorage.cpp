@@ -1598,7 +1598,8 @@ LogicalResult Assignment::convertBlock(Block &block, Scope &scope) {
     // whose energy alone is wanted (D161), holds nothing once its op has
     // run.
     for (Value result : op.getResults()) {
-      if (!isField(result.getType()) || !result.use_empty())
+      if (!isa<ReciprocalOp>(op) || !isField(result.getType()) ||
+          !result.use_empty())
         continue;
       auto found = buffers.find(result);
       if (found == buffers.end())

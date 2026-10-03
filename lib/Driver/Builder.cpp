@@ -1203,13 +1203,23 @@ llvm::Error Builder::collectTopology() {
     program.fields.push_back(std::move(field));
   }
 
-  // [free_energy] (D161): 1 for each particle that it decouples.
+  // [free_energy] (D161): 1 for each particle that it decouples, and the
+  // charges that the reciprocal sum takes at the state of the run.
   if (decouples()) {
     Program::Field flags;
     flags.name = "alch";
     for (bool flag : system.alchemical)
       flags.values.push_back(flag ? 1.0 : 0.0);
     program.fields.push_back(std::move(flags));
+    double lambda = getLambda("coulomb");
+    if (control.pme && lambda != 0.0) {
+      Program::Field scaled;
+      scaled.name = "q_rec";
+      for (size_t i = 0, e = topology.charges.size(); i != e; ++i)
+        scaled.values.push_back(topology.charges[i] *
+                                (system.alchemical[i] ? 1.0 - lambda : 1.0));
+      program.fields.push_back(std::move(scaled));
+    }
   }
 
   // Lennard-Jones for each pair of types.
@@ -2951,16 +2961,52 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
           os << "    %sc_as = arith.mulf %sc_alpha, %sc_s6 : f64\n"
              << "    %sc_asl = arith.mulf %sc_as, " << power << " : f64\n"
              << "    %sc_x = arith.addf %sc_r6, %sc_asl : f64\n"
-             << "    %sc_sixth = arith.constant "
-             << formatReal(1.0 / 6.0) << " : f64\n"
-             << "    %sc_ra = math.powf %sc_x, %sc_sixth : f64\n"
-             << "    %sc_half = arith.constant 5.0e-01 : f64\n"
-             << "    %sc_is = arith.cmpf ogt, %cross, %sc_half : f64\n"
-             << "    %sc_r = arith.select %sc_is, %sc_ra, %r : f64\n";
-          distance = "%sc_r";
+             ;
+          if (control.truncation != Truncation::None &&
+              control.truncation != Truncation::Shift) {
+            os << "    %sc_sixth = arith.constant "
+               << formatReal(1.0 / 6.0) << " : f64\n"
+               << "    %sc_ra = math.powf %sc_x, %sc_sixth : f64\n"
+               << "    %sc_half = arith.constant 5.0e-01 : f64\n"
+               << "    %sc_is = arith.cmpf ogt, %cross, %sc_half : f64\n"
+               << "    %sc_r = arith.select %sc_is, %sc_ra, %r : f64\n";
+            distance = "%sc_r";
+          }
         }
-        emitLennardJones("%sigma", "%epsilon", "%lj_full", control.truncation,
-                         distance);
+        bool plain = control.truncation == Truncation::None ||
+                     control.truncation == Truncation::Shift;
+        if (alpha > 0.0 && plain) {
+          // Without a switch, (σ/r_A)⁶ = σ⁶ / x needs no root: one
+          // expression for every pair, x = r⁶ for those not decoupled.
+          os << "    %sc_xs = arith.mulf %sc_asl, %cross : f64\n"
+             << "    %sc_xx = arith.addf %sc_r6, %sc_xs : f64\n"
+             << "    %sc_g3 = math.fpowi %sigma, %sc_i3 : f64, i32\n"
+             << "    %sc_g6 = arith.mulf %sc_g3, %sc_g3 : f64\n"
+             << "    %sc_q6 = arith.divf %sc_g6, %sc_xx : f64\n"
+             << "    %sc_q12 = arith.mulf %sc_q6, %sc_q6 : f64\n";
+          std::string a = "%sc_q12", b = "%sc_q6";
+          if (control.truncation == Truncation::Shift) {
+            double cut6 = std::pow(cutoff, -6.0);
+            os << "    %sc_rc6 = arith.constant " << formatReal(cut6)
+               << " : f64\n"
+               << "    %sc_rc12 = arith.constant " << formatReal(cut6 * cut6)
+               << " : f64\n"
+               << "    %sc_g12 = arith.mulf %sc_g6, %sc_g6 : f64\n"
+               << "    %sc_c12 = arith.mulf %sc_g12, %sc_rc12 : f64\n"
+               << "    %sc_c6 = arith.mulf %sc_g6, %sc_rc6 : f64\n"
+               << "    %sc_a = arith.subf %sc_q12, %sc_c12 : f64\n"
+               << "    %sc_b = arith.subf %sc_q6, %sc_c6 : f64\n";
+            a = "%sc_a";
+            b = "%sc_b";
+          }
+          os << "    %sc_c4 = arith.constant 4.0 : f64\n"
+             << "    %sc_e4 = arith.mulf %sc_c4, %epsilon : f64\n"
+             << "    %sc_t = arith.subf " << a << ", " << b << " : f64\n"
+             << "    %lj_full = arith.mulf %sc_e4, %sc_t : f64\n";
+        } else {
+          emitLennardJones("%sigma", "%epsilon", "%lj_full",
+                           control.truncation, distance);
+        }
         os << "    %lj_cl = arith.mulf %cross, %lambda_vdw : f64\n"
            << "    %lj_scale = arith.subf %al_one, %lj_cl : f64\n"
            << "    %lj = arith.mulf %lj_scale, %lj_full : f64\n";
@@ -3245,7 +3291,11 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
   if (program.pme && (terms & CoulombReciprocal)) {
     // The charges of the selection of [free_energy] times 1 − λ (D161).
     std::string charges = "%p_q";
-    if (scalesCoulomb) {
+    if (scalesCoulomb && !lambdaArguments) {
+      // At the state of the run, the scaled charges are a field of their
+      // own, which the host computes once.
+      charges = "%p_q_rec";
+    } else if (scalesCoulomb) {
       os << "  %q_scaled = md.map_particles gather(%p_q, %p_alch : !real, "
             "!real) {\n"
          << "  ^bb0(%q: f64, %al: f64):\n"
