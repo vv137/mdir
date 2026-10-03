@@ -22,6 +22,11 @@ what another writes become one kernel: the loops over pairs and over
 tuples of a term of the potential (rows of the same particle), the loops
 over the disjoint tuple sets of a union of constraints (D83), and the
 integration runs of Section 8.2. A run is lowered where its last loop is.
+Destinations that the forces of a step add are merged where a loop gives
+two of them by the same contract: the forces of the sums over the centers
+of a term (D150), and those of a term over the pairs of a topology fused
+into the loop of the nonbonded pairs, which then adds one contribution to
+each particle instead of two (D157).
 
 **Global sums.** A loop writes the contribution of each row to a buffer
 for each sum; a kernel of at most as many blocks as a block has threads
