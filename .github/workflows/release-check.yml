@@ -1,0 +1,22 @@
+name: release-check
+
+# A tag vX.Y.Z must name the version that CMakeLists.txt states, have a dated
+# section in CHANGELOG.md, and leave no decision without its number. The
+# build and the suite run on the maintainer's machine before the tag
+# (scripts/release/publish.sh); there is no GPU here.
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version, changelog, decisions
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          grep -q "project(mdir VERSION $version " CMakeLists.txt
+          python3 scripts/release/changelog.py check "$version"
+          test -f "docs/release-notes/$GITHUB_REF_NAME.md"
+          scripts/decision-number.sh check

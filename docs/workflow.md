@@ -186,8 +186,23 @@ The coordinator merges only PRs labeled `approved` by the maintainer:
 
 ## Releases
 
-A release moves the Unreleased section of the changelog under the new
-version and its date, and sets `project(mdir VERSION ...)` in
-`CMakeLists.txt`, in a PR that goes through the labels like any other. The
-maintainer then tags `v<version>` and publishes the GitHub Release, with
-its notes (`docs/release-notes/`) and the white paper's PDF.
+A release is two steps, scripted so that nothing is done by hand
+(`scripts/release/`):
+
+1. `scripts/release/prepare.sh VERSION` opens the release PR: it sets
+   `project(mdir VERSION ...)` in `CMakeLists.txt` and moves the
+   changelog's [Unreleased] under [VERSION] and the date. The release notes
+   (`docs/release-notes/vVERSION.md`) and the Known limitations are edited
+   on that branch. The PR goes through the labels like any other.
+2. After its merge, `scripts/release/publish.sh VERSION` builds the merged
+   `main` in a fresh tree, runs the full suite on a GPU, builds the white
+   paper, writes the assets (the source archive, the installed tree for
+   Linux x86-64 with CUDA, the PDF, the notes, and SHA256SUMS), and makes
+   the annotated tag. Nothing is tagged unless the suite passes. With
+   `--publish` it pushes the tag and creates the GitHub Release, whose
+   notes are the changelog's section; the maintainer runs it, or approves
+   it. `--container` also builds the Docker image.
+
+GitHub has no GPU, so the build and the suite run on the maintainer's
+machine; the workflow `release-check` checks on the pushed tag that the
+version, the changelog, the notes, and the decision numbers agree.
