@@ -25,8 +25,10 @@ static llvm::Error findCenters(TupleTerm &term, const Topology &topology);
 static llvm::Error placeCell(const Control &control, System &system);
 
 /// The radii of mbondi2 [Onufriev2004], the radii of Bondi [Bondi1964] with
-/// 1.3 Å for a hydrogen bonded to a nitrogen, and the screening factors of
-/// each element [Tsui2000], in nm, for a topology without its own.
+/// 1.3 Å for a hydrogen bonded to a nitrogen, in nm, and the screening
+/// factors of Hawkins, Cramer, and Truhlar for H, C, N, O, P, and S
+/// [Hawkins1996], 0.88 for F, and 0.8 otherwise (D152), for a topology
+/// without its own.
 static void assignBornRadii(Topology &topology) {
   size_t count = topology.getNumParticles();
   std::vector<int> partner(count, -1);
