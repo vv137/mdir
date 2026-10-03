@@ -1843,7 +1843,9 @@ void Builder::emitBorn(unsigned terms,
   // and 1/ρ̃_i − 1/L more where i lies within the sphere of j, 0 where the
   // sphere does not reach it, L ≥ U. A cutoff R of the radii takes the
   // integral over the shells within R alone, U = min(r + s_j, R), so that
-  // the radii do not jump where a sphere crosses it.
+  // the radii do not jump where a sphere crosses it: the smooth cutoff
+  // `rgbmax` of Amber's pmemd (gb_ene.F90), written here from the integral
+  // rather than its series (D152).
   os << "  %gb_integral = md.gather_relation " << reach << ", %x, %cell gather("
         "%p_gb_offset, %p_gb_scaled : !real, !real)\n"
      << "      exchange(none) {\n"
