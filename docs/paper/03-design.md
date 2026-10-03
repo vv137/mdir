@@ -205,7 +205,7 @@ Lennard-Jones of a topology, where it is CHARMM's to $2.2\times10^{-9}$
 it: 9.23 kcal/mol on 12,017 particles of CHARMM36m.
 
 
-**Squared-distance potential switching (D[squared-distance-switch]).**
+**Squared-distance potential switching (D175).**
 For the topology Lennard-Jones $u(r)$, `SQUARED_DISTANCE_SWITCH` selects
 $u(r)S_2(r)$, the VSWITCH potential [[Brooks1983]](references.md#brooks1983).
 A cubic polynomial in $r^2$ subject to $S_2(r_s)=1$, $S_2(r_c)=0$, and

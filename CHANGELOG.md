@@ -21,6 +21,10 @@ format, or the outputs; every such change is listed under **Changed** or
   the log and `area_xy` in the energy file, in Å² (D170).
 - Checkpoints record a fingerprint of the run's physics, coupling, and
   execution; `mdir checkpoint --print=fingerprint` lists it (D172).
+- `lennard_jones_modifier = "SQUARED_DISTANCE_SWITCH"`, CHARMM's switch of
+  the Lennard-Jones potential in r² (VSWITCH; Brooks et al. 1983), between
+  `switch_distance` and `cutoff`, for topology Lennard-Jones and 1-4 pairs;
+  agrees with CHARMM 51b1 on two POPC within 3.7e-7 kcal/mol (D175).
 
 ### Changed
 
