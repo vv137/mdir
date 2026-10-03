@@ -572,6 +572,30 @@ of columns take the interval of the rows of the log, at whose steps the
 energies are computed, and the frames and the checkpoints come at
 multiples of it.
 
+**Run manifest (D168).** Optional `manifest = "run.jsonl"` in `[output]`
+writes UTF-8 JSON Lines, one object per line, with `schema_version = 1`.
+It records executions, not trajectory frames. A `start` event precedes
+execution and an `end` event records `completed` or `stopped`; a start
+without an end means completion was not recorded (for example, a crash
+or a forced kill). Each event has an `invocation` number local to the file.
+The start records the build, SHA-256 and byte size of the control file and
+inputs (including GROMACS includes actually read), target, precision,
+threads, device identity, output paths, starting and requested ending
+steps, and the checkpoint part. UTC timestamps and elapsed seconds use
+wall and monotonic clocks respectively. Input hashes are captured before
+compilation; input files must remain unchanged while the driver reads them.
+
+A fresh run uses the same numbered backups as other outputs. `--continue`
+appends execution history without cutting it to the checkpoint, including
+when no checkpoint exists yet; `--no-append` selects the part filename.
+An already complete run leaves the manifest untouched. A malformed or
+unsupported existing manifest is refused before appending; use a new
+manifest path to retain a damaged file. The manifest is disabled when its
+key is omitted; `mdir check` reports its path without creating it, and
+`mdir emit` creates no manifest. An execution that fails before the start
+record is written has no record. A manifest is provenance, not a restart
+compatibility check or a copy of its inputs.
+
 **Files of columns.** The energies and the terms over centers share one
 form, which a program reads without knowing the run:
 
