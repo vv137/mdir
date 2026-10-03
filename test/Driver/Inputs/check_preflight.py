@@ -43,12 +43,16 @@ def codes(report):
     return {warning["code"] for warning in report["warnings"]}
 
 
+def notes(report):
+    return [note["code"] for note in report["notes"]]
+
+
 def output(report, kind):
     return next(item for item in report["outputs"] if item["kind"] == kind)
 
 
-# An inactive named trajectory is listed but must not trigger an overwrite
-# warning. Its quoted filename also checks proper JSON string escaping.
+# An inactive named trajectory is listed but must not be backed up. Its
+# quoted filename also checks proper JSON string escaping.
 sentinel = work / 'frames with "quotes".xtc'
 sentinel.write_bytes(b"keep this trajectory\n")
 text = template("md").replace('"run.dcd"', json.dumps(sentinel.name))
@@ -69,16 +73,22 @@ assert output(report, "trajectory")["path"] == str(sentinel)
 assert output(report, "trajectory")["format"] == "XTC"
 assert output(report, "trajectory")["exists"] is True
 assert output(report, "trajectory")["enabled"] is False
+assert output(report, "trajectory")["backup"] is None
 assert codes(report) == {"no_checkpoint"}
+assert notes(report) == []
 
-# Active files produce warnings, without being touched. A future checkpoint
+# Active files that exist are noted with the name that a run keeps them
+# under (D149), without being touched. A future checkpoint
 # remains absent, and a missing input checkpoint does not prevent inspecting
 # a stage before the preceding stage runs.
 active = re.sub(r"(?m)^trajectory_interval\s*=\s*0", "trajectory_interval = 10", text)
 active = active.replace("[output]", '[output]\ncheckpoint = "new.h5"\ncheckpoint_interval = 100')
 active = active.replace("[input]", '[input]\ncheckpoint = "earlier.h5"')
 report = check("active", active)
-assert {"output_exists", "missing_input_checkpoint"} <= codes(report)
+assert codes(report) == {"missing_input_checkpoint"}
+assert notes(report) == ["output_backup"]
+assert output(report, "trajectory")["backup"] == str(
+    work / '#frames with "quotes".xtc.1#')
 assert "no_checkpoint" not in codes(report)
 assert output(report, "trajectory")["interval_steps"] == 10
 assert output(report, "checkpoint")["interval_steps"] == 100
@@ -94,7 +104,8 @@ prior.write_bytes(b"input checkpoint is not loaded\n")
 state.write_bytes(b"output checkpoint is not replaced\n")
 report = check("existing-checkpoints", active)
 assert "missing_input_checkpoint" not in codes(report)
-assert sum(w["code"] == "output_exists" for w in report["warnings"]) == 2
+assert notes(report) == ["output_backup", "output_backup"]
+assert output(report, "checkpoint")["backup"] == str(work / "#new.h5.1#")
 assert prior.read_bytes() == b"input checkpoint is not loaded\n"
 assert state.read_bytes() == b"output checkpoint is not replaced\n"
 prior.unlink()
@@ -194,7 +205,8 @@ assert output(report, "pull")["interval_steps"] == 20
 assert output(report, "pull")["enabled"] is True
 assert output(report, "pull")["exists"] is True
 assert output(report, "pull")["count"] == 6
-assert "output_exists" in codes(report)
+assert output(report, "pull")["backup"] == str(work / "#pull.dat.1#")
+assert "output_backup" in notes(report)
 assert pull.read_bytes() == b"keep pulling coordinates\n"
 assert not (work / "two.h5").exists()
 print("preflight JSON, warnings, units, and read-only checks passed")

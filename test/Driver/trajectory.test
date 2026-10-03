@@ -4,7 +4,7 @@
 # RUN:     -e 's|energy_interval = 50|energy_interval = 25\ntrajectory_interval = 50|' \
 # RUN:     %S/mixture.toml > %t.toml
 # RUN: echo 'trajectory = "%t.dcd"' >> %t.toml
-# RUN: mdir run --overwrite %t.toml | FileCheck %s
+# RUN: mdir run %t.toml | FileCheck %s
 # RUN: od -A d -t d4 -N 24 %t.dcd | FileCheck %s --check-prefix=HEADER
 # RUN: od -A d -c -j 4 -N 4 %t.dcd | FileCheck %s --check-prefix=TAG
 # RUN: wc -c < %t.dcd | FileCheck %s --check-prefix=SIZE
@@ -17,7 +17,7 @@
 # RUN:     -e 's|energy_interval = 50|energy_interval = 100\ntrajectory_interval = 50|' \
 # RUN:     %S/mixture.toml > %t.sparse.toml
 # RUN: echo 'trajectory = "%t.sparse.dcd"' >> %t.sparse.toml
-# RUN: mdir run --overwrite %t.sparse.toml | FileCheck %s --check-prefix=SPARSE
+# RUN: mdir run %t.sparse.toml | FileCheck %s --check-prefix=SPARSE
 # RUN: cmp %t.dcd %t.sparse.dcd
 
 # SPARSE:      INFO:         0         0.0000

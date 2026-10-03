@@ -9,8 +9,8 @@
 # RUN:     -e 's|^pairlist_distance = 9.5|pairlist_distance = 9.5\nrebuild_interval = 10|' \
 # RUN:     %S/../../examples/argon/argon.toml > %t.toml
 # RUN: sed -e 's|^rebuild_interval = 10|rebuild_interval = 400|' %t.toml > %t.late.toml
-# RUN: mdir run --overwrite %t.toml 2>&1 | FileCheck %s
-# RUN: mdir run --overwrite %t.late.toml 2>&1 | FileCheck %s --check-prefix=LATE
+# RUN: mdir run %t.toml 2>&1 | FileCheck %s
+# RUN: mdir run %t.late.toml 2>&1 | FileCheck %s --check-prefix=LATE
 # RUN: sed -e 's|^rebuild_interval = 10|rebuild_interval = -1|' %t.toml > %t.bad.toml
 # RUN: not mdir run %t.bad.toml 2>&1 | FileCheck %s --check-prefix=BAD
 

@@ -4,7 +4,7 @@
 # Coulomb with the product of the charges; both cut at 9 Å with no shift,
 # and the correction for the dispersion of the Lennard-Jones term.
 #
-# RUN: mdir run --overwrite %s | FileCheck %s
+# RUN: mdir run %s | FileCheck %s
 # RUN: mdir emit %s | FileCheck %s --check-prefix=MODULE
 
 # The potential energy and the trace of the virial at the start agree with

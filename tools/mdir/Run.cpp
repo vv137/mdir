@@ -35,8 +35,6 @@
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/FormatVariadic.h"
-
-#include <fstream>
 #include "llvm/Support/raw_ostream.h"
 
 #include <chrono>
@@ -454,22 +452,6 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   auto getOutputPath = [&](const std::string &name) {
     return outputsPart > 0 ? getPartPath(name, outputsPart) : name;
   };
-  // A run that is not continued does not write over the files of another;
-  // under --continue they are the run's own.
-  if (emit == Emit::Run && !options.continues && !options.overwrites) {
-    std::vector<const std::string *> written = {
-        &control->logFile, &control->energyFile, &control->pullFile};
-    if (control->framePeriod > 0)
-      written.push_back(&control->trajectoryFile);
-    if (control->checkpointPeriod > 0)
-      written.push_back(&control->restartOutput);
-    for (const std::string *file : written)
-      if (!file->empty() && llvm::sys::fs::exists(*file))
-        return fail("'" + *file + "' exists, written by another run; `mdir "
-                    "run --overwrite` writes over it, and `mdir run "
-                    "--continue` continues the run whose checkpoint is "
-                    "named in [output]");
-  }
 
   auto program = buildProgram(*control, *system);
   if (!program)
@@ -559,6 +541,34 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   if (emit == Emit::Lowered) {
     module->print(llvm::outs());
     return 0;
+  }
+  // A run that is not continued keeps the outputs of an earlier run that
+  // has the same names as `#<name>.<n>#` before it writes its own (D149);
+  // those of a continued run are its own.
+  if (!options.continues) {
+    std::vector<std::string> written = {control->logFile, control->energyFile,
+                                        control->pullFile};
+    if (control->framePeriod > 0)
+      written.push_back(control->trajectoryFile);
+    if (control->checkpointPeriod > 0) {
+      written.push_back(control->restartOutput);
+      written.push_back(getPreviousCheckpointPath(control->restartOutput));
+    }
+    // None is moved unless all can be.
+    for (const std::string &file : written)
+      if (!file.empty())
+        if (llvm::Error error = checkBackup(file))
+          return fail(std::move(error));
+    for (const std::string &file : written) {
+      if (file.empty())
+        continue;
+      auto backup = backUpOutput(file);
+      if (!backup)
+        return fail(backup.takeError());
+      if (!backup->empty())
+        output.log.print("MDIR: backed up '%s' as '%s'\n", file.c_str(),
+                         backup->c_str());
+    }
   }
   // The log file holds what the run has printed so far; a continued run
   // appends to it.

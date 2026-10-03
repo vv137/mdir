@@ -1,15 +1,18 @@
 # The outputs of a run as one system (D149). A run of the mixture writes
 # its log to a file as well as to the standard output, the rows of the log
 # as columns to a file of energies, a trajectory, and checkpoints; `mdir
-# check` lists them. A second run of the same control file refuses to
-# write over them unless --overwrite. A run continued from its checkpoints,
-# twice from the one before the last, keeps the rows of its file of
-# energies up to its checkpoint and appends, so that the file is that of
-# the run that was not interrupted, byte for byte, and its log file holds
-# all that it printed; with --no-append the outputs of the continued part
-# go to files of their own. Then a file of energies of other columns, two
-# outputs with one name, an output named as an input, a file of energies
-# without energies, and the file of a minimization.
+# check` lists them. A second run of the same control file keeps the
+# outputs of the first as `#<name>.1#`, a third those of the second as
+# `#<name>.2#`, the checkpoint before the last included, and says so in
+# its log; `mdir check` notes what a run would keep. A run continued from
+# its checkpoints, twice from the one before the last, keeps no backups:
+# it keeps the rows of its file of energies up to its checkpoint and
+# appends, so that the file is that of the run that was not interrupted,
+# byte for byte, and its log file holds all that it printed; with
+# --no-append the outputs of the continued part go to files of their own.
+# Then 99 backups, which a run does not go beyond, a file of energies of
+# other columns, two outputs with one name, an output named as an input, a
+# file of energies without energies, and the file of a minimization.
 #
 # REQUIRES: hdf5
 #
@@ -23,11 +26,16 @@
 # RUN: FileCheck %s --check-prefix=ENERGY < %t/whole.energy
 # RUN: %python %S/Inputs/check_columns.py %t/whole.log %t/whole.energy \
 # RUN: | FileCheck %s --check-prefix=ROWS
-# RUN: not mdir run %t/whole.toml 2>&1 | FileCheck %s --check-prefix=EXISTS
-# RUN: mdir check %t/whole.toml 2>&1 | FileCheck %s --check-prefix=WARN
-# RUN: mdir run --overwrite %t/whole.toml > %t/again.stdout
-# RUN: not mdir run --overwrite --continue %t/whole.toml 2>&1 \
-# RUN: | FileCheck %s --check-prefix=BOTH
+# RUN: cp %t/whole.energy %t/first.energy
+# RUN: mdir check %t/whole.toml 2>&1 | FileCheck %s --check-prefix=NOTE
+# RUN: mdir run %t/whole.toml > %t/second.stdout
+# RUN: FileCheck %s --check-prefix=SECOND < %t/second.stdout
+# RUN: cmp %t/second.stdout %t/whole.log
+# RUN: cp %t/whole.energy %t/second.energy
+# RUN: mdir run %t/whole.toml | FileCheck %s --check-prefix=THIRD
+# RUN: %python %S/Inputs/backups.py list %t | FileCheck %s --check-prefix=KEPT
+# RUN: cmp %t/first.energy %t/#whole.energy.1#
+# RUN: cmp %t/second.energy %t/#whole.energy.2#
 
 # LIST:      outputs:
 # LIST-NEXT:   log: stdout and {{.*}}whole.log (text), every 50 steps, 9 rows
@@ -42,12 +50,20 @@
 # ENERGY-NEXT: 0 0.000000 {{-?[0-9]+\.[0-9]+}} -497.729{{[0-9]+}}
 # ENERGY:      400 1.600000
 # ROWS: 9 rows of 8 columns, those of the log: ok
-# EXISTS: mdir: '{{.*}}whole.log' exists, written by another run; `mdir run --overwrite` writes over it, and `mdir run --continue` continues the run whose checkpoint is named in [output]
-# WARN:      mdir: warning: log output '{{.*}}whole.log' already exists; mdir run writes over it only with --overwrite, and mdir run --continue continues the run of its checkpoint
-# WARN-NEXT: mdir: warning: energy output '{{.*}}whole.energy' already exists
-# WARN-NEXT: mdir: warning: trajectory output '{{.*}}whole.dcd' already exists
-# WARN-NEXT: mdir: warning: checkpoint output '{{.*}}whole.h5' already exists
-# BOTH: mdir: --overwrite does not go with --continue, whose outputs are those of its run
+# NOTE:      mdir: note: log output '{{.*}}whole.log' exists; mdir run keeps it as '{{.*}}#whole.log.1#' before it writes its own, and mdir run --continue continues the run of its checkpoint instead
+# NOTE-NEXT: mdir: note: energy output '{{.*}}whole.energy' exists; mdir run keeps it as '{{.*}}#whole.energy.1#'
+# NOTE-NEXT: mdir: note: trajectory output '{{.*}}whole.dcd' exists; mdir run keeps it as '{{.*}}#whole.dcd.1#'
+# NOTE-NEXT: mdir: note: checkpoint output '{{.*}}whole.h5' exists; mdir run keeps it as '{{.*}}#whole.h5.1#'
+# NOTE-NEXT: mdir: note: checkpoint output '{{.*}}whole.h5.prev' exists; mdir run keeps it as '{{.*}}#whole.h5.prev.1#'
+# NOTE-NOT:  warning
+# SECOND:      MDIR: backed up '{{.*}}whole.log' as '{{.*}}#whole.log.1#'
+# SECOND-NEXT: MDIR: backed up '{{.*}}whole.energy' as '{{.*}}#whole.energy.1#'
+# SECOND-NEXT: MDIR: backed up '{{.*}}whole.dcd' as '{{.*}}#whole.dcd.1#'
+# SECOND-NEXT: MDIR: backed up '{{.*}}whole.h5' as '{{.*}}#whole.h5.1#'
+# SECOND-NEXT: MDIR: backed up '{{.*}}whole.h5.prev' as '{{.*}}#whole.h5.prev.1#'
+# SECOND:      INFO:       400
+# THIRD:       MDIR: backed up '{{.*}}whole.log' as '{{.*}}#whole.log.2#'
+# KEPT: backups: #whole.dcd.1# #whole.dcd.2# #whole.energy.1# #whole.energy.2# #whole.h5.1# #whole.h5.2# #whole.h5.prev.1# #whole.h5.prev.2# #whole.log.1# #whole.log.2#{{$}}
 
 # Stopped at the first checkpoint twice, put back to it, and continued to
 # the end.
@@ -60,8 +76,11 @@
 # RUN: cmp %t/whole.energy %t/part.energy
 # RUN: mdir checkpoint %t/whole.h5 %t/part.h5 | FileCheck %s --check-prefix=SAME
 # RUN: FileCheck %s --check-prefix=PARTLOG < %t/part.log
+# RUN: %python %S/Inputs/backups.py list %t | FileCheck %s --check-prefix=NONE-OF-PART
 
 # SAME: the states are identical
+# NONE-OF-PART:     backups:
+# NONE-OF-PART-NOT: part
 # PARTLOG:      MDIR: no checkpoint '{{.*}}part.h5' yet; the run begins
 # PARTLOG:      INFO:       100
 # PARTLOG:      MDIR: stopped after step 100 on the wall time
@@ -92,6 +111,23 @@
 # PIECE:     INFO:       400
 # FIRST:     MDIR: stopped after step 100 on the wall time
 # FIRST-NOT: continues
+
+# 99 backups of the file of energies: a run stops before it writes or
+# moves any file, the log that it could back up included, and `mdir check`
+# warns.
+#
+# RUN: sed -e 's|whole|cap|g' %t/whole.toml > %t/cap.toml
+# RUN: %python %S/Inputs/backups.py make %t/cap.log 0
+# RUN: %python %S/Inputs/backups.py make %t/cap.energy 99
+# RUN: mdir check %t/cap.toml 2>&1 | FileCheck %s --check-prefix=CAPCHECK
+# RUN: not mdir run %t/cap.toml 2>&1 | FileCheck %s --check-prefix=CAP
+# RUN: %python %S/Inputs/backups.py list %t | FileCheck %s --check-prefix=CAPLIST
+
+# CAPCHECK: mdir: note: log output '{{.*}}cap.log' exists; mdir run keeps it as '{{.*}}#cap.log.1#'
+# CAPCHECK: mdir: warning: energy output '{{.*}}cap.energy' exists with 99 backups already; mdir run stops before it writes. Remove some of them, or continue the run with --continue
+# CAP:      mdir: '{{.*}}cap.energy' exists, and its directory holds 99 backups of it already, '#cap.energy.1#' to '#cap.energy.99#'; remove some of them, or continue the run with --continue
+# CAPLIST:     #cap.energy.99#
+# CAPLIST-NOT: cap.log
 
 # What the outputs refuse.
 #

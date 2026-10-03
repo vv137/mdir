@@ -5,7 +5,7 @@
 #
 # RUN: split-file %s %t
 # RUN: mdir check %t/run.toml | FileCheck %s --check-prefix=INPUT
-# RUN: mdir run --overwrite %t/run.toml | FileCheck %s
+# RUN: mdir run %t/run.toml | FileCheck %s
 # A site whose atom type is of the particle type A, as in the OPC of
 # amber19sb.ff, is a site all the same, as grompp takes it.
 # RUN: sed -i 's/^  MW    0        0.0000  0.0     D /  MW    0        0.0000  0.0     A /' %t/system.top

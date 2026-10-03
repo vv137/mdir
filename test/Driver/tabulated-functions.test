@@ -16,15 +16,15 @@
 # RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/terms.toml
 # RUN: sed -n '/^#--- run.toml/,/^#--- terms/p' %s | sed '1d;$d' | sed 's/terms.h5/plain.h5/' > %t/plain.toml
-# RUN: cd %t && mdir run --overwrite plain.toml > /dev/null && mdir run --overwrite terms.toml | FileCheck %s
+# RUN: cd %t && mdir run plain.toml > /dev/null && mdir run terms.toml | FileCheck %s
 # RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
 # RUN: mdir checkpoint --print=forces %t/terms.h5 > %t/terms.forces
 # RUN: %python %S/Inputs/check_tabulated.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/plain.forces %t/terms.forces | FileCheck %s --check-prefix=PYTHON
 # In mixed precision the spline stays in the kernel, in f32 (D94, amended).
 # RUN: sed -e 's/^precision = "DOUBLE"/precision = "MIXED"/' %t/terms.toml > %t/mixed.toml
-# RUN: cd %t && mdir run --overwrite mixed.toml | FileCheck %s --check-prefix=MIXED
+# RUN: cd %t && mdir run mixed.toml | FileCheck %s --check-prefix=MIXED
 # RUN: cp %S/Inputs/mixture.pdb %t && %python %S/Inputs/tabulated_mixture.py %S/mixture.toml > %t/mixture.toml
-# RUN: cd %t && mdir run --overwrite mixture.toml | FileCheck %s --check-prefix=MIXTURE
+# RUN: cd %t && mdir run mixture.toml | FileCheck %s --check-prefix=MIXTURE
 #
 # RUN: sed -e 's/scale\*wave(r)/scale*wave(r, r)/' %t/terms.toml > %t/arity.toml
 # RUN: not mdir check %t/arity.toml 2>&1 | FileCheck %s --check-prefix=ARITY

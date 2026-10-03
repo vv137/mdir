@@ -5,8 +5,10 @@
 
 #include "mlir/ExecutionEngine/CRunnerUtils.h"
 
+#include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Path.h"
 
 #include <algorithm>
 #include <chrono>
@@ -134,6 +136,43 @@ void ColumnFile::close() {
   if (file)
     std::fclose(file);
   file = nullptr;
+}
+
+std::string mdir::driver::getBackupPath(llvm::StringRef path) {
+  llvm::StringRef directory = llvm::sys::path::parent_path(path);
+  llvm::StringRef name = llvm::sys::path::filename(path);
+  for (int n = 1; n <= MaxBackups; ++n) {
+    llvm::SmallString<256> backup(directory);
+    llvm::sys::path::append(backup, "#" + name + "." + llvm::Twine(n) + "#");
+    if (!llvm::sys::fs::exists(backup))
+      return std::string(backup);
+  }
+  return "";
+}
+
+llvm::Error mdir::driver::checkBackup(const std::string &path) {
+  if (!llvm::sys::fs::exists(path) || !getBackupPath(path).empty())
+    return llvm::Error::success();
+  std::string name = llvm::sys::path::filename(path).str();
+  return llvm::createStringError(
+      llvm::inconvertibleErrorCode(),
+      "'%s' exists, and its directory holds %d backups of it already, "
+      "'#%s.1#' to '#%s.%d#'; remove some of them, or continue the run "
+      "with --continue",
+      path.c_str(), MaxBackups, name.c_str(), name.c_str(), MaxBackups);
+}
+
+llvm::Expected<std::string> mdir::driver::backUpOutput(const std::string &path) {
+  if (!llvm::sys::fs::exists(path))
+    return "";
+  if (llvm::Error error = checkBackup(path))
+    return std::move(error);
+  std::string backup = getBackupPath(path);
+  if (std::error_code error = llvm::sys::fs::rename(path, backup))
+    return llvm::createStringError(error, "cannot back up '%s' as '%s': %s",
+                                   path.c_str(), backup.c_str(),
+                                   error.message().c_str());
+  return backup;
 }
 
 //===----------------------------------------------------------------------===//

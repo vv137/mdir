@@ -32,9 +32,6 @@ struct RunOptions {
   /// Append the outputs of a continued run to its files, rather than
   /// write them to files of a part of their own (D130, D149).
   bool appends = true;
-  /// Write over the files of another run, which a run that is not
-  /// continued otherwise refuses to (D149).
-  bool overwrites = false;
   /// The wall time that the run may take, in s, or 0 for no limit. The run
   /// stops at the last checkpoint that leaves time for the next interval.
   double maxWalltime = 0.0;

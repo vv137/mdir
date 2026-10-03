@@ -24,13 +24,13 @@
 # 0.367594 nm), as CHARMM does: −0.095106 against −0.095392.
 #
 # RUN: split-file %s %t
-# RUN: mdir run --overwrite %t/run.toml | FileCheck %s --check-prefixes=BONDED,NONE
+# RUN: mdir run %t/run.toml | FileCheck %s --check-prefixes=BONDED,NONE
 # RUN: sed -i 's/^# modifier$/switch_distance = 12.0\nlennard_jones_modifier = "POTENTIAL_SHIFT"\ndispersion_correction = "NONE"/' %t/run.toml
-# RUN: mdir run --overwrite %t/run.toml | FileCheck %s --check-prefixes=BONDED,SHIFT
+# RUN: mdir run %t/run.toml | FileCheck %s --check-prefixes=BONDED,SHIFT
 # RUN: sed -i 's/^switch_distance = 12.0$/switch_distance = 10.0/; s/POTENTIAL_SHIFT/FORCE_SWITCH/' %t/run.toml
-# RUN: mdir run --overwrite %t/run.toml | FileCheck %s --check-prefixes=BONDED,FSW
+# RUN: mdir run %t/run.toml | FileCheck %s --check-prefixes=BONDED,FSW
 # RUN: sed -i 's/"FORCE_SWITCH"/"POWER_FORCE_SWITCH"/' %t/run.toml
-# RUN: mdir run --overwrite %t/run.toml | FileCheck %s --check-prefixes=BONDED,PFS
+# RUN: mdir run %t/run.toml | FileCheck %s --check-prefixes=BONDED,PFS
 # RUN: sed -i '/^dispersion_correction/d' %t/run.toml
 # RUN: not mdir run %t/run.toml 2>&1 | FileCheck %s --check-prefix=DISPERSION
 # RUN: sed -i '/^lennard_jones_modifier/d' %t/run.toml

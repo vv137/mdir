@@ -12,12 +12,12 @@
 # which a rerun of GROMACS 2026.3 gives to the digits shown.
 #
 # RUN: split-file %s %t
-# RUN: mdir run --overwrite %t/run.toml | FileCheck %s --check-prefix=NBFIX
+# RUN: mdir run %t/run.toml | FileCheck %s --check-prefix=NBFIX
 # RUN: sed -i '/^  A  A  1  0.35  0.5$/d' %t/system.top
-# RUN: mdir run --overwrite %t/run.toml | FileCheck %s --check-prefix=RULE
+# RUN: mdir run %t/run.toml | FileCheck %s --check-prefix=RULE
 # RUN: printf '[ pairtypes ]\n  A  A  1  0.32  0.3\n' > %t/pairtypes.itp
 # RUN: sed -i 's|^; pairtypes here|#include "pairtypes.itp"|' %t/system.top
-# RUN: mdir run --overwrite %t/run.toml | FileCheck %s --check-prefix=PAIRTYPE
+# RUN: mdir run %t/run.toml | FileCheck %s --check-prefix=PAIRTYPE
 
 # NBFIX:    MDIR:   Lennard-Jones 1-4              0.089817
 # RULE:     MDIR:   Lennard-Jones 1-4             -0.023887

@@ -1,7 +1,8 @@
 # Reports the planned run without compiling it or touching output files.
-# Covers PDB, Amber, and GROMACS inputs, JSON errors and warnings, PME,
-# minimization, NVE/NVT/NPT, nonperiodic cells, and every output of D149
-# with the number of rows, frames, or checkpoints of the run.
+# Covers PDB, Amber, and GROMACS inputs, JSON errors, warnings, and notes,
+# PME, minimization, NVE/NVT/NPT, nonperiodic cells, and every output of
+# D149 with the number of rows, frames, or checkpoints of the run and the
+# name under which a run keeps the file that exists.
 #
 # RUN: rm -rf %t
 # RUN: %python %S/Inputs/check_preflight.py mdir %S/../.. %t | FileCheck %s --check-prefix=JSON
@@ -43,6 +44,6 @@
 # NONE: boundary: NONE (no periodic cell)
 # ACTIVE: input checkpoint: {{.*}}earlier.h5 (not loaded by check)
 # ACTIVE: trajectory: {{.*}}frames with "quotes".xtc (XTC), every 10 steps, 1000 frames, exists
-# EXISTS: warning: trajectory output '{{.*}}frames with "quotes".xtc' already exists; mdir run writes over it only with --overwrite, and mdir run --continue continues the run of its checkpoint
+# EXISTS: note: trajectory output '{{.*}}frames with "quotes".xtc' exists; mdir run keeps it as '{{.*}}#frames with "quotes".xtc.1#' before it writes its own, and mdir run --continue continues the run of its checkpoint instead
 # EXISTS: warning: input checkpoint '{{.*}}earlier.h5' does not exist yet
 # PULL: pull: {{.*}}pull.dat (columns), every 20 steps, 6 rows, exists

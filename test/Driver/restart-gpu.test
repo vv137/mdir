@@ -18,9 +18,9 @@
 # RUN:     -e 's|^coordinates = \(.*\)|coordinates = \1\ncheckpoint = "%t.first.h5"|' \
 # RUN:     %t.first.toml > %t.second.toml
 #
-# RUN: mdir run --overwrite %t.whole.toml
-# RUN: mdir run --overwrite %t.first.toml
-# RUN: mdir run --overwrite %t.second.toml
+# RUN: mdir run %t.whole.toml
+# RUN: mdir run %t.first.toml
+# RUN: mdir run %t.second.toml
 # RUN: mdir checkpoint %t.whole.h5 %t.second.h5 | FileCheck %s
 # RUN: mdir checkpoint %t.whole.h5 | FileCheck %s --check-prefix=ABOUT
 

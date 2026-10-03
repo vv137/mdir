@@ -6,6 +6,7 @@
 #include "mdir/Driver/Cell.h"
 #include "mdir/Driver/Checkpoint.h"
 #include "mdir/Driver/Control.h"
+#include "mdir/Driver/Output.h"
 #include "mdir/Driver/System.h"
 
 #include "llvm/Support/FileSystem.h"
@@ -30,7 +31,8 @@ static int fail(llvm::Error error, bool json) {
   if (json)
     printJSON(llvm::json::Object{{"schema_version", 1}, {"ok", false},
                                 {"errors", llvm::json::Array{message}},
-                                {"warnings", llvm::json::Array{}}});
+                                {"warnings", llvm::json::Array{}},
+                                {"notes", llvm::json::Array{}}});
   else
     llvm::errs() << "mdir: " << message << "\n";
   return 1;
@@ -164,7 +166,7 @@ static void describeParticles(const Control &control, const System &system) {
 namespace {
 /// An output of the run (D149): the log goes to the standard output and,
 /// with a path, to that file as well.
-struct Output {
+struct OutputFile {
   const char *kind;
   std::string path;
   const char *format;
@@ -177,6 +179,9 @@ struct Output {
   /// converges).
   int64_t count = -1;
   const char *countOf = "";
+  /// Where `mdir run` keeps the file that exists before it writes its own
+  /// (D149), or empty.
+  std::string backup = "";
 };
 
 struct Warning {
@@ -185,8 +190,11 @@ struct Warning {
 };
 
 struct Preflight {
-  std::vector<Output> outputs;
+  std::vector<OutputFile> outputs;
   std::vector<Warning> warnings;
+  /// What the run will do that needs no change: the backups of outputs
+  /// that exist (D149).
+  std::vector<Warning> notes;
 };
 } // namespace
 
@@ -228,17 +236,37 @@ static Preflight inspect(const Control &control) {
        control.checkpointPeriod > 0, control.minimize, false,
        control.minimize ? 1 : count(control.checkpointPeriod, false),
        "checkpoints"}};
-  // `mdir run` does not write over an output of another run; under
-  // --continue the files are the run's own (D149).
-  for (Output &output : report.outputs) {
+  // `mdir run` keeps an output of an earlier run as `#<name>.<n>#` before
+  // it writes its own; under --continue the files are the run's own
+  // (D149). The checkpoint before the last, `.prev`, is kept as well.
+  auto backUp = [&](const char *kind, const std::string &path) {
+    std::string backup = getBackupPath(path);
+    if (backup.empty()) {
+      report.warnings.push_back(
+          {"backup_limit",
+           std::string(kind) + " output '" + path + "' exists with " +
+               std::to_string(MaxBackups) +
+               " backups already; mdir run stops before it writes. Remove "
+               "some of them, or continue the run with --continue"});
+      return backup;
+    }
+    report.notes.push_back(
+        {"output_backup",
+         std::string(kind) + " output '" + path +
+             "' exists; mdir run keeps it as '" + backup +
+             "' before it writes its own, and mdir run --continue continues "
+             "the run of its checkpoint instead"});
+    return backup;
+  };
+  for (OutputFile &output : report.outputs) {
     output.exists = !output.path.empty() && llvm::sys::fs::exists(output.path);
     if (output.enabled && output.exists)
-      report.warnings.push_back(
-          {"output_exists",
-           std::string(output.kind) + " output '" + output.path +
-               "' already exists; mdir run writes over it only with "
-               "--overwrite, and mdir run --continue continues the run of "
-               "its checkpoint"});
+      output.backup = backUp(output.kind, output.path);
+  }
+  if (control.checkpointPeriod > 0) {
+    std::string previous = getPreviousCheckpointPath(control.restartOutput);
+    if (llvm::sys::fs::exists(previous))
+      backUp("checkpoint", previous);
   }
   if (control.rebuildPeriod > 0)
     report.warnings.push_back(
@@ -331,7 +359,7 @@ static void describeRun(const Control &control, const System &system,
     std::printf("input checkpoint:   %s (not loaded by check)\n",
                 control.restartInput.c_str());
   std::printf("outputs:\n");
-  for (const Output &output : report.outputs) {
+  for (const OutputFile &output : report.outputs) {
     bool log = llvm::StringRef(output.kind) == "log";
     std::string path = output.path.empty() ? "not configured" : output.path;
     if (log)
@@ -352,6 +380,8 @@ static void describeRun(const Control &control, const System &system,
       std::printf(", exists");
     std::printf("\n");
   }
+  for (const Warning &note : report.notes)
+    llvm::errs() << "mdir: note: " << note.message << "\n";
   for (const Warning &warning : report.warnings)
     llvm::errs() << "mdir: warning: " << warning.message << "\n";
 }
@@ -449,8 +479,8 @@ static llvm::json::Object makeJSON(const Control &control, const System &system,
                                                        : Value(nullptr)},
         {"tolerance", control.pmeAlphaTolerance}};
   }
-  Array outputs, warnings;
-  for (const Output &output : report.outputs)
+  Array outputs, warnings, notes;
+  for (const OutputFile &output : report.outputs)
     outputs.push_back(Object{{"kind", output.kind},
                              {"path", output.path.empty() ? Value(nullptr)
                                                           : Value(output.path)},
@@ -461,13 +491,18 @@ static llvm::json::Object makeJSON(const Control &control, const System &system,
                              {"count_of", output.countOf},
                              {"enabled", output.enabled},
                              {"at_end", output.atEnd},
-                             {"exists", output.exists}});
+                             {"exists", output.exists},
+                             {"backup", output.backup.empty()
+                                            ? Value(nullptr)
+                                            : Value(output.backup)}});
   for (const Warning &warning : report.warnings)
     warnings.push_back(Object{{"code", warning.code}, {"message", warning.message}});
+  for (const Warning &note : report.notes)
+    notes.push_back(Object{{"code", note.code}, {"message", note.message}});
   return Object{{"schema_version", 1}, {"ok", true},
           {"system", std::move(particles)}, {"run", std::move(run)},
           {"outputs", std::move(outputs)}, {"warnings", std::move(warnings)},
-          {"errors", Array{}}};
+          {"notes", std::move(notes)}, {"errors", Array{}}};
 }
 
 int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {

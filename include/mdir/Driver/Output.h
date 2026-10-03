@@ -218,6 +218,23 @@ void writeLogHeader(Output &output);
 /// The columns of the file of the energies: those of the rows of the log.
 std::vector<ColumnFile::Column> getEnergyColumns(const Output &output);
 
+/// The most backups that a run keeps of one output (D149).
+constexpr int MaxBackups = 99;
+
+/// The name under which a run that is not continued keeps the output
+/// `path` of an earlier run before it writes its own (D149): `#<name>.<n>#`
+/// in the directory of `path`, n the least number from 1 that no file
+/// takes. Empty if all MaxBackups are taken.
+std::string getBackupPath(llvm::StringRef path);
+
+/// Fails if `path` exists and all MaxBackups of it are taken.
+llvm::Error checkBackup(const std::string &path);
+
+/// Renames `path` to getBackupPath(path) if it exists. Returns the new
+/// name, empty if there was no file, or an error if MaxBackups are taken
+/// or the rename fails.
+llvm::Expected<std::string> backUpOutput(const std::string &path);
+
 } // namespace driver
 } // namespace mdir
 

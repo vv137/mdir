@@ -16,9 +16,8 @@ mdir, control, step, name = sys.argv[1:5]
 count = int(sys.argv[5]) if len(sys.argv) > 5 else 1
 kind = getattr(signal, name)
 
-run = subprocess.Popen([mdir, "run", "--overwrite", control],
-                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                       text=True, bufsize=1)
+run = subprocess.Popen([mdir, "run", control], stdout=subprocess.PIPE,
+                       stderr=subprocess.STDOUT, text=True, bufsize=1)
 sent = 0
 stopped = None
 for line in run.stdout:
@@ -53,8 +52,7 @@ text = text.replace(os.path.basename(path), "upto.h5")
 upto = control.replace(".toml", ".upto.toml")
 with open(upto, "w") as file:
     file.write(text)
-subprocess.run([mdir, "run", "--overwrite", upto], stdout=subprocess.DEVNULL,
-               check=True)
+subprocess.run([mdir, "run", upto], stdout=subprocess.DEVNULL, check=True)
 compared = subprocess.run(
     [mdir, "checkpoint", path, os.path.join(os.path.dirname(path), "upto.h5")],
     capture_output=True, text=True)

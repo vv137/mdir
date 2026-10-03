@@ -6,7 +6,7 @@
 # RUN: echo '[execution]' >> %t.toml
 # RUN: echo 'target = "gpu"' >> %t.toml
 # RUN: echo 'precision = "mixed"' >> %t.toml
-# RUN: mdir run --overwrite %t.toml | FileCheck %s
+# RUN: mdir run %t.toml | FileCheck %s
 
 # The virial is a sum of vectors, which the device adds up.
 #

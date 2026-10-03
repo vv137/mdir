@@ -1,7 +1,7 @@
 # A mixture of two types of particles: the parameters of a pair follow from
 # those of its particles, which the kernel reads from fields.
 #
-# RUN: mdir run --overwrite %s | FileCheck %s
+# RUN: mdir run %s | FileCheck %s
 # RUN: mdir emit %s | FileCheck %s --check-prefix=MODULE
 
 # The potential energy, the virial, and the pressure at the start agree

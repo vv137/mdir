@@ -14,16 +14,16 @@
 # RUN: sed -i 's|^\[output\]$|[output]\ncheckpoint = "on.h5"|' %t/on.toml
 # RUN: printf '[execution]\nspatial_order = true\n' >> %t/on.toml
 # RUN: sed -e 's|spatial_order = true|spatial_order = false|' -e 's|on.h5|off.h5|' %t/on.toml > %t/off.toml
-# RUN: mdir run --overwrite %t/on.toml | FileCheck %s
-# RUN: mdir run --overwrite %t/off.toml | FileCheck %s
+# RUN: mdir run %t/on.toml | FileCheck %s
+# RUN: mdir run %t/off.toml | FileCheck %s
 # RUN: not mdir checkpoint %t/on.h5 %t/off.h5 | FileCheck %s --check-prefix=STATES
 
 # The same with the waters rigid: the members of SETTLE are renumbered too.
 #
 # RUN: printf '[constraints]\nrigid_water = true\n' >> %t/on.toml
 # RUN: printf '[constraints]\nrigid_water = true\n' >> %t/off.toml
-# RUN: mdir run --overwrite %t/on.toml | FileCheck %s --check-prefix=RIGID
-# RUN: mdir run --overwrite %t/off.toml | FileCheck %s --check-prefix=RIGID
+# RUN: mdir run %t/on.toml | FileCheck %s --check-prefix=RIGID
+# RUN: mdir run %t/off.toml | FileCheck %s --check-prefix=RIGID
 # RUN: not mdir checkpoint %t/on.h5 %t/off.h5 | FileCheck %s --check-prefix=STATES
 
 # RIGID: INFO:        40

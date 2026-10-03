@@ -16,7 +16,7 @@
 # constants of CODATA and of CHARMM (docs/charmm-m1.md, Section 2).
 #
 # RUN: split-file %s %t
-# RUN: mdir run --overwrite %t/run.toml | FileCheck %s
+# RUN: mdir run %t/run.toml | FileCheck %s
 # RUN: mdir check %t/run.toml | FileCheck %s --check-prefix=CHECK-TOPOLOGY
 # RUN: sed '/^box/d' %t/run.toml > %t/nobox.toml
 # RUN: not mdir run %t/nobox.toml 2>&1 | FileCheck %s --check-prefix=NOBOX

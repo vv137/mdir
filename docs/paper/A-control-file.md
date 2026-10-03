@@ -191,14 +191,14 @@ precision = "MIXED"             # SINGLE, MIXED, DOUBLE
 ## A.3 Runs over more than one job
 
 `mdir run` takes three options for a run that outlasts a job on a
-cluster (docs/driver-m0.md, Section 2.7), and one to write over the
-outputs of another run:
+cluster (docs/driver-m0.md, Section 2.7). Without `--continue`, a run
+keeps each output of an earlier run that has its name as `#<name>.<n>#`
+before it writes, at most 99 of each (D149):
 
 | Option | Meaning |
 |---|---|
 | `--continue` | Continues the run from the checkpoint of `[output]` until it has taken its `steps`, counted from the step it began at; without a checkpoint the run begins, and a complete run exits with 0 (D129). |
 | `--no-append` | With `--continue`, writes the outputs that follow (the log, the files of columns, the frames) to `<name>.partNNNN<ext>` rather than appending them to the files of the run, which are first cut to the checkpoint (D130, D149). |
-| `--overwrite` | Without `--continue`: writes over the outputs of another run, which a run otherwise refuses to (D149). |
 | `--max-walltime <time>` | Stops at the last checkpoint that leaves time for one more interval between checkpoints, in hours or as `H:MM[:SS]` (D131). |
 
 SIGTERM and SIGINT stop a run at its next checkpoint, and a second signal

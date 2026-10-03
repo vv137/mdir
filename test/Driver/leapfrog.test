@@ -4,8 +4,8 @@
 #
 # RUN: sed -e 's|Inputs/|%S/Inputs/|' %S/mixture.toml > %t.verlet.toml
 # RUN: sed -e 's|"VELOCITY_VERLET"|"LEAPFROG"|' %t.verlet.toml > %t.leapfrog.toml
-# RUN: mdir run --overwrite %t.verlet.toml | grep "^INFO" > %t.verlet.log
-# RUN: mdir run --overwrite %t.leapfrog.toml | grep "^INFO" > %t.leapfrog.log
+# RUN: mdir run %t.verlet.toml | grep "^INFO" > %t.verlet.log
+# RUN: mdir run %t.leapfrog.toml | grep "^INFO" > %t.leapfrog.log
 # RUN: diff %t.verlet.log %t.leapfrog.log
 # RUN: FileCheck %s < %t.leapfrog.log
 # RUN: mdir emit %t.leapfrog.toml | FileCheck %s --check-prefix=MODULE

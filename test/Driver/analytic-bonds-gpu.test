@@ -8,13 +8,13 @@
 # RUN: echo 'target = "GPU"' >> %t/base.toml
 # RUN: echo 'deterministic = true' >> %t/base.toml
 # RUN: sed '/hydrogen_bonds = true/a analytic_bonds = true' %t/base.toml > %t/analytic.toml
-# RUN: mdir run --overwrite %t/base.toml > %t/base.log
-# RUN: mdir run --overwrite %t/analytic.toml > %t/analytic.log
+# RUN: mdir run %t/base.toml > %t/base.log
+# RUN: mdir run %t/analytic.toml > %t/analytic.log
 # RUN: %python %S/Inputs/compare_logs.py %t/base.log %t/analytic.log 1e-7 | FileCheck %s
 # RUN: echo 'precision = "MIXED"' >> %t/base.toml
 # RUN: echo 'precision = "MIXED"' >> %t/analytic.toml
-# RUN: mdir run --overwrite %t/base.toml > %t/mixed-base.log
-# RUN: mdir run --overwrite %t/analytic.toml > %t/mixed-analytic.log
+# RUN: mdir run %t/base.toml > %t/mixed-base.log
+# RUN: mdir run %t/analytic.toml > %t/mixed-analytic.log
 # RUN: %python %S/Inputs/compare_logs.py %t/mixed-base.log %t/mixed-analytic.log 2e-4 | FileCheck %s
 # RUN: %python %S/Inputs/check_bonds.py %t/ff19.prmtop %t/verlet.dcd | FileCheck %s --check-prefix=BONDS
 # CHECK: logs agree
