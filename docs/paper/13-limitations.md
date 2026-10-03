@@ -96,8 +96,9 @@ angles, and dihedrals, which give restraints beyond positions and the
 dihedrals of OPLS-AA (D136), and terms over the pairs of a topology, in
 its charges and Lennard-Jones parameters and between interaction groups
 (D137), with tabulated functions of one argument (D138), and terms over
-the centers of groups, which restrain pull groups (D139), whose loops
-still run over every particle of the system, and which pull at a rate
+the centers of groups, which restrain pull groups (D139), whose sums
+and forces run over their tuples and add 0.03 to 0.05 ms to a step of
+JAC (D150), and which pull at a rate
 with the time in their expressions and write their coordinates and
 forces (D145); so are the reaction field
 (D140), runs without a periodic cell, in a cell that no image reaches

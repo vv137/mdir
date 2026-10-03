@@ -206,6 +206,16 @@ def FuseLoops : Pass<"md-exec-fuse-loops", "::mlir::ModuleOp"> {
     ```
 
     A field that only the second loop reads is not stored at all.
+
+    Two `md_exec.tuple_for` ops over the same incidence, positions, cell,
+    and arity are fused as well when the second does not use a result of
+    the first (D139): the kernel takes each displacement once. If an op
+    between them uses a result of the first, the second moves up after the
+    first when everything it uses is defined before; otherwise the ops
+    between them that use the first, if they are pure and the second uses
+    none of them, move after the second (D150), as the sum of the virials
+    of the sums over the centers of groups does while the weight of each
+    next loop is computed between them.
   }];
   let dependentDialects = ["::mdir::md_exec::MDExecDialect"];
 }
@@ -534,6 +544,15 @@ def AccumulateDestinations
     where they were added in `f64` after being stored in `f32`, as GROMACS
     adds them. A run of such loops in one kernel adds to one buffer and
     stores it once (`convert-md-exec-to-gpu`).
+
+    Before, two destinations of one loop over tuples that the chain adds
+    one after the other become one (D150): the kernel yields the sum of the
+    two contributions of each member into the first, and the chain adds it
+    once. The forces of the sums over the centers of groups, which one
+    fused loop gives (D139), become one field that accumulates onto the
+    terms before it, so that the loop is evaluated once for each tuple
+    with atomics. The sums are those of the loop over particles in another
+    order: equal, not to the bit.
   }];
   let dependentDialects = ["::mlir::arith::ArithDialect"];
 }

@@ -659,8 +659,8 @@ Lowering::emitReductions(OpBuilder &builder, Location loc,
   // every so manyth, and the block adds up its threads for all the sums of
   // the kernel in one pass: each warp by a butterfly of shuffles, its first
   // lane writes the totals of the warp to shared memory, and after one
-  // barrier every thread adds the warps in their order. The order of a
-  // sum, and the sum, depend only on the number of particles. A block
+  // barrier every thread adds the warps in their order (D150). The order
+  // of a sum, and the sum, depend only on the number of particles. A block
   // takes at least four particles per thread, and there are no more parts
   // than threads in a block.
   int64_t warps = blockSize / 32;
