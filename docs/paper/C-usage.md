@@ -331,8 +331,9 @@ the units inside MDIR, nm, ps, and kJ/mol, and writes them with the data.
 Terms beyond the force field are written in the control file as
 expressions (D136 to D139, D145, D148): over tuples of particles, over
 the centers of groups, over the pairs of a topology, and of the positions
-of single particles, in Å, kcal/mol, and radians, with functions given by
-tables (D138). A flat-bottomed restraint
+of single particles, in Å, kcal/mol, and radians, with parameters of each
+particle given by masks and functions given by tables of up to three
+arguments (D138, D165). A flat-bottomed restraint
 between two atoms, two groups pulled apart at 1 Å/ps by a spring on their
 centers of mass, and a dihedral given by a periodic spline, on the
 dipeptide of C.2:

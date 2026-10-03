@@ -1,0 +1,137 @@
+# Tabulated functions of two and three arguments and discrete ones (D165):
+# [[energy.function]] with `values` as nested lists, values[i][j] the
+# value at the i-th point of the first argument and the j-th of the second,
+# and `min` and `max` as lists, called as f(x, y) or f(x, y, z): the bicubic
+# or tricubic patch of each cell that matches the values and the
+# derivatives at its corners, the derivatives from natural or periodic
+# splines along the axes; or, with `discrete = true`, the value at the
+# nearest point, the arguments rounded and clamped to the table, as the
+# continuous and discrete tabulated functions of OpenMM. On the dipeptide:
+# a pair term in a function of r and of the sum of a parameter of each
+# particle, and in a discrete table of the kinds of the two particles; a
+# term of the positions of the solute in a function of x, y, z; and a
+# dihedral term in a function of two angles periodic in both. The energies
+# are those of OpenMM 8.6.1 on the Reference platform (Continuous2DFunction,
+# Continuous3DFunction, Discrete2DFunction in CustomNonbondedForce and
+# CustomCompoundBondForce) to the printed digits, and its forces within
+# 2e-12 of the largest; check_functions.py fits the splines on its own and
+# computes the energies, and the forces against central differences of
+# them.
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/terms.toml
+# RUN: sed -n '/^#--- run.toml/,/^#--- terms/p' %s | sed '1d;$d' | sed 's/terms.h5/plain.h5/' > %t/plain.toml
+# RUN: cd %t && mdir run plain.toml > plain.log && mdir run terms.toml > terms.log
+# RUN: FileCheck %s < %t/terms.log
+# RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
+# RUN: mdir checkpoint --print=forces %t/terms.h5 > %t/terms.forces
+# RUN: %python %S/Inputs/check_functions.py %t/terms.toml %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/plain.forces %t/terms.forces 1e-6 | FileCheck %s --check-prefix=PYTHON
+#
+# RUN: sed -e 's/k\*surf(r, s1 + s2)/k*surf(r)/' %t/terms.toml > %t/arity.toml
+# RUN: not mdir check %t/arity.toml 2>&1 | FileCheck %s --check-prefix=ARITY
+# RUN: sed -e 's/^values = \[\[0.593812, /values = [[/' %t/terms.toml > %t/ragged.toml
+# RUN: not mdir check %t/ragged.toml 2>&1 | FileCheck %s --check-prefix=RAGGED
+# RUN: sed -e 's/^min    = \[1.5, -2.0\]/min    = [1.5]/' %t/terms.toml > %t/bounds.toml
+# RUN: not mdir check %t/bounds.toml 2>&1 | FileCheck %s --check-prefix=BOUNDS
+# RUN: sed -e 's/^discrete = true/discrete = true\nmin = 0.0/' %t/terms.toml > %t/discrete.toml
+# RUN: not mdir check %t/discrete.toml 2>&1 | FileCheck %s --check-prefix=DISCRETE
+# RUN: sed -e 's/^values   = \[\[-0.700000, /values   = [[-0.600000, /' %t/terms.toml > %t/ends.toml
+# RUN: not mdir check %t/ends.toml 2>&1 | FileCheck %s --check-prefix=ENDS
+
+# CHECK:      MDIR:   twist2 -1.783024
+# CHECK:      MDIR:   surface 18694.505084
+# CHECK-NEXT: MDIR:   field 19.376434
+
+# PYTHON:      twist2 -1.783024
+# PYTHON-NEXT: surface 18694.505084
+# PYTHON-NEXT: field 19.376434
+# PYTHON-NEXT: forces against differences of the energy: ok
+
+# ARITY: 'surf' takes 2 arguments, not 1
+# RAGGED: expected 'values' as lists of
+# BOUNDS: expected 'min' as a list of 2 numbers, one for each argument
+# DISCRETE: a discrete function takes its arguments as the indices of its values, from 0, without 'min'
+# ENDS: a periodic function needs the last values along each argument equal to the first
+
+#--- run.toml
+[input]
+topology    = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+[output]
+energy_interval = 0
+checkpoint = "terms.h5"
+checkpoint_interval = 1
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "CUTOFF"
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 1e-9
+steps      = 1
+[ensemble]
+ensemble    = "NVE"
+temperature = 0.0
+[boundary]
+type = "PERIODIC"
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- terms
+[[energy.parameter]]
+name  = "s"
+value = 0.25
+[[energy.parameter]]
+name      = "s"
+selection = "@O*"
+value     = -0.75
+[[energy.parameter]]
+name  = "kind"
+value = 0
+[[energy.parameter]]
+name      = "kind"
+selection = "@H*"
+value     = 1
+[[energy.parameter]]
+name      = "kind"
+selection = ":1-3"
+value     = 2
+[[energy.function]]
+name   = "surf"
+min    = [1.5, -2.0]
+max    = [9.0, 1.0]
+values = [[0.593812, 0.742083, 0.521738, 0.396382, 0.615164, 0.650277, 0.388582, 0.387039], [0.479181, 0.521742, 0.334392, 0.310007, 0.473538, 0.425681, 0.244379, 0.308853], [0.377408, 0.355692, 0.219761, 0.250165, 0.351922, 0.268956, 0.162239, 0.246365], [0.288349, 0.236388, 0.151710, 0.202915, 0.251821, 0.165436, 0.116214, 0.192706], [0.213046, 0.154486, 0.111382, 0.162235, 0.173421, 0.100871, 0.089566, 0.146216], [0.151934, 0.100514, 0.086293, 0.126326, 0.115180, 0.062968, 0.072517, 0.107217], [0.104324, 0.066041, 0.068921, 0.095174, 0.074240, 0.042093, 0.060023, 0.076261], [0.068568, 0.044279, 0.055226, 0.069168, 0.047103, 0.031321, 0.049928, 0.053389], [0.042466, 0.030227, 0.043364, 0.048454, 0.030243, 0.026083, 0.041603, 0.038001], [0.023696, 0.020502, 0.032709, 0.032758, 0.020538, 0.023638, 0.035059, 0.029016]]
+[[energy.function]]
+name     = "pairkind"
+discrete = true
+values   = [[0.100000, -0.200000, 0.050000], [-0.200000, 0.300000, 0.150000], [0.050000, 0.150000, -0.400000]]
+[[energy.function]]
+name   = "vol"
+min    = [10.0, 10.0, 10.0]
+max    = [18.0, 20.0, 16.0]
+values = [[[0.295520, 0.791471, 0.791665, 0.225463], [0.259343, 0.688460, 0.670268, 0.142775], [0.159670, 0.404649, 0.335799, -0.085046], [0.020904, 0.009523, -0.129852, -0.402220], [-0.122980, -0.400175, -0.612678, -0.731092], [-0.236754, -0.724139, -0.994466, -0.991143]], [[0.183698, 0.473067, 0.416429, -0.030125], [0.372192, 0.825046, 0.813384, 0.272143], [0.494044, 0.987267, 0.986711, 0.422089], [0.543903, 0.944496, 0.918456, 0.407484], [0.534047, 0.731688, 0.649815, 0.256387], [0.491371, 0.425429, 0.271044, 0.030277]], [[-0.067143, -0.241184, -0.425308, -0.603467], [0.279051, 0.375093, 0.265269, -0.069314], [0.605891, 0.936258, 0.890900, 0.420600], [0.882321, 1.353888, 1.347374, 0.795295], [1.089629, 1.574698, 1.571898, 1.011999], [1.226026, 1.593593, 1.558467, 1.066623]], [[-0.267172, -0.810750, -1.096537, -1.060667], [0.126086, -0.245207, -0.483596, -0.547511], [0.561924, 0.441581, 0.272229, 0.062970], [1.007084, 1.154914, 1.059337, 0.694759], [1.426026, 1.793593, 1.758467, 1.266623], [1.789629, 2.274698, 2.271898, 1.711999]], [[-0.265010, -0.804596, -1.089284, -1.055727], [0.104735, -0.490743, -0.790807, -0.724879], [0.546772, 0.028953, -0.249746, -0.228797], [1.050808, 0.725187, 0.499362, 0.408995], [1.591371, 1.525429, 1.371044, 1.130277], [2.134047, 2.331688, 2.249815, 1.856387]]]
+[[energy.function]]
+name     = "per2"
+min      = [-3.141592653589793, -3.141592653589793]
+max      = [3.141592653589793, 3.141592653589793]
+periodic = true
+values   = [[-0.700000, -1.000000, -1.300000, -1.000000, -0.700000], [-0.216312, 0.076300, -0.201722, -0.294334, -0.216312], [0.566312, 1.185353, 1.451722, 1.232681, 0.566312], [0.566312, 0.932681, 1.651722, 1.885353, 0.566312], [-0.216312, -0.194334, 0.398278, 1.176300, -0.216312], [-0.700000, -1.000000, -1.300000, -1.000000, -0.700000]]
+[[energy.pair]]
+name       = "surface"
+expression = "k*surf(r, s1 + s2) + kd*pairkind(kind1, kind2)*exp(-r)"
+k  = 2.0
+kd = 1.5
+[[energy.external]]
+name       = "field"
+expression = "kv*vol(x, y, z)"
+selection  = ":1-3"
+kv = 0.8
+[[energy.dihedral]]
+name       = "twist2"
+expression = "kt*per2(theta, 2*theta + 0.3)"
+particles  = [[2, 5, 7, 9], [5, 7, 9, 11], [7, 9, 11, 13]]
+kt = 1.2
+#--- end

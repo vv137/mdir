@@ -28,7 +28,8 @@ coordinate and its parameters, and the driver writes every term of a run
 into one `md.potential`. The terms of a topology are written by the
 driver; a control file adds terms over pairs, bonds, angles, and dihedrals
 as expressions in the syntax of the custom forces of OpenMM, with
-tabulated functions (D22, D136 to D138),
+parameters of each particle and tabulated functions of up to three
+arguments (D22, D136 to D138, D165),
 which compile into the same loops as the terms of the topology and whose
 forces the same differentiation gives. Below is the potential of the test of a mixture
 of two Lennard–Jones types (`test/Driver/mixture.toml`), as `mdir emit`
@@ -214,6 +215,46 @@ kernel reads the edges of the cell (`md_exec.cell_edges`), $-\sum_i
 kernel receives from outside, such as one computed from the cell, is
 independent of the kernel's arguments, and the edges of the cell are an
 input of their own, whose derivative only the virial takes.
+
+**Tabulated functions.** A function given by a table enters an
+expression as any other function, and the force is the exact derivative of
+what the table defines: the kernel computes the cell of each argument,
+$\lfloor (x_k - x_k^\text{min})/\delta_k \rfloor$, and the place in it,
+$\tau_k \in [0, 1]$, looks up the coefficients of the cell, and evaluates
+a polynomial in the places, through which alone differentiation carries
+the derivative; the index and the lookups have none. Of one argument the
+polynomial is the cubic of a natural or periodic spline (D138). Of two or
+three it is the product of cubics of Hermite along the axes, the bicubic
+patch [[Press2007]](references.md#press2007) and the tricubic of Lekien and Marsden
+[[Lekien2005]](references.md#lekien2005), which matches at the $2^n$ corners of its cell the value,
+the derivative along each axis, and the mixed derivatives, each times the
+spacings it is taken along; with
+$H(\tau) = (2\tau^3 - 3\tau^2 + 1,\ 3\tau^2 - 2\tau^3,\ \tau^3 - 2\tau^2 + \tau,\ \tau^3 - \tau^2)$
+the weights of $(p_0, p_1, \delta d_0, \delta d_1)$ along one axis, the
+patch of two arguments is
+$f = \sum_{a,b} H_a(\tau_1)\,H_b(\tau_2)\,g_{ab}$, with $g_{ab}$ those
+corner values (D165). Two patches that share a face agree on it with their
+first derivatives, since on the face each is the patch of lower dimension
+of the same corner data: the energy and the forces are continuous, so a
+run in a table conserves its energy as one in an analytic function does.
+The derivatives at the points are those of the splines through the table
+along each axis, and the mixed ones of splines through those, in the
+order of the continuous functions of OpenMM [[Eastman2017]](references.md#eastman2017), so that a
+table gives the same function in both. A discrete function is the value
+at the nearest point, whose derivative is zero and whose value jumps
+between points: it is meant for arguments that do not move, such as the
+kinds of two particles in a parameter of each.
+
+**Parameters of each particle.** A term may weigh each particle by a
+number that the control file gives it by masks of Amber (D165), $w_i$,
+the per-particle parameter of the custom forces of OpenMM. A pair term
+reads it as $w_1, w_2$, gathered as a field of the particles like the
+charges, and the reader tests that the energy of a pair does not change
+when the two are exchanged with their parameters (D137); a term over
+tuples reads $w_1, \dots, w_N$ by place, which the driver writes as
+parameters of each tuple, and a term of the positions reads $w$ itself.
+The parameters are constants of the potential, so they change neither
+its derivatives nor the virial.
 
 **Exchange contracts.** A pair kernel carries a contract that says how
 its value for $(j,i)$ relates to its value for $(i,j)$: `symmetric`,

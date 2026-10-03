@@ -24,6 +24,7 @@ element.
 | $\mathbf x^\text{ref} = \mathbf m_0\odot\mathbf x^\text{c} + \mathbf o$ | Reference of a positional restraint: a center that scales with the cell and an offset that does not (Section 6.4) |
 | $\mathbf u_i = \mathbf x_i\oslash\mathbf L$ | Coordinates of particle $i$ in the frame of the cell |
 | $\varepsilon = \ln V$, $\varepsilon_a = \ln L_a$; $\mu_a$ | Strain of the cell and of axis $a$; $\mu_a$ the factor of a step of the barostat along $a$ |
+| $\delta_k,\ \tau_k$ | Spacing of the points of a tabulated function along its argument $k$, and the place of an argument in its cell, from 0 to 1 (Section 3.1) |
 | $\mathbf X_g,\ \mathbf F_g$ | Center of mass of a group $g$ that moves as a whole, and the total force on it |
 | $P,\ P_0,\ P_{aa}$ | Pressure, its target, and the pressure of axis $a$ |
 | $Z,\ F$ | Canonical partition function and Helmholtz free energy (a force is bold, $\mathbf F_i$) |

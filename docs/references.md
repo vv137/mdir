@@ -535,6 +535,16 @@ integration and solvent–solute splitting," *Proc. R. Soc. A* **472**,
 Used for: BAOAB with holonomic constraints, the projection of the
 velocities after each part of the step (F1).
 
+### Lekien2005
+
+F. Lekien, J. Marsden, "Tricubic interpolation in three dimensions,"
+*Int. J. Numer. Methods Eng.* **63**, 455–471 (2005).
+[doi:10.1002/nme.1296](https://doi.org/10.1002/nme.1296)
+
+Used for: the tricubic patch of a tabulated function of three arguments,
+which matches the values, the first derivatives, and the mixed ones at the
+corners of its cell (D165).
+
 ### Li2014
 
 P. Li, K. M. Merz, "Taking into account the ion-induced dipole
@@ -770,6 +780,15 @@ Program. Lang.* **9**(OOPSLA2), 2087–2114 (2025).
 
 Used for: related work, an activity analysis for automatic
 differentiation on MLIR, proved sound as an abstract interpretation.
+
+### Press2007
+
+W. H. Press, S. A. Teukolsky, W. T. Vetterling, B. P. Flannery,
+*Numerical Recipes: The Art of Scientific Computing*, 3rd ed. (Cambridge
+University Press, Cambridge, 2007), Section 3.6.
+
+Used for: the bicubic patch of a tabulated function of two arguments from
+the values and the derivatives at the corners of its cell (D165).
 
 ### Quentrec1973
 
