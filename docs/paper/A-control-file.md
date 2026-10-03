@@ -26,7 +26,7 @@ terms and types remain valid.
 | | `format` | `AUTO` (the default: from the names of the files), `AMBER`, `GROMACS`, `CHARMM`, or `PDB`. A CHARMM force field runs from its own files (D122) or from a topology of GROMACS (D121). |
 | | `parameters` | With a PSF: the files of topology (`.rtf`), parameters (`.prm`), and streams (`.str`), in the order that CHARMM reads them; a later file replaces what an earlier one defines. |
 | | `include_paths`, `defines` | With a GROMACS topology: the directories of `#include` and the names that `#define` gives. |
-| | `checkpoint` | The checkpoint of an earlier run, whose state the run begins from, at its step and time (D129), taking its cell (and warning on the standard error if the input has another); the input's cell still sets the grid of PME and the reference of restraints. One of a minimization gives the positions only, and the run begins at step 0. |
+| | `checkpoint` | The checkpoint of an earlier run, whose state the run begins from, at its step and time (D129), taking its cell (and warning on the standard error if the input has another); the input's cell still sets the grid of PME and the reference of restraints. It takes the forces, the barostat state, and the thermostat chain of the checkpoint only where the physics and the coupling of the two runs are the same; otherwise it notes each difference and evaluates them at its first step (D[checkpoint-fingerprint]). One of a minimization gives the positions only, and the run begins at step 0. |
 | `[output]` | `log` | The log in a file as well as on the standard output: every line that the run prints there, from its start; a continued run appends to it (D149). |
 | | `manifest` | Optional execution history in version-1 JSON Lines (D168): build and input hashes, resolved settings, device, warnings, and start/end events. Disabled if omitted; fresh runs back up an existing file, continuations append history, and `--no-append` uses the part filename. |
 | | `energy` | The rows of the log as a file of columns: a line of names, a line of units, and a row for each output (D149). |
@@ -221,7 +221,7 @@ before it writes, at most 99 of each (D149):
 
 | Option | Meaning |
 |---|---|
-| `--continue` | Continues the run from the checkpoint of `[output]` until it has taken its `steps`, counted from the step it began at; without a checkpoint the run begins, and a complete run exits with 0 (D129). |
+| `--continue` | Continues the run from the checkpoint of `[output]` until it has taken its `steps`, counted from the step it began at; without a checkpoint the run begins, and a complete run exits with 0 (D129). It refuses a checkpoint of other physics or coupling, naming each change, and notes a change of the execution (D[checkpoint-fingerprint]). |
 | `--no-append` | With `--continue`, writes the outputs that follow (the log, manifest, files of columns, and frames) to `<name>.partNNNN<ext>` rather than appending them to the files of the run, which are first cut to the checkpoint (D130, D149). |
 | `--max-walltime <time>` | Stops at the last checkpoint that leaves time for one more interval between checkpoints, in hours or as `H:MM[:SS]` (D131). |
 
@@ -277,3 +277,30 @@ the first three are absent on failure. Warning entries have `code` and
 such as `duration_ns` and `pressure_atm`; unavailable values are null.
 Warnings in this mode are in the report, not on standard error. The full
 schema is in [driver-m0.md](../driver-m0.md), Section 1.4.
+
+## A.6 The checkpoint file
+
+A checkpoint is an H5MD 1.1 file [[deBuyl2014]](references.md#debuyl2014)
+in the units inside MDIR (nm, ps, u, kJ/mol), every number in 64 bits.
+Format 1, below, is the contract of release 0.1.0 (D[checkpoint-format]):
+a reader refuses a newer format and a file of a development build before
+the release, and a later format comes with a conversion from the one
+before it.
+
+| Path | Holds |
+|---|---|
+| `/h5md` | `version` [1, 1]; `author/name`; `creator/name` "MDIR" and `creator/version`, MDIR's version and commit |
+| `/particles/all/box` | `dimension` 3, `boundary` "periodic" or "none", `edges`: three, or the 3×3 matrix of a triclinic cell, a row per cell vector |
+| `/particles/all/{position,velocity,force}` | `step`, `time`, and `value` of shape (1, N, 3); the forces are those the next step begins with |
+| `/particles/all/{id,species,mass}` | The numbers of the particles from 0, their types, their masses |
+| `/parameters/mdir` | Attributes `format` (1), `state_sha256`, `integrator`, `velocity_offset` (−0.5 with leapfrog), `precision`, `timestep`, `seed`, `first_step`, `part`, `outputs_part`, `trajectory`, `frames`, `bath`, `periodic` |
+| `/parameters/mdir/barostat_state` | With a barostat that scales every step, nine numbers (D92, D119) |
+| `/parameters/mdir/thermostat_state` | With a Nose–Hoover chain, its positions and then its velocities (D163a) |
+| `/parameters/mdir/fingerprint/{physics,coupling,execution}` | What defined the run, a line per entry, its name and value separated by a tab (D[checkpoint-fingerprint]) |
+
+`state_sha256` covers the state and the fingerprint, and is checked on
+every read; a file changed after it was written is refused, with a pointer
+to `<checkpoint>.prev`. The file is flushed to stable storage before it
+takes its name, and its directory after. `mdir checkpoint
+--print=fingerprint` lists the fingerprint, and docs/driver-m0.md, Section
+2.6, says what a run that takes a checkpoint compares.

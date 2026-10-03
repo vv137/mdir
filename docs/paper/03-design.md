@@ -398,7 +398,16 @@ records the step at which its run began, the frames written, and the
 energy that the coupling has taken, so that `mdir run --continue` carries
 one run over as many jobs as it takes, appending to its trajectory; a
 signal or the wall time stops a run after a checkpoint is written, with
-the exit status 75 (D129 to D132; Appendix A.3).
+the exit status 75 (D129 to D132; Appendix A.3). A checkpoint also records
+what defined its run, a fingerprint of its physics, its coupling, and its
+execution: `mdir run --continue` refuses a checkpoint of other physics or
+coupling and names each change, and a run that begins from another run's
+checkpoint evaluates the forces of its first step where they differ,
+rather than take the forces of the physics before
+(D[checkpoint-fingerprint]). Format 1 of the file is the contract of
+release 0.1.0: the reader checks the format and the SHA-256 of the state,
+and the file is on stable storage before it takes its name
+(D[checkpoint-format]).
 
 ## 3.7 The objects of MDIR, for developers
 

@@ -482,19 +482,47 @@ A checkpoint is a file in the H5MD format [[deBuyl2014]](references.md#debuyl201
 64 bits (D26). It holds the state as the next step needs it.
 
 ```text
-/h5md                         version, author, creator
-/particles/all/box            dimension, boundary, edges
-/particles/all/position       step, time, value
-/particles/all/velocity       step, time, value
-/particles/all/force          step, time, value     with velocity Verlet
-/particles/all/id             the numbers of the particles
+/h5md                         version [1, 1]; author/name; creator/name
+                              "MDIR", creator/version "0.1.0 (<commit>)"
+/particles/all/box            dimension, boundary ("periodic" or "none"),
+                              edges: three, or the 3x3 matrix of a
+                              triclinic cell, a row per vector (nm)
+/particles/all/position       step, time, value (1, N, 3)   nm
+/particles/all/velocity       step, time, value (1, N, 3)   nm ps-1
+/particles/all/force          step, time, value (1, N, 3)   kJ mol-1 nm-1
+/particles/all/id             the numbers of the particles, from 0
 /particles/all/species        the types of the particles
-/particles/all/mass
-/parameters/mdir              format, integrator, velocity_offset,
-                              precision, timestep, seed, barostat_state;
-                              the run that wrote it: first_step, part,
-                              trajectory, frames, bath (D129, D130)
+/particles/all/mass                                         u
+/parameters/mdir              attributes:
+    format                    1, the format (D[checkpoint-format])
+    state_sha256              the hash of the state, checked on reading
+    integrator                VELOCITY_VERLET, LEAPFROG, BROWNIAN, or
+                              MINIMIZATION
+    velocity_offset           the time of the velocities after that of
+                              the positions, in steps (-0.5 with leapfrog)
+    precision                 single, mixed, or double
+    timestep, seed
+    first_step, part, outputs_part, trajectory, frames, bath
+                              the run that wrote it (D129, D130, D149)
+    periodic                  1, or 0 for a run without a periodic cell
+                              (D142)
+/parameters/mdir/barostat_state    9 numbers, with a barostat that
+                              scales every step (D92, D119)
+/parameters/mdir/thermostat_state  the positions, then the velocities,
+                              of a Nose-Hoover chain (D163a)
+/parameters/mdir/fingerprint  physics, coupling, execution: a string each,
+                              a line per entry, "<name>\t<value>"
+                              (D[checkpoint-fingerprint])
 ```
+
+This layout is the contract of release 0.1.0, format 1
+(D[checkpoint-format]). A reader checks `format`: a newer one is refused
+as written by a newer MDIR, and a file of a development build before the
+release, without the fingerprint and the hash, is refused. A later format
+comes with a function that converts a file of the format before, so that
+every released format stays readable. `state_sha256` is SHA-256 of
+everything above but `/h5md` and the ids, in a fixed order; a file whose
+bytes changed after it was written is refused, with a pointer to `.prev`.
 
 The units are those inside MDIR and are written with the data: nm, ps, u,
 and kJ/mol.
@@ -505,24 +533,59 @@ and kJ/mol.
 | With velocity Verlet the checkpoint holds the forces. | A step begins with the forces of the step before. Forces that are computed again from the positions differ in their last bits, because a neighbor structure that is built again has another order. |
 | With leapfrog the time of the velocities is half a step before that of the positions. | The file says what it holds. |
 | Neighbor structures start empty after every checkpoint (R1). | The run that continues builds its structure at the first step. The run that was not interrupted must build there too. |
-| The file appears under its name only when it is complete. | A run that ends while it writes leaves the checkpoint before. |
+| The file appears under its name only when it is complete and on stable storage: it is written as `.partial`, flushed and `fsync`ed, renamed, and the directory is `fsync`ed (D[checkpoint-format]). | A run that ends while it writes leaves the checkpoint before; a crash on a file system that delays its writes (ext4 without `auto_da_alloc`, Lustre, NFS) does not leave an empty file under the name. |
+| It records what defined the run: its fingerprint (D[checkpoint-fingerprint]). | A run that takes it compares, as the next table says. |
 | The checkpoint before stays as `<checkpoint>.prev`, a second name made before the rename (D132). | A checkpoint that is damaged after it was written leaves one to go back to; the name of the checkpoint holds a complete state at every moment. |
 | It records the step that its run began at, its part, the trajectory and the frames written to it, and the energy that the coupling has taken. | `mdir run --continue` continues the run to its `steps`, its trajectory, and its conserved energy (Section 2.7). |
 | The particles are in the order of the input, whatever order the run keeps them in. | The file does not depend on the plan of the run. The run that continues puts the particles in order where it begins, and arrives at the order of the run that was not interrupted (D44). |
 
 A run that continues from a checkpoint arrives at the state of the run that
-was not interrupted, bit for bit. This holds on the CPU and on a GPU, in
-every precision mode, and for both integrators; the tests compare the
-states. The two runs must have the same `checkpoint_interval`.
+was not interrupted, bit for bit. This holds on a GPU in every precision
+mode, and on the CPU with one thread, for every integrator, thermostat,
+and barostat; the tests compare the states (`continue.test`,
+`checkpoint-contract.test`, and their GPU versions). On the CPU with more
+than one thread, a run with a thermostat or a barostat is not yet
+reproducible from run to run (the sums that the coupling takes are
+reduced in the order of the threads), and so neither is its
+continuation. The two runs must have the same `checkpoint_interval`.
+
+**The fingerprint** (D[checkpoint-fingerprint]) lists what defined the
+run, an entry each, in three groups:
+
+| Group | Entries |
+|---|---|
+| physics | Every key of `[energy]`, `[pme]`, `[lj_pme]`, `[constraints]`, `[restraints]`, `[boundary]`, and `[free_energy]` as the control file writes it, in a canonical form (keys sorted, numbers as the shortest text of their double, so that `9` and `9.0` are one value); SHA-256 of the contents of the files of the topology (Amber, GROMACS with its included files, CHARMM structure and parameters), of the masses, and of the reference of positional restraints |
+| coupling | Every key of `[dynamics]` but `steps`, and of `[ensemble]`, `[thermostat]`, and `[barostat]` |
+| execution | Every key of `[execution]`, and `pairlist_distance`, `pruned_distance`, and `rebuild_interval` of `[energy]`, which decide how the forces are found and not what they are |
+
+A value longer than 160 characters is recorded as its SHA-256. The
+entries are the keys as written, not the values the driver resolves: a
+key added with its default value counts as a change. `mdir checkpoint
+--print=fingerprint file.h5` lists them.
+
+| A run that takes a checkpoint | Physics or coupling differ | Execution differs |
+|---|---|---|
+| `mdir run --continue`, its own | Refused; each changed entry is named, with its value in the checkpoint and in the control file | Continues, with a note in the log; its bits follow the new settings |
+| `checkpoint` of `[input]`, another run's | Begins with a note that names each difference, and evaluates the forces and the state of the barostat at its first step; a Nose-Hoover chain begins at rest if `[thermostat]` or `[ensemble]` differ | Takes the forces, the barostat state, and the chain |
+
+Where nothing but the execution differs, a run from another run's
+checkpoint continues it bit for bit, as the stages of a pipeline that
+change no physics do; where the physics differs, as from equilibration
+with restraints to production, the first step takes the forces of the new
+physics, not those that the checkpoint stored. Forces evaluated again of
+the same physics are those of the checkpoint, bit for bit: the neighbor
+structures start empty after every checkpoint (R1).
 
 A run cannot continue with another integrator: the velocities of the two
-are not of the same time. It cannot continue in another box.
+are not of the same time.
 
-`mdir checkpoint file.h5` describes a checkpoint, and `mdir checkpoint
-first.h5 second.h5` compares the states of two. `mdir checkpoint
+`mdir checkpoint file.h5` describes a checkpoint, with its format and the
+version of MDIR that wrote it, and `mdir checkpoint first.h5 second.h5`
+compares the states of two. `mdir checkpoint
 --print=positions|velocities|forces file.h5` writes a line for each
 particle in the order of the input: its number, its mass, and the three
-numbers of the field (nm, nm/ps, kJ/mol/nm).
+numbers of the field (nm, nm/ps, kJ/mol/nm); `--print=fingerprint` writes
+the entries of the fingerprint, a line each.
 
 ### 2.7 Runs longer than a job
 
@@ -535,7 +598,7 @@ mdir run --continue --max-walltime 23:50 md.toml
 
 | Option | What it does |
 |---|---|
-| `--continue` | Continues the run from the checkpoint of `[output]` until it has taken `steps` steps from the step it began at (D129). Without a checkpoint the run begins; with one that holds the last step it says that the run is complete and exits with 0. It refuses a checkpoint of another time step or seed, and steps that remain if they are not whole intervals of the outputs and of the coupling. Raising `steps` extends a run. |
+| `--continue` | Continues the run from the checkpoint of `[output]` until it has taken `steps` steps from the step it began at (D129). Without a checkpoint the run begins; with one that holds the last step it says that the run is complete and exits with 0. It refuses a checkpoint of other physics or coupling, naming each change (Section 2.6), and steps that remain if they are not whole intervals of the outputs and of the coupling. Raising `steps` extends a run. |
 | `--no-append` | With `--continue`, writes the outputs that follow, the log, manifest, files of columns, and frames, to `<name>.partNNNN<ext>`, NNNN the part of the run; later continuations append to the files of that part, which the checkpoint records. Without it, the outputs are appended to the files of the run after what was written past the checkpoint is removed (D130, D149). A run without `--continue` keeps the outputs of an earlier run as `#<name>.<n>#` (Section 2.8). |
 | `--max-walltime <time>` | Stops at the last checkpoint that leaves time, within `<time>` from the start of `mdir`, for one more interval between checkpoints as long as the longest so far (D131). In hours (`23.5`) or as `H:MM[:SS]`. |
 
@@ -556,7 +619,9 @@ A run that begins from the checkpoint of another run, as the stages of
 `examples/` do, is a new run that begins at the step of that checkpoint
 (D129): its step and its time continue, so that the random numbers of the
 stages differ, and its `steps` count from there. The checkpoint of the
-run it began from is not changed.
+run it began from is not changed. Where its physics or coupling differ
+from that run's, it evaluates the forces of its first step
+(D[checkpoint-fingerprint], Section 2.6).
 
 ### 2.8 The outputs of a run
 

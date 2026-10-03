@@ -220,7 +220,23 @@ trajectory:      md.dcd, 2 frames
 
 A stage that begins from the checkpoint of a run at constant pressure
 takes the cell of that checkpoint and says so on the standard error
-(`warning: the cell of 'npt.h5' ... differs from that of the input`). Run
+(`warning: the cell of 'npt.h5' ... differs from that of the input`). A
+stage whose physics or coupling differ from those of the stage before
+(production drops the restraints of `3-npt.toml`) says so in its log and
+evaluates the forces of its first step, rather than take those of the
+checkpoint (D[checkpoint-fingerprint]):
+
+```text
+MDIR: note: 'npt.h5' was written by a run of other physics or coupling; the
+run evaluates the forces and the state of the barostat at its first step
+(checkpoint -> control file):
+  [[restraints]]: [{force_constant=1,selection="!:WAT & !@H*"}] -> (none)
+  the reference of the restraints: sha256:28fdff2a... -> (none)
+```
+
+`mdir run --continue` of a stage, on the other hand, refuses a control
+file whose physics or coupling were edited since its checkpoint, and names
+each change; a new stage is a new run. Run
 again, a complete stage says `the run is complete` and exits with 0, so the
 loop above also continues a pipeline that a job left unfinished.
 `examples/ala3/run.sh` runs the same stages on tri-alanine in OPC water.
