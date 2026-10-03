@@ -275,7 +275,7 @@ static void describeRun(const Control &control, const System &system,
                   control.pressure);
   }
   std::printf("cutoff:             %g Å\n", control.cutoffDistance);
-  std::printf("electrostatics:      %s\n", getElectrostatics(control));
+  std::printf("electrostatics:     %s\n", getElectrostatics(control));
   if (control.pme) {
     if (control.pmeGrid[0] > 0)
       std::printf("PME grid:           %lld %lld %lld, order %lld\n",
