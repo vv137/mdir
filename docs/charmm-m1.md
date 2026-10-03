@@ -282,5 +282,18 @@ CHARMM's Lennard-Jones including 1-4 is −6.82392363 kcal/mol. CPU double
 gives −6.823924 (absolute difference $3.70\times10^{-7}$, tolerance
 $10^{-5}$); CPU mixed gives −6.823917 ($6.63\times10^{-6}$, tolerance
 $5\times10^{-3}$). Use a private copy of the input directory; GPU runs
-require the device lock. GPU and full-suite results are recorded in the
-pull request.
+require the device lock. GPU double gives −6.823924 (difference $3.70\times10^{-7}$); GPU mixed
+with groups gives −6.823921 ($2.63\times10^{-6}$), at the same tolerances.
+Both GPU neighbor structures pass the boundary oracle in both precisions.
+Across its energy columns the largest difference is $4.13\times10^{-7}$
+kcal/mol; forces differ by at most $1.14\times10^{-8}$ kcal/(mol Å), and
+the diagonal virial by $3.39\times10^{-7}$ kcal/mol.
+
+The full local GPU suite passes (229 tests, 5 unsupported, no failures).
+The new sanitizer test passes memcheck, initcheck, and racecheck. On GPU 0
+alone under its lock, JAC NPT with groups and a dual list, mixed precision,
+100,000 steps of 2 fs, gives 22.91 s on main and 22.87 s on this branch;
+the second half gives 755.7 and 755.8 ns/day (0.229 ms/step each). The
+emitted IR for that unchanged Hamiltonian is byte-identical to main. This
+single timing pair shows no slowdown; it does not measure the difference
+in cost between switched and unswitched Hamiltonians.
