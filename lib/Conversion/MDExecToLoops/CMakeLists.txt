@@ -15,6 +15,7 @@ configure_file(
   @ONLY)
 
 add_mlir_conversion_library(MDIRMDExecToLoops
+  CPUVectorPairs.cpp
   FixedOrderReductions.cpp
   HoistAllocas.cpp
   MDExecToLoops.cpp
@@ -31,6 +32,7 @@ add_mlir_conversion_library(MDIRMDExecToLoops
   MDIRMDExecKernels
   MDIRMDExec
   MDIRMDRT
+  MLIRControlFlowDialect
   MLIRArithDialect
   MLIRFuncDialect
   MLIRIR

@@ -734,3 +734,31 @@ Milestones (P3, as amended by D169) and what each one adds:
 | Later | Martini [[Marrink2007]](references.md#marrink2007) CG membrane and water | Deferred (D53) |
 
 The v0 performance target is homogeneous systems at finite density (C7).
+
+### Experimental CPU distribution reference
+
+D[cpu-hybrid-lj] provides a fixed-layout LJ snapshot executable, separate from
+`mdir run`: synchronous C++ MPI decomposes ownership and materializes ghosts,
+then generated `md_exec` CPU loops use OpenMP and optional neighbor SIMD.
+`md_exec.neighbor_view` distinguishes owned rows from local gather extent.
+This is a reference execution path, not implementation of the proposed
+`md_dist` field-version and contribution verifier. Exact interfaces and limits
+are documented in [cpu-hybrid-lj.md](cpu-hybrid-lj.md).
+
+## Cartesian CPU reference extension (D[cpu-cartesian-async])
+
+The opt-in `mdir-cpu-lj` snapshot tool supports `--grid=auto|Px,Py,Pz`,
+`--halo=sync|async`, and `--emit=dist`. Its restricted `md_dist` plan binds
+layout/map snapshots and an `mdrt.event`; the host interprets scheduling
+and dispatches existing compiled pair kernels. This introduces no production
+TOML keys. Bonded support, migration, production trajectories, and GPU
+transport remain unimplemented. See [the implementation contract](cpu-cartesian-async.md) for exact scope and validation.
+
+The upper distribution model does not require a unique mutable owner per atom.
+Field-version availability may be fully replicated; publication authority,
+physical access rights, work placement, and reduction placement are separate
+contracts. Field versions, layout snapshots, and cache validity epochs are
+independent. Replicated-data, spatial, and force decomposition are required
+architecture tests. The current Cartesian runtime enforces unique particle
+owners only as a backend restriction. See the upper-contract sections of
+[cpu-cartesian-async.md](cpu-cartesian-async.md).

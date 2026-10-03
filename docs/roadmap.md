@@ -335,3 +335,37 @@ What went wrong in the comparisons of this work was never the arithmetic:
 Not taken: reimplementing the actions of cpptraj. A device pays where pairs
 are involved, where all pairs of frames are (clustering), or where the
 frames never reach a file.
+
+## Fixed-layout hybrid CPU slice (D[cpu-hybrid-lj])
+
+The experimental [MPI/OpenMP/SIMD LJ executable](cpu-hybrid-lj.md) provides a
+single-snapshot reference path with owned-center rows, explicit neighbor SIMD,
+and blocking MPI transport. It does not complete the general distributed-field
+milestone. The [development sequence](cpu-hybrid-plan.md) keeps requirement and
+completion verification, EAM stage extraction, temporal validity/migration, and
+asynchronous buffer lifetime analysis as separate follow-ups. No throughput or
+multi-node scaling claim has been established.
+
+## Cartesian CPU reference extension (D[cpu-cartesian-async])
+
+The opt-in `mdir-cpu-lj` snapshot tool supports `--grid=auto|Px,Py,Pz`,
+`--halo=sync|async`, and `--emit=dist`. Its restricted `md_dist` plan binds
+layout/map snapshots and an `mdrt.event`; the host interprets scheduling
+and dispatches existing compiled pair kernels. This introduces no production
+TOML keys. Bonded support, migration, production trajectories, and GPU
+transport remain unimplemented. See [the implementation contract](cpu-cartesian-async.md) for exact scope and validation.
+
+The upper distributed contract separates state authority, replica availability,
+work placement, result placement, and physical resource binding. PP/PME teams
+may be disjoint or overlapping. Halo, topology gather, mesh redistribution,
+and result reduction are derived plans; particle-to-mesh spread and FFT remain
+computations. The fixed LJ `md_dist.reference_plan` is a lower reference bridge,
+not the upper placement abstraction. Before production integration, require
+multi-step validity/migration, topology-derived support and contribution return,
+and a PP/PME reference plan with independently placed work and results.
+
+Implementation follow-ups are tracked as [#37](https://github.com/vv137/mdir/issues/37)
+(general placement and contribution contracts) and
+[#38](https://github.com/vv137/mdir/issues/38) (temporal validity and migration).
+These are required production milestones, not completed features of the
+fixed-snapshot reference executor.

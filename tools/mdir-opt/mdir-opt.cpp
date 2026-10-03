@@ -3,6 +3,7 @@
 // pipeline of `mdir run` from a reproducer (docs/debugging.md).
 
 #include "mdir/Conversion/Passes.h"
+#include "mdir/Dialect/MDDist/MDDistDialect.h"
 #include "mdir/Dialect/Dyn/DynDialect.h"
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
@@ -32,7 +33,7 @@ int main(int argc, char **argv) {
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);
   mlir::registerAllExtensions(registry);
-  registry.insert<mdir::dyn::DynDialect, mdir::md::MDDialect,
+  registry.insert<mdir::md_dist::MDDistDialect, mdir::dyn::DynDialect, mdir::md::MDDialect,
                   mdir::md_exec::MDExecDialect, mdir::mdrt::MDRTDialect>();
 
   return mlir::asMainReturnCode(

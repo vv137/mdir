@@ -304,3 +304,20 @@ to `<checkpoint>.prev`. The file is flushed to stable storage before it
 takes its name, and its directory after. `mdir checkpoint
 --print=fingerprint` lists the fingerprint, and docs/driver-m0.md, Section
 2.6, says what a run that takes a checkpoint compares.
+
+### Experimental CPU transport tool
+
+D[cpu-hybrid-lj] adds no control-file keys. The build-tree-only `mdir-cpu-lj`
+executable reads a fixed LJ snapshot and accepts precision, OpenMP thread count,
+and SIMD width on its command line. It does not accept this TOML schema or run
+a trajectory. Its complete interface is in
+[the implementation reference](../cpu-hybrid-lj.md).
+
+## Cartesian CPU reference extension (D[cpu-cartesian-async])
+
+The opt-in `mdir-cpu-lj` snapshot tool supports `--grid=auto|Px,Py,Pz`,
+`--halo=sync|async`, `--repeat=N` (fixed snapshot replay), and `--emit=dist`. Its restricted `md_dist` plan binds
+layout/map snapshots and an `mdrt.event`; the host interprets scheduling
+and dispatches existing compiled pair kernels. This introduces no production
+TOML keys. Bonded support, migration, production trajectories, and GPU
+transport remain unimplemented. See [the implementation contract](../cpu-cartesian-async.md) for exact scope and validation.

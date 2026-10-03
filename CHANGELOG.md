@@ -12,6 +12,14 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- Experimental Cartesian CPU LJ grids, synchronous/async payload scheduling,
+  and verified `md_dist` reference plans with layout/map/event bindings.
+  No production control keys change (D[cpu-cartesian-async]).
+
+- Optional `MDIR_ENABLE_MPI` fixed-layout `mdir-cpu-lj` prototype with checked
+  imported neighbor rows, OpenMP centers, and explicit CPU SIMD width 1/4/8.
+  No production TOML keys change (D[cpu-hybrid-lj]).
+
 - `cmake --install` installs `bin/mdir`, its runtime, and the OpenMP runtime
   under one prefix, and the log of a run begins with the version and the
   commit of the build (D174).
