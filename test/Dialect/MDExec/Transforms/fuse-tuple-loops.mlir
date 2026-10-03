@@ -62,3 +62,41 @@ func.func @components(%x: !vec, %cell: !md.cell, %links: !inc,
   } : !inc, !vec -> !vec
   return %p, %f1, %f2 : f64, !vec, !vec
 }
+
+// The virials of two sums: the second loop takes a weight computed after
+// the first, and the sum of the virials uses the first. The ops between
+// them that use the first move after the second, which uses none of them,
+// and the two loops become one.
+//
+// CHECK-LABEL: func.func @virials(
+// CHECK:         %[[K:[0-9]+]] = arith.mulf %{{[a-z0-9]+}}, %{{[a-z0-9]+}} : f64
+// CHECK:         %[[V:[0-9]+]]:2 = md_exec.tuple_for {{.*}} reduce(%{{.*}}, %{{.*}} : vector<9xf64>, vector<9xf64>) arity(2)
+// CHECK:         %[[A:[0-9]+]] = arith.addf %{{[a-z0-9]+}}, %[[V]]#0 : vector<9xf64>
+// CHECK:         %[[B:[0-9]+]] = arith.addf %[[A]], %[[V]]#1 : vector<9xf64>
+// CHECK:         return %[[B]]
+// CHECK-NOT:     md_exec.tuple_for
+func.func @virials(%x: !vec, %cell: !md.cell, %links: !inc, %w: !of_link,
+                   %g: f64, %h: f64, %start: vector<9xf64>) -> vector<9xf64> {
+  %zero = arith.constant dense<0.0> : vector<9xf64>
+  %v1 = md_exec.tuple_for %links, %x, %cell coordinates(displacement(0, 1))
+      tuple(%w : !of_link) reduce(%zero : vector<9xf64>) arity(2) {
+  ^bb0(%d: vector<3xf64>, %wt: f64):
+    %x0 = vector.extract %d[0] : f64 from vector<3xf64>
+    %e = arith.mulf %wt, %x0 : f64
+    %b = vector.broadcast %e : f64 to vector<9xf64>
+    md_exec.yield %b : vector<9xf64>
+  } : !inc, !vec -> vector<9xf64>
+  %s1 = arith.addf %start, %v1 : vector<9xf64>
+  %k = arith.mulf %g, %h : f64
+  %v2 = md_exec.tuple_for %links, %x, %cell coordinates(displacement(0, 1))
+      tuple(%w : !of_link) reduce(%zero : vector<9xf64>) arity(2) {
+  ^bb0(%d: vector<3xf64>, %wt: f64):
+    %x0 = vector.extract %d[0] : f64 from vector<3xf64>
+    %e = arith.mulf %wt, %x0 : f64
+    %f = arith.mulf %k, %e : f64
+    %b = vector.broadcast %f : f64 to vector<9xf64>
+    md_exec.yield %b : vector<9xf64>
+  } : !inc, !vec -> vector<9xf64>
+  %s2 = arith.addf %s1, %v2 : vector<9xf64>
+  return %s2 : vector<9xf64>
+}

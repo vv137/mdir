@@ -27,3 +27,38 @@ func.func @bonds(%members: memref<?x2xi32>, %n: index,
   } : memref<?x?xi32, 1>, memref<?x3xf32, 1>
   return
 }
+
+// With global sums, a thread for each of the tuples or of the particles,
+// whichever are fewer, takes every so manyth tuple and writes the sums of
+// its tuples to its row, and the reduction is over those rows: a set of few
+// tuples, as the pairs of the centers of groups, launches and reduces no
+// more rows than it has tuples.
+//
+// CHECK-LABEL: func.func @energy(
+// CHECK:         %[[TUPLES:[a-z0-9_]+]] = memref.dim %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}} : memref<?x2xi32, 1>
+// CHECK:         %[[COUNT:[0-9]+]] = arith.minui %{{[a-z0-9_]+}}, %[[TUPLES]] : index
+// CHECK:         gpu.launch
+// CHECK:           scf.for %{{[a-z0-9]+}} = %{{[a-z0-9_]+}} to %[[TUPLES]] step %[[COUNT]]
+// CHECK:           memref.store %{{[0-9]+}}, %[[A:[a-z0-9]+]][
+// CHECK:         arith.minsi
+// CHECK:         gpu.launch
+// CHECK:           scf.for %{{[a-z0-9]+}} = %{{[a-z0-9_]+}} to %[[COUNT]] step
+// CHECK:             memref.load %[[A]][
+func.func @energy(%members: memref<?x2xi32>, %n: index,
+                  %x: memref<?x3xf32, 1>, %cell: !md.cell,
+                  %f: memref<?x3xf32, 1>, %a: memref<?xf64, 1>,
+                  %b: memref<?xf64, 1>) -> f64 {
+  %inc = md_exec.build_incidence %members size(%n)
+      : memref<?x2xi32> -> memref<?x?xi32, 1>
+  %u0 = arith.constant 0.0 : f64
+  %u = md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
+      outs(%f : memref<?x3xf32, 1>) reduce(%u0 : f64)
+      scratch(%a, %b : memref<?xf64, 1>, memref<?xf64, 1>) arity(2) {
+  ^bb0(%d: vector<3xf32>):
+    %n0 = arith.negf %d : vector<3xf32>
+    %s = vector.reduction <add>, %d : vector<3xf32> into f32
+    %e = arith.extf %s : f32 to f64
+    md_exec.yield %d, %n0, %e : vector<3xf32>, vector<3xf32>, f64
+  } : memref<?x?xi32, 1>, memref<?x3xf32, 1> -> f64
+  return %u : f64
+}
