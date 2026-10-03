@@ -47,7 +47,20 @@ struct TupleTerm {
   };
   std::vector<Center> centers;
 
+  /// A compound term (D165), as the custom compound bond force of OpenMM
+  /// [Eastman2017]: the coordinates that its expression takes, the
+  /// distance, the angle, or the dihedral of members of each tuple, given by
+  /// their places from 0, and the name that each takes in `expression`,
+  /// where the reader has put it in place of the call.
+  struct Coordinate {
+    std::string kind;
+    std::vector<unsigned> places;
+    std::string name;
+  };
+  std::vector<Coordinate> coordinates;
+
   bool isCentroid() const { return !groups.empty(); }
+  bool isCompound() const { return !coordinates.empty(); }
   size_t size() const {
     if (isCentroid())
       return 1;

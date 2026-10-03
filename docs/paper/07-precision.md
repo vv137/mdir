@@ -103,6 +103,17 @@ with a stated bound, not a library flag:
    $5\times10^{-7}$ of $r_c$. The four units are a heuristic: they cover a
    product of f32 constants, such as $a\sigma$, that rounds a unit below
    the cutoff, and not constants written to put the pole further inside.
+
+   **Tables of the control file.** The coefficients of a tabulated
+   function of the control file (D138, D165) are stored, like every table
+   of a kernel, in the type of the kernel, f32 under `mixed`, and the
+   polynomial of a cell is evaluated in it: the coefficients carry a
+   relative error of $6\times10^{-8}$, and Horner's rule over the 16 or 64
+   of a cell adds some units of the last place. On the dipeptide, terms in
+   functions of two and three arguments and a discrete table give forces
+   within $6.3\times10^{-6}$ of the largest against OpenMM in f64, with
+   the rest of their kernels in f32; in `double` they agree within
+   $1.9\times10^{-12}$.
 3. **The complementary error function**, where it remains in an f32
    kernel after the tables, as in a pair term written over a tuple set.
    $\operatorname{erfc}(c\sqrt y)$ with a positive constant $c$ is

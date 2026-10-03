@@ -72,6 +72,23 @@ struct TripletTerm {
   std::vector<std::pair<std::string, double>> constants;
 };
 
+/// A parameter of each particle of a topology (D165), as the per-particle
+/// parameters of the custom forces of OpenMM [Eastman2017]: a term takes it
+/// by the suffix of a place, `w1` and `w2` in a pair term, `w1` to `wN` in
+/// a term over tuples, and `w` itself in a term of the positions. Entries
+/// of one name apply in the order of the file, each to its particles.
+struct ParticleParameter {
+  std::string name;
+  /// A value for the particles of `selection`, a mask of Amber, or of
+  /// `particles`, their numbers from 0, or for every particle if neither is
+  /// given.
+  double value = 0.0;
+  std::string selection;
+  std::vector<unsigned> particles;
+  /// Or a value for each particle of the system, in its order.
+  std::vector<double> values;
+};
+
 /// Parameters of a pair of types that a pair term takes in place of those
 /// that its mixing rules give (NBFIX).
 struct PairOverride {
@@ -178,6 +195,8 @@ struct Control {
   /// Functions of one argument by their values, which every expression may
   /// call (D138): [[energy.function]].
   std::vector<TabulatedFunction> functions;
+  /// The parameters of each particle (D165).
+  std::vector<ParticleParameter> particleParameters;
   std::vector<ParticleType> types;
   std::vector<PairOverride> overrides;
   /// The correction for the dispersion of a run from a topology.

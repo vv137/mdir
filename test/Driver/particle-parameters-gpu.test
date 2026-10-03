@@ -1,0 +1,32 @@
+# The parameters of each particle of particle-parameters.test on a GPU
+# (D165): in double precision the energies of OpenMM to the printed digits
+# and the forces of check_particle_parameters.py within 1e-6; in mixed
+# precision, where the pair kernel computes in f32, the forces within 1e-5
+# of the largest (2e-6 against OpenMM when this was written).
+#
+# REQUIRES: hdf5, cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/particle-parameters.test | sed '1d;$d' | sed -e 's/^target    = "CPU"/target    = "GPU"/' > %t/terms.toml
+# RUN: sed -n '/^#--- run.toml/,/^#--- terms/p' %S/particle-parameters.test | sed '1d;$d' | sed -e 's/terms.h5/plain.h5/' -e 's/^target    = "CPU"/target    = "GPU"/' > %t/plain.toml
+# RUN: cd %t && mdir run plain.toml > plain.log && mdir run terms.toml > terms.log
+# RUN: FileCheck %S/particle-parameters.test < %t/terms.log
+# RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
+# RUN: mdir checkpoint --print=forces %t/terms.h5 > %t/terms.forces
+# RUN: %python %S/Inputs/check_particle_parameters.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/plain.forces %t/terms.forces 1e-6 | FileCheck %S/particle-parameters.test --check-prefix=PYTHON
+#
+# RUN: sed -e 's/^precision = "DOUBLE"/precision = "MIXED"/' -e 's/terms.h5/mixed.h5/' %t/terms.toml > %t/mixed.toml
+# RUN: sed -e 's/^precision = "DOUBLE"/precision = "MIXED"/' -e 's/plain.h5/mixed-plain.h5/' %t/plain.toml > %t/mixed-plain.toml
+# RUN: cd %t && mdir run mixed-plain.toml > mixed-plain.log && mdir run mixed.toml > mixed.log
+# RUN: FileCheck %s < %t/mixed.log
+# RUN: mdir checkpoint --print=forces %t/mixed-plain.h5 > %t/mixed-plain.forces
+# RUN: mdir checkpoint --print=forces %t/mixed.h5 > %t/mixed.forces
+# RUN: %python %S/Inputs/check_particle_parameters.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/mixed-plain.forces %t/mixed.forces 1e-5 | FileCheck %s --check-prefix=FORCES
+
+# CHECK:      MDIR:   wbond                          4.78204{{[0-9]}}
+# CHECK-NEXT: MDIR:   wangle                         2.33240{{[0-9]}}
+# CHECK:      MDIR:   screened                    5324.4789{{[0-9]+}}
+# CHECK-NEXT: MDIR:   wext                          96.99590{{[0-9]}}
+
+# FORCES: forces against differences of the energy: ok

@@ -243,6 +243,12 @@ methods for molecular sampling," *Appl. Math. Res. Express* **2013**(1), 34
 (2013).
 [doi:10.1093/amrx/abs010](https://doi.org/10.1093/amrx/abs010)
 
+### Lekien2005
+
+F. Lekien, J. Marsden, "Tricubic interpolation in three dimensions,"
+*Int. J. Numer. Methods Eng.* **63**, 455–471 (2005).
+[doi:10.1002/nme.1296](https://doi.org/10.1002/nme.1296)
+
 ### Louwerse2006
 
 M. J. Louwerse, E. J. Baerends, "Calculation of pressure in case of
@@ -340,6 +346,12 @@ M. J. Peng, W. S. Moses, O. Zinenko, C. Dubach, "Sound and modular
 activity analysis for automatic differentiation in MLIR," *Proc. ACM
 Program. Lang.* **9**(OOPSLA2), 2087–2114 (2025).
 [doi:10.1145/3763125](https://doi.org/10.1145/3763125)
+
+### Press2007
+
+W. H. Press, S. A. Teukolsky, W. T. Vetterling, B. P. Flannery,
+*Numerical Recipes: The Art of Scientific Computing*, 3rd ed. (Cambridge
+University Press, Cambridge, 2007), Section 3.6.
 
 ### Quentrec1973
 

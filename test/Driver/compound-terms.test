@@ -1,0 +1,107 @@
+# Compound terms (D165): [[energy.compound]] over tuples of 2 to 9
+# particles, given by an expression in distance(), angle(), and dihedral()
+# of any of the places p1 to pN of a tuple (Å and radians), the time t,
+# parameters of the term, a number for all tuples or a list of one for
+# each, and the parameters of each particle by place, as the custom
+# compound bond force of OpenMM. On the dipeptide: a term over four
+# particles in a distance, an angle, and a dihedral defined after
+# semicolons, weighted by a parameter of each particle, and a term over five
+# in a distance across the tuple, a dihedral of the last four, and an angle
+# of members out of order. The energies are those of OpenMM 8.6.1 on the
+# Reference platform (CustomCompoundBondForce) to the printed digits, and
+# its forces within 3e-16 of the largest; check_compound.py computes the
+# energies, and the forces against central differences of them.
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/terms.toml
+# RUN: sed -n '/^#--- run.toml/,/^#--- terms/p' %s | sed '1d;$d' | sed 's/terms.h5/plain.h5/' > %t/plain.toml
+# RUN: cd %t && mdir run plain.toml > plain.log && mdir run terms.toml > terms.log
+# RUN: FileCheck %s < %t/terms.log
+# RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
+# RUN: mdir checkpoint --print=forces %t/terms.h5 > %t/terms.forces
+# RUN: %python %S/Inputs/check_compound.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/plain.forces %t/terms.forces 1e-6 | FileCheck %s --check-prefix=PYTHON
+#
+# The errors: a place beyond the tuple, a coordinate with the wrong number
+# of places, a place twice, tuples of different lengths, no coordinate, an
+# unknown name, and a term without a topology.
+# RUN: sed -e 's/d = distance(p1, p3)/d = distance(p1, p6)/' %t/terms.toml > %t/place.toml
+# RUN: not mdir check %t/place.toml 2>&1 | FileCheck %s --check-prefix=PLACE
+# RUN: sed -e 's/a = angle(p1, p2, p3)/a = angle(p1, p2)/' %t/terms.toml > %t/count.toml
+# RUN: not mdir check %t/count.toml 2>&1 | FileCheck %s --check-prefix=COUNT
+# RUN: sed -e 's/a = angle(p1, p2, p3)/a = angle(p1, p2, p1)/' %t/terms.toml > %t/twice.toml
+# RUN: not mdir check %t/twice.toml 2>&1 | FileCheck %s --check-prefix=TWICE
+# RUN: sed -e 's/\[2, 5, 7, 22\]/[2, 5, 7]/' %t/terms.toml > %t/length.toml
+# RUN: not mdir check %t/length.toml 2>&1 | FileCheck %s --check-prefix=LENGTH
+# RUN: sed -e 's/^expression = "kf\*w2.*/expression = "kf*t"/' %t/terms.toml > %t/none.toml
+# RUN: not mdir check %t/none.toml 2>&1 | FileCheck %s --check-prefix=NONE
+# RUN: sed -e 's/kc\*(angle/kq*(angle/' %t/terms.toml > %t/name.toml
+# RUN: not mdir check %t/name.toml 2>&1 | FileCheck %s --check-prefix=NAME
+# RUN: printf '[input]\ncoordinates = "a.pdb"\n[energy]\ncutoff = 5.0\n[[energy.type]]\nname = "A"\nmass = 1.0\n[[energy.pair]]\nexpression = "1/r^12"\n[[energy.compound]]\nname = "c"\nexpression = "distance(p1, p2)"\nparticles = [[1, 2]]\n' > %t/pdb.toml
+# RUN: not mdir check %t/pdb.toml 2>&1 | FileCheck %s --check-prefix=TOPOLOGY
+
+# CHECK:      MDIR:   hbond 8.764733
+# CHECK-NEXT: MDIR:   five 0.524879
+
+# PYTHON:      hbond 8.764733
+# PYTHON-NEXT: five 0.524879
+# PYTHON-NEXT: forces against differences of the energy: ok
+
+# PLACE: 'distance' takes the places of the particles of a tuple, p1 to p4, not 'p1, p6'
+# COUNT: 'angle' takes 3 places, not 2
+# TWICE: 'angle' takes a place twice
+# LENGTH: expected a list of 4 particle numbers, as long as the first
+# NONE: the expression uses no distance(), angle(), or dihedral() of the places p1 to p5
+# NAME: the expression uses 'kq', which is neither a distance(), angle(), or dihedral() of the places p1 to p5, the time 't', a parameter of the term, nor one of each particle at a place
+# TOPOLOGY: terms over tuples need a topology, whose particles they number
+
+#--- run.toml
+[input]
+topology    = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+[output]
+energy_interval = 0
+checkpoint = "terms.h5"
+checkpoint_interval = 1
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "CUTOFF"
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 1e-9
+steps      = 1
+[ensemble]
+ensemble    = "NVE"
+temperature = 0.0
+[boundary]
+type = "PERIODIC"
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- terms
+[[energy.parameter]]
+name  = "w"
+value = 1.0
+[[energy.parameter]]
+name      = "w"
+selection = "@N*,O*"
+value     = 1.5
+[[energy.compound]]
+name       = "hbond"
+expression = "k*(d - d0)^2 + ka*w1*w4*(cos(a) - cos(a0))^2 + kd*(1 + cos(2*phi - 0.4)); d = distance(p1, p3); a = angle(p1, p2, p3); phi = dihedral(p1, p2, p3, p4)"
+particles  = [[5, 7, 9, 11], [9, 11, 15, 17], [2, 5, 7, 22]]
+k   = [1.5, 2.0, 0.5]
+d0  = 2.9
+ka  = 0.8
+a0  = 2.6
+kd  = 0.3
+[[energy.compound]]
+name       = "five"
+expression = "kf*w2*distance(p1, p5)*sin(dihedral(p2, p3, p4, p5)) + kc*(angle(p5, p3, p1) - 1.9)^2"
+particles  = [[2, 5, 7, 9, 11], [7, 9, 11, 15, 17]]
+kf = 0.05
+kc = 0.7
+#--- end

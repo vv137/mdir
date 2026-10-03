@@ -1,0 +1,138 @@
+# Parameters of each particle (D165): [[energy.parameter]] gives a value to
+# every particle of a topology, entry by entry in the order of the file, by
+# a mask of Amber, by the numbers of particles, or for all; a pair term
+# takes it as w1 and w2, a term over tuples as w1 to wN by the place of the
+# particle, and a term of the positions as w, as the per-particle
+# parameters of the custom forces of OpenMM. On the dipeptide: a pair term
+# of two such parameters and the charges, a bond and an angle that weigh
+# their particles by them, and a term of the positions. The energies are
+# those of OpenMM 8.6.1 on the Reference platform to the printed digits,
+# and its forces within 6e-13 of the largest (CustomNonbondedForce,
+# CustomCompoundBondForce, and CustomExternalForce with the same
+# parameters); check_particle_parameters.py computes the energies, and the
+# forces against central differences of them.
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/terms.toml
+# RUN: sed -n '/^#--- run.toml/,/^#--- terms/p' %s | sed '1d;$d' | sed 's/terms.h5/plain.h5/' > %t/plain.toml
+# RUN: cd %t && mdir run plain.toml > plain.log && mdir run terms.toml > terms.log
+# RUN: FileCheck %s < %t/terms.log
+# RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
+# RUN: mdir checkpoint --print=forces %t/terms.h5 > %t/terms.forces
+# RUN: %python %S/Inputs/check_particle_parameters.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/plain.forces %t/terms.forces 1e-6 | FileCheck %s --check-prefix=PYTHON
+#
+# The errors: a particle without a value, a name of the terms, a name that
+# ends in a digit, a parameter without a topology, a constant of a term
+# that a parameter of each particle shadows, a pair term that is not
+# symmetric in w1 and w2, and a list of the wrong length.
+# RUN: sed -e '0,/^value = 1.0$/s//value = 1.0\nselection = "@C*"/' %t/terms.toml > %t/partial.toml
+# RUN: not mdir check %t/partial.toml 2>&1 | FileCheck %s --check-prefix=PARTIAL
+# RUN: sed -e 's/^name  = "s"$/name  = "sigma"/' %t/terms.toml > %t/reserved.toml
+# RUN: not mdir check %t/reserved.toml 2>&1 | FileCheck %s --check-prefix=RESERVED
+# RUN: sed -e 's/^name  = "s"$/name  = "s2"/' %t/terms.toml > %t/digit.toml
+# RUN: not mdir check %t/digit.toml 2>&1 | FileCheck %s --check-prefix=DIGIT
+# RUN: sed -e 's/^l = 1.5$/l = 1.5\nw1 = 2.0/' %t/terms.toml > %t/shadow.toml
+# RUN: not mdir check %t/shadow.toml 2>&1 | FileCheck %s --check-prefix=SHADOW
+# RUN: sed -e 's/k\*w1\*w2\*exp/k*w1*w1*w2*exp/' %t/terms.toml > %t/order.toml
+# RUN: not mdir check %t/order.toml 2>&1 | FileCheck %s --check-prefix=ORDER
+# RUN: sed -e 's/^value = 1.0$/values = [1.0, 2.0]/' %t/terms.toml > %t/list.toml
+# RUN: not mdir check %t/list.toml 2>&1 | FileCheck %s --check-prefix=LIST
+# RUN: sed -e 's/k\*w1\*w2\*exp/k*u1*w2*exp/' %t/terms.toml > %t/name.toml
+# RUN: not mdir check %t/name.toml 2>&1 | FileCheck %s --check-prefix=NAME
+# RUN: printf '[input]\ncoordinates = "a.pdb"\n[energy]\ncutoff = 5.0\n[[energy.type]]\nname = "A"\nmass = 1.0\n[[energy.pair]]\nexpression = "1/r^12"\n[[energy.parameter]]\nname = "w"\nvalue = 1.0\n' > %t/plain-pdb.toml
+# RUN: not mdir check %t/plain-pdb.toml 2>&1 | FileCheck %s --check-prefix=TOPOLOGY
+# A term over triplets runs without a topology (D160), so it takes the
+# parameters of the types by place, and those of each particle are refused
+# with it.
+# RUN: printf '[[energy.triplet]]\nexpression = "w1*(cos(theta) + 1/3)^2"\ncutoff = 4.0\n' >> %t/plain-pdb.toml
+# RUN: not mdir check %t/plain-pdb.toml 2>&1 | FileCheck %s --check-prefix=TOPOLOGY
+
+# CHECK:      MDIR:   wbond                          4.782049
+# CHECK-NEXT: MDIR:   wangle                         2.332408
+# CHECK:      MDIR:   screened                    5324.478979
+# CHECK-NEXT: MDIR:   wext                          96.995903
+
+# PYTHON:      wbond 4.782049
+# PYTHON-NEXT: wangle 2.332408
+# PYTHON-NEXT: screened 5324.478979
+# PYTHON-NEXT: wext 96.995903
+# PYTHON-NEXT: forces against differences of the energy: ok
+
+# PARTIAL: no entry of the parameter 'w' gives a value to particle 23; give an entry without 'selection' first, for every particle
+# RESERVED: 'sigma' is a name that the terms give
+# DIGIT: expected a 'name' of letters, digits, and '_' that does not end in a digit in {{\[\[}}energy.parameter{{\]\]}}
+# SHADOW: 'w1' is a parameter of each particle as well as a constant of the term
+# ORDER: the energy of a pair must not change when its two particles are exchanged (q1 with q2, sigma1 with sigma2, epsilon1 with epsilon2, w1 with w2), and this expression does
+# LIST: the parameter 'w' has 2 values, and the topology has 1168 particles
+# NAME: the expression uses 'u1', which is not r, q1, q2, sigma, epsilon, sigma1, sigma2, epsilon1, epsilon2, coulomb, the time t, a constant of the term, or a parameter of each particle, as 'w1'
+# TOPOLOGY: parameters of each particle need a topology, whose particles they select; without one, give the parameters to {{\[\[}}energy.type{{\]\]}}
+
+#--- run.toml
+[input]
+topology    = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+[output]
+energy_interval = 0
+checkpoint = "terms.h5"
+checkpoint_interval = 1
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "CUTOFF"
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 1e-9
+steps      = 1
+[ensemble]
+ensemble    = "NVE"
+temperature = 0.0
+[boundary]
+type = "PERIODIC"
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- terms
+[[energy.parameter]]
+name  = "w"
+value = 1.0
+[[energy.parameter]]
+name      = "w"
+selection = ":1-3"
+value     = 0.5
+[[energy.parameter]]
+name      = "w"
+particles = [5, 6, 30]
+value     = 2.0
+[[energy.parameter]]
+name  = "s"
+value = 0.25
+[[energy.parameter]]
+name      = "s"
+selection = "@O*"
+value     = -0.75
+[[energy.pair]]
+name       = "screened"
+expression = "k*w1*w2*exp(-r/l) + c*(s1 + s2)*q1*q2/r"
+k = 2.0
+l = 1.5
+c = 0.3
+[[energy.bond]]
+name       = "wbond"
+expression = "kb*w1*w2*(r - r0)^2 + s1*s2"
+particles  = [[1, 5], [2, 7], [30, 31]]
+kb = 3.0
+r0 = 1.2
+[[energy.angle]]
+name       = "wangle"
+expression = "ka*(w1 + 2*w2 + 3*w3)*(theta - 2)^2"
+particles  = [[1, 5, 6], [7, 9, 11]]
+ka = 1.5
+[[energy.external]]
+name       = "wext"
+expression = "kx*w*(x - 10)^2 + s*z"
+selection  = ":1-3"
+kx = 0.2
+#--- end

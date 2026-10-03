@@ -49,6 +49,10 @@ struct System {
   std::vector<std::vector<std::vector<bool>>> pairGroups;
   /// The names of those terms, for the log.
   std::vector<std::string> pairTermNames;
+  /// The parameters of each particle (D165): a name and a value for every
+  /// particle, in the units of the control file, which the pair terms
+  /// gather.
+  std::vector<std::pair<std::string, std::vector<double>>> particleParameters;
   /// The names of the terms of generalized Born that follow them (D144).
   std::vector<std::string> bornTermNames;
   /// What the run will do that its user may not intend, by a code and a

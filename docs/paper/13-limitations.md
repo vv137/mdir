@@ -97,7 +97,9 @@ yet a conserved energy, and so are terms given by expressions over bonds,
 angles, and dihedrals, which give restraints beyond positions and the
 dihedrals of OPLS-AA (D136), and terms over the pairs of a topology, in
 its charges and Lennard-Jones parameters and between interaction groups
-(D137), with tabulated functions of one argument (D138), and terms over
+(D137) and in parameters of each particle that the control file gives
+by masks, with tabulated functions of up to three arguments, and compound
+terms over tuples of up to nine particles (D138, D165), and terms over
 the centers of groups, which restrain pull groups (D139), whose sums
 and forces run over their tuples and add 0.03 to 0.05 ms to a step of
 JAC (D150), and which pull at a rate
