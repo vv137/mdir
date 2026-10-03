@@ -36,16 +36,18 @@
 # a compression of a fifth in 10 ps, with strains far larger than at
 # equilibrium, makes drift by about 1e-2 of the value; counted exactly, by
 # about 3e-3 (4e-3 before the exact work counted the change of the
-# correction for the dispersion, barostat.test).
+# correction for the dispersion, barostat.test). The volume at 10 ps is
+# still falling and varies between runs on a device (atomic sums); it has
+# been seen at 24169 Å³, hence the range of 20000 to 24999.
 #
 # CHECK:      INFO:         0 {{.*}} 28634.{{[0-9]+}}
-# CHECK:      INFO:      5000 {{.*}} {{2[0-3][0-9]{3}\.[0-9]+}} {{[0-9.]+$}}
+# CHECK:      INFO:      5000 {{.*}} {{2[0-4][0-9]{3}\.[0-9]+}} {{[0-9.]+$}}
 # CHECK:      MDIR: the momentum at the end is {{[0-9.]+}}e-{{(0[4-9]|1[0-9])}} amu nm/ps
 # CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[2-9]}} of its value
 # EXACT:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[3-9]}} of its value
 #
 # LEAP:       INFO:         0 {{.*}} 28634.{{[0-9]+}}
-# LEAP:       INFO:      5000 {{.*}} {{2[0-3][0-9]{3}\.[0-9]+}} {{[0-9.]+$}}
+# LEAP:       INFO:      5000 {{.*}} {{2[0-4][0-9]{3}\.[0-9]+}} {{[0-9.]+$}}
 # LEAP:       MDIR: the momentum at the end is {{[0-9.]+}}e-{{(0[2-9]|1[0-9])}} amu nm/ps
 # LEAP:       MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[2-9]}} of its value
 
