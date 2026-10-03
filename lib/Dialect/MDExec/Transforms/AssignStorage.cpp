@@ -124,6 +124,7 @@ private:
   LogicalResult convertTupleFor(TupleForOp op, Scope &scope,
                                 unsigned position);
   LogicalResult convertBuildIncidence(BuildIncidenceOp op, Scope &scope);
+  LogicalResult convertBuildTriplets(BuildTripletsOp op, Scope &scope);
   LogicalResult convertReciprocal(ReciprocalOp op, Scope &scope);
   LogicalResult convertGeneric(Operation *op, Scope &scope);
 
@@ -743,6 +744,33 @@ LogicalResult Assignment::convertBuildIncidence(BuildIncidenceOp op,
       scope.builder, op.getLoc(), getIncidenceBufferType(context, space),
       members, size);
   mapping.map(op.getResult(), incidence);
+  return success();
+}
+
+LogicalResult Assignment::convertBuildTriplets(BuildTripletsOp op,
+                                               Scope &scope) {
+  if (op.isStorageForm())
+    return op.emitOpError() << "is in the storage form already";
+  // The triplets are found on the host, from the rows of a matrix there
+  // (D160); a device has neither yet.
+  if (onDevice)
+    return op.emitOpError()
+           << "finds triplets on the host only: terms over triplets do not "
+              "run on a device yet (D160)";
+  Value storage;
+  if (failed(getNeighbors(op, op.getNeighbors(),
+                          op.getPositions().getType(), scope, storage)))
+    return failure();
+  Value positions;
+  if (failed(getBuffer(op.getPositions(), scope, positions)))
+    return failure();
+  // The members are a new buffer at each call, as many rows as there are
+  // triplets, which the lowering frees at the end of the block.
+  auto relation = cast<md::RelationType>(op.getResult().getType());
+  Value members = BuildTripletsOp::create(
+      scope.builder, op.getLoc(), mdrt::getMembersType(relation), storage,
+      positions, mapping.lookup(op.getCell()), op.getCutoffAttr());
+  mapping.map(op.getResult(), members);
   return success();
 }
 
@@ -1495,6 +1523,8 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     return convertTupleFor(loop, scope, position);
   if (auto build = dyn_cast<BuildIncidenceOp>(op))
     return convertBuildIncidence(build, scope);
+  if (auto triplets = dyn_cast<BuildTripletsOp>(op))
+    return convertBuildTriplets(triplets, scope);
   if (auto renumber = dyn_cast<RenumberOp>(op)) {
     if (renumber.isStorageForm())
       return op->emitOpError() << "is in the storage form already";

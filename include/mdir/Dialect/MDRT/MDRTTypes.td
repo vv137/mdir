@@ -60,15 +60,23 @@ def MDRT_IncidenceType : MDRT_Type<"Incidence", "incidence"> {
     in each and the other members.
 
     ```mlir
-    !mdrt.incidence<@atoms, @angles, 3>
+    !mdrt.incidence<@atoms, 3, @angles>
+    ```
+
+    A relation without a tuple set, such as the triplets of
+    `md.triplets`, has an incidence structure without one:
+
+    ```mlir
+    !mdrt.incidence<@atoms, 3>
     ```
   }];
   let parameters = (ins
     "::mlir::FlatSymbolRefAttr":$particleSet,
-    "::mlir::FlatSymbolRefAttr":$tupleSet,
-    "unsigned":$arity
+    "unsigned":$arity,
+    OptionalParameter<"::mlir::FlatSymbolRefAttr">:$tupleSet
   );
-  let assemblyFormat = "`<` $particleSet `,` $tupleSet `,` $arity `>`";
+  let assemblyFormat =
+      "`<` $particleSet `,` $arity (`,` $tupleSet^)? `>`";
 }
 
 def MDRT_EventType : MDRT_Type<"Event", "event"> {

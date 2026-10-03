@@ -2,7 +2,7 @@
 
 !vec = !md.field<@atoms, 3 x f64>
 !nl  = !mdrt.neighbors<@atoms>
-!inc = !mdrt.incidence<@atoms, @bonds, 2>
+!inc = !mdrt.incidence<@atoms, 2, @bonds>
 
 md.particle_set @atoms
 md.tuple_set @bonds on(@atoms) arity(2) orientation(unordered)
@@ -85,7 +85,7 @@ func.func @reversed(%x: !vec, %cell: !md.cell, %nl: !nl, %bonds: !inc) -> !vec {
 // CHECK:           %[[P:[0-9]+]] = arith.addf %[[D]], %[[M]]
 // CHECK:           %[[Q:[0-9]+]] = arith.addf %[[N]], %[[M]]
 // CHECK:           md_exec.yield %[[P]], %[[Q]] : vector<3xf64>, vector<3xf64>
-// CHECK:         } : !mdrt.incidence<@atoms, @bonds, 2>, !md.field<@atoms, 3 x f64> -> !md.field<@atoms, 3 x f64>
+// CHECK:         } : !mdrt.incidence<@atoms, 2, @bonds>, !md.field<@atoms, 3 x f64> -> !md.field<@atoms, 3 x f64>
 // CHECK-NOT:     md_exec.zeros
 // CHECK:         md_exec.particle_for ins(%[[F2]], %{{[a-z0-9]+}} : !md.field<@atoms, 3 x f64>, !md.field<@atoms, 3 x f64>)
 func.func @merged(%x: !vec, %cell: !md.cell, %nl: !nl, %bonds: !inc, %v: !vec)

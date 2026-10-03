@@ -3,7 +3,7 @@
 !vec = !md.field<@atoms, 3 x f32>
 !nl  = !mdrt.neighbors<@atoms>
 !groups = !md.relation<@atoms, 2, unordered, @groups>
-!groups_inc = !mdrt.incidence<@atoms, @groups, 2>
+!groups_inc = !mdrt.incidence<@atoms, 2, @groups>
 
 md.particle_set @atoms
 md.tuple_set @groups on(@atoms) arity(2) orientation(unordered) disjoint

@@ -296,6 +296,22 @@ void lowerLookups(mlir::Operation *root);
 mlir::Value emitRenumber(mlir::OpBuilder &builder, mlir::Location loc,
                          mlir::Value members, mlir::Value ids);
 
+/// Emits, on the host, the triplets centered on each particle of the
+/// neighbor matrix `counts`, `entries` (D160): for each particle `i`, each
+/// pair `a < b` of the entries of its row within `cutoff` once, as the
+/// members `(entries[i][a], i, entries[i][b])`, centers in order. The
+/// distances are those that a loop over the triplets computes in `computed`
+/// from `positions`, the difference in the type of the positions and the
+/// minimum image in `computed`; in f32 the cutoff is pulled in as for a
+/// pair loop (D159). `box` and `inverse` are as for `emitPairKernel`.
+/// Returns the members in a new buffer of the host with one row for each
+/// triplet.
+mlir::Value emitBuildTriplets(mlir::OpBuilder &builder, mlir::Location loc,
+                              mlir::Value counts, mlir::Value entries,
+                              mlir::Value positions, mlir::Value box,
+                              mlir::Value inverse, mlir::Type computed,
+                              double cutoff);
+
 /// Frees `buffer`, a buffer of the host, where the block of `op` ends.
 void freeAtEndOfBlock(mlir::Operation *op, mlir::Value buffer);
 

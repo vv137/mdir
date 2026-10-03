@@ -256,6 +256,49 @@ def MD_NeighborhoodOp : MD_Op<"neighborhood", [Pure]> {
   let hasVerifier = 1;
 }
 
+def MD_TripletsOp : MD_Op<"triplets", [Pure]> {
+  let summary = "Derives the triplets centered on each particle from pairs";
+  let description = [{
+    ```text
+    T(N) = { (j, i, k) : {i, j} ∈ N, {i, k} ∈ N, j ≠ k,
+             r_ij < r_3, r_ik < r_3 } / ((j, i, k) ~ (k, i, j))
+    ```
+
+    For each center `i`, each unordered pair of its neighbors within
+    `cutoff` once: the triple sum of Stillinger and Weber (Phys. Rev. B 31,
+    5262, 1985) and of the mW water model of Molinero and Moore (J. Phys.
+    Chem. B 113, 4008, 2009), and the mode `UniqueCentralParticle` of
+    OpenMM's CustomManyParticleForce. The center is at place 1, as in an
+    angle, so `angle(0, 1, 2)` is the angle at the center. The far leg
+    `j`–`k` is not cut.
+
+    ```mlir
+    %n = md.neighborhood %x, %cell cutoff(0.43065)
+           : !md.field<@atoms, 3 x f64> -> !md.relation<@atoms, 2, unordered>
+    %t = md.triplets %n cutoff(0.43065)
+           : !md.relation<@atoms, 2, unordered>
+             -> !md.relation<@atoms, 3, reversal>
+    ```
+
+    The cutoff is at most that of the neighborhood. The relation is found
+    at the positions of the neighborhood and has no tuple set, so a sum
+    over it takes no fields of tuples. It changes with the positions, so
+    a kernel summed over it must vanish at the cutoff, as the
+    Stillinger-Weber form does with all its derivatives, for the forces
+    to be the gradient of the energy.
+  }];
+  let arguments = (ins
+    MD_RelationType:$neighbors,
+    F64Attr:$cutoff
+  );
+  let results = (outs MD_RelationType:$result);
+  let assemblyFormat = [{
+    $neighbors `cutoff` `(` $cutoff `)` attr-dict
+    `:` qualified(type($neighbors)) `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+
 def MD_LookupOp : MD_Op<"lookup", [Pure]> {
   let summary = "Reads a value of a table";
   let description = [{

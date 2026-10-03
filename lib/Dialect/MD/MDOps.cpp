@@ -307,6 +307,34 @@ LogicalResult NeighborhoodOp::verify() {
   return success();
 }
 
+LogicalResult TripletsOp::verify() {
+  double cutoff = getCutoff().convertToDouble();
+  if (!(cutoff > 0.0))
+    return emitOpError() << "expected a positive cutoff, got " << cutoff;
+  auto pairs = cast<RelationType>(getNeighbors().getType());
+  if (pairs.getTupleSet() || pairs.getArity() != 2 ||
+      pairs.getOrientation() != Orientation::Unordered)
+    return emitOpError() << "expected the unordered relation of arity 2 of "
+                            "a neighborhood, got "
+                         << pairs;
+  auto relation = cast<RelationType>(getResult().getType());
+  if (relation.getTupleSet() || relation.getArity() != 3 ||
+      relation.getOrientation() != Orientation::Reversal ||
+      relation.getParticleSet() != pairs.getParticleSet())
+    return emitOpError()
+           << "expected the result to have type "
+           << RelationType::get(getContext(), pairs.getParticleSet(), 3,
+                                Orientation::Reversal, FlatSymbolRefAttr())
+           << ", got " << relation;
+  if (auto neighborhood = getNeighbors().getDefiningOp<NeighborhoodOp>()) {
+    double reach = neighborhood.getCutoff().convertToDouble();
+    if (cutoff > reach)
+      return emitOpError() << "expected a cutoff of at most " << reach
+                           << ", that of the neighborhood, got " << cutoff;
+  }
+  return success();
+}
+
 //===----------------------------------------------------------------------===//
 // Ops with a pair kernel
 //===----------------------------------------------------------------------===//
@@ -575,11 +603,17 @@ DisjointUnionOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 /// the operands and the coordinates.
 template <typename OpTy>
 static LogicalResult verifyTupleOperands(OpTy op) {
+  // A relation without a tuple set is accepted from 'md.triplets' only,
+  // and then the tuples have no fields (D160).
   auto relation = cast<RelationType>(op.getRelation().getType());
   FlatSymbolRefAttr tupleSet = relation.getTupleSet();
-  if (!tupleSet)
+  if (!tupleSet && !op.getRelation().template getDefiningOp<TripletsOp>())
     return op.emitOpError()
-           << "expected the relation of a tuple set, got " << relation;
+           << "expected the relation of a tuple set or of 'md.triplets', got "
+           << relation;
+  if (!tupleSet && !op.getParameters().empty())
+    return op.emitOpError()
+           << "takes no fields in 'tuple': the triplets have no tuple set";
 
   if (!isPositionField(op.getPositions().getType()))
     return op.emitOpError() << "expected a position field with 3 components "
