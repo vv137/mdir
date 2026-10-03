@@ -175,3 +175,9 @@ an unshifted truncated LJ potential. Cutoff-entry tests check agreement with
 the specified discontinuous potential, not energy conservation. This validation
 is not a production equilibrium protocol, long-time stability study, or restart
 validation.
+
+Under the GPU 1 lock, the existing `pair-terms-gpu` and `lj-pme-gpu` regression
+tests both passed (103 seconds). These exercise production CPU/GPU comparison
+paths, including mixed/double PME checks; they do not execute the new MPI
+trajectory on a GPU. The entire GPU suite was not rerun for this CPU-only
+extension.
