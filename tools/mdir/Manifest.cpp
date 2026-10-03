@@ -13,6 +13,7 @@
 #include <cerrno>
 #include <ctime>
 #include <fstream>
+#include <filesystem>
 #include <limits>
 #include <set>
 
@@ -53,6 +54,18 @@ InputPaths mdir::tool::getManifestInputs(StringRef controlFile,
 }
 
 static std::string absolutePath(StringRef path) {
+  // real_path cannot resolve a dangling final symlink. Follow its target
+  // first, even when the output that it will name has not been created.
+  std::filesystem::path candidate(path.str());
+  for (unsigned links = 0; links != 40; ++links) {
+    std::error_code error;
+    auto target = std::filesystem::read_symlink(candidate, error);
+    if (error)
+      break;
+    candidate = target.is_absolute() ? target : candidate.parent_path() / target;
+  }
+  std::string spelling = candidate.string();
+  path = spelling;
   llvm::SmallString<256> result;
   if (!llvm::sys::fs::real_path(path, result))
     return result.str().str();

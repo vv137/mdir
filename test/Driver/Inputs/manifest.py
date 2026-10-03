@@ -230,6 +230,16 @@ bad.write_text(run.read_text().replace('"whole.jsonl"', '"alias/future.xtc"')
 assert "another output" in command("check", bad, status=1)
 assert "another output" in command("run", bad, status=1)
 assert not (work / "future.xtc").exists()
+# A dangling final symlink must also be resolved, whichever output names it.
+(work / "dangling.xtc").symlink_to("future.xtc")
+for manifest_name, trajectory_name in (("dangling.xtc", "future.xtc"),
+                                       ("future.xtc", "dangling.xtc")):
+    bad.write_text(run.read_text().replace('"whole.jsonl"', json.dumps(manifest_name))
+                   .replace('"whole.xtc"', json.dumps(trajectory_name)))
+    assert "another output" in command("check", bad, status=1)
+    assert "another output" in command("run", bad, status=1)
+    assert not (work / "future.xtc").exists()
+
 # Existing aliases of inputs and directories are also refused.
 (work / "input-alias").symlink_to(source / "Inputs/mixture.pdb")
 for name in ("input-alias", "alias"):
