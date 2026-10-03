@@ -857,7 +857,7 @@ Error Reader::readEnergy(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "energy",
           {"cutoff", "switch_distance", "pairlist_distance",
-           "pruned_distance", "rebuild_interval", "lennard_jones_modifier", "coulomb_modifier", "reaction_field_dielectric", "implicit_solvent", "solvent_dielectric", "solute_dielectric", "surface_area_energy", "pair", "bond", "angle", "dihedral", "external", "function", "type",
+           "pruned_distance", "rebuild_interval", "lennard_jones_modifier", "coulomb_modifier", "reaction_field_dielectric", "implicit_solvent", "solvent_dielectric", "solute_dielectric", "surface_area_energy", "salt_concentration", "born_radius_cutoff", "born_radii", "pair", "bond", "angle", "dihedral", "external", "function", "type",
            "pair_override", "dispersion_correction", "electrostatics"},
           {}))
     return error;
@@ -976,7 +976,8 @@ Error Reader::readEnergy(const toml::table &table) {
   for (StringRef key :
        {"dispersion_correction", "electrostatics", "coulomb_modifier",
         "reaction_field_dielectric", "implicit_solvent",
-        "solvent_dielectric", "solute_dielectric", "surface_area_energy"})
+        "solvent_dielectric", "solute_dielectric", "surface_area_energy",
+        "salt_concentration", "born_radius_cutoff", "born_radii"})
     if (!hasTopology && table.contains(std::string_view(key)))
       return fail(*table.get(std::string_view(key)),
                   "'" + key + "' in [energy] is for a run from a topology; "
@@ -1019,12 +1020,14 @@ Error Reader::readEnergy(const toml::table &table) {
   if (Error error = readChoice<Control::ImplicitSolvent>(
           table, "implicit_solvent", control.implicitSolvent,
           {{"NONE", Control::ImplicitSolvent::None},
+           {"HCT", Control::ImplicitSolvent::HCT},
            {"OBC1", Control::ImplicitSolvent::OBC1},
            {"OBC2", Control::ImplicitSolvent::OBC2}}))
     return error;
   bool born = control.implicitSolvent != Control::ImplicitSolvent::None;
   for (StringRef key :
-       {"solvent_dielectric", "solute_dielectric", "surface_area_energy"})
+       {"solvent_dielectric", "solute_dielectric", "surface_area_energy",
+        "salt_concentration", "born_radius_cutoff", "born_radii"})
     if (!born && table.contains(std::string_view(key)))
       return fail(*table.get(std::string_view(key)),
                   "'" + key + "' is for 'implicit_solvent'");
@@ -1045,6 +1048,24 @@ Error Reader::readEnergy(const toml::table &table) {
     if (control.surfaceAreaEnergy < 0.0)
       return fail(*table.get("surface_area_energy"),
                   "expected 0 or a positive 'surface_area_energy'");
+    // Salt, a cutoff of the descreening, and radii by rules (D152).
+    if (Error error = readReal(table, "salt_concentration",
+                               control.saltConcentration))
+      return error;
+    if (control.saltConcentration < 0.0)
+      return fail(*table.get("salt_concentration"),
+                  "expected 0 or a positive 'salt_concentration' in mol/L");
+    if (Error error = readReal(table, "born_radius_cutoff",
+                               control.bornRadiusCutoff))
+      return error;
+    if (control.bornRadiusCutoff < 0.0)
+      return fail(*table.get("born_radius_cutoff"),
+                  "expected 0 or a positive 'born_radius_cutoff' in Å");
+    if (Error error = readChoice<Control::BornRadii>(
+            table, "born_radii", control.bornRadii,
+            {{"TOPOLOGY", Control::BornRadii::Topology},
+             {"MBONDI2", Control::BornRadii::MBondi2}}))
+      return error;
   }
   if (!control.pme && table.contains("coulomb_modifier"))
     return fail(*table.get("coulomb_modifier"),
@@ -1842,6 +1863,21 @@ Error Reader::read(const toml::table &root) {
         "%s: 'trajectory_interval' is given, but [output] names no "
         "'trajectory'",
         path.str().c_str());
+  // Salt screens with the Debye length at the temperature of the run.
+  if (control.saltConcentration > 0.0 && !(control.temperature > 0.0))
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "%s: 'salt_concentration' screens with the Debye length at the "
+        "temperature of [ensemble], which is %g K",
+        path.str().c_str(), control.temperature);
+  // The descreening reaches the radius cutoff and the screened radius
+  // beyond it, within the cutoff of the pairs.
+  if (control.bornRadiusCutoff > control.cutoffDistance)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "%s: 'born_radius_cutoff', %g Å, is beyond the cutoff, %g Å",
+        path.str().c_str(), control.bornRadiusCutoff,
+        control.cutoffDistance);
   // A term of the absolute positions has no virial (D148): a pressure from
   // the virial of the forces cannot include it.
   if (!control.externalTerms.empty() && control.barostat)

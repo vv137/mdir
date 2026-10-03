@@ -134,6 +134,12 @@ Used for: the derivative of a dihedral with respect to the positions of
 its four particles, which has no singularity where three particles are
 in line.
 
+### Bondi1964
+
+A. Bondi, "van der Waals volumes and radii," *J. Phys. Chem.* **68**,
+441–451 (1964).
+[doi:10.1021/j100785a001](https://doi.org/10.1021/j100785a001)
+
 ### BoxMuller1958
 
 G. E. P. Box, M. E. Muller, "A note on the generation of random normal
@@ -902,6 +908,13 @@ portable library for particle-based simulations," *J. Open Source Softw.*
 [doi:10.21105/joss.04115](https://doi.org/10.21105/joss.04115)
 
 Used for: identifying Cabana, a model for the runtime.
+
+### Srinivasan1999
+
+J. Srinivasan, M. W. Trevathan, P. Beroza, D. A. Case, "Application of a
+pairwise generalized Born model to proteins and nucleic acids: inclusion
+of salt effects," *Theor. Chem. Acc.* **101**, 426–434 (1999).
+[doi:10.1007/s002140050460](https://doi.org/10.1007/s002140050460)
 
 ### Steele2014
 

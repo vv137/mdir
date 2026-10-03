@@ -1,0 +1,29 @@
+# The models of generalized-born-models.test together on a GPU (D152): HCT
+# with a salt and the integral of the descreening cut at 8 Å, the energies
+# of the CPU and of check_born.py, and the forces of the CPU within 1e-9 of
+# the largest in double precision and within 1e-5 in mixed precision, whose
+# largest forces, of clashes of the unminimized peptide, are in f32.
+#
+# REQUIRES: hdf5, cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/gb/peptide.prmtop %S/Inputs/gb/peptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/generalized-born.test | sed '1d;$d' | sed -e 's/"OBC2"/"HCT"/' -e 's/^surface_area_energy = 0.0054/&\nsalt_concentration = 0.15\nborn_radius_cutoff = 8.0/' -e 's/^temperature = 0.0/temperature = 300.0/' -e 's/born.h5/cpu.h5/' > %t/cpu.toml
+# RUN: sed -e 's/cpu.h5/double.h5/' %t/cpu.toml > %t/double.toml
+# RUN: printf '[execution]\ntarget = "GPU"\nprecision = "DOUBLE"\n' >> %t/double.toml
+# RUN: sed -e 's/cpu.h5/mixed.h5/' %t/cpu.toml > %t/mixed.toml
+# RUN: printf '[execution]\ntarget = "GPU"\nprecision = "MIXED"\n' >> %t/mixed.toml
+# RUN: cd %t && mdir run cpu.toml | FileCheck %s
+# RUN: cd %t && mdir run double.toml | FileCheck %s
+# RUN: cd %t && mdir run mixed.toml | FileCheck %s --check-prefix=MIXED
+# RUN: mdir checkpoint --print=forces %t/cpu.h5 > %t/cpu.forces
+# RUN: mdir checkpoint --print=forces %t/double.h5 > %t/double.forces
+# RUN: mdir checkpoint --print=forces %t/mixed.h5 > %t/mixed.forces
+# RUN: %python %S/Inputs/compare_columns.py %t/cpu.forces %t/double.forces 1e-9 | FileCheck %s --check-prefix=SAME
+# RUN: %python %S/Inputs/compare_columns.py %t/cpu.forces %t/mixed.forces 1e-5 | FileCheck %s --check-prefix=SAME
+
+# CHECK:      MDIR:   generalized Born            -142.055612
+# CHECK-NEXT: MDIR:   nonpolar surface               9.653648
+# MIXED:      MDIR:   generalized Born            -142.0556
+# MIXED-NEXT: MDIR:   nonpolar surface               9.6536
+# SAME: the columns agree
