@@ -89,7 +89,20 @@ with a stated bound, not a library flag:
    multiply–adds, checked at 17 points of every interval. On JAC
    ($r_c = 8$ Å) $b = 7$: 1281 intervals, 20 KB a table, each interval
    read with one load of 16 bytes. In an f64 kernel the function is
-   inlined with the exact `math.erfc`.
+   inlined with the exact `math.erfc`. A function that no table holds
+   within the tolerance stays in its kernel, in the kernel's type: the
+   factor $\exp(\sigma/(r - a\sigma))$ of the Stillinger–Weber form, whose
+   cutoff is its pole, vanishes there with all its derivatives and is not
+   finite at it (D159).
+
+   **The cutoff in f32.** A kernel in f32 tests $r^2 < r_c^2$ and then
+   takes $r = \sqrt{r^2}$, which can round to $r_c$; for such a factor
+   that is a division by zero. The square of the cutoff in f32 is
+   therefore pulled in until the square root in f32 of every square that
+   passes is four units in the last place below $r_c$ in f32, some
+   $5\times10^{-7}$ of $r_c$. The four units are a heuristic: they cover a
+   product of f32 constants, such as $a\sigma$, that rounds a unit below
+   the cutoff, and not constants written to put the pole further inside.
 3. **The complementary error function**, where it remains in an f32
    kernel after the tables, as in a pair term written over a tuple set.
    $\operatorname{erfc}(c\sqrt y)$ with a positive constant $c$ is

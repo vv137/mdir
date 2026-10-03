@@ -465,6 +465,14 @@ valid keywords: cutoff, switch_distance, pairlist_distance, ...
 try 'mdir template md' or 'mdir template amber' for a control file with the supported keywords
 ```
 
+Warnings name what a run will do that its author may not intend, and
+the run goes on: a parameter that its expression does not use, an
+expression that uses none of its coordinates and so adds no force, a
+selection that selects no particle, a step longer than 1 fs with the
+bonds of hydrogen free, and the waters of an Amber or CHARMM topology
+left flexible because `[constraints]` says nothing (D153, D158).
+`mdir check --json` lists them under their codes.
+
 `mdir emit FILE` prints the program that the driver builds,
 `--stage=lowered` the program that runs, and `--stage=pipeline` the passes
 between. A run that fails in the compiler or on a device is reported with
