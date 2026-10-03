@@ -541,10 +541,14 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
       memref.store %no_particle, %order[%i] : memref<?xi32, 1>
       // A position that is not a number, or is beyond any cell, gets no
       // cell, and is counted (D107).
-      %sum_xy = arith.addf %xi, %yi : f64
-      %sum_xyz = arith.addf %sum_xy, %zi : f64
-      %not_number = arith.cmpf uno, %sum_xyz, %sum_xyz : f64
-      %magnitude = math.absf %sum_xyz : f64
+      // The largest coordinate, not their sum, which opposite coordinates
+      // could cancel; a NaN in any of them propagates through the maximum.
+      %abs_x = math.absf %xi : f64
+      %abs_y = math.absf %yi : f64
+      %abs_z = math.absf %zi : f64
+      %abs_xy = arith.maximumf %abs_x, %abs_y : f64
+      %magnitude = arith.maximumf %abs_xy, %abs_z : f64
+      %not_number = arith.cmpf uno, %magnitude, %magnitude : f64
       %far_off = arith.constant 1.0e100 : f64
       %huge = arith.cmpf ogt, %magnitude, %far_off : f64
       %bad = arith.ori %not_number, %huge : i1
@@ -1102,10 +1106,14 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic(
       memref.store %no_particle, %order[%i] : memref<?xi32, 1>
       // A position that is not a number, or is beyond any cell, gets no
       // cell, and is counted (D107).
-      %sum_xy = arith.addf %xi, %yi : f64
-      %sum_xyz = arith.addf %sum_xy, %zi : f64
-      %not_number = arith.cmpf uno, %sum_xyz, %sum_xyz : f64
-      %magnitude = math.absf %sum_xyz : f64
+      // The largest coordinate, not their sum, which opposite coordinates
+      // could cancel; a NaN in any of them propagates through the maximum.
+      %abs_x = math.absf %xi : f64
+      %abs_y = math.absf %yi : f64
+      %abs_z = math.absf %zi : f64
+      %abs_xy = arith.maximumf %abs_x, %abs_y : f64
+      %magnitude = arith.maximumf %abs_xy, %abs_z : f64
+      %not_number = arith.cmpf uno, %magnitude, %magnitude : f64
       %far_off = arith.constant 1.0e100 : f64
       %huge = arith.cmpf ogt, %magnitude, %far_off : f64
       %bad = arith.ori %not_number, %huge : i1
