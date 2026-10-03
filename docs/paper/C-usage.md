@@ -401,6 +401,54 @@ z0 = 13.0
 ```
 
 Fixed in space it adds $\sum_i \mathbf x_i \otimes \mathbf F_i$ to the virial; with `scaling = "CELL"` it moves with the cell and adds none, and a run at constant pressure must say which (D148, D154).
+
+A parameter of each particle (D165) is given once, by masks, and every
+term reads it by the place of a particle: `w1` and `w2` in a pair term,
+`w1` to `wN` in a term over tuples, `w` in a term of the positions. Below,
+a soft repulsion that only the heavy atoms of the solute feel at full
+strength, and a dihedral term in a function of two arguments, a table of
+the angle and its double, periodic in both (`values[i][j]` at the i-th
+point of the first argument and the j-th of the second):
+
+```toml
+[[energy.parameter]]
+name  = "w"
+value = 0.0
+[[energy.parameter]]
+name      = "w"
+selection = ":1-3 & !@H*"
+value     = 1.0
+
+[[energy.pair]]
+name       = "soft"
+expression = "k*sqrt(w1*w2)*exp(-r/l)"
+k = 1.0
+l = 1.5
+
+[[energy.dihedral]]
+name       = "two"
+expression = "surface(theta, 2*theta)"
+particles  = [[5, 7, 9, 11]]
+
+[[energy.function]]
+name     = "surface"
+min      = [-3.141592653589793, -3.141592653589793]
+max      = [3.141592653589793, 3.141592653589793]
+periodic = true
+values   = [[1.0, 0.5, 0.0, 0.5, 1.0],
+            [0.5, 0.2, 0.1, 0.2, 0.5],
+            [0.0, 0.1, 0.3, 0.1, 0.0],
+            [0.5, 0.2, 0.1, 0.2, 0.5],
+            [1.0, 0.5, 0.0, 0.5, 1.0]]
+```
+
+On the dipeptide the two add 0.662431 and 0.171469 kcal/mol at the
+start, the second as OpenMM's Continuous2DFunction gives it. A particle
+that no entry gives a value is an error; a later entry wins
+over an earlier one on the particles they share. A table with
+`discrete = true` gives the value at the nearest point, for arguments
+that are whole numbers, such as two kinds of particles given as
+parameters of each.
 Restraints to the positions of the input are a table of their own,
 `[[restraints]]` with a mask and a force constant (Appendix A.1), as the
 templates of C.3 use them.

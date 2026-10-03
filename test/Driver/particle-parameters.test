@@ -44,6 +44,11 @@
 # RUN: not mdir check %t/name.toml 2>&1 | FileCheck %s --check-prefix=NAME
 # RUN: printf '[input]\ncoordinates = "a.pdb"\n[energy]\ncutoff = 5.0\n[[energy.type]]\nname = "A"\nmass = 1.0\n[[energy.pair]]\nexpression = "1/r^12"\n[[energy.parameter]]\nname = "w"\nvalue = 1.0\n' > %t/plain-pdb.toml
 # RUN: not mdir check %t/plain-pdb.toml 2>&1 | FileCheck %s --check-prefix=TOPOLOGY
+# A term over triplets runs without a topology (D160), so it takes the
+# parameters of the types by place, and those of each particle are refused
+# with it.
+# RUN: printf '[[energy.triplet]]\nexpression = "w1*(cos(theta) + 1/3)^2"\ncutoff = 4.0\n' >> %t/plain-pdb.toml
+# RUN: not mdir check %t/plain-pdb.toml 2>&1 | FileCheck %s --check-prefix=TOPOLOGY
 
 # CHECK:      MDIR:   wbond                          4.782049
 # CHECK-NEXT: MDIR:   wangle                         2.332408
