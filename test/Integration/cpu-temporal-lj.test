@@ -1,0 +1,5 @@
+# REQUIRES: mpi
+# RUN: python3 %S/../../scripts/validation/cpu-temporal-lj.py %cpu_lj --smoke | FileCheck %s
+# RUN: python3 %S/../../scripts/validation/cpu-temporal-invalid.py %cpu_lj | FileCheck %s --check-prefix=INVALID
+# CHECK: PASS 36 trajectory configurations
+# INVALID: PASS 12 invalid inputs and participant mismatch checks
