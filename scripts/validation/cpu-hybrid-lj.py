@@ -40,6 +40,7 @@ def main():
     ap.add_argument('executable')
     ap.add_argument('--mpiexec', default='mpiexec')
     ap.add_argument('--smoke', action='store_true')
+    ap.add_argument('--case', help='Run one named fixture')
     args = ap.parse_args()
     coords = [[0.3,1,1], [1.45,1.2,1], [2.7,1,1.3], [4.1,1.1,1],
               [6.6,2,1], [7.85,2.2,1.2], [9.3,1.8,1.1], [11.15,1.1,1.1]]
@@ -48,20 +49,27 @@ def main():
              ('empty-ranks', [coords[0],coords[-1]], [101,77], 2.95),
              ('empty-system', [], [], 2.95),
              ('reordered', coords[::-1], ids[::-1], 2.95),
-             ('nonunit-parameters', coords, ids, 2.95)]
+             ('nonunit-parameters', coords, ids, 2.95),
+             ('multi-slab', [[2.3,1,1], [4.85,1,1]], [901,902], 2.95)]
+    if args.smoke:
+        cases = [cases[0], cases[1], cases[-1]]
+    if args.case:
+        cases = [case for case in cases if case[0] == args.case]
+        if not cases:
+            ap.error('unknown fixture')
     env = dict(os.environ, OMP_DYNAMIC='FALSE')
     env.pop('DISPLAY', None)
     tested = 0
     reproducible = {}
     with tempfile.TemporaryDirectory(prefix='mdir-cpu-lj-') as directory:
         path = Path(directory)/'snapshot.txt'
-        for name, points, gids, rc in (cases[:2] if args.smoke else cases):
+        for name, points, gids, rc in cases:
             sigma, epsilon = ((0.8, 1.3) if name=='nonunit-parameters' else (1.0, 1.0))
             energy, force, virial = oracle(points, [12]*3, rc, sigma, epsilon)
             path.write_text(f'{len(points)} 12 12 12 {rc} {sigma} {epsilon}\n' + ''.join(
                 f'{gid} {p[0]} {p[1]} {p[2]}\n' for gid,p in zip(gids,points)))
             for precision, ranks, threads, width in itertools.product(
-                    ('double','mixed'), ((2,) if args.smoke else (1,2,5)),
+                    ('double','mixed'), (((5,) if name=='multi-slab' else (2,)) if args.smoke else (1,2,5)),
                     ((2,) if args.smoke else (1,2)), ((4,) if args.smoke else (1,4,8))):
                 command = [args.mpiexec, '--oversubscribe', '-n', str(ranks),
                            args.executable, str(path), f'--precision={precision}',

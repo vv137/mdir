@@ -726,7 +726,7 @@ def MDExec_TabulateOp : MDExec_Op<"tabulate", [
   let hasVerifier = 1;
 }
 
-def MDExec_NeighborViewOp : MDExec_Op<"neighbor_view", [Pure]> {
+def MDExec_NeighborViewOp : MDExec_Op<"neighbor_view", [MemoryEffects<[MemRead]>]> {
   let summary = "A checked host neighbor matrix with explicit owned rows";
   let description = [{
     Storage-only host input. Rows enumerate owned centers [0, rows), while
