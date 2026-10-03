@@ -210,6 +210,7 @@ is needed when the kernels are compiled, not when LLVM is built.
 | `md.potential` | Defines a potential energy function. |
 | `md.function` | Defines any other pure function of fields. |
 | `md.neighborhood` | Builds the relation of pairs within a cutoff. |
+| `md.triplets` | Derives the triplets centered on each particle from a neighborhood (Section 4.11, D160). |
 | `md.sum_relation` | Sums a kernel over the tuples of a relation. |
 | `md.gather_relation` | For each particle, sums a kernel over the tuples it belongs to. |
 | `md.sum_particles` | Sums a kernel over particles. |
@@ -460,6 +461,29 @@ with `md.call` to a generated `md.function`.
 %u, %f = md.call @lj.energy_forces(%x, %cell, %eps, %sigma)
            : (!vec, !md.cell, f64, f64) -> (f64, !vec)
 ```
+
+### 4.11 `md.triplets` (D160)
+
+```mlir
+%t = md.triplets %n cutoff(0.43065)
+       : !md.relation<@atoms, 2, unordered> -> !md.relation<@atoms, 3, reversal>
+```
+
+| | |
+|---|---|
+| Operands | The relation of a neighborhood |
+| Attributes | `cutoff`: positive real, at most that of the neighborhood |
+| Result | `!md.relation<@set, 3, reversal>`, without a tuple set |
+
+$$T(N) = \{(j, i, k) : \{i, j\} \in N,\ \{i, k\} \in N,\ j \ne k,\ r_{ij} < r_3,\ r_{ik} < r_3\}\ /\ \big((j, i, k) \sim (k, i, j)\big).$$
+
+For each center, each unordered pair of its neighbors within the cutoff
+once; the center is at place 1, so `angle(0, 1, 2)` is the angle at it.
+The far leg is not cut. `md.sum_tuples` and `md.gather_tuples` sum over the
+relation as over the tuples of a topology, without fields of tuples. The
+relation is found at the positions of the neighborhood, which the sum must
+take, and it changes with them: the kernel must vanish at the cutoff for
+the forces to be the gradient of the energy.
 
 ## 5. Semantic differentiation for M0
 
@@ -928,6 +952,8 @@ double mode (Section 10.9).
 | `md_exec.rebuild_count` | The number of times a neighbor structure has been built. |
 | `md_exec.zeros`, `md_exec.empty` | Destinations of loops. |
 | `md_exec.pair_for` | Runs a kernel over the pairs of a neighbor structure. |
+| `md_exec.build_triplets` | Writes the triplets of a neighbor matrix within a cutoff: a relation without a tuple set, or in the storage form the members on the host, one row a triplet (D160). |
+| `md_exec.build_incidence`, `md_exec.tuple_for` | The tuples of each particle, and a kernel over them; see [design-m1.md](design-m1.md), Section 5. |
 | `md_exec.particle_for` | Runs a kernel over particles. |
 | `md_exec.yield` | Terminator of kernels. |
 
@@ -1211,6 +1237,8 @@ measurements.
 | Semantic op | `md_exec` |
 |---|---|
 | `md.neighborhood` | `md_exec.build_cells` and `md_exec.build_neighbors` |
+| `md.triplets` | `md_exec.build_triplets` on the structure of the neighborhood, then `md_exec.build_incidence` (D160) |
+| `md.sum_tuples`, `md.gather_tuples` | `md_exec.build_incidence` and `md_exec.tuple_for` |
 | `md.sum_relation` | `md_exec.pair_for` with a `reduce` clause |
 | `md.gather_relation` | `md_exec.pair_for` with an `outs` clause |
 | `md.sum_particles` | `md_exec.particle_for` with a `reduce` clause |

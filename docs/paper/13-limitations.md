@@ -103,7 +103,8 @@ and forces run over their tuples and add 0.03 to 0.05 ms to a step of
 JAC (D150), and which pull at a rate
 with the time in their expressions and write their coordinates and
 forces (D145), and terms of the absolute positions of single particles,
-with parameters of each (D148); so are the reaction field
+with parameters of each (D148), and terms over the triplets centered on
+each particle, on the CPU (D160); so are the reaction field
 (D140), runs without a periodic cell, in a cell that no image reaches
 (D142), and generalized Born, whose Born radii are the first
 intermediate fields that differentiation carries the energy back through

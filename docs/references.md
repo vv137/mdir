@@ -1,6 +1,6 @@
 # References
 
-Last updated: 2026-10-02.
+Last updated: 2026-10-03.
 
 This document lists the literature behind the methods, algorithms,
 derivations, force fields, and formats that the MDIR documentation and
@@ -681,6 +681,10 @@ V. Molinero, E. B. Moore, "Water modeled as an intermediate element
 between carbon and silicon," *J. Phys. Chem. B* **113**, 4008–4016 (2009).
 [doi:10.1021/jp805227c](https://doi.org/10.1021/jp805227c)
 
+Used for: the mW water, the Stillinger-Weber form with the parameters of
+water, whose two-body term has a pole at its cutoff (D159) and whose
+three-body term is a term over triplets (D160).
+
 ### Moses2020
 
 W. S. Moses, V. Churavy, "Instead of rewriting foreign code for machine
@@ -943,6 +947,17 @@ long-range forces in macromolecular simulation," *J. Comput. Chem.* **15**,
 
 Used for: force switching and potential switching as truncations of
 nonbonded terms at a cutoff.
+
+### StillingerWeber1985
+
+F. H. Stillinger, T. A. Weber, "Computer simulation of local order in
+condensed phases of silicon," *Phys. Rev. B* **31**, 5262–5271 (1985).
+[doi:10.1103/PhysRevB.31.5262](https://doi.org/10.1103/PhysRevB.31.5262)
+
+Used for: the three-body term over the triplets centered on each
+particle, each center with each unordered pair of its neighbors within
+$a\sigma$, and its form, which vanishes at the cutoff with all its
+derivatives (D160).
 
 ### Stoddard1973
 

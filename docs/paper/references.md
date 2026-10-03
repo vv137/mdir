@@ -284,6 +284,12 @@ and RATTLE algorithm for rigid water models," *J. Comput. Chem.* **13**,
 952–962 (1992).
 [doi:10.1002/jcc.540130805](https://doi.org/10.1002/jcc.540130805)
 
+### Molinero2009
+
+V. Molinero, E. B. Moore, "Water modeled as an intermediate element
+between carbon and silicon," *J. Phys. Chem. B* **113**, 4008–4016 (2009).
+[doi:10.1021/jp805227c](https://doi.org/10.1021/jp805227c)
+
 ### Moses2020
 
 W. S. Moses, V. Churavy, "Instead of rewriting foreign code for machine
@@ -429,6 +435,12 @@ P. J. Steinbach, B. R. Brooks, "New spherical-cutoff methods for
 long-range forces in macromolecular simulation," *J. Comput. Chem.* **15**,
 667–683 (1994).
 [doi:10.1002/jcc.540150702](https://doi.org/10.1002/jcc.540150702)
+
+### StillingerWeber1985
+
+F. H. Stillinger, T. A. Weber, "Computer simulation of local order in
+condensed phases of silicon," *Phys. Rev. B* **31**, 5262–5271 (1985).
+[doi:10.1103/PhysRevB.31.5262](https://doi.org/10.1103/PhysRevB.31.5262)
 
 ### Swope1982
 
