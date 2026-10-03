@@ -249,6 +249,9 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
                                     double kinetic, double forceSquare,
                                     double virial);
 void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids);
+/// Without a periodic cell (D142), stops the run if the positions at the
+/// step `step` have spread so far that images interact.
+void _mlir_ciface_mdrtCheckSpread(int64_t step, void *positions, void *ids);
 /// The energy of each term of a topology at the start, in kJ/mol:
 /// Lennard-Jones, Coulomb, bonds, angles, dihedrals, the pairs three bonds
 /// apart, Lennard-Jones and Coulomb, and CMAP.

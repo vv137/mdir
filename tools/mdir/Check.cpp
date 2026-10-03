@@ -185,7 +185,7 @@ struct OutputFile {
 };
 
 struct Warning {
-  const char *code;
+  std::string code;
   std::string message;
 };
 
@@ -513,6 +513,8 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
   if (!system)
     return fail(system.takeError(), json);
   Preflight report = inspect(*control);
+  for (const auto &[code, message] : system->warnings)
+    report.warnings.push_back({code, message});
   if (json) {
     printJSON(makeJSON(*control, *system, report));
   } else {

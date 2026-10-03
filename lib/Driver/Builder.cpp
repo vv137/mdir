@@ -4808,6 +4808,12 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         emitPullOutput(inner, "%xl", cellName, fieldPrefix, "%step" + here,
                        time);
       }
+      // Without a periodic cell (D142), whether the particles have spread
+      // so far that images interact, at every row of the log as well as at
+      // the frames and checkpoints.
+      if (!control.periodic && !framesAtEnergies)
+        os << inner << "mdrt.host_call @mdrtCheckSpread(%step" << here
+           << ", %xl, " << idName << ") : (i64, !vec, !ids)\n";
       std::string yielded =
           couplesBelow
               ? getCoupled("%xl", "%vl", "%fl", energyName,
@@ -6087,6 +6093,8 @@ void Builder::emitEntry() {
      << "func.func private @mdrtWriteVirial(f64, f64, f64)\n"
      << "    attributes {llvm.emit_c_interface}\n"
      << "func.func private @mdrtWriteFrame(i64, memref<?x3x" << state
+     << ">, memref<?xi32>)\n    attributes {llvm.emit_c_interface}\n"
+     << "func.func private @mdrtCheckSpread(i64, memref<?x3x" << state
      << ">, memref<?xi32>)\n    attributes {llvm.emit_c_interface}\n"
      << "func.func private @mdrtFinish(memref<?x3x" << state
      << ">, memref<?x3x" << state << ">, memref<?xi32>)\n"

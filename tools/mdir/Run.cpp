@@ -351,6 +351,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   auto system = readSystem(*control);
   if (!system)
     return fail(system.takeError());
+  for (const auto &[code, message] : system->warnings)
+    warn(message);
 
   system->referencePositions = system->positions;
   bool writesCheckpoints = control->checkpointPeriod > 0;
@@ -622,6 +624,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     add("_mlir_ciface_mdrtWriteEnergies",
         (void *)&_mlir_ciface_mdrtWriteEnergies);
     add("_mlir_ciface_mdrtWriteFrame", (void *)&_mlir_ciface_mdrtWriteFrame);
+    add("_mlir_ciface_mdrtCheckSpread",
+        (void *)&_mlir_ciface_mdrtCheckSpread);
     add("_mlir_ciface_mdrtWriteTerms", (void *)&_mlir_ciface_mdrtWriteTerms);
     add("_mlir_ciface_mdrtWriteVirial", (void *)&_mlir_ciface_mdrtWriteVirial);
     add("_mlir_ciface_mdrtAddBath", (void *)&_mlir_ciface_mdrtAddBath);

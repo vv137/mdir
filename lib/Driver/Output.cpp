@@ -520,6 +520,11 @@ static void checkSpread(const Output &output, const std::vector<double> &x,
   }
 }
 
+void _mlir_ciface_mdrtCheckSpread(int64_t step, void *positions, void *ids) {
+  Output &output = *current;
+  checkSpread(output, readVectors(positions, ids, output.state), step);
+}
+
 void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids) {
   Output &output = *current;
   if (!output.hasTrajectory)

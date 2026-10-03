@@ -1,0 +1,19 @@
+# The waters of a topology of Amber or CHARMM run flexible unless
+# [constraints] says how (rigid_water): the topology does not tell whether
+# they are meant rigid, as [ settles ] of GROMACS does, and a step of 2 fs
+# needs them rigid. `mdir run` and `mdir check` warn when it says nothing,
+# and `mdir check --json` lists the warning by its code.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- terms/p' %S/centroid-terms.test | sed '1d;$d' | sed '/^checkpoint/d' > %t/water.toml
+# RUN: cd %t && mdir check water.toml 2>&1 | FileCheck %s
+# RUN: cd %t && mdir check water.toml --json | FileCheck %s --check-prefix=JSON
+# RUN: cd %t && mdir run water.toml 2>&1 | FileCheck %s
+# RUN: printf '[constraints]\nrigid_water = false\n' >> %t/water.toml
+# RUN: cd %t && mdir check water.toml 2>&1 | FileCheck %s --check-prefix=STATED
+# RUN: cd %t && mdir run water.toml 2>&1 | FileCheck %s --check-prefix=STATED
+
+# CHECK: 382 waters of the topology run flexible; give 'rigid_water = true' in [constraints] to hold them rigid with SETTLE, as a time step of 2 fs needs, or 'rigid_water = false' to keep them flexible
+# JSON: "code": "flexible_water"
+# STATED-NOT: run flexible

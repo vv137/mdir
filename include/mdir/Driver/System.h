@@ -51,6 +51,9 @@ struct System {
   std::vector<std::string> pairTermNames;
   /// The names of the terms of generalized Born that follow them (D144).
   std::vector<std::string> bornTermNames;
+  /// What the run will do that its user may not intend, by a code and a
+  /// message: `mdir run` prints them, and `mdir check` lists them.
+  std::vector<std::pair<std::string, std::string>> warnings;
   /// Whether the run keeps the momentum of the center of mass: not under
   /// Langevin dynamics unless its motion is removed (D135).
   bool keepsMomentum = true;

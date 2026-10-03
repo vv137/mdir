@@ -19,6 +19,9 @@ using namespace mdir::driver;
 using llvm::StringRef;
 
 static llvm::Error findSettles(const Control &control, Topology &topology);
+/// The residues named in 'water_residues', or WAT or TIP3, that are an
+/// oxygen and two hydrogens.
+static size_t countWaters(const Control &control, const Topology &topology);
 static llvm::Error checkSettles(Topology &topology);
 static llvm::Error findShakes(Topology &topology);
 static llvm::Error findCenters(TupleTerm &term, const Topology &topology);
@@ -163,11 +166,26 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
   }
   if (llvm::Error error = checkSettles(*topology))
     return std::move(error);
+  // The waters of a topology of Amber or CHARMM run flexible unless the
+  // control file says how: unlike [ settles ] of GROMACS, the topology does
+  // not tell whether they are meant rigid, and a step of 2 fs needs them so.
+  size_t flexibleWaters = 0;
+  if ((!control.prmtopFile.empty() || charmm) && !control.fastWater &&
+      !control.statesFlexible)
+    flexibleWaters = countWaters(control, *topology);
   if (control.rigidBonds)
     if (llvm::Error error = findShakes(*topology))
       return std::move(error);
 
   System system;
+  if (flexibleWaters > 0)
+    system.warnings.push_back(
+        {"flexible_water",
+         std::to_string(flexibleWaters) +
+             " waters of the topology run flexible; give 'rigid_water = "
+             "true' in [constraints] to hold them rigid with SETTLE, as a "
+             "time step of 2 fs needs, or 'rigid_water = false' to keep "
+             "them flexible"});
   // The terms over tuples of the control file join those of the topology
   // (D136), once their particles are known to exist.
   for (TupleTerm term : control.tupleTerms) {
@@ -419,6 +437,25 @@ static llvm::Error findCenters(TupleTerm &term, const Topology &topology) {
     term.centers.push_back(std::move(center));
   }
   return llvm::Error::success();
+}
+
+static size_t countWaters(const Control &control, const Topology &topology) {
+  bool charmm = !control.charmmStructureFile.empty();
+  std::vector<std::string> residues = control.settleResidues;
+  if (residues.empty())
+    residues = {charmm ? "TIP3" : "WAT"};
+  size_t count = topology.getNumParticles(), waters = 0;
+  for (size_t r = 0, e = topology.residueNames.size(); r != e; ++r) {
+    if (!llvm::is_contained(residues,
+                            StringRef(topology.residueNames[r]).trim()))
+      continue;
+    unsigned first = topology.residueStarts[r];
+    unsigned end = r + 1 < e ? topology.residueStarts[r + 1] : count;
+    waters += end - first >= 3 && topology.atomicNumbers[first] == 8 &&
+              topology.atomicNumbers[first + 1] == 1 &&
+              topology.atomicNumbers[first + 2] == 1;
+  }
+  return waters;
 }
 
 static llvm::Error findSettles(const Control &control, Topology &topology) {
