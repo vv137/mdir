@@ -5,6 +5,11 @@ This document specifies future work; it adds no dialect implementation,
 control keys, defaults, file formats, or overwrite behavior. It refines
 ML2–ML5 without changing the M2/M3/M4 milestone order in [roadmap.md](roadmap.md).
 
+The [v0 specification](md-dist-v0.md) fixes the first implementation
+boundary: shared `mdrt` types, field-state analysis, lexical accumulation,
+and synchronous straight-line evaluation. It refines the broader gates
+below without claiming implementation.
+
 ## 1. Purpose and boundary
 
 `md_dist` verifies that each computation receives the required logical field
@@ -36,7 +41,8 @@ must specialize to the current execution path before runtime setup.
 
 Names below are proposed, not registered types or operations. Runtime
 snapshots are SSA operands; types retain stable entity domains, element
-shapes/types, and completeness categories.
+shapes/types, and completeness categories. Shared types belong to `mdrt`;
+`md_dist` and `md_exec` remain peers and use neutral interfaces.
 
 | Contract | Meaning |
 |---|---|
@@ -46,7 +52,7 @@ shapes/types, and completeness categories.
 | `transfer_map` | Each consumer slot maps to an owner entity and, for particles, periodic image; physical forwarding is a later choice |
 | `coverage` | Evidence that candidates contain the requested semantic relation under a stated validity predicate |
 | `contribution` | Partial values with target, reducer, scope, and producer identity; not a readable complete field |
-| `accumulation_scope` | Expected producers and target coverage for one logical result, including explicit initialization and completion |
+| `md_dist.accumulate` region | Lexical scope binding semantic requirements to evaluation inputs; its completion terminator returns a complete owned field through the parent op; no new scope-handle type |
 
 Data ownership, evaluation ownership, and accumulation destination are
 separate. Coordinate updates create a new scientific version; halo refresh
@@ -102,7 +108,8 @@ barrier.
 | `halo_map` | Layout, support requirement, candidates, and validity guard; produces a consumer map and coverage witness |
 | `forward_halo` | Complete field view and compatible map; returns that same logical version available at the map's consumer slots |
 | `reverse_accumulate` | Replica contributions and the map snapshot used by forward; returns routed owner contributions, still partial with respect to the enclosing scope |
-| `complete_accumulation` | Scope and all required contributions; produces a complete field after verifying matching targets, reducer, initialization, and producer coverage |
+| `accumulate` / `complete_accumulation` | Region binds independent semantic requirements and evaluation inputs; completion terminator checks contributions and the parent returns a complete field |
+| `merge` | Adds values and symbolic work multiplicities; overlapping targets are legal, duplicated semantic work is rejected at completion |
 | `collective` | Team, partial values, reducer, and result placement; produces one logical result, either owned or physically replicated |
 | `classify_support` | A stage's actual inputs, available views, and support; returns disjoint, exhaustive execution subsets for existing loops |
 
@@ -125,8 +132,10 @@ rule, so duplicated evaluation is distinguished from duplicated addition.
 A contribution may have inspection uses, but exactly one terminal route
 into its scope's completed result. Routing consumes a provenance edge and
 produces another; it cannot erase or duplicate that identity. Adding a
-local contribution and its reverse-routed copy is rejected. Initialization
-occurs once before contributions, never between them. Empty subsets produce
+local contribution and its reverse-routed copy is rejected. Zero carries an
+empty work ledger; multiple zero identities may be merged. Reinitialization
+that discards required work fails completion, rather than a blanket ban on
+multiple zero ops. Empty subsets produce
 explicit empty contributions and still satisfy participation requirements.
 Completing an intermediate field does not complete the enclosing force
 scope: other potential terms may still contribute.
@@ -140,9 +149,10 @@ linear-resource semantics in MLIR; the scope verifier performs that check.
 
 ## 6. Verification and runtime trust boundary
 
-The first verifier supports a restricted structured program: explicit
-scopes, fixed stage DAGs, team-uniform conditionals, and loops with declared
-iteration-carried contracts. Unknown control flow or opaque support fails
+The v0a verifier supports explicit scopes and straight-line distributed
+stage DAGs with fixed layout/cell. Existing outer step loops and nested
+local kernel arithmetic are separate. Team-uniform stage conditionals and
+iteration-carried protocol contracts are later extensions. Unknown control flow or opaque support fails
 with a diagnostic rather than an optimistic distributed lowering. An
 iterative constraint solve must be a structured loop with participation and
 termination rules, or a separately validated opaque operation.
@@ -157,13 +167,19 @@ termination rules, or a separately validated opaque operation.
 | Lifetime | Saved maps and fields dominate consumers; physical hazards ordered | Artificially delayed transfers cannot read overwritten storage |
 
 For a semantic relation $R$ and candidate set $C$, coverage requires
-$R\subseteq C$. Every kernel still tests $R$'s predicate, including the
+$R\subseteq C$. Also check post-filter enumeration multiplicity: duplicate
+candidate entries can satisfy containment while double-counting interactions.
+Every kernel still tests $R$'s predicate, including the
 term's cutoff and exclusions. Skin changes $C$, not the physical potential.
 General geometry is not proved by the verifier. Recognized builders and
 runtime guards provide that proof obligation; tiny all-pairs tests independently
 check their results. Topological support names tuple/parent IDs separately
 from geometric support. Unsupported global or opaque dependencies are errors
 unless an explicit supported global execution plan exists.
+
+v0 halo payloads copy canonical coordinates; geometry applies periodic
+displacements explicitly. Shifted coordinate materialization is a later
+operation with its own cell pullback.
 
 Replica identity includes global entity ID and periodic image where needed;
 edge displacements retain the existing periodic convention. A larger halo
@@ -291,9 +307,11 @@ to remove hazards. Report those allocations/copies under D18; do not hide
 them. Nonblocking transport does not itself prove overlap: backend capability
 records include progress, device-buffer access, stream ordering, and copies.
 
-Proposed code organization is `include/mdir/Dialect/MDDist/` and
-`lib/Dialect/MDDist/` for types, ops, and verification; shared dependency
-analysis/interfaces outside transport backends; a small CPU reference
+Proposed code organization puts shared types under the existing MDRT
+dialect, and ops/verification in `include/mdir/Dialect/MDDist/` and
+`lib/Dialect/MDDist/`. Neutral payload/provenance/dependency interfaces and
+analysis remain outside either execution dialect and transport backends;
+add a small CPU reference
 executor; and separate transport conversions/runtime support. Add exact
 file names with the implementing PR. Registration and field-like changes
 precede storage extensions; avoid concurrent broad rewrites of the driver.
@@ -342,6 +360,10 @@ CPU reference path to exercise actual ops. The oracle must independently
 enumerate expected owner/replica values rather than reuse production map
 construction. Split registration/types and executable reference support
 into successive focused PRs if needed. Neither needs a control-file key.
+
+The [v0 A–D slices](md-dist-v0.md#5-verification-and-implementation-slices)
+permit fixed-state LJ/EAM before temporal migration work; the DIST gates
+remain the broader acceptance areas.
 
 DIST1 adds stage extraction from existing pair operations, guarded geometric
 map builders, and synchronous LJ through existing loops. First freeze a

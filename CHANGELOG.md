@@ -32,7 +32,9 @@ format, or the outputs; every such change is listed under **Changed** or
   versions, owner–replica maps, coverage, and contribution completion, with
   reference-execution and verifier gates before transport and asynchronous
   scheduling (D[md-dist-architecture]). Documentation only; no distributed
-  implementation or control-file changes.
+  implementation or control-file changes. The v0 specification fixes shared
+  `mdrt` types, lexical accumulation, field-state analysis, and enumeration
+  multiplicity, with a bounded synchronous reference path.
 
 - `mdir run --continue` refuses a checkpoint whose physics or coupling
   differ from the control file and names each change. `[execution]`,

@@ -6,7 +6,7 @@ D[md-dist-architecture]; see [md-dist-plan.md](md-dist-plan.md).
 | Part | State |
 |---|---|
 | `md`, `dyn`, `md_exec`, the lowerings to the CPU and to NVIDIA GPUs, the driver | Implemented through milestone M1; the following M0 references describe the foundational syntax. [ops-m0.md](ops-m0.md), [neighbors-m0.md](neighbors-m0.md), and [driver-m0.md](driver-m0.md) describe what is implemented and have the actual syntax. |
-| The planner, `md_dist`, `ensemble`, `mlff`, the events of `mdrt`, `ParticleDependencyInterface` | Not implemented. In M0 the options of the passes and the driver stand for the plan, and the ops of a block run in the order of the block (A12). |
+| The planner, `md_dist`, `ensemble`, `mlff`, distributed event producers/scheduling, `ParticleDependencyInterface` | Not implemented. In M0 the options of the passes and the driver stand for the plan, and the ops of a block run in the order of the block (A12). |
 
 The IR snippets of this document are illustrative; where they differ from
 ops-m0.md, that document holds.
@@ -482,7 +482,12 @@ to the policy, and the compiled program follows them (D32).
 `md_dist` verifies field versions, ownership, availability, coverage, and
 exactly-once contribution completion. The detailed contract and delivery
 gates are in [md-dist-plan.md](md-dist-plan.md), D[md-dist-architecture].
-It is proposed, not implemented.
+It is proposed, not implemented. [The v0 specification](md-dist-v0.md)
+places shared types in `mdrt`, separates payload interfaces from dynamic
+field-state analysis, and uses `md_dist.accumulate` regions with completion
+terminators. The first stage graph is synchronous and straight-line.
+`!mdrt.event` already has a type definition; this does not implement the
+distributed completion/scheduling contract.
 
 Its handles describe logical teams, immutable layout snapshots, local field
 views, owner–replica transfer maps, coverage witnesses, and accumulation

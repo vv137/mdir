@@ -20,6 +20,9 @@ D[md-dist-architecture] makes [md-dist-plan.md](md-dist-plan.md) the concrete
 contract and implementation sequence for ML2–ML5. It distinguishes scientific
 versions from materializations, data/evaluation/accumulation ownership,
 coverage from freshness, and partial contributions from complete results.
+The [v0 specification](md-dist-v0.md) places shared types in `mdrt`,
+uses lexical accumulation regions, and verifies semantic work multiplicity
+as well as coverage. Its first stage graph is synchronous and straight-line.
 The first executable gate is a verifier plus an in-process multi-domain
 reference; synchronous LJ/EAM precedes CPU MPI, GPU transport, and physical
 hazard-aware overlap. The detailed plan includes pinned source inspections

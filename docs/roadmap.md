@@ -287,6 +287,12 @@ replanning that does not change generated code can reuse it. Preserve
 artifact identity and restart contracts from ML1, initially with same-plan
 continuation; changes of rank count require later validation.
 
+The [v0 specification](md-dist-v0.md) refines initial work into A (shared
+`mdrt` types, field-state analysis and lexical verifier), B (fixed-state
+logical-domain LJ/EAM), C (temporal validity and CPU transport), then D
+(synchronous GPU before overlap). These are slices of the gates below;
+fixed-state EAM can be tested before migration is implemented.
+
 ### Distributed implementation gates
 
 D[md-dist-architecture] refines ML2–ML5 without moving the release milestones.
