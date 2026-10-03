@@ -327,7 +327,9 @@ static void describeRun(const Control &control, const System &system,
                                            : "V-RESCALE");
     if (control.barostat)
       std::printf("barostat:           C-RESCALE, %s, %g atm\n",
-                  control.semiIsotropic ? "SEMI_ISOTROPIC" : "ISOTROPIC",
+                  control.semiIsotropic ? "SEMI_ISOTROPIC"
+                  : control.anisotropic ? "ANISOTROPIC"
+                                        : "ISOTROPIC",
                   control.pressure);
   }
   std::printf("cutoff:             %g Å\n", control.cutoffDistance);
@@ -460,7 +462,8 @@ static llvm::json::Object makeJSON(const Control &control, const System &system,
                          : control.isLangevin() ? "LANGEVIN"
                          : control.isNoseHoover() ? "NOSE-HOOVER" : "V-RESCALE"},
       {"barostat_coupling", !control.barostat ? "NONE"
-                          : control.semiIsotropic ? "SEMI_ISOTROPIC" : "ISOTROPIC"},
+                          : control.semiIsotropic ? "SEMI_ISOTROPIC"
+                          : control.anisotropic ? "ANISOTROPIC" : "ISOTROPIC"},
       {"cutoff_angstrom", control.cutoffDistance},
       {"electrostatics", getElectrostatics(control)},
       {"pme", nullptr},

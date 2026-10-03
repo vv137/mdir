@@ -1186,6 +1186,19 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       llvm::consumeError(get.takeError());
     }
   }
+  // The pressures of the axes that anisotropic coupling took (D163c).
+  if (control->barostat && control->anisotropic) {
+    if (auto get = (*engine)->lookup("mdrtGetAxisPressures")) {
+      double p[6];
+      int64_t n = reinterpret_cast<int64_t (*)(double *)>(*get)(p);
+      output.log.print(
+          "MDIR: the pressures of the barostat over %lld periods, in bar: "
+          "x %.2f ± %.2f, y %.2f ± %.2f, z %.2f ± %.2f\n",
+          static_cast<long long>(n), p[0], p[3], p[1], p[4], p[2], p[5]);
+    } else {
+      llvm::consumeError(get.takeError());
+    }
+  }
   // The momentum of the state at the end, which the removal of the motion
   // of the center of mass keeps at 0.
   double momentum[3] = {0.0, 0.0, 0.0};

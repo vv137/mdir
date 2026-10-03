@@ -5349,7 +5349,28 @@ void Builder::emitStrain(StringRef indent, StringRef kinetic,
      << " : f64 to vector<3xf64>\n"
      << indent << "%bp3" << t << " = arith.mulf %bw" << t << ", %bpcb" << t
      << " : vector<3xf64>\n";
-  if (!control.semiIsotropic) {
+  if (control.anisotropic) {
+    // Anisotropic (D163c): each axis by the strain of its own pressure and
+    // noise, eq. (9b) of [Bernetti2020] on each.
+    std::string strains[3];
+    for (int k = 0; k != 3; ++k) {
+      std::string a = std::to_string(k);
+      strains[k] = "%strain" + a + "_" + t;
+      os << indent << "%bpa" << a << "_" << t << " = vector.extract %bp3"
+         << t << "[" << k << "] : f64 from vector<3xf64>\n"
+         << indent << "%baxis" << a << "_" << t << " = arith.constant " << k
+         << " : i64\n"
+         << indent << strains[k]
+         << " = func.call @mdrtBarostatStrainAxis(%seed, " << step
+         << ", %baxis" << a << "_" << t << ", %bpa" << a << "_" << t
+         << ", %baro_target, %bv" << t << ", %baro_kt, %baro_beta_" << a
+         << ", %baro_rate)\n"
+         << indent
+         << "    : (i64, i64, i64, f64, f64, f64, f64, f64, f64) -> f64\n";
+    }
+    os << indent << "%bs3" << t << " = vector.from_elements " << strains[0]
+       << ", " << strains[1] << ", " << strains[2] << " : vector<3xf64>\n";
+  } else if (!control.semiIsotropic) {
     // Isotropic: the mean pressure gives ε, the change of ln V, by a step
     // of λ = √V (eq. S7 of [Bernetti2020]); each axis scales by ε / 3.
     emitSum3(os, "%bps" + t, "%bp3" + t, indent);
@@ -6401,6 +6422,8 @@ void Builder::emitEntry() {
           "f64, f64, f64, f64, f64) -> f64\n"
        << "func.func private @mdrtBarostatStrainHeight(i64, i64, f64, f64, "
           "f64, f64, f64, f64) -> f64\n"
+       << "func.func private @mdrtBarostatStrainAxis(i64, i64, i64, f64, f64, "
+          "f64, f64, f64, f64) -> f64\n"
        << "func.func private @mdrtSetBox(f64, f64, f64)\n"
        << "    attributes {llvm.emit_c_interface}\n"
        << "func.func private @mdrtSetTilt(f64, f64, f64)\n"
@@ -6615,6 +6638,9 @@ void Builder::emitEntry() {
             (program.dispersionEnergy + program.coulombConstantEnergy -
              program.coulombSelfEnergy) *
             volume;
+        for (int k = 0; k != 3; ++k)
+          os << "  %baro_beta_" << k << " = arith.constant "
+             << formatReal(control.compressibilities[k] / bar) << " : f64\n";
         os << "  %baro_target = arith.constant "
            << formatReal(control.pressure * bar) << " : f64\n"
            << "  %baro_beta = arith.constant "

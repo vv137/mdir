@@ -448,6 +448,39 @@ cell stays lower triangular and reduced (D127); and
 the work of a scaling below is a sum over the axes, with $K_a$ and the
 diagonal of the virial of the groups in place of $K$ and the trace.
 
+**Anisotropic coupling** (`coupling = "ANISOTROPIC"`, D163c) scales each
+axis by the strain of its own edge, $\varepsilon_a = \ln L_a$, from its own
+pressure and noise, the step of z above on each axis:
+
+$$
+\Delta\varepsilon_a = -\frac{f_a}{3}\big(P_0 - P_{aa}\big) + \sqrt{\frac{2k_BT\,c\,f_a}{3V}}\,R_a,
+\qquad \mu_a = e^{\Delta\varepsilon_a},
+$$
+
+with $f_a$ from the compressibility $\beta_a$ of the axis (`compressibility`
+as three numbers; 0 keeps the edge to the bit) and $R_a$ the first three
+normal numbers of the step. With $D_a = k_BTc\,f_a/(3V)$ and the density
+$\rho \propto V e^{-(P_0V + F)/k_BT}$ in $(\varepsilon_x, \varepsilon_y,
+\varepsilon_z)$, whose factor $V = L_xL_yL_z$ is the Jacobian of the
+strains, $\partial_{\varepsilon_a}\ln\rho = 1 + V(P_{aa} - P_0)/k_BT$ with
+$P_{aa} = -L_a\,\partial F/\partial L_a/V$ in the mean; the zero flux,
+$A_a\rho = \partial_{\varepsilon_a}(D_a\rho)$, then requires $A_a =
+D_a\partial_{\varepsilon_a}\ln\rho + \partial_{\varepsilon_a}D_a =
+D_aV(P_{aa} - P_0)/k_BT$, since $D_a \propto 1/V$ falls along
+$\varepsilon_a$ by exactly what the factor $V$ of $\rho$ adds: the drift
+above. That is the ensemble at constant pressure in a cell whose three
+edges are free, with no term in $k_BT/V$. The three steps sum to a step in
+$\ln V$ with the drift and the noise of isotropic coupling. A liquid has no
+stiffness against a change of shape at constant volume, so its edges
+wander, $\ln(L_x/L_y)$ diffusing freely: anisotropic coupling is for solids,
+membranes with a crystal, or a cell under different stresses, and a liquid
+run long enough reaches an edge of $2r_c$, where the run stops. A flexible
+cell, with shear, needs the off-diagonal virial and is another decision. An
+argon crystal of 864 atoms at 40 K keeps its cubic shape, edges within
+0.03 Å of the isotropic 32.100 Å and of those of OpenMM's anisotropic
+Monte Carlo barostat, with the volume and its spread of isotropic coupling
+(D163c).
+
 **Scaling.** A free particle moves to $\mu\mathbf x$; a water or a group
 of SHAKE moves with its center of mass, $\mathbf x_j \to \mu\mathbf X +
 (\mathbf x_j - \mathbf X)$, with $\mathbf X$ taken in the minimum image,

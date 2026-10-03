@@ -1742,9 +1742,15 @@ Error Reader::readBarostat(const toml::table &table) {
   control.barostat = true;
   if (Error error = readPositive(table, "time_constant", control.tauP))
     return error;
-  if (Error error =
-          readPositive(table, "compressibility", control.compressibility))
-    return error;
+  // With anisotropic coupling the compressibility may be one of each axis
+  // (D163c); otherwise it is one number.
+  const toml::node *compressibility = table.get("compressibility");
+  const toml::array *axes =
+      compressibility ? compressibility->as_array() : nullptr;
+  if (!axes)
+    if (Error error =
+            readPositive(table, "compressibility", control.compressibility))
+      return error;
   if (Error error = readChoice<BarostatWork>(
           table, "work", control.barostatWork,
           {{"TROTTER", BarostatWork::Trotter},
@@ -1753,10 +1759,36 @@ Error Reader::readBarostat(const toml::table &table) {
            {"FIRST_ORDER", BarostatWork::FirstOrder}}))
     return error;
   int coupling = 0;
-  if (Error error = readChoice<int>(table, "coupling", coupling,
-                                    {{"ISOTROPIC", 0}, {"SEMI_ISOTROPIC", 1}}))
+  if (Error error = readChoice<int>(
+          table, "coupling", coupling,
+          {{"ISOTROPIC", 0}, {"SEMI_ISOTROPIC", 1}, {"ANISOTROPIC", 2}}))
     return error;
   control.semiIsotropic = coupling == 1;
+  control.anisotropic = coupling == 2;
+  for (double &value : control.compressibilities)
+    value = control.compressibility;
+  if (axes) {
+    if (coupling != 2)
+      return fail(*compressibility,
+                  "a 'compressibility' of each axis needs 'coupling = "
+                  "\"ANISOTROPIC\"'; give one number");
+    bool any = false;
+    for (size_t k = 0; k != 3; ++k) {
+      const toml::node *item = k < axes->size() ? axes->get(k) : nullptr;
+      std::optional<double> value =
+          item && item->is_number() ? item->value<double>() : std::nullopt;
+      if (axes->size() != 3 || !value || *value < 0.0)
+        return fail(*compressibility,
+                    "expected three numbers that are not negative for "
+                    "'compressibility', those of x, y, and z, in 1/atm");
+      control.compressibilities[k] = *value;
+      any |= *value > 0.0;
+    }
+    if (!any)
+      return fail(*compressibility,
+                  "a barostat whose compressibilities are all 0 keeps the "
+                  "cell; give one that is not 0");
+  }
   // The keys of semi-isotropic coupling (D119).
   for (const char *key : {"compressibility_z", "surface_tension", "surfaces"})
     if (const toml::node *node = table.get(key); node && coupling != 1)
@@ -1774,13 +1806,14 @@ Error Reader::readBarostat(const toml::table &table) {
     return error;
   if (Error error = readCount(table, "surfaces", control.surfaces, 1))
     return error;
-  if (control.semiIsotropic &&
+  if ((control.semiIsotropic || control.anisotropic) &&
       control.barostatWork == BarostatWork::FirstOrder)
     return fail(*table.get("work"),
                 "'work = \"FIRST_ORDER\"' counts the work from the trace of "
                 "the virial of the step with twice the internal kinetic "
                 "energy, which holds for the trace only; with "
-                "'coupling = \"SEMI_ISOTROPIC\"' use \"TROTTER\", "
+                "'coupling = \"SEMI_ISOTROPIC\"' or \"ANISOTROPIC\" use "
+                "\"TROTTER\", "
                 "\"TROTTER_FIRST_ORDER\", or \"EXACT\"");
   if (Error error = readCount(table, "interval", control.barostatPeriod, 0))
     return error;
@@ -2389,7 +2422,9 @@ method        = "C-RESCALE"     # stochastic cell rescaling
 time_constant = 2.0             # ps
 # compressibility = 4.56e-5     # 1/atm (4.5e-5 /bar)
 # coupling = "ISOTROPIC"        # ISOTROPIC; SEMI_ISOTROPIC: x and y
-#                               # together, z on its own
+#                               # together, z on its own; ANISOTROPIC:
+#                               # each axis on its own, with a number or
+#                               # three for compressibility
 # compressibility_z = 4.56e-5   # 1/atm, of z with SEMI_ISOTROPIC (0 keeps
 #                               # the height); compressibility by default
 # surface_tension = 0.0         # dyn/cm, of each surface normal to z,

@@ -301,6 +301,12 @@ struct Control {
   /// and the tension `surfaceTension` in dyn/cm of each of `surfaces`
   /// surfaces normal to z.
   bool semiIsotropic = false;
+  /// Anisotropic coupling (D163c): each axis scales by its own strain, from
+  /// its own pressure and noise, with the compressibility of the axis in
+  /// `compressibilities`, 1/atm (0 keeps the axis).
+  bool anisotropic = false;
+  double compressibilities[3] = {4.5e-5 * 1.01325, 4.5e-5 * 1.01325,
+                                 4.5e-5 * 1.01325};
   double compressibilityZ = 4.5e-5 * 1.01325;
   double surfaceTension = 0.0;
   int64_t surfaces = 2;

@@ -1,0 +1,17 @@
+# The anisotropic cell rescaling of barostat-aniso.test on a GPU, in mixed
+# precision (D163c): the host draws the strain of each axis from the
+# pressures that the device sums.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/mixture.pdb %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/barostat-aniso.test | sed '1d;$d' \
+# RUN:     | sed -e '/^checkpoint/d' > %t/run.toml
+# RUN: printf '[execution]\ntarget = "gpu"\nprecision = "mixed"\n' >> %t/run.toml
+# RUN: mdir run %t/run.toml | FileCheck %s
+
+# CHECK:      INFO:         0         0.0000 {{ *}}[[TOTAL:-[0-9.]+]] {{.*}} [[TOTAL]]     12487.1680
+# CHECK:      INFO:      2000 {{.*}} {{11[0-9]{3}\.[0-9]+$}}
+# CHECK:      MDIR: the pressures of the barostat over 200 periods, in bar: x
+# CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[4-9]}} of its value
