@@ -139,3 +139,12 @@ no integration. This validates separation of owned centers from replica reads,
 not general field freshness, contribution completeness, migration, or scalable
 distributed execution. Async completion and GPU-initiated transport remain
 future work; MPI request semantics do not define the shared event contract.
+
+## Cartesian CPU reference extension (D[cpu-cartesian-async])
+
+The opt-in `mdir-cpu-lj` snapshot tool supports `--grid=auto|Px,Py,Pz`,
+`--halo=sync|async`, and `--emit=dist`. Its restricted `md_dist` plan binds
+layout/map snapshots and an `mdrt.event`; the host interprets scheduling
+and dispatches existing compiled pair kernels. This introduces no production
+TOML keys. Bonded support, migration, production trajectories, and GPU
+transport remain unimplemented. See [the implementation contract](../cpu-cartesian-async.md) for exact scope and validation.

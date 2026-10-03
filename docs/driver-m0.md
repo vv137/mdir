@@ -802,3 +802,12 @@ build-tree tool `mdir-cpu-lj` reads a text LJ snapshot and uses MPI transport
 with generated OpenMP/SIMD CPU kernels. It does not run this driver's trajectory
 or checkpoint workflow. See [the implementation reference](cpu-hybrid-lj.md)
 for its exact command-line interface, validation results, and limitations.
+
+## Cartesian CPU reference extension (D[cpu-cartesian-async])
+
+The opt-in `mdir-cpu-lj` snapshot tool supports `--grid=auto|Px,Py,Pz`,
+`--halo=sync|async`, `--repeat=N` (fixed snapshot replay), and `--emit=dist`. Its restricted `md_dist` plan binds
+layout/map snapshots and an `mdrt.event`; the host interprets scheduling
+and dispatches existing compiled pair kernels. This introduces no production
+TOML keys. Bonded support, migration, production trajectories, and GPU
+transport remain unimplemented. See [the implementation contract](cpu-cartesian-async.md) for exact scope and validation.
