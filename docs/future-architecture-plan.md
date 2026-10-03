@@ -23,6 +23,9 @@ coverage from freshness, and partial contributions from complete results.
 The [v0 specification](md-dist-v0.md) places shared types in `mdrt`,
 uses lexical accumulation regions, and verifies semantic work multiplicity
 as well as coverage. Its first stage graph is synchronous and straight-line.
+The [post-v0 async skeleton](md-dist-async-design.md) records upstream
+ShardToMPI reuse boundaries and physical transfer completion; particle
+owner–replica maps retain their own semantics.
 The first executable gate is a verifier plus an in-process multi-domain
 reference; synchronous LJ/EAM precedes CPU MPI, GPU transport, and physical
 hazard-aware overlap. The detailed plan includes pinned source inspections

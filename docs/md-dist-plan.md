@@ -316,6 +316,11 @@ executor; and separate transport conversions/runtime support. Add exact
 file names with the implementing PR. Registration and field-like changes
 precede storage extensions; avoid concurrent broad rewrites of the driver.
 
+The [async transfer design skeleton](md-dist-async-design.md) supplies
+TableGen declarations and a future MPI conversion algorithm using the
+existing `mdrt.event`. It is post-v0 work: declarations can be generated,
+but no operations, verifier bodies, transport, or scheduling are registered.
+
 ## 9. Legal planning, PME, and topology
 
 The first planner is a deterministic legalizer: it always produces a

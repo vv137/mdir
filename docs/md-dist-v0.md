@@ -180,6 +180,10 @@ Public driver keys, final assembly spelling, and transport ABI are separate
 implementation reviews. Unsupported distributed types must fail clearly
 if passed to a backend without their lowering.
 
+The [post-v0 async skeleton](md-dist-async-design.md) reuses `mdrt.event`
+for physical transfer start/await/join. It preserves this synchronous field
+contract and does not add async requirements to v0a.
+
 ## 6. Supplied Python reference: evidence and follow-up tests
 
 The maintainer supplied Python source and a log reporting 24 passing tests.

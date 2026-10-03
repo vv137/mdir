@@ -635,6 +635,11 @@ one-to-one to a transport primitive: one halo exchange may involve several
 sends and receives. Its implementation may be one or more MPI requests, a
 CUDA event, or an NVSHMEM signal.
 
+The [post-v0 design skeleton](md-dist-async-design.md) proposes physical
+transfer start/await/join operations using this event. Dense `shard` and
+particle `md_dist` plans may feed a common runtime contract; neither must
+lower through the other. Protocol and alias analyses remain required.
+
 The schedule the IR must be able to express:
 
 ```text

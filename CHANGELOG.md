@@ -34,7 +34,9 @@ format, or the outputs; every such change is listed under **Changed** or
   scheduling (D[md-dist-architecture]). Documentation only; no distributed
   implementation or control-file changes. The v0 specification fixes shared
   `mdrt` types, lexical accumulation, field-state analysis, and enumeration
-  multiplicity, with a bounded synchronous reference path.
+  multiplicity, with a bounded synchronous reference path. A post-v0 async
+  transfer skeleton reuses `mdrt.event`; declaration generation is checked,
+  without registering new operations or implementing transport.
 
 - `mdir run --continue` refuses a checkpoint whose physics or coupling
   differ from the control file and names each change. `[execution]`,

@@ -26,6 +26,8 @@ are future acceptance gates, not additional results of this paper; see
 [the distributed plan](../md-dist-plan.md). Its [v0 specification](../md-dist-v0.md)
 uses shared `mdrt` types, lexical accumulation scopes, and explicit semantic
 work multiplicities, initially in a synchronous straight-line evaluation.
+A [post-v0 async design](../md-dist-async-design.md) sketches event-based
+physical transfers; it supplies no runtime or performance results.
 
 **The deterministic mode does not take groups.** The loop over groups adds
 with floating-point atomics; in the deterministic mode a run keeps the

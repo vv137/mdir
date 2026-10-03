@@ -311,6 +311,12 @@ No distributed dialect, reference executor, or planner is implemented yet.
 | DIST5 | Whole-model gradients, then staged forward/VJP | Whole-model: ML1 + DIST2–DIST3, no DIST4 requirement; staged: single-GPU ML4 hooks; same-artifact and collective-adjoint validation |
 | DIST6 | PME redistribution reference, then scalable mesh and crossing constraints | DIST3; can proceed independently of MLIPs; molecular validation before production distribution |
 
+DIST4 has a [TableGen and lowering design skeleton](md-dist-async-design.md):
+existing `mdrt.event`, conservative completion, separate staging buffers,
+and phase-aware progress. ODS generation is checked; runtime implementation
+and all behavioral/performance gates remain open. Dense `shard` halos are
+a reuse opportunity for mesh work, not a replacement for particle maps.
+
 Fixed legal plans precede cost-based selection. Separate implementation
 issues/PRs carry each gate; the architecture PR defines the plan only.
 Public transport/control keys and artifact schemas remain separate design
