@@ -257,3 +257,11 @@ migration, then asynchronous transport. Reuse `mdrt.event` for logical
 completion rather than equating it with `MPI_Request`. Source release,
 consumer readiness, memory visibility, and execution location are separate
 facts. UCX and NVSHMEM are future backend candidates; neither is implemented.
+
+## Cartesian extension
+
+The current branch extends the original x-slab baseline described above with
+[Cartesian grids and asynchronous reference plans](cpu-cartesian-async.md),
+including periodic cell candidates and fixed-snapshot replay. The historical
+x-slab validation remains evidence for the initial implementation; use the
+Cartesian contract for current options, scheduling, and limitations.

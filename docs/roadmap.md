@@ -345,3 +345,21 @@ milestone. The [development sequence](cpu-hybrid-plan.md) keeps requirement and
 completion verification, EAM stage extraction, temporal validity/migration, and
 asynchronous buffer lifetime analysis as separate follow-ups. No throughput or
 multi-node scaling claim has been established.
+
+## Cartesian CPU reference extension (D[cpu-cartesian-async])
+
+The opt-in `mdir-cpu-lj` snapshot tool supports `--grid=auto|Px,Py,Pz`,
+`--halo=sync|async`, and `--emit=dist`. Its restricted `md_dist` plan binds
+layout/map snapshots and an `mdrt.event`; the host interprets scheduling
+and dispatches existing compiled pair kernels. This introduces no production
+TOML keys. Bonded support, migration, production trajectories, and GPU
+transport remain unimplemented. See [the implementation contract](cpu-cartesian-async.md) for exact scope and validation.
+
+The upper distributed contract separates state authority, replica availability,
+work placement, result placement, and physical resource binding. PP/PME teams
+may be disjoint or overlapping. Halo, topology gather, mesh redistribution,
+and result reduction are derived plans; particle-to-mesh spread and FFT remain
+computations. The fixed LJ `md_dist.reference_plan` is a lower reference bridge,
+not the upper placement abstraction. Before production integration, require
+multi-step validity/migration, topology-derived support and contribution return,
+and a PP/PME reference plan with independently placed work and results.
