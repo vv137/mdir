@@ -830,3 +830,151 @@ velocities; a run that reads it begins anew at step 0, with drawn
 velocities. In mixed precision the forces are rounded to about $10^{-5}$ of
 their size, which bounds how far a minimization can go; a tolerance on the
 force is planned.
+
+## 6.8 Alchemical free energy
+
+`[free_energy]` defines states $\boldsymbol\lambda^{(k)}$,
+$k = 0, \dots, n_\lambda - 1$, each a vector of components $\lambda_m$, and
+the potential energy $U(\mathbf x;\boldsymbol\lambda)$ that couples them to
+the system (D161). A run samples one state, and at every energy of the log
+writes the derivatives $\partial U/\partial\lambda_m$ at its state and the
+differences $U(\mathbf x;\boldsymbol\lambda^{(k)}) - U(\mathbf x;\boldsymbol\lambda)$
+to every state: the inputs of the two estimators below, with which
+`scripts/free-energy.py` gives the free energy between the states.
+
+**Statistical mechanics.** The masses do not depend on $\boldsymbol\lambda$,
+so the kinetic part of the canonical partition function cancels from every
+ratio, and the free energy of a state is, up to a constant,
+
+$$
+F(\boldsymbol\lambda) = -k_BT\ln Z(\boldsymbol\lambda),
+\qquad
+Z(\boldsymbol\lambda) = \int e^{-U(\mathbf x;\boldsymbol\lambda)/k_BT}\,d\mathbf x .
+$$
+
+Differentiating under the integral gives the identity of thermodynamic
+integration [[Kirkwood1935]](references.md#kirkwood1935),
+
+$$
+\frac{\partial F}{\partial\lambda_m} =
+\frac{\int \partial_{\lambda_m}U\,e^{-U/k_BT}\,d\mathbf x}{Z} =
+\Big\langle \frac{\partial U}{\partial\lambda_m}\Big\rangle_{\boldsymbol\lambda},
+\qquad
+\Delta F = \int_0^1 \sum_m \Big\langle \frac{\partial U}{\partial\lambda_m}\Big\rangle_{\boldsymbol\lambda(s)}\frac{d\lambda_m}{ds}\,ds,
+$$
+
+along any path $\boldsymbol\lambda(s)$ between two states; the script
+takes the states in order as the path and the trapezoidal rule in each
+component. Multiplying and dividing the integrand of $Z(\boldsymbol\lambda^{(l)})$
+by $e^{-U_k/k_BT}$, with $U_k = U(\mathbf x;\boldsymbol\lambda^{(k)})$, gives
+the exponential average of Zwanzig [[Zwanzig1954]](references.md#zwanzig1954),
+
+$$
+F_l - F_k = -k_BT\ln\big\langle e^{-(U_l - U_k)/k_BT}\big\rangle_k ,
+$$
+
+which needs the energies of the other states at the samples of one.
+MBAR [[ShirtsChodera2008]](references.md#shirtschodera2008) combines the
+samples of every state: with $N_k$ samples from state $k$, all $N$ of them
+indexed by $n$, and the reduced energies $u_k(\mathbf x_n) = U_k(\mathbf x_n)/k_BT$,
+the reduced free energies $f_k = F_k/k_BT$ solve
+
+$$
+f_l = -\ln\sum_{n=1}^{N}\frac{e^{-u_l(\mathbf x_n)}}{\sum_k N_k\,e^{f_k - u_k(\mathbf x_n)}},
+$$
+
+the estimator of least variance among those that weigh each sample by its
+energies alone; its asymptotic covariance gives the uncertainties. Only
+differences of the $u_k$ at one sample enter, so the energies of the other
+states relative to that of the run suffice. At constant pressure the same
+holds for the Gibbs energy, the $PV$ of a sample being the same in every
+state. The samples of a state are spaced by the statistical inefficiency
+of $\partial U/\partial\lambda$ along the path [[Chodera2007]](references.md#chodera2007).
+
+**Decoupling.** `couple` selects whole molecules, $a_i = 1$ for a particle
+of the selection and 0 otherwise; a pair is decoupled when one particle is
+in it, $c_{ij} = a_i + a_j - 2a_ia_j$. With $\lambda_\text{C}$ and
+$\lambda_\text{V}$ the components `coulomb` and `vdw`, 0 for the topology
+and 1 for the selection decoupled, the Lennard-Jones of a pair is
+
+$$
+\big(1 - c_{ij}\lambda_\text{V}\big)\,u_\text{LJ}(r_A),
+\qquad
+r_A^6 = c_{ij}\,\alpha_\text{sc}\,\sigma_{ij}^6\,\lambda_\text{V}^p + r_{ij}^6,
+$$
+
+the soft-core form of Beutler et al. [[Beutler1994]](references.md#beutler1994),
+with the modifier of the cutoff taken in $r_A$: as $\lambda_\text{V} \to 1$
+the decoupled pairs may overlap, and $u_\text{LJ}(r_A)$ stays finite where
+$u_\text{LJ}(r)$ diverges. The charges of the selection scale,
+$q_i(\lambda_\text{C}) = (1 - a_i\lambda_\text{C})\,q_i$, but the interactions
+within the selection stay at full strength at every state, so that the
+decoupled end state is the molecule as in vacuum beside the solvent, and
+the free energy of decoupling is minus that of solvation with no leg in
+vacuum. Under particle mesh Ewald (Section 5) every part takes its share:
+
+| Part | With $\lambda_\text{C}$ |
+|---|---|
+| Direct sum of a pair | $(1 - c_{ij}\lambda_\text{C})\,f q_iq_j\operatorname{erfc}(\beta r)/r$ |
+| Reciprocal sum | of the charges $q_i(\lambda_\text{C})$ |
+| Excluded pairs | $-f q_i(\lambda_\text{C})\,q_j(\lambda_\text{C})\operatorname{erf}(\beta r)/r$ |
+| Pairs within the selection that are not excluded | $+\big(1 - (1 - \lambda_\text{C})^2\big)\,f q_iq_j\operatorname{erf}(\beta r)/r$ |
+| Self term, background | of the charges $q_i(\lambda_\text{C})$ and their sum |
+
+A pair within the selection thus has $f q_iq_j\big(\operatorname{erfc}(\beta r)[r < r_c] + \operatorname{erf}(\beta r)\big)/r$
+at every $\lambda_\text{C}$, its Coulomb energy within the cutoff, and its
+images in the reciprocal sum vanish with the charges. With the reaction
+field or a plain cutoff only the decoupled pairs scale. The correction for
+the dispersion (Section 5.4) is linear in $\lambda_\text{V}$ between the
+two end states, which is exact for the soft-core form, whose tail is
+$(1 - \lambda_\text{V})$ times that of the Lennard-Jones. Every other
+component $\lambda_m$ is a parameter `lambda_<name>` of the expressions of
+`[energy]` (Section 3.3), as OpenMM's global parameters are: a restraint
+switched on with $\lambda_m$, for one.
+
+**Derivatives and the other states.** The potential `@energy` of the
+steps holds $\boldsymbol\lambda$ of the run as constants, which the
+kernels fold, so a step at $\lambda_\text{C} = \lambda_\text{V} = 0$ is
+the step without `[free_energy]`. A second potential, `@alchemical`, takes
+$\boldsymbol\lambda$ as arguments and holds only what depends on it: the
+pairs of the neighbor structure masked by $c_{ij}$, the excluded pairs
+masked by $a_ia_j$, the pairs within the selection, the reciprocal sum,
+and the terms whose expressions take a component. At every energy the
+loop of the run evaluates it with `request [derivative(m), ...]` at the
+state of the run and with `request [energy]` at every state, in an
+`scf.for` over a table of the states, so that its kernels are compiled
+once; the host adds the constant terms at the volume of the cell. The
+masks keep the differences relative to the size of the perturbation
+rather than of the whole energy, but for the reciprocal sum, whose energy
+at each state is computed whole. The derivatives are those of Section 3.3:
+of the kernels of the sums, and of the reciprocal sum by the identity of
+its quadratic form,
+
+$$
+\frac{dE_\text{rec}}{d\theta} = \frac{E_\text{rec}(\mathbf q + \boldsymbol\delta) - E_\text{rec}(\mathbf q - \boldsymbol\delta)}{2},
+\qquad \boldsymbol\delta = \frac{\partial\mathbf q}{\partial\theta},
+$$
+
+exact for $E_\text{rec}(\mathbf q) = \tfrac12\mathbf q^\mathsf T A\,\mathbf q$
+with $A$ symmetric. The constant terms have their derivatives in closed
+form: the self term and the background are quadratic in
+$\lambda_\text{C}$, the correction for the dispersion linear in
+$\lambda_\text{V}$.
+
+**Validation** (`free-energy.test`, `free-energy-gpu.test`). Ethanol
+(GAFF2, AM1-BCC) in 467 TIP3P waters, at the coordinates of tleap, against
+OpenMM 8.6.1 on its Reference platform with the same Hamiltonian: charge
+offsets in its `NonbondedForce`, the pairs within the ethanol that are not
+excluded as exceptions at full strength, and the Lennard-Jones of ethanol
+and water in a `CustomNonbondedForce` with the same soft-core. Over six
+states, $\partial U/\partial\lambda_\text{C}$, $\partial U/\partial\lambda_\text{V}$,
+and the energy differences agree to $4.7\times10^{-7}$ kcal/mol, the
+printed digits, with the reaction field in double precision, and to
+$3.1\times10^{-5}$ in mixed precision on a device. With particle mesh
+Ewald on a grid of 32 they differ by up to $2.8\times10^{-3}$ kcal/mol in
+$\partial U/\partial\lambda_\text{C}$, which falls to $5\times10^{-5}$ on a
+grid of 80: MDIR's B-splines are of order 4, OpenMM's of order 5. The
+derivatives agree with central differences of the energies of the states
+beside them to $2.9\times10^{-5}$ kcal/mol ($h = 0.01$), in the Coulomb,
+the Lennard-Jones, and a component that only a bond, a term over centers,
+and a term of the positions take.
