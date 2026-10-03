@@ -239,7 +239,7 @@ func.func private @mdrt.pme_wave(%k: index, %count: index, %length: f64) -> f64 
 //
 // with w(m) = 2 for the points whose conjugate is not stored.
 func.func private @mdrt.pme_convolve(%c: memref<?xf64>, %moduli: memref<?x?xf64>,
-                                     %box: vector<3xf64>, %beta: f64, %coulomb: f64,
+                                     %box: vector<3xf64>, %beta: f64, %coulomb: f64, %dispersion: i1,
                                      %k1: index, %k2: index, %k3: index)
     -> (f64, vector<9xf64>) {
   %c0 = arith.constant 0 : index
@@ -262,6 +262,21 @@ func.func private @mdrt.pme_convolve(%c: memref<?xf64>, %moduli: memref<?x?xf64>
   %volume = arith.mulf %lxy, %lz : f64
   %piv = arith.mulf %pi, %volume : f64
   %prefactor = arith.divf %coulomb, %piv : f64
+  // The sum of the dispersion (D162): its prefactor −π^{3/2} β³ / (3V)
+  // times the factor, π / β, which turns |m| into b, and 6 π² / β², which
+  // the virial takes.
+  %pi32 = arith.constant 5.568327996831708 : f64
+  %beta3 = arith.mulf %beta2, %beta : f64
+  %pb3 = arith.mulf %pi32, %beta3 : f64
+  %three = arith.constant 3.0 : f64
+  %v3 = arith.mulf %three, %volume : f64
+  %pd0 = arith.divf %pb3, %v3 : f64
+  %pdc = arith.mulf %pd0, %coulomb : f64
+  %dprefactor = arith.negf %pdc : f64
+  %pib = arith.divf %pi, %beta : f64
+  %sqrtpi = arith.constant 1.7724538509055159 : f64
+  %six = arith.constant 6.0 : f64
+  %sixgauss = arith.mulf %six, %gauss : f64
   %h = arith.divui %k3, %c2 : index
   %h1 = arith.addi %h, %c1 : index
   %odd = arith.remui %k3, %c2 : index
@@ -291,14 +306,48 @@ func.func private @mdrt.pme_convolve(%c: memref<?xf64>, %moduli: memref<?x?xf64>
         %origin = arith.cmpf oeq, %msq, %zero : f64
         %safe = arith.select %origin, %one, %msq : f64
         %inverse = arith.divf %one, %safe : f64
-        %gm = arith.mulf %gauss, %msq : f64
-        %ngm = arith.negf %gm : f64
-        %ex = math.exp %ngm : f64
-        %exm = arith.mulf %ex, %inverse : f64
-        %pexm = arith.mulf %prefactor, %exm : f64
-        %mods = arith.mulf %mod12, %mod3 : f64
-        %bc0 = arith.mulf %pexm, %mods : f64
-        %bc = arith.select %origin, %zero, %bc0 : f64
+        // The influence function: of the Coulomb sum, nothing at m = 0;
+        // of the dispersion, B · P_d · F(b) with b = π |m| / β and
+        //   F(b) = (1 − 2b²) exp(−b²) + 2 √π b³ erfc(b)
+        // [Essmann1995], m = 0 included. `factor` and `vd` are the parts
+        // of the virial: E_m (δ − factor m m) − ½ w vd |G|² m m.
+        %bc, %factor, %vd = scf.if %dispersion -> (f64, f64, f64) {
+          %mods = arith.mulf %mod12, %mod3 : f64
+          %mabs = math.sqrt %msq : f64
+          %bd = arith.mulf %pib, %mabs : f64
+          %bd2 = arith.mulf %bd, %bd : f64
+          %nbd2 = arith.negf %bd2 : f64
+          %ebd = math.exp %nbd2 : f64
+          %erfcb = math.erfc %bd : f64
+          %spb = arith.mulf %sqrtpi, %bd : f64
+          %sbd = arith.mulf %spb, %erfcb : f64
+          %twob2 = arith.mulf %two, %bd2 : f64
+          %omt = arith.subf %one, %twob2 : f64
+          %fa = arith.mulf %omt, %ebd : f64
+          %fb2 = arith.mulf %twob2, %sbd : f64
+          %fd = arith.addf %fa, %fb2 : f64
+          %pmods = arith.mulf %dprefactor, %mods : f64
+          %dbc = arith.mulf %pmods, %fd : f64
+          // −∂F/∂ε_a: 6 π² / β² (exp(−b²) − √π b erfc(b)) m_a m_a.
+          %vd0 = arith.subf %ebd, %sbd : f64
+          %vd1 = arith.mulf %sixgauss, %vd0 : f64
+          %dvd = arith.mulf %pmods, %vd1 : f64
+          scf.yield %dbc, %zero, %dvd : f64, f64, f64
+        } else {
+          %gm = arith.mulf %gauss, %msq : f64
+          %ngm = arith.negf %gm : f64
+          %ex = math.exp %ngm : f64
+          %exm = arith.mulf %ex, %inverse : f64
+          %pexm = arith.mulf %prefactor, %exm : f64
+          %mods = arith.mulf %mod12, %mod3 : f64
+          %bc0 = arith.mulf %pexm, %mods : f64
+          %bcc = arith.select %origin, %zero, %bc0 : f64
+          // Nothing at m = 0, whose influence is 0.
+          %sum = arith.addf %inverse, %gauss : f64
+          %factor0 = arith.mulf %two, %sum : f64
+          %factorc = arith.select %origin, %zero, %factor0 : f64
+          scf.yield %bcc, %factorc, %zero : f64, f64, f64
+        }
         %base1 = arith.muli %row, %h1 : index
         %base2 = arith.addi %base1, %z : index
         %re_at = arith.muli %base2, %c2 : index
@@ -317,10 +366,7 @@ func.func private @mdrt.pme_convolve(%c: memref<?xf64>, %moduli: memref<?x?xf64>
         %hw = arith.mulf %half, %weight : f64
         %hwb = arith.mulf %hw, %bc : f64
         %em = arith.mulf %hwb, %g2 : f64
-        // The virial of the point; nothing at m = 0, whose influence is 0.
-        %sum = arith.addf %inverse, %gauss : f64
-        %factor0 = arith.mulf %two, %sum : f64
-        %factor = arith.select %origin, %zero, %factor0 : f64
+        // The virial of the point.
         %mv = vector.from_elements %m1, %m2, %m3 : vector<3xf64>
         %mm = vector.outerproduct %mv, %mv : vector<3xf64>, vector<3xf64>
         %mmf = vector.shape_cast %mm : vector<3x3xf64> to vector<9xf64>
@@ -328,7 +374,12 @@ func.func private @mdrt.pme_convolve(%c: memref<?xf64>, %moduli: memref<?x?xf64>
         %scaled = arith.mulf %fb, %mmf : vector<9xf64>
         %diff = arith.subf %identity, %scaled : vector<9xf64>
         %eb9 = vector.broadcast %em : f64 to vector<9xf64>
-        %wm = arith.mulf %eb9, %diff : vector<9xf64>
+        %wmc = arith.mulf %eb9, %diff : vector<9xf64>
+        %hvd = arith.mulf %hw, %vd : f64
+        %evd = arith.mulf %hvd, %g2 : f64
+        %evb = vector.broadcast %evd : f64 to vector<9xf64>
+        %evm = arith.mulf %evb, %mmf : vector<9xf64>
+        %wm = arith.subf %wmc, %evm : vector<9xf64>
         %w3n = arith.addf %w3, %wm : vector<9xf64>
         %e3n = arith.addf %e3, %em : f64
         // The product with the influence function, for the forces.
@@ -579,7 +630,7 @@ func.func private @mdrt.pme_spread_triclinic(%x: memref<?x3x!pme_pos>, %q: memre
 //
 // with w(m) = 2 for the points whose conjugate is not stored.
 func.func private @mdrt.pme_convolve_triclinic(%c: memref<?xf64>, %moduli: memref<?x?xf64>,
-                                     %box: vector<6xf64>, %beta: f64, %coulomb: f64,
+                                     %box: vector<6xf64>, %beta: f64, %coulomb: f64, %dispersion: i1,
                                      %k1: index, %k2: index, %k3: index)
     -> (f64, vector<9xf64>) {
   %c0 = arith.constant 0 : index
@@ -624,6 +675,21 @@ func.func private @mdrt.pme_convolve_triclinic(%c: memref<?xf64>, %moduli: memre
   %volume = arith.mulf %lxy, %lz : f64
   %piv = arith.mulf %pi, %volume : f64
   %prefactor = arith.divf %coulomb, %piv : f64
+  // The sum of the dispersion (D162): its prefactor −π^{3/2} β³ / (3V)
+  // times the factor, π / β, which turns |m| into b, and 6 π² / β², which
+  // the virial takes.
+  %pi32 = arith.constant 5.568327996831708 : f64
+  %beta3 = arith.mulf %beta2, %beta : f64
+  %pb3 = arith.mulf %pi32, %beta3 : f64
+  %three = arith.constant 3.0 : f64
+  %v3 = arith.mulf %three, %volume : f64
+  %pd0 = arith.divf %pb3, %v3 : f64
+  %pdc = arith.mulf %pd0, %coulomb : f64
+  %dprefactor = arith.negf %pdc : f64
+  %pib = arith.divf %pi, %beta : f64
+  %sqrtpi = arith.constant 1.7724538509055159 : f64
+  %six = arith.constant 6.0 : f64
+  %sixgauss = arith.mulf %six, %gauss : f64
   %h = arith.divui %k3, %c2 : index
   %h1 = arith.addi %h, %c1 : index
   %odd = arith.remui %k3, %c2 : index
@@ -662,14 +728,48 @@ func.func private @mdrt.pme_convolve_triclinic(%c: memref<?xf64>, %moduli: memre
         %origin = arith.cmpf oeq, %msq, %zero : f64
         %safe = arith.select %origin, %one, %msq : f64
         %inverse = arith.divf %one, %safe : f64
-        %gm = arith.mulf %gauss, %msq : f64
-        %ngm = arith.negf %gm : f64
-        %ex = math.exp %ngm : f64
-        %exm = arith.mulf %ex, %inverse : f64
-        %pexm = arith.mulf %prefactor, %exm : f64
-        %mods = arith.mulf %mod12, %mod3 : f64
-        %bc0 = arith.mulf %pexm, %mods : f64
-        %bc = arith.select %origin, %zero, %bc0 : f64
+        // The influence function: of the Coulomb sum, nothing at m = 0;
+        // of the dispersion, B · P_d · F(b) with b = π |m| / β and
+        //   F(b) = (1 − 2b²) exp(−b²) + 2 √π b³ erfc(b)
+        // [Essmann1995], m = 0 included. `factor` and `vd` are the parts
+        // of the virial: E_m (δ − factor m m) − ½ w vd |G|² m m.
+        %bc, %factor, %vd = scf.if %dispersion -> (f64, f64, f64) {
+          %mods = arith.mulf %mod12, %mod3 : f64
+          %mabs = math.sqrt %msq : f64
+          %bd = arith.mulf %pib, %mabs : f64
+          %bd2 = arith.mulf %bd, %bd : f64
+          %nbd2 = arith.negf %bd2 : f64
+          %ebd = math.exp %nbd2 : f64
+          %erfcb = math.erfc %bd : f64
+          %spb = arith.mulf %sqrtpi, %bd : f64
+          %sbd = arith.mulf %spb, %erfcb : f64
+          %twob2 = arith.mulf %two, %bd2 : f64
+          %omt = arith.subf %one, %twob2 : f64
+          %fa = arith.mulf %omt, %ebd : f64
+          %fb2 = arith.mulf %twob2, %sbd : f64
+          %fd = arith.addf %fa, %fb2 : f64
+          %pmods = arith.mulf %dprefactor, %mods : f64
+          %dbc = arith.mulf %pmods, %fd : f64
+          // −∂F/∂ε_a: 6 π² / β² (exp(−b²) − √π b erfc(b)) m_a m_a.
+          %vd0 = arith.subf %ebd, %sbd : f64
+          %vd1 = arith.mulf %sixgauss, %vd0 : f64
+          %dvd = arith.mulf %pmods, %vd1 : f64
+          scf.yield %dbc, %zero, %dvd : f64, f64, f64
+        } else {
+          %gm = arith.mulf %gauss, %msq : f64
+          %ngm = arith.negf %gm : f64
+          %ex = math.exp %ngm : f64
+          %exm = arith.mulf %ex, %inverse : f64
+          %pexm = arith.mulf %prefactor, %exm : f64
+          %mods = arith.mulf %mod12, %mod3 : f64
+          %bc0 = arith.mulf %pexm, %mods : f64
+          %bcc = arith.select %origin, %zero, %bc0 : f64
+          // Nothing at m = 0, whose influence is 0.
+          %sum = arith.addf %inverse, %gauss : f64
+          %factor0 = arith.mulf %two, %sum : f64
+          %factorc = arith.select %origin, %zero, %factor0 : f64
+          scf.yield %bcc, %factorc, %zero : f64, f64, f64
+        }
         %base1 = arith.muli %row, %h1 : index
         %base2 = arith.addi %base1, %z : index
         %re_at = arith.muli %base2, %c2 : index
@@ -688,10 +788,7 @@ func.func private @mdrt.pme_convolve_triclinic(%c: memref<?xf64>, %moduli: memre
         %hw = arith.mulf %half, %weight : f64
         %hwb = arith.mulf %hw, %bc : f64
         %em = arith.mulf %hwb, %g2 : f64
-        // The virial of the point; nothing at m = 0, whose influence is 0.
-        %sum = arith.addf %inverse, %gauss : f64
-        %factor0 = arith.mulf %two, %sum : f64
-        %factor = arith.select %origin, %zero, %factor0 : f64
+        // The virial of the point.
         %mv = vector.from_elements %m1, %m2, %m3 : vector<3xf64>
         %mm = vector.outerproduct %mv, %mv : vector<3xf64>, vector<3xf64>
         %mmf = vector.shape_cast %mm : vector<3x3xf64> to vector<9xf64>
@@ -699,7 +796,12 @@ func.func private @mdrt.pme_convolve_triclinic(%c: memref<?xf64>, %moduli: memre
         %scaled = arith.mulf %fb, %mmf : vector<9xf64>
         %diff = arith.subf %identity, %scaled : vector<9xf64>
         %eb9 = vector.broadcast %em : f64 to vector<9xf64>
-        %wm = arith.mulf %eb9, %diff : vector<9xf64>
+        %wmc = arith.mulf %eb9, %diff : vector<9xf64>
+        %hvd = arith.mulf %hw, %vd : f64
+        %evd = arith.mulf %hvd, %g2 : f64
+        %evb = vector.broadcast %evd : f64 to vector<9xf64>
+        %evm = arith.mulf %evb, %mmf : vector<9xf64>
+        %wm = arith.subf %wmc, %evm : vector<9xf64>
         %w3n = arith.addf %w3, %wm : vector<9xf64>
         %e3n = arith.addf %e3, %em : f64
         // The product with the influence function, for the forces.

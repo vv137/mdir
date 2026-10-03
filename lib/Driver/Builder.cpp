@@ -89,7 +89,9 @@ private:
     GeneralizedBorn = 16384,
     Surface = 32768,
     ExternalTerms = 65536,
-    AllTerms = 131071,
+    LennardJonesExcluded = 131072,
+    LennardJonesReciprocal = 262144,
+    AllTerms = 524287,
   };
   /// Emits the potential `name` of the terms `terms` of the topology; of
   /// the terms given by expressions over tuples, pairs, or positions, only
@@ -136,6 +138,15 @@ private:
   /// β, the grid, the influence function, and the constant terms of
   /// particle mesh Ewald (docs/pme-m1.md).
   llvm::Error collectPME();
+  /// The grid of particle mesh Ewald: given, or from the largest spacing in
+  /// Å; and the table `name` of the factors of its influence function along
+  /// each edge.
+  llvm::Error collectMesh(StringRef name, const int64_t (&given)[3],
+                          double spacing, int64_t order, bool optimal,
+                          int64_t (&grid)[3]);
+  /// β, the grid, the coefficients, and the self term of particle mesh
+  /// Ewald for the dispersion (D162).
+  llvm::Error collectLJPME();
   void emitPrograms();
   void emitEntry();
   /// Emits `@descend`, one step of steepest descent that moves no particle
@@ -1337,6 +1348,9 @@ llvm::Error Builder::collectTopology() {
   if (control.pme)
     if (llvm::Error error = collectPME())
       return error;
+  if (control.ljpme)
+    if (llvm::Error error = collectLJPME())
+      return error;
   // The reaction field (D140): its self term, −c f Σ q² / 2, which with
   // the terms of the excluded pairs makes the field act on every pair of
   // charges within the cutoff, those of one molecule as well: the
@@ -1473,52 +1487,11 @@ llvm::Error Builder::collectPME() {
     beta = 0.5 * (low + high);
   }
 
-  // The grid: given, or no wider than the largest spacing in the cell of
-  // the file of coordinates. The grid stays as the barostat changes the
-  // cell, finer as the cell shrinks and coarser as it grows.
   int64_t grid[3];
-  for (int k = 0; k != 3; ++k) {
-    grid[k] = control.pmeGrid[k];
-    double edge = system.inputBox[k] > 0.0 ? system.inputBox[k] : system.box[k];
-    // A triclinic cell is spaced along its vectors: |a|, |b|, |c|.
-    if (isTriclinic())
-      edge = k == 0 ? system.box[0]
-             : k == 1 ? std::hypot(system.tilt[0], system.box[1])
-                      : std::sqrt(system.tilt[1] * system.tilt[1] +
-                                  system.tilt[2] * system.tilt[2] +
-                                  system.box[2] * system.box[2]);
-    if (grid[k] == 0)
-      grid[k] = getSmoothSize(static_cast<int64_t>(std::ceil(
-          edge / (control.pmeMaxSpacing * units::length) - 1e-9)));
-    if (grid[k] < 2 * control.pmeOrder)
-      return llvm::createStringError(
-          llvm::inconvertibleErrorCode(),
-          "the grid of particle mesh Ewald has %lld points along an edge, "
-          "fewer than twice the order %lld",
-          static_cast<long long>(grid[k]),
-          static_cast<long long>(control.pmeOrder));
-  }
-
-  // The factors of the influence function along each edge, which do not
-  // depend on the cell: |b(k)|² of the B-splines, times the factor of the
-  // aliasing if it is taken. The program computes the rest from the cell.
-  int64_t longest = std::max({grid[0], grid[1], grid[2]});
-  Program::Table table;
-  table.name = "pme_moduli";
-  table.count = 3;
-  table.columns = longest;
-  table.values.assign(3 * longest, 0.0);
-  for (int k = 0; k != 3; ++k) {
-    std::vector<double> moduli = getSplineModuli(grid[k], control.pmeOrder);
-    if (control.pmeOptimal) {
-      std::vector<double> factors = getAliasFactors(grid[k], control.pmeOrder);
-      for (int64_t i = 0; i != grid[k]; ++i)
-        moduli[i] *= factors[i];
-    }
-    std::copy(moduli.begin(), moduli.end(),
-              table.values.begin() + k * longest);
-  }
-  program.tables.push_back(std::move(table));
+  if (llvm::Error error =
+          collectMesh("pme_moduli", control.pmeGrid, control.pmeMaxSpacing,
+                      control.pmeOrder, control.pmeOptimal, grid))
+    return error;
 
   // The grid holds charges in fixed point at the scale 2^40, up to about
   // 8e6 e at a point (D70); a charge beyond 100 e is not of a molecule.
@@ -1548,6 +1521,132 @@ llvm::Error Builder::collectPME() {
   program.pmeBeta = beta;
   for (int k = 0; k != 3; ++k)
     program.pmeGrid[k] = grid[k];
+  return llvm::Error::success();
+}
+
+llvm::Error Builder::collectMesh(StringRef name, const int64_t (&given)[3],
+                                 double spacing, int64_t order, bool optimal,
+                                 int64_t (&grid)[3]) {
+  // The grid: given, or no wider than the largest spacing in the cell of
+  // the file of coordinates. The grid stays as the barostat changes the
+  // cell, finer as the cell shrinks and coarser as it grows.
+  for (int k = 0; k != 3; ++k) {
+    grid[k] = given[k];
+    double edge = system.inputBox[k] > 0.0 ? system.inputBox[k] : system.box[k];
+    // A triclinic cell is spaced along its vectors: |a|, |b|, |c|.
+    if (isTriclinic())
+      edge = k == 0 ? system.box[0]
+             : k == 1 ? std::hypot(system.tilt[0], system.box[1])
+                      : std::sqrt(system.tilt[1] * system.tilt[1] +
+                                  system.tilt[2] * system.tilt[2] +
+                                  system.box[2] * system.box[2]);
+    if (grid[k] == 0)
+      grid[k] = getSmoothSize(static_cast<int64_t>(std::ceil(
+          edge / (spacing * units::length) - 1e-9)));
+    if (grid[k] < 2 * order)
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "the grid of particle mesh Ewald has %lld points along an edge, "
+          "fewer than twice the order %lld",
+          static_cast<long long>(grid[k]), static_cast<long long>(order));
+  }
+
+  // The factors of the influence function along each edge, which do not
+  // depend on the cell: |b(k)|² of the B-splines, times the factor of the
+  // aliasing if it is taken. The program computes the rest from the cell.
+  int64_t longest = std::max({grid[0], grid[1], grid[2]});
+  Program::Table table;
+  table.name = name.str();
+  table.count = 3;
+  table.columns = longest;
+  table.values.assign(3 * longest, 0.0);
+  for (int k = 0; k != 3; ++k) {
+    std::vector<double> moduli = getSplineModuli(grid[k], order);
+    if (optimal) {
+      std::vector<double> factors = getAliasFactors(grid[k], order);
+      for (int64_t i = 0; i != grid[k]; ++i)
+        moduli[i] *= factors[i];
+    }
+    std::copy(moduli.begin(), moduli.end(),
+              table.values.begin() + k * longest);
+  }
+  program.tables.push_back(std::move(table));
+  return llvm::Error::success();
+}
+
+/// g(x) = exp(−x²) (1 + x² + x⁴/2), the share of the dispersion −c_i c_j /
+/// r⁶ at x = β r that the direct terms of particle mesh Ewald keep
+/// [Essmann1995].
+static double getDispersionScreen(double x) {
+  double x2 = x * x;
+  return std::exp(-x2) * (1.0 + x2 + 0.5 * x2 * x2);
+}
+
+llvm::Error Builder::collectLJPME() {
+  const Topology &topology = *system.topology;
+  double rc = control.cutoffDistance * units::length;
+
+  // β: given, or such that g(β rc) is the tolerance, by bisection; g
+  // falls from 1 at 0.
+  double beta = control.ljpmeAlpha / units::length;
+  if (beta == 0.0) {
+    double low = 0.0, high = 1.0;
+    while (getDispersionScreen(high * rc) > control.ljpmeTolerance)
+      high *= 2.0;
+    for (int i = 0; i != 100; ++i) {
+      double middle = 0.5 * (low + high);
+      if (getDispersionScreen(middle * rc) > control.ljpmeTolerance)
+        low = middle;
+      else
+        high = middle;
+    }
+    beta = 0.5 * (low + high);
+  }
+
+  int64_t grid[3];
+  if (llvm::Error error =
+          collectMesh("ljpme_moduli", control.ljpmeGrid,
+                      control.ljpmeMaxSpacing, control.ljpmeOrder,
+                      /*optimal=*/false, grid))
+    return error;
+
+  // The coefficient of each type, c = 2 √ε σ³ of the type with itself, so
+  // that c_a c_b is the C6 of the pair by the geometric rule of both
+  // parameters; the grid takes those of the particles, the direct terms
+  // and the excluded pairs those of the pairs of types. For the pairs of
+  // the Lorentz–Berthelot rule or set apart (NBFIX) the direct terms hold
+  // the Lennard-Jones of the pair itself within the cutoff and take out
+  // what the grid adds there [Wennberg2013].
+  unsigned numTypes = topology.getNumTypes();
+  std::vector<double> coefficients(numTypes);
+  for (unsigned a = 0; a != numTypes; ++a) {
+    double sigma = topology.sigma[a * numTypes + a];
+    double epsilon = topology.epsilon[a * numTypes + a];
+    coefficients[a] = 2.0 * std::sqrt(std::max(epsilon, 0.0)) *
+                      sigma * sigma * sigma;
+  }
+  Program::Field field;
+  field.name = "ljpme_c";
+  double squares = 0.0;
+  for (unsigned type : topology.types) {
+    field.values.push_back(coefficients[type]);
+    squares += coefficients[type] * coefficients[type];
+  }
+  program.fields.push_back(std::move(field));
+  std::vector<double> products(numTypes * numTypes);
+  for (unsigned a = 0; a != numTypes; ++a)
+    for (unsigned b = 0; b != numTypes; ++b)
+      products[a * numTypes + b] = coefficients[a] * coefficients[b];
+  program.tables.push_back({"ljpme_c6", numTypes, std::move(products)});
+
+  // The self term: the grid sums −c_i² (1 − g(β r)) / r⁶ over each
+  // particle with itself, −c_i² β⁶ / 6 at r = 0, half of it each.
+  double beta3 = beta * beta * beta;
+  program.ljpme = true;
+  program.ljpmeSelfEnergy = beta3 * beta3 / 12.0 * squares;
+  program.ljpmeBeta = beta;
+  for (int k = 0; k != 3; ++k)
+    program.ljpmeGrid[k] = grid[k];
   return llvm::Error::success();
 }
 
@@ -2431,6 +2530,46 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
             "!table, i32, i32 -> f64\n";
       emitLennardJones("%sigma", "%epsilon", "%lj", control.truncation);
       value = "%lj";
+      if (program.ljpme) {
+        // The dispersion that the grid sums within the cutoff,
+        // −c_i c_j (1 − g(β r)) / r⁶, taken out again, so that the pair
+        // has its own Lennard-Jones there [Essmann1995, Wennberg2013]
+        // (D162); shifted with it to 0 at the cutoff if it is.
+        double beta = program.ljpmeBeta;
+        os << "    %lp_c6 = md.lookup %t_ljpme_c6[%type_i, %type_j] : "
+              "!table, i32, i32 -> f64\n"
+           << "    %lp_beta = arith.constant " << formatReal(beta)
+           << " : f64\n"
+           << "    %lp_x = arith.mulf %lp_beta, %r : f64\n"
+           << "    %lp_x2 = arith.mulf %lp_x, %lp_x : f64\n"
+           << "    %lp_nx2 = arith.negf %lp_x2 : f64\n"
+           << "    %lp_e = math.exp %lp_nx2 : f64\n"
+           << "    %lp_x4 = arith.mulf %lp_x2, %lp_x2 : f64\n"
+           << "    %lp_half = arith.constant 0.5 : f64\n"
+           << "    %lp_h4 = arith.mulf %lp_half, %lp_x4 : f64\n"
+           << "    %lp_one = arith.constant 1.0 : f64\n"
+           << "    %lp_p1 = arith.addf %lp_one, %lp_x2 : f64\n"
+           << "    %lp_p = arith.addf %lp_p1, %lp_h4 : f64\n"
+           << "    %lp_g = arith.mulf %lp_e, %lp_p : f64\n"
+           << "    %lp_kept = arith.subf %lp_one, %lp_g : f64\n"
+           << "    %lp_r2 = arith.mulf %r, %r : f64\n"
+           << "    %lp_r4 = arith.mulf %lp_r2, %lp_r2 : f64\n"
+           << "    %lp_r6 = arith.mulf %lp_r4, %lp_r2 : f64\n"
+           << "    %lp_cr = arith.divf %lp_c6, %lp_r6 : f64\n"
+           << "    %lp_d = arith.mulf %lp_cr, %lp_kept : f64\n";
+        std::string correction = "%lp_d";
+        if (control.truncation == Truncation::Shift) {
+          double shift = (1.0 - getDispersionScreen(beta * cutoff)) /
+                         std::pow(cutoff, 6.0);
+          os << "    %lp_shift = arith.constant " << formatReal(shift)
+             << " : f64\n"
+             << "    %lp_cs = arith.mulf %lp_c6, %lp_shift : f64\n"
+             << "    %lp_ds = arith.subf %lp_d, %lp_cs : f64\n";
+          correction = "%lp_ds";
+        }
+        os << "    %ljp = arith.addf %lj, " << correction << " : f64\n";
+        value = "%ljp";
+      }
     }
     if (coulomb) {
       os << "    %f = arith.constant " << formatReal(coulombInternal)
@@ -2471,7 +2610,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
       if (value.empty()) {
         value = "%coulomb";
       } else {
-        os << "    %k = arith.addf %lj, %coulomb : f64\n";
+        os << "    %k = arith.addf " << value << ", %coulomb : f64\n";
         value = "%k";
       }
     }
@@ -2527,6 +2666,73 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
        << "    md.yield %e : f64\n"
        << "  } : !rel_excluded, !vec -> f64\n";
     add("excluded");
+  }
+  if (program.ljpme && (terms & LennardJonesExcluded) && has("excluded")) {
+    // The excluded pairs take their share of the grid of the dispersion
+    // out again: c_i c_j P(3, β² r²) / r⁶ with P(3, y) = 1 − exp(−y) (1 +
+    // y + y²/2) = 1 − g(β r) (D162). Below y = 1, P is taken from its
+    // series exp(−y) y³ Σ_k y^k / (k + 3)!, which has no cancellation;
+    // the pairs of a molecule are close, where 1 − g is small.
+    os << "  %u_lj_excluded = md.sum_tuples %r_excluded, %x, %cell "
+          "coordinates(distance(0, 1))\n"
+       << "      gather(%p_type : !ids) {\n"
+       << "  ^bb0(%r: f64, %type_i: i32, %type_j: i32):\n"
+       << "    %c6 = md.lookup %t_ljpme_c6[%type_i, %type_j] : !table, i32, "
+          "i32 -> f64\n"
+       << "    %beta = arith.constant " << formatReal(program.ljpmeBeta)
+       << " : f64\n"
+       << "    %bx = arith.mulf %beta, %r : f64\n"
+       << "    %y = arith.mulf %bx, %bx : f64\n"
+       << "    %ny = arith.negf %y : f64\n"
+       << "    %ey = math.exp %ny : f64\n"
+       << "    %one = arith.constant 1.0 : f64\n"
+       << "    %half = arith.constant 0.5 : f64\n";
+    // The series, by Horner's rule, to k = 10: the rest is below 1e-10 of
+    // it.
+    double factorial = 6.0;
+    std::vector<double> coefficients;
+    for (int k = 0; k <= 10; ++k) {
+      coefficients.push_back(1.0 / factorial);
+      factorial *= k + 4;
+    }
+    os << "    %s10 = arith.constant " << formatReal(coefficients[10])
+       << " : f64\n";
+    for (int k = 9; k >= 0; --k)
+      os << "    %a" << k << " = arith.constant "
+         << formatReal(coefficients[k]) << " : f64\n"
+         << "    %sy" << k << " = arith.mulf %s" << k + 1 << ", %y : f64\n"
+         << "    %s" << k << " = arith.addf %sy" << k << ", %a" << k
+         << " : f64\n";
+    os << "    %y2 = arith.mulf %y, %y : f64\n"
+       << "    %y3 = arith.mulf %y2, %y : f64\n"
+       << "    %ey3 = arith.mulf %ey, %y3 : f64\n"
+       << "    %series = arith.mulf %ey3, %s0 : f64\n"
+       << "    %hy2 = arith.mulf %half, %y2 : f64\n"
+       << "    %p1 = arith.addf %one, %y : f64\n"
+       << "    %p = arith.addf %p1, %hy2 : f64\n"
+       << "    %g = arith.mulf %ey, %p : f64\n"
+       << "    %closed = arith.subf %one, %g : f64\n"
+       << "    %small = arith.cmpf olt, %y, %one : f64\n"
+       << "    %kept = arith.select %small, %series, %closed : f64\n"
+       << "    %r2 = arith.mulf %r, %r : f64\n"
+       << "    %r4 = arith.mulf %r2, %r2 : f64\n"
+       << "    %r6 = arith.mulf %r4, %r2 : f64\n"
+       << "    %cr = arith.divf %c6, %r6 : f64\n"
+       << "    %e = arith.mulf %cr, %kept : f64\n"
+       << "    md.yield %e : f64\n"
+       << "  } : !rel_excluded, !vec -> f64\n";
+    add("lj_excluded");
+  }
+  if (program.ljpme && (terms & LennardJonesReciprocal)) {
+    // The grid of the dispersion (D162), of the coefficients c_i.
+    os << "  %u_lj_reciprocal, %f_lj_reciprocal, %w_lj_reciprocal = "
+          "md.reciprocal %x, %p_ljpme_c, %cell, %t_ljpme_moduli\n"
+       << "      grid([" << program.ljpmeGrid[0] << ", "
+       << program.ljpmeGrid[1] << ", " << program.ljpmeGrid[2]
+       << "]) order(" << control.ljpmeOrder << ") beta("
+       << formatReal(program.ljpmeBeta) << ") coulomb(1.0) dispersion\n"
+       << "      : !vec, !real, !grid -> f64, !vec, vector<9xf64>\n";
+    add("lj_reciprocal");
   }
   if (program.pme && (terms & CoulombReciprocal)) {
     os << "  %u_reciprocal, %f_reciprocal, %w_reciprocal = md.reciprocal %x, "
@@ -2696,7 +2902,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
       if (value.empty()) {
         value = "%coulomb";
       } else {
-        os << "    %k = arith.addf %lj, %coulomb : f64\n";
+        os << "    %k = arith.addf " << value << ", %coulomb : f64\n";
         value = "%k";
       }
     }
@@ -6246,7 +6452,7 @@ void Builder::emitTerms(StringRef x) {
   int born = static_cast<int>(system.bornTermNames.size());
   int external = static_cast<int>(system.topology->externalTerms.size());
   int size =
-      12 + custom + pairs + born + external + (hasRestraints() ? 1 : 0);
+      14 + custom + pairs + born + external + (hasRestraints() ? 1 : 0);
   std::string type = "memref<" + std::to_string(size) + "xf64>";
   os << "  %terms = memref.alloca() : " << type << "\n";
   int index = 0;
@@ -6254,7 +6460,7 @@ void Builder::emitTerms(StringRef x) {
        {"term_lj", "term_coulomb", "term_bonds", "term_angles",
         "term_dihedrals", "term_lj14", "term_coulomb14", "term_cmap",
         "term_excluded", "term_reciprocal", "term_urey_bradley",
-        "term_impropers"}) {
+        "term_impropers", "term_lj_excluded", "term_lj_reciprocal"}) {
     os << "  %" << name << " = md.evaluate @" << name << "(" << x << ", %cell"
        << getFieldValues() << getTimeValue("%time0") << ") request [energy]\n"
        << "      : (!vec, !md.cell" << getFieldTypes() << getTimeType()
@@ -6955,7 +7161,9 @@ llvm::Error Builder::build() {
             {"term_excluded", CoulombExcluded},
             {"term_reciprocal", CoulombReciprocal},
             {"term_urey_bradley", UreyBradleys},
-            {"term_impropers", HarmonicImpropers}})
+            {"term_impropers", HarmonicImpropers},
+            {"term_lj_excluded", LennardJonesExcluded},
+            {"term_lj_reciprocal", LennardJonesReciprocal}})
         emitTopologyPotential(name, term);
     if (!isRestart())
       for (size_t k = 0, e = system.topology->tupleTerms.size(); k != e; ++k)

@@ -146,6 +146,10 @@ struct Output {
   double coulombConstantVirial = 0.0;
   /// Of which the self term, which does not depend on the volume.
   double coulombSelfEnergy = 0.0;
+  /// Particle mesh Ewald of the dispersion (D162): its self term, which
+  /// does not depend on the volume either.
+  bool ljpme = false;
+  double ljpmeSelfEnergy = 0.0;
 
   /// The constants at the volume `volume`.
   double getDispersionEnergy() const {

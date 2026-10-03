@@ -470,7 +470,7 @@ LogicalResult Converter::convert(Operation *op) {
         reciprocal.getCell(), reciprocal.getModuli(), /*out=*/Value(),
         /*scratch=*/ValueRange(), reciprocal.getGridAttr(),
         reciprocal.getOrderAttr(), reciprocal.getBetaAttr(),
-        reciprocal.getCoulombAttr());
+        reciprocal.getCoulombAttr(), reciprocal.getDispersionAttr());
     reciprocal.getEnergy().replaceAllUsesWith(converted.getEnergy());
     reciprocal.getVirial().replaceAllUsesWith(converted.getVirial());
     reciprocal.getForces().replaceAllUsesWith(converted.getForces());

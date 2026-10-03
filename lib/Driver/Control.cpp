@@ -91,6 +91,11 @@ private:
   Error readInput(const toml::table &table);
   Error checkIntervals(const toml::table &table);
   Error readPME(const toml::table &table);
+  Error readLJPME(const toml::table &table);
+  /// The entries that the grids of particle mesh Ewald share: β, the
+  /// tolerance that gives it, the grid or its largest spacing, the order.
+  Error readMesh(const toml::table &table, double &beta, double &tolerance,
+                 int64_t (&grid)[3], double &spacing, int64_t &order);
   Error readOutput(const toml::table &table);
   Error readThermostat(const toml::table &table);
   Error readBarostat(const toml::table &table);
@@ -1067,7 +1072,8 @@ Error Reader::readEnergy(const toml::table &table) {
           table, "energy",
           {"cutoff", "switch_distance", "pairlist_distance",
            "pruned_distance", "rebuild_interval", "lennard_jones_modifier", "coulomb_modifier", "reaction_field_dielectric", "implicit_solvent", "solvent_dielectric", "solute_dielectric", "surface_area_energy", "salt_concentration", "born_radius_cutoff", "born_radii", "pair", "bond", "angle", "dihedral", "external", "function", "type",
-           "triplet", "pair_override", "dispersion_correction", "electrostatics"},
+           "triplet", "pair_override", "dispersion_correction", "electrostatics",
+           "lennard_jones"},
           {}))
     return error;
 
@@ -1185,8 +1191,8 @@ Error Reader::readEnergy(const toml::table &table) {
   // run, and the electrostatics are a cutoff or particle mesh Ewald.
   bool hasTopology = control.hasTopology();
   for (StringRef key :
-       {"dispersion_correction", "electrostatics", "coulomb_modifier",
-        "reaction_field_dielectric", "implicit_solvent",
+       {"dispersion_correction", "electrostatics", "lennard_jones",
+        "coulomb_modifier", "reaction_field_dielectric", "implicit_solvent",
         "solvent_dielectric", "solute_dielectric", "surface_area_energy",
         "salt_concentration", "born_radius_cutoff", "born_radii"})
     if (!hasTopology && table.contains(std::string_view(key)))
@@ -1206,6 +1212,27 @@ Error Reader::readEnergy(const toml::table &table) {
     return error;
   control.pme = electrostatic == 1;
   control.reactionField = electrostatic == 2;
+  // The dispersion by particle mesh Ewald (D162), whose grid holds what
+  // the correction for the dispersion would add: the correction is off.
+  if (Error error = readChoice<bool>(table, "lennard_jones", control.ljpme,
+                                     {{"CUTOFF", false}, {"PME", true}}))
+    return error;
+  if (control.ljpme) {
+    if (control.topologyDispersionGiven &&
+        control.topologyDispersion != DispersionCorrection::None)
+      return fail(*table.get("dispersion_correction"),
+                  "'lennard_jones = \"PME\"' sums the dispersion beyond the "
+                  "cutoff on its grid; give 'dispersion_correction = "
+                  "\"NONE\"' or leave it out");
+    control.topologyDispersion = DispersionCorrection::None;
+    if (control.truncation != Truncation::None &&
+        control.truncation != Truncation::Shift)
+      return fail(table, "'lennard_jones = \"PME\"' takes "
+                         "'lennard_jones_modifier = \"NONE\"' or "
+                         "\"POTENTIAL_SHIFT\", which shifts its direct sum "
+                         "to 0 at the cutoff; a switch would leave out what "
+                         "the grid does not hold");
+  }
   // The reaction field (D140): the permittivity beyond the cutoff, 1 or
   // more, or 0 for a conductor, as the file must say.
   if (control.reactionField) {
@@ -1243,6 +1270,9 @@ Error Reader::readEnergy(const toml::table &table) {
       return fail(*table.get(std::string_view(key)),
                   "'" + key + "' is for 'implicit_solvent'");
   if (born) {
+    if (control.ljpme)
+      return fail(table, "generalized Born takes the Lennard-Jones of a "
+                         "plain cutoff, 'lennard_jones = \"CUTOFF\"'");
     if (control.pme || control.reactionField)
       return fail(table, "generalized Born takes the Coulomb of a plain "
                          "cutoff, 'electrostatics = \"CUTOFF\"'; its "
@@ -1396,44 +1426,62 @@ Error Reader::readEnergy(const toml::table &table) {
   return Error::success();
 }
 
+Error Reader::readMesh(const toml::table &table, double &beta,
+                       double &tolerance, int64_t (&grid)[3],
+                       double &spacing, int64_t &order) {
+  if (Error error = readPositive(table, "beta", beta))
+    return error;
+  if (Error error = readPositive(table, "tolerance", tolerance))
+    return error;
+  if (!(tolerance < 1.0))
+    return fail(*table.get("tolerance"),
+                "expected a tolerance less than 1 for 'tolerance'");
+  if (const toml::node *node = table.get("grid")) {
+    const toml::array *points = node->as_array();
+    if (!points || points->size() != 3)
+      return fail(*node, "expected three numbers of points for 'grid'");
+    for (int k = 0; k != 3; ++k) {
+      std::optional<int64_t> count = (*points)[k].value<int64_t>();
+      if (!count || *count < 8)
+        return fail(*node, "expected numbers of points of 8 or more for "
+                           "'grid'");
+      grid[k] = *count;
+    }
+  }
+  if (Error error = readPositive(table, "max_spacing", spacing))
+    return error;
+  if (Error error = readCount(table, "order", order, 4))
+    return error;
+  if (order != 4 && order != 6 && order != 8)
+    return fail(*table.get("order"), "expected 4, 6, or 8 for 'order'");
+  return Error::success();
+}
+
 Error Reader::readPME(const toml::table &table) {
   if (Error error = checkKeywords(table, "pme",
                                   {"tolerance", "beta", "max_spacing", "grid",
                                    "order", "influence"},
                                   {}))
     return error;
-  if (Error error = readPositive(table, "beta", control.pmeAlpha))
+  if (Error error = readMesh(table, control.pmeAlpha,
+                             control.pmeAlphaTolerance, control.pmeGrid,
+                             control.pmeMaxSpacing, control.pmeOrder))
     return error;
-  if (Error error =
-          readPositive(table, "tolerance", control.pmeAlphaTolerance))
-    return error;
-  if (!(control.pmeAlphaTolerance < 1.0))
-    return fail(*table.get("tolerance"),
-                "expected a tolerance less than 1 for 'tolerance'");
-  if (const toml::node *node = table.get("grid")) {
-    const toml::array *grid = node->as_array();
-    if (!grid || grid->size() != 3)
-      return fail(*node, "expected three numbers of points for 'grid'");
-    for (int k = 0; k != 3; ++k) {
-      std::optional<int64_t> points = (*grid)[k].value<int64_t>();
-      if (!points || *points < 8)
-        return fail(*node, "expected numbers of points of 8 or more for "
-                           "'grid'");
-      control.pmeGrid[k] = *points;
-    }
-  }
-  if (Error error =
-          readPositive(table, "max_spacing", control.pmeMaxSpacing))
-    return error;
-  if (Error error = readCount(table, "order", control.pmeOrder, 4))
-    return error;
-  if (control.pmeOrder != 4 && control.pmeOrder != 6 &&
-      control.pmeOrder != 8)
-    return fail(*table.get("order"), "expected 4, 6, or 8 for 'order'");
   if (Error error = readChoice<bool>(table, "influence", control.pmeOptimal,
                                      {{"OPTIMAL", true}, {"SPME", false}}))
     return error;
   return Error::success();
+}
+
+Error Reader::readLJPME(const toml::table &table) {
+  if (Error error = checkKeywords(table, "lj_pme",
+                                  {"tolerance", "beta", "max_spacing", "grid",
+                                   "order"},
+                                  {}))
+    return error;
+  return readMesh(table, control.ljpmeAlpha, control.ljpmeTolerance,
+                  control.ljpmeGrid, control.ljpmeMaxSpacing,
+                  control.ljpmeOrder);
 }
 
 /// Checks that the intervals of output nest: each is a multiple of the one
@@ -1777,6 +1825,9 @@ Error Reader::readBoundary(const toml::table &table) {
       return fail(table, "particle mesh Ewald needs a periodic cell; "
                          "without one, give 'electrostatics = \"CUTOFF\"' "
                          "or \"REACTION_FIELD\"");
+    if (control.ljpme)
+      return fail(table, "particle mesh Ewald needs a periodic cell; "
+                         "without one, give 'lennard_jones = \"CUTOFF\"'");
     if (control.barostat)
       return fail(table, "a barostat needs a periodic cell");
     if (control.topologyDispersionGiven &&
@@ -1875,7 +1926,8 @@ Error Reader::readExecution(const toml::table &table) {
 Error Reader::read(const toml::table &root) {
   if (Error error = checkKeywords(
           root, "the control file",
-          {"input", "output", "energy", "pme", "dynamics", "minimize",
+          {"input", "output", "energy", "pme", "lj_pme", "dynamics",
+           "minimize",
            "ensemble", "thermostat", "barostat",
            "boundary", "execution", "constraints", "restraints"},
           {}))
@@ -1918,6 +1970,14 @@ Error Reader::read(const toml::table &root) {
                         "[energy]");
   if (table)
     if (Error error = readPME(*table))
+      return error;
+  if (Error error = getTable("lj_pme", /*required=*/false, table))
+    return error;
+  if (table && !control.ljpme)
+    return fail(*table, "[lj_pme] is for 'lennard_jones = \"PME\"' in "
+                        "[energy]");
+  if (table)
+    if (Error error = readLJPME(*table))
       return error;
 
   // A run minimizes the energy or follows the dynamics.
@@ -2303,6 +2363,8 @@ electrostatics    = "PME"       # PME, CUTOFF
 coulomb_modifier  = "POTENTIAL_SHIFT"  # NONE, POTENTIAL_SHIFT: the direct
                                        # sum shifted to zero at the cutoff
 # dispersion_correction = "ENERGY_PRESSURE"  # NONE, ENERGY_PRESSURE
+# lennard_jones   = "CUTOFF"    # CUTOFF, PME: the dispersion beyond the
+                                # cutoff on a grid, with no correction
 
 # Particle mesh Ewald; every entry has a default.
 # [pme]
@@ -2312,6 +2374,15 @@ coulomb_modifier  = "POTENTIAL_SHIFT"  # NONE, POTENTIAL_SHIFT: the direct
 # grid        = [48, 48, 48]    # the grid, instead
 # order       = 4               # of the B-splines: 4, 6, 8
 # influence   = "SPME"          # SPME, OPTIMAL (as sander)
+
+# Particle mesh Ewald of the dispersion, with lennard_jones = "PME";
+# every entry has a default.
+# [lj_pme]
+# tolerance   = 1.0e-3          # g(β r_c) = exp(−x²)(1 + x² + x⁴/2), x = β r_c
+# beta        = 0.33            # β (1/Å), instead
+# max_spacing = 1.2             # largest spacing of the grid (Å)
+# grid        = [48, 48, 48]    # the grid, instead
+# order       = 4               # of the B-splines: 4, 6, 8
 
 [dynamics]
 integrator = "VELOCITY_VERLET"  # VELOCITY_VERLET, LEAPFROG (velocities

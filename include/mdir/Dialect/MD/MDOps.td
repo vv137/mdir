@@ -349,6 +349,17 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
     `f / (π V) · B(m) exp(−π² m² / β²) / m²` with `B` the product of the
     three, computed from the cell where it is used.
 
+    With `dispersion`, the op is the sum of the dispersion −c_i c_j / r⁶
+    instead (D162, [Essmann1995]), the charges are the coefficients c_i
+    of the particles, and `coulomb` scales the energy:
+
+    ```text
+    E = −f π^{3/2} β³ / (6V) Σ_m F(π |m| / β) |S(m)|²
+    F(b) = (1 − 2b²) exp(−b²) + 2 √π b³ erfc(b)
+    ```
+
+    with the term m = 0, F(0) = 1, included.
+
     The op yields the energy, the forces, and the virial `Σ d ⊗ F` of the
     sum. Differentiation takes the forces and the virial from the op; it
     does not differentiate through it.
@@ -369,7 +380,8 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
     DenseI64ArrayAttr:$grid,
     I64Attr:$order,
     F64Attr:$beta,
-    F64Attr:$coulomb
+    F64Attr:$coulomb,
+    UnitAttr:$dispersion
   );
   let results = (outs
     F64:$energy,
@@ -379,7 +391,7 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
   let assemblyFormat = [{
     $positions `,` $charges `,` $cell `,` $moduli
     `grid` `(` $grid `)` `order` `(` $order `)` `beta` `(` $beta `)`
-    `coulomb` `(` $coulomb `)`
+    `coulomb` `(` $coulomb `)` (`dispersion` $dispersion^)?
     attr-dict `:` qualified(type($positions)) `,` qualified(type($charges))
     `,` qualified(type($moduli)) `->` type($energy) `,`
     qualified(type($forces)) `,` type($virial)
