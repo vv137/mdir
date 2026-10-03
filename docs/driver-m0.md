@@ -135,9 +135,13 @@ parameter of a pair follows from those of its two particles:
 `lorentz-berthelot` [[Lorentz1881]](references.md#lorentz1881), [[Berthelot1898]](references.md#berthelot1898), `geometric`, or a table with `arithmetic` or
 `geometric` for each parameter.
 
-An unknown keyword is an error. `mdir template md` and `mdir template
-amber` print control files with every keyword; the keywords follow the
-code, not earlier versions, until a milestone is released.
+An unknown keyword is an error that names the file, line, and table,
+lists the table's valid keywords, and points to `mdir template md` and
+`mdir template amber`. It suggests the nearest valid keyword when that
+match is unique and within two character insertions, deletions, or
+replacements; it does not change the input. The templates print control
+files with every keyword; the keywords follow the code, not earlier
+versions, until a milestone is released.
 
 ### 1.2 Units
 

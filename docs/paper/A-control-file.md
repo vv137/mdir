@@ -12,6 +12,13 @@ the output of `mdir template amber` at the commit of this paper.
 
 ## A.1 Keywords
 
+An unknown keyword reports the file, line, and table, lists the table's
+valid keywords, and points to the templates. A unique nearest spelling
+within two character insertions, deletions, or replacements is suggested
+as a correction; the input is never corrected automatically. These checks
+also apply to table names. User-defined numeric parameters in tables of
+terms and types remain valid.
+
 | Table | Keyword | Meaning |
 |---|---|---|
 | `[input]` | `topology` | The topology: of Amber (`.prmtop`, `.parm7`), GROMACS (`.top`), or CHARMM (`.psf`, of the XPLOR kind, with the names of the types). Absent for a run from a PDB file, whose terms are in `[energy]`. |
