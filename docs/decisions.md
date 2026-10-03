@@ -11,6 +11,9 @@ the analysis that led to the decisions.
 Identifiers are stable. C*n* are project constraints. D*n* and P*n* are
 decisions; the P series was first recorded as proposals and accepted on
 2026-09-29, and keeps its numbering so that existing references stay valid.
+A D number is given when the change that makes the decision is merged,
+in the order of the merges; until then the branch writes a label,
+`D[<label>]` (CONTRIBUTING.md).
 
 An entry is not rewritten when a later entry changes it. It says
 "Amended by" and names the later entry, which holds where the two differ.

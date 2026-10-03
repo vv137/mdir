@@ -31,7 +31,12 @@ schedule also passes the short runs of the Amber suite
   and a test compares both ways, bitwise where the sums have a fixed order.
 - **A decision** in [docs/decisions.md](docs/decisions.md) for a choice
   that changes a method, a structure, or a default: what, why, and the
-  measurements before and after.
+  measurements before and after. A branch names its decision by a label,
+  `D[<label>]` (lowercase letters, digits, and dashes), wherever it would
+  write the number; the number is given when the branch is merged, by
+  `scripts/decision-number.sh assign <label>`, and
+  `scripts/decision-number.sh check` refuses a label or a number given
+  twice on `main`.
 - **The documents and the white paper** updated with the code: the design
   documents in `docs/` describe what is implemented, and a change to a
   method, an algorithm, or an implementation updates the sections of

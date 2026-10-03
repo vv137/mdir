@@ -1,0 +1,14 @@
+name: decisions
+
+# On main, every decision carries a number and no number is given twice.
+# Branches write labels, D[<label>], until they are merged (CONTRIBUTING.md).
+on:
+  push:
+    branches: [main]
+
+jobs:
+  numbers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/decision-number.sh check
