@@ -109,7 +109,10 @@ completion before boundary dispatch. It rejects unknown operations, control
 flow, duplicate/missing stages, and unsupported kernel signatures. Operations
 have conservative effects; a local DCE cannot remove communication. This is
 not a general alias, field-origin, geometry-coverage, or contribution verifier.
-The checked host builder remains a trust boundary.
+The checked host builder remains a trust boundary. Matching the function ABI
+does not prove that an arbitrary callee obeys the subset access contract.
+Execution is restricted to the driver-generated kernel; `mdir-opt` validation
+alone does not authorize executing an arbitrary external function in a plan.
 
 ## Async memory and subset contract
 
@@ -177,8 +180,9 @@ Five invalid CLI configurations were rejected. The CPU-visible regression
 suite passed 190 tests with 69 unsupported (GPU hidden), including ten plan
 roundtrip/negative tests. The broader 216-case SIMD/thread matrix also passed, with 24 energy finite differences checking the oracle force convention
 and four invalid snapshots rejected; generated forces are separately compared
-with that oracle. GPU-inclusive regression
-results are recorded in the PR when complete. No GPU transport or performance
+with that oracle. The GPU-inclusive serial regression suite passed 254 tests with five
+unsupported opt-in tests (four sanitizer checks and the scale suite), under
+the GPU 1 lock. This validates existing GPU paths, not distributed GPU transport. No GPU transport or performance
 improvement is claimed.
 
 ## Path toward production
