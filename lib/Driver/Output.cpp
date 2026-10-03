@@ -323,6 +323,78 @@ void _mlir_ciface_mdrtWritePull(int64_t step, void *coordinates,
 
 void _mlir_ciface_mdrtAddBath(double energy) { current->bath += energy; }
 
+double Output::getChainEnergy() const {
+  size_t m = chainMasses.size();
+  double energy = 0.0;
+  for (size_t j = 0; j != m; ++j) {
+    double v = chain[m + j];
+    energy += 0.5 * chainMasses[j] * v * v +
+              (j == 0 ? chainFreedom : 1.0) * chainKT * chain[j];
+  }
+  return energy;
+}
+
+double mdrtNoseHooverFactor(double kinetic) {
+  // The action of a Nose-Hoover chain over the time h of a period of
+  // coupling, factorized as in Martyna, Tuckerman, Tobias, and Klein, Mol.
+  // Phys. 87, 1117 (1996): by the Suzuki-Yoshida weights of order 6 (seven
+  // parts w_k h, which sum to h), each a symmetric sequence of half-steps
+  // of the velocities v_j of the thermostats from the end of the chain to
+  // the first, a scaling of the particle velocities by exp(-v_1 w_k h), and
+  // the reverse. The forces on the thermostats are G_1 = (2K - N_f k_B T)
+  // / Q_1 and G_j = (Q_{j-1} v_{j-1}^2 - k_B T) / Q_j (Martyna, Klein, and
+  // Tuckerman, J. Chem. Phys. 97, 2635 (1992), eq. 2.9).
+  Output &output = *current;
+  std::vector<double> &chain = output.chain;
+  const std::vector<double> &q = output.chainMasses;
+  size_t m = q.size();
+  if (m == 0 || !(kinetic > 0.0))
+    return 1.0;
+  double *xi = chain.data(), *v = chain.data() + m;
+  double kT = output.chainKT, freedom = output.chainFreedom;
+  double before = output.getChainEnergy();
+  static const double weights[7] = {
+      0.784513610477560, 0.235573213359357, -1.17767998417887,
+      1.31518632068391,  -1.17767998417887, 0.235573213359357,
+      0.784513610477560};
+  auto force = [&](size_t j, double k) {
+    if (j == 0)
+      return (2.0 * k - freedom * kT) / q[0];
+    return (q[j - 1] * v[j - 1] * v[j - 1] - kT) / q[j];
+  };
+  double scale = 1.0, k = kinetic;
+  int parts = output.chainSubsteps;
+  for (int part = 0; part != parts; ++part) {
+    for (double weight : weights) {
+      double s = weight * output.chainTime / parts;
+      // The velocities of the thermostats over s / 2 on each side of the
+      // scaling, from the end of the chain to its start and back, each damped
+      // by the one after it.
+      v[m - 1] += 0.5 * s * force(m - 1, k);
+      for (size_t j = m - 1; j-- > 0;) {
+        double damp = std::exp(-0.25 * s * v[j + 1]);
+        v[j] = (v[j] * damp + 0.5 * s * force(j, k)) * damp;
+      }
+      double factor = std::exp(-s * v[0]);
+      scale *= factor;
+      k *= factor * factor;
+      for (size_t j = 0; j != m; ++j)
+        xi[j] += s * v[j];
+      for (size_t j = 0; j + 1 < m; ++j) {
+        double damp = std::exp(-0.25 * s * v[j + 1]);
+        v[j] = (v[j] * damp + 0.5 * s * force(j, k)) * damp;
+      }
+      v[m - 1] += 0.5 * s * force(m - 1, k);
+    }
+  }
+  // The conserved energy is that of the system with the energy of the
+  // chain; what the scaling takes from the particles is in the chain, so
+  // the bath counts the change of the chain's energy.
+  output.bath += output.getChainEnergy() - before;
+  output.checkpoint.thermostatState = chain;
+  return scale;
+}
+
 void _mlir_ciface_mdrtSetBarostatState(double w0, double w1, double w2,
                                        double g0, double g1, double g2,
                                        double k0, double k1, double k2) {

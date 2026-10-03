@@ -248,6 +248,83 @@ water at one volume by 39 bar per 1/ps of friction at 2 fs. An ideal gas of 256 
 bath of 300 K with $\gamma$ = 5/ps relaxes its kinetic energy at 9.6 ± 0.3/ps,
 against $2\gamma$ = 10/ps.
 
+**Nosé–Hoover chains** (`method = "NOSE-HOOVER"`, D163a) are the
+deterministic thermostat. A chain of $M$ thermostats (`chain_length`, 3 by
+default) with positions $\eta_j$, momenta $p_{\eta_j}$, and masses $Q_j$
+extends the system [[Martyna1992]](references.md#martyna1992):
+
+$$
+\dot{\mathbf x}_i = \frac{\mathbf p_i}{m_i},\quad
+\dot{\mathbf p}_i = \mathbf F_i - \frac{p_{\eta_1}}{Q_1}\mathbf p_i,\quad
+\dot\eta_j = \frac{p_{\eta_j}}{Q_j},\quad
+\dot p_{\eta_j} = G_j - \frac{p_{\eta_{j+1}}}{Q_{j+1}}\,p_{\eta_j},
+$$
+
+with $G_1 = 2K - N_fk_BT_0$, $G_j = p_{\eta_{j-1}}^2/Q_{j-1} - k_BT_0$
+for $j > 1$, and no last term for $j = M$. These are not Hamiltonian, but
+they conserve
+
+$$
+H' = U + K + \sum_{j=1}^M \frac{p_{\eta_j}^2}{2Q_j} + N_fk_BT_0\,\eta_1
++ k_BT_0\sum_{j=2}^M \eta_j ,
+$$
+
+and the compressibility of their flow, $\kappa = \nabla\cdot\dot{\mathbf
+\Gamma} = -N_f\dot\eta_1 - \sum_{j\ge2}\dot\eta_j$ (the $N_f$ momenta that
+the first thermostat damps, each later one damping the one before), is the
+time derivative of $-(H' - U - K - \sum_j p_{\eta_j}^2/2Q_j)/k_BT_0$. The
+invariant measure of a flow with compressibility $\kappa = -\dot w$ is
+$e^{w}\,d\boldsymbol\Gamma$ [[Tuckerman1999]](references.md#tuckerman1999), so the stationary density
+on the surface $H' = E$ is $\delta(H' - E)\,e^{N_f\eta_1 + \sum_{j\ge2}
+\eta_j}$. Integrating out $\eta_1$ with the delta function leaves
+$e^{(E - U - K - \sum_j p_{\eta_j}^2/2Q_j)/k_BT_0}$: the particles are
+distributed as $e^{-(U + K)/k_BT_0}$, canonically, and each $p_{\eta_j}$ as
+a Gaussian of variance $Q_jk_BT_0$, provided the dynamics are ergodic,
+which the chain secures where a single thermostat ($M = 1$, the
+Nosé–Hoover equations [[Nose1984]](references.md#nose1984), [[Hoover1985]](references.md#hoover1985)) does not, as on a
+harmonic oscillator. With $N_f$ the degrees of freedom of Section 6.2 the
+momentum of the center of mass, which the coupling removes, is left out of
+$K$, as it is from the stochastic thermostats.
+
+The masses take the form of [[Martyna1992]](references.md#martyna1992),
+$Q_1 = N_fk_BT_0/\omega^2$ and $Q_j = k_BT_0/\omega^2$, with
+$\omega = 2\pi/\tau_T$ for the period $\tau_T$ (`time_constant`).
+Linearized about $\bar K$, with the work of the forces left out,
+$\dot K \approx -2\bar K p_{\eta_1}/Q_1$ and $\dot p_{\eta_1} = 2\,\delta K$
+give $\ddot{\delta K} = -(2N_fk_BT_0/Q_1)\,\delta K$: the kinetic energy
+exchanges with the first thermostat with the period $\tau_T/\sqrt2$.
+
+The chain acts where velocity rescaling does, at the end of each period of
+$N_T$ steps: the Liouville operator of the chain, $iL_\text{NHC}$, which
+holds every term above with $p_{\eta}$ or $G$ and the friction on
+$\mathbf p$, is split from that of the particles symmetrically,
+$e^{iL\,N_T\Delta t} \approx e^{iL_\text{NHC}h/2}\,(e^{iL_\text{VV}\Delta
+t})^{N_T}\,e^{iL_\text{NHC}h/2}$ with $h = N_T\Delta t$, and the halves of
+consecutive periods join into one action over $h$. That action is itself
+factorized [[Martyna1996]](references.md#martyna1996) into $n_c$ equal parts, each
+a sequence of seven over $w_kh/n_c$ with the Suzuki–Yoshida weights of
+order six ($w_1 = w_7 = 0.78451361047756$, $w_2 = w_6 = 0.235573213359357$,
+$w_3 = w_5 = -1.17767998417887$, $w_4 = 1 - 2(w_1 + w_2 + w_3)$), and each
+of those, of length $s$, the symmetric sequence: $p_{\eta_M}$ by
+$\tfrac s2 G_M$; for $j = M-1, \dots, 1$, $p_{\eta_j} \leftarrow
+p_{\eta_j}e^{-s\dot\eta_{j+1}/2} + \tfrac s2G_j e^{-s\dot\eta_{j+1}/4}$;
+the velocities of the particles by $e^{-s\,p_{\eta_1}/Q_1}$, and so
+$K$ by its square; $\eta_j \leftarrow \eta_j + s\,p_{\eta_j}/Q_j$; then the
+momenta again from $j = 1$ to $M$. The parts are $n_c = \lceil 50h/\tau_T
+\rceil$: one part of $h$ = 40 fs at $\tau_T$ = 0.5 ps took the later
+thermostats of a liquid far from $T_0$ beyond what the factorization
+follows, and the run failed. The chain is a few numbers, moved on the host,
+which returns $\alpha$ for the loop over particles; the bath takes the
+change of the energy of the chain, the last three terms of $H'$, so the
+log's conserved energy is $H'$ less its value at the start of the run.
+The checkpoints keep the chain. On the mixture of 256 particles of
+`thermostat.test` at 150 K ($N_f = 765$, $\tau_T$ = 1 ps, $N_T = 10$,
+$\Delta t$ = 4 fs, 400 ps after 80 of equilibration), the mean kinetic
+energy is $0.9997\,\bar K$ and its standard deviation $1.017$ times the
+canonical $\sqrt{N_f/2}\,k_BT_0$, and the samples are those of
+$\Gamma(N_f/2, k_BT_0)$ by a test of Kolmogorov and Smirnov ($p = 0.11$);
+$H'$ drifts by $1.9\times10^{-4}\,k_BT_0$ per particle per ns.
+
 ## 6.4 The barostat
 
 Stochastic cell rescaling [[Bernetti2020]](references.md#bernetti2020) couples the cell to a

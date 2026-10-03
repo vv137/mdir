@@ -167,6 +167,16 @@ struct Output {
   /// is conserved.
   bool couples = false;
   double bath = 0.0;
+  /// A Nose-Hoover chain (D163a): the positions of its thermostats, then
+  /// their velocities, their masses Q_j, k_B T of the bath, the degrees of
+  /// freedom, and the time that one action of the chain spans, the period
+  /// of the coupling, in the units of the run. Empty without one.
+  std::vector<double> chain, chainMasses;
+  double chainKT = 0.0, chainFreedom = 0.0, chainTime = 0.0;
+  /// The equal parts that the action over `chainTime` is split into.
+  int chainSubsteps = 1;
+  /// The energy of the chain: Σ Q_j v_j² / 2 + N_f k_B T ξ_1 + k_B T Σ ξ_j.
+  double getChainEnergy() const;
   /// Whether a barostat changes the cell, which the log then shows.
   bool changesCell = false;
   /// Whether the run minimizes the energy, whose log has the forces in
@@ -263,6 +273,10 @@ void _mlir_ciface_mdrtWriteVirial(double xx, double yy, double zz);
 /// The energy that a coupling of the velocities has just taken from the
 /// system, in kJ/mol.
 void _mlir_ciface_mdrtAddBath(double energy);
+/// The factor that a Nose-Hoover chain scales the velocities by over one
+/// period of coupling, from their kinetic energy `kinetic` in kJ/mol
+/// (D163a). The chain moves on; the change of its energy goes to the bath.
+double mdrtNoseHooverFactor(double kinetic);
 /// The coordinates of the terms over centers of groups at the step `step`
 /// (D145), in Å and radians, and the energy and the forces of each term,
 /// in kcal/mol and per Å or radian.

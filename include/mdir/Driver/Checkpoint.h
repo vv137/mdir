@@ -74,6 +74,9 @@ struct Checkpoint {
   /// the center of mass of the state, which the next scaling takes its
   /// pressure from, in kJ/mol; empty otherwise.
   std::vector<double> barostatState;
+  /// With a Nose-Hoover chain (D163a): the positions of its thermostats,
+  /// then their velocities, in the units of the run; empty otherwise.
+  std::vector<double> thermostatState;
 };
 
 /// Returns true if the driver was built with the library that checkpoints

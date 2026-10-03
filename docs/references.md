@@ -236,6 +236,15 @@ Used for: identifying OpenMM, whose custom forces define the syntax of
 energy expressions (D22) and which is discussed in
 [prior-art.md](prior-art.md).
 
+### Ermak1978
+
+D. L. Ermak, J. A. McCammon, "Brownian dynamics with hydrodynamic
+interactions," *J. Chem. Phys.* **69**, 1352–1360 (1978).
+[doi:10.1063/1.436761](https://doi.org/10.1063/1.436761)
+
+Used for: the step of Brownian dynamics without hydrodynamic
+interactions, `integrator = "BROWNIAN"` (D163b).
+
 ### Essmann1995
 
 U. Essmann, L. Perera, M. L. Berkowitz, T. Darden, H. Lee, L. G. Pedersen,
@@ -392,6 +401,14 @@ Lett.* **19**, 155–160 (1992).
 
 Used for: dissipative particle dynamics (DPD), the example of a pairwise
 thermostat that needs a neighborhood.
+
+### Hoover1985
+
+W. G. Hoover, "Canonical dynamics: Equilibrium phase-space
+distributions," *Phys. Rev. A* **31**, 1695–1697 (1985).
+[doi:10.1103/PhysRevA.31.1695](https://doi.org/10.1103/PhysRevA.31.1695)
+
+Used for: the Nosé–Hoover equations, the chain of one thermostat (D163a).
 
 ### Hub2014
 
@@ -624,6 +641,26 @@ variables," *ACM Trans. Math. Softw.* **26**, 363–372 (2000).
 Used for: the sum of the squares of normal deviates that the thermostat
 takes, drawn as a gamma deviate (`runtime/mdrt.c`).
 
+### Martyna1992
+
+G. J. Martyna, M. L. Klein, M. Tuckerman, "Nosé–Hoover chains: The
+canonical ensemble via continuous dynamics," *J. Chem. Phys.* **97**,
+2635–2643 (1992).
+[doi:10.1063/1.463940](https://doi.org/10.1063/1.463940)
+
+Used for: the Nosé–Hoover chain, its conserved energy and the masses of
+its thermostats, `method = "NOSE-HOOVER"` (D163a).
+
+### Martyna1996
+
+G. J. Martyna, M. E. Tuckerman, D. J. Tobias, M. L. Klein, "Explicit
+reversible integrators for extended systems dynamics," *Mol. Phys.*
+**87**, 1117–1157 (1996).
+[doi:10.1080/00268979600100761](https://doi.org/10.1080/00268979600100761)
+
+Used for: the factorization of the action of a Nosé–Hoover chain by the
+Suzuki–Yoshida weights (D163a).
+
 ### McGibbon2015
 
 R. T. McGibbon, K. A. Beauchamp, M. P. Harrigan, et al., "MDTraj: A modern
@@ -714,6 +751,14 @@ Commun.* **14**, 579 (2023).
 [doi:10.1038/s41467-023-36329-y](https://doi.org/10.1038/s41467-023-36329-y)
 
 Used for: Allegro, the example of a strictly local learned potential.
+
+### Nose1984
+
+S. Nosé, "A molecular dynamics method for simulations in the canonical
+ensemble," *Mol. Phys.* **52**, 255–268 (1984).
+[doi:10.1080/00268978400101201](https://doi.org/10.1080/00268978400101201)
+
+Used for: the extended system of a thermostat (D163a).
 
 ### Onufriev2004
 
@@ -1069,6 +1114,24 @@ Phys.* **102**, 5451–5459 (1995).
 
 Used for: the reaction field with its potential shifted to zero at the
 cutoff, `electrostatics = "REACTION_FIELD"` (D140).
+
+### Tuckerman1992
+
+M. Tuckerman, B. J. Berne, G. J. Martyna, "Reversible multiple time
+scale molecular dynamics," *J. Chem. Phys.* **97**, 1990–2001 (1992).
+[doi:10.1063/1.463137](https://doi.org/10.1063/1.463137)
+
+Used for: multiple time steps (r-RESPA), considered for D163.
+
+### Tuckerman1999
+
+M. E. Tuckerman, C. J. Mundy, G. J. Martyna, "On the classical
+statistical mechanics of non-Hamiltonian systems," *Europhys. Lett.*
+**45**, 149–155 (1999).
+[doi:10.1209/epl/i1999-00139-0](https://doi.org/10.1209/epl/i1999-00139-0)
+
+Used for: the invariant measure of the Nosé–Hoover chain, from the
+compressibility of its flow (Section 6.3 of the paper).
 
 ### Verlet1967
 

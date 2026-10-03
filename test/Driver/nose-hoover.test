@@ -1,0 +1,62 @@
+# A Nose-Hoover chain (D163a) on the mixture of thermostat.test: the chain
+# acts at the end of each period of 10 steps, and its energy with that of
+# the system is conserved. A run that continues from a checkpoint takes the
+# chain from it and ends in the state of one that does not stop.
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/mixture.pdb %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/thermostat.test | sed '1d;$d' \
+# RUN:     | sed -e 's|"V-RESCALE"|"NOSE-HOOVER"|' -e 's|time_constant = 0.5|time_constant = 1.0\nchain_length = 4|' \
+# RUN:     > %t/a.toml
+# RUN: mdir run %t/a.toml | FileCheck %s
+# RUN: mdir emit %t/a.toml | FileCheck %s --check-prefix=MODULE
+# RUN: mdir check %t/a.toml | FileCheck %s --check-prefix=CHECK-TOOL
+
+# CHECK:      INFO:         0         0.0000 {{ *}}[[TOTAL:-[0-9.]+]] {{.*}} [[TOTAL]]
+# CHECK:      MDIR: the momentum at the end is {{[0-9.]+}}e-1{{[0-9]}} amu nm/ps
+# CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
+
+# The host moves the chain and returns the factor of the velocities; the
+# bath takes the change of the energy of the chain there, not the change of
+# the kinetic energy.
+#
+# MODULE:      func.func private @mdrtNoseHooverFactor(f64) -> f64
+# MODULE-NOT:  @mdrtBussiFactor
+# MODULE:      %alpha1 = func.call @mdrtNoseHooverFactor(%kt1) : (f64) -> f64
+# MODULE:      func.call @mdrtAddBath(%kcm1) : (f64) -> ()
+
+# CHECK-TOOL: thermostat:         NOSE-HOOVER
+
+# RUN: sed -e 's|energy_interval = 1000|energy_interval = 500\ncheckpoint_interval = 1000|' \
+# RUN:     -e 's|^\[output\]$|[output]\ncheckpoint = "whole.h5"|' %t/a.toml > %t/whole.toml
+# RUN: sed -e 's|^steps *= 2000|steps = 1000|' -e 's|whole.h5|first.h5|' \
+# RUN:     %t/whole.toml > %t/first.toml
+# RUN: sed -e 's|first.h5|second.h5|' \
+# RUN:     -e 's|^coordinates = \(.*\)|coordinates = \1\ncheckpoint = "first.h5"|' \
+# RUN:     %t/first.toml > %t/second.toml
+# RUN: mdir run %t/whole.toml > %t/both.log
+# RUN: mdir run %t/first.toml
+# RUN: mdir run %t/second.toml >> %t/both.log
+# RUN: FileCheck %s --check-prefix=LOG < %t/both.log
+# RUN: mdir checkpoint %t/whole.h5 %t/second.h5 | FileCheck %s --check-prefix=SAME
+
+# The energy that the bath has taken, the change of the energy of the
+# chain among it, is counted from the start of a run, so the conserved
+# energies of the two runs differ.
+#
+# LOG:      INFO:      1500         6.0000 {{ *}}[[ROW1500:-?[0-9.]+ +-?[0-9.]+ +-?[0-9.]+ +-?[0-9.]+ +-?[0-9.]+ +-?[0-9.]+]]
+# LOG:      MDIR: continues after step 1000
+# LOG:      INFO:      1500         6.0000 {{ *}}[[ROW1500]]
+# SAME: the states are identical
+
+# What is wrong with the keys of a chain is reported.
+#
+# RUN: sed -e 's|chain_length = 4|chain_length = 0|' %t/a.toml > %t/zero.toml
+# RUN: not mdir run %t/zero.toml 2>&1 | FileCheck %s --check-prefix=ZERO
+# RUN: sed -e 's|"NOSE-HOOVER"|"V-RESCALE"|' %t/a.toml > %t/other.toml
+# RUN: not mdir run %t/other.toml 2>&1 | FileCheck %s --check-prefix=OTHER
+#
+# ZERO: zero.toml:{{[0-9]+}}: expected at least 1 for 'chain_length'
+# OTHER: other.toml:{{[0-9]+}}: 'chain_length' is for "NOSE-HOOVER"

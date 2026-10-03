@@ -320,7 +320,9 @@ static void describeRun(const Control &control, const System &system,
                 control.thermostat ? "bath" : "initial velocities if drawn");
     if (control.thermostat)
       std::printf("thermostat:         %s\n",
-                  control.isLangevin() ? "LANGEVIN" : "V-RESCALE");
+                  control.isLangevin()     ? "LANGEVIN"
+                  : control.isNoseHoover() ? "NOSE-HOOVER"
+                                           : "V-RESCALE");
     if (control.barostat)
       std::printf("barostat:           C-RESCALE, %s, %g atm\n",
                   control.semiIsotropic ? "SEMI_ISOTROPIC" : "ISOTROPIC",
@@ -453,7 +455,8 @@ static llvm::json::Object makeJSON(const Control &control, const System &system,
                                                : Value(control.temperature)},
       {"pressure_atm", control.barostat ? Value(control.pressure) : Value(nullptr)},
       {"thermostat", !control.thermostat ? "NONE"
-                         : control.isLangevin() ? "LANGEVIN" : "V-RESCALE"},
+                         : control.isLangevin() ? "LANGEVIN"
+                         : control.isNoseHoover() ? "NOSE-HOOVER" : "V-RESCALE"},
       {"barostat_coupling", !control.barostat ? "NONE"
                           : control.semiIsotropic ? "SEMI_ISOTROPIC" : "ISOTROPIC"},
       {"cutoff_angstrom", control.cutoffDistance},

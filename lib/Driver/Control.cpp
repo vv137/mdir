@@ -1662,32 +1662,41 @@ Error Reader::readEnsemble(const toml::table &table) {
 Error Reader::readThermostat(const toml::table &table) {
   if (Error error = checkKeywords(table, "thermostat",
                                   {"method", "time_constant", "friction",
-                                   "interval"},
+                                   "interval", "chain_length"},
                                   {}))
     return error;
   int method = -1;
-  if (Error error = readChoice<int>(table, "method", method,
-                                    {{"V-RESCALE", 0}, {"LANGEVIN", 1}}))
+  if (Error error = readChoice<int>(
+          table, "method", method,
+          {{"V-RESCALE", 0}, {"LANGEVIN", 1}, {"NOSE-HOOVER", 2}}))
     return error;
   if (method < 0)
     return fail(table, "expected 'method' in [thermostat]: \"V-RESCALE\", "
-                       "stochastic velocity rescaling, or \"LANGEVIN\", "
-                       "Langevin dynamics");
+                       "stochastic velocity rescaling, \"LANGEVIN\", "
+                       "Langevin dynamics, or \"NOSE-HOOVER\", a "
+                       "Nose-Hoover chain");
   control.thermostat = true;
   if (method == 1) {
     control.thermostatMethod = ThermostatMethod::Langevin;
     if (const toml::node *node = table.get("time_constant"))
-      return fail(*node, "'time_constant' is for \"V-RESCALE\"; Langevin "
-                         "dynamics takes 'friction', in 1/ps");
+      return fail(*node, "'time_constant' is for \"V-RESCALE\" and "
+                         "\"NOSE-HOOVER\"; Langevin dynamics takes "
+                         "'friction', in 1/ps");
     if (!table.get("friction"))
       return fail(table, "expected 'friction' in [thermostat], in 1/ps");
     control.friction = 0.0;
     if (Error error = readPositive(table, "friction", control.friction))
       return error;
   } else if (const toml::node *node = table.get("friction")) {
-    return fail(*node, "'friction' is for \"LANGEVIN\"; stochastic velocity "
-                       "rescaling takes 'time_constant', in ps");
+    return fail(*node, "'friction' is for \"LANGEVIN\"; this thermostat "
+                       "takes 'time_constant', in ps");
   }
+  if (method == 2)
+    control.thermostatMethod = ThermostatMethod::NoseHoover;
+  if (const toml::node *node = table.get("chain_length"); node && method != 2)
+    return fail(*node, "'chain_length' is for \"NOSE-HOOVER\"");
+  if (Error error = readCount(table, "chain_length", control.chainLength, 1))
+    return error;
   if (Error error = readPositive(table, "time_constant", control.tauT))
     return error;
   if (Error error =
@@ -2246,10 +2255,12 @@ temperature = 298.15            # of the velocities and the bath (K)
 
 # With 'ensemble = "NVT"':
 # [thermostat]
-# method        = "V-RESCALE"   # stochastic velocity rescaling, or
-#                               # "LANGEVIN", Langevin dynamics
-# time_constant = 1.0           # ps, with V-RESCALE
+# method        = "V-RESCALE"   # stochastic velocity rescaling,
+#                               # "LANGEVIN", Langevin dynamics, or
+#                               # "NOSE-HOOVER", a Nose-Hoover chain
+# time_constant = 1.0           # ps, with V-RESCALE or NOSE-HOOVER
 # friction      = 1.0           # 1/ps, with LANGEVIN
+# chain_length  = 3             # thermostats, with NOSE-HOOVER
 # interval      = 10            # steps between its actions
 
 [boundary]
@@ -2330,10 +2341,12 @@ temperature = 300.0             # of the velocities and the bath (K)
 pressure    = 1.0               # atm, with NPT
 
 [thermostat]
-method        = "V-RESCALE"     # stochastic velocity rescaling, or
-                                # "LANGEVIN", Langevin dynamics
-time_constant = 0.5             # ps, with V-RESCALE
+method        = "V-RESCALE"     # stochastic velocity rescaling,
+                                # "LANGEVIN", Langevin dynamics, or
+                                # "NOSE-HOOVER", a Nose-Hoover chain
+time_constant = 0.5             # ps, with V-RESCALE or NOSE-HOOVER
 # friction    = 1.0             # 1/ps, with LANGEVIN
+# chain_length = 3              # thermostats, with NOSE-HOOVER
 interval      = 10              # steps between its actions
 
 [barostat]

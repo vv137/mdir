@@ -99,9 +99,10 @@ enum class BarostatWork { Trotter, TrotterFirstOrder, Exact, FirstOrder };
 /// reference scales with the cell as the positions do.
 enum class ReferenceScaling { Center, All };
 /// How the thermostat couples the velocities to the bath: stochastic
-/// velocity rescaling at the end of a period, or Langevin dynamics in the
-/// middle of the drift of every step (D135).
-enum class ThermostatMethod { VRescale, Langevin };
+/// velocity rescaling at the end of a period, Langevin dynamics in the
+/// middle of the drift of every step (D135), or a Nose-Hoover chain at the
+/// end of a period (D163a).
+enum class ThermostatMethod { VRescale, Langevin, NoseHoover };
 
 /// What a control file says. Lengths are in Å, energies in kcal/mol, times
 /// in ps, masses in amu, and temperatures in K.
@@ -275,6 +276,12 @@ struct Control {
   double friction = 0.0;
   bool isLangevin() const {
     return thermostat && thermostatMethod == ThermostatMethod::Langevin;
+  }
+  /// A Nose-Hoover chain of `chainLength` thermostats (Martyna, Klein, and
+  /// Tuckerman 1992; D163a) with the period `tauT`, in ps.
+  int64_t chainLength = 3;
+  bool isNoseHoover() const {
+    return thermostat && thermostatMethod == ThermostatMethod::NoseHoover;
   }
   /// Stochastic cell rescaling (Bernetti and Bussi 2020), isotropic, at
   /// `pressure` in atm with the time constant `tauP` in ps and the

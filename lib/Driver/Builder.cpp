@@ -5511,17 +5511,26 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
          << " : f64\n";
       kinetic = "%kt" + t;
     }
-    os << indent << "%alpha" << t << " = func.call @mdrtBussiFactor(%seed, "
-       << step << ", " << kinetic
-       << ", %target_kinetic, %freedom, %decay)\n"
-       << indent << "    : (i64, i64, f64, f64, f64, f64) -> f64\n"
-       << indent << "%alpha2" << t << " = arith.mulf %alpha" << t
-       << ", %alpha" << t << " : f64\n"
-       << indent << "%kn" << t << " = arith.mulf %alpha2" << t << ", "
-       << kinetic << " : f64\n"
-       << indent << "%heat" << t << " = arith.subf %kc" << t << ", %kn" << t
-       << " : f64\n";
-    bath = "%heat" + t;
+    if (control.isNoseHoover()) {
+      // A Nose-Hoover chain (D163a) moves on the host over the period and
+      // counts the change of its energy into the bath itself.
+      os << indent << "%alpha" << t << " = func.call @mdrtNoseHooverFactor("
+         << kinetic << ") : (f64) -> f64\n"
+         << indent << "%alpha2" << t << " = arith.mulf %alpha" << t
+         << ", %alpha" << t << " : f64\n";
+    } else {
+      os << indent << "%alpha" << t << " = func.call @mdrtBussiFactor(%seed, "
+         << step << ", " << kinetic
+         << ", %target_kinetic, %freedom, %decay)\n"
+         << indent << "    : (i64, i64, f64, f64, f64, f64) -> f64\n"
+         << indent << "%alpha2" << t << " = arith.mulf %alpha" << t
+         << ", %alpha" << t << " : f64\n"
+         << indent << "%kn" << t << " = arith.mulf %alpha2" << t << ", "
+         << kinetic << " : f64\n"
+         << indent << "%heat" << t << " = arith.subf %kc" << t << ", %kn"
+         << t << " : f64\n";
+      bath = "%heat" + t;
+    }
   }
   // Stochastic cell rescaling (Bernetti and Bussi 2020): the pressure of
   // the step, with the virials of the correction for the dispersion and of
@@ -6313,7 +6322,9 @@ void Builder::emitEntry() {
     os << "func.func private @mdrtWriteMinimization(i64, f64, f64, memref<?x3x"
        << force << ">, memref<?xi32>)\n"
        << "    attributes {llvm.emit_c_interface}\n";
-  if (rescalesVelocities())
+  if (rescalesVelocities() && control.isNoseHoover())
+    os << "func.func private @mdrtNoseHooverFactor(f64) -> f64\n";
+  else if (rescalesVelocities())
     os << "func.func private @mdrtBussiFactor(i64, i64, f64, f64, f64, f64) "
           "-> f64\n";
   if (control.getCouplingPeriod() > 0)
