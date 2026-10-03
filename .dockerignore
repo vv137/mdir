@@ -1,6 +1,17 @@
-# The build context of packaging/Dockerfile is the source tree only.
+# The build context of packaging/Dockerfile is the source tree only: no
+# repository metadata, build trees, archives, or local notes, so that they
+# neither enlarge the context nor invalidate the layer of MDIR's sources.
 .git
+.github
 .claude
 build
+build-*
+**/__pycache__
 *.zip
+*.tar.gz
+*.sif
 docs/diagrams
+docs/paper/out
+notes
+AGENTS.md
+LEADER.md
