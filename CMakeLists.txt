@@ -24,6 +24,10 @@ include(AddLLVM)
 include(AddMLIR)
 include(HandleLLVMOptions)
 
+# An installation holds the driver and its runtime only: the static libraries
+# of the dialects and passes are linked into the driver and are not installed.
+set(LLVM_INSTALL_TOOLCHAIN_ONLY ON)
+
 set(MDIR_SOURCE_DIR ${PROJECT_SOURCE_DIR})
 set(MDIR_BINARY_DIR ${PROJECT_BINARY_DIR})
 

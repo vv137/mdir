@@ -3,6 +3,7 @@
 //
 // See docs/driver-m0.md.
 
+#include "BuildInfo.h"
 #include "Commands.h"
 #include "Manifest.h"
 
@@ -665,7 +666,12 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   } else if (control->threads > 1) {
     setenv("OMP_NUM_THREADS", std::to_string(control->threads).c_str(),
            /*overwrite=*/1);
-    paths.push_back(getLibrary(MDIR_LLVM_LIBRARY_DIR, "libomp.so"));
+    // An installed tree carries the OpenMP runtime in its lib; a build tree
+    // takes the one of the LLVM it was built with.
+    std::string omp = getLibrary(libraries, "libomp.so");
+    if (!llvm::sys::fs::exists(omp))
+      omp = getLibrary(MDIR_LLVM_LIBRARY_DIR, "libomp.so");
+    paths.push_back(omp);
   }
   for (const std::string &path : paths)
     if (!llvm::sys::fs::exists(path))
@@ -1112,6 +1118,12 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   output.maxWalltime = options.maxWalltime;
   setOutput(&output);
 
+  // The version and the commit come first, so that a log names the build
+  // that wrote it.
+  output.log.print("MDIR %s, commit %.12s%s\n", MDIR_VERSION, MDIR_GIT_COMMIT,
+                   StringRef(MDIR_GIT_DIRTY) == "yes"
+                       ? " with uncommitted changes"
+                       : "");
   if (control->minimize)
     output.log.print(
                  "MDIR: %zu particles, %lld steps of steepest descent\n",

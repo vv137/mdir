@@ -41,6 +41,17 @@ else()
   message(STATUS "CUDA toolkit: not found; the GPU runtime is not built")
 endif()
 
+# The runtime goes to <prefix>/lib, beside the driver's <prefix>/bin, and so
+# does the OpenMP runtime of the LLVM build, which threaded runs on the CPU
+# load; the build tree of LLVM is then not needed at run time.
+install(TARGETS mdrt LIBRARY DESTINATION lib COMPONENT mdir)
+if(MDIR_CUDA_FOUND)
+  install(TARGETS mdrt_cuda LIBRARY DESTINATION lib COMPONENT mdir)
+endif()
+if(EXISTS "${LLVM_LIBRARY_DIR}/libomp.so")
+  install(FILES "${LLVM_LIBRARY_DIR}/libomp.so" DESTINATION lib COMPONENT mdir)
+endif()
+
 set(MDIR_CUDA_FOUND ${MDIR_CUDA_FOUND} PARENT_SCOPE)
 set(MDIR_CUDA_ROOT "${CUDAToolkit_TARGET_DIR}" PARENT_SCOPE)
 

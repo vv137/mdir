@@ -57,3 +57,12 @@ target_compile_definitions(mdir PRIVATE
   MDIR_HAS_CUDA=$<BOOL:${MDIR_CUDA_FOUND}>
   MDIR_VERSION="${PROJECT_VERSION}"
   )
+
+# Installed as <prefix>/bin/mdir beside <prefix>/lib, where the driver looks
+# for its runtime (Run.cpp). The libraries found at link time outside the
+# build tree, such as HDF5, stay on the search path of the installed binary.
+set_target_properties(mdir PROPERTIES
+  INSTALL_RPATH "$ORIGIN/../lib"
+  INSTALL_RPATH_USE_LINK_PATH ON
+  )
+install(TARGETS mdir RUNTIME DESTINATION bin COMPONENT mdir)
