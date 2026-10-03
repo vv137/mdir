@@ -197,3 +197,24 @@ SIGTERM and SIGINT stop a run at its next checkpoint, and a second signal
 stops it at once. A run that stops at a checkpoint exits with 75
 (`EX_TEMPFAIL`), from which `--continue` goes on exactly; 0 is a run that
 is complete, and 1 an error.
+
+## A.4 Templates of the standard pipeline
+
+`mdir template minimize`, `nvt`, `npt`, and `production` print the stages
+of `examples/ala3` with placeholder paths `system.prmtop` and
+`system.inpcrd` (D147). They supply restrained minimization (2000 steps),
+50 ps at constant volume and 300 K, 100 ps at 1 atm with weaker
+restraints, and 1 ns at 1 atm without restraints. The checkpoint chain is
+`min.h5`, `nvt.h5`, `npt.h5`, and `md.h5`; production writes `md.dcd`
+every 1 ps. Dynamics uses a step of 2 fs, and all stages use PME and
+constraints on hydrogen bonds and water. The settings are embedded from
+the examples when MDIR is built.
+
+Save each printed control file, edit the input paths, restraint selection,
+run length, and execution settings, then execute the files in order with
+`mdir run --continue FILE` (A.3). The defaults select a GPU in mixed
+precision and need HDF5 checkpoints; `target = "CPU"` uses the host.
+The selection `!:WAT & !@H*` and water constraints assume a solute in
+water named `WAT`; other systems need their selections and residue names
+adapted. The files retain the input coordinates as the restraint reference.
+`mdir template md` and `amber` continue to provide the reference files.

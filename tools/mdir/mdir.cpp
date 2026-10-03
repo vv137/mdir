@@ -18,7 +18,7 @@ static llvm::cl::SubCommand emitCommand(
 static llvm::cl::SubCommand checkCommand(
     "check", "Read the input of a run and print what it describes");
 static llvm::cl::SubCommand templateCommand(
-    "template", "Print a control file with every keyword");
+    "template", "Print a reference control file or a standard pipeline stage");
 static llvm::cl::SubCommand checkpointCommand(
     "checkpoint", "Describe a checkpoint, or compare the states of two");
 static llvm::cl::SubCommand bugReportCommand(
@@ -75,7 +75,8 @@ static llvm::cl::opt<Emit> stage(
     llvm::cl::init(Emit::Module), llvm::cl::sub(emitCommand));
 
 static llvm::cl::opt<std::string>
-    templateName(llvm::cl::Positional, llvm::cl::desc("<kind>: md, amber"),
+    templateName(llvm::cl::Positional,
+                 llvm::cl::desc("<kind>: md, amber, minimize, nvt, npt, production"),
                  llvm::cl::Required, llvm::cl::sub(templateCommand));
 
 static llvm::cl::list<std::string> checkpointFiles(
@@ -98,7 +99,7 @@ int main(int argc, char **argv) {
       "[--max-walltime=<time>]\n"
       "  mdir emit <control file> [--stage=module|lowered|pipeline]\n"
       "  mdir check <control file>\n"
-      "  mdir template md|amber\n"
+      "  mdir template md|amber|minimize|nvt|npt|production\n"
       "  mdir checkpoint <checkpoint> [<checkpoint>] "
       "[--print=positions|velocities|forces]\n"
       "  mdir bug-report <control file> [-o <directory>] [--run]\n"
@@ -136,7 +137,13 @@ int main(int argc, char **argv) {
       llvm::outs() << driver::getAmberControlTemplate();
       return 0;
     }
-    llvm::errs() << "mdir: expected the template 'md' or 'amber', got '"
+    std::string pipeline = driver::getPipelineControlTemplate(templateName);
+    if (!pipeline.empty()) {
+      llvm::outs() << pipeline;
+      return 0;
+    }
+    llvm::errs() << "mdir: expected a template: md, amber, minimize, nvt, "
+                    "npt, production; got '"
                  << templateName << "'\n";
     return 1;
   }

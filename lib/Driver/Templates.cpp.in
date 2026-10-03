@@ -1,0 +1,24 @@
+// The standard pipeline, embedded from examples/ala3 by CMake (D147).
+
+#include "mdir/Driver/Control.h"
+
+std::string mdir::driver::getPipelineControlTemplate(llvm::StringRef kind) {
+  llvm::StringRef stage;
+  if (kind == "minimize")
+    stage = R"TOML(@MDIR_TEMPLATE_MINIMIZE@)TOML";
+  else if (kind == "nvt")
+    stage = R"TOML(@MDIR_TEMPLATE_NVT@)TOML";
+  else if (kind == "npt")
+    stage = R"TOML(@MDIR_TEMPLATE_NPT@)TOML";
+  else if (kind == "production")
+    stage = R"TOML(@MDIR_TEMPLATE_PRODUCTION@)TOML";
+  else
+    return {};
+
+  return "# Standard pipeline for an Amber solute in water (examples/ala3).\n"
+         "# Edit input paths, selections, run length, and execution for your "
+         "system.\n"
+         "# Requires HDF5 checkpoints; run the stages in order with "
+         "--continue.\n\n" +
+         stage.str();
+}

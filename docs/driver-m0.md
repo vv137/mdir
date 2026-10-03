@@ -175,6 +175,41 @@ semicolons: `k*d^2; d = r - r0`. The terms over tuples, over centers, and
 over the pairs of a topology may use the time `t` in ps, that of the end
 of the step whose forces they give (D145).
 
+### 1.3 Standard pipeline templates
+
+`mdir template minimize`, `nvt`, `npt`, and `production` print the four
+stages of `examples/ala3`, with `system.prmtop` and `system.inpcrd` as
+placeholder input paths (D147, roadmap U9). Each command prints one
+control file to standard output; it creates no files. The stages are
+embedded at build time, so the binary needs no copy of the examples at
+run time. `md` and `amber` remain the reference templates.
+
+| Kind | Run | Restraints on the solute's heavy atoms | Input checkpoint | Output |
+|---|---|---|---|---|
+| `minimize` | 2000 steps of steepest descent | 10 kcal/mol/Å² | None | `min.h5` |
+| `nvt` | 50 ps at 300 K, constant volume | 10 kcal/mol/Å² | `min.h5` | `nvt.h5` |
+| `npt` | 100 ps at 300 K and 1 atm | 1 kcal/mol/Å² | `nvt.h5` | `npt.h5` |
+| `production` | 1 ns at 300 K and 1 atm | None | `npt.h5` | `md.h5`, `md.dcd` every 1 ps |
+
+The dynamics stages use velocity Verlet at 2 fs, stochastic velocity
+rescaling, and, at constant pressure, stochastic cell rescaling. All
+stages use PME, constraints on hydrogen bonds, and rigid water. The
+templates select a GPU in mixed precision and require HDF5 for the
+checkpoints; `target = "CPU"` selects the host.
+
+Edit the input paths, lengths of the runs, and execution settings for the
+system. The restraint selection `!:WAT & !@H*` assumes water named `WAT`
+and hydrogen names beginning with `H`; adapt it and `water_residues` for
+other residue names. These stages describe a solute in water with an
+isotropic barostat; the bilayer example has its own protocol.
+
+Save the stages in one directory, for example as `1-min.toml`,
+`2-nvt.toml`, `3-npt.toml`, and `4-md.toml`, and run them in that order
+with `mdir run --continue FILE`. All paths are relative to the control
+file. Each stage begins at the checkpoint of the preceding stage, while
+`--continue` resumes its own output checkpoint or skips it when complete
+(Section 2.7). The coordinate file remains the restraint reference.
+
 ## 2. The driver
 
 ### 2.1 What it does

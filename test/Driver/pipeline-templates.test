@@ -1,0 +1,80 @@
+# Standard stages are available from the command line, including their
+# checkpoint chain, physical settings, and instructions for adapting them.
+# Printing and checking the controls need neither HDF5 nor a GPU.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: mdir template minimize > %t/minimize.toml
+# RUN: mdir template nvt > %t/nvt.toml
+# RUN: mdir template npt > %t/npt.toml
+# RUN: mdir template production > %t/production.toml
+# RUN: FileCheck %s --check-prefix=MIN < %t/minimize.toml
+# RUN: FileCheck %s --check-prefix=NVT < %t/nvt.toml
+# RUN: FileCheck %s --check-prefix=NPT < %t/npt.toml
+# RUN: FileCheck %s --check-prefix=PROD --implicit-check-not=force_constant < %t/production.toml
+# RUN: sed -i -e 's|system.prmtop|%S/../../examples/ala3/ala3.prmtop|' \
+# RUN:   -e 's|system.inpcrd|%S/../../examples/ala3/ala3.inpcrd|' %t/*.toml
+# RUN: mdir check %t/minimize.toml | FileCheck %s --check-prefix=CHECK
+# RUN: mdir check %t/nvt.toml | FileCheck %s --check-prefix=CHECK
+# RUN: mdir check %t/npt.toml | FileCheck %s --check-prefix=CHECK
+# RUN: mdir check %t/production.toml | FileCheck %s --check-prefix=CHECK
+# RUN: mdir template --help | FileCheck %s --check-prefix=HELP
+#
+# CHECK: particles: {{ *}}4905
+# CHECK: degrees of freedom: 7387
+# HELP: <kind>: md, amber, minimize, nvt, npt, production
+#
+# MIN: # Edit input paths, selections, run length, and execution for your system.
+# MIN: # Requires HDF5 checkpoints; run the stages in order with --continue.
+# MIN: [input]
+# MIN-NEXT: topology = "system.prmtop"
+# MIN-NEXT: coordinates = "system.inpcrd"
+# MIN: [output]
+# MIN-NEXT: checkpoint = "min.h5"
+# MIN: [minimize]
+# MIN-NEXT: method = "STEEPEST_DESCENT"
+# MIN-NEXT: steps = 2000
+# MIN: {{\[\[}}restraints]]
+# MIN-NEXT: selection = "!:WAT & !@H*"
+# MIN-NEXT: force_constant = 10.0
+# MIN: [execution]
+# MIN-NEXT: target = "GPU"
+# MIN-NEXT: precision = "MIXED"
+#
+# NVT: [input]
+# NVT: checkpoint = "min.h5"
+# NVT: [output]
+# NVT-NEXT: checkpoint = "nvt.h5"
+# NVT: checkpoint_interval = 25000
+# NVT: time_step = 0.002
+# NVT-NEXT: steps = 25000
+# NVT: ensemble = "NVT"
+# NVT-NEXT: temperature = 300.0
+# NVT: method = "V-RESCALE"
+# NVT: force_constant = 10.0
+#
+# NPT: [input]
+# NPT: checkpoint = "nvt.h5"
+# NPT: [output]
+# NPT-NEXT: checkpoint = "npt.h5"
+# NPT: checkpoint_interval = 50000
+# NPT: time_step = 0.002
+# NPT-NEXT: steps = 50000
+# NPT: ensemble = "NPT"
+# NPT: pressure = 1.0
+# NPT: method = "C-RESCALE"
+# NPT: force_constant = 1.0
+#
+# PROD: [input]
+# PROD: checkpoint = "npt.h5"
+# PROD: [output]
+# PROD-NEXT: trajectory = "md.dcd"
+# PROD-NEXT: checkpoint = "md.h5"
+# PROD: trajectory_interval = 500
+# PROD-NEXT: checkpoint_interval = 50000
+# PROD: time_step = 0.002
+# PROD-NEXT: steps = 500000
+# PROD: ensemble = "NPT"
+# PROD: pressure = 1.0
+# PROD: [constraints]
+# PROD-NEXT: hydrogen_bonds = true
+# PROD-NEXT: rigid_water = true

@@ -9,8 +9,8 @@ before:
 |---|---|---|
 | 1 | `1-min.toml` | Steepest descent, 2000 steps, heavy atoms of the peptide restrained at 10 kcal/mol/Å² |
 | 2 | `2-nvt.toml` | Velocities at 300 K, 50 ps at constant volume with stochastic velocity rescaling, the same restraints |
-| 3 | `3-npt.toml` | 100 ps at 1 bar with stochastic cell rescaling, restraints at 1 kcal/mol/Å² |
-| 4 | `4-md.toml` | 1 ns at 1 bar without restraints, a frame every ps |
+| 3 | `3-npt.toml` | 100 ps at 1 atm with stochastic cell rescaling, restraints at 1 kcal/mol/Å² |
+| 4 | `4-md.toml` | 1 ns at 1 atm without restraints, a frame every ps |
 
 All stages use PME, SETTLE on the waters, SHAKE and RATTLE on the bonds of
 hydrogen, a step of 2 fs, and a GPU in mixed precision; set `target =
@@ -19,6 +19,11 @@ hydrogen, a step of 2 fs, and a GPU in mixed precision; set `target =
 ```sh
 examples/ala3/run.sh ala3-run build/bin/mdir
 ```
+
+`mdir template minimize`, `nvt`, `npt`, and `production` print these
+stages with `system.prmtop` and `system.inpcrd` as placeholder paths.
+Edit the paths, selections, run lengths, and execution for your system,
+then run the saved files in order with `mdir run --continue FILE`.
 
 `render.py` renders the trajectory as a movie with matplotlib and ffmpeg:
 

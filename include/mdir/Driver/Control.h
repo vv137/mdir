@@ -330,6 +330,10 @@ std::string getControlTemplate();
 /// minimization, and restraints.
 std::string getAmberControlTemplate();
 
+/// A stage of the standard pipeline from examples/ala3, with placeholder
+/// input paths: minimize, nvt, npt, or production. Empty for an unknown kind.
+std::string getPipelineControlTemplate(llvm::StringRef kind);
+
 } // namespace driver
 } // namespace mdir
 
