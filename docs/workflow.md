@@ -34,20 +34,23 @@ thermostat are not.
 
 ## The life of a change
 
-1. **Branch.** Work in a separate git worktree, on a branch named
-   `feature/<task>`, with a build tree of its own. Never commit to `main`.
+1. **Branch.** Start from a GitHub issue; open one if the work has none.
+   Work in a separate git worktree, on a branch named `feature/<task>`,
+   with a build tree of its own. Never commit to `main`.
 2. **Design first, as a draft.** As soon as the user-visible design is
    decided, push the branch and open a draft pull request
    (`gh pr create --draft`). User-visible design means the keys of the
    control file, file formats, defaults, and overwrite behavior. The
-   description states the design, the decision label, and the plan of
-   validation. The maintainer can then redirect it before the work is
+   description states the design, the decision label, the plan of
+   validation, and the issue it closes (`Closes #N`). The maintainer can then redirect it before the work is
    done. When a user-visible choice is unclear, ask in a PR comment instead
-   of guessing, and continue with the parts that do not depend on the
-   answer.
+   of guessing, add the label `needs-decision`, and continue with the parts
+   that do not depend on the answer; remove the label once it is answered.
 3. **Implement and validate.** Push commits to the same branch. Read the
    PR's comments between parts of the work, and answer each one with a
-   commit or a reply.
+   commit or a reply. After addressing a review labeled
+   `changes-requested`, remove that label and say so in a comment; the
+   coordinator then reviews the new head.
 4. **Ready.** When the implementation, its documents, and its validation
    are complete and the full suite passes locally, rebase on `main` and
    mark the PR ready (`gh pr ready`).
