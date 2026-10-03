@@ -75,6 +75,39 @@ def ConvertMDExecToLoops
                            "::mlir::vector::VectorDialect"];
 }
 
+def FixedOrderReductions
+    : Pass<"fixed-order-reductions", "::mlir::ModuleOp"> {
+  let summary = "Sums the reductions of parallel loops in an order that "
+                "the threads do not decide";
+  let description = [{
+    A reduction of `scf.parallel` that `convert-scf-to-openmp` lowers is
+    combined by the OpenMP runtime in the order in which the threads
+    finish, so a sum of floating-point numbers can differ in its last bits
+    from one run to the next. In a run with a thermostat or a barostat such
+    sums (the kinetic energy, the virial) set the coupling, and the
+    difference grows into the trajectory (D[threaded-determinism]).
+
+    The pass rewrites each one-dimensional `scf.parallel` with results
+    into a parallel loop over a fixed number of chunks, `chunks` or the
+    number of iterations if smaller. The chunks split the iterations into
+    contiguous ranges that depend only on that number; each chunk folds
+    its range in order and stores its partial result, and a serial loop
+    then folds the initial value with the partial results in the order of
+    the chunks. The result depends neither on the schedule of the threads
+    nor on their number: a run with one thread gives the same bits as a
+    run with many. The partial results live in an alloca of a constant
+    size at the entry of the function, so a loop of steps does not grow
+    the stack (D117).
+  }];
+  let options = [
+    Option<"chunks", "chunks", "int64_t", /*default=*/"256",
+           "The number of chunks of the iterations">,
+  ];
+  let dependentDialects = ["::mlir::arith::ArithDialect",
+                           "::mlir::memref::MemRefDialect",
+                           "::mlir::scf::SCFDialect"];
+}
+
 def HoistStaticAllocas : Pass<"hoist-static-allocas", "::mlir::ModuleOp"> {
   let summary = "Moves the allocas of a constant size outside the regions "
                 "of OpenMP to the entry of their function";
