@@ -289,11 +289,13 @@ Across its energy columns the largest difference is $4.13\times10^{-7}$
 kcal/mol; forces differ by at most $1.14\times10^{-8}$ kcal/(mol Å), and
 the diagonal virial by $3.39\times10^{-7}$ kcal/mol.
 
-The full local GPU suite passes (229 tests, 5 unsupported, no failures).
+The full local GPU suite passes (235 tests, 4 unsupported, including all nine Amber systems with both
+constraint solvers, no failures).
 The new sanitizer test passes memcheck, initcheck, and racecheck. On GPU 0
 alone under its lock, JAC NPT with groups and a dual list, mixed precision,
-100,000 steps of 2 fs, gives 22.91 s on main and 22.87 s on this branch;
-the second half gives 755.7 and 755.8 ns/day (0.229 ms/step each). The
+100,000 steps of 2 fs, gives 22.89 s on main e0eef74 and on this branch;
+the second half gives 755.6 and 755.1 ns/day (0.229 ms/step each), a
+0.07% lower rate on the branch in this single pair. The
 emitted IR for that unchanged Hamiltonian is byte-identical to main. This
-single timing pair shows no slowdown; it does not measure the difference
+single timing pair does not resolve a performance cost; it does not measure the difference
 in cost between switched and unswitched Hamiltonians.
