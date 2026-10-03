@@ -58,7 +58,11 @@ thermostat are not.
    full suite on a GPU. There is no GPU continuous integration, so this run
    is part of the review. The coordinator checks the rules below, posts the
    result as a PR comment naming the commit tested, and labels the PR
-   `merge-recommended` or `changes-requested`.
+   `merge-recommended` or `changes-requested`. Before labeling, the
+   coordinator checks the other open PRs: files both change (conflicts to
+   expect), interactions of behavior (for example a new key that a
+   checkpoint fingerprint must cover), and the order in which they should
+   merge. The review comment states what it found.
 6. **Decision.** The maintainer decides on GitHub: the label `approved`
    approves the merge; a comment asks for changes.
 7. **Merge.** The coordinator merges the PRs labeled `approved`; see
