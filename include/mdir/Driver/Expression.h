@@ -93,9 +93,16 @@ public:
   /// after `indent`. `values` gives the SSA value of every name. The values
   /// that the ops define begin with `prefix`. Returns the value of the
   /// expression.
+  ///
+  /// If `varying` names the values by which derivatives of the expression
+  /// are taken (such as r), a product of which one factor uses none of
+  /// them is 0 where that factor is 0, whatever the other factor is there.
+  /// A factor that uses one of them is never selected on, since its
+  /// derivative at 0 need not be.
   std::string emit(llvm::raw_ostream &os,
                    const llvm::StringMap<std::string> &values,
-                   llvm::StringRef prefix, llvm::StringRef indent) const;
+                   llvm::StringRef prefix, llvm::StringRef indent,
+                   llvm::ArrayRef<std::string> varying = {}) const;
 
   /// The value of the expression, with `values` giving the value of every
   /// name.

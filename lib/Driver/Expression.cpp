@@ -515,9 +515,9 @@ public:
   Emitter(llvm::raw_ostream &os, const llvm::StringMap<std::string> &values,
           const llvm::StringMap<const Expression::Node *> &definitions,
           llvm::ArrayRef<Expression::Spline> splines, StringRef prefix,
-          StringRef indent)
+          StringRef indent, llvm::ArrayRef<std::string> varying)
       : os(os), values(values), definitions(definitions), splines(splines),
-        prefix(prefix), indent(indent) {}
+        prefix(prefix), indent(indent), varying(varying) {}
 
   std::string emit(const Expression::Node &node) {
     using Node = Expression::Node;
@@ -546,7 +546,7 @@ public:
     case Node::Subtract:
       return emitBinary("arith.subf", node);
     case Node::Multiply:
-      return emitBinary("arith.mulf", node);
+      return emitProduct(node);
     case Node::Divide:
       return emitBinary("arith.divf", node);
     case Node::Call:
@@ -746,6 +746,61 @@ private:
     return value == std::floor(value) && std::fabs(value) < 1.0e6;
   }
 
+  /// Whether `node` names a value that varies.
+  bool varies(const Expression::Node &node) {
+    std::vector<std::string> used;
+    collectNames(node, used);
+    return llvm::any_of(used, [&](const std::string &name) {
+      return llvm::is_contained(varying, name);
+    });
+  }
+
+  /// Whether `node` names a value, and none that varies: a factor that is
+  /// fixed for the derivatives that are taken, though not a number.
+  bool isFixed(const Expression::Node &node) {
+    std::vector<std::string> used;
+    collectNames(node, used);
+    return !used.empty() && !varies(node);
+  }
+
+  /// The names that `node` uses, through the names defined after
+  /// semicolons as well.
+  void collectNames(const Expression::Node &node,
+                    std::vector<std::string> &used) {
+    using Node = Expression::Node;
+    if (node.kind == Node::Name) {
+      used.push_back(node.name);
+      if (!values.count(node.name) && definitions.count(node.name))
+        collectNames(*definitions.lookup(node.name), used);
+      return;
+    }
+    if (node.lhs)
+      collectNames(*node.lhs, used);
+    if (node.rhs)
+      collectNames(*node.rhs, used);
+    for (const auto &argument : node.arguments)
+      collectNames(*argument, used);
+  }
+
+  /// A product. Where one factor is fixed (a parameter such as ε) and is
+  /// 0, the product is 0 even if the other factor has left the range of
+  /// its type there, which in f32 a power of σ/r does when two particles
+  /// all but meet: 0 · ∞ would be NaN. The selection is taken only when
+  /// the caller names what varies, so that the derivative of the product
+  /// by those, which the fixed factor scales, is selected away with it.
+  std::string emitProduct(const Expression::Node &node) {
+    std::string lhs = emit(*node.lhs);
+    std::string rhs = emit(*node.rhs);
+    std::string product = emitOp("arith.mulf", {lhs, rhs});
+    if (varying.empty())
+      return product;
+    bool left = isFixed(*node.lhs) && varies(*node.rhs);
+    bool right = isFixed(*node.rhs) && varies(*node.lhs);
+    if (!left && !right)
+      return product;
+    return compareWithZero("oeq", left ? lhs : rhs, constant(0.0), product);
+  }
+
   std::string emitBinary(StringRef op, const Expression::Node &node) {
     std::string lhs = emit(*node.lhs);
     std::string rhs = emit(*node.rhs);
@@ -767,6 +822,8 @@ private:
   llvm::StringMap<std::string> defined;
   StringRef prefix;
   StringRef indent;
+  /// The names whose values vary, by which derivatives are taken.
+  llvm::ArrayRef<std::string> varying;
   unsigned counter = 0;
 };
 
@@ -1013,7 +1070,9 @@ double Expression::evaluate(const llvm::StringMap<double> &values) const {
 
 std::string Expression::emit(llvm::raw_ostream &os,
                              const llvm::StringMap<std::string> &values,
-                             StringRef prefix, StringRef indent) const {
+                             StringRef prefix, StringRef indent,
+                             llvm::ArrayRef<std::string> varying) const {
   auto byName = getDefinitions();
-  return Emitter(os, values, byName, splines, prefix, indent).emit(*root);
+  return Emitter(os, values, byName, splines, prefix, indent, varying)
+      .emit(*root);
 }

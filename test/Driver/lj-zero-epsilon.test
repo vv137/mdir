@@ -1,0 +1,109 @@
+# A pair of particles whose epsilon is 0 contributes exactly 0, even where
+# the two all but meet: there (sigma/r)^12 leaves the range of f32, and in
+# mixed precision 4 epsilon times it was 0 * inf = NaN (#18). Two
+# particles 0.001 Å apart, of a type with epsilon 0, through the
+# Lennard-Jones of a topology and through a pair term given by an
+# expression; mixed precision gives what double precision does.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/zero-epsilon/argon.top %S/Inputs/zero-epsilon/argon.gro %S/Inputs/zero-epsilon/mixture.pdb %t
+# RUN: sed -n '/^#--- topology.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/topology.toml
+# RUN: sed -n '/^#--- expression.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/expression.toml
+# RUN: sed 's/PRECISION/MIXED/' %t/topology.toml > %t/topology-mixed.toml
+# RUN: sed 's/PRECISION/DOUBLE/' %t/topology.toml > %t/topology-double.toml
+# RUN: sed 's/PRECISION/MIXED/' %t/expression.toml > %t/expression-mixed.toml
+# RUN: sed 's/PRECISION/DOUBLE/' %t/expression.toml > %t/expression-double.toml
+# RUN: mdir run %t/topology-mixed.toml | FileCheck %s --check-prefix=TOPOLOGY
+# RUN: mdir run %t/topology-double.toml | FileCheck %s --check-prefix=TOPOLOGY
+# RUN: mdir run %t/expression-mixed.toml | FileCheck %s --check-prefix=EXPRESSION
+# RUN: mdir run %t/expression-double.toml | FileCheck %s --check-prefix=EXPRESSION
+
+# Every particle has epsilon 0: the Lennard-Jones is 0, and nothing moves
+# but by its velocity.
+#
+# TOPOLOGY:      MDIR: Lennard-Jones 0.000000
+# TOPOLOGY:      INFO: 0 0.0000 2.0866 0.0000 2.0866 100.0000 0.0000 6.8997
+# TOPOLOGY-NEXT: INFO: 5 0.0100 2.0866 0.0000 2.0866 100.0000 0.0000 6.8997
+# TOPOLOGY-NEXT: INFO: 10 0.0200 2.0866 0.0000 2.0866 100.0000 0.0000 6.8997
+
+# The two argon atoms interact; the pairs with a particle of epsilon 0 do
+# not, by the rule of Lorentz and Berthelot.
+#
+# EXPRESSION:      INFO: 0 0.0000 0.8908 -0.0035 0.8942 100.0000 -0.0208 1.4964
+# EXPRESSION-NEXT: INFO: 5 0.0100 0.8908 -0.0035 0.8942 99.9992 -0.0208 1.4964
+# EXPRESSION-NEXT: INFO: 10 0.0200 0.8908 -0.0035 0.8942 99.9983 -0.0207 1.4964
+
+#--- topology.toml
+[input]
+topology    = "argon.top"
+coordinates = "argon.gro"
+
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.002
+steps      = 10
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 100.0
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "CPU"
+precision = "PRECISION"
+
+[output]
+energy_interval = 5
+#--- end
+
+#--- expression.toml
+[input]
+coordinates = "mixture.pdb"
+
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+
+[[energy.pair]]
+name       = "lj"
+expression = "4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+mixing     = "lorentz-berthelot"
+
+[[energy.type]]
+name    = "AR"
+mass    = 39.95
+epsilon = 0.238465
+sigma   = 3.4
+
+[[energy.type]]
+name    = "XX"
+mass    = 39.95
+epsilon = 0.0
+sigma   = 3.4
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.002
+steps      = 10
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 100.0
+
+[boundary]
+type = "PERIODIC"
+box  = [30.0, 30.0, 30.0]
+
+[execution]
+target    = "CPU"
+precision = "PRECISION"
+
+[output]
+energy_interval = 5
+#--- end
