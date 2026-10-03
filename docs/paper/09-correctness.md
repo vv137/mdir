@@ -2,7 +2,7 @@
 
 A compiler that writes its own kernels must show that they compute the
 model. This section collects the evidence, each item marked by its kind:
-a check that runs with the tests (`lit`, 203 tests in `test/`), a value
+a check that runs with the tests (`lit`, 205 tests in `test/`), a value
 that a test pins after it was compared once with an independent program
 (the reference value is in the test's comment), or a measurement recorded
 in a decision. Where the log says that an energy "changed by" a fraction,
