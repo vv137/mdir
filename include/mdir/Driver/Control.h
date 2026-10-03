@@ -142,6 +142,9 @@ struct Control {
   /// Terms over tuples of the topology given by expressions (D136):
   /// [[energy.bond]], [[energy.angle]], and [[energy.dihedral]].
   std::vector<TupleTerm> tupleTerms;
+  /// Terms of the absolute positions of single particles given by
+  /// expressions (D148): [[energy.external]].
+  std::vector<ExternalTerm> externalTerms;
   /// Whether an expression of a term of the topology takes the time `t`
   /// in ps (D145).
   bool usesTime = false;

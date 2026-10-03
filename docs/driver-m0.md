@@ -103,6 +103,7 @@ regard to case.
 | | `dispersion_correction` | `NONE` or `ENERGY_PRESSURE`; also in `[[energy.pair]]`. |
 | | `[[energy.pair]]` | A pair term, given by an expression (D16, D22). With a topology, over its pairs that are not excluded, in `r` (Å), `q1`, `q2`, `sigma`, `epsilon` of the pair, `sigma1`, `sigma2`, `epsilon1`, `epsilon2` of each particle (Å, kcal/mol), `coulomb`, the time `t` (ps, D145), and constants, truncated as the Lennard-Jones; `groups = [mask, mask]` keeps the pairs between two masks of Amber (D137). |
 | | `[[energy.bond]]`, `[[energy.angle]]`, `[[energy.dihedral]]` | With a topology: a term over tuples of 2, 3, or 4 of its particles, given by an expression in `r` (Å) or `theta` (radians), with `name`, `expression`, `particles` (lists of particle numbers, from 1), and parameters, a number for all tuples or a list of one for each (D136). With `groups` in place of `particles`, 2, 3, or 4 masks of Amber, a term over the centers of the groups, weighted by mass or, with `weighting = "NONE"`, alike; a bond takes `dx`, `dy`, `dz` as well (D139). The time `t` in ps may enter the expression: a reference that moves at a rate (D145). Restraints of distances, angles, and dihedrals, flat-bottomed with `max`, are such terms. |
+| | `[[energy.external]]` | With a topology: a term of the absolute positions of single particles, given by an expression in `x`, `y`, `z` (Å), the charge `q` (e), the time `t` (ps), and parameters, a number for every particle or a list of one for each, over the particles of `selection`, a mask of Amber, or of `particles`, their numbers from 1 (D148): walls, fields, restraints of any shape. It has no virial, and a run at constant pressure refuses it. |
 | | `[[energy.function]]` | A function of one argument that every expression may call by its `name`: `values` at evenly spaced points from `min` to `max`, a natural cubic spline between them and zero outside, or with `periodic = true` a periodic spline, the first and last value equal and the argument taken modulo `max - min` (D138). |
 | | `[[energy.type]]` | A type of particle: its mass and its parameters. |
 | | `[[energy.pair_override]]` | Parameters of a term for one pair of types. |
@@ -171,9 +172,9 @@ names, `+ - * / ^`, parentheses, the functions `sqrt`, `exp`, `log`,
 x = 0), `square`, `cube`, `recip`, `sec`, `csc`, `cot`, `min`, `max`,
 `atan2(y, x)`, and `select(x, a, b)` (a if x ≠ 0, else b), the tabulated
 functions of `[[energy.function]]` (D138), and definitions of names after
-semicolons: `k*d^2; d = r - r0`. The terms over tuples, over centers, and
-over the pairs of a topology may use the time `t` in ps, that of the end
-of the step whose forces they give (D145).
+semicolons: `k*d^2; d = r - r0`. The terms over tuples, over centers,
+over the pairs of a topology, and of the positions may use the time `t`
+in ps, that of the end of the step whose forces they give (D145, D148).
 
 ### 1.3 Standard pipeline templates
 

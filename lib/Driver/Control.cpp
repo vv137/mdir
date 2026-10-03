@@ -63,6 +63,8 @@ private:
   Error readPair(const toml::table &table);
   /// [[energy.function]]: a tabulated function (D138).
   Error readFunction(const toml::table &table);
+  /// [[energy.external]]: a term of the absolute positions (D148).
+  Error readExternal(const toml::table &table);
   /// [[energy.bond]], [[energy.angle]], or [[energy.dihedral]]: a term over
   /// tuples of `arity` particles (D136).
   Error readTupleTerm(const toml::table &table, unsigned arity);
@@ -245,6 +247,105 @@ Error Reader::readChoice(
 //===----------------------------------------------------------------------===//
 // Tables
 //===----------------------------------------------------------------------===//
+
+Error Reader::readExternal(const toml::table &table) {
+  ExternalTerm term;
+  if (Error error = readString(table, "name", term.name))
+    return error;
+  if (Error error = readString(table, "expression", term.expression))
+    return error;
+  if (term.name.empty())
+    return fail(table, "expected a 'name' in [[energy.external]]");
+  if (!llvm::all_of(term.name,
+                    [](char c) { return llvm::isAlnum(c) || c == '_'; }))
+    return fail(*table.get("name"), "a name of letters, digits, and '_', "
+                                    "not '" + term.name + "'");
+  for (const ExternalTerm &other : control.externalTerms)
+    if (other.name == term.name)
+      return fail(*table.get("name"),
+                  "another term has the name '" + term.name + "'");
+  if (term.expression.empty())
+    return fail(table, "expected an 'expression' in [[energy.external]]");
+
+  // The particles: a mask of Amber, or their numbers, from 1.
+  if (Error error = readString(table, "selection", term.selection))
+    return error;
+  const toml::node *node = table.get("particles");
+  if (node && table.contains("selection"))
+    return fail(*node, "a term takes 'selection' or 'particles', not both");
+  if (node) {
+    const toml::array *list = node->as_array();
+    if (!list || list->empty())
+      return fail(*node, "expected 'particles' as a list of particle "
+                         "numbers, from 1");
+    for (const toml::node &element : *list) {
+      std::optional<int64_t> number = element.value<int64_t>();
+      if (!element.is_integer() || !number || *number < 1)
+        return fail(element, "expected a particle number, from 1");
+      if (llvm::is_contained(term.particles,
+                             static_cast<unsigned>(*number - 1)))
+        return fail(element, "a particle appears twice");
+      term.particles.push_back(static_cast<unsigned>(*number - 1));
+    }
+  } else if (term.selection.empty()) {
+    return fail(table, "expected 'selection', a mask of particles, or "
+                       "'particles' in [[energy.external]]");
+  }
+
+  // Every other keyword is a parameter: a number for every particle, or a
+  // list of one for each.
+  for (auto &&[key, value] : table) {
+    StringRef keyword = toRef(key.str());
+    if (keyword == "name" || keyword == "expression" ||
+        keyword == "selection" || keyword == "particles")
+      continue;
+    if (keyword == "t" || keyword == "x" || keyword == "y" ||
+        keyword == "z" || keyword == "q")
+      return fail(value, "'" + keyword + "' is a variable of the term, not "
+                         "a parameter");
+    if (std::optional<double> number = value.value<double>()) {
+      term.constants.push_back({keyword.str(), *number});
+      continue;
+    }
+    const toml::array *list = value.as_array();
+    if (!list)
+      return fail(value, "expected a parameter: a number, or a list of one "
+                         "for each particle");
+    std::vector<double> values;
+    for (const toml::node &element : *list) {
+      std::optional<double> number = element.value<double>();
+      if (!number)
+        return fail(element, "expected a number");
+      values.push_back(*number);
+    }
+    if (!term.particles.empty() && values.size() != term.particles.size())
+      return fail(value, "expected " + llvm::Twine(term.particles.size()) +
+                             " values, one for each particle");
+    term.parameters.push_back({keyword.str(), std::move(values)});
+  }
+
+  llvm::Expected<Expression> expression =
+      Expression::parse(term.expression, control.functions);
+  if (!expression)
+    return fail(*table.get("expression"),
+                llvm::toString(expression.takeError()));
+  for (const std::string &name : expression->getNames()) {
+    if (name == "t")
+      control.usesTime = true;
+    if (name == "x" || name == "y" || name == "z" || name == "q" ||
+        name == "t")
+      continue;
+    auto named = [&](const auto &p) { return p.first == name; };
+    if (!llvm::any_of(term.constants, named) &&
+        !llvm::any_of(term.parameters, named))
+      return fail(*table.get("expression"),
+                  "the expression uses '" + name + "', which is neither "
+                  "'x', 'y', 'z', the charge 'q', the time 't', nor a "
+                  "parameter of the term");
+  }
+  control.externalTerms.push_back(std::move(term));
+  return Error::success();
+}
 
 Error Reader::readTupleTerm(const toml::table &table, unsigned arity) {
   static const char *const kinds[] = {"", "", "bond", "angle", "dihedral"};
@@ -756,7 +857,7 @@ Error Reader::readEnergy(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "energy",
           {"cutoff", "switch_distance", "pairlist_distance",
-           "pruned_distance", "rebuild_interval", "lennard_jones_modifier", "coulomb_modifier", "reaction_field_dielectric", "implicit_solvent", "solvent_dielectric", "solute_dielectric", "surface_area_energy", "pair", "bond", "angle", "dihedral", "function", "type",
+           "pruned_distance", "rebuild_interval", "lennard_jones_modifier", "coulomb_modifier", "reaction_field_dielectric", "implicit_solvent", "solvent_dielectric", "solute_dielectric", "surface_area_energy", "pair", "bond", "angle", "dihedral", "external", "function", "type",
            "pair_override", "dispersion_correction", "electrostatics"},
           {}))
     return error;
@@ -854,6 +955,12 @@ Error Reader::readEnergy(const toml::table &table) {
     return error;
   if (Error error = readArray("dihedral", &Reader::readDihedral))
     return error;
+  if (Error error = readArray("external", &Reader::readExternal))
+    return error;
+  if (!control.externalTerms.empty() && !control.hasTopology())
+    return fail(*table.get("external"),
+                "terms of the positions need a topology, whose particles "
+                "they select");
   if (!control.tupleTerms.empty() && !control.hasTopology())
     return fail(*table.get(control.tupleTerms.front().arity == 2   ? "bond"
                            : control.tupleTerms.front().arity == 3 ? "angle"
@@ -1735,6 +1842,15 @@ Error Reader::read(const toml::table &root) {
         "%s: 'trajectory_interval' is given, but [output] names no "
         "'trajectory'",
         path.str().c_str());
+  // A term of the absolute positions has no virial (D148): a pressure from
+  // the virial of the forces cannot include it.
+  if (!control.externalTerms.empty() && control.barostat)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "%s: the term '%s' of [[energy.external]] depends on the absolute "
+        "positions, which give no virial; a run at constant pressure cannot "
+        "take it",
+        path.str().c_str(), control.externalTerms.front().name.c_str());
   // The coordinates of the terms over centers, at every energy (D145).
   if (!control.pullFile.empty()) {
     if (llvm::none_of(control.tupleTerms,

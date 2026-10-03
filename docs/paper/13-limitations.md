@@ -99,13 +99,13 @@ its charges and Lennard-Jones parameters and between interaction groups
 the centers of groups, which restrain pull groups (D139), whose loops
 still run over every particle of the system, and which pull at a rate
 with the time in their expressions and write their coordinates and
-forces (D145); so are the reaction field
+forces (D145), and terms of the absolute positions of single particles,
+with parameters of each (D148); so are the reaction field
 (D140), runs without a periodic cell, in a cell that no image reaches
 (D142), and generalized Born, whose Born radii are the first
 intermediate fields that differentiation carries the energy back through
 (D143, D144). Then the features that general molecular dynamics asks of
-MDIR: such terms over positions, with parameters of each particle;
-outputs for analysis (velocities, the pressure tensor), the compressed
+MDIR: outputs for analysis (velocities, the pressure tensor), the compressed
 trajectory of GROMACS being in place (D141);
 coarse-grained models; and free energy, whose $dH/d\lambda$ the
 differentiation of the IR is designed to give (D2). A Python interface whose buffers follow DLPack

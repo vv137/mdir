@@ -112,6 +112,39 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
     topology->tupleTerms.push_back(std::move(term));
   }
 
+  // The terms of the absolute positions (D148): their particles, by a mask
+  // or by number, and a value of each parameter for each.
+  for (ExternalTerm term : control.externalTerms) {
+    if (!term.selection.empty()) {
+      auto selected = selectParticles(term.selection, *topology);
+      if (!selected)
+        return selected.takeError();
+      for (size_t i = 0, e = selected->size(); i != e; ++i)
+        if ((*selected)[i])
+          term.particles.push_back(static_cast<unsigned>(i));
+      if (term.particles.empty())
+        return llvm::createStringError(
+            llvm::inconvertibleErrorCode(),
+            "the selection '%s' of the term '%s' selects no particle",
+            term.selection.c_str(), term.name.c_str());
+      for (const auto &[name, values] : term.parameters)
+        if (values.size() != term.particles.size())
+          return llvm::createStringError(
+              llvm::inconvertibleErrorCode(),
+              "the parameter '%s' of the term '%s' has %zu values, and its "
+              "selection '%s' selects %zu particles",
+              name.c_str(), term.name.c_str(), values.size(),
+              term.selection.c_str(), term.particles.size());
+    }
+    for (unsigned particle : term.particles)
+      if (particle >= topology->getNumParticles())
+        return llvm::createStringError(
+            llvm::inconvertibleErrorCode(),
+            "the term '%s' names the particle %u, and the topology has %zu",
+            term.name.c_str(), particle + 1, topology->getNumParticles());
+    topology->externalTerms.push_back(std::move(term));
+  }
+
   system.types = topology->types;
   system.masses = topology->masses;
   system.positions = topology->positions;
