@@ -236,7 +236,27 @@ run evaluates the forces and the state of the barostat at its first step
 
 `mdir run --continue` of a stage, on the other hand, refuses a control
 file whose physics or coupling were edited since its checkpoint, and names
-each change; a new stage is a new run. Run
+each change; a new stage is a new run. `--continue` extends a stage as it
+was: it may change `[execution]` (and the reach of the neighbor
+structures), `[output]`, and a larger `steps`, nothing else. A schedule,
+such as annealing through temperatures or restraints released in steps,
+is therefore a sequence of runs, each beginning from the checkpoint of the
+one before through `[input]`:
+
+```sh
+for k in 10 5 2 1 0; do
+  sed -e "s/force_constant = .*/force_constant = $k.0/" \
+      -e "s/^checkpoint  = .*/checkpoint  = \"$prev\"/" \
+      -e "s/^checkpoint          = .*/checkpoint          = \"k$k.h5\"/" \
+      npt.toml > k$k.toml
+  mdir run --continue k$k.toml && prev=k$k.h5
+done
+```
+
+with `prev=nvt.h5` before the loop, each run named after its force
+constant; each says in its log that the restraints differ from those of
+the checkpoint, and evaluates its first forces. Editing `npt.toml` and
+running `mdir run --continue npt.toml` again would be refused. Run
 again, a complete stage says `the run is complete` and exits with 0, so the
 loop above also continues a pipeline that a job left unfinished.
 `examples/ala3/run.sh` runs the same stages on tri-alanine in OPC water.

@@ -221,7 +221,7 @@ before it writes, at most 99 of each (D149):
 
 | Option | Meaning |
 |---|---|
-| `--continue` | Continues the run from the checkpoint of `[output]` until it has taken its `steps`, counted from the step it began at; without a checkpoint the run begins, and a complete run exits with 0 (D129). It refuses a checkpoint of other physics or coupling, naming each change, and notes a change of the execution (D[checkpoint-fingerprint]). |
+| `--continue` | Continues the run from the checkpoint of `[output]` until it has taken its `steps`, counted from the step it began at; without a checkpoint the run begins, and a complete run exits with 0 (D129). It refuses a checkpoint of other physics or coupling, naming each change (D[checkpoint-fingerprint]). What may change: `[execution]` and `pairlist_distance`, `pruned_distance`, and `rebuild_interval` of `[energy]`, with a note in the log; `[output]`, within the rules of its intervals; and a larger `steps`, which extends the run. A change of anything else is a new run, which begins from the checkpoint as `checkpoint` of `[input]`. |
 | `--no-append` | With `--continue`, writes the outputs that follow (the log, manifest, files of columns, and frames) to `<name>.partNNNN<ext>` rather than appending them to the files of the run, which are first cut to the checkpoint (D130, D149). |
 | `--max-walltime <time>` | Stops at the last checkpoint that leaves time for one more interval between checkpoints, in hours or as `H:MM[:SS]` (D131). |
 
