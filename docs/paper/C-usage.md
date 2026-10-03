@@ -445,7 +445,11 @@ values   = [[1.0, 0.5, 0.0, 0.5, 1.0],
 On the dipeptide the two add 0.662431 and 0.171469 kcal/mol at the
 start, the second as OpenMM's Continuous2DFunction gives it. A particle
 that no entry gives a value is an error; a later entry wins
-over an earlier one on the particles they share. A table with
+over an earlier one on the particles they share. A term over
+longer tuples, `[[energy.compound]]`, takes `distance(p1, p3)`,
+`angle(p1, p2, p3)`, and `dihedral(p1, p2, p3, p4)` of any places of a
+tuple in one expression, as a hydrogen bond in the distance of its donor
+and acceptor and the angle at its hydrogen. A table with
 `discrete = true` gives the value at the nearest point, for arguments
 that are whole numbers, such as two kinds of particles given as
 parameters of each.

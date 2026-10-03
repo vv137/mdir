@@ -26,7 +26,8 @@ of runs (`ensemble`) are designs, not code (Section 13).
 A term of the potential is written once, as an expression of its
 coordinate and its parameters, and the driver writes every term of a run
 into one `md.potential`. The terms of a topology are written by the
-driver; a control file adds terms over pairs, bonds, angles, and dihedrals
+driver; a control file adds terms over pairs, bonds, angles, dihedrals,
+and tuples of any of their distances, angles, and dihedrals
 as expressions in the syntax of the custom forces of OpenMM, with
 parameters of each particle and tabulated functions of up to three
 arguments (D22, D136 to D138, D165),

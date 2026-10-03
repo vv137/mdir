@@ -2670,8 +2670,17 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     static const char *const coordinates[] = {
         "", "", "distance(0, 1)", "angle(0, 1, 2)", "dihedral(0, 1, 2, 3)"};
     std::string set = "custom_" + term.name;
+    // A compound term (D165) takes the coordinates that its expression
+    // names, of any members of its tuples.
+    std::string list = term.isCompound() ? "" : coordinates[term.arity];
+    for (auto [k, coordinate] : llvm::enumerate(term.coordinates)) {
+      list += (k ? ", " : "") + coordinate.kind + "(";
+      for (auto [p, place] : llvm::enumerate(coordinate.places))
+        list += (p ? ", " : "") + std::to_string(place);
+      list += ")";
+    }
     os << "  %u_" << set << " = md.sum_tuples %r_" << set
-       << ", %x, %cell coordinates(" << coordinates[term.arity] << ")";
+       << ", %x, %cell coordinates(" << list << ")";
     if (!term.parameters.empty()) {
       os << "\n      tuple(";
       for (auto [k, parameter] : llvm::enumerate(term.parameters))
@@ -2681,19 +2690,39 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
         os << (k ? ", " : "") << "!of_" << set;
       os << ")";
     }
-    os << " {\n  ^bb0(%c: f64";
+    llvm::StringMap<std::string> values;
+    if (term.isCompound()) {
+      os << " {\n  ^bb0(";
+      for (size_t k = 0; k != term.coordinates.size(); ++k)
+        os << (k ? ", " : "") << "%c" << k << ": f64";
+    } else {
+      os << " {\n  ^bb0(%c: f64";
+    }
     for (const auto &parameter : term.parameters)
       os << ", %cp_" << parameter.first << ": f64";
     os << "):\n";
-    std::string variable = "%c";
-    if (term.arity == 2) {
+    if (term.isCompound() || term.arity == 2)
       os << "    %c_scale = arith.constant " << formatReal(1.0 / units::length)
-         << " : f64\n"
-         << "    %c_a = arith.mulf %c, %c_scale : f64\n";
-      variable = "%c_a";
+         << " : f64\n";
+    if (term.isCompound()) {
+      // Distances in Å, angles in radians.
+      for (auto [k, coordinate] : llvm::enumerate(term.coordinates)) {
+        std::string variable = "%c" + std::to_string(k);
+        if (coordinate.kind == "distance") {
+          os << "    " << variable << "_a = arith.mulf " << variable
+             << ", %c_scale : f64\n";
+          variable += "_a";
+        }
+        values[coordinate.name] = variable;
+      }
+    } else {
+      std::string variable = "%c";
+      if (term.arity == 2) {
+        os << "    %c_a = arith.mulf %c, %c_scale : f64\n";
+        variable = "%c_a";
+      }
+      values[term.getVariable()] = variable;
     }
-    llvm::StringMap<std::string> values;
-    values[term.getVariable()] = variable;
     if (control.usesTime)
       values["t"] = "%time";
     for (const auto &parameter : term.parameters)

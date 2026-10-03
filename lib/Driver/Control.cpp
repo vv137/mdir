@@ -88,6 +88,9 @@ private:
   Error readDihedral(const toml::table &table) {
     return readTupleTerm(table, 4);
   }
+  /// [[energy.compound]]: a term over tuples of any number of particles in
+  /// their distances, angles, and dihedrals (D165).
+  Error readCompound(const toml::table &table);
   Error readOverride(const toml::table &table);
   Error readType(const toml::table &table);
   Error readDynamics(const toml::table &table);
@@ -668,6 +671,215 @@ Error Reader::readTupleTerm(const toml::table &table, unsigned arity) {
     std::vector<StringRef> coordinates = {term.getVariable()};
     if (term.isCentroid() && arity == 2)
       coordinates.insert(coordinates.end(), {"dx", "dy", "dz"});
+    checkTerm(term.name, term.expression, coordinates, parameters);
+  }
+  control.tupleTerms.push_back(std::move(term));
+  return Error::success();
+}
+
+/// Puts in `text` a name in place of each call of `distance`, `angle`, or
+/// `dihedral` of the places p1 to p`arity`, and records the coordinate that
+/// each name stands for: `distance(p1, p3)` becomes `distance__1_3`, a name
+/// that the syntax of the control file reserves by its two underscores.
+static Error rewriteCoordinates(std::string &text, unsigned arity,
+                                std::vector<TupleTerm::Coordinate> &found) {
+  std::string out;
+  size_t i = 0;
+  auto isName = [](char c) { return llvm::isAlnum(c) || c == '_'; };
+  while (i < text.size()) {
+    if (!isName(text[i])) {
+      out += text[i++];
+      continue;
+    }
+    size_t end = i;
+    while (end < text.size() && isName(text[end]))
+      ++end;
+    StringRef word(text.data() + i, end - i);
+    size_t open = end;
+    while (open < text.size() && text[open] == ' ')
+      ++open;
+    unsigned members = llvm::StringSwitch<unsigned>(word)
+                           .Case("distance", 2)
+                           .Case("angle", 3)
+                           .Case("dihedral", 4)
+                           .Default(0);
+    if (members == 0 || open >= text.size() || text[open] != '(') {
+      out += word.str();
+      i = end;
+      continue;
+    }
+    size_t close = text.find(')', open);
+    if (close == std::string::npos)
+      return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                     "'%s(' is not closed", word.str().c_str());
+    llvm::SmallVector<StringRef, 4> arguments;
+    StringRef(text).slice(open + 1, close).split(arguments, ',');
+    TupleTerm::Coordinate coordinate;
+    coordinate.kind = word.str();
+    coordinate.name = word.str() + "_";
+    for (StringRef argument : arguments) {
+      argument = argument.trim();
+      unsigned place = 0;
+      if (!argument.consume_front("p") || argument.getAsInteger(10, place) ||
+          place < 1 || place > arity)
+        return llvm::createStringError(
+            llvm::inconvertibleErrorCode(),
+            "'%s' takes the places of the particles of a tuple, p1 to p%u, "
+            "not '%s'",
+            word.str().c_str(), arity,
+            StringRef(text).slice(open + 1, close).trim().str().c_str());
+      if (llvm::is_contained(coordinate.places, place - 1))
+        return llvm::createStringError(
+            llvm::inconvertibleErrorCode(),
+            "'%s' takes a place twice", word.str().c_str());
+      coordinate.places.push_back(place - 1);
+      coordinate.name += "_" + std::to_string(place);
+    }
+    if (coordinate.places.size() != members)
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(), "'%s' takes %u places, not %zu",
+          word.str().c_str(), members, coordinate.places.size());
+    if (llvm::none_of(found, [&](const TupleTerm::Coordinate &other) {
+          return other.name == coordinate.name;
+        }))
+      found.push_back(coordinate);
+    out += coordinate.name;
+    i = close + 1;
+  }
+  text = std::move(out);
+  return Error::success();
+}
+
+Error Reader::readCompound(const toml::table &table) {
+  TupleTerm term;
+  if (Error error = readString(table, "name", term.name))
+    return error;
+  if (Error error = readString(table, "expression", term.expression))
+    return error;
+  if (term.name.empty())
+    return fail(table, "expected a 'name' in [[energy.compound]]");
+  if (!llvm::all_of(term.name,
+                    [](char c) { return llvm::isAlnum(c) || c == '_'; }))
+    return fail(*table.get("name"), "a name of letters, digits, and '_', "
+                                    "not '" + term.name + "'");
+  for (const TupleTerm &other : control.tupleTerms)
+    if (other.name == term.name)
+      return fail(*table.get("name"),
+                  "another term has the name '" + term.name + "'");
+  if (term.expression.empty())
+    return fail(table, "expected an 'expression' in [[energy.compound]]");
+
+  // The tuples: lists of the numbers of their particles, from 1, all of
+  // one length, from 2 to 9, so that a place is one digit.
+  const toml::node *node = table.get("particles");
+  const toml::array *tuples = node ? node->as_array() : nullptr;
+  if (!tuples || tuples->empty() || !tuples->front().is_array())
+    return fail(node ? *node : static_cast<const toml::node &>(table),
+                "expected 'particles' in [[energy.compound]]: lists of the "
+                "numbers of the particles of each tuple, from 1");
+  term.arity = tuples->front().as_array()->size();
+  if (term.arity < 2 || term.arity > 9)
+    return fail(*node, "a compound term takes tuples of 2 to 9 particles");
+  for (const toml::node &element : *tuples) {
+    const toml::array *tuple = element.as_array();
+    if (!tuple || tuple->size() != term.arity)
+      return fail(element, "expected a list of " + llvm::Twine(term.arity) +
+                               " particle numbers, as long as the first");
+    std::vector<unsigned> members;
+    for (const toml::node &member : *tuple) {
+      std::optional<int64_t> number = member.value<int64_t>();
+      if (!member.is_integer() || !number || *number < 1)
+        return fail(member, "expected a particle number, from 1");
+      if (llvm::is_contained(members, static_cast<unsigned>(*number - 1)))
+        return fail(member, "a particle appears twice in a tuple");
+      members.push_back(static_cast<unsigned>(*number - 1));
+    }
+    term.particles.insert(term.particles.end(), members.begin(),
+                          members.end());
+  }
+  size_t count = term.size();
+
+  // Every other keyword is a parameter: a number for all tuples, or a list
+  // of one for each.
+  for (auto &&[key, value] : table) {
+    StringRef keyword = toRef(key.str());
+    if (keyword == "name" || keyword == "expression" ||
+        keyword == "particles")
+      continue;
+    if (keyword.contains("__"))
+      return fail(value, "a name with two underscores is reserved");
+    std::vector<double> values;
+    if (std::optional<double> number = value.value<double>()) {
+      values.assign(count, *number);
+    } else if (const toml::array *list = value.as_array()) {
+      for (const toml::node &element : *list) {
+        std::optional<double> number = element.value<double>();
+        if (!number)
+          return fail(element, "expected a number");
+        values.push_back(*number);
+      }
+      if (values.size() != count)
+        return fail(value, "'" + keyword + "' has " +
+                               llvm::Twine(values.size()) +
+                               " values, and there are " +
+                               llvm::Twine(count) + " tuples");
+    } else {
+      return fail(value, "expected a number, or a list of one for each "
+                         "tuple, for the parameter '" +
+                             keyword + "'");
+    }
+    term.parameters.push_back({keyword.str(), std::move(values)});
+  }
+
+  // The coordinates, in place of their calls.
+  std::string text = term.expression;
+  if (Error error = rewriteCoordinates(text, term.arity, term.coordinates))
+    return fail(*table.get("expression"), llvm::toString(std::move(error)));
+  if (term.coordinates.empty())
+    return fail(*table.get("expression"),
+                "the expression uses no distance(), angle(), or dihedral() "
+                "of the places p1 to p" + llvm::Twine(term.arity));
+  term.expression = text;
+  auto expression = Expression::parse(term.expression, control.functions);
+  if (!expression)
+    return fail(*table.get("expression"),
+                llvm::toString(expression.takeError()));
+  if (llvm::any_of(term.parameters,
+                   [](const auto &p) { return p.first == "t"; }))
+    return fail(*table.get("t"), "'t' is the time, not a parameter");
+  for (const std::string &name : expression->getNames()) {
+    if (name == "t") {
+      control.usesTime = true;
+      continue;
+    }
+    if (llvm::any_of(term.coordinates, [&](const auto &c) {
+          return c.name == name;
+        }))
+      continue;
+    bool parameter = llvm::any_of(
+        term.parameters, [&](const auto &p) { return p.first == name; });
+    if (!getParticleStem(name, term.arity).empty()) {
+      if (parameter)
+        return fail(*table.get(name), "'" + name + "' is a parameter of "
+                                      "each particle at a place as well as "
+                                      "one of the term");
+      continue;
+    }
+    if (!parameter)
+      return fail(*table.get("expression"),
+                  "the expression uses '" + name + "', which is neither a "
+                  "distance(), angle(), or dihedral() of the places p1 to p" +
+                      llvm::Twine(term.arity) +
+                      ", the time 't', a parameter of the term, nor one of "
+                      "each particle at a place");
+  }
+  {
+    std::vector<std::string> parameters;
+    for (const auto &[name, values] : term.parameters)
+      parameters.push_back(name);
+    std::vector<StringRef> coordinates;
+    for (const TupleTerm::Coordinate &coordinate : term.coordinates)
+      coordinates.push_back(coordinate.name);
     checkTerm(term.name, term.expression, coordinates, parameters);
   }
   control.tupleTerms.push_back(std::move(term));
@@ -1278,7 +1490,7 @@ Error Reader::readEnergy(const toml::table &table) {
           table, "energy",
           {"cutoff", "switch_distance", "pairlist_distance",
            "pruned_distance", "rebuild_interval", "lennard_jones_modifier", "coulomb_modifier", "reaction_field_dielectric", "implicit_solvent", "solvent_dielectric", "solute_dielectric", "surface_area_energy", "salt_concentration", "born_radius_cutoff", "born_radii", "pair", "bond", "angle", "dihedral", "external", "function", "type",
-           "parameter", "triplet", "pair_override", "dispersion_correction", "electrostatics"},
+           "parameter", "compound", "triplet", "pair_override", "dispersion_correction", "electrostatics"},
           {}))
     return error;
 
@@ -1385,6 +1597,8 @@ Error Reader::readEnergy(const toml::table &table) {
     return error;
   if (Error error = readArray("dihedral", &Reader::readDihedral))
     return error;
+  if (Error error = readArray("compound", &Reader::readCompound))
+    return error;
   if (Error error = readArray("external", &Reader::readExternal))
     return error;
   if (!control.externalTerms.empty() && !control.hasTopology())
@@ -1392,7 +1606,8 @@ Error Reader::readEnergy(const toml::table &table) {
                 "terms of the positions need a topology, whose particles "
                 "they select");
   if (!control.tupleTerms.empty() && !control.hasTopology())
-    return fail(*table.get(control.tupleTerms.front().arity == 2   ? "bond"
+    return fail(*table.get(control.tupleTerms.front().isCompound() ? "compound"
+                           : control.tupleTerms.front().arity == 2 ? "bond"
                            : control.tupleTerms.front().arity == 3 ? "angle"
                                                                    : "dihedral"),
                 "terms over tuples need a topology, whose particles they "
