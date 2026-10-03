@@ -247,6 +247,12 @@ for label, electrostatics in (
         if len(plain) != len(free):
             worst = float('inf')
             continue
+        # On a device the sums of the default mode are not reproducible
+        # from run to run (D84), so two runs part after their first steps
+        # whatever their Hamiltonians; there only the first row, at the
+        # same configuration, tests the identity.
+        if target == 'GPU':
+            plain, free = plain[:1], free[:1]
         worst = max([worst] + [abs(a - b) for a, b in zip(plain, free)])
 report('lambda = 0 against no [free_energy]', worst,
        1e-4 if mixed else 1e-6)
