@@ -621,6 +621,11 @@ with their uncertainties:
 python3 scripts/free-energy.py s*.toml
 ```
 
+For 500 ps a state at 300 K and 1 atm it prints
+$\Delta G = 2.79 \pm 0.11$ kcal/mol by MBAR from the coupled to the
+decoupled state, a hydration free energy of $-2.79$ kcal/mol; OpenMM with
+the same Hamiltonian gives $2.78 \pm 0.11$ (Section 6.8).
+
 Any other component, `restraint = [...]` say, is the parameter
 `lambda_restraint` of the expressions of C.7, so that a restraint can be
 switched on along the states and its contribution taken from the same

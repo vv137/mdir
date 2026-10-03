@@ -930,7 +930,11 @@ two end states, which is exact for the soft-core form, whose tail is
 $(1 - \lambda_\text{V})$ times that of the Lennard-Jones. Every other
 component $\lambda_m$ is a parameter `lambda_<name>` of the expressions of
 `[energy]` (Section 3.3), as OpenMM's global parameters are: a restraint
-switched on with $\lambda_m$, for one.
+switched on with $\lambda_m$, for one. At the state of the run the charges
+of the reciprocal sum are a field of their own, which the host computes
+once; a map over the particles in the loop of the steps (still used by
+`@alchemical`) gave positions that are not numbers on a device in runs
+that put the particles in order, which is open.
 
 **Derivatives and the other states.** The potential `@energy` of the
 steps holds $\boldsymbol\lambda$ of the run as constants, which the
@@ -978,3 +982,27 @@ derivatives agree with central differences of the energies of the states
 beside them to $2.9\times10^{-5}$ kcal/mol ($h = 0.01$), in the Coulomb,
 the Lennard-Jones, and a component that only a bond, a term over centers,
 and a term of the positions take.
+
+**The hydration free energy of ethanol.** The same system through the 14
+states of C.9 (four of the Coulomb, nine of the softened Lennard-Jones),
+each 500 ps at 300 K and 1 atm from one equilibration at state 0
+(minimization, 50 ps at constant volume, 200 ps at constant pressure),
+Langevin dynamics with a friction of 1/ps, SETTLE and SHAKE, 2 fs, PME
+with $\beta = 0.32$ Å$^{-1}$ on a grid of 32, no correction for the
+dispersion, the first tenth of each run left out. MDIR in mixed precision
+on an RTX 3090 gives by MBAR $\Delta G = 2.793 \pm 0.109$ kcal/mol from the
+coupled to the decoupled state, $-2.79$ kcal/mol of hydration (TI over
+the states $3.14 \pm 0.10$); OpenMM 8.6.1 on its CUDA platform, the same
+Hamiltonian and protocol, $2.783 \pm 0.112$ (TI $2.97 \pm 0.11$): the two
+agree to $0.010 \pm 0.156$ kcal/mol. The legs differ by $0.10 \pm 0.08$
+(Coulomb) and $-0.11 \pm 0.12$ kcal/mol (Lennard-Jones). TI on this
+spacing of the Lennard-Jones is biased by its curvature, which MBAR is not.
+
+**Cost.** On JAC (23,558 particles, one water decoupled, RTX 3090, mixed
+precision) a step takes 0.210 ms at a state with $\lambda_\text{C} =
+\lambda_\text{V} = 0$, as without `[free_energy]` (0.211 ms): the kernels
+fold the constants. At $\lambda_\text{C} = 1$, $\lambda_\text{V} = 0.5$ it
+takes 0.258 ms (+23%): the flag of each particle that the pair kernel
+gathers and the soft-core, written without a root, as $\sigma^6/x$. The
+free-energy file every 500 steps over 14 states adds 0.007 ms a step
+(3%).

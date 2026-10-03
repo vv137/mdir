@@ -112,7 +112,12 @@ def mbar(u, counts, tolerance=1e-10, iterations=100000):
     s = np.diag(sigma)
     inner = np.eye(len(sigma)) - s @ v.T @ np.diag(counts) @ v @ s
     theta = v @ s @ np.linalg.pinv(inner) @ s @ v.T
-    return f, theta
+    # The overlap matrix, O = Wᵀ W diag(N) (Section V of Shirts and
+    # Chodera): O[k, l], the probability that a sample of state l would be
+    # taken as one of state k; small values between neighbors mean that the
+    # states sample too little of each other.
+    overlap = w.T @ w @ np.diag(counts)
+    return f, theta, overlap
 
 
 def main():
@@ -174,17 +179,18 @@ def main():
     # MBAR over every sample of every state.
     u = np.concatenate(kept, axis=0).T / kt  # states x samples
     counts = np.array([len(sample) for sample in kept], dtype=float)
-    f, theta = mbar(u, counts)
+    f, theta, overlap = mbar(u, counts)
 
     print(f'# T = {temperature} K, kT = {kt:.6f} kcal/mol; ΔG from state 0, '
           'in kcal/mol')
     print('# state ' + ' '.join(f'{c:>8}' for c in components) +
-          '    TI      +-     MBAR     +-')
+          '    TI      +-     MBAR     +-  overlap')
     for k in range(states):
         variance = theta[0, 0] + theta[k, k] - 2.0 * theta[0, k]
         print(f'{k:7d} ' + ' '.join(f'{v:8.4f}' for v in lambdas[k]) +
               f' {ti[k]:8.4f} {math.sqrt(ti_variance[k]):6.4f}'
-              f' {f[k] * kt:8.4f} {math.sqrt(max(variance, 0.0)) * kt:6.4f}')
+              f' {f[k] * kt:8.4f} {math.sqrt(max(variance, 0.0)) * kt:6.4f}'
+              + (f' {overlap[k - 1, k]:7.3f}' if k else '        '))
 
 
 if __name__ == '__main__':
