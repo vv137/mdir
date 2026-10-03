@@ -64,6 +64,13 @@ LogicalResult FixedOrderReductions::rewrite(scf::ParallelOp loop) {
       return loop.emitOpError()
              << "reduces a value of the type " << result.getType()
              << ", which fixed-order-reductions does not order";
+  // The partial results live in one buffer at the entry of the function:
+  // the iterations of an enclosing parallel loop would share it.
+  if (loop->getParentOfType<scf::ParallelOp>())
+    return loop.emitOpError()
+           << "has a reduction inside another parallel loop, whose "
+              "iterations would share the partial results of "
+              "fixed-order-reductions";
   auto function = loop->getParentOfType<FunctionOpInterface>();
   if (!function)
     return loop.emitOpError() << "is not inside a function";

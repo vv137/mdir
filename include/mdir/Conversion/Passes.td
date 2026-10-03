@@ -97,7 +97,9 @@ def FixedOrderReductions
     nor on their number: a run with one thread gives the same bits as a
     run with many. The partial results live in an alloca of a constant
     size at the entry of the function, so a loop of steps does not grow
-    the stack (D117).
+    the stack (D117). A reduction over more than one dimension, or inside
+    another parallel loop, whose iterations would share that buffer, is
+    refused.
   }];
   let options = [
     Option<"chunks", "chunks", "int64_t", /*default=*/"256",
