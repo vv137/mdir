@@ -18,6 +18,11 @@ config.excludes = ["CMakeLists.txt", "lit.cfg.py", "lit.site.cfg.py.in", "lib", 
 llvm_config.with_system_environment(
     ["HOME", "TMP", "TEMP", "ASAN_OPTIONS", "UBSAN_OPTIONS",
      "CUDA_VISIBLE_DEVICES"])
+# with_system_environment forwards only values that are not empty; an empty
+# choice of devices, which hides every GPU, is forwarded as well, so that
+# the tests run on no device rather than on the first.
+if os.environ.get("CUDA_VISIBLE_DEVICES") == "":
+    config.environment["CUDA_VISIBLE_DEVICES"] = ""
 llvm_config.use_default_substitutions()
 
 config.mdir_tools_dir = os.path.join(config.mdir_obj_root, "bin")
@@ -83,7 +88,10 @@ if config.mdir_cuda:
             text=True,
             timeout=30,
         )
-        if devices.returncode == 0 and devices.stdout.strip():
+        # nvidia-smi lists every device whatever CUDA_VISIBLE_DEVICES
+        # hides; an empty choice hides them all.
+        hidden = os.environ.get("CUDA_VISIBLE_DEVICES") == ""
+        if devices.returncode == 0 and devices.stdout.strip() and not hidden:
             config.available_features.add("cuda")
     except (OSError, subprocess.SubprocessError):
         pass
