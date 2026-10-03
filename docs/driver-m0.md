@@ -86,9 +86,11 @@ regard to case.
 | | `parameters` | With a PSF: the files of topology (`.rtf`), parameters (`.prm`), and streams (`.str`), in the order that CHARMM reads them; a later file replaces what an earlier one defines. |
 | | `include_paths`, `defines` | With a GROMACS topology: the directories of `#include` and the names that `#define` gives. |
 | | `checkpoint` | The checkpoint of an earlier run, whose state the run begins from, at its step and time (D129), taking its cell (and warning on the standard error if the input has another); the input's cell still sets the grid of PME and the reference of restraints. One of a minimization gives the positions only, and the run begins at step 0. |
-| `[output]` | `trajectory` | Positions, in DCD (`.dcd`, Å) or in the compressed XTC of GROMACS (`.xtc`, nm to a thousandth), by the extension of the name (D141). |
+| `[output]` | `log` | The log in a file as well as on the standard output: every line that the run prints there, from its start; a continued run appends to it (D149). |
+| | `energy` | The rows of the log as a file of columns: a line of names, a line of units, and a row for each output (D149). |
+| | `trajectory` | Positions, in DCD (`.dcd`, Å) or in the compressed XTC of GROMACS (`.xtc`, nm to a thousandth), by the extension of the name (D141). |
 | | `trajectory_format` | `AUTO` (the default, from the extension), `DCD`, or `XTC`. |
-| | `pull_coordinates` | A file of the terms over the centers of groups at every energy of the log: the step, the time, and for each term its coordinates (`r`, `dx`, `dy`, `dz` in Å, or `theta`), its energy (kcal/mol), and its force, along the distance and on the second center, or $-\partial E/\partial\theta$; continued with the run (D145). |
+| | `pull` | A file of columns of the terms over the centers of groups at every energy of the log: the step, the time, and for each term its coordinates (`r`, `dx`, `dy`, `dz` in Å, or `theta`), its energy (kcal/mol), and its force, along the distance and on the second center, or $-\partial E/\partial\theta$; continued with the run (D145, D149). |
 | | `checkpoint` | The checkpoint (D26), written every `checkpoint_interval` steps in place of the one before, which stays as `<checkpoint>.prev` (D132), and at the end of a minimization. `mdir run --continue` continues the run from it (Section 2.7). |
 | | `energy_interval`, `trajectory_interval`, `checkpoint_interval` | Steps between the rows of the log, the frames, and the checkpoints (Section 2.2). The intervals nest, either way for energies and frames. |
 | `[energy]` | `cutoff` | The cutoff of `md.neighborhood` (Å). |
@@ -103,6 +105,7 @@ regard to case.
 | | `dispersion_correction` | `NONE` or `ENERGY_PRESSURE`; also in `[[energy.pair]]`. |
 | | `[[energy.pair]]` | A pair term, given by an expression (D16, D22). With a topology, over its pairs that are not excluded, in `r` (Å), `q1`, `q2`, `sigma`, `epsilon` of the pair, `sigma1`, `sigma2`, `epsilon1`, `epsilon2` of each particle (Å, kcal/mol), `coulomb`, the time `t` (ps, D145), and constants, truncated as the Lennard-Jones; `groups = [mask, mask]` keeps the pairs between two masks of Amber (D137). |
 | | `[[energy.bond]]`, `[[energy.angle]]`, `[[energy.dihedral]]` | With a topology: a term over tuples of 2, 3, or 4 of its particles, given by an expression in `r` (Å) or `theta` (radians), with `name`, `expression`, `particles` (lists of particle numbers, from 1), and parameters, a number for all tuples or a list of one for each (D136). With `groups` in place of `particles`, 2, 3, or 4 masks of Amber, a term over the centers of the groups, weighted by mass or, with `weighting = "NONE"`, alike; a bond takes `dx`, `dy`, `dz` as well (D139). The time `t` in ps may enter the expression: a reference that moves at a rate (D145). Restraints of distances, angles, and dihedrals, flat-bottomed with `max`, are such terms. |
+| | `[[energy.external]]` | With a topology: a term of the absolute positions of single particles, given by an expression in `x`, `y`, `z` (Å), the charge `q` (e), the time `t` (ps), and parameters, a number for every particle or a list of one for each, over the particles of `selection`, a mask of Amber, or of `particles`, their numbers from 1 (D148): walls, fields, restraints of any shape. It has no virial, and a run at constant pressure refuses it. |
 | | `[[energy.function]]` | A function of one argument that every expression may call by its `name`: `values` at evenly spaced points from `min` to `max`, a natural cubic spline between them and zero outside, or with `periodic = true` a periodic spline, the first and last value equal and the argument taken modulo `max - min` (D138). |
 | | `[[energy.type]]` | A type of particle: its mass and its parameters. |
 | | `[[energy.pair_override]]` | Parameters of a term for one pair of types. |
@@ -171,9 +174,9 @@ names, `+ - * / ^`, parentheses, the functions `sqrt`, `exp`, `log`,
 x = 0), `square`, `cube`, `recip`, `sec`, `csc`, `cot`, `min`, `max`,
 `atan2(y, x)`, and `select(x, a, b)` (a if x ≠ 0, else b), the tabulated
 functions of `[[energy.function]]` (D138), and definitions of names after
-semicolons: `k*d^2; d = r - r0`. The terms over tuples, over centers, and
-over the pairs of a topology may use the time `t` in ps, that of the end
-of the step whose forces they give (D145).
+semicolons: `k*d^2; d = r - r0`. The terms over tuples, over centers,
+over the pairs of a topology, and of the positions may use the time `t`
+in ps, that of the end of the step whose forces they give (D145, D148).
 
 ### 1.3 Standard pipeline templates
 
@@ -209,6 +212,62 @@ with `mdir run --continue FILE`. All paths are relative to the control
 file. Each stage begins at the checkpoint of the preceding stage, while
 `--continue` resumes its own output checkpoint or skips it when complete
 (Section 2.7). The coordinate file remains the restraint reference.
+
+### 1.4 Preflight
+
+`mdir check FILE` reads and validates the control file, topology, and
+coordinates, and reports the system and the planned run (D151, U6).
+Both topology inputs and PDB inputs get the ensemble, integrator and
+number of steps, time step in ps and duration in ns, electrostatics and
+PME settings, constraint count, target, and precision. A minimization
+reports its method and iterations, with no time step or physical duration.
+A nonperiodic system has no physical cell or density in the report.
+
+The output list has the files of Section 2.8 in the order of its table:
+the log, on standard output and in the file of `log`, the energies and
+the terms over centers as columns, the trajectory in DCD or XTC, and the
+H5MD checkpoint. Each entry says whether it is enabled, its path and
+format, its interval in steps, how many rows, frames, or checkpoints the
+whole run writes, and whether the file exists. A minimization checkpoint
+is written at the end.
+A named trajectory with interval 0 is disabled even if its path exists.
+Paths follow the same rule as a run: relative to the control file.
+
+Warnings go to standard error and leave the exit status at 0. They flag
+existing enabled output files, which `mdir run` writes over only with
+`--overwrite` (D149), a fixed interval between neighbor rebuilds
+(D88), dynamics with no checkpoints or energy reports, a missing input
+checkpoint, and a requested feature absent from the build (HDF5 or CUDA).
+Each warning says what to change or run. Invalid input gives exit status 1.
+The check never opens an output for writing, loads an input checkpoint,
+or compiles a program. Its duration is the configured length of the stage,
+not the remaining time in a continuation. Missing stage checkpoints are
+warnings so that a whole pipeline can be inspected before it runs.
+Device availability, compilation, and checkpoint compatibility are checked
+when the run begins. Automatic PME grid and beta choices are labeled
+automatic, with their spacing, tolerance, and interpolation order.
+
+`mdir check FILE --json` writes one JSON object to standard output, also
+on input errors. Warnings are included there instead of on standard error.
+Its schema begins at version 1:
+
+| Field | Meaning |
+|---|---|
+| `schema_version`, `ok` | Version 1; `ok` is true when reading and validation succeeded, even with warnings |
+| `system` | Particle and type counts, mass in amu, degrees of freedom, supplied velocities, restrained particles, periodicity, and topology counts when present |
+| `system.cell_angstrom` | The reduced cell's `diagonal` and `tilt` ($b_x$, $c_x$, $c_y$) in Å; `null` without periodicity |
+| `run` | Kind, ensemble, method, steps, `time_step_ps`, `duration_ns`, `temperature_kelvin`, `pressure_atm`, thermostat and barostat coupling, cutoff, PME, constraints, execution, and input checkpoint path |
+| `run.pme` | `null` when disabled; otherwise `grid_points` (three nulls when automatic), `beta_inverse_angstrom` (`null` when automatic), `order`, `max_spacing_angstrom`, and `tolerance` |
+| `outputs` | Entries with `kind` (`log`, `energy`, `pull`, `trajectory`, `checkpoint`), `path`, `format`, `interval_steps`, `enabled`, `at_end`, `count` and `count_of` (`rows`, `frames`, `checkpoints`; `count` is null where the run decides, as in a minimization), and `exists`; `path` is null for an unconfigured file, and for the log when it goes to standard output only |
+| `warnings` | Objects with `code` and `message`: `output_exists`, `fixed_rebuild_interval`, `no_checkpoint`, `no_energies`, `missing_input_checkpoint`, `hdf5_unavailable`, or `gpu_unavailable` |
+| `errors` | Error messages; empty on success. On failure, `system`, `run`, and `outputs` are absent |
+
+In a minimization, `time_step_ps`, `duration_ns`, and temperature are null;
+pressure is null without a barostat. Temperature denotes the bath, or the
+temperature used if initial velocities must be drawn. An input checkpoint
+path is reported but its contents are not inspected. The output intervals
+describe the schedule only when `enabled` is true, and `at_end` takes
+precedence over the interval for minimization checkpoints.
 
 ## 2. The driver
 
@@ -265,6 +324,9 @@ The periods must divide one another: `trajectory_interval` and `checkpoint_inter
 are multiples of `energy_interval`.
 
 ### 2.3 The log
+
+The log goes to the standard output and, with `log` in `[output]`, to that
+file as well (D149, Section 2.8); `energy` writes its rows as columns.
 
 ```text
 INFO:      STEP           TIME      TOTAL_ENE  POTENTIAL_ENE    KINETIC_ENE    TEMPERATURE         VIRIAL       PRESSURE
@@ -434,7 +496,8 @@ mdir run --continue --max-walltime 23:50 md.toml
 | Option | What it does |
 |---|---|
 | `--continue` | Continues the run from the checkpoint of `[output]` until it has taken `steps` steps from the step it began at (D129). Without a checkpoint the run begins; with one that holds the last step it says that the run is complete and exits with 0. It refuses a checkpoint of another time step or seed, and steps that remain if they are not whole intervals of the outputs and of the coupling. Raising `steps` extends a run. |
-| `--no-append` | With `--continue`, writes the frames that follow to `<trajectory>.partNNNN.dcd` (or `.xtc`), NNNN the part of the run; later continuations append to that part. Without it, the frames are appended to the trajectory that the checkpoint counts them in, after the frames past the checkpoint are removed (D130). |
+| `--no-append` | With `--continue`, writes the outputs that follow, the log, the files of columns, and the frames, to `<name>.partNNNN<ext>`, NNNN the part of the run; later continuations append to the files of that part, which the checkpoint records. Without it, the outputs are appended to the files of the run after what was written past the checkpoint is removed (D130, D149). |
+| `--overwrite` | A run without `--continue` writes over the outputs of another run, which it otherwise refuses to (D149, Section 2.8). |
 | `--max-walltime <time>` | Stops at the last checkpoint that leaves time, within `<time>` from the start of `mdir`, for one more interval between checkpoints as long as the longest so far (D131). In hours (`23.5`) or as `H:MM[:SS]`. |
 
 SIGTERM and SIGINT ask a run of dynamics that writes checkpoints to stop
@@ -519,18 +582,19 @@ run begins without one, as after a job that stopped before its first
 checkpoint. Two outputs may not have one name, nor an output the name of
 an input.
 
-**`mdir check`** prints the outputs after what the input describes: each
-file with its interval and the number of rows or frames of the run, the
-standard output, and a warning for each file that exists, which `mdir run`
-would refuse to write over.
+**`mdir check`** (D151, Section 1.4) lists these outputs: each file with
+its format, its interval, and the number of rows, frames, or checkpoints
+of the whole run, and warns on the standard error for each file that
+exists, which `mdir run` would refuse to write over.
 
 ```text
 outputs:
-  log:        standard output, and md.log; a row every 5000 steps, 101 rows
-  energy:     md.energy, every 5000 steps, 101 rows
-  trajectory: md.xtc (XTC), every 5000 steps, 100 frames
-  checkpoint: md.h5, every 50000 steps, 10 checkpoints
-  warning: 'md.xtc' exists; mdir run writes over it only with --overwrite or --continue
+  log: stdout and md.log (text), every 5000 steps, 101 rows
+  energy: md.energy (columns), every 5000 steps, 101 rows
+  pull: not configured (columns), disabled
+  trajectory: md.xtc (XTC), every 5000 steps, 100 frames, exists
+  checkpoint: md.h5 (H5MD), every 50000 steps, 10 checkpoints
+mdir: warning: trajectory output 'md.xtc' already exists; mdir run writes over it only with --overwrite, and mdir run --continue continues the run of its checkpoint
 ```
 
 ## 3. Decided

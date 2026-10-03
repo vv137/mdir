@@ -105,6 +105,9 @@ private:
   Value energy;
   SmallVector<SumRelationOp> sums;
   SmallVector<SumTuplesOp> tupleSums;
+  /// Sums over particles that read the positions themselves: terms of the
+  /// absolute positions, which give forces but no virial.
+  SmallVector<SumParticlesOp> particleSums;
   /// Reciprocal sums, which yield their own forces and virial.
   SmallVector<ReciprocalOp> reciprocals;
 };
@@ -129,7 +132,8 @@ LogicalResult DerivativeBuilder::checkPositionUses() {
     unsigned index = use.getOperandNumber();
     bool known = (isa<NeighborhoodOp, ReciprocalOp>(user) && index == 0) ||
                  (isa<SumRelationOp, SumTuplesOp, GatherRelationOp>(user) &&
-                  index == 1);
+                  index == 1) ||
+                 isa<SumParticlesOp>(user);
     if (!known)
       return user->emitError()
              << "cannot differentiate with respect to the positions through "
@@ -163,6 +167,16 @@ LogicalResult DerivativeBuilder::checkPositionUses() {
     if (!sum.getResult().getType().isF64())
       return sum.emitOpError()
              << "cannot differentiate a sum whose result is not f64";
+  }
+  for (SumParticlesOp sum : particleSums) {
+    if (!sum.getResult().getType().isF64())
+      return sum.emitOpError()
+             << "cannot differentiate a sum whose result is not f64";
+    if (llvm::any_of(sum.getGathered(),
+                     [&](Value input) { return isPositional(input); }))
+      return sum.emitOpError()
+             << "cannot differentiate a sum that reads both the positions "
+                "and a field computed from them";
   }
   return success();
 }
@@ -736,6 +750,62 @@ LogicalResult DerivativeBuilder::buildForces(Value &forces) {
     terms.push_back(scaleField(reciprocal.getForces(), weight));
   }
 
+  // A sum S = Σ_i k(x_i, ...) of the positions themselves gives the
+  // particle i the force −weight · ∇k(x_i), a component at a time along
+  // its unit vector, from a map over the particles with the kernel of the
+  // sum.
+  for (SumParticlesOp sum : particleSums) {
+    Value weight;
+    if (failed(getWeight(sum.getResult(), weight)))
+      return failure();
+    if (!weight)
+      continue;
+    OperationState state(loc, MapParticlesOp::getOperationName());
+    state.addOperands(sum.getGathered());
+    state.addRegion();
+    state.addTypes(fieldType);
+    Operation *map = builder.create(state);
+    Block *block = new Block();
+    map->getRegion(0).push_back(block);
+    Block &source = sum.getKernel().front();
+    IRMapping mapping;
+    for (BlockArgument argument : source.getArguments())
+      mapping.map(argument, block->addArgument(argument.getType(), loc));
+    Value value = inlineKernel(source, *block, mapping);
+    OpBuilder kernel = OpBuilder::atBlockEnd(block);
+    ScalarEmitter emit(kernel, loc);
+    Value force;
+    for (auto [index, input] : llvm::enumerate(sum.getGathered())) {
+      if (input != body->getArgument(0))
+        continue;
+      Value x = block->getArgument(index);
+      SmallVector<Value, 3> components;
+      for (int64_t c = 0; c < 3; ++c) {
+        SmallVector<double, 3> unit(3, 0.0);
+        unit[c] = 1.0;
+        Value seed = arith::ConstantOp::create(
+            kernel, loc, vectorType,
+            DenseElementsAttr::get(cast<ShapedType>(vectorType),
+                                   ArrayRef<double>(unit)));
+        ScalarDerivative derivative(kernel, x, nullptr, seed);
+        Value slope;
+        if (failed(derivative.get(value, slope)))
+          return failure();
+        Value component = emit.neg(emit.mul(weight, slope));
+        components.push_back(component
+                                 ? component
+                                 : emit.constant(0.0, kernel.getF64Type()));
+      }
+      force = emit.add(force, vector::FromElementsOp::create(
+                                  kernel, loc, vectorType, components));
+    }
+    YieldOp::create(kernel, loc,
+                    ValueRange{force ? force
+                                     : emit.constant(0.0, vectorType)});
+    eraseDeadOps(*block);
+    terms.push_back(map->getResult(0));
+  }
+
   // The forces through the fields that depend on the positions.
   if (failed(buildAdjoints()))
     return failure();
@@ -898,6 +968,12 @@ LogicalResult DerivativeBuilder::buildVirial(Value &virial) {
     total = outer.add(total, term);
   }
 
+  // A sum of the positions themselves (particleSums) adds nothing: its
+  // forces do not come from displacements between particles, and the sum
+  // of x ⊗ F over the particles depends on the origin and on the images in
+  // a periodic cell. A term of the absolute positions is not a part of the
+  // pressure.
+
   virial = total ? total : outer.constant(0.0, virialType);
   return success();
 }
@@ -1026,6 +1102,9 @@ FunctionOp DerivativeBuilder::build(ArrayRef<int32_t> kinds,
       tupleSums.push_back(tuples);
     if (auto reciprocal = dyn_cast<ReciprocalOp>(&op))
       reciprocals.push_back(reciprocal);
+    if (auto particles = dyn_cast<SumParticlesOp>(&op))
+      if (llvm::is_contained(particles.getGathered(), body->getArgument(0)))
+        particleSums.push_back(particles);
     auto sum = dyn_cast<SumRelationOp>(&op);
     if (!sum)
       continue;

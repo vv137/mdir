@@ -221,12 +221,15 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
   double total = output.getDispersionEnergy() + output.getCoulombConstantEnergy();
   // The terms given by expressions follow those of the topology under
   // their names, those over tuples (D136) and then those over pairs (D137),
-  // and the restraints come last.
+  // generalized Born (D144), and those of the positions (D148), and the
+  // restraints come last.
   int custom = topology ? static_cast<int>(topology->tupleTerms.size()) : 0;
   int pairs = topology ? static_cast<int>(output.system->pairTermNames.size())
                        : 0;
   int born = topology ? static_cast<int>(output.system->bornTermNames.size())
                       : 0;
+  int external =
+      topology ? static_cast<int>(topology->externalTerms.size()) : 0;
   for (int i = 0, e = static_cast<int>(values->sizes[0]); i != e; ++i) {
     if ((i == 7 && !cmap) ||
         (i == 8 && !output.pme && !output.reactionField) ||
@@ -240,6 +243,8 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
             ? output.system->pairTermNames[i - 12 - custom]
         : i < 12 + custom + pairs + born
             ? output.system->bornTermNames[i - 12 - custom - pairs]
+        : i < 12 + custom + pairs + born + external
+            ? topology->externalTerms[i - 12 - custom - pairs - born].name
             : names[12];
     double value = values->data[i * values->strides[0]];
     total += value;

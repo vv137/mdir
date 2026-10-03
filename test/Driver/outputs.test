@@ -17,24 +17,25 @@
 # RUN: sed -e 's|Inputs/|%S/Inputs/|' -e 's|^steps *= 200|steps = 400|' \
 # RUN:     %S/mixture.toml > %t/whole.toml
 # RUN: printf 'log = "whole.log"\nenergy = "whole.energy"\ntrajectory = "whole.dcd"\ntrajectory_interval = 50\ncheckpoint = "whole.h5"\ncheckpoint_interval = 100\n[execution]\nprecision = "mixed"\n' >> %t/whole.toml
-# RUN: mdir check %t/whole.toml | FileCheck %s --check-prefix=LIST
+# RUN: mdir check %t/whole.toml 2>&1 | FileCheck %s --check-prefix=LIST
 # RUN: mdir run %t/whole.toml > %t/whole.stdout
 # RUN: cmp %t/whole.stdout %t/whole.log
 # RUN: FileCheck %s --check-prefix=ENERGY < %t/whole.energy
 # RUN: %python %S/Inputs/check_columns.py %t/whole.log %t/whole.energy \
 # RUN: | FileCheck %s --check-prefix=ROWS
 # RUN: not mdir run %t/whole.toml 2>&1 | FileCheck %s --check-prefix=EXISTS
-# RUN: mdir check %t/whole.toml | FileCheck %s --check-prefix=WARN
+# RUN: mdir check %t/whole.toml 2>&1 | FileCheck %s --check-prefix=WARN
 # RUN: mdir run --overwrite %t/whole.toml > %t/again.stdout
 # RUN: not mdir run --overwrite --continue %t/whole.toml 2>&1 \
 # RUN: | FileCheck %s --check-prefix=BOTH
 
 # LIST:      outputs:
-# LIST-NEXT:   log:        standard output, and {{.*}}whole.log; a row every 50 steps, 9 rows
-# LIST-NEXT:   energy:     {{.*}}whole.energy, every 50 steps, 9 rows
+# LIST-NEXT:   log: stdout and {{.*}}whole.log (text), every 50 steps, 9 rows
+# LIST-NEXT:   energy: {{.*}}whole.energy (columns), every 50 steps, 9 rows
+# LIST-NEXT:   pull: not configured (columns), disabled
 # LIST-NEXT:   trajectory: {{.*}}whole.dcd (DCD), every 50 steps, 8 frames
-# LIST-NEXT:   checkpoint: {{.*}}whole.h5, every 100 steps, 4 checkpoints
-# LIST-NOT:  warning
+# LIST-NEXT:   checkpoint: {{.*}}whole.h5 (H5MD), every 100 steps, 4 checkpoints
+# LIST-NOT:  exists
 
 # ENERGY:      # step time total potential kinetic temperature virial pressure
 # ENERGY-NEXT: # - ps kcal/mol kcal/mol kcal/mol K kcal/mol atm
@@ -42,10 +43,10 @@
 # ENERGY:      400 1.600000
 # ROWS: 9 rows of 8 columns, those of the log: ok
 # EXISTS: mdir: '{{.*}}whole.log' exists, written by another run; `mdir run --overwrite` writes over it, and `mdir run --continue` continues the run whose checkpoint is named in [output]
-# WARN:      warning: '{{.*}}whole.log' exists; mdir run writes over it only with --overwrite or --continue
-# WARN-NEXT: warning: '{{.*}}whole.energy' exists
-# WARN-NEXT: warning: '{{.*}}whole.dcd' exists
-# WARN-NEXT: warning: '{{.*}}whole.h5' exists
+# WARN:      mdir: warning: log output '{{.*}}whole.log' already exists; mdir run writes over it only with --overwrite, and mdir run --continue continues the run of its checkpoint
+# WARN-NEXT: mdir: warning: energy output '{{.*}}whole.energy' already exists
+# WARN-NEXT: mdir: warning: trajectory output '{{.*}}whole.dcd' already exists
+# WARN-NEXT: mdir: warning: checkpoint output '{{.*}}whole.h5' already exists
 # BOTH: mdir: --overwrite does not go with --continue, whose outputs are those of its run
 
 # Stopped at the first checkpoint twice, put back to it, and continued to

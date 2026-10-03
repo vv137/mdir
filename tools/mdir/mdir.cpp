@@ -16,7 +16,7 @@ static llvm::cl::SubCommand runCommand("run",
 static llvm::cl::SubCommand emitCommand(
     "emit", "Print the program of a run instead of executing it");
 static llvm::cl::SubCommand checkCommand(
-    "check", "Read the input of a run and print what it describes");
+    "check", "Check the input and summarize the run, outputs, and warnings");
 static llvm::cl::SubCommand templateCommand(
     "template", "Print a reference control file or a standard pipeline stage");
 static llvm::cl::SubCommand checkpointCommand(
@@ -38,6 +38,10 @@ static llvm::cl::opt<bool> continueRun(
                    "until it has taken its 'steps', or begin it if there is "
                    "none; a complete run exits with 0"),
     llvm::cl::sub(runCommand));
+
+static llvm::cl::opt<bool> checkJSON(
+    "json", llvm::cl::desc("Print the preflight report as JSON"),
+    llvm::cl::sub(checkCommand));
 
 static llvm::cl::opt<bool> noAppend(
     "no-append",
@@ -104,7 +108,7 @@ int main(int argc, char **argv) {
       "  mdir run <control file> [--continue [--no-append] | --overwrite] "
       "[--max-walltime=<time>]\n"
       "  mdir emit <control file> [--stage=module|lowered|pipeline]\n"
-      "  mdir check <control file>\n"
+      "  mdir check <control file> [--json]\n"
       "  mdir template md|amber|minimize|nvt|npt|production\n"
       "  mdir checkpoint <checkpoint> [<checkpoint>] "
       "[--print=positions|velocities|forces]\n"
@@ -139,7 +143,7 @@ int main(int argc, char **argv) {
   if (emitCommand)
     return runControl(controlFile, stage, argv[0]);
   if (checkCommand)
-    return checkControl(controlFile);
+    return checkControl(controlFile, checkJSON);
   if (templateCommand) {
     if (templateName == "md") {
       llvm::outs() << driver::getControlTemplate();

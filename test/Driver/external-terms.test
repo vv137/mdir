@@ -1,0 +1,148 @@
+# Terms of the absolute positions of single particles (D148):
+# [[energy.external]] with an expression in x, y, z (Å), the charge q, the
+# time t, and parameters, a number for every particle or a list of one for
+# each, over the particles of a mask of Amber (`selection`) or of their
+# numbers (`particles`). On the dipeptide: a flat-bottomed wall in z on its
+# three residues, a uniform field along x on the water, and harmonic wells
+# of their own for three particles. check_external.py computes the energy
+# of each term and the forces that they add to every particle; the terms
+# add nothing to the virial. Then two argon atoms in harmonic traps whose
+# center moves at 30 Å/ps, which take the positions of velocity Verlet in
+# Python to the last bit. Then the errors.
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/terms.toml
+# RUN: sed -n '/^#--- run.toml/,/^#--- terms/p' %s | sed '1d;$d' | sed 's/terms.h5/plain.h5/' > %t/plain.toml
+# RUN: cd %t && mdir run plain.toml > plain.log && mdir run terms.toml > terms.log
+# RUN: FileCheck %s < %t/terms.log
+# RUN: grep -A1 'diagonal of the virial' %t/plain.log > %t/plain.virial
+# RUN: grep -A1 'diagonal of the virial' %t/terms.log > %t/terms.virial
+# RUN: cmp %t/plain.virial %t/terms.virial
+# RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
+# RUN: mdir checkpoint --print=forces %t/terms.h5 > %t/terms.forces
+# RUN: %python %S/Inputs/check_external.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/plain.forces %t/terms.forces | FileCheck %s --check-prefix=PYTHON
+#
+# RUN: sed -n '/^#--- two.top/,/^#--- two.gro/p' %S/pull-coordinates.test | sed '1d;$d' > %t/two.top
+# RUN: sed -n '/^#--- two.gro/,/^#--- run.toml/p' %S/pull-coordinates.test | sed '1d;$d' > %t/two.gro
+# RUN: sed -n '/^#--- trap.toml/,/^#--- trap end/p' %s | sed '1d;$d' > %t/trap.toml
+# RUN: cd %t && mdir run trap.toml > trap.log
+# RUN: mdir checkpoint --print=positions %t/trap.h5 > %t/trap.positions
+# RUN: %python %S/Inputs/check_trap.py %t/trap.positions | FileCheck %s --check-prefix=TRAP
+#
+# RUN: sed -e 's/^c  = 0.7/&\nt  = 1.0/' %t/terms.toml > %t/time.toml
+# RUN: not mdir check %t/time.toml 2>&1 | FileCheck %s --check-prefix=TIME
+# RUN: sed -e 's/^expression = "-q\*E\*x"/expression = "-q*E*x*w"/' %t/terms.toml > %t/name.toml
+# RUN: not mdir check %t/name.toml 2>&1 | FileCheck %s --check-prefix=NAME
+# RUN: sed -e 's/^particles  = \[1, 5, 9\]/&\nselection  = ":1"/' %t/terms.toml > %t/both.toml
+# RUN: not mdir check %t/both.toml 2>&1 | FileCheck %s --check-prefix=BOTH
+# RUN: sed -e 's/^k  = \[1.0, 2.0, 3.0\]/k  = [1.0, 2.0]/' %t/terms.toml > %t/count.toml
+# RUN: not mdir check %t/count.toml 2>&1 | FileCheck %s --check-prefix=COUNT
+# RUN: sed -e 's/^selection  = ":1-3"/selection  = ":9999"/' %t/terms.toml > %t/empty.toml
+# RUN: not mdir run %t/empty.toml 2>&1 | FileCheck %s --check-prefix=EMPTY
+# RUN: sed -e 's/^E  = 0.5/E  = [0.5, 0.25]/' %t/terms.toml > %t/values.toml
+# RUN: not mdir run %t/values.toml 2>&1 | FileCheck %s --check-prefix=VALUES
+# RUN: sed -e 's/^ensemble    = "NVE"/ensemble    = "NPT"\npressure    = 1.0/' -e 's/^temperature = 0.0/temperature = 300.0/' -e 's/^steps      = 1$/steps      = 10/' -e 's/^checkpoint_interval = 1$/checkpoint_interval = 10/' %t/terms.toml > %t/npt.toml
+# RUN: printf '[thermostat]\nmethod = "V-RESCALE"\n[barostat]\nmethod = "C-RESCALE"\n' >> %t/npt.toml
+# RUN: not mdir check %t/npt.toml 2>&1 | FileCheck %s --check-prefix=BAROSTAT
+
+# CHECK:      MDIR:   wall                          11.372029
+# CHECK-NEXT: MDIR:   field                         -2.372241
+# CHECK-NEXT: MDIR:   well                           3.033580
+
+# PYTHON:      wall 11.372029
+# PYTHON-NEXT: field -2.372241
+# PYTHON-NEXT: well 3.033580
+# PYTHON-NEXT: forces: ok
+
+# TRAP: positions: equal
+
+# TIME: 't' is a variable of the term, not a parameter
+# NAME: the expression uses 'w', which is neither 'x', 'y', 'z', the charge 'q', the time 't', nor a parameter of the term
+# BOTH: a term takes 'selection' or 'particles', not both
+# COUNT: expected 3 values, one for each particle
+# EMPTY: the selection ':9999' of the term 'wall' selects no particle
+# VALUES: the parameter 'E' of the term 'field' has 2 values, and its selection ':WAT' selects
+# BAROSTAT: the term 'wall' of {{.*}} depends on the absolute positions, which give no virial; a run at constant pressure cannot take it
+
+#--- run.toml
+[input]
+topology    = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+[output]
+energy_interval = 0
+checkpoint = "terms.h5"
+checkpoint_interval = 1
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "CUTOFF"
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 1e-9
+steps      = 1
+[ensemble]
+ensemble    = "NVE"
+temperature = 0.0
+[boundary]
+type = "PERIODIC"
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- terms
+[[energy.external]]
+name       = "wall"
+expression = "k*max(0, z - z0)^2"
+selection  = ":1-3"
+k  = 2.0
+z0 = 13.0
+[[energy.external]]
+name       = "field"
+expression = "-q*E*x"
+selection  = ":WAT"
+E  = 0.5
+[[energy.external]]
+name       = "well"
+expression = "k*((x - x0)^2 + (y - y0)^2) + c*t"
+particles  = [1, 5, 9]
+k  = [1.0, 2.0, 3.0]
+x0 = [11.0, 13.5, 14.0]
+y0 = [11.5, 12.0, 15.0]
+c  = 0.7
+#--- end
+#--- trap.toml
+[input]
+topology    = "two.top"
+coordinates = "two.gro"
+[output]
+energy_interval = 20
+checkpoint = "trap.h5"
+checkpoint_interval = 100
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "CUTOFF"
+[[energy.external]]
+name       = "trap"
+expression = "k*((x - (x0 + v*t))^2 + (y - y0)^2 + (z - z0)^2)"
+particles  = [1, 2]
+k  = [2.0, 3.0]
+x0 = [10.0, 15.0]
+y0 = [10.5, 11.0]
+z0 = [9.5, 9.0]
+v  = 30.0
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.001
+steps      = 100
+[ensemble]
+ensemble    = "NVE"
+temperature = 0.0
+[boundary]
+type = "NONE"
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- trap end

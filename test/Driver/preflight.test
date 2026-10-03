@@ -1,0 +1,48 @@
+# Reports the planned run without compiling it or touching output files.
+# Covers PDB, Amber, and GROMACS inputs, JSON errors and warnings, PME,
+# minimization, NVE/NVT/NPT, nonperiodic cells, and every output of D149
+# with the number of rows, frames, or checkpoints of the run.
+#
+# RUN: rm -rf %t
+# RUN: %python %S/Inputs/check_preflight.py mdir %S/../.. %t | FileCheck %s --check-prefix=JSON
+# RUN: mdir check %t/amber.toml | FileCheck %s --check-prefix=AMBER
+# RUN: mdir check %t/risky.toml 2> %t/warnings | FileCheck %s --check-prefix=RISKY
+# RUN: FileCheck %s --check-prefix=WARN < %t/warnings
+# RUN: mdir check %t/minimize.toml | FileCheck %s --check-prefix=MIN
+# RUN: mdir check %t/none.toml | FileCheck %s --check-prefix=NONE --implicit-check-not='density:' --implicit-check-not='box:'
+# RUN: mdir check %t/active.toml 2> %t/active.warnings | FileCheck %s --check-prefix=ACTIVE
+# RUN: FileCheck %s --check-prefix=EXISTS < %t/active.warnings
+# RUN: mdir check %t/pull.toml 2> %t/pull.warnings | FileCheck %s --check-prefix=PULL
+#
+# JSON: preflight JSON, warnings, units, and read-only checks passed
+# AMBER: particles: {{ *}}4905
+# AMBER: ensemble: NPT
+# AMBER-NEXT: integrator: VELOCITY_VERLET, 500000 steps of 0.002 ps
+# AMBER-NEXT: run length: 1 ns
+# AMBER: barostat: C-RESCALE, ISOTROPIC, 1 atm
+# AMBER: electrostatics: PME
+# AMBER-NEXT: PME grid: automatic, max spacing 1.2 Å, order 4
+# AMBER-NEXT: PME beta: automatic, tolerance 1e-05
+# AMBER: constraints: {{[0-9]+}} distances; hydrogen bonds yes, rigid water yes
+# AMBER-NEXT: target: gpu, mixed precision
+# AMBER: log: stdout and {{.*}}run.log (text), every 5000 steps, 101 rows
+# AMBER-NEXT: energy: {{.*}}run.energy (columns), every 5000 steps, 101 rows
+# AMBER-NEXT: pull: not configured (columns), disabled
+# AMBER-NEXT: trajectory: {{.*}}run.dcd (DCD), every 5000 steps, 100 frames
+# AMBER-NEXT: checkpoint: {{.*}}run.h5 (H5MD), every 50000 steps, 10 checkpoints
+# RISKY: ensemble: NVE
+# RISKY: run length: 0.02 ns
+# RISKY: log: stdout (text), no rows
+# WARN: warning: 'rebuild_interval = 20' skips validity tests
+# WARN: warning: the run writes no checkpoint
+# WARN: warning: 'energy_interval = 0' disables energy reports
+# MIN: ensemble: MINIMIZATION
+# MIN-NEXT: minimizer: STEEPEST_DESCENT, 2000 steps
+# MIN-NOT: run length:
+# MIN: checkpoint: {{.*}}min.h5 (H5MD), at the end
+# NONE: boundary: NONE (no periodic cell)
+# ACTIVE: input checkpoint: {{.*}}earlier.h5 (not loaded by check)
+# ACTIVE: trajectory: {{.*}}frames with "quotes".xtc (XTC), every 10 steps, 1000 frames, exists
+# EXISTS: warning: trajectory output '{{.*}}frames with "quotes".xtc' already exists; mdir run writes over it only with --overwrite, and mdir run --continue continues the run of its checkpoint
+# EXISTS: warning: input checkpoint '{{.*}}earlier.h5' does not exist yet
+# PULL: pull: {{.*}}pull.dat (columns), every 20 steps, 6 rows, exists

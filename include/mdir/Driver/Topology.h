@@ -55,6 +55,25 @@ struct TupleTerm {
   llvm::StringRef getVariable() const { return arity == 2 ? "r" : "theta"; }
 };
 
+/// A term of the absolute positions of single particles, given by an
+/// expression in `x`, `y`, `z` in Å, the charge `q` in e, the time `t` in
+/// ps, and parameters, as the custom external force of OpenMM
+/// [Eastman2017] (D148): walls, fields, and restraints of any shape. The
+/// energy is in kcal/mol.
+struct ExternalTerm {
+  std::string name;
+  std::string expression;
+  /// The particles, by a mask of Amber or by their numbers, from 0, which
+  /// the topology resolves into `particles`.
+  std::string selection;
+  std::vector<unsigned> particles;
+  /// The parameters given as a number, for every particle.
+  std::vector<std::pair<std::string, double>> constants;
+  /// The parameters given as a list, one value for each particle of
+  /// `particles`, in their order.
+  std::vector<std::pair<std::string, std::vector<double>>> parameters;
+};
+
 struct Topology {
   //===--------------------------------------------------------------------===//
   // Particles
@@ -161,6 +180,9 @@ struct Topology {
   /// Terms given by expressions over tuples (D136): those of the control
   /// file, and those that a reader gives so.
   std::vector<TupleTerm> tupleTerms;
+  /// The terms of the absolute positions of the control file (D148), their
+  /// particles resolved.
+  std::vector<ExternalTerm> externalTerms;
   /// The maps: `resolution²` energies each, in kJ/mol, at φ and ψ from
   /// −180° in steps of 360° / `resolution`, φ the slower index.
   unsigned cmapResolution = 0;

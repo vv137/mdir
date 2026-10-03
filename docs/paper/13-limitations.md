@@ -89,8 +89,10 @@ cluster needs first is in place: `steps` as the length of a run that
 `mdir run --continue` carries over as many jobs as it takes, a trajectory
 that continues with it, a stop on a signal or a limit of time that falls
 on a checkpoint so that the continuation stays exact, and the checkpoint
-before the last kept (D129 to D132); the log in a file of the run is
-next. Langevin dynamics by the middle scheme is in place (D135), without
+before the last kept (D129 to D132), and outputs that form one system,
+the log in a file as well, the energies as columns, every file continued
+with the run, and no run writing over another (D149); a manifest of the
+run is next. Langevin dynamics by the middle scheme is in place (D135), without
 yet a conserved energy, and so are terms given by expressions over bonds,
 angles, and dihedrals, which give restraints beyond positions and the
 dihedrals of OPLS-AA (D136), and terms over the pairs of a topology, in
@@ -99,13 +101,13 @@ its charges and Lennard-Jones parameters and between interaction groups
 the centers of groups, which restrain pull groups (D139), whose loops
 still run over every particle of the system, and which pull at a rate
 with the time in their expressions and write their coordinates and
-forces (D145); so are the reaction field
+forces (D145), and terms of the absolute positions of single particles,
+with parameters of each (D148); so are the reaction field
 (D140), runs without a periodic cell, in a cell that no image reaches
 (D142), and generalized Born, whose Born radii are the first
 intermediate fields that differentiation carries the energy back through
 (D143, D144). Then the features that general molecular dynamics asks of
-MDIR: such terms over positions, with parameters of each particle;
-outputs for analysis (velocities, the pressure tensor), the compressed
+MDIR: outputs for analysis (velocities, the pressure tensor), the compressed
 trajectory of GROMACS being in place (D141);
 coarse-grained models; and free energy, whose $dH/d\lambda$ the
 differentiation of the IR is designed to give (D2). A Python interface whose buffers follow DLPack
