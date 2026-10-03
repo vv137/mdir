@@ -72,6 +72,11 @@ struct ExternalTerm {
   /// The parameters given as a list, one value for each particle of
   /// `particles`, in their order.
   std::vector<std::pair<std::string, std::vector<double>>> parameters;
+  /// How the term follows a barostat (D154): fixed in space, its virial
+  /// Σ x ⊗ F, or in the frame of the cell, x ⊙ L_0 / L with L_0 the cell of
+  /// the input, its virial none; a run at constant pressure must say which.
+  enum class Scaling { Unset, None, Cell };
+  Scaling scaling = Scaling::Unset;
 };
 
 struct Topology {

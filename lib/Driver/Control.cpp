@@ -299,12 +299,25 @@ Error Reader::readExternal(const toml::table &table) {
                        "'particles' in [[energy.external]]");
   }
 
+  // How the term follows a barostat (D154).
+  if (const toml::node *node = table.get("scaling")) {
+    std::optional<std::string> value = node->value<std::string>();
+    if (value && *value == "NONE")
+      term.scaling = ExternalTerm::Scaling::None;
+    else if (value && *value == "CELL")
+      term.scaling = ExternalTerm::Scaling::Cell;
+    else
+      return fail(*node, "expected 'scaling' as \"NONE\", fixed in space, "
+                         "or \"CELL\", in the frame of the cell");
+  }
+
   // Every other keyword is a parameter: a number for every particle, or a
   // list of one for each.
   for (auto &&[key, value] : table) {
     StringRef keyword = toRef(key.str());
     if (keyword == "name" || keyword == "expression" ||
-        keyword == "selection" || keyword == "particles")
+        keyword == "selection" || keyword == "particles" ||
+        keyword == "scaling")
       continue;
     if (keyword == "t" || keyword == "x" || keyword == "y" ||
         keyword == "z" || keyword == "q")
@@ -1890,15 +1903,19 @@ Error Reader::read(const toml::table &root) {
         "%s: 'born_radius_cutoff', %g Å, is beyond the cutoff, %g Å",
         path.str().c_str(), control.bornRadiusCutoff,
         control.cutoffDistance);
-  // A term of the absolute positions has no virial (D148): a pressure from
-  // the virial of the forces cannot include it.
-  if (!control.externalTerms.empty() && control.barostat)
-    return llvm::createStringError(
-        llvm::inconvertibleErrorCode(),
-        "%s: the term '%s' of [[energy.external]] depends on the absolute "
-        "positions, which give no virial; a run at constant pressure cannot "
-        "take it",
-        path.str().c_str(), control.externalTerms.front().name.c_str());
+  // Under a barostat a term of the absolute positions says whether it
+  // stays fixed in space or scales with the cell, which its virial follows
+  // (D154).
+  if (control.barostat)
+    for (const ExternalTerm &term : control.externalTerms)
+      if (term.scaling == ExternalTerm::Scaling::Unset)
+        return llvm::createStringError(
+            llvm::inconvertibleErrorCode(),
+            "%s: the term '%s' of [[energy.external]] needs 'scaling' under "
+            "a barostat: \"NONE\" keeps it fixed in space while the cell "
+            "scales about the origin, \"CELL\" takes its positions in the "
+            "frame of the cell, scaled to the cell of the input",
+            path.str().c_str(), term.name.c_str());
   // The terms over centers, at every energy (D145).
   if (!control.pullFile.empty()) {
     if (llvm::none_of(control.tupleTerms,

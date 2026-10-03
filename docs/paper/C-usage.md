@@ -381,7 +381,7 @@ k  = 2.0
 z0 = 13.0
 ```
 
-It has no virial, and a run at constant pressure refuses it (D148).
+Fixed in space it adds $\sum_i \mathbf x_i \otimes \mathbf F_i$ to the virial; with `scaling = "CELL"` it moves with the cell and adds none, and a run at constant pressure must say which (D148, D154).
 Restraints to the positions of the input are a table of their own,
 `[[restraints]]` with a mask and a force constant (Appendix A.1), as the
 templates of C.3 use them.

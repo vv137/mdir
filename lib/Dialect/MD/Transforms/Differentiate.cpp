@@ -968,11 +968,84 @@ LogicalResult DerivativeBuilder::buildVirial(Value &virial) {
     total = outer.add(total, term);
   }
 
-  // A sum of the positions themselves (particleSums) adds nothing: its
-  // forces do not come from displacements between particles, and the sum
-  // of x ⊗ F over the particles depends on the origin and on the images in
-  // a periodic cell. A term of the absolute positions is not a part of the
-  // pressure.
+  // A sum S = Σ_i k(x_i, L) of the positions themselves, and of the edges L
+  // of the cell where the kernel takes them from md_exec.cell_edges: the
+  // virial is −dU/dε when the positions and the cell scale by 1 + ε about
+  // the origin, as a barostat scales them (D154), Σ_i x_i ⊗ F_i with
+  // F_i = −weight · ∇k(x_i) and, on the diagonal, −weight Σ_i ∂k/∂L_a L_a.
+  // A term whose frame scales with the cell, k(x ⊙ L_0 / L), has none.
+  SmallVector<Value> cellEdges;
+  for (Operation &op : *body)
+    if (op.getName().getStringRef() == "md_exec.cell_edges" &&
+        op.getOperand(0) == body->getArgument(1))
+      cellEdges.push_back(op.getResult(0));
+  for (SumParticlesOp sum : particleSums) {
+    Value weight;
+    if (failed(getWeight(sum.getResult(), weight)))
+      return failure();
+    if (!weight)
+      continue;
+    Type vectorType = VectorType::get({3}, builder.getF64Type());
+    OperationState state(loc, SumParticlesOp::getOperationName());
+    state.addOperands(sum.getGathered());
+    state.addRegion();
+    state.addTypes(virialType);
+    Operation *term = builder.create(state);
+    Block *block = new Block();
+    term->getRegion(0).push_back(block);
+    Block &source = sum.getKernel().front();
+    IRMapping mapping;
+    for (BlockArgument argument : source.getArguments())
+      mapping.map(argument, block->addArgument(argument.getType(), loc));
+    Value value = inlineKernel(source, *block, mapping);
+    OpBuilder kernel = OpBuilder::atBlockEnd(block);
+    ScalarEmitter emit(kernel, loc);
+    auto unit = [&](int64_t c) {
+      SmallVector<double, 3> components(3, 0.0);
+      components[c] = 1.0;
+      return arith::ConstantOp::create(
+          kernel, loc, vectorType,
+          DenseElementsAttr::get(cast<ShapedType>(vectorType),
+                                 ArrayRef<double>(components)));
+    };
+    SmallVector<Value, 9> elements(9, Value());
+    for (auto [index, input] : llvm::enumerate(sum.getGathered())) {
+      if (input != body->getArgument(0))
+        continue;
+      Value x = block->getArgument(index);
+      SmallVector<Value, 3> positions, forces;
+      for (int64_t c = 0; c < 3; ++c) {
+        ScalarDerivative derivative(kernel, x, nullptr, unit(c));
+        Value slope;
+        if (failed(derivative.get(value, slope)))
+          return failure();
+        positions.push_back(vector::ExtractOp::create(kernel, loc, x, c));
+        forces.push_back(emit.neg(emit.mul(weight, slope)));
+      }
+      for (int64_t a = 0; a < 3; ++a)
+        for (int64_t b = 0; b < 3; ++b)
+          elements[3 * a + b] = emit.add(elements[3 * a + b],
+                                         emit.mul(positions[a], forces[b]));
+    }
+    for (Value edges : cellEdges)
+      for (int64_t a = 0; a < 3; ++a) {
+        ScalarDerivative derivative(kernel, edges, nullptr, unit(a));
+        Value slope;
+        if (failed(derivative.get(value, slope)))
+          return failure();
+        Value edge = vector::ExtractOp::create(kernel, loc, edges, a);
+        elements[4 * a] = emit.sub(elements[4 * a],
+                                   emit.mul(weight, emit.mul(slope, edge)));
+      }
+    for (Value &element : elements)
+      if (!element)
+        element = emit.constant(0.0, kernel.getF64Type());
+    Value contribution =
+        vector::FromElementsOp::create(kernel, loc, virialType, elements);
+    YieldOp::create(kernel, loc, ValueRange{contribution});
+    eraseDeadOps(*block);
+    total = outer.add(total, term->getResult(0));
+  }
 
   virial = total ? total : outer.constant(0.0, virialType);
   return success();

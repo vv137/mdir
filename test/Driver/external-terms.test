@@ -5,10 +5,15 @@
 # numbers (`particles`). On the dipeptide: a flat-bottomed wall in z on its
 # three residues, a uniform field along x on the water, and harmonic wells
 # of their own for three particles. check_external.py computes the energy
-# of each term and the forces that they add to every particle; the terms
-# add nothing to the virial. Then two argon atoms in harmonic traps whose
-# center moves at 30 Å/ps, which take the positions of velocity Verlet in
-# Python to the last bit. Then the errors.
+# of each term, the forces that they add to every particle, and, fixed in
+# space (`scaling = "NONE"`, the default without a barostat), the diagonal
+# of their virial, sum of x_a F_a, -dU/de_a when the positions and the cell
+# scale about the origin (D154). In the frame of the cell
+# (`scaling = "CELL"`) the energies and forces are those of the cell of
+# the input and the virial does not change. Then two argon atoms in
+# harmonic traps whose center moves at 30 Å/ps, which take the positions of
+# velocity Verlet in Python to the last bit. Then the errors, and runs at
+# constant pressure, which need `scaling`.
 #
 # REQUIRES: hdf5
 #
@@ -18,12 +23,18 @@
 # RUN: sed -n '/^#--- run.toml/,/^#--- terms/p' %s | sed '1d;$d' | sed 's/terms.h5/plain.h5/' > %t/plain.toml
 # RUN: cd %t && mdir run plain.toml > plain.log && mdir run terms.toml > terms.log
 # RUN: FileCheck %s < %t/terms.log
-# RUN: grep -A1 'diagonal of the virial' %t/plain.log > %t/plain.virial
-# RUN: grep -A1 'diagonal of the virial' %t/terms.log > %t/terms.virial
-# RUN: cmp %t/plain.virial %t/terms.virial
 # RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
 # RUN: mdir checkpoint --print=forces %t/terms.h5 > %t/terms.forces
-# RUN: %python %S/Inputs/check_external.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/plain.forces %t/terms.forces | FileCheck %s --check-prefix=PYTHON
+# RUN: %python %S/Inputs/check_external.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/plain.forces %t/terms.forces 1e-9 %t/plain.log %t/terms.log | FileCheck %s --check-prefix=PYTHON
+#
+# RUN: awk '/^\[\[energy.external\]\]/{print; print "scaling    = \"CELL\""; next} {print}' %t/terms.toml | sed 's/terms.h5/cell.h5/' > %t/cell.toml
+# RUN: cd %t && mdir run cell.toml > cell.log
+# RUN: FileCheck %s < %t/cell.log
+# RUN: grep -A1 'diagonal of the virial' %t/plain.log > %t/plain.virial
+# RUN: grep -A1 'diagonal of the virial' %t/cell.log > %t/cell.virial
+# RUN: cmp %t/plain.virial %t/cell.virial
+# RUN: mdir checkpoint --print=forces %t/cell.h5 > %t/cell.forces
+# RUN: %python %S/Inputs/check_external.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/plain.forces %t/cell.forces | FileCheck %s --check-prefix=FORCES
 #
 # RUN: sed -n '/^#--- two.top/,/^#--- two.gro/p' %S/pull-coordinates.test | sed '1d;$d' > %t/two.top
 # RUN: sed -n '/^#--- two.gro/,/^#--- run.toml/p' %S/pull-coordinates.test | sed '1d;$d' > %t/two.gro
@@ -47,6 +58,12 @@
 # RUN: sed -e 's/^ensemble    = "NVE"/ensemble    = "NPT"\npressure    = 1.0/' -e 's/^temperature = 0.0/temperature = 300.0/' -e 's/^steps      = 1$/steps      = 10/' -e 's/^checkpoint_interval = 1$/checkpoint_interval = 10/' %t/terms.toml > %t/npt.toml
 # RUN: printf '[thermostat]\nmethod = "V-RESCALE"\n[barostat]\nmethod = "C-RESCALE"\n' >> %t/npt.toml
 # RUN: not mdir check %t/npt.toml 2>&1 | FileCheck %s --check-prefix=BAROSTAT
+# RUN: sed -e 's/^scaling    = "CELL"/scaling    = "FRAME"/' %t/cell.toml > %t/scaling.toml
+# RUN: not mdir check %t/scaling.toml 2>&1 | FileCheck %s --check-prefix=SCALING
+# RUN: awk '/^\[\[energy.external\]\]/{print; print "scaling    = \"NONE\""; next} {print}' %t/npt.toml | sed 's/terms.h5/npt-none.h5/' > %t/npt-none.toml
+# RUN: cd %t && mdir run npt-none.toml | FileCheck %s --check-prefix=NPT
+# RUN: awk '/^\[\[energy.external\]\]/{print; print "scaling    = \"CELL\""; next} {print}' %t/npt.toml | sed 's/terms.h5/npt-cell.h5/' > %t/npt-cell.toml
+# RUN: cd %t && mdir run npt-cell.toml | FileCheck %s --check-prefix=NPT
 
 # CHECK:      MDIR:   wall                          11.372029
 # CHECK-NEXT: MDIR:   field                         -2.372241
@@ -56,6 +73,8 @@
 # PYTHON-NEXT: field -2.372241
 # PYTHON-NEXT: well 3.033580
 # PYTHON-NEXT: forces: ok
+# PYTHON-NEXT: virial: ok
+# FORCES: forces: ok
 
 # TRAP: positions: equal
 
@@ -65,7 +84,9 @@
 # COUNT: expected 3 values, one for each particle
 # EMPTY: the selection ':9999' of the term 'wall' selects no particle
 # VALUES: the parameter 'E' of the term 'field' has 2 values, and its selection ':WAT' selects
-# BAROSTAT: the term 'wall' of {{.*}} depends on the absolute positions, which give no virial; a run at constant pressure cannot take it
+# BAROSTAT: the term 'wall' of {{.*}} needs 'scaling' under a barostat: "NONE" keeps it fixed in space while the cell scales about the origin, "CELL" takes its positions in the frame of the cell, scaled to the cell of the input
+# SCALING: expected 'scaling' as "NONE", fixed in space, or "CELL", in the frame of the cell
+# NPT: MDIR: ran in
 
 #--- run.toml
 [input]

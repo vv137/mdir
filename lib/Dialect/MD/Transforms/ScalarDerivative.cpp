@@ -152,6 +152,12 @@ LogicalResult ScalarDerivative::compute(Value value, Value &tangent) {
     return success();
   }
 
+  // A value that a kernel takes from outside, such as one of the cell, does
+  // not depend on an argument of the kernel.
+  if (auto argument = dyn_cast<BlockArgument>(variable))
+    if (!argument.getOwner()->getParent()->isAncestor(op->getParentRegion()))
+      return success();
+
   ScalarEmitter emit(builder, op->getLoc());
   Location loc = op->getLoc();
 
@@ -165,6 +171,11 @@ LogicalResult ScalarDerivative::compute(Value value, Value &tangent) {
 
   // A value of a table depends on the types only.
   if (isa<LookupOp>(op))
+    return success();
+
+  // The edges of the cell are an input of their own, which the virial
+  // takes its derivative with respect to (D154).
+  if (op->getName().getStringRef() == "md_exec.cell_edges")
     return success();
 
   // A number converted from an integer is constant where it is defined.

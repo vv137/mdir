@@ -2038,6 +2038,20 @@ void Builder::emitExternalTerm(size_t index, const ExternalTerm &term,
   bool charges = llvm::is_contained(names, "q");
   std::string flag = "ext" + std::to_string(index);
   std::string prefix = "%xe" + std::to_string(index) + "_";
+  // In the frame of the cell (D154), the positions scaled by the edges of
+  // the cell of the input over those of the cell.
+  bool frame = term.scaling == ExternalTerm::Scaling::Cell;
+  if (frame) {
+    os << "  " << prefix << "edges = md_exec.cell_edges %cell : vector<3xf64>\n"
+       << "  " << prefix << "input = arith.constant dense<[";
+    for (int k = 0; k != 3; ++k)
+      os << (k ? ", " : "")
+         << formatReal(system.inputBox[k] > 0.0 ? system.inputBox[k]
+                                                 : system.box[k]);
+    os << "]> : vector<3xf64>\n"
+       << "  " << prefix << "frame = arith.divf " << prefix << "input, "
+       << prefix << "edges : vector<3xf64>\n";
+  }
   os << "  %u_external_" << term.name << " = md.sum_particles gather(%x, %p_"
      << flag;
   if (charges)
@@ -2059,9 +2073,15 @@ void Builder::emitExternalTerm(size_t index, const ExternalTerm &term,
   llvm::StringMap<std::string> values;
   os << "    " << prefix << "a = arith.constant "
      << formatReal(1.0 / units::length) << " : f64\n";
+  std::string position = prefix + "pos";
+  if (frame) {
+    os << "    " << prefix << "posf = arith.mulf " << prefix << "pos, "
+       << prefix << "frame : vector<3xf64>\n";
+    position = prefix + "posf";
+  }
   for (int c = 0; c != 3; ++c) {
     std::string component = prefix + "xyz"[c];
-    os << "    " << component << "n = vector.extract " << prefix << "pos["
+    os << "    " << component << "n = vector.extract " << position << "["
        << c << "] : f64 from vector<3xf64>\n"
        << "    " << component << " = arith.mulf " << component << "n, "
        << prefix << "a : f64\n";

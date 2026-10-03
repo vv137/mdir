@@ -1,6 +1,7 @@
 # The terms of the absolute positions of external-terms.test on a GPU
-# (D148): in double precision the same energies, the forces of
-# check_external.py, no virial, and the moving traps to the last bit; in
+# (D148): in double precision the same energies, the forces and the virial
+# of check_external.py fixed in space and no virial in the frame of the
+# cell (D154), and the moving traps to the last bit; in
 # mixed precision, where the kernel takes the positions in f32, the forces
 # within 1e-6 of the largest.
 #
@@ -12,19 +13,21 @@
 # RUN: sed -n '/^#--- run.toml/,/^#--- terms/p' %S/external-terms.test | sed '1d;$d' | sed -e 's/terms.h5/plain.h5/' -e 's/^target    = "CPU"/target    = "GPU"/' > %t/plain.toml
 # RUN: cd %t && mdir run plain.toml > plain.log && mdir run terms.toml > terms.log
 # RUN: FileCheck %S/external-terms.test < %t/terms.log
-# RUN: grep -A1 'diagonal of the virial' %t/plain.log > %t/plain.virial
-# RUN: grep -A1 'diagonal of the virial' %t/terms.log > %t/terms.virial
-# RUN: cmp %t/plain.virial %t/terms.virial
 # RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
 # RUN: mdir checkpoint --print=forces %t/terms.h5 > %t/terms.forces
-# RUN: %python %S/Inputs/check_external.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/plain.forces %t/terms.forces | FileCheck %S/external-terms.test --check-prefix=PYTHON
+# RUN: %python %S/Inputs/check_external.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/plain.forces %t/terms.forces 1e-9 %t/plain.log %t/terms.log | FileCheck %S/external-terms.test --check-prefix=PYTHON
+# RUN: awk '/^\[\[energy.external\]\]/{print; print "scaling    = \"CELL\""; next} {print}' %t/terms.toml | sed 's/terms.h5/cell.h5/' > %t/cell.toml
+# RUN: cd %t && mdir run cell.toml > cell.log
+# RUN: grep -A1 'diagonal of the virial' %t/plain.log > %t/plain.virial
+# RUN: grep -A1 'diagonal of the virial' %t/cell.log > %t/cell.virial
+# RUN: cmp %t/plain.virial %t/cell.virial
 #
 # RUN: sed -e 's/^precision = "DOUBLE"/precision = "MIXED"/' -e 's/terms.h5/mixed.h5/' %t/terms.toml > %t/mixed.toml
 # RUN: sed -e 's/^precision = "DOUBLE"/precision = "MIXED"/' -e 's/plain.h5/mixed-plain.h5/' %t/plain.toml > %t/mixed-plain.toml
 # RUN: cd %t && mdir run mixed-plain.toml > mixed-plain.log && mdir run mixed.toml > mixed.log
 # RUN: mdir checkpoint --print=forces %t/mixed-plain.h5 > %t/mixed-plain.forces
 # RUN: mdir checkpoint --print=forces %t/mixed.h5 > %t/mixed.forces
-# RUN: %python %S/Inputs/check_external.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/mixed-plain.forces %t/mixed.forces 1e-6 | FileCheck %S/external-terms.test --check-prefix=PYTHON
+# RUN: %python %S/Inputs/check_external.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/mixed-plain.forces %t/mixed.forces 1e-6 | FileCheck %S/external-terms.test --check-prefix=FORCES
 #
 # RUN: sed -n '/^#--- two.top/,/^#--- two.gro/p' %S/pull-coordinates.test | sed '1d;$d' > %t/two.top
 # RUN: sed -n '/^#--- two.gro/,/^#--- run.toml/p' %S/pull-coordinates.test | sed '1d;$d' > %t/two.gro

@@ -5,8 +5,9 @@
 //
 //   k = a (x y + z^2) + sin x,
 //
-// the gradient is g = (a y + cos x, a x, 2 a z) and the force is -g. Such a
-// sum adds nothing to the virial, which is zero here.
+// the gradient is g = (a y + cos x, a x, 2 a z) and the force is -g. The
+// virial is -dU/de when the positions scale by 1 + e about the origin
+// (D154), x ⊗ (-g).
 //
 // RUN: mdir-opt %s --md-differentiate --test-md-outline-kernels=erase-md \
 // RUN: | mlir-opt %lower_to_llvm \
@@ -47,10 +48,11 @@ md.function @requests(%x: !vec, %cell: !md.cell, %a: !real)
   md.return %u, %f, %w : f64, !vec, vector<9xf64>
 }
 
-// The virial is a constant zero of the function, not a kernel.
 func.func private @wall.energy_forces_virial.kernel0(vector<3xf64>, f64) -> f64
 func.func private @wall.energy_forces_virial.kernel1(vector<3xf64>, f64)
     -> vector<3xf64>
+func.func private @wall.energy_forces_virial.kernel2(vector<3xf64>, f64)
+    -> vector<9xf64>
 
 func.func private @printF64(f64)
 func.func private @printNewline()
@@ -86,6 +88,19 @@ func.func @check3(%value: vector<3xf64>, %reference: vector<3xf64>) {
   return
 }
 
+func.func @check9(%value: vector<9xf64>, %reference: vector<9xf64>) {
+  %tolerance = arith.constant 1.0e-12 : f64
+  %difference = arith.subf %value, %reference : vector<9xf64>
+  %errors = math.absf %difference : vector<9xf64>
+  %magnitudes = math.absf %reference : vector<9xf64>
+  %error = vector.reduction <maxnumf>, %errors : vector<9xf64> into f64
+  %magnitude = vector.reduction <maxnumf>, %magnitudes : vector<9xf64> into f64
+  %bound = arith.mulf %tolerance, %magnitude : f64
+  %agrees = arith.cmpf ole, %error, %bound : f64
+  call @print(%agrees) : (i1) -> ()
+  return
+}
+
 func.func @main() {
   %x = arith.constant dense<[0.4, -0.7, 1.3]> : vector<3xf64>
   %a = arith.constant 2.5 : f64
@@ -103,5 +118,13 @@ func.func @main() {
       : (vector<3xf64>, f64) -> vector<3xf64>
   %f_ref = arith.constant dense<[0.8289390059971149, -1.0, -6.5]> : vector<3xf64>
   call @check3(%f, %f_ref) : (vector<3xf64>, vector<3xf64>) -> ()
+
+  // Virial.
+  // CHECK-NEXT: 1
+  %w = call @wall.energy_forces_virial.kernel2(%x, %a)
+      : (vector<3xf64>, f64) -> vector<9xf64>
+  %w_ref = arith.constant dense<[
+      0.331575602398846, -0.4, -2.6, -0.5802573041979804, 0.7, 4.55, 1.0776207077962494, -1.3, -8.450000000000001]> : vector<9xf64>
+  call @check9(%w, %w_ref) : (vector<9xf64>, vector<9xf64>) -> ()
   return
 }

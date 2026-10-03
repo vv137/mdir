@@ -5,7 +5,12 @@ that MDIR adds, the difference of the forces of runs with and without them
 (kcal/mol/Å), within TOLERANCE of the largest of them (1e-9 by default;
 in mixed precision the kernel takes the positions in f32).
 
-    check_external.py TOPOLOGY COORDINATES PLAIN_FORCES FORCES [TOLERANCE]"""
+    check_external.py TOPOLOGY COORDINATES PLAIN_FORCES FORCES [TOLERANCE]
+        [PLAIN_LOG LOG]
+
+With the logs of the runs, the diagonal of the virial that the terms add,
+fixed in space (D154): -dU/de_a when the positions scale by 1 + e along
+axis a about the origin, the sum of x_a F_a (kcal/mol)."""
 import sys
 
 def sections(path):
@@ -73,3 +78,12 @@ for i in range(n):
         largest = max(largest, abs(forces[i][c]))
 tolerance = float(sys.argv[5]) if len(sys.argv) > 5 else 1e-9
 print('forces: %s' % ('ok' if worst < tolerance * max(1.0, largest) else 'FAILED %.2e' % worst))
+if len(sys.argv) > 7:
+    import re
+    def logged(path):
+        text = open(path).read()
+        return [float(v) for v in re.search(r'virial at the start.*\n.*?MDIR:\s+(\S+)\s+(\S+)\s+(\S+)', text).groups()]
+    mdir = [a - b for a, b in zip(logged(sys.argv[7]), logged(sys.argv[6]))]
+    virial = [sum(X[i][c] * forces[i][c] for i in range(n)) for c in range(3)]
+    ok = all(abs(m - v) < 2e-6 * max(1.0, max(abs(u) for u in virial)) for m, v in zip(mdir, virial))
+    print('virial: %s' % ('ok' if ok else 'FAILED %s against %s' % (mdir, virial)))
