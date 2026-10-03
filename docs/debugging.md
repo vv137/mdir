@@ -2,6 +2,16 @@
 
 Status: 2026-09-30.
 
+## Checking the installation
+
+Run `mdir doctor` to report the build, probe the CUDA driver and visible
+devices, and compile and run a small system on each built target (D154).
+`mdir doctor --target=cpu` checks the CPU alone without needing a GPU;
+`--target=gpu` checks just the GPU. Failures return a nonzero status and
+keep their temporary inputs and logs at the printed path. The doctor
+checks basic execution; a failure specific to your system needs the
+report below.
+
 ## Reporting a defect
 
 A report that can be reproduced needs the build, the machine, the inputs,

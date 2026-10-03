@@ -21,10 +21,28 @@ targets: cpu, gpu (CUDA 13.4.20260911 at /usr/local/cuda-13.4)
 checkpoints: yes (HDF5)
 ```
 
-`targets` lists `gpu` when the build found a CUDA toolkit, and
+`targets` lists `gpu` when the CUDA target was built, and
 `checkpoints` says whether HDF5 was found; without it a run writes no
-checkpoints and cannot be continued (C.5). A short run on each target
-checks the rest. `examples/argon/argon.toml` is liquid argon, 864 atoms
+checkpoints and cannot be continued (C.5). `mdir doctor` checks the
+installation by compiling and running an embedded two-atom system for two
+steps on every built target (D154):
+
+```sh
+mdir doctor                # CPU, and GPU when built
+mdir doctor --target=cpu    # CPU alone, without a CUDA driver
+mdir doctor --target=gpu    # GPU alone; fails if it was not built
+```
+
+For the GPU it reports the CUDA API version supported by the driver,
+visible devices, their compute capabilities, and the selected device.
+The runs check the initial pair energy against its expression and require
+finite energies through the last step. Success removes their temporary
+files; failure keeps the inputs and logs and prints their location. Each
+run has a timeout of 120 seconds. A CUDA build without a working device
+fails the default check; a CPU-only build skips the GPU. This checks basic
+execution, not every numerical method or checkpoint support.
+
+For a longer example, `examples/argon/argon.toml` is liquid argon, 864 atoms
 with the terms in the control file, 2000 steps on the CPU in double
 precision:
 

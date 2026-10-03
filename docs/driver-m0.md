@@ -271,6 +271,37 @@ path is reported but its contents are not inspected. The output intervals
 describe the schedule only when `enabled` is true, and `at_end` takes
 precedence over the interval for minimization checkpoints.
 
+### 1.5 Installation doctor
+
+`mdir doctor [--target=all|cpu|gpu]` checks the installation (D154). It
+prints the build information of `mdir version`, then compiles and runs an
+embedded two-atom Lennard-Jones system for two steps on each requested
+target. The CPU uses double precision and two OpenMP threads; the GPU uses
+mixed precision. The initial pair energy must agree with the analytic
+expression to the log's rounding, and both energy rows must be finite.
+
+By default it checks every built target. A CPU-only build prints `SKIP`
+for the GPU; an explicit `--target=gpu` on that build fails. A CUDA build
+must pass the driver probe and GPU run: missing devices do not silently
+skip the check. `--target=cpu` works without a GPU or its driver. The GPU
+probe dynamically loads the driver and reports its supported CUDA API
+version, visible device names, compute capabilities, and selected device.
+`CUDA_VISIBLE_DEVICES` and `MDRT_DEVICE` select devices as in a normal run.
+
+Each run uses the same executable in a child process, with a timeout of
+120 seconds, so a failed CPU run does not prevent checking the GPU. The
+control files, coordinates, captured output, and any compiler reproducer
+are in a unique temporary directory. Success removes it; failure prints
+its path, the log paths and a rerun command when a run was attempted,
+and keeps the files. The child inherits the environment except that
+`MDIR_REPRODUCER` points inside this directory. Exit status is 0 when all
+requested checks pass, 1 otherwise (including failure to remove the files).
+
+This checks loading, compilation, and basic execution. It reports whether
+HDF5 was built but does not test checkpoints, PME, constraints, or the
+stability of a user's system; use `mdir check FILE` and the test suite for
+those concerns.
+
 ## 2. The driver
 
 ### 2.1 What it does

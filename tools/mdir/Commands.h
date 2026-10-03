@@ -66,6 +66,11 @@ int describeCheckpoints(llvm::ArrayRef<std::string> files,
 /// build supports.
 void printVersion(llvm::raw_ostream &os);
 
+/// Reports the build, probes CUDA when requested, and compiles and runs a
+/// small system on each requested target (all, cpu, or gpu). Returns 1 if
+/// any requested check fails; failed runs keep their temporary diagnostics.
+int doctor(llvm::StringRef target, const char *argv0);
+
 /// Writes into `directory` what a report of a defect in the run of
 /// `controlFile` needs: the versions, the environment, the inputs with
 /// their hashes, and the program at each stage, each made by a process of

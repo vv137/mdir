@@ -59,6 +59,7 @@ decision (Section 12).
 
 | Tool | What it does |
 |---|---|
+| `mdir doctor [--target=all\|cpu\|gpu]` | Reports the build, probes the CUDA driver and visible devices, and compiles and runs a small system on the requested targets (D154) |
 | `mdir check FILE [--json]` | Validates the input and reports the system, planned run, outputs, and warnings, without compiling or writing files (D151) |
 | `mdir template amber`, `mdir template md` | Prints a control file with every keyword and its default |
 | `mdir template minimize`, `nvt`, `npt`, `production` | Prints a stage of the standard pipeline, embedded at build time from `examples/ala3` (D147) |

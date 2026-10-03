@@ -1,0 +1,4 @@
+# A real CPU run, invalid target, and compiler failure with retained diagnostics.
+# RUN: %python %S/Inputs/check_doctor.py mdir cpu
+# RUN: mdir doctor --help | FileCheck %s
+# CHECK: --target={{.*}}Targets to check: all (default), cpu, or gpu

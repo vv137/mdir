@@ -297,7 +297,7 @@ static Preflight inspect(const Control &control) {
     report.warnings.push_back(
         {"hdf5_unavailable", "this build has no HDF5 support; use a build "
                               "with HDF5 to read or write checkpoints"});
-  if (control.target == Target::GPU && llvm::StringRef(MDIR_CUDA_ROOT).empty())
+  if (control.target == Target::GPU && !MDIR_HAS_CUDA)
     report.warnings.push_back(
         {"gpu_unavailable", "this build has no CUDA target; use a CUDA build "
                             "or select target = \"CPU\""});
