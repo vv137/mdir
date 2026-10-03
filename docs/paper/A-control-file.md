@@ -43,7 +43,8 @@ terms and types remain valid.
 | | `implicit_solvent` | `NONE`, `HCT`, `OBC1`, or `OBC2`: generalized Born from the radii and the screening of a topology of Amber, or with `born_radii = "MBONDI2"` those of mbondi2 by element for any topology, with `solvent_dielectric` (78.5), `solute_dielectric` (1), `surface_area_energy` (kcal/mol/Å², 0 for no nonpolar term), `salt_concentration` (mol/L of a 1:1 salt at the temperature of [ensemble], 0 for none), and `born_radius_cutoff` (Å, the integral of the descreening cut there; 0, the default, takes every pair within the cutoff); with `electrostatics = "CUTOFF"` (D144, D152). |
 | | `electrostatics` | With a topology: `CUTOFF`, `PME`, or `REACTION_FIELD`, the field of a dielectric beyond the cutoff acting on every pair of charges within it and on the excluded pairs as well, with `reaction_field_dielectric`, its relative permittivity, or 0 for a conductor (D140). |
 | | `coulomb_modifier` | With PME: `NONE`, or `POTENTIAL_SHIFT`, the direct sum shifted to zero at the cutoff. |
-| | `dispersion_correction` | `NONE` or `ENERGY_PRESSURE`; also in `[[energy.pair]]`. |
+| | `lennard_jones` | With a topology and a periodic cell: `CUTOFF` (default), or `PME`, the dispersion $-c_ic_j/r^6$ of every pair and image summed on a grid of `[lj_pme]`, with $c_i = 2\sqrt{\varepsilon_i}\sigma_i^3$ of the type, and each pair within the cutoff given its own Lennard-Jones (D162). It takes `lennard_jones_modifier` `NONE` or `POTENTIAL_SHIFT`, which shifts its whole direct term, and no correction for the dispersion. |
+| | `dispersion_correction` | `NONE` or `ENERGY_PRESSURE`; also in `[[energy.pair]]`. Off with `lennard_jones = "PME"`, which refuses `ENERGY_PRESSURE`. |
 | | `[[energy.pair]]` | A pair term, given by an expression (D16, D22). With a topology, over its pairs that are not excluded, in `r` (Å), `q1`, `q2`, `sigma`, `epsilon` of the pair, `sigma1`, `sigma2`, `epsilon1`, `epsilon2` of each particle (Å, kcal/mol), `coulomb`, the time `t` (ps, D145), and constants, truncated as the Lennard-Jones; `groups = [mask, mask]` keeps the pairs between two masks of Amber (D137). |
 | | `[[energy.triplet]]` | Without a topology: a term over the triplets centered on each particle (D160), each center with each unordered pair of its neighbors within `cutoff` (Å, required, at most that of [energy]), given by an expression in `r12`, `r13` (the legs from the center, particle 1, to the ends 2 and 3, Å), `r23` (the far leg, not cut), `theta` (the angle at the center), the time `t` (ps), numbers of the term, and parameters of every `[[energy.type]]` by the suffix of the place (`sigma1` of the center); the energy must not change when 2 and 3 are exchanged. The term must vanish at its cutoff, as the three-body term of Stillinger and Weber does. CPU only. |
 | | `[[energy.bond]]`, `[[energy.angle]]`, `[[energy.dihedral]]` | With a topology: a term over tuples of 2, 3, or 4 of its particles, given by an expression in `r` (Å) or `theta` (radians), with `name`, `expression`, `particles` (lists of particle numbers, from 1), and parameters, a number for all tuples or a list of one for each (D136). With `groups` in place of `particles`, 2, 3, or 4 masks of Amber, a term over the centers of the groups, weighted by mass or, with `weighting = "NONE"`, alike; a bond takes `dx`, `dy`, `dz` as well (D139). The time `t` in ps may enter the expression: a reference that moves at a rate (D145). |
@@ -52,6 +53,7 @@ terms and types remain valid.
 | | `[[energy.type]]` | A type of particle: its mass and its parameters. |
 | | `[[energy.pair_override]]` | Parameters of a term for one pair of types. |
 | `[pme]` | `tolerance`, `beta`, `max_spacing`, `grid`, `order`, `influence` | Particle mesh Ewald (D71): β from `erfc(β r_c) = tolerance` or given; the grid from the largest spacing or given as three numbers of points; the order of the B-splines, 4, 6, or 8; the influence function, `SPME` or `OPTIMAL`. |
+| `[lj_pme]` | `tolerance`, `beta`, `max_spacing`, `grid`, `order` | Particle mesh Ewald for the dispersion, with `lennard_jones = "PME"` (D162): β from $g(\beta r_c)$ = `tolerance` (default $10^{-3}$), $g(x) = e^{-x^2}(1 + x^2 + x^4/2)$, or given; the grid from the largest spacing (1.2 Å) or given; the order, 4, 6, or 8. |
 | `[dynamics]` | `integrator` | `VELOCITY_VERLET` or `LEAPFROG`: the `dyn.program` (D76). |
 | | `time_step`, `steps` | In ps, and the number of steps of the run, counted from the step it begins at: 0, or the step of the checkpoint of `[input]`. `mdir run --continue` continues the run until it has taken them (D129). |
 | | `seed` | Of the initial velocities and of the coupling. |
@@ -105,6 +107,8 @@ electrostatics    = "PME"       # PME, CUTOFF
 coulomb_modifier  = "POTENTIAL_SHIFT"  # NONE, POTENTIAL_SHIFT: the direct
                                        # sum shifted to zero at the cutoff
 # dispersion_correction = "ENERGY_PRESSURE"  # NONE, ENERGY_PRESSURE
+# lennard_jones   = "CUTOFF"    # CUTOFF, PME: the dispersion beyond the
+                                # cutoff on a grid, with no correction
 
 # Particle mesh Ewald; every entry has a default.
 # [pme]
@@ -114,6 +118,15 @@ coulomb_modifier  = "POTENTIAL_SHIFT"  # NONE, POTENTIAL_SHIFT: the direct
 # grid        = [48, 48, 48]    # the grid, instead
 # order       = 4               # of the B-splines: 4, 6, 8
 # influence   = "SPME"          # SPME, OPTIMAL (as sander)
+
+# Particle mesh Ewald of the dispersion, with lennard_jones = "PME";
+# every entry has a default.
+# [lj_pme]
+# tolerance   = 1.0e-3          # g(β r_c) = exp(−x²)(1 + x² + x⁴/2), x = β r_c
+# beta        = 0.33            # β (1/Å), instead
+# max_spacing = 1.2             # largest spacing of the grid (Å)
+# grid        = [48, 48, 48]    # the grid, instead
+# order       = 4               # of the B-splines: 4, 6, 8
 
 [dynamics]
 integrator = "VELOCITY_VERLET"  # VELOCITY_VERLET, LEAPFROG (velocities

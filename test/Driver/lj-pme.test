@@ -1,0 +1,216 @@
+# Particle mesh Ewald for the dispersion (D162): `lennard_jones = "PME"`
+# sums −c_i c_j / r⁶ over every pair and image on a grid, with c_i =
+# 2 √ε σ³ of the type of each particle with itself, and gives each pair
+# within the cutoff its own Lennard-Jones.
+#
+# Four chains A-B-B-A and six particles C in a cube of 2.6 nm, of three
+# types: A and B by the rule of Lorentz and Berthelot, whose C6 is not the
+# geometric one of the grid, and A with C set apart by [ nonbond_params ].
+# The terms agree with the Ewald sum of Inputs/dispersion_reference.py,
+# which sums over the wave vectors instead of a grid, to the digits
+# printed: the direct terms with each pair's own Lennard-Jones, the
+# excluded pairs (one, two, and three bonds apart, the 1-4 pairs among
+# them), the reciprocal sum on a grid of 64 points with splines of order
+# 8, and the self term.
+#
+# RUN: rm -rf %t && split-file %s %t
+# RUN: cd %t && mdir run run.toml | FileCheck %s
+# RUN: %python %S/Inputs/dispersion_reference.py %t/system.top %t/system.gro 12.0 0.3 \
+# RUN: | FileCheck %s --check-prefix=EWALD
+#
+# EWALD:      direct       0.0027574
+# EWALD-NEXT: excluded     1.6557828
+# EWALD-NEXT: reciprocal   -3.0596461
+# EWALD-NEXT: self         1.2114734
+#
+# CHECK:      MDIR:   Lennard-Jones                  0.002757
+# CHECK:      MDIR:   Lennard-Jones excluded         1.655783
+# CHECK-NEXT: MDIR:   Lennard-Jones reciprocal      -3.059646
+# CHECK:      MDIR:   Lennard-Jones self             1.211473
+
+# Three OPC waters with both sums: the forces are the derivatives of the
+# energy, so the total energy changes as the square of the time step; the
+# trace of the virial agrees with −dU/dλ under a scaling of the cell and
+# the positions.
+#
+# RUN: cp %S/Inputs/opc/three.prmtop %S/Inputs/opc/three.inpcrd %t
+# RUN: cd %t && mdir run three.toml | FileCheck %s --check-prefix=THREE
+# RUN: sed -e 's/^steps         = 200/steps         = 1/' -e 's/^energy_interval = 200/energy_interval = 1/' %t/three.toml > %t/virial.toml
+# RUN: %python %S/Inputs/check_virial.py mdir %t/virial.toml %t/three.inpcrd 8e-3 3e-5 \
+# RUN: | FileCheck %s --check-prefix=VIRIAL
+#
+# THREE: MDIR:   Lennard-Jones reciprocal
+# THREE: MDIR:   Lennard-Jones self
+# THREE: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[4-9]}} of its value
+# VIRIAL: virial ok
+
+# What the mesh refuses: the correction for the dispersion, which it
+# replaces; a switch, which would take away within the cutoff what the grid
+# does not give back; [lj_pme] without it; a run without a periodic cell;
+# and generalized Born.
+#
+# RUN: sed 's/^lennard_jones_modifier = "POTENTIAL_SHIFT"/&\ndispersion_correction = "ENERGY_PRESSURE"/' %t/run.toml > %t/correction.toml
+# RUN: not mdir check %t/correction.toml 2>&1 | FileCheck %s --check-prefix=CORRECTION
+# RUN: sed 's/^lennard_jones_modifier = "POTENTIAL_SHIFT"/lennard_jones_modifier = "FORCE_SWITCH"\nswitch_distance = 10.0/' %t/run.toml > %t/switch.toml
+# RUN: not mdir check %t/switch.toml 2>&1 | FileCheck %s --check-prefix=SWITCH
+# RUN: sed -e '/^lennard_jones     = "PME"/d' -e '/^lennard_jones_modifier/d' %t/run.toml > %t/table.toml
+# RUN: not mdir check %t/table.toml 2>&1 | FileCheck %s --check-prefix=TABLE
+# RUN: sed 's/^type = "PERIODIC"/type = "NONE"/' %t/run.toml > %t/open.toml
+# RUN: not mdir check %t/open.toml 2>&1 | FileCheck %s --check-prefix=OPEN
+# RUN: sed -e 's/^electrostatics    = "CUTOFF"/&\nimplicit_solvent = "OBC2"/' -e 's/^type = "PERIODIC"/type = "NONE"/' %t/run.toml > %t/born.toml
+# RUN: not mdir check %t/born.toml 2>&1 | FileCheck %s --check-prefix=BORN
+#
+# CORRECTION: 'lennard_jones = "PME"' sums the dispersion beyond the cutoff on its grid; give 'dispersion_correction = "NONE"' or leave it out
+# SWITCH: 'lennard_jones = "PME"' takes 'lennard_jones_modifier = "NONE"' or "POTENTIAL_SHIFT"
+# TABLE: [lj_pme] is for 'lennard_jones = "PME"' in [energy]
+# OPEN: particle mesh Ewald needs a periodic cell; without one, give 'lennard_jones = "CUTOFF"'
+# BORN: generalized Born takes the Lennard-Jones of a plain cutoff, 'lennard_jones = "CUTOFF"'
+
+#--- run.toml
+[input]
+topology    = "system.top"
+coordinates = "system.gro"
+
+[output]
+energy_interval = 0
+
+[energy]
+cutoff            = 12.0
+pairlist_distance = 12.5
+electrostatics    = "CUTOFF"
+lennard_jones     = "PME"
+lennard_jones_modifier = "POTENTIAL_SHIFT"
+
+[lj_pme]
+beta  = 0.3
+order = 8
+grid  = [64, 64, 64]
+
+[constraints]
+hydrogen_bonds = false
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.0001
+steps      = 1
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 0.0
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- three.toml
+[input]
+topology   = "three.prmtop"
+coordinates = "three.inpcrd"
+
+[output]
+energy_interval = 200
+[energy]
+cutoff        = 9.0
+pairlist_distance = 10.0
+electrostatics = "PME"
+lennard_jones = "PME"
+
+[pme]
+beta = 0.347045919371208278
+order = 8
+grid = [64, 64, 64]
+
+[lj_pme]
+beta = 0.3
+order = 6
+grid = [32, 32, 32]
+
+[dynamics]
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.0001
+steps         = 200
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PERIODIC"
+#--- system.top
+[ defaults ]
+; nbfunc  comb-rule  gen-pairs  fudgeLJ  fudgeQQ
+  1       2          yes        0.5      0.8333
+
+[ atomtypes ]
+; name  at.num  mass     charge  ptype  sigma  epsilon
+  A     6       12.0100  0.0     A      0.30   0.20
+  B     6       12.0100  0.0     A      0.40   0.50
+  C     18      39.9480  0.0     A      0.35   0.30
+
+[ nonbond_params ]
+; i  j  func  sigma  epsilon
+  A  C  1     0.36   0.90
+
+[ moleculetype ]
+; name  nrexcl
+  CHAIN 3
+
+[ atoms ]
+; nr  type  resnr  residue  atom  cgnr  charge  mass
+  1   A     1      CHN      C1    1     0.0     12.0100
+  2   B     1      CHN      C2    1     0.0     12.0100
+  3   B     1      CHN      C3    1     0.0     12.0100
+  4   A     1      CHN      C4    1     0.0     12.0100
+
+[ bonds ]
+; i  j  func  b0    kb
+  1  2  1     0.15  100000.0
+  2  3  1     0.15  100000.0
+  3  4  1     0.15  100000.0
+
+[ pairs ]
+; i  j  func
+  1  4  1
+
+[ moleculetype ]
+; name  nrexcl
+  SINGLE 3
+
+[ atoms ]
+; nr  type  resnr  residue  atom  cgnr  charge  mass
+  1   C     1      SGL      X     1     0.0     39.9480
+
+[ system ]
+chains and singles
+
+[ molecules ]
+CHAIN   4
+SINGLE  6
+#--- system.gro
+chains and singles
+   22
+    1CHN     C1    1   0.8419652   0.3922079   1.6924296
+    1CHN     C2    2   0.9919652   0.3922079   1.6924296
+    1CHN     C3    3   0.9919652   0.5422079   1.6924296
+    1CHN     C4    4   1.1419652   0.5422079   1.7424296
+    2CHN     C1    5   0.1883343   1.3932932   0.9507912
+    2CHN     C2    6   0.3383343   1.3932932   0.9507912
+    2CHN     C3    7   0.3383343   1.5432932   0.9507912
+    2CHN     C4    8   0.4883343   1.5432932   1.0007912
+    3CHN     C1    9   0.1507972   1.3193329   0.0974887
+    3CHN     C2   10   0.3007972   1.3193329   0.0974887
+    3CHN     C3   11   0.3007972   1.4693329   0.0974887
+    3CHN     C4   12   0.4507972   1.4693329   0.1474887
+    4CHN     C1   13   1.1274788   0.1816241   0.2358538
+    4CHN     C2   14   1.2774788   0.1816241   0.2358538
+    4CHN     C3   15   1.2774788   0.3316241   0.2358538
+    4CHN     C4   16   1.4274788   0.3316241   0.2858538
+    5SGL      X   17   1.1037499   2.1498155   0.3218851
+    6SGL      X   18   0.5804213   1.6313264   2.4640433
+    7SGL      X   19   1.5004677   1.0313692   2.5382633
+    8SGL      X   20   0.1211150   2.2320180   0.7529841
+    9SGL      X   21   0.3750632   0.3062598   0.8020527
+   10SGL      X   22   2.1219285   0.4698886   1.5121604
+   2.6000000   2.6000000   2.6000000

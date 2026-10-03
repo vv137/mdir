@@ -444,6 +444,10 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                           op.getBeta().convertToDouble());
   Value coulomb = createReal(builder, loc, builder.getF64Type(),
                              op.getCoulomb().convertToDouble());
+  // The sum of the dispersion takes the influence function of its own
+  // (D162).
+  Value dispersion = arith::ConstantOp::create(
+      builder, loc, builder.getBoolAttr(op.getDispersion()));
   // The cell is the vector of its edge lengths by now.
   Value box = op.getCellMutable().get();
   Value fixed = op.getScratch()[0], real = op.getScratch()[1],
@@ -471,7 +475,8 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                        ValueRange{real, complex, sizes[0], sizes[1], sizes[2]});
   auto convolve = func::CallOp::create(
       builder, loc, instance("mdrt.pme_convolve"),
-      ValueRange{complex, op.getModuli(), box, beta, coulomb, k1, k2, k3});
+      ValueRange{complex, op.getModuli(), box, beta, coulomb,
+                 dispersion, k1, k2, k3});
   func::CallOp::create(builder, loc, backward,
                        ValueRange{complex, real, sizes[0], sizes[1], sizes[2]});
   func::CallOp::create(builder, loc, instance("mdrt.pme_gather"),

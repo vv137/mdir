@@ -1684,6 +1684,652 @@ func.func private @mdrt_gpu_pme_scale_triclinic(%c: memref<?x!pme_real, 1>, %tab
   return
 }
 
+// The factors of the influence function along the edges, for
+// @mdrt_gpu_pme_scale and @mdrt_gpu_pme_convolve: see tables in the script.
+func.func private @mdrt_gpu_pme_tables_dispersion_triclinic(%moduli: memref<?x?xf64, 1>, %tables: memref<?x!pme_real, 1>,
+                                       %box: vector<6xf64>, %beta: f64, %coulomb: f64,
+                                       %k1: index, %k2: index, %k3: index) {
+  %c1 = arith.constant 1 : index
+  %c3 = arith.constant 3 : index
+  %c128 = arith.constant 128 : index
+  %pi2 = arith.constant 9.869604401089358 : f64
+  %lx = vector.extract %box[0] : f64 from vector<6xf64>
+  %ly = vector.extract %box[1] : f64 from vector<6xf64>
+  %lz = vector.extract %box[2] : f64 from vector<6xf64>
+  %tbx = vector.extract %box[3] : f64 from vector<6xf64>
+  %tcx = vector.extract %box[4] : f64 from vector<6xf64>
+  %tcy = vector.extract %box[5] : f64 from vector<6xf64>
+  %hunit = arith.constant 1.0 : f64
+  %h00 = arith.divf %hunit, %lx : f64
+  %h11 = arith.divf %hunit, %ly : f64
+  %h22 = arith.divf %hunit, %lz : f64
+  %h10a = arith.mulf %tbx, %h00 : f64
+  %h10b = arith.mulf %h10a, %h11 : f64
+  %h10 = arith.negf %h10b : f64
+  %h21a = arith.mulf %tcy, %h11 : f64
+  %h21b = arith.mulf %h21a, %h22 : f64
+  %h21 = arith.negf %h21b : f64
+  %h20a = arith.mulf %tbx, %tcy : f64
+  %h20b = arith.mulf %ly, %tcx : f64
+  %h20c = arith.subf %h20a, %h20b : f64
+  %h20d = arith.mulf %h20c, %h00 : f64
+  %h20e = arith.mulf %h20d, %h11 : f64
+  %h20 = arith.mulf %h20e, %h22 : f64
+  %h00r = PME_F64_TO_REAL %h00 : f64 to !pme_real
+  %h10r = PME_F64_TO_REAL %h10 : f64 to !pme_real
+  %h11r = PME_F64_TO_REAL %h11 : f64 to !pme_real
+  %h20r = PME_F64_TO_REAL %h20 : f64 to !pme_real
+  %h21r = PME_F64_TO_REAL %h21 : f64 to !pme_real
+  %h22r = PME_F64_TO_REAL %h22 : f64 to !pme_real
+  %unit = arith.constant 1.0 : f64
+  %ilx = arith.divf %unit, %lx : f64
+  %ily = arith.divf %unit, %ly : f64
+  %ilz = arith.divf %unit, %lz : f64
+  %beta2 = arith.mulf %beta, %beta : f64
+  %gauss = arith.divf %pi2, %beta2 : f64
+  %pi = arith.constant 3.141592653589793 : f64
+  %lxy = arith.mulf %lx, %ly : f64
+  %volume = arith.mulf %lxy, %lz : f64
+  %piv = arith.mulf %pi, %volume : f64
+  %pi32 = arith.constant 5.568327996831708 : f64
+  %beta3 = arith.mulf %beta2, %beta : f64
+  %pb3 = arith.mulf %pi32, %beta3 : f64
+  %three = arith.constant 3.0 : f64
+  %v3 = arith.mulf %three, %volume : f64
+  %pd0 = arith.divf %pb3, %v3 : f64
+  %pdc = arith.mulf %pd0, %coulomb : f64
+  %prefactor = arith.negf %pdc : f64
+  %pib = arith.divf %pi, %beta : f64
+  %pibr = PME_F64_TO_REAL %pib : f64 to !pme_real
+  %sqrtpi = arith.constant 1.7724538509055159 : f64
+  %sqrtpir = PME_F64_TO_REAL %sqrtpi : f64 to !pme_real
+  %six = arith.constant 6.0 : f64
+  %sixgauss = arith.mulf %six, %gauss : f64
+  %sixgaussr = PME_F64_TO_REAL %sixgauss : f64 to !pme_real
+  %k12a = arith.addi %k1, %k2 : index
+  %entries = arith.addi %k12a, %k3 : index
+  %blocks_entries = func.call @mdrt_gpu_pme_blocks_triclinic(%entries) : (index) -> index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_entries, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %c128 : index
+    %item = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %item, %entries : index
+    scf.if %inside {
+      %c0t = arith.constant 0 : index
+      %c1t = arith.constant 1 : index
+      %c2t = arith.constant 2 : index
+      %k12 = arith.addi %k1, %k2 : index
+      %on_y = arith.cmpi uge, %item, %k1 : index
+      %on_z = arith.cmpi uge, %item, %k12 : index
+      %axis0 = arith.select %on_y, %c1t, %c0t : index
+      %axis = arith.select %on_z, %c2t, %axis0 : index
+      %from0 = arith.select %on_y, %k1, %c0t : index
+      %from = arith.select %on_z, %k12, %from0 : index
+      %kk0 = arith.select %on_y, %k2, %k1 : index
+      %kk = arith.select %on_z, %k3, %kk0 : index
+      %l = arith.constant 1.0 : f64
+      %k = arith.subi %item, %from : index
+      %half = arith.divui %kk, %c2t : index
+      %ki = arith.index_cast %k : index to i64
+      %ni = arith.index_cast %kk : index to i64
+      %beyond = arith.cmpi ugt, %k, %half : index
+      %shifted = arith.subi %ki, %ni : i64
+      %signed = arith.select %beyond, %shifted, %ki : i64
+      %sf = arith.sitofp %signed : i64 to f64
+      %m = arith.mulf %sf, %l : f64
+      %m2 = arith.mulf %m, %m : f64
+      %mod = memref.load %moduli[%axis, %k] : memref<?x?xf64, 1>
+      %fzero = arith.constant 0.0 : f64
+      %factor0 = arith.addf %mod, %fzero : f64
+      %first_axis = arith.cmpi eq, %axis, %c0t : index
+      %scaled = arith.mulf %factor0, %prefactor : f64
+      %factor = arith.select %first_axis, %scaled, %factor0 : f64
+      %tstart = arith.muli %from, %c3 : index
+      %at0 = arith.addi %tstart, %k : index
+      %at1 = arith.addi %at0, %kk : index
+      %at2 = arith.addi %at1, %kk : index
+      %mr = PME_F64_TO_REAL %m : f64 to !pme_real
+      %m2r = PME_F64_TO_REAL %m2 : f64 to !pme_real
+      %fr = PME_F64_TO_REAL %factor : f64 to !pme_real
+      memref.store %mr, %tables[%at0] : memref<?x!pme_real, 1>
+      memref.store %m2r, %tables[%at1] : memref<?x!pme_real, 1>
+      memref.store %fr, %tables[%at2] : memref<?x!pme_real, 1>
+    }
+    gpu.terminator
+  }
+  return
+}
+
+// Multiplies the half-complex transform `c` by the influence function, which
+// it computes from the factors of the edges in `moduli` and the cell, and
+// returns the energy and the virial, as @mdrt.pme_convolve does: see
+// convolve in the script (D104). `rows` holds the sums of the blocks, ten
+// slots each, then the seven sums at its start.
+func.func private @mdrt_gpu_pme_convolve_dispersion_triclinic(%c: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>,
+                                         %rows: memref<?xf64, 1>, %box: vector<6xf64>,
+                                         %beta: f64, %coulomb: f64,
+                                         %k1: index, %k2: index, %k3: index)
+    -> (f64, vector<9xf64>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %c3t = arith.constant 3 : index
+  %c10 = arith.constant 10 : index
+  %c127 = arith.constant 127 : index
+  %c128 = arith.constant 128 : index
+  %pi2 = arith.constant 9.869604401089358 : f64
+  %lx = vector.extract %box[0] : f64 from vector<6xf64>
+  %ly = vector.extract %box[1] : f64 from vector<6xf64>
+  %lz = vector.extract %box[2] : f64 from vector<6xf64>
+  %tbx = vector.extract %box[3] : f64 from vector<6xf64>
+  %tcx = vector.extract %box[4] : f64 from vector<6xf64>
+  %tcy = vector.extract %box[5] : f64 from vector<6xf64>
+  %hunit = arith.constant 1.0 : f64
+  %h00 = arith.divf %hunit, %lx : f64
+  %h11 = arith.divf %hunit, %ly : f64
+  %h22 = arith.divf %hunit, %lz : f64
+  %h10a = arith.mulf %tbx, %h00 : f64
+  %h10b = arith.mulf %h10a, %h11 : f64
+  %h10 = arith.negf %h10b : f64
+  %h21a = arith.mulf %tcy, %h11 : f64
+  %h21b = arith.mulf %h21a, %h22 : f64
+  %h21 = arith.negf %h21b : f64
+  %h20a = arith.mulf %tbx, %tcy : f64
+  %h20b = arith.mulf %ly, %tcx : f64
+  %h20c = arith.subf %h20a, %h20b : f64
+  %h20d = arith.mulf %h20c, %h00 : f64
+  %h20e = arith.mulf %h20d, %h11 : f64
+  %h20 = arith.mulf %h20e, %h22 : f64
+  %h00r = PME_F64_TO_REAL %h00 : f64 to !pme_real
+  %h10r = PME_F64_TO_REAL %h10 : f64 to !pme_real
+  %h11r = PME_F64_TO_REAL %h11 : f64 to !pme_real
+  %h20r = PME_F64_TO_REAL %h20 : f64 to !pme_real
+  %h21r = PME_F64_TO_REAL %h21 : f64 to !pme_real
+  %h22r = PME_F64_TO_REAL %h22 : f64 to !pme_real
+  %beta2 = arith.mulf %beta, %beta : f64
+  %gauss = arith.divf %pi2, %beta2 : f64
+  %pi = arith.constant 3.141592653589793 : f64
+  %lxy = arith.mulf %lx, %ly : f64
+  %volume = arith.mulf %lxy, %lz : f64
+  %piv = arith.mulf %pi, %volume : f64
+  %pi32 = arith.constant 5.568327996831708 : f64
+  %beta3 = arith.mulf %beta2, %beta : f64
+  %pb3 = arith.mulf %pi32, %beta3 : f64
+  %three = arith.constant 3.0 : f64
+  %v3 = arith.mulf %three, %volume : f64
+  %pd0 = arith.divf %pb3, %v3 : f64
+  %pdc = arith.mulf %pd0, %coulomb : f64
+  %prefactor = arith.negf %pdc : f64
+  %pib = arith.divf %pi, %beta : f64
+  %pibr = PME_F64_TO_REAL %pib : f64 to !pme_real
+  %sqrtpi = arith.constant 1.7724538509055159 : f64
+  %sqrtpir = PME_F64_TO_REAL %sqrtpi : f64 to !pme_real
+  %six = arith.constant 6.0 : f64
+  %sixgauss = arith.mulf %six, %gauss : f64
+  %sixgaussr = PME_F64_TO_REAL %sixgauss : f64 to !pme_real
+  %gaussr = PME_F64_TO_REAL %gauss : f64 to !pme_real
+  %prefactorr = PME_F64_TO_REAL %prefactor : f64 to !pme_real
+  %unit = arith.constant 1.0 : f64
+  %ilx = arith.divf %unit, %lx : f64
+  %ily = arith.divf %unit, %ly : f64
+  %ilz = arith.divf %unit, %lz : f64
+  %ilxr = PME_F64_TO_REAL %ilx : f64 to !pme_real
+  %ilyr = PME_F64_TO_REAL %ily : f64 to !pme_real
+  %ilzr = PME_F64_TO_REAL %ilz : f64 to !pme_real
+  %count = arith.muli %k1, %k2 : index
+  %ty0 = arith.muli %k1, %c3t : index
+  %k2_3 = arith.muli %k2, %c3t : index
+  %tz0 = arith.addi %ty0, %k2_3 : index
+  %half = arith.divui %k3, %c2 : index
+  %depth = arith.addi %half, %c1 : index
+  %odd = arith.remui %k3, %c2 : index
+  %even = arith.cmpi eq, %odd, %c0 : index
+  %points = arith.muli %count, %depth : index
+  %depth32 = arith.index_cast %depth : index to i32
+  %k2_32 = arith.index_cast %k2 : index to i32
+  // Points a thread: as many as keep the blocks within the rows, at most
+  // one for each row of the grid.
+  %depth127 = arith.addi %depth, %c127 : index
+  %per = arith.divui %depth127, %c128 : index
+  %span = arith.muli %per, %c128 : index
+  %points_up = arith.addi %points, %span : index
+  %points_up1 = arith.subi %points_up, %c1 : index
+  %blocks = arith.divui %points_up1, %span : index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
+    %cc0 = arith.constant 0 : index
+    %cc1 = arith.constant 1 : index
+    %cc2 = arith.constant 2 : index
+    %rzero = arith.constant 0.0 : !pme_real
+    %rone = arith.constant 1.0 : !pme_real
+    %rhalf = arith.constant 0.5 : !pme_real
+    %rtwo = arith.constant 2.0 : !pme_real
+    %run = arith.muli %bx, %span : index
+    %e, %v00, %v01, %v02, %v11, %v12, %v22 = scf.for %c_ = %cc0 to %per step %cc1
+        iter_args(%e0 = %rzero, %a00 = %rzero, %a01 = %rzero, %a02 = %rzero,
+                  %a11 = %rzero, %a12 = %rzero, %a22 = %rzero)
+        -> (!pme_real, !pme_real, !pme_real, !pme_real, !pme_real, !pme_real, !pme_real) {
+      %c128_ = arith.muli %c_, %c128 : index
+      %run_c = arith.addi %run, %c128_ : index
+      %item = arith.addi %run_c, %tx : index
+      %inside = arith.cmpi ult, %item, %points : index
+      %sums:7 = scf.if %inside -> (!pme_real, !pme_real, !pme_real, !pme_real, !pme_real, !pme_real, !pme_real) {
+        %item32 = arith.index_cast %item : index to i32
+        %row32 = arith.divui %item32, %depth32 : i32
+        %z32 = arith.remui %item32, %depth32 : i32
+        %a32 = arith.divui %row32, %k2_32 : i32
+        %b32 = arith.remui %row32, %k2_32 : i32
+        %z = arith.index_cast %z32 : i32 to index
+        %a = arith.index_cast %a32 : i32 to index
+        %b = arith.index_cast %b32 : i32 to index
+        %tbx2 = arith.addi %a, %k1 : index
+        %tbx2b = arith.addi %tbx2, %k1 : index
+        %n1 = memref.load %tables[%a] : memref<?x!pme_real, 1>
+        %t1 = memref.load %tables[%tbx2b] : memref<?x!pme_real, 1>
+        %tby0 = arith.addi %ty0, %b : index
+        %tby1 = arith.addi %tby0, %k2 : index
+        %tby2 = arith.addi %tby1, %k2 : index
+        %n2 = memref.load %tables[%tby0] : memref<?x!pme_real, 1>
+        %t2 = memref.load %tables[%tby2] : memref<?x!pme_real, 1>
+        %tbz0 = arith.addi %tz0, %z : index
+        %tbz1 = arith.addi %tbz0, %k3 : index
+        %tbz2 = arith.addi %tbz1, %k3 : index
+        %n3 = memref.load %tables[%tbz0] : memref<?x!pme_real, 1>
+        %t3 = memref.load %tables[%tbz2] : memref<?x!pme_real, 1>
+        %m1 = arith.mulf %h00r, %n1 : !pme_real
+        %m2a = arith.mulf %h10r, %n1 : !pme_real
+        %m2b = arith.mulf %h11r, %n2 : !pme_real
+        %m2 = arith.addf %m2a, %m2b : !pme_real
+        %m3a = arith.mulf %h20r, %n1 : !pme_real
+        %m3b = arith.mulf %h21r, %n2 : !pme_real
+        %m3c = arith.mulf %h22r, %n3 : !pme_real
+        %m3ab = arith.addf %m3a, %m3b : !pme_real
+        %m3 = arith.addf %m3ab, %m3c : !pme_real
+        %m1s = arith.mulf %m1, %m1 : !pme_real
+        %m2s = arith.mulf %m2, %m2 : !pme_real
+        %m3s = arith.mulf %m3, %m3 : !pme_real
+        %m12 = arith.addf %m1s, %m2s : !pme_real
+        %msqr = arith.addf %m12, %m3s : !pme_real
+        %dmabs = math.sqrt %msqr : !pme_real
+        %dbd = arith.mulf %pibr, %dmabs : !pme_real
+        %dbd2 = arith.mulf %dbd, %dbd : !pme_real
+        %dnbd2 = arith.negf %dbd2 : !pme_real
+        %debd = math.exp %dnbd2 : !pme_real
+        %derfc = math.erfc %dbd : !pme_real
+        %dspb = arith.mulf %sqrtpir, %dbd : !pme_real
+        %dsbd = arith.mulf %dspb, %derfc : !pme_real
+        %dtwo = arith.constant 2.0 : !pme_real
+        %dtwob2 = arith.mulf %dtwo, %dbd2 : !pme_real
+        %domt = arith.subf %rone, %dtwob2 : !pme_real
+        %dfa = arith.mulf %domt, %debd : !pme_real
+        %dfb = arith.mulf %dtwob2, %dsbd : !pme_real
+        %dfd = arith.addf %dfa, %dfb : !pme_real
+        %tt12 = arith.mulf %t1, %t2 : !pme_real
+        %tt123 = arith.mulf %tt12, %t3 : !pme_real
+        %bc = arith.mulf %tt123, %dfd : !pme_real
+        %dvd0 = arith.subf %debd, %dsbd : !pme_real
+        %dvd1 = arith.mulf %sixgaussr, %dvd0 : !pme_real
+        %vb = arith.mulf %tt123, %dvd1 : !pme_real
+        %re_at = arith.muli %item, %cc2 : index
+        %im_at = arith.addi %re_at, %cc1 : index
+        %re = memref.load %c[%re_at] : memref<?x!pme_real, 1>
+        %im = memref.load %c[%im_at] : memref<?x!pme_real, 1>
+        // The energy and the virial of the point: the points of the half-complex
+        // transform stand for two but at z = 0 and, for an even k3, at k3 / 2.
+        %re2 = arith.mulf %re, %re : !pme_real
+        %im2 = arith.mulf %im, %im : !pme_real
+        %g2 = arith.addf %re2, %im2 : !pme_real
+        %first = arith.cmpi eq, %z, %cc0 : index
+        %middle = arith.cmpi eq, %z, %half : index
+        %middle_even = arith.andi %middle, %even : i1
+        %single = arith.ori %first, %middle_even : i1
+        %hw = arith.select %single, %rhalf, %rone : !pme_real
+        %hwb = arith.mulf %hw, %bc : !pme_real
+        %em = arith.mulf %hwb, %g2 : !pme_real
+        %hwv = arith.mulf %hw, %vb : !pme_real
+        %ef = arith.mulf %hwv, %g2 : !pme_real
+        %p11 = arith.mulf %m1, %m1 : !pme_real
+        %p12 = arith.mulf %m1, %m2 : !pme_real
+        %p13 = arith.mulf %m1, %m3 : !pme_real
+        %p22 = arith.mulf %m2, %m2 : !pme_real
+        %p23 = arith.mulf %m2, %m3 : !pme_real
+        %p33 = arith.mulf %m3, %m3 : !pme_real
+        %t11 = arith.mulf %ef, %p11 : !pme_real
+        %t12 = arith.mulf %ef, %p12 : !pme_real
+        %t13 = arith.mulf %ef, %p13 : !pme_real
+        %t22 = arith.mulf %ef, %p22 : !pme_real
+        %t23 = arith.mulf %ef, %p23 : !pme_real
+        %t33 = arith.mulf %ef, %p33 : !pme_real
+        %d11 = arith.subf %em, %t11 : !pme_real
+        %d22 = arith.subf %em, %t22 : !pme_real
+        %d33 = arith.subf %em, %t33 : !pme_real
+        %n00 = arith.addf %a00, %d11 : !pme_real
+        %n01 = arith.subf %a01, %t12 : !pme_real
+        %n02 = arith.subf %a02, %t13 : !pme_real
+        %n11 = arith.addf %a11, %d22 : !pme_real
+        %n12 = arith.subf %a12, %t23 : !pme_real
+        %n22 = arith.addf %a22, %d33 : !pme_real
+        %ne = arith.addf %e0, %em : !pme_real
+        %reb = arith.mulf %re, %bc : !pme_real
+        %imb = arith.mulf %im, %bc : !pme_real
+        memref.store %reb, %c[%re_at] : memref<?x!pme_real, 1>
+        memref.store %imb, %c[%im_at] : memref<?x!pme_real, 1>
+        scf.yield %ne, %n00, %n01, %n02, %n11, %n12, %n22
+            : !pme_real, !pme_real, !pme_real, !pme_real, !pme_real, !pme_real, !pme_real
+      } else {
+        scf.yield %e0, %a00, %a01, %a02, %a11, %a12, %a22
+            : !pme_real, !pme_real, !pme_real, !pme_real, !pme_real, !pme_real, !pme_real
+      }
+      scf.yield %sums#0, %sums#1, %sums#2, %sums#3, %sums#4, %sums#5, %sums#6
+          : !pme_real, !pme_real, !pme_real, !pme_real, !pme_real, !pme_real, !pme_real
+    }
+    %out = arith.muli %bx, %c10 : index
+    %lead = arith.cmpi eq, %tx, %cc0 : index
+    %r0 = gpu.all_reduce add %e uniform {
+    } : (!pme_real) -> !pme_real
+    %r0w = PME_REAL_TO_F64 %r0 : !pme_real to f64
+    %r1 = gpu.all_reduce add %v00 uniform {
+    } : (!pme_real) -> !pme_real
+    %r1w = PME_REAL_TO_F64 %r1 : !pme_real to f64
+    %r2 = gpu.all_reduce add %v01 uniform {
+    } : (!pme_real) -> !pme_real
+    %r2w = PME_REAL_TO_F64 %r2 : !pme_real to f64
+    %r3 = gpu.all_reduce add %v02 uniform {
+    } : (!pme_real) -> !pme_real
+    %r3w = PME_REAL_TO_F64 %r3 : !pme_real to f64
+    %r4 = gpu.all_reduce add %v11 uniform {
+    } : (!pme_real) -> !pme_real
+    %r4w = PME_REAL_TO_F64 %r4 : !pme_real to f64
+    %r5 = gpu.all_reduce add %v12 uniform {
+    } : (!pme_real) -> !pme_real
+    %r5w = PME_REAL_TO_F64 %r5 : !pme_real to f64
+    %r6 = gpu.all_reduce add %v22 uniform {
+    } : (!pme_real) -> !pme_real
+    %r6w = PME_REAL_TO_F64 %r6 : !pme_real to f64
+    scf.if %lead {
+      %oc0 = arith.constant 0 : index
+      %o0 = arith.addi %out, %oc0 : index
+      memref.store %r0w, %rows[%o0] : memref<?xf64, 1>
+      %oc1 = arith.constant 1 : index
+      %o1 = arith.addi %out, %oc1 : index
+      memref.store %r1w, %rows[%o1] : memref<?xf64, 1>
+      %oc2 = arith.constant 2 : index
+      %o2 = arith.addi %out, %oc2 : index
+      memref.store %r2w, %rows[%o2] : memref<?xf64, 1>
+      %oc3 = arith.constant 3 : index
+      %o3 = arith.addi %out, %oc3 : index
+      memref.store %r3w, %rows[%o3] : memref<?xf64, 1>
+      %oc4 = arith.constant 4 : index
+      %o4 = arith.addi %out, %oc4 : index
+      memref.store %r4w, %rows[%o4] : memref<?xf64, 1>
+      %oc5 = arith.constant 5 : index
+      %o5 = arith.addi %out, %oc5 : index
+      memref.store %r5w, %rows[%o5] : memref<?xf64, 1>
+      %oc6 = arith.constant 6 : index
+      %o6 = arith.addi %out, %oc6 : index
+      memref.store %r6w, %rows[%o6] : memref<?xf64, 1>
+    }
+    gpu.terminator
+  }
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
+    %zero_d = arith.constant 0.0 : f64
+    %cc0 = arith.constant 0 : index
+    %s:7 = scf.for %blk = %tx to %blocks step %c128
+        iter_args(%q0 = %zero_d, %q1 = %zero_d, %q2 = %zero_d, %q3 = %zero_d,
+                  %q4 = %zero_d, %q5 = %zero_d, %q6 = %zero_d)
+        -> (f64, f64, f64, f64, f64, f64, f64) {
+      %at = arith.muli %blk, %c10 : index
+      %tc0 = arith.constant 0 : index
+      %ta0 = arith.addi %at, %tc0 : index
+      %tv0 = memref.load %rows[%ta0] : memref<?xf64, 1>
+      %tn0 = arith.addf %q0, %tv0 : f64
+      %tc1 = arith.constant 1 : index
+      %ta1 = arith.addi %at, %tc1 : index
+      %tv1 = memref.load %rows[%ta1] : memref<?xf64, 1>
+      %tn1 = arith.addf %q1, %tv1 : f64
+      %tc2 = arith.constant 2 : index
+      %ta2 = arith.addi %at, %tc2 : index
+      %tv2 = memref.load %rows[%ta2] : memref<?xf64, 1>
+      %tn2 = arith.addf %q2, %tv2 : f64
+      %tc3 = arith.constant 3 : index
+      %ta3 = arith.addi %at, %tc3 : index
+      %tv3 = memref.load %rows[%ta3] : memref<?xf64, 1>
+      %tn3 = arith.addf %q3, %tv3 : f64
+      %tc4 = arith.constant 4 : index
+      %ta4 = arith.addi %at, %tc4 : index
+      %tv4 = memref.load %rows[%ta4] : memref<?xf64, 1>
+      %tn4 = arith.addf %q4, %tv4 : f64
+      %tc5 = arith.constant 5 : index
+      %ta5 = arith.addi %at, %tc5 : index
+      %tv5 = memref.load %rows[%ta5] : memref<?xf64, 1>
+      %tn5 = arith.addf %q5, %tv5 : f64
+      %tc6 = arith.constant 6 : index
+      %ta6 = arith.addi %at, %tc6 : index
+      %tv6 = memref.load %rows[%ta6] : memref<?xf64, 1>
+      %tn6 = arith.addf %q6, %tv6 : f64
+      scf.yield %tn0, %tn1, %tn2, %tn3, %tn4, %tn5, %tn6 : f64, f64, f64, f64, f64, f64, f64
+    }
+    %lead = arith.cmpi eq, %tx, %cc0 : index
+    %u0 = gpu.all_reduce add %s#0 uniform {
+    } : (f64) -> f64
+    %u1 = gpu.all_reduce add %s#1 uniform {
+    } : (f64) -> f64
+    %u2 = gpu.all_reduce add %s#2 uniform {
+    } : (f64) -> f64
+    %u3 = gpu.all_reduce add %s#3 uniform {
+    } : (f64) -> f64
+    %u4 = gpu.all_reduce add %s#4 uniform {
+    } : (f64) -> f64
+    %u5 = gpu.all_reduce add %s#5 uniform {
+    } : (f64) -> f64
+    %u6 = gpu.all_reduce add %s#6 uniform {
+    } : (f64) -> f64
+    scf.if %lead {
+      %uc0 = arith.constant 0 : index
+      memref.store %u0, %rows[%uc0] : memref<?xf64, 1>
+      %uc1 = arith.constant 1 : index
+      memref.store %u1, %rows[%uc1] : memref<?xf64, 1>
+      %uc2 = arith.constant 2 : index
+      memref.store %u2, %rows[%uc2] : memref<?xf64, 1>
+      %uc3 = arith.constant 3 : index
+      memref.store %u3, %rows[%uc3] : memref<?xf64, 1>
+      %uc4 = arith.constant 4 : index
+      memref.store %u4, %rows[%uc4] : memref<?xf64, 1>
+      %uc5 = arith.constant 5 : index
+      memref.store %u5, %rows[%uc5] : memref<?xf64, 1>
+      %uc6 = arith.constant 6 : index
+      memref.store %u6, %rows[%uc6] : memref<?xf64, 1>
+    }
+    gpu.terminator
+  }
+  // The energy and the six components of the virial that the total wrote:
+  // a longer copy read values that no kernel wrote (initcheck).
+  %host = memref.alloc() : memref<7xf64>
+  %rows7 = memref.subview %rows[0] [7] [1] : memref<?xf64, 1> to memref<7xf64, strided<[1]>, 1>
+  %t0 = gpu.wait async
+  %t1 = gpu.memcpy async [%t0] %host, %rows7 : memref<7xf64>, memref<7xf64, strided<[1]>, 1>
+  gpu.wait [%t1]
+  %e = memref.load %host[%c0] : memref<7xf64>
+  %c3 = arith.constant 3 : index
+  %c4 = arith.constant 4 : index
+  %c5 = arith.constant 5 : index
+  %c6 = arith.constant 6 : index
+  %w00 = memref.load %host[%c1] : memref<7xf64>
+  %w01 = memref.load %host[%c2] : memref<7xf64>
+  %w02 = memref.load %host[%c3] : memref<7xf64>
+  %w11 = memref.load %host[%c4] : memref<7xf64>
+  %w12 = memref.load %host[%c5] : memref<7xf64>
+  %w22 = memref.load %host[%c6] : memref<7xf64>
+  memref.dealloc %host : memref<7xf64>
+  %virial = vector.from_elements %w00, %w01, %w02, %w01, %w11, %w12, %w02, %w12, %w22 : vector<9xf64>
+  return %e, %virial : f64, vector<9xf64>
+}
+
+// Multiplies the half-complex transform `c` by the influence function, as
+// @mdrt_gpu_pme_convolve does, where neither the energy nor the virial is
+// needed: a thread for each point, and nothing for the host to wait for.
+func.func private @mdrt_gpu_pme_scale_dispersion_triclinic(%c: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>,
+                                      %box: vector<6xf64>, %beta: f64, %coulomb: f64,
+                                      %k1: index, %k2: index, %k3: index) {
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %c128 = arith.constant 128 : index
+  %pi2 = arith.constant 9.869604401089358 : f64
+  %lx = vector.extract %box[0] : f64 from vector<6xf64>
+  %ly = vector.extract %box[1] : f64 from vector<6xf64>
+  %lz = vector.extract %box[2] : f64 from vector<6xf64>
+  %tbx = vector.extract %box[3] : f64 from vector<6xf64>
+  %tcx = vector.extract %box[4] : f64 from vector<6xf64>
+  %tcy = vector.extract %box[5] : f64 from vector<6xf64>
+  %hunit = arith.constant 1.0 : f64
+  %h00 = arith.divf %hunit, %lx : f64
+  %h11 = arith.divf %hunit, %ly : f64
+  %h22 = arith.divf %hunit, %lz : f64
+  %h10a = arith.mulf %tbx, %h00 : f64
+  %h10b = arith.mulf %h10a, %h11 : f64
+  %h10 = arith.negf %h10b : f64
+  %h21a = arith.mulf %tcy, %h11 : f64
+  %h21b = arith.mulf %h21a, %h22 : f64
+  %h21 = arith.negf %h21b : f64
+  %h20a = arith.mulf %tbx, %tcy : f64
+  %h20b = arith.mulf %ly, %tcx : f64
+  %h20c = arith.subf %h20a, %h20b : f64
+  %h20d = arith.mulf %h20c, %h00 : f64
+  %h20e = arith.mulf %h20d, %h11 : f64
+  %h20 = arith.mulf %h20e, %h22 : f64
+  %h00r = PME_F64_TO_REAL %h00 : f64 to !pme_real
+  %h10r = PME_F64_TO_REAL %h10 : f64 to !pme_real
+  %h11r = PME_F64_TO_REAL %h11 : f64 to !pme_real
+  %h20r = PME_F64_TO_REAL %h20 : f64 to !pme_real
+  %h21r = PME_F64_TO_REAL %h21 : f64 to !pme_real
+  %h22r = PME_F64_TO_REAL %h22 : f64 to !pme_real
+  %beta2 = arith.mulf %beta, %beta : f64
+  %gauss = arith.divf %pi2, %beta2 : f64
+  %pi = arith.constant 3.141592653589793 : f64
+  %lxy = arith.mulf %lx, %ly : f64
+  %volume = arith.mulf %lxy, %lz : f64
+  %piv = arith.mulf %pi, %volume : f64
+  %pi32 = arith.constant 5.568327996831708 : f64
+  %beta3 = arith.mulf %beta2, %beta : f64
+  %pb3 = arith.mulf %pi32, %beta3 : f64
+  %three = arith.constant 3.0 : f64
+  %v3 = arith.mulf %three, %volume : f64
+  %pd0 = arith.divf %pb3, %v3 : f64
+  %pdc = arith.mulf %pd0, %coulomb : f64
+  %prefactor = arith.negf %pdc : f64
+  %pib = arith.divf %pi, %beta : f64
+  %pibr = PME_F64_TO_REAL %pib : f64 to !pme_real
+  %sqrtpi = arith.constant 1.7724538509055159 : f64
+  %sqrtpir = PME_F64_TO_REAL %sqrtpi : f64 to !pme_real
+  %six = arith.constant 6.0 : f64
+  %sixgauss = arith.mulf %six, %gauss : f64
+  %sixgaussr = PME_F64_TO_REAL %sixgauss : f64 to !pme_real
+  %gaussr = PME_F64_TO_REAL %gauss : f64 to !pme_real
+  %prefactorr = PME_F64_TO_REAL %prefactor : f64 to !pme_real
+  %rows = arith.muli %k1, %k2 : index
+  %c3t = arith.constant 3 : index
+  %ty0 = arith.muli %k1, %c3t : index
+  %k2_3 = arith.muli %k2, %c3t : index
+  %tz0 = arith.addi %ty0, %k2_3 : index
+  %half = arith.divui %k3, %c2 : index
+  %depth = arith.addi %half, %c1 : index
+  %points = arith.muli %rows, %depth : index
+  %depth32 = arith.index_cast %depth : index to i32
+  %k2_32 = arith.index_cast %k2 : index to i32
+  %unit = arith.constant 1.0 : f64
+  %ilx = arith.divf %unit, %lx : f64
+  %ily = arith.divf %unit, %ly : f64
+  %ilz = arith.divf %unit, %lz : f64
+  %ilxr = PME_F64_TO_REAL %ilx : f64 to !pme_real
+  %ilyr = PME_F64_TO_REAL %ily : f64 to !pme_real
+  %ilzr = PME_F64_TO_REAL %ilz : f64 to !pme_real
+  %blocks_points = func.call @mdrt_gpu_pme_blocks_triclinic(%points) : (index) -> index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_points, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %c128 : index
+    %item = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %item, %points : index
+    scf.if %inside {
+      %cc0 = arith.constant 0 : index
+      %cc1 = arith.constant 1 : index
+      %cc2 = arith.constant 2 : index
+      %kzero = arith.constant 0.0 : f64
+      %kone = arith.constant 1.0 : f64
+      // The point, in i32 (D85): a division of 64-bit integers is a long
+      // sequence of instructions on a device.
+      %item32 = arith.index_cast %item : index to i32
+      %row32 = arith.divui %item32, %depth32 : i32
+      %z32 = arith.remui %item32, %depth32 : i32
+      %a32 = arith.divui %row32, %k2_32 : i32
+      %b32 = arith.remui %row32, %k2_32 : i32
+      %z = arith.index_cast %z32 : i32 to index
+      %a = arith.index_cast %a32 : i32 to index
+      %b = arith.index_cast %b32 : i32 to index
+      %rzero = arith.constant 0.0 : !pme_real
+      %rone = arith.constant 1.0 : !pme_real
+      %tbx2 = arith.addi %a, %k1 : index
+      %tbx2b = arith.addi %tbx2, %k1 : index
+      %n1 = memref.load %tables[%a] : memref<?x!pme_real, 1>
+      %t1 = memref.load %tables[%tbx2b] : memref<?x!pme_real, 1>
+      %tby0 = arith.addi %ty0, %b : index
+      %tby1 = arith.addi %tby0, %k2 : index
+      %tby2 = arith.addi %tby1, %k2 : index
+      %n2 = memref.load %tables[%tby0] : memref<?x!pme_real, 1>
+      %t2 = memref.load %tables[%tby2] : memref<?x!pme_real, 1>
+      %tbz0 = arith.addi %tz0, %z : index
+      %tbz1 = arith.addi %tbz0, %k3 : index
+      %tbz2 = arith.addi %tbz1, %k3 : index
+      %n3 = memref.load %tables[%tbz0] : memref<?x!pme_real, 1>
+      %t3 = memref.load %tables[%tbz2] : memref<?x!pme_real, 1>
+      %m1 = arith.mulf %h00r, %n1 : !pme_real
+      %m2a = arith.mulf %h10r, %n1 : !pme_real
+      %m2b = arith.mulf %h11r, %n2 : !pme_real
+      %m2 = arith.addf %m2a, %m2b : !pme_real
+      %m3a = arith.mulf %h20r, %n1 : !pme_real
+      %m3b = arith.mulf %h21r, %n2 : !pme_real
+      %m3c = arith.mulf %h22r, %n3 : !pme_real
+      %m3ab = arith.addf %m3a, %m3b : !pme_real
+      %m3 = arith.addf %m3ab, %m3c : !pme_real
+      %m1s = arith.mulf %m1, %m1 : !pme_real
+      %m2s = arith.mulf %m2, %m2 : !pme_real
+      %m3s = arith.mulf %m3, %m3 : !pme_real
+      %m12 = arith.addf %m1s, %m2s : !pme_real
+      %msqr = arith.addf %m12, %m3s : !pme_real
+      %dmabs = math.sqrt %msqr : !pme_real
+      %dbd = arith.mulf %pibr, %dmabs : !pme_real
+      %dbd2 = arith.mulf %dbd, %dbd : !pme_real
+      %dnbd2 = arith.negf %dbd2 : !pme_real
+      %debd = math.exp %dnbd2 : !pme_real
+      %derfc = math.erfc %dbd : !pme_real
+      %dspb = arith.mulf %sqrtpir, %dbd : !pme_real
+      %dsbd = arith.mulf %dspb, %derfc : !pme_real
+      %dtwo = arith.constant 2.0 : !pme_real
+      %dtwob2 = arith.mulf %dtwo, %dbd2 : !pme_real
+      %domt = arith.subf %rone, %dtwob2 : !pme_real
+      %dfa = arith.mulf %domt, %debd : !pme_real
+      %dfb = arith.mulf %dtwob2, %dsbd : !pme_real
+      %dfd = arith.addf %dfa, %dfb : !pme_real
+      %tt12 = arith.mulf %t1, %t2 : !pme_real
+      %tt123 = arith.mulf %tt12, %t3 : !pme_real
+      %bc = arith.mulf %tt123, %dfd : !pme_real
+      %dvd0 = arith.subf %debd, %dsbd : !pme_real
+      %dvd1 = arith.mulf %sixgaussr, %dvd0 : !pme_real
+      %vb = arith.mulf %tt123, %dvd1 : !pme_real
+      %re_at = arith.muli %item, %cc2 : index
+      %im_at = arith.addi %re_at, %cc1 : index
+      %re = memref.load %c[%re_at] : memref<?x!pme_real, 1>
+      %im = memref.load %c[%im_at] : memref<?x!pme_real, 1>
+      %reb = arith.mulf %re, %bc : !pme_real
+      %imb = arith.mulf %im, %bc : !pme_real
+      memref.store %reb, %c[%re_at] : memref<?x!pme_real, 1>
+      memref.store %imb, %c[%im_at] : memref<?x!pme_real, 1>
+    }
+    gpu.terminator
+  }
+  return
+}
+
 // The forces, as @mdrt.pme_gather gives them: for each particle, a thread
 // for each point of its splines along z (PME_LANES threads, the least power
 // of 2 not below the order; those beyond it add zeros), and the first

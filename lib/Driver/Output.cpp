@@ -247,17 +247,19 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
       "Lennard-Jones", "Coulomb", "bonds", "angles", "dihedrals",
       "Lennard-Jones 1-4", "Coulomb 1-4", "CMAP", "Coulomb excluded",
       "Coulomb reciprocal", "Urey-Bradley", "harmonic impropers",
-      "restraints"};
+      "Lennard-Jones excluded", "Lennard-Jones reciprocal", "restraints"};
   // CMAP, Urey–Bradley, and harmonic impropers only where the topology has
   // them, and the terms of particle mesh Ewald only with it; with it
-  // "Coulomb" is the direct sum.
+  // "Coulomb" is the direct sum, and with that of the dispersion (D162)
+  // "Lennard-Jones" is.
   const Topology *topology =
       output.system ? output.system->topology.get() : nullptr;
   bool cmap = topology && !topology->cmaps.empty();
   bool ureyBradley = topology && !topology->ureyBradleys.empty();
   bool impropers = topology && !topology->harmonicImpropers.empty();
   output.log.print("MDIR: the terms at the start, in kcal/mol:\n");
-  double total = output.getDispersionEnergy() + output.getCoulombConstantEnergy();
+  double total = output.getDispersionEnergy() +
+                 output.getCoulombConstantEnergy() + output.ljpmeSelfEnergy;
   // The terms given by expressions follow those of the topology under
   // their names, those over tuples (D136) and then those over pairs (D137),
   // generalized Born (D144), and those of the positions (D148), and the
@@ -273,18 +275,19 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
     if ((i == 7 && !cmap) ||
         (i == 8 && !output.pme && !output.reactionField) ||
         (i == 9 && !output.pme) ||
-        (i == 10 && !ureyBradley) || (i == 11 && !impropers))
+        (i == 10 && !ureyBradley) || (i == 11 && !impropers) ||
+        ((i == 12 || i == 13) && !output.ljpme))
       continue;
     std::string name =
-        i < 12            ? names[i]
-        : i < 12 + custom ? topology->tupleTerms[i - 12].name
-        : i < 12 + custom + pairs
-            ? output.system->pairTermNames[i - 12 - custom]
-        : i < 12 + custom + pairs + born
-            ? output.system->bornTermNames[i - 12 - custom - pairs]
-        : i < 12 + custom + pairs + born + external
-            ? topology->externalTerms[i - 12 - custom - pairs - born].name
-            : names[12];
+        i < 14            ? names[i]
+        : i < 14 + custom ? topology->tupleTerms[i - 14].name
+        : i < 14 + custom + pairs
+            ? output.system->pairTermNames[i - 14 - custom]
+        : i < 14 + custom + pairs + born
+            ? output.system->bornTermNames[i - 14 - custom - pairs]
+        : i < 14 + custom + pairs + born + external
+            ? topology->externalTerms[i - 14 - custom - pairs - born].name
+            : names[14];
     double value = values->data[i * values->strides[0]];
     total += value;
     output.log.print("MDIR:   %-22s %16.6f\n", name.c_str(),
@@ -293,8 +296,12 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
   if (output.pme || output.reactionField)
     output.log.print("MDIR:   %-22s %16.6f\n", "Coulomb self",
                  output.getCoulombConstantEnergy() / units::energy);
-  output.log.print("MDIR:   %-22s %16.6f\n", "dispersion",
-               output.getDispersionEnergy() / units::energy);
+  if (output.ljpme)
+    output.log.print("MDIR:   %-22s %16.6f\n", "Lennard-Jones self",
+                     output.ljpmeSelfEnergy / units::energy);
+  else
+    output.log.print("MDIR:   %-22s %16.6f\n", "dispersion",
+                     output.getDispersionEnergy() / units::energy);
   output.log.print("MDIR:   %-22s %16.6f\n", "total",
                total / units::energy);
 }
@@ -376,7 +383,8 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
   // `kinetic` is that of the velocities at the step. The total energy has
   // it, because that sum varies least.
   // The correction for the dispersion is a number of the volume.
-  potential += output.getDispersionEnergy() + output.getCoulombConstantEnergy();
+  potential += output.getDispersionEnergy() +
+               output.getCoulombConstantEnergy() + output.ljpmeSelfEnergy;
   virial += output.getDispersionVirial() + output.getCoulombConstantVirial();
   double total = potential + kinetic;
 
@@ -474,7 +482,8 @@ void _mlir_ciface_mdrtWriteMinimization(int64_t step, double energy,
   }
   double scale = units::energy / units::length;
   double rms = counted ? std::sqrt(square / counted) : 0.0;
-  energy += output.getDispersionEnergy() + output.getCoulombConstantEnergy();
+  energy += output.getDispersionEnergy() +
+            output.getCoulombConstantEnergy() + output.ljpmeSelfEnergy;
   output.log.print("INFO: %9lld %14.4f %14.4f %14.4f %9zu %14.6f\n",
                static_cast<long long>(step), energy / units::energy,
                rms / scale, std::sqrt(largest) / scale, where + 1,

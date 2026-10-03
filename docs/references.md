@@ -244,7 +244,9 @@ U. Essmann, L. Perera, M. L. Berkowitz, T. Darden, H. Lee, L. G. Pedersen,
 [doi:10.1063/1.470117](https://doi.org/10.1063/1.470117)
 
 Used for: smooth particle mesh Ewald, with B-spline charge spreading, the
-influence function, and the reciprocal virial (M1).
+influence function, and the reciprocal virial (M1); its sum for the
+dispersion, 1/r⁶ (Section 5 of the paper), for `lennard_jones = "PME"`
+(D162).
 
 ### Ewald1921
 
@@ -1098,6 +1100,18 @@ tempering (REST2)," *J. Phys. Chem. B* **115**, 9431–9438 (2011).
 [doi:10.1021/jp204407d](https://doi.org/10.1021/jp204407d)
 
 Used for: REST2, a protocol of `ensemble`.
+
+### Wennberg2013
+
+C. L. Wennberg, T. Murtola, B. Hess, E. Lindahl, "Lennard-Jones lattice
+summation in bilayer simulations has critical effects on surface tension
+and lipid properties," *J. Chem. Theory Comput.* **9**, 3527–3537 (2013).
+[doi:10.1021/ct400140n](https://doi.org/10.1021/ct400140n)
+
+Used for: particle mesh Ewald for the dispersion with force fields whose
+pairs do not follow the geometric rule (D162): the grid sums the geometric
+C6, and the direct terms give each pair within the cutoff its own
+Lennard-Jones.
 
 ### Zhang2019
 

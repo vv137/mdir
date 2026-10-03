@@ -124,6 +124,13 @@ struct Program {
   /// β in nm⁻¹ and the numbers of points of the grid, for the log.
   double pmeBeta = 0.0;
   int64_t pmeGrid[3] = {0, 0, 0};
+  /// Particle mesh Ewald of the dispersion (D162): whether the program has
+  /// it, its self term in kJ/mol, which does not depend on the volume and
+  /// which the program does not compute, and β in nm⁻¹ and the grid.
+  bool ljpme = false;
+  double ljpmeSelfEnergy = 0.0;
+  double ljpmeBeta = 0.0;
+  int64_t ljpmeGrid[3] = {0, 0, 0};
 
   /// The skin of the neighbor structures, in nm, and the number of
   /// neighbors that they hold per particle.

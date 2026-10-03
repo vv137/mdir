@@ -252,4 +252,5 @@ on a small topology against the formulas.
 | The cell from CHARMM-GUI's files | The box of a run from a PSF comes from `[boundary]`; CHARMM-GUI gives it in `step3_pbcsetup.str` and `sysinfo.dat` |
 | Types given by numbers in a PSF | Their meaning depends on the order of the RTF; CHARMM 51 and CHARMM-GUI write names |
 | VSWITCH | The potential switch of CHARMM (Section 2), for older inputs |
-| Lone pairs of CGenFF, the Drude model, LJ-PME of C36/LJ-PME | Virtual sites of other constructions, polarization, and the mesh for dispersion |
+| Lone pairs of CGenFF, the Drude model | Virtual sites of other constructions, and polarization |
+| The parameters of C36/LJ-PME | The mesh for the dispersion is in place (`lennard_jones = "PME"`, D162, validated on Trp-cage in CHARMM36m against GROMACS); the force field fitted to it has not been run |

@@ -2446,17 +2446,20 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
     return op->emitOpError()
            << "expected a buffer for the factors of the influence function";
   Value tables = op.getScratch()[5];
-  func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_tables"),
+  // The sum of the dispersion multiplies by an influence function of its
+  // own (D162); it spreads and gathers as the Coulomb sum does.
+  std::string kind = op.getDispersion() ? "_dispersion" : "";
+  func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_tables" + kind),
                        ValueRange{op.getModuli(), tables, box, beta, coulomb,
                                   k1, k2, k3});
   func::CallOp convolve;
   if (op.getEnergy().use_empty() && op.getVirial().use_empty())
-    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_scale"),
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_scale" + kind),
                          ValueRange{complex, tables, box, beta, coulomb, k1,
                                     k2, k3});
   else
     convolve = func::CallOp::create(
-        builder, loc, instance("mdrt_gpu_pme_convolve"),
+        builder, loc, instance("mdrt_gpu_pme_convolve" + kind),
         ValueRange{complex, tables, rows, box, beta, coulomb, k1, k2, k3});
   func::CallOp::create(builder, loc, backward,
                        ValueRange{complex, real, sizes[0], sizes[1], sizes[2]});

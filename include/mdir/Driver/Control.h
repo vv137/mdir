@@ -198,6 +198,19 @@ struct Control {
   /// or that of Essmann et al. alone, as GROMACS has it
   /// (docs/pme-m1.md, Section 1.1).
   bool pmeOptimal = false;
+  /// Particle mesh Ewald for the dispersion of the Lennard-Jones of a
+  /// topology (D162): the grid sums −c_i c_j / r⁶ with the coefficients
+  /// c_i = 2 √ε_i σ_i³ of the types, and the direct terms add c_i c_j
+  /// (1 − g(β r)) / r⁶ within the cutoff [Essmann1995, Wennberg2013]. β in
+  /// Å⁻¹, or 0 to take it from the tolerance g(β r_c), with g(x) =
+  /// exp(−x²) (1 + x² + x⁴/2); the grid, or 0 to take it from the largest
+  /// spacing in Å; and the order of the B-splines.
+  bool ljpme = false;
+  double ljpmeAlpha = 0.0;
+  double ljpmeTolerance = 1.0e-3;
+  int64_t ljpmeGrid[3] = {0, 0, 0};
+  double ljpmeMaxSpacing = 1.2;
+  int64_t ljpmeOrder = 4;
   /// The reaction field beyond the cutoff in place of particle mesh Ewald
   /// (D140), with the relative permittivity of the medium beyond it; 0
   /// for a conductor.

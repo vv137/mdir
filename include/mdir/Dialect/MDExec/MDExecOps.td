@@ -194,7 +194,8 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     DenseI64ArrayAttr:$grid,
     I64Attr:$order,
     F64Attr:$beta,
-    F64Attr:$coulomb
+    F64Attr:$coulomb,
+    UnitAttr:$dispersion
   );
   let results = (outs
     F64:$energy,
@@ -206,7 +207,7 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     (`outs` `(` $out^ `:` type($out) `)`)?
     (`scratch` `(` $scratch^ `:` type($scratch) `)`)?
     `grid` `(` $grid `)` `order` `(` $order `)` `beta` `(` $beta `)`
-    `coulomb` `(` $coulomb `)`
+    `coulomb` `(` $coulomb `)` (`dispersion` $dispersion^)?
     attr-dict `:` qualified(type($positions)) `,` qualified(type($charges))
     `,` qualified(type($moduli)) `->` type($energy) `,` type($virial)
     (`,` qualified(type($forces))^)?

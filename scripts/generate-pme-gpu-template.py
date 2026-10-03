@@ -19,6 +19,11 @@ import re
 # (docs/triclinic-m2.md); main writes them to a template of their own.
 TILTED = False
 
+# Whether the kernels being written are those of the sum of the dispersion
+# (D162), whose influence function is not a product of factors of the
+# axes: named with `_dispersion`, for tables, convolve, and scale only.
+DISPERSION = False
+
 HEADER = """\
 // The reciprocal sum of smooth particle mesh Ewald on a device
 // [Essmann1995] (docs/pme-m1.md). The keys are those of
@@ -479,11 +484,99 @@ INFLUENCE_TRICLINIC = """\
 """
 
 
+# The influence function of the dispersion from the square of the wave
+# vector (D162): the factors of the axes times
+#   F(b) = (1 - 2b^2) exp(-b^2) + 2 sqrt(pi) b^3 erfc(b),  b = pi |m| / beta,
+# [Essmann1995], m = 0 included, and %vb, which the virial takes:
+# the factors times 6 pi^2 / beta^2 (exp(-b^2) - sqrt(pi) b erfc(b)).
+INFLUENCE_DISPERSION = """\
+%dmabs = math.sqrt %msqr : !pme_real
+%dbd = arith.mulf %pibr, %dmabs : !pme_real
+%dbd2 = arith.mulf %dbd, %dbd : !pme_real
+%dnbd2 = arith.negf %dbd2 : !pme_real
+%debd = math.exp %dnbd2 : !pme_real
+%derfc = math.erfc %dbd : !pme_real
+%dspb = arith.mulf %sqrtpir, %dbd : !pme_real
+%dsbd = arith.mulf %dspb, %derfc : !pme_real
+%dtwo = arith.constant 2.0 : !pme_real
+%dtwob2 = arith.mulf %dtwo, %dbd2 : !pme_real
+%domt = arith.subf %rone, %dtwob2 : !pme_real
+%dfa = arith.mulf %domt, %debd : !pme_real
+%dfb = arith.mulf %dtwob2, %dsbd : !pme_real
+%dfd = arith.addf %dfa, %dfb : !pme_real
+%tt12 = arith.mulf %t1, %t2 : !pme_real
+%tt123 = arith.mulf %tt12, %t3 : !pme_real
+%bc = arith.mulf %tt123, %dfd : !pme_real
+%dvd0 = arith.subf %debd, %dsbd : !pme_real
+%dvd1 = arith.mulf %sixgaussr, %dvd0 : !pme_real
+%vb = arith.mulf %tt123, %dvd1 : !pme_real
+"""
+
+
 def influence():
     """The influence function at the point (%a, %b, %z) of the half-complex
     transform, %bc, and the wave vector %m1, %m2, %m3 with its square %msqr
-    and its inverse %inverse, which the virial takes."""
-    return (INFLUENCE_TRICLINIC if TILTED else INFLUENCE_ORTHORHOMBIC).rstrip("\n")
+    and its inverse %inverse, which the virial takes; of the dispersion,
+    %vb instead of the inverse."""
+    text = INFLUENCE_TRICLINIC if TILTED else INFLUENCE_ORTHORHOMBIC
+    if DISPERSION:
+        text = text[:text.index("%origin = ")] + INFLUENCE_DISPERSION
+    return text.rstrip("\n")
+
+
+def dispersion_constants():
+    """The constants of the influence function of the dispersion, after
+    %beta, %pi, and %gauss: pi / beta, sqrt(pi), and 6 pi^2 / beta^2."""
+    if not DISPERSION:
+        return ""
+    return """\
+  %pib = arith.divf %pi, %beta : f64
+  %pibr = PME_F64_TO_REAL %pib : f64 to !pme_real
+  %sqrtpi = arith.constant 1.7724538509055159 : f64
+  %sqrtpir = PME_F64_TO_REAL %sqrtpi : f64 to !pme_real
+  %six = arith.constant 6.0 : f64
+  %sixgauss = arith.mulf %six, %gauss : f64
+  %sixgaussr = PME_F64_TO_REAL %sixgauss : f64 to !pme_real
+"""
+
+
+# The prefactor of the energy: f / (pi V) of the Coulomb sum, and
+# -f pi^{3/2} beta^3 / (3V) of the dispersion (D162).
+PREFACTOR_COULOMB = "  %prefactor = arith.divf %coulomb, %piv : f64\n"
+PREFACTOR_DISPERSION = """\
+  %pi32 = arith.constant 5.568327996831708 : f64
+  %beta3 = arith.mulf %beta2, %beta : f64
+  %pb3 = arith.mulf %pi32, %beta3 : f64
+  %three = arith.constant 3.0 : f64
+  %v3 = arith.mulf %three, %volume : f64
+  %pd0 = arith.divf %pb3, %v3 : f64
+  %pdc = arith.mulf %pd0, %coulomb : f64
+  %prefactor = arith.negf %pdc : f64
+"""
+
+
+def prefactor():
+    return (PREFACTOR_DISPERSION if DISPERSION else PREFACTOR_COULOMB) + dispersion_constants()
+
+
+def named(text):
+    """The functions of the dispersion are named with `_dispersion`."""
+    if not DISPERSION:
+        return text
+    return re.sub(r"func\.func private @mdrt_gpu_pme_(\w+)\(",
+                  r"func.func private @mdrt_gpu_pme_\1_dispersion(", text)
+
+
+VIRIAL_COULOMB = """\
+%sum = arith.addf %inverse, %gaussr : !pme_real
+%factor0 = arith.mulf %rtwo, %sum : !pme_real
+%factor = arith.select %origin, %rzero, %factor0 : !pme_real
+%ef = arith.mulf %em, %factor : !pme_real
+"""
+VIRIAL_DISPERSION = """\
+%hwv = arith.mulf %hw, %vb : !pme_real
+%ef = arith.mulf %hwv, %g2 : !pme_real
+"""
 
 
 def convolve():
@@ -546,11 +639,7 @@ def convolve():
 %hw = arith.select %single, %rhalf, %rone : !pme_real
 %hwb = arith.mulf %hw, %bc : !pme_real
 %em = arith.mulf %hwb, %g2 : !pme_real
-%sum = arith.addf %inverse, %gaussr : !pme_real
-%factor0 = arith.mulf %rtwo, %sum : !pme_real
-%factor = arith.select %origin, %rzero, %factor0 : !pme_real
-%ef = arith.mulf %em, %factor : !pme_real
-%p11 = arith.mulf {m1}, {m1} : !pme_real
+{VIRIAL_DISPERSION if DISPERSION else VIRIAL_COULOMB}%p11 = arith.mulf {m1}, {m1} : !pme_real
 %p12 = arith.mulf {m1}, {m2} : !pme_real
 %p13 = arith.mulf {m1}, %m3 : !pme_real
 %p22 = arith.mulf {m2}, {m2} : !pme_real
@@ -659,8 +748,7 @@ func.func private @mdrt_gpu_pme_convolve(%c: memref<?x!pme_real, 1>, %tables: me
   %lxy = arith.mulf %lx, %ly : f64
   %volume = arith.mulf %lxy, %lz : f64
   %piv = arith.mulf %pi, %volume : f64
-  %prefactor = arith.divf %coulomb, %piv : f64
-  %gaussr = PME_F64_TO_REAL %gauss : f64 to !pme_real
+{prefactor()}  %gaussr = PME_F64_TO_REAL %gauss : f64 to !pme_real
   %prefactorr = PME_F64_TO_REAL %prefactor : f64 to !pme_real
   %unit = arith.constant 1.0 : f64
   %ilx = arith.divf %unit, %lx : f64
@@ -774,7 +862,7 @@ def tables():
 %sf = arith.sitofp %signed : i64 to f64
 %m = arith.mulf %sf, %l : f64
 %m2 = arith.mulf %m, %m : f64
-{TABLE_FACTOR_TRICLINIC if TILTED else TABLE_FACTOR_ORTHORHOMBIC}%first_axis = arith.cmpi eq, %axis, %c0t : index
+{TABLE_FACTOR_TRICLINIC if TILTED or DISPERSION else TABLE_FACTOR_ORTHORHOMBIC}%first_axis = arith.cmpi eq, %axis, %c0t : index
 %scaled = arith.mulf %factor0, %prefactor : f64
 %factor = arith.select %first_axis, %scaled, %factor0 : f64
 %tstart = arith.muli %from, %c3 : index
@@ -810,8 +898,7 @@ func.func private @mdrt_gpu_pme_tables(%moduli: memref<?x?xf64, 1>, %tables: mem
   %lxy = arith.mulf %lx, %ly : f64
   %volume = arith.mulf %lxy, %lz : f64
   %piv = arith.mulf %pi, %volume : f64
-  %prefactor = arith.divf %coulomb, %piv : f64
-  %k12a = arith.addi %k1, %k2 : index
+{prefactor()}  %k12a = arith.addi %k1, %k2 : index
   %entries = arith.addi %k12a, %k3 : index
 {launch(body.text(), "%entries")}  return
 }}
@@ -868,8 +955,7 @@ func.func private @mdrt_gpu_pme_scale(%c: memref<?x!pme_real, 1>, %tables: memre
   %lxy = arith.mulf %lx, %ly : f64
   %volume = arith.mulf %lxy, %lz : f64
   %piv = arith.mulf %pi, %volume : f64
-  %prefactor = arith.divf %coulomb, %piv : f64
-  %gaussr = PME_F64_TO_REAL %gauss : f64 to !pme_real
+{prefactor()}  %gaussr = PME_F64_TO_REAL %gauss : f64 to !pme_real
   %prefactorr = PME_F64_TO_REAL %prefactor : f64 to !pme_real
   %rows = arith.muli %k1, %k2 : index
   %c3t = arith.constant 3 : index
@@ -1626,7 +1712,7 @@ def triclinic():
     weights = weights_kernels()
     weights = weights[:weights.index("\n// Adds the charges to `bricks`")] + "\n"
     text = (spread() + spread(fixed=False) + weights + tables() + convolve() + scale() +
-            gather() + gather_weights())
+            dispersion() + gather() + gather_weights())
     TILTED = False
     text = re.sub(r"func\.func private @mdrt_gpu_pme_(\w+)\(",
                   r"func.func private @mdrt_gpu_pme_\1_triclinic(", text)
@@ -1644,12 +1730,25 @@ def triclinic():
     return HEADER_TRICLINIC + text
 
 
+def dispersion():
+    """The product with the influence function of the sum of the
+    dispersion (D162): tables, convolve, and scale, named with
+    `_dispersion`; the spreading and the gathering are those of the
+    charges, with the coefficients of the particles."""
+    global DISPERSION
+    DISPERSION = True
+    text = named(tables() + convolve() + scale())
+    DISPERSION = False
+    return text
+
+
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
     templates = os.path.join(here, "..", "lib", "Runtime", "Templates")
     with open(os.path.join(templates, "PMEGPU.mlir"), "w") as file:
         file.write(HEADER + spread() + spread(fixed=False) + weights_kernels() + real() +
-                   tables() + convolve() + scale() + gather() + gather_weights())
+                   tables() + convolve() + scale() + dispersion() + gather() +
+                   gather_weights())
     with open(os.path.join(templates, "PMEGPUTriclinic.mlir"), "w") as file:
         file.write(triclinic())
 

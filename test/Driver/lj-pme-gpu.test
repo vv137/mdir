@@ -1,0 +1,69 @@
+# Particle mesh Ewald for the dispersion (D162) on a GPU: the dipeptide in
+# OPC of pme-settle.test with both sums, over 0.5 ps. In double precision,
+# deterministic, the log is that of the CPU to its digits; in mixed
+# precision the energy is conserved as well. With both reciprocal sums on
+# a second stream (md-exec-assign-streams, D87) the state is the same to
+# the bit.
+#
+# REQUIRES: cuda, hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: sed -e 's|^type = "PERIODIC"|type = "PERIODIC"\n[execution]\ntarget = "gpu"\ndeterministic = true|' %t/run.toml > %t/double.toml
+# RUN: sed -e 's|^energy_interval = 100|energy_interval = 500\ncheckpoint = "first.h5"\ncheckpoint_interval = 500|' %t/double.toml > %t/first.toml
+# RUN: sed -e 's|^energy_interval = 100|energy_interval = 500\ncheckpoint = "side.h5"\ncheckpoint_interval = 500|' %t/double.toml > %t/side.toml
+# RUN: sed -e 's|^type = "PERIODIC"|type = "PERIODIC"\n[execution]\ntarget = "gpu"\nprecision = "mixed"|' %t/run.toml > %t/mixed.toml
+# RUN: cd %t && mdir run run.toml > cpu.log
+# RUN: cd %t && mdir run double.toml > double.log
+# RUN: %python %S/Inputs/compare_logs.py %t/cpu.log %t/double.log 1e-9 | FileCheck %s --check-prefix=AGREE
+# RUN: FileCheck %s --check-prefix=DOUBLE < %t/double.log
+# RUN: cd %t && mdir run first.toml > first.log
+# RUN: cd %t && mdir emit side.toml --stage=pipeline \
+# RUN:     | sed 's|md-exec-assign-streams,|md-exec-assign-streams{reciprocal=true},|' > pipeline
+# RUN: cd %t && env MDIR_PRINT_AFTER=md-exec-assign-streams sh -c 'MDIR_PIPELINE="$(cat pipeline)" mdir run side.toml' > side.log 2>&1
+# RUN: FileCheck %s --check-prefix=SIDE < %t/side.log
+# RUN: mdir checkpoint %t/first.h5 %t/side.h5 | FileCheck %s --check-prefix=SAME
+# RUN: mdir run %t/mixed.toml | FileCheck %s --check-prefix=MIXED
+
+# AGREE: logs agree
+# DOUBLE: MDIR:   Lennard-Jones reciprocal      -411.015587
+# DOUBLE: MDIR:   Lennard-Jones self            75.212733
+# DOUBLE: INFO:         0         0.0000 {{ *}}-2811.4875 {{ *}}-3522.4098
+# DOUBLE: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[4-9]}} of its value
+# SIDE: md_exec.reciprocal {{.*}} dispersion {{.*}}{md_exec.side}
+# SIDE: md_exec.join
+# SAME: the states are identical
+# MIXED: MDIR:   Lennard-Jones reciprocal      -411.0
+# MIXED: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[4-9]}} of its value
+
+#--- run.toml
+[input]
+topology   = "opc.prmtop"
+coordinates = "opc.inpcrd"
+
+[output]
+energy_interval = 100
+[energy]
+cutoff        = 9.0
+pairlist_distance = 10.0
+electrostatics = "PME"
+coulomb_modifier     = "POTENTIAL_SHIFT"
+lennard_jones = "PME"
+lennard_jones_modifier = "POTENTIAL_SHIFT"
+
+[dynamics]
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.001
+steps         = 500
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[constraints]
+rigid_water = true
+
+[boundary]
+type = "PERIODIC"
+#--- end

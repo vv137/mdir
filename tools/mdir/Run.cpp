@@ -843,6 +843,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   output.coulombConstantEnergy = program->coulombConstantEnergy;
   output.coulombConstantVirial = program->coulombConstantVirial;
   output.coulombSelfEnergy = program->coulombSelfEnergy;
+  output.ljpme = program->ljpme;
+  output.ljpmeSelfEnergy = program->ljpmeSelfEnergy;
   output.system = &*system;
   // The files of columns (D149): a continued run keeps their rows up to
   // its checkpoint and appends.
