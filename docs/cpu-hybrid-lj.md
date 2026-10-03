@@ -190,20 +190,22 @@ against 24 central energy differences with step `1e-6` and absolute tolerance
 `atol=rtol=2e-11` for double and `3e-5` for mixed.
 
 The matrix has six fixtures (periodic, empty ranks, empty system, reversed ID
-order, nonunit sigma/epsilon, and a pair spanning two slabs), two precisions, ranks 1/2/5, threads 1/2, and widths 1/4/8: 216 runs.
+order, nonunit sigma/epsilon, and a pair spanning two slabs), two precisions,
+ranks 1/2/5, threads 1/2, and widths 1/4/8: 216 runs.
 It includes noncontiguous IDs, a cutoff larger than a rank's slab width, and
 partial SIMD vectors. In the two-slab fixture, particles at x=2.3 and
 x=4.85 interact across rank 1 when five ranks partition the length-12 box;
-exchanging only immediately adjacent ranks would omit that pair. It does not test migration, skin reuse, trajectories,
+a single exchange restricted to immediately adjacent ranks would omit that pair. It does not test migration, skin reuse, trajectories,
 production potential files, EAM, or distributed GPU execution. Detailed results
 and regression status are recorded in the PR; numerical success is not a
 performance benchmark.
 
-On the tested host, all 216 numerical configurations (180 initial and
+Validation on 2026-10-03/04: on the tested host, all 216 numerical configurations (180 initial and
 36 additional nonadjacent-rank configurations) and the four rejected-input
 checks passed. The periodic fixture reference energy is
 $-4.141983094297806$; its particle 101 force is
 $(0.2513201688046216, 0.41962282931214345, 0.13421382654072408)$.
+The periodic fixture reference xx virial is $-13.519555879301548$.
 The nonunit-parameter fixture reference energy is $-1.8554057299171132$.
 Maxima over all configurations, rounded to three significant digits:
 
@@ -219,6 +221,16 @@ no numerical comparison failed in that launch. The completed matrix used a
 separate executable, held unchanged throughout its run. The assertion-output
 regression initially needed unbuffered stdout to observe the diagnostic before
 an intentional abort; the corrected test checks both the abort and its message.
+
+The GPU-inclusive regression run completed with 242 passes and five unsupported
+checks: four opt-in compute-sanitizer tests and the opt-in Amber scale suite.
+It ran serially under the GPU 1 lock. This checks existing GPU execution,
+including its mixed/double cases; there is no distributed GPU implementation.
+After the checked-import memory effect and its CSE regression were added,
+the final CPU rebuild/suite passed 179 tests with 69 unsupported (including
+the deliberately hidden GPU tests). It includes the expanded six-configuration
+MPI smoke test. No performance timings or Amber
+scale measurements were taken.
 
 Generated IR can be inspected with `--emit=loops`. To inspect a specified CPU
 target independently of the JIT's host selection:
