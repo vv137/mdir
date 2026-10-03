@@ -794,3 +794,11 @@ mdir: note: trajectory output 'md.xtc' exists; mdir run keeps it as '#md.xtc.1#'
 | `nbupdate_period` | Not implemented; the keyword is an error |
 | Trajectory in the XTC format | Not implemented |
 | Velocities in the trajectory, `dcdvelfile` | Not implemented |
+
+## Experimental fixed-layout CPU evaluation
+
+D[cpu-hybrid-lj] adds no TOML keys and does not extend `mdir run`. The optional
+build-tree tool `mdir-cpu-lj` reads a text LJ snapshot and uses MPI transport
+with generated OpenMP/SIMD CPU kernels. It does not run this driver's trajectory
+or checkpoint workflow. See [the implementation reference](cpu-hybrid-lj.md)
+for its exact command-line interface, validation results, and limitations.

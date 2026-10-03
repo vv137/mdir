@@ -215,3 +215,8 @@ config.substitutions.append(
         " --reconcile-unrealized-casts",
     )
 )
+
+if config.mdir_mpi:
+    config.available_features.add("mpi")
+    config.substitutions.append(("%cpu_lj", os.path.join(config.mdir_tools_dir, "mdir-cpu-lj")))
+    config.substitutions.append(("%mpiexec", config.mdir_mpiexec))

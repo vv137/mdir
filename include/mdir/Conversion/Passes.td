@@ -67,7 +67,12 @@ def ConvertMDExecToLoops
     The pass decides nothing about buffers; `md-exec-assign-storage` has
     done that. It rejects ops in the value form.
   }];
+  let options = [
+    Option<"simdWidth", "simd-width", "int64_t", "1",
+           "Explicit CPU neighbor arithmetic width: 1, 4, or 8">
+  ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
+                           "::mlir::cf::ControlFlowDialect",
                            "::mlir::func::FuncDialect",
                            "::mlir::math::MathDialect",
                            "::mlir::memref::MemRefDialect",

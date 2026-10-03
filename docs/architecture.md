@@ -734,3 +734,13 @@ Milestones (P3, as amended by D169) and what each one adds:
 | Later | Martini [[Marrink2007]](references.md#marrink2007) CG membrane and water | Deferred (D53) |
 
 The v0 performance target is homogeneous systems at finite density (C7).
+
+### Experimental CPU distribution reference
+
+D[cpu-hybrid-lj] provides a fixed-layout LJ snapshot executable, separate from
+`mdir run`: synchronous C++ MPI decomposes ownership and materializes ghosts,
+then generated `md_exec` CPU loops use OpenMP and optional neighbor SIMD.
+`md_exec.neighbor_view` distinguishes owned rows from local gather extent.
+This is a reference execution path, not implementation of the proposed
+`md_dist` field-version and contribution verifier. Exact interfaces and limits
+are documented in [cpu-hybrid-lj.md](cpu-hybrid-lj.md).
