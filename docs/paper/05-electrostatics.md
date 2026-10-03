@@ -4,7 +4,8 @@ MDIR computes the electrostatic energy of a periodic system by particle
 mesh Ewald (PME) in the smooth form of [[Essmann1995]](references.md#essmann1995), after
 [[Darden1993]](references.md#darden1993). This section derives the terms as they are implemented,
 the forces and the virial of the reciprocal sum, and how the sum runs on a
-device. Internally the energies are in kJ/mol and the Coulomb constant is
+device; Sections 5.4 and 5.5 treat the dispersion beyond the cutoff, by a
+correction and by the same mesh. Internally the energies are in kJ/mol and the Coulomb constant is
 $f = 138.935457644$ kJ nm/(mol e²), that of CODATA 2018
 [[Tiesinga2021]](references.md#tiesinga2021), whatever the format of the
 input: Amber's constant is smaller by a factor 1.0000346 and CHARMM's
@@ -248,3 +249,137 @@ For a potential given as an expression, $C_{6,ab}$ is $-r^6u_{ab}(r)$
 evaluated at $10^4r_c$ and checked against its value at $10^3r_c$ to
 $10^{-9}$. Both terms are constants of the host at the volume of the
 start, scaled by $V_0/V$ as the cell changes.
+
+## 5.5 Particle mesh Ewald for the dispersion
+
+The correction of Section 5.4 assumes that the density beyond the cutoff
+is uniform, a pair distribution $g(r) = 1$. That fails where it matters
+most for the dispersion: at an interface or across a membrane the density
+along the normal is not uniform, and a correction from the mean density
+misplaces the attraction between the layers, which changes surface
+tensions and the area per lipid of bilayers
+[[Wennberg2013]](references.md#wennberg2013). `lennard_jones = "PME"`
+(D162) sums the dispersion over every pair and image instead, by the
+Ewald sum for $1/r^6$ of [[Essmann1995]](references.md#essmann1995), so
+that the pairs beyond the cutoff count at their actual distances.
+
+**The splitting.** With $C_{6,ij} = c_ic_j$, the dispersion of the cell
+and its images is split with
+
+$$
+\frac{1}{r^6} = \frac{\gamma(\beta r)}{r^6} + \frac{1 - \gamma(\beta r)}{r^6},
+\qquad
+\gamma(x) = e^{-x^2}\Big(1 + x^2 + \frac{x^4}{2}\Big),
+$$
+
+the first part short-ranged, the second smooth and finite at $r = 0$,
+where it is $\beta^6/6$; $1 - \gamma(x) = P(3, x^2)$, the regularized
+lower incomplete gamma function. (The paper writes $\gamma$ for this
+share, since $g$ is the pair distribution.) The Fourier transform of the
+smooth part, $\int e^{-2\pi i\mathbf m\cdot\mathbf r}\,(1 - \gamma(\beta
+r))\,r^{-6}\,d^3r = \tfrac{\pi^{3/2}\beta^3}{3}F(b)$ with $b =
+\pi\lvert\mathbf m\rvert/\beta$ and
+
+$$
+F(b) = (1 - 2b^2)\,e^{-b^2} + 2\sqrt\pi\,b^3\operatorname{erfc}(b),
+\qquad F(0) = 1,
+$$
+
+gives the reciprocal sum
+
+$$
+E^\text{d}_\text{rec} = -\frac{\pi^{3/2}\beta^3}{6V}\sum_{\mathbf m} F\Big(\frac{\pi\lvert\mathbf m\rvert}{\beta}\Big)\,\lvert S_c(\mathbf m)\rvert^2,
+\qquad S_c(\mathbf m) = \sum_j c_j e^{2\pi i\,\mathbf m\cdot\mathbf x_j},
+$$
+
+which, unlike the Coulomb sum, has a term at $\mathbf m = 0$,
+$-\pi^{3/2}\beta^3(\sum_jc_j)^2/(6V)$: the mean-field attraction of a
+uniform density, which Section 5.4 estimates from the cutoff outward.
+The grid of Section 5.2 computes the sum with the coefficients $c_j$ in
+place of the charges and the influence function $C^\text{d}(\mathbf m) =
+-\pi^{3/2}\beta^3 F(b)/(3V)$; the spreading, the transforms, and the
+gathering are those of the charges.
+
+*Table 5.3. The terms of the dispersion under `lennard_jones = "PME"`.*
+
+| Term | As implemented | Where it runs |
+|---|---|---|
+| $E^\text{d}_\text{dir}$ | $\sum_{i<j,\ r_{ij}<r_c}'\big[u_{ij}(r_{ij}) + c_ic_j(1 - \gamma(\beta r_{ij}))/r_{ij}^6 - s_{ij}\big]$, with $u_{ij}$ the pair's own Lennard-Jones and $s_{ij}$ the bracket at $r_c$ under `lennard_jones_modifier = "POTENTIAL_SHIFT"`, otherwise 0; the prime omits excluded pairs | The loop over pairs, with the Coulomb terms |
+| $E^\text{d}_\text{excl}$ | $\sum_{(i,j)\ \text{excluded}} c_ic_j(1 - \gamma(\beta r_{ij}))/r_{ij}^6$, without a cutoff | A loop over the tuples of the excluded pairs |
+| $E^\text{d}_\text{self}$ | $\frac{\beta^6}{12}\sum_i c_i^2$ | A constant of the host, independent of the volume |
+| $E^\text{d}_\text{rec}$ | Above | `md.reciprocal` with `dispersion` |
+
+**The coefficients.** The grid needs $C_{6,ij}$ to be a product: $c_i =
+2\sqrt{\varepsilon_{aa}}\,\sigma_{aa}^3$ of the type $a$ of particle $i$
+with itself, so that $c_ic_j = 4\sqrt{\varepsilon_{aa}\varepsilon_{bb}}\,
+(\sigma_{aa}\sigma_{bb})^3$, the geometric rule for both parameters.
+Lorentz–Berthelot force fields and pairs set apart (NBFIX) do not follow
+it. The direct term of a pair within the cutoff therefore takes the
+pair's own Lennard-Jones, $u_{ij}$ with its own $\sigma_{ij}$ and
+$\varepsilon_{ij}$, and adds back what the grid takes there,
+$c_ic_j(1 - \gamma)/r^6$: within the cutoff every pair has its own
+potential, and beyond it the geometric $-c_ic_j/r^6$ less the share
+$\gamma(\beta r) \le \gamma(\beta r_c)$ that no term holds, as Wennberg
+et al. propose [[Wennberg2013]](references.md#wennberg2013) and OpenMM and
+GROMACS do. The difference between the rules beyond the cutoff is not
+corrected. The 1–4 pairs are among the excluded pairs, and their scaled
+Lennard-Jones remains a term of its own.
+
+**Parameters.** $\beta$ is given, or found by bisection, as in
+Section 5.1, such that $\gamma(\beta r_c)$ equals a tolerance, $10^{-3}$
+by default: the share of the dispersion at the cutoff that is left out
+(GROMACS's `ewald-rtol-lj` is the same quantity); for $r_c = 8$ Å that is
+$\beta = 4.189$ nm⁻¹. The grid has its own points and order, by default
+from the same largest spacing, 1.2 Å. The correction of Section 5.4 is
+off, and asking for it is an error; so is a switch of the
+Lennard-Jones, which would take away within the cutoff what the grid
+does not give back. A potential shift applies to the whole bracket of
+$E^\text{d}_\text{dir}$.
+
+**The excluded pairs.** At small $y = \beta^2r^2$, $1 - \gamma$ is a
+difference of numbers near 1 that leaves $y^3/6$; for the pairs of a
+molecule, 1 to 3 Å apart, f32 would keep three digits of it. Below
+$y = 1$ the kernel takes the series
+
+$$
+1 - \gamma(\beta r) = e^{-y}y^3\sum_{k\ge0}\frac{y^k}{(k+3)!}
+$$
+
+to $k = 10$, whose terms are positive and whose remainder is below
+$10^{-10}$ of the sum, and the closed form above $y = 1$.
+
+**The virial.** As in Section 5.2, $\hat Q$ does not depend on the
+strain, and $E^\text{d}_\mathbf m = h\,B\,C^\text{d}\lvert\hat Q\rvert^2$
+depends on it through $1/V$ and through $b$, with $\partial
+b/\partial\varepsilon_{ab} = -b\,m_am_b/m^2$. With $F'(b) = 6b\,(\sqrt\pi
+\,b\operatorname{erfc}(b) - e^{-b^2})$ and $b^2/m^2 = \pi^2/\beta^2$,
+
+$$
+W^\text{d}_{ab} = \sum_{\mathbf m}\Big[E^\text{d}_\mathbf m\,\delta_{ab}
++ h\,B\,\lvert\hat Q\rvert^2\,\frac{\pi^{3/2}\beta^3}{3V}\,
+\frac{6\pi^2}{\beta^2}\big(e^{-b^2} - \sqrt\pi\,b\operatorname{erfc}(b)\big)\,m_am_b\Big].
+$$
+
+The term $\mathbf m = 0$ contributes $E^\text{d}_0\,\delta_{ab}$, the
+virial of a constant over the volume, and the self term none. The direct
+and excluded terms are differentiated as every pair term is
+(Section 3.3). $\operatorname{tr}\mathsf W$ of three OPC waters agrees
+with $-dU/d\lambda$ to $2\times10^{-7}$.
+
+**On a device.** The kernels of Table 5.2 run twice, once for each sum.
+The influence function of the dispersion is not a product of a factor for
+each axis, so its tables hold $m_a$, $m_a^2$, and $\lvert b_a\rvert^2$
+alone (the first axis times the prefactor), and `scale` and `convolve`
+compute $F(b)$ at each point, with one exponential and one complementary
+error function, in the type of the grid. On JAC (23,558 particles,
+$r_c$ = 8 Å, mixed precision, RTX 3090) a step takes 0.270 ms against
+0.210 with the cutoff and the correction: the second grid of $54^3$
+points, and the exponential in the direct term (the loop over pairs
+takes 70 µs against 64). OpenMM 8.6.1 goes from 0.210 to 0.285 ms on the
+same system and grids. Both sums may run on the second stream of D87, to
+the same state in the deterministic mode.
+
+**Accuracy.** The reciprocal sum of the dipeptide in water (1168
+particles) in mixed precision is $-138.130538$ kcal/mol against
+$-138.130465$ in double precision, $5\times10^{-7}$ of it. Section 9
+compares the terms with OpenMM, GROMACS, and a direct Ewald sum.
