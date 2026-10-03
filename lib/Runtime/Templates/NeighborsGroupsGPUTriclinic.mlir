@@ -359,9 +359,15 @@ func.func private @mdrt_gpu_build_neighbors_groups_triclinic(
       %ncx1 = arith.subi %ncx, %i1 : index
       %ncy1 = arith.subi %ncy, %i1 : index
       %nzb1 = arith.subi %nzb, %i1 : index
-      %kx = arith.minsi %kx0, %ncx1 : index
-      %ky = arith.minsi %ky0, %ncy1 : index
-      %kz = arith.minsi %kz0, %nzb1 : index
+      // A position far beyond the cell wraps with a large error, of either sign:
+      // its cell is clamped on both sides, so that no key falls outside the
+      // table of counts, whatever the position.
+      %kx1 = arith.minsi %kx0, %ncx1 : index
+      %ky1 = arith.minsi %ky0, %ncy1 : index
+      %kz1 = arith.minsi %kz0, %nzb1 : index
+      %kx = arith.maxsi %kx1, %i0 : index
+      %ky = arith.maxsi %ky1, %i0 : index
+      %kz = arith.maxsi %kz1, %i0 : index
       %col_y = arith.muli %ky, %ncx : index
       %column = arith.addi %col_y, %kx : index
       %col_z = arith.muli %column, %nzb : index
@@ -370,10 +376,14 @@ func.func private @mdrt_gpu_build_neighbors_groups_triclinic(
       // A position that is not a number, or is beyond any cell, has no key and
       // no place, so that the build completes, and is counted in the fifth size:
       // the run stops after the build (D107).
-      %sum_xy = arith.addf %xi, %yi : f64
-      %sum_xyz = arith.addf %sum_xy, %zi : f64
-      %not_number = arith.cmpf uno, %sum_xyz, %sum_xyz : f64
-      %magnitude = math.absf %sum_xyz : f64
+      // The largest coordinate, not their sum, which opposite coordinates
+      // could cancel; a NaN in any of them propagates through the maximum.
+      %abs_x = math.absf %xi : f64
+      %abs_y = math.absf %yi : f64
+      %abs_z = math.absf %zi : f64
+      %abs_xy = arith.maximumf %abs_x, %abs_y : f64
+      %magnitude = arith.maximumf %abs_xy, %abs_z : f64
+      %not_number = arith.cmpf uno, %magnitude, %magnitude : f64
       %far_off = arith.constant 1.0e100 : f64
       %huge = arith.cmpf ogt, %magnitude, %far_off : f64
       %bad = arith.ori %not_number, %huge : i1
