@@ -428,6 +428,23 @@ Form Rewriter::separate(const Form &form, Location loc) {
       continue;
     }
     func::FuncOp function = createRadialFunction(parts, loc);
+    // A function that no table holds stays in the kernel, in its type,
+    // rather than as itself in f64 (D159).
+    auto loop = builder.getInsertionBlock()->getParentOp()
+                    ->getParentOfType<PairForOp>();
+    if (!loop) {
+      Operation *parent = builder.getInsertionBlock()->getParentOp();
+      loop = dyn_cast<PairForOp>(parent);
+    }
+    if (loop && !canTabulate(function, loop.getCutoff().convertToDouble(),
+                             radialTolerance)) {
+      function.erase();
+      for (Term part : parts) {
+        part.factors.append(free.begin(), free.end());
+        result.push_back(part);
+      }
+      continue;
+    }
     Value value = RadialOp::create(
         builder, loc, builder.getF64Type(), r2,
         FlatSymbolRefAttr::get(builder.getContext(), function.getSymName()));

@@ -1,0 +1,62 @@
+# A pair term whose expression has a pole at the cutoff, the two-body term
+# of the mW water of Molinero and Moore [Molinero2009] in the
+# Stillinger-Weber form, A eps (B (sig/r)^4 - 1) exp(sig/(r - a sig)), with
+# the cutoff at a sig (D159). In mixed precision with the default
+# fast_math it compiled to no table (the factor vanishes at the cutoff with
+# all its derivatives) and failed as a defect, and without fast_math the
+# kernel in f32 reached the pole and the positions became NaN. Now the
+# function stays in its kernel and the cutoff in f32 is pulled in below
+# the pole: 512 particles run 200 steps of 2 fs in mixed precision, with
+# and without fast_math, with the energy at the start of the run in double
+# precision.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/mw_lattice.py 8 %t/mw.pdb
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/mixed.toml
+# RUN: sed -e 's/^fast_math = true/fast_math = false/' %t/mixed.toml > %t/exact.toml
+# RUN: sed -e 's/^precision = "MIXED"/precision = "DOUBLE"/' %t/mixed.toml > %t/double.toml
+# RUN: cd %t && mdir run double.toml | FileCheck %s
+# RUN: cd %t && mdir run mixed.toml | FileCheck %s --check-prefixes=CHECK,RAN
+# RUN: cd %t && mdir run exact.toml | FileCheck %s --check-prefixes=CHECK,RAN
+
+# CHECK: INFO: 0 0.0000 -6748.41{{[0-9]+}} -7205.37
+# RAN: MDIR: the total energy changed by
+
+#--- run.toml
+[input]
+coordinates = "mw.pdb"
+[output]
+energy_interval = 100
+[energy]
+switch_distance   = 4.3065
+cutoff            = 4.3065
+pairlist_distance = 5.3065
+[[energy.pair]]
+name       = "sw2"
+expression = "amp*eps*(bb*(sig/r)^4 - 1)*exp(sig/(r - acut*sig))"
+amp  = 7.049556277
+bb   = 0.6022245584
+eps  = 6.189
+sig  = 2.3925
+acut = 1.8
+[[energy.type]]
+name = "WT"
+mass = 18.015
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.002
+steps      = 200
+seed       = 314159
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+[boundary]
+type = "PERIODIC"
+box  = [24.8413, 24.8413, 24.8413]
+[execution]
+target    = "GPU"
+precision = "MIXED"
+fast_math = true
+#--- end

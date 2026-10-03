@@ -35,6 +35,29 @@ Value kernels::createReal(OpBuilder &builder, Location loc, Type real,
                                    builder.getFloatAttr(real, value));
 }
 
+/// The square of `cutoff` in `type`. In f32 it is pulled in so that every
+/// distance whose square passes `r2 < cutoff2` has a square root in f32 at
+/// least four units in the last place below the cutoff in f32: an
+/// expression with a pole at the cutoff, as the Stillinger-Weber form has
+/// at a sigma, whose product in f32 may round to a unit below the cutoff,
+/// is then never evaluated at its pole (D159). The cutoff moves inward by
+/// some 5e-7 of itself.
+static Value createCutoff2(OpBuilder &builder, Location loc, Type type,
+                           double cutoff) {
+  double square = cutoff * cutoff;
+  if (!type.isF32())
+    return createReal(builder, loc, type, square);
+  float limit = static_cast<float>(cutoff);
+  for (int k = 0; k != 4; ++k)
+    limit = std::nextafter(limit, 0.0f);
+  float narrow = static_cast<float>(square);
+  // The test is strict: every r2 that passes is at most the float below.
+  while (static_cast<double>(narrow) > square ||
+         std::sqrt(std::nextafter(narrow, 0.0f)) > limit)
+    narrow = std::nextafter(narrow, 0.0f);
+  return createReal(builder, loc, type, static_cast<double>(narrow));
+}
+
 Value kernels::createInverse(OpBuilder &builder, Location loc, Value box) {
   Value edges = getEdges(builder, loc, box);
   auto type = cast<VectorType>(edges.getType());
@@ -250,7 +273,7 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
   // precision at a small fraction of the rate of single.
   Type computed = kernel.getArgument(0).getType();
   double cutoff = op.getCutoff().convertToDouble();
-  Value cutoff2 = createReal(builder, loc, computed, cutoff * cutoff);
+  Value cutoff2 = createCutoff2(builder, loc, computed, cutoff);
   Value boxComputed = convertReal(builder, loc, box, computed);
   Value inverseComputed = convertReal(builder, loc, inverse, computed);
   Value zero = createIndex(builder, loc, 0);
@@ -449,7 +472,7 @@ SmallVector<Value> kernels::emitGroupPairKernel(
   unsigned numYields = yield->getNumOperands();
   Type computed = kernel.getArgument(0).getType();
   double cutoff = op.getCutoff().convertToDouble();
-  Value cutoff2 = createReal(builder, loc, computed, cutoff * cutoff);
+  Value cutoff2 = createCutoff2(builder, loc, computed, cutoff);
   (void)inverse;
   Type i32 = builder.getI32Type();
   auto constant32 = [&](OpBuilder &b, int64_t v) -> Value {

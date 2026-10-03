@@ -27,6 +27,15 @@ bool isRadialOp(mlir::Operation *op);
 std::optional<double> evaluateRadialOp(mlir::Operation *op,
                                        llvm::ArrayRef<double> operands);
 
+/// The tolerance of the tables of md-exec-expand-radial by default.
+constexpr double radialTolerance = 3.0e-7;
+
+/// Whether the function `function` (a `func.func` of the squared distance)
+/// fits a table up to `cutoff` within `tolerance`: one with a pole at the
+/// cutoff, or that vanishes there with all its derivatives, does not, and
+/// stays in its kernel (D159).
+bool canTabulate(mlir::Operation *function, double cutoff, double tolerance);
+
 } // namespace md_exec
 } // namespace mdir
 

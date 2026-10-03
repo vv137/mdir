@@ -30,7 +30,9 @@ func.func @mixed(%x: !positions, %cell: !md.cell) -> (!forces, f64) {
   //
   // CHECK:      %[[F:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?x3xf32>
   // CHECK:      scf.parallel
-  // CHECK:        %[[CUTOFF2:[a-z0-9_]+]] = arith.constant 6.250000e+00 : f32
+  // The square of the cutoff in f32 is pulled in so that its square root
+  // is four units in the last place below the cutoff (D159).
+  // CHECK:        %[[CUTOFF2:[a-z0-9_]+]] = arith.constant 6.24999619 : f32
   // CHECK:        scf.for
   // CHECK:          %[[RAW:[0-9]+]] = arith.subf %{{[0-9]+}}, %{{[0-9]+}} : vector<3xf64>
   // CHECK:          %[[RAWN:[0-9]+]] = arith.truncf %[[RAW]] : vector<3xf64> to vector<3xf32>

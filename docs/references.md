@@ -675,6 +675,12 @@ and RATTLE algorithm for rigid water models," *J. Comput. Chem.* **13**,
 Used for: SETTLE, the constraints of rigid water in double precision
 (M1; below it, M-SHAKE, D112).
 
+### Molinero2009
+
+V. Molinero, E. B. Moore, "Water modeled as an intermediate element
+between carbon and silicon," *J. Phys. Chem. B* **113**, 4008–4016 (2009).
+[doi:10.1021/jp805227c](https://doi.org/10.1021/jp805227c)
+
 ### Moses2020
 
 W. S. Moses, V. Churavy, "Instead of rewriting foreign code for machine

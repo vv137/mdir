@@ -205,6 +205,25 @@ Table fit(func::FuncOp function, double low, double high, int bits) {
   return table;
 }
 
+} // namespace
+
+bool canTabulate(Operation *op, double cutoff, double tolerance) {
+  auto function = cast<func::FuncOp>(op);
+  double high = cutoff * cutoff;
+  double low = high * std::ldexp(1.0, -10);
+  Table table;
+  for (int bits = 4; bits <= 12; ++bits) {
+    table = fit(function, low, high, bits);
+    if (table.fitError <= 0.1 * tolerance)
+      break;
+  }
+  return llvm::all_of(table.coefficients,
+                      [](float c) { return std::isfinite(c); }) &&
+         table.error <= tolerance;
+}
+
+namespace {
+
 class ExpandRadial : public impl::ExpandRadialBase<ExpandRadial> {
 public:
   using impl::ExpandRadialBase<ExpandRadial>::ExpandRadialBase;
@@ -224,8 +243,17 @@ public:
       }
       OpBuilder builder(op);
       Location loc = op.getLoc();
-      if (!op.getType().isF32()) {
-        // The function itself, in the type of the kernel.
+      // A function that a table cannot hold within the tolerance, such as
+      // one with a pole at the cutoff or that vanishes there with all its
+      // derivatives (the factor exp(sigma / (r - a sigma)) of the
+      // Stillinger-Weber form), is evaluated as itself in f64 (D159).
+      bool asItself = !op.getType().isF32();
+      if (!asItself)
+        if (auto loop = op->getParentOfType<PairForOp>())
+          asItself = !canTabulate(function, loop.getCutoff().convertToDouble(),
+                                  tolerance);
+      if (asItself) {
+        // The function itself, in f64 or the type of the kernel.
         IRMapping values;
         Block &body = function.getBody().front();
         Value s = op.getR2();
