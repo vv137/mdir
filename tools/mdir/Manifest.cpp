@@ -54,6 +54,9 @@ InputPaths mdir::tool::getManifestInputs(StringRef controlFile,
       {"charmm_coordinates", c.charmmCoordinateFile}, {"checkpoint", c.restartInput}};
   for (const auto &path : c.charmmParameterFiles)
     inputs.push_back({"charmm_parameters", path});
+  for (const auto &function : c.functions)
+    if (!function.valuesFile.empty())
+      inputs.push_back({"tabulated_function", function.valuesFile});
   if (s.topology)
     for (const auto &path : s.topology->sourceFiles)
       inputs.push_back({"gromacs_topology", path});

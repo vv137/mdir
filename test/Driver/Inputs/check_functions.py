@@ -257,3 +257,5 @@ for a in [1, 4, 6, 8, 10, 12, 21, 30, 61, 500]:
         worst = max(worst, abs(mine - force)); ref = max(ref, abs(force))
 print('forces against differences of the energy: %s' %
       ('ok' if worst < tolerance * ref else 'FAILED %.2e of %.2e' % (worst, ref)))
+
+print("maximum force difference %.9g; reference scale %.9g; tolerance %.9g kcal/mol/Angstrom" % (worst, ref, tolerance * ref))
