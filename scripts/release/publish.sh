@@ -62,7 +62,7 @@ echo "== assets in $out"
 rm -rf "$out" && mkdir -p "$out"
 git archive --format=tar.gz --prefix="mdir-$version/" -o "$out/mdir-$version-source.tar.gz" "$commit"
 # The binary tarball is built for manylinux_2_28 in its own image
-# (packaging/Dockerfile.manylinux, D[manylinux]), not from the host build;
+# (packaging/Dockerfile.manylinux, D177), not from the host build;
 # it is checked, then run from its extracted tree, without CUDA_ROOT, on
 # the CPU and on GPU 1.
 binary=mdir-$version-manylinux_2_28_x86_64.tar.gz

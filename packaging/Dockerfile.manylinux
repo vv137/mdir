@@ -2,7 +2,7 @@
 #
 # The release tarball of MDIR for Linux x86-64 with glibc 2.28 or later
 # (manylinux_2_28: RHEL/Rocky/Alma 8+, Ubuntu 20.04+, Debian 11+), built on
-# the PyPA image of that baseline (D[manylinux]). From the root of the
+# the PyPA image of that baseline (D177). From the root of the
 # repository:
 #
 #   DOCKER_BUILDKIT=1 docker build -f packaging/Dockerfile.manylinux \

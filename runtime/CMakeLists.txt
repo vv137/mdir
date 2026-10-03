@@ -52,7 +52,7 @@ if(EXISTS "${LLVM_LIBRARY_DIR}/libomp.so")
   install(FILES "${LLVM_LIBRARY_DIR}/libomp.so" DESTINATION lib COMPONENT mdir)
 endif()
 
-# A relocatable release (D[manylinux]): the shared libraries that the
+# A relocatable release (D177): the shared libraries that the
 # installed tree needs beyond the base system go into <prefix>/lib under
 # their sonames, and libdevice of the toolkit into share/mdir/cuda, where
 # the driver finds it when CUDA_ROOT is not set. cuFFT and libdevice are

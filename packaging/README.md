@@ -8,7 +8,7 @@ needs only Docker or Apptainer and the NVIDIA driver.
 |---|---|
 | [Dockerfile](Dockerfile) | A Docker image, in stages: system packages, HDF5, LLVM with MLIR and the OpenMP runtime, MDIR; the final stage holds only the installed tree on CUDA's runtime image |
 | [mdir.def](mdir.def) | An Apptainer (Singularity) image made from the Docker image |
-| [Dockerfile.manylinux](Dockerfile.manylinux) | The release tarball for manylinux_2_28 (glibc 2.28 and later), built on the PyPA image of that baseline (D[manylinux]) |
+| [Dockerfile.manylinux](Dockerfile.manylinux) | The release tarball for manylinux_2_28 (glibc 2.28 and later), built on the PyPA image of that baseline (D177) |
 
 **Layers.** The stages go from what changes least to what changes most:
 the base image (pinned by digest) and its packages, HDF5 1.14.6, LLVM

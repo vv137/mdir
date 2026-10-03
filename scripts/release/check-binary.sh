@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Checks that an extracted release tree runs on manylinux_2_28 systems
-# (D[manylinux]):
+# (D177):
 #
 #   scripts/release/check-binary.sh DIR
 #

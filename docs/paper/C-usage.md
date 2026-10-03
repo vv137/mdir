@@ -10,7 +10,7 @@ or the commit (times, hashes, paths) will differ elsewhere.
 
 MDIR is extracted from the binary tarball of a release, which runs on
 Linux x86-64 with glibc 2.28 or later and needs, for a GPU, only the NVIDIA
-driver (D[manylinux]); or built and installed as Appendix B.1 describes;
+driver (D177); or built and installed as Appendix B.1 describes;
 or run from its container (`packaging/README.md`: `docker run --gpus all`
 or `apptainer run --nv`). `mdir version` prints what the build supports:
 
