@@ -15,7 +15,7 @@
 # the peptide across three faces: the same energies. check_centroid.py
 # computes the energies, the forces on every particle of a group against
 # central differences, and the virial, from the forces of each term and the
-# images that it takes. The file of `pull_coordinates` (D145) of a run
+# images that it takes. The file of `pull` (D145) of a run
 # with energies: its first line against the coordinates, the energies,
 # and central differences of each term.
 #
@@ -31,7 +31,7 @@
 # RUN: mdir checkpoint --print=forces %t/terms.h5 > %t/terms.forces
 # RUN: %python %S/Inputs/check_centroid.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/plain.forces %t/terms.forces %t/plain.log %t/terms.log | FileCheck %s --check-prefix=PYTHON
 #
-# RUN: sed -e 's/^energy_interval = 0/energy_interval = 1\npull_coordinates = "pull.dat"/' -e 's/terms.h5/pull.h5/' %t/terms.toml > %t/pull.toml
+# RUN: sed -e 's/^energy_interval = 0/energy_interval = 1\npull = "pull.dat"/' -e 's/terms.h5/pull.h5/' %t/terms.toml > %t/pull.toml
 # RUN: cd %t && mdir run pull.toml > pull.log
 # RUN: %python %S/Inputs/check_centroid.py --pull %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/pull.dat | FileCheck %s --check-prefix=PULL
 #

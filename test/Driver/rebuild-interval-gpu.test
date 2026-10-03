@@ -9,8 +9,8 @@
 # RUN:     -e 's|^target    = "CPU"|target    = "GPU"|' \
 # RUN:     %S/../../examples/argon/argon.toml > %t.toml
 # RUN: sed -e 's|^rebuild_interval = 10|rebuild_interval = 400|' %t.toml > %t.late.toml
-# RUN: mdir run %t.toml 2>&1 | FileCheck %s
-# RUN: mdir run %t.late.toml 2>&1 | FileCheck %s --check-prefix=LATE
+# RUN: mdir run --overwrite %t.toml 2>&1 | FileCheck %s
+# RUN: mdir run --overwrite %t.late.toml 2>&1 | FileCheck %s --check-prefix=LATE
 
 # CHECK:      mdir: warning: 'rebuild_interval = 10'
 # CHECK:      MDIR: neighbor structures were built 201 times, every 10.0 steps on average

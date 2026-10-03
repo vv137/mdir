@@ -5,7 +5,7 @@
 # a term over the pairs of the topology. The forces of a step are those at
 # the time of its end, so each run takes the positions of velocity Verlet
 # with the force at time n Δt after step n; check_steer.py integrates the
-# same and finds the same numbers to the last bit. `pull_coordinates`
+# same and finds the same numbers to the last bit. `pull`
 # writes at each energy the distance and the vector between the centers,
 # the energy of the term, the force along the distance, and the force on
 # the second center; a run continued from the checkpoint before the last
@@ -20,8 +20,8 @@
 # RUN: sed -n '/^#--- run.toml/,/^#--- tuple/p' %s | sed '1d;$d' > %t/run.toml
 # RUN: sed -n '/^#--- tuple/,/^#--- pair/p' %s | sed '1d;$d' > %t/tuple.term
 # RUN: sed -n '/^#--- pair/,/^#--- end/p' %s | sed '1d;$d' > %t/pair.term
-# RUN: sed -e '/^pull_coordinates/d' -e '/^\[\[energy.bond\]\]/,/^v  = 20.0/d' -e 's/two.h5/tuple.h5/' -e '/^\[dynamics\]/e cat %t/tuple.term' %t/run.toml > %t/tuple.toml
-# RUN: sed -e '/^pull_coordinates/d' -e '/^\[\[energy.bond\]\]/,/^v  = 20.0/d' -e 's/two.h5/pair.h5/' -e '/^\[dynamics\]/e cat %t/pair.term' %t/run.toml > %t/pair.toml
+# RUN: sed -e '/^pull = /d' -e '/^\[\[energy.bond\]\]/,/^v  = 20.0/d' -e 's/two.h5/tuple.h5/' -e '/^\[dynamics\]/e cat %t/tuple.term' %t/run.toml > %t/tuple.toml
+# RUN: sed -e '/^pull = /d' -e '/^\[\[energy.bond\]\]/,/^v  = 20.0/d' -e 's/two.h5/pair.h5/' -e '/^\[dynamics\]/e cat %t/pair.term' %t/run.toml > %t/pair.toml
 # RUN: cd %t && mdir run run.toml > run.log && mdir run tuple.toml > tuple.log && mdir run pair.toml > pair.log
 # RUN: mdir checkpoint --print=positions %t/two.h5 > %t/two.positions
 # RUN: mdir checkpoint --print=positions %t/tuple.h5 > %t/tuple.positions
@@ -36,7 +36,7 @@
 # RUN: not mdir check %t/parameter.toml 2>&1 | FileCheck %s --check-prefix=PARAMETER
 # RUN: sed -e 's/^v  = 20.0/&\nw  = 1.0/' -e 's/v\*t/w*s/' %t/run.toml > %t/name.toml
 # RUN: not mdir check %t/name.toml 2>&1 | FileCheck %s --check-prefix=NAME
-# RUN: sed -e 's/^energy_interval = 20/&\npull_coordinates = "pull.dat"/' %t/tuple.toml > %t/no-center.toml
+# RUN: sed -e 's/^energy_interval = 20/&\npull = "pull.dat"/' %t/tuple.toml > %t/no-center.toml
 # RUN: not mdir check %t/no-center.toml 2>&1 | FileCheck %s --check-prefix=NO-CENTER
 # RUN: sed -e 's/^energy_interval = 20/energy_interval = 0/' %t/run.toml > %t/no-energy.toml
 # RUN: not mdir check %t/no-energy.toml 2>&1 | FileCheck %s --check-prefix=NO-ENERGY
@@ -47,7 +47,7 @@
 # CHECK-NEXT: positions: equal
 
 # FILE:      # step time steer.r steer.dx steer.dy steer.dz steer.energy steer.f_r steer.fx steer.fy steer.fz
-# FILE-NEXT: # ps; Å, radians; kcal/mol; kcal/mol/Å, kcal/mol/rad
+# FILE-NEXT: # - ps Å Å Å Å kcal/mol kcal/mol/Å kcal/mol/Å kcal/mol/Å kcal/mol/Å
 # FILE-NEXT: 0 0.000000 5.196152 5.000000 1.000000 -1.000000 0.000074 0.038476 0.037023 0.007405 -0.007405
 # FILE:      100 0.100000 5.828141 5.608132 1.121626 -1.121626 9.409981 13.718587 13.200716 2.640143 -2.640143
 
@@ -55,8 +55,8 @@
 
 # PARAMETER: 't' is the time, not a parameter
 # NAME: the expression uses 's', which is neither 'r', 'dx', 'dy', 'dz', the time 't', nor a parameter of the term
-# NO-CENTER: [output] names 'pull_coordinates', but no term is over the centers of groups
-# NO-ENERGY: 'pull_coordinates' are written at the energies of a run of dynamics, which needs 'energy_interval'
+# NO-CENTER: [output] names 'pull', but no term is over the centers of groups
+# NO-ENERGY: 'pull' is written at the energies of a run of dynamics, which needs 'energy_interval'
 
 #--- two.top
 [ defaults ]
@@ -83,7 +83,7 @@ topology    = "two.top"
 coordinates = "two.gro"
 [output]
 energy_interval = 20
-pull_coordinates = "pull.dat"
+pull = "pull.dat"
 checkpoint = "two.h5"
 checkpoint_interval = 20
 [energy]

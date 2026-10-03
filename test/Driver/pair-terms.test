@@ -13,7 +13,7 @@
 # RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/terms.toml
 # RUN: sed -n '/^#--- run.toml/,/^#--- terms/p' %s | sed '1d;$d' | sed 's/terms.h5/plain.h5/' > %t/plain.toml
-# RUN: cd %t && mdir run plain.toml > /dev/null && mdir run terms.toml | FileCheck %s
+# RUN: cd %t && mdir run --overwrite plain.toml > /dev/null && mdir run --overwrite terms.toml | FileCheck %s
 # RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
 # RUN: mdir checkpoint --print=forces %t/terms.h5 > %t/terms.forces
 # RUN: %python %S/Inputs/check_pair_terms.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/plain.forces %t/terms.forces | FileCheck %s --check-prefix=PYTHON
@@ -21,9 +21,9 @@
 # The truncation of the Lennard-Jones applies to the terms as well: the copy
 # is the term of the topology shifted, and with its force switched.
 # RUN: sed -e 's/^electrostatics    = "CUTOFF"/&\nlennard_jones_modifier = "POTENTIAL_SHIFT"\ndispersion_correction = "NONE"/' %t/terms.toml > %t/shift.toml
-# RUN: cd %t && mdir run shift.toml | FileCheck %s --check-prefix=TRUNCATED
+# RUN: cd %t && mdir run --overwrite shift.toml | FileCheck %s --check-prefix=TRUNCATED
 # RUN: sed -e 's/^electrostatics    = "CUTOFF"/&\nlennard_jones_modifier = "FORCE_SWITCH"\nswitch_distance = 7.0\ndispersion_correction = "NONE"/' %t/terms.toml > %t/switch.toml
-# RUN: cd %t && mdir run switch.toml | FileCheck %s --check-prefix=TRUNCATED
+# RUN: cd %t && mdir run --overwrite switch.toml | FileCheck %s --check-prefix=TRUNCATED
 # RUN: sed -e 's/FORCE_SWITCH/POWER_FORCE_SWITCH/' %t/switch.toml > %t/power.toml
 # RUN: not mdir check %t/power.toml 2>&1 | FileCheck %s --check-prefix=POWER
 #

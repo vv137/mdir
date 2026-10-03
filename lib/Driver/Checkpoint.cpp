@@ -386,6 +386,8 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
       writer.writeAttribute(mdir, "first_step", H5T_NATIVE_INT64,
                             &checkpoint.firstStep);
       writer.writeAttribute(mdir, "part", H5T_NATIVE_INT64, &checkpoint.part);
+      writer.writeAttribute(mdir, "outputs_part", H5T_NATIVE_INT64,
+                            &checkpoint.outputsPart);
       int periodic = checkpoint.periodic ? 1 : 0;
       writer.writeAttribute(mdir, "periodic", H5T_NATIVE_INT, &periodic);
       writer.writeText(mdir, "trajectory", checkpoint.trajectory);
@@ -488,11 +490,14 @@ mdir::driver::readCheckpoint(const std::string &path) {
                          periodic);
     checkpoint.periodic = periodic != 0;
   }
-  if (reader.hasAttribute("/parameters/mdir", "first_step")) {
+  if (reader.hasAttribute("/parameters/mdir", "first_step") &&
+      reader.hasAttribute("/parameters/mdir", "outputs_part")) {
     reader.readAttribute("/parameters/mdir", "first_step", H5T_NATIVE_INT64,
                          checkpoint.firstStep);
     reader.readAttribute("/parameters/mdir", "part", H5T_NATIVE_INT64,
                          checkpoint.part);
+    reader.readAttribute("/parameters/mdir", "outputs_part",
+                         H5T_NATIVE_INT64, checkpoint.outputsPart);
     reader.readText("/parameters/mdir", "trajectory", checkpoint.trajectory);
     reader.readAttribute("/parameters/mdir", "frames", H5T_NATIVE_INT64,
                          checkpoint.frames);

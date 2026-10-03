@@ -1,18 +1,140 @@
-// What a run writes: the log, the trajectory, and checkpoints.
+// What a run writes: the log, files of columns, the trajectory, and
+// checkpoints (D149, docs/driver-m0.md, Section 2.8).
 
 #include "mdir/Driver/Output.h"
 
 #include "mlir/ExecutionEngine/CRunnerUtils.h"
 
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/FileSystem.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdarg>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <unistd.h>
 #include <vector>
 
 using namespace mdir::driver;
+
+//===----------------------------------------------------------------------===//
+// The log and files of columns
+//===----------------------------------------------------------------------===//
+
+Log::~Log() { close(); }
+
+void Log::print(const char *format, ...) {
+  va_list arguments;
+  va_start(arguments, format);
+  va_list copy;
+  va_copy(copy, arguments);
+  int size = std::vsnprintf(nullptr, 0, format, arguments);
+  va_end(arguments);
+  std::string text(std::max(size, 0), '\0');
+  if (size > 0)
+    std::vsnprintf(text.data(), size + 1, format, copy);
+  va_end(copy);
+  std::fputs(text.c_str(), stdout);
+  // Kept for the file, if one opens.
+  if (file)
+    std::fputs(text.c_str(), file);
+  else
+    pending += text;
+}
+
+llvm::Error Log::open(const std::string &path, bool appends) {
+  close();
+  file = std::fopen(path.c_str(), appends ? "a" : "w");
+  if (!file)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "cannot write the log '%s'", path.c_str());
+  std::fputs(pending.c_str(), file);
+  pending.clear();
+  std::fflush(file);
+  return llvm::Error::success();
+}
+
+void Log::flush() {
+  std::fflush(stdout);
+  if (file)
+    std::fflush(file);
+}
+
+void Log::close() {
+  if (file)
+    std::fclose(file);
+  file = nullptr;
+}
+
+ColumnFile::~ColumnFile() { close(); }
+
+std::string ColumnFile::getHeader(llvm::ArrayRef<Column> columns) {
+  std::string names = "#", units = "#";
+  for (const Column &column : columns) {
+    names += " " + column.name;
+    units += " " + column.unit;
+  }
+  return names + "\n" + units + "\n";
+}
+
+llvm::Error ColumnFile::open(const std::string &path,
+                             std::vector<Column> given,
+                             std::optional<int64_t> keepThrough) {
+  close();
+  columns = std::move(given);
+  std::string header = getHeader(columns);
+  // A continued run keeps the rows up to its checkpoint; those after it
+  // the run computes again.
+  std::string kept;
+  if (keepThrough && llvm::sys::fs::exists(path)) {
+    std::ifstream old(path);
+    std::string first, second;
+    std::getline(old, first);
+    std::getline(old, second);
+    if (first + "\n" + second + "\n" != header)
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "'%s' does not begin with the columns that the run writes, '%s'; "
+          "it is not the output of this run",
+          path.c_str(), llvm::StringRef(header).rtrim().str().c_str());
+    for (std::string line; std::getline(old, line);) {
+      if (std::strtoll(line.c_str(), nullptr, 10) > *keepThrough)
+        break;
+      kept += line + "\n";
+    }
+  }
+  file = std::fopen(path.c_str(), "w");
+  if (!file)
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "cannot write '%s'", path.c_str());
+  std::fputs(header.c_str(), file);
+  std::fputs(kept.c_str(), file);
+  std::fflush(file);
+  return llvm::Error::success();
+}
+
+void ColumnFile::write(int64_t step, llvm::ArrayRef<double> values) {
+  if (!file)
+    return;
+  std::fprintf(file, "%lld", static_cast<long long>(step));
+  for (size_t i = 0, e = values.size(); i != e; ++i) {
+    if (i + 1 < columns.size() && columns[i + 1].integer)
+      std::fprintf(file, " %lld", static_cast<long long>(values[i]));
+    else
+      std::fprintf(file, " %.6f", values[i]);
+  }
+  std::fprintf(file, "\n");
+  std::fflush(file);
+}
+
+void ColumnFile::close() {
+  if (file)
+    std::fclose(file);
+  file = nullptr;
+}
 
 //===----------------------------------------------------------------------===//
 // The log
@@ -26,23 +148,44 @@ void mdir::driver::setOutput(Output *output) { current = output; }
 
 void mdir::driver::writeLogHeader(Output &output) {
   if (output.minimizes) {
-    std::fprintf(output.log, "INFO: %9s %14s %14s %14s %9s %14s\n", "STEP",
+    output.log.print("INFO: %9s %14s %14s %14s %9s %14s\n", "STEP",
                  "POTENTIAL_ENE", "RMS_FORCE", "MAX_FORCE", "MAX_ATOM",
                  "STEP_SIZE");
     return;
   }
-  std::fprintf(output.log, "INFO: %9s %14s %14s %14s %14s %14s %14s",
+  output.log.print("INFO: %9s %14s %14s %14s %14s %14s %14s",
                "STEP", "TIME", "TOTAL_ENE", "POTENTIAL_ENE", "KINETIC_ENE",
                "TEMPERATURE", "VIRIAL");
   // Without a periodic cell, the cell around the particles has no pressure
   // (D142).
   if (output.periodic)
-    std::fprintf(output.log, " %14s", "PRESSURE");
+    output.log.print(" %14s", "PRESSURE");
   if (output.couples)
-    std::fprintf(output.log, " %14s", "CONSERVED");
+    output.log.print(" %14s", "CONSERVED");
   if (output.changesCell)
-    std::fprintf(output.log, " %14s", "VOLUME");
-  std::fprintf(output.log, "\n");
+    output.log.print(" %14s", "VOLUME");
+  output.log.print("\n");
+}
+
+std::vector<ColumnFile::Column>
+mdir::driver::getEnergyColumns(const Output &output) {
+  using Column = ColumnFile::Column;
+  if (output.minimizes)
+    return {{"step", "-", true},          {"potential", "kcal/mol"},
+            {"rms_force", "kcal/mol/Å"}, {"max_force", "kcal/mol/Å"},
+            {"max_atom", "-", true},      {"step_size", "Å"}};
+  std::vector<Column> columns = {
+      {"step", "-", true},       {"time", "ps"},
+      {"total", "kcal/mol"},     {"potential", "kcal/mol"},
+      {"kinetic", "kcal/mol"},   {"temperature", "K"},
+      {"virial", "kcal/mol"}};
+  if (output.periodic)
+    columns.push_back({"pressure", "atm"});
+  if (output.couples)
+    columns.push_back({"conserved", "kcal/mol"});
+  if (output.changesCell)
+    columns.push_back({"volume", "Å^3"});
+  return columns;
 }
 
 void _mlir_ciface_mdrtWriteVirial(double xx, double yy, double zz) {
@@ -51,7 +194,7 @@ void _mlir_ciface_mdrtWriteVirial(double xx, double yy, double zz) {
   // of a net charge are isotropic: a third of each on each axis.
   double constant =
       (output.getDispersionVirial() + output.getCoulombConstantVirial()) / 3.0;
-  std::fprintf(output.log,
+  output.log.print(
                "MDIR: the diagonal of the virial at the start, without the "
                "constraints, in kcal/mol:\nMDIR:   %16.6f %16.6f %16.6f\n",
                (xx + constant) / units::energy, (yy + constant) / units::energy,
@@ -74,7 +217,7 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
   bool cmap = topology && !topology->cmaps.empty();
   bool ureyBradley = topology && !topology->ureyBradleys.empty();
   bool impropers = topology && !topology->harmonicImpropers.empty();
-  std::fprintf(output.log, "MDIR: the terms at the start, in kcal/mol:\n");
+  output.log.print("MDIR: the terms at the start, in kcal/mol:\n");
   double total = output.getDispersionEnergy() + output.getCoulombConstantEnergy();
   // The terms given by expressions follow those of the topology under
   // their names, those over tuples (D136) and then those over pairs (D137),
@@ -100,42 +243,38 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
             : names[12];
     double value = values->data[i * values->strides[0]];
     total += value;
-    std::fprintf(output.log, "MDIR:   %-22s %16.6f\n", name.c_str(),
+    output.log.print("MDIR:   %-22s %16.6f\n", name.c_str(),
                  value / units::energy);
   }
   if (output.pme || output.reactionField)
-    std::fprintf(output.log, "MDIR:   %-22s %16.6f\n", "Coulomb self",
+    output.log.print("MDIR:   %-22s %16.6f\n", "Coulomb self",
                  output.getCoulombConstantEnergy() / units::energy);
-  std::fprintf(output.log, "MDIR:   %-22s %16.6f\n", "dispersion",
+  output.log.print("MDIR:   %-22s %16.6f\n", "dispersion",
                output.getDispersionEnergy() / units::energy);
-  std::fprintf(output.log, "MDIR:   %-22s %16.6f\n", "total",
+  output.log.print("MDIR:   %-22s %16.6f\n", "total",
                total / units::energy);
 }
 
 void _mlir_ciface_mdrtWritePull(int64_t step, void *coordinates,
                                 void *terms) {
   Output &output = *current;
-  if (!output.pull)
+  if (!output.pull.isOpen())
     return;
   // For each term its coordinates, then its energy and the forces along
   // them, in the order of the header, in kcal/mol and per Å or radian.
   auto *q = static_cast<StridedMemRefType<double, 1> *>(coordinates);
   auto *e = static_cast<StridedMemRefType<double, 1> *>(terms);
-  std::fprintf(output.pull, "%lld %.6f", static_cast<long long>(step),
-               output.getTime(step));
+  std::vector<double> row = {output.getTime(step)};
   int64_t column = 0, slot = 0;
   for (int64_t count : output.pullCounts) {
     for (int64_t k = 0; k != count; ++k)
-      std::fprintf(output.pull, " %.6f",
-                   q->data[(column + k) * q->strides[0]]);
+      row.push_back(q->data[(column + k) * q->strides[0]]);
     for (int64_t k = 0; k != count + 1; ++k)
-      std::fprintf(output.pull, " %.6f",
-                   e->data[(slot + k) * e->strides[0]]);
+      row.push_back(e->data[(slot + k) * e->strides[0]]);
     column += count;
     slot += count + 1;
   }
-  std::fprintf(output.pull, "\n");
-  std::fflush(output.pull);
+  output.pull.write(step, row);
 }
 
 void _mlir_ciface_mdrtAddBath(double energy) { current->bath += energy; }
@@ -209,23 +348,28 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
       2.0 * optimal / (output.degreesOfFreedom * units::boltzmann);
   // `virial` is the trace of W, the sum of d (x) K over the pairs (B8).
   double pressure = (2.0 * half + virial) / (3.0 * output.volume);
-  std::fprintf(output.log,
-               "INFO: %9lld %14.4f %14.4f %14.4f %14.4f %14.4f %14.4f",
-               static_cast<long long>(step), output.getTime(step),
-               total / units::energy, potential / units::energy,
-               kinetic / units::energy, temperature, virial / units::energy);
+  // The columns of the log, and of the file of the energies (D149).
+  std::vector<double> row = {output.getTime(step),
+                             total / units::energy,
+                             potential / units::energy,
+                             kinetic / units::energy,
+                             temperature,
+                             virial / units::energy};
   if (output.periodic)
-    std::fprintf(output.log, " %14.4f", pressure * units::pressure);
+    row.push_back(pressure * units::pressure);
   if (output.couples) {
     total += output.bath;
-    std::fprintf(output.log, " %14.4f", total / units::energy);
+    row.push_back(total / units::energy);
   }
   if (output.changesCell)
-    std::fprintf(output.log, " %14.4f",
-                 output.volume / (units::length * units::length *
-                                  units::length));
-  std::fprintf(output.log, "\n");
-  std::fflush(output.log);
+    row.push_back(output.volume /
+                  (units::length * units::length * units::length));
+  output.log.print("INFO: %9lld", static_cast<long long>(step));
+  for (double value : row)
+    output.log.print(" %14.4f", value);
+  output.log.print("\n");
+  output.log.flush();
+  output.energies.write(step, row);
 
   if (!output.hasEnergies)
     output.firstTotal = total;
@@ -287,11 +431,15 @@ void _mlir_ciface_mdrtWriteMinimization(int64_t step, double energy,
   double scale = units::energy / units::length;
   double rms = counted ? std::sqrt(square / counted) : 0.0;
   energy += output.getDispersionEnergy() + output.getCoulombConstantEnergy();
-  std::fprintf(output.log, "INFO: %9lld %14.4f %14.4f %14.4f %9zu %14.6f\n",
+  output.log.print("INFO: %9lld %14.4f %14.4f %14.4f %9zu %14.6f\n",
                static_cast<long long>(step), energy / units::energy,
                rms / scale, std::sqrt(largest) / scale, where + 1,
                size / units::length);
-  std::fflush(output.log);
+  output.log.flush();
+  output.energies.write(step, {energy / units::energy, rms / scale,
+                               std::sqrt(largest) / scale,
+                               static_cast<double>(where + 1),
+                               size / units::length});
   if (!output.hasEnergies)
     output.firstTotal = energy;
   output.hasEnergies = true;
@@ -403,14 +551,12 @@ static void writeState(int64_t step, void *positions, void *velocities,
     return;
   if (output.trajectory)
     output.trajectory->close();
-  std::fprintf(output.log,
+  output.log.print(
                "MDIR: stopped after step %lld on %s; '%s' holds the state, "
                "and `mdir run --continue` goes on from it\n",
                static_cast<long long>(step), reason,
                output.checkpointPath.c_str());
-  std::fflush(output.log);
-  if (output.log != stdout)
-    std::fflush(stdout);
+  output.log.flush();
   std::fprintf(stderr, "mdir: stopped after step %lld of %lld on %s\n",
                static_cast<long long>(step),
                static_cast<long long>(output.endStep), reason);

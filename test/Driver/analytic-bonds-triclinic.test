@@ -9,20 +9,20 @@
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/shake.test | sed '1d;$d' | sed -e 's/28.0/20.0/' -e 's/29.0/22.0/' -e 's/steps         = 500/steps = 100/' > %t/base.toml
 # RUN: sed '/hydrogen_bonds = true/a analytic_bonds = true' %t/base.toml > %t/analytic.toml
 # RUN: mdir emit %t/analytic.toml | FileCheck %s --check-prefix=CELL
-# RUN: mdir run %t/base.toml > %t/cpu-base.log
-# RUN: mdir run %t/analytic.toml > %t/cpu-analytic.log
+# RUN: mdir run --overwrite %t/base.toml > %t/cpu-base.log
+# RUN: mdir run --overwrite %t/analytic.toml > %t/cpu-analytic.log
 # RUN: %python %S/Inputs/compare_logs.py %t/cpu-base.log %t/cpu-analytic.log 1e-7 | FileCheck %s
 # RUN: printf '\n[execution]\ntarget = "GPU"\ndeterministic = true\n' >> %t/base.toml
 # RUN: printf '\n[execution]\ntarget = "GPU"\ndeterministic = true\n' >> %t/analytic.toml
-# RUN: mdir run %t/base.toml > %t/gpu-base.log
-# RUN: mdir run %t/analytic.toml > %t/gpu-analytic.log
+# RUN: mdir run --overwrite %t/base.toml > %t/gpu-base.log
+# RUN: mdir run --overwrite %t/analytic.toml > %t/gpu-analytic.log
 # RUN: %python %S/Inputs/compare_logs.py %t/gpu-base.log %t/gpu-analytic.log 1e-7 | FileCheck %s
 # RUN: %python %S/Inputs/compare_logs.py %t/cpu-analytic.log %t/gpu-analytic.log 1e-7 | FileCheck %s
 # RUN: sed -i 's/deterministic = true/deterministic = false/' %t/base.toml %t/analytic.toml
 # RUN: printf 'precision = "MIXED"\nneighbor_structure = "GROUPS"\n' >> %t/base.toml
 # RUN: printf 'precision = "MIXED"\nneighbor_structure = "GROUPS"\n' >> %t/analytic.toml
-# RUN: mdir run %t/base.toml > %t/groups-base.log
-# RUN: mdir run %t/analytic.toml > %t/groups-analytic.log
+# RUN: mdir run --overwrite %t/base.toml > %t/groups-base.log
+# RUN: mdir run --overwrite %t/analytic.toml > %t/groups-analytic.log
 # RUN: %python %S/Inputs/compare_logs.py %t/groups-base.log %t/groups-analytic.log 2e-4 | FileCheck %s
 # CELL: md.triclinic_cell
 # CHECK: logs agree

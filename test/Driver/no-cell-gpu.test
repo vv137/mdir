@@ -11,5 +11,5 @@
 # RUN: sed -n '/^#--- periodic.toml/,/^#--- two.toml/p' %S/no-cell.test | sed '1d;$d' | sed -e 's/vacuum.inpcrd/drift.rst7/' -e 's/periodic.h5/drift.h5/' -e 's/^steps         = 1$/steps         = 2000/' -e 's/= 1$/= 2000/' -e 's/^time_step     = 1e-9/time_step     = 0.0001/' -e 's/^type = "PERIODIC"/type = "NONE"/' -e '/^dispersion_correction/d' > %t/drift.toml
 # RUN: printf '[execution]\ntarget = "GPU"\nprecision = "DOUBLE"\nneighbor_structure = "MATRIX"\n' >> %t/drift.toml
 # RUN: sed -e 's/"MATRIX"/"GROUPS"/' %t/drift.toml > %t/groups.toml
-# RUN: cd %t && mdir run drift.toml | FileCheck %S/no-cell.test --check-prefix=DRIFT
-# RUN: cd %t && mdir run groups.toml | FileCheck %S/no-cell.test --check-prefix=DRIFT
+# RUN: cd %t && mdir run --overwrite drift.toml | FileCheck %S/no-cell.test --check-prefix=DRIFT
+# RUN: cd %t && mdir run --overwrite groups.toml | FileCheck %S/no-cell.test --check-prefix=DRIFT

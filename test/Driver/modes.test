@@ -7,7 +7,7 @@
 # RUN: echo 'threads = 4' >> %t.toml
 # RUN: echo 'precision = "single"' >> %t.toml
 # RUN: echo 'fast_math = false' >> %t.toml
-# RUN: mdir run %t.toml | FileCheck %s
+# RUN: mdir run --overwrite %t.toml | FileCheck %s
 
 # With leapfrog the stored velocities are half a step behind the
 # positions. The log has the kinetic energy of the time of the row all the

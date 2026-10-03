@@ -103,6 +103,13 @@ static StringRef toRef(std::string_view text) {
   return StringRef(text.data(), text.size());
 }
 
+/// A path without `.` and `..`, to compare the files of a run.
+static std::string normalizePath(StringRef file) {
+  llvm::SmallString<256> path(file);
+  llvm::sys::path::remove_dots(path, /*remove_dot_dot=*/true);
+  return std::string(path);
+}
+
 Error Reader::checkKeywords(
     const toml::table &table, StringRef name,
     std::initializer_list<StringRef> known,
@@ -707,8 +714,9 @@ Error Reader::readInput(const toml::table &table) {
 Error Reader::readOutput(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "output",
-          {"trajectory", "trajectory_format", "checkpoint", "energy_interval",
-           "trajectory_interval", "checkpoint_interval", "pull_coordinates"},
+          {"log", "energy", "pull", "trajectory", "trajectory_format",
+           "checkpoint", "energy_interval", "trajectory_interval",
+           "checkpoint_interval"},
           {}))
     return error;
   if (Error error = readPath(table, "trajectory", control.trajectoryFile))
@@ -737,7 +745,11 @@ Error Reader::readOutput(const toml::table &table) {
       format == Format::XTC ? TrajectoryFormat::XTC : TrajectoryFormat::DCD;
   if (Error error = readPath(table, "checkpoint", control.restartOutput))
     return error;
-  if (Error error = readPath(table, "pull_coordinates", control.pullFile))
+  if (Error error = readPath(table, "log", control.logFile))
+    return error;
+  if (Error error = readPath(table, "energy", control.energyFile))
+    return error;
+  if (Error error = readPath(table, "pull", control.pullFile))
     return error;
   if (Error error =
           readCount(table, "energy_interval", control.energyPeriod, 0))
@@ -1735,21 +1747,64 @@ Error Reader::read(const toml::table &root) {
         "%s: 'trajectory_interval' is given, but [output] names no "
         "'trajectory'",
         path.str().c_str());
-  // The coordinates of the terms over centers, at every energy (D145).
+  // The terms over centers, at every energy (D145).
   if (!control.pullFile.empty()) {
     if (llvm::none_of(control.tupleTerms,
                       [](const TupleTerm &term) { return term.isCentroid(); }))
       return llvm::createStringError(
           llvm::inconvertibleErrorCode(),
-          "%s: [output] names 'pull_coordinates', but no term is over the "
-          "centers of groups",
+          "%s: [output] names 'pull', but no term is over the centers of "
+          "groups",
           path.str().c_str());
     if (control.energyPeriod == 0 || control.minimize)
       return llvm::createStringError(
           llvm::inconvertibleErrorCode(),
-          "%s: 'pull_coordinates' are written at the energies of a run of "
-          "dynamics, which needs 'energy_interval'",
+          "%s: 'pull' is written at the energies of a run of dynamics, "
+          "which needs 'energy_interval'",
           path.str().c_str());
+  }
+  if (!control.energyFile.empty() && control.energyPeriod == 0)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "%s: 'energy' is written at the energies of the log, which needs "
+        "'energy_interval'",
+        path.str().c_str());
+  // Each output has a file of its own, which is not an input (D149).
+  {
+    std::vector<std::pair<StringRef, std::string>> outputs, inputs;
+    for (auto [name, file] :
+         {std::pair<StringRef, const std::string *>{"log", &control.logFile},
+          {"energy", &control.energyFile},
+          {"pull", &control.pullFile},
+          {"trajectory", &control.trajectoryFile},
+          {"checkpoint", &control.restartOutput}})
+      if (!file->empty())
+        outputs.push_back({name, normalizePath(*file)});
+    for (const std::string *file :
+         {&control.pdbFile, &control.prmtopFile, &control.amberCoordinateFile,
+          &control.gromacsTopologyFile, &control.gromacsCoordinateFile,
+          &control.charmmStructureFile, &control.charmmCoordinateFile,
+          &control.restartInput})
+      if (!file->empty())
+        inputs.push_back({"", normalizePath(*file)});
+    for (const std::string &file : control.charmmParameterFiles)
+      inputs.push_back({"", normalizePath(file)});
+    for (size_t i = 0; i != outputs.size(); ++i) {
+      for (size_t j = 0; j != i; ++j)
+        if (outputs[i].second == outputs[j].second)
+          return llvm::createStringError(
+              llvm::inconvertibleErrorCode(),
+              "%s: '%s' and '%s' of [output] name the same file, '%s'",
+              path.str().c_str(), outputs[j].first.str().c_str(),
+              outputs[i].first.str().c_str(), outputs[i].second.c_str());
+      for (const auto &input : inputs)
+        if (outputs[i].second == input.second)
+          return llvm::createStringError(
+              llvm::inconvertibleErrorCode(),
+              "%s: '%s' of [output] names '%s', an input of the run",
+              path.str().c_str(), outputs[i].first.str().c_str(),
+              outputs[i].second.c_str());
+    }
   }
   return Error::success();
 }
@@ -1778,6 +1833,8 @@ coordinates = "system.pdb"      # positions; the name of an atom is its type
 #                               # step
 
 [output]
+# log               = "run.log" # the log as well as on the standard output
+# energy            = "run.energy"  # the rows of the log as columns
 trajectory          = "run.dcd" # positions, in DCD or XTC (.xtc)
 # checkpoint        = "run.h5"  # the state, with checkpoint_interval;
 #                               # mdir run --continue goes on from it
@@ -1857,9 +1914,12 @@ coordinates = "system.inpcrd"   # and the box; the reference of restraints
 #                               # positions
 
 [output]
+log                 = "run.log" # the log as well as on the standard output
+energy              = "run.energy"  # the rows of the log as columns
 trajectory          = "run.dcd" # positions, in DCD or XTC (.xtc)
 checkpoint          = "run.h5"  # the state; mdir run --continue goes on
 #                               # from it, and the one before is run.h5.prev
+# pull              = "run.pull"    # terms over the centers of groups
 energy_interval     = 5000      # steps between energies in the log
 trajectory_interval = 5000      # steps between frames
 checkpoint_interval = 50000     # steps between checkpoints

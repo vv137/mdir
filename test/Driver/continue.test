@@ -88,6 +88,7 @@
 
 # PIECE:      run began at:    step 0
 # PIECE-NEXT: part:            2
+# PIECE-NEXT: outputs to part: 2
 # PIECE-NEXT: trajectory:      piece.part0002.dcd, 2 frames
 # PARTS:      piece.dcd: 2 frames from step 50
 # PARTS-NEXT: piece.part0002.dcd: 6 frames from step 150
@@ -124,7 +125,7 @@
 
 # TIMESTEP: mdir: '{{.*}}short.h5' was written with a time step of 0.004 ps, and the control file has 0.002 ps
 # INTERVAL: mdir: the 300 steps that remain after step 100 of '{{.*}}short.h5' are not a multiple of 'checkpoint_interval', 200
-# OTHER:    mdir: '{{.*}}short.h5' counts the frames of 'short.dcd', which is not the trajectory of the control file, 'other.dcd', or a part of it
+# OTHER:    mdir: '{{.*}}short.h5' counts the frames of 'short.dcd', which is not the trajectory that the run writes, 'other.dcd'
 # FEWER:    mdir: '{{.*}}short.dcd' holds 0 frames, fewer than the 2 that the checkpoint counts
 # MISSING:  mdir: '{{.*}}short.dcd' is missing, and '{{.*}}short.h5' counts 2 frames in it; --no-append writes the frames that follow to a part of their own
 # PREVONLY: mdir: '{{.*}}short.h5' is missing, but '{{.*}}short.h5.prev' is there: the run stopped while it replaced its checkpoint. Rename '{{.*}}short.h5.prev' to '{{.*}}short.h5' to continue from it

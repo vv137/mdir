@@ -41,8 +41,14 @@ static llvm::cl::opt<bool> continueRun(
 
 static llvm::cl::opt<bool> noAppend(
     "no-append",
-    llvm::cl::desc("With --continue, write the frames that follow to a part "
-                   "of their own, <trajectory>.partNNNN.dcd (or .xtc)"),
+    llvm::cl::desc("With --continue, write the outputs that follow to files "
+                   "of a part of their own, <name>.partNNNN<extension>"),
+    llvm::cl::sub(runCommand));
+
+static llvm::cl::opt<bool> overwrite(
+    "overwrite",
+    llvm::cl::desc("Write over the outputs of another run, which a run that "
+                   "is not continued otherwise refuses to"),
     llvm::cl::sub(runCommand));
 
 static llvm::cl::opt<std::string> maxWalltime(
@@ -95,7 +101,7 @@ int main(int argc, char **argv) {
   llvm::cl::ParseCommandLineOptions(
       argc, argv,
       "MDIR: compiles and runs molecular dynamics\n\n"
-      "  mdir run <control file> [--continue [--no-append]] "
+      "  mdir run <control file> [--continue [--no-append] | --overwrite] "
       "[--max-walltime=<time>]\n"
       "  mdir emit <control file> [--stage=module|lowered|pipeline]\n"
       "  mdir check <control file>\n"
@@ -109,8 +115,14 @@ int main(int argc, char **argv) {
     RunOptions options;
     options.continues = continueRun;
     options.appends = !noAppend;
+    options.overwrites = overwrite;
     if (noAppend && !continueRun) {
       llvm::errs() << "mdir: --no-append goes with --continue\n";
+      return 1;
+    }
+    if (overwrite && continueRun) {
+      llvm::errs() << "mdir: --overwrite does not go with --continue, "
+                      "whose outputs are those of its run\n";
       return 1;
     }
     if (!maxWalltime.empty()) {

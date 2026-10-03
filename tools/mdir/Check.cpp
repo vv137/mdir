@@ -7,12 +7,15 @@
 #include "mdir/Driver/Control.h"
 #include "mdir/Driver/System.h"
 
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdio>
 #include <vector>
 
 using namespace mdir::driver;
+using llvm::StringRef;
 
 static int fail(llvm::Error error) {
   llvm::errs() << "mdir: " << llvm::toString(std::move(error)) << "\n";
@@ -111,6 +114,68 @@ static int describeTopology(const Control &control, const System &system) {
   return 0;
 }
 
+/// The outputs of the run (D149): each file with its interval and the
+/// number of rows, frames, or checkpoints of the whole run, and a warning
+/// for each file that exists, which `mdir run` would not write over.
+static void describeOutputs(const Control &control) {
+  long long steps = control.numSteps;
+  auto every = [&](int64_t period, const char *what) {
+    std::string text = llvm::formatv("every {0} steps", period).str();
+    // A run of dynamics writes the energies at its first step as well; a
+    // minimization ends where it converges.
+    if (!control.minimize)
+      text += llvm::formatv(", {0} {1}", steps / period +
+                                             (StringRef(what) == "rows"),
+                            what)
+                  .str();
+    return text;
+  };
+  std::vector<std::string> written;
+  std::printf("outputs:\n");
+  if (control.energyPeriod > 0)
+    std::printf("  log:        standard output%s%s; a row %s\n",
+                control.logFile.empty() ? "" : ", and ",
+                control.logFile.c_str(),
+                every(control.energyPeriod, "rows").c_str());
+  else
+    std::printf("  log:        standard output%s%s; no rows\n",
+                control.logFile.empty() ? "" : ", and ",
+                control.logFile.c_str());
+  if (!control.logFile.empty())
+    written.push_back(control.logFile);
+  if (!control.energyFile.empty()) {
+    std::printf("  energy:     %s, %s\n", control.energyFile.c_str(),
+                every(control.energyPeriod, "rows").c_str());
+    written.push_back(control.energyFile);
+  }
+  if (!control.pullFile.empty()) {
+    std::printf("  pull:       %s, %s\n", control.pullFile.c_str(),
+                every(control.energyPeriod, "rows").c_str());
+    written.push_back(control.pullFile);
+  }
+  if (control.framePeriod > 0) {
+    std::printf("  trajectory: %s (%s), %s\n", control.trajectoryFile.c_str(),
+                control.trajectoryFormat == TrajectoryFormat::XTC ? "XTC"
+                                                                 : "DCD",
+                every(control.framePeriod, "frames").c_str());
+    written.push_back(control.trajectoryFile);
+  }
+  if (control.checkpointPeriod > 0) {
+    if (control.minimize)
+      std::printf("  checkpoint: %s, at the end\n",
+                  control.restartOutput.c_str());
+    else
+      std::printf("  checkpoint: %s, %s\n", control.restartOutput.c_str(),
+                  every(control.checkpointPeriod, "checkpoints").c_str());
+    written.push_back(control.restartOutput);
+  }
+  for (const std::string &file : written)
+    if (llvm::sys::fs::exists(file))
+      std::printf("  warning: '%s' exists; mdir run writes over it only with "
+                  "--overwrite or --continue\n",
+                  file.c_str());
+}
+
 int mdir::tool::checkControl(llvm::StringRef controlFile) {
   auto control = readControl(controlFile);
   if (!control)
@@ -119,8 +184,11 @@ int mdir::tool::checkControl(llvm::StringRef controlFile) {
   if (!system)
     return fail(system.takeError());
 
-  if (system->topology)
-    return describeTopology(*control, *system);
+  if (system->topology) {
+    int status = describeTopology(*control, *system);
+    describeOutputs(*control);
+    return status;
+  }
 
   size_t count = system->getNumParticles();
   std::vector<size_t> perType(control->types.size(), 0);
@@ -152,5 +220,6 @@ int mdir::tool::checkControl(llvm::StringRef controlFile) {
   std::printf("target:             %s, %s precision\n",
               control->target == Target::GPU ? "gpu" : "cpu",
               getName(control->precision));
+  describeOutputs(*control);
   return 0;
 }

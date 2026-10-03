@@ -254,6 +254,9 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   auto control = readControl(controlFile);
   if (!control)
     return fail(control.takeError());
+  // What the run writes (D149). Its log goes to the standard output from
+  // here, and to the file of [output] as well once that is open.
+  Output output;
 
   // A stop lands on a checkpoint, from which the run continues exactly
   // (D131); a run without checkpoints has nowhere to stop.
@@ -287,7 +290,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                     "'checkpoint' of [input]");
       int64_t end = own->firstStep + total;
       if (own->step >= end) {
-        std::fprintf(stdout,
+        output.log.print(
                      "MDIR: the run is complete: '%s' holds step %lld, and "
                      "the run began at step %lld and takes %lld steps\n",
                      path.c_str(), static_cast<long long>(own->step),
@@ -332,8 +335,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                   "Rename '" + previous + "' to '" + path + "' to continue "
                   "from it");
     } else {
-      std::fprintf(stdout, "MDIR: no checkpoint '%s' yet; the run begins\n",
-                   path.c_str());
+      output.log.print("MDIR: no checkpoint '%s' yet; the run begins\n",
+                       path.c_str());
     }
   }
   // The policy of a fixed interval of rebuilds is opt-in and not a
@@ -395,8 +398,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         system->box[i] = checkpoint->box[i];
         system->tilt[i] = checkpoint->tilt[i];
       }
-      std::fprintf(stdout, "MDIR: begins at the positions of '%s'\n",
-                   path.c_str());
+      output.log.print("MDIR: begins at the positions of '%s'\n",
+                       path.c_str());
       isRestart = false;
       fromPositions = true;
     }
@@ -443,6 +446,30 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // step, whose counter and time it continues (D129).
   int64_t runFirstStep = own ? own->firstStep : firstStep;
   int64_t part = own ? own->part + 1 : 1;
+
+  // The files of the outputs (D149): those of the control file, or those
+  // of the part that the checkpoint of a continued run records, or with
+  // --no-append those of its own part.
+  int64_t outputsPart = !own ? 0 : options.appends ? own->outputsPart : part;
+  auto getOutputPath = [&](const std::string &name) {
+    return outputsPart > 0 ? getPartPath(name, outputsPart) : name;
+  };
+  // A run that is not continued does not write over the files of another;
+  // under --continue they are the run's own.
+  if (emit == Emit::Run && !options.continues && !options.overwrites) {
+    std::vector<const std::string *> written = {
+        &control->logFile, &control->energyFile, &control->pullFile};
+    if (control->framePeriod > 0)
+      written.push_back(&control->trajectoryFile);
+    if (control->checkpointPeriod > 0)
+      written.push_back(&control->restartOutput);
+    for (const std::string *file : written)
+      if (!file->empty() && llvm::sys::fs::exists(*file))
+        return fail("'" + *file + "' exists, written by another run; `mdir "
+                    "run --overwrite` writes over it, and `mdir run "
+                    "--continue` continues the run whose checkpoint is "
+                    "named in [output]");
+  }
 
   auto program = buildProgram(*control, *system);
   if (!program)
@@ -533,6 +560,12 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     module->print(llvm::outs());
     return 0;
   }
+  // The log file holds what the run has printed so far; a continued run
+  // appends to it.
+  if (!control->logFile.empty())
+    if (llvm::Error error =
+            output.log.open(getOutputPath(control->logFile), own.has_value()))
+      return fail(std::move(error));
 
   //===--------------------------------------------------------------------===//
   // Load
@@ -746,7 +779,6 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   arguments.push_back(&timestep);
   arguments.push_back(&firstStep);
 
-  Output output;
   output.state = program->state;
   output.force = program->force;
   output.firstStep = firstStep;
@@ -774,31 +806,33 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   output.coulombConstantVirial = program->coulombConstantVirial;
   output.coulombSelfEnergy = program->coulombSelfEnergy;
   output.system = &*system;
+  // The files of columns (D149): a continued run keeps their rows up to
+  // its checkpoint and appends.
+  std::optional<int64_t> keepThrough;
+  if (own)
+    keepThrough = own->step;
+  if (!control->energyFile.empty())
+    if (llvm::Error error =
+            output.energies.open(getOutputPath(control->energyFile),
+                                 getEnergyColumns(output), keepThrough))
+      return fail(std::move(error));
   if (control->framePeriod > 0) {
     // The cell in Å, from the system: a topology gives it with the
     // coordinates, not the control file.
     double cell[3];
     for (int k = 0; k != 3; ++k)
       cell[k] = system->box[k] / units::length;
-    // A continued run appends its frames to the file that its checkpoint
-    // counts them in, cut to those frames, or writes them to a part of
-    // their own (D130).
-    std::string trajectory = control->trajectoryFile;
+    // A continued run appends its frames to the trajectory of the part of
+    // its outputs, which its checkpoint counts them in, cut to those
+    // frames, or writes them to a part of their own (D130, D149).
+    std::string trajectory = getOutputPath(control->trajectoryFile);
     bool appends = false;
     if (own && options.appends && !own->trajectory.empty()) {
-      StringRef name = llvm::sys::path::filename(control->trajectoryFile);
-      StringRef extension = llvm::sys::path::extension(name);
-      StringRef recorded = own->trajectory;
-      std::string stem = (name.drop_back(extension.size()) + ".part").str();
-      if (recorded != name &&
-          !(recorded.starts_with(stem) && recorded.ends_with(extension)))
+      StringRef name = llvm::sys::path::filename(trajectory);
+      if (own->trajectory != name)
         return fail("'" + control->restartOutput + "' counts the frames of '" +
-                    recorded + "', which is not the trajectory of the "
-                    "control file, '" + name + "', or a part of it");
-      llvm::SmallString<256> counted(
-          llvm::sys::path::parent_path(control->trajectoryFile));
-      llvm::sys::path::append(counted, recorded);
-      trajectory = std::string(counted);
+                    own->trajectory + "', which is not the trajectory that "
+                    "the run writes, '" + name + "'");
       if (llvm::sys::fs::exists(trajectory)) {
         appends = true;
       } else if (own->frames > 0) {
@@ -807,8 +841,6 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                     llvm::Twine(own->frames) + " frames in it; --no-append "
                     "writes the frames that follow to a part of their own");
       }
-    } else if (own && !options.appends) {
-      trajectory = getPartPath(control->trajectoryFile, part);
     }
     output.trajectory = createTrajectoryWriter(control->trajectoryFormat);
     output.trajectory->setPeriodic(control->periodic);
@@ -819,10 +851,10 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       if (!removed)
         return fail(removed.takeError());
       if (*removed > 0)
-        std::fprintf(stdout,
-                     "MDIR: removed %lld frames past the checkpoint from "
-                     "'%s'\n",
-                     static_cast<long long>(*removed), trajectory.c_str());
+        output.log.print("MDIR: removed %lld frames past the checkpoint "
+                         "from '%s'\n",
+                         static_cast<long long>(*removed),
+                         trajectory.c_str());
     } else if (llvm::Error error = output.trajectory->open(
                    trajectory, count, firstStep + control->framePeriod,
                    control->framePeriod, control->timestep, cell)) {
@@ -835,50 +867,35 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     output.trajectory->setTilt(tilts);
     output.hasTrajectory = true;
   }
-  // The coordinates of the terms over centers (D145): a line at every
-  // energy of the log. A continued run keeps the lines up to its
-  // checkpoint and appends.
+  // The terms over centers (D145), at every energy of the log: for each
+  // its coordinates, its energy, and its force, over two centers the
+  // component along the distance and the vector on the second center, of
+  // an angle or a dihedral −∂E/∂θ.
   if (!control->pullFile.empty()) {
-    std::vector<std::string> keep;
-    if (own && llvm::sys::fs::exists(control->pullFile)) {
-      std::ifstream old(control->pullFile);
-      for (std::string line; std::getline(old, line);) {
-        if (!line.empty() && line[0] != '#' &&
-            std::strtoll(line.c_str(), nullptr, 10) > own->step)
-          break;
-        keep.push_back(line);
+    std::vector<ColumnFile::Column> columns = {{"step", "-", true},
+                                               {"time", "ps"}};
+    for (const TupleTerm &term : system->topology->tupleTerms) {
+      if (!term.isCentroid())
+        continue;
+      auto add = [&](StringRef quantity, StringRef unit) {
+        columns.push_back({(term.name + "." + quantity).str(), unit.str()});
+      };
+      if (term.arity == 2) {
+        for (StringRef quantity : {"r", "dx", "dy", "dz"})
+          add(quantity, "Å");
+        add("energy", "kcal/mol");
+        for (StringRef quantity : {"f_r", "fx", "fy", "fz"})
+          add(quantity, "kcal/mol/Å");
+      } else {
+        add("theta", "rad");
+        add("energy", "kcal/mol");
+        add("f_theta", "kcal/mol/rad");
       }
+      output.pullCounts.push_back(term.arity == 2 ? 4 : 1);
     }
-    output.pull = std::fopen(control->pullFile.c_str(), "w");
-    if (!output.pull)
-      return fail("cannot write '" + control->pullFile + "'");
-    for (const TupleTerm &term : system->topology->tupleTerms)
-      if (term.isCentroid())
-        output.pullCounts.push_back(term.arity == 2 ? 4 : 1);
-    if (keep.empty()) {
-      // For each term its coordinates, its energy, and its force: over two
-      // centers, the component along the distance and the vector on the
-      // second center; of an angle or a dihedral, −∂E/∂θ.
-      std::fprintf(output.pull, "# step time");
-      for (const TupleTerm &term : system->topology->tupleTerms) {
-        if (!term.isCentroid())
-          continue;
-        const char *name = term.name.c_str();
-        if (term.arity == 2)
-          std::fprintf(output.pull,
-                       " %s.r %s.dx %s.dy %s.dz %s.energy %s.f_r %s.fx "
-                       "%s.fy %s.fz",
-                       name, name, name, name, name, name, name, name, name);
-        else
-          std::fprintf(output.pull, " %s.theta %s.energy %s.f_theta", name,
-                       name, name);
-      }
-      std::fprintf(output.pull,
-                   "\n# ps; Å, radians; kcal/mol; kcal/mol/Å, kcal/mol/rad\n");
-    }
-    for (const std::string &line : keep)
-      std::fprintf(output.pull, "%s\n", line.c_str());
-    std::fflush(output.pull);
+    if (llvm::Error error = output.pull.open(
+            getOutputPath(control->pullFile), columns, keepThrough))
+      return fail(std::move(error));
   }
   if (writesCheckpoints) {
     output.checkpointPath = control->restartOutput;
@@ -900,6 +917,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     checkpoint.seed = control->seed;
     checkpoint.firstStep = runFirstStep;
     checkpoint.part = part;
+    checkpoint.outputsPart = outputsPart;
     checkpoint.trajectory = output.trajectoryName;
   }
   output.endStep = firstStep + control->numSteps;
@@ -912,15 +930,15 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   setOutput(&output);
 
   if (control->minimize)
-    std::fprintf(output.log,
+    output.log.print(
                  "MDIR: %zu particles, %lld steps of steepest descent\n",
                  count, static_cast<long long>(control->numSteps));
   else
-    std::fprintf(output.log, "MDIR: %zu particles, %lld steps of %g ps\n",
+    output.log.print("MDIR: %zu particles, %lld steps of %g ps\n",
                  count, static_cast<long long>(control->numSteps),
                  control->timestep);
   if (!control->periodic)
-    std::fprintf(output.log,
+    output.log.print(
                  "MDIR: no periodic cell; the particles are in a cell of "
                  "%.4f %.4f %.4f Å, whose images stay beyond the reach of "
                  "the neighbor structures, %.4f Å, while the particles "
@@ -931,13 +949,13 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                  (system->box[1] - output.listReach) / units::length,
                  (system->box[2] - output.listReach) / units::length);
   if (control->rebuildPeriod > 0)
-    std::fprintf(output.log,
+    output.log.print(
                  "MDIR: warning: the neighbor structures are rebuilt every "
                  "%lld steps and not tested in between (rebuild_interval, "
                  "opt-in); they may miss pairs within the cutoff\n",
                  static_cast<long long>(control->rebuildPeriod));
   if (own)
-    std::fprintf(output.log,
+    output.log.print(
                  "MDIR: continues the run after step %lld, from '%s', to "
                  "step %lld (part %lld)\n",
                  static_cast<long long>(firstStep),
@@ -945,14 +963,14 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                  static_cast<long long>(output.endStep),
                  static_cast<long long>(part));
   else if (isRestart)
-    std::fprintf(output.log, "MDIR: continues after step %lld, from '%s'\n",
+    output.log.print("MDIR: continues after step %lld, from '%s'\n",
                  static_cast<long long>(firstStep),
                  control->restartInput.c_str());
   else if (system->givenVelocities)
-    std::fprintf(output.log,
+    output.log.print(
                  "MDIR: the velocities are those of the file of "
                  "coordinates\n");
-  std::fprintf(output.log, "MDIR: compiled in %.2f s\n", compileTime);
+  output.log.print("MDIR: compiled in %.2f s\n", compileTime);
   writeLogHeader(output);
 
   // SIGTERM and SIGINT ask the run to stop at its next checkpoint (D131).
@@ -974,14 +992,14 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   if (output.trajectory)
     output.trajectory->close();
 
-  std::fprintf(output.log, "MDIR: ran in %.2f s", runTime);
+  output.log.print("MDIR: ran in %.2f s", runTime);
   if (!control->minimize && control->numSteps > 0 && runTime > 0.0) {
     double simulated = control->timestep * control->numSteps * 1.0e-3;
-    std::fprintf(output.log, ", %.2f ms per step, %.1f ns per day",
+    output.log.print(", %.2f ms per step, %.1f ns per day",
                  1.0e3 * runTime / control->numSteps,
                  simulated * 86400.0 / runTime);
   }
-  std::fprintf(output.log, "\n");
+  output.log.print("\n");
   // The rate past the start: from the first output of the energies at or
   // after half the steps to the last, which wait for the device.
   if (!control->minimize && output.energyTimes.size() >= 2) {
@@ -994,7 +1012,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       double seconds = last.second - from->second;
       int64_t steps = last.first - from->first;
       double simulated = control->timestep * steps * 1.0e-3;
-      std::fprintf(output.log,
+      output.log.print(
                    "MDIR: from step %lld to step %lld, %.3f ms per step, "
                    "%.1f ns per day\n",
                    static_cast<long long>(from->first),
@@ -1003,7 +1021,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     }
   }
   if (writesCheckpoints)
-    std::fprintf(output.log, "MDIR: wrote %lld checkpoints to '%s'\n",
+    output.log.print("MDIR: wrote %lld checkpoints to '%s'\n",
                  static_cast<long long>(output.numCheckpoints),
                  output.checkpointPath.c_str());
 
@@ -1017,14 +1035,14 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     return reinterpret_cast<int64_t (*)()>(*symbol)();
   };
   if (int64_t used = readCount("mdrtGetGroupsBlocks"))
-    std::fprintf(output.log,
+    output.log.print(
                  "MDIR: the lists of groups took at most %lld of %lld "
                  "blocks of 64 entries; the longest held %lld\n",
                  static_cast<long long>(used),
                  static_cast<long long>(readCount("mdrtGetGroupsCapacity")),
                  static_cast<long long>(readCount("mdrtGetGroupsLongest")));
   if (int64_t over = readCount("mdrtGetGroupsOverflow"))
-    std::fprintf(output.log,
+    output.log.print(
                  "MDIR: %lld groups had more partners of excluded pairs than "
                  "the memory of a warp holds, 256, and took their excluded "
                  "pairs from the rows\n",
@@ -1034,14 +1052,14 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   if (auto count = (*engine)->lookup("mdrtGetBuildCount")) {
     auto getCount = reinterpret_cast<int64_t (*)()>(*count);
     int64_t builds = getCount();
-    std::fprintf(output.log, "MDIR: neighbor structures were built %lld "
+    output.log.print("MDIR: neighbor structures were built %lld "
                              "times",
                  static_cast<long long>(builds));
     if (builds > 1 && control->numSteps > 0)
-      std::fprintf(output.log, ", every %.1f steps on average",
+      output.log.print(", every %.1f steps on average",
                    static_cast<double>(control->numSteps) /
                        static_cast<double>(builds - 1));
-    std::fprintf(output.log, "\n");
+    output.log.print("\n");
   } else {
     llvm::consumeError(count.takeError());
   }
@@ -1049,13 +1067,13 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   if (auto count = (*engine)->lookup("mdrtGetPruneCount")) {
     int64_t prunes = reinterpret_cast<int64_t (*)()>(*count)();
     if (prunes > 0) {
-      std::fprintf(output.log, "MDIR: the inner lists were pruned %lld times",
+      output.log.print("MDIR: the inner lists were pruned %lld times",
                    static_cast<long long>(prunes));
       if (prunes > 1 && control->numSteps > 0)
-        std::fprintf(output.log, ", every %.1f steps on average",
+        output.log.print(", every %.1f steps on average",
                      static_cast<double>(control->numSteps) /
                          static_cast<double>(prunes - 1));
-      std::fprintf(output.log, "\n");
+      output.log.print("\n");
     }
   } else {
     llvm::consumeError(count.takeError());
@@ -1065,7 +1083,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   if (control->rebuildPeriod > 0) {
     if (auto count = (*engine)->lookup("mdrtGetLateBuildCount")) {
       int64_t late = reinterpret_cast<int64_t (*)()>(*count)();
-      std::fprintf(output.log,
+      output.log.print(
                    "MDIR: %lld rebuilds found a neighbor structure no "
                    "longer valid\n",
                    static_cast<long long>(late));
@@ -1086,7 +1104,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     if (auto get = (*engine)->lookup("mdrtGetSemiPressures")) {
       double p[6];
       int64_t n = reinterpret_cast<int64_t (*)(double *)>(*get)(p);
-      std::fprintf(output.log,
+      output.log.print(
                    "MDIR: the pressures of the barostat over %lld periods, "
                    "in bar: x and y %.2f ± %.2f, z %.2f ± %.2f, the "
                    "difference %.2f ± %.2f\n",
@@ -1102,14 +1120,14 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   for (size_t i = 0, e = system->getNumParticles(); i != e; ++i)
     for (int c = 0; c != 3; ++c)
       momentum[c] += system->masses[i] * system->velocities[3 * i + c];
-  std::fprintf(output.log,
+  output.log.print(
                "MDIR: the momentum at the end is %.3e amu nm/ps\n",
                std::sqrt(momentum[0] * momentum[0] +
                          momentum[1] * momentum[1] +
                          momentum[2] * momentum[2]));
   if (control->minimize) {
     if (output.hasEnergies)
-      std::fprintf(output.log,
+      output.log.print(
                    "MDIR: the potential energy went from %.4f to %.4f "
                    "kcal/mol\n",
                    output.firstTotal / units::energy,
@@ -1119,7 +1137,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   if (control->isLangevin())
     return 0;
   if (output.hasEnergies && output.firstTotal != 0.0)
-    std::fprintf(output.log,
+    output.log.print(
                  "MDIR: the %s energy changed by %.3e of its value\n",
                  output.couples ? "conserved" : "total",
                  std::fabs((output.lastTotal - output.firstTotal) /

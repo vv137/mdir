@@ -4,8 +4,8 @@
 # RUN: cp %S/Inputs/ff19sb/vacuum.prmtop %S/Inputs/ff19sb/vacuum.inpcrd %t
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/shake.test | sed '1d;$d' > %t/newton.toml
 # RUN: sed '/hydrogen_bonds = true/a analytic_bonds = true' %t/newton.toml > %t/analytic.toml
-# RUN: mdir run %t/newton.toml > %t/newton.log
-# RUN: mdir run %t/analytic.toml > %t/analytic.log
+# RUN: mdir run --overwrite %t/newton.toml > %t/newton.log
+# RUN: mdir run --overwrite %t/analytic.toml > %t/analytic.log
 # RUN: %python %S/Inputs/compare_logs.py %t/newton.log %t/analytic.log 1e-7 | FileCheck %s
 # RUN: %python %S/Inputs/check_bonds.py %t/vacuum.prmtop %t/shake.dcd | FileCheck %s --check-prefix=BONDS
 # RUN: mdir emit %t/analytic.toml > %t/analytic.mlir

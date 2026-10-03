@@ -13,9 +13,9 @@
 # grompp and a rerun of GROMACS 2026.3 give 34.6106 and 35.1455 kJ/mol.
 #
 # RUN: split-file %s %t
-# RUN: mdir run %t/run.toml | FileCheck %s --check-prefix=LEAP
+# RUN: mdir run --overwrite %t/run.toml | FileCheck %s --check-prefix=LEAP
 # RUN: sed -i '/^#define _FF_AMBER_LEAP_ATOM_REORDERING/d' %t/system.top
-# RUN: mdir run %t/run.toml | FileCheck %s --check-prefix=FILE
+# RUN: mdir run --overwrite %t/run.toml | FileCheck %s --check-prefix=FILE
 
 # LEAP: MDIR:   dihedrals                      8.272150
 # FILE: MDIR:   dihedrals                      8.400000

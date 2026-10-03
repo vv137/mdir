@@ -54,9 +54,12 @@ struct Checkpoint {
   /// 1 for the first and one more for each continuation; and the file
   /// name of the trajectory that its frames went to, with the number of
   /// frames that file holds at this state (D130). Without a trajectory the
-  /// name is empty.
+  /// name is empty. `outputsPart` is the part whose files the outputs of
+  /// the run go to, `<name>.partNNNN<ext>`, or 0 for the names of the
+  /// control file (D149).
   int64_t firstStep = 0;
   int64_t part = 1;
+  int64_t outputsPart = 0;
   std::string trajectory;
   int64_t frames = 0;
   /// The energy that the coupling of the velocities has taken from the

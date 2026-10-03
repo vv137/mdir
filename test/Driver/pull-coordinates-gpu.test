@@ -11,8 +11,8 @@
 # RUN: sed -n '/^#--- run.toml/,/^#--- tuple/p' %S/pull-coordinates.test | sed '1d;$d' | sed -e 's/^target    = "CPU"/target    = "GPU"/' > %t/run.toml
 # RUN: sed -n '/^#--- tuple/,/^#--- pair/p' %S/pull-coordinates.test | sed '1d;$d' > %t/tuple.term
 # RUN: sed -n '/^#--- pair/,/^#--- end/p' %S/pull-coordinates.test | sed '1d;$d' > %t/pair.term
-# RUN: sed -e '/^pull_coordinates/d' -e '/^\[\[energy.bond\]\]/,/^v  = 20.0/d' -e 's/two.h5/tuple.h5/' -e '/^\[dynamics\]/e cat %t/tuple.term' %t/run.toml > %t/tuple.toml
-# RUN: sed -e '/^pull_coordinates/d' -e '/^\[\[energy.bond\]\]/,/^v  = 20.0/d' -e 's/two.h5/pair.h5/' -e '/^\[dynamics\]/e cat %t/pair.term' %t/run.toml > %t/pair.toml
+# RUN: sed -e '/^pull = /d' -e '/^\[\[energy.bond\]\]/,/^v  = 20.0/d' -e 's/two.h5/tuple.h5/' -e '/^\[dynamics\]/e cat %t/tuple.term' %t/run.toml > %t/tuple.toml
+# RUN: sed -e '/^pull = /d' -e '/^\[\[energy.bond\]\]/,/^v  = 20.0/d' -e 's/two.h5/pair.h5/' -e '/^\[dynamics\]/e cat %t/pair.term' %t/run.toml > %t/pair.toml
 # RUN: cd %t && mdir run run.toml > run.log && mdir run tuple.toml > tuple.log && mdir run pair.toml > pair.log
 # RUN: mdir checkpoint --print=positions %t/two.h5 > %t/two.positions
 # RUN: mdir checkpoint --print=positions %t/tuple.h5 > %t/tuple.positions

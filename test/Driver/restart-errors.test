@@ -8,7 +8,7 @@
 # RUN:     %S/mixture.toml > %t.first.toml
 # RUN: echo 'checkpoint = "%t.first.h5"' >> %t.first.toml
 # RUN: echo 'checkpoint_interval = 100' >> %t.first.toml
-# RUN: mdir run %t.first.toml
+# RUN: mdir run --overwrite %t.first.toml
 
 # The velocities of leapfrog are half a step behind those of velocity
 # Verlet.
@@ -24,7 +24,7 @@
 # RUN:     -e 's|%t.first.h5|%t.other.h5|' \
 # RUN:     -e 's|^coordinates = \(.*\)|coordinates = \1\ncheckpoint = "%t.first.h5"|' \
 # RUN:     %t.first.toml > %t.box.toml
-# RUN: mdir run %t.box.toml 2>&1 >/dev/null | FileCheck %s --check-prefix=BOX
+# RUN: mdir run --overwrite %t.box.toml 2>&1 >/dev/null | FileCheck %s --check-prefix=BOX
 # RUN: mdir checkpoint %t.other.h5 | FileCheck %s --check-prefix=BOXED
 # A run takes the cell of the checkpoint it continues, which a barostat may
 # have changed, and always warns if the input has another.

@@ -112,10 +112,13 @@ struct Control {
   }
   std::string restartInput;
 
-  // [output]
+  // [output] (D149)
   std::string trajectoryFile;
-  /// The coordinates of the terms over centers of groups at every energy
-  /// of the log (D145).
+  /// The log in a file, besides the standard output, and the rows of the
+  /// log as columns; empty for none.
+  std::string logFile;
+  std::string energyFile;
+  /// The terms over centers of groups at every energy of the log (D145).
   std::string pullFile;
   /// The format of the trajectory, DCD or XTC (D141).
   TrajectoryFormat trajectoryFormat = TrajectoryFormat::DCD;
