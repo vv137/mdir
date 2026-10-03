@@ -1,0 +1,223 @@
+# The checkpoint contract of release 0.1.0 (D[checkpoint-fingerprint],
+# D[checkpoint-format]), on the mixture of thermostat.test.
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/mixture.pdb %t
+# RUN: sed -n '/^#--- base.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/vv.toml
+
+# Continuation, bit for bit, on one thread, of the cases that the suite did
+# not cover: Brownian dynamics, anisotropic cell rescaling, and a
+# Nose-Hoover chain with leapfrog. Each run stops at its checkpoint at step
+# 200 and continues to step 400; the whole run does not stop.
+#
+# RUN: sed -e 's|^integrator *= "VELOCITY_VERLET"|integrator = "BROWNIAN"\nfriction = 5.0|' \
+# RUN:     -e '/^\[thermostat\]/,/^time_constant/d' %t/vv.toml > %t/brownian.toml
+# RUN: sed -e 's|^ensemble *= "NVT"|ensemble = "NPT"\npressure = 200.0|' \
+# RUN:     -e 's|^\[boundary\]|[barostat]\nmethod = "C-RESCALE"\ntime_constant = 2.0\ncoupling = "ANISOTROPIC"\n\n[boundary]|' \
+# RUN:     %t/vv.toml > %t/aniso.toml
+# RUN: sed -e 's|^integrator *= "VELOCITY_VERLET"|integrator = "LEAPFROG"|' \
+# RUN:     -e 's|^method = "V-RESCALE"|method = "NOSE-HOOVER"|' \
+# RUN:     -e 's|^time_constant = 0.5|time_constant = 1.0|' %t/vv.toml > %t/nhc.toml
+# RUN: sed -e 's|run.h5|brownian-whole.h5|' %t/brownian.toml > %t/brownian-whole.toml
+# RUN: mdir run %t/brownian-whole.toml > /dev/null
+# RUN: sed -e 's|run.h5|brownian.h5|' %t/brownian.toml > %t/brownian-parts.toml
+# RUN: not mdir run --continue --max-walltime 0.000001 %t/brownian-parts.toml > /dev/null 2>&1
+# RUN: mdir run --continue %t/brownian-parts.toml > %t/brownian-continue.log 2>&1
+# RUN: mdir checkpoint %t/brownian-whole.h5 %t/brownian.h5 | FileCheck %s --check-prefix=SAME
+# RUN: sed -e 's|run.h5|aniso-whole.h5|' %t/aniso.toml > %t/aniso-whole.toml
+# RUN: mdir run %t/aniso-whole.toml > /dev/null
+# RUN: sed -e 's|run.h5|aniso.h5|' %t/aniso.toml > %t/aniso-parts.toml
+# RUN: not mdir run --continue --max-walltime 0.000001 %t/aniso-parts.toml > /dev/null 2>&1
+# RUN: mdir run --continue %t/aniso-parts.toml > %t/aniso-continue.log 2>&1
+# RUN: mdir checkpoint %t/aniso-whole.h5 %t/aniso.h5 | FileCheck %s --check-prefix=SAME
+# RUN: sed -e 's|run.h5|nhc-whole.h5|' %t/nhc.toml > %t/nhc-whole.toml
+# RUN: mdir run %t/nhc-whole.toml > /dev/null
+# RUN: sed -e 's|run.h5|nhc.h5|' %t/nhc.toml > %t/nhc-parts.toml
+# RUN: not mdir run --continue --max-walltime 0.000001 %t/nhc-parts.toml > /dev/null 2>&1
+# RUN: mdir run --continue %t/nhc-parts.toml > %t/nhc-continue.log 2>&1
+# RUN: mdir checkpoint %t/nhc-whole.h5 %t/nhc.h5 | FileCheck %s --check-prefix=SAME
+# RUN: FileCheck %s --check-prefix=OWNCELL < %t/aniso-continue.log
+
+# SAME: the states are identical
+
+# A run's own barostat moving its cell is no news.
+#
+# OWNCELL-NOT: warning: the cell
+# OWNCELL:     MDIR: continues the run after step 200
+
+# The file records MDIR's version and what defined the run.
+#
+# RUN: mdir checkpoint %t/aniso.h5 | FileCheck %s --check-prefix=DESCRIBE
+# RUN: mdir checkpoint --print=fingerprint %t/aniso.h5 \
+# RUN: | FileCheck %s --check-prefix=FINGERPRINT
+
+# DESCRIBE: format: 1, written by MDIR 0.1.0 ({{[0-9a-f]+|unknown}}
+# DESCRIBE: fingerprint: {{[0-9]+}} entries
+
+# FINGERPRINT:      physics {{\[\[}}energy.pair{{\]\]}} = [{expression="4*epsilon*((sigma/r)^12 - (sigma/r)^6)",mixing="lorentz-berthelot",name="lj"}]
+# FINGERPRINT-NEXT: physics {{\[\[}}energy.type{{\]\]}} = [{epsilon=0.238465,mass=39.95,name="AR",sigma=3.4},{epsilon=0.3253,mass=83.8,name="KR",sigma=3.65}]
+# FINGERPRINT-NEXT: physics [boundary] box = [23.2,23.2,23.2]
+# FINGERPRINT-NEXT: physics [boundary] type = "PERIODIC"
+# FINGERPRINT-NEXT: physics [energy] cutoff = 9
+# FINGERPRINT-NEXT: physics [energy] switch_distance = 7.5
+# FINGERPRINT-NEXT: physics the masses = sha256:{{[0-9a-f]+}}
+# FINGERPRINT-NEXT: coupling [barostat] coupling = "ANISOTROPIC"
+# FINGERPRINT:      coupling [dynamics] time_step = 0.004
+# FINGERPRINT:      coupling [ensemble] pressure = 200
+# FINGERPRINT:      execution [energy] pairlist_distance = 10
+
+# What --continue refuses: another physics or coupling, each change named.
+# Settings of the execution may change, with a note.
+#
+# RUN: sed -e 's|run.h5|stop.h5|' %t/vv.toml > %t/stop.toml
+# RUN: not mdir run --continue --max-walltime 0.000001 %t/stop.toml > /dev/null 2>&1
+# RUN: sed -e 's|mass    = 39.95|mass    = 20.0|' %t/stop.toml > %t/mass.toml
+# RUN: not mdir run --continue %t/mass.toml 2>&1 | FileCheck %s --check-prefix=MASS
+# RUN: sed -e 's|^method = "V-RESCALE"|method = "NOSE-HOOVER"|' %t/stop.toml > %t/method.toml
+# RUN: not mdir run --continue %t/method.toml 2>&1 | FileCheck %s --check-prefix=METHOD
+# RUN: sed -e 's|^cutoff *= 9.0|cutoff = 8.0|' %t/stop.toml > %t/cutoff.toml
+# RUN: not mdir run --continue %t/cutoff.toml 2>&1 | FileCheck %s --check-prefix=CUTOFF
+# RUN: sed -e 's|^ensemble *= "NVT"|ensemble = "NPT"\npressure = 1.0|' \
+# RUN:     -e 's|^\[boundary\]|[barostat]\nmethod = "C-RESCALE"\ntime_constant = 2.0\n\n[boundary]|' \
+# RUN:     %t/stop.toml > %t/npt.toml
+# RUN: not mdir run --continue %t/npt.toml 2>&1 | FileCheck %s --check-prefix=NPT
+# RUN: cp %t/stop.h5 %t/stop.h5.kept
+# RUN: sed -e 's|^pairlist_distance = 10.0|pairlist_distance = 11.0|' %t/stop.toml > %t/reach.toml
+# RUN: mdir run --continue %t/reach.toml | FileCheck %s --check-prefix=REACH
+
+# MASS:      mdir: '{{.*}}stop.h5' was written by a run of other physics or coupling, which --continue does not change; begin a new run from it as 'checkpoint' of [input] instead. What differs (checkpoint -> control file):
+# MASS-NEXT:   {{\[\[}}energy.type{{\]\]}}: [{epsilon=0.238465,mass=39.95,name="AR",sigma=3.4},{{.*}}] -> [{epsilon=0.238465,mass=20,name="AR",sigma=3.4},{{.*}}]
+# MASS-NEXT:   the masses: sha256:{{[0-9a-f]+}} -> sha256:{{[0-9a-f]+}}
+# METHOD:    What differs (checkpoint -> control file):
+# METHOD-NEXT: [thermostat] method: "V-RESCALE" -> "NOSE-HOOVER"
+# CUTOFF:    What differs (checkpoint -> control file):
+# CUTOFF-NEXT: [energy] cutoff: 9 -> 8
+# NPT:       What differs (checkpoint -> control file):
+# NPT-NEXT:    [barostat] method: (none) -> "C-RESCALE"
+# NPT-NEXT:    [barostat] time_constant: (none) -> 2
+# NPT-NEXT:    [ensemble] ensemble: "NVT" -> "NPT"
+# NPT-NEXT:    [ensemble] pressure: (none) -> 1
+# REACH:      MDIR: note: the run continues with other settings of its execution, whose bits follow them (checkpoint -> control file):
+# REACH-NEXT:   [energy] pairlist_distance: 10 -> 11
+
+# A run that begins from another run's checkpoint takes its forces and its
+# chain where the physics and the coupling are the same, and continues it
+# bit for bit; otherwise it evaluates them. The same physics written so
+# that it counts as a change (the default `dispersion_correction` given)
+# evaluates forces that are those of the checkpoint, bit for bit.
+#
+# RUN: sed -e 's|run.h5|whole.h5|' %t/vv.toml > %t/whole.toml
+# RUN: mdir run %t/whole.toml > /dev/null
+# RUN: sed -e 's|run.h5|first.h5|' -e 's|^steps *= 400|steps = 200|' %t/vv.toml > %t/first.toml
+# RUN: mdir run %t/first.toml > /dev/null
+# RUN: sed -e 's|run.h5|same.h5|' -e 's|^steps *= 400|steps = 200|' \
+# RUN:     -e 's|^coordinates = \(.*\)|coordinates = \1\ncheckpoint = "first.h5"|' %t/vv.toml > %t/same.toml
+# RUN: mdir run %t/same.toml | FileCheck %s --check-prefix=TAKES
+# RUN: mdir checkpoint %t/whole.h5 %t/same.h5 | FileCheck %s --check-prefix=IDENTICAL
+# RUN: sed -e 's|same.h5|noop.h5|' \
+# RUN:     -e 's|^mixing     = "lorentz-berthelot"|mixing = "lorentz-berthelot"\ndispersion_correction = "NONE"|' \
+# RUN:     %t/same.toml > %t/noop.toml
+# RUN: mdir run %t/noop.toml | FileCheck %s --check-prefix=EVALUATES
+# RUN: mdir checkpoint %t/whole.h5 %t/noop.h5 | FileCheck %s --check-prefix=IDENTICAL
+# RUN: mdir emit %t/same.toml | FileCheck %s --check-prefix=GIVEN
+# RUN: mdir emit %t/noop.toml | FileCheck %s --check-prefix=EVALUATED
+
+# TAKES-NOT: note
+# TAKES:     MDIR: continues after step 200, from '{{.*}}first.h5'
+# IDENTICAL: the states are identical
+# EVALUATES:      MDIR: note: '{{.*}}first.h5' was written by a run of other physics or coupling; the run evaluates the forces and the state of the barostat at its first step (checkpoint -> control file):
+# EVALUATES-NEXT:   {{\[\[}}energy.pair{{\]\]}}: [{expression={{.*}}] -> [{dispersion_correction="NONE",expression={{.*}}]
+
+# GIVEN:         mdrt.from_buffer %forces
+# EVALUATED-NOT: mdrt.from_buffer %forces
+# EVALUATED:     md.evaluate @energy(%x0
+# EVALUATED-NOT: mdrt.from_buffer %forces
+
+# A chain of other length begins at rest; the cell of another run's
+# barostat is worth a warning.
+#
+# RUN: sed -e 's|nhc-whole.h5|nhc-other.h5|' -e 's|^steps *= 400|steps = 200|' \
+# RUN:     -e 's|^coordinates = \(.*\)|coordinates = \1\ncheckpoint = "nhc.h5"|' \
+# RUN:     -e 's|^time_constant = 1.0|time_constant = 1.0\nchain_length = 5|' \
+# RUN:     %t/nhc-whole.toml > %t/chain.toml
+# RUN: mdir run %t/chain.toml | FileCheck %s --check-prefix=CHAIN
+# RUN: sed -e 's|aniso-whole.h5|aniso-other.h5|' -e 's|^steps *= 400|steps = 200|' \
+# RUN:     -e 's|^coordinates = \(.*\)|coordinates = \1\ncheckpoint = "aniso.h5"|' \
+# RUN:     %t/aniso-whole.toml > %t/cell.toml
+# RUN: mdir run %t/cell.toml 2>&1 | FileCheck %s --check-prefix=CELL
+
+# CHAIN: MDIR: note: the thermostat differs from that of '{{.*}}nhc.h5'; its chain begins at rest
+# CELL:  warning: the cell of '{{.*}}aniso.h5', {{.*}} differs from that of the input
+
+# The file: a byte of the state changed, a newer format, and a file of a
+# development build are refused.
+#
+# RUN: cp %t/stop.h5.kept %t/damaged.h5
+# RUN: mdir checkpoint --print=positions %t/damaged.h5 > %t/positions.txt
+# RUN: %python %S/Inputs/damage_checkpoint.py value %t/damaged.h5 %t/positions.txt
+# RUN: not mdir checkpoint %t/damaged.h5 2>&1 | FileCheck %s --check-prefix=DAMAGED
+# RUN: cp %t/stop.h5.kept %t/newer.h5
+# RUN: %python %S/Inputs/damage_checkpoint.py format %t/newer.h5 2
+# RUN: not mdir checkpoint %t/newer.h5 2>&1 | FileCheck %s --check-prefix=NEWER
+# RUN: cp %t/stop.h5.kept %t/development.h5
+# RUN: %python %S/Inputs/damage_checkpoint.py rename %t/development.h5 state_sha256 state_sha25x
+# RUN: not mdir checkpoint %t/development.h5 2>&1 | FileCheck %s --check-prefix=DEVELOPMENT
+# RUN: cp %t/damaged.h5 %t/stop.h5
+# RUN: not mdir run --continue %t/stop.toml 2>&1 | FileCheck %s --check-prefix=CONTINUE
+
+# DAMAGED:     mdir: the state in '{{.*}}damaged.h5' does not match the hash it was written with: the file was changed or damaged after it was written
+# NEWER:       mdir: '{{.*}}newer.h5' is a checkpoint of format 2, written by a newer MDIR; this one reads format 1
+# DEVELOPMENT: mdir: '{{.*}}development.h5' was written by a development build of MDIR before release 0.1.0, whose checkpoints this one does not read; begin the run from the positions of its last frame
+# CONTINUE:    does not match the hash it was written with: the file was changed or damaged after it was written; '{{.*}}stop.h5.prev' holds the checkpoint before it, if there is one
+
+#--- base.toml
+[input]
+coordinates = "mixture.pdb"
+
+[output]
+energy_interval = 100
+checkpoint = "run.h5"
+checkpoint_interval = 200
+
+[energy]
+switch_distance = 7.5
+cutoff       = 9.0
+pairlist_distance = 10.0
+
+[[energy.pair]]
+name       = "lj"
+expression = "4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+mixing     = "lorentz-berthelot"
+
+[[energy.type]]
+name    = "AR"
+mass    = 39.95
+epsilon = 0.238465
+sigma   = 3.4
+
+[[energy.type]]
+name    = "KR"
+mass    = 83.80
+epsilon = 0.3253
+sigma   = 3.65
+
+[dynamics]
+integrator        = "VELOCITY_VERLET"
+time_step         = 0.004
+steps             = 400
+
+[ensemble]
+ensemble    = "NVT"
+temperature = 150.0
+
+[thermostat]
+method = "V-RESCALE"
+interval = 10
+time_constant = 0.5
+
+[boundary]
+type       = "PERIODIC"
+box = [23.2, 23.2, 23.2]
+#--- end

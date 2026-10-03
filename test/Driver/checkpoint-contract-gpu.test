@@ -1,0 +1,59 @@
+# The checkpoint contract of release 0.1.0 on a GPU (D[checkpoint-fingerprint],
+# D[checkpoint-format]): continuation bit for bit for Brownian dynamics,
+# anisotropic cell rescaling, and a Nose-Hoover chain with leapfrog, in
+# mixed precision; and the forces that a run from another run's checkpoint
+# evaluates when the fingerprint differs.
+#
+# REQUIRES: cuda, hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/mixture.pdb %t
+# RUN: sed -n '/^#--- base.toml/,/^#--- end/p' %S/checkpoint-contract.test | sed '1d;$d' \
+# RUN:     | sed -e 's|^\[boundary\]|[execution]\ntarget = "GPU"\nprecision = "MIXED"\n\n[boundary]|' > %t/vv.toml
+# RUN: sed -e 's|^integrator *= "VELOCITY_VERLET"|integrator = "BROWNIAN"\nfriction = 5.0|' \
+# RUN:     -e '/^\[thermostat\]/,/^time_constant/d' %t/vv.toml > %t/brownian.toml
+# RUN: sed -e 's|^ensemble *= "NVT"|ensemble = "NPT"\npressure = 200.0|' \
+# RUN:     -e 's|^\[boundary\]|[barostat]\nmethod = "C-RESCALE"\ntime_constant = 2.0\ncoupling = "ANISOTROPIC"\n\n[boundary]|' \
+# RUN:     %t/vv.toml > %t/aniso.toml
+# RUN: sed -e 's|^integrator *= "VELOCITY_VERLET"|integrator = "LEAPFROG"|' \
+# RUN:     -e 's|^method = "V-RESCALE"|method = "NOSE-HOOVER"|' \
+# RUN:     -e 's|^time_constant = 0.5|time_constant = 1.0|' %t/vv.toml > %t/nhc.toml
+
+# RUN: sed -e 's|run.h5|brownian-whole.h5|' %t/brownian.toml > %t/brownian-whole.toml
+# RUN: mdir run %t/brownian-whole.toml > /dev/null
+# RUN: sed -e 's|run.h5|brownian.h5|' %t/brownian.toml > %t/brownian-parts.toml
+# RUN: not mdir run --continue --max-walltime 0.000001 %t/brownian-parts.toml > /dev/null 2>&1
+# RUN: mdir run --continue %t/brownian-parts.toml > /dev/null
+# RUN: mdir checkpoint %t/brownian-whole.h5 %t/brownian.h5 | FileCheck %s
+
+# RUN: sed -e 's|run.h5|aniso-whole.h5|' %t/aniso.toml > %t/aniso-whole.toml
+# RUN: mdir run %t/aniso-whole.toml > /dev/null
+# RUN: sed -e 's|run.h5|aniso.h5|' %t/aniso.toml > %t/aniso-parts.toml
+# RUN: not mdir run --continue --max-walltime 0.000001 %t/aniso-parts.toml > /dev/null 2>&1
+# RUN: mdir run --continue %t/aniso-parts.toml > /dev/null
+# RUN: mdir checkpoint %t/aniso-whole.h5 %t/aniso.h5 | FileCheck %s
+
+# RUN: sed -e 's|run.h5|nhc-whole.h5|' %t/nhc.toml > %t/nhc-whole.toml
+# RUN: mdir run %t/nhc-whole.toml > /dev/null
+# RUN: sed -e 's|run.h5|nhc.h5|' %t/nhc.toml > %t/nhc-parts.toml
+# RUN: not mdir run --continue --max-walltime 0.000001 %t/nhc-parts.toml > /dev/null 2>&1
+# RUN: mdir run --continue %t/nhc-parts.toml > /dev/null
+# RUN: mdir checkpoint %t/nhc-whole.h5 %t/nhc.h5 | FileCheck %s
+
+# The same physics written so that it counts as a change: the run from the
+# checkpoint evaluates the forces of its first step, and arrives at the
+# state of the run that did not stop.
+#
+# RUN: sed -e 's|run.h5|whole.h5|' %t/vv.toml > %t/whole.toml
+# RUN: mdir run %t/whole.toml > /dev/null
+# RUN: sed -e 's|run.h5|first.h5|' -e 's|^steps *= 400|steps = 200|' %t/vv.toml > %t/first.toml
+# RUN: mdir run %t/first.toml > /dev/null
+# RUN: sed -e 's|run.h5|noop.h5|' -e 's|^steps *= 400|steps = 200|' \
+# RUN:     -e 's|^coordinates = \(.*\)|coordinates = \1\ncheckpoint = "first.h5"|' \
+# RUN:     -e 's|^mixing     = "lorentz-berthelot"|mixing = "lorentz-berthelot"\ndispersion_correction = "NONE"|' \
+# RUN:     %t/vv.toml > %t/noop.toml
+# RUN: mdir run %t/noop.toml | FileCheck %s --check-prefix=EVALUATES
+# RUN: mdir checkpoint %t/whole.h5 %t/noop.h5 | FileCheck %s
+
+# CHECK: the states are identical
+# EVALUATES: MDIR: note: '{{.*}}first.h5' was written by a run of other physics or coupling; the run evaluates the forces

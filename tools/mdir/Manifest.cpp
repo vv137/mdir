@@ -32,6 +32,13 @@ llvm::json::Object mdir::tool::getManifestBuild() {
                 {"cuda_toolkit_version", MDIR_CUDA_VERSION}};
 }
 
+std::string mdir::tool::getBuildVersion() {
+  std::string version = std::string(MDIR_VERSION) + " (" + MDIR_GIT_COMMIT;
+  if (StringRef(MDIR_GIT_DIRTY) == "yes")
+    version += ", with changes";
+  return version + ")";
+}
+
 std::string mdir::tool::hashInput(StringRef data) {
   return llvm::toHex(llvm::SHA256::hash(llvm::arrayRefFromStringRef(data)), true);
 }

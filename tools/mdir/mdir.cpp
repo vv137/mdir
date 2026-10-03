@@ -111,7 +111,7 @@ int main(int argc, char **argv) {
       "  mdir check <control file> [--json]\n"
       "  mdir template md|amber|minimize|nvt|npt|production\n"
       "  mdir checkpoint <checkpoint> [<checkpoint>] "
-      "[--print=positions|velocities|forces]\n"
+      "[--print=positions|velocities|forces|fingerprint]\n"
       "  mdir bug-report <control file> [-o <directory>] [--run]\n"
       "  mdir version\n"
       "  mdir doctor [--target=all|cpu|gpu]\n");

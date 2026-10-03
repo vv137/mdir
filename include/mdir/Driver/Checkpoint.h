@@ -15,6 +15,22 @@
 namespace mdir {
 namespace driver {
 
+/// An entry of the fingerprint of a run (D[checkpoint-fingerprint]): its
+/// group, "physics", "coupling", or "execution"; its name, such as
+/// "[energy] cutoff"; and its value, the canonical text of what the control
+/// file writes, or the SHA-256 of what is too long to show.
+struct FingerprintEntry {
+  std::string group;
+  std::string name;
+  std::string value;
+};
+using Fingerprint = std::vector<FingerprintEntry>;
+
+/// The format of the checkpoints that this MDIR writes and reads, the
+/// contract of release 0.1.0 (D[checkpoint-format]). A later format comes
+/// with a conversion from the one before it.
+constexpr int checkpointFormat = 1;
+
 /// The state of a run, in the units inside MDIR: nm, ps, amu, kJ/mol. All
 /// numbers are 64-bit, so that a value of any precision mode is stored
 /// without loss.
@@ -66,8 +82,11 @@ struct Checkpoint {
   /// system since the run began, in kJ/mol, which the conserved energy of
   /// a continued run counts on from.
   double bath = 0.0;
-  /// Whether the file holds the above; one written before D129 does not.
-  bool hasRun = false;
+  /// What defined the run (D[checkpoint-fingerprint]).
+  Fingerprint fingerprint;
+  /// The program that wrote the file: its version and commit.
+  std::string creator = "MDIR";
+  std::string creatorVersion;
 
   /// With a barostat that scales the cell every step (D92): the trace of
   /// the virial, that of the rigid groups, and the kinetic energy without
@@ -84,8 +103,8 @@ struct Checkpoint {
 bool hasCheckpointSupport();
 
 /// Writes `checkpoint` to `path`. The file appears under its name only
-/// when it is complete, and the one it replaces stays as `path` with
-/// `.prev` appended (D132).
+/// when it is complete and on stable storage, and the one it replaces stays
+/// as `path` with `.prev` appended (D132, D[checkpoint-format]).
 llvm::Error writeCheckpoint(const std::string &path,
                             const Checkpoint &checkpoint);
 
@@ -93,6 +112,9 @@ llvm::Error writeCheckpoint(const std::string &path,
 /// last.
 std::string getPreviousCheckpointPath(const std::string &path);
 
+/// Reads a checkpoint of format `checkpointFormat`, and checks the hash of
+/// its state. A newer format, a file of a development build before the
+/// release, and a state whose hash differs are errors.
 llvm::Expected<Checkpoint> readCheckpoint(const std::string &path);
 
 /// Compares the states of two checkpoints. Returns an empty string if they

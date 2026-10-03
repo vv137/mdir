@@ -12,7 +12,11 @@
 //   /particles/all/species        the types of the particles
 //   /particles/all/mass
 //   /parameters/mdir              what MDIR needs to continue the run, and
-//                                 the run that wrote it (D129, D130)
+//                                 the run that wrote it (D129, D130); the
+//                                 format and the hash of the state
+//                                 (D[checkpoint-format])
+//   /parameters/mdir/fingerprint  what defined the run
+//                                 (D[checkpoint-fingerprint])
 //
 // A quantity that changes with time has one frame: the state that the
 // checkpoint holds.
@@ -21,11 +25,15 @@
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Path.h"
+#include "llvm/Support/SHA256.h"
 
+#include <array>
 #include <cstdio>
 #include <cstring>
 
 #if MDIR_HAS_HDF5
+#include <fcntl.h>
 #include <hdf5.h>
 #include <unistd.h>
 #endif
@@ -79,6 +87,72 @@ std::string mdir::driver::compareCheckpoints(const Checkpoint &first,
 std::string mdir::driver::getPreviousCheckpointPath(const std::string &path) {
   return path + ".prev";
 }
+
+namespace {
+
+/// The text of the entries of `group` of a fingerprint, a line for each:
+/// the name, a tab, and the value.
+std::string getFingerprintText(const Fingerprint &fingerprint,
+                               llvm::StringRef group) {
+  std::string text;
+  for (const FingerprintEntry &entry : fingerprint)
+    if (entry.group == group)
+      text += entry.name + "\t" + entry.value + "\n";
+  return text;
+}
+
+const char *const fingerprintGroups[] = {"physics", "coupling", "execution"};
+
+/// SHA-256 of everything that a checkpoint holds, in a fixed order
+/// (D[checkpoint-format]).
+std::string hashState(const Checkpoint &state) {
+  llvm::SHA256 hash;
+  auto bytes = [&](const void *data, size_t size) {
+    hash.update(llvm::ArrayRef<uint8_t>(static_cast<const uint8_t *>(data),
+                                        size));
+  };
+  auto number = [&](const auto &value) { bytes(&value, sizeof(value)); };
+  auto numbers = [&](const auto &values) {
+    uint64_t size = values.size();
+    number(size);
+    bytes(values.data(), size * sizeof(values[0]));
+  };
+  auto text = [&](const std::string &value) {
+    uint64_t size = value.size();
+    number(size);
+    bytes(value.data(), size);
+  };
+  number(state.step);
+  number(state.time);
+  numbers(state.positions);
+  numbers(state.velocities);
+  numbers(state.forces);
+  numbers(state.masses);
+  numbers(state.species);
+  bytes(state.box, sizeof(state.box));
+  bytes(state.tilt, sizeof(state.tilt));
+  uint8_t periodic = state.periodic ? 1 : 0;
+  number(periodic);
+  text(state.integrator);
+  number(state.velocityOffset);
+  text(state.precision);
+  number(state.timestep);
+  number(state.seed);
+  number(state.firstStep);
+  number(state.part);
+  number(state.outputsPart);
+  text(state.trajectory);
+  number(state.frames);
+  number(state.bath);
+  numbers(state.barostatState);
+  numbers(state.thermostatState);
+  for (const char *group : fingerprintGroups)
+    text(getFingerprintText(state.fingerprint, group));
+  std::array<uint8_t, 32> digest = hash.final();
+  return llvm::toHex(digest, /*LowerCase=*/true);
+}
+
+} // namespace
 
 #if !MDIR_HAS_HDF5
 
@@ -181,6 +255,23 @@ public:
       writeText(dataset, "unit", unit);
   }
 
+  /// A dataset of one string, which may be longer than an attribute holds.
+  void writeTextDataset(hid_t parent, const char *name,
+                        const std::string &text) {
+    if (failed)
+      return;
+    Handle type(H5Tcopy(H5T_C_S1), H5Tclose);
+    H5Tset_size(type, text.size() + 1);
+    H5Tset_strpad(type, H5T_STR_NULLTERM);
+    Handle space(H5Screate(H5S_SCALAR), H5Sclose);
+    Handle dataset(H5Dcreate2(parent, name, type, space, H5P_DEFAULT,
+                              H5P_DEFAULT, H5P_DEFAULT),
+                   H5Dclose);
+    failed |= !dataset.isValid() ||
+              H5Dwrite(dataset, type, H5S_ALL, H5S_ALL, H5P_DEFAULT,
+                       text.c_str()) < 0;
+  }
+
   /// A quantity that changes with time, with the one frame `values`, which
   /// is of the time `time`.
   void writeElement(hid_t parent, const char *name, const Checkpoint &state,
@@ -277,6 +368,24 @@ public:
     text = buffer.data();
   }
 
+  void readTextDataset(const char *path, std::string &text) {
+    if (hasFailed())
+      return;
+    Handle dataset(H5Dopen2(file, path, H5P_DEFAULT), H5Dclose);
+    if (!dataset.isValid())
+      return fail(path, "is missing");
+    Handle stored(H5Dget_type(dataset), H5Tclose);
+    size_t size = H5Tget_size(stored);
+    Handle type(H5Tcopy(H5T_C_S1), H5Tclose);
+    H5Tset_size(type, size + 1);
+    H5Tset_strpad(type, H5T_STR_NULLTERM);
+    std::vector<char> buffer(size + 1, '\0');
+    if (H5Dread(dataset, type, H5S_ALL, H5S_ALL, H5P_DEFAULT,
+                buffer.data()) < 0)
+      return fail(path, "cannot be read");
+    text = buffer.data();
+  }
+
 private:
   void fail(const char *path, const char *what) {
     failure = std::string("'") + path + "' " + what;
@@ -285,6 +394,18 @@ private:
   hid_t file;
   std::string failure;
 };
+
+/// Writes what the system holds of a file, or of the names of a directory,
+/// to stable storage.
+bool synchronize(const std::string &path, bool directory) {
+  int descriptor =
+      ::open(path.c_str(), directory ? O_RDONLY | O_DIRECTORY : O_RDONLY);
+  if (descriptor < 0)
+    return false;
+  bool synchronized = ::fsync(descriptor) == 0;
+  ::close(descriptor);
+  return synchronized;
+}
 
 } // namespace
 
@@ -309,11 +430,14 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
       Handle h5md = writer.createGroup(file, "h5md");
       int version[2] = {1, 1};
       writer.writeAttribute(h5md, "version", H5T_NATIVE_INT, version, 2);
+      // H5MD asks for an author; MDIR does not know who runs it.
       Handle author = writer.createGroup(h5md, "author");
       writer.writeText(author, "name", "unknown");
       Handle creator = writer.createGroup(h5md, "creator");
-      writer.writeText(creator, "name", "MDIR");
-      writer.writeText(creator, "version", "0");
+      writer.writeText(creator, "name", checkpoint.creator);
+      writer.writeText(creator, "version", checkpoint.creatorVersion.empty()
+                                               ? "unknown"
+                                               : checkpoint.creatorVersion);
     }
 
     {
@@ -375,8 +499,9 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
     {
       Handle parameters = writer.createGroup(file, "parameters");
       Handle mdir = writer.createGroup(parameters, "mdir");
-      int format = 1;
+      int format = checkpointFormat;
       writer.writeAttribute(mdir, "format", H5T_NATIVE_INT, &format);
+      writer.writeText(mdir, "state_sha256", hashState(checkpoint));
       writer.writeText(mdir, "integrator", checkpoint.integrator);
       writer.writeReal(mdir, "velocity_offset", checkpoint.velocityOffset);
       writer.writeText(mdir, "precision", checkpoint.precision);
@@ -402,10 +527,20 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
         writer.writeDataset(mdir, "thermostat_state", H5T_NATIVE_DOUBLE,
                             {checkpoint.thermostatState.size()},
                             checkpoint.thermostatState.data(), "");
+      Handle fingerprint = writer.createGroup(mdir, "fingerprint");
+      for (const char *group : fingerprintGroups)
+        writer.writeTextDataset(
+            fingerprint, group,
+            getFingerprintText(checkpoint.fingerprint, group));
     }
-    failed = writer.hasFailed();
+    failed = writer.hasFailed() || H5Fflush(file, H5F_SCOPE_GLOBAL) < 0;
   }
 
+  // On stable storage before it takes its name: a file system that delays
+  // its writes (ext4 without auto_da_alloc, Lustre, NFS) may otherwise
+  // leave an empty file under the name after a crash (D[checkpoint-format]).
+  if (!failed)
+    failed = !synchronize(partial, /*directory=*/false);
   if (failed) {
     std::remove(partial.c_str());
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
@@ -433,6 +568,15 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                    "cannot write '%s'", path.c_str());
   }
+  // The new names, too.
+  llvm::SmallString<256> directory(path);
+  llvm::sys::path::remove_filename(directory);
+  if (directory.empty())
+    directory = ".";
+  if (!synchronize(directory.str().str(), /*directory=*/true))
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "cannot synchronize the directory of '%s'",
+                                   path.c_str());
   return llvm::Error::success();
 }
 
@@ -451,6 +595,28 @@ mdir::driver::readCheckpoint(const std::string &path) {
         llvm::inconvertibleErrorCode(),
         "'%s' is not a checkpoint of MDIR: it has no group "
         "'/parameters/mdir'",
+        path.c_str());
+  // The format, the contract of release 0.1.0 (D[checkpoint-format]). A
+  // file of a development build before it records no fingerprint and no
+  // hash of its state.
+  int format = 0;
+  if (reader.hasAttribute("/parameters/mdir", "format"))
+    reader.readAttribute("/parameters/mdir", "format", H5T_NATIVE_INT,
+                         format);
+  if (format > checkpointFormat)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "'%s' is a checkpoint of format %d, written by a newer MDIR; this "
+        "one reads format %d",
+        path.c_str(), format, checkpointFormat);
+  if (format != checkpointFormat ||
+      !reader.hasAttribute("/parameters/mdir", "state_sha256") ||
+      !reader.has("/parameters/mdir/fingerprint"))
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "'%s' was written by a development build of MDIR before release "
+        "0.1.0, whose checkpoints this one does not read; begin the run "
+        "from the positions of its last frame",
         path.c_str());
 
   Checkpoint checkpoint;
@@ -486,42 +652,49 @@ mdir::driver::readCheckpoint(const std::string &path) {
                        checkpoint.timestep);
   reader.readAttribute("/parameters/mdir", "seed", H5T_NATIVE_UINT64,
                        checkpoint.seed);
-  // The run that wrote the checkpoint. A checkpoint without it can begin a
-  // run but not be continued by `mdir run --continue`.
-  if (reader.hasAttribute("/parameters/mdir", "periodic")) {
-    int periodic = 1;
-    reader.readAttribute("/parameters/mdir", "periodic", H5T_NATIVE_INT,
-                         periodic);
-    checkpoint.periodic = periodic != 0;
-  }
-  if (reader.hasAttribute("/parameters/mdir", "first_step") &&
-      reader.hasAttribute("/parameters/mdir", "outputs_part")) {
-    reader.readAttribute("/parameters/mdir", "first_step", H5T_NATIVE_INT64,
-                         checkpoint.firstStep);
-    reader.readAttribute("/parameters/mdir", "part", H5T_NATIVE_INT64,
-                         checkpoint.part);
-    reader.readAttribute("/parameters/mdir", "outputs_part",
-                         H5T_NATIVE_INT64, checkpoint.outputsPart);
-    reader.readText("/parameters/mdir", "trajectory", checkpoint.trajectory);
-    reader.readAttribute("/parameters/mdir", "frames", H5T_NATIVE_INT64,
-                         checkpoint.frames);
-    reader.readAttribute("/parameters/mdir", "bath", H5T_NATIVE_DOUBLE,
-                         checkpoint.bath);
-    checkpoint.hasRun = true;
-  }
-  // The state of the last scaling of a barostat that scales every step:
-  // nine numbers since D119, which a run takes; another size, from before,
-  // is read and left for the run to evaluate the state once.
+  // The run that wrote the checkpoint (D129, D130).
+  int periodic = 1;
+  reader.readAttribute("/parameters/mdir", "periodic", H5T_NATIVE_INT,
+                       periodic);
+  checkpoint.periodic = periodic != 0;
+  reader.readAttribute("/parameters/mdir", "first_step", H5T_NATIVE_INT64,
+                       checkpoint.firstStep);
+  reader.readAttribute("/parameters/mdir", "part", H5T_NATIVE_INT64,
+                       checkpoint.part);
+  reader.readAttribute("/parameters/mdir", "outputs_part", H5T_NATIVE_INT64,
+                       checkpoint.outputsPart);
+  reader.readText("/parameters/mdir", "trajectory", checkpoint.trajectory);
+  reader.readAttribute("/parameters/mdir", "frames", H5T_NATIVE_INT64,
+                       checkpoint.frames);
+  reader.readAttribute("/parameters/mdir", "bath", H5T_NATIVE_DOUBLE,
+                       checkpoint.bath);
+  // The state of the last scaling of a barostat that scales every step
+  // (D92, D119): nine numbers.
   if (reader.has("/parameters/mdir/barostat_state"))
     reader.readDataset("/parameters/mdir/barostat_state", H5T_NATIVE_DOUBLE,
-                       reader.getSize("/parameters/mdir/barostat_state"),
-                       checkpoint.barostatState);
+                       9, checkpoint.barostatState);
   // The state of a Nose-Hoover chain (D163a).
   if (reader.has("/parameters/mdir/thermostat_state"))
     reader.readDataset("/parameters/mdir/thermostat_state",
                        H5T_NATIVE_DOUBLE,
                        reader.getSize("/parameters/mdir/thermostat_state"),
                        checkpoint.thermostatState);
+  // What defined the run (D[checkpoint-fingerprint]).
+  for (const char *group : fingerprintGroups) {
+    std::string text;
+    reader.readTextDataset(
+        ("/parameters/mdir/fingerprint/" + std::string(group)).c_str(), text);
+    llvm::SmallVector<llvm::StringRef, 16> lines;
+    llvm::StringRef(text).split(lines, '\n', -1, /*KeepEmpty=*/false);
+    for (llvm::StringRef line : lines) {
+      auto [name, value] = line.split('\t');
+      checkpoint.fingerprint.push_back({group, name.str(), value.str()});
+    }
+  }
+  reader.readText("/h5md/creator", "name", checkpoint.creator);
+  reader.readText("/h5md/creator", "version", checkpoint.creatorVersion);
+  std::string stored;
+  reader.readText("/parameters/mdir", "state_sha256", stored);
 
   if (reader.hasFailed())
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
@@ -540,6 +713,12 @@ mdir::driver::readCheckpoint(const std::string &path) {
   }
   checkpoint.step = step[0];
   checkpoint.time = time[0];
+  if (hashState(checkpoint) != stored)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "the state in '%s' does not match the hash it was written with: the "
+        "file was changed or damaged after it was written",
+        path.c_str());
   return std::move(checkpoint);
 }
 
