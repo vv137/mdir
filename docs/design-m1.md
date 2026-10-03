@@ -919,8 +919,8 @@ by the names O, H1, H2 in any order; and on an odd grid the aliasing
 factor of `influence = "OPTIMAL"` takes the principal frequency at the
 index $(N-1)/2$, where pmemd takes $-(N+1)/2$ ([pme-m1.md](pme-m1.md),
 Section 1.1). The Coulomb
-constant, $eta$ from $\operatorname{erfc}(eta r_c)$ rather than
-$\operatorname{erfc}(eta r_c)/r_c$, and the average of the correction
+constant, $\beta$ from $\operatorname{erfc}(\beta r_c)$ rather than
+$\operatorname{erfc}(\beta r_c)/r_c$, and the average of the correction
 for the dispersion are conventions of MDIR (Sections 7.2 and 8).
 
 A plain cutoff of the Coulomb term does not conserve the energy: a pair
