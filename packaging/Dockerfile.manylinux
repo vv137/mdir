@@ -59,8 +59,15 @@ RUN LLVM_ROOT=/opt/llvm LLVM_VERSION=23.1.2 LLVM_TARGETS="X86;NVPTX" \
       JOBS=${JOBS} LINK_JOBS=${LINK_JOBS} /src/scripts/build-llvm.sh \
  && rm -rf /opt/llvm/src /opt/llvm/build
 
-# --- 5. MDIR -----------------------------------------------------------------
-FROM toolchain AS build
+# --- 5. The CUDA EULA, which the tarball carries beside cuFFT and libdevice --
+# A layer of its own after LLVM, so that adding it kept the LLVM layer.
+FROM toolchain AS eula
+ARG CUDA=13-0
+RUN dnf install -y --setopt=install_weak_deps=False cuda-documentation-${CUDA}-13.0.85 \
+ && dnf clean all && test -f /usr/local/cuda/EULA.txt
+
+# --- 6. MDIR -----------------------------------------------------------------
+FROM eula AS build
 ARG MDIR_GIT_COMMIT=
 ARG VERSION=0.0.0
 ENV MDIR_GIT_COMMIT=${MDIR_GIT_COMMIT}
@@ -79,7 +86,7 @@ RUN --mount=type=cache,target=/build/mdir,id=mdir-manylinux-build \
       -DCMAKE_INSTALL_PREFIX=/ \
  && cmake --build /build/mdir --target mdir mdrt mdrt_cuda \
  && rm -rf /stage && mkdir -p /stage \
- && DESTDIR=/stage/mdir-${VERSION} cmake --install /build/mdir \
+ && DESTDIR=/stage/mdir-${VERSION} cmake --install /build/mdir --strip \
  && cp -r /src/mdir/examples /stage/mdir-${VERSION}/share/mdir/examples \
  && cp /src/mdir/LICENSE /stage/mdir-${VERSION}/share/mdir/LICENSE \
  && tar -C /stage -czf /mdir-${VERSION}-manylinux_2_28_x86_64.tar.gz mdir-${VERSION}

@@ -79,7 +79,7 @@ if(MDIR_BUNDLE_LIBRARIES)
     install(FILES "${CUDAToolkit_LIBRARY_ROOT}/nvvm/libdevice/libdevice.10.bc"
       DESTINATION share/mdir/cuda/nvvm/libdevice COMPONENT mdir)
     install(FILES "${CUDAToolkit_LIBRARY_ROOT}/EULA.txt"
-      DESTINATION share/mdir/cuda COMPONENT mdir OPTIONAL)
+      DESTINATION share/mdir/cuda COMPONENT mdir)
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/version.txt"
       "CUDA Version ${CUDAToolkit_VERSION}\n")
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/version.txt"

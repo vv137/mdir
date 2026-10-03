@@ -21,7 +21,7 @@ fail=0
 complain() { echo "check-binary: $*" >&2; fail=1; }
 
 allowed='^(libc|libm|libdl|libpthread|librt|libgcc_s|libstdc\+\+|libz|libcuda)\.so\.[0-9]+$|^ld-linux-x86-64\.so\.2$|^linux-vdso\.so\.1$'
-max_version() { grep -o "$1_[0-9.]*" | sed "s/$1_//" | sort -V | tail -1; }
+max_version() { { grep -o "$1_[0-9.]*" || true; } | sed "s/$1_//" | sort -V | tail -1; }
 newer() { [[ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" != "$2" ]]; }
 
 files=("$dir/bin/mdir")
