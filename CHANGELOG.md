@@ -28,6 +28,12 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- Refined the proposed distributed architecture and roadmap around field
+  versions, owner–replica maps, coverage, and contribution completion, with
+  reference-execution and verifier gates before transport and asynchronous
+  scheduling (D[md-dist-architecture]). Documentation only; no distributed
+  implementation or control-file changes.
+
 - `mdir run --continue` refuses a checkpoint whose physics or coupling
   differ from the control file and names each change. `[execution]`,
   `[output]`, and a larger `steps` may still change. To change a

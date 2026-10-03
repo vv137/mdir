@@ -99,7 +99,9 @@ of stages. Each stage reports:
 The distribution planner consumes only this interface. It compares an
 expanded halo against per-stage communication with a cost model.
 
-*Amended by A3.*
+*Amended by A3 and D[md-dist-architecture]: the staged interface feeds a
+dependency DAG, with explicit versions, coverage, and contribution scopes;
+a schedule is a derived result, not the interface itself.*
 
 ### D5. The semantic dialects form an object graph, not a lowering chain
 
@@ -205,9 +207,10 @@ expression parser serves both entry points.
 ### D17. Value semantics ends inside `md_exec`
 
 `md_dist` and the upper part of `md_exec` operate on field values. A halo
-exchange returns a new version of a field whose ghost region is current; it
-does not overwrite a buffer. A pass inside `md_exec` then assigns storage:
-it decides in-place updates and the data layout, and converts ops to their
+refresh returns a new materialization of the same logical field version
+whose ghost region is current; it does not overwrite a buffer or advance
+the scientific version (clarified by D[md-dist-architecture]). A pass inside
+`md_exec` then assigns storage: it decides in-place updates and the data layout, and converts ops to their
 storage form.
 
 ```mlir
@@ -229,13 +232,15 @@ operand. Access modes map onto that shape:
 
 Consequences:
 
-- Halo placement and redundant-exchange elimination are ordinary SSA
-  dataflow and common-subexpression elimination.
+- SSA expresses field availability. Eliminating a redundant exchange also
+  requires compatible maps, coverage, and participation. Rank-local protocol
+  effects forbid unrestricted local DCE/CSE (D[md-dist-architecture]).
 - In value form, `!mdrt.event` is needed only for ordering constraints that
   have no data dependency. After storage assignment, the dependencies that
   field values carried are carried by event tokens.
 
-*Amended by A12 and D33.*
+*Amended by A12, D33, and D[md-dist-architecture]. Physical alias hazards
+and communication completion must be checked after storage assignment.*
 
 ### D18. No implicit copies in the step loop
 
@@ -458,6 +463,7 @@ P11 to P18 follow from the review of PPMD (Saunders et al. 2018 [[Saunders2018]]
 | D173 | **Format 1 of the checkpoint is the contract of release 0.1.0: the reader checks `format`, refuses a newer one, and refuses a file of a development build; the state carries its SHA-256, and the file is on stable storage before it takes its name.** `/parameters/mdir` holds `format = 1` and `state_sha256`, the hash of the positions, velocities, forces, masses, species, cell, step, time, the barostat and thermostat states, the bath, and the fingerprint (D172), checked on every read: a file whose bytes changed is refused with a pointer to `.prev`. A format above 1 is refused as written by a newer MDIR; a file without the fingerprint or the hash, written before the release, is refused, and the readers of files from before D129 and of barostat states of the size before D119 are removed (no legacy before the milestone). Before the rename that gives it its name, the file is flushed and `fsync`ed, and the directory after it, so that a crash on a file system that delays writes (ext4 without `auto_da_alloc`, Lustre, NFS) does not leave an empty file under the name. `/h5md/creator` records MDIR's version and commit. A later format comes with a function that converts a file of the format before, so that every released format stays readable. |
 | D174 | **A release is an installed tree, a container, and a tagged source, and its version comes from one place.** `project(mdir VERSION ...)` gives the version that `mdir version`, the first line of the log, the bug report, and the manifest (D168) print, with the commit of the build; a tree without its repository, such as the context of a container, takes the commit from `MDIR_GIT_COMMIT`. `cmake --install` writes `bin/mdir` and, in `lib/`, `libmdrt.so`, `libmdrt_cuda.so`, and the OpenMP runtime of the LLVM build, which the driver takes from beside itself before the LLVM tree; the RPATH is `$ORIGIN/../lib` and the directories it linked against (HDF5); the static libraries of the dialects are not installed. An installed tree run from another directory in an empty environment passed `mdir doctor` on the CPU and the GPU, ran the four stages of `examples/ala3` on a GPU, and ran minimization and NVT on the CPU with 4 threads. `packaging/Dockerfile` builds LLVM, HDF5, and MDIR on CUDA's devel image and keeps only the installed tree, the libraries of HDF5, and libdevice on CUDA's runtime image; `packaging/mdir.def` does the same for Apptainer. Versions follow SemVer: before 1.0 a minor version may change the control file, the checkpoint, or the outputs, and CHANGELOG.md lists each such change with what a user has to do; every pull request adds its entry. Packages for conda and pip wait for M2 (D169). |
 | D175 | **A topology Lennard-Jones potential can be multiplied by the cubic switch in squared distance of CHARMM VSWITCH.** `lennard_jones_modifier = "SQUARED_DISTANCE_SWITCH"`, with `0 < switch_distance < cutoff`, switches ordinary and 1-4 pairs, leaves Coulomb unchanged, and is differentiated as a full product for forces and virials. No defaults or output lifecycle changes. It refuses the plain-cutoff dispersion correction, which omits the contribution removed within the switching interval, LJPME, and custom pair additions. Independent analytic polynomial and derivative checks cover both boundaries on CPU/GPU in mixed/double. Two POPC against CHARMM 51b1: reference −6.82392363 kcal/mol including 1-4; CPU double −6.823924 (difference 3.70e-7), mixed −6.823917 (6.63e-6). See charmm-m1.md, Section 8, and the PR for GPU, suite, and performance validation. |
+| D[md-dist-architecture] | **Plan `md_dist` around field versions, ownership, coverage, and exactly-once contribution completion.** Scientific versions are distinct from materializations and layout/map snapshots; local views preserve the whole-set meaning of `!md.field`. A staged dependency DAG drives one legal joint plan for `md_dist` movement and existing `md_exec` traversal. Explicit scopes distinguish partial contributions, additive completion, and disjoint subset assembly. Rank-local protocol effects and physical buffer hazards constrain transformations and overlap. Begin with a verifier and in-process logical-domain reference, then synchronous LJ/EAM, CPU MPI/GPU transports, and asynchronous scheduling; learned-model and mesh paths reuse these contracts. [md-dist-plan.md](md-dist-plan.md) defines DIST0–DIST6 and acceptance gates. Refines D4/D17 and ML2–ML5 without changing D169 milestone order. Planning only: no implementation, control keys, defaults, file formats, overwrite changes, or new measured results. |
 
 ### 5.1 Amendments to earlier decisions
 
@@ -582,7 +588,7 @@ These items follow from the decisions above but have no design yet.
 | Syntax for combining relations | M1 | |
 | Streams and draw indices of the random numbers of a thermostat (A13) | M1 | |
 | The deterministic level as a constraint on the plan | With the planner | Note: the level says what the planner may choose, not what it prefers. It excludes a sum whose order threads decide. The lowerings of M0 add up in a fixed order on a device. On the CPU the order of a reduction is that of the OpenMP runtime: the tests find the same bits from run to run with the same number of threads, which the OpenMP standard does not promise. |
-| The dependency interface on domains other than particles | M2b | Note: the planner should reason about stages on a domain, of which the particles of a set are one and a mesh is another, so that PME does not need another planner. `ParticleDependencyInterface` (D4, A3) is not implemented yet. |
+| The dependency interface on domains other than particles | DIST1; original M2b priority amended by A14 | Note: the planner should reason about stages on a domain, of which the particles of a set are one and a mesh is another, so that PME does not need another planner. `ParticleDependencyInterface` (D4, A3) is not implemented yet. |
 | Scatter strategy for bonded terms | M1 | Decided (D49) |
 | Long-range dispersion correction | M1 | |
 | Distributed fields and grids | M2c | |

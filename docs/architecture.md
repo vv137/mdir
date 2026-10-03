@@ -1,10 +1,11 @@
 # MDIR Architecture
 
-Status: draft, revision 5 (2026-09-29).
+Status: draft, revision 6 (2026-10-03). Distributed contracts refined by
+D[md-dist-architecture]; see [md-dist-plan.md](md-dist-plan.md).
 
 | Part | State |
 |---|---|
-| `md`, `dyn`, `md_exec`, the lowerings to the CPU and to NVIDIA GPUs, the driver | Implemented for milestone M0. [ops-m0.md](ops-m0.md), [neighbors-m0.md](neighbors-m0.md), and [driver-m0.md](driver-m0.md) describe what is implemented and have the actual syntax. |
+| `md`, `dyn`, `md_exec`, the lowerings to the CPU and to NVIDIA GPUs, the driver | Implemented through milestone M1; the following M0 references describe the foundational syntax. [ops-m0.md](ops-m0.md), [neighbors-m0.md](neighbors-m0.md), and [driver-m0.md](driver-m0.md) describe what is implemented and have the actual syntax. |
 | The planner, `md_dist`, `ensemble`, `mlff`, the events of `mdrt`, `ParticleDependencyInterface` | Not implemented. In M0 the options of the passes and the driver stand for the plan, and the ops of a block run in the order of the block (A12). |
 
 The IR snippets of this document are illustrative; where they differ from
@@ -231,8 +232,9 @@ need a neighborhood. `dyn` ops may consume neighborhoods too.
 `mlff` extends `md`. Its ops consume `md` neighborhoods and produce energies
 that compose with other `md` terms.
 
-Planned op families: embedding, radial basis, spherical harmonics, message,
-tensor product, readout.
+Possible op families include embedding, radial basis, message, and readout.
+The contract is basis-independent; spherical harmonics and tensor products
+are model-specific choices, not prerequisites for integration (D167).
 
 ```mlir
 %n  = md.neighborhood %x, %cell { cutoff = 0.5 } : !pairs
@@ -242,9 +244,13 @@ tensor product, readout.
 %e  = mlff.readout %h2
 ```
 
-Until `mlff` exists, learned potentials attach through
-`md.external_potential`. An opaque potential cannot expose per-layer stages,
-so its halo must cover the full receptive field.
+The proposed external-potential contract precedes `mlff`; it is not yet an
+implemented adapter. A whole-model call declares complete owned-energy
+environments and derivative ownership. Completing owned forces may require
+a larger environment or reverse contribution routing. Stage metadata alone
+does not provide callable stage boundaries. D167 retains external AD;
+[md-dist-plan.md](md-dist-plan.md#7-eam-and-derivative-contracts) specifies
+the distributed obligations.
 
 ### 4.4 `dyn` — Dynamics IR
 
@@ -361,14 +367,17 @@ ghosts and returns them to their owners.
 Any semantic computation that needs data of other particles implements
 `ParticleDependencyInterface` (D4, A3). That covers potentials, `mlff`
 stages, pairwise thermostats, constraints, virtual sites, and collective
-variables. The interface returns an ordered list of stages. Each stage
-reports `support`, `reads`, `writes`, `accumulation`, and
-`freshness_requirement`.
+variables. The proposed interface feeds a dependency DAG rather than a
+single ordered list. Each stage reports exact support, versioned reads and writes,
+evaluation ownership, contribution targets/reducer/scope, and completeness
+requirements. Candidate coverage is separate from exact support. A legal
+schedule is derived from this graph; no extra DAG dialect is required
+initially (D[md-dist-architecture]).
 
 | Computation | Stages |
 |---|---|
 | Lennard-Jones | One stage: reads position and species within the cutoff, writes force. |
-| EAM [[Daw1984]](references.md#daw1984) | Three stages: neighbors to electron density; density to embedding; neighbors and density to force. |
+| EAM [[Daw1984]](references.md#daw1984) | Complete owned density; embedding derivative; neighbors and embedding derivatives to force. Partial density must complete before embedding. |
 | Message passing, L layers | L stages, each reading the previous layer's features within the cutoff. |
 
 Bonded terms, constraints, and virtual sites report topological support
@@ -470,39 +479,40 @@ to the policy, and the compiled program follows them (D32).
 
 ### 8.1 `md_dist` — distributed execution plan
 
-Expresses how the computation is split across ranks and GPUs. Concepts that
-first appear here: domains, partitions, migration, owned and ghost particles,
-forward halo exchange, reverse accumulation, interior and boundary
-computation, replica communicators.
+`md_dist` verifies field versions, ownership, availability, coverage, and
+exactly-once contribution completion. The detailed contract and delivery
+gates are in [md-dist-plan.md](md-dist-plan.md), D[md-dist-architecture].
+It is proposed, not implemented.
 
-```mlir
-%x_h   = md_dist.forward_halo %x { radius = 0.5 }
+Its handles describe logical teams, immutable layout snapshots, local field
+views, owner–replica transfer maps, coverage witnesses, and accumulation
+scopes. Data owners, evaluation owners, and contribution destinations are
+separate. Scientific field versions survive halo refresh, sorting, and
+migration; materialization and indexing/ownership snapshots change.
+`!md.field` retains its whole-set meaning.
 
-%f_int = md_dist.compute_interior %x   { ... }
-%f_bnd = md_dist.compute_boundary %x_h { ... }
-
-%f_loc = md_dist.combine %f_int, %f_bnd
-%f     = md_dist.reverse_accumulate %f_loc
+```text
+Proposed value-level plan, not parser syntax:
+  views = forward_halo(complete owned fields, map)
+  subsets = classify_support(stage, available views, coverage)
+  partial results = md_exec traversal(subsets, views)
+  owner contributions = reverse_accumulate(replica contributions, map)
+  complete result = complete_accumulation(scope, required contributions)
 ```
 
-`md_dist` ops take and return field values (Section 8.3).
+Subsets belong to existing `md_exec` loops, not new `md_dist` loop families.
+A map can be realized with a full shell, sparse topology support, or staged
+forwarding, provided it preserves semantic coverage and image identities.
+The first reference executor uses multiple logical domains in one CPU
+process, followed by synchronous CPU MPI and GPU transports. Nonblocking
+transport and general scheduling come after verified synchronous execution.
 
-The first halo scheme is a full shell: each domain holds ghost copies of
-every particle within the halo distance (P2).
-
-`md_dist` does not know about `MPI_Isend`, NVSHMEM puts, or CUDA streams. It
-records only that some data must reach another domain before a computation
-runs. The transport is chosen below it:
-
-| Transport | Use |
-|---|---|
-| In-process | Workstation with several GPUs, no MPI library needed |
-| MPI | Cluster |
-| NVSHMEM | NVIDIA cluster |
-
-Particle domains are not the only distributed object. Mesh-based methods such
-as PME [[Darden1993]](references.md#darden1993), [[Essmann1995]](references.md#essmann1995) need distributed fields and grids. They are excluded from v0 (D12) but
-the dialect must not assume that all communication is particle halo exchange.
+Rank-local transfers carry protocol effects and participation ordering.
+Local DCE/CSE cannot remove a transfer on which another participant depends.
+Team-uniform rebuild and capacity-retry branches include empty domains.
+Mesh/PME redistribution has distinct layouts; it is not a particle halo.
+Transport lowering may use `mdrt` or suitable upstream dialects. No MPI,
+NVSHMEM, or stream primitive defines the upper contract.
 
 ### 8.2 `md_exec` — MD-specific execution IR
 
@@ -564,7 +574,9 @@ to `memref`.
 ### 8.3 Where value semantics ends
 
 `md_dist` and the upper part of `md_exec` operate on field values (D17). A
-halo exchange returns a new version of a field whose ghost region is current.
+halo refresh returns a new materialization of the same logical field
+version under an explicit layout/map snapshot; it does not update the
+scientific field (D[md-dist-architecture]).
 
 ```mlir
 %x_h   = md_dist.forward_halo %x
@@ -573,8 +585,12 @@ halo exchange returns a new version of a field whose ghost region is current.
 %f     = md_exec.combine %f_int, %f_bnd
 ```
 
-Here `%f_int` does not depend on `%x_h`, so the interior computation can
-overlap the halo exchange. No separate analysis is needed to see that.
+Here `%f_int` does not depend on `%x_h`, which exposes potential overlap.
+The illustrative `combine` assembles disjoint target subsets; additive
+contributions require a separately verified accumulation scope. After
+storage assignment, alias hazards, outstanding reads, protocol ordering,
+and device visibility must also permit overlap. Semantic independence
+alone is insufficient.
 
 A storage assignment pass inside `md_exec` then decides in-place updates and
 the data layout. `md_exec` ops have a value form and a storage form, in the
@@ -602,7 +618,12 @@ md_exec.launch depends_on [%halo_done] ...
 ```
 
 The token also expresses ordering constraints that never had a data
-dependency.
+dependency. Each producing operation specifies whether its event releases
+the input buffer, makes the consumer data ready, or guarantees both. A send
+completion alone cannot stand for receiver readiness. Start with conservative
+composite completion; finer events require a physical hazard analysis
+(D[md-dist-architecture]). The distributed runtime operations below remain
+illustrative.
 
 `!mdrt.event` is an opaque runtime completion object (A9). It is not tied
 one-to-one to a transport primitive: one halo exchange may involve several
@@ -703,7 +724,8 @@ run keeps them in (D44).
 
 ## 12. Roadmap
 
-Development order (D1):
+Original semantic development order (D1); the optional adapter may precede
+`md_dist` (D166/D167), and D169 controls release milestones:
 
 ```text
 1. md
@@ -730,7 +752,7 @@ Milestones (P3, as amended by D169) and what each one adds:
 | M1 | AA protein and water with an Amber force field | Bonded terms executed by the particles, exclusions and scaled pairs, tables of pairs of types, PME on one node, constraints, removal of the motion of the center of mass, thermostat, barostat, readers of Amber and GROMACS topologies, the `mdir` command (D53) |
 | M2 | Python API | An object API over the same IR as the control file (D169); virtual sites, formerly M2a, shipped with M1 |
 | M3 | Learned potentials on one GPU | External AD and tensor execution (D167), the potential and neighbor contract |
-| M4 | Distributed execution | Ownership, halos, reverse accumulation, distributed PME (formerly M2c) |
+| M4 | Distributed execution | DIST0–DIST6: field/view and contribution verifier, in-process reference, LJ/EAM, CPU/GPU transports, learned-model distribution and distributed PME; [delivery gates](md-dist-plan.md#3-delivery-gates) (formerly M2c) |
 | Later | Martini [[Marrink2007]](references.md#marrink2007) CG membrane and water | Deferred (D53) |
 
 The v0 performance target is homogeneous systems at finite density (C7).

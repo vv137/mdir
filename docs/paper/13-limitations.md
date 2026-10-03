@@ -16,7 +16,14 @@ polarizable model and no learned potential. Terms over triplets (D160) run
 on the CPU only.
 The distributed lowering (`md_dist`), the joint planner that would choose
 structures and layouts, and the `mlff` and `ensemble` dialects of the
-architecture are designs, not code.
+architecture are designs, not code. D[md-dist-architecture] specifies
+field-version and owner–replica contracts, coverage, explicit contribution
+completion, and a physical hazard check after storage assignment. Its
+implementation sequence begins with a verifier and in-process logical
+domains, then synchronous LJ/EAM, CPU/GPU transports, and asynchronous
+execution; learned-model and mesh plans reuse the same contracts. These
+are future acceptance gates, not additional results of this paper; see
+[the distributed plan](../md-dist-plan.md).
 
 **The deterministic mode does not take groups.** The loop over groups adds
 with floating-point atomics; in the deterministic mode a run keeps the
@@ -123,7 +130,8 @@ differentiation of the IR is designed to give (D2). A Python interface whose buf
 shares the state with machine-learning frameworks without copies, from
 the same IR and validation as the control file. The distributed work
 begins with a graph of the dependencies of the `md` ops, ownership and
-freshness of fields, and a verifier of two domains (in which the
+freshness of fields, and a verifier with an in-process reference executor
+for logical domains (in which the
 disjoint union of the constraints is the unit of ownership, D83), then
 a potential with an intermediate field and learned potentials behind a
 versioned interface. The deterministic loop over groups is open as well.

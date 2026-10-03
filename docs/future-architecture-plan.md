@@ -14,6 +14,18 @@ Treat the batch/HPC CLI as an equally important entry point to that scientific m
 
 The Saunders reading strengthens five planning requirements: distinguish exact semantic support from candidate traversal; describe reductions and data distribution explicitly; support versioned analysis intermediates as well as energies; admit hierarchical entity/ownership maps; and make approximation accuracy a constraint on legal plans. It also argues for bounded tuning and explicit host-access costs. The detailed evidence and proposed changes appear in [the Saunders review](#architecture-lessons-from-saunders).
 
+## Distributed contract refinement (2026-10-03)
+
+D[md-dist-architecture] makes [md-dist-plan.md](md-dist-plan.md) the concrete
+contract and implementation sequence for ML2–ML5. It distinguishes scientific
+versions from materializations, data/evaluation/accumulation ownership,
+coverage from freshness, and partial contributions from complete results.
+The first executable gate is a verifier plus an in-process multi-domain
+reference; synchronous LJ/EAM precedes CPU MPI, GPU transport, and physical
+hazard-aware overlap. The detailed plan includes pinned source inspections
+of PETSc, LAMMPS EAM, and chemtrain communication. These refine the design,
+not the implementation status or the existing milestone order.
+
 ## Evidence and corrections to the starting assessment
 
 The starting assessment is directionally useful, but four corrections change the architectural comparison.
@@ -716,7 +728,7 @@ An interior region is stage-specific. A particle can be interior for a short-ran
 
 The fourth Cornel comparison question also has a positive architectural answer. MDIR can preserve transport-independent operations above its runtime ABI, then lower them to MPI, an in-process GPU transfer, or another transport. Cornel already preserves a target-agnostic root dialect; the proposed additional distinction is keeping the distributed realization itself independent of OpenFPM-specific procedures. [Cornel, Sections 3.4 and 7.3.2](https://cfaed.tu-dresden.de/publications?pubId=3851), [MDIR distribution proposal](architecture.md#81-md_dist--distributed-execution-plan).
 
-That separation must define observable semantics. A forward halo needs an ownership/communication map, a field version, a supported region, and completion that guarantees the consumer can read the data. Reverse accumulation needs the inverse ownership mapping and a reduction rule. Migration must preserve global identity and topology while invalidating stale local-index maps. The runtime must preserve buffer lifetime and completion across asynchronous work.
+That separation must define observable semantics. A forward halo needs an ownership/communication map, a field version, a supported region, and completion that guarantees the consumer can read the data. Reverse accumulation applies the transpose of the forward consumer map with a reduction rule; it is not generally an inverse. Migration must preserve global identity and topology while invalidating stale local-index maps. The runtime must preserve buffer lifetime and completion across asynchronous work.
 
 Saunders's six directional exchanges reach face, edge, and corner neighbors by forwarding data received in earlier exchanges. (Section 3.1.3, pp. 55–56.) A transfer realization may therefore contain intermediate forwarding domains, not just a direct owner/consumer edge. Preserve origin and periodic-image identity through that route, verify completion and coverage at the final consumer, and route reverse contributions back to the correct owner without duplication. Keep the logical requirement independent of whether a backend chooses direct exchanges or staged forwarding; neither protocol is universally optimal.
 
@@ -919,7 +931,10 @@ optimization follows as ML4 and ML5.
    differences and a short NVE trajectory. Record boundary copies and
    synchronization separately from model computation.
 
-2. **Define and verify dependencies and ownership (ML2).** On current
+2. **Define and verify dependencies and ownership (ML2 / DIST0–DIST1).**
+   First implement field views, maps, contribution scopes, negative verifier
+   tests, and a synchronous in-process logical-domain reference executor.
+   Check map transpose and exactly-once completion independently of MPI. On current
    pair/tuple operations, their derivatives, and specialized reciprocal
    evaluation, record exact support versus candidate coverage, field
    versions, ownership, reduction initialization/completion, and data
@@ -931,7 +946,8 @@ optimization follows as ML4 and ML5.
 
 3. **Implement two-domain LJ with a distributed verifier (ML2).** Start
    with directed, owner-only traversal, synchronous halos, and a fixed plan:
-   two CPU ranks, then two GPUs. Dump requirements, transfers, identity
+   two logical domains in one CPU process; after staged/reverse correctness,
+   run two CPU MPI ranks and then two GPUs (DIST3). Dump requirements, transfers, identity
    mappings, and completion edges. Test migration, neighbor rebuilds,
    periodic boundaries, reordered IDs, and uneven or empty domains. Negative
    tests must diagnose missing transfers, stale fields, incomplete coverage,
