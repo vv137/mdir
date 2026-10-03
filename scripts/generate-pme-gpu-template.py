@@ -36,7 +36,8 @@ HEADER = """\
 //
 // A kernel runs one thread per item, in blocks of 128 threads. The threads
 // beyond the last item do nothing. In the deterministic mode the charges
-// are added to the grid in fixed point with integer atomics, so that the
+// are added to the grid in fixed point with integer atomics, as the fixed
+// point of Le Grand et al. accumulates forces [LeGrand2013], so that the
 // sum does not depend on the order of the threads (D70); by default they
 // are added in !pme_real with floating-point atomics (D84). The product
 // with the influence function sums

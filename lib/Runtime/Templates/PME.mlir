@@ -16,7 +16,8 @@
 // points floor(u) − n + 1 + j, j = 0 .. n − 1, taken modulo k, with the
 // weights M_n(u − floor(u) + n − 1 − j) of the cardinal B-spline of order n.
 // The charges are added in fixed point, at the scale 2^40, so that the sum
-// does not depend on the order in which they are added (D70).
+// does not depend on the order in which they are added (D70), as the
+// fixed point of Le Grand et al. accumulates forces [LeGrand2013].
 
 !pme_pos = f64
 !pme_chg = f64

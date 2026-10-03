@@ -32,7 +32,9 @@ struct TupleTerm {
   std::vector<std::pair<std::string, std::vector<double>>> parameters;
 
   /// Instead of particles, the masks of `arity` groups, whose centers are
-  /// the members of the one tuple of the term (D139).
+  /// the members of the one tuple of the term (D139), as the custom
+  /// centroid bond force of OpenMM [Eastman2017] and the pull groups of
+  /// GROMACS [GromacsManual2025].
   std::vector<std::string> groups;
   /// Whether a center weighs its particles by their masses, or alike.
   bool massWeighted = true;

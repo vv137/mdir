@@ -1281,7 +1281,9 @@ llvm::Error Builder::collectTopology() {
       return error;
   // The reaction field (D140): its self term, −c f Σ q² / 2, which with
   // the terms of the excluded pairs makes the field act on every pair of
-  // charges within the cutoff, those of one molecule as well.
+  // charges within the cutoff, those of one molecule as well: the
+  // convention of GROMACS [GromacsManual2025], whose Coulomb (SR) MDIR's
+  // matches; OpenMM's leaves both out.
   if (control.reactionField) {
     double squares = 0.0;
     for (double q : topology.charges)
@@ -2030,7 +2032,8 @@ void Builder::emitBorn(unsigned terms,
 
 void Builder::emitExternalTerm(size_t index, const ExternalTerm &term,
                                 llvm::function_ref<void(StringRef)> add) {
-  // Σ_i k(x_i) over the particles of the term, the flag `ext<k>` 1 for
+  // Σ_i k(x_i) over the particles of the term, the custom external force of
+  // OpenMM [Eastman2017] (D148), the flag `ext<k>` 1 for
   // them and 0 for the others, which the kernel selects on: the positions
   // in Å, the energy in kcal/mol. The positions are never wrapped (D74), so
   // that the term is continuous along a trajectory.
