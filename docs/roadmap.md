@@ -369,3 +369,14 @@ Implementation follow-ups are tracked as [#37](https://github.com/vv137/mdir/iss
 [#38](https://github.com/vv137/mdir/issues/38) (temporal validity and migration).
 These are required production milestones, not completed features of the
 fixed-snapshot reference executor.
+
+## Temporal CPU reference extension (D[cpu-temporal])
+
+The experimental `mdir-cpu-lj` path adds `--steps=N`, `--dt=T`, `--state=FILE`,
+and `--skin=S`. It implements reduced-unit fixed-cell velocity Verlet,
+team-wide skin/ownership validity, ID-preserving migration of mass and velocity,
+and coordinate refresh on reused maps. No production control keys change.
+The earlier fixed-layout restriction is lifted only for this LJ reference tool;
+bonded support, PME, constraints, production trajectories, GPU transport, and
+general field/contribution verification remain future work. See
+[the precise implementation contract](cpu-temporal.md).

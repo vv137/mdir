@@ -1,5 +1,10 @@
 # Hybrid CPU execution: MPI, OpenMP, and SIMD
 
+Temporal follow-up: [D[cpu-temporal]](cpu-temporal.md) extends the experimental
+LJ tool with skin reuse and state migration. Fixed-layout limitations below
+describe the earlier implementation boundary.
+
+
 Status: fixed-layout reference implementation and validation complete.
 D[cpu-hybrid-lj], 2026-10-04.
 Issue #33 is the first fixed-layout Lennard-Jones slice. The broader

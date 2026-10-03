@@ -462,6 +462,8 @@ P11 to P18 follow from the review of PPMD (Saunders et al. 2018 [[Saunders2018]]
 
 | D[cpu-cartesian-async] | **The opt-in CPU LJ reference path uses box-aware Cartesian grids and a verified synchronous/async host execution plan.** `--grid`, `--halo`, and `--emit=dist` expose routing and scheduling without new production control keys. `mdrt.layout`, `mdrt.transfer_map`, and existing `mdrt.event` carry restricted plan bindings; compiled arithmetic remains in `md_exec`. See [cpu-cartesian-async.md](cpu-cartesian-async.md) for trust boundaries, validation, and deferred bonded/migration support. |
 
+| D[cpu-temporal] | **The experimental Cartesian CPU LJ driver maintains coordinate freshness independently of skin coverage and migrates every live driver field at an agreed epoch boundary.** Optional `--steps`, `--dt`, `--state`, and `--skin` add reduced-unit fixed-cell velocity Verlet, ID-preserving migration, cached rows/maps, and final state output. No production TOML keys change. See [cpu-temporal.md](cpu-temporal.md) for runtime checks, MPI buffer lifetime, oracle tolerances, and unsupported production features. |
+
 ### 5.1 Amendments to earlier decisions
 
 A1 to A10 come from an external review of revision 3 of the architecture,
