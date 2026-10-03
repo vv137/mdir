@@ -74,6 +74,9 @@ int mdir::tool::describeCheckpoints(llvm::ArrayRef<std::string> files,
                   static_cast<long long>(first->firstStep));
       std::printf("part:            %lld\n",
                   static_cast<long long>(first->part));
+      if (first->outputsPart > 0)
+        std::printf("outputs to part: %lld\n",
+                    static_cast<long long>(first->outputsPart));
       if (!first->trajectory.empty())
         std::printf("trajectory:      %s, %lld frames\n",
                     first->trajectory.c_str(),

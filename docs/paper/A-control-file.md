@@ -27,9 +27,11 @@ terms and types remain valid.
 | | `parameters` | With a PSF: the files of topology (`.rtf`), parameters (`.prm`), and streams (`.str`), in the order that CHARMM reads them; a later file replaces what an earlier one defines. |
 | | `include_paths`, `defines` | With a GROMACS topology: the directories of `#include` and the names that `#define` gives. |
 | | `checkpoint` | The checkpoint of an earlier run, whose state the run begins from, at its step and time (D129), taking its cell (and warning on the standard error if the input has another); the input's cell still sets the grid of PME and the reference of restraints. One of a minimization gives the positions only, and the run begins at step 0. |
-| `[output]` | `trajectory` | Positions, in DCD (`.dcd`, Å) or in the compressed XTC of GROMACS (`.xtc`, nm to a thousandth), by the extension of the name (D141). |
+| `[output]` | `log` | The log in a file as well as on the standard output: every line that the run prints there, from its start; a continued run appends to it (D149). |
+| | `energy` | The rows of the log as a file of columns: a line of names, a line of units, and a row for each output (D149). |
+| | `trajectory` | Positions, in DCD (`.dcd`, Å) or in the compressed XTC of GROMACS (`.xtc`, nm to a thousandth), by the extension of the name (D141). |
 | | `trajectory_format` | `AUTO` (the default, from the extension), `DCD`, or `XTC`. |
-| | `pull_coordinates` | A file of the terms over the centers of groups at every energy of the log: the step, the time, and for each term its coordinates (`r`, `dx`, `dy`, `dz` in Å, or `theta`), its energy (kcal/mol), and its force, along the distance and on the second center, or $-\partial E/\partial\theta$; continued with the run (D145). |
+| | `pull` | A file of columns of the terms over the centers of groups at every energy of the log: the step, the time, and for each term its coordinates (`r`, `dx`, `dy`, `dz` in Å, or `theta`), its energy (kcal/mol), and its force, along the distance and on the second center, or $-\partial E/\partial\theta$; continued with the run (D145, D149). |
 | | `checkpoint` | The checkpoint (D26), written every `checkpoint_interval` steps in place of the one before, which stays as `<checkpoint>.prev` (D132), and at the end of a minimization. `mdir run --continue` continues the run from it (A.3). |
 | | `energy_interval`, `trajectory_interval`, `checkpoint_interval` | Steps between the rows of the log, the frames, and the checkpoints. The intervals nest, either way for energies and frames. |
 | `[energy]` | `cutoff` | The cutoff of `md.neighborhood` (Å). |
@@ -80,9 +82,12 @@ coordinates = "system.inpcrd"   # and the box; the reference of restraints
 #                               # positions
 
 [output]
+log                 = "run.log" # the log as well as on the standard output
+energy              = "run.energy"  # the rows of the log as columns
 trajectory          = "run.dcd" # positions, in DCD or XTC (.xtc)
 checkpoint          = "run.h5"  # the state; mdir run --continue goes on
 #                               # from it, and the one before is run.h5.prev
+# pull              = "run.pull"    # terms over the centers of groups
 energy_interval     = 5000      # steps between energies in the log
 trajectory_interval = 5000      # steps between frames
 checkpoint_interval = 50000     # steps between checkpoints
@@ -186,12 +191,14 @@ precision = "MIXED"             # SINGLE, MIXED, DOUBLE
 ## A.3 Runs over more than one job
 
 `mdir run` takes three options for a run that outlasts a job on a
-cluster (docs/driver-m0.md, Section 2.7):
+cluster (docs/driver-m0.md, Section 2.7). Without `--continue`, a run
+keeps each output of an earlier run that has its name as `#<name>.<n>#`
+before it writes, at most 99 of each (D149):
 
 | Option | Meaning |
 |---|---|
 | `--continue` | Continues the run from the checkpoint of `[output]` until it has taken its `steps`, counted from the step it began at; without a checkpoint the run begins, and a complete run exits with 0 (D129). |
-| `--no-append` | With `--continue`, writes the frames that follow to `<trajectory>.partNNNN.dcd` (or `.xtc`) rather than appending them to the trajectory, which is first cut to the frames that the checkpoint counts (D130). |
+| `--no-append` | With `--continue`, writes the outputs that follow (the log, the files of columns, the frames) to `<name>.partNNNN<ext>` rather than appending them to the files of the run, which are first cut to the checkpoint (D130, D149). |
 | `--max-walltime <time>` | Stops at the last checkpoint that leaves time for one more interval between checkpoints, in hours or as `H:MM[:SS]` (D131). |
 
 SIGTERM and SIGINT stop a run at its next checkpoint, and a second signal

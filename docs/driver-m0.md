@@ -86,9 +86,11 @@ regard to case.
 | | `parameters` | With a PSF: the files of topology (`.rtf`), parameters (`.prm`), and streams (`.str`), in the order that CHARMM reads them; a later file replaces what an earlier one defines. |
 | | `include_paths`, `defines` | With a GROMACS topology: the directories of `#include` and the names that `#define` gives. |
 | | `checkpoint` | The checkpoint of an earlier run, whose state the run begins from, at its step and time (D129), taking its cell (and warning on the standard error if the input has another); the input's cell still sets the grid of PME and the reference of restraints. One of a minimization gives the positions only, and the run begins at step 0. |
-| `[output]` | `trajectory` | Positions, in DCD (`.dcd`, Å) or in the compressed XTC of GROMACS (`.xtc`, nm to a thousandth), by the extension of the name (D141). |
+| `[output]` | `log` | The log in a file as well as on the standard output: every line that the run prints there, from its start; a continued run appends to it (D149). |
+| | `energy` | The rows of the log as a file of columns: a line of names, a line of units, and a row for each output (D149). |
+| | `trajectory` | Positions, in DCD (`.dcd`, Å) or in the compressed XTC of GROMACS (`.xtc`, nm to a thousandth), by the extension of the name (D141). |
 | | `trajectory_format` | `AUTO` (the default, from the extension), `DCD`, or `XTC`. |
-| | `pull_coordinates` | A file of the terms over the centers of groups at every energy of the log: the step, the time, and for each term its coordinates (`r`, `dx`, `dy`, `dz` in Å, or `theta`), its energy (kcal/mol), and its force, along the distance and on the second center, or $-\partial E/\partial\theta$; continued with the run (D145). |
+| | `pull` | A file of columns of the terms over the centers of groups at every energy of the log: the step, the time, and for each term its coordinates (`r`, `dx`, `dy`, `dz` in Å, or `theta`), its energy (kcal/mol), and its force, along the distance and on the second center, or $-\partial E/\partial\theta$; continued with the run (D145, D149). |
 | | `checkpoint` | The checkpoint (D26), written every `checkpoint_interval` steps in place of the one before, which stays as `<checkpoint>.prev` (D132), and at the end of a minimization. `mdir run --continue` continues the run from it (Section 2.7). |
 | | `energy_interval`, `trajectory_interval`, `checkpoint_interval` | Steps between the rows of the log, the frames, and the checkpoints (Section 2.2). The intervals nest, either way for energies and frames. |
 | `[energy]` | `cutoff` | The cutoff of `md.neighborhood` (Å). |
@@ -221,15 +223,20 @@ PME settings, constraint count, target, and precision. A minimization
 reports its method and iterations, with no time step or physical duration.
 A nonperiodic system has no physical cell or density in the report.
 
-The output list includes energies on standard output, the trajectory in
-DCD or XTC, the H5MD checkpoint, and pulling coordinates. Each entry says
-whether it is enabled, its path and format, its interval in steps, and
-whether the file exists. A minimization checkpoint is written at the end.
+The output list has the files of Section 2.8 in the order of its table:
+the log, on standard output and in the file of `log`, the energies and
+the terms over centers as columns, the trajectory in DCD or XTC, and the
+H5MD checkpoint. Each entry says whether it is enabled, its path and
+format, its interval in steps, how many rows, frames, or checkpoints the
+whole run writes, and whether the file exists. A minimization checkpoint
+is written at the end.
 A named trajectory with interval 0 is disabled even if its path exists.
 Paths follow the same rule as a run: relative to the control file.
 
-Warnings go to standard error and leave the exit status at 0. They flag
-existing enabled output files, a fixed interval between neighbor rebuilds
+Warnings and notes go to standard error and leave the exit status at 0.
+Notes give, for each enabled output file that exists, the name under
+which `mdir run` keeps it before it writes its own (D149). Warnings flag
+a file that has 99 backups already, a fixed interval between neighbor rebuilds
 (D88), dynamics with no checkpoints or energy reports, a missing input
 checkpoint, and a requested feature absent from the build (HDF5 or CUDA).
 Each warning says what to change or run. Invalid input gives exit status 1.
@@ -252,8 +259,9 @@ Its schema begins at version 1:
 | `system.cell_angstrom` | The reduced cell's `diagonal` and `tilt` ($b_x$, $c_x$, $c_y$) in Å; `null` without periodicity |
 | `run` | Kind, ensemble, method, steps, `time_step_ps`, `duration_ns`, `temperature_kelvin`, `pressure_atm`, thermostat and barostat coupling, cutoff, PME, constraints, execution, and input checkpoint path |
 | `run.pme` | `null` when disabled; otherwise `grid_points` (three nulls when automatic), `beta_inverse_angstrom` (`null` when automatic), `order`, `max_spacing_angstrom`, and `tolerance` |
-| `outputs` | Entries with `kind`, `path`, `format`, `interval_steps`, `enabled`, `at_end`, and `exists`; `path` is null for standard output or an unconfigured file |
-| `warnings` | Objects with `code` and `message`: `output_exists`, `fixed_rebuild_interval`, `no_checkpoint`, `no_energies`, `missing_input_checkpoint`, `hdf5_unavailable`, or `gpu_unavailable` |
+| `outputs` | Entries with `kind` (`log`, `energy`, `pull`, `trajectory`, `checkpoint`), `path`, `format`, `interval_steps`, `enabled`, `at_end`, `count` and `count_of` (`rows`, `frames`, `checkpoints`; `count` is null where the run decides, as in a minimization), `exists`, and `backup`, the name under which a run keeps the file that exists (D149), or null; `path` is null for an unconfigured file, and for the log when it goes to standard output only |
+| `warnings` | Objects with `code` and `message`: `backup_limit`, `fixed_rebuild_interval`, `no_checkpoint`, `no_energies`, `missing_input_checkpoint`, `hdf5_unavailable`, or `gpu_unavailable` |
+| `notes` | Objects with `code` and `message` for what a run will do that needs no change: `output_backup`, an output that exists and the name it will be kept under |
 | `errors` | Error messages; empty on success. On failure, `system`, `run`, and `outputs` are absent |
 
 In a minimization, `time_step_ps`, `duration_ns`, and temperature are null;
@@ -318,6 +326,9 @@ The periods must divide one another: `trajectory_interval` and `checkpoint_inter
 are multiples of `energy_interval`.
 
 ### 2.3 The log
+
+The log goes to the standard output and, with `log` in `[output]`, to that
+file as well (D149, Section 2.8); `energy` writes its rows as columns.
 
 ```text
 INFO:      STEP           TIME      TOTAL_ENE  POTENTIAL_ENE    KINETIC_ENE    TEMPERATURE         VIRIAL       PRESSURE
@@ -487,7 +498,7 @@ mdir run --continue --max-walltime 23:50 md.toml
 | Option | What it does |
 |---|---|
 | `--continue` | Continues the run from the checkpoint of `[output]` until it has taken `steps` steps from the step it began at (D129). Without a checkpoint the run begins; with one that holds the last step it says that the run is complete and exits with 0. It refuses a checkpoint of another time step or seed, and steps that remain if they are not whole intervals of the outputs and of the coupling. Raising `steps` extends a run. |
-| `--no-append` | With `--continue`, writes the frames that follow to `<trajectory>.partNNNN.dcd` (or `.xtc`), NNNN the part of the run; later continuations append to that part. Without it, the frames are appended to the trajectory that the checkpoint counts them in, after the frames past the checkpoint are removed (D130). |
+| `--no-append` | With `--continue`, writes the outputs that follow, the log, the files of columns, and the frames, to `<name>.partNNNN<ext>`, NNNN the part of the run; later continuations append to the files of that part, which the checkpoint records. Without it, the outputs are appended to the files of the run after what was written past the checkpoint is removed (D130, D149). A run without `--continue` keeps the outputs of an earlier run as `#<name>.<n>#` (Section 2.8). |
 | `--max-walltime <time>` | Stops at the last checkpoint that leaves time, within `<time>` from the start of `mdir`, for one more interval between checkpoints as long as the longest so far (D131). In hours (`23.5`) or as `H:MM[:SS]`. |
 
 SIGTERM and SIGINT ask a run of dynamics that writes checkpoints to stop
@@ -508,6 +519,88 @@ A run that begins from the checkpoint of another run, as the stages of
 (D129): its step and its time continue, so that the random numbers of the
 stages differ, and its `steps` count from there. The checkpoint of the
 run it began from is not changed.
+
+### 2.8 The outputs of a run
+
+A run writes the files that `[output]` names, each at the interval given
+there, and nothing else (D149). The names are relative to the control
+file. The checkpoint is the only file that a run continues or begins from;
+there is no restart file besides it.
+
+| Output | Keyword | Written | Form |
+|---|---|---|---|
+| The log | always the standard output; with `log`, a file as well | its rows every `energy_interval` steps, and the messages of the run (Section 2.3) | text |
+| The energies | `energy` | every `energy_interval` steps: the rows of the log | columns |
+| The terms over centers | `pull` | every `energy_interval` steps (D145) | columns |
+| The trajectory | `trajectory`, `trajectory_format` | every `trajectory_interval` steps | DCD or XTC (D141) |
+| The checkpoint | `checkpoint` | every `checkpoint_interval` steps, and at the end of a minimization; the one before as `<checkpoint>.prev` (D132) | H5MD (Section 2.6) |
+
+The intervals are those of the compiled schedule (Section 2.2): the files
+of columns take the interval of the rows of the log, at whose steps the
+energies are computed, and the frames and the checkpoints come at
+multiples of it.
+
+**Files of columns.** The energies and the terms over centers share one
+form, which a program reads without knowing the run:
+
+```text
+# step time total potential kinetic temperature virial pressure
+# - ps kcal/mol kcal/mol kcal/mol K kcal/mol atm
+0 0.000000 -834.146700 -1083.238900 249.092200 96.853800 -70.651300 232.387500
+```
+
+The first line names the columns, the second gives the unit of each, `-`
+for none, and every row after them is one output, its step an integer and
+the other values with six decimals, separated by single spaces. The names
+are in lower case; a quantity of a term is `<term>.<quantity>`. The file
+of the energies has the columns of the log: `step time total potential
+kinetic temperature virial`, then `pressure` with a periodic cell,
+`conserved` with a coupling, and `volume` with a barostat; that of a
+minimization `step potential rms_force max_force max_atom step_size`.
+
+**Continuation.** `mdir run --continue` continues the outputs of its run
+from the step `s` of its checkpoint, so that the files are those of a run
+that was not interrupted:
+
+| Output | A continued run |
+|---|---|
+| Files of columns | Keeps the rows up to step `s` and appends; the first two lines must be those that the run writes, or it stops before it begins |
+| Trajectory | Keeps the frames that the checkpoint counts and appends (D130) |
+| Log file | Appends to the whole file, which records what happened, the steps past `s` that are run again included, after the line `MDIR: continues the run after step s` |
+| Checkpoint | Replaced at the next interval, as always |
+
+With `--no-append` each of the first three goes to `<name>.partNNNN<ext>`
+instead, NNNN the part of the run, and later continuations append to the
+files of that part, which the checkpoint records (`outputs_part`, 0 for
+the names of the control file).
+
+**Backups.** `mdir run` without `--continue` keeps the outputs of an
+earlier run that has the same names: before it writes, it renames each
+file that exists (log, energies, terms over centers, trajectory,
+checkpoint, and the checkpoint before the last, `.prev`) to
+`#<name>.<n>#` in its directory, n the least number from 1 that no file
+takes, and the log says so (`MDIR: backed up 'md.log' as '#md.log.1#'`).
+It keeps at most 99 backups of a file; when a file has them all, the run
+stops before it writes or moves any file. Under `--continue` the files
+belong to the run: they are continued from its checkpoint, or written
+anew when the run begins without one, as after a job that stopped before
+its first checkpoint, and none is backed up. Two outputs may not have one
+name, nor an output the name of an input.
+
+**`mdir check`** (D151, Section 1.4) lists these outputs: each file with
+its format, its interval, and the number of rows, frames, or checkpoints
+of the whole run, and notes on the standard error the name under which a
+run keeps each file that exists.
+
+```text
+outputs:
+  log: stdout and md.log (text), every 5000 steps, 101 rows
+  energy: md.energy (columns), every 5000 steps, 101 rows
+  pull: not configured (columns), disabled
+  trajectory: md.xtc (XTC), every 5000 steps, 100 frames, exists
+  checkpoint: md.h5 (H5MD), every 50000 steps, 10 checkpoints
+mdir: note: trajectory output 'md.xtc' exists; mdir run keeps it as '#md.xtc.1#' before it writes its own, and mdir run --continue continues the run of its checkpoint instead
+```
 
 ## 3. Decided
 

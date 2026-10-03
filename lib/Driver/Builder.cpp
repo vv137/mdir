@@ -106,9 +106,9 @@ private:
   emitCentroidCoordinates(const TupleTerm &term, StringRef indent,
                           StringRef x, StringRef cell, StringRef relations,
                           StringRef prefix);
-  /// The coordinates of the terms over centers that `[output]
-  /// pull_coordinates` writes (D145): the index of the term over tuples
-  /// and the quantity of each column.
+  /// The coordinates of the terms over centers that `[output] pull`
+  /// writes (D145, D149): the index of the term over tuples and the
+  /// quantity of each column.
   std::vector<std::pair<size_t, std::string>> getPullColumns() const;
   /// Emits for each term over centers its energy as a function of its
   /// coordinates, `@pullterm<k>`, whose derivatives give its forces.

@@ -10,7 +10,7 @@ virial, sum of x ⊗ F over the particles in the images of the centers.
 
 PLAIN_FORCES and FORCES are `mdir checkpoint --print=forces`, and PLAIN_LOG
 and LOG the logs, of the runs without and with the terms. With --pull, the
-first line of the file of `pull_coordinates` (D145): the coordinates of
+first line of the file of `pull` (D145, D149): the coordinates of
 each term, its energy, and its force, against central differences: on the
 second center of the bond, and along the angle of the others."""
 import math, re, sys

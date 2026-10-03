@@ -6,6 +6,7 @@
 #include "mdir/Driver/Cell.h"
 #include "mdir/Driver/Checkpoint.h"
 #include "mdir/Driver/Control.h"
+#include "mdir/Driver/Output.h"
 #include "mdir/Driver/System.h"
 
 #include "llvm/Support/FileSystem.h"
@@ -30,7 +31,8 @@ static int fail(llvm::Error error, bool json) {
   if (json)
     printJSON(llvm::json::Object{{"schema_version", 1}, {"ok", false},
                                 {"errors", llvm::json::Array{message}},
-                                {"warnings", llvm::json::Array{}}});
+                                {"warnings", llvm::json::Array{}},
+                                {"notes", llvm::json::Array{}}});
   else
     llvm::errs() << "mdir: " << message << "\n";
   return 1;
@@ -162,7 +164,9 @@ static void describeParticles(const Control &control, const System &system) {
 }
 
 namespace {
-struct Output {
+/// An output of the run (D149): the log goes to the standard output and,
+/// with a path, to that file as well.
+struct OutputFile {
   const char *kind;
   std::string path;
   const char *format;
@@ -170,6 +174,14 @@ struct Output {
   bool enabled;
   bool atEnd = false;
   bool exists = false;
+  /// How many rows, frames, or checkpoints the whole run writes, or -1
+  /// where it depends on the run (a minimization ends where it
+  /// converges).
+  int64_t count = -1;
+  const char *countOf = "";
+  /// Where `mdir run` keeps the file that exists before it writes its own
+  /// (D149), or empty.
+  std::string backup = "";
 };
 
 struct Warning {
@@ -178,8 +190,11 @@ struct Warning {
 };
 
 struct Preflight {
-  std::vector<Output> outputs;
+  std::vector<OutputFile> outputs;
   std::vector<Warning> warnings;
+  /// What the run will do that needs no change: the backups of outputs
+  /// that exist (D149).
+  std::vector<Warning> notes;
 };
 } // namespace
 
@@ -194,27 +209,64 @@ static const char *getElectrostatics(const Control &control) {
          : control.reactionField ? "REACTION_FIELD" : "CUTOFF";
 }
 
-/// Inspect configured outputs without opening or creating any of them.
+/// Inspect configured outputs without opening or creating any of them:
+/// the files of D149, in the order of its table.
 static Preflight inspect(const Control &control) {
   Preflight report;
+  // The rows of a run of dynamics begin at its first step; frames and
+  // checkpoints come at the end of each interval.
+  auto count = [&](int64_t period, bool first) -> int64_t {
+    if (control.minimize || period <= 0)
+      return -1;
+    return control.numSteps / period + (first ? 1 : 0);
+  };
+  int64_t rows = count(control.energyPeriod, true);
   report.outputs = {
-      {"energies", "", "stdout", control.energyPeriod,
-       control.energyPeriod > 0},
+      {"log", control.logFile, "text", control.energyPeriod, true, false,
+       false, rows, "rows"},
+      {"energy", control.energyFile, "columns", control.energyPeriod,
+       !control.energyFile.empty(), false, false, rows, "rows"},
+      {"pull", control.pullFile, "columns", control.energyPeriod,
+       !control.pullFile.empty(), false, false, rows, "rows"},
       {"trajectory", control.trajectoryFile,
        control.trajectoryFormat == TrajectoryFormat::XTC ? "XTC" : "DCD",
-       control.framePeriod, control.framePeriod > 0},
+       control.framePeriod, control.framePeriod > 0, false, false,
+       count(control.framePeriod, false), "frames"},
       {"checkpoint", control.restartOutput, "H5MD", control.checkpointPeriod,
-       control.checkpointPeriod > 0, control.minimize},
-      {"pull_coordinates", control.pullFile, "columns", control.energyPeriod,
-       !control.pullFile.empty()}};
-  for (Output &output : report.outputs) {
+       control.checkpointPeriod > 0, control.minimize, false,
+       control.minimize ? 1 : count(control.checkpointPeriod, false),
+       "checkpoints"}};
+  // `mdir run` keeps an output of an earlier run as `#<name>.<n>#` before
+  // it writes its own; under --continue the files are the run's own
+  // (D149). The checkpoint before the last, `.prev`, is kept as well.
+  auto backUp = [&](const char *kind, const std::string &path) {
+    std::string backup = getBackupPath(path);
+    if (backup.empty()) {
+      report.warnings.push_back(
+          {"backup_limit",
+           std::string(kind) + " output '" + path + "' exists with " +
+               std::to_string(MaxBackups) +
+               " backups already; mdir run stops before it writes. Remove "
+               "some of them, or continue the run with --continue"});
+      return backup;
+    }
+    report.notes.push_back(
+        {"output_backup",
+         std::string(kind) + " output '" + path +
+             "' exists; mdir run keeps it as '" + backup +
+             "' before it writes its own, and mdir run --continue continues "
+             "the run of its checkpoint instead"});
+    return backup;
+  };
+  for (OutputFile &output : report.outputs) {
     output.exists = !output.path.empty() && llvm::sys::fs::exists(output.path);
     if (output.enabled && output.exists)
-      report.warnings.push_back(
-          {"output_exists", std::string(output.kind) + " output '" +
-                                output.path +
-                                "' already exists; use another output path "
-                                "for a new run, or --continue to resume"});
+      output.backup = backUp(output.kind, output.path);
+  }
+  if (control.checkpointPeriod > 0) {
+    std::string previous = getPreviousCheckpointPath(control.restartOutput);
+    if (llvm::sys::fs::exists(previous))
+      backUp("checkpoint", previous);
   }
   if (control.rebuildPeriod > 0)
     report.warnings.push_back(
@@ -307,22 +359,29 @@ static void describeRun(const Control &control, const System &system,
     std::printf("input checkpoint:   %s (not loaded by check)\n",
                 control.restartInput.c_str());
   std::printf("outputs:\n");
-  for (const Output &output : report.outputs) {
-    const char *path = output.path.c_str();
-    if (output.path.empty())
-      path = llvm::StringRef(output.kind) == "energies" ? "stdout"
-                                                       : "not configured";
-    std::printf("  %s: %s (%s)", output.kind, path, output.format);
+  for (const OutputFile &output : report.outputs) {
+    bool log = llvm::StringRef(output.kind) == "log";
+    std::string path = output.path.empty() ? "not configured" : output.path;
+    if (log)
+      path = output.path.empty() ? "stdout" : "stdout and " + output.path;
+    std::printf("  %s: %s (%s)", output.kind, path.c_str(), output.format);
     if (!output.enabled)
       std::printf(", disabled");
     else if (output.atEnd)
       std::printf(", at the end");
+    else if (output.interval == 0)
+      std::printf(", no rows");
     else
       std::printf(", every %lld steps", static_cast<long long>(output.interval));
+    if (output.enabled && output.count >= 0 && !output.atEnd)
+      std::printf(", %lld %s", static_cast<long long>(output.count),
+                  output.countOf);
     if (output.exists)
       std::printf(", exists");
     std::printf("\n");
   }
+  for (const Warning &note : report.notes)
+    llvm::errs() << "mdir: note: " << note.message << "\n";
   for (const Warning &warning : report.warnings)
     llvm::errs() << "mdir: warning: " << warning.message << "\n";
 }
@@ -420,22 +479,30 @@ static llvm::json::Object makeJSON(const Control &control, const System &system,
                                                        : Value(nullptr)},
         {"tolerance", control.pmeAlphaTolerance}};
   }
-  Array outputs, warnings;
-  for (const Output &output : report.outputs)
+  Array outputs, warnings, notes;
+  for (const OutputFile &output : report.outputs)
     outputs.push_back(Object{{"kind", output.kind},
                              {"path", output.path.empty() ? Value(nullptr)
                                                           : Value(output.path)},
                              {"format", output.format},
                              {"interval_steps", output.interval},
+                             {"count", output.count >= 0 ? Value(output.count)
+                                                         : Value(nullptr)},
+                             {"count_of", output.countOf},
                              {"enabled", output.enabled},
                              {"at_end", output.atEnd},
-                             {"exists", output.exists}});
+                             {"exists", output.exists},
+                             {"backup", output.backup.empty()
+                                            ? Value(nullptr)
+                                            : Value(output.backup)}});
   for (const Warning &warning : report.warnings)
     warnings.push_back(Object{{"code", warning.code}, {"message", warning.message}});
+  for (const Warning &note : report.notes)
+    notes.push_back(Object{{"code", note.code}, {"message", note.message}});
   return Object{{"schema_version", 1}, {"ok", true},
           {"system", std::move(particles)}, {"run", std::move(run)},
           {"outputs", std::move(outputs)}, {"warnings", std::move(warnings)},
-          {"errors", Array{}}};
+          {"notes", std::move(notes)}, {"errors", Array{}}};
 }
 
 int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {

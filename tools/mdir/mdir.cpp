@@ -45,8 +45,8 @@ static llvm::cl::opt<bool> checkJSON(
 
 static llvm::cl::opt<bool> noAppend(
     "no-append",
-    llvm::cl::desc("With --continue, write the frames that follow to a part "
-                   "of their own, <trajectory>.partNNNN.dcd (or .xtc)"),
+    llvm::cl::desc("With --continue, write the outputs that follow to files "
+                   "of a part of their own, <name>.partNNNN<extension>"),
     llvm::cl::sub(runCommand));
 
 static llvm::cl::opt<std::string> maxWalltime(

@@ -1,4 +1,5 @@
-// What a run writes: the log, the trajectory, and checkpoints.
+// What a run writes: the log, files of columns, the trajectory, and
+// checkpoints (D149, docs/driver-m0.md, Section 2.8).
 
 #ifndef MDIR_DRIVER_OUTPUT_H
 #define MDIR_DRIVER_OUTPUT_H
@@ -9,24 +10,89 @@
 #include "mdir/Driver/System.h"
 #include "mdir/Driver/Trajectory.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/Error.h"
 
 #include <chrono>
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace mdir {
 namespace driver {
 
+/// The log of a run: every line goes to the standard output and, once
+/// `open` has named a file, to that file as well. What was printed before
+/// goes to the file when it opens, so that the file holds the whole log.
+class Log {
+public:
+  Log() = default;
+  Log(const Log &) = delete;
+  Log &operator=(const Log &) = delete;
+  ~Log();
+
+  /// Prints to the standard output and to the file.
+  void print(const char *format, ...) __attribute__((format(printf, 2, 3)));
+  /// Opens `path`, appending to what it holds if `appends`, and writes
+  /// what was printed before.
+  llvm::Error open(const std::string &path, bool appends);
+  void flush();
+  void close();
+
+private:
+  std::FILE *file = nullptr;
+  std::string pending;
+};
+
+/// A file of columns: a line of the names of the columns, a line of their
+/// units, `-` for none, both after `#`, and a row for each output, the
+/// step an integer and the other values with six decimals.
+class ColumnFile {
+public:
+  struct Column {
+    std::string name;
+    std::string unit;
+    /// Written as an integer, as the step is.
+    bool integer = false;
+  };
+
+  ColumnFile() = default;
+  ColumnFile(const ColumnFile &) = delete;
+  ColumnFile &operator=(const ColumnFile &) = delete;
+  ~ColumnFile();
+
+  /// Opens `path` for `columns`, the first of which is the step. With
+  /// `keepThrough`, the run continues the file: it keeps the rows up to
+  /// that step and appends after them, and the file must begin with the
+  /// lines that `columns` give, if it exists. Otherwise the file is
+  /// written anew.
+  llvm::Error open(const std::string &path, std::vector<Column> columns,
+                   std::optional<int64_t> keepThrough);
+  bool isOpen() const { return file != nullptr; }
+  /// Writes a row: the step and a value for each column after it.
+  void write(int64_t step, llvm::ArrayRef<double> values);
+  void close();
+
+  /// The first two lines of a file of `columns`.
+  static std::string getHeader(llvm::ArrayRef<Column> columns);
+
+private:
+  std::FILE *file = nullptr;
+  std::vector<Column> columns;
+};
+
 /// The output of the run that is under way. The functions that compiled
 /// code calls write to it.
 struct Output {
-  std::FILE *log = stdout;
-  /// The coordinates of the terms over centers (D145), or none, and the
-  /// number of coordinates of each term.
-  std::FILE *pull = nullptr;
+  Log log;
+  /// The rows of the log as columns (D149), or none.
+  ColumnFile energies;
+  /// The terms over centers (D145), or none, and the number of
+  /// coordinates of each term.
+  ColumnFile pull;
   std::vector<int64_t> pullCounts;
   std::unique_ptr<TrajectoryWriter> trajectory;
   bool hasTrajectory = false;
@@ -148,6 +214,26 @@ extern volatile std::sig_atomic_t stopSignal;
 constexpr int StoppedStatus = 75;
 
 void writeLogHeader(Output &output);
+
+/// The columns of the file of the energies: those of the rows of the log.
+std::vector<ColumnFile::Column> getEnergyColumns(const Output &output);
+
+/// The most backups that a run keeps of one output (D149).
+constexpr int MaxBackups = 99;
+
+/// The name under which a run that is not continued keeps the output
+/// `path` of an earlier run before it writes its own (D149): `#<name>.<n>#`
+/// in the directory of `path`, n the least number from 1 that no file
+/// takes. Empty if all MaxBackups are taken.
+std::string getBackupPath(llvm::StringRef path);
+
+/// Fails if `path` exists and all MaxBackups of it are taken.
+llvm::Error checkBackup(const std::string &path);
+
+/// Renames `path` to getBackupPath(path) if it exists. Returns the new
+/// name, empty if there was no file, or an error if MaxBackups are taken
+/// or the rename fails.
+llvm::Expected<std::string> backUpOutput(const std::string &path);
 
 } // namespace driver
 } // namespace mdir

@@ -89,8 +89,10 @@ cluster needs first is in place: `steps` as the length of a run that
 `mdir run --continue` carries over as many jobs as it takes, a trajectory
 that continues with it, a stop on a signal or a limit of time that falls
 on a checkpoint so that the continuation stays exact, and the checkpoint
-before the last kept (D129 to D132); the log in a file of the run is
-next. Langevin dynamics by the middle scheme is in place (D135), without
+before the last kept (D129 to D132), and outputs that form one system,
+the log in a file as well, the energies as columns, every file continued
+with the run, and backups of the outputs of an earlier run (D149); a manifest of the
+run is next. Langevin dynamics by the middle scheme is in place (D135), without
 yet a conserved energy, and so are terms given by expressions over bonds,
 angles, and dihedrals, which give restraints beyond positions and the
 dihedrals of OPLS-AA (D136), and terms over the pairs of a topology, in

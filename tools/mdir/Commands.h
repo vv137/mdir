@@ -29,8 +29,8 @@ struct RunOptions {
   /// Continue the run from its own checkpoint, if there is one, until it
   /// has taken its `steps`; begin it if there is none.
   bool continues = false;
-  /// Append the frames of a continued run to its trajectory, rather than
-  /// write them to a part of their own.
+  /// Append the outputs of a continued run to its files, rather than
+  /// write them to files of a part of their own (D130, D149).
   bool appends = true;
   /// The wall time that the run may take, in s, or 0 for no limit. The run
   /// stops at the last checkpoint that leaves time for the next interval.

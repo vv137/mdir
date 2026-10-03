@@ -1,6 +1,8 @@
 # Reports the planned run without compiling it or touching output files.
-# Covers PDB, Amber, and GROMACS inputs, JSON errors and warnings, PME,
-# minimization, NVE/NVT/NPT, nonperiodic cells, and every output kind.
+# Covers PDB, Amber, and GROMACS inputs, JSON errors, warnings, and notes,
+# PME, minimization, NVE/NVT/NPT, nonperiodic cells, and every output of
+# D149 with the number of rows, frames, or checkpoints of the run and the
+# name under which a run keeps the file that exists.
 #
 # RUN: rm -rf %t
 # RUN: %python %S/Inputs/check_preflight.py mdir %S/../.. %t | FileCheck %s --check-prefix=JSON
@@ -24,11 +26,14 @@
 # AMBER-NEXT: PME beta: automatic, tolerance 1e-05
 # AMBER: constraints: {{[0-9]+}} distances; hydrogen bonds yes, rigid water yes
 # AMBER-NEXT: target: gpu, mixed precision
-# AMBER: trajectory: {{.*}}run.dcd (DCD), every 5000 steps
-# AMBER-NEXT: checkpoint: {{.*}}run.h5 (H5MD), every 50000 steps
+# AMBER: log: stdout and {{.*}}run.log (text), every 5000 steps, 101 rows
+# AMBER-NEXT: energy: {{.*}}run.energy (columns), every 5000 steps, 101 rows
+# AMBER-NEXT: pull: not configured (columns), disabled
+# AMBER-NEXT: trajectory: {{.*}}run.dcd (DCD), every 5000 steps, 100 frames
+# AMBER-NEXT: checkpoint: {{.*}}run.h5 (H5MD), every 50000 steps, 10 checkpoints
 # RISKY: ensemble: NVE
 # RISKY: run length: 0.02 ns
-# RISKY: energies: stdout (stdout), disabled
+# RISKY: log: stdout (text), no rows
 # WARN: warning: 'rebuild_interval = 20' skips validity tests
 # WARN: warning: the run writes no checkpoint
 # WARN: warning: 'energy_interval = 0' disables energy reports
@@ -38,7 +43,7 @@
 # MIN: checkpoint: {{.*}}min.h5 (H5MD), at the end
 # NONE: boundary: NONE (no periodic cell)
 # ACTIVE: input checkpoint: {{.*}}earlier.h5 (not loaded by check)
-# ACTIVE: trajectory: {{.*}}frames with "quotes".xtc (XTC), every 10 steps, exists
-# EXISTS: warning: trajectory output '{{.*}}frames with "quotes".xtc' already exists
+# ACTIVE: trajectory: {{.*}}frames with "quotes".xtc (XTC), every 10 steps, 1000 frames, exists
+# EXISTS: note: trajectory output '{{.*}}frames with "quotes".xtc' exists; mdir run keeps it as '{{.*}}#frames with "quotes".xtc.1#' before it writes its own, and mdir run --continue continues the run of its checkpoint instead
 # EXISTS: warning: input checkpoint '{{.*}}earlier.h5' does not exist yet
-# PULL: pull_coordinates: {{.*}}pull.dat (columns), every 20 steps, exists
+# PULL: pull: {{.*}}pull.dat (columns), every 20 steps, 6 rows, exists
