@@ -168,8 +168,9 @@ energy reference: `-103.3937675287093`. Maximum absolute component error across
 energy, force, and virial was `4.41e-13` in double and `2.52e-5` in mixed.
 Five invalid CLI configurations were rejected. The CPU-visible regression
 suite passed 190 tests with 69 unsupported (GPU hidden), including ten plan
-roundtrip/negative tests. Broader SIMD/thread and GPU-inclusive regressions
-are recorded in the PR as they complete. No GPU transport or performance
+roundtrip/negative tests. The broader 216-case SIMD/thread matrix also passed, with 24 finite
+differences and four invalid snapshots rejected. GPU-inclusive regression
+results are recorded in the PR when complete. No GPU transport or performance
 improvement is claimed.
 
 ## Path toward production
@@ -327,3 +328,11 @@ reducer and floating-point policy, permitted representation transformations,
 cache validity, and participant/progress/completion contracts. Missing facts
 must produce a diagnostic or an explicitly supported conservative plan. The
 initial Cartesian runtime does not implement this general synthesis.
+
+The 1,728-particle replay check on eight ranks (`2,2,2`, two threads, double,
+ten replays) found 64 interior centers and exactly matching sync/async stdout.
+Stage timing instrumentation ran successfully; runs shared CPU resources with
+validation jobs, so these numbers are not used to claim a speedup.
+
+Tracked next work: [general placement/completion contracts (#37)](https://github.com/vv137/mdir/issues/37)
+and [temporal validity/migration (#38)](https://github.com/vv137/mdir/issues/38).
