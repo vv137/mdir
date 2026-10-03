@@ -91,12 +91,14 @@ against pmemd.cuda (the user, 2026-10-01); the comparison on a protein
   in all of them.
 - Every method that MDIR implements, with its equations as implemented
   (TODO: keep the design documents complete in TeX as features land).
-- Usage (TODO, the user, 2026-10-03): how a researcher runs MDIR, beside
-  the reference of the control file (Appendix A): building and checking an
-  installation, the stages of the standard pipeline as control files,
-  inputs from Amber, GROMACS, and CHARMM, the outputs and how to read them,
-  continuing a run on a cluster (U1 to U4), the choice of target and
-  precision, and terms given by expressions.
+- Usage (Done, 2026-10-03: Appendix C, [C-usage.md](paper/C-usage.md)):
+  how a researcher runs MDIR, beside the reference of the control file
+  (Appendix A): building and checking an installation, the stages of the
+  standard pipeline as control files, inputs from Amber, GROMACS, and
+  CHARMM, continuing a run on a cluster (U1 to U4), the choice of target
+  and precision, terms given by expressions, implicit solvent, and
+  failures, each command run at the commit of the paper. Its section on
+  the outputs follows U12 when that lands.
 - The design: the levels of the IR (`md`, `dyn`, `md_exec`), compilation of
   each run before it runs, the lowerings to CPUs and GPUs, the runtime.
 - The neighbor algorithms in detail (Done, Section 4): the matrix (neighbors-m0.md)

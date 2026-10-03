@@ -55,7 +55,11 @@ loses in single precision what an iterative one keeps.
 13. [Limitations and next steps](13-limitations.md)
 
 Appendices: [A. The control file](A-control-file.md),
-[B. Taking part](B-contributing.md). [References](references.md).
+[B. Taking part](B-contributing.md), [C. Using MDIR](C-usage.md): an
+installation and its check, inputs from Amber, GROMACS, and CHARMM, the
+standard pipeline, target and precision, runs on a cluster, terms given
+by expressions, implicit solvent, and what to do when something fails.
+[References](references.md).
 
 ## Reproducing the paper
 
