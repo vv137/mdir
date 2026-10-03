@@ -1,6 +1,10 @@
 add_subdirectory(lib/Dialect/MD)
 
 # For the site configuration of lit.
+set(MDIR_TEST_MPI 0)
+if(MDIR_ENABLE_MPI)
+  set(MDIR_TEST_MPI 1)
+endif()
 if(MDIR_CUDA_FOUND)
   set(MDIR_TEST_CUDA 1)
 else()
@@ -26,6 +30,9 @@ set(MDIR_TEST_DEPENDS
   mdir-opt
   mdrt
   )
+if(MDIR_ENABLE_MPI)
+  list(APPEND MDIR_TEST_DEPENDS mdir-cpu-lj)
+endif()
 if(MDIR_CUDA_FOUND)
   list(APPEND MDIR_TEST_DEPENDS mdrt_cuda)
 endif()

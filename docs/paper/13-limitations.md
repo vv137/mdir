@@ -131,3 +131,11 @@ Analysis comes last: frames correct by construction (molecules whole,
 the solute in one image) and observables compiled into the run, sharing
 its loops; on one trajectory compared across analysis programs, what went
 wrong was images and conventions, never the arithmetic.
+
+The fixed-layout CPU prototype (D[cpu-hybrid-lj]) adds an experimental LJ
+snapshot evaluator with MPI transport and generated OpenMP/SIMD kernels.
+It is a manually selected directed plan, with all-pairs local candidates and
+no integration. This validates separation of owned centers from replica reads,
+not general field freshness, contribution completeness, migration, or scalable
+distributed execution. Async completion and GPU-initiated transport remain
+future work; MPI request semantics do not define the shared event contract.

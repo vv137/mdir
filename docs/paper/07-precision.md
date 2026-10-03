@@ -269,3 +269,14 @@ pmemd.cuda. Right: 0.4 ns, each part of the mixed mode in f64.
 whose error is bounded and smooth, is not harmless in an operator whose
 error is divided by the step. The precision policy of MDIR now names the
 roles that may be approximated, rather than the types that may be.
+
+### Experimental CPU neighbor vectors
+
+In D[cpu-hybrid-lj], the opt-in neighbor SIMD path widens mixed-precision pair
+yields before accumulating f64 lane sums. Its scalar comparison retains the
+existing f32 row sums for global energy and virial. Consequently width changes
+can alter roundoff even at fixed rank count. Coordinates and transport remain
+f64, and both paths use the same inward f32 cutoff rule. Validation compares
+forces, energy, and virial with an independent unique-pair reference and tests
+thread-count invariance for a fixed plan; it does not promise bitwise equality
+across MPI rank counts. See [the implementation reference](../cpu-hybrid-lj.md).

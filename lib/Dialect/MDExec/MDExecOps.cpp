@@ -649,6 +649,20 @@ static SmallVector<Type, 2> getPairGeometryTypes(PairForOp op) {
   return {real, VectorType::get({3}, real)};
 }
 
+LogicalResult NeighborViewOp::verify() {
+  auto counts = dyn_cast<MemRefType>(getCounts().getType());
+  auto entries = dyn_cast<MemRefType>(getEntries().getType());
+  if (!counts || counts.getRank() != 1 || !counts.getElementType().isInteger(32) ||
+      !entries || entries.getRank() != 2 || !entries.getElementType().isInteger(32))
+    return emitOpError("requires rank-one i32 counts and rank-two i32 entries");
+  if (counts.getMemorySpace() || entries.getMemorySpace())
+    return emitOpError("requires host buffers");
+  if (!counts.isDynamicDim(0) && !entries.isDynamicDim(0) &&
+      counts.getDimSize(0) != entries.getDimSize(0))
+    return emitOpError("counts and entries must have the same row count");
+  return success();
+}
+
 LogicalResult PairForOp::verify() {
   auto neighbors = cast<NeighborsType>(getNeighbors().getType());
   if (failed(verifyPositions(getOperation(), getPositions(),

@@ -335,3 +335,13 @@ What went wrong in the comparisons of this work was never the arithmetic:
 Not taken: reimplementing the actions of cpptraj. A device pays where pairs
 are involved, where all pairs of frames are (clustering), or where the
 frames never reach a file.
+
+## Fixed-layout hybrid CPU slice (D[cpu-hybrid-lj])
+
+The experimental [MPI/OpenMP/SIMD LJ executable](cpu-hybrid-lj.md) provides a
+single-snapshot reference path with owned-center rows, explicit neighbor SIMD,
+and blocking MPI transport. It does not complete the general distributed-field
+milestone. The [development sequence](cpu-hybrid-plan.md) keeps requirement and
+completion verification, EAM stage extraction, temporal validity/migration, and
+asynchronous buffer lifetime analysis as separate follow-ups. No throughput or
+multi-node scaling claim has been established.

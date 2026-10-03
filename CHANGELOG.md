@@ -12,6 +12,10 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- Optional `MDIR_ENABLE_MPI` fixed-layout `mdir-cpu-lj` prototype with checked
+  imported neighbor rows, OpenMP centers, and explicit CPU SIMD width 1/4/8.
+  No production TOML keys change (D[cpu-hybrid-lj]).
+
 - `cmake --install` installs `bin/mdir`, its runtime, and the OpenMP runtime
   under one prefix, and the log of a run begins with the version and the
   commit of the build (D174).

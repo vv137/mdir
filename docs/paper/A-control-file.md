@@ -304,3 +304,11 @@ to `<checkpoint>.prev`. The file is flushed to stable storage before it
 takes its name, and its directory after. `mdir checkpoint
 --print=fingerprint` lists the fingerprint, and docs/driver-m0.md, Section
 2.6, says what a run that takes a checkpoint compares.
+
+### Experimental CPU transport tool
+
+D[cpu-hybrid-lj] adds no control-file keys. The build-tree-only `mdir-cpu-lj`
+executable reads a fixed LJ snapshot and accepts precision, OpenMP thread count,
+and SIMD width on its command line. It does not accept this TOML schema or run
+a trajectory. Its complete interface is in
+[the implementation reference](../cpu-hybrid-lj.md).
