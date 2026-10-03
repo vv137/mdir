@@ -5,11 +5,12 @@ CHARMM inputs, or define your own potential in a control file.
 
 ## Quickstart
 
-[Build MDIR](#requirements), then run these commands from the repository
-root. Check the CPU installation and run the supplied liquid argon example:
+[Install MDIR](#installing) from a release or run its container, then run
+these commands from the root of the source tree. Check the CPU installation
+and run the supplied liquid argon example:
 
 ```sh
-export PATH="$PWD/build/bin:$PATH"
+export PATH="$HOME/opt/mdir/bin:$PATH"   # where MDIR is installed
 mdir doctor --target=cpu
 mkdir argon-run
 cp examples/argon/argon.toml examples/argon/argon.pdb argon-run/
@@ -49,6 +50,35 @@ rate of pmemd.cuda. A driver reads a control file and writes a log, a
 trajectory, and checkpoints, from which a run continues exactly. The white
 paper of the first milestone is in [docs/paper/](docs/paper/README.md).
 
+## Installing
+
+The current release is [v0.1.0](docs/release-notes/v0.1.0.md); its
+changes are in [CHANGELOG.md](CHANGELOG.md).
+
+**From a release.** Download the source archive of the release from
+[GitHub Releases](https://github.com/vv137/mdir/releases), build LLVM,
+HDF5, and MDIR as [below](#requirements), and install:
+
+```sh
+cmake --install build --prefix $HOME/opt/mdir
+```
+
+The installed tree is `bin/mdir` with its runtime and the OpenMP runtime in
+`lib/`; it does not need the build trees of MDIR or LLVM. At run time it
+needs HDF5 (found through the RPATH of the build), and on a GPU the NVIDIA
+driver and the CUDA toolkit's `nvvm/libdevice` and cuFFT, under `CUDA_ROOT`
+or the toolkit it was built with.
+
+**In a container.** [packaging/](packaging/README.md) builds a Docker or an
+Apptainer image with LLVM, HDF5, CUDA, and MDIR:
+
+```sh
+docker build -f packaging/Dockerfile -t mdir:0.1.0 .
+docker run --rm --gpus all -v "$PWD":/work mdir:0.1.0 doctor
+apptainer build mdir-0.1.0.sif docker-daemon://mdir:0.1.0
+apptainer run --nv mdir-0.1.0.sif doctor
+```
+
 ## Documents
 
 | Document | Contents |
@@ -62,6 +92,8 @@ paper of the first milestone is in [docs/paper/](docs/paper/README.md).
 | [docs/design-m1.md](docs/design-m1.md) | The design of the first milestone: bonded terms, exclusions, PME, constraints, virtual sites, thermostat, barostat, and their validation |
 | [docs/charmm-m1.md](docs/charmm-m1.md) | CHARMM force fields: what CHARMM computes (measured with CHARMM 51b1), the force switch of Steinbach and Brooks, converting CHARMM files, and the validation against CHARMM |
 | [docs/paper/](docs/paper/README.md) | The white paper of the first milestone, with derivations and measurements (`scripts/paper/build-pdf.sh` builds the PDF) |
+| [CHANGELOG.md](CHANGELOG.md) | What changed in each release |
+| [docs/release-notes/](docs/release-notes/v0.1.0.md) | Notes of each release |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to build, test, and change MDIR |
 | [docs/workflow.md](docs/workflow.md) | How work is planned, reviewed, and merged: roles, draft pull requests, decision labels, shared GPUs |
 | [docs/decisions.md](docs/decisions.md) | Decisions and their status |

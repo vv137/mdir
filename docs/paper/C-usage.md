@@ -8,8 +8,9 @@ or the commit (times, hashes, paths) will differ elsewhere.
 
 ## C.1 An installation and its check
 
-MDIR is built as Appendix B.1 describes. `mdir version` prints what the
-build supports:
+MDIR is built and installed as Appendix B.1 describes, or run from its
+container (`packaging/README.md`: `docker run --gpus all` or
+`apptainer run --nv`). `mdir version` prints what the build supports:
 
 ```text
 $ mdir version

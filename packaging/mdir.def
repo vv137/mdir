@@ -1,0 +1,80 @@
+# The Apptainer (Singularity) container of MDIR, the same build as
+# packaging/Dockerfile. Build from the root of the repository:
+#
+#   apptainer build mdir-0.1.0.sif packaging/mdir.def
+#
+# from a clean tree, a fresh clone or the source archive of a release,
+# since %files copies the whole directory; or convert the Docker image,
+# which is quicker if it is built already:
+#
+#   apptainer build mdir-0.1.0.sif docker-daemon://mdir:0.1.0
+#
+# Run on a GPU with --nv, which binds the host's driver into the container:
+#
+#   apptainer run --nv mdir-0.1.0.sif run md.toml
+#
+# The CUDA of the image must not be newer than the host driver supports.
+
+Bootstrap: docker
+From: nvidia/cuda:13.0.1-devel-ubuntu24.04
+Stage: build
+
+%files
+    . /src/mdir
+
+%environment
+    export LC_ALL=C
+
+%post
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        build-essential cmake ninja-build git python3 ca-certificates curl \
+        zlib1g-dev
+    rm -rf /var/lib/apt/lists/*
+    JOBS=${JOBS:-16}
+    # Only the targets MDIR compiles for: the host and NVIDIA GPUs.
+    LLVM_ROOT=/opt/llvm LLVM_TARGETS="X86;NVPTX" JOBS=$JOBS LINK_JOBS=4 \
+        /src/mdir/scripts/build-llvm.sh
+    rm -rf /opt/llvm/src /opt/llvm/build
+    HDF5_ROOT=/opt/hdf5 JOBS=$JOBS /src/mdir/scripts/build-hdf5.sh
+    rm -rf /opt/hdf5/src /opt/hdf5/build
+    cmake -G Ninja -S /src/mdir -B /build/mdir \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DLLVM_DIR=/opt/llvm/23.1.2/lib/cmake/llvm \
+        -DMLIR_DIR=/opt/llvm/23.1.2/lib/cmake/mlir \
+        -DHDF5_ROOT=/opt/hdf5/1.14.6 \
+        -DCUDAToolkit_ROOT=/usr/local/cuda \
+        -DMDIR_ENABLE_CUDA=ON \
+        -DCMAKE_INSTALL_PREFIX=/opt/mdir
+    cmake --build /build/mdir --target mdir mdrt mdrt_cuda
+    cmake --install /build/mdir
+
+Bootstrap: docker
+From: nvidia/cuda:13.0.1-runtime-ubuntu24.04
+Stage: runtime
+
+# The runtime image of CUDA carries cuFFT; the kernels also take the math
+# functions of libdevice, from CUDA_ROOT, which only the devel image has.
+%files from build
+    /opt/mdir /opt/mdir
+    /opt/hdf5/1.14.6/lib /opt/hdf5/1.14.6/lib
+    /usr/local/cuda/nvvm/libdevice /usr/local/cuda/nvvm/libdevice
+    /usr/local/cuda/version.json /usr/local/cuda/version.json
+    /src/mdir/examples /opt/mdir/share/mdir/examples
+
+%environment
+    export PATH=/opt/mdir/bin:$PATH
+    export CUDA_ROOT=/usr/local/cuda
+
+%runscript
+    exec mdir "$@"
+
+%test
+    mdir version
+
+%labels
+    org.opencontainers.image.title MDIR
+    org.opencontainers.image.version 0.1.0
+    org.opencontainers.image.source https://github.com/vv137/mdir
+    org.opencontainers.image.licenses MIT

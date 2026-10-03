@@ -1,0 +1,6 @@
+# The build context of packaging/Dockerfile is the source tree only.
+.git
+.claude
+build
+*.zip
+docs/diagrams
