@@ -3,7 +3,7 @@
 !vec    = !md.field<@atoms, 3 x f64>
 !real   = !md.field<@atoms, f64>
 !angles = !md.relation<@atoms, 3, reversal, @angles>
-!inc    = !mdrt.incidence<@atoms, @angles, 3>
+!inc    = !mdrt.incidence<@atoms, 3, @angles>
 !of_angle = !md.field<@angles, f64>
 
 md.particle_set @atoms
@@ -16,7 +16,7 @@ func.func @value_form(%members: memref<?x3xi32>, %x: !vec, %cell: !md.cell,
   %angles = mdrt.from_buffer %members : memref<?x3xi32> to !angles
 
   // CHECK: %[[INC:[0-9]+]] = md_exec.build_incidence %[[ANGLES]]
-  // CHECK-SAME: : !md.relation<@atoms, 3, reversal, @angles> -> !mdrt.incidence<@atoms, @angles, 3>
+  // CHECK-SAME: : !md.relation<@atoms, 3, reversal, @angles> -> !mdrt.incidence<@atoms, 3, @angles>
   %inc = md_exec.build_incidence %angles : !angles -> !inc
 
   %f0 = md_exec.zeros : !vec
@@ -27,7 +27,7 @@ func.func @value_form(%members: memref<?x3xi32>, %x: !vec, %cell: !md.cell,
   // CHECK-SAME: outs(%{{[a-z0-9]+}} : !md.field<@atoms, 3 x f64>) reduce(%{{[a-z0-9_]+}} : f64) arity(3) {
   // CHECK-NEXT: ^bb0(%{{[a-z0-9]+}}: vector<3xf64>, %{{[a-z0-9]+}}: vector<3xf64>, %{{[a-z0-9]+}}: f64, %{{[a-z0-9]+}}: f64, %{{[a-z0-9]+}}: f64, %{{[a-z0-9]+}}: f64):
   // CHECK: md_exec.yield %{{.*}} : vector<3xf64>, vector<3xf64>, vector<3xf64>, f64
-  // CHECK-NEXT: } : !mdrt.incidence<@atoms, @angles, 3>, !md.field<@atoms, 3 x f64> -> !md.field<@atoms, 3 x f64>, f64
+  // CHECK-NEXT: } : !mdrt.incidence<@atoms, 3, @angles>, !md.field<@atoms, 3 x f64> -> !md.field<@atoms, 3 x f64>, f64
   %f, %u = md_exec.tuple_for %inc, %x, %cell
              coordinates(displacement(0, 1), displacement(2, 1))
              ins(%q : !real) tuple(%k : !of_angle)
@@ -68,14 +68,14 @@ func.func @storage_form(%members: memref<?x3xi32>, %n: index,
 //
 // CHECK-LABEL: func.func @excluding(
 func.func @excluding(%x: !vec, %cell: !md.cell,
-                     %e: !mdrt.incidence<@atoms, @bonds, 2>,
+                     %e: !mdrt.incidence<@atoms, 2, @bonds>,
                      %m: memref<?x?xi32>, %n: index) {
   %cells = md_exec.build_cells %x, %cell width(1.0) : !vec -> !mdrt.cells<@atoms>
   // CHECK: md_exec.build_neighbors
-  // CHECK-SAME: kind(matrix) width(32) exclude(%{{[a-z0-9]+}} : !mdrt.incidence<@atoms, @bonds, 2>)
+  // CHECK-SAME: kind(matrix) width(32) exclude(%{{[a-z0-9]+}} : !mdrt.incidence<@atoms, 2, @bonds>)
   %nl = md_exec.build_neighbors %cells, %x, %cell
       cutoff(1.0) skin(0.2) kind(matrix) width(32)
-      exclude(%e : !mdrt.incidence<@atoms, @bonds, 2>)
+      exclude(%e : !mdrt.incidence<@atoms, 2, @bonds>)
       : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
   // CHECK: md_exec.empty_neighbors size(%{{[a-z0-9]+}}) positions(memref<?x3xf64>) kind(matrix) width(32) exclude(%{{[a-z0-9]+}} : memref<?x?xi32>)
   %nl0 = md_exec.empty_neighbors size(%n) positions(memref<?x3xf64>)

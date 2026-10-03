@@ -107,6 +107,20 @@ those updates are zero at its members; and the lowering evaluates a
 disjoint tuple once, in the thread of its first member, writing every
 member without atomics (Section 8.1).
 
+A relation may also follow from the positions. Besides the pairs of a
+neighborhood, `md.triplets` derives from them the triplets centered on
+each particle: each center with each unordered pair of its neighbors
+within a cutoff, the center in the middle, as in the three-body term of
+Stillinger and Weber [[StillingerWeber1985]](references.md#stillingerweber1985) and of the mW water
+[[Molinero2009]](references.md#molinero2009) (D160). The tuple ops sum over it as over the tuples of a
+topology, and differentiation gives its forces and virial by the rule for
+tuples of Section 3.3. Its size changes with the positions, so on the CPU
+its members are written at every evaluation, from the rows of the
+neighbor matrix, into a buffer as long as the triplets; the test of a leg
+is that of the kernel, with the cutoff in f32 pulled in below the pole of
+the term (D159). On 64 mW particles the forces agree with OpenMM's to
+$6\times10^{-15}$ of the largest.
+
 ## 3.3 Differentiation and exchange contracts
 
 `md-differentiate` replaces each `md.evaluate` with a call to a function

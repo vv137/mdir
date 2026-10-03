@@ -23,7 +23,7 @@
 !y = !md.field<@pairs, f64>
 !e = !md.field<@atoms, f64>
 !pairs = !md.relation<@atoms, 2, unordered, @pairs>
-!inc = !mdrt.incidence<@atoms, @pairs, 2>
+!inc = !mdrt.incidence<@atoms, 2, @pairs>
 
 md.particle_set @atoms
 md.tuple_set @pairs on(@atoms) arity(2) orientation(unordered)

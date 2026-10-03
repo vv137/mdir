@@ -94,6 +94,15 @@ public:
       }
       found.push_back({loop, beginnings});
     });
+    // The triplets are found in the rows of a matrix, which hold every
+    // neighbor of a particle (D160).
+    getOperation()->walk([&](BuildTripletsOp triplets) {
+      llvm::DenseSet<Value> visited;
+      llvm::SetVector<Operation *> beginnings;
+      if (!findBeginnings(triplets.getNeighbors(), beginnings, visited))
+        unknown = true;
+      keep.insert(beginnings.begin(), beginnings.end());
+    });
     // A loop over a structure whose beginnings are unknown may be over any
     // of them: all stay matrices.
     if (unknown)

@@ -62,6 +62,13 @@ public:
   /// of their first use.
   const std::vector<std::string> &getNames() const { return names; }
 
+  /// Replaces every call of the function `function` whose argument is the
+  /// name `argument` by the name `replacement`, which may be one that no
+  /// expression can write, such as "cos(theta)": a coordinate that the
+  /// kernel then takes in place of the call.
+  void replaceCall(llvm::StringRef function, llvm::StringRef argument,
+                   llvm::StringRef replacement);
+
   /// Whether the expression calls a tabulated function.
   bool callsTabulated() const { return !splines.empty(); }
 

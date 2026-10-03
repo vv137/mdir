@@ -1,7 +1,7 @@
 // RUN: mdir-opt %s --md-exec-fuse-loops | FileCheck %s
 
 !vec = !md.field<@atoms, 3 x f64>
-!inc = !mdrt.incidence<@atoms, @links, 2>
+!inc = !mdrt.incidence<@atoms, 2, @links>
 !of_link = !md.field<@links, f64>
 
 md.particle_set @atoms

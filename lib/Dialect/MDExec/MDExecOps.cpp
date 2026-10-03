@@ -825,18 +825,17 @@ LogicalResult BuildIncidenceOp::verify() {
 
   if (getSize())
     return emitOpError() << "'size' belongs to the storage form";
+  // A relation without a tuple set is one that is found, as the triplets
+  // of 'md_exec.build_triplets' are (D160).
   auto relation = cast<RelationType>(getRelation().getType());
   auto incidence = cast<IncidenceType>(getResult().getType());
-  if (!relation.getTupleSet())
-    return emitOpError() << "expected the relation of a tuple set, got "
-                         << relation;
   if (relation.getParticleSet() != incidence.getParticleSet() ||
       relation.getTupleSet() != incidence.getTupleSet() ||
       relation.getArity() != incidence.getArity())
     return emitOpError()
            << "expected the result to have type "
            << IncidenceType::get(getContext(), relation.getParticleSet(),
-                                 relation.getTupleSet(), relation.getArity())
+                                 relation.getArity(), relation.getTupleSet())
            << ", got " << incidence;
   return success();
 }
@@ -847,6 +846,49 @@ void BuildIncidenceOp::getEffects(
   if (!isStorageForm())
     return;
   addEffect<MemoryEffects::Read>(effects, getRelationMutable());
+  effects.emplace_back(MemoryEffects::Allocate::get(),
+                       getOperation()->getOpResults().front(), /*stage=*/0,
+                       /*effectOnFullRegion=*/true,
+                       SideEffects::DefaultResource::get());
+}
+
+LogicalResult BuildTripletsOp::verify() {
+  auto neighbors = cast<NeighborsType>(getNeighbors().getType());
+  if (failed(verifyPositions(getOperation(), getPositions(),
+                             neighbors.getParticleSet())))
+    return failure();
+  double cutoff = getCutoff().convertToDouble();
+  if (!(cutoff > 0.0))
+    return emitOpError() << "expected a positive cutoff, got " << cutoff;
+  Type result = getResult().getType();
+  if (isStorageForm()) {
+    auto members = dyn_cast<MemRefType>(result);
+    if (!members || members.getDimSize(1) != 3 || members.getMemorySpace())
+      return emitOpError() << "expected the members of triplets, "
+                              "memref<?x3xi32> on the host, got "
+                           << result;
+    return success();
+  }
+  auto relation = dyn_cast<RelationType>(result);
+  if (!relation || relation.getTupleSet() || relation.getArity() != 3 ||
+      relation.getOrientation() != md::Orientation::Reversal ||
+      relation.getParticleSet() != neighbors.getParticleSet())
+    return emitOpError()
+           << "expected the result to have type "
+           << RelationType::get(getContext(), neighbors.getParticleSet(), 3,
+                                md::Orientation::Reversal,
+                                FlatSymbolRefAttr())
+           << ", got " << result;
+  return success();
+}
+
+void BuildTripletsOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  if (!isStorageForm())
+    return;
+  addEffect<MemoryEffects::Read>(effects, getNeighborsMutable());
+  addEffect<MemoryEffects::Read>(effects, getPositionsMutable());
   effects.emplace_back(MemoryEffects::Allocate::get(),
                        getOperation()->getOpResults().front(), /*stage=*/0,
                        /*effectOnFullRegion=*/true,

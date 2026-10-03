@@ -93,6 +93,7 @@ private:
   void lowerParticleFor(md_exec::ParticleForOp op);
   LogicalResult lowerPairFor(md_exec::PairForOp op);
   void lowerTupleFor(md_exec::TupleForOp op);
+  LogicalResult lowerBuildTriplets(md_exec::BuildTripletsOp op);
 
   /// The storage of the neighbor structure `structure`.
   LogicalResult getNeighbors(Operation *op, Value structure,
@@ -293,6 +294,53 @@ void Lowering::lowerTupleFor(md_exec::TupleForOp op) {
 
   for (unsigned i = 0, e = op.getNumResults(); i != e; ++i)
     op.getResult(i).replaceAllUsesWith(loop.getResult(i));
+}
+
+/// The type that the loops over the triplets `triplets` compute in: f32 if
+/// one of them does, so that the test of the cutoff is that of the
+/// narrowest (D160), or else that of the positions.
+static Type getTripletsReal(md_exec::BuildTripletsOp triplets) {
+  Type real = cast<MemRefType>(triplets.getPositions().getType())
+                  .getElementType();
+  for (Operation *user : triplets.getResult().getUsers()) {
+    auto build = dyn_cast<md_exec::BuildIncidenceOp>(user);
+    if (!build)
+      continue;
+    for (Operation *reader : build.getResult().getUsers()) {
+      auto loop = dyn_cast<md_exec::TupleForOp>(reader);
+      if (!loop || loop.getKernel().front().getNumArguments() == 0)
+        continue;
+      Type computed = getElementTypeOrSelf(
+          loop.getKernel().front().getArgument(0).getType());
+      if (computed.getIntOrFloatBitWidth() < real.getIntOrFloatBitWidth())
+        real = computed;
+    }
+  }
+  return real;
+}
+
+LogicalResult Lowering::lowerBuildTriplets(md_exec::BuildTripletsOp op) {
+  if (!op.isStorageForm())
+    return op->emitOpError()
+           << "is not in the storage form; run 'md-exec-assign-storage' "
+              "first";
+  Neighbors structure;
+  if (failed(getNeighbors(op, op.getNeighbors(), structure)))
+    return failure();
+  Location loc = op.getLoc();
+  OpBuilder builder(op);
+  Value positions = op.getPositions();
+  // The cell has become the vector of its edge lengths.
+  Type real = cast<MemRefType>(positions.getType()).getElementType();
+  Value box = convertReal(builder, loc, op.getCellMutable().get(), real);
+  Value inverse = createInverse(builder, loc, box);
+  Value entries = getMatrixEntries(builder, loc, structure.handle);
+  Value members = emitBuildTriplets(
+      builder, loc, structure.counts, entries, positions, box, inverse,
+      getTripletsReal(op), op.getCutoff().convertToDouble());
+  op.getResult().replaceAllUsesWith(members);
+  freeAtEndOfBlock(op, members);
+  return success();
 }
 
 //===----------------------------------------------------------------------===//
@@ -926,6 +974,9 @@ LogicalResult Lowering::lowerOp(Operation *op) {
       return failure();
   } else if (auto loop = dyn_cast<md_exec::TupleForOp>(op)) {
     lowerTupleFor(loop);
+  } else if (auto triplets = dyn_cast<md_exec::BuildTripletsOp>(op)) {
+    if (failed(lowerBuildTriplets(triplets)))
+      return failure();
   } else if (auto build = dyn_cast<md_exec::BuildIncidenceOp>(op)) {
     if (!build.isStorageForm())
       return op->emitOpError()

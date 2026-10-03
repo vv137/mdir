@@ -32,7 +32,7 @@ md.function @f(%a: !md.relation<@atoms, 1, ordered>) {
 md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell) -> f64 {
   %n = md.neighborhood %x, %cell cutoff(1.5)
          : !md.field<@atoms, 3 x f64> -> !md.relation<@atoms, 2, unordered>
-  // expected-error@+1 {{expected the relation of a tuple set, got '!md.relation<@atoms, 2, unordered>'}}
+  // expected-error@+1 {{expected the relation of a tuple set or of 'md.triplets', got '!md.relation<@atoms, 2, unordered>'}}
   %u = md.sum_tuples %n, %x, %cell coordinates(distance(0, 1)) {
   ^bb0(%r: f64):
     md.yield %r : f64

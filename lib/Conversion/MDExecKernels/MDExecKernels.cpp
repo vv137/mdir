@@ -2074,6 +2074,151 @@ Value kernels::emitRenumber(OpBuilder &builder, Location loc, Value members,
   return result;
 }
 
+Value kernels::emitBuildTriplets(OpBuilder &builder, Location loc,
+                                 Value counts, Value entries, Value positions,
+                                 Value box, Value inverse, Type computed,
+                                 double cutoff) {
+  Type narrow = builder.getI32Type();
+  Type index = builder.getIndexType();
+  Value zero = createIndex(builder, loc, 0);
+  Value one = createIndex(builder, loc, 1);
+  Value two = createIndex(builder, loc, 2);
+  Value size = memref::DimOp::create(builder, loc, positions, zero);
+  Value width = memref::DimOp::create(builder, loc, entries, one);
+  Value cutoff2 = createCutoff2(builder, loc, computed, cutoff);
+  Value boxComputed = convertReal(builder, loc, box, computed);
+  Value inverseComputed = convertReal(builder, loc, inverse, computed);
+  auto toIndex = [&](OpBuilder &b, Value value) -> Value {
+    return arith::IndexCastOp::create(b, loc, index, value);
+  };
+
+  // The short row of each particle: the entries of its row within the
+  // cutoff, in the order of the row. Each pair of them is a triplet, as in
+  // the triple sum of [StillingerWeber1985].
+  Value near = memref::AllocOp::create(
+      builder, loc,
+      MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, narrow),
+      ValueRange{size, width});
+  Value nearCounts = memref::AllocOp::create(
+      builder, loc, MemRefType::get({ShapedType::kDynamic}, index),
+      ValueRange{size});
+  scf::ParallelOp::create(
+      builder, loc, ValueRange{zero}, ValueRange{size}, ValueRange{one},
+      [&](OpBuilder &b, Location, ValueRange ivs) {
+        Value center = ivs[0];
+        Value centerPosition = loadElement(b, loc, positions, center);
+        Value count = toIndex(
+            b, memref::LoadOp::create(b, loc, counts, ValueRange{center}));
+        auto row = scf::ForOp::create(
+            b, loc, zero, count, one, ValueRange{zero},
+            [&](OpBuilder &c, Location, Value entry, ValueRange found) {
+              Value other = memref::LoadOp::create(
+                  c, loc, entries, ValueRange{center, entry});
+              // As a loop over the triplets takes the leg: the end minus
+              // the center.
+              Value raw = convertReal(
+                  c, loc,
+                  arith::SubFOp::create(
+                      c, loc, loadElement(c, loc, positions, toIndex(c, other)),
+                      centerPosition),
+                  computed);
+              Value d = emitMinimumImage(c, loc, raw, boxComputed,
+                                         inverseComputed);
+              Value squares = arith::MulFOp::create(c, loc, d, d);
+              Value r2 = vector::ReductionOp::create(
+                  c, loc, vector::CombiningKind::ADD, squares);
+              Value within = arith::CmpFOp::create(
+                  c, loc, arith::CmpFPredicate::OLT, r2, cutoff2);
+              auto keep = scf::IfOp::create(
+                  c, loc, within,
+                  [&](OpBuilder &t, Location) {
+                    memref::StoreOp::create(t, loc, other, near,
+                                            ValueRange{center, found[0]});
+                    scf::YieldOp::create(
+                        t, loc,
+                        ValueRange{arith::AddIOp::create(t, loc, found[0],
+                                                         one)});
+                  },
+                  [&](OpBuilder &e, Location) {
+                    scf::YieldOp::create(e, loc, found[0]);
+                  });
+              scf::YieldOp::create(c, loc, keep.getResults());
+            });
+        memref::StoreOp::create(b, loc, row.getResult(0), nearCounts,
+                                ValueRange{center});
+        scf::ReduceOp::create(b, loc);
+      });
+
+  // The first triplet of each center: n (n - 1) / 2 for each before it.
+  Value firsts = memref::AllocOp::create(
+      builder, loc, MemRefType::get({ShapedType::kDynamic}, index),
+      ValueRange{size});
+  auto total = scf::ForOp::create(
+      builder, loc, zero, size, one, ValueRange{zero},
+      [&](OpBuilder &b, Location, Value center, ValueRange sum) {
+        memref::StoreOp::create(b, loc, sum[0], firsts, ValueRange{center});
+        Value n = memref::LoadOp::create(b, loc, nearCounts,
+                                         ValueRange{center});
+        Value pairs = arith::DivUIOp::create(
+            b, loc,
+            arith::MulIOp::create(b, loc, n,
+                                  arith::SubIOp::create(b, loc, n, one)),
+            two);
+        // A particle with no neighbor within the cutoff has n = 0, whose
+        // n - 1 wraps; its product is 0 all the same.
+        Value isolated = arith::CmpIOp::create(
+            b, loc, arith::CmpIPredicate::eq, n, zero);
+        pairs = arith::SelectOp::create(b, loc, isolated, zero, pairs);
+        scf::YieldOp::create(
+            b, loc, ValueRange{arith::AddIOp::create(b, loc, sum[0], pairs)});
+      });
+
+  Value members = memref::AllocOp::create(
+      builder, loc,
+      MemRefType::get({ShapedType::kDynamic, 3}, narrow),
+      ValueRange{total.getResult(0)});
+  scf::ParallelOp::create(
+      builder, loc, ValueRange{zero}, ValueRange{size}, ValueRange{one},
+      [&](OpBuilder &b, Location, ValueRange ivs) {
+        Value center = ivs[0];
+        Value centerNarrow = arith::IndexCastOp::create(b, loc, narrow,
+                                                        center);
+        Value n = memref::LoadOp::create(b, loc, nearCounts,
+                                         ValueRange{center});
+        Value first = memref::LoadOp::create(b, loc, firsts,
+                                             ValueRange{center});
+        scf::ForOp::create(
+            b, loc, zero, n, one, ValueRange{first},
+            [&](OpBuilder &c, Location, Value a, ValueRange slot) {
+              Value end = memref::LoadOp::create(c, loc, near,
+                                                 ValueRange{center, a});
+              Value next = arith::AddIOp::create(c, loc, a, one);
+              auto inner = scf::ForOp::create(
+                  c, loc, next, n, one, ValueRange{slot[0]},
+                  [&](OpBuilder &d, Location, Value bIndex,
+                      ValueRange row) {
+                    Value other = memref::LoadOp::create(
+                        d, loc, near, ValueRange{center, bIndex});
+                    Value place[3] = {end, centerNarrow, other};
+                    for (int64_t q = 0; q != 3; ++q)
+                      memref::StoreOp::create(
+                          d, loc, place[q], members,
+                          ValueRange{row[0], createIndex(d, loc, q)});
+                    scf::YieldOp::create(
+                        d, loc,
+                        ValueRange{arith::AddIOp::create(d, loc, row[0], one)});
+                  });
+              scf::YieldOp::create(c, loc, inner.getResults());
+            });
+        scf::ReduceOp::create(b, loc);
+      });
+
+  memref::DeallocOp::create(builder, loc, near);
+  memref::DeallocOp::create(builder, loc, nearCounts);
+  memref::DeallocOp::create(builder, loc, firsts);
+  return members;
+}
+
 void kernels::freeAtEndOfBlock(Operation *op, Value buffer) {
   OpBuilder builder(op->getBlock()->getTerminator());
   memref::DeallocOp::create(builder, op->getLoc(), buffer);

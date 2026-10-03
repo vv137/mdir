@@ -346,6 +346,10 @@ LogicalResult Assigner::collect(Operation *op) {
     positions.push_back(build.getPositions());
     return success();
   }
+  if (auto triplets = dyn_cast<BuildTripletsOp>(op)) {
+    positions.push_back(triplets.getPositions());
+    return success();
+  }
   if (auto refresh = dyn_cast<RefreshNeighborsOp>(op)) {
     positions.push_back(refresh.getPositions());
     return success();
@@ -635,10 +639,14 @@ void Assigner::convertPositions() {
   // are over disjoint tuples, keep the positions they are stored in (D79).
   // A loop over groups takes the positions as they are stored: its
   // lowering moves them to the frames of the groups first, then converts
-  // them (D95).
+  // them (D95). The triplets are found at the positions that the loops
+  // over them take, so that the test of the cutoff and the kernel see the
+  // same differences (D160).
   SmallVector<Operation *> loops;
   function.walk([&](Operation *op) {
-    if (auto pair = dyn_cast<PairForOp>(op)) {
+    if (isa<BuildTripletsOp>(op))
+      loops.push_back(op);
+    else if (auto pair = dyn_cast<PairForOp>(op)) {
       if (pair.getTraversal() != Traversal::Unique)
         loops.push_back(op);
     }
@@ -648,9 +656,10 @@ void Assigner::convertPositions() {
   });
   DenseMap<std::pair<Block *, Value>, Value> converted;
   for (Operation *op : loops) {
-    OpOperand &operand = isa<PairForOp>(op)
-                             ? cast<PairForOp>(op).getPositionsMutable()
-                             : cast<TupleForOp>(op).getPositionsMutable();
+    OpOperand &operand =
+        isa<PairForOp>(op)    ? cast<PairForOp>(op).getPositionsMutable()
+        : isa<TupleForOp>(op) ? cast<TupleForOp>(op).getPositionsMutable()
+                              : cast<BuildTripletsOp>(op).getPositionsMutable();
     Value positions = operand.get();
     auto field = dyn_cast<FieldType>(positions.getType());
     if (!field || !isReal(field.getElementType()) ||

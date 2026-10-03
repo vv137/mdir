@@ -317,7 +317,7 @@ B and C are choices for the planner later.
 ```mlir
 %incidence = md_exec.build_incidence %angles
     : !md.relation<@atoms, 3, reversal, @angles>
-      -> !mdrt.incidence<@atoms, @angles, 3>
+      -> !mdrt.incidence<@atoms, 3, @angles>
 
 %f, %u = md_exec.tuple_for %incidence, %x, %cell
            coordinates(displacement(0, 1), displacement(2, 1))
@@ -327,7 +327,7 @@ B and C are choices for the planner later.
   ...
   md_exec.yield %f_0, %f_1, %f_2, %e
       : vector<3xf64>, vector<3xf64>, vector<3xf64>, f64
-} : !mdrt.incidence<@atoms, @angles, 3>, !vec -> !vec, f64
+} : !mdrt.incidence<@atoms, 3, @angles>, !vec -> !vec, f64
 ```
 
 | Item | Decision |

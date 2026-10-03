@@ -1,0 +1,130 @@
+# Terms over the triplets centered on each particle (D160):
+# [[energy.triplet]] with an expression in the legs r12 and r13 from the
+# center to the two ends, the far leg r23, and the angle theta at the
+# center, over each center and each unordered pair of its neighbors within
+# the cutoff of the term. On 64 particles of the mW water of Molinero and
+# Moore [Molinero2009], the two-body term as an [[energy.pair]] and the
+# three-body term of Stillinger and Weber [StillingerWeber1985] as an
+# [[energy.triplet]], on the CPU in double precision. check_triplets.py
+# computes both energies, the forces of each term, and the virial of the
+# three-body term from the coordinates; the run gives them to 1e-9 of the
+# largest force. (The custom many-particle force of OpenMM 8.6.1 in the mode
+# UniqueCentralParticle, on the Reference platform, gives the three-body
+# energy 167.0643245668 kcal/mol for these coordinates and its forces to
+# 6e-15 of the largest.)
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/mw64.pdb %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/terms.toml
+# RUN: sed -n '/^#--- run.toml/,/^#--- terms/p' %s | sed '1d;$d' | sed 's/terms.h5/plain.h5/' > %t/plain.toml
+# RUN: cd %t && mdir run plain.toml > plain.log && mdir run terms.toml > terms.log
+# RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
+# RUN: mdir checkpoint --print=forces %t/terms.h5 > %t/terms.forces
+# RUN: %python %S/Inputs/check_triplets.py %t/mw64.pdb 12.421 %t/plain.forces %t/terms.forces %t/plain.log %t/terms.log | FileCheck %s --check-prefix=PYTHON
+#
+# The parameters of the types by the place of the particle: lambda1 of the
+# center, lambda2 and lambda3 of the ends, with a third of the particles of
+# a type WU with another lambda.
+# RUN: awk '/^HETATM/ && (substr($0,7,5)+0) %% 3 == 0 {$0 = substr($0,1,12) " WU " substr($0,17)} {print}' %t/mw64.pdb > %t/mw64u.pdb
+# RUN: sed -e 's/mw64.pdb/mw64u.pdb/' -e 's/^expression = "lambda\*/expression = "lambda1*sqrt(lambda2*lambda3)\/23.15*/' -e '/^lambda  = 23.15/d' -e 's/^mass = 18.015/&\nlambda = 23.15\n[[energy.type]]\nname = "WU"\nmass = 18.015\nlambda = 30.0/' %t/terms.toml | sed 's/terms.h5/types.h5/' > %t/types.toml
+# RUN: sed -e 's/mw64.pdb/mw64u.pdb/' -e 's/^mass = 18.015/&\nlambda = 23.15\n[[energy.type]]\nname = "WU"\nmass = 18.015\nlambda = 30.0/' %t/plain.toml | sed 's/plain.h5/typesplain.h5/' > %t/typesplain.toml
+# RUN: cd %t && mdir run typesplain.toml > typesplain.log && mdir run types.toml > types.log
+# RUN: mdir checkpoint --print=forces %t/typesplain.h5 > %t/typesplain.forces
+# RUN: mdir checkpoint --print=forces %t/types.h5 > %t/types.forces
+# RUN: %python %S/Inputs/check_triplets.py %t/mw64u.pdb 12.421 %t/typesplain.forces %t/types.forces %t/typesplain.log %t/types.log | FileCheck %s --check-prefix=TYPES
+#
+# A run of 2000 steps of 2 fs at constant energy, in double and in mixed
+# precision, where the kernels compute in f32 and the cutoff of the
+# triplets is pulled in below the pole of the term at a sigma (D159).
+# RUN: sed -e 's/^time_step  = 1e-9/time_step  = 0.002/' -e 's/^steps      = 1$/steps      = 2000\nseed       = 314159/' -e 's/^temperature = 0.0/temperature = 250.0/' -e 's/^energy_interval = 1$/energy_interval = 1000/' -e '/^checkpoint/d' %t/terms.toml > %t/nve.toml
+# RUN: sed -e 's/^precision = "DOUBLE"/precision = "MIXED"/' %t/nve.toml > %t/nve-mixed.toml
+# RUN: cd %t && mdir run nve.toml | FileCheck %s --check-prefix=NVE
+# RUN: cd %t && mdir run nve-mixed.toml | FileCheck %s --check-prefix=NVE
+#
+# The errors.
+# RUN: sed -e 's/^target    = "CPU"/target    = "GPU"/' %t/terms.toml > %t/gpu.toml
+# RUN: not mdir check %t/gpu.toml 2>&1 | FileCheck %s --check-prefix=GPU
+# RUN: sed -e 's/^cutoff     = 4.3065/cutoff     = 5.0/' %t/terms.toml > %t/beyond.toml
+# RUN: not mdir check %t/beyond.toml 2>&1 | FileCheck %s --check-prefix=BEYOND
+# RUN: sed -e '/^cutoff     = 4.3065/d' %t/terms.toml > %t/nocutoff.toml
+# RUN: not mdir check %t/nocutoff.toml 2>&1 | FileCheck %s --check-prefix=NOCUTOFF
+# RUN: sed -e 's/^expression = "lambda\*/expression = "r12*lambda*/' %t/terms.toml > %t/order.toml
+# RUN: not mdir check %t/order.toml 2>&1 | FileCheck %s --check-prefix=ORDER
+# RUN: sed -e 's/^expression = "lambda1\*sqrt(lambda2\*lambda3)/expression = "lambda1*lambda2*sqrt(lambda3)/' %t/types.toml > %t/places.toml
+# RUN: not mdir check %t/places.toml 2>&1 | FileCheck %s --check-prefix=ORDER
+# RUN: sed -e 's/^expression = "lambda\*/expression = "kappa*lambda*/' %t/terms.toml > %t/name.toml
+# RUN: not mdir check %t/name.toml 2>&1 | FileCheck %s --check-prefix=NAME
+# RUN: sed -e 's/^gamma   = 1.2/r23 = 1.2/' %t/terms.toml > %t/variable.toml
+# RUN: not mdir check %t/variable.toml 2>&1 | FileCheck %s --check-prefix=VARIABLE
+
+# PYTHON:      two-body -799.4301
+# PYTHON-NEXT: three-body 167.0643
+# PYTHON-NEXT: forces of the two-body term: ok
+# PYTHON-NEXT: forces of the three-body term: ok
+# PYTHON-NEXT: energies of the log: ok
+# PYTHON-NEXT: virial of the log: ok
+
+# TYPES:      two-body -799.4301
+# TYPES-NEXT: three-body 197.5158
+# TYPES-NEXT: forces of the two-body term: ok
+# TYPES-NEXT: forces of the three-body term: ok
+# TYPES-NEXT: energies of the log: ok
+# TYPES-NEXT: virial of the log: ok
+
+# NVE: MDIR: the total energy changed by {{[0-9.]+e-0[5-9]}} of its value
+
+# GPU: the terms over triplets of {{\[\[}}energy.triplet{{\]\]}} run on the CPU only yet (D160)
+# BEYOND: the cutoff of the triplets, 5 Å, is beyond that of [energy], 4.3065 Å
+# NOCUTOFF: expected a 'cutoff' in {{\[\[}}energy.triplet{{\]\]}}
+# ORDER: the energy of a triplet must not change when its two ends are exchanged
+# NAME: the expression uses 'kappa', which is neither r12, r13, r23, theta, the time t, a number of the term, nor a parameter of every {{\[\[}}energy.type{{\]\]}} with the suffix 1, 2, or 3
+# VARIABLE: 'r23' is a variable of the term, not a number of it
+
+#--- run.toml
+[input]
+coordinates = "mw64.pdb"
+[output]
+energy_interval = 1
+checkpoint = "terms.h5"
+checkpoint_interval = 1
+[energy]
+switch_distance   = 4.3065
+cutoff            = 4.3065
+pairlist_distance = 5.3065
+[[energy.pair]]
+name       = "two-body"
+expression = "A*epsilon*(B*(sigma/r)^4 - 1)*exp(sigma/(r - a*sigma))"
+A       = 7.049556277
+B       = 0.6022245584
+epsilon = 6.189
+sigma   = 2.3925
+a       = 1.8
+[[energy.type]]
+name = "WT"
+mass = 18.015
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 1e-9
+steps      = 1
+[ensemble]
+ensemble    = "NVE"
+temperature = 0.0
+[boundary]
+type = "PERIODIC"
+box  = [12.421, 12.421, 12.421]
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- terms
+[[energy.triplet]]
+name       = "three-body"
+expression = "lambda*epsilon*(cos(theta) + 1/3)^2*exp(gamma*sigma/(r12 - a*sigma))*exp(gamma*sigma/(r13 - a*sigma))"
+cutoff     = 4.3065
+lambda  = 23.15
+epsilon = 6.189
+sigma   = 2.3925
+gamma   = 1.2
+a       = 1.8
+#--- end

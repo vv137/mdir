@@ -943,7 +943,7 @@ def MDExec_BuildIncidenceOp : MDExec_Op<"build_incidence", [
     ```mlir
     %incidence = md_exec.build_incidence %angles
         : !md.relation<@atoms, 3, reversal, @angles>
-          -> !mdrt.incidence<@atoms, @angles, 3>
+          -> !mdrt.incidence<@atoms, 3, @angles>
     ```
 
     The members of a tuple are places in the fields of the particles. The
@@ -976,6 +976,56 @@ def MDExec_BuildIncidenceOp : MDExec_Op<"build_incidence", [
   let extraClassDeclaration = [{
     bool isStorageForm() {
       return ::llvm::isa<::mlir::MemRefType>(getRelation().getType());
+    }
+  }];
+  let hasVerifier = 1;
+}
+
+def MDExec_BuildTripletsOp : MDExec_Op<"build_triplets", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "Finds the triplets centered on each particle";
+  let description = [{
+    The triplets of `md.triplets` at the positions `positions`: for each
+    particle `i`, each unordered pair `{j, k}` of the particles of its row
+    in `neighbors` with `r_ij < cutoff` and `r_ik < cutoff` once, as the
+    tuple `(j, i, k)`, `j` before `k` in the row.
+
+    ```mlir
+    %t = md_exec.build_triplets %nl, %x, %cell cutoff(0.43065)
+           : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+             -> !md.relation<@atoms, 3, reversal>
+    ```
+
+    The structure must be a matrix: its rows hold every neighbor of a
+    particle. The result is a relation without a tuple set; its incidence
+    structure is built by `md_exec.build_incidence`.
+
+    In the storage form the op takes the buffer of the positions and
+    returns a new buffer of the members on the host, one row for each
+    triplet, as many rows as there are triplets (D160).
+
+    ```mlir
+    %members = md_exec.build_triplets %nl, %x, %cell cutoff(0.43065)
+                 : !mdrt.neighbors<@atoms>, memref<?x3xf64>
+                   -> memref<?x3xi32>
+    ```
+  }];
+  let arguments = (ins
+    MDRT_NeighborsType:$neighbors,
+    MDExec_FieldOrBuffer:$positions,
+    MD_CellType:$cell,
+    F64Attr:$cutoff
+  );
+  let results = (outs MDExec_RelationOrMembers:$result);
+  let assemblyFormat = [{
+    $neighbors `,` $positions `,` $cell `cutoff` `(` $cutoff `)` attr-dict
+    `:` qualified(type($neighbors)) `,` qualified(type($positions))
+    `->` qualified(type($result))
+  }];
+  let extraClassDeclaration = [{
+    bool isStorageForm() {
+      return ::llvm::isa<::mlir::MemRefType>(getPositions().getType());
     }
   }];
   let hasVerifier = 1;
@@ -1059,7 +1109,7 @@ def MDExec_TupleForOp : MDExec_Op<"tuple_for", [
       ...
       md_exec.yield %f_0, %f_1, %f_2, %e
           : vector<3xf64>, vector<3xf64>, vector<3xf64>, f64
-    } : !mdrt.incidence<@atoms, @angles, 3>, !md.field<@atoms, 3 x f64>
+    } : !mdrt.incidence<@atoms, 3, @angles>, !md.field<@atoms, 3 x f64>
         -> !md.field<@atoms, 3 x f64>, f64
     ```
 

@@ -43,9 +43,10 @@ private:
   template <typename OpTy>
   LogicalResult convertTupleOp(OpTy op, bool isSum);
   LogicalResult convertKick(dyn::KickOp op);
+  LogicalResult convertTriplets(md::TripletsOp op);
 
-  /// The incidence structure of `relation`, a relation of a tuple set. It
-  /// is built once, where the relation is defined.
+  /// The incidence structure of `relation`, a relation of a tuple set or
+  /// of triplets. It is built once, where the relation is defined.
   Value getIncidence(Value relation, Location loc);
   LogicalResult convertDrift(dyn::DriftOp op);
 
@@ -122,6 +123,25 @@ LogicalResult Converter::convertNeighborhood(md::NeighborhoodOp op) {
       static_cast<uint64_t>(width));
 
   neighbors[op.getResult()] = structure;
+  converted.push_back(op);
+  return success();
+}
+
+/// The triplets are found from the rows of the neighbor structure of the
+/// neighborhood, at its positions, wherever the relation is defined (D160).
+LogicalResult Converter::convertTriplets(md::TripletsOp op) {
+  auto neighborhood = op.getNeighbors().getDefiningOp<md::NeighborhoodOp>();
+  if (!neighborhood)
+    return op.emitOpError() << "cannot convert triplets of a relation that "
+                               "is not the result of 'md.neighborhood'";
+  Value structure = neighbors.lookup(op.getNeighbors());
+  assert(structure && "the neighborhood is converted before its users");
+  builder.setInsertionPoint(op);
+  Value triplets = md_exec::BuildTripletsOp::create(
+      builder, op.getLoc(), op.getResult().getType(), structure,
+      neighborhood.getPositions(), neighborhood.getCell(),
+      op.getCutoffAttr());
+  op.getResult().replaceAllUsesWith(triplets);
   converted.push_back(op);
   return success();
 }
@@ -334,7 +354,7 @@ Value Converter::getIncidence(Value relation, Location loc) {
   incidence = md_exec::BuildIncidenceOp::create(
       builder, loc,
       mdrt::IncidenceType::get(builder.getContext(), type.getParticleSet(),
-                               type.getTupleSet(), type.getArity()),
+                               type.getArity(), type.getTupleSet()),
       relation, /*size=*/Value());
   return incidence;
 }
@@ -419,6 +439,8 @@ LogicalResult Converter::convert(Operation *op) {
 
   if (auto neighborhood = dyn_cast<md::NeighborhoodOp>(op))
     return convertNeighborhood(neighborhood);
+  if (auto triplets = dyn_cast<md::TripletsOp>(op))
+    return convertTriplets(triplets);
 
   if (auto sum = dyn_cast<md::SumRelationOp>(op)) {
     if (sum.getTruncation() != md::Truncation::None)
