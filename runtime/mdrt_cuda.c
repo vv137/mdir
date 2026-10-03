@@ -201,11 +201,49 @@ void mgpuSetDefaultDevice(int32_t device) {
   Modules and kernels
   ===----------------------------------------------------------------------===*/
 
+/* The kernels are PTX that the driver compiles at load, so the driver must
+   know the PTX ISA version that LLVM wrote; the toolkit supplies only
+   libdevice. A driver older than that version fails the load with
+   CUDA_ERROR_UNSUPPORTED_PTX_VERSION, or a log that names `.version`. That
+   failure ends the run with what to do, not a generic failure. */
+static void reportUnsupportedPTX(CUresult result, const void *data,
+                                 size_t size, const char *log) {
+  if (result != CUDA_ERROR_UNSUPPORTED_PTX_VERSION &&
+      !(log && strstr(log, ".version")))
+    return;
+  /* The `.version` line of the module, within its first kilobyte. */
+  char isa[16] = "unknown";
+  const char *text = (const char *)data;
+  size_t length = size ? size : strnlen(text, 1 << 20);
+  for (size_t i = 0; i + 9 < length && i < 1024; ++i)
+    if (strncmp(text + i, ".version ", 9) == 0) {
+      size_t n = 0;
+      for (size_t j = i + 9; j < length && n + 1 < sizeof(isa) &&
+                             (text[j] == '.' || (text[j] >= '0' && text[j] <= '9'));
+           ++j)
+        isa[n++] = text[j];
+      isa[n] = '\0';
+      break;
+    }
+  int driver = 0;
+  cuDriverGetVersion(&driver);
+  fprintf(stderr,
+          "mdrt: the NVIDIA driver supports CUDA %d.%d, which cannot compile "
+          "kernels of PTX ISA %s, the version that this build of MDIR emits. "
+          "Update the NVIDIA driver to one that supports PTX ISA %s, or run "
+          "on the CPU (target = \"CPU\")\n",
+          driver / 1000, driver % 1000 / 10, isa, isa);
+  fflush(stderr);
+  exit(1);
+}
+
 CUmodule mgpuModuleLoad(void *data, size_t size) {
-  (void)size;
   enter();
   CUmodule module = NULL;
-  check(cuModuleLoadData(&module, data), "cuModuleLoadData");
+  CUresult result = cuModuleLoadData(&module, data);
+  if (result != CUDA_SUCCESS)
+    reportUnsupportedPTX(result, data, size, NULL);
+  check(result, "cuModuleLoadData");
   static int loads = 0;
   if (getenv("MDRT_TRACE"))
     fprintf(stderr, "TRACE module %p #%d\n", (void *)module, loads++);
@@ -214,7 +252,6 @@ CUmodule mgpuModuleLoad(void *data, size_t size) {
 
 /* Loads a module from PTX text, which the driver compiles. */
 CUmodule mgpuModuleLoadJIT(void *data, int optLevel, size_t size) {
-  (void)size;
   enter();
   char log[4096] = {0};
   CUjit_option options[] = {CU_JIT_ERROR_LOG_BUFFER,
@@ -224,9 +261,11 @@ CUmodule mgpuModuleLoadJIT(void *data, int optLevel, size_t size) {
                     (void *)(uintptr_t)optLevel};
   CUmodule module = NULL;
   CUresult result = cuModuleLoadDataEx(&module, data, 3, options, values);
-  if (result != CUDA_SUCCESS)
+  if (result != CUDA_SUCCESS) {
+    reportUnsupportedPTX(result, data, size, log);
     fprintf(stderr, "mdrt: the driver could not compile a kernel:\n%s\n",
             log);
+  }
   check(result, "cuModuleLoadDataEx");
   static int jitLoads = 0;
   if (getenv("MDRT_TRACE"))

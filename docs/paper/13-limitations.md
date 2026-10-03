@@ -5,12 +5,15 @@ OpenMP or one NVIDIA GPU. Triclinic cells (truncated octahedra, rhombic
 dodecahedra, the hexagonal cells of CHARMM) run on the CPU and on the
 device, with the neighbor matrix or the groups, at constant volume and
 pressure (D123, D125 to D127). The barostat
-is isotropic or semi-isotropic, with no coupling of the shape of the
-cell. Topologies are read in the formats of Amber,
+rescales the cell isotropically, semi-isotropically, or along three
+independent axes (D163c), with no coupling of the shape of the cell. Topologies are read in the formats of Amber,
 GROMACS, and CHARMM; a CHARMM force field runs with its Urey–Bradley
 angles, harmonic impropers, and force switch (D121, D122), but not with
-lone pairs or the Drude model. Electrostatics are particle mesh Ewald or a cutoff; there
-is no implicit solvent, no polarizable model, and no learned potential.
+lone pairs or the Drude model. Electrostatics are particle mesh Ewald, a
+cutoff, a reaction field (D140), or generalized Born (D144, D152), and the
+dispersion may be summed by particle mesh Ewald as well (D162); there is no
+polarizable model and no learned potential. Terms over triplets (D160) run
+on the CPU only.
 The distributed lowering (`md_dist`), the joint planner that would choose
 structures and layouts, and the `mlff` and `ensemble` dialects of the
 architecture are designs, not code.

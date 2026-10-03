@@ -14,7 +14,15 @@ cmake -G Ninja -S . -B build -DCMAKE_BUILD_TYPE=Release \
     -DMLIR_DIR=$LLVM_PREFIX/lib/cmake/mlir -DLLVM_DIR=$LLVM_PREFIX/lib/cmake/llvm \
     -DLLVM_EXTERNAL_LIT=$(command -v lit) -DHDF5_ROOT=$HDF5_PREFIX
 cmake --build build --target check-mdir
+cmake --install build --prefix $PREFIX
 ```
+
+The installation is `$PREFIX/bin/mdir` with its runtime, the GPU runtime,
+and the OpenMP runtime of the LLVM build in `$PREFIX/lib`; its RPATH holds
+`$ORIGIN/../lib` and the directories of the libraries it linked, such as
+HDF5, so it runs without the build trees of MDIR and LLVM.
+`packaging/` builds the same installation in a Docker or an Apptainer
+image, on CUDA's runtime image with libdevice from the toolkit.
 
 *Table B.1. Tiers of tests.*
 

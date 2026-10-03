@@ -366,7 +366,10 @@ are multiples of `energy_interval`.
 ### 2.3 The log
 
 The log goes to the standard output and, with `log` in `[output]`, to that
-file as well (D149, Section 2.8); `energy` writes its rows as columns.
+file as well (D149, Section 2.8); `energy` writes its rows as columns. Its
+first line names the build that wrote it, `MDIR 0.1.0, commit
+<12 hexadecimal digits>`, followed by `with uncommitted changes` when the
+tree had them (D[release]).
 
 ```text
 INFO:      STEP           TIME      TOTAL_ENE  POTENTIAL_ENE    KINETIC_ENE    TEMPERATURE         VIRIAL       PRESSURE

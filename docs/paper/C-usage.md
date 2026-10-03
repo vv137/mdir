@@ -8,8 +8,9 @@ or the commit (times, hashes, paths) will differ elsewhere.
 
 ## C.1 An installation and its check
 
-MDIR is built as Appendix B.1 describes. `mdir version` prints what the
-build supports:
+MDIR is built and installed as Appendix B.1 describes, or run from its
+container (`packaging/README.md`: `docker run --gpus all` or
+`apptainer run --nv`). `mdir version` prints what the build supports:
 
 ```text
 $ mdir version
@@ -17,11 +18,22 @@ MDIR 0.1.0
 commit: <the commit of the build>
 uncommitted changes: no
 LLVM 23.1.2
-targets: cpu, gpu (CUDA 13.4.20260911 at /usr/local/cuda-13.4)
+targets: cpu, gpu (CUDA 13.4.20260911 at /usr/local/cuda-13.4; driver API 13.2)
 checkpoints: yes (HDF5)
 ```
 
-`targets` lists `gpu` when the CUDA target was built, and
+`targets` lists `gpu` when the CUDA target was built, with the toolkit
+that `CUDA_ROOT` names, or the one of the build, and its version. The
+version comes from a CUDA runtime already loaded, or from the toolkit's
+`version.json` or `version.txt`. CUDA's runtime images, the base of MDIR's
+container, ship neither, and the line then says `runtime version not
+reported`. The driver API is the CUDA version that the installed NVIDIA
+driver supports (`no driver` without one). The kernels are PTX, which the
+driver compiles when a run loads them; the toolkit supplies only the math
+functions of libdevice, so a toolkit newer than the driver, as here, is not
+an error. A driver too old for the PTX ISA version that MDIR emits fails
+the load, and the run, or the GPU check of `mdir doctor`, ends with an
+error that names both versions and asks for a newer driver.
 `checkpoints` says whether HDF5 was found; without it a run writes no
 checkpoints and cannot be continued (C.5). `mdir doctor` checks the
 installation by compiling and running an embedded two-atom system for two

@@ -1,0 +1,35 @@
+# The Apptainer (Singularity) container of MDIR. It is made from the Docker
+# image of packaging/Dockerfile, so that LLVM is built once, in Docker's
+# cached layers, and not again by Apptainer, which keeps no layer cache.
+# Build the Docker image first, then:
+#
+#   apptainer build mdir-0.1.0.sif packaging/mdir.def
+#
+# (or, without the labels and the test below,
+#   apptainer build mdir-0.1.0.sif docker-daemon://mdir:0.1.0).
+# For an image pushed to a registry, replace the two lines below with
+#   Bootstrap: docker
+#   From: <registry>/mdir:0.1.0
+#
+# Run on a GPU with --nv, which binds the host's driver into the container:
+#
+#   apptainer run --nv mdir-0.1.0.sif run md.toml
+
+Bootstrap: docker-daemon
+From: mdir:0.1.0
+
+%environment
+    export PATH=/opt/mdir/bin:$PATH
+    export CUDA_ROOT=/usr/local/cuda
+
+%runscript
+    exec mdir "$@"
+
+%test
+    mdir version
+
+%labels
+    org.opencontainers.image.title MDIR
+    org.opencontainers.image.version 0.1.0
+    org.opencontainers.image.source https://github.com/vv137/mdir
+    org.opencontainers.image.licenses MIT
