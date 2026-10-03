@@ -121,7 +121,8 @@ There are no pending requests, buffer borrows, or overlap in this baseline.
 
 `md_exec.neighbor_view` imports host i32 counts and entries plus an index
 `local_size`, producing the existing `!mdrt.neighbors` type. Its rows specify
-owned centers, independent of the length of the position buffer. The op
+owned centers, independent of the length of the position buffer. The checked import declares memory reads, so it cannot be treated as a pure
+descriptor and hoisted across writes that initialize its input arrays. The op
 verifier checks ranks, element types, host memory space, and compatible static
 row counts. CPU lowering emits runtime assertions for matching dynamic rows,
 `local_size >= owned`, row counts within capacity, indices within range,
@@ -175,7 +176,7 @@ MPI reduction order is not a bitwise portability guarantee.
 
 ```sh
 python3 scripts/validation/cpu-hybrid-lj.py /path/to/build/bin/mdir-cpu-lj
-# A four-configuration MPI smoke test is also part of lit when MPI is enabled.
+# A six-configuration MPI smoke test is also part of lit when MPI is enabled.
 ```
 
 The standard-library Python oracle enumerates each unordered pair once and
@@ -188,13 +189,36 @@ against 24 central energy differences with step `1e-6` and absolute tolerance
 `2e-7`. Numerical comparison uses `abs(error) <= atol + rtol * abs(reference)`:
 `atol=rtol=2e-11` for double and `3e-5` for mixed.
 
-The matrix has five fixtures (periodic, empty ranks, empty system, reversed ID
-order, and nonunit sigma/epsilon), two precisions, ranks 1/2/5, threads 1/2, and widths 1/4/8: 180 runs.
+The matrix has six fixtures (periodic, empty ranks, empty system, reversed ID
+order, nonunit sigma/epsilon, and a pair spanning two slabs), two precisions, ranks 1/2/5, threads 1/2, and widths 1/4/8: 216 runs.
 It includes noncontiguous IDs, a cutoff larger than a rank's slab width, and
-partial SIMD vectors. It does not test migration, skin reuse, trajectories,
+partial SIMD vectors. In the two-slab fixture, particles at x=2.3 and
+x=4.85 interact across rank 1 when five ranks partition the length-12 box;
+exchanging only immediately adjacent ranks would omit that pair. It does not test migration, skin reuse, trajectories,
 production potential files, EAM, or distributed GPU execution. Detailed results
 and regression status are recorded in the PR; numerical success is not a
 performance benchmark.
+
+On the tested host, all 216 numerical configurations (180 initial and
+36 additional nonadjacent-rank configurations) and the four rejected-input
+checks passed. The periodic fixture reference energy is
+$-4.141983094297806$; its particle 101 force is
+$(0.2513201688046216, 0.41962282931214345, 0.13421382654072408)$.
+The nonunit-parameter fixture reference energy is $-1.8554057299171132$.
+Maxima over all configurations, rounded to three significant digits:
+
+| Quantity | Double absolute error | Mixed absolute error |
+|---|---:|---:|
+| Energy | 8.88e-16 | 7.41e-7 |
+| Force component | 4.33e-15 | 1.03e-5 |
+| Force component RMS | 1.24e-15 | 5.80e-6 |
+| Virial component | 5.33e-15 | 1.20e-5 |
+
+An earlier validation launch was interrupted by relinking its executable;
+no numerical comparison failed in that launch. The completed matrix used a
+separate executable, held unchanged throughout its run. The assertion-output
+regression initially needed unbuffered stdout to observe the diagnostic before
+an intentional abort; the corrected test checks both the abort and its message.
 
 Generated IR can be inspected with `--emit=loops`. To inspect a specified CPU
 target independently of the JIT's host selection:
@@ -204,6 +228,10 @@ mpiexec -n 1 /path/to/build/bin/mdir-cpu-lj snapshot.txt --emit=llvm > kernel.ml
 mlir-translate --mlir-to-llvmir kernel.mlir > kernel.ll
 llc -O3 -mattr=+avx2,+fma kernel.ll -o kernel.s
 ```
+
+Representative default CPU storage and GPU kernel fixtures produce identical
+lowered IR to the clean main build at `d1def6b6b38b9e059e3b982e878158cb2b50253e`.
+That comparison is a code-generation regression check, not a timing result.
 
 This inspection produced packed-double `vdivpd` and `vmulpd` instructions for
 width 4. It verifies vector code generation for that target, not a measured
