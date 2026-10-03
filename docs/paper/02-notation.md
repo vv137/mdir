@@ -10,7 +10,7 @@ element.
 | $\mathbf x_i,\ \mathbf v_i,\ m_i$ | Position, velocity, and mass of particle $i$ |
 | $\mathbf F_i = -\partial U/\partial\mathbf x_i$ | Force on particle $i$; $U$ the potential energy |
 | $\mathbf a_i = \mathbf F_i / m_i$ | Acceleration; $0$ for a particle without mass (a virtual site) |
-| $K = \tfrac12\sum_i m_i\lVert\mathbf v_i\rVert^2$ | Kinetic energy |
+| $K = \tfrac12\sum_i m_i\lVert\mathbf v_i\rVert^2$ | Kinetic energy; $K_a$ its part along axis $a$ (Section 6) |
 | $\mathbf L = (L_x, L_y, L_z)$, $V = L_xL_yL_z$ | Edges and volume of the orthorhombic periodic cell |
 | $H$, $\mathbf a = (a_x, 0, 0)$, $\mathbf b = (b_x, b_y, 0)$, $\mathbf c = (c_x, c_y, c_z)$ | A triclinic cell: the lower-triangular matrix whose rows are the cell vectors, reduced so that $\lvert b_x\rvert \le a_x/2$, $\lvert c_x\rvert \le a_x/2$, $\lvert c_y\rvert \le b_y/2$; $V = a_xb_yc_z$; an orthorhombic cell is $H = \operatorname{diag}(\mathbf L)$ (D123) |
 | $\mathbf d_{ij} = \mathbf x_i - \mathbf x_j - \mathbf L\odot\operatorname{round}((\mathbf x_i - \mathbf x_j)\oslash\mathbf L)$ | Displacement in the minimum image; $r_{ij} = \lVert\mathbf d_{ij}\rVert$. In a triclinic cell the image is taken in one pass along $\mathbf c$, $\mathbf b$, and $\mathbf a$, exact within half of the least of $a_x, b_y, c_z$ (Section 4.4) |
@@ -20,11 +20,18 @@ element.
 | $\mathbf x^\text{ref},\ \mathbf L^\text{ref}$ | Configuration and cell of the last build of a structure |
 | $\mathbf x^p,\ \mathbf L^p$ | Configuration and cell of the last pruning of an inner list |
 | $\mathbf m = \mathbf L\oslash\mathbf L^\text{ref}$ | Scale of each axis since the build |
+| $\mathbf L_0,\ \mathbf m_0 = \mathbf L\oslash\mathbf L_0$ | Cell of the file of coordinates, and the scale of each axis since it |
+| $\mathbf x^\text{ref} = \mathbf m_0\odot\mathbf x^\text{c} + \mathbf o$ | Reference of a positional restraint: a center that scales with the cell and an offset that does not (Section 6.4) |
+| $\mathbf u_i = \mathbf x_i\oslash\mathbf L$ | Coordinates of particle $i$ in the frame of the cell |
+| $\varepsilon = \ln V$, $\varepsilon_a = \ln L_a$; $\mu_a$ | Strain of the cell and of axis $a$; $\mu_a$ the factor of a step of the barostat along $a$ |
+| $\mathbf X_g,\ \mathbf F_g$ | Center of mass of a group $g$ that moves as a whole, and the total force on it |
+| $P,\ P_0,\ P_{aa}$ | Pressure, its target, and the pressure of axis $a$ |
+| $Z,\ F$ | Canonical partition function and Helmholtz free energy (a force is bold, $\mathbf F_i$) |
 | $\Delta t$ | Time step |
 | $\beta$ | Ewald splitting parameter; $\operatorname{erfc}(\beta r_c)$ is the tolerance of the direct sum |
 | $q_i$ | Partial charge; $f = 1/(4\pi\varepsilon_0)$ the Coulomb constant in the units of the run |
-| $K_a$ | Number of grid points of PME along axis $a$; $n$ the order of the B-splines (4) |
-| $\mathsf W$ | Virial tensor (Section 6.5 states its sign) |
+| $K_a$ | In Section 5, the number of grid points of PME along axis $a$; $n$ the order of the B-splines (4) |
+| $\mathsf W$ | Virial tensor; $\mathsf W_{aa} = -\partial U/\partial\varepsilon_a$ along the scaling of positions and cell (Sections 6.4 and 6.5) |
 | $T,\ k_B$ | Temperature and Boltzmann's constant |
 
 **Units.** Inside a compiled program MDIR computes in nm, ps, amu, and

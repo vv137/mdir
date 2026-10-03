@@ -433,9 +433,9 @@ stores $\mathbf v' - h\mathbf a'$.
 **Restraints.** A positional restraint $k\lVert\mathbf x - \mathbf
 x^\text{ref}\rVert^2$ depends on where its reference is when the cell
 changes. MDIR writes the reference as a center that scales with the cell
-and an offset that does not, $\mathbf x^\text{ref} = \mathbf s \odot
-\mathbf c + \mathbf o$, $\mathbf s$ the edges of the cell over those of the
-file of coordinates (D124). By default $\mathbf c$ is the mean of the
+and an offset that does not, $\mathbf x^\text{ref} = \mathbf m_0 \odot
+\mathbf x^\text{c} + \mathbf o$, $\mathbf m_0 = \mathbf L\oslash\mathbf L_0$ the
+edges of the cell over those of the file of coordinates (D124). By default $\mathbf x^\text{c}$ is the mean of the
 references of the restrained particles, so that a restrained solute keeps
 its shape; for restraints spread through the cell, such as the phosphorus
 atoms of a bilayer, each reference is its own center with no offset and
@@ -444,12 +444,116 @@ follows the cell as the positions do (the options `com` and `all` of
 [[GromacsManual2025]](references.md#gromacsmanual2025)). The virial is the
 derivative of the energy when the positions and the centers scale,
 $\operatorname{diag}\sum -2k\,\mathbf d \odot (\mathbf d + \mathbf o)$
-with $\mathbf d = \mathbf x - \mathbf x^\text{ref}$. Scaling every
+with $\mathbf d = \mathbf x - \mathbf x^\text{ref}$, as the next paragraphs
+derive. Scaling every
 reference about the origin shrank those of ubiquitin with a cell that had
 become 0.926 of the file's, and the restraints, pushing the protein
 outward, held the cell 2.3% larger than a run without them; scaled about
 their center, the two agree within the noise (196,262 ± 580 and 196,293 ±
 658 Å³).
+
+**The pressure in statistical mechanics.** For $N$ particles in a cell of
+edges $\mathbf L$ at temperature $T$, the canonical partition function is
+$Z = (N!\,h^{3N})^{-1}\int d\mathbf p\int_{V^N} d\mathbf x\,e^{-(K +
+U)/k_BT}$, the free energy $F = -k_BT\ln Z$, and the pressure of axis $a$
+the derivative of $F$ with respect to the strain of that axis,
+$\varepsilon_a = \ln L_a$, the other edges held: $P_{aa}V = -\partial
+F/\partial\varepsilon_a$, and $P = \tfrac13\sum_a P_{aa} = -\partial
+F/\partial V$. The domain of the integral depends on $\mathbf L$; the
+coordinates in the frame of the cell, $\mathbf u_i = \mathbf x_i\oslash
+\mathbf L \in [0, 1)^3$, remove that dependence and bring the Jacobian
+$V^N$:
+
+$$
+Z = \frac{V^N}{N!\,h^{3N}}\int d\mathbf p\int d\mathbf u\;
+e^{-\left(K + U(\mathbf L\odot\mathbf u,\ \mathbf L)\right)/k_BT},
+$$
+
+where $U$ is written with its explicit dependence on the cell. Since
+$\partial V/\partial\varepsilon_a = V$,
+
+$$
+P_{aa}V = Nk_BT + \langle\mathsf W_{aa}\rangle,
+\qquad
+\mathsf W_{aa} = -\frac{\partial U}{\partial\varepsilon_a}\bigg|_{\mathbf u}
+= \sum_i x_{ia}F_{ia} - L_a\frac{\partial U}{\partial L_a}\bigg|_{\mathbf x},
+$$
+
+and with $Nk_BT = \langle 2K_a\rangle$ by equipartition, $P_{aa} =
+\langle 2K_a + \mathsf W_{aa}\rangle/V$, whose value at a step the barostat
+takes (with the constant $c$ of the units and the terms $C/V$)
+[[AllenTildesley2017]](references.md#allentildesley2017). The virial is
+therefore the derivative of the energy along one path in configuration
+space, the scaling of the positions with the cell about the origin, and
+that is the path a step of the barostat takes (D72); its sign is that of
+Section 6.5. A term of displacements in the minimum image, such as a pair,
+a bond, or an angle, depends on $\mathbf L$ only through the images, and
+along the path its displacements scale as the positions do: its virial is
+$\sum\mathbf d\otimes\mathbf K$ over its pairs or tuples, which has no
+origin [[Louwerse2006]](references.md#louwerse2006); the reciprocal sum of
+Ewald depends on $\mathbf L$ explicitly and gives its own (Section 5). When
+the constraints keep groups rigid, the integral runs over the centers of
+mass $\mathbf X_g = \mathbf L\odot\mathbf U_g$ and the internal
+coordinates of the groups, which do not scale; the virial is then that of
+the groups, $\sum_g X_{ga}F_{ga}$ with the explicit derivative, as the
+work of a scaling above takes it, and the kinetic part is that of the
+centers, which the pressure of a step replaces by the kinetic energy of
+the particles and the virial of the constraints, equal to it in the mean.
+Stochastic cell rescaling samples, in these coordinates, the distribution
+at constant pressure, $\propto V^N e^{-(P_0V + K + U)/k_BT}$
+[[Bernetti2020]](references.md#bernetti2020).
+
+**Terms fixed in space or in the frame of the cell.** A term of
+displacements has no origin; a term of the absolute positions has one,
+and its virial depends on how the term follows the scaling, its explicit
+dependence on $\mathbf L$ in the formula above (D154). A term $U =
+\sum_i k(\mathbf x_i)$ fixed in space (`scaling = "NONE"` in
+`[[energy.external]]`) has none, and its virial is $\sum_i\mathbf
+x_i\otimes\mathbf F_i$: the cell scales about the origin of the
+coordinates, and the work against the term does too. Translating the
+system by $\boldsymbol\delta$ changes that virial by $\boldsymbol\delta\otimes\sum_i\mathbf
+F_i$, which vanishes when the term exerts no net force, as a uniform field
+$-q_iEx_{ia}$ on neutral molecules that scale with their centers. A term
+in the frame of the cell (`scaling = "CELL"`) takes its positions as
+$\mathbf x\odot\mathbf L_0\oslash\mathbf L = \mathbf L_0\odot\mathbf u$,
+with $\mathbf L_0$ the cell of the input: it does not change along the
+path, the derivative from the cell cancels that from the positions, and
+its virial is zero, but for $-\sum_g\sum_{j\in g}(\mathbf x_j - \mathbf
+X_g)\otimes\mathbf F_j$ of the members of rigid groups, which scale with
+their centers. A wall at a fraction of the cell follows it so; a uniform
+field should not, since in the frame of the cell its strength would
+change as $L_a/L_{0a}$, so a run at constant pressure must say which. A
+positional restraint is the case of a reference that moves: with
+$\mathbf x^\text{ref} = \mathbf m_0\odot\mathbf x^\text{c} + \mathbf o$, the
+explicit derivative gives $\mathsf W_{aa} = \sum_i(x_{ia} -
+m_{0a}x^\text{c}_a)F_{ia}$, the displacement from the reference plus the offset,
+which is the form above. Table 6.4 sums up the cases.
+
+*Table 6.4. How a term of the absolute positions follows the scaling of
+the cell, and its virial; the forces $\mathbf F_i$ are those of the term,
+and members of rigid groups take $\mathbf X_g$ in place of $\mathbf x_i$.*
+
+| Frame of the term | Moves with the cell | $\mathsf W$ | In MDIR | `refcoord-scaling` of GROMACS |
+|---|---|---|---|---|
+| Fixed in space | Nothing | $\sum_i\mathbf x_i\otimes\mathbf F_i$, about the origin | `[[energy.external]]`, `scaling = "NONE"` | `no` |
+| A center scales, offsets do not | The center $\mathbf x^\text{c}$ | $\operatorname{diag}\sum_i(\mathbf x_i - \mathbf m_0\odot\mathbf x^\text{c})\odot\mathbf F_i$ | restraints, `reference_scaling = "CENTER"` | `com` |
+| Each reference scales | Every reference | $\operatorname{diag}\sum_i\mathbf d_i\odot\mathbf F_i$ | restraints, `reference_scaling = "ALL"` | `all` |
+| The whole frame scales | $\mathbf x\odot\mathbf L_0\oslash\mathbf L$ | $0$ | `[[energy.external]]`, `scaling = "CELL"` | — |
+
+Differentiation computes the two parts from the IR: the derivative of a
+sum over particles with respect to the positions it reads, and, where its
+kernel reads the edges of the cell (`md_exec.cell_edges`), the derivative
+with respect to them, $-\sum_i\partial k/\partial L_a\,L_a$ on the
+diagonal, the edges being an input of their own (Section 3.3). On the
+dipeptide of the tests, three terms fixed in space add to the diagonal of
+the virial the $\sum_i x_{ia}F_{ia}$ of an independent computation in
+Python, on a CPU and on a GPU in double precision, and in the frame of the
+cell they leave it as it is. At constant pressure (its waters flexible,
+0.5 fs, 1 atm, $\tau_P$ = 2 ps, 4000 steps, the Trotter count), a field
+of 5 kcal/mol/Å/e on the water and three wells fixed in space change the
+conserved energy by $+6.27$ kcal/mol, against $+4.86$ without them and
+$+18.01$ with their virial left out, the count of the work then missing
+it (D154).
 
 ## 6.5 What the log reports
 
@@ -470,7 +574,8 @@ $$
 
 with the sign of $\mathsf W$ that of $\sum_i\mathbf x_i\otimes\mathbf F_i$:
 positive for repulsion. $\mathsf W$ includes the virials of the
-constraints, of the virtual sites, of the restraints, of the dispersion
+constraints, of the virtual sites, of the restraints and the terms of
+the absolute positions (Section 6.4), of the dispersion
 correction ($6E_\text{disp}$), and of the neutralizing background
 ($3E_Q$). The total energy is $U + K$; the conserved energy is the total
 plus what the bath has taken. At the start the log gives the diagonal of

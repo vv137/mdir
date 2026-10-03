@@ -188,6 +188,19 @@ Lennard-Jones of a topology, where it is CHARMM's to $2.2\times10^{-9}$
 (D121). The two differ by a constant below $r_s$ and by up to 60% above
 it: 9.23 kcal/mol on 12,017 particles of CHARMM36m.
 
+**Particles.** A sum over the particles that reads the positions
+themselves, $U = \sum_i k(\mathbf x_i, \dots)$, a term of the absolute
+positions (D148), gives the force $\mathbf F_i = -\nabla k(\mathbf x_i)$
+from a map over the particles whose kernel is the derivative of the
+sum's, one component at a time along its unit vector. Its virial is the
+derivative along the scaling of positions and cell (Section 6.4):
+$\sum_i\mathbf x_i\otimes\mathbf F_i$ from the positions and, where the
+kernel reads the edges of the cell (`md_exec.cell_edges`), $-\sum_i
+\partial k/\partial L_a\,L_a$ on the diagonal (D154). A value that a
+kernel receives from outside, such as one computed from the cell, is
+independent of the kernel's arguments, and the edges of the cell are an
+input of their own, whose derivative only the virial takes.
+
 **Exchange contracts.** A pair kernel carries a contract that says how
 its value for $(j,i)$ relates to its value for $(i,j)$: `symmetric`,
 `antisymmetric`, or `none`, with a basis: `proof`, `derived`, or
@@ -330,3 +343,54 @@ energy that the coupling has taken, so that `mdir run --continue` carries
 one run over as many jobs as it takes, appending to its trajectory; a
 signal or the wall time stops a run after a checkpoint is written, with
 the exit status 75 (D129 to D132; Appendix A.3).
+
+## 3.7 The objects of MDIR, for developers
+
+A developer meets the same few objects at every level; Table 3.4 lists
+them with the op or type that carries each in the IR and the code that
+makes or consumes it. The paragraphs after it follow one term through
+them.
+
+*Table 3.4. The objects of MDIR. Paths are relative to the root of the
+repository.*
+
+| Object | What it is | In the IR | Where |
+|---|---|---|---|
+| Particle set | The particles of a run, one set, in the order of the input; the state is sorted in space before the first step | `md.particle_set @atoms` | `include/mdir/Dialect/MD/MDOps.td` |
+| Tuple set | Tuples of particles of one arity: bonds, angles, the members of a constraint group, the pair of the centers of a pull | `md.tuple_set @bonds on(@atoms) arity(2) orientation(unordered)`; `md.disjoint_union` | `MDOps.td`; built in `lib/Driver/Builder.cpp` (`Program::TupleSet`) |
+| Field | A value per element of a set: positions, velocities, masses, charges, types, the parameters of a term; or one computed from the positions, such as the Born radii | `!md.field<@atoms, 3 x f64>` (a vector per particle), `!md.field<@bonds, f64>`; `md.map_particles`, `md.gather_relation` | `Program::Field`; the driver's fields are the arguments of `@mdir_run` |
+| Relation | For each tuple, its members; a neighborhood, the pairs within a cutoff | `!md.relation<@atoms, 2, ordered, @links>`; `md.neighborhood %x, %cell cutoff(r)` | `MDTypes.td`; neighbor structures in `lib/Dialect/MDExec` (Section 4) |
+| Cell | The periodic cell, orthorhombic or triclinic; without one, a cell no image reaches (D142) | `!md.cell`, `md.orthorhombic_cell`, `md.triclinic_cell`; `md_exec.cell_edges` | `include/mdir/Driver/Cell.h` |
+| Table | Parameters of pairs of types, tabulated functions, the grid of CMAP | `md.lookup %t[%a, %b]` | `Program::Table` |
+| Kernel | The scalar code of one interaction, in `arith`, `math`, and `vector`: what a sum adds for a pair, a tuple, or a particle | the region of `md.sum_relation`, `md.sum_tuples`, `md.sum_particles`, `md.gather_relation`, `md.map_particles` | written by the Builder from the control file; differentiated by `ScalarDerivative` |
+| Potential | The energy as a function of the positions, the cell, the fields, the tables, the relations, and scalars such as the time $t$ | `md.potential @energy(...) -> f64` | one per run and one per term for the log, in `Builder.cpp` |
+| Request | What a program asks of a potential: energy, forces, virial, the derivative with respect to a scalar argument | `md.evaluate @energy(...) request [energy, forces, virial, derivative(n)]` | becomes `md.function` and `md.call` in `md-differentiate` (Section 3.3) |
+| Program | A step: kicks, drifts, constraints, couplings, around the requests | `dyn.program`, `dyn.kick`, `dyn.drift`, `dyn.step` | `include/mdir/Dialect/Dyn` |
+| Entry | The schedule of a run: loops over segments, frames, energies, periods, and steps, with the calls to the host for the outputs | `func.func @mdir_run`, `mdrt.host_call @mdrtWriteEnergies(...)` | `Builder::emitEntry`; the callbacks in `lib/Driver/Output.cpp` |
+| Loop | A sum or a map lowered to an iteration over a set with a pattern of access | `md_exec.particle_for`, `md_exec.pair_for`, `md_exec.tuple_for`, `md_exec.reciprocal` | `lib/Conversion/MDToMDExec`; passes in `lib/Dialect/MDExec/Transforms` (Section 3.4) |
+| Neighbor structure | The pairs within the reach, the matrix or the groups of 16, with its test of validity | `md_exec.build_neighbors`, `md_exec.refresh_neighbors`, `!mdrt.neighbors<@atoms>` | Section 4; `runtime/mdrt_cuda.c` |
+| Storage | The buffers of fields, the scratch of reductions, the cells of results read by the host | `memref`s after `md-exec-assign-storage` | `lib/Dialect/MDExec/Transforms/AssignStorage.cpp` |
+| Kernel of a device | A loop lowered to a launch, its sums reduced in blocks | `gpu.launch` | `lib/Conversion/MDExecToGPU` (Section 8) |
+
+**From the control file to a kernel.** The driver reads the control file
+into a `Control` (`lib/Driver/Control.cpp`) and the topology and the
+coordinates into a `System` (`lib/Driver/System.cpp`), which resolves the
+masks of Amber into particles and checks what the IR cannot. The `Builder`
+then writes the module as text: the sets, the fields and tables as
+arguments of `@mdir_run`, the potential, the programs, and the entry. A
+term of the absolute positions, for instance (D148), becomes a flag field
+`ext0`, 1 for the particles of the term, a field for each parameter given
+as a list, and in `@energy` a `md.sum_particles` over the positions and
+those fields whose kernel evaluates the expression and selects on the
+flag. `md-differentiate` turns the request `[energy, forces, virial]` of a
+step into a function in which the forces are a `md.map_particles` and the
+virial a second `md.sum_particles` (Section 3.3). `convert-md-to-md-exec` makes
+both `md_exec.particle_for` loops, `md-exec-fuse-loops` joins them with
+the other loops over particles, the storage pass gives them buffers, and
+the lowering to a device makes one kernel that reduces the energy and the
+virial in blocks (Section 8). A new kind of term therefore needs a reader
+in `Control.cpp`, what the system must resolve in `System.cpp`, its
+emission in `Builder.cpp`, and, if its form is new to the IR, the rules of
+its derivative in `lib/Dialect/MD/Transforms/Differentiate.cpp`; the
+loops, the storage, and the kernels of a device follow from the IR.
+Appendix B.1 lists the tiers of tests, and B.2 where a change goes.
