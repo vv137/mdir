@@ -25,7 +25,7 @@
 # DISTANT-NEXT: valid keywords: log, energy, pull, manifest, trajectory, trajectory_format, checkpoint, energy_interval, trajectory_interval, checkpoint_interval{{$}}
 # DISTANT-NEXT: try 'mdir template md' or 'mdir template amber'
 # TIED: tied.toml:5: unknown keyword 'mix' in {{\[\[}}energy.function]]{{$}}
-# TIED-NEXT: valid keywords: name, values, min, max, periodic
+# TIED-NEXT: valid keywords: name, values, values_file, shape, min, max, periodic, discrete
 # TIED-NEXT: try 'mdir template md' or 'mdir template amber'
 # SCOPE: scope.toml:4: unknown keyword 'cutoff' in [output]{{$}}
 # SCOPE-NEXT: valid keywords: log, energy, pull, manifest, trajectory, trajectory_format, checkpoint, energy_interval, trajectory_interval, checkpoint_interval{{$}}
