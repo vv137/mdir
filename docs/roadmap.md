@@ -363,3 +363,9 @@ computations. The fixed LJ `md_dist.reference_plan` is a lower reference bridge,
 not the upper placement abstraction. Before production integration, require
 multi-step validity/migration, topology-derived support and contribution return,
 and a PP/PME reference plan with independently placed work and results.
+
+Implementation follow-ups are tracked as [#37](https://github.com/vv137/mdir/issues/37)
+(general placement and contribution contracts) and
+[#38](https://github.com/vv137/mdir/issues/38) (temporal validity and migration).
+These are required production milestones, not completed features of the
+fixed-snapshot reference executor.
