@@ -62,7 +62,7 @@ void mdir::tool::printVersion(llvm::raw_ostream &os) {
   os << "uncommitted changes: " << MDIR_GIT_DIRTY << "\n";
   os << "LLVM " << LLVM_VERSION_STRING << "\n";
   os << "targets: cpu";
-  if (StringRef(MDIR_CUDA_ROOT) != "")
+  if (MDIR_HAS_CUDA)
     os << ", gpu (CUDA " << getToolkitVersion(MDIR_CUDA_ROOT) << " at "
        << MDIR_CUDA_ROOT << ")";
   os << "\n";

@@ -1,5 +1,36 @@
 # MDIR
 
+Run molecular dynamics on CPUs and NVIDIA GPUs from Amber, GROMACS, or
+CHARMM inputs, or define your own potential in a control file.
+
+## Quickstart
+
+[Build MDIR](#requirements), then run these commands from the repository
+root. Check the CPU installation and run the supplied liquid argon example:
+
+```sh
+export PATH="$PWD/build/bin:$PATH"
+mdir doctor --target=cpu
+mkdir argon-run
+cp examples/argon/argon.toml examples/argon/argon.pdb argon-run/
+mdir check argon-run/argon.toml
+mdir run argon-run/argon.toml > argon-run/argon.log
+```
+
+The example runs 864 atoms for 2000 steps and writes its energy log and
+`argon.dcd` trajectory in `argon-run/`. `mdir check` reports the planned
+run and warnings before execution. Run `mdir doctor` to check every built
+target, including the CUDA driver, visible devices, and a short GPU run.
+Use `mdir doctor --target=gpu` to check just the GPU.
+
+For your own Amber system, `mdir template minimize`, `nvt`, `npt`, and
+`production` print the stages of a standard pipeline. Set their input
+paths before running them; [Appendix C](docs/paper/C-usage.md) walks through
+inputs, equilibration, checkpoints, and diagnosis, and
+[examples/](examples/) contains complete systems.
+
+## About MDIR
+
 MDIR is an MLIR-based compiler stack for general-purpose molecular dynamics.
 It compiles each run before it runs: the potential, the integrator, the
 constraints, and the couplings are written in dialects of molecular

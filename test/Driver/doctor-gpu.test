@@ -1,0 +1,3 @@
+# The default checks both targets; GPU failures remain actionable and nonzero.
+# REQUIRES: cuda
+# RUN: %python %S/Inputs/check_doctor.py mdir gpu

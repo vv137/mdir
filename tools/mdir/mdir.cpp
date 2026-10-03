@@ -25,6 +25,12 @@ static llvm::cl::SubCommand bugReportCommand(
     "bug-report", "Collect what a report of a defect in a run needs");
 static llvm::cl::SubCommand versionCommand(
     "version", "Print the version and what this build supports");
+static llvm::cl::SubCommand doctorCommand(
+    "doctor", "Check the installation by compiling and running a small system");
+
+static llvm::cl::opt<std::string> doctorTarget(
+    "target", llvm::cl::desc("Targets to check: all (default), cpu, or gpu"),
+    llvm::cl::init("all"), llvm::cl::sub(doctorCommand));
 
 static llvm::cl::opt<std::string>
     controlFile(llvm::cl::Positional, llvm::cl::desc("<control file>"),
@@ -107,7 +113,8 @@ int main(int argc, char **argv) {
       "  mdir checkpoint <checkpoint> [<checkpoint>] "
       "[--print=positions|velocities|forces]\n"
       "  mdir bug-report <control file> [-o <directory>] [--run]\n"
-      "  mdir version\n");
+      "  mdir version\n"
+      "  mdir doctor [--target=all|cpu|gpu]\n");
 
   if (runCommand) {
     RunOptions options;
@@ -159,6 +166,8 @@ int main(int argc, char **argv) {
     printVersion(llvm::outs());
     return 0;
   }
+  if (doctorCommand)
+    return doctor(doctorTarget, argv[0]);
 
   llvm::errs() << "mdir: expected a subcommand; see 'mdir --help'\n";
   return 1;
