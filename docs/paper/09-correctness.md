@@ -311,9 +311,14 @@ beside its rate.
 A checkpoint stores every value in 64 bits. Runs of 100 + 100 steps from
 a checkpoint and of 200 steps end in states that are identical bit for
 bit, every double of the positions, velocities, and forces compared by
-`mdir checkpoint`: on the CPU with four threads, on the GPU, with the
-thermostat, with the barostat at the default period and at a period of
-one step, and with PME and rigid water (`*-restart.test`). In the
+`mdir checkpoint`: on the CPU, on the GPU, with the thermostat, with the
+barostat at the default period and at a period of one step, and with PME
+and rigid water (`*-restart.test`). On the CPU with four threads, runs
+with the anisotropic barostat and velocity rescaling, and with a
+Nosé–Hoover chain and the leapfrog, are bitwise identical from run to run,
+with one thread, and across a checkpoint (`threaded-determinism.test`,
+D[threaded-determinism]); before the fixed order of the sums, each of
+these comparisons differed in 108 to 398 values. In the
 deterministic mode two runs on a GPU are bitwise identical, and so is a
 run with the reciprocal sum on a second stream against the serial one
 (`pme-gpu.test`, D87). The spatial sort changes the order of sums; runs
