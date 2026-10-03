@@ -1,0 +1,3 @@
+# REQUIRES: mpi
+# RUN: python3 %S/../../scripts/validation/cpu-cartesian-lj.py %cpu_lj --smoke | FileCheck %s
+# CHECK: PASS: 8 Cartesian configurations

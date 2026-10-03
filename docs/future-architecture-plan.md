@@ -47,8 +47,8 @@ This is already a useful compiler architecture. A physical neighbor representati
 | Neighbor reuse and validity | `ReuseNeighbors.cpp`, `ExposeValidity.cpp`, `RebuildAtInterval.cpp` | Implemented. The default checks validity; a fixed rebuild interval is an explicit alternative. |
 | Single-node PME | `md.reciprocal`, `md_exec.reciprocal`, CPU/GPU templates and FFT runtime | Implemented. Reciprocal forces and virial are supplied by a specialized implementation; the compiler does not differentiate through the FFT pipeline. |
 | GPU overlap | `AssignStreams.cpp`, buffer alias/effect analysis, `md_exec.join`, CUDA events | A specific second-stream mechanism exists for reciprocal work. It is not a general distributed event scheduler. |
-| Runtime event type | `!mdrt.event` in `MDRTTypes.td` | The type is declared. General event-producing communication operations and their planned scheduling path are not implemented. |
-| Distribution | No `md_dist` dialect or distributed planning implementation in the reviewed compiler sources | Proposed. MPI, NVSHMEM, and multiple-GPU transports are architecture goals. |
+| Runtime event type | `!mdrt.event` in `MDRTTypes.td` | Used by the restricted Cartesian reference plan; general completion/capability scheduling remains proposed. |
+| Distribution | `md_dist.reference_plan` and optional `mdir-cpu-lj` Cartesian MPI executor | Fixed-layout LJ, sync/async payload, periodic cell candidates, and a host-interpreted schedule are implemented. General field placement/completion, migration, bonded routing, and GPU transports remain proposed; see [implementation contract](cpu-cartesian-async.md). |
 | Staged dependency interface | Described in architecture Section 6; absent from compiler sources | Proposed. There is no implemented `ParticleDependencyInterface` contract or stage extractor. |
 | Joint planner | Architecture Sections 7 and 8 | Proposed. Current pass/driver options select strategies; they do not constitute a cost-based joint planner. |
 | MLIP integration | `mlff` and `md.external_potential` appear in the architecture proposal, but not in implemented operation definitions | Proposed, including the opaque escape hatch. |
@@ -305,11 +305,11 @@ The interface should derive summaries from generated regions where possible, usi
 
 | State | Question | Example |
 |---|---|---|
-| Ownership and identity | Which domain owns this particle, and how does its global identity map to local storage? | Migration changes owner/local index even if species does not change. |
+| Layout and identity | Which materializations and local indices correspond to this logical entity? | Migration or reindex changes the layout independently of a species or coordinate value version. |
 | Neighborhood validity | Does the stored relation still contain every interaction needed now? | A Verlet list may remain valid through several position updates within the skin. |
 | Field freshness | Does a ghost or cached view contain the requested field version? | Ghost positions change each step even when the neighbor list remains valid. |
 
-This distinction directly answers the first Cornel comparison question. MDIR can generalize staleness analysis into semantic support and version requirements, but it should retain Cornel's separate ownership/ghost/list states as realization concerns. A new position version should invalidate a cached position field immediately; it should trigger a list rebuild only when the validity predicate fails.
+This distinction directly answers the first Cornel comparison question. MDIR can generalize staleness analysis into semantic support and version requirements, but it should retain Cornel's separate ownership/ghost/list states as realization concerns. A cached position view cannot satisfy a consumer requesting a different logical version. The old view remains valid for consumers of its old version. A new position version should trigger a list rebuild only when the validity predicate fails.
 
 For fixed cells, the familiar sufficient list condition is $2 \times \text{maximum displacement} \le \text{skin}$. The implemented MDIR condition also accounts for cell scaling: with $\mathbf m = \text{current cell edges} \oslash \text{reference cell edges}$ and build reach $R$, it checks displacement relative to scaled reference positions against half of $\min(\mathbf m) R - \text{cutoff}$. This is an existing correctness mechanism that distributed planning should preserve, with an appropriate cross-domain reduction. [Validity implementation](../lib/Dialect/MDExec/Transforms/ExposeValidity.cpp), [neighbor method](neighbors-m0.md).
 
@@ -686,6 +686,52 @@ The dynamic documentation cited in this section was checked on the review date. 
 
 The second Cornel comparison question has a positive architectural answer: communication placement, neighbor structure, skin, pair policy, and overlap can form a joint optimization problem. MDIR should first separate legal realizations from performance selection. A planner must never trade away freshness, complete interaction coverage, correct accumulation, an approximation-accuracy contract, or a requested reproducibility guarantee to reduce estimated time.
 
+The contracts determine a set of legal executions, not a unique communication
+plan. Data/work graphs provide structure but do not supply missing computation
+semantics. The upper model separates set-valued availability of each logical
+field version, authority/publication policy for new versions, work placement,
+result/reduction placement, and binding of logical workers to physical
+resources. Unique particle ownership is a restriction of the current Cartesian
+backend. Replicated-data and interaction decomposition must also be expressible.
+PP/PME teams may overlap or be disjoint; each mesh/FFT phase may use another
+layout. Spreading and FFT are computations, not mere value-preserving moves.
+
+Every permitted transformation needs preconditions and preserved observations:
+access/support relations; independent source-derived contribution requirements
+and multiplicity; old-value read versus overwrite; cache validity; permitted
+representation transformations; floating-point policy; participation, completion,
+and backend progress assumptions. Conservative supersets of memory accesses
+are safe, but adding logical summands is not. Completing every realized request
+does not prove that all required semantic contributions were produced.
+
+**Replication policy and production policy are different.** Requiring an output
+at every worker does not grant permission to duplicate its producing task. The
+first upper-contract test should compare these two plans for replicated input
+state and distributed force contributions:
+
+| Candidate | Required legality evidence |
+|---|---|
+| Reduce force to one worker, integrate there, distribute the new state | All required force contributions complete; the reduction and update obey the numerical policy; result distribution meets next-stage availability |
+| Complete force at every worker, integrate at every worker, omit state distribution | Task replication is permitted; all update inputs and logical RNG draws agree; execution meets the required result-agreement policy; no duplicated observable effects |
+
+Both require force completion. Neither is automatically legal merely because
+its outputs carry the same version label. Reject replicated updates with
+worker-dependent RNG, missing inputs, externally observable effects such as
+I/O, or a reduction order prohibited by the numerical contract. Distinguish
+bitwise agreement with a reference execution, repeatability under a fixed
+configuration, explicitly permitted reassociation, and bounded approximation;
+one `deterministic` flag cannot stand for all of them. If the source already
+fixes task location/count, changing them requires an authorized transformation.
+
+Completion contracts distinguish source reuse, destination readability,
+application of a contribution, and logical result readiness. Backend progress
+is an explicit assumption or scheduled service, not a consequence of issuing
+nonblocking operations. Initial verification is limited to supported
+straight-line protocols; do not claim arbitrary-program termination or global
+deadlock freedom. After storage realization, separately check aliases, access
+regions, and outstanding async lifetimes. See [the current reference boundary
+and upper-contract requirements](cpu-cartesian-async.md).
+
 For a legal plan, a useful conceptual objective is the critical-path time of the schedule, including neighbor builds, packing, communication, computation, reductions, and synchronization. Amortized build time matters over multiple steps. Overlap means these costs cannot always be added independently.
 
 For the first research prototype, use a bounded procedure: enumerate a few legal alternatives, estimate or measure their costs under a fixed protocol, and select the lowest-cost supported plan. Start with two to four plans for a controlled comparison, or a small explicitly bounded combination of directed/unique traversal, bundled/per-stage halos, and a few skin values. Every combination still needs legality checks; bundling cannot satisfy a field version that has not yet been produced. Keep fixed-plan execution available and report tuning cost separately from steady-state time. A general autotuning search system is unnecessary to test the architectural hypothesis: **the semantic IR must expose and justify the alternatives; the search algorithm need not be the contribution.**
@@ -716,7 +762,7 @@ An interior region is stage-specific. A particle can be interior for a short-ran
 
 The fourth Cornel comparison question also has a positive architectural answer. MDIR can preserve transport-independent operations above its runtime ABI, then lower them to MPI, an in-process GPU transfer, or another transport. Cornel already preserves a target-agnostic root dialect; the proposed additional distinction is keeping the distributed realization itself independent of OpenFPM-specific procedures. [Cornel, Sections 3.4 and 7.3.2](https://cfaed.tu-dresden.de/publications?pubId=3851), [MDIR distribution proposal](architecture.md#81-md_dist--distributed-execution-plan).
 
-That separation must define observable semantics. A forward halo needs an ownership/communication map, a field version, a supported region, and completion that guarantees the consumer can read the data. Reverse accumulation needs the inverse ownership mapping and a reduction rule. Migration must preserve global identity and topology while invalidating stale local-index maps. The runtime must preserve buffer lifetime and completion across asynchronous work.
+That separation must define observable semantics. A forward halo needs an ownership/communication map, a field version, a supported region, and completion that guarantees the consumer can read the data. Reverse accumulation needs the transpose of the actual consumer routing map and a reduction rule; a one-to-many replication map need not have an inverse. Migration must preserve global identity and topology while invalidating stale local-index maps. The runtime must preserve buffer lifetime and completion across asynchronous work.
 
 Saunders's six directional exchanges reach face, edge, and corner neighbors by forwarding data received in earlier exchanges. (Section 3.1.3, pp. 55–56.) A transfer realization may therefore contain intermediate forwarding domains, not just a direct owner/consumer edge. Preserve origin and periodic-image identity through that route, verify completion and coverage at the final consumer, and route reverse contributions back to the correct owner without duplication. Keep the logical requirement independent of whether a backend chooses direct exchanges or staged forwarding; neither protocol is universally optimal.
 
@@ -902,6 +948,16 @@ The compiler research claim rests on verified alternatives and measured
 whole-step tradeoffs for the same model, not the count of supported models.
 
 ## Recommended implementation sequence
+
+The CPU execution-contract track now has a tested fixed-layout Cartesian LJ
+baseline with synchronous/async payload execution; see
+[cpu-cartesian-async.md](cpu-cartesian-async.md). It is separate from the MLIP
+sequence below. Its next gates are source-derived placement/completion
+contracts ([#37](https://github.com/vv137/mdir/issues/37)), temporal validity and
+migration ([#38](https://github.com/vv137/mdir/issues/38)), topology-derived
+support and contribution return, and a separately placed PP/PME reference
+execution. Production readiness requires moving-state and trajectory validation;
+fixed-snapshot replay alone does not meet that gate.
 
 This sequence implements D166 and D167 and the milestones in
 [roadmap Section 7](roadmap.md#7-distributed-execution-and-learned-potentials).

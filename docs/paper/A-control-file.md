@@ -304,3 +304,31 @@ to `<checkpoint>.prev`. The file is flushed to stable storage before it
 takes its name, and its directory after. `mdir checkpoint
 --print=fingerprint` lists the fingerprint, and docs/driver-m0.md, Section
 2.6, says what a run that takes a checkpoint compares.
+
+### Experimental CPU transport tool
+
+D[cpu-hybrid-lj] adds no control-file keys. The build-tree-only `mdir-cpu-lj`
+executable reads a fixed LJ snapshot and accepts precision, OpenMP thread count,
+and SIMD width on its command line. It does not accept this TOML schema or run
+a trajectory. Its complete interface is in
+[the implementation reference](../cpu-hybrid-lj.md).
+
+## Cartesian CPU reference extension (D[cpu-cartesian-async])
+
+The opt-in `mdir-cpu-lj` snapshot tool supports `--grid=auto|Px,Py,Pz`,
+`--halo=sync|async`, `--repeat=N` (fixed snapshot replay), and `--emit=dist`. Its restricted `md_dist` plan binds
+layout/map snapshots and an `mdrt.event`; the host interprets scheduling
+and dispatches existing compiled pair kernels. This introduces no production
+TOML keys. Bonded support, migration, production trajectories, and GPU
+transport remain unimplemented. See [the implementation contract](../cpu-cartesian-async.md) for exact scope and validation.
+
+## Temporal CPU reference options (D[cpu-temporal])
+
+The experimental `mdir-cpu-lj` path adds `--steps=N`, `--dt=T`, `--state=FILE`,
+and `--skin=S`. It implements reduced-unit fixed-cell velocity Verlet,
+team-wide skin/ownership validity, ID-preserving migration of mass and velocity,
+and coordinate refresh on reused maps. No production control keys change.
+The earlier fixed-layout restriction is lifted only for this LJ reference tool;
+bonded support, PME, constraints, production trajectories, GPU transport, and
+general field/contribution verification remain future work. See
+[the precise implementation contract](../cpu-temporal.md).

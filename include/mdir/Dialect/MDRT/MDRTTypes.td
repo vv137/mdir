@@ -19,6 +19,15 @@ class MDRT_ParticleSetType<string name, string typeMnemonic>
   let assemblyFormat = "`<` $particleSet `>`";
 }
 
+// Immutable snapshots bound by a checked runtime builder. Epochs are values,
+// not type parameters. The first consumer is the fixed-layout host plan.
+def MDRT_LayoutType : MDRT_ParticleSetType<"Layout", "layout"> {
+  let summary = "Immutable ownership and local-index snapshot";
+}
+def MDRT_TransferMapType : MDRT_ParticleSetType<"TransferMap", "transfer_map"> {
+  let summary = "Owner-to-replica routing snapshot";
+}
+
 def MDRT_CellsType : MDRT_ParticleSetType<"Cells", "cells"> {
   let summary = "Particles binned into cells";
   let description = [{
