@@ -11,7 +11,7 @@
 namespace mdir::tool {
 llvm::json::Object getManifestBuild();
 /// The version of MDIR and its commit, "0.1.0 (<commit>)", as a checkpoint
-/// records its creator (D[checkpoint-format]).
+/// records its creator (D173).
 std::string getBuildVersion();
 std::string hashInput(llvm::StringRef data);
 using InputPaths = std::vector<std::pair<std::string, std::string>>;

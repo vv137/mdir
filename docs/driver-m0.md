@@ -369,7 +369,7 @@ The log goes to the standard output and, with `log` in `[output]`, to that
 file as well (D149, Section 2.8); `energy` writes its rows as columns. Its
 first line names the build that wrote it, `MDIR 0.1.0, commit
 <12 hexadecimal digits>`, followed by `with uncommitted changes` when the
-tree had them (D[release]).
+tree had them (D174).
 
 ```text
 INFO:      STEP           TIME      TOTAL_ENE  POTENTIAL_ENE    KINETIC_ENE    TEMPERATURE         VIRIAL       PRESSURE
@@ -498,7 +498,7 @@ A checkpoint is a file in the H5MD format [[deBuyl2014]](references.md#debuyl201
 /particles/all/species        the types of the particles
 /particles/all/mass                                         u
 /parameters/mdir              attributes:
-    format                    1, the format (D[checkpoint-format])
+    format                    1, the format (D173)
     state_sha256              the hash of the state, checked on reading
     integrator                VELOCITY_VERLET, LEAPFROG, BROWNIAN, or
                               MINIMIZATION
@@ -516,11 +516,11 @@ A checkpoint is a file in the H5MD format [[deBuyl2014]](references.md#debuyl201
                               of a Nose-Hoover chain (D163a)
 /parameters/mdir/fingerprint  physics, coupling, execution: a string each,
                               a line per entry, "<name>\t<value>"
-                              (D[checkpoint-fingerprint])
+                              (D172)
 ```
 
 This layout is the contract of release 0.1.0, format 1
-(D[checkpoint-format]). A reader checks `format`: a newer one is refused
+(D173). A reader checks `format`: a newer one is refused
 as written by a newer MDIR, and a file of a development build before the
 release, without the fingerprint and the hash, is refused. A later format
 comes with a function that converts a file of the format before, so that
@@ -537,8 +537,8 @@ and kJ/mol.
 | With velocity Verlet the checkpoint holds the forces. | A step begins with the forces of the step before. Forces that are computed again from the positions differ in their last bits, because a neighbor structure that is built again has another order. |
 | With leapfrog the time of the velocities is half a step before that of the positions. | The file says what it holds. |
 | Neighbor structures start empty after every checkpoint (R1). | The run that continues builds its structure at the first step. The run that was not interrupted must build there too. |
-| The file appears under its name only when it is complete and on stable storage: it is written as `.partial`, flushed and `fsync`ed, renamed, and the directory is `fsync`ed (D[checkpoint-format]). | A run that ends while it writes leaves the checkpoint before; a crash on a file system that delays its writes (ext4 without `auto_da_alloc`, Lustre, NFS) does not leave an empty file under the name. |
-| It records what defined the run: its fingerprint (D[checkpoint-fingerprint]). | A run that takes it compares, as the next table says. |
+| The file appears under its name only when it is complete and on stable storage: it is written as `.partial`, flushed and `fsync`ed, renamed, and the directory is `fsync`ed (D173). | A run that ends while it writes leaves the checkpoint before; a crash on a file system that delays its writes (ext4 without `auto_da_alloc`, Lustre, NFS) does not leave an empty file under the name. |
+| It records what defined the run: its fingerprint (D172). | A run that takes it compares, as the next table says. |
 | The checkpoint before stays as `<checkpoint>.prev`, a second name made before the rename (D132). | A checkpoint that is damaged after it was written leaves one to go back to; the name of the checkpoint holds a complete state at every moment. |
 | It records the step that its run began at, its part, the trajectory and the frames written to it, and the energy that the coupling has taken. | `mdir run --continue` continues the run to its `steps`, its trajectory, and its conserved energy (Section 2.7). |
 | The particles are in the order of the input, whatever order the run keeps them in. | The file does not depend on the plan of the run. The run that continues puts the particles in order where it begins, and arrives at the order of the run that was not interrupted (D44). |
@@ -556,7 +556,7 @@ groups, D84) can differ in their last bits from run to run, and a run with
 a thermostat or a barostat carries the difference into its state. The two
 runs must have the same `checkpoint_interval`.
 
-**The fingerprint** (D[checkpoint-fingerprint]) lists what defined the
+**The fingerprint** (D172) lists what defined the
 run, an entry each, in three groups:
 
 | Group | Entries |
@@ -628,7 +628,7 @@ A run that begins from the checkpoint of another run, as the stages of
 stages differ, and its `steps` count from there. The checkpoint of the
 run it began from is not changed. Where its physics or coupling differ
 from that run's, it evaluates the forces of its first step
-(D[checkpoint-fingerprint], Section 2.6).
+(D172, Section 2.6).
 
 ### 2.8 The outputs of a run
 

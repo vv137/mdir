@@ -14,22 +14,51 @@ format, or the outputs; every such change is listed under **Changed** or
 
 - `cmake --install` installs `bin/mdir`, its runtime, and the OpenMP runtime
   under one prefix, and the log of a run begins with the version and the
-  commit of the build (D[release]).
+  commit of the build (D174).
 - A container recipe, for Docker and Apptainer, with LLVM/MLIR 23.1.2, HDF5,
-  and CUDA (D[release]).
+  and CUDA (D174).
+- Barostat runs report the area of the xy face of the cell, `AREA_XY` in
+  the log and `area_xy` in the energy file, in Å² (D170).
+- Checkpoints record a fingerprint of the run's physics, coupling, and
+  execution; `mdir checkpoint --print=fingerprint` lists it (D172).
+
+### Changed
+
+- `mdir run --continue` refuses a checkpoint whose physics or coupling
+  differ from the control file and names each change. `[execution]`,
+  `[output]`, and a larger `steps` may still change. To change a
+  temperature, restraints, or another key between stages, start the next
+  stage from the checkpoint through `[input] checkpoint` (D172).
+- A run that starts from another run's checkpoint with different physics
+  evaluates its forces and barostat state at its first step, instead of
+  taking the stored ones. A run whose only difference is execution
+  continues bit for bit (D172).
+- Checkpoint format 1 is the contract of this release. Files from newer
+  formats, and files from development builds before it, are refused
+  (D173).
+- On the CPU every reduction of a parallel loop is summed in a fixed order
+  over fixed chunks, so a run gives the same bits with any number of threads
+  and across a continuation. The last bits of single-threaded runs change
+  once (D171).
 
 ### Fixed
 
+- A checkpoint carries the SHA-256 of its state, checked on every read, and
+  is flushed to stable storage before it replaces the previous one (D173).
+- Multithreaded CPU runs with a thermostat or a barostat were not
+  reproducible from run to run, even with `deterministic = true` (D171).
+- The NPT continuation of a run's own checkpoint no longer warns that the
+  cell differs from the input (D172).
 - `mdir version` and `mdir doctor` no longer print `CUDA unknown` when the
   toolkit has no `version.json`, as in CUDA's runtime images. They take the
   version from a loaded CUDA runtime or the toolkit's `version.txt`, and
   otherwise say `runtime version not reported`. The toolkit is the one
   `CUDA_ROOT` names, if set. The line also gives the CUDA version that the
-  driver supports (`driver API`) (D[release]).
+  driver supports (`driver API`) (D174).
 - A driver too old for the PTX ISA version of the kernels ends the run with
   an error that names the driver's CUDA version and the PTX ISA version and
   asks for a newer driver, instead of a generic failure of
-  `cuModuleLoadDataEx` (D[release]).
+  `cuModuleLoadDataEx` (D174).
 
 ## [0.1.0] - unreleased
 

@@ -518,7 +518,7 @@ struct Coupled {
   }
   bool isRestart() const { return !control.restartInput.empty(); }
   /// Whether a run from a checkpoint evaluates the forces of its first step
-  /// (D[checkpoint-fingerprint]).
+  /// (D172).
   bool recomputes() const { return isRestart() && control.restartRecomputes; }
 
   const Control &control;
@@ -6978,7 +6978,7 @@ void Builder::emitEntry() {
 
   // A run that begins from the checkpoint of a run of other physics
   // evaluates the forces of its first step rather than take those of the
-  // checkpoint (D[checkpoint-fingerprint]).
+  // checkpoint (D172).
   if (recomputes())
     emitStartForces();
 

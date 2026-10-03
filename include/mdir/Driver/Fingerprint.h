@@ -1,5 +1,5 @@
 // What defined a run, which its checkpoint records and a run that takes the
-// checkpoint compares (D[checkpoint-fingerprint]).
+// checkpoint compares (D172).
 //
 // See docs/driver-m0.md, Section 2.6.
 

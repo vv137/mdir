@@ -14,9 +14,9 @@
 //   /parameters/mdir              what MDIR needs to continue the run, and
 //                                 the run that wrote it (D129, D130); the
 //                                 format and the hash of the state
-//                                 (D[checkpoint-format])
+//                                 (D173)
 //   /parameters/mdir/fingerprint  what defined the run
-//                                 (D[checkpoint-fingerprint])
+//                                 (D172)
 //
 // A quantity that changes with time has one frame: the state that the
 // checkpoint holds.
@@ -104,7 +104,7 @@ std::string getFingerprintText(const Fingerprint &fingerprint,
 const char *const fingerprintGroups[] = {"physics", "coupling", "execution"};
 
 /// SHA-256 of everything that a checkpoint holds, in a fixed order
-/// (D[checkpoint-format]).
+/// (D173).
 std::string hashState(const Checkpoint &state) {
   llvm::SHA256 hash;
   auto bytes = [&](const void *data, size_t size) {
@@ -538,7 +538,7 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
 
   // On stable storage before it takes its name: a file system that delays
   // its writes (ext4 without auto_da_alloc, Lustre, NFS) may otherwise
-  // leave an empty file under the name after a crash (D[checkpoint-format]).
+  // leave an empty file under the name after a crash (D173).
   if (!failed)
     failed = !synchronize(partial, /*directory=*/false);
   if (failed) {
@@ -596,7 +596,7 @@ mdir::driver::readCheckpoint(const std::string &path) {
         "'%s' is not a checkpoint of MDIR: it has no group "
         "'/parameters/mdir'",
         path.c_str());
-  // The format, the contract of release 0.1.0 (D[checkpoint-format]). A
+  // The format, the contract of release 0.1.0 (D173). A
   // file of a development build before it records no fingerprint and no
   // hash of its state.
   int format = 0;
@@ -679,7 +679,7 @@ mdir::driver::readCheckpoint(const std::string &path) {
                        H5T_NATIVE_DOUBLE,
                        reader.getSize("/parameters/mdir/thermostat_state"),
                        checkpoint.thermostatState);
-  // What defined the run (D[checkpoint-fingerprint]).
+  // What defined the run (D172).
   for (const char *group : fingerprintGroups) {
     std::string text;
     reader.readTextDataset(

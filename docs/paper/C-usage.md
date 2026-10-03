@@ -236,7 +236,7 @@ takes the cell of that checkpoint and says so on the standard error
 stage whose physics or coupling differ from those of the stage before
 (production drops the restraints of `3-npt.toml`) says so in its log and
 evaluates the forces of its first step, rather than take those of the
-checkpoint (D[checkpoint-fingerprint]):
+checkpoint (D172):
 
 ```text
 MDIR: note: 'npt.h5' was written by a run of other physics or coupling; the

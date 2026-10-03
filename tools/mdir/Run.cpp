@@ -333,7 +333,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         return 0;
       }
       // The physics and the coupling of the run are compared with those of
-      // the checkpoint once the system is read (D[checkpoint-fingerprint]).
+      // the checkpoint once the system is read (D172).
       // What remains must hold whole intervals of each output and of the
       // coupling, which are counted from where the run began.
       int64_t remaining = end - own->step;
@@ -393,7 +393,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     return fail("this build of MDIR has no HDF5, which checkpoints need");
 
   // What defines this run, which its checkpoints record and a checkpoint
-  // that it takes is compared with (D[checkpoint-fingerprint]).
+  // that it takes is compared with (D172).
   Fingerprint fingerprint;
   if (writesCheckpoints || isRestart) {
     auto computed = getRunFingerprint(controlFile, *control, *system);
@@ -510,7 +510,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     // The checkpoint of another run: its forces, the state of its barostat,
     // and its thermostat chain are those of its own physics and coupling,
     // and are taken only where this run has the same
-    // (D[checkpoint-fingerprint]). Otherwise the run evaluates them at its
+    // (D172). Otherwise the run evaluates them at its
     // first step, as production after equilibration with restraints must.
     if (!own) {
       std::vector<FingerprintChange> physics =

@@ -1,4 +1,4 @@
-"""Damages a checkpoint in place, for the tests of D[checkpoint-format].
+"""Damages a checkpoint in place, for the tests of D173.
 
     damage_checkpoint.py value FILE PRINTED  changes one byte of the first
                                         position of the first particle in

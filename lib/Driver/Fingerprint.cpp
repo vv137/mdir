@@ -1,4 +1,4 @@
-// What defined a run (D[checkpoint-fingerprint]).
+// What defined a run (D172).
 
 #include "mdir/Driver/Fingerprint.h"
 

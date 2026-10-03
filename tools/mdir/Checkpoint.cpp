@@ -31,7 +31,7 @@ int mdir::tool::describeCheckpoints(llvm::ArrayRef<std::string> files,
       llvm::errs() << "mdir: --print takes one checkpoint\n";
       return 2;
     }
-    // What defined the run (D[checkpoint-fingerprint]), an entry a line.
+    // What defined the run (D172), an entry a line.
     if (field == "fingerprint") {
       for (const FingerprintEntry &entry : first->fingerprint)
         std::printf("%s %s = %s\n", entry.group.c_str(), entry.name.c_str(),

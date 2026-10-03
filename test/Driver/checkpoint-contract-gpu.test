@@ -1,5 +1,5 @@
-# The checkpoint contract of release 0.1.0 on a GPU (D[checkpoint-fingerprint],
-# D[checkpoint-format]): continuation bit for bit for Brownian dynamics,
+# The checkpoint contract of release 0.1.0 on a GPU (D172,
+# D173): continuation bit for bit for Brownian dynamics,
 # anisotropic cell rescaling, and a Nose-Hoover chain with leapfrog, in
 # mixed precision; and the forces that a run from another run's checkpoint
 # evaluates when the fingerprint differs.

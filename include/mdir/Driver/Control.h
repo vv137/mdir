@@ -151,7 +151,7 @@ struct Control {
   /// Set by the driver, not by a key: the run takes the positions,
   /// velocities, and cell of `restartInput`, but evaluates the forces of its
   /// first step, since the checkpoint was written by a run of other physics
-  /// or coupling (D[checkpoint-fingerprint]).
+  /// or coupling (D172).
   bool restartRecomputes = false;
 
   // [output] (D149)

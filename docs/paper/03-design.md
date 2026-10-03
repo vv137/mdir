@@ -404,10 +404,10 @@ execution: `mdir run --continue` refuses a checkpoint of other physics or
 coupling and names each change, and a run that begins from another run's
 checkpoint evaluates the forces of its first step where they differ,
 rather than take the forces of the physics before
-(D[checkpoint-fingerprint]). Format 1 of the file is the contract of
+(D172). Format 1 of the file is the contract of
 release 0.1.0: the reader checks the format and the SHA-256 of the state,
 and the file is on stable storage before it takes its name
-(D[checkpoint-format]).
+(D173).
 
 ## 3.7 The objects of MDIR, for developers
 

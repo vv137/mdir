@@ -15,7 +15,7 @@
 namespace mdir {
 namespace driver {
 
-/// An entry of the fingerprint of a run (D[checkpoint-fingerprint]): its
+/// An entry of the fingerprint of a run (D172): its
 /// group, "physics", "coupling", or "execution"; its name, such as
 /// "[energy] cutoff"; and its value, the canonical text of what the control
 /// file writes, or the SHA-256 of what is too long to show.
@@ -27,7 +27,7 @@ struct FingerprintEntry {
 using Fingerprint = std::vector<FingerprintEntry>;
 
 /// The format of the checkpoints that this MDIR writes and reads, the
-/// contract of release 0.1.0 (D[checkpoint-format]). A later format comes
+/// contract of release 0.1.0 (D173). A later format comes
 /// with a conversion from the one before it.
 constexpr int checkpointFormat = 1;
 
@@ -82,7 +82,7 @@ struct Checkpoint {
   /// system since the run began, in kJ/mol, which the conserved energy of
   /// a continued run counts on from.
   double bath = 0.0;
-  /// What defined the run (D[checkpoint-fingerprint]).
+  /// What defined the run (D172).
   Fingerprint fingerprint;
   /// The program that wrote the file: its version and commit.
   std::string creator = "MDIR";
@@ -104,7 +104,7 @@ bool hasCheckpointSupport();
 
 /// Writes `checkpoint` to `path`. The file appears under its name only
 /// when it is complete and on stable storage, and the one it replaces stays
-/// as `path` with `.prev` appended (D132, D[checkpoint-format]).
+/// as `path` with `.prev` appended (D132, D173).
 llvm::Error writeCheckpoint(const std::string &path,
                             const Checkpoint &checkpoint);
 

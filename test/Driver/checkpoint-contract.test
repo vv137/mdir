@@ -1,5 +1,5 @@
-# The checkpoint contract of release 0.1.0 (D[checkpoint-fingerprint],
-# D[checkpoint-format]), on the mixture of thermostat.test.
+# The checkpoint contract of release 0.1.0 (D172,
+# D173), on the mixture of thermostat.test.
 #
 # REQUIRES: hdf5
 #
