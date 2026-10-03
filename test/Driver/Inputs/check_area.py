@@ -25,7 +25,7 @@ def run(control, *options, status=0):
 def columns(path):
     lines = path.read_text().splitlines()
     names, units = lines[0].split()[1:], lines[1].split()[1:]
-    assert names[-2:] == ['volume', 'area'], names
+    assert names[-2:] == ['volume', 'area_xy'], names
     assert units[-2:] == ['Å^3', 'Å^2'], units
     rows = [[float(v) for v in line.split()] for line in lines[2:]]
     assert rows and all(len(row) == len(names) for row in rows)
@@ -38,7 +38,7 @@ def check(name, text, fixed_height=False):
            for line in text.splitlines()
            if re.match(r'INFO: +[0-9]+ ', line)]
     assert len(log) == len(rows)
-    assert 'VOLUME           AREA' in text
+    assert 'VOLUME        AREA_XY' in text
     assert max(abs(a-b) for r, s in zip(rows, log)
                for a, b in zip(r, s)) <= 5.0001e-5
     summary = subprocess.check_output(

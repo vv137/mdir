@@ -206,7 +206,7 @@ void mdir::driver::writeLogHeader(Output &output) {
   if (output.couples)
     output.log.print(" %14s", "CONSERVED");
   if (output.changesCell)
-    output.log.print(" %14s %14s", "VOLUME", "AREA");
+    output.log.print(" %14s %14s", "VOLUME", "AREA_XY");
   output.log.print("\n");
 }
 
@@ -233,7 +233,7 @@ mdir::driver::getEnergyColumns(const Output &output) {
     columns.push_back({"conserved", "kcal/mol"});
   if (output.changesCell) {
     columns.push_back({"volume", "Å^3"});
-    columns.push_back({"area", "Å^2"});
+    columns.push_back({"area_xy", "Å^2"});
   }
   return columns;
 }
