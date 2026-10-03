@@ -34,7 +34,7 @@
 # RUN: sed -e 's/q1\*q2/q1*q1*q2/' %t/terms.toml > %t/order.toml
 # RUN: not mdir check %t/order.toml 2>&1 | FileCheck %s --check-prefix=ORDER
 # RUN: sed -e 's/^groups = .*/groups = [":1-3", ":9999"]/' %t/terms.toml > %t/empty.toml
-# RUN: not mdir run %t/empty.toml 2>&1 | FileCheck %s --check-prefix=EMPTY
+# RUN: mdir check %t/empty.toml 2>&1 | FileCheck %s --check-prefix=EMPTY
 # RUN: sed -e 's/^groups = .*/groups = [":1-3"]/' %t/terms.toml > %t/one.toml
 # RUN: not mdir check %t/one.toml 2>&1 | FileCheck %s --check-prefix=ONE
 
@@ -53,7 +53,7 @@
 # MIXING: with a topology a pair term takes the parameters of the topology, not 'mixing' or 'dispersion_correction'
 # NAME: the expression uses 'charge', which is not r, q1, q2, sigma, epsilon, sigma1, sigma2, epsilon1, epsilon2, coulomb, the time t, or a constant of the term
 # ORDER: the energy of a pair must not change when its two particles are exchanged (q1 with q2, sigma1 with sigma2, epsilon1 with epsilon2), and this expression does
-# EMPTY: the group ':9999' of the pair term 'grouped' selects no particle
+# EMPTY: mdir: warning: the group ':9999' of the pair term 'grouped' selects no particle; the term adds nothing
 # ONE: expected 'groups' as two masks of particles
 
 #--- run.toml

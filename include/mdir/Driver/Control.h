@@ -145,6 +145,9 @@ struct Control {
   /// Terms over tuples of the topology given by expressions (D136):
   /// [[energy.bond]], [[energy.angle]], and [[energy.dihedral]].
   std::vector<TupleTerm> tupleTerms;
+  /// What the control file asks that its author may not intend, by a code
+  /// and a message (D158); the system adds them to its own warnings.
+  std::vector<std::pair<std::string, std::string>> warnings;
   /// Terms of the absolute positions of single particles given by
   /// expressions (D148): [[energy.external]].
   std::vector<ExternalTerm> externalTerms;

@@ -12,6 +12,7 @@
 
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <map>
 
@@ -179,6 +180,22 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
       return std::move(error);
 
   System system;
+  system.warnings = control.warnings;
+  // A step longer than 1 fs moves hydrogens too far unless their bonds are
+  // constrained (D158).
+  if (!control.minimize && control.timestep > 0.00101 &&
+      !control.rigidBonds &&
+      llvm::is_contained(topology->atomicNumbers, 1))
+  {
+    char femtoseconds[32];
+    std::snprintf(femtoseconds, sizeof femtoseconds, "%g",
+                  control.timestep * 1000.0);
+    system.warnings.push_back(
+        {"long_time_step",
+         std::string("a time step of ") + femtoseconds +
+             " fs with the bonds of hydrogen free; give 'hydrogen_bonds = "
+             "true' in [constraints], or a step of 1 fs"});
+  }
   if (flexibleWaters > 0)
     system.warnings.push_back(
         {"flexible_water",
@@ -212,11 +229,14 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
       for (size_t i = 0, e = selected->size(); i != e; ++i)
         if ((*selected)[i])
           term.particles.push_back(static_cast<unsigned>(i));
+      // A selection of nothing leaves the term without particles: a warning,
+      // not an error, since the term adds nothing (D158).
       if (term.particles.empty())
-        return llvm::createStringError(
-            llvm::inconvertibleErrorCode(),
-            "the selection '%s' of the term '%s' selects no particle",
-            term.selection.c_str(), term.name.c_str());
+        system.warnings.push_back(
+            {"empty_selection", "the selection '" + term.selection +
+                                    "' of the term '" + term.name +
+                                    "' selects no particle; the term adds "
+                                    "nothing"});
       for (const auto &[name, values] : term.parameters)
         if (values.size() != term.particles.size())
           return llvm::createStringError(
@@ -279,10 +299,10 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
       ++count;
     }
     if (count == 0)
-      return llvm::createStringError(
-          llvm::inconvertibleErrorCode(),
-          "the restraint of '%s' selects no particle with mass",
-          restraint.selection.c_str());
+      system.warnings.push_back(
+          {"empty_selection", "the restraint of '" + restraint.selection +
+                                  "' selects no particle with mass; it "
+                                  "restrains nothing"});
   }
 
   // The interaction groups of the pair terms, by their masks (D137).
@@ -293,10 +313,11 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
       if (!selected)
         return selected.takeError();
       if (llvm::none_of(*selected, [](bool b) { return b; }))
-        return llvm::createStringError(
-            llvm::inconvertibleErrorCode(),
-            "the group '%s' of the pair term '%s' selects no particle",
-            mask.c_str(), term.name.c_str());
+        system.warnings.push_back(
+            {"empty_selection", "the group '" + mask + "' of the pair term '" +
+                                    term.name +
+                                    "' selects no particle; the term adds "
+                                    "nothing"});
       groups.push_back(std::move(*selected));
     }
     system.pairGroups.push_back(std::move(groups));

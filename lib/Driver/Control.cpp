@@ -65,6 +65,12 @@ private:
   Error readFunction(const toml::table &table);
   /// [[energy.external]]: a term of the absolute positions (D148).
   Error readExternal(const toml::table &table);
+  /// Warns about the parameters of the term `name` that its expression does
+  /// not use, and about an expression that uses none of `coordinates`,
+  /// whose forces are then zero (D158).
+  void checkTerm(StringRef name, StringRef expression,
+                 llvm::ArrayRef<StringRef> coordinates,
+                 llvm::ArrayRef<std::string> parameters);
   /// [[energy.bond]], [[energy.angle]], or [[energy.dihedral]]: a term over
   /// tuples of `arity` particles (D136).
   Error readTupleTerm(const toml::table &table, unsigned arity);
@@ -255,6 +261,32 @@ Error Reader::readChoice(
 // Tables
 //===----------------------------------------------------------------------===//
 
+void Reader::checkTerm(StringRef name, StringRef expression,
+                       llvm::ArrayRef<StringRef> coordinates,
+                       llvm::ArrayRef<std::string> parameters) {
+  llvm::Expected<Expression> parsed =
+      Expression::parse(expression, control.functions);
+  if (!parsed) {
+    llvm::consumeError(parsed.takeError());
+    return;
+  }
+  std::vector<std::string> names = parsed->getNames();
+  for (const std::string &parameter : parameters)
+    if (!llvm::is_contained(names, parameter))
+      control.warnings.push_back(
+          {"unused_parameter", "the parameter '" + parameter +
+                                   "' of the term '" + name.str() +
+                                   "' is not in its expression"});
+  if (llvm::none_of(coordinates, [&](StringRef coordinate) {
+        return llvm::is_contained(names, coordinate.str());
+      }))
+    control.warnings.push_back(
+        {"constant_expression",
+         "the expression of the term '" + name.str() + "' uses none of " +
+             llvm::join(coordinates, ", ") +
+             "; it adds an energy and no force"});
+}
+
 Error Reader::readExternal(const toml::table &table) {
   ExternalTerm term;
   if (Error error = readString(table, "name", term.name))
@@ -362,6 +394,14 @@ Error Reader::readExternal(const toml::table &table) {
                   "the expression uses '" + name + "', which is neither "
                   "'x', 'y', 'z', the charge 'q', the time 't', nor a "
                   "parameter of the term");
+  }
+  {
+    std::vector<std::string> parameters;
+    for (const auto &[name, value] : term.constants)
+      parameters.push_back(name);
+    for (const auto &[name, values] : term.parameters)
+      parameters.push_back(name);
+    checkTerm(term.name, term.expression, {"x", "y", "z"}, parameters);
   }
   control.externalTerms.push_back(std::move(term));
   return Error::success();
@@ -505,6 +545,15 @@ Error Reader::readTupleTerm(const toml::table &table, unsigned arity) {
                       (components ? ", 'dx', 'dy', 'dz'" : "") +
                       ", the time 't', nor a parameter of the term");
   }
+  {
+    std::vector<std::string> parameters;
+    for (const auto &[name, values] : term.parameters)
+      parameters.push_back(name);
+    std::vector<StringRef> coordinates = {term.getVariable()};
+    if (term.isCentroid() && arity == 2)
+      coordinates.insert(coordinates.end(), {"dx", "dy", "dz"});
+    checkTerm(term.name, term.expression, coordinates, parameters);
+  }
   control.tupleTerms.push_back(std::move(term));
   return Error::success();
 }
@@ -641,6 +690,12 @@ Error Reader::readPair(const toml::table &table) {
     if (!node.is_number())
       return fail(node, "expected a number for '" + keyword + "'");
     term.constants.push_back({keyword.str(), *node.value<double>()});
+  }
+  {
+    std::vector<std::string> parameters;
+    for (const auto &[name, value] : term.constants)
+      parameters.push_back(name);
+    checkTerm(term.name, term.expression, {"r"}, parameters);
   }
   control.pairs.push_back(std::move(term));
   return Error::success();

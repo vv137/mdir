@@ -49,7 +49,7 @@
 # RUN: sed -e 's/SELECTION/@CA)/' %t/min.toml > %t/wrong1.toml
 # RUN: not mdir check %t/wrong1.toml 2>> %t/wrong.txt
 # RUN: sed -e 's/SELECTION/:XYZ/' %t/min.toml > %t/wrong2.toml
-# RUN: not mdir check %t/wrong2.toml 2>> %t/wrong.txt
+# RUN: mdir check %t/wrong2.toml 2>> %t/wrong.txt > /dev/null
 # RUN: sed -e 's/SELECTION/(:1/' %t/min.toml > %t/wrong3.toml
 # RUN: not mdir check %t/wrong3.toml 2>> %t/wrong.txt
 # RUN: sed -e 's/SELECTION/@/' %t/min.toml > %t/wrong4.toml
@@ -64,7 +64,7 @@
 #
 # WRONG:      mdir: in the mask ':1-', at 4: expected a number or a range such as 1-10, not '1-'
 # WRONG-NEXT: mdir: in the mask '@CA)', at 4: unexpected ')'
-# WRONG-NEXT: mdir: the restraint of ':XYZ' selects no particle with mass
+# WRONG-NEXT: mdir: warning: the restraint of ':XYZ' selects no particle with mass; it restrains nothing
 # WRONG-NEXT: mdir: in the mask '(:1', at 4: expected ')'
 # WRONG-NEXT: mdir: in the mask '@', at 2: expected a number, a range, or a name
 # WRONG-NEXT: mdir: the restraint of ':2' selects particle 7, which another restraint selects with another 'reference_scaling'

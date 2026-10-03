@@ -52,7 +52,7 @@
 # RUN: sed -e 's/^k  = \[1.0, 2.0, 3.0\]/k  = [1.0, 2.0]/' %t/terms.toml > %t/count.toml
 # RUN: not mdir check %t/count.toml 2>&1 | FileCheck %s --check-prefix=COUNT
 # RUN: sed -e 's/^selection  = ":1-3"/selection  = ":9999"/' %t/terms.toml > %t/empty.toml
-# RUN: not mdir run %t/empty.toml 2>&1 | FileCheck %s --check-prefix=EMPTY
+# RUN: mdir check %t/empty.toml 2>&1 | FileCheck %s --check-prefix=EMPTY
 # RUN: sed -e 's/^E  = 0.5/E  = [0.5, 0.25]/' %t/terms.toml > %t/values.toml
 # RUN: not mdir run %t/values.toml 2>&1 | FileCheck %s --check-prefix=VALUES
 # RUN: sed -e 's/^ensemble    = "NVE"/ensemble    = "NPT"\npressure    = 1.0/' -e 's/^temperature = 0.0/temperature = 300.0/' -e 's/^steps      = 1$/steps      = 10/' -e 's/^checkpoint_interval = 1$/checkpoint_interval = 10/' %t/terms.toml > %t/npt.toml
@@ -82,7 +82,7 @@
 # NAME: the expression uses 'w', which is neither 'x', 'y', 'z', the charge 'q', the time 't', nor a parameter of the term
 # BOTH: a term takes 'selection' or 'particles', not both
 # COUNT: expected 3 values, one for each particle
-# EMPTY: the selection ':9999' of the term 'wall' selects no particle
+# EMPTY: mdir: warning: the selection ':9999' of the term 'wall' selects no particle; the term adds nothing
 # VALUES: the parameter 'E' of the term 'field' has 2 values, and its selection ':WAT' selects
 # BAROSTAT: the term 'wall' of {{.*}} needs 'scaling' under a barostat: "NONE" keeps it fixed in space while the cell scales about the origin, "CELL" takes its positions in the frame of the cell, scaled to the cell of the input
 # SCALING: expected 'scaling' as "NONE", fixed in space, or "CELL", in the frame of the cell

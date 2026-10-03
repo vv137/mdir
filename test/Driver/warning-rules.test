@@ -1,0 +1,68 @@
+# Warnings of the control file and the system (D158): what a run does that
+# its author may not intend, printed by `mdir run` and `mdir check` and
+# listed by `mdir check --json` under their codes, with the run going on.
+# On the dipeptide: a parameter that the expression of a term does not use,
+# an expression that uses none of its coordinates and so adds no force, a
+# selection of no particle, and a step of 2 fs with the bonds of hydrogen
+# free.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: cd %t && mdir check run.toml 2>&1 | FileCheck %s
+# RUN: cd %t && mdir check run.toml --json | FileCheck %s --check-prefix=JSON
+# RUN: cd %t && mdir run run.toml 2>&1 | FileCheck %s --check-prefix=RAN
+
+# CHECK-DAG: mdir: warning: the parameter 'c' of the term 'bend' is not in its expression
+# CHECK-DAG: mdir: warning: the expression of the term 'offset' uses none of r; it adds an energy and no force
+# CHECK-DAG: mdir: warning: the selection ':9999' of the term 'wall' selects no particle; the term adds nothing
+# CHECK-DAG: mdir: warning: a time step of 2 fs with the bonds of hydrogen free; give 'hydrogen_bonds = true' in [constraints], or a step of 1 fs
+# JSON-DAG: "code": "unused_parameter"
+# JSON-DAG: "code": "constant_expression"
+# JSON-DAG: "code": "empty_selection"
+# JSON-DAG: "code": "long_time_step"
+# RAN: MDIR: ran in
+
+#--- run.toml
+[input]
+topology    = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+[output]
+energy_interval = 1
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "CUTOFF"
+[[energy.angle]]
+name       = "bend"
+expression = "k*(theta - t0)^2"
+particles  = [[1, 2, 3]]
+k  = 5.0
+t0 = 2.0
+c  = 1.0
+[[energy.bond]]
+name       = "offset"
+expression = "k"
+particles  = [[1, 5]]
+k  = 1.0
+[[energy.external]]
+name       = "wall"
+expression = "k*max(0, z - z0)^2"
+selection  = ":9999"
+k  = 2.0
+z0 = 13.0
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.002
+steps      = 2
+[ensemble]
+ensemble    = "NVE"
+temperature = 0.0
+[constraints]
+rigid_water = true
+[boundary]
+type = "PERIODIC"
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- end
