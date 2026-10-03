@@ -289,3 +289,41 @@ call the existing reciprocal implementation, and return contributions before
 attempting distributed FFT. That would exercise distinct work/result placement
 without claiming scalable PME. Mesh reuse of upstream `shard` is considered
 at that layer, not imposed on particle replica maps.
+
+### Replication and publication are separate contracts
+
+A unique owner per particle is a restriction of the current Cartesian runtime,
+not an axiom of the upper IR. Availability is per logical field value, entity,
+and representation and can name zero, one, or many materialization locations.
+A fully replicated immutable snapshot is ordinary placement. Ghost presence
+alone does not establish that a particular field version is readable there.
+
+Authority specifies how a new logical version is published. Candidate policies
+include an exclusive updater and replicated execution with an explicit
+agreement/publication rule. Multiple materializations do not grant independent
+conflicting writes. Immutable SSA values themselves need no mutable owner;
+physical buffer access authority is a separate lifetime/effect question.
+Dynamic versions and epochs are represented by SSA values/provenance, not
+runtime SSA operands embedded in MLIR type parameters.
+
+Logical field version, layout/index snapshot, and validity epoch are distinct.
+An old version remains valid for its old consumer. A new coordinate value can
+reuse a routing map only if a current support witness permits it; updated
+payloads do not prove geometric coverage. Derived neighbor lists and pack/maps
+are caches with explicit validity requirements, not canonical state. Changing
+representation must distinguish encoding/layout changes that preserve a value
+from numerical computations such as spreading or Fourier transforms.
+
+Required architecture sanity checks are replicated-data, spatial, and force
+(or interaction) decomposition. The same semantic force requirement must be
+realizable in each case with different data/work placements and reduction
+routes. Fully replicated coordinates do not by themselves dictate a final
+broadcast: every worker might compute the same new state, or one publisher
+might distribute it. The publication contract chooses between these cases.
+
+Data/work placement graphs alone are insufficient for automatic synthesis.
+The compiler also needs explicit access/support relations, work multiplicity,
+reducer and floating-point policy, permitted representation transformations,
+cache validity, and participant/progress/completion contracts. Missing facts
+must produce a diagnostic or an explicitly supported conservative plan. The
+initial Cartesian runtime does not implement this general synthesis.
