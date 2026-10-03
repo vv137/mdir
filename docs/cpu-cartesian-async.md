@@ -175,8 +175,9 @@ energy reference: `-103.3937675287093`. Maximum absolute component error across
 energy, force, and virial was `4.41e-13` in double and `2.52e-5` in mixed.
 Five invalid CLI configurations were rejected. The CPU-visible regression
 suite passed 190 tests with 69 unsupported (GPU hidden), including ten plan
-roundtrip/negative tests. The broader 216-case SIMD/thread matrix also passed, with 24 finite
-differences and four invalid snapshots rejected. GPU-inclusive regression
+roundtrip/negative tests. The broader 216-case SIMD/thread matrix also passed, with 24 energy finite differences checking the oracle force convention
+and four invalid snapshots rejected; generated forces are separately compared
+with that oracle. GPU-inclusive regression
 results are recorded in the PR when complete. No GPU transport or performance
 improvement is claimed.
 
