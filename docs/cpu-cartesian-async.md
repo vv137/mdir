@@ -1,5 +1,10 @@
 # Cartesian CPU LJ and asynchronous execution
 
+Temporal follow-up: [D[cpu-temporal]](cpu-temporal.md) extends the experimental
+LJ tool with skin reuse and state migration. Fixed-layout limitations below
+describe the earlier implementation boundary.
+
+
 Decision: D[cpu-cartesian-async]. This extends the opt-in
 [hybrid CPU snapshot tool](cpu-hybrid-lj.md). It does not change the production
 `mdir run` pipeline. The implementation is a fixed-layout, fixed-cell force

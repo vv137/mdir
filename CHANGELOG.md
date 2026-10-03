@@ -12,6 +12,10 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- Optional temporal Cartesian CPU LJ execution with skin reuse, coordinate
+  freshness, collective migration of live state, and reduced-unit NVE.
+  Experimental CLI only; no production keys change (D[cpu-temporal]).
+
 - Experimental Cartesian CPU LJ grids, synchronous/async payload scheduling,
   and verified `md_dist` reference plans with layout/map/event bindings.
   No production control keys change (D[cpu-cartesian-async]).
