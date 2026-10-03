@@ -116,7 +116,7 @@ static std::string getPipeline(const Control &control,
   }
 
   // Reductions summed over fixed chunks in a fixed order: the same bits
-  // from run to run and for any number of threads (D[threaded-determinism]).
+  // from run to run and for any number of threads (D171).
   os << "md-exec-assign-storage,convert-md-exec-to-loops,fixed-order-reductions,";
   bool threaded = control.threads > 1;
   if (threaded)

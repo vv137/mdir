@@ -1,7 +1,7 @@
 // RUN: mdir-opt --fixed-order-reductions %s -split-input-file -verify-diagnostics
 
 // A reduction over two dimensions is refused rather than left in an order
-// that the threads decide (D[threaded-determinism]).
+// that the threads decide (D171).
 
 func.func @two(%values: memref<?x?xf64>, %init: f64) -> f64 {
   %c0 = arith.constant 0 : index

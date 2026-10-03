@@ -1,6 +1,6 @@
 // Sums the reductions of parallel loops over fixed chunks in a fixed order,
 // so that the threads decide neither the order nor the grouping of the
-// operations (D[threaded-determinism]).
+// operations (D171).
 
 #include "mdir/Conversion/Passes.h"
 

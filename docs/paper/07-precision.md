@@ -59,7 +59,7 @@ $2^{40}$ [[LeGrand2013]](references.md#legrand2013) (D70), whose sum does not de
 the threads; by default they are added with f32 atomics (D84). On the
 CPU every reduction of a parallel loop is added over a fixed number of
 chunks of contiguous particles, each in order, and the chunks in their
-order (D[threaded-determinism]): the sum depends on the number of particles
+order (D171): the sum depends on the number of particles
 alone, not on the threads or how many there are. Before, the OpenMP
 runtime combined the partial sums of the threads in the order in which
 they finished; with a thermostat or a barostat, whose coupling reads the

@@ -317,7 +317,7 @@ and rigid water (`*-restart.test`). On the CPU with four threads, runs
 with the anisotropic barostat and velocity rescaling, and with a
 Nosé–Hoover chain and the leapfrog, are bitwise identical from run to run,
 with one thread, and across a checkpoint (`threaded-determinism.test`,
-D[threaded-determinism]); before the fixed order of the sums, each of
+D171); before the fixed order of the sums, each of
 these comparisons differed in 108 to 398 values. In the
 deterministic mode two runs on a GPU are bitwise identical, and so is a
 run with the reciprocal sum on a second stream against the serial one

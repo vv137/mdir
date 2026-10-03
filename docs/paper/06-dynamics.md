@@ -449,7 +449,7 @@ the work of a scaling below is a sum over the axes, with $K_a$ and the
 diagonal of the virial of the groups in place of $K$ and the trace.
 
 The log and the file of energies report the cell area beside its volume
-for every barostat coupling (D[cell-area]), labeled `AREA_XY` in the
+for every barostat coupling (D170), labeled `AREA_XY` in the
 log and `area_xy` in the column file. This is the geometric area
 $A = \lVert \mathbf a \times \mathbf b \rVert$ of the face spanned by
 the first two cell vectors, in Å². In the reduced triangular frame,

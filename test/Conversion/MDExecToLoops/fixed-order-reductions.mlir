@@ -8,7 +8,7 @@
 // A reduction of a parallel loop is summed over a fixed number of chunks of
 // contiguous iterations, each folded in order into a buffer at the entry of
 // the function, and the initial value then takes the chunks in their order
-// (D[threaded-determinism]). Neither the threads nor their number decide
+// (D171). Neither the threads nor their number decide
 // the order of the additions.
 
 // CHECK-LABEL: func.func @sum

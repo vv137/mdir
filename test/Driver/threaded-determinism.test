@@ -1,5 +1,5 @@
 # Runs on the CPU with several threads and a thermostat or a barostat are
-# reproducible (D[threaded-determinism]). The kinetic energy and the virial
+# reproducible (D171). The kinetic energy and the virial
 # that set the coupling are sums of a parallel loop; summed by the OpenMP
 # runtime in the order in which the threads finished, they differed in
 # their last bits from run to run, and the coupling carried the difference

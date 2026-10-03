@@ -85,7 +85,7 @@ def FixedOrderReductions
     finish, so a sum of floating-point numbers can differ in its last bits
     from one run to the next. In a run with a thermostat or a barostat such
     sums (the kinetic energy, the virial) set the coupling, and the
-    difference grows into the trajectory (D[threaded-determinism]).
+    difference grows into the trajectory (D171).
 
     The pass rewrites each one-dimensional `scf.parallel` with results
     into a parallel loop over a fixed number of chunks, `chunks` or the

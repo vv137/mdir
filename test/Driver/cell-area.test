@@ -1,4 +1,4 @@
-# D[cell-area]: the geometric area of the first two cell vectors, on
+# D170: the geometric area of the first two cell vectors, on
 # changing rectangular and tilted cells, in double and mixed precision.
 # The oracle is the cross product of the checkpoint vectors, including
 # b_x != 0; fixed-height coupling also checks A = V / Lz at every output.

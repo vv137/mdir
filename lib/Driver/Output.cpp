@@ -507,7 +507,7 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
     row.push_back(output.volume /
                   (units::length * units::length * units::length));
     // The reduced cell has a = (Lx, 0, 0), b = (bx, Ly, 0), so
-    // |a × b| = Lx Ly even with a tilt (D[cell-area]).
+    // |a × b| = Lx Ly even with a tilt (D170).
     row.push_back(output.box[0] * output.box[1] /
                   (units::length * units::length));
   }
