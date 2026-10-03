@@ -193,8 +193,20 @@ mean ± standard deviation of three runs (white paper, Table 10.2):
   neighbor matrix and its lower rate.
 - **Free energy is limited to decoupling.** Relative (A to B)
   transformations, annihilation, and replica exchange are not supported.
-- **The cell keeps its shape at constant pressure.** The barostat does not
-  couple the shape of the cell.
+  A decoupled selection takes a plain Lennard-Jones cutoff or
+  `POTENTIAL_SHIFT`; switches are refused. On a GPU in mixed precision with
+  the shift, dH/dλ of the Lennard-Jones differs from double precision by
+  about 5e-4 kcal/mol at states with λ_V > 0 (#48).
+- **A per-step field of the particles feeding the reciprocal sum** gives
+  positions that are not numbers on a GPU when the particles are reordered
+  (#26). Free energy avoids it in its step program and is tested on its
+  output path; no other feature uses that pattern.
+- **The cell does not shear at constant pressure.** The barostat scales
+  each axis (isotropic, semi-isotropic, or anisotropic, D163c), without
+  coupling the angles of the cell.
+- **Binaries** are built for manylinux_2_28 (glibc 2.28 or newer: RHEL,
+  Rocky, and Alma 8+, Ubuntu 20.04+, Debian 11+) and x86-64 with an NVIDIA
+  driver supporting CUDA 13.0 or newer for the GPU (D177).
 
 [Unreleased]: https://github.com/vv137/mdir/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/vv137/mdir/releases/tag/v0.1.0
