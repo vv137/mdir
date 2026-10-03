@@ -27,6 +27,10 @@ mlir::Value createReal(mlir::OpBuilder &builder, mlir::Location loc,
 mlir::Value convertReal(mlir::OpBuilder &builder, mlir::Location loc,
                         mlir::Value value, mlir::Type real);
 
+/// Squared cutoff with the established inward f32 safety margin (D159).
+mlir::Value createCutoff2(mlir::OpBuilder &builder, mlir::Location loc,
+                         mlir::Type type, double cutoff);
+
 /// One over each edge length of `box`. A kernel finds the minimum image
 /// with a multiplication in place of a division.
 ///

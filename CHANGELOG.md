@@ -12,6 +12,22 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- Experimental harmonic bond input, topology coordinate transfer, and reverse
+  force accumulation in Cartesian CPU reference plans. Migration preserves
+  ID-based connectivity; no production keys change (D[cpu-bonded]).
+
+- Optional temporal Cartesian CPU LJ execution with skin reuse, coordinate
+  freshness, collective migration of live state, and reduced-unit NVE.
+  Experimental CLI only; no production keys change (D[cpu-temporal]).
+
+- Experimental Cartesian CPU LJ grids, synchronous/async payload scheduling,
+  and verified `md_dist` reference plans with layout/map/event bindings.
+  No production control keys change (D[cpu-cartesian-async]).
+
+- Optional `MDIR_ENABLE_MPI` fixed-layout `mdir-cpu-lj` prototype with checked
+  imported neighbor rows, OpenMP centers, and explicit CPU SIMD width 1/4/8.
+  No production TOML keys change (D[cpu-hybrid-lj]).
+
 - `cmake --install` installs `bin/mdir`, its runtime, and the OpenMP runtime
   under one prefix, and the log of a run begins with the version and the
   commit of the build (D174).

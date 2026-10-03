@@ -7,6 +7,9 @@
 #include <memory>
 
 namespace mlir {
+namespace cf {
+class ControlFlowDialect;
+} // namespace cf
 namespace arith {
 class ArithDialect;
 } // namespace arith
