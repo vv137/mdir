@@ -464,6 +464,8 @@ P11 to P18 follow from the review of PPMD (Saunders et al. 2018 [[Saunders2018]]
 
 | D[cpu-temporal] | **The experimental Cartesian CPU LJ driver maintains coordinate freshness independently of skin coverage and migrates every live driver field at an agreed epoch boundary.** Optional `--steps`, `--dt`, `--state`, and `--skin` add reduced-unit fixed-cell velocity Verlet, ID-preserving migration, cached rows/maps, and final state output. No production TOML keys change. See [cpu-temporal.md](cpu-temporal.md) for runtime checks, MPI buffer lifetime, oracle tolerances, and unsupported production features. |
 
+| D[cpu-bonded] | **Topology-required replicas and bonded result routing are separate from the spatial LJ halo in the experimental CPU executor.** `--bonds=FILE` adds unique harmonic terms with smaller-ID-endpoint work ownership, explicit topology start/wait and reverse completion in the restricted `md_dist` plan, and ID-based route rebuild after migration. No production keys, exclusions, or molecular topology import are introduced. See [cpu-bonded.md](cpu-bonded.md) for exact contracts and limits. |
+
 ### 5.1 Amendments to earlier decisions
 
 A1 to A10 come from an external review of revision 3 of the architecture,

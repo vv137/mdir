@@ -12,6 +12,10 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- Experimental harmonic bond input, topology coordinate transfer, and reverse
+  force accumulation in Cartesian CPU reference plans. Migration preserves
+  ID-based connectivity; no production keys change (D[cpu-bonded]).
+
 - Optional temporal Cartesian CPU LJ execution with skin reuse, coordinate
   freshness, collective migration of live state, and reduced-unit NVE.
   Experimental CLI only; no production keys change (D[cpu-temporal]).

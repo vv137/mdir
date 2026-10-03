@@ -332,3 +332,13 @@ The earlier fixed-layout restriction is lifted only for this LJ reference tool;
 bonded support, PME, constraints, production trajectories, GPU transport, and
 general field/contribution verification remain future work. See
 [the precise implementation contract](../cpu-temporal.md).
+
+## Experimental bonded input (D[cpu-bonded])
+
+The experimental `mdir-cpu-lj --bonds=FILE` adds harmonic terms with rows
+`id_i id_j k r0` and the one-half force-constant convention. It transfers
+ID-selected partners independently of the spatial halo, computes each bond
+once, and returns remote force contributions before integration. Migration
+rebuilds topology routes. This adds no production control keys, exclusions,
+angles/dihedrals, constraints, PME, or distributed GPU transport. See
+[the implementation and validation contract](../cpu-bonded.md).

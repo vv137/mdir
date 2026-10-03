@@ -1,5 +1,10 @@
 # Temporal Cartesian CPU execution
 
+Bonded follow-up: [D[cpu-bonded]](cpu-bonded.md) adds explicit harmonic
+terms and topology transfer to this reference tool; the original LJ-only
+validation below remains specific to D[cpu-temporal].
+
+
 D[cpu-temporal]. Experimental CPU implementation, extending #36; tracks #38.
 
 The experimental `mdir-cpu-lj` executable gains `--steps=N` (default 0),

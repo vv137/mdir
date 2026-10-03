@@ -1,5 +1,6 @@
 // Cartesian reference transport and reduced-unit NVE with an MDIR-generated LJ
 // kernel.
+#include "Bonded.h"
 #include "mdir/Conversion/Passes.h"
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Dialect/MDDist/MDDistDialect.h"
@@ -138,7 +139,7 @@ int main(int argc, char **argv) {
   std::string path, precision = "double", emit;
   int threads = 1, width = 4, repeats = 1, steps = 0;
   double dt = 0, skin = 0;
-  std::string statePath;
+  std::string statePath, bondPath;
   std::string gridOption = "auto", halo = "sync";
   for (int i = 1; i < argc; ++i) {
     std::string a = argv[i];
@@ -158,6 +159,8 @@ int main(int argc, char **argv) {
       skin = parseReal(a.substr(7));
     else if (a.find("--state=") == 0)
       statePath = a.substr(8);
+    else if (a.find("--bonds=") == 0)
+      bondPath = a.substr(8);
     else if (a.find("--grid=") == 0)
       gridOption = a.substr(7);
     else if (a.find("--halo=") == 0)
@@ -177,7 +180,7 @@ int main(int argc, char **argv) {
     fail("usage: mdir-cpu-lj SNAPSHOT [--precision=mixed|double] [--threads=N] "
          "[--simd-width=1|4|8] [--repeat=N] [--grid=auto|Px,Py,Pz] "
          "[--halo=sync|async] [--skin=S] [--steps=N --dt=T --state=FILE] "
-         "[--emit=dist|source|loops|llvm]");
+         "[--bonds=FILE] [--emit=dist|source|loops|llvm]");
   if (skin < 0 || dt < 0 ||
       (steps &&
        (dt <= 0 || statePath.empty() || repeats != 1 || !emit.empty())))
@@ -364,6 +367,8 @@ int main(int argc, char **argv) {
     v *= 4;
   MPI_Scatterv(initialState.data(), size4.data(), off4.data(), MPI_DOUBLE,
                state.data(), 4 * owned, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  Bonded bonded;
+  bonded.load(bondPath, ids, precision == "mixed");
   uint64_t layoutEpoch = 0, fieldVersion = 0, ghostVersion = 0;
   int rebuilds = 0, migrations = 0;
   std::vector<int> sendCounts(ranks), recvCounts(ranks), sendOff(ranks),
@@ -469,6 +474,7 @@ int main(int argc, char **argv) {
                       hi - x[3 * i + k] > margin;
       }
     counts.assign(owned, 0);
+    bonded.rebuild(layoutEpoch, localIDs, owned);
   };
   rebuildMap();
   auto startHalo = [&] {
@@ -578,19 +584,34 @@ int main(int argc, char **argv) {
     cache = {layoutEpoch, row, counts, entries};
   };
   std::string source = kernel(h, precision == "mixed");
+  if (bonded.enabled())
+    source.insert(source.rfind('}'), bondedKernel(h, precision == "mixed"));
   std::ostringstream plan;
-  plan << "md_dist.reference_plan [" << grid[0] << ", " << grid[1] << ", "
-       << grid[2] << "] {\n"
-       << "^bb0(%layout: !mdrt.layout<@atoms>, %map: "
-          "!mdrt.transfer_map<@atoms>):\n"
-       << "%event = md_dist.halo_start %layout via %map : "
+  plan
+      << "md_dist.reference_plan [" << grid[0] << ", " << grid[1] << ", "
+      << grid[2] << "] {\n"
+      << "^bb0(%layout: !mdrt.layout<@atoms>, %map: !mdrt.transfer_map<@atoms>";
+  if (bonded.enabled())
+    plan << ", %topology: !mdrt.transfer_map<@atoms>";
+  plan << "):\n";
+  if (bonded.enabled())
+    plan << "%te = md_dist.topology_start %layout via %topology : "
+            "!mdrt.layout<@atoms>, !mdrt.transfer_map<@atoms> -> !mdrt.event\n";
+  plan << "%event = md_dist.halo_start %layout via %map : "
           "!mdrt.layout<@atoms>, !mdrt.transfer_map<@atoms> -> !mdrt.event\n";
   if (halo == "sync")
     plan << "md_dist.halo_wait %event : !mdrt.event\n";
   plan << "md_dist.dispatch @evaluate \"interior\"\n";
   if (halo == "async")
     plan << "md_dist.halo_wait %event : !mdrt.event\n";
-  plan << "md_dist.dispatch @evaluate \"boundary\"\n}\n";
+  plan << "md_dist.dispatch @evaluate \"boundary\"\n";
+  if (bonded.enabled())
+    plan << "md_dist.topology_wait %te : !mdrt.event\n"
+            "md_dist.bond_dispatch @evaluate_bonds\n"
+            "%re = md_dist.reverse_start %layout via %topology : "
+            "!mdrt.layout<@atoms>, !mdrt.transfer_map<@atoms> -> !mdrt.event\n"
+            "md_dist.reverse_wait %re : !mdrt.event\n";
+  plan << "}\n";
   source.insert(source.rfind('}'), plan.str());
   if (emit == "source") {
     if (rank == 0)
@@ -620,7 +641,17 @@ int main(int argc, char **argv) {
     MPI_Finalize();
     return 0;
   }
-  enum class Action { Start, Wait, Interior, Boundary };
+  enum class Action {
+    Start,
+    Wait,
+    Interior,
+    Boundary,
+    TopologyStart,
+    TopologyWait,
+    Bond,
+    ReverseStart,
+    ReverseWait
+  };
   SmallVector<Action> actions;
   for (auto execution : module->getOps<mdir::md_dist::PlanOp>()) {
     for (Operation &op : execution.getBody().front()) {
@@ -628,6 +659,16 @@ int main(int argc, char **argv) {
         actions.push_back(Action::Start);
       else if (isa<mdir::md_dist::HaloWaitOp>(op))
         actions.push_back(Action::Wait);
+      else if (isa<mdir::md_dist::TopologyStartOp>(op))
+        actions.push_back(Action::TopologyStart);
+      else if (isa<mdir::md_dist::TopologyWaitOp>(op))
+        actions.push_back(Action::TopologyWait);
+      else if (isa<mdir::md_dist::BondDispatchOp>(op))
+        actions.push_back(Action::Bond);
+      else if (isa<mdir::md_dist::ReverseStartOp>(op))
+        actions.push_back(Action::ReverseStart);
+      else if (isa<mdir::md_dist::ReverseWaitOp>(op))
+        actions.push_back(Action::ReverseWait);
       else {
         auto dispatch = cast<mdir::md_dist::DispatchOp>(op);
         actions.push_back(dispatch.getSubset() == "interior"
@@ -689,6 +730,21 @@ int main(int argc, char **argv) {
       interiorForce = force;
       std::copy_n(totals, 10, interiorTotals);
     }
+  };
+  auto evaluateBonds = [&] {
+    int n = bonded.size(), l = bonded.localSize();
+    auto &ends = bonded.endpoints;
+    StridedMemRefType<int32_t, 2> bd{
+        ends.data(), ends.data(), 0, {n, 2}, {2, 1}};
+    auto &p = bonded.parameters, &bx = bonded.positions,
+         &bf = bonded.contributions, &bo = bonded.results;
+    StridedMemRefType<double, 2> pd{p.data(), p.data(), 0, {n, 2}, {2, 1}},
+        bxd{bx.data(), bx.data(), 0, {l, 3}, {3, 1}},
+        bfd{bf.data(), bf.data(), 0, {n, 6}, {6, 1}},
+        bod{bo.data(), bo.data(), 0, {n, 10}, {10, 1}};
+    if (auto err =
+            (*engine)->invoke("evaluate_bonds", &bd, &pd, &bxd, &bfd, &bod))
+      fail(llvm::toString(std::move(err)));
   };
   auto compiled = (*engine)->lookupPacked("_mlir_ciface_evaluate");
   if (!compiled)
@@ -811,7 +867,7 @@ int main(int argc, char **argv) {
                 << " migrations " << migrations << '\n';
     }
   };
-  double stageTimes[4] = {}, elapsed = 0;
+  double stageTimes[9] = {}, elapsed = 0;
   int evaluations = steps ? steps + 1 : repeats;
   for (int iteration = 0; iteration < evaluations; ++iteration) {
     if (steps && iteration)
@@ -835,6 +891,21 @@ int main(int argc, char **argv) {
         break;
       case Action::Boundary:
         evaluateStage(false);
+        break;
+      case Action::TopologyStart:
+        bonded.start(x, halo == "async");
+        break;
+      case Action::TopologyWait:
+        bonded.wait(h);
+        break;
+      case Action::Bond:
+        evaluateBonds();
+        break;
+      case Action::ReverseStart:
+        bonded.reverseStart(halo == "async");
+        break;
+      case Action::ReverseWait:
+        bonded.reverseWait(force, totals);
         break;
       }
       stageTimes[static_cast<int>(action)] += MPI_Wtime() - begin;

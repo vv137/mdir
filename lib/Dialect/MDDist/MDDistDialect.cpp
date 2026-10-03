@@ -19,7 +19,7 @@ LogicalResult PlanOp::verifyRegions() {
   if (getBody().empty())
     return emitOpError("requires a nonempty plan body");
   auto &block = getBody().front();
-  if (block.getNumArguments() != 2 ||
+  if ((block.getNumArguments() != 2 && block.getNumArguments() != 3) ||
       !isa<mdir::mdrt::LayoutType>(block.getArgument(0).getType()) ||
       !isa<mdir::mdrt::TransferMapType>(block.getArgument(1).getType()))
     return emitOpError("requires layout and transfer-map block arguments");
@@ -27,6 +27,15 @@ LogicalResult PlanOp::verifyRegions() {
   auto map = cast<mdir::mdrt::TransferMapType>(block.getArgument(1).getType());
   if (layout.getParticleSet() != map.getParticleSet())
     return emitOpError("layout and map must name the same particle set");
+  bool topology = block.getNumArguments() == 3;
+  if (topology) {
+    auto type =
+        dyn_cast<mdir::mdrt::TransferMapType>(block.getArgument(2).getType());
+    if (!type || type.getParticleSet() != layout.getParticleSet())
+      return emitOpError("topology map must name the layout's particle set");
+  }
+  Value topologyEvent, reverseEvent;
+  bool topologyReady = false, bonds = false, applied = false;
   Value event;
   bool waited = false, interior = false, boundary = false;
   FlatSymbolRefAttr kernel;
@@ -77,11 +86,58 @@ LogicalResult PlanOp::verifyRegions() {
         boundary = true;
       } else
         return dispatch.emitOpError("unknown center subset");
+    } else if (auto start = dyn_cast<TopologyStartOp>(op)) {
+      if (!topology || topologyEvent ||
+          start.getLayout() != block.getArgument(0) ||
+          start.getMap() != block.getArgument(2))
+        return start.emitOpError(
+            "requires the unused topology map bound by this plan");
+      topologyEvent = start.getEvent();
+      if (!topologyEvent.hasOneUse())
+        return start.emitOpError("event requires exactly one wait");
+    } else if (auto wait = dyn_cast<TopologyWaitOp>(op)) {
+      if (!topologyEvent || topologyReady || wait.getEvent() != topologyEvent)
+        return wait.emitOpError("requires the unmatched topology event");
+      topologyReady = true;
+    } else if (auto dispatch = dyn_cast<BondDispatchOp>(op)) {
+      if (!topologyReady || bonds || !boundary)
+        return dispatch.emitOpError(
+            "bond dispatch requires completed topology and both pair subsets");
+      auto callee = SymbolTable::lookupNearestSymbolFrom<func::FuncOp>(
+          getOperation(), dispatch.getCalleeAttr());
+      auto ctx = getContext();
+      auto f64 = Float64Type::get(ctx);
+      SmallVector<Type> inputs{
+          MemRefType::get({ShapedType::kDynamic, 2}, IntegerType::get(ctx, 32)),
+          MemRefType::get({ShapedType::kDynamic, 2}, f64),
+          MemRefType::get({ShapedType::kDynamic, 3}, f64),
+          MemRefType::get({ShapedType::kDynamic, 6}, f64),
+          MemRefType::get({ShapedType::kDynamic, 10}, f64)};
+      if (!callee ||
+          callee.getFunctionType() != FunctionType::get(ctx, inputs, {}))
+        return dispatch.emitOpError(
+            "requires the per-bond contribution kernel ABI");
+      bonds = true;
+    } else if (auto start = dyn_cast<ReverseStartOp>(op)) {
+      if (!bonds || reverseEvent || start.getLayout() != block.getArgument(0) ||
+          start.getMap() != block.getArgument(2))
+        return start.emitOpError("reverse requires completed bond dispatch and "
+                                 "the same topology map");
+      reverseEvent = start.getEvent();
+      if (!reverseEvent.hasOneUse())
+        return start.emitOpError("event requires exactly one wait");
+    } else if (auto wait = dyn_cast<ReverseWaitOp>(op)) {
+      if (!reverseEvent || applied || wait.getEvent() != reverseEvent)
+        return wait.emitOpError("requires the unmatched reverse event");
+      applied = true;
     } else
       return op.emitOpError("unsupported operation in fixed-layout plan");
   }
   if (!event || !waited || !interior || !boundary)
     return emitOpError(
         "requires start, wait, interior, and boundary exactly once");
+  if (topology && (!topologyReady || !bonds || !applied))
+    return emitOpError(
+        "requires topology transfer, bond dispatch, and reverse completion");
   return success();
 }

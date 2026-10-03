@@ -159,3 +159,21 @@ The earlier fixed-layout restriction is lifted only for this LJ reference tool;
 bonded support, PME, constraints, production trajectories, GPU transport, and
 general field/contribution verification remain future work. See
 [the precise implementation contract](../cpu-temporal.md).
+
+## Topology CPU reference extension (D[cpu-bonded])
+
+The experimental `mdir-cpu-lj --bonds=FILE` adds harmonic terms with rows
+`id_i id_j k r0` and the one-half force-constant convention. It transfers
+ID-selected partners independently of the spatial halo, computes each bond
+once, and returns remote force contributions before integration. Migration
+rebuilds topology routes. This adds no production control keys, exclusions,
+angles/dihedrals, constraints, PME, or distributed GPU transport. See
+[the implementation and validation contract](../cpu-bonded.md).
+
+This explicit test Hamiltonian adds an elastic energy that is quadratic in
+bond extension. Differentiation gives equal and opposite endpoint forces;
+differentiation under strain gives the displacement-force outer product for
+the virial. A unique bond evaluator includes the energy once and routes both
+endpoint derivatives to state owners. Neither replica count nor work placement
+changes the thermodynamic energy being differentiated. This limited test does
+not establish a production molecular ensemble or a topology import contract.
