@@ -268,7 +268,7 @@ tensor operations. See the [layer and model plan](future-architecture-plan.md#ex
 | Milestone | Work | Completion evidence |
 |---|---|---|
 | ML1 | One compatible Allegro artifact through the optional metatomic adapter and versioned potential/neighbor contract; retain external AD and tensor backend | On one GPU, energy, per-particle forces, and stress/virial agree with the original backend under declared tolerances; coordinate/cell finite differences and short NVE run; record artifact/backend identity, units, species, precision, copies, and synchronization; unsupported outputs rejected; classical builds still work without the adapter |
-| ML2 | Dependency graph, ownership and periodic images, coverage and freshness; fixed two-domain LJ, then EAM and reverse contribution routing; CPU ranks before GPUs | Energy, forces, and virial agree with one domain; migration, rebuilds, boundaries, uneven/empty domains, and exactly-once accumulation tested; inspectable schedules and negative tests for missing transfers, stale intermediates, and invalid completion |
+| ML2 | DIST0–DIST3: field/view and contribution verifier with in-process logical domains; dependency graph, directed LJ, EAM and reverse routing; synchronous CPU MPI before GPUs | Energy, forces, and virial agree with one domain; migration, rebuilds, boundaries, uneven/empty domains, and exactly-once accumulation tested; inspectable schedules and negative tests for missing transfers, stale intermediates, and invalid completion |
 | ML3 | The ML1 local model on two GPUs using the ML2 ownership and transfer contract | Same artifact, weights, precision, and outputs as ML1; one/two-GPU agreement against the original backend including migration and short-run conservation; peak memory and full-step time recorded, without requiring a speedup; completes the first deliverable |
 | ML4 | PaiNN with an opaque path and declared stages/differentiable communication, then MACE using the same contracts; external AD generates backward; semantic import is optional | Communication adjoint checks and same-model comparison of enlarged coordinate halos and per-layer feature exchange, including reverse derivatives and saved-value lifetimes; energy/force/virial agreement and measurements of bytes, messages, redundant work, memory, and full-step time |
 | ML5 | Bounded legal-plan selection and measured overlap | Fixed-plan baselines and tuning cost reported; one/two/four-GPU strong and weak scaling; multiple nodes before a cluster claim; checked preconditions and an off switch for each optimization |
@@ -287,14 +287,47 @@ replanning that does not change generated code can reuse it. Preserve
 artifact identity and restart contracts from ML1, initially with same-plan
 continuation; changes of rank count require later validation.
 
-To bring into line with the detailed plan: [architecture.md](architecture.md),
-Section 6 still calls the plan an ordered list of stages, where the plan
-makes the graph primary; its Section 4.3 names spherical harmonics as op
-families and asks the halo to cover the receptive field of the energy,
-where the plan is agnostic of the basis and separates the support of the
-forces from that of the energy; its milestones (Section 12) have neither
-EAM, the verifier, nor the adapter. [decisions.md](decisions.md), Section
-7 still tags the dependency interface M2b, which A14 moved into M1.
+The [v0 specification](md-dist-v0.md) refines initial work into A (shared
+`mdrt` types, field-state analysis and lexical verifier), B (fixed-state
+logical-domain LJ/EAM), C (temporal validity and CPU transport), then D
+(synchronous GPU before overlap). These are slices of the gates below;
+fixed-state EAM can be tested before migration is implemented.
+
+### Distributed implementation gates
+
+D[md-dist-architecture] refines ML2–ML5 without moving the release milestones.
+The [distributed contract](md-dist-plan.md) is the detailed implementation
+plan. `md_dist` verifies scientific versions, owner–replica materializations,
+and contribution completion; transport calls implement that contract.
+No distributed dialect, reference executor, or planner is implemented yet.
+
+| Gate | Deliverable | Dependency and exit condition |
+|---|---|---|
+| DIST0 | Field views, maps, scopes, verifier, CPU in-process reference | First implementation work; reject stale/partial/duplicate use and check forward/transpose maps without MPI |
+| DIST1 | Dependency extraction, directed LJ, guarded coverage, sorting/migration | DIST0; independent all-pairs oracle across partitions and empty domains |
+| DIST2 | EAM stages, unique-pair/reverse plans, crossing topology term | DIST1; infer derivative exchange, reject partial embedding, validate forces/virial and completion |
+| DIST3 | Synchronous CPU MPI then GPU transport | DIST2; participation, coherent retries, CPU/GPU mixed/double results; transport correctness before overlap |
+| DIST4 | Physical buffer hazards and asynchronous schedule | DIST3; delayed-transfer tests, full-step timing, existing single-GPU path protected |
+| DIST5 | Whole-model gradients, then staged forward/VJP | Whole-model: ML1 + DIST2–DIST3, no DIST4 requirement; staged: single-GPU ML4 hooks; same-artifact and collective-adjoint validation |
+| DIST6 | PME redistribution reference, then scalable mesh and crossing constraints | DIST3; can proceed independently of MLIPs; molecular validation before production distribution |
+
+DIST4 has a [TableGen and lowering design skeleton](md-dist-async-design.md):
+existing `mdrt.event`, conservative completion, separate staging buffers,
+and phase-aware progress. ODS generation is checked; runtime implementation
+and all behavioral/performance gates remain open. Dense `shard` halos are
+a reuse opportunity for mesh work, not a replacement for particle maps.
+
+Fixed legal plans precede cost-based selection. Separate implementation
+issues/PRs carry each gate; the architecture PR defines the plan only.
+Public transport/control keys and artifact schemas remain separate design
+work. The numerical implementation PR fixes fixtures, units, oracles, and
+precision-specific tolerances before evaluation; this documentation change
+reports no new CPU/GPU or performance result.
+
+The dependency interface's original M2b tag is historical (A14 moved its
+priority); its actual implementation is tracked by DIST1. The architecture's
+stage DAG, field-version wording, loop boundary, and event guarantees now
+follow this contract.
 
 ## 8. Analysis
 
