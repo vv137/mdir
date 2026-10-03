@@ -50,8 +50,10 @@ int runControl(llvm::StringRef controlFile, Emit emit, const char *argv0,
 double parseWalltime(llvm::StringRef text);
 
 /// Reads the control file and the input that it names, and prints what
-/// they describe. Returns the exit status.
-int checkControl(llvm::StringRef controlFile);
+/// they describe, with preflight warnings. With `json`, writes a structured
+/// report (also on an input error). Returns 0 on success, 1 on an error;
+/// warnings do not change the exit status.
+int checkControl(llvm::StringRef controlFile, bool json = false);
 
 /// Describes a checkpoint, or compares the states of two. Returns the exit
 /// status: 0 if the states are identical, 1 if they differ, 2 on an error.

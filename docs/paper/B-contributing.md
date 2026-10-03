@@ -59,7 +59,7 @@ decision (Section 12).
 
 | Tool | What it does |
 |---|---|
-| `mdir check FILE` | Reads the input of a run and prints what it describes: particles, types, degrees of freedom, the integrator, the target |
+| `mdir check FILE [--json]` | Validates the input and reports the system, planned run, outputs, and warnings, without compiling or writing files (D151) |
 | `mdir template amber`, `mdir template md` | Prints a control file with every keyword and its default |
 | `mdir template minimize`, `nvt`, `npt`, `production` | Prints a stage of the standard pipeline, embedded at build time from `examples/ala3` (D147) |
 | `mdir emit FILE --stage=STAGE` | Prints the program of a run as the driver built it (`module`), as lowered (`lowered`), or the passes (`pipeline`) |

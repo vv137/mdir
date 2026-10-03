@@ -211,6 +211,58 @@ file. Each stage begins at the checkpoint of the preceding stage, while
 `--continue` resumes its own output checkpoint or skips it when complete
 (Section 2.7). The coordinate file remains the restraint reference.
 
+### 1.4 Preflight
+
+`mdir check FILE` reads and validates the control file, topology, and
+coordinates, and reports the system and the planned run (D151, U6).
+Both topology inputs and PDB inputs get the ensemble, integrator and
+number of steps, time step in ps and duration in ns, electrostatics and
+PME settings, constraint count, target, and precision. A minimization
+reports its method and iterations, with no time step or physical duration.
+A nonperiodic system has no physical cell or density in the report.
+
+The output list includes energies on standard output, the trajectory in
+DCD or XTC, the H5MD checkpoint, and pulling coordinates. Each entry says
+whether it is enabled, its path and format, its interval in steps, and
+whether the file exists. A minimization checkpoint is written at the end.
+A named trajectory with interval 0 is disabled even if its path exists.
+Paths follow the same rule as a run: relative to the control file.
+
+Warnings go to standard error and leave the exit status at 0. They flag
+existing enabled output files, a fixed interval between neighbor rebuilds
+(D88), dynamics with no checkpoints or energy reports, a missing input
+checkpoint, and a requested feature absent from the build (HDF5 or CUDA).
+Each warning says what to change or run. Invalid input gives exit status 1.
+The check never opens an output for writing, loads an input checkpoint,
+or compiles a program. Its duration is the configured length of the stage,
+not the remaining time in a continuation. Missing stage checkpoints are
+warnings so that a whole pipeline can be inspected before it runs.
+Device availability, compilation, and checkpoint compatibility are checked
+when the run begins. Automatic PME grid and beta choices are labeled
+automatic, with their spacing, tolerance, and interpolation order.
+
+`mdir check FILE --json` writes one JSON object to standard output, also
+on input errors. Warnings are included there instead of on standard error.
+Its schema begins at version 1:
+
+| Field | Meaning |
+|---|---|
+| `schema_version`, `ok` | Version 1; `ok` is true when reading and validation succeeded, even with warnings |
+| `system` | Particle and type counts, mass in amu, degrees of freedom, supplied velocities, restrained particles, periodicity, and topology counts when present |
+| `system.cell_angstrom` | The reduced cell's `diagonal` and `tilt` ($b_x$, $c_x$, $c_y$) in Å; `null` without periodicity |
+| `run` | Kind, ensemble, method, steps, `time_step_ps`, `duration_ns`, `temperature_kelvin`, `pressure_atm`, thermostat and barostat coupling, cutoff, PME, constraints, execution, and input checkpoint path |
+| `run.pme` | `null` when disabled; otherwise `grid_points` (three nulls when automatic), `beta_inverse_angstrom` (`null` when automatic), `order`, `max_spacing_angstrom`, and `tolerance` |
+| `outputs` | Entries with `kind`, `path`, `format`, `interval_steps`, `enabled`, `at_end`, and `exists`; `path` is null for standard output or an unconfigured file |
+| `warnings` | Objects with `code` and `message`: `output_exists`, `fixed_rebuild_interval`, `no_checkpoint`, `no_energies`, `missing_input_checkpoint`, `hdf5_unavailable`, or `gpu_unavailable` |
+| `errors` | Error messages; empty on success. On failure, `system`, `run`, and `outputs` are absent |
+
+In a minimization, `time_step_ps`, `duration_ns`, and temperature are null;
+pressure is null without a barostat. Temperature denotes the bath, or the
+temperature used if initial velocities must be drawn. An input checkpoint
+path is reported but its contents are not inspected. The output intervals
+describe the schedule only when `enabled` is true, and `at_end` takes
+precedence over the interval for minimization checkpoints.
+
 ## 2. The driver
 
 ### 2.1 What it does

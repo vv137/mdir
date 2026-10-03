@@ -1,8 +1,8 @@
 # Appendix A. The control file
 
 A run is described by a control file in TOML. `mdir check FILE` reads it
-and prints what it found (particles, types, the degrees of freedom, the
-integrator, the target); `mdir run FILE` compiles and runs it, and
+and reports the system, planned run, outputs, and warnings (A.5);
+`mdir run FILE` compiles and runs it, and
 `mdir run --continue FILE` continues it from its checkpoint, over as many
 jobs as it takes (A.3);
 `mdir emit FILE` prints the program, as built or as lowered;
@@ -219,3 +219,30 @@ The selection `!:WAT & !@H*` and water constraints assume a solute in
 water named `WAT`; other systems need their selections and residue names
 adapted. The files retain the input coordinates as the restraint reference.
 `mdir template md` and `amber` continue to provide the reference files.
+
+## A.5 Preflight
+
+`mdir check FILE` reports the ensemble, configured length in steps and ns,
+time step in ps, PME, constraints, target, and precision for every input
+format, beside the topology or particle summary (D151). It lists energies,
+trajectory, checkpoint, and pulling-coordinate outputs with their paths,
+formats, intervals, and whether they are enabled and already exist.
+Minimization has an iteration count and a checkpoint at the end, with no
+physical duration; a nonperiodic system has no physical cell or density.
+
+Warnings flag existing enabled output files, fixed neighbor-rebuild
+intervals, absent energy reports or checkpoints, a missing input checkpoint,
+and missing HDF5 or CUDA build support. They include a way to address the
+condition and keep exit status 0; invalid input returns 1. The command
+does not write files, compile, probe a device, or load a checkpoint. It
+describes the stage's configured length, not the work remaining after a
+checkpoint, and keeps automatic PME grid and beta settings explicit.
+
+`mdir check FILE --json` writes one JSON object, including on input errors.
+`schema_version` is 1; `ok` distinguishes successful input validation from
+errors. The report has `system`, `run`, `outputs`, `warnings`, and `errors`;
+the first three are absent on failure. Warning entries have `code` and
+`message`, while errors are strings. Numeric fields name their units,
+such as `duration_ns` and `pressure_atm`; unavailable values are null.
+Warnings in this mode are in the report, not on standard error. The full
+schema is in [driver-m0.md](../driver-m0.md), Section 1.4.
