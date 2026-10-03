@@ -139,6 +139,24 @@ for dimension, fixture, oracle in (
                 entry = next(v for v in inputs if v['path'] == str(scratch / path))
                 assert entry['role'] == 'tabulated_function'
                 assert entry['sha256'] == hashlib.sha256((scratch / path).read_bytes()).hexdigest()
+            # Resolved part outputs and the previous-checkpoint path are also
+            # protected; these names differ from the literal output keys.
+            for reserved, extra_output in (
+                ('part-input.part0002.log', 'log = "part-input.log"\n'),
+                (f'{label}.h5.prev', ''),
+            ):
+                saved_grid = (scratch / grids[0][0]).read_bytes()
+                (scratch / reserved).write_bytes(saved_grid)
+                collision = file_text.replace(grids[0][0], reserved)
+                collision = collision.replace('[output]', '[output]\n' + extra_output)
+                collision = collision.replace('steps      = 1', 'steps      = 2')
+                (scratch / 'part-collision.toml').write_text(collision)
+                failure = invoke(mdir, 'run', '--continue', '--no-append',
+                                 'part-collision.toml', expected=1)
+                assert 'a tabulated input of the run' in failure, failure
+                assert (scratch / reserved).read_bytes() == saved_grid
+                (scratch / reserved).unlink()
+            print('resolved part and previous-checkpoint collisions: passed')
             # Switching between a file and equivalent inline values preserves physics.
             (scratch / 'inline.toml').write_text(inline.replace('steps      = 1', 'steps      = 2'))
             invoke(mdir, 'run', '--continue', 'inline.toml')

@@ -95,7 +95,8 @@ The reader converts to the internal table order before interpolation.
 The same rule extends to three arguments. Relative paths resolve against
 the control file. Only finite decimal numbers are accepted, with whitespace
 separators and `#` comments; count, shape, periodic endpoints, and output
-collisions are checked before compilation. The manifest hashes the file,
+collisions are checked before compilation. Resolved part output names and
+the previous-checkpoint path are protected as well. The manifest hashes the file,
 and continuation compares the loaded grid rather than its filename.
 
 ## A.2 A run from an Amber topology

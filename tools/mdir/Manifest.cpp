@@ -116,6 +116,20 @@ llvm::Error mdir::tool::checkManifestPath(StringRef path,
   return llvm::Error::success();
 }
 
+llvm::Error mdir::tool::checkTabulatedInputs(
+    const InputPaths &inputs, llvm::ArrayRef<std::string> outputs) {
+  for (const auto &[role, input] : inputs) {
+    if (role != "tabulated_function")
+      continue;
+    for (const std::string &output : outputs)
+      if (!output.empty() && sameFile(output, input))
+        return llvm::createStringError(llvm::inconvertibleErrorCode(),
+            "output '%s' names '%s', a tabulated input of the run",
+            output.c_str(), input.c_str());
+  }
+  return llvm::Error::success();
+}
+
 llvm::Expected<llvm::json::Array>
 mdir::tool::hashManifestInputs(const InputPaths &inputs) {
   llvm::json::Array result;

@@ -8,6 +8,7 @@
 # CHECK: 1d-cpu-double: identical IR; equivalent energies and forces; independent oracle passed
 # CHECK: 1d-cpu-mixed: identical IR; equivalent energies and forces; independent oracle passed
 # CHECK: nd-cpu-double: identical IR; equivalent energies and forces; independent oracle passed
+# CHECK: resolved part and previous-checkpoint collisions: passed
 # CHECK: manifest hashes and continuation grid changes: passed
 # CHECK: nd-cpu-mixed: identical IR; equivalent energies and forces; independent oracle passed
 # CHECK: 2-by-3 file order matches inline nested lists: passed

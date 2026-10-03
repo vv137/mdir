@@ -218,7 +218,8 @@ periodic endpoint, and discrete-function rules apply to the loaded grid.
 Values keep the units of the expression that calls the function.
 
 The file is read before compilation, is protected from collisions with
-outputs, and appears as `tabulated_function` in the manifest's input
+outputs, including resolved part files and the previous checkpoint, and
+appears as `tabulated_function` in the manifest's input
 hashes and in the bug report. Continuation compares the loaded grid as
 inline values: changing its numbers is a change of physics, while moving
 the file, changing whitespace or comments, or using equivalent inline
