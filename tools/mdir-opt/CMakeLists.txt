@@ -3,7 +3,7 @@ set(LIBS
   MDIRMD
   MDIRMDExec
   MDIRMDExecTransforms
-  MDIRMDRT
+  MDIRMDDist MDIRMDRT
   MDIRMDExecToGPU
   MDIRMDExecToLoops
   MDIRMDToMDExec
