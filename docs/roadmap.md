@@ -216,8 +216,8 @@ backend for classical runs. LJ/EAM are initial distributed validation
 models; realistic molecular systems remain part of validation and the
 long-term distributed scope.
 
-Direction adopted in D166 (2026-10-03); all milestones below are planned,
-not implemented. [The architecture plan](future-architecture-plan.md#adopted-scope-and-first-deliverable)
+Direction adopted in D166 and refined in D167 (2026-10-03); all milestones
+below are planned, not implemented. [The architecture plan](future-architecture-plan.md#adopted-scope-and-first-deliverable)
 holds the contracts and detailed sequence. The first deliverable is **one
 existing local MLIP, validated on one GPU and then on two GPUs sharing one
 physical system**. Independent trajectories on separate GPUs are useful
@@ -231,19 +231,39 @@ publication independent of this work. An adapter, distributed inference,
 and compiler optimization are separate outcomes; none alone establishes
 novelty or a speedup.
 
+Use **Allegro → PaiNN → MACE** as the sequential support target, pinning
+one existing artifact and its backend/adapter versions per architecture.
+Allegro is the first local model; PaiNN introduces staged scalar/vector
+message passing; MACE extends the validated stage contract. Compatibility
+is checked per artifact, not promised for every checkpoint in a family.
+Supporting these architectures does not by itself validate water-and-salt
+properties; scientific validation is a separate application gate.
+
+**PyTorch/JAX supplies neural-network AD and tensor execution.** MDIR
+verifies particle dependencies, derivative ownership, communication,
+lifetimes, and execution order. Begin with a whole-model energy/force/virial
+call; staged execution later registers or reuses differentiable halo and
+reverse-accumulation primitives while the external framework generates
+backward. No new general reverse-mode engine is required. torch-mlir is an
+optional later import route, not a dependency of ML1–ML3. Preserve semantic
+contracts through external AD rather than reconstructing them from generic
+tensor operations. See the [layer and model plan](future-architecture-plan.md#external-ad-and-execution-layers).
+
 | Milestone | Work | Completion evidence |
 |---|---|---|
-| ML1 | One existing metatomic artifact through an optional adapter and versioned potential/neighbor contract; retain its external backend | On one GPU, energy, per-particle forces, and stress/virial agree with the original backend under declared tolerances; coordinate/cell finite differences and short NVE run; record artifact/backend identity, units, species, precision, copies, and synchronization; unsupported outputs rejected; classical builds still work without the adapter |
+| ML1 | One compatible Allegro artifact through the optional metatomic adapter and versioned potential/neighbor contract; retain external AD and tensor backend | On one GPU, energy, per-particle forces, and stress/virial agree with the original backend under declared tolerances; coordinate/cell finite differences and short NVE run; record artifact/backend identity, units, species, precision, copies, and synchronization; unsupported outputs rejected; classical builds still work without the adapter |
 | ML2 | Dependency graph, ownership and periodic images, coverage and freshness; fixed two-domain LJ, then EAM and reverse contribution routing; CPU ranks before GPUs | Energy, forces, and virial agree with one domain; migration, rebuilds, boundaries, uneven/empty domains, and exactly-once accumulation tested; inspectable schedules and negative tests for missing transfers, stale intermediates, and invalid completion |
 | ML3 | The ML1 local model on two GPUs using the ML2 ownership and transfer contract | Same artifact, weights, precision, and outputs as ML1; one/two-GPU agreement against the original backend including migration and short-run conservation; peak memory and full-step time recorded, without requiring a speedup; completes the first deliverable |
-| ML4 | One message-passing model with both an opaque path and exposed stages or semantic import | Same-model comparison of enlarged coordinate halos and per-layer feature exchange, including reverse derivatives; energy/force/virial agreement and measurements of bytes, messages, redundant work, memory, and full-step time |
+| ML4 | PaiNN with an opaque path and declared stages/differentiable communication, then MACE using the same contracts; external AD generates backward; semantic import is optional | Communication adjoint checks and same-model comparison of enlarged coordinate halos and per-layer feature exchange, including reverse derivatives and saved-value lifetimes; energy/force/virial agreement and measurements of bytes, messages, redundant work, memory, and full-step time |
 | ML5 | Bounded legal-plan selection and measured overlap | Fixed-plan baselines and tuning cost reported; one/two/four-GPU strong and weak scaling; multiple nodes before a cluster claim; checked preconditions and an off switch for each optimization |
 
 A four-GPU measurement follows ML3's one/two-GPU correctness gate; it is
-not required to complete that first deliverable. Distributed PME, global
-attention or charge solvers, constraints across domains, training, and
-arbitrary PyTorch/JAX import remain outside it. The dependency vocabulary
-must leave room for these cases without claiming support.
+not required to complete that first deliverable, nor is support for all
+three architectures. ML5 can begin with the first validated staged model.
+Distributed PME, global attention or charge solvers, constraints across
+domains, training, arbitrary PyTorch/JAX import, and full-trajectory
+differentiation remain outside it. The dependency vocabulary must leave
+room for these cases without claiming support.
 
 A persistent kernel cache and runnable compiled artifacts remain companion
 work. Cache keys include the model/backend and code-affecting plan choices;

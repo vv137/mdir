@@ -1,6 +1,6 @@
 # MDIR Future Architecture Plan: Saunders, Cornel, and P4IRS
 
-Initial architecture review: October 1, 2026. Updated October 2, 2026 after reading William Robert Saunders's doctoral thesis. Sources: the three supplied theses/papers, the repository, and primary documentation for the model interfaces discussed below. The implementation survey records the October 1 baseline; the Saunders additions refine the future plan rather than claim a new implementation audit. On October 3, 2026, D166 adopts the MLIP integration and distributed validation sequence below; that decision changes the plan, not the implementation status. This document distinguishes implemented behavior, documented plans, and recommendations. It does not reproduce benchmark results or execute the test suite.
+Initial architecture review: October 1, 2026. Updated October 2, 2026 after reading William Robert Saunders's doctoral thesis. Sources: the three supplied theses/papers, the repository, and primary documentation for the model interfaces discussed below. The implementation survey records the October 1 baseline; the Saunders additions refine the future plan rather than claim a new implementation audit. On October 3, 2026, D166 adopts the MLIP integration and distributed validation sequence below; D167 refines it with external AD and the Allegro → PaiNN → MACE progression. These decisions change the plan, not the implementation status. This document distinguishes implemented behavior, documented plans, and recommendations. It does not reproduce benchmark results or execute the test suite.
 
 MDIR's separation of potential semantics, dynamics, distribution, and traversal is a sound basis for combining classical force fields with machine-learned interatomic potentials (MLIPs). The strongest research direction is to preserve spatial and topological dependencies through differentiation, then use those dependencies to select communication and traversal together. The repository already provides useful foundations: semantic differentiation, explicit relations, exchange contracts, neighbor validity, storage assignment, and CPU/GPU lowering. The staged dependency interface and distributed planner that would connect them remain proposals.
 
@@ -252,7 +252,7 @@ PPMD is now considered through both the [existing paper analysis](prior-art.md#1
 | Primary abstraction | Particle/pair loops with opaque C kernels and access descriptors | Particle updates and neighbor reductions, specialized to distributed particle sets | Particle computations and domain-specific AST nodes plus a user schedule | Energy and relations plus dynamics; explicit traversal below them |
 | Communication information | Declared access modes and runtime tracking; collective coefficient reduction and specialized tree-level maps | Analyzed reads/changes, ownership and neighbor staleness, liveness, external-call contracts | Neighbor property accesses, volatility, and changes across steps | Current: effects and aliases for local overlap. Proposed: stage support, reads/writes, freshness, and accumulation |
 | Physical neighborhoods | Runtime structures selected for targets | Cell-list/local-domain companion dialects; Verlet proposed | Generated Linked Cells/Verlet variants, half/full lists, per-cell lists | Matrix implemented; optional GPU groups path; general joint choice proposed |
-| Energy differentiation | No semantic energy layer in the reviewed abstraction | Not demonstrated by the thesis | Force-kernel descriptions; no derivative-aware stage planner demonstrated | Supported symbolic pair/tuple derivatives implemented; MLIP reverse mode proposed |
+| Energy differentiation | No semantic energy layer in the reviewed abstraction | Not demonstrated by the thesis | Force-kernel descriptions; no derivative-aware stage planner demonstrated | Supported symbolic pair/tuple derivatives implemented; externally generated MLIP derivatives and communication contracts planned (D167) |
 | Distribution/execution boundary | Framework and runtime | `particles_dist` specialization combines distributed and traversal information with companion dialects | Generated communication and traversal plus runtime partitioner interface | Proposed peer `md_dist` and `md_exec` dialects, driven by one planner |
 | Evidence for staged classical/ML unification | Thesis demonstrates multistage analysis and collective Ewald; no learned/differentiated unification | Repeated particle computations are possible; no unified differentiated model demonstrated | Many-body syntax is discussed; no unified differentiated model demonstrated | Architecture proposal; no EAM/MLIP distributed demonstration yet |
 | Performance evidence relevant here | CPU/GPU LJ scaling; CPU direct Ewald and distributed FMM, including limitations | OpenFPM CPU/GPU comparisons on one machine | LJ/DEM CPU/GPU comparisons and cluster weak scaling | Source, tests, and repository measurements for single-node classical MD; no new measurements in this review |
@@ -432,10 +432,15 @@ The three differentiation routes should have explicit contracts rather than bein
 | Route | Benefit | Condition for use |
 |---|---|---|
 | Differentiate the semantic graph before lowering | Retains relation, representation, and ownership information for derivative-stage planning | Semantic operations have verified derivative rules, including reductions and geometric conventions. |
-| Differentiate after tensor/traversal lowering | Can use an existing backend's differentiation machinery | The compiler retains or reconstructs support and contribution ownership for generated gathers/scatters; communication cannot become an unanalyzable side effect. |
+| Delegate model differentiation to PyTorch/JAX before transport lowering | Reuses the backend's forward/backward generation and tensor execution | Preserve declared particle support, contribution ownership, and differentiable communication boundaries through AD; do not infer lost semantics from arbitrary tensor operations. |
 | Invoke a model-provided force kernel | Enables practical integration without importing the derivative graph | The adapter declares force support, ownership, units and whether the forces are derivatives of the reported energy. |
 
-For the first staged compiler prototype, semantic differentiation is the clearest baseline. The other routes can be supported as adapter/backend capabilities; they require equivalence checks before a planner substitutes one for another.
+For classical expressions, retain MDIR's existing semantic differentiation.
+For MLIPs, D167 adopts external PyTorch/JAX AD, first behind a whole-model
+call and later across declared stages and differentiable communication.
+MDIR does not implement a general neural-network reverse-mode engine.
+The routes require equivalence checks before a planner substitutes one for
+another; see [the layer contract](#external-ad-and-execution-layers).
 
 ## Model interoperability and compatibility tiers
 
@@ -461,7 +466,7 @@ Make metatomic the first MLIP adapter target and the reference for capability, n
 | Neighbor and additional-input requests | Align request semantics and vocabulary; the adapter translates supported requests | Construct complete relations and inputs, negotiate layouts, and report unsupported requests |
 | System and output selection | Align `System`, `ModelOutput`, `NeighborListOptions`, and `selected_atoms` concepts | Preserve global/image identity, ownership, derivative destinations, and output accounting |
 | Opaque execution and artifacts | Load supported metatomic artifacts directly through an optional adapter | Define the external-call contract without requiring this artifact format for other potentials |
-| Stage graph, distributed plan, and semantic MLFF IR | Translate available declarations; do not use metatomic objects as compiler types | Own dependency extraction, differentiation, legal schedules, traversal, and transport realization |
+| Stage graph, distributed plan, and semantic MLFF IR | Translate available declarations; do not use metatomic objects as compiler types | Own dependency extraction, derivative ownership, legal schedules, traversal, and transport realization; reuse external AD for neural tensor computations (D167) |
 | Public ABI and classical integration | Map metatomic versions at the adapter boundary | Version the MDIR ABI independently and accept OpenKIM/native potentials |
 
 The current interface also exposes `requested_inputs()` for additional system data. Support these requests through explicit adapter capability negotiation; do not silently omit an input. The documented extra-data path carries experimental stability caveats, so supporting it must not make MDIR's own public schema depend on an unpinned upstream implementation. [Additional input requests](https://docs.metatensor.org/metatomic/latest/torch/reference/models/export.html), [extra-data caveats](https://docs.metatensor.org/metatomic/latest/overview.html).
@@ -790,17 +795,123 @@ exchange. Neither feature alone establishes MDIR's novelty. [Metatomic
 interface](https://docs.metatensor.org/metatomic/latest/index.html),
 [chemtrain-deploy communication](https://chemtrain.readthedocs.io/en/latest/chemtrain-deploy/lammps.html).
 
+## External AD and execution layers
+
+D167 adopts this refinement on October 3, 2026. It extends D166's plan;
+none of the MLIP adapters, staged execution, or import paths below is
+implemented. **Reuse PyTorch/JAX for neural-network reverse-mode AD and
+tensor execution; MDIR owns the particle and distributed execution
+contracts.** Ordinary MD initially needs derivatives of energy with
+respect to coordinates and cell deformation. Parameter training,
+higher-order derivatives, and differentiation through a full trajectory
+are outside this deliverable. Existing classical semantic AD remains in
+place.
+
+| Layer | Responsibility |
+|---|---|
+| Model and adapter | Existing model and weights; units, species, precision, output conventions, neighbor requirements, and explicit support/stage declarations |
+| External AD | Generate forces and deformation derivatives, or stage forward/backward computations, using PyTorch/JAX; retain required activations or a valid recomputation policy |
+| MDIR semantic and execution plan | Verify particle/image identity, ownership, support, field freshness, forward and reverse transfers, accumulation, lifetimes, and completion; choose legal schedules |
+| Tensor backend | Execute and optimize matrix products, equivariant tensor products, reductions, and other supported tensor operations |
+| MD runtime | Integrate, rebuild neighbors, migrate particles, and execute the planned communication and synchronization |
+
+The first path is a whole-model call: MDIR supplies coordinates, cell, and
+neighbors; the adapter/backend returns energy, forces, and virial; MDIR
+performs the declared accumulation and advances dynamics. On two GPUs,
+evaluate owned-center energies with complete declared environments,
+differentiate them with the existing backend, and return ghost-coordinate
+force contributions to their owners. Each center's energy is counted
+once. This needs neither model-stage import nor torch-mlir. The same
+expanded-environment baseline remains available for message-passing models
+when their finite support can be established.
+
+Staged execution adds a small differentiable communication interface.
+For a fixed ownership/image map, a forward owner-to-ghost copy `y = G x`
+has reverse accumulation `x_bar = transpose(G) y_bar`: all ghost
+contributions are summed at the owner. Register or reuse this rule in the
+external AD framework and let that framework generate the model's
+backward graph. Preserve local paths as well as remote contributions.
+Treat reductions and replicated outputs according to their logical
+ownership; copying one output onto multiple ranks must not multiply its
+derivative. MPI or CUDA calls alone do not supply these AD semantics.
+
+MDIR is responsible for the correctness of its communication primitives
+and adapter contracts, not handwritten derivatives for every neural
+operation. Validate the communication transpose with an adjoint identity
+test, then coordinate/cell finite differences and one/two-domain
+energy/force/virial comparisons. Include repeated periodic images,
+uneven/empty domains, and migration; retain maps and saved activations
+until backward completes, and invalidate maps after migration. Schedules
+must explicitly retain the dependencies of saved values and reverse
+transfers. Reordering or overlap still requires the checked-premise
+argument in [the principles](principles.md), an off switch, and comparison
+with a synchronous baseline.
+
+PyTorch's AOTAutograd can generate forward/backward FX graphs for a custom
+compiler. torch-mlir supplies a PyTorch-to-MLIR bridge; it is an optional
+later import path, not the AD engine or a prerequisite for ML1–ML3.
+A possible staged path is model plus declared differentiable communication
+operations, external AD, optional torch-mlir import, then MDIR scheduling
+and external tensor execution. Preserve particle and communication
+semantics before generic tensor lowering. Do not attempt to recover them
+by recognizing arbitrary gathers afterwards. Validate operator coverage,
+dynamic neighbor shapes, custom kernels, saved values, and framework
+versions on a selected artifact before adopting this path. A backend's
+ability to run a model does not establish that torch-mlir can import it.
+[AOTAutograd compiler interface](https://docs.pytorch.org/docs/main/user_guide/torch_compiler/torch.compiler_custom_backends.html),
+[PyTorch custom-op AD](https://docs.pytorch.org/tutorials/advanced/cpp_custom_ops.html),
+[torch-mlir](https://github.com/llvm/torch-mlir).
+
+Reusing chemtrain's JAX execution and differentiable communication is
+another adapter candidate, subject to the same contracts. Its current
+documentation already provides differentiable `comm.gather` and
+`comm.reduce`, including generated reverse communication. Neither that
+capability nor using MLIR establishes MDIR's novelty.
+[chemtrain communication](https://chemtrain.readthedocs.io/en/latest/chemtrain-deploy/model_inputs.html#communication).
+
+### Model progression and acceptance scope
+
+Use **Allegro → PaiNN → MACE** as the sequential support target. These are
+the three architectures benchmarked by chemtrain-deploy, whose test
+systems include water, aluminum, and solvated chignolin. Those benchmarks
+do not establish aqueous-salt accuracy.
+[chemtrain-deploy paper](https://arxiv.org/html/2506.04055v1).
+
+| Target | Purpose and gate |
+|---|---|
+| Allegro (ML1–ML3) | One finite-range strictly local artifact through the optional adapter, existing AD, and one/two-GPU validation; completes the first deliverable |
+| PaiNN (first ML4 case) | Expose scalar/vector message-passing stages and differentiable communication; compare opaque expanded halos with staged exchange for identical weights and outputs |
+| MACE (ML4 extension) | Reuse the same contracts for higher-order equivariant message passing; check operator and adapter coverage, then repeat same-model correctness and performance comparisons |
+
+Select and pin one existing artifact per architecture, including its
+license, hash, model/backend/adapter versions, supported species, and
+output capabilities. Metatomic remains the first compatibility path;
+verify compatibility for the selected artifact rather than claiming all
+variants of any family are supported. The chemtrain JAX implementations
+and other projects' PyTorch implementations are not interchangeable
+checkpoints. A direct chemtrain performance comparison requires identical
+weights, precision, outputs, and physical settings, or a demonstrated
+equivalent conversion. Record any missing artifact or compatibility as an
+open prerequisite, not a reason to silently retrain or change the model.
+
+Do not require all three architectures to finish ML3. Add MACE after the
+PaiNN staged interface is validated; ML5 tuning can start with that first
+staged model. A validated water-and-salt artifact and scientific observables
+such as diffusion or osmotic pressure are a separate application gate.
+The compiler research claim rests on verified alternatives and measured
+whole-step tradeoffs for the same model, not the count of supported models.
+
 ## Recommended implementation sequence
 
-This sequence implements D166 and the milestones in
+This sequence implements D166 and D167 and the milestones in
 [roadmap Section 7](roadmap.md#7-distributed-execution-and-learned-potentials).
 The first local MLIP on two GPUs completes ML1 through ML3; message-passing
 optimization follows as ML4 and ML5.
 
-1. **Validate one opaque model on one GPU (ML1).** Define the versioned
-   potential/neighbor contract and implement an optional metatomic adapter.
-   Preserve the artifact and its backend; do not require conversion to a
-   new model format. Check species and units, particle/image mapping,
+1. **Validate one opaque Allegro artifact on one GPU (ML1).** Define the
+   versioned potential/neighbor contract and implement an optional
+   metatomic adapter. Preserve the artifact, external AD, and backend;
+   do not require conversion to a new model format. Check species and units, particle/image mapping,
    neighbor derivative registration, requested outputs, and buffer lifetime
    and completion. Reject unsupported requests explicitly. Compare energy,
    every force component, and converted stress/virial with the original
@@ -851,11 +962,13 @@ optimization follows as ML4 and ML5.
    requires correctness on one and two GPUs; a four-GPU scaling measurement
    is a subsequent experiment, not a condition for its completion.
 
-7. **Expose one message-passing model's stages (ML4).** Keep an opaque
-   execution path and add stage calls or a semantic importer for the same
-   model. Make forward field dependencies and reverse derivative routing
-   explicit. Compare enlarged coordinate halos with per-layer feature
-   exchange, including redundant boundary work and reverse communication.
+7. **Expose PaiNN's stages, then extend to MACE (ML4).** Keep an opaque
+   execution path and add declared stage/communication boundaries for the
+   same model. Reuse external AD for backward generation; a semantic
+   importer, including torch-mlir, is optional. Make forward field
+   dependencies and reverse derivative routing explicit. Compare enlarged
+   coordinate halos with per-layer feature exchange, including redundant
+   boundary work and reverse communication.
    Keep weights, precision, outputs, and physical settings identical; a
    comparison of different model architectures does not isolate the
    execution strategy. No universal halo formula or speedup is assumed.
