@@ -12,6 +12,6 @@
 # RUN: mdir run %t/run.toml | FileCheck %s
 
 # CHECK:      INFO:         0         0.0000 {{ *}}[[TOTAL:-[0-9.]+]] {{.*}} [[TOTAL]]     12487.1680
-# CHECK:      INFO:      2000 {{.*}} {{11[0-9]{3}\.[0-9]+$}}
+# CHECK:      INFO:      2000 {{.*}} {{11[0-9]{3}\.[0-9]+}} {{[0-9.]+$}}
 # CHECK:      MDIR: the pressures of the barostat over 200 periods, in bar: x
 # CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[4-9]}} of its value

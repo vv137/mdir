@@ -1,0 +1,8 @@
+# D[cell-area]: the geometric area of the first two cell vectors, on
+# changing rectangular and tilted cells, in double and mixed precision.
+# The oracle is the cross product of the checkpoint vectors, including
+# b_x != 0; fixed-height coupling also checks A = V / Lz at every output.
+# REQUIRES: hdf5
+# RUN: rm -rf %t
+# RUN: %python %S/Inputs/check_area.py %S %t cpu mdir | FileCheck %s
+# CHECK: cell area, units, log agreement, and exact continuation: ok

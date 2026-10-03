@@ -1,0 +1,5 @@
+# The cell-area output oracle on a GPU, in double and mixed precision.
+# REQUIRES: cuda, hdf5
+# RUN: rm -rf %t
+# RUN: %python %S/Inputs/check_area.py %S %t gpu mdir | FileCheck %s
+# CHECK: cell area, units, log agreement, and exact continuation: ok
