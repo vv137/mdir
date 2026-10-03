@@ -51,6 +51,15 @@
 # LOG:      INFO:      1500         6.0000 {{ *}}[[ROW1500]]
 # SAME: the states are identical
 
+# A chain whose period is less than 20 periods of coupling is warned of.
+#
+# RUN: sed -e 's|time_constant = 1.0|time_constant = 0.5|' %t/a.toml > %t/short.toml
+# RUN: mdir check %t/short.toml 2>&1 | FileCheck %s --check-prefix=SHORT
+# RUN: mdir check %t/a.toml 2>&1 | FileCheck %s --check-prefix=LONG
+#
+# SHORT: warning: the Nose-Hoover chain acts every 0.04 ps and its 'time_constant' is 0.5 ps, less than 20 times that; give a smaller 'interval' in [thermostat] or a 'time_constant' of at least 0.8 ps
+# LONG-NOT: Nose-Hoover chain acts
+
 # What is wrong with the keys of a chain is reported.
 #
 # RUN: sed -e 's|chain_length = 4|chain_length = 0|' %t/a.toml > %t/zero.toml

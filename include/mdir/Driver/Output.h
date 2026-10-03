@@ -179,6 +179,13 @@ struct Output {
   double getChainEnergy() const;
   /// Whether a barostat changes the cell, which the log then shows.
   bool changesCell = false;
+  /// Brownian dynamics (D163b): the velocities are displacements over a
+  /// step, so the log has no kinetic energy, temperature, or total, and the
+  /// pressure takes the kinetic energy of the bath, `bathKinetic`,
+  /// N_f k_B T / 2, that of the momenta that the overdamped limit leaves
+  /// Maxwellian.
+  bool overdamped = false;
+  double bathKinetic = 0.0;
   /// Whether the run minimizes the energy, whose log has the forces in
   /// place of the kinetic energy (mdrtWriteMinimization).
   bool minimizes = false;

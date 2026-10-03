@@ -830,6 +830,9 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // the run does not count (D135): its log has no conserved energy.
   output.couples = control->getCouplingPeriod() > 0 && !control->isLangevin();
   output.changesCell = control->barostat;
+  output.overdamped = control->isBrownian();
+  output.bathKinetic = 0.5 * system->getDegreesOfFreedom() *
+                       units::boltzmann * control->temperature;
   output.minimizes = control->minimize;
   output.leastEdge = 2.0 * control->cutoffDistance * units::length;
   output.degreesOfFreedom = system->getDegreesOfFreedom();

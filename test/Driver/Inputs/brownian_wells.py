@@ -72,11 +72,14 @@ log, k, temp, dt, gamma, mass, n = sys.argv[2:9]
 k, temp, dt, gamma, mass, n = (float(k), float(temp), float(dt), float(gamma),
                                float(mass), int(n))
 energies = []
+column = None
 for line in open(log):
     words = line.split()
-    if len(words) > 4 and words[0] == "INFO:" and words[1].isdigit():
+    if words[:2] == ["INFO:", "STEP"]:
+        column = words.index("POTENTIAL_ENE")
+    elif len(words) > 2 and words[0] == "INFO:" and words[1].isdigit():
         if int(words[1]) >= 2000:
-            energies.append(float(words[4]))
+            energies.append(float(words[column]))
 kcal = 4.184
 kT = 0.0083144626181532 * temp
 # k in kcal/mol/A^2 to kJ/mol/nm^2.

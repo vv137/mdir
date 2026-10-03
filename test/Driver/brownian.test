@@ -21,9 +21,11 @@
 # CHECK: within 4 errors of the discrete step: yes
 # CHECK: correlation 10 steps apart {{.*}}: agrees
 
-# The run has no conserved energy; the kinetic energy is that of the
-# displacements of a step, Δx / Δt.
+# The log has no kinetic energy, temperature, total, or conserved energy:
+# the velocities are the displacements of a step, Δx / Δt. The pressure
+# takes the kinetic energy of the bath.
 #
+# LOG:     INFO: STEP TIME POTENTIAL_ENE VIRIAL PRESSURE
 # LOG-NOT: changed by
 # LOG:     MDIR: the momentum at the end
 
@@ -34,6 +36,18 @@
 # MODULE:     %v1_drift = md.map_particles gather(%f, %v, %m
 # MODULE-NOT: dyn.kick
 # MODULE:     %x1 = dyn.drift %x, %v1, %dt
+
+# With constraints, a step that moves the lightest atom more than 0.005 nm
+# at random is warned of: hydrogens at 2 fs and 50/ps, not at 0.1 fs.
+#
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- dipeptide.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/dipeptide.toml
+# RUN: cd %t && mdir check dipeptide.toml 2>&1 | FileCheck %s --check-prefix=STEP
+# RUN: sed -e 's|^time_step  = 0.002|time_step  = 0.0001|' %t/dipeptide.toml > %t/short.toml
+# RUN: cd %t && mdir check short.toml 2>&1 | FileCheck %s --check-prefix=SHORT
+#
+# STEP: warning: Brownian dynamics with constraints moves an atom of mass 1.008 by 0.0141 nm a step at random, more than 0.005 nm; constraints may fail; give a 'time_step' of at most 0.000253 ps or a larger 'friction'
+# SHORT-NOT: Brownian dynamics with constraints
 
 # What is wrong with the keys of Brownian dynamics is reported.
 #
@@ -75,6 +89,33 @@ steps      = 10000
 [ensemble]
 ensemble    = "NVT"
 temperature = 150.0
+
+[boundary]
+type = "PERIODIC"
+#--- end
+
+#--- dipeptide.toml
+[input]
+topology    = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+
+[energy]
+cutoff         = 9.0
+electrostatics = "PME"
+
+[dynamics]
+integrator = "BROWNIAN"
+friction   = 50.0
+time_step  = 0.002
+steps      = 10
+
+[ensemble]
+ensemble    = "NVT"
+temperature = 300.0
+
+[constraints]
+rigid_water    = true
+hydrogen_bonds = true
 
 [boundary]
 type = "PERIODIC"

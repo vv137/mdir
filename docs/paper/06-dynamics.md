@@ -77,9 +77,13 @@ velocity $\mathbf u$ that the drift takes over $\Delta t$; then the
 constraints $\mathcal C$, the correction $(\mathbf x_{n+1} -
 \mathbf x')/\Delta t$, and the placement of the virtual sites, as above,
 and no kick. The velocities stored are $(\mathbf x_{n+1} - \mathbf
-x_n)/\Delta t$, so the kinetic energy of the log is that of the
-displacements, about $2/(\gamma\Delta t)$ times $\tfrac12N_fk_BT_0$, not a
-temperature, and the log has no conserved energy. The step is accurate to
+x_n)/\Delta t$, whose kinetic energy is about $2/(\gamma\Delta t)$ times
+$\tfrac12N_fk_BT_0$; the log therefore has no kinetic energy, temperature,
+total, or conserved energy, and the pressure takes the kinetic energy of
+the momenta that the limit leaves Maxwellian at $T_0$, $\tfrac12N_fk_BT_0$.
+The drift and the noise of a step grow as $1/(m_i\gamma)$, so with
+constraints the hydrogens limit the step: a random displacement of the
+lightest atom beyond 0.005 nm is warned of. The step is accurate to
 first order in $\Delta t$: in a harmonic well $U = \tfrac k2\lvert\mathbf
 x\rvert^2$ it is $\mathbf x' = (1 - a)\mathbf x + \sqrt{2D\Delta t}\,
 \mathbf R$ with $a = k\Delta t/(m\gamma)$, whose stationary variance along
@@ -354,7 +358,9 @@ $K$ by its square; $\eta_j \leftarrow \eta_j + s\,p_{\eta_j}/Q_j$; then the
 momenta again from $j = 1$ to $M$. The parts are $n_c = \lceil 50h/\tau_T
 \rceil$: one part of $h$ = 40 fs at $\tau_T$ = 0.5 ps took the later
 thermostats of a liquid far from $T_0$ beyond what the factorization
-follows, and the run failed. The chain is a few numbers, moved on the host,
+follows, and the run failed. Beyond the stability of the parts, a chain
+acting once a period follows a period $\tau_T$ shorter than about 20
+periods of coupling poorly, which the run warns of. The chain is a few numbers, moved on the host,
 which returns $\alpha$ for the loop over particles; the bath takes the
 change of the energy of the chain, the last three terms of $H'$, so the
 log's conserved energy is $H'$ less its value at the start of the run.

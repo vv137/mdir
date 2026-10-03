@@ -192,9 +192,13 @@ void mdir::driver::writeLogHeader(Output &output) {
                  "STEP_SIZE");
     return;
   }
-  output.log.print("INFO: %9s %14s %14s %14s %14s %14s %14s",
-               "STEP", "TIME", "TOTAL_ENE", "POTENTIAL_ENE", "KINETIC_ENE",
-               "TEMPERATURE", "VIRIAL");
+  if (output.overdamped)
+    output.log.print("INFO: %9s %14s %14s %14s", "STEP", "TIME",
+                     "POTENTIAL_ENE", "VIRIAL");
+  else
+    output.log.print("INFO: %9s %14s %14s %14s %14s %14s %14s",
+                 "STEP", "TIME", "TOTAL_ENE", "POTENTIAL_ENE", "KINETIC_ENE",
+                 "TEMPERATURE", "VIRIAL");
   // Without a periodic cell, the cell around the particles has no pressure
   // (D142).
   if (output.periodic)
@@ -218,6 +222,11 @@ mdir::driver::getEnergyColumns(const Output &output) {
       {"total", "kcal/mol"},     {"potential", "kcal/mol"},
       {"kinetic", "kcal/mol"},   {"temperature", "K"},
       {"virial", "kcal/mol"}};
+  if (output.overdamped)
+    columns = {{"step", "-", true},
+               {"time", "ps"},
+               {"potential", "kcal/mol"},
+               {"virial", "kcal/mol"}};
   if (output.periodic)
     columns.push_back({"pressure", "atm"});
   if (output.couples)
@@ -462,6 +471,10 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
   double optimal = kinetic + 2.0 * excess / 3.0;
   double temperature =
       2.0 * optimal / (output.degreesOfFreedom * units::boltzmann);
+  // Brownian dynamics has no momenta: the pressure takes those of the
+  // bath (D163b).
+  if (output.overdamped)
+    half = output.bathKinetic;
   // `virial` is the trace of W, the sum of d (x) K over the pairs (B8).
   double pressure = (2.0 * half + virial) / (3.0 * output.volume);
   // The columns of the log, and of the file of the energies (D149).
@@ -471,6 +484,9 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
                              kinetic / units::energy,
                              temperature,
                              virial / units::energy};
+  if (output.overdamped)
+    row = {output.getTime(step), potential / units::energy,
+           virial / units::energy};
   if (output.periodic)
     row.push_back(pressure * units::pressure);
   if (output.couples) {

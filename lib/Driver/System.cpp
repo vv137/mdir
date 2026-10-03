@@ -100,6 +100,28 @@ static double getLargestScreenedRadius(const Topology &topology) {
   return largest;
 }
 
+/// The warnings of the thermostat (D158), for a system from a topology or
+/// a PDB file.
+static void addThermostatWarnings(const Control &control,
+                                  System &system) {
+  // A Nose-Hoover chain that acts once a period of N_T steps follows its
+  // period tau_T only if tau_T is many periods long, at least 20 (D163a).
+  if (control.minimize || !control.isNoseHoover())
+    return;
+  double period =
+      static_cast<double>(control.getCouplingPeriod()) * control.timestep;
+  if (control.tauT >= 20.0 * period)
+    return;
+  char text[256];
+  std::snprintf(text, sizeof text,
+                "the Nose-Hoover chain acts every %g ps and its "
+                "'time_constant' is %g ps, less than 20 times that; give a "
+                "smaller 'interval' in [thermostat] or a 'time_constant' of "
+                "at least %g ps",
+                period, control.tauT, 20.0 * period);
+  system.warnings.push_back({"short_thermostat_period", text});
+}
+
 /// The system of a topology and a file of coordinates.
 static llvm::Expected<System> readTopologySystem(const Control &control) {
   bool charmm = !control.charmmStructureFile.empty();
@@ -195,6 +217,33 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
          std::string("a time step of ") + femtoseconds +
              " fs with the bonds of hydrogen free; give 'hydrogen_bonds = "
              "true' in [constraints], or a step of 1 fs"});
+  }
+  addThermostatWarnings(control, system);
+  // Brownian dynamics moves an atom by sqrt(2 k_B T dt / (m gamma)) a step
+  // along each axis, and by dt F / (m gamma) with the force: the lightest
+  // atoms of constrained bonds move furthest. Beyond 0.005 nm, a twentieth
+  // of a bond of hydrogen, the constraints may fail (D163b).
+  if (!control.minimize && control.isBrownian() &&
+      (control.rigidBonds || !topology->settles.empty())) {
+    double lightest = 0.0;
+    for (double mass : topology->masses)
+      if (mass > 0.0 && (lightest == 0.0 || mass < lightest))
+        lightest = mass;
+    double kT = units::boltzmann * control.temperature;
+    double limit = 0.005;
+    double spread =
+        std::sqrt(2.0 * kT * control.timestep / (lightest * control.friction));
+    if (lightest > 0.0 && spread > limit) {
+      char text[320];
+      std::snprintf(text, sizeof text,
+                    "Brownian dynamics with constraints moves an atom of "
+                    "mass %g by %.3g nm a step at random, more than %g nm; "
+                    "constraints may fail; give a 'time_step' of at most "
+                    "%.3g ps or a larger 'friction'",
+                    lightest, spread, limit,
+                    limit * limit * lightest * control.friction / (2.0 * kT));
+      system.warnings.push_back({"brownian_step", text});
+    }
   }
   if (flexibleWaters > 0)
     system.warnings.push_back(
@@ -356,6 +405,7 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
   system.topology = std::make_shared<Topology>(std::move(*topology));
   system.keepsMomentum =
       (!control.isLangevin() && !control.isBrownian()) || control.comPeriod > 0;
+  addThermostatWarnings(control, system);
   if (llvm::Error error = placeCell(control, system))
     return std::move(error);
   return std::move(system);
@@ -683,6 +733,7 @@ llvm::Expected<System> mdir::driver::readSystem(const Control &control) {
   system.velocities.assign(system.positions.size(), 0.0);
   system.keepsMomentum =
       (!control.isLangevin() && !control.isBrownian()) || control.comPeriod > 0;
+  addThermostatWarnings(control, system);
   if (llvm::Error error = placeCell(control, system))
     return std::move(error);
   return std::move(system);
