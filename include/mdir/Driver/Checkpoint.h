@@ -96,6 +96,13 @@ struct Checkpoint {
   /// With a Nose-Hoover chain (D163a): the positions of its thermostats,
   /// then their velocities, in the units of the run; empty otherwise.
   std::vector<double> thermostatState;
+  /// [free_energy] (D161): the selection, the soft-core, and the values of
+  /// every component at every state, as Control::FreeEnergy::describe
+  /// gives them; the state of the run, and the components of λ there.
+  /// Empty, -1, and empty without it.
+  std::string freeEnergy;
+  int64_t freeEnergyState = -1;
+  std::vector<double> freeEnergyLambda;
 };
 
 /// Returns true if the driver was built with the library that checkpoints

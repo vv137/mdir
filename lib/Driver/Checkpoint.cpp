@@ -519,6 +519,15 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
       writer.writeAttribute(mdir, "frames", H5T_NATIVE_INT64,
                             &checkpoint.frames);
       writer.writeReal(mdir, "bath", checkpoint.bath);
+      // The states of [free_energy] and the one of the run (D161).
+      if (!checkpoint.freeEnergy.empty()) {
+        writer.writeText(mdir, "free_energy", checkpoint.freeEnergy);
+        writer.writeAttribute(mdir, "free_energy_state", H5T_NATIVE_INT64,
+                              &checkpoint.freeEnergyState);
+        writer.writeDataset(mdir, "free_energy_lambda", H5T_NATIVE_DOUBLE,
+                            {checkpoint.freeEnergyLambda.size()},
+                            checkpoint.freeEnergyLambda.data());
+      }
       if (!checkpoint.barostatState.empty())
         writer.writeDataset(mdir, "barostat_state", H5T_NATIVE_DOUBLE,
                             {checkpoint.barostatState.size()},
@@ -673,6 +682,16 @@ mdir::driver::readCheckpoint(const std::string &path) {
   if (reader.has("/parameters/mdir/barostat_state"))
     reader.readDataset("/parameters/mdir/barostat_state", H5T_NATIVE_DOUBLE,
                        9, checkpoint.barostatState);
+  // The states of [free_energy] (D161).
+  if (reader.hasAttribute("/parameters/mdir", "free_energy_state")) {
+    reader.readText("/parameters/mdir", "free_energy", checkpoint.freeEnergy);
+    reader.readAttribute("/parameters/mdir", "free_energy_state",
+                         H5T_NATIVE_INT64, checkpoint.freeEnergyState);
+    reader.readDataset("/parameters/mdir/free_energy_lambda",
+                       H5T_NATIVE_DOUBLE,
+                       reader.getSize("/parameters/mdir/free_energy_lambda"),
+                       checkpoint.freeEnergyLambda);
+  }
   // The state of a Nose-Hoover chain (D163a).
   if (reader.has("/parameters/mdir/thermostat_state"))
     reader.readDataset("/parameters/mdir/thermostat_state",

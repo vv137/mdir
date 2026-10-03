@@ -230,6 +230,19 @@ struct Control {
     size_t getNumStates() const {
       return lambdas.empty() ? 0 : lambdas.front().second.size();
     }
+    /// The selection, the soft-core, and every component at every state,
+    /// in one line, which a checkpoint records (D161).
+    std::string describe() const {
+      std::string text = "couple = \"" + couple + "\"; soft_core = " +
+                         std::to_string(softCoreAlpha) + ", " +
+                         std::to_string(softCorePower);
+      for (const auto &[name, values] : lambdas) {
+        text += "; " + name + " =";
+        for (double value : values)
+          text += " " + std::to_string(value);
+      }
+      return text;
+    }
     /// The value of the component `name` at the state `k`; 0 for a
     /// component that the file does not give.
     double get(llvm::StringRef name, size_t k) const {

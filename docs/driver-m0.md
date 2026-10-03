@@ -518,6 +518,10 @@ A checkpoint is a file in the H5MD format [[deBuyl2014]](references.md#debuyl201
 /parameters/mdir/fingerprint  physics, coupling, execution: a string each,
                               a line per entry, "<name>\t<value>"
                               (D172)
+/parameters/mdir/free_energy_lambda  with [free_energy], the components of
+                              the state of the run, with the attributes
+                              free_energy (the states in one line) and
+                              free_energy_state (D161)
 ```
 
 This layout is the contract of release 0.1.0, format 1
@@ -542,6 +546,7 @@ and kJ/mol.
 | It records what defined the run: its fingerprint (D172). | A run that takes it compares, as the next table says. |
 | The checkpoint before stays as `<checkpoint>.prev`, a second name made before the rename (D132). | A checkpoint that is damaged after it was written leaves one to go back to; the name of the checkpoint holds a complete state at every moment. |
 | It records the step that its run began at, its part, the trajectory and the frames written to it, and the energy that the coupling has taken. | `mdir run --continue` continues the run to its `steps`, its trajectory, and its conserved energy (Section 2.7). |
+| With `[free_energy]` it records the states and the state of its run (D161). | `mdir run --continue` refuses another state or other states, naming the change; a run that begins from it as `checkpoint` of `[input]` at another state, or without `[free_energy]`, computes its forces anew rather than begin with those of another energy. |
 | The particles are in the order of the input, whatever order the run keeps them in. | The file does not depend on the plan of the run. The run that continues puts the particles in order where it begins, and arrives at the order of the run that was not interrupted (D44). |
 
 A run that continues from a checkpoint arrives at the state of the run that

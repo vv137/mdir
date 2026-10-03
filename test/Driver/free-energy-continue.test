@@ -1,0 +1,66 @@
+# Checkpoints of [free_energy] (D161): a checkpoint records the states and
+# the state of its run; `--continue` refuses another state or other
+# states; a run that begins from the checkpoint of another state computes
+# its forces anew.
+#
+# REQUIRES: hdf5
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/fep/eth_wat.prmtop %S/Inputs/fep/eth_wat.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/a.toml
+# RUN: cd %t && mdir run a.toml > a.log
+
+# Another state, or other states, cannot continue the run.
+# RUN: sed -e 's/^state = 0/state = 2/' -e 's/^steps .*/steps = 8/' %t/a.toml > %t/a2.toml
+# RUN: not mdir run --continue %t/a2.toml 2>&1 | FileCheck %s --check-prefix=STATE
+# STATE: was written at state 0 of [free_energy], and the control file has state 2; a continued run keeps its state
+# RUN: sed -e 's/^vdw .*/vdw = [0.0, 0.0, 0.25]/' -e 's/^steps .*/steps = 8/' %t/a.toml > %t/a3.toml
+# RUN: not mdir run --continue %t/a3.toml 2>&1 | FileCheck %s --check-prefix=TABLE
+# TABLE: was written with the states of [free_energy] 'couple = ":LIG"; soft_core = 0.500000, 1; coulomb = 0.000000 0.500000 1.000000; vdw = 0.000000 0.000000 0.500000', and the control file has 'couple = ":LIG"; soft_core = 0.500000, 1; coulomb = 0.000000 0.500000 1.000000; vdw = 0.000000 0.000000 0.250000'; a continued run keeps them
+
+# The same state continues.
+# RUN: sed 's/^steps .*/steps = 8/' %t/a.toml > %t/a4.toml
+# RUN: cd %t && mdir run --continue a4.toml | FileCheck %s --check-prefix=SAME
+# SAME: continues
+
+# Another run at state 2 from the checkpoint of state 0.
+# RUN: sed -e 's/^state = 0/state = 2/' -e 's/^coordinates = .*/coordinates = "eth_wat.inpcrd"\ncheckpoint = "a.h5"/' -e 's/a.dhdl/b.dhdl/' -e 's/^checkpoint  *= "a.h5"$/checkpoint = "b.h5"/' %t/a.toml > %t/b.toml
+# RUN: cd %t && mdir run b.toml | FileCheck %s --check-prefix=OTHER
+# OTHER: 'a.h5' is of another state of [free_energy]; the run computes the forces anew
+
+#--- run.toml
+[input]
+topology    = "eth_wat.prmtop"
+coordinates = "eth_wat.inpcrd"
+
+[output]
+energy_interval     = 2
+free_energy         = "a.dhdl"
+checkpoint          = "a.h5"
+checkpoint_interval = 4
+
+[free_energy]
+couple = ":LIG"
+state = 0
+
+[free_energy.lambdas]
+coulomb = [0.0, 0.5, 1.0]
+vdw     = [0.0, 0.0, 0.5]
+
+[energy]
+cutoff                    = 9.0
+pairlist_distance         = 10.0
+electrostatics            = "REACTION_FIELD"
+reaction_field_dielectric = 78.3
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.001
+steps      = 4
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PERIODIC"
+#--- end

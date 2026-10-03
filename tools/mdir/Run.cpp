@@ -1168,6 +1168,13 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     checkpoint.trajectory = output.trajectoryName;
     checkpoint.fingerprint = fingerprint;
     checkpoint.creatorVersion = getBuildVersion();
+    if (control->hasFreeEnergy) {
+      checkpoint.freeEnergy = control->freeEnergy.describe();
+      checkpoint.freeEnergyState = control->freeEnergy.state;
+      for (const auto &[name, values] : control->freeEnergy.lambdas)
+        checkpoint.freeEnergyLambda.push_back(
+            values[control->freeEnergy.state]);
+    }
   }
   output.endStep = firstStep + control->numSteps;
   // A continued run counts the energy that the coupling has taken from
