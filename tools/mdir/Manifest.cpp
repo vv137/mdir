@@ -206,14 +206,14 @@ llvm::Error Manifest::start(const std::string &given, bool append, Object metada
     for (std::string line; std::getline(previous, line);) {
       auto json = llvm::json::parse(line);
       const Object *record = json ? json->getAsObject() : nullptr;
-      auto number = record ? record->getInteger("invocation") : std::nullopt;
+      int64_t number = record ? record->getInteger("invocation").value_or(0) : 0;
       auto event = record ? record->getString("event") : std::nullopt;
       bool start = event && *event == "start";
       bool end = event && *event == "end";
-      bool valid = record && record->getInteger("schema_version") == 1 && number &&
+      bool valid = record && record->getInteger("schema_version") == 1 && number > 0 &&
           record->getString("timestamp_utc") &&
-          ((start && *number == last + 1) ||
-           (end && last > 0 && *number == last && !ended));
+          ((start && number == last + 1) ||
+           (end && last > 0 && number == last && !ended));
       if (end && record) {
         auto status = record->getString("status");
         valid &= status && (*status == "completed" || *status == "stopped");
@@ -221,11 +221,11 @@ llvm::Error Manifest::start(const std::string &given, bool append, Object metada
       if (!json)
         llvm::consumeError(json.takeError());
       // A partial last line is kept for diagnosis, never silently repaired.
-      if (!valid || previous.eof() || *number == std::numeric_limits<int64_t>::max())
+      if (!valid || previous.eof() || number == std::numeric_limits<int64_t>::max())
         return llvm::createStringError(llvm::inconvertibleErrorCode(),
             "manifest '%s' has malformed or unsupported history; use a new manifest path",
             path.c_str());
-      last = *number;
+      last = number;
       ended = end;
     }
     if (previous.bad())
