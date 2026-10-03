@@ -22,8 +22,12 @@ targets: cpu, gpu (CUDA 13.4.20260911 at /usr/local/cuda-13.4)
 checkpoints: yes (HDF5)
 ```
 
-`targets` lists `gpu` when the CUDA target was built, and
-`checkpoints` says whether HDF5 was found; without it a run writes no
+`targets` lists `gpu` when the CUDA target was built, with the toolkit
+that `CUDA_ROOT` names, or the one of the build, and its version. The
+version comes from a CUDA runtime already loaded, or from the toolkit's
+`version.json` or `version.txt`. CUDA's runtime images, the base of MDIR's
+container, ship neither, and the line then says `runtime version not
+reported`. `checkpoints` says whether HDF5 was found; without it a run writes no
 checkpoints and cannot be continued (C.5). `mdir doctor` checks the
 installation by compiling and running an embedded two-atom system for two
 steps on every built target (D155):

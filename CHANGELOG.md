@@ -18,6 +18,14 @@ format, or the outputs; every such change is listed under **Changed** or
 - A container recipe, for Docker and Apptainer, with LLVM/MLIR 23.1.2, HDF5,
   and CUDA (D[release]).
 
+### Fixed
+
+- `mdir version` and `mdir doctor` no longer print `CUDA unknown` when the
+  toolkit has no `version.json`, as in CUDA's runtime images. They take the
+  version from a loaded CUDA runtime or the toolkit's `version.txt`, and
+  otherwise say `runtime version not reported`. The toolkit is the one
+  `CUDA_ROOT` names, if set (D[release]).
+
 ## [0.1.0] - unreleased
 
 The first milestone (M1): an all-atom protein in water with an Amber force

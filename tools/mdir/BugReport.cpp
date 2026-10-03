@@ -12,6 +12,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Config/llvm-config.h"
+#include "llvm/Support/DynamicLibrary.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
@@ -37,23 +38,39 @@ extern char **environ;
 /// named with their sizes and hashes.
 static constexpr uint64_t maxCopiedInput = 16 << 20;
 
-/// The version of the CUDA toolkit at `root`, from its version.json.
-static std::string getToolkitVersion(StringRef root) {
+/// The version of the CUDA runtime: from a libcudart that the process has
+/// loaded, else from the toolkit at `root` (version.json, or version.txt of
+/// older toolkits), else none. MDIR uses the driver API and does not load
+/// libcudart itself, and CUDA's runtime images ship neither file.
+static std::optional<std::string> getRuntimeVersion(StringRef root) {
+  if (auto query = reinterpret_cast<int (*)(int *)>(
+          llvm::sys::DynamicLibrary::SearchForAddressOfSymbol(
+              "cudaRuntimeGetVersion"))) {
+    int version = 0;
+    if (query(&version) == 0 && version > 0)
+      return std::to_string(version / 1000) + "." +
+             std::to_string(version % 1000 / 10);
+  }
   llvm::SmallString<256> path(root);
   llvm::sys::path::append(path, "version.json");
-  auto buffer = llvm::MemoryBuffer::getFile(path);
-  if (!buffer)
-    return "unknown";
-  auto json = llvm::json::parse((*buffer)->getBuffer());
-  if (!json) {
-    llvm::consumeError(json.takeError());
-    return "unknown";
+  if (auto buffer = llvm::MemoryBuffer::getFile(path)) {
+    auto json = llvm::json::parse((*buffer)->getBuffer());
+    if (!json)
+      llvm::consumeError(json.takeError());
+    else if (const auto *object = json->getAsObject())
+      if (const auto *cuda = object->getObject("cuda"))
+        if (auto version = cuda->getString("version"))
+          return version->str();
   }
-  if (const auto *object = json->getAsObject())
-    if (const auto *cuda = object->getObject("cuda"))
-      if (auto version = cuda->getString("version"))
-        return version->str();
-  return "unknown";
+  path = root;
+  llvm::sys::path::append(path, "version.txt");
+  if (auto buffer = llvm::MemoryBuffer::getFile(path)) {
+    // "CUDA Version 11.2.152"
+    StringRef text = (*buffer)->getBuffer().trim();
+    if (text.consume_front("CUDA Version "))
+      return text.str();
+  }
+  return std::nullopt;
 }
 
 void mdir::tool::printVersion(llvm::raw_ostream &os) {
@@ -62,9 +79,17 @@ void mdir::tool::printVersion(llvm::raw_ostream &os) {
   os << "uncommitted changes: " << MDIR_GIT_DIRTY << "\n";
   os << "LLVM " << LLVM_VERSION_STRING << "\n";
   os << "targets: cpu";
-  if (MDIR_HAS_CUDA)
-    os << ", gpu (CUDA " << getToolkitVersion(MDIR_CUDA_ROOT) << " at "
-       << MDIR_CUDA_ROOT << ")";
+  if (MDIR_HAS_CUDA) {
+    // The toolkit of the run is the one that CUDA_ROOT names, as for the
+    // kernels' libdevice (Run.cpp), else the one of the build.
+    const char *root = std::getenv("CUDA_ROOT");
+    StringRef toolkit = root && *root ? StringRef(root) : MDIR_CUDA_ROOT;
+    if (auto version = getRuntimeVersion(toolkit))
+      os << ", gpu (CUDA " << *version << " at " << toolkit << ")";
+    else
+      os << ", gpu (CUDA at " << toolkit
+         << ", runtime version not reported)";
+  }
   os << "\n";
   os << "checkpoints: "
      << (driver::hasCheckpointSupport() ? "yes (HDF5)" : "no") << "\n";
