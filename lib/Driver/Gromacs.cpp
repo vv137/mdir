@@ -68,6 +68,7 @@ public:
 
   /// Reads `path` and the files that it includes into `lines`.
   llvm::Error run(StringRef path, std::vector<Line> &lines);
+  std::vector<std::string> sourceFiles;
 
 private:
   llvm::Error readFile(StringRef path, std::vector<Line> &lines);
@@ -156,6 +157,9 @@ llvm::Error Preprocessor::readFile(StringRef path, std::vector<Line> &lines) {
   auto file = llvm::MemoryBuffer::getFile(path);
   if (!file)
     return fail(path, 0, "cannot read the file: " + file.getError().message());
+
+  if (!llvm::is_contained(sourceFiles, path.str()))
+    sourceFiles.push_back(path.str());
 
   // The state of each open conditional of this file: active, inactive, or
   // inside an inactive one.
@@ -1635,6 +1639,7 @@ llvm::Expected<Topology> TopologyReader::read() {
   }
 
   Topology topology;
+  topology.sourceFiles = preprocessor.sourceFiles;
   if (llvm::Error error = build(topology))
     return std::move(error);
   return std::move(topology);

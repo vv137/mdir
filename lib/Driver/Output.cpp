@@ -551,6 +551,7 @@ void _mlir_ciface_mdrtWriteMinimization(int64_t step, double energy,
                                         double size, void *forces,
                                         void *ids) {
   Output &output = *current;
+  output.lastMinimizationStep = step;
   std::vector<double> values = readVectors(forces, ids, output.force);
   const std::vector<double> &masses = output.system->masses;
   double square = 0.0, largest = 0.0;
@@ -706,6 +707,11 @@ static void writeState(int64_t step, void *positions, void *velocities,
   std::fprintf(stderr, "mdir: stopped after step %lld of %lld on %s\n",
                static_cast<long long>(step),
                static_cast<long long>(output.endStep), reason);
+  if (output.recordStop)
+    if (llvm::Error error = output.recordStop(step, reason)) {
+      std::fprintf(stderr, "mdir: %s\n", llvm::toString(std::move(error)).c_str());
+      std::exit(1);
+    }
   std::exit(StoppedStatus);
 }
 

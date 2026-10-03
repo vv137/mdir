@@ -154,6 +154,8 @@ struct Control {
   /// The log in a file, besides the standard output, and the rows of the
   /// log as columns; empty for none.
   std::string logFile;
+  /// Optional execution history in JSON Lines (D168).
+  std::string manifestFile;
   std::string energyFile;
   /// The terms over centers of groups at every energy of the log (D145).
   std::string pullFile;

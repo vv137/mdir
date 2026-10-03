@@ -17,6 +17,7 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -88,6 +89,9 @@ private:
 /// code calls write to it.
 struct Output {
   Log log;
+  /// Records a checkpoint stop before its direct process exit (D168).
+  std::function<llvm::Error(int64_t, const char *)> recordStop;
+  int64_t lastMinimizationStep = 0;
   /// The rows of the log as columns (D149), or none.
   ColumnFile energies;
   /// The terms over centers (D145), or none, and the number of

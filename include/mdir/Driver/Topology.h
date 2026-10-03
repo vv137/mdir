@@ -95,6 +95,8 @@ struct ExternalTerm {
 };
 
 struct Topology {
+  /// GROMACS topology files actually opened, including active includes.
+  std::vector<std::string> sourceFiles;
   //===--------------------------------------------------------------------===//
   // Particles
   //===--------------------------------------------------------------------===//

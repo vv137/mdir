@@ -2,6 +2,7 @@
 // reproduce it. See docs/debugging.md.
 
 #include "Commands.h"
+#include "Manifest.h"
 
 #include "BuildInfo.h"
 
@@ -16,7 +17,6 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
-#include "llvm/Support/SHA256.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <cstdlib>
@@ -137,8 +137,7 @@ static void describeInput(Report &report, llvm::raw_ostream &os,
   StringRef data = (*buffer)->getBuffer();
   os << "  bytes: " << data.size() << "\n";
   os << "  sha256: "
-     << llvm::toHex(llvm::SHA256::hash(llvm::arrayRefFromStringRef(data)),
-                    /*LowerCase=*/true)
+     << hashInput(data)
      << "\n";
   if (data.size() > maxCopiedInput) {
     os << "  not copied: larger than " << (maxCopiedInput >> 20)

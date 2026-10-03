@@ -2,6 +2,7 @@
 // without compiling anything.
 
 #include "Commands.h"
+#include "Manifest.h"
 
 #include "mdir/Driver/Cell.h"
 #include "mdir/Driver/Checkpoint.h"
@@ -237,7 +238,9 @@ static Preflight inspect(const Control &control) {
       {"checkpoint", control.restartOutput, "H5MD", control.checkpointPeriod,
        control.checkpointPeriod > 0, control.minimize, false,
        control.minimize ? 1 : count(control.checkpointPeriod, false),
-       "checkpoints"}};
+       "checkpoints"},
+      {"manifest", control.manifestFile, "JSON Lines", 0,
+       !control.manifestFile.empty(), false, false, -1, "events"}};
   // `mdir run` keeps an output of an earlier run as `#<name>.<n>#` before
   // it writes its own; under --continue the files are the run's own
   // (D149). The checkpoint before the last, `.prev`, is kept as well.
@@ -373,6 +376,8 @@ static void describeRun(const Control &control, const System &system,
     std::printf("  %s: %s (%s)", output.kind, path.c_str(), output.format);
     if (!output.enabled)
       std::printf(", disabled");
+    else if (llvm::StringRef(output.kind) == "manifest")
+      std::printf(", at execution start and end");
     else if (output.atEnd)
       std::printf(", at the end");
     else if (output.interval == 0)
@@ -520,6 +525,13 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
   auto system = readSystem(*control);
   if (!system)
     return fail(system.takeError(), json);
+  if (llvm::Error error = checkManifestPath(control->manifestFile,
+          getManifestInputs(controlFile, *control, *system),
+          {control->logFile, control->energyFile, control->pullFile,
+           control->trajectoryFile, control->restartOutput,
+           control->restartOutput.empty() ? "" :
+               getPreviousCheckpointPath(control->restartOutput)}))
+    return fail(std::move(error), json);
   Preflight report = inspect(*control);
   for (const auto &[code, message] : system->warnings)
     report.warnings.push_back({code, message});

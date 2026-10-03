@@ -1440,7 +1440,7 @@ Error Reader::readInput(const toml::table &table) {
 Error Reader::readOutput(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "output",
-          {"log", "energy", "pull", "trajectory", "trajectory_format",
+          {"log", "energy", "pull", "manifest", "trajectory", "trajectory_format",
            "checkpoint", "energy_interval", "trajectory_interval",
            "checkpoint_interval"},
           {}))
@@ -1470,6 +1470,8 @@ Error Reader::readOutput(const toml::table &table) {
   control.trajectoryFormat =
       format == Format::XTC ? TrajectoryFormat::XTC : TrajectoryFormat::DCD;
   if (Error error = readPath(table, "checkpoint", control.restartOutput))
+    return error;
+  if (Error error = readPath(table, "manifest", control.manifestFile))
     return error;
   if (Error error = readPath(table, "log", control.logFile))
     return error;
@@ -2739,6 +2741,7 @@ Error Reader::read(const toml::table &root) {
     for (auto [name, file] :
          {std::pair<StringRef, const std::string *>{"log", &control.logFile},
           {"energy", &control.energyFile},
+          {"manifest", &control.manifestFile},
           {"pull", &control.pullFile},
           {"trajectory", &control.trajectoryFile},
           {"checkpoint", &control.restartOutput}})
@@ -2797,6 +2800,7 @@ coordinates = "system.pdb"      # positions; the name of an atom is its type
 #                               # step
 
 [output]
+# manifest = "run.jsonl"        # execution provenance and continuation history
 # log               = "run.log" # the log as well as on the standard output
 # energy            = "run.energy"  # the rows of the log as columns
 trajectory          = "run.dcd" # positions, in DCD or XTC (.xtc)
@@ -2880,6 +2884,7 @@ coordinates = "system.inpcrd"   # and the box; the reference of restraints
 #                               # positions
 
 [output]
+# manifest = "run.jsonl"        # execution provenance and continuation history
 log                 = "run.log" # the log as well as on the standard output
 energy              = "run.energy"  # the rows of the log as columns
 trajectory          = "run.dcd" # positions, in DCD or XTC (.xtc)

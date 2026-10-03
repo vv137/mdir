@@ -1,0 +1,404 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MDIR run manifest event, version 1 (D168)",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "invocation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp_utc": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ$"
+        },
+        "event": {
+          "enum": [
+            "start"
+          ]
+        },
+        "build": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "type": "string"
+            },
+            "git_commit": {
+              "type": "string"
+            },
+            "dirty": {
+              "type": [
+                "boolean",
+                "null"
+              ]
+            },
+            "llvm_version": {
+              "type": "string"
+            },
+            "mlir_version": {
+              "type": "string"
+            },
+            "cuda_toolkit_version": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "version",
+            "git_commit",
+            "dirty",
+            "llvm_version",
+            "mlir_version",
+            "cuda_toolkit_version"
+          ],
+          "additionalProperties": false
+        },
+        "device": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "api": {
+                  "enum": [
+                    "driver"
+                  ]
+                },
+                "visible_index": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "name": {
+                  "type": "string"
+                },
+                "uuid_hex": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{32}$"
+                },
+                "driver_api_version": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "runtime_api_version": {
+                  "anyOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  ]
+                },
+                "compute_capability": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "minItems": 2,
+                  "maxItems": 2
+                }
+              },
+              "required": [
+                "api",
+                "visible_index",
+                "name",
+                "uuid_hex",
+                "driver_api_version",
+                "runtime_api_version",
+                "compute_capability"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "target": {
+          "enum": [
+            "cpu",
+            "gpu"
+          ]
+        },
+        "precision": {
+          "enum": [
+            "single",
+            "mixed",
+            "double"
+          ]
+        },
+        "threads": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "effective": {
+          "type": "object",
+          "properties": {
+            "seed": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "time_step_ps": {
+              "type": "number",
+              "minimum": 0
+            },
+            "trajectory_format": {
+              "enum": [
+                null,
+                "DCD",
+                "XTC"
+              ]
+            },
+            "neighbor_structure_requested": {
+              "enum": [
+                "matrix",
+                "groups"
+              ]
+            },
+            "neighbor_structures": {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "matrix",
+                  "groups"
+                ]
+              }
+            },
+            "buffer_precision": {
+              "type": "object",
+              "properties": {
+                "state": {
+                  "enum": [
+                    "f32",
+                    "f64"
+                  ]
+                },
+                "force": {
+                  "enum": [
+                    "f32",
+                    "f64"
+                  ]
+                },
+                "mass": {
+                  "enum": [
+                    "f32",
+                    "f64"
+                  ]
+                },
+                "parameter": {
+                  "enum": [
+                    "f32",
+                    "f64"
+                  ]
+                }
+              },
+              "required": [
+                "state",
+                "force",
+                "mass",
+                "parameter"
+              ],
+              "additionalProperties": false
+            },
+            "pme": {
+              "anyOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "beta_inverse_angstrom": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "grid": {
+                      "type": "array",
+                      "items": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "minItems": 3,
+                      "maxItems": 3
+                    },
+                    "order": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "beta_inverse_angstrom",
+                    "grid",
+                    "order"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "seed",
+            "time_step_ps",
+            "trajectory_format",
+            "neighbor_structure_requested",
+            "neighbor_structures",
+            "buffer_precision",
+            "pme"
+          ],
+          "additionalProperties": false
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "pipeline": {
+          "type": "string"
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "role": {
+                "type": "string"
+              },
+              "path": {
+                "type": "string"
+              },
+              "bytes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              }
+            },
+            "required": [
+              "role",
+              "path",
+              "bytes",
+              "sha256"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "outputs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "first_step": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requested_end_step": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "part": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "continued": {
+          "type": "boolean"
+        },
+        "compile_seconds": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "schema_version",
+        "invocation",
+        "timestamp_utc",
+        "event",
+        "build",
+        "device",
+        "target",
+        "precision",
+        "threads",
+        "effective",
+        "warnings",
+        "pipeline",
+        "inputs",
+        "outputs",
+        "first_step",
+        "requested_end_step",
+        "part",
+        "continued",
+        "compile_seconds"
+      ],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "invocation": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "timestamp_utc": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d\\d-\\d\\dT\\d\\d:\\d\\d:\\d\\dZ$"
+        },
+        "event": {
+          "enum": [
+            "end"
+          ]
+        },
+        "status": {
+          "enum": [
+            "completed",
+            "stopped"
+          ]
+        },
+        "step": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reason": {
+          "type": "string"
+        },
+        "elapsed_seconds": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "schema_version",
+        "invocation",
+        "timestamp_utc",
+        "event",
+        "status",
+        "step",
+        "reason",
+        "elapsed_seconds"
+      ],
+      "additionalProperties": false
+    }
+  ]
+}

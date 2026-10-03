@@ -1,0 +1,4 @@
+# Execution provenance and output policy (D168). Python independently parses
+# JSON and checks SHA-256, continuation states, backups, and input protection.
+# REQUIRES: hdf5
+# RUN: %python %S/Inputs/manifest.py cpu %S %t mdir
