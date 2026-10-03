@@ -54,6 +54,9 @@ InputPaths mdir::tool::getManifestInputs(StringRef controlFile,
       {"charmm_coordinates", c.charmmCoordinateFile}, {"checkpoint", c.restartInput}};
   for (const auto &path : c.charmmParameterFiles)
     inputs.push_back({"charmm_parameters", path});
+  for (const auto &function : c.functions)
+    if (!function.valuesFile.empty())
+      inputs.push_back({"tabulated_function", function.valuesFile});
   if (s.topology)
     for (const auto &path : s.topology->sourceFiles)
       inputs.push_back({"gromacs_topology", path});
@@ -110,6 +113,20 @@ llvm::Error mdir::tool::checkManifestPath(StringRef path,
       return llvm::createStringError(llvm::inconvertibleErrorCode(),
           "manifest '%s' names another output of the run, '%s'",
           path.str().c_str(), output.c_str());
+  return llvm::Error::success();
+}
+
+llvm::Error mdir::tool::checkTabulatedInputs(
+    const InputPaths &inputs, llvm::ArrayRef<std::string> outputs) {
+  for (const auto &[role, input] : inputs) {
+    if (role != "tabulated_function")
+      continue;
+    for (const std::string &output : outputs)
+      if (!output.empty() && sameFile(output, input))
+        return llvm::createStringError(llvm::inconvertibleErrorCode(),
+            "output '%s' names '%s', a tabulated input of the run",
+            output.c_str(), input.c_str());
+  }
   return llvm::Error::success();
 }
 

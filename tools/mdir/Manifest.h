@@ -20,6 +20,10 @@ InputPaths getManifestInputs(llvm::StringRef controlFile,
                              const driver::System &system);
 llvm::Error checkManifestPath(llvm::StringRef path, const InputPaths &inputs,
                               llvm::ArrayRef<std::string> outputs);
+/// Protect tabulated inputs against resolved output and checkpoint-backup
+/// paths, including the part names of --no-append (D[tabulated-values-file]).
+llvm::Error checkTabulatedInputs(const InputPaths &inputs,
+                                 llvm::ArrayRef<std::string> outputs);
 llvm::Expected<llvm::json::Array> hashManifestInputs(const InputPaths &inputs);
 llvm::Expected<llvm::json::Value> getManifestDevice(driver::Target target);
 

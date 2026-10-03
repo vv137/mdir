@@ -12,6 +12,11 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- Tabulated functions can read whitespace-separated numeric grids from
+  `values_file` with an explicit `shape`, with the existing interpolation
+  in one, two, or three dimensions. Manifests hash the files, and
+  continuation checks the loaded grid (D[tabulated-values-file]).
+
 - `cmake --install` installs `bin/mdir`, its runtime, and the OpenMP runtime
   under one prefix, and the log of a run begins with the version and the
   commit of the build (D174).

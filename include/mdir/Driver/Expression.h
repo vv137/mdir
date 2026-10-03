@@ -35,6 +35,8 @@ namespace driver {
 /// OpenMM.
 struct TabulatedFunction {
   std::string name;
+  /// The input path for a file-backed grid, empty for inline values.
+  std::string valuesFile;
   /// The values, the first argument varying fastest.
   std::vector<double> values;
   /// The number of points along each argument.
