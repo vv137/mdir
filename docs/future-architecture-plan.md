@@ -1,6 +1,6 @@
 # MDIR Future Architecture Plan: Saunders, Cornel, and P4IRS
 
-Initial architecture review: October 1, 2026. Updated October 2, 2026 after reading William Robert Saunders's doctoral thesis. Sources: the three supplied theses/papers, the repository, and primary documentation for the model interfaces discussed below. The implementation survey records the October 1 baseline; the Saunders additions refine the future plan rather than claim a new implementation audit. On October 3, 2026, D159 adopts the MLIP integration and distributed validation sequence below; that decision changes the plan, not the implementation status. This document distinguishes implemented behavior, documented plans, and recommendations. It does not reproduce benchmark results or execute the test suite.
+Initial architecture review: October 1, 2026. Updated October 2, 2026 after reading William Robert Saunders's doctoral thesis. Sources: the three supplied theses/papers, the repository, and primary documentation for the model interfaces discussed below. The implementation survey records the October 1 baseline; the Saunders additions refine the future plan rather than claim a new implementation audit. On October 3, 2026, D166 adopts the MLIP integration and distributed validation sequence below; that decision changes the plan, not the implementation status. This document distinguishes implemented behavior, documented plans, and recommendations. It does not reproduce benchmark results or execute the test suite.
 
 MDIR's separation of potential semantics, dynamics, distribution, and traversal is a sound basis for combining classical force fields with machine-learned interatomic potentials (MLIPs). The strongest research direction is to preserve spatial and topological dependencies through differentiation, then use those dependencies to select communication and traversal together. The repository already provides useful foundations: semantic differentiation, explicit relations, exchange contracts, neighbor validity, storage assignment, and CPU/GPU lowering. The staged dependency interface and distributed planner that would connect them remain proposals.
 
@@ -745,7 +745,7 @@ complement production molecular systems and do not define the final scope.
 The fixed-cell, short-range, unconstrained scope below limits the first
 distributed MLIP experiment, not existing single-device MD functionality.
 
-D159 adopts this direction on October 3, 2026. **The first deliverable is
+D166 adopts this direction on October 3, 2026. **The first deliverable is
 one existing MLIP artifact, validated on one GPU and then on two GPUs
 partitioning the same physical system.** Select a finite-range, strictly
 local model whose energy, force, and stress conventions can be checked
@@ -792,7 +792,7 @@ interface](https://docs.metatensor.org/metatomic/latest/index.html),
 
 ## Recommended implementation sequence
 
-This sequence implements D159 and the milestones in
+This sequence implements D166 and the milestones in
 [roadmap Section 7](roadmap.md#7-distributed-execution-and-learned-potentials).
 The first local MLIP on two GPUs completes ML1 through ML3; message-passing
 optimization follows as ML4 and ML5.

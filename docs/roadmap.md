@@ -216,7 +216,7 @@ backend for classical runs. LJ/EAM are initial distributed validation
 models; realistic molecular systems remain part of validation and the
 long-term distributed scope.
 
-Direction adopted in D159 (2026-10-03); all milestones below are planned,
+Direction adopted in D166 (2026-10-03); all milestones below are planned,
 not implemented. [The architecture plan](future-architecture-plan.md#adopted-scope-and-first-deliverable)
 holds the contracts and detailed sequence. The first deliverable is **one
 existing local MLIP, validated on one GPU and then on two GPUs sharing one
