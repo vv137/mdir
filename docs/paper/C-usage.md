@@ -39,8 +39,8 @@ MDIR: the total energy changed by 1.813e-05 of its value
 A copy with `target = "GPU"` and `precision = "MIXED"` in `[execution]`
 runs on a device; over its first 200 steps the total energy of the last
 row, −834.1525 kcal/mol, is that of the CPU to the printed digits. The
-device is the first that `CUDA_VISIBLE_DEVICES` leaves visible, or the one
-of that index that `MDRT_DEVICE` names:
+device is the first of those that `CUDA_VISIBLE_DEVICES` leaves visible,
+or the one among them whose index `MDRT_DEVICE` gives:
 
 ```sh
 CUDA_VISIBLE_DEVICES=1 mdir run argon-gpu.toml
