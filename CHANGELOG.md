@@ -10,6 +10,12 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-04
+
+The first milestone (M1): an all-atom protein in water with an Amber force
+field, compiled before the run for one CPU (OpenMP) or one NVIDIA GPU, at
+least as fast as pmemd.cuda on every system of the Amber benchmark suite.
+
 ### Added
 
 - The binary tarball of a release, `mdir-VERSION-manylinux_2_28_x86_64.tar.gz`,
@@ -44,60 +50,6 @@ format, or the outputs; every such change is listed under **Changed** or
   are refused with `couple`.
 - `--md-differentiate=remarks=true` lists the ops that a derivative with
   respect to a parameter takes as independent of it (D161).
-
-### Changed
-
-- `mdir run --continue` refuses a checkpoint whose physics or coupling
-  differ from the control file and names each change. `[execution]`,
-  `[output]`, and a larger `steps` may still change. To change a
-  temperature, restraints, or another key between stages, start the next
-  stage from the checkpoint through `[input] checkpoint` (D172).
-- A run that starts from another run's checkpoint with different physics
-  evaluates its forces and barostat state at its first step, instead of
-  taking the stored ones. A run whose only difference is execution
-  continues bit for bit (D172).
-- Checkpoint format 1 is the contract of this release. Files from newer
-  formats, and files from development builds before it, are refused
-  (D173).
-- On the CPU every reduction of a parallel loop is summed in a fixed order
-  over fixed chunks, so a run gives the same bits with any number of threads
-  and across a continuation. The last bits of single-threaded runs change
-  once (D171).
-
-### Fixed
-
-- A run whose positions became NaN or far beyond the cell could abort on a
-  GPU, with or without a message, instead of stopping with "positions are
-  not numbers"; the groups build now counts such positions and the run
-  always stops with the message (D176, #22).
-- A Lennard-Jones pair of epsilon 0 gave NaN in mixed precision where two
-  particles all but meet; it now contributes exactly 0, also under a
-  switch (#18).
-- A checkpoint carries the SHA-256 of its state, checked on every read, and
-  is flushed to stable storage before it replaces the previous one (D173).
-- Multithreaded CPU runs with a thermostat or a barostat were not
-  reproducible from run to run, even with `deterministic = true` (D171).
-- The NPT continuation of a run's own checkpoint no longer warns that the
-  cell differs from the input (D172).
-- `mdir version` and `mdir doctor` no longer print `CUDA unknown` when the
-  toolkit has no `version.json`, as in CUDA's runtime images. They take the
-  version from a loaded CUDA runtime or the toolkit's `version.txt`, and
-  otherwise say `runtime version not reported`. The toolkit is the one
-  `CUDA_ROOT` names, if set. The line also gives the CUDA version that the
-  driver supports (`driver API`) (D174).
-- A driver too old for the PTX ISA version of the kernels ends the run with
-  an error that names the driver's CUDA version and the PTX ISA version and
-  asks for a newer driver, instead of a generic failure of
-  `cuModuleLoadDataEx` (D174).
-
-## [0.1.0] - unreleased
-
-The first milestone (M1): an all-atom protein in water with an Amber force
-field, compiled before the run for one CPU (OpenMP) or one NVIDIA GPU, at
-least as fast as pmemd.cuda on every system of the Amber benchmark suite.
-
-### Added
-
 - **The compiler.** The `md` dialect states potentials and their particle
   sets, and semantic differentiation derives forces and the virial from
   them. `md_exec` chooses neighbor structures, storage, and precision, and
@@ -157,6 +109,51 @@ least as fast as pmemd.cuda on every system of the Amber benchmark suite.
   - Warnings of the system for what a run does that its user may not
     intend (D153, D158).
 
+### Changed
+
+- `mdir run --continue` refuses a checkpoint whose physics or coupling
+  differ from the control file and names each change. `[execution]`,
+  `[output]`, and a larger `steps` may still change. To change a
+  temperature, restraints, or another key between stages, start the next
+  stage from the checkpoint through `[input] checkpoint` (D172).
+- A run that starts from another run's checkpoint with different physics
+  evaluates its forces and barostat state at its first step, instead of
+  taking the stored ones. A run whose only difference is execution
+  continues bit for bit (D172).
+- Checkpoint format 1 is the contract of this release. Files from newer
+  formats, and files from development builds before it, are refused
+  (D173).
+- On the CPU every reduction of a parallel loop is summed in a fixed order
+  over fixed chunks, so a run gives the same bits with any number of threads
+  and across a continuation. The last bits of single-threaded runs change
+  once (D171).
+
+### Fixed
+
+- A run whose positions became NaN or far beyond the cell could abort on a
+  GPU, with or without a message, instead of stopping with "positions are
+  not numbers"; the groups build now counts such positions and the run
+  always stops with the message (D176, #22).
+- A Lennard-Jones pair of epsilon 0 gave NaN in mixed precision where two
+  particles all but meet; it now contributes exactly 0, also under a
+  switch (#18).
+- A checkpoint carries the SHA-256 of its state, checked on every read, and
+  is flushed to stable storage before it replaces the previous one (D173).
+- Multithreaded CPU runs with a thermostat or a barostat were not
+  reproducible from run to run, even with `deterministic = true` (D171).
+- The NPT continuation of a run's own checkpoint no longer warns that the
+  cell differs from the input (D172).
+- `mdir version` and `mdir doctor` no longer print `CUDA unknown` when the
+  toolkit has no `version.json`, as in CUDA's runtime images. They take the
+  version from a loaded CUDA runtime or the toolkit's `version.txt`, and
+  otherwise say `runtime version not reported`. The toolkit is the one
+  `CUDA_ROOT` names, if set. The line also gives the CUDA version that the
+  driver supports (`driver API`) (D174).
+- A driver too old for the PTX ISA version of the kernels ends the run with
+  an error that names the driver's CUDA version and the PTX ISA version and
+  asks for a newer driver, instead of a generic failure of
+  `cuModuleLoadDataEx` (D174).
+
 ### Validated
 
 - Every term against sander or pmemd, GROMACS 2026.3, CHARMM 51b1, or
@@ -196,8 +193,20 @@ mean ± standard deviation of three runs (white paper, Table 10.2):
   neighbor matrix and its lower rate.
 - **Free energy is limited to decoupling.** Relative (A to B)
   transformations, annihilation, and replica exchange are not supported.
-- **The cell keeps its shape at constant pressure.** The barostat does not
-  couple the shape of the cell.
+  A decoupled selection takes a plain Lennard-Jones cutoff or
+  `POTENTIAL_SHIFT`; switches are refused. On a GPU in mixed precision with
+  the shift, dH/dλ of the Lennard-Jones differs from double precision by
+  about 5e-4 kcal/mol at states with λ_V > 0 (#48).
+- **A per-step field of the particles feeding the reciprocal sum** gives
+  positions that are not numbers on a GPU when the particles are reordered
+  (#26). Free energy avoids it in its step program and is tested on its
+  output path; no other feature uses that pattern.
+- **The cell does not shear at constant pressure.** The barostat scales
+  each axis (isotropic, semi-isotropic, or anisotropic, D163c), without
+  coupling the angles of the cell.
+- **Binaries** are built for manylinux_2_28 (glibc 2.28 or newer: RHEL,
+  Rocky, and Alma 8+, Ubuntu 20.04+, Debian 11+) and x86-64 with an NVIDIA
+  driver supporting CUDA 13.0 or newer for the GPU (D177).
 
 [Unreleased]: https://github.com/vv137/mdir/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/vv137/mdir/releases/tag/v0.1.0
