@@ -338,7 +338,15 @@ Error Reader::readTupleTerm(const toml::table &table, unsigned arity) {
   // Between the centers of two groups, the components of the vector from
   // the first to the second as well.
   bool components = term.isCentroid() && arity == 2;
-  for (const std::string &name : expression->getNames())
+  // The time `t` in ps, as a reference that moves (D145).
+  if (llvm::any_of(term.parameters,
+                   [](const auto &p) { return p.first == "t"; }))
+    return fail(*table.get("t"), "'t' is the time, not a parameter");
+  for (const std::string &name : expression->getNames()) {
+    if (name == "t") {
+      control.usesTime = true;
+      continue;
+    }
     if (name != term.getVariable() &&
         !(components && (name == "dx" || name == "dy" || name == "dz")) &&
         !llvm::any_of(term.parameters,
@@ -346,8 +354,9 @@ Error Reader::readTupleTerm(const toml::table &table, unsigned arity) {
       return fail(*table.get("expression"),
                   "the expression uses '" + name + "', which is neither '" +
                       term.getVariable() + "'" +
-                      (components ? ", 'dx', 'dy', 'dz'," : "") +
-                      " nor a parameter of the term");
+                      (components ? ", 'dx', 'dy', 'dz'" : "") +
+                      ", the time 't', nor a parameter of the term");
+  }
   control.tupleTerms.push_back(std::move(term));
   return Error::success();
 }
@@ -672,7 +681,7 @@ Error Reader::readOutput(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "output",
           {"trajectory", "trajectory_format", "checkpoint", "energy_interval",
-           "trajectory_interval", "checkpoint_interval"},
+           "trajectory_interval", "checkpoint_interval", "pull_coordinates"},
           {}))
     return error;
   if (Error error = readPath(table, "trajectory", control.trajectoryFile))
@@ -700,6 +709,8 @@ Error Reader::readOutput(const toml::table &table) {
   control.trajectoryFormat =
       format == Format::XTC ? TrajectoryFormat::XTC : TrajectoryFormat::DCD;
   if (Error error = readPath(table, "checkpoint", control.restartOutput))
+    return error;
+  if (Error error = readPath(table, "pull_coordinates", control.pullFile))
     return error;
   if (Error error =
           readCount(table, "energy_interval", control.energyPeriod, 0))
@@ -957,7 +968,7 @@ Error Reader::readEnergy(const toml::table &table) {
         return fail(node, llvm::toString(expression.takeError()));
       static const char *const known[] = {
           "r", "q1", "q2", "sigma", "epsilon", "sigma1", "sigma2",
-          "epsilon1", "epsilon2", "coulomb"};
+          "epsilon1", "epsilon2", "coulomb", "t"};
       for (const std::string &name : expression->getNames())
         if (!llvm::is_contained(known, StringRef(name)) &&
             !llvm::any_of(term.constants,
@@ -965,7 +976,9 @@ Error Reader::readEnergy(const toml::table &table) {
           return fail(node, "the expression uses '" + name +
                                 "', which is not r, q1, q2, sigma, epsilon, "
                                 "sigma1, sigma2, epsilon1, epsilon2, coulomb, "
-                                "or a constant of the term");
+                                "the time t, or a constant of the term");
+      if (llvm::is_contained(expression->getNames(), "t"))
+        control.usesTime = true;
       // The energy of a pair cannot depend on which particle comes first.
       // No structure of the expression shows that in general, so it is
       // tested at a few points, and the kernel states the symmetry as
@@ -1695,6 +1708,22 @@ Error Reader::read(const toml::table &root) {
         "%s: 'trajectory_interval' is given, but [output] names no "
         "'trajectory'",
         path.str().c_str());
+  // The coordinates of the terms over centers, at every energy (D145).
+  if (!control.pullFile.empty()) {
+    if (llvm::none_of(control.tupleTerms,
+                      [](const TupleTerm &term) { return term.isCentroid(); }))
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "%s: [output] names 'pull_coordinates', but no term is over the "
+          "centers of groups",
+          path.str().c_str());
+    if (control.energyPeriod == 0 || control.minimize)
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "%s: 'pull_coordinates' are written at the energies of a run of "
+          "dynamics, which needs 'energy_interval'",
+          path.str().c_str());
+  }
   return Error::success();
 }
 

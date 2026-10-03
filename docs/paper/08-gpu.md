@@ -23,6 +23,15 @@ tuples of a term of the potential (rows of the same particle), the loops
 over the disjoint tuple sets of a union of constraints (D83), and the
 integration runs of Section 8.2. A run is lowered where its last loop is.
 
+**Global sums.** A loop writes the contribution of each row to a buffer
+for each sum; a kernel of at most as many blocks as a block has threads
+(128) adds the rows into partials, each thread every so manyth row and
+each block by a tree, and a kernel of one block adds the partials, so
+that the order of a sum depends only on the number of rows. A kernel
+passes each buffer as its descriptor, and PTX before ISA 8.1 allows 4352
+bytes of parameters: the sums of a loop go to pairs of kernels in runs
+whose descriptors fit 3 KB, each sum with its own tree (D145).
+
 **Counting in 32 bits** (D85). MLIR's `index` is 64 bits on NVPTX. Device
 code counts particles, cells, tuples, and entries in `i32`, and only a
 flattened element number or a byte address is 64 bits: the search of the

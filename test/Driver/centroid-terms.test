@@ -15,7 +15,11 @@
 # the peptide across three faces: the same energies. check_centroid.py
 # computes the energies, the forces on every particle of a group against
 # central differences, and the virial, from the forces of each term and the
-# images that it takes.
+# images that it takes. The file of `pull_coordinates` (D145) of a run
+# with energies: its first line against the coordinates, the energies,
+# and central differences of each term.
+#
+# REQUIRES: hdf5
 #
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
@@ -26,6 +30,10 @@
 # RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
 # RUN: mdir checkpoint --print=forces %t/terms.h5 > %t/terms.forces
 # RUN: %python %S/Inputs/check_centroid.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/plain.forces %t/terms.forces %t/plain.log %t/terms.log | FileCheck %s --check-prefix=PYTHON
+#
+# RUN: sed -e 's/^energy_interval = 0/energy_interval = 1\npull_coordinates = "pull.dat"/' -e 's/terms.h5/pull.h5/' %t/terms.toml > %t/pull.toml
+# RUN: cd %t && mdir run pull.toml > pull.log
+# RUN: %python %S/Inputs/check_centroid.py --pull %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/pull.dat | FileCheck %s --check-prefix=PULL
 #
 # RUN: %python %S/Inputs/shift_inpcrd.py %t/dipeptide.inpcrd > %t/shifted.inpcrd
 # RUN: sed -e 's/dipeptide.inpcrd/shifted.inpcrd/' -e 's/terms.h5/shifted.h5/' %t/terms.toml > %t/shifted.toml
@@ -53,6 +61,8 @@
 # CHECK-NEXT: MDIR:   bend                           2.234300
 # CHECK-NEXT: MDIR:   twist                          1.161051
 
+# PULL: 15 columns: ok
+
 # PYTHON:      pull 247.012569
 # PYTHON-NEXT: bend 2.234300
 # PYTHON-NEXT: twist 1.161051
@@ -63,7 +73,7 @@
 # WIDE: of the group ':4-400' of the term 'pull' is 0.{{[0-9]+}} of the cell along an edge from the particle {{[0-9]+}}, from which the center is taken in the minimum image; a group must lie within 0.45 of the cell around it
 # COUNT: expected 'groups' as 2 masks of particles
 # WEIGHTING: expected 'weighting' as "MASS" or "NONE"
-# NAME: the expression uses 'dx', which is neither 'theta' nor a parameter of the term
+# NAME: the expression uses 'dx', which is neither 'theta', the time 't', nor a parameter of the term
 # BOTH: a term takes 'particles' or 'groups', not both
 
 #--- run.toml

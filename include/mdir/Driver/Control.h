@@ -114,6 +114,9 @@ struct Control {
 
   // [output]
   std::string trajectoryFile;
+  /// The coordinates of the terms over centers of groups at every energy
+  /// of the log (D145).
+  std::string pullFile;
   /// The format of the trajectory, DCD or XTC (D141).
   TrajectoryFormat trajectoryFormat = TrajectoryFormat::DCD;
   std::string restartOutput;
@@ -139,6 +142,9 @@ struct Control {
   /// Terms over tuples of the topology given by expressions (D136):
   /// [[energy.bond]], [[energy.angle]], and [[energy.dihedral]].
   std::vector<TupleTerm> tupleTerms;
+  /// Whether an expression of a term of the topology takes the time `t`
+  /// in ps (D145).
+  bool usesTime = false;
   /// Functions of one argument by their values, which every expression may
   /// call (D138): [[energy.function]].
   std::vector<TabulatedFunction> functions;

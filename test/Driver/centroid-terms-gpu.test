@@ -1,6 +1,7 @@
 # The terms over the centers of groups of centroid-terms.test on a GPU in
 # double precision (D139): the same energies, and the forces and the virial
-# that check_centroid.py computes.
+# that check_centroid.py computes, and the file of `pull_coordinates`
+# (D145).
 #
 # REQUIRES: hdf5, cuda
 #
@@ -14,3 +15,6 @@
 # RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
 # RUN: mdir checkpoint --print=forces %t/terms.h5 > %t/terms.forces
 # RUN: %python %S/Inputs/check_centroid.py %t/dipeptide.prmtop %t/shifted.inpcrd %t/plain.forces %t/terms.forces %t/plain.log %t/terms.log | FileCheck %S/centroid-terms.test --check-prefix=PYTHON
+# RUN: sed -e 's/^energy_interval = 0/energy_interval = 1\npull_coordinates = "pull.dat"/' -e 's/terms.h5/pull.h5/' %t/terms.toml > %t/pull.toml
+# RUN: cd %t && mdir run pull.toml > pull.log
+# RUN: %python %S/Inputs/check_centroid.py --pull %t/dipeptide.prmtop %t/shifted.inpcrd %t/pull.dat | FileCheck %S/centroid-terms.test --check-prefix=PULL

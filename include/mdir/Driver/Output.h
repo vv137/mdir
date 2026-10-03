@@ -24,6 +24,10 @@ namespace driver {
 /// code calls write to it.
 struct Output {
   std::FILE *log = stdout;
+  /// The coordinates of the terms over centers (D145), or none, and the
+  /// number of coordinates of each term.
+  std::FILE *pull = nullptr;
+  std::vector<int64_t> pullCounts;
   std::unique_ptr<TrajectoryWriter> trajectory;
   bool hasTrajectory = false;
 
@@ -169,6 +173,11 @@ void _mlir_ciface_mdrtWriteVirial(double xx, double yy, double zz);
 /// The energy that a coupling of the velocities has just taken from the
 /// system, in kJ/mol.
 void _mlir_ciface_mdrtAddBath(double energy);
+/// The coordinates of the terms over centers of groups at the step `step`
+/// (D145), in Å and radians, and the energy and the forces of each term,
+/// in kcal/mol and per Å or radian.
+void _mlir_ciface_mdrtWritePull(int64_t step, void *coordinates,
+                                void *terms);
 /// A step of a minimization: the potential energy and the length of the
 /// next step, in kJ/mol and nm, and the forces, of which the log has the
 /// root mean square over the particles with mass and the largest.

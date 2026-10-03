@@ -112,6 +112,32 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
                total / units::energy);
 }
 
+void _mlir_ciface_mdrtWritePull(int64_t step, void *coordinates,
+                                void *terms) {
+  Output &output = *current;
+  if (!output.pull)
+    return;
+  // For each term its coordinates, then its energy and the forces along
+  // them, in the order of the header, in kcal/mol and per Å or radian.
+  auto *q = static_cast<StridedMemRefType<double, 1> *>(coordinates);
+  auto *e = static_cast<StridedMemRefType<double, 1> *>(terms);
+  std::fprintf(output.pull, "%lld %.6f", static_cast<long long>(step),
+               output.getTime(step));
+  int64_t column = 0, slot = 0;
+  for (int64_t count : output.pullCounts) {
+    for (int64_t k = 0; k != count; ++k)
+      std::fprintf(output.pull, " %.6f",
+                   q->data[(column + k) * q->strides[0]]);
+    for (int64_t k = 0; k != count + 1; ++k)
+      std::fprintf(output.pull, " %.6f",
+                   e->data[(slot + k) * e->strides[0]]);
+    column += count;
+    slot += count + 1;
+  }
+  std::fprintf(output.pull, "\n");
+  std::fflush(output.pull);
+}
+
 void _mlir_ciface_mdrtAddBath(double energy) { current->bath += energy; }
 
 void _mlir_ciface_mdrtSetBarostatState(double w0, double w1, double w2,

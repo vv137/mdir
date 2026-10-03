@@ -1,0 +1,24 @@
+# The steered spring of pull-coordinates.test on a GPU in double precision
+# (D145): the three forms of the term take the positions of velocity
+# Verlet to the last bit, the file of pulling is that of the CPU, and a
+# continued run writes it again.
+#
+# REQUIRES: hdf5, cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: sed -n '/^#--- two.top/,/^#--- two.gro/p' %S/pull-coordinates.test | sed '1d;$d' > %t/two.top
+# RUN: sed -n '/^#--- two.gro/,/^#--- run.toml/p' %S/pull-coordinates.test | sed '1d;$d' > %t/two.gro
+# RUN: sed -n '/^#--- run.toml/,/^#--- tuple/p' %S/pull-coordinates.test | sed '1d;$d' | sed -e 's/^target    = "CPU"/target    = "GPU"/' > %t/run.toml
+# RUN: sed -n '/^#--- tuple/,/^#--- pair/p' %S/pull-coordinates.test | sed '1d;$d' > %t/tuple.term
+# RUN: sed -n '/^#--- pair/,/^#--- end/p' %S/pull-coordinates.test | sed '1d;$d' > %t/pair.term
+# RUN: sed -e '/^pull_coordinates/d' -e '/^\[\[energy.bond\]\]/,/^v  = 20.0/d' -e 's/two.h5/tuple.h5/' -e '/^\[dynamics\]/e cat %t/tuple.term' %t/run.toml > %t/tuple.toml
+# RUN: sed -e '/^pull_coordinates/d' -e '/^\[\[energy.bond\]\]/,/^v  = 20.0/d' -e 's/two.h5/pair.h5/' -e '/^\[dynamics\]/e cat %t/pair.term' %t/run.toml > %t/pair.toml
+# RUN: cd %t && mdir run run.toml > run.log && mdir run tuple.toml > tuple.log && mdir run pair.toml > pair.log
+# RUN: mdir checkpoint --print=positions %t/two.h5 > %t/two.positions
+# RUN: mdir checkpoint --print=positions %t/tuple.h5 > %t/tuple.positions
+# RUN: mdir checkpoint --print=positions %t/pair.h5 > %t/pair.positions
+# RUN: %python %S/Inputs/check_steer.py %t/pull.dat %t/two.positions %t/tuple.positions %t/pair.positions | FileCheck %S/pull-coordinates.test
+# RUN: FileCheck %S/pull-coordinates.test --check-prefix=FILE < %t/pull.dat
+#
+# RUN: cd %t && cp pull.dat full.dat && cp two.h5.prev two.h5 && mdir run run.toml --continue | FileCheck %S/pull-coordinates.test --check-prefix=CONTINUE
+# RUN: cmp %t/full.dat %t/pull.dat

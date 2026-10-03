@@ -51,7 +51,7 @@
 
 # POWER: a pair term is truncated as the whole of its energy, which "POWER_FORCE_SWITCH" does not say; use "FORCE_SWITCH"
 # MIXING: with a topology a pair term takes the parameters of the topology, not 'mixing' or 'dispersion_correction'
-# NAME: the expression uses 'charge', which is not r, q1, q2, sigma, epsilon, sigma1, sigma2, epsilon1, epsilon2, coulomb, or a constant of the term
+# NAME: the expression uses 'charge', which is not r, q1, q2, sigma, epsilon, sigma1, sigma2, epsilon1, epsilon2, coulomb, the time t, or a constant of the term
 # ORDER: the energy of a pair must not change when its two particles are exchanged (q1 with q2, sigma1 with sigma2, epsilon1 with epsilon2), and this expression does
 # EMPTY: the group ':9999' of the pair term 'grouped' selects no particle
 # ONE: expected 'groups' as two masks of particles

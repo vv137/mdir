@@ -90,6 +90,29 @@ private:
   /// Emits `%u_centroid_<name>`, the energy of the term `term` over the
   /// centers of groups, the term `index` over tuples (D139).
   void emitCentroidTerm(size_t index, const TupleTerm &term);
+  /// Emits the coordinates of the term `term` over centers, the term
+  /// `index` over tuples, at the positions `x` in the cell `cell`, with
+  /// the members of its tuples named `relations` and the name of the set:
+  /// `r`, `dx`, `dy`, `dz` in Å for two centers, `theta` in radians
+  /// otherwise, mapped to their names, which begin with `prefix`.
+  llvm::StringMap<std::string>
+  emitCentroidCoordinates(const TupleTerm &term, StringRef indent,
+                          StringRef x, StringRef cell, StringRef relations,
+                          StringRef prefix);
+  /// The coordinates of the terms over centers that `[output]
+  /// pull_coordinates` writes (D145): the index of the term over tuples
+  /// and the quantity of each column.
+  std::vector<std::pair<size_t, std::string>> getPullColumns() const;
+  /// Emits for each term over centers its energy as a function of its
+  /// coordinates, `@pullterm<k>`, whose derivatives give its forces.
+  void emitPullPotentials();
+  /// The number of arguments of a potential, before those of its own.
+  unsigned getNumPotentialArguments() const;
+  /// Emits the evaluation of the columns at the positions `x` in the cell
+  /// `cell`, the fields of `prefix`, the step `step`, and the time `time`,
+  /// and their call to the writer.
+  void emitPullOutput(StringRef indent, StringRef x, StringRef cell,
+                      StringRef prefix, StringRef step, StringRef time);
   /// Emits generalized Born (D144), `%u_born` and `%u_surface` as `terms`
   /// asks, and passes their names to `add`.
   void emitBorn(unsigned terms, llvm::function_ref<void(StringRef)> add);
@@ -166,17 +189,32 @@ private:
   /// the step that they take and the numbers of the particles, which key the
   /// random numbers of each particle (A13).
   std::string getNoiseParameter() const {
-    return control.isLangevin() ? ", %noise_step: i64, %noise_ids: !ids"
-                                : "";
+    return needsStepNumber() ? ", %noise_step: i64, %noise_ids: !ids" : "";
   }
   std::string getNoiseType() const {
-    return control.isLangevin() ? ", i64, !ids" : "";
+    return needsStepNumber() ? ", i64, !ids" : "";
+  }
+  /// Whether the programs of the steps take the number of the step: for the
+  /// noise of Langevin dynamics, and for the time of terms that take it.
+  bool needsStepNumber() const {
+    return control.isLangevin() || control.usesTime;
+  }
+  /// Terms whose expressions take the time `t` (D145): the potentials take
+  /// it in ps as their last argument. A program of a step computes it from
+  /// the number of the step, `%time`; the entry has `%time0`, that of the
+  /// first step.
+  std::string getTimeParameter() const {
+    return control.usesTime ? ", %time: f64" : "";
+  }
+  std::string getTimeType() const { return control.usesTime ? ", f64" : ""; }
+  std::string getTimeValue(StringRef name) const {
+    return control.usesTime ? (", " + name).str() : "";
   }
   /// Emits the number of the step about to be taken, from the counter on
   /// the host that each step advances, and returns the operands that a
   /// program of a step takes for it.
   std::string emitNoiseValue(StringRef indent) {
-    if (!control.isLangevin())
+    if (!needsStepNumber())
       return "";
     std::string name = "%noise" + std::to_string(numNoiseSteps++);
     os << indent << name << "_last = memref.load %noise_memory[%c0]"
@@ -1424,20 +1462,20 @@ llvm::Error Builder::collectPME() {
   return llvm::Error::success();
 }
 
-void Builder::emitCentroidTerm(size_t index, const TupleTerm &term) {
-  // Numbers outside the kernels, named after the term.
-  std::string prefix = "%cb" + std::to_string(index) + "_";
+llvm::StringMap<std::string> Builder::emitCentroidCoordinates(
+    const TupleTerm &term, StringRef indent, StringRef x, StringRef cell,
+    StringRef relations, StringRef prefix) {
   unsigned counter = 0;
-  auto next = [&]() { return prefix + std::to_string(counter++); };
+  auto next = [&]() { return (prefix + llvm::Twine(counter++)).str(); };
   auto op = [&](StringRef name, std::initializer_list<std::string> operands) {
     std::string result = next();
-    os << "  " << result << " = " << name << " " << llvm::join(operands, ", ")
-       << " : f64\n";
+    os << indent << result << " = " << name << " "
+       << llvm::join(operands, ", ") << " : f64\n";
     return result;
   };
   auto constant = [&](double value) {
     std::string result = next();
-    os << "  " << result << " = arith.constant " << formatReal(value)
+    os << indent << result << " = arith.constant " << formatReal(value)
        << " : f64\n";
     return result;
   };
@@ -1448,15 +1486,15 @@ void Builder::emitCentroidTerm(size_t index, const TupleTerm &term) {
   auto sum = [&](size_t slot, int component) {
     std::string result = next();
     std::string field = "%f_" + set + "_w" + std::to_string(slot);
-    os << "  " << result << " = md.sum_tuples %r_" << set
-       << ", %x, %cell coordinates(displacement(0, 1))\n"
-       << "      tuple(" << field << " : !of_" << set << ") {\n"
-       << "  ^bb0(%gd: vector<3xf64>, %gw: f64):\n"
-       << "    %gdc = vector.extract %gd[" << component
+    os << indent << result << " = md.sum_tuples " << relations << set << ", "
+       << x << ", " << cell << " coordinates(displacement(0, 1))\n"
+       << indent << "    tuple(" << field << " : !of_" << set << ") {\n"
+       << indent << "^bb0(%gd: vector<3xf64>, %gw: f64):\n"
+       << indent << "  %gdc = vector.extract %gd[" << component
        << "] : f64 from vector<3xf64>\n"
-       << "    %ge = arith.mulf %gw, %gdc : f64\n"
-       << "    md.yield %ge : f64\n"
-       << "  } : !rel_" << set << ", !vec -> f64\n";
+       << indent << "  %ge = arith.mulf %gw, %gdc : f64\n"
+       << indent << "  md.yield %ge : f64\n"
+       << indent << "} : !rel_" << set << ", !vec -> f64\n";
     return result;
   };
 
@@ -1532,14 +1570,206 @@ void Builder::emitCentroidTerm(size_t index, const TupleTerm &term) {
     values["theta"] =
         op("math.atan2", {dot(cross(axis, v), w), dot(v, w)});
   }
-  for (const auto &[name, parameter] : term.parameters)
-    values[name] = constant(parameter.front());
+  return values;
+}
+
+void Builder::emitCentroidTerm(size_t index, const TupleTerm &term) {
+  // Numbers outside the kernels, named after the term.
+  std::string prefix = "%cb" + std::to_string(index) + "_";
+  llvm::StringMap<std::string> values =
+      emitCentroidCoordinates(term, "  ", "%x", "%cell", "%r_", prefix);
+  for (auto [k, parameter] : llvm::enumerate(term.parameters)) {
+    std::string name = prefix + "p" + std::to_string(k);
+    os << "  " << name << " = arith.constant "
+       << formatReal(parameter.second.front()) << " : f64\n";
+    values[parameter.first] = name;
+  }
+  if (control.usesTime)
+    values["t"] = "%time";
   Expression expression = llvm::cantFail(
       Expression::parse(term.expression, control.functions));
   std::string energy = expression.emit(os, values, prefix + "e", "  ");
-  std::string kj = constant(units::energy);
-  os << "  %u_centroid_" << term.name << " = arith.mulf " << energy << ", "
-     << kj << " : f64\n";
+  os << "  " << prefix << "kj = arith.constant " << formatReal(units::energy)
+     << " : f64\n"
+     << "  %u_centroid_" << term.name << " = arith.mulf " << energy << ", "
+     << prefix << "kj : f64\n";
+}
+
+std::vector<std::pair<size_t, std::string>> Builder::getPullColumns() const {
+  std::vector<std::pair<size_t, std::string>> columns;
+  if (control.pullFile.empty() || !system.topology)
+    return columns;
+  for (auto [index, term] : llvm::enumerate(system.topology->tupleTerms)) {
+    if (!term.isCentroid())
+      continue;
+    if (term.arity == 2)
+      for (const char *quantity : {"r", "dx", "dy", "dz"})
+        columns.push_back({index, quantity});
+    else
+      columns.push_back({index, "theta"});
+  }
+  return columns;
+}
+
+void Builder::emitPullPotentials() {
+  // The energy of each term as a function of its coordinates, which follow
+  // the other arguments, so that the derivatives with respect to them give
+  // the forces along the coordinates.
+  std::vector<std::pair<size_t, std::string>> columns = getPullColumns();
+  if (columns.empty())
+    return;
+  for (size_t index = 0, e = system.topology->tupleTerms.size(); index != e;
+       ++index) {
+    const TupleTerm &term = system.topology->tupleTerms[index];
+    if (!term.isCentroid())
+      continue;
+    std::vector<std::string> quantities;
+    for (const auto &[k, quantity] : columns)
+      if (k == index)
+        quantities.push_back(quantity);
+    os << "md.potential @pullterm" << index << "(%x: !vec, %cell: !md.cell"
+       << getFieldParameters() << getTimeParameter();
+    for (size_t q = 0; q != quantities.size(); ++q)
+      os << ", %pq" << q << ": f64";
+    os << ") -> f64 {\n";
+    llvm::StringMap<std::string> values;
+    for (auto [q, quantity] : llvm::enumerate(quantities))
+      values[quantity] = "%pq" + std::to_string(q);
+    for (auto [p, parameter] : llvm::enumerate(term.parameters)) {
+      std::string name = "%pp" + std::to_string(p);
+      os << "  " << name << " = arith.constant "
+         << formatReal(parameter.second.front()) << " : f64\n";
+      values[parameter.first] = name;
+    }
+    if (control.usesTime)
+      values["t"] = "%time";
+    Expression expression = llvm::cantFail(
+        Expression::parse(term.expression, control.functions));
+    std::string energy = expression.emit(os, values, "%pe", "  ");
+    os << "  md.return " << energy << " : f64\n}\n\n";
+  }
+}
+
+unsigned Builder::getNumPotentialArguments() const {
+  unsigned count = 2 + program.fields.size() + program.tables.size();
+  for (const Program::TupleSet &set : program.tupleSets)
+    count += 1 + set.fields.size();
+  return count + (control.usesTime ? 1 : 0);
+}
+
+void Builder::emitPullOutput(StringRef indent, StringRef x, StringRef cell,
+                             StringRef prefix, StringRef step,
+                             StringRef time) {
+  std::vector<std::pair<size_t, std::string>> columns = getPullColumns();
+  if (columns.empty())
+    return;
+  // The coordinates of each term, its centers computed once. The members
+  // of the tuples follow the order of the particles, as in
+  // getFieldValues.
+  std::string type = "memref<" + std::to_string(columns.size()) + "xf64>";
+  std::string values = ("%pull_values" + step.drop_front()).str();
+  std::string relations = ("%r" + prefix.drop_front(2)).str();
+  os << indent << values << " = memref.alloca() : " << type << "\n";
+  std::vector<std::string> names(columns.size());
+  for (size_t index = 0, e = system.topology->tupleTerms.size(); index != e;
+       ++index) {
+    const TupleTerm &term = system.topology->tupleTerms[index];
+    if (!term.isCentroid())
+      continue;
+    llvm::StringMap<std::string> coordinates = emitCentroidCoordinates(
+        term, indent, x, cell, relations,
+        values + "_c" + std::to_string(index) + "_");
+    for (size_t column = 0; column != columns.size(); ++column)
+      if (columns[column].first == index)
+        names[column] = coordinates.lookup(columns[column].second);
+  }
+  for (size_t column = 0, e = columns.size(); column != e; ++column) {
+    std::string place = values + "_i" + std::to_string(column);
+    os << indent << place << " = arith.constant " << column << " : index\n"
+       << indent << "memref.store " << names[column] << ", " << values << "["
+       << place << "] : " << type << "\n";
+  }
+  // The energy of each term, in kcal/mol, and its force: of a term over
+  // two centers, the force on the second, F = −(∂E/∂r d/r + ∂E/∂d) with d
+  // the vector from the first, and its component along d, in kcal/mol/Å;
+  // of an angle or a dihedral, −∂E/∂θ, in kcal/mol/rad.
+  std::string terms = ("%pull_terms" + step.drop_front()).str();
+  unsigned numTerms = 0;
+  for (const TupleTerm &term : system.topology->tupleTerms)
+    numTerms += term.isCentroid() ? (term.arity == 2 ? 5 : 2) : 0;
+  std::string termType = "memref<" + std::to_string(numTerms) + "xf64>";
+  os << indent << terms << " = memref.alloca() : " << termType << "\n";
+  unsigned slot = 0;
+  unsigned base = getNumPotentialArguments();
+  for (size_t index = 0, e = system.topology->tupleTerms.size(); index != e;
+       ++index) {
+    if (!system.topology->tupleTerms[index].isCentroid())
+      continue;
+    std::vector<std::string> coordinates;
+    for (size_t column = 0; column != columns.size(); ++column)
+      if (columns[column].first == index)
+        coordinates.push_back(names[column]);
+    std::string name = terms + "_" + std::to_string(index);
+    os << indent << name << "_e";
+    for (size_t q = 0; q != coordinates.size(); ++q)
+      os << ", " << name << "_d" << q;
+    os << " = md.evaluate @pullterm" << index << "(" << x << ", " << cell
+       << getFieldValues(prefix) << getTimeValue(time);
+    for (const std::string &coordinate : coordinates)
+      os << ", " << coordinate;
+    os << ")\n" << indent << "    request [energy";
+    for (size_t q = 0; q != coordinates.size(); ++q)
+      os << ", derivative(" << base + q << ")";
+    os << "]\n" << indent << "    : (!vec, !md.cell" << getFieldTypes()
+       << getTimeType();
+    for (size_t q = 0; q != coordinates.size(); ++q)
+      os << ", f64";
+    os << ") -> (f64";
+    for (size_t q = 0; q != coordinates.size(); ++q)
+      os << ", f64";
+    os << ")\n";
+    auto store = [&](const std::string &value) {
+      std::string place = name + "_s" + std::to_string(slot);
+      os << indent << place << " = arith.constant " << slot++ << " : index\n"
+         << indent << "memref.store " << value << ", " << terms << "["
+         << place << "] : " << termType << "\n";
+    };
+    store(name + "_e");
+    unsigned counter = 0;
+    auto op = [&](StringRef operation,
+                  std::initializer_list<std::string> operands) {
+      std::string result = name + "_v" + std::to_string(counter++);
+      os << indent << result << " = " << operation << " "
+         << llvm::join(operands, ", ") << " : f64\n";
+      return result;
+    };
+    auto derivative = [&](size_t q) { return name + "_d" + std::to_string(q); };
+    if (coordinates.size() == 1) {
+      store(op("arith.negf", {derivative(0)}));
+      continue;
+    }
+    std::string radial = op("arith.divf", {derivative(0), coordinates[0]});
+    std::array<std::string, 3> force;
+    for (int c = 0; c != 3; ++c)
+      force[c] = op("arith.negf",
+                    {op("arith.addf",
+                        {op("arith.mulf", {radial, coordinates[1 + c]}),
+                         derivative(1 + c)})});
+    std::string along = op("arith.mulf", {force[0], coordinates[1]});
+    for (int c = 1; c != 3; ++c)
+      along = op("arith.addf",
+                 {along, op("arith.mulf", {force[c], coordinates[1 + c]})});
+    store(op("arith.divf", {along, coordinates[0]}));
+    for (int c = 0; c != 3; ++c)
+      store(force[c]);
+  }
+  os << indent << values << "_cast = memref.cast " << values << " : " << type
+     << " to memref<?xf64>\n"
+     << indent << terms << "_cast = memref.cast " << terms << " : "
+     << termType << " to memref<?xf64>\n"
+     << indent << "func.call @mdrtWritePull(" << step << ", " << values
+     << "_cast, " << terms << "_cast) : (i64, memref<?xf64>, memref<?xf64>) "
+        "-> ()\n";
 }
 
 void Builder::emitBorn(unsigned terms,
@@ -1815,7 +2045,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
   };
 
   os << "md.potential @" << name << "(%x: !vec, %cell: !md.cell"
-     << getFieldParameters() << ") -> f64 {\n";
+     << getFieldParameters() << getTimeParameter() << ") -> f64 {\n";
   std::string total;
   auto add = [&](StringRef term) {
     std::string value = ("%u_" + term).str();
@@ -1872,6 +2102,8 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
        << "    %pt_r = arith.mulf %r, %pt_angstrom : f64\n";
     llvm::StringMap<std::string> values;
     values["r"] = "%pt_r";
+    if (control.usesTime)
+      values["t"] = "%time";
     values["q1"] = "%q_i";
     values["q2"] = "%q_j";
     auto lookup = [&](StringRef variable, StringRef table, StringRef a,
@@ -2170,6 +2402,8 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     }
     llvm::StringMap<std::string> values;
     values[term.getVariable()] = variable;
+    if (control.usesTime)
+      values["t"] = "%time";
     for (const auto &parameter : term.parameters)
       values[parameter.first] = "%cp_" + parameter.first;
     Expression expression = llvm::cantFail(Expression::parse(term.expression, control.functions));
@@ -2287,7 +2521,7 @@ llvm::Error Builder::emitPotential() {
   std::string truncation = getTruncation(control);
 
   os << "md.potential @energy(%x: !vec, %cell: !md.cell"
-     << getFieldParameters() << ") -> f64 {\n";
+     << getFieldParameters() << getTimeParameter() << ") -> f64 {\n";
   os << "  %n = md.neighborhood %x, %cell cutoff(" << formatReal(cutoff)
      << ") : !vec -> !pairs\n";
 
@@ -2455,8 +2689,9 @@ void Builder::emitPrograms() {
     return;
   }
   std::string evaluate = "md.evaluate @energy(%x1, %cell" + getFieldValues() +
-                         ")";
-  std::string signature = "(!vec, !md.cell" + getFieldTypes() + ")";
+                         getTimeValue("%time") + ")";
+  std::string signature =
+      "(!vec, !md.cell" + getFieldTypes() + getTimeType() + ")";
   // Virtual sites are placed after the positions move, and the forces on
   // them are moved to their atoms before the velocities do. Rigid waters
   // are constrained before the sites are placed.
@@ -2562,6 +2797,11 @@ void Builder::emitPrograms() {
        << "provides = [\"symplectic\", \"time_reversible\"]} {\n"
        << "  %c = arith.constant 5.0e-01 : f64\n"
        << "  %half = arith.mulf %c, %dt : f64\n";
+    // The time at the end of the step, at which its forces are evaluated
+    // (D145).
+    if (control.usesTime)
+      os << "  %time_steps = arith.sitofp %noise_step : i64 to f64\n"
+         << "  %time = arith.mulf %time_steps, %dt : f64\n";
     if (!leapfrog) {
       os << "  %v1 = dyn.kick %v, %f, %m, %half : !vec\n";
     } else if (withVirial && constraints) {
@@ -4380,6 +4620,18 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         emitStep();
       os << inner << "func.call @mdrtWriteEnergies(%step" << here << ", "
          << energyName << ", %k, %g, %tr) : (i64, f64, f64, f64, f64) -> ()\n";
+      if (!getPullColumns().empty()) {
+        // The coordinates of the terms over centers at the positions after
+        // the step, at its time (D145).
+        std::string time = "%pull_time" + here;
+        if (control.usesTime)
+          os << inner << time << "_steps = arith.sitofp %step" << here
+             << " : i64 to f64\n"
+             << inner << time << " = arith.mulf " << time << "_steps, %dt"
+             << " : f64\n";
+        emitPullOutput(inner, "%xl", cellName, fieldPrefix, "%step" + here,
+                       time);
+      }
       std::string yielded =
           couplesBelow
               ? getCoupled("%xl", "%vl", "%fl", energyName,
@@ -5029,12 +5281,21 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
       // The work takes the energy, and the next step the forces; the
       // virial of the scaled positions is not needed.
       std::string u = "%bu" + t, f = "%bf" + t;
+      // The time of the step that the scaling follows (D145).
+      std::string time = "%btime" + t;
+      if (control.usesTime)
+        os << indent << time << "_steps_i = memref.load %noise_memory[%c0]"
+           << " : memref<1xi64>\n"
+           << indent << time << "_steps = arith.sitofp " << time
+           << "_steps_i : i64 to f64\n"
+           << indent << time << " = arith.mulf " << time << "_steps, %dt"
+           << " : f64\n";
       os << indent << u << held << ", " << f << held << raw
          << " = md.evaluate @energy(" << newPositions << ", " << cell
-         << getFieldValues(fieldPrefix) << ")\n"
+         << getFieldValues(fieldPrefix) << getTimeValue(time) << ")\n"
          << indent << "    request [energy, forces]\n"
          << indent << "    : (!vec, !md.cell" << getFieldTypes()
-         << ") -> (f64, !vec)\n";
+         << getTimeType() << ") -> (f64, !vec)\n";
       if (hasSites())
         emitSpreadSites(indent, newPositions, f + held + "e", f + held,
                         relations);
@@ -5337,8 +5598,9 @@ void Builder::emitDescend() {
   std::vector<const Program::TupleSet *> shakeSets = getShakeSets();
   bool constraints = settles || !shakeSets.empty();
   std::string evaluate = "md.evaluate @energy(%x1, %cell" + getFieldValues() +
-                         ")";
-  std::string signature = "(!vec, !md.cell" + getFieldTypes() + ")";
+                         getTimeValue("%zero") + ")";
+  std::string signature =
+      "(!vec, !md.cell" + getFieldTypes() + getTimeType() + ")";
   os << "dyn.program @descend(%x: !vec, %f: !vec, %m: !real, "
         "%cell: !md.cell,\n    %h: f64"
      << getFieldParameters() << ")\n    -> (!vec, !vec, f64) {\n"
@@ -5457,9 +5719,10 @@ void Builder::emitMinimization() {
   std::string held = hasRestraints() ? "p" : "";
   os << "  %u0" << held << ", %f0" << held << raw
      << " = md.evaluate @energy(" << x0 << ", %cell" << getFieldValues()
-     << ")\n"
+     << getTimeValue("%time0") << ")\n"
      << "      request [energy, forces]\n"
-     << "      : (!vec, !md.cell" << getFieldTypes() << ") -> (f64, !vec)\n";
+     << "      : (!vec, !md.cell" << getFieldTypes() << getTimeType()
+     << ") -> (f64, !vec)\n";
   if (hasSites())
     emitSpreadSites("  ", x0, "%f0" + held + "e", "%f0" + held, "%r_");
   if (hasRestraints()) {
@@ -5599,8 +5862,9 @@ void Builder::emitTerms(StringRef x) {
         "term_excluded", "term_reciprocal", "term_urey_bradley",
         "term_impropers"}) {
     os << "  %" << name << " = md.evaluate @" << name << "(" << x << ", %cell"
-       << getFieldValues() << ") request [energy]\n"
-       << "      : (!vec, !md.cell" << getFieldTypes() << ") -> f64\n"
+       << getFieldValues() << getTimeValue("%time0") << ") request [energy]\n"
+       << "      : (!vec, !md.cell" << getFieldTypes() << getTimeType()
+       << ") -> f64\n"
        << "  %i_" << name << " = arith.constant " << index++
        << " : index\n"
        << "  memref.store %" << name << ", %terms[%i_" << name
@@ -5613,8 +5877,9 @@ void Builder::emitTerms(StringRef x) {
                        : k == custom + pairs ? "term_born"
                                              : "term_surface";
     os << "  %" << name << " = md.evaluate @" << name << "(" << x << ", %cell"
-       << getFieldValues() << ") request [energy]\n"
-       << "      : (!vec, !md.cell" << getFieldTypes() << ") -> f64\n"
+       << getFieldValues() << getTimeValue("%time0") << ") request [energy]\n"
+       << "      : (!vec, !md.cell" << getFieldTypes() << getTimeType()
+       << ") -> f64\n"
        << "  %i_" << name << " = arith.constant " << index++ << " : index\n"
        << "  memref.store %" << name << ", %terms[%i_" << name << "] : "
        << type << "\n";
@@ -5634,6 +5899,8 @@ void Builder::emitEntry() {
   StringRef parameter = getName(program.parameter);
 
   os << "func.func private @mdrtWriteEnergies(i64, f64, f64, f64, f64)\n"
+     << "    attributes {llvm.emit_c_interface}\n"
+     << "func.func private @mdrtWritePull(i64, memref<?xf64>, memref<?xf64>)\n"
      << "    attributes {llvm.emit_c_interface}\n"
      << "func.func private @mdrtWriteTerms(memref<?xf64>)\n"
      << "    attributes {llvm.emit_c_interface}\n"
@@ -5699,9 +5966,18 @@ void Builder::emitEntry() {
 
   os << "  %c0 = arith.constant 0 : index\n"
      << "  %c1 = arith.constant 1 : index\n";
+  // The time of the first step, which the evaluations at the start take
+  // (D145); a minimization takes 0.
+  if (control.usesTime) {
+    if (control.minimize)
+      os << "  %time0 = arith.constant 0.0 : f64\n";
+    else
+      os << "  %time0_steps = arith.sitofp %start : i64 to f64\n"
+         << "  %time0 = arith.mulf %time0_steps, %dt : f64\n";
+  }
   // The number of the last step taken, which keys the random numbers of
   // Langevin dynamics (D135).
-  if (control.isLangevin())
+  if (needsStepNumber())
     os << "  %noise_memory = memref.alloca() : memref<1xi64>\n"
        << "  memref.store %start, %noise_memory[%c0] : memref<1xi64>\n"
        << "  %noise_one = arith.constant 1 : i64\n";
@@ -5912,9 +6188,10 @@ void Builder::emitEntry() {
     StringRef raw = hasSites() ? "e" : "";
     std::string held = hasRestraints() ? "p" : "";
     os << "  %u0" << held << ", %f0" << held << raw << ", %w0" << held << raw
-       << " = md.evaluate @energy(%x0, %cell" << getFieldValues() << ")\n"
+       << " = md.evaluate @energy(%x0, %cell" << getFieldValues()
+       << getTimeValue("%time0") << ")\n"
        << "      request [energy, forces, virial]\n"
-       << "      : (!vec, !md.cell" << getFieldTypes()
+       << "      : (!vec, !md.cell" << getFieldTypes() << getTimeType()
        << ") -> (f64, !vec, vector<9xf64>)\n";
     std::string virial = "%w0" + held;
     if (hasSites())
@@ -5945,6 +6222,7 @@ void Builder::emitEntry() {
     os << "  call @mdrtWriteEnergies(%start, %u0, %k0, %g0, " << trace
        << ")\n"
        << "      : (i64, f64, f64, f64, f64) -> ()\n";
+    emitPullOutput("  ", "%x0", "%cell", "%p_", "%start", "%time0");
     // The state that the first scaling takes its pressure from (D92), by
     // axes.
     if (scalesEveryStep()) {
@@ -5993,9 +6271,10 @@ void Builder::emitEntry() {
     StringRef raw = hasSites() ? "e" : "";
     std::string held = hasRestraints() ? "p" : "";
     os << "  %ubs" << held << ", %fbs" << held << raw << ", %wbs" << held << raw
-       << " = md.evaluate @energy(%x0, %cell" << getFieldValues() << ")\n"
+       << " = md.evaluate @energy(%x0, %cell" << getFieldValues()
+       << getTimeValue("%time0") << ")\n"
        << "      request [energy, forces, virial]\n"
-       << "      : (!vec, !md.cell" << getFieldTypes()
+       << "      : (!vec, !md.cell" << getFieldTypes() << getTimeType()
        << ") -> (f64, !vec, vector<9xf64>)\n";
     std::string virial = "%wbs" + held;
     if (hasSites())
@@ -6296,6 +6575,7 @@ llvm::Error Builder::build() {
   }
   else if (llvm::Error error = emitPotential())
     return error;
+  emitPullPotentials();
   emitPrograms();
   emitEntry();
   return llvm::Error::success();

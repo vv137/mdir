@@ -35,6 +35,8 @@
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Support/Format.h"
 #include "llvm/Support/FormatVariadic.h"
+
+#include <fstream>
 #include "llvm/Support/raw_ostream.h"
 
 #include <chrono>
@@ -580,6 +582,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     add("_mlir_ciface_mdrtWriteTerms", (void *)&_mlir_ciface_mdrtWriteTerms);
     add("_mlir_ciface_mdrtWriteVirial", (void *)&_mlir_ciface_mdrtWriteVirial);
     add("_mlir_ciface_mdrtAddBath", (void *)&_mlir_ciface_mdrtAddBath);
+    add("_mlir_ciface_mdrtWritePull", (void *)&_mlir_ciface_mdrtWritePull);
     add("_mlir_ciface_mdrtSetBox", (void *)&_mlir_ciface_mdrtSetBox);
     add("_mlir_ciface_mdrtSetTilt", (void *)&_mlir_ciface_mdrtSetTilt);
     add("_mlir_ciface_mdrtSetBarostatState",
@@ -831,6 +834,51 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       tilts[k] = system->tilt[k] / units::length;
     output.trajectory->setTilt(tilts);
     output.hasTrajectory = true;
+  }
+  // The coordinates of the terms over centers (D145): a line at every
+  // energy of the log. A continued run keeps the lines up to its
+  // checkpoint and appends.
+  if (!control->pullFile.empty()) {
+    std::vector<std::string> keep;
+    if (own && llvm::sys::fs::exists(control->pullFile)) {
+      std::ifstream old(control->pullFile);
+      for (std::string line; std::getline(old, line);) {
+        if (!line.empty() && line[0] != '#' &&
+            std::strtoll(line.c_str(), nullptr, 10) > own->step)
+          break;
+        keep.push_back(line);
+      }
+    }
+    output.pull = std::fopen(control->pullFile.c_str(), "w");
+    if (!output.pull)
+      return fail("cannot write '" + control->pullFile + "'");
+    for (const TupleTerm &term : system->topology->tupleTerms)
+      if (term.isCentroid())
+        output.pullCounts.push_back(term.arity == 2 ? 4 : 1);
+    if (keep.empty()) {
+      // For each term its coordinates, its energy, and its force: over two
+      // centers, the component along the distance and the vector on the
+      // second center; of an angle or a dihedral, −∂E/∂θ.
+      std::fprintf(output.pull, "# step time");
+      for (const TupleTerm &term : system->topology->tupleTerms) {
+        if (!term.isCentroid())
+          continue;
+        const char *name = term.name.c_str();
+        if (term.arity == 2)
+          std::fprintf(output.pull,
+                       " %s.r %s.dx %s.dy %s.dz %s.energy %s.f_r %s.fx "
+                       "%s.fy %s.fz",
+                       name, name, name, name, name, name, name, name, name);
+        else
+          std::fprintf(output.pull, " %s.theta %s.energy %s.f_theta", name,
+                       name, name);
+      }
+      std::fprintf(output.pull,
+                   "\n# ps; Å, radians; kcal/mol; kcal/mol/Å, kcal/mol/rad\n");
+    }
+    for (const std::string &line : keep)
+      std::fprintf(output.pull, "%s\n", line.c_str());
+    std::fflush(output.pull);
   }
   if (writesCheckpoints) {
     output.checkpointPath = control->restartOutput;

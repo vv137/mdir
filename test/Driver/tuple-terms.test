@@ -38,7 +38,7 @@
 # PYTHON-NEXT: forces against differences of the energy: ok
 
 # COUNT: 'k' has 1 values, and there are 2 tuples
-# NAME: the expression uses 'theta0', which is neither 'theta' nor a parameter of the term
+# NAME: the expression uses 'theta0', which is neither 'theta', the time 't', nor a parameter of the term
 # ARITY: expected a list of 3 particle numbers
 # RANGE: the term 'flat' names the particle 9999, and the topology has 1168
 

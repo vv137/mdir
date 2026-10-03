@@ -6,10 +6,18 @@ central differences of the energies (kcal/mol/Å), and the diagonal of their
 virial, sum of x ⊗ F over the particles in the images of the centers.
 
     check_centroid.py TOPOLOGY COORDINATES PLAIN_FORCES FORCES PLAIN_LOG LOG
+    check_centroid.py --pull TOPOLOGY COORDINATES PULL
 
 PLAIN_FORCES and FORCES are `mdir checkpoint --print=forces`, and PLAIN_LOG
-and LOG the logs, of the runs without and with the terms."""
+and LOG the logs, of the runs without and with the terms. With --pull, the
+first line of the file of `pull_coordinates` (D145): the coordinates of
+each term, its energy, and its force, against central differences: on the
+second center of the bond, and along the angle of the others."""
 import math, re, sys
+
+pull = sys.argv[1] == '--pull'
+if pull:
+    del sys.argv[1]
 
 def sections(path):
     out = {}; name = None
@@ -68,19 +76,49 @@ def centers(x, groups, weighted):
         out.append(c)
     return out, images
 
-def energy(name, c):
+def coordinates(name, c):
     if name == 'pull':
-        d = sub(c[1], c[0]); r = norm(d)
-        return 2.0 * (r - 6.0) ** 2 + 0.3 * d[2]
+        d = sub(c[1], c[0])
+        return [norm(d)] + d
     if name == 'bend':
         u = sub(c[0], c[1]); v = sub(c[2], c[1])
-        t = math.atan2(norm(cross(u, v)), dot(u, v))
-        return 5.0 * (t - 2.0) ** 2
+        return [math.atan2(norm(cross(u, v)), dot(u, v))]
     b0 = sub(c[0], c[1]); b1 = sub(c[2], c[1]); b2 = sub(c[3], c[2])
     a = [v / norm(b1) for v in b1]
     v = sub(b0, [dot(b0, a) * k for k in a]); w = sub(b2, [dot(b2, a) * k for k in a])
-    t = math.atan2(dot(cross(a, v), w), dot(v, w))
-    return 1.0 * (1 + math.cos(t - 0.5))
+    return [math.atan2(dot(cross(a, v), w), dot(v, w))]
+
+def value(name, q):
+    if name == 'pull':
+        return 2.0 * (q[0] - 6.0) ** 2 + 0.3 * q[3]
+    if name == 'bend':
+        return 5.0 * (q[0] - 2.0) ** 2
+    return 1.0 * (1 + math.cos(q[0] - 0.5))
+
+def energy(name, c):
+    return value(name, coordinates(name, c))
+
+if pull:
+    got = [float(v) for v in [l for l in open(sys.argv[3]) if not l.startswith('#')][0].split()[2:]]
+    want = []; h = 1e-5
+    for name, groups, weighted in terms:
+        c = centers(X, groups, weighted)[0]
+        q = coordinates(name, c)
+        want += q + [value(name, q)]
+        if name == 'pull':
+            force = []
+            for k in range(3):
+                e = []
+                for step in (h, -h):
+                    moved = [p[:] for p in c]; moved[1][k] += step
+                    e.append(energy(name, moved))
+                force.append(-(e[0] - e[1]) / (2 * h))
+            want += [dot(force, q[1:]) / q[0]] + force
+        else:
+            want += [-(value(name, [q[0] + h]) - value(name, [q[0] - h])) / (2 * h)]
+    worst = max(abs(a - b) for a, b in zip(got, want))
+    print('%d columns: %s' % (len(got), 'ok' if len(got) == len(want) and worst < 2e-6 else 'FAILED %.2e %s %s' % (worst, got, want)))
+    sys.exit()
 
 
 for name, groups, weighted in terms:

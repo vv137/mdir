@@ -650,12 +650,6 @@ Lowering::emitReductions(OpBuilder &builder, Location loc,
         arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OGT, lhs, rhs);
     return arith::SelectOp::create(b, loc, larger, lhs, rhs);
   };
-  auto createZeros = [&](OpBuilder &b) {
-    SmallVector<Value> zeros;
-    for (Type type : types)
-      zeros.push_back(createZero(b, loc, type));
-    return zeros;
-  };
 
   // A block of threads for each part of the particles, and one block for
   // the results of the parts. A thread adds up the particles that it takes,
@@ -692,34 +686,68 @@ Lowering::emitReductions(OpBuilder &builder, Location loc,
     gpu::TerminatorOp::create(kernel, loc);
     bringIn(launch);
   };
+  // The sums go to the kernels in runs whose buffers fit a budget of
+  // parameters: a kernel passes each buffer as its descriptor, two
+  // pointers, an offset, and a size and a stride for each dimension, and
+  // PTX before ISA 8.1 allows 4352 bytes of parameters. A loop with many
+  // sums (the centers of a dihedral, its energy and its output together)
+  // takes more than one pair of kernels; each sum keeps its tree.
+  auto getDescriptorBytes = [](Value buffer) -> int64_t {
+    return 8 * (3 + 2 * cast<MemRefType>(buffer.getType()).getRank());
+  };
+  const int64_t budget = 3072;
+  SmallVector<std::pair<size_t, size_t>> runs;
+  for (size_t first = 0, e = contributions.size(); first != e;) {
+    size_t last = first;
+    int64_t bytes = 0;
+    while (last != e) {
+      int64_t more = getDescriptorBytes(contributions[last]) +
+                     getDescriptorBytes(partials[last]);
+      if (last != first && bytes + more > budget)
+        break;
+      bytes += more;
+      ++last;
+    }
+    runs.push_back({first, last});
+    first = last;
+  }
+
   Value parts = arith::MinSIOp::create(
       builder, loc, createIndex(builder, loc, blockSize),
       createGroups(builder, loc, size, 4 * blockSize));
-  launchBlocks(parts, [&](OpBuilder &b, Value block, Value thread) {
-    Value threads = createIndex(b, loc, blockSize);
-    Value first = arith::AddIOp::create(
-        b, loc, arith::MulIOp::create(b, loc, block, threads), thread);
-    Value stride = arith::MulIOp::create(b, loc, parts, threads);
-    auto loop = scf::ForOp::create(
-        b, loc, first, size, stride, createZeros(b),
-        [&](OpBuilder &inner, Location, Value i, ValueRange sums) {
-          SmallVector<Value> next;
-          for (auto [buffer, sum] : llvm::zip(contributions, sums))
-            next.push_back(
-                combine(inner, sum, loadElement(inner, loc, buffer, i)));
-          scf::YieldOp::create(inner, loc, next);
-        });
-    SmallVector<Value> totals;
-    for (Value value : loop.getResults())
-      totals.push_back(reduceBlock(b, value));
-    Value leader = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq,
-                                         thread, createIndex(b, loc, 0));
-    scf::IfOp::create(b, loc, leader, [&](OpBuilder &then, Location) {
-      for (auto [total, partial] : llvm::zip(totals, partials))
-        storeElement(then, loc, total, partial, block);
-      scf::YieldOp::create(then, loc);
+  for (const auto &run : runs) {
+    size_t begin = run.first, end = run.second;
+    ArrayRef<Value> those = contributions.slice(begin, end - begin);
+    ArrayRef<Value> into = partials.slice(begin, end - begin);
+    launchBlocks(parts, [&](OpBuilder &b, Value block, Value thread) {
+      Value threads = createIndex(b, loc, blockSize);
+      Value first = arith::AddIOp::create(
+          b, loc, arith::MulIOp::create(b, loc, block, threads), thread);
+      Value stride = arith::MulIOp::create(b, loc, parts, threads);
+      SmallVector<Value> zeros;
+      for (Type type : ArrayRef<Type>(types).slice(begin, end - begin))
+        zeros.push_back(createZero(b, loc, type));
+      auto loop = scf::ForOp::create(
+          b, loc, first, size, stride, zeros,
+          [&](OpBuilder &inner, Location, Value i, ValueRange sums) {
+            SmallVector<Value> next;
+            for (auto [buffer, sum] : llvm::zip(those, sums))
+              next.push_back(
+                  combine(inner, sum, loadElement(inner, loc, buffer, i)));
+            scf::YieldOp::create(inner, loc, next);
+          });
+      SmallVector<Value> totals;
+      for (Value value : loop.getResults())
+        totals.push_back(reduceBlock(b, value));
+      Value leader = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq,
+                                           thread, createIndex(b, loc, 0));
+      scf::IfOp::create(b, loc, leader, [&](OpBuilder &then, Location) {
+        for (auto [total, partial] : llvm::zip(totals, into))
+          storeElement(then, loc, total, partial, block);
+        scf::YieldOp::create(then, loc);
+      });
     });
-  });
+  }
 
   // Where the results arrive. Numbers of one type are next to one another,
   // so that one copy brings them to the host.
@@ -757,38 +785,42 @@ Lowering::emitReductions(OpBuilder &builder, Location loc,
     places[index].offset += base[element];
   }
 
-  // One block for the results of the parts.
-  launchBlocks(createIndex(builder, loc, 1), [&](OpBuilder &b, Value,
-                                                 Value thread) {
-    Value inside = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult,
-                                         thread, parts);
-    Value slot = arith::SelectOp::create(b, loc, inside, thread,
-                                         createIndex(b, loc, 0));
-    SmallVector<Value> totals;
-    for (auto [partial, type] : llvm::zip(partials, types)) {
-      Value value = loadElement(b, loc, partial, slot);
-      Value nothing = createZero(b, loc, type);
-      value = arith::SelectOp::create(b, loc, inside, value, nothing);
-      totals.push_back(reduceBlock(b, value));
-    }
-    Value leader = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq,
-                                         thread, createIndex(b, loc, 0));
-    scf::IfOp::create(b, loc, leader, [&](OpBuilder &then, Location) {
-      for (auto [index, place] : llvm::enumerate(places)) {
-        Value result = totals[index];
-        for (int64_t c = 0; c != place.count; ++c) {
-          Value number = isa<VectorType>(result.getType())
-                             ? Value(vector::ExtractOp::create(then, loc,
-                                                               result, c))
-                             : result;
-          memref::StoreOp::create(
-              then, loc, number, place.cell.device,
-              ValueRange{createIndex(then, loc, place.offset + c)});
-        }
+  // One block for the results of the parts, for each run of sums.
+  for (const auto &run : runs) {
+    size_t begin = run.first, end = run.second;
+    launchBlocks(createIndex(builder, loc, 1), [&](OpBuilder &b, Value,
+                                                   Value thread) {
+      Value inside = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult,
+                                           thread, parts);
+      Value slot = arith::SelectOp::create(b, loc, inside, thread,
+                                           createIndex(b, loc, 0));
+      SmallVector<Value> totals;
+      for (size_t index = begin; index != end; ++index) {
+        Value value = loadElement(b, loc, partials[index], slot);
+        Value nothing = createZero(b, loc, types[index]);
+        value = arith::SelectOp::create(b, loc, inside, value, nothing);
+        totals.push_back(reduceBlock(b, value));
       }
-      scf::YieldOp::create(then, loc);
+      Value leader = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq,
+                                           thread, createIndex(b, loc, 0));
+      scf::IfOp::create(b, loc, leader, [&](OpBuilder &then, Location) {
+        for (size_t index = begin; index != end; ++index) {
+          const Place &place = places[index];
+          Value result = totals[index - begin];
+          for (int64_t c = 0; c != place.count; ++c) {
+            Value number = isa<VectorType>(result.getType())
+                               ? Value(vector::ExtractOp::create(then, loc,
+                                                                 result, c))
+                               : result;
+            memref::StoreOp::create(
+                then, loc, number, place.cell.device,
+                ValueRange{createIndex(then, loc, place.offset + c)});
+          }
+        }
+        scf::YieldOp::create(then, loc);
+      });
     });
-  });
+  }
 
   // The copies and the loads of the results are marked, so that they can
   // be moved to where the host first needs them.

@@ -91,6 +91,12 @@ against pmemd.cuda (the user, 2026-10-01); the comparison on a protein
   in all of them.
 - Every method that MDIR implements, with its equations as implemented
   (TODO: keep the design documents complete in TeX as features land).
+- Usage (TODO, the user, 2026-10-03): how a researcher runs MDIR, beside
+  the reference of the control file (Appendix A): building and checking an
+  installation, the stages of the standard pipeline as control files,
+  inputs from Amber, GROMACS, and CHARMM, the outputs and how to read them,
+  continuing a run on a cluster (U1 to U4), the choice of target and
+  precision, and terms given by expressions.
 - The design: the levels of the IR (`md`, `dyn`, `md_exec`), compilation of
   each run before it runs, the lowerings to CPUs and GPUs, the runtime.
 - The neighbor algorithms in detail (Done, Section 4): the matrix (neighbors-m0.md)
@@ -155,6 +161,7 @@ cluster needs.
 | U9 | Control files of the standard pipeline from `mdir template` | P2 | The stages of `examples/` (minimization, equilibration, constant pressure with restraints, production) as kinds of `template`, not as a new command: no aliases before a release |
 | U10 | Distribution | P2 | After the release of M1: an Apptainer or OCI image. A container needs the cubin of its kernels, not PTX that a driver older than the toolkit cannot compile |
 | U11 | Many runs of one plan (as `-multidir`) | Later | With `ensemble` |
+| U12 | Outputs as one system | P1 | TODO (the user, 2026-10-03): the outputs grew one keyword at a time (energies in the log, the trajectory in DCD or XTC, the checkpoint, the restart file, the coordinates of pulling of D145), each with its own interval, header, units, and way of continuing. Give them one form: a writer of files of columns shared by the energies and the pulling (a header of names and units, precision, continuation by step), the intervals of each output in one place, the log in a file (U5), and the list of outputs in `mdir check` (U6) |
 
 Not taken: `target = "AUTO"` (a check would pass on one machine and fail
 on another, and a large run could fall back to the CPU without a word; a
@@ -174,7 +181,7 @@ they are needed:
 | F2 | Triclinic cells (the truncated octahedron and the rhombic dodecahedron of Amber and GROMACS, the hexagonal cells of CHARMM-GUI) | Done but the rates (D123, D125 to D127, [triclinic-m2.md](triclinic-m2.md)): read, reduced, and run on the CPU and on the device, with the matrix and the groups, at constant volume and pressure; validated against sander, GROMACS, and CHARMM 51b1 on a hexagonal cell. First rates (2026-10-02, RTX 3090, groups with a dual list, mixed precision): ubiquitin in OPC 12 Å beyond the protein, tleap's octahedron of 25,035 particles at 587 ns/day against its rectangular box of 26,031 at 581, 3% more time a particle for the minimum image and the lattice shifts, and only 4% fewer particles for this solute. Next: P5 (pmemd.cuda and GROMACS on the same systems, cells of the same least distance between images) |
 | F3 | CHARMM force fields | In part: from a topology of GROMACS (D121) and from the files of CHARMM (D122), with triclinic cells (D127), validated against CHARMM 51b1. Missing: VSWITCH, lone pairs, the Drude model, LJ-PME |
 | F4 | Outputs for analysis: frames of the velocities, XTC, the pressure tensor and the area in the log, observables in H5MD | In part: XTC (D141), with `trajectory_format` from the extension. Missing: frames of the velocities, which the test of equipartition needs, the pressure tensor and the area in the log, observables in H5MD |
-| F5 | Restraints beyond positions: distance, angle, dihedral, flat-bottomed | Done (D136): terms over tuples given by expressions, [[energy.bond]], [[energy.angle]], and [[energy.dihedral]], as the custom forces of OpenMM; positional restraints keep their own table (D74). Over the centers of groups as well (D139), the restraints of pulling. Next: terms in the positions of single particles (external); a reference that moves with time and the coordinate written at intervals |
+| F5 | Restraints beyond positions: distance, angle, dihedral, flat-bottomed | Done (D136): terms over tuples given by expressions, [[energy.bond]], [[energy.angle]], and [[energy.dihedral]], as the custom forces of OpenMM; positional restraints keep their own table (D74). Over the centers of groups as well (D139), the restraints of pulling. A reference that moves with the time `t` and the coordinates, energies, and forces of the terms over centers written at every energy (D145). Next: terms in the positions of single particles (external) |
 | F6 | Coarse-grained models: tabulated potentials, Martini from GROMACS topologies, DPD | Missing; part of the purpose from the start |
 | F7 | Free energy and enhanced sampling: alchemical $\lambda$ with $dH/d\lambda$ (D2), collective variables, replica exchange | Not designed; neither [future-architecture-plan.md](future-architecture-plan.md) nor this roadmap has a design. The architecture names `ensemble` and replica exchange as a driver event (P4) |
 | F8 | Learned potentials | Section 7 |
