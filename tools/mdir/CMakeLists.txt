@@ -13,6 +13,7 @@ add_llvm_executable(mdir
   BugReport.cpp
   Check.cpp
   Checkpoint.cpp
+  Manifest.cpp
   Doctor.cpp
   Run.cpp
   )
@@ -51,6 +52,7 @@ set_target_properties(mdir PROPERTIES ENABLE_EXPORTS ON)
 
 target_compile_definitions(mdir PRIVATE
   MDIR_LLVM_LIBRARY_DIR="${LLVM_LIBRARY_DIR}"
+  MDIR_CUDA_VERSION="${MDIR_CUDA_VERSION}"
   MDIR_CUDA_ROOT="${MDIR_CUDA_ROOT}"
   MDIR_HAS_CUDA=$<BOOL:${MDIR_CUDA_FOUND}>
   MDIR_VERSION="${PROJECT_VERSION}"

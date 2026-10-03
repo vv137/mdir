@@ -87,6 +87,7 @@ regard to case.
 | | `include_paths`, `defines` | With a GROMACS topology: the directories of `#include` and the names that `#define` gives. |
 | | `checkpoint` | The checkpoint of an earlier run, whose state the run begins from, at its step and time (D129), taking its cell (and warning on the standard error if the input has another); the input's cell still sets the grid of PME and the reference of restraints. One of a minimization gives the positions only, and the run begins at step 0. |
 | `[output]` | `log` | The log in a file as well as on the standard output: every line that the run prints there, from its start; a continued run appends to it (D149). |
+| | `manifest` | Optional execution history in version-1 JSON Lines (D168): build and input hashes, resolved settings, device, warnings, and start/end events. Disabled if omitted; fresh runs back up an existing file, continuations append history, and `--no-append` uses the part filename. |
 | | `energy` | The rows of the log as a file of columns: a line of names, a line of units, and a row for each output (D149). |
 | | `trajectory` | Positions, in DCD (`.dcd`, Å) or in the compressed XTC of GROMACS (`.xtc`, nm to a thousandth), by the extension of the name (D141). |
 | | `trajectory_format` | `AUTO` (the default, from the extension), `DCD`, or `XTC`. |
@@ -260,7 +261,7 @@ Its schema begins at version 1:
 | `system.cell_angstrom` | The reduced cell's `diagonal` and `tilt` ($b_x$, $c_x$, $c_y$) in Å; `null` without periodicity |
 | `run` | Kind, ensemble, method, steps, `time_step_ps`, `duration_ns`, `temperature_kelvin`, `pressure_atm`, thermostat and barostat coupling, cutoff, PME, constraints, execution, and input checkpoint path |
 | `run.pme` | `null` when disabled; otherwise `grid_points` (three nulls when automatic), `beta_inverse_angstrom` (`null` when automatic), `order`, `max_spacing_angstrom`, and `tolerance` |
-| `outputs` | Entries with `kind` (`log`, `energy`, `pull`, `trajectory`, `checkpoint`), `path`, `format`, `interval_steps`, `enabled`, `at_end`, `count` and `count_of` (`rows`, `frames`, `checkpoints`; `count` is null where the run decides, as in a minimization), `exists`, and `backup`, the name under which a run keeps the file that exists (D149), or null; `path` is null for an unconfigured file, and for the log when it goes to standard output only |
+| `outputs` | Entries with `kind` (`log`, `energy`, `pull`, `trajectory`, `checkpoint`, `manifest`), `path`, `format`, `interval_steps`, `enabled`, `at_end`, `count` and `count_of` (`rows`, `frames`, `checkpoints`; `count` is null where the run decides, as in a minimization), `exists`, and `backup`, the name under which a run keeps the file that exists (D149), or null; `path` is null for an unconfigured file, and for the log when it goes to standard output only |
 | `warnings` | Objects with `code` and `message`: `backup_limit`, `constant_expression`, `empty_selection`, `flexible_water`, `long_time_step`, `unused_parameter`, `fixed_rebuild_interval`, `no_checkpoint`, `no_energies`, `missing_input_checkpoint`, `hdf5_unavailable`, or `gpu_unavailable` |
 | `notes` | Objects with `code` and `message` for what a run will do that needs no change: `output_backup`, an output that exists and the name it will be kept under |
 | `errors` | Error messages; empty on success. On failure, `system`, `run`, and `outputs` are absent |
@@ -270,7 +271,9 @@ pressure is null without a barostat. Temperature denotes the bath, or the
 temperature used if initial velocities must be drawn. An input checkpoint
 path is reported but its contents are not inspected. The output intervals
 describe the schedule only when `enabled` is true, and `at_end` takes
-precedence over the interval for minimization checkpoints.
+precedence over the interval for minimization checkpoints. The manifest
+has interval 0 and a null count: its events occur at execution start and
+end, independently of the simulation schedule.
 
 ### 1.5 Installation doctor
 
@@ -530,7 +533,7 @@ mdir run --continue --max-walltime 23:50 md.toml
 | Option | What it does |
 |---|---|
 | `--continue` | Continues the run from the checkpoint of `[output]` until it has taken `steps` steps from the step it began at (D129). Without a checkpoint the run begins; with one that holds the last step it says that the run is complete and exits with 0. It refuses a checkpoint of another time step or seed, and steps that remain if they are not whole intervals of the outputs and of the coupling. Raising `steps` extends a run. |
-| `--no-append` | With `--continue`, writes the outputs that follow, the log, the files of columns, and the frames, to `<name>.partNNNN<ext>`, NNNN the part of the run; later continuations append to the files of that part, which the checkpoint records. Without it, the outputs are appended to the files of the run after what was written past the checkpoint is removed (D130, D149). A run without `--continue` keeps the outputs of an earlier run as `#<name>.<n>#` (Section 2.8). |
+| `--no-append` | With `--continue`, writes the outputs that follow, the log, manifest, files of columns, and frames, to `<name>.partNNNN<ext>`, NNNN the part of the run; later continuations append to the files of that part, which the checkpoint records. Without it, the outputs are appended to the files of the run after what was written past the checkpoint is removed (D130, D149). A run without `--continue` keeps the outputs of an earlier run as `#<name>.<n>#` (Section 2.8). |
 | `--max-walltime <time>` | Stops at the last checkpoint that leaves time, within `<time>` from the start of `mdir`, for one more interval between checkpoints as long as the longest so far (D131). In hours (`23.5`) or as `H:MM[:SS]`. |
 
 SIGTERM and SIGINT ask a run of dynamics that writes checkpoints to stop
@@ -554,7 +557,7 @@ run it began from is not changed.
 
 ### 2.8 The outputs of a run
 
-A run writes the files that `[output]` names, each at the interval given
+A run writes the files that `[output]` names, at the interval given
 there, and nothing else (D149). The names are relative to the control
 file. The checkpoint is the only file that a run continues or begins from;
 there is no restart file besides it.
@@ -565,9 +568,10 @@ there is no restart file besides it.
 | The energies | `energy` | every `energy_interval` steps: the rows of the log | columns |
 | The terms over centers | `pull` | every `energy_interval` steps (D145) | columns |
 | The trajectory | `trajectory`, `trajectory_format` | every `trajectory_interval` steps | DCD or XTC (D141) |
+| The manifest | `manifest` | at execution start and end | JSON Lines (D168) |
 | The checkpoint | `checkpoint` | every `checkpoint_interval` steps, and at the end of a minimization; the one before as `<checkpoint>.prev` (D132) | H5MD (Section 2.6) |
 
-The intervals are those of the compiled schedule (Section 2.2): the files
+The manifest has no step interval. The other intervals are those of the compiled schedule (Section 2.2): the files
 of columns take the interval of the rows of the log, at whose steps the
 energies are computed, and the frames and the checkpoints come at
 multiples of it.
@@ -578,12 +582,35 @@ It records executions, not trajectory frames. A `start` event precedes
 execution and an `end` event records `completed` or `stopped`; a start
 without an end means completion was not recorded (for example, a crash
 or a forced kill). Each event has an `invocation` number local to the file.
-The start records the build, SHA-256 and byte size of the control file and
-inputs (including GROMACS includes actually read), target, precision,
-threads, device identity, output paths, starting and requested ending
-steps, and the checkpoint part. UTC timestamps and elapsed seconds use
-wall and monotonic clocks respectively. Input hashes are captured before
-compilation; input files must remain unchanged while the driver reads them.
+The [JSON schema](run-manifest.schema.json) defines every event. The start
+records the build (version, git commit, dirty flag, LLVM/MLIR and CUDA
+toolkit versions), SHA-256 and byte size of each input, target, precision,
+threads, output paths, starting and requested ending steps, and the
+checkpoint part. Inputs include the selected restart checkpoint, CHARMM
+parameter files, and GROMACS includes actually read; inactive includes
+are absent. Input paths are absolute. No hostname is recorded.
+
+`effective` gives the seed as a decimal string (preserving all 64 bits),
+time step in ps, resolved trajectory format (null without frames), the
+requested neighbor kind and the kinds observed immediately before
+lowering, the program's state/force/mass/parameter buffer types, and PME's
+grid, spline order, and beta in inverse Å (null without PME). The actual
+pass pipeline and `system.warnings` are recorded. A custom `MDIR_PIPELINE`
+that omits the normal lowering passes may leave the observed neighbor
+kinds empty; the buffer types describe the driver's program interface.
+
+`device` is null on CPU. On CUDA it gives the visible device index, name,
+UUID in hexadecimal, compute capability, and driver API version. MDIR
+uses the driver API; `runtime_api_version` is null unless a CUDA runtime
+API is actually loaded. API versions use CUDA's integer representation
+(e.g. 13040 for 13.4). UTC timestamps use the wall clock;
+`compile_seconds` and `elapsed_seconds` use monotonic clocks, with elapsed
+time measured from the start record through completion or a checkpoint
+stop, excluding compilation. The terminal `step` is the completed step,
+or the last reported minimization step. `reason` is empty on completion,
+or the stop reason (`SIGTERM`, `SIGINT`, or `the wall time`). Input hashes
+are captured before compilation; input files must remain unchanged while
+the driver reads them.
 
 A fresh run uses the same numbered backups as other outputs. `--continue`
 appends execution history without cutting it to the checkpoint, including
@@ -624,15 +651,16 @@ that was not interrupted:
 | Trajectory | Keeps the frames that the checkpoint counts and appends (D130) |
 | Log file | Appends to the whole file, which records what happened, the steps past `s` that are run again included, after the line `MDIR: continues the run after step s` |
 | Checkpoint | Replaced at the next interval, as always |
+| Manifest | Appends execution history, including attempts past the checkpoint; never cuts history to a simulation step |
 
-With `--no-append` each of the first three goes to `<name>.partNNNN<ext>`
+With `--no-append` the log, files of columns, trajectory, and manifest go to `<name>.partNNNN<ext>`
 instead, NNNN the part of the run, and later continuations append to the
 files of that part, which the checkpoint records (`outputs_part`, 0 for
 the names of the control file).
 
 **Backups.** `mdir run` without `--continue` keeps the outputs of an
 earlier run that has the same names: before it writes, it renames each
-file that exists (log, energies, terms over centers, trajectory,
+file that exists (log, manifest, energies, terms over centers, trajectory,
 checkpoint, and the checkpoint before the last, `.prev`) to
 `#<name>.<n>#` in its directory, n the least number from 1 that no file
 takes, and the log says so (`MDIR: backed up 'md.log' as '#md.log.1#'`).
@@ -640,7 +668,8 @@ It keeps at most 99 backups of a file; when a file has them all, the run
 stops before it writes or moves any file. Under `--continue` the files
 belong to the run: they are continued from its checkpoint, or written
 anew when the run begins without one, as after a job that stopped before
-its first checkpoint, and none is backed up. Two outputs may not have one
+its first checkpoint, and none is backed up. The manifest preserves the
+history of those attempts by appending even without a checkpoint. Two outputs may not have one
 name, nor an output the name of an input.
 
 **`mdir check`** (D151, Section 1.4) lists these outputs: each file with

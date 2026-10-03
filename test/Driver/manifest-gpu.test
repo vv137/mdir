@@ -1,0 +1,3 @@
+# Device identity is that of the runtime's current CUDA context (D168).
+# REQUIRES: cuda, hdf5
+# RUN: %python %S/Inputs/manifest.py gpu %S %t mdir

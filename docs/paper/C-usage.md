@@ -306,16 +306,35 @@ output as well.
 | Output | Where | Reference |
 |---|---|---|
 | The log | The standard output, and the file `log` if given: the terms at the start, a row every `energy_interval` steps, and a summary | Section 6.5, D149 |
+| The manifest | Optional `manifest`, JSON Lines with execution provenance and start/end events | D168, docs/driver-m0.md Section 2.8 |
 | The energies | `energy`, a file of columns at the rows of the log | D149 |
 | The coordinates of pulling | `pull`, a file of columns at the rows of the log (C.7) | D145, D149 |
 | The trajectory | `trajectory`, DCD (Å) or XTC (nm, to a thousandth) by its extension, every `trajectory_interval` steps | D141 |
 | The checkpoint | `checkpoint`, H5MD with all numbers in 64 bits, every `checkpoint_interval` steps, the one before kept as `<checkpoint>.prev`; `mdir checkpoint --print=positions FILE` (or `velocities`, `forces`) prints a field in the order of the input, in nm, nm/ps, or kJ/mol/nm | D26, D132, docs/driver-m0.md Section 2.6 |
 
+For execution provenance, add `manifest = "run.jsonl"` to `[output]`
+(D168). It is off by default. The start event records the build, input
+SHA-256 hashes (including topology includes), resolved seed, trajectory
+format, neighbor kinds, buffer precision and PME parameters, execution
+settings, CUDA device identity and versions, and warnings. No hostname is
+recorded. An end event records completion or a checkpoint stop, its step,
+UTC time, and elapsed seconds. A start without an end means completion
+was not recorded; a crash or a forced kill can leave one.
+
+A continued run appends the entire manifest history, including attempts
+before its first checkpoint; `--no-append` uses the part filename. A
+fresh run backs it up by the rule below. An already complete run changes
+nothing. A damaged history is refused on append; choose a new manifest
+path to preserve it for diagnosis. The version-1 event format is in
+[the JSON schema](../run-manifest.schema.json). The manifest records
+provenance; it does not replace a checkpoint or check restart compatibility.
+
 A file of columns begins with a line of names and a line of units, one
 for each column (`-` for none), and has a row for each output, the step
 first. `mdir check` lists the outputs, their intervals, and how many rows,
 frames, or checkpoints the run writes (D151). A continued run (C.5) cuts
-each file to its checkpoint and appends; a run that is not continued
+column files and trajectories to its checkpoint and appends, while the
+log and manifest retain their whole history; a run that is not continued
 keeps a file that exists as `#<name>.<n>#` before it writes its own, as
 GROMACS does, and says so in the log:
 

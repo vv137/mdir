@@ -4,12 +4,14 @@
 // See docs/driver-m0.md.
 
 #include "Commands.h"
+#include "Manifest.h"
 
 #include "mdir/Conversion/Passes.h"
 #include "mdir/Dialect/Dyn/DynDialect.h"
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Dialect/MD/Transforms/Passes.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
+#include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
 #include "mdir/Driver/Builder.h"
@@ -28,6 +30,8 @@
 #include "mlir/InitAllPasses.h"
 #include "mlir/Parser/Parser.h"
 #include "mlir/Pass/PassManager.h"
+#include "mlir/Pass/PassInstrumentation.h"
+#include <set>
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Target/LLVMIR/Dialect/All.h"
 #include "llvm/Support/CommandLine.h"
@@ -252,6 +256,25 @@ static std::string getPartPath(StringRef path, int64_t part) {
       .str();
 }
 
+/// Observe the resolved structure kinds immediately before lowering (D168).
+/// A requested GROUPS structure may stay a matrix if its loops require one.
+class ManifestNeighbors : public mlir::PassInstrumentation {
+public:
+  explicit ManifestNeighbors(std::set<std::string> &kinds) : kinds(kinds) {}
+  void runBeforePass(mlir::Pass *pass, mlir::Operation *operation) override {
+    if (pass->getArgument() != "convert-md-exec-to-gpu" &&
+        pass->getArgument() != "convert-md-exec-to-loops")
+      return;
+    auto add = [&](md_exec::NeighborKind kind) {
+      kinds.insert(kind == md_exec::NeighborKind::Groups ? "groups" : "matrix");
+    };
+    operation->walk([&](md_exec::EmptyNeighborsOp op) { add(op.getKind()); });
+    operation->walk([&](md_exec::BuildNeighborsOp op) { add(op.getKind()); });
+  }
+private:
+  std::set<std::string> &kinds;
+};
+
 int mdir::tool::runControl(StringRef controlFile, Emit emit,
                            const char *argv0, const RunOptions &options) {
   auto began = std::chrono::steady_clock::now();
@@ -266,6 +289,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // What the run writes (D149). Its log goes to the standard output from
   // here, and to the file of [output] as well once that is open.
   Output output;
+  Manifest manifest;
+  llvm::json::Array manifestInputs;
 
   // A stop lands on a checkpoint, from which the run continues exactly
   // (D131); a run without checkpoints has nowhere to stop.
@@ -364,6 +389,14 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     return fail(system.takeError());
   for (const auto &[code, message] : system->warnings)
     warn(message);
+
+  InputPaths inputPaths = getManifestInputs(controlFile, *control, *system);
+  if (!control->manifestFile.empty() && emit == Emit::Run) {
+    auto hashes = hashManifestInputs(inputPaths);
+    if (!hashes)
+      return fail(hashes.takeError());
+    manifestInputs = std::move(*hashes);
+  }
 
   system->referencePositions = system->positions;
   bool writesCheckpoints = control->checkpointPeriod > 0;
@@ -466,6 +499,21 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     return outputsPart > 0 ? getPartPath(name, outputsPart) : name;
   };
 
+  if (!control->manifestFile.empty()) {
+    std::vector<std::string> otherOutputs;
+    for (const auto &path : {control->logFile, control->energyFile,
+                             control->pullFile, control->trajectoryFile})
+      if (!path.empty())
+        otherOutputs.push_back(getOutputPath(path));
+    if (!control->restartOutput.empty()) {
+      otherOutputs.push_back(control->restartOutput);
+      otherOutputs.push_back(getPreviousCheckpointPath(control->restartOutput));
+    }
+    if (llvm::Error error = checkManifestPath(getOutputPath(control->manifestFile),
+                                              inputPaths, otherOutputs))
+      return fail(std::move(error));
+  }
+
   auto program = buildProgram(*control, *system);
   if (!program)
     return fail(program.takeError());
@@ -511,9 +559,12 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
 
   // Passes on functions are nested where they occur, as on the command
   // line of mlir-opt.
+  std::set<std::string> neighborKinds;
   mlir::PassManager manager(&context,
                             mlir::ModuleOp::getOperationName(),
                             mlir::PassManager::Nesting::Implicit);
+  if (!control->manifestFile.empty())
+    manager.addInstrumentation(std::make_unique<ManifestNeighbors>(neighborKinds));
   std::string pipeline = getPipeline(*control, *program);
   // MDIR_PIPELINE replaces the pipeline, to try another order of passes or
   // to stop part of the way.
@@ -560,7 +611,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // those of a continued run are its own.
   if (!options.continues) {
     std::vector<std::string> written = {control->logFile, control->energyFile,
-                                        control->pullFile};
+                                        control->pullFile, control->manifestFile};
     if (control->framePeriod > 0)
       written.push_back(control->trajectoryFile);
     if (control->checkpointPeriod > 0) {
@@ -817,6 +868,64 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   arguments.push_back(&timestep);
   arguments.push_back(&firstStep);
 
+  if (!control->manifestFile.empty()) {
+    auto device = getManifestDevice(control->target);
+    if (!device)
+      return fail(device.takeError());
+    llvm::json::Object outputs;
+    for (auto [name, path] : {
+        std::pair<const char *, std::string>{"log", control->logFile},
+        {"energy", control->energyFile}, {"pull", control->pullFile},
+        {"trajectory", control->framePeriod > 0 ? control->trajectoryFile : ""},
+        {"manifest", control->manifestFile}})
+      if (!path.empty())
+        outputs[name] = getOutputPath(path);
+    if (!control->restartOutput.empty())
+      outputs["checkpoint"] = control->restartOutput;
+    auto element = [](Element type) {
+      return type == Element::F32 ? "f32" : "f64";
+    };
+    llvm::json::Array neighbors, warnings;
+    for (const auto &kind : neighborKinds)
+      neighbors.push_back(kind);
+    for (const auto &[code, message] : system->warnings)
+      warnings.push_back(llvm::json::Object{{"code", code}, {"message", message}});
+    llvm::json::Value pme = nullptr;
+    if (program->pme)
+      pme = llvm::json::Object{{"beta_inverse_angstrom", program->pmeBeta * units::length},
+          {"grid", llvm::json::Array{program->pmeGrid[0], program->pmeGrid[1],
+                                    program->pmeGrid[2]}},
+          {"order", control->pmeOrder}};
+    llvm::json::Object effective{
+        {"seed", std::to_string(control->seed)}, {"time_step_ps", control->timestep},
+        {"trajectory_format", control->framePeriod == 0 ? llvm::json::Value(nullptr) :
+            llvm::json::Value(control->trajectoryFormat == TrajectoryFormat::XTC ? "XTC" : "DCD")},
+        {"neighbor_structure_requested",
+         control->neighborStructure == NeighborStructure::Groups ? "groups" : "matrix"},
+        {"neighbor_structures", std::move(neighbors)},
+        {"buffer_precision", llvm::json::Object{{"state", element(program->state)},
+            {"force", element(program->force)}, {"mass", element(program->mass)},
+            {"parameter", element(program->parameter)}}}, {"pme", std::move(pme)}};
+    llvm::json::Object metadata{
+        {"build", getManifestBuild()}, {"effective", std::move(effective)},
+        {"warnings", std::move(warnings)}, {"pipeline", pipeline},
+        {"inputs", std::move(manifestInputs)},
+        {"target", control->target == Target::GPU ? "gpu" : "cpu"},
+        {"precision", control->precision == Precision::Double ? "double" :
+                      control->precision == Precision::Mixed ? "mixed" : "single"},
+        {"threads", control->threads}, {"device", std::move(*device)},
+        {"outputs", std::move(outputs)}, {"first_step", firstStep},
+        {"requested_end_step", firstStep + control->numSteps},
+        {"part", part}, {"continued", options.continues},
+        {"compile_seconds", compileTime}};
+    if (llvm::Error error = manifest.start(getOutputPath(control->manifestFile),
+                                            options.continues, std::move(metadata)))
+      return fail(std::move(error));
+    output.recordStop = [&](int64_t step, const char *reason) {
+      return manifest.finish("stopped", step, reason);
+    };
+  }
+
   output.state = program->state;
   output.force = program->force;
   output.firstStep = firstStep;
@@ -1030,6 +1139,11 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                        .count();
   if (output.trajectory)
     output.trajectory->close();
+  if (llvm::Error error = manifest.finish("completed", control->minimize
+                                              ? output.lastMinimizationStep
+                                              : output.endStep))
+    return fail(std::move(error));
+
 
   output.log.print("MDIR: ran in %.2f s", runTime);
   if (!control->minimize && control->numSteps > 0 && runTime > 0.0) {

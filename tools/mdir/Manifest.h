@@ -1,0 +1,41 @@
+// Optional execution provenance (D168).
+#ifndef MDIR_TOOL_MANIFEST_H
+#define MDIR_TOOL_MANIFEST_H
+
+#include "mdir/Driver/Control.h"
+#include "mdir/Driver/System.h"
+#include "llvm/Support/JSON.h"
+#include <chrono>
+#include <cstdio>
+
+namespace mdir::tool {
+llvm::json::Object getManifestBuild();
+std::string hashInput(llvm::StringRef data);
+using InputPaths = std::vector<std::pair<std::string, std::string>>;
+InputPaths getManifestInputs(llvm::StringRef controlFile,
+                             const driver::Control &control,
+                             const driver::System &system);
+llvm::Error checkManifestPath(llvm::StringRef path, const InputPaths &inputs,
+                              llvm::ArrayRef<std::string> outputs);
+llvm::Expected<llvm::json::Array> hashManifestInputs(const InputPaths &inputs);
+llvm::Expected<llvm::json::Value> getManifestDevice(driver::Target target);
+
+class Manifest {
+public:
+  Manifest() = default;
+  Manifest(const Manifest &) = delete;
+  Manifest &operator=(const Manifest &) = delete;
+  ~Manifest();
+  llvm::Error start(const std::string &path, bool append,
+                     llvm::json::Object metadata);
+  llvm::Error finish(llvm::StringRef status, int64_t step,
+                      llvm::StringRef reason = "");
+private:
+  llvm::Error write(llvm::json::Object event);
+  std::FILE *file = nullptr;
+  std::string path;
+  int64_t invocation = 1;
+  std::chrono::steady_clock::time_point began;
+};
+} // namespace mdir::tool
+#endif

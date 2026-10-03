@@ -28,6 +28,7 @@ terms and types remain valid.
 | | `include_paths`, `defines` | With a GROMACS topology: the directories of `#include` and the names that `#define` gives. |
 | | `checkpoint` | The checkpoint of an earlier run, whose state the run begins from, at its step and time (D129), taking its cell (and warning on the standard error if the input has another); the input's cell still sets the grid of PME and the reference of restraints. One of a minimization gives the positions only, and the run begins at step 0. |
 | `[output]` | `log` | The log in a file as well as on the standard output: every line that the run prints there, from its start; a continued run appends to it (D149). |
+| | `manifest` | Optional execution history in version-1 JSON Lines (D168): build and input hashes, resolved settings, device, warnings, and start/end events. Disabled if omitted; fresh runs back up an existing file, continuations append history, and `--no-append` uses the part filename. |
 | | `energy` | The rows of the log as a file of columns: a line of names, a line of units, and a row for each output (D149). |
 | | `trajectory` | Positions, in DCD (`.dcd`, Å) or in the compressed XTC of GROMACS (`.xtc`, nm to a thousandth), by the extension of the name (D141). |
 | | `trajectory_format` | `AUTO` (the default, from the extension), `DCD`, or `XTC`. |
@@ -83,6 +84,7 @@ coordinates = "system.inpcrd"   # and the box; the reference of restraints
 #                               # positions
 
 [output]
+# manifest = "run.jsonl"        # execution provenance and continuation history
 log                 = "run.log" # the log as well as on the standard output
 energy              = "run.energy"  # the rows of the log as columns
 trajectory          = "run.dcd" # positions, in DCD or XTC (.xtc)
@@ -199,7 +201,7 @@ before it writes, at most 99 of each (D149):
 | Option | Meaning |
 |---|---|
 | `--continue` | Continues the run from the checkpoint of `[output]` until it has taken its `steps`, counted from the step it began at; without a checkpoint the run begins, and a complete run exits with 0 (D129). |
-| `--no-append` | With `--continue`, writes the outputs that follow (the log, the files of columns, the frames) to `<name>.partNNNN<ext>` rather than appending them to the files of the run, which are first cut to the checkpoint (D130, D149). |
+| `--no-append` | With `--continue`, writes the outputs that follow (the log, manifest, files of columns, and frames) to `<name>.partNNNN<ext>` rather than appending them to the files of the run, which are first cut to the checkpoint (D130, D149). |
 | `--max-walltime <time>` | Stops at the last checkpoint that leaves time for one more interval between checkpoints, in hours or as `H:MM[:SS]` (D131). |
 
 SIGTERM and SIGINT stop a run at its next checkpoint, and a second signal
