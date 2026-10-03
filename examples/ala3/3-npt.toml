@@ -1,5 +1,5 @@
 # 3. Equilibration at constant pressure: stochastic cell rescaling at
-#    1 bar for 100 ps, with weaker restraints.
+#    1 atm for 100 ps, with weaker restraints.
 
 [input]
 topology    = "ala3.prmtop"

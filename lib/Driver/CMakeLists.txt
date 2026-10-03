@@ -18,6 +18,22 @@ if(MDIR_ENABLE_HDF5)
   endif()
 endif()
 
+# Embed the standard pipeline so templates work without the source tree.
+# The examples remain the source of the stage settings (D147).
+function(read_pipeline_template variable file)
+  set(path "${PROJECT_SOURCE_DIR}/examples/ala3/${file}.toml")
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${path}")
+  file(READ "${path}" contents)
+  string(REPLACE "ala3.prmtop" "system.prmtop" contents "${contents}")
+  string(REPLACE "ala3.inpcrd" "system.inpcrd" contents "${contents}")
+  set(${variable} "${contents}" PARENT_SCOPE)
+endfunction()
+read_pipeline_template(MDIR_TEMPLATE_MINIMIZE 1-min)
+read_pipeline_template(MDIR_TEMPLATE_NVT 2-nvt)
+read_pipeline_template(MDIR_TEMPLATE_NPT 3-npt)
+read_pipeline_template(MDIR_TEMPLATE_PRODUCTION 4-md)
+configure_file(Templates.cpp.in Templates.cpp @ONLY)
+
 add_mlir_library(MDIRDriver
   Amber.cpp
   Builder.cpp
@@ -32,6 +48,7 @@ add_mlir_library(MDIRDriver
   Selection.cpp
   System.cpp
   Trajectory.cpp
+  ${CMAKE_CURRENT_BINARY_DIR}/Templates.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mdir/Driver

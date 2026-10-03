@@ -202,6 +202,7 @@ See [docs/driver-m0.md](docs/driver-m0.md).
 | `mdir emit <control file> [--stage=module\|lowered\|pipeline]` | Prints the program of the run, as it is built or as it is executed, or the passes between |
 | `mdir check <control file>` | Reads the input and prints what it describes, without compiling |
 | `mdir template md\|amber` | Prints a control file with every keyword, for terms in the control file or for an Amber topology |
+| `mdir template minimize\|nvt\|npt\|production` | Prints one stage of the standard pipeline, with checkpoints connecting the stages |
 | `mdir checkpoint <file> [<file>]` | Describes a checkpoint, or compares the states of two |
 | `mdir version` | Prints the version, the commit, and what the build supports |
 | `mdir bug-report <control file> [--run]` | Collects what a report of a defect needs ([docs/debugging.md](docs/debugging.md)) |
@@ -225,6 +226,26 @@ examples/ala3/run.sh ala3-run build/bin/mdir   # the four stages, in ala3-run
 `mdir template amber` prints a control file for a run from an Amber
 topology with every keyword it takes, and `mdir template md` one for a run
 with the terms in the control file.
+
+To start from the standard pipeline with your own Amber system:
+
+```sh
+mdir template minimize > 1-min.toml
+mdir template nvt > 2-nvt.toml
+mdir template npt > 3-npt.toml
+mdir template production > 4-md.toml
+```
+
+Edit `system.prmtop` and `system.inpcrd`, the restraint selection, the run
+lengths, and `[execution]` in these files. They use the settings of
+`examples/ala3`: restrained minimization, 50 ps at constant volume,
+100 ps at constant pressure with weaker restraints, and 1 ns of production
+without restraints. They require HDF5 checkpoints and select a GPU in
+mixed precision; set `target = "CPU"` to use the host. Then run the files
+in order with `mdir run --continue FILE`. Each stage takes the previous
+stage's checkpoint; the same commands continue interrupted stages and
+skip completed ones. [The driver guide](docs/driver-m0.md#13-standard-pipeline-templates)
+lists the stage settings and outputs.
 
 `examples/argon/argon.toml` is liquid argon at constant energy: 864 atoms,
 2000 steps of 5 fs with velocity Verlet. `examples/argon/argon.mlir` is the

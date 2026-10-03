@@ -152,7 +152,7 @@ cluster needs.
 | U6 | `mdir check` as a preflight | P1 | Partial: it reads the control file and prints the topology. It should print the run (ensemble, step and length in ns, PME, constraints, target and precision, outputs), warn on outputs that exist and on risky settings, and give `--json` |
 | U7 | Errors that say what to do | P1 | Partial: errors name the line, and enums list their values. Add the nearest valid key (edit distance over the known keys), the keys of a table, and a line of what to try |
 | U8 | A quickstart first in the README, and `mdir doctor` | P1 | Missing: the README leads with the compiler. `doctor` extends `version` with a probe of the device and the driver and a short run on each target |
-| U9 | Control files of the standard pipeline from `mdir template` | P2 | The stages of `examples/` (minimization, equilibration, constant pressure with restraints, production) as kinds of `template`, not as a new command: no aliases before a release |
+| U9 | Control files of the standard pipeline from `mdir template` | P2 | Done (2026-10-03, D147): `minimize`, `nvt`, `npt`, and `production` print the four stages of `examples/ala3` with placeholder input paths and their checkpoint chain. Embedded at build time; `md` and `amber` remain the reference templates, with no new command or aliases |
 | U10 | Distribution | P2 | After the release of M1: an Apptainer or OCI image. A container needs the cubin of its kernels, not PTX that a driver older than the toolkit cannot compile |
 | U11 | Many runs of one plan (as `-multidir`) | Later | With `ensemble` |
 

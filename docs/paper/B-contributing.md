@@ -61,6 +61,7 @@ decision (Section 12).
 |---|---|
 | `mdir check FILE` | Reads the input of a run and prints what it describes: particles, types, degrees of freedom, the integrator, the target |
 | `mdir template amber`, `mdir template md` | Prints a control file with every keyword and its default |
+| `mdir template minimize`, `nvt`, `npt`, `production` | Prints a stage of the standard pipeline, embedded at build time from `examples/ala3` (D147) |
 | `mdir emit FILE --stage=STAGE` | Prints the program of a run as the driver built it (`module`), as lowered (`lowered`), or the passes (`pipeline`) |
 | `MDIR_PRINT_AFTER=<pass>` | Prints the module after each run of that pass |
 | `MDIR_PIPELINE=<passes>` | Replaces the pipeline, for example to turn one option off |

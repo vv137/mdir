@@ -1,0 +1,30 @@
+# The printed stages run in order from each other's checkpoints. Shorten
+# each to ten steps on the CPU; keep the inputs and the output chain.
+# A second submission recognizes every stage as complete.
+#
+# REQUIRES: hdf5
+# RUN: rm -rf %t
+# RUN: %python %S/Inputs/prepare_pipeline.py mdir %S/../../examples/ala3 %t
+# RUN: mdir run --continue %t/minimize.toml > %t/pipeline.log
+# RUN: mdir run --continue %t/nvt.toml >> %t/pipeline.log
+# RUN: mdir run --continue %t/npt.toml >> %t/pipeline.log
+# RUN: mdir run --continue %t/production.toml >> %t/pipeline.log
+# RUN: FileCheck %s --check-prefix=LOG < %t/pipeline.log
+# RUN: mdir checkpoint %t/md.h5 | FileCheck %s --check-prefix=STATE
+# RUN: mdir run --continue %t/minimize.toml | FileCheck %s --check-prefix=MIN
+# RUN: mdir run --continue %t/nvt.toml | FileCheck %s --check-prefix=NVT
+# RUN: mdir run --continue %t/npt.toml | FileCheck %s --check-prefix=NPT
+# RUN: mdir run --continue %t/production.toml | FileCheck %s --check-prefix=PROD
+#
+# LOG: MDIR: 4905 particles, 10 steps of steepest descent
+# LOG: MDIR: wrote 1 checkpoints to '{{.*}}min.h5'
+# LOG: MDIR: begins at the positions of '{{.*}}min.h5'
+# LOG: MDIR: wrote 1 checkpoints to '{{.*}}nvt.h5'
+# LOG: MDIR: wrote 1 checkpoints to '{{.*}}npt.h5'
+# LOG: MDIR: wrote 1 checkpoints to '{{.*}}md.h5'
+# STATE: step: {{ *}}30
+# STATE: run began at: {{ *}}step 20
+# MIN: MDIR: the run is complete: '{{.*}}min.h5' holds step 10
+# NVT: MDIR: the run is complete: '{{.*}}nvt.h5' holds step 10
+# NPT: MDIR: the run is complete: '{{.*}}npt.h5' holds step 20
+# PROD: MDIR: the run is complete: '{{.*}}md.h5' holds step 30
