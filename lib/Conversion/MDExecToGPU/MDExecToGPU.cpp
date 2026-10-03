@@ -632,6 +632,9 @@ void Lowering::replaceWithFlag(OpBuilder &builder, Location loc,
   result.replaceAllUsesWith(arith::OrIOp::create(wait, loc, start, isSet));
 }
 
+static Value shuffleXor(OpBuilder &builder, Location loc, Value value,
+                        int64_t offset);
+
 SmallVector<Value>
 Lowering::emitReductions(OpBuilder &builder, Location loc,
                          ArrayRef<Value> contributions,
@@ -653,36 +656,101 @@ Lowering::emitReductions(OpBuilder &builder, Location loc,
 
   // A block of threads for each part of the particles, and one block for
   // the results of the parts. A thread adds up the particles that it takes,
-  // every so manyth, and the block adds up its threads by a tree
-  // (`gpu.all_reduce`), so that the order of the sum, and the sum, depend
-  // only on the number of particles. A block takes at least four
-  // particles per thread, and there are no more parts than threads in a
-  // block.
-  auto reduceBlock = [&](OpBuilder &b, Value value) -> Value {
-    auto operation = gpu::AllReduceOperationAttr::get(
-        b.getContext(), isSum ? gpu::AllReduceOperation::ADD
-                              : gpu::AllReduceOperation::MAXNUMF);
-    auto reduceNumber = [&](Value number) -> Value {
-      return gpu::AllReduceOp::create(b, loc, number, operation,
-                                      b.getUnitAttr());
-    };
-    if (auto vector = dyn_cast<VectorType>(value.getType())) {
-      SmallVector<Value> elements;
-      for (int64_t i = 0, e = vector.getNumElements(); i != e; ++i)
-        elements.push_back(reduceNumber(
-            vector::ExtractOp::create(b, loc, value, i)));
-      return vector::FromElementsOp::create(b, loc, vector, elements);
-    }
-    return reduceNumber(value);
+  // every so manyth, and the block adds up its threads for all the sums of
+  // the kernel in one pass: each warp by a butterfly of shuffles, its first
+  // lane writes the totals of the warp to shared memory, and after one
+  // barrier every thread adds the warps in their order (D150). The order
+  // of a sum, and the sum, depend only on the number of particles. A block
+  // takes at least four particles per thread, and there are no more parts
+  // than threads in a block.
+  int64_t warps = blockSize / 32;
+  auto countNumbers = [](TypeRange types) {
+    int64_t count = 0;
+    for (Type type : types)
+      count += isa<VectorType>(type) ? cast<VectorType>(type).getNumElements()
+                                     : 1;
+    return count;
   };
-  auto launchBlocks = [&](Value blocks,
-                          function_ref<void(OpBuilder &, Value, Value)> body) {
-    Value one = createIndex(builder, loc, 1);
-    Value threads = createIndex(builder, loc, blockSize);
-    auto launch = gpu::LaunchOp::create(builder, loc, blocks, one, one,
-                                        threads, one, one);
+  auto reduceTogether = [&](OpBuilder &b, ValueRange values, Value thread,
+                            Value shared) -> SmallVector<Value> {
+    SmallVector<Value> numbers;
+    for (Value value : values) {
+      auto vector = dyn_cast<VectorType>(value.getType());
+      if (!vector) {
+        numbers.push_back(value);
+        continue;
+      }
+      for (int64_t i = 0, e = vector.getNumElements(); i != e; ++i)
+        numbers.push_back(vector::ExtractOp::create(b, loc, value, i));
+    }
+    for (Value &number : numbers)
+      for (int64_t offset = 16; offset >= 1; offset /= 2)
+        number = combine(b, number, shuffleXor(b, loc, number, offset));
+    Value width = createIndex(b, loc, 32);
+    Value lane = arith::RemUIOp::create(b, loc, thread, width);
+    Value warp = arith::DivUIOp::create(b, loc, thread, width);
+    Value count = createIndex(b, loc, numbers.size());
+    Value leads = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq, lane,
+                                        createIndex(b, loc, 0));
+    Type wide = b.getF64Type();
+    scf::IfOp::create(b, loc, leads, [&](OpBuilder &then, Location) {
+      Value base = arith::MulIOp::create(then, loc, warp, count);
+      for (auto [k, number] : llvm::enumerate(numbers)) {
+        Value place = arith::AddIOp::create(then, loc, base,
+                                            createIndex(then, loc, k));
+        Value stored = number;
+        if (number.getType() != wide)
+          stored = arith::ExtFOp::create(then, loc, wide, number);
+        memref::StoreOp::create(then, loc, stored, shared, ValueRange{place});
+      }
+      scf::YieldOp::create(then, loc);
+    });
+    gpu::BarrierOp::create(b, loc);
+    SmallVector<Value> totals;
+    for (auto [k, number] : llvm::enumerate(numbers)) {
+      Value total;
+      for (int64_t w = 0; w != warps; ++w) {
+        Value part = memref::LoadOp::create(
+            b, loc, shared,
+            ValueRange{createIndex(b, loc, w * numbers.size() + k)});
+        if (number.getType() != wide)
+          part = arith::TruncFOp::create(b, loc, number.getType(), part);
+        total = w == 0 ? part : combine(b, total, part);
+      }
+      totals.push_back(total);
+    }
+    SmallVector<Value> results;
+    size_t next = 0;
+    for (Value value : values) {
+      auto vector = dyn_cast<VectorType>(value.getType());
+      if (!vector) {
+        results.push_back(totals[next++]);
+        continue;
+      }
+      ArrayRef<Value> elements(totals.begin() + next,
+                               totals.begin() + next + vector.getNumElements());
+      next += vector.getNumElements();
+      results.push_back(
+          vector::FromElementsOp::create(b, loc, vector, elements));
+    }
+    return results;
+  };
+  auto launchBlocks = [&](OpBuilder &at, Value blocks, int64_t numbers,
+                          function_ref<void(OpBuilder &, Value, Value, Value)>
+                              body) {
+    Value one = createIndex(at, loc, 1);
+    Value threads = createIndex(at, loc, blockSize);
+    auto workgroup = gpu::AddressSpaceAttr::get(
+        context, gpu::GPUDialect::getWorkgroupAddressSpace());
+    auto shared = MemRefType::get({warps * numbers}, at.getF64Type(),
+                                  MemRefLayoutAttrInterface(), workgroup);
+    auto launch = gpu::LaunchOp::create(
+        at, loc, blocks, one, one, threads, one, one,
+        /*dynamicSharedMemorySize=*/nullptr, /*asyncTokenType=*/nullptr,
+        /*asyncDependencies=*/{}, /*workgroupAttributions=*/TypeRange{shared});
     OpBuilder kernel = OpBuilder::atBlockEnd(&launch.getBody().front());
-    body(kernel, launch.getBlockIds().x, launch.getThreadIds().x);
+    body(kernel, launch.getBlockIds().x, launch.getThreadIds().x,
+         launch.getWorkgroupAttributionBBArgs().front());
     gpu::TerminatorOp::create(kernel, loc);
     bringIn(launch);
   };
@@ -710,43 +778,6 @@ Lowering::emitReductions(OpBuilder &builder, Location loc,
     }
     runs.push_back({first, last});
     first = last;
-  }
-
-  Value parts = arith::MinSIOp::create(
-      builder, loc, createIndex(builder, loc, blockSize),
-      createGroups(builder, loc, size, 4 * blockSize));
-  for (const auto &run : runs) {
-    size_t begin = run.first, end = run.second;
-    ArrayRef<Value> those = contributions.slice(begin, end - begin);
-    ArrayRef<Value> into = partials.slice(begin, end - begin);
-    launchBlocks(parts, [&](OpBuilder &b, Value block, Value thread) {
-      Value threads = createIndex(b, loc, blockSize);
-      Value first = arith::AddIOp::create(
-          b, loc, arith::MulIOp::create(b, loc, block, threads), thread);
-      Value stride = arith::MulIOp::create(b, loc, parts, threads);
-      SmallVector<Value> zeros;
-      for (Type type : ArrayRef<Type>(types).slice(begin, end - begin))
-        zeros.push_back(createZero(b, loc, type));
-      auto loop = scf::ForOp::create(
-          b, loc, first, size, stride, zeros,
-          [&](OpBuilder &inner, Location, Value i, ValueRange sums) {
-            SmallVector<Value> next;
-            for (auto [buffer, sum] : llvm::zip(those, sums))
-              next.push_back(
-                  combine(inner, sum, loadElement(inner, loc, buffer, i)));
-            scf::YieldOp::create(inner, loc, next);
-          });
-      SmallVector<Value> totals;
-      for (Value value : loop.getResults())
-        totals.push_back(reduceBlock(b, value));
-      Value leader = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq,
-                                           thread, createIndex(b, loc, 0));
-      scf::IfOp::create(b, loc, leader, [&](OpBuilder &then, Location) {
-        for (auto [total, partial] : llvm::zip(totals, into))
-          storeElement(then, loc, total, partial, block);
-        scf::YieldOp::create(then, loc);
-      });
-    });
   }
 
   // Where the results arrive. Numbers of one type are next to one another,
@@ -785,38 +816,100 @@ Lowering::emitReductions(OpBuilder &builder, Location loc,
     places[index].offset += base[element];
   }
 
-  // One block for the results of the parts, for each run of sums.
+  // Stores the totals of the sums `begin` to `end` where the results
+  // arrive.
+  auto storeResults = [&](OpBuilder &then, size_t begin, size_t end,
+                          ArrayRef<Value> totals) {
+    for (size_t index = begin; index != end; ++index) {
+      const Place &place = places[index];
+      Value result = totals[index - begin];
+      for (int64_t c = 0; c != place.count; ++c) {
+        Value number =
+            isa<VectorType>(result.getType())
+                ? Value(vector::ExtractOp::create(then, loc, result, c))
+                : result;
+        memref::StoreOp::create(
+            then, loc, number, place.cell.device,
+            ValueRange{createIndex(then, loc, place.offset + c)});
+      }
+    }
+  };
+
+  Value parts = arith::MinSIOp::create(
+      builder, loc, createIndex(builder, loc, blockSize),
+      createGroups(builder, loc, size, 4 * blockSize));
+  // With one part, as for a set of few tuples, its block gives the results
+  // and the second kernel is not launched.
+  Value onePart = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq,
+                                        parts, createIndex(builder, loc, 1));
   for (const auto &run : runs) {
     size_t begin = run.first, end = run.second;
-    launchBlocks(createIndex(builder, loc, 1), [&](OpBuilder &b, Value,
-                                                   Value thread) {
+    ArrayRef<Value> those = contributions.slice(begin, end - begin);
+    ArrayRef<Value> into = partials.slice(begin, end - begin);
+    int64_t numbers =
+        countNumbers(ArrayRef<Type>(types).slice(begin, end - begin));
+    launchBlocks(builder, parts, numbers, [&](OpBuilder &b, Value block,
+                                              Value thread, Value shared) {
+      Value threads = createIndex(b, loc, blockSize);
+      Value first = arith::AddIOp::create(
+          b, loc, arith::MulIOp::create(b, loc, block, threads), thread);
+      Value stride = arith::MulIOp::create(b, loc, parts, threads);
+      SmallVector<Value> zeros;
+      for (Type type : ArrayRef<Type>(types).slice(begin, end - begin))
+        zeros.push_back(createZero(b, loc, type));
+      auto loop = scf::ForOp::create(
+          b, loc, first, size, stride, zeros,
+          [&](OpBuilder &inner, Location, Value i, ValueRange sums) {
+            SmallVector<Value> next;
+            for (auto [buffer, sum] : llvm::zip(those, sums))
+              next.push_back(
+                  combine(inner, sum, loadElement(inner, loc, buffer, i)));
+            scf::YieldOp::create(inner, loc, next);
+          });
+      SmallVector<Value> totals =
+          reduceTogether(b, loop.getResults(), thread, shared);
+      Value leader = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq,
+                                           thread, createIndex(b, loc, 0));
+      scf::IfOp::create(b, loc, leader, [&](OpBuilder &then, Location) {
+        for (auto [total, partial] : llvm::zip(totals, into))
+          storeElement(then, loc, total, partial, block);
+        scf::IfOp::create(then, loc, onePart, [&](OpBuilder &only, Location) {
+          storeResults(only, begin, end, totals);
+          scf::YieldOp::create(only, loc);
+        });
+        scf::YieldOp::create(then, loc);
+      });
+    });
+  }
+
+  // One block for the results of the parts, for each run of sums.
+  Value severalParts =
+      arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ugt, parts,
+                            createIndex(builder, loc, 1));
+  auto several = scf::IfOp::create(builder, loc, severalParts);
+  OpBuilder second = several.getThenBodyBuilder();
+  for (const auto &run : runs) {
+    size_t begin = run.first, end = run.second;
+    int64_t numbers =
+        countNumbers(ArrayRef<Type>(types).slice(begin, end - begin));
+    launchBlocks(second, createIndex(second, loc, 1), numbers,
+                 [&](OpBuilder &b, Value, Value thread, Value shared) {
       Value inside = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult,
                                            thread, parts);
       Value slot = arith::SelectOp::create(b, loc, inside, thread,
                                            createIndex(b, loc, 0));
-      SmallVector<Value> totals;
+      SmallVector<Value> values;
       for (size_t index = begin; index != end; ++index) {
         Value value = loadElement(b, loc, partials[index], slot);
         Value nothing = createZero(b, loc, types[index]);
-        value = arith::SelectOp::create(b, loc, inside, value, nothing);
-        totals.push_back(reduceBlock(b, value));
+        values.push_back(
+            arith::SelectOp::create(b, loc, inside, value, nothing));
       }
+      SmallVector<Value> totals = reduceTogether(b, values, thread, shared);
       Value leader = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq,
                                            thread, createIndex(b, loc, 0));
       scf::IfOp::create(b, loc, leader, [&](OpBuilder &then, Location) {
-        for (size_t index = begin; index != end; ++index) {
-          const Place &place = places[index];
-          Value result = totals[index - begin];
-          for (int64_t c = 0; c != place.count; ++c) {
-            Value number = isa<VectorType>(result.getType())
-                               ? Value(vector::ExtractOp::create(then, loc,
-                                                                 result, c))
-                               : result;
-            memref::StoreOp::create(
-                then, loc, number, place.cell.device,
-                ValueRange{createIndex(then, loc, place.offset + c)});
-          }
-        }
+        storeResults(then, begin, end, totals);
         scf::YieldOp::create(then, loc);
       });
     });
@@ -1990,17 +2083,20 @@ LogicalResult Lowering::lowerTupleFor(md_exec::TupleForOp op) {
       });
       return success();
     }
-    // With global sums, a thread for each particle takes the tuples p,
-    // p + n, ..., and writes the sums of their contributions where a loop
-    // over the rows of the particles would: the reduction is that of the
-    // particles, in an order that does not depend on the threads.
-    launchOver(builder, loc, size, [&](OpBuilder &body, Value particle) {
+    // With global sums, a thread for each of m rows, the tuples or the
+    // particles if they are fewer, takes the tuples r, r + m, ..., and
+    // writes the sums of their contributions to its row: the reduction is
+    // over the rows, in an order that does not depend on the threads. A
+    // set of few tuples, as the pairs of the centers of groups (D139),
+    // launches and reduces as many rows as it has tuples.
+    Value rows = arith::MinUIOp::create(builder, loc, size, tuples);
+    launchOver(builder, loc, rows, [&](OpBuilder &body, Value row) {
       SmallVector<Value> contributions = emitTuplesOnceWithSums(
-          body, op, tupleMembers, particle, size, tuples, box, inverse);
+          body, op, tupleMembers, row, rows, tuples, box, inverse);
       for (auto [index, value] : llvm::enumerate(contributions))
-        storeElement(body, loc, value, op.getScratch()[2 * index], particle);
+        storeElement(body, loc, value, op.getScratch()[2 * index], row);
     });
-    return finishSums(op, builder, op.getReduce(), op.getScratch(), size);
+    return finishSums(op, builder, op.getReduce(), op.getScratch(), rows);
   }
   // A set whose tuples share no particle has each tuple evaluated once, by
   // the thread of its first member; its rows hold one tuple at most, which

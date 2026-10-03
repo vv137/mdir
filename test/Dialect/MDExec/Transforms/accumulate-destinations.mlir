@@ -71,3 +71,50 @@ func.func @reversed(%x: !vec, %cell: !md.cell, %nl: !nl, %bonds: !inc) -> !vec {
   } -> !vec
   return %s : !vec
 }
+
+// One loop gives two destinations that the kick adds one after the other,
+// as the forces of the sums over the centers of groups (D139): the loop
+// yields the sum of the two contributions of each member into the first,
+// and then accumulates onto the loop before it.
+//
+// CHECK-LABEL: func.func @merged(
+// CHECK:         %[[F1:[0-9]+]] = md_exec.pair_for
+// CHECK:         %[[F2:[0-9]+]] = md_exec.tuple_for {{.*}} outs(%[[F1]] : !md.field<@atoms, 3 x f64>) arity(2) {
+// CHECK:           %[[N:[0-9]+]] = arith.negf %[[D:[a-z0-9]+]]
+// CHECK:           %[[M:[0-9]+]] = arith.mulf %[[D]], %[[D]]
+// CHECK:           %[[P:[0-9]+]] = arith.addf %[[D]], %[[M]]
+// CHECK:           %[[Q:[0-9]+]] = arith.addf %[[N]], %[[M]]
+// CHECK:           md_exec.yield %[[P]], %[[Q]] : vector<3xf64>, vector<3xf64>
+// CHECK:         } : !mdrt.incidence<@atoms, @bonds, 2>, !md.field<@atoms, 3 x f64> -> !md.field<@atoms, 3 x f64>
+// CHECK-NOT:     md_exec.zeros
+// CHECK:         md_exec.particle_for ins(%[[F2]], %{{[a-z0-9]+}} : !md.field<@atoms, 3 x f64>, !md.field<@atoms, 3 x f64>)
+func.func @merged(%x: !vec, %cell: !md.cell, %nl: !nl, %bonds: !inc, %v: !vec)
+    -> !vec {
+  %z1 = md_exec.zeros : !vec
+  %f1 = md_exec.pair_for %nl, %x, %cell outs(%z1 : !vec) cutoff(1.5)
+      policy(directed, owner_only) {
+  ^bb0(%r2: f64, %d: vector<3xf64>):
+    md_exec.yield %d : vector<3xf64>
+  } : !nl, !vec -> !vec
+  %z2 = md_exec.zeros : !vec
+  %z3 = md_exec.zeros : !vec
+  %f2:2 = md_exec.tuple_for %bonds, %x, %cell coordinates(displacement(0, 1))
+      outs(%z2, %z3 : !vec, !vec) arity(2) {
+  ^bb0(%d: vector<3xf64>):
+    %n = arith.negf %d : vector<3xf64>
+    %m = arith.mulf %d, %d : vector<3xf64>
+    md_exec.yield %d, %n, %m, %m
+        : vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>
+  } : !inc, !vec -> !vec, !vec
+  %e = md_exec.empty : !vec
+  %v1 = md_exec.particle_for ins(%f1, %f2#0, %f2#1, %v : !vec, !vec, !vec, !vec)
+      outs(%e : !vec) {
+  ^bb0(%a: vector<3xf64>, %b: vector<3xf64>, %c: vector<3xf64>,
+       %w: vector<3xf64>):
+    %s = arith.addf %a, %b : vector<3xf64>
+    %t = arith.addf %s, %c : vector<3xf64>
+    %k = arith.addf %w, %t : vector<3xf64>
+    md_exec.yield %k : vector<3xf64>
+  } -> !vec
+  return %v1 : !vec
+}

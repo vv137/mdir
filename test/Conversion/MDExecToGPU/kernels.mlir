@@ -117,22 +117,30 @@ func.func @forces(%x: memref<?x3xf64, 1>, %f: memref<?x3xf64, 1>,
   // CHECK:        gpu.terminator
   //
   // The sums: a block for each part of the particles adds up its threads
-  // by a tree, and one block the parts.
+  // in one pass for all its sums, by shuffles in each warp and the warps
+  // in shared memory; with one part it gives the result, and with more one
+  // block adds the parts.
   //
   // CHECK:      gpu.launch
+  // CHECK-SAME:   workgroup(%{{[a-z0-9]+}} : memref<4xf64, #gpu.address_space<workgroup>>)
   // CHECK:        scf.for
   // CHECK:          memref.load %[[A]][
-  // CHECK:        gpu.all_reduce add
+  // CHECK:        gpu.shuffle xor
+  // CHECK:        gpu.barrier
   // CHECK:        scf.if
   // CHECK:          memref.store %{{[0-9]+}}, %[[B]][
+  // CHECK:          scf.if
+  // CHECK:            memref.store %{{[0-9]+}}, %[[CELL]][
   // CHECK:        gpu.terminator
   //
-  // CHECK:      gpu.launch
-  // CHECK:        memref.load %[[B]][
-  // CHECK:        gpu.all_reduce add
-  // CHECK:        scf.if
-  // CHECK:          memref.store %{{[0-9]+}}, %[[CELL]][
-  // CHECK:        gpu.terminator
+  // CHECK:      scf.if
+  // CHECK:        gpu.launch
+  // CHECK:          memref.load %[[B]][
+  // CHECK:          gpu.shuffle xor
+  // CHECK:          gpu.barrier
+  // CHECK:          scf.if
+  // CHECK:            memref.store %{{[0-9]+}}, %[[CELL]][
+  // CHECK:          gpu.terminator
   //
   // CHECK:      gpu.memcpy async [%{{[0-9]+}}] %[[HOST]], %[[CELL]]
   // CHECK:      %[[SUM:[0-9]+]] = memref.load %[[HOST]][
@@ -281,12 +289,16 @@ func.func @ordered(%x: memref<?x3xf64, 1>, %ids: memref<?xi32, 1>,
 // CHECK:           scf.for
 // CHECK:             memref.load %[[A]][
 // CHECK:             arith.addf %{{[a-z0-9]+}}, %{{[0-9]+}} : vector<3xf64>
-// CHECK:           gpu.all_reduce add
+// CHECK:           gpu.shuffle xor
+// CHECK:           gpu.barrier
 // CHECK:           memref.store %{{[0-9]+}}, %[[B]][
-// CHECK:         gpu.launch
-// CHECK:           memref.load %[[B]][
-// CHECK:           gpu.all_reduce add
 // CHECK:           memref.store %{{[0-9]+}}, %[[CELL]][
+// CHECK:         scf.if
+// CHECK:           gpu.launch
+// CHECK:             memref.load %[[B]][
+// CHECK:             gpu.shuffle xor
+// CHECK:             gpu.barrier
+// CHECK:             memref.store %{{[0-9]+}}, %[[CELL]][
 // CHECK:         gpu.memcpy async [%{{[0-9]+}}] %[[HOST]], %[[CELL]]
 // CHECK:         memref.load %[[HOST]][
 // CHECK:         %[[SUM:[0-9]+]] = vector.from_elements
@@ -305,8 +317,9 @@ func.func @momentum(%v: memref<?x3xf64, 1>, %a: memref<?x3xf64, 1>,
 }
 
 // The sums of one loop are added up together: one kernel for the chunks,
-// one for the results of the chunks, and one copy to the host, which takes
-// the ten numbers of a number and a vector of nine.
+// whose blocks add up the ten numbers of a number and a vector of nine in
+// one pass through shared memory, one for the results of the chunks if
+// there are several, and one copy to the host.
 //
 // CHECK-LABEL: func.func @together(
 // CHECK-SAME:    %[[V:[a-z0-9]+]]: memref<?x3xf64, 1>, %[[A:[a-z0-9]+]]: memref<?xf64, 1>, %[[B:[a-z0-9]+]]: memref<?xf64, 1>, %[[C:[a-z0-9]+]]: memref<?x9xf64, 1>, %[[D:[a-z0-9]+]]: memref<?x9xf64, 1>)
@@ -317,19 +330,23 @@ func.func @momentum(%v: memref<?x3xf64, 1>, %a: memref<?x3xf64, 1>,
 // CHECK:           memref.store %{{[0-9]+}}, %[[C]][
 // CHECK:           gpu.terminator
 // CHECK:         gpu.launch
+// CHECK-SAME:      workgroup(%{{[a-z0-9]+}} : memref<40xf64, #gpu.address_space<workgroup>>)
 // CHECK:           scf.for
 // CHECK:             memref.load %[[A]][
 // CHECK:             memref.load %[[C]][
-// CHECK:           gpu.all_reduce add
+// CHECK:           gpu.shuffle xor
+// CHECK:           gpu.barrier
+// CHECK-NOT:       gpu.barrier
 // CHECK:           memref.store %{{[0-9#]+}}, %[[B]][
 // CHECK:           memref.store %{{[0-9]+}}, %[[D]][
 // CHECK:           gpu.terminator
-// CHECK:         gpu.launch
-// CHECK:           memref.load %[[B]][
-// CHECK:           memref.load %[[D]][
-// CHECK:           gpu.all_reduce add
-// CHECK:           memref.store %{{[0-9#]+}}, %[[CELL]][
-// CHECK:           gpu.terminator
+// CHECK:         scf.if
+// CHECK:           gpu.launch
+// CHECK:             memref.load %[[B]][
+// CHECK:             memref.load %[[D]][
+// CHECK:             gpu.barrier
+// CHECK:             memref.store %{{[0-9#]+}}, %[[CELL]][
+// CHECK:             gpu.terminator
 // CHECK-NOT:     gpu.launch
 // CHECK:         gpu.memcpy async [%{{[0-9]+}}] %[[HOST]], %[[CELL]]
 // CHECK-NOT:     gpu.memcpy

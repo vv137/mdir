@@ -30,6 +30,7 @@
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Target/LLVMIR/Dialect/All.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/TargetSelect.h"
@@ -52,6 +53,16 @@ using llvm::SmallVectorImpl;
 using llvm::StringRef;
 
 /// The passes that compile the program of a run.
+/// The option of LLVM that chooses the instruction scheduler before
+/// register allocation, `-pre-RA-sched`, if the command line did not.
+static llvm::cl::Option *getSchedulerOption() {
+  auto &options = llvm::cl::getRegisteredOptions();
+  auto option = options.find("pre-RA-sched");
+  if (option == options.end() || option->second->getNumOccurrences() != 0)
+    return nullptr;
+  return option->second;
+}
+
 static std::string getPipeline(const Control &control,
                                const Program &program) {
   std::string pipeline;
@@ -607,6 +618,17 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     if (!llvm::sys::fs::exists(path))
       return fail("cannot find '" + path + "'");
 
+  // The code of the host is scheduled by the fast list scheduler of LLVM.
+  // The default one, at each call, follows the chains of the block up
+  // through every path of their token factors, which grows exponentially
+  // with the calls of one block: the host code of a term over the centers
+  // of a dihedral on JAC, a block of 95 calls among 1,400 stores of the
+  // arguments of kernels, did not compile in ten minutes; the fast one
+  // compiles it in 2.6 s (D150). The kernels were compiled in the pass
+  // pipeline, with the default; it is set back once the host code is.
+  llvm::cl::Option *scheduler = getSchedulerOption();
+  if (scheduler)
+    (void)scheduler->addOccurrence(0, "pre-RA-sched", "fast");
   mlir::ExecutionEngineOptions engineOptions;
   SmallVector<StringRef> sharedLibraries(paths.begin(), paths.end());
   engineOptions.sharedLibPaths = sharedLibraries;
@@ -649,6 +671,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   (*engine)->initialize();
 
   auto function = (*engine)->lookupPacked(program->entry);
+  if (scheduler)
+    (void)scheduler->addOccurrence(0, "pre-RA-sched", "default");
   if (!function)
     return fail(function.takeError());
   double compileTime = std::chrono::duration<double>(

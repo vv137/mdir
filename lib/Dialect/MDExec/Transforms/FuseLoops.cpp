@@ -10,6 +10,7 @@
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SetVector.h"
 
 using namespace mlir;
 using namespace mdir;
@@ -589,6 +590,37 @@ static void fuse(TupleForOp first, TupleForOp second) {
   second.erase();
 }
 
+/// Moves after `second` the ops between `first` and `second` that use a
+/// result of `first`, directly or through one another, if they are pure
+/// and `second` uses none of them, so that every user of `first` comes
+/// after `second`: as the virial of a term over centers adds the virial of
+/// each loop of its sums (D139) while the weight of the next loop is
+/// computed between them. Returns true if it moved them.
+static bool deferUsers(Operation *first, Operation *second) {
+  llvm::SetVector<Operation *> dependent;
+  dependent.insert(first);
+  for (Operation *op = first->getNextNode(); op != second;
+       op = op->getNextNode()) {
+    bool depends = false;
+    op->walk([&](Operation *nested) {
+      for (Value operand : nested->getOperands())
+        if (Operation *definition = operand.getDefiningOp())
+          depends |= dependent.contains(definition);
+    });
+    if (!depends)
+      continue;
+    if (!isPure(op) || op->getNumRegions() != 0)
+      return false;
+    dependent.insert(op);
+  }
+  for (Operation *op : dependent)
+    if (op != first && uses(second, op))
+      return false;
+  for (Operation *op : llvm::reverse(dependent.getArrayRef().drop_front()))
+    op->moveAfter(second);
+  return true;
+}
+
 /// Fuses two loops over tuples of `block`, if two can be fused. Returns
 /// true if it did.
 static bool fuseTupleLoopsOnce(Block &block) {
@@ -606,11 +638,13 @@ static bool fuseTupleLoopsOnce(Block &block) {
         continue;
       if (!usersComeAfter(first, second)) {
         SmallVector<Operation *> moved;
-        if (!canMoveAfter(second, first, moved))
+        if (canMoveAfter(second, first, moved)) {
+          second->moveAfter(first);
+          for (Operation *op : moved)
+            op->moveBefore(second);
+        } else if (!deferUsers(first, second)) {
           continue;
-        second->moveAfter(first);
-        for (Operation *op : moved)
-          op->moveBefore(second);
+        }
       }
       fuse(first, second);
       return true;

@@ -25,12 +25,18 @@ integration runs of Section 8.2. A run is lowered where its last loop is.
 
 **Global sums.** A loop writes the contribution of each row to a buffer
 for each sum; a kernel of at most as many blocks as a block has threads
-(128) adds the rows into partials, each thread every so manyth row and
-each block by a tree, and a kernel of one block adds the partials, so
-that the order of a sum depends only on the number of rows. A kernel
-passes each buffer as its descriptor, and PTX before ISA 8.1 allows 4352
-bytes of parameters: the sums of a loop go to pairs of kernels in runs
-whose descriptors fit 3 KB, each sum with its own tree (D145).
+(128) adds the rows into partials, each thread every so manyth row, and a
+kernel of one block adds the partials, so that the order of a sum depends
+only on the numbers of rows and parts. A block adds all the sums of its
+kernel in one pass: each warp by a butterfly of shuffles, then, after one
+barrier, the four warps in their order from shared memory (D150). With at
+most 512 rows the first kernel has one block, which writes the results,
+and the second is not launched; a loop that evaluates each tuple once
+launches no more rows than it has tuples, so the sums over the centers of
+groups, some 170 tuples on JAC, are one block. A kernel passes each
+buffer as its descriptor, and PTX before ISA 8.1 allows 4352 bytes of
+parameters: the sums of a loop go to the kernels in runs whose
+descriptors fit 3 KB (D145).
 
 **Counting in 32 bits** (D85). MLIR's `index` is 64 bits on NVPTX. Device
 code counts particles, cells, tuples, and entries in `i32`, and only a
