@@ -121,7 +121,15 @@ trajectory of GROMACS being in place (D141);
 coarse-grained models; and free energy, whose $dH/d\lambda$ the
 differentiation of the IR is designed to give (D2). A Python interface whose buffers follow DLPack
 shares the state with machine-learning frameworks without copies, from
-the same IR and validation as the control file. The distributed work
+the same IR and validation as the control file. M2 preparation
+(D[m2-python-plan], [Python API plan](../python-m2.md)) identifies shared
+validation, persistent segments, embedded error handling, checkpoint
+provenance, and allocation ownership as prerequisites. The maintainer's
+2026-10-04 rulings adopt owned loaded data, a documented classical subset,
+typed execution and reporters, independent serial simulations, read-only
+view leases followed by tracked writes within M2, and shared format-1
+checkpoints. A manylinux_2_28 pip wheel for Python 3.10–3.13 gates M2;
+preparation adds no executable Python interface. The distributed work
 begins with a graph of the dependencies of the `md` ops, ownership and
 freshness of fields, and a verifier of two domains (in which the
 disjoint union of the constraints is the unit of ownership, D83), then

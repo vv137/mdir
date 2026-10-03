@@ -10,6 +10,13 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ## [Unreleased]
 
+### Added
+
+- M2 Python API preparation: driver prerequisites, proposed implementation
+  sequence, adopted maintainer contracts, and validation gates in
+  `docs/python-m2.md`
+  (D[m2-python-plan]); this preparation adds no executable Python API.
+
 ## [0.1.0] - 2026-10-04
 
 The first milestone (M1): an all-atom protein in water with an Amber force

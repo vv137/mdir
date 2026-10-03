@@ -203,6 +203,12 @@ they are needed:
 
 ## 6. Python API (M2)
 
+Preparation and proposed implementation gates are in
+[python-m2.md](python-m2.md) (D[m2-python-plan]), including the maintainer's
+2026-10-04 rulings. Python functionality remains unimplemented. M2 covers
+a documented classical subset and requires a manylinux_2_28 pip wheel for
+Python 3.10–3.13; conda follows later.
+
 The design follows a reading of OpenMM's Python layer (2026-10-02,
 `openmm/openmm` at 5ee2cba): its vocabulary and its reporters fit MDIR,
 its copies and its silent caching do not. Both front ends, the control file
@@ -214,11 +220,20 @@ and Python, must produce the same IR and share one validation.
 | Physics apart from execution | `System` (terms, cutoff, PME, constraints, custom potentials as expressions with per-particle and global parameters); the integrator and the ensemble; `Execution` (target, device, precision) as typed objects, not strings |
 | An explicit compile | `mdir.compile(...)` returns an immutable program and its plan; changing the system afterwards marks it stale rather than being ignored. Parameters declared tunable are read from a buffer, so setting them does not recompile |
 | Runs and reporters | `sim.run(n)` runs segments to the next report of any reporter (OpenMM's protocol), with the writers of the driver in C++ and the GIL released; a stop is polled between segments |
-| State | `state()`: host copies in the order of the input, in the units of MD (nm, ps, kJ/mol, bar) as plain arrays. `view()`: DLPack tensors of the device in the order of the run with the index of each row, valid until the next run, on a stated stream, whose type is that of the buffer (`f32` forces in the mixed mode). Writes through a view advance the version of the state (P16) |
+| State | `state()`: host copies in the order of the input, in the units of MD (nm, ps, kJ/mol, bar) as plain arrays. `view()`: DLPack tensors of the device in the order of the run with the index of each row, with leases blocking conflicting runs and mutations, on a stated stream, whose type is that of the buffer (`f32` forces in the mixed mode). Writes through a view advance the version of the state (P16) |
 | Errors | Typed: input (file, line, term), compile (the diagnostic with its location), unsupported (feature, target), simulation (step, particle, quantity) |
 | Checkpoints | The H5MD checkpoint of the driver, exact and portable, with the hashes of the model and the plan; one format, not two |
 
-Still to decide for DLPack: the order of the particles when the run keeps them in the order of their positions (a permuted view, or the numbers of the particles alongside), the lifetime of a buffer that the caching allocator of the runtime owns, the stream on which a consumer may read, and the types of the mixed mode (forces in `f32`, the state in `f64`).
+DLPack views use execution order with input particle IDs alongside and
+the buffer's actual dtype (mixed-mode forces in `f32`, state in `f64`).
+Initial read-only leases block conflicting runs and mutations while views
+are alive; tracked writable borrows follow within M2 and are required to
+complete it. The implementation specifies stream handoff, consumer
+completion, and allocation release. Reporters use typed MDIR requests,
+with final reports only when due; segments without reporters bound stop
+latency to about 1 s or less on the Amber suite. Python fingerprints record
+explicit options and add model/plan hashes to format 1, with continuation
+tests in both directions before claiming CLI/Python interoperability.
 
 ## 7. Learned potentials (M3) and distributed execution (M4)
 

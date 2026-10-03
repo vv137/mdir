@@ -1,5 +1,9 @@
 # Appendix A. The control file
 
+M2 Python API preparation (D[m2-python-plan]) is described in
+[python-m2.md](../python-m2.md). It introduces no control-file keys or
+changes to the checkpoint and output contracts listed here.
+
 A run is described by a control file in TOML. `mdir check FILE` reads it
 and reports the system, planned run, outputs, and warnings (A.5);
 `mdir run FILE` compiles and runs it, and
