@@ -39,7 +39,9 @@ static int fail(llvm::Error error, bool json) {
 }
 
 static const char *getName(Integrator integrator) {
-  return integrator == Integrator::Leapfrog ? "LEAPFROG" : "VELOCITY_VERLET";
+  return integrator == Integrator::Leapfrog   ? "LEAPFROG"
+         : integrator == Integrator::Brownian ? "BROWNIAN"
+                                              : "VELOCITY_VERLET";
 }
 
 static const char *getName(Precision precision) {

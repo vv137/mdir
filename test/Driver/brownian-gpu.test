@@ -1,0 +1,15 @@
+# The Brownian dynamics of brownian.test on a GPU, in mixed precision: the
+# noise comes from Philox in the kernel, as on the CPU (D163b).
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/brownian_wells.py write %t 125
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/brownian.test | sed '1d;$d' > %t/base.toml
+# RUN: cat %t/base.toml %t/wells.toml > %t/run.toml
+# RUN: printf '[execution]\ntarget = "gpu"\nprecision = "mixed"\n' >> %t/run.toml
+# RUN: cd %t && mdir run run.toml > run.log
+# RUN: %python %S/Inputs/brownian_wells.py check %t/run.log 2.0 150 0.01 1.0 39.948 125 | FileCheck %s
+
+# CHECK: within 4 errors of the discrete step: yes
+# CHECK: correlation 10 steps apart {{.*}}: agrees

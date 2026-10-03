@@ -374,6 +374,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   StringRef integrator =
       control->minimize ? "MINIMIZATION"
       : control->integrator == Integrator::Leapfrog ? "LEAPFROG"
+      : control->integrator == Integrator::Brownian ? "BROWNIAN"
                                                    : "VELOCITY_VERLET";
   double velocityOffset =
       control->integrator == Integrator::Leapfrog ? -0.5 : 0.0;
@@ -1202,7 +1203,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                    output.lastTotal / units::energy);
     return 0;
   }
-  if (control->isLangevin())
+  if (control->isLangevin() || control->isBrownian())
     return 0;
   if (output.hasEnergies && output.firstTotal != 0.0)
     output.log.print(

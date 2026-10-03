@@ -89,7 +89,8 @@ struct PairOverride {
 /// power switched on its own [Steinbach1994] (`PowerForceSwitch`, for the
 /// Lennard-Jones of a topology only).
 enum class Truncation { None, Shift, Switch, ForceSwitch, PowerForceSwitch };
-enum class Integrator { VelocityVerlet, Leapfrog };
+/// Brownian dynamics (D163b) moves the positions only, overdamped.
+enum class Integrator { VelocityVerlet, Leapfrog, Brownian };
 enum class Target { CPU, GPU };
 enum class Precision { Single, Mixed, Double };
 enum class NeighborStructure { Matrix, Groups };
@@ -277,6 +278,9 @@ struct Control {
   bool isLangevin() const {
     return thermostat && thermostatMethod == ThermostatMethod::Langevin;
   }
+  /// Brownian dynamics (D163b), with the friction `friction` of [dynamics]
+  /// in 1/ps and no [thermostat].
+  bool isBrownian() const { return integrator == Integrator::Brownian; }
   /// A Nose-Hoover chain of `chainLength` thermostats (Martyna, Klein, and
   /// Tuckerman 1992; D163a) with the period `tauT`, in ps.
   int64_t chainLength = 3;

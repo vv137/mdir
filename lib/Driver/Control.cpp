@@ -1490,15 +1490,35 @@ Error Reader::readDynamics(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "dynamics",
           {"integrator", "time_step", "steps", "seed",
-           "center_of_mass_interval"},
+           "center_of_mass_interval", "friction"},
           {}))
     return error;
 
   if (Error error = readChoice<Integrator>(
           table, "integrator", control.integrator,
           {{"VELOCITY_VERLET", Integrator::VelocityVerlet},
-           {"LEAPFROG", Integrator::Leapfrog}}))
+           {"LEAPFROG", Integrator::Leapfrog},
+           {"BROWNIAN", Integrator::Brownian}}))
     return error;
+  // Brownian dynamics takes its friction here; the friction of Langevin
+  // dynamics is that of its [thermostat] (D163b).
+  if (const toml::node *node = table.get("friction");
+      node && !control.isBrownian())
+    return fail(*node, "'friction' in [dynamics] is for 'integrator = "
+                       "\"BROWNIAN\"'; Langevin dynamics takes 'friction' "
+                       "in [thermostat]");
+  if (control.isBrownian()) {
+    if (!table.get("friction"))
+      return fail(table, "expected 'friction' in [dynamics], in 1/ps, with "
+                         "'integrator = \"BROWNIAN\"'");
+    control.friction = 0.0;
+    if (Error error = readPositive(table, "friction", control.friction))
+      return error;
+    if (const toml::node *node = table.get("center_of_mass_interval"))
+      return fail(*node, "Brownian dynamics has no momentum to remove: "
+                         "'center_of_mass_interval' is not for 'integrator "
+                         "= \"BROWNIAN\"'");
+  }
   if (Error error = readPositive(table, "time_step", control.timestep))
     return error;
   if (Error error = readCount(table, "steps", control.numSteps, 0))
@@ -1962,13 +1982,27 @@ Error Reader::read(const toml::table &root) {
     return fail(thermostat ? *thermostat : *barostat,
                 "a minimization has no thermostat or barostat");
   static const char *const names[] = {"NVE", "NVT", "NPT"};
+  // Brownian dynamics is coupled to the bath by its own friction (D163b).
+  if (control.isBrownian() && !control.minimize) {
+    if (thermostat)
+      return fail(*thermostat,
+                  "'integrator = \"BROWNIAN\"' takes no [thermostat]: "
+                  "Brownian dynamics is coupled to the bath by its "
+                  "'friction' in [dynamics]");
+    if (barostat)
+      return fail(*barostat, "Brownian dynamics has no barostat");
+    if (ensembleKind != 1)
+      return fail(ensembleTable ? *ensembleTable : root,
+                  "'integrator = \"BROWNIAN\"' needs 'ensemble = \"NVT\"' "
+                  "in [ensemble], whose 'temperature' is that of the bath");
+  }
   if (thermostat && ensembleKind == 0)
     return fail(*thermostat, "a [thermostat] needs 'ensemble = \"NVT\"' or "
                              "\"NPT\" in [ensemble]");
   if (barostat && ensembleKind != 2)
     return fail(*barostat,
                 "a [barostat] needs 'ensemble = \"NPT\"' in [ensemble]");
-  if (!thermostat && ensembleKind != 0)
+  if (!thermostat && ensembleKind != 0 && !control.isBrownian())
     return fail(*ensembleTable, llvm::Twine("'ensemble = \"") +
                                     names[ensembleKind] +
                                     "\"' needs a [thermostat]");

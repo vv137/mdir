@@ -214,7 +214,7 @@ private:
   /// Whether the programs of the steps take the number of the step: for the
   /// noise of Langevin dynamics, and for the time of terms that take it.
   bool needsStepNumber() const {
-    return control.isLangevin() || control.usesTime;
+    return control.isLangevin() || control.isBrownian() || control.usesTime;
   }
   /// Terms whose expressions take the time `t` (D145): the potentials take
   /// it in ps as their last argument. A program of a step computes it from
@@ -299,6 +299,17 @@ private:
   /// `%m`, `%noise_step`, and `%noise_ids`.
   void emitLangevin(StringRef indent, StringRef velocities,
                     StringRef result);
+  /// Emits `result` = c `velocities` + (spread / √m) R for each particle of
+  /// mass m, with R three normal numbers of stream 2 of the particle and
+  /// the step (D135); a particle of mass 0 keeps its velocity.
+  void emitNoise(StringRef indent, StringRef velocities, StringRef result,
+                 double c, double spread);
+  /// Emits `result`, the velocity of a step of Brownian dynamics (D163b),
+  /// F / (m γ) + √(2 k_B T / (m γ Δt)) R, from the forces `forces`; the
+  /// positions drift by it over the step. A particle of mass 0 keeps its
+  /// velocity from `velocities`.
+  void emitBrownianVelocity(StringRef indent, StringRef forces,
+                            StringRef velocities, StringRef result);
   void emitPlaceSites(StringRef indent, StringRef x, StringRef result,
                       StringRef relations);
   /// Emits the forces `result`: the forces `f` at the positions `x` with
@@ -3167,6 +3178,9 @@ void Builder::emitPrograms() {
     // the work takes (D116).
     bool molecular = trotter && withVirial &&
                      (scales || StringRef(kind.name) == "step_virial");
+    // Brownian dynamics (D163b) neither conserves a volume of phase space
+    // nor reverses; it couples to the bath.
+    bool brownian = control.isBrownian();
     os << "dyn.program @" << kind.name
        << "(%x: !vec, %v: !vec, %f: !vec, %m: !real,\n"
        << "    %cell: !md.cell, %dt: f64"
@@ -3180,7 +3194,8 @@ void Builder::emitPrograms() {
        << (scales ? ", vector<3xf64>" : "") << ")\n"
        << "    attributes {"
        << (leapfrog ? "velocity_offset = -0.5,\n                " : "")
-       << "provides = [\"symplectic\", \"time_reversible\"]} {\n"
+       << (brownian ? "provides = [\"thermostatting\"]} {\n"
+                    : "provides = [\"symplectic\", \"time_reversible\"]} {\n")
        << "  %c = arith.constant 5.0e-01 : f64\n"
        << "  %half = arith.mulf %c, %dt : f64\n";
     // The time at the end of the step, at which its forces are evaluated
@@ -3188,7 +3203,11 @@ void Builder::emitPrograms() {
     if (control.usesTime)
       os << "  %time_steps = arith.sitofp %noise_step : i64 to f64\n"
          << "  %time = arith.mulf %time_steps, %dt : f64\n";
-    if (!leapfrog) {
+    if (brownian) {
+      // The velocity of the step, which the drift takes over Δt; the
+      // velocities stored are those of the displacement, Δx / Δt.
+      emitBrownianVelocity("  ", "%f", "%v", "%v1");
+    } else if (!leapfrog) {
       os << "  %v1 = dyn.kick %v, %f, %m, %half : !vec\n";
     } else if (withVirial && constraints) {
       // The velocities of the time of the positions, as velocity Verlet
@@ -3320,6 +3339,15 @@ void Builder::emitPrograms() {
          << ", %f1 : !vec, !vec, !vec\n}\n\n";
       continue;
     }
+    if (brownian) {
+      // No kick: the velocities are those of the displacement, with the
+      // constraints. The virial is that of the forces alone.
+      os << "  dyn.return %x1, " << velocities << ", %f1"
+         << (withEnergy ? ", %u1" : "") << (withVirial ? ", " + virial : "")
+         << " : !vec, !vec, !vec" << (withEnergy ? ", f64" : "")
+         << (withVirial ? ", vector<9xf64>" : "") << "\n}\n\n";
+      continue;
+    }
     // The second half kick, to the velocities of the time of the new
     // positions: those of the next step with velocity Verlet, and those of
     // the energies with leapfrog.
@@ -3368,15 +3396,51 @@ void Builder::emitPrograms() {
 void Builder::emitLangevin(StringRef indent, StringRef velocities,
                            StringRef result) {
   // v' = c v + sqrt((1 - c^2) k_B T / m) R, with c = exp(-gamma dt) and R
-  // three standard normal numbers. They come from one block of Philox
-  // 4x32-10 [Salmon2011] under the key of A13: the seed; the counter of the
-  // step, the number of the particle, and stream 2 in the high byte of the
-  // last word. The four words give four uniform numbers, (w + 1/2) 2^-32,
-  // and the method of Box and Muller two pairs of normal numbers, of which
-  // the first three are taken. A particle of mass 0 keeps its velocity.
+  // three standard normal numbers.
   double c = std::exp(-control.friction * control.timestep);
   double kT = units::boltzmann * control.temperature;
-  double spread = std::sqrt((1.0 - c * c) * kT);
+  emitNoise(indent, velocities, result, c, std::sqrt((1.0 - c * c) * kT));
+}
+
+void Builder::emitBrownianVelocity(StringRef indent, StringRef forces,
+                                   StringRef velocities, StringRef result) {
+  // The step of Ermak and McCammon, J. Chem. Phys. 69, 1352 (1978), without
+  // hydrodynamic interactions: Δx = Δt F / (m γ) + √(2 k_B T Δt /
+  // (m γ)) R, written as a velocity that the positions drift by over Δt. A
+  // particle of mass 0 (a virtual site, placed after the drift) keeps the
+  // velocity it had, which also keeps the velocities of the step before as
+  // an operand of the step.
+  double gamma = control.friction;
+  double kT = units::boltzmann * control.temperature;
+  std::string in = (indent + "  ").str();
+  std::string drift = (result + "_drift").str();
+  os << indent << drift << " = md.map_particles gather(" << forces << ", "
+     << velocities << ", %m : !vec, !vec, !real) {\n"
+     << indent
+     << "^bb0(%bf: vector<3xf64>, %bvi: vector<3xf64>, %bm: f64):\n"
+     << in << "%bzero = arith.constant 0.0 : f64\n"
+     << in << "%bmassive = arith.cmpf ogt, %bm, %bzero : f64\n"
+     << in << "%bone = arith.constant 1.0 : f64\n"
+     << in << "%bsafe = arith.select %bmassive, %bm, %bone : f64\n"
+     << in << "%bgamma = arith.constant " << formatReal(gamma) << " : f64\n"
+     << in << "%bmg = arith.mulf %bsafe, %bgamma : f64\n"
+     << in << "%bmgb = vector.broadcast %bmg : f64 to vector<3xf64>\n"
+     << in << "%bv = arith.divf %bf, %bmgb : vector<3xf64>\n"
+     << in << "%bout = arith.select %bmassive, %bv, %bvi : vector<3xf64>\n"
+     << in << "md.yield %bout : vector<3xf64>\n"
+     << indent << "} : !vec\n";
+  emitNoise(indent, drift, result, 1.0,
+            std::sqrt(2.0 * kT / (gamma * control.timestep)));
+}
+
+void Builder::emitNoise(StringRef indent, StringRef velocities,
+                        StringRef result, double c, double spread) {
+  // The normal numbers R come from one block of Philox 4x32-10
+  // [Salmon2011] under the key of A13: the seed; the counter of the step,
+  // the number of the particle, and stream 2 in the high byte of the last
+  // word. The four words give four uniform numbers, (w + 1/2) 2^-32, and
+  // the method of Box and Muller two pairs of normal numbers, of which the
+  // first three are taken. A particle of mass 0 keeps its velocity.
   auto i32 = [](uint32_t value) {
     return std::to_string(static_cast<int32_t>(value));
   };
