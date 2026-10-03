@@ -15,11 +15,14 @@
 # RUN: sed 's/PRECISION/DOUBLE/' %t/expression.toml > %t/expression-double.toml
 # RUN: mdir run %t/topology-mixed.toml | FileCheck %s --check-prefix=TOPOLOGY
 # RUN: mdir run %t/topology-double.toml | FileCheck %s --check-prefix=TOPOLOGY
+# RUN: sed 's/^cutoff            = 9.0/cutoff = 9.0\nswitch_distance = 8.0\nlennard_jones_modifier = "SQUARED_DISTANCE_SWITCH"\ndispersion_correction = "NONE"/' %t/topology-mixed.toml > %t/switched-mixed.toml
+# RUN: mdir run %t/switched-mixed.toml | FileCheck %s --check-prefix=TOPOLOGY
 # RUN: mdir run %t/expression-mixed.toml | FileCheck %s --check-prefix=EXPRESSION
 # RUN: mdir run %t/expression-double.toml | FileCheck %s --check-prefix=EXPRESSION
 
 # Every particle has epsilon 0: the Lennard-Jones is 0, and nothing moves
-# but by its velocity.
+# but by its velocity; also under the switch in r^2 (D175), whose product
+# with the potential takes the same select.
 #
 # TOPOLOGY:      MDIR: Lennard-Jones 0.000000
 # TOPOLOGY:      INFO: 0 0.0000 2.0866 0.0000 2.0866 100.0000 0.0000 6.8997

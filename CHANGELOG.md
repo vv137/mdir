@@ -47,6 +47,9 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- A Lennard-Jones pair of epsilon 0 gave NaN in mixed precision where two
+  particles all but meet; it now contributes exactly 0, also under a
+  switch (#18).
 - A checkpoint carries the SHA-256 of its state, checked on every read, and
   is flushed to stable storage before it replaces the previous one (D173).
 - Multithreaded CPU runs with a thermostat or a barostat were not
