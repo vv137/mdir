@@ -50,6 +50,47 @@ to rounding (`test/Driver/leapfrog-constraints.test` compares their logs
 to $10^{-7}$, D76). A run that starts leapfrog from velocities of time 0
 takes $\mathbf v_{-\frac12} = \mathbf v_0 - h\mathbf a_0$.
 
+**Brownian dynamics** (`integrator = "BROWNIAN"`, D163b) is the limit of
+Langevin dynamics in which the friction damps the momenta faster than the
+forces change. Langevin's equation for particle $i$,
+$m_i\,d\mathbf v_i = \mathbf F_i\,dt - m_i\gamma\,\mathbf v_i\,dt +
+\sqrt{2m_i\gamma k_BT_0}\,d\mathbf W_i$, with the inertial term dropped
+gives the overdamped equation
+
+$$
+d\mathbf x_i = \frac{\mathbf F_i}{m_i\gamma}\,dt + \sqrt{2D_i}\,d\mathbf W_i,
+\qquad D_i = \frac{k_BT_0}{m_i\gamma},
+$$
+
+whose density obeys the Smoluchowski equation $\partial_t p =
+\sum_i \nabla_i\cdot D_i(\nabla_i p - \beta\mathbf F_i\,p)$ with
+$\beta = 1/k_BT_0$. Its flux vanishes for $p \propto e^{-\beta U}$, so the
+positions are sampled canonically; the momenta are not variables of the
+dynamics. The friction $\gamma$ (`friction` of `[dynamics]`, 1/ps) and the
+mass set the mobility $1/(m_i\gamma)$: like Langevin dynamics with one
+friction, light atoms move fastest. The step is that of Euler and
+Maruyama, the step of [[Ermak1978]](references.md#ermak1978) without hydrodynamic interactions,
+$\mathbf x' = \mathbf x_n + \Delta t\,\mathbf F_i(\mathbf x_n)/(m_i\gamma) +
+\sqrt{2D_i\Delta t}\,\mathbf R_i$, with $\mathbf R_i$ three normal numbers
+of the particle and the step from stream 2 (Section 6.6), written as a
+velocity $\mathbf u$ that the drift takes over $\Delta t$; then the
+constraints $\mathcal C$, the correction $(\mathbf x_{n+1} -
+\mathbf x')/\Delta t$, and the placement of the virtual sites, as above,
+and no kick. The velocities stored are $(\mathbf x_{n+1} - \mathbf
+x_n)/\Delta t$, so the kinetic energy of the log is that of the
+displacements, about $2/(\gamma\Delta t)$ times $\tfrac12N_fk_BT_0$, not a
+temperature, and the log has no conserved energy. The step is accurate to
+first order in $\Delta t$: in a harmonic well $U = \tfrac k2\lvert\mathbf
+x\rvert^2$ it is $\mathbf x' = (1 - a)\mathbf x + \sqrt{2D\Delta t}\,
+\mathbf R$ with $a = k\Delta t/(m\gamma)$, whose stationary variance along
+each axis, $\sigma^2 = 2D\Delta t/(1 - (1-a)^2) = (k_BT_0/k)/(1 - a/2)$,
+exceeds the canonical $k_BT_0/k$ by a fraction $a/2$. On 125 atoms in
+wells of their own at 150 K the mean energy of the wells is 62.38 ± 0.16
+kcal/mol at $a = 0.21$ against 62.43 for the step and 55.89 canonically,
+and 56.38 ± 0.15 at $a = 0.021$ against 56.48; the energies 10 steps
+apart are correlated by 0.657 ± 0.012 at $a = 0.021$, against
+$(1-a)^{20} = 0.655$ (`brownian.test`).
+
 **Precision.** In the mixed mode the positions, the velocities, and the
 loops over particles (the kicks, the drift, the correction) are f64; the
 kernels of the constraints compute in f32 on displacements taken in f64

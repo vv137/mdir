@@ -2276,7 +2276,7 @@ epsilon = 0.2385                # kcal/mol
 sigma   = 3.4                   # Å
 
 [dynamics]
-integrator = "VELOCITY_VERLET"  # VELOCITY_VERLET, LEAPFROG
+integrator = "VELOCITY_VERLET"  # VELOCITY_VERLET, LEAPFROG, BROWNIAN
 time_step  = 0.001              # ps
 steps      = 100                # of the run; --continue runs to them
 seed       = 314159             # of the velocities and the thermostat
@@ -2360,7 +2360,8 @@ coulomb_modifier  = "POTENTIAL_SHIFT"  # NONE, POTENTIAL_SHIFT: the direct
 
 [dynamics]
 integrator = "VELOCITY_VERLET"  # VELOCITY_VERLET, LEAPFROG (velocities
-                                # half a step behind)
+                                # half a step behind), BROWNIAN (with
+                                # friction, 1/ps, and no [thermostat])
 time_step  = 0.002              # ps
 steps      = 500000             # of the run; --continue runs to them
 seed       = 314159             # of the velocities and the coupling

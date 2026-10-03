@@ -111,7 +111,8 @@ regard to case.
 | | `[[energy.type]]` | A type of particle: its mass and its parameters. |
 | | `[[energy.pair_override]]` | Parameters of a term for one pair of types. |
 | `[pme]` | `tolerance`, `beta`, `max_spacing`, `grid`, `order`, `influence` | Particle mesh Ewald (D71): $\beta$ from $\operatorname{erfc}(\beta r_c) = \texttt{tolerance}$ or given; the grid from the largest spacing or given as three numbers of points; the order of the B-splines, 4, 6, or 8; the influence function, `SPME` or `OPTIMAL`. |
-| `[dynamics]` | `integrator` | `VELOCITY_VERLET` or `LEAPFROG`: the `dyn.program` (D76). |
+| `[dynamics]` | `integrator` | `VELOCITY_VERLET`, `LEAPFROG`, or `BROWNIAN`: the `dyn.program` (D76). `BROWNIAN` is overdamped Langevin dynamics, the positions only, with `friction` and the temperature of `ensemble = "NVT"`, without a `[thermostat]` (D163b). |
+| | `friction` | With `BROWNIAN` only: the friction $\gamma$ in 1/ps; the mobility of a particle is $1/(m\gamma)$. |
 | | `time_step`, `steps` | In ps, and the number of steps of the run, counted from the step it begins at: 0, or the step of the checkpoint of `[input]`. `mdir run --continue` continues the run until it has taken them (D129). |
 | | `seed` | Of the initial velocities and of the coupling. |
 | | `center_of_mass_interval` | Steps between removals of the motion of the center of mass; with a thermostat, when it acts. |

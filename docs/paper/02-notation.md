@@ -33,6 +33,7 @@ element.
 | $K_a$ | In Section 5, the number of grid points of PME along axis $a$; $n$ the order of the B-splines (4) |
 | $\mathsf W$ | Virial tensor; $\mathsf W_{aa} = -\partial U/\partial\varepsilon_a$ along the scaling of positions and cell (Sections 6.4 and 6.5) |
 | $T,\ k_B$ | Temperature and Boltzmann's constant |
+| $\gamma$; $D_i = k_BT/(m_i\gamma)$ | Friction of Langevin and Brownian dynamics, in 1/ps; the diffusion constant of particle $i$ in Brownian dynamics (Section 6.1) |
 | $\eta_j,\ p_{\eta_j},\ Q_j$; $H'$ | Position, momentum, and mass of thermostat $j$ of a Nosé–Hoover chain of $M$, and the energy that the chain conserves (Section 6.3) |
 
 **Units.** Inside a compiled program MDIR computes in nm, ps, amu, and
