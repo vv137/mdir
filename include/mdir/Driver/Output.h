@@ -98,6 +98,13 @@ struct Output {
   /// coordinates of each term.
   ColumnFile pull;
   std::vector<int64_t> pullCounts;
+  /// [free_energy] (D161): dH/dλ and the differences of the energy to the
+  /// other states, or none; the state of the run, and the constant
+  /// energies of Program at each state and their derivatives.
+  ColumnFile freeEnergy;
+  int64_t freeEnergyState = 0;
+  std::vector<double> stateFixedEnergies, stateVolumeEnergies;
+  std::vector<double> lambdaFixedDerivatives, lambdaVolumeDerivatives;
   std::unique_ptr<TrajectoryWriter> trajectory;
   bool hasTrajectory = false;
 
@@ -295,6 +302,7 @@ double mdrtNoseHooverFactor(double kinetic);
 /// The coordinates of the terms over centers of groups at the step `step`
 /// (D145), in Å and radians, and the energy and the forces of each term,
 /// in kcal/mol and per Å or radian.
+void _mlir_ciface_mdrtWriteFreeEnergy(int64_t step, void *values);
 void _mlir_ciface_mdrtWritePull(int64_t step, void *coordinates,
                                 void *terms);
 /// A step of a minimization: the potential energy and the length of the

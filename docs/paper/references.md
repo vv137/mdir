@@ -49,6 +49,14 @@ M. Bernetti, G. Bussi, "Pressure control using stochastic cell
 rescaling," *J. Chem. Phys.* **153**, 114107 (2020).
 [doi:10.1063/5.0020514](https://doi.org/10.1063/5.0020514)
 
+### Beutler1994
+
+T. C. Beutler, A. E. Mark, R. C. van Schaik, P. R. Gerber,
+W. F. van Gunsteren, "Avoiding singularities and numerical instabilities
+in free energy calculations based on molecular simulations," *Chem. Phys.
+Lett.* **222**(6), 529–539 (1994).
+[doi:10.1016/0009-2614(94)00397-1](https://doi.org/10.1016/0009-2614(94)00397-1)
+
 ### Blackman2021
 
 D. Blackman, S. Vigna, "Scrambled linear pseudorandom number generators,"
@@ -90,6 +98,14 @@ Used for: the squared-distance switching potential (VSWITCH).
 G. Bussi, D. Donadio, M. Parrinello, "Canonical sampling through velocity
 rescaling," *J. Chem. Phys.* **126**, 014101 (2007).
 [doi:10.1063/1.2408420](https://doi.org/10.1063/1.2408420)
+
+### Chodera2007
+
+J. D. Chodera, W. C. Swope, J. W. Pitera, C. Seok, K. A. Dill, "Use of the
+weighted histogram analysis method for the analysis of simulated and
+parallel tempering simulations," *J. Chem. Theory Comput.* **3**(1),
+26–41 (2007).
+[doi:10.1021/ct0502864](https://doi.org/10.1021/ct0502864)
 
 ### Darden1993
 
@@ -222,6 +238,12 @@ architectures," *J. Comput. Chem.* **47**(25), e70492 (2026).
 B. Kelley, S. Rajamanickam, "LAPIS: A performance portable, high
 productivity compiler framework," arXiv:2509.25605 (2025).
 [doi:10.48550/arXiv.2509.25605](https://doi.org/10.48550/arXiv.2509.25605)
+
+### Kirkwood1935
+
+J. G. Kirkwood, "Statistical mechanics of fluid mixtures," *J. Chem.
+Phys.* **3**(5), 300–313 (1935).
+[doi:10.1063/1.1749657](https://doi.org/10.1063/1.1749657)
 
 ### Krautler2001
 
@@ -444,6 +466,13 @@ thermodynamic ensembles," *J. Chem. Theory Comput.* **9**(2), 909–926
 (2013).
 [doi:10.1021/ct300688p](https://doi.org/10.1021/ct300688p)
 
+### ShirtsChodera2008
+
+M. R. Shirts, J. D. Chodera, "Statistically optimal analysis of samples
+from multiple equilibrium states," *J. Chem. Phys.* **129**(12), 124105
+(2008).
+[doi:10.1063/1.2978177](https://doi.org/10.1063/1.2978177)
+
 ### Slattery2022
 
 S. Slattery, S. T. Reeve, C. Junghans, et al., "Cabana: A performance
@@ -518,3 +547,10 @@ thermostat scheme for the canonical ensemble with holonomic or isokinetic
 constraints via molecular dynamics," *J. Phys. Chem. A* **123**, 6056–6079
 (2019).
 [doi:10.1021/acs.jpca.9b02771](https://doi.org/10.1021/acs.jpca.9b02771)
+
+### Zwanzig1954
+
+R. W. Zwanzig, "High-temperature equation of state by a perturbation
+method. I. Nonpolar gases," *J. Chem. Phys.* **22**(8), 1420–1426 (1954).
+[doi:10.1063/1.1740409](https://doi.org/10.1063/1.1740409)
+

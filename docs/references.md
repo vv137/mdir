@@ -114,6 +114,16 @@ but the pages could not be opened to check the title and page range.
 Used for: the geometric mean of the energy parameter in the
 Lorentz–Berthelot mixing rule.
 
+### Beutler1994
+
+T. C. Beutler, A. E. Mark, R. C. van Schaik, P. R. Gerber,
+W. F. van Gunsteren, "Avoiding singularities and numerical instabilities
+in free energy calculations based on molecular simulations," *Chem. Phys.
+Lett.* **222**(6), 529–539 (1994).
+[doi:10.1016/0009-2614(94)00397-1](https://doi.org/10.1016/0009-2614(94)00397-1)
+
+Used for: the soft-core Lennard-Jones of the pairs that [free_energy] decouples (D161).
+
 ### Blackman2021
 
 D. Blackman, S. Vigna, "Scrambled linear pseudorandom number generators,"
@@ -186,6 +196,16 @@ dynamics using stochastic velocity rescaling," *J. Chem. Phys.* **130**,
 
 Used for: the second-order barostat that M1 considered and did not take
 (D50).
+
+### Chodera2007
+
+J. D. Chodera, W. C. Swope, J. W. Pitera, C. Seok, K. A. Dill, "Use of the
+weighted histogram analysis method for the analysis of simulated and
+parallel tempering simulations," *J. Chem. Theory Comput.* **3**(1),
+26–41 (2007).
+[doi:10.1021/ct0502864](https://doi.org/10.1021/ct0502864)
+
+Used for: the statistical inefficiency by which `scripts/free-energy.py` spaces its samples (D161).
 
 ### Darden1993
 
@@ -502,6 +522,14 @@ productivity compiler framework," arXiv:2509.25605 (2025).
 
 Used for: related work, a compiler on MLIR for sparse and dense linear
 algebra that emits Kokkos.
+
+### Kirkwood1935
+
+J. G. Kirkwood, "Statistical mechanics of fluid mixtures," *J. Chem.
+Phys.* **3**(5), 300–313 (1935).
+[doi:10.1063/1.1749657](https://doi.org/10.1063/1.1749657)
+
+Used for: thermodynamic integration, dF/dλ = ⟨∂H/∂λ⟩ (D161).
 
 ### Krautler2001
 
@@ -986,6 +1014,15 @@ Used for: the tests of the ensembles of the thermostat and the barostat,
 from the ratio of the distributions of two runs at different temperatures
 or pressures (`scripts/validation/ensembles`).
 
+### ShirtsChodera2008
+
+M. R. Shirts, J. D. Chodera, "Statistically optimal analysis of samples
+from multiple equilibrium states," *J. Chem. Phys.* **129**(12), 124105
+(2008).
+[doi:10.1063/1.2978177](https://doi.org/10.1063/1.2978177)
+
+Used for: MBAR, the estimator of `scripts/free-energy.py`, and the energies of every state that [free_energy] writes for it (D161).
+
 ### Slattery2022
 
 S. Slattery, S. T. Reeve, C. Junghans, et al., "Cabana: A performance
@@ -1215,3 +1252,12 @@ constraints via molecular dynamics," *J. Phys. Chem. A* **123**, 6056–6079
 
 Used for: the middle scheme of Langevin dynamics with constraints, the
 thermostat between the two halves of the drift (F1).
+
+### Zwanzig1954
+
+R. W. Zwanzig, "High-temperature equation of state by a perturbation
+method. I. Nonpolar gases," *J. Chem. Phys.* **22**(8), 1420–1426 (1954).
+[doi:10.1063/1.1740409](https://doi.org/10.1063/1.1740409)
+
+Used for: the exponential average of the energy difference between two states (D161).
+

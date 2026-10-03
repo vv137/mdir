@@ -13,7 +13,7 @@ cd "$(git rev-parse --show-toplevel)"
 
 # Numbers handed out before labels were introduced, to work still open.
 # Remove a number when its decision is merged.
-reserved=(161)
+reserved=()
 
 decisions=docs/decisions.md
 label_pattern='(^|[^A-Za-z0-9_])D\[[a-z0-9-]+\]'

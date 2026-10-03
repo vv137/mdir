@@ -572,7 +572,68 @@ message if the particles spread past it; a larger `pairlist_distance`
 places a larger cell. The log of a run without a cell has no pressure,
 and the trajectory no cell.
 
-## C.9 When something fails
+## C.9 Free energy
+
+`[free_energy]` decouples a selection of whole molecules from the rest
+through states of $\boldsymbol\lambda$ (D161, Section 6.8). The hydration
+free energy of ethanol (GAFF2 and AM1-BCC charges in TIP3P,
+`test/Driver/Inputs/fep`) takes one run per state, all from one
+minimization: the charges are turned off first, then the Lennard-Jones,
+softened as it goes:
+
+```toml
+[input]
+topology    = "eth_wat.prmtop"
+coordinates = "eth_wat.inpcrd"
+checkpoint  = "min.h5"
+
+[output]
+energy_interval = 250
+free_energy     = "s3.dhdl"
+
+[free_energy]
+couple = ":LIG"                 # a mask of whole molecules
+state  = 3                      # this run's state, from 0
+soft_core_alpha = 0.5
+
+[free_energy.lambdas]
+coulomb = [0.0, 0.25, 0.5, 0.75, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+vdw     = [0.0, 0.0,  0.0, 0.0,  0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.85, 1.0]
+```
+
+after the minimization, the equilibration at constant volume, and that at
+constant pressure of C.3, run at state 0, with `[dynamics]` and
+`[ensemble]` at constant pressure as in C.3; only `state` and the name of the file change from run to run. Each
+row of the file holds $\partial U/\partial\lambda$ of each component and
+the energy of every state less that of the run, in kcal/mol:
+
+```text
+# step time dHdl.coulomb dHdl.vdw dU.0 dU.1 dU.2 dU.3 dU.4 dU.5 ...
+# - ps kcal/mol kcal/mol kcal/mol kcal/mol kcal/mol kcal/mol kcal/mol kcal/mol ...
+```
+
+`scripts/free-energy.py` reads the control files of the runs, leaves out
+the first tenth of each (`--skip`), and prints the free energy of every
+state relative to the first by thermodynamic integration and by MBAR,
+with their uncertainties:
+
+```text
+python3 scripts/free-energy.py s*.toml
+```
+
+For 500 ps a state at 300 K and 1 atm it prints
+$\Delta G = 2.79 \pm 0.11$ kcal/mol by MBAR from the coupled to the
+decoupled state, a hydration free energy of $-2.79$ kcal/mol; OpenMM with
+the same Hamiltonian gives $2.78 \pm 0.11$ (Section 6.8).
+
+Any other component, `restraint = [...]` say, is the parameter
+`lambda_restraint` of the expressions of C.7, so that a restraint can be
+switched on along the states and its contribution taken from the same
+files. A state that softens the Lennard-Jones while the charges are still
+on warns (`charged_soft_core`): the charges of the selection could then
+come arbitrarily close to others.
+
+## C.10 When something fails
 
 `mdir check` is the first step: it reads everything that `mdir run`
 reads, and its errors name the file, the line, and the table. A keyword

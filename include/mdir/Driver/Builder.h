@@ -121,6 +121,14 @@ struct Program {
   double coulombConstantEnergy = 0.0;
   double coulombConstantVirial = 0.0;
   double coulombSelfEnergy = 0.0;
+  /// [free_energy] (D161): for each state, the constant energies that
+  /// depend on λ, in kJ/mol at the volume of the file: those that do not
+  /// depend on the volume (the self term of particle mesh Ewald) and those
+  /// proportional to 1 / V (the background of a net charge and the
+  /// correction for the dispersion); and for each component of λ their
+  /// derivatives at the state of the run.
+  std::vector<double> stateFixedEnergies, stateVolumeEnergies;
+  std::vector<double> lambdaFixedDerivatives, lambdaVolumeDerivatives;
   /// β in nm⁻¹ and the numbers of points of the grid, for the log.
   double pmeBeta = 0.0;
   int64_t pmeGrid[3] = {0, 0, 0};

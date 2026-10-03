@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <map>
+#include <set>
 
 using namespace mdir::driver;
 using llvm::StringRef;
@@ -419,6 +420,53 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
     }
     system.pairGroups.push_back(std::move(groups));
     system.pairTermNames.push_back(term.name);
+  }
+
+  // The particles that [free_energy] decouples (D161). The interactions
+  // within the selection stay, so no excluded pair, pair 1-4, or bond may
+  // join it to the rest: it holds whole molecules.
+  if (control.hasFreeEnergy && !control.freeEnergy.couple.empty()) {
+    const std::string &mask = control.freeEnergy.couple;
+    auto selected = selectParticles(mask, *topology);
+    if (!selected)
+      return selected.takeError();
+    std::vector<bool> &in = *selected;
+    if (llvm::none_of(in, [](bool b) { return b; }))
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "'couple' of [free_energy], '%s', selects no particle",
+          mask.c_str());
+    auto check = [&](unsigned i, unsigned j, const char *what) -> llvm::Error {
+      if (in[i] == in[j])
+        return llvm::Error::success();
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "'couple' of [free_energy], '%s', selects particle %u and not "
+          "particle %u, which %s joins to it; it must select whole "
+          "molecules",
+          mask.c_str(), (in[i] ? i : j) + 1, (in[i] ? j : i) + 1, what);
+    };
+    for (auto [i, j] : topology->exclusions)
+      if (llvm::Error error = check(i, j, "an excluded pair"))
+        return std::move(error);
+    for (const Topology::Pair &pair : topology->pairs)
+      if (llvm::Error error = check(pair.i, pair.j, "a pair 1-4"))
+        return std::move(error);
+    for (const Topology::Bond &bond : topology->bonds)
+      if (llvm::Error error = check(bond.i, bond.j, "a bond"))
+        return std::move(error);
+    std::vector<unsigned> members;
+    for (size_t i = 0, e = in.size(); i != e; ++i)
+      if (in[i])
+        members.push_back(static_cast<unsigned>(i));
+    std::set<std::pair<unsigned, unsigned>> excluded;
+    for (auto [i, j] : topology->exclusions)
+      excluded.insert({std::min(i, j), std::max(i, j)});
+    for (size_t a = 0; a != members.size(); ++a)
+      for (size_t b = a + 1; b != members.size(); ++b)
+        if (!excluded.count({members[a], members[b]}))
+          system.alchemicalPairs.push_back({members[a], members[b]});
+    system.alchemical = std::move(in);
   }
 
   // Generalized Born (D144) takes the radii and the screening of the

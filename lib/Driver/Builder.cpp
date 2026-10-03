@@ -91,7 +91,14 @@ private:
     ExternalTerms = 65536,
     LennardJonesExcluded = 131072,
     LennardJonesReciprocal = 262144,
-    AllTerms = 524287,
+    /// The Coulomb of the pairs within the selection of [free_energy] that
+    /// the reciprocal sum of scaled charges leaves out (D161).
+    CoulombWithin = 524288,
+    AllTerms = 1048575,
+    /// Only what depends on λ (D161): the pairs that the selection
+    /// decouples, the Coulomb within it, the reciprocal sum, and the terms
+    /// whose expressions take a λ.
+    Alchemical = 1048576,
   };
   /// Emits the potential `name` of the terms `terms` of the topology; of
   /// the terms given by expressions over tuples, pairs, or positions, only
@@ -238,6 +245,64 @@ private:
   std::string getTimeValue(StringRef name) const {
     return control.usesTime ? (", " + name).str() : "";
   }
+  /// [free_energy] (D161): whether the run decouples a selection.
+  bool decouples() const { return !system.alchemical.empty(); }
+  /// The component `name` of λ at the state of the run.
+  double getLambda(StringRef name) const {
+    return control.freeEnergy.get(name, control.freeEnergy.state);
+  }
+  /// The potential `@alchemical` takes the components of λ as its last
+  /// arguments, `%lambda_<name>`; the others hold them as constants, the
+  /// values of the state of the run, under the same names.
+  bool lambdaArguments = false;
+  std::string getLambdaParameters() const {
+    std::string text;
+    if (lambdaArguments)
+      for (const auto &[name, values] : control.freeEnergy.lambdas)
+        text += ", %lambda_" + name + ": f64";
+    return text;
+  }
+  void emitLambdaConstants(StringRef indent) {
+    if (lambdaArguments)
+      return;
+    for (const auto &[name, values] : control.freeEnergy.lambdas)
+      os << indent << "%lambda_" << name << " = arith.constant "
+         << formatReal(getLambda(name)) << " : f64\n";
+  }
+  /// Binds the parameters `lambda_<name>` of the expressions.
+  void bindLambdas(llvm::StringMap<std::string> &values) const {
+    for (const auto &[name, v] : control.freeEnergy.lambdas)
+      values["lambda_" + name] = "%lambda_" + name;
+  }
+  /// Whether the expression `text` takes a component of λ.
+  bool usesLambda(StringRef text) const {
+    llvm::Expected<Expression> expression =
+        Expression::parse(text, control.functions);
+    if (!expression) {
+      llvm::consumeError(expression.takeError());
+      return false;
+    }
+    return llvm::any_of(expression->getNames(), [&](const std::string &n) {
+      return control.isLambda(n);
+    });
+  }
+  /// Emits dH/dλ of each component and the energy of `@alchemical` at
+  /// every state, at the positions `x` in the cell `cell`, and their call
+  /// to the writer (D161).
+  void emitFreeEnergyOutput(StringRef indent, StringRef x, StringRef cell,
+                            StringRef prefix, StringRef step,
+                            StringRef time);
+  /// The constant energies of [free_energy] at each state and their
+  /// derivatives (D161).
+  void collectFreeEnergyConstants();
+  /// The correction for the dispersion of a topology at the volume of the
+  /// file, in kJ/mol; with `decoupled`, without the pairs that the
+  /// selection of [free_energy] decouples.
+  double getTopologyDispersion(bool decoupled) const;
+  /// The self term of particle mesh Ewald and the background of a net
+  /// charge at the volume of the file, in kJ/mol, with the charges of the
+  /// selection of [free_energy] times 1 − `lambda`.
+  std::pair<double, double> getPMEConstants(double lambda) const;
   /// Emits the number of the step about to be taken, from the counter on
   /// the host that each step advances, and returns the operands that a
   /// program of a step takes for it.
@@ -1138,6 +1203,25 @@ llvm::Error Builder::collectTopology() {
     program.fields.push_back(std::move(field));
   }
 
+  // [free_energy] (D161): 1 for each particle that it decouples, and the
+  // charges that the reciprocal sum takes at the state of the run.
+  if (decouples()) {
+    Program::Field flags;
+    flags.name = "alch";
+    for (bool flag : system.alchemical)
+      flags.values.push_back(flag ? 1.0 : 0.0);
+    program.fields.push_back(std::move(flags));
+    double lambda = getLambda("coulomb");
+    if (control.pme && lambda != 0.0) {
+      Program::Field scaled;
+      scaled.name = "q_rec";
+      for (size_t i = 0, e = topology.charges.size(); i != e; ++i)
+        scaled.values.push_back(topology.charges[i] *
+                                (system.alchemical[i] ? 1.0 - lambda : 1.0));
+      program.fields.push_back(std::move(scaled));
+    }
+  }
+
   // Lennard-Jones for each pair of types.
   unsigned numTypes = topology.getNumTypes();
   program.tables.push_back({"lj_sigma", numTypes, topology.sigma});
@@ -1376,6 +1460,15 @@ llvm::Error Builder::collectTopology() {
       set.members.push_back(j);
     }
   }
+  // The pairs within the selection of [free_energy] that are not excluded,
+  // whose Coulomb particle mesh Ewald adds back (D161).
+  if (control.pme && !system.alchemicalPairs.empty()) {
+    Program::TupleSet &set = addSet("alchemical_pairs", 2);
+    for (auto [i, j] : system.alchemicalPairs) {
+      set.members.push_back(i);
+      set.members.push_back(j);
+    }
+  }
 
   if (control.pme)
     if (llvm::Error error = collectPME())
@@ -1402,8 +1495,26 @@ llvm::Error Builder::collectTopology() {
   // The correction for the dispersion (Section 7.2 of design-m1.md): N²
   // times the mean of C6 over the pairs of distinct particles that are not
   // excluded, as GROMACS takes it.
-  if (control.topologyDispersion == DispersionCorrection::None)
-    return llvm::Error::success();
+  if (control.topologyDispersion != DispersionCorrection::None) {
+    // With [free_energy] the pairs that the selection decouples count
+    // times 1 − λ: the tail of their soft-core Lennard-Jones is that of
+    // the plain one times 1 − λ (D161).
+    double energy = getTopologyDispersion(false);
+    if (decouples()) {
+      double lambda = getLambda("vdw");
+      energy = (1.0 - lambda) * energy + lambda * getTopologyDispersion(true);
+    }
+    program.dispersionEnergy = energy;
+    program.dispersionVirial = 6.0 * energy;
+  }
+  if (control.hasFreeEnergy)
+    collectFreeEnergyConstants();
+  return llvm::Error::success();
+}
+
+double Builder::getTopologyDispersion(bool decoupled) const {
+  const Topology &topology = *system.topology;
+  unsigned numTypes = topology.getNumTypes();
   std::vector<double> numbers(numTypes, 0.0);
   for (unsigned type : topology.types)
     numbers[type] += 1.0;
@@ -1417,16 +1528,95 @@ llvm::Error Builder::collectTopology() {
       sum += numbers[a] * (numbers[b] - (a == b ? 1.0 : 0.0)) * c6(a, b);
   for (auto [i, j] : topology.exclusions)
     sum -= 2.0 * c6(topology.types[i], topology.types[j]);
+  // Without the pairs of a particle of the selection and one of the rest,
+  // over the same number of pairs.
+  if (decoupled) {
+    std::vector<double> inside(numTypes, 0.0), outside(numTypes, 0.0);
+    for (size_t i = 0, e = topology.types.size(); i != e; ++i)
+      (system.alchemical[i] ? inside : outside)[topology.types[i]] += 1.0;
+    for (unsigned a = 0; a != numTypes; ++a)
+      for (unsigned b = 0; b != numTypes; ++b)
+        sum -= 2.0 * inside[a] * outside[b] * c6(a, b);
+  }
   double n = static_cast<double>(topology.getNumParticles());
   double pairs = n * (n - 1.0) - 2.0 * topology.exclusions.size();
   double mean = pairs > 0.0 ? sum / pairs : 0.0;
   double rc = control.cutoffDistance * units::length;
   double volume = system.box[0] * system.box[1] * system.box[2];
-  double energy =
-      -2.0 * M_PI / (3.0 * volume) * n * n * mean / (rc * rc * rc);
-  program.dispersionEnergy = energy;
-  program.dispersionVirial = 6.0 * energy;
-  return llvm::Error::success();
+  return -2.0 * M_PI / (3.0 * volume) * n * n * mean / (rc * rc * rc);
+}
+
+std::pair<double, double> Builder::getPMEConstants(double lambda) const {
+  const Topology &topology = *system.topology;
+  double squares = 0.0, net = 0.0;
+  for (size_t i = 0, e = topology.charges.size(); i != e; ++i) {
+    double q = topology.charges[i];
+    if (decouples() && system.alchemical[i])
+      q *= 1.0 - lambda;
+    squares += q * q;
+    net += q;
+  }
+  double beta = program.pmeBeta;
+  double self = -coulombInternal * beta / std::sqrt(M_PI) * squares;
+  double volume = system.box[0] * system.box[1] * system.box[2];
+  double background =
+      -coulombInternal * M_PI * net * net / (2.0 * volume * beta * beta);
+  return {self, background};
+}
+
+void Builder::collectFreeEnergyConstants() {
+  // At each state, the constants that depend on λ: the self term of
+  // particle mesh Ewald, which does not depend on the volume, and the
+  // background of a net charge and the correction for the dispersion,
+  // proportional to 1 / V, at the volume of the file. Their derivatives
+  // follow at the state of the run: in λ of the Coulomb, 2 s s' times the
+  // part of the selection in the self term, and in the background as its
+  // net charge Q(λ) = Q_0 + s Q_1 says; in λ of the Lennard-Jones, the
+  // difference of the two corrections (D161).
+  const Control::FreeEnergy &energy = control.freeEnergy;
+  size_t states = energy.getNumStates();
+  bool dispersion = control.topologyDispersion != DispersionCorrection::None;
+  double coupled = 0.0, decoupled = 0.0;
+  if (dispersion && decouples()) {
+    coupled = getTopologyDispersion(false);
+    decoupled = getTopologyDispersion(true);
+  } else if (dispersion) {
+    coupled = decoupled = getTopologyDispersion(false);
+  }
+  for (size_t k = 0; k != states; ++k) {
+    double fixed = 0.0, scaled = 0.0;
+    if (program.pme && decouples()) {
+      auto [self, background] = getPMEConstants(energy.get("coulomb", k));
+      fixed += self;
+      scaled += background;
+    }
+    double lambda = decouples() ? energy.get("vdw", k) : 0.0;
+    scaled += (1.0 - lambda) * coupled + lambda * decoupled;
+    program.stateFixedEnergies.push_back(fixed);
+    program.stateVolumeEnergies.push_back(scaled);
+  }
+  for (const auto &[name, values] : energy.lambdas) {
+    double fixed = 0.0, scaled = 0.0;
+    if (decouples() && name == "coulomb" && program.pme) {
+      // The derivatives of quadratics in λ, from three points.
+      double lambda = getLambda("coulomb");
+      auto [self0, background0] = getPMEConstants(0.0);
+      auto [self1, background1] = getPMEConstants(1.0);
+      auto [selfh, backgroundh] = getPMEConstants(0.5);
+      auto slope = [&](double at0, double ath, double at1) {
+        // f(λ) = a + b λ + c λ², f'(λ) = b + 2 c λ.
+        double c = 2.0 * (at0 + at1 - 2.0 * ath);
+        double b = at1 - at0 - c;
+        return b + 2.0 * c * lambda;
+      };
+      fixed = slope(self0, selfh, self1);
+      scaled = slope(background0, backgroundh, background1);
+    }
+    if (decouples() && name == "vdw")
+      scaled = decoupled - coupled;
+    program.lambdaFixedDerivatives.push_back(fixed);
+    program.lambdaVolumeDerivatives.push_back(scaled);
+  }
 }
 
 /// The smallest even number of points, at least `least`, whose prime
@@ -1536,16 +1726,10 @@ llvm::Error Builder::collectPME() {
           index + 1, q);
 
   // The self term, and the background that neutralizes a net charge,
-  // whose virial is its energy on the diagonal.
-  double squares = 0.0, net = 0.0;
-  for (double q : topology.charges) {
-    squares += q * q;
-    net += q;
-  }
-  double self = -coulombInternal * beta / std::sqrt(M_PI) * squares;
-  double volume = system.box[0] * system.box[1] * system.box[2];
-  double background =
-      -coulombInternal * M_PI * net * net / (2.0 * volume * beta * beta);
+  // whose virial is its energy on the diagonal; with the charges of the
+  // selection of [free_energy] scaled as at the state of the run (D161).
+  program.pmeBeta = beta;
+  auto [self, background] = getPMEConstants(getLambda("coulomb"));
   program.pme = true;
   program.coulombConstantEnergy = self + background;
   program.coulombSelfEnergy = self;
@@ -1806,6 +1990,7 @@ void Builder::emitCentroidTerm(size_t index, const TupleTerm &term) {
   }
   if (control.usesTime)
     values["t"] = "%time";
+  bindLambdas(values);
   Expression expression = llvm::cantFail(
       Expression::parse(term.expression, control.functions));
   std::string energy = expression.emit(os, values, prefix + "e", "  ");
@@ -1852,6 +2037,7 @@ void Builder::emitPullPotentials() {
     for (size_t q = 0; q != quantities.size(); ++q)
       os << ", %pq" << q << ": f64";
     os << ") -> f64 {\n";
+    emitLambdaConstants("  ");
     llvm::StringMap<std::string> values;
     for (auto [q, quantity] : llvm::enumerate(quantities))
       values[quantity] = "%pq" + std::to_string(q);
@@ -1863,6 +2049,7 @@ void Builder::emitPullPotentials() {
     }
     if (control.usesTime)
       values["t"] = "%time";
+    bindLambdas(values);
     Expression expression = llvm::cantFail(
         Expression::parse(term.expression, control.functions));
     std::string energy = expression.emit(os, values, "%pe", "  ");
@@ -1990,6 +2177,107 @@ void Builder::emitPullOutput(StringRef indent, StringRef x, StringRef cell,
      << indent << "func.call @mdrtWritePull(" << step << ", " << values
      << "_cast, " << terms << "_cast) : (i64, memref<?xf64>, memref<?xf64>) "
         "-> ()\n";
+}
+
+void Builder::emitFreeEnergyOutput(StringRef indent, StringRef x,
+                                   StringRef cell, StringRef prefix,
+                                   StringRef step, StringRef time) {
+  if (control.freeEnergyFile.empty())
+    return;
+  // `@alchemical` at the state of the run with its derivatives in each
+  // component of λ, and its energy at every other state; the host adds the
+  // constant terms (D161). The values: the derivatives, then the energies
+  // of the states in order.
+  const Control::FreeEnergy &energy = control.freeEnergy;
+  size_t components = energy.lambdas.size(), states = energy.getNumStates();
+  std::string name = ("%fe" + step.drop_front()).str();
+  std::string type =
+      "memref<" + std::to_string(components + states) + "xf64>";
+  os << indent << name << " = memref.alloca() : " << type << "\n";
+  unsigned base = getNumPotentialArguments();
+  auto lambdas = [&](size_t k) {
+    std::string text;
+    for (size_t c = 0; c != components; ++c) {
+      std::string value = name + "_l" + std::to_string(k) + "_" +
+                          std::to_string(c);
+      os << indent << value << " = arith.constant "
+         << formatReal(energy.lambdas[c].second[k]) << " : f64\n";
+      text += ", " + value;
+    }
+    return text;
+  };
+  std::string types = "(!vec, !md.cell" + getFieldTypes() + getTimeType();
+  for (size_t c = 0; c != components; ++c)
+    types += ", f64";
+  types += ")";
+  auto store = [&](const std::string &value, size_t slot) {
+    std::string place = name + "_s" + std::to_string(slot);
+    os << indent << place << " = arith.constant " << slot << " : index\n"
+       << indent << "memref.store " << value << ", " << name << "["
+       << place << "] : " << type << "\n";
+  };
+  // The derivatives at the state of the run, then the energy at every
+  // state in a loop, whose kernels are compiled once, with the components
+  // of each state from a table.
+  size_t state = static_cast<size_t>(energy.state);
+  std::string arguments = lambdas(state);
+  os << indent;
+  for (size_t c = 0; c != components; ++c)
+    os << (c ? ", " : "") << name << "_d" << c;
+  os << " = md.evaluate @alchemical(" << x << ", " << cell
+     << getFieldValues(prefix) << getTimeValue(time) << arguments << ")\n"
+     << indent << "    request [";
+  for (size_t c = 0; c != components; ++c)
+    os << (c ? ", " : "") << "derivative(" << base + c << ")";
+  os << "]\n" << indent << "    : " << types << " -> (";
+  for (size_t c = 0; c != components; ++c)
+    os << (c ? ", " : "") << "f64";
+  os << ")\n";
+  for (size_t c = 0; c != components; ++c)
+    store(name + "_d" + std::to_string(c), c);
+  std::string table = name + "_table";
+  std::string tableType = "memref<" + std::to_string(states) + "x" +
+                          std::to_string(components) + "xf64>";
+  os << indent << table << " = memref.alloca() : " << tableType << "\n";
+  for (size_t k = 0; k != states; ++k)
+    for (size_t c = 0; c != components; ++c) {
+      std::string at = name + "_t" + std::to_string(k) + "_" +
+                       std::to_string(c);
+      os << indent << at << "v = arith.constant "
+         << formatReal(energy.lambdas[c].second[k]) << " : f64\n"
+         << indent << at << "k = arith.constant " << k << " : index\n"
+         << indent << at << "c = arith.constant " << c << " : index\n"
+         << indent << "memref.store " << at << "v, " << table << "[" << at
+         << "k, " << at << "c] : " << tableType << "\n";
+    }
+  std::string inner = (indent + "  ").str();
+  os << indent << name << "_count = arith.constant " << states
+     << " : index\n"
+     << indent << name << "_first = arith.constant " << components
+     << " : index\n"
+     << indent << "scf.for " << name << "_k = %c0 to " << name
+     << "_count step %c1 {\n";
+  std::string loaded;
+  for (size_t c = 0; c != components; ++c) {
+    std::string value = name + "_lk" + std::to_string(c);
+    os << inner << name << "_ci" << c << " = arith.constant " << c
+       << " : index\n"
+       << inner << value << " = memref.load " << table << "[" << name
+       << "_k, " << name << "_ci" << c << "] : " << tableType << "\n";
+    loaded += ", " + value;
+  }
+  os << inner << name << "_e = md.evaluate @alchemical(" << x << ", " << cell
+     << getFieldValues(prefix) << getTimeValue(time) << loaded << ")\n"
+     << inner << "    request [energy] : " << types << " -> f64\n"
+     << inner << name << "_slot = arith.addi " << name << "_first, " << name
+     << "_k : index\n"
+     << inner << "memref.store " << name << "_e, " << name << "[" << name
+     << "_slot] : " << type << "\n"
+     << indent << "}\n";
+  os << indent << name << "_cast = memref.cast " << name << " : " << type
+     << " to memref<?xf64>\n"
+     << indent << "func.call @mdrtWriteFreeEnergy(" << step << ", " << name
+     << "_cast) : (i64, memref<?xf64>) -> ()\n";
 }
 
 double Builder::getDebyeKappa() const {
@@ -2293,6 +2581,7 @@ void Builder::emitExternalTerm(size_t index, const ExternalTerm &term,
   }
   if (control.usesTime)
     values["t"] = "%time";
+  bindLambdas(values);
   std::string energy = expression.emit(os, values, prefix + "e", "    ");
   os << "    " << prefix << "kj = arith.constant " << formatReal(units::energy)
      << " : f64\n"
@@ -2334,11 +2623,13 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
   // σⁿ Φₙ is written with s = σ/r and g = σ, so that no power of r alone
   // leaves the range of f32.
   double from = control.switchDistance * units::length;
+  // `distance` is r, or the soft-core distance of [free_energy] (D161).
   auto emitLennardJones = [&](StringRef sigma, StringRef epsilon,
-                              StringRef result, Truncation modifier) {
+                              StringRef result, Truncation modifier,
+                              StringRef distance = "%r") {
     os << "    %c4 = arith.constant 4.0 : f64\n"
        << "    %e4 = arith.mulf %c4, " << epsilon << " : f64\n"
-       << "    %sr = arith.divf " << sigma << ", %r : f64\n";
+       << "    %sr = arith.divf " << sigma << ", " << distance << " : f64\n";
     if (modifier == Truncation::None ||
         modifier == Truncation::SquaredDistanceSwitch) {
       os << "    %i6 = arith.constant 6 : i32\n"
@@ -2404,8 +2695,8 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
       double width = cutoff - from;
       os << "    %rs = arith.constant " << formatReal(from) << " : f64\n"
          << "    %zero = arith.constant 0.0 : f64\n"
-         << "    %dr = arith.subf %r, %rs : f64\n"
-         << "    %beyond = arith.cmpf ogt, %r, %rs : f64\n"
+         << "    %dr = arith.subf " << distance << ", %rs : f64\n"
+         << "    %beyond = arith.cmpf ogt, " << distance << ", %rs : f64\n"
          << "    %u = arith.select %beyond, %dr, %zero : f64\n"
          << "    %u2 = arith.mulf %u, %u : f64\n"
          << "    %u3 = arith.mulf %u2, %u : f64\n";
@@ -2449,7 +2740,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
          << "    %h3s = arith.mulf %h3, %h3 : f64\n"
          << "    %b_out = arith.mulf %k6, %h3s : f64\n"
          << "    %rs = arith.constant " << formatReal(from) << " : f64\n"
-         << "    %inside = arith.cmpf ole, %r, %rs : f64\n"
+         << "    %inside = arith.cmpf ole, " << distance << ", %rs : f64\n"
          << "    %a_sel = arith.select %inside, %a, %a_out : f64\n"
          << "    %b_sel = arith.select %inside, %b, %b_out : f64\n";
       a = "%a_sel";
@@ -2460,7 +2751,25 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
   };
 
   os << "md.potential @" << name << "(%x: !vec, %cell: !md.cell"
-     << getFieldParameters() << getTimeParameter() << ") -> f64 {\n";
+     << getFieldParameters() << getTimeParameter() << getLambdaParameters()
+     << ") -> f64 {\n";
+  emitLambdaConstants("  ");
+  // [free_energy] (D161): `@alchemical` has only what depends on λ.
+  bool alchemicalOnly = terms & Alchemical;
+  if (alchemicalOnly) {
+    unsigned kept = LennardJones | Coulomb | CoulombExcluded |
+                    CoulombWithin | CoulombReciprocal | TupleTerms |
+                    PairTerms | ExternalTerms;
+    if (!decouples())
+      kept &= ~(LennardJones | Coulomb | CoulombExcluded | CoulombWithin |
+                CoulombReciprocal);
+    terms &= kept;
+  }
+  // Which λ the kernels of the pairs take: as arguments, or as constants
+  // of the state of the run that are not 0.
+  bool scalesCoulomb =
+      decouples() && (lambdaArguments || getLambda("coulomb") != 0.0);
+  bool scalesVdw = decouples() && (lambdaArguments || getLambda("vdw") != 0.0);
   std::string total;
   auto add = [&](StringRef term) {
     std::string value = ("%u_" + term).str();
@@ -2495,6 +2804,8 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
   // sigma1, epsilon1 those of the type of each particle with itself.
   for (auto [k, term] : llvm::enumerate(control.pairs)) {
     if (!pairTerms || (pairTerm >= 0 && static_cast<int>(k) != pairTerm))
+      continue;
+    if (alchemicalOnly && !usesLambda(term.expression))
       continue;
     bool grouped = k < system.pairGroups.size() && !system.pairGroups[k].empty();
     std::string g = std::to_string(k), set = "pair_" + term.name;
@@ -2531,6 +2842,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     values["r"] = "%pt_r";
     if (control.usesTime)
       values["t"] = "%time";
+    bindLambdas(values);
     values["q1"] = "%q_i";
     values["q2"] = "%q_j";
     for (const std::string &stem : stems) {
@@ -2591,21 +2903,116 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     emitBorn(terms, add);
   if (terms & ExternalTerms)
     for (auto [index, term] : llvm::enumerate(system.topology->externalTerms))
-      if (externalTerm < 0 || static_cast<int>(index) == externalTerm)
+      if ((externalTerm < 0 || static_cast<int>(index) == externalTerm) &&
+          !(alchemicalOnly && !usesLambda(term.expression)))
         emitExternalTerm(index, term, add);
   if (lj || coulomb) {
+    // [free_energy] (D161): a pair with one particle in the selection,
+    // `%al_x` = 1, is decoupled. Its Lennard-Jones is that of the
+    // soft-core distance r_A, r_A^6 = alpha sigma^6 lambda^p + r^6, times
+    // 1 - lambda [Beutler1994], and its Coulomb is times 1 - lambda: the
+    // charge of the particle in the selection scaled. The pairs within the
+    // selection stay.
+    bool flags = (lj && scalesVdw) || (coulomb && scalesCoulomb) ||
+                 (alchemicalOnly && decouples());
     os << "  %u_nonbonded = md.sum_relation %n, %x, %cell gather(%p_type, "
-          "%p_q : !ids, !real)\n"
+          "%p_q"
+       << (flags ? ", %p_alch : !ids, !real, !real)\n"
+                 : " : !ids, !real)\n")
        << "      exchange(symmetric) {\n"
        << "  ^bb0(%r: f64, %d: vector<3xf64>, %type_i: i32, %type_j: i32, "
-          "%q_i: f64, %q_j: f64):\n";
+          "%q_i: f64, %q_j: f64"
+       << (flags ? ", %al_i: f64, %al_j: f64" : "") << "):\n";
+    if (flags)
+      os << "    %al_ij = arith.mulf %al_i, %al_j : f64\n"
+         << "    %al_sum = arith.addf %al_i, %al_j : f64\n"
+         << "    %al_twice = arith.addf %al_ij, %al_ij : f64\n"
+         << "    %cross = arith.subf %al_sum, %al_twice : f64\n"
+         << "    %al_one = arith.constant 1.0 : f64\n";
     std::string value;
     if (lj) {
       os << "    %sigma = md.lookup %t_lj_sigma[%type_i, %type_j] : !table, "
             "i32, i32 -> f64\n"
          << "    %epsilon = md.lookup %t_lj_epsilon[%type_i, %type_j] : "
             "!table, i32, i32 -> f64\n";
-      emitLennardJones("%sigma", "%epsilon", "%lj", control.truncation);
+      if (scalesVdw) {
+        // The distance r_A of a decoupled pair, r of the others. A pair
+        // without a σ, which has no Lennard-Jones, takes 0.3 nm in r_A,
+        // so that r_A stays above 0 where its particles overlap.
+        double alpha = control.freeEnergy.softCoreAlpha;
+        std::string distance = "%r";
+        if (alpha > 0.0) {
+          os << "    %sc_alpha = arith.constant " << formatReal(alpha)
+             << " : f64\n"
+             << "    %sc_zero = arith.constant 0.0 : f64\n"
+             << "    %sc_floor = arith.constant 3.0e-01 : f64\n"
+             << "    %sc_has = arith.cmpf ogt, %sigma, %sc_zero : f64\n"
+             << "    %sc_sigma = arith.select %sc_has, %sigma, %sc_floor : f64\n"
+             << "    %sc_i3 = arith.constant 3 : i32\n"
+             << "    %sc_s3 = math.fpowi %sc_sigma, %sc_i3 : f64, i32\n"
+             << "    %sc_s6 = arith.mulf %sc_s3, %sc_s3 : f64\n"
+             << "    %sc_r3 = math.fpowi %r, %sc_i3 : f64, i32\n"
+             << "    %sc_r6 = arith.mulf %sc_r3, %sc_r3 : f64\n";
+          std::string power = "%lambda_vdw";
+          if (control.freeEnergy.softCorePower == 2) {
+            os << "    %sc_lp = arith.mulf %lambda_vdw, %lambda_vdw : f64\n";
+            power = "%sc_lp";
+          }
+          os << "    %sc_as = arith.mulf %sc_alpha, %sc_s6 : f64\n"
+             << "    %sc_asl = arith.mulf %sc_as, " << power << " : f64\n"
+             << "    %sc_x = arith.addf %sc_r6, %sc_asl : f64\n"
+             ;
+          if (control.truncation != Truncation::None &&
+              control.truncation != Truncation::Shift) {
+            os << "    %sc_sixth = arith.constant "
+               << formatReal(1.0 / 6.0) << " : f64\n"
+               << "    %sc_ra = math.powf %sc_x, %sc_sixth : f64\n"
+               << "    %sc_half = arith.constant 5.0e-01 : f64\n"
+               << "    %sc_is = arith.cmpf ogt, %cross, %sc_half : f64\n"
+               << "    %sc_r = arith.select %sc_is, %sc_ra, %r : f64\n";
+            distance = "%sc_r";
+          }
+        }
+        bool plain = control.truncation == Truncation::None ||
+                     control.truncation == Truncation::Shift;
+        if (alpha > 0.0 && plain) {
+          // Without a switch, (σ/r_A)⁶ = σ⁶ / x needs no root: one
+          // expression for every pair, x = r⁶ for those not decoupled.
+          os << "    %sc_xs = arith.mulf %sc_asl, %cross : f64\n"
+             << "    %sc_xx = arith.addf %sc_r6, %sc_xs : f64\n"
+             << "    %sc_g3 = math.fpowi %sigma, %sc_i3 : f64, i32\n"
+             << "    %sc_g6 = arith.mulf %sc_g3, %sc_g3 : f64\n"
+             << "    %sc_q6 = arith.divf %sc_g6, %sc_xx : f64\n"
+             << "    %sc_q12 = arith.mulf %sc_q6, %sc_q6 : f64\n";
+          std::string a = "%sc_q12", b = "%sc_q6";
+          if (control.truncation == Truncation::Shift) {
+            double cut6 = std::pow(cutoff, -6.0);
+            os << "    %sc_rc6 = arith.constant " << formatReal(cut6)
+               << " : f64\n"
+               << "    %sc_rc12 = arith.constant " << formatReal(cut6 * cut6)
+               << " : f64\n"
+               << "    %sc_g12 = arith.mulf %sc_g6, %sc_g6 : f64\n"
+               << "    %sc_c12 = arith.mulf %sc_g12, %sc_rc12 : f64\n"
+               << "    %sc_c6 = arith.mulf %sc_g6, %sc_rc6 : f64\n"
+               << "    %sc_a = arith.subf %sc_q12, %sc_c12 : f64\n"
+               << "    %sc_b = arith.subf %sc_q6, %sc_c6 : f64\n";
+            a = "%sc_a";
+            b = "%sc_b";
+          }
+          os << "    %sc_c4 = arith.constant 4.0 : f64\n"
+             << "    %sc_e4 = arith.mulf %sc_c4, %epsilon : f64\n"
+             << "    %sc_t = arith.subf " << a << ", " << b << " : f64\n"
+             << "    %lj_full = arith.mulf %sc_e4, %sc_t : f64\n";
+        } else {
+          emitLennardJones("%sigma", "%epsilon", "%lj_full",
+                           control.truncation, distance);
+        }
+        os << "    %lj_cl = arith.mulf %cross, %lambda_vdw : f64\n"
+           << "    %lj_scale = arith.subf %al_one, %lj_cl : f64\n"
+           << "    %lj = arith.mulf %lj_scale, %lj_full : f64\n";
+      } else {
+        emitLennardJones("%sigma", "%epsilon", "%lj", control.truncation);
+      }
       value = "%lj";
       if (program.ljpme) {
         // The dispersion that the grid sums within the cutoff,
@@ -2650,17 +3057,32 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     }
     if (coulomb) {
       os << "    %f = arith.constant " << formatReal(coulombInternal)
-         << " : f64\n"
-         << "    %qq = arith.mulf %q_i, %q_j : f64\n"
-         << "    %fqq = arith.mulf %f, %qq : f64\n";
+         << " : f64\n";
+      if (scalesCoulomb)
+        os << "    %qq0 = arith.mulf %q_i, %q_j : f64\n"
+           << "    %qq_cl = arith.mulf %cross, %lambda_coulomb : f64\n"
+           << "    %qq_scale = arith.subf %al_one, %qq_cl : f64\n"
+           << "    %qq = arith.mulf %qq0, %qq_scale : f64\n";
+      else
+        os << "    %qq = arith.mulf %q_i, %q_j : f64\n";
+      os << "    %fqq = arith.mulf %f, %qq : f64\n";
+      // A decoupled pair may overlap once its Lennard-Jones is off; its
+      // Coulomb, then 0, takes a distance of at least 1e-4 nm, which no
+      // pair that interacts comes near, so that it is not 0 times ∞.
+      std::string rq = "%r";
+      if (scalesCoulomb) {
+        os << "    %rq_least = arith.constant 1.0e-04 : f64\n"
+           << "    %rq = arith.maximumf %r, %rq_least : f64\n";
+        rq = "%rq";
+      }
       if (program.pme) {
         // The direct sum of particle mesh Ewald, f q q erfc(β r) / r,
         // shifted to 0 at the cutoff if the control file asks.
         double beta = program.pmeBeta;
         os << "    %beta = arith.constant " << formatReal(beta) << " : f64\n"
-           << "    %br = arith.mulf %beta, %r : f64\n"
+           << "    %br = arith.mulf %beta, " << rq << " : f64\n"
            << "    %erfc = math.erfc %br : f64\n"
-           << "    %screened = arith.divf %erfc, %r : f64\n";
+           << "    %screened = arith.divf %erfc, " << rq << " : f64\n";
         std::string kernel = "%screened";
         if (control.pmeShift) {
           os << "    %shift = arith.constant "
@@ -2675,14 +3097,14 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
         os << "    %one = arith.constant 1.0 : f64\n"
            << "    %krf = arith.constant " << formatReal(k) << " : f64\n"
            << "    %crf = arith.constant " << formatReal(c) << " : f64\n"
-           << "    %inverse = arith.divf %one, %r : f64\n"
+           << "    %inverse = arith.divf %one, " << rq << " : f64\n"
            << "    %rr = arith.mulf %r, %r : f64\n"
            << "    %field = arith.mulf %krf, %rr : f64\n"
            << "    %near = arith.addf %inverse, %field : f64\n"
            << "    %rf = arith.subf %near, %crf : f64\n"
            << "    %coulomb = arith.mulf %fqq, %rf : f64\n";
       } else {
-        os << "    %coulomb = arith.divf %fqq, %r : f64\n";
+        os << "    %coulomb = arith.divf %fqq, " << rq << " : f64\n";
       }
       if (value.empty()) {
         value = "%coulomb";
@@ -2691,6 +3113,11 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
         value = "%k";
       }
     }
+    // In `@alchemical` the pairs that λ leaves alone add nothing.
+    if (alchemicalOnly) {
+      os << "    %masked = arith.mulf " << value << ", %cross : f64\n";
+      value = "%masked";
+    }
     os << "    md.yield " << value << " : f64\n"
        << "  } : !pairs, !vec -> f64\n";
     add("nonbonded");
@@ -2698,27 +3125,77 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
 
   if (program.pme && (terms & CoulombExcluded) && has("excluded")) {
     // The excluded pairs take their share of the reciprocal sum out again:
-    // −f q_i q_j erf(β r) / r.
+    // −f q_i q_j erf(β r) / r, with the charges that the reciprocal sum
+    // takes, those of the selection of [free_energy] times 1 − λ (D161).
+    bool flags = scalesCoulomb || (alchemicalOnly && decouples());
     os << "  %u_excluded = md.sum_tuples %r_excluded, %x, %cell coordinates("
           "distance(0, 1))\n"
-       << "      gather(%p_q : !real) {\n"
-       << "  ^bb0(%r: f64, %q_i: f64, %q_j: f64):\n"
+       << "      gather(%p_q" << (flags ? ", %p_alch : !real, !real" : " : !real")
+       << ") {\n"
+       << "  ^bb0(%r: f64, %q_i: f64, %q_j: f64"
+       << (flags ? ", %al_i: f64, %al_j: f64" : "") << "):\n"
        << "    %f = arith.constant " << formatReal(-coulombInternal)
        << " : f64\n"
        << "    %beta = arith.constant " << formatReal(program.pmeBeta)
        << " : f64\n"
-       << "    %qq = arith.mulf %q_i, %q_j : f64\n"
-       << "    %fqq = arith.mulf %f, %qq : f64\n"
+       << "    %qq0 = arith.mulf %q_i, %q_j : f64\n";
+    std::string qq = "%qq0";
+    if (flags) {
+      os << "    %al_one = arith.constant 1.0 : f64\n"
+         << "    %al_li = arith.mulf %al_i, %lambda_coulomb : f64\n"
+         << "    %al_si = arith.subf %al_one, %al_li : f64\n"
+         << "    %al_lj = arith.mulf %al_j, %lambda_coulomb : f64\n"
+         << "    %al_sj = arith.subf %al_one, %al_lj : f64\n"
+         << "    %al_s = arith.mulf %al_si, %al_sj : f64\n"
+         << "    %qq = arith.mulf %qq0, %al_s : f64\n";
+      qq = "%qq";
+    }
+    os << "    %fqq = arith.mulf %f, " << qq << " : f64\n"
        << "    %br = arith.mulf %beta, %r : f64\n"
        << "    %erf = math.erf %br : f64\n"
        << "    %shielded = arith.divf %erf, %r : f64\n"
-       << "    %e = arith.mulf %fqq, %shielded : f64\n"
-       << "    md.yield %e : f64\n"
+       << "    %e = arith.mulf %fqq, %shielded : f64\n";
+    std::string e = "%e";
+    if (alchemicalOnly) {
+      // Only the pairs within the selection depend on λ.
+      os << "    %al_both = arith.mulf %al_i, %al_j : f64\n"
+         << "    %masked = arith.mulf %e, %al_both : f64\n";
+      e = "%masked";
+    }
+    os << "    md.yield " << e << " : f64\n"
        << "  } : !rel_excluded, !vec -> f64\n";
     add("excluded");
   }
+  if (program.pme && (terms & CoulombWithin) && scalesCoulomb &&
+      has("alchemical_pairs")) {
+    // The pairs within the selection that are not excluded keep their
+    // Coulomb, which the reciprocal sum of the scaled charges takes times
+    // (1 − λ)²: (1 − (1 − λ)²) f q_i q_j erf(β r) / r adds the rest (D161).
+    os << "  %u_within = md.sum_tuples %r_alchemical_pairs, %x, %cell "
+          "coordinates(distance(0, 1))\n"
+       << "      gather(%p_q : !real) {\n"
+       << "  ^bb0(%r: f64, %q_i: f64, %q_j: f64):\n"
+       << "    %f = arith.constant " << formatReal(coulombInternal)
+       << " : f64\n"
+       << "    %beta = arith.constant " << formatReal(program.pmeBeta)
+       << " : f64\n"
+       << "    %one = arith.constant 1.0 : f64\n"
+       << "    %s = arith.subf %one, %lambda_coulomb : f64\n"
+       << "    %s2 = arith.mulf %s, %s : f64\n"
+       << "    %w = arith.subf %one, %s2 : f64\n"
+       << "    %qq = arith.mulf %q_i, %q_j : f64\n"
+       << "    %fqq = arith.mulf %f, %qq : f64\n"
+       << "    %fw = arith.mulf %fqq, %w : f64\n"
+       << "    %br = arith.mulf %beta, %r : f64\n"
+       << "    %erf = math.erf %br : f64\n"
+       << "    %shielded = arith.divf %erf, %r : f64\n"
+       << "    %e = arith.mulf %fw, %shielded : f64\n"
+       << "    md.yield %e : f64\n"
+       << "  } : !rel_alchemical_pairs, !vec -> f64\n";
+    add("within");
+  }
   if (program.reactionField && (terms & CoulombExcluded) &&
-      has("excluded")) {
+      !alchemicalOnly && has("excluded")) {
     // The field acts on the excluded pairs within the cutoff as well:
     // f q_i q_j (k r² − c), as GROMACS has it (D140).
     auto [k, c] = getReactionField(control);
@@ -2812,8 +3289,26 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     add("lj_reciprocal");
   }
   if (program.pme && (terms & CoulombReciprocal)) {
+    // The charges of the selection of [free_energy] times 1 − λ (D161).
+    std::string charges = "%p_q";
+    if (scalesCoulomb && !lambdaArguments) {
+      // At the state of the run, the scaled charges are a field of their
+      // own, which the host computes once.
+      charges = "%p_q_rec";
+    } else if (scalesCoulomb) {
+      os << "  %q_scaled = md.map_particles gather(%p_q, %p_alch : !real, "
+            "!real) {\n"
+         << "  ^bb0(%q: f64, %al: f64):\n"
+         << "    %one = arith.constant 1.0 : f64\n"
+         << "    %al_l = arith.mulf %al, %lambda_coulomb : f64\n"
+         << "    %al_s = arith.subf %one, %al_l : f64\n"
+         << "    %qs = arith.mulf %q, %al_s : f64\n"
+         << "    md.yield %qs : f64\n"
+         << "  } : !real\n";
+      charges = "%q_scaled";
+    }
     os << "  %u_reciprocal, %f_reciprocal, %w_reciprocal = md.reciprocal %x, "
-          "%p_q, %cell, %t_pme_moduli\n"
+       << charges << ", %cell, %t_pme_moduli\n"
        << "      grid([" << program.pmeGrid[0] << ", " << program.pmeGrid[1]
        << ", " << program.pmeGrid[2] << "]) order(" << control.pmeOrder
        << ") beta(" << formatReal(program.pmeBeta) << ") coulomb("
@@ -2912,6 +3407,8 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     if (!(terms & TupleTerms) ||
         (tupleTerm >= 0 && static_cast<int>(index) != tupleTerm))
       continue;
+    if (alchemicalOnly && !usesLambda(term.expression))
+      continue;
     if (term.isCentroid()) {
       emitCentroidTerm(index, term);
       add("centroid_" + term.name);
@@ -2975,6 +3472,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     }
     if (control.usesTime)
       values["t"] = "%time";
+    bindLambdas(values);
     for (const auto &parameter : term.parameters)
       values[parameter.first] = "%cp_" + parameter.first;
     Expression expression = llvm::cantFail(Expression::parse(term.expression, control.functions));
@@ -5384,6 +5882,18 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         emitPullOutput(inner, "%xl", cellName, fieldPrefix, "%step" + here,
                        time);
       }
+      if (!control.freeEnergyFile.empty()) {
+        // dH/dλ and the energies of the other states at the positions
+        // after the step (D161).
+        std::string time = "%fe_time" + here;
+        if (control.usesTime)
+          os << inner << time << "_steps = arith.sitofp %step" << here
+             << " : i64 to f64\n"
+             << inner << time << " = arith.mulf " << time << "_steps, %dt"
+             << " : f64\n";
+        emitFreeEnergyOutput(inner, "%xl", cellName, fieldPrefix,
+                             "%step" + here, time);
+      }
       // Without a periodic cell (D142), whether the particles have spread
       // so far that images interact, at every row of the log as well as at
       // the frames and checkpoints.
@@ -6694,6 +7204,8 @@ void Builder::emitEntry() {
      << "    attributes {llvm.emit_c_interface}\n"
      << "func.func private @mdrtWritePull(i64, memref<?xf64>, memref<?xf64>)\n"
      << "    attributes {llvm.emit_c_interface}\n"
+     << "func.func private @mdrtWriteFreeEnergy(i64, memref<?xf64>)\n"
+     << "    attributes {llvm.emit_c_interface}\n"
      << "func.func private @mdrtWriteTerms(memref<?xf64>)\n"
      << "    attributes {llvm.emit_c_interface}\n"
      << "func.func private @mdrtWriteVirial(f64, f64, f64)\n"
@@ -7037,6 +7549,7 @@ void Builder::emitEntry() {
        << ")\n"
        << "      : (i64, f64, f64, f64, f64) -> ()\n";
     emitPullOutput("  ", "%x0", "%cell", "%p_", "%start", "%time0");
+    emitFreeEnergyOutput("  ", "%x0", "%cell", "%p_", "%start", "%time0");
     // The state that the first scaling takes its pressure from (D92), by
     // axes.
     if (scalesEveryStep()) {
@@ -7369,7 +7882,7 @@ llvm::Error Builder::build() {
             {"term_lj14", LennardJones14},
             {"term_coulomb14", Coulomb14},
             {"term_cmap", CMaps},
-            {"term_excluded", CoulombExcluded},
+            {"term_excluded", CoulombExcluded | CoulombWithin},
             {"term_reciprocal", CoulombReciprocal},
             {"term_urey_bradley", UreyBradleys},
             {"term_impropers", HarmonicImpropers},
@@ -7397,6 +7910,13 @@ llvm::Error Builder::build() {
   }
   else if (llvm::Error error = emitPotential())
     return error;
+  // What depends on λ, as a function of it, for dH/dλ and the energies of
+  // the other states (D161).
+  if (system.topology && !control.freeEnergyFile.empty()) {
+    lambdaArguments = true;
+    emitTopologyPotential("alchemical", AllTerms | Alchemical);
+    lambdaArguments = false;
+  }
   emitPullPotentials();
   emitPrograms();
   emitEntry();

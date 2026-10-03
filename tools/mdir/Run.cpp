@@ -677,7 +677,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // those of a continued run are its own.
   if (!options.continues) {
     std::vector<std::string> written = {control->logFile, control->energyFile,
-                                        control->pullFile, control->manifestFile};
+                                        control->pullFile, control->manifestFile,
+                                        control->freeEnergyFile};
     if (control->framePeriod > 0)
       written.push_back(control->trajectoryFile);
     if (control->checkpointPeriod > 0) {
@@ -775,6 +776,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     add("_mlir_ciface_mdrtAddBath", (void *)&_mlir_ciface_mdrtAddBath);
     add("mdrtNoseHooverFactor", (void *)&mdrtNoseHooverFactor);
     add("_mlir_ciface_mdrtWritePull", (void *)&_mlir_ciface_mdrtWritePull);
+    add("_mlir_ciface_mdrtWriteFreeEnergy",
+        (void *)&_mlir_ciface_mdrtWriteFreeEnergy);
     add("_mlir_ciface_mdrtSetBox", (void *)&_mlir_ciface_mdrtSetBox);
     add("_mlir_ciface_mdrtSetTilt", (void *)&_mlir_ciface_mdrtSetTilt);
     add("_mlir_ciface_mdrtSetBarostatState",
@@ -1096,6 +1099,25 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // component along the distance and the vector on the second center, of
   // an angle or a dihedral −∂E/∂θ; the coordinates and forces of pulling
   // that GROMACS writes to its pullx and pullf files, in one file.
+  // [free_energy] (D161): at every energy of the log, dH/dλ of each
+  // component and the difference of the energy to each state, the input of
+  // thermodynamic integration and of MBAR.
+  if (!control->freeEnergyFile.empty()) {
+    std::vector<ColumnFile::Column> columns = {{"step", "-", true},
+                                               {"time", "ps"}};
+    for (const auto &[name, values] : control->freeEnergy.lambdas)
+      columns.push_back({"dHdl." + name, "kcal/mol"});
+    for (size_t k = 0, e = control->freeEnergy.getNumStates(); k != e; ++k)
+      columns.push_back({"dU." + std::to_string(k), "kcal/mol"});
+    output.freeEnergyState = control->freeEnergy.state;
+    output.stateFixedEnergies = program->stateFixedEnergies;
+    output.stateVolumeEnergies = program->stateVolumeEnergies;
+    output.lambdaFixedDerivatives = program->lambdaFixedDerivatives;
+    output.lambdaVolumeDerivatives = program->lambdaVolumeDerivatives;
+    if (llvm::Error error = output.freeEnergy.open(
+            getOutputPath(control->freeEnergyFile), columns, keepThrough))
+      return fail(std::move(error));
+  }
   if (!control->pullFile.empty()) {
     std::vector<ColumnFile::Column> columns = {{"step", "-", true},
                                                {"time", "ps"}};
@@ -1146,6 +1168,13 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     checkpoint.trajectory = output.trajectoryName;
     checkpoint.fingerprint = fingerprint;
     checkpoint.creatorVersion = getBuildVersion();
+    if (control->hasFreeEnergy) {
+      checkpoint.freeEnergy = control->freeEnergy.describe();
+      checkpoint.freeEnergyState = control->freeEnergy.state;
+      for (const auto &[name, values] : control->freeEnergy.lambdas)
+        checkpoint.freeEnergyLambda.push_back(
+            values[control->freeEnergy.state]);
+    }
   }
   output.endStep = firstStep + control->numSteps;
   // A continued run counts the energy that the coupling has taken from
