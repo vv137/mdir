@@ -251,15 +251,15 @@ on a small topology against the formulas.
 |---|---|
 | The cell from CHARMM-GUI's files | The box of a run from a PSF comes from `[boundary]`; CHARMM-GUI gives it in `step3_pbcsetup.str` and `sysinfo.dat` |
 | Types given by numbers in a PSF | Their meaning depends on the order of the RTF; CHARMM 51 and CHARMM-GUI write names |
-| VSWITCH | The potential switch of CHARMM (Section 2), for older inputs |
+| VSWITCH | Implemented as `SQUARED_DISTANCE_SWITCH` (D[squared-distance-switch], Section 8) |
 | Lone pairs of CGenFF, the Drude model | Virtual sites of other constructions, and polarization |
 | The parameters of C36/LJ-PME | The mesh for the dispersion is in place (`lennard_jones = "PME"`, D162, validated on Trp-cage in CHARMM36m against GROMACS); the force field fitted to it has not been run |
 
 ## 8. Squared-distance potential switch (D[squared-distance-switch])
 
-Design for roadmap F3: `[energy] lennard_jones_modifier =
+Roadmap F3: `[energy] lennard_jones_modifier =
 "SQUARED_DISTANCE_SWITCH"` selects the VSWITCH potential described in
-Section 2. It uses the existing `switch_distance` and `cutoff`, with
+Section 2 [[Brooks1983]](references.md#brooks1983). It uses the existing `switch_distance` and `cutoff`, with
 $0 < r_s < r_c$. It multiplies the topology's Lennard-Jones potential by
 $S(r)$, including its pairs three bonds apart, and leaves Coulomb alone.
 The energy is unchanged below $r_s$ and zero at and beyond $r_c$.
@@ -267,8 +267,20 @@ Dispersion correction and additional custom pair terms are refused, as
 neither currently defines the corresponding switched correction.
 No file format, default, or overwrite behavior changes.
 
-Validation will compare energies, forces, and virials against an
-independent analytic implementation, below and at the switch, within its
-interval, and at and beyond the cutoff, on CPU and GPU in mixed and double
-precision. Finite differences check the derivatives. The existing suite
-and a GPU timing comparison against main complete validation.
+`test/Driver/Inputs/check_squared_switch.py` compares energies, forces,
+and the diagonal virial to the independent expanded polynomial and its
+analytic slope, checked by central differences. Isolated ordinary and 1-4
+pairs have separations of 6, 9.999, 10, 10.001, 10.5, 11, 11.999, 12,
+12.001, and 13 Å. Charges check that Coulomb is unchanged, including the
+1-4 Coulomb beyond the cutoff. Absolute tolerances are $10^{-6}$ in double
+and $2\times10^{-5}$ in mixed precision, in kcal/mol for energy and virial
+and kcal/(mol Å) for force, including the printed rounding.
+
+`scripts/validation/charmm/squared-switch.py` compares the existing
+Trp-cage or two-POPC inputs to CHARMM 51b1 with VSWITCH. On two POPC,
+CHARMM's Lennard-Jones including 1-4 is −6.82392363 kcal/mol. CPU double
+gives −6.823924 (absolute difference $3.70\times10^{-7}$, tolerance
+$10^{-5}$); CPU mixed gives −6.823917 ($6.63\times10^{-6}$, tolerance
+$5\times10^{-3}$). Use a private copy of the input directory; GPU runs
+require the device lock. GPU and full-suite results are recorded in the
+pull request.

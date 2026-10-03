@@ -105,7 +105,11 @@ struct PairOverride {
 /// the force (`force_switch` of the IR) or with the force of each inverse
 /// power switched on its own [Steinbach1994] (`PowerForceSwitch`, for the
 /// Lennard-Jones of a topology only).
-enum class Truncation { None, Shift, Switch, ForceSwitch, PowerForceSwitch };
+/// SquaredDistanceSwitch multiplies the topology Lennard-Jones potential
+/// by a cubic in squared distance [Brooks1983].
+enum class Truncation {
+  None, Shift, Switch, ForceSwitch, PowerForceSwitch, SquaredDistanceSwitch
+};
 /// Brownian dynamics (D163b) moves the positions only, overdamped.
 enum class Integrator { VelocityVerlet, Leapfrog, Brownian };
 enum class Target { CPU, GPU };

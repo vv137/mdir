@@ -1538,16 +1538,22 @@ Error Reader::readEnergy(const toml::table &table) {
     return fail(table, "'pruned_distance' and 'rebuild_interval' do not go "
                        "together");
 
-  enum class Modifier { None, PotentialShift, ForceSwitch, PowerForceSwitch };
+  enum class Modifier {
+    None, PotentialShift, ForceSwitch, PowerForceSwitch, SquaredDistanceSwitch
+  };
   Modifier modifier = Modifier::None;
   if (Error error = readChoice<Modifier>(
           table, "lennard_jones_modifier", modifier,
           {{"NONE", Modifier::None},
            {"POTENTIAL_SHIFT", Modifier::PotentialShift},
            {"FORCE_SWITCH", Modifier::ForceSwitch},
-           {"POWER_FORCE_SWITCH", Modifier::PowerForceSwitch}}))
+           {"POWER_FORCE_SWITCH", Modifier::PowerForceSwitch},
+           {"SQUARED_DISTANCE_SWITCH", Modifier::SquaredDistanceSwitch}}))
     return error;
   bool switches = control.switchDistance < control.cutoffDistance;
+  if (modifier == Modifier::SquaredDistanceSwitch && !switches)
+    return fail(table, "a squared-distance switch needs a 'switch_distance' "
+                       "that is less than 'cutoff'");
   if ((modifier == Modifier::ForceSwitch ||
        modifier == Modifier::PowerForceSwitch) &&
       !switches)
@@ -1559,6 +1565,8 @@ Error Reader::readEnergy(const toml::table &table) {
     control.truncation = Truncation::ForceSwitch;
   else if (modifier == Modifier::PowerForceSwitch)
     control.truncation = Truncation::PowerForceSwitch;
+  else if (modifier == Modifier::SquaredDistanceSwitch)
+    control.truncation = Truncation::SquaredDistanceSwitch;
   else if (switches)
     control.truncation = Truncation::Switch;
   else
@@ -1753,17 +1761,21 @@ Error Reader::readEnergy(const toml::table &table) {
                                       {"POTENTIAL_SHIFT", true}}))
     return error;
   // A topology's Lennard-Jones takes the modifier on its own, not its
-  // Coulomb; a switch of the potential is for terms in the control file.
+  // Coulomb; the generic quintic switch is for terms in the control file.
   if (hasTopology && control.truncation == Truncation::Switch)
     return fail(table, "a run from a topology switches its Lennard-Jones "
                        "only with a 'lennard_jones_modifier' "
-                       "(\"FORCE_SWITCH\" or \"POWER_FORCE_SWITCH\"); "
+                       "(\"FORCE_SWITCH\", \"POWER_FORCE_SWITCH\", or "
+                       "\"SQUARED_DISTANCE_SWITCH\"); "
                        "without one, 'switch_distance' must equal 'cutoff'");
   if (hasTopology && control.truncation != Truncation::None &&
       control.topologyDispersion != DispersionCorrection::None)
     return fail(table, "the correction for the dispersion needs a plain "
                        "cutoff; with a 'lennard_jones_modifier', give "
                        "'dispersion_correction = \"NONE\"'");
+  if (!hasTopology && control.truncation == Truncation::SquaredDistanceSwitch)
+    return fail(table, "'lennard_jones_modifier = \"SQUARED_DISTANCE_SWITCH\"' "
+                       "is for the Lennard-Jones of a topology");
   if (!hasTopology && control.truncation == Truncation::PowerForceSwitch)
     return fail(table, "'lennard_jones_modifier = \"POWER_FORCE_SWITCH\"' "
                        "switches the powers of the Lennard-Jones of a "
@@ -1784,6 +1796,9 @@ Error Reader::readEnergy(const toml::table &table) {
                          "gives them");
     const toml::array *pairs = table.get("pair") ? table.get("pair")->as_array()
                                                  : nullptr;
+    if (pairs && control.truncation == Truncation::SquaredDistanceSwitch)
+      return fail(*pairs, "custom pair terms cannot accompany "
+                          "\"SQUARED_DISTANCE_SWITCH\"");
     if (pairs && control.truncation == Truncation::PowerForceSwitch)
       return fail(*pairs, "a pair term is truncated as the whole of its "
                           "energy, which \"POWER_FORCE_SWITCH\" does not "
@@ -2820,7 +2835,8 @@ pairlist_distance = 13.5        # reach of the neighbor structures (Å)
                                 # the skin (default); N: every N steps, not
                                 # tested between; may miss pairs (opt-in)
 # lennard_jones_modifier = "NONE"  # NONE, POTENTIAL_SHIFT, FORCE_SWITCH,
-                                   # POWER_FORCE_SWITCH (a topology only)
+                                   # POWER_FORCE_SWITCH or
+                                   # SQUARED_DISTANCE_SWITCH (topology only)
 
 [[energy.pair]]
 name       = "lj"

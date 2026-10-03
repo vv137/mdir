@@ -204,6 +204,31 @@ Lennard-Jones of a topology, where it is CHARMM's to $2.2\times10^{-9}$
 (D121). The two differ by a constant below $r_s$ and by up to 60% above
 it: 9.23 kcal/mol on 12,017 particles of CHARMM36m.
 
+
+**Squared-distance potential switching (D[squared-distance-switch]).**
+For the topology Lennard-Jones $u(r)$, `SQUARED_DISTANCE_SWITCH` selects
+$u(r)S_2(r)$, the VSWITCH potential [[Brooks1983]](references.md#brooks1983).
+A cubic polynomial in $r^2$ subject to $S_2(r_s)=1$, $S_2(r_c)=0$, and
+$S_2'(r_s)=S_2'(r_c)=0$ is uniquely fixed. In the interval it is
+$S_2(r)=(r_c^2-r^2)^2(r_c^2+2r^2-3r_s^2)/(r_c^2-r_s^2)^3$; below it is
+1, and at and beyond the cutoff it is 0. Both energy and force are
+continuous. The driver emits the cubic with its argument clamped to the
+interval, multiplying the Lennard-Jones before differentiation, for the
+ordinary pairs and the 1-4 pairs with their own parameters.
+
+This is a change of the Hamiltonian: the configurational part of the
+canonical partition function integrates $\exp[-U/(k_BT)]$ with the
+switched $U$. Its thermodynamic force is therefore
+$-\nabla[uS_2]=-S_2\nabla u-u\nabla S_2$; switching only the force by
+$S_2$ would sample a different potential. The virial follows the same
+Hamiltonian derivative under a cell strain. Coulomb is unchanged. The
+plain-cutoff tail correction does not account for the contribution removed
+between $r_s$ and $r_c$, so this option requires no dispersion correction.
+LJPME and custom pair additions are refused. The analytic energy, force,
+and virial tests cover both boundaries, CPU and GPU, mixed and double;
+the independent two-POPC CHARMM comparison is documented in
+`docs/charmm-m1.md`, Section 8.
+
 **Particles.** A sum over the particles that reads the positions
 themselves, $U = \sum_i k(\mathbf x_i, \dots)$, a term of the absolute
 positions (D148), gives the force $\mathbf F_i = -\nabla k(\mathbf x_i)$
