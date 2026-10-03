@@ -19,7 +19,7 @@
 # REPLACEMENT: replacement.toml:4: unknown keyword 'cutofx' in [energy]; did you mean 'cutoff'?
 # TRANSPOSITION: transposition.toml:4: unknown keyword 'ctuoff' in [energy]; did you mean 'cutoff'?
 # TABLE: table.toml:1: unknown keyword 'ouput' in [the control file]; did you mean 'output'?
-# TABLE-NEXT: valid keywords: input, output, energy, pme, dynamics, minimize, ensemble, thermostat, barostat, boundary, execution, constraints, restraints
+# TABLE-NEXT: valid keywords: input, output, energy, pme, lj_pme, dynamics, minimize, ensemble, thermostat, barostat, boundary, execution, constraints, restraints
 # TABLE-NEXT: try 'mdir template md' or 'mdir template amber'
 # DISTANT: distant.toml:4: unknown keyword 'unrecognized_setting' in [output]{{$}}
 # DISTANT-NEXT: valid keywords: log, energy, pull, trajectory, trajectory_format, checkpoint, energy_interval, trajectory_interval, checkpoint_interval{{$}}
