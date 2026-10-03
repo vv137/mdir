@@ -2897,6 +2897,13 @@ Error Reader::read(const toml::table &root) {
           "%s: [free_energy] does not decouple particles in implicit "
           "solvent yet",
           path.str().c_str());
+    // The grid of the dispersion would take the selection at full strength.
+    if (control.ljpme && !control.freeEnergy.couple.empty())
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "%s: [free_energy] does not decouple particles with "
+          "'lennard_jones = \"PME\"' yet",
+          path.str().c_str());
   }
   if (!control.energyFile.empty() && control.energyPeriod == 0)
     return llvm::createStringError(
