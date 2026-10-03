@@ -1,7 +1,7 @@
-# Checkpoints of [free_energy] (D161): a checkpoint records the states and
-# the state of its run; `--continue` refuses another state or other
-# states; a run that begins from the checkpoint of another state computes
-# its forces anew.
+# Checkpoints of [free_energy] (D161): the fingerprint of a checkpoint
+# (D172) holds the states and the state of its run, so `--continue`
+# refuses another state or other states, and a run that begins from the
+# checkpoint of another state computes its forces anew.
 #
 # REQUIRES: hdf5
 # RUN: rm -rf %t && mkdir -p %t
@@ -12,10 +12,12 @@
 # Another state, or other states, cannot continue the run.
 # RUN: sed -e 's/^state = 0/state = 2/' -e 's/^steps .*/steps = 8/' %t/a.toml > %t/a2.toml
 # RUN: not mdir run --continue %t/a2.toml 2>&1 | FileCheck %s --check-prefix=STATE
-# STATE: was written at state 0 of [free_energy], and the control file has state 2; a continued run keeps its state
+# STATE: was written by a run of other physics or coupling, which --continue does not change
+# STATE: [free_energy] state: 0 -> 2
 # RUN: sed -e 's/^vdw .*/vdw = [0.0, 0.0, 0.25]/' -e 's/^steps .*/steps = 8/' %t/a.toml > %t/a3.toml
 # RUN: not mdir run --continue %t/a3.toml 2>&1 | FileCheck %s --check-prefix=TABLE
-# TABLE: was written with the states of [free_energy] 'couple = ":LIG"; soft_core = 0.500000, 1; coulomb = 0.000000 0.500000 1.000000; vdw = 0.000000 0.000000 0.500000', and the control file has 'couple = ":LIG"; soft_core = 0.500000, 1; coulomb = 0.000000 0.500000 1.000000; vdw = 0.000000 0.000000 0.250000'; a continued run keeps them
+# TABLE: was written by a run of other physics or coupling
+# TABLE: [free_energy] lambdas: {coulomb=[0,0.5,1],vdw=[0,0,0.5]} -> {coulomb=[0,0.5,1],vdw=[0,0,0.25]}
 
 # The same state continues.
 # RUN: sed 's/^steps .*/steps = 8/' %t/a.toml > %t/a4.toml
@@ -25,7 +27,8 @@
 # Another run at state 2 from the checkpoint of state 0.
 # RUN: sed -e 's/^state = 0/state = 2/' -e 's/^coordinates = .*/coordinates = "eth_wat.inpcrd"\ncheckpoint = "a.h5"/' -e 's/a.dhdl/b.dhdl/' -e 's/^checkpoint  *= "a.h5"$/checkpoint = "b.h5"/' %t/a.toml > %t/b.toml
 # RUN: cd %t && mdir run b.toml | FileCheck %s --check-prefix=OTHER
-# OTHER: 'a.h5' is of another state of [free_energy]; the run computes the forces anew
+# OTHER: 'a.h5' was written by a run of other physics or coupling; the run evaluates the forces
+# OTHER: [free_energy] state: 0 -> 2
 
 #--- run.toml
 [input]
