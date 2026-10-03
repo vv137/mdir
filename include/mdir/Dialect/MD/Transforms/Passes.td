@@ -34,6 +34,11 @@ def Differentiate : Pass<"md-differentiate", "::mlir::ModuleOp"> {
     Forces become an `md.gather_relation` whose kernel is
     `K(i, j) = −u'(r) · d / r`.
   }];
+  let options = [
+    Option<"remarks", "remarks", "bool", /*default=*/"false",
+           "Remark on every op that a derivative with respect to a "
+           "parameter takes as independent of it">
+  ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::math::MathDialect",
                            "::mlir::vector::VectorDialect"];

@@ -155,7 +155,7 @@ assert output(report, "trajectory")["count"] == 100
 assert output(report, "trajectory")["count_of"] == "frames"
 assert output(report, "checkpoint")["count"] == 10
 assert [item["kind"] for item in report["outputs"]] == [
-    "log", "energy", "pull", "trajectory", "checkpoint", "manifest"]
+    "log", "energy", "pull", "free_energy", "trajectory", "checkpoint", "manifest"]
 
 explicit = template("amber") + '\n[pme]\ngrid = [32, 40, 48]\nbeta = 0.35\n'
 explicit = re.sub(r"(?m)^\[barostat\]$", '[barostat]\ncoupling = "SEMI_ISOTROPIC"', explicit)

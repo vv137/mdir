@@ -29,6 +29,7 @@
 # AMBER: log: stdout and {{.*}}run.log (text), every 5000 steps, 101 rows
 # AMBER-NEXT: energy: {{.*}}run.energy (columns), every 5000 steps, 101 rows
 # AMBER-NEXT: pull: not configured (columns), disabled
+# AMBER-NEXT: free_energy: not configured (columns), disabled
 # AMBER-NEXT: trajectory: {{.*}}run.dcd (DCD), every 5000 steps, 100 frames
 # AMBER-NEXT: checkpoint: {{.*}}run.h5 (H5MD), every 50000 steps, 10 checkpoints
 # RISKY: ensemble: NVE

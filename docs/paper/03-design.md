@@ -287,9 +287,18 @@ scalar argument $\theta_n$ of the potential (D2), such as a component of
 $\boldsymbol\lambda$ of `[free_energy]` (Section 6.8, D161). The
 derivative of a sum over a relation, over tuples, or over particles is a
 sum of the same kind whose kernel is the derivative of the sum's, taken
-where the kernel reads $\theta_n$ from outside; an op that depends on
-$\theta_n$ neither through its operands nor through what its kernel reads
-adds nothing. The reciprocal sum of particle mesh Ewald is not
+where the kernel reads $\theta_n$ from outside. Every value is one of
+three. It is *independent* of $\theta_n$ only if a proof says so: every
+path by which $\theta_n$ could reach it is modeled, the operands of ops,
+the values that their kernels take from outside, and the arguments of
+blocks whose meaning is known (those of the potential and of a kernel);
+its derivative is then exactly zero, and `remarks=true` of the pass lists
+each op taken so. It is *dependent*, and a rule gives its derivative. Or it
+is dependent without a rule, or its independence cannot be proved (an op
+that the pass does not know, with effects on memory, or with a region whose
+meaning it does not know), and the derivative fails with an error that
+names the op and says which of the two it is: a constant derivative and a
+failure are never confused. The reciprocal sum of particle mesh Ewald is not
 differentiated through: its energy is a quadratic form of the charges,
 $E(\mathbf q) = \tfrac12\mathbf q^\mathsf T A\mathbf q$ with $A$
 symmetric, so $dE/d\theta = \boldsymbol\delta^\mathsf T A\mathbf q =
