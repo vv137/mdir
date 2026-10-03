@@ -116,7 +116,34 @@ Error Reader::checkKeywords(
         return fail(node, "'" + keyword + "' in [" + name +
                               "] is not supported yet; it is planned for " +
                               milestone);
-    return fail(node, "unknown keyword '" + keyword + "' in [" + name + "]");
+    // Offer only a close, unambiguous match. The same list that validates
+    // the table supplies both the suggestion and its supported keywords.
+    StringRef nearest;
+    unsigned bestDistance = 3;
+    bool tied = false;
+    std::string names;
+    for (StringRef candidate : known) {
+      if (!names.empty())
+        names += ", ";
+      names += candidate.str();
+      unsigned distance = keyword.edit_distance(
+          candidate, /*AllowReplacements=*/true, /*MaxEditDistance=*/2);
+      if (distance < bestDistance) {
+        nearest = candidate;
+        bestDistance = distance;
+        tied = false;
+      } else if (distance == bestDistance) {
+        tied = true;
+      }
+    }
+    std::string message =
+        ("unknown keyword '" + keyword + "' in [" + name + "]").str();
+    if (!nearest.empty() && !tied)
+      message += ("; did you mean '" + nearest + "'?").str();
+    message += "\nvalid keywords: " + names;
+    message += "\ntry 'mdir template md' or 'mdir template amber' for a "
+               "control file with the supported keywords";
+    return fail(node, message);
   }
   return Error::success();
 }

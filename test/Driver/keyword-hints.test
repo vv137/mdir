@@ -1,0 +1,72 @@
+# Unknown keywords retain their source location and explain how to fix them.
+# Suggestions use the supported keys of the current table only. Distant or
+# ambiguous spellings give the valid keys without guessing a correction.
+#
+# RUN: split-file %s %t
+# RUN: not mdir check %t/deletion.toml 2>&1 | FileCheck %s --check-prefix=DELETION
+# RUN: not mdir check %t/insertion.toml 2>&1 | FileCheck %s --check-prefix=INSERTION
+# RUN: not mdir check %t/replacement.toml 2>&1 | FileCheck %s --check-prefix=REPLACEMENT
+# RUN: not mdir check %t/transposition.toml 2>&1 | FileCheck %s --check-prefix=TRANSPOSITION
+# RUN: not mdir check %t/table.toml 2>&1 | FileCheck %s --check-prefix=TABLE
+# RUN: not mdir check %t/distant.toml 2>&1 | FileCheck %s --check-prefix=DISTANT
+# RUN: not mdir check %t/tied.toml 2>&1 | FileCheck %s --check-prefix=TIED
+# RUN: not mdir check %t/scope.toml 2>&1 | FileCheck %s --check-prefix=SCOPE
+#
+# DELETION: deletion.toml:4: unknown keyword 'cutof' in [energy]; did you mean 'cutoff'?
+# DELETION-NEXT: valid keywords: cutoff, switch_distance, pairlist_distance,
+# DELETION-NEXT: try 'mdir template md' or 'mdir template amber' for a control file with the supported keywords
+# INSERTION: insertion.toml:4: unknown keyword 'cutofff' in [energy]; did you mean 'cutoff'?
+# REPLACEMENT: replacement.toml:4: unknown keyword 'cutofx' in [energy]; did you mean 'cutoff'?
+# TRANSPOSITION: transposition.toml:4: unknown keyword 'ctuoff' in [energy]; did you mean 'cutoff'?
+# TABLE: table.toml:1: unknown keyword 'ouput' in [the control file]; did you mean 'output'?
+# TABLE-NEXT: valid keywords: input, output, energy, pme, dynamics, minimize, ensemble, thermostat, barostat, boundary, execution, constraints, restraints
+# TABLE-NEXT: try 'mdir template md' or 'mdir template amber'
+# DISTANT: distant.toml:4: unknown keyword 'unrecognized_setting' in [output]{{$}}
+# DISTANT-NEXT: valid keywords: trajectory, trajectory_format, checkpoint, energy_interval, trajectory_interval, checkpoint_interval{{$}}
+# DISTANT-NEXT: try 'mdir template md' or 'mdir template amber'
+# TIED: tied.toml:5: unknown keyword 'mix' in {{\[\[}}energy.function]]{{$}}
+# TIED-NEXT: valid keywords: name, values, min, max, periodic
+# TIED-NEXT: try 'mdir template md' or 'mdir template amber'
+# SCOPE: scope.toml:4: unknown keyword 'cutoff' in [output]{{$}}
+# SCOPE-NEXT: valid keywords: trajectory, trajectory_format, checkpoint, energy_interval, trajectory_interval, checkpoint_interval{{$}}
+# SCOPE-NEXT: try 'mdir template md' or 'mdir template amber'
+
+#--- deletion.toml
+[input]
+coordinates = "unused.pdb"
+[energy]
+cutof = 9.0
+#--- insertion.toml
+[input]
+coordinates = "unused.pdb"
+[energy]
+cutofff = 9.0
+#--- replacement.toml
+[input]
+coordinates = "unused.pdb"
+[energy]
+cutofx = 9.0
+#--- transposition.toml
+[input]
+coordinates = "unused.pdb"
+[energy]
+ctuoff = 9.0
+#--- table.toml
+[ouput]
+energy_interval = 10
+#--- distant.toml
+[input]
+coordinates = "unused.pdb"
+[output]
+unrecognized_setting = 1
+#--- tied.toml
+[input]
+coordinates = "unused.pdb"
+[energy]
+[[energy.function]]
+mix = 0.0
+#--- scope.toml
+[input]
+coordinates = "unused.pdb"
+[output]
+cutoff = 9.0
