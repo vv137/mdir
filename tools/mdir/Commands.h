@@ -66,6 +66,12 @@ int describeCheckpoints(llvm::ArrayRef<std::string> files,
 /// build supports.
 void printVersion(llvm::raw_ostream &os);
 
+/// The CUDA toolkit whose libdevice the kernels of a GPU link: the one that
+/// CUDA_ROOT, CUDA_HOME, or CUDA_PATH names; else the copy of libdevice
+/// installed with mdir, <prefix>/share/mdir/cuda (a release build,
+/// D[manylinux]); else the toolkit of the build; empty if there is none.
+std::string getCudaToolkitRoot();
+
 /// Reports the build, probes CUDA when requested, and compiles and runs a
 /// small system on each requested target (all, cpu, or gpu). Returns 1 if
 /// any requested check fails; failed runs keep their temporary diagnostics.

@@ -1,0 +1,89 @@
+# syntax=docker/dockerfile:1
+#
+# The release tarball of MDIR for Linux x86-64 with glibc 2.28 or later
+# (manylinux_2_28: RHEL/Rocky/Alma 8+, Ubuntu 20.04+, Debian 11+), built on
+# the PyPA image of that baseline (D[manylinux]). From the root of the
+# repository:
+#
+#   DOCKER_BUILDKIT=1 docker build -f packaging/Dockerfile.manylinux \
+#     --build-arg MDIR_GIT_COMMIT=$(git rev-parse HEAD) \
+#     --build-arg VERSION=0.1.0 --target tarball --output type=local,dest=out .
+#
+# writes out/mdir-VERSION-manylinux_2_28_x86_64.tar.gz: bin/mdir, lib/ with
+# the runtime, the OpenMP runtime, HDF5, and cuFFT under their sonames, and
+# share/mdir/cuda with libdevice and the CUDA EULA. libstdc++ and libgcc are
+# linked statically; the driver's libcuda comes from the system.
+# scripts/release/check-binary.sh checks the result.
+#
+# Layers go from what changes least to what changes most, as in
+# packaging/Dockerfile: the base image (pinned by digest) and its packages;
+# the parts of CUDA 13.0 for RHEL 8 that the build needs (headers, the
+# driver's stub, cuFFT, libdevice, and nvcc, which CMake reads the version
+# from); HDF5 from scripts/build-hdf5.sh alone; LLVM from
+# scripts/build-llvm.sh alone (about an hour); and MDIR's sources last, in a
+# BuildKit cache mount so that a rebuild compiles only what changed.
+
+# quay.io/pypa/manylinux_2_28_x86_64, GCC 14 (gcc-toolset), glibc 2.28.
+ARG BASE=quay.io/pypa/manylinux_2_28_x86_64@sha256:39df0042d5cc900b085aa25a0659368b42a0006c54c474299b785b44c1b4ff82
+
+# --- 1. System packages ------------------------------------------------------
+FROM ${BASE} AS base
+RUN pipx install ninja==1.11.1.4 && ninja --version
+
+# --- 2. CUDA 13.0 for RHEL 8, the parts the build reads ----------------------
+FROM base AS cuda
+ARG CUDA=13-0
+RUN dnf config-manager --add-repo \
+      https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo \
+ && dnf install -y --setopt=install_weak_deps=False \
+      cuda-nvcc-${CUDA}-13.0.88 cuda-cudart-devel-${CUDA}-13.0.88 \
+      cuda-driver-devel-${CUDA}-13.0.88 libcufft-devel-${CUDA}-12.0.0.61 \
+ && dnf clean all \
+ && ln -sfn /usr/local/cuda-13.0 /usr/local/cuda
+ENV PATH=/usr/local/cuda/bin:${PATH}
+
+# --- 3. HDF5 1.14.6 ----------------------------------------------------------
+FROM cuda AS hdf5
+ARG JOBS=16
+COPY scripts/build-hdf5.sh /src/scripts/build-hdf5.sh
+RUN HDF5_ROOT=/opt/hdf5 HDF5_VERSION=1.14.6 JOBS=${JOBS} \
+      /src/scripts/build-hdf5.sh \
+ && rm -rf /opt/hdf5/src /opt/hdf5/build
+
+# --- 4. LLVM, MLIR, and the OpenMP runtime 23.1.2 ----------------------------
+FROM hdf5 AS toolchain
+ARG JOBS=16
+ARG LINK_JOBS=4
+COPY scripts/build-llvm.sh /src/scripts/build-llvm.sh
+RUN LLVM_ROOT=/opt/llvm LLVM_VERSION=23.1.2 LLVM_TARGETS="X86;NVPTX" \
+      JOBS=${JOBS} LINK_JOBS=${LINK_JOBS} /src/scripts/build-llvm.sh \
+ && rm -rf /opt/llvm/src /opt/llvm/build
+
+# --- 5. MDIR -----------------------------------------------------------------
+FROM toolchain AS build
+ARG MDIR_GIT_COMMIT=
+ARG VERSION=0.0.0
+ENV MDIR_GIT_COMMIT=${MDIR_GIT_COMMIT}
+COPY . /src/mdir
+RUN --mount=type=cache,target=/build/mdir,id=mdir-manylinux-build \
+    cmake -G Ninja -S /src/mdir -B /build/mdir \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DLLVM_DIR=/opt/llvm/23.1.2/lib/cmake/llvm \
+      -DMLIR_DIR=/opt/llvm/23.1.2/lib/cmake/mlir \
+      -DHDF5_ROOT=/opt/hdf5/1.14.6 \
+      -DCUDAToolkit_ROOT=/usr/local/cuda \
+      -DMDIR_ENABLE_CUDA=ON -DMDIR_ENABLE_HDF5=ON \
+      -DMDIR_BUNDLE_LIBRARIES=ON \
+      "-DCMAKE_EXE_LINKER_FLAGS=-static-libstdc++ -static-libgcc" \
+      "-DCMAKE_SHARED_LINKER_FLAGS=-static-libstdc++ -static-libgcc" \
+      -DCMAKE_INSTALL_PREFIX=/ \
+ && cmake --build /build/mdir --target mdir mdrt mdrt_cuda \
+ && rm -rf /stage && mkdir -p /stage \
+ && DESTDIR=/stage/mdir-${VERSION} cmake --install /build/mdir \
+ && cp -r /src/mdir/examples /stage/mdir-${VERSION}/share/mdir/examples \
+ && cp /src/mdir/LICENSE /stage/mdir-${VERSION}/share/mdir/LICENSE \
+ && tar -C /stage -czf /mdir-${VERSION}-manylinux_2_28_x86_64.tar.gz mdir-${VERSION}
+
+# --- The tarball alone, for --output -----------------------------------------
+FROM scratch AS tarball
+COPY --from=build /mdir-*-manylinux_2_28_x86_64.tar.gz /

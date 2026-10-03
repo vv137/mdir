@@ -8,9 +8,11 @@ or the commit (times, hashes, paths) will differ elsewhere.
 
 ## C.1 An installation and its check
 
-MDIR is built and installed as Appendix B.1 describes, or run from its
-container (`packaging/README.md`: `docker run --gpus all` or
-`apptainer run --nv`). `mdir version` prints what the build supports:
+MDIR is extracted from the binary tarball of a release, which runs on
+Linux x86-64 with glibc 2.28 or later and needs, for a GPU, only the NVIDIA
+driver (D[manylinux]); or built and installed as Appendix B.1 describes;
+or run from its container (`packaging/README.md`: `docker run --gpus all`
+or `apptainer run --nv`). `mdir version` prints what the build supports:
 
 ```text
 $ mdir version
@@ -23,7 +25,10 @@ checkpoints: yes (HDF5)
 ```
 
 `targets` lists `gpu` when the CUDA target was built, with the toolkit
-that `CUDA_ROOT` names, or the one of the build, and its version. The
+whose libdevice the kernels link and its version: the one that `CUDA_ROOT`
+(or `CUDA_HOME`, `CUDA_PATH`) names; else the copy of libdevice that a
+release tarball carries in `share/mdir/cuda`; else the toolkit of the
+build. The
 version comes from a CUDA runtime already loaded, or from the toolkit's
 `version.json` or `version.txt`. CUDA's runtime images, the base of MDIR's
 container, ship neither, and the line then says `runtime version not

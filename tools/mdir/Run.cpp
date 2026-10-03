@@ -609,11 +609,14 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                   mdrt::MDRTDialect>();
   mlir::MLIRContext context(registry);
 
-  // The kernels for a GPU take their math functions from the CUDA toolkit.
-  if (control->target == Target::GPU && !std::getenv("CUDA_ROOT") &&
-      !std::getenv("CUDA_HOME") && !std::getenv("CUDA_PATH") &&
-      StringRef(MDIR_CUDA_ROOT) != "")
-    setenv("CUDA_ROOT", MDIR_CUDA_ROOT, /*overwrite=*/0);
+  // The kernels for a GPU take their math functions from libdevice: that
+  // of the toolkit the environment names, else the copy installed with
+  // mdir, else that of the toolkit of the build.
+  if (control->target == Target::GPU) {
+    std::string toolkit = getCudaToolkitRoot();
+    if (!toolkit.empty())
+      setenv("CUDA_ROOT", toolkit.c_str(), /*overwrite=*/0);
+  }
 
   auto begin = std::chrono::steady_clock::now();
   mlir::OwningOpRef<mlir::ModuleOp> module =
