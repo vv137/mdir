@@ -168,6 +168,9 @@ struct Control {
   std::string energyFile;
   /// The terms over centers of groups at every energy of the log (D145).
   std::string pullFile;
+  /// dH/dλ and the differences of the energy to the other states of
+  /// [free_energy] at every energy of the log (D161).
+  std::string freeEnergyFile;
   /// The format of the trajectory, DCD or XTC (D141).
   TrajectoryFormat trajectoryFormat = TrajectoryFormat::DCD;
   std::string restartOutput;
@@ -205,6 +208,49 @@ struct Control {
   /// Whether an expression of a term of the topology takes the time `t`
   /// in ps (D145).
   bool usesTime = false;
+
+  // [free_energy] (D161)
+  /// Alchemical states: the particles that `couple` selects (a mask, or
+  /// none) are decoupled from the rest as `lambda_coulomb` and `lambda_vdw`
+  /// go from 0, the system of the topology, to 1, while the interactions
+  /// within the selection stay; every component `name` is a parameter
+  /// `lambda_name` of the expressions as well. The run samples the state
+  /// `state`, from 0.
+  struct FreeEnergy {
+    std::string couple;
+    int64_t state = 0;
+    /// The soft-core of the Lennard-Jones of the decoupled pairs,
+    /// r_A^6 = alpha sigma^6 lambda^power + r^6 [Beutler1994].
+    double softCoreAlpha = 0.5;
+    int64_t softCorePower = 1;
+    /// The components, `coulomb` and `vdw` first, then the others by name,
+    /// each with a value for every state.
+    std::vector<std::pair<std::string, std::vector<double>>> lambdas;
+
+    size_t getNumStates() const {
+      return lambdas.empty() ? 0 : lambdas.front().second.size();
+    }
+    /// The value of the component `name` at the state `k`; 0 for a
+    /// component that the file does not give.
+    double get(llvm::StringRef name, size_t k) const {
+      for (const auto &[component, values] : lambdas)
+        if (component == name)
+          return values[k];
+      return 0.0;
+    }
+  };
+  bool hasFreeEnergy = false;
+  FreeEnergy freeEnergy;
+  /// Whether `name` is the parameter `lambda_<component>` of a component of
+  /// [free_energy].
+  bool isLambda(llvm::StringRef name) const {
+    if (!hasFreeEnergy || !name.starts_with("lambda_"))
+      return false;
+    for (const auto &[component, values] : freeEnergy.lambdas)
+      if (name.drop_front(7) == component)
+        return true;
+    return false;
+  }
   /// Functions of one argument by their values, which every expression may
   /// call (D138): [[energy.function]].
   std::vector<TabulatedFunction> functions;

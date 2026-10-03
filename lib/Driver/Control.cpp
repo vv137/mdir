@@ -105,6 +105,8 @@ private:
   Error readMesh(const toml::table &table, double &beta, double &tolerance,
                  int64_t (&grid)[3], double &spacing, int64_t &order);
   Error readOutput(const toml::table &table);
+  /// [free_energy]: the alchemical states (D161).
+  Error readFreeEnergy(const toml::table &table);
   Error readThermostat(const toml::table &table);
   Error readBarostat(const toml::table &table);
 
@@ -485,7 +487,7 @@ Error Reader::readExternal(const toml::table &table) {
     if (name == "t")
       control.usesTime = true;
     if (name == "x" || name == "y" || name == "z" || name == "q" ||
-        name == "t")
+        name == "t" || control.isLambda(name))
       continue;
     auto named = [&](const auto &p) { return p.first == name; };
     // A parameter of each particle, by its name (D165).
@@ -647,6 +649,8 @@ Error Reader::readTupleTerm(const toml::table &table, unsigned arity) {
       control.usesTime = true;
       continue;
     }
+    if (control.isLambda(name))
+      continue;
     // A parameter of each particle at a place of the tuple (D165).
     if (!term.isCentroid() && !getParticleStem(name, arity).empty()) {
       if (llvm::any_of(term.parameters,
@@ -1440,7 +1444,8 @@ Error Reader::readInput(const toml::table &table) {
 Error Reader::readOutput(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "output",
-          {"log", "energy", "pull", "manifest", "trajectory", "trajectory_format",
+          {"log", "energy", "pull", "free_energy", "manifest", "trajectory",
+           "trajectory_format",
            "checkpoint", "energy_interval", "trajectory_interval",
            "checkpoint_interval"},
           {}))
@@ -1479,6 +1484,8 @@ Error Reader::readOutput(const toml::table &table) {
     return error;
   if (Error error = readPath(table, "pull", control.pullFile))
     return error;
+  if (Error error = readPath(table, "free_energy", control.freeEnergyFile))
+    return error;
   if (Error error =
           readCount(table, "energy_interval", control.energyPeriod, 0))
     return error;
@@ -1489,6 +1496,114 @@ Error Reader::readOutput(const toml::table &table) {
           readCount(table, "checkpoint_interval", control.checkpointPeriod, 0))
     return error;
   outputTable = &table;
+  return Error::success();
+}
+
+Error Reader::readFreeEnergy(const toml::table &table) {
+  if (Error error = checkKeywords(table, "free_energy",
+                                  {"couple", "state", "soft_core_alpha",
+                                   "soft_core_power", "lambdas"},
+                                  {}))
+    return error;
+  Control::FreeEnergy &energy = control.freeEnergy;
+  if (Error error = readString(table, "couple", energy.couple))
+    return error;
+  if (Error error = readCount(table, "state", energy.state, 0))
+    return error;
+  if (Error error = readReal(table, "soft_core_alpha", energy.softCoreAlpha))
+    return error;
+  if (const toml::node *node = table.get("soft_core_alpha"))
+    if (energy.softCoreAlpha < 0.0)
+      return fail(*node, "expected 'soft_core_alpha' of at least 0");
+  if (Error error =
+          readCount(table, "soft_core_power", energy.softCorePower, 1))
+    return error;
+  if (energy.softCorePower > 2)
+    return fail(*table.get("soft_core_power"),
+                "expected 'soft_core_power' 1 or 2");
+
+  const toml::node *node = table.get("lambdas");
+  const toml::table *lambdas = node ? node->as_table() : nullptr;
+  if (!lambdas || lambdas->empty())
+    return fail(node ? *node : static_cast<const toml::node &>(table),
+                "expected [free_energy.lambdas], a list of the values of "
+                "each component for every state, such as 'coulomb = [0.0, "
+                "0.5, 1.0]'");
+  // `coulomb` and `vdw` first, then the others in the order of their names.
+  std::vector<std::pair<std::string, std::vector<double>>> given;
+  for (auto &&[key, value] : *lambdas) {
+    std::string name(key.str());
+    if (name.empty() || !llvm::all_of(name, [](char c) {
+          return llvm::isAlnum(c) || c == '_';
+        }))
+      return fail(value, "a component of letters, digits, and '_', not '" +
+                             name + "'");
+    const toml::array *list = value.as_array();
+    if (!list || list->empty())
+      return fail(value, "expected a list of the values of '" + name +
+                             "', one for each state");
+    std::vector<double> values;
+    for (const toml::node &element : *list) {
+      std::optional<double> number = element.value<double>();
+      if (!element.is_number() || !number)
+        return fail(element, "expected a number");
+      if ((name == "coulomb" || name == "vdw") &&
+          !(*number >= 0.0 && *number <= 1.0))
+        return fail(element, "a value of '" + name +
+                                 "' from 0, coupled, to 1, decoupled");
+      values.push_back(*number);
+    }
+    if (!given.empty() && values.size() != given.front().second.size())
+      return fail(value, "'" + name + "' has " +
+                             llvm::Twine(values.size()) + " values and '" +
+                             given.front().first + "' has " +
+                             llvm::Twine(given.front().second.size()) +
+                             "; every component has one for each state");
+    given.push_back({name, std::move(values)});
+  }
+  // The selection is decoupled by `coulomb` and `vdw`, which are 0 where
+  // the file does not give them.
+  size_t states = given.front().second.size();
+  auto has = [&](StringRef name) {
+    return llvm::any_of(given,
+                        [&](const auto &c) { return c.first == name; });
+  };
+  if (energy.couple.empty()) {
+    if (has("coulomb") || has("vdw"))
+      return fail(*lambdas, "'coulomb' and 'vdw' decouple the particles of "
+                            "'couple', which [free_energy] does not give");
+  } else {
+    for (StringRef name : {"coulomb", "vdw"})
+      if (!has(name))
+        given.push_back({name.str(), std::vector<double>(states, 0.0)});
+  }
+  for (StringRef name : {"coulomb", "vdw"})
+    for (auto &component : given)
+      if (component.first == name)
+        energy.lambdas.push_back(component);
+  for (auto &component : given)
+    if (component.first != "coulomb" && component.first != "vdw")
+      energy.lambdas.push_back(component);
+  if (energy.state >= static_cast<int64_t>(states))
+    return fail(*table.get("state"),
+                "'state' is " + llvm::Twine(energy.state) +
+                    ", and the components have " + llvm::Twine(states) +
+                    " states, from 0");
+  // A particle whose Lennard-Jones is softened while it keeps a charge can
+  // come so close to another that the Coulomb energy diverges: the charges
+  // go first.
+  if (!energy.couple.empty())
+    for (size_t k = 0; k != states; ++k)
+      if (energy.get("vdw", k) > 0.0 && energy.get("coulomb", k) < 1.0) {
+        control.warnings.push_back(
+            {"charged_soft_core",
+             "state " + std::to_string(k) +
+                 " softens the Lennard-Jones (vdw > 0) of particles that "
+                 "keep a charge (coulomb < 1), whose Coulomb energy may then "
+                 "diverge; decouple the charges before the Lennard-Jones"});
+        break;
+      }
+  control.hasFreeEnergy = true;
   return Error::success();
 }
 
@@ -1836,7 +1951,8 @@ Error Reader::readEnergy(const toml::table &table) {
             stems.push_back(stem.str());
           continue;
         }
-        if (!llvm::is_contained(known, StringRef(name)) && !constant)
+        if (!llvm::is_contained(known, StringRef(name)) && !constant &&
+            !control.isLambda(name))
           return fail(node, "the expression uses '" + name +
                                 "', which is not r, q1, q2, sigma, epsilon, "
                                 "sigma1, sigma2, epsilon1, epsilon2, coulomb, "
@@ -2466,7 +2582,8 @@ Error Reader::readExecution(const toml::table &table) {
 Error Reader::read(const toml::table &root) {
   if (Error error = checkKeywords(
           root, "the control file",
-          {"input", "output", "energy", "pme", "lj_pme", "dynamics",
+          {"input", "output", "free_energy", "energy", "pme", "lj_pme",
+           "dynamics",
            "minimize",
            "ensemble", "thermostat", "barostat",
            "boundary", "execution", "constraints", "restraints"},
@@ -2497,6 +2614,13 @@ Error Reader::read(const toml::table &root) {
     return error;
   if (table)
     if (Error error = readOutput(*table))
+      return error;
+
+  // The components of λ are parameters of the expressions of [energy].
+  if (Error error = getTable("free_energy", /*required=*/false, table))
+    return error;
+  if (table)
+    if (Error error = readFreeEnergy(*table))
       return error;
 
   if (Error error = getTable("energy", /*required=*/true, table))
@@ -2744,6 +2868,34 @@ Error Reader::read(const toml::table &root) {
           "which needs 'energy_interval'",
           path.str().c_str());
   }
+  // dH/dλ and the differences to the other states, at every energy (D161).
+  if (!control.freeEnergyFile.empty()) {
+    if (!control.hasFreeEnergy)
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "%s: [output] names 'free_energy', but there is no [free_energy]",
+          path.str().c_str());
+    if (control.energyPeriod == 0 || control.minimize)
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "%s: 'free_energy' is written at the energies of a run of "
+          "dynamics, which needs 'energy_interval'",
+          path.str().c_str());
+  }
+  if (control.hasFreeEnergy) {
+    if (!control.hasTopology())
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "%s: [free_energy] acts on a system from a topology",
+          path.str().c_str());
+    if (control.implicitSolvent != Control::ImplicitSolvent::None &&
+        !control.freeEnergy.couple.empty())
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "%s: [free_energy] does not decouple particles in implicit "
+          "solvent yet",
+          path.str().c_str());
+  }
   if (!control.energyFile.empty() && control.energyPeriod == 0)
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
@@ -2758,6 +2910,7 @@ Error Reader::read(const toml::table &root) {
           {"energy", &control.energyFile},
           {"manifest", &control.manifestFile},
           {"pull", &control.pullFile},
+          {"free_energy", &control.freeEnergyFile},
           {"trajectory", &control.trajectoryFile},
           {"checkpoint", &control.restartOutput}})
       if (!file->empty())

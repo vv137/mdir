@@ -231,6 +231,8 @@ static Preflight inspect(const Control &control) {
        !control.energyFile.empty(), false, false, rows, "rows"},
       {"pull", control.pullFile, "columns", control.energyPeriod,
        !control.pullFile.empty(), false, false, rows, "rows"},
+      {"free_energy", control.freeEnergyFile, "columns", control.energyPeriod,
+       !control.freeEnergyFile.empty(), false, false, rows, "rows"},
       {"trajectory", control.trajectoryFile,
        control.trajectoryFormat == TrajectoryFormat::XTC ? "XTC" : "DCD",
        control.framePeriod, control.framePeriod > 0, false, false,

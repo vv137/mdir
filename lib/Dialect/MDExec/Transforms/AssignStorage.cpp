@@ -1594,6 +1594,23 @@ LogicalResult Assignment::convertBlock(Block &block, Scope &scope) {
     if (failed(convertOp(&op, scope, position)))
       return failure();
 
+    // A field that nothing uses, such as the forces of a reciprocal sum
+    // whose energy alone is wanted (D161), holds nothing once its op has
+    // run.
+    for (Value result : op.getResults()) {
+      if (!isField(result.getType()) || !result.use_empty())
+        continue;
+      auto found = buffers.find(result);
+      if (found == buffers.end())
+        continue;
+      Value buffer = found->second;
+      buffers.erase(found);
+      if (scope.owns(buffer) && llvm::none_of(buffers, [&](const auto &entry) {
+            return entry.second == buffer;
+          }))
+        scope.release(buffer);
+    }
+
     // The buffers of the fields and of the orders that die here hold
     // nothing from now on.
     op.walk([&](Operation *nested) {

@@ -1059,14 +1059,108 @@ LogicalResult DerivativeBuilder::buildParameterDerivative(int64_t argument,
                                                           Value &result) {
   Value parameter = body->getArgument(argument);
 
-  // The derivative of a sum over a relation is the sum of the derivative of
-  // its kernel.
+  // Whether a value depends on the parameter: through the operands of its
+  // op, or through a kernel of its op that takes the parameter, or a value
+  // that depends on it, from outside.
+  llvm::DenseMap<Value, bool> dependence;
+  std::function<bool(Value)> depends = [&](Value value) -> bool {
+    if (value == parameter)
+      return true;
+    Operation *op = value.getDefiningOp();
+    if (!op)
+      return false;
+    auto found = dependence.find(value);
+    if (found != dependence.end())
+      return found->second;
+    bool result = llvm::any_of(op->getOperands(), depends);
+    if (!result)
+      op->walk([&](Operation *inner) {
+        for (Value operand : inner->getOperands()) {
+          Operation *definition = operand.getDefiningOp();
+          bool outside = operand == parameter ||
+                         (definition && !op->isAncestor(definition));
+          if (outside && depends(operand)) {
+            result = true;
+            return WalkResult::interrupt();
+          }
+        }
+        return WalkResult::advance();
+      });
+    dependence[value] = result;
+    return result;
+  };
+
+  // A field that a map over particles computes, with its derivative with
+  // respect to the parameter times `sign` added: the same map, whose
+  // kernel yields k + sign · ∂k/∂θ.
+  auto shiftField = [&](Value field, double sign, Value &shifted)
+      -> LogicalResult {
+    auto map = field.getDefiningOp<MapParticlesOp>();
+    if (!map || llvm::any_of(map.getGathered(), depends))
+      return field.getDefiningOp()->emitError()
+             << "cannot differentiate a field with respect to a parameter "
+                "unless a map over particles computes it from fields that do "
+                "not depend on the parameter";
+    Operation *copy = builder.clone(*map);
+    Block &block = copy->getRegion(0).front();
+    Value value = cast<YieldOp>(block.getTerminator()).getOperand(0);
+    OpBuilder kernel(block.getTerminator());
+    ScalarDerivative derivative(kernel, parameter);
+    Value slope;
+    if (failed(derivative.get(value, slope)))
+      return failure();
+    ScalarEmitter emit(kernel, loc);
+    setYield(block, emit.add(value, emit.scale(sign, slope)));
+    shifted = copy->getResult(0);
+    return success();
+  };
+
+  // The derivative of a sum over a relation, tuples, or particles is the
+  // sum of the derivative of its kernel. That of a reciprocal sum, whose
+  // energy E(c) = ½ cᵀ A c is a quadratic form of the charges, is
+  // Δᵀ A c = (E(c + Δ) − E(c − Δ)) / 2 with Δ = ∂c/∂θ: two reciprocal
+  // sums (D161). An op that does not depend on the parameter adds nothing.
   auto leaf = [&](Value value, Value &tangent) -> LogicalResult {
     tangent = Value();
     Operation *op = value.getDefiningOp();
-    if (!op)
+    if (!op || !depends(value))
       return success();
 
+    if (auto reciprocal = dyn_cast<ReciprocalOp>(op)) {
+      if (value != reciprocal.getEnergy())
+        return op->emitError() << "cannot differentiate the forces or the "
+                                  "virial of a reciprocal sum with respect "
+                                  "to a parameter";
+      if (depends(reciprocal.getPositions()))
+        return op->emitError() << "cannot differentiate a reciprocal sum "
+                                  "whose positions depend on a parameter";
+      Value energies[2];
+      for (int k = 0; k != 2; ++k) {
+        Value charges;
+        if (failed(shiftField(reciprocal.getCharges(), k == 0 ? 1.0 : -1.0,
+                              charges)))
+          return failure();
+        auto copy = cast<ReciprocalOp>(builder.clone(*reciprocal));
+        copy.getChargesMutable().assign(charges);
+        energies[k] = copy.getEnergy();
+      }
+      ScalarEmitter emit(builder, loc);
+      tangent = emit.scale(0.5, emit.sub(energies[0], energies[1]));
+      return success();
+    }
+
+    // The fields that a kernel takes do not depend on the parameter; the
+    // kernel may.
+    auto gathered = [&](Operation *sum) {
+      for (Value operand : sum->getOperands())
+        if (operand != parameter && depends(operand))
+          return false;
+      return true;
+    };
+    if (!gathered(op))
+      return op->emitError() << "cannot differentiate '" << op->getName()
+                             << "' with respect to a parameter that a field "
+                                "it takes depends on";
     Operation *term;
     if (auto sum = dyn_cast<SumRelationOp>(op))
       term = createPairOp(SumRelationOp::getOperationName(), sum,
@@ -1074,6 +1168,8 @@ LogicalResult DerivativeBuilder::buildParameterDerivative(int64_t argument,
     else if (auto tuples = dyn_cast<SumTuplesOp>(op))
       term = createTupleOp(SumTuplesOp::getOperationName(), tuples,
                            value.getType());
+    else if (isa<SumParticlesOp>(op))
+      term = builder.clone(*op);
     else
       return op->emitError() << "cannot differentiate '" << op->getName()
                              << "' with respect to a parameter";
