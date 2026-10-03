@@ -23,9 +23,9 @@ namespace {
 /// Builds the function that computes requested quantities from a potential.
 class DerivativeBuilder {
 public:
-  DerivativeBuilder(PotentialOp potential, StringRef name)
+  DerivativeBuilder(PotentialOp potential, StringRef name, bool remarks)
       : potential(potential), name(name), builder(potential.getContext()),
-        loc(potential.getLoc()) {}
+        loc(potential.getLoc()), remarks(remarks) {}
 
   /// Returns the generated function, or a null op after emitting a
   /// diagnostic.
@@ -99,6 +99,9 @@ private:
   StringRef name;
   OpBuilder builder;
   Location loc;
+  /// Whether a parameter derivative remarks on each op that it takes as
+  /// independent of the parameter.
+  bool remarks;
 
   FunctionOp function;
   Block *body = nullptr;
@@ -1059,14 +1062,230 @@ LogicalResult DerivativeBuilder::buildParameterDerivative(int64_t argument,
                                                           Value &result) {
   Value parameter = body->getArgument(argument);
 
-  // The derivative of a sum over a relation is the sum of the derivative of
-  // its kernel.
+  // Each value is one of three: independent of the parameter, which only a
+  // proof gives, then its derivative is exactly zero; dependent on it, then
+  // a rule gives its derivative or the derivative fails; or undetermined,
+  // which fails as well (D161). The proof follows every path by which the
+  // parameter can reach a value: the operands of ops, the values that their
+  // kernels take from outside, and the arguments of blocks whose meaning is
+  // known: those of the body, the other arguments of the potential, and
+  // those of a kernel, the values of its particles, tuples, or pairs, whose
+  // fields are checked apart.
+  enum class Dependence { Independent, Dependent, Undetermined };
+  struct Verdict {
+    Dependence dependence = Dependence::Independent;
+    std::string reason;
+  };
+  auto combine = [](Verdict &into, const Verdict &from) {
+    if (from.dependence == Dependence::Dependent ||
+        into.dependence == Dependence::Dependent) {
+      into = {Dependence::Dependent, ""};
+      return;
+    }
+    if (from.dependence == Dependence::Undetermined &&
+        into.dependence == Dependence::Independent)
+      into = from;
+  };
+  llvm::DenseSet<Block *> knownBlocks = {body};
+  llvm::DenseMap<Value, Verdict> verdicts;
+  // Ops of a kernel whose meaning the pass knows: arithmetic without
+  // effects, and the values of tables.
+  auto isKernelOp = [](Operation *op) {
+    if (isa<LookupOp, YieldOp>(op) ||
+        op->getName().getStringRef() == "md_exec.cell_edges")
+      return true;
+    StringRef dialect = op->getName().getDialectNamespace();
+    return (dialect == "arith" || dialect == "math" || dialect == "vector") &&
+           op->getNumRegions() == 0 && isMemoryEffectFree(op);
+  };
+  // Ops over particles, tuples, or pairs whose kernels the pass knows.
+  auto isSumOp = [](Operation *op) {
+    return isa<SumRelationOp, GatherRelationOp, SumTuplesOp, GatherTuplesOp,
+               SumParticlesOp, MapParticlesOp>(op);
+  };
+  std::function<Verdict(Value)> classify = [&](Value value) -> Verdict {
+    if (value == parameter)
+      return {Dependence::Dependent, ""};
+    auto found = verdicts.find(value);
+    if (found != verdicts.end())
+      return found->second;
+    Verdict verdict;
+    Operation *op = value.getDefiningOp();
+    if (!op) {
+      Block *owner = cast<BlockArgument>(value).getOwner();
+      if (!knownBlocks.contains(owner))
+        verdict = {Dependence::Undetermined,
+                   "it is an argument of a block whose meaning the pass does "
+                   "not know"};
+    } else {
+      bool known = isKernelOp(op) || isSumOp(op) ||
+                   (op->getName().getDialectNamespace() == "md" &&
+                    op->getNumRegions() == 0 && isMemoryEffectFree(op));
+      // An operand that depends on the parameter makes the op dependent,
+      // known or not.
+      for (Value operand : op->getOperands())
+        combine(verdict, classify(operand));
+      if (!known) {
+        combine(verdict,
+                {Dependence::Undetermined,
+                 ("'" + op->getName().getStringRef() +
+                  "' is not an op whose dependences the pass knows")
+                     .str()});
+      } else {
+        // What the kernels take from outside.
+        op->walk([&](Operation *inner) {
+          if (inner == op)
+            return WalkResult::advance();
+          if (!isKernelOp(inner)) {
+            combine(verdict,
+                    {Dependence::Undetermined,
+                     ("its kernel holds '" + inner->getName().getStringRef() +
+                      "', whose dependences the pass does not know")
+                         .str()});
+            return WalkResult::advance();
+          }
+          for (Value operand : inner->getOperands()) {
+            Operation *definition = operand.getDefiningOp();
+            bool outside =
+                definition ? !op->isAncestor(definition)
+                           : !op->isAncestor(
+                                 cast<BlockArgument>(operand).getOwner()
+                                     ->getParentOp());
+            if (outside)
+              combine(verdict, classify(operand));
+          }
+          return WalkResult::advance();
+        });
+      }
+    }
+    verdicts[value] = verdict;
+    return verdict;
+  };
+
+  auto describe = [&]() {
+    return "argument " + std::to_string(argument) + " of '" +
+           potential.getSymName().str() + "'";
+  };
+  // An error for a value that is not independent and has no rule here.
+  auto refuse = [&](Value value, const Verdict &verdict) -> LogicalResult {
+    Operation *op = value.getDefiningOp();
+    Location at = op ? op->getLoc() : value.getLoc();
+    if (verdict.dependence == Dependence::Undetermined)
+      return emitError(at) << "cannot prove that this value does not depend on "
+                           << describe() << ": " << verdict.reason;
+    if (op)
+      return emitError(at) << "'" << op->getName() << "' depends on "
+                           << describe()
+                           << " and has no rule for its derivative";
+    return emitError(at) << "a block argument depends on " << describe()
+                         << " and has no rule for its derivative";
+  };
+  auto takeAsZero = [&](Value value) {
+    if (Operation *op = value.getDefiningOp(); op && remarks)
+      op->emitRemark() << "independent of " << describe()
+                       << ": its derivative is zero";
+  };
+
+  // Within a kernel: the arguments of the kernel and what it computes from
+  // them are independent of the parameter; an op without a rule fails as
+  // the leaf above says.
+  ScalarDerivative::LeafHandler kernelLeaf = [&](Value value,
+                                                 Value &tangent) {
+    tangent = Value();
+    Verdict verdict = classify(value);
+    if (verdict.dependence == Dependence::Independent)
+      return success();
+    return refuse(value, verdict);
+  };
+
+  // A field that a map over particles computes, with its derivative with
+  // respect to the parameter times `sign` added: the same map, whose
+  // kernel yields k + sign · ∂k/∂θ.
+  auto shiftField = [&](Value field, double sign, Value &shifted)
+      -> LogicalResult {
+    auto map = field.getDefiningOp<MapParticlesOp>();
+    if (!map)
+      return refuse(field, classify(field).dependence ==
+                                   Dependence::Undetermined
+                               ? classify(field)
+                               : Verdict{Dependence::Dependent, ""});
+    for (Value gathered : map.getGathered()) {
+      Verdict verdict = classify(gathered);
+      if (verdict.dependence != Dependence::Independent)
+        return refuse(gathered, verdict);
+    }
+    Operation *copy = builder.clone(*map);
+    Block &block = copy->getRegion(0).front();
+    knownBlocks.insert(&block);
+    Value value = cast<YieldOp>(block.getTerminator()).getOperand(0);
+    OpBuilder kernel(block.getTerminator());
+    ScalarDerivative derivative(kernel, parameter, kernelLeaf);
+    Value slope;
+    if (failed(derivative.get(value, slope)))
+      return failure();
+    ScalarEmitter emit(kernel, loc);
+    setYield(block, emit.add(value, emit.scale(sign, slope)));
+    shifted = copy->getResult(0);
+    return success();
+  };
+
+  // The derivative of a sum over a relation, tuples, or particles is the
+  // sum of the derivative of its kernel. That of a reciprocal sum, whose
+  // energy E(c) = ½ cᵀ A c is a quadratic form of the charges, is
+  // Δᵀ A c = (E(c + Δ) − E(c − Δ)) / 2 with Δ = ∂c/∂θ: two reciprocal
+  // sums (D161).
   auto leaf = [&](Value value, Value &tangent) -> LogicalResult {
     tangent = Value();
+    Verdict verdict = classify(value);
+    if (verdict.dependence == Dependence::Independent) {
+      takeAsZero(value);
+      return success();
+    }
+    if (verdict.dependence == Dependence::Undetermined)
+      return refuse(value, verdict);
     Operation *op = value.getDefiningOp();
     if (!op)
-      return success();
+      return refuse(value, verdict);
 
+    if (auto reciprocal = dyn_cast<ReciprocalOp>(op)) {
+      if (value != reciprocal.getEnergy())
+        return op->emitError() << "cannot differentiate the forces or the "
+                                  "virial of a reciprocal sum with respect "
+                                  "to a parameter";
+      Verdict positions = classify(reciprocal.getPositions());
+      if (positions.dependence != Dependence::Independent)
+        return refuse(reciprocal.getPositions(), positions);
+      Value energies[2];
+      for (int k = 0; k != 2; ++k) {
+        Value charges;
+        if (failed(shiftField(reciprocal.getCharges(), k == 0 ? 1.0 : -1.0,
+                              charges)))
+          return failure();
+        auto copy = cast<ReciprocalOp>(builder.clone(*reciprocal));
+        copy.getChargesMutable().assign(charges);
+        energies[k] = copy.getEnergy();
+      }
+      ScalarEmitter emit(builder, loc);
+      tangent = emit.scale(0.5, emit.sub(energies[0], energies[1]));
+      return success();
+    }
+
+    // The derivative of a sum takes its kernel's; the fields that the
+    // kernel takes must not depend on the parameter, for which there is no
+    // rule.
+    if (!isa<SumRelationOp, SumTuplesOp, SumParticlesOp>(op))
+      return refuse(value, verdict);
+    for (Value operand : op->getOperands()) {
+      if (operand == parameter)
+        continue;
+      Verdict field = classify(operand);
+      if (field.dependence == Dependence::Dependent)
+        return op->emitError()
+               << "'" << op->getName() << "' takes a field that depends on "
+               << describe() << ", and has no rule for that derivative";
+      if (field.dependence == Dependence::Undetermined)
+        return refuse(operand, field);
+    }
     Operation *term;
     if (auto sum = dyn_cast<SumRelationOp>(op))
       term = createPairOp(SumRelationOp::getOperationName(), sum,
@@ -1075,13 +1294,13 @@ LogicalResult DerivativeBuilder::buildParameterDerivative(int64_t argument,
       term = createTupleOp(SumTuplesOp::getOperationName(), tuples,
                            value.getType());
     else
-      return op->emitError() << "cannot differentiate '" << op->getName()
-                             << "' with respect to a parameter";
+      term = builder.clone(*op);
     Block &block = term->getRegion(0).front();
+    knownBlocks.insert(&block);
     Value pairEnergy = cast<YieldOp>(block.getTerminator()).getOperand(0);
 
     OpBuilder kernel(block.getTerminator());
-    ScalarDerivative derivative(kernel, parameter);
+    ScalarDerivative derivative(kernel, parameter, kernelLeaf);
     Value slope;
     if (failed(derivative.get(pairEnergy, slope)))
       return failure();
@@ -1283,7 +1502,7 @@ public:
           return signalPassFailure();
         }
       } else {
-        DerivativeBuilder derivative(potential, name);
+        DerivativeBuilder derivative(potential, name, remarks);
         if (!derivative.build(evaluate.getRequestKinds(),
                               evaluate.getRequestArguments()))
           return signalPassFailure();

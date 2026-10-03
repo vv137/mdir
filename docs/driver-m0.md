@@ -92,6 +92,7 @@ regard to case.
 | | `trajectory` | Positions, in DCD (`.dcd`, Å) or in the compressed XTC of GROMACS (`.xtc`, nm to a thousandth), by the extension of the name (D141). |
 | | `trajectory_format` | `AUTO` (the default, from the extension), `DCD`, or `XTC`. |
 | | `pull` | A file of columns of the terms over the centers of groups at every energy of the log: the step, the time, and for each term its coordinates (`r`, `dx`, `dy`, `dz` in Å, or `theta`), its energy (kcal/mol), and its force, along the distance and on the second center, or $-\partial E/\partial\theta$; continued with the run (D145, D149). |
+| | `free_energy` | A file of columns of `[free_energy]` at every energy of the log: the step, the time, $\partial U/\partial\lambda_m$ of each component (`dHdl.<name>`), and $U(\boldsymbol\lambda^{(k)}) - U(\boldsymbol\lambda)$ for every state $k$ (`dU.<k>`), in kcal/mol; continued with the run (D161). |
 | | `checkpoint` | The checkpoint (D26), written every `checkpoint_interval` steps in place of the one before, which stays as `<checkpoint>.prev` (D132), and at the end of a minimization. `mdir run --continue` continues the run from it (Section 2.7). |
 | | `energy_interval`, `trajectory_interval`, `checkpoint_interval` | Steps between the rows of the log, the frames, and the checkpoints (Section 2.2). The intervals nest, either way for energies and frames. |
 | `[energy]` | `cutoff` | The cutoff of `md.neighborhood` (Å). |
@@ -264,8 +265,8 @@ Its schema begins at version 1:
 | `system.cell_angstrom` | The reduced cell's `diagonal` and `tilt` ($b_x$, $c_x$, $c_y$) in Å; `null` without periodicity |
 | `run` | Kind, ensemble, method, steps, `time_step_ps`, `duration_ns`, `temperature_kelvin`, `pressure_atm`, thermostat and barostat coupling, cutoff, PME, constraints, execution, and input checkpoint path |
 | `run.pme` | `null` when disabled; otherwise `grid_points` (three nulls when automatic), `beta_inverse_angstrom` (`null` when automatic), `order`, `max_spacing_angstrom`, and `tolerance` |
-| `outputs` | Entries with `kind` (`log`, `energy`, `pull`, `trajectory`, `checkpoint`, `manifest`), `path`, `format`, `interval_steps`, `enabled`, `at_end`, `count` and `count_of` (`rows`, `frames`, `checkpoints`; `count` is null where the run decides, as in a minimization), `exists`, and `backup`, the name under which a run keeps the file that exists (D149), or null; `path` is null for an unconfigured file, and for the log when it goes to standard output only |
-| `warnings` | Objects with `code` and `message`: `backup_limit`, `constant_expression`, `empty_selection`, `flexible_water`, `long_time_step`, `short_thermostat_period` (D163a), `brownian_step` (D163b), `unused_parameter`, `fixed_rebuild_interval`, `no_checkpoint`, `no_energies`, `missing_input_checkpoint`, `hdf5_unavailable`, or `gpu_unavailable` |
+| `outputs` | Entries with `kind` (`log`, `energy`, `pull`, `free_energy`, `trajectory`, `checkpoint`, `manifest`), `path`, `format`, `interval_steps`, `enabled`, `at_end`, `count` and `count_of` (`rows`, `frames`, `checkpoints`; `count` is null where the run decides, as in a minimization), `exists`, and `backup`, the name under which a run keeps the file that exists (D149), or null; `path` is null for an unconfigured file, and for the log when it goes to standard output only |
+| `warnings` | Objects with `code` and `message`: `backup_limit`, `constant_expression`, `empty_selection`, `flexible_water`, `long_time_step`, `short_thermostat_period` (D163a), `brownian_step` (D163b), `charged_soft_core` (D161), `unused_parameter`, `fixed_rebuild_interval`, `no_checkpoint`, `no_energies`, `missing_input_checkpoint`, `hdf5_unavailable`, or `gpu_unavailable` |
 | `notes` | Objects with `code` and `message` for what a run will do that needs no change: `output_backup`, an output that exists and the name it will be kept under |
 | `errors` | Error messages; empty on success. On failure, `system`, `run`, and `outputs` are absent |
 
@@ -517,6 +518,10 @@ A checkpoint is a file in the H5MD format [[deBuyl2014]](references.md#debuyl201
 /parameters/mdir/fingerprint  physics, coupling, execution: a string each,
                               a line per entry, "<name>\t<value>"
                               (D172)
+/parameters/mdir/free_energy_lambda  with [free_energy], the components of
+                              the state of the run, with the attributes
+                              free_energy (the states in one line) and
+                              free_energy_state (D161)
 ```
 
 This layout is the contract of release 0.1.0, format 1
@@ -541,6 +546,7 @@ and kJ/mol.
 | It records what defined the run: its fingerprint (D172). | A run that takes it compares, as the next table says. |
 | The checkpoint before stays as `<checkpoint>.prev`, a second name made before the rename (D132). | A checkpoint that is damaged after it was written leaves one to go back to; the name of the checkpoint holds a complete state at every moment. |
 | It records the step that its run began at, its part, the trajectory and the frames written to it, and the energy that the coupling has taken. | `mdir run --continue` continues the run to its `steps`, its trajectory, and its conserved energy (Section 2.7). |
+| With `[free_energy]` it records the states and the state of its run (D161), which the fingerprint holds as well (D172). | `mdir run --continue` refuses another state or other states, naming the change; a run that begins from it as `checkpoint` of `[input]` at another state computes its forces anew rather than begin with those of another energy. |
 | The particles are in the order of the input, whatever order the run keeps them in. | The file does not depend on the plan of the run. The run that continues puts the particles in order where it begins, and arrives at the order of the run that was not interrupted (D44). |
 
 A run that continues from a checkpoint arrives at the state of the run that
@@ -642,6 +648,7 @@ there is no restart file besides it.
 | The log | always the standard output; with `log`, a file as well | its rows every `energy_interval` steps, and the messages of the run (Section 2.3) | text |
 | The energies | `energy` | every `energy_interval` steps: the rows of the log | columns |
 | The terms over centers | `pull` | every `energy_interval` steps (D145) | columns |
+| dH/dλ and the energies of the states | `free_energy` | every `energy_interval` steps (D161) | columns |
 | The trajectory | `trajectory`, `trajectory_format` | every `trajectory_interval` steps | DCD or XTC (D141) |
 | The manifest | `manifest` | at execution start and end | JSON Lines (D168) |
 | The checkpoint | `checkpoint` | every `checkpoint_interval` steps, and at the end of a minimization; the one before as `<checkpoint>.prev` (D132) | H5MD (Section 2.6) |
@@ -760,6 +767,7 @@ outputs:
   log: stdout and md.log (text), every 5000 steps, 101 rows
   energy: md.energy (columns), every 5000 steps, 101 rows
   pull: not configured (columns), disabled
+  free_energy: not configured (columns), disabled
   trajectory: md.xtc (XTC), every 5000 steps, 100 frames, exists
   checkpoint: md.h5 (H5MD), every 50000 steps, 10 checkpoints
 mdir: note: trajectory output 'md.xtc' exists; mdir run keeps it as '#md.xtc.1#' before it writes its own, and mdir run --continue continues the run of its checkpoint instead

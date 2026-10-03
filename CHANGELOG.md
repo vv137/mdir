@@ -25,6 +25,21 @@ format, or the outputs; every such change is listed under **Changed** or
   the Lennard-Jones potential in r² (VSWITCH; Brooks et al. 1983), between
   `switch_distance` and `cutoff`, for topology Lennard-Jones and 1-4 pairs;
   agrees with CHARMM 51b1 on two POPC within 3.7e-7 kcal/mol (D175).
+- Alchemical free energy (D161). `[free_energy]` decouples a selection of
+  whole molecules (`couple`, a mask) through states of λ given in
+  `[free_energy.lambdas]` (`coulomb`, `vdw`, and any other component, a
+  parameter `lambda_<name>` of the expressions of `[energy]`), with the
+  soft-core Lennard-Jones of Beutler et al. (`soft_core_alpha`,
+  `soft_core_power`). `[output] free_energy` writes dH/dλ of each
+  component and the energy of every state relative to the run's at every
+  energy; `scripts/free-energy.py` gives the free energy by thermodynamic
+  integration and MBAR. Checkpoints record the states and the run's state.
+  The Lennard-Jones takes a plain cutoff or the potential shift; a switch
+  (`switch_distance` below `cutoff`, `FORCE_SWITCH`, `POWER_FORCE_SWITCH`,
+  `SQUARED_DISTANCE_SWITCH`), implicit solvent, and `lennard_jones = "PME"`
+  are refused with `couple`.
+- `--md-differentiate=remarks=true` lists the ops that a derivative with
+  respect to a parameter takes as independent of it (D161).
 
 ### Changed
 

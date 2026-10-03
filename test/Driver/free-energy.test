@@ -1,0 +1,97 @@
+# [free_energy] (D161): ethanol decoupled from TIP3P (Inputs/fep, GAFF2 and
+# AM1-BCC charges from AmberTools 26, Inputs/fep/leap.in). dH/dλ and the
+# energies of the other states against OpenMM 8.6.1 with the reaction field
+# and particle mesh Ewald, against central differences, and against runs at
+# the other states (Inputs/check_free_energy.py).
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/check_free_energy.py %t CPU DOUBLE mdir | FileCheck %s
+#
+# CHECK: RF against OpenMM: ok
+# CHECK: RF_SHIFT against OpenMM: ok
+# CHECK: PME against OpenMM: ok
+# CHECK: dH/dl against central differences: ok
+# CHECK: the energies of the other states: ok
+# CHECK: lambda = 0 against no [free_energy]: ok
+
+# The columns of the file, and the warning of a state that softens the
+# Lennard-Jones of particles that keep a charge.
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: cd %t && mdir run run.toml > run.log 2> run.err
+# RUN: FileCheck %s --check-prefix=COLUMNS < %t/run.dhdl
+# RUN: FileCheck %s --check-prefix=WARNING < %t/run.err
+#
+# COLUMNS: # step time dHdl.coulomb dHdl.vdw dU.0 dU.1 dU.2
+# COLUMNS-NEXT: # - ps kcal/mol kcal/mol kcal/mol kcal/mol kcal/mol
+# COLUMNS-NEXT: 0 0.000000 {{.*}} 0.000000 {{.*}}
+# COLUMNS-NEXT: 2 0.002000
+# COLUMNS-NEXT: 4 0.004000
+# WARNING: mdir: warning: state 1 softens the Lennard-Jones (vdw > 0) of particles that keep a charge
+
+# Errors.
+# RUN: sed 's/couple = ":LIG"/couple = ":LIG@C1"/' %t/run.toml > %t/cut.toml
+# RUN: not mdir run %t/cut.toml 2>&1 | FileCheck %s --check-prefix=CUT
+# CUT: selects particle {{[0-9]+}} and not particle {{[0-9]+}}, which an excluded pair joins to it; it must select whole molecules
+# RUN: sed 's/^state = 0/state = 3/' %t/run.toml > %t/state.toml
+# RUN: not mdir run %t/state.toml 2>&1 | FileCheck %s --check-prefix=STATE
+# STATE: 'state' is 3, and the components have 3 states, from 0
+# RUN: sed 's/^couple = ":LIG"//' %t/run.toml > %t/nocouple.toml
+# RUN: not mdir run %t/nocouple.toml 2>&1 | FileCheck %s --check-prefix=NOCOUPLE
+# NOCOUPLE: 'coulomb' and 'vdw' decouple the particles of 'couple', which [free_energy] does not give
+# RUN: sed 's/^vdw  *= .*/vdw = [0.0, 0.5]/' %t/run.toml > %t/lengths.toml
+# RUN: not mdir run %t/lengths.toml 2>&1 | FileCheck %s --check-prefix=LENGTHS
+# LENGTHS: 'vdw' has 2 values and 'coulomb' has 3; every component has one for each state
+# RUN: sed 's/^coulomb = .*/coulomb = [0.0, 1.5, 1.0]/' %t/run.toml > %t/range.toml
+# RUN: not mdir run %t/range.toml 2>&1 | FileCheck %s --check-prefix=RANGE
+# RANGE: a value of 'coulomb' from 0, coupled, to 1, decoupled
+# RUN: sed '/^\[free_energy/,/^vdw/d' %t/run.toml > %t/output.toml
+# RUN: not mdir run %t/output.toml 2>&1 | FileCheck %s --check-prefix=OUTPUT
+# OUTPUT: [output] names 'free_energy', but there is no [free_energy]
+# RUN: sed 's/^expression = "k \* (r - r0)^2"/expression = "lambda_other * k * (r - r0)^2"/' %t/run.toml > %t/unknown.toml
+# RUN: not mdir run %t/unknown.toml 2>&1 | FileCheck %s --check-prefix=UNKNOWN
+# UNKNOWN: the expression uses 'lambda_other'
+# RUN: sed 's/^electrostatics    = "PME"/electrostatics    = "PME"\nswitch_distance = 8.0\nlennard_jones_modifier = "FORCE_SWITCH"\ndispersion_correction = "NONE"/' %t/run.toml > %t/switch.toml
+# RUN: not mdir run %t/switch.toml 2>&1 | FileCheck %s --check-prefix=SWITCH
+# SWITCH: [free_energy] decouples particles with the Lennard-Jones of a plain cutoff or 'lennard_jones_modifier = "POTENTIAL_SHIFT"', not with a switch
+
+#--- run.toml
+[input]
+topology    = "eth_wat.prmtop"
+coordinates = "eth_wat.inpcrd"
+
+[output]
+energy_interval = 2
+free_energy     = "run.dhdl"
+
+[free_energy]
+couple = ":LIG"
+state = 0
+
+[free_energy.lambdas]
+coulomb = [0.0, 0.5, 1.0]
+vdw     = [0.0, 0.5, 1.0]
+
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "PME"
+
+[[energy.bond]]
+name       = "hold"
+particles  = [[3, 100]]
+expression = "k * (r - r0)^2"
+k  = 2.0
+r0 = 5.0
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.001
+steps      = 4
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PERIODIC"
+#--- end

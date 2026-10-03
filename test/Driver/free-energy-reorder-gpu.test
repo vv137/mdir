@@ -1,0 +1,14 @@
+# The free-energy file of D161 on a device where the particles are put in
+# order, with a checkpoint every 10 steps and from the checkpoint of
+# another state, against the CPU in double precision
+# (Inputs/check_free_energy_reorder.py; issue #26).
+#
+# REQUIRES: cuda, hdf5
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/check_free_energy_reorder.py %t mdir | FileCheck %s
+#
+# CHECK: with checkpoints, finite: ok
+# CHECK: with checkpoints, device against CPU: ok
+# CHECK: with checkpoints, dH/dl against central differences: ok
+# CHECK: from another state, finite: ok
+# CHECK: from another state, device against CPU: ok
