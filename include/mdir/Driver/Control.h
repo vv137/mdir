@@ -179,15 +179,26 @@ struct Control {
   /// for a conductor.
   bool reactionField = false;
   double reactionFieldDielectric = 0.0;
-  /// Generalized Born of Onufriev, Bashford, and Case (D144): none, or
-  /// OBC I or II, with the relative permittivities of the solvent and the
-  /// solute, and the energy per area of the nonpolar term in kcal/mol/Å²,
-  /// 0 for none.
-  enum class ImplicitSolvent { None, OBC1, OBC2 };
+  /// Generalized Born (D144, D152): none, the model of Hawkins, Cramer,
+  /// and Truhlar, or OBC I or II of Onufriev, Bashford, and Case, with the
+  /// relative permittivities of the solvent and the solute, and the energy
+  /// per area of the nonpolar term in kcal/mol/Å², 0 for none.
+  enum class ImplicitSolvent { None, HCT, OBC1, OBC2 };
   ImplicitSolvent implicitSolvent = ImplicitSolvent::None;
   double solventDielectric = 78.5;
   double soluteDielectric = 1.0;
   double surfaceAreaEnergy = 0.0;
+  /// The concentration of a 1:1 salt in mol/L, which screens the solvent
+  /// with the Debye length at `temperature`; 0 for none.
+  double saltConcentration = 0.0;
+  /// The distance in Å beyond which the radii take no descreening, the
+  /// integral cut there; 0 for none, all pairs within the cutoff.
+  double bornRadiusCutoff = 0.0;
+  /// Where the intrinsic radii and the screening factors come from: the
+  /// topology (the sections RADII and SCREEN of Amber), or the rules of
+  /// mbondi2 by element.
+  enum class BornRadii { Topology, MBondi2 };
+  BornRadii bornRadii = BornRadii::Topology;
 
   DispersionCorrection topologyDispersion =
       DispersionCorrection::EnergyPressure;

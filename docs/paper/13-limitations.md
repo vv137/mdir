@@ -106,7 +106,8 @@ with parameters of each (D148); so are the reaction field
 (D140), runs without a periodic cell, in a cell that no image reaches
 (D142), and generalized Born, whose Born radii are the first
 intermediate fields that differentiation carries the energy back through
-(D143, D144). Then the features that general molecular dynamics asks of
+(D143, D144), in the models HCT and OBC, with salt, a cutoff of the
+descreening, and radii by element for any topology (D152). Then the features that general molecular dynamics asks of
 MDIR: outputs for analysis (velocities, the pressure tensor), the compressed
 trajectory of GROMACS being in place (D141);
 coarse-grained models; and free energy, whose $dH/d\lambda$ the

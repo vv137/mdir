@@ -24,6 +24,75 @@ static llvm::Error findShakes(Topology &topology);
 static llvm::Error findCenters(TupleTerm &term, const Topology &topology);
 static llvm::Error placeCell(const Control &control, System &system);
 
+/// The radii of mbondi2 [Onufriev2004], the radii of Bondi [Bondi1964] with
+/// 1.3 Å for a hydrogen bonded to a nitrogen, and the screening factors of
+/// each element [Tsui2000], in nm, for a topology without its own.
+static void assignBornRadii(Topology &topology) {
+  size_t count = topology.getNumParticles();
+  std::vector<int> partner(count, -1);
+  for (const Topology::Bond &bond : topology.bonds) {
+    if (partner[bond.i] < 0)
+      partner[bond.i] = static_cast<int>(bond.j);
+    if (partner[bond.j] < 0)
+      partner[bond.j] = static_cast<int>(bond.i);
+  }
+  topology.bornRadii.assign(count, 0.0);
+  topology.bornScreens.assign(count, 0.0);
+  for (size_t i = 0; i != count; ++i) {
+    int number = topology.atomicNumbers[i];
+    double radius = 1.5, screen = 0.8;
+    switch (number) {
+    case 1:
+      radius = partner[i] >= 0 && topology.atomicNumbers[partner[i]] == 7
+                   ? 1.3
+                   : 1.2;
+      screen = 0.85;
+      break;
+    case 6:
+      radius = 1.7;
+      screen = 0.72;
+      break;
+    case 7:
+      radius = 1.55;
+      screen = 0.79;
+      break;
+    case 8:
+      radius = 1.5;
+      screen = 0.85;
+      break;
+    case 9:
+      radius = 1.5;
+      screen = 0.88;
+      break;
+    case 14:
+      radius = 2.1;
+      break;
+    case 15:
+      radius = 1.85;
+      screen = 0.86;
+      break;
+    case 16:
+      radius = 1.8;
+      screen = 0.96;
+      break;
+    case 17:
+      radius = 1.7;
+      break;
+    }
+    topology.bornRadii[i] = radius * units::length;
+    topology.bornScreens[i] = screen;
+  }
+}
+
+/// The largest screened radius of generalized Born, S (ρ − 0.009 nm), in nm.
+static double getLargestScreenedRadius(const Topology &topology) {
+  double largest = 0.0;
+  for (size_t i = 0, e = topology.bornRadii.size(); i != e; ++i)
+    largest = std::max(largest,
+                       topology.bornScreens[i] * (topology.bornRadii[i] - 0.009));
+  return largest;
+}
+
 /// The system of a topology and a file of coordinates.
 static llvm::Expected<System> readTopologySystem(const Control &control) {
   bool charmm = !control.charmmStructureFile.empty();
@@ -214,14 +283,29 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
   }
 
   // Generalized Born (D144) takes the radii and the screening of the
-  // topology.
+  // topology, or those of the rules of mbondi2 by element (D152).
   if (control.implicitSolvent != Control::ImplicitSolvent::None) {
+    if (control.bornRadii == Control::BornRadii::MBondi2)
+      assignBornRadii(*topology);
     if (topology->bornRadii.size() != topology->getNumParticles() ||
         topology->bornScreens.size() != topology->getNumParticles())
       return llvm::createStringError(
           llvm::inconvertibleErrorCode(),
           "generalized Born needs the radii and the screening of every "
-          "particle, the sections RADII and SCREEN of a topology of Amber");
+          "particle, the sections RADII and SCREEN of a topology of Amber; "
+          "for another topology give 'born_radii = \"MBONDI2\"'");
+    // The descreening of a cut integral reaches its cutoff and the screened
+    // radius beyond it, which the pairs within the cutoff must hold.
+    if (control.bornRadiusCutoff > 0.0) {
+      double reach = control.bornRadiusCutoff * units::length +
+                     getLargestScreenedRadius(*topology);
+      if (reach > control.cutoffDistance * units::length)
+        return llvm::createStringError(
+            llvm::inconvertibleErrorCode(),
+            "'born_radius_cutoff' and the largest screened radius reach "
+            "%g Å, beyond the cutoff, %g Å",
+            reach / units::length, control.cutoffDistance);
+    }
     system.bornTermNames.push_back("generalized Born");
     if (control.surfaceAreaEnergy > 0.0)
       system.bornTermNames.push_back("nonpolar surface");

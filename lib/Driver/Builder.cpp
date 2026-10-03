@@ -123,6 +123,8 @@ private:
   /// Emits generalized Born (D144), `%u_born` and `%u_surface` as `terms`
   /// asks, and passes their names to `add`.
   void emitBorn(unsigned terms, llvm::function_ref<void(StringRef)> add);
+  /// κ of the salt of generalized Born in nm⁻¹, scaled by 0.73, or 0.
+  double getDebyeKappa() const;
   /// β, the grid, the influence function, and the constant terms of
   /// particle mesh Ewald (docs/pme-m1.md).
   llvm::Error collectPME();
@@ -1799,6 +1801,20 @@ void Builder::emitPullOutput(StringRef indent, StringRef x, StringRef cell,
         "-> ()\n";
 }
 
+double Builder::getDebyeKappa() const {
+  // κ² = 2 N_A e² c / (ε0 ε_r k_B T) for a 1:1 salt of c mol/L, with the
+  // constants of CODATA 2018 in SI units, c in mol/m³; κ in nm⁻¹.
+  if (control.saltConcentration <= 0.0)
+    return 0.0;
+  const double avogadro = 6.02214076e23, charge = 1.602176634e-19,
+               permittivity = 8.8541878128e-12, boltzmann = 1.380649e-23;
+  double concentration = control.saltConcentration * 1000.0;
+  double kappa2 = 2.0 * avogadro * charge * charge * concentration /
+                  (permittivity * control.solventDielectric * boltzmann *
+                   control.temperature);
+  return 0.73 * std::sqrt(kappa2) * 1e-9;
+}
+
 void Builder::emitBorn(unsigned terms,
                        llvm::function_ref<void(StringRef)> add) {
   // Every pair within the cutoff, those that the topology excludes as
@@ -1806,12 +1822,29 @@ void Builder::emitBorn(unsigned terms,
   double cutoff = control.cutoffDistance * units::length;
   os << "  %ngb = md.neighborhood %x, %cell cutoff(" << formatReal(cutoff)
      << ") : !vec -> !pairs\n";
+  // With a cutoff R of the radii (D152), the descreening reaches R and the
+  // largest screened radius beyond it, which System checked is within the
+  // cutoff.
+  double radiusCutoff = control.bornRadiusCutoff * units::length;
+  std::string reach = "%ngb";
+  if (radiusCutoff > 0.0) {
+    double largest = 0.0;
+    for (size_t i = 0, e = system.topology->bornRadii.size(); i != e; ++i)
+      largest = std::max(largest, system.topology->bornScreens[i] *
+                                      (system.topology->bornRadii[i] - 0.009));
+    reach = "%ngb_radii";
+    os << "  %ngb_radii = md.neighborhood %x, %cell cutoff("
+       << formatReal(std::min(radiusCutoff + largest, cutoff))
+       << ") : !vec -> !pairs\n";
+  }
   // The integral of the descreening of i by the sphere of j of the radius
   // s_j [Hawkins1996]: with L = max(ρ̃_i, |r − s_j|) and U = r + s_j,
   //   ½ (1/L − 1/U + r/4 (1/U² − 1/L²) + ln(L/U) / (2r) + s_j²/(4r) (1/L² − 1/U²)),
   // and 1/ρ̃_i − 1/L more where i lies within the sphere of j, 0 where the
-  // sphere does not reach it.
-  os << "  %gb_integral = md.gather_relation %ngb, %x, %cell gather("
+  // sphere does not reach it, L ≥ U. A cutoff R of the radii takes the
+  // integral over the shells within R alone, U = min(r + s_j, R), so that
+  // the radii do not jump where a sphere crosses it.
+  os << "  %gb_integral = md.gather_relation " << reach << ", %x, %cell gather("
         "%p_gb_offset, %p_gb_scaled : !real, !real)\n"
      << "      exchange(none) {\n"
      << "  ^bb0(%r: f64, %d: vector<3xf64>, %ri: f64, %rj: f64, %si: f64, "
@@ -1821,8 +1854,13 @@ void Builder::emitBorn(unsigned terms,
      << "    %two = arith.constant 2.0 : f64\n"
      << "    %quarter = arith.constant 0.25 : f64\n"
      << "    %half = arith.constant 0.5 : f64\n"
-     << "    %upper = arith.addf %r, %sj : f64\n"
-     << "    %gap = arith.subf %r, %sj : f64\n"
+     << "    %upper" << (radiusCutoff > 0.0 ? "_sphere" : "")
+     << " = arith.addf %r, %sj : f64\n";
+  if (radiusCutoff > 0.0)
+    os << "    %rgb = arith.constant " << formatReal(radiusCutoff)
+       << " : f64\n"
+       << "    %upper = arith.minimumf %upper_sphere, %rgb : f64\n";
+  os << "    %gap = arith.subf %r, %sj : f64\n"
      << "    %agap = math.absf %gap : f64\n"
      << "    %lower = arith.maximumf %ri, %agap : f64\n"
      << "    %l = arith.divf %one, %lower : f64\n"
@@ -1852,52 +1890,90 @@ void Builder::emitBorn(unsigned terms,
      << "    %e1 = arith.mulf %two, %e0 : f64\n"
      << "    %a3 = arith.addf %a2, %e1 : f64\n"
      << "    %a4 = arith.select %within, %a3, %a2 : f64\n"
-     << "    %reach = arith.cmpf olt, %ri, %upper : f64\n"
+     << "    %reach = arith.cmpf olt, %lower, %upper : f64\n"
      << "    %k = arith.select %reach, %a4, %zero : f64\n"
      << "    md.yield %k : f64\n"
      << "  } : !pairs, !vec -> !real\n";
-  // The Born radii [Onufriev2004]: with ψ = I ρ̃ / 2 (the factor ½ of the
-  // integral), B = 1 / (1/ρ̃ − tanh(α ψ − β ψ² + γ ψ³) / ρ).
+  // The Born radii of Hawkins, Cramer, and Truhlar [Hawkins1996],
+  // B = 1 / (1/ρ̃ − I/2) (the factor ½ of the integral).
+  if (control.implicitSolvent == Control::ImplicitSolvent::HCT)
+    os << "  %gb_born = md.map_particles gather(%gb_integral, %p_gb_offset "
+          ": !real, !real) {\n"
+       << "  ^bb0(%i: f64, %ri: f64):\n"
+       << "    %half = arith.constant 0.5 : f64\n"
+       << "    %one = arith.constant 1.0 : f64\n"
+       << "    %hi = arith.mulf %half, %i : f64\n"
+       << "    %iri = arith.divf %one, %ri : f64\n"
+       << "    %den = arith.subf %iri, %hi : f64\n"
+       << "    %bi = arith.divf %one, %den : f64\n"
+       << "    md.yield %bi : f64\n"
+       << "  } : !real\n";
+  // Those of Onufriev, Bashford, and Case [Onufriev2004]: with ψ = I ρ̃ / 2,
+  // B = 1 / (1/ρ̃ − tanh(α ψ − β ψ² + γ ψ³) / ρ).
   bool first = control.implicitSolvent == Control::ImplicitSolvent::OBC1;
   double alpha = first ? 0.8 : 1.0, beta = first ? 0.0 : 0.8,
          gamma = first ? 2.909125 : 4.85;
-  os << "  %gb_born = md.map_particles gather(%gb_integral, %p_gb_offset, "
-        "%p_gb_radius : !real, !real, !real) {\n"
-     << "  ^bb0(%i: f64, %ri: f64, %r0: f64):\n"
-     << "    %half = arith.constant 0.5 : f64\n"
-     << "    %one = arith.constant 1.0 : f64\n"
-     << "    %alpha = arith.constant " << formatReal(alpha) << " : f64\n"
-     << "    %beta = arith.constant " << formatReal(beta) << " : f64\n"
-     << "    %gamma = arith.constant " << formatReal(gamma) << " : f64\n"
-     << "    %hi = arith.mulf %half, %i : f64\n"
-     << "    %psi = arith.mulf %hi, %ri : f64\n"
-     << "    %psi2 = arith.mulf %psi, %psi : f64\n"
-     << "    %psi3 = arith.mulf %psi2, %psi : f64\n"
-     << "    %a = arith.mulf %alpha, %psi : f64\n"
-     << "    %b = arith.mulf %beta, %psi2 : f64\n"
-     << "    %c = arith.mulf %gamma, %psi3 : f64\n"
-     << "    %s0 = arith.subf %a, %b : f64\n"
-     << "    %s1 = arith.addf %s0, %c : f64\n"
-     << "    %t = math.tanh %s1 : f64\n"
-     << "    %tr = arith.divf %t, %r0 : f64\n"
-     << "    %iri = arith.divf %one, %ri : f64\n"
-     << "    %den = arith.subf %iri, %tr : f64\n"
-     << "    %bi = arith.divf %one, %den : f64\n"
-     << "    md.yield %bi : f64\n"
-     << "  } : !real\n";
+  if (control.implicitSolvent != Control::ImplicitSolvent::HCT)
+    os << "  %gb_born = md.map_particles gather(%gb_integral, %p_gb_offset, "
+          "%p_gb_radius : !real, !real, !real) {\n"
+       << "  ^bb0(%i: f64, %ri: f64, %r0: f64):\n"
+       << "    %half = arith.constant 0.5 : f64\n"
+       << "    %one = arith.constant 1.0 : f64\n"
+       << "    %alpha = arith.constant " << formatReal(alpha) << " : f64\n"
+       << "    %beta = arith.constant " << formatReal(beta) << " : f64\n"
+       << "    %gamma = arith.constant " << formatReal(gamma) << " : f64\n"
+       << "    %hi = arith.mulf %half, %i : f64\n"
+       << "    %psi = arith.mulf %hi, %ri : f64\n"
+       << "    %psi2 = arith.mulf %psi, %psi : f64\n"
+       << "    %psi3 = arith.mulf %psi2, %psi : f64\n"
+       << "    %a = arith.mulf %alpha, %psi : f64\n"
+       << "    %b = arith.mulf %beta, %psi2 : f64\n"
+       << "    %c = arith.mulf %gamma, %psi3 : f64\n"
+       << "    %s0 = arith.subf %a, %b : f64\n"
+       << "    %s1 = arith.addf %s0, %c : f64\n"
+       << "    %t = math.tanh %s1 : f64\n"
+       << "    %tr = arith.divf %t, %r0 : f64\n"
+       << "    %iri = arith.divf %one, %ri : f64\n"
+       << "    %den = arith.subf %iri, %tr : f64\n"
+       << "    %bi = arith.divf %one, %den : f64\n"
+       << "    md.yield %bi : f64\n"
+       << "  } : !real\n";
   if (terms & GeneralizedBorn) {
     // −τ f q_i q_j / f_GB over the pairs and −τ f q_i² / (2 B_i) for each
     // particle, f_GB = sqrt(r² + B_i B_j exp(−r² / (4 B_i B_j))) and
-    // τ = 1/ε_solute − 1/ε_solvent.
+    // τ = 1/ε_solute − 1/ε_solvent. A salt screens the solvent with the
+    // Debye length 1/κ, τ = 1/ε_solute − exp(−κ f_GB)/ε_solvent, with κ
+    // scaled by 0.73 for the layer around the solute that excludes the ions
+    // [Srinivasan1999] (D152); f_GB is B_i for a particle.
     double tau = 1.0 / control.soluteDielectric -
                  1.0 / control.solventDielectric;
+    double kappa = getDebyeKappa();
+    // Emits `%ct`, f τ with the factor `factor` of f, for the distance
+    // `distance`.
+    auto emitScreening = [&](double factor, StringRef distance) {
+      if (kappa == 0.0) {
+        os << "    %ct = arith.constant "
+           << formatReal(-factor * tau * coulombInternal) << " : f64\n";
+        return;
+      }
+      os << "    %cf = arith.constant " << formatReal(-factor * coulombInternal)
+         << " : f64\n"
+         << "    %ein = arith.constant "
+         << formatReal(1.0 / control.soluteDielectric) << " : f64\n"
+         << "    %eout = arith.constant "
+         << formatReal(1.0 / control.solventDielectric) << " : f64\n"
+         << "    %nkappa = arith.constant " << formatReal(-kappa) << " : f64\n"
+         << "    %kd = arith.mulf %nkappa, " << distance << " : f64\n"
+         << "    %ekd = math.exp %kd : f64\n"
+         << "    %screened = arith.mulf %ekd, %eout : f64\n"
+         << "    %tau = arith.subf %ein, %screened : f64\n"
+         << "    %ct = arith.mulf %cf, %tau : f64\n";
+    };
     os << "  %u_gb_pairs = md.sum_relation %ngb, %x, %cell gather(%p_q, "
           "%gb_born : !real, !real)\n"
        << "      exchange(symmetric) {\n"
        << "  ^bb0(%r: f64, %d: vector<3xf64>, %qi: f64, %qj: f64, %bi: f64, "
           "%bj: f64):\n"
-       << "    %c = arith.constant " << formatReal(-tau * coulombInternal)
-       << " : f64\n"
        << "    %quarter = arith.constant 0.25 : f64\n"
        << "    %bb = arith.mulf %bi, %bj : f64\n"
        << "    %r2 = arith.mulf %r, %r : f64\n"
@@ -1907,19 +1983,19 @@ void Builder::emitBorn(unsigned terms,
        << "    %ex = math.exp %nx : f64\n"
        << "    %be = arith.mulf %bb, %ex : f64\n"
        << "    %s = arith.addf %r2, %be : f64\n"
-       << "    %fgb = math.sqrt %s : f64\n"
-       << "    %qq = arith.mulf %qi, %qj : f64\n"
-       << "    %cq = arith.mulf %c, %qq : f64\n"
+       << "    %fgb = math.sqrt %s : f64\n";
+    emitScreening(1.0, "%fgb");
+    os << "    %qq = arith.mulf %qi, %qj : f64\n"
+       << "    %cq = arith.mulf %ct, %qq : f64\n"
        << "    %e = arith.divf %cq, %fgb : f64\n"
        << "    md.yield %e : f64\n"
        << "  } : !pairs, !vec -> f64\n"
        << "  %u_gb_self = md.sum_particles gather(%p_q, %gb_born : !real, "
           "!real) {\n"
-       << "  ^bb0(%qi: f64, %bi: f64):\n"
-       << "    %c = arith.constant " << formatReal(-0.5 * tau * coulombInternal)
-       << " : f64\n"
-       << "    %qq = arith.mulf %qi, %qi : f64\n"
-       << "    %cq = arith.mulf %c, %qq : f64\n"
+       << "  ^bb0(%qi: f64, %bi: f64):\n";
+    emitScreening(0.5, "%bi");
+    os << "    %qq = arith.mulf %qi, %qi : f64\n"
+       << "    %cq = arith.mulf %ct, %qq : f64\n"
        << "    %e = arith.divf %cq, %bi : f64\n"
        << "    md.yield %e : f64\n"
        << "  } : f64\n"

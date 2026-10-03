@@ -1,0 +1,99 @@
+# Generalized Born beyond D144 (D152), on the peptide of
+# generalized-born.test: the model of Hawkins, Cramer, and Truhlar
+# (`implicit_solvent = "HCT"`), a salt that screens the solvent
+# (`salt_concentration`, mol/L, at the temperature of [ensemble]), the
+# integral of the descreening cut at `born_radius_cutoff`, and the radii of
+# mbondi2 by element (`born_radii = "MBONDI2"`). check_born.py computes each
+# from the formulas, and the forces against central differences. The radii
+# of mbondi2 are those of the topology, built with mbondi2: the same
+# energies. Then the peptide from a topology of GROMACS that ParmEd wrote,
+# whose coordinates are rounded to 0.001 nm, with the radii of mbondi2: the
+# energies of the topology of Amber at those coordinates, and the forces of
+# generalized Born within 1e-8, the charges of the file having eight
+# decimals. Then the errors.
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/gb/peptide.prmtop %S/Inputs/gb/peptide.inpcrd %S/Inputs/gb/peptide-rounded.inpcrd %S/Inputs/gb/peptide.top %S/Inputs/gb/peptide.gro %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/generalized-born.test | sed '1d;$d' > %t/born.toml
+# RUN: sed -e '/^implicit_solvent/d' -e '/^surface_area_energy/d' -e 's/born.h5/plain.h5/' %t/born.toml > %t/plain.toml
+# RUN: cd %t && mdir run plain.toml > plain.log
+# RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
+#
+# RUN: sed -e 's/"OBC2"/"HCT"/' -e 's/born.h5/hct.h5/' %t/born.toml > %t/hct.toml
+# RUN: cd %t && mdir run hct.toml | FileCheck %s --check-prefix=HCT
+# RUN: mdir checkpoint --print=forces %t/hct.h5 > %t/hct.forces
+# RUN: %python %S/Inputs/check_born.py %t/peptide.prmtop %t/peptide.inpcrd %t/plain.forces %t/hct.forces --model HCT | FileCheck %s --check-prefix=HCT-PYTHON
+#
+# RUN: sed -e 's/^surface_area_energy = 0.0054/&\nsalt_concentration = 0.15/' -e 's/^temperature = 0.0/temperature = 300.0/' -e 's/born.h5/salt.h5/' %t/born.toml > %t/salt.toml
+# RUN: sed -e 's/^temperature = 0.0/temperature = 300.0/' -e 's/plain.h5/plain300.h5/' %t/plain.toml > %t/plain300.toml
+# RUN: cd %t && mdir run plain300.toml > plain300.log && mdir run salt.toml | FileCheck %s --check-prefix=SALT
+# RUN: mdir checkpoint --print=forces %t/plain300.h5 > %t/plain300.forces
+# RUN: mdir checkpoint --print=forces %t/salt.h5 > %t/salt.forces
+# RUN: %python %S/Inputs/check_born.py %t/peptide.prmtop %t/peptide.inpcrd %t/plain300.forces %t/salt.forces --salt 0.15 --temperature 300 | FileCheck %s --check-prefix=SALT-PYTHON
+#
+# RUN: sed -e 's/^surface_area_energy = 0.0054/&\nborn_radius_cutoff = 8.0/' -e 's/born.h5/cut.h5/' %t/born.toml > %t/cut.toml
+# RUN: cd %t && mdir run cut.toml | FileCheck %s --check-prefix=CUT
+# RUN: mdir checkpoint --print=forces %t/cut.h5 > %t/cut.forces
+# RUN: %python %S/Inputs/check_born.py %t/peptide.prmtop %t/peptide.inpcrd %t/plain.forces %t/cut.forces --radius-cutoff 8.0 | FileCheck %s --check-prefix=CUT-PYTHON
+#
+# RUN: sed -e 's/^surface_area_energy = 0.0054/&\nborn_radii = "MBONDI2"/' -e 's/born.h5/mbondi2.h5/' %t/born.toml > %t/mbondi2.toml
+# RUN: cd %t && mdir run mbondi2.toml | FileCheck %s --check-prefix=MBONDI2
+#
+# RUN: sed -e 's/peptide.inpcrd/peptide-rounded.inpcrd/' -e 's/born.h5/amber.h5/' %t/born.toml > %t/amber.toml
+# RUN: sed -e 's/peptide.inpcrd/peptide-rounded.inpcrd/' -e 's/plain.h5/amber-plain.h5/' %t/plain.toml > %t/amber-plain.toml
+# RUN: sed -e 's/peptide.prmtop/peptide.top/' -e 's/peptide.inpcrd/peptide.gro/' -e 's/^surface_area_energy = 0.0054/&\nborn_radii = "MBONDI2"/' -e 's/born.h5/gromacs.h5/' %t/born.toml > %t/gromacs.toml
+# RUN: sed -e 's/peptide.prmtop/peptide.top/' -e 's/peptide.inpcrd/peptide.gro/' -e 's/plain.h5/gromacs-plain.h5/' %t/plain.toml > %t/gromacs-plain.toml
+# RUN: cd %t && mdir run amber-plain.toml > amber-plain.log && mdir run gromacs-plain.toml > gromacs-plain.log
+# RUN: cd %t && mdir run amber.toml | FileCheck %s --check-prefix=ROUNDED
+# RUN: cd %t && mdir run gromacs.toml | FileCheck %s --check-prefix=ROUNDED
+# RUN: mdir checkpoint --print=forces %t/amber.h5 > %t/amber.forces
+# RUN: mdir checkpoint --print=forces %t/amber-plain.h5 > %t/amber-plain.forces
+# RUN: mdir checkpoint --print=forces %t/gromacs.h5 > %t/gromacs.forces
+# RUN: mdir checkpoint --print=forces %t/gromacs-plain.h5 > %t/gromacs-plain.forces
+# RUN: %python %S/Inputs/difference_columns.py %t/amber.forces %t/amber-plain.forces > %t/amber.born
+# RUN: %python %S/Inputs/difference_columns.py %t/gromacs.forces %t/gromacs-plain.forces > %t/gromacs.born
+# RUN: %python %S/Inputs/compare_columns.py %t/amber.born %t/gromacs.born 1e-8 | FileCheck %s --check-prefix=SAME
+#
+# RUN: sed -e '/^born_radii/d' %t/gromacs.toml > %t/radii.toml
+# RUN: not mdir run %t/radii.toml 2>&1 | FileCheck %s --check-prefix=RADII
+# RUN: sed -e 's/^temperature = 300.0/temperature = 0.0/' %t/salt.toml > %t/cold.toml
+# RUN: not mdir check %t/cold.toml 2>&1 | FileCheck %s --check-prefix=COLD
+# RUN: sed -e 's/^born_radius_cutoff = 8.0/born_radius_cutoff = 45.0/' %t/cut.toml > %t/far.toml
+# RUN: not mdir check %t/far.toml 2>&1 | FileCheck %s --check-prefix=FAR
+# RUN: sed -e 's/^born_radius_cutoff = 8.0/born_radius_cutoff = 39.9/' %t/cut.toml > %t/reach.toml
+# RUN: not mdir run %t/reach.toml 2>&1 | FileCheck %s --check-prefix=REACH
+# RUN: sed -e '/^implicit_solvent/d' -e '/^surface_area_energy/d' %t/salt.toml > %t/stray.toml
+# RUN: not mdir check %t/stray.toml 2>&1 | FileCheck %s --check-prefix=STRAY
+
+# HCT:      MDIR:   generalized Born            -141.432807
+# HCT-NEXT: MDIR:   nonpolar surface               9.508977
+# HCT-PYTHON:      generalized Born -141.432807
+# HCT-PYTHON-NEXT: nonpolar surface 9.508977
+# HCT-PYTHON-NEXT: forces against differences of the energy: ok
+
+# SALT:      MDIR:   generalized Born            -143.565200
+# SALT-NEXT: MDIR:   nonpolar surface               8.214797
+# SALT-PYTHON:      generalized Born -143.565200
+# SALT-PYTHON-NEXT: nonpolar surface 8.214797
+# SALT-PYTHON-NEXT: forces against differences of the energy: ok
+
+# CUT:      MDIR:   generalized Born            -144.112309
+# CUT-NEXT: MDIR:   nonpolar surface               8.389662
+# CUT-PYTHON:      generalized Born -144.112309
+# CUT-PYTHON-NEXT: nonpolar surface 8.389662
+# CUT-PYTHON-NEXT: forces against differences of the energy: ok
+
+# MBONDI2:      MDIR:   generalized Born            -143.479635
+# MBONDI2-NEXT: MDIR:   nonpolar surface               8.214797
+
+# ROUNDED:      MDIR:   generalized Born            -143.211170
+# ROUNDED-NEXT: MDIR:   nonpolar surface               8.220448
+# SAME: the columns agree
+
+# RADII: generalized Born needs the radii and the screening of every particle, the sections RADII and SCREEN of a topology of Amber; for another topology give 'born_radii = "MBONDI2"'
+# COLD: 'salt_concentration' screens with the Debye length at the temperature of [ensemble], which is 0 K
+# FAR: 'born_radius_cutoff', 45 Å, is beyond the cutoff, 40 Å
+# REACH: 'born_radius_cutoff' and the largest screened radius reach
+# STRAY: 'salt_concentration' is for 'implicit_solvent'
