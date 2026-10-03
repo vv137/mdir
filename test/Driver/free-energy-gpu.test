@@ -1,0 +1,11 @@
+# [free_energy] (D161) on a device, in mixed precision: the checks of
+# free-energy.test, with tolerances for the kernels of the pairs in f32.
+#
+# REQUIRES: cuda
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/check_free_energy.py %t GPU MIXED mdir | FileCheck %s
+#
+# CHECK: RF against OpenMM: ok
+# CHECK: PME against OpenMM: ok
+# CHECK: dH/dl against central differences: ok
+# CHECK: the energies of the other states: ok

@@ -2206,30 +2206,64 @@ void Builder::emitFreeEnergyOutput(StringRef indent, StringRef x,
        << indent << "memref.store " << value << ", " << name << "["
        << place << "] : " << type << "\n";
   };
+  // The derivatives at the state of the run, then the energy at every
+  // state in a loop, whose kernels are compiled once, with the components
+  // of each state from a table.
   size_t state = static_cast<size_t>(energy.state);
-  for (size_t k = 0; k != states; ++k) {
-    std::string arguments = lambdas(k);
-    std::string e = name + "_e" + std::to_string(k);
-    os << indent << e;
-    if (k == state)
-      for (size_t c = 0; c != components; ++c)
-        os << ", " << name << "_d" << c;
-    os << " = md.evaluate @alchemical(" << x << ", " << cell
-       << getFieldValues(prefix) << getTimeValue(time) << arguments << ")\n"
-       << indent << "    request [energy";
-    if (k == state)
-      for (size_t c = 0; c != components; ++c)
-        os << ", derivative(" << base + c << ")";
-    os << "]\n" << indent << "    : " << types << " -> (f64";
-    if (k == state)
-      for (size_t c = 0; c != components; ++c)
-        os << ", f64";
-    os << ")\n";
-    store(e, components + k);
-    if (k == state)
-      for (size_t c = 0; c != components; ++c)
-        store(name + "_d" + std::to_string(c), c);
+  std::string arguments = lambdas(state);
+  os << indent;
+  for (size_t c = 0; c != components; ++c)
+    os << (c ? ", " : "") << name << "_d" << c;
+  os << " = md.evaluate @alchemical(" << x << ", " << cell
+     << getFieldValues(prefix) << getTimeValue(time) << arguments << ")\n"
+     << indent << "    request [";
+  for (size_t c = 0; c != components; ++c)
+    os << (c ? ", " : "") << "derivative(" << base + c << ")";
+  os << "]\n" << indent << "    : " << types << " -> (";
+  for (size_t c = 0; c != components; ++c)
+    os << (c ? ", " : "") << "f64";
+  os << ")\n";
+  for (size_t c = 0; c != components; ++c)
+    store(name + "_d" + std::to_string(c), c);
+  std::string table = name + "_table";
+  std::string tableType = "memref<" + std::to_string(states) + "x" +
+                          std::to_string(components) + "xf64>";
+  os << indent << table << " = memref.alloca() : " << tableType << "\n";
+  for (size_t k = 0; k != states; ++k)
+    for (size_t c = 0; c != components; ++c) {
+      std::string at = name + "_t" + std::to_string(k) + "_" +
+                       std::to_string(c);
+      os << indent << at << "v = arith.constant "
+         << formatReal(energy.lambdas[c].second[k]) << " : f64\n"
+         << indent << at << "k = arith.constant " << k << " : index\n"
+         << indent << at << "c = arith.constant " << c << " : index\n"
+         << indent << "memref.store " << at << "v, " << table << "[" << at
+         << "k, " << at << "c] : " << tableType << "\n";
+    }
+  std::string inner = (indent + "  ").str();
+  os << indent << name << "_count = arith.constant " << states
+     << " : index\n"
+     << indent << name << "_first = arith.constant " << components
+     << " : index\n"
+     << indent << "scf.for " << name << "_k = %c0 to " << name
+     << "_count step %c1 {\n";
+  std::string loaded;
+  for (size_t c = 0; c != components; ++c) {
+    std::string value = name + "_lk" + std::to_string(c);
+    os << inner << name << "_ci" << c << " = arith.constant " << c
+       << " : index\n"
+       << inner << value << " = memref.load " << table << "[" << name
+       << "_k, " << name << "_ci" << c << "] : " << tableType << "\n";
+    loaded += ", " + value;
   }
+  os << inner << name << "_e = md.evaluate @alchemical(" << x << ", " << cell
+     << getFieldValues(prefix) << getTimeValue(time) << loaded << ")\n"
+     << inner << "    request [energy] : " << types << " -> f64\n"
+     << inner << name << "_slot = arith.addi " << name << "_first, " << name
+     << "_k : index\n"
+     << inner << "memref.store " << name << "_e, " << name << "[" << name
+     << "_slot] : " << type << "\n"
+     << indent << "}\n";
   os << indent << name << "_cast = memref.cast " << name << " : " << type
      << " to memref<?xf64>\n"
      << indent << "func.call @mdrtWriteFreeEnergy(" << step << ", " << name
@@ -2892,14 +2926,20 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
          << "    %epsilon = md.lookup %t_lj_epsilon[%type_i, %type_j] : "
             "!table, i32, i32 -> f64\n";
       if (scalesVdw) {
-        // The distance r_A of a decoupled pair, r of the others.
+        // The distance r_A of a decoupled pair, r of the others. A pair
+        // without a σ, which has no Lennard-Jones, takes 0.3 nm in r_A,
+        // so that r_A stays above 0 where its particles overlap.
         double alpha = control.freeEnergy.softCoreAlpha;
         std::string distance = "%r";
         if (alpha > 0.0) {
           os << "    %sc_alpha = arith.constant " << formatReal(alpha)
              << " : f64\n"
+             << "    %sc_zero = arith.constant 0.0 : f64\n"
+             << "    %sc_floor = arith.constant 3.0e-01 : f64\n"
+             << "    %sc_has = arith.cmpf ogt, %sigma, %sc_zero : f64\n"
+             << "    %sc_sigma = arith.select %sc_has, %sigma, %sc_floor : f64\n"
              << "    %sc_i3 = arith.constant 3 : i32\n"
-             << "    %sc_s3 = math.fpowi %sigma, %sc_i3 : f64, i32\n"
+             << "    %sc_s3 = math.fpowi %sc_sigma, %sc_i3 : f64, i32\n"
              << "    %sc_s6 = arith.mulf %sc_s3, %sc_s3 : f64\n"
              << "    %sc_r3 = math.fpowi %r, %sc_i3 : f64, i32\n"
              << "    %sc_r6 = arith.mulf %sc_r3, %sc_r3 : f64\n";
@@ -2980,14 +3020,23 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
       else
         os << "    %qq = arith.mulf %q_i, %q_j : f64\n";
       os << "    %fqq = arith.mulf %f, %qq : f64\n";
+      // A decoupled pair may overlap once its Lennard-Jones is off; its
+      // Coulomb, then 0, takes a distance of at least 1e-4 nm, which no
+      // pair that interacts comes near, so that it is not 0 times ∞.
+      std::string rq = "%r";
+      if (scalesCoulomb) {
+        os << "    %rq_least = arith.constant 1.0e-04 : f64\n"
+           << "    %rq = arith.maximumf %r, %rq_least : f64\n";
+        rq = "%rq";
+      }
       if (program.pme) {
         // The direct sum of particle mesh Ewald, f q q erfc(β r) / r,
         // shifted to 0 at the cutoff if the control file asks.
         double beta = program.pmeBeta;
         os << "    %beta = arith.constant " << formatReal(beta) << " : f64\n"
-           << "    %br = arith.mulf %beta, %r : f64\n"
+           << "    %br = arith.mulf %beta, " << rq << " : f64\n"
            << "    %erfc = math.erfc %br : f64\n"
-           << "    %screened = arith.divf %erfc, %r : f64\n";
+           << "    %screened = arith.divf %erfc, " << rq << " : f64\n";
         std::string kernel = "%screened";
         if (control.pmeShift) {
           os << "    %shift = arith.constant "
@@ -3002,14 +3051,14 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
         os << "    %one = arith.constant 1.0 : f64\n"
            << "    %krf = arith.constant " << formatReal(k) << " : f64\n"
            << "    %crf = arith.constant " << formatReal(c) << " : f64\n"
-           << "    %inverse = arith.divf %one, %r : f64\n"
+           << "    %inverse = arith.divf %one, " << rq << " : f64\n"
            << "    %rr = arith.mulf %r, %r : f64\n"
            << "    %field = arith.mulf %krf, %rr : f64\n"
            << "    %near = arith.addf %inverse, %field : f64\n"
            << "    %rf = arith.subf %near, %crf : f64\n"
            << "    %coulomb = arith.mulf %fqq, %rf : f64\n";
       } else {
-        os << "    %coulomb = arith.divf %fqq, %r : f64\n";
+        os << "    %coulomb = arith.divf %fqq, " << rq << " : f64\n";
       }
       if (value.empty()) {
         value = "%coulomb";

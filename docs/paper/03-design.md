@@ -282,6 +282,27 @@ parameters of each tuple, and a term of the positions reads $w$ itself.
 The parameters are constants of the potential, so they change neither
 its derivatives nor the virial.
 
+**Parameters.** `derivative(n)` asks $\partial U/\partial\theta_n$ of a
+scalar argument $\theta_n$ of the potential (D2), such as a component of
+$\boldsymbol\lambda$ of `[free_energy]` (Section 6.8, D161). The
+derivative of a sum over a relation, over tuples, or over particles is a
+sum of the same kind whose kernel is the derivative of the sum's, taken
+where the kernel reads $\theta_n$ from outside; an op that depends on
+$\theta_n$ neither through its operands nor through what its kernel reads
+adds nothing. The reciprocal sum of particle mesh Ewald is not
+differentiated through: its energy is a quadratic form of the charges,
+$E(\mathbf q) = \tfrac12\mathbf q^\mathsf T A\mathbf q$ with $A$
+symmetric, so $dE/d\theta = \boldsymbol\delta^\mathsf T A\mathbf q =
+\big(E(\mathbf q + \boldsymbol\delta) - E(\mathbf q - \boldsymbol\delta)\big)/2$
+exactly, with $\boldsymbol\delta = \partial\mathbf q/\partial\theta$ the
+derivative of the map over particles that computes the charges: two more
+reciprocal sums of the energy alone, and no change to their templates. In
+mixed precision the grid is in f32 and the difference carries an error of
+about $\epsilon_{32}E$; on ethanol in 467 waters, $5\times10^{-6}$
+kcal/mol of $\partial U/\partial\lambda_\text{C}$ against double
+precision. A field that a sum gathers and that depends on $\theta_n$
+other than through the charges of a reciprocal sum is refused.
+
 **Exchange contracts.** A pair kernel carries a contract that says how
 its value for $(j,i)$ relates to its value for $(i,j)$: `symmetric`,
 `antisymmetric`, or `none`, with a basis: `proof`, `derived`, or

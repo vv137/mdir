@@ -1,0 +1,9 @@
+source leaprc.gaff2
+source leaprc.water.tip3p
+LIG = loadmol2 eth.mol2
+loadamberparams eth.frcmod
+saveamberparm LIG eth_vac.prmtop eth_vac.inpcrd
+solvatebox LIG TIP3PBOX 10.0
+saveamberparm LIG eth_wat.prmtop eth_wat.inpcrd
+savepdb LIG eth_wat.pdb
+quit

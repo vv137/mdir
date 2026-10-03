@@ -1512,9 +1512,11 @@ Error Reader::readFreeEnergy(const toml::table &table) {
     return error;
   if (Error error = readReal(table, "soft_core_alpha", energy.softCoreAlpha))
     return error;
+  // Without the soft-core, a decoupled pair may overlap where its
+  // Lennard-Jones is all but off, and its energy diverges.
   if (const toml::node *node = table.get("soft_core_alpha"))
-    if (energy.softCoreAlpha < 0.0)
-      return fail(*node, "expected 'soft_core_alpha' of at least 0");
+    if (!(energy.softCoreAlpha > 0.0))
+      return fail(*node, "expected a positive 'soft_core_alpha'");
   if (Error error =
           readCount(table, "soft_core_power", energy.softCorePower, 1))
     return error;
@@ -3061,6 +3063,8 @@ trajectory          = "run.dcd" # positions, in DCD or XTC (.xtc)
 checkpoint          = "run.h5"  # the state; mdir run --continue goes on
 #                               # from it, and the one before is run.h5.prev
 # pull              = "run.pull"    # terms over the centers of groups
+# free_energy       = "run.dhdl"    # dH/dλ and the energies of the states
+#                                   # of [free_energy] at every energy
 energy_interval     = 5000      # steps between energies in the log
 trajectory_interval = 5000      # steps between frames
 checkpoint_interval = 50000     # steps between checkpoints
@@ -3097,6 +3101,15 @@ coulomb_modifier  = "POTENTIAL_SHIFT"  # NONE, POTENTIAL_SHIFT: the direct
 # max_spacing = 1.2             # largest spacing of the grid (Å)
 # grid        = [48, 48, 48]    # the grid, instead
 # order       = 4               # of the B-splines: 4, 6, 8
+
+# Alchemical states: a selection decoupled from the rest (D161).
+# [free_energy]
+# couple = ":LIG"               # a mask of Amber of whole molecules
+# state  = 0                    # the state of this run, from 0
+# soft_core_alpha = 0.5         # of the Lennard-Jones of decoupled pairs
+# [free_energy.lambdas]         # a value for each state; 0 is the topology
+# coulomb = [0.0, 0.5, 1.0, 1.0, 1.0]
+# vdw     = [0.0, 0.0, 0.0, 0.5, 1.0]
 
 [dynamics]
 integrator = "VELOCITY_VERLET"  # VELOCITY_VERLET, LEAPFROG (velocities

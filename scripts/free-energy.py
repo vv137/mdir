@@ -164,8 +164,12 @@ def main():
         delta = lambdas[k] - lambdas[k - 1]
         weights[k - 1] += 0.5 * delta
         weights[k] += 0.5 * delta
-        ti.append(float(np.sum(weights * ti_mean)))
-        ti_variance.append(float(np.sum((weights * ti_error) ** 2)))
+        # A component that does not move adds nothing, even where its
+        # derivative is not finite (a decoupled particle on a charge).
+        moving = weights != 0.0
+        ti.append(float(np.sum(weights[moving] * ti_mean[moving])))
+        ti_variance.append(float(np.sum((weights[moving] *
+                                         ti_error[moving]) ** 2)))
 
     # MBAR over every sample of every state.
     u = np.concatenate(kept, axis=0).T / kt  # states x samples
