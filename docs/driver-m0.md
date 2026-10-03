@@ -456,6 +456,83 @@ A run that begins from the checkpoint of another run, as the stages of
 stages differ, and its `steps` count from there. The checkpoint of the
 run it began from is not changed.
 
+### 2.8 The outputs of a run
+
+A run writes the files that `[output]` names, each at the interval given
+there, and nothing else (D149). The names are relative to the control
+file. The checkpoint is the only file that a run continues or begins from;
+there is no restart file besides it.
+
+| Output | Keyword | Written | Form |
+|---|---|---|---|
+| The log | always the standard output; with `log`, a file as well | its rows every `energy_interval` steps, and the messages of the run (Section 2.3) | text |
+| The energies | `energy` | every `energy_interval` steps: the rows of the log | columns |
+| The terms over centers | `pull` | every `energy_interval` steps (D145) | columns |
+| The trajectory | `trajectory`, `trajectory_format` | every `trajectory_interval` steps | DCD or XTC (D141) |
+| The checkpoint | `checkpoint` | every `checkpoint_interval` steps, and at the end of a minimization; the one before as `<checkpoint>.prev` (D132) | H5MD (Section 2.6) |
+
+The intervals are those of the compiled schedule (Section 2.2): the files
+of columns take the interval of the rows of the log, at whose steps the
+energies are computed, and the frames and the checkpoints come at
+multiples of it.
+
+**Files of columns.** The energies and the terms over centers share one
+form, which a program reads without knowing the run:
+
+```text
+# step time total potential kinetic temperature virial pressure
+# - ps kcal/mol kcal/mol kcal/mol K kcal/mol atm
+0 0.000000 -834.146700 -1083.238900 249.092200 96.853800 -70.651300 232.387500
+```
+
+The first line names the columns, the second gives the unit of each, `-`
+for none, and every row after them is one output, its step an integer and
+the other values with six decimals, separated by single spaces. The names
+are in lower case; a quantity of a term is `<term>.<quantity>`. The file
+of the energies has the columns of the log: `step time total potential
+kinetic temperature virial`, then `pressure` with a periodic cell,
+`conserved` with a coupling, and `volume` with a barostat; that of a
+minimization `step potential rms_force max_force max_atom step_size`.
+
+**Continuation.** `mdir run --continue` continues the outputs of its run
+from the step `s` of its checkpoint, so that the files are those of a run
+that was not interrupted:
+
+| Output | A continued run |
+|---|---|
+| Files of columns | Keeps the rows up to step `s` and appends; the first two lines must be those that the run writes, or it stops before it begins |
+| Trajectory | Keeps the frames that the checkpoint counts and appends (D130) |
+| Log file | Appends to the whole file, which records what happened, the steps past `s` that are run again included, after the line `MDIR: continues the run after step s` |
+| Checkpoint | Replaced at the next interval, as always |
+
+With `--no-append` each of the first three goes to `<name>.partNNNN<ext>`
+instead, NNNN the part of the run, and later continuations append to the
+files of that part, which the checkpoint records (`outputs_part`, 0 for
+the names of the control file).
+
+**Overwriting.** `mdir run` without `--continue` does not write over
+another run: it stops before it compiles, naming the file, if one that it
+would write exists (log, energies, terms over centers, trajectory,
+checkpoint). `--overwrite` lets it. Under `--continue` the files belong to
+the run: they are continued from its checkpoint, or written anew when the
+run begins without one, as after a job that stopped before its first
+checkpoint. Two outputs may not have one name, nor an output the name of
+an input.
+
+**`mdir check`** prints the outputs after what the input describes: each
+file with its interval and the number of rows or frames of the run, the
+standard output, and a warning for each file that exists, which `mdir run`
+would refuse to write over.
+
+```text
+outputs:
+  log:        standard output, and md.log; a row every 5000 steps, 101 rows
+  energy:     md.energy, every 5000 steps, 101 rows
+  trajectory: md.xtc (XTC), every 5000 steps, 100 frames
+  checkpoint: md.h5, every 50000 steps, 10 checkpoints
+  warning: 'md.xtc' exists; mdir run writes over it only with --overwrite or --continue
+```
+
 ## 3. Decided
 
 | # | Question | Decision |
