@@ -16,7 +16,7 @@
 # A neighbor structure that reaches less far than the cutoff would miss
 # pairs within it.
 # REACH: reach.toml:{{[0-9]+}}: 'pairlist_distance' is less than 'cutoff
-# CHOICE: choice.toml:12: expected one of VELOCITY_VERLET, LEAPFROG for 'integrator', got 'RK4'
+# CHOICE: choice.toml:12: expected one of VELOCITY_VERLET, LEAPFROG, BROWNIAN for 'integrator', got 'RK4'
 # PERIOD: period.toml:{{[0-9]+}}: 'steps' is not a multiple of 'energy_interval'
 # SYNTAX: syntax.toml:2:
 # NAME: the expression of 'lj' uses 'delta', which is neither 'r', nor 'coulomb', nor a number of the term, nor a parameter of the type 'AR'
