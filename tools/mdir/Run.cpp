@@ -908,7 +908,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // The terms over centers (D145), at every energy of the log: for each
   // its coordinates, its energy, and its force, over two centers the
   // component along the distance and the vector on the second center, of
-  // an angle or a dihedral −∂E/∂θ.
+  // an angle or a dihedral −∂E/∂θ; the coordinates and forces of pulling
+  // that GROMACS writes to its pullx and pullf files, in one file.
   if (!control->pullFile.empty()) {
     std::vector<ColumnFile::Column> columns = {{"step", "-", true},
                                                {"time", "ps"}};

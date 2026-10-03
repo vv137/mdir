@@ -50,7 +50,9 @@ struct PairTerm {
   /// suits a term that decays faster than 1/r³, such as dispersion.
   DispersionCorrection dispersion = DispersionCorrection::None;
   /// With a topology, two masks: the term then acts only on the pairs of
-  /// a particle of one and a particle of the other (D137).
+  /// a particle of one and a particle of the other (D137), as the
+  /// interaction groups of the custom nonbonded force of OpenMM
+  /// [Eastman2017].
   std::vector<std::string> groups;
 };
 

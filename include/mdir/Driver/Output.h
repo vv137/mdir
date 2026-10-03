@@ -224,7 +224,8 @@ constexpr int MaxBackups = 99;
 /// The name under which a run that is not continued keeps the output
 /// `path` of an earlier run before it writes its own (D149): `#<name>.<n>#`
 /// in the directory of `path`, n the least number from 1 that no file
-/// takes. Empty if all MaxBackups are taken.
+/// takes. Empty if all MaxBackups are taken. The naming and the limit of
+/// 99 are those of the backups of GROMACS [GromacsManual2025].
 std::string getBackupPath(llvm::StringRef path);
 
 /// Fails if `path` exists and all MaxBackups of it are taken.

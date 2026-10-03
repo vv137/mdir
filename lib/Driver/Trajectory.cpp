@@ -222,7 +222,10 @@ void DCDWriter::writeFrame(const float *positions, int64_t, double) {
 // difference grows or shrinks by a step of a table of sizes, each about
 // 2^(1/3) times the one before. The first close particle is written
 // before the one it follows, which suits water, whose oxygen is farther
-// from the hydrogens than they are from each other.
+// from the hydrogens than they are from each other. The algorithm and its
+// table of sizes are those of the compression of GROMACS (xdr3dfcoord of
+// its xdrfile library), written here from their description so that the
+// files are those GROMACS writes, byte for byte (D141).
 
 namespace {
 
