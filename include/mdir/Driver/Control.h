@@ -56,6 +56,22 @@ struct PairTerm {
   std::vector<std::string> groups;
 };
 
+/// A term of the potential energy over the triplets centered on each
+/// particle (D160), given by an expression in the legs `r12` and `r13`
+/// from the center, particle 1, to the ends 2 and 3, the far leg `r23`,
+/// and the angle `theta` at the center: the three-body term of Stillinger
+/// and Weber [StillingerWeber1985] and of mW water [Molinero2009], and the
+/// mode `UniqueCentralParticle` of the custom many-particle force of OpenMM
+/// [Eastman2017], whose names of the variables it takes.
+struct TripletTerm {
+  std::string name;
+  std::string expression;
+  /// The cutoff of each leg from the center, in Å; the far leg is not cut.
+  double cutoff = 0.0;
+  /// Numbers that the expression uses under a name.
+  std::vector<std::pair<std::string, double>> constants;
+};
+
 /// Parameters of a pair of types that a pair term takes in place of those
 /// that its mixing rules give (NBFIX).
 struct PairOverride {
@@ -144,6 +160,9 @@ struct Control {
   NeighborStructure neighborStructure = NeighborStructure::Matrix;
   Truncation truncation = Truncation::Switch;
   std::vector<PairTerm> pairs;
+  /// Terms over the triplets centered on each particle (D160):
+  /// [[energy.triplet]].
+  std::vector<TripletTerm> triplets;
   /// Terms over tuples of the topology given by expressions (D136):
   /// [[energy.bond]], [[energy.angle]], and [[energy.dihedral]].
   std::vector<TupleTerm> tupleTerms;

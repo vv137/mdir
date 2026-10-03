@@ -750,6 +750,58 @@ evaluateNode(const Expression::Node &node,
   return std::nan("");
 }
 
+/// Replaces in `node` every call of `function` of the name `argument` by
+/// the name `replacement`.
+static void replaceCalls(Expression::Node &node, StringRef function,
+                         StringRef argument, StringRef replacement) {
+  using Node = Expression::Node;
+  if (node.kind == Node::Call && node.name == function &&
+      node.arguments.size() == 1 &&
+      node.arguments.front()->kind == Node::Name &&
+      node.arguments.front()->name == argument) {
+    node.kind = Node::Name;
+    node.name = replacement.str();
+    node.arguments.clear();
+    return;
+  }
+  for (auto *child : {node.lhs.get(), node.rhs.get()})
+    if (child)
+      replaceCalls(*child, function, argument, replacement);
+  for (auto &child : node.arguments)
+    replaceCalls(*child, function, argument, replacement);
+}
+
+/// Appends to `names` the names that `node` uses, in the order of their
+/// first use, once each.
+static void appendNames(const Expression::Node &node,
+                        std::vector<std::string> &names) {
+  if (node.kind == Expression::Node::Name &&
+      !llvm::is_contained(names, node.name))
+    names.push_back(node.name);
+  for (const auto *child : {node.lhs.get(), node.rhs.get()})
+    if (child)
+      appendNames(*child, names);
+  for (const auto &child : node.arguments)
+    appendNames(*child, names);
+}
+
+void Expression::replaceCall(StringRef function, StringRef argument,
+                             StringRef replacement) {
+  replaceCalls(*root, function, argument, replacement);
+  for (auto &[name, node] : definitions)
+    replaceCalls(*node, function, argument, replacement);
+  // The names that the expression uses and does not define, again.
+  std::vector<std::string> used;
+  appendNames(*root, used);
+  for (const auto &[name, node] : definitions)
+    appendNames(*node, used);
+  names.clear();
+  for (const std::string &name : used)
+    if (llvm::none_of(definitions,
+                      [&](const auto &entry) { return entry.first == name; }))
+      names.push_back(name);
+}
+
 llvm::StringMap<const Expression::Node *> Expression::getDefinitions() const {
   llvm::StringMap<const Node *> byName;
   for (const auto &[name, node] : definitions)

@@ -5,6 +5,7 @@
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/Path.h"
 
 #include <algorithm>
@@ -61,6 +62,9 @@ private:
 
   Error readEnergy(const toml::table &table);
   Error readPair(const toml::table &table);
+  /// [[energy.triplet]]: a term over the triplets centered on each particle
+  /// (D160).
+  Error readTriplet(const toml::table &table);
   /// [[energy.function]]: a tabulated function (D138).
   Error readFunction(const toml::table &table);
   /// [[energy.external]]: a term of the absolute positions (D148).
@@ -701,6 +705,131 @@ Error Reader::readPair(const toml::table &table) {
   return Error::success();
 }
 
+Error Reader::readTriplet(const toml::table &table) {
+  TripletTerm term;
+  if (Error error = readString(table, "name", term.name))
+    return error;
+  if (Error error = readString(table, "expression", term.expression))
+    return error;
+  if (term.expression.empty())
+    return fail(table, "expected an 'expression' in [[energy.triplet]]");
+  if (term.name.empty())
+    term.name = "triplet" + std::to_string(control.triplets.size());
+  // Its own cutoff, which the term must vanish at: the triplets are found
+  // anew at every step, and a term that does not vanish at the cutoff
+  // gives forces that are not the gradient of its energy.
+  if (!table.contains("cutoff"))
+    return fail(table, "expected a 'cutoff' in [[energy.triplet]], the "
+                       "reach of each leg from the center, at which the "
+                       "term vanishes");
+  if (Error error = readPositive(table, "cutoff", term.cutoff))
+    return error;
+  if (term.cutoff > control.cutoffDistance) {
+    std::string message;
+    llvm::raw_string_ostream(message)
+        << llvm::format("the cutoff of the triplets, %g Å, is beyond that "
+                        "of [energy], %g Å",
+                        term.cutoff, control.cutoffDistance);
+    return fail(*table.get("cutoff"), message);
+  }
+
+  static const char *const variables[] = {"r12", "r13", "r23", "theta",
+                                          "t"};
+  for (auto &&[key, node] : table) {
+    StringRef keyword = toRef(key.str());
+    if (keyword == "name" || keyword == "expression" || keyword == "cutoff")
+      continue;
+    if (llvm::is_contained(variables, keyword))
+      return fail(node, "'" + keyword + "' is a variable of the term, not "
+                                        "a number of it");
+    if (!node.is_number())
+      return fail(node, "expected a number for '" + keyword + "'");
+    term.constants.push_back({keyword.str(), *node.value<double>()});
+  }
+
+  // The names: the variables, the numbers of the term, and the parameters
+  // of the types of the three particles, by the suffix 1 (the center), 2,
+  // or 3, as the custom forces of OpenMM name them.
+  auto expression = Expression::parse(term.expression, control.functions);
+  if (!expression)
+    return fail(*table.get("expression"),
+                llvm::toString(expression.takeError()));
+  auto isConstant = [&](StringRef name) {
+    return llvm::any_of(term.constants,
+                        [&](const auto &c) { return c.first == name; });
+  };
+  auto isParameter = [&](StringRef name) {
+    if (name.size() < 2 || !llvm::is_contained("123", name.back()) ||
+        control.types.empty())
+      return false;
+    StringRef stem = name.drop_back();
+    return llvm::all_of(control.types, [&](const ParticleType &type) {
+      return llvm::any_of(type.parameters,
+                          [&](const auto &p) { return p.first == stem; });
+    });
+  };
+  for (const std::string &name : expression->getNames()) {
+    if (name == "t")
+      control.usesTime = true;
+    if (!llvm::is_contained(variables, StringRef(name)) &&
+        !isConstant(name) && !isParameter(name))
+      return fail(*table.get("expression"),
+                  "the expression uses '" + name +
+                      "', which is neither r12, r13, r23, theta, the time "
+                      "t, a number of the term, nor a parameter of every "
+                      "[[energy.type]] with the suffix 1, 2, or 3");
+  }
+
+  // A triplet is a center and an unordered pair of ends: its energy must
+  // not change when the ends are exchanged, r12 with r13 and the
+  // parameters of 2 with those of 3. No structure of the expression shows
+  // that in general, so it is tested at a few points, as for the pair
+  // terms of a topology (D137).
+  const double samples[][7] = {{2.7, 3.1, 4.4, 1.9, 0.41, 0.83, 0.27},
+                               {3.6, 2.4, 3.9, 1.2, 1.37, 0.35, 0.62},
+                               {4.1, 3.3, 2.6, 2.6, 0.97, 0.12, 1.45}};
+  for (const double *s : samples) {
+    llvm::StringMap<double> values, swapped;
+    for (const auto &[name, value] : term.constants)
+      values[name] = swapped[name] = value;
+    values["r12"] = swapped["r13"] = s[0];
+    values["r13"] = swapped["r12"] = s[1];
+    values["r23"] = swapped["r23"] = s[2];
+    values["theta"] = swapped["theta"] = s[3];
+    values["t"] = swapped["t"] = 0.5;
+    for (const std::string &name : expression->getNames()) {
+      if (!isParameter(name) || isConstant(name))
+        continue;
+      // The value of each place, distinct for each parameter.
+      double scale = 1.0 + 0.1 * static_cast<double>(name.size());
+      char place = name.back();
+      std::string stem = name.substr(0, name.size() - 1);
+      values[name] = scale * s[4 + (place - '1')];
+      swapped[place == '1' ? name : stem + (place == '2' ? "3" : "2")] =
+          values[name];
+    }
+    double a = expression->evaluate(values);
+    double b = expression->evaluate(swapped);
+    if (std::isnan(a) && std::isnan(b))
+      continue;
+    if (!(std::abs(a - b) <=
+          1e-12 * std::max({std::abs(a), std::abs(b), 1e-300})))
+      return fail(*table.get("expression"),
+                  "the energy of a triplet must not change when its two "
+                  "ends are exchanged (r12 with r13, and the parameters "
+                  "of 2 with those of 3), and this expression does");
+  }
+  {
+    std::vector<std::string> parameters;
+    for (const auto &[name, value] : term.constants)
+      parameters.push_back(name);
+    checkTerm(term.name, term.expression, {"r12", "r13", "r23", "theta"},
+              parameters);
+  }
+  control.triplets.push_back(std::move(term));
+  return Error::success();
+}
+
 Error Reader::readOverride(const toml::table &table) {
   PairOverride entry;
   if (Error error = readString(table, "pair", entry.term))
@@ -938,7 +1067,7 @@ Error Reader::readEnergy(const toml::table &table) {
           table, "energy",
           {"cutoff", "switch_distance", "pairlist_distance",
            "pruned_distance", "rebuild_interval", "lennard_jones_modifier", "coulomb_modifier", "reaction_field_dielectric", "implicit_solvent", "solvent_dielectric", "solute_dielectric", "surface_area_energy", "salt_concentration", "born_radius_cutoff", "born_radii", "pair", "bond", "angle", "dihedral", "external", "function", "type",
-           "pair_override", "dispersion_correction", "electrostatics"},
+           "triplet", "pair_override", "dispersion_correction", "electrostatics"},
           {}))
     return error;
 
@@ -1028,6 +1157,8 @@ Error Reader::readEnergy(const toml::table &table) {
   if (Error error = readArray("type", &Reader::readType))
     return error;
   if (Error error = readArray("pair", &Reader::readPair))
+    return error;
+  if (Error error = readArray("triplet", &Reader::readTriplet))
     return error;
   if (Error error = readArray("bond", &Reader::readBond))
     return error;
@@ -1172,6 +1303,11 @@ Error Reader::readEnergy(const toml::table &table) {
                        "switches the powers of the Lennard-Jones of a "
                        "topology; for terms in the control file use "
                        "\"FORCE_SWITCH\"");
+
+  if (!control.triplets.empty() && control.hasTopology())
+    return fail(*table.get("triplet"),
+                "terms over triplets are for a system of [[energy.type]] "
+                "without a topology yet (D160)");
 
   // A topology gives the types and the terms. A pair term adds to them,
   // with the parameters of the topology (D137).
@@ -1958,6 +2094,13 @@ Error Reader::read(const toml::table &root) {
         "%s: 'born_radius_cutoff', %g Å, is beyond the cutoff, %g Å",
         path.str().c_str(), control.bornRadiusCutoff,
         control.cutoffDistance);
+  // The triplets are found on the host (D160).
+  if (!control.triplets.empty() && control.target == Target::GPU)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "%s: the terms over triplets of [[energy.triplet]] run on the CPU "
+        "only yet (D160); give 'target = \"CPU\"'",
+        path.str().c_str());
   // Under a barostat a term of the absolute positions says whether it
   // stays fixed in space or scales with the cell, which its virial follows
   // (D154).
