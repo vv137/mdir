@@ -77,7 +77,10 @@ request a review of or approve its own PRs; labels carry the state instead.
 | `merge-recommended` | coordinator | Reviewed, the suite passed at the commit named in the review comment |
 | `approved` | maintainer | The maintainer approves the merge |
 
-A PR whose head moves after `merge-recommended` is reviewed again. Work
+To approve, the maintainer only adds `approved` and leaves
+`merge-recommended` in place: the coordinator merges a PR that carries
+both, at the commit named in the review. A PR whose head moves after
+`merge-recommended` is reviewed again. Work
 that is not yet a PR is tracked as GitHub issues.
 
 ## The pull request
