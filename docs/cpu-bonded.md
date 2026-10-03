@@ -202,3 +202,12 @@ The full CPU lit suite passed **200 tests, 69 unsupported**, including the
 bonded roundtrip, seven invalid-plan tests, MPI numerical smoke test, and
 malformed input checks. The tests use the same tolerance contract above.
 No intermittent numerical failures were observed.
+
+After rebasing onto `b0eac91` (the zero-epsilon fix), the full CPU suite passed
+**201 tests, 70 unsupported**. The initial base's two focused production GPU
+regressions (`pair-terms-gpu` and `lj-pme-gpu`) also passed under the GPU 1 lock.
+These are existing production-path regression checks, not execution of the
+new distributed bonded path on a GPU. The entire GPU suite was not rerun.
+The rebased build also passed all three focused GPU 1 tests
+(`pair-terms-gpu`, `lj-pme-gpu`, and the new `lj-zero-epsilon-gpu`) under the
+lock in 111 seconds. The new topology transport remains CPU-only.
