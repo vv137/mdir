@@ -753,3 +753,12 @@ layout/map snapshots and an `mdrt.event`; the host interprets scheduling
 and dispatches existing compiled pair kernels. This introduces no production
 TOML keys. Bonded support, migration, production trajectories, and GPU
 transport remain unimplemented. See [the implementation contract](cpu-cartesian-async.md) for exact scope and validation.
+
+The upper distribution model does not require a unique mutable owner per atom.
+Field-version availability may be fully replicated; publication authority,
+physical access rights, work placement, and reduction placement are separate
+contracts. Field versions, layout snapshots, and cache validity epochs are
+independent. Replicated-data, spatial, and force decomposition are required
+architecture tests. The current Cartesian runtime enforces unique particle
+owners only as a backend restriction. See the upper-contract sections of
+[cpu-cartesian-async.md](cpu-cartesian-async.md).
