@@ -244,6 +244,12 @@ def SimplifyDistance
     product can be much larger than the product, and their sum then loses
     digits.
 
+    A term with an inverse power of `r` is 0 where its factor `c` is 0:
+    the term selects 0 there. Where two particles all but meet, the power
+    can leave the range of its type (in f32, `r^-14` once `r` is below
+    about 0.002 nm), and `c · r^p` would be 0 · ∞ = NaN for a pair with no
+    interaction, such as a Lennard-Jones pair of ε = 0.
+
     The pass reassociates floating-point arithmetic, so results change in
     their last bits against the kernel as written. It rewrites the program
     once, at compilation, so two runs of the same program still give the

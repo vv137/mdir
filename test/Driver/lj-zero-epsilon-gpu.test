@@ -1,0 +1,24 @@
+# lj-zero-epsilon.test on a device: a pair of particles whose epsilon is
+# 0 contributes exactly 0 where the two all but meet, in mixed precision as
+# in double (#18).
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/zero-epsilon/argon.top %S/Inputs/zero-epsilon/argon.gro %S/Inputs/zero-epsilon/mixture.pdb %t
+# RUN: sed -n '/^#--- topology.toml/,/^#--- end/p' %S/lj-zero-epsilon.test | sed '1d;$d' | sed 's/"CPU"/"GPU"/' > %t/topology.toml
+# RUN: sed -n '/^#--- expression.toml/,/^#--- end/p' %S/lj-zero-epsilon.test | sed '1d;$d' | sed 's/"CPU"/"GPU"/' > %t/expression.toml
+# RUN: sed 's/PRECISION/MIXED/' %t/topology.toml > %t/topology-mixed.toml
+# RUN: sed 's/PRECISION/DOUBLE/' %t/topology.toml > %t/topology-double.toml
+# RUN: sed 's/PRECISION/MIXED/' %t/expression.toml > %t/expression-mixed.toml
+# RUN: sed 's/PRECISION/DOUBLE/' %t/expression.toml > %t/expression-double.toml
+# RUN: mdir run %t/topology-mixed.toml | FileCheck %s --check-prefix=TOPOLOGY
+# RUN: mdir run %t/topology-double.toml | FileCheck %s --check-prefix=TOPOLOGY
+# RUN: mdir run %t/expression-mixed.toml | FileCheck %s --check-prefix=EXPRESSION
+# RUN: mdir run %t/expression-double.toml | FileCheck %s --check-prefix=EXPRESSION
+#
+# TOPOLOGY:      INFO: 0 0.0000 2.0866 0.0000 2.0866 100.0000 0.0000 6.8997
+# TOPOLOGY-NEXT: INFO: 5 0.0100 2.0866 0.0000 2.0866 100.0000 0.0000 6.8997
+#
+# EXPRESSION:      INFO: 0 0.0000 0.8908 -0.0035 0.8942 100.0000 -0.0208 1.4964
+# EXPRESSION-NEXT: INFO: 5 0.0100 0.8908 -0.0035 0.8942 99.9992 -0.0208 1.4964

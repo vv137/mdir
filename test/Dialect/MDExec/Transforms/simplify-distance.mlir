@@ -7,7 +7,9 @@
 md.particle_set @atoms
 
 // The Lennard-Jones energy has only even powers of the distance:
-// 4 eps sigma^12 r^-12 - 4 eps sigma^6 r^-6. No square root is left.
+// 4 eps sigma^12 r^-12 - 4 eps sigma^6 r^-6. No square root is left. A
+// term whose factors are 0 is 0, though the inverse power of r may have
+// left the range of its type: eps = 0 does not make 0 * inf.
 //
 // CHECK-LABEL: func.func @lennard_jones(
 // CHECK-SAME:    %[[EPS:[a-z0-9]+]]: f64, %[[SIGMA:[a-z0-9]+]]: f64)
@@ -18,10 +20,17 @@ func.func @lennard_jones(%x: !vec, %cell: !md.cell, %nl: !nl, %eps: f64,
   // CHECK-NEXT: ^bb0(%[[R2:[a-z0-9]+]]: f64,
   // CHECK-NEXT:   %[[INVERSE:[0-9]+]] = arith.divf %{{[a-z0-9_]+}}, %[[R2]]
   // CHECK-NOT:    math.sqrt
-  // CHECK:        math.fpowi %[[SIGMA]], %c12
-  // CHECK:        math.fpowi %[[INVERSE]], %c6
+  // CHECK:        %[[S12:[0-9]+]] = math.fpowi %[[SIGMA]], %c12
+  // CHECK-NEXT:   %[[F12:[0-9]+]] = arith.mulf %[[S12]], %[[EPS]]
+  // CHECK-NEXT:   math.fpowi %[[INVERSE]], %c6
+  // CHECK-NEXT:   arith.mulf %[[F12]],
+  // CHECK-NEXT:   %[[T12:[0-9]+]] = arith.mulf
+  // CHECK-NEXT:   %[[NONE12:[0-9]+]] = arith.cmpf oeq, %[[F12]], %[[ZERO:[a-z0-9_]+]]
+  // CHECK-NEXT:   arith.select %[[NONE12]], %[[ZERO]], %[[T12]]
   // CHECK:        math.fpowi %[[SIGMA]], %c6
   // CHECK:        math.fpowi %[[INVERSE]], %c3
+  // CHECK:        arith.cmpf oeq
+  // CHECK-NEXT:   arith.select
   // CHECK-NOT:    math.sqrt
   // CHECK:        md_exec.yield
   %u = md_exec.pair_for %nl, %x, %cell reduce(%zero : f64) cutoff(2.5)
