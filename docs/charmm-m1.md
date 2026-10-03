@@ -254,3 +254,21 @@ on a small topology against the formulas.
 | VSWITCH | The potential switch of CHARMM (Section 2), for older inputs |
 | Lone pairs of CGenFF, the Drude model | Virtual sites of other constructions, and polarization |
 | The parameters of C36/LJ-PME | The mesh for the dispersion is in place (`lennard_jones = "PME"`, D162, validated on Trp-cage in CHARMM36m against GROMACS); the force field fitted to it has not been run |
+
+## 8. Squared-distance potential switch (D[squared-distance-switch])
+
+Design for roadmap F3: `[energy] lennard_jones_modifier =
+"SQUARED_DISTANCE_SWITCH"` selects the VSWITCH potential described in
+Section 2. It uses the existing `switch_distance` and `cutoff`, with
+$0 < r_s < r_c$. It multiplies the topology's Lennard-Jones potential by
+$S(r)$, including its pairs three bonds apart, and leaves Coulomb alone.
+The energy is unchanged below $r_s$ and zero at and beyond $r_c$.
+Dispersion correction and additional custom pair terms are refused, as
+neither currently defines the corresponding switched correction.
+No file format, default, or overwrite behavior changes.
+
+Validation will compare energies, forces, and virials against an
+independent analytic implementation, below and at the switch, within its
+interval, and at and beyond the cutoff, on CPU and GPU in mixed and double
+precision. Finite differences check the derivatives. The existing suite
+and a GPU timing comparison against main complete validation.
