@@ -204,6 +204,77 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
              "true' in [constraints] to hold them rigid with SETTLE, as a "
              "time step of 2 fs needs, or 'rigid_water = false' to keep "
              "them flexible"});
+  // The parameters of each particle (D165), entry by entry in the order of
+  // the file.
+  for (const ParticleParameter &entry : control.particleParameters) {
+    size_t count = topology->getNumParticles();
+    auto found = llvm::find_if(system.particleParameters, [&](const auto &p) {
+      return p.first == entry.name;
+    });
+    if (found == system.particleParameters.end()) {
+      system.particleParameters.push_back(
+          {entry.name, std::vector<double>(count, std::nan(""))});
+      found = std::prev(system.particleParameters.end());
+    }
+    std::vector<double> &values = found->second;
+    if (!entry.values.empty()) {
+      if (entry.values.size() != count)
+        return llvm::createStringError(
+            llvm::inconvertibleErrorCode(),
+            "the parameter '%s' has %zu values, and the topology has %zu "
+            "particles",
+            entry.name.c_str(), entry.values.size(), count);
+      values = entry.values;
+      continue;
+    }
+    if (!entry.selection.empty()) {
+      auto selected = selectParticles(entry.selection, *topology);
+      if (!selected)
+        return selected.takeError();
+      size_t chosen = 0;
+      for (size_t i = 0; i != count; ++i)
+        if ((*selected)[i]) {
+          values[i] = entry.value;
+          ++chosen;
+        }
+      if (chosen == 0)
+        system.warnings.push_back(
+            {"empty_selection", "the selection '" + entry.selection +
+                                    "' of the parameter '" + entry.name +
+                                    "' selects no particle"});
+      continue;
+    }
+    if (!entry.particles.empty()) {
+      for (unsigned particle : entry.particles) {
+        if (particle >= count)
+          return llvm::createStringError(
+              llvm::inconvertibleErrorCode(),
+              "the parameter '%s' names the particle %u, and the topology "
+              "has %zu",
+              entry.name.c_str(), particle + 1, count);
+        values[particle] = entry.value;
+      }
+      continue;
+    }
+    values.assign(count, entry.value);
+  }
+  for (const auto &[name, values] : system.particleParameters)
+    for (size_t i = 0, e = values.size(); i != e; ++i)
+      if (std::isnan(values[i]))
+        return llvm::createStringError(
+            llvm::inconvertibleErrorCode(),
+            "no entry of the parameter '%s' gives a value to particle %zu; "
+            "give an entry without 'selection' first, for every particle",
+            name.c_str(), i + 1);
+  // The value of the parameter `stem` of each particle, or nothing.
+  auto particleValues =
+      [&](StringRef stem) -> const std::vector<double> * {
+    for (const auto &[name, values] : system.particleParameters)
+      if (name == stem)
+        return &values;
+    return nullptr;
+  };
+
   // The terms over tuples of the control file join those of the topology
   // (D136), once their particles are known to exist.
   for (TupleTerm term : control.tupleTerms) {
@@ -216,6 +287,27 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
     if (term.isCentroid())
       if (llvm::Error error = findCenters(term, *topology))
         return std::move(error);
+    // A parameter of each particle at a place, `w2`, becomes one of each
+    // tuple, the value of its second particle (D165).
+    if (!term.isCentroid() && !system.particleParameters.empty()) {
+      Expression expression = llvm::cantFail(
+          Expression::parse(term.expression, control.functions));
+      for (const std::string &name : expression.getNames()) {
+        if (name.size() < 2 || !llvm::isDigit(name.back()))
+          continue;
+        const std::vector<double> *values =
+            particleValues(StringRef(name).drop_back());
+        unsigned place = name.back() - '1';
+        if (!values || place >= term.arity ||
+            llvm::any_of(term.parameters,
+                         [&](const auto &p) { return p.first == name; }))
+          continue;
+        std::vector<double> column;
+        for (size_t k = 0, e = term.size(); k != e; ++k)
+          column.push_back((*values)[term.particles[k * term.arity + place]]);
+        term.parameters.push_back({name, std::move(column)});
+      }
+    }
     topology->tupleTerms.push_back(std::move(term));
   }
 
@@ -252,6 +344,19 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
             llvm::inconvertibleErrorCode(),
             "the term '%s' names the particle %u, and the topology has %zu",
             term.name.c_str(), particle + 1, topology->getNumParticles());
+    // A parameter of each particle, by its name, becomes one of the term
+    // (D165).
+    if (!system.particleParameters.empty()) {
+      Expression expression = llvm::cantFail(
+          Expression::parse(term.expression, control.functions));
+      for (const std::string &name : expression.getNames())
+        if (const std::vector<double> *values = particleValues(name)) {
+          std::vector<double> column;
+          for (unsigned particle : term.particles)
+            column.push_back((*values)[particle]);
+          term.parameters.push_back({name, std::move(column)});
+        }
+    }
     topology->externalTerms.push_back(std::move(term));
   }
 

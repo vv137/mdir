@@ -69,6 +69,11 @@ private:
   Error readFunction(const toml::table &table);
   /// [[energy.external]]: a term of the absolute positions (D148).
   Error readExternal(const toml::table &table);
+  /// [[energy.parameter]]: a parameter of each particle (D165).
+  Error readParticleParameter(const toml::table &table);
+  /// The name of the parameter of each particle that `name` takes at one
+  /// of the places 1 to `places`, `w` for `w2`, or "".
+  StringRef getParticleStem(StringRef name, unsigned places) const;
   /// Warns about the parameters of the term `name` that its expression does
   /// not use, and about an expression that uses none of `coordinates`,
   /// whose forces are then zero (D158).
@@ -291,6 +296,89 @@ void Reader::checkTerm(StringRef name, StringRef expression,
              "; it adds an energy and no force"});
 }
 
+Error Reader::readParticleParameter(const toml::table &table) {
+  if (Error error = checkKeywords(table, "[energy.parameter]",
+                                  {"name", "value", "values", "selection",
+                                   "particles"}))
+    return error;
+  ParticleParameter parameter;
+  if (Error error = readString(table, "name", parameter.name))
+    return error;
+  // A name that a place may follow: no digit at its end, and none of the
+  // names that the terms give.
+  static const char *const reserved[] = {
+      "r", "t", "x", "y", "z", "q", "dx", "dy", "dz", "theta", "coulomb",
+      "sigma", "epsilon", "r12", "r13", "r23"};
+  if (parameter.name.empty() ||
+      !(llvm::isAlpha(parameter.name.front()) ||
+        parameter.name.front() == '_') ||
+      !llvm::all_of(parameter.name,
+                    [](char c) { return llvm::isAlnum(c) || c == '_'; }) ||
+      llvm::isDigit(parameter.name.back()))
+    return fail(table.contains("name") ? *table.get("name")
+                                       : static_cast<const toml::node &>(table),
+                "expected a 'name' of letters, digits, and '_' that does not "
+                "end in a digit in [[energy.parameter]]");
+  if (llvm::is_contained(reserved, StringRef(parameter.name)) ||
+      Expression::isFunction(parameter.name))
+    return fail(*table.get("name"), "'" + parameter.name +
+                                        "' is a name that the terms give");
+  if (table.contains("value") == table.contains("values"))
+    return fail(table, "[[energy.parameter]] takes 'value', a number, or "
+                       "'values', one for each particle");
+  if (const toml::node *node = table.get("values")) {
+    if (table.contains("selection") || table.contains("particles"))
+      return fail(*node, "'values' gives every particle; it takes no "
+                         "'selection' or 'particles'");
+    const toml::array *list = node->as_array();
+    if (!list || list->empty())
+      return fail(*node, "expected 'values' as a list of one number for "
+                         "each particle");
+    for (const toml::node &element : *list) {
+      std::optional<double> number = element.value<double>();
+      if (!number || !std::isfinite(*number))
+        return fail(element, "expected a number");
+      parameter.values.push_back(*number);
+    }
+  } else {
+    const toml::node &entry = *table.get("value");
+    std::optional<double> number = entry.value<double>();
+    if (!number || !std::isfinite(*number))
+      return fail(entry, "expected 'value' as a number");
+    parameter.value = *number;
+  }
+  if (Error error = readString(table, "selection", parameter.selection))
+    return error;
+  if (const toml::node *node = table.get("particles")) {
+    if (table.contains("selection"))
+      return fail(*node, "an entry takes 'selection' or 'particles', not "
+                         "both");
+    const toml::array *list = node->as_array();
+    if (!list || list->empty())
+      return fail(*node, "expected 'particles' as a list of particle "
+                         "numbers, from 1");
+    for (const toml::node &element : *list) {
+      std::optional<int64_t> number = element.value<int64_t>();
+      if (!element.is_integer() || !number || *number < 1)
+        return fail(element, "expected a particle number, from 1");
+      parameter.particles.push_back(static_cast<unsigned>(*number - 1));
+    }
+  }
+  control.particleParameters.push_back(std::move(parameter));
+  return Error::success();
+}
+
+StringRef Reader::getParticleStem(StringRef name, unsigned places) const {
+  if (name.size() < 2 || name.back() < '1' ||
+      name.back() > static_cast<char>('0' + places))
+    return "";
+  StringRef stem = name.drop_back();
+  for (const ParticleParameter &parameter : control.particleParameters)
+    if (parameter.name == stem)
+      return stem;
+  return "";
+}
+
 Error Reader::readExternal(const toml::table &table) {
   ExternalTerm term;
   if (Error error = readString(table, "name", term.name))
@@ -392,12 +480,24 @@ Error Reader::readExternal(const toml::table &table) {
         name == "t")
       continue;
     auto named = [&](const auto &p) { return p.first == name; };
+    // A parameter of each particle, by its name (D165).
+    if (llvm::any_of(control.particleParameters,
+                     [&](const ParticleParameter &p) { return p.name == name; })) {
+      if (llvm::any_of(term.constants, named) ||
+          llvm::any_of(term.parameters, named))
+        return fail(*table.get(name), "'" + name + "' is a parameter of "
+                                      "each particle as well as of the term");
+      continue;
+    }
     if (!llvm::any_of(term.constants, named) &&
         !llvm::any_of(term.parameters, named))
       return fail(*table.get("expression"),
                   "the expression uses '" + name + "', which is neither "
-                  "'x', 'y', 'z', the charge 'q', the time 't', nor a "
-                  "parameter of the term");
+                  "'x', 'y', 'z', the charge 'q', the time 't', " +
+                  (control.particleParameters.empty()
+                       ? "nor a parameter of the term"
+                       : "a parameter of the term, nor one of each "
+                         "particle"));
   }
   {
     std::vector<std::string> parameters;
@@ -539,6 +639,15 @@ Error Reader::readTupleTerm(const toml::table &table, unsigned arity) {
       control.usesTime = true;
       continue;
     }
+    // A parameter of each particle at a place of the tuple (D165).
+    if (!term.isCentroid() && !getParticleStem(name, arity).empty()) {
+      if (llvm::any_of(term.parameters,
+                       [&](const auto &p) { return p.first == name; }))
+        return fail(*table.get(name), "'" + name + "' is a parameter of "
+                                      "each particle at a place as well as "
+                                      "one of the term");
+      continue;
+    }
     if (name != term.getVariable() &&
         !(components && (name == "dx" || name == "dy" || name == "dz")) &&
         !llvm::any_of(term.parameters,
@@ -547,7 +656,10 @@ Error Reader::readTupleTerm(const toml::table &table, unsigned arity) {
                   "the expression uses '" + name + "', which is neither '" +
                       term.getVariable() + "'" +
                       (components ? ", 'dx', 'dy', 'dz'" : "") +
-                      ", the time 't', nor a parameter of the term");
+                      (term.isCentroid() || control.particleParameters.empty()
+                           ? ", the time 't', nor a parameter of the term"
+                           : ", the time 't', a parameter of the term, nor "
+                             "one of each particle at a place, as 'w1'"));
   }
   {
     std::vector<std::string> parameters;
@@ -1067,7 +1179,7 @@ Error Reader::readEnergy(const toml::table &table) {
           table, "energy",
           {"cutoff", "switch_distance", "pairlist_distance",
            "pruned_distance", "rebuild_interval", "lennard_jones_modifier", "coulomb_modifier", "reaction_field_dielectric", "implicit_solvent", "solvent_dielectric", "solute_dielectric", "surface_area_energy", "salt_concentration", "born_radius_cutoff", "born_radii", "pair", "bond", "angle", "dihedral", "external", "function", "type",
-           "triplet", "pair_override", "dispersion_correction", "electrostatics"},
+           "parameter", "triplet", "pair_override", "dispersion_correction", "electrostatics"},
           {}))
     return error;
 
@@ -1156,6 +1268,14 @@ Error Reader::readEnergy(const toml::table &table) {
     return error;
   if (Error error = readArray("type", &Reader::readType))
     return error;
+  // The parameters of the particles before the terms that take them.
+  if (Error error = readArray("parameter", &Reader::readParticleParameter))
+    return error;
+  if (!control.particleParameters.empty() && !control.hasTopology())
+    return fail(*table.get("parameter"),
+                "parameters of each particle need a topology, whose "
+                "particles they select; without one, give the parameters "
+                "to [[energy.type]]");
   if (Error error = readArray("pair", &Reader::readPair))
     return error;
   if (Error error = readArray("triplet", &Reader::readTriplet))
@@ -1340,14 +1460,32 @@ Error Reader::readEnergy(const toml::table &table) {
       static const char *const known[] = {
           "r", "q1", "q2", "sigma", "epsilon", "sigma1", "sigma2",
           "epsilon1", "epsilon2", "coulomb", "t"};
-      for (const std::string &name : expression->getNames())
-        if (!llvm::is_contained(known, StringRef(name)) &&
-            !llvm::any_of(term.constants,
-                          [&](const auto &c) { return c.first == name; }))
+      // The parameters of each particle that the term takes, `w1` and `w2`
+      // (D165).
+      std::vector<std::string> stems;
+      for (const std::string &name : expression->getNames()) {
+        bool constant = llvm::any_of(
+            term.constants, [&](const auto &c) { return c.first == name; });
+        StringRef stem = getParticleStem(name, 2);
+        if (!stem.empty()) {
+          if (constant)
+            return fail(node, "'" + name + "' is a parameter of each "
+                              "particle as well as a constant of the term");
+          if (!llvm::is_contained(stems, stem))
+            stems.push_back(stem.str());
+          continue;
+        }
+        if (!llvm::is_contained(known, StringRef(name)) && !constant)
           return fail(node, "the expression uses '" + name +
                                 "', which is not r, q1, q2, sigma, epsilon, "
                                 "sigma1, sigma2, epsilon1, epsilon2, coulomb, "
-                                "the time t, or a constant of the term");
+                                "the time t, " +
+                                (control.particleParameters.empty()
+                                     ? "or a constant of the term"
+                                     : "a constant of the term, or a "
+                                       "parameter of each particle, as "
+                                       "'w1'"));
+      }
       if (llvm::is_contained(expression->getNames(), "t"))
         control.usesTime = true;
       // The energy of a pair cannot depend on which particle comes first.
@@ -1371,16 +1509,25 @@ Error Reader::readEnergy(const toml::table &table) {
           values[names[0]] = swapped[names[1]] = s[1 + 2 * k];
           values[names[1]] = swapped[names[0]] = s[2 + 2 * k];
         }
+        for (auto [k, stem] : llvm::enumerate(stems)) {
+          double first = s[1 + (2 * k) % 6] + 0.17 * k;
+          double second = s[2 + (2 * k + 3) % 6] - 0.11 * k;
+          values[stem + "1"] = swapped[stem + "2"] = first;
+          values[stem + "2"] = swapped[stem + "1"] = second;
+        }
         double a = expression->evaluate(values);
         double b = expression->evaluate(swapped);
         if (std::isnan(a) && std::isnan(b))
           continue;
         if (!(std::abs(a - b) <=
               1e-12 * std::max({std::abs(a), std::abs(b), 1e-300})))
-          return fail(node, "the energy of a pair must not change when its "
-                            "two particles are exchanged (q1 with q2, sigma1 "
-                            "with sigma2, epsilon1 with epsilon2), and this "
-                            "expression does");
+          return fail(node,
+                      llvm::Twine("the energy of a pair must not change when "
+                                  "its two particles are exchanged (q1 with "
+                                  "q2, sigma1 with sigma2, epsilon1 with "
+                                  "epsilon2") +
+                          (stems.empty() ? "" : ", w1 with w2") +
+                          "), and this expression does");
       }
     }
     return Error::success();

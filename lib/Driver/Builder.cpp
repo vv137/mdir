@@ -1095,6 +1095,23 @@ llvm::Error Builder::collectTopology() {
       program.fields.push_back(std::move(field));
     }
 
+  // The parameters of each particle that the pair terms take, `w1` and
+  // `w2` of `w`, a field gathered for both particles (D165).
+  for (const auto &[name, values] : system.particleParameters) {
+    bool used = llvm::any_of(control.pairs, [&](const PairTerm &term) {
+      Expression expression = llvm::cantFail(
+          Expression::parse(term.expression, control.functions));
+      return llvm::is_contained(expression.getNames(), name + "1") ||
+             llvm::is_contained(expression.getNames(), name + "2");
+    });
+    if (!used)
+      continue;
+    Program::Field field;
+    field.name = "pp_" + name;
+    field.values = values;
+    program.fields.push_back(std::move(field));
+  }
+
   // Lennard-Jones for each pair of types.
   unsigned numTypes = topology.getNumTypes();
   program.tables.push_back({"lj_sigma", numTypes, topology.sigma});
@@ -2341,15 +2358,27 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     Expression expression = llvm::cantFail(Expression::parse(term.expression, control.functions));
     const std::vector<std::string> &used = expression.getNames();
     auto uses = [&](StringRef name) { return llvm::is_contained(used, name); };
+    // The parameters of each particle that the term takes (D165).
+    std::vector<std::string> stems;
+    for (const auto &[name, values] : system.particleParameters)
+      if (uses(name + "1") || uses(name + "2"))
+        stems.push_back(name);
     os << "  %u_" << set << " = md.sum_relation %n, %x, %cell gather(%p_type, "
-       << "%p_q" << (grouped ? ", %p_pg" + g + "a, %p_pg" + g + "b" : "")
-       << " : !ids, !real" << (grouped ? ", !real, !real" : "") << ")\n"
+       << "%p_q" << (grouped ? ", %p_pg" + g + "a, %p_pg" + g + "b" : "");
+    for (const std::string &stem : stems)
+      os << ", %p_pp_" << stem;
+    os << " : !ids, !real" << (grouped ? ", !real, !real" : "");
+    for (size_t n = 0; n != stems.size(); ++n)
+      os << ", !real";
+    os << ")\n"
        << "      exchange(symmetric, asserted)" << getTruncation(control)
        << " {\n"
        << "  ^bb0(%r: f64, %d: vector<3xf64>, %type_i: i32, %type_j: i32, "
        << "%q_i: f64, %q_j: f64"
-       << (grouped ? ", %ga_i: f64, %ga_j: f64, %gb_i: f64, %gb_j: f64" : "")
-       << "):\n"
+       << (grouped ? ", %ga_i: f64, %ga_j: f64, %gb_i: f64, %gb_j: f64" : "");
+    for (const std::string &stem : stems)
+      os << ", %pp_" << stem << "_i: f64, %pp_" << stem << "_j: f64";
+    os << "):\n"
        << "    %pt_angstrom = arith.constant " << formatReal(1.0 / units::length)
        << " : f64\n"
        << "    %pt_kcal = arith.constant " << formatReal(1.0 / units::energy)
@@ -2361,6 +2390,10 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
       values["t"] = "%time";
     values["q1"] = "%q_i";
     values["q2"] = "%q_j";
+    for (const std::string &stem : stems) {
+      values[stem + "1"] = "%pp_" + stem + "_i";
+      values[stem + "2"] = "%pp_" + stem + "_j";
+    }
     auto lookup = [&](StringRef variable, StringRef table, StringRef a,
                       StringRef b, StringRef factor) {
       if (!uses(variable))
