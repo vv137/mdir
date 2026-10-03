@@ -54,9 +54,28 @@ thermostat are not.
 5. **Review.** The coordinator builds the PR's head commit and runs the
    full suite on a GPU. There is no GPU continuous integration, so this run
    is part of the review. The coordinator checks the rules below, posts the
-   result as a PR comment naming the commit tested, and recommends to the
-   maintainer whether to merge, ask for changes, or close.
-6. **Merge**, after the maintainer approves; see below.
+   result as a PR comment naming the commit tested, and labels the PR
+   `merge-recommended` or `changes-requested`.
+6. **Decision.** The maintainer decides on GitHub: the label `approved`
+   approves the merge; a comment asks for changes.
+7. **Merge.** The coordinator merges the PRs labeled `approved`; see
+   below.
+
+## Labels and where decisions are made
+
+Reviews, questions, and approvals live on GitHub, so that each PR keeps its
+own record. All contributors may push under one account, which cannot
+request a review of or approve its own PRs; labels carry the state instead.
+
+| Label | Set by | Meaning |
+|---|---|---|
+| `needs-decision` | contributor or coordinator | A question for the maintainer, asked in a PR comment; removed when answered |
+| `changes-requested` | coordinator | The review asks for changes; removed when they are pushed |
+| `merge-recommended` | coordinator | Reviewed, the suite passed at the commit named in the review comment |
+| `approved` | maintainer | The maintainer approves the merge |
+
+A PR whose head moves after `merge-recommended` is reviewed again. Work
+that is not yet a PR is tracked as GitHub issues.
 
 ## The pull request
 
@@ -130,7 +149,7 @@ maintainer decides whether to allow it.
 
 ## Merging
 
-The coordinator merges only what the maintainer has approved:
+The coordinator merges only PRs labeled `approved` by the maintainer:
 
 1. Branch `review-<name>` from `origin/main`.
 2. Merge the approved PRs one at a time with `--no-ff`, resolving
@@ -140,7 +159,8 @@ The coordinator merges only what the maintainer has approved:
 3. Assign the decision numbers and run `scripts/decision-number.sh check`.
 4. Build and run the full suite, on a GPU. A merge never proceeds on a
    failing suite.
-5. Fast-forward `main` and push it. The PRs then show as merged.
+5. Fast-forward `main` and push it. The PRs then show as merged; the
+   label `approved` is the maintainer's approval of this push.
 6. Rebuild the white paper (`scripts/paper/build-pdf.sh`).
 7. Remove the merged worktrees, branches, and build trees, and ask the
    authors of the open PRs to rebase on the new `main`.
