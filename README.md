@@ -200,12 +200,27 @@ See [docs/driver-m0.md](docs/driver-m0.md).
 |---|---|
 | `mdir run <control file> [--continue [--no-append]] [--max-walltime=<time>]` | Compiles the run and executes it; `--continue` goes on from its checkpoint until it is complete, and a run stops at a checkpoint on SIGTERM or at the wall time with the exit status 75 ([docs/driver-m0.md](docs/driver-m0.md), Section 2.7) |
 | `mdir emit <control file> [--stage=module\|lowered\|pipeline]` | Prints the program of the run, as it is built or as it is executed, or the passes between |
-| `mdir check <control file>` | Reads the input and prints what it describes, without compiling |
+| `mdir check <control file> [--json]` | Reads the input and reports the system, planned run, output paths and intervals, and preflight warnings; `--json` gives a structured report |
 | `mdir template md\|amber` | Prints a control file with every keyword, for terms in the control file or for an Amber topology |
 | `mdir template minimize\|nvt\|npt\|production` | Prints one stage of the standard pipeline, with checkpoints connecting the stages |
 | `mdir checkpoint <file> [<file>]` | Describes a checkpoint, or compares the states of two |
 | `mdir version` | Prints the version, the commit, and what the build supports |
 | `mdir bug-report <control file> [--run]` | Collects what a report of a defect needs ([docs/debugging.md](docs/debugging.md)) |
+
+Before running a control file, inspect its ensemble, duration, PME,
+constraints, target, precision, and outputs:
+
+```sh
+mdir check production.toml
+mdir check production.toml --json > preflight.json
+```
+
+The check warns about existing output files, a fixed neighbor-rebuild
+interval, and missing energy reports or checkpoints. It leaves files
+untouched. Warnings keep exit status 0; invalid input returns 1, including
+in JSON mode. It checks the control file and coordinates without compiling
+or loading an input checkpoint; it does not test the device or guarantee
+that a run will compile. See [the preflight reference](docs/driver-m0.md#14-preflight).
 
 `mdir-opt` runs the passes of MDIR on IR, as `mlir-opt` does, for
 development.

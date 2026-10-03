@@ -4,18 +4,35 @@
 #include "Commands.h"
 
 #include "mdir/Driver/Cell.h"
+#include "mdir/Driver/Checkpoint.h"
 #include "mdir/Driver/Control.h"
 #include "mdir/Driver/System.h"
 
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <cstdio>
+#include <numeric>
 #include <vector>
 
 using namespace mdir::driver;
 
-static int fail(llvm::Error error) {
-  llvm::errs() << "mdir: " << llvm::toString(std::move(error)) << "\n";
+static void printJSON(llvm::json::Object report) {
+  llvm::outs() << llvm::formatv("{0:2}", llvm::json::Value(std::move(report)))
+               << "\n";
+}
+
+static int fail(llvm::Error error, bool json) {
+  std::string message = llvm::toString(std::move(error));
+  if (json)
+    printJSON(llvm::json::Object{{"schema_version", 1}, {"ok", false},
+                                {"errors", llvm::json::Array{message}},
+                                {"warnings", llvm::json::Array{}}});
+  else
+    llvm::errs() << "mdir: " << message << "\n";
   return 1;
 }
 
@@ -36,7 +53,7 @@ static const char *getName(Precision precision) {
 }
 
 /// What a topology describes.
-static int describeTopology(const Control &control, const System &system) {
+static void describeTopology(const Control &control, const System &system) {
   const Topology &topology = *system.topology;
   size_t count = topology.getNumParticles();
   double totalMass = 0.0, totalCharge = 0.0;
@@ -80,25 +97,29 @@ static int describeTopology(const Control &control, const System &system) {
     std::printf("virtual sites:      %zu\n", topology.virtualSites.size());
   std::printf("total charge:       %.6f e\n", totalCharge);
   std::printf("total mass:         %g amu\n", totalMass);
-  Cell cell;
-  for (int k = 0; k != 3; ++k) {
-    cell.diagonal[k] = topology.box[k] / units::length;
-    cell.tilt[k] = topology.tilt[k] / units::length;
-  }
-  if (cell.isOrthorhombic()) {
-    std::printf("box:                %g %g %g Å\n", cell.diagonal[0],
-                cell.diagonal[1], cell.diagonal[2]);
+  if (control.periodic) {
+    Cell cell;
+    for (int k = 0; k != 3; ++k) {
+      cell.diagonal[k] = topology.box[k] / units::length;
+      cell.tilt[k] = topology.tilt[k] / units::length;
+    }
+    if (cell.isOrthorhombic()) {
+      std::printf("box:                %g %g %g Å\n", cell.diagonal[0],
+                  cell.diagonal[1], cell.diagonal[2]);
+    } else {
+      std::array<double, 6> shape = cell.getLengthsAndAngles();
+      std::printf("box:                %g %g %g Å, angles %g %g %g\n",
+                  shape[0], shape[1], shape[2], shape[3], shape[4], shape[5]);
+      std::printf("cell vectors:       a (%g, 0, 0), b (%g, %g, 0), "
+                  "c (%g, %g, %g) Å\n",
+                  cell.diagonal[0], cell.tilt[0], cell.diagonal[1],
+                  cell.tilt[1], cell.tilt[2], cell.diagonal[2]);
+    }
+    std::printf("density:            %g g/cm³\n",
+                totalMass / volume * 1.66053906660e-3);
   } else {
-    std::array<double, 6> shape = cell.getLengthsAndAngles();
-    std::printf("box:                %g %g %g Å, angles %g %g %g\n",
-                shape[0], shape[1], shape[2], shape[3], shape[4], shape[5]);
-    std::printf("cell vectors:       a (%g, 0, 0), b (%g, %g, 0), "
-                "c (%g, %g, %g) Å\n",
-                cell.diagonal[0], cell.tilt[0], cell.diagonal[1],
-                cell.tilt[1], cell.tilt[2], cell.diagonal[2]);
+    std::printf("boundary:           NONE (no periodic cell)\n");
   }
-  std::printf("density:            %g g/cm³\n",
-              totalMass / volume * 1.66053906660e-3);
   std::printf("velocities:         %s\n",
               topology.velocities.empty() ? "no" : "yes");
   std::printf("degrees of freedom: %g\n", system.getDegreesOfFreedom());
@@ -108,49 +129,331 @@ static int describeTopology(const Control &control, const System &system) {
       restrained += k > 0.0;
     std::printf("restrained:         %zu particles\n", restrained);
   }
-  return 0;
 }
 
-int mdir::tool::checkControl(llvm::StringRef controlFile) {
-  auto control = readControl(controlFile);
-  if (!control)
-    return fail(control.takeError());
-  auto system = readSystem(*control);
-  if (!system)
-    return fail(system.takeError());
-
-  if (system->topology)
-    return describeTopology(*control, *system);
-
-  size_t count = system->getNumParticles();
-  std::vector<size_t> perType(control->types.size(), 0);
+static void describeParticles(const Control &control, const System &system) {
+  size_t count = system.getNumParticles();
+  std::vector<size_t> perType(control.types.size(), 0);
   double totalMass = 0.0;
   for (size_t i = 0; i != count; ++i) {
-    ++perType[system->types[i]];
-    totalMass += system->masses[i];
+    ++perType[system.types[i]];
+    totalMass += system.masses[i];
   }
   // The box is held in nm; the control file is in Å.
-  double volume = system->box[0] * system->box[1] * system->box[2];
+  double volume = system.box[0] * system.box[1] * system.box[2];
 
   std::printf("particles:          %zu\n", count);
-  for (size_t t = 0, e = control->types.size(); t != e; ++t)
-    std::printf("  of type %-10s %zu\n", control->types[t].name.c_str(),
+  for (size_t t = 0, e = control.types.size(); t != e; ++t)
+    std::printf("  of type %-10s %zu\n", control.types[t].name.c_str(),
                 perType[t]);
   std::printf("total mass:         %g amu\n", totalMass);
-  std::printf("box:                %g %g %g Å\n",
-              system->box[0] / units::length, system->box[1] / units::length,
-              system->box[2] / units::length);
-  // amu/nm³ to g/cm³: 1 amu = 1.66053906660e-24 g, 1 nm³ = 1e-21 cm³.
-  std::printf("density:            %g g/cm³\n",
-              totalMass / volume * 1.66053906660e-3);
-  std::printf("degrees of freedom: %g\n", system->getDegreesOfFreedom());
-  std::printf("pair terms:         %zu\n", control->pairs.size());
-  std::printf("cutoff:             %g Å\n", control->cutoffDistance);
-  std::printf("integrator:         %s, %lld steps of %g ps\n",
-              getName(control->integrator),
-              static_cast<long long>(control->numSteps), control->timestep);
+  if (control.periodic) {
+    std::printf("box:                %g %g %g Å\n",
+                system.box[0] / units::length, system.box[1] / units::length,
+                system.box[2] / units::length);
+    // amu/nm³ to g/cm³: 1 amu = 1.66053906660e-24 g, 1 nm³ = 1e-21 cm³.
+    std::printf("density:            %g g/cm³\n",
+                totalMass / volume * 1.66053906660e-3);
+  } else {
+    std::printf("boundary:           NONE (no periodic cell)\n");
+  }
+  std::printf("degrees of freedom: %g\n", system.getDegreesOfFreedom());
+  std::printf("pair terms:         %zu\n", control.pairs.size());
+}
+
+namespace {
+struct Output {
+  const char *kind;
+  std::string path;
+  const char *format;
+  int64_t interval;
+  bool enabled;
+  bool atEnd = false;
+  bool exists = false;
+};
+
+struct Warning {
+  const char *code;
+  std::string message;
+};
+
+struct Preflight {
+  std::vector<Output> outputs;
+  std::vector<Warning> warnings;
+};
+} // namespace
+
+static const char *getEnsemble(const Control &control) {
+  return control.minimize ? "MINIMIZATION"
+         : control.barostat ? "NPT"
+         : control.thermostat ? "NVT" : "NVE";
+}
+
+static const char *getElectrostatics(const Control &control) {
+  return control.pme ? "PME"
+         : control.reactionField ? "REACTION_FIELD" : "CUTOFF";
+}
+
+/// Inspect configured outputs without opening or creating any of them.
+static Preflight inspect(const Control &control) {
+  Preflight report;
+  report.outputs = {
+      {"energies", "", "stdout", control.energyPeriod,
+       control.energyPeriod > 0},
+      {"trajectory", control.trajectoryFile,
+       control.trajectoryFormat == TrajectoryFormat::XTC ? "XTC" : "DCD",
+       control.framePeriod, control.framePeriod > 0},
+      {"checkpoint", control.restartOutput, "H5MD", control.checkpointPeriod,
+       control.checkpointPeriod > 0, control.minimize},
+      {"pull_coordinates", control.pullFile, "columns", control.energyPeriod,
+       !control.pullFile.empty()}};
+  for (Output &output : report.outputs) {
+    output.exists = !output.path.empty() && llvm::sys::fs::exists(output.path);
+    if (output.enabled && output.exists)
+      report.warnings.push_back(
+          {"output_exists", std::string(output.kind) + " output '" +
+                                output.path +
+                                "' already exists; use another output path "
+                                "for a new run, or --continue to resume"});
+  }
+  if (control.rebuildPeriod > 0)
+    report.warnings.push_back(
+        {"fixed_rebuild_interval",
+         "'rebuild_interval = " + std::to_string(control.rebuildPeriod) +
+             "' skips validity tests between rebuilds and may miss pairs "
+             "within the cutoff; set it to 0 to test every step"});
+  if (!control.minimize && control.numSteps > 0) {
+    if (control.checkpointPeriod == 0)
+      report.warnings.push_back(
+          {"no_checkpoint", "the run writes no checkpoint and cannot be "
+                            "continued with --continue; set [output].checkpoint "
+                            "and checkpoint_interval to enable continuation"});
+    if (control.energyPeriod == 0)
+      report.warnings.push_back(
+          {"no_energies", "'energy_interval = 0' disables energy reports; set "
+                          "a positive interval to monitor the run"});
+  }
+  if (!control.restartInput.empty() &&
+      !llvm::sys::fs::exists(control.restartInput))
+    report.warnings.push_back(
+        {"missing_input_checkpoint",
+         "input checkpoint '" + control.restartInput +
+             "' does not exist yet; complete the preceding stage or correct "
+             "[input].checkpoint before running"});
+  if ((!control.restartInput.empty() || control.checkpointPeriod > 0) &&
+      !hasCheckpointSupport())
+    report.warnings.push_back(
+        {"hdf5_unavailable", "this build has no HDF5 support; use a build "
+                              "with HDF5 to read or write checkpoints"});
+  if (control.target == Target::GPU && llvm::StringRef(MDIR_CUDA_ROOT).empty())
+    report.warnings.push_back(
+        {"gpu_unavailable", "this build has no CUDA target; use a CUDA build "
+                            "or select target = \"CPU\""});
+  return report;
+}
+
+static void describeRun(const Control &control, const System &system,
+                        const Preflight &report) {
+  std::printf("ensemble:           %s\n", getEnsemble(control));
+  if (control.minimize) {
+    std::printf("minimizer:          STEEPEST_DESCENT, %lld steps\n",
+                static_cast<long long>(control.numSteps));
+  } else {
+    std::printf("integrator:         %s, %lld steps of %g ps\n",
+                getName(control.integrator),
+                static_cast<long long>(control.numSteps), control.timestep);
+    std::printf("run length:         %g ns\n",
+                control.numSteps * control.timestep / 1000.0);
+    std::printf("temperature:        %g K (%s)\n", control.temperature,
+                control.thermostat ? "bath" : "initial velocities if drawn");
+    if (control.thermostat)
+      std::printf("thermostat:         %s\n",
+                  control.isLangevin() ? "LANGEVIN" : "V-RESCALE");
+    if (control.barostat)
+      std::printf("barostat:           C-RESCALE, %s, %g atm\n",
+                  control.semiIsotropic ? "SEMI_ISOTROPIC" : "ISOTROPIC",
+                  control.pressure);
+  }
+  std::printf("cutoff:             %g Å\n", control.cutoffDistance);
+  std::printf("electrostatics:      %s\n", getElectrostatics(control));
+  if (control.pme) {
+    if (control.pmeGrid[0] > 0)
+      std::printf("PME grid:           %lld %lld %lld, order %lld\n",
+                  static_cast<long long>(control.pmeGrid[0]),
+                  static_cast<long long>(control.pmeGrid[1]),
+                  static_cast<long long>(control.pmeGrid[2]),
+                  static_cast<long long>(control.pmeOrder));
+    else
+      std::printf("PME grid:           automatic, max spacing %g Å, order %lld\n",
+                  control.pmeMaxSpacing,
+                  static_cast<long long>(control.pmeOrder));
+    if (control.pmeAlpha > 0)
+      std::printf("PME beta:           %g Å^-1\n", control.pmeAlpha);
+    else
+      std::printf("PME beta:           automatic, tolerance %g\n",
+                  control.pmeAlphaTolerance);
+  }
+  std::printf("constraints:        %zu distances; hydrogen bonds %s, "
+              "rigid water %s\n",
+              system.numConstraints, control.rigidBonds ? "yes" : "no",
+              control.fastWater ? "yes" : "no");
   std::printf("target:             %s, %s precision\n",
-              control->target == Target::GPU ? "gpu" : "cpu",
-              getName(control->precision));
+              control.target == Target::GPU ? "gpu" : "cpu",
+              getName(control.precision));
+  if (control.target == Target::CPU)
+    std::printf("threads:            %lld\n",
+                static_cast<long long>(control.threads));
+  if (!control.restartInput.empty())
+    std::printf("input checkpoint:   %s (not loaded by check)\n",
+                control.restartInput.c_str());
+  std::printf("outputs:\n");
+  for (const Output &output : report.outputs) {
+    const char *path = output.path.c_str();
+    if (output.path.empty())
+      path = llvm::StringRef(output.kind) == "energies" ? "stdout"
+                                                       : "not configured";
+    std::printf("  %s: %s (%s)", output.kind, path, output.format);
+    if (!output.enabled)
+      std::printf(", disabled");
+    else if (output.atEnd)
+      std::printf(", at the end");
+    else
+      std::printf(", every %lld steps", static_cast<long long>(output.interval));
+    if (output.exists)
+      std::printf(", exists");
+    std::printf("\n");
+  }
+  for (const Warning &warning : report.warnings)
+    llvm::errs() << "mdir: warning: " << warning.message << "\n";
+}
+
+static llvm::json::Object makeJSON(const Control &control, const System &system,
+                                  const Preflight &report) {
+  using llvm::json::Array;
+  using llvm::json::Object;
+  using llvm::json::Value;
+  Object particles{
+      {"particles", system.getNumParticles()},
+      {"types", system.topology ? system.topology->getNumTypes()
+                                : control.types.size()},
+      {"degrees_of_freedom", system.getDegreesOfFreedom()},
+      {"total_mass_amu", std::accumulate(system.masses.begin(),
+                                         system.masses.end(), 0.0)},
+      {"given_velocities", system.givenVelocities},
+      {"restrained_particles", std::count_if(
+          system.restraintConstants.begin(), system.restraintConstants.end(),
+          [](double k) { return k > 0.0; })},
+      {"periodic", control.periodic}, {"cell_angstrom", nullptr}};
+  if (control.periodic) {
+    Array diagonal, tilt;
+    for (int k = 0; k != 3; ++k) {
+      diagonal.push_back(system.box[k] / units::length);
+      tilt.push_back(system.tilt[k] / units::length);
+    }
+    particles["cell_angstrom"] = Object{{"diagonal", std::move(diagonal)},
+                                         {"tilt", std::move(tilt)}};
+  }
+  if (system.topology) {
+    const Topology &topology = *system.topology;
+    particles["topology"] = Object{
+        {"path", !control.prmtopFile.empty() ? control.prmtopFile
+                     : !control.charmmStructureFile.empty()
+                           ? control.charmmStructureFile
+                           : control.gromacsTopologyFile},
+        {"residues", topology.residueNames.size()},
+        {"bonds", topology.bonds.size()}, {"angles", topology.angles.size()},
+        {"hydrogen_bonds", std::count_if(
+            topology.bonds.begin(), topology.bonds.end(),
+            [](const Topology::Bond &bond) { return bond.hydrogen; })},
+        {"dihedrals", topology.dihedrals.size()},
+        {"improper_dihedrals", std::count_if(
+            topology.dihedrals.begin(), topology.dihedrals.end(),
+            [](const Topology::Dihedral &dihedral) { return dihedral.improper; })},
+        {"urey_bradley_terms", topology.ureyBradleys.size()},
+        {"harmonic_impropers", topology.harmonicImpropers.size()},
+        {"pairs_1_4", topology.pairs.size()},
+        {"excluded_pairs", topology.exclusions.size()},
+        {"cmap_terms", topology.cmaps.size()},
+        {"cmap_maps", topology.cmapGrids.size()},
+        {"total_charge_e", std::accumulate(topology.charges.begin(),
+                                           topology.charges.end(), 0.0)},
+        {"virtual_sites", topology.virtualSites.size()},
+        {"rigid_waters", topology.settles.size()}};
+  } else {
+    particles["pair_terms"] = control.pairs.size();
+  }
+  Object run{
+      {"kind", control.minimize ? "minimization" : "dynamics"},
+      {"ensemble", getEnsemble(control)}, {"steps", control.numSteps},
+      {"integrator", control.minimize ? "STEEPEST_DESCENT"
+                                      : getName(control.integrator)},
+      {"time_step_ps", control.minimize ? Value(nullptr) : Value(control.timestep)},
+      {"duration_ns", control.minimize ? Value(nullptr)
+                         : Value(control.numSteps * control.timestep / 1000.0)},
+      {"temperature_kelvin", control.minimize ? Value(nullptr)
+                                               : Value(control.temperature)},
+      {"pressure_atm", control.barostat ? Value(control.pressure) : Value(nullptr)},
+      {"thermostat", !control.thermostat ? "NONE"
+                         : control.isLangevin() ? "LANGEVIN" : "V-RESCALE"},
+      {"barostat_coupling", !control.barostat ? "NONE"
+                          : control.semiIsotropic ? "SEMI_ISOTROPIC" : "ISOTROPIC"},
+      {"cutoff_angstrom", control.cutoffDistance},
+      {"electrostatics", getElectrostatics(control)},
+      {"pme", nullptr},
+      {"constraints", Object{{"distances", system.numConstraints},
+                              {"hydrogen_bonds", control.rigidBonds},
+                              {"rigid_water", control.fastWater},
+                              {"analytic_bonds", control.analyticBonds}}},
+      {"target", control.target == Target::GPU ? "gpu" : "cpu"},
+      {"precision", getName(control.precision)},
+      {"threads", control.threads},
+      {"input_checkpoint", control.restartInput.empty() ? Value(nullptr)
+                                                       : Value(control.restartInput)}};
+  if (control.pme) {
+    Array grid;
+    for (int k = 0; k != 3; ++k)
+      grid.push_back(control.pmeGrid[k] ? Value(control.pmeGrid[k]) : Value(nullptr));
+    run["pme"] = Object{
+        {"grid_points", std::move(grid)}, {"order", control.pmeOrder},
+        {"max_spacing_angstrom", control.pmeMaxSpacing},
+        {"beta_inverse_angstrom", control.pmeAlpha > 0 ? Value(control.pmeAlpha)
+                                                       : Value(nullptr)},
+        {"tolerance", control.pmeAlphaTolerance}};
+  }
+  Array outputs, warnings;
+  for (const Output &output : report.outputs)
+    outputs.push_back(Object{{"kind", output.kind},
+                             {"path", output.path.empty() ? Value(nullptr)
+                                                          : Value(output.path)},
+                             {"format", output.format},
+                             {"interval_steps", output.interval},
+                             {"enabled", output.enabled},
+                             {"at_end", output.atEnd},
+                             {"exists", output.exists}});
+  for (const Warning &warning : report.warnings)
+    warnings.push_back(Object{{"code", warning.code}, {"message", warning.message}});
+  return Object{{"schema_version", 1}, {"ok", true},
+          {"system", std::move(particles)}, {"run", std::move(run)},
+          {"outputs", std::move(outputs)}, {"warnings", std::move(warnings)},
+          {"errors", Array{}}};
+}
+
+int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
+  auto control = readControl(controlFile);
+  if (!control)
+    return fail(control.takeError(), json);
+  auto system = readSystem(*control);
+  if (!system)
+    return fail(system.takeError(), json);
+  Preflight report = inspect(*control);
+  if (json) {
+    printJSON(makeJSON(*control, *system, report));
+  } else {
+    if (system->topology)
+      describeTopology(*control, *system);
+    else
+      describeParticles(*control, *system);
+    describeRun(*control, *system, report);
+  }
   return 0;
 }
