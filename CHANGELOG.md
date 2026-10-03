@@ -12,6 +12,10 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- The binary tarball of a release, `mdir-VERSION-manylinux_2_28_x86_64.tar.gz`,
+  runs on Linux x86-64 with glibc 2.28 or later and carries HDF5, cuFFT, and
+  libdevice, so a GPU run needs only the NVIDIA driver; `CUDA_ROOT` is
+  optional (D[manylinux]).
 - `cmake --install` installs `bin/mdir`, its runtime, and the OpenMP runtime
   under one prefix, and the log of a run begins with the version and the
   commit of the build (D174).

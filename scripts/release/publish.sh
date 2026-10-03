@@ -11,8 +11,9 @@
 #     its lock (MDIR_RELEASE_GPU_LOCK, default ~/build/locks/gpu1.lock);
 #  3. builds the white paper (PANDOC, default ~/opt/pandoc/bin/pandoc);
 #  4. writes the assets to ~/build/release/vVERSION: the source archive
-#     (git archive), the installed tree for Linux x86-64 with CUDA, the PDF,
-#     the release notes, and SHA256SUMS; --container also builds the Docker
+#     (git archive), the installed tree for manylinux_2_28 x86-64 with CUDA
+#     (packaging/Dockerfile.manylinux; checked by check-binary.sh and run
+#     on the CPU and on GPU 1 without CUDA_ROOT), the PDF, the release notes, and SHA256SUMS; --container also builds the Docker
 #     image mdir:VERSION (not uploaded);
 #  5. makes the annotated tag vVERSION on that commit.
 # Without --publish it stops there and prints the two publishing commands;
@@ -60,10 +61,26 @@ grep -E '^\s+(Passed|Unsupported)' "$log-check.log"
 echo "== assets in $out"
 rm -rf "$out" && mkdir -p "$out"
 git archive --format=tar.gz --prefix="mdir-$version/" -o "$out/mdir-$version-source.tar.gz" "$commit"
-stage=$(mktemp -d)
-DESTDIR="$stage/mdir-$version" cmake --install "$build" > "$log-install.log"
-tar -C "$stage" -czf "$out/mdir-$version-linux-x86_64-cuda.tar.gz" "mdir-$version"
-rm -rf "$stage"
+# The binary tarball is built for manylinux_2_28 in its own image
+# (packaging/Dockerfile.manylinux, D[manylinux]), not from the host build;
+# it is checked, then run from its extracted tree, without CUDA_ROOT, on
+# the CPU and on GPU 1.
+binary=mdir-$version-manylinux_2_28_x86_64.tar.gz
+DOCKER_BUILDKIT=1 docker build -f packaging/Dockerfile.manylinux \
+  --build-arg MDIR_GIT_COMMIT="$commit" --build-arg VERSION="$version" \
+  --target tarball --output "type=local,dest=$out" . > "$log-manylinux.log" 2>&1
+tree=$(mktemp -d)
+tar -C "$tree" -xzf "$out/$binary"
+scripts/release/check-binary.sh "$tree/mdir-$version"
+mdir="$tree/mdir-$version/bin/mdir"
+cp -r "$tree/mdir-$version/share/mdir/examples/ala3" "$tree/ala3"
+sed 's/^target *= *"GPU".*/target = "CPU"/' "$tree/ala3/1-min.toml" > "$tree/ala3/1-min-cpu.toml"
+(cd "$tree/ala3" && env -u CUDA_ROOT -u CUDA_HOME -u CUDA_PATH "$mdir" doctor --target=cpu \
+  && env -u CUDA_ROOT -u CUDA_HOME -u CUDA_PATH "$mdir" run 1-min-cpu.toml) > "$log-tarball-cpu.log" 2>&1 \
+  || { echo "the tarball failed on the CPU: $log-tarball-cpu.log" >&2; exit 1; }
+(cd "$tree/ala3" && flock "$lock" sh -c "nvidia-smi -i 1 >/dev/null; export CUDA_VISIBLE_DEVICES=1; env -u CUDA_ROOT -u CUDA_HOME -u CUDA_PATH '$mdir' doctor --target=gpu && env -u CUDA_ROOT -u CUDA_HOME -u CUDA_PATH '$mdir' run 1-min.toml") > "$log-tarball-gpu.log" 2>&1 \
+  || { echo "the tarball failed on the GPU: $log-tarball-gpu.log" >&2; exit 1; }
+rm -rf "$tree"
 PANDOC=${PANDOC:-$HOME/opt/pandoc/bin/pandoc} scripts/paper/build-pdf.sh "$build/paper" > "$log-pdf.log" 2>&1
 cp "$build/paper/main.pdf" "$out/mdir-$version-white-paper.pdf"
 cp "docs/release-notes/$tag.md" "$out/"

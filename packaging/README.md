@@ -8,6 +8,7 @@ needs only Docker or Apptainer and the NVIDIA driver.
 |---|---|
 | [Dockerfile](Dockerfile) | A Docker image, in stages: system packages, HDF5, LLVM with MLIR and the OpenMP runtime, MDIR; the final stage holds only the installed tree on CUDA's runtime image |
 | [mdir.def](mdir.def) | An Apptainer (Singularity) image made from the Docker image |
+| [Dockerfile.manylinux](Dockerfile.manylinux) | The release tarball for manylinux_2_28 (glibc 2.28 and later), built on the PyPA image of that baseline (D[manylinux]) |
 
 **Layers.** The stages go from what changes least to what changes most:
 the base image (pinned by digest) and its packages, HDF5 1.14.6, LLVM
@@ -81,3 +82,40 @@ CUDA_VISIBLE_DEVICES=1 apptainer run --nv mdir-0.1.0.sif run md.toml
   and `nvvm/libdevice` copied from the devel image, with
   `CUDA_ROOT=/usr/local/cuda`. The kernels are compiled at the start of a
   run and take their math functions from libdevice.
+
+## The release tarball (manylinux_2_28)
+
+`Dockerfile.manylinux` builds the binary tarball of a release on
+`quay.io/pypa/manylinux_2_28_x86_64` (AlmaLinux 8, glibc 2.28, GCC 14), so
+that it runs on RHEL, Rocky, and Alma 8 and later, Ubuntu 20.04 and later,
+and Debian 11 and later:
+
+```sh
+DOCKER_BUILDKIT=1 docker build -f packaging/Dockerfile.manylinux \
+  --build-arg MDIR_GIT_COMMIT=$(git rev-parse HEAD) --build-arg VERSION=0.1.0 \
+  --target tarball --output type=local,dest=out .
+scripts/release/check-binary.sh <extracted tree>
+```
+
+The layers follow the same rule as the container: the base image and
+ninja, the parts of CUDA 13.0 for RHEL 8 that the build reads, HDF5, LLVM,
+then MDIR's sources. The tarball holds:
+
+| Path | What |
+|---|---|
+| `bin/mdir` | The driver; libstdc++ and libgcc are linked statically |
+| `lib/libmdrt.so`, `lib/libmdrt_cuda.so` | The runtime |
+| `lib/libomp.so` | The OpenMP runtime of LLVM, for threaded runs on the CPU |
+| `lib/libhdf5.so.*` | HDF5, for checkpoints |
+| `lib/libcufft.so.*` | cuFFT, for particle mesh Ewald on a GPU |
+| `share/mdir/cuda` | libdevice, the math functions the kernels link, with the CUDA EULA |
+| `share/mdir/examples`, `share/mdir/LICENSE` | The examples and MDIR's license |
+
+cuFFT and libdevice are redistributable under Attachment A of the CUDA
+EULA, which the tarball carries. With them a GPU run needs only the NVIDIA
+driver: when `CUDA_ROOT`, `CUDA_HOME`, and `CUDA_PATH` are unset, the driver
+links the kernels against `share/mdir/cuda`. Setting `CUDA_ROOT` still
+selects another toolkit. `scripts/release/check-binary.sh` checks that no
+binary needs GLIBC newer than 2.28 or the system's libstdc++ (MDIR's own
+binaries), and that every library is bundled or one that manylinux_2_28
+allows from the system.

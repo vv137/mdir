@@ -73,11 +73,21 @@ static std::optional<std::string> getRuntimeVersion(StringRef root) {
   return std::nullopt;
 }
 
-/// The toolkit of the run: the one that CUDA_ROOT names, as for the
-/// kernels' libdevice (Run.cpp), else the one of the build.
-static StringRef getToolkitRoot() {
-  const char *root = std::getenv("CUDA_ROOT");
-  return root && *root ? StringRef(root) : StringRef(MDIR_CUDA_ROOT);
+std::string mdir::tool::getCudaToolkitRoot() {
+  for (const char *name : {"CUDA_ROOT", "CUDA_HOME", "CUDA_PATH"})
+    if (const char *root = std::getenv(name); root && *root)
+      return root;
+  static int anchor;
+  std::string executable =
+      llvm::sys::fs::getMainExecutable("mdir", (void *)&anchor);
+  llvm::SmallString<256> bundled(llvm::sys::path::parent_path(
+      llvm::sys::path::parent_path(executable)));
+  llvm::sys::path::append(bundled, "share", "mdir", "cuda");
+  llvm::SmallString<256> libdevice(bundled);
+  llvm::sys::path::append(libdevice, "nvvm", "libdevice", "libdevice.10.bc");
+  if (llvm::sys::fs::exists(libdevice))
+    return std::string(bundled);
+  return MDIR_CUDA_ROOT;
 }
 
 /// The version of CUDA that the driver supports, as major * 1000 + minor *
@@ -102,7 +112,7 @@ void mdir::tool::printVersion(llvm::raw_ostream &os) {
   os << "LLVM " << LLVM_VERSION_STRING << "\n";
   os << "targets: cpu";
   if (MDIR_HAS_CUDA) {
-    StringRef toolkit = getToolkitRoot();
+    std::string toolkit = getCudaToolkitRoot();
     if (auto version = getRuntimeVersion(toolkit))
       os << ", gpu (CUDA " << *version << " at " << toolkit;
     else
