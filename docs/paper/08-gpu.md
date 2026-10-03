@@ -36,7 +36,12 @@ launches no more rows than it has tuples, so the sums over the centers of
 groups, some 170 tuples on JAC, are one block. A kernel passes each
 buffer as its descriptor, and PTX before ISA 8.1 allows 4352 bytes of
 parameters: the sums of a loop go to the kernels in runs whose
-descriptors fit 3 KB (D145).
+descriptors fit 3 KB (D145). The results go to a buffer of the device;
+the host copies them only where it reads them, for the log. A kernel
+whose arguments are arithmetic of the sums, such as the weights of the
+forces of a term over the centers of groups, evaluates that arithmetic
+itself from the device's buffer, so that a step does not wait for its
+sums (D156).
 
 **Counting in 32 bits** (D85). MLIR's `index` is 64 bits on NVPTX. Device
 code counts particles, cells, tuples, and entries in `i32`, and only a

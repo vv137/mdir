@@ -3748,6 +3748,151 @@ static void expandPowers(func::FuncOp function) {
   }
 }
 
+/// Kernels that take a value the host computes from global sums compute it
+/// themselves from the copy of the sums on the device, so that the host
+/// need not wait for the sums to launch them (D156). The value is a chain
+/// of pure ops over loads of the results that emitReductions marked
+/// `mdir.readback`; the chain is cloned into the kernel with each load
+/// reading the device's buffer, which the kernel of the reduction wrote
+/// before, in the order of the stream. A group of copies whose loads the
+/// host then no longer needs is removed. The work of a second stream (D87)
+/// is left as it is, since its order relative to the first is the host's.
+static void keepReadbacksOnDevice(func::FuncOp function) {
+  llvm::DenseMap<Value, Value> deviceOf;
+  function.walk([&](gpu::MemcpyOp copy) {
+    if (copy->hasAttr("mdir.readback"))
+      deviceOf[copy.getDst()] = copy.getSrc();
+  });
+  if (deviceOf.empty())
+    return;
+  // The ops of the work of a second stream.
+  llvm::DenseSet<Operation *> side;
+  function.walk([&](Block *block) {
+    bool inside = false;
+    for (Operation &op : *block) {
+      if (auto call = dyn_cast<func::CallOp>(op)) {
+        if (call.getCallee() == "mdrtSideBegin")
+          inside = true;
+        else if (call.getCallee() == "mdrtSideEnd")
+          inside = false;
+      }
+      if (inside)
+        op.walk([&](Operation *nested) { side.insert(nested); });
+    }
+  });
+  auto isPure = [](Operation *op) {
+    return op->getNumRegions() == 0 && isMemoryEffectFree(op);
+  };
+  auto isSum = [&](Operation *op) {
+    auto load = dyn_cast_or_null<memref::LoadOp>(op);
+    return load && load->hasAttr("mdir.readback") &&
+           deviceOf.count(load.getMemRef()) && !side.contains(op);
+  };
+  // Whether `value` is computed by pure ops from at least one load of the
+  // sums.
+  llvm::DenseMap<Value, bool> fromSums;
+  std::function<bool(Value)> readsSums = [&](Value value) -> bool {
+    auto found = fromSums.find(value);
+    if (found != fromSums.end())
+      return found->second;
+    fromSums[value] = false;
+    Operation *def = value.getDefiningOp();
+    bool result = false;
+    if (isSum(def)) {
+      result = true;
+    } else if (def && isPure(def) && !side.contains(def)) {
+      for (Value operand : def->getOperands())
+        result |= readsSums(operand);
+    }
+    fromSums[value] = result;
+    return result;
+  };
+
+  SmallVector<gpu::LaunchOp> launches;
+  function.walk([&](gpu::LaunchOp launch) {
+    if (!side.contains(launch))
+      launches.push_back(launch);
+  });
+  for (gpu::LaunchOp launch : launches) {
+    Region &body = launch.getBody();
+    llvm::SetVector<Value> captured;
+    body.walk([&](Operation *op) {
+      for (Value operand : op->getOperands())
+        if (!body.isAncestor(operand.getParentRegion()))
+          captured.insert(operand);
+    });
+    OpBuilder builder = OpBuilder::atBlockBegin(&body.front());
+    IRMapping mapping;
+    std::function<Value(Value)> clone = [&](Value value) -> Value {
+      if (Value done = mapping.lookupOrNull(value))
+        return done;
+      if (!readsSums(value))
+        return value;
+      Operation *def = value.getDefiningOp();
+      Value result;
+      if (auto load = dyn_cast<memref::LoadOp>(def)) {
+        SmallVector<Value> indices;
+        for (Value index : load.getIndices())
+          indices.push_back(builder.clone(*index.getDefiningOp())->getResult(0));
+        result = memref::LoadOp::create(builder, load.getLoc(),
+                                        deviceOf.lookup(load.getMemRef()),
+                                        indices);
+      } else {
+        for (Value operand : def->getOperands())
+          mapping.map(operand, clone(operand));
+        Operation *copy = builder.clone(*def, mapping);
+        result = copy->getResult(cast<OpResult>(value).getResultNumber());
+      }
+      mapping.map(value, result);
+      return result;
+    };
+    for (Value value : captured) {
+      if (!readsSums(value))
+        continue;
+      Value inside = clone(value);
+      value.replaceUsesWithIf(inside, [&](OpOperand &use) {
+        return body.isAncestor(use.getOwner()->getParentRegion());
+      });
+    }
+  }
+
+  // The host's chains of pure ops and loads that nothing uses any more,
+  // and then the copies whose loads are all gone.
+  bool erased = true;
+  while (erased) {
+    erased = false;
+    SmallVector<Operation *> dead;
+    function.walk([&](Operation *op) {
+      if (op->use_empty() && op->getNumResults() > 0 &&
+          (isPure(op) || isSum(op)))
+        dead.push_back(op);
+    });
+    for (Operation *op : dead)
+      op->erase();
+    erased = !dead.empty();
+  }
+  llvm::MapVector<int64_t, SmallVector<Operation *>> groups;
+  function.walk([&](Operation *op) {
+    if (auto id = op->getAttrOfType<IntegerAttr>("mdir.readback"))
+      groups[id.getInt()].push_back(op);
+  });
+  for (auto &[id, group] : groups) {
+    if (llvm::any_of(group, [](Operation *op) {
+          return isa<memref::LoadOp>(op);
+        }))
+      continue;
+    SmallVector<Operation *> trio;
+    for (Operation *op : group)
+      if (isa<gpu::WaitOp, gpu::MemcpyOp>(op))
+        trio.push_back(op);
+    // Users first: the last wait, the copy, the first wait of each copy.
+    for (Operation *op : llvm::reverse(trio))
+      if (op->use_empty() ||
+          llvm::all_of(op->getUsers(), [](Operation *) { return false; }))
+        op->erase();
+  }
+}
+
 /// Moves each group of ops that reads global sums back to the host (marked
 /// `mdir.readback` by emitReductions) down its block to just before the
 /// first op that needs its values and may have effects, taking the pure ops
@@ -3986,6 +4131,7 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   // The kernels read tables from their buffers.
   lowerLookups(function);
   expandPowers(function);
+  keepReadbacksOnDevice(function);
   deferReadbacks(function);
 
   releaseStack(function);
