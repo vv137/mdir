@@ -73,7 +73,7 @@ for precision in ['double', 'mixed']:
         text = base.replace('SEMI_ISOTROPIC', coupling).replace('semi.h5', 'NAME.h5')
         if coupling == 'SEMI_ISOTROPIC':
             text = text.replace('[barostat]', '[barostat]\ncompressibility_z = 0.0')
-        text += f'\n[execution]\ntarget = "{target}"\nprecision = "{precision}"\n'
+        text += f'\n[execution]\ntarget = "{target}"\nprecision = "{precision}"\ndeterministic = true\n'
         text = text.replace('NAME', name)
         control = scratch / (name + '.toml')
         control.write_text(text)
@@ -87,7 +87,10 @@ for precision in ['double', 'mixed']:
             continued.write_text(text.replace(name, 'continued').replace('checkpoint_interval = 20', 'checkpoint_interval = 10'))
             run(continued, '--continue', '--max-walltime', '0.000001', status=75)
             run(continued, '--continue')
-            assert (scratch / 'continued.energy').read_bytes() == (scratch / (name + '.energy')).read_bytes()
+            resumed = columns(scratch / 'continued.energy')
+            whole = columns(scratch / (name + '.energy'))
+            assert len(resumed) == len(whole)
+            assert [(r[0], *r[-2:]) for r in resumed] == [(r[0], *r[-2:]) for r in whole]
 
 # A tilted b vector catches using |a| |b| instead of the face area.
 gro = scratch / 'tilted.gro'

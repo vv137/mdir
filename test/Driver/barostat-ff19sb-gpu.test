@@ -39,13 +39,13 @@
 # correction for the dispersion, barostat.test).
 #
 # CHECK:      INFO:         0 {{.*}} 28634.{{[0-9]+}}
-# CHECK:      INFO:      5000 {{.*}} {{2[0-3][0-9]{3}\.[0-9]+$}}
+# CHECK:      INFO:      5000 {{.*}} {{2[0-3][0-9]{3}\.[0-9]+}} {{[0-9.]+$}}
 # CHECK:      MDIR: the momentum at the end is {{[0-9.]+}}e-{{(0[4-9]|1[0-9])}} amu nm/ps
 # CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[2-9]}} of its value
 # EXACT:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[3-9]}} of its value
 #
 # LEAP:       INFO:         0 {{.*}} 28634.{{[0-9]+}}
-# LEAP:       INFO:      5000 {{.*}} {{2[0-3][0-9]{3}\.[0-9]+$}}
+# LEAP:       INFO:      5000 {{.*}} {{2[0-3][0-9]{3}\.[0-9]+}} {{[0-9.]+$}}
 # LEAP:       MDIR: the momentum at the end is {{[0-9.]+}}e-{{(0[2-9]|1[0-9])}} amu nm/ps
 # LEAP:       MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[2-9]}} of its value
 
