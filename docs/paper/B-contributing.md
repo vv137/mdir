@@ -91,3 +91,11 @@ reuses, aliases, or reorders buffers, under what condition, checked where;
 whether it can be turned off and is compared both ways; whether it depends
 on sizes that the small tests do not vary; and whether a numerical method
 is tested on its hard case.
+
+The process around a change is described in `docs/workflow.md`. A change
+lives on a branch of its own and opens a draft pull request as soon as its
+user-visible design is decided, so that the design can be redirected
+early. Its decision carries a label until the merge gives it a number in
+the order of the merges. A reviewer runs the full suite on a GPU and
+reports the result on the pull request before the maintainer approves the
+merge.

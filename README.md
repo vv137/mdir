@@ -63,6 +63,7 @@ paper of the first milestone is in [docs/paper/](docs/paper/README.md).
 | [docs/charmm-m1.md](docs/charmm-m1.md) | CHARMM force fields: what CHARMM computes (measured with CHARMM 51b1), the force switch of Steinbach and Brooks, converting CHARMM files, and the validation against CHARMM |
 | [docs/paper/](docs/paper/README.md) | The white paper of the first milestone, with derivations and measurements (`scripts/paper/build-pdf.sh` builds the PDF) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to build, test, and change MDIR |
+| [docs/workflow.md](docs/workflow.md) | How work is planned, reviewed, and merged: roles, draft pull requests, decision labels, shared GPUs |
 | [docs/decisions.md](docs/decisions.md) | Decisions and their status |
 | [docs/principles.md](docs/principles.md) | Principles of development, from the defects that taught them |
 | [docs/roadmap.md](docs/roadmap.md) | What comes next: robustness, the rest of the first milestone, the white paper |

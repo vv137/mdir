@@ -4,6 +4,8 @@ The full guide is Appendix B of the white paper,
 [docs/paper/B-contributing.md](docs/paper/B-contributing.md): building,
 the tiers of tests, where a change goes, the tools of diagnosis, and how a
 change is recorded and reviewed. This file is its summary.
+[docs/workflow.md](docs/workflow.md) describes the process around a change:
+roles, branches and draft pull requests, review, and merging.
 
 ## Build and test
 
