@@ -1,6 +1,7 @@
 # Hybrid CPU execution: MPI, OpenMP, and SIMD
 
-Status: implementation in progress, D[cpu-hybrid-lj], 2026-10-03.
+Status: fixed-layout reference implementation and validation complete.
+D[cpu-hybrid-lj], 2026-10-04.
 Issue #33 is the first fixed-layout Lennard-Jones slice. The broader
 `md_dist` contract remains the design of PR #32, not implemented by this
 prototype.
