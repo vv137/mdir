@@ -737,6 +737,14 @@ The first-milestone white paper is written. Its validation and preparation for p
 
 ## Adopted scope and first deliverable
 
+Classical MD remains an independent core use case of MDIR. MLIP support
+extends the shared compiler and runtime while preserving existing classical
+features, correctness checks, and performance baselines. Small LJ and EAM
+systems provide tractable validation of new distributed mechanisms; they
+complement production molecular systems and do not define the final scope.
+The fixed-cell, short-range, unconstrained scope below limits the first
+distributed MLIP experiment, not existing single-device MD functionality.
+
 D159 adopts this direction on October 3, 2026. **The first deliverable is
 one existing MLIP artifact, validated on one GPU and then on two GPUs
 partitioning the same physical system.** Select a finite-range, strictly

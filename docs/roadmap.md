@@ -210,6 +210,12 @@ Still to decide for DLPack: the order of the particles when the run keeps them i
 
 ## 7. Distributed execution and learned potentials
 
+Classical MD remains a core use case. This extension preserves its existing
+features, validation, and performance baselines, with no required MLIP
+backend for classical runs. LJ/EAM are initial distributed validation
+models; realistic molecular systems remain part of validation and the
+long-term distributed scope.
+
 Direction adopted in D159 (2026-10-03); all milestones below are planned,
 not implemented. [The architecture plan](future-architecture-plan.md#adopted-scope-and-first-deliverable)
 holds the contracts and detailed sequence. The first deliverable is **one
