@@ -268,6 +268,10 @@ Value Rewriter::emitTerm(const Term &term, Location loc, bool magnitude) {
       denominator = multiplyValues(
           denominator, createPower(value, -exponent, loc), loc);
   }
+  // The product of the factors, which may be 0 where an inverse power of
+  // r leaves the range of its type (in f32 when two particles all but
+  // meet): the term is then 0, not 0 · ∞. A pair of ε = 0 is such a case.
+  Value factors = numerator;
   numerator =
       multiplyValues(numerator, emitPowerOfDistance(term.power, loc), loc);
 
@@ -275,6 +279,12 @@ Value Rewriter::emitTerm(const Term &term, Location loc, bool magnitude) {
     numerator = multiplyValues(createConstant(scale, loc), numerator, loc);
   if (denominator)
     numerator = arith::DivFOp::create(builder, loc, numerator, denominator);
+  if (factors && term.power < 0) {
+    Value zero = createConstant(0.0, loc);
+    Value none = arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::OEQ,
+                                       factors, zero);
+    numerator = arith::SelectOp::create(builder, loc, none, zero, numerator);
+  }
   return numerator;
 }
 

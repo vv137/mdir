@@ -2329,21 +2329,9 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
   //
   // σⁿ Φₙ is written with s = σ/r and g = σ, so that no power of r alone
   // leaves the range of f32.
-  //
-  // A pair of ε = 0 contributes exactly 0: 4ε times the bracket, which
-  // leaves the range of f32 when two such particles all but meet (as two
-  // particles of an ideal gas may), would be 0 · ∞ there. The product is
-  // selected away where ε is 0, and so is its derivative.
   double from = control.switchDistance * units::length;
   auto emitLennardJones = [&](StringRef sigma, StringRef epsilon,
                               StringRef result, Truncation modifier) {
-    auto emitProduct = [&]() {
-      os << "    %e4t = arith.mulf %e4, %t : f64\n"
-         << "    %e_zero = arith.constant 0.0 : f64\n"
-         << "    %e_none = arith.cmpf oeq, %e4, %e_zero : f64\n"
-         << "    " << result
-         << " = arith.select %e_none, %e_zero, %e4t : f64\n";
-    };
     os << "    %c4 = arith.constant 4.0 : f64\n"
        << "    %e4 = arith.mulf %c4, " << epsilon << " : f64\n"
        << "    %sr = arith.divf " << sigma << ", %r : f64\n";
@@ -2351,8 +2339,8 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
       os << "    %i6 = arith.constant 6 : i32\n"
          << "    %s6 = math.fpowi %sr, %i6 : f64, i32\n"
          << "    %s12 = arith.mulf %s6, %s6 : f64\n"
-         << "    %t = arith.subf %s12, %s6 : f64\n";
-      emitProduct();
+         << "    %t = arith.subf %s12, %s6 : f64\n"
+         << "    " << result << " = arith.mulf %e4, %t : f64\n";
       return;
     }
     os << "    %i3 = arith.constant 3 : i32\n"
@@ -2434,8 +2422,8 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
       a = "%a_sel";
       b = "%b_sel";
     }
-    os << "    %t = arith.subf " << a << ", " << b << " : f64\n";
-    emitProduct();
+    os << "    %t = arith.subf " << a << ", " << b << " : f64\n"
+       << "    " << result << " = arith.mulf %e4, %t : f64\n";
   };
 
   os << "md.potential @" << name << "(%x: !vec, %cell: !md.cell"
@@ -2545,8 +2533,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
          << formatReal(constant.second) << " : f64\n";
       values[constant.first] = value;
     }
-    // A fixed factor of 0, such as ε of a pair, makes the term 0.
-    std::string energy = expression.emit(os, values, "%pte", "    ", {"r"});
+    std::string energy = expression.emit(os, values, "%pte", "    ");
     os << "    %pt_kj = arith.constant " << formatReal(units::energy)
        << " : f64\n"
        << "    %pt_e = arith.mulf " << energy << ", %pt_kj : f64\n";
@@ -3155,8 +3142,7 @@ llvm::Error Builder::emitPotential() {
       values[name] = "%" + name;
     }
 
-    // A fixed factor of 0, such as ε of a pair, makes the term 0.
-    std::string value = expression.emit(os, values, "%e", "    ", {"r"});
+    std::string value = expression.emit(os, values, "%e", "    ");
     os << "    %to_energy = arith.constant " << formatReal(units::energy)
        << " : f64\n";
     os << "    %u = arith.mulf " << value << ", %to_energy : f64\n";

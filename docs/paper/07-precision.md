@@ -113,6 +113,17 @@ with a stated bound, not a library flag:
    product of f32 constants, such as $a\sigma$, that rounds a unit below
    the cutoff, and not constants written to put the pole further inside.
 
+   **Pairs that do not interact.** `md-exec-simplify-distance` writes a
+   pair kernel as terms $c\,r^p$, the Lennard-Jones as
+   $4\varepsilon\sigma^{12} r^{-12} - 4\varepsilon\sigma^6 r^{-6}$ and its
+   force with $r^{-14}$ and $r^{-8}$. In f32, $r^{-14}$ leaves the range
+   below $r \approx 1.8\times10^{-3}$ nm, where two particles of an ideal
+   gas can come, and a pair of $\varepsilon = 0$ would then give
+   $0\cdot\infty$, not a number. A term with an inverse power of $r$ is
+   therefore 0 where its factor $c$ is: one comparison and one selection
+   a term, 0.7% of the time of a step on JAC (0.2125 against 0.211 ms).
+   The sum is then exact for such pairs at any $r > 0$, in every mode.
+
    **Tables of the control file.** The coefficients of a tabulated
    function of the control file (D138, D165) are stored, like every table
    of a kernel, in the type of the kernel, f32 under `mixed`, and the
