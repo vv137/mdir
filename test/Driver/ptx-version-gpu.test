@@ -1,0 +1,10 @@
+# A module of a PTX ISA version that the driver does not support ends the
+# run with an error that names the driver's CUDA version, the PTX ISA
+# version of the module, and what to do, through both entry points of the
+# runtime that load modules (D[release]).
+#
+# REQUIRES: cuda
+# RUN: %python %S/Inputs/check_ptx_version.py %mdrt_cuda | FileCheck %s
+# CHECK: jit: mdrt: the NVIDIA driver supports CUDA
+# CHECK: plain: mdrt: the NVIDIA driver supports CUDA
+# CHECK: unsupported PTX ISA versions are reported

@@ -12,6 +12,14 @@ keep their temporary inputs and logs at the printed path. The doctor
 checks basic execution; a failure specific to your system needs the
 report below.
 
+The kernels are PTX, which the NVIDIA driver compiles when a run loads
+them. A driver older than the PTX ISA version that MDIR emits cannot, and
+the run, or the doctor's GPU check, ends with `mdrt: the NVIDIA driver
+supports CUDA <x.y>, which cannot compile kernels of PTX ISA <a.b>`; update
+the driver. The toolkit's version does not matter to the load: it supplies
+only libdevice. `mdir version` prints both, the toolkit's and the driver's
+(`driver API`).
+
 ## Reporting a defect
 
 A report that can be reproduced needs the build, the machine, the inputs,

@@ -73,6 +73,28 @@ static std::optional<std::string> getRuntimeVersion(StringRef root) {
   return std::nullopt;
 }
 
+/// The toolkit of the run: the one that CUDA_ROOT names, as for the
+/// kernels' libdevice (Run.cpp), else the one of the build.
+static StringRef getToolkitRoot() {
+  const char *root = std::getenv("CUDA_ROOT");
+  return root && *root ? StringRef(root) : StringRef(MDIR_CUDA_ROOT);
+}
+
+/// The version of CUDA that the driver supports, as major * 1000 + minor *
+/// 10, or none without a driver. The driver is opened, not initialized.
+static std::optional<int> getDriverVersion() {
+  auto library =
+      llvm::sys::DynamicLibrary::getPermanentLibrary("libcuda.so.1");
+  if (!library.isValid())
+    return std::nullopt;
+  auto query = reinterpret_cast<int (*)(int *)>(
+      library.getAddressOfSymbol("cuDriverGetVersion"));
+  int version = 0;
+  if (!query || query(&version) != 0 || version <= 0)
+    return std::nullopt;
+  return version;
+}
+
 void mdir::tool::printVersion(llvm::raw_ostream &os) {
   os << "MDIR " << MDIR_VERSION << "\n";
   os << "commit: " << MDIR_GIT_COMMIT << "\n";
@@ -80,15 +102,16 @@ void mdir::tool::printVersion(llvm::raw_ostream &os) {
   os << "LLVM " << LLVM_VERSION_STRING << "\n";
   os << "targets: cpu";
   if (MDIR_HAS_CUDA) {
-    // The toolkit of the run is the one that CUDA_ROOT names, as for the
-    // kernels' libdevice (Run.cpp), else the one of the build.
-    const char *root = std::getenv("CUDA_ROOT");
-    StringRef toolkit = root && *root ? StringRef(root) : MDIR_CUDA_ROOT;
+    StringRef toolkit = getToolkitRoot();
     if (auto version = getRuntimeVersion(toolkit))
-      os << ", gpu (CUDA " << *version << " at " << toolkit << ")";
+      os << ", gpu (CUDA " << *version << " at " << toolkit;
     else
-      os << ", gpu (CUDA at " << toolkit
-         << ", runtime version not reported)";
+      os << ", gpu (CUDA at " << toolkit << ", runtime version not reported";
+    if (auto driver = getDriverVersion())
+      os << "; driver API " << *driver / 1000 << "." << *driver % 1000 / 10
+         << ")";
+    else
+      os << "; no driver)";
   }
   os << "\n";
   os << "checkpoints: "

@@ -24,7 +24,12 @@ format, or the outputs; every such change is listed under **Changed** or
   toolkit has no `version.json`, as in CUDA's runtime images. They take the
   version from a loaded CUDA runtime or the toolkit's `version.txt`, and
   otherwise say `runtime version not reported`. The toolkit is the one
-  `CUDA_ROOT` names, if set (D[release]).
+  `CUDA_ROOT` names, if set. The line also gives the CUDA version that the
+  driver supports (`driver API`) (D[release]).
+- A driver too old for the PTX ISA version of the kernels ends the run with
+  an error that names the driver's CUDA version and the PTX ISA version and
+  asks for a newer driver, instead of a generic failure of
+  `cuModuleLoadDataEx` (D[release]).
 
 ## [0.1.0] - unreleased
 
