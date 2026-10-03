@@ -24,7 +24,7 @@ convert() {
       -t latex --wrap=preserve --columns=80 \
       --syntax-highlighting=none -o "$2"
 }
-for f in "$paper"/[0-9]*.md "$paper"/A-*.md "$paper"/B-*.md "$paper"/references.md; do
+for f in "$paper"/[0-9]*.md "$paper"/A-*.md "$paper"/B-*.md "$paper"/C-*.md "$paper"/references.md; do
   convert "$f" "$out/sections/$(basename "$f" .md).tex"
 done
 # The abstract, from the front page.
