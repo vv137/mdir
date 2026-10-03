@@ -113,10 +113,17 @@ The checked host builder remains a trust boundary.
 
 ## Async memory and subset contract
 
-Payload start posts all nonempty receives before sends. Every peer uses a
+Async payload start posts all nonempty receives before sends using
+`MPI_Irecv`/`MPI_Isend` with tag 17 on the prototype's world communicator.
+Sync payload transport uses `MPI_Alltoallv`; timing differences therefore
+include transport-algorithm differences, not only overlap. Every peer uses a
 separate slice of persistent send/receive packing storage. The send pack is
 independent of coordinate storage and never changes while requests are live.
 All MPI calls are on the initializing host thread (`MPI_THREAD_FUNNELED`).
+This standalone SPMD prototype requires identical control options on all
+ranks; it does not yet validate MPMD protocol-option agreement. A production
+embedding must use an isolated team/context and a checked participation
+contract.
 
 Wait completes every receive and send, then copies received coordinates into
 ghost slots. Its postcondition includes consumer readiness and send-storage
