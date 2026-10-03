@@ -14,7 +14,7 @@ build supports:
 ```text
 $ mdir version
 MDIR 0.1.0
-commit: e7a644af9b97743f534a4c0040f98308a9ad40c5
+commit: <the commit of the build>
 uncommitted changes: no
 LLVM 23.1.2
 targets: cpu, gpu (CUDA 13.4.20260911 at /usr/local/cuda-13.4)
@@ -282,14 +282,28 @@ they differ (`the steps differ: 200 and 300`).
 
 ## C.6 What a run writes
 
-<!-- revise after U12 -->
+`[output]` names every file of a run (D149); the log goes to the standard
+output as well.
 
 | Output | Where | Reference |
 |---|---|---|
-| The log | The standard output: the terms at the start, a row every `energy_interval` steps, and a summary | Section 6.5 |
-| The trajectory | `[output] trajectory`, DCD (Å) or XTC (nm, to a thousandth) by its extension | D141 |
-| The checkpoint | `[output] checkpoint`, H5MD with all numbers in 64 bits; `mdir checkpoint --print=positions FILE` (or `velocities`, `forces`) prints a field in the order of the input, in nm, nm/ps, or kJ/mol/nm | D26, docs/driver-m0.md Section 2.6 |
-| The coordinates of pulling | `[output] pull_coordinates` (C.7) | D145 |
+| The log | The standard output, and the file `log` if given: the terms at the start, a row every `energy_interval` steps, and a summary | Section 6.5, D149 |
+| The energies | `energy`, a file of columns at the rows of the log | D149 |
+| The coordinates of pulling | `pull`, a file of columns at the rows of the log (C.7) | D145, D149 |
+| The trajectory | `trajectory`, DCD (Å) or XTC (nm, to a thousandth) by its extension, every `trajectory_interval` steps | D141 |
+| The checkpoint | `checkpoint`, H5MD with all numbers in 64 bits, every `checkpoint_interval` steps, the one before kept as `<checkpoint>.prev`; `mdir checkpoint --print=positions FILE` (or `velocities`, `forces`) prints a field in the order of the input, in nm, nm/ps, or kJ/mol/nm | D26, D132, docs/driver-m0.md Section 2.6 |
+
+A file of columns begins with a line of names and a line of units, one
+for each column (`-` for none), and has a row for each output, the step
+first. `mdir check` lists the outputs, their intervals, and how many rows,
+frames, or checkpoints the run writes (D151). A continued run (C.5) cuts
+each file to its checkpoint and appends; a run that is not continued
+keeps a file that exists as `#<name>.<n>#` before it writes its own, as
+GROMACS does, and says so in the log:
+
+```text
+MDIR: backed up 'energy.dat' as '#energy.dat.1#'
+```
 
 The control file is in Å, kcal/mol, ps, K, and atm; the checkpoint keeps
 the units inside MDIR, nm, ps, and kJ/mol, and writes them with the data.
@@ -297,9 +311,10 @@ the units inside MDIR, nm, ps, and kJ/mol, and writes them with the data.
 ## C.7 Terms given by expressions
 
 Terms beyond the force field are written in the control file as
-expressions (D136 to D139, D145): over tuples of particles, over the
-centers of groups, and over the pairs of a topology, in Å, kcal/mol, and
-radians, with functions given by tables (D138). A flat-bottomed restraint
+expressions (D136 to D139, D145, D148): over tuples of particles, over
+the centers of groups, over the pairs of a topology, and of the positions
+of single particles, in Å, kcal/mol, and radians, with functions given by
+tables (D138). A flat-bottomed restraint
 between two atoms, two groups pulled apart at 1 Å/ps by a spring on their
 centers of mass, and a dihedral given by a periodic spline, on the
 dipeptide of C.2:
@@ -307,7 +322,7 @@ dipeptide of C.2:
 ```toml
 [output]
 energy_interval  = 10
-pull_coordinates = "pull.dat"
+pull             = "pull.dat"
 
 [[energy.bond]]
 name       = "flat"
@@ -340,28 +355,45 @@ values   = [1.0, 0.5, 0.0, 0.5, 1.0, 0.5, 0.0, 0.5, 1.0]
 The particles are numbered from 1, as in the topology; the groups are
 masks of Amber, weighted by mass unless `weighting = "NONE"`; `t` is the
 time in ps. The log lists each term among the terms at the start
-(`MDIR:   flat   108.296187`), and `pull_coordinates` writes at every row
-of the log the coordinates of the term over centers, its energy, and its
-force, the force on the second center and its component along the
-distance:
+(`MDIR:   flat   108.296187`), and `pull` writes at every row of the log
+the coordinates of the term over centers, its energy, and its force, the
+force on the second center and its component along the distance:
 
 ```text
 # step time pull.r pull.dx pull.dy pull.dz pull.energy pull.f_r pull.fx pull.fy pull.fz
-# ps; Å, radians; kcal/mol; kcal/mol/Å, kcal/mol/rad
+# - ps Å Å Å Å kcal/mol kcal/mol/Å kcal/mol/Å kcal/mol/Å kcal/mol/Å
 0 0.000000 17.051243 9.907016 10.411861 9.175460 0.005252 -0.204971 -0.119091 -0.125160 -0.110297
 10 0.020000 17.011361 9.963863 10.464706 8.977625 0.000149 0.034557 0.020241 0.021258 0.018237
 ```
 
-A constant force along the distance is the expression `-f*r`.
+A constant force along the distance is the expression `-f*r`. A term of
+the absolute positions, `[[energy.external]]` in `x`, `y`, `z`, the charge
+`q`, and `t`, over a mask (`selection`) or a list (`particles`), makes a
+wall, a field, or a restraint of any shape; on the same dipeptide a wall
+in z on the first three residues adds 11.372029 kcal/mol at the start:
+
+```toml
+[[energy.external]]
+name       = "wall"
+expression = "k*max(0, z - z0)^2"
+selection  = ":1-3"
+k  = 2.0
+z0 = 13.0
+```
+
+It has no virial, and a run at constant pressure refuses it (D148).
 Restraints to the positions of the input are a table of their own,
 `[[restraints]]` with a mask and a force constant (Appendix A.1), as the
 templates of C.3 use them.
 
 ## C.8 Implicit solvent, and runs without a cell
 
-Generalized Born takes the radii and the screening of an Amber topology
-(D144) and the Coulomb of a cutoff, usually without a periodic cell
-(D142). A structure from tleap is minimized first; the peptide of
+Generalized Born takes the radii and the screening of an Amber topology,
+or with `born_radii = "MBONDI2"` the radii of mbondi2 by element for any
+topology, in the models `HCT`, `OBC1`, or `OBC2`, with a salt
+(`salt_concentration` in mol/L) and a cutoff of the descreening
+(`born_radius_cutoff`, Amber's `rgbmax`) if asked (D144, D152), and the
+Coulomb of a cutoff, usually without a periodic cell (D142). A structure from tleap is minimized first; the peptide of
 `test/Driver/Inputs/gb` went from 14,266.7 to −148.2 kcal/mol in 500
 steps of steepest descent:
 
