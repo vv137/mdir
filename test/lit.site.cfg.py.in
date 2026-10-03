@@ -1,5 +1,8 @@
 @LIT_SITE_CFG_IN_HEADER@
 
+config.mdir_mpi = @MDIR_TEST_MPI@
+config.mdir_mpiexec = "@MPIEXEC_EXECUTABLE@"
+
 config.llvm_tools_dir = lit_config.substitute("@LLVM_TOOLS_DIR@")
 config.llvm_lib_dir = lit_config.substitute("@LLVM_LIBRARY_DIR@")
 config.llvm_shlib_ext = "@SHLIBEXT@"

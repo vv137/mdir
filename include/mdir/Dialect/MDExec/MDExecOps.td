@@ -726,6 +726,27 @@ def MDExec_TabulateOp : MDExec_Op<"tabulate", [
   let hasVerifier = 1;
 }
 
+def MDExec_NeighborViewOp : MDExec_Op<"neighbor_view", [Pure]> {
+  let summary = "A checked host neighbor matrix with explicit owned rows";
+  let description = [{
+    Storage-only host input. Rows enumerate owned centers [0, rows), while
+    indices address [0, local_size), including replicas. Each row must be
+    sorted, unique, in bounds, and exclude its center. CPU lowering checks
+    these conditions and extents before use. The caller supplies complete
+    geometric coverage; this descriptor does not prove scientific coverage.
+    Buffers remain immutable and live while the view is used. Refresh and
+    GPU lowering of this imported view are not supported.
+  }];
+  let arguments = (ins AnyMemRef:$counts, AnyMemRef:$entries,
+                       Index:$local_size);
+  let results = (outs MDRT_NeighborsType:$result);
+  let assemblyFormat = [{
+    $counts `,` $entries `local_size` `(` $local_size `)` attr-dict
+    `:` type($counts) `,` type($entries) `->` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
 def MDExec_PairForOp : MDExec_Op<"pair_for", [
     AttrSizedOperandSegments, RecursiveMemoryEffects, SingleBlock,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>

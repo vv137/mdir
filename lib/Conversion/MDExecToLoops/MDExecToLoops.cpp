@@ -3,7 +3,9 @@
 // Every op of md_exec becomes `scf` loops that load from and store to
 // `memref`s, where the op is. See docs/ops-m0.md, Section 10.
 
+#include "CPUVectorPairs.h"
 #include "mdir/Conversion/Passes.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
 
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Dialect/MD/MDDialect.h"
@@ -55,6 +57,7 @@ struct Neighbors {
   /// of their indices, by `handle`, and makes them wider when a build finds
   /// them too narrow (getMatrixEntries).
   Value counts;
+  Value importedEntries, localSize;
   Value handle;
   /// The number of neighbors that a row holds at first.
   Value width;
@@ -73,8 +76,8 @@ struct Neighbors {
 
 class Lowering {
 public:
-  explicit Lowering(ModuleOp module)
-      : module(module), context(module.getContext()) {
+  explicit Lowering(ModuleOp module, int64_t simdWidth)
+      : simdWidth(simdWidth), module(module), context(module.getContext()) {
     // A module with a triclinic cell lowers every cell to the vector of six,
     // a_x, b_y, c_z, b_x, c_x, c_y; one without, to the three edges.
     module.walk([&](md::TriclinicCellOp) { triclinic = true; });
@@ -87,6 +90,7 @@ private:
   LogicalResult lowerOp(Operation *op);
 
   void lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op);
+  void lowerNeighborView(md_exec::NeighborViewOp op);
   LogicalResult lowerSpatialOrder(md_exec::SpatialOrderOp op);
   void lowerPermute(md_exec::PermuteOp op);
   LogicalResult lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op);
@@ -127,6 +131,7 @@ private:
   /// is.
   Value getMatrixEntries(OpBuilder &builder, Location loc, Value handle);
 
+  int64_t simdWidth;
   /// Whether the module has a triclinic cell.
   bool triclinic = false;
   ModuleOp module;
@@ -237,14 +242,40 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
 
   Value positions = op.getPositions();
   SmallVector<Value> inits(op.getReduce().begin(), op.getReduce().end());
-  Value size = createSize(builder, loc, positions);
+  Value size = structure.importedEntries ? structure.size
+                                         : createSize(builder, loc, positions);
+  if (structure.importedEntries) {
+    Value actual = createSize(builder, loc, positions);
+    Value matches = arith::CmpIOp::create(
+        builder, loc, arith::CmpIPredicate::eq, actual, structure.localSize);
+    cf::AssertOp::create(builder, loc, matches,
+                         "neighbor view local extent mismatch");
+    for (Value in : op.getIns()) {
+      Value matches = arith::CmpIOp::create(
+          builder, loc, arith::CmpIPredicate::eq, createSize(builder, loc, in),
+          structure.localSize);
+      cf::AssertOp::create(builder, loc, matches,
+                           "neighbor view input extent mismatch");
+    }
+    for (Value out : op.getOuts()) {
+      Value enough =
+          arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::uge,
+                                createSize(builder, loc, out), size);
+      cf::AssertOp::create(builder, loc, enough,
+                           "neighbor view output extent too small");
+    }
+  }
+  if (simdWidth != 1 && failed(checkCPUSIMDKernel(op)))
+    return failure();
 
   // The cell has become the vector of its edge lengths.
   Type real = cast<MemRefType>(positions.getType()).getElementType();
   Value box = convertReal(builder, loc, op.getCellMutable().get(), real);
   Value inverse = createInverse(builder, loc, box);
 
-  Value entries = getMatrixEntries(builder, loc, structure.handle);
+  Value entries = structure.importedEntries
+                      ? structure.importedEntries
+                      : getMatrixEntries(builder, loc, structure.handle);
   Value zero = createIndex(builder, loc, 0);
   Value one = createIndex(builder, loc, 1);
   auto loop = scf::ParallelOp::create(
@@ -252,8 +283,11 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
       inits, [&](OpBuilder &body, Location, ValueRange ivs, ValueRange) {
         IRMapping local;
         SmallVector<Value> contributions =
-            emitPairKernel(body, op, structure.counts, entries, box,
-                           inverse, ivs[0], local);
+            simdWidth == 1
+                ? emitPairKernel(body, op, structure.counts, entries, box,
+                                 inverse, ivs[0], local)
+                : emitCPUSIMDPairs(body, op, structure.counts, entries, box,
+                                   inverse, ivs[0], simdWidth);
         if (!contributions.empty())
           createReduction(body, loc, contributions, /*isSum=*/true);
       });
@@ -496,7 +530,60 @@ LogicalResult Lowering::getNeighbors(Operation *op, Value structure,
               "'md_exec.empty_neighbors' in the storage form, in the same "
               "function, is supported";
   storage = found->second;
+  if (storage.importedEntries && !isa<md_exec::PairForOp>(op))
+    return op->emitOpError("imported neighbor views support only pair_for");
   return success();
+}
+
+void Lowering::lowerNeighborView(md_exec::NeighborViewOp op) {
+  OpBuilder b(op);
+  Location loc = op.getLoc();
+  Value zero = createIndex(b, loc, 0), one = createIndex(b, loc, 1);
+  Neighbors n;
+  n.size = createSize(b, loc, op.getCounts());
+  n.counts = op.getCounts();
+  n.importedEntries = op.getEntries();
+  n.localSize = op.getLocalSize();
+  auto check = [&](OpBuilder &at, arith::CmpIPredicate pred, Value x, Value y,
+                   StringRef message) {
+    cf::AssertOp::create(at, loc, arith::CmpIOp::create(at, loc, pred, x, y),
+                         message);
+  };
+  check(b, arith::CmpIPredicate::eq, n.size,
+        createSize(b, loc, n.importedEntries),
+        "neighbor view row count mismatch");
+  check(b, arith::CmpIPredicate::sge, n.localSize, n.size,
+        "neighbor view has more owned rows than local particles");
+  Value width = memref::DimOp::create(b, loc, n.importedEntries, one);
+  scf::ForOp::create(
+      b, loc, zero, n.size, one, ValueRange{},
+      [&](OpBuilder &row, Location, Value i, ValueRange) {
+        Value count = arith::IndexCastOp::create(
+            row, loc, row.getIndexType(),
+            memref::LoadOp::create(row, loc, n.counts, ValueRange{i}));
+        check(row, arith::CmpIPredicate::sge, count, zero,
+              "negative neighbor count");
+        check(row, arith::CmpIPredicate::sle, count, width,
+              "neighbor count exceeds capacity");
+        Value minus = createIndex(row, loc, -1);
+        scf::ForOp::create(
+            row, loc, zero, count, one, ValueRange{minus},
+            [&](OpBuilder &entry, Location, Value j, ValueRange previous) {
+              Value index = arith::IndexCastOp::create(
+                  entry, loc, entry.getIndexType(),
+                  memref::LoadOp::create(entry, loc, n.importedEntries,
+                                         ValueRange{i, j}));
+              check(entry, arith::CmpIPredicate::sgt, index, previous[0],
+                    "neighbor indices must be sorted, unique, and nonnegative");
+              check(entry, arith::CmpIPredicate::slt, index, n.localSize,
+                    "neighbor index outside local extent");
+              check(entry, arith::CmpIPredicate::ne, index, i,
+                    "self neighbor is not allowed");
+              scf::YieldOp::create(entry, loc, index);
+            });
+        scf::YieldOp::create(row, loc);
+      });
+  neighbors[op.getResult()] = n;
 }
 
 void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
@@ -674,6 +761,8 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
   Neighbors structure;
   if (failed(getNeighbors(op, op.getNeighbors(), structure)))
     return failure();
+  if (structure.importedEntries)
+    return op.emitOpError("cannot refresh an imported neighbor view");
   // The structure is refreshed where it is.
   neighbors[op.getResult()] = structure;
 
@@ -901,7 +990,9 @@ LogicalResult Lowering::lowerOp(Operation *op) {
                 "'convert-md-exec-to-gpu'";
   }
 
-  if (auto empty = dyn_cast<md_exec::EmptyNeighborsOp>(op)) {
+  if (auto view = dyn_cast<md_exec::NeighborViewOp>(op)) {
+    lowerNeighborView(view);
+  } else if (auto empty = dyn_cast<md_exec::EmptyNeighborsOp>(op)) {
     if (!empty.isStorageForm())
       return op->emitOpError()
              << "is not in the storage form; run 'md-exec-assign-storage' "
@@ -1155,7 +1246,11 @@ public:
       ConvertMDExecToLoops>::ConvertMDExecToLoopsBase;
 
   void runOnOperation() final {
-    Lowering lowering(getOperation());
+    if (simdWidth != 1 && simdWidth != 4 && simdWidth != 8) {
+      getOperation().emitError("simd-width must be 1, 4, or 8");
+      return signalPassFailure();
+    }
+    Lowering lowering(getOperation(), simdWidth);
     if (failed(lowering.run()))
       signalPassFailure();
   }

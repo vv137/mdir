@@ -1,0 +1,3 @@
+# REQUIRES: mpi
+# RUN: python3 %S/../../scripts/validation/cpu-hybrid-lj.py %cpu_lj --mpiexec %mpiexec --smoke | FileCheck %s
+# CHECK: PASS: 4 MPI configurations and 24 finite differences
