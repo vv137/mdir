@@ -588,7 +588,10 @@ toolkit versions), SHA-256 and byte size of each input, target, precision,
 threads, output paths, starting and requested ending steps, and the
 checkpoint part. Inputs include the selected restart checkpoint, CHARMM
 parameter files, and GROMACS includes actually read; inactive includes
-are absent. Input paths are absolute. No hostname is recorded.
+are absent. Input paths are absolute, with filesystem aliases resolved.
+The manifest path cannot alias an input or another output, even through
+a directory symlink when the output file does not yet exist. No hostname
+is recorded.
 
 `effective` gives the seed as a decimal string (preserving all 64 bits),
 time step in ps, resolved trajectory format (null without frames), the

@@ -53,8 +53,18 @@ InputPaths mdir::tool::getManifestInputs(StringRef controlFile,
 }
 
 static std::string absolutePath(StringRef path) {
-  llvm::SmallString<256> result(path);
+  llvm::SmallString<256> result;
+  if (!llvm::sys::fs::real_path(path, result))
+    return result.str().str();
+  result = path;
   llvm::sys::fs::make_absolute(result);
+  // Outputs need not exist yet. Resolve their containing directory so
+  // two spellings through a directory symlink cannot overwrite one file.
+  llvm::SmallString<256> parent;
+  if (!llvm::sys::fs::real_path(llvm::sys::path::parent_path(result), parent)) {
+    llvm::sys::path::append(parent, llvm::sys::path::filename(result));
+    return parent.str().str();
+  }
   llvm::sys::path::remove_dots(result, true);
   return result.str().str();
 }

@@ -221,6 +221,22 @@ for name in ('collision.toml', 'whole.h5', 'whole.h5.prev', str(source / 'Inputs
     assert "manifest" in command("check", bad, status=1)
     assert "manifest" in command("run", bad, status=1)
 
+# Different names through a directory symlink can name one future output.
+# Refuse the collision before either writer creates it.
+(work / "alias").symlink_to(work, target_is_directory=True)
+bad = work / "alias.toml"
+bad.write_text(run.read_text().replace('"whole.jsonl"', '"alias/future.xtc"')
+               .replace('"whole.xtc"', '"future.xtc"'))
+assert "another output" in command("check", bad, status=1)
+assert "another output" in command("run", bad, status=1)
+assert not (work / "future.xtc").exists()
+# Existing aliases of inputs and directories are also refused.
+(work / "input-alias").symlink_to(source / "Inputs/mixture.pdb")
+for name in ("input-alias", "alias"):
+    bad.write_text(run.read_text().replace('"whole.jsonl"', json.dumps(name)))
+    assert "manifest" in command("check", bad, status=1)
+    assert "manifest" in command("run", bad, status=1)
+
 # Active GROMACS includes are hashed; inactive includes are not opened.
 gmx = work / "gromacs"
 shutil.copytree(source / "Inputs/gromacs", gmx)
