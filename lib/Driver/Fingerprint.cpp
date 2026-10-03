@@ -10,10 +10,10 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <tuple>
-#include <map>
 #include <functional>
+#include <map>
 #include <set>
+#include <tuple>
 
 #define TOML_EXCEPTIONS 0
 #define TOML_ENABLE_FORMATTERS 0

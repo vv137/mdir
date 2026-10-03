@@ -257,7 +257,8 @@ int mdir::tool::writeBugReport(StringRef controlFile, StringRef directory,
       describeInput(report, *os, "restart", control->restartInput);
       for (const auto &function : control->functions)
         if (!function.valuesFile.empty())
-          describeInput(report, *os, "function-" + function.name, function.valuesFile);
+          describeInput(report, *os, "function-" + function.name,
+                        function.valuesFile);
       for (const std::string &include : control->gromacsIncludes)
         *os << "include directory: " << include << "\n";
     }

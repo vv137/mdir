@@ -176,6 +176,10 @@ if target == 'CPU':
         collision = base.replace('checkpoint = "terms.h5"', f'{key} = "{path}"' +
                                  ('\ncheckpoint = "terms.h5"' if key == 'manifest' else ''))
         rejected('collision', collision, 'a tabulated input of the run')
+    alias = scratch / 'grid-alias.dat'
+    alias.symlink_to(scratch / path)
+    rejected('symlink collision', base.replace('checkpoint = "terms.h5"',
+              'checkpoint = "grid-alias.dat"'), 'a tabulated input of the run')
     # Existing interpolation validation also applies to grids loaded from files.
     rejected('short axis', base.replace(f'shape = {sizes}', f'shape = [1, {len(flat)}]', 1),
              'at least two values along each argument')
