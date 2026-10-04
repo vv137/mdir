@@ -1,3 +1,5 @@
+// RUN: mdir-opt %s --md-check-derivatives %md_passes --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt | FileCheck %s
+
 // The three-body term of Stillinger and Weber [StillingerWeber1985],
 //
 //   E = sum over (j, i, k) of lambda (cos theta_jik + 1/3)^2

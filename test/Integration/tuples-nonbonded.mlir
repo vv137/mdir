@@ -1,3 +1,5 @@
+// RUN: mdir-opt %s --md-check-derivatives %md_passes --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt | FileCheck %s
+
 // Lennard-Jones between the particles of the chains of tuples.mlir, with
 // the pairs one, two, and three bonds apart excluded from the neighborhood
 // and the pairs three bonds apart added back with the factor 0.5,
