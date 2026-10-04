@@ -297,6 +297,15 @@ parameters of each tuple, and a term of the positions reads $w$ itself.
 The parameters are constants of the potential, so they change neither
 its derivatives nor the virial.
 
+**Activity (D[ad-robust]).** The dependency proof is a separate analysis,
+shared by scalar coordinates, cell edges, positional intermediate fields,
+sum weights, and scalar parameters. Its outcomes are active, proven
+inactive, and unknown with a reason. Active does not guarantee a nonzero
+derivative or a rule; only proven inactivity licenses a zero without a
+rule. Unknown required activity fails. Operands and captured kernel values
+are followed, and block arguments are independent only in scopes whose
+meaning is known. `--md-analyze-activity=argument=N` reports these outcomes.
+
 **Parameters.** `derivative(n)` asks $\partial U/\partial\theta_n$ of a
 scalar argument $\theta_n$ of the potential (D2), such as a component of
 $\boldsymbol\lambda$ of `[free_energy]` (Section 6.8, D161). The

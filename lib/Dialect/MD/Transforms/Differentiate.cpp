@@ -4,6 +4,7 @@
 
 #include "mdir/Dialect/MD/Transforms/Passes.h"
 #include "mdir/Dialect/MD/Transforms/ScalarDerivative.h"
+#include "mdir/Dialect/MD/Transforms/Activity.h"
 #include "mdir/Dialect/MD/Transforms/Truncation.h"
 
 #include "mdir/Dialect/MD/MDDialect.h"
@@ -93,6 +94,7 @@ private:
   llvm::DenseMap<Value, bool> positional;
   llvm::DenseMap<Value, Value> adjoints;
   bool adjointsBuilt = false;
+  bool activityFailed = false;
   LogicalResult buildParameterDerivative(int64_t argument, Value &result);
 
   PotentialOp potential;
@@ -176,7 +178,7 @@ LogicalResult DerivativeBuilder::checkPositionUses() {
       return sum.emitOpError()
              << "cannot differentiate a sum whose result is not f64";
     if (llvm::any_of(sum.getGathered(),
-                     [&](Value input) { return isPositional(input); }))
+                     [&](Value input) { return input != positions && isPositional(input); }))
       return sum.emitOpError()
              << "cannot differentiate a sum that reads both the positions "
                 "and a field computed from them";
@@ -187,13 +189,18 @@ LogicalResult DerivativeBuilder::checkPositionUses() {
 LogicalResult DerivativeBuilder::getWeight(Value sum, Value &weight) {
   // With respect to one sum, everything that does not come from a scalar op
   // is an independent input.
-  auto leaf = [](Value value, Value &tangent) -> LogicalResult {
+  ActivityAnalysis activity(sum);
+  activity.addKnownBlock(body);
+  auto leaf = [&](Value value, Value &tangent) -> LogicalResult {
     tangent = Value();
-    Operation *op = value.getDefiningOp();
-    if (!op || isa<MDDialect>(op->getDialect()))
+    auto verdict = activity.classify(value);
+    if (verdict.dependence == Activity::Inactive)
       return success();
-    return op->emitError() << "no derivative rule for '" << op->getName()
-                           << "'";
+    Operation *op = value.getDefiningOp();
+    return emitError(value.getLoc()) << "no derivative rule for '"
+        << (op ? op->getName().getStringRef() : "block argument")
+        << "' in potential '" << potential.getSymName() << "'"
+        << (verdict.reason.empty() ? "" : ": " + verdict.reason);
   };
   ScalarDerivative derivative(builder, sum, leaf);
   return derivative.get(energy, weight);
@@ -405,15 +412,16 @@ LogicalResult DerivativeBuilder::emitTupleForces(Operation *op, Value weight,
 
 bool DerivativeBuilder::isPositional(Value field) {
   auto found = positional.find(field);
-  if (found != positional.end())
-    return found->second;
-  bool result = false;
-  Operation *op = field.getDefiningOp();
-  if (auto gather = dyn_cast_or_null<GatherRelationOp>(op))
-    result = gather.getPositions() == body->getArgument(0);
-  else if (auto map = dyn_cast_or_null<MapParticlesOp>(op))
-    result = llvm::any_of(map.getGathered(),
-                          [&](Value input) { return isPositional(input); });
+  if (found != positional.end()) return found->second;
+  ActivityAnalysis activity(body->getArgument(0));
+  activity.addKnownBlock(body);
+  auto verdict = activity.classify(field);
+  if (verdict.dependence == Activity::Unknown) {
+    emitError(field.getLoc()) << "cannot prove positional inactivity in potential '"
+                             << potential.getSymName() << "': " << verdict.reason;
+    activityFailed = true;
+  }
+  bool result = verdict.dependence == Activity::Active;
   positional[field] = result;
   return result;
 }
@@ -1071,96 +1079,11 @@ LogicalResult DerivativeBuilder::buildParameterDerivative(int64_t argument,
   // known: those of the body, the other arguments of the potential, and
   // those of a kernel, the values of its particles, tuples, or pairs, whose
   // fields are checked apart.
-  enum class Dependence { Independent, Dependent, Undetermined };
-  struct Verdict {
-    Dependence dependence = Dependence::Independent;
-    std::string reason;
-  };
-  auto combine = [](Verdict &into, const Verdict &from) {
-    if (from.dependence == Dependence::Dependent ||
-        into.dependence == Dependence::Dependent) {
-      into = {Dependence::Dependent, ""};
-      return;
-    }
-    if (from.dependence == Dependence::Undetermined &&
-        into.dependence == Dependence::Independent)
-      into = from;
-  };
-  llvm::DenseSet<Block *> knownBlocks = {body};
-  llvm::DenseMap<Value, Verdict> verdicts;
-  // Ops of a kernel whose meaning the pass knows: arithmetic without
-  // effects, and the values of tables.
-  auto isKernelOp = [](Operation *op) {
-    if (isa<LookupOp, YieldOp>(op) ||
-        op->getName().getStringRef() == "md_exec.cell_edges")
-      return true;
-    StringRef dialect = op->getName().getDialectNamespace();
-    return (dialect == "arith" || dialect == "math" || dialect == "vector") &&
-           op->getNumRegions() == 0 && isMemoryEffectFree(op);
-  };
-  // Ops over particles, tuples, or pairs whose kernels the pass knows.
-  auto isSumOp = [](Operation *op) {
-    return isa<SumRelationOp, GatherRelationOp, SumTuplesOp, GatherTuplesOp,
-               SumParticlesOp, MapParticlesOp>(op);
-  };
-  std::function<Verdict(Value)> classify = [&](Value value) -> Verdict {
-    if (value == parameter)
-      return {Dependence::Dependent, ""};
-    auto found = verdicts.find(value);
-    if (found != verdicts.end())
-      return found->second;
-    Verdict verdict;
-    Operation *op = value.getDefiningOp();
-    if (!op) {
-      Block *owner = cast<BlockArgument>(value).getOwner();
-      if (!knownBlocks.contains(owner))
-        verdict = {Dependence::Undetermined,
-                   "it is an argument of a block whose meaning the pass does "
-                   "not know"};
-    } else {
-      bool known = isKernelOp(op) || isSumOp(op) ||
-                   (op->getName().getDialectNamespace() == "md" &&
-                    op->getNumRegions() == 0 && isMemoryEffectFree(op));
-      // An operand that depends on the parameter makes the op dependent,
-      // known or not.
-      for (Value operand : op->getOperands())
-        combine(verdict, classify(operand));
-      if (!known) {
-        combine(verdict,
-                {Dependence::Undetermined,
-                 ("'" + op->getName().getStringRef() +
-                  "' is not an op whose dependences the pass knows")
-                     .str()});
-      } else {
-        // What the kernels take from outside.
-        op->walk([&](Operation *inner) {
-          if (inner == op)
-            return WalkResult::advance();
-          if (!isKernelOp(inner)) {
-            combine(verdict,
-                    {Dependence::Undetermined,
-                     ("its kernel holds '" + inner->getName().getStringRef() +
-                      "', whose dependences the pass does not know")
-                         .str()});
-            return WalkResult::advance();
-          }
-          for (Value operand : inner->getOperands()) {
-            Operation *definition = operand.getDefiningOp();
-            bool outside =
-                definition ? !op->isAncestor(definition)
-                           : !op->isAncestor(
-                                 cast<BlockArgument>(operand).getOwner()
-                                     ->getParentOp());
-            if (outside)
-              combine(verdict, classify(operand));
-          }
-          return WalkResult::advance();
-        });
-      }
-    }
-    verdicts[value] = verdict;
-    return verdict;
-  };
+  using Dependence = Activity;
+  using Verdict = ActivityResult;
+  ActivityAnalysis activity(parameter);
+  activity.addKnownBlock(body);
+  auto classify = [&](Value value) { return activity.classify(value); };
 
   auto describe = [&]() {
     return "argument " + std::to_string(argument) + " of '" +
@@ -1170,7 +1093,7 @@ LogicalResult DerivativeBuilder::buildParameterDerivative(int64_t argument,
   auto refuse = [&](Value value, const Verdict &verdict) -> LogicalResult {
     Operation *op = value.getDefiningOp();
     Location at = op ? op->getLoc() : value.getLoc();
-    if (verdict.dependence == Dependence::Undetermined)
+    if (verdict.dependence == Dependence::Unknown)
       return emitError(at) << "cannot prove that this value does not depend on "
                            << describe() << ": " << verdict.reason;
     if (op)
@@ -1193,7 +1116,7 @@ LogicalResult DerivativeBuilder::buildParameterDerivative(int64_t argument,
                                                  Value &tangent) {
     tangent = Value();
     Verdict verdict = classify(value);
-    if (verdict.dependence == Dependence::Independent)
+    if (verdict.dependence == Dependence::Inactive)
       return success();
     return refuse(value, verdict);
   };
@@ -1206,17 +1129,17 @@ LogicalResult DerivativeBuilder::buildParameterDerivative(int64_t argument,
     auto map = field.getDefiningOp<MapParticlesOp>();
     if (!map)
       return refuse(field, classify(field).dependence ==
-                                   Dependence::Undetermined
+                                   Dependence::Unknown
                                ? classify(field)
-                               : Verdict{Dependence::Dependent, ""});
+                               : Verdict{Dependence::Active, ""});
     for (Value gathered : map.getGathered()) {
       Verdict verdict = classify(gathered);
-      if (verdict.dependence != Dependence::Independent)
+      if (verdict.dependence != Dependence::Inactive)
         return refuse(gathered, verdict);
     }
     Operation *copy = builder.clone(*map);
     Block &block = copy->getRegion(0).front();
-    knownBlocks.insert(&block);
+    activity.addKnownBlock(&block);
     Value value = cast<YieldOp>(block.getTerminator()).getOperand(0);
     OpBuilder kernel(block.getTerminator());
     ScalarDerivative derivative(kernel, parameter, kernelLeaf);
@@ -1237,11 +1160,11 @@ LogicalResult DerivativeBuilder::buildParameterDerivative(int64_t argument,
   auto leaf = [&](Value value, Value &tangent) -> LogicalResult {
     tangent = Value();
     Verdict verdict = classify(value);
-    if (verdict.dependence == Dependence::Independent) {
+    if (verdict.dependence == Dependence::Inactive) {
       takeAsZero(value);
       return success();
     }
-    if (verdict.dependence == Dependence::Undetermined)
+    if (verdict.dependence == Dependence::Unknown)
       return refuse(value, verdict);
     Operation *op = value.getDefiningOp();
     if (!op)
@@ -1253,7 +1176,7 @@ LogicalResult DerivativeBuilder::buildParameterDerivative(int64_t argument,
                                   "virial of a reciprocal sum with respect "
                                   "to a parameter";
       Verdict positions = classify(reciprocal.getPositions());
-      if (positions.dependence != Dependence::Independent)
+      if (positions.dependence != Dependence::Inactive)
         return refuse(reciprocal.getPositions(), positions);
       Value energies[2];
       for (int k = 0; k != 2; ++k) {
@@ -1279,11 +1202,11 @@ LogicalResult DerivativeBuilder::buildParameterDerivative(int64_t argument,
       if (operand == parameter)
         continue;
       Verdict field = classify(operand);
-      if (field.dependence == Dependence::Dependent)
+      if (field.dependence == Dependence::Active)
         return op->emitError()
                << "'" << op->getName() << "' takes a field that depends on "
                << describe() << ", and has no rule for that derivative";
-      if (field.dependence == Dependence::Undetermined)
+      if (field.dependence == Dependence::Unknown)
         return refuse(operand, field);
     }
     Operation *term;
@@ -1296,7 +1219,7 @@ LogicalResult DerivativeBuilder::buildParameterDerivative(int64_t argument,
     else
       term = builder.clone(*op);
     Block &block = term->getRegion(0).front();
-    knownBlocks.insert(&block);
+    activity.addKnownBlock(&block);
     Value pairEnergy = cast<YieldOp>(block.getTerminator()).getOperand(0);
 
     OpBuilder kernel(block.getTerminator());
@@ -1409,7 +1332,7 @@ FunctionOp DerivativeBuilder::build(ArrayRef<int32_t> kinds,
     auto request = static_cast<Request>(kind);
     return request == Request::Forces || request == Request::Virial;
   });
-  if (needsPositions && failed(checkPositionUses()))
+  if (needsPositions && (failed(checkPositionUses()) || activityFailed))
     return fail();
 
   builder.setInsertionPoint(oldReturn);
@@ -1417,6 +1340,7 @@ FunctionOp DerivativeBuilder::build(ArrayRef<int32_t> kinds,
   // of the potential alone, before the derivatives add their own.
   if (needsPositions && failed(buildAdjoints()))
     return fail();
+  if (activityFailed) return fail();
   SmallVector<Value> results;
   for (unsigned i = 0, e = kinds.size(); i != e; ++i) {
     Value result;

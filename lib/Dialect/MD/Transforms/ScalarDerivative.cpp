@@ -3,6 +3,7 @@
 // The derivative rules are those of docs/ops-m0.md, Section 5.4.
 
 #include "mdir/Dialect/MD/Transforms/ScalarDerivative.h"
+#include "mdir/Dialect/MD/Transforms/Activity.h"
 
 #include "mdir/Dialect/MD/MDOps.h"
 
@@ -157,6 +158,16 @@ LogicalResult ScalarDerivative::compute(Value value, Value &tangent) {
   if (auto argument = dyn_cast<BlockArgument>(variable))
     if (!argument.getOwner()->getParent()->isAncestor(op->getParentRegion()))
       return success();
+
+  ActivityAnalysis activity(variable);
+  auto verdict = activity.classify(value);
+  StringRef dialect = op->getName().getDialectNamespace();
+  bool scalar = (dialect == "arith" || dialect == "math" || dialect == "vector") &&
+                op->getNumRegions() == 0 && isMemoryEffectFree(op);
+  if (scalar && verdict.dependence == Activity::Inactive)
+    return success();
+  if (scalar && verdict.dependence == Activity::Unknown)
+    return op->emitError() << "cannot prove inactivity: " << verdict.reason;
 
   ScalarEmitter emit(builder, op->getLoc());
   Location loc = op->getLoc();

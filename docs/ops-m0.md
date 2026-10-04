@@ -538,6 +538,19 @@ $$P = \frac{2 E_\text{kin} + \operatorname{tr}\mathsf W}{3V}.$$
 Other packages use other conventions. The GROMACS virial is $-\mathsf W / 2$
 [[GromacsManual2025]](references.md#gromacsmanual2025).
 
+### 5.3.1 Activity (D[ad-robust])
+
+`ActivityAnalysis` gives active, proven inactive, or unknown, with a reason
+for unknown. Active establishes a dependency path, not a nonzero tangent
+or the existence of a derivative rule. Only proven inactivity permits a
+zero without differentiation. Unknown activity needed by a derivative is
+an error. The same analysis is used for scalar derivatives of coordinates
+and cell edges, positional intermediate fields, sum weights, and scalar
+parameters. It follows operands and values captured by kernels.
+
+`--md-analyze-activity=argument=N` reports the three outcomes for the
+results in each potential body. See [ad-robust.md](ad-robust.md).
+
 ### 5.4 Rules
 
 The pass needs two kinds of rules.
