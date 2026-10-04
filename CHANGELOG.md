@@ -17,6 +17,11 @@ format, or the outputs; every such change is listed under **Changed** or
   in one, two, or three dimensions. Manifests hash the files, and
   continuation checks the loaded grid (D178).
 
+- Shared three-outcome activity analysis for scalar, position, cell, and
+  parameter differentiation. `--md-analyze-activity=argument=N` reports
+  active, proven inactive, and unknown results; required unknown activity
+  fails differentiation (D[ad-robust], part 1 of #15).
+
 ### Fixed
 
 - GPU PME preserves mapped-charge producers when moving a reciprocal sum

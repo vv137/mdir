@@ -44,6 +44,11 @@ def Differentiate : Pass<"md-differentiate", "::mlir::ModuleOp"> {
                            "::mlir::vector::VectorDialect"];
 }
 
+def AnalyzeActivity : Pass<"md-analyze-activity", "::mlir::ModuleOp"> {
+  let summary = "Report active, proven inactive, or unknown results for a potential argument";
+  let options = [Option<"argument", "argument", "int", "2", "Potential argument to analyze">];
+}
+
 def Inline : Pass<"md-inline", "::mlir::ModuleOp"> {
   let summary = "Inlines potentials, functions, and programs";
   let description = [{

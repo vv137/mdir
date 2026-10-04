@@ -19,6 +19,7 @@ Features of classical MD (Section 5) continue between milestones.
 
 | Item | State |
 |---|---|
+| Robust differentiation (#15) | Activity analysis shared by positions, cell variables, and parameters (D[ad-robust]); rule interfaces, numerical checking, conventions, and term diagnostics follow in separate PRs |
 | Principles of development | Done ([principles.md](principles.md)) |
 | Tests under compute-sanitizer; short runs of the Amber suite | Done (`test/Sanitizer`, `test/Scale`) |
 | Kernels named after their op and line | Done |
