@@ -2236,9 +2236,12 @@ void Builder::emitFreeEnergyOutput(StringRef indent, StringRef x,
   // `@alchemical` at the state of the run with its derivatives in each
   // component of λ, and its energy at every other state; the host adds the
   // constant terms (D161). The values: the derivatives, then the energies
-  // of the states in order.
+  // of the states in order. With one state its energy differs from itself
+  // only, so the states are not evaluated (D[single-state-dhdl]).
   const Control::FreeEnergy &energy = control.freeEnergy;
   size_t components = energy.lambdas.size(), states = energy.getNumStates();
+  if (states == 1)
+    states = 0;
   std::string name = ("%fe" + step.drop_front()).str();
   std::string type =
       "memref<" + std::to_string(components + states) + "xf64>";
@@ -2284,6 +2287,13 @@ void Builder::emitFreeEnergyOutput(StringRef indent, StringRef x,
   os << ")\n";
   for (size_t c = 0; c != components; ++c)
     store(name + "_d" + std::to_string(c), c);
+  if (states == 0) {
+    os << indent << name << "_cast = memref.cast " << name << " : " << type
+       << " to memref<?xf64>\n"
+       << indent << "func.call @mdrtWriteFreeEnergy(" << step << ", " << name
+       << "_cast) : (i64, memref<?xf64>) -> ()\n";
+    return;
+  }
   std::string table = name + "_table";
   std::string tableType = "memref<" + std::to_string(states) + "x" +
                           std::to_string(components) + "xf64>";
