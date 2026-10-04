@@ -12,6 +12,10 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- `observe` is a reserved key of every term table given by an expression
+  (D[cv]); a constant named `observe` must be renamed, with its uses in
+  the expression.
+
 - Custom term parameters now reject names supplied by the term, declared
   particle parameters, functions, and lambda components, including unused
   declarations. Control files with colliding parameters must rename the
