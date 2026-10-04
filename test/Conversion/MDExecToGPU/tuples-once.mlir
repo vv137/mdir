@@ -71,3 +71,41 @@ func.func @energy(%members: memref<?x2xi32>, %n: index,
   } : memref<?x?xi32, 1>, memref<?x3xf32, 1> -> f64
   return %u : f64
 }
+
+// Adjacent loops that evaluate each tuple once and have no global sums are
+// one kernel over the tuples of both: a thread takes the first loop below
+// the count of its tuples, and the second after it (#20).
+//
+// CHECK-LABEL: func.func @two(
+// CHECK:         %[[N1:[a-z0-9_]+]] = memref.dim %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}} : memref<?x2xi32, 1>
+// CHECK:         %[[N2:[a-z0-9_]+]] = memref.dim %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}} : memref<?x2xi32, 1>
+// CHECK:         %[[END:[0-9]+]] = arith.addi %[[N1]], %[[N2]] : index
+// CHECK:         gpu.launch
+// CHECK:           arith.cmpi ult, %{{[0-9]+}}, %[[END]]
+// CHECK:           arith.cmpi ult, %{{[0-9]+}}, %[[N1]]
+// CHECK:           arith.subi %{{[0-9]+}}, %[[N1]]
+// CHECK-NOT:     gpu.launch
+// CHECK:         return
+// ROWS-LABEL:  func.func @two(
+// ROWS-NOT:      llvm.inline_asm
+func.func @two(%m1: memref<?x2xi32>, %m2: memref<?x2xi32>, %n: index,
+               %x: memref<?x3xf32, 1>, %cell: !md.cell,
+               %f: memref<?x3xf32, 1>) {
+  %i1 = md_exec.build_incidence %m1 size(%n)
+      : memref<?x2xi32> -> memref<?x?xi32, 1>
+  %i2 = md_exec.build_incidence %m2 size(%n)
+      : memref<?x2xi32> -> memref<?x?xi32, 1>
+  md_exec.tuple_for %i1, %x, %cell coordinates(displacement(0, 1))
+      outs(%f : memref<?x3xf32, 1>) arity(2) {
+  ^bb0(%d: vector<3xf32>):
+    %n0 = arith.negf %d : vector<3xf32>
+    md_exec.yield %d, %n0 : vector<3xf32>, vector<3xf32>
+  } : memref<?x?xi32, 1>, memref<?x3xf32, 1>
+  md_exec.tuple_for %i2, %x, %cell coordinates(displacement(0, 1))
+      outs(%f : memref<?x3xf32, 1>) arity(2) {
+  ^bb0(%d: vector<3xf32>):
+    %n0 = arith.negf %d : vector<3xf32>
+    md_exec.yield %n0, %d : vector<3xf32>, vector<3xf32>
+  } : memref<?x?xi32, 1>, memref<?x3xf32, 1>
+  return
+}
