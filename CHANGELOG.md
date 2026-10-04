@@ -16,7 +16,7 @@ format, or the outputs; every such change is listed under **Changed** or
   particle parameters, functions, and lambda components, including unused
   declarations. Control files with colliding parameters must rename the
   parameters and their expression uses (for example, change a bond constant
-  `r` to `r0`) (D[expression-namespace], #67).
+  `r` to `r0`) (D188, #67).
 
 - On a GPU, adjacent bonded loops are launched as one kernel, and the sums
   over few tuples, as the centers of groups, take one kernel instead of
@@ -64,7 +64,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Fixed
 
 - Compound terms accept declared `lambda_<name>` components
-  (D[expression-namespace], #67).
+  (D188, #67).
 
 - GPU PME preserves mapped-charge producers when moving a reciprocal sum
   ahead of a neighbor refresh. Free-energy runs with spatial ordering,

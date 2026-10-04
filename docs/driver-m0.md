@@ -848,7 +848,7 @@ mdir: note: trajectory output 'md.xtc' exists; mdir run keeps it as '#md.xtc.1#'
 | Trajectory in the XTC format | Not implemented |
 | Velocities in the trajectory, `dcdvelfile` | Not implemented |
 
-### Expression parameter names (D[expression-namespace])
+### Expression parameter names (D188)
 
 The control reader rejects term parameters that collide with names supplied
 by their term: coordinates, time, topology properties, declared particle

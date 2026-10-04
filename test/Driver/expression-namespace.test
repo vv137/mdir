@@ -1,4 +1,4 @@
-# D[expression-namespace], #67: parameters must not overwrite supplied names,
+# D188, #67: parameters must not overwrite supplied names,
 # even when unused. Compound expressions accept declared lambdas only.
 # RUN: %python %S/Inputs/check_expression_namespace.py %t mdir %S/Inputs | FileCheck %s
 # CHECK: namespace collisions: {{[0-9]+}} rejected; compound lambda accepted

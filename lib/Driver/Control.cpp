@@ -79,7 +79,7 @@ private:
   /// of the places 1 to `places`, `w` for `w2`, or "".
   StringRef getParticleStem(StringRef name, unsigned places) const;
   /// Rejects a declaration that shadows a supplied expression name, even
-  /// if the expression does not use it (D[expression-namespace]).
+  /// if the expression does not use it (D188).
   Error checkTermParameter(const toml::node &node, StringRef name,
                            llvm::ArrayRef<StringRef> variables,
                            unsigned places = 0);

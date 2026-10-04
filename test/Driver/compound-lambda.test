@@ -1,4 +1,4 @@
-# D[expression-namespace]: analytic oracle for compound lambda energy, forces,
+# D188: analytic oracle for compound lambda energy, forces,
 # dH/dlambda and state differences; check_compound_lambda.py gives the values.
 # REQUIRES: hdf5
 # RUN: %python %S/Inputs/check_compound_lambda.py %t-double CPU DOUBLE mdir %S/pull-coordinates.test | FileCheck %s

@@ -1,4 +1,4 @@
-# D[expression-namespace]: the same analytic compound lambda oracle on a GPU.
+# D188: the same analytic compound lambda oracle on a GPU.
 # REQUIRES: cuda, hdf5
 # RUN: %python %S/Inputs/check_compound_lambda.py %t-double GPU DOUBLE mdir %S/pull-coordinates.test | FileCheck %s
 # RUN: %python %S/Inputs/check_compound_lambda.py %t-mixed GPU MIXED mdir %S/pull-coordinates.test | FileCheck %s
