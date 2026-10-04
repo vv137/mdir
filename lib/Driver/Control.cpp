@@ -2389,6 +2389,10 @@ Error Reader::readMinimize(const toml::table &table) {
 }
 
 Error Reader::resolveCoupling() {
+  return resolveControlCoupling(control, path);
+}
+
+llvm::Error mdir::driver::resolveControlCoupling(Control &control, StringRef path) {
   int64_t &com = control.comPeriod, &thermostat = control.thermostatPeriod;
   if (!control.thermostat && thermostat > 0)
     return llvm::createStringError(
@@ -2967,6 +2971,10 @@ Error Reader::read(const toml::table &root) {
     if (Error error = readExecution(*table))
       return error;
 
+  return validateControl(control, path);
+}
+
+llvm::Error mdir::driver::validateControl(Control &control, StringRef path) {
   if (control.prunedDistance != 0.0 &&
       control.neighborStructure != NeighborStructure::Groups)
     return llvm::createStringError(

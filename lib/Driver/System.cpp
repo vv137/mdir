@@ -128,7 +128,7 @@ static void addThermostatWarnings(const Control &control,
 
 /// The system of a topology and a file of coordinates.
 static llvm::Expected<System> readTopologySystem(const Control &control) {
-  bool charmm = !control.charmmStructureFile.empty();
+  bool charmm = !control.charmmStructureFile.empty() || control.inMemoryCharmm;
   llvm::Expected<Topology> topology =
       charmm ? readCharmmTopology(control.charmmStructureFile,
                                   control.charmmParameterFiles)
@@ -158,28 +158,42 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
                  control.angles[2]);
     if (!cell)
       return cell.takeError();
-    for (int k = 0; k != 3; ++k) {
-      topology->box[k] = cell->diagonal[k];
-      topology->tilt[k] = cell->tilt[k];
-    }
-    if (!cell->isOrthorhombic()) {
-      std::array<double, 9> r = getSymmetricFrameRotation(*cell);
-      std::vector<double> &x = topology->positions;
-      for (size_t i = 0; i + 2 < x.size(); i += 3) {
-        double s[3] = {x[i], x[i + 1], x[i + 2]};
-        for (int k = 0; k != 3; ++k)
-          x[i + k] = s[0] * r[3 * k] + s[1] * r[3 * k + 1] +
-                     s[2] * r[3 * k + 2];
-      }
-    }
+    applyCharmmCell(*topology, *cell);
   }
 
+  return prepareTopologySystem(control, std::move(*topology),
+                               !control.prmtopFile.empty() || charmm);
+}
+
+void mdir::driver::applyCharmmCell(Topology &topology, const Cell &cell) {
+  for (int k = 0; k != 3; ++k) {
+    topology.box[k] = cell.diagonal[k];
+    topology.tilt[k] = cell.tilt[k];
+  }
+  if (!cell.isOrthorhombic()) {
+    auto rotation = getSymmetricFrameRotation(cell);
+    auto &x = topology.positions;
+    for (size_t i = 0; i + 2 < x.size(); i += 3) {
+      double position[3] = {x[i], x[i + 1], x[i + 2]};
+      for (int k = 0; k != 3; ++k)
+        x[i + k] = position[0] * rotation[3 * k] +
+                   position[1] * rotation[3 * k + 1] +
+                   position[2] * rotation[3 * k + 2];
+    }
+  }
+}
+
+llvm::Expected<System> mdir::driver::prepareTopologySystem(
+    const Control &control, Topology input, bool recognizeWaterResidues) {
+  if (llvm::Error error = validateTopology(input))
+    return std::move(error);
+  auto topology = std::make_unique<Topology>(std::move(input));
   // The waters that SETTLE constrains (D63): those of [ settles ] of
   // GROMACS, and the residues of Amber or CHARMM named in 'water_residues'.
   // A run leaves them flexible only when it says so, and they then need
   // bonds.
   if (control.fastWater) {
-    if (!control.prmtopFile.empty() || charmm)
+    if (recognizeWaterResidues)
       if (llvm::Error error = findSettles(control, *topology))
         return std::move(error);
   } else if (!topology->settles.empty()) {
@@ -198,12 +212,15 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
   // control file says how: unlike [ settles ] of GROMACS, the topology does
   // not tell whether they are meant rigid, and a step of 2 fs needs them so.
   size_t flexibleWaters = 0;
-  if ((!control.prmtopFile.empty() || charmm) && !control.fastWater &&
+  if (recognizeWaterResidues && !control.fastWater &&
       !control.statesFlexible)
     flexibleWaters = countWaters(control, *topology);
   if (control.rigidBonds)
     if (llvm::Error error = findShakes(*topology))
       return std::move(error);
+
+  if (llvm::Error error = validateTopology(*topology))
+    return std::move(error);
 
   System system;
   system.warnings = control.warnings;
@@ -678,7 +695,7 @@ static llvm::Error findCenters(TupleTerm &term, const Topology &topology) {
 }
 
 static size_t countWaters(const Control &control, const Topology &topology) {
-  bool charmm = !control.charmmStructureFile.empty();
+  bool charmm = !control.charmmStructureFile.empty() || control.inMemoryCharmm;
   std::vector<std::string> residues = control.settleResidues;
   if (residues.empty())
     residues = {charmm ? "TIP3" : "WAT"};
@@ -697,7 +714,7 @@ static size_t countWaters(const Control &control, const Topology &topology) {
 }
 
 static llvm::Error findSettles(const Control &control, Topology &topology) {
-  bool charmm = !control.charmmStructureFile.empty();
+  bool charmm = !control.charmmStructureFile.empty() || control.inMemoryCharmm;
   const std::string &path =
       charmm ? control.charmmStructureFile : control.prmtopFile;
   auto fail = [&](const llvm::Twine &message) {

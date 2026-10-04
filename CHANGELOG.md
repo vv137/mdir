@@ -38,6 +38,12 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- Native C++ model preparation for the M2 Python API: owned Amber,
+  GROMACS, and CHARMM data, physics apart from initial state, typed
+  integrator/ensemble/execution options, MD-unit custom expressions,
+  and shared validation and IR construction (D[python-model], #74).
+  Python bindings and persistent simulations follow separately.
+
 - `observe = [...]` in a term given by an expression writes the term's
   energy and its derivatives in the listed constants, the generalized
   forces along them, to `[output] observables` at every energy, without

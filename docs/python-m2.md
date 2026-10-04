@@ -6,12 +6,14 @@ The work item is [#46](https://github.com/vv137/mdir/issues/46).
 The maintainer approved the contracts in Section 6 on 2026-10-04,
 [relayed in PR #47](https://github.com/vv137/mdir/pull/47#issuecomment-5975221457).
 Remaining implementation details are specified in each implementation PR.
-The sequence describes prospective PRs, not assigned work.
+The first implementation item is tracked in [#74](https://github.com/vv137/mdir/issues/74)
+and [PR #75](https://github.com/vv137/mdir/pull/75), with the native contract in
+[python-model.md](python-model.md). Later items remain prospective work.
 
 ## 1. Scope and acceptance
 
 M2 gives Python and the control file one validated model and one IR builder.
-It includes Amber and GROMACS loading; physics separated from execution;
+It includes Amber, GROMACS, and CHARMM loading; physics separated from execution;
 explicit compilation and stale detection; tunable parameters; persistent
 runs and reporters; host arrays and device DLPack views; typed errors;
 and the driver's H5MD checkpoint. It needs an installed Python package
@@ -158,7 +160,7 @@ draft. Changes to Builder, Control and runtime should proceed sequentially.
 
 | Order | Proposed deliverable | Gate |
 |---|---|---|
-| 1 | `python-model` (future label): in-memory validation, loaded data, System/integrator/ensemble/Execution and shared model-to-IR path | File and object models produce equivalent physics/IR and consistent validation failures |
+| 1 | `D[python-model]` (#74, PR #75): in-memory validation, loaded data, System/integrator/ensemble/Execution and shared model-to-IR path | File and object models produce equivalent physics/IR and consistent validation failures |
 | 2 | `python-compile` (future label): compilation service and optional native extension, immutable program, plan inspection, stale detection | CPU/GPU mixed/double compilation, structured diagnostics, repeated destruction, no output side effects |
 | 3 | `python-segments` (future label): persistent simulation and arbitrary counts, embedded status/errors, runtime ownership | Segmented/uninterrupted agreement, retained coupling phase, stop/error survival, independent simulation state |
 | 4 | `python-reporters` (future label): scheduling, C++ writers, Python callbacks, host snapshots | Nondividing/coincident periods, final remainder, callback errors, GIL behavior, file lifecycle, input order |
