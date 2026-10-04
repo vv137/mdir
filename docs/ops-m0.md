@@ -1571,7 +1571,7 @@ The pass `convert-md-exec-to-gpu` replaces every op where it is, with ops
 of the upstream `gpu` dialect. Before moving a reciprocal sum ahead of a
 neighbor refresh, it checks both operand dominance and independence from
 every intervening op using the declared memory effects and buffer aliases
-(D[reciprocal-hoist-dependencies]). An allocated or loop-carried charge
+(D179). An allocated or loop-carried charge
 buffer can dominate the refresh while a later particle kernel has yet to
 fill it; the sum must stay after that kernel. Unknown effects also prevent
 the move.

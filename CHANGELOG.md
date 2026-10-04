@@ -23,7 +23,7 @@ format, or the outputs; every such change is listed under **Changed** or
   ahead of a neighbor refresh. Free-energy runs with spatial ordering,
   checkpoints, and continuation now use the mapped charges directly,
   replacing the host-computed charge workaround
-  (D[reciprocal-hoist-dependencies], #26).
+  (D179, #26).
 
 - `md-exec-assign-storage` asserted that "the buffers of a loop are
   conserved" when a loop carried a field it did not read, or when an op in

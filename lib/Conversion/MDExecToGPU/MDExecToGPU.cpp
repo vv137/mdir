@@ -4058,7 +4058,7 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   // be there: a run of one step with no energies allocates the scratch
   // after the test. Buffer dominance does not imply that its contents are
   // ready: do not cross a producer of charges or another memory dependency
-  // (D[reciprocal-hoist-dependencies], issue #26).
+  // (D179, issue #26).
   DominanceInfo dominance(function);
   function.walk([&](md_exec::RefreshNeighborsOp refresh) {
     SmallVector<md_exec::ReciprocalOp> sums;

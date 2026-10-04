@@ -171,7 +171,7 @@ wait before the first op that uses the flag rather than after the loop
 that sets it. The reciprocal sum of PME moves before the test of the
 structure when its operands dominate that test and every intervening op
 is independent of the sum by its memory effects and buffer aliases
-(D[reciprocal-hoist-dependencies]). In particular, a kernel that fills its
+(D179). In particular, a kernel that fills its
 charge buffer must run first, even when the buffer itself was allocated
 earlier; otherwise PME reads stale or uninitialized charges (issue #26).
 When the move is safe, the device computes PME while the host waits. On JAC the rate went from 695 to 739 ns/day at constant
