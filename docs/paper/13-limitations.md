@@ -134,8 +134,7 @@ the native model prerequisite: owned Amber/GROMACS/CHARMM loading, physics
 and state as separate values, typed options, common preparation and validation,
 and the shared semantic IR builder, with a documented classical subset.
 Binding, compilation ownership and stale detection remain subsequent work.
-Future PyTorch/JAX automatic differentiation (requested 2026-10-04, with
-[chemtrain](https://github.com/tummfm/chemtrain) as an extension reference)
+Future PyTorch/JAX automatic differentiation (requested 2026-10-04)
 requires explicit framework derivative rules for energy, force, virial and
 parameter evaluation; DLPack alone shares storage, not gradient graphs.
 Sampling and differentiable evaluation remain separate concerns. The distributed work

@@ -42,10 +42,8 @@ behavior change. Model preparation and IR construction create no reports.
 ## Future MLIP differentiation
 
 The maintainer requested future PyTorch/JAX automatic differentiation on
-2026-10-04, pointing to [chemtrain](https://github.com/tummfm/chemtrain).
-Its [DiffTRe example](https://chemtrain.readthedocs.io/en/latest/algorithms/difftre.html)
-separates reference sampling from differentiable target energy and observable
-evaluation. This informs an extension boundary, not a claimed implementation.
+2026-10-04. Sampling and differentiable energy/observable evaluation have
+separate contracts; this is an extension requirement, not an implementation.
 Physics, parameters and initial state remain explicit values apart from
 execution ownership. Backend adapters must retain parameter identity and
 provide energy/force/virial evaluation with explicit derivative contracts

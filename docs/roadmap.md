@@ -240,8 +240,7 @@ explicit options and add model/plan hashes to format 1, with continuation
 tests in both directions before claiming CLI/Python interoperability.
 
 Future MLIP work will integrate PyTorch/JAX automatic differentiation
-(maintainer, 2026-10-04; [chemtrain](https://github.com/tummfm/chemtrain) is a
-reference for the extension boundary). Keep energy/observable evaluation and
+(maintainer, 2026-10-04). Keep energy/observable evaluation and
 parameters separate from simulation ownership. Tensor exchange alone does
 not propagate gradients: framework adapters need explicit derivative rules
 and independently validated force/virial and parameter derivatives. This
