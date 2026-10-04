@@ -206,7 +206,10 @@ they are needed:
 
 Preparation and proposed implementation gates are in
 [python-m2.md](python-m2.md) (D187), including the maintainer's
-2026-10-04 rulings. Python functionality remains unimplemented. M2 covers
+2026-10-04 rulings. The first native model contribution
+(D[python-model], [python-model.md](python-model.md)) adds shared preparation
+and owned Amber/GROMACS/CHARMM loading; Python bindings remain unimplemented.
+M2 covers
 a documented classical subset and requires a manylinux_2_28 pip wheel for
 Python 3.10–3.13; conda follows later.
 
@@ -235,6 +238,15 @@ with final reports only when due; segments without reporters bound stop
 latency to about 1 s or less on the Amber suite. Python fingerprints record
 explicit options and add model/plan hashes to format 1, with continuation
 tests in both directions before claiming CLI/Python interoperability.
+
+Future MLIP work will integrate PyTorch/JAX automatic differentiation
+(maintainer, 2026-10-04; [chemtrain](https://github.com/tummfm/chemtrain) is a
+reference for the extension boundary). Keep energy/observable evaluation and
+parameters separate from simulation ownership. Tensor exchange alone does
+not propagate gradients: framework adapters need explicit derivative rules
+and independently validated force/virial and parameter derivatives. This
+future requirement does not claim training or trajectory differentiation in
+the initial M3 inference deliverable.
 
 ## 7. Learned potentials (M3) and distributed execution (M4)
 

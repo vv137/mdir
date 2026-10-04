@@ -248,6 +248,10 @@ struct Topology {
   size_t getNumTypes() const { return typeNames.size(); }
 };
 
+/// Check shapes, finite values and particle/type identities before indexing.
+/// Used by both file input and the in-memory model.
+llvm::Error validateTopology(const Topology &topology);
+
 /// The coefficients of the bicubic patches of the maps of `topology`: for
 /// each map, each cell (a, b) with φ index a and ψ index b, 16 numbers
 /// `c[4 i + j]` of `E(t, u) = Σ c_ij t^i u^j`, with t and u the places of φ

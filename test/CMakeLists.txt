@@ -21,7 +21,12 @@ configure_lit_site_cfg(
   ${CMAKE_CURRENT_SOURCE_DIR}/lit.cfg.py
   )
 
+add_llvm_executable(mdir-model-test Driver/ModelTest.cpp)
+llvm_update_compile_flags(mdir-model-test)
+target_link_libraries(mdir-model-test PRIVATE MDIRDriver)
+
 set(MDIR_TEST_DEPENDS
+  mdir-model-test
   mdir
   mdir-opt
   mdrt

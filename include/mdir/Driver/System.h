@@ -4,6 +4,7 @@
 #define MDIR_DRIVER_SYSTEM_H
 
 #include "mdir/Driver/Control.h"
+#include "mdir/Driver/Cell.h"
 #include "mdir/Driver/Topology.h"
 
 #include <memory>
@@ -113,6 +114,15 @@ struct System {
 /// Reads the positions from the PDB file of `control`. The name of an atom
 /// selects its type.
 llvm::Expected<System> readSystem(const Control &control);
+
+/// Set a CHARMM cell and rotate positions from its symmetric frame.
+void applyCharmmCell(Topology &topology, const Cell &cell);
+
+/// Prepare an owned topology through the same path as file input.
+/// The input has been validated before constraints or selections index it.
+llvm::Expected<System> prepareTopologySystem(const Control &control,
+                                             Topology topology,
+                                             bool recognizeWaterResidues);
 
 /// Gives the particles velocities of the temperature of `control`, from
 /// the seed of `control`, with the center of mass at rest.

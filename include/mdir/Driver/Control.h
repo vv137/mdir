@@ -147,8 +147,12 @@ struct Control {
   std::string charmmCoordinateFile;
   std::vector<std::string> charmmParameterFiles;
 
+  /// An owned topology supplied by an embedding front end. No file is reopened.
+  bool inMemoryTopology = false;
+  bool inMemoryCharmm = false;
+
   bool hasTopology() const {
-    return !prmtopFile.empty() || !gromacsTopologyFile.empty() ||
+    return inMemoryTopology || !prmtopFile.empty() || !gromacsTopologyFile.empty() ||
            !charmmStructureFile.empty();
   }
   std::string restartInput;
@@ -494,6 +498,10 @@ struct Control {
 /// Reads the control file `path`. Paths of files in it are relative to the
 /// directory of the control file.
 llvm::Expected<Control> readControl(llvm::StringRef path);
+
+/// Validate and resolve cross-field options without parsing a file.
+llvm::Error validateControl(Control &control, llvm::StringRef context);
+llvm::Error resolveControlCoupling(Control &control, llvm::StringRef context);
 
 /// A control file with every keyword of M0 and its default.
 std::string getControlTemplate();

@@ -32,6 +32,7 @@ tool_dirs = [config.mdir_tools_dir, config.llvm_tools_dir]
 tools = [
     "mdir",
     "mdir-opt",
+    "mdir-model-test",
     "mlir-opt",
     "mlir-runner",
     "FileCheck",

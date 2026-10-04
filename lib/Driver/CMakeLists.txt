@@ -45,10 +45,12 @@ add_mlir_library(MDIRDriver
   Expression.cpp
   Fingerprint.cpp
   Gromacs.cpp
+  Model.cpp
   Output.cpp
   Selection.cpp
   System.cpp
   Trajectory.cpp
+  Validation.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/Templates.cpp
 
   ADDITIONAL_HEADER_DIRS

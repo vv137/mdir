@@ -1,0 +1,17 @@
+# The native model is the first M2 layer; no Python dependency is needed.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp -r %S/Inputs/gromacs %S/Inputs/dipeptide %S/Inputs/triclinic %t/
+# RUN: split-file %S/charmm.test %t/charmm
+# RUN: %python %S/Inputs/model_controls.py %t CPU
+# RUN: mdir-model-test %t/amber-double.toml | FileCheck %s
+# RUN: mdir-model-test %t/amber-mixed.toml | FileCheck %s
+# RUN: mdir-model-test %t/gromacs-double.toml | FileCheck %s
+# RUN: mdir-model-test %t/gromacs-mixed.toml | FileCheck %s
+# RUN: mdir-model-test %t/constraints-double.toml | FileCheck %s
+# RUN: mdir-model-test %t/triclinic-double.toml | FileCheck %s
+# RUN: mdir-model-test %t/nvt-double.toml | FileCheck %s
+# RUN: mdir-model-test %t/npt-mixed.toml | FileCheck %s
+# RUN: mdir-model-test %t/charmm-double.toml | FileCheck %s
+# RUN: mdir-model-test %t/charmm-triclinic-mixed.toml | FileCheck %s
+# CHECK: analytic energy: 1.000000e+00 kJ/mol; derivative: 2.000000e+01 kJ/mol/nm
+# CHECK: file/object parity, ownership and typed validation passed

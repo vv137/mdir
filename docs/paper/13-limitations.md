@@ -129,7 +129,16 @@ provenance, and allocation ownership as prerequisites. The maintainer's
 typed execution and reporters, independent serial simulations, read-only
 view leases followed by tracked writes within M2, and shared format-1
 checkpoints. A manylinux_2_28 pip wheel for Python 3.10–3.13 gates M2;
-preparation adds no executable Python interface. The distributed work
+preparation adds no executable Python interface. D[python-model] implements
+the native model prerequisite: owned Amber/GROMACS/CHARMM loading, physics
+and state as separate values, typed options, common preparation and validation,
+and the shared semantic IR builder, with a documented classical subset.
+Binding, compilation ownership and stale detection remain subsequent work.
+Future PyTorch/JAX automatic differentiation (requested 2026-10-04, with
+[chemtrain](https://github.com/tummfm/chemtrain) as an extension reference)
+requires explicit framework derivative rules for energy, force, virial and
+parameter evaluation; DLPack alone shares storage, not gradient graphs.
+Sampling and differentiable evaluation remain separate concerns. The distributed work
 begins with a graph of the dependencies of the `md` ops, ownership and
 freshness of fields, and a verifier of two domains (in which the
 disjoint union of the constraints is the unit of ownership, D83), then

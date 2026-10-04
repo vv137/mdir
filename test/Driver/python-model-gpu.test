@@ -1,0 +1,15 @@
+# REQUIRES: cuda
+# Native preparation emits GPU IR without initializing CUDA. Numerical
+# execution of this same builder is checked by the existing oracle tests.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp -r %S/Inputs/gromacs %S/Inputs/dipeptide %S/Inputs/triclinic %t/
+# RUN: split-file %S/charmm.test %t/charmm
+# RUN: %python %S/Inputs/model_controls.py %t GPU
+# RUN: mdir-model-test %t/amber-double.toml | FileCheck %s
+# RUN: mdir-model-test %t/amber-mixed.toml | FileCheck %s
+# RUN: mdir-model-test %t/constraints-double.toml | FileCheck %s
+# RUN: mdir-model-test %t/triclinic-mixed.toml | FileCheck %s
+# RUN: mdir-model-test %t/npt-mixed.toml | FileCheck %s
+# RUN: mdir-model-test %t/charmm-double.toml | FileCheck %s
+# RUN: mdir-model-test %t/charmm-triclinic-mixed.toml | FileCheck %s
+# CHECK: file/object parity, ownership and typed validation passed
