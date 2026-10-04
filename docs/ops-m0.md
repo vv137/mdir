@@ -1568,7 +1568,13 @@ buffer. A loop around the op carries them, so the lowering allocates
 nothing inside a loop over steps (D18, B10).
 
 The pass `convert-md-exec-to-gpu` replaces every op where it is, with ops
-of the upstream `gpu` dialect.
+of the upstream `gpu` dialect. Before moving a reciprocal sum ahead of a
+neighbor refresh, it checks both operand dominance and independence from
+every intervening op using the declared memory effects and buffer aliases
+(D[reciprocal-hoist-dependencies]). An allocated or loop-carried charge
+buffer can dominate the refresh while a later particle kernel has yet to
+fill it; the sum must stay after that kernel. Unknown effects also prevent
+the move.
 
 | Storage form | Kernels |
 |---|---|

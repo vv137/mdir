@@ -168,9 +168,13 @@ the next kernels: on JAC the device was idle 45 µs of a step of 249, and
 of the host that it pins, records an event after the copy, and waits for
 that event alone (`mdrtFlagStart`, `mdrtFlagFinish`); the lowering puts the
 wait before the first op that uses the flag rather than after the loop
-that sets it. The reciprocal sum of PME, which takes the positions only,
-moves before the test of the structure, so the device computes it while
-the host waits. On JAC the rate went from 695 to 739 ns/day at constant
+that sets it. The reciprocal sum of PME moves before the test of the
+structure when its operands dominate that test and every intervening op
+is independent of the sum by its memory effects and buffer aliases
+(D[reciprocal-hoist-dependencies]). In particular, a kernel that fills its
+charge buffer must run first, even when the buffer itself was allocated
+earlier; otherwise PME reads stale or uninitialized charges (issue #26).
+When the move is safe, the device computes PME while the host waits. On JAC the rate went from 695 to 739 ns/day at constant
 energy and from 522 to 600 at constant pressure, and the waits for the
 stream fell to the builds alone. The flags are now memory of the host
 that is mapped for the device (D118): a kernel that sets one stores into
