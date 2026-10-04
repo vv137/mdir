@@ -382,10 +382,10 @@ private:
                  double c, double spread);
   /// Emits `result`, the velocity of a step of Brownian dynamics (D163b),
   /// F / (m γ) + √(2 k_B T / (m γ Δt)) R, from the forces `forces`; the
-  /// positions drift by it over the step. A particle of mass 0 keeps its
-  /// velocity from `velocities`.
+  /// positions drift by it over the step. A particle of mass 0 does not
+  /// drift.
   void emitBrownianVelocity(StringRef indent, StringRef forces,
-                            StringRef velocities, StringRef result);
+                            StringRef result);
   void emitPlaceSites(StringRef indent, StringRef x, StringRef result,
                       StringRef relations);
   /// Emits the forces `result`: the forces `f` at the positions `x` with
@@ -4006,7 +4006,7 @@ void Builder::emitPrograms() {
     if (brownian) {
       // The velocity of the step, which the drift takes over Δt; the
       // velocities stored are those of the displacement, Δx / Δt.
-      emitBrownianVelocity("  ", "%f", "%v", "%v1");
+      emitBrownianVelocity("  ", "%f", "%v1");
     } else if (!leapfrog) {
       os << "  %v1 = dyn.kick %v, %f, %m, %half : !vec\n";
     } else if (withVirial && constraints) {
@@ -4203,21 +4203,19 @@ void Builder::emitLangevin(StringRef indent, StringRef velocities,
 }
 
 void Builder::emitBrownianVelocity(StringRef indent, StringRef forces,
-                                   StringRef velocities, StringRef result) {
+                                   StringRef result) {
   // The step of Ermak and McCammon, J. Chem. Phys. 69, 1352 (1978), without
   // hydrodynamic interactions: Δx = Δt F / (m γ) + √(2 k_B T Δt /
   // (m γ)) R, written as a velocity that the positions drift by over Δt. A
-  // particle of mass 0 (a virtual site, placed after the drift) keeps the
-  // velocity it had, which also keeps the velocities of the step before as
-  // an operand of the step.
+  // particle of mass 0 (a virtual site, placed after the drift) does not
+  // drift; the step does not read the velocities of the step before.
   double gamma = control.friction;
   double kT = units::boltzmann * control.temperature;
   std::string in = (indent + "  ").str();
   std::string drift = (result + "_drift").str();
-  os << indent << drift << " = md.map_particles gather(" << forces << ", "
-     << velocities << ", %m : !vec, !vec, !real) {\n"
-     << indent
-     << "^bb0(%bf: vector<3xf64>, %bvi: vector<3xf64>, %bm: f64):\n"
+  os << indent << drift << " = md.map_particles gather(" << forces
+     << ", %m : !vec, !real) {\n"
+     << indent << "^bb0(%bf: vector<3xf64>, %bm: f64):\n"
      << in << "%bzero = arith.constant 0.0 : f64\n"
      << in << "%bmassive = arith.cmpf ogt, %bm, %bzero : f64\n"
      << in << "%bone = arith.constant 1.0 : f64\n"
@@ -4226,7 +4224,8 @@ void Builder::emitBrownianVelocity(StringRef indent, StringRef forces,
      << in << "%bmg = arith.mulf %bsafe, %bgamma : f64\n"
      << in << "%bmgb = vector.broadcast %bmg : f64 to vector<3xf64>\n"
      << in << "%bv = arith.divf %bf, %bmgb : vector<3xf64>\n"
-     << in << "%bout = arith.select %bmassive, %bv, %bvi : vector<3xf64>\n"
+     << in << "%bstill = arith.constant dense<0.0> : vector<3xf64>\n"
+     << in << "%bout = arith.select %bmassive, %bv, %bstill : vector<3xf64>\n"
      << in << "md.yield %bout : vector<3xf64>\n"
      << indent << "} : !vec\n";
   emitNoise(indent, drift, result, 1.0,

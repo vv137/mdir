@@ -10,6 +10,15 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ## [Unreleased]
 
+### Fixed
+
+- `md-exec-assign-storage` asserted that "the buffers of a loop are
+  conserved" when a loop carried a field it did not read, or when an op in
+  a loop produced a field that nothing used. Both now free the buffer. The
+  Brownian step no longer reads the velocities to avoid it, and a particle
+  of mass 0 (a virtual site) gets velocity 0 instead of keeping its old
+  velocity (#19).
+
 ## [0.1.0] - 2026-10-04
 
 The first milestone (M1): an all-atom protein in water with an Amber force
