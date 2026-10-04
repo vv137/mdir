@@ -4,6 +4,7 @@
 .git
 .github
 .claude
+.codex
 build
 build-*
 **/__pycache__
