@@ -54,7 +54,7 @@ flattened element number or a byte address is 64 bits: the search of the
 matrix needed more than 64 registers in `index` and spilled (612 µs a
 build of JAC, against 430 in `i32`).
 
-**Divisions and reciprocals** (D98, D[approximate-quotient-rounding]). A division marked approximate becomes
+**Divisions and reciprocals** (D98, D180). A division marked approximate becomes
 `x * rcp.approx.ftz(y)`: the backend's `div.approx.f32` scales operands
 that are subnormal or beyond $2^{126}$, which never occur in the
 arithmetic of a pair, at a cost of two comparisons, two selections, and a

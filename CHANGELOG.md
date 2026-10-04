@@ -35,7 +35,7 @@ format, or the outputs; every such change is listed under **Changed** or
   longer fuse an approximate quotient into the cutoff subtraction. The
   shifted Lennard-Jones derivative is checked against OpenMM within
   1e-5 kcal/mol, replacing the widened 1e-3 tolerance
-  (D[approximate-quotient-rounding], #48).
+  (D180, #48).
 
 ## [0.1.0] - 2026-10-04
 
