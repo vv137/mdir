@@ -115,6 +115,12 @@ English. Commits carry no trailers (no `Co-Authored-By`, no
 `Signed-off-by`). A contributor force-pushes only its own branch, and only
 with `--force-with-lease`. A contributor never merges its own PR.
 
+Issues, PRs, and their comments name no paths of a contributor's machine:
+no home directories, build trees, logs, scratch directories, or private
+notes. Others cannot open them, and they leak the layout of a machine.
+Describe the measurement or the input instead, and put anything others need
+in the repository; paths in the repository are fine.
+
 ## Decision numbers
 
 A branch does not take a decision number. It writes its decision as a
