@@ -19,6 +19,12 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- GPU PME preserves mapped-charge producers when moving a reciprocal sum
+  ahead of a neighbor refresh. Free-energy runs with spatial ordering,
+  checkpoints, and continuation now use the mapped charges directly,
+  replacing the host-computed charge workaround
+  (D[reciprocal-hoist-dependencies], #26).
+
 - `md-exec-assign-storage` asserted that "the buffers of a loop are
   conserved" when a loop carried a field it did not read, or when an op in
   a loop produced a field that nothing used. Both now free the buffer. The

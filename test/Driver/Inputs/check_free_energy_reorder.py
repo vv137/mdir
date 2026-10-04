@@ -2,11 +2,12 @@
 put in order, with checkpoints, and from the checkpoint of another state,
 against the same runs on the CPU in double precision.
 
-    check_free_energy_reorder.py <directory> <mdir>
+    check_free_energy_reorder.py <directory> <mdir> [MIXED|DOUBLE]
 
-The energies of the states come from `@alchemical`, whose charges are a map
-over the particles; such a field once gave positions that were not numbers
-on a device in runs that put the particles in order (issue #26). Prints a
+The step potential `@energy` and the state evaluations in `@alchemical`
+map their charges over particles. Moving a reciprocal sum before the map
+once gave nonfinite positions on a device in runs that put the particles
+in order (issue #26). Prints a
 line per check: every value finite, the rows of the device against those
 of the CPU, and dH/dλ against the central difference of the energies of
 the states beside it.
@@ -20,6 +21,7 @@ import sys
 
 here = os.path.dirname(os.path.abspath(__file__))
 directory, mdir = sys.argv[1], sys.argv[2]
+precision = sys.argv[3] if len(sys.argv) > 3 else "MIXED"
 for name in ('eth_wat.prmtop', 'eth_wat.inpcrd'):
     shutil.copy(os.path.join(here, 'fep', name), directory)
 
@@ -113,13 +115,20 @@ def compare(label, device, host, tolerance, central=True):
 
 
 # From the coordinates, with a checkpoint (and a new order) every 10 steps.
-device = run('ordered', 'GPU', 'MIXED')
+device = run('ordered', 'GPU', precision)
 host = run('ordered_cpu', 'CPU', 'DOUBLE')
 compare('with checkpoints', device, host, 2e-3)
 
-# From the checkpoint of state 0 at state 3, whose forces are computed anew.
+# Continue the same state, then restart at another state with new forces.
 start = 'checkpoint = "{}"'
-device = run('other', 'GPU', 'MIXED', state=3,
+device = run('continued', 'GPU', precision,
+             start=start.format('ordered.h5'), steps=20)
+host = run('continued_cpu', 'CPU', 'DOUBLE',
+           start=start.format('ordered_cpu.h5'), steps=20)
+compare('same-state continuation', device, host, 2e-3)
+
+# From the checkpoint of state 0 at state 3, whose forces are computed anew.
+device = run('other', 'GPU', precision, state=3,
              start=start.format('ordered.h5'), steps=20)
 host = run('other_cpu', 'CPU', 'DOUBLE', state=3,
            start=start.format('ordered_cpu.h5'), steps=20)

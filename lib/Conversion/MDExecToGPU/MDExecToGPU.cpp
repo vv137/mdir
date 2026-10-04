@@ -4056,7 +4056,9 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   // the positions only, and the device computes it while the host waits
   // for the test (D113). Its operands, its scratch included, must already
   // be there: a run of one step with no energies allocates the scratch
-  // after the test.
+  // after the test. Buffer dominance does not imply that its contents are
+  // ready: do not cross a producer of charges or another memory dependency
+  // (D[reciprocal-hoist-dependencies], issue #26).
   DominanceInfo dominance(function);
   function.walk([&](md_exec::RefreshNeighborsOp refresh) {
     SmallVector<md_exec::ReciprocalOp> sums;
@@ -4083,6 +4085,9 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
       for (Value operand : reciprocal->getOperands())
         independent &= !llvm::is_contained(refresh->getResults(), operand) &&
                        dominance.properlyDominates(operand, refresh);
+      for (Operation *crossed = refresh->getNextNode();
+           independent && crossed != next; crossed = crossed->getNextNode())
+        independent = md_exec::areIndependent(crossed, reciprocal, aliases);
       if (independent)
         sums.push_back(reciprocal);
     }

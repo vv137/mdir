@@ -1,0 +1,13 @@
+# Mapped charges feeding PME in checkpointed and restarted GPU runs (#26).
+# The driver regression prepares controls with mapped charges in @energy.
+# Check both the checkpointed run and the same-state continuation for
+# accesses outside buffers and reads before a buffer has been initialized.
+# REQUIRES: cuda, hdf5, compute-sanitizer
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/../Driver/Inputs/check_free_energy_reorder.py %t mdir MIXED > %t/checks.log
+# RUN: FileCheck %S/../Driver/free-energy-reorder-gpu.test < %t/checks.log
+# RUN: cd %t && %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run ordered.toml 2>&1 | FileCheck %s
+# RUN: cd %t && %compute_sanitizer --tool initcheck --error-exitcode 1 mdir run ordered.toml 2>&1 | FileCheck %s
+# RUN: cd %t && %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run continued.toml 2>&1 | FileCheck %s
+# RUN: cd %t && %compute_sanitizer --tool initcheck --error-exitcode 1 mdir run continued.toml 2>&1 | FileCheck %s
+# CHECK: ERROR SUMMARY: 0 errors

@@ -1203,23 +1203,13 @@ llvm::Error Builder::collectTopology() {
     program.fields.push_back(std::move(field));
   }
 
-  // [free_energy] (D161): 1 for each particle that it decouples, and the
-  // charges that the reciprocal sum takes at the state of the run.
+  // [free_energy] (D161): 1 for each particle that it decouples.
   if (decouples()) {
     Program::Field flags;
     flags.name = "alch";
     for (bool flag : system.alchemical)
       flags.values.push_back(flag ? 1.0 : 0.0);
     program.fields.push_back(std::move(flags));
-    double lambda = getLambda("coulomb");
-    if (control.pme && lambda != 0.0) {
-      Program::Field scaled;
-      scaled.name = "q_rec";
-      for (size_t i = 0, e = topology.charges.size(); i != e; ++i)
-        scaled.values.push_back(topology.charges[i] *
-                                (system.alchemical[i] ? 1.0 - lambda : 1.0));
-      program.fields.push_back(std::move(scaled));
-    }
   }
 
   // Lennard-Jones for each pair of types.
@@ -3291,11 +3281,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
   if (program.pme && (terms & CoulombReciprocal)) {
     // The charges of the selection of [free_energy] times 1 − λ (D161).
     std::string charges = "%p_q";
-    if (scalesCoulomb && !lambdaArguments) {
-      // At the state of the run, the scaled charges are a field of their
-      // own, which the host computes once.
-      charges = "%p_q_rec";
-    } else if (scalesCoulomb) {
+    if (scalesCoulomb) {
       os << "  %q_scaled = md.map_particles gather(%p_q, %p_alch : !real, "
             "!real) {\n"
          << "  ^bb0(%q: f64, %al: f64):\n"

@@ -5,10 +5,22 @@
 #
 # REQUIRES: cuda, hdf5
 # RUN: rm -rf %t && mkdir -p %t
-# RUN: %python %S/Inputs/check_free_energy_reorder.py %t mdir | FileCheck %s
+# RUN: %python %S/Inputs/check_free_energy_reorder.py %t mdir MIXED | FileCheck %s
+# RUN: mdir emit %t/ordered.toml --stage=module | FileCheck %s --check-prefix=MAP
+# RUN: rm -rf %t-double && mkdir -p %t-double
+# RUN: %python %S/Inputs/check_free_energy_reorder.py %t-double mdir DOUBLE | FileCheck %s
 #
 # CHECK: with checkpoints, finite: ok
 # CHECK: with checkpoints, device against CPU: ok
 # CHECK: with checkpoints, dH/dl against central differences: ok
+# CHECK: same-state continuation, finite: ok
+# CHECK: same-state continuation, device against CPU: ok
+# CHECK: same-state continuation, dH/dl against central differences: ok
 # CHECK: from another state, finite: ok
 # CHECK: from another state, device against CPU: ok
+
+# Verify that the step potential exercises the mapped-charge producer,
+# rather than masking #26 with the former host-computed q_rec field.
+# MAP-LABEL: md.potential @energy(
+# MAP: %q_scaled = md.map_particles
+# MAP: md.reciprocal %x, %q_scaled,
