@@ -91,3 +91,42 @@ CMake uses the documented pybind11
 [package discovery and module helper](https://pybind11.readthedocs.io/en/stable/cmake/index.html).
 Only Python 3.10 is validated in this contribution; 3.11–3.13 and portable
 wheels remain installation gates.
+
+## Recorded validation
+
+Python 3.10.12 with pybind11 3.0.1 passes 16 front-end parity cases per
+CPU/GPU target (eight loading/ensemble cases in mixed and double).
+Semantic IR and pipeline text match the CLI exactly (difference zero,
+tolerance zero). Ownership, copied nested terms/cells, every compile input's
+version, immutable inspection, error recovery and retained owners are checked.
+The native compiler diagnostic test retains its IR location, recovers on a
+subsequent compilation, and leaves no reproducer file.
+
+CLI-only compilation passes with Python and CUDA disabled. A CUDA-disabled
+extension passes the CPU checks and refuses GPU compilation with
+`UnsupportedError`. The installed module passes the CPU checks outside
+source and build trees with GPUs hidden. The extension has no CUDA driver
+or MDIR runtime dependency; runtime loading is deferred.
+
+Independent finite differences of the existing tabulated-term energies
+(`test/Driver/Inputs/check_functions.py`) provide a numerical regression of
+the unchanged CLI pipeline. The reference maximum force magnitude is
+4.51391065 kcal/mol/Å. These checks exercise existing CLI kernels, not a
+Python simulation, and do not extend the initial Python physics subset.
+
+| Target and precision | Maximum component force difference (kcal/mol/Å) | Tolerance (kcal/mol/Å) |
+|---|---:|---:|
+| CPU double | $1.78911164\times10^{-9}$ | $4.51391065\times10^{-6}$ |
+| GPU double | $1.78911197\times10^{-9}$ | $4.51391065\times10^{-6}$ |
+| CPU mixed | $7.88052008\times10^{-6}$ | $9.02782129\times10^{-5}$ |
+| GPU mixed | $1.26336992\times10^{-5}$ | $9.02782129\times10^{-5}$ |
+
+The CLI pipeline generator is a verbatim extraction from main. No runtime,
+step schedule or device kernels change, so no per-step timing or device
+sanitizer run is added. Python execution timing remains a segment-API gate.
+
+The complete default suite, run sequentially under the GPU 1 lock after
+checking the device, passes 263 tests with six optional tests unsupported
+and zero failures (269 discovered, 2045.79 s). Issues #22 and #26 are closed;
+their `not-numbers-gpu.test` and `free-energy-reorder-gpu.test` regressions
+pass in this single suite run, with no failures or retries.
