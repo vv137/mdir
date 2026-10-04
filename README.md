@@ -112,6 +112,8 @@ apptainer run --nv mdir-0.1.0.sif doctor
 - For NVIDIA GPUs: the driver, and the CUDA toolkit for its header and its
   device math library. Versions 11.2 and 13.x are known to work.
 - For checkpoints: HDF5, built with `scripts/build-hdf5.sh`
+- For the Python interface (optional): Python 3.10 to 3.13 and pybind11
+  3.0.1
 
 ## Building LLVM
 
@@ -153,6 +155,27 @@ If the CUDA toolkit is found, the runtime for NVIDIA GPUs is built as
 that is not on the search path, and `-DMDIR_ENABLE_CUDA=OFF` leaves the
 runtime out.
 
+## Python interface (preview)
+
+The Python interface of milestone M2 is optional and off by default:
+
+```sh
+pip install pybind11==3.0.1
+
+cmake -G Ninja -S . -B build <the options above> \
+    -DMDIR_ENABLE_PYTHON=ON \
+    -Dpybind11_DIR=$(python3 -m pybind11 --cmakedir)
+cmake --build build
+
+PYTHONPATH=build/python python3 -c "import mdir"
+```
+
+The module `mdir` is built in `build/python`. It loads Amber, GROMACS, and
+CHARMM inputs, sets up a model, and compiles it to the IR and plan that
+`mdir run` would use; it does not yet run a simulation. The interface
+changes during M2. [docs/python-compile.md](docs/python-compile.md)
+describes it.
+
 ## Testing
 
 ```sh
@@ -161,7 +184,8 @@ cmake --build build --target check-mdir
 
 The tests need `mlir-opt`, `mlir-runner`, and `FileCheck` from the LLVM
 installation. Some tests run generated code and compare its results with
-reference values.
+reference values. A build with `MDIR_ENABLE_PYTHON=ON` adds the tests of
+the Python interface.
 
 ## Tools
 
