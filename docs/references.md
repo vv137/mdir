@@ -652,6 +652,15 @@ molecular dynamics simulations," *J. Comput. Chem.* **25**, 1400–1415
 Used for: CMAP, the correction map of two backbone dihedrals, a bicubic
 patch in each cell of a grid (design-m1.md, Section 20).
 
+### LuoRoux2010
+
+Y. Luo, B. Roux, "Simulation of osmotic pressure in concentrated aqueous
+salt solutions," *J. Phys. Chem. Lett.* **1**, 183–189 (2010).
+[doi:10.1021/jz900079w](https://doi.org/10.1021/jz900079w)
+
+Used for: the osmotic pressure read from the force on walls that act on
+the ions only, the example of `observe` (D[cv]).
+
 ### Maier2015
 
 J. A. Maier, C. Martinez, K. Kasavajhala, L. Wickstrom, K. E. Hauser,

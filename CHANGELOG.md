@@ -27,6 +27,11 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- `observe = [...]` in a term given by an expression writes the term's
+  energy and its derivatives in the listed constants, the generalized
+  forces along them, to `[output] observables` at every energy, without
+  `[free_energy]`: for example the force on a wall, and so an osmotic
+  pressure (D[cv], part of #16).
 - M2 Python API preparation: driver prerequisites, proposed implementation
   sequence, adopted maintainer contracts, and validation gates in
   `docs/python-m2.md`

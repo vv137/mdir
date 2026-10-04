@@ -288,6 +288,12 @@ periodic boundary conditions," *Chem. Phys. Lett.* **421**, 138–141
 (2006).
 [doi:10.1016/j.cplett.2006.01.087](https://doi.org/10.1016/j.cplett.2006.01.087)
 
+### LuoRoux2010
+
+Y. Luo, B. Roux, "Simulation of osmotic pressure in concentrated aqueous
+salt solutions," *J. Phys. Chem. Lett.* **1**, 183–189 (2010).
+[doi:10.1021/jz900079w](https://doi.org/10.1021/jz900079w)
+
 ### Maier2015
 
 J. A. Maier, C. Martinez, K. Kasavajhala, L. Wickstrom, K. E. Hauser,
