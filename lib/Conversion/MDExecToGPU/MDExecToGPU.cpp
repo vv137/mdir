@@ -1100,7 +1100,8 @@ void Lowering::findOnceRuns(func::FuncOp function) {
       // one after the other (D84).
       bool joins = !run.empty() &&
                    loop.getPositions() == run.front().getPositions() &&
-                   loop.getCell() == run.front().getCell();
+                   loop.getCellMutable().get() ==
+                       run.front().getCellMutable().get();
       ValueRange outs = loop.getOuts();
       if (joins)
         for (Value operand : op.getOperands())
