@@ -165,10 +165,50 @@ sum (D81, D87), tried on this system, gives 597 ns/day against 609
 without (D118). On JAC, with three sites per water and a cutoff of 8 Å, the same
 structure is 25% faster than pmemd.cuda (Table 10.2); on this system its
 rate is 66% to 72% of GROMACS's, and the measurements place the
-difference outside the loop over pairs. GROMACS's conserved energy at
+difference outside the loop over pairs. Most of it is the policy of the
+lists rather than the kernels, as the matched comparison below shows. GROMACS's conserved energy at
 constant pressure changed by $5\times10^{-3}$ to $7\times10^{-3}$ at every
 tolerance of its buffer that was tried ($5\times10^{-3}$, $5\times10^{-4}$,
 and $5\times10^{-5}$ kJ/mol/ps per atom). Its thermostat alone, without
 the barostat, moves it by $+370$ to $+610$ kcal/mol/ns (`nsttcouple` 1 or
 25, $\tau_T$ 1 or 10 ps, `nstcalcenergy` 1 or 100), against $-70$ for its
 total energy at constant energy; that was not investigated further.
+
+**The policy of the lists, matched.** GROMACS's rate in Table 10.3 is that
+of its default policy. Its buffer is set from a tolerance on the energy
+error of missed pairs (`verlet-buffer-tolerance`). With a thermostat and
+the update on the device, GROMACS also searches every 50 steps instead of
+10 and prunes a rolling inner list every 4 steps. MDIR's default misses
+no pair: its lists are rebuilt when a displacement could bring a pair
+within reach (Section 4). Table 10.5 compares the two programs on JAC with
+the ensemble and the policy matched. RTX 3090 at 300 W (GPU 0), 50,000
+steps of 2 fs, cutoff 8 Å, PME on a grid of $64^3$, the bonds of hydrogen
+constrained, mixed precision, MDIR at 264b6d7 with groups and the dual
+list (11 and 8.6 Å), GROMACS 2026.3 with its nonbonded terms, PME, bonded
+terms, and update on the device.
+
+*Table 10.5. JAC, ms per step (one or two runs each; the second, where
+there is one, agreed within 0.001), and the drift of the conserved energy
+in kJ/mol/ps per atom (MDIR: end minus start over 100 ps; GROMACS: its
+"Conserved energy drift").*
+
+| Ensemble and list policy | MDIR | GROMACS | MDIR / GROMACS, time | Drift: MDIR | GROMACS |
+|---|---|---|---|---|---|
+| NVE (GROMACS keeps a search every 10 steps) | 0.213 | 0.216 | 0.99 | $-1.0\times10^{-5}$ | $-1.7\times10^{-4}$ |
+| NVE, GROMACS with an exact buffer (rlist 1.1 nm) | 0.213 | 0.261 | 0.82 | $-1.0\times10^{-5}$ | $-7.8\times10^{-5}$ |
+| V-rescale, GROMACS searching every 10 steps | 0.215 | 0.225 | 0.96 | $-8.9\times10^{-6}$ | $-1.2\times10^{-4}$ |
+| V-rescale, GROMACS default (search every 50, rolling prune every 4) | 0.215 | 0.147 | 1.46 | $-8.9\times10^{-6}$ | $-1.6\times10^{-4}$ |
+
+With the same ensemble and the same list policy, the two programs run at
+the same rate. MDIR's conserved energy drifts 15 to 40 times less than
+GROMACS's at its default tolerance. GROMACS's 0.147 ms is its search every
+50 steps: its accounting of cycles shows 801 searches instead of 4001
+over the run, 67 µs a step, which is the whole difference. It allows that
+search only with a thermostat and the update on the device. MDIR rebuilds
+its lists every 16.4 steps on average and prunes every 2.8. A smaller
+skin makes it slower (pairlist 10 Å: 0.220 ms; 9.5 Å: 0.226 ms), so the
+3 Å skin of D114 stays. MDIR's rate below 0.21 ms on this system would
+need a list that lives longer, through a buffer set from a tolerance as
+GROMACS's is. That is not the default, since a missed pair is not allowed
+by default, and it would be an option.
+
