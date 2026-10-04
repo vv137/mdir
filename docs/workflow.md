@@ -155,8 +155,9 @@ system, and states any slowdown on the Amber suite.
 
 GPUs are shared among contributors and other users. Each device runs one
 job at a time: every GPU command takes a lock for its device and checks the
-device's use inside the lock. One device is kept for timing and another for
-tests, and no contributor uses more than two at once. Full suites queue
+device's use inside the lock. A timing run has its device to itself; tests
+may use either device between timings, and no contributor uses more than
+two at once. Full suites queue
 behind the lock instead of running side by side.
 
 ## Permissions
