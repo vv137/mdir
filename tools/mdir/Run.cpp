@@ -1129,7 +1129,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // [free_energy] (D161): at every energy of the log, dH/dλ of each
   // component and the difference of the energy to each state, the input of
   // thermodynamic integration and of MBAR. With one state the differences
-  // are identically 0 and are left out (D[single-state-dhdl]).
+  // are identically 0 and are left out (D190).
   if (!control->freeEnergyFile.empty()) {
     std::vector<ColumnFile::Column> columns = {{"step", "-", true},
                                                {"time", "ps"}};

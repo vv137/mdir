@@ -347,7 +347,7 @@ void _mlir_ciface_mdrtWriteFreeEnergy(int64_t step, void *values) {
   // energy at every state, in kJ/mol; the constant terms follow at the
   // volume of the cell (D161). The row: dH/dλ of each component, then
   // U(λ_k) − U(λ of the run) for each state k, in kcal/mol. With one state
-  // the values hold the derivatives alone (D[single-state-dhdl]).
+  // the values hold the derivatives alone (D190).
   auto *v = static_cast<StridedMemRefType<double, 1> *>(values);
   auto at = [&](size_t k) { return v->data[k * v->strides[0]]; };
   double scale = output.firstVolume / output.volume;

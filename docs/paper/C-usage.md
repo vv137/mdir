@@ -719,7 +719,7 @@ needed only with `coulomb` or `vdw`. Without it, `[free_energy]` only
 defines parameters. The force on a wall is read with `observe` (C.7)
 rather than through a component of $\lambda$. With one state the file has
 no `dU` columns, which would be identically 0, and `scripts/free-energy.py`
-refuses it (D[single-state-dhdl]). A state that softens the Lennard-Jones while the charges are still
+refuses it (D190). A state that softens the Lennard-Jones while the charges are still
 on warns (`charged_soft_core`): the charges of the selection could then
 come arbitrarily close to others.
 

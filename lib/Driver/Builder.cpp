@@ -2237,7 +2237,7 @@ void Builder::emitFreeEnergyOutput(StringRef indent, StringRef x,
   // component of λ, and its energy at every other state; the host adds the
   // constant terms (D161). The values: the derivatives, then the energies
   // of the states in order. With one state its energy differs from itself
-  // only, so the states are not evaluated (D[single-state-dhdl]).
+  // only, so the states are not evaluated (D190).
   const Control::FreeEnergy &energy = control.freeEnergy;
   size_t components = energy.lambdas.size(), states = energy.getNumStates();
   if (states == 1)

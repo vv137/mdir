@@ -17,7 +17,7 @@ format, or the outputs; every such change is listed under **Changed** or
   evaluated. `--continue` onto a file written before stops at its column
   header; continue with `--no-append` or start a new file.
   `scripts/free-energy.py` refuses a one-state run, since TI and MBAR need
-  two or more states (D[single-state-dhdl], #71).
+  two or more states (D190, #71).
 
 - `observe` is a reserved key of every term table given by an expression
   (D189); a constant named `observe` must be renamed, with its uses in
