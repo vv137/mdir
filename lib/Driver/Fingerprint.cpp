@@ -10,9 +10,10 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <tuple>
+#include <functional>
 #include <map>
 #include <set>
+#include <tuple>
 
 #define TOML_EXCEPTIONS 0
 #define TOML_ENABLE_FORMATTERS 0
@@ -118,7 +119,41 @@ mdir::driver::getRunFingerprint(StringRef controlFile, const Control &control,
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                    "cannot read '%s' again",
                                    controlFile.str().c_str());
-  const toml::table &root = parsed.table();
+  toml::table &root = parsed.table();
+
+  // Compare the grid actually loaded, rather than its filename. Reconstruct
+  // the inline representation so that a relocated file or equivalent inline
+  // values define the same physics (D[tabulated-values-file]).
+  if (toml::array *functions = root["energy"]["function"].as_array())
+    for (toml::node &node : *functions) {
+      toml::table *table = node.as_table();
+      if (!table || !table->contains("values_file"))
+        continue;
+      auto name = (*table)["name"].value<std::string>();
+      auto found = llvm::find_if(control.functions, [&](const auto &function) {
+        return name && function.name == *name;
+      });
+      if (found == control.functions.end())
+        continue;
+      std::vector<size_t> stride(found->sizes.size(), 1);
+      for (size_t k = 1; k < stride.size(); ++k)
+        stride[k] = stride[k - 1] * found->sizes[k - 1];
+      std::function<toml::array(unsigned, size_t)> values =
+          [&](unsigned depth, size_t offset) {
+        toml::array result;
+        for (unsigned i = 0; i < found->sizes[depth]; ++i) {
+          size_t at = offset + i * stride[depth];
+          if (depth + 1 == found->sizes.size())
+            result.push_back(found->values[at]);
+          else
+            result.push_back(values(depth + 1, at));
+        }
+        return result;
+      };
+      table->erase("values_file");
+      table->erase("shape");
+      table->insert("values", values(0, 0));
+    }
 
   Fingerprint fingerprint;
   auto add = [&](StringRef group, std::string name, std::string value) {

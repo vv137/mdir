@@ -5,11 +5,14 @@
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Format.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <optional>
 
 #define TOML_EXCEPTIONS 0
@@ -67,6 +70,7 @@ private:
   Error readTriplet(const toml::table &table);
   /// [[energy.function]]: a tabulated function (D138).
   Error readFunction(const toml::table &table);
+  Error readFunctionFile(const toml::table &table, TabulatedFunction &function);
   /// [[energy.external]]: a term of the absolute positions (D148).
   Error readExternal(const toml::table &table);
   /// [[energy.parameter]]: a parameter of each particle (D165).
@@ -895,9 +899,91 @@ Error Reader::readCompound(const toml::table &table) {
   return Error::success();
 }
 
+// File-backed grids follow inline nested lists, the last argument fastest.
+// The spline coefficients use the first argument fastest, so the reader
+// transposes the input (D[tabulated-values-file]). No file data reaches a
+// compiler or kernel until its shape and every value have been checked.
+Error Reader::readFunctionFile(const toml::table &table,
+                                TabulatedFunction &function) {
+  const toml::node &fileNode = *table.get("values_file");
+  if (Error error = readPath(table, "values_file", function.valuesFile))
+    return error;
+  if (function.valuesFile.empty())
+    return fail(fileNode, "expected a nonempty 'values_file' path");
+  const toml::node *shape = table.get("shape");
+  const toml::array *sizes = shape ? shape->as_array() : nullptr;
+  if (!sizes || sizes->empty() || sizes->size() > 3)
+    return fail(shape ? *shape : fileNode,
+                "expected 'shape', a list of one to three positive grid sizes");
+  size_t total = 1;
+  for (const toml::node &size : *sizes) {
+    auto number = size.value<int64_t>();
+    if (!size.is_integer() || !number || *number < 1 ||
+        static_cast<uint64_t>(*number) > std::numeric_limits<unsigned>::max())
+      return fail(size, "expected a positive grid size that fits in an "
+                        "unsigned integer");
+    if (static_cast<uint64_t>(*number) >
+        std::numeric_limits<size_t>::max() / total)
+      return fail(*shape, "the product of 'shape' overflows the grid size");
+    total *= *number;
+    function.sizes.push_back(*number);
+  }
+  auto buffer = llvm::MemoryBuffer::getFile(function.valuesFile);
+  if (!buffer)
+    return fail(fileNode, "cannot read '" + function.valuesFile + "': " +
+                          buffer.getError().message());
+  StringRef rest = (*buffer)->getBuffer();
+  unsigned lineNumber = 0;
+  while (!rest.empty()) {
+    auto line = rest.split('\n');
+    rest = line.second;
+    StringRef text = line.first.split('#').first.trim();
+    ++lineNumber;
+    while (!text.empty()) {
+      size_t end = text.find_first_of(" \t\r\v\f");
+      StringRef token = text.take_front(end);
+      double value;
+      if (!llvm::all_of(token, [](char c) {
+            return llvm::isDigit(c) || c == '+' || c == '-' || c == '.' ||
+                   c == 'e' || c == 'E';
+          }) || token.getAsDouble(value) || !std::isfinite(value))
+        return fail(fileNode, function.valuesFile + ":" +
+                                 llvm::Twine(lineNumber) +
+                                 ": expected a finite decimal number, got '" +
+                                 token + "'");
+      if (function.values.size() == total)
+        return fail(fileNode, function.valuesFile + ":" +
+                                 llvm::Twine(lineNumber) + ": more than " +
+                                 llvm::Twine(total) + " values for 'shape'");
+      function.values.push_back(value);
+      text = end == StringRef::npos ? StringRef() : text.drop_front(end).trim();
+    }
+  }
+  if (function.values.size() != total)
+    return fail(fileNode, function.valuesFile + ": expected " +
+                             llvm::Twine(total) + " values for 'shape', found " +
+                             llvm::Twine(function.values.size()));
+  if (function.sizes.size() > 1) {
+    std::vector<double> input = std::move(function.values);
+    function.values.resize(total);
+    std::vector<size_t> stride(function.sizes.size(), 1);
+    for (size_t k = 1; k < stride.size(); ++k)
+      stride[k] = stride[k - 1] * function.sizes[k - 1];
+    for (size_t offset = 0; offset < total; ++offset) {
+      size_t remaining = offset, at = 0;
+      for (size_t k = function.sizes.size(); k-- != 0;) {
+        at += (remaining % function.sizes[k]) * stride[k];
+        remaining /= function.sizes[k];
+      }
+      function.values[at] = input[offset];
+    }
+  }
+  return Error::success();
+}
+
 Error Reader::readFunction(const toml::table &table) {
   if (Error error = checkKeywords(table, "[energy.function]",
-                                  {"name", "values", "min", "max",
+                                  {"name", "values", "values_file", "shape", "min", "max",
                                    "periodic", "discrete"}))
     return error;
   TabulatedFunction function;
@@ -922,54 +1008,69 @@ Error Reader::readFunction(const toml::table &table) {
   // of lists for two, of lists of lists for three, `values[i][j]` the value
   // at the i-th point of the first argument and the j-th of the second (D165).
   const toml::node *values = table.get("values");
-  const toml::array *list = values ? values->as_array() : nullptr;
-  if (!list || list->empty())
-    return fail(values ? *values : static_cast<const toml::node &>(table),
-                "expected 'values', a list of numbers, or of lists of them "
-                "for a function of two or three arguments");
-  const toml::array *inner = list;
-  while (inner && !inner->empty() && inner->front().is_array()) {
+  if (const toml::node *file = table.get("values_file")) {
+    if (values)
+      return fail(*file, "'values' and 'values_file' are mutually exclusive");
+    if (Error error = readFunctionFile(table, function))
+      return error;
+    values = file;
+  } else {
+    if (const toml::node *shape = table.get("shape"))
+      return fail(*shape, "'shape' requires 'values_file'");
+    const toml::array *list = values ? values->as_array() : nullptr;
+    if (!list || list->empty())
+      return fail(values ? *values : static_cast<const toml::node &>(table),
+                  "expected 'values', a list of numbers, or of lists of them "
+                  "for a function of two or three arguments");
+    const toml::array *inner = list;
+    while (inner && !inner->empty() && inner->front().is_array()) {
+      function.sizes.push_back(inner->size());
+      inner = inner->front().as_array();
+    }
+    if (!inner || inner->empty())
+      return fail(*values, "expected 'values' as lists of numbers");
     function.sizes.push_back(inner->size());
-    inner = inner->front().as_array();
+    unsigned dimensions = function.sizes.size();
+    if (dimensions > 3)
+      return fail(*values, "a function takes at most three arguments; "
+                           "'values' nests deeper");
+    // In the table the first argument varies fastest.
+    size_t total = 1;
+    for (unsigned size : function.sizes)
+      total *= size;
+    function.values.assign(total, 0.0);
+    std::vector<size_t> stride(dimensions, 1);
+    for (unsigned k = 1; k < dimensions; ++k)
+      stride[k] = stride[k - 1] * function.sizes[k - 1];
+    std::function<Error(const toml::node &, unsigned, size_t)> read =
+        [&](const toml::node &node, unsigned depth, size_t offset) -> Error {
+      if (depth == dimensions) {
+        std::optional<double> number = node.value<double>();
+        if (!number || !std::isfinite(*number))
+          return fail(node, "expected a number in 'values'");
+        function.values[offset] = *number;
+        return Error::success();
+      }
+      const toml::array *row = node.as_array();
+      if (!row || row->size() != function.sizes[depth])
+        return fail(node, "expected 'values' as lists of " +
+                              llvm::Twine(function.sizes[depth]) +
+                              (depth + 1 == dimensions ? " numbers"
+                                                       : " lists") +
+                              ", the same length at each level");
+      for (size_t i = 0; i != row->size(); ++i)
+        if (Error error = read((*row)[i], depth + 1, offset + i * stride[depth]))
+          return error;
+      return Error::success();
+    };
+    if (Error error = read(*values, 0, 0))
+      return error;
   }
-  if (!inner || inner->empty())
-    return fail(*values, "expected 'values' as lists of numbers");
-  function.sizes.push_back(inner->size());
   unsigned dimensions = function.sizes.size();
-  if (dimensions > 3)
-    return fail(*values, "a function takes at most three arguments; "
-                         "'values' nests deeper");
-  // In the table the first argument varies fastest.
-  size_t total = 1;
-  for (unsigned size : function.sizes)
-    total *= size;
-  function.values.assign(total, 0.0);
+  size_t total = function.values.size();
   std::vector<size_t> stride(dimensions, 1);
   for (unsigned k = 1; k < dimensions; ++k)
     stride[k] = stride[k - 1] * function.sizes[k - 1];
-  std::function<Error(const toml::node &, unsigned, size_t)> read =
-      [&](const toml::node &node, unsigned depth, size_t offset) -> Error {
-    if (depth == dimensions) {
-      std::optional<double> number = node.value<double>();
-      if (!number || !std::isfinite(*number))
-        return fail(node, "expected a number in 'values'");
-      function.values[offset] = *number;
-      return Error::success();
-    }
-    const toml::array *row = node.as_array();
-    if (!row || row->size() != function.sizes[depth])
-      return fail(node, "expected 'values' as lists of " +
-                            llvm::Twine(function.sizes[depth]) +
-                            (depth + 1 == dimensions ? " numbers"
-                                                     : " lists") +
-                            ", the same length at each level");
-    for (size_t i = 0; i != row->size(); ++i)
-      if (Error error = read((*row)[i], depth + 1, offset + i * stride[depth]))
-        return error;
-    return Error::success();
-  };
-  if (Error error = read(*values, 0, 0))
-    return error;
 
   if (function.discrete) {
     for (StringRef key : {"min", "max", "periodic"})
@@ -2946,6 +3047,21 @@ Error Reader::read(const toml::table &root) {
         inputs.push_back({"", normalizePath(*file)});
     for (const std::string &file : control.charmmParameterFiles)
       inputs.push_back({"", normalizePath(file)});
+    for (const auto &function : control.functions)
+      if (!function.valuesFile.empty())
+        for (const auto &output : outputs) {
+          llvm::SmallString<256> outputPath(output.second),
+              inputPath(function.valuesFile);
+          llvm::sys::fs::make_absolute(outputPath);
+          llvm::sys::fs::make_absolute(inputPath);
+          if (normalizePath(outputPath) == normalizePath(inputPath) ||
+              llvm::sys::fs::equivalent(outputPath, inputPath))
+            return llvm::createStringError(
+                llvm::inconvertibleErrorCode(),
+                "%s: '%s' of [output] names '%s', a tabulated input of the run",
+                path.str().c_str(), output.first.str().c_str(),
+                function.valuesFile.c_str());
+        }
     for (size_t i = 0; i != outputs.size(); ++i) {
       for (size_t j = 0; j != i; ++j)
         if (outputs[i].second == outputs[j].second)

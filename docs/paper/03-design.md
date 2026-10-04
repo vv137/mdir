@@ -271,6 +271,21 @@ at the nearest point, whose derivative is zero and whose value jumps
 between points: it is meant for arguments that do not move, such as the
 kinds of two particles in a parameter of each.
 
+The representation of the input grid does not change that Hamiltonian
+(D[tabulated-values-file]). A text file gives the same values in the same
+axis order as the inline table, so it gives the same spline coefficients,
+$U$, and $-\partial U/\partial\mathbf x_i$. The canonical weight
+$\exp[-(K+U)/(k_BT)]$ and its partition function $Z$ therefore remain
+the same. A file is decoded and checked before the IR is built, with the
+last argument varying fastest as in inline nested lists, its shape
+supplied explicitly, and its values reordered into the internal table
+layout before fitting the splines; it
+introduces no reading or interpolation inside the loop of steps. The
+fingerprint of a continuation records the resolved values in the inline
+representation, because changing a grid changes $U$ even if its filename
+does not change. The manifest separately hashes the file's bytes to
+record its provenance.
+
 **Parameters of each particle.** A term may weigh each particle by a
 number that the control file gives it by masks of Amber (D165), $w_i$,
 the per-particle parameter of the custom forces of OpenMM. A pair term

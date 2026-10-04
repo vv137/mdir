@@ -565,6 +565,23 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     return outputsPart > 0 ? getPartPath(name, outputsPart) : name;
   };
 
+  if (llvm::any_of(control->functions, [](const auto &function) {
+        return !function.valuesFile.empty();
+      })) {
+    std::vector<std::string> outputs;
+    for (const auto &path : {control->logFile, control->energyFile,
+                             control->pullFile, control->trajectoryFile,
+                             control->manifestFile})
+      if (!path.empty())
+        outputs.push_back(getOutputPath(path));
+    if (!control->restartOutput.empty()) {
+      outputs.push_back(control->restartOutput);
+      outputs.push_back(getPreviousCheckpointPath(control->restartOutput));
+    }
+    if (llvm::Error error = checkTabulatedInputs(inputPaths, outputs))
+      return fail(std::move(error));
+  }
+
   if (!control->manifestFile.empty()) {
     std::vector<std::string> otherOutputs;
     for (const auto &path : {control->logFile, control->energyFile,

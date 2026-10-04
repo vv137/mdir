@@ -10,6 +10,13 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ## [Unreleased]
 
+### Added
+
+- Tabulated functions can read whitespace-separated numeric grids from
+  `values_file` with an explicit `shape`, with the existing interpolation
+  in one, two, or three dimensions. Manifests hash the files, and
+  continuation checks the loaded grid (D[tabulated-values-file]).
+
 ### Fixed
 
 - `md-exec-assign-storage` asserted that "the buffers of a loop are

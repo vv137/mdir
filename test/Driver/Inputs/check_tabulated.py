@@ -5,7 +5,7 @@ the energies of the pair term and the dihedral term that call them, and the
 forces that they add on a few particles, against central differences of
 those energies (kcal/mol/Å).
 
-    check_tabulated.py TOPOLOGY COORDINATES PLAIN_FORCES FORCES
+    check_tabulated.py TOPOLOGY COORDINATES PLAIN_FORCES FORCES [TOLERANCE]
 
 PLAIN_FORCES and FORCES are `mdir checkpoint --print=forces` of the runs
 without and with the terms."""
@@ -134,4 +134,6 @@ for a in [1, 4, 6, 8, 10, 14, 22, 40, 61]:
         force = -(e[0] - e[1]) / (2 * h)
         mine = (F[a][c] - P[a][c]) / 4.184 / 10   # kJ/mol/nm -> kcal/mol/Å
         worst = max(worst, abs(mine - force)); ref = max(ref, abs(force))
-print("forces against differences of the energy: %s" % ("ok" if worst < 1e-6 * ref else "FAILED %.2e" % worst))
+tolerance = float(sys.argv[5]) if len(sys.argv) > 5 else 1e-6
+print("forces against differences of the energy: %s" % ("ok" if worst < tolerance * ref else "FAILED %.2e" % worst))
+print("maximum force difference %.9g; reference scale %.9g; tolerance %.9g kcal/mol/Angstrom" % (worst, ref, tolerance * ref))
