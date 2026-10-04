@@ -30,7 +30,7 @@ format, or the outputs; every such change is listed under **Changed** or
   scalar parameter derivative, and six independent cell strains. Failed
   checks print the analytic value, numerical value, error, and tolerance
   before stopping. The checker requires CPU double precision and an
-  explicit cell for virials (D[ad-checker], part 3 of #15).
+  explicit cell for virials (D184, part 3 of #15).
 
 - Scalar derivative rules use `DerivativeOpInterface`, with external
   arithmetic, math, and vector models and explicit differentiable or

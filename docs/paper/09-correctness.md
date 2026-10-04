@@ -445,7 +445,7 @@ and against the paths of the orthorhombic cell:
   run continued from a checkpoint gives the log of one that does not stop
   (`triclinic-npt.test`).
 
-## 9.10 Numerical derivative checking (D[ad-checker])
+## 9.10 Numerical derivative checking (D184)
 
 A central difference of the primal energy is an oracle independent of the
 derivative rules: $(U(x+h)-U(x-h))/(2h)$ is compared with the analytic

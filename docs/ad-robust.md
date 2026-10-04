@@ -44,7 +44,7 @@ modeled scalar operation rather than trusting its dialect namespace.
 including kernel operations that happen to be inactive at an evaluation.
 It reports the missing operation and potential name.
 
-## Numerical checking (D[ad-checker])
+## Numerical checking (D184)
 
 Run `--md-check-derivatives` before differentiation. The pass instruments
 existing `md.evaluate` operations; run the resulting module through the

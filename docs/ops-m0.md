@@ -581,7 +581,7 @@ derivative of the argument.
 The conventions are part of the reference semantics: every back end must
 produce the same branch at a tie.
 
-### 5.4.1 Numerical checks (D[ad-checker])
+### 5.4.1 Numerical checks (D184)
 
 `--md-check-derivatives` instruments evaluations before differentiation.
 It compares requested forces, parameter derivatives, and six independent
