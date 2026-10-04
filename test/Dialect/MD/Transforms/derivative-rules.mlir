@@ -1,5 +1,5 @@
 // All scalar operations emitted by expressions and table interpolation
-// have a rule or an explicit structural zero (D[ad-rules]).
+// have a rule or an explicit structural zero (D183).
 // RUN: mdir-opt %s --md-check-derivative-coverage --md-differentiate -o /dev/null
 !vec = !md.field<@atoms, 3 x f64>
 md.particle_set @atoms

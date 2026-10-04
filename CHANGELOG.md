@@ -28,7 +28,7 @@ format, or the outputs; every such change is listed under **Changed** or
 - Scalar derivative rules use `DerivativeOpInterface`, with external
   arithmetic, math, and vector models and explicit differentiable or
   structural operand roles. `--md-check-derivative-coverage` rejects scalar
-  operations without a rule or declared zero (D[ad-rules], part 2 of #15).
+  operations without a rule or declared zero (D183, part 2 of #15).
 
 - Shared three-outcome activity analysis for scalar, position, cell, and
   parameter differentiation. `--md-analyze-activity=argument=N` reports

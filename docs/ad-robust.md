@@ -28,7 +28,7 @@ The activity tests include scalar roots, captured parameters, propagation
 through fields, and opaque operations. Existing numerical tests cover the
 scalar, position, cell, and parameter paths that use the shared analysis.
 
-## Scalar rule interface (D[ad-rules])
+## Scalar rule interface (D183)
 
 `DerivativeOpInterface` dispatches scalar differentiation. External models
 cover arithmetic, math, vector construction/extraction/broadcast, and table

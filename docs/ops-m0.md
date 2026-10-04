@@ -554,7 +554,7 @@ results in each potential body. See [ad-robust.md](ad-robust.md).
 ### 5.4 Rules
 
 Scalar rules are supplied by `DerivativeOpInterface` and external models
-for arithmetic, math, and vector ops (D[ad-rules]). Models state which
+for arithmetic, math, and vector ops (D183). Models state which
 operands carry tangents and which are structural. Coverage is checked by
 `--md-check-derivative-coverage`; an unsupported scalar op fails even when
 it happens to be inactive in one kernel. See [ad-robust.md](ad-robust.md).
