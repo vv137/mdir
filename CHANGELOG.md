@@ -17,7 +17,7 @@ format, or the outputs; every such change is listed under **Changed** or
   two. A bias on the distance between two centers of groups costs JAC
   about 9 µs a step instead of 12.5, as much as OpenMM's
   `CustomCentroidBondForce`, and JAC without it runs 3.7% faster
-  (D[centroid-weights], #20).
+  (D181, #20).
 
 ### Added
 
