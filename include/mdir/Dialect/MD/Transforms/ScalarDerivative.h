@@ -67,6 +67,8 @@ public:
   /// no derivative rule.
   mlir::LogicalResult get(mlir::Value value, mlir::Value &tangent);
 
+  mlir::OpBuilder &getBuilder() { return builder; }
+
 private:
   mlir::LogicalResult compute(mlir::Value value, mlir::Value &tangent);
 

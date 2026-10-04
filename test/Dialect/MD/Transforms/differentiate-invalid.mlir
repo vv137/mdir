@@ -73,11 +73,11 @@ md.tuple_set @bonds on(@atoms) arity(2) orientation(unordered)
 md.potential @directional(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
                           %b: !md.relation<@atoms, 2, unordered, @bonds>)
     -> f64 {
-  // A displacement is differentiated through its components only.
+  // A multiplicative reduction still lacks an active derivative rule.
   %u = md.sum_tuples %b, %x, %cell coordinates(displacement(0, 1)) {
   ^bb0(%d: vector<3xf64>):
-    // expected-error@+1 {{no derivative rule for 'vector.reduction'}}
-    %s = vector.reduction <add>, %d : vector<3xf64> into f64
+    // expected-error@+1 {{only additive vector reductions have a derivative rule}}
+    %s = vector.reduction <mul>, %d : vector<3xf64> into f64
     %k = arith.mulf %s, %s : f64
     md.yield %k : f64
   } : !md.relation<@atoms, 2, unordered, @bonds>, !md.field<@atoms, 3 x f64>

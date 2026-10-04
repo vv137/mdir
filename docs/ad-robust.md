@@ -27,3 +27,19 @@ command reports unknowns without treating them as a successful derivative;
 The activity tests include scalar roots, captured parameters, propagation
 through fields, and opaque operations. Existing numerical tests cover the
 scalar, position, cell, and parameter paths that use the shared analysis.
+
+## Scalar rule interface (D[ad-rules])
+
+`DerivativeOpInterface` dispatches scalar differentiation. External models
+cover arithmetic, math, vector construction/extraction/broadcast, and table
+lookup. Each model declares its operands differentiable or structural.
+The derivative emitter consults those roles. Conditions, integer indices,
+integer powers' exponents, and piecewise-constant operations are structural.
+A successful null tangent means zero; failure is distinct.
+
+Clients constructing a dialect registry call `registerDerivativeInterfaces`.
+Both MDIR command-line tools register the models. Activity recognizes a
+modeled scalar operation rather than trusting its dialect namespace.
+`--md-check-derivative-coverage` checks every scalar operation in potentials,
+including kernel operations that happen to be inactive at an evaluation.
+It reports the missing operation and potential name.

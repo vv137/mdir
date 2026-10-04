@@ -5,6 +5,7 @@
 #include "mdir/Conversion/Passes.h"
 #include "mdir/Dialect/Dyn/DynDialect.h"
 #include "mdir/Dialect/MD/MDDialect.h"
+#include "mdir/Dialect/MD/Transforms/DerivativeInterface.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
@@ -32,6 +33,7 @@ int main(int argc, char **argv) {
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);
   mlir::registerAllExtensions(registry);
+  mdir::md::registerDerivativeInterfaces(registry);
   registry.insert<mdir::dyn::DynDialect, mdir::md::MDDialect,
                   mdir::md_exec::MDExecDialect, mdir::mdrt::MDRTDialect>();
 
