@@ -10,6 +10,15 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ## [Unreleased]
 
+### Changed
+
+- On a GPU, adjacent bonded loops are launched as one kernel, and the sums
+  over few tuples, as the centers of groups, take one kernel instead of
+  two. A bias on the distance between two centers of groups costs JAC
+  about 9 µs a step instead of 12.5, as much as OpenMM's
+  `CustomCentroidBondForce`, and JAC without it runs 3.7% faster
+  (D[centroid-weights], #20).
+
 ### Added
 
 - Tabulated functions can read whitespace-separated numeric grids from

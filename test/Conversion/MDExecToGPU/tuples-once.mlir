@@ -32,18 +32,27 @@ func.func @bonds(%members: memref<?x2xi32>, %n: index,
 // whichever are fewer, takes every so manyth tuple and writes the sums of
 // its tuples to its row, and the reduction is over those rows: a set of few
 // tuples, as the pairs of the centers of groups, launches and reduces no
-// more rows than it has tuples.
+// more rows than it has tuples. The rows are reduced in one part when there
+// are few; the block of that part then evaluates the tuples of each row
+// itself, and the kernel that writes the rows to the buffer of
+// contributions is launched only for several parts (#20).
 //
 // CHECK-LABEL: func.func @energy(
 // CHECK:         %[[TUPLES:[a-z0-9_]+]] = memref.dim %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}} : memref<?x2xi32, 1>
 // CHECK:         %[[COUNT:[0-9]+]] = arith.minui %{{[a-z0-9_]+}}, %[[TUPLES]] : index
-// CHECK:         gpu.launch
-// CHECK:           scf.for %{{[a-z0-9]+}} = %{{[a-z0-9_]+}} to %[[TUPLES]] step %[[COUNT]]
-// CHECK:           memref.store %{{[0-9]+}}, %[[A:[a-z0-9]+]][
-// CHECK:         arith.minsi
+// CHECK:         %[[PARTS:[0-9]+]] = arith.minsi
+// CHECK:         %[[ONE:[0-9]+]] = arith.cmpi eq, %[[PARTS]]
+// CHECK:         %[[SEVERAL:[0-9]+]] = arith.cmpi ne, %[[PARTS]]
+// CHECK:         scf.if %[[SEVERAL]] {
+// CHECK:           gpu.launch
+// CHECK:             scf.for %{{[a-z0-9]+}} = %{{[a-z0-9_]+}} to %[[TUPLES]] step %[[COUNT]]
+// CHECK:             memref.store %{{[0-9]+}}, %[[A:[a-z0-9]+]][
 // CHECK:         gpu.launch
 // CHECK:           scf.for %{{[a-z0-9]+}} = %{{[a-z0-9_]+}} to %[[COUNT]] step
-// CHECK:             memref.load %[[A]][
+// CHECK:             scf.if %[[ONE]] -> (f64) {
+// CHECK:               scf.for %{{[a-z0-9]+}} = %{{[a-z0-9_]+}} to %[[TUPLES]] step %[[COUNT]]
+// CHECK:             } else {
+// CHECK:               memref.load %[[A]][
 func.func @energy(%members: memref<?x2xi32>, %n: index,
                   %x: memref<?x3xf32, 1>, %cell: !md.cell,
                   %f: memref<?x3xf32, 1>, %a: memref<?xf64, 1>,
@@ -61,4 +70,42 @@ func.func @energy(%members: memref<?x2xi32>, %n: index,
     md_exec.yield %d, %n0, %e : vector<3xf32>, vector<3xf32>, f64
   } : memref<?x?xi32, 1>, memref<?x3xf32, 1> -> f64
   return %u : f64
+}
+
+// Adjacent loops that evaluate each tuple once and have no global sums are
+// one kernel over the tuples of both: a thread takes the first loop below
+// the count of its tuples, and the second after it (#20).
+//
+// CHECK-LABEL: func.func @two(
+// CHECK:         %[[N1:[a-z0-9_]+]] = memref.dim %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}} : memref<?x2xi32, 1>
+// CHECK:         %[[N2:[a-z0-9_]+]] = memref.dim %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}} : memref<?x2xi32, 1>
+// CHECK:         %[[END:[0-9]+]] = arith.addi %[[N1]], %[[N2]] : index
+// CHECK:         gpu.launch
+// CHECK:           arith.cmpi ult, %{{[0-9]+}}, %[[END]]
+// CHECK:           arith.cmpi ult, %{{[0-9]+}}, %[[N1]]
+// CHECK:           arith.subi %{{[0-9]+}}, %[[N1]]
+// CHECK-NOT:     gpu.launch
+// CHECK:         return
+// ROWS-LABEL:  func.func @two(
+// ROWS-NOT:      llvm.inline_asm
+func.func @two(%m1: memref<?x2xi32>, %m2: memref<?x2xi32>, %n: index,
+               %x: memref<?x3xf32, 1>, %cell: !md.cell,
+               %f: memref<?x3xf32, 1>) {
+  %i1 = md_exec.build_incidence %m1 size(%n)
+      : memref<?x2xi32> -> memref<?x?xi32, 1>
+  %i2 = md_exec.build_incidence %m2 size(%n)
+      : memref<?x2xi32> -> memref<?x?xi32, 1>
+  md_exec.tuple_for %i1, %x, %cell coordinates(displacement(0, 1))
+      outs(%f : memref<?x3xf32, 1>) arity(2) {
+  ^bb0(%d: vector<3xf32>):
+    %n0 = arith.negf %d : vector<3xf32>
+    md_exec.yield %d, %n0 : vector<3xf32>, vector<3xf32>
+  } : memref<?x?xi32, 1>, memref<?x3xf32, 1>
+  md_exec.tuple_for %i2, %x, %cell coordinates(displacement(0, 1))
+      outs(%f : memref<?x3xf32, 1>) arity(2) {
+  ^bb0(%d: vector<3xf32>):
+    %n0 = arith.negf %d : vector<3xf32>
+    md_exec.yield %n0, %d : vector<3xf32>, vector<3xf32>
+  } : memref<?x?xi32, 1>, memref<?x3xf32, 1>
+  return
 }
