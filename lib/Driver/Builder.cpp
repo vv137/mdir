@@ -274,6 +274,64 @@ private:
     for (const auto &[name, v] : control.freeEnergy.lambdas)
       values["lambda_" + name] = "%lambda_" + name;
   }
+  /// The term of `@observe<k>` and the constants of it that the potential
+  /// takes as its last arguments, `%ob_<name>`, in place of their values
+  /// (D[cv]).
+  std::string observedTerm;
+  std::vector<std::string> observedConstants;
+  std::string getObservedParameters() const {
+    std::string text;
+    for (const std::string &name : observedConstants)
+      text += ", %ob_" + name + ": f64";
+    return text;
+  }
+  /// Binds the observed constants of the term `term` to the arguments of
+  /// `@observe<k>`, after the term has bound its own values.
+  void bindObserved(StringRef term,
+                    llvm::StringMap<std::string> &values) const {
+    if (term != observedTerm)
+      return;
+    for (const std::string &name : observedConstants)
+      values[name] = "%ob_" + name;
+  }
+  /// The potentials `@observe<k>`, each a term of `[output] observe`: the
+  /// kind of the term, its index among the terms of its kind, and the
+  /// columns of the term, -1 for its energy or the place of the constant
+  /// among `observedConstants` of the potential, with the column of each.
+  struct ObservedTerm {
+    unsigned kind = 0;
+    int index = -1;
+    std::string name;
+    std::vector<std::string> constants;
+    std::vector<std::pair<int, size_t>> columns;
+  };
+  std::vector<ObservedTerm> getObservedTerms() const;
+  /// The value of the constant `name` of the observed term `term`.
+  double getObservedValue(const ObservedTerm &term, StringRef name) const {
+    if (term.kind == PairTerms)
+      for (const auto &[key, value] : control.pairs[term.index].constants)
+        if (key == name)
+          return value;
+    if (term.kind == ExternalTerms)
+      for (const auto &[key, value] :
+           system.topology->externalTerms[term.index].constants)
+        if (key == name)
+          return value;
+    if (term.kind == TupleTerms)
+      for (const auto &[key, values] :
+           system.topology->tupleTerms[term.index].parameters)
+        if (key == name)
+          return values.front();
+    llvm_unreachable("Control checks the observed constants");
+  }
+  /// Emits `@observe<k>` for each term of `[output] observe`.
+  void emitObservedPotentials();
+  /// Emits the energies and the derivatives of `[output] observe` at the
+  /// positions `x` in the cell `cell` and their call to the writer
+  /// (D[cv]).
+  void emitObservablesOutput(StringRef indent, StringRef x, StringRef cell,
+                             StringRef prefix, StringRef step,
+                             StringRef time);
   /// Whether the expression `text` takes a component of λ.
   bool usesLambda(StringRef text) const {
     llvm::Expected<Expression> expression =
@@ -1981,6 +2039,7 @@ void Builder::emitCentroidTerm(size_t index, const TupleTerm &term) {
   if (control.usesTime)
     values["t"] = "%time";
   bindLambdas(values);
+  bindObserved(term.name, values);
   Expression expression = llvm::cantFail(
       Expression::parse(term.expression, control.functions));
   std::string energy = expression.emit(os, values, prefix + "e", "  ", term.name);
@@ -2267,6 +2326,117 @@ void Builder::emitFreeEnergyOutput(StringRef indent, StringRef x,
   os << indent << name << "_cast = memref.cast " << name << " : " << type
      << " to memref<?xf64>\n"
      << indent << "func.call @mdrtWriteFreeEnergy(" << step << ", " << name
+     << "_cast) : (i64, memref<?xf64>) -> ()\n";
+}
+
+std::vector<Builder::ObservedTerm> Builder::getObservedTerms() const {
+  // The terms in the order of their first column; Control has checked the
+  // names and the constants.
+  std::vector<ObservedTerm> terms;
+  if (control.observablesFile.empty() || !system.topology)
+    return terms;
+  for (auto [column, observable] : llvm::enumerate(control.observables)) {
+    auto it = llvm::find_if(terms, [&](const ObservedTerm &term) {
+      return term.name == observable.term;
+    });
+    if (it == terms.end()) {
+      ObservedTerm term;
+      term.name = observable.term;
+      for (auto [k, pair] : llvm::enumerate(control.pairs))
+        if (pair.name == term.name)
+          term.kind = PairTerms, term.index = static_cast<int>(k);
+      for (auto [k, tuple] : llvm::enumerate(system.topology->tupleTerms))
+        if (tuple.name == term.name)
+          term.kind = TupleTerms, term.index = static_cast<int>(k);
+      for (auto [k, external] :
+           llvm::enumerate(system.topology->externalTerms))
+        if (external.name == term.name)
+          term.kind = ExternalTerms, term.index = static_cast<int>(k);
+      terms.push_back(std::move(term));
+      it = std::prev(terms.end());
+    }
+    int place = -1;
+    if (!observable.constant.empty()) {
+      place = static_cast<int>(it->constants.size());
+      it->constants.push_back(observable.constant);
+    }
+    it->columns.push_back({place, column});
+  }
+  return terms;
+}
+
+void Builder::emitObservedPotentials() {
+  // Each term alone, with its observed constants as arguments, whose
+  // derivatives the differentiation of parameters gives as it gives
+  // dH/dλ (D161): exactly 0 where the energy provably does not depend on
+  // them, an error where a dependence has no rule.
+  for (auto [k, term] : llvm::enumerate(getObservedTerms())) {
+    observedTerm = term.name;
+    observedConstants = term.constants;
+    emitTopologyPotential("observe" + std::to_string(k), term.kind,
+                          term.kind == TupleTerms ? term.index : -1,
+                          term.kind == PairTerms ? term.index : -1,
+                          term.kind == ExternalTerms ? term.index : -1);
+    observedTerm.clear();
+    observedConstants.clear();
+  }
+}
+
+void Builder::emitObservablesOutput(StringRef indent, StringRef x,
+                                    StringRef cell, StringRef prefix,
+                                    StringRef step, StringRef time) {
+  std::vector<ObservedTerm> terms = getObservedTerms();
+  if (terms.empty())
+    return;
+  // The values in the order of `observe`, in kJ/mol and kJ/mol per unit of
+  // the constant; the writer converts them.
+  std::string name = ("%ob" + step.drop_front()).str();
+  std::string type =
+      "memref<" + std::to_string(control.observables.size()) + "xf64>";
+  os << indent << name << " = memref.alloca() : " << type << "\n";
+  unsigned base = getNumPotentialArguments();
+  for (auto [k, term] : llvm::enumerate(terms)) {
+    std::string at = name + "_" + std::to_string(k);
+    std::string arguments, types = "(!vec, !md.cell" + getFieldTypes() +
+                                   getTimeType();
+    // The constants at their values, which the term holds for each of its
+    // tuples, particles, or pairs alike.
+    for (auto [c, constant] : llvm::enumerate(term.constants)) {
+      std::string value = at + "_v" + std::to_string(c);
+      os << indent << value << " = arith.constant "
+         << formatReal(getObservedValue(term, constant)) << " : f64\n";
+      arguments += ", " + value;
+      types += ", f64";
+    }
+    types += ")";
+    os << indent;
+    for (auto [i, column] : llvm::enumerate(term.columns))
+      os << (i ? ", " : "") << at << "_r" << i;
+    os << " = md.evaluate @observe" << k << "(" << x << ", " << cell
+       << getFieldValues(prefix) << getTimeValue(time) << arguments << ")\n"
+       << indent << "    request [";
+    for (auto [i, column] : llvm::enumerate(term.columns)) {
+      os << (i ? ", " : "");
+      if (column.first < 0)
+        os << "energy";
+      else
+        os << "derivative(" << base + column.first << ")";
+    }
+    os << "]\n" << indent << "    : " << types << " -> (";
+    for (size_t i = 0; i != term.columns.size(); ++i)
+      os << (i ? ", " : "") << "f64";
+    os << ")\n";
+    for (auto [i, column] : llvm::enumerate(term.columns)) {
+      std::string place = at + "_s" + std::to_string(i);
+      os << indent << place << " = arith.constant " << column.second
+         << " : index\n"
+         << indent << "memref.store " << at << "_r" << i << ", " << name
+         << "[" << place << "] : " << type << "\n";
+    }
+  }
+  os << indent << name << "_cast = memref.cast " << name << " : " << type
+     << " to memref<?xf64>\n"
+     << indent << "func.call @mdrtWriteObservables(" << step << ", " << name
      << "_cast) : (i64, memref<?xf64>) -> ()\n";
 }
 
@@ -2572,6 +2742,7 @@ void Builder::emitExternalTerm(size_t index, const ExternalTerm &term,
   if (control.usesTime)
     values["t"] = "%time";
   bindLambdas(values);
+  bindObserved(term.name, values);
   std::string energy = expression.emit(os, values, prefix + "e", "    ", term.name);
   os << "    " << prefix << "kj = arith.constant " << formatReal(units::energy)
      << " : f64\n"
@@ -2742,7 +2913,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
 
   os << "md.potential @" << name << "(%x: !vec, %cell: !md.cell"
      << getFieldParameters() << getTimeParameter() << getLambdaParameters()
-     << ") -> f64 {\n";
+     << getObservedParameters() << ") -> f64 {\n";
   emitLambdaConstants("  ");
   // [free_energy] (D161): `@alchemical` has only what depends on λ.
   bool alchemicalOnly = terms & Alchemical;
@@ -2868,6 +3039,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
          << formatReal(constant.second) << " : f64\n";
       values[constant.first] = value;
     }
+    bindObserved(term.name, values);
     std::string energy = expression.emit(os, values, "%pte", "    ", term.name);
     os << "    %pt_kj = arith.constant " << formatReal(units::energy)
        << " : f64\n"
@@ -3461,6 +3633,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     bindLambdas(values);
     for (const auto &parameter : term.parameters)
       values[parameter.first] = "%cp_" + parameter.first;
+    bindObserved(term.name, values);
     Expression expression = llvm::cantFail(Expression::parse(term.expression, control.functions));
     std::string energy = expression.emit(os, values, "%ce", "    ", term.name);
     os << "    %c_kj = arith.constant " << formatReal(units::energy)
@@ -5879,6 +6052,17 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         emitFreeEnergyOutput(inner, "%xl", cellName, fieldPrefix,
                              "%step" + here, time);
       }
+      if (!control.observablesFile.empty()) {
+        // The observed terms at the positions after the step (D[cv]).
+        std::string time = "%ob_time" + here;
+        if (control.usesTime)
+          os << inner << time << "_steps = arith.sitofp %step" << here
+             << " : i64 to f64\n"
+             << inner << time << " = arith.mulf " << time << "_steps, %dt"
+             << " : f64\n";
+        emitObservablesOutput(inner, "%xl", cellName, fieldPrefix,
+                              "%step" + here, time);
+      }
       // Without a periodic cell (D142), whether the particles have spread
       // so far that images interact, at every row of the log as well as at
       // the frames and checkpoints.
@@ -7191,6 +7375,8 @@ void Builder::emitEntry() {
      << "    attributes {llvm.emit_c_interface}\n"
      << "func.func private @mdrtWriteFreeEnergy(i64, memref<?xf64>)\n"
      << "    attributes {llvm.emit_c_interface}\n"
+     << "func.func private @mdrtWriteObservables(i64, memref<?xf64>)\n"
+     << "    attributes {llvm.emit_c_interface}\n"
      << "func.func private @mdrtWriteTerms(memref<?xf64>)\n"
      << "    attributes {llvm.emit_c_interface}\n"
      << "func.func private @mdrtWriteVirial(f64, f64, f64)\n"
@@ -7535,6 +7721,7 @@ void Builder::emitEntry() {
        << "      : (i64, f64, f64, f64, f64) -> ()\n";
     emitPullOutput("  ", "%x0", "%cell", "%p_", "%start", "%time0");
     emitFreeEnergyOutput("  ", "%x0", "%cell", "%p_", "%start", "%time0");
+    emitObservablesOutput("  ", "%x0", "%cell", "%p_", "%start", "%time0");
     // The state that the first scaling takes its pressure from (D92), by
     // axes.
     if (scalesEveryStep()) {
@@ -7902,6 +8089,7 @@ llvm::Error Builder::build() {
     emitTopologyPotential("alchemical", AllTerms | Alchemical);
     lambdaArguments = false;
   }
+  emitObservedPotentials();
   emitPullPotentials();
   emitPrograms();
   emitEntry();

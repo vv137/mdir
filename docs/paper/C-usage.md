@@ -525,6 +525,57 @@ and acceptor and the angle at its hydrogen. A table with
 `discrete = true` gives the value at the nearest point, for arguments
 that are whole numbers, such as two kinds of particles given as
 parameters of each.
+
+**Observing a term** (D[cv]). `observe` in a term lists constants of it,
+and `[output] observables` names a file of columns. At every energy of the
+log, the file then holds the term's energy and its derivative
+$\partial U/\partial p$ in each listed constant, `observe = []` the
+energy alone. The derivative in the position of a wall is the force on
+it, so the osmotic pressure of a solution held between two walls that act
+on its ions [[LuoRoux2010]](references.md#luoroux2010) is read from the
+walls directly:
+
+```toml
+[output]
+energy_interval = 500
+observables     = "run.obs"
+
+[[energy.external]]
+name       = "lower"
+selection  = ":NA,CL"
+scaling    = "NONE"
+expression = "0.5*k*max(0, z0 - z)^2"
+observe    = ["z0"]
+k  = 10.0
+z0 = 24.0
+
+[[energy.external]]
+name       = "upper"
+selection  = ":NA,CL"
+scaling    = "NONE"
+expression = "0.5*k*max(0, z - z0)^2"
+observe    = ["z0"]
+k  = 10.0
+z0 = 72.0
+```
+
+```text
+# step time lower.energy lower.d_z0 upper.energy upper.d_z0
+# - ps kcal/mol kcal/mol/z0 kcal/mol kcal/mol/z0
+```
+
+with $\Pi = (\langle$`lower.d_z0`$\rangle - \langle$`upper.d_z0`$\rangle)/(2A)$
+for the area $A$ of the walls, and 1 kcal/mol/Å³ = 69,476.95 bar. The
+columns follow the terms in the order of the file, then the order within
+`observe`; a derivative is in kcal/mol per unit of its constant. A
+constant must be one number for the whole term. A constant that the
+energy does not depend on gives exactly 0, while a dependence that the
+differentiation has no rule for stops the run, so that neither is taken
+for the other (D161). A constant that is 0 adds nothing to the energy and
+the forces, and so observes a sum over the term's particles: with `expression = "s*step(abs(z - zc) - zw) + ..."`, `s = 0.0`, and
+`observe = ["s"]`, the column `d_s` counts the particles beyond the
+walls. The terms of `[[energy.triplet]]` are not observed yet.
+
 **Where the names of an expression come from.** An expression knows
 only the names below; any other is an error that lists those of its
 term. They come from five places:
@@ -533,7 +584,7 @@ term. They come from five places:
 |---|---|---|---|
 | Coordinates | The kind of term | Computed at every evaluation | `r` (bond, pair, groups), `theta` (angle, dihedral), `dx`, `dy`, `dz` (bond over groups), `x`, `y`, `z` (external), `distance(p1, p3)` (compound) |
 | Properties of the topology | The kind of term | Fixed for each particle or pair | `q` (external); `q1`, `q2`, `sigma`, `epsilon`, `sigma1`, `epsilon2`, `coulomb` (pair) |
-| Constants of the term | Any other key of the term's table | A number; in a term over tuples or of the positions, also a list of one for each tuple or particle | `k = 10.0`, `r0 = [4.0, 4.5]` |
+| Constants of the term | Any other key of the term's table but `name`, `expression`, the particles or groups, `scaling`, `weighting`, and `observe` | A number; in a term over tuples or of the positions, also a list of one for each tuple or particle | `k = 10.0`, `r0 = [4.0, 4.5]` |
 | Parameters of each particle | `[[energy.parameter]]`, outside the term | One per particle, read by its place | `w1`, `w2` (pair), `w1` to `wN` (tuples), `w` (external) |
 | Global | `t`, and `[free_energy.lambdas]` | The time of the step; the component of the run's state | `t`, `lambda_wall` |
 
@@ -665,10 +716,8 @@ $\partial U/\partial\lambda_\text{restraint}$ of every term that uses it.
 Every component has one value for each state, a missing `coulomb` or
 `vdw` is 0 in every state, and `state` is 0 unless given. `couple` is
 needed only with `coulomb` or `vdw`. Without it, `[free_energy]` only
-defines parameters, as in a reading of the force on a wall. There
-`expression = "k*max(0, z - lambda_wall)^2"` with
-`[free_energy.lambdas] wall = [24.0]` gives $\partial U/\partial z_\text{wall}$
-in `dHdl.wall`, the mean force on the wall. A state that softens the Lennard-Jones while the charges are still
+defines parameters. The force on a wall is read with `observe` (C.7)
+rather than through a component of $\lambda$. A state that softens the Lennard-Jones while the charges are still
 on warns (`charged_soft_core`): the charges of the selection could then
 come arbitrarily close to others.
 

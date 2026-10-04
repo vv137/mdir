@@ -92,6 +92,9 @@ private:
   /// [[energy.bond]], [[energy.angle]], or [[energy.dihedral]]: a term over
   /// tuples of `arity` particles (D136).
   Error readTupleTerm(const toml::table &table, unsigned arity);
+  /// `observe` of the term `term` (D[cv]): its energy and the constants of
+  /// it whose derivatives `[output] observables` writes.
+  Error readObserve(const toml::table &table, StringRef term);
   Error readBond(const toml::table &table) { return readTupleTerm(table, 2); }
   Error readAngle(const toml::table &table) { return readTupleTerm(table, 3); }
   Error readDihedral(const toml::table &table) {
@@ -429,6 +432,29 @@ Error Reader::checkTermParameter(const toml::node &node, StringRef name,
   return Error::success();
 }
 
+Error Reader::readObserve(const toml::table &table, StringRef term) {
+  const toml::node *node = table.get("observe");
+  if (!node)
+    return Error::success();
+  const toml::array *list = node->as_array();
+  if (!list)
+    return fail(*node, "expected 'observe' as a list of constants of the "
+                       "term, or [] for its energy alone");
+  // Ordered by the place of the term in the file, then as listed.
+  int64_t line = table.source().begin.line;
+  control.observables.push_back({term.str(), "", line});
+  for (const toml::node &element : *list) {
+    std::optional<std::string> name = element.value<std::string>();
+    if (!element.is_string() || !name || name->empty())
+      return fail(element, "expected the name of a constant of the term");
+    for (const Control::Observable &other : control.observables)
+      if (other.term == term && other.constant == *name)
+        return fail(element, "'" + *name + "' is observed twice");
+    control.observables.push_back({term.str(), *name, line});
+  }
+  return Error::success();
+}
+
 Error Reader::readExternal(const toml::table &table) {
   ExternalTerm term;
   if (Error error = readString(table, "name", term.name))
@@ -491,7 +517,7 @@ Error Reader::readExternal(const toml::table &table) {
     StringRef keyword = toRef(key.str());
     if (keyword == "name" || keyword == "expression" ||
         keyword == "selection" || keyword == "particles" ||
-        keyword == "scaling")
+        keyword == "scaling" || keyword == "observe")
       continue;
     if (Error error = checkTermParameter(value, keyword,
                                          {"t", "x", "y", "z", "q"}))
@@ -552,6 +578,8 @@ Error Reader::readExternal(const toml::table &table) {
       parameters.push_back(name);
     checkTerm(term.name, term.expression, {"x", "y", "z"}, parameters);
   }
+  if (Error error = readObserve(table, term.name))
+    return error;
   control.externalTerms.push_back(std::move(term));
   return Error::success();
 }
@@ -636,7 +664,7 @@ Error Reader::readTupleTerm(const toml::table &table, unsigned arity) {
     StringRef keyword = toRef(key.str());
     if (keyword == "name" || keyword == "expression" ||
         keyword == "particles" || keyword == "groups" ||
-        keyword == "weighting")
+        keyword == "weighting" || keyword == "observe")
       continue;
     if (keyword == "t")
       return fail(value, "'t' is the time, not a parameter");
@@ -717,6 +745,8 @@ Error Reader::readTupleTerm(const toml::table &table, unsigned arity) {
       coordinates.insert(coordinates.end(), {"dx", "dy", "dz"});
     checkTerm(term.name, term.expression, coordinates, parameters);
   }
+  if (Error error = readObserve(table, term.name))
+    return error;
   control.tupleTerms.push_back(std::move(term));
   return Error::success();
 }
@@ -848,7 +878,7 @@ Error Reader::readCompound(const toml::table &table) {
   for (auto &&[key, value] : table) {
     StringRef keyword = toRef(key.str());
     if (keyword == "name" || keyword == "expression" ||
-        keyword == "particles")
+        keyword == "particles" || keyword == "observe")
       continue;
     if (keyword.contains("__"))
       return fail(value, "a name with two underscores is reserved");
@@ -925,6 +955,8 @@ Error Reader::readCompound(const toml::table &table) {
       coordinates.push_back(coordinate.name);
     checkTerm(term.name, term.expression, coordinates, parameters);
   }
+  if (Error error = readObserve(table, term.name))
+    return error;
   control.tupleTerms.push_back(std::move(term));
   return Error::success();
 }
@@ -1203,7 +1235,7 @@ Error Reader::readPair(const toml::table &table) {
 
   for (auto &&[key, node] : table) {
     StringRef keyword = toRef(key.str());
-    if (keyword == "name" || keyword == "expression")
+    if (keyword == "name" || keyword == "expression" || keyword == "observe")
       continue;
     if (keyword == "dispersion_correction") {
       if (Error error = readChoice<DispersionCorrection>(
@@ -1272,6 +1304,8 @@ Error Reader::readPair(const toml::table &table) {
       parameters.push_back(name);
     checkTerm(term.name, term.expression, {"r"}, parameters);
   }
+  if (Error error = readObserve(table, term.name))
+    return error;
   control.pairs.push_back(std::move(term));
   return Error::success();
 }
@@ -1308,6 +1342,8 @@ Error Reader::readTriplet(const toml::table &table) {
                                           "t"};
   for (auto &&[key, node] : table) {
     StringRef keyword = toRef(key.str());
+    if (keyword == "observe")
+      return fail(node, "the energies of triplet terms are not observed yet");
     if (keyword == "name" || keyword == "expression" || keyword == "cutoff")
       continue;
     if (llvm::is_contained(variables, keyword))
@@ -1585,8 +1621,8 @@ Error Reader::readInput(const toml::table &table) {
 Error Reader::readOutput(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "output",
-          {"log", "energy", "pull", "free_energy", "manifest", "trajectory",
-           "trajectory_format",
+          {"log", "energy", "pull", "free_energy", "observables", "manifest",
+           "trajectory", "trajectory_format",
            "checkpoint", "energy_interval", "trajectory_interval",
            "checkpoint_interval"},
           {}))
@@ -1626,6 +1662,8 @@ Error Reader::readOutput(const toml::table &table) {
   if (Error error = readPath(table, "pull", control.pullFile))
     return error;
   if (Error error = readPath(table, "free_energy", control.freeEnergyFile))
+    return error;
+  if (Error error = readPath(table, "observables", control.observablesFile))
     return error;
   if (Error error =
           readCount(table, "energy_interval", control.energyPeriod, 0))
@@ -3008,6 +3046,82 @@ Error Reader::read(const toml::table &root) {
           "which needs 'energy_interval'",
           path.str().c_str());
   }
+  // The energies of terms and their derivatives in constants of theirs,
+  // at every energy (D[cv]).
+  if (!control.observablesFile.empty() || !control.observables.empty()) {
+    auto error = [&](const llvm::Twine &message) {
+      return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                     path + ": " + message);
+    };
+    // The columns: the terms in the order of the file, then as listed.
+    std::stable_sort(control.observables.begin(), control.observables.end(),
+                     [](const Control::Observable &a,
+                        const Control::Observable &b) {
+                       return a.line < b.line;
+                     });
+    if (control.observablesFile.empty())
+      return error("the term '" + control.observables.front().term +
+                   "' gives 'observe', but [output] has no 'observables', "
+                   "the file of its columns");
+    if (control.observables.empty())
+      return error("[output] names 'observables', but no term gives "
+                   "'observe'");
+    if (control.energyPeriod == 0 || control.minimize)
+      return error("'observables' is written at the energies of a run of "
+                   "dynamics, which needs 'energy_interval'");
+    if (!control.hasTopology())
+      return error("'observe' takes the terms of a system from a topology");
+    for (const Control::Observable &observable : control.observables) {
+      // The term, by its name among the terms given by expressions.
+      const PairTerm *pair = nullptr;
+      const TupleTerm *tuple = nullptr;
+      const ExternalTerm *external = nullptr;
+      unsigned found = 0;
+      for (const PairTerm &term : control.pairs)
+        if (term.name == observable.term)
+          pair = &term, ++found;
+      for (const TupleTerm &term : control.tupleTerms)
+        if (term.name == observable.term)
+          tuple = &term, ++found;
+      for (const ExternalTerm &term : control.externalTerms)
+        if (term.name == observable.term)
+          external = &term, ++found;
+      if (found > 1)
+        return error("the term '" + observable.term + "' gives 'observe', "
+                     "and terms of two kinds have its name; rename one");
+      if (observable.constant.empty())
+        continue;
+      // The constant: one number for the whole term, not a value of each
+      // particle or tuple, nor a name that the term or the run gives.
+      const std::string &name = observable.constant;
+      bool constant = false, perItem = false;
+      if (pair)
+        constant = llvm::any_of(pair->constants,
+                                [&](const auto &c) { return c.first == name; });
+      if (external) {
+        constant = llvm::any_of(external->constants,
+                                [&](const auto &c) { return c.first == name; });
+        perItem = llvm::any_of(external->parameters,
+                               [&](const auto &c) { return c.first == name; });
+      }
+      if (tuple)
+        for (const auto &[key, values] : tuple->parameters)
+          if (key == name) {
+            bool same = llvm::all_of(values, [&](double v) {
+              return v == values.front();
+            });
+            (same ? constant : perItem) = true;
+          }
+      if (perItem)
+        return error("the term '" + observable.term + "' observes '" + name +
+                     "', which has a value for each particle or tuple; "
+                     "observe a constant given as one number");
+      if (!constant)
+        return error("the term '" + observable.term + "' observes '" + name +
+                     "', which is not a constant of the term given as one "
+                     "number");
+    }
+  }
   // dH/dλ and the differences to the other states, at every energy (D161).
   if (!control.freeEnergyFile.empty()) {
     if (!control.hasFreeEnergy)
@@ -3071,6 +3185,7 @@ Error Reader::read(const toml::table &root) {
           {"manifest", &control.manifestFile},
           {"pull", &control.pullFile},
           {"free_energy", &control.freeEnergyFile},
+          {"observables", &control.observablesFile},
           {"trajectory", &control.trajectoryFile},
           {"checkpoint", &control.restartOutput}})
       if (!file->empty())

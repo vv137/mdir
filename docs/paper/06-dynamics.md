@@ -945,6 +945,32 @@ holds for the Gibbs energy, the $PV$ of a sample being the same in every
 state. The samples of a state are spaced by the statistical inefficiency
 of $\partial U/\partial\lambda$ along the path [[Chodera2007]](references.md#chodera2007).
 
+**Generalized forces of constants** (D[cv]). The identity of thermodynamic
+integration does not need $\lambda$: for any constant $\xi$ of a term,
+$\partial F/\partial\xi = \langle\partial U/\partial\xi\rangle$, the mean
+force along $\xi$. `observe` in a term writes $\partial U/\partial\xi$ at
+every energy of the log, through the same differentiation of parameters,
+with no `[free_energy]` (Appendix C.7). Two flat walls fixed in space that
+act only on the ions of a solution, at $z_1 < z_2$ with area $A$, measure
+its osmotic pressure [[LuoRoux2010]](references.md#luoroux2010). The
+water passes the walls, so the cell holds the solution between them and
+pure water beyond. Moving the lower wall by $dz_1$ at constant $N$, $V$,
+and $T$ moves the volume $A\,dz_1$ from the solution, at pressure $P_s$,
+to the water, at $P_w$:
+
+$$
+dF = -P_s\,dV_s - P_w\,dV_w = (P_s - P_w)\,A\,dz_1 = \Pi A\,dz_1,
+\qquad
+\Pi = \frac{1}{2A}\Big(\Big\langle\frac{\partial U}{\partial z_1}\Big\rangle - \Big\langle\frac{\partial U}{\partial z_2}\Big\rangle\Big),
+$$
+
+the second wall giving the same with the opposite sign. With walls of
+10 kcal/mol/Å² on 5 M NaCl of CHARMM in TIP3P, read through a component
+of $\lambda$ before `observe` existed, MDIR gives $\Pi = 186.1 \pm 4.7$
+bar over ten runs of 1 ns, against $181 \pm 9$ bar of the paper with the
+same Lorentz–Berthelot ions; `observe` gives the same derivative to the
+printed digits (`test/Driver/observables.test`).
+
 **Decoupling.** `couple` selects whole molecules, $a_i = 1$ for a particle
 of the selection and 0 otherwise; a pair is decoupled when one particle is
 in it, $c_{ij} = a_i + a_j - 2a_ia_j$. With $\lambda_\text{C}$ and

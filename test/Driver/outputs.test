@@ -42,6 +42,7 @@
 # LIST-NEXT:   energy: {{.*}}whole.energy (columns), every 50 steps, 9 rows
 # LIST-NEXT:   pull: not configured (columns), disabled
 # LIST-NEXT:   free_energy: not configured (columns), disabled
+# LIST-NEXT:   observables: not configured (columns), disabled
 # LIST-NEXT:   trajectory: {{.*}}whole.dcd (DCD), every 50 steps, 8 frames
 # LIST-NEXT:   checkpoint: {{.*}}whole.h5 (H5MD), every 100 steps, 4 checkpoints
 # LIST-NOT:  exists

@@ -171,6 +171,19 @@ struct Control {
   /// dH/dλ and the differences of the energy to the other states of
   /// [free_energy] at every energy of the log (D161).
   std::string freeEnergyFile;
+  /// The energies of terms given by expressions and their derivatives in
+  /// constants of theirs, at every energy of the log (D[cv]): the file and
+  /// the columns, from `observe` of each term, the energy of the term and
+  /// then its constants, the terms in the order of the file.
+  std::string observablesFile;
+  struct Observable {
+    std::string term;
+    /// Empty for the energy of the term.
+    std::string constant;
+    /// The line of the term in the control file, which orders the columns.
+    int64_t line = 0;
+  };
+  std::vector<Observable> observables;
   /// The format of the trajectory, DCD or XTC (D141).
   TrajectoryFormat trajectoryFormat = TrajectoryFormat::DCD;
   std::string restartOutput;
