@@ -33,6 +33,7 @@ tools = [
     "mdir",
     "mdir-opt",
     "mdir-model-test",
+    "mdir-compile-test",
     "mlir-opt",
     "mlir-runner",
     "FileCheck",
@@ -72,6 +73,11 @@ config.substitutions.append(
         os.path.join(config.llvm_lib_dir, "libomp" + config.llvm_shlib_ext),
     )
 )
+
+if config.mdir_python:
+    config.available_features.add("python-api")
+    config.substitutions.append(("%mdir_python", config.mdir_python_executable))
+    llvm_config.with_environment("PYTHONPATH", os.path.join(config.mdir_obj_root, "python"))
 
 # Checkpoints need HDF5.
 if config.mdir_hdf5:

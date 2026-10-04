@@ -17,6 +17,7 @@
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
 #include "mdir/Driver/Builder.h"
+#include "mdir/Compiler/Compile.h"
 #include "mdir/Driver/Checkpoint.h"
 #include "mdir/Driver/Control.h"
 #include "mdir/Driver/Fingerprint.h"
@@ -68,70 +69,6 @@ static llvm::cl::Option *getSchedulerOption() {
   if (option == options.end() || option->second->getNumOccurrences() != 0)
     return nullptr;
   return option->second;
-}
-
-static std::string getPipeline(const Control &control,
-                               const Program &program) {
-  std::string pipeline;
-  llvm::raw_string_ostream os(pipeline);
-  os << "md-check-exchange,md-differentiate,md-expand-truncation,md-inline,"
-     << "md-bypass-updates,";
-  os << "convert-md-to-md-exec{skin=" << program.skin
-     << " width=" << program.neighborWidth << "},";
-  os << "md-exec-reuse-neighbors";
-  if (program.pruneSkin > 0.0)
-    os << "{prune-skin=" << program.pruneSkin << "}";
-  os << ",";
-  // Opt-in only (D88): the structures may miss pairs; the run warns.
-  if (control.rebuildPeriod > 0)
-    os << "md-exec-rebuild-at-interval{interval=" << control.rebuildPeriod
-       << "},";
-  os << "md-exec-expose-validity,"
-     << "md-exec-fuse-loops,md-exec-accumulate-destinations,"
-     << "md-exec-narrow-sums,";
-  if (control.fastMath)
-    os << "md-exec-simplify-distance{radial=true},";
-  os << "canonicalize,cse,md-exec-fold-tables,canonicalize,cse,";
-  // Before the precision: a loop over groups keeps the positions as they
-  // are stored (D95).
-  if (control.target == Target::GPU &&
-      control.neighborStructure == NeighborStructure::Groups)
-    os << "md-exec-choose-neighbors{kind=groups},";
-
-  StringRef mode = control.precision == Precision::Single
-                       ? "single"
-                       : control.precision == Precision::Mixed ? "mixed"
-                                                               : "double";
-  os << "md-exec-assign-precision{mode=" << mode << "},";
-  if (control.fastMath)
-    os << "md-exec-approximate,md-exec-expand-radial,canonicalize,cse,";
-
-  if (control.target == Target::GPU) {
-    // Kernels in f32 look their tables up in f32.
-    os << "md-exec-assign-storage{memory=device"
-       << (control.precision == Precision::Double ? "" : " tables=f32")
-       << "},md-exec-assign-streams,convert-md-exec-to-gpu{"
-       << (control.deterministic ? "deterministic=true " : "")
-       << (control.fastMath ? "" : "contract=false") << "},"
-       << "gpu-lower-to-nvvm-pipeline{cubin-format=isa},"
-       << "reconcile-unrealized-casts";
-    return pipeline;
-  }
-
-  // Reductions summed over fixed chunks in a fixed order: the same bits
-  // from run to run and for any number of threads (D171).
-  os << "md-exec-assign-storage,convert-md-exec-to-loops,fixed-order-reductions,";
-  bool threaded = control.threads > 1;
-  if (threaded)
-    os << "convert-scf-to-openmp,hoist-static-allocas,canonicalize,";
-  os << "convert-scf-to-cf,convert-math-to-llvm,convert-math-to-libm,"
-     << "convert-vector-to-llvm,expand-strided-metadata,"
-     << "finalize-memref-to-llvm,convert-arith-to-llvm,"
-     << "convert-func-to-llvm,convert-cf-to-llvm,convert-ub-to-llvm,";
-  if (threaded)
-    os << "convert-openmp-to-llvm,";
-  os << "reconcile-unrealized-casts";
-  return pipeline;
 }
 
 /// A buffer of the host, in the type that the program takes, and its
@@ -654,7 +591,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                             mlir::PassManager::Nesting::Implicit);
   if (!control->manifestFile.empty())
     manager.addInstrumentation(std::make_unique<ManifestNeighbors>(neighborKinds));
-  std::string pipeline = getPipeline(*control, *program);
+  std::string pipeline = compiler::getPipeline(*control, *program);
   // MDIR_PIPELINE replaces the pipeline, to try another order of passes or
   // to stop part of the way.
   if (const char *replaced = std::getenv("MDIR_PIPELINE"))

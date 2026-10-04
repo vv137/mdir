@@ -32,6 +32,7 @@ target_include_directories(mdir PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 llvm_update_compile_flags(mdir)
 target_link_libraries(mdir PRIVATE
   MDIRDriver
+  MDIRCompiler
   MDIRDyn
   MDIRMD
   MDIRMDExec

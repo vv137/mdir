@@ -38,6 +38,10 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- Optional Python loaders and typed model inputs, explicit shared compiler
+  lowering, immutable IR/plan inspection and tracked stale detection
+  (D[python-compile], #76). Persistent execution and wheels follow separately.
+
 - Native C++ model preparation for the M2 Python API: owned Amber,
   GROMACS, and CHARMM data, physics apart from initial state, typed
   integrator/ensemble/execution options, MD-unit custom expressions,
