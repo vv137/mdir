@@ -543,10 +543,13 @@ is a separate constant in each. Functions, `[[energy.function]]`, are
 called by their names in any term. A $\lambda$ component exists only when
 `[free_energy.lambdas]` gives it (C.9); it is then a parameter of pair
 terms, of terms over tuples and over centers, and of terms of the
-positions, while `[[energy.compound]]` does not take it yet (issue #67).
-Give a constant a name that none of the other four kinds provides:
-`t` is refused, but a constant `r` in a bond term currently replaces the
-distance without a message (issue #67).
+positions, and terms over compound tuples (D[expression-namespace]).
+Give a constant a name that none of the other four kinds provides.
+The reader rejects collisions even when unused, including `t`, a bond's
+`r`, declared per-particle parameters, function names, and declared lambda
+components (D[expression-namespace]). Rename colliding constants and their
+uses in the expression; a constant cannot replace a coordinate and erase
+its force.
 
 Restraints to the positions of the input are a table of their own,
 `[[restraints]]` with a mask and a force constant (Appendix A.1), as the

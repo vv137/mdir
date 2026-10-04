@@ -64,7 +64,7 @@
 # PARTIAL: no entry of the parameter 'w' gives a value to particle 23; give an entry without 'selection' first, for every particle
 # RESERVED: 'sigma' is a name that the terms give
 # DIGIT: expected a 'name' of letters, digits, and '_' that does not end in a digit in {{\[\[}}energy.parameter{{\]\]}}
-# SHADOW: 'w1' is a parameter of each particle as well as a constant of the term
+# SHADOW: 'w1' is a parameter of each particle, not of the term
 # ORDER: the energy of a pair must not change when its two particles are exchanged (q1 with q2, sigma1 with sigma2, epsilon1 with epsilon2, w1 with w2), and this expression does
 # LIST: the parameter 'w' has 2 values, and the topology has 1168 particles
 # NAME: the expression uses 'u1', which is not r, q1, q2, sigma, epsilon, sigma1, sigma2, epsilon1, epsilon2, coulomb, the time t, a constant of the term, or a parameter of each particle, as 'w1'

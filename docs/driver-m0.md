@@ -847,3 +847,14 @@ mdir: note: trajectory output 'md.xtc' exists; mdir run keeps it as '#md.xtc.1#'
 | `nbupdate_period` | Not implemented; the keyword is an error |
 | Trajectory in the XTC format | Not implemented |
 | Velocities in the trajectory, `dcdvelfile` | Not implemented |
+
+### Expression parameter names (D[expression-namespace])
+
+The control reader rejects term parameters that collide with names supplied
+by their term: coordinates, time, topology properties, declared particle
+parameters and their applicable place suffixes, built-in and tabulated
+functions, and declared lambda components. The declaration is checked even
+when unused, so a constant cannot silently replace a coordinate and its
+force. Compound terms accept declared `lambda_<name>` components through
+the existing lambda bindings, with forces, component derivatives, and
+state energy differences computed by the same differentiation path.

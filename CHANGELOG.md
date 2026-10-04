@@ -12,6 +12,12 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- Custom term parameters now reject names supplied by the term, declared
+  particle parameters, functions, and lambda components, including unused
+  declarations. Control files with colliding parameters must rename the
+  parameters and their expression uses (for example, change a bond constant
+  `r` to `r0`) (D[expression-namespace], #67).
+
 - On a GPU, adjacent bonded loops are launched as one kernel, and the sums
   over few tuples, as the centers of groups, take one kernel instead of
   two. A bias on the distance between two centers of groups costs JAC
@@ -56,6 +62,9 @@ format, or the outputs; every such change is listed under **Changed** or
   fails differentiation (D182, part 1 of #15).
 
 ### Fixed
+
+- Compound terms accept declared `lambda_<name>` components
+  (D[expression-namespace], #67).
 
 - GPU PME preserves mapped-charge producers when moving a reciprocal sum
   ahead of a neighbor refresh. Free-energy runs with spatial ordering,
