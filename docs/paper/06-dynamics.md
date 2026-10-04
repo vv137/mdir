@@ -787,12 +787,23 @@ to the coupled ensembles, and not a law of physics: its drift reports a
 defect of the integration or of a count, not heat exchanged with the
 bath. Nor does it test the ensemble: a thermostat at a wrong $T_0$ or a
 barostat at a wrong $P_0$ leaves $\tilde H$ as flat as the right ones,
-and the distributions are tested apart (Section 9.5). Counting $P_0V$
-with the system, as the effective energy of
-[[Bernetti2020]](references.md#bernetti2020) does, adds $P_0\Delta V$
-to each $\Delta E_\text{sys}$ of a scaling and takes it from the bath, so
-$\tilde H$ changes only by the constant $P_0V_0$, with $V_0$ the volume
-at the start. Langevin dynamics
+and the distributions are tested apart (Section 9.5). It is not the
+effective energy of [[Bernetti2020]](references.md#bernetti2020)
+(Section II C) either, whose drift is the work that the integrator does
+on the system and measures how far it breaks detailed balance with
+respect to $e^{-(K + U + P_0V)/k_BT}$: there the barostat contributes the
+acceptance of its move of the cell in smart Monte Carlo, with $P_0\Delta
+V$ and the probabilities of the move of $\lambda$ forward and back. The
+count above leaves that term out. It takes the change of $U + K$ that a
+scaling makes, whatever the strain was, and so does not see the error of
+the step of Euler and Maruyama in $\lambda$, which $f$ sets; with the
+`EXACT` count $\tilde H$ stayed within $3\times10^{-7}\,k_BT$ per
+step of zero on the mixture of Section 6.4. Without a
+barostat the two agree: the rescaling of the thermostat solves its
+equation exactly [[Bussi2007]](references.md#bussi2007), and the drift
+of either is that of the steps between couplings. That paper also notes
+that its drift may overstate the errors of the sampled configurations,
+since detailed balance is sufficient but not necessary. Langevin dynamics
 exchanges energy with the bath in every step, through its friction and
 noise, which the run does not count; its log has no conserved energy
 (Section 6.3).
