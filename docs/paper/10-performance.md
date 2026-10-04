@@ -31,8 +31,8 @@ by `scripts/paper/suite-table.py` and the figure by
 
 *Table 10.2. Rates over the Amber suite, mean ± sample standard deviation
 over three repeats. "Energy changed by" is the change of the total
-energy (NVE) or of the conserved energy (NPT) between the first and the
-last row of MDIR's log, relative to its value. The counts are the mean
+energy (NVE) or of the conserved energy $\tilde H$ (NPT, Section 6.5)
+between the first and the last row of MDIR's log, relative to its value. The counts are the mean
 number of steps between builds of the outer list and between prunings of
 the inner list. The rates, the changes of the energy, the counts, and the
 times of compilation are from the same three repeats, at D134, with the
