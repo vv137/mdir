@@ -54,11 +54,16 @@ flattened element number or a byte address is 64 bits: the search of the
 matrix needed more than 64 registers in `index` and spilled (612 µs a
 build of JAC, against 430 in `i32`).
 
-**Divisions and reciprocals** (D98). A division marked approximate becomes
+**Divisions and reciprocals** (D98, D[approximate-quotient-rounding]). A division marked approximate becomes
 `x * rcp.approx.ftz(y)`: the backend's `div.approx.f32` scales operands
 that are subnormal or beyond $2^{126}$, which never occur in the
 arithmetic of a pair, at a cost of two comparisons, two selections, and a
-product a pair.
+product a pair. The product that forms an approximate quotient rounds in
+f32 before subsequent arithmetic; it does not contract into a fused
+multiply-add with a cutoff shift. Such contraction changed the shifted
+soft-core Lennard-Jones parameter derivative by about
+$5.5\times10^{-4}$ kcal/mol on the ethanol validation system (issue #48).
+Other products may still contract under `fast_math`.
 
 ## 8.2 The integration kernel
 
