@@ -119,6 +119,14 @@ static llvm::Error checkExpression(llvm::StringRef name, llvm::StringRef text,
                                    llvm::StringRef coordinate,
                                    const std::set<std::string> &parameters) {
   if (name.empty()) return input("a custom term needs a name");
+  llvm::StringRef definitions = text.split(';').second;
+  while (!definitions.empty()) {
+    auto part = definitions.split(';');
+    llvm::StringRef local = part.first.split('=').first.trim();
+    if (local == "r" || local == "theta" || parameters.count(local.str()))
+      return input("term '" + name + "': local definition shadows supplied name '" + local + "'");
+    definitions = part.second;
+  }
   auto e = driver::Expression::parse(text);
   if (!e) return input("term '" + name + "': " + llvm::toString(e.takeError()));
   for (const auto &n : e->getNames())

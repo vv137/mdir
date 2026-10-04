@@ -144,6 +144,8 @@ int main(int argc, char **argv) {
           "MD coordinate conversion lost local definitions");
   take(definitions.build()); s.pairTerms={pair};
   llvm::outs()<<"energy difference: "<<driver::formatReal(energy-1)<<"; derivative difference: "<<driver::formatReal(derivative-20)<<"\n";
+  s.pairTerms[0].expression="r^2; r=r0"; reject(prepare(),input); s.pairTerms={pair};
+  s.tupleTerms[0].expression="r^2; r=r0"; reject(prepare(),input); s.tupleTerms={bond};
   s.pairTerms[0].mixing["k"]=driver::Mixing::Arithmetic; reject(prepare(),unsupported);
   llvm::outs()<<"file/object parity, ownership and typed validation passed\n";
 }
