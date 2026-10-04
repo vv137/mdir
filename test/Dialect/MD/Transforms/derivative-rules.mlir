@@ -85,7 +85,8 @@ md.potential @rules(%x: !vec, %cell: !md.cell, %a: f64) -> f64 {
   %total28 = arith.addf %total27, %intfloat : f64
   %total29 = arith.addf %total28, %extract : f64
   %total30 = arith.addf %total29, %extractb : f64
-  md.return %total30 : f64
+  %combined = arith.addf %total30, %reduced : f64
+  md.return %combined : f64
 }
 md.function @request(%x: !vec, %cell: !md.cell, %a: f64) -> f64 {
   %d = md.evaluate @rules(%x, %cell, %a) request [derivative(2)] : (!vec, !md.cell, f64) -> f64
