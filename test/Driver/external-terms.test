@@ -173,7 +173,7 @@ target    = "CPU"
 precision = "DOUBLE"
 #--- trap end
 
-# TERM-LOCATION: loc("control-file term: 
+# TERM-LOCATION: loc("control-file term:
 
 # TERM-ERROR: error: loc("control-file term: wall"): cannot prove inactivity
 # TERM-ERROR-SAME: test.no_derivative
