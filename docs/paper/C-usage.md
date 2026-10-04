@@ -525,6 +525,29 @@ and acceptor and the angle at its hydrogen. A table with
 `discrete = true` gives the value at the nearest point, for arguments
 that are whole numbers, such as two kinds of particles given as
 parameters of each.
+**Where the names of an expression come from.** An expression knows
+only the names below; any other is an error that lists those of its
+term. They come from five places:
+
+| Kind | Given by | Value | Example |
+|---|---|---|---|
+| Coordinates | The kind of term | Computed at every evaluation | `r` (bond, pair, groups), `theta` (angle, dihedral), `dx`, `dy`, `dz` (bond over groups), `x`, `y`, `z` (external), `distance(p1, p3)` (compound) |
+| Properties of the topology | The kind of term | Fixed for each particle or pair | `q` (external); `q1`, `q2`, `sigma`, `epsilon`, `sigma1`, `epsilon2`, `coulomb` (pair) |
+| Constants of the term | Any other key of the term's table | A number; in a term over tuples or of the positions, also a list of one for each tuple or particle | `k = 10.0`, `r0 = [4.0, 4.5]` |
+| Parameters of each particle | `[[energy.parameter]]`, outside the term | One per particle, read by its place | `w1`, `w2` (pair), `w1` to `wN` (tuples), `w` (external) |
+| Global | `t`, and `[free_energy.lambdas]` | The time of the step; the component of the run's state | `t`, `lambda_wall` |
+
+The constants of a term are numbers only: a key cannot refer to a
+`lambda_<name>` or to another key, and a name used by more than one term
+is a separate constant in each. Functions, `[[energy.function]]`, are
+called by their names in any term. A $\lambda$ component exists only when
+`[free_energy.lambdas]` gives it (C.9); it is then a parameter of pair
+terms, of terms over tuples and over centers, and of terms of the
+positions, while `[[energy.compound]]` does not take it yet (issue #67).
+Give a constant a name that none of the other four kinds provides:
+`t` is refused, but a constant `r` in a bond term currently replaces the
+distance without a message (issue #67).
+
 Restraints to the positions of the input are a table of their own,
 `[[restraints]]` with a mask and a force constant (Appendix A.1), as the
 templates of C.3 use them.
@@ -631,10 +654,18 @@ $\Delta G = 2.79 \pm 0.11$ kcal/mol by MBAR from the coupled to the
 decoupled state, a hydration free energy of $-2.79$ kcal/mol; OpenMM with
 the same Hamiltonian gives $2.78 \pm 0.11$ (Section 6.8).
 
-Any other component, `restraint = [...]` say, is the parameter
-`lambda_restraint` of the expressions of C.7, so that a restraint can be
-switched on along the states and its contribution taken from the same
-files. A state that softens the Lennard-Jones while the charges are still
+Any other component, `restraint = [...]` say, is the global parameter
+`lambda_restraint` of the expressions of C.7, with the value of the
+run's state, so that a restraint can be switched on along the states and
+its contribution taken from the same files: `dHdl.restraint` is
+$\partial U/\partial\lambda_\text{restraint}$ of every term that uses it.
+Every component has one value for each state, a missing `coulomb` or
+`vdw` is 0 in every state, and `state` is 0 unless given. `couple` is
+needed only with `coulomb` or `vdw`. Without it, `[free_energy]` only
+defines parameters, as in a reading of the force on a wall. There
+`expression = "k*max(0, z - lambda_wall)^2"` with
+`[free_energy.lambdas] wall = [24.0]` gives $\partial U/\partial z_\text{wall}$
+in `dHdl.wall`, the mean force on the wall. A state that softens the Lennard-Jones while the charges are still
 on warns (`charged_soft_core`): the charges of the selection could then
 come arbitrarily close to others.
 
