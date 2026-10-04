@@ -1038,8 +1038,15 @@ LogicalResult Assignment::convertFor(scf::ForOp op, Scope &scope,
 
     Value inside = inner.body->addArgument(buffer.getType(), loc);
     inner.setSet(inside, scope.getSet(buffer));
-    buffers[argument] = inside;
     inner.owned.insert(inside);
+    // A carried field that the body never reads, such as the velocities of
+    // a step that computes them afresh, has no last use to free its buffer:
+    // it holds nothing from the start of the body (#19).
+    if (argument.use_empty()) {
+      inner.release(inside);
+      continue;
+    }
+    buffers[argument] = inside;
   }
 
   if (failed(convertBlock(oldBody, inner)))
@@ -1595,11 +1602,10 @@ LogicalResult Assignment::convertBlock(Block &block, Scope &scope) {
       return failure();
 
     // A field that nothing uses, such as the forces of a reciprocal sum
-    // whose energy alone is wanted (D161), holds nothing once its op has
-    // run.
+    // whose energy alone is wanted (D161) or the velocities of a step whose
+    // loop does not carry them (#19), holds nothing once its op has run.
     for (Value result : op.getResults()) {
-      if (!isa<ReciprocalOp>(op) || !isField(result.getType()) ||
-          !result.use_empty())
+      if (!isField(result.getType()) || !result.use_empty())
         continue;
       auto found = buffers.find(result);
       if (found == buffers.end())

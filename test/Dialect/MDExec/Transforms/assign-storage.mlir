@@ -174,6 +174,68 @@ func.func @steps(%x: !vec, %v: !vec, %cell: !md.cell, %dt: f64, %n: index)
   return %xe, %ve, %builds : !vec, !vec, i64
 }
 
+// A carried field that the body never reads holds nothing from the start
+// of the body, so the new value is written into its buffer and the loop
+// borrows none (#19: this asserted that the buffers of a loop are
+// conserved).
+//
+// CHECK-LABEL: func.func @unread(
+// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64>, %[[V:[a-z0-9]+]]: memref<?x3xf64>, %[[N:[a-z0-9]+]]: index)
+func.func @unread(%x: !vec, %v: !vec, %n: index) -> (!vec, !vec) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  // CHECK-NOT:  memref.alloc
+  // CHECK:      scf.for %{{[a-z0-9]+}} = %{{[a-z0-9_]+}} to %[[N]] step %{{[a-z0-9_]+}}
+  // CHECK-SAME:   iter_args(%[[XA:[a-z0-9]+]] = %[[X]], %[[VA:[a-z0-9]+]] = %[[V]])
+  // CHECK-SAME:   -> (memref<?x3xf64>, memref<?x3xf64>) {
+  %xe, %ve = scf.for %step = %c0 to %n step %c1
+      iter_args(%xa = %x, %va = %v) -> (!vec, !vec) {
+    // CHECK:      md_exec.particle_for ins(%[[XA]] : memref<?x3xf64>) outs(%[[VA]] : memref<?x3xf64>)
+    %w0 = md_exec.empty : !vec
+    %vb = md_exec.particle_for ins(%xa : !vec) outs(%w0 : !vec) {
+    ^bb0(%x_i: vector<3xf64>):
+      md_exec.yield %x_i : vector<3xf64>
+    } -> !vec
+    // CHECK:      md_exec.particle_for ins(%[[XA]], %[[VA]] : memref<?x3xf64>, memref<?x3xf64>) outs(%[[XA]] : memref<?x3xf64>)
+    %x0 = md_exec.empty : !vec
+    %xb = md_exec.particle_for ins(%xa, %vb : !vec, !vec) outs(%x0 : !vec) {
+    ^bb0(%x_i: vector<3xf64>, %v_i: vector<3xf64>):
+      %s = arith.addf %x_i, %v_i : vector<3xf64>
+      md_exec.yield %s : vector<3xf64>
+    } -> !vec
+    // CHECK:      scf.yield %[[XA]], %[[VA]]
+    scf.yield %xb, %vb : !vec, !vec
+  }
+  return %xe, %ve : !vec, !vec
+}
+
+// A result that nothing uses, such as the velocities of a fused step whose
+// loop does not carry them, holds nothing once its op has run, so the
+// buffer it took is free again at the yield (#19).
+//
+// CHECK-LABEL: func.func @unused_result(
+// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64>, %[[N:[a-z0-9]+]]: index)
+func.func @unused_result(%x: !vec, %n: index) -> !vec {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  // CHECK:      %[[SPARE:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?x3xf64>
+  // CHECK:      scf.for %{{[a-z0-9]+}} = %{{[a-z0-9_]+}} to %[[N]] step %{{[a-z0-9_]+}}
+  // CHECK-SAME:   iter_args(%[[XA:[a-z0-9]+]] = %[[X]], %[[SA:[a-z0-9]+]] = %[[SPARE]])
+  %xe = scf.for %step = %c0 to %n step %c1 iter_args(%xa = %x) -> (!vec) {
+    // CHECK:      md_exec.particle_for ins(%[[XA]] : memref<?x3xf64>) outs(%[[XA]], %[[SA]] : memref<?x3xf64>, memref<?x3xf64>)
+    %w0 = md_exec.empty : !vec
+    %x0 = md_exec.empty : !vec
+    %w, %xb = md_exec.particle_for ins(%xa : !vec) outs(%w0, %x0 : !vec, !vec) {
+    ^bb0(%x_i: vector<3xf64>):
+      %s = arith.addf %x_i, %x_i : vector<3xf64>
+      md_exec.yield %x_i, %s : vector<3xf64>, vector<3xf64>
+    } -> !vec, !vec
+    // CHECK:      scf.yield %[[SA]], %[[XA]]
+    scf.yield %xb : !vec
+  }
+  return %xe : !vec
+}
+
 // A destination of zeros that is read like any other field is filled.
 //
 // CHECK-LABEL: func.func @zeros(

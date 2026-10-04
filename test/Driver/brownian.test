@@ -29,11 +29,12 @@
 # LOG-NOT: changed by
 # LOG:     MDIR: the momentum at the end
 
-# The step takes the noise of stream 2 for the displacement and no kick.
+# The step takes the noise of stream 2 for the displacement and no kick,
+# and does not read the velocities of the step before (#19).
 #
 # MODULE:     dyn.program @step(
 # MODULE:     provides = ["thermostatting"]
-# MODULE:     %v1_drift = md.map_particles gather(%f, %v, %m
+# MODULE:     %v1_drift = md.map_particles gather(%f, %m :
 # MODULE-NOT: dyn.kick
 # MODULE:     %x1 = dyn.drift %x, %v1, %dt
 
