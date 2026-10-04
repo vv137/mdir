@@ -57,6 +57,12 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- Custom term parameters now reject names supplied by the term, declared
+  particle parameters, functions, and lambda components, including unused
+  declarations. Rename colliding parameters and their expression uses.
+  Compound terms accept declared `lambda_<name>` components
+  (D[expression-namespace], #67).
+
 - GPU PME preserves mapped-charge producers when moving a reciprocal sum
   ahead of a neighbor refresh. Free-energy runs with spatial ordering,
   checkpoints, and continuation now use the mapped charges directly,

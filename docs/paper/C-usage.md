@@ -600,6 +600,12 @@ message if the particles spread past it; a larger `pairlist_distance`
 places a larger cell. The log of a run without a cell has no pressure,
 and the trajectory no cell.
 
+Parameters of a term must have names distinct from its coordinates and
+other supplied variables, declared per-particle parameters, function names,
+and declared lambda components. The reader rejects collisions even when
+unused, rather than allowing a constant to replace a coordinate and erase
+its force (D[expression-namespace]).
+
 ## C.9 Free energy
 
 `[free_energy]` decouples a selection of whole molecules from the rest
