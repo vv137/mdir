@@ -367,6 +367,17 @@ void _mlir_ciface_mdrtWriteFreeEnergy(int64_t step, void *values) {
   output.freeEnergy.write(step, row);
 }
 
+void _mlir_ciface_mdrtWriteObservables(int64_t step, void *values) {
+  Output &output = *current;
+  if (!output.observables.isOpen())
+    return;
+  auto *v = static_cast<StridedMemRefType<double, 1> *>(values);
+  std::vector<double> row = {output.getTime(step)};
+  for (int64_t k = 0; k != v->sizes[0]; ++k)
+    row.push_back(v->data[k * v->strides[0]] / units::energy);
+  output.observables.write(step, row);
+}
+
 void _mlir_ciface_mdrtAddBath(double energy) { current->bath += energy; }
 
 double Output::getChainEnergy() const {

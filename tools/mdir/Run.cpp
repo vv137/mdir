@@ -571,8 +571,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       })) {
     std::vector<std::string> outputs;
     for (const auto &path : {control->logFile, control->energyFile,
-                             control->pullFile, control->trajectoryFile,
-                             control->manifestFile})
+                             control->pullFile, control->observablesFile,
+                             control->trajectoryFile, control->manifestFile})
       if (!path.empty())
         outputs.push_back(getOutputPath(path));
     if (!control->restartOutput.empty()) {
@@ -586,7 +586,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   if (!control->manifestFile.empty()) {
     std::vector<std::string> otherOutputs;
     for (const auto &path : {control->logFile, control->energyFile,
-                             control->pullFile, control->trajectoryFile})
+                             control->pullFile, control->observablesFile,
+                             control->trajectoryFile})
       if (!path.empty())
         otherOutputs.push_back(getOutputPath(path));
     if (!control->restartOutput.empty()) {
@@ -700,7 +701,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   if (!options.continues) {
     std::vector<std::string> written = {control->logFile, control->energyFile,
                                         control->pullFile, control->manifestFile,
-                                        control->freeEnergyFile};
+                                        control->freeEnergyFile,
+                                        control->observablesFile};
     if (control->framePeriod > 0)
       written.push_back(control->trajectoryFile);
     if (control->checkpointPeriod > 0) {
@@ -800,6 +802,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     add("_mlir_ciface_mdrtWritePull", (void *)&_mlir_ciface_mdrtWritePull);
     add("_mlir_ciface_mdrtWriteFreeEnergy",
         (void *)&_mlir_ciface_mdrtWriteFreeEnergy);
+    add("_mlir_ciface_mdrtWriteObservables",
+        (void *)&_mlir_ciface_mdrtWriteObservables);
     add("_mlir_ciface_mdrtSetBox", (void *)&_mlir_ciface_mdrtSetBox);
     add("_mlir_ciface_mdrtSetTilt", (void *)&_mlir_ciface_mdrtSetTilt);
     add("_mlir_ciface_mdrtSetBarostatState",
@@ -973,6 +977,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     for (auto [name, path] : {
         std::pair<const char *, std::string>{"log", control->logFile},
         {"energy", control->energyFile}, {"pull", control->pullFile},
+        {"observables", control->observablesFile},
         {"trajectory", control->framePeriod > 0 ? control->trajectoryFile : ""},
         {"manifest", control->manifestFile}})
       if (!path.empty())
@@ -1138,6 +1143,22 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     output.lambdaVolumeDerivatives = program->lambdaVolumeDerivatives;
     if (llvm::Error error = output.freeEnergy.open(
             getOutputPath(control->freeEnergyFile), columns, keepThrough))
+      return fail(std::move(error));
+  }
+  // [output] observe (D[cv]): the energy of a term, `<term>.energy`, or its
+  // derivative in a constant of its, `<term>.d_<constant>`, per unit of the
+  // constant, at every energy of the log.
+  if (!control->observablesFile.empty()) {
+    std::vector<ColumnFile::Column> columns = {{"step", "-", true},
+                                               {"time", "ps"}};
+    for (const Control::Observable &observable : control->observables)
+      if (observable.constant.empty())
+        columns.push_back({observable.term + ".energy", "kcal/mol"});
+      else
+        columns.push_back({observable.term + ".d_" + observable.constant,
+                           "kcal/mol/" + observable.constant});
+    if (llvm::Error error = output.observables.open(
+            getOutputPath(control->observablesFile), columns, keepThrough))
       return fail(std::move(error));
   }
   if (!control->pullFile.empty()) {

@@ -1,0 +1,11 @@
+# REQUIRES: hdf5, cuda
+# [output] observables (D[cv]) on a device, in mixed and double precision:
+# the first row against the energies and derivatives written out by hand
+# (observables.test), within 1e-5 relative in mixed precision.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/observables.test | sed '1d;$d' | sed -e 's/^target    = "CPU"/target    = "GPU"/' > %t/double.toml
+# RUN: sed -e 's/^precision = "DOUBLE"/precision = "MIXED"/' -e 's/run.obs/mixed.obs/' %t/double.toml > %t/mixed.toml
+# RUN: cd %t && mdir run double.toml > double.log && mdir run mixed.toml > mixed.log
+# RUN: %python %S/Inputs/check_observables.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/run.obs %t/double.log | FileCheck %S/observables.test --check-prefix=PYTHON
+# RUN: %python %S/Inputs/check_observables.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/mixed.obs %t/mixed.log 1e-5 | FileCheck %S/observables.test --check-prefix=PYTHON

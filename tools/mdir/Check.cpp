@@ -233,6 +233,9 @@ static Preflight inspect(const Control &control) {
        !control.pullFile.empty(), false, false, rows, "rows"},
       {"free_energy", control.freeEnergyFile, "columns", control.energyPeriod,
        !control.freeEnergyFile.empty(), false, false, rows, "rows"},
+      {"observables", control.observablesFile, "columns",
+       control.energyPeriod, !control.observablesFile.empty(), false, false,
+       rows, "rows"},
       {"trajectory", control.trajectoryFile,
        control.trajectoryFormat == TrajectoryFormat::XTC ? "XTC" : "DCD",
        control.framePeriod, control.framePeriod > 0, false, false,
@@ -530,7 +533,8 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
   if (llvm::Error error = checkManifestPath(control->manifestFile,
           getManifestInputs(controlFile, *control, *system),
           {control->logFile, control->energyFile, control->pullFile,
-           control->trajectoryFile, control->restartOutput,
+           control->observablesFile, control->trajectoryFile,
+           control->restartOutput,
            control->restartOutput.empty() ? "" :
                getPreviousCheckpointPath(control->restartOutput)}))
     return fail(std::move(error), json);

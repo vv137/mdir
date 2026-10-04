@@ -103,6 +103,9 @@ struct Output {
   /// energies of Program at each state and their derivatives.
   ColumnFile freeEnergy;
   int64_t freeEnergyState = 0;
+  /// The energies of terms and their derivatives in constants of theirs
+  /// (D[cv]), or none.
+  ColumnFile observables;
   std::vector<double> stateFixedEnergies, stateVolumeEnergies;
   std::vector<double> lambdaFixedDerivatives, lambdaVolumeDerivatives;
   std::unique_ptr<TrajectoryWriter> trajectory;
@@ -303,6 +306,9 @@ double mdrtNoseHooverFactor(double kinetic);
 /// (D145), in Å and radians, and the energy and the forces of each term,
 /// in kcal/mol and per Å or radian.
 void _mlir_ciface_mdrtWriteFreeEnergy(int64_t step, void *values);
+/// The columns of `[output] observe` at the step `step` (D[cv]), in kJ/mol
+/// and kJ/mol per unit of a constant.
+void _mlir_ciface_mdrtWriteObservables(int64_t step, void *values);
 void _mlir_ciface_mdrtWritePull(int64_t step, void *coordinates,
                                 void *terms);
 /// A step of a minimization: the potential energy and the length of the
