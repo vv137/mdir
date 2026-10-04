@@ -4,9 +4,10 @@ against the same runs on the CPU in double precision.
 
     check_free_energy_reorder.py <directory> <mdir> [MIXED|DOUBLE]
 
-The energies of the states come from `@alchemical`, whose charges are a map
-over the particles; such a field once gave positions that were not numbers
-on a device in runs that put the particles in order (issue #26). Prints a
+The step potential `@energy` and the state evaluations in `@alchemical`
+map their charges over particles. Moving a reciprocal sum before the map
+once gave nonfinite positions on a device in runs that put the particles
+in order (issue #26). Prints a
 line per check: every value finite, the rows of the device against those
 of the CPU, and dH/dλ against the central difference of the energies of
 the states beside it.

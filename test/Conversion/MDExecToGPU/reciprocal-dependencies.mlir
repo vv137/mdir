@@ -150,4 +150,3 @@ func.func @unknown_effects(%n: index, %k: index, %cell: !md.cell) {
       : !pos, !chg, !mod -> f64, vector<9xf64>
   return
 }
-
