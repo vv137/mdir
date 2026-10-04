@@ -578,6 +578,18 @@ derivative of the argument.
 | `min(a, b)` | `a'` if `a < b`, else `b'` |
 | `max(a, b)` | `a'` if `a > b`, else `b'` |
 
+At $r=0$ the radial geometry has no supported direction or analytic
+continuation; active forces can be nonfinite. An active `sqrt(0)` tangent
+uses $x'/(2\sqrt{x})$ and is nonfinite, whereas an inactive square root
+has a proved zero tangent without division. Continuous nonperiodic table
+endpoints are included and use the first/last polynomial interval;
+strictly outside, the value and derivative are zero. Periodic tables wrap
+to a half-open interval; discrete tables have zero derivative at jumps.
+A central difference across a jump can disagree with the chosen branch
+and is reported as a failed check, not a zero. These conventions, including
+`abs(0)`, ties, and active conditions, are tested/documented in
+[ad-robust.md](ad-robust.md) (D[ad-conventions]).
+
 The conventions are part of the reference semantics: every back end must
 produce the same branch at a tie.
 

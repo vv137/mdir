@@ -545,3 +545,16 @@ emission in `Builder.cpp`, and, if its form is new to the IR, the rules of
 its derivative in `lib/Dialect/MD/Transforms/Differentiate.cpp`; the
 loops, the storage, and the kernels of a device follow from the IR.
 Appendix B.1 lists the tiers of tests, and B.2 where a change goes.
+
+**Singular and branch points (D[ad-conventions]).** Scalar differentiation
+uses the chosen branch: `abs(0)` takes its nonnegative branch; min/max ties
+take the second operand; a select's condition has no tangent; floor, ceil,
+integer conversions, steps, and discrete table lookups have piecewise-zero
+derivatives even at jumps. Continuous table endpoints use the first/last
+polynomial interval and strictly outside the table both value and tangent
+are zero. An active square root at zero and coincident radial geometry
+have no invented finite continuation; the generated arithmetic can be
+nonfinite and the numerical checker fails. An inactive square root still
+has a proved zero tangent. Differences across a branch boundary need not
+agree with the chosen derivative. See the singular-point tests and
+`docs/ad-robust.md` for the full conventions.
