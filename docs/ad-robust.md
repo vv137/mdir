@@ -81,3 +81,31 @@ configurations. It does not alter the normal simulation pipeline.
 expressions with seeds 15 and 161 and a deliberately wrong analytic force.
 The existing Lennard-Jones, tuple, table, and generalized-Born integration
 tests also check their actual configurations against energy differences.
+
+## Singular and branch conventions (D[ad-conventions])
+
+These are the reference semantics, including at ties:
+
+| Point | Convention |
+|---|---|
+| Pair distance $r=0$ | The geometric conversion divides by $r$; no direction or analytic continuation is invented. An active force is undefined/nonfinite and a numerical check fails. Coincident particles are outside the supported coordinate-gradient domain. |
+| `sqrt(0)` | An active tangent uses $x'/(2\sqrt{x})$ and is nonfinite at zero; an inactive argument has a proved zero tangent without a division. |
+| `abs(0)` | Select the nonnegative branch, giving $x'$. |
+| `min(a,b)` or `max(a,b)` at a tie | Select the second operand's derivative. |
+| `select` on an active condition | Differentiate the selected value branch; no derivative of the condition or distributional contribution at its boundary is introduced. |
+| `floor`, `ceil`, integer conversions, `step`, `delta` | Piecewise-constant derivative zero, including at a jump. |
+| Nonperiodic continuous table endpoints | The endpoint is in range. Differentiate the first/last polynomial interval; strictly outside the range, the value and derivative are zero. The last interval is selected at the upper endpoint. |
+| Periodic tables | Wrap to the half-open fundamental interval; use its spline derivative. |
+| Discrete table half-integer boundaries | Nearest-point lookup using `floor(x+1/2)`, clamped to the valid indices; derivative zero even where the value jumps. |
+
+A branch derivative at a discontinuity need not agree with a central
+difference that crosses the discontinuity. The numerical checker reports
+that disagreement; it does not reinterpret it as a proved zero. Domain
+errors of logarithms, powers, angles, or collinear geometry likewise have
+no invented continuation. Existing runtime checks diagnose nonfinite
+simulation states, and the derivative checker rejects nonfinite comparisons.
+
+`derivative-conventions.mlir` evaluates ties, active and inactive square
+roots at zero, and coincident radial geometry directly. Table endpoint
+conventions follow the interpolation in `Expression::emitSpline` and the
+existing tabulated-function boundary tests.

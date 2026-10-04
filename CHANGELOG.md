@@ -25,6 +25,11 @@ format, or the outputs; every such change is listed under **Changed** or
   `values_file` with an explicit `shape`, with the existing interpolation
   in one, two, or three dimensions. Manifests hash the files, and
   continuation checks the loaded grid (D178).
+- Explicit differentiation conventions at coincident particles, active and
+  inactive `sqrt(0)`, absolute-value and min/max ties, dependent select
+  conditions, and table boundaries, with direct singular-point regression
+  tests (D[ad-conventions], part 4 of #15).
+
 - `--md-check-derivatives` instruments evaluations with f64 central
   differences at their actual inputs: every requested force component,
   scalar parameter derivative, and six independent cell strains. Failed
