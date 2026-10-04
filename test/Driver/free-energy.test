@@ -32,6 +32,17 @@
 # COLUMNS-NEXT: 4 0.004000
 # WARNING: mdir: warning: state 1 softens the Lennard-Jones (vdw > 0) of particles that keep a charge
 
+# One state (D[single-state-dhdl]): its dU.0 would be identically 0, so the
+# file holds dH/dλ alone.
+# RUN: sed -e 's/^coulomb = .*/coulomb = [0.5]/' -e 's/^vdw  *= .*/vdw = [0.5]/' -e 's/run.dhdl/one.dhdl/' %t/run.toml > %t/one.toml
+# RUN: cd %t && mdir run one.toml > one.log
+# RUN: FileCheck %s --check-prefix=ONE < %t/one.dhdl
+#
+# ONE: # step time dHdl.coulomb dHdl.vdw{{$}}
+# ONE-NEXT: # - ps kcal/mol kcal/mol{{$}}
+# ONE-NEXT: 0 0.000000 {{[-0-9.]+}} {{[-0-9.]+}}{{$}}
+# ONE-NOT: dU
+
 # Errors.
 # RUN: sed 's/couple = ":LIG"/couple = ":LIG@C1"/' %t/run.toml > %t/cut.toml
 # RUN: not mdir run %t/cut.toml 2>&1 | FileCheck %s --check-prefix=CUT
