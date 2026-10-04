@@ -21,7 +21,12 @@ MLIR, compiled at run time (Section 3.6).
 what another writes become one kernel: the loops over pairs and over
 tuples of a term of the potential (rows of the same particle), the loops
 over the disjoint tuple sets of a union of constraints (D83), and the
-integration runs of Section 8.2. A run is lowered where its last loop is.
+integration runs of Section 8.2. Adjacent loops over tuples that evaluate
+each tuple once and have no global sums, the bonded terms of a step and the
+forces of a term over centers among them, are launched as one kernel over
+all their tuples, each thread finding its loop by the running totals of the
+tuples (D[centroid-weights]); on JAC the five bonded kernels of a step
+become one. A run is lowered where its last loop is.
 Destinations that the forces of a step add are merged where a loop gives
 two of them by the same contract: the forces of the sums over the centers
 of a term (D150), and those of a term over the pairs of a topology fused
@@ -38,7 +43,11 @@ barrier, the four warps in their order from shared memory (D150). With at
 most 512 rows the first kernel has one block, which writes the results,
 and the second is not launched; a loop that evaluates each tuple once
 launches no more rows than it has tuples, so the sums over the centers of
-groups, some 170 tuples on JAC, are one block. A kernel passes each
+groups, some 170 tuples on JAC, are one block. That block also computes
+the contributions of the rows itself, so that such sums are one kernel
+in all (D[centroid-weights]): with the forces in the run of bonded loops,
+a harmonic bias on the distance between two centers costs JAC one kernel
+and about 9 µs a step, as OpenMM's `CustomCentroidBondForce` does. A kernel passes each
 buffer as its descriptor, and PTX before ISA 8.1 allows 4352 bytes of
 parameters: the sums of a loop go to the kernels in runs whose
 descriptors fit 3 KB (D145). The results go to a buffer of the device;
