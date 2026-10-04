@@ -17,3 +17,7 @@
 # PRECISION: derivative checking requires double precision for every role
 # RUN: not mdir-opt %t.mlir --md-check-derivatives %md_passes --convert-md-to-md-exec --md-exec-assign-storage="memory=device" --convert-md-exec-to-gpu 2>&1 | FileCheck %s --check-prefix=TARGET
 # TARGET: derivative checking requires the CPU lowering
+
+# All arithmetic/math/vector rules from the coverage test, with a=0.37.
+# RUN: %python %S/Inputs/derivative_fuzzer.py %t.rules.mlir 15 1 %S/../Dialect/MD/Transforms/derivative-rules.mlir
+# RUN: mdir-opt %t.rules.mlir --md-check-derivative-coverage --md-check-derivatives %md_passes --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mdrt,%mlir_c_runner_utils

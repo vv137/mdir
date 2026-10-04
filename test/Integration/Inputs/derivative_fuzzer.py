@@ -91,3 +91,11 @@ md.function @random0.energy_forces_virial_derivative2(%x: !vec, %cell: !md.cell,
   md.return %zero, %f, %w, %zero : f64, !vec, vector<9xf64>, f64
 }
 ''')
+
+# Optionally check the complete opcode-coverage expression numerically too.
+if len(sys.argv) > 4 and Path(sys.argv[4]).is_file():
+    coverage = Path(sys.argv[4]).read_text()
+    potential = coverage.split("md.potential @rules", 1)[1].split("md.function @request", 1)[0]
+    text = out.read_text().replace("  return\n}",
+        "  %rules = md.evaluate @rules(%x, %cell, %lambda) request [derivative(2)] : (!vec, !md.cell, f64) -> f64\n  return\n}", 1)
+    out.write_text(text + "\nmd.potential @rules" + potential)
