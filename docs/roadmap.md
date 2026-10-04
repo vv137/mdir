@@ -19,7 +19,7 @@ Features of classical MD (Section 5) continue between milestones.
 
 | Item | State |
 |---|---|
-| Robust differentiation (#15) | Activity analysis shared by positions, cell variables, and parameters (D[ad-robust]); scalar rule interfaces and coverage (D[ad-rules]); CPU f64 central-difference checker and expression fuzzer (D[ad-checker]); singular-point conventions and direct tests (D[ad-conventions]); term diagnostics follow in separate PRs |
+| Robust differentiation (#15) | Activity analysis shared by positions, cell variables, and parameters (D[ad-robust]); scalar rule interfaces and coverage (D[ad-rules]); CPU f64 central-difference checker and expression fuzzer (D[ad-checker]); singular-point conventions and direct tests (D[ad-conventions]); control-file term diagnostic locations (D[ad-term-diagnostics]). All five parts are implemented for review in separate PRs |
 | Principles of development | Done ([principles.md](principles.md)) |
 | Tests under compute-sanitizer; short runs of the Amber suite | Done (`test/Sanitizer`, `test/Scale`) |
 | Kernels named after their op and line | Done |

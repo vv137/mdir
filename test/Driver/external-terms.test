@@ -23,6 +23,11 @@
 # RUN: sed -n '/^#--- run.toml/,/^#--- terms/p' %s | sed '1d;$d' | sed 's/terms.h5/plain.h5/' > %t/plain.toml
 # RUN: cd %t && mdir run plain.toml > plain.log && mdir run terms.toml > terms.log
 # RUN: FileCheck %s < %t/terms.log
+# RUN: mdir emit %t/terms.toml > %t/terms.mlir
+# RUN: mdir-opt %t/terms.mlir --md-check-derivative-coverage -o /dev/null
+# RUN: FileCheck %s --check-prefix=TERM-LOCATION < %t/terms.mlir
+# RUN: %python %S/Inputs/inject_missing_derivative.py %t/terms.mlir %t/opaque.mlir
+# RUN: not mdir-opt %t/opaque.mlir --allow-unregistered-dialect --md-differentiate 2>&1 | FileCheck %s --check-prefix=TERM-ERROR
 # RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
 # RUN: mdir checkpoint --print=forces %t/terms.h5 > %t/terms.forces
 # RUN: %python %S/Inputs/check_external.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/plain.forces %t/terms.forces 1e-9 %t/plain.log %t/terms.log | FileCheck %s --check-prefix=PYTHON
@@ -167,3 +172,8 @@ type = "NONE"
 target    = "CPU"
 precision = "DOUBLE"
 #--- trap end
+
+# TERM-LOCATION: loc("control-file term: 
+
+# TERM-ERROR: error: loc("control-file term: wall"): cannot prove inactivity
+# TERM-ERROR-SAME: test.no_derivative

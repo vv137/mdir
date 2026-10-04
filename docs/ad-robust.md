@@ -109,3 +109,17 @@ simulation states, and the derivative checker rejects nonfinite comparisons.
 roots at zero, and coincident radial geometry directly. Table endpoint
 conventions follow the interpolation in `Expression::emitSpline` and the
 existing tabulated-function boundary tests.
+
+## Control-file term diagnostics (D[ad-term-diagnostics])
+
+Expression emission accepts the control-file term name and records it as a
+named MLIR location on every emitted expression operation. Pair, tuple,
+centroid, pull, triplet, and external terms supply their names. Quoting is
+escaped for MLIR. Activity retains the operation that first made a proof
+unknown, so a failure reported through an enclosing sum or field still
+points to the named expression that caused it.
+
+The driver regression injects a missing scalar rule into emitted IR and
+checks that differentiation names the control-file term in the diagnostic.
+This changes diagnostic attribution only; expressions and trajectories
+retain their previous arithmetic and defaults.

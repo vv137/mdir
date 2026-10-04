@@ -97,7 +97,8 @@ public:
   /// expression.
   std::string emit(llvm::raw_ostream &os,
                    const llvm::StringMap<std::string> &values,
-                   llvm::StringRef prefix, llvm::StringRef indent) const;
+                   llvm::StringRef prefix, llvm::StringRef indent,
+                   llvm::StringRef termName = {}) const;
 
   /// The value of the expression, with `values` giving the value of every
   /// name.

@@ -197,7 +197,8 @@ LogicalResult DerivativeBuilder::getWeight(Value sum, Value &weight) {
     if (verdict.dependence == Activity::Inactive)
       return success();
     Operation *op = value.getDefiningOp();
-    return emitError(value.getLoc()) << "no derivative rule for '"
+    Location at = verdict.unknownOperation ? verdict.unknownOperation->getLoc() : value.getLoc();
+    return emitError(at) << "no derivative rule for '"
         << (op ? op->getName().getStringRef() : "block argument")
         << "' in potential '" << potential.getSymName() << "'"
         << (verdict.reason.empty() ? "" : ": " + verdict.reason);
@@ -417,7 +418,8 @@ bool DerivativeBuilder::isPositional(Value field) {
   activity.addKnownBlock(body);
   auto verdict = activity.classify(field);
   if (verdict.dependence == Activity::Unknown) {
-    emitError(field.getLoc()) << "cannot prove positional inactivity in potential '"
+    Location at = verdict.unknownOperation ? verdict.unknownOperation->getLoc() : field.getLoc();
+    emitError(at) << "cannot prove positional inactivity in potential '"
                              << potential.getSymName() << "': " << verdict.reason;
     activityFailed = true;
   }
@@ -1092,7 +1094,8 @@ LogicalResult DerivativeBuilder::buildParameterDerivative(int64_t argument,
   // An error for a value that is not independent and has no rule here.
   auto refuse = [&](Value value, const Verdict &verdict) -> LogicalResult {
     Operation *op = value.getDefiningOp();
-    Location at = op ? op->getLoc() : value.getLoc();
+    Location at = verdict.unknownOperation ? verdict.unknownOperation->getLoc() :
+                  op ? op->getLoc() : value.getLoc();
     if (verdict.dependence == Dependence::Unknown)
       return emitError(at) << "cannot prove that this value does not depend on "
                            << describe() << ": " << verdict.reason;

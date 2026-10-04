@@ -168,7 +168,8 @@ LogicalResult ScalarDerivative::compute(Value value, Value &tangent) {
     if (verdict.dependence == Activity::Inactive)
       return success();
     if (verdict.dependence == Activity::Unknown)
-      return op->emitError() << "cannot prove inactivity: " << verdict.reason;
+      return emitError(verdict.unknownOperation ? verdict.unknownOperation->getLoc() : op->getLoc())
+             << "cannot prove inactivity: " << verdict.reason;
     return rule.emitDerivative(value, *this, tangent);
   }
   if (leafHandler)

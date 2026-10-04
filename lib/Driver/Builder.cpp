@@ -1983,7 +1983,7 @@ void Builder::emitCentroidTerm(size_t index, const TupleTerm &term) {
   bindLambdas(values);
   Expression expression = llvm::cantFail(
       Expression::parse(term.expression, control.functions));
-  std::string energy = expression.emit(os, values, prefix + "e", "  ");
+  std::string energy = expression.emit(os, values, prefix + "e", "  ", term.name);
   os << "  " << prefix << "kj = arith.constant " << formatReal(units::energy)
      << " : f64\n"
      << "  %u_centroid_" << term.name << " = arith.mulf " << energy << ", "
@@ -2042,7 +2042,7 @@ void Builder::emitPullPotentials() {
     bindLambdas(values);
     Expression expression = llvm::cantFail(
         Expression::parse(term.expression, control.functions));
-    std::string energy = expression.emit(os, values, "%pe", "  ");
+    std::string energy = expression.emit(os, values, "%pe", "  ", term.name);
     os << "  md.return " << energy << " : f64\n}\n\n";
   }
 }
@@ -2572,7 +2572,7 @@ void Builder::emitExternalTerm(size_t index, const ExternalTerm &term,
   if (control.usesTime)
     values["t"] = "%time";
   bindLambdas(values);
-  std::string energy = expression.emit(os, values, prefix + "e", "    ");
+  std::string energy = expression.emit(os, values, prefix + "e", "    ", term.name);
   os << "    " << prefix << "kj = arith.constant " << formatReal(units::energy)
      << " : f64\n"
      << "    " << prefix << "u = arith.mulf " << energy << ", " << prefix
@@ -2868,7 +2868,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
          << formatReal(constant.second) << " : f64\n";
       values[constant.first] = value;
     }
-    std::string energy = expression.emit(os, values, "%pte", "    ");
+    std::string energy = expression.emit(os, values, "%pte", "    ", term.name);
     os << "    %pt_kj = arith.constant " << formatReal(units::energy)
        << " : f64\n"
        << "    %pt_e = arith.mulf " << energy << ", %pt_kj : f64\n";
@@ -3462,7 +3462,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     for (const auto &parameter : term.parameters)
       values[parameter.first] = "%cp_" + parameter.first;
     Expression expression = llvm::cantFail(Expression::parse(term.expression, control.functions));
-    std::string energy = expression.emit(os, values, "%ce", "    ");
+    std::string energy = expression.emit(os, values, "%ce", "    ", term.name);
     os << "    %c_kj = arith.constant " << formatReal(units::energy)
        << " : f64\n"
        << "    %c_e = arith.mulf " << energy << ", %c_kj : f64\n"
@@ -3660,7 +3660,7 @@ llvm::Error Builder::emitPotential() {
       values[name] = "%" + name;
     }
 
-    std::string value = expression.emit(os, values, "%e", "    ");
+    std::string value = expression.emit(os, values, "%e", "    ", term.name);
     os << "    %to_energy = arith.constant " << formatReal(units::energy)
        << " : f64\n";
     os << "    %u = arith.mulf " << value << ", %to_energy : f64\n";
@@ -3797,7 +3797,7 @@ std::string Builder::emitTripletTerm(size_t index, const TripletTerm &term) {
   }
   if (control.usesTime)
     values["t"] = "%time";
-  std::string value = expression.emit(os, values, p + "e", "    ");
+  std::string value = expression.emit(os, values, p + "e", "    ", term.name);
   os << "    " << p << "to_energy = arith.constant "
      << formatReal(units::energy) << " : f64\n";
   os << "    " << p << "u = arith.mulf " << value << ", " << p

@@ -10,6 +10,7 @@ enum class Activity { Inactive, Active, Unknown };
 struct ActivityResult {
   Activity dependence = Activity::Inactive;
   std::string reason;
+  mlir::Operation *unknownOperation = nullptr;
 };
 class ActivityAnalysis {
 public:
