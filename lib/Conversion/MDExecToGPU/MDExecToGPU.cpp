@@ -40,6 +40,7 @@ using namespace mlir;
 using namespace mdir;
 using namespace mdir::kernels;
 
+#include <functional>
 #include <limits>
 
 namespace mdir {
@@ -271,10 +272,23 @@ private:
   }
   DenseSet<Operation *> inRows;
 
+  /// How a loop provides the contributions of its rows to its global sums
+  /// when one kernel can also compute them: `produce` launches the kernel
+  /// that stores them in the buffers of contributions, and `row` emits, in
+  /// a thread of the kernel of the reduction, the contributions of row `i`.
+  struct RowSums {
+    function_ref<void(OpBuilder &)> produce;
+    function_ref<SmallVector<Value>(OpBuilder &, Value)> row;
+  };
+
+  /// `rows`, if given, lets a reduction of one part compute the
+  /// contributions of the rows itself rather than load them: a set of few
+  /// tuples then takes one kernel for its sums instead of two (#20).
   SmallVector<Value> emitReductions(OpBuilder &builder, Location loc,
                                     ArrayRef<Value> contributions,
                                     ArrayRef<Value> partials, Value size,
-                                    bool isSum);
+                                    bool isSum,
+                                    std::optional<RowSums> rows = {});
 
   /// The integration runs (D110), by their loop after, where they are
   /// lowered.
@@ -291,6 +305,17 @@ private:
   /// Finds the runs of loops over pairs and tuples in `function` that one
   /// kernel can do (lowerRows), and records them in `rows`.
   void findRows(func::FuncOp function);
+  /// The runs of loops over tuples that evaluate each tuple once and have no
+  /// global sums, by their last loop: one kernel launches the tuples of all
+  /// of them (lowerOnceRun), as the bonded terms of a step, or the forces of
+  /// a term over the centers of groups beside them (#20).
+  DenseMap<Operation *, SmallVector<md_exec::TupleForOp>> onceRuns;
+  DenseSet<Operation *> inOnceRuns;
+  /// Finds the runs of `onceRuns` in `function`.
+  void findOnceRuns(func::FuncOp function);
+  /// Lowers the loops of `run` to one kernel: a thread takes the tuple of
+  /// its number in the tuples of the loops, one loop after the other.
+  LogicalResult lowerOnceRun(ArrayRef<md_exec::TupleForOp> run);
   /// Lowers the loops over pairs and tuples of `run` to one kernel, in
   /// which the group of threads of a particle does each loop in turn, and
   /// their global sums to one reduction.
@@ -306,7 +331,8 @@ private:
   /// Stores the contributions of a particle and returns, for each global
   /// sum of a loop, its result.
   LogicalResult finishSums(Operation *op, OpBuilder &builder,
-                           ValueRange reduce, ValueRange scratch, Value size);
+                           ValueRange reduce, ValueRange scratch, Value size,
+                           std::optional<RowSums> rows = {});
 
   /// A place for `count` numbers of the type `element`.
   Cell getCell(Type element, int64_t count, Location loc);
@@ -638,7 +664,8 @@ static Value shuffleXor(OpBuilder &builder, Location loc, Value value,
 SmallVector<Value>
 Lowering::emitReductions(OpBuilder &builder, Location loc,
                          ArrayRef<Value> contributions,
-                         ArrayRef<Value> partials, Value size, bool isSum) {
+                         ArrayRef<Value> partials, Value size, bool isSum,
+                         std::optional<RowSums> rows) {
   if (contributions.empty())
     return {};
 
@@ -842,6 +869,23 @@ Lowering::emitReductions(OpBuilder &builder, Location loc,
   // and the second kernel is not launched.
   Value onePart = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq,
                                         parts, createIndex(builder, loc, 1));
+  // A reduction of one part may compute the contributions of the rows in
+  // its own block, in the order the buffers would hold them, so that the
+  // kernel that stores them is not launched. With several runs of sums each
+  // run would evaluate the rows again, and their stores to the
+  // destinations of the loop with them, so only one run computes them.
+  bool fused = rows && runs.size() == 1;
+  if (fused) {
+    Value several = arith::CmpIOp::create(
+        builder, loc, arith::CmpIPredicate::ne, parts,
+        createIndex(builder, loc, 1));
+    scf::IfOp::create(builder, loc, several, [&](OpBuilder &then, Location) {
+      rows->produce(then);
+      scf::YieldOp::create(then, loc);
+    });
+  } else if (rows) {
+    rows->produce(builder);
+  }
   for (const auto &run : runs) {
     size_t begin = run.first, end = run.second;
     ArrayRef<Value> those = contributions.slice(begin, end - begin);
@@ -860,10 +904,30 @@ Lowering::emitReductions(OpBuilder &builder, Location loc,
       auto loop = scf::ForOp::create(
           b, loc, first, size, stride, zeros,
           [&](OpBuilder &inner, Location, Value i, ValueRange sums) {
+            SmallVector<Value> values;
+            if (fused) {
+              SmallVector<Type> wanted;
+              for (Value buffer : those)
+                wanted.push_back(
+                    md_exec::getKernelValueType(buffer.getType()));
+              auto choose = scf::IfOp::create(
+                  inner, loc, wanted, onePart, /*withElseRegion=*/true);
+              OpBuilder computed = choose.getThenBodyBuilder();
+              scf::YieldOp::create(computed, loc, rows->row(computed, i));
+              OpBuilder loaded = choose.getElseBodyBuilder();
+              SmallVector<Value> fromBuffers;
+              for (Value buffer : those)
+                fromBuffers.push_back(loadElement(loaded, loc, buffer, i));
+              scf::YieldOp::create(loaded, loc, fromBuffers);
+              values.append(choose.getResults().begin(),
+                            choose.getResults().end());
+            } else {
+              for (Value buffer : those)
+                values.push_back(loadElement(inner, loc, buffer, i));
+            }
             SmallVector<Value> next;
-            for (auto [buffer, sum] : llvm::zip(those, sums))
-              next.push_back(
-                  combine(inner, sum, loadElement(inner, loc, buffer, i)));
+            for (auto [value, sum] : llvm::zip(values, sums))
+              next.push_back(combine(inner, sum, value));
             scf::YieldOp::create(inner, loc, next);
           });
       SmallVector<Value> totals =
@@ -973,7 +1037,7 @@ static LogicalResult checkScratch(Operation *op, unsigned sums,
 
 LogicalResult Lowering::finishSums(Operation *op, OpBuilder &builder,
                                    ValueRange reduce, ValueRange scratch,
-                                   Value size) {
+                                   Value size, std::optional<RowSums> rows) {
   Location loc = op->getLoc();
   SmallVector<Value> contributions, partials;
   for (unsigned i = 0, e = reduce.size(); i != e; ++i) {
@@ -981,7 +1045,8 @@ LogicalResult Lowering::finishSums(Operation *op, OpBuilder &builder,
     partials.push_back(scratch[2 * i + 1]);
   }
   SmallVector<Value> sums = emitReductions(builder, loc, contributions,
-                                           partials, size, /*isSum=*/true);
+                                           partials, size, /*isSum=*/true,
+                                           rows);
   for (unsigned i = 0, e = reduce.size(); i != e; ++i) {
     Value total = arith::AddFOp::create(builder, loc, reduce[i], sums[i]);
     op->getResult(i).replaceAllUsesWith(total);
@@ -993,6 +1058,123 @@ static void storeContributions(OpBuilder &builder, Location loc,
                                ArrayRef<Value> contributions,
                                ValueRange scratch, Value particle,
                                const RowLanes &sharing);
+
+void Lowering::findOnceRuns(func::FuncOp function) {
+  auto isOnceLoop = [&](Operation *op) {
+    auto tuple = dyn_cast<md_exec::TupleForOp>(op);
+    return tuple && !inRows.contains(op) && evaluatesOnce(tuple) &&
+           tuple.getReduce().empty() &&
+           !op->hasAttr(md_exec::kSideAttrName);
+  };
+  auto finish = [&](SmallVector<md_exec::TupleForOp> &run) {
+    if (run.size() >= 2) {
+      onceRuns[run.back()] = run;
+      for (md_exec::TupleForOp loop : run)
+        inOnceRuns.insert(loop);
+    }
+    run.clear();
+  };
+  function.walk([&](Block *block) {
+    SmallVector<md_exec::TupleForOp> run;
+    // What the loops of the run add to, and what they read besides.
+    DenseSet<Value> written, read;
+    for (Operation &op : *block) {
+      if (!isOnceLoop(&op)) {
+        // Constants and arithmetic on the host may lie between the loops of a
+        // run, as the coordinate of a term over centers that its loop takes:
+        // they touch no memory, and the kernel of the run is launched at its
+        // last loop, after them.
+        if (op.getNumRegions() == 0 && isMemoryEffectFree(&op) &&
+            !isa<md_exec::MDExecDialect, md::MDDialect>(op.getDialect()))
+          continue;
+        finish(run);
+        written.clear();
+        read.clear();
+        continue;
+      }
+      auto loop = cast<md_exec::TupleForOp>(op);
+      // A loop joins if it takes the same positions and cell, reads nothing
+      // that another loop of the run adds to, and adds to nothing that one
+      // reads: then the loops of the run may run at once. Loops that add to
+      // the same destination do so with atomics, in any order, as they do
+      // one after the other (D84).
+      bool joins = !run.empty() &&
+                   loop.getPositions() == run.front().getPositions() &&
+                   loop.getCell() == run.front().getCell();
+      ValueRange outs = loop.getOuts();
+      if (joins)
+        for (Value operand : op.getOperands())
+          joins &= !(written.contains(operand) &&
+                     !llvm::is_contained(outs, operand));
+      for (Value out : outs)
+        joins &= !read.contains(out);
+      if (!joins)
+        finish(run), written.clear(), read.clear();
+      run.push_back(loop);
+      for (Value operand : op.getOperands())
+        if (!llvm::is_contained(outs, operand))
+          read.insert(operand);
+      written.insert(outs.begin(), outs.end());
+    }
+    finish(run);
+  });
+}
+
+LogicalResult Lowering::lowerOnceRun(ArrayRef<md_exec::TupleForOp> run) {
+  md_exec::TupleForOp first = run.front();
+  Location loc = first.getLoc();
+  setPurpose(run.back());
+  OpBuilder builder(run.back());
+  Value positions = first.getPositions();
+  Type real = cast<MemRefType>(positions.getType()).getElementType();
+  Value box = convertReal(builder, loc, first.getCellMutable().get(), real);
+  Value inverse = createInverse(builder, loc, box);
+  // The tuples of the loops, one after the other: loop k takes the numbers
+  // from ends[k - 1] to ends[k].
+  SmallVector<Value> tupleMembers, ends;
+  for (md_exec::TupleForOp loop : run) {
+    Value found = members.lookup(loop.getIncidence());
+    if (!found)
+      return loop->emitOpError()
+             << "has no members on the device to evaluate each tuple once";
+    tupleMembers.push_back(found);
+    Value count = createSize(builder, loc, found);
+    ends.push_back(ends.empty()
+                       ? count
+                       : arith::AddIOp::create(builder, loc, ends.back(),
+                                               count));
+  }
+  launchOver(builder, loc, ends.back(), [&](OpBuilder &body, Value item) {
+    std::function<void(OpBuilder &, size_t)> emitFrom = [&](OpBuilder &at,
+                                                           size_t k) {
+      auto emitLoop = [&](OpBuilder &b) {
+        Value tuple = k == 0 ? item
+                             : arith::SubIOp::create(b, loc, item,
+                                                     ends[k - 1]);
+        IRMapping local;
+        emitTupleOnce(b, run[k], tupleMembers[k], tuple, box, inverse, local);
+      };
+      if (k + 1 == run.size()) {
+        emitLoop(at);
+        return;
+      }
+      Value mine = arith::CmpIOp::create(at, loc, arith::CmpIPredicate::ult,
+                                         item, ends[k]);
+      scf::IfOp::create(
+          at, loc, mine,
+          [&](OpBuilder &then, Location) {
+            emitLoop(then);
+            scf::YieldOp::create(then, loc);
+          },
+          [&](OpBuilder &otherwise, Location) {
+            emitFrom(otherwise, k + 1);
+            scf::YieldOp::create(otherwise, loc);
+          });
+    };
+    emitFrom(body, 0);
+  });
+  return success();
+}
 
 void Lowering::findRows(func::FuncOp function) {
   auto isRowLoop = [&](Operation *op) {
@@ -2089,14 +2271,23 @@ LogicalResult Lowering::lowerTupleFor(md_exec::TupleForOp op) {
     // over the rows, in an order that does not depend on the threads. A
     // set of few tuples, as the pairs of the centers of groups (D139),
     // launches and reduces as many rows as it has tuples.
+    // Few rows, as those of such a set, are reduced in one part, whose
+    // block computes them itself (#20).
     Value rows = arith::MinUIOp::create(builder, loc, size, tuples);
-    launchOver(builder, loc, rows, [&](OpBuilder &body, Value row) {
-      SmallVector<Value> contributions = emitTuplesOnceWithSums(
-          body, op, tupleMembers, row, rows, tuples, box, inverse);
-      for (auto [index, value] : llvm::enumerate(contributions))
-        storeElement(body, loc, value, op.getScratch()[2 * index], row);
-    });
-    return finishSums(op, builder, op.getReduce(), op.getScratch(), rows);
+    auto produce = [&](OpBuilder &at) {
+      launchOver(at, loc, rows, [&](OpBuilder &body, Value row) {
+        SmallVector<Value> contributions = emitTuplesOnceWithSums(
+            body, op, tupleMembers, row, rows, tuples, box, inverse);
+        for (auto [index, value] : llvm::enumerate(contributions))
+          storeElement(body, loc, value, op.getScratch()[2 * index], row);
+      });
+    };
+    auto row = [&](OpBuilder &body, Value i) {
+      return emitTuplesOnceWithSums(body, op, tupleMembers, i, rows, tuples,
+                                    box, inverse);
+    };
+    return finishSums(op, builder, op.getReduce(), op.getScratch(), rows,
+                      RowSums{produce, row});
   }
   // A set whose tuples share no particle has each tuple evaluated once, by
   // the thread of its first member; its rows hold one tuple at most, which
@@ -4098,11 +4289,22 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   // The kernels are copied into the loops, so the ops inside them are not
   // lowered where they are. A run of loops is lowered at its last loop.
   findRows(function);
+  findOnceRuns(function);
   for (Operation *op : ops) {
     Operation *parent = op->getParentOp();
     if (isa<md_exec::ParticleForOp, md_exec::PairForOp, md_exec::TupleForOp>(
             parent))
       continue;
+    if (inOnceRuns.contains(op)) {
+      auto run = onceRuns.find(op);
+      if (run != onceRuns.end()) {
+        if (failed(lowerOnceRun(run->second)))
+          return failure();
+        for (md_exec::TupleForOp loop : run->second)
+          lowered.push_back(loop);
+      }
+      continue;
+    }
     if (inRows.contains(op)) {
       auto run = rows.find(op);
       if (run != rows.end()) {
@@ -4129,6 +4331,8 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   rows.clear();
   integrations.clear();
   inRows.clear();
+  onceRuns.clear();
+  inOnceRuns.clear();
 
   // Users come after what they use, so erase from the back.
   for (Operation *op : llvm::reverse(lowered))
