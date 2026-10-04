@@ -1,4 +1,5 @@
 #include "mdir/Dialect/MD/Transforms/Activity.h"
+#include "mdir/Dialect/MD/Transforms/DerivativeInterface.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 using namespace mlir;
@@ -28,8 +29,7 @@ static auto isKernelOp = [](Operation *op) {
     if (isa<LookupOp, YieldOp>(op) ||
         op->getName().getStringRef() == "md_exec.cell_edges")
       return true;
-    StringRef dialect = op->getName().getDialectNamespace();
-    return (dialect == "arith" || dialect == "math" || dialect == "vector") &&
+    return isa<DerivativeOpInterface>(op) &&
            op->getNumRegions() == 0 && isMemoryEffectFree(op);
   };
   // Ops over particles, tuples, or pairs whose kernels the pass knows.

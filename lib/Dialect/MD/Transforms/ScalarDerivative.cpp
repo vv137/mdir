@@ -3,9 +3,12 @@
 // The derivative rules are those of docs/ops-m0.md, Section 5.4.
 
 #include "mdir/Dialect/MD/Transforms/ScalarDerivative.h"
+#include "mdir/Dialect/MD/Transforms/DerivativeInterface.h"
 #include "mdir/Dialect/MD/Transforms/Activity.h"
+#include "mlir/IR/DialectRegistry.h"
 
 #include "mdir/Dialect/MD/MDOps.h"
+#include "mdir/Dialect/MD/MDDialect.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -159,22 +162,42 @@ LogicalResult ScalarDerivative::compute(Value value, Value &tangent) {
     if (!argument.getOwner()->getParent()->isAncestor(op->getParentRegion()))
       return success();
 
-  ActivityAnalysis activity(variable);
-  auto verdict = activity.classify(value);
-  StringRef dialect = op->getName().getDialectNamespace();
-  bool scalar = (dialect == "arith" || dialect == "math" || dialect == "vector") &&
-                op->getNumRegions() == 0 && isMemoryEffectFree(op);
-  if (scalar && verdict.dependence == Activity::Inactive)
-    return success();
-  if (scalar && verdict.dependence == Activity::Unknown)
-    return op->emitError() << "cannot prove inactivity: " << verdict.reason;
+  if (auto rule = dyn_cast<DerivativeOpInterface>(op)) {
+    ActivityAnalysis activity(variable);
+    auto verdict = activity.classify(value);
+    if (verdict.dependence == Activity::Inactive)
+      return success();
+    if (verdict.dependence == Activity::Unknown)
+      return op->emitError() << "cannot prove inactivity: " << verdict.reason;
+    return rule.emitDerivative(value, *this, tangent);
+  }
+  if (leafHandler)
+    return leafHandler(value, tangent);
+  return op->emitError() << "no derivative rule for '" << op->getName() << "'";
+}
 
+#include "mdir/Dialect/MD/Transforms/DerivativeInterface.cpp.inc"
+
+static LogicalResult emitScalarRule(Value value, ScalarDerivative &derivative,
+                                    Value &tangent) {
+  tangent = Value();
+  Operation *op = value.getDefiningOp();
+  OpBuilder &builder = derivative.getBuilder();
   ScalarEmitter emit(builder, op->getLoc());
   Location loc = op->getLoc();
 
+  if (matchPattern(op, m_Constant()) ||
+      isa<LookupOp, arith::SIToFPOp, arith::UIToFPOp>(op))
+    return success();
+
   // Derivative of operand `index` of `op`.
   auto operandTangent = [&](unsigned index, Value &result) {
-    return get(op->getOperand(index), result);
+    auto rule = cast<DerivativeOpInterface>(op);
+    if (rule.getDerivativeOperand(index) == DerivativeOperand::Structural) {
+      result = Value();
+      return success();
+    }
+    return derivative.get(op->getOperand(index), result);
   };
 
   if (matchPattern(op, m_Constant()))
@@ -440,6 +463,20 @@ LogicalResult ScalarDerivative::compute(Value value, Value &tangent) {
   // Vectors
   //===--------------------------------------------------------------------===//
 
+  if (isa<vector::FromElementsOp>(op)) {
+    SmallVector<Value> components;
+    bool active = false;
+    Type element = cast<VectorType>(value.getType()).getElementType();
+    for (Value operand : op->getOperands()) {
+      Value slope;
+      if (failed(derivative.get(operand, slope))) return failure();
+      active |= static_cast<bool>(slope);
+      components.push_back(slope ? slope : emit.constant(0.0, element));
+    }
+    if (active) tangent = vector::FromElementsOp::create(builder, loc, value.getType(), components);
+    return success();
+  }
+
   if (isa<vector::BroadcastOp>(op)) {
     Value operand;
     if (failed(operandTangent(0, operand)))
@@ -464,11 +501,83 @@ LogicalResult ScalarDerivative::compute(Value value, Value &tangent) {
     return success();
   }
 
-  if (leafHandler)
-    return leafHandler(value, tangent);
+  return op->emitError() << "derivative interface has no implementation for '"
+                         << op->getName() << "'";
+}
 
-  return op->emitError() << "no derivative rule for '" << op->getName()
-                         << "'";
+namespace {
+template <typename Op>
+struct ScalarRule : DerivativeOpInterface::ExternalModel<ScalarRule<Op>, Op> {
+  DerivativeOperand getDerivativeOperand(Operation *, unsigned index) const {
+    if constexpr (std::is_same_v<Op, arith::ConstantOp> ||
+                  std::is_same_v<Op, arith::CmpFOp> ||
+                  std::is_same_v<Op, arith::CmpIOp> ||
+                  std::is_same_v<Op, arith::SIToFPOp> ||
+                  std::is_same_v<Op, arith::UIToFPOp> ||
+                  std::is_same_v<Op, arith::FPToSIOp> ||
+                  std::is_same_v<Op, arith::IndexCastOp> ||
+                  std::is_same_v<Op, arith::AddIOp> ||
+                  std::is_same_v<Op, arith::SubIOp> ||
+                  std::is_same_v<Op, arith::MulIOp> ||
+                  std::is_same_v<Op, arith::OrIOp> ||
+                  std::is_same_v<Op, arith::AndIOp> ||
+                  std::is_same_v<Op, math::FloorOp> ||
+                  std::is_same_v<Op, math::CeilOp> ||
+                  std::is_same_v<Op, LookupOp>)
+      return DerivativeOperand::Structural;
+    if constexpr (std::is_same_v<Op, arith::SelectOp>)
+      if (index == 0) return DerivativeOperand::Structural;
+    if constexpr (std::is_same_v<Op, math::FPowIOp> ||
+                  std::is_same_v<Op, vector::ExtractOp>)
+      if (index != 0) return DerivativeOperand::Structural;
+    return DerivativeOperand::Differentiable;
+  }
+  LogicalResult emitDerivative(Operation *, Value result,
+                               ScalarDerivative &derivative,
+                               Value &tangent) const {
+    if constexpr (std::is_same_v<Op, arith::CmpFOp> ||
+                  std::is_same_v<Op, arith::CmpIOp> ||
+                  std::is_same_v<Op, arith::FPToSIOp> ||
+                  std::is_same_v<Op, arith::IndexCastOp> ||
+                  std::is_same_v<Op, arith::AddIOp> ||
+                  std::is_same_v<Op, arith::SubIOp> ||
+                  std::is_same_v<Op, arith::MulIOp> ||
+                  std::is_same_v<Op, arith::OrIOp> ||
+                  std::is_same_v<Op, arith::AndIOp>) {
+      tangent = Value();
+      return success();
+    }
+    return emitScalarRule(result, derivative, tangent);
+  }
+};
+template <typename... Ops> void attachRules(MLIRContext *context) {
+  (Ops::template attachInterface<ScalarRule<Ops>>(*context), ...);
+}
+} // namespace
+
+void mdir::md::registerDerivativeInterfaces(DialectRegistry &registry) {
+  registry.addExtension(+[](MLIRContext *context, arith::ArithDialect *) {
+    attachRules<arith::ConstantOp, arith::AddFOp, arith::SubFOp,
+                arith::MulFOp, arith::DivFOp, arith::NegFOp,
+                arith::SelectOp, arith::MinimumFOp, arith::MaximumFOp,
+                arith::CmpFOp, arith::CmpIOp, arith::SIToFPOp,
+                arith::UIToFPOp, arith::FPToSIOp, arith::IndexCastOp,
+                arith::AddIOp, arith::SubIOp, arith::MulIOp,
+                arith::OrIOp, arith::AndIOp>(context);
+  });
+  registry.addExtension(+[](MLIRContext *context, math::MathDialect *) {
+    attachRules<math::AbsFOp, math::FloorOp, math::CeilOp, math::SqrtOp,
+                math::FPowIOp, math::PowFOp, math::ExpOp, math::LogOp,
+                math::SinOp, math::CosOp, math::TanOp, math::AsinOp,
+                math::AcosOp, math::AtanOp, math::SinhOp, math::CoshOp,
+                math::TanhOp, math::ErfOp, math::ErfcOp, math::Atan2Op>(context);
+  });
+  registry.addExtension(+[](MLIRContext *context, vector::VectorDialect *) {
+    attachRules<vector::BroadcastOp, vector::ExtractOp, vector::FromElementsOp>(context);
+  });
+  registry.addExtension(+[](MLIRContext *context, MDDialect *) {
+    attachRules<LookupOp>(context);
+  });
 }
 
 //===----------------------------------------------------------------------===//

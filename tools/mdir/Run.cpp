@@ -10,6 +10,7 @@
 #include "mdir/Conversion/Passes.h"
 #include "mdir/Dialect/Dyn/DynDialect.h"
 #include "mdir/Dialect/MD/MDDialect.h"
+#include "mdir/Dialect/MD/Transforms/DerivativeInterface.h"
 #include "mdir/Dialect/MD/Transforms/Passes.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
@@ -621,6 +622,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);
   mlir::registerAllExtensions(registry);
+  mdir::md::registerDerivativeInterfaces(registry);
   mlir::registerAllToLLVMIRTranslations(registry);
   registry.insert<dyn::DynDialect, md::MDDialect, md_exec::MDExecDialect,
                   mdrt::MDRTDialect>();

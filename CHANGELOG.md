@@ -16,6 +16,10 @@ format, or the outputs; every such change is listed under **Changed** or
   `values_file` with an explicit `shape`, with the existing interpolation
   in one, two, or three dimensions. Manifests hash the files, and
   continuation checks the loaded grid (D178).
+- Scalar derivative rules use `DerivativeOpInterface`, with external
+  arithmetic, math, and vector models and explicit differentiable or
+  structural operand roles. `--md-check-derivative-coverage` rejects scalar
+  operations without a rule or declared zero (D[ad-rules], part 2 of #15).
 
 - Shared three-outcome activity analysis for scalar, position, cell, and
   parameter differentiation. `--md-analyze-activity=argument=N` reports

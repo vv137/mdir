@@ -49,6 +49,10 @@ def AnalyzeActivity : Pass<"md-analyze-activity", "::mlir::ModuleOp"> {
   let options = [Option<"argument", "argument", "int", "2", "Potential argument to analyze">];
 }
 
+def CheckDerivativeCoverage : Pass<"md-check-derivative-coverage", "::mlir::ModuleOp"> {
+  let summary = "Require a derivative rule or declared zero for every scalar op in potentials";
+}
+
 def Inline : Pass<"md-inline", "::mlir::ModuleOp"> {
   let summary = "Inlines potentials, functions, and programs";
   let description = [{

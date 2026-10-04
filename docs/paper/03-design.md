@@ -297,6 +297,13 @@ parameters of each tuple, and a term of the positions reads $w$ itself.
 The parameters are constants of the potential, so they change neither
 its derivatives nor the virial.
 
+**Scalar rules (D[ad-rules]).** An op interface dispatches rules, supplied
+as external models for arithmetic, math, and vectors. Every model declares
+differentiable and structural operands; conditions and indices are
+structural. The emitter consults these declarations, and the coverage pass
+requires a rule or declared zero for every scalar op in a potential. A
+missing active rule is an error, distinct from a proved zero.
+
 **Activity (D[ad-robust]).** The dependency proof is a separate analysis,
 shared by scalar coordinates, cell edges, positional intermediate fields,
 sum weights, and scalar parameters. Its outcomes are active, proven

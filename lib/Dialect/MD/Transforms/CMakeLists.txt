@@ -1,6 +1,7 @@
 add_mlir_dialect_library(MDIRMDTransforms
   BypassUpdates.cpp
   CheckExchange.cpp
+  CheckDerivativeCoverage.cpp
   Activity.cpp
   Differentiate.cpp
   ExpandTruncation.cpp
@@ -12,6 +13,7 @@ add_mlir_dialect_library(MDIRMDTransforms
 
   DEPENDS
   MDIRMDPassIncGen
+  MDIRDerivativeInterfaceIncGen
 
   LINK_LIBS PUBLIC
   MDIRDyn
