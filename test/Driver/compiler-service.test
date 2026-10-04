@@ -1,0 +1,4 @@
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cd %t && mdir-compile-test | FileCheck %s
+# RUN: test ! -e %t/mdir-reproducer.mlir
+# CHECK: typed located diagnostic and compiler recovery passed

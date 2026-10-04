@@ -8,7 +8,9 @@ The maintainer approved the contracts in Section 6 on 2026-10-04,
 Remaining implementation details are specified in each implementation PR.
 The first implementation item is tracked in [#74](https://github.com/vv137/mdir/issues/74)
 and [PR #75](https://github.com/vv137/mdir/pull/75), with the native contract in
-[python-model.md](python-model.md). Later items remain prospective work.
+[python-model.md](python-model.md). D[python-compile] (#76) adds optional Python bindings and explicit lowering;
+see [python-compile.md](python-compile.md). JIT/runtime ownership and tunable
+buffers remain open parts of the compilation gate. Later items remain prospective work.
 
 ## 1. Scope and acceptance
 
@@ -161,7 +163,7 @@ draft. Changes to Builder, Control and runtime should proceed sequentially.
 | Order | Proposed deliverable | Gate |
 |---|---|---|
 | 1 | `D191` (#74, PR #75): in-memory validation, loaded data, System/integrator/ensemble/Execution and shared model-to-IR path | File and object models produce equivalent physics/IR and consistent validation failures |
-| 2 | `python-compile` (future label): compilation service and optional native extension, immutable program, plan inspection, stale detection | CPU/GPU mixed/double compilation, structured diagnostics, repeated destruction, no output side effects |
+| 2 | `D[python-compile]` (#76): optional native extension, shared lowering, immutable IR/plan and stale detection; JIT/runtime ownership and tuning remain open | CPU/GPU mixed/double compilation, structured diagnostics, repeated destruction, no output side effects |
 | 3 | `python-segments` (future label): persistent simulation and arbitrary counts, embedded status/errors, runtime ownership | Segmented/uninterrupted agreement, retained coupling phase, stop/error survival, independent simulation state |
 | 4 | `python-reporters` (future label): scheduling, C++ writers, Python callbacks, host snapshots | Nondividing/coincident periods, final remainder, callback errors, GIL behavior, file lifecycle, input order |
 | 5 | `python-checkpoints` (future label): shared in-memory provenance and cross-front-end continuation | Both checkpoint directions, stage changes, corruption rejection, tunable restoration and output continuation |

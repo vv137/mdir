@@ -133,7 +133,10 @@ preparation adds no executable Python interface. D191 implements
 the native model prerequisite: owned Amber/GROMACS/CHARMM loading, physics
 and state as separate values, typed options, common preparation and validation,
 and the shared semantic IR builder, with a documented classical subset.
-Binding, compilation ownership and stale detection remain subsequent work.
+D[python-compile] adds optional Python bindings, explicit lowering through
+the shared CLI pipeline, immutable IR/plan inspection and versioned stale
+detection. Runtime/JIT ownership, persistent execution and tunable buffers
+remain subsequent work; M2 and its packaging gate are incomplete.
 Future PyTorch/JAX automatic differentiation (requested 2026-10-04)
 requires explicit framework derivative rules for energy, force, virial and
 parameter evaluation; DLPack alone shares storage, not gradient graphs.

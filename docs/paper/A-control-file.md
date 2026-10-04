@@ -4,6 +4,10 @@ M2 Python API preparation (D187) is described in
 [python-m2.md](../python-m2.md). It introduces no control-file keys or
 changes to the checkpoint and output contracts listed here.
 
+The optional Python lowering interface (D[python-compile],
+[contract](../python-compile.md)) uses the same compiler pipeline and adds
+no control keys, format changes or output side effects.
+
 A run is described by a control file in TOML. `mdir check FILE` reads it
 and reports the system, planned run, outputs, and warnings (A.5);
 `mdir run FILE` compiles and runs it, and

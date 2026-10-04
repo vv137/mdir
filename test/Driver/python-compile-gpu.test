@@ -1,0 +1,7 @@
+# REQUIRES: python-api, cuda
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp -r %S/Inputs/gromacs %S/Inputs/dipeptide %S/Inputs/triclinic %t/
+# RUN: split-file %S/charmm.test %t/charmm
+# RUN: %python %S/Inputs/model_controls.py %t GPU
+# RUN: %mdir_python %S/Inputs/python_compile.py %t GPU mdir | FileCheck %s
+# CHECK: compilation parity, copied inputs, stale checks, typed errors and lifecycle passed
