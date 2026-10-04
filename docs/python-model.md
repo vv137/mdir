@@ -1,4 +1,4 @@
-# Shared model for M2 (D[python-model])
+# Shared model for M2 (D191)
 
 Native implementation of the first item of `python-m2.md` (#74, PR #75).
 This PR provides the native C++ model layer for subsequent Python bindings.

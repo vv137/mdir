@@ -160,7 +160,7 @@ draft. Changes to Builder, Control and runtime should proceed sequentially.
 
 | Order | Proposed deliverable | Gate |
 |---|---|---|
-| 1 | `D[python-model]` (#74, PR #75): in-memory validation, loaded data, System/integrator/ensemble/Execution and shared model-to-IR path | File and object models produce equivalent physics/IR and consistent validation failures |
+| 1 | `D191` (#74, PR #75): in-memory validation, loaded data, System/integrator/ensemble/Execution and shared model-to-IR path | File and object models produce equivalent physics/IR and consistent validation failures |
 | 2 | `python-compile` (future label): compilation service and optional native extension, immutable program, plan inspection, stale detection | CPU/GPU mixed/double compilation, structured diagnostics, repeated destruction, no output side effects |
 | 3 | `python-segments` (future label): persistent simulation and arbitrary counts, embedded status/errors, runtime ownership | Segmented/uninterrupted agreement, retained coupling phase, stop/error survival, independent simulation state |
 | 4 | `python-reporters` (future label): scheduling, C++ writers, Python callbacks, host snapshots | Nondividing/coincident periods, final remainder, callback errors, GIL behavior, file lifecycle, input order |

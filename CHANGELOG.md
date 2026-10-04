@@ -41,7 +41,7 @@ format, or the outputs; every such change is listed under **Changed** or
 - Native C++ model preparation for the M2 Python API: owned Amber,
   GROMACS, and CHARMM data, physics apart from initial state, typed
   integrator/ensemble/execution options, MD-unit custom expressions,
-  and shared validation and IR construction (D[python-model], #74).
+  and shared validation and IR construction (D191, #74).
   Python bindings and persistent simulations follow separately.
 
 - `observe = [...]` in a term given by an expression writes the term's

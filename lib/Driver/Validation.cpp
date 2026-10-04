@@ -1,4 +1,4 @@
-// Validation shared by file and object front ends (D[python-model]).
+// Validation shared by file and object front ends (D191).
 #include "mdir/Driver/Topology.h"
 #include "mdir/Driver/Cell.h"
 #include "llvm/ADT/STLExtras.h"

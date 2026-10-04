@@ -353,7 +353,7 @@ takes its name, and its directory after. `mdir checkpoint
 --print=fingerprint` lists the fingerprint, and docs/driver-m0.md, Section
 2.6, says what a run that takes a checkpoint compares.
 
-The native object-model boundary (D[python-model]) is described in
+The native object-model boundary (D191) is described in
 [the model contract](../python-model.md). It adds no control-file keys:
 object lengths and energies use nm and kJ/mol, whereas this reference keeps
 Å and kcal/mol. Both input paths share topology validation, constraint

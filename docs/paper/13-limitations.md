@@ -129,7 +129,7 @@ provenance, and allocation ownership as prerequisites. The maintainer's
 typed execution and reporters, independent serial simulations, read-only
 view leases followed by tracked writes within M2, and shared format-1
 checkpoints. A manylinux_2_28 pip wheel for Python 3.10–3.13 gates M2;
-preparation adds no executable Python interface. D[python-model] implements
+preparation adds no executable Python interface. D191 implements
 the native model prerequisite: owned Amber/GROMACS/CHARMM loading, physics
 and state as separate values, typed options, common preparation and validation,
 and the shared semantic IR builder, with a documented classical subset.
