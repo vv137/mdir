@@ -901,7 +901,7 @@ Error Reader::readCompound(const toml::table &table) {
 
 // File-backed grids follow inline nested lists, the last argument fastest.
 // The spline coefficients use the first argument fastest, so the reader
-// transposes the input (D[tabulated-values-file]). No file data reaches a
+// transposes the input (D178). No file data reaches a
 // compiler or kernel until its shape and every value have been checked.
 Error Reader::readFunctionFile(const toml::table &table,
                                 TabulatedFunction &function) {

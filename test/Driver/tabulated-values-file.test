@@ -1,4 +1,4 @@
-# File-backed 1D/2D/3D, periodic and discrete grids (D[tabulated-values-file]).
+# File-backed 1D/2D/3D, periodic and discrete grids (D178).
 # Independent spline and finite-difference oracles, bit-identical inline IR,
 # provenance, continuation, and input validation in both precisions.
 # REQUIRES: hdf5

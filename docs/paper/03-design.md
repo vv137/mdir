@@ -272,7 +272,7 @@ between points: it is meant for arguments that do not move, such as the
 kinds of two particles in a parameter of each.
 
 The representation of the input grid does not change that Hamiltonian
-(D[tabulated-values-file]). A text file gives the same values in the same
+(D178). A text file gives the same values in the same
 axis order as the inline table, so it gives the same spline coefficients,
 $U$, and $-\partial U/\partial\mathbf x_i$. The canonical weight
 $\exp[-(K+U)/(k_BT)]$ and its partition function $Z$ therefore remain

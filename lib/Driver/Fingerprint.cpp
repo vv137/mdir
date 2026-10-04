@@ -123,7 +123,7 @@ mdir::driver::getRunFingerprint(StringRef controlFile, const Control &control,
 
   // Compare the grid actually loaded, rather than its filename. Reconstruct
   // the inline representation so that a relocated file or equivalent inline
-  // values define the same physics (D[tabulated-values-file]).
+  // values define the same physics (D178).
   if (toml::array *functions = root["energy"]["function"].as_array())
     for (toml::node &node : *functions) {
       toml::table *table = node.as_table();

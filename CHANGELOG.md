@@ -15,7 +15,7 @@ format, or the outputs; every such change is listed under **Changed** or
 - Tabulated functions can read whitespace-separated numeric grids from
   `values_file` with an explicit `shape`, with the existing interpolation
   in one, two, or three dimensions. Manifests hash the files, and
-  continuation checks the loaded grid (D[tabulated-values-file]).
+  continuation checks the loaded grid (D178).
 
 ### Fixed
 
