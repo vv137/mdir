@@ -127,7 +127,7 @@ one $-2\times10^{-4}$ (recorded in `docs/pme-m1.md`).
 ## 9.4 Conservation of energy
 
 Every test of dynamics bounds the change of the total or the conserved
-energy over its run, and several record how it scales with the step,
+energy ($\tilde H$ of Section 6.5) over its run, and several record how it scales with the step,
 which tells a correct integrator (second order) from a wrong force (no
 convergence):
 

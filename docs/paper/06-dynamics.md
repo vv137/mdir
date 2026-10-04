@@ -747,12 +747,66 @@ constraints, of the virtual sites, of the restraints and the terms of
 the absolute positions (Section 6.4), of the dispersion
 correction ($6E_\text{disp}$), and of the neutralizing background
 ($3E_Q$). The total energy is $U + K$; the conserved energy is the total
-plus what the bath has taken. At the start the log gives the diagonal of
+plus what the bath has taken, defined below. At the start the log gives the diagonal of
 $\mathsf W$ without the virials of the constraints, which other programs
 give for the same positions; at the end of a run with semi-isotropic
 coupling, the means of the pressures of x and y and of z that the
 barostat took and of their difference, with errors from blocks of 100
 periods (D119).
+
+**What is conserved.** With a thermostat or a barostat neither the total
+energy nor the enthalpy $U + K + P_0V$ is a constant of the motion: the
+couplings exchange energy with the bath, and in the ensembles they sample
+both fluctuate. The conserved
+energy of the log is a count instead,
+
+$$
+\tilde H_n = U_n + K_n + E_{\text{bath},n},
+\qquad
+E_{\text{bath},n} = -\sum_{\text{couplings before step } n}\Delta E_\text{sys},
+$$
+
+where each coupling, a change of the state that the step of Section 6.1
+does not make, gives the system the energy $\Delta E_\text{sys}$, which
+the run counts when the coupling acts and gives to the bath. A rescaling
+of the velocities gives $-K_\text{cm} - (1 - \alpha^2)K_t$, counted
+exactly (Section 6.3); with a Nosé–Hoover chain the bath takes the change
+of the chain's energy, and $\tilde H$ is $H'$ less its start; a scaling of
+the cell gives the $\Delta E_\text{sys}$ of its `work`, exact with
+`EXACT`, to second order in the strain with `TROTTER`, and to first with
+`FIRST_ORDER` (Section 6.4). The random numbers, $T_0$, and $P_0$ enter
+only through the state they produce, so $\tilde H$ would stay at its
+start to rounding if the steps between couplings conserved $U + K$ and
+every count were exact. Its change over a run is the sum of two errors:
+that of the integration of Hamilton's equations between the couplings,
+of order $\Delta t^2$ for a correct step (Table 9.2) and drifting with
+the precision of the forces, the cutoffs, and the neighbor structures
+(Section 7.3); and that of the counts of the work of the scalings (D92,
+D116). It is the check that the total energy gives in NVE, carried over
+to the coupled ensembles, and not a law of physics: its drift reports a
+defect of the integration or of a count, not heat exchanged with the
+bath. Nor does it test the ensemble: a thermostat at a wrong $T_0$ or a
+barostat at a wrong $P_0$ leaves $\tilde H$ as flat as the right ones,
+and the distributions are tested apart (Section 9.5). It is not the
+effective energy of [[Bernetti2020]](references.md#bernetti2020)
+(Section II C) either, whose drift is the work that the integrator does
+on the system and measures how far it breaks detailed balance with
+respect to $e^{-(K + U + P_0V)/k_BT}$: there the barostat contributes the
+acceptance of its move of the cell in smart Monte Carlo, with $P_0\Delta
+V$ and the probabilities of the move of $\lambda$ forward and back. The
+count above leaves that term out. It takes the change of $U + K$ that a
+scaling makes, whatever the strain was, and so does not see the error of
+the step of Euler and Maruyama in $\lambda$, which $f$ sets; with the
+`EXACT` count $\tilde H$ stayed within $3\times10^{-7}\,k_BT$ per
+step of zero on the mixture of Section 6.4. Without a
+barostat the two agree: the rescaling of the thermostat solves its
+equation exactly [[Bussi2007]](references.md#bussi2007), and the drift
+of either is that of the steps between couplings. That paper also notes
+that its drift may overstate the errors of the sampled configurations,
+since detailed balance is sufficient but not necessary. Langevin dynamics
+exchanges energy with the bath in every step, through its friction and
+noise, which the run does not count; its log has no conserved energy
+(Section 6.3).
 
 ## 6.6 Random numbers
 
