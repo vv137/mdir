@@ -47,6 +47,9 @@ def read_run(path, skip):
     data = np.array(rows)
     data = data[int(skip * len(data)):]
     components = [c[len('dHdl.'):] for c in columns if c.startswith('dHdl.')]
+    if 'dU.0' not in columns:
+        sys.exit(f'{name}: a run of one state has no dU columns; the free '
+                 f'energy needs [free_energy.lambdas] of two or more states')
     first = columns.index('dU.0')
     lambdas = energy['lambdas']
     return {

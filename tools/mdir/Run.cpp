@@ -1128,13 +1128,15 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // that GROMACS writes to its pullx and pullf files, in one file.
   // [free_energy] (D161): at every energy of the log, dH/dλ of each
   // component and the difference of the energy to each state, the input of
-  // thermodynamic integration and of MBAR.
+  // thermodynamic integration and of MBAR. With one state the differences
+  // are identically 0 and are left out (D[single-state-dhdl]).
   if (!control->freeEnergyFile.empty()) {
     std::vector<ColumnFile::Column> columns = {{"step", "-", true},
                                                {"time", "ps"}};
     for (const auto &[name, values] : control->freeEnergy.lambdas)
       columns.push_back({"dHdl." + name, "kcal/mol"});
-    for (size_t k = 0, e = control->freeEnergy.getNumStates(); k != e; ++k)
+    size_t states = control->freeEnergy.getNumStates();
+    for (size_t k = 0; states > 1 && k != states; ++k)
       columns.push_back({"dU." + std::to_string(k), "kcal/mol"});
     output.freeEnergyState = control->freeEnergy.state;
     output.stateFixedEnergies = program->stateFixedEnergies;
