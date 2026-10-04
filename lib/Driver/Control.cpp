@@ -78,6 +78,11 @@ private:
   /// The name of the parameter of each particle that `name` takes at one
   /// of the places 1 to `places`, `w` for `w2`, or "".
   StringRef getParticleStem(StringRef name, unsigned places) const;
+  /// Rejects a declaration that shadows a supplied expression name, even
+  /// if the expression does not use it (D[expression-namespace]).
+  Error checkTermParameter(const toml::node &node, StringRef name,
+                           llvm::ArrayRef<StringRef> variables,
+                           unsigned places = 0);
   /// Warns about the parameters of the term `name` that its expression does
   /// not use, and about an expression that uses none of `coordinates`,
   /// whose forces are then zero (D158).
@@ -393,6 +398,37 @@ StringRef Reader::getParticleStem(StringRef name, unsigned places) const {
   return "";
 }
 
+Error Reader::checkTermParameter(const toml::node &node, StringRef name,
+                                 llvm::ArrayRef<StringRef> variables,
+                                 unsigned places) {
+  if (llvm::is_contained(variables, name))
+    return fail(node, "'" + name + "' is a variable of the term, not a parameter");
+  if (control.isLambda(name))
+    return fail(node, "'" + name + "' is a lambda component, not a parameter");
+  if (Expression::isFunction(name) ||
+      llvm::any_of(control.functions, [&](const TabulatedFunction &f) {
+        return f.name == name;
+      }))
+    return fail(node, "'" + name + "' is a function, not a parameter");
+  if (!getParticleStem(name, places).empty() ||
+      llvm::any_of(control.particleParameters, [&](const ParticleParameter &p) {
+        return p.name == name;
+      }))
+    return fail(node, "'" + name +
+                          "' is a parameter of each particle, not of the term");
+  // Triplet expressions take the parameters of types at each place.
+  if (places && name.size() > 1 && name.back() >= '1' &&
+      name.back() <= static_cast<char>('0' + places) &&
+      llvm::any_of(control.types, [&](const ParticleType &type) {
+        return llvm::any_of(type.parameters, [&](const auto &p) {
+          return p.first == name.drop_back();
+        });
+      }))
+    return fail(node, "'" + name +
+                          "' is a parameter of each type at a place, not of the term");
+  return Error::success();
+}
+
 Error Reader::readExternal(const toml::table &table) {
   ExternalTerm term;
   if (Error error = readString(table, "name", term.name))
@@ -457,10 +493,9 @@ Error Reader::readExternal(const toml::table &table) {
         keyword == "selection" || keyword == "particles" ||
         keyword == "scaling")
       continue;
-    if (keyword == "t" || keyword == "x" || keyword == "y" ||
-        keyword == "z" || keyword == "q")
-      return fail(value, "'" + keyword + "' is a variable of the term, not "
-                         "a parameter");
+    if (Error error = checkTermParameter(value, keyword,
+                                         {"t", "x", "y", "z", "q"}))
+      return error;
     if (std::optional<double> number = value.value<double>()) {
       term.constants.push_back({keyword.str(), *number});
       continue;
@@ -497,10 +532,6 @@ Error Reader::readExternal(const toml::table &table) {
     // A parameter of each particle, by its name (D165).
     if (llvm::any_of(control.particleParameters,
                      [&](const ParticleParameter &p) { return p.name == name; })) {
-      if (llvm::any_of(term.constants, named) ||
-          llvm::any_of(term.parameters, named))
-        return fail(*table.get(name), "'" + name + "' is a parameter of "
-                                      "each particle as well as of the term");
       continue;
     }
     if (!llvm::any_of(term.constants, named) &&
@@ -607,6 +638,14 @@ Error Reader::readTupleTerm(const toml::table &table, unsigned arity) {
         keyword == "particles" || keyword == "groups" ||
         keyword == "weighting")
       continue;
+    if (keyword == "t")
+      return fail(value, "'t' is the time, not a parameter");
+    std::vector<StringRef> variables = {term.getVariable()};
+    if (term.isCentroid() && arity == 2)
+      variables.insert(variables.end(), {"dx", "dy", "dz"});
+    if (Error error = checkTermParameter(value, keyword, variables,
+                                         term.isCentroid() ? 0 : arity))
+      return error;
     std::vector<double> values;
     if (std::optional<double> number = value.value<double>()) {
       values.assign(count, *number);
@@ -645,9 +684,6 @@ Error Reader::readTupleTerm(const toml::table &table, unsigned arity) {
   // the first to the second as well.
   bool components = term.isCentroid() && arity == 2;
   // The time `t` in ps, as a reference that moves (D145).
-  if (llvm::any_of(term.parameters,
-                   [](const auto &p) { return p.first == "t"; }))
-    return fail(*table.get("t"), "'t' is the time, not a parameter");
   for (const std::string &name : expression->getNames()) {
     if (name == "t") {
       control.usesTime = true;
@@ -657,11 +693,6 @@ Error Reader::readTupleTerm(const toml::table &table, unsigned arity) {
       continue;
     // A parameter of each particle at a place of the tuple (D165).
     if (!term.isCentroid() && !getParticleStem(name, arity).empty()) {
-      if (llvm::any_of(term.parameters,
-                       [&](const auto &p) { return p.first == name; }))
-        return fail(*table.get(name), "'" + name + "' is a parameter of "
-                                      "each particle at a place as well as "
-                                      "one of the term");
       continue;
     }
     if (name != term.getVariable() &&
@@ -821,6 +852,10 @@ Error Reader::readCompound(const toml::table &table) {
       continue;
     if (keyword.contains("__"))
       return fail(value, "a name with two underscores is reserved");
+    if (keyword == "t")
+      return fail(value, "'t' is the time, not a parameter");
+    if (Error error = checkTermParameter(value, keyword, {}, term.arity))
+      return error;
     std::vector<double> values;
     if (std::optional<double> number = value.value<double>()) {
       values.assign(count, *number);
@@ -857,14 +892,13 @@ Error Reader::readCompound(const toml::table &table) {
   if (!expression)
     return fail(*table.get("expression"),
                 llvm::toString(expression.takeError()));
-  if (llvm::any_of(term.parameters,
-                   [](const auto &p) { return p.first == "t"; }))
-    return fail(*table.get("t"), "'t' is the time, not a parameter");
   for (const std::string &name : expression->getNames()) {
     if (name == "t") {
       control.usesTime = true;
       continue;
     }
+    if (control.isLambda(name))
+      continue;
     if (llvm::any_of(term.coordinates, [&](const auto &c) {
           return c.name == name;
         }))
@@ -872,10 +906,6 @@ Error Reader::readCompound(const toml::table &table) {
     bool parameter = llvm::any_of(
         term.parameters, [&](const auto &p) { return p.first == name; });
     if (!getParticleStem(name, term.arity).empty()) {
-      if (parameter)
-        return fail(*table.get(name), "'" + name + "' is a parameter of "
-                                      "each particle at a place as well as "
-                                      "one of the term");
       continue;
     }
     if (!parameter)
@@ -1224,6 +1254,14 @@ Error Reader::readPair(const toml::table &table) {
       continue;
     }
     // Any other keyword names a number that the expression uses.
+    std::vector<StringRef> variables = {"r", "t", "coulomb"};
+    if (control.hasTopology())
+      variables.insert(variables.end(), {"q1", "q2", "sigma", "epsilon",
+                                         "sigma1", "sigma2", "epsilon1",
+                                         "epsilon2"});
+    if (Error error = checkTermParameter(node, keyword, variables,
+                                         control.hasTopology() ? 2 : 0))
+      return error;
     if (!node.is_number())
       return fail(node, "expected a number for '" + keyword + "'");
     term.constants.push_back({keyword.str(), *node.value<double>()});
@@ -1275,6 +1313,8 @@ Error Reader::readTriplet(const toml::table &table) {
     if (llvm::is_contained(variables, keyword))
       return fail(node, "'" + keyword + "' is a variable of the term, not "
                                         "a number of it");
+    if (Error error = checkTermParameter(node, keyword, {}, 3))
+      return error;
     if (!node.is_number())
       return fail(node, "expected a number for '" + keyword + "'");
     term.constants.push_back({keyword.str(), *node.value<double>()});
@@ -2047,9 +2087,6 @@ Error Reader::readEnergy(const toml::table &table) {
             term.constants, [&](const auto &c) { return c.first == name; });
         StringRef stem = getParticleStem(name, 2);
         if (!stem.empty()) {
-          if (constant)
-            return fail(node, "'" + name + "' is a parameter of each "
-                              "particle as well as a constant of the term");
           if (!llvm::is_contained(stems, stem))
             stems.push_back(stem.str());
           continue;
