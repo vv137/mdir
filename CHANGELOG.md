@@ -21,6 +21,10 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- M2 Python API preparation: driver prerequisites, proposed implementation
+  sequence, adopted maintainer contracts, and validation gates in
+  `docs/python-m2.md`
+  (D[m2-python-plan]); this preparation adds no executable Python API.
 - Tabulated functions can read whitespace-separated numeric grids from
   `values_file` with an explicit `shape`, with the existing interpolation
   in one, two, or three dimensions. Manifests hash the files, and
