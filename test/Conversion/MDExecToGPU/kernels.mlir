@@ -418,6 +418,13 @@ func.func @deferred(%v: memref<?x3xf64, 1>, %a: memref<?xf64, 1>,
 // CHECK:           %[[S:[0-9]+]] = nvvm.rcp.approx.ftz.f %{{.*}} : f32
 // CHECK:           arith.mulf %{{.*}}, %[[S]] fastmath<afn>
 // CHECK:           arith.divf %{{.*}} : f32
+// With contraction enabled elsewhere, the approximate quotient still
+// rounds before it can be combined with an add or subtraction (#48).
+// CONTRACT-LABEL: func.func @reciprocal(
+// CONTRACT:       %[[RECIP:[0-9]+]] = nvvm.rcp.approx.ftz.f %{{.*}} : f32
+// CONTRACT:       %[[DIVISOR:[0-9]+]] = nvvm.rcp.approx.ftz.f %{{.*}} : f32
+// CONTRACT:       arith.mulf %{{.*}}, %[[DIVISOR]] fastmath<afn> : f32
+// CONTRACT:       arith.divf %{{.*}} fastmath<contract> : f32
 func.func @reciprocal(%a: memref<?xf32, 1>, %b: memref<?xf32, 1>) {
   md_exec.particle_for ins(%a, %b : memref<?xf32, 1>, memref<?xf32, 1>)
       outs(%a : memref<?xf32, 1>) {

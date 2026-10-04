@@ -31,6 +31,11 @@ format, or the outputs; every such change is listed under **Changed** or
   Brownian step no longer reads the velocities to avoid it, and a particle
   of mass 0 (a virtual site) gets velocity 0 instead of keeping its old
   velocity (#19).
+- GPU mixed-precision free-energy derivatives with `POTENTIAL_SHIFT` no
+  longer fuse an approximate quotient into the cutoff subtraction. The
+  shifted Lennard-Jones derivative is checked against OpenMM within
+  1e-5 kcal/mol, replacing the widened 1e-3 tolerance
+  (D[approximate-quotient-rounding], #48).
 
 ## [0.1.0] - 2026-10-04
 

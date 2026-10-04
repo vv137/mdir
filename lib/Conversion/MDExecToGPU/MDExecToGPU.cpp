@@ -4258,9 +4258,13 @@ public:
         Value reciprocal = NVVM::RcpApproxFtzF32Op::create(
             builder, op.getLoc(), builder.getF32Type(), op.getRhs());
         Value result = reciprocal;
+        // Round the approximate quotient before subsequent arithmetic.
+        // Contracting this product with a cutoff shift changes cancellation
+        // in parameter derivatives even when the reciprocal is unchanged.
         if (!matchPattern(op.getLhs(), m_OneFloat()))
-          result = arith::MulFOp::create(builder, op.getLoc(), op.getLhs(),
-                                         reciprocal, op.getFastmath());
+          result = arith::MulFOp::create(
+              builder, op.getLoc(), op.getLhs(), reciprocal,
+              op.getFastmath() & ~arith::FastMathFlags::contract);
         op.replaceAllUsesWith(result);
         op.erase();
       }

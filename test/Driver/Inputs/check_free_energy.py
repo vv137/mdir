@@ -116,23 +116,34 @@ def report(label, worst, tolerance):
 # Against OpenMM. In mixed precision the kernels of the pairs are in f32.
 mixed = precision == 'MIXED'
 for electrostatics, tolerance in (('RF', 5e-5 if mixed else 3e-6),
-                                  # In mixed precision the shift of the soft-core
-                                  # moves dH/dλ of the Lennard-Jones by 5.5e-4.
-                                  ('RF_SHIFT', 1e-3 if mixed else 3e-6),
+                                  ('RF_SHIFT', 5e-5 if mixed else 3e-6),
                                   ('PME', 4e-3)):
     coulomb = [s[0] for s in STATES]
     vdw = [s[1] for s in STATES]
     worst = 0.0
+    worst_vdw = 0.0
+    worst_vdw_energy = 0.0
     for k in (1, 3, 5):
         row = control(f'{electrostatics.lower()}{k}', k, coulomb, vdw,
                       electrostatics)
         reference = OPENMM[electrostatics]
+        worst_vdw = max(worst_vdw, abs(row['dHdl.vdw'] - reference[k][1]))
         worst = max(worst, abs(row['dHdl.coulomb'] - reference[k][0]),
                     abs(row['dHdl.vdw'] - reference[k][1]))
         for j in range(len(STATES)):
             expected = reference[k][2] - reference[j][2]
             worst = max(worst, abs(row[f'dU.{j}'] - expected))
+            if STATES[k][0] == STATES[j][0]:
+                worst_vdw_energy = max(worst_vdw_energy,
+                                       abs(row[f'dU.{j}'] - expected))
     report(f'{electrostatics} against OpenMM', worst, tolerance)
+    if electrostatics == 'RF_SHIFT':
+        # The Coulomb and total-energy differences include their f32 error;
+        # pin the shifted Lennard-Jones derivative separately to catch #48.
+        report('RF_SHIFT dH/dl.vdw against OpenMM', worst_vdw,
+               1e-5 if mixed else 3e-6)
+        report('RF_SHIFT vdW dU against OpenMM', worst_vdw_energy,
+               1e-5 if mixed else 3e-6)
 
 # Central differences: the Coulomb is quadratic in λ, the rest smooth.
 h = 1e-2
