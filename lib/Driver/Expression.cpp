@@ -1013,7 +1013,20 @@ double Expression::evaluate(const llvm::StringMap<double> &values) const {
 
 std::string Expression::emit(llvm::raw_ostream &os,
                              const llvm::StringMap<std::string> &values,
-                             StringRef prefix, StringRef indent) const {
+                             StringRef prefix, StringRef indent, StringRef termName) const {
   auto byName = getDefinitions();
-  return Emitter(os, values, byName, splines, prefix, indent).emit(*root);
+  if (termName.empty())
+    return Emitter(os, values, byName, splines, prefix, indent).emit(*root);
+  std::string text;
+  llvm::raw_string_ostream annotated(text);
+  std::string result = Emitter(annotated, values, byName, splines, prefix, indent).emit(*root);
+  StringRef remaining(text);
+  while (!remaining.empty()) {
+    auto line = remaining.split('\n');
+    os << line.first << " loc(\"control-file term: ";
+    os.write_escaped(termName);
+    os << "\")\n";
+    remaining = line.second;
+  }
+  return result;
 }

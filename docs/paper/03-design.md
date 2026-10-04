@@ -558,3 +558,10 @@ nonfinite and the numerical checker fails. An inactive square root still
 has a proved zero tangent. Differences across a branch boundary need not
 agree with the chosen derivative. See the singular-point tests and
 `docs/ad-robust.md` for the full conventions.
+
+**Diagnostic attribution (D[ad-term-diagnostics]).** The driver attaches
+the control-file term name as a named location to every custom-expression
+op. Activity retains the operation that prevented a proof, and diagnostics
+routed through sums or intermediate fields point at that operation's
+location. The numerical semantics are unchanged. An injected unsupported
+scalar operation tests that the error names the source term.

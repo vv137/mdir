@@ -602,6 +602,11 @@ It requires CPU f64 and an explicit cell for virials. Failed checks print
 values and tolerances before stopping. See [ad-robust.md](ad-robust.md) for
 the step, tolerances, pipeline order, buffer lifetime, and cell limitations.
 
+Custom-expression operations carry named locations identifying their
+control-file terms (D[ad-term-diagnostics]). Unknown activity proofs retain
+the first unknown operation, so a failure through a generated sum or field
+still names its source term. See [ad-robust.md](ad-robust.md).
+
 ### 5.5 Generated function
 
 ```mlir

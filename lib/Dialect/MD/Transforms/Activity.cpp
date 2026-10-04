@@ -72,7 +72,7 @@ ActivityResult ActivityAnalysis::classify(Value value) {
                 {Activity::Unknown,
                  ("'" + op->getName().getStringRef() +
                   "' is not an op whose dependences the pass knows")
-                     .str()});
+                     .str(), op});
       } else {
         // What the kernels take from outside.
         op->walk([&](Operation *inner) {
@@ -83,7 +83,7 @@ ActivityResult ActivityAnalysis::classify(Value value) {
                     {Activity::Unknown,
                      ("its kernel holds '" + inner->getName().getStringRef() +
                       "', whose dependences the pass does not know")
-                         .str()});
+                         .str(), inner});
             return WalkResult::advance();
           }
           for (Value operand : inner->getOperands()) {
