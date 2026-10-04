@@ -1,6 +1,6 @@
 # Robust differentiation
 
-D[ad-robust], issue #15, is implemented in separate reviewable parts:
+D182, issue #15, is implemented in separate reviewable parts:
 activity analysis, scalar rule interfaces, numerical checking, singular
 point conventions, and control-file term diagnostics.
 

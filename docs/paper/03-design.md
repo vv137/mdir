@@ -297,7 +297,7 @@ parameters of each tuple, and a term of the positions reads $w$ itself.
 The parameters are constants of the potential, so they change neither
 its derivatives nor the virial.
 
-**Activity (D[ad-robust]).** The dependency proof is a separate analysis,
+**Activity (D182).** The dependency proof is a separate analysis,
 shared by scalar coordinates, cell edges, positional intermediate fields,
 sum weights, and scalar parameters. Its outcomes are active, proven
 inactive, and unknown with a reason. Active does not guarantee a nonzero

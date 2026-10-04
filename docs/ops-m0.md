@@ -538,7 +538,7 @@ $$P = \frac{2 E_\text{kin} + \operatorname{tr}\mathsf W}{3V}.$$
 Other packages use other conventions. The GROMACS virial is $-\mathsf W / 2$
 [[GromacsManual2025]](references.md#gromacsmanual2025).
 
-### 5.3.1 Activity (D[ad-robust])
+### 5.3.1 Activity (D182)
 
 `ActivityAnalysis` gives active, proven inactive, or unknown, with a reason
 for unknown. Active establishes a dependency path, not a nonzero tangent

@@ -29,7 +29,7 @@ format, or the outputs; every such change is listed under **Changed** or
 - Shared three-outcome activity analysis for scalar, position, cell, and
   parameter differentiation. `--md-analyze-activity=argument=N` reports
   active, proven inactive, and unknown results; required unknown activity
-  fails differentiation (D[ad-robust], part 1 of #15).
+  fails differentiation (D182, part 1 of #15).
 
 ### Fixed
 
