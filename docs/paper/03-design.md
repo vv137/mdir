@@ -546,7 +546,7 @@ its derivative in `lib/Dialect/MD/Transforms/Differentiate.cpp`; the
 loops, the storage, and the kernels of a device follow from the IR.
 Appendix B.1 lists the tiers of tests, and B.2 where a change goes.
 
-**Singular and branch points (D[ad-conventions]).** Scalar differentiation
+**Singular and branch points (D185).** Scalar differentiation
 uses the chosen branch: `abs(0)` takes its nonnegative branch; min/max ties
 take the second operand; a select's condition has no tangent; floor, ceil,
 integer conversions, steps, and discrete table lookups have piecewise-zero

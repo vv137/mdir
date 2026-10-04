@@ -82,7 +82,7 @@ expressions with seeds 15 and 161 and a deliberately wrong analytic force.
 The existing Lennard-Jones, tuple, table, and generalized-Born integration
 tests also check their actual configurations against energy differences.
 
-## Singular and branch conventions (D[ad-conventions])
+## Singular and branch conventions (D185)
 
 These are the reference semantics, including at ties:
 

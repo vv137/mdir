@@ -1,4 +1,4 @@
-// The documented branch conventions (D[ad-conventions]), evaluated at
+// The documented branch conventions (D185), evaluated at
 // the singular/tie points, rather than compared with a difference
 // that crosses a branch. Each check prints 1.
 // RUN: mdir-opt %s %md_passes --convert-md-to-md-exec %md_exec_passes | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mdrt,%mlir_c_runner_utils | FileCheck %s

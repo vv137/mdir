@@ -588,7 +588,7 @@ to a half-open interval; discrete tables have zero derivative at jumps.
 A central difference across a jump can disagree with the chosen branch
 and is reported as a failed check, not a zero. These conventions, including
 `abs(0)`, ties, and active conditions, are tested/documented in
-[ad-robust.md](ad-robust.md) (D[ad-conventions]).
+[ad-robust.md](ad-robust.md) (D185).
 
 The conventions are part of the reference semantics: every back end must
 produce the same branch at a tie.

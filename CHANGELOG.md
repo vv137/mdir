@@ -28,7 +28,7 @@ format, or the outputs; every such change is listed under **Changed** or
 - Explicit differentiation conventions at coincident particles, active and
   inactive `sqrt(0)`, absolute-value and min/max ties, dependent select
   conditions, and table boundaries, with direct singular-point regression
-  tests (D[ad-conventions], part 4 of #15).
+  tests (D185, part 4 of #15).
 
 - `--md-check-derivatives` instruments evaluations with f64 central
   differences at their actual inputs: every requested force component,
