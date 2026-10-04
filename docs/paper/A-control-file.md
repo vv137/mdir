@@ -4,7 +4,7 @@ M2 Python API preparation (D187) is described in
 [python-m2.md](../python-m2.md). It introduces no control-file keys or
 changes to the checkpoint and output contracts listed here.
 
-The optional Python lowering interface (D[python-compile],
+The optional Python lowering interface (D192,
 [contract](../python-compile.md)) uses the same compiler pipeline and adds
 no control keys, format changes or output side effects.
 

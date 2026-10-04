@@ -4,7 +4,7 @@ Native implementation of the first item of `python-m2.md` (#74, PR #75).
 This PR provides the native C++ model layer for subsequent Python bindings.
 It does not provide an importable Python package. The optional bindings and
 lowering contribution is [python-compile.md](python-compile.md)
-(D[python-compile]).
+(D192).
 
 ## Contract
 

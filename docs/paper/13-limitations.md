@@ -133,7 +133,7 @@ preparation adds no executable Python interface. D191 implements
 the native model prerequisite: owned Amber/GROMACS/CHARMM loading, physics
 and state as separate values, typed options, common preparation and validation,
 and the shared semantic IR builder, with a documented classical subset.
-D[python-compile] adds optional Python bindings, explicit lowering through
+D192 adds optional Python bindings, explicit lowering through
 the shared CLI pipeline, immutable IR/plan inspection and versioned stale
 detection. Runtime/JIT ownership, persistent execution and tunable buffers
 remain subsequent work; M2 and its packaging gate are incomplete.

@@ -1,4 +1,4 @@
-# Python compilation interface (D[python-compile])
+# Python compilation interface (D192)
 
 The next M2 contribution after D191, tracked in issue #76, exposes the
 owned native model and explicit compiler lowering. It is an optional build,

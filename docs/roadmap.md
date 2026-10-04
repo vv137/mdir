@@ -208,7 +208,7 @@ Preparation and proposed implementation gates are in
 [python-m2.md](python-m2.md) (D187), including the maintainer's
 2026-10-04 rulings. The first native model contribution
 (D191, [python-model.md](python-model.md)) adds shared preparation
-and owned Amber/GROMACS/CHARMM loading. D[python-compile]
+and owned Amber/GROMACS/CHARMM loading. D192
 ([python-compile.md](python-compile.md)) adds optional Python bindings, explicit
 lowering, immutable IR/plan inspection and versioned stale detection.
 Persistent execution, JIT/runtime ownership and tunable buffers remain open.
