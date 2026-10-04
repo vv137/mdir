@@ -1,4 +1,4 @@
-# [output] observables (D[cv]): the energy of each term that gives
+# [output] observables (D189): the energy of each term that gives
 # `observe`, and its derivative in each constant it lists, at every energy
 # of the log, without [free_energy]. The first row against the energies and
 # derivatives written out by hand from the input positions, for terms of

@@ -659,7 +659,7 @@ salt solutions," *J. Phys. Chem. Lett.* **1**, 183–189 (2010).
 [doi:10.1021/jz900079w](https://doi.org/10.1021/jz900079w)
 
 Used for: the osmotic pressure read from the force on walls that act on
-the ions only, the example of `observe` (D[cv]).
+the ions only, the example of `observe` (D189).
 
 ### Maier2015
 

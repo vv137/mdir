@@ -172,7 +172,7 @@ struct Control {
   /// [free_energy] at every energy of the log (D161).
   std::string freeEnergyFile;
   /// The energies of terms given by expressions and their derivatives in
-  /// constants of theirs, at every energy of the log (D[cv]): the file and
+  /// constants of theirs, at every energy of the log (D189): the file and
   /// the columns, from `observe` of each term, the energy of the term and
   /// then its constants, the terms in the order of the file.
   std::string observablesFile;

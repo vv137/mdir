@@ -526,7 +526,7 @@ and acceptor and the angle at its hydrogen. A table with
 that are whole numbers, such as two kinds of particles given as
 parameters of each.
 
-**Observing a term** (D[cv]). `observe` in a term lists constants of it,
+**Observing a term** (D189). `observe` in a term lists constants of it,
 and `[output] observables` names a file of columns. At every energy of the
 log, the file then holds the term's energy and its derivative
 $\partial U/\partial p$ in each listed constant, `observe = []` the

@@ -1145,7 +1145,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
             getOutputPath(control->freeEnergyFile), columns, keepThrough))
       return fail(std::move(error));
   }
-  // [output] observe (D[cv]): the energy of a term, `<term>.energy`, or its
+  // [output] observe (D189): the energy of a term, `<term>.energy`, or its
   // derivative in a constant of its, `<term>.d_<constant>`, per unit of the
   // constant, at every energy of the log.
   if (!control->observablesFile.empty()) {

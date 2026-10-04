@@ -945,7 +945,7 @@ holds for the Gibbs energy, the $PV$ of a sample being the same in every
 state. The samples of a state are spaced by the statistical inefficiency
 of $\partial U/\partial\lambda$ along the path [[Chodera2007]](references.md#chodera2007).
 
-**Generalized forces of constants** (D[cv]). The identity of thermodynamic
+**Generalized forces of constants** (D189). The identity of thermodynamic
 integration does not need $\lambda$: for any constant $\xi$ of a term,
 $\partial F/\partial\xi = \langle\partial U/\partial\xi\rangle$, the mean
 force along $\xi$. `observe` in a term writes $\partial U/\partial\xi$ at

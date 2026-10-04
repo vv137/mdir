@@ -1,5 +1,5 @@
 # REQUIRES: hdf5, cuda
-# [output] observables (D[cv]) on a device, in mixed and double precision:
+# [output] observables (D189) on a device, in mixed and double precision:
 # the first row against the energies and derivatives written out by hand
 # (observables.test), within 1e-5 relative in mixed precision.
 # RUN: rm -rf %t && mkdir -p %t

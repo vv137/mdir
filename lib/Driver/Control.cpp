@@ -92,7 +92,7 @@ private:
   /// [[energy.bond]], [[energy.angle]], or [[energy.dihedral]]: a term over
   /// tuples of `arity` particles (D136).
   Error readTupleTerm(const toml::table &table, unsigned arity);
-  /// `observe` of the term `term` (D[cv]): its energy and the constants of
+  /// `observe` of the term `term` (D189): its energy and the constants of
   /// it whose derivatives `[output] observables` writes.
   Error readObserve(const toml::table &table, StringRef term);
   Error readBond(const toml::table &table) { return readTupleTerm(table, 2); }
@@ -3047,7 +3047,7 @@ Error Reader::read(const toml::table &root) {
           path.str().c_str());
   }
   // The energies of terms and their derivatives in constants of theirs,
-  // at every energy (D[cv]).
+  // at every energy (D189).
   if (!control.observablesFile.empty() || !control.observables.empty()) {
     auto error = [&](const llvm::Twine &message) {
       return llvm::createStringError(llvm::inconvertibleErrorCode(),

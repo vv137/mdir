@@ -13,7 +13,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Changed
 
 - `observe` is a reserved key of every term table given by an expression
-  (D[cv]); a constant named `observe` must be renamed, with its uses in
+  (D189); a constant named `observe` must be renamed, with its uses in
   the expression.
 
 - Custom term parameters now reject names supplied by the term, declared
@@ -35,7 +35,7 @@ format, or the outputs; every such change is listed under **Changed** or
   energy and its derivatives in the listed constants, the generalized
   forces along them, to `[output] observables` at every energy, without
   `[free_energy]`: for example the force on a wall, and so an osmotic
-  pressure (D[cv], part of #16).
+  pressure (D189, part of #16).
 - M2 Python API preparation: driver prerequisites, proposed implementation
   sequence, adopted maintainer contracts, and validation gates in
   `docs/python-m2.md`

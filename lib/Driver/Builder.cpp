@@ -276,7 +276,7 @@ private:
   }
   /// The term of `@observe<k>` and the constants of it that the potential
   /// takes as its last arguments, `%ob_<name>`, in place of their values
-  /// (D[cv]).
+  /// (D189).
   std::string observedTerm;
   std::vector<std::string> observedConstants;
   std::string getObservedParameters() const {
@@ -328,7 +328,7 @@ private:
   void emitObservedPotentials();
   /// Emits the energies and the derivatives of `[output] observe` at the
   /// positions `x` in the cell `cell` and their call to the writer
-  /// (D[cv]).
+  /// (D189).
   void emitObservablesOutput(StringRef indent, StringRef x, StringRef cell,
                              StringRef prefix, StringRef step,
                              StringRef time);
@@ -6053,7 +6053,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
                              "%step" + here, time);
       }
       if (!control.observablesFile.empty()) {
-        // The observed terms at the positions after the step (D[cv]).
+        // The observed terms at the positions after the step (D189).
         std::string time = "%ob_time" + here;
         if (control.usesTime)
           os << inner << time << "_steps = arith.sitofp %step" << here
