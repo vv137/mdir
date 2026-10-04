@@ -110,7 +110,7 @@ roots at zero, and coincident radial geometry directly. Table endpoint
 conventions follow the interpolation in `Expression::emitSpline` and the
 existing tabulated-function boundary tests.
 
-## Control-file term diagnostics (D[ad-term-diagnostics])
+## Control-file term diagnostics (D186)
 
 Expression emission accepts the control-file term name and records it as a
 named MLIR location on every emitted expression operation. Pair, tuple,

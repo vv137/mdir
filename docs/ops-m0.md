@@ -603,7 +603,7 @@ values and tolerances before stopping. See [ad-robust.md](ad-robust.md) for
 the step, tolerances, pipeline order, buffer lifetime, and cell limitations.
 
 Custom-expression operations carry named locations identifying their
-control-file terms (D[ad-term-diagnostics]). Unknown activity proofs retain
+control-file terms (D186). Unknown activity proofs retain
 the first unknown operation, so a failure through a generated sum or field
 still names its source term. See [ad-robust.md](ad-robust.md).
 

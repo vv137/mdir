@@ -27,7 +27,7 @@ format, or the outputs; every such change is listed under **Changed** or
   continuation checks the loaded grid (D178).
 - Differentiation diagnostics carry control-file term names, including an
   unknown operation inside a captured kernel whose failure is reported
-  through a sum or field (D[ad-term-diagnostics], part 5 of #15).
+  through a sum or field (D186, part 5 of #15).
 
 - Explicit differentiation conventions at coincident particles, active and
   inactive `sqrt(0)`, absolute-value and min/max ties, dependent select
