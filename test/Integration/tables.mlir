@@ -1,3 +1,6 @@
+// Check the requested derivatives against energy differences (D[ad-robust]).
+// RUN: mdir-opt %s --md-check-derivative-coverage --md-check-derivatives %md_passes --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt | FileCheck %s
+
 // Lennard-Jones with sigma and epsilon from tables of pairs of types, one
 // pair of which the mixing rule does not give (NBFIX), and Coulomb with the
 // product of the charges, both cut at 1.5 nm with no shift, compiled

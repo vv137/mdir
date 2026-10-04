@@ -693,6 +693,13 @@ public:
     Policy policy;
     if (failed(getPolicy(policy)))
       return signalPassFailure();
+    if (getOperation()->hasAttr("md.derivative_check") &&
+        (!policy.position.isF64() || !policy.force.isF64() ||
+         !policy.kernel.isF64() || !policy.integrator.isF64() ||
+         !policy.accumulator.isF64())) {
+      getOperation().emitError("derivative checking requires double precision for every role");
+      return signalPassFailure();
+    }
 
     SmallVector<func::FuncOp> functions;
     for (Operation &op : module)

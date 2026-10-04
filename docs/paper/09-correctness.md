@@ -444,3 +444,24 @@ and against the paths of the orthorhombic cell:
   last 300 ps; the shape of the cell stays to the printed digits, and a
   run continued from a checkpoint gives the log of one that does not stop
   (`triclinic-npt.test`).
+
+## 9.10 Numerical derivative checking (D[ad-checker])
+
+A central difference of the primal energy is an oracle independent of the
+derivative rules: $(U(x+h)-U(x-h))/(2h)$ is compared with the analytic
+parameter derivative and the negative of a force component. Straining
+positions and cell together gives the negative of a virial component.
+The checker pass instruments evaluations at their supplied configuration
+in CPU f64, checking every force coordinate and six independent strains
+of an explicit restricted-triclinic cell. Its default relative step is
+$10^{-5}$; the absolute and relative tolerances are $10^{-6}$ and $10^{-4}$.
+Nonfinite values fail; a difference across a discontinuity is not the
+chosen branch derivative. Fresh immutable perturbation buffers are exported
+before release so storage cannot reuse a freed buffer.
+
+The tests use two fixed random seeds for custom scalar expressions and a
+pair across a periodic boundary, reject deliberately wrong forces, and
+check the existing Lennard-Jones, bonded, tabulated, and generalized-Born
+configurations. The checker supports CPU f64 only; general cell
+orientations and the other three tensor entries are not independently
+checked. It is a diagnostic pass for small systems.

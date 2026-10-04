@@ -6,7 +6,11 @@
 #include "mlir/Pass/Pass.h"
 #include <memory>
 
+namespace mdir { namespace mdrt { class MDRTDialect; } }
 namespace mlir {
+namespace memref { class MemRefDialect; }
+namespace scf { class SCFDialect; }
+namespace func { class FuncDialect; }
 namespace arith {
 class ArithDialect;
 } // namespace arith
