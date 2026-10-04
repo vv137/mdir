@@ -41,13 +41,16 @@ md.potential @rules(%x: !vec, %cell: !md.cell, %a: f64) -> f64 {
   %addint = arith.addi %fpint, %two : i32
   %subint = arith.subi %addint, %two : i32
   %mulint = arith.muli %subint, %two : i32
+  %remainder = arith.remsi %mulint, %two : i32
   %cmpint = arith.cmpi slt, %mulint, %two : i32
   %or = arith.ori %cmpint, %condition : i1
   %and = arith.andi %or, %condition : i1
+  %xor = arith.xori %and, %condition : i1
   %flag = arith.uitofp %and : i1 to f64
   %intfloat = arith.sitofp %mulint : i32 to f64
   %index = arith.index_cast %mulint : i32 to index
   %broadcast = vector.broadcast %a : f64 to vector<3xf64>
+  %reduced = vector.reduction <add>, %broadcast : vector<3xf64> into f64
   %assembled = vector.from_elements %a, %one, %square : vector<3xf64>
   %extract = vector.extract %assembled[0] : f64 from vector<3xf64>
   %extractb = vector.extract %broadcast[1] : f64 from vector<3xf64>

@@ -477,6 +477,21 @@ static LogicalResult emitScalarRule(Value value, ScalarDerivative &derivative,
     return success();
   }
 
+  if (auto reduction = dyn_cast<vector::ReductionOp>(op)) {
+    if (reduction.getKind() != vector::CombiningKind::ADD)
+      return op->emitError("only additive vector reductions have a derivative rule");
+    Value input;
+    if (failed(operandTangent(0, input))) return failure();
+    if (input) tangent = vector::ReductionOp::create(builder, loc,
+        vector::CombiningKind::ADD, input);
+    if (op->getNumOperands() > 1) {
+      Value initial;
+      if (failed(operandTangent(1, initial))) return failure();
+      tangent = emit.add(tangent, initial);
+    }
+    return success();
+  }
+
   if (isa<vector::BroadcastOp>(op)) {
     Value operand;
     if (failed(operandTangent(0, operand)))
@@ -521,6 +536,8 @@ struct ScalarRule : DerivativeOpInterface::ExternalModel<ScalarRule<Op>, Op> {
                   std::is_same_v<Op, arith::MulIOp> ||
                   std::is_same_v<Op, arith::OrIOp> ||
                   std::is_same_v<Op, arith::AndIOp> ||
+                  std::is_same_v<Op, arith::RemSIOp> ||
+                  std::is_same_v<Op, arith::XOrIOp> ||
                   std::is_same_v<Op, math::FloorOp> ||
                   std::is_same_v<Op, math::CeilOp> ||
                   std::is_same_v<Op, LookupOp>)
@@ -543,7 +560,9 @@ struct ScalarRule : DerivativeOpInterface::ExternalModel<ScalarRule<Op>, Op> {
                   std::is_same_v<Op, arith::SubIOp> ||
                   std::is_same_v<Op, arith::MulIOp> ||
                   std::is_same_v<Op, arith::OrIOp> ||
-                  std::is_same_v<Op, arith::AndIOp>) {
+                  std::is_same_v<Op, arith::AndIOp> ||
+                  std::is_same_v<Op, arith::RemSIOp> ||
+                  std::is_same_v<Op, arith::XOrIOp>) {
       tangent = Value();
       return success();
     }
@@ -563,7 +582,7 @@ void mdir::md::registerDerivativeInterfaces(DialectRegistry &registry) {
                 arith::CmpFOp, arith::CmpIOp, arith::SIToFPOp,
                 arith::UIToFPOp, arith::FPToSIOp, arith::IndexCastOp,
                 arith::AddIOp, arith::SubIOp, arith::MulIOp,
-                arith::OrIOp, arith::AndIOp>(context);
+                arith::OrIOp, arith::AndIOp, arith::RemSIOp, arith::XOrIOp>(context);
   });
   registry.addExtension(+[](MLIRContext *context, math::MathDialect *) {
     attachRules<math::AbsFOp, math::FloorOp, math::CeilOp, math::SqrtOp,
@@ -573,7 +592,7 @@ void mdir::md::registerDerivativeInterfaces(DialectRegistry &registry) {
                 math::TanhOp, math::ErfOp, math::ErfcOp, math::Atan2Op>(context);
   });
   registry.addExtension(+[](MLIRContext *context, vector::VectorDialect *) {
-    attachRules<vector::BroadcastOp, vector::ExtractOp, vector::FromElementsOp>(context);
+    attachRules<vector::BroadcastOp, vector::ExtractOp, vector::FromElementsOp, vector::ReductionOp>(context);
   });
   registry.addExtension(+[](MLIRContext *context, MDDialect *) {
     attachRules<LookupOp>(context);
