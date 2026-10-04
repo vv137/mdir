@@ -4430,6 +4430,10 @@ public:
       ConvertMDExecToGPU>::ConvertMDExecToGPUBase;
 
   void runOnOperation() final {
+    if (getOperation()->hasAttr("md.derivative_check")) {
+      getOperation().emitError("derivative checking requires the CPU lowering");
+      return signalPassFailure();
+    }
     Lowering lowering(getOperation(), blockSize, rowLanes, fuseRows,
                       fuseIntegration, deterministic, tuplesOnce);
     if (failed(lowering.run()))

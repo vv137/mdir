@@ -25,6 +25,13 @@ format, or the outputs; every such change is listed under **Changed** or
   `values_file` with an explicit `shape`, with the existing interpolation
   in one, two, or three dimensions. Manifests hash the files, and
   continuation checks the loaded grid (D178).
+- `--md-check-derivatives` instruments evaluations with f64 central
+  differences at their actual inputs: every requested force component,
+  scalar parameter derivative, and six independent cell strains. Failed
+  checks print the analytic value, numerical value, error, and tolerance
+  before stopping. The checker requires CPU double precision and an
+  explicit cell for virials (D[ad-checker], part 3 of #15).
+
 - Scalar derivative rules use `DerivativeOpInterface`, with external
   arithmetic, math, and vector models and explicit differentiable or
   structural operand roles. `--md-check-derivative-coverage` rejects scalar

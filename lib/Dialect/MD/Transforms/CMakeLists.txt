@@ -1,6 +1,7 @@
 add_mlir_dialect_library(MDIRMDTransforms
   BypassUpdates.cpp
   CheckExchange.cpp
+  CheckDerivatives.cpp
   CheckDerivativeCoverage.cpp
   Activity.cpp
   Differentiate.cpp
@@ -18,6 +19,10 @@ add_mlir_dialect_library(MDIRMDTransforms
   LINK_LIBS PUBLIC
   MDIRDyn
   MDIRMD
+  MDIRMDRT
+  MLIRFuncDialect
+  MLIRMemRefDialect
+  MLIRSCFDialect
   MLIRArithDialect
   MLIRIR
   MLIRMathDialect

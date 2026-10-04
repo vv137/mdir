@@ -5,6 +5,21 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+/* D[ad-checker]: a diagnostic central-difference comparison failed.
+   The first five arguments are the lowered memref<?xi8> descriptor. */
+void mdrtDerivativeFailure(void *allocated, const char *aligned, int64_t offset,
+                           int64_t size, int64_t stride, double analytic,
+                           double numerical, double error, double tolerance) {
+  (void)allocated;
+  for (int64_t i = 0; i < size; ++i)
+    fputc(aligned[offset + i * stride], stderr);
+  fprintf(stderr, ": analytic %.17g, central difference %.17g, "
+                  "error %.6g exceeds tolerance %.6g\n",
+          analytic, numerical, error, tolerance);
+  fflush(stderr);
+  abort();
+}
+
 /* The number of times that compiled code has built a neighbor structure
    since the library was loaded. */
 static int64_t numBuilds = 0;

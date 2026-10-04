@@ -1774,6 +1774,10 @@ public:
           << "expected the tables 'f64' or 'f32', got '" << tables << "'";
       return signalPassFailure();
     }
+    if (getOperation()->hasAttr("md.derivative_check") && memory == "device") {
+      getOperation().emitError("derivative checking requires the CPU lowering");
+      return signalPassFailure();
+    }
     if (failed(Assignment(getOperation(), memory == "device", tables == "f32")
                    .run()))
       signalPassFailure();

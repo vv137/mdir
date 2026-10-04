@@ -1,3 +1,6 @@
+// Check the requested derivatives against energy differences (D182).
+// RUN: mdir-opt %s --md-check-derivative-coverage --md-check-derivatives %md_passes --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt | FileCheck %s
+
 // Generalized Born of Onufriev, Bashford, and Case (OBC II) at the md
 // level: the integral of the descreening of each particle by its
 // neighbors [HawkinsCramerTruhlar], a gather over pairs whose kernel is not

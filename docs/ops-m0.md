@@ -581,6 +581,15 @@ derivative of the argument.
 The conventions are part of the reference semantics: every back end must
 produce the same branch at a tie.
 
+### 5.4.1 Numerical checks (D[ad-checker])
+
+`--md-check-derivatives` instruments evaluations before differentiation.
+It compares requested forces, parameter derivatives, and six independent
+cell strains with central differences of energy at the evaluation inputs.
+It requires CPU f64 and an explicit cell for virials. Failed checks print
+values and tolerances before stopping. See [ad-robust.md](ad-robust.md) for
+the step, tolerances, pipeline order, buffer lifetime, and cell limitations.
+
 ### 5.5 Generated function
 
 ```mlir

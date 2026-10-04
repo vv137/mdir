@@ -1,3 +1,6 @@
+// Check the requested derivatives against energy differences (D182).
+// RUN: mdir-opt %s --md-check-derivative-coverage --md-check-derivatives %md_passes --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt | FileCheck %s
+
 // Energy, forces, and virial of a Lennard-Jones system, compiled and run,
 // compared with a brute-force evaluation over all pairs.
 //

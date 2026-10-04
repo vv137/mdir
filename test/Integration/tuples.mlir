@@ -1,3 +1,6 @@
+// Check the requested derivatives against energy differences (D182).
+// RUN: mdir-opt %s --md-check-derivative-coverage --md-check-derivatives %md_passes --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes | mlir-opt %lower_loops_to_llvm | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt | FileCheck %s
+
 // Energy, forces, and virial of bonds, angles, and dihedrals, compiled and
 // run on the CPU, compared with Inputs/tuples_reference.py, which evaluates the
 // same terms from their definitions and checks its forces against finite

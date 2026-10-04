@@ -53,6 +53,19 @@ def CheckDerivativeCoverage : Pass<"md-check-derivative-coverage", "::mlir::Modu
   let summary = "Require a derivative rule or declared zero for every scalar op in potentials";
 }
 
+def CheckDerivatives : Pass<"md-check-derivatives", "::mlir::ModuleOp"> {
+  let summary = "Check requested derivatives against f64 central differences at evaluation inputs";
+  let options = [
+    Option<"step", "step", "double", "1e-5", "Relative finite difference step">,
+    Option<"atol", "atol", "double", "1e-6", "Absolute tolerance">,
+    Option<"rtol", "rtol", "double", "1e-4", "Relative tolerance">
+  ];
+  let dependentDialects = ["::mlir::arith::ArithDialect", "::mlir::math::MathDialect",
+    "::mlir::vector::VectorDialect", "::mlir::memref::MemRefDialect",
+    "::mlir::scf::SCFDialect", "::mlir::func::FuncDialect",
+    "::mdir::mdrt::MDRTDialect"];
+}
+
 def Inline : Pass<"md-inline", "::mlir::ModuleOp"> {
   let summary = "Inlines potentials, functions, and programs";
   let description = [{
