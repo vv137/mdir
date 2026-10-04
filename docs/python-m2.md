@@ -1,7 +1,7 @@
 # Python API preparation (M2)
 
 Status: implementation plan with maintainer rulings, not implemented functionality.
-D169 fixes the milestone's scope; D[m2-python-plan] records this preparation.
+D169 fixes the milestone's scope; D187 records this preparation.
 The work item is [#46](https://github.com/vv137/mdir/issues/46).
 The maintainer approved the contracts in Section 6 on 2026-10-04,
 [relayed in PR #47](https://github.com/vv137/mdir/pull/47#issuecomment-5975221457).

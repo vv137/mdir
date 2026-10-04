@@ -122,7 +122,7 @@ coarse-grained models; and free energy, whose $dH/d\lambda$ the
 differentiation of the IR is designed to give (D2). A Python interface whose buffers follow DLPack
 shares the state with machine-learning frameworks without copies, from
 the same IR and validation as the control file. M2 preparation
-(D[m2-python-plan], [Python API plan](../python-m2.md)) identifies shared
+(D187, [Python API plan](../python-m2.md)) identifies shared
 validation, persistent segments, embedded error handling, checkpoint
 provenance, and allocation ownership as prerequisites. The maintainer's
 2026-10-04 rulings adopt owned loaded data, a documented classical subset,

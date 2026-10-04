@@ -205,7 +205,7 @@ they are needed:
 ## 6. Python API (M2)
 
 Preparation and proposed implementation gates are in
-[python-m2.md](python-m2.md) (D[m2-python-plan]), including the maintainer's
+[python-m2.md](python-m2.md) (D187), including the maintainer's
 2026-10-04 rulings. Python functionality remains unimplemented. M2 covers
 a documented classical subset and requires a manylinux_2_28 pip wheel for
 Python 3.10–3.13; conda follows later.
