@@ -913,7 +913,7 @@ What still differs from pmemd, by design: the cosine of an angle is not
 clamped to $\pm0.999$ (pmemd evaluates an angle within 2.56° of linear at
 that bound); a dihedral whose cross products are below $10^{-3}$ Å² is not
 dropped; a net charge below 0.01 e is not spread over the atoms to make
-the system neutral (Factor IX: $3.1	imes10^{-4}$ e, below the printed
+the system neutral (Factor IX: $3.1\times10^{-4}$ e, below the printed
 digits); water is found by its residue and atomic numbers (O, H, H), not
 by the names O, H1, H2 in any order; and on an odd grid the aliasing
 factor of `influence = "OPTIMAL"` takes the principal frequency at the
