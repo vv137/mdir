@@ -219,5 +219,5 @@ four-stage example (#82) needs, followed in a small model PR after this one
 temperature, seed)`, and a typed `System.restraints` list mapped to
 `[[restraints]]` (D74, D124), in
 [python-velocities-restraints.md](python-velocities-restraints.md)
-(D[python-velocities-restraints]). A state without velocities still starts
+(D198). A state without velocities still starts
 at rest; drawing them is explicit.

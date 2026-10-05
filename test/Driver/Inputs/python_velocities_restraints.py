@@ -1,5 +1,5 @@
 """Drawn velocities and typed restraints in the Python model
-(D[python-velocities-restraints]): the velocities of `mdir run` bit for bit,
+(D198): the velocities of `mdir run` bit for bit,
 restraints against `[[restraints]]` through `mdir run`, copies, versions,
 and refusals."""
 import pathlib

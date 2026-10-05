@@ -57,7 +57,7 @@ format, or the outputs; every such change is listed under **Changed** or
   a new state; `System.restraints`, a list of `mdir.Restraint` (selection,
   force constant in kJ/mol/nm², `ReferenceScaling`), and
   `System.restraint_reference` map onto `[[restraints]]`
-  (D[python-velocities-restraints], #92).
+  (D198, #92).
 
 - Roadmap: M2 is split into M2a, the Python API, and M2b, differentiable
   simulation (fitting parameters to ensemble averages by trajectory

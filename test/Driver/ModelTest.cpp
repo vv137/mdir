@@ -66,7 +66,7 @@ int main(int argc, char **argv) {
   s.rigidWater = c.fastWater; s.flexibleWater = c.statesFlexible;
   s.electrostatics = c.pme ? model::Electrostatics::PME : model::Electrostatics::Cutoff;
   s.pmeGrid = {28,28,28};
-  // [[restraints]] as typed restraints in kJ/mol/nm^2 (D[python-velocities-restraints]).
+  // [[restraints]] as typed restraints in kJ/mol/nm^2 (D198).
   // The constant of the control file in kJ/mol/nm^2, converted as the file
   // path converts it.
   for (const auto &r : c.restraints)

@@ -1,6 +1,6 @@
 # REQUIRES: python-api, hdf5, cuda
 # Drawn velocities and typed restraints in the Python model on a GPU
-# (D[python-velocities-restraints]): the velocities that `mdir run` draws, bit
+# (D198): the velocities that `mdir run` draws, bit
 # for bit; restraints against [[restraints]] through `mdir run`; copies,
 # versions, and refusals.
 # RUN: rm -rf %t && mkdir -p %t

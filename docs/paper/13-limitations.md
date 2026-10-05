@@ -148,7 +148,7 @@ of the log, whose energies equal that row's; failures return to Python with
 the state from before them. A failed part returns through the runtime before
 its state is discarded. Each ELF host module keeps its functions in one code
 section so that exception-frame ranges remain disjoint across JIT lifetimes.
-D[python-velocities-restraints] draws initial velocities by the CLI's
+D198 draws initial velocities by the CLI's
 code, so that Python and `mdir run` start from the same velocities bit for
 bit, and maps typed positional restraints onto `[[restraints]]`.
 Reporters, checkpoints, minimization, NPT in a

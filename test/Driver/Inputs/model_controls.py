@@ -19,7 +19,7 @@ for name in ("amber", "gromacs", "constraints", "triclinic", "nvt", "npt", "char
         thermostat = '[thermostat]\nmethod = "V-RESCALE"\ninterval = 10' if name in ('nvt','npt','restraints') else ''
         barostat = '[barostat]\nmethod = "C-RESCALE"\ninterval = 10' if npt else ''
         # Both reference scalings of D124, with constants that add where
-        # the selections overlap (D[python-velocities-restraints]).
+        # the selections overlap (D198).
         restraints = ('[[restraints]]\nselection = "!:WAT & !@H*"\nforce_constant = 10.0\n'
                       '[[restraints]]\nselection = ":ALA & !@H*"\nforce_constant = 2.5\n'
                       '[[restraints]]\nselection = ":4-9@O"\nforce_constant = 5.0\n'

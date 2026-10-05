@@ -224,7 +224,7 @@ D196 (#85, [persistent simulations](python-segments.md)) adds
 phase, errors, stops, and runtime and device ownership. Host JIT unwind ranges
 remain disjoint across simulation lifetimes, and a failed part finishes runtime
 cleanup before its state is discarded.
-D[python-velocities-restraints] (#92,
+D198 (#92,
 [drawn velocities and restraints](python-velocities-restraints.md)) adds
 `InitialState.draw_velocities`, bit for bit the velocities of `mdir run`,
 and typed `System.restraints` mapped to `[[restraints]]`, which the

@@ -397,7 +397,7 @@ Simulation::create(const model::PreparedModel &prepared) {
   // A state without velocities begins at rest.
   if (system.velocities.size() != 3 * count)
     system.velocities.assign(3 * count, 0.0);
-  // The reference of restraints is the model's (D[python-velocities-restraints]),
+  // The reference of restraints is the model's (D198),
   // or the positions it begins at; its cell is that of the start.
   if (system.referencePositions.size() != system.positions.size())
     system.referencePositions = system.positions;

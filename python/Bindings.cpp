@@ -154,7 +154,7 @@ PYBIND11_MODULE(mdir, m) {
                   [](driver::TupleTerm &t, py::object value) { host::particles(t, value); })
     .def_property("parameters", [](const driver::TupleTerm &t) { return host::parameters(t); },
                   [](driver::TupleTerm &t, py::sequence value) { host::parameters(t, value); });
-  // Restraints (D74, D124; D[python-velocities-restraints]).
+  // Restraints (D74, D124; D198).
   py::enum_<driver::ReferenceScaling>(m, "ReferenceScaling")
     .value("Center", driver::ReferenceScaling::Center)
     .value("All", driver::ReferenceScaling::All)
@@ -223,7 +223,7 @@ PYBIND11_MODULE(mdir, m) {
   }
   property(initialstate, "cell", &model::InitialState::cell);
   // The velocities that `mdir run` draws for the same system, temperature,
-  // and seed, in a new state (D[python-velocities-restraints]).
+  // and seed, in a new state (D198).
   initialstate.def("draw_velocities", [](const Input<model::InitialState> &o,
                                          std::shared_ptr<Input<model::System>> system,
                                          double temperature, py::int_ seed) {

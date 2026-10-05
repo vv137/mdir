@@ -19,7 +19,7 @@ they add no control keys and write no files. A segment continues as
 `mdir run --continue` continues a checkpoint. Runtime failure cleanup and
 host JIT exception-frame ownership are internal to the simulation; they add
 no control keys or changes to output formats or overwrite behavior.
-Typed Python restraints (D[python-velocities-restraints],
+Typed Python restraints (D198,
 [contract](../python-velocities-restraints.md)) are one `[[restraints]]`
 table each, with the force constant in kJ/mol/nm² and the reference
 positions of the compiled state unless given; drawn velocities are those of

@@ -1,4 +1,4 @@
-# Drawn velocities and positional restraints in the Python model (D[python-velocities-restraints])
+# Drawn velocities and positional restraints in the Python model (D198)
 
 Issue #92 is the small model item that the four-stage example (#82) needs
 after the persistent simulations of D196 (#85): initial velocities drawn at

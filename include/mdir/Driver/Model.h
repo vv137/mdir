@@ -50,7 +50,7 @@ struct System {
   std::vector<driver::PairTerm> pairTerms;
   std::vector<driver::TupleTerm> tupleTerms;
   /// One `[[restraints]]` table (D74, D124), with its constant in
-  /// kJ/mol/nm^2 (D[python-velocities-restraints]).
+  /// kJ/mol/nm^2 (D198).
   struct Restraint {
     std::string selection;
     double forceConstant = 0;
