@@ -160,7 +160,7 @@ observed difference. Each test run prints all three values for every case.
 |---|---|
 | `StaleProgramError` | The program's inputs changed after compilation |
 | `InputError` | `n < 0`, or a run that ends between the two closing steps of a Trotter period |
-| `UnsupportedError` | A minimization; NPT with a coupling period of 1 (scaling every step); NPT in a triclinic cell; a second GPU device in one process |
+| `UnsupportedError` | NPT with a coupling period of 1 (scaling every step); NPT in a triclinic cell; a second GPU device in one process |
 | `SimulationError` | A failure during a run: positions that are not numbers at a build of the neighbor structures on a device, a state that is not numbers at the end of a part, a barostat that takes the cell below twice the cutoff; or another operation under way on the same simulation |
 
 After a `SimulationError` raised by a failure, the simulation keeps the
@@ -218,3 +218,7 @@ temperature, seed)`, and a typed `System.restraints` list mapped to
 [python-velocities-restraints.md](python-velocities-restraints.md)
 (D198). A state without velocities still starts
 at rest; drawing them is explicit.
+
+A program that minimizes is a simulation of its own, which takes
+`minimize(steps)` in parts as `run(n)` takes steps (D[python-minimize],
+[python-minimize.md](python-minimize.md)).

@@ -34,6 +34,15 @@ struct SimulationEnergies {
          temperature = 0.0, virial = 0.0, pressure = 0.0, volume = 0.0;
 };
 
+/// The row that `mdir run` logs at a step of a minimization, in kJ/mol and
+/// nm (D[python-minimize]): the energy with its constant parts, the RMS and
+/// the largest force without their parts along the constraints, the
+/// particle of the largest (zero-based), and the length of the next step.
+struct SimulationMinimization {
+  double energy = 0.0, rmsForce = 0.0, maxForce = 0.0, stepSize = 0.0;
+  int64_t maxForceParticle = 0;
+};
+
 /// The state of a simulation, in the order of the input and in MD units.
 struct SimulationState {
   int64_t step = 0;
@@ -48,6 +57,8 @@ struct SimulationState {
   /// Those of the step `step`, if the run that ended there ended with a
   /// step of energy.
   std::optional<SimulationEnergies> energies;
+  /// That of the last step of a minimization that has taken steps.
+  std::optional<SimulationMinimization> minimization;
 };
 
 class Simulation {
@@ -67,6 +78,12 @@ public:
   llvm::Expected<int64_t> run(int64_t count,
                               const std::function<bool()> &poll = {},
                               bool energy = false);
+  /// Takes `count` more steps of the minimization of `mdir run`, or the
+  /// steps of its schedule if none, in parts as `run` does; a simulation
+  /// of a program that minimizes takes only these (D[python-minimize]).
+  llvm::Expected<int64_t> minimize(std::optional<int64_t> count = {},
+                                   const std::function<bool()> &poll = {});
+  bool isMinimization() const { return prepared.control.minimize; }
   /// Asks a run under way to stop after its part; from any thread.
   void requestStop() { stopRequested = true; }
 
@@ -94,6 +111,8 @@ private:
             closeInner = 0;
   };
   llvm::Error runPart(Engine &engine, Part part);
+  /// The steps of the next part, in multiples of `unit`.
+  int64_t getPartSteps(int64_t unit) const;
 
   model::PreparedModel prepared;
   std::unique_ptr<Engine> first, continued;
@@ -105,6 +124,10 @@ private:
   driver::System initial, system;
   std::vector<double> forces;
   int64_t step = 0;
+  /// A minimization: the steps of its schedule, and the length of its next
+  /// step in nm.
+  int64_t minimizationSteps = 0;
+  double minimizationSize = 0.0;
   bool hasRun = false;
   bool failed = false;
   /// The time that a step took in the last part long enough to tell, in

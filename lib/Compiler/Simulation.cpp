@@ -353,9 +353,6 @@ llvm::Expected<std::unique_ptr<Simulation>>
 Simulation::create(const model::PreparedModel &prepared) {
   std::unique_lock<std::mutex> lock(getRunMutex());
   const Control &given = prepared.control;
-  if (given.minimize)
-    return unsupported("a simulation runs dynamics; minimization follows "
-                       "later");
   bool trotter = given.barostat &&
                  (given.barostatWork == BarostatWork::Trotter ||
                   given.barostatWork == BarostatWork::TrotterFirstOrder);
@@ -374,6 +371,10 @@ Simulation::create(const model::PreparedModel &prepared) {
   } unlockBeforeCleanup{lock};
   simulation->prepared = prepared;
   Control &control = simulation->prepared.control;
+  // A minimization takes the steps of its schedule unless told otherwise,
+  // and begins with the step of the control (D[python-minimize]).
+  simulation->minimizationSteps = control.numSteps;
+  simulation->minimizationSize = control.minimizeStep * units::length;
   control.segments = true;
   control.energyPeriod = 0;
   control.framePeriod = 0;
@@ -563,6 +564,10 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
   for (int64_t *count : {&part.outer, &part.inner, &part.tail, &part.plain,
                          &part.close, &part.closeInner})
     a.pointers.push_back(count);
+  double firstSize = minimizationSize;
+  if (engine.control.minimize)
+    a.pointers.push_back(&firstSize);
+  Output::MinimizationRow rowBefore = out.lastMinimization;
 
   stopMessage.clear();
   engine.function(a.pointers.data());
@@ -590,6 +595,7 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
       out.box[k] = boxBefore[k];
     out.volume = out.box[0] * out.box[1] * out.box[2];
     out.bath = bathBefore;
+    out.lastMinimization = rowBefore;
     failed = true;
     return simulationError("the simulation failed after step " +
                            llvm::Twine(step) + ": " + failure +
@@ -598,6 +604,8 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
   forces = std::move(out.finalForces);
   out.finalForces.clear();
   step = out.endStep;
+  if (engine.control.minimize)
+    minimizationSize = out.lastMinimization.stepSize;
   hasRun = true;
   return llvm::Error::success();
 }
@@ -616,6 +624,9 @@ llvm::Expected<int64_t> Simulation::run(int64_t count,
     return simulationError("the simulation failed earlier; it keeps the "
                            "state of step " + llvm::Twine(step) +
                            " and runs no further");
+  if (prepared.control.minimize)
+    return inputError("this simulation minimizes: its program's integrator "
+                      "minimizes; call minimize(steps)");
   if (count < 0)
     return inputError("run takes a nonnegative number of steps");
   stopRequested = false;
@@ -632,16 +643,7 @@ llvm::Expected<int64_t> Simulation::run(int64_t count,
         "barostat of Trotter type (every " + llvm::Twine(period) +
         " steps); take one step more or fewer");
 
-  // The steps of a part: about `partSeconds` long, in whole periods, from
-  // the time that steps took; 100 steps until that is known.
   int64_t unit = std::max<int64_t>(1, period);
-  auto getPartSteps = [&]() -> int64_t {
-    double steps = secondsPerStep > 0.0 ? partSeconds / secondsPerStep : 100.0;
-    if (!(steps < 1e15))
-      steps = 1e15;
-    int64_t whole = static_cast<int64_t>(steps) / unit * unit;
-    return std::max(unit, whole);
-  };
   int64_t taken = 0;
   while (taken < count) {
     if (taken > 0 && (stopRequested || (poll && poll())))
@@ -649,7 +651,7 @@ llvm::Expected<int64_t> Simulation::run(int64_t count,
     int64_t remaining = count - taken;
     Part part;
     part.inner = period > 0 ? period - closing : 0;
-    int64_t partSteps = getPartSteps();
+    int64_t partSteps = getPartSteps(unit);
     if (period == 0) {
       part.outer = std::min(remaining, partSteps);
     } else {
@@ -707,7 +709,67 @@ llvm::Expected<int64_t> Simulation::run(int64_t count,
   return taken;
 }
 
+// The steps of a part: about `partSeconds` long, in whole multiples of
+// `unit` (periods of coupling), from the time that steps took; 100 steps
+// until that is known.
+int64_t Simulation::getPartSteps(int64_t unit) const {
+  double steps = secondsPerStep > 0.0 ? partSeconds / secondsPerStep : 100.0;
+  if (!(steps < 1e15))
+    steps = 1e15;
+  int64_t whole = static_cast<int64_t>(steps) / unit * unit;
+  return std::max(unit, whole);
+}
+
+llvm::Expected<int64_t> Simulation::minimize(std::optional<int64_t> count,
+                                             const std::function<bool()> &poll) {
+  if (busy.exchange(true))
+    return simulationError("another operation is under way on this "
+                           "simulation");
+  struct Release {
+    std::atomic<bool> &flag;
+    ~Release() { flag = false; }
+  } release{busy};
+  if (failed)
+    return simulationError("the simulation failed earlier; it keeps the "
+                           "state of step " + llvm::Twine(step) +
+                           " and runs no further");
+  if (!prepared.control.minimize)
+    return inputError("this simulation runs dynamics: minimize() takes a "
+                      "program whose integrator minimizes");
+  int64_t total = count ? *count : minimizationSteps;
+  if (total < 0)
+    return inputError("minimize takes a nonnegative number of steps");
+  stopRequested = false;
+  // Parts as those of run: the program of the parts after the first takes
+  // the positions and the length of the step that the last left.
+  int64_t taken = 0;
+  while (taken < total) {
+    if (taken > 0 && (stopRequested || (poll && poll())))
+      break;
+    Part part;
+    part.outer = std::min(total - taken, getPartSteps(1));
+    auto engine = getEngine();
+    if (!engine)
+      return engine.takeError();
+    auto began = std::chrono::steady_clock::now();
+    int64_t before = step;
+    if (llvm::Error error = runPart(**engine, part))
+      return std::move(error);
+    int64_t steps = step - before;
+    taken += steps;
+    double seconds = std::chrono::duration<double>(
+                         std::chrono::steady_clock::now() - began)
+                         .count();
+    if (steps >= 8 && seconds > 0.0)
+      secondsPerStep = seconds / steps;
+  }
+  return taken;
+}
+
 double Simulation::getTime() const {
+  // A minimization has no time.
+  if (prepared.control.minimize)
+    return 0.0;
   return static_cast<double>(step) * prepared.control.timestep;
 }
 
@@ -728,8 +790,13 @@ llvm::Expected<SimulationState> Simulation::getState() const {
     state.box[k] = output->box[k];
     state.tilt[k] = system.tilt[k];
   }
+  const auto &least = output->lastMinimization;
+  if (prepared.control.minimize && hasRun && least.step == step)
+    state.minimization =
+        SimulationMinimization{least.energy, least.rmsForce, least.maxForce,
+                               least.stepSize, least.maxForceParticle};
   const auto &row = output->lastEnergies;
-  if (hasRun && row.step == step)
+  if (hasRun && !prepared.control.minimize && row.step == step)
     state.energies = SimulationEnergies{row.potential, row.kinetic, row.total,
                                         row.conserved, row.temperature,
                                         row.virial, row.pressure, row.volume};

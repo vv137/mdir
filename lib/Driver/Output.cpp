@@ -649,6 +649,8 @@ void _mlir_ciface_mdrtWriteMinimization(int64_t step, double energy,
   double rms = counted ? std::sqrt(square / counted) : 0.0;
   energy += output.getDispersionEnergy() +
             output.getCoulombConstantEnergy() + output.ljpmeSelfEnergy;
+  output.lastMinimization = {step, energy, rms, std::sqrt(largest), size,
+                             static_cast<int64_t>(where)};
   output.log.print("INFO: %9lld %14.4f %14.4f %14.4f %9zu %14.6f\n",
                static_cast<long long>(step), energy / units::energy,
                rms / scale, std::sqrt(largest) / scale, where + 1,

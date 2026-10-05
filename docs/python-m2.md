@@ -20,6 +20,8 @@ errors and stops, and runtime and device ownership
 restraints ([python-velocities-restraints.md](python-velocities-restraints.md)).
 D200 (#95) lets the setters take OpenMM unit quantities
 ([python-units.md](python-units.md)).
+D[python-minimize] (#91) runs the minimizer of `mdir run` in a Python
+simulation ([python-minimize.md](python-minimize.md)).
 Tunable buffers remain open.
 Later items remain prospective work.
 

@@ -232,7 +232,9 @@ D198 (#92,
 and typed `System.restraints` mapped to `[[restraints]]`, which the
 four-stage example needs. D200 (#95,
 [unit quantities](python-units.md)) lets the setters take OpenMM unit
-quantities, converted at the boundary. Reporters,
+quantities, converted at the boundary. D[python-minimize] (#91,
+[minimization](python-minimize.md)) runs the minimizer of `mdir run` in a
+Python simulation, `Simulation.minimize(steps)`. Reporters,
 checkpoints, DLPack views and tunable buffers remain open.
 M2 covers
 a documented classical subset and requires a manylinux_2_28 pip wheel for
