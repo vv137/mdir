@@ -1,5 +1,6 @@
 #include "JITEngine.h"
 #include "JITMemory.h"
+#include "llvm/ExecutionEngine/JITEventListener.h"
 #include "mlir/Target/LLVMIR/Export.h"
 #include "llvm/ExecutionEngine/Orc/CompileUtils.h"
 #include "llvm/ExecutionEngine/Orc/ExecutionUtils.h"
@@ -61,6 +62,10 @@ Expected<std::unique_ptr<JITEngine>> JITEngine::create(
     if (!f.isDeclaration())
       f.setSection(section);
   auto layout = module->getDataLayout();
+  auto engine = std::unique_ptr<JITEngine>(new JITEngine);
+  engine->perfListener.reset(JITEventListener::createPerfJITEventListener());
+  if (!engine->perfListener)
+    engine->perfListener.reset(JITEventListener::createIntelJITEventListener());
   auto created = LLJITBuilder()
       .setDataLayout(layout)
       .setCompileFunctionCreator([&](JITTargetMachineBuilder)
@@ -68,17 +73,21 @@ Expected<std::unique_ptr<JITEngine>> JITEngine::create(
 
         return std::make_unique<TMOwningSimpleCompiler>(std::move(target));
       })
-      .setObjectLinkingLayerCreator([triple](ExecutionSession &session,
+      .setObjectLinkingLayerCreator([triple, &engine](ExecutionSession &session,
                                             jitlink::JITLinkMemoryManager &)
           -> Expected<std::unique_ptr<ObjectLayer>> {
-        return std::make_unique<RTDyldObjectLinkingLayer>(
+        auto layer = std::make_unique<RTDyldObjectLinkingLayer>(
             session, [triple](const MemoryBuffer &) {
               return std::make_unique<JITMemory>(triple);
             });
+        if (auto *listener = JITEventListener::createGDBRegistrationListener())
+          layer->registerJITEventListener(*listener);
+        if (engine->perfListener)
+          layer->registerJITEventListener(*engine->perfListener);
+        return layer;
       }).create();
   if (!created)
     return ownedError(created.takeError());
-  auto engine = std::unique_ptr<JITEngine>(new JITEngine);
   engine->jit = std::move(*created);
   auto &main = engine->jit->getMainJITDylib();
   for (auto &path : libraries) {

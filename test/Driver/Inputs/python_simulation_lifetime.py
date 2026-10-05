@@ -5,11 +5,13 @@ import sys
 import random
 import ctypes
 import concurrent.futures
+import time
 
 # Each order runs in a fresh process with ASLR unchanged.
 order = sys.argv[3] if len(sys.argv) > 3 else "numpy-first"
 if order == "runtime-first":
-    ctypes.CDLL(sys.argv[4], mode=ctypes.RTLD_GLOBAL)
+    for library in sys.argv[4:]:
+        ctypes.CDLL(library, mode=ctypes.RTLD_GLOBAL)
 if order == "mdir-first":
     import mdir
     import numpy as np
@@ -20,6 +22,11 @@ else:
 faulthandler.dump_traceback_later(900, exit=True)
 work = pathlib.Path(sys.argv[2])
 work.mkdir(parents=True, exist_ok=True)
+(work / "validation.txt").write_text("")
+def report(message):
+    print(message)
+    with (work / "validation.txt").open("a") as output:
+        output.write(message + "\n")
 topology = work / "pair.top"
 coordinates = work / "pair.gro"
 topology.write_text("""[ defaults ]
@@ -54,6 +61,23 @@ for precision in (mdir.Precision.Double, mdir.Precision.Mixed):
     programs.append(mdir.compile(system, state, integrator, ensemble, execution,
                                  mdir.Schedule()))
 
+if order == "timing":
+    # One long steady-state run; compilation and warmup are reported separately.
+    for precision, program in enumerate(programs):
+        start = time.perf_counter()
+        current = mdir.Simulation(program)
+        current.run(2)
+        compile_seconds = time.perf_counter() - start
+        start = time.perf_counter()
+        count = 200000
+        current.run(count)
+        elapsed = time.perf_counter() - start
+        report(f"timing precision={precision} compile={compile_seconds:.6f}s "
+              f"ms/step={1000*elapsed/count:.9f}")
+        del current
+    faulthandler.cancel_dump_traceback_later()
+    sys.exit(0)
+
 # Independent analytic Lennard-Jones force at the returned coordinates.
 # GROMACS fixture: epsilon=0.1 kJ/mol and sigma=0.3 nm, below switching.
 for precision, program in enumerate(programs):
@@ -69,7 +93,7 @@ for precision, program in enumerate(programs):
     tolerance = (256 * np.finfo(np.float64).eps if precision == 0 else
                  64 * np.finfo(np.float32).eps) * np.max(np.abs(expected))
     assert difference <= tolerance, (precision, difference, tolerance)
-    print(f"force oracle target={sys.argv[1]} precision={precision} "
+    report(f"force oracle target={sys.argv[1]} precision={precision} "
           f"reference={oracle[0]:.12e} difference={difference:.12e} "
           f"tolerance={tolerance:.12e} kJ/mol/nm")
     del current
@@ -158,7 +182,7 @@ for seed in (89, 196, 20261006):
     except BaseException:
         print(f"seed={seed} order={order} operations={trace}", file=sys.stderr)
         raise
-    print(f"lifecycle seed={seed} order={order}: 32 operations, 0 failures")
+    report(f"lifecycle seed={seed} order={order}: 32 operations, 0 failures")
 
 # Creation and destruction must synchronize with runs of another simulation.
 # The extension releases the GIL for execution; workers retain their own

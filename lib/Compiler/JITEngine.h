@@ -6,6 +6,8 @@
 #include "llvm/ExecutionEngine/Orc/Mangling.h"
 #include "llvm/Target/TargetMachine.h"
 
+namespace llvm { class JITEventListener; }
+
 namespace mdir::compiler {
 /// The simulation's final object boundary (D[jit-invariants]).
 class JITEngine {
@@ -20,6 +22,8 @@ public:
   llvm::Expected<void (*)(void **)> lookupPacked(llvm::StringRef name);
 
 private:
+  // The owned listener outlives the object layer's notifications.
+  std::unique_ptr<llvm::JITEventListener> perfListener;
   std::unique_ptr<llvm::orc::LLJIT> jit;
   bool initialized = false;
 };

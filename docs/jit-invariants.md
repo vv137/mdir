@@ -4,7 +4,7 @@ Issue #89 strengthens D196 at the final host object boundary. No control-file
 keys, file formats, defaults, or overwrite behavior change.
 
 The simulation owns an ORC object memory manager. It reserves a
-contiguous allocation per object, inspect allocated executable sections and
+contiguous allocation per object, inspects allocated executable sections and
 relocated exception-frame records before registration, and rejects layouts
 whose frame ranges leave their executable sections or whose bounding code
 interval overlaps another live object. Section names alone are not evidence.
@@ -25,8 +25,8 @@ than claimed as formal verification of either dependency.
 Validation will cover CPU/GPU, mixed/double, import orders, retained live
 engines, construction errors, and delayed exceptions, with ASLR retained.
 A separate host exception sanitizer baseline will distinguish interceptor
-failures from JIT failures. Numerical results is compared with D196's
-analytic pair oracle and the existing segment regressions.
+failures from JIT failures. Numerical results are compared with an independent analytic pair force and
+the existing segment regressions.
 
 ## Enforced transitions and dependency boundary
 
@@ -75,3 +75,40 @@ The wrapper uses LLVM 23.1.2 ORC LLJIT and RuntimeDyld public interfaces.
 Its packed entry matches the ABI documented by MLIR ExecutionEngine; the
 implementation is independent and creates only the simulation's void wrapper.
 No LLVM installation files are modified.
+
+## Reproduction and sanitizer configuration
+
+`test/Driver/jit-memory.test` exercises the production memory manager directly,
+including malformed relocated records, out-of-section FDEs, noncontiguous
+code allocations, overlap with a retained object's interval, duplicate
+finalization, registration after release, and release before deregistration.
+The native engine fixture includes late ORC initialization/deinitialization
+functions under x86-64 small and large code models and a missing-symbol
+initialization failure followed by a C++ throw after destruction.
+
+`python-simulation-lifetime{,-gpu}.test` each run fresh processes in NumPy-first,
+MDIR-first, and runtime-first orders (both runtimes first on the GPU). Each
+process runs the original 24 retained-engine cycles, then seeds 89, 196, and
+20261006 once each for 32 operations, retaining up to five simulations with
+both first and continued engines. Six additional lifetimes run on three host
+threads. Failures print the seed, import order, and operation sequence.
+`validation.txt` under each test's output directory records the independent
+force comparison and the seed outcomes. ASLR is retained.
+
+A sanitizer exception baseline can be built from
+`test/Driver/Inputs/host_exception_baseline.cpp` with GCC 11,
+`-fsanitize=address,undefined -fno-omit-frame-pointer`; it catches 32 throws
+without a JIT or GPU. The native JIT boundary executable is also run in the
+instrumented build with `ASAN_OPTIONS=detect_leaks=0:allow_user_poisoning=0`.
+The uninstrumented LLVM libraries require disabled user poisoning.
+`-fno-sanitize=vptr` avoids checks requiring RTTI from a no-RTTI LLVM build.
+Neither test disables ASLR. Instrumented generated machine code and LLVM's
+own allocations are outside the host sanitizer's coverage.
+
+The Python sanitizer configuration is tracked separately in #98: GCC 11's
+instrumented extension references unavailable LLVM RTTI and fails at import,
+before JIT execution. Preloading libasan and libstdc++ together changes the
+prior exception-interceptor recursion into a clean import diagnostic, but
+does not make this configuration a usable Python sanitizer baseline. Release
+Python lifecycle tests and native sanitizer tests provide distinct evidence;
+Python sanitizer lifecycle success is not claimed.
