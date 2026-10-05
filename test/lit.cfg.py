@@ -106,8 +106,8 @@ if config.mdir_cuda:
     except (OSError, subprocess.SubprocessError):
         pass
     config.environment["CUDA_ROOT"] = config.mdir_cuda_root
-# One device serves every worker of a suite: the tests that need it run one
-# at a time, the others side by side (test/mdir_lit.py).
+# One device serves every worker of a suite: at most four tests that need it
+# run at once, the others side by side (test/mdir_lit.py).
 if "cuda" in config.available_features:
     sys.path.insert(0, os.path.dirname(__file__))
     import mdir_lit

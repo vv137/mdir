@@ -2,11 +2,13 @@
 
 lit runs the tests of a suite in several worker processes, and
 CUDA_VISIBLE_DEVICES names one device for all of them. Tests that need the
-device take the parallelism group "mdir-gpu", of size 1 unless lit is given
--Dgpu_workers=N, so that they run one at a time while the others run side by
-side. The lock of the device that a
-suite holds (docs/workflow.md, "Shared machines") keeps other suites and
-timing runs off the device; this group orders the tests within one suite.
+device take the parallelism group "mdir-gpu", of size 4 unless lit is given
+-Dgpu_workers=N, so that at most four of them share the device while the
+others run side by side. One at a time, the suite took 1266 s on an RTX 3090;
+sharing the device without a bound, 262 s (PR #83). The lock of the device
+that a suite holds (docs/workflow.md, "Shared machines") keeps other suites
+and timing runs off the device; this group orders the tests within one
+suite.
 
 lit pickles the configuration for its workers, so the group is chosen by an
 instance of a class of this module rather than by a function of lit.cfg.py.
@@ -43,9 +45,9 @@ class GPUGroup:
 
 
 def serialize_gpu_tests(config, lit_config):
-    """Run the tests that need CUDA one at a time, or at most gpu_workers
-    at a time when lit is given -Dgpu_workers=N."""
-    value = lit_config.params.get("gpu_workers", "1")
+    """Run at most four tests that need CUDA at a time, or gpu_workers when
+    lit is given -Dgpu_workers=N."""
+    value = lit_config.params.get("gpu_workers", "4")
     try:
         workers = int(value)
     except ValueError:

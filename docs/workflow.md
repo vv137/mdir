@@ -165,8 +165,8 @@ device's use inside the lock. A timing run has its device to itself; tests
 may use either device between timings, and no contributor uses more than
 two at once. Full suites queue
 behind the lock instead of running side by side. Within one suite, lit runs
-the tests that need the device one at a time and the others in parallel
-(`test/mdir_lit.py`), so the suite needs no `-j 1`.
+at most four tests that need the device at once and the others in parallel
+(`test/mdir_lit.py`, `-Dgpu_workers=N`), so the suite needs no `-j 1`.
 
 ## Permissions
 

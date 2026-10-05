@@ -43,5 +43,5 @@ export ASAN_OPTIONS="detect_leaks=0:protect_shadow_gap=0:allow_user_poisoning=0:
 export UBSAN_OPTIONS="print_stacktrace=1:halt_on_error=1${UBSAN_OPTIONS:+:$UBSAN_OPTIONS}"
 # The AddressSanitizer of older compilers (GCC 9) loops on the random
 # placement of mappings of recent kernels; the tests run without it.
-# The tests that need a GPU still run one at a time (test/mdir_lit.py).
+# At most four tests that need a GPU still run at once (test/mdir_lit.py).
 setarch "$(uname -m)" -R lit -j 16 "$build/test" "$@"
