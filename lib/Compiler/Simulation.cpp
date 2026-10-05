@@ -9,7 +9,7 @@
 #include "mdir/Driver/Builder.h"
 #include "mdir/Driver/Output.h"
 #include "mlir/ExecutionEngine/CRunnerUtils.h"
-#include "mlir/ExecutionEngine/ExecutionEngine.h"
+#include "JITEngine.h"
 #include "llvm/ExecutionEngine/Orc/Mangling.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/CommandLine.h"
@@ -159,7 +159,7 @@ struct Simulation::Engine {
   Program program;
   std::unique_ptr<mlir::MLIRContext> context;
   mlir::OwningOpRef<mlir::ModuleOp> module;
-  std::unique_ptr<mlir::ExecutionEngine> engine;
+  std::unique_ptr<compiler::JITEngine> engine;
   void (*function)(void **) = nullptr;
   /// The volume that the constants of the program are for.
   double volume = 0.0;
@@ -186,7 +186,11 @@ struct Arguments {
 };
 } // namespace
 
-Simulation::~Simulation() = default;
+Simulation::~Simulation() {
+  std::lock_guard<std::mutex> lock(getRunMutex());
+  continued.reset();
+  first.reset();
+}
 
 static llvm::Expected<std::unique_ptr<Simulation::Engine>>
 compileEngine(const Control &control, const System &system,
@@ -254,45 +258,26 @@ compileEngine(const Control &control, const System &system,
   auto targetMachine = compiler::createHostMachine();
   if (!targetMachine)
     return targetMachine.takeError();
-  // Match the default section of the functions ORC adds after the transformer.
-  // On x86-64 ELF the large code model uses .ltext (with SHF_X86_64_LARGE),
-  // including for ORC's synthesized initialization and deinitialization entry.
-  StringRef textSection =
-      (*targetMachine)->getTargetTriple().getArch() == llvm::Triple::x86_64 &&
-              (*targetMachine)->getCodeModel() == llvm::CodeModel::Large
-          ? ".ltext"
-          : ".text";
-
   llvm::cl::Option *scheduler = getSchedulerOption();
   if (scheduler)
     (void)scheduler->addOccurrence(0, "pre-RA-sched", "fast");
-  mlir::ExecutionEngineOptions options;
-  llvm::SmallVector<StringRef> shared(paths.begin(), paths.end());
-  options.sharedLibPaths = shared;
-  // A frame registration describes the bounding PC range of its functions.
-  // Keep the GPU module's host entry, constructors, and destructors together:
-  // separately mapped text sections can enclose another engine's code, and
-  // libgcc's interval index can retain a freed registration on deregistration.
-  auto keepHostCodeTogether = [textSection](llvm::Module *module) {
-    if (module->getTargetTriple().isOSBinFormatELF())
-      for (llvm::Function &function : *module)
-        if (!function.isDeclaration())
-          function.setSection(textSection);
-    return llvm::Error::success();
-  };
-  options.transformer = keepHostCodeTogether;
-  auto created = mlir::ExecutionEngine::create(
-      *engine->module, options, std::move(*targetMachine));
+  struct ResetScheduler {
+    llvm::cl::Option *option;
+    ~ResetScheduler() {
+      if (option)
+        (void)option->addOccurrence(0, "pre-RA-sched", "default");
+    }
+  } resetScheduler{scheduler};
+  auto created = compiler::JITEngine::create(
+      *engine->module, std::move(*targetMachine), paths, engine->program.entry);
   if (!created) {
-    if (scheduler)
-      (void)scheduler->addOccurrence(0, "pre-RA-sched", "default");
     return llvm::make_error<compiler::CompileError>(
         "cannot compile the program for execution: " +
         llvm::toString(created.takeError()));
   }
   engine->engine = std::move(*created);
   bool writesForces = engine->program.writesForces;
-  engine->engine->registerSymbols([&](llvm::orc::MangleAndInterner interner) {
+  auto symbolError = engine->engine->registerSymbols([&](llvm::orc::MangleAndInterner interner) {
     llvm::orc::SymbolMap symbols;
     auto add = [&](StringRef name, void *function) {
       symbols[interner(name)] = {llvm::orc::ExecutorAddr::fromPtr(function),
@@ -324,6 +309,9 @@ compileEngine(const Control &control, const System &system,
     return symbols;
   });
 
+  if (symbolError)
+    return std::move(symbolError);
+
   // The runtime takes the failures that it cannot return from to the
   // simulation, and a GPU simulation the device that the process uses.
   if (auto set = reinterpret_cast<void (*)(void (*)(const char *))>(
@@ -332,8 +320,6 @@ compileEngine(const Control &control, const System &system,
     set(&stopPart);
   if (control.target == Target::GPU) {
     if (usedDevice >= 0 && usedDevice != execution.device) {
-      if (scheduler)
-        (void)scheduler->addOccurrence(0, "pre-RA-sched", "default");
       return unsupported("this process runs its GPU simulations on device " +
                          llvm::Twine(usedDevice) + "; a simulation on device " +
                          llvm::Twine(execution.device) +
@@ -344,8 +330,6 @@ compileEngine(const Control &control, const System &system,
           llvm::sys::DynamicLibrary::SearchForAddressOfSymbol(
               "mgpuSetDefaultDevice"));
       if (!select) {
-        if (scheduler)
-          (void)scheduler->addOccurrence(0, "pre-RA-sched", "default");
         return unsupported("the GPU runtime does not select devices");
       }
       select(static_cast<int32_t>(execution.device));
@@ -353,10 +337,9 @@ compileEngine(const Control &control, const System &system,
     }
   }
   // Loads the kernels of a GPU; the functions of the driver are known.
-  engine->engine->initialize();
+  if (auto error = engine->engine->initialize())
+    return llvm::make_error<compiler::CompileError>(llvm::toString(std::move(error)));
   auto function = engine->engine->lookupPacked(engine->program.entry);
-  if (scheduler)
-    (void)scheduler->addOccurrence(0, "pre-RA-sched", "default");
   if (!function)
     return llvm::make_error<compiler::CompileError>(
         llvm::toString(function.takeError()));
@@ -368,6 +351,7 @@ compileEngine(const Control &control, const System &system,
 
 llvm::Expected<std::unique_ptr<Simulation>>
 Simulation::create(const model::PreparedModel &prepared) {
+  std::unique_lock<std::mutex> lock(getRunMutex());
   const Control &given = prepared.control;
   if (given.minimize)
     return unsupported("a simulation runs dynamics; minimization follows "
@@ -384,6 +368,10 @@ Simulation::create(const model::PreparedModel &prepared) {
     return unsupported("a simulation with a barostat in a triclinic cell is "
                        "not supported yet");
   std::unique_ptr<Simulation> simulation(new Simulation());
+  struct UnlockBeforeCleanup {
+    std::unique_lock<std::mutex> &lock;
+    ~UnlockBeforeCleanup() { if (lock.owns_lock()) lock.unlock(); }
+  } unlockBeforeCleanup{lock};
   simulation->prepared = prepared;
   Control &control = simulation->prepared.control;
   control.segments = true;
@@ -406,8 +394,10 @@ Simulation::create(const model::PreparedModel &prepared) {
 
   simulation->initial = system;
   auto engine = compileEngine(control, system, prepared.execution);
-  if (!engine)
+  if (!engine) {
+    lock.unlock();
     return engine.takeError();
+  }
   simulation->first = std::move(*engine);
 
   auto output = std::make_unique<Output>();
@@ -426,10 +416,12 @@ Simulation::create(const model::PreparedModel &prepared) {
   output->volume = system.box[0] * system.box[1] * system.box[2];
   output->endStep = 0;
   simulation->output = std::move(output);
+  lock.unlock();
   return std::move(simulation);
 }
 
 llvm::Expected<Simulation::Engine *> Simulation::getEngine() {
+  std::lock_guard<std::mutex> lock(getRunMutex());
   if (!hasRun)
     return first.get();
   if (!continued) {

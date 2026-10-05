@@ -1,0 +1,3 @@
+# REQUIRES: python-api
+# RUN: %mdir_python %S/Inputs/python_exception_baseline.py %t | FileCheck %s
+# CHECK: native exception baseline: 32 missing-input errors, 0 failures

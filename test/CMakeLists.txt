@@ -34,7 +34,13 @@ add_llvm_executable(mdir-compile-test Driver/CompileTest.cpp)
 llvm_update_compile_flags(mdir-compile-test)
 target_link_libraries(mdir-compile-test PRIVATE MDIRCompiler)
 
+add_llvm_executable(mdir-jit-memory-test Driver/JITMemoryTest.cpp)
+llvm_update_compile_flags(mdir-jit-memory-test)
+target_compile_options(mdir-jit-memory-test PRIVATE -fexceptions)
+target_link_libraries(mdir-jit-memory-test PRIVATE MDIRSimulation MLIRParser)
+
 set(MDIR_TEST_DEPENDS
+  mdir-jit-memory-test
   mdir-compile-test
   mdir-model-test
   mdir

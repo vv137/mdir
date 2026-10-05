@@ -1,0 +1,4 @@
+# RUN: mdir-jit-memory-test | FileCheck %s
+# CHECK: JIT memory negative and lifecycle checks passed
+# RUN: not --crash mdir-jit-memory-test release-before-deregister 2>&1 | FileCheck %s --check-prefix=RELEASE
+# RELEASE: JIT ownership: release before frame deregistration
