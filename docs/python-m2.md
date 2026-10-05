@@ -1,6 +1,8 @@
 # Python API preparation (M2)
 
 Status: implementation plan with maintainer rulings, not implemented functionality.
+"M2" in this document is M2a: D[m2b-differentiable] split the milestone,
+and differentiable simulation is M2b ([roadmap](roadmap.md), Section 6.1).
 D169 fixes the milestone's scope; D187 records this preparation.
 The work item is [#46](https://github.com/vv137/mdir/issues/46).
 The maintainer approved the contracts in Section 6 on 2026-10-04,

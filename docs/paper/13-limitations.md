@@ -144,7 +144,12 @@ remain subsequent work; M2 and its packaging gate are incomplete.
 Future PyTorch/JAX automatic differentiation (requested 2026-10-04)
 requires explicit framework derivative rules for energy, force, virial and
 parameter evaluation; DLPack alone shares storage, not gradient graphs.
-Sampling and differentiable evaluation remain separate concerns. The distributed work
+Sampling and differentiable evaluation remain separate concerns. That work
+is milestone M2b (D[m2b-differentiable]), after the Python API (M2a): the
+parameters of a potential fitted to ensemble averages by reweighting
+stored frames [[ThalerZavadlav2021]](references.md#thalerzavadlav2021),
+with an evaluator of the energy at the frames and its derivative in the
+parameters, adapted to PyTorch first and JAX second; it is not begun. The distributed work
 begins with a graph of the dependencies of the `md` ops, ownership and
 freshness of fields, and a verifier of two domains (in which the
 disjoint union of the constraints is the unit of ownership, D83), then

@@ -1127,6 +1127,17 @@ Used for: lists of clusters along a Hilbert curve whose indices are
 stored as deltas in nibbles, 3.6 bytes a particle against 12 for GROMACS;
 weighed against the lists of groups in the roadmap (Section 2).
 
+### ThalerZavadlav2021
+
+S. Thaler, J. Zavadlav, "Learning neural network potentials from
+experimental data via Differentiable Trajectory Reweighting," *Nat.
+Commun.* **12**, 6884 (2021).
+[doi:10.1038/s41467-021-27241-4](https://doi.org/10.1038/s41467-021-27241-4)
+
+Used for: the gradient of an ensemble average with respect to the
+parameters of the potential by reweighting stored frames, without
+differentiating the trajectory; the scope of M2b (D[m2b-differentiable]).
+
 ### Theobald2005
 
 D. L. Theobald, "Rapid calculation of RMSDs using a quaternion-based
