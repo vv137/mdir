@@ -15,9 +15,9 @@ endforeach()
 
 # A simulation that persists across runs (D196): it compiles
 # and runs its programs in the process that embeds it.
-add_mlir_library(MDIRSimulation Simulation.cpp
+add_mlir_library(MDIRSimulation Simulation.cpp JITEngine.cpp JITMemory.cpp
   PARTIAL_SOURCES_INTENDED
-  LINK_COMPONENTS Core Support nativecodegen native
+  LINK_COMPONENTS Core Support nativecodegen native DebugInfoDWARF
   LINK_LIBS PUBLIC MDIRCompiler MLIRExecutionEngine
 )
 foreach(target MDIRSimulation obj.MDIRSimulation)

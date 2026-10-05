@@ -147,7 +147,14 @@ coupling at the same steps; a run may end with the step of energy of a row
 of the log, whose energies equal that row's; failures return to Python with
 the state from before them. A failed part returns through the runtime before
 its state is discarded. Each ELF host module keeps its functions in one code
-section so that exception-frame ranges remain disjoint across JIT lifetimes.
+section for locality. D[jit-invariants] reserves contiguous object storage and
+checks the allocated executable sections and relocated exception-frame ranges
+before registration, including late ORC-generated functions. It rejects
+unsupported layouts and deregisters before releasing storage; creation,
+execution, and teardown share the process runtime mutex. ELF x86-64 and
+AArch64 host unwind formats are supported by the checks; the lifecycle matrix
+is exercised on x86-64. LLVM relocation correctness and libgcc's frame index
+remain dependency assumptions, as described in [JIT ownership](../jit-invariants.md).
 D198 draws initial velocities by the CLI's
 code, so that Python and `mdir run` start from the same velocities bit for
 bit, and maps typed positional restraints onto `[[restraints]]`.

@@ -183,24 +183,21 @@ so one simulation runs at a time in a process: a run waits for another
 simulation's run to end. Simulations created one after another are
 independent. The GIL is released while a part runs.
 
-On ELF hosts, each compiled module puts its functions in one text section,
-including the GPU module's host constructors and destructors and the entry
-functions ORC synthesizes afterward. The section follows the target machine's
-code model: `.ltext` for x86-64's large code model, `.text` otherwise; forcing
-`.text` for all functions would still separate ORC's large-model functions. A registered
-exception-frame table covers the bounding address range of those functions.
-Separate text sections can be mapped around another module's code; overlapping
-ranges can leave a freed registration object in libgcc's interval index after
-an engine is destroyed. Keeping the code together makes those ranges disjoint
-while retaining normal frame registration and cleanup. The lifetime regression
-keeps three simulations alive while creating and destroying others, then raises
-an input error, in both precisions on the CPU and GPU. In a diagnostic run of
-24 creation/destruction cycles with address randomization enabled, the old
-layout produced 52 overlapping registrations and crashed on the deferred throw;
-the corrected layout produced none, paired all 144 registrations and
-unregistrations, and caught the error normally. These measurements validate
-the exercised layout; checking every emitted object and registration at run
-time remains a separate hardening task.
+D[jit-invariants] enforces the host object contract after code generation,
+including ORC's synthesized entries. The owned memory manager reserves space
+for each object together, checks its actual executable sections and relocated
+exception-frame descriptions before registering them, and deregisters before
+freeing any storage. Creation, continuation compilation, execution, and
+teardown share the process runtime mutex; independent simulations may be held
+simultaneously, but operations using the runtime wait for that mutex. No call
+holds it while polling Python. See [JIT ownership](jit-invariants.md) for the
+state transitions, rejected layouts, tests, and dependency assumptions.
+
+The original D196 section placement is retained for locality: `.ltext` for
+x86-64's large code model, `.text` otherwise. Its diagnostic run observed
+52 overlapping registrations before the correction and none afterward,
+with all 144 registrations paired with deregistration. D[jit-invariants]
+replaces reliance on that exercised layout with checks of every final object.
 
 The device is resolved when the first GPU simulation in a process runs:
 `Execution.device` is an index among the devices that `CUDA_VISIBLE_DEVICES`

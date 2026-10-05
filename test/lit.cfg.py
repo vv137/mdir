@@ -34,6 +34,7 @@ tools = [
     "mdir-opt",
     "mdir-model-test",
     "mdir-compile-test",
+    "mdir-jit-memory-test",
     "mlir-opt",
     "mlir-runner",
     "FileCheck",
