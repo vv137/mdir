@@ -1,0 +1,2 @@
+# REQUIRES: hdf5, cuda
+# RUN: %python %record %log gpu-4

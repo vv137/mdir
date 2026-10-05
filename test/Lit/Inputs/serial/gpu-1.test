@@ -1,0 +1,2 @@
+# REQUIRES: cuda
+# RUN: %python %record %log gpu-1

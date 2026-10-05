@@ -1,0 +1,14 @@
+# The tests that need CUDA share the device among at most gpu_workers of
+# them in a suite run by several workers, and the others run side by side
+# (test/mdir_lit.py). Seven workers leave one for each CPU test while GPU
+# tests wait for the group. The suite declares the feature cuda itself: no
+# device is used.
+# RUN: rm -rf %t && mkdir -p %t/1 %t/2
+# RUN: %lit -j 7 -q -Dout=%t/1 -Dgpu_workers=1 %S/Inputs/serial
+# RUN: %python %S/Inputs/check_intervals.py %t/1 1 | FileCheck --check-prefix=ONE %s
+# RUN: %lit -j 7 -q -Dout=%t/2 -Dgpu_workers=2 %S/Inputs/serial
+# RUN: %python %S/Inputs/check_intervals.py %t/2 2 | FileCheck --check-prefix=TWO %s
+# RUN: not %lit -q -Dout=%t/1 -Dgpu_workers=0 %S/Inputs/serial 2>&1 | FileCheck --check-prefix=BAD %s
+# ONE: at most 1 GPU tests at once, CPU tests side by side
+# TWO: at most 2 GPU tests at once, CPU tests side by side
+# BAD: gpu_workers must be a positive integer, not '0'

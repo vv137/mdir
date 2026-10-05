@@ -9,7 +9,7 @@ config.test_format = lit.formats.ShTest()
 config.suffixes = [".mlir", ".toml", ".test"]
 config.test_source_root = os.path.dirname(__file__)
 config.test_exec_root = os.path.join(config.mdir_obj_root, "test")
-config.excludes = ["CMakeLists.txt", "lit.cfg.py", "lit.site.cfg.py.in", "lib", "Inputs"]
+config.excludes = ["CMakeLists.txt", "lit.cfg.py", "lit.site.cfg.py.in", "mdir_lit.py", "lib", "Inputs"]
 
 # The options of the sanitizers reach the tests of a sanitized build
 # (scripts/build-sanitized.sh), and the choice of the device reaches the
@@ -56,6 +56,9 @@ config.substitutions.append(
 import sys
 
 config.substitutions.append(("%python", sys.executable))
+# lit itself, for the tests of how the suite is scheduled (test/Lit).
+config.substitutions.append(
+    ("%lit", sys.executable + " -c 'import lit.main; lit.main.main()'"))
 
 # The runtime, and the OpenMP runtime that code lowered through the omp
 # dialect needs.
@@ -103,6 +106,13 @@ if config.mdir_cuda:
     except (OSError, subprocess.SubprocessError):
         pass
     config.environment["CUDA_ROOT"] = config.mdir_cuda_root
+# One device serves every worker of a suite: at most four tests that need it
+# run at once, the others side by side (test/mdir_lit.py).
+if "cuda" in config.available_features:
+    sys.path.insert(0, os.path.dirname(__file__))
+    import mdir_lit
+
+    mdir_lit.serialize_gpu_tests(config, lit_config)
 # Runs of the driver under compute-sanitizer (memcheck, initcheck,
 # racecheck) take about a minute; they run when lit is given
 # -Dsanitize=1 (docs/principles.md, Section 6).
