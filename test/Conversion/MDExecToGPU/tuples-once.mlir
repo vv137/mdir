@@ -117,8 +117,7 @@ func.func @two(%m1: memref<?x2xi32>, %m2: memref<?x2xi32>, %n: index,
 // of groups and its forces (D139). With one part, a block of the kernel of
 // the forces computes the sums, as the kernel of the reduction would, then
 // the arithmetic and the forces; the kernels of several parts are launched
-// only for several, and leave the totals in the first element of the
-// buffers of the parts. With one part, one kernel runs instead of the
+// only for several, and leave the totals in a buffer of their own. With one part, one kernel runs instead of the
 // reduction and the forces, and the host reads no sum (#66); without the
 // fusion the results also take a buffer that a kernel clears.
 //
@@ -129,7 +128,7 @@ func.func @two(%m1: memref<?x2xi32>, %m2: memref<?x2xi32>, %n: index,
 // CENTERS:           scf.if %{{[0-9]+}} -> (f64) {
 // CENTERS:             gpu.barrier
 // CENTERS:           } else {
-// CENTERS:             memref.load %{{[a-z0-9_]+}}[%{{[a-z0-9_]+}}] : memref<?xf64, 1>
+// CENTERS:             memref.load %{{[a-z0-9_]+}}[%{{[a-z0-9_]+}}] : memref<1xf64, 1>
 // CENTERS:           arith.mulf %{{[0-9]+}}, %{{[a-z0-9_]+}} {{.*}}: f64
 // CENTERS-NOT:     gpu.launch
 // CENTERS:         return
