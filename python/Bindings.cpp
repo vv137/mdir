@@ -77,6 +77,29 @@ struct Program {
     if (stale()) throw StaleProgramError("compile inputs changed; explicitly recompile the program");
   }
 };
+// Runs `call` with the GIL released. Signals reach Python between parts; a
+// KeyboardInterrupt ends the call there and is raised once the GIL is held
+// again.
+template <class Call> static int64_t withSignals(Call call) {
+  std::optional<py::error_already_set> interrupt;
+  std::optional<llvm::Expected<int64_t>> taken;
+  {
+    py::gil_scoped_release release;
+    taken.emplace(call([&] {
+      py::gil_scoped_acquire acquire;
+      if (PyErr_CheckSignals() != 0) {
+        interrupt.emplace();
+        return true;
+      }
+      return false;
+    }));
+  }
+  if (interrupt) {
+    if (!*taken) llvm::consumeError(taken->takeError());
+    throw *interrupt;
+  }
+  return unwrap(std::move(*taken));
+}
 PYBIND11_MODULE(mdir, m) {
   // Required at import as well as configuration, including installed modules.
   try {
@@ -390,6 +413,16 @@ PYBIND11_MODULE(mdir, m) {
       d["virial"] = e.virial; d["pressure"] = e.pressure; d["volume"] = e.volume;
       return d;
     })
+    .def_property_readonly("minimization", [](const compiler::SimulationState &s) -> py::object {
+      // The row of the log of `mdir run` at the last step of a minimization,
+      // in kJ/mol and nm (D[python-minimize]).
+      if (!s.minimization) return py::none();
+      const auto &m = *s.minimization;
+      py::dict d;
+      d["energy"] = m.energy; d["rms_force"] = m.rmsForce; d["max_force"] = m.maxForce;
+      d["max_force_particle"] = m.maxForceParticle; d["step_size"] = m.stepSize;
+      return d;
+    })
     .def_property_readonly("cell", [](const compiler::SimulationState &s) {
       driver::Cell cell;
       for (int k = 0; k != 3; ++k) { cell.diagonal[k] = s.box[k]; cell.tilt[k] = s.tilt[k]; }
@@ -416,27 +449,15 @@ PYBIND11_MODULE(mdir, m) {
       return result;
     }), py::arg("program"))
     .def("run", [](PySimulation &s, int64_t steps, bool energy) {
-      std::optional<py::error_already_set> interrupt;
-      std::optional<llvm::Expected<int64_t>> taken;
-      {
-        py::gil_scoped_release release;
-        // Signals reach Python between parts; a KeyboardInterrupt ends the
-        // run there and is raised once the GIL is held again.
-        taken.emplace(s.simulation->run(steps, [&] {
-          py::gil_scoped_acquire acquire;
-          if (PyErr_CheckSignals() != 0) {
-            interrupt.emplace();
-            return true;
-          }
-          return false;
-        }, energy));
-      }
-      if (interrupt) {
-        if (!*taken) llvm::consumeError(taken->takeError());
-        throw *interrupt;
-      }
-      return unwrap(std::move(*taken));
+      return withSignals([&](const std::function<bool()> &poll) {
+        return s.simulation->run(steps, poll, energy);
+      });
     }, py::arg("steps"), py::arg("energy") = false)
+    .def("minimize", [](PySimulation &s, std::optional<int64_t> steps) {
+      return withSignals([&](const std::function<bool()> &poll) {
+        return s.simulation->minimize(steps, poll);
+      });
+    }, py::arg("steps") = py::none())
     .def("request_stop", [](PySimulation &s) { s.simulation->requestStop(); })
     .def("state", [](PySimulation &s) { return unwrap(s.simulation->getState()); })
     .def_property_readonly("step", [](const PySimulation &s) { return s.simulation->getStep(); })

@@ -163,10 +163,12 @@ system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
 integrator, execution = mdir.Integrator(), mdir.Execution()
 execution.target = target
 integrator.minimize = True
-expect(mdir.UnsupportedError,
-       lambda: mdir.Simulation(mdir.compile(system, state, integrator, mdir.Ensemble(),
-                                            execution, mdir.Schedule())),
-       "minimization")
+# A minimization is a simulation of its own (D[python-minimize]): it
+# takes minimize(), not run(n).
+minimizer = mdir.Simulation(mdir.compile(system, state, integrator, mdir.Ensemble(),
+                                         execution, mdir.Schedule()))
+expect(mdir.InputError, lambda: minimizer.run(1), "minimize")
+del minimizer
 integrator.minimize = False
 program = mdir.compile(system, state, integrator, mdir.Ensemble(), execution, mdir.Schedule())
 integrator.timestep = 0.002

@@ -1,0 +1,16 @@
+# REQUIRES: python-api, hdf5
+# Minimization in a Python simulation on the CPU (D[python-minimize]):
+# the minimizer of `mdir run` in several parts against its last row and
+# checkpoint, the NVT stage after it, and refusals.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_minimize.py %S/Inputs/dipeptide CPU mdir %t | FileCheck %s
+# CHECK: CPU Double: one part of 100 steps:
+# CHECK: CPU Double: 10 parts of one step after it: row at step 110 within
+# CHECK: CPU Double: 30 parts of one step: row at step 30 within
+# CHECK: CPU Double: NVT from the minimized state, step 10:
+# CHECK: CPU Mixed: one part of 100 steps:
+# CHECK: CPU Mixed: 10 parts of one step after it: row at step 110 within
+# CHECK: CPU Mixed: 30 parts of one step: row at step 30 within
+# CHECK: CPU Mixed: NVT from the minimized state, step 10:
+# CHECK: CPU Mixed, cutoff: one part of 20 steps:
+# CHECK: minimization refusals passed

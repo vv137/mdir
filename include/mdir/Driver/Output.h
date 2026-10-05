@@ -95,6 +95,15 @@ struct Output {
   /// Records a checkpoint stop before its direct process exit (D168).
   std::function<llvm::Error(int64_t, const char *)> recordStop;
   int64_t lastMinimizationStep = 0;
+  /// The last row of a minimization, in kJ/mol and nm: the energy with its
+  /// constant parts, the RMS and the largest force without their parts
+  /// along the constraints, the particle of the largest (zero-based), and
+  /// the length of the next step (D[python-minimize]).
+  struct MinimizationRow {
+    int64_t step = -1;
+    double energy = 0.0, rmsForce = 0.0, maxForce = 0.0, stepSize = 0.0;
+    int64_t maxForceParticle = 0;
+  } lastMinimization;
   /// The rows of the log as columns (D149), or none.
   ColumnFile energies;
   /// The terms over centers (D145), or none, and the number of

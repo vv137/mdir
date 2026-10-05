@@ -7189,11 +7189,13 @@ void Builder::emitMinimization() {
   // groups to their shapes, which does not shrink with the step: where
   // the file has close contacts (a bilayer from packmol, bonds to
   // hydrogens 0.02 Å from their lengths) that change alone can raise the
-  // energy, and no step is ever taken.
+  // energy, and no step is ever taken. A segment that continues a
+  // minimization begins where the last one ended, on that surface
+  // (D[python-minimize]).
   std::string x0 = "%x0";
   bool settles = hasSettles();
   std::vector<const Program::TupleSet *> shakeSets = getShakeSets();
-  if (settles || !shakeSets.empty()) {
+  if ((settles || !shakeSets.empty()) && !control.continuesSegment) {
     std::string current = "%x0";
     unsigned steps = (settles ? 1 : 0) + shakeSets.size(), step = 0;
     std::string constrained = hasSites() ? "%x0ks" : "%x0k";
@@ -7231,10 +7233,16 @@ void Builder::emitMinimization() {
     emitRestraints("  ", x0, "%p_", "%f0p", "%f0", "%u0p", "%u0", "%w0z",
                    "%w0r");
   }
-  emitTerms(x0);
-  os << "  %h0 = arith.constant "
-     << formatReal(control.minimizeStep * units::length) << " : f64\n"
-     << "  %h_most = arith.constant " << formatReal(1.0 * units::length)
+  // The terms at the start, which a continued segment does not log.
+  if (!isRestart())
+    emitTerms(x0);
+  // The length of the first step: that of the control file, or the one
+  // that the last segment left.
+  std::string h0 = control.segments ? "%first_size" : "%h0";
+  if (!control.segments)
+    os << "  %h0 = arith.constant "
+       << formatReal(control.minimizeStep * units::length) << " : f64\n";
+  os << "  %h_most = arith.constant " << formatReal(1.0 * units::length)
      << " : f64\n"
      << "  %grow = arith.constant 1.2 : f64\n"
      << "  %shrink = arith.constant 0.2 : f64\n"
@@ -7258,7 +7266,7 @@ void Builder::emitMinimization() {
     return reported;
   };
   std::string reported = emitReported("  ", x0, "%f0", "0");
-  os << "  mdrt.host_call @mdrtWriteMinimization(%start, %u0, %h0, "
+  os << "  mdrt.host_call @mdrtWriteMinimization(%start, %u0, " << h0 << ", "
      << reported << ", %id)\n"
      << "      : (i64, f64, f64, !vec, !ids)\n";
 
@@ -7266,18 +7274,27 @@ void Builder::emitMinimization() {
   // otherwise the next one is shorter, from where the step began. The
   // loops: over the intervals between frames (one if there are none),
   // over the intervals between energies in each, and over the steps.
-  int64_t period = control.energyPeriod;
-  int64_t framePeriod =
-      control.framePeriod > 0 ? control.framePeriod : control.numSteps;
+  // A segment (D[python-minimize]) is one interval of the steps that
+  // the entry takes, with a row at its end.
   std::string state = "!vec, !vec, f64, f64";
-  os << "  %n0 = arith.constant " << control.numSteps / framePeriod
-     << " : index\n"
-     << "  %n1 = arith.constant " << framePeriod / period << " : index\n"
-     << "  %n2 = arith.constant " << period << " : index\n"
-     << "  %per0 = arith.constant " << framePeriod << " : index\n"
-     << "  %xe0, %fe0, %ue0, %he0 = scf.for %i0 = %c0 to %n0 step %c1\n"
+  if (control.segments) {
+    os << "  %n0 = arith.constant 1 : index\n"
+       << "  %n1 = arith.constant 1 : index\n"
+       << "  %n2 = arith.index_cast %count_outer : i64 to index\n"
+       << "  %per0 = arith.addi %n2, %c0 : index\n";
+  } else {
+    int64_t period = control.energyPeriod;
+    int64_t framePeriod =
+        control.framePeriod > 0 ? control.framePeriod : control.numSteps;
+    os << "  %n0 = arith.constant " << control.numSteps / framePeriod
+       << " : index\n"
+       << "  %n1 = arith.constant " << framePeriod / period << " : index\n"
+       << "  %n2 = arith.constant " << period << " : index\n"
+       << "  %per0 = arith.constant " << framePeriod << " : index\n";
+  }
+  os << "  %xe0, %fe0, %ue0, %he0 = scf.for %i0 = %c0 to %n0 step %c1\n"
      << "      iter_args(%xa0 = " << x0
-     << ", %fa0 = %f0, %ua0 = %u0, %ha0 = %h0)\n"
+     << ", %fa0 = %f0, %ua0 = %u0, %ha0 = " << h0 << ")\n"
      << "      -> (" << state << ") {\n"
      << "    %xe1, %fe1, %ue1, %he1 = scf.for %i1 = %c0 to %n1 step %c1\n"
      << "        iter_args(%xa1 = %xa0, %fa1 = %fa0, %ua1 = %ua0, "
@@ -7339,8 +7356,11 @@ void Builder::emitMinimization() {
        << "  %end = arith.addi %start, %c_total : i64\n"
        << "  mdrt.host_call @mdrtWriteCheckpoint(%end, %xe0, %v0, %id)\n"
        << "      : (i64, !vec, !vec, !ids)\n";
-  os << "  mdrt.host_call @mdrtFinish(%xe0, %v0, %id) : (!vec, !vec, !ids)\n"
-     << "  return\n}\n";
+  os << "  mdrt.host_call @mdrtFinish(%xe0, %v0, %id) : (!vec, !vec, !ids)\n";
+  // The forces at the positions that the segment ends at.
+  if (control.segments)
+    os << "  mdrt.host_call @mdrtFinishForces(%fe0, %id) : (!vec, !ids)\n";
+  os << "  return\n}\n";
 }
 
 void Builder::emitTerms(StringRef x) {
@@ -7491,6 +7511,11 @@ void Builder::emitEntry() {
     os << ",\n    %count_outer: i64, %count_inner: i64, %count_tail: i64,"
        << "\n    %count_energy_plain: i64, %count_energy_close: i64,"
        << " %count_energy_inner: i64";
+  // A minimization in segments takes its steps in %count_outer and the
+  // length of its first step, which the last segment left
+  // (D[python-minimize]).
+  if (control.segments && control.minimize)
+    os << ", %first_size: f64";
   os << ") {\n";
 
   os << "  %c0 = arith.constant 0 : index\n"
@@ -7510,7 +7535,8 @@ void Builder::emitEntry() {
     os << "  %noise_memory = memref.alloca() : memref<1xi64>\n"
        << "  memref.store %start, %noise_memory[%c0] : memref<1xi64>\n"
        << "  %noise_one = arith.constant 1 : i64\n";
-  if (control.segments) {
+  // A minimization has loops of its own (emitMinimization).
+  if (control.segments && !control.minimize) {
     // The counts that the entry takes. The first nest is over the periods
     // of coupling, with plain steps inside, or over steps; the second, if
     // any, is one period that closes with a step of energy.
@@ -7535,7 +7561,9 @@ void Builder::emitEntry() {
   // well (two with the barostat of Trotter type), and one over energy intervals a whole period after its loop over
   // periods.
   int64_t steps = 1;
-  if (control.segments && levels[0].name == "couple") {
+  if (control.minimize) {
+    // None: emitMinimization counts its steps.
+  } else if (control.segments && levels[0].name == "couple") {
     // An iteration over a period takes its plain steps and those that close
     // it: one, or two with the barostat of Trotter type. The period of the
     // second nest is the whole of its one interval of energy.
@@ -8145,18 +8173,19 @@ llvm::Error Builder::build() {
   }
 
   // A program of segments has no outputs of its own: its loops are those
-  // of the periods of coupling and of the steps (D196).
-  if (control.segments && (control.minimize || control.energyPeriod > 0 ||
+  // of the periods of coupling and of the steps (D196), or of the steps of
+  // a minimization (D[python-minimize]).
+  if (control.segments && (control.energyPeriod > 0 ||
                            control.framePeriod > 0 ||
                            control.checkpointPeriod > 0))
-    return makeError("a program of segments takes no minimization, "
-                     "energies, frames, or checkpoints");
+    return makeError("a program of segments takes no energies, frames, or "
+                     "checkpoints");
 
   // The loops of the schedule; a minimization has its own
   // (emitMinimization).
   if (!control.minimize)
     setSchedule();
-  if (control.segments) {
+  if (control.segments && !control.minimize) {
     bool couples = levels[0].name == "couple";
     program.segmentPeriod = couples ? control.getCouplingPeriod() : 0;
     program.closingSteps = getClosingSteps();
