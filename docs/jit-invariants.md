@@ -191,3 +191,13 @@ speedup claim or an Amber suite performance claim. Device kernels and the
 integration schedule are unchanged. AArch64 and Python sanitizer lifecycle
 validation remain unexercised configurations; the dependency guarantees are
 limited as stated above.
+
+The reviewer also measured JAC through the Python simulation on idle GPU 0
+(RTX 3090, mixed, PME grid $64^3$, rigid hydrogen bonds and water, 0.8 nm
+cutoff; 1,000 warmup steps and 10,000 timed steps, one run per branch):
+**0.2761 ms/step** for main with #94 (no JIT change), against **0.2766 ms/step**
+at b27129d, +0.2%, reported within run-to-run noise. Creation plus the first
+1,000 steps took 33.3 s and 25.3 s respectively; the reviewer attributed the
+difference probably to run order (baseline first), not to this change. These
+are reviewer measurements, not additional repetitions of the pair benchmark.
+See the [review timing](https://github.com/vv137/mdir/pull/93#issuecomment-5999524681).
