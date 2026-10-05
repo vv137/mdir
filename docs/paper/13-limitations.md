@@ -105,8 +105,9 @@ its charges and Lennard-Jones parameters and between interaction groups
 by masks, with tabulated functions of up to three arguments, and compound
 terms over tuples of up to nine particles (D138, D165), and terms over
 the centers of groups, which restrain pull groups (D139), whose sums
-and forces run over their tuples and add 0.03 to 0.05 ms to a step of
-JAC (D150), and which pull at a rate
+and forces run over their tuples, in one block of the kernel of the
+bonded terms, and add 2.7 µs to a step of JAC (D150,
+D[centroid-one-kernel]), and which pull at a rate
 with the time in their expressions and write their coordinates and
 forces (D145), and terms of the absolute positions of single particles,
 with parameters of each (D148), and terms over the triplets centered on

@@ -45,9 +45,17 @@ and the second is not launched; a loop that evaluates each tuple once
 launches no more rows than it has tuples, so the sums over the centers of
 groups, some 170 tuples on JAC, are one block. That block also computes
 the contributions of the rows itself, so that such sums are one kernel
-in all (D181): with the forces in the run of bonded loops,
-a harmonic bias on the distance between two centers costs JAC one kernel
-and about 9 µs a step, as OpenMM's `CustomCentroidBondForce` does. A kernel passes each
+in all (D181). When the sums reach nothing but a later loop that
+evaluates each tuple once, through arithmetic, as the centers of a term
+over the centers of groups reach its forces, a block of the kernel of the
+run of that loop does the work of that kernel instead: the same rows, added
+in the same order, then the arithmetic, then the tuples of the forces,
+while the other blocks evaluate the other bonded loops; with more than
+512 rows the kernels of several parts still run, and leave the totals in
+a buffer for that block (D[centroid-one-kernel]). A harmonic bias on the
+distance between two centers then costs JAC no kernel of its own and
+2.7 µs a step, against 9.2 µs with its sums in a kernel of their own and
+8.6 µs for OpenMM 8.2's `CustomCentroidBondForce`. A kernel passes each
 buffer as its descriptor, and PTX before ISA 8.1 allows 4352 bytes of
 parameters: the sums of a loop go to the kernels in runs whose
 descriptors fit 3 KB (D145). The results go to a buffer of the device;

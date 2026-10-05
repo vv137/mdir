@@ -5,6 +5,8 @@
 //
 // RUN: mdir-opt %s --convert-md-exec-to-gpu="tuples-once=true" | FileCheck %s
 // RUN: mdir-opt %s --convert-md-exec-to-gpu="tuples-once=false" | FileCheck %s --check-prefix=ROWS
+// RUN: mdir-opt %s --convert-md-exec-to-gpu | FileCheck %s --check-prefix=CENTERS
+// RUN: mdir-opt %s --convert-md-exec-to-gpu="fuse-centers=false" | FileCheck %s --check-prefix=APART
 
 md.particle_set @atoms
 
@@ -106,6 +108,58 @@ func.func @two(%m1: memref<?x2xi32>, %m2: memref<?x2xi32>, %n: index,
   ^bb0(%d: vector<3xf32>):
     %n0 = arith.negf %d : vector<3xf32>
     md_exec.yield %n0, %d : vector<3xf32>, vector<3xf32>
+  } : memref<?x?xi32, 1>, memref<?x3xf32, 1>
+  return
+}
+
+// Sums over tuples evaluated once that reach only a later loop over tuples
+// evaluated once, through arithmetic: the centers of a term over the centers
+// of groups and its forces (D139). With one part, a block of the kernel of
+// the forces computes the sums, as the kernel of the reduction would, then
+// the arithmetic and the forces; the kernels of several parts are launched
+// only for several, and leave the totals in a buffer of their own. With
+// one part, one kernel runs instead of the reduction and the forces (#66);
+// without the fusion the results also take a buffer that a kernel clears.
+//
+// CENTERS-LABEL: func.func @centers(
+// CENTERS:         scf.if %{{[0-9]+}} {
+// CENTERS-COUNT-3:   gpu.launch
+// CENTERS:         gpu.launch {{.*}}workgroup(
+// CENTERS:           scf.if %{{[0-9]+}} -> (f64) {
+// CENTERS:             gpu.barrier
+// CENTERS:           } else {
+// CENTERS:             memref.load %{{[a-z0-9_]+}}[%{{[a-z0-9_]+}}] : memref<1xf64, 1>
+// CENTERS:           arith.mulf %{{[0-9]+}}, %{{[a-z0-9_]+}} {{.*}}: f64
+// CENTERS-NOT:     gpu.launch
+// CENTERS:         return
+// APART-LABEL:  func.func @centers(
+// APART-COUNT-5:  gpu.launch
+// APART:          return
+func.func @centers(%members: memref<?x2xi32>, %n: index,
+                   %x: memref<?x3xf32, 1>, %cell: !md.cell,
+                   %f: memref<?x3xf32, 1>, %w: memref<?xf64, 1>,
+                   %a: memref<?xf64, 1>, %b: memref<?xf64, 1>) {
+  %inc = md_exec.build_incidence %members size(%n)
+      : memref<?x2xi32> -> memref<?x?xi32, 1>
+  %zero = arith.constant 0.0 : f64
+  %s = md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
+      tuple(%w : memref<?xf64, 1>) reduce(%zero : f64)
+      scratch(%a, %b : memref<?xf64, 1>, memref<?xf64, 1>) arity(2) {
+  ^bb0(%d: vector<3xf32>, %wt: f64):
+    %dx = vector.extract %d[0] : f32 from vector<3xf32>
+    %e = arith.extf %dx : f32 to f64
+    %c = arith.mulf %wt, %e : f64
+    md_exec.yield %c : f64
+  } : memref<?x?xi32, 1>, memref<?x3xf32, 1> -> f64
+  %k = arith.constant 2.0 : f64
+  %g = arith.mulf %s, %k : f64
+  %g32 = arith.truncf %g : f64 to f32
+  md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
+      tuple(%w : memref<?xf64, 1>) outs(%f : memref<?x3xf32, 1>) arity(2) {
+  ^bb0(%d: vector<3xf32>, %wt: f64):
+    %v = vector.broadcast %g32 : f32 to vector<3xf32>
+    %m = arith.negf %v : vector<3xf32>
+    md_exec.yield %v, %m : vector<3xf32>, vector<3xf32>
   } : memref<?x?xi32, 1>, memref<?x3xf32, 1>
   return
 }
