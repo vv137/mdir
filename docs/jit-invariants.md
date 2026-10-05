@@ -1,6 +1,7 @@
 # JIT memory and unwind ownership (D[jit-invariants])
 
-Issue #89 strengthens D196 at the final host object boundary. No control-file
+Issue #89 supersedes D196's section-placement lifetime guarantee with checks
+at the final host object boundary. No control-file
 keys, file formats, defaults, or overwrite behavior change.
 
 The simulation owns an ORC object memory manager. It reserves a
@@ -25,8 +26,31 @@ than claimed as formal verification of either dependency.
 Validation covers CPU/GPU, mixed/double, import orders, retained live
 engines, construction errors, and delayed exceptions, with ASLR retained.
 A separate host exception sanitizer baseline distinguishes interceptor
-failures from JIT failures. Numerical results are compared with an independent analytic pair force and
-the existing segment regressions.
+failures from JIT failures. Numerical results are compared with an independent
+analytic pair force and the existing segment regressions.
+
+## Front-end boundary and follow-up
+
+The CLI remains on MLIR's `ExecutionEngine` in this PR. `mdir run` owns one
+engine in its own process, so it does not exercise the retained multi-engine
+lifetimes that motivated #89. Moving it here would also require accounting
+for its entry ABI, symbol registration, runtime-library protocol, diagnostics,
+and object dumping, broadening this fix beyond simulation ownership.
+
+The intended direction is to move the CLI to the owned engine in a separate
+change, tracked by [#99](https://github.com/vv137/mdir/issues/99), so both front
+ends share library loading, symbols, initialization, and final-object checks.
+Both already share `compiler::createHostMachine()` from D197. Until migration,
+CLI/Python comparisons remain necessary to detect drift. Separate JIT paths
+are a possible source of differences, not an established explanation for #97.
+
+D[jit-invariants] amends D196: section placement is superseded as the lifetime
+guarantee by contiguous owned allocation and validation of actual code and
+unwind ranges before registration. The old MLIR transformer in
+`Simulation.cpp` is removed. Its section assignment remains in
+`JITEngine.cpp` for locality (`.ltext` for x86-64's large model, `.text`
+otherwise); section names and that hint provide no correctness proof. Late
+ORC-generated functions are checked regardless of their section placement.
 
 ## Enforced transitions and dependency boundary
 
