@@ -12,6 +12,13 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- Replace the Python preview's flat numeric lists with shaped, read-only
+  NumPy copies and strict buffer/CPU DLPack inputs. Assign native float64
+  `(N, 3)` coordinate arrays and copy outputs before editing; tuple IDs use
+  shaped int32/int64 inputs. Enabling Python now requires NumPy >=1.23
+  and checks it at configuration and import (D[python-arrays], #78).
+
+
 - `[free_energy]` with one state writes `dHdl.<name>` alone: the `dU.0`
   column, identically 0, is gone, and the state energy is no longer
   evaluated. `--continue` onto a file written before stops at its column

@@ -112,8 +112,8 @@ apptainer run --nv mdir-0.1.0.sif doctor
 - For NVIDIA GPUs: the driver, and the CUDA toolkit for its header and its
   device math library. Versions 11.2 and 13.x are known to work.
 - For checkpoints: HDF5, built with `scripts/build-hdf5.sh`
-- For the Python interface (optional): Python 3.10 to 3.13 and pybind11
-  3.0.1
+- For the Python interface (optional): Python 3.10 to 3.13, pybind11
+  3.0.1, and NumPy 1.23 or later
 
 ## Building LLVM
 
@@ -157,10 +157,11 @@ runtime out.
 
 ## Python interface (preview)
 
-The Python interface of milestone M2 is optional and off by default:
+The Python interface of milestone M2 is optional and off by default.
+When enabled, NumPy is required and checked at configuration:
 
 ```sh
-pip install pybind11==3.0.1
+pip install pybind11==3.0.1 'numpy>=1.23'
 
 cmake -G Ninja -S . -B build <the options above> \
     -DMDIR_ENABLE_PYTHON=ON \

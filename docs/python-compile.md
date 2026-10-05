@@ -1,4 +1,4 @@
-# Python compilation interface (D192)
+# Python compilation interface (D192, D[python-arrays])
 
 The next M2 contribution after D191, tracked in issue #76, exposes the
 owned native model and explicit compiler lowering. It is an optional build,
@@ -20,10 +20,11 @@ Typed enums select target, precision, integrator, ensemble, electrostatics,
 truncation and dispersion. Mutable properties on all compile inputs advance
 versions. `program.stale` and `program.check_current()` compare those versions;
 the latter raises `StaleProgramError` until explicitly recompiled.
-Programs retain input owners. Collection getters return copies: edit a
-copy and assign it back to commit a change. This includes positions,
-velocities, cell, custom terms, tuple parameters and members. Imported
-topology is owned and read-only at this first binding boundary.
+Programs retain input owners. Numeric array getters return read-only NumPy
+copies: call `.copy()`, edit the copy and assign it back to commit a change.
+Cell and custom-term objects are also copied; assign edited objects back to
+their owner. Imported topology is owned and read-only at this first binding
+boundary.
 
 `InputError`, `UnsupportedError`, and `CompileError` preserve native error
 messages; lowering errors retain MLIR locations and diagnostics. Existing
@@ -33,8 +34,10 @@ Declared tunable runtime buffers are not implemented by this contribution.
 
 ## Build and validation
 
-Enable `MDIR_ENABLE_PYTHON=ON` with Python 3.10–3.13 and pybind11 3.0.1
-installed. CLI-only builds require neither. CMake places the importable
+Enable `MDIR_ENABLE_PYTHON=ON` with Python 3.10–3.13, pybind11 3.0.1 and
+NumPy >=1.23 installed. Configuration checks the selected interpreter can
+import a supported NumPy; module import checks it again. CLI-only builds
+require none of these Python dependencies. CMake places the importable
 development module in `python/` under the build tree; set `PYTHONPATH` to
 that directory. Installation places it in a configurable Python destination.
 The manylinux_2_28 wheel remains the package gate of M2.
@@ -62,20 +65,31 @@ snake case; defaults and the supported physics subset are those of
 | Execution | `target`, `precision`, `device`, `threads`, `deterministic`, `reorder`, `fast_math` |
 | Schedule | `steps`, `energy_period` |
 
-Positions and velocities are flattened lists of $3N$ Python floats in input
-order, with an empty velocity list denoting absent velocities. `Cell` has
-three diagonal lengths and three tilts in nm, with read-only `vectors`
-following the reduced lower-triangular convention. Its properties are
-copies when obtained from a state: assign the edited cell back to the state.
-No NumPy or framework tensor dependency is required.
+Positions and velocities are native float64 NumPy arrays of shape $(N, 3)$
+in input order; absent velocities have shape $(0, 3)$. Inputs must export
+buffers or CPU DLPack and have C-contiguous storage and native dtype.
+Flat coordinates, lists, float32, nonnative byte order, nonfinite values,
+strided arrays and wrong particle counts raise property-specific `InputError`.
+Loaded states retain their particle count. A fresh InitialState establishes
+its count on its first nonempty coordinate or velocity assignment.
 
-`PairTerm` has `name`, `expression`, `constants` (name/value pairs) and
+`Cell` diagonal/tilt properties use float64 arrays of shape $(3,)$ and
+read-only `vectors` has shape $(3, 3)$ in the reduced lower-triangular
+convention. Assign an edited cell back to its state to commit the change.
+Every returned numeric array is an independent read-only NumPy copy.
+
+`PairTerm` retains `name`, `expression`, `constants` (name/value pairs) and
 `groups` (selection masks). `TupleTerm` has `name`, `expression`, `arity`,
-`particles` (flattened zero-based IDs), and `parameters` (name/list pairs).
-Expressions use nm, radians and kJ/mol as in the native model. System owns
-copies on assignment. To edit a nested term, obtain `system.tuple_terms`,
-edit a term or its parameter copy, then assign the entire collection back.
-Collection edits without reassignment affect only the returned copy.
+`particles` (shape $(n, \mathrm{arity})$, zero-based int64 IDs), and
+`parameters` (ordered name/1-D float64 array pairs). Particle inputs accept
+native int32 or int64. Expressions use nm, radians and kJ/mol as in the
+native model. System owns copies on assignment. To edit a nested term,
+obtain `system.tuple_terms`, copy and edit an array, assign it to the term,
+then assign the entire collection back. Failed assignments change neither
+values nor versions. See [python-arrays.md](python-arrays.md).
+
+CPU DLPack inputs are copied and non-CPU devices are refused. No framework
+or gradient adapter is supplied; device views and leases remain later M2 work.
 
 The plan records target, precision, logical device, threads, determinism,
 particle reordering, entry name, state/force dtypes and PME grid. It does
@@ -130,3 +144,10 @@ checking the device, passes 263 tests with six optional tests unsupported
 and zero failures (269 discovered, 2045.79 s). Issues #22 and #26 are closed;
 their `not-numbers-gpu.test` and `free-energy-reorder-gpu.test` regressions
 pass in this single suite run, with no failures or retries.
+
+D[python-arrays] repeats the CPU/GPU mixed/double parity matrix with strict
+host arrays: all 32 case/target/precision combinations match native loader
+array bytes (0 differing bytes, tolerance 0) and CLI semantic IR/pipelines
+exactly. The full local suite passes with 265 passed, 6 unsupported and
+0 failures. See [host-array validation](python-arrays.md#validation-environment)
+for the dependency, ownership and malformed-input checks.

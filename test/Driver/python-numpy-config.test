@@ -1,0 +1,4 @@
+# REQUIRES: python-api
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_numpy_config.py %t %S/../../python | FileCheck %s
+# CHECK: missing and old NumPy refuse Python configuration with the minimum version

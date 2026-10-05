@@ -100,3 +100,15 @@ A custom spring at 0.3 nm with rest length 0.2 nm and coefficient
 derivative gives 20 kJ/mol/nm (tolerance 1e-7). These are analytic checks of
 the unit boundary, not a claim of Python runtime execution. The unchanged
 numerical builder retains the existing independent term-oracle suite.
+
+
+## Python host array boundary
+
+D[python-arrays] (#78) exposes the native vectors as independent read-only
+NumPy arrays: positions/velocities $(N, 3)$ float64 (absent velocities
+$(0, 3)$), reduced cell vectors $(3, 3)$ float64, tuple particles
+$(n, \mathrm{arity})$ int64 and parameters as 1-D float64 arrays. Native
+C++ storage remains unchanged. Strict buffer/CPU DLPack assignment validates
+shape, dtype, contiguity, finite values and particle count, copies values and
+advances the binding version. There is no list path. NumPy >=1.23 is required
+only for the enabled Python interface. See [python-arrays.md](python-arrays.md).

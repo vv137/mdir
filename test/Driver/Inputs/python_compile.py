@@ -6,6 +6,7 @@ import pathlib
 import subprocess
 import sys
 import mdir
+import numpy as np
 
 root = pathlib.Path(sys.argv[1]).resolve()
 target = getattr(mdir.Target, sys.argv[2])
@@ -26,10 +27,10 @@ def inputs(name, precision):
         cell = mdir.Cell()
         if name == "charmm-triclinic":
             # The 80 degree alpha cell in model_controls.py.
-            cell.diagonal = [3.2, 3.2, 3.2 * math.sin(math.radians(80))]
-            cell.tilt = [0, 0, 3.2 * math.cos(math.radians(80))]
+            cell.diagonal = np.array([3.2, 3.2, 3.2 * math.sin(math.radians(80))])
+            cell.tilt = np.array([0, 0, 3.2 * math.cos(math.radians(80))])
         else:
-            cell.diagonal = [3.2] * 3
+            cell.diagonal = np.full(3, 3.2)
         loaded = mdir.load_charmm(str(root / "charmm/toy.psf"),
                                   str(root / "charmm/toy.crd"),
                                   [str(root / "charmm/toy.rtf"), str(root / "charmm/toy.prm")], cell)
@@ -41,13 +42,13 @@ def inputs(name, precision):
         loaded = mdir.load_amber(str(root / "dipeptide/dipeptide.prmtop"),
                                 str(root / "dipeptide/dipeptide.inpcrd"))
     system, state = loaded.make_system(), loaded.make_state()
-    assert len(state.positions) == system.particle_count * 3
+    assert state.positions.shape == (system.particle_count, 3)
     assert loaded.sources
     # Loaded data and the two consumers own separate values.
-    pos = state.positions
-    pos[0] += 0.125
-    assert loaded.make_state().positions[0] != pos[0]
-    assert state.positions[0] != pos[0]
+    pos = state.positions.copy()
+    pos[0, 0] += 0.125
+    assert loaded.make_state().positions[0, 0] != pos[0, 0]
+    assert state.positions[0, 0] != pos[0, 0]
     system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.8
     system.truncation = mdir.Truncation.None_
     if name == "constraints":
@@ -73,6 +74,13 @@ for name in ("amber", "gromacs", "constraints", "triclinic", "nvt", "npt", "char
     for precision in (mdir.Precision.Double, mdir.Precision.Mixed):
         args = inputs(name, precision)
         control = root / f"{name}-{precision.name.lower()}.toml"
+        native = subprocess.check_output([str(pathlib.Path(cli).with_name("mdir-model-test")), str(control), "--arrays"])
+        expected = np.frombuffer(native, dtype=np.float64)
+        actual = np.concatenate((args[1].positions.ravel(), args[1].velocities.ravel(), args[1].cell.vectors.ravel()))
+        assert actual.tobytes() == expected.tobytes(), f"{name}: native array bytes differ"
+        saved_positions = args[1].positions.copy()
+        args[1].positions = saved_positions
+        assert args[1].positions.tobytes() == saved_positions.tobytes()
         before = {p.name for p in root.iterdir()}
         program = mdir.compile(*args)
         assert {p.name for p in root.iterdir()} == before
@@ -86,6 +94,15 @@ for name in ("amber", "gromacs", "constraints", "triclinic", "nvt", "npt", "char
         assert program.plan["force_dtype"] == ("float32" if precision == mdir.Precision.Mixed else "float64")
         assert not program.stale
         program.check_current()
+        # Failed assignment and writes to detached snapshots preserve versions.
+        original = args[1].positions.tobytes()
+        expect(mdir.InputError, lambda: setattr(args[1], "positions", np.zeros((1, 3))))
+        assert args[1].positions.tobytes() == original and not program.stale
+        snapshot = args[1].positions
+        expect(ValueError, lambda: snapshot.__setitem__((0, 0), 99))
+        snapshot.setflags(write=True)
+        snapshot[0, 0] += 1
+        assert args[1].positions.tobytes() == original and not program.stale
         expect(AttributeError, lambda: setattr(program, "ir", "changed"))
         plan = program.plan
         plan["device"] = -1
@@ -107,26 +124,24 @@ args = inputs("amber", mdir.Precision.Double)
 system, state, integrator, ensemble, execution, schedule = args
 term = mdir.TupleTerm()
 term.name, term.expression = "spring", "k*(r-r0)^2"
-term.particles, term.parameters = [0, 1], [("k", [100.0]), ("r0", [0.2])]
+term.particles, term.parameters = np.array([[0, 1]], dtype=np.int64), [("k", np.array([100.0])), ("r0", np.array([0.2]))]
 system.tuple_terms = [term]
 program = mdir.compile(*args)
 term.expression = "0"
 assert system.tuple_terms[0].expression != "0"
 copy = system.tuple_terms
-copy[0].parameters = [("k", [200.0]), ("r0", [0.2])]
-assert system.tuple_terms[0].parameters[0][1] == [100.0]
+copy[0].parameters = [("k", np.array([200.0])), ("r0", np.array([0.2]))]
+np.testing.assert_array_equal(system.tuple_terms[0].parameters[0][1], [100.0])
 assert not program.stale
 system.tuple_terms = copy
 assert program.stale
 state_copy = state.cell
-state_copy.diagonal = [9] * 3
-assert state.cell.diagonal != [9] * 3
+state_copy.diagonal = np.full(3, 9.0)
+assert not np.array_equal(state.cell.diagonal, np.full(3, 9.0))
 state.cell = state_copy
 assert program.stale
-state.positions = [0]
-expect(mdir.InputError, lambda: mdir.compile(*args))
-state.positions = [float("nan")] * (3 * system.particle_count)
-expect(mdir.InputError, lambda: mdir.compile(*args))
+expect(mdir.InputError, lambda: setattr(state, "positions", np.zeros((1, 3))))
+expect(mdir.InputError, lambda: setattr(state, "positions", np.full((system.particle_count, 3), np.nan)))
 expect(mdir.InputError, lambda: mdir.load_amber("missing.prmtop", "missing.inpcrd"))
 args = inputs("amber", mdir.Precision.Double)
 args[4].precision = mdir.Precision.Single
