@@ -43,6 +43,13 @@ format, or the outputs; every such change is listed under **Changed** or
   `CustomCentroidBondForce`, and JAC without it runs 3.7% faster
   (D181, #20).
 
+- On a GPU, outside the deterministic mode, the sums over the centers of
+  a term over the centers of groups are computed by a block of the kernel
+  of the bonded terms, which then evaluates the term and its forces: the
+  term takes no kernel of its own. A bias on the distance between two
+  centers costs JAC 2.7 µs a step instead of 9.2 (D[centroid-one-kernel],
+  #66).
+
 ### Added
 
 - Optional Python loaders and typed model inputs, explicit shared compiler

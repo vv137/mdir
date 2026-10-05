@@ -1,0 +1,25 @@
+# The terms over the centers of groups of centroid-terms.test on a GPU in
+# mixed precision, for 20 steps under compute-sanitizer: one block of the
+# kernel of their forces computes the sums of each term in shared memory,
+# then the term and its forces (#66). No access beyond a buffer, no read of
+# memory that nothing has written, and no race in shared memory.
+#
+# REQUIRES: cuda, compute-sanitizer
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/../Driver/Inputs/dipeptide/dipeptide.prmtop %S/../Driver/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: %python %S/../Driver/Inputs/shift_inpcrd.py %t/dipeptide.inpcrd > %t/shifted.inpcrd
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/../Driver/centroid-terms.test | sed '1d;$d' \
+# RUN:   | sed -e 's/^target    = "CPU"/target    = "GPU"/' -e 's/^precision = "DOUBLE"/precision = "MIXED"/' \
+# RUN:         -e 's/dipeptide.inpcrd/shifted.inpcrd/' -e 's/^steps .*/steps = 20/' \
+# RUN:         -e 's/^time_step .*/time_step = 0.001/' -e 's/^energy_interval .*/energy_interval = 10/' \
+# RUN:         -e '/^checkpoint/d' -e '/^#--- terms/d' > %t/run.toml
+# RUN: cd %t && %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run run.toml 2>&1 \
+# RUN:   | FileCheck %s
+# RUN: cd %t && %compute_sanitizer --tool initcheck --error-exitcode 1 mdir run run.toml 2>&1 \
+# RUN:   | FileCheck %s
+# RUN: cd %t && %compute_sanitizer --tool racecheck --error-exitcode 1 mdir run run.toml 2>&1 \
+# RUN:   | FileCheck %s --check-prefix=RACE
+
+# CHECK: ERROR SUMMARY: 0 errors
+# RACE: RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)
