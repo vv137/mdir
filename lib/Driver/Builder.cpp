@@ -183,6 +183,18 @@ private:
   /// Emits the loops of the schedule, from `level` inward, and returns the
   /// values that the loop of `level` results in.
   void emitLevel(unsigned level, StringRef indent);
+  /// The loops that emitLevel emits are those of the nest from `nestBegin`
+  /// to `nestEnd` (0: to the end of `levels`), which begins with the values
+  /// `%x<nestOutside>` and the like, after the step `nestStart`. A program of
+  /// segments has a second nest, for a period that ends with a step of
+  /// energy (D[python-segments]).
+  unsigned nestBegin = 0, nestEnd = 0;
+  std::string nestOutside = "0", nestStart = "%start";
+  unsigned getNestEnd() const { return nestEnd ? nestEnd : levels.size(); }
+  /// The plain step of energy that may end a segment between the steps that
+  /// close periods, after `x`, `v`, and `f`; returns the suffix of its
+  /// results (D[python-segments]).
+  std::string emitSegmentEnergyStep(StringRef x, StringRef v, StringRef f);
   /// Whether the cell changes in the run, which a barostat does.
   bool changesCell() const { return control.barostat; }
   /// Whether particles are restrained to reference positions.
@@ -416,6 +428,11 @@ private:
   bool scalesEveryStep() const {
     return usesTrotter() && control.barostatPeriod == 1;
   }
+  /// The steps that close a period of coupling, after its plain steps: the
+  /// last, or the last two with the barostat of Trotter type (D92).
+  int64_t getClosingSteps() const {
+    return usesTrotter() && !scalesEveryStep() ? 2 : 1;
+  }
   /// The tuple sets of the virtual sites, those of Amber first.
   std::vector<const Program::TupleSet *> getSiteSets() const {
     std::vector<const Program::TupleSet *> sets;
@@ -639,7 +656,9 @@ struct Coupled {
   bool isLeapfrog() const {
     return control.integrator == Integrator::Leapfrog;
   }
-  bool isRestart() const { return !control.restartInput.empty(); }
+  bool isRestart() const {
+    return !control.restartInput.empty() || control.continuesSegment;
+  }
   /// Whether a run from a checkpoint evaluates the forces of its first step
   /// (D172).
   bool recomputes() const { return isRestart() && control.restartRecomputes; }
@@ -5660,13 +5679,13 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
 
   std::string inner = (indent + "  ").str();
   std::string here = std::to_string(level);
-  std::string outside = level == 0
-                            ? "0"
+  std::string outside = level == nestBegin
+                            ? nestOutside
                             : isReordered(level - 1)
                                   ? "s"
                                   : "a" + std::to_string(level - 1);
   const Level &current = levels[level];
-  bool isStepLoop = level + 1 == levels.size();
+  bool isStepLoop = level + 1 == getNestEnd();
   bool reorders = isReordered(level);
 
   // With a new order in every iteration, the loop carries the fields that
@@ -5756,7 +5775,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
     // the whole run.
     auto emitIteration = [&](unsigned upto) {
       std::string counted;
-      for (unsigned i = 0; i <= upto; ++i) {
+      for (unsigned i = nestBegin; i <= upto; ++i) {
         std::string index = "%i" + std::to_string(i);
         if (counted.empty()) {
           counted = index;
@@ -5773,7 +5792,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
     };
     // The number of the step that has just been taken.
     auto emitStep = [&]() {
-      if (current.name == "couple" && level != 0 &&
+      if (current.name == "couple" && level != nestBegin &&
           levels[level - 1].name == "energy") {
         // The interval between energies holds one period more than its
         // loop over periods: the steps before the interval, and those of
@@ -5798,7 +5817,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       os << inner << "%since" << here << " = arith.index_cast %steps"
          << here << " : index to i64\n";
       os << inner << "%step" << here << " = arith.addi %since" << here
-         << ", %start : i64\n";
+         << ", " << nestStart << " : i64\n";
     };
     // The velocities as the step after the coupling takes them, and the
     // state that the loop yields.
@@ -5978,7 +5997,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
     if (current.name == "energy" && couplesBelow) {
       // The last period of the interval: its steps but the last, which
       // the step of energy takes.
-      std::string steps = std::to_string(levels.size() - 1);
+      std::string steps = std::to_string(getNestEnd() - 1);
       os << inner << getValues("q" + here) << " = scf.for %j" << here
          << " = %c0 to %n" << steps << " step %c1\n"
          << inner << "    iter_args(" << getInits("p" + here, last) << ")\n"
@@ -7398,6 +7417,9 @@ void Builder::emitEntry() {
      << "func.func private @mdrtFinish(memref<?x3x" << state
      << ">, memref<?x3x" << state << ">, memref<?xi32>)\n"
      << "    attributes {llvm.emit_c_interface}\n";
+  if (control.segments)
+    os << "func.func private @mdrtFinishForces(memref<?x3x" << force
+       << ">, memref<?xi32>)\n    attributes {llvm.emit_c_interface}\n";
   if (control.minimize)
     os << "func.func private @mdrtWriteMinimization(i64, f64, f64, memref<?x3x"
        << force << ">, memref<?xi32>)\n"
@@ -7453,7 +7475,18 @@ void Builder::emitEntry() {
       os << ", %bf_" << set.name << "_" << field.name << ": memref<?xf64>";
   }
   os << ",\n    %identities: memref<?xi32>,\n"
-     << "    %lx: f64, %ly: f64, %lz: f64, %dt: f64, %start: i64) {\n";
+     << "    %lx: f64, %ly: f64, %lz: f64, %dt: f64, %start: i64";
+  // The counts of the loops of a program of segments (D[python-segments]):
+  // the iterations of the outer loop, the plain steps in an iteration of the
+  // loop over the periods of coupling, and plain steps after the loops; then
+  // whether the segment ends with a plain step of energy, and whether it
+  // ends with a period that closes with a step of energy, with its plain
+  // steps.
+  if (control.segments)
+    os << ",\n    %count_outer: i64, %count_inner: i64, %count_tail: i64,"
+       << "\n    %count_energy_plain: i64, %count_energy_close: i64,"
+       << " %count_energy_inner: i64";
+  os << ") {\n";
 
   os << "  %c0 = arith.constant 0 : index\n"
      << "  %c1 = arith.constant 1 : index\n";
@@ -7472,9 +7505,24 @@ void Builder::emitEntry() {
     os << "  %noise_memory = memref.alloca() : memref<1xi64>\n"
        << "  memref.store %start, %noise_memory[%c0] : memref<1xi64>\n"
        << "  %noise_one = arith.constant 1 : i64\n";
-  for (auto [index, level] : llvm::enumerate(levels))
-    os << "  %n" << index << " = arith.constant " << level.count
-       << " : index\n";
+  if (control.segments) {
+    // The counts that the entry takes. The first nest is over the periods
+    // of coupling, with plain steps inside, or over steps; the second, if
+    // any, is one period that closes with a step of energy.
+    bool couples = levels[0].name == "couple";
+    os << "  %n0 = arith.index_cast %count_outer : i64 to index\n";
+    if (couples)
+      os << "  %n1 = arith.index_cast %count_inner : i64 to index\n"
+         << "  %n2 = arith.index_cast %count_energy_close : i64 to index\n"
+         << "  %n3 = arith.constant 0 : index\n"
+         << "  %n4 = arith.index_cast %count_energy_inner : i64 to index\n";
+    os << "  %n_tail = arith.index_cast %count_tail : i64 to index\n"
+       << "  %n_plain = arith.index_cast %count_energy_plain : i64 to index\n";
+  } else {
+    for (auto [index, level] : llvm::enumerate(levels))
+      os << "  %n" << index << " = arith.constant " << level.count
+         << " : index\n";
+  }
   // The number of steps in one iteration of each loop. An iteration of
   // the loop over energy intervals takes one step after its loop over
   // steps.
@@ -7482,7 +7530,20 @@ void Builder::emitEntry() {
   // well (two with the barostat of Trotter type), and one over energy intervals a whole period after its loop over
   // periods.
   int64_t steps = 1;
-  for (unsigned i = levels.size(); i-- != 0;) {
+  if (control.segments && levels[0].name == "couple") {
+    // An iteration over a period takes its plain steps and those that close
+    // it: one, or two with the barostat of Trotter type. The period of the
+    // second nest is the whole of its one interval of energy.
+    os << "  %per1 = arith.constant 1 : index\n"
+       << "  %closing = arith.constant " << getClosingSteps() << " : index\n"
+       << "  %per0 = arith.addi %n1, %closing : index\n"
+       << "  %per4 = arith.constant 1 : index\n"
+       << "  %per3 = arith.addi %n4, %closing : index\n"
+       << "  %per2 = arith.addi %n4, %closing : index\n";
+  } else if (control.segments) {
+    os << "  %per0 = arith.constant 1 : index\n";
+  }
+  for (unsigned i = control.segments ? 0 : levels.size(); i-- != 0;) {
     os << "  %per" << i << " = arith.constant " << steps << " : index\n";
     steps *= levels[i].count;
     if (i == 0)
@@ -7814,10 +7875,105 @@ void Builder::emitEntry() {
         emitKineticWithoutCenter("  ", current, "%m", "s0"));
   }
 
-  emitLevel(0, "  ");
-  os << "  mdrt.host_call @mdrtFinish(%xe0, %ve0, " << idName
-     << ") : (!vec, !vec, !ids)\n"
-     << "  return\n}\n";
+  std::string last = "e0";
+  if (control.segments) {
+    nestEnd = levels[0].name == "couple" ? 2 : 1;
+    emitLevel(0, "  ");
+    // The plain steps of the period in which the segment ends, after the
+    // loops (D[python-segments]); the next segment closes the period. The
+    // barostat may have changed the cell in the loops.
+    std::string outerCell = cellName, outerScale = scaleName;
+    if (changesCell()) {
+      cellName = "%cell_tail";
+      for (int k = 0; k != getCellSize(); ++k)
+        os << "  %edge_tail_" << k << " = memref.load %box_memory[%c_edge"
+           << k << "] : " << getBoxMemoryType() << "\n";
+      emitCellOf("  ", cellName, "%edge_tail");
+      if (scalesReference()) {
+        scaleName = "%rest_scale_tail";
+        emitReferenceScale(os, "  ", scaleName, "%edge_tail_0",
+                           "%edge_tail_1", "%edge_tail_2");
+      }
+    }
+    os << "  %xt, %vt, %ft = scf.for %i_tail = %c0 to %n_tail step %c1\n"
+       << "      iter_args(%xta = %xe0, %vta = %ve0, %fta = %fe0)\n"
+       << "      -> (!vec, !vec, !vec) {\n";
+    std::string noise = emitNoiseValue("    ");
+    os << "    %xtb, %vtb, %ftb = dyn.step @step(%xta, %vta, %fta, "
+       << massName << ", " << cellName << ", %dt" << getScaleValue()
+       << getFieldValues(fieldPrefix) << noise << ")\n"
+       << "        : (!vec, !vec, !vec, !real, !md.cell, f64"
+       << getScaleType() << getFieldTypes() << getNoiseType()
+       << ") -> (!vec, !vec, !vec)\n"
+       << "    scf.yield %xtb, %vtb, %ftb : !vec, !vec, !vec\n"
+       << "  }\n";
+    last = emitSegmentEnergyStep("%xt", "%vt", "%ft");
+    cellName = outerCell;
+    scaleName = outerScale;
+    // A period that closes with a step of energy, as an interval of the log
+    // of `mdir run` ends, after the steps of the segment before it.
+    if (levels[0].name == "couple") {
+      os << "  %steps_a = arith.muli %n0, %per0 : index\n"
+         << "  %steps_t = arith.addi %steps_a, %n_tail : index\n"
+         << "  %steps_p = arith.addi %steps_t, %n_plain : index\n"
+         << "  %steps_e = arith.index_cast %steps_p : index to i64\n"
+         << "  %start_e = arith.addi %start, %steps_e : i64\n";
+      nestBegin = 2;
+      nestEnd = 5;
+      nestOutside = last;
+      nestStart = "%start_e";
+      emitLevel(2, "  ");
+      last = "e2";
+    }
+  } else {
+    emitLevel(0, "  ");
+  }
+  os << "  mdrt.host_call @mdrtFinish(%x" << last << ", %v" << last << ", "
+     << idName << ") : (!vec, !vec, !ids)\n";
+  // The forces that the next segment begins with.
+  if (control.segments)
+    os << "  mdrt.host_call @mdrtFinishForces(%f" << last << ", " << idName
+       << ") : (!vec, !ids)\n";
+  os << "  return\n}\n";
+}
+
+std::string Builder::emitSegmentEnergyStep(StringRef x, StringRef v,
+                                           StringRef f) {
+  // At most one plain step, of energy, as `mdir run` takes at a row of its
+  // log without coupling: its energies go to mdrtWriteEnergies.
+  os << "  %steps_pa = arith.muli %n0, %per0 : index\n"
+     << "  %steps_pt = arith.addi %steps_pa, %n_tail : index\n"
+     << "  %steps_pe = arith.addi %steps_pt, %c1 : index\n"
+     << "  %steps_pi = arith.index_cast %steps_pe : index to i64\n"
+     << "  %step_plain = arith.addi %start, %steps_pi : i64\n";
+  os << "  %xp, %vp, %fp = scf.for %i_plain = %c0 to %n_plain step %c1\n"
+     << "      iter_args(%xpa = " << x << ", %vpa = " << v << ", %fpa = "
+     << f << ")\n"
+     << "      -> (!vec, !vec, !vec) {\n";
+  std::string noise = emitNoiseValue("    ");
+  os << "    %xpl, %vpl, %fpl, %upl, %wpl" << (isLeapfrog() ? ", %vpn" : "")
+     << " = dyn.step @step_energy(%xpa, %vpa, %fpa, " << massName << ", "
+     << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix)
+     << noise << ")\n"
+     << "        : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
+     << getFieldTypes() << getNoiseType()
+     << ") -> (!vec, !vec, !vec, f64, vector<9xf64>"
+     << (isLeapfrog() ? ", !vec" : "") << ")\n";
+  emitKineticEnergy(os, "%kpl", isLeapfrog() ? "%vpn" : "%vpl", massName,
+                    "    ");
+  if (hasConstraints())
+    os << "    %gpl = arith.constant 0.0 : f64\n";
+  else
+    emitForceSquare(os, "%gpl", "%fpl", massName, "    ");
+  emitTrace(os, "%trpl", "%wpl", "    ");
+  os << "    func.call @mdrtWriteEnergies(%step_plain, %upl, %kpl, %gpl, "
+        "%trpl) : (i64, f64, f64, f64, f64) -> ()\n";
+  if (!control.periodic)
+    os << "    mdrt.host_call @mdrtCheckSpread(%step_plain, %xpl, " << idName
+       << ") : (i64, !vec, !ids)\n";
+  os << "    scf.yield %xpl, %vpl, %fpl : !vec, !vec, !vec\n"
+     << "  }\n";
+  return "p";
 }
 
 /// The largest number of particles within `reach` of a particle, found
@@ -7983,10 +8139,30 @@ llvm::Error Builder::build() {
     program.neighborWidth = (width + 7) / 8 * 8;
   }
 
+  // A program of segments has no outputs of its own: its loops are those
+  // of the periods of coupling and of the steps (D[python-segments]).
+  if (control.segments && (control.minimize || control.energyPeriod > 0 ||
+                           control.framePeriod > 0 ||
+                           control.checkpointPeriod > 0))
+    return makeError("a program of segments takes no minimization, "
+                     "energies, frames, or checkpoints");
+
   // The loops of the schedule; a minimization has its own
   // (emitMinimization).
   if (!control.minimize)
     setSchedule();
+  if (control.segments) {
+    bool couples = levels[0].name == "couple";
+    program.segmentPeriod = couples ? control.getCouplingPeriod() : 0;
+    program.closingSteps = getClosingSteps();
+    // The second nest: one interval of energy of one period, which its
+    // step of energy closes, as `mdir run` ends an interval of its log.
+    if (couples) {
+      levels.push_back({"energy", 1});
+      levels.push_back({"couple", 0});
+      levels.push_back({"step", 0});
+    }
+  }
 
   if (system.topology) {
     if (llvm::Error error = collectTopology())

@@ -1,5 +1,6 @@
 // Owned Python inputs; collections cross the boundary by value.
 #include "mdir/Compiler/Compile.h"
+#include "mdir/Compiler/Simulation.h"
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <memory>
@@ -11,19 +12,23 @@ struct InputError : std::runtime_error { using std::runtime_error::runtime_error
 struct UnsupportedError : std::runtime_error { using std::runtime_error::runtime_error; };
 struct CompileError : std::runtime_error { using std::runtime_error::runtime_error; };
 struct StaleProgramError : std::runtime_error { using std::runtime_error::runtime_error; };
+struct SimulationError : std::runtime_error { using std::runtime_error::runtime_error; };
 [[noreturn]] static void raise(llvm::Error error) {
-  bool unsupported = false, compile = false;
+  bool unsupported = false, compile = false, simulation = false;
   std::string message;
   llvm::handleAllErrors(std::move(error),
     [&](const model::ModelError &e) {
       unsupported = e.kind == model::ModelError::Unsupported; message = e.message;
     }, [&](const compiler::CompileError &e) {
       compile = true; message = e.diagnostic;
+    }, [&](const compiler::SimulationError &e) {
+      simulation = true; message = e.message;
     }, [&](const llvm::ErrorInfoBase &e) {
       llvm::raw_string_ostream os(message); e.log(os);
     });
   if (unsupported) throw UnsupportedError(message);
   if (compile) throw CompileError(message);
+  if (simulation) throw SimulationError(message);
   throw InputError(message);
 }
 template <class T> static T unwrap(llvm::Expected<T> value) {
@@ -47,6 +52,8 @@ template <class T> static auto input(py::module_ &m, const char *name) {
 }
 struct Program {
   compiler::CompiledProgram compiled;
+  /// What a simulation compiles its programs from (D[python-segments]).
+  std::shared_ptr<const model::PreparedModel> prepared;
   std::vector<std::pair<std::shared_ptr<Version>, uint64_t>> inputs;
   template <class T> void track(const std::shared_ptr<Input<T>> &o) {
     inputs.emplace_back(o, o->version);
@@ -74,6 +81,7 @@ PYBIND11_MODULE(mdir, m) {
   py::register_exception<UnsupportedError>(m, "UnsupportedError");
   py::register_exception<CompileError>(m, "CompileError");
   py::register_exception<StaleProgramError>(m, "StaleProgramError");
+  py::register_exception<SimulationError>(m, "SimulationError", PyExc_RuntimeError);
   py::enum_<driver::Target>(m, "Target")
     .value("CPU", driver::Target::CPU)
     .value("GPU", driver::Target::GPU)
@@ -238,7 +246,7 @@ PYBIND11_MODULE(mdir, m) {
                            const std::vector<std::string> &parameters, const driver::Cell &cell) {
     return unwrap(model::loadCharmm(structure, coordinates, parameters, cell));
   }, py::arg("structure"), py::arg("coordinates"), py::arg("parameters"), py::arg("cell") = driver::Cell{});
-  py::class_<Program>(m, "Program")
+  py::class_<Program, std::shared_ptr<Program>>(m, "Program")
     .def_property_readonly("ir", [](const Program &p) { return p.compiled.program.module; })
     .def_property_readonly("lowered_ir", [](const Program &p) { return p.compiled.loweredIR; })
     .def_property_readonly("pipeline", [](const Program &p) { return p.compiled.pipeline; })
@@ -272,9 +280,101 @@ PYBIND11_MODULE(mdir, m) {
                                           ensemble->value, execution->value, schedule->value));
     Program result;
     result.compiled = unwrap(compiler::compile(prepared));
+    result.prepared = std::make_shared<const model::PreparedModel>(std::move(prepared));
     result.track(system); result.track(state); result.track(integrator);
     result.track(ensemble); result.track(execution); result.track(schedule);
-    return result;
+    return std::make_shared<Program>(std::move(result));
   }, py::arg("system"), py::arg("state"), py::arg("integrator"),
      py::arg("ensemble"), py::arg("execution"), py::arg("schedule"));
+
+  // Persistent simulations (D[python-segments], docs/python-segments.md).
+  py::class_<compiler::SimulationState>(m, "State")
+    .def_property_readonly("step", [](const compiler::SimulationState &s) { return s.step; })
+    .def_property_readonly("time", [](const compiler::SimulationState &s) { return s.time; })
+    .def_property_readonly("positions", [](const compiler::SimulationState &s) {
+      return host::copy(s.positions.data(), s.positions.size(),
+                        {static_cast<py::ssize_t>(s.positions.size() / 3), 3});
+    })
+    .def_property_readonly("velocities", [](const compiler::SimulationState &s) {
+      return host::copy(s.velocities.data(), s.velocities.size(),
+                        {static_cast<py::ssize_t>(s.velocities.size() / 3), 3});
+    })
+    .def_property_readonly("velocity_offset",
+                           [](const compiler::SimulationState &s) { return s.velocityOffset; })
+    .def_property_readonly("forces", [](const compiler::SimulationState &s) -> py::object {
+      if (s.forces.empty()) return py::none();
+      return host::copy(s.forces.data(), s.forces.size(),
+                        {static_cast<py::ssize_t>(s.forces.size() / 3), 3});
+    })
+    .def_property_readonly("energies", [](const compiler::SimulationState &s) -> py::object {
+      // Those of a run that ended with a step of energy (run(n, energy=True)),
+      // at this step: kJ/mol, K, bar, nm^3.
+      if (!s.energies) return py::none();
+      const auto &e = *s.energies;
+      py::dict d;
+      d["potential"] = e.potential; d["kinetic"] = e.kinetic; d["total"] = e.total;
+      d["conserved"] = e.conserved; d["temperature"] = e.temperature;
+      d["virial"] = e.virial; d["pressure"] = e.pressure; d["volume"] = e.volume;
+      return d;
+    })
+    .def_property_readonly("cell", [](const compiler::SimulationState &s) {
+      driver::Cell cell;
+      for (int k = 0; k != 3; ++k) { cell.diagonal[k] = s.box[k]; cell.tilt[k] = s.tilt[k]; }
+      return cell;
+    });
+  struct PySimulation {
+    std::shared_ptr<Program> program;
+    std::unique_ptr<compiler::Simulation> simulation;
+  };
+  py::class_<PySimulation>(m, "Simulation")
+    .def(py::init([](std::shared_ptr<Program> program) {
+      if (!program) throw InputError("Simulation takes a compiled program");
+      program->checkCurrent();
+      auto prepared = program->prepared;
+      std::optional<llvm::Expected<std::unique_ptr<compiler::Simulation>>> created;
+      {
+        // The inputs were copied at compilation; nothing here touches Python.
+        py::gil_scoped_release release;
+        created.emplace(compiler::Simulation::create(*prepared));
+      }
+      PySimulation result;
+      result.program = std::move(program);
+      result.simulation = unwrap(std::move(*created));
+      return result;
+    }), py::arg("program"))
+    .def("run", [](PySimulation &s, int64_t steps, bool energy) {
+      std::optional<py::error_already_set> interrupt;
+      std::optional<llvm::Expected<int64_t>> taken;
+      {
+        py::gil_scoped_release release;
+        // Signals reach Python between parts; a KeyboardInterrupt ends the
+        // run there and is raised once the GIL is held again.
+        taken.emplace(s.simulation->run(steps, [&] {
+          py::gil_scoped_acquire acquire;
+          if (PyErr_CheckSignals() != 0) {
+            interrupt.emplace();
+            return true;
+          }
+          return false;
+        }, energy));
+      }
+      if (interrupt) {
+        if (!*taken) llvm::consumeError(taken->takeError());
+        throw *interrupt;
+      }
+      return unwrap(std::move(*taken));
+    }, py::arg("steps"), py::arg("energy") = false)
+    .def("request_stop", [](PySimulation &s) { s.simulation->requestStop(); })
+    .def("state", [](PySimulation &s) { return unwrap(s.simulation->getState()); })
+    .def_property_readonly("step", [](const PySimulation &s) { return s.simulation->getStep(); })
+    .def_property_readonly("time", [](const PySimulation &s) { return s.simulation->getTime(); })
+    .def_property_readonly("failed", [](const PySimulation &s) { return s.simulation->hasFailed(); })
+    .def_property_readonly("program", [](const PySimulation &s) { return s.program; })
+    .def_property("part_seconds",
+                  [](const PySimulation &s) { return s.simulation->partSeconds; },
+                  [](PySimulation &s, double seconds) {
+                    if (!(seconds > 0) || !std::isfinite(seconds))
+                      throw InputError("part_seconds must be positive and finite");
+                    s.simulation->partSeconds = seconds;
+                  });
 }

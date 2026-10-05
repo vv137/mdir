@@ -39,6 +39,8 @@ void Log::print(const char *format, ...) {
   if (size > 0)
     std::vsnprintf(text.data(), size + 1, format, copy);
   va_end(copy);
+  if (quiet)
+    return;
   std::fputs(text.c_str(), stdout);
   // Kept for the file, if one opens.
   if (file)
@@ -184,6 +186,17 @@ static Output *current = nullptr;
 volatile std::sig_atomic_t mdir::driver::stopSignal = 0;
 
 void mdir::driver::setOutput(Output *output) { current = output; }
+
+/// Ends the run on a failure: the process exits, or an embedding program
+/// is told and the segment goes on to its end (D[python-segments]).
+static void stopOnFailure(const Output &output, const std::string &message) {
+  if (output.fail) {
+    output.fail(message);
+    return;
+  }
+  std::fprintf(stderr, "mdir: %s\n", message.c_str());
+  std::exit(1);
+}
 
 void mdir::driver::writeLogHeader(Output &output) {
   if (output.minimizes) {
@@ -477,13 +490,15 @@ void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz) {
   static const char axes[] = "xyz";
   for (int k = 0; k != 3; ++k)
     if (output.box[k] < output.leastEdge) {
-      std::fprintf(stderr,
-                   "mdir: the barostat has made the cell %.4f Å along %c, "
-                   "less than twice the cutoff, %.4f Å; the run needs a "
-                   "larger cell\n",
-                   output.box[k] / units::length, axes[k],
-                   0.5 * output.leastEdge / units::length);
-      std::exit(1);
+      char message[256];
+      std::snprintf(message, sizeof message,
+                    "the barostat has made the cell %.4f Å along %c, "
+                    "less than twice the cutoff, %.4f Å; the run needs a "
+                    "larger cell",
+                    output.box[k] / units::length, axes[k],
+                    0.5 * output.leastEdge / units::length);
+      stopOnFailure(output, message);
+      return;
     }
 }
 
@@ -553,6 +568,18 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
     row.push_back(output.box[0] * output.box[1] /
                   (units::length * units::length));
   }
+  // The total here has the energy of the bath if the run couples: the
+  // conserved energy (D[python-segments] reports both).
+  output.lastEnergies = {step,
+                         potential,
+                         kinetic,
+                         potential + kinetic,
+                         temperature,
+                         virial,
+                         // bar: kJ/mol/nm^3 is 16.6053906717 bar.
+                         pressure * 16.6053906717,
+                         potential + kinetic + (output.couples ? output.bath : 0.0),
+                         output.volume};
   output.log.print("INFO: %9lld", static_cast<long long>(step));
   for (double value : row)
     output.log.print(" %14.4f", value);
@@ -652,17 +679,19 @@ static void checkSpread(const Output &output, const std::vector<double> &x,
       most = std::max(most, x[i]);
     }
     if (most - least > output.box[k] - output.listReach) {
-      std::fprintf(stderr,
-                   "mdir: at step %lld the particles spread %.4f Å along "
-                   "%c, more than the cell around them less the reach of "
-                   "the neighbor structures, %.4f Å; images of the "
-                   "particles would interact. The run stops; begin it "
-                   "again with a larger 'pairlist_distance', which places "
-                   "a larger cell (D142)\n",
-                   static_cast<long long>(step),
-                   (most - least) / units::length, axes[k],
-                   (output.box[k] - output.listReach) / units::length);
-      std::exit(1);
+      char message[512];
+      std::snprintf(message, sizeof message,
+                    "at step %lld the particles spread %.4f Å along "
+                    "%c, more than the cell around them less the reach of "
+                    "the neighbor structures, %.4f Å; images of the "
+                    "particles would interact. The run stops; begin it "
+                    "again with a larger 'pairlist_distance', which places "
+                    "a larger cell (D142)",
+                    static_cast<long long>(step),
+                    (most - least) / units::length, axes[k],
+                    (output.box[k] - output.listReach) / units::length);
+      stopOnFailure(output, message);
+      return;
     }
   }
 }
@@ -681,6 +710,10 @@ void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids) {
   checkSpread(output, readVectors(positions, ids, output.state), step);
   std::vector<float> narrow(values.begin(), values.end());
   output.trajectory->writeFrame(narrow.data(), step, output.getTime(step));
+}
+
+void _mlir_ciface_mdrtFinishForces(void *forces, void *ids) {
+  current->finalForces = readVectors(forces, ids, current->force);
 }
 
 void _mlir_ciface_mdrtFinish(void *positions, void *velocities,

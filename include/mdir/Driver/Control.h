@@ -161,6 +161,13 @@ struct Control {
   /// first step, since the checkpoint was written by a run of other physics
   /// or coupling (D172).
   bool restartRecomputes = false;
+  /// Set by an embedding front end, not by a key (D[python-segments]): the
+  /// entry takes the counts of its loops as arguments, so that one program
+  /// runs any number of steps from any step of the coupling period; and,
+  /// with `continuesSegment`, the run continues the state that the last
+  /// segment left, as a run from `restartInput` continues a checkpoint.
+  bool segments = false;
+  bool continuesSegment = false;
 
   // [output] (D149)
   std::string trajectoryFile;

@@ -93,14 +93,7 @@ compiler::compile(const model::PreparedModel &prepared) {
     return program.takeError();
   return lower(prepared.control, std::move(*program), prepared.execution);
 }
-llvm::Expected<compiler::CompiledProgram>
-compiler::lower(const driver::Control &control, driver::Program program,
-                const model::Execution &execution) {
-#if !MDIR_HAS_CUDA
-  if (execution.target == Target::GPU)
-    return llvm::make_error<model::ModelError>(model::ModelError::Unsupported,
-                                              "GPU compilation requires a CUDA-enabled build");
-#endif
+mlir::DialectRegistry compiler::getRegistry() {
   // Process-wide registries are initialized once; each lowering owns a context.
   static std::once_flag registration;
   std::call_once(registration, [] {
@@ -116,7 +109,11 @@ compiler::lower(const driver::Control &control, driver::Program program,
   mlir::registerAllToLLVMIRTranslations(registry);
   registry.insert<dyn::DynDialect, md::MDDialect, md_exec::MDExecDialect,
                   mdrt::MDRTDialect>();
-  mlir::MLIRContext context(registry);
+  return registry;
+}
+llvm::Expected<mlir::OwningOpRef<mlir::ModuleOp>>
+compiler::lowerModule(mlir::MLIRContext &context, const driver::Control &control,
+                      const driver::Program &program) {
   std::string diagnostics;
   llvm::raw_string_ostream diagnosticStream(diagnostics);
   mlir::ScopedDiagnosticHandler handler(&context, [&](mlir::Diagnostic &d) {
@@ -136,9 +133,24 @@ compiler::lower(const driver::Control &control, driver::Program program,
     return llvm::make_error<CompileError>("cannot set up lowering: " + diagnostics);
   if (mlir::failed(manager.run(*module)))
     return llvm::make_error<CompileError>("cannot lower program: " + diagnostics);
+  return std::move(module);
+}
+llvm::Expected<compiler::CompiledProgram>
+compiler::lower(const driver::Control &control, driver::Program program,
+                const model::Execution &execution) {
+#if !MDIR_HAS_CUDA
+  if (execution.target == Target::GPU)
+    return llvm::make_error<model::ModelError>(model::ModelError::Unsupported,
+                                              "GPU compilation requires a CUDA-enabled build");
+#endif
+  mlir::MLIRContext context(getRegistry());
+  auto module = lowerModule(context, control, program);
+  if (!module)
+    return module.takeError();
   std::string lowered;
   llvm::raw_string_ostream os(lowered);
-  module->print(os);
+  (*module)->print(os);
+  std::string pipeline = getPipeline(control, program);
   return CompiledProgram{std::move(program), execution,
                          std::move(pipeline), std::move(lowered)};
 }

@@ -37,6 +37,9 @@ public:
 
   /// Prints to the standard output and to the file.
   void print(const char *format, ...) __attribute__((format(printf, 2, 3)));
+  /// A log that prints nothing: that of a simulation embedded in another
+  /// program (D[python-segments]), whose state the program reads.
+  bool quiet = false;
   /// Opens `path`, appending to what it holds if `appends`, and writes
   /// what was printed before.
   llvm::Error open(const std::string &path, bool appends);
@@ -230,6 +233,21 @@ struct Output {
 
   /// Takes the state when the run ends.
   System *system = nullptr;
+  /// The forces that a segment ends with, in the order of the files, from
+  /// a program of segments (D[python-segments]).
+  std::vector<double> finalForces;
+  /// The last row of energies, in kJ/mol, K, bar, and nm^3 (the total
+  /// without the bath, `conserved` with it), for a program
+  /// that embeds the run (D[python-segments]); `step` is -1 before one.
+  struct EnergyRow {
+    int64_t step = -1;
+    double potential = 0.0, kinetic = 0.0, total = 0.0, temperature = 0.0,
+           virial = 0.0, pressure = 0.0, conserved = 0.0, volume = 0.0;
+  } lastEnergies;
+  /// If set, a failure of the run is reported to it, and the run goes on to
+  /// the end of its segment, rather than the process exiting: a simulation
+  /// embedded in another program (D[python-segments]).
+  std::function<void(const std::string &)> fail;
 
   double getTime(int64_t step) const {
     return firstTime + static_cast<double>(step - firstStep) * timestep;
@@ -337,6 +355,8 @@ void _mlir_ciface_mdrtWriteCheckpointWithForces(int64_t step,
                                                 void *velocities,
                                                 void *forces, void *ids);
 void _mlir_ciface_mdrtFinish(void *positions, void *velocities, void *ids);
+/// The forces that a segment ends with (D[python-segments]).
+void _mlir_ciface_mdrtFinishForces(void *forces, void *ids);
 }
 
 #endif // MDIR_DRIVER_OUTPUT_H

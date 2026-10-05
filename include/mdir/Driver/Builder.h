@@ -151,6 +151,14 @@ struct Program {
   /// positions, and the width of the cells that it orders them by, in nm.
   bool reorders = false;
   double orderWidth = 0.0;
+
+  /// A program of segments (Control::segments, D[python-segments]): its
+  /// entry takes the counts of its loops after the step that the run begins
+  /// after. `segmentPeriod` is the period of coupling that an iteration of
+  /// its outer loop takes, or 0 if the outer loop is over single steps;
+  /// `closingSteps` are the steps of a period after its plain steps.
+  int64_t segmentPeriod = 0;
+  int64_t closingSteps = 1;
 };
 
 llvm::Expected<Program> buildProgram(const Control &control,
