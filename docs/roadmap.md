@@ -4,12 +4,13 @@ Status: 2026-10-03. The stages of the first milestone are in
 [design-m1.md](design-m1.md), Section 18; the principles that the work
 follows are in [principles.md](principles.md).
 
-**Milestones** (D169):
+**Milestones** (D169; M2 split into M2a and M2b by D[m2b-differentiable]):
 
 | Milestone | Scope | Status |
 |---|---|---|
 | M1 | An all-atom protein in water with an Amber force field, on one node, CPU and GPU; at least the rate of pmemd.cuda on every system of the Amber suite | Done (D114, 2026-10-02); release in preparation |
-| M2 | The Python API (Section 6) | Next |
+| M2a | The Python API (Section 6) | Under way |
+| M2b | Differentiable simulation: parameters as tunable buffers, a frame evaluator with derivative rules, PyTorch then JAX adapters, and trajectory reweighting [[ThalerZavadlav2021]](references.md#thalerzavadlav2021) (Section 6.1) | Planned, after M2a |
 | M3 | Learned potentials on one GPU: ML1, then the single-GPU stage of ML4 (Section 7) | Planned |
 | M4 | Distributed execution: ML2, ML3, ML5, and distributed particle mesh Ewald (Section 7) | Planned |
 
@@ -202,7 +203,11 @@ they are needed:
 | F9 | The custom forces of OpenMM beyond tuples: pairs with a topology, tabulated functions, centers of groups (pulling), generalized Born | In progress: pair terms over the pairs of a topology, in its charges and Lennard-Jones parameters, with interaction groups (D137); tabulated functions of one argument, natural or periodic splines, in every expression (D138); terms over the centers of groups (D139), 0.21 to 0.24 ms a step on JAC with a bond and 0.26 with a dihedral since the sums of a block are added in one pass, a set of few tuples is reduced by one block, and the forces of a term are one field evaluated once per tuple (D150). The reaction field as GROMACS has it (D140); runs without a periodic cell, in a cell that no image reaches (D142). Intermediate fields, the derivative of the energy carried back through fields computed from the positions (D143), and generalized Born, OBC I and II, from a topology of Amber (D144), and HCT, salt, a cutoff of the descreening, and the radii of mbondi2 for a topology of GROMACS or CHARMM (D152). Terms over the triplets centered on each particle, the three-body term of Stillinger-Weber and mW water, `[[energy.triplet]]` without a topology on the CPU, its members written at every step from the neighbor matrix (D160); their GPU kernel, the selections `center` and `ends`, a topology, the exclusion of a far leg, and bond order (Tersoff) follow. Parameters of each particle, by masks of Amber, for the pair terms, the terms over tuples, and those of the positions, tabulated functions of two and three arguments and discrete ones, and terms over tuples of any length in their distances, angles, and dihedrals, as OpenMM's (D165). Term parameter collisions are rejected and compound terms accept declared lambda components (D188, #67). Next: the first reduction inside the loop of the sums (D150) and an open cell if a system needs one; file-backed grids with explicit shape are implemented (D178); later a reader or converter for the seven-column tables of GROMACS for F6 |
 | F10 | Thermostats, integrators, and barostats beyond M1: a deterministic thermostat, Brownian dynamics, anisotropic and flexible cells, multiple time steps | In progress (D163): Nosé–Hoover chains (D163a), Brownian dynamics (D163b), anisotropic cell rescaling (D163c). Next, as a design only: multiple time steps (r-RESPA, [[Tuckerman1992]](references.md#tuckerman1992)), the energy split into a fast part (bonded terms, the direct sum within a short cutoff) and a slow part (the rest, the reciprocal sum), the slow forces kicking half an outer step at its ends and the fast ones integrated by velocity Verlet within it; in MDIR two `md.evaluate` of two `@energy` functions that the terms are partitioned into, a program of an outer step that loops over inner ones, and a check of the resonance of the outer step with the fastest motions, which limits it to about 4 fs with constraints; a flexible cell, with shear, needs the off-diagonal virial and the pressure tensor (F4), a decision of its own |
 
-## 6. Python API (M2)
+## 6. Python API (M2a)
+
+D[m2b-differentiable] splits M2 in two: M2a is this section, the Python API
+as planned in [python-m2.md](python-m2.md), where "M2" means M2a; M2b is
+Section 6.1.
 
 Preparation and proposed implementation gates are in
 [python-m2.md](python-m2.md) (D187), including the maintainer's
@@ -252,6 +257,32 @@ not propagate gradients: framework adapters need explicit derivative rules
 and independently validated force/virial and parameter derivatives. This
 future requirement does not claim training or trajectory differentiation in
 the initial M3 inference deliverable.
+
+### 6.1 Differentiable simulation (M2b)
+
+Fitting the parameters of a potential to measured averages, as Differentiable
+Trajectory Reweighting does [[ThalerZavadlav2021]](references.md#thalerzavadlav2021),
+needs no derivative through the trajectory. Frames $S_i$ sampled at
+$\hat\theta$ are reweighted to $\theta$ by
+$w_i = \operatorname{softmax}_i[-\beta(U_\theta(S_i) - U_{\hat\theta}(S_i))]$,
+and $\langle O\rangle_\theta = \sum_i w_i O_i$. Automatic differentiation of
+that expression in the framework gives the gradient,
+$\langle\partial O/\partial\theta\rangle - \beta(\langle O\,\partial U/\partial\theta\rangle - \langle O\rangle\langle\partial U/\partial\theta\rangle)$,
+so MDIR need provide only two things: a sampler, which is not
+differentiated, and an evaluator of $U_\theta$, the virial, and observables
+at stored frames, with a derivative rule in $\theta$.
+
+| Item | Design |
+|---|---|
+| Tunable parameters | Parameters declared tunable (Lennard-Jones, charges, constants of terms given by expressions) are buffers, so a new $\theta$ needs no compilation (the open M2a gate of D192) |
+| Frame evaluator | $U_\theta$, virial, and observables at $K$ stored frames, on the device, with the vector-Jacobian product $g \mapsto \sum_i g_i\,\partial U/\partial\theta(S_i)$ from the differentiation of parameters (D161); evaluated as a multi-point evaluation of the potential (#87) |
+| Adapters | PyTorch first (`torch.autograd.Function`), then JAX (`jax.custom_vjp` over `jax.ffi`), one framework-neutral contract with DLPack buffers (maintainer, 2026-10-05) |
+| Reweighting | In the framework, with the effective sample size $\exp(-\sum_i w_i\ln w_i)$ deciding when to sample again; an example fits the radial distribution function and the density of water |
+| Further targets | Free energies through `[free_energy]` ($\partial\Delta G/\partial\theta$ from $\langle\partial U/\partial\theta\rangle$ at the end states or MBAR weights), the pressure through the derivative of the virial, the relative entropy of coarse-grained models |
+
+Learned potentials (M3) keep their parameters in the framework: MDIR
+samples, and the framework model evaluates $U_\theta$ at the frames. M2b
+depends on M2a's segments, device views, and tunable buffers.
 
 ## 7. Learned potentials (M3) and distributed execution (M4)
 

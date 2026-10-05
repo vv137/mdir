@@ -52,6 +52,10 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- Roadmap: M2 is split into M2a, the Python API, and M2b, differentiable
+  simulation (fitting parameters to ensemble averages by trajectory
+  reweighting, PyTorch then JAX) (D[m2b-differentiable]).
+
 - Optional Python loaders and typed model inputs, explicit shared compiler
   lowering, immutable IR/plan inspection and tracked stale detection
   (D192, #76). Persistent execution and wheels follow separately.
