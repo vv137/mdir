@@ -17,6 +17,8 @@ inline std::string shape(const py::array &a) {
   return result + ")";
 }
 inline py::array array(py::handle source, const std::string &name) {
+  // Checked first: a quantity forwards `__dlpack__` to its magnitude.
+  if (units::isQuantity(source)) units::strip(source, name, units::none);
   py::array a;
   try {
     if (PyObject_CheckBuffer(source.ptr())) {
@@ -58,8 +60,21 @@ inline void contiguous(const py::array &a, const std::string &name) {
 }
 inline std::vector<double> doubles(py::handle source, const std::string &name,
                                     std::optional<size_t> rows = {},
-                                    std::optional<size_t> columns = {}) {
-  auto a = array(source, name);
+                                    std::optional<size_t> columns = {},
+                                    units::Unit unit = units::none) {
+  auto magnitude = py::reinterpret_borrow<py::object>(source);
+  if (units::isQuantity(source)) {
+    // Only a quantity converts a sequence, such as OpenMM's list of Vec3.
+    magnitude = units::strip(source, name, unit);
+    if (!PyObject_CheckBuffer(magnitude.ptr()) && !py::hasattr(magnitude, "__dlpack__")) {
+      try {
+        magnitude = py::module_::import("numpy").attr("array")(magnitude, py::arg("dtype") = "float64");
+      } catch (const py::error_already_set &e) {
+        throw InputError(name + ": cannot convert the quantity to a float64 array: " + e.what());
+      }
+    }
+  }
+  auto a = array(magnitude, name);
   dimensions(a, name, rows, columns);
   if (!dtype<double>(a))
     throw InputError(name + ": expected native float64; found " +

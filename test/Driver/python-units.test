@@ -1,0 +1,14 @@
+# REQUIRES: python-api, openmm
+# Unit quantities at the Python boundary (D[python-units]): OpenMM
+# quantities in other units against the plain values in the public units,
+# Vec3 lists and NumPy magnitudes, wrong dimensions, and values with no
+# declared unit; a model of quantities compiles to the IR of the plain one.
+# RUN: %mdir_python %S/Inputs/python_units.py %S/Inputs/dipeptide CPU | FileCheck %s
+# CHECK: scalar setters: 13 within {{[01]}} ulp of the plain values
+# CHECK: positions: list of Vec3 within {{[01]}} ulp, NumPy within {{[01]}} ulp of the plain values
+# CHECK: velocities, restraint reference, and cell within 1 ulp
+# CHECK: array refusals passed
+# CHECK: CPU: model of quantities compiles to the IR of the plain model in mixed and double, not of another pressure
+# CHECK: versions advance on the quantity path
+# CHECK: Simulation.part_seconds: 250 ms -> 0.25
+# CHECK: unit quantities passed
