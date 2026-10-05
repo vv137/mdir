@@ -726,12 +726,34 @@ it (D154).
 
 ## 6.5 What the log reports
 
-$K$ is the kinetic energy of $\mathbf v_{n+1}$. Without constraints the
+$K$ is the kinetic energy of $\mathbf v_{n+1}$, and $K_\text{half}$ the
+mean of those of the velocities of the half steps before and after it. The
 log corrects the estimates of the temperature and the pressure for the
-velocity of the integer step [[Jung2018]](references.md#jung2018) [[Jung2019]](references.md#jung2019): with
-$\epsilon = \tfrac{\Delta t^2}{8}\sum_i\lVert\mathbf F_i\rVert^2/m_i$,
-$K_T = K + \tfrac23\epsilon$ (the mean of $K_{n\pm\frac12}$ and $K_n$) and
-$K_P = K + \epsilon$. With constraints both are $K$. Then
+velocity of the integer step [[Jung2018]](references.md#jung2018)
+[[Jung2019]](references.md#jung2019): $K_T = \tfrac13K +
+\tfrac23K_\text{half}$, the optimal estimate of [[Jung2019]](references.md#jung2019),
+$N_fk_BT = \tfrac43K_\text{half} + \tfrac23K$, and $K_P = K_\text{half}$.
+Without constraints velocity Verlet gives $K_\text{half} = K +
+\tfrac{\Delta t^2}{8}\sum_i\lVert\mathbf F_i\rVert^2/m_i$ exactly. With
+constraints the two halves of a step receive different impulses of the
+constraints, and the steps of the rows measure $K_\text{half}$ from the
+chord velocities $(\mathbf x_{n+2} - \mathbf x_{n+1})/\Delta t$ and
+$(\mathbf x_{n+1} - \mathbf x_n)/\Delta t$, the velocities after the
+constraints of the positions: after its second half kick, the step takes
+the first half of the next as that step will, without changing the state
+(D[optimal-temperature]). The estimate is accurate as an equilibrium mean,
+with constraints when the half-step velocities include the corrections of
+the constraints of the positions. The row of step 0 with constraints, and
+Langevin dynamics with constraints, take $K$. The couplings take the
+kinetic energy of the velocities they scale (Sections 6.3 and 6.4):
+$K_T$ is not a homogeneous quadratic function of the momenta, so a
+rescaling would not produce the value it draws, and at a finite step the
+couplings sample the physical distribution up to the error of the
+integrator. With rigid waters, a run ends with $T$ of the solvent, the
+waters of SETTLE with 6 degrees of freedom each, and of the solute, the
+rest, each with its share of the three of the center of mass, as means
+over the rows: the check of the hot-solvent/cold-solute problem
+[[Lingenheil2008]](references.md#lingenheil2008). Then
 
 $$
 T = \frac{2K_T}{N_fk_B},

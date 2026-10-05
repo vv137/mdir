@@ -281,6 +281,13 @@ F. Lekien, J. Marsden, "Tricubic interpolation in three dimensions,"
 *Int. J. Numer. Methods Eng.* **63**, 455–471 (2005).
 [doi:10.1002/nme.1296](https://doi.org/10.1002/nme.1296)
 
+### Lingenheil2008
+
+M. Lingenheil, R. Denschlag, R. Reichold, P. Tavan, "The
+"hot-solvent/cold-solute" problem revisited," *J. Chem. Theory Comput.*
+**4**, 1293–1306 (2008).
+[doi:10.1021/ct8000365](https://doi.org/10.1021/ct8000365)
+
 ### Louwerse2006
 
 M. J. Louwerse, E. J. Baerends, "Calculation of pressure in case of

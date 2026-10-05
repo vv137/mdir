@@ -12,6 +12,17 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- With constraints, the temperature of the log is now the optimal estimate
+  of Jung, Kobayashi, and Sugita (2019), $N_fk_BT = \tfrac43K_\text{half} +
+  \tfrac23K$, and its pressure takes $K_\text{half}$, the mean of the
+  kinetic energies of the half steps, measured from the velocities after the
+  constraints; before, both took the kinetic energy of the step $K$ with
+  constraints (without them the log already took these estimates). Rows of
+  runs with constraints read about 1 K higher at 2 fs and 5 K at 4 fs; the
+  dynamics, the thermostats, and the barostats are unchanged. With rigid
+  waters, `mdir run` ends with the temperatures of the solute and of the
+  solvent (D[optimal-temperature], #112).
+
 - In the deterministic mode (`deterministic = true`) device kernels no longer
   contract products and sums into fused multiply-adds, so that a step that
   writes energies moves the particles as one that does not

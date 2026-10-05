@@ -457,8 +457,12 @@ $$K_\text{half} = K + \frac{\Delta t^2}{8} \sum_i \frac{\lVert\mathbf F_i\rVert^
 
 which holds exactly without constraints and thermostats. With
 constraints the forces do not give the kinetic energies of the half steps,
-and the log takes $K$ for the temperature and the pressure as well
-(D45, amended).
+and the steps of the rows measure them: they take the first half of the
+next step, a kick, a drift, and the constraints of the positions, and the
+mean of the kinetic energies of the velocities of the two drifts after
+their constraints (D[optimal-temperature]). The row of step 0 has no step
+before it and takes $K$ there. The thermostats and the barostats take the
+kinetic energy of the velocities they scale.
 
 | Quantity | Kinetic energy | Reason |
 |---|---|---|
