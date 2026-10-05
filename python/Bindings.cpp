@@ -4,6 +4,7 @@
 #include <pybind11/stl.h>
 #include <memory>
 #include <stdexcept>
+#include <optional>
 namespace py = pybind11;
 using namespace mdir;
 struct InputError : std::runtime_error { using std::runtime_error::runtime_error; };
@@ -29,8 +30,10 @@ template <class T> static T unwrap(llvm::Expected<T> value) {
   if (!value) raise(value.takeError());
   return std::move(*value);
 }
+#include "HostArrays.h"
+
 struct Version { uint64_t version = 0; virtual ~Version() = default; };
-template <class T> struct Input : Version { T value; };
+template <class T> struct Input : Version { T value; std::optional<size_t> particleCount; };
 template <class T, class V>
 static void property(py::class_<Input<T>, std::shared_ptr<Input<T>>> &c,
                      const char *name, V T::*member) {
@@ -57,6 +60,15 @@ struct Program {
   }
 };
 PYBIND11_MODULE(mdir, m) {
+  // Required at import as well as configuration, including installed modules.
+  try {
+    auto numpy = py::module_::import("numpy");
+    auto version = numpy.attr("lib").attr("NumpyVersion")(numpy.attr("__version__"));
+    if (!py::cast<bool>(version.attr("__ge__")("1.23.0")))
+      throw py::import_error("The MDIR Python interface requires NumPy >=1.23");
+  } catch (const py::error_already_set &e) {
+    throw py::import_error(std::string("The MDIR Python interface requires NumPy >=1.23: ") + e.what());
+  }
   m.attr("__version__") = MDIR_VERSION;
   py::register_exception<InputError>(m, "InputError", PyExc_ValueError);
   py::register_exception<UnsupportedError>(m, "UnsupportedError");
@@ -102,10 +114,25 @@ PYBIND11_MODULE(mdir, m) {
     .value("Gromacs", model::Format::Gromacs)
     .value("Charmm", model::Format::Charmm)
     ;
-  py::class_<driver::Cell>(m, "Cell")
-    .def(py::init<>()).def_readwrite("diagonal", &driver::Cell::diagonal)
-    .def_readwrite("tilt", &driver::Cell::tilt)
-    .def_property_readonly("vectors", &driver::Cell::getVectors);
+  auto cell = py::class_<driver::Cell>(m, "Cell").def(py::init<>());
+  for (auto item : {std::make_pair("diagonal", &driver::Cell::diagonal),
+                    std::make_pair("tilt", &driver::Cell::tilt)}) {
+    auto member = item.second;
+    std::string name = std::string("Cell.") + item.first;
+    cell.def_property(item.first, [member](const driver::Cell &c) {
+      return host::copy((c.*member).data(), 3, {3});
+    }, [member, name](driver::Cell &c, py::object input) {
+      auto values = host::doubles(input, name, 3);
+      std::copy(values.begin(), values.end(), (c.*member).begin());
+    });
+  }
+  cell.def_property_readonly("vectors", [](const driver::Cell &c) {
+    auto vectors = c.getVectors();
+    std::array<double, 9> values;
+    for (size_t i = 0; i < 3; ++i)
+      std::copy(vectors[i].begin(), vectors[i].end(), values.begin() + 3 * i);
+    return host::copy(values.data(), values.size(), {3, 3});
+  });
   py::class_<driver::PairTerm>(m, "PairTerm").def(py::init<>())
     .def_readwrite("name", &driver::PairTerm::name)
     .def_readwrite("expression", &driver::PairTerm::expression)
@@ -115,8 +142,10 @@ PYBIND11_MODULE(mdir, m) {
     .def_readwrite("name", &driver::TupleTerm::name)
     .def_readwrite("expression", &driver::TupleTerm::expression)
     .def_readwrite("arity", &driver::TupleTerm::arity)
-    .def_readwrite("particles", &driver::TupleTerm::particles)
-    .def_readwrite("parameters", &driver::TupleTerm::parameters);
+    .def_property("particles", [](const driver::TupleTerm &t) { return host::particles(t); },
+                  [](driver::TupleTerm &t, py::object value) { host::particles(t, value); })
+    .def_property("parameters", [](const driver::TupleTerm &t) { return host::parameters(t); },
+                  [](driver::TupleTerm &t, py::sequence value) { host::parameters(t, value); });
   auto system = input<model::System>(m, "System");
   property(system, "periodic", &model::System::periodic);
   property(system, "cutoff", &model::System::cutoff);
@@ -137,8 +166,25 @@ PYBIND11_MODULE(mdir, m) {
   property(system, "pair_terms", &model::System::pairTerms);
   property(system, "tuple_terms", &model::System::tupleTerms);
   auto initialstate = input<model::InitialState>(m, "InitialState");
-  property(initialstate, "positions", &model::InitialState::positions);
-  property(initialstate, "velocities", &model::InitialState::velocities);
+  for (auto item : {std::make_pair("positions", &model::InitialState::positions),
+                    std::make_pair("velocities", &model::InitialState::velocities)}) {
+    auto member = item.second;
+    bool velocity = member == &model::InitialState::velocities;
+    std::string name = std::string("InitialState.") + item.first;
+    initialstate.def_property(item.first, [member](const Input<model::InitialState> &o) {
+      const auto &v = o.value.*member;
+      return host::copy(v.data(), v.size(), {static_cast<py::ssize_t>(v.size() / 3), 3});
+    }, [member, velocity, name](Input<model::InitialState> &o, py::object source) {
+      auto values = host::doubles(source, name, {}, 3);
+      size_t count = values.size() / 3;
+      if (o.particleCount && count != *o.particleCount && !(velocity && count == 0))
+        throw InputError(name + ": expected shape (" + std::to_string(*o.particleCount) +
+                         ", 3); found (" + std::to_string(count) + ", 3)");
+      o.value.*member = std::move(values);
+      if (!o.particleCount && count) o.particleCount = count;
+      ++o.version;
+    });
+  }
   property(initialstate, "cell", &model::InitialState::cell);
   auto integrator = input<model::Integrator>(m, "Integrator");
   property(integrator, "method", &model::Integrator::method);
@@ -176,7 +222,8 @@ PYBIND11_MODULE(mdir, m) {
       auto result = std::make_shared<Input<model::System>>(); result->value = d.makeSystem(); return result;
     })
     .def("make_state", [](const model::LoadedData &d) {
-      auto result = std::make_shared<Input<model::InitialState>>(); result->value = d.makeState(); return result;
+      auto result = std::make_shared<Input<model::InitialState>>(); result->value = d.makeState();
+      result->particleCount = d.topology.getNumParticles(); return result;
     });
   m.def("load_amber", [](const std::string &top, const std::string &coordinates) {
     return unwrap(model::loadAmber(top, coordinates));

@@ -20,7 +20,7 @@ static void reject(llvm::Expected<model::PreparedModel> result,
   require(matched, "wrong model error category");
 }
 int main(int argc, char **argv) {
-  require(argc == 2, "expected a control file");
+  require(argc == 2 || (argc == 3 && llvm::StringRef(argv[2]) == "--arrays"), "expected a control file and optional --arrays");
   auto c = take(driver::readControl(argv[1]));
   auto fileSystem = take(driver::readSystem(c));
   driver::Cell charmmCell;
@@ -36,6 +36,18 @@ int main(int argc, char **argv) {
           : take(model::loadAmber(c.prmtopFile,c.amberCoordinateFile));
   auto s = data.makeSystem();
   auto state = data.makeState();
+  if (argc == 3) {
+    // The D191 native values underlying D192's list interface, independent
+    // of Python array shaping, dtype conversion and ownership.
+    auto write = [](const std::vector<double> &values) {
+      llvm::outs().write(reinterpret_cast<const char *>(values.data()),
+                         values.size() * sizeof(double));
+    };
+    write(state.positions); write(state.velocities);
+    for (const auto &row : state.cell.getVectors())
+      llvm::outs().write(reinterpret_cast<const char *>(row.data()), sizeof(row));
+    return 0;
+  }
   s.cutoff = 0.8; s.pairlistDistance = 0.9; s.switchDistance = 0.8;
   s.truncation = driver::Truncation::None;
   s.rigidHydrogenBonds = c.rigidBonds;

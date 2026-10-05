@@ -1,0 +1,3 @@
+# REQUIRES: python-api
+# RUN: %mdir_python %S/Inputs/python_arrays.py %S/Inputs/dipeptide | FileCheck %s
+# CHECK: host arrays: shapes, dtype, strides, buffer/DLPack, ownership and atomic versions passed

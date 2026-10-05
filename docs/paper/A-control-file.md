@@ -8,6 +8,10 @@ The optional Python lowering interface (D192,
 [contract](../python-compile.md)) uses the same compiler pipeline and adds
 no control keys, format changes or output side effects.
 
+D[python-arrays] changes the optional Python host-data boundary and
+requires NumPy >=1.23 when enabled. It adds no control keys and changes
+no checkpoint/output formats or overwrite behavior.
+
 A run is described by a control file in TOML. `mdir check FILE` reads it
 and reports the system, planned run, outputs, and warnings (A.5);
 `mdir run FILE` compiles and runs it, and

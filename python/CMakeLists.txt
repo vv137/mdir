@@ -2,6 +2,15 @@ find_package(Python 3.10 REQUIRED COMPONENTS Interpreter Development.Module)
 if(Python_VERSION VERSION_GREATER_EQUAL 3.14)
   message(FATAL_ERROR "The M2 Python interface supports Python 3.10 through 3.13")
 endif()
+# Host arrays have one required dependency and one validated interchange path.
+execute_process(COMMAND "${Python_EXECUTABLE}" -c
+  "import numpy as np; assert np.lib.NumpyVersion(np.__version__) >= '1.23.0', np.__version__"
+  RESULT_VARIABLE MDIR_NUMPY_STATUS OUTPUT_VARIABLE MDIR_NUMPY_OUTPUT
+  ERROR_VARIABLE MDIR_NUMPY_ERROR)
+if(NOT MDIR_NUMPY_STATUS STREQUAL "0")
+  message(FATAL_ERROR
+    "The MDIR Python interface requires NumPy >=1.23 with ${Python_EXECUTABLE}.\n${MDIR_NUMPY_ERROR}")
+endif()
 set(PYBIND11_FINDPYTHON ON)
 find_package(pybind11 3.0.1 EXACT CONFIG REQUIRED)
 pybind11_add_module(mdir_python NO_EXTRAS Bindings.cpp)

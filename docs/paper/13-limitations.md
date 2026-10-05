@@ -135,7 +135,11 @@ and state as separate values, typed options, common preparation and validation,
 and the shared semantic IR builder, with a documented classical subset.
 D192 adds optional Python bindings, explicit lowering through
 the shared CLI pipeline, immutable IR/plan inspection and versioned stale
-detection. Runtime/JIT ownership, persistent execution and tunable buffers
+detection. D[python-arrays] changes the host boundary to shaped, read-only NumPy
+copies, with strict buffer/CPU DLPack inputs and required NumPy >=1.23
+when Python is enabled. Native storage and CLI behavior are unchanged;
+this does not supply device views or framework gradients.
+Runtime/JIT ownership, persistent execution and tunable buffers
 remain subsequent work; M2 and its packaging gate are incomplete.
 Future PyTorch/JAX automatic differentiation (requested 2026-10-04)
 requires explicit framework derivative rules for energy, force, virial and
