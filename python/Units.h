@@ -37,12 +37,14 @@ inline py::object strip(py::handle value, const std::string &name, Unit unit) {
     auto module = py::module_::import("openmm.unit");
     target = py::eval(unit.expression, module.attr("__dict__"));
   } catch (const py::error_already_set &e) {
-    throw InputError(name + ": a unit quantity needs openmm.unit: " + e.what());
+    throw InputError(name + ": a unit quantity needs openmm.unit: " +
+                     py::str(e.value()).cast<std::string>());
   }
   try {
     return value.attr("value_in_unit")(target);
   } catch (const py::error_already_set &e) {
-    throw InputError(name + ": expected a quantity in " + unit.text + "; " + e.what());
+    throw InputError(name + ": expected a quantity in " + unit.text + "; " +
+                     py::str(e.value()).cast<std::string>());
   }
 }
 /// A real number: a plain one as it is, a quantity in `unit`.
