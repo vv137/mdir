@@ -1,4 +1,4 @@
-"""The Python model without OpenMM (D[python-units]): `openmm` is hidden,
+"""The Python model without OpenMM (D200): `openmm` is hidden,
 MDIR imports and its plain setters work without importing it, and an
 object that looks like a quantity raises InputError."""
 import sys

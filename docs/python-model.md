@@ -121,4 +121,4 @@ advances the binding version. There is no list path. NumPy >=1.23 is required
 only for the enabled Python interface. See [python-arrays.md](python-arrays.md).
 
 Setters whose value has a unit also take OpenMM unit quantities, converted
-at the boundary (D[python-units], [python-units.md](python-units.md)).
+at the boundary (D200, [python-units.md](python-units.md)).

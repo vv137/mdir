@@ -82,7 +82,7 @@ if config.mdir_python:
     config.available_features.add("python-api")
     config.substitutions.append(("%mdir_python", config.mdir_python_executable))
     llvm_config.with_environment("PYTHONPATH", os.path.join(config.mdir_obj_root, "python"))
-    # OpenMM's unit module, for the tests of unit quantities (D[python-units]).
+    # OpenMM's unit module, for the tests of unit quantities (D200).
     import subprocess
 
     if subprocess.run([config.mdir_python_executable, "-c", "import openmm.unit"],

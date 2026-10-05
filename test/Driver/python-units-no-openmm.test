@@ -1,5 +1,5 @@
 # REQUIRES: python-api
-# The Python model with `openmm` hidden (D[python-units]): it imports, its
+# The Python model with `openmm` hidden (D200): it imports, its
 # plain setters work, and an object with `value_in_unit_system` raises
 # InputError.
 # RUN: %mdir_python %S/Inputs/python_units_no_openmm.py %S/Inputs/dipeptide | FileCheck %s

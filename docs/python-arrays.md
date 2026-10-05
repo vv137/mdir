@@ -14,7 +14,7 @@ their particle count; fresh states establish it on first nonempty assignment.
 Absent velocities have shape `(0, 3)`. An OpenMM unit quantity is the one
 exception to the refusal of lists: its magnitude, such as a list of `Vec3`,
 is converted to a float64 array and then checked as above
-(D[python-units], [python-units.md](python-units.md)).
+(D200, [python-units.md](python-units.md)).
 
 Outputs are independent, C-contiguous, read-only NumPy copies: positions
 and velocities `(N, 3)` float64, Cell vectors `(3, 3)` float64, Cell

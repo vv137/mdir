@@ -158,7 +158,7 @@ remain dependency assumptions, as described in [JIT ownership](../jit-invariants
 D198 draws initial velocities by the CLI's
 code, so that Python and `mdir run` start from the same velocities bit for
 bit, and maps typed positional restraints onto `[[restraints]]`.
-D[python-units] converts OpenMM unit quantities given to the setters into
+D200 converts OpenMM unit quantities given to the setters into
 MDIR's units at the boundary; outputs stay in MD units without units
 attached.
 Reporters, checkpoints, minimization, NPT in a

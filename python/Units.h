@@ -1,4 +1,4 @@
-// Unit quantities at the Python boundary (D[python-units]).
+// Unit quantities at the Python boundary (D200).
 //
 // A value with `value_in_unit_system` is taken as an `openmm.unit.Quantity`
 // (duck typing: OpenMM is not a dependency). It is converted to the unit

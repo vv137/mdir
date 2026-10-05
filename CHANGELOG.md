@@ -58,7 +58,7 @@ format, or the outputs; every such change is listed under **Changed** or
   and others), converted to MDIR's units; a list of `Vec3` in a quantity
   becomes a float64 array. OpenMM stays optional. A NumPy array wrapped in
   a quantity is no longer stored with its unit dropped
-  (D[python-units], #95).
+  (D200, #95).
 
 - Python: `InitialState.draw_velocities(system, temperature, seed)` draws
   the velocities that `mdir run` draws for the same input, bit for bit, in

@@ -1,4 +1,4 @@
-# Unit quantities at the Python boundary (D[python-units])
+# Unit quantities at the Python boundary (D200)
 
 Issue #95. The Python model (D191) takes numbers in its public units: nm,
 ps, kJ/mol, K, bar, amu, and e. With this decision every setter of a

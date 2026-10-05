@@ -1,4 +1,4 @@
-"""Unit quantities at the Python boundary (D[python-units]): each setter
+"""Unit quantities at the Python boundary (D200): each setter
 with an OpenMM quantity in other units against the plain value in the
 public units, arrays of Vec3 and NumPy magnitudes, wrong dimensions, and
 values that have no declared unit."""

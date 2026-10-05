@@ -1,5 +1,5 @@
 # REQUIRES: python-api, openmm, cuda
-# Unit quantities at the Python boundary (D[python-units]) with programs
+# Unit quantities at the Python boundary (D200) with programs
 # for a GPU: a model of quantities compiles to the IR of the plain one.
 # RUN: %mdir_python %S/Inputs/python_units.py %S/Inputs/dipeptide GPU | FileCheck %s
 # CHECK: scalar setters: 13 within {{[01]}} ulp of the plain values
