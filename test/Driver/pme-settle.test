@@ -20,17 +20,20 @@
 # RUN: mdir run %t/start.toml | FileCheck %s --check-prefix=START
 
 # CHECK: INFO:         0         0.0000 {{ *}}-2811.4253 {{ *}}-3522.3477
+# CHECK: MDIR: the temperatures over 2 rows, in K: of the solute {{[0-9.]+}} ± {{[0-9.]+}}, of the solvent {{[0-9.]+}} ± {{[0-9.]+}}; from the velocities of the steps alone
 # CHECK: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
 
 # At the start no step has given the forces of the constraints; their
 # virial is that of the forces that keep the accelerations on the
 # constraints, less twice the kinetic energy within the rigid waters. The
 # pressure of step 0 then continues those of the steps after it, which
-# fall by about 135 atm per step here, rather than being 20000 atm.
+# fall by about 135 atm per step here, rather than being 20000 atm. The
+# rows after it take K_half, measured from the velocities of the half
+# steps, and step 0, which has no step before it, K (D[optimal-temperature]).
 #
 # START: INFO:         0 {{.*}} -818.5888 {{ *}}695.9850
-# START: INFO:         1 {{.*}} -950.4970 {{ *}}554.4190
-# START: INFO:         2 {{.*}} -1078.0753 {{ *}}424.2331
+# START: INFO:         1 {{.*}} -950.4970 {{ *}}558.9504
+# START: INFO:         2 {{.*}} -1078.0753 {{ *}}428.7343
 
 #--- run.toml
 [input]

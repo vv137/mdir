@@ -376,6 +376,7 @@ llvm::Expected<System> mdir::driver::prepareTopologySystem(
   system.velocities = topology->velocities;
   system.givenVelocities = !system.velocities.empty();
   system.numConstraints = 3 * topology->settles.size();
+  system.numSettles = topology->settles.size();
   for (const Topology::Shake &shake : topology->shakes)
     system.numConstraints += shake.hydrogens.size();
   if (system.velocities.empty())

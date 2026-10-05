@@ -135,6 +135,17 @@ struct Output {
   int64_t energyPeriod = 0;
   double timestep = 0.0;
   double degreesOfFreedom = 0.0;
+  /// Those of the rigid waters (System::getSolventDegreesOfFreedom); the
+  /// solute has the rest. The kinetic energies of the waters at the step
+  /// of the next row, K and K_half, if `hasSolvent`, and for each row
+  /// since the start, the temperatures of the solute and of the solvent:
+  /// the optimal estimate and that of the velocities of the step
+  /// (D[optimal-temperature]).
+  double solventFreedom = 0.0;
+  bool hasSolvent = false;
+  double solventKinetic = 0.0, solventHalf = 0.0;
+  std::vector<double> soluteOptimal, solventOptimal, soluteFull,
+      solventFull;
   /// The last step of the run, and where it stops if a signal or the wall
   /// time asks for a stop: at the next checkpoint before the last step
   /// (D131). `began` is when the run began, `lastCheckpoint` when the last
@@ -308,8 +319,11 @@ llvm::Expected<std::string> backUpOutput(const std::string &path);
 /// `ids` holds the number of each: the place of the particle in the files
 /// of the run. What is written is in the order of these numbers.
 extern "C" {
+/// `kinetic` is the kinetic energy of the velocities of the step, and
+/// `excess` the mean of those of the half steps before and after it less
+/// `kinetic`, K_half - K (D[optimal-temperature]).
 void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
-                                    double kinetic, double forceSquare,
+                                    double kinetic, double excess,
                                     double virial);
 void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids);
 /// Without a periodic cell (D142), stops the run if the positions at the
@@ -329,6 +343,10 @@ void _mlir_ciface_mdrtAddBath(double energy);
 /// period of coupling, from their kinetic energy `kinetic` in kJ/mol
 /// (D163a). The chain moves on; the change of its energy goes to the bath.
 double mdrtNoseHooverFactor(double kinetic);
+/// The kinetic energies of the rigid waters at the step of the next row of
+/// the log, of the velocities of the step and K_half, in kJ/mol
+/// (D[optimal-temperature]).
+void mdrtWriteSolvent(double kinetic, double half);
 /// The coordinates of the terms over centers of groups at the step `step`
 /// (D145), in Å and radians, and the energy and the forces of each term,
 /// in kcal/mol and per Å or radian.

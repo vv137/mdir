@@ -739,6 +739,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     add("_mlir_ciface_mdrtWriteVirial", (void *)&_mlir_ciface_mdrtWriteVirial);
     add("_mlir_ciface_mdrtAddBath", (void *)&_mlir_ciface_mdrtAddBath);
     add("mdrtNoseHooverFactor", (void *)&mdrtNoseHooverFactor);
+    add("mdrtWriteSolvent", (void *)&mdrtWriteSolvent);
     add("_mlir_ciface_mdrtWritePull", (void *)&_mlir_ciface_mdrtWritePull);
     add("_mlir_ciface_mdrtWriteFreeEnergy",
         (void *)&_mlir_ciface_mdrtWriteFreeEnergy);
@@ -984,6 +985,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   output.minimizes = control->minimize;
   output.leastEdge = 2.0 * control->cutoffDistance * units::length;
   output.degreesOfFreedom = system->getDegreesOfFreedom();
+  output.solventFreedom = system->getSolventDegreesOfFreedom();
   output.volume = system->box[0] * system->box[1] * system->box[2];
   output.firstVolume = output.volume;
   for (int k = 0; k != 3; ++k)
@@ -1406,6 +1408,59 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
           static_cast<long long>(n), p[0], p[3], p[1], p[4], p[2], p[5]);
     } else {
       llvm::consumeError(get.takeError());
+    }
+  }
+  // The temperatures of the solute and of the solvent, the rigid waters,
+  // over the rows of the log: their means, with errors from ten blocks of
+  // rows (D[optimal-temperature]). A gradient between them at a time step
+  // is the hot-solvent/cold-solute problem of Lingenheil et al. (2008).
+  if (!output.solventOptimal.empty()) {
+    auto summarize = [](const std::vector<double> &values) {
+      size_t n = values.size();
+      double sum = 0.0;
+      for (double value : values)
+        sum += value;
+      double mean = sum / static_cast<double>(n);
+      size_t blocks = std::min<size_t>(10, n), size = n / blocks;
+      double error = 0.0;
+      if (blocks > 1) {
+        double total = 0.0, squares = 0.0;
+        for (size_t b = 0; b != blocks; ++b) {
+          double block = 0.0;
+          for (size_t i = 0; i != size; ++i)
+            block += values[b * size + i];
+          block /= static_cast<double>(size);
+          total += block;
+          squares += block * block;
+        }
+        double average = total / static_cast<double>(blocks);
+        double variance =
+            (squares - static_cast<double>(blocks) * average * average) /
+            static_cast<double>(blocks - 1);
+        error = std::sqrt(std::max(variance, 0.0) /
+                          static_cast<double>(blocks));
+      }
+      return std::make_pair(mean, error);
+    };
+    auto solvent = summarize(output.solventOptimal);
+    auto solventFull = summarize(output.solventFull);
+    if (!output.soluteOptimal.empty()) {
+      auto solute = summarize(output.soluteOptimal);
+      auto soluteFull = summarize(output.soluteFull);
+      output.log.print(
+          "MDIR: the temperatures over %zu rows, in K: of the solute "
+          "%.2f ± %.2f, of the solvent %.2f ± %.2f; from the velocities of "
+          "the steps alone, %.2f ± %.2f and %.2f ± %.2f\n",
+          output.solventOptimal.size(), solute.first, solute.second,
+          solvent.first, solvent.second, soluteFull.first, soluteFull.second,
+          solventFull.first, solventFull.second);
+    } else {
+      output.log.print(
+          "MDIR: the temperature of the solvent over %zu rows, in K: "
+          "%.2f ± %.2f; from the velocities of the steps alone, %.2f ± "
+          "%.2f\n",
+          output.solventOptimal.size(), solvent.first, solvent.second,
+          solventFull.first, solventFull.second);
     }
   }
   // The momentum of the state at the end, which the removal of the motion

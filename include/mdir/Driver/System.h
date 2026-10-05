@@ -69,6 +69,22 @@ struct System {
   bool keepsMomentum = true;
   /// The number of distances that constraints keep.
   size_t numConstraints = 0;
+  /// The number of rigid waters that SETTLE keeps, the solvent whose
+  /// temperature the log gives apart (D[optimal-temperature]).
+  size_t numSettles = 0;
+  /// The degrees of freedom of the rigid waters, 6 each, less their share
+  /// of those of the center of mass, in proportion to their number.
+  double getSolventDegreesOfFreedom() const {
+    size_t massive = 0;
+    for (double mass : masses)
+      massive += mass > 0.0;
+    double free = 3.0 * static_cast<double>(massive) -
+                  static_cast<double>(numConstraints);
+    if (!(free > 0.0))
+      return 0.0;
+    return 6.0 * static_cast<double>(numSettles) * getDegreesOfFreedom() /
+           free;
+  }
 
   /// For every particle, the position of its type in `Control::types`.
   std::vector<unsigned> types;

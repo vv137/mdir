@@ -290,6 +290,7 @@ compileEngine(const Control &control, const System &system,
     add("_mlir_ciface_mdrtWriteVirial", (void *)&_mlir_ciface_mdrtWriteVirial);
     add("_mlir_ciface_mdrtAddBath", (void *)&_mlir_ciface_mdrtAddBath);
     add("mdrtNoseHooverFactor", (void *)&mdrtNoseHooverFactor);
+    add("mdrtWriteSolvent", (void *)&mdrtWriteSolvent);
     add("_mlir_ciface_mdrtWritePull", (void *)&_mlir_ciface_mdrtWritePull);
     add("_mlir_ciface_mdrtWriteFreeEnergy",
         (void *)&_mlir_ciface_mdrtWriteFreeEnergy);
@@ -410,6 +411,7 @@ Simulation::create(const model::PreparedModel &prepared) {
                         units::boltzmann * control.temperature;
   output->leastEdge = 2.0 * control.cutoffDistance * units::length;
   output->degreesOfFreedom = system.getDegreesOfFreedom();
+  output->solventFreedom = system.getSolventDegreesOfFreedom();
   output->periodic = control.periodic;
   output->listReach = control.pairlistDistance * units::length;
   for (int k = 0; k != 3; ++k)
