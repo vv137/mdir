@@ -65,19 +65,34 @@ void mdrtNoteGroups(int64_t blocks, int64_t capacity, int64_t longest,
   groupsOverflow += overflow;
 }
 
+/* A program that embeds a run may take its failures instead of the process
+   exiting (D[python-segments]). The handler records the failure; the run
+   goes on to the end of its segment, whose state the program discards. */
+static void (*stopHandler)(const char *) = NULL;
+void mdrtSetStopHandler(void (*handler)(const char *)) {
+  stopHandler = handler;
+}
+
 /* A build of a neighbor structure found positions that are not numbers:
    the run has failed, whatever produced them (D107). */
 void mdrtStopNotNumbers(int64_t count) {
+  char message[256];
   if (count == 1)
-    fprintf(stderr, "mdir: a position is not a number at a build of the "
-                    "neighbor structure; the run has failed (a time step too "
-                    "long, a bad contact, or a defect of mdir)\n");
+    snprintf(message, sizeof message,
+             "a position is not a number at a build of the neighbor "
+             "structure; the run has failed (a time step too long, a bad "
+             "contact, or a defect of mdir)");
   else
-    fprintf(stderr,
-            "mdir: %lld positions are not numbers at a build of the neighbor "
-            "structure; the run has failed (a time step too long, a bad "
-            "contact, or a defect of mdir)\n",
-            (long long)count);
+    snprintf(message, sizeof message,
+             "%lld positions are not numbers at a build of the neighbor "
+             "structure; the run has failed (a time step too long, a bad "
+             "contact, or a defect of mdir)",
+             (long long)count);
+  if (stopHandler) {
+    stopHandler(message);
+    return;
+  }
+  fprintf(stderr, "mdir: %s\n", message);
   exit(1);
 }
 

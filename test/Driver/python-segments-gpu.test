@@ -1,0 +1,9 @@
+# REQUIRES: python-api, cuda
+# Persistent simulations on a GPU (D[python-segments]).
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_segments.py %S/Inputs/dipeptide GPU mdir %t | FileCheck %s
+# CHECK: NVT: the coupling moves the velocities
+# CHECK: NPT: the coupling moves the velocities
+# CHECK: energies NVE Double: the rows of mdir run at steps 10 and 20 to every printed digit
+# CHECK: energies NPT Mixed: the rows of mdir run at steps 10 and 20 to every printed digit
+# CHECK: segmented runs, coupling phase, errors, stops and ownership passed

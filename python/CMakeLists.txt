@@ -18,7 +18,7 @@ set_target_properties(mdir_python PROPERTIES OUTPUT_NAME mdir
   LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/python)
 target_compile_options(mdir_python PRIVATE -fexceptions)
 target_compile_definitions(mdir_python PRIVATE MDIR_VERSION="${PROJECT_VERSION}")
-target_link_libraries(mdir_python PRIVATE MDIRCompiler)
+target_link_libraries(mdir_python PRIVATE MDIRCompiler MDIRSimulation)
 set(MDIR_PYTHON_INSTALL_DIR "lib/python${Python_VERSION_MAJOR}.${Python_VERSION_MINOR}/site-packages"
   CACHE STRING "Python extension install destination")
 install(TARGETS mdir_python LIBRARY DESTINATION ${MDIR_PYTHON_INSTALL_DIR})

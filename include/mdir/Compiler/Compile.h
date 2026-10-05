@@ -2,6 +2,9 @@
 #ifndef MDIR_COMPILER_COMPILE_H
 #define MDIR_COMPILER_COMPILE_H
 #include "mdir/Driver/Model.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/DialectRegistry.h"
+#include "mlir/IR/OwningOpRef.h"
 namespace mdir { namespace compiler {
 class CompileError : public llvm::ErrorInfo<CompileError> {
 public:
@@ -24,5 +27,13 @@ struct CompiledProgram {
 llvm::Expected<CompiledProgram> lower(const driver::Control &, driver::Program,
                                       const model::Execution &);
 llvm::Expected<CompiledProgram> compile(const model::PreparedModel &);
+/// The dialects, extensions and translations of a lowering; registers the
+/// passes once per process.
+mlir::DialectRegistry getRegistry();
+/// Parses and lowers `program` in `context`, for a front end that runs the
+/// result (D[python-segments]). Errors are CompileError with diagnostics.
+llvm::Expected<mlir::OwningOpRef<mlir::ModuleOp>>
+lowerModule(mlir::MLIRContext &context, const driver::Control &,
+            const driver::Program &);
 } }
 #endif

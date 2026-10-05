@@ -140,8 +140,17 @@ detection. D193 changes the host boundary to shaped, read-only NumPy
 copies, with strict buffer/CPU DLPack inputs and required NumPy >=1.23
 when Python is enabled. Native storage and CLI behavior are unchanged;
 this does not supply device views or framework gradients.
-Runtime/JIT ownership, persistent execution and tunable buffers
-remain subsequent work; M2 and its packaging gate are incomplete.
+D[python-segments] adds persistent simulations: a program that runs any
+number of steps from any step of the period of coupling continues the
+state of the last segment, as a run continues its checkpoint, with the
+coupling at the same steps; a run may end with the step of energy of a row
+of the log, whose energies equal that row's; failures return to Python with
+the state from before them. A failed part returns through the runtime before
+its state is discarded. Each ELF host module keeps its functions in one code
+section so that exception-frame ranges remain disjoint across JIT lifetimes.
+Reporters, checkpoints, minimization, NPT in a
+triclinic cell or with a coupling period of 1, and tunable buffers remain
+subsequent work; M2 and its packaging gate are incomplete.
 Future PyTorch/JAX automatic differentiation (requested 2026-10-04)
 requires explicit framework derivative rules for energy, force, virial and
 parameter evaluation; DLPack alone shares storage, not gradient graphs.
