@@ -4,7 +4,7 @@ Status: 2026-10-03. The stages of the first milestone are in
 [design-m1.md](design-m1.md), Section 18; the principles that the work
 follows are in [principles.md](principles.md).
 
-**Milestones** (D169; M2 split into M2a and M2b by D[m2b-differentiable]):
+**Milestones** (D169; M2 split into M2a and M2b by D195):
 
 | Milestone | Scope | Status |
 |---|---|---|
@@ -205,7 +205,7 @@ they are needed:
 
 ## 6. Python API (M2a)
 
-D[m2b-differentiable] splits M2 in two: M2a is this section, the Python API
+D195 splits M2 in two: M2a is this section, the Python API
 as planned in [python-m2.md](python-m2.md), where "M2" means M2a; M2b is
 Section 6.1.
 

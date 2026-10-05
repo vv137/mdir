@@ -107,7 +107,7 @@ terms over tuples of up to nine particles (D138, D165), and terms over
 the centers of groups, which restrain pull groups (D139), whose sums
 and forces run over their tuples, in one block of the kernel of the
 bonded terms, and add 2.7 µs to a step of JAC (D150,
-D[centroid-one-kernel]), and which pull at a rate
+D194), and which pull at a rate
 with the time in their expressions and write their coordinates and
 forces (D145), and terms of the absolute positions of single particles,
 with parameters of each (D148), and terms over the triplets centered on
@@ -146,7 +146,7 @@ Future PyTorch/JAX automatic differentiation (requested 2026-10-04)
 requires explicit framework derivative rules for energy, force, virial and
 parameter evaluation; DLPack alone shares storage, not gradient graphs.
 Sampling and differentiable evaluation remain separate concerns. That work
-is milestone M2b (D[m2b-differentiable]), after the Python API (M2a): the
+is milestone M2b (D195), after the Python API (M2a): the
 parameters of a potential fitted to ensemble averages by reweighting
 stored frames [[ThalerZavadlav2021]](references.md#thalerzavadlav2021),
 with an evaluator of the energy at the frames and its derivative in the

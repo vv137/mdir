@@ -1136,7 +1136,7 @@ Commun.* **12**, 6884 (2021).
 
 Used for: the gradient of an ensemble average with respect to the
 parameters of the potential by reweighting stored frames, without
-differentiating the trajectory; the scope of M2b (D[m2b-differentiable]).
+differentiating the trajectory; the scope of M2b (D195).
 
 ### Theobald2005
 
