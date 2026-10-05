@@ -10,7 +10,6 @@
 #include "mdir/Driver/Output.h"
 #include "mlir/ExecutionEngine/CRunnerUtils.h"
 #include "mlir/ExecutionEngine/ExecutionEngine.h"
-#include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include "llvm/ExecutionEngine/Orc/Mangling.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/CommandLine.h"
@@ -252,10 +251,7 @@ compileEngine(const Control &control, const System &system,
     if (!llvm::sys::fs::exists(path))
       return unsupported("cannot find '" + path + "'");
 
-  auto targetBuilder = llvm::orc::JITTargetMachineBuilder::detectHost();
-  if (!targetBuilder)
-    return targetBuilder.takeError();
-  auto targetMachine = targetBuilder->createTargetMachine();
+  auto targetMachine = compiler::createHostMachine();
   if (!targetMachine)
     return targetMachine.takeError();
   // Match the default section of the functions ORC adds after the transformer.
@@ -273,7 +269,6 @@ compileEngine(const Control &control, const System &system,
   mlir::ExecutionEngineOptions options;
   llvm::SmallVector<StringRef> shared(paths.begin(), paths.end());
   options.sharedLibPaths = shared;
-  options.jitCodeGenOptLevel = llvm::CodeGenOptLevel::Aggressive;
   // A frame registration describes the bounding PC range of its functions.
   // Keep the GPU module's host entry, constructors, and destructors together:
   // separately mapped text sections can enclose another engine's code, and

@@ -716,8 +716,11 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   mlir::ExecutionEngineOptions engineOptions;
   SmallVector<StringRef> sharedLibraries(paths.begin(), paths.end());
   engineOptions.sharedLibPaths = sharedLibraries;
-  engineOptions.jitCodeGenOptLevel = llvm::CodeGenOptLevel::Aggressive;
-  auto engine = mlir::ExecutionEngine::create(*module, engineOptions);
+  auto hostMachine = compiler::createHostMachine();
+  if (!hostMachine)
+    return fail(hostMachine.takeError());
+  auto engine = mlir::ExecutionEngine::create(*module, engineOptions,
+                                              std::move(*hostMachine));
   if (!engine)
     return fail(engine.takeError());
 

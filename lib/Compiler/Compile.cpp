@@ -16,6 +16,7 @@
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Target/LLVMIR/Dialect/All.h"
+#include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include <mutex>
 using namespace mdir;
 using namespace mdir::driver;
@@ -153,4 +154,19 @@ compiler::lower(const driver::Control &control, driver::Program program,
   std::string pipeline = getPipeline(control, program);
   return CompiledProgram{std::move(program), execution,
                          std::move(pipeline), std::move(lowered)};
+}
+
+// MLIR's ExecutionEngine compiles with the machine it is given, or with one
+// of the default level that it makes itself; its option
+// `jitCodeGenOptLevel` sets the level of a builder that it does not use.
+// The level is therefore that of this machine. `Aggressive` measured no
+// gain over `Default` on the Amber suite (GPU, within 0.3%) nor on JAC on
+// the CPU (2%, within the noise), so the host code takes `Default` (#90).
+llvm::Expected<std::unique_ptr<llvm::TargetMachine>>
+compiler::createHostMachine() {
+  auto builder = llvm::orc::JITTargetMachineBuilder::detectHost();
+  if (!builder)
+    return builder.takeError();
+  builder->setCodeGenOptLevel(llvm::CodeGenOptLevel::Default);
+  return builder->createTargetMachine();
 }
