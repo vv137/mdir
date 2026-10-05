@@ -117,7 +117,9 @@ owned and checked before registration (D199; LLVM's relocation and the
 frame index of libgcc remain assumptions, [JIT ownership](../jit-invariants.md));
 initial velocities drawn by
 the CLI's code and typed positional restraints (D198); unit quantities of
-OpenMM at the setters (D200). Remaining: minimization, reporters,
+OpenMM at the setters (D200); the minimizer of `mdir run` in a
+simulation, in parts that carry its step length (D[python-minimize]).
+Remaining: reporters,
 checkpoints shared with the CLI, views of device buffers through DLPack,
 NPT in a triclinic cell or with a coupling period of 1, tunable buffers,
 and the manylinux_2_28 pip wheel for Python 3.10–3.13 that gates the

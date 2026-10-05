@@ -150,7 +150,7 @@ def bound_of(precision, written, double, relative):
     mixed, three times the difference of `mdir run` in mixed and in double
     at that row, the error of mixed precision itself (as D196 bounds it):
     with PME the model and `mdir run` differ in mixed precision from the
-    first evaluation, in dynamics as well."""
+    first evaluation, in dynamics as well (#105)."""
     if precision == "Double":
         return lambda c: 1e-6 + relative * abs(float(written[c]))
     return lambda c: 1e-6 + 3 * abs(float(written[c]) - float(double[c]))

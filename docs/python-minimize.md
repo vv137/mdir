@@ -74,8 +74,58 @@ nvt_state.cell = minimized.cell
 nvt_state = nvt_state.draw_velocities(system, 300.0, seed)
 ```
 
+## Boundaries of parts
+
+A part after the first is a segment that continues the last, as in D196:
+it builds its neighbor structures anew and evaluates the energy and the
+forces at its first positions, where a single call of `mdir run` keeps
+those of the step before. The sums are the same up to their order, so a
+row after a boundary agrees with `mdir run` within the rounding of a sum;
+a minimization, whose choice of each step depends on a comparison of two
+energies, carries such a difference on, so that two long runs with
+boundaries at different steps can drift apart where the energy surface is
+flat. Within a part the program is that of `mdir run`.
+
 ## Validation
 
-To follow: the final row against `mdir run` on the same input, in several
-parts, on CPU and GPU, mixed and double, in deterministic mode; a
-continuation into an NVT stage; refusals.
+`test/Driver/python-minimize.test` (CPU) and `python-minimize-gpu.test`
+run `test/Driver/Inputs/python_minimize.py` on the dipeptide in water of
+`test/Driver/Inputs/dipeptide` (1168 particles; cutoff 8 Å, pair list 9 Å,
+PME; SHAKE and SETTLE; a restraint of 10 kcal/mol/Å² on the heavy atoms of
+the peptide; deterministic mode) against `mdir run` with the same control
+file, its log written at every step. The energy of the minimization falls
+from −2747.3 to −3551.8 kcal/mol in 100 steps.
+
+| Check | Double, CPU | Double, GPU | Mixed, CPU | Mixed, GPU |
+|---|---|---|---|---|
+| Row at step 100, one part | every printed digit | every printed digit | within 3 E | within 3 E |
+| Positions at step 100 against the checkpoint | 2.4e-12 nm | 3.2e-12 nm | 1.2e-4 nm | 1.1e-5 nm |
+| Row at step 110 after 10 parts of one step | every printed digit | every printed digit | 7.8e-3 relative | 7.0e-4 relative |
+| Row at step 30 after 30 parts of one step | every printed digit | every printed digit | 1.8e-4 relative | 6.2e-4 relative |
+| NVT from the minimized state, row at step 10 | every printed digit | every printed digit | within 3 E | within 3 E |
+
+The row is the energy, the RMS and the largest force, its particle, and
+the step length, as `%.6f` of kcal/mol and Å in the columns file. The
+tolerance of the positions in double is 1e-11 nm: the minimization of
+`mdir run` and that of the simulation are programs of loops of another
+shape (counts taken by the entry, rather than constants), whose rounding
+differs by an ulp from the second step, below every printed digit. In
+mixed precision E is the difference of `mdir run` in mixed and in double
+at that row (for positions, the largest difference of their checkpoints),
+the error of mixed precision itself, as D196 bounds segments: with PME the
+model and `mdir run` already differ in mixed precision at the first
+evaluation, in dynamics as well (#105, outside this decision). With cutoff
+electrostatics and no constraints, mixed precision is free of that
+difference: one part of 20 steps gives every printed digit of `mdir run`,
+and 20 parts of one step agree within 1.2e-8 (CPU) and 4.6e-8 (GPU) of each
+value (tolerance 1e-6), while the energy falls from −5736.3 to
+−5931.2 kcal/mol.
+
+The NVT stage starts at the positions and the cell of the minimized state,
+with velocities from `draw_velocities` at 300 K and the restraints of the
+control file (reference: the coordinates file), as `mdir run` begins anew
+at the checkpoint of a minimization. The test also checks the refusals
+(`run(n)` on a minimization, `minimize()` on dynamics, a negative count),
+that `minimize(0)` takes no step and leaves no row, and that
+`minimize()` takes the steps of the schedule. Stops and Ctrl-C share the
+loop of parts with `run(n)`, which `python-segments.test` checks.
