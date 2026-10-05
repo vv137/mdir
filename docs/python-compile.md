@@ -20,10 +20,11 @@ Typed enums select target, precision, integrator, ensemble, electrostatics,
 truncation and dispersion. Mutable properties on all compile inputs advance
 versions. `program.stale` and `program.check_current()` compare those versions;
 the latter raises `StaleProgramError` until explicitly recompiled.
-Programs retain input owners. Array getters return read-only NumPy copies: call `.copy()`, edit the
-copy and assign it back to commit a change. Other collections remain copied values. This includes positions,
-velocities, cell, custom terms, tuple parameters and members. Imported
-topology is owned and read-only at this first binding boundary.
+Programs retain input owners. Numeric array getters return read-only NumPy
+copies: call `.copy()`, edit the copy and assign it back to commit a change.
+Cell and custom-term objects are also copied; assign edited objects back to
+their owner. Imported topology is owned and read-only at this first binding
+boundary.
 
 `InputError`, `UnsupportedError`, and `CompileError` preserve native error
 messages; lowering errors retain MLIR locations and diagnostics. Existing
@@ -143,3 +144,10 @@ checking the device, passes 263 tests with six optional tests unsupported
 and zero failures (269 discovered, 2045.79 s). Issues #22 and #26 are closed;
 their `not-numbers-gpu.test` and `free-energy-reorder-gpu.test` regressions
 pass in this single suite run, with no failures or retries.
+
+D[python-arrays] repeats the CPU/GPU mixed/double parity matrix with strict
+host arrays: all 32 case/target/precision combinations match native loader
+array bytes (0 differing bytes, tolerance 0) and CLI semantic IR/pipelines
+exactly. The full local suite passes with 265 passed, 6 unsupported and
+0 failures. See [host-array validation](python-arrays.md#validation-environment)
+for the dependency, ownership and malformed-input checks.
