@@ -118,7 +118,7 @@ format, or the outputs; every such change is listed under **Changed** or
 
 - The host code of a program is compiled at LLVM's default level, which is
   the level it always had: the requested `Aggressive` level was not applied
-  by MLIR's execution engine, and measured no faster (D[host-jit-level],
+  by MLIR's execution engine, and measured no faster (D197,
   #90).
 
 - Compound terms accept declared `lambda_<name>` components

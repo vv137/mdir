@@ -453,7 +453,7 @@ triclinic variant is parsed only into a module whose cell is triclinic.
 the pipeline, and hands the result to MLIR's `ExecutionEngine`, which
 compiles the host code with LLVM at its default level of optimization
 (the most aggressive level measured no faster on the Amber suite,
-D[host-jit-level]), with the fast list scheduler, whose time does not grow
+D197), with the fast list scheduler, whose time does not grow
 exponentially with the calls of a block as the default's can (D150), and
 links it with the runtime. Kernels are embedded as PTX
 and compiled by the CUDA driver for the device present when the module is
