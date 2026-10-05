@@ -74,6 +74,11 @@ nvt_state.cell = minimized.cell
 nvt_state = nvt_state.draw_velocities(system, 300.0, seed)
 ```
 
+Without `System.restraint_reference`, the restraints of that stage hold
+the particles at the positions of the state it is compiled with, here the
+minimized ones (D198). To restrain toward the coordinates file, as
+`examples/ala3/2-nvt.toml` does, set the reference to the loaded positions.
+
 ## Boundaries of parts
 
 A part after the first is a segment that continues the last, as in D196:
