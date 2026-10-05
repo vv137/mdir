@@ -5,6 +5,8 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/OwningOpRef.h"
+#include "llvm/Target/TargetMachine.h"
+#include <memory>
 namespace mdir { namespace compiler {
 class CompileError : public llvm::ErrorInfo<CompileError> {
 public:
@@ -35,5 +37,8 @@ mlir::DialectRegistry getRegistry();
 llvm::Expected<mlir::OwningOpRef<mlir::ModuleOp>>
 lowerModule(mlir::MLIRContext &context, const driver::Control &,
             const driver::Program &);
+/// The machine that compiles the host code of a program for the JIT, at the
+/// one code-generation level of both front ends (#90).
+llvm::Expected<std::unique_ptr<llvm::TargetMachine>> createHostMachine();
 } }
 #endif

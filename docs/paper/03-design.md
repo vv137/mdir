@@ -451,8 +451,9 @@ triclinic variant is parsed only into a module whose cell is triclinic.
 
 `mdir run` compiles before it runs. It builds the module, parses it, runs
 the pipeline, and hands the result to MLIR's `ExecutionEngine`, which
-compiles the host code with LLVM at its most aggressive level of
-optimization, with the fast list scheduler, whose time does not grow
+compiles the host code with LLVM at its default level of optimization
+(the most aggressive level measured no faster on the Amber suite,
+D[host-jit-level]), with the fast list scheduler, whose time does not grow
 exponentially with the calls of a block as the default's can (D150), and
 links it with the runtime. Kernels are embedded as PTX
 and compiled by the CUDA driver for the device present when the module is
