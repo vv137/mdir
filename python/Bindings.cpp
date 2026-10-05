@@ -35,6 +35,7 @@ template <class T> static T unwrap(llvm::Expected<T> value) {
   if (!value) raise(value.takeError());
   return std::move(*value);
 }
+#include "Units.h"
 #include "HostArrays.h"
 
 struct Version { uint64_t version = 0; virtual ~Version() = default; };
@@ -45,6 +46,16 @@ static void property(py::class_<Input<T>, std::shared_ptr<Input<T>>> &c,
   c.def_property(name, [member](const Input<T> &o) { return o.value.*member; },
     [member](Input<T> &o, V value) {
       o.value.*member = std::move(value); ++o.version;
+    });
+}
+/// A real-valued property in `unit`, which also takes a unit quantity.
+template <class T>
+static void property(py::class_<Input<T>, std::shared_ptr<Input<T>>> &c,
+                     const char *name, double T::*member, units::Unit unit) {
+  std::string qualified = py::cast<std::string>(c.attr("__name__")) + "." + name;
+  c.def_property(name, [member](const Input<T> &o) { return o.value.*member; },
+    [member, qualified, unit](Input<T> &o, py::object value) {
+      o.value.*member = units::scalar(value, qualified, unit); ++o.version;
     });
 }
 template <class T> static auto input(py::module_ &m, const char *name) {
@@ -130,7 +141,7 @@ PYBIND11_MODULE(mdir, m) {
     cell.def_property(item.first, [member](const driver::Cell &c) {
       return host::copy((c.*member).data(), 3, {3});
     }, [member, name](driver::Cell &c, py::object input) {
-      auto values = host::doubles(input, name, 3);
+      auto values = host::doubles(input, name, 3, {}, units::nm);
       std::copy(values.begin(), values.end(), (c.*member).begin());
     });
   }
@@ -161,24 +172,32 @@ PYBIND11_MODULE(mdir, m) {
     ;
   py::class_<model::System::Restraint>(m, "Restraint")
     .def(py::init<>())
-    .def(py::init([](std::string selection, double forceConstant, driver::ReferenceScaling scaling) {
-      return model::System::Restraint{std::move(selection), forceConstant, scaling};
+    .def(py::init([](std::string selection, py::object forceConstant,
+                     driver::ReferenceScaling scaling) {
+      return model::System::Restraint{
+          std::move(selection),
+          units::scalar(forceConstant, "Restraint.force_constant", units::springConstant), scaling};
     }), py::arg("selection"), py::arg("force_constant"),
         py::arg("reference_scaling") = driver::ReferenceScaling::Center)
     .def_readwrite("selection", &model::System::Restraint::selection)
-    .def_readwrite("force_constant", &model::System::Restraint::forceConstant)
+    .def_property("force_constant",
+                  [](const model::System::Restraint &r) { return r.forceConstant; },
+                  [](model::System::Restraint &r, py::object value) {
+                    r.forceConstant = units::scalar(value, "Restraint.force_constant",
+                                                    units::springConstant);
+                  })
     .def_readwrite("reference_scaling", &model::System::Restraint::scaling);
   auto system = input<model::System>(m, "System");
   property(system, "periodic", &model::System::periodic);
-  property(system, "cutoff", &model::System::cutoff);
-  property(system, "pairlist_distance", &model::System::pairlistDistance);
-  property(system, "switch_distance", &model::System::switchDistance);
+  property(system, "cutoff", &model::System::cutoff, units::nm);
+  property(system, "pairlist_distance", &model::System::pairlistDistance, units::nm);
+  property(system, "switch_distance", &model::System::switchDistance, units::nm);
   property(system, "truncation", &model::System::truncation);
   property(system, "electrostatics", &model::System::electrostatics);
   property(system, "dispersion", &model::System::dispersion);
-  property(system, "pme_alpha", &model::System::pmeAlpha);
-  property(system, "pme_tolerance", &model::System::pmeTolerance);
-  property(system, "pme_spacing", &model::System::pmeSpacing);
+  property(system, "pme_alpha", &model::System::pmeAlpha, units::inverseNm);
+  property(system, "pme_tolerance", &model::System::pmeTolerance, units::none);
+  property(system, "pme_spacing", &model::System::pmeSpacing, units::nm);
   property(system, "pme_grid", &model::System::pmeGrid);
   property(system, "pme_order", &model::System::pmeOrder);
   property(system, "rigid_hydrogen_bonds", &model::System::rigidHydrogenBonds);
@@ -193,7 +212,7 @@ PYBIND11_MODULE(mdir, m) {
     return host::copy(v.data(), v.size(), {static_cast<py::ssize_t>(v.size() / 3), 3});
   }, [](Input<model::System> &o, py::object source) {
     const std::string name = "System.restraint_reference";
-    auto values = host::doubles(source, name, {}, 3);
+    auto values = host::doubles(source, name, {}, 3, units::nm);
     size_t count = values.size() / 3, particles = o.value.topology.getNumParticles();
     if (count != 0 && count != particles)
       throw InputError(name + ": expected shape (" + std::to_string(particles) +
@@ -211,7 +230,7 @@ PYBIND11_MODULE(mdir, m) {
       const auto &v = o.value.*member;
       return host::copy(v.data(), v.size(), {static_cast<py::ssize_t>(v.size() / 3), 3});
     }, [member, velocity, name](Input<model::InitialState> &o, py::object source) {
-      auto values = host::doubles(source, name, {}, 3);
+      auto values = host::doubles(source, name, {}, 3, velocity ? units::nmPerPs : units::nm);
       size_t count = values.size() / 3;
       if (o.particleCount && count != *o.particleCount && !(velocity && count == 0))
         throw InputError(name + ": expected shape (" + std::to_string(*o.particleCount) +
@@ -226,8 +245,10 @@ PYBIND11_MODULE(mdir, m) {
   // and seed, in a new state (D198).
   initialstate.def("draw_velocities", [](const Input<model::InitialState> &o,
                                          std::shared_ptr<Input<model::System>> system,
-                                         double temperature, py::int_ seed) {
+                                         py::object temperatureValue, py::int_ seed) {
     if (!system) throw InputError("draw_velocities takes a System");
+    double temperature = units::scalar(temperatureValue, "draw_velocities: temperature",
+                                       units::kelvin);
     int overflow = 0;
     long long value = PyLong_AsLongLongAndOverflow(seed.ptr(), &overflow);
     if (overflow || value < 0)
@@ -242,16 +263,16 @@ PYBIND11_MODULE(mdir, m) {
   }, py::arg("system"), py::arg("temperature"), py::arg("seed"));
   auto integrator = input<model::Integrator>(m, "Integrator");
   property(integrator, "method", &model::Integrator::method);
-  property(integrator, "timestep", &model::Integrator::timestep);
+  property(integrator, "timestep", &model::Integrator::timestep, units::ps);
   property(integrator, "minimize", &model::Integrator::minimize);
-  property(integrator, "minimize_step", &model::Integrator::minimizeStep);
+  property(integrator, "minimize_step", &model::Integrator::minimizeStep, units::nm);
   auto ensemble = input<model::Ensemble>(m, "Ensemble");
   property(ensemble, "kind", &model::Ensemble::kind);
-  property(ensemble, "temperature", &model::Ensemble::temperature);
-  property(ensemble, "tau_t", &model::Ensemble::tauT);
-  property(ensemble, "pressure", &model::Ensemble::pressure);
-  property(ensemble, "tau_p", &model::Ensemble::tauP);
-  property(ensemble, "compressibility", &model::Ensemble::compressibility);
+  property(ensemble, "temperature", &model::Ensemble::temperature, units::kelvin);
+  property(ensemble, "tau_t", &model::Ensemble::tauT, units::ps);
+  property(ensemble, "pressure", &model::Ensemble::pressure, units::bar);
+  property(ensemble, "tau_p", &model::Ensemble::tauP, units::ps);
+  property(ensemble, "compressibility", &model::Ensemble::compressibility, units::inverseBar);
   property(ensemble, "coupling_period", &model::Ensemble::couplingPeriod);
   property(ensemble, "com_period", &model::Ensemble::comPeriod);
   property(ensemble, "seed", &model::Ensemble::seed);
@@ -424,7 +445,9 @@ PYBIND11_MODULE(mdir, m) {
     .def_property_readonly("program", [](const PySimulation &s) { return s.program; })
     .def_property("part_seconds",
                   [](const PySimulation &s) { return s.simulation->partSeconds; },
-                  [](PySimulation &s, double seconds) {
+                  [](PySimulation &s, py::object value) {
+                    // Wall-clock time: a quantity converts to seconds.
+                    double seconds = units::scalar(value, "Simulation.part_seconds", units::second);
                     if (!(seconds > 0) || !std::isfinite(seconds))
                       throw InputError("part_seconds must be positive and finite");
                     s.simulation->partSeconds = seconds;

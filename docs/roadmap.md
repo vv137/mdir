@@ -230,7 +230,9 @@ D198 (#92,
 [drawn velocities and restraints](python-velocities-restraints.md)) adds
 `InitialState.draw_velocities`, bit for bit the velocities of `mdir run`,
 and typed `System.restraints` mapped to `[[restraints]]`, which the
-four-stage example needs. Reporters,
+four-stage example needs. D[python-units] (#95,
+[unit quantities](python-units.md)) lets the setters take OpenMM unit
+quantities, converted at the boundary. Reporters,
 checkpoints, DLPack views and tunable buffers remain open.
 M2 covers
 a documented classical subset and requires a manylinux_2_28 pip wheel for

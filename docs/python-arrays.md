@@ -11,7 +11,10 @@ shape `(N, 3)`, native float64 dtype and C-contiguous storage. Flat inputs,
 lists, float32, nonnative byte order, nonfinite values and strided inputs
 are refused with a property-specific `InputError`. Loaded states retain
 their particle count; fresh states establish it on first nonempty assignment.
-Absent velocities have shape `(0, 3)`.
+Absent velocities have shape `(0, 3)`. An OpenMM unit quantity is the one
+exception to the refusal of lists: its magnitude, such as a list of `Vec3`,
+is converted to a float64 array and then checked as above
+(D[python-units], [python-units.md](python-units.md)).
 
 Outputs are independent, C-contiguous, read-only NumPy copies: positions
 and velocities `(N, 3)` float64, Cell vectors `(3, 3)` float64, Cell
