@@ -30,6 +30,8 @@ boundary.
 messages; lowering errors retain MLIR locations and diagnostics. Existing
 CLI control-file keys, formats and overwrite behavior are unchanged.
 The temporary `Schedule` retains D191's fixed schedule; it is not `run(n)`.
+A persistent `mdir.Simulation` ([python-segments.md](python-segments.md))
+ignores it and runs the steps that `run(n)` asks for.
 Declared tunable runtime buffers are not implemented by this contribution.
 
 ## Build and validation

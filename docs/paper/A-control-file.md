@@ -12,6 +12,12 @@ D193 changes the optional Python host-data boundary and
 requires NumPy >=1.23 when enabled. It adds no control keys and changes
 no checkpoint/output formats or overwrite behavior.
 
+Persistent Python simulations (D[python-segments],
+[contract](../python-segments.md)) build their programs from the same
+model and builder with the counts of the loops as arguments of the entry;
+they add no control keys and write no files. A segment continues as
+`mdir run --continue` continues a checkpoint.
+
 A run is described by a control file in TOML. `mdir check FILE` reads it
 and reports the system, planned run, outputs, and warnings (A.5);
 `mdir run FILE` compiles and runs it, and

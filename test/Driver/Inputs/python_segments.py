@@ -20,7 +20,7 @@ target = getattr(mdir.Target, sys.argv[2])
 cli = sys.argv[3]
 work = pathlib.Path(sys.argv[4])
 # A run that hangs ends with the stacks of its threads.
-faulthandler.dump_traceback_later(1500, exit=True)
+faulthandler.dump_traceback_later(900, exit=True)
 PARTS = (1, 7, 13)  # boundaries inside the periods of 10 steps
 
 

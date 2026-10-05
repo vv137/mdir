@@ -219,7 +219,10 @@ lowering, immutable IR/plan inspection and versioned stale detection.
 D193 (#78, [host arrays](python-arrays.md)) replaces numeric
 lists with shaped, read-only NumPy host copies and strict buffer/CPU DLPack
 inputs before segments; enabling Python requires NumPy >=1.23.
-Persistent execution, JIT/runtime ownership and tunable buffers remain open.
+D[python-segments] (#85, [persistent simulations](python-segments.md)) adds
+`mdir.Simulation` and `run(n)` for any number of steps, with the coupling
+phase, errors, stops, and runtime and device ownership. Reporters,
+checkpoints, DLPack views and tunable buffers remain open.
 M2 covers
 a documented classical subset and requires a manylinux_2_28 pip wheel for
 Python 3.10–3.13; conda follows later.

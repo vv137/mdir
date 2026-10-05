@@ -172,10 +172,22 @@ PYTHONPATH=build/python python3 -c "import mdir"
 ```
 
 The module `mdir` is built in `build/python`. It loads Amber, GROMACS, and
-CHARMM inputs, sets up a model, and compiles it to the IR and plan that
-`mdir run` would use; it does not yet run a simulation. The interface
-changes during M2. [docs/python-compile.md](docs/python-compile.md)
-describes it.
+CHARMM inputs, sets up a model, compiles it to the IR and plan that
+`mdir run` would use, and runs it as a simulation that persists across
+calls:
+
+```python
+sim = mdir.Simulation(mdir.compile(system, state, integrator, ensemble,
+                                   execution, mdir.Schedule()))
+sim.run(1000)
+positions = sim.state().positions   # (N, 3) in nm, in input order
+```
+
+`sim.run(n, energy=True)` ends with a step of energy, whose energies
+`sim.state().energies` holds. Reporters and checkpoints of a simulation are
+not there yet, and the interface changes during M2.
+[docs/python-compile.md](docs/python-compile.md) and
+[docs/python-segments.md](docs/python-segments.md) describe it.
 
 ## Testing
 

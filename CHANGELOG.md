@@ -56,6 +56,13 @@ format, or the outputs; every such change is listed under **Changed** or
   simulation (fitting parameters to ensemble averages by trajectory
   reweighting, PyTorch then JAX) (D195).
 
+- `mdir.Simulation`: a Python simulation that persists across `run(n)` of
+  any number of steps, with the coupling at the same steps as an
+  uninterrupted run, `state()` as NumPy copies, the energies of a final
+  step of energy (`run(n, energy=True)`) equal to the row of `mdir run` at
+  that step, stops between parts, and errors that leave Python alive
+  (D[python-segments], #85). Reporters and checkpoints follow separately.
+
 - Optional Python loaders and typed model inputs, explicit shared compiler
   lowering, immutable IR/plan inspection and tracked stale detection
   (D192, #76). Persistent execution and wheels follow separately.
