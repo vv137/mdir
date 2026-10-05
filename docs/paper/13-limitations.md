@@ -87,98 +87,62 @@ lower clock than pmemd.cuda's (about 1590 against 1695 MHz on Cellulose),
 so a kernel that does the same work with less power gains speed.
 
 **Next steps.** The white paper closes the first milestone; the roadmap
-(`docs/roadmap.md`) orders what follows. What a production run on a
-cluster needs first is in place: `steps` as the length of a run that
-`mdir run --continue` carries over as many jobs as it takes, a trajectory
-that continues with it, a stop on a signal or a limit of time that falls
-on a checkpoint so that the continuation stays exact, and the checkpoint
-before the last kept (D129 to D132), and outputs that form one system,
-the log in a file as well, the energies as columns, every file continued
-with the run, and backups of the outputs of an earlier run (D149). An
-optional manifest records execution provenance, resolved settings, input
-hashes, warnings, and completion or checkpoint stops across jobs (D168). Langevin dynamics by the middle scheme is in place (D135), without
-yet a conserved energy, and so are terms given by expressions over bonds,
-angles, and dihedrals, which give restraints beyond positions and the
-dihedrals of OPLS-AA (D136), and terms over the pairs of a topology, in
-its charges and Lennard-Jones parameters and between interaction groups
-(D137) and in parameters of each particle that the control file gives
-by masks, with tabulated functions of up to three arguments, and compound
-terms over tuples of up to nine particles (D138, D165), and terms over
-the centers of groups, which restrain pull groups (D139), whose sums
-and forces run over their tuples, in one block of the kernel of the
-bonded terms, and add 2.7 µs to a step of JAC (D150,
-D194), and which pull at a rate
-with the time in their expressions and write their coordinates and
-forces (D145), and terms of the absolute positions of single particles,
-with parameters of each (D148), and terms over the triplets centered on
-each particle, on the CPU (D160); so are the reaction field
-(D140), runs without a periodic cell, in a cell that no image reaches
-(D142), and generalized Born, whose Born radii are the first
-intermediate fields that differentiation carries the energy back through
-(D143, D144), in the models HCT and OBC, with salt, a cutoff of the
-descreening, and radii by element for any topology (D152). Then the features that general molecular dynamics asks of
-MDIR: outputs for analysis (velocities, the pressure tensor), the compressed
-trajectory of GROMACS being in place (D141);
-coarse-grained models; and free energy, whose $dH/d\lambda$ the
-differentiation of the IR is designed to give (D2). A Python interface whose buffers follow DLPack
-shares the state with machine-learning frameworks without copies, from
-the same IR and validation as the control file. M2 preparation
-(D187, [Python API plan](../python-m2.md)) identifies shared
-validation, persistent segments, embedded error handling, checkpoint
-provenance, and allocation ownership as prerequisites. The maintainer's
-2026-10-04 rulings adopt owned loaded data, a documented classical subset,
-typed execution and reporters, independent serial simulations, read-only
-view leases followed by tracked writes within M2, and shared format-1
-checkpoints. A manylinux_2_28 pip wheel for Python 3.10–3.13 gates M2;
-preparation adds no executable Python interface. D191 implements
-the native model prerequisite: owned Amber/GROMACS/CHARMM loading, physics
-and state as separate values, typed options, common preparation and validation,
-and the shared semantic IR builder, with a documented classical subset.
-D192 adds optional Python bindings, explicit lowering through
-the shared CLI pipeline, immutable IR/plan inspection and versioned stale
-detection. D193 changes the host boundary to shaped, read-only NumPy
-copies, with strict buffer/CPU DLPack inputs and required NumPy >=1.23
-when Python is enabled. Native storage and CLI behavior are unchanged;
-this does not supply device views or framework gradients.
-D196 adds persistent simulations: a program that runs any
-number of steps from any step of the period of coupling continues the
-state of the last segment, as a run continues its checkpoint, with the
-coupling at the same steps; a run may end with the step of energy of a row
-of the log, whose energies equal that row's; failures return to Python with
-the state from before them. A failed part returns through the runtime before
-its state is discarded. Each ELF host module keeps its functions in one code
-section for locality. D199 reserves contiguous object storage and
-checks the allocated executable sections and relocated exception-frame ranges
-before registration, including late ORC-generated functions. It rejects
-unsupported layouts and deregisters before releasing storage; creation,
-execution, and teardown share the process runtime mutex. ELF x86-64 and
-AArch64 host unwind formats are supported by the checks; the lifecycle matrix
-is exercised on x86-64. LLVM relocation correctness and libgcc's frame index
-remain dependency assumptions, as described in [JIT ownership](../jit-invariants.md).
-D198 draws initial velocities by the CLI's
-code, so that Python and `mdir run` start from the same velocities bit for
-bit, and maps typed positional restraints onto `[[restraints]]`.
-D200 converts OpenMM unit quantities given to the setters into
-MDIR's units at the boundary; outputs stay in MD units without units
-attached.
-Reporters, checkpoints, minimization, NPT in a
-triclinic cell or with a coupling period of 1, and tunable buffers remain
-subsequent work; M2 and its packaging gate are incomplete.
-Future PyTorch/JAX automatic differentiation (requested 2026-10-04)
-requires explicit framework derivative rules for energy, force, virial and
-parameter evaluation; DLPack alone shares storage, not gradient graphs.
-Sampling and differentiable evaluation remain separate concerns. That work
-is milestone M2b (D195), after the Python API (M2a): the
-parameters of a potential fitted to ensemble averages by reweighting
-stored frames [[ThalerZavadlav2021]](references.md#thalerzavadlav2021),
-with an evaluator of the energy at the frames and its derivative in the
-parameters, adapted to PyTorch first and JAX second; it is not begun. The distributed work
-begins with a graph of the dependencies of the `md` ops, ownership and
-freshness of fields, and a verifier of two domains (in which the
-disjoint union of the constraints is the unit of ownership, D83), then
-a potential with an intermediate field and learned potentials behind a
-versioned interface. The deterministic loop over groups is open as well.
-Analysis comes last: frames correct by construction (molecules whole,
-the solute in one image) and observables compiled into the run, sharing
-its loops; on one trajectory compared across analysis programs, what went
-wrong was images and conventions, never the arithmetic.
+(`docs/roadmap.md`) orders what follows into milestones: the Python API
+(M2a), differentiable simulation (M2b), learned potentials on one GPU (M3),
+and distributed execution (M4), with classical features between them.
+
+*In place since the first milestone.* Production runs on a cluster: `steps`
+as the length of a run that `mdir run --continue` carries over as many jobs
+as it takes, stops on a signal or a limit of time that fall on a checkpoint,
+outputs that form one system and continue with the run (D129 to D132,
+D149), and an optional manifest of provenance (D168). Dynamics: Langevin
+dynamics by the middle scheme (D135), Nosé–Hoover chains, Brownian
+dynamics, and anisotropic cell rescaling (D163). Terms given by expressions
+over tuples, the pairs of a topology, the centers of groups, and single
+particles, with parameters of each particle, tabulated functions, and
+compound terms (D136 to D139, D145, D148, D165); terms over triplets on the
+CPU (D160); their energies and generalized forces as observables (D189).
+Electrostatics and dispersion: the reaction field (D140), runs without a
+periodic cell (D142), generalized Born (D143, D144, D152), and particle mesh
+Ewald for the dispersion (D162). Alchemical free energy, whose
+$dH/d\lambda$ the differentiation of the IR gives (D2, D161).
+
+*M2a, the Python API* ([plan](../python-m2.md)). In place: owned loaded
+data, a typed model, and the preparation that the control file shares
+(D191); lowering to immutable IR (D192); read-only NumPy arrays at the
+boundary (D193); persistent simulations that run any number of steps and
+continue the coupling phase, with failures that return to Python (D196),
+host code compiled by one machine (D197), and JIT memory and unwind frames
+owned and checked before registration (D199; LLVM's relocation and the
+frame index of libgcc remain assumptions, [JIT ownership](../jit-invariants.md));
+initial velocities drawn by
+the CLI's code and typed positional restraints (D198); unit quantities of
+OpenMM at the setters (D200). Remaining: minimization, reporters,
+checkpoints shared with the CLI, views of device buffers through DLPack,
+NPT in a triclinic cell or with a coupling period of 1, tunable buffers,
+and the manylinux_2_28 pip wheel for Python 3.10–3.13 that gates the
+milestone, with a four-stage tutorial.
+
+*M2b, differentiable simulation* (D195). The parameters of a potential
+fitted to ensemble averages by reweighting stored frames
+[[ThalerZavadlav2021]](references.md#thalerzavadlav2021): MDIR samples and
+evaluates the energy at the frames with its derivative in the parameters;
+the reweighting and the loss stay in the framework, through adapters for
+PyTorch first and JAX second. DLPack shares storage, not gradient graphs,
+so each adapter needs explicit derivative rules. Not begun.
+
+*M3 and M4.* Learned potentials behind a versioned interface, one model on
+one GPU first. The distributed work begins with a graph of the
+dependencies of the `md` ops, ownership and freshness of fields, and a
+verifier of two domains, in which the disjoint union of the constraints is
+the unit of ownership (D83).
+
+*Between milestones.* Coarse-grained models (tabulated potentials,
+Martini, DPD); native collective variables and biases; terms over triplets
+on a device; outputs for analysis (frames of the velocities, the pressure
+tensor); fixed-point sums in the loop over groups, so that the
+deterministic mode keeps its rate. Analysis comes last: frames correct by
+construction (molecules whole, the solute in one image) and observables
+compiled into the run, sharing its loops; on one trajectory compared
+across analysis programs, what went wrong was images and conventions,
+never the arithmetic.
