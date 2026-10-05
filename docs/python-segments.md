@@ -199,6 +199,14 @@ x86-64's large code model, `.text` otherwise. Its diagnostic run observed
 with all 144 registrations paired with deregistration. D199
 replaces reliance on that exercised layout with checks of every final object.
 
+Each call of an entry is a call of its own in the runtime: what the call
+allocates (the memory of the host that compiled code takes with `malloc`,
+the neighbor structures of the runtime, and the blocks of device memory) is
+freed when it returns, the device blocks into the runtime's pool, where the
+next part takes the blocks of the same sizes. The memory of a simulation
+therefore stays that of one part however many parts it runs (#110);
+`mdir run` calls its entry once and is unchanged.
+
 The device is resolved when the first GPU simulation in a process runs:
 `Execution.device` is an index among the devices that `CUDA_VISIBLE_DEVICES`
 leaves visible. The CUDA context is process-wide, so a later GPU simulation

@@ -554,7 +554,16 @@ void mgpuEventRecord(CUevent event, CUstream stream) {
 struct Block {
   CUdeviceptr pointer;
   uint64_t size;
+  /* Whether a call of an entry that an embedding program opened
+     (mdrtDeviceBeginCall) allocated the block; it returns to the pool when
+     the call closes (#110). */
+  int ofCall;
 };
+static int inCall = 0;
+/* Memory shared with the host that a call allocated, freed when it closes. */
+#define MAX_CALL_MANAGED 256
+static CUdeviceptr callManaged[MAX_CALL_MANAGED];
+static int numCallManaged = 0;
 static struct Block liveBlocks[MAX_BLOCKS];
 static int numLive = 0;
 static struct Block freeBlocks[MAX_BLOCKS];
@@ -573,6 +582,8 @@ void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
   if (isHostShared) {
     check(cuMemAllocManaged(&pointer, size, CU_MEM_ATTACH_GLOBAL),
           "cuMemAllocManaged");
+    if (inCall && numCallManaged < MAX_CALL_MANAGED)
+      callManaged[numCallManaged++] = pointer;
     end(ALLOCATE, start);
     return (void *)pointer;
   }
@@ -586,7 +597,7 @@ void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
   if (!pointer)
     check(cuMemAlloc(&pointer, size), "cuMemAlloc");
   if (numLive < MAX_BLOCKS)
-    liveBlocks[numLive++] = (struct Block){pointer, size};
+    liveBlocks[numLive++] = (struct Block){pointer, size, inCall};
   else
     untracked = 1;
   end(ALLOCATE, start);
@@ -616,6 +627,26 @@ void mgpuMemFree(void *pointer, CUstream stream) {
   finish();
   check(cuMemFree(address), "cuMemFree");
   end(ALLOCATE, start);
+}
+
+/* The structures of neighbors (groups and matrices) that a call made: their
+   host records are freed when it closes, and their memory of the device
+   returns to the pool with the call's other blocks. */
+static void **callHandles = NULL;
+static size_t numCallHandles = 0, roomCallHandles = 0;
+
+static void recordCallHandle(void *handle) {
+  if (!inCall)
+    return;
+  if (numCallHandles == roomCallHandles) {
+    roomCallHandles = roomCallHandles ? 2 * roomCallHandles : 8;
+    callHandles = realloc(callHandles, roomCallHandles * sizeof(void *));
+    if (!callHandles) {
+      fprintf(stderr, "mdrt: out of memory of the host\n");
+      abort();
+    }
+  }
+  callHandles[numCallHandles++] = handle;
 }
 
 /* Returns true if `pointer` is memory of the device: in a block that the
@@ -902,6 +933,7 @@ int64_t mdrtGroupsCreate(int64_t places, int64_t blocks) {
   groups->places = (places + 15) / 16 * 16;
   groups->blocks = blocks > 0 ? blocks : 1;
   allocateGroups(groups);
+  recordCallHandle(groups);
   return (int64_t)(intptr_t)groups;
 }
 
@@ -973,6 +1005,7 @@ int64_t mdrtMatrixCreate(int64_t rows, int64_t width) {
   matrix->rows = rows > 0 ? rows : 1;
   matrix->width = width > 0 ? width : 1;
   allocateMatrix(matrix);
+  recordCallHandle(matrix);
   return (int64_t)(intptr_t)matrix;
 }
 
@@ -998,4 +1031,40 @@ void mdrtMatrixGrow(int64_t handle, int64_t width) {
   mgpuMemFree(matrix->data, NULL);
   matrix->width = width + width / 4;
   allocateMatrix(matrix);
+}
+
+/*===----------------------------------------------------------------------===
+ * Calls of an entry by an embedding program
+ *===----------------------------------------------------------------------===*/
+
+/* A program that calls an entry more than once (a Python simulation, D196)
+   opens a call before each and closes it after. What the call allocated is
+   its own: its blocks return to the pool, where the next call takes the
+   blocks of the same sizes, so the memory of the device stays that of one
+   call (#110). `mdir run` calls its entry once and opens none. */
+void mdrtDeviceBeginCall(void) { inCall = 1; }
+
+void mdrtDeviceEndCall(void) {
+  if (!inCall)
+    return;
+  /* No work of the call may still use a block that is reused or freed. */
+  finish();
+  for (int i = numLive; i-- != 0;) {
+    if (!liveBlocks[i].ofCall)
+      continue;
+    struct Block block = liveBlocks[i];
+    liveBlocks[i] = liveBlocks[--numLive];
+    block.ofCall = 0;
+    if (numFree < MAX_BLOCKS)
+      freeBlocks[numFree++] = block;
+    else
+      check(cuMemFree(block.pointer), "cuMemFree");
+  }
+  for (int i = 0; i != numCallManaged; ++i)
+    check(cuMemFree(callManaged[i]), "cuMemFree");
+  numCallManaged = 0;
+  for (size_t i = 0; i != numCallHandles; ++i)
+    free(callHandles[i]);
+  numCallHandles = 0;
+  inCall = 0;
 }
