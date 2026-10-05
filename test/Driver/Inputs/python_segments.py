@@ -22,6 +22,7 @@ work = pathlib.Path(sys.argv[4])
 # A run that hangs ends with the stacks of its threads.
 faulthandler.dump_traceback_later(900, exit=True)
 PARTS = (1, 7, 13)  # boundaries inside the periods of 10 steps
+PME_ORDER = 4
 
 
 def compile_program(kind="NVE", precision="Double", method="VelocityVerlet",
@@ -30,6 +31,7 @@ def compile_program(kind="NVE", precision="Double", method="VelocityVerlet",
     system, state = loaded.make_system(), loaded.make_state()
     system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
     system.electrostatics = mdir.Electrostatics.PME
+    system.pme_order = PME_ORDER
     integrator, ensemble = mdir.Integrator(), mdir.Ensemble()
     integrator.method = getattr(mdir.IntegratorMethod, method)
     integrator.timestep = timestep
@@ -58,7 +60,34 @@ def expect(error, call, text=""):
 
 
 QUANTITIES = ("positions", "velocities", "forces")
-DOUBLE = {"positions": 1e-12, "velocities": 1e-9, "forces": 1e-6}
+
+
+def double_tolerance(quantity, whole):
+    # A scale-relative regression budget, not a forward-error theorem for MD.
+    # Each force gathers at most N-1 direct neighbors and p^3 PME grid values
+    # (N=1168, p=4 here). Use c=4*((N-1)+p^3)=4924 for forces and velocities:
+    # two differently ordered evaluations, times a factor-two guard for other
+    # reductions and propagation through the trajectory. For positions use
+    # c=2*21=42: one accumulated update per step in each of the two trajectories.
+    # Across the CPU/GPU double cases, max residual/(eps64*max(abs(reference)))
+    # was 1.406, 648.55, 2110.76 for positions, velocities, forces, respectively:
+    # these budgets leave margins of at least 29.8, 7.59, 2.33, rather than the
+    # old fixed force tolerance's roughly 2000-fold margin. The force term count
+    # motivates the budget; cancellation and nonlinear propagation are checked
+    # empirically by this fixed fixture, not bounded for arbitrary trajectories.
+    terms = whole.positions.shape[0] - 1 + PME_ORDER**3
+    c = 2 * sum(PARTS) if quantity == "positions" else 4 * terms
+    scale = np.abs(getattr(whole, quantity)).max()
+    return c * np.finfo(np.float64).eps * scale
+
+
+# Let E be the mixed-versus-double error of the uninterrupted reference.
+# If both mixed paths have errors of size E, their difference can be 2E by
+# the triangle inequality. Use 1.5 times that scale (3E) to allow their errors
+# to differ as the reduction order changes; this is a self-calibrated regression
+# allowance, not a universal mixed-precision bound. The observed difference/E
+# is at most 1.05 over this fixture's CPU/GPU cases, leaving at least 2.85x.
+MIXED_ERROR_FACTOR = 3.0
 
 # Segmented against uninterrupted runs, in both precisions. In double the
 # difference is the rounding of a sum in another order, as the structures
@@ -84,12 +113,14 @@ for kind, method in (("NVE", "VelocityVerlet"), ("NVT", "VelocityVerlet"),
         for q in QUANTITIES:
             difference = np.abs(getattr(segmented, q) - getattr(whole, q)).max()
             if precision == "Double":
-                tolerance = DOUBLE[q]
+                tolerance = double_tolerance(q, whole)
             else:
                 error = np.abs(getattr(whole, q) - getattr(references["Double"], q)).max()
-                tolerance = 3.0 * error
+                tolerance = MIXED_ERROR_FACTOR * error
             assert difference <= tolerance, (kind, precision, q, difference, tolerance)
-            line.append(f"{q} {difference:.2e} (tolerance {tolerance:.2e})")
+            margin = tolerance / difference if difference else float("inf")
+            line.append(f"{q} {difference:.6e} (tolerance {tolerance:.6e}; "
+                        f"margin {margin:.3f}x)")
         cell = np.abs(segmented.cell.diagonal - whole.cell.diagonal).max()
         assert cell <= (1e-12 if precision == "Double" else 1e-6), cell
         line.append(f"cell {cell:.2e}")
@@ -101,7 +132,7 @@ for kind, method in (("NVE", "VelocityVerlet"), ("NVT", "VelocityVerlet"),
         # The coupling changes the velocities far beyond the tolerance, so a
         # coupling at other steps would be seen.
         coupled = np.abs(references["Double"].velocities - nve.velocities).max()
-        assert coupled > 1e4 * DOUBLE["velocities"], coupled
+        assert coupled > 1e4 * double_tolerance("velocities", references["Double"]), coupled
         print(f"{kind}: the coupling moves the velocities by {coupled:.2e} nm/ps")
     if kind == "NVE":
         nve = references["Double"]

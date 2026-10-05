@@ -115,10 +115,44 @@ On the dipeptide in water with PME (`test/Driver/python-segments.test`),
 | mixed, CPU and GPU | 2e-7 to 6e-7 | 2e-4 to 4e-4 | 0.3 to 0.8 |
 
 The thermostat moves the velocities by 5e-2 nm/ps over these steps, so a
-coupling at other steps would show. In mixed precision the difference is
-of the size of the error of mixed precision itself (the difference of a
-mixed run from a double one): the forces are rounded to f32 after a sum in
-another order.
+coupling at other steps would show. The double comparison uses
+$T_q = c_q \epsilon_{64} \max_i \lvert q_i^{\mathrm{whole}}\rvert$,
+with $\epsilon_{64}=2^{-52}$. For the 1168-particle fixture and PME order 4,
+$M=(N-1)+4^3=1231$ counts a conservative ceiling of direct neighbors plus
+interpolation terms. Forces and velocities use $c_q=4M=4924$: two different
+summation orders and a factor-two guard for other reductions and propagation.
+Positions use $c_x=2(21)=42$, counting an accumulated update in each trajectory
+at each step. These are regression budgets for this fixture, checked against
+observed residuals; they are not forward-error bounds for arbitrary nonlinear
+trajectories or cancellation. The least observed margins are 29.8, 7.59, and
+2.33 for positions, velocities, and forces, respectively.
+
+Mixed precision uses $T_q=3E_q$, where $E_q$ is the maximum difference between
+the uninterrupted mixed and double references. Two mixed paths with errors of
+size $E_q$ can differ by $2E_q$ by the triangle inequality; the factor 3 adds a
+50% guard for variation between their error sizes when the reduction order
+changes. The observed difference divided by $E_q$ is at most 1.05, leaving
+at least a factor 2.85 of margin. This self-calibrated allowance is not a
+universal mixed-precision error bound.
+
+The table selects the least-margin case for each target, precision, and
+quantity; other cases have more margin. Margin is tolerance divided by the
+observed difference. Each test run prints all three values for every case.
+
+| Target | Precision | Quantity | Case with least margin | Observed difference | Tolerance | Margin |
+|---|---|---|---|---:|---:|---:|
+| CPU | double | positions (nm) | NVE VelocityVerlet | 8.881784e-16 | 2.655975e-14 | 29.904 |
+| CPU | double | velocities (nm/ps) | NVE VelocityVerlet | 6.522560e-13 | 4.952198e-12 | 7.592 |
+| CPU | double | forces (kJ/mol/nm) | NVE VelocityVerlet | 5.580318e-10 | 1.302357e-09 | 2.334 |
+| CPU | mixed | positions (nm) | NVT VelocityVerlet | 3.064083e-07 | 1.532936e-06 | 5.003 |
+| CPU | mixed | velocities (nm/ps) | NVE VelocityVerlet | 2.372057e-04 | 1.488703e-03 | 6.276 |
+| CPU | mixed | forces (kJ/mol/nm) | NVT VelocityVerlet | 4.191208e-01 | 1.939384e+00 | 4.627 |
+| GPU | double | positions (nm) | NPT VelocityVerlet | 8.881784e-16 | 2.654271e-14 | 29.884 |
+| GPU | double | velocities (nm/ps) | NVT Leapfrog | 6.141754e-13 | 4.937995e-12 | 8.040 |
+| GPU | double | forces (kJ/mol/nm) | NVT Leapfrog | 5.636593e-10 | 1.314916e-09 | 2.333 |
+| GPU | mixed | positions (nm) | NVT VelocityVerlet | 6.081129e-07 | 1.768247e-06 | 2.908 |
+| GPU | mixed | velocities (nm/ps) | NVT VelocityVerlet | 4.108488e-04 | 1.420102e-03 | 3.457 |
+| GPU | mixed | forces (kJ/mol/nm) | NVT VelocityVerlet | 8.018188e-01 | 2.312715e+00 | 2.884 |
 
 ## Errors
 
