@@ -20,9 +20,21 @@ static void reject(llvm::Expected<model::PreparedModel> result,
   require(matched, "wrong model error category");
 }
 int main(int argc, char **argv) {
-  require(argc == 2 || (argc == 3 && llvm::StringRef(argv[2]) == "--arrays"), "expected a control file and optional --arrays");
+  require(argc == 2 || (argc == 3 && (llvm::StringRef(argv[2]) == "--arrays" ||
+                                       llvm::StringRef(argv[2]) == "--drawn")),
+          "expected a control file and optional --arrays or --drawn");
   auto c = take(driver::readControl(argv[1]));
   auto fileSystem = take(driver::readSystem(c));
+  if (argc == 3 && llvm::StringRef(argv[2]) == "--drawn") {
+    // The velocities that `mdir run` draws for this control file: its
+    // readSystem, then assignVelocities (tools/mdir/Run.cpp), as raw f64.
+    driver::assignVelocities(c, fileSystem);
+    llvm::outs().write(reinterpret_cast<const char *>(fileSystem.velocities.data()),
+                       fileSystem.velocities.size() * sizeof(double));
+    return 0;
+  }
+  // As `mdir run` takes the reference of restraints.
+  fileSystem.referencePositions = fileSystem.positions;
   driver::Cell charmmCell;
   if (!c.charmmStructureFile.empty())
     charmmCell = take(driver::makeCell(c.box[0]*0.1,c.box[1]*0.1,c.box[2]*0.1,
@@ -54,6 +66,13 @@ int main(int argc, char **argv) {
   s.rigidWater = c.fastWater; s.flexibleWater = c.statesFlexible;
   s.electrostatics = c.pme ? model::Electrostatics::PME : model::Electrostatics::Cutoff;
   s.pmeGrid = {28,28,28};
+  // [[restraints]] as typed restraints in kJ/mol/nm^2 (D[python-velocities-restraints]).
+  // The constant of the control file in kJ/mol/nm^2, converted as the file
+  // path converts it.
+  for (const auto &r : c.restraints)
+    s.restraints.push_back({r.selection, r.forceConstant * driver::units::energy /
+                                         (driver::units::length * driver::units::length),
+                            r.scaling});
   model::Integrator integrator;
   integrator.timestep = 0.0005;
   integrator.method = c.integrator;
@@ -90,6 +109,19 @@ int main(int argc, char **argv) {
     require(a.members == b.members && a.fields.size() == b.fields.size(), "tuple identities differ");
     for (size_t j=0; j<a.fields.size(); ++j)
       require(a.fields[j].values == b.fields[j].values, "tuple parameters differ");
+  }
+  require(fileSystem.restraintConstants == prepared.system.restraintConstants &&
+          fileSystem.restraintScaling == prepared.system.restraintScaling &&
+          fileSystem.referencePositions == prepared.system.referencePositions,
+          "file/object restraints differ");
+  // The velocities of `mdir run` (readSystem, then assignVelocities), bit for bit.
+  {
+    auto fileDrawn = fileSystem;
+    driver::assignVelocities(c, fileDrawn);
+    auto drawn = take(model::drawVelocities(s, state, c.temperature, c.seed));
+    require(drawn.velocities == fileDrawn.velocities && drawn.positions == state.positions,
+            "drawn velocities differ from those of mdir run");
+    require(llvm::any_of(drawn.velocities, [](double v) { return v != 0; }), "no velocities drawn");
   }
   require(!data.sources.empty() && !data.sources.front().second.empty(), "missing owned provenance");
   auto stateCopy = state;
@@ -159,5 +191,30 @@ int main(int argc, char **argv) {
   s.pairTerms[0].expression="r^2; r=r0"; reject(prepare(),input); s.pairTerms={pair};
   s.tupleTerms[0].expression="r^2; r=r0"; reject(prepare(),input); s.tupleTerms={bond};
   s.pairTerms[0].mixing["k"]=driver::Mixing::Arithmetic; reject(prepare(),unsupported);
+  s=saved;
+  // Typed restraints are refused as [[restraints]] is.
+  s.restraints={{"!:WAT & !@H*", 4184.0, driver::ReferenceScaling::Center}};
+  take(prepare());
+  s.restraints[0].selection=""; reject(prepare(),input); s=saved;
+  s.restraints={{"@1", 0.0, driver::ReferenceScaling::Center}}; reject(prepare(),input);
+  s.restraints[0].forceConstant=std::numeric_limits<double>::infinity(); reject(prepare(),input);
+  s.restraints={{"@1 &", 1.0, driver::ReferenceScaling::Center}}; reject(prepare(),input);
+  s.restraints={{"@1", 1.0, driver::ReferenceScaling::Center},
+                {"@1", 1.0, driver::ReferenceScaling::All}}; reject(prepare(),input);
+  s.restraints={{"@1", 1.0, driver::ReferenceScaling::Center}};
+  s.restraintReference={0.0}; reject(prepare(),input); s=saved;
+  auto rejectDraw=[&](double temperature, uint64_t seed) {
+    auto drawn=model::drawVelocities(s,state,temperature,seed);
+    require(!drawn, "bad draw accepted"); llvm::consumeError(drawn.takeError());
+  };
+  rejectDraw(-1,1); rejectDraw(std::numeric_limits<double>::quiet_NaN(),1);
+  rejectDraw(300,uint64_t(1)<<63);
+  // A constant written in kJ/mol/nm^2 is that of the restraint, to within
+  // the one rounding of the conversion through the control file's unit.
+  s.restraints={{"@1", 4184.0, driver::ReferenceScaling::Center}};
+  auto exact=take(prepare());
+  require(llvm::all_of(exact.system.restraintConstants, [](double k) {
+            return k==0 || std::abs(k-4184.0) <= 4184.0*std::numeric_limits<double>::epsilon(); }),
+          "restraint constant changed by the unit conversion");
   llvm::outs()<<"file/object parity, ownership and typed validation passed\n";
 }

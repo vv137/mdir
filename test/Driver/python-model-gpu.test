@@ -10,6 +10,8 @@
 # RUN: mdir-model-test %t/constraints-double.toml | FileCheck %s
 # RUN: mdir-model-test %t/triclinic-mixed.toml | FileCheck %s
 # RUN: mdir-model-test %t/npt-mixed.toml | FileCheck %s
+# RUN: mdir-model-test %t/restraints-double.toml | FileCheck %s
+# RUN: mdir-model-test %t/restraints-mixed.toml | FileCheck %s
 # RUN: mdir-model-test %t/charmm-double.toml | FileCheck %s
 # RUN: mdir-model-test %t/charmm-triclinic-mixed.toml | FileCheck %s
 # CHECK: file/object parity, ownership and typed validation passed

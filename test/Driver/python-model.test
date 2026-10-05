@@ -11,6 +11,8 @@
 # RUN: mdir-model-test %t/triclinic-double.toml | FileCheck %s
 # RUN: mdir-model-test %t/nvt-double.toml | FileCheck %s
 # RUN: mdir-model-test %t/npt-mixed.toml | FileCheck %s
+# RUN: mdir-model-test %t/restraints-double.toml | FileCheck %s
+# RUN: mdir-model-test %t/restraints-mixed.toml | FileCheck %s
 # RUN: mdir-model-test %t/charmm-double.toml | FileCheck %s
 # RUN: mdir-model-test %t/charmm-triclinic-mixed.toml | FileCheck %s
 # CHECK: analytic energy: 1.000000e+00 kJ/mol; derivative: 2.000000e+01 kJ/mol/nm
