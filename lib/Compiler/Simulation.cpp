@@ -397,7 +397,10 @@ Simulation::create(const model::PreparedModel &prepared) {
   // A state without velocities begins at rest.
   if (system.velocities.size() != 3 * count)
     system.velocities.assign(3 * count, 0.0);
-  system.referencePositions = system.positions;
+  // The reference of restraints is the model's (D[python-velocities-restraints]),
+  // or the positions it begins at; its cell is that of the start.
+  if (system.referencePositions.size() != system.positions.size())
+    system.referencePositions = system.positions;
   for (int k = 0; k != 3; ++k)
     system.inputBox[k] = system.box[k];
 

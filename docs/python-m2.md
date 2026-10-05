@@ -15,7 +15,10 @@ see [python-compile.md](python-compile.md). D193 (#78) changes the host
 boundary to NumPy arrays ([python-arrays.md](python-arrays.md)).
 D196 (#85) adds persistent simulations, `run(n)`, embedded
 errors and stops, and runtime and device ownership
-([python-segments.md](python-segments.md)). Tunable buffers remain open.
+([python-segments.md](python-segments.md)). D[python-velocities-restraints]
+(#92) adds velocities drawn as `mdir run` draws them and typed positional
+restraints ([python-velocities-restraints.md](python-velocities-restraints.md)).
+Tunable buffers remain open.
 Later items remain prospective work.
 
 ## 1. Scope and acceptance
@@ -172,6 +175,7 @@ draft. Changes to Builder, Control and runtime should proceed sequentially.
 | 2 | `D192` (#76): optional native extension, shared lowering, immutable IR/plan and stale detection; JIT/runtime ownership and tuning remain open | CPU/GPU mixed/double compilation, structured diagnostics, repeated destruction, no output side effects |
 | 2a | `D193` (#78): strict buffer/CPU DLPack host inputs, read-only NumPy copies and required NumPy >=1.23 | Bitwise native array round trips, shapes/dtypes/strides, ownership, atomic stale tracking, dependency failures and CPU/GPU IR parity |
 | 3 | `D196` (#85): persistent simulation and arbitrary counts, embedded status/errors, runtime ownership | Segmented/uninterrupted agreement, retained coupling phase, stop/error survival, independent simulation state |
+| 3a | `D[python-velocities-restraints]` (#92): `InitialState.draw_velocities`, typed `System.restraints` | Velocities of `mdir run` bit for bit; restrained runs against `mdir run` on CPU/GPU, mixed/double; refusals |
 | 4 | `python-reporters` (future label): scheduling, C++ writers, Python callbacks, host snapshots | Nondividing/coincident periods, final remainder, callback errors, GIL behavior, file lifecycle, input order |
 | 5 | `python-checkpoints` (future label): shared in-memory provenance and cross-front-end continuation | Both checkpoint directions, stage changes, corruption rejection, tunable restoration and output continuation |
 | 6 | `python-dlpack` (future label): read-only leases, IDs and stream handoff, followed by tracked writable borrows within M2 | Alias lifetime/completion, allocator reuse, dtype/order and version invalidation; read-only support alone does not close M2 |

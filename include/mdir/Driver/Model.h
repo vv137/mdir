@@ -49,6 +49,18 @@ struct System {
   /// subset accept constants only; tuple parameters have one value/tuple.
   std::vector<driver::PairTerm> pairTerms;
   std::vector<driver::TupleTerm> tupleTerms;
+  /// One `[[restraints]]` table (D74, D124), with its constant in
+  /// kJ/mol/nm^2 (D[python-velocities-restraints]).
+  struct Restraint {
+    std::string selection;
+    double forceConstant = 0;
+    driver::ReferenceScaling scaling = driver::ReferenceScaling::Center;
+  };
+  std::vector<Restraint> restraints;
+  /// The reference of the restraints, (N, 3) nm in input order, the
+  /// coordinates file of the control file; empty: the positions of the
+  /// initial state that is prepared.
+  std::vector<double> restraintReference;
 };
 struct LoadedData {
   driver::Topology topology;
@@ -102,6 +114,12 @@ struct PreparedModel {
 llvm::Expected<PreparedModel> prepare(const System &, const InitialState &,
                                      const Integrator &, const Ensemble &,
                                      const Execution &, const Schedule &);
+/// A copy of `state` with the velocities that `mdir run` draws for the same
+/// system, temperature (K), and seed: `system` is prepared as `prepare`
+/// prepares it (NVE at `temperature`), then driver::assignVelocities draws.
+llvm::Expected<InitialState> drawVelocities(const System &system,
+                                            const InitialState &state,
+                                            double temperature, uint64_t seed);
 } // namespace model
 } // namespace mdir
 #endif
