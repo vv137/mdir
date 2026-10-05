@@ -22,9 +22,9 @@ search and the implementation of its registration index. These assumptions
 are checked with negative boundary tests and seeded lifecycle tests, rather
 than claimed as formal verification of either dependency.
 
-Validation will cover CPU/GPU, mixed/double, import orders, retained live
+Validation covers CPU/GPU, mixed/double, import orders, retained live
 engines, construction errors, and delayed exceptions, with ASLR retained.
-A separate host exception sanitizer baseline will distinguish interceptor
+A separate host exception sanitizer baseline distinguishes interceptor
 failures from JIT failures. Numerical results are compared with an independent analytic pair force and
 the existing segment regressions.
 
@@ -84,7 +84,9 @@ code allocations, overlap with a retained object's interval, duplicate
 finalization, registration after release, and release before deregistration.
 The native engine fixture includes late ORC initialization/deinitialization
 functions under x86-64 small and large code models and a missing-symbol
-initialization failure followed by a C++ throw after destruction.
+initialization failure followed by a C++ throw after destruction. Successful
+engines also call a native thrower through the packed JIT entry and catch the
+exception in the host, proving live unwinding works in both code models.
 
 `python-simulation-lifetime{,-gpu}.test` each run fresh processes in NumPy-first,
 MDIR-first, and runtime-first orders (both runtimes first on the GPU). Each
@@ -112,3 +114,56 @@ prior exception-interceptor recursion into a clean import diagnostic, but
 does not make this configuration a usable Python sanitizer baseline. Release
 Python lifecycle tests and native sanitizer tests provide distinct evidence;
 Python sanitizer lifecycle success is not claimed.
+
+## Validation results
+
+The release build on x86-64, LLVM 23.1.2, passed the complete GPU-enabled
+suite: **272 passed, 7 unsupported, 0 failed**, 638.18 s under the GPU 1 lock.
+The unsupported tests are the six opt-in device sanitizer tests and the
+external Amber scale suite. No device code changes, so compute-sanitizer
+was not run. The strengthened live-unwinding native test subsequently passed
+both normally and under host ASan/UBSan.
+
+In the complete lifecycle matrix, each seed (89, 196, 20261006) was run once
+per target and import order: 18 seed sequences, 576 seeded operations,
+0 failures. Both precisions are retained in each process. Each process also
+passes 24 interleaved lifetimes and six threaded lifetimes. ASLR is enabled.
+The independent oracle is the analytic Lennard-Jones pair force, evaluated
+in NumPy at the returned coordinates with $\sigma=0.3$ nm and
+$\epsilon=0.1$ kJ/mol, below the switching interval. The maximum absolute
+force difference is compared with $256\varepsilon_{64}\lvert F\rvert$
+in double and $64\varepsilon_{32}\lvert F\rvert$ in mixed; these budgets
+cover arithmetic and parameter/coordinate conversion rounding for this pair.
+The floating-point constants here denote machine epsilon, not the potential's
+energy parameter.
+
+| Target | Precision | Reference x-force (kJ/mol/nm) | Maximum difference | Tolerance |
+|---|---|---|---|---|
+| CPU | double | 0.6877722941605 | 1.110223e-16 | 3.909533e-14 |
+| CPU | mixed | 0.6877722941590 | 9.906765e-8 | 5.247286e-6 |
+| GPU | double | 0.6877722941605 | 1.110223e-16 | 3.909533e-14 |
+| GPU | mixed | 0.6877722941582 | 9.906841e-8 | 5.247286e-6 |
+
+The original focused GPU validation had one infrastructure failure in two
+tests: the CLI was launched while a concurrent relink replaced its executable,
+producing permission denied. The lifecycle test passed. Builds were completed
+before running the full suite above. This is not evidence of intermittent
+numerical behavior and was not retried until green. Sanitizer setup failures
+(interceptor recursion, unsupported RTTI linkage, and missing LLVM poisoning
+options) are recorded separately from the passing native sanitizer run; #98
+tracks the Python configuration.
+
+Performance was measured on idle GPU 0 under its lock, one RTX 3090 at
+300 W, against main 143c650, with the same two-particle input, 200,000 steps
+per precision after compilation and warmup. One long run per cell:
+
+| Precision | Main ms/step | This change ms/step | Change | Main compile/warmup (s) | This change (s) |
+|---|---|---|---|---|---|
+| double | 0.020776762 | 0.021375896 | +2.9% | 1.947048 | 1.946182 |
+| mixed | 0.023662715 | 0.022072166 | -6.7% | 1.386909 | 1.633006 |
+
+These launch-bound pair measurements are single runs, not a statistical
+speedup claim or an Amber suite performance claim. Device kernels and the
+integration schedule are unchanged. AArch64 and Python sanitizer lifecycle
+validation remain unexercised configurations; the dependency guarantees are
+limited as stated above.

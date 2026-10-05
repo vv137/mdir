@@ -40,6 +40,7 @@ static uint8_t *frame(JITMemory &memory, uint8_t *code, uint32_t range = 64) {
   memory.registerEHFrames(bytes, reinterpret_cast<uintptr_t>(bytes), 44);
   return bytes;
 }
+static void throwFromJIT() { throw std::runtime_error("through JIT"); }
 int main(int argc, char **) {
   if (argc > 1) {
     JITMemoryMapper mapper;
@@ -110,9 +111,14 @@ int main(int argc, char **) {
       }
     )mlir" : R"mlir(
       module {
-        llvm.func @entry() attributes {uwtable_kind = #llvm.uwtableKind<sync>} { llvm.return }
-        llvm.mlir.global_ctors ctors = [@entry], priorities = [0 : i32], data = [#llvm.zero]
-        llvm.mlir.global_dtors dtors = [@entry], priorities = [0 : i32], data = [#llvm.zero]
+        llvm.func @jit_ownership_throw()
+        llvm.func @entry() attributes {uwtable_kind = #llvm.uwtableKind<sync>} {
+          llvm.call @jit_ownership_throw() : () -> ()
+          llvm.return
+        }
+        llvm.func @init() attributes {uwtable_kind = #llvm.uwtableKind<sync>} { llvm.return }
+        llvm.mlir.global_ctors ctors = [@init], priorities = [0 : i32], data = [#llvm.zero]
+        llvm.mlir.global_dtors dtors = [@init], priorities = [0 : i32], data = [#llvm.zero]
       }
     )mlir", &context);
     require(bool(module), "cannot parse JIT fixture");
@@ -120,6 +126,12 @@ int main(int argc, char **) {
     builder.setCodeModel(configuration == 2 ? CodeModel::Small : CodeModel::Large);
     auto target = cantFail(builder.createTargetMachine());
     auto engine = cantFail(JITEngine::create(*module, std::move(target), {}, "entry"));
+    cantFail(engine->registerSymbols([](orc::MangleAndInterner interner) {
+      orc::SymbolMap symbols;
+      symbols[interner("jit_ownership_throw")] = {
+          orc::ExecutorAddr::fromPtr(&throwFromJIT), JITSymbolFlags::Exported};
+      return symbols;
+    }));
     auto initialized = engine->initialize();
     require(bool(initialized) == fails, "unexpected initialization result");
     if (fails) {
@@ -127,7 +139,12 @@ int main(int argc, char **) {
               "missing-symbol error was not propagated");
     } else {
       auto function = cantFail(engine->lookupPacked("entry"));
-      function(nullptr);
+      bool caught = false;
+      try { function(nullptr); }
+      catch (const std::runtime_error &error) {
+        caught = std::strcmp(error.what(), "through JIT") == 0;
+      }
+      require(caught, "exception did not unwind through the JIT entry");
     }
     engine.reset();
     try { throw std::runtime_error("after engine destruction"); }
