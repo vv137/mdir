@@ -95,3 +95,81 @@ Before marking the implementation ready:
 No CPU/GPU validation or performance result is available at the design
 stage. Update the control reference, roadmap, decisions, changelog, and
 white paper alongside the implementation after the design ruling.
+
+## GROMACS 2026.3 source analysis
+
+The following observations come from reading the released source, not
+copying its implementation. Source paths below are relative to the
+[GROMACS v2026.3 source tree](https://gitlab.com/gromacs/gromacs/-/tree/v2026.3/src/gromacs).
+They refine the proposal; they do not settle MDIR's user-visible contract.
+
+### Buffer estimator
+
+`mdlib/calc_verletbuf.cpp`, especially `energyDriftAtomPair`,
+`energyDrift`, and `calcVerletBufferSize`, integrates a cutoff Taylor
+expansion against Gaussian displacement tails. It includes the potential
+value and derivatives through third order, with separate LJ and Coulomb
+cutoffs. Inertial displacement variance scales as temperature times the
+square of lifetime divided by mass. Constraint-aware displacement combines
+center-of-mass translation with bounded rotational motion; Brownian
+displacement has a separate model. Treating all constrained hydrogens as
+free particles would sacrifice much of the potential buffer reduction.
+
+The total estimate sums the absolute contributions of atom-type pairs,
+after combining LJ and Coulomb within each pair type. This allows
+cancellation within a pair type but not between types. Our proposed
+uncancelled estimate can be more conservative; that difference must be
+reported when comparing computed reaches.
+
+`computeEffectiveAtomDensity` bins coordinates into cells about a cutoff
+wide. It uses the sum of squared occupancies divided by particle count
+and cell volume. Using only particle count divided by total volume can
+underestimate the density seen by particles in heterogeneous systems.
+
+Buffer selection uses bisection on a 0.001 nm grid. The estimate is
+evaluated at the last-use age, then divided by rebuild period, time step,
+and particle count to give kJ/mol/ps per particle. Cluster surface factors
+reduce estimated missing pairs. MDIR must initially use an atom-pair
+factor of one unless its own grouping benefit is independently validated.
+The same search can enforce a separate pressure-error bound.
+
+### Lifetimes and rolling pruning
+
+`nbnxm/pairlist_tuning.cpp` distinguishes outer rebuild period from outer
+last-use age: with one force evaluation per step, a period of N has age
+N minus one. CPU inner-list age similarly excludes the current force
+step. GPU pruning prepares a list for the next step, so its age includes
+that additional step. MDIR must derive ages from its own launch order.
+
+GPU rolling pruning launches every two steps and divides the inner
+refresh period by two to choose the partition count. The source tunes the
+outer period from candidates 20, 25, 40, 50, 80, and 100 using list-size
+heuristics. Automatic period tuning is disabled for unthermostatted MD;
+that restriction is separate from estimating a buffer with a supplied
+temperature.
+
+`nbnxm/cuda/nbnxm_cuda_kernel_pruneonly.cuh` retains an outer mask and a
+working inner mask. Fresh-list pruning initializes both. Subsequent rolling
+visits check only outer-mask entries missing from the inner mask and add
+entries that have approached the inner reach. They do not remove entries
+already active; those are cleared at the next fresh-list prune. Partitions
+are interleaved supercluster entries, with a rolling cursor per block.
+Thus the inner list grows between outer rebuilds. This is more specific
+than periodically recomputing a compact inner list and should be evaluated
+as an MDIR implementation option.
+
+### Error budgets and NPT acceptance
+
+GROMACS requires outer and inner energy estimates independently to meet
+the same tolerance. Its source explicitly acknowledges a small possible
+underestimate, while adding the two estimates would double count some
+errors. The proposed MDIR split budget is a conservative departure and
+needs a speed/accuracy comparison before choosing it.
+
+For pressure error, GROMACS subtracts the estimated outer contribution
+from the inner allowance and reports the sum of both contributions.
+Energy drift alone therefore does not settle NPT accuracy. To satisfy
+the full Amber acceptance in #59, the implementation plan must address
+cell deformation and pressure bias, rather than declare completion with
+constant-volume validation alone. Whether to expose a separate pressure
+tolerance remains a maintainer decision.
