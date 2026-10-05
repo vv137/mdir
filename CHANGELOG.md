@@ -12,6 +12,12 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- In the deterministic mode (`deterministic = true`) device kernels no longer
+  contract products and sums into fused multiply-adds, so that a step that
+  writes energies moves the particles as one that does not
+  (D[deterministic-energy-steps], #97). JAC in mixed precision is about 2.5%
+  slower in this mode; the default mode is unchanged.
+
 - Replace the Python preview's flat numeric lists with shaped, read-only
   NumPy copies and strict buffer/CPU DLPack inputs. Assign native float64
   `(N, 3)` coordinate arrays and copy outputs before editing; tuple IDs use
@@ -130,6 +136,10 @@ format, or the outputs; every such change is listed under **Changed** or
   fails differentiation (D182, part 1 of #15).
 
 ### Fixed
+
+- The virial of SETTLE and SHAKE at a step that writes energies reads the
+  velocity changes the step applies instead of solving the constraints again
+  (D[deterministic-energy-steps], #97).
 
 - The host code of a program is compiled at LLVM's default level, which is
   the level it always had: the requested `Aggressive` level was not applied

@@ -137,7 +137,7 @@ same control file.
   those restraints and drawn velocities against `mdir run`. The row of step
   10 matches every printed digit, except on the GPU in mixed precision,
   where it agrees within 1e-6 of each value; that case differs the same way
-  without restraints (#97). The state at step 20, which the model reaches in
+  without restraints (#97, #102). The state at step 20, which the model reaches in
   two parts, against the checkpoint of `mdir run` (largest absolute
   difference / tolerance; tolerances as in the test):
 

@@ -5268,11 +5268,11 @@ std::string Builder::emitShakeVelocities(StringRef indent, StringRef x,
   for (unsigned k = 1; k <= count; ++k)
     arguments += "%vs_d" + std::to_string(k) + ": f64" +
                  (k == count ? "" : ", ");
-  auto header = [&](StringRef name, StringRef op) {
+  auto header = [&](StringRef name, StringRef op, StringRef field) {
     os << indent << name << " = md." << op << " %r_" << set.name << ", " << x
        << ", %cell\n"
        << indent << "    coordinates(" << coordinates << ")\n"
-       << indent << "    gather(" << v << ", %m : !vec, !real)\n"
+       << indent << "    gather(" << field << ", %m : !vec, !real)\n"
        << indent << "    tuple(" << tuple << " : " << tupleTypes << ") {\n"
        << indent << "^bb0(" << arguments << "):\n";
   };
@@ -5313,7 +5313,7 @@ std::string Builder::emitShakeVelocities(StringRef indent, StringRef x,
   };
 
   std::string change = (result + "_change").str();
-  header(change, "gather_tuples");
+  header(change, "gather_tuples", v);
   SiteKernel k(os, inner);
   std::vector<std::string> changes = solve(k);
   std::string yielded, types;
@@ -5329,11 +5329,14 @@ std::string Builder::emitShakeVelocities(StringRef indent, StringRef x,
     // The forces of the constraints over the second half of the step,
     // G = 2 m Δv / dt, and their virial Σ (x_j − x_0) ⊗ G_j, with the
     // weight ½: the virial of the constraints is the mean of those of the
-    // two halves (emitConstraintVirial).
+    // two halves (emitConstraintVirial). The changes are read, not solved
+    // again, as for SETTLE (#97); the clusters are disjoint.
     std::string sum = (virialResult + "_sum").str();
-    header(sum, "sum_tuples");
+    header(sum, "sum_tuples", change);
     SiteKernel w(os, inner);
-    std::vector<std::string> dv = solve(w);
+    std::vector<std::string> dv(count + 1);
+    for (unsigned j = 0; j <= count; ++j)
+      dv[j] = "%vs_v" + std::to_string(j);
     std::string two = w.constant(1.0);
     std::string elements;
     std::vector<std::string> forces;
@@ -5554,11 +5557,11 @@ std::string Builder::emitSettleVelocities(StringRef indent, StringRef x,
     std::string dv2 = k.scale(ih, k.vector("addf", i1, i2));
     return std::array<std::string, 3>{dv0, dv1, dv2};
   };
-  auto header = [&](StringRef op, StringRef type) {
+  auto header = [&](StringRef op, StringRef field) {
     os << indent << " = md." << op << " %r_settles, " << x << ", %cell\n"
        << indent << "    coordinates(displacement(1, 0), displacement(2, 0), "
                     "displacement(2, 1))\n"
-       << indent << "    gather(" << v << ", %m : !vec, !real)\n"
+       << indent << "    gather(" << field << ", %m : !vec, !real)\n"
        << indent << "    tuple(%f_settles_doh, %f_settles_dhh : !of_settles, "
                     "!of_settles) {\n"
        << indent << "^bb0(%vs_d10: vector<3xf64>, %vs_d20: vector<3xf64>, "
@@ -5566,11 +5569,10 @@ std::string Builder::emitSettleVelocities(StringRef indent, StringRef x,
                     "%vs_v1: vector<3xf64>, %vs_v2: vector<3xf64>, "
                     "%vs_m0: f64, %vs_m1: f64, %vs_m2: f64, %vs_doh: f64, "
                     "%vs_dhh: f64):\n";
-    (void)type;
   };
   std::string change = (result + "_settle").str();
   os << indent << change;
-  header("gather_tuples", "!vec");
+  header("gather_tuples", v);
   SiteKernel k(os, inner);
   std::array<std::string, 3> dv = emitKernel(k);
   os << inner << "md.yield " << dv[0] << ", " << dv[1] << ", " << dv[2]
@@ -5581,16 +5583,19 @@ std::string Builder::emitSettleVelocities(StringRef indent, StringRef x,
   if (!virial.empty()) {
     // The forces of the constraints over the second half of the step,
     // G = 2 m Δv / dt, and their virial Σ (x_i − x_O) ⊗ G_i, with the
-    // weight ½ (emitConstraintVirial).
+    // weight ½ (emitConstraintVirial). The changes Δv are those that the
+    // step applies, read rather than solved again: a solve of its own
+    // could round otherwise once fused with the step's (#97), and the
+    // dynamics of a step would depend on whether it writes energies. The
+    // groups are disjoint, so a particle's change is its group's.
     std::string sum = (virialResult + "_settle").str();
     os << indent << sum;
-    header("sum_tuples", "vector<9xf64>");
+    header("sum_tuples", change);
     SiteKernel w(os, inner);
-    std::array<std::string, 3> change = emitKernel(w);
     std::string factor = w.real("divf", "%vs_m1", "%dt");
     std::array<std::string, 2> arms = {"%vs_d10", "%vs_d20"};
-    std::array<std::string, 2> forces = {w.scale(factor, change[1]),
-                                         w.scale(factor, change[2])};
+    std::array<std::string, 2> forces = {w.scale(factor, "%vs_v1"),
+                                         w.scale(factor, "%vs_v2")};
     std::string elements;
     for (int a = 0; a != 3; ++a) {
       std::string row;

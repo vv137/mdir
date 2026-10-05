@@ -1,0 +1,50 @@
+# In the deterministic mode, a step that writes energies moves the
+# particles as a step that does not (#97): the kernels contract no product
+# into a fused multiply-add, whose rounding would otherwise depend on the
+# further uses that the energies and the virial give a product. With
+# cutoff electrostatics and without constraints, 20 steps in mixed
+# precision with a row of energies at every step and with one at the end
+# give the same state bit for bit. Constraints and PME are #102.
+# REQUIRES: cuda
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' | sed 's|INPUTS|%S/Inputs/dipeptide|' > %t/every.toml
+# RUN: sed 's/^energy_interval = 1$/energy_interval = 20/; s/every/once/g' %t/every.toml > %t/once.toml
+# RUN: cd %t && mdir run every.toml > every.log && mdir run once.toml > once.log
+# RUN: cd %t && mdir checkpoint --print=positions every.h5 > every.x && mdir checkpoint --print=positions once.h5 > once.x
+# RUN: cd %t && mdir checkpoint --print=velocities every.h5 > every.v && mdir checkpoint --print=velocities once.h5 > once.v
+# RUN: cd %t && mdir checkpoint --print=forces every.h5 > every.f && mdir checkpoint --print=forces once.h5 > once.f
+# RUN: cd %t && cmp every.x once.x && cmp every.v once.v && cmp every.f once.f && echo "same state" | FileCheck %s
+# RUN: cd %t && grep -c . every.x | FileCheck %s --check-prefix=COUNT
+# CHECK: same state
+# COUNT: 1168
+
+#--- run.toml
+[input]
+topology = "INPUTS/dipeptide.prmtop"
+coordinates = "INPUTS/dipeptide.inpcrd"
+[energy]
+cutoff = 8.0
+pairlist_distance = 9.0
+electrostatics = "CUTOFF"
+[constraints]
+hydrogen_bonds = false
+rigid_water = false
+[dynamics]
+time_step = 0.0005
+steps = 20
+seed = 271828
+[output]
+energy_interval = 1
+energy = "every.dat"
+checkpoint = "every.h5"
+checkpoint_interval = 20
+[ensemble]
+ensemble = "NVE"
+temperature = 300.0
+[boundary]
+type = "PERIODIC"
+[execution]
+target = "GPU"
+precision = "MIXED"
+deterministic = true
+#--- end

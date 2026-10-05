@@ -247,7 +247,7 @@ for kind in ("NVT", "NPT"):
         first, last = python_run(kind, precision)
         # Step 10 is in the first part, as in `mdir run`: every printed digit,
         # except on a GPU in mixed precision with constraints, which differs
-        # in the last digits with or without restraints (#97).
+        # in the last digits with or without restraints (#97, #102).
         if target_name == "GPU" and precision == "Mixed":
             close_row(first, rows[10], 1e-6)
         else:

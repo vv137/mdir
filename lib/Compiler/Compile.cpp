@@ -64,7 +64,13 @@ std::string mdir::compiler::getPipeline(const Control &control,
        << (control.precision == Precision::Double ? "" : " tables=f32")
        << "},md-exec-assign-streams,convert-md-exec-to-gpu{"
        << (control.deterministic ? "deterministic=true " : "")
-       << (control.fastMath ? "" : "contract=false") << "},"
+       // In the deterministic mode the arithmetic of a step does not
+       // depend on what else the step computes: a contraction into a fused
+       // multiply-add is made only where a product has one use, and the
+       // energies and the virial of a step that writes them give products
+       // more uses, which would change the rounding of its forces (#97).
+       << (control.fastMath && !control.deterministic ? "" : "contract=false")
+       << "},"
        << "gpu-lower-to-nvvm-pipeline{cubin-format=isa},"
        << "reconcile-unrealized-casts";
     return pipeline;
