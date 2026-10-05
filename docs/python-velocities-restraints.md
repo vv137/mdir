@@ -119,6 +119,57 @@ control file warns of it, and `compile` raises a Python `UserWarning` with
 the same text. As for `pair_terms`, `system.restraints.append(r)` changes
 a copy; assign the list.
 
+## Validation
+
+`test/Driver/python-velocities-restraints.test` (CPU) and its `-gpu` twin
+use the dipeptide in water (1168 particles). The oracle is `mdir run` of the
+same control file.
+
+- Drawn velocities against those of `mdir run` (its `readSystem` and
+  `assignVelocities`, written as raw f64 by `mdir-model-test --drawn`), with
+  and without SETTLE/SHAKE: 0 differing bits of 3504 values, tolerance 0.
+  The native `python-model` tests compare them in every file case.
+- The file and the object model with three overlapping restraints (CENTER at
+  10 and 2.5 kcal/mol/Å², ALL at 5) under NPT give identical restraint
+  constants, scalings, references, fields, and semantic IR, on CPU and GPU
+  targets in mixed and double (`python-model.test`, `python-model-gpu.test`).
+- Runs of 20 steps (0.5 fs, V-RESCALE and C-RESCALE every 10 steps) with
+  those restraints and drawn velocities against `mdir run`. The row of step
+  10 matches every printed digit, except on the GPU in mixed precision,
+  where it agrees within 1e-6 of each value; that case differs the same way
+  without restraints (#97). The state at step 20, which the model reaches in
+  two parts, against the checkpoint of `mdir run` (largest absolute
+  difference / tolerance; tolerances as in the test):
+
+| Target | Ensemble | Precision | Positions (nm) | Velocities (nm/ps) | Forces (kJ/mol/nm) |
+|---|---|---|---|---|---|
+| CPU | NVT | double | 1.3e-15 / 2.5e-14 | 7.8e-13 / 6.1e-12 | 4.3e-11 / 2.2e-9 |
+| CPU | NPT | double | 2.4e-15 / 2.5e-14 | 9.6e-13 / 6.1e-12 | 1.3e-11 / 2.2e-9 |
+| CPU | NVT | mixed | 2.4e-8 / 1.6e-7 | 1.8e-6 / 3.0e-5 | 2.2e-3 / 0.12 |
+| CPU | NPT | mixed | 2.5e-8 / 1.6e-7 | 1.0e-6 / 3.0e-5 | 1.4e-3 / 0.12 |
+| GPU | NVT | double | 4.0e-15 / 2.5e-14 | 1.7e-12 / 6.1e-12 | 1.0e-10 / 2.2e-9 |
+| GPU | NPT | double | 5.3e-15 / 2.5e-14 | 1.1e-12 / 6.1e-12 | 1.2e-10 / 2.2e-9 |
+| GPU | NVT | mixed | 2.0e-8 / 1.5e-7 | 3.5e-6 / 2.4e-5 | 1.0e-2 / 0.12 |
+| GPU | NPT | mixed | 2.5e-8 / 1.5e-7 | 1.3e-6 / 2.4e-5 | 2.2e-3 / 0.12 |
+
+  In double the tolerance is $c\,\epsilon_{64} \max_i\lvert q_i\rvert$ with
+  $c = 40$ for positions and $c = 4(N-1)$ for velocities and forces, as in
+  [python-segments.md](python-segments.md); in mixed it is $3E$, with $E$
+  the difference of `mdir run` in mixed and in double under NVT (under NPT
+  the scalings of the cell amplify that difference to 32 kJ/mol/nm in the
+  forces, while the model and `mdir run` still differ only by a part
+  boundary). The restraints change the potential at step 10 by 0.50 kJ/mol,
+  far above the printed digits that match; references given explicitly as
+  the state's positions change no bit; references moved by 0.01 nm change
+  the potential by more than 1 kJ/mol.
+- Refusals: negative, NaN, and infinite temperatures, seeds $-1$ and
+  $2^{63}$, a missing system, a state of another particle count; an empty
+  selection, constants 0 and NaN, a mask that does not parse, conflicting
+  scalings (at `compile` and at the draw); references of another count, in
+  float32, as a list, or with NaN; a list of non-restraints (`TypeError`);
+  a selection of nothing (`UserWarning`). Copies and versions: editing a
+  returned restraint changes nothing, assignment makes a program stale.
+
 ## Not in this item
 
 Checkpoints (item 6) will record the restraints and their reference in the
