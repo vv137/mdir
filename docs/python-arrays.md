@@ -1,4 +1,4 @@
-# Host arrays for M2 (D[python-arrays])
+# Host arrays for M2 (D193)
 
 Issue #78 replaces the D192 list boundary before persistent segments.
 NumPy 1.23 or later is required when `MDIR_ENABLE_PYTHON=ON`; configuration

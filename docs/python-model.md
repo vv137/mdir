@@ -104,7 +104,7 @@ numerical builder retains the existing independent term-oracle suite.
 
 ## Python host array boundary
 
-D[python-arrays] (#78) exposes the native vectors as independent read-only
+D193 (#78) exposes the native vectors as independent read-only
 NumPy arrays: positions/velocities $(N, 3)$ float64 (absent velocities
 $(0, 3)$), reduced cell vectors $(3, 3)$ float64, tuple particles
 $(n, \mathrm{arity})$ int64 and parameters as 1-D float64 arrays. Native

@@ -164,7 +164,7 @@ draft. Changes to Builder, Control and runtime should proceed sequentially.
 |---|---|---|
 | 1 | `D191` (#74, PR #75): in-memory validation, loaded data, System/integrator/ensemble/Execution and shared model-to-IR path | File and object models produce equivalent physics/IR and consistent validation failures |
 | 2 | `D192` (#76): optional native extension, shared lowering, immutable IR/plan and stale detection; JIT/runtime ownership and tuning remain open | CPU/GPU mixed/double compilation, structured diagnostics, repeated destruction, no output side effects |
-| 2a | `D[python-arrays]` (#78): strict buffer/CPU DLPack host inputs, read-only NumPy copies and required NumPy >=1.23 | Bitwise native array round trips, shapes/dtypes/strides, ownership, atomic stale tracking, dependency failures and CPU/GPU IR parity |
+| 2a | `D193` (#78): strict buffer/CPU DLPack host inputs, read-only NumPy copies and required NumPy >=1.23 | Bitwise native array round trips, shapes/dtypes/strides, ownership, atomic stale tracking, dependency failures and CPU/GPU IR parity |
 | 3 | `python-segments` (future label): persistent simulation and arbitrary counts, embedded status/errors, runtime ownership | Segmented/uninterrupted agreement, retained coupling phase, stop/error survival, independent simulation state |
 | 4 | `python-reporters` (future label): scheduling, C++ writers, Python callbacks, host snapshots | Nondividing/coincident periods, final remainder, callback errors, GIL behavior, file lifecycle, input order |
 | 5 | `python-checkpoints` (future label): shared in-memory provenance and cross-front-end continuation | Both checkpoint directions, stage changes, corruption rejection, tunable restoration and output continuation |
@@ -173,7 +173,7 @@ draft. Changes to Builder, Control and runtime should proceed sequentially.
 
 Use an optional pybind11 extension. The enabled Python interface requires
 NumPy >=1.23, checked at configuration with the selected interpreter and
-at module import (D[python-arrays]); wheels must declare this dependency.
+at module import (D193); wheels must declare this dependency.
 Classical CLI builds require neither
 Python nor NumPy. Support Python 3.10–3.13; a manylinux_2_28 pip wheel built
 on D177's packaging baseline gates M2. Conda follows later. Pin the binding

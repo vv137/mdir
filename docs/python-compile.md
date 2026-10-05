@@ -1,4 +1,4 @@
-# Python compilation interface (D192, D[python-arrays])
+# Python compilation interface (D192, D193)
 
 The next M2 contribution after D191, tracked in issue #76, exposes the
 owned native model and explicit compiler lowering. It is an optional build,
@@ -145,7 +145,7 @@ and zero failures (269 discovered, 2045.79 s). Issues #22 and #26 are closed;
 their `not-numbers-gpu.test` and `free-energy-reorder-gpu.test` regressions
 pass in this single suite run, with no failures or retries.
 
-D[python-arrays] repeats the CPU/GPU mixed/double parity matrix with strict
+D193 repeats the CPU/GPU mixed/double parity matrix with strict
 host arrays: all 32 case/target/precision combinations match native loader
 array bytes (0 differing bytes, tolerance 0) and CLI semantic IR/pipelines
 exactly. The full local suite passes with 265 passed, 6 unsupported and

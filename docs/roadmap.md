@@ -211,7 +211,7 @@ Preparation and proposed implementation gates are in
 and owned Amber/GROMACS/CHARMM loading. D192
 ([python-compile.md](python-compile.md)) adds optional Python bindings, explicit
 lowering, immutable IR/plan inspection and versioned stale detection.
-D[python-arrays] (#78, [host arrays](python-arrays.md)) replaces numeric
+D193 (#78, [host arrays](python-arrays.md)) replaces numeric
 lists with shaped, read-only NumPy host copies and strict buffer/CPU DLPack
 inputs before segments; enabling Python requires NumPy >=1.23.
 Persistent execution, JIT/runtime ownership and tunable buffers remain open.
