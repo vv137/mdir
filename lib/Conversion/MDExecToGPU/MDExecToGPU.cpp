@@ -160,11 +160,11 @@ class Lowering {
 public:
   Lowering(ModuleOp module, int64_t blockSize, int64_t rowLanes,
            bool fuseRows, bool fuseIntegration, bool deterministic,
-           bool tuplesOnce)
+           bool tuplesOnce, bool fuseCenters)
       : module(module), context(module.getContext()), blockSize(blockSize),
         rowLanes(rowLanes), fuseRows(fuseRows),
         fuseIntegration(fuseIntegration), deterministic(deterministic),
-        tuplesOnce(tuplesOnce) {
+        tuplesOnce(tuplesOnce), fuseCenters(fuseCenters) {
     // A module with a triclinic cell lowers every cell to the vector of six,
     // a_x, b_y, c_z, b_x, c_x, c_y; one without, to the three edges.
     module.walk([&](md::TriclinicCellOp) { triclinic = true; });
@@ -326,6 +326,30 @@ private:
   DenseSet<Operation *> inOnceRuns;
   /// Finds the runs of `onceRuns` in `function`.
   void findOnceRuns(func::FuncOp function);
+
+  /// A loop with global sums over tuples, each evaluated once, whose sums
+  /// reach nothing but a later loop over tuples evaluated once, through
+  /// arithmetic on the host: the centers of a term over the centers of
+  /// groups and its forces (D139). One block of the kernel of the run of
+  /// the later loop computes the sums of a reduction of one part, as the
+  /// kernel of that reduction would, and then evaluates the later loop,
+  /// so that the sums take no kernel of their own (#66).
+  struct CenterFusion {
+    md_exec::TupleForOp sums, forces;
+    /// The arithmetic from the sums to the later loop, in its order.
+    SmallVector<Operation *> chain;
+    /// The values that stand for the results of `sums` once it is lowered.
+    SmallVector<Value> placeholders;
+  };
+  SmallVector<std::unique_ptr<CenterFusion>> fusions;
+  DenseMap<Operation *, CenterFusion *> fusionOfSums, fusionOfForces;
+  /// Finds the loops of `fusions` in `function`.
+  void findCenterFusions(func::FuncOp function);
+  /// Lowers the sums of `fusion` where the loop is: the kernels of a
+  /// reduction of several parts, launched only when there are several,
+  /// whose totals stay in the first element of the buffers of the parts.
+  void lowerFusedSums(CenterFusion &fusion, Value tupleMembers, Value rows,
+                      Value tuples, Value box, Value inverse);
   /// Lowers the loops of `run` to one kernel: a thread takes the tuple of
   /// its number in the tuples of the loops, one loop after the other.
   LogicalResult lowerOnceRun(ArrayRef<md_exec::TupleForOp> run);
@@ -407,6 +431,7 @@ private:
   /// The number of elements of a cell lowered to a vector.
   int64_t getCellSize() const { return triclinic ? 6 : 3; }
   bool tuplesOnce;
+  bool fuseCenters;
 
   /// The function that is being lowered.
   func::FuncOp current;
@@ -1095,6 +1120,113 @@ static void storeContributions(OpBuilder &builder, Location loc,
                                ValueRange scratch, Value particle,
                                const RowLanes &sharing);
 
+void Lowering::findCenterFusions(func::FuncOp function) {
+  if (!fuseCenters)
+    return;
+  function.walk([&](md_exec::TupleForOp sums) {
+    if (sums.getReduce().empty() || !sums.getOuts().empty() ||
+        !evaluatesOnce(sums) || inRows.contains(sums) ||
+        sums->hasAttr(md_exec::kSideAttrName))
+      return;
+    // One kernel takes the buffers of the parts beside those of the run.
+    int64_t bytes = 0;
+    for (Value buffer : sums.getScratch())
+      bytes += 8 * (3 + 2 * cast<MemRefType>(buffer.getType()).getRank());
+    if (bytes > 1024)
+      return;
+    Block *block = sums->getBlock();
+    // The arithmetic on the host that the sums reach, and the one loop
+    // that it reaches, inside whose kernel it is used.
+    llvm::SetVector<Operation *> chain;
+    md_exec::TupleForOp forces;
+    SmallVector<Value> pending(sums->getResults());
+    while (!pending.empty()) {
+      Value value = pending.pop_back_val();
+      for (OpOperand &use : value.getUses()) {
+        Operation *user = use.getOwner();
+        Operation *top = block->findAncestorOpInBlock(*user);
+        if (!top)
+          return;
+        if (top != user) {
+          auto loop = dyn_cast<md_exec::TupleForOp>(top);
+          if (!loop || (forces && forces != loop))
+            return;
+          forces = loop;
+          continue;
+        }
+        if (user->getNumRegions() != 0 || !isMemoryEffectFree(user) ||
+            isa<md_exec::MDExecDialect, md::MDDialect>(user->getDialect()) ||
+            !llvm::all_of(user->getResultTypes(),
+                          [](Type type) { return type.isIntOrIndexOrFloat(); }))
+          return;
+        if (chain.insert(user))
+          pending.append(user->result_begin(), user->result_end());
+      }
+    }
+    if (!forces || !sums->isBeforeInBlock(forces) ||
+        !forces.getReduce().empty() || !evaluatesOnce(forces) ||
+        inRows.contains(forces) || fusionOfForces.contains(forces) ||
+        forces->hasAttr(md_exec::kSideAttrName) ||
+        forces.getPositions() != sums.getPositions() ||
+        forces.getCellMutable().get() != sums.getCellMutable().get())
+      return;
+    for (Operation *op : chain)
+      if (!op->isBeforeInBlock(forces))
+        return;
+    // The sums move to the kernel of the later loop: nothing between them
+    // may write what the sums read, nor use the buffers of their parts,
+    // which keep the totals of several parts until that kernel.
+    DenseSet<Value> read;
+    for (Value operand : sums->getOperands())
+      if (isa<MemRefType>(operand.getType()))
+        read.insert(operand);
+    DenseSet<Value> scratch(sums.getScratch().begin(),
+                            sums.getScratch().end());
+    for (Operation *op = sums->getNextNode(); op != forces;
+         op = op->getNextNode()) {
+      if (chain.contains(op) || isMemoryEffectFree(op))
+        continue;
+      SmallVector<Value> writes;
+      if (auto pair = dyn_cast<md_exec::PairForOp>(op)) {
+        llvm::append_range(writes, pair.getOuts());
+        llvm::append_range(writes, pair.getScratch());
+      } else if (auto particle = dyn_cast<md_exec::ParticleForOp>(op)) {
+        llvm::append_range(writes, particle.getOuts());
+        llvm::append_range(writes, particle.getScratch());
+      } else if (auto tuple = dyn_cast<md_exec::TupleForOp>(op)) {
+        llvm::append_range(writes, tuple.getOuts());
+        llvm::append_range(writes, tuple.getScratch());
+      } else {
+        // Any other op is taken to write every buffer it uses.
+        bool touches = false;
+        op->walk([&](Operation *inner) {
+          for (Value operand : inner->getOperands())
+            touches |= read.contains(operand);
+        });
+        if (touches)
+          return;
+        continue;
+      }
+      for (Value buffer : writes)
+        if (read.contains(buffer))
+          return;
+      for (Value operand : op->getOperands())
+        if (scratch.contains(operand))
+          return;
+    }
+    auto fusion = std::make_unique<CenterFusion>();
+    fusion->sums = sums;
+    fusion->forces = forces;
+    fusion->chain.assign(chain.begin(), chain.end());
+    llvm::sort(fusion->chain, [](Operation *a, Operation *b) {
+      return a->isBeforeInBlock(b);
+    });
+    fusionOfSums[sums] = fusion.get();
+    fusionOfForces[forces] = fusion.get();
+    fusions.push_back(std::move(fusion));
+  });
+}
+
 void Lowering::findOnceRuns(func::FuncOp function) {
   auto isOnceLoop = [&](Operation *op) {
     auto tuple = dyn_cast<md_exec::TupleForOp>(op);
@@ -1103,7 +1235,10 @@ void Lowering::findOnceRuns(func::FuncOp function) {
            !op->hasAttr(md_exec::kSideAttrName);
   };
   auto finish = [&](SmallVector<md_exec::TupleForOp> &run) {
-    if (run.size() >= 2) {
+    // A loop whose kernel computes the sums of a term over centers is a
+    // run of its own as well (#66).
+    if (run.size() >= 2 ||
+        (run.size() == 1 && fusionOfForces.contains(run.front()))) {
       onceRuns[run.back()] = run;
       for (md_exec::TupleForOp loop : run)
         inOnceRuns.insert(loop);
@@ -1166,22 +1301,39 @@ LogicalResult Lowering::lowerOnceRun(ArrayRef<md_exec::TupleForOp> run) {
   Type real = cast<MemRefType>(positions.getType()).getElementType();
   Value box = convertReal(builder, loc, first.getCellMutable().get(), real);
   Value inverse = createInverse(builder, loc, box);
-  // The tuples of the loops, one after the other: loop k takes the numbers
-  // from ends[k - 1] to ends[k].
-  SmallVector<Value> tupleMembers, ends;
+  // The loops whose block computes the sums of a term over centers (#66),
+  // and the others.
+  SmallVector<CenterFusion *> fused;
+  SmallVector<md_exec::TupleForOp> others;
   for (md_exec::TupleForOp loop : run) {
+    if (CenterFusion *fusion = fusionOfForces.lookup(loop))
+      fused.push_back(fusion);
+    else
+      others.push_back(loop);
+  }
+  auto getMembers = [&](md_exec::TupleForOp loop) -> FailureOr<Value> {
     Value found = members.lookup(loop.getIncidence());
     if (!found)
       return loop->emitOpError()
              << "has no members on the device to evaluate each tuple once";
-    tupleMembers.push_back(found);
-    Value count = createSize(builder, loc, found);
+    return found;
+  };
+  // The tuples of the other loops, one after the other: loop k takes the
+  // numbers from ends[k - 1] to ends[k].
+  SmallVector<Value> tupleMembers, ends;
+  for (md_exec::TupleForOp loop : others) {
+    FailureOr<Value> found = getMembers(loop);
+    if (failed(found))
+      return failure();
+    tupleMembers.push_back(*found);
+    Value count = createSize(builder, loc, *found);
     ends.push_back(ends.empty()
                        ? count
                        : arith::AddIOp::create(builder, loc, ends.back(),
                                                count));
   }
-  launchOver(builder, loc, ends.back(), [&](OpBuilder &body, Value item) {
+  // What the thread of item `item` of the other loops does.
+  auto emitItem = [&](OpBuilder &body, Value item) {
     std::function<void(OpBuilder &, size_t)> emitFrom = [&](OpBuilder &at,
                                                            size_t k) {
       auto emitLoop = [&](OpBuilder &b) {
@@ -1189,9 +1341,10 @@ LogicalResult Lowering::lowerOnceRun(ArrayRef<md_exec::TupleForOp> run) {
                              : arith::SubIOp::create(b, loc, item,
                                                      ends[k - 1]);
         IRMapping local;
-        emitTupleOnce(b, run[k], tupleMembers[k], tuple, box, inverse, local);
+        emitTupleOnce(b, others[k], tupleMembers[k], tuple, box, inverse,
+                      local);
       };
-      if (k + 1 == run.size()) {
+      if (k + 1 == others.size()) {
         emitLoop(at);
         return;
       }
@@ -1209,7 +1362,154 @@ LogicalResult Lowering::lowerOnceRun(ArrayRef<md_exec::TupleForOp> run) {
           });
     };
     emitFrom(body, 0);
-  });
+  };
+  if (fused.empty()) {
+    launchOver(builder, loc, ends.back(), emitItem);
+    return success();
+  }
+
+  // Block k computes the sums of fusion k as a reduction of one part
+  // computes them (emitReductions), the same rows in the same order, or
+  // takes the totals of several parts from the first element of their
+  // buffers (lowerFusedSums); then the arithmetic after them, and the
+  // tuples of its loop of forces, every so manyth. The blocks after them
+  // take the items of the other loops.
+  struct Fused {
+    Value sumsMembers, forcesMembers, rows, tuples, forcesTuples, onePart;
+    SmallVector<Type> types;
+  };
+  SmallVector<Fused> setup;
+  int64_t numbers = 1;
+  Value size = createSize(builder, loc, positions);
+  for (CenterFusion *fusion : fused) {
+    Fused entry;
+    FailureOr<Value> sumsMembers = getMembers(fusion->sums);
+    FailureOr<Value> forcesMembers = getMembers(fusion->forces);
+    if (failed(sumsMembers) || failed(forcesMembers))
+      return failure();
+    entry.sumsMembers = *sumsMembers;
+    entry.forcesMembers = *forcesMembers;
+    entry.tuples = createSize(builder, loc, entry.sumsMembers);
+    entry.forcesTuples = createSize(builder, loc, entry.forcesMembers);
+    entry.rows = arith::MinUIOp::create(builder, loc, size, entry.tuples);
+    Value parts = arith::MinSIOp::create(
+        builder, loc, createIndex(builder, loc, blockSize),
+        createGroups(builder, loc, entry.rows, 4 * blockSize));
+    entry.onePart =
+        arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::eq, parts,
+                              createIndex(builder, loc, 1));
+    for (unsigned i = 0, e = fusion->sums.getReduce().size(); i != e; ++i)
+      entry.types.push_back(md_exec::getKernelValueType(
+          fusion->sums.getScratch()[2 * i].getType()));
+    numbers = std::max(numbers, countKernelNumbers(entry.types));
+    setup.push_back(entry);
+  }
+  Value numFused = createIndex(builder, loc, fused.size());
+  Value blocks = numFused;
+  if (!others.empty())
+    blocks = arith::AddIOp::create(
+        builder, loc, blocks,
+        createGroups(builder, loc, ends.back(), blockSize));
+
+  auto emitFused = [&](OpBuilder &b, size_t k, Value thread, Value shared) {
+    CenterFusion &fusion = *fused[k];
+    const Fused &entry = setup[k];
+    md_exec::TupleForOp sums = fusion.sums;
+    Value threads = createIndex(b, loc, blockSize);
+    auto choose = scf::IfOp::create(b, loc, entry.types, entry.onePart,
+                                    /*withElseRegion=*/true);
+    {
+      OpBuilder one = choose.getThenBodyBuilder();
+      SmallVector<Value> zeros;
+      for (Type type : entry.types)
+        zeros.push_back(createZero(one, loc, type));
+      auto loop = scf::ForOp::create(
+          one, loc, thread, entry.rows, threads, zeros,
+          [&](OpBuilder &inner, Location, Value i, ValueRange partial) {
+            SmallVector<Value> values = emitTuplesOnceWithSums(
+                inner, sums, entry.sumsMembers, i, entry.rows, entry.tuples,
+                box, inverse);
+            SmallVector<Value> next;
+            for (auto [sum, value] : llvm::zip(partial, values))
+              next.push_back(arith::AddFOp::create(inner, loc, sum, value));
+            scf::YieldOp::create(inner, loc, next);
+          });
+      scf::YieldOp::create(one, loc,
+                           reduceInBlock(one, loc, loop.getResults(), thread,
+                                         shared, /*isSum=*/true));
+    }
+    {
+      OpBuilder several = choose.getElseBodyBuilder();
+      SmallVector<Value> totals;
+      for (unsigned i = 0, e = entry.types.size(); i != e; ++i)
+        totals.push_back(loadElement(several, loc,
+                                     sums.getScratch()[2 * i + 1],
+                                     createIndex(several, loc, 0)));
+      scf::YieldOp::create(several, loc, totals);
+    }
+    // As finishSums adds them to the values the loop starts from.
+    IRMapping map;
+    for (auto [i, placeholder] : llvm::enumerate(fusion.placeholders))
+      map.map(placeholder,
+              arith::AddFOp::create(b, loc, sums.getReduce()[i],
+                                    choose.getResult(i)));
+    for (Operation *op : fusion.chain)
+      b.clone(*op, map);
+    IRMapping local;
+    for (Operation *op : fusion.chain)
+      for (Value result : op->getResults())
+        local.map(result, map.lookup(result));
+    scf::ForOp::create(b, loc, thread, entry.forcesTuples, threads,
+                       ValueRange(),
+                       [&](OpBuilder &inner, Location, Value tuple,
+                           ValueRange) {
+                         IRMapping inside = local;
+                         emitTupleOnce(inner, fusion.forces,
+                                       entry.forcesMembers, tuple, box,
+                                       inverse, inside);
+                         scf::YieldOp::create(inner, loc);
+                       });
+  };
+  launchSharedBlocks(
+      builder, loc, blocks, numbers,
+      [&](OpBuilder &body, Value block, Value thread, Value shared) {
+        std::function<void(OpBuilder &, size_t)> dispatch =
+            [&](OpBuilder &at, size_t k) {
+              if (k == fused.size()) {
+                if (others.empty())
+                  return;
+                Value item = arith::AddIOp::create(
+                    at, loc,
+                    arith::MulIOp::create(
+                        at, loc,
+                        arith::SubIOp::create(at, loc, block, numFused),
+                        createIndex(at, loc, blockSize)),
+                    thread);
+                Value inside = arith::CmpIOp::create(
+                    at, loc, arith::CmpIPredicate::ult, item, ends.back());
+                scf::IfOp::create(at, loc, inside,
+                                  [&](OpBuilder &then, Location) {
+                                    emitItem(then, item);
+                                    scf::YieldOp::create(then, loc);
+                                  });
+                return;
+              }
+              Value mine =
+                  arith::CmpIOp::create(at, loc, arith::CmpIPredicate::eq,
+                                        block, createIndex(at, loc, k));
+              scf::IfOp::create(
+                  at, loc, mine,
+                  [&](OpBuilder &then, Location) {
+                    emitFused(then, k, thread, shared);
+                    scf::YieldOp::create(then, loc);
+                  },
+                  [&](OpBuilder &otherwise, Location) {
+                    dispatch(otherwise, k + 1);
+                    scf::YieldOp::create(otherwise, loc);
+                  });
+            };
+        dispatch(body, 0);
+      });
   return success();
 }
 
@@ -2272,6 +2572,99 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
   return finishSums(op, builder, op.getReduce(), op.getScratch(), warps);
 }
 
+void Lowering::lowerFusedSums(CenterFusion &fusion, Value tupleMembers,
+                              Value rows, Value tuples, Value box,
+                              Value inverse) {
+  md_exec::TupleForOp op = fusion.sums;
+  Location loc = op.getLoc();
+  OpBuilder builder(op);
+  SmallVector<Value> contributions, partials;
+  SmallVector<Type> types;
+  for (unsigned i = 0, e = op.getReduce().size(); i != e; ++i) {
+    contributions.push_back(op.getScratch()[2 * i]);
+    partials.push_back(op.getScratch()[2 * i + 1]);
+    types.push_back(md_exec::getKernelValueType(contributions[i].getType()));
+  }
+  int64_t numbers = countKernelNumbers(types);
+  // The parts as emitReductions takes them (D150). Several parts are
+  // reduced by its kernels, in its order; the totals stay in the first
+  // element of the buffers of the parts, for the block of the forces.
+  Value parts = arith::MinSIOp::create(
+      builder, loc, createIndex(builder, loc, blockSize),
+      createGroups(builder, loc, rows, 4 * blockSize));
+  Value several = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ne,
+                                        parts, createIndex(builder, loc, 1));
+  scf::IfOp::create(builder, loc, several, [&](OpBuilder &then, Location) {
+    launchOver(then, loc, rows, [&](OpBuilder &body, Value row) {
+      SmallVector<Value> values = emitTuplesOnceWithSums(
+          body, op, tupleMembers, row, rows, tuples, box, inverse);
+      for (auto [index, value] : llvm::enumerate(values))
+        storeElement(body, loc, value, contributions[index], row);
+    });
+    launchSharedBlocks(
+        then, loc, parts, numbers,
+        [&](OpBuilder &b, Value block, Value thread, Value shared) {
+          Value threads = createIndex(b, loc, blockSize);
+          Value first = arith::AddIOp::create(
+              b, loc, arith::MulIOp::create(b, loc, block, threads), thread);
+          Value stride = arith::MulIOp::create(b, loc, parts, threads);
+          SmallVector<Value> zeros;
+          for (Type type : types)
+            zeros.push_back(createZero(b, loc, type));
+          auto loop = scf::ForOp::create(
+              b, loc, first, rows, stride, zeros,
+              [&](OpBuilder &inner, Location, Value i, ValueRange sums) {
+                SmallVector<Value> next;
+                for (auto [buffer, sum] : llvm::zip(contributions, sums))
+                  next.push_back(arith::AddFOp::create(
+                      inner, loc, sum, loadElement(inner, loc, buffer, i)));
+                scf::YieldOp::create(inner, loc, next);
+              });
+          SmallVector<Value> totals = reduceInBlock(
+              b, loc, loop.getResults(), thread, shared, /*isSum=*/true);
+          Value leader = arith::CmpIOp::create(
+              b, loc, arith::CmpIPredicate::eq, thread, createIndex(b, loc, 0));
+          scf::IfOp::create(b, loc, leader, [&](OpBuilder &lead, Location) {
+            for (auto [total, partial] : llvm::zip(totals, partials))
+              storeElement(lead, loc, total, partial, block);
+            scf::YieldOp::create(lead, loc);
+          });
+        });
+    launchSharedBlocks(
+        then, loc, createIndex(then, loc, 1), numbers,
+        [&](OpBuilder &b, Value, Value thread, Value shared) {
+          Value inside = arith::CmpIOp::create(
+              b, loc, arith::CmpIPredicate::ult, thread, parts);
+          Value slot = arith::SelectOp::create(b, loc, inside, thread,
+                                               createIndex(b, loc, 0));
+          SmallVector<Value> values;
+          for (auto [partial, type] : llvm::zip(partials, types))
+            values.push_back(arith::SelectOp::create(
+                b, loc, inside, loadElement(b, loc, partial, slot),
+                createZero(b, loc, type)));
+          SmallVector<Value> totals =
+              reduceInBlock(b, loc, values, thread, shared, /*isSum=*/true);
+          // Every thread has loaded its part before the barrier of the
+          // reduction, so the first element may take the total.
+          Value leader = arith::CmpIOp::create(
+              b, loc, arith::CmpIPredicate::eq, thread, createIndex(b, loc, 0));
+          scf::IfOp::create(b, loc, leader, [&](OpBuilder &lead, Location) {
+            for (auto [total, partial] : llvm::zip(totals, partials))
+              storeElement(lead, loc, total, partial, createIndex(lead, loc, 0));
+            scf::YieldOp::create(lead, loc);
+          });
+        });
+    scf::YieldOp::create(then, loc);
+  });
+  // The arithmetic after the sums is computed in the kernel of the forces;
+  // on the host it takes these and is erased with the loop of the forces.
+  for (Value result : op->getResults()) {
+    Value zero = createZero(builder, loc, result.getType());
+    result.replaceAllUsesWith(zero);
+    fusion.placeholders.push_back(zero);
+  }
+}
+
 LogicalResult Lowering::lowerTupleFor(md_exec::TupleForOp op) {
   Location loc = op.getLoc();
   OpBuilder builder(op);
@@ -2311,6 +2704,12 @@ LogicalResult Lowering::lowerTupleFor(md_exec::TupleForOp op) {
     // Few rows, as those of such a set, are reduced in one part, whose
     // block computes them itself (#20).
     Value rows = arith::MinUIOp::create(builder, loc, size, tuples);
+    // The sums of a term over centers, which the kernel of its forces
+    // computes with one part (#66).
+    if (CenterFusion *fusion = fusionOfSums.lookup(op)) {
+      lowerFusedSums(*fusion, tupleMembers, rows, tuples, box, inverse);
+      return success();
+    }
     auto produce = [&](OpBuilder &at) {
       launchOver(at, loc, rows, [&](OpBuilder &body, Value row) {
         SmallVector<Value> contributions = emitTuplesOnceWithSums(
@@ -4326,6 +4725,7 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   // The kernels are copied into the loops, so the ops inside them are not
   // lowered where they are. A run of loops is lowered at its last loop.
   findRows(function);
+  findCenterFusions(function);
   findOnceRuns(function);
   for (Operation *op : ops) {
     Operation *parent = op->getParentOp();
@@ -4337,6 +4737,10 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
       if (run != onceRuns.end()) {
         if (failed(lowerOnceRun(run->second)))
           return failure();
+        // The arithmetic of a fused term over centers goes after its loop.
+        for (md_exec::TupleForOp loop : run->second)
+          if (CenterFusion *fusion = fusionOfForces.lookup(loop))
+            lowered.append(fusion->chain.begin(), fusion->chain.end());
         for (md_exec::TupleForOp loop : run->second)
           lowered.push_back(loop);
       }
@@ -4370,6 +4774,9 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   inRows.clear();
   onceRuns.clear();
   inOnceRuns.clear();
+  fusionOfSums.clear();
+  fusionOfForces.clear();
+  fusions.clear();
 
   // Users come after what they use, so erase from the back.
   for (Operation *op : llvm::reverse(lowered))
@@ -4471,7 +4878,8 @@ public:
       return signalPassFailure();
     }
     Lowering lowering(getOperation(), blockSize, rowLanes, fuseRows,
-                      fuseIntegration, deterministic, tuplesOnce);
+                      fuseIntegration, deterministic, tuplesOnce,
+                      fuseCenters);
     if (failed(lowering.run()))
       return signalPassFailure();
     // Products and sums in the kernels may become fused multiply-adds, as

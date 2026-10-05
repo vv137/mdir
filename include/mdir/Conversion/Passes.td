@@ -146,7 +146,7 @@ def ConvertMDExecToGPU
     | `md_exec.tuple_for`, not disjoint | A thread evaluates each tuple once and adds to its members with atomics (`tuples-once`, D103); in the deterministic mode, the rows of the particles take the tuples they belong to. |
     | `md_exec.tuple_for`, disjoint | A thread for each particle; the member at place 0 evaluates the tuple and writes every member, which no other thread writes (D83). |
     | Consecutive loops of the same positions | One kernel, where no loop reads what another writes (`fuse-rows`); a loop over particles, the loops over the tuples of a disjoint union that read it, and the loop over particles that reads them become one integration kernel, in which a warp takes whole groups of constraints (`fuse-integration`, D110, D111). |
-    | The global sums of a loop | Each thread adds up the particles that it takes, and a block adds up its threads by a tree (`gpu.all_reduce`) into partial sums in `scratch`; one block adds up the partial sums. The order depends only on the number of particles. The host reads the results with one copy for each type of number. |
+    | The global sums of a loop | Each thread adds up the particles that it takes, and a block adds up its threads by a tree (`gpu.all_reduce`) into partial sums in `scratch`; one block adds up the partial sums. The order depends only on the number of particles. The host reads the results with one copy for each type of number. Sums over tuples evaluated once that reach only a later loop over tuples evaluated once, through arithmetic, are computed with one part by a block of the kernel of that loop, which then does the arithmetic and the later loop; several parts keep their kernels and leave the totals to that block (`fuse-centers`, #66). |
     | An `i1` reduction (any) | A flag on the device, set by a plain store; the host reads it through pinned memory and an event, without waiting for the stream, just before the first op that uses it (`mdrtFlagStart`, `mdrtFlagFinish`, D113). |
     | `md_exec.empty_neighbors` | The buffers of a neighbor matrix or of the lists of groups, which the runtime grows when a build needs more |
     | `md_exec.refresh_neighbors` | A branch on the flag of the test of validity to the build of its kind, a template that the pass adds to the module; with `prune_skin`, on the flag of the inner list to a pruning of the inner list from the outer one (D114) |
@@ -191,6 +191,11 @@ def ConvertMDExecToGPU
            "each tuple once and adds to its members with atomics, outside "
            "the deterministic mode (JAC: 526 against 505 ns/day for the "
            "rows of the particles)">,
+    Option<"fuseCenters", "fuse-centers", "bool", /*default=*/"true",
+           "Whether the sums of a loop over few tuples evaluated once, which "
+           "reach only a later such loop through arithmetic, are computed by "
+           "one block of the kernel of that loop, as for the centers of a "
+           "term over the centers of groups (#66)">,
     Option<"deterministic", "deterministic", "bool", /*default=*/"false",
            "Whether sums are added in an order that does not depend on the "
            "threads (D84): the charges of PME in fixed point, not with "
