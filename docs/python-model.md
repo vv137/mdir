@@ -102,6 +102,13 @@ the unit boundary, not a claim of Python runtime execution. The unchanged
 numerical builder retains the existing independent term-oracle suite.
 
 
+Drawn velocities and typed positional restraints extend this model
+(D[python-velocities-restraints],
+[python-velocities-restraints.md](python-velocities-restraints.md)):
+`drawVelocities` prepares the system as `prepare` does and calls the CLI's
+`assignVelocities`, and `System::restraints` with `restraintReference`
+become the control's `[[restraints]]`.
+
 ## Python host array boundary
 
 D193 (#78) exposes the native vectors as independent read-only

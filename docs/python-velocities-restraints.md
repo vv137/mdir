@@ -5,7 +5,11 @@ after the persistent simulations of D196 (#85): initial velocities drawn at
 a temperature, and positional restraints for the equilibration stages. The
 maintainer ruled on PR #86 for option A of both: a method of the initial
 state that reuses the CLI's draw, and a typed list on the system that maps
-onto `[[restraints]]` (D74, D124).
+onto `[[restraints]]` (D74, D124). The maintainer accepted the design of
+PR #94 on 2026-10-06: the system as an argument of the draw, separate seeds
+for the velocities and the thermostat, constants in kJ/mol/nm², a Python
+warning for a restraint that selects nothing, and references in the frame
+of the compiled state's cell.
 
 ## Drawn velocities
 
@@ -46,7 +50,9 @@ and moves no other random stream.
 | `seed` | int | | 0 to $2^{63}-1$, as `[dynamics] seed` |
 
 A refusal raises `InputError` (or `UnsupportedError` for what `compile`
-does not support) and returns nothing. A state without velocities still
+does not support) and returns nothing. To repeat `mdir run`, which takes
+one seed for both, give `draw_velocities` and `Ensemble.seed` the same
+seed. A state without velocities still
 starts at rest in a simulation (D196); drawing them is explicit.
 
 ## Restraints
@@ -66,7 +72,7 @@ system.restraint_reference = reference_positions   # optional, (N, 3) nm
 | Attribute | Type | Unit | Control file |
 |---|---|---|---|
 | `selection` | str | | `selection`: the mask of Amber of Section 22 of [design-m1.md](design-m1.md) |
-| `force_constant` | float | kJ/mol/nm² | `force_constant` in kcal/mol/Å²: 1 kcal/mol/Å² is 418.4 kJ/mol/nm² |
+| `force_constant` | float | kJ/mol/nm² | `force_constant` in kcal/mol/Å²: 1 kcal/mol/Å² is 418.4 kJ/mol/nm² (the public units of D191) |
 | `reference_scaling` | `ReferenceScaling.Center` (default) or `.All` | | `reference_scaling = "CENTER"` or `"ALL"` (D124) |
 
 The energy is $k \lVert\mathbf x - \mathbf x^\mathrm{ref}\rVert^2$ for each
@@ -74,7 +80,12 @@ selected particle with mass, constants of restraints that select the same
 particle add, and a barostat moves the references as D124 says. The
 selection, the sum, the reference scaling, and the evaluation are those of
 the control file: `compile` turns the list into the control's restraints and
-prepares them by the same code.
+prepares them by the same code. The constant is converted to the control
+file's unit and back by that code; the conversion takes the value in
+kcal/mol/Å² that gives the constant back exactly where one exists, which is
+always so for a constant computed from a control-file value as the CLI
+computes it ($k \cdot 4.184 / 0.1^2$), and otherwise keeps it to within one
+rounding.
 
 `System.restraint_reference` is the reference $\mathbf r$, the positions of
 the file of coordinates in the control file: `(N, 3)` float64 in nm, in
@@ -83,6 +94,10 @@ input order, with `N` the particle count of the system. Absent (shape
 `compile`. A stage that begins from the end of another and restrains to the
 structure it began with sets it. Its cell is that of the state given to
 `compile`: under a barostat the references scale with the cell from there.
+`mdir run` scales from the cell of its coordinates file, also when it
+begins from another run's checkpoint; the two agree when the stage before
+kept the cell (NVT before NPT, as in the standard pipeline). A separate
+reference cell can be added if a case needs it.
 
 The list and the reference cross the boundary as the other D191/D193
 collections: reading returns copies (a list of new `Restraint` values, a
@@ -94,14 +109,15 @@ version of the system, so a program compiled before is stale.
 |---|---|---|
 | An empty `selection` | `InputError` | `compile`, `draw_velocities` |
 | A `force_constant` that is not positive and finite | `InputError` | `compile`, `draw_velocities` |
-| A mask that does not parse, or names what the topology does not have | `InputError` | `compile`, `draw_velocities` |
+| A mask that does not parse (a number 0 or a reversed range among them) | `InputError` | `compile`, `draw_velocities` |
 | A particle selected with both `Center` and `All` | `InputError` | `compile`, `draw_velocities` |
 | A reference of another shape, dtype, or particle count, or not finite | `InputError` | assignment |
 | A list holding anything but `Restraint` | `TypeError` | assignment |
 
 A selection that selects no particle with mass restrains nothing; the
 control file warns of it, and `compile` raises a Python `UserWarning` with
-the same text.
+the same text. As for `pair_terms`, `system.restraints.append(r)` changes
+a copy; assign the list.
 
 ## Not in this item
 
