@@ -1,0 +1,1 @@
+# RUN: %python %record %log cpu-2

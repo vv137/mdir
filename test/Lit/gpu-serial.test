@@ -1,0 +1,8 @@
+# The tests that need CUDA run one at a time in a suite run by several
+# workers, and the others side by side (test/mdir_lit.py). Seven workers
+# leave one for each CPU test while three of the four GPU tests wait for
+# the group. The suite declares the feature cuda itself: no device is used.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %lit -j 7 -q -Dout=%t %S/Inputs/serial
+# RUN: %python %S/Inputs/check_intervals.py %t | FileCheck %s
+# CHECK: GPU tests one at a time, CPU tests side by side
