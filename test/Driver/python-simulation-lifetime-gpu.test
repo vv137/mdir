@@ -1,0 +1,3 @@
+# REQUIRES: python-api, cuda
+# RUN: %mdir_python %S/Inputs/python_simulation_lifetime.py GPU %t | FileCheck %s
+# CHECK: simulation lifetime: double and mixed passed

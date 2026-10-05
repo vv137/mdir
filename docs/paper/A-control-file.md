@@ -16,7 +16,9 @@ Persistent Python simulations (D[python-segments],
 [contract](../python-segments.md)) build their programs from the same
 model and builder with the counts of the loops as arguments of the entry;
 they add no control keys and write no files. A segment continues as
-`mdir run --continue` continues a checkpoint.
+`mdir run --continue` continues a checkpoint. Runtime failure cleanup and
+host JIT exception-frame ownership are internal to the simulation; they add
+no control keys or changes to output formats or overwrite behavior.
 
 A run is described by a control file in TOML. `mdir check FILE` reads it
 and reports the system, planned run, outputs, and warnings (A.5);

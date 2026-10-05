@@ -66,8 +66,8 @@ void mdrtNoteGroups(int64_t blocks, int64_t capacity, int64_t longest,
 }
 
 /* A program that embeds a run may take its failures instead of the process
-   exiting (D[python-segments]). The handler does not return: it ends the
-   segment, as a jump back to where the program called the run. */
+   exiting (D[python-segments]). The handler records the failure; the run
+   goes on to the end of its segment, whose state the program discards. */
 static void (*stopHandler)(const char *) = NULL;
 void mdrtSetStopHandler(void (*handler)(const char *)) {
   stopHandler = handler;
@@ -88,8 +88,10 @@ void mdrtStopNotNumbers(int64_t count) {
              "structure; the run has failed (a time step too long, a bad "
              "contact, or a defect of mdir)",
              (long long)count);
-  if (stopHandler)
+  if (stopHandler) {
     stopHandler(message);
+    return;
+  }
   fprintf(stderr, "mdir: %s\n", message);
   exit(1);
 }

@@ -131,10 +131,12 @@ another order.
 
 After a `SimulationError` raised by a failure, the simulation keeps the
 state from before the failed part, `failed` is true, and `run` refuses to
-continue; `state()` still returns that state. On a device the runtime
-stops the part where a build of the neighbor structures finds positions
-that are not numbers (D107), which ends `mdir run`; on the CPU the part
-runs to its end and its state is checked there. Failures of the device
+continue; `state()` still returns that state. On a device a build of the
+neighbor structures that finds positions that are not numbers (D107),
+which ends `mdir run`, reports to the simulation through a handler of the
+runtime instead; the part runs to its end, as it does on the CPU, and its
+state is checked and discarded there. The runtime is never left in the
+middle of its work. Failures of the device
 runtime itself (a CUDA error) still end the process, as they do for
 `mdir run`.
 
@@ -146,6 +148,25 @@ the runtime keeps its streams and allocation cache in process-wide state,
 so one simulation runs at a time in a process: a run waits for another
 simulation's run to end. Simulations created one after another are
 independent. The GIL is released while a part runs.
+
+On ELF hosts, each compiled module puts its functions in one text section,
+including the GPU module's host constructors and destructors and the entry
+functions ORC synthesizes afterward. The section follows the target machine's
+code model: `.ltext` for x86-64's large code model, `.text` otherwise; forcing
+`.text` for all functions would still separate ORC's large-model functions. A registered
+exception-frame table covers the bounding address range of those functions.
+Separate text sections can be mapped around another module's code; overlapping
+ranges can leave a freed registration object in libgcc's interval index after
+an engine is destroyed. Keeping the code together makes those ranges disjoint
+while retaining normal frame registration and cleanup. The lifetime regression
+keeps three simulations alive while creating and destroying others, then raises
+an input error, in both precisions on the CPU and GPU. In a diagnostic run of
+24 creation/destruction cycles with address randomization enabled, the old
+layout produced 52 overlapping registrations and crashed on the deferred throw;
+the corrected layout produced none, paired all 144 registrations and
+unregistrations, and caught the error normally. These measurements validate
+the exercised layout; checking every emitted object and registration at run
+time remains a separate hardening task.
 
 The device is resolved when the first GPU simulation in a process runs:
 `Execution.device` is an index among the devices that `CUDA_VISIBLE_DEVICES`

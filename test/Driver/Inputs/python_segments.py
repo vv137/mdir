@@ -195,6 +195,8 @@ thread.join()
 assert busy.state().step > 2
 
 # Ctrl-C ends a run after its part, with the steps taken recorded.
+# lit workers ignore SIGINT, and Python preserves that inherited disposition.
+signal.signal(signal.SIGINT, signal.default_int_handler)
 interrupted = mdir.Simulation(compile_program(deterministic=False))
 interrupted.run(1); interrupted.run(1)
 interrupted.part_seconds = 0.05

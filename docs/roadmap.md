@@ -221,7 +221,9 @@ lists with shaped, read-only NumPy host copies and strict buffer/CPU DLPack
 inputs before segments; enabling Python requires NumPy >=1.23.
 D[python-segments] (#85, [persistent simulations](python-segments.md)) adds
 `mdir.Simulation` and `run(n)` for any number of steps, with the coupling
-phase, errors, stops, and runtime and device ownership. Reporters,
+phase, errors, stops, and runtime and device ownership. Host JIT unwind ranges
+remain disjoint across simulation lifetimes, and a failed part finishes runtime
+cleanup before its state is discarded. Reporters,
 checkpoints, DLPack views and tunable buffers remain open.
 M2 covers
 a documented classical subset and requires a manylinux_2_28 pip wheel for

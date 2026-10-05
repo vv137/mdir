@@ -10,15 +10,17 @@
 #include "mdir/Driver/Output.h"
 #include "mlir/ExecutionEngine/CRunnerUtils.h"
 #include "mlir/ExecutionEngine/ExecutionEngine.h"
+#include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include "llvm/ExecutionEngine/Orc/Mangling.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/DynamicLibrary.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/TargetSelect.h"
+#include "llvm/Target/TargetMachine.h"
 #include <chrono>
 #include <cmath>
-#include <csetjmp>
 #include <cstring>
 #include <dlfcn.h>
 #include <mutex>
@@ -101,29 +103,13 @@ std::mutex &getRunMutex() {
 /// The device of the GPU simulations of the process, once one has run.
 int64_t usedDevice = -1;
 
-/// Where a failure that the runtime cannot return from ends the part: the
-/// stop of a build of the neighbor structures that found positions that are
-/// not numbers (mdrtStopNotNumbers).
-std::jmp_buf *stopTarget = nullptr;
+/// The first failure that the runtime reports during a part: a build of the
+/// neighbor structures that found positions that are not numbers
+/// (mdrtStopNotNumbers). The part goes on to its end and is discarded.
 std::string stopMessage;
 extern "C" void stopPart(const char *message) {
-  if (!stopTarget)
-    return;
-  stopMessage = message;
-  std::longjmp(*stopTarget, 1);
-}
-/// Calls the entry; false if the runtime stopped the part. The frame holds no
-/// object with a destructor, which the jump would skip.
-bool invoke(void (*function)(void **), void **arguments) {
-  std::jmp_buf target;
-  if (setjmp(target) != 0) {
-    stopTarget = nullptr;
-    return false;
-  }
-  stopTarget = &target;
-  function(arguments);
-  stopTarget = nullptr;
-  return true;
+  if (stopMessage.empty())
+    stopMessage = message;
 }
 
 /// The directory of the runtime libraries: `MDIR_RUNTIME_DIR`, or `lib` next
@@ -266,6 +252,21 @@ compileEngine(const Control &control, const System &system,
     if (!llvm::sys::fs::exists(path))
       return unsupported("cannot find '" + path + "'");
 
+  auto targetBuilder = llvm::orc::JITTargetMachineBuilder::detectHost();
+  if (!targetBuilder)
+    return targetBuilder.takeError();
+  auto targetMachine = targetBuilder->createTargetMachine();
+  if (!targetMachine)
+    return targetMachine.takeError();
+  // Match the default section of the functions ORC adds after the transformer.
+  // On x86-64 ELF the large code model uses .ltext (with SHF_X86_64_LARGE),
+  // including for ORC's synthesized initialization and deinitialization entry.
+  StringRef textSection =
+      (*targetMachine)->getTargetTriple().getArch() == llvm::Triple::x86_64 &&
+              (*targetMachine)->getCodeModel() == llvm::CodeModel::Large
+          ? ".ltext"
+          : ".text";
+
   llvm::cl::Option *scheduler = getSchedulerOption();
   if (scheduler)
     (void)scheduler->addOccurrence(0, "pre-RA-sched", "fast");
@@ -273,7 +274,20 @@ compileEngine(const Control &control, const System &system,
   llvm::SmallVector<StringRef> shared(paths.begin(), paths.end());
   options.sharedLibPaths = shared;
   options.jitCodeGenOptLevel = llvm::CodeGenOptLevel::Aggressive;
-  auto created = mlir::ExecutionEngine::create(*engine->module, options);
+  // A frame registration describes the bounding PC range of its functions.
+  // Keep the GPU module's host entry, constructors, and destructors together:
+  // separately mapped text sections can enclose another engine's code, and
+  // libgcc's interval index can retain a freed registration on deregistration.
+  auto keepHostCodeTogether = [textSection](llvm::Module *module) {
+    if (module->getTargetTriple().isOSBinFormatELF())
+      for (llvm::Function &function : *module)
+        if (!function.isDeclaration())
+          function.setSection(textSection);
+    return llvm::Error::success();
+  };
+  options.transformer = keepHostCodeTogether;
+  auto created = mlir::ExecutionEngine::create(
+      *engine->module, options, std::move(*targetMachine));
   if (!created) {
     if (scheduler)
       (void)scheduler->addOccurrence(0, "pre-RA-sched", "default");
@@ -560,9 +574,10 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
                          &part.close, &part.closeInner})
     a.pointers.push_back(count);
 
-  bool returned = invoke(engine.function, a.pointers.data());
+  stopMessage.clear();
+  engine.function(a.pointers.data());
   out.fail = nullptr;
-  if (!returned)
+  if (failure.empty())
     failure = stopMessage;
   if (failure.empty() && out.finalForces.size() != 3 * count)
     failure = "the segment returned no forces; this is a defect of mdir";
