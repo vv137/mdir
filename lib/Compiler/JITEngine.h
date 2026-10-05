@@ -9,7 +9,7 @@
 namespace llvm { class JITEventListener; }
 
 namespace mdir::compiler {
-/// The simulation's final object boundary (D[jit-invariants]).
+/// The simulation's final object boundary (D199).
 class JITEngine {
 public:
   static llvm::Expected<std::unique_ptr<JITEngine>>

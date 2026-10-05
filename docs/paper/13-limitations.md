@@ -147,7 +147,7 @@ coupling at the same steps; a run may end with the step of energy of a row
 of the log, whose energies equal that row's; failures return to Python with
 the state from before them. A failed part returns through the runtime before
 its state is discarded. Each ELF host module keeps its functions in one code
-section for locality. D[jit-invariants] reserves contiguous object storage and
+section for locality. D199 reserves contiguous object storage and
 checks the allocated executable sections and relocated exception-frame ranges
 before registration, including late ORC-generated functions. It rejects
 unsupported layouts and deregisters before releasing storage; creation,

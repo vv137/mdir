@@ -132,7 +132,7 @@ format, or the outputs; every such change is listed under **Changed** or
   before registering exception frames and deregister before freeing object
   storage. Creation and teardown synchronize with execution. Unsupported
   layouts fail compilation with an ownership diagnostic; no control-file keys
-  or output formats change (D[jit-invariants], #89).
+  or output formats change (D199, #89).
 
 - Compound terms accept declared `lambda_<name>` components
   (D188, #67).

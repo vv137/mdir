@@ -1,4 +1,4 @@
-# JIT memory and unwind ownership (D[jit-invariants])
+# JIT memory and unwind ownership (D199)
 
 Issue #89 supersedes D196's section-placement lifetime guarantee with checks
 at the final host object boundary. No control-file
@@ -44,7 +44,7 @@ Both already share `compiler::createHostMachine()` from D197. Until migration,
 CLI/Python comparisons remain necessary to detect drift. Separate JIT paths
 are a possible source of differences, not an established explanation for #97.
 
-D[jit-invariants] amends D196: section placement is superseded as the lifetime
+D199 amends D196: section placement is superseded as the lifetime
 guarantee by contiguous owned allocation and validation of actual code and
 unwind ranges before registration. The old MLIR transformer in
 `Simulation.cpp` is removed. Its section assignment remains in

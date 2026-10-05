@@ -183,7 +183,7 @@ so one simulation runs at a time in a process: a run waits for another
 simulation's run to end. Simulations created one after another are
 independent. The GIL is released while a part runs.
 
-D[jit-invariants] enforces the host object contract after code generation,
+D199 enforces the host object contract after code generation,
 including ORC's synthesized entries. The owned memory manager reserves space
 for each object together, checks its actual executable sections and relocated
 exception-frame descriptions before registering them, and deregisters before
@@ -196,7 +196,7 @@ state transitions, rejected layouts, tests, and dependency assumptions.
 The original D196 section placement is retained for locality: `.ltext` for
 x86-64's large code model, `.text` otherwise. Its diagnostic run observed
 52 overlapping registrations before the correction and none afterward,
-with all 144 registrations paired with deregistration. D[jit-invariants]
+with all 144 registrations paired with deregistration. D199
 replaces reliance on that exercised layout with checks of every final object.
 
 The device is resolved when the first GPU simulation in a process runs:

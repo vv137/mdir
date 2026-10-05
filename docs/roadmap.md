@@ -223,7 +223,7 @@ D196 (#85, [persistent simulations](python-segments.md)) adds
 `mdir.Simulation` and `run(n)` for any number of steps, with the coupling
 phase, errors, stops, and runtime and device ownership. Host JIT unwind ranges
 remain disjoint across simulation lifetimes, and a failed part finishes runtime
-cleanup before its state is discarded. D[jit-invariants] (#89) enforces the
+cleanup before its state is discarded. D199 (#89) enforces the
 final object memory and unwind boundary and serializes creation and teardown
 with execution; see [JIT ownership](jit-invariants.md).
 D198 (#92,
