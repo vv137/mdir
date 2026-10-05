@@ -281,6 +281,19 @@ private:
     function_ref<SmallVector<Value>(OpBuilder &, Value)> row;
   };
 
+  /// Adds up, or takes the maximum of, `values` over the threads of a block
+  /// in one pass (D150): each warp by a butterfly of shuffles, then the
+  /// warps in their order through `shared`. Every thread gets the totals.
+  SmallVector<Value> reduceInBlock(OpBuilder &builder, Location loc,
+                                   ValueRange values, Value thread,
+                                   Value shared, bool isSum);
+  /// Launches `blocks` blocks of threads with shared memory for `numbers`
+  /// numbers of each warp; `body` takes the block, the thread, and the
+  /// shared memory.
+  void launchSharedBlocks(
+      OpBuilder &builder, Location loc, Value blocks, int64_t numbers,
+      function_ref<void(OpBuilder &, Value, Value, Value)> body);
+
   /// `rows`, if given, lets a reduction of one part compute the
   /// contributions of the rows itself rather than load them: a set of few
   /// tuples then takes one kernel for its sums instead of two (#20).
@@ -661,6 +674,110 @@ void Lowering::replaceWithFlag(OpBuilder &builder, Location loc,
 static Value shuffleXor(OpBuilder &builder, Location loc, Value value,
                         int64_t offset);
 
+/// The numbers of `types`: one for a number, and the elements of a vector.
+static int64_t countKernelNumbers(TypeRange types) {
+  int64_t count = 0;
+  for (Type type : types)
+    count += isa<VectorType>(type) ? cast<VectorType>(type).getNumElements()
+                                   : 1;
+  return count;
+}
+
+SmallVector<Value> Lowering::reduceInBlock(OpBuilder &b, Location loc,
+                                           ValueRange values, Value thread,
+                                           Value shared, bool isSum) {
+  int64_t warps = blockSize / 32;
+  auto combine = [&](OpBuilder &b, Value lhs, Value rhs) -> Value {
+    if (isSum)
+      return arith::AddFOp::create(b, loc, lhs, rhs);
+    Value larger =
+        arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OGT, lhs, rhs);
+    return arith::SelectOp::create(b, loc, larger, lhs, rhs);
+  };
+  SmallVector<Value> numbers;
+  for (Value value : values) {
+    auto vector = dyn_cast<VectorType>(value.getType());
+    if (!vector) {
+      numbers.push_back(value);
+      continue;
+    }
+    for (int64_t i = 0, e = vector.getNumElements(); i != e; ++i)
+      numbers.push_back(vector::ExtractOp::create(b, loc, value, i));
+  }
+  for (Value &number : numbers)
+    for (int64_t offset = 16; offset >= 1; offset /= 2)
+      number = combine(b, number, shuffleXor(b, loc, number, offset));
+  Value width = createIndex(b, loc, 32);
+  Value lane = arith::RemUIOp::create(b, loc, thread, width);
+  Value warp = arith::DivUIOp::create(b, loc, thread, width);
+  Value count = createIndex(b, loc, numbers.size());
+  Value leads = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq, lane,
+                                      createIndex(b, loc, 0));
+  Type wide = b.getF64Type();
+  scf::IfOp::create(b, loc, leads, [&](OpBuilder &then, Location) {
+    Value base = arith::MulIOp::create(then, loc, warp, count);
+    for (auto [k, number] : llvm::enumerate(numbers)) {
+      Value place = arith::AddIOp::create(then, loc, base,
+                                          createIndex(then, loc, k));
+      Value stored = number;
+      if (number.getType() != wide)
+        stored = arith::ExtFOp::create(then, loc, wide, number);
+      memref::StoreOp::create(then, loc, stored, shared, ValueRange{place});
+    }
+    scf::YieldOp::create(then, loc);
+  });
+  gpu::BarrierOp::create(b, loc);
+  SmallVector<Value> totals;
+  for (auto [k, number] : llvm::enumerate(numbers)) {
+    Value total;
+    for (int64_t w = 0; w != warps; ++w) {
+      Value part = memref::LoadOp::create(
+          b, loc, shared,
+          ValueRange{createIndex(b, loc, w * numbers.size() + k)});
+      if (number.getType() != wide)
+        part = arith::TruncFOp::create(b, loc, number.getType(), part);
+      total = w == 0 ? part : combine(b, total, part);
+    }
+    totals.push_back(total);
+  }
+  SmallVector<Value> results;
+  size_t next = 0;
+  for (Value value : values) {
+    auto vector = dyn_cast<VectorType>(value.getType());
+    if (!vector) {
+      results.push_back(totals[next++]);
+      continue;
+    }
+    ArrayRef<Value> elements(totals.begin() + next,
+                             totals.begin() + next + vector.getNumElements());
+    next += vector.getNumElements();
+    results.push_back(
+        vector::FromElementsOp::create(b, loc, vector, elements));
+  }
+  return results;
+}
+
+void Lowering::launchSharedBlocks(
+    OpBuilder &at, Location loc, Value blocks, int64_t numbers,
+    function_ref<void(OpBuilder &, Value, Value, Value)> body) {
+  int64_t warps = blockSize / 32;
+  Value one = createIndex(at, loc, 1);
+  Value threads = createIndex(at, loc, blockSize);
+  auto workgroup = gpu::AddressSpaceAttr::get(
+      context, gpu::GPUDialect::getWorkgroupAddressSpace());
+  auto shared = MemRefType::get({warps * numbers}, at.getF64Type(),
+                                MemRefLayoutAttrInterface(), workgroup);
+  auto launch = gpu::LaunchOp::create(
+      at, loc, blocks, one, one, threads, one, one,
+      /*dynamicSharedMemorySize=*/nullptr, /*asyncTokenType=*/nullptr,
+      /*asyncDependencies=*/{}, /*workgroupAttributions=*/TypeRange{shared});
+  OpBuilder kernel = OpBuilder::atBlockEnd(&launch.getBody().front());
+  body(kernel, launch.getBlockIds().x, launch.getThreadIds().x,
+       launch.getWorkgroupAttributionBBArgs().front());
+  gpu::TerminatorOp::create(kernel, loc);
+  bringIn(launch);
+}
+
 SmallVector<Value>
 Lowering::emitReductions(OpBuilder &builder, Location loc,
                          ArrayRef<Value> contributions,
@@ -690,96 +807,15 @@ Lowering::emitReductions(OpBuilder &builder, Location loc,
   // of a sum, and the sum, depend only on the number of particles. A block
   // takes at least four particles per thread, and there are no more parts
   // than threads in a block.
-  int64_t warps = blockSize / 32;
-  auto countNumbers = [](TypeRange types) {
-    int64_t count = 0;
-    for (Type type : types)
-      count += isa<VectorType>(type) ? cast<VectorType>(type).getNumElements()
-                                     : 1;
-    return count;
-  };
+  auto countNumbers = [](TypeRange types) { return countKernelNumbers(types); };
   auto reduceTogether = [&](OpBuilder &b, ValueRange values, Value thread,
                             Value shared) -> SmallVector<Value> {
-    SmallVector<Value> numbers;
-    for (Value value : values) {
-      auto vector = dyn_cast<VectorType>(value.getType());
-      if (!vector) {
-        numbers.push_back(value);
-        continue;
-      }
-      for (int64_t i = 0, e = vector.getNumElements(); i != e; ++i)
-        numbers.push_back(vector::ExtractOp::create(b, loc, value, i));
-    }
-    for (Value &number : numbers)
-      for (int64_t offset = 16; offset >= 1; offset /= 2)
-        number = combine(b, number, shuffleXor(b, loc, number, offset));
-    Value width = createIndex(b, loc, 32);
-    Value lane = arith::RemUIOp::create(b, loc, thread, width);
-    Value warp = arith::DivUIOp::create(b, loc, thread, width);
-    Value count = createIndex(b, loc, numbers.size());
-    Value leads = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq, lane,
-                                        createIndex(b, loc, 0));
-    Type wide = b.getF64Type();
-    scf::IfOp::create(b, loc, leads, [&](OpBuilder &then, Location) {
-      Value base = arith::MulIOp::create(then, loc, warp, count);
-      for (auto [k, number] : llvm::enumerate(numbers)) {
-        Value place = arith::AddIOp::create(then, loc, base,
-                                            createIndex(then, loc, k));
-        Value stored = number;
-        if (number.getType() != wide)
-          stored = arith::ExtFOp::create(then, loc, wide, number);
-        memref::StoreOp::create(then, loc, stored, shared, ValueRange{place});
-      }
-      scf::YieldOp::create(then, loc);
-    });
-    gpu::BarrierOp::create(b, loc);
-    SmallVector<Value> totals;
-    for (auto [k, number] : llvm::enumerate(numbers)) {
-      Value total;
-      for (int64_t w = 0; w != warps; ++w) {
-        Value part = memref::LoadOp::create(
-            b, loc, shared,
-            ValueRange{createIndex(b, loc, w * numbers.size() + k)});
-        if (number.getType() != wide)
-          part = arith::TruncFOp::create(b, loc, number.getType(), part);
-        total = w == 0 ? part : combine(b, total, part);
-      }
-      totals.push_back(total);
-    }
-    SmallVector<Value> results;
-    size_t next = 0;
-    for (Value value : values) {
-      auto vector = dyn_cast<VectorType>(value.getType());
-      if (!vector) {
-        results.push_back(totals[next++]);
-        continue;
-      }
-      ArrayRef<Value> elements(totals.begin() + next,
-                               totals.begin() + next + vector.getNumElements());
-      next += vector.getNumElements();
-      results.push_back(
-          vector::FromElementsOp::create(b, loc, vector, elements));
-    }
-    return results;
+    return reduceInBlock(b, loc, values, thread, shared, isSum);
   };
   auto launchBlocks = [&](OpBuilder &at, Value blocks, int64_t numbers,
                           function_ref<void(OpBuilder &, Value, Value, Value)>
                               body) {
-    Value one = createIndex(at, loc, 1);
-    Value threads = createIndex(at, loc, blockSize);
-    auto workgroup = gpu::AddressSpaceAttr::get(
-        context, gpu::GPUDialect::getWorkgroupAddressSpace());
-    auto shared = MemRefType::get({warps * numbers}, at.getF64Type(),
-                                  MemRefLayoutAttrInterface(), workgroup);
-    auto launch = gpu::LaunchOp::create(
-        at, loc, blocks, one, one, threads, one, one,
-        /*dynamicSharedMemorySize=*/nullptr, /*asyncTokenType=*/nullptr,
-        /*asyncDependencies=*/{}, /*workgroupAttributions=*/TypeRange{shared});
-    OpBuilder kernel = OpBuilder::atBlockEnd(&launch.getBody().front());
-    body(kernel, launch.getBlockIds().x, launch.getThreadIds().x,
-         launch.getWorkgroupAttributionBBArgs().front());
-    gpu::TerminatorOp::create(kernel, loc);
-    bringIn(launch);
+    launchSharedBlocks(at, loc, blocks, numbers, body);
   };
   // The sums go to the kernels in runs whose buffers fit a budget of
   // parameters: a kernel passes each buffer as its descriptor, two
