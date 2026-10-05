@@ -119,3 +119,6 @@ C++ storage remains unchanged. Strict buffer/CPU DLPack assignment validates
 shape, dtype, contiguity, finite values and particle count, copies values and
 advances the binding version. There is no list path. NumPy >=1.23 is required
 only for the enabled Python interface. See [python-arrays.md](python-arrays.md).
+
+Setters whose value has a unit also take OpenMM unit quantities, converted
+at the boundary (D[python-units], [python-units.md](python-units.md)).

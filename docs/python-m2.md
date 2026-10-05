@@ -18,6 +18,8 @@ errors and stops, and runtime and device ownership
 ([python-segments.md](python-segments.md)). D198
 (#92) adds velocities drawn as `mdir run` draws them and typed positional
 restraints ([python-velocities-restraints.md](python-velocities-restraints.md)).
+D[python-units] (#95) lets the setters take OpenMM unit quantities
+([python-units.md](python-units.md)).
 Tunable buffers remain open.
 Later items remain prospective work.
 
