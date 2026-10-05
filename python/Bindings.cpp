@@ -52,7 +52,7 @@ template <class T> static auto input(py::module_ &m, const char *name) {
 }
 struct Program {
   compiler::CompiledProgram compiled;
-  /// What a simulation compiles its programs from (D[python-segments]).
+  /// What a simulation compiles its programs from (D196).
   std::shared_ptr<const model::PreparedModel> prepared;
   std::vector<std::pair<std::shared_ptr<Version>, uint64_t>> inputs;
   template <class T> void track(const std::shared_ptr<Input<T>> &o) {
@@ -287,7 +287,7 @@ PYBIND11_MODULE(mdir, m) {
   }, py::arg("system"), py::arg("state"), py::arg("integrator"),
      py::arg("ensemble"), py::arg("execution"), py::arg("schedule"));
 
-  // Persistent simulations (D[python-segments], docs/python-segments.md).
+  // Persistent simulations (D196, docs/python-segments.md).
   py::class_<compiler::SimulationState>(m, "State")
     .def_property_readonly("step", [](const compiler::SimulationState &s) { return s.step; })
     .def_property_readonly("time", [](const compiler::SimulationState &s) { return s.time; })

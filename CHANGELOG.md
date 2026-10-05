@@ -61,7 +61,7 @@ format, or the outputs; every such change is listed under **Changed** or
   uninterrupted run, `state()` as NumPy copies, the energies of a final
   step of energy (`run(n, energy=True)`) equal to the row of `mdir run` at
   that step, stops between parts, and errors that leave Python alive
-  (D[python-segments], #85). Host JIT code keeps disjoint exception-frame
+  (D196, #85). Host JIT code keeps disjoint exception-frame
   ranges across engine destruction, and failed parts finish runtime cleanup
   before their state is discarded. Reporters and checkpoints follow separately.
 

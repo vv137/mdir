@@ -187,13 +187,13 @@ private:
   /// to `nestEnd` (0: to the end of `levels`), which begins with the values
   /// `%x<nestOutside>` and the like, after the step `nestStart`. A program of
   /// segments has a second nest, for a period that ends with a step of
-  /// energy (D[python-segments]).
+  /// energy (D196).
   unsigned nestBegin = 0, nestEnd = 0;
   std::string nestOutside = "0", nestStart = "%start";
   unsigned getNestEnd() const { return nestEnd ? nestEnd : levels.size(); }
   /// The plain step of energy that may end a segment between the steps that
   /// close periods, after `x`, `v`, and `f`; returns the suffix of its
-  /// results (D[python-segments]).
+  /// results (D196).
   std::string emitSegmentEnergyStep(StringRef x, StringRef v, StringRef f);
   /// Whether the cell changes in the run, which a barostat does.
   bool changesCell() const { return control.barostat; }
@@ -7476,7 +7476,7 @@ void Builder::emitEntry() {
   }
   os << ",\n    %identities: memref<?xi32>,\n"
      << "    %lx: f64, %ly: f64, %lz: f64, %dt: f64, %start: i64";
-  // The counts of the loops of a program of segments (D[python-segments]):
+  // The counts of the loops of a program of segments (D196):
   // the iterations of the outer loop, the plain steps in an iteration of the
   // loop over the periods of coupling, and plain steps after the loops; then
   // whether the segment ends with a plain step of energy, and whether it
@@ -7880,7 +7880,7 @@ void Builder::emitEntry() {
     nestEnd = levels[0].name == "couple" ? 2 : 1;
     emitLevel(0, "  ");
     // The plain steps of the period in which the segment ends, after the
-    // loops (D[python-segments]); the next segment closes the period. The
+    // loops (D196); the next segment closes the period. The
     // barostat may have changed the cell in the loops.
     std::string outerCell = cellName, outerScale = scaleName;
     if (changesCell()) {
@@ -8140,7 +8140,7 @@ llvm::Error Builder::build() {
   }
 
   // A program of segments has no outputs of its own: its loops are those
-  // of the periods of coupling and of the steps (D[python-segments]).
+  // of the periods of coupling and of the steps (D196).
   if (control.segments && (control.minimize || control.energyPeriod > 0 ||
                            control.framePeriod > 0 ||
                            control.checkpointPeriod > 0))

@@ -1,4 +1,4 @@
-"""Exceptions after interleaved JIT destruction (D[python-segments])."""
+"""Exceptions after interleaved JIT destruction (D196)."""
 import faulthandler
 import pathlib
 import sys

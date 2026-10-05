@@ -1,5 +1,5 @@
 // A simulation that persists across runs of any number of steps, for an
-// embedding front end (D[python-segments], docs/python-segments.md).
+// embedding front end (D196, docs/python-segments.md).
 #ifndef MDIR_COMPILER_SIMULATION_H
 #define MDIR_COMPILER_SIMULATION_H
 #include "mdir/Driver/Model.h"
@@ -28,7 +28,7 @@ public:
 
 /// The energies of a step of energy, as a row of the log of `mdir run`
 /// holds them: kJ/mol, K, bar, nm^3. `total` is potential and kinetic;
-/// `conserved` adds the energy that the coupling has taken (D[python-segments]).
+/// `conserved` adds the energy that the coupling has taken (D196).
 struct SimulationEnergies {
   double potential = 0.0, kinetic = 0.0, total = 0.0, conserved = 0.0,
          temperature = 0.0, virial = 0.0, pressure = 0.0, volume = 0.0;

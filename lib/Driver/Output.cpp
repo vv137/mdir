@@ -188,7 +188,7 @@ volatile std::sig_atomic_t mdir::driver::stopSignal = 0;
 void mdir::driver::setOutput(Output *output) { current = output; }
 
 /// Ends the run on a failure: the process exits, or an embedding program
-/// is told and the segment goes on to its end (D[python-segments]).
+/// is told and the segment goes on to its end (D196).
 static void stopOnFailure(const Output &output, const std::string &message) {
   if (output.fail) {
     output.fail(message);
@@ -569,7 +569,7 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
                   (units::length * units::length));
   }
   // The total here has the energy of the bath if the run couples: the
-  // conserved energy (D[python-segments] reports both).
+  // conserved energy (D196 reports both).
   output.lastEnergies = {step,
                          potential,
                          kinetic,

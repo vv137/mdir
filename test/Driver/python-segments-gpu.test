@@ -1,5 +1,5 @@
 # REQUIRES: python-api, cuda
-# Persistent simulations on a GPU (D[python-segments]).
+# Persistent simulations on a GPU (D196).
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %mdir_python %S/Inputs/python_segments.py %S/Inputs/dipeptide GPU mdir %t | FileCheck %s
 # CHECK: NVT: the coupling moves the velocities

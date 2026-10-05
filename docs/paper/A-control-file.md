@@ -12,7 +12,7 @@ D193 changes the optional Python host-data boundary and
 requires NumPy >=1.23 when enabled. It adds no control keys and changes
 no checkpoint/output formats or overwrite behavior.
 
-Persistent Python simulations (D[python-segments],
+Persistent Python simulations (D196,
 [contract](../python-segments.md)) build their programs from the same
 model and builder with the counts of the loops as arguments of the entry;
 they add no control keys and write no files. A segment continues as

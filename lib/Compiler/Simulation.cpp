@@ -1,4 +1,4 @@
-// A simulation that persists across runs (D[python-segments],
+// A simulation that persists across runs (D196,
 // docs/python-segments.md). It compiles the program of its first segment,
 // which begins as `mdir run` does, and the program of the segments after it,
 // which continue the state as `mdir run --continue` continues a checkpoint;

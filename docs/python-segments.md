@@ -1,4 +1,4 @@
-# Persistent simulations for M2 (D[python-segments])
+# Persistent simulations for M2 (D196)
 
 Issue #85 is item 3 of the M2 sequence ([python-m2.md](python-m2.md)): a
 simulation that persists across calls, `run(n)` for any number of steps,

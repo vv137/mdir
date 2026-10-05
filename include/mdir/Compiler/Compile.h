@@ -31,7 +31,7 @@ llvm::Expected<CompiledProgram> compile(const model::PreparedModel &);
 /// passes once per process.
 mlir::DialectRegistry getRegistry();
 /// Parses and lowers `program` in `context`, for a front end that runs the
-/// result (D[python-segments]). Errors are CompileError with diagnostics.
+/// result (D196). Errors are CompileError with diagnostics.
 llvm::Expected<mlir::OwningOpRef<mlir::ModuleOp>>
 lowerModule(mlir::MLIRContext &context, const driver::Control &,
             const driver::Program &);

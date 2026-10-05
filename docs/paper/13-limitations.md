@@ -140,7 +140,7 @@ detection. D193 changes the host boundary to shaped, read-only NumPy
 copies, with strict buffer/CPU DLPack inputs and required NumPy >=1.23
 when Python is enabled. Native storage and CLI behavior are unchanged;
 this does not supply device views or framework gradients.
-D[python-segments] adds persistent simulations: a program that runs any
+D196 adds persistent simulations: a program that runs any
 number of steps from any step of the period of coupling continues the
 state of the last segment, as a run continues its checkpoint, with the
 coupling at the same steps; a run may end with the step of energy of a row

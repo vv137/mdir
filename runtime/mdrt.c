@@ -66,7 +66,7 @@ void mdrtNoteGroups(int64_t blocks, int64_t capacity, int64_t longest,
 }
 
 /* A program that embeds a run may take its failures instead of the process
-   exiting (D[python-segments]). The handler records the failure; the run
+   exiting (D196). The handler records the failure; the run
    goes on to the end of its segment, whose state the program discards. */
 static void (*stopHandler)(const char *) = NULL;
 void mdrtSetStopHandler(void (*handler)(const char *)) {

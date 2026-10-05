@@ -152,7 +152,7 @@ struct Program {
   bool reorders = false;
   double orderWidth = 0.0;
 
-  /// A program of segments (Control::segments, D[python-segments]): its
+  /// A program of segments (Control::segments, D196): its
   /// entry takes the counts of its loops after the step that the run begins
   /// after. `segmentPeriod` is the period of coupling that an iteration of
   /// its outer loop takes, or 0 if the outer loop is over single steps;

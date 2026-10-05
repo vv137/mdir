@@ -1,5 +1,5 @@
 # REQUIRES: python-api
-# Persistent simulations on the CPU (D[python-segments]): segmented runs
+# Persistent simulations on the CPU (D196): segmented runs
 # against uninterrupted ones, the coupling phase across boundaries, the
 # energies of a final step of energy against `mdir run`, errors, stops, and
 # ownership.

@@ -1,4 +1,4 @@
-"""Persistent simulations (D[python-segments]): segmented runs against
+"""Persistent simulations (D196): segmented runs against
 uninterrupted ones, the phase of the coupling across segment boundaries,
 the energies of a final step of energy against `mdir run`, errors and stops
 that leave Python alive, and the ownership of simulations."""
