@@ -1,4 +1,4 @@
-# Energy minimization in a Python simulation (D[python-minimize])
+# Energy minimization in a Python simulation (D202)
 
 Issue #91. A Python simulation (D196) runs dynamics; this decision lets it
 run the minimization of `mdir run` as well, so that the first stage of the

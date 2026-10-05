@@ -415,7 +415,7 @@ PYBIND11_MODULE(mdir, m) {
     })
     .def_property_readonly("minimization", [](const compiler::SimulationState &s) -> py::object {
       // The row of the log of `mdir run` at the last step of a minimization,
-      // in kJ/mol and nm (D[python-minimize]).
+      // in kJ/mol and nm (D202).
       if (!s.minimization) return py::none();
       const auto &m = *s.minimization;
       py::dict d;

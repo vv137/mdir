@@ -61,7 +61,7 @@ format, or the outputs; every such change is listed under **Changed** or
 - Python: a simulation of a program whose integrator minimizes runs the
   minimizer of `mdir run`, `Simulation.minimize(steps=None)`, in parts
   that `request_stop()` and Ctrl-C end; `State.minimization` holds the row
-  of the log at its last step (D[python-minimize], #91).
+  of the log at its last step (D202, #91).
 
 - Python: setters of the model whose value has a unit also take an
   `openmm.unit.Quantity` (cutoffs, time step, temperatures, pressure,

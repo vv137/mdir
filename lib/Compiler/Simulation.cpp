@@ -372,7 +372,7 @@ Simulation::create(const model::PreparedModel &prepared) {
   simulation->prepared = prepared;
   Control &control = simulation->prepared.control;
   // A minimization takes the steps of its schedule unless told otherwise,
-  // and begins with the step of the control (D[python-minimize]).
+  // and begins with the step of the control (D202).
   simulation->minimizationSteps = control.numSteps;
   simulation->minimizationSize = control.minimizeStep * units::length;
   control.segments = true;

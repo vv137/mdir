@@ -35,7 +35,7 @@ struct SimulationEnergies {
 };
 
 /// The row that `mdir run` logs at a step of a minimization, in kJ/mol and
-/// nm (D[python-minimize]): the energy with its constant parts, the RMS and
+/// nm (D202): the energy with its constant parts, the RMS and
 /// the largest force without their parts along the constraints, the
 /// particle of the largest (zero-based), and the length of the next step.
 struct SimulationMinimization {
@@ -80,7 +80,7 @@ public:
                               bool energy = false);
   /// Takes `count` more steps of the minimization of `mdir run`, or the
   /// steps of its schedule if none, in parts as `run` does; a simulation
-  /// of a program that minimizes takes only these (D[python-minimize]).
+  /// of a program that minimizes takes only these (D202).
   llvm::Expected<int64_t> minimize(std::optional<int64_t> count = {},
                                    const std::function<bool()> &poll = {});
   bool isMinimization() const { return prepared.control.minimize; }

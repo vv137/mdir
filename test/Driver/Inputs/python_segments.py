@@ -163,7 +163,7 @@ system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
 integrator, execution = mdir.Integrator(), mdir.Execution()
 execution.target = target
 integrator.minimize = True
-# A minimization is a simulation of its own (D[python-minimize]): it
+# A minimization is a simulation of its own (D202): it
 # takes minimize(), not run(n).
 minimizer = mdir.Simulation(mdir.compile(system, state, integrator, mdir.Ensemble(),
                                          execution, mdir.Schedule()))

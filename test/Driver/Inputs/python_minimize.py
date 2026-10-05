@@ -1,4 +1,4 @@
-"""Minimization in a Python simulation (D[python-minimize]): the minimizer
+"""Minimization in a Python simulation (D202): the minimizer
 of `mdir run`, run in several parts, against the last row and the
 checkpoint of `mdir run` on the same input; the next stage from the
 minimized positions against `mdir run` from its checkpoint; refusals."""

@@ -1,5 +1,5 @@
 # REQUIRES: python-api, hdf5
-# Minimization in a Python simulation on the CPU (D[python-minimize]):
+# Minimization in a Python simulation on the CPU (D202):
 # the minimizer of `mdir run` in several parts against its last row and
 # checkpoint, the NVT stage after it, and refusals.
 # RUN: rm -rf %t && mkdir -p %t

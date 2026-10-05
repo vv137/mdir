@@ -7191,7 +7191,7 @@ void Builder::emitMinimization() {
   // hydrogens 0.02 Å from their lengths) that change alone can raise the
   // energy, and no step is ever taken. A segment that continues a
   // minimization begins where the last one ended, on that surface
-  // (D[python-minimize]).
+  // (D202).
   std::string x0 = "%x0";
   bool settles = hasSettles();
   std::vector<const Program::TupleSet *> shakeSets = getShakeSets();
@@ -7274,7 +7274,7 @@ void Builder::emitMinimization() {
   // otherwise the next one is shorter, from where the step began. The
   // loops: over the intervals between frames (one if there are none),
   // over the intervals between energies in each, and over the steps.
-  // A segment (D[python-minimize]) is one interval of the steps that
+  // A segment (D202) is one interval of the steps that
   // the entry takes, with a row at its end.
   std::string state = "!vec, !vec, f64, f64";
   if (control.segments) {
@@ -7513,7 +7513,7 @@ void Builder::emitEntry() {
        << " %count_energy_inner: i64";
   // A minimization in segments takes its steps in %count_outer and the
   // length of its first step, which the last segment left
-  // (D[python-minimize]).
+  // (D202).
   if (control.segments && control.minimize)
     os << ", %first_size: f64";
   os << ") {\n";
@@ -8174,7 +8174,7 @@ llvm::Error Builder::build() {
 
   // A program of segments has no outputs of its own: its loops are those
   // of the periods of coupling and of the steps (D196), or of the steps of
-  // a minimization (D[python-minimize]).
+  // a minimization (D202).
   if (control.segments && (control.energyPeriod > 0 ||
                            control.framePeriod > 0 ||
                            control.checkpointPeriod > 0))

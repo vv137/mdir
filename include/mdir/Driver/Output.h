@@ -98,7 +98,7 @@ struct Output {
   /// The last row of a minimization, in kJ/mol and nm: the energy with its
   /// constant parts, the RMS and the largest force without their parts
   /// along the constraints, the particle of the largest (zero-based), and
-  /// the length of the next step (D[python-minimize]).
+  /// the length of the next step (D202).
   struct MinimizationRow {
     int64_t step = -1;
     double energy = 0.0, rmsForce = 0.0, maxForce = 0.0, stepSize = 0.0;

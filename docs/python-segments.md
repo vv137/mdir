@@ -220,5 +220,5 @@ temperature, seed)`, and a typed `System.restraints` list mapped to
 at rest; drawing them is explicit.
 
 A program that minimizes is a simulation of its own, which takes
-`minimize(steps)` in parts as `run(n)` takes steps (D[python-minimize],
+`minimize(steps)` in parts as `run(n)` takes steps (D202,
 [python-minimize.md](python-minimize.md)).
