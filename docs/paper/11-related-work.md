@@ -44,7 +44,9 @@ expresses molecular dynamics in JAX and obtains forces by automatic
 differentiation of the energy; Enzyme [[Moses2020]](references.md#moses2020) differentiates at the
 level of LLVM IR, and on MLIR, where an activity analysis proved sound as
 an abstract interpretation finds the operations that do not contribute to
-a derivative [[Peng2025]](references.md#peng2025). MDIR differentiates in its own dialect (Section
+a derivative [[Peng2025]](references.md#peng2025); LAGrad differentiates high-level dialects of MLIR and
+uses their structure for static optimizations of the derivative
+[[Peng2023]](references.md#peng2023). MDIR differentiates in its own dialect (Section
 3.3), where the derivative of a sum over pairs or tuples is again a gather
 over the same relation and carries an exchange contract that later passes
 use.

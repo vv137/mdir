@@ -312,6 +312,13 @@ derivative or a rule; only proven inactivity licenses a zero without a
 rule. Unknown required activity fails. Operands and captured kernel values
 are followed, and block arguments are independent only in scopes whose
 meaning is known. `--md-analyze-activity=argument=N` reports these outcomes.
+Activity analysis for differentiation on MLIR has been formalized as an
+abstract interpretation, forward from the inputs and backward from the
+outputs of interest, and proved sound: what it finds inactive contributes
+only zero to the requested derivatives [[Peng2025]](references.md#peng2025). MDIR's analysis is the
+forward part, from the argument being differentiated; where it cannot
+prove independence it reports unknown and the derivative fails, instead
+of assuming activity. It has no formal proof of its own.
 
 **Parameters.** `derivative(n)` asks $\partial U/\partial\theta_n$ of a
 scalar argument $\theta_n$ of the potential (D2), such as a component of

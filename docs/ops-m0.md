@@ -546,7 +546,10 @@ or the existence of a derivative rule. Only proven inactivity permits a
 zero without differentiation. Unknown activity needed by a derivative is
 an error. The same analysis is used for scalar derivatives of coordinates
 and cell edges, positional intermediate fields, sum weights, and scalar
-parameters. It follows operands and values captured by kernels.
+parameters. It follows operands and values captured by kernels. A sound
+formulation of activity analysis on MLIR as an abstract interpretation,
+forward and backward, is given by Peng et al. (2025,
+[Peng2025](references.md#peng2025)); this analysis is the forward part.
 
 `--md-analyze-activity=argument=N` reports the three outcomes for the
 results in each potential body. See [ad-robust.md](ad-robust.md).

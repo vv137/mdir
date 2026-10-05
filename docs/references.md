@@ -865,6 +865,18 @@ simulations," *J. Chem. Theory Comput.* **20**, 4857–4868 (2024).
 Used for: SevenNet, the example of a message-passing learned potential
 with per-layer communication.
 
+### Peng2023
+
+M. J. Peng, C. Dubach, "LAGrad: Statically optimized differentiable
+programming in MLIR," in *Proceedings of the 32nd ACM SIGPLAN
+International Conference on Compiler Construction (CC 2023)*, 228–238
+(2023).
+[doi:10.1145/3578360.3580259](https://doi.org/10.1145/3578360.3580259)
+
+Used for: related work, reverse-mode differentiation on MLIR that uses the
+semantics of high-level dialects (structured control flow, sparsity) for
+static optimizations of the derivative.
+
 ### Peng2025
 
 M. J. Peng, W. S. Moses, O. Zinenko, C. Dubach, "Sound and modular
