@@ -2,6 +2,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include <cmath>
+#include <limits>
 #include <set>
 using namespace mdir;
 using namespace mdir::model;
@@ -133,6 +134,23 @@ static llvm::Error checkExpression(llvm::StringRef name, llvm::StringRef text,
     if (n != coordinate && !parameters.count(n))
       return input("term '" + name + "': undeclared parameter '" + n + "'");
   return llvm::Error::success();
+}
+// A restraint constant in kJ/mol/nm^2 as the control file's kcal/mol/A^2:
+// the value that prepareTopologySystem converts back to `k` exactly where
+// one exists (always for a constant converted from a control file), or else
+// the nearest of the neighbors tried.
+static double toControlConstant(double k) {
+  auto back = [](double c) {
+    return c * driver::units::energy / (driver::units::length * driver::units::length);
+  };
+  double guess = k * (driver::units::length * driver::units::length) / driver::units::energy;
+  double best = guess;
+  for (double direction : {-HUGE_VAL, HUGE_VAL}) {
+    double c = guess;
+    for (int step = 0; step != 3; ++step, c = std::nextafter(c, direction))
+      if (std::abs(back(c) - k) < std::abs(back(best) - k)) best = c;
+  }
+  return best;
 }
 llvm::Expected<PreparedModel> mdir::model::prepare(
     const System &s, const InitialState &state, const Integrator &integrator,
@@ -269,6 +287,21 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
     term.expression = convertExpression(term.expression, term.arity == 2);
     c.tupleTerms.push_back(std::move(term));
   }
+  // The restraints become those of the control file, whose constants are
+  // in kcal/mol/A^2, and are prepared by the same code (D74, D124).
+  for (const auto &r : s.restraints) {
+    if (r.selection.empty()) return input("a restraint needs a selection");
+    if (!positive(r.forceConstant))
+      return input("the restraint of '" + r.selection +
+                   "': the force constant must be positive and finite (kJ/mol/nm^2)");
+    if (r.scaling != driver::ReferenceScaling::Center && r.scaling != driver::ReferenceScaling::All)
+      return input("the restraint of '" + r.selection + "': unknown reference scaling");
+    c.restraints.push_back({r.selection, toControlConstant(r.forceConstant), r.scaling});
+  }
+  if (!s.restraintReference.empty() &&
+      (s.restraintReference.size() != 3 * s.topology.getNumParticles() ||
+       llvm::any_of(s.restraintReference, [](double x) { return !std::isfinite(x); })))
+    return input("the restraint reference needs finite (N, 3) positions of every particle");
   if (!c.minimize)
     if (llvm::Error e = driver::resolveControlCoupling(c, "model")) return typed(std::move(e));
   if (llvm::Error e = driver::validateControl(c, "model")) return typed(std::move(e));
@@ -288,7 +321,29 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   }
   auto prepared = driver::prepareTopologySystem(c, std::move(topology), s.format != Format::Gromacs);
   if (!prepared) return typed(prepared.takeError());
+  // The reference of the restraints, as the CLI takes the positions of its
+  // coordinates file; the cell it scales from is that of the state.
+  prepared->referencePositions =
+      s.restraintReference.empty() ? prepared->positions : s.restraintReference;
   return PreparedModel{execution, std::move(c), std::move(*prepared)};
+}
+llvm::Expected<InitialState> mdir::model::drawVelocities(
+    const System &s, const InitialState &state, double temperature, uint64_t seed) {
+  if (!std::isfinite(temperature) || temperature < 0)
+    return input("the temperature of drawn velocities must be finite and at least 0 K");
+  if (seed > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
+    return input("the seed must be from 0 to 2^63-1, as [dynamics] seed");
+  Ensemble ensemble;
+  ensemble.kind = EnsembleKind::NVE;
+  ensemble.temperature = temperature;
+  ensemble.seed = seed;
+  auto prepared = prepare(s, state, Integrator{}, ensemble, Execution{}, Schedule{});
+  if (!prepared) return prepared.takeError();
+  // The draw of `mdir run` when its coordinates give no velocities.
+  driver::assignVelocities(prepared->control, prepared->system);
+  InitialState result = state;
+  result.velocities = prepared->system.velocities;
+  return result;
 }
 llvm::Expected<driver::Program> PreparedModel::build() const {
   auto result = driver::buildProgram(control, system);

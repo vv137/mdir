@@ -154,6 +154,20 @@ PYBIND11_MODULE(mdir, m) {
                   [](driver::TupleTerm &t, py::object value) { host::particles(t, value); })
     .def_property("parameters", [](const driver::TupleTerm &t) { return host::parameters(t); },
                   [](driver::TupleTerm &t, py::sequence value) { host::parameters(t, value); });
+  // Restraints (D74, D124; D[python-velocities-restraints]).
+  py::enum_<driver::ReferenceScaling>(m, "ReferenceScaling")
+    .value("Center", driver::ReferenceScaling::Center)
+    .value("All", driver::ReferenceScaling::All)
+    ;
+  py::class_<model::System::Restraint>(m, "Restraint")
+    .def(py::init<>())
+    .def(py::init([](std::string selection, double forceConstant, driver::ReferenceScaling scaling) {
+      return model::System::Restraint{std::move(selection), forceConstant, scaling};
+    }), py::arg("selection"), py::arg("force_constant"),
+        py::arg("reference_scaling") = driver::ReferenceScaling::Center)
+    .def_readwrite("selection", &model::System::Restraint::selection)
+    .def_readwrite("force_constant", &model::System::Restraint::forceConstant)
+    .def_readwrite("reference_scaling", &model::System::Restraint::scaling);
   auto system = input<model::System>(m, "System");
   property(system, "periodic", &model::System::periodic);
   property(system, "cutoff", &model::System::cutoff);
@@ -173,6 +187,20 @@ PYBIND11_MODULE(mdir, m) {
   property(system, "water_residues", &model::System::waterResidues);
   property(system, "pair_terms", &model::System::pairTerms);
   property(system, "tuple_terms", &model::System::tupleTerms);
+  property(system, "restraints", &model::System::restraints);
+  system.def_property("restraint_reference", [](const Input<model::System> &o) {
+    const auto &v = o.value.restraintReference;
+    return host::copy(v.data(), v.size(), {static_cast<py::ssize_t>(v.size() / 3), 3});
+  }, [](Input<model::System> &o, py::object source) {
+    const std::string name = "System.restraint_reference";
+    auto values = host::doubles(source, name, {}, 3);
+    size_t count = values.size() / 3, particles = o.value.topology.getNumParticles();
+    if (count != 0 && count != particles)
+      throw InputError(name + ": expected shape (" + std::to_string(particles) +
+                       ", 3) or (0, 3); found (" + std::to_string(count) + ", 3)");
+    o.value.restraintReference = std::move(values);
+    ++o.version;
+  });
   auto initialstate = input<model::InitialState>(m, "InitialState");
   for (auto item : {std::make_pair("positions", &model::InitialState::positions),
                     std::make_pair("velocities", &model::InitialState::velocities)}) {
@@ -194,6 +222,24 @@ PYBIND11_MODULE(mdir, m) {
     });
   }
   property(initialstate, "cell", &model::InitialState::cell);
+  // The velocities that `mdir run` draws for the same system, temperature,
+  // and seed, in a new state (D[python-velocities-restraints]).
+  initialstate.def("draw_velocities", [](const Input<model::InitialState> &o,
+                                         std::shared_ptr<Input<model::System>> system,
+                                         double temperature, py::int_ seed) {
+    if (!system) throw InputError("draw_velocities takes a System");
+    int overflow = 0;
+    long long value = PyLong_AsLongLongAndOverflow(seed.ptr(), &overflow);
+    if (overflow || value < 0)
+      throw InputError("draw_velocities: the seed must be from 0 to 2^63-1, as [dynamics] seed");
+    auto result = std::make_shared<Input<model::InitialState>>();
+    result->value = unwrap(model::drawVelocities(system->value, o.value, temperature,
+                                                 static_cast<uint64_t>(value)));
+    result->particleCount = o.particleCount;
+    if (!result->particleCount && !o.value.positions.empty())
+      result->particleCount = o.value.positions.size() / 3;
+    return result;
+  }, py::arg("system"), py::arg("temperature"), py::arg("seed"));
   auto integrator = input<model::Integrator>(m, "Integrator");
   property(integrator, "method", &model::Integrator::method);
   property(integrator, "timestep", &model::Integrator::timestep);
@@ -278,6 +324,12 @@ PYBIND11_MODULE(mdir, m) {
     // version capture. GIL release belongs to persistent execution.
     auto prepared = unwrap(model::prepare(system->value, state->value, integrator->value,
                                           ensemble->value, execution->value, schedule->value));
+    // A restraint that selects nothing restrains nothing: the control file
+    // warns of it, and so does compile.
+    for (const auto &[code, message] : prepared.system.warnings)
+      if (code == "empty_selection" && llvm::StringRef(message).starts_with("the restraint of"))
+        if (PyErr_WarnEx(PyExc_UserWarning, message.c_str(), 1) != 0)
+          throw py::error_already_set();
     Program result;
     result.compiled = unwrap(compiler::compile(prepared));
     result.prepared = std::make_shared<const model::PreparedModel>(std::move(prepared));
