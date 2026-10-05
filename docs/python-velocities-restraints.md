@@ -172,6 +172,6 @@ same control file.
 
 ## Not in this item
 
-Checkpoints (item 6) will record the restraints and their reference in the
+Checkpoints (item 5) will record the restraints and their reference in the
 fingerprint as D172 does. Restraints by expressions of absolute positions
 (D148) stay outside the D191 subset.
