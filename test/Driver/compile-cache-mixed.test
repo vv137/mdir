@@ -2,12 +2,12 @@
 # The compile cache of host objects (D[compile-cache]) on the CPU in mixed
 # precision: a cold and a warm cache give the state of no cache bit for
 # bit after 20 deterministic steps; a truncated entry and an object with a
-# byte flipped are rejected and rebuilt; a changed pipeline option or
-# precision misses; a bound of 0 MiB keeps no entry; four processes at once
-# on an empty directory leave one entry. Each scenario is a process
+# byte flipped are rejected and rebuilt; a changed pipeline option or precision
+# misses; a bound of 0 MiB keeps no entry; four processes at once on an
+# empty directory leave one entry. Each scenario is a process
 # of its own on one directory (Inputs/compile_cache.py).
 # RUN: rm -rf %t
-# RUN: %mdir_python %S/Inputs/compile_cache.py %S/Inputs/dipeptide CPU Mixed %t --misses --concurrent | FileCheck %s
+# RUN: %mdir_python %S/Inputs/compile_cache.py %S/Inputs/dipeptide CPU Mixed %t --damaged --misses --concurrent | FileCheck %s
 # CHECK: off: compiled 1 hits 0 rejected 0 stored 0
 # CHECK-NEXT: off: directory absent
 # CHECK-NEXT: cold: compiled 1 hits 0 rejected 0 stored 1 state same

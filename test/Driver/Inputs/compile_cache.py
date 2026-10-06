@@ -1,6 +1,6 @@
 """The compile cache of host objects (D[compile-cache]) across processes.
 
-  compile_cache.py ROOT TARGET PRECISION WORK [--misses] [--concurrent]
+  compile_cache.py ROOT TARGET PRECISION WORK [--damaged] [--misses] [--concurrent]
 
 The dipeptide in water with PME, SHAKE, and SETTLE, deterministic, 20 steps
 in two runs of one part each; a Simulation compiles one program. Each
@@ -10,10 +10,9 @@ scenario runs in a process of its own on the cache directory WORK/cache:
   directory is made.
 - cold: the object is generated and stored.
 - warm: a hit; nothing is generated.
-- truncated: the entry is cut in half; it is rejected, generated again,
-  and stored.
-- flipped: a byte of the stored object is flipped; likewise.
-- rewarm: a hit again.
+- with --damaged: truncated, the entry is cut in half, and it is
+  rejected, generated again, and stored; flipped, a byte of the stored
+  object is flipped, likewise; rewarm, a hit again.
 - with --misses: a changed pipeline option (not deterministic) and a
   changed precision miss, and a bound of 0 MiB leaves no entry.
 - with --concurrent: four processes start at once on an empty directory;
@@ -65,6 +64,7 @@ def child(root, target, precision, deterministic, out):
 
 def main():
     root, target, precision, work = sys.argv[1:5]
+    damaged = "--damaged" in sys.argv[5:]
     misses = "--misses" in sys.argv[5:]
     concurrent = "--concurrent" in sys.argv[5:]
     work = pathlib.Path(work)
@@ -110,19 +110,20 @@ def main():
     print(f"cold: entries {len(stored)}")
     stats, out = run("warm")
     report("warm", stats, out, reference)
-    # A truncated entry, then an object with one byte flipped.
-    entry, = stored
-    data = entry.read_bytes()
-    entry.write_bytes(data[: len(data) // 2])
-    stats, out = run("truncated")
-    report("truncated", stats, out, reference)
-    data = bytearray(entry.read_bytes())
-    data[-100] ^= 0x40
-    entry.write_bytes(bytes(data))
-    stats, out = run("flipped")
-    report("flipped", stats, out, reference)
-    stats, out = run("rewarm")
-    report("rewarm", stats, out, reference)
+    if damaged:
+        # A truncated entry, then an object with one byte flipped.
+        entry, = stored
+        data = entry.read_bytes()
+        entry.write_bytes(data[: len(data) // 2])
+        stats, out = run("truncated")
+        report("truncated", stats, out, reference)
+        data = bytearray(entry.read_bytes())
+        data[-100] ^= 0x40
+        entry.write_bytes(bytes(data))
+        stats, out = run("flipped")
+        report("flipped", stats, out, reference)
+        stats, out = run("rewarm")
+        report("rewarm", stats, out, reference)
     if misses:
         stats, _ = run("nondeterministic", deterministic=False)
         report("nondeterministic", stats)
