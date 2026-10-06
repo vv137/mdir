@@ -65,3 +65,26 @@ def serialize_gpu_tests(config, lit_config):
         lit_config.fatal(f"gpu_workers must be a positive integer, not '{value}'")
     lit_config.parallelism_groups[GPU_GROUP] = workers
     config.parallelism_group = GPUGroup()
+    limit_compile_threads(config, lit_config, workers)
+
+
+def limit_compile_threads(config, lit_config, workers):
+    """Bound the threads with which each test lowers its programs. A process
+    lowers with as many threads as the host has (D211), so the tests that
+    need the device, `workers` of them at once, would ask for `workers`
+    times the cores. Each takes its share of the cores, or compile_threads
+    when lit is given -Dcompile_threads=N. A suite took 285, 252, and 262 s
+    with 128, 8, and 1 threads to a process (one RTX 3090, 128 cores
+    shared with other jobs)."""
+    import os
+    cores = os.cpu_count() or 1
+    value = lit_config.params.get("compile_threads",
+                                  str(max(1, cores // workers)))
+    try:
+        threads = int(value)
+    except ValueError:
+        threads = 0
+    if threads < 1:
+        lit_config.fatal(
+            f"compile_threads must be a positive integer, not '{value}'")
+    config.environment["MDIR_COMPILE_THREADS"] = str(threads)

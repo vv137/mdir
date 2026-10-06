@@ -204,7 +204,9 @@ The suite runs its tests in parallel, but at most sixteen of the tests that
 need a GPU (`REQUIRES: cuda`) run at once, on the device that
 `CUDA_VISIBLE_DEVICES` selects; an empty value hides the GPU and skips
 them. `-Dgpu_workers=N` in `LIT_OPTS` changes that number; `-Dgpu_workers=1`
-runs them one at a time. The same holds for the sanitized suite (`scripts/build-sanitized.sh`)
+runs them one at a time. Each test lowers its programs with the cores over
+that number of threads (`MDIR_COMPILE_THREADS`; `-Dcompile_threads=N`
+changes it). The same holds for the sanitized suite (`scripts/build-sanitized.sh`)
 and the suite of a release (`scripts/release/publish.sh`). On a machine
 that others share, hold a lock of the device around the whole suite, as
 [docs/workflow.md](docs/workflow.md) says, so that no other suite or timing
