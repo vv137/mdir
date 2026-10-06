@@ -8753,7 +8753,7 @@ void Builder::emitPartCounts() {
   // %frame_period (0: none) (D207). A minimization takes its steps in
   // %count_outer (D202).
   static const char *const names[] = {
-      "%start_p",           "%count_outer",        "%count_inner",
+      "%start$part",        "%count_outer",        "%count_inner",
       "%count_tail",        "%count_energy_plain", "%count_energy_close",
       "%count_energy_inner", "%count_energy_periods", "%frame_period"};
   static_assert(sizeof(names) / sizeof(names[0]) == 9, "");
@@ -8808,8 +8808,8 @@ void Builder::emitPartLoop(std::string chunk,
        at = chunk.find(" call @", at))
     chunk.replace(at, 7, " func.call @");
   for (const std::string &value : carried)
-    chunk = renameValue(chunk, value, value + "_p");
-  chunk = renameValue(chunk, "%start", "%start_p");
+    chunk = renameValue(chunk, value, value + "$part");
+  chunk = renameValue(chunk, "%start", "%start$part");
   std::string typeList;
   for (size_t i = 0; i != types.size(); ++i)
     typeList += (i ? ", " : "") + types[i];
@@ -8821,18 +8821,19 @@ void Builder::emitPartLoop(std::string chunk,
      << "  %part_end = arith.constant 9223372036854775807 : index\n"
      << "  ";
   for (size_t i = 0; i != carried.size(); ++i)
-    os << (i ? ", " : "") << carried[i] << "_r";
+    os << (i ? ", " : "") << carried[i] << "$parts";
   os << " = scf.for %i_part = %c0 to %part_end step %c1\n"
      << "      iter_args(";
   for (size_t i = 0; i != carried.size(); ++i)
-    os << (i ? ", " : "") << carried[i] << "_p = " << carried[i];
+    os << (i ? ", " : "") << carried[i] << "$part = " << carried[i];
   os << ") -> (" << typeList << ") {\n";
   // The components of the state that are not numbers, which fail the part
   // (D196): the positions, velocities, and forces, in whatever type they
   // are stored. x - x is not a number for an infinity as well.
-  std::string x = boundary[0] + "_p", v = boundary[1], f = boundary[2] + "_p";
+  std::string x = boundary[0] + "$part", v = boundary[1],
+              f = boundary[2] + "$part";
   if (llvm::is_contained(carried, boundary[1]))
-    v += "_p";
+    v += "$part";
   os << "    %nf_s = md.sum_particles gather(" << x << ", " << v << ", " << f
      << " : !vec, !vec, !vec) {\n"
      << "    ^bb0(%nf_x: vector<3xf64>, %nf_v: vector<3xf64>, "
