@@ -34,7 +34,19 @@ sim.close_reporters()          # or the simulation's end; files are complete the
 - Files are opened at the first `run` after the reporter is added. An
   existing file is backed up as `mdir run` backs up its outputs (D149);
   rows and frames are appended across `run` calls; `close_reporters()` (or
-  the end of the simulation) closes the files. No control-file key changes.
+  the end of the simulation) closes the files and empties the list. No
+  control-file key changes.
+- A simulation takes one `EnergyReporter` and one `TrajectoryReporter` (the
+  outputs of `mdir run` it has one of each); callbacks are any number.
+- The energy file of a reporter present at the simulation's first run holds
+  the row of step 0, as the file of `mdir run` does; the callbacks follow
+  OpenMM and are not called at the start.
+- With the barostat of Trotter type, a built-in reporter's period must be a
+  multiple of the coupling period: a step of energy cannot fall between the
+  two steps that close a period (D92).
+- A part that fails (D196) may have written rows and frames before its
+  failure; the state returns to the step before the part, the files do not.
+- A minimization takes no reporters.
 
 Checkpoints are M2a item 5 (`python-checkpoints`) and are not reporters
 here. The log of `mdir run` is not a reporter: the energy file holds its
@@ -54,14 +66,18 @@ Reports must not cut parts:
    particles as any other step). R is the greatest common divisor of the
    periods of the built-in reporters; with a thermostat or barostat, R must
    be a multiple of the coupling period (as `energy_interval` must), or the
-   reports fall back to ending parts at their steps (correct, slower). The
-   prefix of a part before the first report point and the steps after the
-   last are the existing D196 nest.
+   reports fall back to ending parts at their steps (correct, slower). A
+   run that does not begin at a multiple of R first takes the steps up to
+   the next report in a part of its own (the existing D196 nest), and its
+   last steps after the last report likewise. A step of energy at a
+   multiple of R where no reporter is due (periods 6 and 10 give R = 2)
+   costs an evaluation of the energy and writes nothing.
 2. **What is due is decided at run time.** At each step of energy the row
    goes to the energy file if an `EnergyReporter` is due (the host decides,
    no copy beyond the scalars), and the positions are copied and written as
    a frame only where a `TrajectoryReporter` is due: the frame period is an
-   argument of the entry and guards the copy (`scf.if`). Reporters due at
+   argument of the entry and guards the copy (a loop of one iteration or none, which the passes that
+   place the buffers carry). Reporters due at
    one step share the step of energy and the copy.
 3. **The writers are those of `mdir run`.** Rows and frames go through the
    same host functions (`mdrtWriteEnergies`, `mdrtWriteFrame`) and writers
