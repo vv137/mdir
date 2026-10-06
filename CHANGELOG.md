@@ -162,6 +162,10 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- The warning `short_thermostat_period` is reported once for a run from a
+  topology. It was added to the system twice, so `mdir check`,
+  `mdir check --json`, `mdir run`, and a Python model showed it twice (#124).
+
 - A persistent Python simulation no longer keeps the memory of each part:
   every `run(n)` call left its device buffers (about 97 MiB on JAC on a GPU)
   or its host buffers (on the CPU) allocated, until a long run ran out of
