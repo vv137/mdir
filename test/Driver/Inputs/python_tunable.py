@@ -257,6 +257,48 @@ def run_nbfix(target, precision):
     assert abs(remixed - reference) > 1e-3
 
 
+def run_cache(target, precision, work):
+    """The compile cache (D212) and tunables: the values of tunables are
+    data of the entry's buffers and arguments, not of the module whose
+    bitcode keys a cached host object, so programs compiled with other
+    values hit the same entry and run with their own values; an update
+    compiles nothing and takes nothing from the cache."""
+    import os
+    # A directory of its own, whatever the suite gives the other tests.
+    os.environ.pop("MDIR_COMPILE_CACHE", None)
+    os.environ["MDIR_COMPILE_CACHE_DIR"] = str(work / "cache")
+    system, state = model(declarations)
+    first = simulation(compile_(system, state, target, precision))
+    stats = first.compile_stats
+    assert stats["cache_stored"] == 1 and stats["cache_hits"] == 0, stats
+    values = new_values(first)
+    first.run(4)
+    first.tunables.update(values)
+    assert first.compile_stats == stats, (first.compile_stats, stats)
+    first.run(6, energy=True)
+
+    # A compile with other values hits the entry of the first.
+    other, _ = model(lambda s: declarations(s, values))
+    cached = simulation(compile_(other, state, target, precision))
+    assert cached.compile_stats["cache_hits"] == 1, cached.compile_stats
+    # The same compile without the cache gives the same run to the bit.
+    os.environ["MDIR_COMPILE_CACHE"] = "off"
+    plain = simulation(compile_(other, state, target, precision))
+    assert plain.compile_stats["cache_hits"] == 0 and plain.compile_stats["host_compiled"] == 1
+    del os.environ["MDIR_COMPILE_CACHE"]
+    for sim in (cached, plain):
+        sim.run(10, energy=True)
+    d = difference(cached.state(), plain.state())
+    assert d == [0.0, 0.0, 0.0] and cached.state().energies == plain.state().energies, d
+    # And its values are its own, not those of the first compile.
+    assert all(np.array_equal(cached.tunables[k], values[k]) for k in values)
+    reference = simulation(compile_(system, state, target, precision))
+    reference.run(10, energy=True)
+    assert reference.state().energies != cached.state().energies
+    print(f"{target} {precision}: a compile with other values hits the cached object of the first, "
+          f"and runs to the bit as one compiled without the cache; an update compiles nothing")
+
+
 def run_declarations():
     system, state = model()
     n = system.particle_count
@@ -710,6 +752,8 @@ elif scenario == "updates":
     run_updates(sys.argv[3], sys.argv[4])
 elif scenario == "integrators":
     run_integrators(sys.argv[3], sys.argv[4])
+elif scenario == "cache":
+    run_cache(sys.argv[3], sys.argv[4], pathlib.Path(sys.argv[5]))
 elif scenario == "nbfix":
     run_nbfix(sys.argv[3], sys.argv[4])
 elif scenario == "oracle":

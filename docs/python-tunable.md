@@ -188,6 +188,22 @@ check: the cost is that of building the program's text and values, about
   Python checkpoints are M2a item 5, so this item exposes them
   (`program.plan["tunables"]`, `sim.tunables`) for it.
 
+## The compile cache
+
+The compile cache (D212, [compile-cache.md](compile-cache.md)) keys a host
+object by the bitcode of the module it is generated from. The values of
+tunables never enter the module: they are the entry's buffers and
+arguments, and an update that would change the module's text is refused.
+So programs compiled with other `values=` of the same declarations have
+one key and share one cached object, each running with its own values, and
+an update compiles nothing and reads nothing from the cache
+(`Simulation.compile_stats` is unchanged by it). `python-tunable-cache*.test`
+checks that a compile with other values hits the first compile's entry and
+runs 10 steps to the bit as one compiled without the cache, on the CPU and
+a GPU in double and mixed precision. A program without tunables keeps its
+values as constants of its module, so other values are another key, as
+before.
+
 ## Units and precision
 
 Values are in MD units, as the model's: e, nm, kJ/mol, and for a constant

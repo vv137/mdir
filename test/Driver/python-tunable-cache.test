@@ -1,0 +1,12 @@
+# REQUIRES: python-api
+# Tunable parameters (D[python-tunable]) and the compile cache (D212) on the
+# CPU: the values of tunables are runtime data, not part of the module that
+# keys a cached host object, so a compile with other values hits the first
+# compile's entry and runs, to the bit, as one compiled without the cache,
+# with its own values; an update compiles nothing.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_tunable.py %S/Inputs/dipeptide cache CPU Double %t | FileCheck %s
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_tunable.py %S/Inputs/dipeptide cache CPU Mixed %t | FileCheck %s
+# CHECK: CPU {{Double|Mixed}}: a compile with other values hits the cached object of the first
+# CHECK: cache passed
