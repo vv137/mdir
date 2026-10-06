@@ -100,6 +100,11 @@ format, or the outputs; every such change is listed under **Changed** or
   tests that bounded its wall time, with their CPU twins, are split into one
   file per scenario. On one RTX 3090 the suite takes about 260 s instead of
   about 1090 s (D208, #141).
+- The free-energy, Python minimization, and velocities-and-restraints tests
+  that D208 left whole are split by scenario as well, on the CPU and on a
+  GPU; the runs of the restraints' effect stop after their first part. The
+  slowest file on a GPU is now a `python-simulation-lifetime` one, which
+  runs one process's whole sequence (D208, #141).
 
 ### Added
 

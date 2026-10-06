@@ -93,8 +93,9 @@ flat. Within a part the program is that of `mdir run`.
 
 ## Validation
 
-`test/Driver/python-minimize.test` (CPU) and `python-minimize-gpu.test`
-run `test/Driver/Inputs/python_minimize.py` on the dipeptide in water of
+`test/Driver/python-minimize-*.test` (CPU), one file per scenario of
+`test/Driver/Inputs/python_minimize.py` (`double`, `mixed`,
+`cutoff-refusals`), and their `-gpu` twins run it on the dipeptide in water of
 `test/Driver/Inputs/dipeptide` (1168 particles; cutoff 8 Å, pair list 9 Å,
 PME; SHAKE and SETTLE; a restraint of 10 kcal/mol/Å² on the heavy atoms of
 the peptide; deterministic mode) against `mdir run` with the same control
