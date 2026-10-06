@@ -1,0 +1,20 @@
+# Device-resident buffers of a persistent simulation (D[resident-buffers]),
+# scenario sanitize of Driver/Inputs/python_resident.py, under
+# compute-sanitizer: parts that continue one activation of the entry, the
+# copies of the state at their ends and to the host, an update of tunables
+# that ends an activation and begins another, a part that fails, and
+# simulations that end with their activations, with no access beyond a
+# buffer and no read of memory that nothing has written.
+#
+# REQUIRES: cuda, compute-sanitizer, python-api
+#
+# RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 %mdir_python \
+# RUN:   %S/../Driver/Inputs/python_resident.py %S/../Driver/Inputs/dipeptide GPU sanitize 2>&1 \
+# RUN:   | FileCheck %s
+# RUN: %compute_sanitizer --tool initcheck --error-exitcode 1 %mdir_python \
+# RUN:   %S/../Driver/Inputs/python_resident.py %S/../Driver/Inputs/dipeptide GPU sanitize 2>&1 \
+# RUN:   | FileCheck %s
+
+# CHECK: steps 13, a part that failed, three simulations
+# CHECK: resident sanitize passed
+# CHECK: ERROR SUMMARY: 0 errors

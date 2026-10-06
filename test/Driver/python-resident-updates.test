@@ -2,10 +2,11 @@
 # Device-resident buffers of a persistent simulation on the CPU
 # (D[resident-buffers]), scenario updates of Inputs/python_resident.py.
 # Updates of tunables, evaluations, and reads of the state between parts:
-# any partition of the steps after them gives the same state to the bit.
+# any partition of the steps after them gives the same state to the bit;
+# an evaluation before the first run leaves the run that follows unchanged.
 # RUN: %mdir_python %S/Inputs/python_resident.py %S/Inputs/dipeptide CPU updates | FileCheck %s
-# CHECK: Double VelocityVerlet: after an update and an evaluation, parts of 12, 5+7, and 1+1+10 steps give the same state to the bit
-# CHECK: Double Leapfrog: after an update and an evaluation, parts of 12, 5+7, and 1+1+10 steps give the same state to the bit
-# CHECK: Mixed VelocityVerlet: after an update and an evaluation, parts of 12, 5+7, and 1+1+10 steps give the same state to the bit
-# CHECK: Mixed Leapfrog: after an update and an evaluation, parts of 12, 5+7, and 1+1+10 steps give the same state to the bit
+# CHECK: Double VelocityVerlet: after an update and an evaluation, parts of 12, 5+7, and 1+1+10 steps give the same state to the bit; an evaluation before the first run changes nothing
+# CHECK: Double Leapfrog: after an update and an evaluation, parts of 12, 5+7, and 1+1+10 steps give the same state to the bit; an evaluation before the first run changes nothing
+# CHECK: Mixed VelocityVerlet: after an update and an evaluation, parts of 12, 5+7, and 1+1+10 steps give the same state to the bit; an evaluation before the first run changes nothing
+# CHECK: Mixed Leapfrog: after an update and an evaluation, parts of 12, 5+7, and 1+1+10 steps give the same state to the bit; an evaluation before the first run changes nothing
 # CHECK: resident updates passed

@@ -13,6 +13,10 @@ Scenarios:
             parts: any partition of the steps after them gives the same state
             to the bit, on velocity Verlet and leapfrog, in double and mixed
             precision
+  threads   an activation resumed on threads other than the one it began
+            on, with OpenMP threads on the CPU, gives the state of a run on
+            one thread to the bit
+  sanitize  a short life of three simulations for compute-sanitizer
 """
 import sys
 
@@ -33,7 +37,7 @@ def expect(error, call, text=""):
 
 
 def compile_program(precision="Double", method="VelocityVerlet", timestep=0.001,
-                    kind="NVE", tunable=False, overlap=False):
+                    kind="NVE", tunable=False, overlap=False, threads=1):
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
     system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
@@ -52,6 +56,7 @@ def compile_program(precision="Double", method="VelocityVerlet", timestep=0.001,
     ensemble.temperature, ensemble.coupling_period = 300, 10
     execution.target, execution.precision = target, getattr(mdir.Precision, precision)
     execution.deterministic = True
+    execution.threads = threads
     return mdir.compile(system, state, integrator, ensemble, execution, mdir.Schedule()), state
 
 
@@ -132,15 +137,69 @@ def updates():
                     sim.run(n)
                 return sim.state()
 
+            # Before the first run, an evaluation and then steps are the run
+            # that takes its steps at once: the start ends at a boundary in
+            # both.
+            direct, evaluated = mdir.Simulation(program), mdir.Simulation(program)
+            direct.run(20)
+            evaluated.run(0, energy=True)
+            evaluated.run(20)
+            same(evaluated.state(), direct.state(), "an evaluation before the first run")
             whole = history([12])
             same(history([5, 7]), whole, "an update, then parts")
             same(history([1, 1, 10], read=True), whole, "reads of the state between parts")
             assert whole.tunables_version == 1
             print(f"{precision} {method}: after an update and an evaluation, parts of "
-                  f"12, 5+7, and 1+1+10 steps give the same state to the bit")
+                  f"12, 5+7, and 1+1+10 steps give the same state to the bit; an "
+                  f"evaluation before the first run changes nothing")
 
 
-SCENARIOS = {"failures": failures, "updates": updates}
+def threads():
+    import threading
+    for precision in ("Double", "Mixed"):
+        for count in ((1, 4) if target == mdir.Target.CPU else (1,)):
+            program, _ = compile_program(precision, kind="NVT", threads=count)
+            alone = mdir.Simulation(program)
+            for n in (3, 4, 5, 9):
+                alone.run(n)
+            moved = mdir.Simulation(program)
+            moved.run(3)
+            # The activation begun here takes its next parts on other
+            # threads, then here again.
+            for n in (4, 5):
+                thread = threading.Thread(target=moved.run, args=(n,))
+                thread.start()
+                thread.join()
+            moved.run(9)
+            same(moved.state(), alone.state(), "parts on other threads")
+            print(f"{precision}, Execution.threads {count}: parts on three Python threads "
+                  f"give the state of one, to the bit")
+
+
+def sanitize():
+    # Short and in mixed precision, for compute-sanitizer: parts that
+    # continue an activation, copies of the state, an update that ends one
+    # activation and begins another, a part that fails, and simulations
+    # that end with their activations.
+    program, _ = compile_program("Mixed", kind="NVT", tunable=True)
+    sim = mdir.Simulation(program)
+    sim.run(3)
+    sim.run(4, energy=True)
+    sim.state()
+    sim.tunables.update({"q": sim.tunables["q"] * 0.9})
+    sim.run(5)
+    other = mdir.Simulation(program)
+    other.run(2)
+    sim.run(1)
+    del other
+    program, _ = compile_program("Mixed", overlap=True)
+    blown = mdir.Simulation(program)
+    expect(mdir.SimulationError, lambda: blown.run(3), "not numbers")
+    print(f"steps {sim.step}, a part that failed, three simulations")
+
+
+SCENARIOS = {"failures": failures, "updates": updates, "threads": threads,
+             "sanitize": sanitize}
 if scenario not in SCENARIOS:
     raise SystemExit(f"unknown scenario '{scenario}'")
 SCENARIOS[scenario]()

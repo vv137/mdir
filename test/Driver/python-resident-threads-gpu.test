@@ -1,0 +1,9 @@
+# REQUIRES: python-api, cuda
+# Device-resident buffers of a persistent simulation on a GPU
+# (D[resident-buffers]), scenario threads of Inputs/python_resident.py.
+# An activation of the entry resumed on Python threads other than the one
+# it began on gives the state of a run on one thread to the bit.
+# RUN: %mdir_python %S/Inputs/python_resident.py %S/Inputs/dipeptide GPU threads | FileCheck %s
+# CHECK: Double, Execution.threads 1: parts on three Python threads give the state of one, to the bit
+# CHECK: Mixed, Execution.threads 1: parts on three Python threads give the state of one, to the bit
+# CHECK: resident threads passed
