@@ -382,7 +382,8 @@ PYBIND11_MODULE(mdir, m) {
     // A restraint that selects nothing restrains nothing: the control file
     // warns of it, and so does compile.
     for (const auto &[code, message] : prepared.system.warnings)
-      if (code == "empty_selection" && llvm::StringRef(message).starts_with("the restraint of"))
+      if ((code == "empty_selection" && llvm::StringRef(message).starts_with("the restraint of")) ||
+          code == "tunable_fixed_pairs")
         if (PyErr_WarnEx(PyExc_UserWarning, message.c_str(), 1) != 0)
           throw py::error_already_set();
     Program result;

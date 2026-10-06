@@ -183,7 +183,10 @@ mdir::model::resolveTunables(const System &model, driver::Control &control,
     return std::move(error);
 
   // σ and ε of the pairs of types follow the combining rule from those of
-  // the types, which the table of the model must already do.
+  // the types; a pair whose values in the model do not (an NBFIX of CHARMM
+  // or GROMACS) keeps them, as an override keeps them when the types'
+  // parameters change (maintainer's decision on PR #159).
+  set.fixedPairs.assign(types * types, false);
   for (const TunableSet::Entry &entry : set.tunables) {
     if (entry.kind != TunableSet::Entry::Sigma &&
         entry.kind != TunableSet::Entry::Epsilon)
@@ -204,15 +207,23 @@ mdir::model::resolveTunables(const System &model, driver::Control &control,
           rule = std::sqrt(set.typeEpsilon[a] * set.typeEpsilon[b]);
         }
         if (!follows(value, rule))
-          return input("the tunable '" + entry.name + "': " +
-                       (sigma ? "σ" : "ε") + " of the types '" +
-                       topology.typeNames[a] + "' and '" + topology.typeNames[b] +
-                       "' is " + number(value) + ", and the combining rule "
-                       "of the two types gives " + number(rule) +
-                       "; a table with such pairs (NBFIX) cannot take per-type "
-                       "values");
+          set.fixedPairs[a * types + b] = set.fixedPairs[b * types + a] = true;
       }
   }
+  std::string fixed;
+  size_t count = 0;
+  for (size_t a = 0; a != types; ++a)
+    for (size_t b = a; b != types; ++b)
+      if (set.fixedPairs[a * types + b]) {
+        fixed += (count++ ? ", " : "") + topology.typeNames[a] + "-" +
+                 topology.typeNames[b];
+      }
+  if (count)
+    system.warnings.push_back(
+        {"tunable_fixed_pairs",
+         "per-type sigma and epsilon are tunable, and " + std::to_string(count) +
+             " pair" + (count > 1 ? "s" : "") + " of types whose values do not "
+             "follow the combining rule (NBFIX) keep them: " + fixed});
   for (const auto &tails : system.pairTails)
     set.pairTails.push_back(!tails.empty());
   control.tunables = true;
@@ -290,6 +301,8 @@ llvm::Error mdir::model::applyTunables(
   // geometric mean) for σ, Berthelot for ε.
   for (size_t a = 0; a != types; ++a)
     for (size_t b = 0; b != types; ++b) {
+      if (!set.fixedPairs.empty() && set.fixedPairs[a * types + b])
+        continue;
       if (mixesSigma)
         topology->sigma[a * types + b] = mixSigma(mixing, sigma[a], sigma[b]);
       if (mixesEpsilon)

@@ -20,7 +20,8 @@ format, or the outputs; every such change is listed under **Changed** or
   atomic update that advances a value version (`tunables.version`,
   `tunables.history`, `State.tunables_version`, and a last column
   `tunables_version` in the energy file of a simulation with tunables). The
-  quantities derived from them (the 1-4 products, the constants of PME and
+  quantities derived from them (the table of the types by the combining
+  rule, whose NBFIX pairs keep their values with a warning; the 1-4 products, the constants of PME and
   of the reaction field, the correction for the dispersion, the tails of
   pair terms) are rebuilt by the code that compiles them, and an update
   equals a compile with the new values to the bit. `run(0, energy=True)`

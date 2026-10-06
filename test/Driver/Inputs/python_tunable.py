@@ -133,6 +133,130 @@ def difference(a, b):
     return [float(np.abs(getattr(a, f) - getattr(b, f)).max()) for f in ("positions", "velocities", "forces")]
 
 
+def gromacs_model(tunables):
+    """Propane and water with an NBFIX of CT and OW in [ nonbond_params ]
+    (Inputs/gromacs), the Lennard-Jones cut without a shift or correction,
+    a Coulomb cutoff."""
+    gromacs = root + "/../gromacs"
+    loaded = mdir.load_gromacs(gromacs + "/system.top", gromacs + "/system.gro", defines=["FLEXIBLE"])
+    system, state = loaded.make_system(), loaded.make_state()
+    system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.8
+    system.truncation = mdir.Truncation.None_
+    system.dispersion = mdir.DispersionCorrection.None_
+    system.tunables = tunables
+    return system, state
+
+
+def run_nbfix(target, precision):
+    """Per-type sigma and epsilon on a table with an NBFIX: an update equals
+    a compile with the rule's values for the other pairs and the NBFIX's
+    own, to the bit; the change of the energy at fixed positions against a
+    NumPy sum of the Lennard-Jones that keeps the NBFIX."""
+    import warnings
+    T = mdir.Tunable
+
+    def declarations(values=None):
+        values = values or {}
+        return [T("sigma", "sigma", mixing="geometric", values=values.get("sigma")),
+                T("epsilon", "epsilon", values=values.get("epsilon"))]
+
+    system, state = gromacs_model(declarations())
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        sim = simulation(compile_(system, state, target, precision))
+    sim.run(6)
+    sim.run(0, energy=True)
+    at = sim.state()
+    theta0 = dict(sim.tunables)
+    names = system.type_names
+    theta1 = {"sigma": theta0["sigma"] * np.array([1.05 if n in ("CT", "OW") else 0.98 for n in names]),
+              "epsilon": theta0["epsilon"] * np.array([1.3 if n in ("CT", "OW") else 0.9 for n in names])}
+    sim.tunables.update(theta1)
+    updated = sim.state()
+    du = updated.energies["potential"] - at.energies["potential"]
+    sim.run(10, energy=True)
+    after = sim.state()
+
+    other, _ = gromacs_model(declarations(theta1))
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        fresh = simulation(compile_(other, state_of(other, at), target, precision))
+    fresh.run(0, energy=True)
+    assert np.array_equal(fresh.state().forces, updated.forces)
+    assert fresh.state().energies == updated.energies
+    fresh.run(10, energy=True)
+    d = difference(after, fresh.state())
+    assert d == [0.0, 0.0, 0.0] and after.energies == fresh.state().energies, d
+    print(f"{target} {precision}: NBFIX kept: an update at step 6 and 10 steps equal a compile with "
+          f"the new values from that state to the bit")
+
+    if target != "CPU" or precision != "Double":
+        return
+    # NumPy: the Lennard-Jones of the pairs not excluded within the cutoff,
+    # σ and ε of the geometric rule but for CT-OW, the NBFIX's.
+    top = open(root + "/../gromacs/system.top").read()
+    bonds, counts = [], {}
+    section = None
+    for line in top.splitlines():
+        line = line.split(";")[0].strip()
+        if line.startswith("["):
+            section = line.strip("[] ")
+            continue
+        if section == "bonds" and line:
+            bonds.append(tuple(int(x) - 1 for x in line.split()[:2]))
+        if section == "molecules" and line:
+            counts[line.split()[0]] = int(line.split()[1])
+    n_pro = 11
+    graph = {i: set() for i in range(n_pro)}
+    for i, j in bonds:
+        graph[i].add(j); graph[j].add(i)
+    excluded = set()
+    for m in range(counts["PRO"]):
+        o = n_pro * m
+        for i in range(n_pro):
+            seen, frontier = {i}, {i}
+            for _ in range(3):
+                frontier = {k for f in frontier for k in graph[f]} - seen
+                seen |= frontier
+            excluded |= {(o + min(i, j), o + max(i, j)) for j in seen if j != i}
+    for w in range(counts["SOL"]):
+        o = n_pro * counts["PRO"] + 3 * w
+        excluded |= {(o, o + 1), (o, o + 2), (o + 1, o + 2)}
+    assert n_pro * counts["PRO"] + 3 * counts["SOL"] == len(at.positions)
+    types = system.particle_types
+    x, box = at.positions, np.diag(at.cell.vectors)
+    ct, ow = names.index("CT"), names.index("OW")
+    c6, c12 = 2.60000e-03, 3.10000e-06
+    fixed = ((c12 / c6) ** (1 / 6), c6 * c6 / (4 * c12))
+
+    def energy(theta, keep=True):
+        sig, eps = theta["sigma"], theta["epsilon"]
+        total = 0.0
+        for i in range(len(x) - 1):
+            d = x[i + 1:] - x[i]
+            d -= box * np.round(d / box)
+            r = np.sqrt((d * d).sum(1))
+            js = np.arange(i + 1, len(x))
+            a, b = types[i], types[js]
+            s_ij, e_ij = np.sqrt(sig[a] * sig[b]), np.sqrt(eps[a] * eps[b])
+            if keep:
+                pair = ((a == ct) & (b == ow)) | ((a == ow) & (b == ct))
+                s_ij = np.where(pair, fixed[0], s_ij)
+                e_ij = np.where(pair, fixed[1], e_ij)
+            ok = (r < 0.8) & np.array([(i, j) not in excluded for j in js])
+            sr6 = (s_ij[ok] / r[ok]) ** 6
+            total += (4 * e_ij[ok] * (sr6 * sr6 - sr6)).sum()
+        return total
+
+    reference = energy(theta1) - energy(theta0)
+    remixed = energy(theta1, False) - energy(theta0, False)
+    print(f"NBFIX: the change of the energy at fixed positions {du:.9f}, NumPy with CT-OW kept "
+          f"{reference:.9f} kJ/mol, difference {du - reference:.1e} (with CT-OW mixed by the rule "
+          f"it would be {remixed:.6f})")
+    assert abs(du - reference) < 1e-9 * max(1.0, abs(reference))
+    assert abs(remixed - reference) > 1e-3
+
+
 def run_declarations():
     system, state = model()
     n = system.particle_count
@@ -175,19 +299,16 @@ def run_declarations():
     expect(mdir.InputError, lambda: T("s", "sigma", map=np.zeros(3)), "int32 or int64")
     expect(mdir.InputError, lambda: T("s", "sigma", values=[0.3]), "lists are not accepted")
     print(f"declaration refusals: {len(cases) + 4} passed")
-    # A table with an override (an NBFIX of [ nonbond_params ]) takes no
-    # per-type values.
-    gromacs = root + "/../gromacs"
-    loaded = mdir.load_gromacs(gromacs + "/system.top", gromacs + "/system.gro", defines=["FLEXIBLE"])
-    other, other_state = loaded.make_system(), loaded.make_state()
-    other.cutoff, other.pairlist_distance, other.switch_distance = 0.8, 0.9, 0.8
-    other.truncation = mdir.Truncation.None_
-    other.tunables = [T("s", "sigma", mixing="geometric")]
-    message = expect(mdir.InputError, lambda: compile_(other, other_state), "NBFIX")
-    assert "'CT' and 'OW'" in message or "'OW' and 'CT'" in message, message
-    other.tunables = [T("q", "charge")]
-    compile_(other, other_state)
-    print("NBFIX: refused for sigma, naming CT and OW; charges of the same model compile")
+    # A table with an override (an NBFIX of [ nonbond_params ]): the pair
+    # keeps its values, and compile warns once, naming it.
+    import warnings
+    other, other_state = gromacs_model([T("s", "sigma", mixing="geometric")])
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        compile_(other, other_state)
+    messages = [str(w.message) for w in caught if "NBFIX" in str(w.message)]
+    assert len(messages) == 1 and messages[0].endswith("keep them: CT-OW"), messages
+    print(f"NBFIX: one warning: {messages[0]}")
     # Declaring is structural: the program goes stale.
     system.tunables = good
     program = compile_(system, state)
@@ -589,6 +710,8 @@ elif scenario == "updates":
     run_updates(sys.argv[3], sys.argv[4])
 elif scenario == "integrators":
     run_integrators(sys.argv[3], sys.argv[4])
+elif scenario == "nbfix":
+    run_nbfix(sys.argv[3], sys.argv[4])
 elif scenario == "oracle":
     run_oracle(sys.argv[3], pathlib.Path(sys.argv[4]))
 else:

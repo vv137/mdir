@@ -342,7 +342,12 @@ the dispersion at the new $\sigma$ and $\epsilon$ equals its formula to
 $10^{-14}$; and central differences of the energy in a tunable constant of
 a pair term, by two updates at fixed positions, equal the derivative that
 `observe` writes (Section 6.8) to $4.7\times10^{-8}$, its tail and the
-estimate of its shift included (`python-tunable-oracle.test`).
+estimate of its shift included (`python-tunable-oracle.test`). On a GROMACS
+topology with an NBFIX in `[ nonbond_params ]`, which keeps its values
+under per-type $\sigma$ and $\epsilon$, an update equals a compile with the
+rule's table but for that pair to the bit, and its change of the energy a
+NumPy sum of the Lennard-Jones to $1.5\times10^{-11}$ kJ/mol of 508.5
+(`python-tunable-nbfix*.test`).
 
 ## 9.7 Neighbor structures
 

@@ -1,0 +1,11 @@
+# REQUIRES: python-api
+# Per-type sigma and epsilon tunable on a table with an NBFIX of
+# [ nonbond_params ] (D[python-tunable], maintainer's decision on PR #159):
+# the pair CT-OW keeps its values, and an update during a run equals, to the
+# bit, a compile with the rule's values for the other pairs and the NBFIX's
+# own, on the CPU against a NumPy sum of the Lennard-Jones.
+# RUN: %mdir_python %S/Inputs/python_tunable.py %S/Inputs/dipeptide nbfix CPU Double | FileCheck %s --check-prefixes=CHECK,NUMPY
+# RUN: %mdir_python %S/Inputs/python_tunable.py %S/Inputs/dipeptide nbfix CPU Mixed | FileCheck %s
+# CHECK: CPU {{Double|Mixed}}: NBFIX kept: an update at step 6 and 10 steps equal a compile with the new values from that state to the bit
+# NUMPY: NBFIX: the change of the energy at fixed positions
+# CHECK: nbfix passed

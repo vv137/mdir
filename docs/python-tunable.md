@@ -79,10 +79,15 @@ $\sigma_{ab} = (\sigma_a+\sigma_b)/2$ (Lorentz; `mixing="geometric"`
 gives $\sqrt{\sigma_a\sigma_b}$) and
 $\epsilon_{ab}=\sqrt{\epsilon_a\epsilon_b}$ (Berthelot), recomputed on the
 host from the per-type values. At compile time the initial per-type values
-are the diagonal of the table, and the table must follow the rule: an entry
-that differs from the rule by more than $10^{-6}$ relative (an NBFIX of
-CHARMM or GROMACS, an edited Amber pair) is refused, naming the pair of
-types. Amber's tables follow it within $2\times10^{-7}$ (the eight digits of
+are the diagonal of the table. A pair of types whose $\sigma$ (where its
+$\epsilon$ is not 0) or $\epsilon$ differs from the rule of the declared
+parameters by more than $10^{-6}$ relative (an NBFIX of CHARMM or GROMACS,
+an edited Amber pair) keeps both of its values, as an override keeps them
+in those force fields when the parameters of the types change; `compile`
+warns once (`UserWarning`) and lists such pairs (maintainer's decision on
+PR #159, Q2; first proposed as a refusal). A tunable of the table by pairs
+of types, which would let such pairs change, is a separate item (#160).
+Amber's tables follow the rule within $2\times10^{-7}$ (the eight digits of
 `ACOEF`/`BCOEF`; JAC, cellulose, factor IX, the dipeptide); the table of the
 rule replaces them, so a tunable run differs from one without tunables at
 that level. Pairs of types where both $\epsilon$ are 0 keep
@@ -195,8 +200,7 @@ accumulated in f64 by its evaluator.
 
 ## Refused combinations
 
-A tunable `sigma` or `epsilon` with a table that the rule does not
-reproduce; an unknown term or parameter; a parameter declared twice; a map
+An unknown term or parameter; a parameter declared twice; a map
 of the wrong length, with entries outside $[-1, M)$, or with an entry no
 site takes; `values` of the wrong shape or not finite; a name that is not
 an identifier, or used twice; `mixing` for a parameter other than `sigma`.
@@ -229,8 +233,18 @@ in two.
 | Correction for the dispersion at new σ and ε | $-\tfrac{2\pi}{3}N^2\langle C_6\rangle/(Vr_c^3)$ in NumPy | Within 1.0e-14 relative | 1e-9 |
 | $\partial U/\partial l$ of the pair term by central differences ($h = 10^{-5}$ nm, two updates) | `observe` of `mdir run` at the same positions, with tail and shift estimate (D189, D209, D210) | 172.744550 against 172.744542 kcal/mol/Å, 4.7e-8 relative | 1e-6 |
 
-Refusals: 18 of declarations (including an NBFIX of `[ nonbond_params ]`
-in a GROMACS topology, refused for per-type σ and naming CT and OW), 6 of
+NBFIX (`python-tunable-nbfix*.test`): on propane and water of
+`Inputs/gromacs` (224 atoms, CT-OW set in `[ nonbond_params ]`), per-type σ
+(geometric) and ε tunable; compile warns once, naming CT-OW. An update at
+step 6 (σ of CT and OW by 1.05, ε by 1.3, the others by 0.98 and 0.9) and
+10 steps equal, to the bit, a compile with those values from the state of
+step 6 (the rule's table but for CT-OW, which keeps its values): CPU and
+GPU, double and mixed. The change of the energy at fixed positions,
+508.539313772 kJ/mol, equals a NumPy sum of the Lennard-Jones over the
+pairs not excluded within the cutoff, CT-OW kept, to 1.5e-11 kJ/mol (with
+CT-OW mixed by the rule it would be 567.49).
+
+Refusals: 18 of declarations, 6 of
 updates, each changing neither values nor version; versions in the history,
 the states, and the energy file (`tunables_version` 0, 0, 0, 1, 2 at steps
 0 to 20 with updates at 10 and 15); the program goes stale when the

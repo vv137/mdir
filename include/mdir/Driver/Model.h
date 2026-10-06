@@ -64,6 +64,10 @@ struct TunableSet {
   /// σ and ε of each type as the model gives them, which a type that a map
   /// leaves out keeps.
   std::vector<double> typeSigma, typeEpsilon;
+  /// For each pair of types (`a * T + b`), whether its σ and ε are an
+  /// override of the combining rule in the model (an NBFIX), which keeps
+  /// its values when per-type σ or ε are tunable.
+  std::vector<bool> fixedPairs;
   /// Whether each pair term's tail is in the correction for the
   /// dispersion at the values of the compile (D209), which an update keeps.
   std::vector<bool> pairTails;

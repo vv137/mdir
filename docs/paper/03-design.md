@@ -542,7 +542,8 @@ which the barostat takes with the dispersion's $6E_\text{disp}$
 (Section 5.4) as arguments of the entry once they depend on
 $\boldsymbol\theta$. The pairs three bonds apart take $fq_iq_js_C$; the
 table of the types takes $\sigma_{ab} = (\sigma_a + \sigma_b)/2$ and
-$\epsilon_{ab} = \sqrt{\epsilon_a\epsilon_b}$ from the types' own, and
+$\epsilon_{ab} = \sqrt{\epsilon_a\epsilon_b}$ from the types' own, but for
+pairs that the model sets apart from the rule (NBFIX), which keep theirs, and
 $\langle C_6\rangle$ of $E_\text{disp}$ follows from it; the tails $I_{ij}$ of
 pair terms are integrated anew (Section 5.4).
 
