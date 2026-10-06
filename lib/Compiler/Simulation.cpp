@@ -1069,6 +1069,9 @@ llvm::Error Simulation::updateTunables(
   System system = compiledSystem;
   if (llvm::Error error = model::applyTunables(set, values, control, system))
     return error;
+  // The width of the neighbor structures is the compiled program's: counting
+  // the neighbors anew took 0.8 s of the 0.81 s of an update on JAC.
+  control.neighborWidth = compiled->program.neighborWidth;
   auto program = buildProgram(control, system);
   if (!program)
     return inputError("the new values of the tunables: " +
