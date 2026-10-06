@@ -387,6 +387,10 @@ private:
   /// file, in kJ/mol; with `decoupled`, without the pairs that the
   /// selection of [free_energy] decouples.
   double getTopologyDispersion(bool decoupled) const;
+  /// What a shift of the topology's Lennard-Jones to 0 at the cutoff takes
+  /// from the pairs within it, estimated at a uniform density, in kJ/mol at
+  /// the volume of the file (D[shifted-derivatives]).
+  double getTopologyShift(bool decoupled) const;
   /// The expressions of the pair terms, whose tails beyond the cutoff
   /// System::pairTails counts (D209).
   std::vector<Expression> tailExpressions;
@@ -400,12 +404,21 @@ private:
   /// kJ/mol, with the values `changes` in place of those of the run (a
   /// component `lambda_<name>` of λ, or a constant of the term), and its
   /// share of the trace of the virial; an error if the integral fails.
-  llvm::Expected<std::pair<double, double>>
+  struct PairTail {
+    /// The tail, its share of the trace of the virial, and the estimate of
+    /// what a shift to 0 at the cutoff takes from the pairs within it
+    /// (D[shifted-derivatives]), in kJ/mol at the volume of the file.
+    double energy = 0.0, virial = 0.0, shift = 0.0;
+  };
+  llvm::Expected<PairTail>
   getPairTail(unsigned index, const llvm::StringMap<double> &changes) const;
-  /// The sum of the tails of the pair terms at the values `changes`.
+  /// The sum over the pair terms, at the values `changes`, of the tail and
+  /// the estimate of the shift: what the correction adds to the quantities
+  /// of the shifted potential (D[shifted-derivatives]).
   double getPairTails(const llvm::StringMap<double> &changes) const;
-  /// The derivative of the tail of the pair term `index` in the value
-  /// `name`: exactly 0 if its expression does not read it.
+  /// The derivative of the tail and the estimate of the shift of the pair
+  /// term `index` in the value `name`: exactly 0 if its expression does not
+  /// read it.
   double getPairTailDerivative(unsigned index, StringRef name,
                                double value) const;
   /// The values of the components of λ at the state `k`.
@@ -1651,20 +1664,26 @@ llvm::Error Builder::collectTopology() {
     // times 1 − λ: the tail of their soft-core Lennard-Jones is that of
     // the plain one times 1 − λ (D161).
     double energy = getTopologyDispersion(false);
+    double shift = getTopologyShift(false);
     if (decouples()) {
       double lambda = getLambda("vdw");
       energy = (1.0 - lambda) * energy + lambda * getTopologyDispersion(true);
+      shift = (1.0 - lambda) * shift + lambda * getTopologyShift(true);
     }
-    program.dispersionEnergy = energy;
+    // Under "POTENTIAL_SHIFT" the energy that the run reports is shifted,
+    // and the correction adds the estimate of the shift, which changes no
+    // force and so no virial (D[shifted-derivatives]).
+    bool shifted = control.truncation == Truncation::Shift;
+    program.dispersionEnergy = energy + (shifted ? shift : 0.0);
     program.dispersionVirial = 6.0 * energy;
     // The tails of the pair terms (D209).
     if (llvm::Error error = collectPairTails())
       return error;
     for (unsigned index = 0, e = system.pairTails.size(); index != e;
          ++index) {
-      auto [tail, virial] = llvm::cantFail(getPairTail(index, {}));
-      program.dispersionEnergy += tail;
-      program.dispersionVirial += virial;
+      PairTail tail = llvm::cantFail(getPairTail(index, {}));
+      program.dispersionEnergy += tail.energy + (shifted ? tail.shift : 0.0);
+      program.dispersionVirial += tail.virial;
     }
     collectObservedTails();
   }
@@ -1705,6 +1724,15 @@ double Builder::getTopologyDispersion(bool decoupled) const {
   double rc = control.cutoffDistance * units::length;
   double volume = system.box[0] * system.box[1] * system.box[2];
   return -2.0 * M_PI / (3.0 * volume) * n * n * mean / (rc * rc * rc);
+}
+
+double Builder::getTopologyShift(bool decoupled) const {
+  // A shift to 0 at the cutoff takes u(r_c) from each pair within it; at a
+  // uniform density that is (4π r_c³ / 3V) of the pairs, in the convention
+  // of the tail, N² / 2 pairs of the mean C6: (2π N² / 3V) r_c³ u(r_c). Of
+  // the r⁻⁶ part alone, as the tail, u(r_c) = −⟨C6⟩ / r_c⁶, and the
+  // estimate is −(2π / 3V) N² ⟨C6⟩ / r_c³: the tail itself.
+  return getTopologyDispersion(decoupled);
 }
 
 /// The integral of `f` over [0, 1] by adaptive Gauss–Kronrod quadrature
@@ -1786,7 +1814,7 @@ llvm::Error Builder::collectPairTails() {
   return llvm::Error::success();
 }
 
-llvm::Expected<std::pair<double, double>>
+llvm::Expected<Builder::PairTail>
 Builder::getPairTail(unsigned index,
                      const llvm::StringMap<double> &changes) const {
   // With a uniform density beyond the cutoff [AllenTildesley2017], each
@@ -1798,10 +1826,12 @@ Builder::getPairTail(unsigned index,
   // that are not excluded, so that both follow one convention. In
   // s = rc / r, I = rc³ ∫_0^1 u(rc / s) s⁻⁴ ds, whose integrand is a
   // polynomial in s for a sum of powers r⁻ᵏ, k ≥ 4, which the quadrature
-  // integrates exactly.
+  // integrates exactly. A shift to 0 at the cutoff takes u(r_c) from each
+  // pair within it, at a uniform density (4π / 3V) r_c³ u(r_c) for each
+  // pair, with the same factor (D[shifted-derivatives]).
   const Expression &expression = tailExpressions[index];
   double rc = control.cutoffDistance;
-  double energy = 0.0, virial = 0.0;
+  double energy = 0.0, virial = 0.0, shift = 0.0;
   for (const System::TailPair &pair : system.pairTails[index]) {
     llvm::StringMap<double> values = pair.values;
     for (const auto &entry : changes)
@@ -1823,6 +1853,7 @@ Builder::getPairTail(unsigned index,
       return makeError("cannot be integrated");
     energy += pair.count * integral;
     virial += pair.count * (3.0 * integral + edge);
+    shift += pair.count * edge / 3.0;
   }
   const Topology &topology = *system.topology;
   double n = static_cast<double>(topology.getNumParticles());
@@ -1831,7 +1862,11 @@ Builder::getPairTail(unsigned index,
   double volume = system.box[0] * system.box[1] * system.box[2] /
                   (units::length * units::length * units::length);
   double factor = 4.0 * M_PI / volume * scale * units::energy;
-  return std::make_pair(factor * energy, factor * virial);
+  PairTail tail;
+  tail.energy = factor * energy;
+  tail.virial = factor * virial;
+  tail.shift = factor * shift;
+  return tail;
 }
 
 double Builder::getPairTails(const llvm::StringMap<double> &changes) const {
@@ -1843,7 +1878,7 @@ double Builder::getPairTails(const llvm::StringMap<double> &changes) const {
       llvm::consumeError(tail.takeError());
       return std::nan("");
     }
-    sum += tail->first;
+    sum += tail->energy + tail->shift;
   }
   return sum;
 }
@@ -1863,7 +1898,7 @@ double Builder::getPairTailDerivative(unsigned index, StringRef name,
       llvm::consumeError(tail.takeError());
       return std::nan("");
     }
-    return tail->first;
+    return tail->energy + tail->shift;
   };
   double h = 1.0e-3 * std::max(std::fabs(value), 1.0);
   auto central = [&](double step) {
@@ -1883,16 +1918,17 @@ double Builder::getPairTailDerivative(unsigned index, StringRef name,
 }
 
 void Builder::collectObservedTails() {
-  // The columns of `observe` of a pair term take its tail: its energy and
-  // its derivatives in the observed constants, proportional to 1 / V.
+  // The columns of `observe` of a pair term take its tail and the estimate
+  // of its shift: its energy and its derivatives in the observed constants,
+  // proportional to 1 / V (D[shifted-derivatives]).
   program.observableVolumeConstants.assign(control.observables.size(), 0.0);
   for (auto [column, observable] : llvm::enumerate(control.observables))
     for (auto [index, term] : llvm::enumerate(control.pairs)) {
       if (term.name != observable.term || index >= system.pairTails.size())
         continue;
       if (observable.constant.empty()) {
-        program.observableVolumeConstants[column] =
-            llvm::cantFail(getPairTail(index, {})).first;
+        PairTail tail = llvm::cantFail(getPairTail(index, {}));
+        program.observableVolumeConstants[column] = tail.energy + tail.shift;
         continue;
       }
       double value = 0.0;
@@ -1933,13 +1969,16 @@ void Builder::collectFreeEnergyConstants() {
   // difference of the two corrections (D161).
   const Control::FreeEnergy &energy = control.freeEnergy;
   size_t states = energy.getNumStates();
+  // These quantities are of the shifted potential, so the correction adds
+  // the estimate of the shift to the tail (D[shifted-derivatives]).
   bool dispersion = control.topologyDispersion != DispersionCorrection::None;
   double coupled = 0.0, decoupled = 0.0;
   if (dispersion && decouples()) {
-    coupled = getTopologyDispersion(false);
-    decoupled = getTopologyDispersion(true);
+    coupled = getTopologyDispersion(false) + getTopologyShift(false);
+    decoupled = getTopologyDispersion(true) + getTopologyShift(true);
   } else if (dispersion) {
-    coupled = decoupled = getTopologyDispersion(false);
+    coupled = decoupled =
+        getTopologyDispersion(false) + getTopologyShift(false);
   }
   for (size_t k = 0; k != states; ++k) {
     double fixed = 0.0, scaled = 0.0;
