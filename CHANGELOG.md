@@ -170,6 +170,16 @@ format, or the outputs; every such change is listed under **Changed** or
   topology. It was added to the system twice, so `mdir check`,
   `mdir check --json`, `mdir run`, and a Python model showed it twice (#124).
 
+- A Nose-Hoover chain driven far from equilibrium no longer turns the run
+  to NaN: its action over a period of coupling is split into as many parts
+  as keep each part's step in the chain's velocities at most 1 (on identical
+  harmonic wells at a large step, 130 parts against the 11 of the time
+  constant), and the run says so at its end. An action that 1024 times the
+  usual parts do not follow stops the run with an error. Near equilibrium
+  the chain moves as before; runs whose chain was fast, such as a start far
+  from the bath's temperature, follow a slightly different and more
+  accurate trajectory (D[nhc-nan], #117).
+
 - A persistent Python simulation no longer keeps the memory of each part:
   every `run(n)` call left its device buffers (about 97 MiB on JAC on a GPU)
   or its host buffers (on the CPU) allocated, until a long run ran out of
