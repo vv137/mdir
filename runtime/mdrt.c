@@ -594,6 +594,14 @@ static void allocateHostMatrix(struct HostMatrix *matrix) {
   }
 }
 
+/* The matrices that a call of an entry made while an embedding program (a
+   Python simulation, D196) has a call open (mdrtBeginCall): they belong to
+   the call and are destroyed when it closes (#110). `mdir run` calls its
+   entry once and opens none. */
+static struct HostMatrix **callMatrices = NULL;
+static size_t numCallMatrices = 0, roomCallMatrices = 0;
+static int inCall = 0;
+
 int64_t mdrtHostMatrixCreate(int64_t rows, int64_t width) {
   struct HostMatrix *matrix = calloc(1, sizeof(struct HostMatrix));
   if (!matrix) {
@@ -603,7 +611,30 @@ int64_t mdrtHostMatrixCreate(int64_t rows, int64_t width) {
   matrix->rows = rows > 0 ? rows : 1;
   matrix->width = width > 0 ? width : 1;
   allocateHostMatrix(matrix);
+  if (inCall) {
+    if (numCallMatrices == roomCallMatrices) {
+      roomCallMatrices = roomCallMatrices ? 2 * roomCallMatrices : 8;
+      callMatrices =
+          realloc(callMatrices, roomCallMatrices * sizeof(*callMatrices));
+      if (!callMatrices) {
+        fprintf(stderr, "mdrt: out of memory of the host\n");
+        abort();
+      }
+    }
+    callMatrices[numCallMatrices++] = matrix;
+  }
   return (int64_t)(intptr_t)matrix;
+}
+
+void mdrtBeginCall(void) { inCall = 1; }
+
+void mdrtEndCall(void) {
+  for (size_t i = 0; i != numCallMatrices; ++i) {
+    free(callMatrices[i]->data);
+    free(callMatrices[i]);
+  }
+  numCallMatrices = 0;
+  inCall = 0;
 }
 
 void _mlir_ciface_mdrtHostMatrixEntries(struct HostBuffer2 *result,

@@ -1,0 +1,6 @@
+# REQUIRES: python-api, cuda
+# The device memory of a persistent simulation on a GPU stays flat across
+# many calls of run (#110).
+# RUN: %mdir_python %S/Inputs/python_memory.py %S/Inputs/dipeptide GPU | FileCheck %s
+# CHECK: GPU: device memory from call 5 to call 30:
+# CHECK: memory across calls passed

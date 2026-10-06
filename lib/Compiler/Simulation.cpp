@@ -23,6 +23,7 @@
 #include <cstring>
 #include <dlfcn.h>
 #include <mutex>
+#include <unordered_set>
 
 using namespace mdir;
 using namespace mdir::driver;
@@ -109,6 +110,52 @@ std::string stopMessage;
 extern "C" void stopPart(const char *message) {
   if (stopMessage.empty())
     stopMessage = message;
+}
+
+/// The memory of the host that compiled code allocates (`malloc` and `free`
+/// of its module): what a call of an entry leaves allocated is the call's
+/// own, since every buffer of a part is made anew, and is freed when the
+/// call returns (#110). A pointer that compiled code did not allocate goes to
+/// `free` as it is.
+std::mutex &getAllocationMutex() {
+  static std::mutex mutex;
+  return mutex;
+}
+std::unordered_set<void *> &getAllocations() {
+  static std::unordered_set<void *> allocations;
+  return allocations;
+}
+extern "C" void *allocateForCode(size_t size) {
+  void *pointer = std::malloc(size);
+  if (pointer) {
+    std::lock_guard<std::mutex> lock(getAllocationMutex());
+    getAllocations().insert(pointer);
+  }
+  return pointer;
+}
+extern "C" void freeForCode(void *pointer) {
+  if (!pointer)
+    return;
+  {
+    std::lock_guard<std::mutex> lock(getAllocationMutex());
+    getAllocations().erase(pointer);
+  }
+  std::free(pointer);
+}
+void freeAllocationsOfCall() {
+  std::lock_guard<std::mutex> lock(getAllocationMutex());
+  for (void *pointer : getAllocations())
+    std::free(pointer);
+  getAllocations().clear();
+}
+
+/// Opens or closes a call of an entry in a runtime library (`mdrtBeginCall`,
+/// `mdrtDeviceEndCall`, ...), which frees what the call made; nothing if the
+/// library is not loaded.
+void callRuntime(const char *name) {
+  if (auto function = reinterpret_cast<void (*)()>(
+          llvm::sys::DynamicLibrary::SearchForAddressOfSymbol(name)))
+    function();
 }
 
 /// The directory of the runtime libraries: `MDIR_RUNTIME_DIR`, or `lib` next
@@ -302,6 +349,9 @@ compileEngine(const Control &control, const System &system,
     add("_mlir_ciface_mdrtWriteMinimization",
         (void *)&_mlir_ciface_mdrtWriteMinimization);
     add("_mlir_ciface_mdrtFinish", (void *)&_mlir_ciface_mdrtFinish);
+    // The memory of the host that the code allocates, freed after each call.
+    add("malloc", (void *)&allocateForCode);
+    add("free", (void *)&freeForCode);
     add("_mlir_ciface_mdrtFinishForces", (void *)&_mlir_ciface_mdrtFinishForces);
     add("_mlir_ciface_mdrtWriteCheckpoint",
         writesForces ? (void *)&_mlir_ciface_mdrtWriteCheckpointWithForces
@@ -570,7 +620,13 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
   Output::MinimizationRow rowBefore = out.lastMinimization;
 
   stopMessage.clear();
+  // What the call allocates is its own and is freed when it returns (#110).
+  callRuntime("mdrtBeginCall");
+  callRuntime("mdrtDeviceBeginCall");
   engine.function(a.pointers.data());
+  callRuntime("mdrtDeviceEndCall");
+  callRuntime("mdrtEndCall");
+  freeAllocationsOfCall();
   out.fail = nullptr;
   if (failure.empty())
     failure = stopMessage;

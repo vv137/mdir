@@ -142,6 +142,12 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- A persistent Python simulation no longer keeps the memory of each part:
+  every `run(n)` call left its device buffers (about 97 MiB on JAC on a GPU)
+  or its host buffers (on the CPU) allocated, until a long run ran out of
+  memory. What a part allocates is now freed or returned to the runtime's
+  pool when it ends (#110).
+
 - The virial of SETTLE and SHAKE at a step that writes energies reads the
   velocity changes the step applies instead of solving the constraints again
   (D201, #97).
