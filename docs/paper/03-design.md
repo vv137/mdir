@@ -466,6 +466,18 @@ constant pressure for the systems of the Amber suite, whatever their size
 (Table 10.2). The module of JAC at constant pressure has 9,236 lines as
 the driver writes it, and the lowering outlines 545 GPU modules from it.
 
+A Python simulation compiles on an engine of its own (D199), whose host
+code generation can be cached on disk (D[compile-cache],
+`MDIR_COMPILE_CACHE_DIR`). The relocatable object is a function of the
+LLVM module and of the code generator alone, so an entry is keyed by a
+hash of the module's bitcode, which holds the PTX of its kernels, and by
+the LLVM version, the CPU and its features, and the options of code
+generation, but not by the build of MDIR: a rebuild that generates the
+same module hits. An entry also stores its full key and a hash of its
+object, so that a collision or a damaged file is a miss, and a hit is
+linked and checked as a generated object is. The passes, which do depend
+on MDIR, run on every compile.
+
 The runtime is small and holds what cannot be IR: 533 lines of C for the
 host (`runtime/mdrt.c`: counters of builds and prunings, the stop on a
 position that is not a number, the generator Philox 4×32-10
