@@ -182,6 +182,19 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- With a topology, `dispersion_correction = "ENERGY_PRESSURE"` now includes
+  the tail beyond the cutoff of every `[[energy.pair]]` term, over the pairs
+  that its `groups` select and the topology does not exclude, in the energy,
+  the pressure, the λ-state energies, `dH/dλ`, and the derivatives of
+  `observe`. Before, it took the topology's own Lennard-Jones alone, so a
+  correction term such as an NBFIX written in the control file was missing
+  its long-range part (0.80 kcal/mol on 300 particles), and NPT densities
+  and pressures were wrong. Runs whose pair terms decay as $r^{-6}$ or
+  faster change in the line `dispersion`; a pair term whose tail diverges,
+  such as a Coulomb-like $1/r$, or that depends on the time `t`, is now
+  refused with the correction on and needs `dispersion_correction = "NONE"`
+  (D[pair-dispersion-correction], #145).
+
 - The warning `short_thermostat_period` is reported once for a run from a
   topology. It was added to the system twice, so `mdir check`,
   `mdir check --json`, `mdir run`, and a Python model showed it twice (#124).
