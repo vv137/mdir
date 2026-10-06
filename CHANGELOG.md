@@ -189,10 +189,15 @@ format, or the outputs; every such change is listed under **Changed** or
   `observe`. Before, it took the topology's own Lennard-Jones alone, so a
   correction term such as an NBFIX written in the control file was missing
   its long-range part (0.80 kcal/mol on 300 particles), and NPT densities
-  and pressures were wrong. Runs whose pair terms decay as $r^{-6}$ or
-  faster change in the line `dispersion`; a pair term whose tail diverges,
-  such as a Coulomb-like $1/r$, or that depends on the time `t`, is now
-  refused with the correction on and needs `dispersion_correction = "NONE"`
+  and pressures were wrong (1.1% in the volume of an NBFIX mixture in NPT).
+  Runs whose pair terms decay faster than $r^{-3}$ change in the line
+  `dispersion`. With a topology, `[[energy.pair]]` now accepts its
+  `dispersion_correction`: `"NONE"` leaves the term out of the correction,
+  which it otherwise follows from `[energy]`. A term whose tail diverges,
+  such as a Coulomb-like $1/r$, or that depends on the time `t`, is left
+  out with the warning `pair_tail_left_out` under the default correction,
+  and is an error when the control file gives `dispersion_correction =
+  "ENERGY_PRESSURE"`, until the term gives `dispersion_correction = "NONE"`
   (D[pair-dispersion-correction], #145).
 
 - The warning `short_thermostat_period` is reported once for a run from a

@@ -288,7 +288,9 @@ energies of the states of `[free_energy]`, and the derivatives of
 leaves its covariance with any observable unchanged; at constant pressure
 it varies as $1/V$. Without it, a correction term would leave out the
 long-range part of what it changes: 0.80 kcal/mol at $\sigma'$ = 3.7 Å on
-150 + 150 particles, and the pressure and the density of NPT with it.
+150 + 150 particles, and the pressure and the density of NPT with it:
+1.1% of the volume of 250 + 250 such particles at 100 K, which the tail
+restores to that of `[ nonbond_params ]` within 0.2 standard errors.
 
 Pairs whose particles agree in all that the expression reads (the type,
 the charge if it reads $q$, the parameters of each particle, the flags of
@@ -311,6 +313,9 @@ integrated adaptively to $10^{-13}$ relative. The integral converges only
 if $r^3u(r)\to0$; the driver requires $r^3u$ to fall by at least a decade
 per decade of $r$ from $10^3r_c$ to $10^6r_c$, and refuses the term
 otherwise, as it refuses a term of the time, which has no constant tail.
+Such a term is left out with a warning under the default correction, and
+refused when the control file asks for the correction; `dispersion_correction
+= "NONE"` in the term leaves it out explicitly.
 The derivatives in $\xi$ and $\lambda$ are central differences of the
 integral, extrapolated to a zero step (Richardson), on the host.
 
