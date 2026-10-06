@@ -12,13 +12,38 @@ before:
 | 3 | `3-npt.toml` | 100 ps at 1 atm with stochastic cell rescaling, restraints at 1 kcal/mol/Å² |
 | 4 | `4-md.toml` | 1 ns at 1 atm without restraints, a frame every ps |
 
-All stages use PME, SETTLE on the waters, SHAKE and RATTLE on the bonds of
-hydrogen, a step of 2 fs, and a GPU in mixed precision; set `target =
-"cpu"` in `[execution]` to run on the host.
+All stages use PME with the Coulomb potential shifted to zero at the
+cutoff, SETTLE on the waters, SHAKE and RATTLE on the bonds of hydrogen, a
+step of 2 fs, and a GPU in mixed precision. The restraints hold the heavy
+atoms of the peptide (`!:WAT & !@H*`) at their positions in `ala3.inpcrd`
+in stages 1 to 3.
+
+The same stages run in two ways, side by side:
+
+| | Control files | Python |
+|---|---|---|
+| Files | `1-min.toml` … `4-md.toml` | `run.py` |
+| Run | `examples/ala3/run.sh ala3-run build/bin/mdir` | `PYTHONPATH=build/python uv run examples/ala3/run.py` |
+| Between stages | each stage reads the checkpoint of the one before (`[input] checkpoint`) | each stage starts from `simulation.state()` of the one before |
+| Velocities | drawn at 300 K by stage 2 from `[dynamics] seed` (314159 by default) | `InitialState.draw_velocities(system, 300.0, seed)` with the same seed, `--seed` |
+| Restraints | `[[restraints]]`, 10, 10, and 1 kcal/mol/Å² | `System.restraints`, the same constants in kJ/mol/nm², `System.restraint_reference` the inpcrd positions |
+| Production output | the log, `md.dcd`, `md.h5` | `md.dat` (`EnergyReporter`), `md.dcd` (`TrajectoryReporter`), the density printed by a `CallbackReporter` |
+| Host instead of GPU | `target = "cpu"` in `[execution]` | `--cpu` (and `--threads N`) |
+
+The Python route needs the extension, built with `-DMDIR_ENABLE_PYTHON=ON`
+into `build/python`, and the Python 3.12 that it was built for. The script
+declares Python 3.12 and NumPy in its PEP 723 header, so
+[uv](https://docs.astral.sh/uv/) runs it without a prepared environment:
 
 ```sh
-examples/ala3/run.sh ala3-run build/bin/mdir
+PYTHONPATH=build/python uv run examples/ala3/run.py --out ala3-python
 ```
+
+The outputs go to `ala3-python` (`--out`). `--steps-scale 0.01` multiplies
+the steps and intervals of every stage for a quick check, and `--precision
+Double` and `--deterministic` select the precision and the deterministic
+mode. Without uv, any Python 3.12 with NumPy runs the script in the same way:
+`PYTHONPATH=build/python python3.12 examples/ala3/run.py`.
 
 `mdir template minimize`, `nvt`, `npt`, and `production` print these
 stages with `system.prmtop` and `system.inpcrd` as placeholder paths.

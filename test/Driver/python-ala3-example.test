@@ -1,0 +1,15 @@
+# REQUIRES: python-api
+# The four-stage Python example of examples/ala3 (#82) at a tiny scale on
+# the CPU: minimization, NVT from drawn velocities, NPT with restraints, and
+# production with an energy file, a DCD trajectory, and a callback.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/../../examples/ala3/run.py --cpu --threads 4 --steps-scale 0.0002 --out %t | FileCheck %s
+# RUN: grep -vc '^#' %t/md.dat | FileCheck %s --check-prefix=ROWS
+# RUN: test -s %t/md.dcd && test -s %t/nvt.dat && test -s %t/npt.dat
+# CHECK: 1-min: 10 steps in {{.*}} kcal/mol
+# CHECK: 2-nvt: 10 steps in {{.*}} density
+# CHECK: 3-npt: 10 steps in {{.*}} density
+# CHECK: step 10: density
+# CHECK: 4-md: 100 steps in {{.*}} density
+# CHECK: 4-md: mean density {{[0-9.]+}} g/cm^3 over 10 reports
+# ROWS: {{^}}11{{$}}

@@ -78,9 +78,19 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- `examples/ala3/run.py`: the four stages of the ala3 example (minimization,
+  NVT, NPT with restraints, production) from Python, with the settings of its
+  control files, reporters in production, and a PEP 723 header for
+  `uv run` (#82).
+
 - Python: `System.coulomb_modifier` (`CoulombModifier.None_`,
   `PotentialShift`), the control file's `[energy] coulomb_modifier` for PME
   (D205, #127).
+
+- Python: reporters of a simulation, `Simulation.reporters` with
+  `EnergyReporter`, `TrajectoryReporter` (DCD, XTC), and `CallbackReporter`;
+  the energy file and the trajectory are those of `mdir run`, written inside
+  the parts of a run at the periods given (D[python-reporters], #109).
 
 - Python: a simulation of a program whose integrator minimizes runs the
   minimizer of `mdir run`, `Simulation.minimize(steps=None)`, in parts

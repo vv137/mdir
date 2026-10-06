@@ -23,6 +23,7 @@
 #include <cstring>
 #include <dlfcn.h>
 #include <mutex>
+#include <numeric>
 #include <unordered_set>
 
 using namespace mdir;
@@ -235,6 +236,12 @@ struct Arguments {
 
 Simulation::~Simulation() {
   std::lock_guard<std::mutex> lock(getRunMutex());
+  // The files of the reports are complete when the simulation ends.
+  if (output) {
+    output->energies.close();
+    if (output->trajectory)
+      output->trajectory->close();
+  }
   continued.reset();
   first.reset();
 }
@@ -454,6 +461,7 @@ Simulation::create(const model::PreparedModel &prepared) {
 
   auto output = std::make_unique<Output>();
   output->log.quiet = true;
+  output->embedded = true;
   output->timestep = control.timestep;
   output->couples = control.getCouplingPeriod() > 0 && !control.isLangevin();
   output->changesCell = control.barostat;
@@ -510,9 +518,13 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
   out.ljpme = p.ljpme;
   out.ljpmeSelfEnergy = p.ljpmeSelfEnergy;
   int64_t closing = p.segmentPeriod ? p.closingSteps : 0;
+  // An interval of the second nest: periods of coupling, or plain steps
+  // and the step of energy.
+  int64_t interval = p.segmentPeriod
+                         ? (part.closePeriods + 1) * (part.closeInner + closing)
+                         : part.closeInner + 1;
   out.endStep = step + part.outer * (p.segmentPeriod ? part.inner + closing : 1) +
-                part.tail + part.plain +
-                part.close * (part.closeInner + closing);
+                part.tail + part.plain + part.close * interval;
 
   // The state before the part, which a failed part leaves.
   System before = system;
@@ -617,8 +629,13 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
                          &part.close, &part.closeInner})
     a.pointers.push_back(count);
   double firstSize = minimizationSize;
-  if (engine.control.minimize)
+  int64_t framePeriod = reports.framePeriod;
+  if (engine.control.minimize) {
     a.pointers.push_back(&firstSize);
+  } else {
+    a.pointers.push_back(&part.closePeriods);
+    a.pointers.push_back(&framePeriod);
+  }
   Output::MinimizationRow rowBefore = out.lastMinimization;
 
   stopMessage.clear();
@@ -702,11 +719,9 @@ llvm::Expected<int64_t> Simulation::run(int64_t count,
         " steps); take one step more or fewer");
 
   int64_t unit = std::max<int64_t>(1, period);
-  int64_t taken = 0;
-  while (taken < count) {
-    if (taken > 0 && (stopRequested || (poll && poll())))
-      break;
-    int64_t remaining = count - taken;
+  // A part of `remaining` steps at most, as D196 cuts a run, whose last
+  // step is a step of energy if `energyAtEnd` and it reaches the end.
+  auto planPart = [&](int64_t remaining, bool energyAtEnd) {
     Part part;
     part.inner = period > 0 ? period - closing : 0;
     int64_t partSteps = getPartSteps(unit);
@@ -736,7 +751,7 @@ llvm::Expected<int64_t> Simulation::run(int64_t count,
                       part.tail;
     // The last step of the run is a step of energy, as `mdir run` takes at
     // a row of its log: a plain one, or one that closes a period.
-    if (energy && planned == remaining) {
+    if (energyAtEnd && planned == remaining) {
       if (period == 0) {
         --part.outer;
         part.plain = 1;
@@ -748,6 +763,43 @@ llvm::Expected<int64_t> Simulation::run(int64_t count,
         part.close = 1;
         part.closeInner = part.inner;
       }
+    }
+    return part;
+  };
+  // The interval of the reports inside a part (D[python-reporters]): the
+  // greatest common divisor of their periods, if it holds whole periods of
+  // coupling; otherwise each report ends a part.
+  int64_t interval = 0;
+  for (int64_t p : {reports.energyPeriod, reports.framePeriod})
+    if (p > 0)
+      interval = interval ? std::gcd(interval, p) : p;
+  if (interval % unit != 0)
+    interval = 0;
+  int64_t end = step + count;
+  int64_t taken = 0;
+  while (taken < count) {
+    if (taken > 0 && (stopRequested || (poll && poll())))
+      break;
+    int64_t remaining = count - taken;
+    Part part;
+    if (interval > 0 && step % interval == 0 && remaining >= interval) {
+      // Intervals of the reports, each ending with a step of energy, inside
+      // one call.
+      int64_t most = std::max<int64_t>(1, getPartSteps(interval) / interval);
+      part.close = std::min(remaining / interval, most);
+      if (period > 0) {
+        part.closePeriods = interval / period - 1;
+        part.closeInner = period - closing;
+      } else {
+        part.closeInner = interval - 1;
+      }
+    } else {
+      // Up to the next report, which a step of energy takes, or the end.
+      int64_t next = getNextReport(step);
+      if (next > 0 && next < end)
+        part = planPart(next - step, true);
+      else
+        part = planPart(remaining, energy || next == end);
     }
     auto engine = getEngine();
     if (!engine)
@@ -822,6 +874,105 @@ llvm::Expected<int64_t> Simulation::minimize(std::optional<int64_t> count,
       secondsPerStep = seconds / steps;
   }
   return taken;
+}
+
+int64_t Simulation::getNextReport(int64_t from) const {
+  int64_t next = -1;
+  for (int64_t p : {reports.energyPeriod, reports.framePeriod})
+    if (p > 0) {
+      int64_t due = (from / p + 1) * p;
+      next = next < 0 ? due : std::min(next, due);
+    }
+  return next;
+}
+
+llvm::Error Simulation::setReports(const Reports &given) {
+  if (busy.exchange(true))
+    return simulationError("another operation is under way on this "
+                           "simulation");
+  struct Release {
+    std::atomic<bool> &flag;
+    ~Release() { flag = false; }
+  } release{busy};
+  if (prepared.control.minimize && (given.energyPeriod || given.framePeriod))
+    return inputError("a minimization takes no reporters");
+  if (given.energyPeriod < 0 || given.framePeriod < 0)
+    return inputError("a reporter's period must be positive");
+  if ((given.energyPeriod > 0) == given.energyPath.empty() ||
+      (given.framePeriod > 0) == given.trajectoryPath.empty())
+    return inputError("a reporter needs both a file and a period");
+  // The steps of energy of the reports must not fall between the two steps
+  // that close a period of the barostat of Trotter type (D92).
+  int64_t period = first->program.segmentPeriod;
+  if (period > 0 && first->program.closingSteps == 2)
+    for (int64_t p : {given.energyPeriod, given.framePeriod})
+      if (p > 0 && p % period != 0)
+        return inputError("with the barostat of Trotter type a reporter's "
+                          "period must be a multiple of the coupling period, " +
+                          llvm::Twine(period));
+  std::lock_guard<std::mutex> lock(getRunMutex());
+  Output &out = *output;
+  std::vector<std::string> opened;
+  if (given.energyPath != reports.energyPath && !given.energyPath.empty())
+    opened.push_back(given.energyPath);
+  if (given.trajectoryPath != reports.trajectoryPath &&
+      !given.trajectoryPath.empty())
+    opened.push_back(given.trajectoryPath);
+  // None is moved unless all can be, as `mdir run` backs up (D149).
+  for (const std::string &file : opened)
+    if (llvm::Error error = checkBackup(file))
+      return inputError(llvm::toString(std::move(error)));
+  for (const std::string &file : opened) {
+    auto backup = backUpOutput(file);
+    if (!backup)
+      return inputError(llvm::toString(backup.takeError()));
+  }
+  if (given.energyPath != reports.energyPath) {
+    out.energies.close();
+    if (!given.energyPath.empty())
+      if (llvm::Error error = out.energies.open(given.energyPath,
+                                                getEnergyColumns(out), {}))
+        return inputError(llvm::toString(std::move(error)));
+  }
+  out.energyPeriod = given.energyPeriod;
+  if (given.trajectoryPath != reports.trajectoryPath ||
+      given.trajectoryFormat != reports.trajectoryFormat ||
+      given.framePeriod != reports.framePeriod) {
+    if (out.trajectory)
+      out.trajectory->close();
+    out.trajectory.reset();
+    out.hasTrajectory = false;
+    if (!given.trajectoryPath.empty()) {
+      double cell[3], tilts[3];
+      for (int k = 0; k != 3; ++k) {
+        cell[k] = out.box[k] / units::length;
+        tilts[k] = system.tilt[k] / units::length;
+      }
+      auto writer = createTrajectoryWriter(given.trajectoryFormat);
+      writer->setPeriodic(prepared.control.periodic);
+      int64_t firstFrame = (step / given.framePeriod + 1) * given.framePeriod;
+      if (llvm::Error error = writer->open(
+              given.trajectoryPath, system.getNumParticles(), firstFrame,
+              given.framePeriod, prepared.control.timestep, cell))
+        return inputError(llvm::toString(std::move(error)));
+      writer->setTilt(tilts);
+      out.trajectory = std::move(writer);
+      out.hasTrajectory = true;
+    }
+  }
+  reports = given;
+  return llvm::Error::success();
+}
+
+void Simulation::closeReports() {
+  std::lock_guard<std::mutex> lock(getRunMutex());
+  output->energies.close();
+  if (output->trajectory)
+    output->trajectory->close();
+  output->trajectory.reset();
+  output->hasTrajectory = false;
+  output->energyPeriod = 0;
+  reports = Reports();
 }
 
 double Simulation::getTime() const {

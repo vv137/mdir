@@ -143,6 +143,10 @@ struct Output {
   /// (D203).
   double solventFreedom = 0.0;
   bool hasSolvent = false;
+  /// Whether a program embeds the run (a Python simulation, D196): its
+  /// state takes the energies of every step of energy, rows or not
+  /// (D[python-reporters]).
+  bool embedded = false;
   double solventKinetic = 0.0, solventHalf = 0.0;
   std::vector<double> soluteOptimal, solventOptimal, soluteFull,
       solventFull;
