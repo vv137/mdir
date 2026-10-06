@@ -237,7 +237,9 @@ quantities, converted at the boundary. D202 (#91,
 Python simulation, `Simulation.minimize(steps)`. D[python-reporters] (#109,
 [reporters](python-reporters.md)) writes `mdir run`'s energy file and
 trajectory inside the parts of a run and calls Python functions at their
-steps. Checkpoints, DLPack views and tunable buffers remain open.
+steps. `examples/ala3/run.py` (#82) runs the four stages of the
+example from Python, beside its control files. Checkpoints, DLPack views and
+tunable buffers remain open.
 M2 covers
 a documented classical subset and requires a manylinux_2_28 pip wheel for
 Python 3.10–3.13; conda follows later.

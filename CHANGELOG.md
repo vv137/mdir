@@ -78,6 +78,11 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- `examples/ala3/run.py`: the four stages of the ala3 example (minimization,
+  NVT, NPT with restraints, production) from Python, with the settings of its
+  control files, reporters in production, and a PEP 723 header for
+  `uv run` (#82).
+
 - Python: `System.coulomb_modifier` (`CoulombModifier.None_`,
   `PotentialShift`), the control file's `[energy] coulomb_modifier` for PME
   (D205, #127).
