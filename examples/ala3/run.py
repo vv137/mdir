@@ -106,7 +106,23 @@ def restrain(kcal):
     system.restraints = [mdir.Restraint(HEAVY, kcal * KCAL_A2)] if kcal else []
 
 
-def dynamics(start, kind, steps, energy_period, energy_file):
+def simulate(name, *model):
+    """A simulation of the program of `model`, with what compiling it took.
+    With MDIR_COMPILE_CACHE_DIR set, a stage whose host object is in the
+    compile cache skips its generation (D[compile-cache])."""
+    began = time.perf_counter()
+    program = mdir.compile(*model)
+    lowered = time.perf_counter()
+    simulation = mdir.Simulation(program)
+    s = simulation.compile_stats
+    source = "from the cache" if s["cache_hits"] else "generated"
+    print(f"{name}: compiled in {time.perf_counter() - began:.1f} s; mdir.compile "
+          f"{lowered - began:.1f} s, Simulation: MLIR {s['pipeline_seconds']:.1f} s, "
+          f"JIT {s['engine_seconds']:.1f} s, host object {source}")
+    return simulation
+
+
+def dynamics(name, start, kind, steps, energy_period, energy_file):
     """A simulation of `steps` steps of 2 fs from `start` at 300 K."""
     integrator, ensemble = mdir.Integrator(), mdir.Ensemble()
     integrator.method = mdir.IntegratorMethod.VelocityVerlet
@@ -121,8 +137,8 @@ def dynamics(start, kind, steps, energy_period, energy_file):
     ensemble.seed = args.seed
     schedule = mdir.Schedule()
     schedule.steps, schedule.energy_period = steps, energy_period
-    simulation = mdir.Simulation(mdir.compile(system, start, integrator, ensemble,
-                                              execution, schedule))
+    simulation = simulate(name, system, start, integrator, ensemble, execution,
+                          schedule)
     simulation.reporters.append(mdir.EnergyReporter(str(args.out / energy_file),
                                                     energy_period))
     return simulation
@@ -151,9 +167,9 @@ restrain(10.0)
 integrator, schedule = mdir.Integrator(), mdir.Schedule()
 integrator.minimize = True           # STEEPEST_DESCENT
 schedule.steps = scaled(2000)
+simulation = simulate("1-min", system, initial, integrator, mdir.Ensemble(),
+                      execution, schedule)
 began = time.perf_counter()
-simulation = mdir.Simulation(mdir.compile(system, initial, integrator, mdir.Ensemble(),
-                                          execution, schedule))
 simulation.minimize()
 state = simulation.state()
 row = state.minimization
@@ -168,7 +184,7 @@ restrain(10.0)
 start = mdir.InitialState()
 start.positions, start.cell = state.positions, state.cell
 start = start.draw_velocities(system, 300.0, args.seed)
-simulation = dynamics(start, mdir.EnsembleKind.NVT, scaled(25000), scaled(2500), "nvt.dat")
+simulation = dynamics("2-nvt", start, mdir.EnsembleKind.NVT, scaled(25000), scaled(2500), "nvt.dat")
 began = time.perf_counter()
 simulation.run(scaled(25000), energy=True)
 state = summary("2-nvt", simulation, time.perf_counter() - began)
@@ -176,7 +192,7 @@ simulation.close_reporters()
 
 # 3. NPT: 100 ps at 1 atm, restraints at 1 kcal/mol/Å² (3-npt.toml).
 restrain(1.0)
-simulation = dynamics(carry(state), mdir.EnsembleKind.NPT, scaled(50000), scaled(5000),
+simulation = dynamics("3-npt", carry(state), mdir.EnsembleKind.NPT, scaled(50000), scaled(5000),
                       "npt.dat")
 began = time.perf_counter()
 simulation.run(scaled(50000), energy=True)
@@ -188,7 +204,7 @@ simulation.close_reporters()
 #    (4-md.toml).
 restrain(0.0)
 period = scaled(5000)
-simulation = dynamics(carry(state), mdir.EnsembleKind.NPT, scaled(500000), period, "md.dat")
+simulation = dynamics("4-md", carry(state), mdir.EnsembleKind.NPT, scaled(500000), period, "md.dat")
 simulation.reporters.append(mdir.TrajectoryReporter(str(args.out / "md.dcd"), scaled(500)))
 densities = []
 
