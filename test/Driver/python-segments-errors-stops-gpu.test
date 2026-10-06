@@ -1,0 +1,10 @@
+# REQUIRES: python-api, cuda
+# Persistent simulations on a GPU (D196), scenario errors-stops of
+# Inputs/python_segments.py.
+# Refusals (a negative count, an end between the two steps
+# of the barostat, NPT coupled every step, run(n) on a minimization, a
+# stale program), a failed run that leaves Python alive, and stops from
+# another thread and from Ctrl-C.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_segments.py %S/Inputs/dipeptide GPU mdir %t errors-stops | FileCheck %s
+# CHECK: segments errors-stops passed

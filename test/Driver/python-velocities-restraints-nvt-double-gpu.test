@@ -1,0 +1,10 @@
+# REQUIRES: python-api, hdf5, cuda
+# Drawn velocities and typed restraints in the Python model on a GPU
+# (D198), scenario nvt-double of Inputs/python_velocities_restraints.py.
+# NVT runs with drawn velocities and restraints against `mdir run` of the
+# same control file in double precision, and the effect of the restraints
+# and of their reference.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_velocities_restraints.py %S/Inputs/dipeptide GPU mdir mdir-model-test %t nvt-double | FileCheck %s
+# CHECK: NVT: the restraints change the potential
+# CHECK: velocities and restraints nvt-double passed

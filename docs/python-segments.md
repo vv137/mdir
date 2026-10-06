@@ -105,7 +105,8 @@ rounding of that order rather than bit for bit, as `mdir run` does across
 its checkpoints. Repeated runs of one partition are identical bit for bit
 in the deterministic mode.
 
-On the dipeptide in water with PME (`test/Driver/python-segments.test`),
+On the dipeptide in water with PME (`test/Driver/python-segments-*.test`,
+one file per scenario of `Inputs/python_segments.py`),
 1 + 7 + 13 steps against 21, with coupling every 10 steps:
 
 | Precision | Positions (nm) | Velocities (nm/ps) | Forces (kJ/mol/nm) |

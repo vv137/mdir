@@ -1,5 +1,0 @@
-# REQUIRES: python-api, cuda
-# RUN: %mdir_python %S/Inputs/python_simulation_lifetime.py GPU %t numpy-first | FileCheck %s
-# CHECK: simulation lifetime: double and mixed passed
-# RUN: %mdir_python %S/Inputs/python_simulation_lifetime.py GPU %t-mdir mdir-first | FileCheck %s
-# RUN: %mdir_python %S/Inputs/python_simulation_lifetime.py GPU %t-runtime runtime-first %mdrt %mdrt_cuda | FileCheck %s

@@ -121,9 +121,11 @@ a copy; assign the list.
 
 ## Validation
 
-`test/Driver/python-velocities-restraints.test` (CPU) and its `-gpu` twin
-use the dipeptide in water (1168 particles). The oracle is `mdir run` of the
-same control file.
+`test/Driver/python-velocities-restraints-*.test` (CPU), one file per
+scenario of `Inputs/python_velocities_restraints.py` (`draws-copies`,
+`nvt-double`, `npt-double`, `mixed`), and their `-gpu` twins use the
+dipeptide in water (1168 particles). The oracle is `mdir run` of the same
+control file.
 
 - Drawn velocities against those of `mdir run` (its `readSystem` and
   `assignVelocities`, written as raw f64 by `mdir-model-test --drawn`), with

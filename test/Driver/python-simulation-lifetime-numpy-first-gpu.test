@@ -1,0 +1,6 @@
+# REQUIRES: python-api, cuda
+# Simulations created and destroyed in turn on a GPU (D196,
+# docs/jit-invariants.md), with NumPy imported first. Each import
+# order runs in a process and a test file of its own.
+# RUN: %mdir_python %S/Inputs/python_simulation_lifetime.py GPU %t numpy-first | FileCheck %s
+# CHECK: simulation lifetime: double and mixed passed

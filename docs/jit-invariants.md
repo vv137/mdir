@@ -112,9 +112,9 @@ initialization failure followed by a C++ throw after destruction. Successful
 engines also call a native thrower through the packed JIT entry and catch the
 exception in the host, proving live unwinding works in both code models.
 
-`python-simulation-lifetime{,-gpu}.test` each run fresh processes in NumPy-first,
-MDIR-first, and runtime-first orders (both runtimes first on the GPU). Each
-process runs the original 24 retained-engine cycles, then seeds 89, 196, and
+`python-simulation-lifetime-{numpy,mdir,runtime}-first{,-gpu}.test` each run a
+fresh process in the NumPy-first, MDIR-first, or runtime-first order (both
+runtimes first on the GPU), one order per file. Each process runs the original 24 retained-engine cycles, then seeds 89, 196, and
 20261006 once each for 32 operations, retaining up to five simulations with
 both first and continued engines. Six additional lifetimes run on three host
 threads. Failures print the seed, import order, and operation sequence.
