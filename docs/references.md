@@ -887,6 +887,17 @@ Program. Lang.* **9**(OOPSLA2), 2087–2114 (2025).
 Used for: related work, an activity analysis for automatic
 differentiation on MLIR, proved sound as an abstract interpretation.
 
+### Piessens1983
+
+R. Piessens, E. de Doncker-Kapenga, C. W. Überhuber, D. K. Kahaner,
+*QUADPACK: A Subroutine Package for Automatic Integration*, Springer Series
+in Computational Mathematics **1** (Springer, Berlin, 1983).
+[doi:10.1007/978-3-642-61786-7](https://doi.org/10.1007/978-3-642-61786-7)
+
+Used for: the adaptive Gauss–Kronrod quadrature of 7 and 15 points that
+integrates the tail of a pair term beyond the cutoff in the correction for
+the dispersion (D[pair-dispersion-correction]).
+
 ### Press2007
 
 W. H. Press, S. A. Teukolsky, W. T. Vetterling, B. P. Flannery,

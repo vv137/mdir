@@ -1090,7 +1090,9 @@ exact for $E_\text{rec}(\mathbf q) = \tfrac12\mathbf q^\mathsf T A\,\mathbf q$
 with $A$ symmetric. The constant terms have their derivatives in closed
 form: the self term and the background are quadratic in
 $\lambda_\text{C}$, the correction for the dispersion linear in
-$\lambda_\text{V}$.
+$\lambda_\text{V}$. The tail of a pair term in $\boldsymbol\lambda$ or
+in an observed constant $\xi$ (Section 5.4) is evaluated at each state
+and differentiated on the host, and scales as $1/V$ like the correction.
 
 **Validation** (`free-energy.test`, `free-energy-gpu.test`). Ethanol
 (GAFF2, AM1-BCC) in 467 TIP3P waters, at the coordinates of tleap, against
