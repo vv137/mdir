@@ -54,7 +54,10 @@ std::string mdir::compiler::getPipeline(const Control &control,
                        ? "single"
                        : control.precision == Precision::Mixed ? "mixed"
                                                                : "double";
-  os << "md-exec-assign-precision{mode=" << mode << "},";
+  // In the deterministic mode the fields of the steps are stored as their
+  // roles say, whatever buffers of host calls the loops reach (#102).
+  os << "md-exec-assign-precision{mode=" << mode
+     << (control.deterministic ? " deterministic=true" : "") << "},";
   if (control.fastMath)
     os << "md-exec-approximate,md-exec-expand-radial,canonicalize,cse,";
 
@@ -63,7 +66,13 @@ std::string mdir::compiler::getPipeline(const Control &control,
     os << "md-exec-assign-storage{memory=device"
        << (control.precision == Precision::Double ? "" : " tables=f32")
        << "},md-exec-assign-streams,convert-md-exec-to-gpu{"
-       << (control.deterministic ? "deterministic=true " : "")
+       // In the deterministic mode the loops of the constraints are not
+       // joined with the loops over particles around them into one kernel
+       // (D110): a step of energy, whose virial reads the changes of the
+       // constraints, cannot join them, and the joined kernel rounds the
+       // velocities of SETTLE otherwise by an ulp of f32 (#102).
+       << (control.deterministic ? "deterministic=true fuse-integration=false "
+                                 : "")
        // In the deterministic mode the arithmetic of a step does not
        // depend on what else the step computes: a contraction into a fused
        // multiply-add is made only where a product has one use, and the

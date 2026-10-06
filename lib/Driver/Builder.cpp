@@ -8370,6 +8370,15 @@ llvm::Error Builder::build() {
   case Precision::Mixed:
     program.state = program.mass = Element::F64;
     program.force = program.parameter = Element::F32;
+    // In the deterministic mode the forces that a step carries to the next
+    // are stored as the state is (#102). Buffers of forces in f32 at the
+    // host calls would make the forces that a loop of steps carries f32
+    // where the loop's result reaches such a call (a run whose every step
+    // writes energies) and f64 where it does not (md-exec-assign-precision
+    // gives fields stored together the type of a buffer that holds one),
+    // and the trajectory would depend on the schedule of the energies.
+    if (control.deterministic)
+      program.force = Element::F64;
     break;
   case Precision::Double:
     program.state = program.mass = Element::F64;

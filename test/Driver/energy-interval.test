@@ -1,8 +1,9 @@
 # In the deterministic mode, a step that writes energies moves the
 # particles as a step that does not (#97, #102): 20 steps of the dipeptide
 # in water with a row of energies at every step and with one at the end
-# give the same state bit for bit, with cutoff electrostatics and PME, with
-# and without SHAKE and SETTLE, in mixed and double precision. The kernels
+# give the same state bit for bit on the CPU, with cutoff electrostatics
+# and PME, with and without SHAKE and SETTLE, in mixed and double precision
+# (energy-interval-gpu.test on a device). The kernels
 # contract no product into a fused multiply-add, whose rounding would
 # depend on the further uses that the energies and the virial give a
 # product (#97); the forces that the steps carry are stored in f64 in mixed
@@ -10,16 +11,14 @@
 # loops of the constraints are not joined with the loops over particles
 # around them (D110), as a step of energy, whose virial reads the changes
 # of the constraints, cannot join them (#102).
-# REQUIRES: cuda
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' | sed 's|INPUTS|%S/Inputs/dipeptide|' > %t/template.toml
-# RUN: %python %S/Inputs/energy_interval.py %t/template.toml mdir %t GPU MIXED CUTOFF:false CUTOFF:true PME:false PME:true | FileCheck %s
-# RUN: %python %S/Inputs/energy_interval.py %t/template.toml mdir %t GPU DOUBLE PME:true | FileCheck %s --check-prefix=DOUBLE
-# CHECK: GPU MIXED CUTOFF constraints=false: same state, 1168 particles
-# CHECK: GPU MIXED CUTOFF constraints=true: same state, 1168 particles
-# CHECK: GPU MIXED PME constraints=false: same state, 1168 particles
-# CHECK: GPU MIXED PME constraints=true: same state, 1168 particles
-# DOUBLE: GPU DOUBLE PME constraints=true: same state, 1168 particles
+# RUN: %python %S/Inputs/energy_interval.py %t/template.toml mdir %t CPU MIXED CUTOFF:true PME:false PME:true | FileCheck %s
+# RUN: %python %S/Inputs/energy_interval.py %t/template.toml mdir %t CPU DOUBLE PME:true | FileCheck %s --check-prefix=DOUBLE
+# CHECK: CPU MIXED CUTOFF constraints=true: same state, 1168 particles
+# CHECK: CPU MIXED PME constraints=false: same state, 1168 particles
+# CHECK: CPU MIXED PME constraints=true: same state, 1168 particles
+# DOUBLE: CPU DOUBLE PME constraints=true: same state, 1168 particles
 
 #--- run.toml
 [input]

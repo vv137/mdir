@@ -120,9 +120,9 @@ namespace {
 class Assigner {
 public:
   Assigner(func::FuncOp function, const Policy &policy,
-           bool kernelPositions)
+           bool kernelPositions, bool deterministic)
       : function(function), policy(policy),
-        kernelPositions(kernelPositions) {}
+        kernelPositions(kernelPositions), deterministic(deterministic) {}
 
   LogicalResult run();
 
@@ -139,6 +139,9 @@ private:
   /// Gives the loops that compute in a type narrower than the positions the
   /// positions converted to it, once for each block and positions.
   void convertPositions();
+  /// Makes each field that a buffer of the boundary holds reach the other
+  /// fields through a loop over particles that copies it (`deterministic`).
+  void isolateBoundaries();
   /// A loop over particles, before `before`, that converts `positions` to
   /// the type of the kernels.
   Value createConversion(Operation *before, Value positions);
@@ -159,6 +162,7 @@ private:
   func::FuncOp function;
   const Policy &policy;
   bool kernelPositions;
+  bool deterministic;
 
   llvm::DenseMap<Value, unsigned> ids;
   SmallVector<Value> fields;
@@ -595,7 +599,54 @@ void Assigner::apply() {
   function.setType(FunctionType::get(function.getContext(), inputs, results));
 }
 
+/// A loop over particles that copies `field`, placed before `point`; the
+/// copy is the result.
+static Value createCopy(OpBuilder &builder, Location loc, Value field) {
+  auto type = cast<FieldType>(field.getType());
+  Value empty = EmptyOp::create(builder, loc, type);
+  auto loop = ParticleForOp::create(builder, loc, TypeRange{type},
+                                    ValueRange{field}, ValueRange{empty},
+                                    /*reduce=*/ValueRange(),
+                                    /*scratch=*/ValueRange());
+  Block *block = new Block();
+  loop.getKernel().push_back(block);
+  Value value = block->addArgument(type.getKernelValueType(), loc);
+  OpBuilder kernel = OpBuilder::atBlockEnd(block);
+  YieldOp::create(kernel, loc, ValueRange{value});
+  return loop.getResult(0);
+}
+
+void Assigner::isolateBoundaries() {
+  SmallVector<Operation *> boundaries;
+  function.walk([&](Operation *op) {
+    if (isa<mdrt::FromBufferOp, mdrt::ToBufferOp, mdrt::HostCallOp>(op))
+      boundaries.push_back(op);
+  });
+  for (Operation *op : boundaries) {
+    if (auto from = dyn_cast<mdrt::FromBufferOp>(op)) {
+      Value result = from.getResult();
+      if (!isRealField(result.getType()) || result.use_empty())
+        continue;
+      OpBuilder builder(op->getContext());
+      builder.setInsertionPointAfter(op);
+      Value copy = createCopy(builder, op->getLoc(), result);
+      result.replaceAllUsesExcept(
+          copy, copy.getDefiningOp<ParticleForOp>().getOperation());
+      continue;
+    }
+    OpBuilder builder(op);
+    for (OpOperand &operand : op->getOpOperands())
+      if (isRealField(operand.get().getType()))
+        operand.set(createCopy(builder, op->getLoc(), operand.get()));
+  }
+}
+
 LogicalResult Assigner::run() {
+  // In the deterministic mode the type of a buffer decides that of its
+  // copy alone: the fields of the steps are stored as their roles say,
+  // whatever buffers the program reaches them from or hands them to.
+  if (deterministic)
+    isolateBoundaries();
   for (BlockArgument argument : function.getArguments())
     if (isRealField(argument.getType()))
       find(argument);
@@ -707,7 +758,8 @@ public:
         if (!function.isExternal())
           functions.push_back(function);
     for (func::FuncOp function : functions)
-      if (failed(Assigner(function, policy, kernelPositions).run()))
+      if (failed(Assigner(function, policy, kernelPositions, deterministic)
+                     .run()))
         return signalPassFailure();
   }
 
