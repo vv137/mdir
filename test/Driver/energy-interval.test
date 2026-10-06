@@ -1,16 +1,13 @@
 # In the deterministic mode, a step that writes energies moves the
 # particles as a step that does not (#97, #102): 20 steps of the dipeptide
 # in water with a row of energies at every step and with one at the end
-# give the same state bit for bit on the CPU, with cutoff electrostatics
-# and PME, with and without SHAKE and SETTLE, in mixed and double precision
-# (energy-interval-gpu.test on a device). The kernels
-# contract no product into a fused multiply-add, whose rounding would
-# depend on the further uses that the energies and the virial give a
-# product (#97); the forces that the steps carry are stored in f64 in mixed
-# precision, as the host takes them at a step of energy (#102); and the
-# loops of the constraints are not joined with the loops over particles
-# around them (D110), as a step of energy, whose virial reads the changes
-# of the constraints, cannot join them (#102).
+# give the same state bit for bit, with cutoff electrostatics and PME, with
+# and without SHAKE and SETTLE, in mixed and double precision, on the CPU
+# (energy-interval-gpu.test on a device). The forces
+# that the steps carry are stored as their role says, whatever buffers of
+# host calls the loop of steps reaches (in mixed precision they were f32
+# where every step writes energies and f64 otherwise), and the buffers of
+# forces are f64 in mixed precision (#102).
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' | sed 's|INPUTS|%S/Inputs/dipeptide|' > %t/template.toml
 # RUN: %python %S/Inputs/energy_interval.py %t/template.toml mdir %t CPU MIXED CUTOFF:true PME:false PME:true | FileCheck %s
