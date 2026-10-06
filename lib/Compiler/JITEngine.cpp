@@ -21,7 +21,7 @@ Error ownedError(Error error) {
 }
 Expected<std::unique_ptr<JITEngine>> JITEngine::create(
     mlir::ModuleOp input, std::unique_ptr<TargetMachine> target,
-    ArrayRef<std::string> libraries, StringRef entry) {
+    ArrayRef<std::string> libraries, StringRef entry, StringRef codegen) {
   Triple triple = target->getTargetTriple();
   // Fail closed: this validation decodes ELF .eh_frame, not COFF/Mach-O.
   if (!triple.isOSBinFormatELF() ||
@@ -63,6 +63,9 @@ Expected<std::unique_ptr<JITEngine>> JITEngine::create(
       f.setSection(section);
   auto layout = module->getDataLayout();
   auto engine = std::unique_ptr<JITEngine>(new JITEngine);
+  engine->cache = std::make_unique<HostObjectCache>(
+      CompileCacheConfig::fromEnvironment(), describeMachine(*target, codegen),
+      module->getModuleIdentifier());
   engine->perfListener.reset(JITEventListener::createPerfJITEventListener());
   if (!engine->perfListener)
     engine->perfListener.reset(JITEventListener::createIntelJITEventListener());
@@ -70,8 +73,8 @@ Expected<std::unique_ptr<JITEngine>> JITEngine::create(
       .setDataLayout(layout)
       .setCompileFunctionCreator([&](JITTargetMachineBuilder)
           -> Expected<std::unique_ptr<IRCompileLayer::IRCompiler>> {
-
-        return std::make_unique<TMOwningSimpleCompiler>(std::move(target));
+        return std::make_unique<TMOwningSimpleCompiler>(std::move(target),
+                                                        engine->cache.get());
       })
       .setObjectLinkingLayerCreator([triple, &engine](ExecutionSession &session,
                                             jitlink::JITLinkMemoryManager &)

@@ -2,6 +2,7 @@
 // embedding front end (D196, docs/python-segments.md).
 #ifndef MDIR_COMPILER_SIMULATION_H
 #define MDIR_COMPILER_SIMULATION_H
+#include "mdir/Compiler/CompileCache.h"
 #include "mdir/Driver/Model.h"
 #include "mdir/Driver/Trajectory.h"
 #include <array>
@@ -111,6 +112,9 @@ public:
   int64_t getStep() const { return step; }
   double getTime() const;
   bool hasFailed() const { return failed; }
+  /// What compiling its programs cost, and what the compile cache saved
+  /// (D[compile-cache]).
+  CompileStats getCompileStats() const;
   /// The longest a part may take, in s, which bounds the latency of a stop.
   double partSeconds = 0.5;
 

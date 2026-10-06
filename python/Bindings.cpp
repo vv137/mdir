@@ -569,6 +569,24 @@ PYBIND11_MODULE(mdir, m) {
     .def_property_readonly("time", [](const PySimulation &s) { return s.simulation->getTime(); })
     .def_property_readonly("failed", [](const PySimulation &s) { return s.simulation->hasFailed(); })
     .def_property_readonly("program", [](const PySimulation &s) { return s.program; })
+    // What compiling the programs cost, and what the compile cache saved
+    // (D[compile-cache]).
+    .def_property_readonly("compile_stats", [](const PySimulation &s) {
+      compiler::CompileStats c = s.simulation->getCompileStats();
+      py::dict d;
+      d["programs"] = c.programs;
+      d["pipeline_seconds"] = c.pipelineSeconds;
+      d["engine_seconds"] = c.engineSeconds;
+      d["host_compiled"] = c.compiled;
+      d["host_compile_seconds"] = c.compileSeconds;
+      d["cache_hits"] = c.hits;
+      d["cache_saved_seconds"] = c.savedSeconds;
+      d["cache_rejected"] = c.rejected;
+      d["cache_stored"] = c.stored;
+      d["cache_unstored"] = c.unstored;
+      d["cache_lookup_seconds"] = c.lookupSeconds;
+      return d;
+    })
     .def_property("part_seconds",
                   [](const PySimulation &s) { return s.simulation->partSeconds; },
                   [](PySimulation &s, py::object value) {
