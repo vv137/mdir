@@ -22,6 +22,7 @@ suite.
 lit pickles the configuration for its workers, so the group is chosen by an
 instance of a class of this module rather than by a function of lit.cfg.py.
 """
+import os
 import re
 
 GPU_GROUP = "mdir-gpu"
@@ -76,7 +77,6 @@ def limit_compile_threads(config, lit_config, workers):
     when lit is given -Dcompile_threads=N. A suite took 285, 252, and 262 s
     with 128, 8, and 1 threads to a process (one RTX 3090, 128 cores
     shared with other jobs)."""
-    import os
     cores = os.cpu_count() or 1
     value = lit_config.params.get("compile_threads",
                                   str(max(1, cores // workers)))
@@ -88,3 +88,19 @@ def limit_compile_threads(config, lit_config, workers):
         lit_config.fatal(
             f"compile_threads must be a positive integer, not '{value}'")
     config.environment["MDIR_COMPILE_THREADS"] = str(threads)
+
+
+def enable_compile_cache(config, lit_config):
+    """Share the host objects of the tests' JIT engines through the compile
+    cache (D[compile-cache]), in a directory of the build tree, so that a
+    suite of one build shares nothing with that of another. lit -Dcompile_cache=off,
+    or MDIR_COMPILE_CACHE=off in the environment, runs the suite without it;
+    a test of compilation itself sets MDIR_COMPILE_CACHE=off in its RUN
+    lines."""
+    off = (lit_config.params.get("compile_cache", "on").lower() == "off" or
+           os.environ.get("MDIR_COMPILE_CACHE", "").lower() == "off")
+    if off:
+        config.environment["MDIR_COMPILE_CACHE"] = "off"
+        return
+    config.environment["MDIR_COMPILE_CACHE_DIR"] = os.path.join(
+        config.mdir_obj_root, "test", "compile-cache")

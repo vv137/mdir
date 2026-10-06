@@ -35,6 +35,7 @@ tools = [
     "mdir-model-test",
     "mdir-compile-test",
     "mdir-jit-memory-test",
+    "mdir-compile-cache-test",
     "mlir-opt",
     "mlir-runner",
     "FileCheck",
@@ -113,12 +114,15 @@ if config.mdir_cuda:
     except (OSError, subprocess.SubprocessError):
         pass
     config.environment["CUDA_ROOT"] = config.mdir_cuda_root
+# The tests share the host objects they compile (test/mdir_lit.py).
+sys.path.insert(0, os.path.dirname(__file__))
+import mdir_lit
+
+mdir_lit.enable_compile_cache(config, lit_config)
+
 # One device serves every worker of a suite: at most four tests that need it
 # run at once, the others side by side (test/mdir_lit.py).
 if "cuda" in config.available_features:
-    sys.path.insert(0, os.path.dirname(__file__))
-    import mdir_lit
-
     mdir_lit.serialize_gpu_tests(config, lit_config)
 # Runs of the driver under compute-sanitizer (memcheck, initcheck,
 # racecheck) take about a minute; they run when lit is given
