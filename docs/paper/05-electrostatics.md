@@ -218,11 +218,9 @@ pressure of $2E_\text{disp}/V$. The repulsion is left out.
 **Why the virial is $6E_\text{disp}$, not $3E_\text{disp}$.** As
 $E_\text{disp}\propto 1/V$, its own derivative gives only
 $-dE_\text{disp}/d\ln\mu = 3E_\text{disp}$ under a scaling of the cell by
-$\mu$. The rest is the boundary of the cutoff. A run with a correction
-for the dispersion takes a plain cutoff (the driver rejects a switch or a
-shift with it), so a pair that a scaling carries across $r_c$ changes the
-truncated energy by $u(r_c) = -C_6/r_c^6$, which the virial of the
-truncated sum does not see. At a uniform density, the pairs in the shell
+$\mu$. The rest is the boundary of the cutoff. Under a plain cutoff a pair
+that a scaling carries across $r_c$ changes the truncated energy by
+$u(r_c) = -C_6/r_c^6$, which the virial of the truncated sum does not see. At a uniform density, the pairs in the shell
 that a scaling by $\mu$ moves across are
 $\tfrac{N^2}{2V}\,4\pi r_c^2\cdot r_c\,d\ln\mu$, so the truncated energy
 changes by $\tfrac{2\pi N^2}{V}\tfrac{\langle C_6\rangle}{r_c^3}\,d\ln\mu =
@@ -326,6 +324,43 @@ the tail of $\Delta C_{12}$, $\nu(4\pi/V)N_AN_B\,\Delta C_{12}/(9r_c^9)$,
 $3.3\times10^{-4}$ kcal/mol in `pair-dispersion.test`, to which they
 agree to $2.4\times10^{-8}$ kcal/mol in the energy and $10^{-7}$ in the
 virial.
+
+**The shift and its estimate** (D[shifted-derivatives]). Under
+`POTENTIAL_SHIFT` each pair within $r_c$ has $u_\text{shift} = u - u(r_c)$,
+so the energy lacks $\sum_{r_{ij}<r_c}u_{ij}(r_c) = N_\text{in}\,u(r_c)$ of
+the unshifted one, and so do the quantities of `[free_energy]` and `observe`
+under a plain cutoff (Section 6.8). The correction adds its mean at the
+density of the tail. Around a particle the number of others within $r_c$ is
+$\rho\int_{r<r_c}g\,dV = \rho\tfrac{4\pi}{3}r_c^3 + \rho\int_{r<r_c}(g-1)\,dV$,
+and when $g\approx1$ beyond $r_c$ the last integral is the whole of
+$\rho\int(g-1)\,dV = \rho k_BT\kappa_T - 1$, the compressibility sum rule
+[[HansenMcDonald2013]](references.md#hansenmcdonald2013), which is close to
+$-1$ for a liquid of low compressibility $\kappa_T$: the particle's own
+excluded volume. In the convention of the tail ($\nu$ per pair), the
+estimate is therefore
+
+$$
+E_\text{sh} = \nu\Big(\frac{4\pi r_c^3}{3V} - \frac1N\Big)\sum_{\{i,j\}}u_{ij}(r_c),
+$$
+
+of the $r^{-6}$ part alone for the topology's Lennard-Jones, as its tail,
+where it is $E_\text{disp}\,(1 - V/(N\tfrac{4\pi}{3}r_c^3))$, and of the
+whole $u(r_c)$ for a pair term. It changes no force, and so no virial: the
+shell of pairs that a scaling carries across $r_c$, which under a plain
+cutoff changes the truncated energy by $-3E_\text{disp}\,d\ln\mu$ above,
+changes the shifted energy by nothing, and $E_\text{sh}\propto1/V$ changes
+by $-3E_\text{sh}\,d\ln\mu$ instead, the same as the shell to the factor
+$1 - V/(N\tfrac{4\pi}{3}r_c^3)$. GROMACS counts the neighbors the same
+way, with the particle left out, and gives the estimate no virial
+(`DispCorr = EnerPres` with `vdw-modifier = Potential-shift`): on 60 + 60
+Lennard-Jones particles with an NBFIX pair and on the 224 particles of
+propane in water of `test/Driver/Inputs/gromacs`, the correction's
+energy, $-3.472644$ and $-3.788929$ kcal/mol, its pressure, and its virial
+equal those of GROMACS 2026.3 to their printed digits. Counting all
+$\rho\tfrac{4\pi}{3}r_c^3$ instead would put $\tfrac N2\langle C_6\rangle/r_c^6$
+more in the energy, 0.067 kcal/mol on the 120 particles. On the fluid of
+Section 6.8 the mean number within $r_c$ of a particle, $132.6\pm0.3$,
+agrees with $\rho\tfrac{4\pi}{3}r_c^3 - 1 = 133.0$ and not with $134.0$.
 
 ## 5.5 Particle mesh Ewald for the dispersion
 
