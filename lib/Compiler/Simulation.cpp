@@ -210,6 +210,8 @@ struct Simulation::Engine {
   mlir::OwningOpRef<mlir::ModuleOp> module;
   std::unique_ptr<compiler::JITEngine> engine;
   void (*function)(void **) = nullptr;
+  /// What compiling it cost (D[compile-cache]).
+  compiler::CompileStats stats;
   /// The volume that the constants of the program are for.
   double volume = 0.0;
   /// The masses of the particles, in the order of the input.
@@ -275,11 +277,16 @@ compileEngine(const Control &control, const System &system,
   engine->context = std::make_unique<mlir::MLIRContext>(
       compiler::getRegistry(), mlir::MLIRContext::Threading::DISABLED);
   compiler::shareThreadPool(*engine->context);
+  auto seconds = [start = std::chrono::steady_clock::now()] {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() -
+                                         start).count();
+  };
   auto module = compiler::lowerModule(*engine->context, control,
                                       engine->program);
   if (!module)
     return module.takeError();
   engine->module = std::move(*module);
+  engine->stats.pipelineSeconds = seconds();
 
   static std::once_flag native;
   std::call_once(native, [] {
@@ -323,8 +330,10 @@ compileEngine(const Control &control, const System &system,
         (void)option->addOccurrence(0, "pre-RA-sched", "default");
     }
   } resetScheduler{scheduler};
+  double jitStart = seconds();
   auto created = compiler::JITEngine::create(
-      *engine->module, std::move(*targetMachine), paths, engine->program.entry);
+      *engine->module, std::move(*targetMachine), paths, engine->program.entry,
+      scheduler ? "pre-RA-sched=fast" : "");
   if (!created) {
     return llvm::make_error<compiler::CompileError>(
         "cannot compile the program for execution: " +
@@ -403,6 +412,9 @@ compileEngine(const Control &control, const System &system,
     return llvm::make_error<compiler::CompileError>(
         llvm::toString(function.takeError()));
   engine->function = *function;
+  engine->stats += engine->engine->getCompileStats();
+  engine->stats.programs = 1;
+  engine->stats.engineSeconds = seconds() - jitStart;
 
   engine->masses = system.masses;
   return std::move(engine);
@@ -479,6 +491,13 @@ Simulation::create(const model::PreparedModel &prepared) {
   simulation->output = std::move(output);
   lock.unlock();
   return std::move(simulation);
+}
+
+compiler::CompileStats Simulation::getCompileStats() const {
+  CompileStats stats;
+  if (compiled)
+    stats += compiled->stats;
+  return stats;
 }
 
 llvm::Expected<Simulation::Engine *> Simulation::getEngine() {

@@ -1,4 +1,13 @@
-# RUN: mdir-jit-memory-test | FileCheck %s
+# The D199 checks of linking and memory, without the compile cache and
+# with a cold and then a warm one (D[compile-cache]): an object read from
+# the cache is linked into memory of the engine's own, as a generated one.
+# RUN: env MDIR_COMPILE_CACHE=off mdir-jit-memory-test | FileCheck %s
+# RUN: rm -rf %t
+# RUN: env -u MDIR_COMPILE_CACHE MDIR_COMPILE_CACHE_DIR=%t mdir-jit-memory-test | FileCheck %s
+# RUN: env -u MDIR_COMPILE_CACHE MDIR_COMPILE_CACHE_DIR=%t mdir-jit-memory-test | FileCheck %s
+# RUN: ls %t/host | FileCheck %s --check-prefix=ENTRIES
 # CHECK: JIT memory negative and lifecycle checks passed
-# RUN: not --crash mdir-jit-memory-test release-before-deregister 2>&1 | FileCheck %s --check-prefix=RELEASE
+# ENTRIES: .o
+# RUN: env MDIR_COMPILE_CACHE=off not --crash mdir-jit-memory-test release-before-deregister 2>&1 | FileCheck %s --check-prefix=RELEASE
+# RUN: env -u MDIR_COMPILE_CACHE MDIR_COMPILE_CACHE_DIR=%t not --crash mdir-jit-memory-test release-before-deregister 2>&1 | FileCheck %s --check-prefix=RELEASE
 # RELEASE: JIT ownership: release before frame deregistration

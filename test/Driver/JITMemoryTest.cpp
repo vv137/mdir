@@ -125,7 +125,7 @@ int main(int argc, char **) {
     auto builder = cantFail(orc::JITTargetMachineBuilder::detectHost());
     builder.setCodeModel(configuration == 2 ? CodeModel::Small : CodeModel::Large);
     auto target = cantFail(builder.createTargetMachine());
-    auto engine = cantFail(JITEngine::create(*module, std::move(target), {}, "entry"));
+    auto engine = cantFail(JITEngine::create(*module, std::move(target), {}, "entry", ""));
     cantFail(engine->registerSymbols([](orc::MangleAndInterner interner) {
       orc::SymbolMap symbols;
       symbols[interner("jit_ownership_throw")] = {

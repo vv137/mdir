@@ -17,6 +17,17 @@ format, or the outputs; every such change is listed under **Changed** or
   test suite sets it to the cores over `gpu_workers`, or to
   `-Dcompile_threads=N`, so that sixteen tests compiling at once do not ask
   for sixteen times the cores.
+- A compile cache of host objects for Python simulations
+  (D[compile-cache], #142): `MDIR_COMPILE_CACHE_DIR=<dir>` keeps the
+  relocatable object of each compiled program on disk, keyed by the
+  content of its LLVM module and the code generator, so that later
+  processes and rebuilds of MDIR that generate the same module skip host
+  code generation. `MDIR_COMPILE_CACHE=off` disables it and
+  `MDIR_COMPILE_CACHE_MAX_MB` bounds it (2048 MiB, least recently used
+  first). `Simulation.compile_stats` reports the compile times and the
+  hits. The test suite shares a cache in its build tree
+  (`-Dcompile_cache=off` turns it off). `mdir run` does not use it yet
+  (#99).
 
 ### Changed
 

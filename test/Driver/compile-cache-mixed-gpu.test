@@ -1,0 +1,12 @@
+# REQUIRES: python-api, cuda
+# The compile cache of host objects (D[compile-cache]) on a GPU in mixed
+# precision: a cold and a warm cache give the state of no cache bit for
+# bit after 20 deterministic steps. Each scenario is a process
+# of its own on one directory (Inputs/compile_cache.py).
+# RUN: rm -rf %t
+# RUN: %mdir_python %S/Inputs/compile_cache.py %S/Inputs/dipeptide GPU Mixed %t | FileCheck %s
+# CHECK: off: compiled 1 hits 0 rejected 0 stored 0
+# CHECK-NEXT: off: directory absent
+# CHECK-NEXT: cold: compiled 1 hits 0 rejected 0 stored 1 state same
+# CHECK-NEXT: cold: entries 1
+# CHECK-NEXT: warm: compiled 0 hits 1 rejected 0 stored 0 state same

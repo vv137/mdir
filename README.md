@@ -186,6 +186,11 @@ positions = sim.state().positions   # (N, 3) in nm, in input order
 `sim.run(n, energy=True)` ends with a step of energy, whose energies
 `sim.state().energies` holds. Reporters and checkpoints of a simulation are
 not there yet, and the interface changes during M2.
+`MDIR_COMPILE_CACHE_DIR=<dir>` keeps the host code of compiled programs in
+`<dir>` across processes and rebuilds (`MDIR_COMPILE_CACHE=off` disables
+it, `MDIR_COMPILE_CACHE_MAX_MB` bounds it, 2048 by default), and
+`sim.compile_stats` reports what compiling took
+([docs/compile-cache.md](docs/compile-cache.md)).
 [docs/python-compile.md](docs/python-compile.md) and
 [docs/python-segments.md](docs/python-segments.md) describe it.
 
@@ -206,7 +211,9 @@ need a GPU (`REQUIRES: cuda`) run at once, on the device that
 them. `-Dgpu_workers=N` in `LIT_OPTS` changes that number; `-Dgpu_workers=1`
 runs them one at a time. Each test lowers its programs with the cores over
 that number of threads (`MDIR_COMPILE_THREADS`; `-Dcompile_threads=N`
-changes it). The same holds for the sanitized suite (`scripts/build-sanitized.sh`)
+changes it). The tests share the host objects they compile through the
+compile cache in `build/test/compile-cache`; `-Dcompile_cache=off` runs
+the suite without it. The same holds for the sanitized suite (`scripts/build-sanitized.sh`)
 and the suite of a release (`scripts/release/publish.sh`). On a machine
 that others share, hold a lock of the device around the whole suite, as
 [docs/workflow.md](docs/workflow.md) says, so that no other suite or timing

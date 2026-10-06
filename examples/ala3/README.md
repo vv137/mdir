@@ -45,6 +45,12 @@ Double` and `--deterministic` select the precision and the deterministic
 mode. Without uv, any Python 3.12 with NumPy runs the script in the same way:
 `PYTHONPATH=build/python python3.12 examples/ala3/run.py`.
 
+Each stage prints what compiling it took. With `MDIR_COMPILE_CACHE_DIR`
+set to a directory, a later run takes the host code of the stages from it
+([compile-cache.md](../../docs/compile-cache.md)); in the deterministic
+mode every stage hits, while without it the production stage starts from
+another cell and misses.
+
 `mdir template minimize`, `nvt`, `npt`, and `production` print these
 stages with `system.prmtop` and `system.inpcrd` as placeholder paths.
 Edit the paths, selections, run lengths, and execution for your system,

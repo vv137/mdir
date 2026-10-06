@@ -6,6 +6,7 @@
 # RUN: %mdir_python %S/../../examples/ala3/run.py --cpu --threads 4 --steps-scale 0.0002 --out %t | FileCheck %s
 # RUN: grep -vc '^#' %t/md.dat | FileCheck %s --check-prefix=ROWS
 # RUN: test -s %t/md.dcd && test -s %t/nvt.dat && test -s %t/npt.dat
+# CHECK: 1-min: compiled in {{.*}} host object
 # CHECK: 1-min: 10 steps in {{.*}} kcal/mol
 # CHECK: 2-nvt: 10 steps in {{.*}} density
 # CHECK: 3-npt: 10 steps in {{.*}} density

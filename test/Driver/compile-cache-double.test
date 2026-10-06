@@ -1,0 +1,16 @@
+# REQUIRES: python-api
+# The compile cache of host objects (D[compile-cache]) on the CPU in double
+# precision: a cold and a warm cache give the state of no cache bit for
+# bit after 20 deterministic steps; a truncated entry and an object with a
+# byte flipped are rejected and rebuilt. Each scenario is a process
+# of its own on one directory (Inputs/compile_cache.py).
+# RUN: rm -rf %t
+# RUN: %mdir_python %S/Inputs/compile_cache.py %S/Inputs/dipeptide CPU Double %t --damaged | FileCheck %s
+# CHECK: off: compiled 1 hits 0 rejected 0 stored 0
+# CHECK-NEXT: off: directory absent
+# CHECK-NEXT: cold: compiled 1 hits 0 rejected 0 stored 1 state same
+# CHECK-NEXT: cold: entries 1
+# CHECK-NEXT: warm: compiled 0 hits 1 rejected 0 stored 0 state same
+# CHECK-NEXT: truncated: compiled 1 hits 0 rejected 1 stored 1 state same
+# CHECK-NEXT: flipped: compiled 1 hits 0 rejected 1 stored 1 state same
+# CHECK-NEXT: rewarm: compiled 0 hits 1 rejected 0 stored 0 state same

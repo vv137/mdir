@@ -52,6 +52,17 @@ unwind ranges before registration. The old MLIR transformer in
 otherwise); section names and that hint provide no correctness proof. Late
 ORC-generated functions are checked regardless of their section placement.
 
+## Cached host objects (D[compile-cache])
+
+The compile cache ([compile-cache.md](compile-cache.md)) is the
+`llvm::ObjectCache` of the engine's compiler. It holds relocatable objects
+before linking, and a hit replaces only code generation: the object goes
+through the same allocation, linking, validation, registration, and release
+as a generated one, in memory the engine owns. No linked code, mapping, or
+frame is shared between engines or processes, and an entry is copied into
+memory rather than mapped. `jit-memory.test` runs the checks of this
+document without a cache, with a cold one, and with a warm one.
+
 ## Enforced transitions and dependency boundary
 
 Each object starts in `Linking`. RuntimeDyld allocates and relocates sections,
