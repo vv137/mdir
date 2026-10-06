@@ -29,7 +29,7 @@ format, or the outputs; every such change is listed under **Changed** or
   the steps carry are stored in f64, and checkpoints and Python states hold
   forces in f64 (`force_dtype` is `float64`); on a device the kernels make
   fused multiply-adds by the formula rather than none (#102, #105,
-  D[deterministic-energy-steps]). Runs outside the deterministic mode are
+  D204). Runs outside the deterministic mode are
   unchanged.
 
 - In the deterministic mode (`deterministic = true`) device kernels no longer

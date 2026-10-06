@@ -69,7 +69,7 @@ did not prevent it.
 
 **What a step of energy may not change.** A step that writes energies
 computes more than a plain step, and in the deterministic mode none of it
-may change the rounding of the dynamics (D201, D[deterministic-energy-steps]).
+may change the rounding of the dynamics (D201, D204).
 Three things did. LLVM fuses a product into a multiply-add only where the
 product has one use, so the energies and the virial changed which products
 of a force were fused; the device kernels now make every sum with a
