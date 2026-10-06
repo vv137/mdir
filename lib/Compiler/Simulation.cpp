@@ -510,6 +510,7 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
   out.firstVolume = engine.volume;
   out.dispersionEnergy = p.dispersionEnergy;
   out.dispersionVirial = p.dispersionVirial;
+  out.observableVolumeConstants = p.observableVolumeConstants;
   out.pme = p.pme;
   out.reactionField = p.reactionField;
   out.coulombConstantEnergy = p.coulombConstantEnergy;
