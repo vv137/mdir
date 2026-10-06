@@ -1,0 +1,11 @@
+# REQUIRES: python-api, hdf5, cuda
+# Drawn velocities and typed restraints in the Python model on a GPU
+# (D198), scenario nvt-double-restraints of
+# Inputs/python_velocities_restraints.py. The effect of the restraints and
+# of a moved reference on the NVT energies at step 10 in double precision;
+# the run with the default reference, which scenario nvt-double compares
+# with `mdir run`, is computed again here as a reference only.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_velocities_restraints.py %S/Inputs/dipeptide GPU mdir mdir-model-test %t nvt-double-restraints | FileCheck %s
+# CHECK: NVT: the restraints change the potential
+# CHECK: velocities and restraints nvt-double-restraints passed

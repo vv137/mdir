@@ -2,9 +2,9 @@
 # Drawn velocities and typed restraints in the Python model on the CPU
 # (D198), scenario nvt-double of Inputs/python_velocities_restraints.py.
 # NVT runs with drawn velocities and restraints against `mdir run` of the
-# same control file in double precision, and the effect of the restraints
-# and of their reference.
+# same control file in double precision, and the same run with the
+# reference of the restraints given explicitly, bit for bit.
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %mdir_python %S/Inputs/python_velocities_restraints.py %S/Inputs/dipeptide CPU mdir mdir-model-test %t nvt-double | FileCheck %s
-# CHECK: NVT: the restraints change the potential
+# CHECK: NVT Double; positions
 # CHECK: velocities and restraints nvt-double passed

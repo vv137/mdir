@@ -202,7 +202,12 @@ def cli_run(name, kind, precision, restraints=RESTRAINTS):
     return rows, state
 
 
-def python_run(kind, precision, restraints=RESTRAINTS, reference=None):
+def python_run(kind, precision, restraints=RESTRAINTS, reference=None, parts=2):
+    """The energies at step 10 and, with `parts` = 2, the state at step 20,
+    reached in a second part. The first `run` after the first segment
+    compiles the program that continues (D196), which on a GPU takes about
+    as long as the first program, so a run whose step 20 is not checked
+    stops after one part and returns None for it."""
     system, state = model(restraints=restraints)
     if reference is not None:
         system.restraint_reference = reference
@@ -217,6 +222,8 @@ def python_run(kind, precision, restraints=RESTRAINTS, reference=None):
                                               mdir.Schedule()))
     simulation.run(10, energy=True)
     first = simulation.state().energies
+    if parts == 1:
+        return first, None
     simulation.run(10, energy=True)
     return first, simulation.state()
 
@@ -280,31 +287,40 @@ def against_cli(precision, kinds=("NVT", "NPT")):
             line.append(f"{field} {difference:.3e} (tolerance {tolerance:.3e})")
         print("; ".join(line))
         if precision == "Double":
-            double_reference = reference
-            # The restraints are on: without them the potential at step 10
-            # differs by far more than the printed digits that matched.
-            free = python_run(kind, precision, restraints=())[0]
-            effect = abs(first["potential"] - free["potential"])
-            assert effect > 0.1, effect
-            print(f"{kind}: the restraints change the potential at step 10 by {effect:.3f} kJ/mol")
             # The default reference is the positions of the state given to
             # compile; the same positions given explicitly change no bit.
-            system, start = model()
+            _, start = model()
             _, explicit = python_run(kind, precision, reference=start.positions)
             for field in FIELDS:
                 assert np.array_equal(getattr(explicit, field), getattr(last, field)), field
-            # References of the peptide moved by 0.01 nm along x add about
-            # k (0.01 nm)^2 = 0.42 kJ/mol for each of its heavy atoms.
-            shifted = start.positions.copy()
-            shifted[:22, 0] += 0.01
-            moved = python_run(kind, precision, reference=shifted)[0]
-            assert abs(moved["potential"] - first["potential"]) > 1.0
+
+
+def restraint_effect(kind):
+    """The effect of the restraints and of their reference on the energies
+    at step 10, in double precision. The run with the default reference is
+    that of scenario <kind>-double, which compares it with `mdir run`; here
+    it is a reference only, and every run stops after its first part."""
+    first = python_run(kind, "Double", parts=1)[0]
+    # The restraints are on: without them the potential at step 10 differs
+    # by far more than the printed digits that scenario <kind>-double matches.
+    free = python_run(kind, "Double", restraints=(), parts=1)[0]
+    effect = abs(first["potential"] - free["potential"])
+    assert effect > 0.1, effect
+    print(f"{kind}: the restraints change the potential at step 10 by {effect:.3f} kJ/mol")
+    # References of the peptide moved by 0.01 nm along x add about
+    # k (0.01 nm)^2 = 0.42 kJ/mol for each of its heavy atoms.
+    shifted = model()[1].positions.copy()
+    shifted[:22, 0] += 0.01
+    moved = python_run(kind, "Double", reference=shifted, parts=1)[0]
+    assert abs(moved["potential"] - first["potential"]) > 1.0
 
 
 SCENARIOS = {
     "draws-copies": draws_copies,
     "nvt-double": lambda: against_cli("Double", ["NVT"]),
+    "nvt-double-restraints": lambda: restraint_effect("NVT"),
     "npt-double": lambda: against_cli("Double", ["NPT"]),
+    "npt-double-restraints": lambda: restraint_effect("NPT"),
     "mixed": lambda: against_cli("Mixed"),
 }
 if scenario not in SCENARIOS:
