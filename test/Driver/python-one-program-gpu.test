@@ -1,0 +1,15 @@
+# REQUIRES: python-api, cuda
+# A simulation compiles one program (D[python-simulation-compile]): after
+# its creation, runs in several calls of the entry load no module of kernels,
+# which they would if a later call compiled a program of its own. The runtime
+# traces each load with MDRT_TRACE.
+# RUN: env MDRT_TRACE=1 %mdir_python %S/Inputs/python_one_program.py %S/Inputs/dipeptide dynamics 2>&1 | FileCheck %s --check-prefix=DYNAMICS
+# RUN: env MDRT_TRACE=1 %mdir_python %S/Inputs/python_one_program.py %S/Inputs/dipeptide minimize 2>&1 | FileCheck %s --check-prefix=MINIMIZE
+# DYNAMICS: TRACE module
+# DYNAMICS: created dynamics
+# DYNAMICS-NOT: TRACE module
+# DYNAMICS: ran dynamics
+# MINIMIZE: TRACE module
+# MINIMIZE: created minimize
+# MINIMIZE-NOT: TRACE module
+# MINIMIZE: ran minimize
