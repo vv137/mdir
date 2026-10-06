@@ -79,12 +79,16 @@ def read_columns(path):
 
 def derivatives(directory, tolerance, volume, na, nb, scale, rc):
     """The rows at step 0 of [free_energy] and `observe` with the
-    correction on and off: they differ by the tail and its derivatives,
-    written out from the closed forms of the integrals of powers."""
+    correction on and off: they are of the shifted potential, so they differ
+    by the tail and the estimate of the shift, (4 pi / 3V) r_c^3 u(r_c) for
+    each pair (D[shifted-derivatives]), and their derivatives, written out
+    from the closed forms of the integrals of powers."""
     factor = 4 * math.pi / volume * scale
     ok = True
-    # -lambda_s c8 / r^8 over A-B and A-A, at lambda_s = 0.5 of (0, 0.5, 1).
-    tail = -factor * (na * nb + na * (na - 1) / 2) * C8 / (5 * rc ** 5)
+    # -lambda_s c8 / r^8 over A-B and A-A, at lambda_s = 0.5 of (0, 0.5, 1):
+    # the tail -c8 / (5 r_c^5) and the shift -c8 / (3 r_c^5) of a pair.
+    tail = -factor * (na * nb + na * (na - 1) / 2) * C8 * (
+        1 / (5 * rc ** 5) + 1 / (3 * rc ** 5))
     on = read_columns(f"{directory}/lambda.dhdl")
     off = read_columns(f"{directory}/lambda-off.dhdl")
     expected = {"dHdl.s": tail, "dU.0": -0.5 * tail, "dU.1": 0.0,
@@ -95,7 +99,9 @@ def derivatives(directory, tolerance, volume, na, nb, scale, rc):
         ok &= abs(difference) <= tolerance
 
     def lj_tail(s, e):
-        return 4 * e * (s ** 12 / (9 * rc ** 9) - s ** 6 / (3 * rc ** 3))
+        # The tail and the shift, r_c^3 u(r_c) / 3.
+        return 4 * e * (s ** 12 / (9 * rc ** 9) - s ** 6 / (3 * rc ** 3)
+                        + s ** 12 / (3 * rc ** 9) - s ** 6 / (3 * rc ** 3))
 
     pairs = factor * na * nb
     on = read_columns(f"{directory}/observe.obs")
@@ -103,6 +109,8 @@ def derivatives(directory, tolerance, volume, na, nb, scale, rc):
     expected = {
         "nbfix.energy": pairs * (lj_tail(SIG, EPS) - lj_tail(SIGMA, EPSILON)),
         "nbfix.d_sig": pairs * 4 * EPS * (12 * SIG ** 11 / (9 * rc ** 9)
+                                          - 6 * SIG ** 5 / (3 * rc ** 3)
+                                          + 12 * SIG ** 11 / (3 * rc ** 9)
                                           - 6 * SIG ** 5 / (3 * rc ** 3)),
         "nbfix.d_eps": pairs * lj_tail(SIG, 1.0),
     }
@@ -133,12 +141,14 @@ def main():
         c6 = 4 * EPSILON * SIGMA ** 6
         total = (na * (na - 1) + nb * (nb - 1)) * c6 + 2 * na * nb * c6ab
         e = -2 * math.pi / (3 * volume) * n * n * total / (n * (n - 1)) / rc ** 3
-        return e, 6 * e
+        # The shift of -C6/r^6 alone, -(4 pi / 3V) r_c^3 C6 / r_c^6 a pair,
+        # equals its tail.
+        return e, 6 * e, e
 
     def tail(u, du, pairs):
         i, j = tails(u, du, rc)
         factor = 4 * math.pi / volume * scale * pairs
-        return factor * i, -factor * j
+        return factor * i, -factor * j, factor * rc ** 3 * u(rc) / 3
 
     plain = topology(4 * EPSILON * SIGMA ** 6)
     fixed = topology(4 * EPS * SIG ** 6)
@@ -153,15 +163,19 @@ def main():
     reference = {
         "plain": plain,
         "fixed": fixed,
-        "nbfix": (plain[0] + nbfix[0], plain[1] + nbfix[1]),
-        "r8": (plain[0] + r8[0], plain[1] + r8[1]),
+        "nbfix": tuple(a + b for a, b in zip(plain, nbfix)),
+        "r8": tuple(a + b for a, b in zip(plain, r8)),
     }
     logs = {}
     ok = True
     for name in names:
         terms, row, diagonal = read_log(f"{directory}/{name}.log")
         logs[name] = (terms, row, diagonal)
-        e, w = reference[name.split("-")[0]]
+        # Under POTENTIAL_SHIFT (a name ending in -shift) the correction adds
+        # the estimate of the shift (D[shifted-derivatives]).
+        e, w, shift = reference[name.split("-")[0]]
+        if name.endswith("-shift"):
+            e += shift
         de = terms["dispersion"] - e
         print(f"{name}: dispersion {terms['dispersion']:.6f} reference {e:.6f} "
               f"difference {de:.1e}")
@@ -178,10 +192,13 @@ def main():
         (t1, r1, d1), (t0, r0, d0) = logs[name], logs[other]
         c12 = 4 * EPS * SIG ** 12 - 4 * EPSILON * SIGMA ** 12
         e12 = 4 * math.pi / volume * scale * na * nb * c12 / (9 * rc ** 9)
-        de = t1["total"] - t0["total"] - e12
+        # And under POTENTIAL_SHIFT the estimate of the shift of the
+        # repulsion, 3 times its tail, which has no virial.
+        e12s = e12 * (4 if name.endswith("-shift") else 1)
+        de = t1["total"] - t0["total"] - e12s
         dw = [a - b - 4 * e12 for a, b in zip(d1, d0)]
         dp = r1[-1] - r0[-1] - 12 * e12 / (3 * volume) * ATM
-        print(f"{name} - {other}: repulsion tail {e12:.6e}; total {de:.1e}, "
+        print(f"{name} - {other}: repulsion tail {e12s:.6e}; total {de:.1e}, "
               f"virial {max(abs(x) for x in dw):.1e}, pressure {dp:.1e} atm")
         ok &= abs(de) <= tolerance and max(abs(x) for x in dw) <= tolerance
         ok &= abs(dp) <= max(1.5e-4, tolerance / (3 * volume) * ATM * 12)
