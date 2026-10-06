@@ -67,6 +67,27 @@ kinetic energy and the virial, two runs with four threads then differed in
 up to 1.3e-15 of the positions after 200 steps, and the deterministic mode
 did not prevent it.
 
+**What a step of energy may not change.** A step that writes energies
+computes more than a plain step, and in the deterministic mode none of it
+may change the rounding of the dynamics (D201, D[deterministic-energy-steps]).
+Three things did. LLVM fuses a product into a multiply-add only where the
+product has one use, so the energies and the virial changed which products
+of a force were fused; the device kernels now make every sum with a
+product as an operand a fused multiply-add, by the formula alone. The type
+in which a field is stored came, for every field stored together with it,
+from a buffer of a host call that it reached, so the forces that a loop of
+steps carries were f32 where the loop's result reached the buffer of a
+checkpoint and f64 where it did not; a buffer now reaches the fields
+through a copy. And the kernel that joins the constraints with the loops
+over particles around them (D110) narrowed the positions of the members
+relative to the first before taking their differences, where a step of
+energy, which runs the loops alone, narrows the differences; the joined
+kernel now takes the stored positions. With constraints and PME, in mixed
+and double precision, on the CPU and a GPU, 20 steps with a row of energies
+at every step and with one at the end then give the same state bit for
+bit, at the speed of the deterministic mode before (JAC, 0.326 against
+0.325 ms per step).
+
 ## 7.2 What is approximated, and within what bound
 
 Under `fast_math` (the default of the suite) the f32 kernels of the terms
