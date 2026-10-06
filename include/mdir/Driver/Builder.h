@@ -132,7 +132,7 @@ struct Program {
   /// For each column of `observe`, what the correction for the dispersion
   /// adds to it, in kJ/mol (per unit of the constant) at the volume of the
   /// file, proportional to 1 / V: the tail of an observed pair term and its
-  /// derivatives (D[pair-dispersion-correction]); 0 for the other columns.
+  /// derivatives (D209); 0 for the other columns.
   std::vector<double> observableVolumeConstants;
   /// β in nm⁻¹ and the numbers of points of the grid, for the log.
   double pmeBeta = 0.0;

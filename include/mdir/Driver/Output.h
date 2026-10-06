@@ -122,7 +122,7 @@ struct Output {
   std::vector<double> lambdaFixedDerivatives, lambdaVolumeDerivatives;
   /// What the correction for the dispersion adds to each column of
   /// `observe`, in kJ/mol at the volume `firstVolume`, proportional to 1 / V
-  /// (D[pair-dispersion-correction]); empty if nothing.
+  /// (D209); empty if nothing.
   std::vector<double> observableVolumeConstants;
   std::unique_ptr<TrajectoryWriter> trajectory;
   bool hasTrajectory = false;

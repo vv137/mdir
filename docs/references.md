@@ -896,7 +896,7 @@ in Computational Mathematics **1** (Springer, Berlin, 1983).
 
 Used for: the adaptive Gauss–Kronrod quadrature of 7 and 15 points that
 integrates the tail of a pair term beyond the cutoff in the correction for
-the dispersion (D[pair-dispersion-correction]).
+the dispersion (D209).
 
 ### Press2007
 

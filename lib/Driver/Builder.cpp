@@ -374,7 +374,7 @@ private:
   /// selection of [free_energy] decouples.
   double getTopologyDispersion(bool decoupled) const;
   /// The expressions of the pair terms, whose tails beyond the cutoff
-  /// System::pairTails counts (D[pair-dispersion-correction]).
+  /// System::pairTails counts (D209).
   std::vector<Expression> tailExpressions;
   /// Collects the tails of the observed pair terms and their derivatives
   /// in the observed constants, for the columns of `observe`.
@@ -1638,7 +1638,7 @@ llvm::Error Builder::collectTopology() {
     }
     program.dispersionEnergy = energy;
     program.dispersionVirial = 6.0 * energy;
-    // The tails of the pair terms (D[pair-dispersion-correction]).
+    // The tails of the pair terms (D209).
     if (llvm::Error error = collectPairTails())
       return error;
     for (unsigned index = 0, e = system.pairTails.size(); index != e;
@@ -1748,7 +1748,7 @@ static double integrateUnit(llvm::function_ref<double(double)> f) {
 
 llvm::Error Builder::collectPairTails() {
   // The pairs that each term counts, from the system
-  // (D[pair-dispersion-correction]); a term that the correction leaves out
+  // (D209); a term that the correction leaves out
   // has none.
   for (const PairTerm &term : control.pairs)
     tailExpressions.push_back(llvm::cantFail(

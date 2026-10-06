@@ -51,7 +51,7 @@ struct PairTerm {
   DispersionCorrection dispersion = DispersionCorrection::None;
   /// Whether the term gives `dispersion_correction`: with a topology,
   /// `"NONE"` leaves it out of the correction of [energy], which it
-  /// otherwise follows (D[pair-dispersion-correction]).
+  /// otherwise follows (D209).
   bool dispersionGiven = false;
   /// With a topology, two masks: the term then acts only on the pairs of
   /// a particle of one and a particle of the other (D137), as the

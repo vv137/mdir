@@ -40,7 +40,7 @@ class Expression;
 /// Whether the tail of the pair energy `expression` beyond `cutoff` (Å),
 /// ∫ r² u(r) dr, converges at the values `values`: r³ u(r) must fall by a
 /// decade at least from each of 10³, 10⁴, 10⁵ to 10⁶ r_c, or be 0
-/// (D[pair-dispersion-correction]).
+/// (D209).
 bool hasFiniteTail(const Expression &expression,
                    llvm::StringMap<double> values, double cutoff);
 
@@ -64,7 +64,7 @@ struct System {
   /// The names of those terms, for the log.
   std::vector<std::string> pairTermNames;
   /// The tail of each pair term of a topology in the correction for the
-  /// dispersion (D[pair-dispersion-correction]): the pairs of classes of
+  /// dispersion (D209): the pairs of classes of
   /// particles that it counts, each with the values that its expression
   /// reads in the units of the control file (`r` aside) and the number of
   /// such pairs that the topology does not exclude; empty for a term that

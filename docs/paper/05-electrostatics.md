@@ -250,7 +250,7 @@ evaluated at $10^4r_c$ and checked against its value at $10^3r_c$ to
 $10^{-9}$. Both terms are constants of the host at the volume of the
 start, scaled by $V_0/V$ as the cell changes.
 
-**Pair terms over a topology** (D[pair-dispersion-correction]). A term
+**Pair terms over a topology** (D209). A term
 `[[energy.pair]]` over the pairs of a topology, such as an NBFIX written
 in the control file as $u(\sigma',\varepsilon') - u(\sigma,\varepsilon)$
 over two groups, has a tail of its own, of any form. With the same uniform

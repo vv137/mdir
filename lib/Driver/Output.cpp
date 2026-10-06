@@ -390,7 +390,7 @@ void _mlir_ciface_mdrtWriteObservables(int64_t step, void *values) {
   auto *v = static_cast<StridedMemRefType<double, 1> *>(values);
   std::vector<double> row = {output.getTime(step)};
   // The tails of the observed pair terms at the volume of the cell
-  // (D[pair-dispersion-correction]).
+  // (D209).
   double scale = output.firstVolume / output.volume;
   for (int64_t k = 0; k != v->sizes[0]; ++k) {
     double value = v->data[k * v->strides[0]];

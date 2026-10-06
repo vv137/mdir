@@ -1,6 +1,6 @@
 # The correction for the dispersion of a topology includes the tail beyond
 # the cutoff of every [[energy.pair]] term, over the pairs its groups select
-# (D[pair-dispersion-correction]). On a mixture of 60 A and 60 B
+# (D209). On a mixture of 60 A and 60 B
 # (pair_tail_system.py): an NBFIX of the A-B pair written as a correction
 # term, u(sigma', epsilon') - u(sigma, epsilon), against the topology with
 # the same pair in [ nonbond_params ]; and a term -c8/r^8 - a exp(-r/l)/r^4

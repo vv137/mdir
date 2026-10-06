@@ -1,6 +1,6 @@
 """A small mixture of two Lennard-Jones species A and B, single-atom
 molecules of GROMACS, for the tail of pair terms beyond the cutoff
-(D[pair-dispersion-correction]). Writes
+(D209). Writes
 
   plain.top   A and B with the rule of Lorentz and Berthelot
   fixed.top   the same with the A-B pair set apart in [ nonbond_params ]

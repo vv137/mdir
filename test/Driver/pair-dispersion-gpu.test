@@ -1,5 +1,5 @@
 # The tails of pair terms in the correction for the dispersion
-# (D[pair-dispersion-correction]) on a GPU, in double and mixed precision:
+# (D209) on a GPU, in double and mixed precision:
 # the runs of pair-dispersion.test against check_pair_tail.py. The
 # correction is a constant of the host, so the dispersion lines are those of
 # the CPU; the comparison of the NBFIX written as a correction term with the

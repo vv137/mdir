@@ -198,7 +198,7 @@ format, or the outputs; every such change is listed under **Changed** or
   out with the warning `pair_tail_left_out` under the default correction,
   and is an error when the control file gives `dispersion_correction =
   "ENERGY_PRESSURE"`, until the term gives `dispersion_correction = "NONE"`
-  (D[pair-dispersion-correction], #145).
+  (D209, #145).
 
 - The warning `short_thermostat_period` is reported once for a run from a
   topology. It was added to the system twice, so `mdir check`,

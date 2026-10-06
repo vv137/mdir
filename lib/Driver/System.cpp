@@ -546,7 +546,7 @@ bool mdir::driver::hasFiniteTail(const Expression &expression,
 }
 
 /// The tails of the pair terms in the correction for the dispersion of a
-/// topology (D[pair-dispersion-correction]). The pairs that a term counts
+/// topology (D209). The pairs that a term counts
 /// fall into classes of particles equal in everything that its expression
 /// reads: the type, the charge if it reads q1 or q2, the parameters of
 /// each particle that it reads, and its two group flags. The number of

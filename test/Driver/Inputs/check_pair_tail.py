@@ -1,5 +1,5 @@
 """The tail of pair terms beyond the cutoff in the correction for the
-dispersion (D[pair-dispersion-correction]), on the mixture of
+dispersion (D209), on the mixture of
 pair_tail_system.py, against an independent reference in pure Python.
 
 With a uniform density beyond the cutoff r_c, each unordered pair that a

@@ -29,7 +29,7 @@
 #
 #
 # The correction for the dispersion, on by default, integrates each pair
-# term beyond the cutoff (D[pair-dispersion-correction]). The Coulomb-like
+# term beyond the cutoff (D209). The Coulomb-like
 # part of 'grouped' has no finite tail: under the default the term is left
 # out with a warning; asked for in [energy], it is an error, unless the
 # term leaves the correction with its own 'dispersion_correction'.

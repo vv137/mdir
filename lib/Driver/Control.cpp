@@ -2106,7 +2106,7 @@ Error Reader::readEnergy(const toml::table &table) {
         return fail(node, "with a topology a pair term takes the parameters "
                           "of the topology, not 'mixing'");
       // Its tail follows the correction of [energy], which "NONE" in the
-      // term leaves it out of (D[pair-dispersion-correction]).
+      // term leaves it out of (D209).
       if (term.dispersion != DispersionCorrection::None &&
           control.topologyDispersion == DispersionCorrection::None)
         return fail(node, "with a topology the correction for the "
