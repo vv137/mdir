@@ -22,6 +22,9 @@ no control keys or changes to output formats or overwrite behavior.
 D199 checks final allocated host code and relocated unwind ranges
 before frame registration; an unsupported layout fails compilation with an
 ownership diagnostic. See [JIT ownership](../jit-invariants.md).
+D[python-simulation-compile] compiles one program of segments, whose entry
+does the work of the start only on its first call; it adds no control keys
+and changes no output formats or overwrite behavior.
 
 Typed Python restraints (D198,
 [contract](../python-velocities-restraints.md)) are one `[[restraints]]`

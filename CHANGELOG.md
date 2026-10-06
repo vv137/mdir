@@ -106,6 +106,15 @@ format, or the outputs; every such change is listed under **Changed** or
   slowest file on a GPU is now a `python-simulation-lifetime` one, which
   runs one process's whole sequence (D208, #141).
 
+- A Python `Simulation` compiles one program, whose entry does the work of
+  the start only on its first call, instead of a second program for the
+  segments after the first on its first part; every lowering in the
+  process uses MLIR's threads, from one pool shared by the process. The four
+  stages of the Python ala3 example at a hundredth of their steps take 146 s
+  instead of 240 s on a GPU in mixed precision, and 162 s instead of 251 s
+  in double, with less CPU time; results are unchanged to the bit in the
+  deterministic mode (D[python-simulation-compile], #147).
+
 ### Added
 
 - `examples/ala3/run.py`: the four stages of the ala3 example (minimization,

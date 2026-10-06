@@ -75,8 +75,10 @@ The entry pointer is exposed only after initialization and successful lookup.
 Initialization and symbol-resolution failures are returned as owned error
 strings, which survive destruction of the ORC session.
 
-Creation, continuation compilation, entry execution, and destruction take the
-same process mutex. Polling Python happens between parts after releasing it.
+Creation, entry execution, and destruction take the
+same process mutex. Since D[python-simulation-compile] a simulation compiles
+one program, whose entry begins the run or continues it as an argument says,
+so it owns one engine. Polling Python happens between parts after releasing it.
 A caller must keep a simulation alive while one of its methods runs; native
 callers cannot destroy an object concurrently with its own active method.
 The Python binding retains the object for its method call. Independent
@@ -115,8 +117,8 @@ exception in the host, proving live unwinding works in both code models.
 `python-simulation-lifetime-{numpy,mdir,runtime}-first{,-gpu}.test` each run a
 fresh process in the NumPy-first, MDIR-first, or runtime-first order (both
 runtimes first on the GPU), one order per file. Each process runs the original 24 retained-engine cycles, then seeds 89, 196, and
-20261006 once each for 32 operations, retaining up to five simulations with
-both first and continued engines. Six additional lifetimes run on three host
+20261006 once each for 32 operations, retaining up to five simulations that
+have run more than one part. Six additional lifetimes run on three host
 threads. Failures print the seed, import order, and operation sequence.
 `validation.txt` under each test's output directory records the independent
 force comparison and the seed outcomes. ASLR is retained.
