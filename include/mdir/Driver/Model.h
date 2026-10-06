@@ -27,6 +27,56 @@ enum class Electrostatics { Cutoff, PME };
 enum class CoulombModifier { None, PotentialShift };
 enum class EnsembleKind { NVE, NVT, NPT };
 
+/// A tunable parameter (D[python-tunable], docs/python-tunable.md): a
+/// vector θ of M entries and a map from the sites of `parameter` to them.
+/// `parameter` is "charge" (sites: the particles), "sigma" or "epsilon"
+/// (the Lennard-Jones types, with the combining rule), or, with `term`, a
+/// constant of that pair term (one site) or a parameter of that tuple term
+/// (its tuples). `map` has an entry for each site, the entry of θ it takes
+/// or -1 to keep its value; empty, each site is an entry of its own.
+/// `values` are the initial θ; empty, those of the model.
+struct Tunable {
+  std::string name, parameter, term;
+  std::vector<int64_t> map;
+  std::vector<double> values;
+  /// The rule of σ of a pair of types: Arithmetic (Lorentz) or Geometric.
+  driver::Mixing mixing = driver::Mixing::Arithmetic;
+};
+/// The tunables of a prepared model, resolved against it.
+struct TunableSet {
+  struct Entry {
+    enum Kind { Charge, Sigma, Epsilon, PairConstant, TupleParameter };
+    std::string name, parameter, term;
+    Kind kind = Charge;
+    /// The index of the term among the pair terms of the control or the
+    /// tuple terms of the topology.
+    unsigned termIndex = 0;
+    /// One entry per site, -1 for a site that keeps its value.
+    std::vector<int64_t> map;
+    size_t entries = 0;
+    driver::Mixing mixing = driver::Mixing::Arithmetic;
+    /// The unit of the values, for messages and the plan.
+    std::string unit;
+  };
+  std::vector<Entry> tunables;
+  /// The values of each tunable, in MD units.
+  std::vector<std::vector<double>> values;
+  /// σ and ε of each type as the model gives them, which a type that a map
+  /// leaves out keeps.
+  std::vector<double> typeSigma, typeEpsilon;
+  /// Whether each pair term's tail is in the correction for the
+  /// dispersion at the values of the compile (D209), which an update keeps.
+  std::vector<bool> pairTails;
+  bool empty() const { return tunables.empty(); }
+  /// The place of the tunable `name`, or -1.
+  int find(llvm::StringRef name) const {
+    for (size_t k = 0; k != tunables.size(); ++k)
+      if (tunables[k].name == name)
+        return static_cast<int>(k);
+    return -1;
+  }
+};
+
 /// Input order, nm and nm/ps. Empty velocities stay absent until execution.
 struct InitialState {
   std::vector<double> positions, velocities;
@@ -67,6 +117,8 @@ struct System {
   /// coordinates file of the control file; empty: the positions of the
   /// initial state that is prepared.
   std::vector<double> restraintReference;
+  /// The tunable parameters (D[python-tunable]).
+  std::vector<Tunable> tunables;
 };
 struct LoadedData {
   driver::Topology topology;
@@ -115,8 +167,27 @@ struct PreparedModel {
   Execution execution;
   driver::Control control;
   driver::System system;
+  /// The tunables, whose values `control` and `system` hold.
+  TunableSet tunables;
   llvm::Expected<driver::Program> build() const;
 };
+/// Resolves the tunables of `model` against its prepared `control` and
+/// `system`, and puts their initial values into them (D[python-tunable]).
+llvm::Expected<TunableSet> resolveTunables(const System &model,
+                                           driver::Control &control,
+                                           driver::System &system);
+/// Puts the values `values` of the tunables `set` into `control` and
+/// `system` (a copy of the topology), and collects the tails of the pair
+/// terms anew; an InputError if a value is not allowed or a pair term's
+/// tail enters or leaves the correction for the dispersion
+/// (D[python-tunable]).
+llvm::Error applyTunables(const TunableSet &set,
+                          const std::vector<std::vector<double>> &values,
+                          driver::Control &control, driver::System &system);
+/// Checks new values of the tunables `set`: one array of the right shape
+/// for each, finite, σ and ε not negative.
+llvm::Error checkTunableValues(const TunableSet &set,
+                               const std::vector<std::vector<double>> &values);
 llvm::Expected<PreparedModel> prepare(const System &, const InitialState &,
                                      const Integrator &, const Ensemble &,
                                      const Execution &, const Schedule &);

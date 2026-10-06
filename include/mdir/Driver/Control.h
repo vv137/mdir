@@ -154,6 +154,14 @@ struct Control {
   /// An owned topology supplied by an embedding front end. No file is reopened.
   bool inMemoryTopology = false;
   bool inMemoryCharmm = false;
+  /// Set by an embedding front end, not by a key (D[python-tunable]):
+  /// whether the model declares tunable parameters, whose values the
+  /// program must take at run time rather than as constants; and the
+  /// constants of pair terms that are tunable, by the index of the term and
+  /// the name of the constant, in the order of the columns of the table
+  /// `tunable_constants` that the program reads them from.
+  bool tunables = false;
+  std::vector<std::pair<unsigned, std::string>> tunableConstants;
 
   bool hasTopology() const {
     return inMemoryTopology || !prmtopFile.empty() || !gromacsTopologyFile.empty() ||

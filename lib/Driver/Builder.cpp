@@ -1485,6 +1485,19 @@ llvm::Error Builder::collectTopology() {
   unsigned numTypes = topology.getNumTypes();
   program.tables.push_back({"lj_sigma", numTypes, topology.sigma});
   program.tables.push_back({"lj_epsilon", numTypes, topology.epsilon});
+  // The tunable constants of the pair terms (D[python-tunable]), a row that
+  // the kernels read in place of constants of their text.
+  if (!control.tunableConstants.empty()) {
+    Program::Table table;
+    table.name = "tunable_constants";
+    table.count = 1;
+    table.columns = control.tunableConstants.size();
+    for (const auto &[term, name] : control.tunableConstants)
+      for (const auto &[key, value] : control.pairs[term].constants)
+        if (key == name)
+          table.values.push_back(value);
+    program.tables.push_back(std::move(table));
+  }
 
   auto addSet = [&](StringRef name, unsigned arity) -> Program::TupleSet & {
     Program::TupleSet set;
@@ -3532,8 +3545,21 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     }
     for (auto [c, constant] : llvm::enumerate(term.constants)) {
       std::string value = "%pt_c" + std::to_string(c);
-      os << "    " << value << " = arith.constant "
-         << formatReal(constant.second) << " : f64\n";
+      // A tunable constant is a value of the program's table, which an
+      // update changes without compiling (D[python-tunable]).
+      auto tunable = llvm::find(control.tunableConstants,
+                                std::pair<unsigned, std::string>(
+                                    static_cast<unsigned>(k), constant.first));
+      if (tunable != control.tunableConstants.end()) {
+        os << "    " << value << "_row = arith.constant 0 : i32\n"
+           << "    " << value << "_column = arith.constant "
+           << (tunable - control.tunableConstants.begin()) << " : i32\n"
+           << "    " << value << " = md.lookup %t_tunable_constants[" << value
+           << "_row, " << value << "_column] : !grid, i32, i32 -> f64\n";
+      } else {
+        os << "    " << value << " = arith.constant "
+           << formatReal(constant.second) << " : f64\n";
+      }
       values[constant.first] = value;
     }
     bindObserved(term.name, values);
@@ -8206,6 +8232,8 @@ void Builder::emitEntry() {
   // the last call left (D211).
   if (branchesStart())
     os << ", %first_call: i64";
+  if (program.takesConstants)
+    os << ", %baro_constant: f64, %baro_energy_constant: f64";
   os << ") {\n";
 
   os << "  %c0 = arith.constant 0 : index\n"
@@ -8448,12 +8476,17 @@ void Builder::emitEntry() {
                          control.timestep / control.tauP)
            << " : f64\n"
            << "  %baro_kt = arith.constant "
-           << formatReal(units::boltzmann * control.temperature) << " : f64\n"
-           << "  %baro_constant = arith.constant " << formatReal(constant)
-           << " : f64\n"
-           << "  %baro_energy_constant = arith.constant "
-           << formatReal(energyConstant) << " : f64\n"
-           << "  %c_bar = arith.constant 16.6053906717 : f64\n"
+           << formatReal(units::boltzmann * control.temperature) << " : f64\n";
+        // With tunables they depend on the values, and the entry takes
+        // them (D[python-tunable]).
+        program.baroConstant = constant;
+        program.baroEnergyConstant = energyConstant;
+        if (!program.takesConstants)
+          os << "  %baro_constant = arith.constant " << formatReal(constant)
+             << " : f64\n"
+             << "  %baro_energy_constant = arith.constant "
+             << formatReal(energyConstant) << " : f64\n";
+        os << "  %c_bar = arith.constant 16.6053906717 : f64\n"
            << "  %c_three = arith.constant 3.0 : f64\n"
            << "  %c_third = arith.constant "
            << formatReal(1.0 / 3.0) << " : f64\n"
@@ -8560,7 +8593,20 @@ void Builder::emitEntry() {
           emitKineticWithoutCenter("  ", velocities, "%m", "s0"));
     }
 
-    if (isLeapfrog()) {
+    if (isLeapfrog() && program.tunable && branchesStart()) {
+      // v(-dt/2) = v(0) - (dt/2) F(0) / m on the first call; a call that
+      // evaluates the forces anew after an update of the tunables
+      // (%first_call = 2) has the velocities of the half step already
+      // (D[python-tunable]).
+      os << "  %back = arith.constant -5.0e-01 : f64\n"
+         << "  %back_dt = arith.mulf %back, %dt : f64\n"
+         << "  %back_none = arith.constant 0.0 : f64\n"
+         << "  %back_first = arith.constant 1 : i64\n"
+         << "  %back_begins = arith.cmpi eq, %first_call, %back_first : i64\n"
+         << "  %behind = arith.select %back_begins, %back_dt, %back_none"
+            " : f64\n"
+         << "  %v0 = dyn.kick %vg, %f0, %m, %behind : !vec\n";
+    } else if (isLeapfrog()) {
       // v(-dt/2) = v(0) - (dt/2) F(0) / m.
       os << "  %back = arith.constant -5.0e-01 : f64\n"
          << "  %behind = arith.mulf %back, %dt : f64\n"
@@ -8896,6 +8942,19 @@ llvm::Error Builder::build() {
           system.box[k] / units::length, axes[k],
           control.cutoffDistance);
   program.entry = "mdir_run";
+  // Tunable parameters (D[python-tunable]) are values of the buffers of a
+  // program of segments, of the Python simulation that updates them.
+  if (control.tunables) {
+    if (!system.topology)
+      return makeError("tunable parameters are for a model with a topology");
+    if (control.hasFreeEnergy || !control.observables.empty() ||
+        control.ljpme || !getPullColumns().empty())
+      return makeError("tunable parameters do not take [free_energy], "
+                       "observe, LJPME, or pulls yet");
+    program.tunable = true;
+    program.takesConstants = control.barostat && control.thermostat &&
+                             control.getCouplingPeriod() > 0;
+  }
   switch (control.precision) {
   case Precision::Single:
     program.state = program.mass = Element::F32;

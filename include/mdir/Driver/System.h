@@ -164,6 +164,12 @@ llvm::Expected<System> prepareTopologySystem(const Control &control,
                                              Topology topology,
                                              bool recognizeWaterResidues);
 
+/// Collects the tails of the pair terms of `system` anew (D209), as
+/// prepareTopologySystem does, from the values of its topology and of the
+/// pair terms of `control`, which a tunable parameter may have changed
+/// (D[python-tunable]); the warnings of `system` are kept as they are.
+llvm::Error recollectPairTails(const Control &control, System &system);
+
 /// Gives the particles velocities of the temperature of `control`, from
 /// the seed of `control`, with the center of mass at rest.
 void assignVelocities(const Control &control, System &system);

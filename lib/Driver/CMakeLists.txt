@@ -46,6 +46,7 @@ add_mlir_library(MDIRDriver
   Fingerprint.cpp
   Gromacs.cpp
   Model.cpp
+  Tunables.cpp
   Output.cpp
   Selection.cpp
   System.cpp

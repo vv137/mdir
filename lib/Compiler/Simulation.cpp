@@ -464,6 +464,11 @@ Simulation::create(const model::PreparedModel &prepared) {
   for (int k = 0; k != 3; ++k)
     system.inputBox[k] = system.box[k];
 
+  // The values of the tunables are put into the system that the program is
+  // built from to build them anew (D[python-tunable]).
+  simulation->compiledSystem = system;
+  simulation->tunableValues = prepared.tunables.values;
+  simulation->tunablesHistory = {{0, 0}};
   auto engine = compileEngine(control, system, prepared.execution);
   if (!engine) {
     lock.unlock();
@@ -488,6 +493,7 @@ Simulation::create(const model::PreparedModel &prepared) {
     output->box[k] = system.box[k];
   output->volume = system.box[0] * system.box[1] * system.box[2];
   output->endStep = 0;
+  output->tunablesVersion = prepared.tunables.empty() ? -1 : 0;
   simulation->output = std::move(output);
   lock.unlock();
   return std::move(simulation);
@@ -643,8 +649,17 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
     a.pointers.push_back(&part.closePeriods);
     a.pointers.push_back(&framePeriod);
   }
-  int64_t firstCall = hasRun ? 0 : 1;
+  // 2: the forces of the state given anew, after an update of the
+  // tunables (D[python-tunable]).
+  int64_t firstCall = hasRun ? (refreshing ? 2 : 0) : 1;
   a.pointers.push_back(&firstCall);
+  double baroConstant = p.baroConstant, baroEnergyConstant = p.baroEnergyConstant;
+  if (p.takesConstants) {
+    a.pointers.push_back(&baroConstant);
+    a.pointers.push_back(&baroEnergyConstant);
+  }
+  out.quietStep = refreshing ? step : -1;
+  out.tunablesVersion = prepared.tunables.empty() ? -1 : tunablesVersion;
   Output::MinimizationRow rowBefore = out.lastMinimization;
 
   stopMessage.clear();
@@ -1013,6 +1028,7 @@ llvm::Expected<SimulationState> Simulation::getState() const {
     state.minimization =
         SimulationMinimization{least.energy, least.rmsForce, least.maxForce,
                                least.stepSize, least.maxForceParticle};
+  state.tunablesVersion = tunablesVersion;
   const auto &row = output->lastEnergies;
   if (hasRun && !prepared.control.minimize && row.step == step)
     state.energies = SimulationEnergies{row.potential, row.kinetic, row.total,
@@ -1020,4 +1036,82 @@ llvm::Expected<SimulationState> Simulation::getState() const {
                                         row.virial, row.pressure, row.volume};
   busy = false;
   return state;
+}
+
+llvm::Error Simulation::updateTunables(
+    const std::vector<std::pair<std::string, std::vector<double>>> &changes) {
+  if (busy.exchange(true))
+    return simulationError("another operation is under way on this "
+                           "simulation");
+  struct Release {
+    std::atomic<bool> &flag;
+    ~Release() { flag = false; }
+  } release{busy};
+  if (failed)
+    return simulationError("the simulation failed earlier; it keeps the "
+                           "state of step " + llvm::Twine(step) +
+                           " and takes no new values");
+  const model::TunableSet &set = prepared.tunables;
+  if (set.empty())
+    return inputError("the program of this simulation declares no tunable "
+                      "parameters (System.tunables)");
+  std::vector<std::vector<double>> values = tunableValues;
+  for (const auto &[name, given] : changes) {
+    int k = set.find(name);
+    if (k < 0)
+      return inputError("this simulation has no tunable named '" + name + "'");
+    values[k] = given;
+  }
+  // The values of the program, built from the model with the new values by
+  // the code that compiled it: everything that depends on them, and the
+  // same program, or the change is structural.
+  Control control = compiled->control;
+  System system = compiledSystem;
+  if (llvm::Error error = model::applyTunables(set, values, control, system))
+    return error;
+  auto program = buildProgram(control, system);
+  if (!program)
+    return inputError("the new values of the tunables: " +
+                      llvm::toString(program.takeError()));
+  if (program->module != compiled->program.module) {
+    StringRef was = compiled->program.module, now = program->module;
+    size_t at = 0;
+    while (at < was.size() && at < now.size() && was[at] == now[at])
+      ++at;
+    size_t begin = was.rfind('\n', at);
+    begin = begin == StringRef::npos ? 0 : begin + 1;
+    StringRef line = was.substr(begin).split('\n').first.trim();
+    return inputError("the new values of the tunables change the program, "
+                      "not only its values (at '" + line + "'): compile it "
+                      "with them (Tunable values=...)");
+  }
+  std::swap(compiled->program, *program);
+  std::vector<std::vector<double>> before = std::move(tunableValues);
+  tunableValues = std::move(values);
+  // The forces that the next step begins with, at the new values; a
+  // minimization takes none.
+  if (hasRun && !prepared.control.minimize) {
+    refreshing = true;
+    llvm::Error error = runPart(*compiled, Part());
+    refreshing = false;
+    if (error) {
+      std::swap(compiled->program, *program);
+      tunableValues = std::move(before);
+      failed = false;
+      output->lastEnergies.step = -1;
+      return simulationError("the new values of the tunables: " +
+                             llvm::toString(std::move(error)) +
+                             "; the update is undone");
+    }
+    // Leapfrog's velocities are half a step behind the positions: the row
+    // of the energies would take them for those of the step.
+    if (prepared.control.integrator == Integrator::Leapfrog)
+      output->lastEnergies.step = -1;
+  } else {
+    output->lastEnergies.step = -1;
+  }
+  ++tunablesVersion;
+  tunablesHistory.push_back({step, tunablesVersion});
+  output->tunablesVersion = tunablesVersion;
+  return llvm::Error::success();
 }

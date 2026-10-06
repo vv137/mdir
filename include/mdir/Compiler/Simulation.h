@@ -61,6 +61,9 @@ struct SimulationState {
   std::optional<SimulationEnergies> energies;
   /// That of the last step of a minimization that has taken steps.
   std::optional<SimulationMinimization> minimization;
+  /// The version of the values of the tunable parameters that the forces
+  /// and the energies are of (D[python-tunable]).
+  int64_t tunablesVersion = 0;
 };
 
 class Simulation {
@@ -109,6 +112,26 @@ public:
 
   /// The state after the last part that succeeded.
   llvm::Expected<SimulationState> getState() const;
+
+  /// The tunable parameters of the program (D[python-tunable],
+  /// docs/python-tunable.md), their values, the version of the values (0
+  /// at the creation, one more for each update), and for each version the
+  /// step after which it holds.
+  const model::TunableSet &getTunables() const { return prepared.tunables; }
+  const std::vector<std::vector<double>> &getTunableValues() const {
+    return tunableValues;
+  }
+  int64_t getTunablesVersion() const { return tunablesVersion; }
+  const std::vector<std::pair<int64_t, int64_t>> &getTunablesHistory() const {
+    return tunablesHistory;
+  }
+  /// Gives the tunables named in `changes` the values given, at once: the
+  /// values of the program are built anew from the model with them, which
+  /// must give the program compiled (a structural change is refused), and
+  /// the forces of the state are evaluated anew. On any failure nothing
+  /// changes.
+  llvm::Error updateTunables(
+      const std::vector<std::pair<std::string, std::vector<double>>> &changes);
   int64_t getStep() const { return step; }
   double getTime() const;
   bool hasFailed() const { return failed; }
@@ -162,6 +185,16 @@ private:
   double minimizationSize = 0.0;
   bool hasRun = false;
   bool failed = false;
+  /// The system that the program was built from, at its first step, which
+  /// the values of the tunables are put into to build them anew; their
+  /// values, version, and history (D[python-tunable]).
+  driver::System compiledSystem;
+  std::vector<std::vector<double>> tunableValues;
+  int64_t tunablesVersion = 0;
+  std::vector<std::pair<int64_t, int64_t>> tunablesHistory;
+  /// Whether the part under way evaluates the forces anew after an update:
+  /// a call of the entry with `%first_call` 2 and no steps.
+  bool refreshing = false;
   /// The time that a step took in the last part long enough to tell, in
   /// s, which sets the length of the next part; 0 until then.
   double secondsPerStep = 0.0;
