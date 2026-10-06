@@ -412,6 +412,9 @@ private:
   };
   llvm::Expected<PairTail>
   getPairTail(unsigned index, const llvm::StringMap<double> &changes) const;
+  /// 1 − V / (N (4π/3) r_c³), which takes the particle itself out of the
+  /// neighbors within r_c in the estimate of the shift.
+  double getShiftFactor() const;
   /// The sum over the pair terms, at the values `changes`, of the tail and
   /// the estimate of the shift: what the correction adds to the quantities
   /// of the shifted potential (D[shifted-derivatives]).
@@ -1727,12 +1730,25 @@ double Builder::getTopologyDispersion(bool decoupled) const {
 }
 
 double Builder::getTopologyShift(bool decoupled) const {
-  // A shift to 0 at the cutoff takes u(r_c) from each pair within it; at a
-  // uniform density that is (4π r_c³ / 3V) of the pairs, in the convention
-  // of the tail, N² / 2 pairs of the mean C6: (2π N² / 3V) r_c³ u(r_c). Of
-  // the r⁻⁶ part alone, as the tail, u(r_c) = −⟨C6⟩ / r_c⁶, and the
-  // estimate is −(2π / 3V) N² ⟨C6⟩ / r_c³: the tail itself.
-  return getTopologyDispersion(decoupled);
+  // A shift to 0 at the cutoff takes u(r_c) from each pair within it. A
+  // particle has ρ (4π/3) r_c³ − 1 neighbors within r_c at the density
+  // ρ = N / V, the particle itself taken out, as the compressibility sum
+  // rule makes ∫ ρ (g − 1) dV = −1 for a liquid of low compressibility
+  // [HansenMcDonald2013] (and as GROMACS counts them). In the convention of
+  // the tail, N² / 2 pairs of the mean C6, the estimate is
+  // (N/2) ⟨u(r_c)⟩ (ρ (4π/3) r_c³ − 1); of the r⁻⁶ part alone, as the
+  // tail, u(r_c) = −⟨C6⟩ / r_c⁶, which is the tail E times
+  // 1 − V / (N (4π/3) r_c³).
+  return getTopologyDispersion(decoupled) * getShiftFactor();
+}
+
+double Builder::getShiftFactor() const {
+  // 1 − 1 / (ρ (4π/3) r_c³): the neighbors within r_c less the particle
+  // itself, over ρ (4π/3) r_c³ (D[shifted-derivatives]).
+  double rc = control.cutoffDistance * units::length;
+  double volume = system.box[0] * system.box[1] * system.box[2];
+  double n = static_cast<double>(system.topology->getNumParticles());
+  return 1.0 - volume / (n * 4.0 * M_PI / 3.0 * rc * rc * rc);
 }
 
 /// The integral of `f` over [0, 1] by adaptive Gauss–Kronrod quadrature
@@ -1828,7 +1844,8 @@ Builder::getPairTail(unsigned index,
   // polynomial in s for a sum of powers r⁻ᵏ, k ≥ 4, which the quadrature
   // integrates exactly. A shift to 0 at the cutoff takes u(r_c) from each
   // pair within it, at a uniform density (4π / 3V) r_c³ u(r_c) for each
-  // pair, with the same factor (D[shifted-derivatives]).
+  // pair, with the same factor, times getShiftFactor() for the particle
+  // itself (D[shifted-derivatives]).
   const Expression &expression = tailExpressions[index];
   double rc = control.cutoffDistance;
   double energy = 0.0, virial = 0.0, shift = 0.0;
@@ -1865,7 +1882,7 @@ Builder::getPairTail(unsigned index,
   PairTail tail;
   tail.energy = factor * energy;
   tail.virial = factor * virial;
-  tail.shift = factor * shift;
+  tail.shift = factor * shift * getShiftFactor();
   return tail;
 }
 
