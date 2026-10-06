@@ -3,6 +3,7 @@
 #ifndef MDIR_COMPILER_SIMULATION_H
 #define MDIR_COMPILER_SIMULATION_H
 #include "mdir/Driver/Model.h"
+#include "mdir/Driver/Trajectory.h"
 #include <array>
 #include <atomic>
 #include <functional>
@@ -84,6 +85,23 @@ public:
   llvm::Expected<int64_t> minimize(std::optional<int64_t> count = {},
                                    const std::function<bool()> &poll = {});
   bool isMinimization() const { return prepared.control.minimize; }
+  /// The built-in reports of `mdir run`'s outputs (D[python-reporters]):
+  /// the columns file of the energies every `energyPeriod` steps and a
+  /// trajectory every `framePeriod` steps, 0 for none. Files are backed up
+  /// as `mdir run` backs up its outputs and opened at once; they stay open
+  /// across runs, and the reports are written inside the parts of a run.
+  struct Reports {
+    std::string energyPath;
+    int64_t energyPeriod = 0;
+    std::string trajectoryPath;
+    driver::TrajectoryFormat trajectoryFormat = driver::TrajectoryFormat::DCD;
+    int64_t framePeriod = 0;
+  };
+  llvm::Error setReports(const Reports &reports);
+  /// Flushes and closes the files of the reports.
+  void closeReports();
+  const Reports &getReports() const { return reports; }
+
   /// Asks a run under way to stop after its part; from any thread.
   void requestStop() { stopRequested = true; }
 
@@ -109,10 +127,16 @@ private:
   struct Part {
     int64_t outer = 0, inner = 0, tail = 0, plain = 0, close = 0,
             closeInner = 0;
+    /// The periods of coupling of an interval of the second nest, less one
+    /// (D[python-reporters]).
+    int64_t closePeriods = 0;
   };
   llvm::Error runPart(Engine &engine, Part part);
   /// The steps of the next part, in multiples of `unit`.
   int64_t getPartSteps(int64_t unit) const;
+  /// The next step after `step` at which a built-in report is due, or -1.
+  int64_t getNextReport(int64_t step) const;
+  Reports reports;
 
   model::PreparedModel prepared;
   std::unique_ptr<Engine> first, continued;

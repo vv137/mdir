@@ -177,6 +177,9 @@ private:
   /// Sets `levels`, the loops of the schedule of a run of dynamics.
   void setSchedule();
   void emitMinimization();
+  /// A frame at `step` if a reporter's frame is due (programs of segments).
+  void emitFrameIfDue(StringRef indent, StringRef step, StringRef positions,
+                      StringRef tag);
   /// Emits the energy of each term at the positions `x`, for the log.
   void emitTerms(StringRef x = "%x0");
 
@@ -6287,6 +6290,9 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         os << inner << "mdrt.host_call @mdrtWriteFrame(%step" << here << ", "
            << StringRef(yielded).split(',').first << ", " << idName
            << ") : (i64, !vec, !ids)\n";
+      else if (control.segments)
+        emitFrameIfDue(inner, "%step" + here,
+                       StringRef(yielded).split(',').first, here);
       os << inner << "scf.yield " << yielded << " : " << state << "\n";
     } else {
       if (current.name == "frame") {
@@ -7731,6 +7737,13 @@ void Builder::emitEntry() {
   // (D202).
   if (control.segments && control.minimize)
     os << ", %first_size: f64";
+  // The reports of a program of segments (D[python-reporters]): the second
+  // nest is %count_energy_close intervals that end with a step of energy,
+  // of %count_energy_periods + 1 periods of coupling each (or of
+  // %count_energy_inner + 1 steps without coupling); a frame is written at a
+  // step of energy whose number is a multiple of %frame_period (0: none).
+  if (control.segments && !control.minimize)
+    os << ",\n    %count_energy_periods: i64, %frame_period: i64";
   os << ") {\n";
 
   os << "  %c0 = arith.constant 0 : index\n"
@@ -7760,8 +7773,11 @@ void Builder::emitEntry() {
     if (couples)
       os << "  %n1 = arith.index_cast %count_inner : i64 to index\n"
          << "  %n2 = arith.index_cast %count_energy_close : i64 to index\n"
-         << "  %n3 = arith.constant 0 : index\n"
+         << "  %n3 = arith.index_cast %count_energy_periods : i64 to index\n"
          << "  %n4 = arith.index_cast %count_energy_inner : i64 to index\n";
+    else
+      os << "  %n1 = arith.index_cast %count_energy_close : i64 to index\n"
+         << "  %n2 = arith.index_cast %count_energy_inner : i64 to index\n";
     os << "  %n_tail = arith.index_cast %count_tail : i64 to index\n"
        << "  %n_plain = arith.index_cast %count_energy_plain : i64 to index\n";
   } else {
@@ -7787,9 +7803,13 @@ void Builder::emitEntry() {
        << "  %per0 = arith.addi %n1, %closing : index\n"
        << "  %per4 = arith.constant 1 : index\n"
        << "  %per3 = arith.addi %n4, %closing : index\n"
-       << "  %per2 = arith.addi %n4, %closing : index\n";
+       << "  %periods2 = arith.addi %n3, %c1 : index\n"
+       << "  %per2 = arith.muli %periods2, %per3 : index\n";
   } else if (control.segments) {
-    os << "  %per0 = arith.constant 1 : index\n";
+    // The second nest: intervals of %n2 plain steps and a step of energy.
+    os << "  %per0 = arith.constant 1 : index\n"
+       << "  %per2 = arith.constant 1 : index\n"
+       << "  %per1 = arith.addi %n2, %c1 : index\n";
   }
   for (unsigned i = control.segments ? 0 : levels.size(); i-- != 0;) {
     os << "  %per" << i << " = arith.constant " << steps << " : index\n";
@@ -8163,21 +8183,22 @@ void Builder::emitEntry() {
     last = emitSegmentEnergyStep("%xt", "%vt", "%ft");
     cellName = outerCell;
     scaleName = outerScale;
-    // A period that closes with a step of energy, as an interval of the log
-    // of `mdir run` ends, after the steps of the segment before it.
-    if (levels[0].name == "couple") {
-      os << "  %steps_a = arith.muli %n0, %per0 : index\n"
-         << "  %steps_t = arith.addi %steps_a, %n_tail : index\n"
-         << "  %steps_p = arith.addi %steps_t, %n_plain : index\n"
-         << "  %steps_e = arith.index_cast %steps_p : index to i64\n"
-         << "  %start_e = arith.addi %start, %steps_e : i64\n";
-      nestBegin = 2;
-      nestEnd = 5;
-      nestOutside = last;
-      nestStart = "%start_e";
-      emitLevel(2, "  ");
-      last = "e2";
-    }
+    // Intervals that end with a step of energy, as an interval of the log
+    // of `mdir run` ends, after the steps of the segment before them: one
+    // period that closes, or the intervals of the reports
+    // (D[python-reporters]).
+    unsigned second = levels[0].name == "couple" ? 2 : 1;
+    os << "  %steps_a = arith.muli %n0, %per0 : index\n"
+       << "  %steps_t = arith.addi %steps_a, %n_tail : index\n"
+       << "  %steps_p = arith.addi %steps_t, %n_plain : index\n"
+       << "  %steps_e = arith.index_cast %steps_p : index to i64\n"
+       << "  %start_e = arith.addi %start, %steps_e : i64\n";
+    nestBegin = second;
+    nestEnd = levels.size();
+    nestOutside = last;
+    nestStart = "%start_e";
+    emitLevel(second, "  ");
+    last = "e" + std::to_string(second);
   } else {
     emitLevel(0, "  ");
   }
@@ -8188,6 +8209,32 @@ void Builder::emitEntry() {
     os << "  mdrt.host_call @mdrtFinishForces(%f" << last << ", " << idName
        << ") : (!vec, !ids)\n";
   os << "  return\n}\n";
+}
+
+void Builder::emitFrameIfDue(StringRef indent, StringRef step,
+                             StringRef positions, StringRef tag) {
+  // A frame of a reporter (D[python-reporters]) where the number of the step
+  // is a multiple of the frame period that the entry takes; only then are
+  // the positions copied.
+  std::string t = ("%frame_" + tag).str();
+  os << indent << t << "_z = arith.constant 0 : i64\n"
+     << indent << t << "_o = arith.constant 1 : i64\n"
+     << indent << t << "_h = arith.cmpi sgt, %frame_period, " << t
+     << "_z : i64\n"
+     << indent << t << "_s = arith.select " << t << "_h, %frame_period, " << t
+     << "_o : i64\n"
+     << indent << t << "_r = arith.remsi " << step << ", " << t << "_s : i64\n"
+     << indent << t << "_e = arith.cmpi eq, " << t << "_r, " << t
+     << "_z : i64\n"
+     << indent << t << "_d = arith.andi " << t << "_h, " << t << "_e : i1\n"
+     // A loop of one iteration or none: the passes that place the buffers
+     // carry their storage through scf.for, not scf.if.
+     << indent << t << "_w = arith.extui " << t << "_d : i1 to i64\n"
+     << indent << t << "_n = arith.index_cast " << t << "_w : i64 to index\n"
+     << indent << "scf.for " << t << "_i = %c0 to " << t << "_n step %c1 {\n"
+     << indent << "  mdrt.host_call @mdrtWriteFrame(" << step << ", "
+     << positions << ", " << idName << ") : (i64, !vec, !ids)\n"
+     << indent << "}\n";
 }
 
 std::string Builder::emitSegmentEnergyStep(StringRef x, StringRef v,
@@ -8232,6 +8279,7 @@ std::string Builder::emitSegmentEnergyStep(StringRef x, StringRef v,
   if (!control.periodic)
     os << "    mdrt.host_call @mdrtCheckSpread(%step_plain, %xpl, " << idName
        << ") : (i64, !vec, !ids)\n";
+  emitFrameIfDue("    ", "%step_plain", "%xpl", "pl");
   os << "    scf.yield %xpl, %vpl, %fpl : !vec, !vec, !vec\n"
      << "  }\n";
   return "p";
@@ -8431,6 +8479,9 @@ llvm::Error Builder::build() {
     if (couples) {
       levels.push_back({"energy", 1});
       levels.push_back({"couple", 0});
+      levels.push_back({"step", 0});
+    } else {
+      levels.push_back({"energy", 1});
       levels.push_back({"step", 0});
     }
   }

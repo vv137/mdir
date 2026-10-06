@@ -602,10 +602,15 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
                                     double kinetic, double excess,
                                     double virial) {
   Output &output = *current;
-  if (output.energyPeriod > 0 &&
-      (step - output.firstStep) % output.energyPeriod != 0) {
+  // A step of energy that is not a row of the log keeps no temperatures of
+  // the solvent and the solute, as for `mdir run`; an embedded program
+  // (D196) still takes its energies, without a row.
+  bool isRow = output.energyPeriod <= 0 ||
+               (step - output.firstStep) % output.energyPeriod == 0;
+  if (!isRow) {
     output.hasSolvent = false;
-    return;
+    if (!output.embedded)
+      return;
   }
   // `kinetic` is that of the velocities at the step. The total energy has
   // it, because that sum varies least.
@@ -690,6 +695,8 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
                          pressure * 16.6053906717,
                          potential + kinetic + (output.couples ? output.bath : 0.0),
                          output.volume};
+  if (!isRow)
+    return;
   output.log.print("INFO: %9lld", static_cast<long long>(step));
   for (double value : row)
     output.log.print(" %14.4f", value);

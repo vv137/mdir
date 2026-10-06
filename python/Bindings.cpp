@@ -433,9 +433,81 @@ PYBIND11_MODULE(mdir, m) {
       for (int k = 0; k != 3; ++k) { cell.diagonal[k] = s.box[k]; cell.tilt[k] = s.tilt[k]; }
       return cell;
     });
+  // Reporters (D[python-reporters], docs/python-reporters.md): the files
+  // of `mdir run` written inside the parts of a run, and Python functions
+  // called after the part that ends at their step.
+  py::enum_<driver::TrajectoryFormat>(m, "TrajectoryFormat")
+    .value("DCD", driver::TrajectoryFormat::DCD)
+    .value("XTC", driver::TrajectoryFormat::XTC)
+    ;
+  struct EnergyReporter { std::string file; int64_t period; };
+  struct TrajectoryReporter { std::string file; int64_t period; driver::TrajectoryFormat format; };
+  struct CallbackReporter { py::object function; int64_t period; };
+  auto positive = [](int64_t period) {
+    if (period <= 0) throw InputError("a reporter's period must be a positive number of steps");
+    return period;
+  };
+  py::class_<EnergyReporter>(m, "EnergyReporter")
+    .def(py::init([positive](std::string file, int64_t period) {
+      return EnergyReporter{std::move(file), positive(period)};
+    }), py::arg("file"), py::arg("period"))
+    .def_readonly("file", &EnergyReporter::file)
+    .def_readonly("period", &EnergyReporter::period);
+  py::class_<TrajectoryReporter>(m, "TrajectoryReporter")
+    .def(py::init([positive](std::string file, int64_t period,
+                             std::optional<driver::TrajectoryFormat> format) {
+      if (!format) {
+        llvm::StringRef name(file);
+        if (name.ends_with_insensitive(".dcd")) format = driver::TrajectoryFormat::DCD;
+        else if (name.ends_with_insensitive(".xtc")) format = driver::TrajectoryFormat::XTC;
+        else throw InputError("TrajectoryReporter: cannot tell the format of '" + file +
+                              "'; name a .dcd or .xtc file, or give format=");
+      }
+      return TrajectoryReporter{std::move(file), positive(period), *format};
+    }), py::arg("file"), py::arg("period"), py::arg("format") = py::none())
+    .def_readonly("file", &TrajectoryReporter::file)
+    .def_readonly("period", &TrajectoryReporter::period)
+    .def_readonly("format", &TrajectoryReporter::format);
+  py::class_<CallbackReporter>(m, "CallbackReporter")
+    .def(py::init([positive](py::object function, int64_t period) {
+      if (!PyCallable_Check(function.ptr())) throw InputError("CallbackReporter takes a callable");
+      return CallbackReporter{std::move(function), positive(period)};
+    }), py::arg("function"), py::arg("period"))
+    .def_readonly("function", &CallbackReporter::function)
+    .def_readonly("period", &CallbackReporter::period);
   struct PySimulation {
     std::shared_ptr<Program> program;
     std::unique_ptr<compiler::Simulation> simulation;
+    py::list reporters;
+    /// Gives the simulation the built-in reporters of the list; returns the
+    /// callbacks.
+    std::vector<CallbackReporter> sync() {
+      compiler::Simulation::Reports given;
+      std::vector<CallbackReporter> callbacks;
+      for (py::handle item : reporters) {
+        if (py::isinstance<EnergyReporter>(item)) {
+          if (given.energyPeriod) throw InputError("a simulation takes one EnergyReporter");
+          const auto &r = item.cast<const EnergyReporter &>();
+          given.energyPath = r.file; given.energyPeriod = r.period;
+        } else if (py::isinstance<TrajectoryReporter>(item)) {
+          if (given.framePeriod) throw InputError("a simulation takes one TrajectoryReporter");
+          const auto &r = item.cast<const TrajectoryReporter &>();
+          given.trajectoryPath = r.file; given.framePeriod = r.period;
+          given.trajectoryFormat = r.format;
+        } else if (py::isinstance<CallbackReporter>(item)) {
+          callbacks.push_back(item.cast<CallbackReporter>());
+        } else {
+          throw InputError("Simulation.reporters holds EnergyReporter, TrajectoryReporter, "
+                           "and CallbackReporter values");
+        }
+      }
+      const auto &now = simulation->getReports();
+      if (given.energyPath != now.energyPath || given.energyPeriod != now.energyPeriod ||
+          given.trajectoryPath != now.trajectoryPath || given.framePeriod != now.framePeriod ||
+          given.trajectoryFormat != now.trajectoryFormat)
+        if (llvm::Error error = simulation->setReports(given)) raise(std::move(error));
+      return callbacks;
+    }
   };
   py::class_<PySimulation>(m, "Simulation")
     .def(py::init([](std::shared_ptr<Program> program) {
@@ -453,11 +525,39 @@ PYBIND11_MODULE(mdir, m) {
       result.simulation = unwrap(std::move(*created));
       return result;
     }), py::arg("program"))
-    .def("run", [](PySimulation &s, int64_t steps, bool energy) {
-      return withSignals([&](const std::function<bool()> &poll) {
-        return s.simulation->run(steps, poll, energy);
-      });
+    .def("run", [](py::object self, int64_t steps, bool energy) {
+      auto &s = self.cast<PySimulation &>();
+      if (steps < 0) throw InputError("run takes a nonnegative number of steps");
+      std::vector<CallbackReporter> callbacks = s.sync();
+      // The parts end at the steps of the callbacks, whose state they take;
+      // the files of the built-in reporters are written inside the parts.
+      int64_t taken = 0, end = s.simulation->getStep() + steps;
+      while (taken < steps) {
+        int64_t now = s.simulation->getStep(), next = end;
+        for (const auto &c : callbacks) next = std::min(next, (now / c.period + 1) * c.period);
+        bool atCallback = next < end || (!callbacks.empty() && llvm::any_of(callbacks,
+            [&](const CallbackReporter &c) { return end % c.period == 0; }));
+        int64_t leg = withSignals([&](const std::function<bool()> &poll) {
+          return s.simulation->run(next - now, poll, energy || atCallback);
+        });
+        taken += leg;
+        if (leg < next - now) break;  // A stop.
+        int64_t at = s.simulation->getStep();
+        bool due = false;
+        for (const auto &c : callbacks) due = due || at % c.period == 0;
+        if (!due) continue;
+        py::object state = py::cast(unwrap(s.simulation->getState()));
+        for (const auto &c : callbacks)
+          if (at % c.period == 0) c.function(self, state);
+      }
+      return taken;
     }, py::arg("steps"), py::arg("energy") = false)
+    .def_property("reporters", [](PySimulation &s) { return s.reporters; },
+                  [](PySimulation &s, py::list reporters) { s.reporters = std::move(reporters); })
+    .def("close_reporters", [](PySimulation &s) {
+      s.simulation->closeReports();
+      s.reporters = py::list();
+    })
     .def("minimize", [](PySimulation &s, std::optional<int64_t> steps) {
       return withSignals([&](const std::function<bool()> &poll) {
         return s.simulation->minimize(steps, poll);

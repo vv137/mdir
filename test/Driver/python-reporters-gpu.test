@@ -1,0 +1,14 @@
+# REQUIRES: python-api, cuda
+# Reporters of a Python simulation on a GPU (D[python-reporters]): the
+# energy file and the trajectory of `mdir run`, written inside the parts of
+# a run, against those of `mdir run`; the schedule; callbacks; the state
+# unchanged by the reports; backups and refusals.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_reporters.py %S/Inputs/dipeptide GPU mdir %t | FileCheck %s
+# CHECK: GPU NVE Double dcd: 11 rows
+# CHECK: GPU NVT Double xtc: 11 rows
+# CHECK: GPU NVT Mixed xtc: 11 rows
+# CHECK: schedule: callbacks at [(7, 7), (11, 11), (7, 14), (7, 21), (11, 22), (7, 28)]
+# CHECK: a callback error ends the run at step 5
+# CHECK: reports change no bit of the state in the deterministic mode
+# CHECK: backups and refusals passed
