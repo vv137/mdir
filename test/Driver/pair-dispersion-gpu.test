@@ -2,10 +2,12 @@
 # (D209) on a GPU, in double and mixed precision:
 # the runs of pair-dispersion.test against check_pair_tail.py. The
 # correction is a constant of the host, so the dispersion lines are those of
-# the CPU; the comparison of the NBFIX written as a correction term with the
-# topology of [ nonbond_params ] holds to 2e-6 kcal/mol in double precision
-# and to 2e-5 in mixed (1.9e-6 measured), where the two programs sum the
-# pairs within the cutoff in f32 in different orders.
+# the CPU, with the estimate of the shift under POTENTIAL_SHIFT
+# (D[shifted-derivatives]); the comparison of the NBFIX written as a
+# correction term with the topology of [ nonbond_params ] holds to 2e-6
+# kcal/mol in double precision and to 2e-5 in mixed (1.9e-6 measured),
+# where the two programs sum the pairs within the cutoff in f32 in
+# different orders.
 #
 # REQUIRES: cuda
 #
@@ -33,6 +35,10 @@
 # RUN: cd %t/double && mdir run lambda.toml > lambda.log && mdir run lambda-off.toml > lambda-off.log && mdir run observe.toml > observe.log && mdir run observe-off.toml > observe-off.log
 # RUN: %python %S/Inputs/check_pair_tail.py %t/double 2e-6 plain fixed nbfix r8 | FileCheck %S/pair-dispersion.test
 # RUN: %python %S/Inputs/check_pair_tail.py %t/double 2e-6 derivatives | FileCheck %S/pair-dispersion.test --check-prefix=DERIVATIVES
+# RUN: sed -e 's/^lennard_jones_modifier = "NONE"/lennard_jones_modifier = "POTENTIAL_SHIFT"/' %t/double/nbfix.toml > %t/double/shift.toml
+# RUN: sed -e 's/^lennard_jones_modifier = "NONE"/lennard_jones_modifier = "POTENTIAL_SHIFT"/' %t/double/fixed.toml > %t/double/fixed-shift.toml
+# RUN: cd %t/double && mdir run shift.toml > nbfix-shift.log && mdir run fixed-shift.toml > fixed-shift.log
+# RUN: %python %S/Inputs/check_pair_tail.py %t/double 2e-6 fixed-shift nbfix-shift | FileCheck %S/pair-dispersion.test --check-prefix=SHIFT
 #
 # RUN: sed -e 's/TOPOLOGY/plain.top/' %t/mixed/base.toml > %t/mixed/plain.toml
 # RUN: sed -e 's/TOPOLOGY/fixed.top/' %t/mixed/base.toml > %t/mixed/fixed.toml
@@ -48,3 +54,7 @@
 # RUN: cd %t/mixed && mdir run lambda.toml > lambda.log && mdir run lambda-off.toml > lambda-off.log && mdir run observe.toml > observe.log && mdir run observe-off.toml > observe-off.log
 # RUN: %python %S/Inputs/check_pair_tail.py %t/mixed 2e-5 plain fixed nbfix r8 | FileCheck %S/pair-dispersion.test
 # RUN: %python %S/Inputs/check_pair_tail.py %t/mixed 2e-5 derivatives | FileCheck %S/pair-dispersion.test --check-prefix=DERIVATIVES
+# RUN: sed -e 's/^lennard_jones_modifier = "NONE"/lennard_jones_modifier = "POTENTIAL_SHIFT"/' %t/mixed/nbfix.toml > %t/mixed/shift.toml
+# RUN: sed -e 's/^lennard_jones_modifier = "NONE"/lennard_jones_modifier = "POTENTIAL_SHIFT"/' %t/mixed/fixed.toml > %t/mixed/fixed-shift.toml
+# RUN: cd %t/mixed && mdir run shift.toml > nbfix-shift.log && mdir run fixed-shift.toml > fixed-shift.log
+# RUN: %python %S/Inputs/check_pair_tail.py %t/mixed 2e-5 fixed-shift nbfix-shift | FileCheck %S/pair-dispersion.test --check-prefix=SHIFT

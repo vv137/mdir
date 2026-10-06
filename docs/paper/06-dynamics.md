@@ -1015,6 +1015,65 @@ bar over ten runs of 1 ns, against $181 \pm 9$ bar of the paper with the
 same Lorentz–Berthelot ions; `observe` gives the same derivative to the
 printed digits (`test/Driver/observables.test`).
 
+**The potential that the forces sample** (D[shifted-derivatives]). A pair
+term cut at $r_c$ without a shift has the energy $u(r)\,\Theta(r_c - r)$.
+Its force within $r_c$ is $-u'(r)$, that of
+$u_\text{shift} = u - u(r_c)$, and the integrator never applies the
+impulse $u(r_c)\,\delta(r - r_c)$ of the step: the dynamics is that of
+$U_\text{shift} = \sum u_\text{shift}$, a thermostatted run samples
+$e^{-U_\text{shift}/k_BT}$ as $\Delta t\to0$, and a run at constant energy
+conserves $U_\text{shift} + K$. The identities above hold for the potential
+of the ensemble that is sampled, so
+
+$$
+\frac{\partial F}{\partial\theta} = \Big\langle\frac{\partial U_\text{shift}}{\partial\theta}\Big\rangle,
+\qquad
+\frac{\partial u_\text{shift}}{\partial\theta} = \frac{\partial u(r)}{\partial\theta} - \frac{\partial u(r_c)}{\partial\theta}\quad(r < r_c),
+$$
+
+and the exponential averages, BAR, and MBAR need $U_\text{shift}$ at every
+state. The cut $U$ differs by $U - U_\text{shift} = N_\text{in}\,u(r_c;\theta)$,
+which fluctuates with the configuration: its derivative would add
+$\langle N_\text{in}\rangle\,\partial_\theta u(r_c)$ to the mean force, and
+$\partial_\theta u(r_c)\,\mathrm{Cov}(O, N_\text{in})$ to the covariance of
+an observable $O$ with $\partial U/\partial\theta$ that reweighting takes.
+MDIR therefore writes the free-energy file and the observables file of
+$U_\text{shift}$ under a plain cutoff: the topology's Lennard-Jones, pair
+terms, a Coulomb cutoff, and the direct sum of PME, each pair less its
+energy at $r_c$, which is what `POTENTIAL_SHIFT` computes. The log keeps
+$U$, which compares with Amber programs. With the correction for the
+dispersion, the files add the tail and $E_\text{sh}$ (Section 5.4): their
+fluctuations stay those of the sampled potential, while their mean, with
+$N_\text{in}$ replaced by its uniform estimate, is the mean-field value of
+the corrected unshifted potential. A decoupled soft-core pair is shifted by
+$(1-\lambda)\,u_\text{LJ}(r_c)$, the plain Lennard-Jones at $r_c$, as under
+`POTENTIAL_SHIFT` and as in the free-energy kernels of GROMACS; its
+soft-core energy at $r_c$ is $(1-\lambda)\,u_\text{LJ}(r_A(r_c))$, so a step
+of about $\alpha_\text{sc}\lambda(\sigma/r_c)^6$ of $u(r_c)$ remains,
+$1.4\times10^{-3}\lambda$ of it at $\sigma$ = 3.4 Å and $r_c$ = 9 Å: kept,
+so that the shift is a constant of the pair's types as for every other
+pair, and so that the two modifiers give the same files.
+
+Validation: on the same trajectory the files under `NONE` and
+`POTENTIAL_SHIFT` are equal to the last digit, with a Coulomb cutoff and with
+PME, on the CPU and on a GPU in both precisions
+(`test/Driver/shifted-derivatives.test`); the Coulomb cutoff's
+$\partial U/\partial\lambda_\text{C}$ is the sum
+$-\sum fq_iq_j(1/r - 1/r_c)$ over the decoupled pairs to $1.5\times10^{-7}$
+kcal/mol, where the cut sum would be 9.536 against 0.681. Decoupling one
+particle from 500 Lennard-Jones particles at 100 K, $r_c$ = 12 Å, with the
+correction, gives $1.092 \pm 0.024$ kcal/mol by thermodynamic integration over 11 windows
+and $1.085 \pm 0.015$ by BAR. On 200 frames of the window $\lambda = 0.5$, pmemd 26
+(plain truncation and its long-range correction) gives
+$\partial U/\partial\lambda$ of the cut potential and the derivative of its
+correction, 0.0665 kcal/mol, the tail's: MDIR's differs from it by
+$N_\text{in}\,u(r_c)$ of the frame plus the derivative of $E_\text{sh}$ to
+$6.3\times10^{-5}$ kcal/mol (the printed digits of pmemd), and on average by
+$(\langle N_\text{in}\rangle - N_\text{uniform})\,u(r_c)$ =
+$+0.00022$ kcal/mol against $+0.00032 \pm 0.00015$ observed, small here because $g\approx1$ at
+$r_c$. In the study of #140 the reweighting gradients under `NONE` now
+agree with brute force: $d\langle\Pi\rangle/d\sigma' = -18.38 \pm 1.04$ bar/Å against $-17.84 \pm 0.90$ (−0.39 SE), where the cut potential gave $-21.13$ (−2.39 SE), and the same for $c$ and $\varphi$; $\partial U/\partial\sigma'$ under `NONE` equals that under `POTENTIAL_SHIFT` in all 2,960,148 rows of the 148 runs, whose trajectories are those of the earlier runs.
+
 **Decoupling.** `couple` selects whole molecules, $a_i = 1$ for a particle
 of the selection and 0 otherwise; a pair is decoupled when one particle is
 in it, $c_{ij} = a_i + a_j - 2a_ia_j$. With $\lambda_\text{C}$ and

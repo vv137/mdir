@@ -7,9 +7,10 @@ molecules of GROMACS, for the tail of pair terms beyond the cutoff
               (sigma' and epsilon')
   system.gro  the coordinates: a jittered cubic lattice, fixed by a seed
 
-    pair_tail_system.py directory count-A count-B edge-Å sigma'-Å epsilon'-kcal/mol
+    pair_tail_system.py directory count-A count-B edge-Å sigma'-Å epsilon'-kcal/mol [charge-e]
 
-A and B have sigma = 3.4 Å and epsilon = 0.24 kcal/mol, mass 40."""
+A and B have sigma = 3.4 Å and epsilon = 0.24 kcal/mol, mass 40, and the
+charges +charge and -charge (default 0)."""
 
 import random
 import sys
@@ -20,13 +21,14 @@ KCAL = 4.184
 def main():
     out, na, nb = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
     edge, sig, eps = float(sys.argv[4]), float(sys.argv[5]), float(sys.argv[6])
+    charge = float(sys.argv[7]) if len(sys.argv) > 7 else 0.0
     head = ["[ defaults ]", "  1 2 no 1.0 1.0", "", "[ atomtypes ]"]
     for name in ("A", "B"):
         head.append(f"  {name}T 0 40.0 0.0 A 0.340000 {0.24 * KCAL:.6f}")
     body = []
-    for name in ("A", "B"):
+    for name, q in (("A", charge), ("B", -charge)):
         body += ["", "[ moleculetype ]", f"  {name} 1", "", "[ atoms ]",
-                 f"  1 {name}T 1 {name} {name} 1 0.0 40.0"]
+                 f"  1 {name}T 1 {name} {name} 1 {q} 40.0"]
     body += ["", "[ system ]", "mixture", "", "[ molecules ]", f"A {na}",
              f"B {nb}", ""]
     nbfix = ["", "[ nonbond_params ]",

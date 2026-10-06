@@ -2065,10 +2065,14 @@ Error Reader::readEnergy(const toml::table &table) {
                        "(\"FORCE_SWITCH\", \"POWER_FORCE_SWITCH\", or "
                        "\"SQUARED_DISTANCE_SWITCH\"); "
                        "without one, 'switch_distance' must equal 'cutoff'");
+  // The correction takes a plain cutoff, or the shift with the estimate of
+  // what it takes within the cutoff (D[shifted-derivatives]); a switch
+  // would leave out what it removes below the cutoff.
   if (hasTopology && control.truncation != Truncation::None &&
+      control.truncation != Truncation::Shift &&
       control.topologyDispersion != DispersionCorrection::None)
     return fail(table, "the correction for the dispersion needs a plain "
-                       "cutoff; with a 'lennard_jones_modifier', give "
+                       "cutoff or \"POTENTIAL_SHIFT\"; with a switch, give "
                        "'dispersion_correction = \"NONE\"'");
   if (!hasTopology && control.truncation == Truncation::SquaredDistanceSwitch)
     return fail(table, "'lennard_jones_modifier = \"SQUARED_DISTANCE_SWITCH\"' "

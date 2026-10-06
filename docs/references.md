@@ -383,6 +383,17 @@ illustrated by the Störmer–Verlet method," *Acta Numer.* **12**, 399–450
 Used for: the properties `symplectic` and `time_reversible` of velocity
 Verlet and leapfrog, and why neither conserves energy exactly (B9).
 
+### HansenMcDonald2013
+
+J.-P. Hansen, I. R. McDonald, *Theory of Simple Liquids*, 4th ed.
+(Academic Press, Oxford, 2013).
+[doi:10.1016/C2010-0-66723-X](https://doi.org/10.1016/C2010-0-66723-X)
+
+Used for: the compressibility sum rule, by which a particle of a
+liquid has $\rho\,\tfrac{4\pi}{3}r_c^3 - 1$ neighbors within $r_c$ at a uniform
+density, in the estimate of the shift of the correction for the
+dispersion (D[shifted-derivatives]).
+
 ### Hawkins1996
 
 G. D. Hawkins, C. J. Cramer, D. G. Truhlar, "Parametrized models of

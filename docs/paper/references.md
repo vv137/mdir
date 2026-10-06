@@ -184,6 +184,12 @@ M. Abraham, A. Alekseenko, B. Andrews, et al., *GROMACS 2025.4 Manual*
 (Zenodo, 2025).
 [doi:10.5281/zenodo.17671776](https://doi.org/10.5281/zenodo.17671776)
 
+### HansenMcDonald2013
+
+J.-P. Hansen, I. R. McDonald, *Theory of Simple Liquids*, 4th ed.
+(Academic Press, Oxford, 2013).
+[doi:10.1016/C2010-0-66723-X](https://doi.org/10.1016/C2010-0-66723-X)
+
 ### He2024
 
 Y. He, A. Podobas, S. Markidis, "Leveraging MLIR for loop vectorization

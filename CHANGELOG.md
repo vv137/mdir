@@ -12,6 +12,25 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- Under a plain cutoff (`lennard_jones_modifier = "NONE"`, a Coulomb
+  cutoff, or the direct sum of PME without `coulomb_modifier`), the
+  free-energy file (`dHdl.<name>`, `dU.<k>`) and the observables file
+  (`<term>.energy` and its derivatives) now take the potential that the
+  forces sample: each pair within the cutoff less its energy at the cutoff,
+  as under `POTENTIAL_SHIFT`, whose files they now equal on the same
+  trajectory. Before, they took the potential cut without a shift, whose
+  derivatives differ by a term that fluctuates with the number of pairs
+  within the cutoff, and biased reweighting gradients by 18% (#140) and
+  thermodynamic integration by $\langle N_\text{pairs}\rangle\,\partial
+  u(r_c)/\partial\lambda$. The forces, the trajectories, the energies of the
+  log and of the energy file, the virial, and the pressure are unchanged.
+  With a topology, `dispersion_correction = "ENERGY_PRESSURE"` is now
+  allowed with `lennard_jones_modifier = "POTENTIAL_SHIFT"` (a switch stays
+  refused): it adds the estimate of what the shift takes within the cutoff
+  at a uniform density, with no virial, to the energy of the log under the
+  shift, and to the free-energy and observables files under either modifier
+  (D[shifted-derivatives], #144).
+
 - With constraints, the temperature of the log is now the optimal estimate
   of Jung, Kobayashi, and Sugita (2019), $N_fk_BT = \tfrac43K_\text{half} +
   \tfrac23K$, and its pressure takes $K_\text{half}$, the mean of the

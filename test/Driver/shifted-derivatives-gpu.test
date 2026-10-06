@@ -1,0 +1,36 @@
+# shifted-derivatives.test on a GPU in double and mixed precision, in the
+# deterministic mode so that the runs under "NONE" and "POTENTIAL_SHIFT"
+# follow the same trajectory (D[shifted-derivatives]): their files of
+# [free_energy] and `observe` are equal, with a Coulomb cutoff and with PME,
+# and dH/dlambda of the Coulomb cutoff is the shifted sum of
+# check_shifted.py, to 1e-6 kcal/mol in double precision and 1e-4 in mixed.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t/double %t/mixed
+# RUN: %python %S/Inputs/pair_tail_system.py %t/double 60 60 32 3.7 0.5 0.4
+# RUN: %python %S/Inputs/pair_tail_system.py %t/mixed 60 60 32 3.7 0.5 0.4
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/shifted-derivatives.test | sed '1d;$d' | sed -e 's/^target    = "CPU"/target    = "GPU"\ndeterministic = true/' > %t/double/none.toml
+# RUN: sed -e 's/^precision = "DOUBLE"/precision = "MIXED"/' %t/double/none.toml > %t/mixed/none.toml
+#
+# RUN: sed -e 's/^lennard_jones_modifier = "NONE"/lennard_jones_modifier = "POTENTIAL_SHIFT"/' -e 's/none\./shift./' %t/double/none.toml > %t/double/shift.toml
+# RUN: sed -e 's/^electrostatics    = "CUTOFF"/electrostatics    = "PME"/' -e 's/none\./pme-none./' %t/double/none.toml > %t/double/pme-none.toml
+# RUN: sed -e 's/^electrostatics    = "PME"/&\ncoulomb_modifier = "POTENTIAL_SHIFT"/' -e 's/^lennard_jones_modifier = "NONE"/lennard_jones_modifier = "POTENTIAL_SHIFT"/' -e 's/pme-none\./pme-shift./' %t/double/pme-none.toml > %t/double/pme-shift.toml
+# RUN: cd %t/double && mdir run none.toml > none.log && mdir run shift.toml > shift.log
+# RUN: cd %t/double && mdir run pme-none.toml > pme-none.log && mdir run pme-shift.toml > pme-shift.log
+# RUN: cmp %t/double/none.dhdl %t/double/shift.dhdl
+# RUN: cmp %t/double/none.obs %t/double/shift.obs
+# RUN: cmp %t/double/pme-none.dhdl %t/double/pme-shift.dhdl
+# RUN: cmp %t/double/pme-none.obs %t/double/pme-shift.obs
+# RUN: %python %S/Inputs/check_shifted.py %t/double/system.gro %t/double/none.dhdl 0.4 1e-6 | FileCheck %S/shifted-derivatives.test
+#
+# RUN: sed -e 's/^lennard_jones_modifier = "NONE"/lennard_jones_modifier = "POTENTIAL_SHIFT"/' -e 's/none\./shift./' %t/mixed/none.toml > %t/mixed/shift.toml
+# RUN: sed -e 's/^electrostatics    = "CUTOFF"/electrostatics    = "PME"/' -e 's/none\./pme-none./' %t/mixed/none.toml > %t/mixed/pme-none.toml
+# RUN: sed -e 's/^electrostatics    = "PME"/&\ncoulomb_modifier = "POTENTIAL_SHIFT"/' -e 's/^lennard_jones_modifier = "NONE"/lennard_jones_modifier = "POTENTIAL_SHIFT"/' -e 's/pme-none\./pme-shift./' %t/mixed/pme-none.toml > %t/mixed/pme-shift.toml
+# RUN: cd %t/mixed && mdir run none.toml > none.log && mdir run shift.toml > shift.log
+# RUN: cd %t/mixed && mdir run pme-none.toml > pme-none.log && mdir run pme-shift.toml > pme-shift.log
+# RUN: cmp %t/mixed/none.dhdl %t/mixed/shift.dhdl
+# RUN: cmp %t/mixed/none.obs %t/mixed/shift.obs
+# RUN: cmp %t/mixed/pme-none.dhdl %t/mixed/pme-shift.dhdl
+# RUN: cmp %t/mixed/pme-none.obs %t/mixed/pme-shift.obs
+# RUN: %python %S/Inputs/check_shifted.py %t/mixed/system.gro %t/mixed/none.dhdl 0.4 1e-4 | FileCheck %S/shifted-derivatives.test
