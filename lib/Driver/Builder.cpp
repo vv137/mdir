@@ -6828,7 +6828,7 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
       // A Nose-Hoover chain (D163a) moves on the host over the period and
       // counts the change of its energy into the bath itself.
       os << indent << "%alpha" << t << " = func.call @mdrtNoseHooverFactor("
-         << kinetic << ") : (f64) -> f64\n"
+         << step << ", " << kinetic << ") : (i64, f64) -> f64\n"
          << indent << "%alpha2" << t << " = arith.mulf %alpha" << t
          << ", %alpha" << t << " : f64\n";
     } else {
@@ -7665,7 +7665,7 @@ void Builder::emitEntry() {
   if (reportsSolvent())
     os << "func.func private @mdrtWriteSolvent(f64, f64)\n";
   if (rescalesVelocities() && control.isNoseHoover())
-    os << "func.func private @mdrtNoseHooverFactor(f64) -> f64\n";
+    os << "func.func private @mdrtNoseHooverFactor(i64, f64) -> f64\n";
   else if (rescalesVelocities())
     os << "func.func private @mdrtBussiFactor(i64, i64, f64, f64, f64, f64) "
           "-> f64\n";

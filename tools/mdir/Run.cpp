@@ -1463,6 +1463,19 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
           solventFull.first, solventFull.second);
     }
   }
+  // A Nose-Hoover chain whose action took more parts than its time constant
+  // asks for was driven far beyond its thermal velocities (D[nhc-nan]).
+  if (control->isNoseHoover() &&
+      output.chainMostParts > output.chainSubsteps) {
+    double omega = 2.0 * M_PI / control->tauT;
+    output.log.print(
+        "MDIR: the Nose-Hoover chain took up to %d parts over a period of "
+        "coupling, against %d for its time constant: its velocities reached "
+        "%.3g/ps, %.3g times their thermal size 2 pi / time_constant; the "
+        "chain was far from equilibrium\n",
+        output.chainMostParts, output.chainSubsteps, output.chainFastest,
+        output.chainFastest / omega);
+  }
   // The momentum of the state at the end, which the removal of the motion
   // of the center of mass keeps at 0.
   double momentum[3] = {0.0, 0.0, 0.0};

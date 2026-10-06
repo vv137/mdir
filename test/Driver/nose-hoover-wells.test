@@ -7,7 +7,10 @@
 # their thermal size 2 pi / tau_T. The run is thermostatted poorly, as the
 # warning of the short period says, but it runs: the potential energy of
 # every row is that of the oscillator moved with the chain of
-# nose_hoover_wells.py, whose action over the period is split finely.
+# nose_hoover_wells.py, whose action over the period is split finely. The
+# run splits the action into as many parts as keep |s v_j| at most 1 for
+# every part s and thermostat j, here 132 against the 11 of tau_T / 50, and
+# says so (D[nhc-nan]).
 #
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %python %S/Inputs/brownian_wells.py write %t 125
@@ -16,10 +19,22 @@
 # RUN: cd %t && mdir run run.toml > run.log 2> run.err
 # RUN: %python %S/Inputs/nose_hoover_wells.py %t/run.log 372 1000 | FileCheck %s
 # RUN: FileCheck %s --check-prefix=WARN < %t/run.err
+# RUN: FileCheck %s --check-prefix=LOG < %t/run.log
 
 # CHECK: 101 rows
 # CHECK: within 0.01 kcal/mol: yes
+# LOG: MDIR: the Nose-Hoover chain took up to 132 parts over a period of coupling, against 11 for its time constant: its velocities reached {{[0-9.]+}}/ps, {{[0-9.]+}} times their thermal size 2 pi / time_constant; the chain was far from equilibrium
 # WARN: warning: the Nose-Hoover chain acts every 1.0925 ps and its 'time_constant' is 5 ps
+
+# A chain that 1024 times those parts do not follow, here with a kinetic
+# energy 10^7 times that of the bath, stops the run instead of scaling the
+# velocities by NaN (D[nhc-nan]).
+#
+# RUN: %python %S/Inputs/nose_hoover_wells.py hot %t/wells.gro %t/hot.gro 3000
+# RUN: sed -e 's|wells.gro|hot.gro|' -e 's|^steps      = 1000|steps      = 20|' %t/run.toml > %t/hot.toml
+# RUN: cd %t && not mdir run hot.toml 2>&1 | FileCheck %s --check-prefix=HOT
+#
+# HOT: mdir: at step 10 the Nose-Hoover chain does not converge over the period of coupling in 11264 parts, with a kinetic energy {{[0-9.]+}}e+07 times that of the bath; the run stops. The system is far from the temperature of the bath: bring it near first, by a minimization or another thermostat
 
 #--- run.toml
 [input]

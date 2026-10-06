@@ -15,6 +15,7 @@
 # RUN: mdir check %t/a.toml | FileCheck %s --check-prefix=CHECK-TOOL
 
 # CHECK:      INFO:         0         0.0000 {{ *}}[[TOTAL:-[0-9.]+]] {{.*}} [[TOTAL]]
+# CHECK:      MDIR: the Nose-Hoover chain took up to 4 parts over a period of coupling, against 2 for its time constant: its velocities reached {{[0-9.]+}}/ps
 # CHECK:      MDIR: the momentum at the end is {{[0-9.]+}}e-1{{[0-9]}} amu nm/ps
 # CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
 
@@ -22,9 +23,9 @@
 # bath takes the change of the energy of the chain there, not the change of
 # the kinetic energy.
 #
-# MODULE:      func.func private @mdrtNoseHooverFactor(f64) -> f64
+# MODULE:      func.func private @mdrtNoseHooverFactor(i64, f64) -> f64
 # MODULE-NOT:  @mdrtBussiFactor
-# MODULE:      %alpha1 = func.call @mdrtNoseHooverFactor(%kt1) : (f64) -> f64
+# MODULE:      %alpha1 = func.call @mdrtNoseHooverFactor(%{{[a-z0-9_]+}}, %kt1) : (i64, f64) -> f64
 # MODULE:      func.call @mdrtAddBath(%kcm1) : (f64) -> ()
 
 # CHECK-TOOL: thermostat:         NOSE-HOOVER

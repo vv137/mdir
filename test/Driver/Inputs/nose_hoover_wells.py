@@ -1,6 +1,9 @@
 """A Nose-Hoover chain on identical harmonic wells (#117).
 
   nose_hoover_wells.py LOG N_F STEPS
+  nose_hoover_wells.py hot GRO OUT SPEED
+                              writes OUT, the coordinates of GRO with the
+                              velocities +-SPEED nm/ps along x
 
 The atoms of brownian_wells.py start at the centers of their wells, so
 under velocity Verlet every atom moves as x_i(t) = a(t) v_i(0), v_i(t) =
@@ -16,6 +19,17 @@ energy of each row of LOG with that of the oscillator.
 """
 import math
 import sys
+
+if sys.argv[1] == "hot":
+    lines = open(sys.argv[2]).read().splitlines()
+    count, speed = int(lines[1]), float(sys.argv[4])
+    with open(sys.argv[3], "w") as f:
+        f.write("\n".join(lines[:2]) + "\n")
+        for i in range(count):
+            f.write("%s%8.1f%8.1f%8.1f\n" % (
+                lines[2 + i], speed if i % 2 == 0 else -speed, 0.0, 0.0))
+        f.write("\n".join(lines[2 + count:]) + "\n")
+    sys.exit(0)
 
 log, nf, steps = sys.argv[1], float(sys.argv[2]), int(sys.argv[3])
 kB = 0.0083144626181532
