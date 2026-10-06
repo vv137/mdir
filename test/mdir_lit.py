@@ -9,7 +9,7 @@ sharing the device without a bound, 262 s (PR #83).
 
 Most tests that need the device spend their time compiling, on one core of
 the host each, and leave the device nearly idle, so the size of the group
-sets the wall time (D[split-python-gpu-tests], #141). After the Python tests
+sets the wall time (D208, #141). After the Python tests
 were split by scenario, a Release suite with Python on one RTX 3090 and a
 128-core host took 969, 496, 370, and 262 s with groups of 4, 8, 12, and 16;
 at 16 the wall time is that of the slowest test (about 260 s), so a larger

@@ -80,7 +80,7 @@ format, or the outputs; every such change is listed under **Changed** or
   of four (`-Dgpu_workers=N` still sets the number), and the three Python
   tests that bounded its wall time, with their CPU twins, are split into one
   file per scenario. On one RTX 3090 the suite takes about 260 s instead of
-  about 1090 s (D[split-python-gpu-tests], #141).
+  about 1090 s (D208, #141).
 
 ### Added
 
