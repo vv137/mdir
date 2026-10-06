@@ -15,7 +15,7 @@ Tuckerman (1992), with Q_1 = N_f k_B T / w^2 and Q_j = k_B T / w^2, w =
 the period is factorized as in Martyna, Tuckerman, Tobias, and Klein
 (1996), Suzuki-Yoshida weights of order 6, in n_c = ceil(50 h / tau) = 11
 equal parts. It finds the first action in which some part s meets
-|s v_j| > 3 (D[nhc-nan]), and compares the potential energy of each row of
+|s v_j| > 3 (D206), and compares the potential energy of each row of
 LOG, all before that action, with that of the oscillator.
 """
 import math

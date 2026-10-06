@@ -177,7 +177,7 @@ format, or the outputs; every such change is listed under **Changed** or
   velocities, and the kinetic energy relative to the bath's, and suggests a
   shorter `interval`, a larger `time_constant`, or another thermostat. The
   factorization is unchanged, and runs the guard does not stop move as before
-  (D[nhc-nan], #117).
+  (D206, #117).
 
 - A persistent Python simulation no longer keeps the memory of each part:
   every `run(n)` call left its device buffers (about 97 MiB on JAC on a GPU)

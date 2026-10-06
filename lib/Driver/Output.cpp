@@ -474,7 +474,7 @@ static double moveChain(const Output &output, double *xi, double *v,
 }
 
 /// The largest |s v_j| that an action of a Nose-Hoover chain may meet, s
-/// a part w_k h / n_c and v_j the velocity of thermostat j (D[nhc-nan]).
+/// a part w_k h / n_c and v_j the velocity of thermostat j (D206).
 /// Near equilibrium it is about 0.2. On identical harmonic wells (#117),
 /// the action of 11 parts gave the potential energy within 0.015 kJ/mol of
 /// one of 1000 parts while it met at most 2.9, 0.3 kJ/mol beyond 3.3, and
@@ -496,7 +496,7 @@ double mdrtNoseHooverFactor(int64_t step, double kinetic) {
   // its thermal velocities 2 pi / tau_T leaves that range: the run then
   // stops, on a copy of the chain and before the velocities are scaled,
   // rather than continue with an action that no longer follows the chain
-  // or, as on identical harmonic wells (#117), with NaN (D[nhc-nan]). The
+  // or, as on identical harmonic wells (#117), with NaN (D206). The
   // guard reads the action and changes nothing in it.
   std::vector<double> moved = chain;
   double largest = 0.0;

@@ -376,7 +376,7 @@ $\lvert s\dot\eta_3\rvert \approx 6$, while a finely split chain stays
 bounded there. The parts stay fixed before the run, as the time
 reversibility of the factorization requires. After each action, a value
 that is not finite, or a part that met $\lvert s\dot\eta_j\rvert > 3$,
-stops the run before the velocities are scaled (D[nhc-nan]). Up to 3 the
+stops the run before the velocities are scaled (D206). Up to 3 the
 wells' potential energy is within 0.015 kJ/mol of a chain in 1000 parts;
 beyond, the difference grows to kJ/mol. This is a guard on the scheme, not
 a change of it: a run that it does not stop moves as before.

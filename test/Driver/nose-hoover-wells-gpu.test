@@ -1,7 +1,7 @@
 # The chain on identical harmonic wells of nose-hoover-wells.test on a GPU,
 # in mixed and in double precision (#117): the device sums the kinetic
 # energy, and the host moves the chain and stops the run at step 60, with
-# the rows before it those of the oscillator (D[nhc-nan]).
+# the rows before it those of the oscillator (D206).
 #
 # REQUIRES: cuda
 #

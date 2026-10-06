@@ -8,7 +8,7 @@
 # n_c = 11 parts of tau_T / 50, then met |s v_j| of 4 and more, and at
 # about 6 ran to infinity: every column of the log was NaN from step 480.
 # The run now stops at the first action in which a part meets |s v_j| > 3
-# (D[nhc-nan]), at step 60, with the rows before it those of the
+# (D206), at step 60, with the rows before it those of the
 # oscillator moved with the same chain by nose_hoover_wells.py, which stops
 # there too.
 #
