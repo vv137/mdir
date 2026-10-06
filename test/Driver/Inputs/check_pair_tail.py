@@ -29,7 +29,7 @@ import math
 import sys
 
 KCAL = 4.184
-BAR = 69476.95  # bar per kcal/mol/Å^3
+ATM = 69476.95 / 1.01325  # atm per kcal/mol/Å^3, the pressure of the log
 SIGMA, EPSILON = 3.4, 0.24
 SIG, EPS = 3.7, 0.5
 C8, A, L = 2.0e4, 0.8, 3.0
@@ -180,11 +180,11 @@ def main():
         e12 = 4 * math.pi / volume * scale * na * nb * c12 / (9 * rc ** 9)
         de = t1["total"] - t0["total"] - e12
         dw = [a - b - 4 * e12 for a, b in zip(d1, d0)]
-        dp = r1[-1] - r0[-1] - 12 * e12 / (3 * volume) * BAR
+        dp = r1[-1] - r0[-1] - 12 * e12 / (3 * volume) * ATM
         print(f"{name} - {other}: repulsion tail {e12:.6e}; total {de:.1e}, "
-              f"virial {max(abs(x) for x in dw):.1e}, pressure {dp:.1e} bar")
+              f"virial {max(abs(x) for x in dw):.1e}, pressure {dp:.1e} atm")
         ok &= abs(de) <= tolerance and max(abs(x) for x in dw) <= tolerance
-        ok &= abs(dp) <= max(1.5e-4, tolerance / (3 * volume) * BAR * 12)
+        ok &= abs(dp) <= max(1.5e-4, tolerance / (3 * volume) * ATM * 12)
     print("tails: " + ("ok" if ok else "FAILED"))
 
 
