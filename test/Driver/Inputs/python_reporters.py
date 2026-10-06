@@ -26,7 +26,7 @@ def expect(error, call, text=""):
     raise AssertionError(f"expected {error.__name__}")
 
 
-def control(name, kind, precision, steps, energy, frames, fmt):
+def control(name, kind, precision, steps, energy, frames, fmt, constraints=False):
     thermostat = '[thermostat]\nmethod = "V-RESCALE"\ninterval = 10\n' if kind == "NVT" else ""
     path = work / f"{name}.toml"
     path.write_text(f"""[input]
@@ -37,8 +37,8 @@ cutoff = 8.0
 pairlist_distance = 9.0
 electrostatics = "CUTOFF"
 [constraints]
-hydrogen_bonds = false
-rigid_water = false
+hydrogen_bonds = {str(constraints).lower()}
+rigid_water = {str(constraints).lower()}
 [dynamics]
 time_step = 0.0005
 steps = {steps}
@@ -61,12 +61,13 @@ deterministic = true
     return path
 
 
-def simulation(kind, precision):
+def simulation(kind, precision, constraints=False):
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
     system.cutoff, system.pairlist_distance = 0.8, 0.9
     system.truncation = mdir.Truncation.None_
     system.electrostatics = mdir.Electrostatics.Cutoff
+    system.rigid_hydrogen_bonds = system.rigid_water = constraints
     state = state.draw_velocities(system, 300.0, SEED)
     integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execution()
     integrator.timestep, ensemble.temperature, ensemble.seed = 0.0005, 300.0, SEED
@@ -138,6 +139,26 @@ for kind in ("NVE", "NVT"):
                 frames = "XTC frames: " + str(ours.read_bytes().count(bytes([0, 0, 7, 203])))
             print(f"{target_name} {kind} {precision} {fmt}: {len(mine)} rows within 3 E "
                   f"(largest relative difference {worst:.1e}); {frames}")
+
+# With SHAKE and SETTLE the steps of the rows measure K_half from the half
+# steps and the temperature is the optimal estimate (D203); the steps of
+# energy that are not rows keep no temperatures of the solvent. The rows
+# equal those of `mdir run`, where every step of energy is a row, and where
+# rows are every other step of energy (a frame period of 10 under an
+# energy period of 20).
+for energy, frames in ((10, 50), (20, 10)):
+    name = f"optimal-{energy}-{frames}"
+    path = control(name, "NVT", "Double", 100, energy, frames, "dcd", constraints=True)
+    subprocess.run([cli, "run", str(path)], cwd=work, check=True, stdout=subprocess.DEVNULL)
+    sim = simulation("NVT", "Double", constraints=True)
+    sim.reporters.append(mdir.EnergyReporter(str(work / f"py-{name}.dat"), energy))
+    sim.reporters.append(mdir.TrajectoryReporter(str(work / f"py-{name}.dcd"), frames))
+    assert sim.run(100) == 100
+    sim.close_reporters()
+    mine, theirs = rows(work / f"py-{name}.dat"), rows(work / f"{name}.dat")
+    assert mine == theirs, (mine[:2], theirs[:2])
+    print(f"{target_name} constraints, energies every {energy}, frames every {frames}: "
+          f"{len(mine)} rows with the optimal temperature equal to mdir run's")
 
 # The schedule of OpenMM: periods 7 and 11 over 25 steps (NVE, so that any
 # period is a report interval), callbacks with the state of their steps.

@@ -129,7 +129,12 @@ In NVT and mixed precision the rows agree within 3.3e-4 (CPU) and 1.4e-4
 (GPU) of each value and the DCD frames within 1.2e-3 Å (CPU) and 4.5e-4 Å
 (GPU), where 3 E, three times the difference of `mdir run` in mixed and in
 double, is 1.8e-2 Å: the program of segments and that of `mdir run` round
-differently in single precision (loops of another shape; #105). The test
+differently in single precision (loops of another shape; #105). With SHAKE and
+SETTLE, where the rows take the optimal temperature from the half steps
+(D203), the rows equal those of `mdir run` in double precision, with
+energies every 10 steps and frames every 50, and with energies every 20
+and frames every 10 (steps of energy that are not rows, which keep no
+temperatures of the solvent, as in `mdir run`). The test
 also checks the schedule (callbacks of periods 7 and 11 over 25 steps at
 steps 7, 11, 14, 21, 22, and 28 after three more steps; energy rows at 0,
 7, 14, 21, 28), a callback error that ends the run at its step, the

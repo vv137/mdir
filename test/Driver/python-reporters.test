@@ -8,6 +8,8 @@
 # CHECK: CPU NVE Double dcd: 11 rows and the trajectory equal to mdir run
 # CHECK: CPU NVT Double xtc: 11 rows and the trajectory equal to mdir run
 # CHECK: CPU NVT Mixed xtc: 11 rows
+# CHECK: CPU constraints, energies every 10, frames every 50: 11 rows with the optimal temperature equal to mdir run's
+# CHECK: CPU constraints, energies every 20, frames every 10: 6 rows with the optimal temperature equal to mdir run's
 # CHECK: schedule: callbacks at [(7, 7), (11, 11), (7, 14), (7, 21), (11, 22), (7, 28)]
 # CHECK: a callback error ends the run at step 5
 # CHECK: reports change no bit of the state in the deterministic mode
