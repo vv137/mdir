@@ -1,0 +1,16 @@
+# [free_energy] (D161) on a device, scenario openmm of
+# Inputs/check_free_energy.py: the checks of free-energy-openmm.test, with
+# tolerances for the kernels of the pairs in f32 in mixed precision.
+#
+# REQUIRES: cuda
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/check_free_energy.py %t GPU MIXED mdir openmm | FileCheck %s
+# RUN: rm -rf %t-double && mkdir -p %t-double
+# RUN: %python %S/Inputs/check_free_energy.py %t-double GPU DOUBLE mdir openmm | FileCheck %s
+#
+# CHECK: RF against OpenMM: ok
+# CHECK: RF_SHIFT against OpenMM: ok
+# CHECK: RF_SHIFT dH/dl.vdw against OpenMM: ok
+# CHECK: RF_SHIFT vdW dU against OpenMM: ok
+# CHECK: PME against OpenMM: ok
+# CHECK: free energy openmm passed

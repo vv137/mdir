@@ -1,28 +1,33 @@
 """Checks [free_energy] (D161) on ethanol in TIP3P (Inputs/fep), decoupled
 from the water, at the coordinates of tleap.
 
-    check_free_energy.py <directory> <CPU|GPU> <DOUBLE|MIXED> <mdir>
+    check_free_energy.py <directory> <CPU|GPU> <DOUBLE|MIXED> <mdir> <scenario>
 
-Runs mdir in `directory` and prints one line per check:
+Runs mdir in `directory` and prints one line per check of the scenario.
+Each scenario is one test file (SCENARIOS at the end), so that the files
+run side by side:
 
-- reaction field: dH/dλ of the Coulomb and of the Lennard-Jones and
-  U(state 0) − U(state k) at three states against OpenMM 8.6.1 (Reference
-  platform; NonbondedForce with charge offsets, the pairs within the ethanol
-  as exceptions at full strength, the ethanol-water Lennard-Jones in a
-  CustomNonbondedForce with the soft-core of Beutler et al. and an
-  interaction group);
-- particle mesh Ewald: the same against OpenMM with the same β and grid,
-  within what the B-splines of order 4 (MDIR) and 5 (OpenMM) leave,
-  2.8e-3 kcal/mol, which falls to 5e-5 on a grid of 80;
-- under a plain cutoff these outputs differentiate the potential shifted to
-  0 at the cutoff, which the forces sample (D210): the
-  Lennard-Jones of RF_SHIFT, and for PME also its direct sum less
-  f q_i q_j erfc(β r_c)/r_c for each decoupled pair within the cutoff,
-  which this script sums from the coordinates;
-- dH/dλ against the central differences of the energies of the states
-  beside it, in the Coulomb, the Lennard-Jones, and a component that only
-  expressions take (a bond, a term over centers, a term of the positions);
-- the energies of the other states against runs at those states.
+- `openmm`: with the reaction field, dH/dλ of the Coulomb and of the
+  Lennard-Jones and U(state 0) − U(state k) at three states against
+  OpenMM 8.6.1 (Reference platform; NonbondedForce with charge offsets, the
+  pairs within the ethanol as exceptions at full strength, the
+  ethanol-water Lennard-Jones in a CustomNonbondedForce with the soft-core
+  of Beutler et al. and an interaction group); with particle mesh Ewald,
+  the same against OpenMM with the same β and grid, within what the
+  B-splines of order 4 (MDIR) and 5 (OpenMM) leave, 2.8e-3 kcal/mol, which
+  falls to 5e-5 on a grid of 80. Under a plain cutoff these outputs
+  differentiate the potential shifted to 0 at the cutoff, which the forces
+  sample (D210): the Lennard-Jones of RF_SHIFT, and for PME also its direct
+  sum less f q_i q_j erfc(β r_c)/r_c for each decoupled pair within the
+  cutoff, which this script sums from the coordinates;
+- `differences`: dH/dλ against the central differences of the energies of
+  the states beside it, in the Coulomb, the Lennard-Jones, and a component
+  that only expressions take (a bond, a term over centers, a term of the
+  positions), and the energies of the other states against runs at those
+  states;
+- `identity`: at λ = 0, the potential energy against that of the run
+  without [free_energy], with each electrostatics and each modifier of the
+  Lennard-Jones that [free_energy] takes.
 """
 
 import math
@@ -33,7 +38,11 @@ import subprocess
 import sys
 
 here = os.path.dirname(os.path.abspath(__file__))
-directory, target, precision, mdir = sys.argv[1:5]
+directory, target, precision, mdir, scenario = sys.argv[1:6]
+NAMES = ('openmm', 'differences', 'identity')
+if scenario not in NAMES:
+    sys.exit(f"unknown scenario '{scenario}'; expected one of "
+             f"{', '.join(NAMES)}")
 for name in ('eth_wat.prmtop', 'eth_wat.inpcrd'):
     shutil.copy(os.path.join(here, 'fep', name), directory)
 
@@ -170,44 +179,52 @@ def report(label, worst, tolerance):
     print(f'{label}: {verdict} (worst {worst:.2e}, tolerance {tolerance:.0e})')
 
 
-# Against OpenMM. In mixed precision the kernels of the pairs are in f32.
+# In mixed precision the kernels of the pairs are in f32.
 mixed = precision == 'MIXED'
-for electrostatics, tolerance in (('RF', 5e-5 if mixed else 3e-6),
-                                  ('RF_SHIFT', 5e-5 if mixed else 3e-6),
-                                  ('PME', 4e-3)):
-    coulomb = [s[0] for s in STATES]
-    vdw = [s[1] for s in STATES]
-    worst = 0.0
-    worst_vdw = 0.0
-    worst_vdw_energy = 0.0
-    for k in (1, 3, 5):
-        row = control(f'{electrostatics.lower()}{k}', k, coulomb, vdw,
-                      electrostatics)
-        reference = OPENMM[electrostatics]
-        worst_vdw = max(worst_vdw, abs(row['dHdl.vdw'] - reference[k][1]))
-        worst = max(worst, abs(row['dHdl.coulomb'] - reference[k][0]),
-                    abs(row['dHdl.vdw'] - reference[k][1]))
-        for j in range(len(STATES)):
-            expected = reference[k][2] - reference[j][2]
-            worst = max(worst, abs(row[f'dU.{j}'] - expected))
-            if STATES[k][0] == STATES[j][0]:
-                worst_vdw_energy = max(worst_vdw_energy,
-                                       abs(row[f'dU.{j}'] - expected))
-    report(f'{electrostatics} against OpenMM', worst, tolerance)
-    if electrostatics == 'RF_SHIFT':
-        # The Coulomb and total-energy differences include their f32 error;
-        # pin the shifted Lennard-Jones derivative separately to catch #48.
-        report('RF_SHIFT dH/dl.vdw against OpenMM', worst_vdw,
-               1e-5 if mixed else 3e-6)
-        report('RF_SHIFT vdW dU against OpenMM', worst_vdw_energy,
-               1e-5 if mixed else 3e-6)
 
-# Central differences: the Coulomb is quadratic in λ, the rest smooth.
-h = 1e-2
-coulomb = [0.5, 0.5 - h, 0.5 + h, 1.0, 1.0, 1.0, 0.5, 0.5]
-vdw = [0.0, 0.0, 0.0, 0.5, 0.5 - h, 0.5 + h, 0.0, 0.0]
-restraint = [0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3 - h, 0.3 + h]
-extra = '''[[energy.bond]]
+
+def against_openmm():
+    """Against OpenMM at three states, with each electrostatics."""
+    for electrostatics, tolerance in (('RF', 5e-5 if mixed else 3e-6),
+                                      ('RF_SHIFT', 5e-5 if mixed else 3e-6),
+                                      ('PME', 4e-3)):
+        coulomb = [s[0] for s in STATES]
+        vdw = [s[1] for s in STATES]
+        worst = 0.0
+        worst_vdw = 0.0
+        worst_vdw_energy = 0.0
+        for k in (1, 3, 5):
+            row = control(f'{electrostatics.lower()}{k}', k, coulomb, vdw,
+                          electrostatics)
+            reference = OPENMM[electrostatics]
+            worst_vdw = max(worst_vdw, abs(row['dHdl.vdw'] - reference[k][1]))
+            worst = max(worst, abs(row['dHdl.coulomb'] - reference[k][0]),
+                        abs(row['dHdl.vdw'] - reference[k][1]))
+            for j in range(len(STATES)):
+                expected = reference[k][2] - reference[j][2]
+                worst = max(worst, abs(row[f'dU.{j}'] - expected))
+                if STATES[k][0] == STATES[j][0]:
+                    worst_vdw_energy = max(worst_vdw_energy,
+                                           abs(row[f'dU.{j}'] - expected))
+        report(f'{electrostatics} against OpenMM', worst, tolerance)
+        if electrostatics == 'RF_SHIFT':
+            # The Coulomb and total-energy differences include their f32
+            # error; pin the shifted Lennard-Jones derivative separately to
+            # catch #48.
+            report('RF_SHIFT dH/dl.vdw against OpenMM', worst_vdw,
+                   1e-5 if mixed else 3e-6)
+            report('RF_SHIFT vdW dU against OpenMM', worst_vdw_energy,
+                   1e-5 if mixed else 3e-6)
+
+
+def differences():
+    """Central differences (the Coulomb is quadratic in λ, the rest smooth),
+    and the energies of the other states against runs at those states."""
+    h = 1e-2
+    coulomb = [0.5, 0.5 - h, 0.5 + h, 1.0, 1.0, 1.0, 0.5, 0.5]
+    vdw = [0.0, 0.0, 0.0, 0.5, 0.5 - h, 0.5 + h, 0.0, 0.0]
+    restraint = [0.3, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3 - h, 0.3 + h]
+    extra = '''[[energy.bond]]
 name = "hold"
 particles = [[3, 100]]
 expression = "lambda_restraint^2 * k * (r - r0)^2"
@@ -225,26 +242,30 @@ selection = ":LIG"
 expression = "lambda_restraint * k * (z - 10.0)^2"
 k = 0.5
 '''
-components = f'restraint = {restraint}'
-runs = {k: control(f'central{k}', k, coulomb, vdw, 'PME', extra, components)
-        for k in (0, 3, 7)}
-first, second = runs[0], runs[3]
-differences = {
-    'coulomb': (first['dHdl.coulomb'],
-                (first['dU.2'] - first['dU.1']) / (2 * h)),
-    'vdw': (second['dHdl.vdw'], (second['dU.5'] - second['dU.4']) / (2 * h)),
-    'restraint': (first['dHdl.restraint'],
-                  (first['dU.7'] - first['dU.6']) / (2 * h)),
-}
-worst = max(abs(a - b) for a, b in differences.values())
-report('dH/dl against central differences', worst,
-       2e-3 if mixed else 1e-4)
+    components = f'restraint = {restraint}'
+    runs = {k: control(f'central{k}', k, coulomb, vdw, 'PME', extra,
+                       components)
+            for k in (0, 3, 7)}
+    first, second = runs[0], runs[3]
+    pairs = {
+        'coulomb': (first['dHdl.coulomb'],
+                    (first['dU.2'] - first['dU.1']) / (2 * h)),
+        'vdw': (second['dHdl.vdw'],
+                (second['dU.5'] - second['dU.4']) / (2 * h)),
+        'restraint': (first['dHdl.restraint'],
+                      (first['dU.7'] - first['dU.6']) / (2 * h)),
+    }
+    worst = max(abs(a - b) for a, b in pairs.values())
+    report('dH/dl against central differences', worst,
+           2e-3 if mixed else 1e-4)
 
-# The energies of the other states against runs at those states:
-# U_j - U_k from the run at k against -(U_k - U_j) from the run at j.
-worst = max(abs(runs[k][f'dU.{j}'] + runs[j][f'dU.{k}'])
-            for k in runs for j in runs)
-report('the energies of the other states', worst, 1e-4 if mixed else 3e-6)
+    # The energies of the other states against runs at those states:
+    # U_j - U_k from the run at k against -(U_k - U_j) from the run at j.
+    worst = max(abs(runs[k][f'dU.{j}'] + runs[j][f'dU.{k}'])
+                for k in runs for j in runs)
+    report('the energies of the other states', worst,
+           1e-4 if mixed else 3e-6)
+
 
 # At λ = 0 the run is the run without [free_energy]: its potential energy
 # at every row of the log, with each electrostatics and each modifier of
@@ -302,25 +323,36 @@ def potentials(name, free, electrostatics, modifier):
         return [float(line.split()[column]) for line in file]
 
 
-worst = 0.0
-for label, electrostatics in (
-        ('cutoff', 'electrostatics = "CUTOFF"'),
-        ('pme', 'electrostatics = "PME"'),
-        ('rf', ELECTROSTATICS['RF'])):
-    for modifier in ('', 'lennard_jones_modifier = "POTENTIAL_SHIFT"\n'
-                         'dispersion_correction = "NONE"'):
-        name = f'identity_{label}_{"shift" if modifier else "none"}'
-        plain = potentials(name + '_plain', '', electrostatics, modifier)
-        free = potentials(name + '_free', FREE, electrostatics, modifier)
-        if len(plain) != len(free):
-            worst = float('inf')
-            continue
-        # On a device the sums of the default mode are not reproducible
-        # from run to run (D84), so two runs part after their first steps
-        # whatever their Hamiltonians; there only the first row, at the
-        # same configuration, tests the identity.
-        if target == 'GPU':
-            plain, free = plain[:1], free[:1]
-        worst = max([worst] + [abs(a - b) for a, b in zip(plain, free)])
-report('lambda = 0 against no [free_energy]', worst,
-       1e-4 if mixed else 1e-6)
+def identity():
+    worst = 0.0
+    for label, electrostatics in (
+            ('cutoff', 'electrostatics = "CUTOFF"'),
+            ('pme', 'electrostatics = "PME"'),
+            ('rf', ELECTROSTATICS['RF'])):
+        for modifier in ('', 'lennard_jones_modifier = "POTENTIAL_SHIFT"\n'
+                             'dispersion_correction = "NONE"'):
+            name = f'identity_{label}_{"shift" if modifier else "none"}'
+            plain = potentials(name + '_plain', '', electrostatics, modifier)
+            free = potentials(name + '_free', FREE, electrostatics, modifier)
+            if len(plain) != len(free):
+                worst = float('inf')
+                continue
+            # On a device the sums of the default mode are not reproducible
+            # from run to run (D84), so two runs part after their first
+            # steps whatever their Hamiltonians; there only the first row,
+            # at the same configuration, tests the identity.
+            if target == 'GPU':
+                plain, free = plain[:1], free[:1]
+            worst = max([worst] + [abs(a - b) for a, b in zip(plain, free)])
+    report('lambda = 0 against no [free_energy]', worst,
+           1e-4 if mixed else 1e-6)
+
+
+SCENARIOS = {
+    'openmm': against_openmm,
+    'differences': differences,
+    'identity': identity,
+}
+assert tuple(SCENARIOS) == NAMES
+SCENARIOS[scenario]()
+print(f'free energy {scenario} passed')
