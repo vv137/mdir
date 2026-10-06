@@ -1,0 +1,10 @@
+# REQUIRES: python-api
+# Updates of tunable parameters (D[python-tunable]) on the CPU: leapfrog
+# keeps its positions and velocities through an update; NPT updated before
+# its first run equals a compile with the new values to the bit, the
+# barostat taking the constants of the new values.
+# RUN: %mdir_python %S/Inputs/python_tunable.py %S/Inputs/dipeptide integrators CPU Double | FileCheck %s
+# RUN: %mdir_python %S/Inputs/python_tunable.py %S/Inputs/dipeptide integrators CPU Mixed | FileCheck %s
+# CHECK: CPU {{Double|Mixed}}: leapfrog keeps its positions and velocities through an update
+# CHECK: CPU {{Double|Mixed}}: NPT, an update before the first run equals a compile with the new values to the bit
+# CHECK: integrators passed

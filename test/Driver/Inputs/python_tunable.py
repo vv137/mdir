@@ -368,12 +368,217 @@ def run_integrators(target, precision):
           f"new values to the bit after 30 steps (volume {a.energies['volume']:.6f} nm^3)")
 
 
+def evaluated(sim):
+    """The potential of the state, kJ/mol, after an evaluation or update."""
+    energies = sim.state().energies
+    assert energies is not None
+    return energies["potential"]
+
+
+def run_oracle(cli, work):
+    from openmm import app, unit
+    import openmm
+
+    # MDIR: the dipeptide in water, PME on a fixed grid and β, the
+    # Lennard-Jones cut without a shift and no correction, as OpenMM's
+    # NonbondedForce takes them; charges, σ, and ε tunable.
+    alpha, grid = 2.0, 72
+    system, state = model(lambda s: [mdir.Tunable("q", "charge"), mdir.Tunable("sigma", "sigma"),
+                                     mdir.Tunable("epsilon", "epsilon"),
+                                     mdir.Tunable("soft_a", "a", term="soft"),
+                                     mdir.Tunable("k", "k", term="spring")])
+    system.truncation = mdir.Truncation.None_
+    system.dispersion = mdir.DispersionCorrection.None_
+    system.pme_alpha, system.pme_grid = alpha, [grid] * 3
+    sim = simulation(compile_(system, state))
+    sim.run(0, energy=True)
+    u0 = evaluated(sim)
+    theta0 = dict(sim.tunables)
+    rng = np.random.default_rng(11)
+    theta1 = {"q": theta0["q"] * (1.0 + 0.1 * rng.standard_normal(theta0["q"].shape)),
+              "sigma": theta0["sigma"] * (1.0 + 0.03 * rng.standard_normal(theta0["sigma"].shape)),
+              "epsilon": theta0["epsilon"] * (1.0 + 0.2 * rng.random(theta0["epsilon"].shape)),
+              "soft_a": np.array([7.0]), "k": theta0["k"] * 2.0}
+    sim.tunables.update(theta1)
+    u1 = evaluated(sim)
+
+    # OpenMM at the same positions, the new charges (1-4 products scaled by
+    # 1/1.2 as the topology's), σ and ε of the types (Lorentz-Berthelot),
+    # the 1-4 pairs' own σ and ε kept; the pair and tuple terms by NumPy.
+    prmtop = app.AmberPrmtopFile(root + "/dipeptide.prmtop")
+    positions = state.positions
+    cell = state.cell.vectors
+
+    def openmm_energy(theta):
+        omm = prmtop.createSystem(nonbondedMethod=app.PME, nonbondedCutoff=0.8 * unit.nanometer,
+                                  constraints=None, rigidWater=False)
+        for force in omm.getForces():
+            if isinstance(force, openmm.NonbondedForce):
+                nb = force
+        nb.setUseDispersionCorrection(False)
+        nb.setUseSwitchingFunction(False)
+        nb.setPMEParameters(alpha, grid, grid, grid)
+        types = system.particle_types
+        old = [nb.getParticleParameters(i)[0].value_in_unit(unit.elementary_charge)
+               for i in range(nb.getNumParticles())]
+        for i in range(nb.getNumParticles()):
+            nb.setParticleParameters(i, theta["q"][i], theta["sigma"][types[i]],
+                                     theta["epsilon"][types[i]])
+        for k in range(nb.getNumExceptions()):
+            i, j, qq, sig, eps = nb.getExceptionParameters(k)
+            qq = qq.value_in_unit(unit.elementary_charge ** 2)
+            if qq != 0.0:
+                scale = qq / (old[i] * old[j])
+                nb.setExceptionParameters(k, i, j, scale * theta["q"][i] * theta["q"][j], sig, eps)
+        omm.setDefaultPeriodicBoxVectors(*[openmm.Vec3(*row) for row in cell])
+        context = openmm.Context(omm, openmm.VerletIntegrator(0.001),
+                                 openmm.Platform.getPlatformByName("Reference"))
+        context.setPositions(positions)
+        return context.getState(getEnergy=True).getPotentialEnergy().value_in_unit(
+            unit.kilojoule_per_mole)
+
+    exclusions = set()
+    omm = prmtop.createSystem(nonbondedMethod=app.PME, nonbondedCutoff=0.8 * unit.nanometer)
+    for force in omm.getForces():
+        if isinstance(force, openmm.NonbondedForce):
+            for k in range(force.getNumExceptions()):
+                i, j = force.getExceptionParameters(k)[:2]
+                exclusions.add((min(i, j), max(i, j)))
+    box = np.diag(cell)
+
+    def numpy_terms(theta):
+        # The soft pair term over the pairs that are not excluded within the
+        # cutoff, and the springs.
+        x = positions
+        total = 0.0
+        for i in range(len(x) - 1):
+            d = x[i + 1:] - x[i]
+            d -= box * np.round(d / box)
+            r = np.sqrt((d * d).sum(1))
+            js = np.arange(i + 1, len(x))
+            keep = (r < 0.8) & np.array([(i, j) not in exclusions for j in js])
+            total += (theta["soft_a"][0] * np.exp(-r[keep] / 0.05)).sum()
+        k = theta["k"][[0, 1, 1]]
+        for (i, j), kk, r0 in zip([[1, 4], [4, 6], [6, 8]], k, [0.25, 0.26, 0.27]):
+            d = x[j] - x[i]
+            d -= box * np.round(d / box)
+            total += 0.5 * kk * (np.sqrt((d * d).sum()) - r0) ** 2
+        return total
+
+    reference = [openmm_energy(t) + numpy_terms(t) for t in (theta0, theta1)]
+    du, dref = u1 - u0, reference[1] - reference[0]
+    print(f"oracle: U(theta0) {u0:.6f}, OpenMM + NumPy {reference[0]:.6f} kJ/mol, "
+          f"difference {u0 - reference[0]:.2e}")
+    print(f"oracle: U(theta1) {u1:.6f}, OpenMM + NumPy {reference[1]:.6f} kJ/mol, "
+          f"difference {u1 - reference[1]:.2e}")
+    print(f"oracle: U(theta1) - U(theta0) {du:.6f}, OpenMM + NumPy {dref:.6f} kJ/mol, "
+          f"difference {du - dref:.2e}")
+    # B-splines of order 4 (MDIR) against 5 (OpenMM): on a grid of 72 over
+    # 2.7 nm with β = 2/nm the two sums of the model without tunables differ
+    # by 4.6e-4 kJ/mol (by 0.03 with β = 3.5/nm, 0.14 on a grid of 48).
+    assert abs(u0 - reference[0]) < 2e-3 and abs(u1 - reference[1]) < 2e-3
+    assert abs(du - dref) < 1e-3
+
+    # The correction for the dispersion at the new σ and ε against its
+    # formula: -(2π/3) N² <C6> / (V r_c³), <C6> over the pairs that are not
+    # excluded.
+    def with_dispersion(theta):
+        other, other_state = model(lambda s: [mdir.Tunable("sigma", "sigma", values=theta["sigma"]),
+                                              mdir.Tunable("epsilon", "epsilon",
+                                                           values=theta["epsilon"])],
+                                    terms=False)
+        other.truncation = mdir.Truncation.None_
+        other.pme_alpha, other.pme_grid = alpha, [grid] * 3
+        result = []
+        for correction in (mdir.DispersionCorrection.None_, mdir.DispersionCorrection.EnergyPressure):
+            other.dispersion = correction
+            s = simulation(compile_(other, other_state))
+            s.run(0, energy=True)
+            result.append(evaluated(s))
+        return result[1] - result[0]
+
+    types = system.particle_types
+    n = len(types)
+    sig, eps = theta1["sigma"], theta1["epsilon"]
+
+    def c6(a, b):
+        return 4.0 * np.sqrt(eps[a] * eps[b]) * (0.5 * (sig[a] + sig[b])) ** 6
+
+    counts = np.bincount(types, minlength=len(sig)).astype(float)
+    total = sum(counts[a] * (counts[b] - (a == b)) * c6(a, b)
+                for a in range(len(sig)) for b in range(len(sig)))
+    total -= 2.0 * sum(c6(types[i], types[j]) for i, j in exclusions)
+    mean = total / (n * (n - 1.0) - 2.0 * len(exclusions))
+    formula = -2.0 * np.pi / (3.0 * np.prod(box)) * n * n * mean / 0.8 ** 3
+    mine = with_dispersion(theta1)
+    print(f"oracle: the correction for the dispersion at the new sigma and epsilon {mine:.9f}, "
+          f"the formula {formula:.9f} kJ/mol, relative difference {abs(mine / formula - 1):.1e}")
+    assert abs(mine / formula - 1.0) < 1e-9
+
+    # Central differences of U in a tunable constant of a pair term, by two
+    # updates at fixed positions, against the derivative of `observe` of
+    # mdir run at the same positions (D189), with the tail and the estimate
+    # of the shift of D209 and D210.
+    system, state = model(lambda s: [mdir.Tunable("soft_l", "l", term="soft")])
+    system.truncation = mdir.Truncation.Shift
+    system.cutoff, system.pairlist_distance = 0.8, 0.9
+    sim = simulation(compile_(system, state))
+    sim.run(0, energy=True)
+    l, h = 0.05, 1e-5
+    sim.tunables["soft_l"] = np.array([l + h])
+    plus = evaluated(sim)
+    sim.tunables["soft_l"] = np.array([l - h])
+    minus = evaluated(sim)
+    fd = (plus - minus) / (2.0 * h) / (KJ * 10.0)  # kcal/mol/Å
+    control = work / "observe.toml"
+    control.write_text(f"""[input]
+topology    = "{root}/dipeptide.prmtop"
+coordinates = "{root}/dipeptide.inpcrd"
+[output]
+energy_interval = 1
+observables = "observe.obs"
+energy = "observe.dat"
+[energy]
+cutoff            = 8.0
+pairlist_distance = 9.0
+electrostatics    = "PME"
+lennard_jones_modifier = "POTENTIAL_SHIFT"
+dispersion_correction = "ENERGY_PRESSURE"
+[[energy.pair]]
+name       = "soft"
+expression = "a*exp(-r/l)"
+observe    = ["l"]
+a = {2.0 / KJ!r}
+l = 0.5
+[dynamics]
+time_step = 0.0005
+steps     = 1
+[ensemble]
+ensemble = "NVE"
+[boundary]
+type = "PERIODIC"
+[execution]
+target = "CPU"
+precision = "DOUBLE"
+""")
+    subprocess.run([cli, "run", str(control)], cwd=work, check=True, stdout=subprocess.DEVNULL)
+    rows = [line.split() for line in (work / "observe.obs").read_text().splitlines()
+            if not line.startswith("#")]
+    header = (work / "observe.obs").read_text().splitlines()[0].lstrip("#").split()
+    observed = float(rows[0][header.index("soft.d_l")])
+    print(f"derivative: central differences {fd:.6f}, observe of mdir run {observed:.6f} "
+          f"kcal/mol/Å, relative difference {abs(fd / observed - 1):.1e}")
+    assert abs(fd / observed - 1.0) < 1e-6
+
+
 if scenario == "declarations":
     run_declarations()
 elif scenario == "updates":
     run_updates(sys.argv[3], sys.argv[4])
 elif scenario == "integrators":
     run_integrators(sys.argv[3], sys.argv[4])
+elif scenario == "oracle":
+    run_oracle(sys.argv[3], pathlib.Path(sys.argv[4]))
 else:
     raise SystemExit(f"unknown scenario {scenario}")
 print(f"{scenario} passed")

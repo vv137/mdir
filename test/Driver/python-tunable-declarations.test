@@ -1,0 +1,11 @@
+# REQUIRES: python-api
+# Tunable parameters of a Python model (D[python-tunable]): the arrays maps
+# are built from, the declarations and their refusals, an NBFIX of
+# [ nonbond_params ] refused for per-type sigma, and the program that goes
+# stale when the declarations change.
+# RUN: %mdir_python %S/Inputs/python_tunable.py %S/Inputs/dipeptide declarations | FileCheck %s
+# CHECK: model arrays: 1168 particles, 9 types, 385 residues
+# CHECK: declaration refusals: 18 passed
+# CHECK: NBFIX: refused for sigma, naming CT and OW
+# CHECK: declaring is structural
+# CHECK: declarations passed

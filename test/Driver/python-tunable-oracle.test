@@ -1,0 +1,17 @@
+# REQUIRES: python-api, openmm
+# Tunable parameters (D[python-tunable]) against independent references on
+# the dipeptide in water: the energies at new charges, per-type sigma and
+# epsilon, a constant of a pair term, and the parameters of a tuple term
+# against OpenMM 8.6.1 (Reference platform) and NumPy sums; the correction
+# for the dispersion at the new sigma and epsilon against its formula; and
+# central differences of the energy in a tunable constant of a pair term
+# against the derivative of `observe` (D189) of mdir run at the same
+# positions, with the tail and the estimate of the shift (D209, D210).
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_tunable.py %S/Inputs/dipeptide oracle mdir %t | FileCheck %s
+# CHECK: oracle: U(theta0)
+# CHECK: oracle: U(theta1)
+# CHECK: oracle: U(theta1) - U(theta0)
+# CHECK: oracle: the correction for the dispersion at the new sigma and epsilon
+# CHECK: derivative: central differences
+# CHECK: oracle passed
