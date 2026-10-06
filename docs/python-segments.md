@@ -231,7 +231,7 @@ A program that minimizes is a simulation of its own, which takes
 `minimize(steps)` in parts as `run(n)` takes steps (D202,
 [python-minimize.md](python-minimize.md)).
 
-The program of segments also takes report intervals (D[python-reporters],
+The program of segments also takes report intervals (D207,
 [python-reporters.md](python-reporters.md)): its second nest runs a number
 of intervals that end with a step of energy, and the frame period that the
 entry takes decides where a frame is copied.

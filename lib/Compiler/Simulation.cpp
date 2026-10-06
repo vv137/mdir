@@ -766,7 +766,7 @@ llvm::Expected<int64_t> Simulation::run(int64_t count,
     }
     return part;
   };
-  // The interval of the reports inside a part (D[python-reporters]): the
+  // The interval of the reports inside a part (D207): the
   // greatest common divisor of their periods, if it holds whole periods of
   // coupling; otherwise each report ends a part.
   int64_t interval = 0;

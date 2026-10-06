@@ -1,4 +1,4 @@
-# Reporters of a Python simulation (D[python-reporters])
+# Reporters of a Python simulation (D207)
 
 Issue #109, M2a item 4 of [python-m2.md](python-m2.md). A persistent
 simulation (D196) writes the outputs of `mdir run` (the energy file and the

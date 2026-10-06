@@ -1,5 +1,5 @@
 # REQUIRES: python-api, cuda
-# Reporters of a Python simulation on a GPU (D[python-reporters]): the
+# Reporters of a Python simulation on a GPU (D207): the
 # energy file and the trajectory of `mdir run`, written inside the parts of
 # a run, against those of `mdir run`; the schedule; callbacks; the state
 # unchanged by the reports; backups and refusals.

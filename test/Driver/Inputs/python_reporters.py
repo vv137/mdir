@@ -1,4 +1,4 @@
-"""Reporters of a Python simulation (D[python-reporters]): the energy file
+"""Reporters of a Python simulation (D207): the energy file
 and the trajectory of `mdir run` written inside the parts of a run, Python
 callbacks at their steps, the schedule of OpenMM, backups, and the state
 unchanged by the reports in the deterministic mode."""

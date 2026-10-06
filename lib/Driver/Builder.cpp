@@ -7737,7 +7737,7 @@ void Builder::emitEntry() {
   // (D202).
   if (control.segments && control.minimize)
     os << ", %first_size: f64";
-  // The reports of a program of segments (D[python-reporters]): the second
+  // The reports of a program of segments (D207): the second
   // nest is %count_energy_close intervals that end with a step of energy,
   // of %count_energy_periods + 1 periods of coupling each (or of
   // %count_energy_inner + 1 steps without coupling); a frame is written at a
@@ -8186,7 +8186,7 @@ void Builder::emitEntry() {
     // Intervals that end with a step of energy, as an interval of the log
     // of `mdir run` ends, after the steps of the segment before them: one
     // period that closes, or the intervals of the reports
-    // (D[python-reporters]).
+    // (D207).
     unsigned second = levels[0].name == "couple" ? 2 : 1;
     os << "  %steps_a = arith.muli %n0, %per0 : index\n"
        << "  %steps_t = arith.addi %steps_a, %n_tail : index\n"
@@ -8213,7 +8213,7 @@ void Builder::emitEntry() {
 
 void Builder::emitFrameIfDue(StringRef indent, StringRef step,
                              StringRef positions, StringRef tag) {
-  // A frame of a reporter (D[python-reporters]) where the number of the step
+  // A frame of a reporter (D207) where the number of the step
   // is a multiple of the frame period that the entry takes; only then are
   // the positions copied.
   std::string t = ("%frame_" + tag).str();

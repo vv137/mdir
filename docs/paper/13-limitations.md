@@ -120,7 +120,7 @@ the CLI's code and typed positional restraints (D198); unit quantities of
 OpenMM at the setters (D200); the minimizer of `mdir run` in a
 simulation, in parts that carry its step length (D202); reporters whose
 times are arguments of the compiled program, so that the energy file and
-the trajectory of `mdir run` are written inside a part (D[python-reporters]).
+the trajectory of `mdir run` are written inside a part (D207).
 Remaining:
 checkpoints shared with the CLI, views of device buffers through DLPack,
 NPT in a triclinic cell or with a coupling period of 1, tunable buffers,

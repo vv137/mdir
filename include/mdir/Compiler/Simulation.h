@@ -85,7 +85,7 @@ public:
   llvm::Expected<int64_t> minimize(std::optional<int64_t> count = {},
                                    const std::function<bool()> &poll = {});
   bool isMinimization() const { return prepared.control.minimize; }
-  /// The built-in reports of `mdir run`'s outputs (D[python-reporters]):
+  /// The built-in reports of `mdir run`'s outputs (D207):
   /// the columns file of the energies every `energyPeriod` steps and a
   /// trajectory every `framePeriod` steps, 0 for none. Files are backed up
   /// as `mdir run` backs up its outputs and opened at once; they stay open
@@ -128,7 +128,7 @@ private:
     int64_t outer = 0, inner = 0, tail = 0, plain = 0, close = 0,
             closeInner = 0;
     /// The periods of coupling of an interval of the second nest, less one
-    /// (D[python-reporters]).
+    /// (D207).
     int64_t closePeriods = 0;
   };
   llvm::Error runPart(Engine &engine, Part part);

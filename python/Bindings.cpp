@@ -433,7 +433,7 @@ PYBIND11_MODULE(mdir, m) {
       for (int k = 0; k != 3; ++k) { cell.diagonal[k] = s.box[k]; cell.tilt[k] = s.tilt[k]; }
       return cell;
     });
-  // Reporters (D[python-reporters], docs/python-reporters.md): the files
+  // Reporters (D207, docs/python-reporters.md): the files
   // of `mdir run` written inside the parts of a run, and Python functions
   // called after the part that ends at their step.
   py::enum_<driver::TrajectoryFormat>(m, "TrajectoryFormat")
