@@ -533,11 +533,18 @@ llvm::Expected<System> mdir::driver::prepareTopologySystem(
 bool mdir::driver::hasFiniteTail(const Expression &expression,
                                  llvm::StringMap<double> values,
                                  double cutoff) {
+  // A value at the level of the rounding of the terms it sums is 0 (#155):
+  // a difference of two terms that cancel, as an NBFIX correction at the
+  // force field's own parameters, is 0 at one distance and their rounding
+  // at the next.
   double previous = 0.0;
   for (int k = 3; k <= 6; ++k) {
     double r = cutoff * std::pow(10.0, k);
     values["r"] = r;
     double h = std::fabs(r * r * r * expression.evaluate(values));
+    double size = std::fabs(r * r * r * expression.evaluateMagnitude(values));
+    if (h <= 1.0e-12 * size)
+      h = 0.0;
     if (!std::isfinite(h) || (k > 3 && h != 0.0 && !(h <= 0.1 * previous)))
       return false;
     previous = h;

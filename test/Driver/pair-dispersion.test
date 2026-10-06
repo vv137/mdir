@@ -43,6 +43,19 @@
 # RUN: cd %t && mdir run observe.toml > observe.log && mdir run observe-off.toml > observe-off.log
 # RUN: %python %S/Inputs/check_pair_tail.py %t 2e-6 derivatives | FileCheck %s --check-prefix=DERIVATIVES
 #
+# An NBFIX correction at the force field's own sigma and epsilon (#155), the
+# start of a fit, is a difference of two terms that cancel: its tail, 0,
+# and that of a correction 1e-4 Å away, -7.0e-5 kcal/mol, are integrated to
+# the size of the two terms rather than refused, and its derivatives in
+# `observe` take their tails and estimates of the shift.
+# RUN: sed -e 's/^sig = 3.7/sig = 3.4/' -e 's/^eps = 0.5/eps = 0.24/' -e 's/observe.obs/zero.obs/' %t/observe.toml > %t/zero.toml
+# RUN: sed -e 's/^dispersion_correction = "ENERGY_PRESSURE"/dispersion_correction = "NONE"/' -e 's/zero.obs/zero-off.obs/' %t/zero.toml > %t/zero-off.toml
+# RUN: sed -e 's/^sig = 3.4$/sig = 3.4001/' -e 's/zero.obs/near.obs/' %t/zero.toml > %t/near.toml
+# RUN: cd %t && mdir run zero.toml | FileCheck %s --check-prefix=ZERO
+# RUN: cd %t && mdir run zero-off.toml > zero-off.log
+# RUN: cd %t && mdir run near.toml | FileCheck %s --check-prefix=NEAR
+# RUN: %python %S/Inputs/check_pair_tail.py %t 2e-6 zero | FileCheck %s --check-prefix=ZEROD
+#
 # A tail that diverges, or a term of the time, is refused when the control
 # file asks for the correction, naming the term; with its own
 # 'dispersion_correction = "NONE"' the term is left out, and the run has the
@@ -85,6 +98,11 @@
 # DERIVATIVES:      dHdl.s: tail
 # DERIVATIVES:      nbfix.energy: tail
 # DERIVATIVES:      derivatives: ok
+#
+# ZERO:  dispersion -0.789900
+# NEAR:  dispersion -0.789970
+# ZEROD: nbfix.d_sig: tail
+# ZEROD: zero: ok
 
 # DIVERGES: the correction for the dispersion integrates the pair term 'r8' beyond the cutoff, and its tail diverges (its energy must decay faster than 1/r^3); give 'dispersion_correction = "NONE"' in the term to leave it out
 # TIME: the correction for the dispersion integrates the pair term 'r8' beyond the cutoff, and its expression depends on the time t; give 'dispersion_correction = "NONE"' in the term to leave it out

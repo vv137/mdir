@@ -104,6 +104,14 @@ public:
   /// name.
   double evaluate(const llvm::StringMap<double> &values) const;
 
+  /// The size of the terms that the value sums, which sets its rounding
+  /// error: the value with every sum and difference taken over the
+  /// absolute values of its operands, a product over theirs, and a call
+  /// or a power by the absolute value it gives (with the base's size for
+  /// a power). A difference of two large terms that nearly cancel has a
+  /// small value and a large size.
+  double evaluateMagnitude(const llvm::StringMap<double> &values) const;
+
   /// A tabulated function that the expression calls: its table in the IR,
   /// and the rows of TabulatedFunction::getCoefficients.
   struct Spline {

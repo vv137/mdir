@@ -1011,6 +1011,60 @@ double Expression::evaluate(const llvm::StringMap<double> &values) const {
   return evaluateNode(*root, values, getDefinitions(), splines);
 }
 
+/// The value of `node` and the size of the terms that it sums (see
+/// Expression::evaluateMagnitude).
+static std::pair<double, double>
+magnitudeNode(const Expression::Node &node,
+              const llvm::StringMap<double> &values,
+              const llvm::StringMap<const Expression::Node *> &definitions,
+              llvm::ArrayRef<Expression::Spline> splines) {
+  using Node = Expression::Node;
+  auto both = [&](const Node &child) {
+    return magnitudeNode(child, values, definitions, splines);
+  };
+  switch (node.kind) {
+  case Node::Name:
+    if (!values.count(node.name) && definitions.count(node.name))
+      return both(*definitions.lookup(node.name));
+    break;
+  case Node::Negate: {
+    auto [a, size] = both(*node.lhs);
+    return {-a, size};
+  }
+  case Node::Add:
+  case Node::Subtract: {
+    auto [a, sa] = both(*node.lhs);
+    auto [b, sb] = both(*node.rhs);
+    return {node.kind == Node::Add ? a + b : a - b, sa + sb};
+  }
+  case Node::Multiply: {
+    auto [a, sa] = both(*node.lhs);
+    auto [b, sb] = both(*node.rhs);
+    return {a * b, sa * sb};
+  }
+  case Node::Divide: {
+    auto [a, sa] = both(*node.lhs);
+    double b = evaluateNode(*node.rhs, values, definitions, splines);
+    return {a / b, sa / std::fabs(b)};
+  }
+  case Node::Power: {
+    auto [a, sa] = both(*node.lhs);
+    double b = evaluateNode(*node.rhs, values, definitions, splines);
+    double value = std::pow(a, b);
+    return {value, std::fmax(std::fabs(value), std::pow(sa, b))};
+  }
+  default:
+    break;
+  }
+  double value = evaluateNode(node, values, definitions, splines);
+  return {value, std::fabs(value)};
+}
+
+double
+Expression::evaluateMagnitude(const llvm::StringMap<double> &values) const {
+  return magnitudeNode(*root, values, getDefinitions(), splines).second;
+}
+
 std::string Expression::emit(llvm::raw_ostream &os,
                              const llvm::StringMap<std::string> &values,
                              StringRef prefix, StringRef indent, StringRef termName) const {

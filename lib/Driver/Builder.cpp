@@ -1752,11 +1752,16 @@ double Builder::getShiftFactor() const {
 }
 
 /// The integral of `f` over [0, 1] by adaptive Gauss–Kronrod quadrature
-/// of 7 and 15 points [Piessens1983], to a relative error of 1e-13 of the
-/// whole; NaN if it does not reach it. The rule of 15 points is exact for
-/// polynomials of degree 22 and that of 7 for degree 13, so a polynomial of
-/// degree 13 or less takes one interval and its value to round-off.
-static double integrateUnit(llvm::function_ref<double(double)> f) {
+/// of 7 and 15 points [Piessens1983], to an error of 1e-13 of the whole or
+/// of the integral of `size`, the size of the terms that `f` sums (#155);
+/// NaN if it reaches neither. A difference of two terms that nearly cancel,
+/// as an NBFIX correction at the force field's own parameters, has a value
+/// at the level of their rounding, which no relative error of the value
+/// could reach. The rule of 15 points is exact for polynomials of degree 22
+/// and that of 7 for degree 13, so a polynomial of degree 13 or less takes
+/// one interval and its value to round-off.
+static double integrateUnit(llvm::function_ref<double(double)> f,
+                            llvm::function_ref<double(double)> size) {
   static const double xk[8] = {
       0.991455371120812639206854697526329, 0.949107912342758524526189684047851,
       0.864864423359769072789712788640926, 0.741531185599394439863864773280788,
@@ -1771,31 +1776,36 @@ static double integrateUnit(llvm::function_ref<double(double)> f) {
       0.129484966168869693270611432679082, 0.279705391489276667901467771423780,
       0.381830050505118944950369775488975, 0.417959183673469387755102040816327};
   struct Interval {
-    double a, b, value, error;
+    double a, b, value, error, size;
   };
   auto rule = [&](double a, double b) {
     double center = 0.5 * (a + b), half = 0.5 * (b - a);
     double fc = f(center);
     double kronrod = wk[7] * fc, gauss = wg[3] * fc;
+    double sized = wk[7] * size(center);
     for (int k = 0; k != 7; ++k) {
-      double sum = f(center - half * xk[k]) + f(center + half * xk[k]);
+      double left = center - half * xk[k], right = center + half * xk[k];
+      double sum = f(left) + f(right);
       kronrod += wk[k] * sum;
+      sized += wk[k] * (size(left) + size(right));
       if (k % 2 == 1)
         gauss += wg[k / 2] * sum;
     }
     return Interval{a, b, kronrod * half,
-                    std::fabs((kronrod - gauss) * half)};
+                    std::fabs((kronrod - gauss) * half), sized * half};
   };
   std::vector<Interval> intervals = {rule(0.0, 1.0)};
   for (int iteration = 0; iteration != 4000; ++iteration) {
-    double value = 0.0, error = 0.0;
+    double value = 0.0, error = 0.0, sized = 0.0;
     for (const Interval &interval : intervals) {
       value += interval.value;
       error += interval.error;
+      sized += interval.size;
     }
     if (!std::isfinite(value) || !std::isfinite(error))
       return std::nan("");
-    if (error <= 1.0e-13 * std::fabs(value) || error == 0.0)
+    if (error <= 1.0e-13 * std::fmax(std::fabs(value), sized) ||
+        error == 0.0)
       return value;
     auto worst = std::max_element(
         intervals.begin(), intervals.end(),
@@ -1860,11 +1870,21 @@ Builder::getPairTail(unsigned index,
       values["r"] = r;
       return expression.evaluate(values);
     };
-    double integral = integrateUnit([&](double x) {
-      if (x == 0.0)
-        return 0.0;
-      return rc * rc * rc * u(rc / x) / (x * x * x * x);
-    });
+    auto size = [&](double r) {
+      values["r"] = r;
+      return expression.evaluateMagnitude(values);
+    };
+    double integral = integrateUnit(
+        [&](double x) {
+          if (x == 0.0)
+            return 0.0;
+          return rc * rc * rc * u(rc / x) / (x * x * x * x);
+        },
+        [&](double x) {
+          if (x == 0.0)
+            return 0.0;
+          return rc * rc * rc * size(rc / x) / (x * x * x * x);
+        });
     double edge = rc * rc * rc * u(rc);
     if (!std::isfinite(integral) || !std::isfinite(edge))
       return makeError("cannot be integrated");
