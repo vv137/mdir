@@ -242,8 +242,8 @@ calls.
 
 The branch is a loop of one iteration on the first call and none on the
 others, carrying the values given: the passes that place fields and their
-buffers know the loops that carry fields, and a field-valued `scf.if` would
-be new to all of them. A program of segments with a barostat that scales the
+buffers know the loops that carry fields, while `md-exec-assign-precision`
+and `md-exec-assign-storage` refuse a field-valued `scf.if`. A program of segments with a barostat that scales the
 cell every step, which a simulation refuses already, is refused by the
 builder too: the state that its first scaling takes is not an argument.
 
