@@ -158,6 +158,9 @@ int main(int argc, char **argv) {
   pair.name="custom"; pair.expression="k*(r-r0)^2";
   pair.constants={{"k",100},{"r0",0.2}};
   s.pairTerms={pair};
+  // A harmonic pair term has no finite tail beyond the cutoff
+  // (D[pair-dispersion-correction]).
+  s.dispersion=driver::DispersionCorrection::None;
   driver::TupleTerm bond;
   bond.name="spring"; bond.expression="k*(r-r0)^2"; bond.particles={0,1};
   bond.parameters={{"k",{100}},{"r0",{0.2}}};

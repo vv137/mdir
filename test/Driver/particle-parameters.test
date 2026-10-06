@@ -82,6 +82,7 @@ checkpoint_interval = 1
 cutoff            = 9.0
 pairlist_distance = 10.0
 electrostatics    = "CUTOFF"
+dispersion_correction = "NONE"
 [dynamics]
 integrator = "VELOCITY_VERLET"
 time_step  = 1e-9

@@ -20,12 +20,19 @@
 #
 # The truncation of the Lennard-Jones applies to the terms as well: the copy
 # is the term of the topology shifted, and with its force switched.
-# RUN: sed -e 's/^electrostatics    = "CUTOFF"/&\nlennard_jones_modifier = "POTENTIAL_SHIFT"\ndispersion_correction = "NONE"/' %t/terms.toml > %t/shift.toml
+# RUN: sed -e 's/^electrostatics    = "CUTOFF"/&\nlennard_jones_modifier = "POTENTIAL_SHIFT"/' %t/terms.toml > %t/shift.toml
 # RUN: cd %t && mdir run shift.toml | FileCheck %s --check-prefix=TRUNCATED
-# RUN: sed -e 's/^electrostatics    = "CUTOFF"/&\nlennard_jones_modifier = "FORCE_SWITCH"\nswitch_distance = 7.0\ndispersion_correction = "NONE"/' %t/terms.toml > %t/switch.toml
+# RUN: sed -e 's/^electrostatics    = "CUTOFF"/&\nlennard_jones_modifier = "FORCE_SWITCH"\nswitch_distance = 7.0/' %t/terms.toml > %t/switch.toml
 # RUN: cd %t && mdir run switch.toml | FileCheck %s --check-prefix=TRUNCATED
 # RUN: sed -e 's/FORCE_SWITCH/POWER_FORCE_SWITCH/' %t/switch.toml > %t/power.toml
 # RUN: not mdir check %t/power.toml 2>&1 | FileCheck %s --check-prefix=POWER
+#
+#
+# The correction for the dispersion integrates each pair term beyond the
+# cutoff (D[pair-dispersion-correction]), and the Coulomb-like part of
+# 'grouped' has no finite tail.
+# RUN: sed -e 's/^dispersion_correction = "NONE"/dispersion_correction = "ENERGY_PRESSURE"/' %t/terms.toml > %t/tail.toml
+# RUN: cd %t && not mdir run tail.toml 2>&1 | FileCheck %s --check-prefix=TAIL
 #
 # RUN: sed -e 's/^scale = 0.5/mixing = { scale = "ARITHMETIC" }/' %t/terms.toml > %t/mixing.toml
 # RUN: not mdir check %t/mixing.toml 2>&1 | FileCheck %s --check-prefix=MIXING
@@ -54,6 +61,7 @@
 # NAME: the expression uses 'charge', which is not r, q1, q2, sigma, epsilon, sigma1, sigma2, epsilon1, epsilon2, coulomb, the time t, or a constant of the term
 # ORDER: the energy of a pair must not change when its two particles are exchanged (q1 with q2, sigma1 with sigma2, epsilon1 with epsilon2), and this expression does
 # EMPTY: mdir: warning: the group ':9999' of the pair term 'grouped' selects no particle; the term adds nothing
+# TAIL: the correction for the dispersion integrates the pair term 'grouped' beyond the cutoff, and its tail diverges or cannot be integrated (its energy must decay faster than 1/r^3); give 'dispersion_correction = "NONE"'
 # ONE: expected 'groups' as two masks of particles
 
 #--- run.toml
@@ -68,6 +76,7 @@ checkpoint_interval = 1
 cutoff            = 9.0
 pairlist_distance = 10.0
 electrostatics    = "CUTOFF"
+dispersion_correction = "NONE"
 [dynamics]
 integrator = "VELOCITY_VERLET"
 time_step  = 1e-9
