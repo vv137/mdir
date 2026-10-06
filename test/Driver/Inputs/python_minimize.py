@@ -1,7 +1,12 @@
 """Minimization in a Python simulation (D202): the minimizer
 of `mdir run`, run in several parts, against the last row and the
 checkpoint of `mdir run` on the same input; the next stage from the
-minimized positions against `mdir run` from its checkpoint; refusals."""
+minimized positions against `mdir run` from its checkpoint; refusals.
+
+Usage: python_minimize.py ROOT TARGET MDIR WORK SCENARIO. Each scenario is
+one test file (SCENARIOS at the end), so that the files run side by side:
+`double` and `mixed` compare with `mdir run` in that precision, and
+`cutoff-refusals` takes the cutoff in mixed precision and the refusals."""
 import pathlib
 import subprocess
 import sys
@@ -14,6 +19,10 @@ target_name = sys.argv[2]
 target = getattr(mdir.Target, target_name)
 cli = sys.argv[3]
 work = pathlib.Path(sys.argv[4])
+scenario = sys.argv[5]
+NAMES = ("double", "mixed", "cutoff-refusals")
+if scenario not in NAMES:
+    raise SystemExit(f"unknown scenario '{scenario}'; expected one of {', '.join(NAMES)}")
 SEED = 271828
 # The first part of a simulation takes at most 100 steps (D196): FIRST
 # steps run in one part, and the steps after them in parts of their own.
@@ -135,14 +144,14 @@ def compare(label, mine, written, bound):
     return worst
 
 
-# `mdir run` in each precision: one run of FIRST steps (with a checkpoint,
-# where the NVT stage begins) and one of FIRST + AFTER, rows at every step.
-references = {}
-for precision in ("Double", "Mixed"):
+def references_of(precision):
+    """`mdir run` in `precision`: one run of FIRST steps (with a checkpoint,
+    where the NVT stage begins) and one of FIRST + AFTER, rows at every
+    step, and the NVT stage."""
     rows, positions = cli_run(f"min-{precision}", precision, "min")
     longer, _ = cli_run(f"long-{precision}", precision, "min", FIRST + AFTER)
     nvt, _ = cli_run(f"nvt-{precision}", precision, "nvt")
-    references[precision] = rows, positions, longer, nvt
+    return rows, positions, longer, nvt
 
 
 def bound_of(precision, written, double, relative):
@@ -162,14 +171,19 @@ def bound_of(precision, written, double, relative):
                                     1e-4 * abs(float(written[c])))
 
 
-# Within a part the program is that of `mdir run`. A part after the first
-# begins with its own neighbor structures and evaluates its first energy
-# anew, as a segment of dynamics does (D196), so after a boundary the rows
-# agree within the rounding of a sum in another order, which the choices of
-# the steps carry on.
-for precision in ("Double", "Mixed"):
-    rows, reference, longer, nvt_rows = references[precision]
-    double_rows, double_positions, double_longer, double_nvt = references["Double"]
+
+def against_cli(precision):
+    """Within a part the program is that of `mdir run`. A part after the
+    first begins with its own neighbor structures and evaluates its first
+    energy anew, as a segment of dynamics does (D196), so after a boundary
+    the rows agree within the rounding of a sum in another order, which the
+    choices of the steps carry on. In mixed precision the bounds take
+    `mdir run` in double precision, here a reference only: scenario `double`
+    compares the model with it."""
+    double = references_of("Double")
+    references = double if precision == "Double" else references_of(precision)
+    rows, reference, longer, nvt_rows = references
+    double_rows, double_positions, double_longer, double_nvt = double
     system, simulation = minimization(precision)
     assert simulation.minimize() == FIRST and simulation.step == FIRST
     state = simulation.state()
@@ -230,34 +244,47 @@ for precision in ("Double", "Mixed"):
     print(f"{target_name} {precision}: NVT from the minimized state, step 10: python "
           f"{mine}; mdir run {nvt_rows[10]}")
 
-# In mixed precision with cutoff electrostatics (and no constraints, with
-# which this minimization lowers the energy for longer) the model and `mdir run`
-# agree from the first evaluation: one part of 20 steps is every printed
-# digit, and 20 parts of one step agree within the rounding of the sums of
-# forces in single precision. (The energy of a cutoff without a shift is
-# not continuous, and the minimization stops lowering it after about 30
-# steps.)
-rows, _ = cli_run("cutoff-Mixed", "Mixed", "min", 20, "CUTOFF", False)
-_, whole = minimization("Mixed", 20, "CUTOFF", False)
-whole.minimize()
-mine = row_text(whole.state().minimization)
-compare("cutoff one part", mine, rows[20], None)
-_, parts = minimization("Mixed", 20, "CUTOFF", False)
-for k in range(20):
-    parts.minimize(1)
-worst = compare("cutoff parts", row_text(parts.state().minimization), rows[20],
-                lambda c: 1e-6 + 1e-6 * abs(float(rows[20][c])))
-print(f"{target_name} Mixed, cutoff: one part of 20 steps: python {mine}, every printed digit "
-      f"of mdir run; 20 parts of one step within {worst:.1e} (tolerance 1e-06)")
 
-# Refusals.
-system, simulation = minimization("Double", steps=10)
-expect(mdir.InputError, lambda: simulation.run(5), "minimize")
-expect(mdir.InputError, lambda: simulation.minimize(-1), "nonnegative")
-assert simulation.minimize(0) == 0 and simulation.state().minimization is None
-assert simulation.minimize() == 10 and simulation.state().minimization is not None
-dynamics = mdir.Simulation(mdir.compile(system, model()[1], mdir.Integrator(), mdir.Ensemble(),
-                                        execution("Double"), mdir.Schedule()))
-expect(mdir.InputError, lambda: dynamics.minimize(5), "dynamics")
-assert dynamics.state().minimization is None
-print("minimization refusals passed")
+def cutoff_refusals():
+    # In mixed precision with cutoff electrostatics (and no constraints, with
+    # which this minimization lowers the energy for longer) the model and
+    # `mdir run` agree from the first evaluation: one part of 20 steps is
+    # every printed digit, and 20 parts of one step agree within the rounding
+    # of the sums of forces in single precision. (The energy of a cutoff
+    # without a shift is not continuous, and the minimization stops lowering
+    # it after about 30 steps.)
+    rows, _ = cli_run("cutoff-Mixed", "Mixed", "min", 20, "CUTOFF", False)
+    _, whole = minimization("Mixed", 20, "CUTOFF", False)
+    whole.minimize()
+    mine = row_text(whole.state().minimization)
+    compare("cutoff one part", mine, rows[20], None)
+    _, parts = minimization("Mixed", 20, "CUTOFF", False)
+    for k in range(20):
+        parts.minimize(1)
+    worst = compare("cutoff parts", row_text(parts.state().minimization), rows[20],
+                    lambda c: 1e-6 + 1e-6 * abs(float(rows[20][c])))
+    print(f"{target_name} Mixed, cutoff: one part of 20 steps: python {mine}, every printed "
+          f"digit of mdir run; 20 parts of one step within {worst:.1e} (tolerance 1e-06)")
+
+    # Refusals.
+    system, simulation = minimization("Double", steps=10)
+    expect(mdir.InputError, lambda: simulation.run(5), "minimize")
+    expect(mdir.InputError, lambda: simulation.minimize(-1), "nonnegative")
+    assert simulation.minimize(0) == 0 and simulation.state().minimization is None
+    assert simulation.minimize() == 10 and simulation.state().minimization is not None
+    dynamics = mdir.Simulation(mdir.compile(system, model()[1], mdir.Integrator(),
+                                            mdir.Ensemble(), execution("Double"),
+                                            mdir.Schedule()))
+    expect(mdir.InputError, lambda: dynamics.minimize(5), "dynamics")
+    assert dynamics.state().minimization is None
+    print("minimization refusals passed")
+
+
+SCENARIOS = {
+    "double": lambda: against_cli("Double"),
+    "mixed": lambda: against_cli("Mixed"),
+    "cutoff-refusals": cutoff_refusals,
+}
+assert tuple(SCENARIOS) == NAMES
+SCENARIOS[scenario]()
+print(f"minimization {scenario} passed")
