@@ -248,13 +248,13 @@ def close_row(energies, row, relative):
 EPS = np.finfo(np.float64).eps
 FIELDS = ("positions", "velocities", "forces")
 
-def against_cli(precision):
+def against_cli(precision, kinds=("NVT", "NPT")):
     mixed_error = {}
     if precision == "Mixed":
         # The NVT run of `mdir run` in double precision, a reference only:
-        # scenario double compares the model with it.
+        # scenario nvt-double compares the model with it.
         double_reference = cli_run("nvt-double", "NVT", "Double")[1]
-    for kind in ("NVT", "NPT"):
+    for kind in kinds:
         rows, reference = cli_run(f"{kind}-{precision}".lower(), kind, precision)
         first, last = python_run(kind, precision)
         # Step 10 is in the first part, as in `mdir run`: every printed digit,
@@ -303,7 +303,8 @@ def against_cli(precision):
 
 SCENARIOS = {
     "draws-copies": draws_copies,
-    "double": lambda: against_cli("Double"),
+    "nvt-double": lambda: against_cli("Double", ["NVT"]),
+    "npt-double": lambda: against_cli("Double", ["NPT"]),
     "mixed": lambda: against_cli("Mixed"),
 }
 if scenario not in SCENARIOS:
