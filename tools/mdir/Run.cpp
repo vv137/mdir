@@ -556,6 +556,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   md::registerMDPasses();
   md_exec::registerMDExecPasses();
   registerMDIRConversionPasses();
+  registerGpuLowerToNVVMPipeline();
 
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);
@@ -564,7 +565,11 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   mlir::registerAllToLLVMIRTranslations(registry);
   registry.insert<dyn::DynDialect, md::MDDialect, md_exec::MDExecDialect,
                   mdrt::MDRTDialect>();
-  mlir::MLIRContext context(registry);
+  // The threads of the process's pool, at most MDIR_COMPILE_THREADS, as a
+  // Python simulation lowers (D211); the GPU modules are serialized on them
+  // (D[gpu-module-compile]).
+  mlir::MLIRContext context(registry, mlir::MLIRContext::Threading::DISABLED);
+  compiler::shareThreadPool(context);
 
   // The kernels for a GPU take their math functions from libdevice: that
   // of the toolkit the environment names, else the copy installed with

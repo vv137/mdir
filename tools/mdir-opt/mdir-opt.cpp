@@ -27,6 +27,7 @@ int main(int argc, char **argv) {
   mlir::registerAllPasses();
   mdir::md::registerMDPasses();
   mdir::registerMDIRConversionPasses();
+  mdir::registerGpuLowerToNVVMPipeline();
   mdir::md_exec::registerMDExecPasses();
   mdir::test::registerTestOutlineKernels();
 

@@ -47,6 +47,11 @@ class MDRTDialect;
 #define GEN_PASS_REGISTRATION
 #include "mdir/Conversion/Passes.h.inc"
 
+/// Registers `mdir-gpu-lower-to-nvvm`: upstream `gpu-lower-to-nvvm-pipeline`,
+/// with the same options, whose GPU modules are serialized by
+/// `mdir-gpu-module-to-binary` (D[gpu-module-compile]).
+void registerGpuLowerToNVVMPipeline();
+
 } // namespace mdir
 
 #endif // MDIR_CONVERSION_PASSES_H

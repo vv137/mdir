@@ -83,7 +83,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
                                  : "")
        << (control.fastMath && !control.deterministic ? "" : "contract=false")
        << "},"
-       << "gpu-lower-to-nvvm-pipeline{cubin-format=isa},"
+       << "mdir-gpu-lower-to-nvvm{cubin-format=isa},"
        << "reconcile-unrealized-casts";
     return pipeline;
   }
@@ -120,6 +120,7 @@ mlir::DialectRegistry compiler::getRegistry() {
     md::registerMDPasses();
     md_exec::registerMDExecPasses();
     registerMDIRConversionPasses();
+    registerGpuLowerToNVVMPipeline();
   });
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);
