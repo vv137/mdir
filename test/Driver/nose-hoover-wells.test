@@ -1,0 +1,52 @@
+# A Nose-Hoover chain (D163a) on 125 atoms of argon in identical harmonic
+# wells, which start at their centers and so move as one oscillator, under
+# velocity Verlet at omega dt = 0.5, 150 K, tau_T = 5 ps, and the chain
+# acting every 10 steps, at omega h = 5 (#117). The kinetic energy that the
+# chain sees swings by its whole size from one period to the next, not by
+# 1/sqrt(N_f) of it, and drives the chain's velocities to some 30 times
+# their thermal size 2 pi / tau_T. The run is thermostatted poorly, as the
+# warning of the short period says, but it runs: the potential energy of
+# every row is that of the oscillator moved with the chain of
+# nose_hoover_wells.py, whose action over the period is split finely.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/brownian_wells.py write %t 125
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/base.toml
+# RUN: cat %t/base.toml %t/wells.toml > %t/run.toml
+# RUN: cd %t && mdir run run.toml > run.log 2> run.err
+# RUN: %python %S/Inputs/nose_hoover_wells.py %t/run.log 372 1000 | FileCheck %s
+# RUN: FileCheck %s --check-prefix=WARN < %t/run.err
+
+# CHECK: 101 rows
+# CHECK: within 0.01 kcal/mol: yes
+# WARN: warning: the Nose-Hoover chain acts every 1.0925 ps and its 'time_constant' is 5 ps
+
+#--- run.toml
+[input]
+topology    = "wells.top"
+coordinates = "wells.gro"
+
+[output]
+energy_interval = 10
+
+[energy]
+cutoff = 9.0
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.10925
+steps      = 1000
+seed       = 7
+center_of_mass_interval = 0
+
+[ensemble]
+ensemble    = "NVT"
+temperature = 150.0
+
+[thermostat]
+method        = "NOSE-HOOVER"
+time_constant = 5.0
+
+[boundary]
+type = "PERIODIC"
+#--- end
