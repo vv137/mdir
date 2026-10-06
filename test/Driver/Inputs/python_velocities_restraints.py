@@ -261,6 +261,13 @@ def against_cli(precision, kinds=("NVT", "NPT")):
         # The NVT run of `mdir run` in double precision, a reference only:
         # scenario nvt-double compares the model with it.
         double_reference = cli_run("nvt-double", "NVT", "Double")[1]
+        if "NVT" not in kinds:
+            # NPT takes the E of NVT: the NVT run of `mdir run` in mixed
+            # precision, a reference only (scenario mixed-nvt compares the
+            # model with it).
+            nvt_mixed = cli_run("nvt-mixed", "NVT", "Mixed")[1]
+            for field in FIELDS:
+                mixed_error[field] = np.abs(nvt_mixed[field] - double_reference[field]).max()
     for kind in kinds:
         rows, reference = cli_run(f"{kind}-{precision}".lower(), kind, precision)
         first, last = python_run(kind, precision)
@@ -321,7 +328,8 @@ SCENARIOS = {
     "nvt-double-restraints": lambda: restraint_effect("NVT"),
     "npt-double": lambda: against_cli("Double", ["NPT"]),
     "npt-double-restraints": lambda: restraint_effect("NPT"),
-    "mixed": lambda: against_cli("Mixed"),
+    "mixed-nvt": lambda: against_cli("Mixed", ["NVT"]),
+    "mixed-npt": lambda: against_cli("Mixed", ["NPT"]),
 }
 if scenario not in SCENARIOS:
     raise SystemExit(f"unknown scenario '{scenario}'; expected one of {', '.join(SCENARIOS)}")
