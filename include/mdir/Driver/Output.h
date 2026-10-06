@@ -339,10 +339,12 @@ void _mlir_ciface_mdrtWriteVirial(double xx, double yy, double zz);
 /// The energy that a coupling of the velocities has just taken from the
 /// system, in kJ/mol.
 void _mlir_ciface_mdrtAddBath(double energy);
-/// The factor that a Nose-Hoover chain scales the velocities by over one
-/// period of coupling, from their kinetic energy `kinetic` in kJ/mol
-/// (D163a). The chain moves on; the change of its energy goes to the bath.
-double mdrtNoseHooverFactor(double kinetic);
+/// The factor that a Nose-Hoover chain scales the velocities by over the
+/// period of coupling that ends at step `step`, from their kinetic energy
+/// `kinetic` in kJ/mol (D163a). The chain moves on; the change of its
+/// energy goes to the bath. A chain that its factorization no longer
+/// follows stops the run (D[nhc-nan]).
+double mdrtNoseHooverFactor(int64_t step, double kinetic);
 /// The kinetic energies of the rigid waters at the step of the next row of
 /// the log, of the velocities of the step and K_half, in kJ/mol
 /// (D203).

@@ -22,9 +22,9 @@
 # bath takes the change of the energy of the chain there, not the change of
 # the kinetic energy.
 #
-# MODULE:      func.func private @mdrtNoseHooverFactor(f64) -> f64
+# MODULE:      func.func private @mdrtNoseHooverFactor(i64, f64) -> f64
 # MODULE-NOT:  @mdrtBussiFactor
-# MODULE:      %alpha1 = func.call @mdrtNoseHooverFactor(%kt1) : (f64) -> f64
+# MODULE:      %alpha1 = func.call @mdrtNoseHooverFactor(%{{[a-z0-9_]+}}, %kt1) : (i64, f64) -> f64
 # MODULE:      func.call @mdrtAddBath(%kcm1) : (f64) -> ()
 
 # CHECK-TOOL: thermostat:         NOSE-HOOVER

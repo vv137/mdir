@@ -355,10 +355,32 @@ $\tfrac s2 G_M$; for $j = M-1, \dots, 1$, $p_{\eta_j} \leftarrow
 p_{\eta_j}e^{-s\dot\eta_{j+1}/2} + \tfrac s2G_j e^{-s\dot\eta_{j+1}/4}$;
 the velocities of the particles by $e^{-s\,p_{\eta_1}/Q_1}$, and so
 $K$ by its square; $\eta_j \leftarrow \eta_j + s\,p_{\eta_j}/Q_j$; then the
-momenta again from $j = 1$ to $M$. The parts are $n_c = \lceil 50h/\tau_T
-\rceil$: one part of $h$ = 40 fs at $\tau_T$ = 0.5 ps took the later
-thermostats of a liquid far from $T_0$ beyond what the factorization
-follows, and the run failed. Beyond the stability of the parts, a chain
+momenta again from $j = 1$ to $M$. The parts are $n_c = \lceil
+50h/\tau_T\rceil$: one part of $h$ = 40 fs at $\tau_T$ = 0.5 ps took the
+later thermostats of a liquid far from $T_0$ beyond what the factorization
+follows, and the run failed. The factorization is accurate while each
+part moves the chain little, $\lvert s\,\dot\eta_j\rvert \ll 1$. At
+$n_c$ that holds for $\dot\eta_j$ of the order of their thermal size
+$\sqrt{k_BT_0/Q_j} = \omega$ ($j \ge 2$), where $\lvert s\dot\eta_j\rvert
+\le 1.32 \cdot 2\pi/50 \approx 0.2$. A chain driven far from equilibrium
+leaves that range. For a negative weight $s < 0$, so the factor
+$e^{-s\dot\eta_{j+1}/2}$ grows $p_{\eta_j}$ by $e^{\lvert
+s\rvert\dot\eta_{j+1}/2}$ instead of damping it. The factorization undoes
+the growth only to its order, and at $\lvert s\dot\eta_j\rvert$ of a few
+the chain runs to infinity within one action. Identical harmonic wells
+did that. Their atoms, starting at the centers, move as one oscillator, so
+the kinetic energy the chain sees once a period, 5 radians of their
+oscillation apart, swings by its whole size rather than by $1/\sqrt{N_f}$
+of it. That drove $\dot\eta_3$ to $35\,\omega$, and the chain diverged at
+$\lvert s\dot\eta_3\rvert \approx 6$, while a finely split chain stays
+bounded there. The parts stay fixed before the run, as the time
+reversibility of the factorization requires. After each action, a value
+that is not finite, or a part that met $\lvert s\dot\eta_j\rvert > 3$,
+stops the run before the velocities are scaled (D[nhc-nan]). Up to 3 the
+wells' potential energy is within 0.015 kJ/mol of a chain in 1000 parts;
+beyond, the difference grows to kJ/mol. This is a guard on the scheme, not
+a change of it: a run that it does not stop moves as before.
+Beyond the stability of the parts, a chain
 acting once a period follows a period $\tau_T$ shorter than about 20
 periods of coupling poorly, which the run warns of. The chain is a few numbers, moved on the host,
 which returns $\alpha$ for the loop over particles; the bath takes the

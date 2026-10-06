@@ -1,0 +1,24 @@
+# The chain on identical harmonic wells of nose-hoover-wells.test on a GPU,
+# in mixed and in double precision (#117): the device sums the kinetic
+# energy, and the host moves the chain and stops the run at step 60, with
+# the rows before it those of the oscillator (D[nhc-nan]).
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/brownian_wells.py write %t 125
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/nose-hoover-wells.test | sed '1d;$d' > %t/base.toml
+# RUN: cat %t/base.toml %t/wells.toml > %t/mixed.toml
+# RUN: cp %t/mixed.toml %t/double.toml
+# RUN: printf '[execution]\ntarget = "gpu"\nprecision = "mixed"\n' >> %t/mixed.toml
+# RUN: printf '[execution]\ntarget = "gpu"\nprecision = "double"\n' >> %t/double.toml
+# RUN: cd %t && not mdir run mixed.toml > mixed.log 2> mixed.err
+# RUN: %python %S/Inputs/nose_hoover_wells.py %t/mixed.log 372 1000 | FileCheck %s
+# RUN: FileCheck %s --check-prefix=ERR < %t/mixed.err
+# RUN: cd %t && not mdir run double.toml > double.log 2> double.err
+# RUN: %python %S/Inputs/nose_hoover_wells.py %t/double.log 372 1000 | FileCheck %s
+# RUN: FileCheck %s --check-prefix=ERR < %t/double.err
+
+# CHECK: 7 rows, the last at step 60;
+# CHECK: within 0.001 kcal/mol: yes
+# ERR: mdir: at step 60 the Nose-Hoover chain no longer follows its factorization in 11 parts: a part moved it by |s v_j| = 3.29, above 3
