@@ -282,7 +282,7 @@ compileEngine(const Control &control, const System &system,
                                          start).count();
   };
   auto module = compiler::lowerModule(*engine->context, control,
-                                      engine->program);
+                                      engine->program, &engine->stats);
   if (!module)
     return module.takeError();
   engine->module = std::move(*module);

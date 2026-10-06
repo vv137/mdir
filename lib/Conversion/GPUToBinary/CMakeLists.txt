@@ -8,6 +8,7 @@ add_mlir_conversion_library(MDIRGPUToBinary
   MDIRConversionPassIncGen
 
   LINK_LIBS PUBLIC
+  MDIRCompileCache
   MLIRAffineToStandard
   MLIRArithToLLVM
   MLIRFuncToLLVM
@@ -21,6 +22,8 @@ add_mlir_conversion_library(MDIRGPUToBinary
   MLIRMathToLLVM
   MLIRMemRefTransforms
   MLIRNVGPUToNVVM
+  MLIRNVVMDialect
+  MLIRNVVMTarget
   MLIRNVVMToLLVM
   MLIRPass
   MLIRReconcileUnrealizedCasts

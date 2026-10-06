@@ -690,6 +690,19 @@ PYBIND11_MODULE(mdir, m) {
       d["cache_stored"] = c.stored;
       d["cache_unstored"] = c.unstored;
       d["cache_lookup_seconds"] = c.lookupSeconds;
+      // The GPU modules (D[gpu-module-compile]).
+      d["gpu_modules"] = c.gpuModules;
+      d["gpu_serialize_seconds"] = c.gpuSerializeSeconds;
+      d["gpu_ptx_compiled"] = c.gpuPtxCompiled;
+      d["gpu_ptx_hits"] = c.gpuPtxHits;
+      d["gpu_cubin_compiled"] = c.gpuCubinCompiled;
+      d["gpu_cubin_hits"] = c.gpuCubinHits;
+      d["gpu_compile_seconds"] = c.gpuCompileSeconds;
+      d["gpu_cache_saved_seconds"] = c.gpuSavedSeconds;
+      d["gpu_cache_lookup_seconds"] = c.gpuLookupSeconds;
+      d["gpu_cache_rejected"] = c.gpuRejected;
+      d["gpu_cache_stored"] = c.gpuStored;
+      d["gpu_cache_unstored"] = c.gpuUnstored;
       return d;
     })
     .def_property_readonly("tunables", [](py::object self) { return TunableValues{self}; })

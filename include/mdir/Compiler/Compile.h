@@ -1,6 +1,7 @@
 // Shared lowering service for the CLI and embedded front ends.
 #ifndef MDIR_COMPILER_COMPILE_H
 #define MDIR_COMPILER_COMPILE_H
+#include "mdir/Compiler/CompileCache.h"
 #include "mdir/Driver/Model.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -42,10 +43,12 @@ llvm::ThreadPoolInterface &getThreadPool();
 /// of getThreadPool.
 void shareThreadPool(mlir::MLIRContext &context);
 /// Parses and lowers `program` in `context`, for a front end that runs the
-/// result (D196). Errors are CompileError with diagnostics.
+/// result (D196). Errors are CompileError with diagnostics. What the
+/// serialization of the GPU modules did is added to `stats`, if given
+/// (D[gpu-module-compile]).
 llvm::Expected<mlir::OwningOpRef<mlir::ModuleOp>>
 lowerModule(mlir::MLIRContext &context, const driver::Control &,
-            const driver::Program &);
+            const driver::Program &, CompileStats *stats = nullptr);
 /// The machine that compiles the host code of a program for the JIT, at the
 /// one code-generation level of both front ends (#90).
 llvm::Expected<std::unique_ptr<llvm::TargetMachine>> createHostMachine();

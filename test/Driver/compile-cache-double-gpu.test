@@ -1,12 +1,17 @@
 # REQUIRES: python-api, cuda
-# The compile cache of host objects (D212) on a GPU in double
-# precision: a cold and a warm cache give the state of no cache bit for
-# bit after 20 deterministic steps. Each scenario is a process
-# of its own on one directory (Inputs/compile_cache.py).
+# The compile cache of host objects (D212) and of the GPU modules
+# (D[gpu-module-compile]) on a GPU in double precision: a cold and a warm
+# cache give the state of no cache bit for bit after 20 deterministic
+# steps, and a warm cache generates no PTX and no cubin. Each scenario is
+# a process of its own on one directory (Inputs/compile_cache.py).
 # RUN: rm -rf %t
 # RUN: %mdir_python %S/Inputs/compile_cache.py %S/Inputs/dipeptide GPU Double %t | FileCheck %s
 # CHECK: off: compiled 1 hits 0 rejected 0 stored 0
+# CHECK-NEXT: off: gpu modules [[M:[0-9]+]] ptx generated [[M]] hits 0 cubins generated {{[0-9]+}} hits 0 rejected 0 stored 0
 # CHECK-NEXT: off: directory absent
 # CHECK-NEXT: cold: compiled 1 hits 0 rejected 0 stored 1 state same
+# CHECK-NEXT: cold: gpu modules [[M]] ptx generated {{[1-9][0-9]*}} hits {{[0-9]+}} cubins generated {{[0-9]+}} hits {{[0-9]+}} rejected 0 stored {{[1-9][0-9]*}}
 # CHECK-NEXT: cold: entries 1
+# CHECK-NEXT: cold: gpu entries ptx {{[1-9][0-9]*}} cubin {{[0-9]+}}
 # CHECK-NEXT: warm: compiled 0 hits 1 rejected 0 stored 0 state same
+# CHECK-NEXT: warm: gpu modules [[M]] ptx generated 0 hits [[M]] cubins generated 0 hits {{[0-9]+}} rejected 0 stored 0

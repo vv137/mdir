@@ -1,6 +1,7 @@
 #ifndef MDIR_COMPILER_COMPILECACHE_H
 #define MDIR_COMPILER_COMPILECACHE_H
 
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ExecutionEngine/ObjectCache.h"
 #include "llvm/Support/Error.h"
 #include <cstdint>
@@ -41,6 +42,29 @@ struct CompileStats {
   /// The time spent on keys and on reading entries, hit or miss.
   double lookupSeconds = 0.0;
 
+  /// The GPU modules of the programs (D[gpu-module-compile]) and the wall
+  /// time of their serialization. Each module is serialized to PTX, which
+  /// LLVM generates or the cache gives, and on a device whose architecture
+  /// is known, the PTX to a cubin, which ptxas generates or the cache
+  /// gives.
+  unsigned gpuModules = 0;
+  double gpuSerializeSeconds = 0.0;
+  unsigned gpuPtxCompiled = 0;
+  unsigned gpuPtxHits = 0;
+  unsigned gpuCubinCompiled = 0;
+  unsigned gpuCubinHits = 0;
+  /// The time the generated PTX and cubins took, summed over the modules,
+  /// and the time the hits took when they were stored.
+  double gpuCompileSeconds = 0.0;
+  double gpuSavedSeconds = 0.0;
+  /// The time spent on the keys and reads of GPU entries, hit or miss,
+  /// summed over the modules.
+  double gpuLookupSeconds = 0.0;
+  /// The GPU entries rejected, written, and that could not be written.
+  unsigned gpuRejected = 0;
+  unsigned gpuStored = 0;
+  unsigned gpuUnstored = 0;
+
   CompileStats &operator+=(const CompileStats &other);
 };
 
@@ -54,6 +78,30 @@ struct CompileCacheConfig {
 
   static std::optional<CompileCacheConfig> fromEnvironment();
 };
+
+/// The entries of every kind of the cache (D212, D[gpu-module-compile]):
+/// a magic tag, the full key, the length of the data, a BLAKE3 hash of
+/// the data, the time its generation took, and the data.
+///
+/// Reads the entry at `path` if its key is `key`, its data is intact, and
+/// `isValid` (if given) accepts the data; the time its generation took goes
+/// to `seconds`. A file that exists but fails a check sets `rejected`.
+std::unique_ptr<llvm::MemoryBuffer>
+readCacheEntry(llvm::StringRef path, llvm::StringRef key, double &seconds,
+               bool &rejected,
+               llvm::function_ref<bool(llvm::StringRef)> isValid = nullptr);
+/// Writes the entry atomically: a unique temporary file in the same
+/// directory, then a rename.
+llvm::Error writeCacheEntry(llvm::StringRef path, llvm::StringRef key,
+                            llvm::StringRef data, double seconds);
+/// The file name of the entry of `key`: a hash of the key and `extension`.
+std::string getCacheEntryName(llvm::StringRef key, llvm::StringRef extension);
+/// Removes the entries used least recently, of every kind (`host/*.o`,
+/// `gpu/*.ptx`, `gpu/*.cubin`), until the cache at `directory` holds at
+/// most `maxBytes`, and temporary files left by processes that died.
+void evictCache(llvm::StringRef directory, uint64_t maxBytes);
+/// Marks the entry at `path` as used, for the eviction.
+void touchCacheEntry(llvm::StringRef path);
 
 /// The part of a key that the target machine and the code generator's
 /// options give: the LLVM version, the triple, the CPU and its features,
@@ -110,9 +158,6 @@ public:
   /// Writes the entry atomically.
   static llvm::Error writeEntry(llvm::StringRef path, llvm::StringRef key,
                                 llvm::MemoryBufferRef object, double seconds);
-  /// Removes the entries used least recently until the directory holds
-  /// at most `maxBytes`, and temporary files left by processes that died.
-  static void evict(llvm::StringRef directory, uint64_t maxBytes);
 
 private:
   struct Pending {

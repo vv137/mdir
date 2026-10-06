@@ -1,3 +1,10 @@
+# The compile cache (D212): the host objects of the JIT engines and the
+# binaries of the GPU modules (D[gpu-module-compile]).
+add_mlir_library(MDIRCompileCache CompileCache.cpp
+  PARTIAL_SOURCES_INTENDED
+  LINK_COMPONENTS BitWriter Core Object Support
+)
+
 add_mlir_library(MDIRCompiler Compile.cpp
   PARTIAL_SOURCES_INTENDED
   LINK_COMPONENTS OrcJIT
@@ -16,11 +23,10 @@ endforeach()
 # A simulation that persists across runs (D196): it compiles
 # and runs its programs in the process that embeds it.
 add_mlir_library(MDIRSimulation Simulation.cpp JITEngine.cpp JITMemory.cpp
-  CompileCache.cpp
   PARTIAL_SOURCES_INTENDED
   LINK_COMPONENTS BitWriter Core Object Support nativecodegen native
     DebugInfoDWARF
-  LINK_LIBS PUBLIC MDIRCompiler MLIRExecutionEngine
+  LINK_LIBS PUBLIC MDIRCompiler MDIRCompileCache MLIRExecutionEngine
 )
 foreach(target MDIRSimulation obj.MDIRSimulation)
   if(TARGET ${target})

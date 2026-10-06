@@ -235,11 +235,6 @@ def GpuModuleToBinary
     Option<"format", "format", "std::string", /*default=*/"\"isa\"",
            "isa (PTX, which the driver compiles at load) or bin (a cubin)">
   ];
-  let statistics = [
-    Statistic<"numModules", "modules", "GPU modules serialized">,
-    Statistic<"serializeMicroseconds", "serialize-us",
-              "Wall time of the serialization, in microseconds">
-  ];
 }
 
 #endif // MDIR_CONVERSION_PASSES_TD

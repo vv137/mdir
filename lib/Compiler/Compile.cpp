@@ -1,4 +1,5 @@
 #include "mdir/Compiler/Compile.h"
+#include "mdir/Conversion/GPUToBinary.h"
 #include "mdir/Conversion/Passes.h"
 #include "mdir/Dialect/Dyn/DynDialect.h"
 #include "mdir/Dialect/MD/MDDialect.h"
@@ -161,7 +162,7 @@ void compiler::shareThreadPool(mlir::MLIRContext &context) {
 }
 llvm::Expected<mlir::OwningOpRef<mlir::ModuleOp>>
 compiler::lowerModule(mlir::MLIRContext &context, const driver::Control &control,
-                      const driver::Program &program) {
+                      const driver::Program &program, CompileStats *stats) {
   std::string diagnostics;
   llvm::raw_string_ostream diagnosticStream(diagnostics);
   mlir::ScopedDiagnosticHandler handler(&context, [&](mlir::Diagnostic &d) {
@@ -179,8 +180,13 @@ compiler::lowerModule(mlir::MLIRContext &context, const driver::Control &control
                              mlir::PassManager::Nesting::Implicit);
   if (mlir::failed(mlir::parsePassPipeline(pipeline, manager, diagnosticStream)))
     return llvm::make_error<CompileError>("cannot set up lowering: " + diagnostics);
+  // Counts from an earlier context at the same address are not this one's.
+  (void)takeGpuModuleStats(context);
   if (mlir::failed(manager.run(*module)))
     return llvm::make_error<CompileError>("cannot lower program: " + diagnostics);
+  CompileStats gpu = takeGpuModuleStats(context);
+  if (stats)
+    *stats += gpu;
   return std::move(module);
 }
 llvm::Expected<compiler::CompiledProgram>

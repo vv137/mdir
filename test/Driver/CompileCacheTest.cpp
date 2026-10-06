@@ -176,15 +176,53 @@ int main(int argc, char **argv) {
   age(stale, std::chrono::hours(2));
   uint64_t size = 0;
   cantFail(errorCodeToError(sys::fs::file_size(paths[0], size)));
-  HostObjectCache::evict(objects, 2 * size);
+  evictCache(directory, 2 * size);
   check(!sys::fs::exists(paths[0]) && sys::fs::exists(paths[1]) &&
             sys::fs::exists(paths[2]),
         "the entry used least recently is evicted first");
   check(!sys::fs::exists(stale) && sys::fs::exists(fresh),
         "a stale temporary file is removed, a recent one is kept");
-  HostObjectCache::evict(objects, 0);
+  evictCache(directory, 0);
   check(!sys::fs::exists(paths[1]) && !sys::fs::exists(paths[2]),
         "a bound of zero keeps no entry");
+
+  // The entries of the GPU modules (D[gpu-module-compile]): a check of the
+  // data rejects an entry, and one bound covers the entries of every kind.
+  SmallString<256> gpu(directory);
+  sys::path::append(gpu, "gpu");
+  cantFail(errorCodeToError(sys::fs::create_directories(gpu)));
+  auto gpuEntry = [&](StringRef key, StringRef extension) {
+    SmallString<256> path(gpu);
+    sys::path::append(path, getCacheEntryName(key, extension));
+    return std::string(path);
+  };
+  std::string ptxKey = "ptx of a module", cubinKey = "cubin of a module";
+  std::string ptx = gpuEntry(ptxKey, ".ptx"), cubin = gpuEntry(cubinKey, ".cubin");
+  check(getCacheEntryName(ptxKey, ".ptx") != getCacheEntryName(cubinKey, ".ptx"),
+        "another GPU key names another entry");
+  cantFail(writeCacheEntry(ptx, ptxKey, ".version 8.0\n.target sm_86\n", 1.0));
+  auto isPtx = [](StringRef data) { return data.contains(".version"); };
+  found = readCacheEntry(ptx, ptxKey, seconds, rejected, isPtx);
+  check(found && !rejected && seconds == 1.0, "a GPU entry gives back its data");
+  cantFail(writeCacheEntry(ptx, ptxKey, "not PTX", 1.0));
+  found = readCacheEntry(ptx, ptxKey, seconds, rejected, isPtx);
+  check(!found && rejected, "a GPU entry whose data fails its check is rejected");
+  cantFail(writeCacheEntry(ptx, ptxKey, object, 1.0));
+  cantFail(writeCacheEntry(cubin, cubinKey, object, 1.0));
+  std::string hostKey20 = cache.getKey(*program(context, *host, 20));
+  std::string hostEntry = entry(HostObjectCache::getEntryName(hostKey20));
+  cantFail(HostObjectCache::writeEntry(
+      hostEntry, hostKey20, MemoryBufferRef(object, "program"), 1.0));
+  age(ptx, std::chrono::seconds(30));
+  age(hostEntry, std::chrono::seconds(20));
+  age(cubin, std::chrono::seconds(10));
+  uint64_t hostSize = 0, cubinSize = 0;
+  cantFail(errorCodeToError(sys::fs::file_size(hostEntry, hostSize)));
+  cantFail(errorCodeToError(sys::fs::file_size(cubin, cubinSize)));
+  evictCache(directory, hostSize + cubinSize);
+  check(!sys::fs::exists(ptx) && sys::fs::exists(hostEntry) &&
+            sys::fs::exists(cubin),
+        "one bound covers the host and GPU entries, least recent first");
 
   outs() << (failures ? "compile cache checks FAILED\n"
                       : "compile cache checks passed\n");
