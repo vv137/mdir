@@ -275,7 +275,7 @@ runs that compiled the second program take a second or so instead of 20 to
 `Program.lowered_ir` (#151).
 
 The host object of a simulation's program can be kept on disk across
-processes by the compile cache (D[compile-cache],
+processes by the compile cache (D212,
 [compile-cache.md](compile-cache.md)), which `MDIR_COMPILE_CACHE_DIR`
 enables; `Simulation.compile_stats` reports the times of the pipeline and
 of the engine, and the hits.

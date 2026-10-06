@@ -18,7 +18,7 @@ format, or the outputs; every such change is listed under **Changed** or
   `-Dcompile_threads=N`, so that sixteen tests compiling at once do not ask
   for sixteen times the cores.
 - A compile cache of host objects for Python simulations
-  (D[compile-cache], #142): `MDIR_COMPILE_CACHE_DIR=<dir>` keeps the
+  (D212, #142): `MDIR_COMPILE_CACHE_DIR=<dir>` keeps the
   relocatable object of each compiled program on disk, keyed by the
   content of its LLVM module and the code generator, so that later
   processes and rebuilds of MDIR that generate the same module skip host

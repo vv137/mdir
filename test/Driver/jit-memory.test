@@ -1,5 +1,5 @@
 # The D199 checks of linking and memory, without the compile cache and
-# with a cold and then a warm one (D[compile-cache]): an object read from
+# with a cold and then a warm one (D212): an object read from
 # the cache is linked into memory of the engine's own, as a generated one.
 # RUN: env MDIR_COMPILE_CACHE=off mdir-jit-memory-test | FileCheck %s
 # RUN: rm -rf %t

@@ -1,5 +1,5 @@
 # The keys, entries, and bound of the compile cache of host objects
-# (D[compile-cache]); the cache across processes is in compile-cache-*.test.
+# (D212); the cache across processes is in compile-cache-*.test.
 # RUN: rm -rf %t
 # RUN: mdir-compile-cache-test %t | FileCheck %s
 # CHECK: compile cache checks passed

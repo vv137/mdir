@@ -1,4 +1,4 @@
-//===- CompileCache.cpp - The cache of host objects (D[compile-cache]) ----===//
+//===- CompileCache.cpp - The cache of host objects (D212) ----===//
 //
 // The object cache follows the interface that LLVM's ORC JIT offers for it
 // (llvm::ObjectCache, as in LLVM's LLJITWithObjectCache example); entries

@@ -92,7 +92,7 @@ def limit_compile_threads(config, lit_config, workers):
 
 def enable_compile_cache(config, lit_config):
     """Share the host objects of the tests' JIT engines through the compile
-    cache (D[compile-cache]), in a directory of the build tree, so that a
+    cache (D212), in a directory of the build tree, so that a
     suite of one build shares nothing with that of another. lit -Dcompile_cache=off,
     or MDIR_COMPILE_CACHE=off in the environment, runs the suite without it;
     a test of compilation itself sets MDIR_COMPILE_CACHE=off in its RUN

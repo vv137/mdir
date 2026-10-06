@@ -1,4 +1,4 @@
-"""The compile cache of host objects (D[compile-cache]) across processes.
+"""The compile cache of host objects (D212) across processes.
 
   compile_cache.py ROOT TARGET PRECISION WORK [--damaged] [--misses] [--concurrent]
 

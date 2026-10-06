@@ -241,7 +241,7 @@ steps. `examples/ala3/run.py` (#82) runs the four stages of the
 example from Python, beside its control files. D211
 (#147, [compiles](python-segments.md#compiles)) compiles one program per
 simulation, whose entry branches the start on an argument, with MLIR's
-threads from one pool of the process. D[compile-cache] (#142,
+threads from one pool of the process. D212 (#142,
 [compile cache](compile-cache.md)) keeps the host objects of compiled
 programs on disk, keyed by their content. Checkpoints, DLPack views and
 tunable buffers remain open.

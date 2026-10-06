@@ -467,7 +467,7 @@ constant pressure for the systems of the Amber suite, whatever their size
 the driver writes it, and the lowering outlines 545 GPU modules from it.
 
 A Python simulation compiles on an engine of its own (D199), whose host
-code generation can be cached on disk (D[compile-cache],
+code generation can be cached on disk (D212,
 `MDIR_COMPILE_CACHE_DIR`). The relocatable object is a function of the
 LLVM module and of the code generator alone, so an entry is keyed by a
 hash of the module's bitcode, which holds the PTX of its kernels, and by

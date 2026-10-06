@@ -1,5 +1,5 @@
 # REQUIRES: python-api
-# The compile cache of host objects (D[compile-cache]) on the CPU in mixed
+# The compile cache of host objects (D212) on the CPU in mixed
 # precision: a cold and a warm cache give the state of no cache bit for
 # bit after 20 deterministic steps; a truncated entry and an object with a
 # byte flipped are rejected and rebuilt; a changed pipeline option or precision

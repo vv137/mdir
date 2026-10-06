@@ -52,7 +52,7 @@ unwind ranges before registration. The old MLIR transformer in
 otherwise); section names and that hint provide no correctness proof. Late
 ORC-generated functions are checked regardless of their section placement.
 
-## Cached host objects (D[compile-cache])
+## Cached host objects (D212)
 
 The compile cache ([compile-cache.md](compile-cache.md)) is the
 `llvm::ObjectCache` of the engine's compiler. It holds relocatable objects

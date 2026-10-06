@@ -1,5 +1,5 @@
 // The keys, entries, and bound of the compile cache of host objects
-// (D[compile-cache]): a changed key part misses, a damaged entry is
+// (D212): a changed key part misses, a damaged entry is
 // rejected, and eviction removes the entries used least recently.
 #include "mdir/Compiler/CompileCache.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"

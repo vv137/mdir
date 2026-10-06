@@ -28,7 +28,7 @@ public:
   CompileStats getCompileStats() const { return cache->getStats(); }
 
 private:
-  // The compile cache (D[compile-cache]) outlives the compiler that uses
+  // The compile cache (D212) outlives the compiler that uses
   // it. It holds no linked code: each engine links its own copy of an
   // object, as it does a generated one.
   std::unique_ptr<HostObjectCache> cache;

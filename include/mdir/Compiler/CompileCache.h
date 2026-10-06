@@ -17,7 +17,7 @@ class TargetMachine;
 namespace mdir::compiler {
 
 /// What the host code generation of one engine, or of several, cost and
-/// what the compile cache saved (D[compile-cache]).
+/// what the compile cache saved (D212).
 struct CompileStats {
   /// Programs compiled, the time of their MLIR pipelines, and the time
   /// from the creation of their JIT engines to their entries: host code
@@ -45,7 +45,7 @@ struct CompileStats {
 };
 
 /// Where the compile cache lives, as the environment says
-/// (D[compile-cache]). `MDIR_COMPILE_CACHE_DIR` names the directory;
+/// (D212). `MDIR_COMPILE_CACHE_DIR` names the directory;
 /// without it, or with `MDIR_COMPILE_CACHE=off`, there is no cache.
 /// `MDIR_COMPILE_CACHE_MAX_MB` bounds its size (2048 MiB by default).
 struct CompileCacheConfig {
@@ -64,7 +64,7 @@ std::string describeMachine(const llvm::TargetMachine &machine,
                             llvm::StringRef extra);
 
 /// The cache of relocatable host objects of one JIT engine
-/// (D[compile-cache]). ORC's compiler asks it for the object of a module
+/// (D212). ORC's compiler asks it for the object of a module
 /// before it generates code, and gives it the object it generated.
 ///
 /// An entry is keyed by the content of the LLVM module (a BLAKE3 hash of

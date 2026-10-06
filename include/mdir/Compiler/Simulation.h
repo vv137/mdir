@@ -113,7 +113,7 @@ public:
   double getTime() const;
   bool hasFailed() const { return failed; }
   /// What compiling its programs cost, and what the compile cache saved
-  /// (D[compile-cache]).
+  /// (D212).
   CompileStats getCompileStats() const;
   /// The longest a part may take, in s, which bounds the latency of a stop.
   double partSeconds = 0.5;

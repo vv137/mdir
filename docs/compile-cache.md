@@ -1,4 +1,4 @@
-# The compile cache of host objects (D[compile-cache])
+# The compile cache of host objects (D212)
 
 Issue #142. A Python simulation compiles its program in three stages: the
 MLIR pipeline lowers it to an LLVM module (with the PTX of its kernels on a

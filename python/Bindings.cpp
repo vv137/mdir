@@ -570,7 +570,7 @@ PYBIND11_MODULE(mdir, m) {
     .def_property_readonly("failed", [](const PySimulation &s) { return s.simulation->hasFailed(); })
     .def_property_readonly("program", [](const PySimulation &s) { return s.program; })
     // What compiling the programs cost, and what the compile cache saved
-    // (D[compile-cache]).
+    // (D212).
     .def_property_readonly("compile_stats", [](const PySimulation &s) {
       compiler::CompileStats c = s.simulation->getCompileStats();
       py::dict d;

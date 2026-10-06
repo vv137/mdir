@@ -210,7 +210,7 @@ struct Simulation::Engine {
   mlir::OwningOpRef<mlir::ModuleOp> module;
   std::unique_ptr<compiler::JITEngine> engine;
   void (*function)(void **) = nullptr;
-  /// What compiling it cost (D[compile-cache]).
+  /// What compiling it cost (D212).
   compiler::CompileStats stats;
   /// The volume that the constants of the program are for.
   double volume = 0.0;
