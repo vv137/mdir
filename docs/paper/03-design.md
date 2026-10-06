@@ -508,6 +508,77 @@ release 0.1.0: the reader checks the format and the SHA-256 of the state,
 and the file is on stable storage before it takes its name
 (D173).
 
+### Parameters that change without compiling
+
+A compiled program depends on the structure of its model (the terms and
+their expressions, the cutoff, the grid, the constraints) and on values. A
+Python model may declare values *tunable* (D[python-tunable],
+`docs/python-tunable.md`): charges, $\sigma$ and $\epsilon$ of the
+Lennard-Jones types, constants of pair terms, and parameters of tuple
+terms, each a vector $\boldsymbol\theta$ with a map $\pi$ from its sites,
+so that site $s$ takes $\theta_{\pi(s)}$. Nothing that depends on them is a
+constant of the program's text: the charges, the table of the types, and
+the fields of tuples are buffers of the entry already (Section 3.6), and a
+tunable constant of an expression is read from a row of the program's
+scalars in the kernel. A new $\boldsymbol\theta$ is put into the model,
+and the builder computes the values of the program from it by the code
+that compiles it; the update is accepted only if the text it builds is the
+compiled one, so that an update and a compile with the new values give the
+same buffers, and the same trajectory to the bit (Section 9).
+
+The quantities derived from $\boldsymbol\theta$ are recomputed with it.
+With $q_i$ the charges, the self term and the background of a net charge
+of particle mesh Ewald are
+
+$$
+E_\text{self} = -f\frac{\beta}{\sqrt\pi}\sum_i q_i^2,\qquad
+E_\text{bg} = -\frac{f\pi Q^2}{2V\beta^2},\quad Q = \sum_i q_i,
+$$
+
+the second proportional to $1/V = e^{-(\varepsilon_x + \varepsilon_y +
+\varepsilon_z)}$, so that $\mathsf W_{aa} = -\partial E_\text{bg}/\partial
+\varepsilon_a = E_\text{bg}$ and its virial has the trace $3E_\text{bg}$,
+which the barostat takes with the dispersion's $6E_\text{disp}$
+(Section 5.4) as arguments of the entry once they depend on
+$\boldsymbol\theta$. The pairs three bonds apart take $fq_iq_js_C$; the
+table of the types takes $\sigma_{ab} = (\sigma_a + \sigma_b)/2$ and
+$\epsilon_{ab} = \sqrt{\epsilon_a\epsilon_b}$ from the types' own, and
+$\langle C_6\rangle$ of $E_\text{disp}$ follows from it; the tails $I_{ij}$ of
+pair terms are integrated anew (Section 5.4).
+
+The purpose is reweighting. Frames $S_n$ sampled from the canonical
+distribution of $U_{\hat{\boldsymbol\theta}}$ give the average of $O$ at
+$\boldsymbol\theta$ without sampling it: with $\Delta U = U_{\boldsymbol\theta} -
+U_{\hat{\boldsymbol\theta}}$,
+
+$$
+\langle O\rangle_{\boldsymbol\theta}
+= \frac{\int O\,e^{-U_{\boldsymbol\theta}/k_BT}\,d\mathbf x}{\int e^{-U_{\boldsymbol\theta}/k_BT}\,d\mathbf x}
+= \frac{\langle O\,e^{-\Delta U/k_BT}\rangle_{\hat{\boldsymbol\theta}}}{\langle e^{-\Delta U/k_BT}\rangle_{\hat{\boldsymbol\theta}}}
+\approx \sum_n w_nO(S_n),\qquad
+w_n = \frac{e^{-\Delta U(S_n)/k_BT}}{\sum_m e^{-\Delta U(S_m)/k_BT}},
+$$
+
+the numerator and the denominator multiplied by $Z_{\hat{\boldsymbol\theta}}$
+[[ThalerZavadlav2021]](references.md#thalerzavadlav2021). The estimate holds
+while the weights spread over many frames, $\exp(-\sum_n w_n\ln w_n)$ of
+them; when that number falls, sampling continues at $\boldsymbol\theta$,
+which is an update, not a compile. The version of the values that each
+energy and frame records says which $\hat{\boldsymbol\theta}$ it was sampled
+at.
+
+An update changes the Hamiltonian $H = K + U_{\boldsymbol\theta}$ between two
+steps. A step of velocity Verlet, $e^{\frac{\Delta t}{2}\mathcal L_U}
+e^{\Delta t\mathcal L_K}e^{\frac{\Delta t}{2}\mathcal L_U}$ with
+$\mathcal L_U = \sum_i\mathbf F_i\cdot\partial/\partial\mathbf p_i$, is the
+time-reversible, symplectic map of one Hamiltonian only if both of its half
+kicks take the forces of that Hamiltonian; the forces carried from the last
+step are those of $U_{\hat{\boldsymbol\theta}}$ at $\mathbf x$, so an update
+evaluates $\mathbf F_i = -\partial U_{\boldsymbol\theta}/\partial\mathbf x_i$ at
+the same $\mathbf x$ before the next step (a call of the entry with no
+steps). Leapfrog's velocities of the half step before are momenta of the
+trajectory already taken and stay; its next kick takes the new forces.
+
 ## 3.7 The objects of MDIR, for developers
 
 A developer meets the same few objects at every level; Table 3.4 lists

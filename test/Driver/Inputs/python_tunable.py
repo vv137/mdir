@@ -345,6 +345,14 @@ def run_integrators(target, precision):
     tolerance = 1e-9 if precision == "Double" else 1e-3
     assert float(np.abs(back.forces - before.forces).max()) <= tolerance * scale
     sim.run(4)
+    # Without tunables the half kick back of leapfrog is not a select: an
+    # evaluation without a step after the first run is refused.
+    plain_system, plain_state = model()
+    plain = simulation(compile_(plain_system, plain_state, target, precision, leapfrog=True))
+    plain.run(0, energy=True)
+    assert plain.state().energies is not None and plain.state().velocity_offset == -0.5
+    plain.run(2)
+    expect(mdir.UnsupportedError, lambda: plain.run(0, energy=True), "leapfrog")
     print(f"{target} {precision}: leapfrog keeps its positions and velocities through an update; "
           f"the forces back at the old values within "
           f"{float(np.abs(back.forces - before.forces).max()):.1e} kJ/mol/nm")

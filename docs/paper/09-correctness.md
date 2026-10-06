@@ -324,6 +324,26 @@ run with the reciprocal sum on a second stream against the serial one
 (`pme-gpu.test`, D87). The spatial sort changes the order of sums; runs
 with and without it agree to about $10^{-10}$ (`reorder.test`).
 
+An update of tunable parameters (Section 3.6, D[python-tunable]) during a
+run of velocity Verlet at constant energy, of the charges, $\sigma$ and
+$\epsilon$ of every type, a constant of a pair term, and the force
+constants of tuple terms at once, gives the forces and energies at its
+state, and after 12 more steps the positions, velocities, forces, and
+energies, of a simulation compiled with the new values from the same
+state, bit for bit: on the CPU and on a GPU in the deterministic mode, in
+double and mixed precision (`python-tunable-updates-*.test`), as does an
+update before the first run at constant pressure, whose barostat takes the
+constant terms of the new values. Against OpenMM 8.6.1 (Reference) and
+NumPy sums on the dipeptide in water with PME on a grid of 72, the energy
+at the new values differs by $1.3\times10^{-3}$ kJ/mol and its change by
+$8.6\times10^{-4}$ kJ/mol of $-102.0$ (the model without tunables by
+$4.6\times10^{-4}$, the B-splines of order 4 against 5); the correction for
+the dispersion at the new $\sigma$ and $\epsilon$ equals its formula to
+$10^{-14}$; and central differences of the energy in a tunable constant of
+a pair term, by two updates at fixed positions, equal the derivative that
+`observe` writes (Section 6.8) to $4.7\times10^{-8}$, its tail and the
+estimate of its shift included (`python-tunable-oracle.test`).
+
 ## 9.7 Neighbor structures
 
 - **Templates against all pairs.** The matrix of the host matches a
