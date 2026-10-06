@@ -2066,7 +2066,7 @@ Error Reader::readEnergy(const toml::table &table) {
                        "\"SQUARED_DISTANCE_SWITCH\"); "
                        "without one, 'switch_distance' must equal 'cutoff'");
   // The correction takes a plain cutoff, or the shift with the estimate of
-  // what it takes within the cutoff (D[shifted-derivatives]); a switch
+  // what it takes within the cutoff (D210); a switch
   // would leave out what it removes below the cutoff.
   if (hasTopology && control.truncation != Truncation::None &&
       control.truncation != Truncation::Shift &&

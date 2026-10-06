@@ -15,7 +15,7 @@ Runs mdir in `directory` and prints one line per check:
   within what the B-splines of order 4 (MDIR) and 5 (OpenMM) leave,
   2.8e-3 kcal/mol, which falls to 5e-5 on a grid of 80;
 - under a plain cutoff these outputs differentiate the potential shifted to
-  0 at the cutoff, which the forces sample (D[shifted-derivatives]): the
+  0 at the cutoff, which the forces sample (D210): the
   Lennard-Jones of RF_SHIFT, and for PME also its direct sum less
   f q_i q_j erfc(β r_c)/r_c for each decoupled pair within the cutoff,
   which this script sums from the coordinates;
@@ -95,7 +95,7 @@ def direct_shift(beta, cutoff):
 
 # Under a plain cutoff (lennard_jones_modifier = "NONE") the free-energy
 # outputs take the Lennard-Jones shifted to 0 at the cutoff
-# (D[shifted-derivatives]), that of RF_SHIFT, and the direct sum of PME
+# (D210), that of RF_SHIFT, and the direct sum of PME
 # shifted as well: U(λ_C) changes by -(1 - λ_C) S, dH/dλ_C by +S, and
 # U(state 0) - U(state k) by -λ_C(k) S.
 SHIFT = direct_shift(0.32, 9.0)

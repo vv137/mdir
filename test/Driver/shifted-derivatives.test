@@ -1,6 +1,6 @@
 # Under a plain cutoff the forces are the gradient of the potential shifted
 # to 0 at the cutoff, which the dynamics samples, and the outputs that enter
-# free energies and gradients differentiate it (D[shifted-derivatives]): the
+# free energies and gradients differentiate it (D210): the
 # energies of the states of [free_energy], dH/dlambda, and the columns of
 # `observe`. On a mixture of 60 A (+0.4 e) and 60 B (-0.4 e) of
 # pair_tail_system.py, with the first A decoupled and an A-B correction term

@@ -392,7 +392,7 @@ J.-P. Hansen, I. R. McDonald, *Theory of Simple Liquids*, 4th ed.
 Used for: the compressibility sum rule, by which a particle of a
 liquid has $\rho\,\tfrac{4\pi}{3}r_c^3 - 1$ neighbors within $r_c$ at a uniform
 density, in the estimate of the shift of the correction for the
-dispersion (D[shifted-derivatives]).
+dispersion (D210).
 
 ### Hawkins1996
 

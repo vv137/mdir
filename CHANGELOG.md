@@ -29,7 +29,7 @@ format, or the outputs; every such change is listed under **Changed** or
   refused): it adds the estimate of what the shift takes within the cutoff
   at a uniform density, with no virial, to the energy of the log under the
   shift, and to the free-energy and observables files under either modifier
-  (D[shifted-derivatives], #144).
+  (D210, #144).
 
 - With constraints, the temperature of the log is now the optimal estimate
   of Jung, Kobayashi, and Sugita (2019), $N_fk_BT = \tfrac43K_\text{half} +

@@ -1,6 +1,6 @@
 """dH/dlambda of the Coulomb at the first row of a [free_energy] file of
 shifted-derivatives.test, against a sum over the pairs of the coordinates
-(D[shifted-derivatives]). The first particle is decoupled; with a Coulomb
+(D210). The first particle is decoupled; with a Coulomb
 cutoff its pairs within r_c contribute (1 - lambda) f q_i q_j (1/r - 1/r_c),
 the cutoff shifted to 0, so
 

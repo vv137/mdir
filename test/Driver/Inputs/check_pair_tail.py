@@ -82,7 +82,7 @@ def derivatives(directory, tolerance, volume, na, nb, scale, rc, f):
     correction on and off: they are of the shifted potential, so they differ
     by the tail and the estimate of the shift, (4 pi / 3V) r_c^3 u(r_c) f
     for each pair, f = 1 - V / (N (4 pi / 3) r_c^3) taking the particle
-    itself out of its neighbors (D[shifted-derivatives]), and their
+    itself out of its neighbors (D210), and their
     derivatives, written out from the closed forms of the integrals of
     powers."""
     factor = 4 * math.pi / volume * scale
@@ -175,7 +175,7 @@ def main():
         terms, row, diagonal = read_log(f"{directory}/{name}.log")
         logs[name] = (terms, row, diagonal)
         # Under POTENTIAL_SHIFT (a name ending in -shift) the correction adds
-        # the estimate of the shift (D[shifted-derivatives]).
+        # the estimate of the shift (D210).
         e, w, shift = reference[name.split("-")[0]]
         if name.endswith("-shift"):
             e += shift

@@ -35,7 +35,7 @@
 # The tails enter the energies of the states of [free_energy] and dH/dlambda
 # of a term in lambda, and the columns of `observe` of a term, its energy
 # and its derivatives in its constants. These are of the potential shifted
-# to 0 at the cutoff (D[shifted-derivatives]), so with the correction on and
+# to 0 at the cutoff (D210), so with the correction on and
 # off they differ by the tail and the estimate of the shift,
 # (4 pi / 3V) r_c^3 u(r_c) a pair, and their derivatives, which
 # check_pair_tail.py writes out by hand.
@@ -55,7 +55,7 @@
 # RUN: cd %t && mdir run out.toml | FileCheck %s --check-prefix=OUT
 #
 # Under POTENTIAL_SHIFT the correction adds the estimate of the shift to the
-# tail, with no virial (D[shifted-derivatives]): each pair within the
+# tail, with no virial (D210): each pair within the
 # cutoff loses u(r_c), with rho (4 pi/3) r_c^3 - 1 neighbors a particle,
 # itself left out. For the topology's r^-6 part that is the tail times
 # 1 - V / (N (4 pi/3) r_c^3): -3.472644 kcal/mol here, the "Disper. corr."

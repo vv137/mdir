@@ -3,7 +3,7 @@
 # the runs of pair-dispersion.test against check_pair_tail.py. The
 # correction is a constant of the host, so the dispersion lines are those of
 # the CPU, with the estimate of the shift under POTENTIAL_SHIFT
-# (D[shifted-derivatives]); the comparison of the NBFIX written as a
+# (D210); the comparison of the NBFIX written as a
 # correction term with the topology of [ nonbond_params ] holds to 2e-6
 # kcal/mol in double precision and to 2e-5 in mixed (1.9e-6 measured),
 # where the two programs sum the pairs within the cutoff in f32 in

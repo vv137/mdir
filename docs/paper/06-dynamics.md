@@ -1015,7 +1015,7 @@ bar over ten runs of 1 ns, against $181 \pm 9$ bar of the paper with the
 same Lorentz–Berthelot ions; `observe` gives the same derivative to the
 printed digits (`test/Driver/observables.test`).
 
-**The potential that the forces sample** (D[shifted-derivatives]). A pair
+**The potential that the forces sample** (D210). A pair
 term cut at $r_c$ without a shift has the energy $u(r)\,\Theta(r_c - r)$.
 Its force within $r_c$ is $-u'(r)$, that of
 $u_\text{shift} = u - u(r_c)$, and the integrator never applies the

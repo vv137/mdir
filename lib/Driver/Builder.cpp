@@ -292,7 +292,7 @@ private:
   }
   /// Whether the potential being emitted is one whose derivatives enter
   /// free energies and gradients, `@alchemical` and `@observe<k>`
-  /// (D[shifted-derivatives]): its pair terms cut at the cutoff without a
+  /// (D210): its pair terms cut at the cutoff without a
   /// shift (`lennard_jones_modifier = "NONE"`, a Coulomb cutoff, the direct
   /// sum of PME without `coulomb_modifier`) are shifted to 0 at the cutoff,
   /// each pair within it less its energy at r_c, as the forces are the
@@ -389,7 +389,7 @@ private:
   double getTopologyDispersion(bool decoupled) const;
   /// What a shift of the topology's Lennard-Jones to 0 at the cutoff takes
   /// from the pairs within it, estimated at a uniform density, in kJ/mol at
-  /// the volume of the file (D[shifted-derivatives]).
+  /// the volume of the file (D210).
   double getTopologyShift(bool decoupled) const;
   /// The expressions of the pair terms, whose tails beyond the cutoff
   /// System::pairTails counts (D209).
@@ -407,7 +407,7 @@ private:
   struct PairTail {
     /// The tail, its share of the trace of the virial, and the estimate of
     /// what a shift to 0 at the cutoff takes from the pairs within it
-    /// (D[shifted-derivatives]), in kJ/mol at the volume of the file.
+    /// (D210), in kJ/mol at the volume of the file.
     double energy = 0.0, virial = 0.0, shift = 0.0;
   };
   llvm::Expected<PairTail>
@@ -417,7 +417,7 @@ private:
   double getShiftFactor() const;
   /// The sum over the pair terms, at the values `changes`, of the tail and
   /// the estimate of the shift: what the correction adds to the quantities
-  /// of the shifted potential (D[shifted-derivatives]).
+  /// of the shifted potential (D210).
   double getPairTails(const llvm::StringMap<double> &changes) const;
   /// The derivative of the tail and the estimate of the shift of the pair
   /// term `index` in the value `name`: exactly 0 if its expression does not
@@ -1675,7 +1675,7 @@ llvm::Error Builder::collectTopology() {
     }
     // Under "POTENTIAL_SHIFT" the energy that the run reports is shifted,
     // and the correction adds the estimate of the shift, which changes no
-    // force and so no virial (D[shifted-derivatives]).
+    // force and so no virial (D210).
     bool shifted = control.truncation == Truncation::Shift;
     program.dispersionEnergy = energy + (shifted ? shift : 0.0);
     program.dispersionVirial = 6.0 * energy;
@@ -1744,7 +1744,7 @@ double Builder::getTopologyShift(bool decoupled) const {
 
 double Builder::getShiftFactor() const {
   // 1 − 1 / (ρ (4π/3) r_c³): the neighbors within r_c less the particle
-  // itself, over ρ (4π/3) r_c³ (D[shifted-derivatives]).
+  // itself, over ρ (4π/3) r_c³ (D210).
   double rc = control.cutoffDistance * units::length;
   double volume = system.box[0] * system.box[1] * system.box[2];
   double n = static_cast<double>(system.topology->getNumParticles());
@@ -1845,7 +1845,7 @@ Builder::getPairTail(unsigned index,
   // integrates exactly. A shift to 0 at the cutoff takes u(r_c) from each
   // pair within it, at a uniform density (4π / 3V) r_c³ u(r_c) for each
   // pair, with the same factor, times getShiftFactor() for the particle
-  // itself (D[shifted-derivatives]).
+  // itself (D210).
   const Expression &expression = tailExpressions[index];
   double rc = control.cutoffDistance;
   double energy = 0.0, virial = 0.0, shift = 0.0;
@@ -1937,7 +1937,7 @@ double Builder::getPairTailDerivative(unsigned index, StringRef name,
 void Builder::collectObservedTails() {
   // The columns of `observe` of a pair term take its tail and the estimate
   // of its shift: its energy and its derivatives in the observed constants,
-  // proportional to 1 / V (D[shifted-derivatives]).
+  // proportional to 1 / V (D210).
   program.observableVolumeConstants.assign(control.observables.size(), 0.0);
   for (auto [column, observable] : llvm::enumerate(control.observables))
     for (auto [index, term] : llvm::enumerate(control.pairs)) {
@@ -1987,7 +1987,7 @@ void Builder::collectFreeEnergyConstants() {
   const Control::FreeEnergy &energy = control.freeEnergy;
   size_t states = energy.getNumStates();
   // These quantities are of the shifted potential, so the correction adds
-  // the estimate of the shift to the tail (D[shifted-derivatives]).
+  // the estimate of the shift to the tail (D210).
   bool dispersion = control.topologyDispersion != DispersionCorrection::None;
   double coupled = 0.0, decoupled = 0.0;
   if (dispersion && decouples()) {
@@ -3143,7 +3143,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
                                     int externalTerm) {
   double cutoff = control.cutoffDistance * units::length;
   // The truncation of the pair terms, shifted in `@alchemical` and
-  // `@observe<k>` (D[shifted-derivatives]).
+  // `@observe<k>` (D210).
   Truncation truncation = getPairTruncation();
   auto has = [&](StringRef set) {
     return llvm::any_of(program.tupleSets, [&](const Program::TupleSet &s) {
@@ -3329,7 +3329,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
 
   // Lennard-Jones and Coulomb, both cut at the cutoff, over the pairs that
   // are not excluded: as the modifiers say, and in `@alchemical` and
-  // `@observe<k>` shifted to 0 at the cutoff (D[shifted-derivatives]).
+  // `@observe<k>` shifted to 0 at the cutoff (D210).
   bool lj = terms & LennardJones, coulomb = terms & Coulomb;
   bool pairTerms = (terms & PairTerms) && !control.pairs.empty();
   if (lj || coulomb || pairTerms) {
@@ -3651,7 +3651,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
            << "    %rf = arith.subf %near, %crf : f64\n"
            << "    %coulomb = arith.mulf %fqq, %rf : f64\n";
       } else if (shiftsAtCutoff) {
-        // f q q (1/r − 1/r_c), the cutoff shifted (D[shifted-derivatives]).
+        // f q q (1/r − 1/r_c), the cutoff shifted (D210).
         os << "    %one = arith.constant 1.0 : f64\n"
            << "    %inverse = arith.divf %one, " << rq << " : f64\n"
            << "    %rc_inverse = arith.constant " << formatReal(1.0 / cutoff)
@@ -8928,7 +8928,7 @@ llvm::Error Builder::build() {
     lambdaArguments = false;
   }
   // The energies and derivatives of `observe`, of the potential that the
-  // forces sample (D[shifted-derivatives]).
+  // forces sample (D210).
   shiftsAtCutoff = true;
   emitObservedPotentials();
   shiftsAtCutoff = false;

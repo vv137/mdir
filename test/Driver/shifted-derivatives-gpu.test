@@ -1,6 +1,6 @@
 # shifted-derivatives.test on a GPU in double and mixed precision, in the
 # deterministic mode so that the runs under "NONE" and "POTENTIAL_SHIFT"
-# follow the same trajectory (D[shifted-derivatives]): their files of
+# follow the same trajectory (D210): their files of
 # [free_energy] and `observe` are equal, with a Coulomb cutoff and with PME,
 # and dH/dlambda of the Coulomb cutoff is the shifted sum of
 # check_shifted.py, to 1e-6 kcal/mol in double precision and 1e-4 in mixed.

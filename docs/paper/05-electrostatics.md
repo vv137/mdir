@@ -325,7 +325,7 @@ $3.3\times10^{-4}$ kcal/mol in `pair-dispersion.test`, to which they
 agree to $2.4\times10^{-8}$ kcal/mol in the energy and $10^{-7}$ in the
 virial.
 
-**The shift and its estimate** (D[shifted-derivatives]). Under
+**The shift and its estimate** (D210). Under
 `POTENTIAL_SHIFT` each pair within $r_c$ has $u_\text{shift} = u - u(r_c)$,
 so the energy lacks $\sum_{r_{ij}<r_c}u_{ij}(r_c) = N_\text{in}\,u(r_c)$ of
 the unshifted one, and so do the quantities of `[free_energy]` and `observe`
