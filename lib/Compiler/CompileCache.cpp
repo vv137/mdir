@@ -272,8 +272,8 @@ void HostObjectCache::evict(StringRef directory, uint64_t maxBytes) {
 std::unique_ptr<MemoryBuffer> HostObjectCache::getObject(const Module *module) {
   if (module->getModuleIdentifier() != this->module)
     return nullptr;
-  // The key is taken even without a directory: generation is timed from
-  // here, and the bitcode is that of the module before code generation.
+  // The key is the bitcode of the module before code generation, which
+  // changes the module; without a directory, only the generation is timed.
   Pending request;
   double start = now();
   if (config) {
