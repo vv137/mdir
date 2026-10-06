@@ -98,12 +98,26 @@ for precision in ("Double", "Mixed"):
     mine = {c: "%.6f" % (state.energies[c] / s) for c, s in COLUMNS.items()}
     theirs = {c: rows[10][c] for c in COLUMNS}
     if precision == "Double":
-        # The same state to the bit, so the same energies.
-        for field in ("positions", "velocities", "forces"):
-            assert np.array_equal(getattr(state, field), reference[field]), field
+        fields = ("positions", "velocities", "forces")
+        differences = [float(np.abs(getattr(state, f) - reference[f]).max()) for f in fields]
         assert mine == theirs, (mine, theirs)
-        print(f"{target_name} Double: the state at step 10 equals that of mdir run to the bit; "
-              f"rows {mine}")
+        if target_name == "CPU":
+            # The same state to the bit, so the same energies.
+            assert differences == [0.0, 0.0, 0.0], differences
+            print(f"{target_name} Double: the state at step 10 equals that of mdir run to the "
+                  f"bit; rows {mine}")
+        else:
+            # On a GPU the two front ends differ in the last bits of PME in
+            # double precision with or without the shift (#105): the shift
+            # adds no difference of its own.
+            _, unshifted = cli_run("noshift-double", "Double", "NONE")
+            plain = python_run("Double", mdir.CoulombModifier.None_)
+            without = [float(np.abs(getattr(plain, f) - unshifted[f]).max()) for f in fields]
+            assert differences == without, (differences, without)
+            assert differences[0] < 1e-14 and differences[2] < 1e-9, differences
+            print(f"{target_name} Double: rows {mine} equal to mdir run's; the state at step 10 "
+                  f"within {differences} (positions, velocities, forces), the same as without "
+                  f"the shift")
     else:
         # With PME in mixed precision the model and `mdir run` differ in the
         # last digits from the first evaluation, with or without the shift
