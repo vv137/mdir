@@ -1816,9 +1816,16 @@ Builder::getPairTail(unsigned index,
 }
 
 double Builder::getPairTails(const llvm::StringMap<double> &changes) const {
+  // A tail that a state makes diverge is NaN in the output, not 0.
   double sum = 0.0;
-  for (unsigned index = 0, e = system.pairTails.size(); index != e; ++index)
-    sum += llvm::cantFail(getPairTail(index, changes)).first;
+  for (unsigned index = 0, e = system.pairTails.size(); index != e; ++index) {
+    auto tail = getPairTail(index, changes);
+    if (!tail) {
+      llvm::consumeError(tail.takeError());
+      return std::nan("");
+    }
+    sum += tail->first;
+  }
   return sum;
 }
 
