@@ -100,7 +100,8 @@ A Python simulation can take its host object from the compile cache
 (Section 3.6). For the stages of the ala3 example on a GPU in mixed
 precision it removes 1 to 6 s of host code generation per stage, of 12 to
 54 s of compilation, most of which is then the MLIR pipeline; the whole
-example at a hundredth of its steps took 137 s instead of 154 s
+example at a hundredth of its steps, in the deterministic mode, took 137 s
+with a warm cache against 155 s with a cold one
 ([compile-cache.md](../compile-cache.md)).
 
 ## 10.5 Over long runs

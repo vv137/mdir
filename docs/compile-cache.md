@@ -162,13 +162,13 @@ The Python ala3 example, GPU, mixed, `--steps-scale 0.01`, the driver's
 cache of compiled PTX warm; per stage, the time from `mdir.compile` to a
 simulation, and in parentheses the engine's part:
 
-| Stage | Cache off | Cold | Warm | Warm, deterministic |
-|---|---|---|---|---|
-| 1-min | 13.8 s (2.1) | 13.0 s (1.8) | 12.2 s (0.8) | 12.2 s (0.9) |
-| 2-nvt | 33.1 s (4.9) | 33.5 s (5.1) | 29.1 s (1.0) | 29.0 s (1.1) |
-| 3-npt | 53.8 s (8.3) | 52.1 s (7.7) | 46.4 s (1.9) | 47.3 s (2.0) |
-| 4-md | 51.0 s (7.0) | 50.2 s (7.8) | 50.9 s (7.2), a miss | 46.5 s (1.8) |
-| Whole run | 153.8 s | 150.8 s | 140.6 s | 137.3 s |
+| Stage | Cache off | Cold | Warm | Cold, deterministic | Warm, deterministic |
+|---|---|---|---|---|---|
+| 1-min | 13.8 s (2.1) | 13.0 s (1.8) | 12.2 s (0.8) | 13.4 s (1.9) | 12.2 s (0.9) |
+| 2-nvt | 33.1 s (4.9) | 33.5 s (5.1) | 29.1 s (1.0) | 33.6 s (4.8) | 29.0 s (1.1) |
+| 3-npt | 53.8 s (8.3) | 52.1 s (7.7) | 46.4 s (1.9) | 54.0 s (8.1) | 47.3 s (2.0) |
+| 4-md | 51.0 s (7.0) | 50.2 s (7.8) | 50.9 s (7.2), a miss | 51.6 s (7.0) | 46.5 s (1.8) |
+| Whole run | 153.8 s | 150.8 s | 140.6 s | 154.7 s | 137.3 s |
 
 A hit saves 1 to 6 s per stage of host code generation; the MLIR pipeline,
 in `mdir.compile` (which lowers a program of its own, #151) and in the
@@ -178,7 +178,9 @@ reached, which differs from run to run, and its program's constants depend
 on it.
 
 The full suite on that GPU at the default `gpu_workers` (16): 262 s with
-the cache off, 250 s with a cold cache, and 243 s with a warm one. The
+the cache off, 250 s with a cold cache, and 243 s with a warm one, single
+runs on a shared host whose load varied between them (D208 saw 262 and
+340 s from load alone), so the totals show no gain beyond noise. The
 slowest test, `python-reporters-gpu.test`, took 207, 198, and 188 s, and
 the GPU lifetime tests about 163, 128, and 124 s. Many programs of a
 suite are compiled more than once, by one test or by several, so a cold
