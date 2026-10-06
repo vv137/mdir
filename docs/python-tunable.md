@@ -2,8 +2,8 @@
 
 Issue #130, the M2a gate that D192 left open and the base of M2b
 (differentiable simulation, [roadmap](roadmap.md), Section 6.1; D195).
-Status: design of the draft PR; the measurements follow the
-implementation.
+Status: implemented; the questions put to the maintainer on PR #159 are
+marked below.
 
 Before this item every change of a parameter of a Python model meant a new
 `mdir.compile` and a new `mdir.Simulation`: a lowering and a JIT of the
@@ -127,7 +127,20 @@ derivatives to the evaluator: the per-site quantities (the table of the
 rule, the 1-4 products, the maps) and the sums over particles ($\sum q_i^2$,
 $\sum q_i$, $\langle C_6\rangle$) in its IR, and the tails, host quadratures
 (D209), as runtime scalars with their host Richardson derivatives, an
-explicit exception. This is a question to the maintainer on the PR.
+explicit exception. This is a question to the maintainer on the PR (Q1).
+
+**How an update builds them.** `Simulation` keeps the system that its
+program was built from (at its first step) and the control it was built
+with. An update copies both, puts the new values into them
+(`model::applyTunables`: the charges, the per-type σ and ε and the table
+of the rule, the constants of pair terms, the parameters of tuple terms,
+and the classes and values of the tails, `driver::recollectPairTails`),
+and runs `driver::buildProgram` on the copy with the compiled program's
+neighbor width. The new program's text must equal the compiled one's; its
+values replace the old, and the next call of the entry builds its buffers
+from them as every call does (D196). Everything else in the update is a
+check: the cost is that of building the program's text and values, about
+10 ms on the host for JAC (23,558 atoms).
 
 ## Updates
 
@@ -142,13 +155,20 @@ explicit exception. This is a question to the maintainer on the PR.
   `sim.tunables.history` lists `(step, version)`: version `v` is in effect for
   the steps after `step`.
 - The forces that the next step begins with were those of the old values.
-  After an update the simulation evaluates them anew at its state (a call of
-  the entry with no steps, which redoes the evaluation of the start without
-  the half kick of leapfrog), so that `state().forces` is that of the new
-  values. With velocity Verlet, `state().energies` then holds the energies
-  of the state at the new values (the row of the start); with leapfrog,
-  whose velocities are half a step behind, it is `None`. Neighbor structures
-  are built anew at every part anyway.
+  After an update during a run the simulation evaluates them anew at its
+  state: a call of the entry with no steps and `%first_call = 2`, which
+  redoes the evaluation of the start without the half kick back of
+  leapfrog (a select on `%first_call` in a program with tunables) and
+  writes no row of the energy file. `state().forces` is then that of the
+  new values; with velocity Verlet `state().energies` holds the energies of
+  the state at the new values; with leapfrog, whose velocities are half a
+  step behind, it is `None`. An update before the first run evaluates
+  nothing: the first call does. If the evaluation fails, the update is
+  undone. Neighbor structures are built anew at every part anyway.
+- `run(0, energy=True)` makes the same evaluation without an update
+  ([python-segments.md](python-segments.md#evaluations-without-a-step)):
+  the energies of the state at the current values, for scans and finite
+  differences at fixed positions.
 - `State.tunables_version` is the version of its forces and energies. An
   `EnergyReporter` of a simulation with tunables writes a last column,
   `tunables_version`; a trajectory's frames take theirs from the history.
@@ -178,25 +198,46 @@ accumulated in f64 by its evaluator.
 A tunable `sigma` or `epsilon` with a table that the rule does not
 reproduce; an unknown term or parameter; a parameter declared twice; a map
 of the wrong length, with entries outside $[-1, M)$, or with an entry no
-site takes; `values` of the wrong shape or not finite. A pair term's
-constant whose term is left out of the correction for the dispersion stays
-left out after an update; one whose tail diverges at the new values is an
-update refused.
+site takes; `values` of the wrong shape or not finite; a name that is not
+an identifier, or used twice; `mixing` for a parameter other than `sigma`.
+A tunable needs a model with a topology, and the builder refuses tunables
+with `[free_energy]`, `observe`, LJPME, or pulls, which the Python model
+does not take yet. An update is refused (`InputError`, nothing changed)
+for an unknown name, a shape other than $(M,)$, a value that is not finite,
+negative σ or ε, charges of 100 e or more under PME, a pair term whose tail
+would enter or leave the correction for the dispersion at the new values,
+and any value that would change the program's text; a simulation whose
+program declares no tunables refuses every update.
 
-## Validation plan
+## Validation
 
-- Update against recompile: a simulation updated during a run against one
-  compiled with `values=` from the state at the update, velocity Verlet,
-  NVE: bit for bit on the CPU and on a GPU (deterministic mode), mixed and
-  double. Against a program without tunables whose model has the new values
-  (the edited table): within the term's tolerance.
-- Oracle: OpenMM 8.6.1 energies at the new charges and per-type
-  Lennard-Jones on the dipeptide in water; NumPy for a pair term's constant.
-- Derivative: central differences of $U$ in a tunable constant of a pair
-  term, by two updates at fixed positions, against the existing scalar
-  derivative of `observe` (D189) from `mdir run` at the same positions.
-- Refusals and versions: every refusal above; versions across updates, runs,
-  reporters, and states.
-- Speed: the default path against main on the Amber suite on GPU 0, and the
-  cost with tunable charges and per-type Lennard-Jones (and the cost of an
-  update).
+Tests `python-tunable-*.test` (`Inputs/python_tunable.py`), on the
+dipeptide in water (1,168 atoms) with PME, a pair term
+`a*exp(-r/l)` and springs over three pairs of atoms; the tunables are the
+charges tied by a map (one entry per atom name of the waters), σ and ε of
+the 9 types, the constant `a`, and the force constants of the springs tied
+in two.
+
+| Check | Reference | Result | Tolerance |
+|---|---|---|---|
+| Forces and energies after an update at step 8, and positions, velocities, forces, energies 12 steps later (velocity Verlet, NVE, deterministic) | A compile with the new values from the state of step 8, evaluated first | Equal to the bit: CPU and GPU, double and mixed | 0 |
+| NPT, an update before the first run, 30 steps | A compile with the new values | Equal to the bit, volume included: CPU and GPU, double and mixed | 0 |
+| Leapfrog through an update | The state before it | Positions and velocities equal to the bit; forces back at the old values within 2.3e-13 kJ/mol/nm (double), 1.8e-4 (mixed) | 1e-9, 1e-3 of the largest force |
+| An update and its inverse | The energy of the state before | Equal (CPU, double and mixed) | 1e-9, 1e-4 relative |
+| Tunables at the model's values, 20 steps | The model without tunables | Potential within 3e-12 (double) and 9e-11 (mixed) relative on the CPU: the table of the rule replaces Amber's, within 2e-7 | 1e-7, 1e-5 relative |
+| Energy at new charges, σ, ε, `a`, and spring constants | OpenMM 8.6.1 (Reference) and NumPy, PME β = 2/nm, grid 72 | 1.3e-3 kJ/mol at the new values, 4.6e-4 at the old; the change, -102.03 kJ/mol, within 8.6e-4 | 2e-3, 1e-3 kJ/mol (B-splines of order 4 against 5) |
+| Correction for the dispersion at new σ and ε | $-\tfrac{2\pi}{3}N^2\langle C_6\rangle/(Vr_c^3)$ in NumPy | Within 1.0e-14 relative | 1e-9 |
+| $\partial U/\partial l$ of the pair term by central differences ($h = 10^{-5}$ nm, two updates) | `observe` of `mdir run` at the same positions, with tail and shift estimate (D189, D209, D210) | 172.744550 against 172.744542 kcal/mol/Å, 4.7e-8 relative | 1e-6 |
+
+Refusals: 18 of declarations (including an NBFIX of `[ nonbond_params ]`
+in a GROMACS topology, refused for per-type σ and naming CT and OW), 6 of
+updates, each changing neither values nor version; versions in the history,
+the states, and the energy file (`tunables_version` 0, 0, 0, 1, 2 at steps
+0 to 20 with updates at 10 and 15); the program goes stale when the
+declarations change; programs without tunables emit no table of them.
+
+## Performance
+
+See the PR for the measurements on the Amber suite: the default path
+(nothing declared) emits the same module and lowered IR as main for every
+suite system, and its rate is that of main.
