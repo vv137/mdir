@@ -1,7 +1,11 @@
 """Drawn velocities and typed restraints in the Python model
 (D198): the velocities of `mdir run` bit for bit,
 restraints against `[[restraints]]` through `mdir run`, copies, versions,
-and refusals."""
+and refusals.
+
+Usage: python_velocities_restraints.py ROOT TARGET MDIR MDIR-MODEL-TEST WORK
+SCENARIO. Each scenario is one test file (SCENARIOS at the end), so that the
+files run side by side."""
 import pathlib
 import subprocess
 import sys
@@ -16,6 +20,7 @@ target = getattr(mdir.Target, target_name)
 cli = sys.argv[3]
 model_test = sys.argv[4]
 work = pathlib.Path(sys.argv[5])
+scenario = sys.argv[6]
 SEED = 271828
 BOLTZMANN = 0.0083144626181532  # kJ/mol/K
 # The restraints of the control file and of the model: the heavy atoms of
@@ -86,93 +91,95 @@ def model(constraints=True, restraints=RESTRAINTS):
     return system, state
 
 
-# Drawn velocities: those that `mdir run` draws for the same control file
-# (its readSystem, then assignVelocities, written by mdir-model-test), bit
-# for bit, with and without constraints.
-for constraints in (False, True):
-    path = control(f"draw-{constraints}", "NVT", "Double", constraints)
-    cli_bytes = subprocess.run([model_test, str(path), "--drawn"], check=True,
-                               stdout=subprocess.PIPE).stdout
-    reference = np.frombuffer(cli_bytes, dtype=np.float64).reshape(-1, 3)
-    system, state = model(constraints)
-    before = state.positions
-    drawn = state.draw_velocities(system, 300.0, SEED)
-    differing = np.count_nonzero(drawn.velocities.view(np.uint64) != reference.view(np.uint64))
-    assert differing == 0, differing
-    assert drawn is not state and state.velocities.shape == (0, 3)
-    assert np.array_equal(drawn.positions, before)
-    assert np.array_equal(drawn.cell.vectors, state.cell.vectors)
-    count = drawn.velocities.shape[0]
-    print(f"drawn velocities (constraints {constraints}): {count} particles, "
-          f"{differing} differing bits against mdir run")
-    again = state.draw_velocities(system, 300.0, SEED)
-    assert np.array_equal(again.velocities, drawn.velocities)
-    other = state.draw_velocities(system, 300.0, SEED + 1)
-    assert not np.array_equal(other.velocities, drawn.velocities)
-    hot = state.draw_velocities(system, 600.0, SEED)
-    assert np.allclose(hot.velocities, np.sqrt(2.0) * drawn.velocities, rtol=1e-12, atol=0)
-    cold = state.draw_velocities(system, 0.0, SEED)
-    assert not cold.velocities.any()
+def draws_copies():
+    # Drawn velocities: those that `mdir run` draws for the same control file
+    # (its readSystem, then assignVelocities, written by mdir-model-test), bit
+    # for bit, with and without constraints.
+    for constraints in (False, True):
+        path = control(f"draw-{constraints}", "NVT", "Double", constraints)
+        cli_bytes = subprocess.run([model_test, str(path), "--drawn"], check=True,
+                                   stdout=subprocess.PIPE).stdout
+        reference = np.frombuffer(cli_bytes, dtype=np.float64).reshape(-1, 3)
+        system, state = model(constraints)
+        before = state.positions
+        drawn = state.draw_velocities(system, 300.0, SEED)
+        differing = np.count_nonzero(drawn.velocities.view(np.uint64) != reference.view(np.uint64))
+        assert differing == 0, differing
+        assert drawn is not state and state.velocities.shape == (0, 3)
+        assert np.array_equal(drawn.positions, before)
+        assert np.array_equal(drawn.cell.vectors, state.cell.vectors)
+        count = drawn.velocities.shape[0]
+        print(f"drawn velocities (constraints {constraints}): {count} particles, "
+              f"{differing} differing bits against mdir run")
+        again = state.draw_velocities(system, 300.0, SEED)
+        assert np.array_equal(again.velocities, drawn.velocities)
+        other = state.draw_velocities(system, 300.0, SEED + 1)
+        assert not np.array_equal(other.velocities, drawn.velocities)
+        hot = state.draw_velocities(system, 600.0, SEED)
+        assert np.allclose(hot.velocities, np.sqrt(2.0) * drawn.velocities, rtol=1e-12, atol=0)
+        cold = state.draw_velocities(system, 0.0, SEED)
+        assert not cold.velocities.any()
 
-system, state = model()
-for temperature in (-1.0, float("nan"), float("inf")):
-    expect(mdir.InputError, lambda: state.draw_velocities(system, temperature, SEED), "temperature")
-for seed in (-1, 2**63):
-    expect(mdir.InputError, lambda: state.draw_velocities(system, 300.0, seed), "seed")
-expect(mdir.InputError, lambda: state.draw_velocities(None, 300.0, SEED), "System")
-broken = mdir.InitialState()
-broken.positions = state.positions[:10]
-expect(mdir.InputError, lambda: broken.draw_velocities(system, 300.0, SEED))
-print("draw_velocities refusals passed")
+    system, state = model()
+    for temperature in (-1.0, float("nan"), float("inf")):
+        expect(mdir.InputError, lambda: state.draw_velocities(system, temperature, SEED), "temperature")
+    for seed in (-1, 2**63):
+        expect(mdir.InputError, lambda: state.draw_velocities(system, 300.0, seed), "seed")
+    expect(mdir.InputError, lambda: state.draw_velocities(None, 300.0, SEED), "System")
+    broken = mdir.InitialState()
+    broken.positions = state.positions[:10]
+    expect(mdir.InputError, lambda: broken.draw_velocities(system, 300.0, SEED))
+    print("draw_velocities refusals passed")
 
-# The typed list: defaults, copies, versions, and strict references.
-restraint = mdir.Restraint()
-assert restraint.selection == "" and restraint.force_constant == 0.0
-assert restraint.reference_scaling == mdir.ReferenceScaling.Center
-copies = system.restraints
-assert [r.selection for r in copies] == [r[0] for r in RESTRAINTS]
-copies[0].force_constant = 1.0
-assert system.restraints[0].force_constant == 10.0 * KCAL_A2
-assert system.restraint_reference.shape == (0, 3)
-assert not system.restraint_reference.flags.writeable
-program_inputs = (mdir.Integrator(), mdir.Ensemble(), mdir.Execution(), mdir.Schedule())
-program = mdir.compile(system, state, *program_inputs)
-system.restraints = system.restraints
-assert program.stale
-program = mdir.compile(system, state, *program_inputs)
-system.restraint_reference = state.positions
-assert program.stale and np.array_equal(system.restraint_reference, state.positions)
-expect(mdir.InputError, lambda: setattr(system, "restraint_reference", state.positions[:5]), "expected shape")
-expect(mdir.InputError, lambda: setattr(system, "restraint_reference", state.positions.astype(np.float32)))
-expect(mdir.InputError, lambda: setattr(system, "restraint_reference", state.positions.tolist()))
-bad = state.positions.copy()
-bad[3, 1] = np.nan
-expect(mdir.InputError, lambda: setattr(system, "restraint_reference", bad))
-assert np.array_equal(system.restraint_reference, state.positions)
-system.restraint_reference = np.zeros((0, 3))
-expect(TypeError, lambda: setattr(system, "restraints", [1]))
-
-
-def refuse(restraints, text):
-    system.restraints = restraints
-    expect(mdir.InputError, lambda: mdir.compile(system, state, *program_inputs), text)
-    expect(mdir.InputError, lambda: state.draw_velocities(system, 300.0, SEED), text)
+    # The typed list: defaults, copies, versions, and strict references.
+    restraint = mdir.Restraint()
+    assert restraint.selection == "" and restraint.force_constant == 0.0
+    assert restraint.reference_scaling == mdir.ReferenceScaling.Center
+    copies = system.restraints
+    assert [r.selection for r in copies] == [r[0] for r in RESTRAINTS]
+    copies[0].force_constant = 1.0
+    assert system.restraints[0].force_constant == 10.0 * KCAL_A2
+    assert system.restraint_reference.shape == (0, 3)
+    assert not system.restraint_reference.flags.writeable
+    program_inputs = (mdir.Integrator(), mdir.Ensemble(), mdir.Execution(), mdir.Schedule())
+    program = mdir.compile(system, state, *program_inputs)
+    system.restraints = system.restraints
+    assert program.stale
+    program = mdir.compile(system, state, *program_inputs)
+    system.restraint_reference = state.positions
+    assert program.stale and np.array_equal(system.restraint_reference, state.positions)
+    expect(mdir.InputError, lambda: setattr(system, "restraint_reference", state.positions[:5]), "expected shape")
+    expect(mdir.InputError, lambda: setattr(system, "restraint_reference", state.positions.astype(np.float32)))
+    expect(mdir.InputError, lambda: setattr(system, "restraint_reference", state.positions.tolist()))
+    bad = state.positions.copy()
+    bad[3, 1] = np.nan
+    expect(mdir.InputError, lambda: setattr(system, "restraint_reference", bad))
+    assert np.array_equal(system.restraint_reference, state.positions)
+    system.restraint_reference = np.zeros((0, 3))
+    expect(TypeError, lambda: setattr(system, "restraints", [1]))
 
 
-refuse([mdir.Restraint("", 1.0)], "selection")
-refuse([mdir.Restraint("@CA", 0.0)], "force constant")
-refuse([mdir.Restraint("@CA", float("nan"))], "force constant")
-refuse([mdir.Restraint("@CA &", 1.0)], "")
-refuse([mdir.Restraint("@CA", 1.0), mdir.Restraint("@CA", 1.0, mdir.ReferenceScaling.All)],
-       "reference_scaling")
-# A selection of nothing restrains nothing: a warning, as `mdir run` gives.
-system.restraints = [mdir.Restraint(":XYZ", 1.0)]
-with warnings.catch_warnings(record=True) as caught:
-    warnings.simplefilter("always")
-    mdir.compile(system, state, *program_inputs)
-assert len(caught) == 1 and issubclass(caught[0].category, UserWarning), caught
-assert "restrains nothing" in str(caught[0].message)
-print("restraint copies, versions and refusals passed")
+    def refuse(restraints, text):
+        system.restraints = restraints
+        expect(mdir.InputError, lambda: mdir.compile(system, state, *program_inputs), text)
+        expect(mdir.InputError, lambda: state.draw_velocities(system, 300.0, SEED), text)
+
+
+    refuse([mdir.Restraint("", 1.0)], "selection")
+    refuse([mdir.Restraint("@CA", 0.0)], "force constant")
+    refuse([mdir.Restraint("@CA", float("nan"))], "force constant")
+    refuse([mdir.Restraint("@CA &", 1.0)], "")
+    refuse([mdir.Restraint("@CA", 1.0), mdir.Restraint("@CA", 1.0, mdir.ReferenceScaling.All)],
+           "reference_scaling")
+    # A selection of nothing restrains nothing: a warning, as `mdir run` gives.
+    system.restraints = [mdir.Restraint(":XYZ", 1.0)]
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        mdir.compile(system, state, *program_inputs)
+    assert len(caught) == 1 and issubclass(caught[0].category, UserWarning), caught
+    assert "restrains nothing" in str(caught[0].message)
+    print("restraint copies, versions and refusals passed")
+
 
 # A run with drawn velocities and restraints against `mdir run` of the same
 # control file: the rows of its energies to every printed digit, and its
@@ -240,9 +247,14 @@ def close_row(energies, row, relative):
 # differ only by the boundary of a part, as under NVT: NPT takes the E of NVT.
 EPS = np.finfo(np.float64).eps
 FIELDS = ("positions", "velocities", "forces")
-mixed_error = {}
-for kind in ("NVT", "NPT"):
-    for precision in ("Double", "Mixed"):
+
+def against_cli(precision):
+    mixed_error = {}
+    if precision == "Mixed":
+        # The NVT run of `mdir run` in double precision, a reference only:
+        # scenario double compares the model with it.
+        double_reference = cli_run("nvt-double", "NVT", "Double")[1]
+    for kind in ("NVT", "NPT"):
         rows, reference = cli_run(f"{kind}-{precision}".lower(), kind, precision)
         first, last = python_run(kind, precision)
         # Step 10 is in the first part, as in `mdir run`: every printed digit,
@@ -288,4 +300,13 @@ for kind in ("NVT", "NPT"):
             moved = python_run(kind, precision, reference=shifted)[0]
             assert abs(moved["potential"] - first["potential"]) > 1.0
 
-print("drawn velocities and restraints against mdir run passed")
+
+SCENARIOS = {
+    "draws-copies": draws_copies,
+    "double": lambda: against_cli("Double"),
+    "mixed": lambda: against_cli("Mixed"),
+}
+if scenario not in SCENARIOS:
+    raise SystemExit(f"unknown scenario '{scenario}'; expected one of {', '.join(SCENARIOS)}")
+SCENARIOS[scenario]()
+print(f"velocities and restraints {scenario} passed")

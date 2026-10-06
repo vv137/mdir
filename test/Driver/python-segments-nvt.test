@@ -1,0 +1,10 @@
+# REQUIRES: python-api
+# Persistent simulations on the CPU (D196), scenario nvt of
+# Inputs/python_segments.py.
+# NVT runs (velocity Verlet in double and mixed precision, leapfrog in
+# double) of 1 + 7 + 13 steps against uninterrupted ones, and the phase of
+# the coupling across their boundaries.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_segments.py %S/Inputs/dipeptide CPU mdir %t nvt | FileCheck %s
+# CHECK: NVT: the coupling moves the velocities
+# CHECK: segments nvt passed

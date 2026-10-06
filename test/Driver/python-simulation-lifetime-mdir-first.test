@@ -1,0 +1,6 @@
+# REQUIRES: python-api
+# Simulations created and destroyed in turn on the CPU (D196,
+# docs/jit-invariants.md), with mdir imported first. Each import
+# order runs in a process and a test file of its own.
+# RUN: %mdir_python %S/Inputs/python_simulation_lifetime.py CPU %t mdir-first | FileCheck %s
+# CHECK: simulation lifetime: double and mixed passed

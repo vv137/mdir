@@ -1,0 +1,8 @@
+# REQUIRES: python-api
+# Persistent simulations on the CPU (D196), scenario ownership of
+# Inputs/python_segments.py.
+# Simulations interleaved, and created and destroyed one
+# after another, are independent.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_segments.py %S/Inputs/dipeptide CPU mdir %t ownership | FileCheck %s
+# CHECK: segments ownership passed

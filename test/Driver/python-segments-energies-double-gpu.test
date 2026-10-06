@@ -1,0 +1,9 @@
+# REQUIRES: python-api, cuda
+# Persistent simulations on a GPU (D196), scenario energies-double of
+# Inputs/python_segments.py.
+# The energies of a final step of energy against the rows
+# of `mdir run`, NVE, NVT, and NPT in double precision.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_segments.py %S/Inputs/dipeptide GPU mdir %t energies-double | FileCheck %s
+# CHECK: energies NVE Double: the rows of mdir run at steps 10 and 20 to every printed digit
+# CHECK: segments energies-double passed

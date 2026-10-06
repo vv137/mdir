@@ -1,0 +1,8 @@
+# REQUIRES: python-api, cuda
+# Persistent simulations on a GPU (D196), scenario nve of
+# Inputs/python_segments.py.
+# NVE runs of 1 + 7 + 13 steps against uninterrupted ones, in double and
+# mixed precision, and the repeat of a deterministic run bit for bit.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_segments.py %S/Inputs/dipeptide GPU mdir %t nve | FileCheck %s
+# CHECK: segments nve passed
