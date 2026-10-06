@@ -18,7 +18,7 @@ format, or the outputs; every such change is listed under **Changed** or
   kinetic energies of the half steps, measured from the velocities after the
   constraints; before, both took the kinetic energy of the step $K$ with
   constraints (without them the log already took these estimates). Rows of
-  runs with constraints read about 1 K higher at 2 fs and 5 K at 4 fs; the
+  runs with constraints read 1 to 2 K higher at 2 fs and 4 to 5 K at 4 fs; the
   dynamics, the thermostats, and the barostats are unchanged. With rigid
   waters, `mdir run` ends with the temperatures of the solute and of the
   solvent (D[optimal-temperature], #112).
