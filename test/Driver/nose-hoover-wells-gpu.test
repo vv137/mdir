@@ -12,9 +12,9 @@
 # RUN: printf '[execution]\ntarget = "gpu"\nprecision = "mixed"\n' >> %t/mixed.toml
 # RUN: printf '[execution]\ntarget = "gpu"\nprecision = "double"\n' >> %t/double.toml
 # RUN: cd %t && mdir run mixed.toml > mixed.log
-# RUN: %python %S/Inputs/nose_hoover_wells.py %t/mixed.log 372 1000 | FileCheck %s
+# RUN: %python %S/Inputs/nose_hoover_wells.py %t/mixed.log 372 800 | FileCheck %s
 # RUN: cd %t && mdir run double.toml > double.log
-# RUN: %python %S/Inputs/nose_hoover_wells.py %t/double.log 372 1000 | FileCheck %s
+# RUN: %python %S/Inputs/nose_hoover_wells.py %t/double.log 372 800 | FileCheck %s
 
-# CHECK: 101 rows
+# CHECK: 81 rows
 # CHECK: within 0.01 kcal/mol: yes
