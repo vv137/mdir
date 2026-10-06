@@ -37,6 +37,7 @@ template <class T> static T unwrap(llvm::Expected<T> value) {
 }
 #include "Units.h"
 #include "HostArrays.h"
+#include "Tunables.h"
 
 struct Version { uint64_t version = 0; virtual ~Version() = default; };
 template <class T> struct Input : Version { T value; std::optional<size_t> particleCount; };
@@ -192,6 +193,8 @@ PYBIND11_MODULE(mdir, m) {
                   [](driver::TupleTerm &t, py::object value) { host::particles(t, value); })
     .def_property("parameters", [](const driver::TupleTerm &t) { return host::parameters(t); },
                   [](driver::TupleTerm &t, py::sequence value) { host::parameters(t, value); });
+  // Tunable parameters (D[python-tunable]).
+  tunables::bindTunable(m);
   // Restraints (D74, D124; D198).
   py::enum_<driver::ReferenceScaling>(m, "ReferenceScaling")
     .value("Center", driver::ReferenceScaling::Center)
@@ -235,6 +238,8 @@ PYBIND11_MODULE(mdir, m) {
   property(system, "pair_terms", &model::System::pairTerms);
   property(system, "tuple_terms", &model::System::tupleTerms);
   property(system, "restraints", &model::System::restraints);
+  property(system, "tunables", &model::System::tunables);
+  tunables::bindModelArrays(system);
   system.def_property("restraint_reference", [](const Input<model::System> &o) {
     const auto &v = o.value.restraintReference;
     return host::copy(v.data(), v.size(), {static_cast<py::ssize_t>(v.size() / 3), 3});
@@ -359,6 +364,7 @@ PYBIND11_MODULE(mdir, m) {
       d["force_dtype"] = c.program.force == driver::Element::F64 ? "float64" : "float32";
       d["pme"] = c.program.pme;
       d["pme_grid"] = std::array<int64_t, 3>{c.program.pmeGrid[0], c.program.pmeGrid[1], c.program.pmeGrid[2]};
+      d["tunables"] = tunables::describe(p.prepared->tunables);
       return d;
     });
   m.def("compile", [](std::shared_ptr<Input<model::System>> system,
@@ -376,7 +382,8 @@ PYBIND11_MODULE(mdir, m) {
     // A restraint that selects nothing restrains nothing: the control file
     // warns of it, and so does compile.
     for (const auto &[code, message] : prepared.system.warnings)
-      if (code == "empty_selection" && llvm::StringRef(message).starts_with("the restraint of"))
+      if ((code == "empty_selection" && llvm::StringRef(message).starts_with("the restraint of")) ||
+          code == "tunable_fixed_pairs")
         if (PyErr_WarnEx(PyExc_UserWarning, message.c_str(), 1) != 0)
           throw py::error_already_set();
     Program result;
@@ -400,6 +407,8 @@ PYBIND11_MODULE(mdir, m) {
       return host::copy(s.velocities.data(), s.velocities.size(),
                         {static_cast<py::ssize_t>(s.velocities.size() / 3), 3});
     })
+    .def_property_readonly("tunables_version",
+                           [](const compiler::SimulationState &s) { return s.tunablesVersion; })
     .def_property_readonly("velocity_offset",
                            [](const compiler::SimulationState &s) { return s.velocityOffset; })
     .def_property_readonly("forces", [](const compiler::SimulationState &s) -> py::object {
@@ -509,6 +518,92 @@ PYBIND11_MODULE(mdir, m) {
       return callbacks;
     }
   };
+  // The values of a simulation's tunables, a mapping of names to arrays
+  // (D[python-tunable]).
+  struct TunableValues { py::object owner; };
+  static auto simulationOf = [](const TunableValues &t) -> compiler::Simulation & {
+    return *t.owner.cast<PySimulation &>().simulation;
+  };
+  static auto valueOf = [](const TunableValues &t, const std::string &name) {
+    auto &sim = simulationOf(t);
+    int k = sim.getTunables().find(name);
+    if (k < 0) throw py::key_error(name);
+    const auto &v = sim.getTunableValues()[k];
+    return host::copy(v.data(), v.size(), {static_cast<py::ssize_t>(v.size())});
+  };
+  static auto namesOf = [](const TunableValues &t) {
+    std::vector<std::string> names;
+    for (const auto &entry : simulationOf(t).getTunables().tunables) names.push_back(entry.name);
+    return names;
+  };
+  static auto updateOf = [](TunableValues &t, py::handle mapping) {
+    auto &sim = simulationOf(t);
+    const auto &set = sim.getTunables();
+    if (set.empty())
+      throw InputError("the program of this simulation declares no tunable parameters "
+                       "(System.tunables)");
+    std::vector<std::pair<std::string, std::vector<double>>> changes;
+    auto items = py::reinterpret_borrow<py::object>(mapping).attr("items")();
+    for (py::handle item : items) {
+      auto pair = py::reinterpret_borrow<py::tuple>(item);
+      if (!py::isinstance<py::str>(pair[0]))
+        throw InputError("Simulation.tunables: the names of tunables are strings");
+      auto name = py::cast<std::string>(pair[0]);
+      int k = set.find(name);
+      if (k < 0) throw InputError("this simulation has no tunable named '" + name + "'");
+      const auto &entry = set.tunables[k];
+      changes.emplace_back(name, host::doubles(pair[1], "Simulation.tunables['" + name + "']",
+                                               entry.entries, {},
+                                               tunables::unitOf(entry.parameter, entry.term)));
+    }
+    std::optional<llvm::Error> error;
+    {
+      py::gil_scoped_release release;
+      error.emplace(sim.updateTunables(changes));
+    }
+    if (*error) raise(std::move(*error));
+    return sim.getTunablesVersion();
+  };
+  py::class_<TunableValues>(m, "TunableValues")
+    .def("__getitem__", [](const TunableValues &t, const std::string &name) { return valueOf(t, name); })
+    .def("__setitem__", [](TunableValues &t, const std::string &name, py::object value) {
+      py::dict d; d[py::str(name)] = value; updateOf(t, d);
+    })
+    .def("__len__", [](const TunableValues &t) { return simulationOf(t).getTunables().tunables.size(); })
+    .def("__contains__", [](const TunableValues &t, const std::string &name) {
+      return simulationOf(t).getTunables().find(name) >= 0;
+    })
+    .def("__iter__", [](const TunableValues &t) { return py::iter(py::cast(namesOf(t))); })
+    .def("keys", [](const TunableValues &t) { return namesOf(t); })
+    .def("values", [](const TunableValues &t) {
+      py::list result;
+      for (const auto &name : namesOf(t)) result.append(valueOf(t, name));
+      return result;
+    })
+    .def("items", [](const TunableValues &t) {
+      py::list result;
+      for (const auto &name : namesOf(t)) result.append(py::make_tuple(name, valueOf(t, name)));
+      return result;
+    })
+    .def("update", [](TunableValues &t, py::object mapping, py::kwargs more) {
+      py::dict all;
+      if (!mapping.is_none()) all = py::dict(mapping);
+      for (auto item : more) all[item.first] = item.second;
+      return updateOf(t, all);
+    }, py::arg("values") = py::none())
+    .def_property_readonly("version", [](const TunableValues &t) { return simulationOf(t).getTunablesVersion(); })
+    .def_property_readonly("history", [](const TunableValues &t) { return simulationOf(t).getTunablesHistory(); })
+    .def_property_readonly("units", [](const TunableValues &t) {
+      py::dict d;
+      for (const auto &entry : simulationOf(t).getTunables().tunables) d[py::str(entry.name)] = entry.unit;
+      return d;
+    })
+    .def("__repr__", [](const TunableValues &t) {
+      std::string text = "TunableValues(version=" + std::to_string(simulationOf(t).getTunablesVersion()) + ", [";
+      bool first = true;
+      for (const auto &name : namesOf(t)) { text += (first ? "'" : ", '") + name + "'"; first = false; }
+      return text + "])";
+    });
   py::class_<PySimulation>(m, "Simulation")
     .def(py::init([](std::shared_ptr<Program> program) {
       if (!program) throw InputError("Simulation takes a compiled program");
@@ -529,6 +624,16 @@ PYBIND11_MODULE(mdir, m) {
       auto &s = self.cast<PySimulation &>();
       if (steps < 0) throw InputError("run takes a nonnegative number of steps");
       std::vector<CallbackReporter> callbacks = s.sync();
+      // No step, and the energies of the state (D[python-tunable]).
+      if (steps == 0 && energy) {
+        std::optional<llvm::Error> error;
+        {
+          py::gil_scoped_release release;
+          error.emplace(s.simulation->evaluate());
+        }
+        if (*error) raise(std::move(*error));
+        return int64_t(0);
+      }
       // The parts end at the steps of the callbacks, whose state they take;
       // the files of the built-in reporters are written inside the parts.
       int64_t taken = 0, end = s.simulation->getStep() + steps;
@@ -587,6 +692,7 @@ PYBIND11_MODULE(mdir, m) {
       d["cache_lookup_seconds"] = c.lookupSeconds;
       return d;
     })
+    .def_property_readonly("tunables", [](py::object self) { return TunableValues{self}; })
     .def_property("part_seconds",
                   [](const PySimulation &s) { return s.simulation->partSeconds; },
                   [](PySimulation &s, py::object value) {

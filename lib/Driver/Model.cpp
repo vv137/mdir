@@ -331,7 +331,11 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   // coordinates file; the cell it scales from is that of the state.
   prepared->referencePositions =
       s.restraintReference.empty() ? prepared->positions : s.restraintReference;
-  return PreparedModel{execution, std::move(c), std::move(*prepared)};
+  // The tunable parameters, whose initial values the prepared model takes
+  // (D[python-tunable]).
+  auto tunables = resolveTunables(s, c, *prepared);
+  if (!tunables) return tunables.takeError();
+  return PreparedModel{execution, std::move(c), std::move(*prepared), std::move(*tunables)};
 }
 llvm::Expected<InitialState> mdir::model::drawVelocities(
     const System &s, const InitialState &state, double temperature, uint64_t seed) {

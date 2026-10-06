@@ -1,0 +1,14 @@
+# REQUIRES: python-api, cuda
+# Updates of tunable parameters (D[python-tunable]) on the GPU in mixed
+# precision: an update during a run equals, to the bit, a compile with the
+# new values from the same state (velocity Verlet, NVE, deterministic); an
+# update and its inverse; the model without tunables; refused updates; the
+# versions in the history, the states, and the energy file.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_tunable.py %S/Inputs/dipeptide updates GPU Mixed %t | FileCheck %s
+# CHECK: GPU Mixed: the forces and energies of an update at step 8 equal those of a compile with the new values at that state to the bit
+# CHECK: GPU Mixed: there and back
+# CHECK: GPU Mixed: against the model without tunables
+# CHECK: GPU Mixed: 6 refused updates change neither values nor version
+# CHECK: GPU Mixed: versions [(0, 0), (5, 0), (10, 0), (15, 1), (20, 2)] in the energy file
+# CHECK: updates passed

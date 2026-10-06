@@ -25,7 +25,8 @@ simulation ([python-minimize.md](python-minimize.md)).
 D207 (#109) adds reporters: `mdir run`'s energy file and
 trajectory written inside the parts of a run, and Python callbacks
 ([python-reporters.md](python-reporters.md)).
-Tunable buffers remain open.
+D[python-tunable] (#130) declares tunable parameters, whose values a
+simulation takes without compiling ([python-tunable.md](python-tunable.md)).
 Later items remain prospective work.
 
 ## 1. Scope and acceptance
@@ -103,7 +104,8 @@ the next run fails until explicitly recompiled. Define tracking for nested
 terms and arrays so writes cannot bypass this check. A simulation owns its
 buffers, step/time, runtime resources, output state and program lifetime.
 
-Declared tunable coefficients use runtime buffers without recompilation.
+Declared tunable coefficients use runtime buffers without recompilation
+(implemented by D[python-tunable], [python-tunable.md](python-tunable.md)).
 Updates invalidate dependent forces and intermediate results. Reject
 structural tuning (particle count, constraints, grid, cutoff or expression
 structure) as though it were a scalar update. Checkpoint provenance must

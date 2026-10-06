@@ -151,6 +151,12 @@ struct Output {
   /// state takes the energies of every step of energy, rows or not
   /// (D207).
   bool embedded = false;
+  /// A simulation with tunable parameters (D[python-tunable]): the version
+  /// of their values, which the energy file takes as its last column, or
+  /// -1 for none; and a step at which the energies are evaluated anew after
+  /// an update, which takes no row, or -1.
+  int64_t tunablesVersion = -1;
+  int64_t quietStep = -1;
   double solventKinetic = 0.0, solventHalf = 0.0;
   std::vector<double> soluteOptimal, solventOptimal, soluteFull,
       solventFull;

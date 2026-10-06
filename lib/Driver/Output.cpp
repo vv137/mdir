@@ -248,6 +248,9 @@ mdir::driver::getEnergyColumns(const Output &output) {
     columns.push_back({"volume", "Å^3"});
     columns.push_back({"area_xy", "Å^2"});
   }
+  // The version of the values of tunable parameters (D[python-tunable]).
+  if (output.tunablesVersion >= 0)
+    columns.push_back({"tunables_version", "-", true});
   return columns;
 }
 
@@ -612,8 +615,11 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
   // A step of energy that is not a row of the log keeps no temperatures of
   // the solvent and the solute, as for `mdir run`; an embedded program
   // (D196) still takes its energies, without a row.
-  bool isRow = output.energyPeriod <= 0 ||
-               (step - output.firstStep) % output.energyPeriod == 0;
+  // The energies evaluated anew after an update of tunable parameters
+  // (D[python-tunable]) are of a step that has its row already.
+  bool isRow = step != output.quietStep &&
+               (output.energyPeriod <= 0 ||
+                (step - output.firstStep) % output.energyPeriod == 0);
   if (!isRow) {
     output.hasSolvent = false;
     if (!output.embedded)
@@ -690,6 +696,8 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
     row.push_back(output.box[0] * output.box[1] /
                   (units::length * units::length));
   }
+  if (output.tunablesVersion >= 0)
+    row.push_back(static_cast<double>(output.tunablesVersion));
   // The total here has the energy of the bath if the run couples: the
   // conserved energy (D196 reports both).
   output.lastEnergies = {step,

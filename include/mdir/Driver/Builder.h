@@ -164,6 +164,19 @@ struct Program {
   /// `closingSteps` are the steps of a period after its plain steps.
   int64_t segmentPeriod = 0;
   int64_t closingSteps = 1;
+
+  /// A program with tunable parameters (Control::tunables,
+  /// D[python-tunable]): its values are those of its buffers, never
+  /// constants of its text. Its entry's `%first_call` is 2 for a call that
+  /// evaluates the forces of the state that it is given anew, as the first
+  /// call does, without the half kick back of leapfrog.
+  bool tunable = false;
+  /// Whether the entry takes, after `%first_call`, what the barostat adds
+  /// for the constant terms, which depend on the values of the tunables:
+  /// the trace of their virial times the volume and their energy times the
+  /// volume, in kJ/mol nm³, and those values.
+  bool takesConstants = false;
+  double baroConstant = 0.0, baroEnergyConstant = 0.0;
 };
 
 llvm::Expected<Program> buildProgram(const Control &control,

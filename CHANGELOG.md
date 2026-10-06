@@ -12,6 +12,23 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- Tunable parameters of a Python model (D[python-tunable], #130):
+  `System.tunables` declares charges per particle, σ and ε per
+  Lennard-Jones type (with the combining rule), constants of pair terms, and
+  parameters of tuple terms as named vectors with a map from their sites,
+  and `Simulation.tunables` takes new values without compiling, as one
+  atomic update that advances a value version (`tunables.version`,
+  `tunables.history`, `State.tunables_version`, and a last column
+  `tunables_version` in the energy file of a simulation with tunables). The
+  quantities derived from them (the table of the types by the combining
+  rule, whose NBFIX pairs keep their values with a warning; the 1-4 products, the constants of PME and
+  of the reaction field, the correction for the dispersion, the tails of
+  pair terms) are rebuilt by the code that compiles them, and an update
+  equals a compile with the new values to the bit. `run(0, energy=True)`
+  evaluates the forces and the energies of the state without a step. The
+  read-only `System.charges`, `particle_types`, `type_names`,
+  `atom_names`, `residue_names`, and `residue_indices` are what maps are
+  built from. No control-file key changes.
 - `MDIR_COMPILE_THREADS` bounds the threads with which a process lowers
   its programs (D211's process-wide pool otherwise takes every core). The
   test suite sets it to the cores over `gpu_workers`, or to

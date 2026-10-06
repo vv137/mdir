@@ -700,6 +700,15 @@ static llvm::Error collectPairTails(const Control &control,
   return llvm::Error::success();
 }
 
+llvm::Error mdir::driver::recollectPairTails(const Control &control,
+                                             System &system) {
+  std::vector<std::pair<std::string, std::string>> warnings = system.warnings;
+  system.pairTails.clear();
+  llvm::Error error = collectPairTails(control, *system.topology, system);
+  system.warnings = std::move(warnings);
+  return error;
+}
+
 /// The parameters of each particle (D165): the entries of the control file,
 /// in its order, each over its particles, into a value for every particle
 /// of `topology` in `system`. Every value of a parameter comes from here.

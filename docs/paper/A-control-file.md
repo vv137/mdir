@@ -26,6 +26,11 @@ D211 compiles one program of segments, whose entry
 does the work of the start only on its first call; it adds no control keys
 and changes no output formats or overwrite behavior.
 
+Tunable parameters of a Python model (D[python-tunable],
+[contract](../python-tunable.md)) add no control keys; a Python
+simulation's energy file takes a last column `tunables_version` when its
+model declares tunables, and is unchanged otherwise.
+
 Typed Python restraints (D198,
 [contract](../python-velocities-restraints.md)) are one `[[restraints]]`
 table each, with the force constant in kJ/mol/nm² and the reference

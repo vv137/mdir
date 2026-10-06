@@ -280,6 +280,34 @@ processes by the compile cache (D212,
 enables; `Simulation.compile_stats` reports the times of the pipeline and
 of the engine, and the hits.
 
+## Evaluations without a step
+
+`run(0, energy=True)` evaluates the state without taking a step
+(D[python-tunable], [python-tunable.md](python-tunable.md)): a call of the
+entry whose loops take no steps. Before the first run it is the first call,
+the start of the run (the row of step 0 goes to a reporter's energy file,
+and leapfrog kicks its velocities back by half a step); after it, the call
+takes `%first_call = 2` and evaluates the forces of the state anew, writing
+no row, so that `state().forces` and, with velocity Verlet,
+`state().energies` are those of the current values of the program. An
+update of tunable parameters makes the same call. Only a program with
+tunables leaves leapfrog's velocities alone on such a call (its half kick
+back is a select on `%first_call`); a program without them refuses leapfrog
+after the first run, and leapfrog's energies stay unset, its velocities
+being half a step behind the positions. `run(0)` without `energy` does
+nothing, as before.
+
+A run cut where such an evaluation is made sums its forces in another
+order than an uninterrupted one only as the first call of a part does: an
+update of the values during a run, followed by steps, equals to the bit a
+simulation compiled with the new values from the same state that evaluates
+it first and then takes the same steps (velocity Verlet, deterministic
+mode). A first call that takes its steps at once differs from the two
+calls in the last bits: on the dipeptide in double precision on the CPU,
+the forces at the start agree to the bit, and after one step the positions
+agree, the forces differ by 5e-13 kJ/mol/nm, and the velocities by 2e-16
+nm/ps.
+
 ## Not in this item
 
 Drawing velocities at a temperature and positional restraints, which the

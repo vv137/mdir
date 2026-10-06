@@ -120,11 +120,12 @@ the CLI's code and typed positional restraints (D198); unit quantities of
 OpenMM at the setters (D200); the minimizer of `mdir run` in a
 simulation, in parts that carry its step length (D202); reporters whose
 times are arguments of the compiled program, so that the energy file and
-the trajectory of `mdir run` are written inside a part (D207).
+the trajectory of `mdir run` are written inside a part (D207);
+tunable parameters, whose new values a simulation takes without compiling,
+an update equal to a compile with them to the bit (D[python-tunable]).
 Remaining:
 checkpoints shared with the CLI, views of device buffers through DLPack,
-NPT in a triclinic cell or with a coupling period of 1, tunable buffers,
-and the manylinux_2_28 pip wheel for Python 3.10–3.13 that gates the
+NPT in a triclinic cell or with a coupling period of 1, and the manylinux_2_28 pip wheel for Python 3.10–3.13 that gates the
 milestone, with a four-stage tutorial.
 
 *M2b, differentiable simulation* (D195). The parameters of a potential

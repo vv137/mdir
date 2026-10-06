@@ -23,6 +23,8 @@ inline constexpr Unit bar{"bar", "bar"};
 inline constexpr Unit inverseBar{"bar**-1", "1/bar"};
 inline constexpr Unit springConstant{"kilojoule_per_mole/nanometer**2", "kJ/mol/nm^2"};
 inline constexpr Unit second{"second", "s"};
+inline constexpr Unit charge{"elementary_charge", "e"};
+inline constexpr Unit energy{"kilojoule_per_mole", "kJ/mol"};
 
 inline bool isQuantity(py::handle value) {
   return py::hasattr(value, "value_in_unit_system");
