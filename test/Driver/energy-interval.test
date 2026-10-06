@@ -2,25 +2,20 @@
 # particles as a step that does not (#97, #102): 20 steps of the dipeptide
 # in water with a row of energies at every step and with one at the end
 # give the same state bit for bit, with cutoff electrostatics and PME, with
-# and without SHAKE and SETTLE, in mixed and double precision. The forces
+# and without SHAKE and SETTLE, in mixed and double precision, on the CPU
+# (energy-interval-gpu.test on a device). The forces
 # that the steps carry are stored as their role says, whatever buffers of
 # host calls the loop of steps reaches (in mixed precision they were f32
 # where every step writes energies and f64 otherwise), and the buffers of
-# forces are f64 in mixed precision (#102). On a device a sum with a
-# product as an operand is a fused multiply-add by the formula alone, not by
-# how many uses the product has (#97, #102), and the kernel that joins the
-# constraints with the loops over particles around them (D110) takes the
-# displacements of the tuples as the kernels of the constraints alone do.
-# REQUIRES: cuda
+# forces are f64 in mixed precision (#102).
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' | sed 's|INPUTS|%S/Inputs/dipeptide|' > %t/template.toml
-# RUN: %python %S/Inputs/energy_interval.py %t/template.toml mdir %t GPU MIXED CUTOFF:false CUTOFF:true PME:false PME:true | FileCheck %s
-# RUN: %python %S/Inputs/energy_interval.py %t/template.toml mdir %t GPU DOUBLE PME:true | FileCheck %s --check-prefix=DOUBLE
-# CHECK: GPU MIXED CUTOFF constraints=false: same state, 1168 particles
-# CHECK: GPU MIXED CUTOFF constraints=true: same state, 1168 particles
-# CHECK: GPU MIXED PME constraints=false: same state, 1168 particles
-# CHECK: GPU MIXED PME constraints=true: same state, 1168 particles
-# DOUBLE: GPU DOUBLE PME constraints=true: same state, 1168 particles
+# RUN: %python %S/Inputs/energy_interval.py %t/template.toml mdir %t CPU MIXED CUTOFF:true PME:false PME:true | FileCheck %s
+# RUN: %python %S/Inputs/energy_interval.py %t/template.toml mdir %t CPU DOUBLE PME:true | FileCheck %s --check-prefix=DOUBLE
+# CHECK: CPU MIXED CUTOFF constraints=true: same state, 1168 particles
+# CHECK: CPU MIXED PME constraints=false: same state, 1168 particles
+# CHECK: CPU MIXED PME constraints=true: same state, 1168 particles
+# DOUBLE: CPU DOUBLE PME constraints=true: same state, 1168 particles
 
 #--- run.toml
 [input]

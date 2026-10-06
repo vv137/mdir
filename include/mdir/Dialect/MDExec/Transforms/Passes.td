@@ -486,6 +486,16 @@ def AssignPrecision
 
     Scalars outside the loops keep the type `f64`.
 
+    With `deterministic`, a field that a buffer holds (`mdrt.from_buffer`,
+    `mdrt.to_buffer`, and the buffers of host calls) reaches the fields of
+    the steps through a loop over particles that copies it, converting it
+    to the type of the buffer. Otherwise the type of a buffer of the
+    boundary, by rule 1, decided that of every field stored together with
+    it: the forces that a loop of steps carries took the type of the
+    buffer of a host call where the loop's result reached one, which
+    depends on the schedule of the energies and on the program, a run of
+    `mdir run` or of segments, and the trajectory with them (#102, #105).
+
     The results agree with those of the reference precision within a
     tolerance only.
   }];
@@ -507,7 +517,11 @@ def AssignPrecision
            /*default=*/"true",
            "Whether loops over pairs, and over tuples that are not "
            "disjoint, take the positions converted once to the type of "
-           "the kernel, where that is narrower than the positions">
+           "the kernel, where that is narrower than the positions">,
+    Option<"deterministic", "deterministic", "bool", /*default=*/"false",
+           "Whether a buffer at the boundary of the program reaches the "
+           "fields through a copy, so that the type of a buffer does not "
+           "decide that of the fields of the steps (#102)">
   ];
   let dependentDialects = ["::mdir::md_exec::MDExecDialect",
                            "::mlir::arith::ArithDialect"];

@@ -147,13 +147,19 @@ for precision in ("Double", "Mixed"):
 
 def bound_of(precision, written, double, relative):
     """In double, `relative` of the value and the last printed digit. In
-    mixed, three times the difference of `mdir run` in mixed and in double
-    at that row, the error of mixed precision itself (as D196 bounds it):
-    with PME the model and `mdir run` differ in mixed precision from the
-    first evaluation, in dynamics as well (#105)."""
+    mixed, three times the error of mixed precision itself (as D196 bounds
+    it): the difference of `mdir run` in mixed and in double at that row,
+    but at least 1e-4 of the value, the rounding of the forces in f32. A
+    part after the first begins with its own neighbor structures, whose
+    sums in another order differ by that rounding (#121); within a part the
+    two agree bit for bit (#105). Since the forces that the steps carry are
+    f64 in the deterministic mode (#102), `mdir run` in mixed precision can
+    lie much closer to double than that rounding (rms_force at step 30,
+    1.3e-4 against 6.5e-4 before)."""
     if precision == "Double":
         return lambda c: 1e-6 + relative * abs(float(written[c]))
-    return lambda c: 1e-6 + 3 * abs(float(written[c]) - float(double[c]))
+    return lambda c: 1e-6 + 3 * max(abs(float(written[c]) - float(double[c])),
+                                    1e-4 * abs(float(written[c])))
 
 
 # Within a part the program is that of `mdir run`. A part after the first

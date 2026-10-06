@@ -206,6 +206,12 @@ struct IntegrationRun {
   /// it after the loop after; the loop after takes the values from
   /// registers, so a destination that nothing else reads is not written.
   llvm::SmallVector<llvm::SmallVector<bool, 2>, 4> keepOuts;
+  /// Whether the members take the positions as they are stored, so that
+  /// the kernels of the loops over tuples compute their displacements as
+  /// the kernels of the loops alone do (the deterministic mode, #102);
+  /// otherwise a member takes its position relative to that of the member
+  /// at place 0, narrowed.
+  bool storedPositions = false;
 };
 
 /// The particles that a warp of the first kernel of an integration run

@@ -22,6 +22,15 @@ format, or the outputs; every such change is listed under **Changed** or
   dynamics, the thermostats, and the barostats are unchanged. With rigid
   waters, `mdir run` ends with the temperatures of the solute and of the
   solvent (D203, #112).
+- In the deterministic mode, a step that writes energies moves the particles
+  as one that does not with constraints and PME too, and a Python simulation
+  of a model equals `mdir run` within a part on the CPU. The trajectories of
+  deterministic runs therefore change: in mixed precision the forces that
+  the steps carry are stored in f64, and checkpoints and Python states hold
+  forces in f64 (`force_dtype` is `float64`); on a device the kernels make
+  fused multiply-adds by the formula rather than none (#102, #105,
+  D[deterministic-energy-steps]). Runs outside the deterministic mode are
+  unchanged.
 
 - In the deterministic mode (`deterministic = true`) device kernels no longer
   contract products and sums into fused multiply-adds, so that a step that

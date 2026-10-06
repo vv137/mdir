@@ -1780,6 +1780,9 @@ bool Lowering::recordIntegration(ArrayRef<Operation *> run) {
   if (!readsLoops || after.getIns().empty() || before.getIns().empty())
     return false;
   kernels::IntegrationRun integration;
+  // In the deterministic mode the joined kernel computes the displacements
+  // of the tuples as the kernels of the loops alone do (#102).
+  integration.storedPositions = deterministic;
   integration.before = before;
   integration.loops = loops;
   integration.after = after;
@@ -4902,6 +4905,49 @@ public:
                           op->getContext(),
                           flags | arith::FastMathFlags::contract));
         });
+      });
+    // Explicit fused multiply-adds (#102): every sum or difference with a
+    // product as an operand becomes one, by a rule of the formula alone.
+    // LLVM contracts only a product with one use, so the further uses
+    // that the energies and the virial of a step give a product would
+    // decide its rounding; here the product stays for its other uses. Of
+    // two products, the first operand is fused.
+    if (explicitFma)
+      getOperation()->walk([](gpu::LaunchOp launch) {
+        SmallVector<Operation *> sums;
+        launch.getBody().walk([&](Operation *op) {
+          if (isa<arith::AddFOp, arith::SubFOp>(op))
+            sums.push_back(op);
+        });
+        for (Operation *op : sums) {
+          Value lhs = op->getOperand(0), rhs = op->getOperand(1);
+          auto lhsProduct = lhs.getDefiningOp<arith::MulFOp>();
+          auto rhsProduct = rhs.getDefiningOp<arith::MulFOp>();
+          if (!lhsProduct && !rhsProduct)
+            continue;
+          OpBuilder builder(op);
+          Location loc = op->getLoc();
+          Value result;
+          bool subtract = isa<arith::SubFOp>(op);
+          if (lhsProduct) {
+            // a * b + c, or a * b - c = fma(a, b, -c).
+            Value addend = subtract
+                               ? arith::NegFOp::create(builder, loc, rhs)
+                                     .getResult()
+                               : rhs;
+            result = math::FmaOp::create(builder, loc, lhsProduct.getLhs(),
+                                         lhsProduct.getRhs(), addend);
+          } else {
+            // c + a * b, or c - a * b = fma(-a, b, c).
+            Value factor = rhsProduct.getLhs();
+            if (subtract)
+              factor = arith::NegFOp::create(builder, loc, factor);
+            result = math::FmaOp::create(builder, loc, factor,
+                                         rhsProduct.getRhs(), lhs);
+          }
+          op->getResult(0).replaceAllUsesWith(result);
+          op->erase();
+        }
       });
     // An approximate division in f32 is a product with an approximate
     // reciprocal that flushes subnormal numbers (D98).

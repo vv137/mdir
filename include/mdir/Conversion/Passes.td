@@ -186,6 +186,11 @@ def ConvertMDExecToGPU
            "Whether the arithmetic of the kernels may contract a product "
            "and a sum into a fused multiply-add, which rounds once "
            "(the control keyword fast_math)">,
+    Option<"explicitFma", "explicit-fma", "bool", /*default=*/"false",
+           "Whether every sum or difference in a kernel with a product as "
+           "an operand becomes a math.fma, whatever else uses the product, "
+           "so that whether a product is fused does not depend on its "
+           "other uses (the deterministic mode, #102)">,
     Option<"tuplesOnce", "tuples-once", "bool", /*default=*/"true",
            "Whether a loop over tuples that may share particles evaluates "
            "each tuple once and adds to its members with atomics, outside "
