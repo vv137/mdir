@@ -77,7 +77,8 @@ def read_columns(path):
     return dict(zip(names, row))
 
 
-def derivatives(directory, tolerance, volume, na, nb, scale, rc, f):
+def derivatives(directory, tolerance, volume, na, nb, scale, rc, f,
+                sig=SIG, eps=EPS, observable="observe", states=True):
     """The rows at step 0 of [free_energy] and `observe` with the
     correction on and off: they are of the shifted potential, so they differ
     by the tail and the estimate of the shift, (4 pi / 3V) r_c^3 u(r_c) f
@@ -87,6 +88,9 @@ def derivatives(directory, tolerance, volume, na, nb, scale, rc, f):
     powers."""
     factor = 4 * math.pi / volume * scale
     ok = True
+    if not states:
+        return observed(directory, tolerance, factor, na, nb, rc, f, sig,
+                        eps, observable)
     # -lambda_s c8 / r^8 over A-B and A-A, at lambda_s = 0.5 of (0, 0.5, 1):
     # the tail -c8 / (5 r_c^5) and the shift -f c8 / (3 r_c^5) of a pair.
     tail = -factor * (na * nb + na * (na - 1) / 2) * C8 * (
@@ -100,27 +104,39 @@ def derivatives(directory, tolerance, volume, na, nb, scale, rc, f):
         print(f"{name}: tail {value:.6f}, difference {difference:.1e}")
         ok &= abs(difference) <= tolerance
 
+    ok &= observed(directory, tolerance, factor, na, nb, rc, f, sig, eps,
+                   observable, report=False)
+    print("derivatives: " + ("ok" if ok else "FAILED"))
+
+
+def observed(directory, tolerance, factor, na, nb, rc, f, sig, eps, name,
+             report=True):
+    """The columns of `observe` of the NBFIX correction term at sig and
+    eps, with the correction on (`name`.obs) and off (`name`-off.obs)."""
     def lj_tail(s, e):
         # The tail and the shift, f r_c^3 u(r_c) / 3.
         return 4 * e * (s ** 12 / (9 * rc ** 9) - s ** 6 / (3 * rc ** 3)
                         + f * (s ** 12 / (3 * rc ** 9) - s ** 6 / (3 * rc ** 3)))
 
+    ok = True
     pairs = factor * na * nb
-    on = read_columns(f"{directory}/observe.obs")
-    off = read_columns(f"{directory}/observe-off.obs")
+    on = read_columns(f"{directory}/{name}.obs")
+    off = read_columns(f"{directory}/{name}-off.obs")
     expected = {
-        "nbfix.energy": pairs * (lj_tail(SIG, EPS) - lj_tail(SIGMA, EPSILON)),
-        "nbfix.d_sig": pairs * 4 * EPS * (12 * SIG ** 11 / (9 * rc ** 9)
-                                          - 6 * SIG ** 5 / (3 * rc ** 3)
-                                          + f * (12 * SIG ** 11 / (3 * rc ** 9)
-                                                 - 6 * SIG ** 5 / (3 * rc ** 3))),
-        "nbfix.d_eps": pairs * lj_tail(SIG, 1.0),
+        "nbfix.energy": pairs * (lj_tail(sig, eps) - lj_tail(SIGMA, EPSILON)),
+        "nbfix.d_sig": pairs * 4 * eps * (12 * sig ** 11 / (9 * rc ** 9)
+                                          - 6 * sig ** 5 / (3 * rc ** 3)
+                                          + f * (12 * sig ** 11 / (3 * rc ** 9)
+                                                 - 6 * sig ** 5 / (3 * rc ** 3))),
+        "nbfix.d_eps": pairs * lj_tail(sig, 1.0),
     }
-    for name, value in expected.items():
-        difference = on[name] - off[name] - value
-        print(f"{name}: tail {value:.6f}, difference {difference:.1e}")
+    for column, value in expected.items():
+        difference = on[column] - off[column] - value
+        print(f"{column}: tail {value:.6f}, difference {difference:.1e}")
         ok &= abs(difference) <= tolerance
-    print("derivatives: " + ("ok" if ok else "FAILED"))
+    if report:
+        print(f"{name}: " + ("ok" if ok else "FAILED"))
+    return ok
 
 
 def main():
@@ -138,6 +154,11 @@ def main():
     f = 1 - volume / (n * 4 * math.pi / 3 * rc ** 3)
     if names == ["derivatives"]:
         derivatives(directory, tolerance, volume, na, nb, scale, rc, f)
+        return
+    if names == ["zero"]:
+        # The correction at the force field's own sigma and epsilon (#155).
+        derivatives(directory, tolerance, volume, na, nb, scale, rc, f,
+                    SIGMA, EPSILON, "zero", states=False)
         return
 
     def topology(c6ab):

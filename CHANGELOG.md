@@ -206,6 +206,14 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- An `[[energy.pair]]` correction at or near the force field's own
+  parameters, such as an NBFIX at zero offset where a fit begins, is no
+  longer refused by the correction for the dispersion as a tail that
+  "cannot be integrated" or "diverges" (#155). Its terms cancel to their
+  rounding, which the quadrature now measures against the size of the terms
+  rather than their difference. The tail is 0, and its derivatives in
+  `observe` include their tails.
+
 - With a topology, `dispersion_correction = "ENERGY_PRESSURE"` now includes
   the tail beyond the cutoff of every `[[energy.pair]]` term, over the pairs
   that its `groups` select and the topology does not exclude, in the energy,

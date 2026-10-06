@@ -307,9 +307,16 @@ $k\ge4$. The adaptive Gauss–Kronrod rule of 7 and 15 points
 degree up to 13 exactly on its first interval, with an estimate of the
 error at round-off, so the tail of a Lennard-Jones ($s^2$ and $s^8$) or of
 $r^{-8}$ is its closed form to round-off, and any other expression is
-integrated adaptively to $10^{-13}$ relative. The integral converges only
-if $r^3u(r)\to0$; the driver requires $r^3u$ to fall by at least a decade
-per decade of $r$ from $10^3r_c$ to $10^6r_c$, and refuses the term
+integrated adaptively to $10^{-13}$ relative. The error is relative to the
+integral or to the size of the terms that the expression sums, whichever
+is larger: the size takes every sum and difference over the absolute values
+of its operands. A correction that is the difference of two potentials,
+such as an NBFIX at the force field's own $\sigma$ and $\varepsilon$ where a
+fit begins, has a tail of 0 and values at the level of the rounding of the
+two terms, which no error relative to the value could reach. The integral
+converges only if $r^3u(r)\to0$; the driver requires $r^3u$ to fall by at
+least a decade per decade of $r$ from $10^3r_c$ to $10^6r_c$, counting a
+value within $10^{-12}$ of the size of its terms as 0, and refuses the term
 otherwise, as it refuses a term of the time, which has no constant tail.
 Such a term is left out with a warning under the default correction, and
 refused when the control file asks for the correction; `dispersion_correction
