@@ -1,6 +1,9 @@
 # REQUIRES: python-api
 # The host memory of a persistent simulation on the CPU stays flat across
-# many calls of run (#110).
+# many calls of run (#110), across evaluations that end its activation, and
+# across simulations that end (D[resident-buffers]).
 # RUN: %mdir_python %S/Inputs/python_memory.py %S/Inputs/dipeptide CPU | FileCheck %s
 # CHECK: CPU: host memory from call 5 to call 30:
+# CHECK: CPU: host memory after 30 evaluations between runs:
+# CHECK: CPU: host memory from simulation 5 to simulation 30 that ended:
 # CHECK: memory across calls passed
