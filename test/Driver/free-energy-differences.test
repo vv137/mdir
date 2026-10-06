@@ -1,0 +1,15 @@
+# [free_energy] (D161) on the CPU, scenario differences of
+# Inputs/check_free_energy.py: ethanol decoupled from TIP3P (Inputs/fep).
+# dH/dλ of the Coulomb, the Lennard-Jones, and a component of expressions
+# against central differences of the energies of the states beside it, and
+# the energies of the other states against runs at those states, in double
+# and mixed precision.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/check_free_energy.py %t CPU DOUBLE mdir differences | FileCheck %s
+# RUN: rm -rf %t-mixed && mkdir -p %t-mixed
+# RUN: %python %S/Inputs/check_free_energy.py %t-mixed CPU MIXED mdir differences | FileCheck %s
+#
+# CHECK: dH/dl against central differences: ok
+# CHECK: the energies of the other states: ok
+# CHECK: free energy differences passed

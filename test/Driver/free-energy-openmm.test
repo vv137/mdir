@@ -1,0 +1,17 @@
+# [free_energy] (D161) on the CPU, scenario openmm of
+# Inputs/check_free_energy.py: ethanol decoupled from TIP3P (Inputs/fep).
+# dH/dλ and the energies of the other states against OpenMM 8.6.1 with the
+# reaction field, with it and the Lennard-Jones shifted, and with particle
+# mesh Ewald, in double and mixed precision.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/check_free_energy.py %t CPU DOUBLE mdir openmm | FileCheck %s
+# RUN: rm -rf %t-mixed && mkdir -p %t-mixed
+# RUN: %python %S/Inputs/check_free_energy.py %t-mixed CPU MIXED mdir openmm | FileCheck %s
+#
+# CHECK: RF against OpenMM: ok
+# CHECK: RF_SHIFT against OpenMM: ok
+# CHECK: RF_SHIFT dH/dl.vdw against OpenMM: ok
+# CHECK: RF_SHIFT vdW dU against OpenMM: ok
+# CHECK: PME against OpenMM: ok
+# CHECK: free energy openmm passed

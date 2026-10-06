@@ -1,0 +1,14 @@
+# [free_energy] (D161) on the CPU, scenario identity of
+# Inputs/check_free_energy.py: ethanol decoupled from TIP3P (Inputs/fep).
+# At λ = 0 the potential energy of every row of the log against the run
+# without [free_energy], with the cutoff, particle mesh Ewald, and the
+# reaction field, each with and without the Lennard-Jones shifted, in
+# double and mixed precision.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/check_free_energy.py %t CPU DOUBLE mdir identity | FileCheck %s
+# RUN: rm -rf %t-mixed && mkdir -p %t-mixed
+# RUN: %python %S/Inputs/check_free_energy.py %t-mixed CPU MIXED mdir identity | FileCheck %s
+#
+# CHECK: lambda = 0 against no [free_energy]: ok
+# CHECK: free energy identity passed

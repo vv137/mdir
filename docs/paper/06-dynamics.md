@@ -1153,7 +1153,8 @@ $\lambda_\text{V}$. The tail of a pair term in $\boldsymbol\lambda$ or
 in an observed constant $\xi$ (Section 5.4) is evaluated at each state
 and differentiated on the host, and scales as $1/V$ like the correction.
 
-**Validation** (`free-energy.test`, `free-energy-gpu.test`). Ethanol
+**Validation** (`free-energy-openmm.test`, `free-energy-differences.test`,
+`free-energy-identity.test`, each with a `-gpu` twin). Ethanol
 (GAFF2, AM1-BCC) in 467 TIP3P waters, at the coordinates of tleap, against
 OpenMM 8.6.1 on its Reference platform with the same Hamiltonian: charge
 offsets in its `NonbondedForce`, the pairs within the ethanol that are not

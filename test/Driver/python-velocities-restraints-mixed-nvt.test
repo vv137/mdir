@@ -1,0 +1,11 @@
+# REQUIRES: python-api, hdf5
+# Drawn velocities and typed restraints in the Python model on the CPU
+# (D198), scenario mixed-nvt of Inputs/python_velocities_restraints.py.
+# NVT runs with drawn velocities and restraints against `mdir run` of the
+# same control file in mixed precision.
+# The bound takes the NVT run of `mdir run` in double precision, a
+# reference only (scenario nvt-double compares the model with it).
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_velocities_restraints.py %S/Inputs/dipeptide CPU mdir mdir-model-test %t mixed-nvt | FileCheck %s
+# CHECK: NVT Mixed; positions
+# CHECK: velocities and restraints mixed-nvt passed

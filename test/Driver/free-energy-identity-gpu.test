@@ -1,0 +1,13 @@
+# [free_energy] (D161) on a device, scenario identity of
+# Inputs/check_free_energy.py: the check of free-energy-identity.test, at
+# the first row of the log only (the sums of the default mode on a device
+# are not reproducible from run to run, D84).
+#
+# REQUIRES: cuda
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/check_free_energy.py %t GPU MIXED mdir identity | FileCheck %s
+# RUN: rm -rf %t-double && mkdir -p %t-double
+# RUN: %python %S/Inputs/check_free_energy.py %t-double GPU DOUBLE mdir identity | FileCheck %s
+#
+# CHECK: lambda = 0 against no [free_energy]: ok
+# CHECK: free energy identity passed

@@ -1,0 +1,11 @@
+# REQUIRES: python-api, hdf5
+# Drawn velocities and typed restraints in the Python model on the CPU
+# (D198), scenario npt-double-restraints of
+# Inputs/python_velocities_restraints.py. The effect of the restraints and
+# of a moved reference on the NPT energies at step 10 in double precision;
+# the run with the default reference, which scenario npt-double compares
+# with `mdir run`, is computed again here as a reference only.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_velocities_restraints.py %S/Inputs/dipeptide CPU mdir mdir-model-test %t npt-double-restraints | FileCheck %s
+# CHECK: NPT: the restraints change the potential
+# CHECK: velocities and restraints npt-double-restraints passed

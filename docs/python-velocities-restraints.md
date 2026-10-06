@@ -123,9 +123,14 @@ a copy; assign the list.
 
 `test/Driver/python-velocities-restraints-*.test` (CPU), one file per
 scenario of `Inputs/python_velocities_restraints.py` (`draws-copies`,
-`nvt-double`, `npt-double`, `mixed`), and their `-gpu` twins use the
-dipeptide in water (1168 particles). The oracle is `mdir run` of the same
-control file.
+`nvt-double`, `nvt-double-restraints`, `npt-double`,
+`npt-double-restraints`, `mixed-nvt`, `mixed-npt`), and their `-gpu` twins
+use the dipeptide in water (1168 particles). The oracle is `mdir run` of
+the same control file. The `-restraints` scenarios check the effect of the
+restraints and of their reference on the energies at step 10, so their runs
+stop after the first part; they run the simulation of `nvt-double` or
+`npt-double` with the default reference again as a reference only, as
+`mixed-npt` does with the NVT runs of `mdir run` that give its bound.
 
 - Drawn velocities against those of `mdir run` (its `readSystem` and
   `assignVelocities`, written as raw f64 by `mdir-model-test --drawn`), with

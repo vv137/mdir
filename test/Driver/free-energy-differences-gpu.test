@@ -1,0 +1,13 @@
+# [free_energy] (D161) on a device, scenario differences of
+# Inputs/check_free_energy.py: the checks of free-energy-differences.test,
+# with tolerances for the kernels of the pairs in f32 in mixed precision.
+#
+# REQUIRES: cuda
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/check_free_energy.py %t GPU MIXED mdir differences | FileCheck %s
+# RUN: rm -rf %t-double && mkdir -p %t-double
+# RUN: %python %S/Inputs/check_free_energy.py %t-double GPU DOUBLE mdir differences | FileCheck %s
+#
+# CHECK: dH/dl against central differences: ok
+# CHECK: the energies of the other states: ok
+# CHECK: free energy differences passed
