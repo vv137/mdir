@@ -66,22 +66,18 @@ std::string mdir::compiler::getPipeline(const Control &control,
     os << "md-exec-assign-storage{memory=device"
        << (control.precision == Precision::Double ? "" : " tables=f32")
        << "},md-exec-assign-streams,convert-md-exec-to-gpu{"
-       // In the deterministic mode the loops of the constraints are not
-       // joined with the loops over particles around them into one kernel
-       // (D110): a step of energy, whose virial reads the changes of the
-       // constraints, cannot join them, and the joined kernel rounds the
-       // velocities of SETTLE otherwise by an ulp of f32 (#102).
-       //
-       // Nor does the arithmetic of a step depend on what else the step
-       // computes: LLVM contracts a product into a fused multiply-add only
-       // where it has one use, and the energies and the virial of a step
-       // that writes them give products more uses, which changed the
-       // rounding of its forces (#97). LLVM does not contract there; every
-       // sum with a product as an operand becomes a fused multiply-add
-       // instead, by the formula alone (#102).
-       << (control.deterministic
-               ? "deterministic=true fuse-integration=false explicit-fma=true "
-               : "")
+       // In the deterministic mode the arithmetic of a step does not
+       // depend on what else the step computes. LLVM contracts a product
+       // into a fused multiply-add only where it has one use, and the
+       // energies and the virial of a step that writes them give products
+       // more uses, which changed the rounding of its forces (#97). LLVM
+       // does not contract there; every sum with a product as an operand
+       // becomes a fused multiply-add instead, by the formula alone, and
+       // the kernels that join the constraints with the loops over
+       // particles around them (D110) take the displacements of the tuples
+       // as the kernels of the constraints alone do (#102).
+       << (control.deterministic ? "deterministic=true explicit-fma=true "
+                                 : "")
        << (control.fastMath && !control.deterministic ? "" : "contract=false")
        << "},"
        << "gpu-lower-to-nvvm-pipeline{cubin-format=isa},"

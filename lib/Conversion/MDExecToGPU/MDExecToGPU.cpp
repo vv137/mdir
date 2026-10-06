@@ -1780,6 +1780,9 @@ bool Lowering::recordIntegration(ArrayRef<Operation *> run) {
   if (!readsLoops || after.getIns().empty() || before.getIns().empty())
     return false;
   kernels::IntegrationRun integration;
+  // In the deterministic mode the joined kernel computes the displacements
+  // of the tuples as the kernels of the loops alone do (#102).
+  integration.storedPositions = deterministic;
   integration.before = before;
   integration.loops = loops;
   integration.after = after;

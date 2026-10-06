@@ -1739,11 +1739,17 @@ void kernels::emitIntegrationThread(
     if (!llvm::is_contained(requests, wanted))
       requests.push_back(wanted);
   };
+  // With `storedPositions` the members take the positions as stored: the
+  // displacement between two members other than the member at place 0 is
+  // then the difference of the stored positions, narrowed, as in the
+  // kernel of the loop alone, not that of two narrowed relative positions,
+  // which rounds otherwise (#102).
   auto positionRequest = [&](unsigned i) {
     Value positions = loops[i].getPositions();
     Type real = cast<MemRefType>(positions.getType()).getElementType();
     Type computed = getElementTypeOrSelf(boxes[i].getType());
-    if (computed.getIntOrFloatBitWidth() < real.getIntOrFloatBitWidth())
+    if (!run.storedPositions &&
+        computed.getIntOrFloatBitWidth() < real.getIntOrFloatBitWidth())
       return Request{positions, VectorType::get({3}, computed), true};
     return Request{positions, Type(), true};
   };
