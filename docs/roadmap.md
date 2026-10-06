@@ -234,8 +234,10 @@ four-stage example needs. D200 (#95,
 [unit quantities](python-units.md)) lets the setters take OpenMM unit
 quantities, converted at the boundary. D202 (#91,
 [minimization](python-minimize.md)) runs the minimizer of `mdir run` in a
-Python simulation, `Simulation.minimize(steps)`. Reporters,
-checkpoints, DLPack views and tunable buffers remain open.
+Python simulation, `Simulation.minimize(steps)`. D[python-reporters] (#109,
+[reporters](python-reporters.md)) writes `mdir run`'s energy file and
+trajectory inside the parts of a run and calls Python functions at their
+steps. Checkpoints, DLPack views and tunable buffers remain open.
 M2 covers
 a documented classical subset and requires a manylinux_2_28 pip wheel for
 Python 3.10–3.13; conda follows later.

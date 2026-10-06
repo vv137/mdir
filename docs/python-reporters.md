@@ -111,16 +111,49 @@ reporters equals one without, to the bit. With constraints or PME on a GPU
 (#102 open) the schedule may change the last bits, as `energy_interval`
 does in `mdir run`.
 
-## Validation (planned)
+## Validation
 
-- Periods 7 and 11 over 25 steps: due steps, counts, shared reports, the
-  final remainder; repeated runs; reporters added between runs.
-- Files equal to those of `mdir run` with the same `energy_interval` and
-  `trajectory_interval`: rows to the printed digits, frames to the bit;
-  CPU and GPU, mixed and double; backups; append across runs.
-- Callback errors, copy independence, GIL release while a part runs.
-- Deterministic mode: positions with and without reporters, to the bit,
-  where D201 holds.
-- JAC on GPU 0, ms/step against `mdir run` with the same outputs: no
-  reporters; energies every 100 and 1000 steps; DCD every 1000 steps; a
-  callback every 1000 steps.
+`test/Driver/python-reporters.test` (CPU) and `python-reporters-gpu.test`
+run `test/Driver/Inputs/python_reporters.py` on the dipeptide in water
+(1168 particles, cutoff electrostatics, deterministic mode) against
+`mdir run` with the same `energy_interval` (10) and `trajectory_interval`
+(50), 100 steps in one `run` call, which takes one part of ten report
+intervals:
+
+| | Double, CPU | Double, GPU | Mixed, CPU | Mixed, GPU |
+|---|---|---|---|---|
+| NVE, energy file and DCD/XTC | byte for byte | byte for byte | byte for byte | byte for byte |
+| NVT (V-rescale every 10 steps), energy file and DCD/XTC | byte for byte | byte for byte | within 3 E | within 3 E |
+
+In NVT and mixed precision the rows agree within 3.3e-4 (CPU) and 1.4e-4
+(GPU) of each value and the DCD frames within 1.2e-3 Å (CPU) and 4.5e-4 Å
+(GPU), where 3 E, three times the difference of `mdir run` in mixed and in
+double, is 1.8e-2 Å: the program of segments and that of `mdir run` round
+differently in single precision (loops of another shape; #105). The test
+also checks the schedule (callbacks of periods 7 and 11 over 25 steps at
+steps 7, 11, 14, 21, 22, and 28 after three more steps; energy rows at 0,
+7, 14, 21, 28), a callback error that ends the run at its step, the
+state with and without reporters equal to the bit in the deterministic
+mode (NVT, cutoff, no constraints), backups, and refusals.
+
+### Performance
+
+JAC (23,558 atoms, PME 64³, SHAKE and SETTLE, NVE, mixed precision) on
+one RTX 3090 (GPU 0, alone), ms per step over 5,000 steps after 5,000.
+The Python model has no pruned lists and no groups of neighbors, so its
+rate without reporters differs from that of `mdir run`'s control file; the
+overheads are the comparison:
+
+| Outputs | Python | Overhead | `mdir run` | Overhead |
+|---|---|---|---|---|
+| None | 0.289 | | 0.215 | |
+| Energies every 100 steps | 0.292 | +1.1% | 0.210 | within noise |
+| Energies every 1000 steps | 0.291 | +0.8% | 0.207 | within noise |
+| DCD every 1000 steps | 0.293 | +1.2% | 0.212 | within noise |
+| Python callback every 1000 steps | 0.291 | +0.8% | | |
+
+The resolution of `mdir run`'s timing is 1 µs per step (its run time is
+printed to 0.01 s). The callback's cost is a part boundary and a copy of
+the state: about 2 ms each here. It needs the memory of a part to be
+reused (#110, PR #115); without that fix, every part allocated its device
+memory anew and a callback every 1000 steps cost +46%.

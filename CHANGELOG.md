@@ -82,6 +82,11 @@ format, or the outputs; every such change is listed under **Changed** or
   `PotentialShift`), the control file's `[energy] coulomb_modifier` for PME
   (D205, #127).
 
+- Python: reporters of a simulation, `Simulation.reporters` with
+  `EnergyReporter`, `TrajectoryReporter` (DCD, XTC), and `CallbackReporter`;
+  the energy file and the trajectory are those of `mdir run`, written inside
+  the parts of a run at the periods given (D[python-reporters], #109).
+
 - Python: a simulation of a program whose integrator minimizes runs the
   minimizer of `mdir run`, `Simulation.minimize(steps=None)`, in parts
   that `request_stop()` and Ctrl-C end; `State.minimization` holds the row
