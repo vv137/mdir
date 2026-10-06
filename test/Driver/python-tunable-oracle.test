@@ -1,5 +1,5 @@
 # REQUIRES: python-api, openmm
-# Tunable parameters (D[python-tunable]) against independent references on
+# Tunable parameters (D213) against independent references on
 # the dipeptide in water: the energies at new charges, per-type sigma and
 # epsilon, a constant of a pair term, and the parameters of a tuple term
 # against OpenMM 8.6.1 (Reference platform) and NumPy sums; the correction

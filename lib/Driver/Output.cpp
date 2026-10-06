@@ -248,7 +248,7 @@ mdir::driver::getEnergyColumns(const Output &output) {
     columns.push_back({"volume", "Å^3"});
     columns.push_back({"area_xy", "Å^2"});
   }
-  // The version of the values of tunable parameters (D[python-tunable]).
+  // The version of the values of tunable parameters (D213).
   if (output.tunablesVersion >= 0)
     columns.push_back({"tunables_version", "-", true});
   return columns;
@@ -616,7 +616,7 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
   // the solvent and the solute, as for `mdir run`; an embedded program
   // (D196) still takes its energies, without a row.
   // The energies evaluated anew after an update of tunable parameters
-  // (D[python-tunable]) are of a step that has its row already.
+  // (D213) are of a step that has its row already.
   bool isRow = step != output.quietStep &&
                (output.energyPeriod <= 0 ||
                 (step - output.firstStep) % output.energyPeriod == 0);

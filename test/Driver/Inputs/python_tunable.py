@@ -1,4 +1,4 @@
-"""Tunable parameters of a Python model (D[python-tunable],
+"""Tunable parameters of a Python model (D213,
 docs/python-tunable.md).
 
 Usage: python_tunable.py ROOT SCENARIO [TARGET PRECISION | CLI WORK]

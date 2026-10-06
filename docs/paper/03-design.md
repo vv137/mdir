@@ -512,7 +512,7 @@ and the file is on stable storage before it takes its name
 
 A compiled program depends on the structure of its model (the terms and
 their expressions, the cutoff, the grid, the constraints) and on values. A
-Python model may declare values *tunable* (D[python-tunable],
+Python model may declare values *tunable* (D213,
 `docs/python-tunable.md`): charges, $\sigma$ and $\epsilon$ of the
 Lennard-Jones types, constants of pair terms, and parameters of tuple
 terms, each a vector $\boldsymbol\theta$ with a map $\iota$ from its sites,

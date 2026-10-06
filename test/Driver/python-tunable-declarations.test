@@ -1,5 +1,5 @@
 # REQUIRES: python-api
-# Tunable parameters of a Python model (D[python-tunable]): the arrays maps
+# Tunable parameters of a Python model (D213): the arrays maps
 # are built from, the declarations and their refusals, the one warning that
 # names an NBFIX of [ nonbond_params ] kept under per-type sigma, and the
 # program that goes stale when the declarations change.

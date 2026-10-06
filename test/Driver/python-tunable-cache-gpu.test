@@ -1,5 +1,5 @@
 # REQUIRES: python-api, cuda
-# Tunable parameters (D[python-tunable]) and the compile cache (D212) on the
+# Tunable parameters (D213) and the compile cache (D212) on the
 # GPU: the values of tunables are runtime data, not part of the module that
 # keys a cached host object, so a compile with other values hits the first
 # compile's entry and runs, to the bit, as one compiled without the cache,

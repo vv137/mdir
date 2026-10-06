@@ -32,7 +32,7 @@ CLI control-file keys, formats and overwrite behavior are unchanged.
 The temporary `Schedule` retains D191's fixed schedule; it is not `run(n)`.
 A persistent `mdir.Simulation` ([python-segments.md](python-segments.md))
 ignores it and runs the steps that `run(n)` asks for.
-Declared tunable runtime buffers followed in D[python-tunable]
+Declared tunable runtime buffers followed in D213
 ([python-tunable.md](python-tunable.md)): `System.tunables` is a compile
 input like the others, and `Program.plan["tunables"]` lists them.
 
@@ -62,7 +62,7 @@ snake case; defaults and the supported physics subset are those of
 
 | Object | Properties |
 |---|---|
-| System | `periodic`, `cutoff`, `pairlist_distance`, `switch_distance`, `truncation`, `electrostatics`, `coulomb_modifier`, `dispersion`, `pme_alpha`, `pme_tolerance`, `pme_spacing`, `pme_grid`, `pme_order`, `rigid_hydrogen_bonds`, `rigid_water`, `flexible_water`, `water_residues`, `pair_terms`, `tuple_terms`, `restraints`, `restraint_reference`, `tunables` (D[python-tunable]); read-only `particle_count`, `charges`, `particle_types`, `type_names`, `atom_names`, `residue_names`, `residue_indices` |
+| System | `periodic`, `cutoff`, `pairlist_distance`, `switch_distance`, `truncation`, `electrostatics`, `coulomb_modifier`, `dispersion`, `pme_alpha`, `pme_tolerance`, `pme_spacing`, `pme_grid`, `pme_order`, `rigid_hydrogen_bonds`, `rigid_water`, `flexible_water`, `water_residues`, `pair_terms`, `tuple_terms`, `restraints`, `restraint_reference`, `tunables` (D213); read-only `particle_count`, `charges`, `particle_types`, `type_names`, `atom_names`, `residue_names`, `residue_indices` |
 | InitialState | `positions`, `velocities`, `cell` |
 | Integrator | `method`, `timestep`, `minimize`, `minimize_step` |
 | Ensemble | `kind`, `temperature`, `tau_t`, `pressure`, `tau_p`, `compressibility`, `coupling_period`, `com_period`, `seed` |

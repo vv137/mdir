@@ -332,7 +332,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   prepared->referencePositions =
       s.restraintReference.empty() ? prepared->positions : s.restraintReference;
   // The tunable parameters, whose initial values the prepared model takes
-  // (D[python-tunable]).
+  // (D213).
   auto tunables = resolveTunables(s, c, *prepared);
   if (!tunables) return tunables.takeError();
   return PreparedModel{execution, std::move(c), std::move(*prepared), std::move(*tunables)};

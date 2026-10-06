@@ -166,7 +166,7 @@ struct Program {
   int64_t closingSteps = 1;
 
   /// A program with tunable parameters (Control::tunables,
-  /// D[python-tunable]): its values are those of its buffers, never
+  /// D213): its values are those of its buffers, never
   /// constants of its text. Its entry's `%first_call` is 2 for a call that
   /// evaluates the forces of the state that it is given anew, as the first
   /// call does, without the half kick back of leapfrog.

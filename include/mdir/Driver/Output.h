@@ -151,7 +151,7 @@ struct Output {
   /// state takes the energies of every step of energy, rows or not
   /// (D207).
   bool embedded = false;
-  /// A simulation with tunable parameters (D[python-tunable]): the version
+  /// A simulation with tunable parameters (D213): the version
   /// of their values, which the energy file takes as its last column, or
   /// -1 for none; and a step at which the energies are evaluated anew after
   /// an update, which takes no row, or -1.

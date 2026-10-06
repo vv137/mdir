@@ -1,5 +1,5 @@
 # REQUIRES: python-api, cuda
-# Updates of tunable parameters (D[python-tunable]) on the GPU: leapfrog
+# Updates of tunable parameters (D213) on the GPU: leapfrog
 # keeps its positions and velocities through an update; NPT updated before
 # its first run equals a compile with the new values to the bit, the
 # barostat taking the constants of the new values.

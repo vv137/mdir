@@ -324,7 +324,7 @@ run with the reciprocal sum on a second stream against the serial one
 (`pme-gpu.test`, D87). The spatial sort changes the order of sums; runs
 with and without it agree to about $10^{-10}$ (`reorder.test`).
 
-An update of tunable parameters (Section 3.6, D[python-tunable]) during a
+An update of tunable parameters (Section 3.6, D213) during a
 run of velocity Verlet at constant energy, of the charges, $\sigma$ and
 $\epsilon$ of every type, a constant of a pair term, and the force
 constants of tuple terms at once, gives the forces and energies at its

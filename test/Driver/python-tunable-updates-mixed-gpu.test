@@ -1,5 +1,5 @@
 # REQUIRES: python-api, cuda
-# Updates of tunable parameters (D[python-tunable]) on the GPU in mixed
+# Updates of tunable parameters (D213) on the GPU in mixed
 # precision: an update during a run equals, to the bit, a compile with the
 # new values from the same state (velocity Verlet, NVE, deterministic); an
 # update and its inverse; the model without tunables; refused updates; the

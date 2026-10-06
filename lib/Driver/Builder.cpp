@@ -1485,7 +1485,7 @@ llvm::Error Builder::collectTopology() {
   unsigned numTypes = topology.getNumTypes();
   program.tables.push_back({"lj_sigma", numTypes, topology.sigma});
   program.tables.push_back({"lj_epsilon", numTypes, topology.epsilon});
-  // The tunable constants of the pair terms (D[python-tunable]), a row that
+  // The tunable constants of the pair terms (D213), a row that
   // the kernels read in place of constants of their text.
   if (!control.tunableConstants.empty()) {
     Program::Table table;
@@ -3546,7 +3546,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     for (auto [c, constant] : llvm::enumerate(term.constants)) {
       std::string value = "%pt_c" + std::to_string(c);
       // A tunable constant is a value of the program's table, which an
-      // update changes without compiling (D[python-tunable]).
+      // update changes without compiling (D213).
       auto tunable = llvm::find(control.tunableConstants,
                                 std::pair<unsigned, std::string>(
                                     static_cast<unsigned>(k), constant.first));
@@ -8478,7 +8478,7 @@ void Builder::emitEntry() {
            << "  %baro_kt = arith.constant "
            << formatReal(units::boltzmann * control.temperature) << " : f64\n";
         // With tunables they depend on the values, and the entry takes
-        // them (D[python-tunable]).
+        // them (D213).
         program.baroConstant = constant;
         program.baroEnergyConstant = energyConstant;
         if (!program.takesConstants)
@@ -8597,7 +8597,7 @@ void Builder::emitEntry() {
       // v(-dt/2) = v(0) - (dt/2) F(0) / m on the first call; a call that
       // evaluates the forces anew after an update of the tunables
       // (%first_call = 2) has the velocities of the half step already
-      // (D[python-tunable]).
+      // (D213).
       os << "  %back = arith.constant -5.0e-01 : f64\n"
          << "  %back_dt = arith.mulf %back, %dt : f64\n"
          << "  %back_none = arith.constant 0.0 : f64\n"
@@ -8942,7 +8942,7 @@ llvm::Error Builder::build() {
           system.box[k] / units::length, axes[k],
           control.cutoffDistance);
   program.entry = "mdir_run";
-  // Tunable parameters (D[python-tunable]) are values of the buffers of a
+  // Tunable parameters (D213) are values of the buffers of a
   // program of segments, of the Python simulation that updates them.
   if (control.tunables) {
     if (!system.topology)

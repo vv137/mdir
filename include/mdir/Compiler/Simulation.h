@@ -62,7 +62,7 @@ struct SimulationState {
   /// That of the last step of a minimization that has taken steps.
   std::optional<SimulationMinimization> minimization;
   /// The version of the values of the tunable parameters that the forces
-  /// and the energies are of (D[python-tunable]).
+  /// and the energies are of (D213).
   int64_t tunablesVersion = 0;
 };
 
@@ -85,7 +85,7 @@ public:
                               const std::function<bool()> &poll = {},
                               bool energy = false);
   /// Evaluates the forces at the state, and the energies of a step of
-  /// energy, without taking a step (D[python-tunable]): the start of the
+  /// energy, without taking a step (D213): the start of the
   /// run before the first, and the forces of the state anew after it.
   /// After the first run, leapfrog's energies are not those of the step
   /// (its velocities are half a step behind) and stay unset; a program
@@ -120,7 +120,7 @@ public:
   /// The state after the last part that succeeded.
   llvm::Expected<SimulationState> getState() const;
 
-  /// The tunable parameters of the program (D[python-tunable],
+  /// The tunable parameters of the program (D213,
   /// docs/python-tunable.md), their values, the version of the values (0
   /// at the creation, one more for each update), and for each version the
   /// step after which it holds.
@@ -196,7 +196,7 @@ private:
   bool failed = false;
   /// The system that the program was built from, at its first step, which
   /// the values of the tunables are put into to build them anew; their
-  /// values, version, and history (D[python-tunable]).
+  /// values, version, and history (D213).
   driver::System compiledSystem;
   std::vector<std::vector<double>> tunableValues;
   int64_t tunablesVersion = 0;

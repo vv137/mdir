@@ -465,7 +465,7 @@ Simulation::create(const model::PreparedModel &prepared) {
     system.inputBox[k] = system.box[k];
 
   // The values of the tunables are put into the system that the program is
-  // built from to build them anew (D[python-tunable]).
+  // built from to build them anew (D213).
   simulation->compiledSystem = system;
   simulation->tunableValues = prepared.tunables.values;
   simulation->tunablesHistory = {{0, 0}};
@@ -650,7 +650,7 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
     a.pointers.push_back(&framePeriod);
   }
   // 2: the forces of the state given anew, after an update of the
-  // tunables (D[python-tunable]).
+  // tunables (D213).
   int64_t firstCall = hasRun ? (refreshing ? 2 : 0) : 1;
   a.pointers.push_back(&firstCall);
   double baroConstant = p.baroConstant, baroEnergyConstant = p.baroEnergyConstant;

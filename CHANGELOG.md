@@ -12,7 +12,7 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
-- Tunable parameters of a Python model (D[python-tunable], #130):
+- Tunable parameters of a Python model (D213, #130):
   `System.tunables` declares charges per particle, σ and ε per
   Lennard-Jones type (with the combining rule), constants of pair terms, and
   parameters of tuple terms as named vectors with a map from their sites,

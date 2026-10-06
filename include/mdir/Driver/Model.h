@@ -27,7 +27,7 @@ enum class Electrostatics { Cutoff, PME };
 enum class CoulombModifier { None, PotentialShift };
 enum class EnsembleKind { NVE, NVT, NPT };
 
-/// A tunable parameter (D[python-tunable], docs/python-tunable.md): a
+/// A tunable parameter (D213, docs/python-tunable.md): a
 /// vector θ of M entries and a map from the sites of `parameter` to them.
 /// `parameter` is "charge" (sites: the particles), "sigma" or "epsilon"
 /// (the Lennard-Jones types, with the combining rule), or, with `term`, a
@@ -121,7 +121,7 @@ struct System {
   /// coordinates file of the control file; empty: the positions of the
   /// initial state that is prepared.
   std::vector<double> restraintReference;
-  /// The tunable parameters (D[python-tunable]).
+  /// The tunable parameters (D213).
   std::vector<Tunable> tunables;
 };
 struct LoadedData {
@@ -176,7 +176,7 @@ struct PreparedModel {
   llvm::Expected<driver::Program> build() const;
 };
 /// Resolves the tunables of `model` against its prepared `control` and
-/// `system`, and puts their initial values into them (D[python-tunable]).
+/// `system`, and puts their initial values into them (D213).
 llvm::Expected<TunableSet> resolveTunables(const System &model,
                                            driver::Control &control,
                                            driver::System &system);
@@ -184,7 +184,7 @@ llvm::Expected<TunableSet> resolveTunables(const System &model,
 /// `system` (a copy of the topology), and collects the tails of the pair
 /// terms anew; an InputError if a value is not allowed or a pair term's
 /// tail enters or leaves the correction for the dispersion
-/// (D[python-tunable]).
+/// (D213).
 llvm::Error applyTunables(const TunableSet &set,
                           const std::vector<std::vector<double>> &values,
                           driver::Control &control, driver::System &system);

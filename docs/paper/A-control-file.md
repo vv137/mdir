@@ -26,7 +26,7 @@ D211 compiles one program of segments, whose entry
 does the work of the start only on its first call; it adds no control keys
 and changes no output formats or overwrite behavior.
 
-Tunable parameters of a Python model (D[python-tunable],
+Tunable parameters of a Python model (D213,
 [contract](../python-tunable.md)) add no control keys; a Python
 simulation's energy file takes a last column `tunables_version` when its
 model declares tunables, and is unchanged otherwise.

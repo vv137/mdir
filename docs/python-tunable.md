@@ -1,4 +1,4 @@
-# Tunable parameters of a Python model (D[python-tunable])
+# Tunable parameters of a Python model (D213)
 
 Issue #130, the M2a gate that D192 left open and the base of M2b
 (differentiable simulation, [roadmap](roadmap.md), Section 6.1; D195).

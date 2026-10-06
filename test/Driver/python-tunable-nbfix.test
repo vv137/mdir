@@ -1,6 +1,6 @@
 # REQUIRES: python-api
 # Per-type sigma and epsilon tunable on a table with an NBFIX of
-# [ nonbond_params ] (D[python-tunable], maintainer's decision on PR #159):
+# [ nonbond_params ] (D213, maintainer's decision on PR #159):
 # the pair CT-OW keeps its values, and an update during a run equals, to the
 # bit, a compile with the rule's values for the other pairs and the NBFIX's
 # own, on the CPU against a NumPy sum of the Lennard-Jones.

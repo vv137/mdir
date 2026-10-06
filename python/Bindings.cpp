@@ -193,7 +193,7 @@ PYBIND11_MODULE(mdir, m) {
                   [](driver::TupleTerm &t, py::object value) { host::particles(t, value); })
     .def_property("parameters", [](const driver::TupleTerm &t) { return host::parameters(t); },
                   [](driver::TupleTerm &t, py::sequence value) { host::parameters(t, value); });
-  // Tunable parameters (D[python-tunable]).
+  // Tunable parameters (D213).
   tunables::bindTunable(m);
   // Restraints (D74, D124; D198).
   py::enum_<driver::ReferenceScaling>(m, "ReferenceScaling")
@@ -519,7 +519,7 @@ PYBIND11_MODULE(mdir, m) {
     }
   };
   // The values of a simulation's tunables, a mapping of names to arrays
-  // (D[python-tunable]).
+  // (D213).
   struct TunableValues { py::object owner; };
   static auto simulationOf = [](const TunableValues &t) -> compiler::Simulation & {
     return *t.owner.cast<PySimulation &>().simulation;
@@ -624,7 +624,7 @@ PYBIND11_MODULE(mdir, m) {
       auto &s = self.cast<PySimulation &>();
       if (steps < 0) throw InputError("run takes a nonnegative number of steps");
       std::vector<CallbackReporter> callbacks = s.sync();
-      // No step, and the energies of the state (D[python-tunable]).
+      // No step, and the energies of the state (D213).
       if (steps == 0 && energy) {
         std::optional<llvm::Error> error;
         {

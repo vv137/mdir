@@ -154,7 +154,7 @@ struct Control {
   /// An owned topology supplied by an embedding front end. No file is reopened.
   bool inMemoryTopology = false;
   bool inMemoryCharmm = false;
-  /// Set by an embedding front end, not by a key (D[python-tunable]):
+  /// Set by an embedding front end, not by a key (D213):
   /// whether the model declares tunable parameters, whose values the
   /// program must take at run time rather than as constants; and the
   /// constants of pair terms that are tunable, by the index of the term and
