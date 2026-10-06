@@ -133,4 +133,5 @@ at the checkpoint of a minimization. The test also checks the refusals
 (`run(n)` on a minimization, `minimize()` on dynamics, a negative count),
 that `minimize(0)` takes no step and leaves no row, and that
 `minimize()` takes the steps of the schedule. Stops and Ctrl-C share the
-loop of parts with `run(n)`, which `python-segments.test` checks.
+loop of parts with `run(n)`, which `python-segments-errors-stops.test`
+checks.
