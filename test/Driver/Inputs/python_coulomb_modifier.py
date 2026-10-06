@@ -1,4 +1,4 @@
-"""The Coulomb modifier of the Python model (D[python-coulomb-modifier]): PME
+"""The Coulomb modifier of the Python model (D205): PME
 with the real-space term shifted at the cutoff, against `mdir run` with
 `coulomb_modifier = "POTENTIAL_SHIFT"`, and the refusal without PME."""
 import pathlib

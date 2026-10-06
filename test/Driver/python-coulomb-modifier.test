@@ -1,6 +1,6 @@
 # REQUIRES: python-api, hdf5
 # The Coulomb modifier of the Python model on the CPU
-# (D[python-coulomb-modifier]): PME shifted at the cutoff against mdir run.
+# (D205): PME shifted at the cutoff against mdir run.
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %mdir_python %S/Inputs/python_coulomb_modifier.py %S/Inputs/dipeptide CPU mdir %t | FileCheck %s
 # CHECK: CPU Double: the state at step 10 equals that of mdir run to the bit

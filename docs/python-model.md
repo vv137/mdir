@@ -123,7 +123,7 @@ only for the enabled Python interface. See [python-arrays.md](python-arrays.md).
 Setters whose value has a unit also take OpenMM unit quantities, converted
 at the boundary (D200, [python-units.md](python-units.md)).
 
-`System.coulomb_modifier` (D[python-coulomb-modifier], #127) is the
+`System.coulomb_modifier` (D205, #127) is the
 control file's `[energy] coulomb_modifier`: `CoulombModifier.None_` (the
 default, as in the control file) or `CoulombModifier.PotentialShift`, the
 real-space Coulomb term of PME shifted to zero at the cutoff

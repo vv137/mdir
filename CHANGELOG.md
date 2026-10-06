@@ -80,7 +80,7 @@ format, or the outputs; every such change is listed under **Changed** or
 
 - Python: `System.coulomb_modifier` (`CoulombModifier.None_`,
   `PotentialShift`), the control file's `[energy] coulomb_modifier` for PME
-  (D[python-coulomb-modifier], #127).
+  (D205, #127).
 
 - Python: a simulation of a program whose integrator minimizes runs the
   minimizer of `mdir run`, `Simulation.minimize(steps=None)`, in parts

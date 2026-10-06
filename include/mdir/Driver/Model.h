@@ -23,7 +23,7 @@ enum class Format { Amber, Gromacs, Charmm };
 enum class Electrostatics { Cutoff, PME };
 /// The `[energy] coulomb_modifier` of the control file: whether the
 /// real-space Coulomb term of PME is shifted to zero at the cutoff
-/// (Control::pmeShift; D[python-coulomb-modifier]).
+/// (Control::pmeShift; D205).
 enum class CoulombModifier { None, PotentialShift };
 enum class EnsembleKind { NVE, NVT, NPT };
 
