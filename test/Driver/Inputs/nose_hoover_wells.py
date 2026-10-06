@@ -13,9 +13,10 @@ This script moves that oscillator and the chain of Martyna, Klein, and
 Tuckerman (1992), with Q_1 = N_f k_B T / w^2 and Q_j = k_B T / w^2, w =
 2 pi / tau, acting at the end of each period of 10 steps; its action over
 the period is factorized as in Martyna, Tuckerman, Tobias, and Klein
-(1996), Suzuki-Yoshida weights of order 6, in 400 equal parts, enough that
-the result does not depend on their number. It compares the potential
-energy of each row of LOG with that of the oscillator.
+(1996), Suzuki-Yoshida weights of order 6, in n_c = ceil(50 h / tau) = 11
+equal parts. It finds the first action in which some part s meets
+|s v_j| > 3 (D[nhc-nan]), and compares the potential energy of each row of
+LOG, all before that action, with that of the oscillator.
 """
 import math
 import sys
@@ -36,11 +37,12 @@ kB = 0.0083144626181532
 kT = kB * 150.0
 kcal = 4.184
 omega2 = 2.0 * kcal * 100 / 39.948
-dt, period, tau, m, parts = 0.10925, 10, 5.0, 3, 400
+dt, period, tau, m = 0.10925, 10, 5.0, 3
+h = period * dt
+parts = math.ceil(50 * h / tau)
 w = 2 * math.pi / tau
 Q = [kT / w ** 2] * m
 Q[0] *= nf
-h = period * dt
 weights = [0.784513610477560, 0.235573213359357, -1.17767998417887,
            1.31518632068391, -1.17767998417887, 0.235573213359357,
            0.784513610477560]
@@ -54,14 +56,17 @@ def force(j, k):
 
 
 def chain(k):
-    scale = 1.0
+    """The factor of the velocities and the largest |s v_j| met."""
+    scale, largest = 1.0, 0.0
     for _ in range(parts):
         for weight in weights:
             s = weight * h / parts
+            largest = max([largest] + [abs(s * q) for q in v])
             v[m - 1] += 0.5 * s * force(m - 1, k)
             for j in range(m - 2, -1, -1):
                 d = math.exp(-0.25 * s * v[j + 1])
                 v[j] = (v[j] * d + 0.5 * s * force(j, k)) * d
+            largest = max([largest] + [abs(s * q) for q in v])
             f = math.exp(-s * v[0])
             scale *= f
             k *= f * f
@@ -69,33 +74,42 @@ def chain(k):
                 d = math.exp(-0.25 * s * v[j + 1])
                 v[j] = (v[j] * d + 0.5 * s * force(j, k)) * d
             v[m - 1] += 0.5 * s * force(m - 1, k)
-    return scale
+            largest = max([largest] + [abs(s * q) for q in v])
+    return scale, largest
 
 
 k0 = 0.5 * nf * kT
 x, b = 0.0, 1.0
 reference = {0: 0.0}
+stop = None
 for step in range(1, steps + 1):
     b -= 0.5 * dt * omega2 * x
     x += dt * b
     b -= 0.5 * dt * omega2 * x
     if step % period == 0:
-        b *= chain(k0 * b * b)
+        # The row of the step is written before the chain acts.
         reference[step] = k0 * omega2 * x * x / kcal
+        alpha, largest = chain(k0 * b * b)
+        if largest > 3.0:
+            stop = step
+            break
+        b *= alpha
+print("%d parts; the reference stops at step %s, where |s v_j| reaches %.3g"
+      % (parts, stop, largest))
 
-rows, column, worst = 0, None, 0.0
+rows, last, column, worst = 0, None, None, 0.0
 for line in open(log):
     words = line.split()
     if words[:2] == ["INFO:", "STEP"]:
         column = words.index("POTENTIAL_ENE")
     elif len(words) > 2 and words[0] == "INFO:" and words[1].isdigit():
         step = int(words[1])
-        value = float(words[column])
         rows += 1
-        difference = abs(value - reference[step])
+        last = step
+        difference = abs(float(words[column]) - reference.get(step, math.nan))
         if not math.isfinite(difference):
             worst = math.inf
         worst = max(worst, difference)
-print("%d rows, the largest difference of the potential energy %.2g "
-      "kcal/mol" % (rows, worst))
-print("within 0.01 kcal/mol: %s" % ("yes" if worst <= 0.01 else "no"))
+print("%d rows, the last at step %s; the largest difference of the potential "
+      "energy %.2g kcal/mol" % (rows, last, worst))
+print("within 0.001 kcal/mol: %s" % ("yes" if worst <= 0.001 else "no"))

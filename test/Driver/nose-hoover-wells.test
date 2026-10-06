@@ -3,38 +3,39 @@
 # velocity Verlet at omega dt = 0.5, 150 K, tau_T = 5 ps, and the chain
 # acting every 10 steps, at omega h = 5 (#117). The kinetic energy that the
 # chain sees swings by its whole size from one period to the next, not by
-# 1/sqrt(N_f) of it, and drives the chain's velocities to some 30 times
-# their thermal size 2 pi / tau_T. The run is thermostatted poorly, as the
-# warning of the short period says, but it runs: the potential energy of
-# every row is that of the oscillator moved with the chain of
-# nose_hoover_wells.py, whose action over the period is split finely. The
-# run splits the action into as many parts as keep |s v_j| at most 1 for
-# every part s and thermostat j, here 130 against the 11 of tau_T / 50, and
-# says so (D[nhc-nan]).
+# 1/sqrt(N_f) of it, and drives the chain's last velocity to some 15, then
+# 35 times its thermal size 2 pi / tau_T. Its action, factorized in the
+# n_c = 11 parts of tau_T / 50, then met |s v_j| of 4 and more, and at
+# about 6 ran to infinity: every column of the log was NaN from step 480.
+# The run now stops at the first action in which a part meets |s v_j| > 3
+# (D[nhc-nan]), at step 60, with the rows before it those of the
+# oscillator moved with the same chain by nose_hoover_wells.py, which stops
+# there too.
 #
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %python %S/Inputs/brownian_wells.py write %t 125
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/base.toml
 # RUN: cat %t/base.toml %t/wells.toml > %t/run.toml
-# RUN: cd %t && mdir run run.toml > run.log 2> run.err
-# RUN: %python %S/Inputs/nose_hoover_wells.py %t/run.log 372 800 | FileCheck %s
-# RUN: FileCheck %s --check-prefix=WARN < %t/run.err
-# RUN: FileCheck %s --check-prefix=LOG < %t/run.log
+# RUN: cd %t && not mdir run run.toml > run.log 2> run.err
+# RUN: %python %S/Inputs/nose_hoover_wells.py %t/run.log 372 1000 | FileCheck %s
+# RUN: FileCheck %s --check-prefix=ERR < %t/run.err
 
-# CHECK: 81 rows
-# CHECK: within 0.01 kcal/mol: yes
-# LOG: MDIR: the Nose-Hoover chain took up to 130 parts over a period of coupling, against 11 for its time constant: its velocities reached {{[0-9.]+}}/ps, {{[0-9.]+}} times their thermal size 2 pi / time_constant; the chain was far from equilibrium
-# WARN: warning: the Nose-Hoover chain acts every 1.0925 ps and its 'time_constant' is 5 ps
+# CHECK: 11 parts; the reference stops at step 60, where |s v_j| reaches 3.29
+# CHECK: 7 rows, the last at step 60;
+# CHECK: within 0.001 kcal/mol: yes
 
-# A chain that 1024 times those parts do not follow, here with a kinetic
-# energy 10^7 times that of the bath, stops the run instead of scaling the
-# velocities by NaN (D[nhc-nan]).
+# ERR: warning: the Nose-Hoover chain acts every 1.0925 ps and its 'time_constant' is 5 ps
+# ERR: mdir: at step 60 the Nose-Hoover chain no longer follows its factorization in 11 parts: a part moved it by |s v_j| = 3.29, above 3, from velocities ({{-?[0-9.]+}}, {{-?[0-9.]+}}, 22.2)/ps, 17.7 times their thermal size 2 pi / time_constant, with a kinetic energy 0.151 times that of the bath; the run stops. The chain is driven far from equilibrium; give a shorter 'interval' in [thermostat], a larger 'time_constant', or another thermostat
+
+# A chain whose action gives values that are not numbers, here with a
+# kinetic energy 10^7 times that of the bath, stops the run at its first
+# action, before the velocities are scaled.
 #
 # RUN: %python %S/Inputs/nose_hoover_wells.py hot %t/wells.gro %t/hot.gro 3000
-# RUN: sed -e 's|wells.gro|hot.gro|' -e 's|^steps      = 800|steps      = 20|' %t/run.toml > %t/hot.toml
+# RUN: sed -e 's|wells.gro|hot.gro|' %t/run.toml > %t/hot.toml
 # RUN: cd %t && not mdir run hot.toml 2>&1 | FileCheck %s --check-prefix=HOT
 #
-# HOT: mdir: at step 10 the Nose-Hoover chain does not converge over the period of coupling in 11264 parts, with a kinetic energy {{[0-9.]+}}e+07 times that of the bath; the run stops. The system is far from the temperature of the bath: bring it near first, by a minimization or another thermostat
+# HOT: mdir: at step 10 the Nose-Hoover chain no longer follows its factorization in 11 parts: a part moved it by |s v_j| = {{.*}} and values that are not numbers, above 3, from velocities (0, 0, 0)/ps, 0 times their thermal size 2 pi / time_constant, with a kinetic energy {{[0-9.]+}}e+07 times that of the bath; the run stops.
 
 #--- run.toml
 [input]
@@ -50,7 +51,7 @@ cutoff = 9.0
 [dynamics]
 integrator = "VELOCITY_VERLET"
 time_step  = 0.10925
-steps      = 800
+steps      = 1000
 seed       = 7
 center_of_mass_interval = 0
 

@@ -15,7 +15,6 @@
 # RUN: mdir check %t/a.toml | FileCheck %s --check-prefix=CHECK-TOOL
 
 # CHECK:      INFO:         0         0.0000 {{ *}}[[TOTAL:-[0-9.]+]] {{.*}} [[TOTAL]]
-# CHECK:      MDIR: the Nose-Hoover chain took up to 4 parts over a period of coupling, against 2 for its time constant: its velocities reached {{[0-9.]+}}/ps
 # CHECK:      MDIR: the momentum at the end is {{[0-9.]+}}e-1{{[0-9]}} amu nm/ps
 # CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
 

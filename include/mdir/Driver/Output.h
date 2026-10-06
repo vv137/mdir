@@ -214,12 +214,8 @@ struct Output {
   /// of the coupling, in the units of the run. Empty without one.
   std::vector<double> chain, chainMasses;
   double chainKT = 0.0, chainFreedom = 0.0, chainTime = 0.0;
-  /// The equal parts that the action over `chainTime` is split into at
-  /// least, and the most that an action took, more where the velocities of
-  /// the chain are far beyond their thermal size (D[nhc-nan]), with the
-  /// largest of those velocities met, in the units of the run.
-  int chainSubsteps = 1, chainMostParts = 0;
-  double chainFastest = 0.0;
+  /// The equal parts that the action over `chainTime` is split into.
+  int chainSubsteps = 1;
   /// The energy of the chain: Σ Q_j v_j² / 2 + N_f k_B T ξ_1 + k_B T Σ ξ_j.
   double getChainEnergy() const;
   /// Whether a barostat changes the cell, which the log then shows.
@@ -346,8 +342,8 @@ void _mlir_ciface_mdrtAddBath(double energy);
 /// The factor that a Nose-Hoover chain scales the velocities by over the
 /// period of coupling that ends at step `step`, from their kinetic energy
 /// `kinetic` in kJ/mol (D163a). The chain moves on; the change of its
-/// energy goes to the bath. A chain whose action does not converge stops
-/// the run (D[nhc-nan]).
+/// energy goes to the bath. A chain that its factorization no longer
+/// follows stops the run (D[nhc-nan]).
 double mdrtNoseHooverFactor(int64_t step, double kinetic);
 /// The kinetic energies of the rigid waters at the step of the next row of
 /// the log, of the velocities of the step and K_half, in kJ/mol

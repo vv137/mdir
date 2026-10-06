@@ -424,11 +424,9 @@ static const double chainWeights[7] = {
 /// thermostats are G_1 = (2K - N_f k_B T) / Q_1 and G_j = (Q_{j-1}
 /// v_{j-1}^2 - k_B T) / Q_j (Martyna, Klein, and Tuckerman, J. Chem. Phys.
 /// 97, 2635 (1992), eq. 2.9). Returns the factor of the particle
-/// velocities; `largest` is the largest |s v_j| that the action met, and
-/// `fastest` the largest |v_j|.
+/// velocities; `largest` is the largest |s v_j| that the action met.
 static double moveChain(const Output &output, double *xi, double *v,
-                        double kinetic, int parts, double &largest,
-                        double &fastest) {
+                        double kinetic, int parts, double &largest) {
   const std::vector<double> &q = output.chainMasses;
   size_t m = q.size();
   double kT = output.chainKT, freedom = output.chainFreedom;
@@ -442,12 +440,9 @@ static double moveChain(const Output &output, double *xi, double *v,
       // Not std::max, which would drop a NaN.
       if (!(std::fabs(s * v[j]) <= largest))
         largest = std::fabs(s * v[j]);
-      if (!(std::fabs(v[j]) <= fastest))
-        fastest = std::fabs(v[j]);
     }
   };
   largest = 0.0;
-  fastest = 0.0;
   double scale = 1.0, k = kinetic;
   for (int part = 0; part != parts; ++part) {
     for (double weight : chainWeights) {
@@ -478,6 +473,14 @@ static double moveChain(const Output &output, double *xi, double *v,
   return scale;
 }
 
+/// The largest |s v_j| that an action of a Nose-Hoover chain may meet, s
+/// a part w_k h / n_c and v_j the velocity of thermostat j (D[nhc-nan]).
+/// Near equilibrium it is about 0.2. On identical harmonic wells (#117),
+/// the action of 11 parts gave the potential energy within 0.015 kJ/mol of
+/// one of 1000 parts while it met at most 2.9, 0.3 kJ/mol beyond 3.3, and
+/// kJ/mol beyond 4; at about 6 the chain ran to infinity within an action.
+static constexpr double largestChainStep = 3.0;
+
 double mdrtNoseHooverFactor(int64_t step, double kinetic) {
   Output &output = *current;
   std::vector<double> &chain = output.chain;
@@ -485,63 +488,56 @@ double mdrtNoseHooverFactor(int64_t step, double kinetic) {
   if (m == 0 || !(kinetic > 0.0))
     return 1.0;
   double before = output.getChainEnergy();
-  // The parts of the action are at least those of its time constant,
-  // chainSubsteps, which follow velocities of the chain of the order of
-  // their thermal size 2 pi / tau_T. Each part of length s with a negative
-  // weight turns the damping exp(-s v_{j+1} / 4) into a growth, and with
-  // |s v_j| of a few the factorization no longer follows the chain and
-  // runs to infinity within one action: the velocities of a chain driven
-  // far from equilibrium, some 30 times their thermal size on identical
-  // harmonic wells, did that (#117). The parts are therefore as many as
-  // keep every |s v_j| that the action meets at most 1, the start taken
-  // from the velocities before it and doubled while the action meets more
-  // (D[nhc-nan]). Near equilibrium |s v_j| is about 0.2 at the least
-  // number, which therefore stays, and the chain moves as before. A chain
-  // that 1024 times the least number does not follow stops the run.
-  double fastest = 0.0;
-  for (size_t j = 0; j != m; ++j)
-    fastest = std::max(fastest, std::fabs(chain[m + j]));
-  double widest = 0.0;
-  for (double weight : chainWeights)
-    widest = std::max(widest, std::fabs(weight));
-  int least = output.chainSubsteps;
-  double wanted = std::ceil(widest * output.chainTime * fastest);
-  const int most = 1024 * least;
-  int parts = wanted > least
-                  ? static_cast<int>(std::min(wanted, static_cast<double>(most)))
-                  : least;
-  std::vector<double> moved;
-  double scale = 1.0, largest = 0.0, met = 0.0;
-  for (;;) {
-    moved = chain;
-    scale = moveChain(output, moved.data(), moved.data() + m, kinetic, parts,
-                      largest, met);
-    bool finite = std::isfinite(scale);
-    for (double value : moved)
-      finite = finite && std::isfinite(value);
-    if (finite && largest <= 1.0)
-      break;
-    if (parts >= most) {
-      // The run stops rather than scale the velocities by what does not
-      // converge.
-      char message[512];
-      std::snprintf(
-          message, sizeof message,
-          "at step %lld the Nose-Hoover chain does not converge over the "
-          "period of coupling in %d parts, with a kinetic energy %.3g times "
-          "that of the bath; the run stops. The system is far from the "
-          "temperature of the bath: bring it near first, by a minimization "
-          "or another thermostat",
-          static_cast<long long>(step), parts,
-          2.0 * kinetic / (output.chainFreedom * output.chainKT));
-      stopOnFailure(output, message);
-      return 1.0;
+  // The action is that of the canonical scheme in a fixed number of parts,
+  // chainSubsteps, chosen before the run. A part of length s with a
+  // negative weight turns the damping exp(-s v_{j+1} / 4) into a growth,
+  // undone only to the order of the factorization, so the scheme follows
+  // the chain only while every |s v_j| is small. A chain driven far beyond
+  // its thermal velocities 2 pi / tau_T leaves that range: the run then
+  // stops, on a copy of the chain and before the velocities are scaled,
+  // rather than continue with an action that no longer follows the chain
+  // or, as on identical harmonic wells (#117), with NaN (D[nhc-nan]). The
+  // guard reads the action and changes nothing in it.
+  std::vector<double> moved = chain;
+  double largest = 0.0;
+  double scale = moveChain(output, moved.data(), moved.data() + m, kinetic,
+                           output.chainSubsteps, largest);
+  bool finite = std::isfinite(scale);
+  for (double value : moved)
+    finite = finite && std::isfinite(value);
+  if (!finite || !(largest <= largestChainStep)) {
+    // The velocities of the chain before the action, and their thermal
+    // size sqrt(k_B T / Q_M) = 2 pi / tau_T.
+    std::string velocities;
+    double fastest = 0.0;
+    for (size_t j = 0; j != m; ++j) {
+      char value[32];
+      std::snprintf(value, sizeof value, "%s%.3g", j ? ", " : "",
+                    chain[m + j]);
+      velocities += value;
+      fastest = std::max(fastest, std::fabs(chain[m + j]));
     }
-    parts = std::min(2 * parts, most);
+    double omega = std::sqrt(output.chainKT *
+                             (m > 1 ? 1.0 : output.chainFreedom) /
+                             output.chainMasses[m - 1]);
+    char message[1024];
+    std::snprintf(
+        message, sizeof message,
+        "at step %lld the Nose-Hoover chain no longer follows its "
+        "factorization in %d parts: a part moved it by |s v_j| = %.3g%s, "
+        "above %g, from velocities (%s)/ps, %.3g times their thermal size "
+        "2 pi / time_constant, with a kinetic energy %.3g times that of the "
+        "bath; the run stops. The chain is driven far from equilibrium; give "
+        "a shorter 'interval' in [thermostat], a larger 'time_constant', or "
+        "another thermostat",
+        static_cast<long long>(step), output.chainSubsteps, largest,
+        finite ? "" : " and values that are not numbers", largestChainStep,
+        velocities.c_str(), fastest / omega,
+        2.0 * kinetic / (output.chainFreedom * output.chainKT));
+    stopOnFailure(output, message);
+    return 1.0;
   }
   chain = std::move(moved);
-  output.chainMostParts = std::max(output.chainMostParts, parts);
-  output.chainFastest = std::max(output.chainFastest, met);
   // The conserved energy is that of the system with the energy of the
   // chain; what the scaling takes from the particles is in the chain, so
   // the bath counts the change of the chain's energy.
