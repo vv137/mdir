@@ -76,7 +76,7 @@ Initialization and symbol-resolution failures are returned as owned error
 strings, which survive destruction of the ORC session.
 
 Creation, entry execution, and destruction take the
-same process mutex. Since D[python-simulation-compile] a simulation compiles
+same process mutex. Since D211 a simulation compiles
 one program, whose entry begins the run or continues it as an argument says,
 so it owns one engine. Polling Python happens between parts after releasing it.
 A caller must keep a simulation alive while one of its methods runs; native

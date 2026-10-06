@@ -113,7 +113,7 @@ format, or the outputs; every such change is listed under **Changed** or
   stages of the Python ala3 example at a hundredth of their steps take 146 s
   instead of 240 s on a GPU in mixed precision, and 162 s instead of 251 s
   in double, with less CPU time; results are unchanged to the bit in the
-  deterministic mode (D[python-simulation-compile], #147).
+  deterministic mode (D211, #147).
 
 ### Added
 

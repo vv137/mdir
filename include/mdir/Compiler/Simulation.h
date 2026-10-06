@@ -65,7 +65,7 @@ struct SimulationState {
 class Simulation {
 public:
   /// Builds the program of the segments of `prepared` and compiles it, once
-  /// (D[python-simulation-compile]).
+  /// (D211).
   static llvm::Expected<std::unique_ptr<Simulation>>
   create(const model::PreparedModel &prepared);
   ~Simulation();
@@ -142,7 +142,7 @@ private:
   model::PreparedModel prepared;
   /// The one program of the simulation, whose entry begins the run on the
   /// first call and continues the last segment on the others
-  /// (D[python-simulation-compile]).
+  /// (D211).
   std::unique_ptr<Engine> compiled;
   /// What the compiled code reports to: the cell, the bath, the state at
   /// the end of a part.

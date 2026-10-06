@@ -1,4 +1,4 @@
-"""A simulation compiles one program (D[python-simulation-compile]): runs
+"""A simulation compiles one program (D211): runs
 of dynamics in several calls of the entry, and a minimization in several,
 load the kernels of one module each, which the runtime traces with
 MDRT_TRACE.

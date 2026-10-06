@@ -238,7 +238,7 @@ Python simulation, `Simulation.minimize(steps)`. D207 (#109,
 [reporters](python-reporters.md)) writes `mdir run`'s energy file and
 trajectory inside the parts of a run and calls Python functions at their
 steps. `examples/ala3/run.py` (#82) runs the four stages of the
-example from Python, beside its control files. D[python-simulation-compile]
+example from Python, beside its control files. D211
 (#147, [compiles](python-segments.md#compiles)) compiles one program per
 simulation, whose entry branches the start on an argument, with MLIR's
 threads from one pool of the process. Checkpoints, DLPack views and

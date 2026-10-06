@@ -1,5 +1,5 @@
 # REQUIRES: python-api, cuda
-# A simulation compiles one program (D[python-simulation-compile]): after
+# A simulation compiles one program (D211): after
 # its creation, runs in several calls of the entry load no module of kernels,
 # which they would if a later call compiled a program of its own. The runtime
 # traces each load with MDRT_TRACE.

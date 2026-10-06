@@ -170,7 +170,7 @@ struct Control {
   /// runs any number of steps from any step of the coupling period, and
   /// whether the call begins the run or continues the state that the last
   /// segment left, as a run from `restartInput` continues a checkpoint
-  /// (D[python-simulation-compile]).
+  /// (D211).
   bool segments = false;
 
   // [output] (D149)

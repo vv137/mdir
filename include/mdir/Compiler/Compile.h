@@ -35,7 +35,7 @@ llvm::Expected<CompiledProgram> compile(const model::PreparedModel &);
 mlir::DialectRegistry getRegistry();
 /// The threads that the MLIR contexts of the lowerings of a process share,
 /// one pool for the process, so that no context keeps a pool of its own
-/// (D[python-simulation-compile]). A child forked after a lowering makes a
+/// (D211). A child forked after a lowering makes a
 /// pool of its own; the threads of its parent's do not exist in it.
 llvm::ThreadPoolInterface &getThreadPool();
 /// Makes `context`, created with threading disabled, lower with the threads

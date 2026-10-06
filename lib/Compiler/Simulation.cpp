@@ -2,7 +2,7 @@
 // docs/python-segments.md). It compiles one program of segments, whose
 // entry begins the run as `mdir run` does on its first call and continues
 // the state that the last call left on the others, as `mdir run --continue`
-// continues a checkpoint (D[python-simulation-compile]); the entry takes the
+// continues a checkpoint (D211); the entry takes the
 // counts of its loops, so that the program runs any number of steps from any
 // step of the period of coupling.
 #include "mdir/Compiler/Simulation.h"
@@ -271,7 +271,7 @@ compileEngine(const Control &control, const System &system,
       setenv("CUDA_ROOT", MDIR_CUDA_ROOT, /*overwrite=*/0);
   }
   // The context lowers with the threads of the process, so that a
-  // simulation keeps no pool of its own (D[python-simulation-compile]).
+  // simulation keeps no pool of its own (D211).
   engine->context = std::make_unique<mlir::MLIRContext>(
       compiler::getRegistry(), mlir::MLIRContext::Threading::DISABLED);
   compiler::shareThreadPool(*engine->context);
@@ -528,7 +528,7 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
 
   size_t count = system.getNumParticles();
   // The first call begins the run and ignores the forces that it is given
-  // (D[python-simulation-compile]); a later call continues those that the
+  // (D211); a later call continues those that the
   // last left.
   if (p.takesForces && hasRun && forces.size() != 3 * count)
     return simulationError("the segment takes forces, but has none; this "

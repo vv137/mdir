@@ -753,7 +753,7 @@ struct Coupled {
   }
   bool isRestart() const { return !control.restartInput.empty(); }
   /// Whether the entry begins a run or continues the last segment as its
-  /// argument %first_call says (D196, D[python-simulation-compile]): a
+  /// argument %first_call says (D196, D211): a
   /// program of segments is one program for the first segment and the
   /// later ones, whose work at the start is a branch on that argument.
   bool branchesStart() const { return control.segments; }
@@ -8203,7 +8203,7 @@ void Builder::emitEntry() {
   if (control.segments && !control.minimize)
     os << ",\n    %count_energy_periods: i64, %frame_period: i64";
   // Whether the call begins the run, nonzero, or continues the state that
-  // the last call left (D[python-simulation-compile]).
+  // the last call left (D211).
   if (branchesStart())
     os << ", %first_call: i64";
   os << ") {\n";
@@ -8511,7 +8511,7 @@ void Builder::emitEntry() {
 
   // A program of segments does the work of the start in a branch on
   // %is_first; a later call takes the forces and the velocities given
-  // (D[python-simulation-compile]).
+  // (D211).
   os.flush();
   size_t startMark = program.module.size();
   if (!isRestart()) {

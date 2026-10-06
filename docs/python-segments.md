@@ -22,7 +22,7 @@ compiles what it runs from the program's prepared model, once: one program
 of segments, whose entry begins as `mdir run` begins on its first call and
 continues from the state the last segment left on the others, as
 `mdir run --continue` continues from a checkpoint
-(D[python-simulation-compile], [Compiles](#compiles)). It is built from the
+(D211, [Compiles](#compiles)). It is built from the
 system at its first step, so its constants and neighbor structures are
 the same whatever state the run reaches. Later edits of the
 compile inputs do not change a simulation; compile again and create a new
@@ -220,7 +220,7 @@ that `MDIR_RUNTIME_DIR` names.
 
 ## Compiles
 
-A simulation compiles one program (D[python-simulation-compile], #147).
+A simulation compiles one program (D211, #147).
 Before, it compiled a program for the first segment at creation and, on the
 first part after it, a second program that continued the state, a full
 lowering and JIT of a nearly identical program on the path of the run. The
