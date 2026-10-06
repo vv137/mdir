@@ -1,5 +1,5 @@
 # With constraints, the log's K_half is that of the velocities of the half
-# steps after the constraints of the positions (D[optimal-temperature]):
+# steps after the constraints of the positions (D203):
 # those of the chords (x_{n+1} - x_n) / dt of the trajectory. The dipeptide
 # in OPC of pme-settle.test with SHAKE and SETTLE, on the CPU in double
 # precision: runs of 1 to 6 steps from the same start give the positions of

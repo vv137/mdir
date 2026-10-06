@@ -1,5 +1,5 @@
 """K_half of the log against the half steps of the trajectory
-(D[optimal-temperature]).
+(D203).
 
   chord_half_steps.py LOG DT X1 X2 ... XN
 

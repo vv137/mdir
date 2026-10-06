@@ -21,7 +21,7 @@ format, or the outputs; every such change is listed under **Changed** or
   runs with constraints read 1 to 2 K higher at 2 fs and 4 to 5 K at 4 fs; the
   dynamics, the thermostats, and the barostats are unchanged. With rigid
   waters, `mdir run` ends with the temperatures of the solute and of the
-  solvent (D[optimal-temperature], #112).
+  solvent (D203, #112).
 
 - In the deterministic mode (`deterministic = true`) device kernels no longer
   contract products and sums into fused multiply-adds, so that a step that

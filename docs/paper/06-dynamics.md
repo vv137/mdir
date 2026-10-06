@@ -741,7 +741,7 @@ chord velocities $(\mathbf x_{n+2} - \mathbf x_{n+1})/\Delta t$ and
 $(\mathbf x_{n+1} - \mathbf x_n)/\Delta t$, the velocities after the
 constraints of the positions: after its second half kick, the step takes
 the first half of the next as that step will, without changing the state
-(D[optimal-temperature]). The estimate is accurate as an equilibrium mean,
+(D203). The estimate is accurate as an equilibrium mean,
 with constraints when the half-step velocities include the corrections of
 the constraints of the positions. The row of step 0 with constraints, and
 Langevin dynamics with constraints, take $K$. The couplings take the

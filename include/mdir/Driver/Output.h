@@ -140,7 +140,7 @@ struct Output {
   /// of the next row, K and K_half, if `hasSolvent`, and for each row
   /// since the start, the temperatures of the solute and of the solvent:
   /// the optimal estimate and that of the velocities of the step
-  /// (D[optimal-temperature]).
+  /// (D203).
   double solventFreedom = 0.0;
   bool hasSolvent = false;
   double solventKinetic = 0.0, solventHalf = 0.0;
@@ -321,7 +321,7 @@ llvm::Expected<std::string> backUpOutput(const std::string &path);
 extern "C" {
 /// `kinetic` is the kinetic energy of the velocities of the step, and
 /// `excess` the mean of those of the half steps before and after it less
-/// `kinetic`, K_half - K (D[optimal-temperature]).
+/// `kinetic`, K_half - K (D203).
 void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
                                     double kinetic, double excess,
                                     double virial);
@@ -345,7 +345,7 @@ void _mlir_ciface_mdrtAddBath(double energy);
 double mdrtNoseHooverFactor(double kinetic);
 /// The kinetic energies of the rigid waters at the step of the next row of
 /// the log, of the velocities of the step and K_half, in kJ/mol
-/// (D[optimal-temperature]).
+/// (D203).
 void mdrtWriteSolvent(double kinetic, double half);
 /// The coordinates of the terms over centers of groups at the step `step`
 /// (D145), in Å and radians, and the energy and the forces of each term,

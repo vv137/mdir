@@ -70,7 +70,7 @@ struct System {
   /// The number of distances that constraints keep.
   size_t numConstraints = 0;
   /// The number of rigid waters that SETTLE keeps, the solvent whose
-  /// temperature the log gives apart (D[optimal-temperature]).
+  /// temperature the log gives apart (D203).
   size_t numSettles = 0;
   /// The degrees of freedom of the rigid waters, 6 each, less their share
   /// of those of the center of mass, in proportion to their number.

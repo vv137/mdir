@@ -1,4 +1,4 @@
-# The optimal temperature of the log (D[optimal-temperature]). 125 atoms
+# The optimal temperature of the log (D203). 125 atoms
 # of argon, each in a harmonic well of its own, under velocity Verlet at
 # omega dt = 0.5 with velocity rescaling at 150 K, which holds the kinetic
 # energy of the velocities of the steps at the target. The log's

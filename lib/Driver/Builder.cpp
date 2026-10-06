@@ -491,7 +491,7 @@ private:
   }
   /// Whether the steps that the log reads measure the kinetic energy of
   /// the half steps around their end from the velocities
-  /// (D[optimal-temperature]): with constraints, which the forces alone do
+  /// (D203): with constraints, which the forces alone do
   /// not give it for. Under Langevin dynamics the half steps hold the noise
   /// of a step not yet taken, and Brownian dynamics has no momenta, so
   /// neither measures them.
@@ -508,7 +508,7 @@ private:
                            bool solvent = false);
   /// Whether the steps of energy report the kinetic energies of the rigid
   /// waters, from which the log gives the temperatures of the solvent and
-  /// of the solute (D[optimal-temperature]).
+  /// of the solute (D203).
   bool reportsSolvent() const { return measuresHalfSteps() && hasSettles(); }
   /// Emits the call that gives the host the kinetic energies of the rigid
   /// waters `sums` (emitHalfStepKinetic) before the row of the log.
@@ -4203,7 +4203,7 @@ void Builder::emitPrograms() {
     bool returnsCurrent = leapfrog && (withVirial || scales);
     // The steps of the rows of the log return the kinetic energy of each
     // axis at the half steps around their end, measured
-    // (D[optimal-temperature]).
+    // (D203).
     bool measured = measuresHalfSteps() && kind.measures;
     // The steps around a scaling of Trotter type also return the trace of
     // the virial of the groups at their new positions, which the count of
@@ -4453,7 +4453,7 @@ void Builder::emitHalfStepKinetic(StringRef velocities, bool leapfrog,
   // drifted with, and those that the next step will drift with, which are
   // taken here as that step takes them, by a kick, a drift, and the
   // constraints of the positions. The forces alone do not give them with
-  // constraints (D[optimal-temperature]). Nothing here feeds the state
+  // constraints (D203). Nothing here feeds the state
   // that the step returns.
   bool settles = hasSettles();
   std::vector<const Program::TupleSet *> shakeSets = getShakeSets();
@@ -6217,7 +6217,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       std::string full = isLeapfrog() ? now : "%vl";
       emitKineticEnergy(os, "%k", full, massName, inner);
       // K_half - K, measured from the velocities of the half steps with
-      // constraints and from the forces without (D[optimal-temperature]).
+      // constraints and from the forces without (D203).
       std::string excess = emitKineticExcess(
           inner, "l" + here, measuresHalfSteps() ? "%khsl" : "", "%fl", full);
       if (excess.empty())
@@ -8029,7 +8029,7 @@ void Builder::emitEntry() {
     emitKineticEnergy(os, "%k0", velocities, "%m", "  ");
     // K_half - K from the forces without constraints; with them there is
     // no step before the start to measure, and the row takes K
-    // (D[optimal-temperature]).
+    // (D203).
     std::string startExcess =
         emitKineticExcess("  ", "s0", "", "%f0", velocities);
     if (startExcess.empty())

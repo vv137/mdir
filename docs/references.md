@@ -501,7 +501,7 @@ Comput.* **15**, 84–94 (2019).
 Used for: the optimal temperature, from the kinetic energies at the step
 and at the half steps, which the log reports and the thermostats control,
 with the half steps measured under constraints (D45,
-D[optimal-temperature]).
+D203).
 
 ### Jung2026
 
@@ -621,7 +621,7 @@ M. Lingenheil, R. Denschlag, R. Reichold, P. Tavan, "The
 [doi:10.1021/ct8000365](https://doi.org/10.1021/ct8000365)
 
 Used for: the check that the solute and the solvent of a thermostatted
-run share one temperature (D[optimal-temperature]).
+run share one temperature (D203).
 
 ### Lorentz1881
 

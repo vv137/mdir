@@ -541,7 +541,7 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
   // K_half, exceeds `kinetic` by `excess`: (dt^2 / 8) sum F^2 / m without
   // constraints, measured from the velocities of the half steps with them.
   // The pressure takes K_half, and the temperature the optimal estimate
-  // (2 K_half + K) / 3 (D45, D[optimal-temperature]). See Jung et al., J.
+  // (2 K_half + K) / 3 (D45, D203). See Jung et al., J.
   // Chem. Phys. 148, 164109 (2018), and J. Chem. Theory Comput. 15, 84
   // (2019).
   double half = kinetic + excess;
@@ -549,7 +549,7 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
   double temperature =
       2.0 * optimal / (output.degreesOfFreedom * units::boltzmann);
   // The temperatures of the solvent, the rigid waters, and of the solute,
-  // the rest, each with its own degrees of freedom (D[optimal-temperature]).
+  // the rest, each with its own degrees of freedom (D203).
   if (output.hasSolvent) {
     output.hasSolvent = false;
     double solvent = output.solventFreedom;

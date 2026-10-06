@@ -1412,7 +1412,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   }
   // The temperatures of the solute and of the solvent, the rigid waters,
   // over the rows of the log: their means, with errors from ten blocks of
-  // rows (D[optimal-temperature]). A gradient between them at a time step
+  // rows (D203). A gradient between them at a time step
   // is the hot-solvent/cold-solute problem of Lingenheil et al. (2008).
   if (!output.solventOptimal.empty()) {
     auto summarize = [](const std::vector<double> &values) {
