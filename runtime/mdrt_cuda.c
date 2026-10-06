@@ -561,19 +561,31 @@ void mgpuEventRecord(CUevent event, CUstream stream) {
    are recorded with their sizes, and the free blocks are reused for
    requests of the same size. */
 #define MAX_BLOCKS 4096
+/* An activation of an entry that an embedding program keeps across its
+   calls (a Python simulation, D[resident-buffers]): what the activation
+   allocates is its own, and returns to the pool when the program closes
+   it, so the memory of the device stays that of one activation however
+   many parts it runs (#110). Several activations may be open at once, one
+   for each live simulation, and one of them is current while its code
+   runs. `mdir run` opens none. */
+struct Activation {
+  /* Memory shared with the host that the activation allocated. */
+  CUdeviceptr *managed;
+  size_t numManaged, roomManaged;
+  /* The structures of neighbors (groups and matrices) that it made: their
+     host records are freed when it closes, and their memory of the device
+     returns to the pool with its other blocks. */
+  void **handles;
+  size_t numHandles, roomHandles;
+};
+static struct Activation *currentActivation = NULL;
+
 struct Block {
   CUdeviceptr pointer;
   uint64_t size;
-  /* Whether a call of an entry that an embedding program opened
-     (mdrtDeviceBeginCall) allocated the block; it returns to the pool when
-     the call closes (#110). */
-  int ofCall;
+  /* The activation that allocated the block, or null. */
+  struct Activation *owner;
 };
-static int inCall = 0;
-/* Memory shared with the host that a call allocated, freed when it closes. */
-#define MAX_CALL_MANAGED 256
-static CUdeviceptr callManaged[MAX_CALL_MANAGED];
-static int numCallManaged = 0;
 static struct Block liveBlocks[MAX_BLOCKS];
 static int numLive = 0;
 static struct Block freeBlocks[MAX_BLOCKS];
@@ -581,6 +593,17 @@ static int numFree = 0;
 /* Whether memory of the device was allocated that `liveBlocks` does not
    record, for want of room. */
 static int untracked = 0;
+
+/* Makes the room of a list that grows twice as large. */
+static void *growList(void *list, size_t *room, size_t size) {
+  *room = *room ? 2 * *room : 8;
+  void *grown = realloc(list, *room * size);
+  if (!grown) {
+    fprintf(stderr, "mdrt: out of memory of the host\n");
+    abort();
+  }
+  return grown;
+}
 
 void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
   (void)stream;
@@ -592,8 +615,12 @@ void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
   if (isHostShared) {
     check(cuMemAllocManaged(&pointer, size, CU_MEM_ATTACH_GLOBAL),
           "cuMemAllocManaged");
-    if (inCall && numCallManaged < MAX_CALL_MANAGED)
-      callManaged[numCallManaged++] = pointer;
+    struct Activation *a = currentActivation;
+    if (a) {
+      if (a->numManaged == a->roomManaged)
+        a->managed = growList(a->managed, &a->roomManaged, sizeof(*a->managed));
+      a->managed[a->numManaged++] = pointer;
+    }
     end(ALLOCATE, start);
     return (void *)pointer;
   }
@@ -607,7 +634,7 @@ void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
   if (!pointer)
     check(cuMemAlloc(&pointer, size), "cuMemAlloc");
   if (numLive < MAX_BLOCKS)
-    liveBlocks[numLive++] = (struct Block){pointer, size, inCall};
+    liveBlocks[numLive++] = (struct Block){pointer, size, currentActivation};
   else
     untracked = 1;
   end(ALLOCATE, start);
@@ -639,24 +666,14 @@ void mgpuMemFree(void *pointer, CUstream stream) {
   end(ALLOCATE, start);
 }
 
-/* The structures of neighbors (groups and matrices) that a call made: their
-   host records are freed when it closes, and their memory of the device
-   returns to the pool with the call's other blocks. */
-static void **callHandles = NULL;
-static size_t numCallHandles = 0, roomCallHandles = 0;
-
+/* Records a structure of neighbors that the current activation made. */
 static void recordCallHandle(void *handle) {
-  if (!inCall)
+  struct Activation *a = currentActivation;
+  if (!a)
     return;
-  if (numCallHandles == roomCallHandles) {
-    roomCallHandles = roomCallHandles ? 2 * roomCallHandles : 8;
-    callHandles = realloc(callHandles, roomCallHandles * sizeof(void *));
-    if (!callHandles) {
-      fprintf(stderr, "mdrt: out of memory of the host\n");
-      abort();
-    }
-  }
-  callHandles[numCallHandles++] = handle;
+  if (a->numHandles == a->roomHandles)
+    a->handles = growList(a->handles, &a->roomHandles, sizeof(*a->handles));
+  a->handles[a->numHandles++] = handle;
 }
 
 /* Returns true if `pointer` is memory of the device: in a block that the
@@ -1047,34 +1064,100 @@ void mdrtMatrixGrow(int64_t handle, int64_t width) {
  * Calls of an entry by an embedding program
  *===----------------------------------------------------------------------===*/
 
-/* A program that calls an entry more than once (a Python simulation, D196)
-   opens a call before each and closes it after. What the call allocated is
-   its own: its blocks return to the pool, where the next call takes the
-   blocks of the same sizes, so the memory of the device stays that of one
-   call (#110). `mdir run` calls its entry once and opens none. */
-void mdrtDeviceBeginCall(void) { inCall = 1; }
+/* An embedding program opens an activation before it first calls an entry
+   (D[resident-buffers]), enters it whenever the code of the activation
+   runs, leaves it when the code waits between parts, and closes it when
+   the activation ends: its blocks return to the pool, where later
+   activations take the blocks of the same sizes. */
+void *mdrtDeviceActivationOpen(void) {
+  struct Activation *a = calloc(1, sizeof(struct Activation));
+  if (!a) {
+    fprintf(stderr, "mdrt: out of memory of the host\n");
+    abort();
+  }
+  return a;
+}
 
-void mdrtDeviceEndCall(void) {
-  if (!inCall)
+void mdrtDeviceActivationEnter(void *activation) {
+  currentActivation = activation;
+}
+
+void mdrtDeviceActivationLeave(void) { currentActivation = NULL; }
+
+void mdrtDeviceActivationClose(void *activation) {
+  struct Activation *a = activation;
+  if (!a)
     return;
-  /* No work of the call may still use a block that is reused or freed. */
+  if (currentActivation == a)
+    currentActivation = NULL;
+  /* No work of the activation may still use a block that is reused or
+     freed. */
+  if (context)
+    enter();
   finish();
   for (int i = numLive; i-- != 0;) {
-    if (!liveBlocks[i].ofCall)
+    if (liveBlocks[i].owner != a)
       continue;
     struct Block block = liveBlocks[i];
     liveBlocks[i] = liveBlocks[--numLive];
-    block.ofCall = 0;
+    block.owner = NULL;
     if (numFree < MAX_BLOCKS)
       freeBlocks[numFree++] = block;
     else
       check(cuMemFree(block.pointer), "cuMemFree");
   }
-  for (int i = 0; i != numCallManaged; ++i)
-    check(cuMemFree(callManaged[i]), "cuMemFree");
-  numCallManaged = 0;
-  for (size_t i = 0; i != numCallHandles; ++i)
-    free(callHandles[i]);
-  numCallHandles = 0;
-  inCall = 0;
+  for (size_t i = 0; i != a->numManaged; ++i)
+    check(cuMemFree(a->managed[i]), "cuMemFree");
+  for (size_t i = 0; i != a->numHandles; ++i)
+    free(a->handles[i]);
+  free(a->managed);
+  free(a->handles);
+  free(a);
+}
+
+/* Memory of the device that an embedding program holds outside any
+   activation, and copies to and from it on the stream of the kernels: the
+   state of a simulation at the end of its last part, which a part that
+   fails returns to (D196, D[resident-buffers]). */
+void *mdrtDeviceAllocateKept(uint64_t size) {
+  enter();
+  CUdeviceptr pointer = 0;
+  if (size)
+    check(cuMemAlloc(&pointer, size), "cuMemAlloc");
+  return (void *)pointer;
+}
+
+void mdrtDeviceFreeKept(void *pointer) {
+  if (!pointer)
+    return;
+  enter();
+  finish();
+  check(cuMemFree((CUdeviceptr)pointer), "cuMemFree");
+}
+
+/* Copies `size` bytes from the device to the device, after the work issued
+   before it and before the work issued after it; the host does not wait. */
+void mdrtDeviceCopyWithin(void *destination, const void *source,
+                          uint64_t size) {
+  if (!size)
+    return;
+  mgpuStreamCreate();
+  check(cuMemcpyAsync((CUdeviceptr)destination, (CUdeviceptr)source, size,
+                      sharedStream),
+        "cuMemcpyAsync");
+  isPending = 1;
+}
+
+/* Copies `size` bytes from the device to the host once the work issued
+   before it is done, and returns when they are there. */
+void mdrtDeviceCopyToHost(void *destination, const void *source,
+                          uint64_t size) {
+  if (!size)
+    return;
+  mgpuStreamCreate();
+  check(cuMemcpyDtoHAsync(destination, (CUdeviceptr)source, size,
+                          sharedStream),
+        "cuMemcpyDtoHAsync");
+  isPending = 1;
+  finish();
 }

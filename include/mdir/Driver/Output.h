@@ -267,9 +267,6 @@ struct Output {
 
   /// Takes the state when the run ends.
   System *system = nullptr;
-  /// The forces that a segment ends with, in the order of the files, from
-  /// a program of segments (D196).
-  std::vector<double> finalForces;
   /// The last row of energies, in kJ/mol, K, bar, and nm^3 (the total
   /// without the bath, `conserved` with it), for a program
   /// that embeds the run (D196); `step` is -1 before one.
@@ -290,6 +287,13 @@ struct Output {
 
 /// Sets the output that the functions below write to.
 void setOutput(Output *output);
+
+/// Without a periodic cell (D142), fails the run of `output` if the
+/// positions `x` of the step `step`, in the order of the input, have spread
+/// so far that images of the particles could interact; as a program does at
+/// its end (mdrtFinish).
+void checkParticleSpread(const Output &output, const std::vector<double> &x,
+                         int64_t step);
 
 /// The signal that has asked the run to stop, or 0. A handler of SIGTERM
 /// and SIGINT sets it; the run stops at its next checkpoint (D131).
@@ -398,8 +402,6 @@ void _mlir_ciface_mdrtWriteCheckpointWithForces(int64_t step,
                                                 void *velocities,
                                                 void *forces, void *ids);
 void _mlir_ciface_mdrtFinish(void *positions, void *velocities, void *ids);
-/// The forces that a segment ends with (D196).
-void _mlir_ciface_mdrtFinishForces(void *forces, void *ids);
 }
 
 #endif // MDIR_DRIVER_OUTPUT_H

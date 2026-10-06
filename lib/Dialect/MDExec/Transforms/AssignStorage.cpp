@@ -1403,6 +1403,16 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
         arguments.push_back(buffer);
         continue;
       }
+      if (call.getInPlace()) {
+        // The host takes the buffer of the device where it is
+        // (D[resident-buffers]).
+        auto device = cast<MemRefType>(buffer.getType());
+        arguments.push_back(memref::MemorySpaceCastOp::create(
+            builder, op->getLoc(),
+            MemRefType::get(device.getShape(), device.getElementType()),
+            buffer));
+        continue;
+      }
 
       // The host reads a copy. The buffer that takes it is free again when
       // the call returns.
