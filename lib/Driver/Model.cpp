@@ -172,6 +172,11 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
     return unsupported("unsupported ensemble");
   if (s.electrostatics != Electrostatics::Cutoff && s.electrostatics != Electrostatics::PME)
     return unsupported("unsupported electrostatics");
+  // As the control file: the modifier is of the real-space term of PME.
+  if (s.coulombModifier != CoulombModifier::None && s.coulombModifier != CoulombModifier::PotentialShift)
+    return input("unknown Coulomb modifier");
+  if (s.coulombModifier != CoulombModifier::None && s.electrostatics != Electrostatics::PME)
+    return input("the Coulomb modifier is for PME electrostatics");
   if (s.truncation != driver::Truncation::None && s.truncation != driver::Truncation::Shift &&
       s.truncation != driver::Truncation::Switch && s.truncation != driver::Truncation::ForceSwitch &&
       s.truncation != driver::Truncation::PowerForceSwitch && s.truncation != driver::Truncation::SquaredDistanceSwitch)
@@ -219,6 +224,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.truncation = s.truncation;
   c.topologyDispersion = s.dispersion;
   c.pme = s.electrostatics == Electrostatics::PME;
+  c.pmeShift = s.coulombModifier == CoulombModifier::PotentialShift;
   c.pmeAlpha = s.pmeAlpha * driver::units::length;
   c.pmeAlphaTolerance = s.pmeTolerance;
   c.pmeMaxSpacing = s.pmeSpacing / driver::units::length;

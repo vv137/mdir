@@ -60,7 +60,7 @@ snake case; defaults and the supported physics subset are those of
 
 | Object | Properties |
 |---|---|
-| System | `periodic`, `cutoff`, `pairlist_distance`, `switch_distance`, `truncation`, `electrostatics`, `dispersion`, `pme_alpha`, `pme_tolerance`, `pme_spacing`, `pme_grid`, `pme_order`, `rigid_hydrogen_bonds`, `rigid_water`, `flexible_water`, `water_residues`, `pair_terms`, `tuple_terms`; read-only `particle_count` |
+| System | `periodic`, `cutoff`, `pairlist_distance`, `switch_distance`, `truncation`, `electrostatics`, `coulomb_modifier`, `dispersion`, `pme_alpha`, `pme_tolerance`, `pme_spacing`, `pme_grid`, `pme_order`, `rigid_hydrogen_bonds`, `rigid_water`, `flexible_water`, `water_residues`, `pair_terms`, `tuple_terms`; read-only `particle_count` |
 | InitialState | `positions`, `velocities`, `cell` |
 | Integrator | `method`, `timestep`, `minimize`, `minimize_step` |
 | Ensemble | `kind`, `temperature`, `tau_t`, `pressure`, `tau_p`, `compressibility`, `coupling_period`, `com_period`, `seed` |
