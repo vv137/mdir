@@ -10,6 +10,14 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ## [Unreleased]
 
+### Added
+
+- `MDIR_COMPILE_THREADS` bounds the threads with which a process lowers
+  its programs (D211's process-wide pool otherwise takes every core). The
+  test suite sets it to the cores over `gpu_workers`, or to
+  `-Dcompile_threads=N`, so that sixteen tests compiling at once do not ask
+  for sixteen times the cores.
+
 ### Changed
 
 - Under a plain cutoff (`lennard_jones_modifier = "NONE"`, a Coulomb

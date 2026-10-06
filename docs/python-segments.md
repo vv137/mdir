@@ -257,7 +257,12 @@ of `mdir.compile`, lowers with the threads of one process-wide
 `llvm::DefaultThreadPool`, given to it through `MLIRContext::setThreadPool`,
 so a simulation keeps no pool of its own. The pool is never destroyed. Its
 threads do not exist in a child forked after a lowering; a child that lowers
-makes a pool of its own.
+makes a pool of its own. It has as many threads as the host has cores,
+unless the environment variable `MDIR_COMPILE_THREADS` gives a smaller
+positive number. Processes that compile side by side take it to share the
+cores: the test suite sets it to the cores over `gpu_workers` (8 on a
+128-core host), where a suite took 285, 252, and 262 s with 128, 8, and 1
+threads to a process (one RTX 3090, a shared host).
 
 In the deterministic mode the Python ala3 example gives the states, energy
 files, and trajectory of the two programs to the bit, on the CPU and a GPU,
