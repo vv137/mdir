@@ -515,8 +515,8 @@ their expressions, the cutoff, the grid, the constraints) and on values. A
 Python model may declare values *tunable* (D[python-tunable],
 `docs/python-tunable.md`): charges, $\sigma$ and $\epsilon$ of the
 Lennard-Jones types, constants of pair terms, and parameters of tuple
-terms, each a vector $\boldsymbol\theta$ with a map $\pi$ from its sites,
-so that site $s$ takes $\theta_{\pi(s)}$. Nothing that depends on them is a
+terms, each a vector $\boldsymbol\theta$ with a map $\iota$ from its sites,
+so that site $s$ takes $\theta_{\iota(s)}$. Nothing that depends on them is a
 constant of the program's text: the charges, the table of the types, and
 the fields of tuples are buffers of the entry already (Section 3.6), and a
 tunable constant of an expression is read from a row of the program's

@@ -393,6 +393,7 @@ def run_oracle(cli, work):
     alpha, grid = 2.0, 72
     system, state = model(lambda s: [mdir.Tunable("q", "charge"), mdir.Tunable("sigma", "sigma"),
                                      mdir.Tunable("epsilon", "epsilon"),
+                                     mdir.Tunable("soft_l", "l", term="soft"),
                                      mdir.Tunable("soft_a", "a", term="soft"),
                                      mdir.Tunable("k", "k", term="spring")])
     system.truncation = mdir.Truncation.None_
@@ -406,7 +407,10 @@ def run_oracle(cli, work):
     theta1 = {"q": theta0["q"] * (1.0 + 0.1 * rng.standard_normal(theta0["q"].shape)),
               "sigma": theta0["sigma"] * (1.0 + 0.03 * rng.standard_normal(theta0["sigma"].shape)),
               "epsilon": theta0["epsilon"] * (1.0 + 0.2 * rng.random(theta0["epsilon"].shape)),
-              "soft_a": np.array([7.0]), "k": theta0["k"] * 2.0}
+              "soft_a": np.array([7.0]), "soft_l": np.array([0.06]), "k": theta0["k"] * 2.0}
+    # Two constants of one term, declared in the other order than the
+    # term's: each is read from its own column of the table.
+    assert sim.program.plan["tunables"][3]["name"] == "soft_l"
     sim.tunables.update(theta1)
     u1 = evaluated(sim)
 
@@ -465,7 +469,7 @@ def run_oracle(cli, work):
             r = np.sqrt((d * d).sum(1))
             js = np.arange(i + 1, len(x))
             keep = (r < 0.8) & np.array([(i, j) not in exclusions for j in js])
-            total += (theta["soft_a"][0] * np.exp(-r[keep] / 0.05)).sum()
+            total += (theta["soft_a"][0] * np.exp(-r[keep] / theta["soft_l"][0])).sum()
         k = theta["k"][[0, 1, 1]]
         for (i, j), kk, r0 in zip([[1, 4], [4, 6], [6, 8]], k, [0.25, 0.26, 0.27]):
             d = x[j] - x[i]

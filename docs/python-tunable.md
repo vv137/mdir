@@ -225,7 +225,7 @@ in two.
 | Leapfrog through an update | The state before it | Positions and velocities equal to the bit; forces back at the old values within 2.3e-13 kJ/mol/nm (double), 1.8e-4 (mixed) | 1e-9, 1e-3 of the largest force |
 | An update and its inverse | The energy of the state before | Equal (CPU, double and mixed) | 1e-9, 1e-4 relative |
 | Tunables at the model's values, 20 steps | The model without tunables | Potential within 3e-12 (double) and 9e-11 (mixed) relative on the CPU: the table of the rule replaces Amber's, within 2e-7 | 1e-7, 1e-5 relative |
-| Energy at new charges, σ, ε, `a`, and spring constants | OpenMM 8.6.1 (Reference) and NumPy, PME β = 2/nm, grid 72 | 1.3e-3 kJ/mol at the new values, 4.6e-4 at the old; the change, -102.03 kJ/mol, within 8.6e-4 | 2e-3, 1e-3 kJ/mol (B-splines of order 4 against 5) |
+| Energy at new charges, σ, ε, both constants `a` and `l` of the pair term (two columns of its table), and spring constants | OpenMM 8.6.1 (Reference) and NumPy, PME β = 2/nm, grid 72 | 1.3e-3 kJ/mol at the new values, 4.6e-4 at the old; the change, 253.01 kJ/mol, within 8.6e-4 | 2e-3, 1e-3 kJ/mol (B-splines of order 4 against 5) |
 | Correction for the dispersion at new σ and ε | $-\tfrac{2\pi}{3}N^2\langle C_6\rangle/(Vr_c^3)$ in NumPy | Within 1.0e-14 relative | 1e-9 |
 | $\partial U/\partial l$ of the pair term by central differences ($h = 10^{-5}$ nm, two updates) | `observe` of `mdir run` at the same positions, with tail and shift estimate (D189, D209, D210) | 172.744550 against 172.744542 kcal/mol/Å, 4.7e-8 relative | 1e-6 |
 

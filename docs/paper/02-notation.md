@@ -48,7 +48,7 @@ element.
 | $a_i,\ c_{ij}$ | 1 if particle $i$ is in the selection that `[free_energy]` decouples, 0 otherwise; 1 if exactly one of $i$, $j$ is, $c_{ij} = a_i + a_j - 2a_ia_j$ |
 | $r_A,\ \alpha_\text{sc},\ p$ | The soft-core distance of a decoupled pair, $r_A^6 = \alpha_\text{sc}\sigma^6\lambda_\text{V}^p + r^6$, and its two parameters |
 | $u_k,\ f_k$ | Reduced energy $U_k/k_BT$ of state $k$ and its reduced free energy $F_k/k_BT$ |
-| $\boldsymbol\theta = (\theta_0, \dots, \theta_{M_\theta-1}),\ \pi;\ \hat{\boldsymbol\theta}$ | A tunable parameter of a Python model, and the map $\pi$ from its sites (particles, types, tuples, or one constant) to its entries, $\pi(s) = -1$ for a site that keeps its value; the values at which stored frames were sampled (Section 3.6) |
+| $\boldsymbol\theta = (\theta_0, \dots, \theta_{M_\theta-1}),\ \iota;\ \hat{\boldsymbol\theta}$ | A tunable parameter of a Python model, and the map $\iota$ from its sites (particles, types, tuples, or one constant) to its entries, $\iota(s) = -1$ for a site that keeps its value; the values at which stored frames were sampled (Section 3.6) |
 | $S_n,\ w_n$ | A stored frame and its weight when frames sampled at $\hat{\boldsymbol\theta}$ are reweighted to $\boldsymbol\theta$ (Section 3.6) |
 
 **Units.** Inside a compiled program MDIR computes in nm, ps, amu, and
