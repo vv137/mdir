@@ -519,7 +519,6 @@ llvm::Expected<System> mdir::driver::prepareTopologySystem(
   system.topology = std::make_shared<Topology>(std::move(*topology));
   system.keepsMomentum =
       (!control.isLangevin() && !control.isBrownian()) || control.comPeriod > 0;
-  addThermostatWarnings(control, system);
   if (llvm::Error error = placeCell(control, system))
     return std::move(error);
   return std::move(system);

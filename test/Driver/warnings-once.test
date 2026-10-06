@@ -1,0 +1,58 @@
+# Every warning of a system is reported once (#124): `short_thermostat_period`
+# was added twice to a system from a topology, and `mdir check`, `mdir check
+# --json`, and `mdir run` showed it twice. A topology run (argon in wells,
+# GROMACS files) and a control-file run (the PDB mixture of thermostat.test),
+# both with a Nose-Hoover chain whose 'time_constant' is short, report it
+# once, and no warning code appears twice in the JSON report.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/brownian_wells.py write %t 125
+# RUN: sed -n '/^#--- wells.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/base.toml
+# RUN: cat %t/base.toml %t/wells.toml > %t/topology.toml
+# RUN: cp %S/Inputs/mixture.pdb %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/thermostat.test | sed '1d;$d' \
+# RUN:     | sed -e 's|"V-RESCALE"|"NOSE-HOOVER"|' -e 's|^steps *= 2000|steps = 20|' -e 's|energy_interval = 1000|energy_interval = 10|' \
+# RUN:     > %t/pdb.toml
+#
+# RUN: cd %t && mdir check --json topology.toml | grep -o '"short_thermostat_period"' | wc -l | FileCheck %s --check-prefix=ONE
+# RUN: cd %t && mdir check --json topology.toml | grep -o '"code": *"[a-z_]*"' | sort | uniq -d | wc -l | FileCheck %s --check-prefix=ZERO
+# RUN: cd %t && mdir check topology.toml 2>&1 | grep -c 'the Nose-Hoover chain acts every' | FileCheck %s --check-prefix=ONE
+# RUN: cd %t && mdir run topology.toml 2>&1 >/dev/null | grep -c 'the Nose-Hoover chain acts every' | FileCheck %s --check-prefix=ONE
+#
+# RUN: cd %t && mdir check --json pdb.toml | grep -o '"short_thermostat_period"' | wc -l | FileCheck %s --check-prefix=ONE
+# RUN: cd %t && mdir check --json pdb.toml | grep -o '"code": *"[a-z_]*"' | sort | uniq -d | wc -l | FileCheck %s --check-prefix=ZERO
+# RUN: cd %t && mdir check pdb.toml 2>&1 | grep -c 'the Nose-Hoover chain acts every' | FileCheck %s --check-prefix=ONE
+# RUN: cd %t && mdir run pdb.toml 2>&1 >/dev/null | grep -c 'the Nose-Hoover chain acts every' | FileCheck %s --check-prefix=ONE
+#
+# ONE: {{^ *1$}}
+# ZERO: {{^ *0$}}
+
+#--- wells.toml
+[input]
+topology    = "wells.top"
+coordinates = "wells.gro"
+
+[output]
+energy_interval = 10
+
+[energy]
+cutoff = 9.0
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.10925
+steps      = 20
+seed       = 7
+center_of_mass_interval = 0
+
+[ensemble]
+ensemble    = "NVT"
+temperature = 150.0
+
+[thermostat]
+method        = "NOSE-HOOVER"
+time_constant = 5.0
+
+[boundary]
+type = "PERIODIC"
+#--- end
