@@ -290,6 +290,20 @@ private:
     for (const auto &[name, v] : control.freeEnergy.lambdas)
       values["lambda_" + name] = "%lambda_" + name;
   }
+  /// Whether the potential being emitted is one whose derivatives enter
+  /// free energies and gradients, `@alchemical` and `@observe<k>`
+  /// (D[shifted-derivatives]): its pair terms cut at the cutoff without a
+  /// shift (`lennard_jones_modifier = "NONE"`, a Coulomb cutoff, the direct
+  /// sum of PME without `coulomb_modifier`) are shifted to 0 at the cutoff,
+  /// each pair within it less its energy at r_c, as the forces are the
+  /// gradient of that potential and the dynamics samples it.
+  bool shiftsAtCutoff = false;
+  /// The truncation of the pair terms of the potential being emitted.
+  Truncation getPairTruncation() const {
+    return shiftsAtCutoff && control.truncation == Truncation::None
+               ? Truncation::Shift
+               : control.truncation;
+  }
   /// The term of `@observe<k>` and the constants of it that the potential
   /// takes as its last arguments, `%ob_<name>`, in place of their values
   /// (D189).
@@ -796,11 +810,13 @@ static std::pair<double, double> getReactionField(const Control &control) {
 }
 
 /// The attribute of an md.sum_relation that truncates its energy at the
-/// cutoff as `control` says; the power force switch is for the
-/// Lennard-Jones of a topology only, and the reader rejects it elsewhere.
-static std::string getTruncation(const Control &control) {
+/// cutoff as `truncation` says, with the switching distance of `control`;
+/// the power force switch is for the Lennard-Jones of a topology only, and
+/// the reader rejects it elsewhere.
+static std::string getTruncation(const Control &control,
+                                 Truncation truncation) {
   double from = control.switchDistance * units::length;
-  switch (control.truncation) {
+  switch (truncation) {
   case Truncation::None:
   case Truncation::PowerForceSwitch:
   case Truncation::SquaredDistanceSwitch:
@@ -813,6 +829,9 @@ static std::string getTruncation(const Control &control) {
     return " truncation(force_switch, from = " + formatReal(from) + ")";
   }
   llvm_unreachable("unknown truncation");
+}
+static std::string getTruncation(const Control &control) {
+  return getTruncation(control, control.truncation);
 }
 
 std::string Builder::getFieldParameters() const {
@@ -3067,6 +3086,9 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
                                     int tupleTerm, int pairTerm,
                                     int externalTerm) {
   double cutoff = control.cutoffDistance * units::length;
+  // The truncation of the pair terms, shifted in `@alchemical` and
+  // `@observe<k>` (D[shifted-derivatives]).
+  Truncation truncation = getPairTruncation();
   auto has = [&](StringRef set) {
     return llvm::any_of(program.tupleSets, [&](const Program::TupleSet &s) {
       return s.name == set;
@@ -3249,8 +3271,9 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     total = sum;
   };
 
-  // Lennard-Jones and Coulomb, both cut at the cutoff with no shift, over
-  // the pairs that are not excluded.
+  // Lennard-Jones and Coulomb, both cut at the cutoff, over the pairs that
+  // are not excluded: as the modifiers say, and in `@alchemical` and
+  // `@observe<k>` shifted to 0 at the cutoff (D[shifted-derivatives]).
   bool lj = terms & LennardJones, coulomb = terms & Coulomb;
   bool pairTerms = (terms & PairTerms) && !control.pairs.empty();
   if (lj || coulomb || pairTerms) {
@@ -3291,7 +3314,8 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     for (size_t n = 0; n != stems.size(); ++n)
       os << ", !real";
     os << ")\n"
-       << "      exchange(symmetric, asserted)" << getTruncation(control)
+       << "      exchange(symmetric, asserted)"
+       << getTruncation(control, truncation)
        << " {\n"
        << "  ^bb0(%r: f64, %d: vector<3xf64>, %type_i: i32, %type_j: i32, "
        << "%q_i: f64, %q_j: f64"
@@ -3429,8 +3453,8 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
              << "    %sc_asl = arith.mulf %sc_as, " << power << " : f64\n"
              << "    %sc_x = arith.addf %sc_r6, %sc_asl : f64\n"
              ;
-          if (control.truncation != Truncation::None &&
-              control.truncation != Truncation::Shift) {
+          if (truncation != Truncation::None &&
+              truncation != Truncation::Shift) {
             os << "    %sc_sixth = arith.constant "
                << formatReal(1.0 / 6.0) << " : f64\n"
                << "    %sc_ra = math.powf %sc_x, %sc_sixth : f64\n"
@@ -3440,8 +3464,8 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
             distance = "%sc_r";
           }
         }
-        bool plain = control.truncation == Truncation::None ||
-                     control.truncation == Truncation::Shift;
+        bool plain = truncation == Truncation::None ||
+                     truncation == Truncation::Shift;
         if (alpha > 0.0 && plain) {
           // Without a switch, (σ/r_A)⁶ = σ⁶ / x needs no root: one
           // expression for every pair, x = r⁶ for those not decoupled.
@@ -3452,7 +3476,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
              << "    %sc_q6 = arith.divf %sc_g6, %sc_xx : f64\n"
              << "    %sc_q12 = arith.mulf %sc_q6, %sc_q6 : f64\n";
           std::string a = "%sc_q12", b = "%sc_q6";
-          if (control.truncation == Truncation::Shift) {
+          if (truncation == Truncation::Shift) {
             double cut6 = std::pow(cutoff, -6.0);
             os << "    %sc_rc6 = arith.constant " << formatReal(cut6)
                << " : f64\n"
@@ -3471,14 +3495,14 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
              << "    %sc_t = arith.subf " << a << ", " << b << " : f64\n"
              << "    %lj_full = arith.mulf %sc_e4, %sc_t : f64\n";
         } else {
-          emitLennardJones("%sigma", "%epsilon", "%lj_full",
-                           control.truncation, distance);
+          emitLennardJones("%sigma", "%epsilon", "%lj_full", truncation,
+                           distance);
         }
         os << "    %lj_cl = arith.mulf %cross, %lambda_vdw : f64\n"
            << "    %lj_scale = arith.subf %al_one, %lj_cl : f64\n"
            << "    %lj = arith.mulf %lj_scale, %lj_full : f64\n";
       } else {
-        emitLennardJones("%sigma", "%epsilon", "%lj", control.truncation);
+        emitLennardJones("%sigma", "%epsilon", "%lj", truncation);
       }
       value = "%lj";
       if (program.ljpme) {
@@ -3509,7 +3533,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
            << "    %lp_cr = arith.divf %lp_c6, %lp_r6 : f64\n"
            << "    %lp_d = arith.mulf %lp_cr, %lp_kept : f64\n";
         std::string correction = "%lp_d";
-        if (control.truncation == Truncation::Shift) {
+        if (truncation == Truncation::Shift) {
           double shift = (1.0 - getDispersionScreen(beta * cutoff)) /
                          std::pow(cutoff, 6.0);
           os << "    %lp_shift = arith.constant " << formatReal(shift)
@@ -3551,7 +3575,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
            << "    %erfc = math.erfc %br : f64\n"
            << "    %screened = arith.divf %erfc, " << rq << " : f64\n";
         std::string kernel = "%screened";
-        if (control.pmeShift) {
+        if (control.pmeShift || shiftsAtCutoff) {
           os << "    %shift = arith.constant "
              << formatReal(std::erfc(beta * cutoff) / cutoff) << " : f64\n"
              << "    %shifted = arith.subf %screened, %shift : f64\n";
@@ -3570,6 +3594,14 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
            << "    %near = arith.addf %inverse, %field : f64\n"
            << "    %rf = arith.subf %near, %crf : f64\n"
            << "    %coulomb = arith.mulf %fqq, %rf : f64\n";
+      } else if (shiftsAtCutoff) {
+        // f q q (1/r − 1/r_c), the cutoff shifted (D[shifted-derivatives]).
+        os << "    %one = arith.constant 1.0 : f64\n"
+           << "    %inverse = arith.divf %one, " << rq << " : f64\n"
+           << "    %rc_inverse = arith.constant " << formatReal(1.0 / cutoff)
+           << " : f64\n"
+           << "    %cut = arith.subf %inverse, %rc_inverse : f64\n"
+           << "    %coulomb = arith.mulf %fqq, %cut : f64\n";
       } else {
         os << "    %coulomb = arith.divf %fqq, " << rq << " : f64\n";
       }
@@ -8834,10 +8866,16 @@ llvm::Error Builder::build() {
   // the other states (D161).
   if (system.topology && !control.freeEnergyFile.empty()) {
     lambdaArguments = true;
+    shiftsAtCutoff = true;
     emitTopologyPotential("alchemical", AllTerms | Alchemical);
+    shiftsAtCutoff = false;
     lambdaArguments = false;
   }
+  // The energies and derivatives of `observe`, of the potential that the
+  // forces sample (D[shifted-derivatives]).
+  shiftsAtCutoff = true;
   emitObservedPotentials();
+  shiftsAtCutoff = false;
   emitPullPotentials();
   emitPrograms();
   emitEntry();
