@@ -41,12 +41,16 @@
 # RUN: cd %t && mdir run observe.toml > observe.log && mdir run observe-off.toml > observe-off.log
 # RUN: %python %S/Inputs/check_pair_tail.py %t 2e-6 derivatives | FileCheck %s --check-prefix=DERIVATIVES
 #
-# A tail that diverges, or a term of the time, is refused with the
-# correction on, naming the term.
+# A tail that diverges, or a term of the time, is refused when the control
+# file asks for the correction, naming the term; with its own
+# 'dispersion_correction = "NONE"' the term is left out, and the run has the
+# dispersion line of the topology alone.
 # RUN: sed -e 's|^expression = "-c8.*|expression = "-c8/r^3"|' %t/r8.toml > %t/diverges.toml
-# RUN: cd %t && not mdir run diverges.toml 2>&1 | FileCheck %s --check-prefix=DIVERGES
+# RUN: not mdir check %t/diverges.toml 2>&1 | FileCheck %s --check-prefix=DIVERGES
 # RUN: sed -e 's|^expression = "-c8.*|expression = "-c8/r^8*(1 + t)"|' %t/r8.toml > %t/time.toml
-# RUN: cd %t && not mdir run time.toml 2>&1 | FileCheck %s --check-prefix=TIME
+# RUN: not mdir check %t/time.toml 2>&1 | FileCheck %s --check-prefix=TIME
+# RUN: sed -e 's|^name       = "r8"|&\ndispersion_correction = "NONE"|' %t/diverges.toml > %t/out.toml
+# RUN: cd %t && mdir run out.toml | FileCheck %s --check-prefix=OUT
 #
 # The topology's correction is refused with a modifier (D121), and so the
 # tails of the pair terms as well; with the correction off, the correction
@@ -69,8 +73,9 @@
 # DERIVATIVES:      nbfix.energy: tail -0.979478
 # DERIVATIVES:      derivatives: ok
 
-# DIVERGES: the correction for the dispersion integrates the pair term 'r8' beyond the cutoff, and its tail diverges or cannot be integrated (its energy must decay faster than 1/r^3); give 'dispersion_correction = "NONE"'
-# TIME: the correction for the dispersion takes the tail of the pair term 'r8' as a constant, and its expression depends on the time t; give 'dispersion_correction = "NONE"'
+# DIVERGES: the correction for the dispersion integrates the pair term 'r8' beyond the cutoff, and its tail diverges (its energy must decay faster than 1/r^3); give 'dispersion_correction = "NONE"' in the term to leave it out
+# TIME: the correction for the dispersion integrates the pair term 'r8' beyond the cutoff, and its expression depends on the time t; give 'dispersion_correction = "NONE"' in the term to leave it out
+# OUT: MDIR:   dispersion -0.789900
 # SHIFT: the correction for the dispersion needs a plain cutoff; with a 'lennard_jones_modifier', give 'dispersion_correction = "NONE"'
 
 #--- run.toml
