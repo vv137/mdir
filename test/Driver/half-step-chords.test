@@ -1,0 +1,60 @@
+# With constraints, the log's K_half is that of the velocities of the half
+# steps after the constraints of the positions (D[optimal-temperature]):
+# those of the chords (x_{n+1} - x_n) / dt of the trajectory. The dipeptide
+# in OPC of pme-settle.test with SHAKE and SETTLE, on the CPU in double
+# precision: runs of 1 to 6 steps from the same start give the positions of
+# the steps, and the run of 6 steps a row at every step. K_half at steps
+# 2..5 agrees with that of the chords to the rounding of the log, while it
+# exceeds K by about 1.8 kcal/mol.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/base.toml
+# RUN: cd %t && sed -e "s/STEPS/1/g" base.toml > r1.toml && mdir run r1.toml > r1.log && mdir checkpoint --print=positions c1.h5 > x1.txt
+# RUN: cd %t && sed -e "s/STEPS/2/g" base.toml > r2.toml && mdir run r2.toml > r2.log && mdir checkpoint --print=positions c2.h5 > x2.txt
+# RUN: cd %t && sed -e "s/STEPS/3/g" base.toml > r3.toml && mdir run r3.toml > r3.log && mdir checkpoint --print=positions c3.h5 > x3.txt
+# RUN: cd %t && sed -e "s/STEPS/4/g" base.toml > r4.toml && mdir run r4.toml > r4.log && mdir checkpoint --print=positions c4.h5 > x4.txt
+# RUN: cd %t && sed -e "s/STEPS/5/g" base.toml > r5.toml && mdir run r5.toml > r5.log && mdir checkpoint --print=positions c5.h5 > x5.txt
+# RUN: cd %t && sed -e "s/STEPS/6/g" base.toml > r6.toml && mdir run r6.toml > r6.log && mdir checkpoint --print=positions c6.h5 > x6.txt
+# RUN: %python %S/Inputs/chord_half_steps.py %t/r6.log 0.001 %t/x1.txt %t/x2.txt %t/x3.txt %t/x4.txt %t/x5.txt %t/x6.txt | FileCheck %s
+
+# CHECK: step 2: K_half
+# CHECK: step 5: K_half
+# CHECK: largest difference {{.*}}: agrees
+
+#--- run.toml
+[input]
+topology   = "opc.prmtop"
+coordinates = "opc.inpcrd"
+
+[output]
+energy_interval = 1
+checkpoint = "cSTEPS.h5"
+checkpoint_interval = STEPS
+
+[energy]
+cutoff        = 9.0
+pairlist_distance = 10.0
+electrostatics = "PME"
+coulomb_modifier     = "POTENTIAL_SHIFT"
+
+[dynamics]
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.001
+steps         = STEPS
+seed          = 5
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[constraints]
+rigid_water    = true
+hydrogen_bonds = true
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+precision = "DOUBLE"
+#--- end

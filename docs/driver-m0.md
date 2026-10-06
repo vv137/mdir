@@ -457,8 +457,19 @@ $$K_\text{half} = K + \frac{\Delta t^2}{8} \sum_i \frac{\lVert\mathbf F_i\rVert^
 
 which holds exactly without constraints and thermostats. With
 constraints the forces do not give the kinetic energies of the half steps,
-and the log takes $K$ for the temperature and the pressure as well
-(D45, amended).
+and the steps of the rows measure them: they take the first half of the
+next step, a kick, a drift, and the constraints of the positions, and the
+mean of the kinetic energies of the velocities of the two drifts after
+their constraints (D[optimal-temperature]). The row of step 0 has no step
+before it and takes $K$ there. The thermostats and the barostats take the
+kinetic energy of the velocities they scale. With rigid waters, a run ends with
+`MDIR: the temperatures over N rows, in K: of the solute ..., of the
+solvent ...; from the velocities of the steps alone, ... and ...`: the means
+of $T$ and of $2K/(N_fk_B)$ over the rows, with errors from ten blocks of
+rows, for the solvent, the waters of SETTLE (6 degrees of freedom each),
+and the solute, every other particle, ions included; the three degrees of
+freedom of the center of mass are shared in proportion
+(D[optimal-temperature]).
 
 | Quantity | Kinetic energy | Reason |
 |---|---|---|

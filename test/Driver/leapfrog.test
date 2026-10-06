@@ -27,4 +27,5 @@
 # MODULE-NEXT: dyn.return %x1, %v1, %f1, %u1, %w1, %v2
 # MODULE:      %xl, %vl, %fl, %u, %w, %vn = dyn.step @step_energy(
 # MODULE:      %k = md.sum_particles gather(%vn, %m : !vec, !real)
-# MODULE:      %g = md.sum_particles gather(%fl, %m : !vec, !real)
+# MODULE:      %kexg{{.*}} = md.sum_particles gather(%fl, %m : !vec, !real)
+# MODULE:      %g = vector.reduction <add>, %kex

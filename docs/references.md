@@ -498,8 +498,10 @@ molecular dynamics simulations with a large time step," *J. Chem. Theory
 Comput.* **15**, 84–94 (2019).
 [doi:10.1021/acs.jctc.8b00874](https://doi.org/10.1021/acs.jctc.8b00874)
 
-Used for: the mean of the kinetic energies at the step and at the half
-steps, which the temperature takes (D45).
+Used for: the optimal temperature, from the kinetic energies at the step
+and at the half steps, which the log reports and the thermostats control,
+with the half steps measured under constraints (D45,
+D[optimal-temperature]).
 
 ### Jung2026
 
@@ -610,6 +612,16 @@ interaction in the nonbonded model of ions," *J. Chem. Theory Comput.*
 [doi:10.1021/ct400751u](https://doi.org/10.1021/ct400751u)
 
 Used for: the 12-6-4 model of ions, which the readers of M1 reject.
+
+### Lingenheil2008
+
+M. Lingenheil, R. Denschlag, R. Reichold, P. Tavan, "The
+"hot-solvent/cold-solute" problem revisited," *J. Chem. Theory Comput.*
+**4**, 1293–1306 (2008).
+[doi:10.1021/ct8000365](https://doi.org/10.1021/ct8000365)
+
+Used for: the check that the solute and the solvent of a thermostatted
+run share one temperature (D[optimal-temperature]).
 
 ### Lorentz1881
 

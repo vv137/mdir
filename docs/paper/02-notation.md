@@ -11,6 +11,7 @@ element.
 | $\mathbf F_i = -\partial U/\partial\mathbf x_i$ | Force on particle $i$; $U$ the potential energy |
 | $\mathbf a_i = \mathbf F_i / m_i$ | Acceleration; $0$ for a particle without mass (a virtual site) |
 | $K = \tfrac12\sum_i m_i\lVert\mathbf v_i\rVert^2$ | Kinetic energy; $K_a$ its part along axis $a$ (Section 6) |
+| $K_\text{half},\ K_T,\ K_P$ | The mean of the kinetic energies of the half steps before and after a step; the kinetic energies of the temperature, $\tfrac13K + \tfrac23K_\text{half}$, and of the pressure, $K_\text{half}$, of the log (Section 6.5) |
 | $\mathbf L = (L_x, L_y, L_z)$, $V = L_xL_yL_z$ | Edges and volume of the orthorhombic periodic cell |
 | $H$, $\mathbf a = (a_x, 0, 0)$, $\mathbf b = (b_x, b_y, 0)$, $\mathbf c = (c_x, c_y, c_z)$ | A triclinic cell: the lower-triangular matrix whose rows are the cell vectors, reduced so that $\lvert b_x\rvert \le a_x/2$, $\lvert c_x\rvert \le a_x/2$, $\lvert c_y\rvert \le b_y/2$; $V = a_xb_yc_z$; an orthorhombic cell is $H = \operatorname{diag}(\mathbf L)$ (D123) |
 | $A = \lVert \mathbf a \times \mathbf b \rVert$ | Area of the face spanned by the first two cell vectors; $A = L_x L_y$ in the reduced triangular frame (D170) |

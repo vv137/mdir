@@ -547,7 +547,7 @@ stage begins.
 | Virial | The mean of those of the forces of the constraints over the two halves of the step: $\mathbf G_i = 2 m_i \Delta\mathbf x_i / \Delta t^2$ of the positions, with the bonds before the drift for arms, and $\mathbf G_i = 2 m_i \Delta\mathbf v_i / \Delta t$ of the velocities, with the bonds after it; $\sum (\mathbf x_i - \mathbf x_O) \otimes \mathbf G_i$ of each. The mean is that of the pressure (D45). |
 | At the start | The drawn velocities have their parts along the bonds removed before they are scaled to the temperature. The positions are not constrained, as sander does not. |
 | Degrees of freedom | Three fewer for each water |
-| Temperature of the log | That of the velocities of the step: the forces do not give the kinetic energies of the half steps once the constraints act (D45) |
+| Temperature of the log | The optimal estimate, with the kinetic energies of the half steps measured from the velocities after the constraints of the positions (D45; D[optimal-temperature]) |
 | In the IR | An `md.gather_tuples` over a tuple set `settles` of arity 3, the oxygen first, for each of the two halves, in the program of the step; the virial an `md.sum_tuples` |
 | Which waters | Those of `[ settles ]` of GROMACS; from Amber the residues of `water_residues`, `["WAT"]` by default, which are an oxygen and two hydrogens with at most virtual sites after them. Their bonds and angles are dropped. |
 
@@ -568,7 +568,7 @@ Three consequences reach other stages, and are recorded now:
 |---|---|
 | The forces of the constraints add to the virial | The pressure, and the barostat (Section 11) |
 | Every constraint removes a degree of freedom: `f = 3N − N_c − 3` | The temperature, and the thermostat |
-| The kinetic energies at the half steps (D45) must be measured from constrained velocities, not computed from the forces | The log, the thermostat, and the barostat |
+| The kinetic energies at the half steps (D45) must be measured from constrained velocities, not computed from the forces | The log (D[optimal-temperature]); the thermostat and the barostat take the kinetic energy of the velocities they scale |
 
 ## 10. Removal of the motion of the center of mass
 

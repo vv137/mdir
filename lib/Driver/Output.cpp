@@ -468,6 +468,13 @@ double mdrtNoseHooverFactor(double kinetic) {
   return scale;
 }
 
+void mdrtWriteSolvent(double kinetic, double half) {
+  Output &output = *current;
+  output.hasSolvent = true;
+  output.solventKinetic = kinetic;
+  output.solventHalf = half;
+}
+
 void _mlir_ciface_mdrtSetBarostatState(double w0, double w1, double w2,
                                        double g0, double g1, double g2,
                                        double k0, double k1, double k2) {
@@ -514,12 +521,14 @@ void _mlir_ciface_mdrtSetTilt(double bx, double cx, double cy) {
 }
 
 void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
-                                    double kinetic, double forceSquare,
+                                    double kinetic, double excess,
                                     double virial) {
   Output &output = *current;
   if (output.energyPeriod > 0 &&
-      (step - output.firstStep) % output.energyPeriod != 0)
+      (step - output.firstStep) % output.energyPeriod != 0) {
+    output.hasSolvent = false;
     return;
+  }
   // `kinetic` is that of the velocities at the step. The total energy has
   // it, because that sum varies least.
   // The correction for the dispersion is a number of the volume.
@@ -528,16 +537,39 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
   virial += output.getDispersionVirial() + output.getCoulombConstantVirial();
   double total = potential + kinetic;
 
-  // The mean of the kinetic energies half a step before and after exceeds
-  // `kinetic` by (dt^2 / 8) sum F^2 / m. The pressure takes that mean, and
-  // the temperature the mean of all three (D45). See Jung et al., J. Chem.
-  // Phys. 148, 164109 (2018), and J. Chem. Theory Comput. 15, 84 (2019).
-  double excess =
-      0.125 * output.timestep * output.timestep * forceSquare;
+  // The mean of the kinetic energies half a step before and after,
+  // K_half, exceeds `kinetic` by `excess`: (dt^2 / 8) sum F^2 / m without
+  // constraints, measured from the velocities of the half steps with them.
+  // The pressure takes K_half, and the temperature the optimal estimate
+  // (2 K_half + K) / 3 (D45, D[optimal-temperature]). See Jung et al., J.
+  // Chem. Phys. 148, 164109 (2018), and J. Chem. Theory Comput. 15, 84
+  // (2019).
   double half = kinetic + excess;
   double optimal = kinetic + 2.0 * excess / 3.0;
   double temperature =
       2.0 * optimal / (output.degreesOfFreedom * units::boltzmann);
+  // The temperatures of the solvent, the rigid waters, and of the solute,
+  // the rest, each with its own degrees of freedom (D[optimal-temperature]).
+  if (output.hasSolvent) {
+    output.hasSolvent = false;
+    double solvent = output.solventFreedom;
+    double solute = output.degreesOfFreedom - solvent;
+    auto get = [](double k, double h, double freedom) {
+      double estimate = (k + 2.0 * h) / 3.0;
+      return 2.0 * estimate / (freedom * units::boltzmann);
+    };
+    double k = output.solventKinetic, h = output.solventHalf;
+    if (solvent > 0.0) {
+      output.solventOptimal.push_back(get(k, h, solvent));
+      output.solventFull.push_back(2.0 * k / (solvent * units::boltzmann));
+    }
+    if (solute > 0.5) {
+      output.soluteOptimal.push_back(
+          get(kinetic - k, kinetic + excess - h, solute));
+      output.soluteFull.push_back(2.0 * (kinetic - k) /
+                                  (solute * units::boltzmann));
+    }
+  }
   // Brownian dynamics has no momenta: the pressure takes those of the
   // bath (D163b).
   if (output.overdamped)
