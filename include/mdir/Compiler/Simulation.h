@@ -64,7 +64,8 @@ struct SimulationState {
 
 class Simulation {
 public:
-  /// Builds the program of the first segment of `prepared` and compiles it.
+  /// Builds the program of the segments of `prepared` and compiles it, once
+  /// (D[python-simulation-compile]).
   static llvm::Expected<std::unique_ptr<Simulation>>
   create(const model::PreparedModel &prepared);
   ~Simulation();
@@ -139,13 +140,16 @@ private:
   Reports reports;
 
   model::PreparedModel prepared;
-  std::unique_ptr<Engine> first, continued;
+  /// The one program of the simulation, whose entry begins the run on the
+  /// first call and continues the last segment on the others
+  /// (D[python-simulation-compile]).
+  std::unique_ptr<Engine> compiled;
   /// What the compiled code reports to: the cell, the bath, the state at
   /// the end of a part.
   std::unique_ptr<driver::Output> output;
-  /// The system that the programs are built from, at its first step, and
-  /// the state between parts.
-  driver::System initial, system;
+  /// The state between parts; the program is built from it at the first
+  /// step.
+  driver::System system;
   std::vector<double> forces;
   int64_t step = 0;
   /// A minimization: the steps of its schedule, and the length of its next

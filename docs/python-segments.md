@@ -18,11 +18,12 @@ snapshot.energies["potential"]
 ```
 
 `Simulation(program)` refuses a stale program (`StaleProgramError`) and
-compiles what it runs from the program's prepared model: a program for the
-first segment, which begins as `mdir run` begins, and on the first `run`
-after it a program that continues from the state the last segment left, as
-`mdir run --continue` continues from a checkpoint. Both are built from the
-system at its first step, so their constants and neighbor structures are
+compiles what it runs from the program's prepared model, once: one program
+of segments, whose entry begins as `mdir run` begins on its first call and
+continues from the state the last segment left on the others, as
+`mdir run --continue` continues from a checkpoint
+(D[python-simulation-compile], [Compiles](#compiles)). It is built from the
+system at its first step, so its constants and neighbor structures are
 the same whatever state the run reaches. Later edits of the
 compile inputs do not change a simulation; compile again and create a new
 one. `Schedule.steps` and `Schedule.energy_period` are not used:
@@ -188,7 +189,7 @@ D199 enforces the host object contract after code generation,
 including ORC's synthesized entries. The owned memory manager reserves space
 for each object together, checks its actual executable sections and relocated
 exception-frame descriptions before registering them, and deregisters before
-freeing any storage. Creation, continuation compilation, execution, and
+freeing any storage. Creation, execution, and
 teardown share the process runtime mutex; independent simulations may be held
 simultaneously, but operations using the runtime wait for that mutex. No call
 holds it while polling Python. See [JIT ownership](jit-invariants.md) for the
@@ -216,6 +217,57 @@ on another device is refused with `UnsupportedError`.
 The runtime libraries are found next to the module: in `lib` of the build
 tree, or of the prefix the module is installed under, or in the directory
 that `MDIR_RUNTIME_DIR` names.
+
+## Compiles
+
+A simulation compiles one program (D[python-simulation-compile], #147).
+Before, it compiled a program for the first segment at creation and, on the
+first part after it, a second program that continued the state, a full
+lowering and JIT of a nearly identical program on the path of the run. The
+entry of a program of segments now takes `%first_call`, nonzero on the first
+call. The work of the start is a branch on it:
+
+- for dynamics, the forces and the energy at the start, the energies and the
+  terms of the row of step 0 with the virial, kinetic energy, and the outputs
+  of pulls, free energy, and observables at the start, and the half kick
+  back of leapfrog;
+- for a minimization (D202), the projection of the positions onto the
+  constraints and the terms at the start.
+
+A later call takes the forces and the velocities given (for a minimization,
+the positions as given), as the continuation program did. The signature is
+the union of the two: the first call of dynamics is given the forces as
+well, zeros, and does not read them. Everything after the start is one code for both
+calls.
+
+The branch is a loop of one iteration on the first call and none on the
+others, carrying the values given: the passes that place fields and their
+buffers know the loops that carry fields, while `md-exec-assign-precision`
+and `md-exec-assign-storage` refuse a field-valued `scf.if`. A program of segments with a barostat that scales the
+cell every step, which a simulation refuses already, is refused by the
+builder too: the state that its first scaling takes is not an argument.
+
+Two entries that share the steps would not save the compile: `md-inline`
+inlines the loop of steps into each, so nothing is shared without calls
+that are not inlined and deduplicated kernels, and calls would cut
+optimizations between the start and the first step.
+
+Every MLIR context of a lowering in the process, the simulation's and that
+of `mdir.compile`, lowers with the threads of one process-wide
+`llvm::DefaultThreadPool`, given to it through `MLIRContext::setThreadPool`,
+so a simulation keeps no pool of its own. The pool is never destroyed. Its
+threads do not exist in a child forked after a lowering; a child that lowers
+makes a pool of its own.
+
+In the deterministic mode the Python ala3 example gives the states, energy
+files, and trajectory of the two programs to the bit, on the CPU and a GPU,
+in mixed and double precision; `python-one-program-gpu.test` checks that no
+kernels are loaded after a simulation's creation. At a hundredth of its
+steps on one RTX 3090, the example takes 146 s instead of 240 s in mixed
+precision and 162 s instead of 251 s in double, with less CPU time; the
+runs that compiled the second program take a second or so instead of 20 to
+34 s. `mdir.compile` still lowers a program of its own for
+`Program.lowered_ir` (#151).
 
 ## Not in this item
 

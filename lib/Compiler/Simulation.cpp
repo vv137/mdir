@@ -1,9 +1,10 @@
 // A simulation that persists across runs (D196,
-// docs/python-segments.md). It compiles the program of its first segment,
-// which begins as `mdir run` does, and the program of the segments after it,
-// which continue the state as `mdir run --continue` continues a checkpoint;
-// the entries of both take the counts of their loops, so that one program
-// runs any number of steps from any step of the period of coupling.
+// docs/python-segments.md). It compiles one program of segments, whose
+// entry begins the run as `mdir run` does on its first call and continues
+// the state that the last call left on the others, as `mdir run --continue`
+// continues a checkpoint (D[python-simulation-compile]); the entry takes the
+// counts of its loops, so that the program runs any number of steps from any
+// step of the period of coupling.
 #include "mdir/Compiler/Simulation.h"
 #include "mdir/Compiler/Compile.h"
 #include "mdir/Driver/Builder.h"
@@ -242,8 +243,7 @@ Simulation::~Simulation() {
     if (output->trajectory)
       output->trajectory->close();
   }
-  continued.reset();
-  first.reset();
+  compiled.reset();
 }
 
 static llvm::Expected<std::unique_ptr<Simulation::Engine>>
@@ -270,10 +270,11 @@ compileEngine(const Control &control, const System &system,
     if (!named && *MDIR_CUDA_ROOT)
       setenv("CUDA_ROOT", MDIR_CUDA_ROOT, /*overwrite=*/0);
   }
-  // One module is lowered at a time: a pool of threads for each engine
-  // would stay for the life of the simulation.
+  // The context lowers with the threads of the process, so that a
+  // simulation keeps no pool of its own (D[python-simulation-compile]).
   engine->context = std::make_unique<mlir::MLIRContext>(
       compiler::getRegistry(), mlir::MLIRContext::Threading::DISABLED);
+  compiler::shareThreadPool(*engine->context);
   auto module = compiler::lowerModule(*engine->context, control,
                                       engine->program);
   if (!module)
@@ -451,13 +452,12 @@ Simulation::create(const model::PreparedModel &prepared) {
   for (int k = 0; k != 3; ++k)
     system.inputBox[k] = system.box[k];
 
-  simulation->initial = system;
   auto engine = compileEngine(control, system, prepared.execution);
   if (!engine) {
     lock.unlock();
     return engine.takeError();
   }
-  simulation->first = std::move(*engine);
+  simulation->compiled = std::move(*engine);
 
   auto output = std::make_unique<Output>();
   output->log.quiet = true;
@@ -482,23 +482,7 @@ Simulation::create(const model::PreparedModel &prepared) {
 }
 
 llvm::Expected<Simulation::Engine *> Simulation::getEngine() {
-  std::lock_guard<std::mutex> lock(getRunMutex());
-  if (!hasRun)
-    return first.get();
-  if (!continued) {
-    // The segments after the first continue the state that the last left,
-    // as a run continues its checkpoint: they take its forces and its cell.
-    // The program is built from the system at its first step, which was
-    // checked, so that its constants and neighbor structures are those of
-    // the first program whatever state the run has reached.
-    Control control = prepared.control;
-    control.continuesSegment = true;
-    auto engine = compileEngine(control, initial, prepared.execution);
-    if (!engine)
-      return engine.takeError();
-    continued = std::move(*engine);
-  }
-  return continued.get();
+  return compiled.get();
 }
 
 llvm::Error Simulation::runPart(Engine &engine, Part part) {
@@ -543,7 +527,10 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
   setOutput(&out);
 
   size_t count = system.getNumParticles();
-  if (p.takesForces && forces.size() != 3 * count)
+  // The first call begins the run and ignores the forces that it is given
+  // (D[python-simulation-compile]); a later call continues those that the
+  // last left.
+  if (p.takesForces && hasRun && forces.size() != 3 * count)
     return simulationError("the segment takes forces, but has none; this "
                            "is a defect of mdir");
   // The arguments in the order of the entry (Builder.h).
@@ -555,7 +542,7 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
   vector(system.positions, p.state);
   vector(system.velocities, p.state);
   if (p.takesForces)
-    vector(forces, p.force);
+    vector(hasRun ? forces : std::vector<double>(3 * count, 0.0), p.force);
   a.reals.push_back(std::make_unique<HostBuffer<1>>(engine.masses, p.mass, count));
   a.reals.back()->addTo(a.pointers);
   for (const Program::Field &field : p.fields) {
@@ -637,6 +624,8 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
     a.pointers.push_back(&part.closePeriods);
     a.pointers.push_back(&framePeriod);
   }
+  int64_t firstCall = hasRun ? 0 : 1;
+  a.pointers.push_back(&firstCall);
   Output::MinimizationRow rowBefore = out.lastMinimization;
 
   stopMessage.clear();
@@ -708,8 +697,8 @@ llvm::Expected<int64_t> Simulation::run(int64_t count,
   stopRequested = false;
   if (count == 0)
     return 0;
-  int64_t period = first->program.segmentPeriod;
-  int64_t closing = first->program.closingSteps;
+  int64_t period = compiled->program.segmentPeriod;
+  int64_t closing = compiled->program.closingSteps;
   // The two steps that close a period of the barostat of Trotter type are
   // one: the first gives the strain that the second applies (D92).
   if (period > 0 && closing == 2 && (step + count) % period == period - 1)
@@ -904,8 +893,8 @@ llvm::Error Simulation::setReports(const Reports &given) {
     return inputError("a reporter needs both a file and a period");
   // The steps of energy of the reports must not fall between the two steps
   // that close a period of the barostat of Trotter type (D92).
-  int64_t period = first->program.segmentPeriod;
-  if (period > 0 && first->program.closingSteps == 2)
+  int64_t period = compiled->program.segmentPeriod;
+  if (period > 0 && compiled->program.closingSteps == 2)
     for (int64_t p : {given.energyPeriod, given.framePeriod})
       if (p > 0 && p % period != 0)
         return inputError("with the barostat of Trotter type a reporter's "

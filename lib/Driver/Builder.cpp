@@ -741,7 +741,7 @@ struct Coupled {
   /// of the fields before and after.
   void emitReorder(StringRef indent, StringRef from, StringRef stateTo,
                    StringRef otherTo, bool withForces,
-                   StringRef velocities);
+                   StringRef velocities, StringRef forcesTo = "");
   /// Emits the members of the tuples of the topology at the places that
   /// the numbers `ids` give the particles, named `prefix` and the name of
   /// the set.
@@ -751,9 +751,22 @@ struct Coupled {
   bool isLeapfrog() const {
     return control.integrator == Integrator::Leapfrog;
   }
-  bool isRestart() const {
-    return !control.restartInput.empty() || control.continuesSegment;
-  }
+  bool isRestart() const { return !control.restartInput.empty(); }
+  /// Whether the entry begins a run or continues the last segment as its
+  /// argument %first_call says (D196, D[python-simulation-compile]): a
+  /// program of segments is one program for the first segment and the
+  /// later ones, whose work at the start is a branch on that argument.
+  bool branchesStart() const { return control.segments; }
+  /// Emits `chunk`, code of the start, as the branch of %is_first: a loop of
+  /// one iteration on the first call and none on the others, whose results
+  /// `results` are the values `inside` of the chunk on the first call and the
+  /// values given, `otherwise`, which it carries, on a later one. In the
+  /// chunk, the values named as the results and those given are renamed.
+  void emitStartBranch(std::string chunk, llvm::ArrayRef<std::string> results,
+                       llvm::ArrayRef<std::string> inside,
+                       llvm::ArrayRef<std::string> otherwise);
+  bool emittedFirstTrips = false;
+  unsigned startBranches = 0;
   /// Whether a run from a checkpoint evaluates the forces of its first step
   /// (D172).
   bool recomputes() const { return isRestart() && control.restartRecomputes; }
@@ -887,7 +900,8 @@ std::string Builder::getFieldValues(StringRef prefix) const {
 
 void Builder::emitReorder(StringRef indent, StringRef from,
                           StringRef stateTo, StringRef otherTo,
-                          bool withForces, StringRef velocities) {
+                          bool withForces, StringRef velocities,
+                          StringRef forcesTo) {
   StringRef order = "!mdrt.permutation<@atoms>";
   // A particle goes where the anchor of its constraint group is (D110):
   // the positions that the order takes are those of the anchors, from the
@@ -921,14 +935,92 @@ void Builder::emitReorder(StringRef indent, StringRef from,
   };
   permute("%x" + stateTo, "%x" + from, "!vec");
   permute(velocities, "%v" + from, "!vec");
-  if (withForces)
-    permute("%f" + stateTo, "%f" + from, "!vec");
+  if (withForces) {
+    if (forcesTo.empty())
+      permute("%f" + stateTo, "%f" + from, "!vec");
+    else
+      permute(forcesTo, "%f" + from, "!vec");
+  }
   permute("%m" + otherTo, "%m" + from, "!real");
   for (const Program::Field &field : program.fields)
     permute("%p" + otherTo + "_" + field.name,
             "%p" + from + "_" + field.name, getFieldType(field));
   permute("%id" + otherTo, "%id" + from, "!ids");
   emitRenumber(indent, "%id" + otherTo, "%r" + otherTo + "_");
+}
+
+/// `text` with the value `name` renamed `to` where it is a whole name.
+static std::string renameValue(StringRef text, StringRef name, StringRef to) {
+  std::string renamed;
+  size_t from = 0;
+  while (true) {
+    size_t at = text.find(name, from);
+    if (at == StringRef::npos) {
+      renamed += text.substr(from).str();
+      return renamed;
+    }
+    size_t end = at + name.size();
+    bool whole = end == text.size() ||
+                 !(llvm::isAlnum(text[end]) || text[end] == '_' ||
+                   text[end] == '$' || text[end] == '.');
+    renamed += text.substr(from, at - from).str();
+    renamed += whole ? to.str() : name.str();
+    from = end;
+  }
+}
+
+void Builder::emitStartBranch(std::string chunk,
+                              llvm::ArrayRef<std::string> results,
+                              llvm::ArrayRef<std::string> inside,
+                              llvm::ArrayRef<std::string> otherwise) {
+  if (chunk.empty() && results.empty())
+    return;
+  // A `call` in the loop names its dialect, which the body of a `func.func`
+  // lets the ops directly in it leave out.
+  for (size_t at = chunk.find(" call @"); at != std::string::npos;
+       at = chunk.find(" call @", at))
+    chunk.replace(at, 7, " func.call @");
+  // The values of the start take the names of the results with `_s`, and
+  // the values given, which the loop carries, those of its arguments, `_a`.
+  std::vector<std::string> first(inside.begin(), inside.end());
+  auto rename = [&](StringRef from, const std::string &to) {
+    chunk = renameValue(chunk, from, to);
+    for (std::string &value : first)
+      value = renameValue(value, from, to);
+  };
+  for (const std::string &result : results)
+    rename(result, result + "_s");
+  for (const std::string &given : otherwise)
+    rename(given, given + "_a");
+  std::string types;
+  for (size_t i = 0; i != results.size(); ++i)
+    types += (i ? ", " : "") + std::string("!vec");
+  // A loop of one iteration on the first call and none on the others: the
+  // passes that place fields know the loops that carry them.
+  if (!emittedFirstTrips) {
+    os << "  %first_trips = arith.select %is_first, %c1, %c0 : index\n";
+    emittedFirstTrips = true;
+  }
+  os << "  ";
+  if (!results.empty()) {
+    llvm::interleaveComma(results, os);
+    os << " = ";
+  }
+  std::string loop = "%i_first" + std::to_string(startBranches++);
+  os << "scf.for " << loop << " = %c0 to %first_trips step %c1";
+  if (!results.empty()) {
+    os << "\n      iter_args(";
+    for (size_t i = 0; i != otherwise.size(); ++i)
+      os << (i ? ", " : "") << otherwise[i] << "_a = " << otherwise[i];
+    os << ") -> (" << types << ")";
+  }
+  os << " {\n" << chunk;
+  if (!results.empty()) {
+    os << "    scf.yield ";
+    llvm::interleaveComma(first, os);
+    os << " : " << types << "\n";
+  }
+  os << "  }\n";
 }
 
 void Builder::emitRenumber(StringRef indent, const llvm::Twine &ids,
@@ -7762,7 +7854,9 @@ void Builder::emitMinimization() {
   std::string x0 = "%x0";
   bool settles = hasSettles();
   std::vector<const Program::TupleSet *> shakeSets = getShakeSets();
-  if ((settles || !shakeSets.empty()) && !control.continuesSegment) {
+  os.flush();
+  size_t projectionMark = program.module.size();
+  if ((settles || !shakeSets.empty()) && !isRestart()) {
     std::string current = "%x0";
     unsigned steps = (settles ? 1 : 0) + shakeSets.size(), step = 0;
     std::string constrained = hasSites() ? "%x0ks" : "%x0k";
@@ -7783,6 +7877,13 @@ void Builder::emitMinimization() {
     if (hasSites())
       emitPlaceSites("  ", "%x0ks", "%x0k", "%r_");
     x0 = "%x0k";
+    if (branchesStart()) {
+      os.flush();
+      std::string chunk = program.module.substr(projectionMark);
+      program.module.resize(projectionMark);
+      emitStartBranch(std::move(chunk), {"%x0c"}, {"%x0k"}, {"%x0"});
+      x0 = "%x0c";
+    }
   }
   // The energy and the forces at the start, and the terms.
   std::string raw = hasSites() ? "e" : "";
@@ -7801,8 +7902,17 @@ void Builder::emitMinimization() {
                    "%w0r");
   }
   // The terms at the start, which a continued segment does not log.
-  if (!isRestart())
+  if (branchesStart()) {
+    os.flush();
+    size_t termsMark = program.module.size();
     emitTerms(x0);
+    os.flush();
+    std::string chunk = program.module.substr(termsMark);
+    program.module.resize(termsMark);
+    emitStartBranch(std::move(chunk), {}, {}, {});
+  } else if (!isRestart()) {
+    emitTerms(x0);
+  }
   // The length of the first step: that of the control file, or the one
   // that the last segment left.
   std::string h0 = control.segments ? "%first_size" : "%h0";
@@ -8092,10 +8202,17 @@ void Builder::emitEntry() {
   // step of energy whose number is a multiple of %frame_period (0: none).
   if (control.segments && !control.minimize)
     os << ",\n    %count_energy_periods: i64, %frame_period: i64";
+  // Whether the call begins the run, nonzero, or continues the state that
+  // the last call left (D[python-simulation-compile]).
+  if (branchesStart())
+    os << ", %first_call: i64";
   os << ") {\n";
 
   os << "  %c0 = arith.constant 0 : index\n"
      << "  %c1 = arith.constant 1 : index\n";
+  if (branchesStart())
+    os << "  %first_none = arith.constant 0 : i64\n"
+       << "  %is_first = arith.cmpi ne, %first_call, %first_none : i64\n";
   // The time of the first step, which the evaluations at the start take
   // (D145); a minimization takes 0.
   if (control.usesTime) {
@@ -8173,8 +8290,16 @@ void Builder::emitEntry() {
 
   // The fields as the buffers hold them, and in the order of the positions
   // if the run keeps that order.
-  bool givenForces = isRestart() && program.takesForces;
-  std::string velocities = isLeapfrog() && !isRestart() ? "%vg" : "%v0";
+  // A program of segments takes the forces and the velocities of the last
+  // segment as %fg and %vg, which a later call continues from.
+  bool givenForces = (isRestart() || branchesStart()) && program.takesForces;
+  std::string velocities =
+      (branchesStart() && !control.minimize) ||
+              (isLeapfrog() && !isRestart())
+          ? "%vg"
+          : "%v0";
+  std::string givenForcesName =
+      branchesStart() ? "%fg" : "%f0";
   std::string given = program.reorders ? "_in" : "";
   if (changesCell()) {
     // Where the barostat keeps the cell, on the host.
@@ -8258,7 +8383,7 @@ void Builder::emitEntry() {
      << " = mdrt.from_buffer %identities : memref<?xi32> to !ids\n";
   // A run that continues an earlier one has the forces of the step before.
   if (givenForces)
-    os << "  %f" << (program.reorders ? "_in" : "0")
+    os << "  " << (program.reorders ? "%f_in" : givenForcesName)
        << " = mdrt.from_buffer %forces : memref<?x3x" << force
        << "> to !vec\n";
   // The virtual sites where their atoms put them, whatever the file says.
@@ -8268,7 +8393,8 @@ void Builder::emitEntry() {
                    program.reorders ? "%ro_" : "%r_");
   }
   if (program.reorders)
-    emitReorder("  ", "_in", "0", "", givenForces, velocities);
+    emitReorder("  ", "_in", "0", "", givenForces, velocities,
+                branchesStart() ? "%fg" : "");
   if (control.minimize) {
     emitMinimization();
     return;
@@ -8383,6 +8509,11 @@ void Builder::emitEntry() {
   if (recomputes())
     emitStartForces();
 
+  // A program of segments does the work of the start in a branch on
+  // %is_first; a later call takes the forces and the velocities given
+  // (D[python-simulation-compile]).
+  os.flush();
+  size_t startMark = program.module.size();
   if (!isRestart()) {
     // The energies at the start.
     std::string virial = emitStartForces();
@@ -8435,6 +8566,13 @@ void Builder::emitEntry() {
          << "  %behind = arith.mulf %back, %dt : f64\n"
          << "  %v0 = dyn.kick %vg, %f0, %m, %behind : !vec\n";
     }
+  }
+  if (branchesStart()) {
+    os.flush();
+    std::string chunk = program.module.substr(startMark);
+    program.module.resize(startMark);
+    emitStartBranch(std::move(chunk), {"%f0", "%v0"},
+                    {"%f0", isLeapfrog() ? "%v0" : "%vg"}, {"%fg", "%vg"});
   }
 
   if (isRestart() && scalesEveryStep() &&
@@ -8783,7 +8921,8 @@ llvm::Error Builder::build() {
   }
   // Velocity Verlet begins a step with the forces of the step before.
   program.writesForces = !control.minimize;
-  program.takesForces = isRestart() && !recomputes() && !control.minimize;
+  program.takesForces =
+      ((isRestart() && !recomputes()) || branchesStart()) && !control.minimize;
 
   program.skin =
       (control.pairlistDistance - control.cutoffDistance) * units::length;
@@ -8808,6 +8947,9 @@ llvm::Error Builder::build() {
   // A program of segments has no outputs of its own: its loops are those
   // of the periods of coupling and of the steps (D196), or of the steps of
   // a minimization (D202).
+  if (control.segments && scalesEveryStep())
+    return makeError("a program of segments with a barostat that scales the "
+                     "cell every step is not supported");
   if (control.segments && (control.energyPeriod > 0 ||
                            control.framePeriod > 0 ||
                            control.checkpointPeriod > 0))
