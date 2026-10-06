@@ -1,0 +1,86 @@
+# Under a plain cutoff the forces are the gradient of the potential shifted
+# to 0 at the cutoff, which the dynamics samples, and the outputs that enter
+# free energies and gradients differentiate it (D[shifted-derivatives]): the
+# energies of the states of [free_energy], dH/dlambda, and the columns of
+# `observe`. On a mixture of 60 A (+0.4 e) and 60 B (-0.4 e) of
+# pair_tail_system.py, with the first A decoupled and an A-B correction term
+# observed in its constants:
+#
+# - with lennard_jones_modifier = "NONE" these files equal those of
+#   "POTENTIAL_SHIFT" at every row, the trajectories being the same, with a
+#   Coulomb cutoff and with PME (against coulomb_modifier = "POTENTIAL_SHIFT");
+# - the reported energies are not shifted: the log of "NONE" keeps the
+#   Lennard-Jones and the correction term cut, as before;
+# - at the first row, dH/dlambda of the Coulomb cutoff is the sum that
+#   check_shifted.py takes over the pairs,
+#   -f q_i q_j (1/r - 1/r_c) for each decoupled pair within the cutoff.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/pair_tail_system.py %t 60 60 32 3.7 0.5 0.4
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/none.toml
+# RUN: sed -e 's/^lennard_jones_modifier = "NONE"/lennard_jones_modifier = "POTENTIAL_SHIFT"/' -e 's/none\./shift./' %t/none.toml > %t/shift.toml
+# RUN: cd %t && mdir run none.toml > none.log && mdir run shift.toml > shift.log
+# RUN: cmp %t/none.dhdl %t/shift.dhdl
+# RUN: cmp %t/none.obs %t/shift.obs
+# RUN: FileCheck %s --check-prefix=LOG < %t/none.log
+# RUN: %python %S/Inputs/check_shifted.py %t/system.gro %t/none.dhdl 0.4 1e-6 | FileCheck %s
+#
+# RUN: sed -e 's/^electrostatics    = "CUTOFF"/electrostatics    = "PME"/' -e 's/none\./pme-none./' %t/none.toml > %t/pme-none.toml
+# RUN: sed -e 's/^electrostatics    = "PME"/&\ncoulomb_modifier = "POTENTIAL_SHIFT"/' -e 's/^lennard_jones_modifier = "NONE"/lennard_jones_modifier = "POTENTIAL_SHIFT"/' -e 's/pme-none\./pme-shift./' %t/pme-none.toml > %t/pme-shift.toml
+# RUN: cd %t && mdir run pme-none.toml > pme-none.log && mdir run pme-shift.toml > pme-shift.log
+# RUN: cmp %t/pme-none.dhdl %t/pme-shift.dhdl
+# RUN: cmp %t/pme-none.obs %t/pme-shift.obs
+
+# The terms of the log under "NONE" are the cut ones (the correction term
+# is -11.321848 shifted, in the column of `observe`), and the Coulomb cutoff
+# gives dH/dlambda 0.680998 shifted where the cut sum would give 9.536031.
+# LOG: MDIR:   Lennard-Jones -10.293671
+# LOG: MDIR:   nbfix -12.244648
+# LOG: MDIR:   total -95.524956
+
+# CHECK: dHdl.coulomb: {{.*}} ok
+# CHECK: shifted Coulomb: ok
+
+#--- run.toml
+[input]
+topology    = "plain.top"
+coordinates = "system.gro"
+[output]
+energy_interval = 5
+free_energy = "none.dhdl"
+observables = "none.obs"
+[energy]
+cutoff            = 12.0
+pairlist_distance = 13.0
+electrostatics    = "CUTOFF"
+lennard_jones_modifier = "NONE"
+dispersion_correction = "NONE"
+[[energy.pair]]
+name       = "nbfix"
+groups     = [":A", ":B"]
+expression = "4*eps*((sig/r)^12 - (sig/r)^6) - 4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+observe    = ["sig", "eps"]
+sig = 3.7
+eps = 0.5
+[free_energy]
+couple = ":1"
+state = 1
+[free_energy.lambdas]
+coulomb = [0.0, 0.5, 1.0]
+vdw     = [0.0, 0.5, 1.0]
+[dynamics]
+time_step  = 0.002
+steps      = 20
+seed       = 11
+[ensemble]
+ensemble    = "NVT"
+temperature = 120.0
+[thermostat]
+method   = "LANGEVIN"
+friction = 5.0
+[boundary]
+type = "PERIODIC"
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- end

@@ -14,13 +14,20 @@ Runs mdir in `directory` and prints one line per check:
 - particle mesh Ewald: the same against OpenMM with the same β and grid,
   within what the B-splines of order 4 (MDIR) and 5 (OpenMM) leave,
   2.8e-3 kcal/mol, which falls to 5e-5 on a grid of 80;
+- under a plain cutoff these outputs differentiate the potential shifted to
+  0 at the cutoff, which the forces sample (D[shifted-derivatives]): the
+  Lennard-Jones of RF_SHIFT, and for PME also its direct sum less
+  f q_i q_j erfc(β r_c)/r_c for each decoupled pair within the cutoff,
+  which this script sums from the coordinates;
 - dH/dλ against the central differences of the energies of the states
   beside it, in the Coulomb, the Lennard-Jones, and a component that only
   expressions take (a bond, a term over centers, a term of the positions);
 - the energies of the other states against runs at those states.
 """
 
+import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -48,6 +55,56 @@ OPENMM = {
                  (-0.349729, 3.350496, -2.055926),
                  (-0.349729, 3.279802, -3.050406)],
 }
+
+
+def direct_shift(beta, cutoff):
+    """S = sum of f q_i q_j erfc(β r_c)/r_c over the pairs of a particle of
+    the ethanol (residue 1) and one of the water within the cutoff, in the
+    minimum image: what shifting the direct sum of PME to 0 at the cutoff
+    removes from the decoupled pairs at full coupling, kcal/mol."""
+    flags, fields, name = {}, {}, None
+    for line in open(os.path.join(here, 'fep', 'eth_wat.prmtop')):
+        if line.startswith('%FLAG'):
+            name = line.split()[1]
+            fields[name] = []
+        elif line.startswith('%FORMAT'):
+            flags[name] = int(re.match(r'\(\d+[aIE](\d+)', line[7:]).group(1))
+        elif name:
+            width = flags[name]
+            text = line.rstrip('\n')
+            fields[name] += [text[k:k + width]
+                             for k in range(0, len(text), width)
+                             if text[k:k + width].strip()]
+    charges = [float(v) / 18.2223 for v in fields['CHARGE']]
+    first_water = int(fields['RESIDUE_POINTER'][1]) - 1
+    lines = open(os.path.join(here, 'fep', 'eth_wat.inpcrd')).read().split('\n')
+    count = int(lines[1].split()[0])
+    values = [float(line[k:k + 12]) for line in lines[2:2 + (count + 1) // 2]
+              for k in range(0, len(line), 12) if line[k:k + 12].strip()]
+    x = [values[3 * i:3 * i + 3] for i in range(count)]
+    box = [float(v) for v in lines[2 + (count + 1) // 2].split()[:3]]
+    total = 0.0
+    for i in range(first_water):
+        for j in range(first_water, count):
+            d = [x[i][a] - x[j][a] for a in range(3)]
+            d = [d[a] - box[a] * round(d[a] / box[a]) for a in range(3)]
+            if math.sqrt(sum(c * c for c in d)) < cutoff:
+                total += charges[i] * charges[j]
+    return 332.06371329919205 * total * math.erfc(beta * cutoff) / cutoff
+
+
+# Under a plain cutoff (lennard_jones_modifier = "NONE") the free-energy
+# outputs take the Lennard-Jones shifted to 0 at the cutoff
+# (D[shifted-derivatives]), that of RF_SHIFT, and the direct sum of PME
+# shifted as well: U(λ_C) changes by -(1 - λ_C) S, dH/dλ_C by +S, and
+# U(state 0) - U(state k) by -λ_C(k) S.
+SHIFT = direct_shift(0.32, 9.0)
+OPENMM['PME'] = [
+    (pme[0] + SHIFT, shifted[1],
+     pme[2] + shifted[2] - rf[2] - STATES[k][0] * SHIFT)
+    for k, (pme, shifted, rf) in enumerate(zip(
+        OPENMM['PME'], OPENMM['RF_SHIFT'], OPENMM['RF']))]
+OPENMM['RF'] = OPENMM['RF_SHIFT']
 ELECTROSTATICS = {
     'RF': 'electrostatics = "REACTION_FIELD"\nreaction_field_dielectric = 78.3\n',
     'PME': 'electrostatics = "PME"\n[pme]\nbeta = 0.32\ngrid = [32, 32, 32]\n'
