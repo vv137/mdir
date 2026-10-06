@@ -18,6 +18,7 @@
 #include "mlir/Target/LLVMIR/Dialect/All.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include "llvm/Support/ThreadPool.h"
+#include <cstdlib>
 #include <mutex>
 #include <unistd.h>
 using namespace mdir;
@@ -138,7 +139,18 @@ llvm::ThreadPoolInterface &compiler::getThreadPool() {
   static pid_t owner = 0;
   std::lock_guard<std::mutex> lock(mutex);
   if (!pool || owner != getpid()) {
-    pool = new llvm::DefaultThreadPool(llvm::hardware_concurrency());
+    // MDIR_COMPILE_THREADS bounds the threads of a lowering, for processes
+    // that compile side by side, such as the tests of a suite.
+    llvm::ThreadPoolStrategy strategy = llvm::hardware_concurrency();
+    if (const char *given = std::getenv("MDIR_COMPILE_THREADS")) {
+      unsigned threads = 0;
+      if (llvm::StringRef(given).getAsInteger(10, threads) || threads == 0)
+        llvm::errs() << "mdir: ignoring MDIR_COMPILE_THREADS='" << given
+                     << "', which is not a positive integer\n";
+      else
+        strategy = llvm::hardware_concurrency(threads);
+    }
+    pool = new llvm::DefaultThreadPool(strategy);
     owner = getpid();
   }
   return *pool;
