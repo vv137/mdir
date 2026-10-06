@@ -76,6 +76,12 @@ format, or the outputs; every such change is listed under **Changed** or
   centers costs JAC 2.7 µs a step instead of 9.2 (D194,
   #66).
 
+- The test suite runs at most sixteen tests that need a GPU at once instead
+  of four (`-Dgpu_workers=N` still sets the number), and the three Python
+  tests that bounded its wall time, with their CPU twins, are split into one
+  file per scenario. On one RTX 3090 the suite takes about 260 s instead of
+  about 1090 s (D[split-python-gpu-tests], #141).
+
 ### Added
 
 - `examples/ala3/run.py`: the four stages of the ala3 example (minimization,

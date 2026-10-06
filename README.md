@@ -200,7 +200,7 @@ installation. Some tests run generated code and compare its results with
 reference values. A build with `MDIR_ENABLE_PYTHON=ON` adds the tests of
 the Python interface.
 
-The suite runs its tests in parallel, but at most four of the tests that
+The suite runs its tests in parallel, but at most sixteen of the tests that
 need a GPU (`REQUIRES: cuda`) run at once, on the device that
 `CUDA_VISIBLE_DEVICES` selects; an empty value hides the GPU and skips
 them. `-Dgpu_workers=N` in `LIT_OPTS` changes that number; `-Dgpu_workers=1`
