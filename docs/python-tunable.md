@@ -238,6 +238,26 @@ declarations change; programs without tunables emit no table of them.
 
 ## Performance
 
-See the PR for the measurements on the Amber suite: the default path
-(nothing declared) emits the same module and lowered IR as main for every
-suite system, and its rate is that of main.
+One RTX 3090 (GPU 0, 300 W cap), mixed precision, the rate of the second
+half of each run.
+
+**The default path.** Without tunables the builder emits the same module as
+main for every system of the Amber suite (9 control files of
+`scripts/benchmarks/amber/bench.py`, dual lists), and the same lowered IR
+but for the compile times that the GPU binaries record
+(`LLVMIRToISATimeInMs`). `mdir run`, main against this branch, in ms per
+step: JAC NVE 0.203 and 0.204, JAC NPT 0.221 and 0.221, Factor IX NVE 0.594
+and 0.593, Factor IX NPT 0.625 and 0.626; Cellulose NVE 2.717 and 2.719 on
+main against 2.717 and 2.714 on the branch, alternated (a first pair gave
+2.723 and 3.065, which the four runs after it did not repeat).
+
+**Tunable charges and per-type Lennard-Jones** (a Python simulation, NVT,
+2 fs, constraints, 5,000 steps after 200, two runs each): JAC 0.2876 and
+0.2872 ms per step without tunables, 0.2877 and 0.2882 with them; Factor IX
+1.077 and 1.045 without, 1.066 and 1.067 with: no cost beyond the spread
+of runs, since the program is the same but for where its values come from.
+
+**An update** of the charges (and σ) takes 10 ms on JAC and 31 to 33 ms on
+Factor IX (90,906 atoms) before the first run, the host building the
+program's text and values; during a run, with the evaluation of the forces
+of the state, 20 ms and 104 ms.
