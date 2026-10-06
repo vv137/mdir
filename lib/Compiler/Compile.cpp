@@ -17,7 +17,9 @@
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Target/LLVMIR/Dialect/All.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
+#include "llvm/Support/ThreadPool.h"
 #include <mutex>
+#include <unistd.h>
 using namespace mdir;
 using namespace mdir::driver;
 using llvm::StringRef;
@@ -127,6 +129,23 @@ mlir::DialectRegistry compiler::getRegistry() {
                   mdrt::MDRTDialect>();
   return registry;
 }
+llvm::ThreadPoolInterface &compiler::getThreadPool() {
+  // The pool is never destroyed: a lowering may still use it while the
+  // process exits, and a forked child, in which the threads of its parent's
+  // pool do not exist, leaves that pool and makes its own.
+  static std::mutex mutex;
+  static llvm::DefaultThreadPool *pool = nullptr;
+  static pid_t owner = 0;
+  std::lock_guard<std::mutex> lock(mutex);
+  if (!pool || owner != getpid()) {
+    pool = new llvm::DefaultThreadPool(llvm::hardware_concurrency());
+    owner = getpid();
+  }
+  return *pool;
+}
+void compiler::shareThreadPool(mlir::MLIRContext &context) {
+  context.setThreadPool(getThreadPool());
+}
 llvm::Expected<mlir::OwningOpRef<mlir::ModuleOp>>
 compiler::lowerModule(mlir::MLIRContext &context, const driver::Control &control,
                       const driver::Program &program) {
@@ -159,7 +178,9 @@ compiler::lower(const driver::Control &control, driver::Program program,
     return llvm::make_error<model::ModelError>(model::ModelError::Unsupported,
                                               "GPU compilation requires a CUDA-enabled build");
 #endif
-  mlir::MLIRContext context(getRegistry());
+  mlir::MLIRContext context(getRegistry(),
+                            mlir::MLIRContext::Threading::DISABLED);
+  shareThreadPool(context);
   auto module = lowerModule(context, control, program);
   if (!module)
     return module.takeError();

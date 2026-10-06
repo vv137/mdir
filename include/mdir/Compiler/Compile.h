@@ -7,6 +7,7 @@
 #include "mlir/IR/OwningOpRef.h"
 #include "llvm/Target/TargetMachine.h"
 #include <memory>
+namespace llvm { class ThreadPoolInterface; }
 namespace mdir { namespace compiler {
 class CompileError : public llvm::ErrorInfo<CompileError> {
 public:
@@ -32,6 +33,14 @@ llvm::Expected<CompiledProgram> compile(const model::PreparedModel &);
 /// The dialects, extensions and translations of a lowering; registers the
 /// passes once per process.
 mlir::DialectRegistry getRegistry();
+/// The threads that the MLIR contexts of the lowerings of a process share,
+/// one pool for the process, so that no context keeps a pool of its own
+/// (D[python-simulation-compile]). A child forked after a lowering makes a
+/// pool of its own; the threads of its parent's do not exist in it.
+llvm::ThreadPoolInterface &getThreadPool();
+/// Makes `context`, created with threading disabled, lower with the threads
+/// of getThreadPool.
+void shareThreadPool(mlir::MLIRContext &context);
 /// Parses and lowers `program` in `context`, for a front end that runs the
 /// result (D196). Errors are CompileError with diagnostics.
 llvm::Expected<mlir::OwningOpRef<mlir::ModuleOp>>
