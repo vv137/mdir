@@ -139,6 +139,10 @@ PYBIND11_MODULE(mdir, m) {
     .value("Cutoff", model::Electrostatics::Cutoff)
     .value("PME", model::Electrostatics::PME)
     ;
+  py::enum_<model::CoulombModifier>(m, "CoulombModifier")
+    .value("None_", model::CoulombModifier::None)
+    .value("PotentialShift", model::CoulombModifier::PotentialShift)
+    ;
   py::enum_<driver::Truncation>(m, "Truncation")
     .value("None_", driver::Truncation::None)
     .value("Shift", driver::Truncation::Shift)
@@ -217,6 +221,7 @@ PYBIND11_MODULE(mdir, m) {
   property(system, "switch_distance", &model::System::switchDistance, units::nm);
   property(system, "truncation", &model::System::truncation);
   property(system, "electrostatics", &model::System::electrostatics);
+  property(system, "coulomb_modifier", &model::System::coulombModifier);
   property(system, "dispersion", &model::System::dispersion);
   property(system, "pme_alpha", &model::System::pmeAlpha, units::inverseNm);
   property(system, "pme_tolerance", &model::System::pmeTolerance, units::none);

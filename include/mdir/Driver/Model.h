@@ -21,6 +21,10 @@ public:
 };
 enum class Format { Amber, Gromacs, Charmm };
 enum class Electrostatics { Cutoff, PME };
+/// The `[energy] coulomb_modifier` of the control file: whether the
+/// real-space Coulomb term of PME is shifted to zero at the cutoff
+/// (Control::pmeShift; D[python-coulomb-modifier]).
+enum class CoulombModifier { None, PotentialShift };
 enum class EnsembleKind { NVE, NVT, NPT };
 
 /// Input order, nm and nm/ps. Empty velocities stay absent until execution.
@@ -37,6 +41,8 @@ struct System {
   double cutoff = 1.2, pairlistDistance = 1.35, switchDistance = 1.0;
   driver::Truncation truncation = driver::Truncation::Switch;
   Electrostatics electrostatics = Electrostatics::Cutoff;
+  /// For PME only; as the control file, none by default.
+  CoulombModifier coulombModifier = CoulombModifier::None;
   driver::DispersionCorrection dispersion = driver::DispersionCorrection::EnergyPressure;
   double pmeAlpha = 0, pmeTolerance = 1.e-5, pmeSpacing = 0.12;
   std::array<int64_t, 3> pmeGrid = {0,0,0};

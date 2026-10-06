@@ -1,0 +1,9 @@
+# REQUIRES: python-api, hdf5, cuda
+# The Coulomb modifier of the Python model on a GPU
+# (D[python-coulomb-modifier]): PME shifted at the cutoff against mdir run.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_coulomb_modifier.py %S/Inputs/dipeptide GPU mdir %t | FileCheck %s
+# CHECK: GPU Double: the state at step 10 equals that of mdir run to the bit
+# CHECK: GPU Double: the shift changes the potential
+# CHECK: GPU Mixed: rows within
+# CHECK: coulomb modifier passed
