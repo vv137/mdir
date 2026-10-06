@@ -1243,6 +1243,7 @@ Error Reader::readPair(const toml::table &table) {
               {{"NONE", DispersionCorrection::None},
                {"ENERGY_PRESSURE", DispersionCorrection::EnergyPressure}}))
         return error;
+      term.dispersionGiven = true;
       continue;
     }
     if (keyword == "mixing") {
@@ -2101,11 +2102,17 @@ Error Reader::readEnergy(const toml::table &table) {
                           "say; use \"FORCE_SWITCH\"");
     for (auto [index, term] : llvm::enumerate(control.pairs)) {
       const toml::node &node = (*pairs)[index];
-      if (!term.mixing.empty() ||
-          term.dispersion != DispersionCorrection::None)
+      if (!term.mixing.empty())
         return fail(node, "with a topology a pair term takes the parameters "
-                          "of the topology, not 'mixing' or "
-                          "'dispersion_correction'");
+                          "of the topology, not 'mixing'");
+      // Its tail follows the correction of [energy], which "NONE" in the
+      // term leaves it out of (D[pair-dispersion-correction]).
+      if (term.dispersion != DispersionCorrection::None &&
+          control.topologyDispersion == DispersionCorrection::None)
+        return fail(node, "with a topology the correction for the "
+                          "dispersion of a pair term follows that of "
+                          "[energy], which is off; a term can only leave "
+                          "it with 'dispersion_correction = \"NONE\"'");
       if (!llvm::all_of(term.name, [](char c) {
             return llvm::isAlnum(c) || c == '_';
           }))

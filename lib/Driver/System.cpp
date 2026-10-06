@@ -3,6 +3,7 @@
 #include "mdir/Driver/System.h"
 
 #include "mdir/Driver/Cell.h"
+#include "mdir/Driver/Expression.h"
 #include "mdir/Driver/Selection.h"
 
 #include <algorithm>
@@ -31,6 +32,8 @@ static llvm::Error placeCell(const Control &control, System &system);
 static llvm::Error resolveParticleParameters(const Control &control,
                                              const Topology &topology,
                                              System &system);
+static llvm::Error collectPairTails(const Control &control,
+                                    const Topology &topology, System &system);
 
 /// The radii of mbondi2 [Onufriev2004], the radii of Bondi [Bondi1964] with
 /// 1.3 Å for a hydrogen bonded to a nitrogen, in nm, and the screening
@@ -516,12 +519,178 @@ llvm::Expected<System> mdir::driver::prepareTopologySystem(
       system.bornTermNames.push_back("nonpolar surface");
   }
 
+  if (llvm::Error error = collectPairTails(control, *topology, system))
+    return std::move(error);
+
   system.topology = std::make_shared<Topology>(std::move(*topology));
   system.keepsMomentum =
       (!control.isLangevin() && !control.isBrownian()) || control.comPeriod > 0;
   if (llvm::Error error = placeCell(control, system))
     return std::move(error);
   return std::move(system);
+}
+
+bool mdir::driver::hasFiniteTail(const Expression &expression,
+                                 llvm::StringMap<double> values,
+                                 double cutoff) {
+  double previous = 0.0;
+  for (int k = 3; k <= 6; ++k) {
+    double r = cutoff * std::pow(10.0, k);
+    values["r"] = r;
+    double h = std::fabs(r * r * r * expression.evaluate(values));
+    if (!std::isfinite(h) || (k > 3 && h != 0.0 && !(h <= 0.1 * previous)))
+      return false;
+    previous = h;
+  }
+  return true;
+}
+
+/// The tails of the pair terms in the correction for the dispersion of a
+/// topology (D[pair-dispersion-correction]). The pairs that a term counts
+/// fall into classes of particles equal in everything that its expression
+/// reads: the type, the charge if it reads q1 or q2, the parameters of
+/// each particle that it reads, and its two group flags. The number of
+/// pairs of two classes is then a product, less the pairs that the
+/// topology excludes. A term leaves the correction with
+/// `dispersion_correction = "NONE"` of its own; one whose tail diverges or
+/// that reads the time is an error when the control file asks for the
+/// correction, and is left out with a warning under the default.
+static llvm::Error collectPairTails(const Control &control,
+                                    const Topology &topology, System &system) {
+  if (control.topologyDispersion == DispersionCorrection::None)
+    return llvm::Error::success();
+  unsigned numTypes = topology.getNumTypes();
+  size_t n = topology.getNumParticles();
+  for (auto [index, term] : llvm::enumerate(control.pairs)) {
+    std::vector<System::TailPair> &tails = system.pairTails.emplace_back();
+    if (term.dispersionGiven &&
+        term.dispersion == DispersionCorrection::None)
+      continue;
+    Expression expression =
+        llvm::cantFail(Expression::parse(term.expression, control.functions));
+    const std::vector<std::string> &used = expression.getNames();
+    auto uses = [&](llvm::StringRef name) {
+      return llvm::is_contained(used, name);
+    };
+    bool asked = term.dispersionGiven || control.topologyDispersionGiven;
+    auto refuse = [&](llvm::StringRef why) -> llvm::Error {
+      if (asked)
+        return llvm::createStringError(
+            llvm::inconvertibleErrorCode(),
+            "the correction for the dispersion integrates the pair term "
+            "'%s' beyond the cutoff, and %s; give 'dispersion_correction = "
+            "\"NONE\"' in the term to leave it out",
+            term.name.c_str(), why.str().c_str());
+      system.warnings.push_back(
+          {"pair_tail_left_out",
+           "the correction for the dispersion leaves out the pair term '" +
+               term.name + "', since " + why.str() +
+               "; give 'dispersion_correction = \"NONE\"' in the term to "
+               "say so"});
+      tails.clear();
+      return llvm::Error::success();
+    };
+    if (uses("t"))
+      return refuse("its expression depends on the time t");
+    bool charged = uses("q1") || uses("q2");
+    std::vector<const std::vector<double> *> stems;
+    std::vector<std::string> stemNames;
+    for (const auto &[name, values] : system.particleParameters)
+      if (uses(name + "1") || uses(name + "2")) {
+        stems.push_back(&values);
+        stemNames.push_back(name);
+      }
+    bool grouped = index < system.pairGroups.size() &&
+                   !system.pairGroups[index].empty();
+    std::map<std::vector<double>, unsigned> classes;
+    std::vector<std::vector<double>> keys;
+    std::vector<unsigned> classOf(n);
+    std::vector<double> sizes;
+    for (size_t i = 0; i != n; ++i) {
+      std::vector<double> key = {static_cast<double>(topology.types[i])};
+      if (charged)
+        key.push_back(topology.charges[i]);
+      for (const std::vector<double> *values : stems)
+        key.push_back((*values)[i]);
+      if (grouped) {
+        key.push_back(system.pairGroups[index][0][i] ? 1.0 : 0.0);
+        key.push_back(system.pairGroups[index][1][i] ? 1.0 : 0.0);
+      }
+      auto [it, inserted] = classes.insert({key, keys.size()});
+      if (inserted) {
+        keys.push_back(key);
+        sizes.push_back(0.0);
+      }
+      classOf[i] = it->second;
+      sizes[it->second] += 1.0;
+    }
+    size_t count = keys.size();
+    auto selects = [&](unsigned a, unsigned b) {
+      if (!grouped)
+        return true;
+      const std::vector<double> &x = keys[a], &y = keys[b];
+      size_t g = x.size() - 2;
+      return x[g] * y[g + 1] + x[g + 1] * y[g] > 0.0;
+    };
+    // The unordered pairs of each pair of classes a <= b.
+    std::vector<double> pairs(count * count, 0.0);
+    for (unsigned a = 0; a != count; ++a)
+      for (unsigned b = a; b != count; ++b)
+        if (selects(a, b))
+          pairs[a * count + b] = a == b ? 0.5 * sizes[a] * (sizes[a] - 1.0)
+                                        : sizes[a] * sizes[b];
+    for (auto [i, j] : topology.exclusions) {
+      unsigned a = classOf[i], b = classOf[j];
+      if (a > b)
+        std::swap(a, b);
+      if (selects(a, b))
+        pairs[a * count + b] -= 1.0;
+    }
+    auto sigma = [&](unsigned x, unsigned y) {
+      return topology.sigma[x * numTypes + y] / units::length;
+    };
+    auto epsilon = [&](unsigned x, unsigned y) {
+      return topology.epsilon[x * numTypes + y] / units::energy;
+    };
+    for (unsigned a = 0; a != count; ++a)
+      for (unsigned b = a; b != count; ++b) {
+        if (pairs[a * count + b] <= 0.0)
+          continue;
+        System::TailPair pair;
+        pair.count = pairs[a * count + b];
+        llvm::StringMap<double> &values = pair.values;
+        unsigned ta = static_cast<unsigned>(keys[a][0]);
+        unsigned tb = static_cast<unsigned>(keys[b][0]);
+        values["sigma"] = sigma(ta, tb);
+        values["epsilon"] = epsilon(ta, tb);
+        values["sigma1"] = sigma(ta, ta);
+        values["sigma2"] = sigma(tb, tb);
+        values["epsilon1"] = epsilon(ta, ta);
+        values["epsilon2"] = epsilon(tb, tb);
+        values["coulomb"] = units::coulomb;
+        size_t place = 1;
+        if (charged) {
+          values["q1"] = keys[a][place];
+          values["q2"] = keys[b][place];
+          ++place;
+        }
+        for (const std::string &stem : stemNames) {
+          values[stem + "1"] = keys[a][place];
+          values[stem + "2"] = keys[b][place];
+          ++place;
+        }
+        for (const auto &[name, value] : term.constants)
+          values[name] = value;
+        for (const auto &[name, list] : control.freeEnergy.lambdas)
+          values["lambda_" + name] =
+              control.freeEnergy.get(name, control.freeEnergy.state);
+        if (!hasFiniteTail(expression, values, control.cutoffDistance))
+          return refuse("its tail diverges (its energy must decay faster "
+                        "than 1/r^3)");
+        tails.push_back(std::move(pair));
+      }
+  }
+  return llvm::Error::success();
 }
 
 /// The parameters of each particle (D165): the entries of the control file,

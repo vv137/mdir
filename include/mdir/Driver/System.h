@@ -29,7 +29,20 @@ constexpr double dynePerCmToBarNm = 10.0;
 /// The Boltzmann constant in kJ/(mol K): k_B N_A, exact since the SI of 2019.
 /// See Tiesinga et al., Rev. Mod. Phys. 93, 025010 (2021).
 constexpr double boltzmann = 0.0083144626181532;
+/// The Coulomb constant in the units of the control file, kcal Å mol⁻¹ e⁻²,
+/// from CODATA 2018 (docs/conventions.md). An expression names it
+/// `coulomb`.
+constexpr double coulomb = 332.06371329919205;
 } // namespace units
+
+class Expression;
+
+/// Whether the tail of the pair energy `expression` beyond `cutoff` (Å),
+/// ∫ r² u(r) dr, converges at the values `values`: r³ u(r) must fall by a
+/// decade at least from each of 10³, 10⁴, 10⁵ to 10⁶ r_c, or be 0
+/// (D[pair-dispersion-correction]).
+bool hasFiniteTail(const Expression &expression,
+                   llvm::StringMap<double> values, double cutoff);
 
 /// The particles, in the units inside MDIR: nm, ps, amu.
 struct System {
@@ -50,6 +63,17 @@ struct System {
   std::vector<std::vector<std::vector<bool>>> pairGroups;
   /// The names of those terms, for the log.
   std::vector<std::string> pairTermNames;
+  /// The tail of each pair term of a topology in the correction for the
+  /// dispersion (D[pair-dispersion-correction]): the pairs of classes of
+  /// particles that it counts, each with the values that its expression
+  /// reads in the units of the control file (`r` aside) and the number of
+  /// such pairs that the topology does not exclude; empty for a term that
+  /// the correction leaves out, and for all without the correction.
+  struct TailPair {
+    llvm::StringMap<double> values;
+    double count = 0.0;
+  };
+  std::vector<std::vector<TailPair>> pairTails;
   /// The parameters of each particle (D165): a name and a value for every
   /// particle, in the units of the control file, which the pair terms
   /// gather.

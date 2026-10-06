@@ -22,7 +22,7 @@ namespace {
 /// The Coulomb constant in the units of the control file, kcal Å mol⁻¹ e⁻²,
 /// from CODATA 2018 (docs/conventions.md). An expression names it
 /// `coulomb`.
-constexpr double coulombConstant = 332.06371329919205;
+constexpr double coulombConstant = units::coulomb;
 
 /// The parameter of a pair from those of its two particles.
 static double mix(Mixing mixing, double a, double b) {
@@ -373,21 +373,14 @@ private:
   /// file, in kJ/mol; with `decoupled`, without the pairs that the
   /// selection of [free_energy] decouples.
   double getTopologyDispersion(bool decoupled) const;
-  /// The tails of the pair terms beyond the cutoff with a topology
-  /// (D[pair-dispersion-correction]): for each term, the pairs of classes
-  /// of particles that it selects, with the values that its expression
-  /// reads for them and the number of such pairs that the topology does
-  /// not exclude.
-  struct TailPair {
-    llvm::StringMap<double> values;
-    double count = 0.0;
-  };
-  std::vector<std::vector<TailPair>> pairTails;
+  /// The expressions of the pair terms, whose tails beyond the cutoff
+  /// System::pairTails counts (D[pair-dispersion-correction]).
   std::vector<Expression> tailExpressions;
   /// Collects the tails of the observed pair terms and their derivatives
   /// in the observed constants, for the columns of `observe`.
   void collectObservedTails();
-  /// Collects `pairTails` and refuses a term whose tail diverges.
+  /// Parses the expressions of the pair terms and refuses a tail that the
+  /// quadrature cannot integrate.
   llvm::Error collectPairTails();
   /// The tail of the pair term `index` at the volume of the file, in
   /// kJ/mol, with the values `changes` in place of those of the run (a
@@ -1648,7 +1641,8 @@ llvm::Error Builder::collectTopology() {
     // The tails of the pair terms (D[pair-dispersion-correction]).
     if (llvm::Error error = collectPairTails())
       return error;
-    for (unsigned index = 0, e = pairTails.size(); index != e; ++index) {
+    for (unsigned index = 0, e = system.pairTails.size(); index != e;
+         ++index) {
       auto [tail, virial] = llvm::cantFail(getPairTail(index, {}));
       program.dispersionEnergy += tail;
       program.dispersionVirial += virial;
@@ -1753,134 +1747,21 @@ static double integrateUnit(llvm::function_ref<double(double)> f) {
 }
 
 llvm::Error Builder::collectPairTails() {
-  // The pairs of particles that each pair term counts, in classes of
-  // particles equal in everything that its expression reads: the type, the
-  // charge if it reads q1 or q2, the parameters of each particle that it
-  // reads, and its two group flags. The number of pairs of two classes is
-  // then a product, less the pairs that the topology excludes, and the
-  // tail is a sum over pairs of classes (D[pair-dispersion-correction]).
-  const Topology &topology = *system.topology;
-  unsigned numTypes = topology.getNumTypes();
-  size_t n = topology.getNumParticles();
-  for (auto [index, term] : llvm::enumerate(control.pairs)) {
-    Expression expression =
-        llvm::cantFail(Expression::parse(term.expression, control.functions));
-    const std::vector<std::string> &used = expression.getNames();
-    auto uses = [&](StringRef name) { return llvm::is_contained(used, name); };
-    if (uses("t"))
-      return makeError("the correction for the dispersion takes the tail "
-                       "of the pair term '" + term.name + "' as a constant, "
-                       "and its expression depends on the time t; give "
-                       "'dispersion_correction = \"NONE\"'");
-    bool charged = uses("q1") || uses("q2");
-    std::vector<const std::vector<double> *> stems;
-    std::vector<std::string> stemNames;
-    for (const auto &[name, values] : system.particleParameters)
-      if (uses(name + "1") || uses(name + "2")) {
-        stems.push_back(&values);
-        stemNames.push_back(name);
-      }
-    bool grouped =
-        index < system.pairGroups.size() && !system.pairGroups[index].empty();
-    // The class of each particle.
-    std::map<std::vector<double>, unsigned> classes;
-    std::vector<std::vector<double>> keys;
-    std::vector<unsigned> classOf(n);
-    std::vector<double> sizes;
-    for (size_t i = 0; i != n; ++i) {
-      std::vector<double> key = {static_cast<double>(topology.types[i])};
-      if (charged)
-        key.push_back(topology.charges[i]);
-      for (const std::vector<double> *values : stems)
-        key.push_back((*values)[i]);
-      if (grouped) {
-        key.push_back(system.pairGroups[index][0][i] ? 1.0 : 0.0);
-        key.push_back(system.pairGroups[index][1][i] ? 1.0 : 0.0);
-      }
-      auto [it, inserted] = classes.insert({key, keys.size()});
-      if (inserted) {
-        keys.push_back(key);
-        sizes.push_back(0.0);
-      }
-      classOf[i] = it->second;
-      sizes[it->second] += 1.0;
-    }
-    size_t count = keys.size();
-    auto selects = [&](unsigned a, unsigned b) {
-      if (!grouped)
-        return true;
-      const std::vector<double> &x = keys[a], &y = keys[b];
-      size_t g = x.size() - 2;
-      return x[g] * y[g + 1] + x[g + 1] * y[g] > 0.0;
-    };
-    // The unordered pairs of each pair of classes a <= b.
-    std::vector<double> pairs(count * count, 0.0);
-    for (unsigned a = 0; a != count; ++a)
-      for (unsigned b = a; b != count; ++b)
-        if (selects(a, b))
-          pairs[a * count + b] = a == b ? 0.5 * sizes[a] * (sizes[a] - 1.0)
-                                        : sizes[a] * sizes[b];
-    for (auto [i, j] : topology.exclusions) {
-      unsigned a = classOf[i], b = classOf[j];
-      if (a > b)
-        std::swap(a, b);
-      if (selects(a, b))
-        pairs[a * count + b] -= 1.0;
-    }
-    auto sigma = [&](unsigned x, unsigned y) {
-      return topology.sigma[x * numTypes + y] / units::length;
-    };
-    auto epsilon = [&](unsigned x, unsigned y) {
-      return topology.epsilon[x * numTypes + y] / units::energy;
-    };
-    std::vector<TailPair> tails;
-    for (unsigned a = 0; a != count; ++a)
-      for (unsigned b = a; b != count; ++b) {
-        if (pairs[a * count + b] <= 0.0)
-          continue;
-        TailPair pair;
-        pair.count = pairs[a * count + b];
-        llvm::StringMap<double> &values = pair.values;
-        unsigned ta = static_cast<unsigned>(keys[a][0]);
-        unsigned tb = static_cast<unsigned>(keys[b][0]);
-        values["sigma"] = sigma(ta, tb);
-        values["epsilon"] = epsilon(ta, tb);
-        values["sigma1"] = sigma(ta, ta);
-        values["sigma2"] = sigma(tb, tb);
-        values["epsilon1"] = epsilon(ta, ta);
-        values["epsilon2"] = epsilon(tb, tb);
-        values["coulomb"] = coulombConstant;
-        size_t place = 1;
-        if (charged) {
-          values["q1"] = keys[a][place];
-          values["q2"] = keys[b][place];
-          ++place;
-        }
-        for (const std::string &stem : stemNames) {
-          values[stem + "1"] = keys[a][place];
-          values[stem + "2"] = keys[b][place];
-          ++place;
-        }
-        for (const auto &[name, value] : term.constants)
-          values[name] = value;
-        for (const auto &[name, list] : control.freeEnergy.lambdas)
-          values["lambda_" + name] = getLambda(name);
-        tails.push_back(std::move(pair));
-      }
-    pairTails.push_back(std::move(tails));
-    tailExpressions.push_back(std::move(expression));
-  }
-  // The tail must converge: r³ u(r) must decay. It is tested at the values
-  // of the run, far beyond the cutoff.
+  // The pairs that each term counts, from the system
+  // (D[pair-dispersion-correction]); a term that the correction leaves out
+  // has none.
+  for (const PairTerm &term : control.pairs)
+    tailExpressions.push_back(llvm::cantFail(
+        Expression::parse(term.expression, control.functions)));
   for (auto [index, term] : llvm::enumerate(control.pairs)) {
     auto tail = getPairTail(index, {});
     if (!tail) {
       llvm::consumeError(tail.takeError());
       return makeError("the correction for the dispersion integrates the "
                        "pair term '" + term.name + "' beyond the cutoff, "
-                       "and its tail diverges or cannot be integrated (its "
-                       "energy must decay faster than 1/r^3); give "
-                       "'dispersion_correction = \"NONE\"'");
+                       "and its tail cannot be integrated; give "
+                       "'dispersion_correction = \"NONE\"' in the term to "
+                       "leave it out");
     }
   }
   return llvm::Error::success();
@@ -1902,25 +1783,17 @@ Builder::getPairTail(unsigned index,
   const Expression &expression = tailExpressions[index];
   double rc = control.cutoffDistance;
   double energy = 0.0, virial = 0.0;
-  for (const TailPair &pair : pairTails[index]) {
+  for (const System::TailPair &pair : system.pairTails[index]) {
     llvm::StringMap<double> values = pair.values;
     for (const auto &entry : changes)
       if (values.count(entry.getKey()))
         values[entry.getKey()] = entry.getValue();
+    if (!hasFiniteTail(expression, values, rc))
+      return makeError("diverges");
     auto u = [&](double r) {
       values["r"] = r;
       return expression.evaluate(values);
     };
-    // r³ u(r) at 10³, 10⁴, 10⁵, and 10⁶ rc must decay by a decade at least
-    // each time, or be 0.
-    double previous = 0.0;
-    for (int k = 3; k <= 6; ++k) {
-      double r = rc * std::pow(10.0, k);
-      double h = std::fabs(r * r * r * u(r));
-      if (!std::isfinite(h) || (k > 3 && h != 0.0 && !(h <= 0.1 * previous)))
-        return makeError("diverges");
-      previous = h;
-    }
     double integral = integrateUnit([&](double x) {
       if (x == 0.0)
         return 0.0;
@@ -1944,7 +1817,7 @@ Builder::getPairTail(unsigned index,
 
 double Builder::getPairTails(const llvm::StringMap<double> &changes) const {
   double sum = 0.0;
-  for (unsigned index = 0, e = pairTails.size(); index != e; ++index)
+  for (unsigned index = 0, e = system.pairTails.size(); index != e; ++index)
     sum += llvm::cantFail(getPairTail(index, changes)).first;
   return sum;
 }
@@ -1989,7 +1862,7 @@ void Builder::collectObservedTails() {
   program.observableVolumeConstants.assign(control.observables.size(), 0.0);
   for (auto [column, observable] : llvm::enumerate(control.observables))
     for (auto [index, term] : llvm::enumerate(control.pairs)) {
-      if (term.name != observable.term || index >= pairTails.size())
+      if (term.name != observable.term || index >= system.pairTails.size())
         continue;
       if (observable.constant.empty()) {
         program.observableVolumeConstants[column] =
@@ -2075,7 +1948,7 @@ void Builder::collectFreeEnergyConstants() {
     }
     if (decouples() && name == "vdw")
       scaled = decoupled - coupled;
-    for (unsigned index = 0, e = pairTails.size(); index != e; ++index)
+    for (unsigned index = 0, e = system.pairTails.size(); index != e; ++index)
       scaled += getPairTailDerivative(index, "lambda_" + name, getLambda(name));
     program.lambdaFixedDerivatives.push_back(fixed);
     program.lambdaVolumeDerivatives.push_back(scaled);
