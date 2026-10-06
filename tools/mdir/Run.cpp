@@ -596,7 +596,10 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                             mlir::PassManager::Nesting::Implicit);
   if (!control->manifestFile.empty())
     manager.addInstrumentation(std::make_unique<ManifestNeighbors>(neighborKinds));
-  std::string pipeline = compiler::getPipeline(*control, *program);
+  // The kernels are compiled for the device that runs them: the first
+  // visible one, or the one MDRT_DEVICE names (D[gpu-module-compile]).
+  std::string pipeline = compiler::getPipeline(
+      *control, *program, compiler::getGpuChip(*control, /*device=*/0));
   // MDIR_PIPELINE replaces the pipeline, to try another order of passes or
   // to stop part of the way.
   if (const char *replaced = std::getenv("MDIR_PIPELINE"))

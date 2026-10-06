@@ -16,7 +16,8 @@ add_mlir_library(MDIRCompiler Compile.cpp
 )
 foreach(target MDIRCompiler obj.MDIRCompiler)
   if(TARGET ${target})
-    target_compile_definitions(${target} PRIVATE MDIR_HAS_CUDA=$<BOOL:${MDIR_CUDA_FOUND}>)
+    target_compile_definitions(${target} PRIVATE MDIR_HAS_CUDA=$<BOOL:${MDIR_CUDA_FOUND}>
+      MDIR_CUDA_ROOT="${MDIR_CUDA_ROOT}")
   endif()
 endforeach()
 

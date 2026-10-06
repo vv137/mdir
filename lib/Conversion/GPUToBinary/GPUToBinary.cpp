@@ -40,6 +40,7 @@
 #include "mlir/Transforms/Passes.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Config/Targets.h"
 #include "llvm/Config/llvm-config.h"
 #include "llvm/Support/BLAKE3.h"
 #include "llvm/Support/FileSystem.h"
@@ -48,7 +49,13 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Program.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/MC/MCSubtargetInfo.h"
+#include "llvm/MC/TargetRegistry.h"
+#include "llvm/TargetParser/Triple.h"
 #include <atomic>
+#include <cstdlib>
+#include <dlfcn.h>
+#include <unistd.h>
 #include <chrono>
 #include <limits>
 #include <map>
@@ -605,6 +612,74 @@ void buildGpuLowerToNVVM(OpPassManager &pm,
 }
 
 } // namespace
+
+#if LLVM_HAS_NVPTX_TARGET
+extern "C" void LLVMInitializeNVPTXTargetInfo();
+extern "C" void LLVMInitializeNVPTXTarget();
+extern "C" void LLVMInitializeNVPTXTargetMC();
+#endif
+
+/// Whether LLVM's NVPTX backend knows `chip`.
+static bool isKnownChip(StringRef chip) {
+#if LLVM_HAS_NVPTX_TARGET
+  static std::once_flag initialized;
+  std::call_once(initialized, [] {
+    LLVMInitializeNVPTXTargetInfo();
+    LLVMInitializeNVPTXTarget();
+    LLVMInitializeNVPTXTargetMC();
+  });
+  llvm::Triple triple("nvptx64-nvidia-cuda");
+  std::string error;
+  const llvm::Target *target = llvm::TargetRegistry::lookupTarget(triple, error);
+  if (!target)
+    return false;
+  std::unique_ptr<llvm::MCSubtargetInfo> info(
+      target->createMCSubtargetInfo(triple, chip, ""));
+  return info && info->isCPUStringValid(chip);
+#else
+  return false;
+#endif
+}
+
+/// The compute capability of a visible device, through the driver API,
+/// which is opened at run time as `mdir doctor` opens it (D155); empty if
+/// it cannot be asked.
+static std::string queryChip(int64_t device) {
+  void *driver = dlopen("libcuda.so.1", RTLD_NOW | RTLD_GLOBAL);
+  if (!driver)
+    return "";
+  using Init = int (*)(unsigned);
+  using Get = int (*)(int *, int);
+  using Attribute = int (*)(int *, int, int);
+  auto init = reinterpret_cast<Init>(dlsym(driver, "cuInit"));
+  auto get = reinterpret_cast<Get>(dlsym(driver, "cuDeviceGet"));
+  auto attribute =
+      reinterpret_cast<Attribute>(dlsym(driver, "cuDeviceGetAttribute"));
+  // CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR and _MINOR.
+  constexpr int kMajor = 75, kMinor = 76;
+  int handle = 0, major = 0, minor = 0;
+  if (!init || !get || !attribute || init(0) != 0 ||
+      get(&handle, static_cast<int>(device)) != 0 ||
+      attribute(&major, kMajor, handle) != 0 ||
+      attribute(&minor, kMinor, handle) != 0)
+    return "";
+  return "sm_" + std::to_string(major) + std::to_string(minor);
+}
+
+std::string mdir::getGpuChip(int64_t device) {
+  // The runtime takes MDRT_DEVICE over the device it is given.
+  if (const char *chosen = std::getenv("MDRT_DEVICE"); chosen && *chosen)
+    device = std::strtol(chosen, nullptr, 10);
+  static std::mutex mutex;
+  static std::map<std::pair<pid_t, int64_t>, std::string> chips;
+  std::lock_guard<std::mutex> lock(mutex);
+  auto [entry, inserted] = chips.try_emplace({getpid(), device});
+  if (inserted) {
+    std::string chip = queryChip(device);
+    entry->second = !chip.empty() && isKnownChip(chip) ? chip : "";
+  }
+  return entry->second;
+}
 
 CompileStats mdir::takeGpuModuleStats(MLIRContext &context) {
   std::lock_guard<std::mutex> lock(getStatsMutex());
