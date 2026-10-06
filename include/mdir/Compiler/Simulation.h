@@ -84,6 +84,13 @@ public:
   llvm::Expected<int64_t> run(int64_t count,
                               const std::function<bool()> &poll = {},
                               bool energy = false);
+  /// Evaluates the forces at the state, and the energies of a step of
+  /// energy, without taking a step (D[python-tunable]): the start of the
+  /// run before the first, and the forces of the state anew after it.
+  /// After the first run, leapfrog's energies are not those of the step
+  /// (its velocities are half a step behind) and stay unset; a program
+  /// without tunables refuses leapfrog then.
+  llvm::Error evaluate();
   /// Takes `count` more steps of the minimization of `mdir run`, or the
   /// steps of its schedule if none, in parts as `run` does; a simulation
   /// of a program that minimizes takes only these (D202).
@@ -160,6 +167,8 @@ private:
     int64_t closePeriods = 0;
   };
   llvm::Error runPart(Engine &engine, Part part);
+  /// A part of no steps: the evaluation of `evaluate`.
+  llvm::Error evaluatePart();
   /// The steps of the next part, in multiples of `unit`.
   int64_t getPartSteps(int64_t unit) const;
   /// The next step after `step` at which a built-in report is due, or -1.

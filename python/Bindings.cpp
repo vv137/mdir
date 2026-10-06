@@ -538,6 +538,9 @@ PYBIND11_MODULE(mdir, m) {
   static auto updateOf = [](TunableValues &t, py::handle mapping) {
     auto &sim = simulationOf(t);
     const auto &set = sim.getTunables();
+    if (set.empty())
+      throw InputError("the program of this simulation declares no tunable parameters "
+                       "(System.tunables)");
     std::vector<std::pair<std::string, std::vector<double>>> changes;
     auto items = py::reinterpret_borrow<py::object>(mapping).attr("items")();
     for (py::handle item : items) {
@@ -620,6 +623,16 @@ PYBIND11_MODULE(mdir, m) {
       auto &s = self.cast<PySimulation &>();
       if (steps < 0) throw InputError("run takes a nonnegative number of steps");
       std::vector<CallbackReporter> callbacks = s.sync();
+      // No step, and the energies of the state (D[python-tunable]).
+      if (steps == 0 && energy) {
+        std::optional<llvm::Error> error;
+        {
+          py::gil_scoped_release release;
+          error.emplace(s.simulation->evaluate());
+        }
+        if (*error) raise(std::move(*error));
+        return int64_t(0);
+      }
       // The parts end at the steps of the callbacks, whose state they take;
       // the files of the built-in reporters are written inside the parts.
       int64_t taken = 0, end = s.simulation->getStep() + steps;

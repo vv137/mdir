@@ -1091,10 +1091,7 @@ llvm::Error Simulation::updateTunables(
   // The forces that the next step begins with, at the new values; a
   // minimization takes none.
   if (hasRun && !prepared.control.minimize) {
-    refreshing = true;
-    llvm::Error error = runPart(*compiled, Part());
-    refreshing = false;
-    if (error) {
+    if (llvm::Error error = evaluatePart()) {
       std::swap(compiled->program, *program);
       tunableValues = std::move(before);
       failed = false;
@@ -1103,10 +1100,6 @@ llvm::Error Simulation::updateTunables(
                              llvm::toString(std::move(error)) +
                              "; the update is undone");
     }
-    // Leapfrog's velocities are half a step behind the positions: the row
-    // of the energies would take them for those of the step.
-    if (prepared.control.integrator == Integrator::Leapfrog)
-      output->lastEnergies.step = -1;
   } else {
     output->lastEnergies.step = -1;
   }
@@ -1114,4 +1107,45 @@ llvm::Error Simulation::updateTunables(
   tunablesHistory.push_back({step, tunablesVersion});
   output->tunablesVersion = tunablesVersion;
   return llvm::Error::success();
+}
+
+llvm::Error Simulation::evaluatePart() {
+  // On the first call, the start of the run; on a later one, the forces of
+  // the state given anew (%first_call 2), which only a program with
+  // tunables takes without the half kick back of leapfrog.
+  if (hasRun && prepared.control.integrator == Integrator::Leapfrog &&
+      !compiled->program.tunable)
+    return unsupported("an evaluation without a step after the first run "
+                       "takes velocity Verlet, or a program with tunable "
+                       "parameters: leapfrog's velocities are half a step "
+                       "behind the positions");
+  bool refresh = hasRun;
+  refreshing = refresh;
+  llvm::Error error = runPart(*compiled, Part());
+  refreshing = false;
+  if (error)
+    return error;
+  // Leapfrog's velocities are half a step behind the positions after the
+  // first call: a row of energies would take them for those of the step.
+  if (refresh && prepared.control.integrator == Integrator::Leapfrog)
+    output->lastEnergies.step = -1;
+  return llvm::Error::success();
+}
+
+llvm::Error Simulation::evaluate() {
+  if (busy.exchange(true))
+    return simulationError("another operation is under way on this "
+                           "simulation");
+  struct Release {
+    std::atomic<bool> &flag;
+    ~Release() { flag = false; }
+  } release{busy};
+  if (failed)
+    return simulationError("the simulation failed earlier; it keeps the "
+                           "state of step " + llvm::Twine(step) +
+                           " and runs no further");
+  if (prepared.control.minimize)
+    return inputError("this simulation minimizes: minimize(0) evaluates "
+                      "nothing; call minimize(steps)");
+  return evaluatePart();
 }
