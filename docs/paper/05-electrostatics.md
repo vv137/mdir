@@ -250,6 +250,83 @@ evaluated at $10^4r_c$ and checked against its value at $10^3r_c$ to
 $10^{-9}$. Both terms are constants of the host at the volume of the
 start, scaled by $V_0/V$ as the cell changes.
 
+**Pair terms over a topology** (D[pair-dispersion-correction]). A term
+`[[energy.pair]]` over the pairs of a topology, such as an NBFIX written
+in the control file as $u(\sigma',\varepsilon') - u(\sigma,\varepsilon)$
+over two groups, has a tail of its own, of any form. With the same uniform
+density, the pairs $\{i,j\}$ that the term counts (its groups select them
+and the topology does not exclude them) add
+
+$$
+E_\text{tail} = \nu\,\frac{4\pi}{V}\sum_{\{i,j\}} I_{ij},
+\qquad I_{ij} = \int_{r_c}^\infty r^2u_{ij}(r)\,dr,
+\qquad \nu = \frac{N^2}{N(N-1) - 2N_\text{excluded}},
+$$
+
+where $\nu$ is the factor that $N^2\langle C_6\rangle$ above gives each
+pair, so that both corrections follow one convention; for
+$u = -C_6/r^6$, $E_\text{tail}$ is $E_\text{disp}$. The virial is the
+work that the pairs beyond $r_c$ would do under a scaling of the cell,
+$-\nu(4\pi/V)\sum\int_{r_c}^\infty r^3u'_{ij}\,dr$, which by parts,
+as $r^3u_{ij}\to0$, is
+
+$$
+\operatorname{tr}\mathsf W_\text{tail} = \nu\,\frac{4\pi}{V}\sum_{\{i,j\}}\big(3I_{ij} + r_c^3u_{ij}(r_c)\big).
+$$
+
+The term $3I_{ij}$ is the tail's own change, $-dE_\text{tail}/d\ln\mu$, and
+$r_c^3u_{ij}(r_c)$ the shell of pairs that a scaling carries across the
+cutoff, as derived above; for $-C_6/r^6$, $r_c^3u(r_c) = 3I$ and
+$\operatorname{tr}\mathsf W_\text{tail} = 6E_\text{tail}$. The tail is
+part of the potential energy as a function of the constants of the term,
+$\xi$ and $\boldsymbol\lambda$, and of $V$: $U = U_{r<r_c}(\mathbf x;\xi) +
+E_\text{tail}(V;\xi)$. So $\partial F/\partial\xi =
+\langle\partial U/\partial\xi\rangle$ (Section 6.8) includes
+$\partial E_\text{tail}/\partial\xi$, and so do $dH/d\lambda$, the
+energies of the states of `[free_energy]`, and the derivatives of
+`observe`. At constant volume it shifts the mean force by a constant and
+leaves its covariance with any observable unchanged; at constant pressure
+it varies as $1/V$. Without it, a correction term would leave out the
+long-range part of what it changes: 0.80 kcal/mol at $\sigma'$ = 3.7 Å on
+150 + 150 particles, and the pressure and the density of NPT with it:
+1.1% of the volume of 250 + 250 such particles at 100 K, which the tail
+restores to that of `[ nonbond_params ]` within 0.2 standard errors.
+
+Pairs whose particles agree in all that the expression reads (the type,
+the charge if it reads $q$, the parameters of each particle, the flags of
+the groups) have the same $I_{ij}$, so the sum runs over pairs of such
+classes, their counts products less the excluded pairs. In
+$s = r_c/r$,
+
+$$
+I = r_c^3\int_0^1 u(r_c/s)\,s^{-4}\,ds,
+$$
+
+whose integrand for $u = \sum_k a_kr^{-k}$ is
+$\sum_k a_kr_c^{3-k}s^{k-4}$, a polynomial in $s$ for integers
+$k\ge4$. The adaptive Gauss–Kronrod rule of 7 and 15 points
+[[Piessens1983]](references.md#piessens1983) integrates a polynomial of
+degree up to 13 exactly on its first interval, with an estimate of the
+error at round-off, so the tail of a Lennard-Jones ($s^2$ and $s^8$) or of
+$r^{-8}$ is its closed form to round-off, and any other expression is
+integrated adaptively to $10^{-13}$ relative. The integral converges only
+if $r^3u(r)\to0$; the driver requires $r^3u$ to fall by at least a decade
+per decade of $r$ from $10^3r_c$ to $10^6r_c$, and refuses the term
+otherwise, as it refuses a term of the time, which has no constant tail.
+Such a term is left out with a warning under the default correction, and
+refused when the control file asks for the correction; `dispersion_correction
+= "NONE"` in the term leaves it out explicitly.
+The derivatives in $\xi$ and $\lambda$ are central differences of the
+integral, extrapolated to a zero step (Richardson), on the host.
+
+The topology's correction leaves its repulsion out, as Amber and GROMACS
+do, while a pair term's tail is its whole expression: an NBFIX written as
+a correction term differs from the same pair in `[ nonbond_params ]` by
+the tail of $\Delta C_{12}$, $\nu(4\pi/V)N_AN_B\,\Delta C_{12}/(9r_c^9)$,
+$3.3\times10^{-4}$ kcal/mol in `pair-dispersion.test`, to which they
+agree to $2.4\times10^{-8}$ kcal/mol in the energy and $10^{-7}$ in the
+virial.
+
 ## 5.5 Particle mesh Ewald for the dispersion
 
 The correction of Section 5.4 assumes that the density beyond the cutoff

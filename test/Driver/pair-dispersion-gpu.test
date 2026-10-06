@@ -1,0 +1,50 @@
+# The tails of pair terms in the correction for the dispersion
+# (D[pair-dispersion-correction]) on a GPU, in double and mixed precision:
+# the runs of pair-dispersion.test against check_pair_tail.py. The
+# correction is a constant of the host, so the dispersion lines are those of
+# the CPU; the comparison of the NBFIX written as a correction term with the
+# topology of [ nonbond_params ] holds to 2e-6 kcal/mol in double precision
+# and to 2e-5 in mixed (1.9e-6 measured), where the two programs sum the
+# pairs within the cutoff in f32 in different orders.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t/double %t/mixed
+# RUN: %python %S/Inputs/pair_tail_system.py %t/double 60 60 32 3.7 0.5
+# RUN: %python %S/Inputs/pair_tail_system.py %t/mixed 60 60 32 3.7 0.5
+# RUN: sed -n '/^#--- run.toml/,/^#--- terms/p' %S/pair-dispersion.test | sed '1d;$d' | sed -e 's/^target    = "CPU"/target    = "GPU"/' > %t/double/base.toml
+# RUN: sed -e 's/^precision = "DOUBLE"/precision = "MIXED"/' %t/double/base.toml > %t/mixed/base.toml
+# RUN: sed -n '/^#--- nbfix/,/^#--- r8/p' %S/pair-dispersion.test | sed '1d;$d' > %t/nbfix.term
+# RUN: sed -n '/^#--- r8/,/^#--- lambda/p' %S/pair-dispersion.test | sed '1d;$d' > %t/r8.term
+# RUN: sed -n '/^#--- lambda/,/^#--- observe/p' %S/pair-dispersion.test | sed '1d;$d' > %t/lambda.term
+# RUN: sed -n '/^#--- observe/,/^#--- end/p' %S/pair-dispersion.test | sed '1d;$d' > %t/observe.term
+#
+# RUN: sed -e 's/TOPOLOGY/plain.top/' %t/double/base.toml > %t/double/plain.toml
+# RUN: sed -e 's/TOPOLOGY/fixed.top/' %t/double/base.toml > %t/double/fixed.toml
+# RUN: cat %t/double/plain.toml %t/nbfix.term > %t/double/nbfix.toml
+# RUN: cat %t/double/plain.toml %t/r8.term > %t/double/r8.toml
+# RUN: sed -e 's/^energy_interval = 1/&\nfree_energy = "lambda.dhdl"/' %t/double/plain.toml > %t/double/lambda.head
+# RUN: cat %t/double/lambda.head %t/lambda.term > %t/double/lambda.toml
+# RUN: sed -e 's/^energy_interval = 1/&\nobservables = "observe.obs"/' %t/double/plain.toml > %t/double/observe.head
+# RUN: cat %t/double/observe.head %t/observe.term > %t/double/observe.toml
+# RUN: sed -e 's/^dispersion_correction = "ENERGY_PRESSURE"/dispersion_correction = "NONE"/' -e 's/lambda.dhdl/lambda-off.dhdl/' %t/double/lambda.toml > %t/double/lambda-off.toml
+# RUN: sed -e 's/^dispersion_correction = "ENERGY_PRESSURE"/dispersion_correction = "NONE"/' -e 's/observe.obs/observe-off.obs/' %t/double/observe.toml > %t/double/observe-off.toml
+# RUN: cd %t/double && mdir run plain.toml > plain.log && mdir run fixed.toml > fixed.log && mdir run nbfix.toml > nbfix.log && mdir run r8.toml > r8.log
+# RUN: cd %t/double && mdir run lambda.toml > lambda.log && mdir run lambda-off.toml > lambda-off.log && mdir run observe.toml > observe.log && mdir run observe-off.toml > observe-off.log
+# RUN: %python %S/Inputs/check_pair_tail.py %t/double 2e-6 plain fixed nbfix r8 | FileCheck %S/pair-dispersion.test
+# RUN: %python %S/Inputs/check_pair_tail.py %t/double 2e-6 derivatives | FileCheck %S/pair-dispersion.test --check-prefix=DERIVATIVES
+#
+# RUN: sed -e 's/TOPOLOGY/plain.top/' %t/mixed/base.toml > %t/mixed/plain.toml
+# RUN: sed -e 's/TOPOLOGY/fixed.top/' %t/mixed/base.toml > %t/mixed/fixed.toml
+# RUN: cat %t/mixed/plain.toml %t/nbfix.term > %t/mixed/nbfix.toml
+# RUN: cat %t/mixed/plain.toml %t/r8.term > %t/mixed/r8.toml
+# RUN: sed -e 's/^energy_interval = 1/&\nfree_energy = "lambda.dhdl"/' %t/mixed/plain.toml > %t/mixed/lambda.head
+# RUN: cat %t/mixed/lambda.head %t/lambda.term > %t/mixed/lambda.toml
+# RUN: sed -e 's/^energy_interval = 1/&\nobservables = "observe.obs"/' %t/mixed/plain.toml > %t/mixed/observe.head
+# RUN: cat %t/mixed/observe.head %t/observe.term > %t/mixed/observe.toml
+# RUN: sed -e 's/^dispersion_correction = "ENERGY_PRESSURE"/dispersion_correction = "NONE"/' -e 's/lambda.dhdl/lambda-off.dhdl/' %t/mixed/lambda.toml > %t/mixed/lambda-off.toml
+# RUN: sed -e 's/^dispersion_correction = "ENERGY_PRESSURE"/dispersion_correction = "NONE"/' -e 's/observe.obs/observe-off.obs/' %t/mixed/observe.toml > %t/mixed/observe-off.toml
+# RUN: cd %t/mixed && mdir run plain.toml > plain.log && mdir run fixed.toml > fixed.log && mdir run nbfix.toml > nbfix.log && mdir run r8.toml > r8.log
+# RUN: cd %t/mixed && mdir run lambda.toml > lambda.log && mdir run lambda-off.toml > lambda-off.log && mdir run observe.toml > observe.log && mdir run observe-off.toml > observe-off.log
+# RUN: %python %S/Inputs/check_pair_tail.py %t/mixed 2e-5 plain fixed nbfix r8 | FileCheck %S/pair-dispersion.test
+# RUN: %python %S/Inputs/check_pair_tail.py %t/mixed 2e-5 derivatives | FileCheck %S/pair-dispersion.test --check-prefix=DERIVATIVES

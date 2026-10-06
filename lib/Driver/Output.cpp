@@ -389,8 +389,15 @@ void _mlir_ciface_mdrtWriteObservables(int64_t step, void *values) {
     return;
   auto *v = static_cast<StridedMemRefType<double, 1> *>(values);
   std::vector<double> row = {output.getTime(step)};
-  for (int64_t k = 0; k != v->sizes[0]; ++k)
-    row.push_back(v->data[k * v->strides[0]] / units::energy);
+  // The tails of the observed pair terms at the volume of the cell
+  // (D[pair-dispersion-correction]).
+  double scale = output.firstVolume / output.volume;
+  for (int64_t k = 0; k != v->sizes[0]; ++k) {
+    double value = v->data[k * v->strides[0]];
+    if (static_cast<size_t>(k) < output.observableVolumeConstants.size())
+      value += output.observableVolumeConstants[k] * scale;
+    row.push_back(value / units::energy);
+  }
   output.observables.write(step, row);
 }
 

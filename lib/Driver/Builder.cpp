@@ -8,6 +8,7 @@
 
 #include <array>
 #include <cmath>
+#include <map>
 
 using namespace mdir::driver;
 using llvm::StringRef;
@@ -21,7 +22,7 @@ namespace {
 /// The Coulomb constant in the units of the control file, kcal Å mol⁻¹ e⁻²,
 /// from CODATA 2018 (docs/conventions.md). An expression names it
 /// `coulomb`.
-constexpr double coulombConstant = 332.06371329919205;
+constexpr double coulombConstant = units::coulomb;
 
 /// The parameter of a pair from those of its two particles.
 static double mix(Mixing mixing, double a, double b) {
@@ -372,6 +373,34 @@ private:
   /// file, in kJ/mol; with `decoupled`, without the pairs that the
   /// selection of [free_energy] decouples.
   double getTopologyDispersion(bool decoupled) const;
+  /// The expressions of the pair terms, whose tails beyond the cutoff
+  /// System::pairTails counts (D[pair-dispersion-correction]).
+  std::vector<Expression> tailExpressions;
+  /// Collects the tails of the observed pair terms and their derivatives
+  /// in the observed constants, for the columns of `observe`.
+  void collectObservedTails();
+  /// Parses the expressions of the pair terms and refuses a tail that the
+  /// quadrature cannot integrate.
+  llvm::Error collectPairTails();
+  /// The tail of the pair term `index` at the volume of the file, in
+  /// kJ/mol, with the values `changes` in place of those of the run (a
+  /// component `lambda_<name>` of λ, or a constant of the term), and its
+  /// share of the trace of the virial; an error if the integral fails.
+  llvm::Expected<std::pair<double, double>>
+  getPairTail(unsigned index, const llvm::StringMap<double> &changes) const;
+  /// The sum of the tails of the pair terms at the values `changes`.
+  double getPairTails(const llvm::StringMap<double> &changes) const;
+  /// The derivative of the tail of the pair term `index` in the value
+  /// `name`: exactly 0 if its expression does not read it.
+  double getPairTailDerivative(unsigned index, StringRef name,
+                               double value) const;
+  /// The values of the components of λ at the state `k`.
+  llvm::StringMap<double> getLambdaValues(size_t k) const {
+    llvm::StringMap<double> values;
+    for (const auto &[name, list] : control.freeEnergy.lambdas)
+      values["lambda_" + name] = control.freeEnergy.get(name, k);
+    return values;
+  }
   /// The self term of particle mesh Ewald and the background of a net
   /// charge at the volume of the file, in kJ/mol, with the charges of the
   /// selection of [free_energy] times 1 − `lambda`.
@@ -1609,6 +1638,16 @@ llvm::Error Builder::collectTopology() {
     }
     program.dispersionEnergy = energy;
     program.dispersionVirial = 6.0 * energy;
+    // The tails of the pair terms (D[pair-dispersion-correction]).
+    if (llvm::Error error = collectPairTails())
+      return error;
+    for (unsigned index = 0, e = system.pairTails.size(); index != e;
+         ++index) {
+      auto [tail, virial] = llvm::cantFail(getPairTail(index, {}));
+      program.dispersionEnergy += tail;
+      program.dispersionVirial += virial;
+    }
+    collectObservedTails();
   }
   if (control.hasFreeEnergy)
     collectFreeEnergyConstants();
@@ -1647,6 +1686,203 @@ double Builder::getTopologyDispersion(bool decoupled) const {
   double rc = control.cutoffDistance * units::length;
   double volume = system.box[0] * system.box[1] * system.box[2];
   return -2.0 * M_PI / (3.0 * volume) * n * n * mean / (rc * rc * rc);
+}
+
+/// The integral of `f` over [0, 1] by adaptive Gauss–Kronrod quadrature
+/// of 7 and 15 points [Piessens1983], to a relative error of 1e-13 of the
+/// whole; NaN if it does not reach it. The rule of 15 points is exact for
+/// polynomials of degree 22 and that of 7 for degree 13, so a polynomial of
+/// degree 13 or less takes one interval and its value to round-off.
+static double integrateUnit(llvm::function_ref<double(double)> f) {
+  static const double xk[8] = {
+      0.991455371120812639206854697526329, 0.949107912342758524526189684047851,
+      0.864864423359769072789712788640926, 0.741531185599394439863864773280788,
+      0.586087235467691130294144845693013, 0.405845151377397166906606412076961,
+      0.207784955007898467600689403773245, 0.0};
+  static const double wk[8] = {
+      0.022935322010529224963732008058970, 0.063092092629978553290700663189204,
+      0.104790010322250183839876322541518, 0.140653259715525918745189590510238,
+      0.169004726639267902826583426598550, 0.190350578064785409913256402421014,
+      0.204432940075298892414161999234649, 0.209482141084727828012999174891714};
+  static const double wg[4] = {
+      0.129484966168869693270611432679082, 0.279705391489276667901467771423780,
+      0.381830050505118944950369775488975, 0.417959183673469387755102040816327};
+  struct Interval {
+    double a, b, value, error;
+  };
+  auto rule = [&](double a, double b) {
+    double center = 0.5 * (a + b), half = 0.5 * (b - a);
+    double fc = f(center);
+    double kronrod = wk[7] * fc, gauss = wg[3] * fc;
+    for (int k = 0; k != 7; ++k) {
+      double sum = f(center - half * xk[k]) + f(center + half * xk[k]);
+      kronrod += wk[k] * sum;
+      if (k % 2 == 1)
+        gauss += wg[k / 2] * sum;
+    }
+    return Interval{a, b, kronrod * half,
+                    std::fabs((kronrod - gauss) * half)};
+  };
+  std::vector<Interval> intervals = {rule(0.0, 1.0)};
+  for (int iteration = 0; iteration != 4000; ++iteration) {
+    double value = 0.0, error = 0.0;
+    for (const Interval &interval : intervals) {
+      value += interval.value;
+      error += interval.error;
+    }
+    if (!std::isfinite(value) || !std::isfinite(error))
+      return std::nan("");
+    if (error <= 1.0e-13 * std::fabs(value) || error == 0.0)
+      return value;
+    auto worst = std::max_element(
+        intervals.begin(), intervals.end(),
+        [](const Interval &x, const Interval &y) { return x.error < y.error; });
+    double a = worst->a, b = worst->b, middle = 0.5 * (a + b);
+    if (!(middle > a && middle < b))
+      return std::nan("");
+    *worst = rule(a, middle);
+    intervals.push_back(rule(middle, b));
+  }
+  return std::nan("");
+}
+
+llvm::Error Builder::collectPairTails() {
+  // The pairs that each term counts, from the system
+  // (D[pair-dispersion-correction]); a term that the correction leaves out
+  // has none.
+  for (const PairTerm &term : control.pairs)
+    tailExpressions.push_back(llvm::cantFail(
+        Expression::parse(term.expression, control.functions)));
+  for (auto [index, term] : llvm::enumerate(control.pairs)) {
+    auto tail = getPairTail(index, {});
+    if (!tail) {
+      llvm::consumeError(tail.takeError());
+      return makeError("the correction for the dispersion integrates the "
+                       "pair term '" + term.name + "' beyond the cutoff, "
+                       "and its tail cannot be integrated; give "
+                       "'dispersion_correction = \"NONE\"' in the term to "
+                       "leave it out");
+    }
+  }
+  return llvm::Error::success();
+}
+
+llvm::Expected<std::pair<double, double>>
+Builder::getPairTail(unsigned index,
+                     const llvm::StringMap<double> &changes) const {
+  // With a uniform density beyond the cutoff [AllenTildesley2017], each
+  // unordered pair adds (4π / V) I, I = ∫_rc^∞ r² u(r) dr, to the energy
+  // and (4π / V)(3 I + rc³ u(rc)) to the trace of the virial, which is
+  // −(4π / V) ∫_rc^∞ r³ u'(r) dr integrated by parts; for −C6 / r⁶ that is
+  // 6 times the energy, as for the topology's correction. The sum takes
+  // the factor N² / P of the topology's correction, P the ordered pairs
+  // that are not excluded, so that both follow one convention. In
+  // s = rc / r, I = rc³ ∫_0^1 u(rc / s) s⁻⁴ ds, whose integrand is a
+  // polynomial in s for a sum of powers r⁻ᵏ, k ≥ 4, which the quadrature
+  // integrates exactly.
+  const Expression &expression = tailExpressions[index];
+  double rc = control.cutoffDistance;
+  double energy = 0.0, virial = 0.0;
+  for (const System::TailPair &pair : system.pairTails[index]) {
+    llvm::StringMap<double> values = pair.values;
+    for (const auto &entry : changes)
+      if (values.count(entry.getKey()))
+        values[entry.getKey()] = entry.getValue();
+    if (!hasFiniteTail(expression, values, rc))
+      return makeError("diverges");
+    auto u = [&](double r) {
+      values["r"] = r;
+      return expression.evaluate(values);
+    };
+    double integral = integrateUnit([&](double x) {
+      if (x == 0.0)
+        return 0.0;
+      return rc * rc * rc * u(rc / x) / (x * x * x * x);
+    });
+    double edge = rc * rc * rc * u(rc);
+    if (!std::isfinite(integral) || !std::isfinite(edge))
+      return makeError("cannot be integrated");
+    energy += pair.count * integral;
+    virial += pair.count * (3.0 * integral + edge);
+  }
+  const Topology &topology = *system.topology;
+  double n = static_cast<double>(topology.getNumParticles());
+  double ordered = n * (n - 1.0) - 2.0 * topology.exclusions.size();
+  double scale = ordered > 0.0 ? n * n / ordered : 0.0;
+  double volume = system.box[0] * system.box[1] * system.box[2] /
+                  (units::length * units::length * units::length);
+  double factor = 4.0 * M_PI / volume * scale * units::energy;
+  return std::make_pair(factor * energy, factor * virial);
+}
+
+double Builder::getPairTails(const llvm::StringMap<double> &changes) const {
+  // A tail that a state makes diverge is NaN in the output, not 0.
+  double sum = 0.0;
+  for (unsigned index = 0, e = system.pairTails.size(); index != e; ++index) {
+    auto tail = getPairTail(index, changes);
+    if (!tail) {
+      llvm::consumeError(tail.takeError());
+      return std::nan("");
+    }
+    sum += tail->first;
+  }
+  return sum;
+}
+
+double Builder::getPairTailDerivative(unsigned index, StringRef name,
+                                      double value) const {
+  if (!llvm::is_contained(tailExpressions[index].getNames(), name))
+    return 0.0;
+  // Central differences extrapolated to h → 0 (Richardson); where a side
+  // cannot be evaluated (a λ at 0 of an expression in √λ), the one-sided
+  // differences of second order.
+  auto at = [&](double x) {
+    llvm::StringMap<double> changes;
+    changes[name] = x;
+    auto tail = getPairTail(index, changes);
+    if (!tail) {
+      llvm::consumeError(tail.takeError());
+      return std::nan("");
+    }
+    return tail->first;
+  };
+  double h = 1.0e-3 * std::max(std::fabs(value), 1.0);
+  auto central = [&](double step) {
+    return (at(value + step) - at(value - step)) / (2.0 * step);
+  };
+  double d = (4.0 * central(0.5 * h) - central(h)) / 3.0;
+  if (std::isfinite(d))
+    return d;
+  for (double sign : {1.0, -1.0}) {
+    double step = sign * 1.0e-4 * std::max(std::fabs(value), 1.0);
+    double one = (-3.0 * at(value) + 4.0 * at(value + step) -
+                  at(value + 2.0 * step)) / (2.0 * step);
+    if (std::isfinite(one))
+      return one;
+  }
+  return std::nan("");
+}
+
+void Builder::collectObservedTails() {
+  // The columns of `observe` of a pair term take its tail: its energy and
+  // its derivatives in the observed constants, proportional to 1 / V.
+  program.observableVolumeConstants.assign(control.observables.size(), 0.0);
+  for (auto [column, observable] : llvm::enumerate(control.observables))
+    for (auto [index, term] : llvm::enumerate(control.pairs)) {
+      if (term.name != observable.term || index >= system.pairTails.size())
+        continue;
+      if (observable.constant.empty()) {
+        program.observableVolumeConstants[column] =
+            llvm::cantFail(getPairTail(index, {})).first;
+        continue;
+      }
+      double value = 0.0;
+      for (const auto &[name, v] : term.constants)
+        if (name == observable.constant)
+          value = v;
+      program.observableVolumeConstants[column] =
+          getPairTailDerivative(index, observable.constant, value);
+    }
 }
 
 std::pair<double, double> Builder::getPMEConstants(double lambda) const {
@@ -1695,6 +1931,8 @@ void Builder::collectFreeEnergyConstants() {
     }
     double lambda = decouples() ? energy.get("vdw", k) : 0.0;
     scaled += (1.0 - lambda) * coupled + lambda * decoupled;
+    if (dispersion)
+      scaled += getPairTails(getLambdaValues(k));
     program.stateFixedEnergies.push_back(fixed);
     program.stateVolumeEnergies.push_back(scaled);
   }
@@ -1717,6 +1955,8 @@ void Builder::collectFreeEnergyConstants() {
     }
     if (decouples() && name == "vdw")
       scaled = decoupled - coupled;
+    for (unsigned index = 0, e = system.pairTails.size(); index != e; ++index)
+      scaled += getPairTailDerivative(index, "lambda_" + name, getLambda(name));
     program.lambdaFixedDerivatives.push_back(fixed);
     program.lambdaVolumeDerivatives.push_back(scaled);
   }

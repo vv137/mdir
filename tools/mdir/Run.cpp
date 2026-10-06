@@ -992,6 +992,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     output.box[k] = system->box[k];
   output.dispersionEnergy = program->dispersionEnergy;
   output.dispersionVirial = program->dispersionVirial;
+  output.observableVolumeConstants = program->observableVolumeConstants;
   output.pme = program->pme;
   output.periodic = control->periodic;
   output.listReach = control->pairlistDistance * units::length;

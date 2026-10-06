@@ -27,6 +27,20 @@
 # RUN: sed -e 's/FORCE_SWITCH/POWER_FORCE_SWITCH/' %t/switch.toml > %t/power.toml
 # RUN: not mdir check %t/power.toml 2>&1 | FileCheck %s --check-prefix=POWER
 #
+#
+# The correction for the dispersion, on by default, integrates each pair
+# term beyond the cutoff (D[pair-dispersion-correction]). The Coulomb-like
+# part of 'grouped' has no finite tail: under the default the term is left
+# out with a warning; asked for in [energy], it is an error, unless the
+# term leaves the correction with its own 'dispersion_correction'.
+# RUN: mdir check %t/terms.toml 2>&1 | FileCheck %s --check-prefix=LEFTOUT
+# RUN: sed -e 's/^electrostatics    = "CUTOFF"/&\ndispersion_correction = "ENERGY_PRESSURE"/' %t/terms.toml > %t/tail.toml
+# RUN: not mdir check %t/tail.toml 2>&1 | FileCheck %s --check-prefix=TAIL
+# RUN: sed -e 's/^groups = \[":1-3", ":1-20"\]/&\ndispersion_correction = "NONE"/' %t/tail.toml > %t/out.toml
+# RUN: mdir check %t/out.toml 2>&1 | FileCheck %s --check-prefix=OUT
+# RUN: sed -e 's/^electrostatics    = "CUTOFF"/&\ndispersion_correction = "NONE"/' -e 's/^name       = "copy"/&\ndispersion_correction = "ENERGY_PRESSURE"/' %t/terms.toml > %t/on.toml
+# RUN: not mdir check %t/on.toml 2>&1 | FileCheck %s --check-prefix=ON
+#
 # RUN: sed -e 's/^scale = 0.5/mixing = { scale = "ARITHMETIC" }/' %t/terms.toml > %t/mixing.toml
 # RUN: not mdir check %t/mixing.toml 2>&1 | FileCheck %s --check-prefix=MIXING
 # RUN: sed -e 's/q1\*q2/q1*charge/' %t/terms.toml > %t/name.toml
@@ -50,7 +64,12 @@
 # PYTHON-NEXT: forces against differences of the energy: ok
 
 # POWER: a pair term is truncated as the whole of its energy, which "POWER_FORCE_SWITCH" does not say; use "FORCE_SWITCH"
-# MIXING: with a topology a pair term takes the parameters of the topology, not 'mixing' or 'dispersion_correction'
+# MIXING: with a topology a pair term takes the parameters of the topology, not 'mixing'
+# LEFTOUT: warning: the correction for the dispersion leaves out the pair term 'grouped', since its tail diverges (its energy must decay faster than 1/r^3); give 'dispersion_correction = "NONE"' in the term to say so
+# TAIL: the correction for the dispersion integrates the pair term 'grouped' beyond the cutoff, and its tail diverges (its energy must decay faster than 1/r^3); give 'dispersion_correction = "NONE"' in the term to leave it out
+# OUT-NOT: pair_tail_left_out
+# OUT-NOT: error
+# ON: with a topology the correction for the dispersion of a pair term follows that of [energy], which is off; a term can only leave it with 'dispersion_correction = "NONE"'
 # NAME: the expression uses 'charge', which is not r, q1, q2, sigma, epsilon, sigma1, sigma2, epsilon1, epsilon2, coulomb, the time t, or a constant of the term
 # ORDER: the energy of a pair must not change when its two particles are exchanged (q1 with q2, sigma1 with sigma2, epsilon1 with epsilon2), and this expression does
 # EMPTY: mdir: warning: the group ':9999' of the pair term 'grouped' selects no particle; the term adds nothing

@@ -49,6 +49,10 @@ struct PairTerm {
   /// The correction for what the term leaves out beyond the cutoff. It
   /// suits a term that decays faster than 1/r³, such as dispersion.
   DispersionCorrection dispersion = DispersionCorrection::None;
+  /// Whether the term gives `dispersion_correction`: with a topology,
+  /// `"NONE"` leaves it out of the correction of [energy], which it
+  /// otherwise follows (D[pair-dispersion-correction]).
+  bool dispersionGiven = false;
   /// With a topology, two masks: the term then acts only on the pairs of
   /// a particle of one and a particle of the other (D137), as the
   /// interaction groups of the custom nonbonded force of OpenMM
