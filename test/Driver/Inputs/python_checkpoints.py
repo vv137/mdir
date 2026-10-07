@@ -24,13 +24,12 @@ work = pathlib.Path(sys.argv[5])
 scenario = sys.argv[6]
 SEED = 2024
 FIELDS = ("positions", "velocities", "forces")
-EPS = np.finfo(np.float64).eps
 KCAL_A2 = 4.184 / (0.1 * 0.1)  # kJ/mol/nm^2 per kcal/mol/A^2
 
 
 def control(path, kind="NVT", steps=20, interval=10, pme=False, constraints=False,
             restraint=None, temperature=300.0, method="VELOCITY_VERLET", start=None,
-            trajectory=True, run_precision=None):
+            trajectory=True):
     """A control file that writes what the Python model of `model` gives."""
     name = path.stem
     thermostat = '[thermostat]\nmethod = "V-RESCALE"\ninterval = 10' if kind != "NVE" else ""
@@ -73,7 +72,7 @@ temperature = {temperature}
 type = "PERIODIC"
 [execution]
 target = "{target_name}"
-precision = "{(run_precision or precision).upper()}"
+precision = "{precision.upper()}"
 deterministic = true
 {tables}""")
     return path
@@ -135,37 +134,16 @@ def expect(error, call, *texts):
     raise AssertionError(f"expected {error.__name__}")
 
 
-def tolerance(field, reference, bitwise, error):
-    """0 where the deterministic mode orders both front ends alike; else, in
-    double, the budget of python-segments.md (c eps max|q|, c = 2 x 20 for
-    positions and 4 (N - 1) for velocities and forces), and in mixed 3 E,
-    with E the difference of the same run of `mdir run` in mixed and in
-    double (as python_velocities_restraints.py budgets it)."""
-    if bitwise:
-        return 0.0
-    if precision == "Double":
-        scale = np.abs(reference).max()
-        c = 40 if field == "positions" else 4 * (reference.shape[0] - 1)
-        return c * EPS * scale
-    return 3 * error[field]
-
-
-def precision_error(mixed, double):
-    """E of `tolerance`: the largest difference of each field of two
-    checkpoints of `mdir run`, in mixed and in double precision."""
-    return {field: np.abs(getattr(mixed, field) - getattr(double, field)).max()
-            for field in FIELDS}
-
-
-def compare(label, state, reference, bitwise, error=None):
+def compare(label, state, reference):
+    """The deterministic mode orders both front ends alike (#121, PR #173),
+    so every comparison here is to the bit, in both precisions and on both
+    targets."""
     line = [label]
     for field in FIELDS:
         mine, theirs = getattr(state, field), getattr(reference, field)
-        difference = np.abs(mine - theirs).max()
-        allowed = tolerance(field, theirs, bitwise, error)
-        assert difference <= allowed, (label, field, difference, allowed)
-        line.append(f"{field} {difference:.3e}" +
-                    (f" (tolerance {allowed:.3e})" if allowed else ""))
+        differing = np.count_nonzero(mine.view(np.uint64) != theirs.view(np.uint64))
+        assert differing == 0, (label, field, differing, np.abs(mine - theirs).max())
+        line.append(f"{field} equal")
     print("; ".join(line))
 
 
@@ -178,7 +156,7 @@ def uninterrupted(directory, **settings):
     return path
 
 
-def cli_to_python(kind, pme=False, constraints=False, bitwise=True):
+def cli_to_python(kind, pme=False, constraints=False):
     # `mdir run` stops at step 10 (the checkpoint before the last); Python
     # continues it to step 20, appending to its energy file and trajectory.
     whole = work / f"cli-{kind}"
@@ -199,8 +177,7 @@ def cli_to_python(kind, pme=False, constraints=False, bitwise=True):
     simulation.run(10)
     state = simulation.state()
     assert state.step == 20
-    compare(f"mdir run -> Python {kind} {target_name} {precision}", state, reference,
-            bitwise)
+    compare(f"mdir run -> Python {kind} {target_name} {precision}", state, reference)
     simulation.save_checkpoint(str(part / "run.h5"))
     simulation.close_reporters()
     mine = mdir.read_checkpoint(str(part / "run.h5"))
@@ -208,24 +185,20 @@ def cli_to_python(kind, pme=False, constraints=False, bitwise=True):
     assert mine.trajectory == "run.dcd" and mine.frames == 2
     assert mine.fingerprint == reference.fingerprint, \
         set(mine.fingerprint) ^ set(reference.fingerprint)
-    assert abs(mine.bath - reference.bath) <= (0 if bitwise else 1e-6 * abs(reference.bath) + 1e-9)
+    assert mine.bath == reference.bath
     assert (part / "run.h5.prev").exists()
     rows = (part / "run.dat").read_text().splitlines()
     assert [int(r.split()[0]) for r in rows[2:]] == [0, 10, 20], rows
-    if bitwise:
-        assert (part / "run.dat").read_bytes() == (whole / "run.dat").read_bytes()
-        assert (part / "run.dcd").read_bytes() == (whole / "run.dcd").read_bytes()
-        print("the energy file and the trajectory equal those of mdir run byte for byte")
+    assert (part / "run.dat").read_bytes() == (whole / "run.dat").read_bytes()
+    assert (part / "run.dcd").read_bytes() == (whole / "run.dcd").read_bytes()
+    print("the energy file and the trajectory equal those of mdir run byte for byte")
 
 
-def python_to_cli(kind, pme=False, constraints=False, files=True):
+def python_to_cli(kind, pme=False, constraints=False):
     # Python takes 10 steps and writes the checkpoint; `mdir run --continue`
     # takes the 10 that remain, appending to the files of the reporters.
-    # The transfer is exact: `mdir run` from the Python checkpoint equals a
-    # Python continuation of the same file to the bit. Against the run of
-    # `mdir run` that did not stop the first 10 steps differ already: until
-    # #121 (PR #173) the two front ends build their neighbor structures at
-    # other steps, which orders the sums otherwise.
+    # `mdir run` from the Python checkpoint equals a Python continuation of
+    # the same file and the run of `mdir run` that did not stop, to the bit.
     whole = work / f"whole-{kind}"
     uninterrupted(whole, kind=kind, pme=pme, constraints=constraints)
     reference = mdir.read_checkpoint(str(whole / "run.h5"))
@@ -250,23 +223,14 @@ def python_to_cli(kind, pme=False, constraints=False, files=True):
     state = mdir.read_checkpoint(str(part / "run.h5"))
     assert state.step == 20 and state.part == 2
     compare(f"Python -> mdir run {kind} {target_name} {precision}, against Python", state,
-            python.state(), True)
-    error = None
-    if precision == "Mixed":
-        double = work / f"double-{kind}"
-        uninterrupted(double, kind=kind, pme=pme, constraints=constraints,
-                      run_precision="Double")
-        error = precision_error(reference, mdir.read_checkpoint(str(double / "run.h5")))
+            python.state())
     compare(f"Python -> mdir run {kind} {target_name} {precision}, against mdir run", state,
-            reference, False, error)
+            reference)
     rows = (part / "run.dat").read_text().splitlines()
     assert [int(r.split()[0]) for r in rows[2:]] == [0, 10, 20], rows
-    # The printed digits and the float32 frames hide the differences of
-    # the first 10 steps in double precision, not in mixed.
-    if files and precision == "Double":
-        assert (part / "run.dat").read_bytes() == (whole / "run.dat").read_bytes()
-        assert (part / "run.dcd").read_bytes() == (whole / "run.dcd").read_bytes()
-        print("the energy file and the trajectory equal those of mdir run byte for byte")
+    assert (part / "run.dat").read_bytes() == (whole / "run.dat").read_bytes()
+    assert (part / "run.dcd").read_bytes() == (whole / "run.dcd").read_bytes()
+    print("the energy file and the trajectory equal those of mdir run byte for byte")
     code, text = mdir_checkpoint(part / "run.h5")
     assert code == 0 and "front end" not in text, text
 
@@ -317,7 +281,7 @@ def python_to_python():
     second.reporters = [mdir.EnergyReporter(str(work / "py.dat"), 5)]
     second.run(5)
     compare(f"Python -> Python NVE with tunables {target_name} {precision}", second.state(),
-            reference, True)
+            reference)
     rows = (work / "py.dat").read_text().splitlines()[2:]
     assert [int(r.split()[0]) for r in rows] == [0, 5, 10, 15, 20], rows
     assert rows[-1].split()[-1] == "1", rows[-1]  # tunables_version
@@ -407,13 +371,11 @@ def stages():
     assert notes == [], notes
     simulation.run(10)
     compare(f"a stage of the same physics {target_name} {precision}", simulation.state(),
-            mdir.read_checkpoint(str(directory / "run.h5")), True)
+            mdir.read_checkpoint(str(directory / "run.h5")))
     assert mdir.read_checkpoint(str(start)).bath != 0.0
 
     # Stages of other physics against `mdir run` from `[input] checkpoint`:
     # restraints, another temperature, and the barostat.
-    if precision == "Mixed":
-        uninterrupted(directory / "double", kind="NVT", run_precision="Double")
 
     def cli_stage(stage_dir, start, **settings):
         stage_dir.mkdir()
@@ -427,18 +389,11 @@ def stages():
                            ("npt", dict(kind="NPT"))):
         stage_dir = directory / name
         reference = cli_stage(stage_dir, start, **settings)
-        error = None
-        if precision == "Mixed":
-            error = precision_error(reference, cli_stage(
-                directory / f"{name}-double", directory / "double" / "run.h5.prev",
-                run_precision="Double", **settings))
         simulation, notes = continued(model(**settings), start, stage=True)
         assert len(notes) == 1 and "evaluates the forces" in notes[0], notes
         simulation.run(10)
-        # Not to the bit: the evaluation at the start of a stage builds its
-        # neighbor structures at another step than `mdir run` does (#121).
         compare(f"a stage {name} against mdir run {target_name} {precision}",
-                simulation.state(), reference, False, error)
+                simulation.state(), reference)
         saved = stage_dir / "python.h5"
         simulation.save_checkpoint(str(saved))
         mine = mdir.read_checkpoint(str(saved))
@@ -452,18 +407,12 @@ def stages():
     uninterrupted(leap, method="LEAPFROG")
     reference = cli_stage(leap / "warmer", leap / "run.h5.prev", temperature=310.0,
                           method="LEAPFROG")
-    error = None
-    if precision == "Mixed":
-        uninterrupted(leap / "double", method="LEAPFROG", run_precision="Double")
-        error = precision_error(reference, cli_stage(
-            leap / "warmer-double", leap / "double" / "run.h5.prev", temperature=310.0,
-            method="LEAPFROG", run_precision="Double"))
     simulation, notes = continued(model(method="Leapfrog", temperature=310.0),
                                   leap / "run.h5.prev", stage=True)
     assert len(notes) == 1, notes
     simulation.run(10)
     compare(f"a leapfrog stage against mdir run {target_name} {precision}", simulation.state(),
-            reference, False, error)
+            reference)
     print("stages: refusals name the entries; stages equal mdir run from [input] checkpoint")
 
 
@@ -519,7 +468,7 @@ SCENARIOS = {
     "cli-to-python": lambda: (cli_to_python("NVE"), cli_to_python("NVT"),
                               cli_to_python("NPT", pme=True, constraints=True)),
     "python-to-cli": lambda: (python_to_cli("NVE"), python_to_cli("NVT"),
-                              python_to_cli("NPT", pme=True, constraints=True, files=False)),
+                              python_to_cli("NPT", pme=True, constraints=True)),
     "python-to-python": python_to_python,
     "stages": stages,
     "corrupted": corrupted,

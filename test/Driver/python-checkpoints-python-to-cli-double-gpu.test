@@ -3,8 +3,8 @@
 # double precision, scenario python-to-cli of Inputs/python_checkpoints.py.
 # A Python simulation writes its checkpoint at step 10 and `mdir run
 # --continue` takes it to step 20: equal to a Python continuation of the
-# same file to the bit, and to the run of `mdir run` that did not stop
-# within the tolerances of python_checkpoints.py.
+# same file and to the run of `mdir run` that did not stop, to the bit,
+# with the energy file and the trajectory byte for byte.
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %mdir_python %S/Inputs/python_checkpoints.py %S/Inputs/dipeptide GPU Double mdir %t python-to-cli | FileCheck %s
 # CHECK: Python -> mdir run NVE GPU Double
