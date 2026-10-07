@@ -72,6 +72,10 @@ snake case; defaults and the supported physics subset are those of
 | Execution | `target`, `precision`, `device`, `threads`, `deterministic`, `reorder`, `fast_math` |
 | Schedule | `steps`, `energy_period` |
 
+`Schedule.steps` and `Schedule.energy_period` are nonnegative; a
+minimization needs both positive, as `[minimize]` needs a positive
+`energy_interval` (#178, [python-minimize.md](python-minimize.md)).
+
 Positions and velocities are native float64 NumPy arrays of shape $(N, 3)$
 in input order; absent velocities have shape $(0, 3)$. Inputs must export
 buffers or CPU DLPack and have C-contiguous storage and native dtype.
