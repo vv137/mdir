@@ -32,9 +32,11 @@ enum class EnsembleKind { NVE, NVT, NPT };
 /// A tunable parameter (D213, docs/python-tunable.md): a
 /// vector θ of M entries and a map from the sites of `parameter` to them.
 /// `parameter` is "charge" (sites: the particles), "sigma" or "epsilon"
-/// (the Lennard-Jones types, with the combining rule), or, with `term`, a
-/// constant of that pair term (one site) or a parameter of that tuple term
-/// (its tuples). `map` has an entry for each site, the entry of θ it takes
+/// (the Lennard-Jones types, with the combining rule), "sigma_pair" or
+/// "epsilon_pair" (the unordered pairs of types, the flat upper triangle:
+/// (a, b) with a <= b is the site a T - a (a - 1) / 2 + b - a), or, with
+/// `term`, a constant of that pair term (one site) or a parameter of that
+/// tuple term (its tuples). `map` has an entry for each site, the entry of θ it takes
 /// or -1 to keep its value; empty, each site is an entry of its own.
 /// `values` are the initial θ; empty, those of the model.
 struct Tunable {
@@ -47,7 +49,15 @@ struct Tunable {
 /// The tunables of a prepared model, resolved against it.
 struct TunableSet {
   struct Entry {
-    enum Kind { Charge, Sigma, Epsilon, PairConstant, TupleParameter };
+    enum Kind {
+      Charge,
+      Sigma,
+      Epsilon,
+      SigmaPair,
+      EpsilonPair,
+      PairConstant,
+      TupleParameter
+    };
     std::string name, parameter, term;
     Kind kind = Charge;
     /// The index of the term among the pair terms of the control or the
@@ -68,7 +78,8 @@ struct TunableSet {
   std::vector<double> typeSigma, typeEpsilon;
   /// For each pair of types (`a * T + b`), whether its σ and ε are an
   /// override of the combining rule in the model (an NBFIX), which keeps
-  /// its values when per-type σ or ε are tunable.
+  /// its values when per-type σ or ε are tunable, unless a tunable of the
+  /// table by pairs takes it.
   std::vector<bool> fixedPairs;
   /// Whether each pair term's tail is in the correction for the
   /// dispersion at the values of the compile (D209), which an update keeps.

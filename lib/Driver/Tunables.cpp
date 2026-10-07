@@ -1,4 +1,4 @@
-// Tunable parameters of a model (D213,
+// Tunable parameters of a model (D213, D[python-tunable-pairs],
 // docs/python-tunable.md): their declarations resolved against a prepared
 // model, and their values put into it, from which the builder computes the
 // values of the program and every quantity derived from them.
@@ -80,10 +80,25 @@ mdir::model::resolveTunables(const System &model, driver::Control &control,
         entry.kind = TunableSet::Entry::Epsilon;
         entry.unit = "kJ/mol";
         sites = set.typeEpsilon;
+      } else if (tunable.parameter == "sigma_pair" ||
+                 tunable.parameter == "epsilon_pair") {
+        // The table by pairs of types (#160): the unordered pairs in the
+        // order of the flat upper triangle, (a, b) with a <= b, so that each
+        // pair is one site and its gradient has no entry twice.
+        bool sigma = tunable.parameter == "sigma_pair";
+        entry.kind = sigma ? TunableSet::Entry::SigmaPair
+                           : TunableSet::Entry::EpsilonPair;
+        entry.unit = sigma ? "nm" : "kJ/mol";
+        const std::vector<double> &table =
+            sigma ? topology.sigma : topology.epsilon;
+        for (size_t a = 0; a != types; ++a)
+          for (size_t b = a; b != types; ++b)
+            sites.push_back(table[a * types + b]);
       } else {
-        return input(where + ": the parameter is \"charge\", \"sigma\", or "
-                     "\"epsilon\", or a constant or parameter of the term "
-                     "given as `term`; found \"" + tunable.parameter + "\"");
+        return input(where + ": the parameter is \"charge\", \"sigma\", "
+                     "\"epsilon\", \"sigma_pair\", or \"epsilon_pair\", or a "
+                     "constant or parameter of the term given as `term`; "
+                     "found \"" + tunable.parameter + "\"");
       }
     } else {
       bool found = false;
@@ -210,11 +225,28 @@ mdir::model::resolveTunables(const System &model, driver::Control &control,
           set.fixedPairs[a * types + b] = set.fixedPairs[b * types + a] = true;
       }
   }
+  // A pair that the tunables of the table by pairs take, for every
+  // per-type parameter that is tunable, takes their values: it keeps none
+  // of its own.
+  std::vector<bool> sigmaTaken, epsilonTaken;
+  bool typeSigma = false, typeEpsilon = false;
+  for (const TunableSet::Entry &entry : set.tunables) {
+    typeSigma |= entry.kind == TunableSet::Entry::Sigma;
+    typeEpsilon |= entry.kind == TunableSet::Entry::Epsilon;
+    if (entry.kind == TunableSet::Entry::SigmaPair)
+      for (int64_t k : entry.map)
+        sigmaTaken.push_back(k >= 0);
+    if (entry.kind == TunableSet::Entry::EpsilonPair)
+      for (int64_t k : entry.map)
+        epsilonTaken.push_back(k >= 0);
+  }
   std::string fixed;
-  size_t count = 0;
+  size_t count = 0, site = 0;
   for (size_t a = 0; a != types; ++a)
-    for (size_t b = a; b != types; ++b)
-      if (set.fixedPairs[a * types + b]) {
+    for (size_t b = a; b != types; ++b, ++site)
+      if (set.fixedPairs[a * types + b] &&
+          !((!typeSigma || (!sigmaTaken.empty() && sigmaTaken[site])) &&
+            (!typeEpsilon || (!epsilonTaken.empty() && epsilonTaken[site])))) {
         fixed += (count++ ? ", " : "") + topology.typeNames[a] + "-" +
                  topology.typeNames[b];
       }
@@ -245,8 +277,9 @@ llvm::Error mdir::model::checkTunableValues(
     for (double value : given) {
       if (!std::isfinite(value))
         return input("the tunable '" + entry.name + "' takes finite values");
-      if ((entry.kind == TunableSet::Entry::Sigma ||
-           entry.kind == TunableSet::Entry::Epsilon) && value < 0.0)
+      if (entry.kind != TunableSet::Entry::Charge &&
+          entry.kind != TunableSet::Entry::PairConstant &&
+          entry.kind != TunableSet::Entry::TupleParameter && value < 0.0)
         return input("the tunable '" + entry.name + "' takes values of at "
                      "least 0 (" + entry.unit + ")");
     }
@@ -285,6 +318,10 @@ llvm::Error mdir::model::applyTunables(
       take(epsilon);
       mixesEpsilon = true;
       break;
+    case TunableSet::Entry::SigmaPair:
+    case TunableSet::Entry::EpsilonPair:
+      // After the combining rule, below.
+      break;
     case TunableSet::Entry::PairConstant:
       for (auto &[name, value] : control.pairs[entry.termIndex].constants)
         if (name == entry.parameter && entry.map[0] >= 0)
@@ -308,6 +345,21 @@ llvm::Error mdir::model::applyTunables(
       if (mixesEpsilon)
         topology->epsilon[a * types + b] = std::sqrt(epsilon[a] * epsilon[b]);
     }
+  // The tunables of the table by pairs: each pair that a map takes has the
+  // value of its entry, whatever the rule gives it (#160).
+  for (auto [entry, theta] : llvm::zip_equal(set.tunables, values)) {
+    if (entry.kind != TunableSet::Entry::SigmaPair &&
+        entry.kind != TunableSet::Entry::EpsilonPair)
+      continue;
+    std::vector<double> &table = entry.kind == TunableSet::Entry::SigmaPair
+                                     ? topology->sigma
+                                     : topology->epsilon;
+    size_t site = 0;
+    for (size_t a = 0; a != types; ++a)
+      for (size_t b = a; b != types; ++b, ++site)
+        if (entry.map[site] >= 0)
+          table[a * types + b] = table[b * types + a] = theta[entry.map[site]];
+  }
   system.topology = std::move(topology);
   // The tails of the pair terms (D209), whose classes of particles and
   // values follow the charges, the table, and the constants.
