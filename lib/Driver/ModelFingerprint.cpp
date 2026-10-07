@@ -306,6 +306,12 @@ Fingerprint mdir::model::getFingerprint(const System &s,
     add("execution", "[execution] spatial_order", flag(execution.reorder));
   if (has(given.execution, "fast_math"))
     add("execution", "[execution] fast_math", flag(execution.fastMath));
+  // The capacity that was given, as the control file writes the key; the
+  // estimate (0) has no key there (D[cell-runtime-constants]).
+  if (has(given.execution, "neighbor_capacity") &&
+      execution.neighborCapacity > 0)
+    add("execution", "[execution] neighbor_capacity",
+        getFingerprintNumber(static_cast<double>(execution.neighborCapacity)));
 
   std::stable_sort(fingerprint.begin(), fingerprint.end(),
                    [](const driver::FingerprintEntry &a,

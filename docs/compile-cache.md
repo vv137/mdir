@@ -1,4 +1,4 @@
-# The compile cache (D212, D214, D217)
+# The compile cache (D212, D214, D217, D[cell-runtime-constants])
 
 Issue #142. A Python simulation compiles its program in three stages: the
 MLIR pipeline lowers it to an LLVM module (with the PTX of its kernels on a
@@ -17,6 +17,10 @@ compiled for the device instead of PTX; see
 [The GPU modules](#the-gpu-modules-dgpu-module-compile) below.
 D217 (#163) clears the cache and bypasses it for one
 compile from Python; see [Controls from Python](#controls-from-python).
+D[cell-runtime-constants] (#162) takes the values that depend on the
+starting cell out of the program's text, so that a stage that starts from
+an equilibrated cell hits the entry of another; see
+[Values of the start](#values-of-the-start-dcell-runtime-constants).
 
 ## Use
 
@@ -165,7 +169,9 @@ alone, so its key holds these and nothing of the MDIR build:
 
 The PTX of the kernels is a global of the module, so a change of device
 code changes the key too, and everything the program's constants depend on
-(the cell at the start, for example) is in the module. A rebuild of MDIR
+is in the module. The values that depend on the state the run starts from
+are not constants of the module but arguments of its entry
+([Values of the start](#values-of-the-start-dcell-runtime-constants)). A rebuild of MDIR
 that leaves the generated module unchanged therefore hits, and one that
 changes any part of the generated code misses. An object is not portable
 between machines with different CPU features: a different CPU is a
@@ -182,6 +188,132 @@ This follows the design of #142 for the stages after MLIR. The MLIR
 pipeline depends on MDIR's passes, so a cache of its output would need the
 build identity in its key, and would miss after every rebuild; it is not
 part of this item.
+
+## Values of the start (D[cell-runtime-constants])
+
+Issue #162. A stage that continues from an equilibrated state, such as the
+production stage of the ala3 example after its NPT stage, a resubmission,
+or a replica with a cell of its own, starts from a cell that differs from
+run to run. A program whose text held values computed from that cell
+differed from the last one only in those numbers, and missed the cache.
+
+The entry now takes them as its last arguments (`Program::startValues`,
+`include/mdir/Driver/Builder.h`). The host computes each one exactly as the
+constant was computed, so a run gives the same numbers as before to the
+bit. This generalizes D213, under which a program with tunables already
+took the barostat's two constants as arguments.
+
+Every value that the program text or the pipeline takes from the starting
+state:
+
+| Value | Depends on | Now |
+|---|---|---|
+| `%baro_constant`, `%baro_energy_constant`: the virial and the energy of the correction for the dispersion and the PME background, times $V$ | the volume at the start, through rounding only ($V$ cancels) | arguments of the entry |
+| `%rest_edge0` to `%rest_edge2`: the cell that the reference positions of the restraints belong to, with a barostat | a Python stage: the cell of its start; `mdir run`: the cell of the coordinate file | arguments of the entry |
+| `%tilt_bx`, `%tilt_cx`, `%tilt_cy`: the tilts of a triclinic cell | the cell at the start | arguments of the entry |
+| `%bstate0` to `%bstate8`: the pressure state of a barostat that scales every step (D92) | the checkpoint that `mdir run` continues | arguments of the entry |
+| The edges `%lx`, `%ly`, `%lz` | the cell at the start | arguments of the entry already |
+| The correction for the dispersion, the PME self term and background, the shift estimate (D210), the tails of pair terms (D209), the constants of `[free_energy]` that scale as $1/V$ | the volume at the start | values of the host (`Output`), never in the text |
+| The factors of the influence function of PME and LJPME | the grid | entry buffers already |
+| The PME and LJPME grid, an attribute of `md.reciprocal` | a Python stage: the cell of its start; `mdir run`: the cell of the coordinate file | **structural**: stays in the text |
+| The neighbor capacity, `width` of `convert-md-to-md-exec` | the positions and the cell at the start | **structural**: a pipeline option, in the lowered module; its estimate is rounded more coarsely, and `Execution.neighbor_capacity` fixes it |
+| The edges of the coordinate file for an external term in the frame of the cell (D154) | the coordinate file, not the start | stays in the text; the Python model has no external terms |
+
+The grid and the neighbor capacity shape the program's loops and buffers,
+so they stay part of the key, and a change of either still compiles anew.
+The grid of a Python stage follows the cell it starts from, but it changes
+only when an edge crosses a size that the FFT takes, so a continued stage
+usually keeps it. `System.pme_grid` fixes it for every stage.
+
+The neighbor capacity is estimated as $\lceil 1.5\,n_\text{max}\rceil + 16$,
+where $n_\text{max}$ is the most neighbors that a particle has at the
+start. It does not change the results, since a build that finds more
+neighbors makes room: `neighbor_capacity` 888, 896, and 1024 on ala3 at
+constant pressure gave the same positions, velocities, and cell to the
+bit, deterministic on the CPU and a GPU. It does move by a few neighbors
+from one equilibrated state to another. Rounded up to a multiple of 8, as
+it was, it gave 888, 896, and 888 for three equilibrated states of ala3,
+and the second missed the cache on the width alone. By the maintainer's
+decision on PR #192:
+
+- **The estimate is rounded up to four significant bits**, that is to a
+  multiple of an eighth of the power of two below it (64 between 512 and
+  1024) and of 8. This costs at most 12.5% more room at first. All three
+  states above take 896.
+- **`Execution.neighbor_capacity`** in Python is the control file's
+  `[execution] neighbor_capacity`. 0, the default, takes the estimate;
+  `Program.plan["neighbor_capacity"]` is the capacity that a compile took.
+  A workflow gives its stages one value where the estimates still round
+  apart.
+
+### Validation
+
+- **Text.** On main, the program of segments of the ala3 production stage
+  from three NPT-equilibrated states (seeds 1 to 3, edges 3.517 to
+  3.551 nm) differed in `%baro_constant` and `%baro_energy_constant`, and
+  with restraints also in `%rest_edge*`. Now the texts are the same.
+- **Cache.** One process per state on one directory, CPU, mixed:
+
+  | State | Capacity, multiple of 8 | With the values as arguments only | Capacity now | Now |
+  |---|---|---|---|---|
+  | seed 1 | 888 | stores | 896 | stores |
+  | seed 3 | 888 | hits (main: a miss) | 896 | hits |
+  | seed 2 | 896 | misses on the capacity | 896 | hits |
+
+- **The ala3 example.** Three runs of `examples/ala3/run.py`
+  (`--steps-scale 0.01`, GPU, mixed, the default mode, one seed) on one
+  directory. The production stage starts from the cell that the NPT stage
+  reached, different in every run; its grid is $32^3$ in all of them. On
+  main the production stage of a second run missed whatever its capacity.
+  With the values as arguments and the capacity a multiple of 8, the
+  capacities were 864, 872, and 864: the third run hit the entry of the
+  first and the second missed. Now the capacity is 896 in the three runs,
+  and every stage of the second and third runs hits: the production stage
+  compiles in 12.1 and 11.7 s with 0.5 s in the engine, against 19.3 s and
+  6.4 s in the first run.
+- **Tests.** `compile-cache-cell.test` and its GPU variant, on the
+  dipeptide at constant pressure with restraints, deterministic, in mixed
+  and double precision:
+  - A start with its cell 1% larger has the text and the pipeline of the
+    file's start (capacity 448; a multiple of 8 gave 432 and 424), hits
+    its entry, and its 20 steps equal those of a compile without the cache
+    bit for bit.
+  - A start 2% larger estimates 416 and misses. With
+    `Execution.neighbor_capacity` set to the 448 of the first it hits, and
+    its 20 steps with either capacity are the same bit for bit.
+  - A negative capacity is refused.
+- **Bit identity with main.** Deterministic, the positions, velocities,
+  cell, and energy file (or energies) after the run equal those of main to
+  the bit, on the CPU and a GPU in mixed and double precision, for:
+  - `mdir run` on ala3 at constant pressure with restraints, 500 steps, and
+    its continuation from the checkpoint;
+  - a barostat that scales every step (`work = "TROTTER"`, `interval = 1`),
+    200 steps, and its continuation, which takes `%bstate*`;
+  - a triclinic water box (the dodecahedron of `triclinic.test`) at constant
+    volume and at constant pressure, which take `%tilt_*`;
+  - the Python program of segments of the ala3 production stage from an
+    equilibrated state, with and without restraints, 300 steps. On the CPU
+    this holds in the default mode too.
+
+  The capacities of these runs differ from main's (832 against 824 for
+  ala3 from its file), so they also show that the capacity leaves the
+  results as they are.
+- **Speed.** The Amber suite on GPU 0 (RTX 3090, 300 W), mixed, in the
+  settings of the suite (D114), one run per system:
+
+  | System | main, ms/step | Now, ms/step | Rate | Capacity, main | Capacity now |
+  |---|---|---|---|---|---|
+  | JAC NVE | 0.204 | 0.204 | +0.1% | 960 | 960 |
+  | JAC NVE 4 fs | 0.219 | 0.219 | +0.2% | 960 | 960 |
+  | JAC NPT | 0.220 | 0.220 | −0.1% | 960 | 960 |
+  | JAC NPT 4 fs | 0.229 | 0.229 | 0.0% | 960 | 960 |
+  | Factor IX NVE | 0.590 | 0.591 | −0.1% | 976 | 1024 |
+  | Factor IX NPT | 0.620 | 0.621 | −0.1% | 976 | 1024 |
+  | Cellulose NVE | 2.704 | 2.696 | +0.3% | 1104 | 1152 |
+  | Cellulose NPT | 2.792 | 2.787 | +0.2% | 1104 | 1152 |
+  | STMV NPT 4 fs | 8.288 | 8.308 | −0.2% | 1016 | 1024 |
+
+  The rates agree within 0.3%, with the larger capacities as without.
 
 ## Entries
 
@@ -315,8 +447,9 @@ A hit saves 1 to 6 s per stage of host code generation; the MLIR pipeline,
 in `mdir.compile` (which lowered a program of its own until
 D224, #151) and in the simulation, is most of what remains. Without the deterministic mode the
 production stage missed: it starts from the cell that the NPT stage
-reached, which differs from run to run, and its program's constants depend
-on it.
+reached, which differs from run to run, and its program's constants
+depended on it. They no longer do
+([Values of the start](#values-of-the-start-dcell-runtime-constants)).
 
 The full suite on that GPU at the default `gpu_workers` (16): 262 s with
 the cache off, 250 s with a cold cache, and 243 s with a warm one, single

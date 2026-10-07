@@ -250,8 +250,9 @@ struct compiler::Activation {
   /// the program works in on the CPU, and the scalars.
   Arguments arguments;
   double box[3] = {0.0, 0.0, 0.0};
-  double timestep = 0.0, firstSize = 0.0, baroConstant = 0.0,
-         baroEnergyConstant = 0.0;
+  double timestep = 0.0, firstSize = 0.0;
+  /// The values of Program::startValues (D[cell-runtime-constants]).
+  std::vector<double> startValues;
   int64_t start = 0, firstCall = 0;
   /// The records of what the activation allocates: of the runtime of the
   /// host, of that of the device, and of the memory of the host that its
@@ -676,8 +677,8 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
   a->start = step;
   a->firstCall = firstCall;
   a->firstSize = minimizationSize;
-  a->baroConstant = p.baroConstant;
-  a->baroEnergyConstant = p.baroEnergyConstant;
+  for (const Program::StartValue &value : p.startValues)
+    a->startValues.push_back(value.value);
   for (double &edge : a->box)
     args.pointers.push_back(&edge);
   args.pointers.push_back(&a->timestep);
@@ -685,10 +686,8 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
   if (engine.control.minimize)
     args.pointers.push_back(&a->firstSize);
   args.pointers.push_back(&a->firstCall);
-  if (p.takesConstants) {
-    args.pointers.push_back(&a->baroConstant);
-    args.pointers.push_back(&a->baroEnergyConstant);
-  }
+  for (double &value : a->startValues)
+    args.pointers.push_back(&value);
 
   // A stack of its own, below which a page that is not mapped stops an
   // overflow.

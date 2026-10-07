@@ -24,7 +24,10 @@ enum class Element { F32, F64 };
 /// and of the velocities; the buffer of the forces, if `takesForces` is
 /// set; the buffer of the masses; one buffer for each field in `fields`;
 /// the three edge lengths of the cell, in nm; the time step, in ps; and the
-/// number of the step that the run begins after.
+/// number of the step that the run begins after. A minimization in segments
+/// then takes the length of its first step, and a program of segments
+/// whether the call begins the run. Last come the values of `startValues`,
+/// one f64 each, in their order.
 struct Program {
   /// The module, as text.
   std::string module;
@@ -173,12 +176,35 @@ struct Program {
   /// evaluates the forces of the state that it is given anew, as the first
   /// call does, without the half kick back of leapfrog.
   bool tunable = false;
-  /// Whether the entry takes, after `%first_call`, what the barostat adds
-  /// for the constant terms, which depend on the values of the tunables:
-  /// the trace of their virial times the volume and their energy times the
-  /// volume, in kJ/mol nm³, and those values.
-  bool takesConstants = false;
-  double baroConstant = 0.0, baroEnergyConstant = 0.0;
+
+  /// The values that depend on the state that the run begins from, its
+  /// cell above all, which the entry takes as its last arguments rather
+  /// than its text holding them as constants (D[cell-runtime-constants]):
+  /// two programs that differ only in them have the same text, and the
+  /// compile cache serves the second (docs/compile-cache.md). Each is
+  /// computed on the host as the constant was, so that a run gives the
+  /// same numbers to the bit. They are, in this order and where the
+  /// program has them:
+  ///
+  /// - `tilt_bx`, `tilt_cx`, `tilt_cy`: the tilts of a triclinic cell at
+  ///   the start, in nm;
+  /// - `rest_edge0` to `rest_edge2`: the edges of the cell that the
+  ///   reference positions of the restraints are for, in nm, where a
+  ///   barostat scales them;
+  /// - `baro_constant`, `baro_energy_constant`: what the barostat adds for
+  ///   the constant terms (the correction for the dispersion and the
+  ///   background of particle mesh Ewald), the trace of their virial times
+  ///   the volume and their energy times the volume, in kJ/mol nm³ at the
+  ///   volume of the start; with tunables they depend on their values too
+  ///   (D213);
+  /// - `bstate0` to `bstate8`: the state that the first scaling of a
+  ///   barostat that scales every step takes its pressure from, as the
+  ///   checkpoint that the run continues keeps it (D92).
+  struct StartValue {
+    std::string name;
+    double value = 0.0;
+  };
+  std::vector<StartValue> startValues;
 };
 
 llvm::Expected<Program> buildProgram(const Control &control,

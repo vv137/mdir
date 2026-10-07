@@ -121,6 +121,13 @@ them), and so are the masses and the reference of the restraints. A Python
 script and a control file that set the same options of the same files have
 the same fingerprint, and either continues the other's run.
 
+`Execution.neighbor_capacity`, when given and not 0, is the entry
+`[execution] neighbor_capacity` that the control file's key writes
+(D[cell-runtime-constants]). A run that gives the same capacity to both
+front ends continues without a warning; a capacity in one of them only is
+a change of the execution, with the warning of one. The estimate, 0 or
+the key absent, has no entry.
+
 Settings without a control-file key (custom terms in Python's units,
 tunables) have entries of their own: a CLI run never has them, so a
 checkpoint with them is a new stage for `mdir run`, never `--continue`.

@@ -912,6 +912,13 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     arguments.push_back(&edge);
   arguments.push_back(&timestep);
   arguments.push_back(&firstStep);
+  // The values of the state at the start that the entry takes rather than
+  // its text (D[cell-runtime-constants]).
+  SmallVector<double> startValues;
+  for (const Program::StartValue &value : program->startValues)
+    startValues.push_back(value.value);
+  for (double &value : startValues)
+    arguments.push_back(&value);
 
   if (!control->manifestFile.empty()) {
     auto device = getManifestDevice(control->target);
