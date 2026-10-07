@@ -5,3 +5,5 @@ argon.dcd
 /references/
 .claude
 .codex
+.env
+.env.*
