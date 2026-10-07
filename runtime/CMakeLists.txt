@@ -87,6 +87,44 @@ if(MDIR_BUNDLE_LIBRARIES)
   endif()
 endif()
 
+# A wheel of the Python package (pyproject.toml, scikit-build-core sets
+# SKBUILD; D[python-package]): the component `python` carries the runtime
+# in mdir/lib and libdevice with the CUDA EULA in mdir/cuda, where the
+# extension looks beside itself. cuFFT is not carried: the GPU runtime
+# takes it from NVIDIA's wheel (nvidia-cufft) in the same site-packages,
+# else from the system's search path.
+if(SKBUILD)
+  install(TARGETS mdrt LIBRARY DESTINATION mdir/lib COMPONENT python)
+  if(EXISTS "${LLVM_LIBRARY_DIR}/libomp.so")
+    install(FILES "${LLVM_LIBRARY_DIR}/libomp.so" DESTINATION mdir/lib
+      COMPONENT python)
+  endif()
+  if(MDIR_CUDA_FOUND)
+    set_target_properties(mdrt_cuda PROPERTIES
+      INSTALL_RPATH "$ORIGIN;$ORIGIN/../../nvidia/cu13/lib")
+    install(TARGETS mdrt_cuda LIBRARY DESTINATION mdir/lib COMPONENT python)
+    install(FILES "${CUDAToolkit_LIBRARY_ROOT}/nvvm/libdevice/libdevice.10.bc"
+      DESTINATION mdir/cuda/nvvm/libdevice COMPONENT python)
+    install(FILES "${CUDAToolkit_LIBRARY_ROOT}/EULA.txt"
+      DESTINATION mdir/cuda COMPONENT python)
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/version.txt"
+      "CUDA Version ${CUDAToolkit_VERSION}\n")
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/version.txt"
+      DESTINATION mdir/cuda COMPONENT python)
+  endif()
+  install(FILES ${PROJECT_SOURCE_DIR}/LICENSE DESTINATION mdir/licenses
+    COMPONENT python)
+  # HDF5's notice, which a binary distribution reproduces.
+  get_filename_component(hdf5_root "${MDIR_HDF5_INCLUDE_DIR}" DIRECTORY)
+  foreach(notice COPYING share/COPYING)
+    if(MDIR_HDF5_LIBRARY AND EXISTS "${hdf5_root}/${notice}")
+      install(FILES "${hdf5_root}/${notice}" DESTINATION mdir/licenses
+        RENAME HDF5-COPYING COMPONENT python)
+      break()
+    endif()
+  endforeach()
+endif()
+
 set(MDIR_CUDA_FOUND ${MDIR_CUDA_FOUND} PARENT_SCOPE)
 set(MDIR_CUDA_ROOT "${CUDAToolkit_TARGET_DIR}" PARENT_SCOPE)
 

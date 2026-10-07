@@ -142,7 +142,7 @@ static py::array_t<double> vectors(const std::vector<double> &values) {
   return host::copy(values.data(), values.size(),
                     {static_cast<py::ssize_t>(values.size() / 3), 3});
 }
-PYBIND11_MODULE(mdir, m) {
+PYBIND11_MODULE(_core, m) {
   // Required at import as well as configuration, including installed modules.
   try {
     auto numpy = py::module_::import("numpy");
