@@ -46,6 +46,10 @@ struct SimulationEnergies {
 struct SimulationMinimization {
   double energy = 0.0, rmsForce = 0.0, maxForce = 0.0, stepSize = 0.0;
   int64_t maxForceParticle = 0;
+  /// Whether `maxForce` is below the tolerance of the call of `minimize`
+  /// that wrote the row; none if that call had no tolerance
+  /// (D[minimize-tolerance]).
+  std::optional<bool> converged;
 };
 
 /// The state of a simulation, in the order of the input and in MD units.
@@ -97,9 +101,13 @@ public:
   llvm::Error evaluate();
   /// Takes `count` more steps of the minimization of `mdir run`, or the
   /// steps of its schedule if none, in parts as `run` does; a simulation
-  /// of a program that minimizes takes only these (D202).
+  /// of a program that minimizes takes only these (D202). With a
+  /// `tolerance` in kJ/mol/nm, it stops at the first row whose largest
+  /// force is below it, checked every energy period of the program and at
+  /// the end, as `[minimize] force_tolerance` (D[minimize-tolerance]).
   llvm::Expected<int64_t> minimize(std::optional<int64_t> count = {},
-                                   const std::function<bool()> &poll = {});
+                                   const std::function<bool()> &poll = {},
+                                   std::optional<double> tolerance = {});
   bool isMinimization() const { return prepared.control.minimize; }
   /// The built-in reports of `mdir run`'s outputs (D207):
   /// the columns file of the energies every `energyPeriod` steps and a
@@ -231,6 +239,13 @@ private:
   /// step in nm.
   int64_t minimizationSteps = 0;
   double minimizationSize = 0.0;
+  /// The steps between the checks of a tolerance: the energy period of
+  /// the program (D[minimize-tolerance]).
+  int64_t minimizationCheckPeriod = 0;
+  /// Whether the row at `minimizationCheckedStep` is below the tolerance
+  /// of the call that wrote it; none without a tolerance.
+  std::optional<bool> minimizationConverged;
+  int64_t minimizationCheckedStep = -1;
   bool hasRun = false;
   bool failed = false;
   /// The system that the program was built from, at its first step, which

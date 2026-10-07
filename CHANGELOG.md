@@ -20,6 +20,15 @@ format, or the outputs; every such change is listed under **Changed** or
   without touching the environment; a simulation takes its program's
   choice unless given one. `Simulation.compile_stats["cache_bypassed"]`
   reports it.
+- A force tolerance for minimization (D[minimize-tolerance], #106):
+  `[minimize] force_tolerance` (kcal/mol/Å) ends `mdir run`'s minimization
+  at the first row of the energies whose largest force (the `MAX_FORCE`
+  column, without the parts along the constraints) is below it, with the
+  checkpoint at that step and a line in the log saying whether it
+  converged. `Simulation.minimize(steps=None, tolerance=None)` takes it in
+  kJ/mol/nm (or an OpenMM quantity) and checks every
+  `Schedule.energy_period` steps; `state().minimization["converged"]`
+  reports the result. Without a tolerance nothing changes.
 - `mdir.InitialState.from_state(state, velocities=True)` makes the initial
   state of a new stage from the `State` that a simulation reached: copies of
   its positions, cell, and velocities, or without the velocities when asked,

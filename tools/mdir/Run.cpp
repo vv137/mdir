@@ -761,6 +761,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         (void *)&_mlir_ciface_mdrtSetBarostatState);
     add("_mlir_ciface_mdrtWriteMinimization",
         (void *)&_mlir_ciface_mdrtWriteMinimization);
+    add("_mlir_ciface_mdrtCheckMinimization",
+        (void *)&_mlir_ciface_mdrtCheckMinimization);
     add("_mlir_ciface_mdrtFinish", (void *)&_mlir_ciface_mdrtFinish);
     add("_mlir_ciface_mdrtWriteCheckpoint",
         program->writesForces
@@ -993,6 +995,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   output.bathKinetic = 0.5 * system->getDegreesOfFreedom() *
                        units::boltzmann * control->temperature;
   output.minimizes = control->minimize;
+  output.minimizeTolerance =
+      control->minimizeTolerance * units::energy / units::length;
   output.leastEdge = 2.0 * control->cutoffDistance * units::length;
   output.degreesOfFreedom = system->getDegreesOfFreedom();
   output.solventFreedom = system->getSolventDegreesOfFreedom();
@@ -1216,7 +1220,13 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                    StringRef(MDIR_GIT_DIRTY) == "yes"
                        ? " with uncommitted changes"
                        : "");
-  if (control->minimize)
+  if (control->minimize && control->minimizeTolerance > 0.0)
+    output.log.print("MDIR: %zu particles, at most %lld steps of steepest "
+                     "descent, until the largest force is below %g "
+                     "kcal/mol/Å\n",
+                     count, static_cast<long long>(control->numSteps),
+                     control->minimizeTolerance);
+  else if (control->minimize)
     output.log.print(
                  "MDIR: %zu particles, %lld steps of steepest descent\n",
                  count, static_cast<long long>(control->numSteps));
@@ -1492,6 +1502,22 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                    "kcal/mol\n",
                    output.firstTotal / units::energy,
                    output.lastTotal / units::energy);
+    // Whether the largest force fell below the tolerance
+    // (D[minimize-tolerance]), at a row of the energies.
+    if (control->minimizeTolerance > 0.0) {
+      double largest = output.lastMinimization.maxForce /
+                       (units::energy / units::length);
+      if (output.convergedStep >= 0)
+        output.log.print("MDIR: converged at step %lld: the largest force, "
+                         "%.4f kcal/mol/Å, is below %g\n",
+                         static_cast<long long>(output.convergedStep),
+                         largest, control->minimizeTolerance);
+      else
+        output.log.print("MDIR: not converged in %lld steps: the largest "
+                         "force, %.4f kcal/mol/Å, is not below %g\n",
+                         static_cast<long long>(control->numSteps), largest,
+                         control->minimizeTolerance);
+    }
     return 0;
   }
   if (control->isLangevin() || control->isBrownian())

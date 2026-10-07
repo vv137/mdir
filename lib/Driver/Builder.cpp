@@ -178,6 +178,14 @@ private:
   /// Sets `levels`, the loops of the schedule of a run of dynamics.
   void setSchedule();
   void emitMinimization(StringRef velocities);
+  /// Whether the minimization of `mdir run` ends at the first row of the
+  /// energies whose largest force is below a tolerance
+  /// (D[minimize-tolerance]). A Python simulation checks it between its
+  /// parts, on the host, and its program is that without a tolerance.
+  bool stopsMinimization() const {
+    return control.minimize && !control.segments &&
+           control.minimizeTolerance > 0.0;
+  }
   /// A frame at `step` if a reporter's frame is due (programs of segments).
   void emitFrameIfDue(StringRef indent, StringRef step, StringRef positions,
                       StringRef tag);
@@ -8002,6 +8010,24 @@ void Builder::emitMinimization(StringRef velocities) {
   os << "  mdrt.host_call @mdrtWriteMinimization(%start, %u0, " << h0 << ", "
      << reported << ", %id)\n"
      << "      : (i64, f64, f64, !vec, !ids)\n";
+  // With a tolerance (D[minimize-tolerance]), the host compares the largest
+  // force of each row with it and keeps, in a buffer of its own, whether
+  // one was below it and the step of that row (the last step otherwise).
+  // The loops read it where an iteration begins: the steps and the rows
+  // after that row are loops of no iteration. A row is where the host
+  // waits for the device anyway, so the check takes no wait of its own.
+  bool stops = stopsMinimization();
+  if (stops) {
+    os << "  %conv = memref.alloca() : memref<2xi64>\n"
+       << "  %conv_at0 = arith.constant 0 : index\n"
+       << "  %conv_at1 = arith.constant 1 : index\n"
+       << "  %conv_no = arith.constant 0 : i64\n"
+       << "  %conv_steps = arith.constant " << control.numSteps << " : i64\n"
+       << "  %conv_last = arith.addi %start, %conv_steps : i64\n"
+       << "  memref.store %conv_no, %conv[%conv_at0] : memref<2xi64>\n"
+       << "  memref.store %conv_last, %conv[%conv_at1] : memref<2xi64>\n"
+       << "  mdrt.host_call @mdrtCheckMinimization(%conv) : (memref<2xi64>)\n";
+  }
 
   // A step is taken if it lowers the energy, and the next one is longer;
   // otherwise the next one is shorter, from where the step began. The
@@ -8034,8 +8060,18 @@ void Builder::emitMinimization(StringRef velocities) {
      << "    %xe1, %fe1, %ue1, %he1 = scf.for %i1 = %c0 to %n1 step %c1\n"
      << "        iter_args(%xa1 = %xa0, %fa1 = %fa0, %ua1 = %ua0, "
         "%ha1 = %ha0)\n"
-     << "        -> (" << state << ") {\n"
-     << "      %xe2, %fe2, %ue2, %he2 = scf.for %i2 = %c0 to %n2 step %c1\n"
+     << "        -> (" << state << ") {\n";
+  // After the row that converged, no step and no row.
+  std::string n2 = "%n2";
+  if (stops) {
+    os << "      %conv_done = memref.load %conv[%conv_at0] : memref<2xi64>\n"
+       << "      %conv_open = arith.cmpi eq, %conv_done, %conv_no : i64\n"
+       << "      %n2_open = arith.select %conv_open, %n2, %c0 : index\n"
+       << "      %row_open = arith.select %conv_open, %c1, %c0 : index\n";
+    n2 = "%n2_open";
+  }
+  os << "      %xe2, %fe2, %ue2, %he2 = scf.for %i2 = %c0 to " << n2
+     << " step %c1\n"
      << "          iter_args(%xa2 = %xa1, %fa2 = %fa1, %ua2 = %ua1, "
         "%ha2 = %ha1)\n"
      << "          -> (" << state << ") {\n"
@@ -8070,19 +8106,43 @@ void Builder::emitMinimization(StringRef velocities) {
      << "      %steps = arith.addi %before, %within : index\n"
      << "      %since = arith.index_cast %steps : index to i64\n"
      << "      %step = arith.addi %since, %start : i64\n";
-  reported = emitReported("      ", "%xe2", "%fe2", "1");
-  os << "      mdrt.host_call @mdrtWriteMinimization(%step, %ue2, %he2, "
-     << reported << ", %id)\n"
-     << "          : (i64, f64, f64, !vec, !ids)\n"
-     << "      scf.yield %xe2, %fe2, %ue2, %he2 : " << state << "\n"
+  // A row, unless an earlier one converged: a loop of one iteration or
+  // none, as emitFrameIfDue.
+  std::string rowIndent = stops ? "        " : "      ";
+  if (stops)
+    os << "      scf.for %i_row = %c0 to %row_open step %c1 {\n";
+  reported = emitReported(rowIndent, "%xe2", "%fe2", "1");
+  os << rowIndent << "mdrt.host_call @mdrtWriteMinimization(%step, %ue2, "
+     << "%he2, " << reported << ", %id)\n"
+     << rowIndent << "    : (i64, f64, f64, !vec, !ids)\n";
+  if (stops)
+    os << "        mdrt.host_call @mdrtCheckMinimization(%conv) "
+          ": (memref<2xi64>)\n"
+       << "      }\n";
+  os << "      scf.yield %xe2, %fe2, %ue2, %he2 : " << state << "\n"
      << "    }\n";
-  if (control.framePeriod > 0)
+  if (control.framePeriod > 0) {
     os << "    %frames = arith.addi %i0, %c1 : index\n"
        << "    %frame_steps = arith.muli %frames, %per0 : index\n"
        << "    %frame_since = arith.index_cast %frame_steps : index to i64\n"
-       << "    %frame_step = arith.addi %frame_since, %start : i64\n"
-       << "    mdrt.host_call @mdrtWriteFrame(%frame_step, %xe1, %id) "
-          ": (i64, !vec, !ids)\n";
+       << "    %frame_step = arith.addi %frame_since, %start : i64\n";
+    std::string frameIndent = "    ";
+    if (stops) {
+      // The frame at the row that converged, and none after it.
+      os << "    %conv_fdone = memref.load %conv[%conv_at0] : memref<2xi64>\n"
+         << "    %conv_fstep = memref.load %conv[%conv_at1] : memref<2xi64>\n"
+         << "    %conv_fopen = arith.cmpi eq, %conv_fdone, %conv_no : i64\n"
+         << "    %conv_fat = arith.cmpi eq, %conv_fstep, %frame_step : i64\n"
+         << "    %conv_fdue = arith.ori %conv_fopen, %conv_fat : i1\n"
+         << "    %conv_fn = arith.select %conv_fdue, %c1, %c0 : index\n"
+         << "    scf.for %i_frame = %c0 to %conv_fn step %c1 {\n";
+      frameIndent = "      ";
+    }
+    os << frameIndent << "mdrt.host_call @mdrtWriteFrame(%frame_step, %xe1, "
+       << "%id) : (i64, !vec, !ids)\n";
+    if (stops)
+      os << "    }\n";
+  }
   os << "    scf.yield %xe1, %fe1, %ue1, %he1 : " << state << "\n"
      << "  }\n";
   if (control.segments) {
@@ -8098,12 +8158,17 @@ void Builder::emitMinimization(StringRef velocities) {
     os << "  return\n}\n";
     return;
   }
-  // The checkpoint holds the positions, and velocities of 0.
-  if (control.checkpointPeriod > 0)
-    os << "  %c_total = arith.constant " << control.numSteps << " : i64\n"
-       << "  %end = arith.addi %start, %c_total : i64\n"
-       << "  mdrt.host_call @mdrtWriteCheckpoint(%end, %xe0, %v0, %id)\n"
+  // The checkpoint holds the positions, and velocities of 0, at the last
+  // step or at the row that converged.
+  if (control.checkpointPeriod > 0) {
+    if (stops)
+      os << "  %end = memref.load %conv[%conv_at1] : memref<2xi64>\n";
+    else
+      os << "  %c_total = arith.constant " << control.numSteps << " : i64\n"
+         << "  %end = arith.addi %start, %c_total : i64\n";
+    os << "  mdrt.host_call @mdrtWriteCheckpoint(%end, %xe0, %v0, %id)\n"
        << "      : (i64, !vec, !vec, !ids)\n";
+  }
   os << "  mdrt.host_call @mdrtFinish(%xe0, %v0, %id) : (!vec, !vec, !ids)\n";
   os << "  return\n}\n";
 }
@@ -8201,6 +8266,9 @@ void Builder::emitEntry() {
   if (control.minimize)
     os << "func.func private @mdrtWriteMinimization(i64, f64, f64, memref<?x3x"
        << force << ">, memref<?xi32>)\n"
+       << "    attributes {llvm.emit_c_interface}\n";
+  if (stopsMinimization())
+    os << "func.func private @mdrtCheckMinimization(memref<2xi64>)\n"
        << "    attributes {llvm.emit_c_interface}\n";
   if (reportsSolvent())
     os << "func.func private @mdrtWriteSolvent(f64, f64)\n";

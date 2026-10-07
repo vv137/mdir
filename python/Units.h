@@ -25,6 +25,7 @@ inline constexpr Unit springConstant{"kilojoule_per_mole/nanometer**2", "kJ/mol/
 inline constexpr Unit second{"second", "s"};
 inline constexpr Unit charge{"elementary_charge", "e"};
 inline constexpr Unit energy{"kilojoule_per_mole", "kJ/mol"};
+inline constexpr Unit force{"kilojoule_per_mole/nanometer", "kJ/mol/nm"};
 
 inline bool isQuantity(py::handle value) {
   return py::hasattr(value, "value_in_unit_system");

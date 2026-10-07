@@ -387,8 +387,12 @@ struct Control {
   // steps, the first of which moves no particle farther than
   // `minimizeStep`, in Å. The energies are written every `energyPeriod`
   // steps, a frame every `framePeriod`, and a checkpoint at the end.
+  // With `minimizeTolerance` > 0, in kcal/mol/Å, it ends at the first row
+  // of the energies whose largest force (without its parts along the
+  // constraints) is below it (D[minimize-tolerance]).
   bool minimize = false;
   double minimizeStep = 0.1;
+  double minimizeTolerance = 0.0;
 
   // [dynamics]
   Integrator integrator = Integrator::VelocityVerlet;

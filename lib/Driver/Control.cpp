@@ -2371,7 +2371,9 @@ Error Reader::readDynamics(const toml::table &table) {
 
 Error Reader::readMinimize(const toml::table &table) {
   if (Error error = checkKeywords(table, "minimize",
-                                  {"method", "steps", "initial_step"}, {}))
+                                  {"method", "steps", "initial_step",
+                                   "force_tolerance"},
+                                  {}))
     return error;
   enum class Method { SteepestDescent };
   Method method = Method::SteepestDescent;
@@ -2384,6 +2386,13 @@ Error Reader::readMinimize(const toml::table &table) {
     return error;
   if (Error error = readPositive(table, "initial_step", control.minimizeStep))
     return error;
+  // The largest force at which the minimization ends (D[minimize-tolerance]).
+  if (Error error =
+          readPositive(table, "force_tolerance", control.minimizeTolerance))
+    return error;
+  if (!std::isfinite(control.minimizeTolerance))
+    return fail(*table.get("force_tolerance"),
+                "expected a finite number for 'force_tolerance'");
   if (control.energyPeriod == 0)
     return fail(outputTable ? *outputTable : table,
                 "a minimization writes energies: 'energy_interval' may not "
@@ -3493,6 +3502,8 @@ precision = "MIXED"             # SINGLE, MIXED, DOUBLE
 # method       = "STEEPEST_DESCENT"
 # steps        = 2000
 # initial_step = 0.1            # Å
+# force_tolerance = 1.0         # kcal/mol/Å: ends at the first row of the
+                                # energies whose largest force is below it
 
 # Restraints to the positions of 'coordinates', any number of them.
 # [[restraints]]

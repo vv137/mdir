@@ -20,6 +20,14 @@ minimized = simulation.state()
 minimized.minimization                  # the row of the log at the last step
 ```
 
+With a tolerance (D[minimize-tolerance], see [Convergence](#convergence)):
+
+```python
+schedule.energy_period = 10             # [output] energy_interval: the checks
+taken = simulation.minimize(tolerance=41.84)  # kJ/mol/nm (1 kcal/mol/Å)
+simulation.state().minimization["converged"]  # True if it stopped there
+```
+
 A program whose `Integrator.minimize` is true is a minimization, as
 `[minimize]` in place of `[dynamics]` is in a control file; its ensemble is
 NVE, as before (D191). `Simulation(program)` accepts it.
@@ -37,8 +45,39 @@ energy accepted and the next one 1.2 times longer (at most 0.1 nm), a step
 that does not rejected and the next one 0.2 times as long, the positions
 first put on the surface of the constraints (SHAKE, SETTLE) and every
 trial put back on it, virtual sites placed, and the restraints of the
-system. Like `mdir run`, it takes a fixed number of steps and has no
-convergence criterion.
+system. Like `mdir run`, it takes a fixed number of steps unless it is
+given a tolerance on the force (below).
+
+## Convergence
+
+`Simulation.minimize(steps=None, tolerance=None)` with a `tolerance` in
+kJ/mol/nm (a number, or an OpenMM quantity of force, as D200 converts)
+stops at the first check whose largest force is below it, or after
+`steps`, whichever comes first, as `[minimize] force_tolerance` stops
+`mdir run` (D[minimize-tolerance]). The force is the `max_force` of the
+row, the largest $\lVert m_i\mathbf g_i\rVert$ over the particles with
+mass, without the parts along the constraints, and the test is strict
+(`<`). A check is made where the call begins (with no step if the state is
+already converged), every `Schedule.energy_period` steps (the
+`energy_interval` of the control file), and where the call ends: the parts
+of the call end at those steps, and the host compares the row of the last
+part with the tolerance between parts. The program is that without a
+tolerance; since a part continues the last to the bit (D215), the
+simulation stops at the step where `mdir run` with the same tolerance and
+energy interval stops, with the same row. A tolerance must be positive and
+finite, and the program's `energy_period` positive.
+
+`minimize()` returns the steps taken, as before. The row of the last step,
+`state().minimization`, has `converged`: `True` if its largest force is
+below the tolerance of the call that wrote it, `False` if not, and `None`
+for a call without one.
+
+GROMACS's `emtol` is likewise a tolerance on the largest force
+[[GromacsManual2025]](references.md#gromacsmanual2025). OpenMM 8.6's
+`LocalEnergyMinimizer.minimize(tolerance=...)` is on the root mean square
+of all force components (its documentation), which is the `rms_force` of
+the row over $\sqrt3$: an average over thousands of waters can be below a
+tolerance that a strained residue is far above.
 
 ## Parts, stops, and failures
 
@@ -137,3 +176,22 @@ that `minimize(0)` takes no step and leaves no row, and that
 `minimize()` takes the steps of the schedule. Stops and Ctrl-C share the
 loop of parts with `run(n)`, which `python-segments-errors-stops.test`
 checks.
+
+The tolerance (D[minimize-tolerance]) is checked by
+`test/Driver/python-minimize-tolerance-*.test` and their `-gpu` twins
+(`Inputs/python_minimize_tolerance.py`), in double and mixed precision, on
+the dipeptide with PME, SHAKE, SETTLE, and the restraint, with rows every
+10 steps. The reference is `mdir run` without the key: the criterion
+applied in NumPy to its rows gives step 100 in every mode (largest force
+60.9 kcal/mol/Å at step 90, at least 25 at the rows before, and 9.6 in
+double, 6.9 in mixed on the CPU, 8.4 in mixed on the GPU at step 100) for
+a tolerance of 15 kcal/mol/Å. `mdir run` with
+`force_tolerance = 15.0` stops there, with the rows of the reference up to
+step 100, and its energy file, trajectory, and checkpoint equal those of a
+run of 100 steps without the key, byte for byte. The simulation stops at
+step 100 with `converged` true and the row of `mdir run` to every printed
+digit, in both precisions on the CPU and the GPU. The test also checks the
+log of a run that does not converge in 20 steps (1 kcal/mol/Å) and of one
+that converges at step 0 (30 kcal/mol/Å), and in Python a call that is
+converged at its start (no step), one that does not converge, and one
+without a tolerance (`converged` is `None`).

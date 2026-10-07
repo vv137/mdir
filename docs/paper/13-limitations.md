@@ -118,7 +118,9 @@ frame index of libgcc remain assumptions, [JIT ownership](../jit-invariants.md))
 initial velocities drawn by
 the CLI's code and typed positional restraints (D198); unit quantities of
 OpenMM at the setters (D200); the minimizer of `mdir run` in a
-simulation, in parts that carry its step length (D202); reporters whose
+simulation, in parts that carry its step length (D202), with a tolerance
+on the largest force that both check at the rows of the energies
+(D[minimize-tolerance]); reporters whose
 times are arguments of the compiled program, so that the energy file and
 the trajectory of `mdir run` are written inside a part (D207);
 tunable parameters, whose new values a simulation takes without compiling,

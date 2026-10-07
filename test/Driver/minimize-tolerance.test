@@ -1,0 +1,48 @@
+# `[minimize] force_tolerance` (D[minimize-tolerance]): the minimization of
+# the dipeptide in water stops at the first row of the log whose largest
+# force is below 15 kcal/mol/Å, step 100 (60.9 at step 90), and takes no
+# step after it; with 1 kcal/mol/Å it takes its 20 steps and says that it
+# did not converge. Inputs/python_minimize_tolerance.py checks the stop
+# against a NumPy reference, on the CPU and a GPU.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: sed -e 's|@ROOT@|%S/Inputs/dipeptide|' -e 's|@TOLERANCE@|15.0|' -e 's|@STEPS@|400|' %s > %t/stop.toml
+# RUN: sed -e 's|@ROOT@|%S/Inputs/dipeptide|' -e 's|@TOLERANCE@|1.0|' -e 's|@STEPS@|20|' %s > %t/more.toml
+# RUN: mdir run %t/stop.toml | FileCheck %s --check-prefix=STOP
+# RUN: mdir run %t/more.toml | FileCheck %s --check-prefix=MORE
+
+# STOP:      MDIR: 1168 particles, at most 400 steps of steepest descent, until the largest force is below 15 kcal/mol/Å
+# STOP:      INFO:         0 {{.*}}
+# STOP:      INFO:        90 {{ *}}{{-[0-9.]+}} {{ *}}{{[0-9.]+}} {{ *}}60.9
+# STOP-NEXT: INFO:       100 {{ *}}{{-[0-9.]+}} {{ *}}{{[0-9.]+}} {{ *}}9.6
+# STOP-NOT:  INFO:       110
+# STOP:      MDIR: converged at step 100: the largest force, 9.6{{[0-9]+}} kcal/mol/Å, is below 15
+
+# MORE:      INFO:        20
+# MORE:      MDIR: not converged in 20 steps: the largest force, {{[0-9.]+}} kcal/mol/Å, is not below 1
+
+[input]
+topology = "@ROOT@/dipeptide.prmtop"
+coordinates = "@ROOT@/dipeptide.inpcrd"
+[energy]
+cutoff = 8.0
+pairlist_distance = 9.0
+electrostatics = "PME"
+[constraints]
+hydrogen_bonds = true
+rigid_water = true
+[output]
+energy_interval = 10
+[minimize]
+method = "STEEPEST_DESCENT"
+steps = @STEPS@
+force_tolerance = @TOLERANCE@
+[[restraints]]
+selection = "!:WAT & !@H*"
+force_constant = 10.0
+[boundary]
+type = "PERIODIC"
+[execution]
+target = "CPU"
+precision = "DOUBLE"
+deterministic = true
