@@ -160,6 +160,21 @@ names of types.
 $\sigma$ and $\epsilon$, as under per-type tunables; tunable 1-4 parameters
 would be a separate item.
 
+For a CHARMM NBFIX this means that a pair tunable moves only part of what
+the NBFIX sets. A line `type type emin rmin [emin14 rmin14]` of `NBFIX`
+sets the Lennard-Jones of that pair of types beyond the 1-4 pairs and also
+their 1-4 Lennard-Jones: its own 1-4 values when given, otherwise the same
+`emin` and `rmin` (so CHARMM reads it, and so does `pairParameters` in
+`lib/Driver/Charmm.cpp`); GROMACS's `[ nonbond_params ]`, by contrast,
+does not reach the 1-4 pairs, which take `[ pairtypes ]` or `gen-pairs`.
+A pair tunable that changes an NBFIX pair changes
+its nonbonded interactions only; the 1-4 pairs of those two types keep the
+values of the compile (from the NBFIX or its 1-4 values). Ions have no 1-4
+pairs, so a fit of the NBFIXes of ions is unaffected; a fit of an NBFIX
+between types that also meet as 1-4 pairs within a molecule leaves those
+1-4 pairs at the old values, which is not consistent with the NBFIX it
+fits.
+
 The derived quantities follow the table as for per-type values: the
 correction for the dispersion, $\langle C_6\rangle$ and its shift estimate,
 with the classes of particles of the tails of pair terms, rebuilt on the
