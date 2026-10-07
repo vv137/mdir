@@ -479,7 +479,8 @@ struct Control {
   // [[restraints]]
   /// A harmonic restraint of the particles that `selection` selects (a mask
   /// of Amber, selectParticles) to their positions in the file of
-  /// coordinates: `k |x − x_ref|²` each, with k in kcal/mol/Å².
+  /// coordinates: `k |x − x_ref|²` each, with k in kJ/mol/nm². The control
+  /// file gives k in kcal/mol/Å²; it is converted where the file is read.
   struct Restraint {
     std::string selection;
     double forceConstant = 0.0;
