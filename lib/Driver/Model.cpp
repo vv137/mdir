@@ -204,6 +204,8 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   if (schedule.steps < 0 || schedule.energyPeriod < 0 || execution.threads < 1 ||
       ensemble.couplingPeriod < 1 || ensemble.comPeriod < 0)
     return input("invalid step, thread or coupling count");
+  if (execution.neighborCapacity < 0)
+    return input("Execution.neighbor_capacity must be positive, or 0 for the estimate");
   if (integrator.minimize && ensemble.kind != EnsembleKind::NVE)
     return input("minimization takes no bath");
   // The program of a minimization loops over the intervals between its
@@ -290,6 +292,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.deterministic = execution.deterministic;
   c.reorder = execution.reorder;
   c.fastMath = execution.fastMath;
+  c.neighborWidth = execution.neighborCapacity;
   std::set<std::string> termNames;
   for (auto term : s.pairTerms) {
     if (!termNames.insert(term.name).second) return input("duplicate custom term name");

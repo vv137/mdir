@@ -75,7 +75,7 @@
 # barostat-ff19sb-gpu.test -1.47 kcal/mol after 2 ps (CPU, double), the
 # dispersion correction of -30.24 kcal/mol times V_0/V - 1 = 0.0487.
 #
-# EXACT-WORK: %baro_energy_constant = arith.constant
+# EXACT-WORK: %baro_constant: f64, %baro_energy_constant: f64
 # EXACT-WORK: %bdc{{[a-z0-9_]*}} = arith.mulf %baro_energy_constant, %bdvi
 # EXACT-WORK: %bdu{{[a-z0-9_]*}} = arith.addf %bdue
 # FIRST:      MDIR: the conserved energy changed by {{[0-9.]+}}e-03 of its value

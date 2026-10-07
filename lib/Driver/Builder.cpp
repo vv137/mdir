@@ -9209,7 +9209,16 @@ llvm::Error Builder::build() {
     double reach = control.pairlistDistance * units::length;
     int64_t most = countMostNeighbors(system, reach);
     int64_t width = static_cast<int64_t>(std::ceil(1.5 * most)) + 16;
-    program.neighborWidth = (width + 7) / 8 * 8;
+    // Rounded up to four significant bits, a multiple of an eighth of the
+    // power of two below it and of 8: at most an eighth more room. The
+    // count moves by a few neighbors from one equilibrated state to the
+    // next, and the width is part of the lowered program, so a finer
+    // rounding made stages that differ only in their start compile anew
+    // (D[cell-runtime-constants]). The width only sets the room at first.
+    int64_t step = 8;
+    while (16 * step <= width)
+      step *= 2;
+    program.neighborWidth = (width + step - 1) / step * step;
   }
 
   // A program of segments has no outputs of its own: its loops are those

@@ -192,6 +192,10 @@ struct Execution {
   int64_t device = 0;
   int64_t threads = 1;
   bool deterministic = false, reorder = true, fastMath = true;
+  /// The neighbors that a neighbor structure holds per particle at first,
+  /// `[execution] neighbor_capacity`; 0 estimates it from the start
+  /// (D[cell-runtime-constants]).
+  int64_t neighborCapacity = 0;
 };
 /// A temporary fixed schedule for shared-builder parity. No runtime ownership,
 /// JIT, output writers or public Python simulation is implemented here.

@@ -1,13 +1,21 @@
 # REQUIRES: python-api, cuda
 # Programs that differ only in the cell they start from have one text and
 # share the compile cache (D[cell-runtime-constants]): the values of the
-# start are arguments of the entry. On a GPU, mixed and double, at
+# start are arguments of the entry, and the estimate of the neighbor
+# capacity is rounded up to four significant bits. A start with another
+# estimate hits with `Execution.neighbor_capacity`, and the capacity does
+# not change the run. On a GPU, mixed and double, deterministic, at
 # constant pressure with restraints (Inputs/compile_cache_cell.py).
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %mdir_python %S/Inputs/compile_cache_cell.py %S/Inputs/dipeptide GPU Mixed %t | FileCheck %s
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %mdir_python %S/Inputs/compile_cache_cell.py %S/Inputs/dipeptide GPU Double %t | FileCheck %s
-# CHECK: the starting cell leaves the text and the pipeline as they are
+# CHECK: the starting cell leaves the text and the pipeline as they are, capacity 448
 # CHECK-NEXT: first: compiled 1 hits 0 stored 1
 # CHECK-NEXT: second: compiled 0 hits 1 stored 0
 # CHECK-NEXT: second, 20 steps: same as without the cache
+# CHECK-NEXT: third: capacity 416
+# CHECK-NEXT: third: compiled 1 hits 0 stored 1
+# CHECK-NEXT: third with the capacity of the first: compiled 0 hits 1 stored 0
+# CHECK-NEXT: third, 20 steps: same with either capacity
+# CHECK-NEXT: refused: Execution.neighbor_capacity must be positive, or 0 for the estimate

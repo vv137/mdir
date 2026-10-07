@@ -413,6 +413,7 @@ PYBIND11_MODULE(mdir, m) {
   property(execution, "deterministic", &model::Execution::deterministic);
   property(execution, "reorder", &model::Execution::reorder);
   property(execution, "fast_math", &model::Execution::fastMath);
+  property(execution, "neighbor_capacity", &model::Execution::neighborCapacity);
   auto schedule = input<model::Schedule>(m, "Schedule");
   property(schedule, "steps", &model::Schedule::steps);
   property(schedule, "energy_period", &model::Schedule::energyPeriod);
@@ -482,6 +483,7 @@ PYBIND11_MODULE(mdir, m) {
       d["device"] = c.execution.device; d["threads"] = c.execution.threads;
       d["deterministic"] = c.execution.deterministic;
       d["reorders"] = c.program.reorders;
+      d["neighbor_capacity"] = c.program.neighborWidth;
       d["entry"] = c.program.entry;
       d["state_dtype"] = c.program.state == driver::Element::F64 ? "float64" : "float32";
       d["force_dtype"] = c.program.force == driver::Element::F64 ? "float64" : "float32";
