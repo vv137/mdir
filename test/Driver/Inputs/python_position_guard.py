@@ -1,4 +1,4 @@
-"""Runs whose positions or cell blow up (#168, D[gpu-position-guard]): a
+"""Runs whose positions or cell blow up (#168, D225): a
 part that fails raises SimulationError, keeps the state from before it,
 and leaves the process, and the device, able to run another simulation.
 

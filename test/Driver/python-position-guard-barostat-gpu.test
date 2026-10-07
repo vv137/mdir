@@ -1,6 +1,6 @@
 # REQUIRES: python-api, cuda
 # A run on a GPU whose barostat blows up the cell fails with SimulationError
-# instead of ending the process (#168, D[gpu-position-guard]), scenario
+# instead of ending the process (#168, D225), scenario
 # barostat of Inputs/python_position_guard.py: at 5e4 bar with a cutoff of
 # 0.4 nm the pressure blows up, and one coupling scales the cell by about
 # 1e10, which the builds took as it was (an allocation of 6.6e18 bytes). In

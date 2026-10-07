@@ -150,7 +150,7 @@ coupling at other steps would show.
 | `StaleProgramError` | The program's inputs changed after compilation |
 | `InputError` | `n < 0`, or a run that ends between the two closing steps of a Trotter period |
 | `UnsupportedError` | NPT with a coupling period of 1 (scaling every step); NPT in a triclinic cell; a second GPU device in one process |
-| `SimulationError` | A failure during a run: positions that are not numbers or are far outside the cell at a build of the neighbor structures on a device, a state that is not numbers at the end of a part, a barostat that takes the cell below twice the cutoff, makes it not finite, or scales an edge by a factor outside [1/2, 2] at one coupling (D[gpu-position-guard]); or another operation under way on the same simulation |
+| `SimulationError` | A failure during a run: positions that are not numbers or are far outside the cell at a build of the neighbor structures on a device, a state that is not numbers at the end of a part, a barostat that takes the cell below twice the cutoff, makes it not finite, or scales an edge by a factor outside [1/2, 2] at one coupling (D225); or another operation under way on the same simulation |
 
 After a `SimulationError` raised by a failure, the simulation keeps the
 state from before the failed part: the state at the end of the last part
@@ -164,7 +164,7 @@ simulation through a handler of the runtime instead; the part runs to its
 end, as it does on the CPU, and its state is checked and discarded there.
 The runtime is never left in the middle of its work. The rest of the part
 runs on whatever the failure left, so no kernel addresses outside its
-buffers for any positions or cell (D[gpu-position-guard]): the loops over
+buffers for any positions or cell (D225): the loops over
 the rows of a matrix skip the places that the build left empty, the points
 of PME are defined for coordinates that are not numbers, and every build
 takes at most 256 cells along an axis. Failures of the device
@@ -314,7 +314,7 @@ cutoff, or, without a periodic cell, where the particles have spread too
 far (D142). A barostat that makes the cell not finite or scales an edge by
 a factor outside [1/2, 2] at one coupling fails the part as well, and the
 part that has failed runs to its end without any access outside a buffer
-(D[gpu-position-guard], #168). The simulation then takes the copy, or, for a
+(D225, #168). The simulation then takes the copy, or, for a
 part that began an activation, the state of the host it began from, and
 ends the activation. Two sets of buffers that the parts alternate between
 were not taken: the loops already rotate the buffers of the state, and the

@@ -1,4 +1,4 @@
-# Runs whose positions or cell blow up (#168, D[gpu-position-guard]),
+# Runs whose positions or cell blow up (#168, D225),
 # scenario sanitize of Driver/Inputs/python_position_guard.py, under
 # compute-sanitizer: a restraint that sends an atom to about 1e190 nm, two
 # particles on top of one another with PME, and a barostat that scales the

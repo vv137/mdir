@@ -1,7 +1,7 @@
 # REQUIRES: python-api, cuda
 # A run on a GPU whose positions stop being numbers fails with
 # SimulationError instead of ending the process (#168,
-# D[gpu-position-guard]), scenario overlap of Inputs/python_position_guard.py:
+# D225), scenario overlap of Inputs/python_position_guard.py:
 # two particles that are not bonded, on top of one another, with PME, with
 # the matrix (deterministic) and with groups. In double and mixed precision
 # the simulation keeps the state it began from, and another simulation runs

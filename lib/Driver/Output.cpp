@@ -595,7 +595,7 @@ void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz) {
   // A cell that is not finite, or that one coupling has scaled by more
   // than a factor of 2, comes from a pressure that is not a number or has
   // blown up: the run has failed. The builds of the neighbor structures
-  // would take the cell as it is (#168, D[gpu-position-guard]).
+  // would take the cell as it is (#168, D225).
   for (int k = 0; k != 3; ++k) {
     char message[320];
     if (!std::isfinite(output.box[k])) {

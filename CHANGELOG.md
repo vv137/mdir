@@ -387,7 +387,7 @@ format, or the outputs; every such change is listed under **Changed** or
   `mdir run` stops with a word. A coupling of the barostat that scales an
   edge of the cell by a factor outside [1/2, 2], or makes it not finite,
   fails the run; the stop of a build says that a position "is not a number
-  or is far outside the cell" (D[gpu-position-guard], #168).
+  or is far outside the cell" (D225, #168).
 
 - The builder numbered the values that store the state of a barostat of
   Trotter type with a count of the process instead of one of the build, so

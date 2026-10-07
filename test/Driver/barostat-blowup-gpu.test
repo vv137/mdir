@@ -1,9 +1,9 @@
-# The test of barostat-blowup.test on a GPU (#168, D[gpu-position-guard]).
+# The test of barostat-blowup.test on a GPU (#168, D225).
 #
 # REQUIRES: cuda
 #
 # A barostat whose pressure blows up stops the run with a word (#168,
-# D[gpu-position-guard]): at 5e4 bar with a cutoff of 4 Å, one coupling of
+# D225): at 5e4 bar with a cutoff of 4 Å, one coupling of
 # the dipeptide in water scales the cell by a factor of hundreds, which the
 # check of twice the cutoff let through: the run went on with a cell of
 # thousands of Å and energies of 1e11 kcal/mol. A coupling that scales an

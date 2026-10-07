@@ -1,6 +1,6 @@
 # REQUIRES: python-api, cuda
 # A run on a GPU whose positions blow up fails with SimulationError instead
-# of ending the process (#168, D[gpu-position-guard]), scenario restraint of
+# of ending the process (#168, D225), scenario restraint of
 # Inputs/python_position_guard.py: a positional restraint of 1e300 kJ/mol/nm^2
 # on one atom sends it to about 1e190 nm, finite, within two steps. The build
 # of the matrix gives it no place (D107), and the loops over the rows read

@@ -336,7 +336,7 @@ restraint that sends an atom to $10^{190}$ nm, two particles on top of one
 another with PME, a barostat at $5\times 10^4$ bar) fail with the state
 from before the part and leave the device to another simulation, with no
 access outside a buffer under compute-sanitizer
-(`python-position-guard-*.test`, D[gpu-position-guard]). Before, each part put the particles in
+(`python-position-guard-*.test`, D225). Before, each part put the particles in
 order and built its neighbor structures anew, and the two agreed within
 the rounding of that order.
 

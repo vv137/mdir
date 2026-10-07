@@ -297,7 +297,7 @@ and its cell would index outside the tables of the build
 the cell. A Python simulation takes the stop as a failure of its part and
 runs the part to its end (D196), so everything after a build must stay
 inside its buffers whatever the positions and the cell are
-(D[gpu-position-guard]): the loops over the rows of a matrix skip a place
+(D225): the loops over the rows of a matrix skip a place
 that the build left empty, and every build takes at least one and at most
 256 cells along an axis, computed with a maximum and a minimum that take
 the other operand of one that is not a number. A wider cell costs only

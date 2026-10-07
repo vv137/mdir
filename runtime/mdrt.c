@@ -76,7 +76,7 @@ void mdrtSetStopHandler(void (*handler)(const char *)) {
 /* A build of a neighbor structure found positions that are not numbers,
    or are numbers far outside the cell (beyond 1e100, or whose wrap does not
    land in the cell, D176): the run has failed, whatever produced them
-   (D107, D[gpu-position-guard]). */
+   (D107, D225). */
 void mdrtStopNotNumbers(int64_t count) {
   char message[256];
   if (count == 1)
