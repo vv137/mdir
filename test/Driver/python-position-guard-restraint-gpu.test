@@ -1,0 +1,13 @@
+# REQUIRES: python-api, cuda
+# A run on a GPU whose positions blow up fails with SimulationError instead
+# of ending the process (#168, D[gpu-position-guard]), scenario restraint of
+# Inputs/python_position_guard.py: a positional restraint of 1e300 kJ/mol/nm^2
+# on one atom sends it to about 1e190 nm, finite, within two steps. The build
+# of the matrix gives it no place (D107), and the loops over the rows read
+# before the buffers of the particles while the part ran to its end. In
+# double and mixed precision the simulation keeps the state from before the
+# part that failed, and another simulation runs on the device.
+# RUN: %mdir_python %S/Inputs/python_position_guard.py %S/Inputs/dipeptide GPU restraint | FileCheck %s
+# CHECK: restraint Double: fails after step {{[0-9]+}} and keeps its state; another simulation runs: a position is not a number or is far outside the cell
+# CHECK: restraint Mixed: fails after step {{[0-9]+}} and keeps its state; another simulation runs:
+# CHECK: position guard restraint passed

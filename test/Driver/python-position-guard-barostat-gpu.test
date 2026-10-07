@@ -1,0 +1,12 @@
+# REQUIRES: python-api, cuda
+# A run on a GPU whose barostat blows up the cell fails with SimulationError
+# instead of ending the process (#168, D[gpu-position-guard]), scenario
+# barostat of Inputs/python_position_guard.py: at 5e4 bar with a cutoff of
+# 0.4 nm the pressure blows up, and one coupling scales the cell by about
+# 1e10, which the builds took as it was (an allocation of 6.6e18 bytes). In
+# double and mixed precision the simulation keeps the state of the last
+# part that succeeded, and another simulation runs on the device.
+# RUN: %mdir_python %S/Inputs/python_position_guard.py %S/Inputs/dipeptide GPU barostat | FileCheck %s
+# CHECK: barostat Double: fails after step {{[0-9]+}} and keeps its state; another simulation runs: the barostat has scaled the cell by {{[0-9.e+]+}} along {{[xyz]}} at one coupling
+# CHECK: barostat Mixed: fails after step {{[0-9]+}} and keeps its state; another simulation runs: the barostat has scaled the cell
+# CHECK: position guard barostat passed

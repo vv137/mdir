@@ -1,0 +1,54 @@
+# A barostat whose pressure blows up stops the run with a word (#168,
+# D[gpu-position-guard]): at 5e4 bar with a cutoff of 4 Å, one coupling of
+# the dipeptide in water scales the cell by a factor of hundreds, which the
+# check of twice the cutoff let through: the run went on with a cell of
+# thousands of Å and energies of 1e11 kcal/mol. A coupling that scales an
+# edge by a factor outside [1/2, 2] fails the run.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: not mdir run %t/run.toml 2>&1 | FileCheck %s
+
+# CHECK: mdir: the barostat has scaled the cell by {{[0-9.e+]+}} along {{[xyz]}} at one coupling, from {{[0-9.]+}} Å to {{[0-9.e+]+}} Å; the run has failed
+
+#--- run.toml
+[input]
+topology   = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+
+[output]
+energy_interval = 10
+
+[energy]
+cutoff        = 4.0
+pairlist_distance = 5.0
+electrostatics = "PME"
+
+[dynamics]
+integrator        = "VELOCITY_VERLET"
+time_step         = 0.001
+steps             = 200
+
+[ensemble]
+ensemble    = "NPT"
+temperature = 300.0
+pressure    = 50000.0
+
+[thermostat]
+method = "V-RESCALE"
+interval = 10
+time_constant = 0.5
+
+[barostat]
+method = "C-RESCALE"
+time_constant = 0.1
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+deterministic = true
+#--- end

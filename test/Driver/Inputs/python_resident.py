@@ -105,8 +105,7 @@ def failures():
 
         # A first part that fails keeps the state of the start: with a
         # cutoff of 1.26 nm the first coupling takes the cell below twice it.
-        # (A state that is not numbers would do on the CPU; on a device it
-        # can end the process, #168.)
+        # (States that blow up are the cases of python_position_guard.py.)
         program, start = compile_program(precision, kind="NPT", pressure=1e3, cutoff=1.26)
         blown = mdir.Simulation(program)
         expect(mdir.SimulationError, lambda: blown.run(10), "barostat")

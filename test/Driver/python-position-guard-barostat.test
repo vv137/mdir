@@ -1,0 +1,8 @@
+# REQUIRES: python-api
+# The test of python-position-guard-barostat-gpu.test on the CPU, where the
+# build of the matrix took the blown-up cell as well and the process
+# crashed (#168, D[gpu-position-guard]).
+# RUN: %mdir_python %S/Inputs/python_position_guard.py %S/Inputs/dipeptide CPU barostat | FileCheck %s
+# CHECK: barostat Double: fails after step {{[0-9]+}} and keeps its state; another simulation runs: the barostat has scaled the cell by {{[0-9.e+]+}} along {{[xyz]}} at one coupling
+# CHECK: barostat Mixed: fails after step {{[0-9]+}} and keeps its state; another simulation runs: the barostat has scaled the cell
+# CHECK: position guard barostat passed
