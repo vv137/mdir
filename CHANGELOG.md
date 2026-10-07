@@ -327,6 +327,13 @@ format, or the outputs; every such change is listed under **Changed** or
   No control key or file format changes. The trajectory of `mdir run`
   without checkpoints changes at the rounding of its sums, and a fixed
   `rebuild_interval` counts from step 1, one step later than before.
+- `mdir.compile` of a minimization (`Integrator.minimize = True`) with
+  `Schedule.energy_period = 0` or `Schedule.steps = 0` raises `InputError`
+  instead of killing Python with a floating-point exception (#178). The
+  program of a minimization loops over the intervals between its energies,
+  as `[minimize]` of a control file does, which refuses
+  `energy_interval = 0` the same way. `Simulation.minimize(steps)` still
+  takes any nonnegative count.
 
 - An `[[energy.pair]]` correction at or near the force field's own
   parameters, such as an NBFIX at zero offset where a fit begins, is no

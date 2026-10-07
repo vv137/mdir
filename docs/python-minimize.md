@@ -35,6 +35,11 @@ NVE, as before (D191). `Simulation(program)` accepts it.
 minimizer, the program's `Schedule.steps` when it is `None`, and returns
 the steps taken. Any nonnegative count is accepted: a Python simulation
 writes no log, so `steps` need not be a multiple of an energy interval.
+The program that `compile` builds still loops over the intervals between
+its energies, as `[minimize]` of a control file does, so `compile` refuses
+a minimization whose `Schedule.energy_period` or `Schedule.steps` is 0
+with `InputError` (#178), as the control file refuses
+`energy_interval = 0`.
 `run(n)` on a minimization and `minimize()` on a simulation of dynamics
 raise `InputError`.
 
