@@ -331,7 +331,12 @@ at constant energy, temperature, and pressure, the energy file and the
 trajectory over runs of 7 against one of 30, and a minimization of
 3 + 17 + 20 steps against 40 (`python-segments-*.test`); a part that fails
 keeps the state of the last part that succeeded, to the bit
-(`python-resident-failures*.test`). Before, each part put the particles in
+(`python-resident-failures*.test`). Runs whose positions or cell blow up (a
+restraint that sends an atom to $10^{190}$ nm, two particles on top of one
+another with PME, a barostat at $5\times 10^4$ bar) fail with the state
+from before the part and leave the device to another simulation, with no
+access outside a buffer under compute-sanitizer
+(`python-position-guard-*.test`, D[gpu-position-guard]). Before, each part put the particles in
 order and built its neighbor structures anew, and the two agreed within
 the rounding of that order.
 

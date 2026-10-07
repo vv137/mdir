@@ -579,6 +579,7 @@ void _mlir_ciface_mdrtSetBarostatState(double w0, double w1, double w2,
 
 void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz) {
   Output &output = *current;
+  double before[3] = {output.box[0], output.box[1], output.box[2]};
   output.box[0] = lx;
   output.box[1] = ly;
   output.box[2] = lz;
@@ -591,6 +592,35 @@ void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz) {
   output.checkpoint.box[1] = ly;
   output.checkpoint.box[2] = lz;
   static const char axes[] = "xyz";
+  // A cell that is not finite, or that one coupling has scaled by more
+  // than a factor of 2, comes from a pressure that is not a number or has
+  // blown up: the run has failed. The builds of the neighbor structures
+  // would take the cell as it is (#168, D[gpu-position-guard]).
+  for (int k = 0; k != 3; ++k) {
+    char message[320];
+    if (!std::isfinite(output.box[k])) {
+      std::snprintf(message, sizeof message,
+                    "the barostat has made the cell %s along %c; the run "
+                    "has failed (a time step too long, a bad contact, or a "
+                    "defect of mdir)",
+                    std::isnan(output.box[k]) ? "not a number" : "infinite",
+                    axes[k]);
+      stopOnFailure(output, message);
+      return;
+    }
+    double ratio = output.box[k] / before[k];
+    if (before[k] > 0.0 && !(ratio >= 0.5 && ratio <= 2.0)) {
+      std::snprintf(message, sizeof message,
+                    "the barostat has scaled the cell by %.4g along %c at "
+                    "one coupling, from %.4f Å to %.4g Å; the run has "
+                    "failed (a time step too long, a bad contact, or a "
+                    "defect of mdir)",
+                    ratio, axes[k], before[k] / units::length,
+                    output.box[k] / units::length);
+      stopOnFailure(output, message);
+      return;
+    }
+  }
   for (int k = 0; k != 3; ++k)
     if (output.box[k] < output.leastEdge) {
       char message[256];

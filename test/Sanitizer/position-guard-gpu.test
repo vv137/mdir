@@ -1,0 +1,18 @@
+# Runs whose positions or cell blow up (#168, D[gpu-position-guard]),
+# scenario sanitize of Driver/Inputs/python_position_guard.py, under
+# compute-sanitizer: a restraint that sends an atom to about 1e190 nm, two
+# particles on top of one another with PME, and a barostat that scales the
+# cell by about 1e10, each run to its failure and to the end of the part
+# that failed, with no access beyond a buffer.
+#
+# REQUIRES: cuda, compute-sanitizer, python-api
+#
+# RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 %mdir_python \
+# RUN:   %S/../Driver/Inputs/python_position_guard.py %S/../Driver/Inputs/dipeptide GPU sanitize 2>&1 \
+# RUN:   | FileCheck %s
+
+# CHECK: restraint Mixed: fails after step
+# CHECK: overlap Mixed: fails after step 0
+# CHECK: barostat Mixed: fails after step
+# CHECK: position guard sanitize passed
+# CHECK: ERROR SUMMARY: 0 errors

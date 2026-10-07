@@ -379,6 +379,16 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- A run whose positions blew up (to about 1e190 nm, or to positions that
+  are not numbers with PME) or whose barostat blew up the cell ended the
+  process on a GPU with an illegal address or an allocation that failed,
+  and a Python run on the CPU could crash the same way. A Python simulation
+  now raises `SimulationError` and keeps the state from before the part;
+  `mdir run` stops with a word. A coupling of the barostat that scales an
+  edge of the cell by a factor outside [1/2, 2], or makes it not finite,
+  fails the run; the stop of a build says that a position "is not a number
+  or is far outside the cell" (D[gpu-position-guard], #168).
+
 - The builder numbered the values that store the state of a barostat of
   Trotter type with a count of the process instead of one of the build, so
   the text of a program depended on what the process had built before, and

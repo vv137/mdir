@@ -73,20 +73,22 @@ void mdrtSetStopHandler(void (*handler)(const char *)) {
   stopHandler = handler;
 }
 
-/* A build of a neighbor structure found positions that are not numbers:
-   the run has failed, whatever produced them (D107). */
+/* A build of a neighbor structure found positions that are not numbers,
+   or are numbers far outside the cell (beyond 1e100, or whose wrap does not
+   land in the cell, D176): the run has failed, whatever produced them
+   (D107, D[gpu-position-guard]). */
 void mdrtStopNotNumbers(int64_t count) {
   char message[256];
   if (count == 1)
     snprintf(message, sizeof message,
-             "a position is not a number at a build of the neighbor "
-             "structure; the run has failed (a time step too long, a bad "
-             "contact, or a defect of mdir)");
+             "a position is not a number or is far outside the cell at a "
+             "build of the neighbor structure; the run has failed (a time "
+             "step too long, a bad contact, or a defect of mdir)");
   else
     snprintf(message, sizeof message,
-             "%lld positions are not numbers at a build of the neighbor "
-             "structure; the run has failed (a time step too long, a bad "
-             "contact, or a defect of mdir)",
+             "%lld positions are not numbers or are far outside the cell at "
+             "a build of the neighbor structure; the run has failed (a time "
+             "step too long, a bad contact, or a defect of mdir)",
              (long long)count);
   if (stopHandler) {
     stopHandler(message);

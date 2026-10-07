@@ -293,7 +293,20 @@ into the cell does not land in it, a fraction outside
 $[-10^{-6}, 1 + 10^{-6}]$, which a run that has failed reaches on its
 way to NaN: beyond about $10^{16}$ cells the wrap errs by more than a cell,
 and its cell would index outside the tables of the build
-(D176).
+(D176). The stop says that a position is not a number or is far outside
+the cell. A Python simulation takes the stop as a failure of its part and
+runs the part to its end (D196), so everything after a build must stay
+inside its buffers whatever the positions and the cell are
+(D[gpu-position-guard]): the loops over the rows of a matrix skip a place
+that the build left empty, and every build takes at least one and at most
+256 cells along an axis, computed with a maximum and a minimum that take
+the other operand of one that is not a number. A wider cell costs only
+time, since the range of the search follows from the number of cells; the
+largest system of the Amber suite takes at most 77. A barostat whose
+coupling scales an edge of the cell by a factor outside $[1/2, 2]$, or
+makes it not finite, fails the run: a pressure that had blown up once took
+the cell from 1.7 nm to $10^{11}$ nm, within the bound of twice the cutoff,
+and the builds asked for $10^{11}$ cells along each axis.
 
 The positions of the build are wrapped into the cell and tested in f32
 against the reach widened by $\varepsilon = 3\times 10^{-6}\,(L_x + L_y +

@@ -102,7 +102,12 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %px_kf = arith.sitofp %px_ki : i32 to !pme_real
       %px_fracr = PME_F64_TO_REAL %px_frac : f64 to !pme_real
       %px_u = arith.mulf %px_fracr, %px_kf : !pme_real
-      %px_fu = math.floor %px_u : !pme_real
+      %px_fu0 = math.floor %px_u : !pme_real
+      // A coordinate that is not a number takes the point 0, so that the
+      // conversion to an integer is defined and every point is in the grid
+      // (#168); the fraction is in [0, 1] otherwise, and so is this.
+      %px_nil = arith.constant 0.0 : !pme_real
+      %px_fu = arith.maxnumf %px_fu0, %px_nil : !pme_real
       %px_w = arith.subf %px_u, %px_fu : !pme_real
       %px_bi32 = arith.fptosi %px_fu : !pme_real to i32
       %px_bi = arith.extsi %px_bi32 : i32 to i64
@@ -200,7 +205,12 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %py_kf = arith.sitofp %py_ki : i32 to !pme_real
       %py_fracr = PME_F64_TO_REAL %py_frac : f64 to !pme_real
       %py_u = arith.mulf %py_fracr, %py_kf : !pme_real
-      %py_fu = math.floor %py_u : !pme_real
+      %py_fu0 = math.floor %py_u : !pme_real
+      // A coordinate that is not a number takes the point 0, so that the
+      // conversion to an integer is defined and every point is in the grid
+      // (#168); the fraction is in [0, 1] otherwise, and so is this.
+      %py_nil = arith.constant 0.0 : !pme_real
+      %py_fu = arith.maxnumf %py_fu0, %py_nil : !pme_real
       %py_w = arith.subf %py_u, %py_fu : !pme_real
       %py_bi32 = arith.fptosi %py_fu : !pme_real to i32
       %py_bi = arith.extsi %py_bi32 : i32 to i64
@@ -298,7 +308,12 @@ func.func private @mdrt_gpu_pme_spread(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %pz_kf = arith.sitofp %pz_ki : i32 to !pme_real
       %pz_fracr = PME_F64_TO_REAL %pz_frac : f64 to !pme_real
       %pz_u = arith.mulf %pz_fracr, %pz_kf : !pme_real
-      %pz_fu = math.floor %pz_u : !pme_real
+      %pz_fu0 = math.floor %pz_u : !pme_real
+      // A coordinate that is not a number takes the point 0, so that the
+      // conversion to an integer is defined and every point is in the grid
+      // (#168); the fraction is in [0, 1] otherwise, and so is this.
+      %pz_nil = arith.constant 0.0 : !pme_real
+      %pz_fu = arith.maxnumf %pz_fu0, %pz_nil : !pme_real
       %pz_w = arith.subf %pz_u, %pz_fu : !pme_real
       %pz_bi32 = arith.fptosi %pz_fu : !pme_real to i32
       %pz_bi = arith.extsi %pz_bi32 : i32 to i64
@@ -514,7 +529,12 @@ func.func private @mdrt_gpu_pme_spread_float(%x: memref<?x3x!pme_pos, 1>, %q: me
       %px_kf = arith.sitofp %px_ki : i32 to !pme_real
       %px_fracr = PME_F64_TO_REAL %px_frac : f64 to !pme_real
       %px_u = arith.mulf %px_fracr, %px_kf : !pme_real
-      %px_fu = math.floor %px_u : !pme_real
+      %px_fu0 = math.floor %px_u : !pme_real
+      // A coordinate that is not a number takes the point 0, so that the
+      // conversion to an integer is defined and every point is in the grid
+      // (#168); the fraction is in [0, 1] otherwise, and so is this.
+      %px_nil = arith.constant 0.0 : !pme_real
+      %px_fu = arith.maxnumf %px_fu0, %px_nil : !pme_real
       %px_w = arith.subf %px_u, %px_fu : !pme_real
       %px_bi32 = arith.fptosi %px_fu : !pme_real to i32
       %px_bi = arith.extsi %px_bi32 : i32 to i64
@@ -612,7 +632,12 @@ func.func private @mdrt_gpu_pme_spread_float(%x: memref<?x3x!pme_pos, 1>, %q: me
       %py_kf = arith.sitofp %py_ki : i32 to !pme_real
       %py_fracr = PME_F64_TO_REAL %py_frac : f64 to !pme_real
       %py_u = arith.mulf %py_fracr, %py_kf : !pme_real
-      %py_fu = math.floor %py_u : !pme_real
+      %py_fu0 = math.floor %py_u : !pme_real
+      // A coordinate that is not a number takes the point 0, so that the
+      // conversion to an integer is defined and every point is in the grid
+      // (#168); the fraction is in [0, 1] otherwise, and so is this.
+      %py_nil = arith.constant 0.0 : !pme_real
+      %py_fu = arith.maxnumf %py_fu0, %py_nil : !pme_real
       %py_w = arith.subf %py_u, %py_fu : !pme_real
       %py_bi32 = arith.fptosi %py_fu : !pme_real to i32
       %py_bi = arith.extsi %py_bi32 : i32 to i64
@@ -710,7 +735,12 @@ func.func private @mdrt_gpu_pme_spread_float(%x: memref<?x3x!pme_pos, 1>, %q: me
       %pz_kf = arith.sitofp %pz_ki : i32 to !pme_real
       %pz_fracr = PME_F64_TO_REAL %pz_frac : f64 to !pme_real
       %pz_u = arith.mulf %pz_fracr, %pz_kf : !pme_real
-      %pz_fu = math.floor %pz_u : !pme_real
+      %pz_fu0 = math.floor %pz_u : !pme_real
+      // A coordinate that is not a number takes the point 0, so that the
+      // conversion to an integer is defined and every point is in the grid
+      // (#168); the fraction is in [0, 1] otherwise, and so is this.
+      %pz_nil = arith.constant 0.0 : !pme_real
+      %pz_fu = arith.maxnumf %pz_fu0, %pz_nil : !pme_real
       %pz_w = arith.subf %pz_u, %pz_fu : !pme_real
       %pz_bi32 = arith.fptosi %pz_fu : !pme_real to i32
       %pz_bi = arith.extsi %pz_bi32 : i32 to i64
@@ -913,7 +943,12 @@ func.func private @mdrt_gpu_pme_weights(%x: memref<?x3x!pme_pos, 1>, %box: vecto
       %px_kf = arith.sitofp %px_ki : i32 to !pme_real
       %px_fracr = PME_F64_TO_REAL %px_frac : f64 to !pme_real
       %px_u = arith.mulf %px_fracr, %px_kf : !pme_real
-      %px_fu = math.floor %px_u : !pme_real
+      %px_fu0 = math.floor %px_u : !pme_real
+      // A coordinate that is not a number takes the point 0, so that the
+      // conversion to an integer is defined and every point is in the grid
+      // (#168); the fraction is in [0, 1] otherwise, and so is this.
+      %px_nil = arith.constant 0.0 : !pme_real
+      %px_fu = arith.maxnumf %px_fu0, %px_nil : !pme_real
       %px_w = arith.subf %px_u, %px_fu : !pme_real
       %px_bi32 = arith.fptosi %px_fu : !pme_real to i32
       %px_bi = arith.extsi %px_bi32 : i32 to i64
@@ -944,7 +979,12 @@ func.func private @mdrt_gpu_pme_weights(%x: memref<?x3x!pme_pos, 1>, %box: vecto
       %py_kf = arith.sitofp %py_ki : i32 to !pme_real
       %py_fracr = PME_F64_TO_REAL %py_frac : f64 to !pme_real
       %py_u = arith.mulf %py_fracr, %py_kf : !pme_real
-      %py_fu = math.floor %py_u : !pme_real
+      %py_fu0 = math.floor %py_u : !pme_real
+      // A coordinate that is not a number takes the point 0, so that the
+      // conversion to an integer is defined and every point is in the grid
+      // (#168); the fraction is in [0, 1] otherwise, and so is this.
+      %py_nil = arith.constant 0.0 : !pme_real
+      %py_fu = arith.maxnumf %py_fu0, %py_nil : !pme_real
       %py_w = arith.subf %py_u, %py_fu : !pme_real
       %py_bi32 = arith.fptosi %py_fu : !pme_real to i32
       %py_bi = arith.extsi %py_bi32 : i32 to i64
@@ -975,7 +1015,12 @@ func.func private @mdrt_gpu_pme_weights(%x: memref<?x3x!pme_pos, 1>, %box: vecto
       %pz_kf = arith.sitofp %pz_ki : i32 to !pme_real
       %pz_fracr = PME_F64_TO_REAL %pz_frac : f64 to !pme_real
       %pz_u = arith.mulf %pz_fracr, %pz_kf : !pme_real
-      %pz_fu = math.floor %pz_u : !pme_real
+      %pz_fu0 = math.floor %pz_u : !pme_real
+      // A coordinate that is not a number takes the point 0, so that the
+      // conversion to an integer is defined and every point is in the grid
+      // (#168); the fraction is in [0, 1] otherwise, and so is this.
+      %pz_nil = arith.constant 0.0 : !pme_real
+      %pz_fu = arith.maxnumf %pz_fu0, %pz_nil : !pme_real
       %pz_w = arith.subf %pz_u, %pz_fu : !pme_real
       %pz_bi32 = arith.fptosi %pz_fu : !pme_real to i32
       %pz_bi = arith.extsi %pz_bi32 : i32 to i64
@@ -2474,7 +2519,12 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %px_kf = arith.sitofp %px_ki : i32 to !pme_real
       %px_fracr = PME_F64_TO_REAL %px_frac : f64 to !pme_real
       %px_u = arith.mulf %px_fracr, %px_kf : !pme_real
-      %px_fu = math.floor %px_u : !pme_real
+      %px_fu0 = math.floor %px_u : !pme_real
+      // A coordinate that is not a number takes the point 0, so that the
+      // conversion to an integer is defined and every point is in the grid
+      // (#168); the fraction is in [0, 1] otherwise, and so is this.
+      %px_nil = arith.constant 0.0 : !pme_real
+      %px_fu = arith.maxnumf %px_fu0, %px_nil : !pme_real
       %px_w = arith.subf %px_u, %px_fu : !pme_real
       %px_bi32 = arith.fptosi %px_fu : !pme_real to i32
       %px_bi = arith.extsi %px_bi32 : i32 to i64
@@ -2582,7 +2632,12 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %py_kf = arith.sitofp %py_ki : i32 to !pme_real
       %py_fracr = PME_F64_TO_REAL %py_frac : f64 to !pme_real
       %py_u = arith.mulf %py_fracr, %py_kf : !pme_real
-      %py_fu = math.floor %py_u : !pme_real
+      %py_fu0 = math.floor %py_u : !pme_real
+      // A coordinate that is not a number takes the point 0, so that the
+      // conversion to an integer is defined and every point is in the grid
+      // (#168); the fraction is in [0, 1] otherwise, and so is this.
+      %py_nil = arith.constant 0.0 : !pme_real
+      %py_fu = arith.maxnumf %py_fu0, %py_nil : !pme_real
       %py_w = arith.subf %py_u, %py_fu : !pme_real
       %py_bi32 = arith.fptosi %py_fu : !pme_real to i32
       %py_bi = arith.extsi %py_bi32 : i32 to i64
@@ -2690,7 +2745,12 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
       %pz_kf = arith.sitofp %pz_ki : i32 to !pme_real
       %pz_fracr = PME_F64_TO_REAL %pz_frac : f64 to !pme_real
       %pz_u = arith.mulf %pz_fracr, %pz_kf : !pme_real
-      %pz_fu = math.floor %pz_u : !pme_real
+      %pz_fu0 = math.floor %pz_u : !pme_real
+      // A coordinate that is not a number takes the point 0, so that the
+      // conversion to an integer is defined and every point is in the grid
+      // (#168); the fraction is in [0, 1] otherwise, and so is this.
+      %pz_nil = arith.constant 0.0 : !pme_real
+      %pz_fu = arith.maxnumf %pz_fu0, %pz_nil : !pme_real
       %pz_w = arith.subf %pz_u, %pz_fu : !pme_real
       %pz_bi32 = arith.fptosi %pz_fu : !pme_real to i32
       %pz_bi = arith.extsi %pz_bi32 : i32 to i64
