@@ -270,13 +270,17 @@ D[python-dlpack] (#131, [DLPack views](python-dlpack.md)) hands
 consumers such as PyTorch those buffers, the particle IDs, and the values
 of tunables as read-only DLPack views, without a copy: leases block runs
 and updates while a view or a tensor taken from it is alive, and the
-consumer's stream waits for the simulation's work. Checkpoints and
-writable views (#136) remain open.
+consumer's stream waits for the simulation's work. Writable views (#136)
+remain open.
 D[python-topology] (#120, [topology views](python-topology.md)) gives
 loaded data, systems, and programs a read-only view of their topology
 (atoms, residues, bonded tuples, and, after preparation, the constraints)
 and `Topology.select(mask)`, the particles of a mask of Amber by the parser
 of the control file, with `Topology.to_openmm()` for OpenMM's tools.
+D[python-checkpoints] (#132, [checkpoints](python-checkpoints.md)) writes
+and continues the checkpoint of `mdir run` from Python: the fingerprint of
+a Python model has the entries of the control file of the same model, so
+either front end continues the other's run, tested in both directions.
 M2 covers
 a documented classical subset and requires a manylinux_2_28 pip wheel for
 Python 3.10–3.13; conda follows later.

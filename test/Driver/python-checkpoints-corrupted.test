@@ -1,0 +1,9 @@
+# REQUIRES: python-api, hdf5
+# Checkpoints of a Python simulation (D[python-checkpoints]): files whose
+# state, additional entries, or bytes were changed, a truncated file, and a
+# file that is not one are refused by the bindings with the pointer to
+# `.prev`, and by `mdir checkpoint`.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_checkpoints.py %S/Inputs/dipeptide CPU Double mdir %t corrupted | FileCheck %s
+# CHECK: corrupted files: refused by the bindings and by mdir checkpoint
+# CHECK: checkpoints corrupted CPU Double passed

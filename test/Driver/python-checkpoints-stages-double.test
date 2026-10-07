@@ -1,0 +1,14 @@
+# REQUIRES: python-api, hdf5
+# Checkpoints of a Python simulation (D[python-checkpoints]) on the CPU in
+# double precision, scenario stages of Inputs/python_checkpoints.py.
+# The same run against a changed stage from a checkpoint of `mdir run`:
+# refusals that name the changed entries (restraints, temperature,
+# barostat, electrostatics, masses), another integrator, another
+# precision, and stages of other physics against `mdir run` from
+# `[input] checkpoint`.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_checkpoints.py %S/Inputs/dipeptide CPU Double mdir %t stages | FileCheck %s
+# CHECK: a stage of the same physics CPU Double
+# CHECK: a stage restrained against mdir run CPU Double
+# CHECK: a leapfrog stage against mdir run CPU Double
+# CHECK: checkpoints stages CPU Double passed

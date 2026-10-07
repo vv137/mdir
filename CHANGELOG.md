@@ -12,6 +12,19 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- Checkpoints of Python simulations (D[python-checkpoints], #132):
+  `Simulation.save_checkpoint(path)` and `CheckpointReporter(file,
+  period)` write the H5MD checkpoint of `mdir run` (format 1, with `.prev`
+  and durable replacement); `Simulation(program, checkpoint=path)`
+  continues the same run as `mdir run --continue` does, and `stage=True`
+  begins a new stage as `[input] checkpoint` does; `append=False` writes
+  the reporters' files to a part of their own; `mdir.read_checkpoint(path)`
+  reads one. Either front end continues the other's checkpoint: the
+  fingerprint of a Python model has the entries that the control file of
+  the same model writes. Format 1 is unchanged: the front end, model and
+  plan hashes, and tunables are additional entries with a hash of their
+  own, which earlier readers ignore; `mdir checkpoint` prints them.
+
 - Controls of the compile cache from Python (D[compile-cache-controls],
   #163): `mdir.clear_compile_cache(directory=None)` removes the entries of
   this format from the directory given or from `MDIR_COMPILE_CACHE_DIR`,

@@ -1,0 +1,11 @@
+# REQUIRES: python-api, hdf5
+# Checkpoints of a Python simulation (D[python-checkpoints]) on the CPU in
+# double precision, scenario python-to-python of Inputs/python_checkpoints.py.
+# A Python simulation with tunables updated before its checkpoint, continued
+# from the file: the state, the tunables with their version and history,
+# and the energy rows of the run that did not stop; `mdir run` refuses to
+# continue it and begins a stage from it.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_checkpoints.py %S/Inputs/dipeptide CPU Double mdir %t python-to-python | FileCheck %s
+# CHECK: Python -> Python NVE with tunables CPU Double
+# CHECK: checkpoints python-to-python CPU Double passed

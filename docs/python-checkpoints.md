@@ -1,8 +1,8 @@
 # Checkpoints of a Python simulation (D[python-checkpoints])
 
 Issue #132, M2a item 5 ([python-m2.md](python-m2.md), Sections 3–5).
-Status: design under review in the draft pull request; the questions put to
-the maintainer there are marked below.
+Status: implemented (PR #186). The maintainer chose option 1 of the
+question below on PR #186.
 
 A Python simulation writes the checkpoint of `mdir run` (H5MD format 1,
 D173) and continues from one, written by either front end. The two ways a
@@ -37,10 +37,14 @@ mdir.read_checkpoint("prod.h5")           # a read-only view of a checkpoint
   the entries below. The file appears under its name only when it is
   complete and on stable storage; the one it replaces stays as
   `path + ".prev"` (D132, D173). It is the writer of `mdir run`, called on
-  the host, not through the compiled code. A state before the first run has
-  no forces; its checkpoint is refused for `--continue` as `mdir run`'s
-  would be, so `save_checkpoint` evaluates the start first (`run(0,
-  energy=True)`'s evaluation, D213).
+  the host, not through the compiled code. A step begins with forces, so a
+  simulation that has not run evaluates its start first (`run(0,
+  energy=True)`'s evaluation, D213). The next part begins from the state
+  written, with new neighbor structures, as `mdir run` builds them anew at
+  each checkpoint: a simulation that goes on after `save_checkpoint` and
+  one that continues the file take the same steps to the bit in the
+  deterministic mode. This ends the activation of the entry (D215), which
+  costs a part boundary and a copy of the state per checkpoint.
 - `CheckpointReporter(file, period)` calls `save_checkpoint(file)` at every
   step that is a multiple of `period`; like a callback, its step ends a part.
   A simulation takes one.
@@ -58,9 +62,20 @@ mdir.read_checkpoint("prod.h5")           # a read-only view of a checkpoint
   the checkpoint, as `[input] checkpoint` does: the step and the time
   continue (the random streams are keyed by the absolute step), the bath
   starts at 0, and the forces are taken only if physics and coupling match;
-  otherwise a `UserWarning` names what differs and the first step evaluates
-  the forces of the new physics. A minimization's checkpoint gives the
-  positions and the cell only (as in `mdir run`).
+  otherwise a `UserWarning` names what differs and the first part begins
+  with an evaluation of the forces of the new physics (`%first_call = 2`,
+  as after an update of tunables, D213). Leapfrog's velocities are half a
+  step behind already, so that evaluation takes no half kick back; the
+  program of segments now selects the kick on `%first_call` for every
+  leapfrog program, not only for one with tunables. Unlike `mdir run` from
+  `[input] checkpoint`, the evaluation projects the positions onto the
+  constraints once more, which they satisfy already. A minimization's
+  checkpoint, or a minimizing program, takes the positions and the cell
+  only and begins at step 0 (as in `mdir run`).
+- The time continues from that of the checkpoint, whose run may have had
+  another time step; the step keys the random numbers (A13), so a stage at
+  the step of the checkpoint does not repeat the numbers of the run before
+  it.
 - `read_checkpoint(path)` returns a read-only `Checkpoint` with the step,
   time, positions, velocities, forces, cell, integrator, precision,
   fingerprint as `(group, name, value)` tuples, the tunables, and the
@@ -110,7 +125,7 @@ Settings without a control-file key (custom terms in Python's units,
 tunables) have entries of their own: a CLI run never has them, so a
 checkpoint with them is a new stage for `mdir run`, never `--continue`.
 
-**Question to the maintainer (needs-decision).** Some Python defaults
+**Decided (option 1, maintainer on PR #186).** Some Python defaults
 differ from what the control file takes when its key is absent:
 
 | Setting | Python default | Control file without the key |
@@ -122,10 +137,15 @@ differ from what the control file takes when its key is absent:
 
 Recording only given settings would let a Python model and a control file
 that both leave out `switch_distance` look identical with different
-physics. The recommendation is to record a setting when it was given *or*
-when the value the Python model resolves differs from the control file's
-value for an absent key, and to write the methods that `Ensemble.kind`
-implies.
+physics. A setting is therefore recorded when it was given *or* when the
+value the Python model resolves differs from the control file's value for
+an absent key, and the methods that `Ensemble.kind` implies are written.
+The truncation is written as the control file writes it: a switch by its
+`switch_distance` (no entry when it equals the cutoff, which is no
+switch), the other modifiers by `lennard_jones_modifier`, and none by no
+entry. A restraint writes `selection` and `force_constant` (kcal/mol/Å²),
+and `reference_scaling` only when it is `"ALL"`. The code is
+`lib/Driver/ModelFingerprint.cpp`.
 
 ## Additional entries of format 1
 
@@ -138,8 +158,11 @@ migration is needed and no changelog entry under Changed.
 - `/parameters/mdir/model_sha256`: SHA-256 of the physics and coupling
   groups of the fingerprint and of the tunable declarations.
 - `/parameters/mdir/plan_sha256`: SHA-256 of the canonical text of the
-  program's plan (`Program.plan`: target, precision, deterministic, order,
-  dtypes, PME grid, entry) and of its semantic IR.
+  program's plan (target, precision, deterministic, order, dtypes, PME
+  grid, entry) and of its semantic IR.
+
+They are provenance: a continuation decides by the fingerprint, which a
+reader of release 0.1.0 compares as well.
 - `/parameters/mdir/tunables`: the declarations as text, one dataset of
   values per tunable, the version and the history (D213).
 - `/parameters/mdir/extras_sha256`: SHA-256 of the entries above.

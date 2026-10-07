@@ -498,7 +498,7 @@ start = mdir.InitialState.from_state(minimized, velocities=False).draw_velocitie
 
 A program compiled from it is a new stage: its baths, its step count, and
 its random streams start anew, and the first step evaluates the forces. A
-continuation that keeps those is a checkpoint's (#132). The velocities of a
+continuation that keeps those is a checkpoint's ([python-checkpoints.md](python-checkpoints.md)). The velocities of a
 leapfrog state are half a step behind its positions (`velocity_offset =
 -0.5`), and an initial state takes velocities at the time of its
 positions. `from_state` therefore refuses them and asks for

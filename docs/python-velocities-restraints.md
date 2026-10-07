@@ -179,6 +179,6 @@ stop after the first part; they run the simulation of `nvt-double` or
 
 ## Not in this item
 
-Checkpoints (item 5) will record the restraints and their reference in the
-fingerprint as D172 does. Restraints by expressions of absolute positions
+Checkpoints (D[python-checkpoints]) record the restraints and their
+reference in the fingerprint as D172 does. Restraints by expressions of absolute positions
 (D148) stay outside the D191 subset.
