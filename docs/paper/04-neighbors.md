@@ -29,7 +29,7 @@ all under `lib/Runtime/Templates/`.
 between checkpoints begins, so that a run continued from a checkpoint
 rebuilds where the first run did. The evaluation at the start of a run is a
 segment of its own: the steps build their structure at the first step
-rather than continue the one of the start (D[front-end-divergence]). The
+rather than continue the one of the start (D218). The
 test of validity compares the positions with those of the last build, so
 the steps at which a structure is rebuilt, and with them the order of the
 sums of forces, depend on where the structures begin. With one rule for

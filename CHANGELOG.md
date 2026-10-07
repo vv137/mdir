@@ -397,7 +397,7 @@ format, or the outputs; every such change is listed under **Changed** or
   (D212, D214), whatever the process built before (#152).
 - In the deterministic mode a Python simulation and `mdir run` give the same
   state to the bit for any number of steps, in one part or in several, with
-  or without a checkpoint at the end (D[front-end-divergence], #121). Before,
+  or without a checkpoint at the end (D218, #121). Before,
   they parted at the rounding of the forces after about 20 steps on the
   dipeptide in water (1.5e-3 kJ/mol/nm in mixed precision, 2.2e-10 in
   double). The neighbor structures of the evaluation at the start carried

@@ -7,7 +7,7 @@
 # structures of the evaluation at the start, those of the other built their
 # own at step 1, and a structure built at other positions orders the pairs of
 # a device otherwise. The evaluation at the start is now a segment of its own
-# in every program (D[front-end-divergence]).
+# in every program (D218).
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: env MDIR_COMPILE_CACHE_DIR=%t/cache %mdir_python %S/Inputs/python_deterministic_run.py %S/Inputs/dipeptide GPU mdir %t Mixed PME 1 20 50 7x5 | FileCheck %s --check-prefix=MIXED
 # RUN: env MDIR_COMPILE_CACHE_DIR=%t/cache %mdir_python %S/Inputs/python_deterministic_run.py %S/Inputs/dipeptide GPU mdir %t Double CUTOFF 1 20 50 7x5 | FileCheck %s --check-prefix=DOUBLE

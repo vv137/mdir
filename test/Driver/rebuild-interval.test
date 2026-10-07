@@ -4,7 +4,7 @@
 # 10 steps liquid argon stays within the skin; at 400 it does not, and the
 # run warns again at the end. The steps begin with a structure of their own,
 # built at step 1 after the one of the evaluation at the start
-# (D[front-end-divergence]), so the interval counts from step 1: of 2000
+# (D218), so the interval counts from step 1: of 2000
 # steps, the rebuilds at 401, 801, 1201, and 1601 are tested.
 #
 # RUN: sed -e 's|"argon.pdb"|"%S/../../examples/argon/argon.pdb"|' \

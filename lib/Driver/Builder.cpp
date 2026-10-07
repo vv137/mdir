@@ -776,7 +776,7 @@ struct Coupled {
   /// chunk, the values named as the results and those given are renamed.
   /// With `segment`, the loop is a segment of the run (mdrt.segment): the
   /// neighbor structures that the chunk builds do not carry into the steps
-  /// after it (D[front-end-divergence]).
+  /// after it (D218).
   void emitStartBranch(std::string chunk, llvm::ArrayRef<std::string> results,
                        llvm::ArrayRef<std::string> inside,
                        llvm::ArrayRef<std::string> otherwise,
@@ -6818,7 +6818,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
     // The evaluation at the start is a segment of its own: the steps begin
     // with neighbor structures of their own, built at the first step, as
     // the first segment between checkpoints and the steps of a program of
-    // segments do (D[front-end-divergence]).
+    // segments do (D218).
     os << " {mdrt.fresh}";
   os << "\n";
 
@@ -8696,7 +8696,7 @@ void Builder::emitEntry() {
     // its neighbor structures anew at the first step after it: a structure
     // of the start does not carry into the steps, so that both build at the
     // same steps and sum the forces of a configuration in the same order
-    // (#121, D[front-end-divergence]).
+    // (#121, D218).
     emitStartBranch(std::move(chunk), {"%f0", "%v0"},
                     {"%f0", isLeapfrog() ? "%v0" : "%vg"}, {"%fg", "%vg"},
                     /*segment=*/true);

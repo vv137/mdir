@@ -114,7 +114,7 @@ positions and 6e-10 kJ/mol/nm for the forces on the fixture below), as
 `mdir run` does across its checkpoints.
 
 The evaluation at the start of a run is a segment of its own in every
-program (D[front-end-divergence], #121). The neighbor structures that it
+program (D218, #121). The neighbor structures that it
 builds do not carry into the steps. The steps build their own at step 1 and
 rebuild them where the test of displacement asks. Before, the structures of
 the start carried into the steps of a simulation and of `mdir run` without

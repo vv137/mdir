@@ -41,7 +41,7 @@ inline llvm::StringRef getSegmentAttrName() { return "mdrt.segment"; }
 /// The attribute that marks a loop whose neighbor structures begin empty
 /// rather than continue those built before it: the loop of steps after the
 /// evaluation at the start of a run, which is a segment of its own
-/// (D[front-end-divergence]).
+/// (D218).
 inline llvm::StringRef getFreshAttrName() { return "mdrt.fresh"; }
 
 } // namespace mdrt

@@ -66,7 +66,7 @@ struct Chain {
 /// neighbor structure starts empty in every segment, so that a run that is
 /// restarted from a checkpoint builds where the first run did. The
 /// evaluation at the start of a program of segments is one as well
-/// (D[front-end-divergence]).
+/// (D218).
 static bool isSegmentLoop(scf::ForOp loop) {
   return loop->hasAttr(mdrt::getSegmentAttrName());
 }
@@ -75,7 +75,7 @@ static bool isSegmentLoop(scf::ForOp loop) {
 /// than continue those built before it: the steps after the evaluation at
 /// the start of `mdir run`, which is a segment of its own, so that every
 /// front end and every schedule of checkpoints builds at the same steps
-/// (D[front-end-divergence]).
+/// (D218).
 static bool isFreshLoop(scf::ForOp loop) {
   return loop->hasAttr(mdrt::getFreshAttrName());
 }
