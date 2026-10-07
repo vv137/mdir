@@ -3,6 +3,8 @@
 #define MDIR_DRIVER_MODEL_H
 #include "mdir/Driver/Builder.h"
 #include "mdir/Driver/Cell.h"
+#include "mdir/Driver/Checkpoint.h"
+#include <set>
 namespace mdir {
 namespace model {
 
@@ -133,12 +135,18 @@ struct System {
   std::vector<double> restraintReference;
   /// The tunable parameters (D213).
   std::vector<Tunable> tunables;
+  /// The entry of the files of the topology in the fingerprint, as
+  /// `mdir run` makes it from their contents (D172); empty for a topology
+  /// that no file gave.
+  std::string topologyFilesHash;
 };
 struct LoadedData {
   driver::Topology topology;
   Format format;
   /// Files actually read, including active includes, and their owned bytes.
   std::vector<std::pair<std::string, std::string>> sources;
+  /// See System::topologyFilesHash.
+  std::string topologyFilesHash;
   System makeSystem() const;
   InitialState makeState() const;
 };
@@ -183,6 +191,9 @@ struct PreparedModel {
   driver::System system;
   /// The tunables, whose values `control` and `system` hold.
   TunableSet tunables;
+  /// What defined the model, which its checkpoints record
+  /// (D[python-checkpoints]); empty if the front end gave none.
+  driver::Fingerprint fingerprint;
   llvm::Expected<driver::Program> build() const;
 };
 /// Resolves the tunables of `model` against its prepared `control` and
@@ -202,6 +213,27 @@ llvm::Error applyTunables(const TunableSet &set,
 /// for each, finite, σ and ε not negative.
 llvm::Error checkTunableValues(const TunableSet &set,
                                const std::vector<std::vector<double>> &values);
+/// The settings of a model that its front end gave explicitly, by the
+/// names of their Python attributes (D[python-checkpoints]).
+struct GivenSettings {
+  std::set<std::string> system, integrator, ensemble, execution;
+};
+/// The fingerprint of a prepared model (D172, D[python-checkpoints],
+/// docs/python-checkpoints.md): the entries that the control file of the
+/// same model writes, with their names, units, and text, for the settings
+/// given explicitly and those whose value differs from what the control
+/// file takes when it leaves the key out; the hashes of the files of the
+/// topology, of the masses, and of the reference of the restraints; and
+/// entries of their own for what has no key (custom terms, tunables).
+driver::Fingerprint getFingerprint(const System &system,
+                                   const Integrator &integrator,
+                                   const Ensemble &ensemble,
+                                   const Execution &execution,
+                                   const GivenSettings &given,
+                                   const PreparedModel &prepared);
+/// The text of the declarations of the tunables of a model, which a
+/// checkpoint records and a continuation compares.
+std::string describeTunables(const TunableSet &set);
 llvm::Expected<PreparedModel> prepare(const System &, const InitialState &,
                                      const Integrator &, const Ensemble &,
                                      const Execution &, const Schedule &);

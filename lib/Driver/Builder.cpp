@@ -8666,11 +8666,12 @@ void Builder::emitEntry() {
           emitKineticWithoutCenter("  ", velocities, "%m", "s0"));
     }
 
-    if (isLeapfrog() && program.tunable && branchesStart()) {
+    if (isLeapfrog() && branchesStart()) {
       // v(-dt/2) = v(0) - (dt/2) F(0) / m on the first call; a call that
       // evaluates the forces anew after an update of the tunables
-      // (%first_call = 2) has the velocities of the half step already
-      // (D213).
+      // (%first_call = 2, D213) or at the start of a stage of other
+      // physics from a checkpoint (D[python-checkpoints]) has the
+      // velocities of the half step already.
       os << "  %back = arith.constant -5.0e-01 : f64\n"
          << "  %back_dt = arith.mulf %back, %dt : f64\n"
          << "  %back_none = arith.constant 0.0 : f64\n"

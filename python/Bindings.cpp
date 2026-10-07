@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <optional>
+#include <set>
 namespace py = pybind11;
 using namespace mdir;
 struct InputError : std::runtime_error { using std::runtime_error::runtime_error; };
@@ -42,14 +43,20 @@ template <class T> static T unwrap(llvm::Expected<T> value) {
 #include "DLPack.h"
 #include "Topology.h"
 
-struct Version { uint64_t version = 0; virtual ~Version() = default; };
+struct Version {
+  uint64_t version = 0;
+  /// The attributes given explicitly, which the fingerprint of a checkpoint
+  /// records (D[python-checkpoints]).
+  std::set<std::string> given;
+  virtual ~Version() = default;
+};
 template <class T> struct Input : Version { T value; std::optional<size_t> particleCount; };
 template <class T, class V>
 static void property(py::class_<Input<T>, std::shared_ptr<Input<T>>> &c,
                      const char *name, V T::*member) {
   c.def_property(name, [member](const Input<T> &o) { return o.value.*member; },
-    [member](Input<T> &o, V value) {
-      o.value.*member = std::move(value); ++o.version;
+    [member, name](Input<T> &o, V value) {
+      o.value.*member = std::move(value); ++o.version; o.given.insert(name);
     });
 }
 /// A real-valued property in `unit`, which also takes a unit quantity.
@@ -58,8 +65,9 @@ static void property(py::class_<Input<T>, std::shared_ptr<Input<T>>> &c,
                      const char *name, double T::*member, units::Unit unit) {
   std::string qualified = py::cast<std::string>(c.attr("__name__")) + "." + name;
   c.def_property(name, [member](const Input<T> &o) { return o.value.*member; },
-    [member, qualified, unit](Input<T> &o, py::object value) {
+    [member, qualified, unit, name](Input<T> &o, py::object value) {
       o.value.*member = units::scalar(value, qualified, unit); ++o.version;
+      o.given.insert(name);
     });
 }
 template <class T> static auto input(py::module_ &m, const char *name) {
@@ -106,6 +114,24 @@ template <class Call> static int64_t withSignals(Call call) {
     throw *interrupt;
   }
   return unwrap(std::move(*taken));
+}
+/// Reads a checkpoint for a simulation (D[python-checkpoints]): without
+/// HDF5 an UnsupportedError, and a file that is not one, of a newer format,
+/// or whose hashes differ an InputError with the pointer to `.prev` that
+/// `mdir run` gives.
+static driver::Checkpoint readCheckpointFile(const std::string &path) {
+  if (!driver::hasCheckpointSupport())
+    throw UnsupportedError("this build of MDIR has no HDF5, which checkpoints need");
+  auto read = driver::readCheckpoint(path);
+  if (!read)
+    throw InputError(llvm::toString(read.takeError()) + "; '" +
+                     driver::getPreviousCheckpointPath(path) +
+                     "' holds the checkpoint before it, if there is one");
+  return std::move(*read);
+}
+static py::array_t<double> vectors(const std::vector<double> &values) {
+  return host::copy(values.data(), values.size(),
+                    {static_cast<py::ssize_t>(values.size() / 3), 3});
 }
 PYBIND11_MODULE(mdir, m) {
   // Required at import as well as configuration, including installed modules.
@@ -472,6 +498,12 @@ PYBIND11_MODULE(mdir, m) {
           code == "dispersion_switched")
         if (PyErr_WarnEx(PyExc_UserWarning, message.c_str(), 1) != 0)
           throw py::error_already_set();
+    // What defined the model, for its checkpoints (D[python-checkpoints]).
+    prepared.fingerprint = model::getFingerprint(
+        system->value, integrator->value, ensemble->value, execution->value,
+        model::GivenSettings{system->given, integrator->given, ensemble->given,
+                             execution->given},
+        prepared);
     Program result;
     result.compiled = unwrap(compiler::compile(prepared, cache));
     result.cache = cache;
@@ -551,6 +583,72 @@ PYBIND11_MODULE(mdir, m) {
       for (int k = 0; k != 3; ++k) { cell.diagonal[k] = s.box[k]; cell.tilt[k] = s.tilt[k]; }
       return cell;
     });
+  // A read-only view of a checkpoint (D[python-checkpoints]), in MD units.
+  using driver::Checkpoint;
+  py::class_<Checkpoint>(m, "Checkpoint")
+    .def_property_readonly("step", [](const Checkpoint &c) { return c.step; })
+    .def_property_readonly("time", [](const Checkpoint &c) { return c.time; })
+    .def_property_readonly("positions", [](const Checkpoint &c) { return vectors(c.positions); })
+    .def_property_readonly("velocities", [](const Checkpoint &c) { return vectors(c.velocities); })
+    .def_property_readonly("forces", [](const Checkpoint &c) -> py::object {
+      if (c.forces.empty()) return py::none();
+      return vectors(c.forces);
+    })
+    .def_property_readonly("masses", [](const Checkpoint &c) {
+      return host::copy(c.masses.data(), c.masses.size(), {static_cast<py::ssize_t>(c.masses.size())});
+    })
+    .def_property_readonly("cell", [](const Checkpoint &c) {
+      driver::Cell cell;
+      for (int k = 0; k != 3; ++k) { cell.diagonal[k] = c.box[k]; cell.tilt[k] = c.tilt[k]; }
+      return cell;
+    })
+    .def_property_readonly("periodic", [](const Checkpoint &c) { return c.periodic; })
+    .def_property_readonly("integrator", [](const Checkpoint &c) { return c.integrator; })
+    .def_property_readonly("velocity_offset", [](const Checkpoint &c) { return c.velocityOffset; })
+    .def_property_readonly("precision", [](const Checkpoint &c) { return c.precision; })
+    .def_property_readonly("timestep", [](const Checkpoint &c) { return c.timestep; })
+    .def_property_readonly("seed", [](const Checkpoint &c) { return c.seed; })
+    .def_property_readonly("first_step", [](const Checkpoint &c) { return c.firstStep; })
+    .def_property_readonly("part", [](const Checkpoint &c) { return c.part; })
+    .def_property_readonly("outputs_part", [](const Checkpoint &c) { return c.outputsPart; })
+    .def_property_readonly("trajectory", [](const Checkpoint &c) { return c.trajectory; })
+    .def_property_readonly("frames", [](const Checkpoint &c) { return c.frames; })
+    .def_property_readonly("bath", [](const Checkpoint &c) { return c.bath; })
+    .def_property_readonly("fingerprint", [](const Checkpoint &c) {
+      py::list entries;
+      for (const auto &e : c.fingerprint) entries.append(py::make_tuple(e.group, e.name, e.value));
+      return entries;
+    })
+    .def_property_readonly("creator", [](const Checkpoint &c) {
+      return c.creator + (c.creatorVersion.empty() ? "" : " " + c.creatorVersion);
+    })
+    .def_property_readonly("front_end", [](const Checkpoint &c) {
+      return c.frontEnd.empty() ? std::string("mdir run") : c.frontEnd;
+    })
+    .def_property_readonly("model_sha256", [](const Checkpoint &c) -> py::object {
+      if (c.modelHash.empty()) return py::none();
+      return py::str(c.modelHash);
+    })
+    .def_property_readonly("plan_sha256", [](const Checkpoint &c) -> py::object {
+      if (c.planHash.empty()) return py::none();
+      return py::str(c.planHash);
+    })
+    .def_property_readonly("tunables", [](const Checkpoint &c) {
+      py::dict d;
+      for (const auto &[name, values] : c.tunables)
+        d[py::str(name)] = host::copy(values.data(), values.size(),
+                                      {static_cast<py::ssize_t>(values.size())});
+      return d;
+    })
+    .def_property_readonly("tunables_version", [](const Checkpoint &c) { return c.tunablesVersion; })
+    .def_property_readonly("tunables_history", [](const Checkpoint &c) { return c.tunablesHistory; })
+    .def("__repr__", [](const Checkpoint &c) {
+      return "Checkpoint(step=" + std::to_string(c.step) + ", particles=" +
+             std::to_string(c.getNumParticles()) + ", integrator=" + c.integrator + ")";
+    });
+  m.def("read_checkpoint", [](const std::string &path) {
+    return readCheckpointFile(path);
+  }, py::arg("path"));
   // Reporters (D207, docs/python-reporters.md): the files
   // of `mdir run` written inside the parts of a run, and Python functions
   // called after the part that ends at their step.
@@ -586,6 +684,15 @@ PYBIND11_MODULE(mdir, m) {
     .def_readonly("file", &TrajectoryReporter::file)
     .def_readonly("period", &TrajectoryReporter::period)
     .def_readonly("format", &TrajectoryReporter::format);
+  // Checkpoints (D[python-checkpoints], docs/python-checkpoints.md).
+  struct CheckpointReporter { std::string file; int64_t period; };
+  py::class_<CheckpointReporter>(m, "CheckpointReporter")
+    .def(py::init([positive](std::string file, int64_t period) {
+      if (file.empty()) throw InputError("CheckpointReporter takes the name of a file");
+      return CheckpointReporter{std::move(file), positive(period)};
+    }), py::arg("file"), py::arg("period"))
+    .def_readonly("file", &CheckpointReporter::file)
+    .def_readonly("period", &CheckpointReporter::period);
   py::class_<CallbackReporter>(m, "CallbackReporter")
     .def(py::init([positive](py::object function, int64_t period) {
       if (!PyCallable_Check(function.ptr())) throw InputError("CallbackReporter takes a callable");
@@ -599,12 +706,20 @@ PYBIND11_MODULE(mdir, m) {
     /// (D[python-dlpack]).
     std::shared_ptr<compiler::Simulation> simulation;
     py::list reporters;
+    /// The checkpoint reporter of the list, if any.
+    std::optional<CheckpointReporter> checkpoints;
     /// Gives the simulation the built-in reporters of the list; returns the
     /// callbacks.
     std::vector<CallbackReporter> sync() {
       compiler::Simulation::Reports given;
       std::vector<CallbackReporter> callbacks;
+      checkpoints.reset();
       for (py::handle item : reporters) {
+        if (py::isinstance<CheckpointReporter>(item)) {
+          if (checkpoints) throw InputError("a simulation takes one CheckpointReporter");
+          checkpoints = item.cast<CheckpointReporter>();
+          continue;
+        }
         if (py::isinstance<EnergyReporter>(item)) {
           if (given.energyPeriod) throw InputError("a simulation takes one EnergyReporter");
           const auto &r = item.cast<const EnergyReporter &>();
@@ -618,7 +733,7 @@ PYBIND11_MODULE(mdir, m) {
           callbacks.push_back(item.cast<CallbackReporter>());
         } else {
           throw InputError("Simulation.reporters holds EnergyReporter, TrajectoryReporter, "
-                           "and CallbackReporter values");
+                           "CheckpointReporter, and CallbackReporter values");
         }
       }
       const auto &now = simulation->getReports();
@@ -717,9 +832,17 @@ PYBIND11_MODULE(mdir, m) {
     });
   views::bind(m);
   py::class_<PySimulation>(m, "Simulation")
-    .def(py::init([](std::shared_ptr<Program> program, std::optional<bool> cache) {
+    .def(py::init([](std::shared_ptr<Program> program, std::optional<bool> cache,
+                     std::optional<std::string> checkpoint, bool stage, bool append) {
       if (!program) throw InputError("Simulation takes a compiled program");
       program->checkCurrent();
+      if (!checkpoint && stage)
+        throw InputError("Simulation: stage=True begins a stage from a checkpoint; give checkpoint=");
+      // A checkpoint is read before anything is compiled.
+      std::optional<driver::Checkpoint> taken;
+      if (checkpoint) {
+        taken = readCheckpointFile(*checkpoint);
+      }
       // The program's choice unless one is given (D[compile-cache-controls]).
       bool useCache = cache.value_or(program->cache);
       auto prepared = program->prepared;
@@ -732,8 +855,26 @@ PYBIND11_MODULE(mdir, m) {
       PySimulation result;
       result.program = std::move(program);
       result.simulation = unwrap(std::move(*created));
+      // The same run goes on, or a stage begins (D[python-checkpoints]);
+      // what differs in execution, or is evaluated anew, is a warning.
+      if (taken) {
+        auto notes = unwrap(result.simulation->continueFrom(*taken, stage, append));
+        for (const std::string &note : notes)
+          if (PyErr_WarnEx(PyExc_UserWarning, ("Simulation: '" + *checkpoint + "': " + note).c_str(), 1) != 0)
+            throw py::error_already_set();
+      }
       return result;
-    }), py::arg("program"), py::kw_only(), py::arg("cache") = py::none())
+    }), py::arg("program"), py::kw_only(), py::arg("cache") = py::none(),
+       py::arg("checkpoint") = py::none(), py::arg("stage") = false,
+       py::arg("append") = true)
+    .def("save_checkpoint", [](PySimulation &s, const std::string &path) {
+      std::optional<llvm::Error> error;
+      {
+        py::gil_scoped_release release;
+        error.emplace(s.simulation->saveCheckpoint(path, MDIR_VERSION));
+      }
+      if (*error) raise(std::move(*error));
+    }, py::arg("path"))
     .def("run", [](py::object self, int64_t steps, bool energy) {
       auto &s = self.cast<PySimulation &>();
       if (steps < 0) throw InputError("run takes a nonnegative number of steps");
@@ -751,9 +892,13 @@ PYBIND11_MODULE(mdir, m) {
       // The parts end at the steps of the callbacks, whose state they take;
       // the files of the built-in reporters are written inside the parts.
       int64_t taken = 0, end = s.simulation->getStep() + steps;
+      // A checkpoint reporter ends a part at its steps, as a callback does
+      // (D[python-checkpoints]).
+      std::optional<CheckpointReporter> saves = s.checkpoints;
       while (taken < steps) {
         int64_t now = s.simulation->getStep(), next = end;
         for (const auto &c : callbacks) next = std::min(next, (now / c.period + 1) * c.period);
+        if (saves) next = std::min(next, (now / saves->period + 1) * saves->period);
         bool atCallback = next < end || (!callbacks.empty() && llvm::any_of(callbacks,
             [&](const CallbackReporter &c) { return end % c.period == 0; }));
         int64_t leg = withSignals([&](const std::function<bool()> &poll) {
@@ -762,6 +907,14 @@ PYBIND11_MODULE(mdir, m) {
         taken += leg;
         if (leg < next - now) break;  // A stop.
         int64_t at = s.simulation->getStep();
+        if (saves && at % saves->period == 0) {
+          std::optional<llvm::Error> error;
+          {
+            py::gil_scoped_release release;
+            error.emplace(s.simulation->saveCheckpoint(saves->file, MDIR_VERSION));
+          }
+          if (*error) raise(std::move(*error));
+        }
         bool due = false;
         for (const auto &c : callbacks) due = due || at % c.period == 0;
         if (!due) continue;

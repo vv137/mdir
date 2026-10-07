@@ -549,6 +549,34 @@ release 0.1.0: the reader checks the format and the SHA-256 of the state,
 and the file is on stable storage before it takes its name
 (D173).
 
+A run is a realization of a Markov chain on the state $\mathbf z_n$, each
+step drawn from the kernel $\mathcal K_{U,\mathcal C}$: the integrator and
+the potential $U$ map $\mathbf z_n$ to $\mathbf z_{n+1}$, and the coupling
+$\mathcal C$ draws its random numbers as a function of $\omega$ and of the
+absolute step $n$ alone (A13). Given $\mathbf z_n$, $n$, $\omega$, $U$, and
+$\mathcal C$, the steps that follow are therefore determined, up to the
+order of the sums, which the deterministic mode fixes. This is why a
+checkpoint stores the step and every value in 64 bits, and why the same
+run may continue in another process, or in another front end, to the bit.
+The forces in $\mathbf z_n$ are $-\partial U/\partial\mathbf x$ of the run
+that wrote them, and the energy that the coupling has taken is a sum over
+its steps. A stage of another $U'$ or $\mathcal C'$ samples another
+stationary distribution (at constant temperature the canonical
+$Z'^{-1}e^{-U'/k_BT'}$) with $\mathbf z_n$ as its initial condition, and
+must evaluate $-\partial U'/\partial\mathbf x$ rather than reuse the forces
+of $U$; the fingerprint identifies $U$ and $\mathcal C$ by what defined
+them. A Python simulation (D[python-checkpoints]) writes and reads the same
+file. The fingerprint of a Python model holds the entries that the control
+file of the same model writes, for a setting given explicitly or one whose
+Python default differs from what the control file takes without its key,
+so that a Python script and a control file of the same model continue each
+other's run, and a change of either is named. Tunable parameters, the
+front end, and hashes of the model and the plan are additional entries of
+format 1 with a hash of their own. A simulation that writes a checkpoint
+goes on from the state written, with new neighbor structures, as `mdir run`
+builds them at each checkpoint, so that going on and continuing the file
+are the same steps.
+
 ### Parameters that change without compiling
 
 A compiled program depends on the structure of its model (the terms and

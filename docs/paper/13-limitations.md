@@ -130,9 +130,11 @@ that a run in parts is the run in one part to the bit
 (D215); read-only DLPack views of those buffers, whose leases
 block runs while a consumer holds them (D[python-dlpack]); read-only views
 of the topology, with the constraints of a compiled program, and the masks
-of the control file evaluated from Python (D[python-topology]).
+of the control file evaluated from Python (D[python-topology]); checkpoints
+shared with the CLI, which either front end continues
+(D[python-checkpoints]).
 Remaining:
-checkpoints shared with the CLI, writable views of the buffers,
+writable views of the buffers,
 NPT in a triclinic cell or with a coupling period of 1, and the manylinux_2_28 pip wheel for Python 3.10–3.13 that gates the
 milestone, with a four-stage tutorial.
 

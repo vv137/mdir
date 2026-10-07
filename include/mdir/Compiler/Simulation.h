@@ -3,6 +3,7 @@
 #ifndef MDIR_COMPILER_SIMULATION_H
 #define MDIR_COMPILER_SIMULATION_H
 #include "mdir/Compiler/CompileCache.h"
+#include "mdir/Driver/Checkpoint.h"
 #include "mdir/Driver/Model.h"
 #include "mdir/Driver/Trajectory.h"
 #include <array>
@@ -171,6 +172,29 @@ public:
   /// changes.
   llvm::Error updateTunables(
       const std::vector<std::pair<std::string, std::vector<double>>> &changes);
+  /// Writes the checkpoint of `mdir run` (H5MD format 1, D173) of the state
+  /// after the last run, with `.prev` rotation and durable replacement, and
+  /// the additional entries of a Python simulation
+  /// (D[python-checkpoints], docs/python-checkpoints.md). A simulation that
+  /// has not run evaluates its start first. `creatorVersion` names the
+  /// program that writes it.
+  llvm::Error saveCheckpoint(const std::string &path,
+                             const std::string &creatorVersion);
+  /// Takes the state of `checkpoint` before the first run. Without
+  /// `stage`, the same run goes on, as `mdir run --continue` continues it:
+  /// a checkpoint of other physics or coupling is refused. With `stage`, a
+  /// new stage begins at the checkpoint, as `[input] checkpoint` begins
+  /// one: its forces are taken only if physics and coupling are the same,
+  /// and evaluated at the first step otherwise. With `append` the files of
+  /// the reporters of the same run continue those of the checkpoint;
+  /// otherwise they are those of a part of their own (D149). Returns the
+  /// notes for the front end: execution that differs, or what a stage
+  /// evaluates anew.
+  llvm::Expected<std::vector<std::string>>
+  continueFrom(const driver::Checkpoint &checkpoint, bool stage, bool append);
+  /// The file that a built-in report writes: `path`, or that of the part of
+  /// the outputs of a continued run (D149).
+  std::string getReportPath(const std::string &path) const;
   int64_t getStep() const { return step; }
   double getTime() const;
 
@@ -222,6 +246,10 @@ private:
     int64_t closePeriods = 0;
   };
   llvm::Error runPart(Engine &engine, Part part);
+  /// The program built anew with the values `values` of the tunables, or
+  /// an InputError if its text would change.
+  llvm::Expected<driver::Program>
+  rebuildTunables(const std::vector<std::vector<double>> &values);
   /// A part of no steps: the evaluation of `evaluate`, the start of an
   /// activation.
   llvm::Error evaluatePart();
@@ -290,6 +318,18 @@ private:
   int64_t minimizationCheckedStep = -1;
   bool hasRun = false;
   bool failed = false;
+  /// The run that a checkpoint continues or a stage begins from
+  /// (D[python-checkpoints]): the step it began at, its part, the part of
+  /// its outputs (0 for the names given), and for the same run whose
+  /// files continue, the step through which the energy file keeps its rows
+  /// and the trajectory and frames the checkpoint counts.
+  int64_t runFirstStep = 0, runPartNumber = 1, outputsPart = 0;
+  std::optional<int64_t> keepThrough;
+  std::string continuedTrajectory;
+  int64_t continuedFrames = 0;
+  /// Whether the first part evaluates the forces of the state given, a
+  /// stage of other physics.
+  bool startRefresh = false;
   /// The system that the program was built from, at its first step, which
   /// the values of the tunables are put into to build them anew; their
   /// values, version, and history (D213).

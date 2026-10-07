@@ -1,0 +1,13 @@
+# REQUIRES: python-api, hdf5
+# Checkpoints of a Python simulation (D[python-checkpoints]) on the CPU in
+# mixed precision, scenario python-to-cli of Inputs/python_checkpoints.py.
+# A Python simulation writes its checkpoint at step 10 and `mdir run
+# --continue` takes it to step 20: equal to a Python continuation of the
+# same file and to the run of `mdir run` that did not stop, to the bit,
+# with the energy file and the trajectory byte for byte.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_checkpoints.py %S/Inputs/dipeptide CPU Mixed mdir %t python-to-cli | FileCheck %s
+# CHECK: Python -> mdir run NVE CPU Mixed
+# CHECK: Python -> mdir run NVT CPU Mixed
+# CHECK: Python -> mdir run NPT CPU Mixed
+# CHECK: checkpoints python-to-cli CPU Mixed passed

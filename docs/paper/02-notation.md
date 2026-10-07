@@ -51,6 +51,7 @@ element.
 | $u_k,\ f_k$ | Reduced energy $U_k/k_BT$ of state $k$ and its reduced free energy $F_k/k_BT$ |
 | $\boldsymbol\theta = (\theta_0, \dots, \theta_{M_\theta-1}),\ \iota;\ \hat{\boldsymbol\theta}$ | A tunable parameter of a Python model, and the map $\iota$ from its sites (particles, types, tuples, or one constant) to its entries, $\iota(s) = -1$ for a site that keeps its value; the values at which stored frames were sampled (Section 3.6) |
 | $S_n,\ w_n$ | A stored frame and its weight when frames sampled at $\hat{\boldsymbol\theta}$ are reweighted to $\boldsymbol\theta$ (Section 3.6) |
+| $\mathbf z_n;\ \mathcal K_{U,\mathcal C};\ \omega$ | The state of a run after step $n$ that a checkpoint holds (positions, velocities, cell, the forces the next step begins with, the energy the coupling has taken); the transition kernel of one step, of the potential $U$ and the coupling $\mathcal C$ (thermostat, barostat, and their parameters); the seed of the random numbers (Section 3.6) |
 
 **Units.** Inside a compiled program MDIR computes in nm, ps, amu, and
 kJ/mol, with $k_B = 0.0083144626181532$ kJ/(mol K) [[Tiesinga2021]](references.md#tiesinga2021). The

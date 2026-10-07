@@ -332,6 +332,10 @@ llvm::Error checkBackup(const std::string &path);
 /// or the rename fails.
 llvm::Expected<std::string> backUpOutput(const std::string &path);
 
+/// The name of the part `part` of the output `path`: `run.dcd` becomes
+/// `run.part0002.dcd` (D130, D149).
+std::string getPartPath(llvm::StringRef path, int64_t part);
+
 } // namespace driver
 } // namespace mdir
 
