@@ -217,6 +217,13 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.truncation = s.truncation;
   c.topologyDispersion = dispersion;
   c.topologyDispersionGiven = s.dispersionGiven;
+  // As the control file (D210): the correction takes a plain cutoff or the
+  // shift; a switch would leave out what it removes below the cutoff.
+  if (s.dispersionGiven && dispersion != driver::DispersionCorrection::None &&
+      s.truncation != driver::Truncation::None && s.truncation != driver::Truncation::Shift)
+    return input("the correction for the dispersion needs a plain cutoff or the shift "
+                 "(Truncation.None_ or Truncation.Shift); with a switch, set "
+                 "System.dispersion to DispersionCorrection.None_");
   c.pme = s.electrostatics == Electrostatics::PME;
   c.pmeShift = s.coulombModifier == CoulombModifier::PotentialShift;
   c.pmeAlpha = s.pmeAlpha * driver::units::length;
