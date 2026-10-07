@@ -1,7 +1,7 @@
 // The keys, entries, and bound of the compile cache of host objects
 // (D212): a changed key part misses, a damaged entry is
 // rejected, and eviction removes the entries used least recently.
-// clearCache (D[compile-cache-controls]) removes the entries of this format
+// clearCache (D217) removes the entries of this format
 // and nothing else, and a process that clears while another writes leaves
 // only intact entries.
 #include "mdir/Compiler/CompileCache.h"
@@ -229,7 +229,7 @@ int main(int argc, char **argv) {
             sys::fs::exists(cubin),
         "one bound covers the host and GPU entries, least recent first");
 
-  // Clearing (D[compile-cache-controls]): the entries of this format go,
+  // Clearing (D217): the entries of this format go,
   // of every kind; another format, other names, the temporary file of a
   // writer under way, and the directories stay; a stale temporary file goes.
   std::string foreign = entry("foreign.o"), other = entry("notes.txt");

@@ -87,7 +87,7 @@ struct Program {
   /// What a simulation compiles its programs from (D196).
   std::shared_ptr<const model::PreparedModel> prepared;
   /// Whether its compilations use the compile cache, the default of its
-  /// simulations (D[compile-cache-controls]).
+  /// simulations (D217).
   bool cache = true;
   std::vector<std::pair<std::shared_ptr<Version>, uint64_t>> inputs;
   template <class T> void track(const std::shared_ptr<Input<T>> &o) {
@@ -543,7 +543,7 @@ PYBIND11_MODULE(mdir, m) {
      py::arg("ensemble"), py::arg("execution"), py::arg("schedule"),
      py::kw_only(), py::arg("cache") = true);
 
-  // Removes the entries of the compile cache (D[compile-cache-controls]):
+  // Removes the entries of the compile cache (D217):
   // those of this format in `directory`, else in MDIR_COMPILE_CACHE_DIR,
   // which MDIR_COMPILE_CACHE=off does not hide from it.
   m.def("clear_compile_cache", [](std::optional<std::string> directory) {
@@ -871,7 +871,7 @@ PYBIND11_MODULE(mdir, m) {
       if (checkpoint) {
         taken = readCheckpointFile(*checkpoint);
       }
-      // The program's choice unless one is given (D[compile-cache-controls]).
+      // The program's choice unless one is given (D217).
       bool useCache = cache.value_or(program->cache);
       auto prepared = program->prepared;
       std::optional<llvm::Expected<std::unique_ptr<compiler::Simulation>>> created;
@@ -1005,7 +1005,7 @@ PYBIND11_MODULE(mdir, m) {
       d["gpu_cache_rejected"] = c.gpuRejected;
       d["gpu_cache_stored"] = c.gpuStored;
       d["gpu_cache_unstored"] = c.gpuUnstored;
-      // Programs compiled with cache=False (D[compile-cache-controls]).
+      // Programs compiled with cache=False (D217).
       d["cache_bypassed"] = c.bypassed;
       return d;
     })

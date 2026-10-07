@@ -1,5 +1,5 @@
 # REQUIRES: python-api, cuda
-# The controls of the compile cache (D[compile-cache-controls]) on a GPU,
+# The controls of the compile cache (D217) on a GPU,
 # whose PTX and cubins are entries too, read and written by mdir.compile's
 # lowering as well as the simulation's: cache=False generates every module
 # and reads and writes no entry of either kind; a clear removes the GPU

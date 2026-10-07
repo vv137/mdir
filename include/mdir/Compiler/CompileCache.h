@@ -66,7 +66,7 @@ struct CompileStats {
   unsigned gpuUnstored = 0;
 
   /// The programs compiled with the cache bypassed (`cache=False`,
-  /// D[compile-cache-controls]): no entry was read or written for them,
+  /// D217): no entry was read or written for them,
   /// whatever the environment says.
   unsigned bypassed = 0;
 
@@ -84,7 +84,7 @@ struct CompileCacheConfig {
   static std::optional<CompileCacheConfig> fromEnvironment();
 };
 
-/// What clearCache removed (D[compile-cache-controls]).
+/// What clearCache removed (D217).
 struct ClearedCache {
   /// Host objects (`host/*.o`) and GPU entries (`gpu/*.ptx`,
   /// `gpu/*.cubin`) removed, and their bytes.
@@ -100,7 +100,7 @@ struct ClearedCache {
 /// writers under way are left; so is the directory. Another process may
 /// write or read entries meanwhile: a writer renames a complete entry into
 /// place and a reader copies the file, so each sees a whole entry or none
-/// (D[compile-cache-controls]).
+/// (D217).
 ClearedCache clearCache(llvm::StringRef directory);
 
 /// The entries of every kind of the cache (D212, D214):

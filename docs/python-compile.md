@@ -22,7 +22,7 @@ execution context is initialized, and no report or reproducer is written.
 JIT ownership, runtime device selection and execution follow with segments.
 The logical device is recorded in the plan, not selected during lowering.
 The keyword `cache=False` lowers without the compile cache, and the
-program's simulations inherit it (D[compile-cache-controls],
+program's simulations inherit it (D217,
 [compile-cache.md](compile-cache.md#controls-from-python)).
 
 Typed enums select target, precision, integrator, ensemble, electrostatics,

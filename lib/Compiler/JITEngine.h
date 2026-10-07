@@ -16,7 +16,7 @@ public:
   /// `codegen` names settings outside the target machine that change the
   /// generated code; it is part of the key of the compile cache. Without
   /// `cache`, the cache is bypassed whatever the environment says
-  /// (D[compile-cache-controls]).
+  /// (D217).
   static llvm::Expected<std::unique_ptr<JITEngine>>
   create(mlir::ModuleOp module, std::unique_ptr<llvm::TargetMachine> target,
          llvm::ArrayRef<std::string> libraries, llvm::StringRef entry,

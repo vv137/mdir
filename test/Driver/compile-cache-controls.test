@@ -1,5 +1,5 @@
 # REQUIRES: python-api
-# The controls of the compile cache (D[compile-cache-controls]) on the CPU:
+# The controls of the compile cache (D217) on the CPU:
 # mdir.compile(..., cache=False) makes no directory, and on a warm cache
 # reads and writes no entry (their times unchanged) and gives the state of
 # no cache bit for bit; Simulation(program, cache=False) bypasses it after a

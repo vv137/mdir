@@ -25,7 +25,7 @@ format, or the outputs; every such change is listed under **Changed** or
   plan hashes, and tunables are additional entries with a hash of their
   own, which earlier readers ignore; `mdir checkpoint` prints them.
 
-- Controls of the compile cache from Python (D[compile-cache-controls],
+- Controls of the compile cache from Python (D217,
   #163): `mdir.clear_compile_cache(directory=None)` removes the entries of
   this format from the directory given or from `MDIR_COMPILE_CACHE_DIR`,
   and returns what it removed. `mdir.compile(..., cache=False)` and

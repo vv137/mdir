@@ -1,4 +1,4 @@
-# The compile cache (D212, D214, D[compile-cache-controls])
+# The compile cache (D212, D214, D217)
 
 Issue #142. A Python simulation compiles its program in three stages: the
 MLIR pipeline lowers it to an LLVM module (with the PTX of its kernels on a
@@ -15,7 +15,7 @@ D214 (#148) serializes the GPU modules in parallel, keeps
 the PTX and the cubin of each module in the same cache, and loads cubins
 compiled for the device instead of PTX; see
 [The GPU modules](#the-gpu-modules-dgpu-module-compile) below.
-D[compile-cache-controls] (#163) clears the cache and bypasses it for one
+D217 (#163) clears the cache and bypasses it for one
 compile from Python; see [Controls from Python](#controls-from-python).
 
 ## Use
@@ -54,7 +54,7 @@ cost and what the cache saved, as a dict:
 
 ## Controls from Python
 
-D[compile-cache-controls], issue #163.
+D217, issue #163.
 
 ```python
 cleared = mdir.clear_compile_cache()          # or clear_compile_cache(directory)
@@ -261,7 +261,7 @@ directory:
   remains, the states agree with no cache, and the next process hits.
   Every suite also runs up to sixteen GPU tests and the CPU tests on one
   directory at once.
-- **Controls (D[compile-cache-controls]).** `compile-cache-controls.test`
+- **Controls (D217).** `compile-cache-controls.test`
   (CPU, mixed) and `compile-cache-controls-gpu.test` (GPU, mixed), each
   scenario a process of its own:
   - `mdir.compile(..., cache=False)` on an empty directory makes none. On

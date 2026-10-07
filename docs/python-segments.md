@@ -470,7 +470,7 @@ processes by the compile cache (D212,
 enables; `Simulation.compile_stats` reports the times of the pipeline and
 of the engine, and the hits. `Simulation(program, cache=False)` compiles
 without it, and `mdir.clear_compile_cache()` empties it
-(D[compile-cache-controls],
+(D217,
 [compile-cache.md](compile-cache.md#controls-from-python)).
 
 ## Evaluations without a step

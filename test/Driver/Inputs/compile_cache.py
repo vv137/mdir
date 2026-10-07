@@ -22,7 +22,7 @@ scenario runs in a process of its own on the cache directory WORK/cache:
 - with --gpu-damaged (a GPU): a byte of the data of one PTX entry, and of
   one cubin entry if there are any, is flipped; each is rejected,
   generated again, and stored (D214).
-- with --bypass (D[compile-cache-controls]): before the cold run,
+- with --bypass (D217): before the cold run,
   `mdir.compile(..., cache=False)` makes no directory; after the warm run,
   it generates every object (no hit) and leaves the entries and their
   times as they were, so it read none; `Simulation(program, cache=False)`

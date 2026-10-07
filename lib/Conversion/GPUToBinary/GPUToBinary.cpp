@@ -466,7 +466,7 @@ void GpuModuleToBinary::runOnOperation() {
       ptxas = nullptr;
     }
   }
-  // Without `cache`, no entry is read or written (D[compile-cache-controls]).
+  // Without `cache`, no entry is read or written (D217).
   GpuCache cache(this->cache ? CompileCacheConfig::fromEnvironment()
                              : std::nullopt);
   Counters counters;
@@ -631,7 +631,7 @@ struct GpuLowerToNVVMOptions : public gpu::GPUToNVVMPipelineOptions {
   PassOptions::Option<bool> cache{
       *this, "cache",
       llvm::cl::desc("use the compile cache that the environment names; "
-                     "false bypasses it (D[compile-cache-controls])"),
+                     "false bypasses it (D217)"),
       llvm::cl::init(true)};
 };
 

@@ -245,7 +245,7 @@ example from Python, beside its control files. D211
 simulation, whose entry branches the start on an argument, with MLIR's
 threads from one pool of the process. D212 (#142,
 [compile cache](compile-cache.md)) keeps the host objects of compiled
-programs on disk, keyed by their content; D[compile-cache-controls] (#163)
+programs on disk, keyed by their content; D217 (#163)
 clears it and bypasses it per compile from Python. D213 (#130,
 [tunable parameters](python-tunable.md)) declares charges, per-type σ and
 ε, constants of pair terms, and parameters of tuple terms tunable, whose

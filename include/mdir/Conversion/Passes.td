@@ -236,7 +236,7 @@ def GpuModuleToBinary
     `ptxas` or it fails; with `binary=cubin`, that is an error. With
     `MDIR_COMPILE_CACHE_DIR` set, the PTX and the cubin of each module are
     read from and written to the compile cache (D212), unless `cache` is
-    false (D[compile-cache-controls]).
+    false (D217).
   }];
   let options = [
     Option<"format", "format", "std::string", /*default=*/"\"isa\"",

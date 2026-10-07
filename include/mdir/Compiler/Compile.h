@@ -33,7 +33,7 @@ void useCudaToolkit();
 /// For a GPU program, the options of the serialization of its kernels for
 /// the visible device `device` (mdir::getGpuPipelineOptions); else empty.
 /// Without `cache`, the serialization bypasses the compile cache
-/// (D[compile-cache-controls]). Errors are CompileError.
+/// (D217). Errors are CompileError.
 llvm::Expected<std::string> getGpuOptions(const driver::Control &,
                                           int64_t device, bool cache = true);
 struct CompiledProgram {
@@ -47,7 +47,7 @@ struct CompiledProgram {
 /// Owns all returned data; initializes no runtime and creates no files.
 /// Lower already-built IR; used by compiler integration and diagnostic tests.
 /// Without `cache`, the lowering reads and writes no entry of the compile
-/// cache (D[compile-cache-controls]).
+/// cache (D217).
 llvm::Expected<CompiledProgram> lower(const driver::Control &, driver::Program,
                                       const model::Execution &,
                                       bool cache = true);
@@ -58,7 +58,7 @@ llvm::Expected<CompiledProgram> compile(const model::PreparedModel &,
 /// a simulation lowers programs of its own. The errors of the build, of a
 /// GPU program in a build without CUDA, and of the GPU options are those of
 /// compile. Without `cache`, the lowering of the result reads and writes no
-/// entry of the compile cache (D[compile-cache-controls]).
+/// entry of the compile cache (D217).
 llvm::Expected<CompiledProgram> plan(const model::PreparedModel &,
                                      bool cache = true);
 /// The text of the lowering of `compiled`, a result of plan, in a context of
