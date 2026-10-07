@@ -77,6 +77,16 @@ condition holds whatever moves the particles: the dynamics, the
 constraints, or the barostat moving rigid groups with their centers of
 mass.
 
+The theorem is stated for an orthorhombic cell and holds unchanged for a
+triclinic one (D126). The barostat scales the cell $H$ only as
+$H\,\mathrm{diag}(\boldsymbol\mu)$, each tilt with its column (Section
+6), and the positions with it: the lattice of the images of the old cell
+maps onto that of the new one, and a displacement $\mathbf d$ becomes
+$\mathbf d\,\mathrm{diag}(\boldsymbol\mu)$, at least $\min(\boldsymbol\mu)$
+times as long. The proof above then goes through with $\mathbf m$ the
+ratio of the diagonals $(a_x, b_y, c_z)$ of the two cells, which is what
+the test takes for either kind of cell.
+
 **Implementation.** The test is not a separate kernel. The pass
 `md-exec-expose-validity` writes it as a loop over particles,
 
@@ -310,7 +320,8 @@ and the builds asked for $10^{11}$ cells along each axis.
 
 The positions of the build are wrapped into the cell and tested in f32
 against the reach widened by $\varepsilon = 3\times 10^{-6}\,(L_x + L_y +
-L_z)$. A coordinate of magnitude at most $L$ rounds to f32 with an error
+L_z)$; in a triclinic cell the sum also takes the magnitudes of the three
+tilts. A coordinate of magnitude at most $L$ rounds to f32 with an error
 of at most $2^{-24}L$; a distance computed from two rounded positions
 differs from the exact one by at most $2\sqrt3\,2^{-24}L \approx 2\times
 10^{-7}L$, plus the rounding of the arithmetic, well within
@@ -398,8 +409,9 @@ $$
 bit by bit, at the current positions. Second, the two references are
 independent: a pruning sets $\mathbf x^p$ and $\mathbf L^p$ only, a build
 sets $\mathbf x^\text{ref}$ and $\mathbf L^\text{ref}$ and is followed by
-a pruning. Each test scales by its own cell, and since the cell is
-orthorhombic, a scaling has no shear.
+a pruning. Each test scales by its own cell, and a scaling has no shear:
+the cell is orthorhombic, or triclinic and scaled column by column
+(Section 4.1).
 
 **The two tests** are two fused loops over particles
 (`md-exec-expose-validity`): the first against `reference_positions` and
