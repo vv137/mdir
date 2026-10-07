@@ -144,7 +144,10 @@ take some: the table is a buffer of the program for every pair.
 PR #191, Q1; implemented as recommended there). The per-type values build
 the table by the combining rule first, the pairs set apart from it (NBFIX)
 keeping their values as above; then every pair that a map of a pair
-tunable takes has the value of its entry, whatever the rule gives it. The
+tunable takes has the value of its entry, whatever the rule gives it.
+A diagonal pair $(a, a)$ that a pair tunable takes has its entry's value,
+while the rule for the pairs of $a$ with other types still takes the
+per-type $\sigma_a$ and $\epsilon_a$, not the diagonal. The
 warning of compile lists only the pairs that still keep a value of their
 own: an NBFIX pair that a pair tunable takes for every per-type parameter
 declared is not listed. **Maps over pairs** (Q2) are the maps of every
