@@ -3,6 +3,8 @@
 #define MDIR_CONVERSION_GPUTOBINARY_H
 
 #include "mdir/Compiler/CompileCache.h"
+#include "llvm/Support/Error.h"
+#include <string>
 
 namespace mlir {
 class MLIRContext;
@@ -14,14 +16,22 @@ namespace mdir {
 /// the `gpu*` fields of CompileStats. Taking them resets them.
 compiler::CompileStats takeGpuModuleStats(mlir::MLIRContext &context);
 
-/// The architecture (`sm_XY`) of the CUDA device that runs the kernels:
-/// the visible device `device`, or the one that MDRT_DEVICE names, as the
-/// runtime chooses it. Empty when the driver or the device cannot be
-/// queried, or when LLVM's NVPTX backend does not know the architecture;
-/// the kernels are then PTX for the default architecture, which the driver
-/// compiles at load. The driver is initialized by the query. Asked once per
-/// process and device.
-std::string getGpuChip(int64_t device);
+/// The options of `mdir-gpu-lower-to-nvvm` for the kernels of the visible
+/// CUDA device `device`, or of the one that MDRT_DEVICE names, as the
+/// runtime chooses it (D[gpu-module-compile]):
+///
+/// - MDIR_GPU_BINARY=auto (the default): cubins for the device's
+///   architecture, PTX where ptxas cannot make them; PTX for the default
+///   architecture when the architecture is not known.
+/// - MDIR_GPU_BINARY=cubin: cubins; an unknown architecture or a missing
+///   ptxas is an error.
+/// - MDIR_GPU_BINARY=ptx: PTX, which the driver compiles at load.
+///
+/// The architecture is MDIR_GPU_ARCH (`sm_XY`), else the compute capability
+/// that NVML gives for the device, if LLVM's NVPTX back end knows it. The
+/// CUDA driver is not initialized, so a process may fork after it
+/// compiles. NVML is asked once per process and selection of devices.
+llvm::Expected<std::string> getGpuPipelineOptions(int64_t device);
 
 } // namespace mdir
 

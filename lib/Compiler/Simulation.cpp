@@ -269,9 +269,11 @@ compileEngine(const Control &control, const System &system,
     return std::chrono::duration<double>(std::chrono::steady_clock::now() -
                                          start).count();
   };
-  auto module = compiler::lowerModule(
-      *engine->context, control, engine->program, &engine->stats,
-      compiler::getGpuChip(control, execution.device));
+  auto gpu = compiler::getGpuOptions(control, execution.device);
+  if (!gpu)
+    return gpu.takeError();
+  auto module = compiler::lowerModule(*engine->context, control,
+                                      engine->program, &engine->stats, *gpu);
   if (!module)
     return module.takeError();
   engine->module = std::move(*module);

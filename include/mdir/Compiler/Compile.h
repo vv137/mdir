@@ -20,18 +20,21 @@ public:
   }
   std::string diagnostic;
 };
-/// The pipeline of `program`. On a GPU, `gpuChip` (getGpuChip) names the
-/// architecture of the device, whose kernels become cubins; empty, they
-/// are PTX for the default architecture (D[gpu-module-compile]).
+/// The pipeline of `program`. On a GPU, `gpuOptions` (getGpuOptions) are
+/// the options of the serialization of its kernels; empty, they are PTX
+/// for the default architecture (D[gpu-module-compile]).
 std::string getPipeline(const driver::Control &, const driver::Program &,
-                        llvm::StringRef gpuChip = {});
+                        llvm::StringRef gpuOptions = {});
 /// Points CUDA_ROOT at the toolkit whose libdevice and ptxas the kernels of
 /// a GPU take: the one the environment names (CUDA_ROOT, CUDA_HOME, or
 /// CUDA_PATH), else that of the build, as for `mdir run`
 /// (tools/mdir/BugReport.cpp, getCudaToolkitRoot).
 void useCudaToolkit();
-/// getGpuChip of the device of `execution` for a GPU program, else empty.
-std::string getGpuChip(const driver::Control &, int64_t device);
+/// For a GPU program, the options of the serialization of its kernels for
+/// the visible device `device` (mdir::getGpuPipelineOptions); else empty.
+/// Errors are CompileError.
+llvm::Expected<std::string> getGpuOptions(const driver::Control &,
+                                          int64_t device);
 struct CompiledProgram {
   driver::Program program;
   model::Execution execution;
@@ -60,7 +63,7 @@ void shareThreadPool(mlir::MLIRContext &context);
 llvm::Expected<mlir::OwningOpRef<mlir::ModuleOp>>
 lowerModule(mlir::MLIRContext &context, const driver::Control &,
             const driver::Program &, CompileStats *stats = nullptr,
-            llvm::StringRef gpuChip = {});
+            llvm::StringRef gpuOptions = {});
 /// The machine that compiles the host code of a program for the JIT, at the
 /// one code-generation level of both front ends (#90).
 llvm::Expected<std::unique_ptr<llvm::TargetMachine>> createHostMachine();

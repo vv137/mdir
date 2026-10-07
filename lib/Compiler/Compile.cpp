@@ -35,12 +35,17 @@ void mdir::compiler::useCudaToolkit() {
   if (*MDIR_CUDA_ROOT)
     setenv("CUDA_ROOT", MDIR_CUDA_ROOT, /*overwrite=*/0);
 }
-std::string mdir::compiler::getGpuChip(const Control &control,
-                                      int64_t device) {
-  return control.target == Target::GPU ? mdir::getGpuChip(device) : "";
+llvm::Expected<std::string>
+mdir::compiler::getGpuOptions(const Control &control, int64_t device) {
+  if (control.target != Target::GPU)
+    return std::string();
+  auto options = mdir::getGpuPipelineOptions(device);
+  if (!options)
+    return llvm::make_error<CompileError>(llvm::toString(options.takeError()));
+  return options;
 }
 std::string mdir::compiler::getPipeline(const Control &control,
-                               const Program &program, StringRef gpuChip) {
+                               const Program &program, StringRef gpuOptions) {
   std::string pipeline;
   llvm::raw_string_ostream os(pipeline);
   os << "md-check-exchange,md-differentiate,md-expand-truncation,md-inline,"
@@ -102,11 +107,8 @@ std::string mdir::compiler::getPipeline(const Control &control,
     // driver loads without compiling them; for a device that cannot be
     // asked, PTX for the default architecture, which it compiles at load
     // (D[gpu-module-compile]).
-    if (gpuChip.empty())
-      os << "cubin-format=isa";
-    else
-      os << "cubin-chip=" << gpuChip << " cubin-format=bin";
-    os << "},"
+    os << (gpuOptions.empty() ? StringRef("cubin-format=isa") : gpuOptions)
+       << "},"
        << "reconcile-unrealized-casts";
     return pipeline;
   }
@@ -185,7 +187,7 @@ void compiler::shareThreadPool(mlir::MLIRContext &context) {
 llvm::Expected<mlir::OwningOpRef<mlir::ModuleOp>>
 compiler::lowerModule(mlir::MLIRContext &context, const driver::Control &control,
                       const driver::Program &program, CompileStats *stats,
-                      StringRef gpuChip) {
+                      StringRef gpuOptions) {
   std::string diagnostics;
   llvm::raw_string_ostream diagnosticStream(diagnostics);
   mlir::ScopedDiagnosticHandler handler(&context, [&](mlir::Diagnostic &d) {
@@ -198,7 +200,7 @@ compiler::lowerModule(mlir::MLIRContext &context, const driver::Control &control
   auto module = mlir::parseSourceString<mlir::ModuleOp>(program.module, &context);
   if (!module)
     return llvm::make_error<CompileError>("cannot parse generated IR: " + diagnostics);
-  std::string pipeline = getPipeline(control, program, gpuChip);
+  std::string pipeline = getPipeline(control, program, gpuOptions);
   mlir::PassManager manager(&context, mlir::ModuleOp::getOperationName(),
                              mlir::PassManager::Nesting::Implicit);
   if (mlir::failed(mlir::parsePassPipeline(pipeline, manager, diagnosticStream)))
@@ -227,14 +229,16 @@ compiler::lower(const driver::Control &control, driver::Program program,
   // libdevice and ptxas.
   if (control.target == Target::GPU)
     useCudaToolkit();
-  std::string chip = getGpuChip(control, execution.device);
-  auto module = lowerModule(context, control, program, nullptr, chip);
+  auto gpu = getGpuOptions(control, execution.device);
+  if (!gpu)
+    return gpu.takeError();
+  auto module = lowerModule(context, control, program, nullptr, *gpu);
   if (!module)
     return module.takeError();
   std::string lowered;
   llvm::raw_string_ostream os(lowered);
   (*module)->print(os);
-  std::string pipeline = getPipeline(control, program, chip);
+  std::string pipeline = getPipeline(control, program, *gpu);
   return CompiledProgram{std::move(program), execution,
                          std::move(pipeline), std::move(lowered)};
 }

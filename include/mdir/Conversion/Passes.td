@@ -230,10 +230,20 @@ def GpuModuleToBinary
     (D[gpu-module-compile]). The time the serialization took is left out of
     the objects' properties, which the upstream pass records, so that the
     result is the same from run to run.
+
+    With `format=bin`, the toolkit's `ptxas` compiles the PTX of each module
+    to a cubin. With `binary=auto`, a module stays PTX when there is no
+    `ptxas` or it fails; with `binary=cubin`, that is an error. With
+    `MDIR_COMPILE_CACHE_DIR` set, the PTX and the cubin of each module are
+    read from and written to the compile cache (D212).
   }];
   let options = [
     Option<"format", "format", "std::string", /*default=*/"\"isa\"",
-           "isa (PTX, which the driver compiles at load) or bin (a cubin)">
+           "isa (PTX, which the driver compiles at load) or bin (a cubin)">,
+    Option<"binary", "binary", "std::string", /*default=*/"\"auto\"",
+           "MDIR_GPU_BINARY: auto (a cubin, or PTX when ptxas cannot make "
+           "one), cubin (a cubin, or an error), or ptx; part of the keys of "
+           "the cache">
   ];
 }
 
