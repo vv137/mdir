@@ -131,14 +131,21 @@ def main():
     stats, out = run("warm")
     report("warm", stats, out, reference)
     if gpu_damaged:
-        # One byte of the data of the first entry of each kind.
+        # One byte of the data of the first entry of each kind. The
+        # lowering of mdir.compile in the same process may be the one that
+        # rejects and rewrites an entry, so the entries themselves are
+        # checked.
+        flipped = {}
         for kind in ("ptx", "cubin"):
             for entry in gpu_entries(kind)[:1]:
                 data = bytearray(entry.read_bytes())
                 data[-10] ^= 0x01
                 entry.write_bytes(bytes(data))
+                flipped[entry] = bytes(data)
         stats, out = run("gpu-flipped")
         report("gpu-flipped", stats, out, reference)
+        rewritten = sum(entry.read_bytes() != data for entry, data in flipped.items())
+        print(f"gpu-flipped: rewritten {rewritten} of {len(flipped)}")
         stats, out = run("gpu-rewarm")
         report("gpu-rewarm", stats, out, reference)
     if damaged:

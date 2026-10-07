@@ -1,0 +1,9 @@
+# REQUIRES: python-api, cuda
+# A process that forks after mdir.compile of a GPU program, whose child
+# runs it on the GPU (D[gpu-module-compile]): lowering asks NVML for the
+# device's architecture and does not initialize the CUDA driver, which a
+# forked child could not use. The kernels are cubins for the device.
+# RUN: %mdir_python %S/Inputs/fork_after_compile.py %S/Inputs/dipeptide | FileCheck %s
+# CHECK: parent: mdir-gpu-lower-to-nvvm{cubin-chip=sm_{{[0-9]+}} cubin-format=bin binary=auto}
+# CHECK-NEXT: child: ran 10 steps, potential finite True
+# CHECK-NEXT: parent: child exited with 0

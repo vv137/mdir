@@ -8,15 +8,16 @@
 # RUN: rm -rf %t
 # RUN: %mdir_python %S/Inputs/compile_cache.py %S/Inputs/dipeptide GPU Mixed %t --gpu-damaged | FileCheck %s
 # CHECK: off: compiled 1 hits 0 rejected 0 stored 0
-# CHECK-NEXT: off: gpu modules [[M:[0-9]+]] ptx generated [[M]] hits 0 cubins generated {{[0-9]+}} hits 0 rejected 0 stored 0
+# CHECK-NEXT: off: gpu modules [[M:[0-9]+]] ptx generated [[M]] hits 0 cubins generated [[M]] hits 0 rejected 0 stored 0
 # CHECK-NEXT: off: directory absent
 # CHECK-NEXT: cold: compiled 1 hits 0 rejected 0 stored 1 state same
 # CHECK-NEXT: cold: gpu modules [[M]] ptx generated {{[1-9][0-9]*}} hits {{[0-9]+}} cubins generated {{[0-9]+}} hits {{[0-9]+}} rejected 0 stored {{[1-9][0-9]*}}
 # CHECK-NEXT: cold: entries 1
-# CHECK-NEXT: cold: gpu entries ptx {{[1-9][0-9]*}} cubin {{[0-9]+}}
+# CHECK-NEXT: cold: gpu entries ptx {{[1-9][0-9]*}} cubin {{[1-9][0-9]*}}
 # CHECK-NEXT: warm: compiled 0 hits 1 rejected 0 stored 0 state same
-# CHECK-NEXT: warm: gpu modules [[M]] ptx generated 0 hits [[M]] cubins generated 0 hits {{[0-9]+}} rejected 0 stored 0
+# CHECK-NEXT: warm: gpu modules [[M]] ptx generated 0 hits [[M]] cubins generated 0 hits [[M]] rejected 0 stored 0
 # CHECK-NEXT: gpu-flipped: compiled 0 hits 1 rejected 0 stored 0 state same
-# CHECK-NEXT: gpu-flipped: gpu modules [[M]] ptx generated 1 hits {{[0-9]+}} cubins generated {{[01]}} hits {{[0-9]+}} rejected {{[12]}} stored {{[12]}}
+# CHECK-NEXT: gpu-flipped: gpu modules [[M]] ptx generated {{[01]}} hits {{[0-9]+}} cubins generated {{[01]}} hits {{[0-9]+}} rejected {{[0-2]}} stored {{[0-2]}}
+# CHECK-NEXT: gpu-flipped: rewritten 2 of 2
 # CHECK-NEXT: gpu-rewarm: compiled 0 hits 1 rejected 0 stored 0 state same
-# CHECK-NEXT: gpu-rewarm: gpu modules [[M]] ptx generated 0 hits [[M]] cubins generated 0 hits {{[0-9]+}} rejected 0 stored 0
+# CHECK-NEXT: gpu-rewarm: gpu modules [[M]] ptx generated 0 hits [[M]] cubins generated 0 hits [[M]] rejected 0 stored 0
