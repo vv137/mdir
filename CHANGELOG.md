@@ -128,6 +128,13 @@ format, or the outputs; every such change is listed under **Changed** or
   divergent tail is an error; assign `None` for the default. Without a
   periodic cell the default is now off, as in the control file; before,
   compiling such a system needed `System.dispersion = DispersionCorrection.None_`.
+- With a switch (`Truncation.Switch`, the default, `ForceSwitch`, ...) the
+  Python model's default correction for the dispersion is now off, and
+  `mdir.compile` warns `dispersion_switched` (D[python-dispersion], #161):
+  the energies and pressures of a default switched `System` lose the tail
+  of the Lennard-Jones and of its pair terms, which it applied before
+  though the switch takes part of the potential below the cutoff. For the
+  correction, use `Truncation.None_` or `Truncation.Shift`.
 - A typed Python restraint keeps its force constant in kJ/mol/nm² exactly
   (D216, #100). Before, it passed through the control
   file's kcal/mol/Å², and a constant not computed from a control-file value

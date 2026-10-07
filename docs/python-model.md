@@ -118,7 +118,7 @@ control file's `dispersion_correction` that it lacked (D209, D210).
 
 | Python | Control file | Meaning |
 |---|---|---|
-| `System.dispersion` not set (`dispersion_given` is `False`) | no `dispersion_correction` in `[energy]` | `EnergyPressure`; a pair term whose tail diverges or that reads `t` is left out with the warning `pair_tail_left_out`; off without a periodic cell |
+| `System.dispersion` not set (`dispersion_given` is `False`) | no `dispersion_correction` in `[energy]` | `EnergyPressure`; a pair term whose tail diverges or that reads `t` is left out with the warning `pair_tail_left_out`; off without a periodic cell; off with a switch, with the warning `dispersion_switched` |
 | `System.dispersion = DispersionCorrection.EnergyPressure` | `dispersion_correction = "ENERGY_PRESSURE"` | on; such a term is an `InputError` naming it; refused without a periodic cell and with a switch |
 | `System.dispersion = DispersionCorrection.None_` | `"NONE"` | off |
 | `PairTerm.dispersion = None` (default) | no key in `[[energy.pair]]` | the term follows the system |
@@ -129,8 +129,10 @@ Python's `None` and `DispersionCorrection.None_` differ as an absent key
 and `"NONE"` do. Setting `System.dispersion` to `None` restores the default;
 reading it gives the value, `EnergyPressure` by default. Leaving a term out
 omits only its long-range estimate; its energy, forces, and virial within
-the cutoff are unchanged. `mdir.compile` raises `pair_tail_left_out` as a
-`UserWarning`, and `Program.plan["dispersion"]` is
+the cutoff are unchanged. `mdir.compile` raises `pair_tail_left_out` and
+`dispersion_switched` as `UserWarning`s, whose messages, like those of a
+refused tail, name `PairTerm.dispersion` rather than the control-file key;
+a value other than a `DispersionCorrection` or `None` is a `TypeError`; and `Program.plan["dispersion"]` is
 `{"correction", "given", "pair_terms"}`, the last a dict from each pair
 term's name to whether its tail is in the correction. A tunable
 (D213) of a term left out may take any value; for a term in the
@@ -139,9 +141,12 @@ before.
 
 The numbers are the builder's: the model hands it the control structure of
 the control file. With a switch (`Truncation.Switch`, `ForceSwitch`, ...),
-the control file refuses the correction even by default; the Python model
-refuses it when it is set, and keeps it by default (PR #187 asks which
-default to take).
+which takes part of the potential below the cutoff that the correction
+would leave out, the control file refuses the correction even by default.
+The Python model refuses it when it is set and, by default, turns it off
+with the warning `dispersion_switched`, so that the default `System`, whose
+truncation is `Switch`, still compiles (the maintainer's choice on PR
+#187). Before, it kept the correction under a switch.
 
 Validation (`python-dispersion.test`, `-gpu.test`, `Inputs/python_dispersion.py`),
 on the 60 A + 60 B mixture of `pair-dispersion.test` with the term
@@ -156,7 +161,8 @@ cutoff and `Truncation.Shift`, CPU and GPU, double and mixed:
 | Its trace of the virial, $-\nu(4\pi/V)N_\text{pairs}\int r^3u'\,dr$, the same under the shift | the same | −0.270926137 kcal/mol, within 3.5e-13 | the same |
 | Its pressure, $\operatorname{tr}\mathsf W/3V$ | the same | −0.191478708 bar, within 2.0e-12 | the same |
 | $-c_8/(l^5r^3)$, a divergent tail | `mdir check` refuses it under `ENERGY_PRESSURE` in `[energy]` or in the term | `InputError` naming the term in both; by default one warning, energies equal to the opt-out and to `mdir run` | |
-| No cell; a switch | the control file | default off without a cell, explicit refused; explicit with a switch refused | |
+| No cell; a switch | the control file | default off without a cell, explicit refused; explicit with a switch refused; by default with a switch off, one warning, energies equal to those with the correction set off | |
+| Messages and types | | a refused tail and the warning name `PairTerm.dispersion`; a string or an integer is a `TypeError` | |
 | Tunable exponent $p$ of $-c_8/r^p$ updated from 8 to 3 | | taken by a term left out; refused by a term in the correction | |
 
 The differences of the default and the opt-out agree in mixed precision as

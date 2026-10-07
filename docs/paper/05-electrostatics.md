@@ -330,7 +330,9 @@ decays as $r^{-3}$ or more slowly, such as $1/r$, has no such limit at a
 uniform density and needs a lattice sum instead. The Python model takes
 the same choices (D[python-dispersion]): a correction that is set on
 the system, or a term that asks for its tail, is the control file's key
-given, and a term's own `None_` its opt-out; the difference of the
+given, and a term's own `None_` its opt-out, except that under a
+switch its default correction is off with a warning rather than an error,
+so that its default system, which switches, compiles; the difference of the
 default and the opt-out of a term $-c_8/r^8 - ae^{-r/l}/r^4$ is its
 $E_\text{tail}$ and $\operatorname{tr}\mathsf W_\text{tail}$ to
 $4\times10^{-13}$ relative, against a quadrature in $\ln r$ of its own.
