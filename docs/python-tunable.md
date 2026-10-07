@@ -3,7 +3,9 @@
 Issue #130, the M2a gate that D192 left open and the base of M2b
 (differentiable simulation, [roadmap](roadmap.md), Section 6.1; D195).
 Status: implemented; the questions put to the maintainer on PR #159 are
-marked below.
+marked below. The table of the Lennard-Jones by pairs of types
+(D[python-tunable-pairs], #160) is a follow-up, in
+[its own section](#the-table-by-pairs-of-types).
 
 Before this item every change of a parameter of a Python model meant a new
 `mdir.compile` and a new `mdir.Simulation`: a lowering and a JIT of the
@@ -51,6 +53,8 @@ map from the *sites* of its parameter to its entries.
 | `"charge"` | none | the particles, $N$ | e |
 | `"sigma"` | none | the Lennard-Jones types, $T$ (`System.type_names`) | nm |
 | `"epsilon"` | none | the Lennard-Jones types, $T$ | kJ/mol |
+| `"sigma_pair"` | none | the unordered pairs of types, $T(T+1)/2$ (`System.type_pairs`) | nm |
+| `"epsilon_pair"` | none | the unordered pairs of types, $T(T+1)/2$ | kJ/mol |
 | a constant of a pair term | the term's name | one | that of the expression |
 | a parameter of a tuple term | the term's name | its tuples, $n$ | that of the expression |
 
@@ -68,8 +72,9 @@ The set of tunables is a flat collection of named one-dimensional arrays,
 the shape of their gradients, so that a framework holds it as a dict or a
 pytree (M2b). The Python model exposes what maps are built from:
 `System.charges` $(N,)$, `System.particle_types` $(N,)$ int64,
-`System.type_names`, `System.atom_names`, and `System.residue_names` (one per
-particle), all read-only; `System.topology` (D221,
+`System.type_names`, `System.type_pairs` $(T(T+1)/2, 2)$ int64,
+`System.atom_names`, and `System.residue_names` (one per particle), all
+read-only; `System.topology` (D221,
 [python-topology.md](python-topology.md)) gives the same arrays with the
 residues, bonds, and `select(mask)`.
 
@@ -88,7 +93,7 @@ an edited Amber pair) keeps both of its values, as an override keeps them
 in those force fields when the parameters of the types change; `compile`
 warns once (`UserWarning`) and lists such pairs (maintainer's decision on
 PR #159, Q2; first proposed as a refusal). A tunable of the table by pairs
-of types, which would let such pairs change, is a separate item (#160).
+of types lets such pairs change ([below](#the-table-by-pairs-of-types)).
 Amber's tables follow the rule within $2\times10^{-7}$ (the eight digits of
 `ACOEF`/`BCOEF`; JAC, cellulose, factor IX, the dipeptide); the table of the
 rule replaces them, so a tunable run differs from one without tunables at
@@ -99,6 +104,61 @@ The 1-4 pairs keep the $\sigma$ and $\epsilon$ that the topology gives them,
 as a compile from edited types would: their parameters are their own
 (Amber copies them from the table of the file, GROMACS from `[ pairtypes ]`
 or the rule at reading, CHARMM from its 1-4 parameters).
+
+### The table by pairs of types
+
+D[python-tunable-pairs], issue #160. A fit that must change a pair that
+the combining rule does not give (an NBFIX), or a force field without a
+combining rule, tunes the table itself: `mdir.Tunable(name, "sigma_pair")`
+and `mdir.Tunable(name, "epsilon_pair")`. Their sites are the unordered
+pairs of types $(a, b)$, $a \le b$, in the order of the flat upper triangle,
+
+$$
+(0,0), (0,1), \dots, (0,T-1), (1,1), \dots, (T-1,T-1),\qquad
+s(a, b) = aT - \frac{a(a-1)}{2} + b - a,
+$$
+
+so that each pair is one site: the gradient has the structure of the table
+and no entry twice, and a value sets both $\sigma_{ab}$ and $\sigma_{ba}$.
+`System.type_pairs` lists the pairs in this order, what maps over pairs are
+built from:
+
+```python
+pairs, names = system.type_pairs, system.type_names
+site = {(names[a], names[b]): k for k, (a, b) in enumerate(pairs)}
+nbfix = np.full(len(pairs), -1, dtype=np.int64)    # -1 keeps the model's value
+nbfix[site["CT", "OW"]] = 0
+system.tunables = [mdir.Tunable("sigma", "sigma", mixing="geometric"),
+                   mdir.Tunable("epsilon", "epsilon"),
+                   mdir.Tunable("eps_ct_ow", "epsilon_pair", map=nbfix)]
+```
+
+`map` and `values` are those of every tunable: without a map every pair is
+an entry of its own; without `values` the initial values are the model's
+table. The values are finite and at least 0; `mixing` is refused, as for
+every parameter but `"sigma"`. A pair without Lennard-Jones in the model
+($\epsilon_{ab}=0$, as between a water's hydrogen and other types) may
+take some: the table is a buffer of the program for every pair.
+
+**Pair and per-type tunables together** (a question to the maintainer on
+PR #191, Q1; implemented as recommended there). The per-type values build
+the table by the combining rule first, the pairs set apart from it (NBFIX)
+keeping their values as above; then every pair that a map of a pair
+tunable takes has the value of its entry, whatever the rule gives it. The
+warning of compile lists only the pairs that still keep a value of their
+own: an NBFIX pair that a pair tunable takes for every per-type parameter
+declared is not listed. **Maps over pairs** (Q2) are the maps of every
+tunable, built from `System.type_pairs`. **The 1-4 pairs** (Q3) keep their
+own $\sigma$ and $\epsilon$, as under per-type tunables.
+
+The derived quantities follow the table as for per-type values: the
+correction for the dispersion, $\langle C_6\rangle$ and its shift estimate,
+with the classes of particles of the tails of pair terms, rebuilt on the
+host. The pair terms of the Python model read $r$ and their constants, not
+the table, so their tails do not change with these tunables; `sigma1`,
+`epsilon1` and the table of a pair term of the control file would follow
+the diagonal and the table. No kernel changes: the table was a buffer of
+the program already.
 
 ## Derived quantities
 
@@ -111,7 +171,7 @@ reaches:
 | Tunable | Runtime values it changes |
 |---|---|
 | charge | the field `q`; the 1-4 products $fq_iq_js_C$; the self term and the net-charge background of PME (and their virial), or the self term of the reaction field; the tails (D209) and the shift estimate (D210) of pair terms that read `q1`/`q2` (their classes of particles are rebuilt) |
-| sigma, epsilon | the tables `lj_sigma` and `lj_epsilon`; the correction for the dispersion $\langle C_6\rangle$ and its shift estimate; the tails of pair terms that read `sigma`/`epsilon` |
+| sigma, epsilon, sigma_pair, epsilon_pair | the tables `lj_sigma` and `lj_epsilon`; the correction for the dispersion $\langle C_6\rangle$ and its shift estimate; the tails of pair terms that read `sigma`/`epsilon` |
 | a constant of a pair term | a table of the program's scalars, read by the term's kernel; the term's tail and shift estimate |
 | a parameter of a tuple term | that tuple field |
 
@@ -140,7 +200,7 @@ explicit exception. This is a question to the maintainer on the PR (Q1).
 program was built from (at its first step) and the control it was built
 with. An update copies both, puts the new values into them
 (`model::applyTunables`: the charges, the per-type σ and ε and the table
-of the rule, the constants of pair terms, the parameters of tuple terms,
+of the rule, the pairs of the table that pair tunables take, the constants of pair terms, the parameters of tuple terms,
 and the classes and values of the tails, `driver::recollectPairTails`),
 and runs `driver::buildProgram` on the copy with the compiled program's
 neighbor width. The new program's text must equal the compiled one's; its
@@ -156,7 +216,8 @@ program's text and values, about 10 ms on the host for JAC (23,558 atoms).
 - `sim.tunables` is a mapping from names to read-only $(M,)$ float64 copies
   (`dict(sim.tunables)` is a plain dict). `update(mapping)` assigns any
   subset at once: every value is checked (known name, shape $(M,)$, finite,
-  $\sigma\ge0$ and $\epsilon\ge0$, charges below 100 e under PME), the
+  $\sigma\ge0$ and $\epsilon\ge0$ per type and per pair, charges below
+  100 e under PME), the
   program's values are rebuilt, and only then is anything changed. A
   failure changes nothing.
 - An update advances the *value version* (`sim.tunables.version`, 0 at
@@ -273,6 +334,23 @@ GPU, double and mixed. The change of the energy at fixed positions,
 508.539313772 kJ/mol, equals a NumPy sum of the Lennard-Jones over the
 pairs not excluded within the cutoff, CT-OW kept, to 1.5e-11 kJ/mol (with
 CT-OW mixed by the rule it would be 567.49).
+
+Pairs of types (`python-tunable-pairs*.test`), on the same propane and
+water: `sigma_pair` and `epsilon_pair` over the 10 pairs of the 4 types.
+An update at step 6 (every σ by 0.97 and ε by 1.1, ε of CT-HC doubled off
+the rule, OW-HW given σ = 0.2 nm and ε = 0.05 kJ/mol where the model has
+none) and 10 steps equal, to the bit, a compile with those values from the
+state of step 6: CPU and GPU, double and mixed.
+
+| Check | Reference | Result | Tolerance |
+|---|---|---|---|
+| The change of the energy at fixed positions, −208.013008349 kJ/mol (−234.67 with CT-HC by the rule) | NumPy sum of the Lennard-Jones over the pairs not excluded within the cutoff, σ and ε from the table; the 1-4 pairs, which keep their own parameters, left out | 3.0e-12 kJ/mol | 1e-9 relative |
+| Per-type σ (geometric) and ε with pair tunables taking CT-OW (the NBFIX) and CT-HC, all changed: 135.878025285 kJ/mol | NumPy: the rule for the other pairs, the pair values for those two | 1.0e-11 kJ/mol | 1e-9 relative |
+| The correction for the dispersion at the new pair values, −7.564999036 kJ/mol | $\nu\,(4\pi/V)\sum_{i<j}(-C_{6,ij}/3r_c^3)$ over the pairs not excluded, $\nu = N^2/(N(N-1)-2N_\text{excluded})$ (D209) | 7.4e-13 relative | 1e-9 |
+
+With per-type σ and a pair tunable of ε alone taking CT-OW, compile still
+warns of CT-OW (its σ is kept); `mixing` on `"sigma_pair"`, a map of the
+length of the types, and negative values are refused.
 
 Refusals: 18 of declarations, 6 of
 updates, each changing neither values nor version; versions in the history,

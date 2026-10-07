@@ -26,6 +26,16 @@ format, or the outputs; every such change is listed under **Changed** or
   own, which earlier readers ignore; `mdir checkpoint` prints them.
 
 - Controls of the compile cache from Python (D217,
+- Tunable Lennard-Jones by pairs of types (D[python-tunable-pairs], #160):
+  `mdir.Tunable(name, "sigma_pair")` and `"epsilon_pair"` tune the table of
+  the pairs of types, so that a pair the combining rule does not give (an
+  NBFIX) or a force field without a rule can change. The sites are the
+  unordered pairs $(a, b)$, $a \le b$, in the order of the flat upper
+  triangle, which the read-only `System.type_pairs` lists. With per-type
+  σ or ε, the pair tunables set the pairs that their maps take after the
+  rule. An update equals a compile with the new values to the bit. No
+  control-file key changes.
+- Controls of the compile cache from Python (D[compile-cache-controls],
   #163): `mdir.clear_compile_cache(directory=None)` removes the entries of
   this format from the directory given or from `MDIR_COMPILE_CACHE_DIR`,
   and returns what it removed. `mdir.compile(..., cache=False)` and

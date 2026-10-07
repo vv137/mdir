@@ -612,9 +612,16 @@ which the barostat takes with the dispersion's $6E_\text{disp}$
 $\boldsymbol\theta$. The pairs three bonds apart take $fq_iq_js_C$; the
 table of the types takes $\sigma_{ab} = (\sigma_a + \sigma_b)/2$ and
 $\epsilon_{ab} = \sqrt{\epsilon_a\epsilon_b}$ from the types' own, but for
-pairs that the model sets apart from the rule (NBFIX), which keep theirs, and
-$\langle C_6\rangle$ of $E_\text{disp}$ follows from it; the tails $I_{ij}$ of
-pair terms are integrated anew (Section 5.4).
+pairs that the model sets apart from the rule (NBFIX), which keep theirs.
+The table itself may be tunable by pairs of types (D[python-tunable-pairs]):
+its sites are the unordered pairs $(a, b)$, $a\le b$, so that
+$\sigma_{ab} = \sigma_{ba} = \theta_{\iota(s(a,b))}$ with one entry per pair,
+set after the rule for the pairs that $\iota$ takes. Since $U$ depends on
+the table only through $\sigma_{ab}$ and $\epsilon_{ab}$ of unordered pairs,
+$\partial U/\partial\theta_k = \sum_{s:\iota(s)=k}\partial U/\partial\sigma_{s}$
+counts each pair once, which a site per ordered pair would count twice.
+$\langle C_6\rangle$ of $E_\text{disp}$ follows from the table; the tails
+$I_{ij}$ of pair terms are integrated anew (Section 5.4).
 
 The purpose is reweighting. Frames $S_n$ sampled from the canonical
 distribution of $U_{\hat{\boldsymbol\theta}}$ give the average of $O$ at
