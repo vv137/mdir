@@ -68,6 +68,13 @@ changes any part of the generated code misses. An object is not portable
 between machines with different CPU features: a different CPU is a
 different key.
 
+A hit needs the same module from the same inputs, so the text that the
+builder generates must be a function of the model alone, not of what the
+process built before. The builder keeps no count or other state across
+builds: its names are numbered per build (#152), and a model built after
+another in one process has the text and the lowered text of a model built
+first (`python-build-history.test`, on the CPU and a GPU).
+
 This follows the design of #142 for the stages after MLIR. The MLIR
 pipeline depends on MDIR's passes, so a cache of its output would need the
 build identity in its key, and would miss after every rebuild; it is not

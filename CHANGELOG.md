@@ -291,6 +291,13 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- The builder numbered the values that store the state of a barostat of
+  Trotter type with a count of the process instead of one of the build, so
+  the text of a program depended on what the process had built before, and
+  two builds on two Python threads could emit the same names. A program
+  now has the same text, and therefore the same keys in the compile cache
+  (D212, D214), whatever the process built before (#152).
+
 - An `[[energy.pair]]` correction at or near the force field's own
   parameters, such as an NBFIX at zero offset where a fit begins, is no
   longer refused by the correction for the dispersion as a tail that
