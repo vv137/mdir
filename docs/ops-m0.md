@@ -1066,6 +1066,7 @@ body of a loop. It does two more things.
 |---|---|
 | A structure moves outward through the loops around it, one loop at a time. | A run has a loop for each period of output. The structure lives on from one output to the next. |
 | It stops at a loop that has the attribute `mdrt.segment`. | The iterations of that loop are segments of the run. A structure starts empty in each (R1). |
+| A loop that has the attribute `mdrt.fresh` begins with a structure of its own, which no structure built before it in the same block continues. | It is the loop of the steps of `mdir run` without checkpoints. The evaluation at the start is a segment of its own, so the steps build at step 1 in every program, as the first segment of checkpoints and a Python simulation do (D[front-end-divergence]). |
 | Structures of one block that are built with the same parameters, one after the other, share their storage. The later build becomes a refresh of what the earlier one left. | The step that returns the energy and the steps that do not are different code with the same neighbors. |
 
 Two structures share storage only if the first is no longer used where the
