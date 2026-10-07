@@ -70,6 +70,11 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- A typed Python restraint keeps its force constant in kJ/mol/nm² exactly
+  (D[restraint-md-units], #100). Before, it passed through the control
+  file's kcal/mol/Å², and a constant not computed from a control-file value
+  could change by one rounding. Runs from a control file are unchanged.
+
 - Under a plain cutoff (`lennard_jones_modifier = "NONE"`, a Coulomb
   cutoff, or the direct sum of PME without `coulomb_modifier`), the
   free-energy file (`dHdl.<name>`, `dU.<k>`) and the observables file

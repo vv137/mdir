@@ -80,12 +80,12 @@ selected particle with mass, constants of restraints that select the same
 particle add, and a barostat moves the references as D124 says. The
 selection, the sum, the reference scaling, and the evaluation are those of
 the control file: `compile` turns the list into the control's restraints and
-prepares them by the same code. The constant is converted to the control
-file's unit and back by that code; the conversion takes the value in
-kcal/mol/Å² that gives the constant back exactly where one exists, which is
-always so for a constant computed from a control-file value as the CLI
-computes it ($k \cdot 4.184 / 0.1^2$), and otherwise keeps it to within one
-rounding.
+prepares them by the same code. The control's restraints hold their
+constants in kJ/mol/nm², into which the CLI converts the file's value once
+as it reads it ($k \cdot 4.184 / 0.1^2$), so the typed constant is that of
+the prepared system exactly, and one computed from a control-file value as
+the CLI computes it gives the CLI's constant bit for bit
+(D[restraint-md-units]).
 
 `System.restraint_reference` is the reference $\mathbf r$, the positions of
 the file of coordinates in the control file: `(N, 3)` float64 in nm, in
