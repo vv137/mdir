@@ -71,7 +71,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Changed
 
 - A typed Python restraint keeps its force constant in kJ/mol/nm² exactly
-  (D[restraint-md-units], #100). Before, it passed through the control
+  (D216, #100). Before, it passed through the control
   file's kcal/mol/Å², and a constant not computed from a control-file value
   could change by one rounding. Runs from a control file are unchanged.
 

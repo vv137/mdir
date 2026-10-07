@@ -85,7 +85,7 @@ constants in kJ/mol/nm², into which the CLI converts the file's value once
 as it reads it ($k \cdot 4.184 / 0.1^2$), so the typed constant is that of
 the prepared system exactly, and one computed from a control-file value as
 the CLI computes it gives the CLI's constant bit for bit
-(D[restraint-md-units]).
+(D216).
 
 `System.restraint_reference` is the reference $\mathbf r$, the positions of
 the file of coordinates in the control file: `(N, 3)` float64 in nm, in
