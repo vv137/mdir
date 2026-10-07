@@ -167,10 +167,23 @@ with a stated bound, not a library flag:
    with $P$ of degree 9 fitted by least squares, weighted by
    $1/(\operatorname{erfc}(x)e^{x^2})$, to $\operatorname{erfc}(x)\,e^{x^2}$
    on $[0, 6]$ (`scripts/fit-erfc.py`) and evaluated by Horner's rule with
-   fused multiply–adds. Its largest relative error on that interval is
-   $1.3\times10^{-8}$ with $P$ in f64 and $3.2\times 10^{-7}$ with $P$ in
-   f32 (`test/Integration/erfc-approximation.mlir` checks
-   $5\times10^{-7}$); beyond $x = 6$,
+   fused multiply–adds, $P(t) = \sum_{k=0}^{9} p_k t^k$ with
+
+   | $k$ | $p_k$ | $k$ | $p_k$ |
+   |---|---|---|---|
+   | 0 | $-5.844017783662725\times10^{-5}$ | 5 | $0.21878733123987557$ |
+   | 1 | $0.28321992286605291$ | 6 | $-0.021014074929707336$ |
+   | 2 | $0.27292130542277271$ | 7 | $-0.25983392190712945$ |
+   | 3 | $0.28757948962599933$ | 8 | $0.18656882080781992$ |
+   | 4 | $0.072615343657635112$ | 9 | $-0.04078578921930151$ |
+
+   (`kErfcPolynomial` in `lib/Dialect/MDExec/Transforms/Approximate.cpp`,
+   the output of the script to the last digit). Its largest relative error
+   on that interval is $1.3\times10^{-8}$ with $P$ in f64 and
+   $3.2\times 10^{-7}$ with $P$ in f32
+   (`test/Integration/erfc-approximation.mlir` checks $5\times10^{-7}$),
+   and $4.8\times10^{-6}$ when the argument of the exponential is rounded
+   to f32 as well, as in a kernel; beyond $x = 6$,
    $\operatorname{erfc}(x) < 2.2\times 10^{-17}$. The exponential is the
    one the derivative computes anyway,
    $\frac{d}{dx}\operatorname{erfc}(x) = -\tfrac{2}{\sqrt\pi} e^{-x^2}$:
