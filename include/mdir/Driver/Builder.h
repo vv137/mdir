@@ -158,8 +158,10 @@ struct Program {
   double orderWidth = 0.0;
 
   /// A program of segments (Control::segments, D196): its
-  /// entry takes the counts of its loops after the step that the run begins
-  /// after. `segmentPeriod` is the period of coupling that an iteration of
+  /// entry runs every part of a simulation in one activation
+  /// (D[resident-buffers]); a loop over parts begins each iteration with
+  /// `mdrtPartBoundary`, which hands the host the state where it is and
+  /// takes the step and the counts of the loops of the next part. `segmentPeriod` is the period of coupling that an iteration of
   /// its outer loop takes, or 0 if the outer loop is over single steps;
   /// `closingSteps` are the steps of a period after its plain steps.
   int64_t segmentPeriod = 0;

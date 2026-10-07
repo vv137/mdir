@@ -165,6 +165,19 @@ format, or the outputs; every such change is listed under **Changed** or
   in double, with less CPU time; results are unchanged to the bit in the
   deterministic mode (D211, #147).
 
+- A Python `Simulation` runs every part in one activation of its entry,
+  whose buffers, order of the particles, and neighbor structures stay
+  where the program keeps them, on the device, from part to part; the host
+  copies the state only for `state()`, callbacks, and updates of tunables.
+  A run in parts now equals the same steps in one part to the bit in the
+  deterministic mode (energies, energy files, and trajectories included);
+  before, each part put the particles in order and built its neighbor
+  structures anew, and a run in parts agreed with one run only within that
+  rounding, so its numbers change in the last bits. A part that fails still
+  keeps the state of the last part that succeeded, from a copy on the
+  device. A live simulation now holds its memory between runs. Short parts
+  are faster: a part of 10 steps of JAC takes 2.75 ms instead of 10.3 on a GPU in mixed precision, and of one step 0.309 ms instead of 8.77; long runs are unchanged (D[resident-buffers], #135).
+
 ### Added
 
 - `examples/ala3/run.py`: the four stages of the ala3 example (minimization,

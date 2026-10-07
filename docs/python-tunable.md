@@ -142,10 +142,12 @@ of the rule, the constants of pair terms, the parameters of tuple terms,
 and the classes and values of the tails, `driver::recollectPairTails`),
 and runs `driver::buildProgram` on the copy with the compiled program's
 neighbor width. The new program's text must equal the compiled one's; its
-values replace the old, and the next call of the entry builds its buffers
-from them as every call does (D196). Everything else in the update is a
-check: the cost is that of building the program's text and values, about
-10 ms on the host for JAC (23,558 atoms).
+values replace the old. The activation of the entry that holds the old
+values in its buffers ends, after the state is copied from it, and the
+next part begins another from the state of the host, which uploads the new
+values (D[resident-buffers], [python-segments.md](python-segments.md#resident-buffers)).
+Everything else in the update is a check: the cost is that of building the
+program's text and values, about 10 ms on the host for JAC (23,558 atoms).
 
 ## Updates
 
@@ -169,7 +171,11 @@ check: the cost is that of building the program's text and values, about
   the state at the new values; with leapfrog, whose velocities are half a
   step behind, it is `None`. An update before the first run evaluates
   nothing: the first call does. If the evaluation fails, the update is
-  undone. Neighbor structures are built anew at every part anyway.
+  undone. The evaluation begins a new activation of the entry
+  (D[resident-buffers]): the particles are put in order and the neighbor
+  structures built at the state of the update, as a simulation compiled
+  with the new values from that state does, and the parts after the update
+  continue that activation.
 - `run(0, energy=True)` makes the same evaluation without an update
   ([python-segments.md](python-segments.md#evaluations-without-a-step)):
   the energies of the state at the current values, for scans and finite
