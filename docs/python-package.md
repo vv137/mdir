@@ -1,74 +1,209 @@
 # The Python package (D[python-package])
 
-Status: design under review in the pull request that closes
-[#133](https://github.com/vv137/mdir/issues/133), the last item of M2a
-([python-m2.md](python-m2.md), Sections 1, 4 and 6).
+The last item of M2a ([python-m2.md](python-m2.md), Sections 1, 4 and 6;
+[#133](https://github.com/vv137/mdir/issues/133)). The Python interface of
+D192 is the package `mdir`, built as a pip wheel for CPython 3.10–3.13 on
+manylinux_2_28 (x86-64) on the packaging baseline of the release tarball
+(D177). A wheel installs into a clean virtual environment and runs on the
+CPU, and on an NVIDIA GPU with only the driver, without the source tree,
+the build tree, or a CUDA toolkit. The maintainer decided the open choices
+in [PR #190](https://github.com/vv137/mdir/pull/190) as recommended.
 
-The Python interface of D192 is an extension module built with
-`-DMDIR_ENABLE_PYTHON=ON` and found through `PYTHONPATH=<build>/python`.
-This item makes it a pip wheel for CPython 3.10–3.13 on manylinux_2_28
-(x86-64), built on the packaging baseline of D177, that installs into a
-clean virtual environment and runs on the CPU and on an NVIDIA GPU without
-the source tree, the build tree, or a CUDA toolkit.
+## 1. Installing
 
-## 1. Layout
+```sh
+python -m venv mdir-env
+mdir-env/bin/pip install "mdir-0.1.0-cp312-cp312-manylinux_2_28_x86_64.whl[cuda]"
+mdir-env/bin/python -c "import mdir; print(mdir.__version__)"
+```
+
+The wheel depends on NumPy 1.23 or later. The extra `cuda` adds NVIDIA's
+cuFFT wheel (`nvidia-cufft`, the cuFFT of CUDA 13), which GPU runs need;
+CPU-only installs leave it out. The `mdir` command is not in the wheel: it
+comes with the release tarball and the container (D177, D174), which carry
+their own copy of the same version.
+
+## 2. Layout
 
 ```
 site-packages/
-  mdir/
-    __init__.py                        # re-exports the extension
-    _core.cpython-3XY-x86_64-linux-gnu.so
-    lib/libmdrt.so, libmdrt_cuda.so, libomp.so
-    cuda/nvvm/libdevice/libdevice.10.bc, cuda/EULA.txt, cuda/version.txt
-    licenses/                          # MDIR, HDF5
-  mdir.libs/                           # HDF5 and zlib, renamed by auditwheel
-  mdir-X.Y.Z.dist-info/
+  mdir/__init__.py                     the names of the extension, as mdir.X
+  mdir/_core.cpython-3XY-x86_64-linux-gnu.so
+  mdir/lib/libmdrt.so, libmdrt_cuda.so, libomp.so
+  mdir/cuda/nvvm/libdevice/libdevice.10.bc, mdir/cuda/EULA.txt, version.txt
+  mdir/licenses/LICENSE, HDF5-COPYING
+  mdir.libs/libhdf5-<hash>.so.310.5.1  grafted and renamed by auditwheel
+  nvidia/cu13/lib/libcufft.so.12       NVIDIA's wheel, with the extra cuda
 ```
 
-The extension's module becomes `mdir._core`; `mdir/__init__.py` imports
-its names into `mdir` and sets their `__module__` to `mdir`, so `import
-mdir`, `mdir.InputError`, and the rest are unchanged. The build tree has
-the same layout (`<build>/python/mdir/`), so `PYTHONPATH=<build>/python`
-still works.
+The extension module is `mdir._core`; `mdir/__init__.py` imports its names
+and sets the `__module__` of its classes and exceptions to `mdir`, so that
+`mdir.InputError` is the name in tracebacks. A build of the tree has the
+same layout in `<build>/python/mdir`, so `PYTHONPATH=<build>/python` imports
+the build as before.
 
-## 2. Runtime libraries
+## 3. Runtime libraries
 
-| Library | Where it comes from | Found by |
+| Library | Source | Found by |
 |---|---|---|
-| `libmdrt.so`, `libmdrt_cuda.so`, `libomp.so` | the wheel, `mdir/lib` | the extension, beside itself (dladdr), before the build tree |
-| HDF5, zlib | the wheel, `mdir.libs` (auditwheel), names made unique so that h5py's HDF5 in the same process does not collide | RPATH of the extension |
-| libdevice | the wheel, `mdir/cuda` (464 KB), redistributable under Attachment A of the CUDA EULA, carried beside it as in D177 | without `CUDA_ROOT`, `CUDA_HOME`, `CUDA_PATH`, the extension's `cuda` directory |
-| cuFFT (`libcufft.so.12`) | to decide (Section 6) | |
-| `libcuda.so.1` | the NVIDIA driver of the system | the loader, only when a GPU program loads |
+| `libmdrt.so`, `libmdrt_cuda.so`, `libomp.so` | the wheel, `mdir/lib` | the extension: `MDIR_RUNTIME_DIR`, else `lib` beside the extension (dladdr), else `lib` beside a directory above it (a build tree, an installed prefix), else the build's |
+| HDF5 | the wheel, `mdir.libs`, renamed by auditwheel so that another HDF5 in the process (h5py's) is not taken for it | the extension's RPATH |
+| libdevice | the wheel, `mdir/cuda`, 464 KB | without `CUDA_ROOT`, `CUDA_HOME`, `CUDA_PATH`: `cuda` beside the extension, else `../share/mdir/cuda` of an installed tree, else the toolkit of the build |
+| cuFFT (`libcufft.so.12`) | NVIDIA's `nvidia-cufft` wheel (extra `cuda`) | `libmdrt_cuda.so`'s RPATH, `$ORIGIN/../../nvidia/cu13/lib`, else the system's search path (a CUDA toolkit on `LD_LIBRARY_PATH` or in the loader's cache) |
+| `libcuda.so.1` | the NVIDIA driver | the loader, when a GPU program is loaded |
+| ptxas | none | a CUDA toolkit's, if `CUDA_ROOT` or `PATH` names one (D214) |
 
-## 3. Version
+libdevice is redistributable under Attachment A of the CUDA EULA, which
+the wheel carries beside it, as the tarball does (D177). The wheel carries
+no other part of CUDA: cuFFT comes from NVIDIA's own wheel, which keeps
+each MDIR wheel at 78 MB (cuFFT alone is 287 MB, its wheel 214 MB, beyond
+PyPI's default limit of 100 MB per file) and is shared with other CUDA
+packages of the environment. Without it and without a toolkit's cuFFT, a
+GPU program fails to load with a `CompileError` that names the extra.
 
-`project(mdir VERSION ...)` in `CMakeLists.txt` stays the single source
-(D174). The wheel's version is read from it by scikit-build-core's regex
-provider, and the extension's `__version__` is compiled from it, as `mdir
-version` is.
+Without ptxas, the kernels are loaded as PTX, which the driver compiles
+(D214). The first load of a program on a machine then takes longer: 5–17 s
+more per stage of the ala3 tutorial, 15 s more for JAC NPT; the driver's
+cache (`~/.nv/ComputeCache`) makes later loads as fast as cubins. A CUDA
+13 toolkit's `bin` on `PATH` avoids it.
 
-## 4. Build
-
-`pyproject.toml` at the root of the repository, scikit-build-core as the
-build backend, `pybind11==3.0.1` (the version that CMake requires
-exactly) and NumPy (for the configuration check of D193) as build
-requirements, `numpy>=1.23` as the dependency. The wheel builds only the
-extension and the runtime, installs only the `python` component, and
-needs LLVM/MLIR 23.1.2, HDF5, and CUDA 13.0 as the tarball does.
-
-`packaging/Dockerfile.manylinux` gets a `wheels` target on the cached
-toolchain of the tarball (PyPA's manylinux_2_28 image, which has CPython
-3.10–3.13 and auditwheel) that builds one wheel per interpreter and
-repairs it with auditwheel to the manylinux_2_28 tag.
-
-## 5. CPU-only import
+## 4. A CPU-only machine
 
 `import mdir` loads no CUDA library: the extension does not link the
-driver, `libmdrt_cuda.so` is loaded only when a GPU program is loaded, and
-the architecture of a device is asked of NVML only when a GPU program is
-compiled.
+driver, `libmdrt_cuda.so` is loaded only with a GPU program, and NVML is
+asked for the architecture only when a GPU program is compiled.
+`python-package.test` checks that the import maps none of `libcuda`,
+`libcufft`, `libnvidia-ml`, or `libmdrt_cuda`; the wheel's validation
+checked it again after a CPU run, and in a container without GPUs a GPU
+program fails with a `CompileError` that names `libcuda.so.1`.
 
-## 6. Open choices
+## 5. Version
 
-To be decided in the pull request; recommendations in the PR description.
+`project(mdir VERSION ...)` in `CMakeLists.txt` is the one source (D174).
+scikit-build-core's regex provider reads the wheel's version from it, the
+extension's `__version__` is compiled from it, as `mdir version` is, and
+`scripts/release/prepare.sh` sets the ala3 example's `mdir[cuda]==X.Y.Z`
+with it. `python-package.test` checks that the five agree, and
+`check-wheel.sh` that a wheel's name and metadata carry it.
+
+## 6. Building
+
+`pyproject.toml` at the root of the repository: scikit-build-core 0.11
+builds the target `mdir_wheel` (the extension and the runtime) and
+installs the CMake component `python` into the wheel (`SKBUILD` selects the
+package's destinations in `python/CMakeLists.txt` and
+`runtime/CMakeLists.txt`). Build requirements: `scikit-build-core>=0.11,<0.12`,
+`pybind11==3.0.1` (the version that CMake requires exactly), and NumPy,
+for the configuration check of D193 (its C API is not used, so one wheel
+takes NumPy 1.23 to 2.x). The build needs LLVM/MLIR 23.1.2, HDF5, and a
+CUDA toolkit, named through CMake's variables:
+
+```sh
+pip wheel . --no-deps -w dist \
+  -C cmake.define.LLVM_DIR=<llvm>/lib/cmake/llvm \
+  -C cmake.define.MLIR_DIR=<llvm>/lib/cmake/mlir \
+  -C cmake.define.HDF5_ROOT=<hdf5> -C cmake.define.CUDAToolkit_ROOT=<cuda>
+```
+
+Release wheels come from the target `wheels` of
+`packaging/Dockerfile.manylinux`, on the toolchain of the tarball (PyPA's
+manylinux_2_28 image, GCC 14, LLVM/MLIR 23.1.2, HDF5 1.14.6, CUDA 13.0):
+one wheel per CPython 3.10–3.13 of the image, with libstdc++ and libgcc
+linked statically, repaired by auditwheel to `manylinux_2_28_x86_64`
+(`--exclude libcuda.so.1 --exclude libcufft.so.12`):
+
+```sh
+DOCKER_BUILDKIT=1 docker build -f packaging/Dockerfile.manylinux \
+  --build-arg MDIR_GIT_COMMIT=$(git rev-parse HEAD) \
+  --target wheels --output type=local,dest=dist .
+scripts/release/check-wheel.sh dist/*.whl
+```
+
+With the toolchain in Docker's cache the four wheels take about 35
+minutes, most of it auditwheel's repair of the 270 MB extension.
+`check-wheel.sh` checks the tag and the version, that no ELF file needs
+GLIBC newer than 2.28, that the extension and the runtime need no system
+libstdc++, that every needed library is in the wheel or allowed (the
+manylinux_2_28 list, the driver's libcuda, cuFFT), and that libdevice, the
+EULA, and the notices of MDIR and HDF5 are there.
+
+A CLI-only build is unchanged: with `MDIR_ENABLE_PYTHON` off it needs
+neither Python nor NumPy.
+
+## 7. The tutorial
+
+`examples/ala3/run.py` declares `mdir[cuda]==<version>` and NumPy in its
+PEP 723 header, for Python 3.10–3.13. Until the wheels are published,
+uv takes them from a directory or a release page:
+
+```sh
+uv run --find-links <wheels> examples/ala3/run.py --out ala3-python
+```
+
+The script reads its inputs beside itself, so a copy of `examples/ala3`
+runs anywhere; `python run.py` in an environment where the wheel is
+installed does the same, and so does `PYTHONPATH=<build>/python python
+run.py` with a build of the tree.
+
+## 8. Validation
+
+The four wheels of the Docker target, built at 3ebbb3a; host Ubuntu 22.04
+(glibc 2.35), RTX 3090; CPython 3.10.19, 3.11.14, 3.12.12, 3.13.12 in clean
+virtual environments made by uv, the wheel installed with `[cuda]` (NumPy
+2.2.6 to 2.5.3, `nvidia-cufft` 12.4.0.43), run from a copy of
+`examples/ala3` outside the trees, with `PYTHONPATH`, `CUDA_ROOT`,
+`CUDA_HOME`, `CUDA_PATH`, and `LD_LIBRARY_PATH` unset.
+
+| Check | Result |
+|---|---|
+| `check-wheel.sh` | ok for the four: GLIBC at most 2.28 (HDF5), 2.27 (extension); no GLIBCXX or CXXABI need; HDF5 in `mdir.libs` |
+| Import, each version | `mdir.__version__` = `importlib.metadata.version("mdir")` = 0.1.0; `mdir.InputError.__module__` = `mdir`; no CUDA library mapped after the import and after a CPU run of 10 steps |
+| Tutorial on the CPU, each version (8 threads, `--steps-scale 0.002`) | the energy files and the trajectory equal to the bit those of the build tree (`PYTHONPATH`, the same commit) |
+| Single point of ala3, the 3.12 wheel against the build tree | CPU double, CPU mixed, GPU double: energies and forces equal to the bit. GPU mixed: potential −52473.7247 against −52473.6758 kJ/mol (9.3e-7 of it), largest force difference 0.0011 kJ/mol/nm (0.17 between mixed and double); with `CUDA_ROOT` at the build's toolkit (CUDA 13.4) the wheel equals the build to the bit, so the difference is libdevice 13.0 against 13.4 |
+| Tutorial on the GPU, each version (`--steps-scale 0.01`), mixed; 3.12 double and deterministic | four stages complete; deterministic mixed repeated, equal to the bit |
+| Tutorial on the GPU at full length, 3.12 | 1 ns of production in 95.5 s; mean density 1.0011 g/cm³ over 100 reports |
+| NumPy 1.23.5 (the floor), 3.10 | single points on the CPU and the GPU in double equal to those with NumPy 2.5.3 |
+| AlmaLinux 8.10, glibc 2.28 (PyPA's image), no GPU, no toolkit, 3.12 | install, the import checks, the CPU tutorial; a GPU program fails with `CompileError: ... libcuda.so.1: cannot open shared object file` |
+| The same image with GPU 1 and the driver only | without `[cuda]`: `CompileError` for `libcufft.so.12`; with it, the GPU single point equals the host wheel's to the bit, and the tutorial runs |
+| CLI-only tree, `MDIR_ENABLE_PYTHON` off, Python interpreters set to a path that does not exist | configures and builds `mdir`; `mdir doctor --target=cpu` passes; no NumPy or pybind11 entry in the cache |
+
+### Performance
+
+`mdir run` of a build of the tree against the 3.12 wheel on GPU 0 (RTX
+3090, 300 W cap, idle, under its lock), mixed precision, the same settings
+in a control file and in Python: the suite's β and grid, 8 Å cutoff, lists
+to 10 Å, SHAKE and SETTLE, velocity Verlet; NPT with stochastic velocity
+and cell rescaling every 25 steps; `MDIR_COMPILE_CACHE=off`. ms/step is
+that of the second half of the run, as `mdir run` reports it. One run per
+cell.
+
+| System | Steps | `mdir run` ms/step | Wheel ms/step | Build tree's Python ms/step |
+|---|---|---|---|---|
+| JAC NVE | 20,000 | 0.259 | 0.2594 | — |
+| JAC NPT | 20,000 | 0.276 | 0.2756 | 0.2754 |
+| Factor IX NVE | 10,000 | 0.870 | 0.8676 | 0.8677 |
+| Cellulose NVE | 4,000 | 4.056 | 4.0506 | 4.0581 |
+| STMV NPT 4 fs | 2,000 | 13.581 | 13.6144 | 13.5867 |
+
+The wheel runs at the rate of `mdir run` on every system measured.
+
+Compile time, from the model to a simulation ready to run (`mdir.compile`
+and `Simulation`), in s:
+
+| System | Wheel, first load (PTX compiled by the driver) | Wheel, again (the driver's cache) or with ptxas | Build tree's Python | `mdir run` "compiled in" |
+|---|---|---|---|---|
+| JAC NVE | 22.3 | 14.1 | — | 5.3 |
+| JAC NPT | 39.9 | 25.4 | 29.8 | 10.6 |
+| Factor IX NVE | 24.4 | 24.1 | 24.1 | 5.3 |
+| Cellulose NVE | 42.9 | 37.9 | 36.2 | 4.5 |
+| STMV NPT 4 fs | 174.3 | 186.6 | 173.0 | 12.4 |
+
+Beyond the first load of a program's PTX, the wheel compiles as the build
+tree's Python does. Python's compile is longer than `mdir run`'s "compiled
+in", which leaves out the reading and the preparation of the inputs: over
+whole processes of 200 steps, `mdir run` took 24.6 s on Cellulose and 97.8
+s on STMV, the wheel 46.9 s and 182.7 s. Most of the difference is
+`mdir.compile`, which lowers the program only to fill `Program.lowered_ir`
+(16.8 s of the 38.9 s on Cellulose);
+[PR #179](https://github.com/vv137/mdir/pull/179) defers that lowering to
+the first read of the IR. The package does not change it.

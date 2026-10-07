@@ -35,6 +35,9 @@ D221 (#120) adds read-only topology views and mask selection
 ([python-topology.md](python-topology.md)).
 D223 (#132) writes and continues the checkpoint of
 `mdir run` from Python ([python-checkpoints.md](python-checkpoints.md)).
+D[python-package] (#133) makes the interface the package `mdir`, a pip
+wheel for Python 3.10–3.13 on manylinux_2_28 with the four-stage tutorial
+from the installed package ([python-package.md](python-package.md)).
 Later items remain prospective work.
 
 ## 1. Scope and acceptance
@@ -196,7 +199,7 @@ draft. Changes to Builder, Control and runtime should proceed sequentially.
 | 4 | `python-reporters` (future label): scheduling, C++ writers, Python callbacks, host snapshots | Nondividing/coincident periods, final remainder, callback errors, GIL behavior, file lifecycle, input order |
 | 5 | `python-checkpoints` (future label): shared in-memory provenance and cross-front-end continuation | Both checkpoint directions, stage changes, corruption rejection, tunable restoration and output continuation |
 | 6 | `D220` (#131, [python-dlpack.md](python-dlpack.md)): read-only leases, IDs and stream handoff; tracked writable borrows (#136) follow within M2 | Alias lifetime/completion, allocator reuse, dtype/order and version invalidation; read-only support alone does not close M2 |
-| 7 | `python-package` (future label): Python 3.10–3.13 manylinux_2_28 pip wheel, reference and four-stage tutorial | Import/run outside the source/build tree, runtime discovery, CPU-only operation, suite and performance report; conda is deferred |
+| 7 | `D[python-package]` (#133): Python 3.10–3.13 manylinux_2_28 pip wheel, reference and four-stage tutorial | Import/run outside the source/build tree, runtime discovery, CPU-only operation, suite and performance report; conda is deferred |
 
 Use an optional pybind11 extension. The enabled Python interface requires
 NumPy >=1.23, checked at configuration with the selected interpreter and

@@ -133,11 +133,13 @@ block runs while a consumer holds them (D220); read-only views
 of the topology, with the constraints of a compiled program, and the masks
 of the control file evaluated from Python (D221); checkpoints
 shared with the CLI, which either front end continues
-(D223).
+(D223); the package `mdir` as a manylinux_2_28 pip wheel for Python
+3.10–3.13, which carries its runtime and libdevice, takes cuFFT from
+NVIDIA's wheel, and runs the four-stage tutorial from the installed
+package at the rate of `mdir run` (D[python-package]).
 Remaining:
-writable views of the buffers,
-NPT in a triclinic cell or with a coupling period of 1, and the manylinux_2_28 pip wheel for Python 3.10–3.13 that gates the
-milestone, with a four-stage tutorial.
+writable views of the buffers, and
+NPT in a triclinic cell or with a coupling period of 1.
 
 *M2b, differentiable simulation* (D195). The parameters of a potential
 fitted to ensemble averages by reweighting stored frames

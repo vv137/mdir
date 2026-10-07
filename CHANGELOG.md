@@ -16,6 +16,16 @@ format, or the outputs; every such change is listed under **Changed** or
   neighbor_capacity` of the control file (D227,
   #162): 0, the default, estimates it, and
   `Program.plan["neighbor_capacity"]` is the capacity that a compile took.
+- The Python interface as a pip wheel (D[python-package], #133): the
+  package `mdir` for CPython 3.10–3.13 on Linux x86-64 with glibc 2.28 or
+  later (manylinux_2_28), built by `pyproject.toml` (scikit-build-core) and
+  in release form by the target `wheels` of `packaging/Dockerfile.manylinux`.
+  It carries its runtime, libdevice, and HDF5; `pip install "mdir[cuda]"`
+  adds NVIDIA's cuFFT wheel for GPU runs, which then need only the NVIDIA
+  driver. `import mdir` initializes no CUDA. The `mdir` command stays in the
+  release tarball. The ala3 Python example declares `mdir[cuda]` of its
+  version and runs with `uv run --find-links <wheels>` from a copy of the
+  directory.
 
 - Checkpoints of Python simulations (D223, #132):
   `Simulation.save_checkpoint(path)` and `CheckpointReporter(file,
@@ -166,6 +176,13 @@ format, or the outputs; every such change is listed under **Changed** or
   of 8, at most 12.5% more room at first, so that it is the same for the
   starts of continued stages (D227). The capacity
   does not change the results; the Amber suite runs at the same rate.
+- The Python extension is the module `mdir._core` of the package `mdir`
+  (D[python-package]): a build puts `mdir/__init__.py` and the extension in
+  `<build>/python/mdir`, and `cmake --install` in `MDIR_PYTHON_INSTALL_DIR`,
+  which now names the package's directory (by default
+  `lib/pythonX.Y/site-packages/mdir`). `import mdir` and every name under
+  it are unchanged; `PYTHONPATH=<build>/python` still imports the build. A
+  cache that set `MDIR_PYTHON_INSTALL_DIR` should append `/mdir`.
 - Setting `System.dispersion` in Python makes the correction for the
   dispersion explicit, as giving `dispersion_correction` in the control
   file (D222, #161): with a switch it is refused, and a
