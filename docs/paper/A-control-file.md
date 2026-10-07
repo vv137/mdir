@@ -40,6 +40,12 @@ table each, with the force constant in kJ/mol/nm² and the reference
 positions of the compiled state unless given; drawn velocities are those of
 `mdir run` for the same `[ensemble] temperature` and `[dynamics] seed`.
 
+Topology views of the Python model (D[python-topology],
+[contract](../python-topology.md)) add no control keys. `Topology.select`
+evaluates a mask of Amber by the parser of `selection` in
+`[[restraints]]` and `[[energy.external]]` and of `couple` in
+`[free_energy]`, and returns the particles from 0.
+
 A run is described by a control file in TOML. `mdir check FILE` reads it
 and reports the system, planned run, outputs, and warnings (A.5);
 `mdir run FILE` compiles and runs it, and

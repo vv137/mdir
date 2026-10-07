@@ -81,7 +81,9 @@ reader. A quadruple with a torsion of several terms (a dihedral type of two
 terms in CHARMM or GROMACS, the repeated entries of an Amber `prmtop`) has a
 row for each term; `np.unique(top.dihedrals, axis=0)` gives the quadruples.
 Amber's `prmtop` lists the H–H "bond" of a three-site water among its
-bonds, and so does the view.
+bonds, and so does the view. The bonds, angles, and torsions of an Amber
+extra point carry no energy and are dropped, as sander drops them;
+`virtual_sites` gives each extra point with its owner first.
 
 ### Constraints after preparation
 
@@ -156,5 +158,13 @@ D200). Neither is in this item until the maintainer decides.
 - dtypes, shapes, read-only flags, fresh copies, and views that do not change
   when the system, the loaded data, or a recompiled program changes.
 
-The values of the Amber, GROMACS, and CHARMM inputs were also compared with
-ParmEd 4.3.1 once, outside the suite; the pull request lists the numbers.
+The views were also compared once, outside the suite, with ParmEd 4.3.1
+(`parmed.load_file`, `GromacsTopologyFile`, `CharmmPsfFile`, and
+`AmberMask`) on the dipeptide, the four-site OPC water box, the ethanol of
+the free-energy tests, the GROMACS propane and water, and the CHARMM toy
+system: names, charges and masses (to the bit), atomic numbers, residues,
+bonds, angles, torsions, impropers, and the extra points with their owners
+are equal, and ten masks select the same particles in each. ParmEd keeps
+the 387 bonds of the OPC extra points, which MDIR drops as sander does;
+without them the 1182 bonds are equal. ParmEd refuses `!*`, which MDIR's
+parser takes as the empty selection.

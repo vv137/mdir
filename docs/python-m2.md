@@ -31,6 +31,8 @@ D[python-dlpack] (#131) exposes the buffers of a
 simulation, the particle IDs, and the values of tunables as read-only DLPack
 views with leases and stream handoff ([python-dlpack.md](python-dlpack.md));
 writable views (#136) remain.
+D[python-topology] (#120) adds read-only topology views and mask selection
+([python-topology.md](python-topology.md)).
 Later items remain prospective work.
 
 ## 1. Scope and acceptance

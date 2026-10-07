@@ -42,6 +42,18 @@ format, or the outputs; every such change is listed under **Changed** or
   the consumer's stream waits for the simulation's work, and the next part
   waits for the consumer's. No control-file key changes.
 
+- Read-only topology views of the Python model (D[python-topology], #120):
+  `LoadedData.topology`, `System.topology`, and `Program.topology` return an
+  `mdir.Topology`, a copy of the atoms (`atom_names`, `atomic_numbers`,
+  `masses`, `charges`, `particle_types`, `type_names`, `residue_indices`),
+  residues (`residue_names`, one per residue, and `residue_starts`), bonded
+  tuples (`bonds`, `angles`, `dihedrals` with `improper_dihedrals`,
+  `harmonic_impropers`), and `virtual_sites`, as read-only NumPy arrays and
+  lists; a compiled program's view also gives the bonds that SHAKE holds
+  (`constraints`) and the waters that SETTLE holds (`rigid_waters`).
+  `Topology.select(mask)` returns the particles of a mask of Amber by the
+  parser of the control file, an `InputError` with its diagnostic for a mask
+  that does not parse. No control-file key changes.
 - `mdir.InitialState.from_state(state, velocities=True)` makes the initial
   state of a new stage from the `State` that a simulation reached: copies of
   its positions, cell, and velocities, or without the velocities when asked,
