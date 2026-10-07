@@ -1,7 +1,10 @@
 name: decisions
 
-# On main, every decision carries a number and no number is given twice.
-# Branches write labels, D[<label>], until they are merged (CONTRIBUTING.md).
+# On main, no number is given twice, and a decision without its number yet
+# has its row in docs/decisions.md. Branches write labels, D[<label>], and
+# the merger numbers them after the merge (docs/workflow.md), so a push of
+# a merge carries labels until the commit that numbers them; a tag runs the
+# strict check (release-check.yml).
 on:
   push:
     branches: [main]
@@ -11,4 +14,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: scripts/decision-number.sh check
+      - run: scripts/decision-number.sh check --pending

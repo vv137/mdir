@@ -6,7 +6,9 @@
 #   scripts/decision-number.sh assign <label>   # D[<label>] -> next free Dnnn
 #   scripts/decision-number.sh check            # no labels, no number twice
 #
-# on the merged tree. `assign` rewrites every tracked file and leaves the
+# on the merged tree. Between a merge and its number, `check --pending`
+# (run on every push to main) accepts a label that has its row in
+# docs/decisions.md; a tag runs the strict `check`. `assign` rewrites every tracked file and leaves the
 # change for the merger to commit.
 set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
@@ -28,12 +30,30 @@ next_number() {
 }
 
 check() {
-  local status=0 files duplicates
+  local pending=${1:-} status=0 files labels label duplicates rowless=()
   files=$(git grep -lE "$label_pattern" -- . ':!scripts/decision-number.sh' || true)
-  if [[ -n "$files" ]]; then
+  if [[ -n "$files" && -z "$pending" ]]; then
     echo "decision labels without a number:" >&2
     git grep -nE "$label_pattern" -- . ':!scripts/decision-number.sh' >&2
     status=1
+  elif [[ -n "$files" ]]; then
+    # A merged decision waits for its number; its label needs a row.
+    labels=$(git grep -hoE "$label_pattern" -- . ':!scripts/decision-number.sh' |
+      grep -oE 'D\[[a-z0-9-]+\]' | sort -u)
+    for label in $labels; do
+      if grep -qF "| $label |" "$decisions"; then
+        echo "waiting for a number: $label"
+      else
+        rowless+=("$label")
+      fi
+    done
+    if (( ${#rowless[@]} )); then
+      echo "decision labels without a row in $decisions:" >&2
+      for label in "${rowless[@]}"; do
+        git grep -nF "$label" -- . ':!scripts/decision-number.sh' >&2
+      done
+      status=1
+    fi
   fi
   duplicates=$(grep -oE '^\| D[0-9]+[a-z]? ' "$decisions" | sort | uniq -d)
   if [[ -n "$duplicates" ]]; then
@@ -57,10 +77,14 @@ case "${1:-}" in
     echo "$files" | sed 's/^/  /'
     ;;
   check)
-    check && echo "decision numbers: ok"
+    case "${2:-}" in
+      '') check && echo "decision numbers: ok" ;;
+      --pending) check pending && echo "decision numbers: ok" ;;
+      *) echo "usage: $0 check [--pending]" >&2; exit 2 ;;
+    esac
     ;;
   *)
-    echo "usage: $0 assign <label> | check" >&2
+    echo "usage: $0 assign <label> | check [--pending]" >&2
     exit 2
     ;;
 esac

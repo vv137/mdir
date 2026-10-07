@@ -129,10 +129,13 @@ number would go: in the row it adds at the end of the table in
 [decisions.md](decisions.md), in comments, in the documents, and in the
 paper. Several decisions of one branch take several labels. At merge time
 the coordinator runs `scripts/decision-number.sh assign <label>`, which
-gives the next free number. `scripts/decision-number.sh check` runs on
-every push to `main` and refuses a label left without a number or a number
-given twice. Numbers therefore follow the order of the merges, and no
-number is lost to abandoned work.
+gives the next free number. `scripts/decision-number.sh check --pending`
+runs on every push to `main`: it refuses a number given twice and a label
+without its row in decisions.md, and lists the labels still waiting for
+their numbers, since a merge reaches `main` before the commit that numbers
+it. A tag runs the strict `scripts/decision-number.sh check`, which also
+refuses any label left without a number. Numbers therefore follow the
+order of the merges, and no number is lost to abandoned work.
 
 ## Validation
 
