@@ -38,7 +38,8 @@ echo "wrote $out"
 # README says how the rows of M and Gr in the results are put together.
 if [ "${OCTREE:-0}" = 1 ]; then
   flags="-O3 -arch=$arch -std=c++17 -DFAST_ERFC -diag-suppress 1650 -Xcompiler -Wno-unused-result"
-  for program in octree groups build; do "$nvcc" $flags -o "$work/$program" "$here/$program.cu"; done
+  for program in octree groups; do "$nvcc" $flags -o "$work/$program" "$here/$program.cu"; done
+  "$nvcc" $flags -DGRID_POSITIONS -DSORTED_PARTNERS -DRELATIVE -o "$work/build" "$here/build.cu"
   "$nvcc" $flags -DCUTOFF=10.122f -DLJ_ONLY -o "$work/groups-argon" "$here/groups.cu"
   python3 "$here/prep.py" "$bench/cellulose_nve/system.parm7" "$bench/cellulose_nve/system.rst7" "$work/cellulose.bin"
   "$work/octree" gen "$work/liquid0.bin" lattice 100 362.46 0.2 1

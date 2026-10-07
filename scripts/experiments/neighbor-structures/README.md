@@ -192,7 +192,7 @@ the forces of the pairs it finds, each pair twice, with no atomic addition.
 | **T** | The tree of the paper. A region octree over the periodic cell; nodes with the bounds of their region, a pointer to the parent and one to the first child; leaves with a block of `MC` indices of atoms. A thread per atom, in the order of an array of indices sorted along a Morton curve, climbs from its leaf to the smallest ancestor whose region contains the query box of half-width $r_c$ (no skin), descends, pruning the nodes that the box does not meet, and sums the forces in registers. After the positions move, the atoms that left their leaf are moved (the *update*) |
 | **G** | The same without a tree: the atoms are sorted into a uniform grid of cells (a counting sort on the device), and a thread or a warp per atom reads the runs of cells within the cutoff, as `search.cu` does for a build, and computes the forces |
 | **M** | The loop over the neighbor matrix (`groups.cu`, 16 lanes a particle), and its build (`search.cu`, a warp a particle with the excluded pairs, cells of half the reach) divided by the steps between builds |
-| **Gr** | The loop over groups of 16 (`groups.cu`, compact order, the best of the units of 64, 128, and 256 entries), and their build (`ORDER=gpu build`: the order, the positions and cells, the boxes, and the lists; its scan and its order by key are not timed) divided by the steps between builds |
+| **Gr** | The loop over groups of 16 (`groups.cu`, compact order, the best of the units of 64, 128, and 256 entries), and their build (`ORDER=gpu build`, compiled with `-DGRID_POSITIONS -DSORTED_PARTNERS -DRELATIVE`: the order, the positions and cells, the boxes, and the lists; its scan and its order by key are not timed) divided by the steps between builds |
 
 All kernels are `f32` with the pair kernel of `groups.cu` and `-DFAST_ERFC`
 (Lennard-Jones from the type tables and the direct sum of PME; plain
@@ -271,16 +271,16 @@ of a thread and a warp an atom.
 | M: a step | 157 | 2885 | 1226 | 402 |
 | M: entries an atom | 298 | 315 | 121 | 4.9 |
 | **Gr**: loop | 70 | 1094 | 1139 | 201 |
-| Gr: build | 206 | 2497 | 2548 | 3562 |
-| Gr: build over the steps between builds | 47 | 624 | 44 | 62 |
-| Gr: a step | 116 | 1718 | 1183 | 263 |
+| Gr: build | 138 | 1568 | 2401 | 3732 |
+| Gr: build over the steps between builds | 31 | 392 | 42 | 65 |
+| Gr: a step | 101 | 1486 | 1181 | 266 |
 | Gr: slots an atom (each pair once) | 355 | 365 | 194 | 33 |
 | With the excluded pairs: T, search and forces (input order) | 1118 | 9267 | | |
 | With the excluded pairs: G, search and forces | 253 | 2449 | | |
 
 In MDIR itself, Cellulose with groups at 9 Å takes 1041 µs of loop and 405 µs
-of builds a step (Table 4.1 of the paper; not measured here): the build of
-`build.cu` as it stands is slower than the build of MDIR.
+of builds a step (Table 4.1 of the paper; not measured here), against 1094
+and 392 for Gr here.
 
 The leaf level of T (search and forces, µs; pruning with the box / with the
 sphere; atoms in the order of the input, then in Morton order; the last
@@ -417,15 +417,15 @@ and a start a group.
 1. **The search is exact** under periodic boundaries, with leaves over
    their capacity, and after partial updates of the tree, with the handling
    of the boundary and of the overflow that the prototype adds.
-2. **A step of T takes 4.3 to 10.5 times a step of Gr and 2.6 to 6.9 times
-   a step of M** (JAC 853 against 116 and 157 µs; Cellulose 7404 against
-   1718 and 2885; liquid 7611 against 1183 and 1226; the density of the
-   paper 2774 against 263 and 402), without the excluded pairs.
+2. **A step of T takes 5.0 to 10.4 times a step of Gr and 2.6 to 6.9 times
+   a step of M** (JAC 853 against 101 and 157 µs; Cellulose 7404 against
+   1486 and 2885; liquid 7611 against 1181 and 1226; the density of the
+   paper 2774 against 266 and 402), without the excluded pairs.
 3. **Without the tree the same idea is 3.2 to 6.8 times faster**: G takes
    266, 2062, 1632, and 405 µs a step. A candidate of T costs more than one
    of G: its index is loaded from the block and its position from the array
    of the atoms, where G reads positions in a row (the kernels were not
-   profiled). A step of G is 2.3 times a step of Gr on JAC, 1.2 on
+   profiled). A step of G is 2.6 times a step of Gr on JAC, 1.4 on
    Cellulose, 1.4 on the liquid, and 1.5 at the density of the paper, and
    0.7 of a step of M on Cellulose with the build of `search.cu`.
 4. **The update and the sort are small**: 18 to 141 µs and 81 to 446 µs
