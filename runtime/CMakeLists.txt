@@ -103,9 +103,15 @@ if(SKBUILD)
     set_target_properties(mdrt_cuda PROPERTIES
       INSTALL_RPATH "$ORIGIN;$ORIGIN/../../nvidia/cu13/lib")
     install(TARGETS mdrt_cuda LIBRARY DESTINATION mdir/lib COMPONENT python)
-    install(FILES "${CUDAToolkit_LIBRARY_ROOT}/nvvm/libdevice/libdevice.10.bc"
+    # The root of the toolkit: CMake before 3.27 may leave
+    # CUDAToolkit_LIBRARY_ROOT empty; nvcc's bin is then beside nvvm.
+    set(cuda_root "${CUDAToolkit_LIBRARY_ROOT}")
+    if(NOT cuda_root)
+      get_filename_component(cuda_root "${CUDAToolkit_BIN_DIR}" DIRECTORY)
+    endif()
+    install(FILES "${cuda_root}/nvvm/libdevice/libdevice.10.bc"
       DESTINATION mdir/cuda/nvvm/libdevice COMPONENT python)
-    install(FILES "${CUDAToolkit_LIBRARY_ROOT}/EULA.txt"
+    install(FILES "${cuda_root}/EULA.txt"
       DESTINATION mdir/cuda COMPONENT python)
     file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/version.txt"
       "CUDA Version ${CUDAToolkit_VERSION}\n")

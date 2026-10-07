@@ -41,4 +41,10 @@ install(TARGETS mdir_python LIBRARY DESTINATION ${MDIR_PYTHON_INSTALL_DIR}
   COMPONENT python)
 install(FILES mdir/__init__.py DESTINATION ${MDIR_PYTHON_INSTALL_DIR}
   COMPONENT python)
+# What a wheel builds (pyproject.toml): the extension and the runtime.
+add_custom_target(mdir_wheel)
+add_dependencies(mdir_wheel mdir_python mdrt)
+if(TARGET mdrt_cuda)
+  add_dependencies(mdir_wheel mdrt_cuda)
+endif()
 set(MDIR_PYTHON_EXECUTABLE "${Python_EXECUTABLE}" PARENT_SCOPE)
