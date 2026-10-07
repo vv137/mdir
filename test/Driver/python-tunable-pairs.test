@@ -1,5 +1,5 @@
 # REQUIRES: python-api
-# The Lennard-Jones table tunable by pairs of types (D[python-tunable-pairs],
+# The Lennard-Jones table tunable by pairs of types (D226,
 # #160): an update during a run that breaks the combining rule equals, to the
 # bit, a compile with the new values; on the CPU in double precision the change
 # of the energy against a NumPy sum over the table, pair and per-type tunables

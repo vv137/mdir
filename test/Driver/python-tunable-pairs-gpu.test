@@ -1,5 +1,5 @@
 # REQUIRES: python-api, cuda
-# The Lennard-Jones table tunable by pairs of types (D[python-tunable-pairs],
+# The Lennard-Jones table tunable by pairs of types (D226,
 # #160): an update during a run that breaks the combining rule equals, to the
 # bit, a compile with the new values.
 # RUN: %mdir_python %S/Inputs/python_tunable.py %S/Inputs/dipeptide pairs GPU Double | FileCheck %s

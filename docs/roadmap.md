@@ -251,7 +251,7 @@ clears it and bypasses it per compile from Python. D213 (#130,
 ε, constants of pair terms, and parameters of tuple terms tunable, whose
 values a simulation takes without compiling; the quantities derived from
 them are rebuilt by the code that compiles them, so an update equals a
-compile with the new values to the bit; D[python-tunable-pairs] (#160)
+compile with the new values to the bit; D226 (#160)
 adds the table of the Lennard-Jones by pairs of types. D222 (#161,
 [dispersion](python-model.md#the-correction-for-the-dispersion)) gives
 Python pair terms their own `dispersion`, so a term can leave the
@@ -337,7 +337,7 @@ at stored frames, with a derivative rule in $\theta$.
 
 | Item | Design |
 |---|---|
-| Tunable parameters | Done in M2a (D213, [python-tunable.md](python-tunable.md)): charges, per-type Lennard-Jones and its table by pairs of types (D[python-tunable-pairs]), constants of pair terms, and parameters of tuple terms are runtime values, a flat collection of named vectors with maps from their sites, so a new $\theta$ needs no compilation; the derived quantities are rebuilt on the host. M2b adds their derivatives: the evaluator's IR computes the per-site derived quantities and the sums over particles from $\theta$, and the tails of pair terms stay host quadratures with Richardson derivatives (D209) |
+| Tunable parameters | Done in M2a (D213, [python-tunable.md](python-tunable.md)): charges, per-type Lennard-Jones and its table by pairs of types (D226), constants of pair terms, and parameters of tuple terms are runtime values, a flat collection of named vectors with maps from their sites, so a new $\theta$ needs no compilation; the derived quantities are rebuilt on the host. M2b adds their derivatives: the evaluator's IR computes the per-site derived quantities and the sums over particles from $\theta$, and the tails of pair terms stay host quadratures with Richardson derivatives (D209) |
 | Frame evaluator | $U_\theta$, virial, and observables at $K$ stored frames, on the device, with the vector-Jacobian product $g \mapsto \sum_i g_i\,\partial U/\partial\theta(S_i)$ from the differentiation of parameters (D161); evaluated as a multi-point evaluation of the potential (#87) |
 | Adapters | PyTorch first (`torch.autograd.Function`), then JAX (`jax.custom_vjp` over `jax.ffi`), one framework-neutral contract with DLPack buffers (maintainer, 2026-10-05) |
 | Reweighting | In the framework, with the effective sample size $\exp(-\sum_i w_i\ln w_i)$ deciding when to sample again; an example fits the radial distribution function and the density of water |

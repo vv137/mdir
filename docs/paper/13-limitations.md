@@ -125,7 +125,7 @@ times are arguments of the compiled program, so that the energy file and
 the trajectory of `mdir run` are written inside a part (D207);
 tunable parameters, whose new values a simulation takes without compiling,
 an update equal to a compile with them to the bit (D213), the table of the
-Lennard-Jones among them by pairs of types (D[python-tunable-pairs]); parts that
+Lennard-Jones among them by pairs of types (D226); parts that
 continue one activation of the entry, whose buffers stay on the device, so
 that a run in parts is the run in one part to the bit
 (D215); read-only DLPack views of those buffers, whose leases

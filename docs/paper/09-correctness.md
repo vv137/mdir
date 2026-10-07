@@ -364,7 +364,7 @@ under per-type $\sigma$ and $\epsilon$, an update equals a compile with the
 rule's table but for that pair to the bit, and its change of the energy a
 NumPy sum of the Lennard-Jones to $1.5\times10^{-11}$ kJ/mol of 508.5
 (`python-tunable-nbfix*.test`). With the table tunable by pairs of types
-(D[python-tunable-pairs]), an update that sets a pair off the rule and
+(D226), an update that sets a pair off the rule and
 gives Lennard-Jones to a pair without it equals a compile with the new
 values to the bit on the CPU and a GPU, double and mixed; its change of the
 energy equals a NumPy sum over the table to $3.0\times10^{-12}$ kJ/mol of

@@ -25,7 +25,7 @@ format, or the outputs; every such change is listed under **Changed** or
   plan hashes, and tunables are additional entries with a hash of their
   own, which earlier readers ignore; `mdir checkpoint` prints them.
 
-- Tunable Lennard-Jones by pairs of types (D[python-tunable-pairs], #160):
+- Tunable Lennard-Jones by pairs of types (D226, #160):
   `mdir.Tunable(name, "sigma_pair")` and `"epsilon_pair"` tune the table of
   the pairs of types, so that a pair the combining rule does not give (an
   NBFIX) or a force field without a rule can change. The sites are the

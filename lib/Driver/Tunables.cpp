@@ -1,4 +1,4 @@
-// Tunable parameters of a model (D213, D[python-tunable-pairs],
+// Tunable parameters of a model (D213, D226,
 // docs/python-tunable.md): their declarations resolved against a prepared
 // model, and their values put into it, from which the builder computes the
 // values of the program and every quantity derived from them.

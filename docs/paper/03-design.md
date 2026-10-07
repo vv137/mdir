@@ -613,7 +613,7 @@ $\boldsymbol\theta$. The pairs three bonds apart take $fq_iq_js_C$; the
 table of the types takes $\sigma_{ab} = (\sigma_a + \sigma_b)/2$ and
 $\epsilon_{ab} = \sqrt{\epsilon_a\epsilon_b}$ from the types' own, but for
 pairs that the model sets apart from the rule (NBFIX), which keep theirs.
-The table itself may be tunable by pairs of types (D[python-tunable-pairs]):
+The table itself may be tunable by pairs of types (D226):
 its sites are the unordered pairs $(a, b)$, $a\le b$, so that
 $\sigma_{ab} = \sigma_{ba} = \theta_{\iota(s(a,b))}$ with one entry per pair,
 set after the rule for the pairs that $\iota$ takes. Since $U$ depends on

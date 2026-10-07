@@ -4,7 +4,7 @@ Issue #130, the M2a gate that D192 left open and the base of M2b
 (differentiable simulation, [roadmap](roadmap.md), Section 6.1; D195).
 Status: implemented; the questions put to the maintainer on PR #159 are
 marked below. The table of the Lennard-Jones by pairs of types
-(D[python-tunable-pairs], #160) is a follow-up, in
+(D226, #160) is a follow-up, in
 [its own section](#the-table-by-pairs-of-types).
 
 Before this item every change of a parameter of a Python model meant a new
@@ -107,7 +107,7 @@ or the rule at reading, CHARMM from its 1-4 parameters).
 
 ### The table by pairs of types
 
-D[python-tunable-pairs], issue #160. A fit that must change a pair that
+D226, issue #160. A fit that must change a pair that
 the combining rule does not give (an NBFIX), or a force field without a
 combining rule, tunes the table itself: `mdir.Tunable(name, "sigma_pair")`
 and `mdir.Tunable(name, "epsilon_pair")`. Their sites are the unordered
