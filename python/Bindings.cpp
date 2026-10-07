@@ -40,6 +40,7 @@ template <class T> static T unwrap(llvm::Expected<T> value) {
 #include "HostArrays.h"
 #include "Tunables.h"
 #include "DLPack.h"
+#include "Topology.h"
 
 struct Version { uint64_t version = 0; virtual ~Version() = default; };
 template <class T> struct Input : Version { T value; std::optional<size_t> particleCount; };
@@ -200,6 +201,8 @@ PYBIND11_MODULE(mdir, m) {
                   [](driver::TupleTerm &t, py::sequence value) { host::parameters(t, value); });
   // Tunable parameters (D213).
   tunables::bindTunable(m);
+  // Read-only topology views (D[python-topology]).
+  topology::bind(m);
   // Restraints (D74, D124; D198).
   py::enum_<driver::ReferenceScaling>(m, "ReferenceScaling")
     .value("Center", driver::ReferenceScaling::Center)
@@ -353,9 +356,15 @@ PYBIND11_MODULE(mdir, m) {
   system.def_property_readonly("particle_count", [](const Input<model::System> &s) {
     return s.value.topology.masses.size();
   });
+  system.def_property_readonly("topology", [](const Input<model::System> &s) {
+    return topology::of(s.value.topology, false);
+  });
   py::class_<model::LoadedData>(m, "LoadedData")
     .def_property_readonly("format", [](const model::LoadedData &d) { return d.format; })
     .def_property_readonly("sources", [](const model::LoadedData &d) { return d.sources; })
+    .def_property_readonly("topology", [](const model::LoadedData &d) {
+      return topology::of(d.topology, false);
+    })
     .def("make_system", [](const model::LoadedData &d) {
       auto result = std::make_shared<Input<model::System>>(); result->value = d.makeSystem(); return result;
     })
@@ -381,6 +390,10 @@ PYBIND11_MODULE(mdir, m) {
     .def_property_readonly("lowered_ir", [](const Program &p) { return p.compiled.loweredIR; })
     .def_property_readonly("pipeline", [](const Program &p) { return p.compiled.pipeline; })
     .def_property_readonly("stale", &Program::stale)
+    // The topology as compiled, with its constraints resolved.
+    .def_property_readonly("topology", [](const Program &p) {
+      return topology::of(*p.prepared->system.topology, true);
+    })
     .def("check_current", &Program::checkCurrent)
     .def_property_readonly("plan", [](const Program &p) {
       py::dict d;

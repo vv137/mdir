@@ -267,6 +267,11 @@ of tunables as read-only DLPack views, without a copy: leases block runs
 and updates while a view or a tensor taken from it is alive, and the
 consumer's stream waits for the simulation's work. Checkpoints and
 writable views (#136) remain open.
+D[python-topology] (#120, [topology views](python-topology.md)) gives
+loaded data, systems, and programs a read-only view of their topology
+(atoms, residues, bonded tuples, and, after preparation, the constraints)
+and `Topology.select(mask)`, the particles of a mask of Amber by the parser
+of the control file, with `Topology.to_openmm()` for OpenMM's tools.
 M2 covers
 a documented classical subset and requires a manylinux_2_28 pip wheel for
 Python 3.10–3.13; conda follows later.
@@ -279,6 +284,7 @@ and Python, must produce the same IR and share one validation.
 | Item | Design |
 |---|---|
 | Loading | `mdir.load_amber`, `mdir.load_gromacs`: topology, parameters, positions, cell; nothing about the run. Later an import of an OpenMM `System` for the supported subset, which reuses its force fields and its builders |
+| Topology | `loaded.topology`, `system.topology`, `program.topology`: read-only copies of atoms, residues, bonded tuples, and the constraints of a compiled program; `select(mask)` by the control file's masks; `to_openmm()` (done, D[python-topology]) |
 | Physics apart from execution | `System` (terms, cutoff, PME, constraints, custom potentials as expressions with per-particle and global parameters); the integrator and the ensemble; `Execution` (target, device, precision) as typed objects, not strings |
 | An explicit compile | `mdir.compile(...)` returns an immutable program and its plan; changing the system afterwards marks it stale rather than being ignored. Parameters declared tunable are read from a buffer, so setting them does not recompile |
 | Runs and reporters | `sim.run(n)` runs segments to the next report of any reporter (OpenMM's protocol), with the writers of the driver in C++ and the GIL released; a stop is polled between segments |

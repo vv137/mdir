@@ -1,0 +1,14 @@
+# REQUIRES: python-api, openmm
+# Topology.to_openmm (D[python-topology]): elements, atom and residue names,
+# residues, bonds, and the cell of the OpenMM topology of a view against
+# AmberPrmtopFile and CharmmPsfFile on the same files; one chain for each
+# molecule of the prmtop; the bonds of SETTLE waters in a GROMACS topology.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: split-file %S/charmm.test %t/charmm
+# RUN: %mdir_python %S/Inputs/python_topology_openmm.py %S/Inputs %t/charmm openmm | FileCheck %s
+# CHECK: to_openmm dipeptide: 1168 atoms, 385 residues, 785 bonds, 383 chains equal AmberPrmtopFile's
+# CHECK: to_openmm opc: 1570 atoms, 390 residues, 1182 bonds, 388 chains equal AmberPrmtopFile's
+# CHECK: to_openmm fep: 1410 atoms, 468 residues, 942 bonds, 468 chains equal AmberPrmtopFile's
+# CHECK: to_openmm gromacs: 160 bonds with SETTLE equal those of FLEXIBLE, 64 chains
+# CHECK: to_openmm charmm: 9 atoms, 3 residues, 6 bonds, 3 chains equal CharmmPsfFile's
+# CHECK: to_openmm passed
