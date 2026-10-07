@@ -2384,6 +2384,11 @@ Error Reader::readMinimize(const toml::table &table) {
   control.minimize = true;
   if (Error error = readCount(table, "steps", control.numSteps, 0))
     return error;
+  // A minimization of no steps would write no energies and divide by a
+  // frame period of 0 (issue #180).
+  if (control.numSteps == 0)
+    return fail(*table.get("steps"),
+                "a minimization takes steps: 'steps' may not be 0");
   if (Error error = readPositive(table, "initial_step", control.minimizeStep))
     return error;
   // The largest force at which the minimization ends (D219).

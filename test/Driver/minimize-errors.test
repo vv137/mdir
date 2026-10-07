@@ -9,6 +9,7 @@
 # RUN: not mdir run %t/size.toml 2>&1 | FileCheck %s --check-prefix=SIZE
 # RUN: not mdir run %t/tolerance.toml 2>&1 | FileCheck %s --check-prefix=TOLERANCE
 # RUN: not mdir run %t/infinite.toml 2>&1 | FileCheck %s --check-prefix=INFINITE
+# RUN: not mdir run %t/zero.toml 2>&1 | FileCheck %s --check-prefix=ZERO
 
 # BOTH: both.toml:{{[0-9]+}}: expected [dynamics] or [minimize], not both
 # BATH: bath.toml:{{[0-9]+}}: a minimization has no thermostat or barostat
@@ -18,6 +19,7 @@
 # SIZE: size.toml:{{[0-9]+}}: expected a positive number for 'initial_step'
 # TOLERANCE: tolerance.toml:{{[0-9]+}}: expected a positive number for 'force_tolerance'
 # INFINITE: infinite.toml:{{[0-9]+}}: expected a finite number for 'force_tolerance'
+# ZERO: zero.toml:{{[0-9]+}}: a minimization takes steps: 'steps' may not be 0
 
 #--- one.pdb
 HETATM    1  AR  AR  A   1       1.000   1.000   1.000  1.00  0.00          AR
@@ -167,6 +169,24 @@ epsilon = 0.2
 [minimize]
 steps  = 10
 force_tolerance = inf
+[boundary]
+type = "PERIODIC"
+box = [30.0, 30.0, 30.0]
+#--- zero.toml
+[input]
+coordinates = "one.pdb"
+[energy]
+cutoff     = 9.0
+[[energy.pair]]
+expression = "epsilon/r"
+[[energy.type]]
+name = "AR"
+mass = 39.95
+epsilon = 0.2
+[minimize]
+steps  = 0
+[output]
+trajectory = "a.dcd"
 [boundary]
 type = "PERIODIC"
 box = [30.0, 30.0, 30.0]
