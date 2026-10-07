@@ -727,6 +727,10 @@ struct Coupled {
   /// `groups`, and the kinetic energy `kinetic` in `%trotter_memory`.
   void emitStoreTrotterState(StringRef indent, StringRef trace,
                              StringRef groups, StringRef kinetic);
+  /// The stores of emitStoreTrotterState so far, which number their values.
+  /// It counts per build, so that the text of a program depends only on
+  /// its inputs, not on what the process built before (#152).
+  unsigned trotterStores = 0;
 
   /// The arguments that pass the fields of the parameters on: their
   /// declarations, their values, and their types, each after a comma.
@@ -7159,8 +7163,7 @@ std::string Builder::emitKineticWithoutCenter(StringRef indent,
 
 void Builder::emitStoreTrotterState(StringRef indent, StringRef diagonal,
                                     StringRef groups, StringRef kinetic) {
-  static unsigned stores = 0;
-  std::string t = std::to_string(stores++);
+  std::string t = std::to_string(trotterStores++);
   StringRef vectors[] = {diagonal, groups, kinetic};
   std::string values[9];
   for (int v = 0; v != 3; ++v)

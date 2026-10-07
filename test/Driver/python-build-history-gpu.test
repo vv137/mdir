@@ -1,0 +1,5 @@
+# REQUIRES: python-api, cuda
+# python-build-history.test for a GPU program, whose lowered text embeds
+# the serialized GPU modules (#152, D214).
+# RUN: %mdir_python %S/Inputs/python_build_history.py %S/Inputs/dipeptide GPU | FileCheck %s
+# CHECK: program independent of build history passed

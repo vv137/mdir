@@ -1,0 +1,6 @@
+# REQUIRES: python-api
+# The text of a program, and of its lowering, does not depend on what the
+# process built before (#152): a model of a barostat of Trotter type that
+# scales every step, built before and after another model in one process.
+# RUN: %mdir_python %S/Inputs/python_build_history.py %S/Inputs/dipeptide CPU | FileCheck %s
+# CHECK: program independent of build history passed
