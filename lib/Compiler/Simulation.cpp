@@ -944,14 +944,18 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
   bool begins = !activation;
   if (begins) {
     size_t count = system.getNumParticles();
-    if (p.takesForces && hasRun && forces.size() != 3 * count)
+    if (p.takesForces && hasRun && forces.size() != 3 * count) {
+      out.fail = nullptr;
       return simulationError("the segment takes forces, but has none; this "
                              "is a defect of mdir");
+    }
     // 2: the forces of the state given anew, after an update of the
     // tunables (D213).
     int64_t firstCall = hasRun ? (refreshing ? 2 : 0) : 1;
-    if (llvm::Error error = startActivation(firstCall))
+    if (llvm::Error error = startActivation(firstCall)) {
+      out.fail = nullptr;
       return error;
+    }
   }
   Activation &a = *activation;
   if (out.endStep > step && a.atBoundary) {

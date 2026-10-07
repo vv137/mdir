@@ -1084,17 +1084,29 @@ void mdrtDeviceActivationEnter(void *activation) {
 
 void mdrtDeviceActivationLeave(void) { currentActivation = NULL; }
 
+/* Whether the driver has shut down, as it may have when a simulation ends
+   after the program's own end (mgpuModuleUnload): the memory of the device
+   is then gone with it. */
+static int isDriverGone(void) {
+  if (!context)
+    return 1;
+  CUresult result = cuCtxSetCurrent(context);
+  return result == CUDA_ERROR_DEINITIALIZED ||
+         result == CUDA_ERROR_INVALID_CONTEXT ||
+         result == CUDA_ERROR_CONTEXT_IS_DESTROYED;
+}
+
 void mdrtDeviceActivationClose(void *activation) {
   struct Activation *a = activation;
   if (!a)
     return;
   if (currentActivation == a)
     currentActivation = NULL;
+  int gone = isDriverGone();
   /* No work of the activation may still use a block that is reused or
      freed. */
-  if (context)
-    enter();
-  finish();
+  if (!gone)
+    finish();
   for (int i = numLive; i-- != 0;) {
     if (liveBlocks[i].owner != a)
       continue;
@@ -1103,10 +1115,10 @@ void mdrtDeviceActivationClose(void *activation) {
     block.owner = NULL;
     if (numFree < MAX_BLOCKS)
       freeBlocks[numFree++] = block;
-    else
+    else if (!gone)
       check(cuMemFree(block.pointer), "cuMemFree");
   }
-  for (size_t i = 0; i != a->numManaged; ++i)
+  for (size_t i = 0; i != a->numManaged && !gone; ++i)
     check(cuMemFree(a->managed[i]), "cuMemFree");
   for (size_t i = 0; i != a->numHandles; ++i)
     free(a->handles[i]);
@@ -1128,9 +1140,8 @@ void *mdrtDeviceAllocateKept(uint64_t size) {
 }
 
 void mdrtDeviceFreeKept(void *pointer) {
-  if (!pointer)
+  if (!pointer || isDriverGone())
     return;
-  enter();
   finish();
   check(cuMemFree((CUdeviceptr)pointer), "cuMemFree");
 }
