@@ -366,6 +366,10 @@ format, or the outputs; every such change is listed under **Changed** or
   shifted Lennard-Jones derivative is checked against OpenMM within
   1e-5 kcal/mol, replacing the widened 1e-3 tolerance
   (D180, #48).
+- A run whose particles come from a PDB file now reports the warnings of
+  its control file (`unused_parameter` and `constant_expression`, D158) in
+  `mdir check`, `mdir check --json`, and `mdir run`, as a run from a
+  topology does; they were dropped before (#129).
 
 ## [0.1.0] - 2026-10-04
 

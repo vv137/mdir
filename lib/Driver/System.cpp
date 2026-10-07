@@ -107,6 +107,16 @@ static double getLargestScreenedRadius(const Topology &topology) {
   return largest;
 }
 
+/// An empty system that carries what reading the control file found: its
+/// warnings (D158), such as a parameter that the expression of a term does
+/// not use. Every system, from a topology or a PDB file, starts here, so
+/// that no reader drops them (#129).
+static System startSystem(const Control &control) {
+  System system;
+  system.warnings = control.warnings;
+  return system;
+}
+
 /// The warnings of the thermostat (D158), for a system from a topology or
 /// a PDB file.
 static void addThermostatWarnings(const Control &control,
@@ -225,8 +235,7 @@ llvm::Expected<System> mdir::driver::prepareTopologySystem(
   if (llvm::Error error = validateTopology(*topology))
     return std::move(error);
 
-  System system;
-  system.warnings = control.warnings;
+  System system = startSystem(control);
   // A step longer than 1 fs moves hydrogens too far unless their bonds are
   // constrained (D158).
   if (!control.minimize && control.timestep > 0.00101 &&
@@ -1049,7 +1058,7 @@ llvm::Expected<System> mdir::driver::readSystem(const Control &control) {
     return llvm::createStringError(file.getError(), "cannot read '%s'",
                                    control.pdbFile.c_str());
 
-  System system;
+  System system = startSystem(control);
   for (int i = 0; i != 3; ++i)
     system.box[i] = control.box[i] * units::length;
 

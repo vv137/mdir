@@ -1,0 +1,78 @@
+# The warnings of the control file reach a run from a PDB file as they reach
+# one from a topology (warning-rules.test): `mdir check`, `mdir check --json`,
+# and `mdir run` report a parameter that the expression of a term does not
+# use and an expression that uses none of its coordinates, once each (#129).
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: sed -n '/^#--- four.pdb/,/^#--- end/p' %s | sed '1d;$d' > %t/four.pdb
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: cd %t && mdir check run.toml 2>&1 | FileCheck %s
+# RUN: cd %t && mdir check run.toml --json | FileCheck %s --check-prefix=JSON
+# RUN: cd %t && mdir run run.toml 2>&1 | FileCheck %s --check-prefix=RAN
+
+# The control file collects its warnings in the order of its terms.
+#
+# CHECK:     mdir: warning: the parameter 'c' of the term 'soft' is not in its expression
+# CHECK-NOT: is not in its expression
+# CHECK-NOT: it adds an energy and no force
+# CHECK:     mdir: warning: the expression of the term 'offset' uses none of r; it adds an energy and no force
+# CHECK-NOT: is not in its expression
+# CHECK-NOT: it adds an energy and no force
+# CHECK:     particles: 4
+# JSON-DAG: "code": "unused_parameter"
+# JSON-DAG: "code": "constant_expression"
+# RAN:     mdir: warning: the parameter 'c' of the term 'soft' is not in its expression
+# RAN-NOT: is not in its expression
+# RAN-NOT: it adds an energy and no force
+# RAN:     mdir: warning: the expression of the term 'offset' uses none of r; it adds an energy and no force
+# RAN-NOT: is not in its expression
+# RAN-NOT: it adds an energy and no force
+# RAN:     MDIR: ran in
+
+#--- four.pdb
+ATOM      1  AR  AR      1       0.000   0.000   0.000
+ATOM      2  AR  AR      2       3.800   0.000   0.000
+ATOM      3  AR  AR      3       0.000   3.800   0.000
+ATOM      4  AR  AR      4       0.000   0.000   3.800
+END
+#--- end
+#--- run.toml
+[input]
+coordinates = "four.pdb"
+[output]
+energy_interval = 1
+[energy]
+cutoff            = 8.0
+pairlist_distance = 9.0
+[[energy.pair]]
+name       = "lj"
+expression = "4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+mixing     = "lorentz-berthelot"
+[[energy.pair]]
+name       = "soft"
+expression = "k*exp(-r)"
+k = 1.0
+c = 2.0
+[[energy.pair]]
+name       = "offset"
+expression = "k"
+k = 1.0
+[[energy.type]]
+name    = "AR"
+mass    = 39.95
+epsilon = 0.238465
+sigma   = 3.4
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.002
+steps      = 2
+[ensemble]
+ensemble    = "NVE"
+temperature = 0.0
+[boundary]
+type = "PERIODIC"
+box  = [20.0, 20.0, 20.0]
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- end
