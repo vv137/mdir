@@ -16,6 +16,14 @@ static llvm::Error unsupported(const llvm::Twine &s) {
 static llvm::Error typed(llvm::Error e) {
   return input(llvm::toString(std::move(e)));
 }
+/// A message of the builder about the tail of a pair term, in the words of
+/// the Python model (D[python-dispersion]).
+static std::string pythonWords(std::string message) {
+  static const std::string key = "give 'dispersion_correction = \"NONE\"' in the term";
+  for (size_t at = message.find(key); at != std::string::npos; at = message.find(key, at))
+    message.replace(at, key.size(), "set PairTerm.dispersion to DispersionCorrection.None_");
+  return message;
+}
 
 System LoadedData::makeSystem() const {
   System s;
@@ -200,6 +208,13 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   // unless it is asked for (D[python-dispersion]).
   driver::DispersionCorrection dispersion =
       s.periodic || s.dispersionGiven ? s.dispersion : driver::DispersionCorrection::None;
+  // With a switch the default correction is off, with a warning: the
+  // switch takes part of the potential below the cutoff, which the
+  // correction would leave out (D210, D[python-dispersion]).
+  bool switched = !s.dispersionGiven && dispersion != driver::DispersionCorrection::None &&
+                  s.truncation != driver::Truncation::None &&
+                  s.truncation != driver::Truncation::Shift;
+  if (switched) dispersion = driver::DispersionCorrection::None;
   if (!s.periodic && (s.electrostatics == Electrostatics::PME || ensemble.kind == EnsembleKind::NPT ||
                      dispersion != driver::DispersionCorrection::None))
     return input("PME, pressure coupling and dispersion correction require periodic boundaries");
@@ -339,9 +354,17 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
     topology.box[k] = cell.diagonal[k]; topology.tilt[k] = cell.tilt[k];
   }
   auto prepared = driver::prepareTopologySystem(c, std::move(topology), s.format != Format::Gromacs);
-  if (!prepared) return typed(prepared.takeError());
+  if (!prepared) return input(pythonWords(llvm::toString(prepared.takeError())));
+  for (auto &[code, message] : prepared->warnings)
+    if (code == "pair_tail_left_out") message = pythonWords(std::move(message));
   // The reference of the restraints, as the CLI takes the positions of its
   // coordinates file; the cell it scales from is that of the state.
+  if (switched)
+    prepared->warnings.push_back(
+        {"dispersion_switched",
+         "the switch of the truncation turns the correction for the dispersion off; it "
+         "takes a plain cutoff or the shift (Truncation.None_ or Truncation.Shift). Set "
+         "System.dispersion to DispersionCorrection.None_ to say so"});
   prepared->referencePositions =
       s.restraintReference.empty() ? prepared->positions : s.restraintReference;
   // The tunable parameters, whose initial values the prepared model takes

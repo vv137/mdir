@@ -10,6 +10,6 @@
 # CHECK: GPU Double shift: the term's virial beyond the cutoff
 # CHECK: GPU Mixed shift: the term's pressure beyond the cutoff
 # CHECK: diverges: refused when asked for
-# CHECK: no cell, switch: as the control file
+# CHECK: no cell, switch: as the control file; by default a switch turns the correction off with a warning
 # CHECK: tunable exponent: taken by a term left out
 # CHECK: python dispersion passed

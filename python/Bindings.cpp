@@ -198,6 +198,8 @@ PYBIND11_MODULE(mdir, m) {
       if (!t.dispersionGiven) return py::none();
       return py::cast(t.dispersion);
     }, [](driver::PairTerm &t, py::object value) {
+      if (!value.is_none() && !py::isinstance<driver::DispersionCorrection>(value))
+        throw py::type_error("PairTerm.dispersion takes a DispersionCorrection or None");
       t.dispersionGiven = !value.is_none();
       t.dispersion = t.dispersionGiven ? value.cast<driver::DispersionCorrection>()
                                        : driver::DispersionCorrection::None;
@@ -249,6 +251,8 @@ PYBIND11_MODULE(mdir, m) {
   system.def_property("dispersion", [](const Input<model::System> &o) {
     return o.value.dispersion;
   }, [](Input<model::System> &o, py::object value) {
+    if (!value.is_none() && !py::isinstance<driver::DispersionCorrection>(value))
+      throw py::type_error("System.dispersion takes a DispersionCorrection or None");
     o.value.dispersionGiven = !value.is_none();
     o.value.dispersion = o.value.dispersionGiven
                              ? value.cast<driver::DispersionCorrection>()
@@ -464,7 +468,8 @@ PYBIND11_MODULE(mdir, m) {
     // warns of it, and so does compile.
     for (const auto &[code, message] : prepared.system.warnings)
       if ((code == "empty_selection" && llvm::StringRef(message).starts_with("the restraint of")) ||
-          code == "tunable_fixed_pairs" || code == "pair_tail_left_out")
+          code == "tunable_fixed_pairs" || code == "pair_tail_left_out" ||
+          code == "dispersion_switched")
         if (PyErr_WarnEx(PyExc_UserWarning, message.c_str(), 1) != 0)
           throw py::error_already_set();
     Program result;

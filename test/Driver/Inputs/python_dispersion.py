@@ -227,6 +227,7 @@ for case in ("explicit", "term"):
 default, plan, caught = python_run("Double", False, UNSET, UNSET, diverges)
 assert plan["pair_terms"] == {"r8": False} and len(caught) == 1, (plan, caught)
 assert "leaves out the pair term 'r8'" in caught[0], caught
+assert "set PairTerm.dispersion to DispersionCorrection.None_" in caught[0], caught
 optout, plan, caught = python_run("Double", False, UNSET, NONE, diverges)
 assert plan["pair_terms"] == {"r8": False} and not caught, (plan, caught)
 assert optout == default, (optout, default)
@@ -251,7 +252,35 @@ system, state = model(False, EP, UNSET, "-c8/r^8")
 system.truncation, system.switch_distance = mdir.Truncation.Switch, 1.0
 expect(mdir.InputError, lambda: mdir.compile(system, state, mdir.Integrator(), mdir.Ensemble(),
                                              mdir.Execution(), mdir.Schedule()), "plain cutoff")
-print("no cell, switch: as the control file")
+# With a switch the default correction is off, with the warning
+# dispersion_switched; the energies are those of the correction set off.
+switched = {}
+for correction in (UNSET, NONE):
+    system, state = model(False, correction, UNSET, "-c8/r^8")
+    system.truncation, system.switch_distance = mdir.Truncation.Switch, 1.0
+    execution = mdir.Execution()
+    execution.target = getattr(mdir.Target, target_name)
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        program = mdir.compile(system, state, mdir.Integrator(), mdir.Ensemble(), execution,
+                               mdir.Schedule())
+    messages = [str(w.message) for w in caught]
+    assert program.plan["dispersion"]["correction"] == NONE, program.plan
+    assert program.plan["dispersion"]["pair_terms"] == {"r8": False}, program.plan
+    assert len(messages) == (1 if correction is UNSET else 0), messages
+    assert all("switch" in m for m in messages), messages
+    simulation = mdir.Simulation(program)
+    simulation.run(0, energy=True)
+    switched[correction is UNSET] = simulation.state().energies
+assert switched[True] == switched[False], switched
+print("no cell, switch: as the control file; by default a switch turns the correction off "
+      "with a warning")
+# The words of the Python model, and a type error for a value of another
+# kind.
+expect(mdir.InputError, lambda: python_run("Double", False, EP, UNSET, diverges),
+       "set PairTerm.dispersion to DispersionCorrection.None_")
+expect(TypeError, lambda: setattr(mdir.System(), "dispersion", "NONE"))
+expect(TypeError, lambda: setattr(mdir.PairTerm(), "dispersion", 0))
 
 # A tunable exponent: at p = 3 the tail diverges. A term left out of the
 # correction takes it; one in it refuses an update that would leave it out.
