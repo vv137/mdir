@@ -2,10 +2,11 @@
 #121): the dipeptide in water with SHAKE and SETTLE, NVE from the velocities
 that both draw. Each case is a number of steps N, which a simulation takes in
 one part with a step of energy at its end, against `mdir run` of N steps with
-a row and a checkpoint at the end; or PxK, K parts of P steps each, against
-`mdir run` of P K steps with a row and a checkpoint every P steps. Prints
-whether the positions, the velocities, and the forces of the end are the same
-bit for bit.
+a row and a checkpoint at the end; or PxK, K parts of P steps each with a step
+of energy at the end of each, against `mdir run` of P K steps with a row every
+P steps and a checkpoint at the end (the parts of a simulation run in one
+activation, D215, and continue one run). Prints whether the positions, the
+velocities, and the forces of the end are the same bit for bit.
 
   python_deterministic_run.py ROOT TARGET MDIR WORK PRECISION ELECTROSTATICS CASE...
 """
@@ -59,7 +60,7 @@ seed = {SEED}
 [output]
 energy_interval = {part}
 checkpoint = "run.h5"
-checkpoint_interval = {part}
+checkpoint_interval = {steps}
 [ensemble]
 ensemble = "NVE"
 temperature = 300.0
@@ -82,8 +83,6 @@ deterministic = true
 
     simulation = mdir.Simulation(program)
     for _ in range(count):
-        # A run of at most 100 steps before the time of a step is known,
-        # and of about 0.5 s after it, is one call of the entry.
         simulation.run(part, energy=True)
     result = simulation.state()
     line = [f"{target_name} {precision} {electrostatics} {case}:"]

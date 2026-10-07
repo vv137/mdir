@@ -13,13 +13,15 @@
 # step of its first segment, so the programs rebuilt at other steps. The
 # evaluation at the start is now a segment of its own in every program
 # (D[front-end-divergence]). Cases: N steps in one part against N steps with
-# a checkpoint at the end, and 3 parts of 20 steps against a checkpoint every
-# 20 steps.
+# a checkpoint at the end; and 3 parts of 20 steps, and 5 of 7, against one
+# run with a row at the end of each part, since the parts of a simulation
+# continue one run in one activation (D215).
 # RUN: rm -rf %t && mkdir -p %t
-# RUN: env MDIR_COMPILE_CACHE_DIR=%t/cache %mdir_python %S/Inputs/python_deterministic_run.py %S/Inputs/dipeptide CPU mdir %t Double PME 1 19 20 21 50 20x3 | FileCheck %s
+# RUN: env MDIR_COMPILE_CACHE_DIR=%t/cache %mdir_python %S/Inputs/python_deterministic_run.py %S/Inputs/dipeptide CPU mdir %t Double PME 1 19 20 21 50 20x3 7x5 | FileCheck %s
 # CHECK: CPU Double PME 1: positions same velocities same forces same
 # CHECK-NEXT: CPU Double PME 19: positions same velocities same forces same
 # CHECK-NEXT: CPU Double PME 20: positions same velocities same forces same
 # CHECK-NEXT: CPU Double PME 21: positions same velocities same forces same
 # CHECK-NEXT: CPU Double PME 50: positions same velocities same forces same
 # CHECK-NEXT: CPU Double PME 20x3: positions same velocities same forces same
+# CHECK-NEXT: CPU Double PME 7x5: positions same velocities same forces same
