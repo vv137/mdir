@@ -487,6 +487,7 @@ PYBIND11_MODULE(mdir, m) {
       py::dict d;
       d["energy"] = m.energy; d["rms_force"] = m.rmsForce; d["max_force"] = m.maxForce;
       d["max_force_particle"] = m.maxForceParticle; d["step_size"] = m.stepSize;
+      d["converged"] = m.converged ? py::cast(*m.converged) : py::none();
       return d;
     })
     .def_property_readonly("cell", [](const compiler::SimulationState &s) {
@@ -717,11 +718,15 @@ PYBIND11_MODULE(mdir, m) {
       s.simulation->closeReports();
       s.reporters = py::list();
     })
-    .def("minimize", [](PySimulation &s, std::optional<int64_t> steps) {
+    .def("minimize", [](PySimulation &s, std::optional<int64_t> steps, py::object given) {
+      // The largest force at which it stops, in kJ/mol/nm (D[minimize-tolerance]).
+      std::optional<double> tolerance;
+      if (!given.is_none())
+        tolerance = units::scalar(given, "minimize: tolerance", units::force);
       return withSignals([&](const std::function<bool()> &poll) {
-        return s.simulation->minimize(steps, poll);
+        return s.simulation->minimize(steps, poll, tolerance);
       });
-    }, py::arg("steps") = py::none())
+    }, py::arg("steps") = py::none(), py::arg("tolerance") = py::none())
     .def("request_stop", [](PySimulation &s) { s.simulation->requestStop(); })
     .def("state", [](PySimulation &s) { return unwrap(s.simulation->getState()); })
     .def_property_readonly("step", [](const PySimulation &s) { return s.simulation->getStep(); })

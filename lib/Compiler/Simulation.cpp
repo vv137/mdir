@@ -515,6 +515,9 @@ Simulation::create(const model::PreparedModel &prepared, bool cache) {
   // and begins with the step of the control (D202).
   simulation->minimizationSteps = control.numSteps;
   simulation->minimizationSize = control.minimizeStep * units::length;
+  // A tolerance is checked every energy period of the program, at the
+  // steps where `mdir run` writes its rows (D[minimize-tolerance]).
+  simulation->minimizationCheckPeriod = control.energyPeriod;
   control.segments = true;
   control.energyPeriod = 0;
   control.framePeriod = 0;
@@ -1168,7 +1171,8 @@ int64_t Simulation::getPartSteps(int64_t unit) const {
 }
 
 llvm::Expected<int64_t> Simulation::minimize(std::optional<int64_t> count,
-                                             const std::function<bool()> &poll) {
+                                             const std::function<bool()> &poll,
+                                             std::optional<double> tolerance) {
   if (busy.exchange(true))
     return simulationError("another operation is under way on this "
                            "simulation");
@@ -1186,7 +1190,39 @@ llvm::Expected<int64_t> Simulation::minimize(std::optional<int64_t> count,
   int64_t total = count ? *count : minimizationSteps;
   if (total < 0)
     return inputError("minimize takes a nonnegative number of steps");
+  int64_t period = minimizationCheckPeriod;
+  if (tolerance && !(std::isfinite(*tolerance) && *tolerance > 0.0))
+    return inputError("minimize takes a positive, finite tolerance");
+  if (tolerance && period <= 0)
+    return inputError("a tolerance is checked every energy period of the "
+                      "program, whose Schedule.energy_period is 0");
   stopRequested = false;
+  // With a tolerance (D[minimize-tolerance]), the row at the
+  // end of each part is compared with it, as the host of `mdir run` compares
+  // each row of its log, and the parts end at the steps of those rows.
+  // An activation begins with a row at its first step, which a part of no
+  // step writes.
+  const Output::MinimizationRow &row = output->lastMinimization;
+  auto below = [&]() {
+    return row.step == step && row.maxForce < *tolerance;
+  };
+  if (tolerance) {
+    minimizationConverged = false;
+    minimizationCheckedStep = step;
+    if (!activation || row.step != step) {
+      auto engine = getEngine();
+      if (!engine)
+        return engine.takeError();
+      if (llvm::Error error = runPart(**engine, Part()))
+        return std::move(error);
+    }
+    if (below()) {
+      minimizationConverged = true;
+      return 0;
+    }
+  } else {
+    minimizationConverged.reset();
+  }
   // Parts as those of run: the program of the parts after the first takes
   // the positions and the length of the step that the last left.
   int64_t taken = 0;
@@ -1195,6 +1231,8 @@ llvm::Expected<int64_t> Simulation::minimize(std::optional<int64_t> count,
       break;
     Part part;
     part.outer = std::min(total - taken, getPartSteps(1));
+    if (tolerance)
+      part.outer = std::min(part.outer, (step / period + 1) * period - step);
     auto engine = getEngine();
     if (!engine)
       return engine.takeError();
@@ -1209,6 +1247,13 @@ llvm::Expected<int64_t> Simulation::minimize(std::optional<int64_t> count,
                          .count();
     if (steps >= 8 && seconds > 0.0)
       secondsPerStep = seconds / steps;
+    if (tolerance) {
+      minimizationCheckedStep = step;
+      if (below()) {
+        minimizationConverged = true;
+        break;
+      }
+    }
   }
   return taken;
 }
@@ -1345,7 +1390,10 @@ llvm::Expected<SimulationState> Simulation::getState() const {
   if (prepared.control.minimize && hasRun && least.step == step)
     state.minimization =
         SimulationMinimization{least.energy, least.rmsForce, least.maxForce,
-                               least.stepSize, least.maxForceParticle};
+                               least.stepSize, least.maxForceParticle,
+                               minimizationCheckedStep == step
+                                   ? minimizationConverged
+                                   : std::nullopt};
   state.tunablesVersion = tunablesVersion;
   const auto &row = output->lastEnergies;
   if (hasRun && !prepared.control.minimize && row.step == step)
