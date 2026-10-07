@@ -59,7 +59,7 @@ of the Python model. D213 first gave `System` read-only copies of some of
 them (`System.charges`, `particle_types`, `type_names`, `atom_names`,
 `residue_indices`, `residue_names`) and D226 `System.type_pairs`; the
 maintainer's decision on PR #183 (issue #184) removed them, before any
-release, in favor of `system.topology`, and placed `type_pairs` here with
+release, in favor of `system.topology`; `type_pairs` moved here with
 the other data of the types.
 
 ### Residues
