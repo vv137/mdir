@@ -169,22 +169,48 @@ reader of release 0.1.0 compares as well.
 
 `mdir checkpoint FILE` prints them when present.
 
-## Validation plan
+## Evidence
 
-- `mdir run` → Python and Python → `mdir run --continue`: a run of 20 steps
-  stopped at 10 against the run of 20, CPU and GPU, mixed and double, NVE,
-  NVT and NPT; bitwise where the deterministic mode orders both front ends
-  alike (cutoff electrostatics without constraints, D207), within the
-  tolerances of [python-segments.md](python-segments.md) otherwise (#121,
-  #125).
-- Python → Python: bitwise in the deterministic mode, with tunables
-  updated before the checkpoint.
-- Same run against a changed stage: topology, masses, restraints,
-  thermostat and barostat settings, tunables and their values, and the
-  fingerprint entries named in the refusal or the warning.
-- Reporters: energy rows and frames appended across a continuation, equal
-  to those of the uninterrupted run; `append=False` parts.
-- Corrupted files (a changed byte of the state, a truncated file, a missing
-  `fingerprint`) and the refusals of `mdir run` for the same files. A build
-  without HDF5 cannot be made on this machine's recipe; the typed error is
-  checked through a test hook of the bindings.
+`test/Driver/python-checkpoints-*.test` (`Inputs/python_checkpoints.py`)
+on the dipeptide in water (1168 particles), deterministic mode, on the CPU
+and on one RTX 3090, in double and mixed precision. Every comparison below
+is of the bits of the positions, velocities, and forces at step 20 (zero
+differing values in each of the eight combinations of target, precision,
+and direction):
+
+| Case | Reference | Result |
+|---|---|---|
+| `mdir run` stops at step 10, Python continues to 20 (NVE, NVT; NPT with PME, SHAKE and SETTLE) | `mdir run` of 20 steps | equal to the bit; energy file and DCD byte for byte; same fingerprint and bath |
+| Python writes step 10, `mdir run --continue` to 20 (same three) | a Python continuation of the same file, and `mdir run` of 20 steps | equal to the bit; files byte for byte |
+| Python with tunable charges updated at step 10, checkpoint at 15, continued | the same simulation going on after `save_checkpoint` | equal to the bit; values, version 1, history `[(0, 0), (10, 1)]`, energy rows with `tunables_version` |
+| Stages of other physics from step 10 (restraints added, 310 K, NPT, and leapfrog at 310 K) | `mdir run` from `[input] checkpoint` | equal to the bit |
+| A stage of the same physics | `mdir run` of 20 steps | equal to the bit |
+
+Before #121 was fixed (PR #173) the Python and CLI programs built their
+neighbor structures at different steps. With that difference, Python ->
+`mdir run` and the stages agreed within $2.2\times10^{-16}$ nm in double
+precision, and the continuation in each direction from one file was
+already exact. A simulation that ran on after `save_checkpoint` without
+starting a new activation differed from the continued file by
+$1.1\times10^{-16}$ nm. This is why the next part now begins from the
+state written.
+
+Refusals of the same run name each entry: `[[restraints]]` and "the
+reference of the restraints", `[ensemble] temperature`, `[ensemble]
+ensemble` and `[barostat] method`, `[energy] electrostatics`, and "the
+masses" and "the files of the topology" for a topology whose first mass was
+changed. Another integrator is refused in both modes. Another precision is
+a warning naming `[execution] precision`. `mdir run --continue` refuses a
+Python checkpoint with tunables (`[python] tunables`) and begins a stage
+from it.
+
+Corrupted files are refused by the bindings (with the pointer to `.prev`),
+by `read_checkpoint`, and by `mdir checkpoint` (exit status 2). The cases
+are a flipped bit in the positions (the state hash), a changed character
+of `model_sha256` (the hash of the additional entries), a truncated file,
+and a file that is not HDF5. The error without HDF5
+(`python-checkpoints-no-hdf5.test`) runs only in a build without HDF5,
+which the standard build does not make.
+
+The GPU scenarios take about 10 minutes together on one RTX 3090, most
+of it compiling the programs.
