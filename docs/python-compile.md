@@ -89,8 +89,10 @@ read-only `vectors` has shape $(3, 3)$ in the reduced lower-triangular
 convention. Assign an edited cell back to its state to commit the change.
 Every returned numeric array is an independent read-only NumPy copy.
 
-`PairTerm` retains `name`, `expression`, `constants` (name/value pairs) and
-`groups` (selection masks). `TupleTerm` has `name`, `expression`, `arity`,
+`PairTerm` retains `name`, `expression`, `constants` (name/value pairs),
+`groups` (selection masks), and `dispersion` (`None` to follow the
+system's correction for the dispersion, `DispersionCorrection.None_` to
+leave it; D[python-dispersion]). `TupleTerm` has `name`, `expression`, `arity`,
 `particles` (shape $(n, \mathrm{arity})$, zero-based int64 IDs), and
 `parameters` (ordered name/1-D float64 array pairs). Particle inputs accept
 native int32 or int64. Expressions use nm, radians and kJ/mol as in the
