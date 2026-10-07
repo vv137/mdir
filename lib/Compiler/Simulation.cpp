@@ -1061,6 +1061,11 @@ llvm::Expected<int64_t> Simulation::run(int64_t count,
   stopRequested = false;
   if (count == 0)
     return 0;
+  // The files of the checkpoint continue in the reporters of the first run
+  // only; a reporter added later begins its file (D[python-checkpoints]).
+  keepThrough.reset();
+  continuedTrajectory.clear();
+  continuedFrames = 0;
   int64_t period = compiled->program.segmentPeriod;
   int64_t closing = compiled->program.closingSteps;
   // The two steps that close a period of the barostat of Trotter type are
