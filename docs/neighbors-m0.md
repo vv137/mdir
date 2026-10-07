@@ -23,7 +23,7 @@ index[i][0 .. W)    their indices; entries from count[i] on are unused
 |---|---|
 | Directed | If `j` is in the row of `i`, then `i` is in the row of `j`. |
 | Complete | A row holds every particle within the reach. It may hold particles that are beyond the reach by less than the margin of Section 2.3; a loop over pairs tests the cutoff for every entry, so these contribute nothing. |
-| Order of a row | The order of the cells that the search visits, and within a cell the order of the indices. The order does not depend on the threads, on the device, or on the run. |
+| Order of a row | The order of the cells that the search visits, and within a cell the order of the indices. The order does not depend on the threads or on the run. The host and a device choose the width of the cells with different costs (Sections 2.2 and 2.5), so the cells that a search visits, and with them the order of a row, can differ between the two. |
 | Overflow | `W` is the width a row has at first. A build that finds a row too narrow has the runtime make the rows a quarter wider than needed, and builds again. |
 
 The order of a row decides the order in which a loop over pairs adds up
@@ -45,7 +45,12 @@ The build is a template in IR:
 `lib/Runtime/Templates/NeighborsMatrix.mlir` for the host and
 `lib/Runtime/Templates/NeighborsMatrixGPU.mlir` for a device. The compiler
 adds the template to the module, where it is lowered with the rest of the
-code. The two templates build the same matrix, entry by entry. Each has a
+code. The two templates find the same neighbors and differ in what a row
+holds: on a device the entries are places in the order of the cells
+(Section 1) and an excluded pair is entered as the particle itself
+(Section 2.5); on the host the entries are the indices of the particles,
+the template takes no excluded pairs, and the lowering removes them from
+the rows after the build and lowers the counts. Each has a
 build of its own for a triclinic cell, `_triclinic`, which bins the
 fractional coordinates (D123, D125).
 
@@ -56,14 +61,23 @@ fractional coordinates (D123, D125).
 | 3 | The offsets of the cells, from the counts | Three kernels: the sums of chunks of 256 cells, the offsets of the chunks in one thread, the offsets of the cells of each chunk |
 | 4 | The particles in the order of the cells | One thread per particle takes the next slot of its cell, with an atomic addition |
 | 5 | The particles of each cell in the order of their indices, and their positions in that order | One thread per cell: a sort by insertion, and a copy of the positions |
-| 6 | The search: for each particle, test the particles of the cells within reach and fill the row (Sections 2.3 to 2.5) | One thread per particle, or one per row of cells of a particle |
-| 7 | The largest count, and the counts limited to the width of a row | Two kernels: chunks of 256 particles, and one thread for the chunks |
+| 6 | The search: for each particle, test the particles of the cells within reach and fill the row (Sections 2.3 to 2.5) | A warp of 32 threads per particle (Section 2.5) |
+| 7 | The largest count, and the counts limited to the width of a row | In the kernel of the search: the first lane of a warp stores the limited count of its particle and raises the largest count with an atomic maximum, which does not depend on the order of the threads |
 
 Steps 2 to 4 are a counting sort. On the host it is sequential and keeps
 the order of the indices, so step 5 is only the copy.
 
 Step 3 was one thread on a device. With narrow cells there are as many
 cells as particles, and one thread took longer than the search.
+
+Step 7 was two kernels of its own on a device, sums over chunks of 256
+particles and one thread for the chunks; the search now gives the largest
+count itself.
+
+On a device, a position that is not a number, or whose largest coordinate
+is beyond $10^{100}$, gets no cell and no place in step 2 (D107): the
+search skips the place, the build counts such positions, and the caller
+stops the run on a count that is not 0.
 
 ### 2.2 Cells and their width
 
@@ -72,7 +86,12 @@ Along an edge of the length `L` there are `n = floor(L / w)` cells, of the
 width `L / n`, which is `w` or more. A search for the neighbors of a
 particle visits the cells within reach of the cell of the particle:
 `r = ceil(reach / (L / n))` cells on each side, or all cells, each once,
-where these are fewer.
+where these are fewer. `n` is at least 1 and at most 256 along each axis
+(#168, D225): a cell that is not a number, or one that a failed run has
+blown up, then gives a count that is defined and fits memory. With 256
+cells the cells are wider than `w`, which costs only time, since `r`
+follows from the count. The largest system of the Amber suite takes at
+most 77.
 
 | Width `w` | Cells visited | Volume visited, in cubes of the reach |
 |---|---|---|
@@ -83,18 +102,24 @@ where these are fewer.
 
 Narrow cells have fewer particles to test and more cells to visit. A
 search reads the cells of a row as one run (Section 2.4), so what counts
-is the number of rows. On the device that was measured, visiting a row
-costs as much as testing 12 particles.
+is the number of rows. On the host, visiting a row costs as much as
+testing 12 particles; a device counts in steps of a warp instead
+(Section 2.5).
 
 The build chooses the width when it runs, because the density is known
 only then:
 
 ```text
-for w in reach, reach / 2, reach / 3, each not below the least width:
-    cost(w) = 12 · rows visited + particles tested
+for w in reach, reach / 2, reach / 3, each raised to the least width:
     particles tested = N · cells visited / cells
-the width with the least cost is taken
+    host:    cost(w) = 12 · rows visited + particles tested
+    device:  cost(w) = rows visited · 1.5 + particles tested / 32
+the width with the least cost is taken; on a tie, the wider
 ```
+
+The widths of the table below are examples from the time of writing. The
+width that a build takes depends on the target, which has its own cost,
+and on the box, through the number of cells that fit along an edge.
 
 | System | Particles in a cube of the reach | Width |
 |---|---|---|
@@ -128,7 +153,9 @@ converted. A distance between two positions of the copy differs from the
 distance of the particles by rounding. The search therefore takes a pair
 that is within the reach plus a margin:
 
-$$\text{margin} = 3 \times 10^{-6}\,(L_x + L_y + L_z).$$
+$$\text{margin} = 3 \times 10^{-6}\,(L_x + L_y + L_z),$$
+
+and in a triclinic cell $3 \times 10^{-6}\,(a_x + b_y + c_z + \lvert b_x\rvert + \lvert c_x\rvert + \lvert c_y\rvert)$.
 
 | Source of the difference | Size |
 |---|---|
@@ -177,7 +204,7 @@ can report how wide the row must be.
 
 The excluded pairs are entered in the search: a neighbor that is an
 excluded pair of the particle is written as the particle itself, which
-the loops over pairs skip (Section 1). The excluded pairs of a particle
+the loops over pairs skip (a loop takes only entries that are not its own particle). The excluded pairs of a particle
 are few (the incidence structure of the relation `excluded`), and only
 the neighbors that the ballot keeps are looked up.
 
@@ -197,7 +224,8 @@ their results are in
 [scripts/experiments/neighbor-structures](../scripts/experiments/neighbor-structures/README.md).
 
 The width of the cells is chosen for the warp: a row of cells costs one
-step of 32 tests to visit, and its particles one step for every 32
+and a half steps of 32 tests, the visit and a last step that is half empty
+on average, and its particles one step for every 32
 (`mdrt_gpu_cell_width`). With a thread per particle the cost of a row was
 that of 12 particles, and the cells were a third of the reach; for the
 warp that width took 846 µs on JAC, half the reach 612.
@@ -215,8 +243,8 @@ memory.
 
 | Parameter | Option | Default |
 |---|---|---|
-| The skin | `skin` of `convert-md-to-md-exec`; in a control file `pairlist_distance − cutoff` | |
-| The width of a row of the matrix | `width` of `convert-md-to-md-exec`; in a control file `neighbor_capacity`, in Python `Execution.neighbor_capacity` | Half as many again as a uniform density gives; the driver estimates it from the start: half as many again as the most neighbors of a particle, plus 16, rounded up to four significant bits (D227) |
+| The skin | `skin` of `convert-md-to-md-exec`; in a control file `pairlist_distance − cutoff` | 0 for the pass; in a control file `pairlist_distance` is the cutoff plus 1.5 Å |
+| The width of a row of the matrix | `width` of `convert-md-to-md-exec`; in a control file `neighbor_capacity`, in Python `Execution.neighbor_capacity` | 64 for the pass; the driver always gives one, from `neighbor_capacity` or estimated from the start: half as many again as the most neighbors of a particle, plus 16, rounded up to four significant bits (D227) |
 | The least width of the cells | `cells` of `convert-md-to-md-exec` | A third of the reach |
 
 ## 3. The test of validity
@@ -226,8 +254,21 @@ positions $\mathbf x$ while [[AllenTildesley2017]](references.md#allentildesley2
 
 $$\max_i \lVert \mathbf x_i - \mathbf x^\text{ref}_i \rVert \le s / 2,$$
 
-with $s$ the skin, and the cell is the one it was built in. Two particles that are farther
+with $s$ the skin, in the cell it was built in. Two particles that are farther
 apart than the reach at $\mathbf x^\text{ref}$ have then not come closer than the cutoff.
+
+A cell that a barostat has scaled since the build does not end the
+validity (D80, `md-exec-expose-validity`). With the edges $\mathbf L$ now
+and $\mathbf L^\text{ref}$ at the build, $\mathbf m = \mathbf L \oslash
+\mathbf L^\text{ref}$ per axis, the test compares each position with its
+reference scaled as the cell was, against a limit that shrinks with the
+least scale:
+
+$$\max_i \lVert \mathbf x_i - \mathbf m \odot \mathbf x^\text{ref}_i \rVert \le \tfrac12 \max\bigl(\min(\mathbf m)\,(r_c + s) - r_c,\ 0\bigr),$$
+
+which is $s/2$ in the cell of the build. Only the three edges of the
+diagonal enter, also for a triclinic cell. With `rebuild_interval` the
+structure is built every $n$ refreshes and not tested in between (D88).
 
 | Method | State |
 |---|---|
@@ -296,7 +337,7 @@ the cells and the threads of the search set by hand.
 |---|---|
 | At this density, 6 particles in a cube of the reach, cells of the reach are best for a large system. | The width is chosen from the density, not fixed (Section 2.2). |
 | For a small system narrow cells are better even at this density: the cell has few cells along an edge, and they are wider than they need to be. | The cost counts the cells that there are in this cell. |
-| A split search is faster up to 4096 particles and slower from 13824 on. | The limit of Section 2.5 |
+| A split search is faster up to 4096 particles and slower from 13824 on. | The split search is no longer in the build: the search is a warp per particle (Section 2.5) |
 | Before the cells of a row were read as one run, cells of half the reach took 1097 microseconds at 262144 particles, and cells of the reach 854. | Section 2.4 |
 
 ## 5. The order of the particles
@@ -318,7 +359,7 @@ where they were.
 The particles are put in the order of their positions (P17, D44):
 
 ```mlir
-%order = md_exec.spatial_order %x, %cell, %ids width(0.5)
+%order = md_exec.spatial_order %x, %cell, %ids width(0.5)   // a length, half the reach
 %xs    = md_exec.permute %x, %order       // and every other field
 ```
 

@@ -49,15 +49,17 @@ build of Section 5 as first written) made the loop 2.5 times slower in the
 order of cells and changed little in the compact order: the build tests
 every pair against the reach instead. The compact order makes the matrix
 faster too (5 to 16 %). The gain of the build, a sixteenth of the entries
-and no test of candidates far from a box, is still to be measured
-(stage G1).
+and no test of candidates far from a box, was measured in stage G1
+(Section 6.1).
 
 ## 2. The structure
 
-**Places and groups.** A build sorts the particles into cells and gives
-each a place in the order of the cells (D86); the positions that the loops
-read are gathered in that order. Group $g$ is the places $16g$ to $16g + 15$;
-the last group is padded with empty places.
+**Places and groups.** A build gives each particle a place in the compact
+order of Section 5 (columns in x-y, bins along z, chunks of 64 split by x
+and by y), not in the order of the cells of the matrix (D86); the positions
+that the loops read are gathered in that order. Group $g$ is the places
+$16g$ to $16g + 15$; the places that a short group leaves are empty, at
+most 63 in the last chunk of each column.
 
 **Entries.** The list of group $g$ holds entries $(q, m)$: a place $q$ and a mask
 $m$ of 16 bits, bit $u$ for the particle at place $16g + u$. The list holds
@@ -90,7 +92,8 @@ entries and the masks, against 510 MB for the fixed lists), and a run of
 buffers and gives the energies of the matrix to every digit.
 
 **Validity.** The build tests distances in f32 against the reach widened
-by 3e-6 of the sum of the edges of the cell, as the build of the matrix
+by 3e-6 of the sum of the edges of the cell (in a triclinic cell, of the
+diagonal and the magnitudes of the three tilts), as the build of the matrix
 does: far more than the rounding of the positions to f32 (half an ulp of
 the edge a coordinate) can move a distance, so that every pair within R in
 f64 is in the lists (`test/Runtime/neighbors-groups-gpu.mlir` checks this
@@ -122,8 +125,8 @@ symmetric. `md_exec.pair_for` carries the contract of each of its
 destinations and sums (Section 6); a loop with a destination whose kernel
 has none keeps the matrix.
 
-**On a device.** The list of a group is cut into units of work of up to
-64 entries (the unit of the loop, not of the structure); a warp takes a
+**On a device.** The unit of work is a block of the structure (Section 2):
+up to 64 entries of the list of one group; a warp takes a
 unit, 32 entries at a time. Lanes u
 and u + 16 hold particle 16 g + u; each lane loads one entry, and the
 entries turn within their half-warp, one lane a step, for 16 steps, with
@@ -136,14 +139,15 @@ Cellulose 1109 µs against 1200 (`groups.cu`, 2026-10-01).
 
 **Order of the sums.** The atomic additions make the sums depend on the
 order of the threads. In the default mode they are additions in the type
-of the destination (D84). In the deterministic mode they are integer
-additions in fixed point (D70, [LeGrand2013]), whose sum does not depend on
-the order: the value of an entry, summed over the 16 steps of a chunk in
-registers, is converted and added; the value of a particle of the group is
-converted and added for each chunk, so its sum does not depend on the
-order of the chunks either; the entries of a group are in a fixed order
-(Section 5), so the sum of a chunk in registers is the same from run to
-run.
+of the destination (D84). The deterministic mode does not take groups
+yet: the control file refuses `neighbor_structure = "GROUPS"` with
+`deterministic`, and the lowering refuses the loop (stage G2). The design
+for it is integer additions in fixed point (D70, [LeGrand2013]), whose sum
+does not depend on the order: the value of an entry, summed over the 16
+steps of a chunk in registers, would be converted and added, and the value
+of a particle of the group converted and added for each chunk; the entries
+of a group are in a fixed order (Section 5), so the sum of a chunk in
+registers would be the same from run to run.
 
 **Destinations.** A loop that adds each pair once adds into its
 destination; it cannot overwrite it (the `overwrite` of
@@ -271,8 +275,10 @@ every pair in f64.
   the fusion of loops keeps them.
 - The policy `(unique, atomic)` of `md_exec.pair_for`, which M0 declared
   and rejected, becomes legal over a structure of kind `groups`, with every
-  destination and sum symmetric or antisymmetric. The weights of the sums
-  are then 1.
+  destination symmetric or antisymmetric and every sum symmetric. The
+  attribute `weights` of the op stays that of the sum over both orders of
+  each pair (½ for a sum of pairs); the lowering doubles it, so that each
+  pair counts with the weight 1 (Section 3).
 - A pass chooses the kind of each structure and the policy of its loops on
   a device (the kind stays `matrix` on the CPU).
 
