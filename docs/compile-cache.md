@@ -1,4 +1,4 @@
-# The compile cache (D212, D214)
+# The compile cache (D212, D214, D[compile-cache-controls])
 
 Issue #142. A Python simulation compiles its program in three stages: the
 MLIR pipeline lowers it to an LLVM module (with the PTX of its kernels on a
@@ -15,11 +15,15 @@ D214 (#148) serializes the GPU modules in parallel, keeps
 the PTX and the cubin of each module in the same cache, and loads cubins
 compiled for the device instead of PTX; see
 [The GPU modules](#the-gpu-modules-dgpu-module-compile) below.
+D[compile-cache-controls] (#163) clears the cache and bypasses it for one
+compile from Python; see [Controls from Python](#controls-from-python).
 
 ## Use
 
-The cache is off unless a directory is given. It is controlled by the
-environment only; no control-file key and no Python argument changes.
+The cache is off unless a directory is given. The environment enables
+it; no control-file key changes. From Python, `mdir.clear_compile_cache()`
+empties it and `cache=False` bypasses it for one compile
+([Controls from Python](#controls-from-python)).
 
 | Variable | Effect |
 |---|---|
@@ -44,8 +48,66 @@ cost and what the cache saved, as a dict:
 | `cache_rejected` | Entries found under the key's name but rejected (see Entries) |
 | `cache_stored`, `cache_unstored` | Entries written, and entries that could not be written |
 | `cache_lookup_seconds` | The time of keys and reads, hit or miss |
+| `cache_bypassed` | Programs compiled with `cache=False`: 1 or 0 for a simulation. With it, every `cache_*` and `gpu_cache_*` count is 0. |
 
 `examples/ala3/run.py` prints the compile times of each stage from them.
+
+## Controls from Python
+
+D[compile-cache-controls], issue #163.
+
+```python
+cleared = mdir.clear_compile_cache()          # or clear_compile_cache(directory)
+program = mdir.compile(system, state, integrator, ensemble, execution,
+                       schedule, cache=False)
+sim = mdir.Simulation(program)                # takes the program's choice
+sim = mdir.Simulation(program, cache=False)   # or overrides it
+sim.compile_stats["cache_bypassed"]           # 1
+```
+
+`mdir.clear_compile_cache(directory=None)` removes the entries of the
+cache in `directory`, else in `MDIR_COMPILE_CACHE_DIR`.
+`MDIR_COMPILE_CACHE=off` does not hide that directory from it.
+
+- It removes the host objects (`host/*.o`) and the GPU entries
+  (`gpu/*.ptx`, `gpu/*.cubin`) whose magic tag is this format's.
+- It leaves the entries of another format, files of other names, and the
+  directories themselves.
+- It leaves the temporary files of writers under way, so that their
+  renames succeed. Temporary files older than an hour are removed, as
+  eviction removes them.
+
+It returns what it removed:
+
+| Key | Meaning |
+|---|---|
+| `directory` | The directory cleared, or `None` when none was given or set |
+| `host_entries`, `gpu_entries` | Host objects and GPU entries removed |
+| `bytes` | Their bytes |
+
+MDIR keeps no entries in memory between compiles: each JIT engine and each
+serialization of GPU modules reads the directory anew. A clear therefore
+takes effect at the next compile, in this process and in others.
+
+Other processes may write and read the directory during a clear. A writer
+renames a complete entry into place and a reader copies the file, so a
+clear can make a reader miss or remove an entry just written, but never
+leaves a part of an entry. A later compile stores the entry again.
+
+`cache=False` bypasses the cache for one compile, whatever the
+environment says: no entry is read, written, or touched, no directory is
+made, and nothing is evicted.
+
+- `mdir.compile(..., cache=False)` is keyword only. It applies to the
+  lowering that `mdir.compile` does; on a GPU that lowering reads and
+  writes the PTX and cubins of its modules. The program records the
+  choice.
+- `Simulation(program, cache=None)` is keyword only. `None` takes the
+  program's choice, and `True` or `False` overrides it for the
+  simulation's compile: its host object and the entries of its GPU
+  modules.
+- On a GPU the pipeline of a bypassed program shows `cache=false` among
+  the options of `mdir-gpu-lower-to-nvvm` (`Program.pipeline`).
 
 ## The key
 
@@ -151,6 +213,30 @@ directory:
   remains, the states agree with no cache, and the next process hits.
   Every suite also runs up to sixteen GPU tests and the CPU tests on one
   directory at once.
+- **Controls (D[compile-cache-controls]).** `compile-cache-controls.test`
+  (CPU, mixed) and `compile-cache-controls-gpu.test` (GPU, mixed), each
+  scenario a process of its own:
+  - `mdir.compile(..., cache=False)` on an empty directory makes none. On
+    a warm one it generates the object and, on a GPU, every PTX and cubin,
+    hits nothing, and leaves every entry with its size and time (a read
+    would have touched it). The state equals that of no cache bit for
+    bit. `Simulation(program, cache=False)` after a compile that used the
+    cache does likewise for the simulation. `cache_bypassed` is 1.
+  - A clear removes every entry of the warm cache (1 host object, and on a
+    GPU every PTX and cubin) and leaves a file of another format and a
+    writer's temporary file. The next process misses and stores, and the
+    one after hits. A clear of another directory, or with no directory,
+    removes nothing; under `MDIR_COMPILE_CACHE=off` it still clears the
+    directory set.
+  - One process clears over and over while another compiles the
+    dipeptide four times. On the CPU, about 190,000 clears ran during the
+    four compiles; each compile missed and stored, and the clears removed
+    the 4 entries. Every entry left is well formed, and the next process
+    reads the cache with no rejection and the state of no cache.
+  - `compile-cache.test` checks what a clear removes and leaves, and races
+    it against a forked writer of 3000 entries under 50 keys: 85 clears
+    removed 2947 entries, every write succeeded, and the 14 entries left
+    were intact, with no temporary file.
 - **Ownership.** `jit-memory.test` runs the D199 checks without a cache,
   with a cold one, and with a warm one, and the Python lifetime tests
   (`python-simulation-lifetime*`, CPU and GPU, three import orders) pass
