@@ -10,7 +10,7 @@ not a wheel or a persistent simulation API. M2 remains incomplete.
 `make_system()` and `make_state()` return independent objects in MD units.
 `mdir.compile(system, state, integrator, ensemble, execution, schedule)`
 validates the inputs, builds the shared semantic IR, and sets up the CLI's
-pipeline for it, without running that pipeline (D[compile-once], #151).
+pipeline for it, without running that pipeline (D224, #151).
 The immutable returned `Program` exposes `ir`, `lowered_ir`, `pipeline`,
 and a copied `plan` dictionary. `ir`, `pipeline`, and `plan` are ready on
 return; `lowered_ir` is lowered on its first read, from the IR captured at

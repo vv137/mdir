@@ -101,7 +101,7 @@ made, and nothing is evicted.
 - `mdir.compile(..., cache=False)` is keyword only. It applies to the
   lowering of `Program.lowered_ir`, which `mdir.compile` no longer runs
   itself but which happens on the first read of `lowered_ir`
-  (D[compile-once]); on a GPU that lowering reads and writes the PTX and
+  (D224); on a GPU that lowering reads and writes the PTX and
   cubins of its modules. The program records the choice, the default of
   its simulations.
 - `Simulation(program, cache=None)` is keyword only. `None` takes the
@@ -266,7 +266,7 @@ directory:
   scenario a process of its own:
   - `mdir.compile(..., cache=False)` on an empty directory makes none. On
     a warm one its simulation, which inherits the choice (`compile` itself
-    lowers nothing, D[compile-once]), generates the object and, on a GPU, every PTX and cubin,
+    lowers nothing, D224), generates the object and, on a GPU, every PTX and cubin,
     hits nothing, and leaves every entry with its size and time (a read
     would have touched it). The state equals that of no cache bit for
     bit. `Simulation(program, cache=False)` after a compile that used the
@@ -313,7 +313,7 @@ simulation, and in parentheses the engine's part:
 
 A hit saves 1 to 6 s per stage of host code generation; the MLIR pipeline,
 in `mdir.compile` (which lowered a program of its own until
-D[compile-once], #151) and in the simulation, is most of what remains. Without the deterministic mode the
+D224, #151) and in the simulation, is most of what remains. Without the deterministic mode the
 production stage missed: it starts from the cell that the NPT stage
 reached, which differs from run to run, and its program's constants depend
 on it.
@@ -525,7 +525,7 @@ simulation):
 With a warm cache, the JIT part of a stage takes 0.3 to 0.5 s instead of
 1.7 to 6.2 s, whatever the driver's cache. What remains is the MLIR passes
 before the serialization: 2 to 12 s per simulation, and as much again in
-`mdir.compile`, which no longer lowers (D[compile-once], #151): the
+`mdir.compile`, which no longer lowers (D224, #151): the
 example then takes 62 s instead of 85 s without the cache. The cache of the example holds 21 MB of host
 objects and 78 MB of GPU entries.
 

@@ -1,5 +1,5 @@
 """mdir.compile builds a program without lowering it; `lowered_ir` lowers on
-its first read (D[compile-once], #151).
+its first read (D224, #151).
 
   python_compile_lazy.py ROOT TARGET WORK
 

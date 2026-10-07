@@ -153,7 +153,7 @@ format, or the outputs; every such change is listed under **Changed** or
   file's kcal/mol/Å², and a constant not computed from a control-file value
   could change by one rounding. Runs from a control file are unchanged.
 
-- `mdir.compile` no longer lowers the program (D[compile-once], #151): it
+- `mdir.compile` no longer lowers the program (D224, #151): it
   builds it and sets up its pipeline, so `Program.ir`, `pipeline`, and
   `plan` are ready on return, and `Program.lowered_ir` lowers on its first
   read, once. A `Simulation` lowers programs of its own and never used that

@@ -54,7 +54,7 @@ llvm::Expected<CompiledProgram> lower(const driver::Control &, driver::Program,
 llvm::Expected<CompiledProgram> compile(const model::PreparedModel &,
                                         bool cache = true);
 /// Builds `prepared` and sets up its pipeline without running it, so that
-/// `loweredIR` stays empty (D[compile-once]): what `mdir.compile` does, for
+/// `loweredIR` stays empty (D224): what `mdir.compile` does, for
 /// a simulation lowers programs of its own. The errors of the build, of a
 /// GPU program in a build without CUDA, and of the GPU options are those of
 /// compile. Without `cache`, the lowering of the result reads and writes no

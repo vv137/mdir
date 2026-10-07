@@ -451,7 +451,7 @@ runs that compiled the second program take a second or so instead of 20 to
 34 s.
 
 `mdir.compile` builds the program and its pipeline but does not lower it
-(D[compile-once], #151); `Program.lowered_ir` lowers on its first read
+(D224, #151); `Program.lowered_ir` lowers on its first read
 ([python-compile.md](python-compile.md)). Before, every stage lowered the
 program of `compile`, NVPTX code generation included, for a text that the
 simulation does not use: the simulation lowers a program of segments of

@@ -75,7 +75,7 @@ template <class T> static auto input(py::module_ &m, const char *name) {
   return py::class_<Input<T>, std::shared_ptr<Input<T>>>(m, name).def(py::init<>());
 }
 struct Program {
-  /// The built program and its pipeline; not lowered (D[compile-once]).
+  /// The built program and its pipeline; not lowered (D224).
   compiler::CompiledProgram compiled;
   /// The lowered text, made on the first read of `lowered_ir`, under the
   /// mutex, by the thread that reads it first.
@@ -452,7 +452,7 @@ PYBIND11_MODULE(mdir, m) {
     .def_property_readonly("ir", [](const Program &p) { return p.compiled.program.module; })
     .def_property_readonly("lowered_ir", [](const Program &p) {
       // Lowered when first asked for, with the GIL released: a simulation
-      // lowers programs of its own (D[compile-once]).
+      // lowers programs of its own (D224).
       std::optional<llvm::Error> failed;
       {
         py::gil_scoped_release release;
@@ -532,7 +532,7 @@ PYBIND11_MODULE(mdir, m) {
         prepared);
     Program result;
     // Built, not lowered: a simulation lowers programs of its own, and
-    // `lowered_ir` lowers on its first read (D[compile-once], #151).
+    // `lowered_ir` lowers on its first read (D224, #151).
     result.compiled = unwrap(compiler::plan(prepared, cache));
     result.cache = cache;
     result.prepared = std::make_shared<const model::PreparedModel>(std::move(prepared));
