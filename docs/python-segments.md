@@ -282,8 +282,11 @@ work of the next part and without a wait of the host. A part fails where
 the count of components that are not numbers is not 0 (a sum over the
 particles of $x - x$ unordered with itself, which an infinity fails too),
 where a build of the neighbor structures on a device finds positions that
-are not numbers (D107), or, without a periodic cell, where the particles
-have spread too far (D142). The simulation then takes the copy, or, for a
+are not numbers (D107), where a barostat takes the cell below twice the
+cutoff, or, without a periodic cell, where the particles have spread too
+far (D142). (On a device, positions that are huge or not numbers can still
+end the process inside PME or a loop over particles before the part ends,
+as on main, #168.) The simulation then takes the copy, or, for a
 part that began an activation, the state of the host it began from, and
 ends the activation. Two sets of buffers that the parts alternate between
 were not taken: the loops already rotate the buffers of the state, and the
