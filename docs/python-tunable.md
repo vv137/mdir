@@ -140,19 +140,25 @@ every parameter but `"sigma"`. A pair without Lennard-Jones in the model
 ($\epsilon_{ab}=0$, as between a water's hydrogen and other types) may
 take some: the table is a buffer of the program for every pair.
 
-**Pair and per-type tunables together** (a question to the maintainer on
-PR #191, Q1; implemented as recommended there). The per-type values build
-the table by the combining rule first, the pairs set apart from it (NBFIX)
-keeping their values as above; then every pair that a map of a pair
-tunable takes has the value of its entry, whatever the rule gives it.
-A diagonal pair $(a, a)$ that a pair tunable takes has its entry's value,
-while the rule for the pairs of $a$ with other types still takes the
-per-type $\sigma_a$ and $\epsilon_a$, not the diagonal. The
-warning of compile lists only the pairs that still keep a value of their
-own: an NBFIX pair that a pair tunable takes for every per-type parameter
-declared is not listed. **Maps over pairs** (Q2) are the maps of every
-tunable, built from `System.type_pairs`. **The 1-4 pairs** (Q3) keep their
-own $\sigma$ and $\epsilon$, as under per-type tunables.
+**Pair and per-type tunables together** (maintainer's decision on PR #191,
+Q1). They may be declared together, and the pair tunable wins for the
+pairs its map takes: the per-type values build the table by the combining
+rule first, the pairs set apart from it (NBFIX) keeping their values as
+above; then every pair that a map of a pair tunable takes has the value of
+its entry, whatever the rule gives it. A diagonal pair $(a, a)$ that a pair
+tunable takes has its entry's value but does not redefine the per-type
+$\sigma_a$ and $\epsilon_a$: the rule for the pairs of $a$ with other types
+still takes those, not the diagonal. The warning of compile lists only the
+pairs that still keep a value of their own: an NBFIX pair that a pair
+tunable takes for every per-type parameter declared is not listed.
+
+**Maps over pairs** (maintainer's decision on PR #191, Q2) are the ordinary
+maps of every tunable, built from `System.type_pairs`; there is no map by
+names of types.
+
+**The 1-4 pairs** (maintainer's decision on PR #191, Q3) keep their own
+$\sigma$ and $\epsilon$, as under per-type tunables; tunable 1-4 parameters
+would be a separate item.
 
 The derived quantities follow the table as for per-type values: the
 correction for the dispersion, $\langle C_6\rangle$ and its shift estimate,
