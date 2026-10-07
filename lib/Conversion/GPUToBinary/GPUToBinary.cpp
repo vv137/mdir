@@ -147,7 +147,7 @@ bool runTool(StringRef program, ArrayRef<StringRef> arguments,
 /// whose libdevice the modules link (CUDA_ROOT, CUDA_HOME, or CUDA_PATH,
 /// else the toolkit of the build); else that of NVIDIA's wheel
 /// `nvidia-cuda-nvcc` in the site-packages that holds the Python package
-/// (D[python-package]); else the one on PATH; and the text of its
+/// (D228); else the one on PATH; and the text of its
 /// `--version`, which is part of the key of a cubin. Empty if there is none
 /// that runs.
 struct Ptxas {

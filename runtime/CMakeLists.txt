@@ -88,7 +88,7 @@ if(MDIR_BUNDLE_LIBRARIES)
 endif()
 
 # A wheel of the Python package (pyproject.toml, scikit-build-core sets
-# SKBUILD; D[python-package]): the component `python` carries the runtime
+# SKBUILD; D228): the component `python` carries the runtime
 # in mdir/lib and libdevice with the CUDA EULA in mdir/cuda, where the
 # extension looks beside itself. cuFFT is not carried: the GPU runtime
 # takes it from NVIDIA's wheel (nvidia-cufft) in the same site-packages,

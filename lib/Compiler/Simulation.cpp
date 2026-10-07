@@ -160,7 +160,7 @@ template <typename Function> Function *findRuntime(const char *name) {
 
 /// The directory of the runtime libraries: `MDIR_RUNTIME_DIR`; `lib` beside
 /// the module that holds this code, as a wheel places them (site-packages/
-/// mdir/lib, D[python-package]); `lib` next to a directory above it, as a
+/// mdir/lib, D228); `lib` next to a directory above it, as a
 /// build tree and an installed prefix place them; or that of the build.
 std::string findRuntimeDirectory() {
   std::vector<std::string> candidates;

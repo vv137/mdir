@@ -95,7 +95,7 @@ RUN --mount=type=cache,target=/build/mdir,id=mdir-manylinux-build \
 FROM scratch AS tarball
 COPY --from=build /mdir-*-manylinux_2_28_x86_64.tar.gz /
 
-# --- 7. Wheels of the Python package (D[python-package]) ---------------------
+# --- 7. Wheels of the Python package (D228) ---------------------
 # One wheel per CPython of the image (PYTHONS), built by pyproject.toml with
 # the toolchain above, libstdc++ and libgcc linked statically as for the
 # tarball, and repaired by auditwheel to manylinux_2_28: HDF5 and zlib are

@@ -16,7 +16,7 @@ find_package(pybind11 3.0.1 EXACT CONFIG REQUIRED)
 
 # The package `mdir`: `mdir/__init__.py` and the extension `mdir._core`, in
 # <build>/python/mdir as in site-packages, so that PYTHONPATH=<build>/python
-# imports the build (D[python-package]).
+# imports the build (D228).
 set(MDIR_PYTHON_PACKAGE_DIR ${CMAKE_BINARY_DIR}/python/mdir)
 pybind11_add_module(mdir_python NO_EXTRAS Bindings.cpp)
 set_target_properties(mdir_python PROPERTIES OUTPUT_NAME _core

@@ -1,4 +1,4 @@
-# The Python package `mdir` as a wheel (D[python-package],
+# The Python package `mdir` as a wheel (D228,
 # docs/python-package.md): the extension, its runtime, and libdevice, built
 # by CMake through scikit-build-core. The build needs what a build of the
 # tree needs (LLVM/MLIR 23.1.2, and for a GPU wheel HDF5 and CUDA), named

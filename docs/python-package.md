@@ -1,4 +1,4 @@
-# The Python package (D[python-package])
+# The Python package (D228)
 
 The last item of M2a ([python-m2.md](python-m2.md), Sections 1, 4 and 6;
 [#133](https://github.com/vv137/mdir/issues/133)). The Python interface of

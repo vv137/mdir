@@ -1,4 +1,4 @@
-"""The package `mdir` of a build tree (D[python-package]).
+"""The package `mdir` of a build tree (D228).
 
 python_package.py SOURCE_ROOT VERSION_FILE (the output of `mdir version`)
 

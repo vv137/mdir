@@ -136,7 +136,7 @@ shared with the CLI, which either front end continues
 (D223); the package `mdir` as a manylinux_2_28 pip wheel for Python
 3.10–3.13, which carries its runtime and libdevice, takes cuFFT from
 NVIDIA's wheel, and runs the four-stage tutorial from the installed
-package at the rate of `mdir run` (D[python-package]).
+package at the rate of `mdir run` (D228).
 Remaining:
 writable views of the buffers, and
 NPT in a triclinic cell or with a coupling period of 1.

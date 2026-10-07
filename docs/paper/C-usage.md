@@ -16,7 +16,7 @@ or `apptainer run --nv`). The Python interface installs from its wheel,
 for Python 3.10–3.13 on the same systems, with `pip install
 "mdir[cuda]"` from the wheel's file or directory; the extra `cuda` brings
 NVIDIA's cuFFT and ptxas for GPU runs, which then need only the driver, and the
-wheel does not hold the `mdir` command (D[python-package],
+wheel does not hold the `mdir` command (D228,
 `docs/python-package.md`). `mdir version` prints what the build supports:
 
 ```text

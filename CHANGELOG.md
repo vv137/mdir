@@ -16,7 +16,7 @@ format, or the outputs; every such change is listed under **Changed** or
   neighbor_capacity` of the control file (D227,
   #162): 0, the default, estimates it, and
   `Program.plan["neighbor_capacity"]` is the capacity that a compile took.
-- The Python interface as a pip wheel (D[python-package], #133): the
+- The Python interface as a pip wheel (D228, #133): the
   package `mdir` for CPython 3.10–3.13 on Linux x86-64 with glibc 2.28 or
   later (manylinux_2_28), built by `pyproject.toml` (scikit-build-core) and
   in release form by the target `wheels` of `packaging/Dockerfile.manylinux`.
@@ -178,7 +178,7 @@ format, or the outputs; every such change is listed under **Changed** or
   starts of continued stages (D227). The capacity
   does not change the results; the Amber suite runs at the same rate.
 - The Python extension is the module `mdir._core` of the package `mdir`
-  (D[python-package]): a build puts `mdir/__init__.py` and the extension in
+  (D228): a build puts `mdir/__init__.py` and the extension in
   `<build>/python/mdir`, and `cmake --install` in `MDIR_PYTHON_INSTALL_DIR`,
   which now names the package's directory (by default
   `lib/pythonX.Y/site-packages/mdir`). `import mdir` and every name under

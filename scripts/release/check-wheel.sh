@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Checks that wheels of the Python package run on manylinux_2_28 systems
-# (D[python-package]), as check-binary.sh does for the tarball (D177):
+# (D228), as check-binary.sh does for the tarball (D177):
 #
 #   scripts/release/check-wheel.sh WHEEL...
 #

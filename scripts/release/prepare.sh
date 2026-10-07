@@ -21,7 +21,7 @@ git fetch -q origin
 git checkout -q -b "release/v$version" origin/main
 sed -i -E "s/^project\(mdir VERSION [0-9]+\.[0-9]+\.[0-9]+/project(mdir VERSION $version/" CMakeLists.txt
 grep -q "project(mdir VERSION $version " CMakeLists.txt || { echo "CMakeLists.txt: version not set" >&2; exit 1; }
-# The package that the Python example declares is the release's (D[python-package]).
+# The package that the Python example declares is the release's (D228).
 sed -i -E "s/\"mdir\[cuda\]==[0-9]+\.[0-9]+\.[0-9]+\"/\"mdir[cuda]==$version\"/" examples/ala3/run.py
 grep -q "\"mdir\[cuda\]==$version\"" examples/ala3/run.py || { echo "examples/ala3/run.py: version not set" >&2; exit 1; }
 python3 scripts/release/changelog.py release "$version" "$date"

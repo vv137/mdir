@@ -3,7 +3,7 @@
 The interface is the native extension `mdir._core` (D192); this package
 gives its names under `mdir` and carries, in an installed wheel, the
 runtime libraries and libdevice that the extension finds beside itself
-(D[python-package], docs/python-package.md).
+(D228, docs/python-package.md).
 """
 from . import _core
 from ._core import *  # noqa: F401,F403

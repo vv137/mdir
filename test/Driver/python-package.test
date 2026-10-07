@@ -1,6 +1,6 @@
 # REQUIRES: python-api
 # The package of the build tree, its one version, and an import without
-# CUDA (D[python-package]).
+# CUDA (D228).
 # RUN: mdir version > %t.version
 # RUN: %mdir_python %S/Inputs/python_package.py %S/../.. %t.version | FileCheck %s
 # CHECK: one version: {{[0-9]+\.[0-9]+\.[0-9]+}}

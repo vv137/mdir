@@ -102,7 +102,7 @@ Expected<std::unique_ptr<JITEngine>> JITEngine::create(
     auto library = sys::DynamicLibrary::getPermanentLibrary(path.c_str(), &message);
     if (!library.isValid()) {
       // cuFFT comes from NVIDIA's wheel of the extra `cuda` of the Python
-      // package, or from a CUDA toolkit (D[python-package]).
+      // package, or from a CUDA toolkit (D228).
       if (StringRef(message).contains("libcufft"))
         message += "; the GPU runtime needs cuFFT of CUDA 13: install the "
                    "Python package with its extra, pip install 'mdir[cuda]', "

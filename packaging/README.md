@@ -8,7 +8,7 @@ needs only Docker or Apptainer and the NVIDIA driver.
 |---|---|
 | [Dockerfile](Dockerfile) | A Docker image, in stages: system packages, HDF5, LLVM with MLIR and the OpenMP runtime, MDIR; the final stage holds only the installed tree on CUDA's runtime image |
 | [mdir.def](mdir.def) | An Apptainer (Singularity) image made from the Docker image |
-| [Dockerfile.manylinux](Dockerfile.manylinux) | The release tarball (D177) and the Python wheels (D[python-package]) for manylinux_2_28 (glibc 2.28 and later), built on the PyPA image of that baseline |
+| [Dockerfile.manylinux](Dockerfile.manylinux) | The release tarball (D177) and the Python wheels (D228) for manylinux_2_28 (glibc 2.28 and later), built on the PyPA image of that baseline |
 
 **Layers.** The stages go from what changes least to what changes most:
 the base image (pinned by digest) and its packages, HDF5 1.14.6, LLVM
@@ -125,7 +125,7 @@ allows from the system.
 The target `wheels` of `Dockerfile.manylinux` builds the wheels of the
 Python package `mdir`, one for each of CPython 3.10–3.13 of the image, on
 the same toolchain as the tarball, and repairs them with auditwheel to
-`manylinux_2_28_x86_64` (D[python-package],
+`manylinux_2_28_x86_64` (D228,
 [python-package.md](../docs/python-package.md)):
 
 ```sh

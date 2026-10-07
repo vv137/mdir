@@ -59,7 +59,7 @@ development package, `mdir/__init__.py` and the extension `mdir._core`, in
 `python/mdir` under the build tree; set `PYTHONPATH` to `python/`.
 Installation places it in a configurable Python destination. The
 manylinux_2_28 wheels are built from `pyproject.toml`
-([python-package.md](python-package.md), D[python-package]).
+([python-package.md](python-package.md), D228).
 
 Validation checks file/object semantic IR and pipeline parity, CPU/GPU
 mixed/double lowering, copied nested inputs, stale detection, repeated

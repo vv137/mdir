@@ -28,7 +28,7 @@ std::string getPipeline(const driver::Control &, const driver::Program &,
 /// Points CUDA_ROOT at the toolkit whose libdevice and ptxas the kernels of
 /// a GPU take: the one the environment names (CUDA_ROOT, CUDA_HOME, or
 /// CUDA_PATH); else the copy of libdevice carried with the module that holds
-/// this code, `cuda` beside it (a wheel, D[python-package]) or
+/// this code, `cuda` beside it (a wheel, D228) or
 /// `../share/mdir/cuda` (an installed release, D177); else that of the
 /// build, as for `mdir run` (tools/mdir/BugReport.cpp, getCudaToolkitRoot).
 void useCudaToolkit();
