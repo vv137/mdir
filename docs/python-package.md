@@ -17,8 +17,9 @@ mdir-env/bin/pip install "mdir-0.1.0-cp312-cp312-manylinux_2_28_x86_64.whl[cuda]
 mdir-env/bin/python -c "import mdir; print(mdir.__version__)"
 ```
 
-The wheel depends on NumPy 1.23 or later. The extra `cuda` adds NVIDIA's
-cuFFT wheel (`nvidia-cufft`, the cuFFT of CUDA 13), which GPU runs need;
+The wheel depends on NumPy 1.23 or later. The extra `cuda` adds two of
+NVIDIA's wheels of CUDA 13, `nvidia-cufft` (cuFFT, which GPU runs need)
+and `nvidia-cuda-nvcc` (for its ptxas, which compiles the kernels);
 CPU-only installs leave it out. The `mdir` command is not in the wheel: it
 comes with the release tarball and the container (D177, D174), which carry
 their own copy of the same version.
@@ -31,9 +32,10 @@ site-packages/
   mdir/_core.cpython-3XY-x86_64-linux-gnu.so
   mdir/lib/libmdrt.so, libmdrt_cuda.so, libomp.so
   mdir/cuda/nvvm/libdevice/libdevice.10.bc, mdir/cuda/EULA.txt, version.txt
-  mdir/licenses/LICENSE, HDF5-COPYING
+  mdir/licenses/LICENSE, HDF5-COPYING, pybind11-LICENSE
   mdir.libs/libhdf5-<hash>.so.310.5.1  grafted and renamed by auditwheel
-  nvidia/cu13/lib/libcufft.so.12       NVIDIA's wheel, with the extra cuda
+  nvidia/cu13/lib/libcufft.so.12       NVIDIA's wheels, with the extra cuda
+  nvidia/cu13/bin/ptxas
 ```
 
 The extension module is `mdir._core`; `mdir/__init__.py` imports its names
@@ -51,7 +53,7 @@ the build as before.
 | libdevice | the wheel, `mdir/cuda`, 464 KB | without `CUDA_ROOT`, `CUDA_HOME`, `CUDA_PATH`: `cuda` beside the extension, else `../share/mdir/cuda` of an installed tree, else the toolkit of the build |
 | cuFFT (`libcufft.so.12`) | NVIDIA's `nvidia-cufft` wheel (extra `cuda`) | `libmdrt_cuda.so`'s RPATH, `$ORIGIN/../../nvidia/cu13/lib`, else the system's search path (a CUDA toolkit on `LD_LIBRARY_PATH` or in the loader's cache) |
 | `libcuda.so.1` | the NVIDIA driver | the loader, when a GPU program is loaded |
-| ptxas | optional: NVIDIA's `nvidia-cuda-nvcc` wheel, or a CUDA toolkit | the `bin` of a toolkit that `CUDA_ROOT` names, else `nvidia/cu13/bin/ptxas` beside the package, else `PATH` (D214) |
+| ptxas | NVIDIA's `nvidia-cuda-nvcc` wheel (extra `cuda`) | the `bin` of a toolkit that `CUDA_ROOT` names, else `nvidia/cu13/bin/ptxas` beside the package, else `PATH` (D214) |
 
 libdevice is redistributable under Attachment A of the CUDA EULA, which
 the wheel carries beside it, as the tarball does (D177). The wheel carries
@@ -61,15 +63,29 @@ PyPI's default limit of 100 MB per file) and is shared with other CUDA
 packages of the environment. Without it and without a toolkit's cuFFT, a
 GPU program fails to load with a `CompileError` that names the extra.
 
-Without ptxas, the kernels are loaded as PTX, which the driver compiles
-(D214): the first load of a program that the driver's cache
-(`~/.nv/ComputeCache`, or `CUDA_CACHE_PATH`) has not seen takes 3–13 s
-more per stage of the ala3 tutorial (Section 8), and later loads come from
-that cache. `pip install nvidia-cuda-nvcc` beside the package, or a CUDA 13
-toolkit's `bin` on `PATH`, gives MDIR a ptxas and removes that cost; the
-extra `cuda` does not include it (about 320 MB more of NVIDIA's files).
-On a home directory on a network file system, point `CUDA_CACHE_PATH` at
-a local disk.
+The extra also brings ptxas, in `nvidia-cuda-nvcc` (`>=13.0,<14`: any
+ptxas of CUDA 13 assembles the PTX that MDIR emits; the wheel was run with
+13.0.88 and 13.4.92), so the kernels are compiled to cubins as in a build
+of the tree. MDIR uses only `nvidia/cu13/bin/ptxas` of that wheel and of
+the three it depends on (`nvidia-nvvm`, `nvidia-cuda-runtime`,
+`nvidia-cuda-crt`); libdevice stays the wheel's own. An environment of
+CPython 3.13 with `mdir[cuda]` holds 964 MB in site-packages: 644 MB of
+NVIDIA's files (325 MB of them cuFFT with nvJitLink, the rest for ptxas),
+264 MB of MDIR with its HDF5, and 57 MB of NumPy.
+
+libdevice is that of the toolkit the wheel was built with, CUDA 13.0,
+where a build of the tree on this machine links that of CUDA 13.4. In
+mixed precision on the GPU the two give energies that differ in the
+seventh digit (9.3e-7 of the potential of ala3, Section 8); with
+`CUDA_ROOT` at the same toolkit the wheel and the build agree to the bit.
+
+Without ptxas (the package installed without the extra, beside a system
+cuFFT), the kernels are loaded as PTX, which the driver compiles (D214):
+the first load of a program that the driver's cache (`~/.nv/ComputeCache`,
+or `CUDA_CACHE_PATH`) has not seen takes 3–13 s more per stage of the ala3
+tutorial (Section 8), and later loads come from that cache. On a home
+directory on a network file system, point `CUDA_CACHE_PATH` at a local
+disk.
 
 ## 4. A CPU-only machine
 
@@ -153,8 +169,11 @@ run.py` with a build of the tree.
 
 The four wheels of the Docker target; host Ubuntu 22.04
 (glibc 2.35), RTX 3090; CPython 3.10.19, 3.11.14, 3.12.12, 3.13.12 in clean
-virtual environments made by uv, the wheel installed with `[cuda]` (NumPy
-2.2.6 to 2.5.3, `nvidia-cufft` 12.4.0.43), run from a copy of
+virtual environments (made by uv for 3.10, 3.11, and 3.13, by `python -m
+venv` and pip 24.3.1 for 3.12), the wheel installed with `[cuda]` (NumPy
+2.2.6 to 2.5.3, `nvidia-cufft` 12.4.0.43, `nvidia-cuda-nvcc` 13.4.92), run
+with a `PATH` of `/usr/bin:/bin` and an empty cache of the driver from a
+copy of
 `examples/ala3` outside the trees, with `PYTHONPATH`, `CUDA_ROOT`,
 `CUDA_HOME`, `CUDA_PATH`, and `LD_LIBRARY_PATH` unset.
 
@@ -210,12 +229,14 @@ the preparation of the inputs: over whole processes of 200 steps, `mdir
 run` took 24.6 s on Cellulose and 97.8 s on STMV, the wheel 46.9 s and
 182.7 s. The package does not change that.
 
-Without ptxas the driver compiles the PTX (Section 3). The four stages of
-the ala3 tutorial (`--steps-scale 0.01`, after D224; a wheel built at
-the head of the branch, GPU 1) compiled in:
+With the extra, MDIR finds ptxas beside the package and prints no
+warning; without ptxas the driver compiles the PTX (Section 3). The four
+stages of the ala3 tutorial (`--steps-scale 0.01`, after D224; the 3.12
+wheel, GPU 1, the driver's cache on a local disk) compiled in:
 
 | ptxas | Driver's cache | Compile time of the stages (s) | Sum (s) |
 |---|---|---|---|
-| none | empty | 7.8, 18.1, 31.4, 29.7 | 87 |
+| none (installed without the extra's nvcc) | empty | 7.8, 18.1, 31.4, 29.7 | 87 |
 | none | filled by that run | 4.9, 11.4, 18.7, 17.9 | 53 |
-| `nvidia-cuda-nvcc`'s, found beside the package | empty | 5.0, 11.2, 18.9, 17.8 | 53 |
+| `nvidia-cuda-nvcc` 13.0.88, installed by hand beside the package | empty | 5.0, 11.2, 18.9, 17.8 | 53 |
+| `nvidia-cuda-nvcc` 13.4.92, from the extra | empty | 5.0, 11.2, 20.0, 19.3 | 56 |

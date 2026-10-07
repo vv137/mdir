@@ -291,7 +291,7 @@ either front end continues the other's run, tested in both directions.
 D[python-package] (#133, [the package](python-package.md)) builds
 the interface as the package `mdir`, a manylinux_2_28 pip wheel for
 Python 3.10–3.13 that carries its runtime, libdevice, and HDF5 and takes
-cuFFT from NVIDIA's wheel (`mdir[cuda]`), and runs the four-stage tutorial
+cuFFT and ptxas from NVIDIA's wheels (`mdir[cuda]`), and runs the four-stage tutorial
 from it. M2 covers a documented classical subset; conda follows later.
 
 The design follows a reading of OpenMM's Python layer (2026-10-02,

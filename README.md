@@ -161,7 +161,7 @@ runtime out.
 The Python interface of milestone M2 is the package `mdir`. Its wheels,
 for CPython 3.10–3.13 on Linux x86-64 with glibc 2.28 or later
 (manylinux_2_28), install into a virtual environment and need, for a
-GPU, only the NVIDIA driver; the extra `cuda` brings cuFFT
+GPU, only the NVIDIA driver; the extra `cuda` brings cuFFT and ptxas
 ([docs/python-package.md](docs/python-package.md)):
 
 ```sh

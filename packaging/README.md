@@ -136,6 +136,6 @@ scripts/release/check-wheel.sh dist/*.whl
 ```
 
 A wheel holds the extension, the runtime, libdevice with the CUDA EULA,
-and HDF5 (in `mdir.libs`); cuFFT comes from NVIDIA's `nvidia-cufft` wheel
-through the extra `mdir[cuda]`, and the driver's `libcuda` from the
-system. The `mdir` command is not in the wheels.
+and HDF5 (in `mdir.libs`); cuFFT and ptxas come from NVIDIA's wheels
+`nvidia-cufft` and `nvidia-cuda-nvcc` through the extra `mdir[cuda]`, and
+the driver's `libcuda` from the system. The `mdir` command is not in the wheels.
