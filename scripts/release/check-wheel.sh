@@ -14,8 +14,10 @@
 #    manylinux_2_28 lets a binary take from the system, is the driver's
 #    libcuda, or is cuFFT (libcufft.so.12, from NVIDIA's wheel, the extra
 #    `cuda`);
+#  - the extra `cuda` of its metadata requires nvidia-cufft and
+#    nvidia-cuda-nvcc (ptxas), and nothing else;
 #  - mdir/cuda holds libdevice and the CUDA EULA, and mdir/licenses the
-#    notices of MDIR and HDF5;
+#    notices of MDIR, HDF5, and pybind11;
 #  - the version of its metadata is that of project() in CMakeLists.txt.
 # Exit status 1 on any failure, with each one listed.
 set -euo pipefail
@@ -41,6 +43,9 @@ for wheel in "$@"; do
   python3 -m zipfile -e "$wheel" "$tree"
   grep -qx "Version: $version" "$tree"/mdir-*.dist-info/METADATA \
     || complain "$name: METADATA does not say Version: $version"
+  extra=$(sed -n 's/^Requires-Dist: \(.*\); extra == "cuda"$/\1/p' "$tree"/mdir-*.dist-info/METADATA | sort | tr '\n' ' ')
+  [[ "$extra" == "nvidia-cuda-nvcc<14,>=13.0 nvidia-cufft<13,>=12.0 " ]] \
+    || complain "$name: the extra cuda requires '$extra', not nvidia-cuda-nvcc<14,>=13.0 and nvidia-cufft<13,>=12.0"
   while IFS= read -r -d '' f; do
     file "$f" | grep -q ELF || continue
     base=$(basename "$f")
@@ -65,7 +70,8 @@ for wheel in "$@"; do
   done < <(find "$tree" -type f -name '*.so*' -print0)
   for f in mdir/__init__.py mdir/lib/libmdrt.so mdir/lib/libmdrt_cuda.so mdir/lib/libomp.so \
            mdir/cuda/nvvm/libdevice/libdevice.10.bc mdir/cuda/EULA.txt \
-           mdir/licenses/LICENSE mdir/licenses/HDF5-COPYING; do
+           mdir/licenses/LICENSE mdir/licenses/HDF5-COPYING \
+           mdir/licenses/pybind11-LICENSE; do
     [[ -f "$tree/$f" ]] || complain "$name has no $f"
   done
   rm -rf "$tree"

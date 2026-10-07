@@ -39,9 +39,16 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-# cuFFT of CUDA 13 (soname libcufft.so.12) from NVIDIA's wheel, which the
-# GPU runtime finds in the same site-packages (nvidia/cu13/lib).
-cuda = ["nvidia-cufft>=12.0,<13"]
+# What a GPU run takes from NVIDIA's wheels of CUDA 13, in the same
+# site-packages: cuFFT (soname libcufft.so.12, nvidia/cu13/lib), which the
+# GPU runtime loads, and ptxas (nvidia/cu13/bin, from nvidia-cuda-nvcc),
+# which compiles the kernels to cubins, so that the driver does not compile
+# their PTX at the first load. Any ptxas of CUDA 13 serves: it only
+# assembles the PTX that LLVM emits, after libdevice (CUDA 13.0, carried
+# by the wheel) is linked, so its minor version need not be libdevice's;
+# 13.0.88 and 13.4.92 were run. The major is fixed because MDIR looks in
+# nvidia/cu13.
+cuda = ["nvidia-cufft>=12.0,<13", "nvidia-cuda-nvcc>=13.0,<14"]
 
 [project.urls]
 Homepage = "https://github.com/vv137/mdir"

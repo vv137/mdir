@@ -118,6 +118,10 @@ if(SKBUILD)
     install(FILES "${CMAKE_CURRENT_BINARY_DIR}/version.txt"
       DESTINATION mdir/cuda COMPONENT python)
   endif()
+  # pybind11 3.0.1, compiled into the extension (BSD-3-Clause, whose
+  # notice goes with binaries); the copy is python/pybind11-LICENSE.
+  install(FILES ${PROJECT_SOURCE_DIR}/python/pybind11-LICENSE
+    DESTINATION mdir/licenses COMPONENT python)
   install(FILES ${PROJECT_SOURCE_DIR}/LICENSE DESTINATION mdir/licenses
     COMPONENT python)
   # HDF5's notice, which a binary distribution reproduces.
