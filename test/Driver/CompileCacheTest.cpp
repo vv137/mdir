@@ -1,6 +1,9 @@
 // The keys, entries, and bound of the compile cache of host objects
 // (D212): a changed key part misses, a damaged entry is
 // rejected, and eviction removes the entries used least recently.
+// clearCache (D[compile-cache-controls]) removes the entries of this format
+// and nothing else, and a process that clears while another writes leaves
+// only intact entries.
 #include "mdir/Compiler/CompileCache.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include "llvm/IR/IRBuilder.h"
@@ -16,6 +19,8 @@
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/TargetParser/SubtargetFeature.h"
 #include <chrono>
+#include <sys/wait.h>
+#include <unistd.h>
 
 using namespace llvm;
 using namespace mdir::compiler;
@@ -223,6 +228,91 @@ int main(int argc, char **argv) {
   check(!sys::fs::exists(ptx) && sys::fs::exists(hostEntry) &&
             sys::fs::exists(cubin),
         "one bound covers the host and GPU entries, least recent first");
+
+  // Clearing (D[compile-cache-controls]): the entries of this format go,
+  // of every kind; another format, other names, the temporary file of a
+  // writer under way, and the directories stay; a stale temporary file goes.
+  std::string foreign = entry("foreign.o"), other = entry("notes.txt");
+  write(foreign, "OTHERFMT and more bytes than a tag");
+  write(other, intact);
+  write(stale, "partial");
+  age(stale, std::chrono::hours(2));
+  ClearedCache cleared = clearCache(directory);
+  check(cleared.hostEntries == 1 && cleared.gpuEntries == 1 &&
+            cleared.bytes == hostSize + cubinSize,
+        "a clear removes the host and GPU entries and counts their bytes");
+  check(!sys::fs::exists(hostEntry) && !sys::fs::exists(cubin),
+        "a cleared entry is gone");
+  check(sys::fs::exists(foreign) && sys::fs::exists(other) &&
+            sys::fs::exists(fresh) && !sys::fs::exists(stale) &&
+            sys::fs::is_directory(objects) && sys::fs::is_directory(gpu),
+        "a clear leaves other formats, other names, a writer's temporary "
+        "file, and the directories, and removes a stale temporary file");
+  cleared = clearCache(directory);
+  check(cleared.hostEntries == 0 && cleared.gpuEntries == 0 &&
+            cleared.bytes == 0,
+        "a second clear removes nothing");
+  SmallString<256> absent(directory);
+  sys::path::append(absent, "absent");
+  cleared = clearCache(absent);
+  check(cleared.hostEntries == 0 && cleared.gpuEntries == 0 &&
+            !sys::fs::exists(absent),
+        "a clear of a directory that does not exist removes nothing and "
+        "makes nothing");
+  for (StringRef file : {foreign, other, fresh})
+    sys::fs::remove(file);
+
+  // A process that writes entries while this one clears: every write
+  // succeeds, and every entry that remains is intact.
+  constexpr int kKeys = 50, kWrites = 3000;
+  auto raceKey = [](int i) { return "race key " + std::to_string(i % kKeys); };
+  auto racePath = [&](int i) {
+    return i % 2 ? gpuEntry(raceKey(i), ".cubin")
+                 : entry(getCacheEntryName(raceKey(i), ".o"));
+  };
+  outs().flush();
+  pid_t writer = fork();
+  if (writer == 0) {
+    int failed = 0;
+    for (int i = 0; i < kWrites; ++i)
+      if (auto error = writeCacheEntry(racePath(i), raceKey(i), object, 1.0)) {
+        consumeError(std::move(error));
+        ++failed;
+      }
+    _exit(failed ? 1 : 0);
+  }
+  check(writer > 0, "the writer starts");
+  int clears = 0, status = 0;
+  uint64_t removed = 0;
+  while (writer > 0 && waitpid(writer, &status, WNOHANG) == 0) {
+    ClearedCache c = clearCache(directory);
+    removed += c.hostEntries + c.gpuEntries;
+    ++clears;
+  }
+  check(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+        "every write succeeds while another process clears");
+  int remaining = 0, intactEntries = 0;
+  for (int i = 0; i < kKeys; ++i) {
+    if (!sys::fs::exists(racePath(i)))
+      continue;
+    ++remaining;
+    found = readCacheEntry(racePath(i), raceKey(i), seconds, rejected);
+    intactEntries += found && !rejected && found->getBuffer() == object;
+  }
+  int temporaries = 0;
+  for (StringRef kind : {StringRef(objects), StringRef(gpu)}) {
+    std::error_code error;
+    for (sys::fs::directory_iterator it(kind, error), end; it != end && !error;
+         it.increment(error))
+      temporaries += StringRef(it->path()).contains(".tmp-");
+  }
+  outs() << "clear race: writes " << kWrites << ", clears " << clears
+         << ", removed " << removed << ", remaining " << remaining
+         << ", intact " << intactEntries << ", temporary files "
+         << temporaries << "\n";
+  check(clears > 0 && removed > 0, "the clears removed entries meanwhile");
+  check(intactEntries == remaining && temporaries == 0,
+        "every entry that remains is intact, and no temporary file is left");
 
   outs() << (failures ? "compile cache checks FAILED\n"
                       : "compile cache checks passed\n");

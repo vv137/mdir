@@ -1,0 +1,39 @@
+# REQUIRES: python-api, cuda
+# The controls of the compile cache (D[compile-cache-controls]) on a GPU,
+# whose PTX and cubins are entries too, read and written by mdir.compile's
+# lowering as well as the simulation's: cache=False generates every module
+# and reads and writes no entry of either kind; a clear removes the GPU
+# entries with the host object, and the next process stores them again; a
+# process that clears over and over while another compiles leaves only
+# well-formed entries. See compile-cache-controls.test.
+# RUN: rm -rf %t
+# RUN: %mdir_python %S/Inputs/compile_cache.py %S/Inputs/dipeptide GPU Mixed %t --bypass --clear --clear-concurrent | FileCheck %s
+# CHECK: off: compiled 1 hits 0 rejected 0 stored 0
+# CHECK-NEXT: off: gpu modules [[M:[0-9]+]] ptx generated [[M]] hits 0 cubins generated [[M]] hits 0 rejected 0 stored 0
+# CHECK-NEXT: off: directory absent
+# CHECK-NEXT: bypass-empty: compiled 1 hits 0 rejected 0 stored 0 bypassed 1 state same
+# CHECK-NEXT: bypass-empty: gpu modules [[M]] ptx generated [[M]] hits 0 cubins generated [[M]] hits 0 rejected 0 stored 0
+# CHECK-NEXT: bypass-empty: directory absent
+# CHECK-NEXT: cold: compiled 1 hits 0 rejected 0 stored 1 state same
+# CHECK-NEXT: cold: gpu modules [[M]] ptx generated {{[0-9]+}} hits {{[0-9]+}} cubins generated {{[0-9]+}} hits {{[0-9]+}} rejected 0 stored {{[0-9]+}}
+# CHECK-NEXT: cold: entries 1
+# CHECK-NEXT: cold: gpu entries ptx {{[1-9][0-9]*}} cubin {{[1-9][0-9]*}}
+# CHECK-NEXT: warm: compiled 0 hits 1 rejected 0 stored 0 state same
+# CHECK-NEXT: warm: gpu modules [[M]] ptx generated 0 hits [[M]] cubins generated 0 hits [[M]] rejected 0 stored 0
+# CHECK-NEXT: bypass: compiled 1 hits 0 rejected 0 stored 0 bypassed 1 state same
+# CHECK-NEXT: bypass: gpu modules [[M]] ptx generated [[M]] hits 0 cubins generated [[M]] hits 0 rejected 0 stored 0
+# CHECK-NEXT: bypass: entries unchanged
+# CHECK-NEXT: bypass-simulation: compiled 1 hits 0 rejected 0 stored 0 bypassed 1 state same
+# CHECK-NEXT: bypass-simulation: gpu modules [[M]] ptx generated [[M]] hits 0 cubins generated [[M]] hits 0 rejected 0 stored 0
+# CHECK-NEXT: bypass-simulation: host entries unchanged
+# CHECK-NEXT: clear: directory True host 1 of 1 gpu [[G:[1-9][0-9]*]] of [[G]] bytes positive
+# CHECK-NEXT: clear: entries 0 foreign kept temporary kept
+# CHECK-NEXT: after-clear: compiled 1 hits 0 rejected 0 stored 1 state same
+# CHECK-NEXT: after-clear: gpu modules [[M]] ptx generated {{[0-9]+}} hits {{[0-9]+}} cubins generated {{[0-9]+}} hits {{[0-9]+}} rejected 0 stored {{[0-9]+}}
+# CHECK-NEXT: rewarm-after-clear: compiled 0 hits 1 rejected 0 stored 0 state same
+# CHECK-NEXT: rewarm-after-clear: gpu modules [[M]] ptx generated 0 hits [[M]] cubins generated 0 hits [[M]] rejected 0 stored 0
+# CHECK-NEXT: clear-other: host 0 gpu 0, entries here kept
+# CHECK-NEXT: clear-none: directory False host 0 gpu 0, entries here kept
+# CHECK-NEXT: clear-off: host 1 entries 0
+# CHECK-NEXT: clear-concurrent: stored over 4 compiles more than 1, clears many, removed some, malformed 0, state same
+# CHECK-NEXT: after-concurrent-clear: rejected 0 gpu rejected 0 state same
