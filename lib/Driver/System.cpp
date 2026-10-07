@@ -421,9 +421,7 @@ llvm::Expected<System> mdir::driver::prepareTopologySystem(
             "restraint selects with another 'reference_scaling'",
             restraint.selection.c_str(), i + 1);
       system.restraintScaling[i] = restraint.scaling;
-      system.restraintConstants[i] += restraint.forceConstant *
-                                      units::energy /
-                                      (units::length * units::length);
+      system.restraintConstants[i] += restraint.forceConstant;
       ++count;
     }
     if (count == 0)

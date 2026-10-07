@@ -2,6 +2,7 @@
 
 #include "mdir/Driver/Control.h"
 #include "mdir/Driver/Expression.h"
+#include "mdir/Driver/System.h"
 
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -2962,6 +2963,9 @@ Error Reader::read(const toml::table &root) {
         return error;
       if (restraint.forceConstant == 0.0)
         return fail(*entry, "expected a 'force_constant' in [[restraints]]");
+      // kcal/mol/Å² of the file to kJ/mol/nm², the one conversion.
+      restraint.forceConstant = restraint.forceConstant * units::energy /
+                                (units::length * units::length);
       if (Error error = readChoice<ReferenceScaling>(
               *entry, "reference_scaling", restraint.scaling,
               {{"CENTER", ReferenceScaling::Center},

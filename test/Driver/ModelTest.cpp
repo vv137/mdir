@@ -67,12 +67,9 @@ int main(int argc, char **argv) {
   s.electrostatics = c.pme ? model::Electrostatics::PME : model::Electrostatics::Cutoff;
   s.pmeGrid = {28,28,28};
   // [[restraints]] as typed restraints in kJ/mol/nm^2 (D198).
-  // The constant of the control file in kJ/mol/nm^2, converted as the file
-  // path converts it.
+  // The control structure holds the constant of the file in kJ/mol/nm^2.
   for (const auto &r : c.restraints)
-    s.restraints.push_back({r.selection, r.forceConstant * driver::units::energy /
-                                         (driver::units::length * driver::units::length),
-                            r.scaling});
+    s.restraints.push_back({r.selection, r.forceConstant, r.scaling});
   model::Integrator integrator;
   integrator.timestep = 0.0005;
   integrator.method = c.integrator;
@@ -209,12 +206,13 @@ int main(int argc, char **argv) {
   };
   rejectDraw(-1,1); rejectDraw(std::numeric_limits<double>::quiet_NaN(),1);
   rejectDraw(300,uint64_t(1)<<63);
-  // A constant written in kJ/mol/nm^2 is that of the restraint, to within
-  // the one rounding of the conversion through the control file's unit.
-  s.restraints={{"@1", 4184.0, driver::ReferenceScaling::Center}};
-  auto exact=take(prepare());
-  require(llvm::all_of(exact.system.restraintConstants, [](double k) {
-            return k==0 || std::abs(k-4184.0) <= 4184.0*std::numeric_limits<double>::epsilon(); }),
-          "restraint constant changed by the unit conversion");
+  // A constant written in kJ/mol/nm^2 is that of the restraint, exactly:
+  // it is not converted.
+  for (double k : {4184.0, 1000.0, 0.1}) {
+    s.restraints={{"@1", k, driver::ReferenceScaling::Center}};
+    auto exact=take(prepare());
+    require(llvm::all_of(exact.system.restraintConstants, [k](double c) { return c==0 || c==k; }),
+            "restraint constant changed by the unit conversion");
+  }
   llvm::outs()<<"file/object parity, ownership and typed validation passed\n";
 }

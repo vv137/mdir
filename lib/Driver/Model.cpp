@@ -135,23 +135,6 @@ static llvm::Error checkExpression(llvm::StringRef name, llvm::StringRef text,
       return input("term '" + name + "': undeclared parameter '" + n + "'");
   return llvm::Error::success();
 }
-// A restraint constant in kJ/mol/nm^2 as the control file's kcal/mol/A^2:
-// the value that prepareTopologySystem converts back to `k` exactly where
-// one exists (always for a constant converted from a control file), or else
-// the nearest of the neighbors tried.
-static double toControlConstant(double k) {
-  auto back = [](double c) {
-    return c * driver::units::energy / (driver::units::length * driver::units::length);
-  };
-  double guess = k * (driver::units::length * driver::units::length) / driver::units::energy;
-  double best = guess;
-  for (double direction : {-HUGE_VAL, HUGE_VAL}) {
-    double c = guess;
-    for (int step = 0; step != 3; ++step, c = std::nextafter(c, direction))
-      if (std::abs(back(c) - k) < std::abs(back(best) - k)) best = c;
-  }
-  return best;
-}
 llvm::Expected<PreparedModel> mdir::model::prepare(
     const System &s, const InitialState &state, const Integrator &integrator,
     const Ensemble &ensemble, const Execution &execution, const Schedule &schedule) {
@@ -293,8 +276,8 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
     term.expression = convertExpression(term.expression, term.arity == 2);
     c.tupleTerms.push_back(std::move(term));
   }
-  // The restraints become those of the control file, whose constants are
-  // in kcal/mol/A^2, and are prepared by the same code (D74, D124).
+  // The restraints become those of the control structure, whose constants
+  // are in kJ/mol/nm^2, and are prepared by the same code (D74, D124).
   for (const auto &r : s.restraints) {
     if (r.selection.empty()) return input("a restraint needs a selection");
     if (!positive(r.forceConstant))
@@ -302,7 +285,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
                    "': the force constant must be positive and finite (kJ/mol/nm^2)");
     if (r.scaling != driver::ReferenceScaling::Center && r.scaling != driver::ReferenceScaling::All)
       return input("the restraint of '" + r.selection + "': unknown reference scaling");
-    c.restraints.push_back({r.selection, toControlConstant(r.forceConstant), r.scaling});
+    c.restraints.push_back({r.selection, r.forceConstant, r.scaling});
   }
   if (!s.restraintReference.empty() &&
       (s.restraintReference.size() != 3 * s.topology.getNumParticles() ||
