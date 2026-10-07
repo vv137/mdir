@@ -99,9 +99,11 @@ environment says: no entry is read, written, or touched, no directory is
 made, and nothing is evicted.
 
 - `mdir.compile(..., cache=False)` is keyword only. It applies to the
-  lowering that `mdir.compile` does; on a GPU that lowering reads and
-  writes the PTX and cubins of its modules. The program records the
-  choice.
+  lowering of `Program.lowered_ir`, which `mdir.compile` no longer runs
+  itself but which happens on the first read of `lowered_ir`
+  (D[compile-once]); on a GPU that lowering reads and writes the PTX and
+  cubins of its modules. The program records the choice, the default of
+  its simulations.
 - `Simulation(program, cache=None)` is keyword only. `None` takes the
   program's choice, and `True` or `False` overrides it for the
   simulation's compile: its host object and the entries of its GPU
