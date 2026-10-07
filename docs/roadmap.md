@@ -248,7 +248,7 @@ programs on disk, keyed by their content. D213 (#130,
 ε, constants of pair terms, and parameters of tuple terms tunable, whose
 values a simulation takes without compiling; the quantities derived from
 them are rebuilt by the code that compiles them, so an update equals a
-compile with the new values to the bit. D[gpu-module-compile] (#148,
+compile with the new values to the bit. D214 (#148,
 [GPU modules](compile-cache.md#the-gpu-modules-dgpu-module-compile))
 serializes the GPU modules in parallel, caches their PTX and cubins, and
 loads cubins compiled for the device instead of PTX. Checkpoints and

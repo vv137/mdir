@@ -48,7 +48,7 @@ format, or the outputs; every such change is listed under **Changed** or
 - The GPU modules of a program are serialized in parallel, on the threads
   that `MDIR_COMPILE_THREADS` bounds, and become cubins for the device that
   runs them, which the driver loads without compiling
-  (D[gpu-module-compile], #148). The toolkit's `ptxas` compiles them. The
+  (D214, #148). The toolkit's `ptxas` compiles them. The
   kernels stay PTX, as before, when there is no device to ask, when LLVM
   does not know the architecture, or when there is no `ptxas`.
 - The compile cache keeps the PTX and the cubin of each GPU module in

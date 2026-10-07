@@ -63,7 +63,7 @@ frame is shared between engines or processes, and an entry is copied into
 memory rather than mapped. `jit-memory.test` runs the checks of this
 document without a cache, with a cold one, and with a warm one.
 
-The PTX and cubins of the GPU modules (D[gpu-module-compile]) are data: a
+The PTX and cubins of the GPU modules (D214) are data: a
 constant of the host module, which the CUDA driver loads into memory of its
 own. Whether they were generated, read from the cache, or compiled by
 `ptxas` changes only those bytes, before the host object is generated;

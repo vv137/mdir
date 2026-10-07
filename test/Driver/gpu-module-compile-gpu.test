@@ -1,4 +1,4 @@
-# The serialization of the GPU modules (D[gpu-module-compile]). On a device
+# The serialization of the GPU modules (D214). On a device
 # whose architecture LLVM knows, the kernels become cubins for it; without a
 # visible device they stay PTX for sm_75, which the driver compiles.
 # MDIR_GPU_BINARY=ptx keeps PTX, MDIR_GPU_ARCH gives the architecture, and

@@ -1668,7 +1668,7 @@ one that the template for the host builds, entry by entry.
 The result is lowered by `mdir-gpu-lower-to-nvvm`, the upstream pipeline
 `gpu-lower-to-nvvm-pipeline` with the GPU modules serialized in parallel.
 The kernels become cubins for the device's architecture, compiled by
-`ptxas`, inside the program (D[gpu-module-compile]). Where that is not
+`ptxas`, inside the program (D214). Where that is not
 possible, they become PTX text, which the driver compiles when the program
 starts. Math
 functions come from the device math library of the CUDA toolkit.

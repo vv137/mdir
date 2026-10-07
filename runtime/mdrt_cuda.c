@@ -244,7 +244,7 @@ CUmodule mgpuModuleLoad(void *data, size_t size) {
   if (result != CUDA_SUCCESS)
     reportUnsupportedPTX(result, data, size, NULL);
   /* A cubin is compiled for the architecture of the device that the
-     compiler asked the driver for (D[gpu-module-compile]). */
+     compiler asked the driver for (D214). */
   if (result == CUDA_ERROR_NO_BINARY_FOR_GPU) {
     fprintf(stderr,
             "mdrt: the kernels were compiled for the architecture of another "

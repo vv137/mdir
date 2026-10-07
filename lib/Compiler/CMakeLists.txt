@@ -1,5 +1,5 @@
 # The compile cache (D212): the host objects of the JIT engines and the
-# binaries of the GPU modules (D[gpu-module-compile]).
+# binaries of the GPU modules (D214).
 add_mlir_library(MDIRCompileCache CompileCache.cpp
   PARTIAL_SOURCES_INTENDED
   LINK_COMPONENTS BitWriter Core Object Support

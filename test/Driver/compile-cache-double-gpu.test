@@ -1,6 +1,6 @@
 # REQUIRES: python-api, cuda
 # The compile cache of host objects (D212) and of the GPU modules
-# (D[gpu-module-compile]) on a GPU in double precision: a cold and a warm
+# (D214) on a GPU in double precision: a cold and a warm
 # cache give the state of no cache bit for bit after 20 deterministic
 # steps, and a warm cache generates no PTX and no cubin. Each scenario is
 # a process of its own on one directory (Inputs/compile_cache.py).

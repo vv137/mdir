@@ -14,7 +14,7 @@ report below.
 
 The kernels are cubins for the architecture of the device. They are
 compiled by the `ptxas` of the toolkit, which also supplies libdevice
-(D[gpu-module-compile]), and the driver loads them without compiling them.
+(D214), and the driver loads them without compiling them.
 A cubin compiled for one architecture does not load on a device of
 another; such a run ends with `mdrt: the kernels were compiled for the
 architecture of another device`.

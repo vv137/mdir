@@ -1,4 +1,4 @@
-// The serialization of the GPU modules (D[gpu-module-compile]).
+// The serialization of the GPU modules (D214).
 #ifndef MDIR_CONVERSION_GPUTOBINARY_H
 #define MDIR_CONVERSION_GPUTOBINARY_H
 
@@ -18,7 +18,7 @@ compiler::CompileStats takeGpuModuleStats(mlir::MLIRContext &context);
 
 /// The options of `mdir-gpu-lower-to-nvvm` for the kernels of the visible
 /// CUDA device `device`, or of the one that MDRT_DEVICE names, as the
-/// runtime chooses it (D[gpu-module-compile]):
+/// runtime chooses it (D214):
 ///
 /// - MDIR_GPU_BINARY=auto (the default): cubins for the device's
 ///   architecture, PTX where ptxas cannot make them; PTX for the default

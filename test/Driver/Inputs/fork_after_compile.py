@@ -1,5 +1,5 @@
 """A process that forks after mdir.compile of a GPU program: the child
-simulates on the GPU (D[gpu-module-compile]).
+simulates on the GPU (D214).
 
   fork_after_compile.py ROOT
 

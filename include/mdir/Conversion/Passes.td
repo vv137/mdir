@@ -227,7 +227,7 @@ def GpuModuleToBinary
     does, but serializes the modules on the threads of the context, at
     most `MDIR_COMPILE_THREADS` (D211), and puts the binaries in the order
     of the modules, so that the result does not depend on the threads
-    (D[gpu-module-compile]). The time the serialization took is left out of
+    (D214). The time the serialization took is left out of
     the objects' properties, which the upstream pass records, so that the
     result is the same from run to run.
 

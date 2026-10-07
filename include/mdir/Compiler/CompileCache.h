@@ -42,7 +42,7 @@ struct CompileStats {
   /// The time spent on keys and on reading entries, hit or miss.
   double lookupSeconds = 0.0;
 
-  /// The GPU modules of the programs (D[gpu-module-compile]) and the wall
+  /// The GPU modules of the programs (D214) and the wall
   /// time of their serialization. Each module is serialized to PTX, which
   /// LLVM generates or the cache gives, and on a device whose architecture
   /// is known, the PTX to a cubin, which ptxas generates or the cache
@@ -79,7 +79,7 @@ struct CompileCacheConfig {
   static std::optional<CompileCacheConfig> fromEnvironment();
 };
 
-/// The entries of every kind of the cache (D212, D[gpu-module-compile]):
+/// The entries of every kind of the cache (D212, D214):
 /// a magic tag, the full key, the length of the data, a BLAKE3 hash of
 /// the data, the time its generation took, and the data.
 ///

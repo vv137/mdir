@@ -690,7 +690,7 @@ PYBIND11_MODULE(mdir, m) {
       d["cache_stored"] = c.stored;
       d["cache_unstored"] = c.unstored;
       d["cache_lookup_seconds"] = c.lookupSeconds;
-      // The GPU modules (D[gpu-module-compile]).
+      // The GPU modules (D214).
       d["gpu_modules"] = c.gpuModules;
       d["gpu_serialize_seconds"] = c.gpuSerializeSeconds;
       d["gpu_ptx_compiled"] = c.gpuPtxCompiled;

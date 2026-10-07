@@ -567,7 +567,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                   mdrt::MDRTDialect>();
   // The threads of the process's pool, at most MDIR_COMPILE_THREADS, as a
   // Python simulation lowers (D211); the GPU modules are serialized on them
-  // (D[gpu-module-compile]).
+  // (D214).
   mlir::MLIRContext context(registry, mlir::MLIRContext::Threading::DISABLED);
   compiler::shareThreadPool(context);
 
@@ -597,7 +597,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   if (!control->manifestFile.empty())
     manager.addInstrumentation(std::make_unique<ManifestNeighbors>(neighborKinds));
   // The kernels are compiled for the device that runs them: the first
-  // visible one, or the one MDRT_DEVICE names (D[gpu-module-compile]).
+  // visible one, or the one MDRT_DEVICE names (D214).
   auto gpu = compiler::getGpuOptions(*control, /*device=*/0);
   if (!gpu)
     return fail(gpu.takeError());

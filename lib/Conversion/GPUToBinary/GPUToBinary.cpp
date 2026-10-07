@@ -4,7 +4,7 @@
 // (mlir/lib/Dialect/GPU/Transforms/ModuleToBinary.cpp) does, one
 // `gpu.binary` for each `gpu.module`, but serializes the modules on the
 // threads of the context, takes their PTX and cubins from the compile
-// cache, and runs ptxas itself (D[gpu-module-compile]).
+// cache, and runs ptxas itself (D214).
 // `mdir-gpu-lower-to-nvvm` is upstream `gpu-lower-to-nvvm-pipeline`
 // (mlir/lib/Dialect/GPU/Pipelines/GPUToNVVMPipeline.cpp), pass for pass,
 // with this pass in place of upstream's serialization.

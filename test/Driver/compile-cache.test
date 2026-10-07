@@ -1,5 +1,5 @@
 # The keys, entries, and bound of the compile cache of host objects
-# (D212) and of the entries of GPU modules (D[gpu-module-compile]); the
+# (D212) and of the entries of GPU modules (D214); the
 # cache across processes is in compile-cache-*.test.
 # RUN: rm -rf %t
 # RUN: mdir-compile-cache-test %t | FileCheck %s

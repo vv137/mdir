@@ -10,8 +10,8 @@ and for tests.
 
 | Variable | Read by | Effect |
 |---|---|---|
-| `CUDA_VISIBLE_DEVICES` | the CUDA driver; the test suite; the compiler of a GPU program | The GPUs that a process may use. An empty value hides every GPU, and the suite then skips the tests that need one ([README](../README.md#testing)). The compiler asks NVML for the architecture of the device it selects (D[gpu-module-compile]). |
-| `MDRT_DEVICE=<n>` | the device runtime (`runtime/mdrt_cuda.c`); the compiler of a GPU program | The device, among the visible ones, that a run uses; the first by default ([mdrt-m0.md](mdrt-m0.md)). The kernels are compiled for its architecture (D[gpu-module-compile]). |
+| `CUDA_VISIBLE_DEVICES` | the CUDA driver; the test suite; the compiler of a GPU program | The GPUs that a process may use. An empty value hides every GPU, and the suite then skips the tests that need one ([README](../README.md#testing)). The compiler asks NVML for the architecture of the device it selects (D214). |
+| `MDRT_DEVICE=<n>` | the device runtime (`runtime/mdrt_cuda.c`); the compiler of a GPU program | The device, among the visible ones, that a run uses; the first by default ([mdrt-m0.md](mdrt-m0.md)). The kernels are compiled for its architecture (D214). |
 | `CUDA_ROOT`, `CUDA_HOME`, `CUDA_PATH` | the compiler of a GPU program | The CUDA toolkit whose libdevice the kernels take their math functions from, and whose `ptxas` compiles them to cubins, the first of the three that is set; otherwise the toolkit of the build ([mdrt-m0.md](mdrt-m0.md), [compile-cache.md](compile-cache.md#cubins-for-the-device)). |
 | `MDIR_RUNTIME_DIR=<dir>` | a Python simulation | The directory of the runtime libraries (`libmdrt`, `libmdrt_cuda`); otherwise `lib` next to the Python module, as a build tree and an installation place it ([python-segments.md](python-segments.md)). |
 
@@ -20,11 +20,11 @@ and for tests.
 | Variable | Read by | Effect |
 |---|---|---|
 | `MDIR_COMPILE_THREADS=<n>` | every lowering (`mdir run`, `mdir.compile`, a Python simulation) | Bounds the threads of the process-wide pool that lowers programs; as many as the host has cores by default (D211). The test suite sets it to the cores over `gpu_workers` ([python-segments.md](python-segments.md)). |
-| `MDIR_COMPILE_CACHE_DIR=<dir>` | the JIT of a Python simulation (host objects); every lowering of a GPU program (`mdir run`, `mdir.compile`, a Python simulation) for the PTX and cubins of its GPU modules | Enables the compile cache and puts its entries in `<dir>/host/` and `<dir>/gpu/` (D212, D[gpu-module-compile], [compile-cache.md](compile-cache.md)). |
+| `MDIR_COMPILE_CACHE_DIR=<dir>` | the JIT of a Python simulation (host objects); every lowering of a GPU program (`mdir run`, `mdir.compile`, a Python simulation) for the PTX and cubins of its GPU modules | Enables the compile cache and puts its entries in `<dir>/host/` and `<dir>/gpu/` (D212, D214, [compile-cache.md](compile-cache.md)). |
 | `MDIR_COMPILE_CACHE=off` | the same | Disables the cache even when a directory is set. |
 | `MDIR_COMPILE_CACHE_MAX_MB=<n>` | the same | Bounds the cache directory, host and GPU entries together, to $n$ MiB, 2048 by default, removing the entries used least recently. |
-| `MDIR_GPU_BINARY=auto\|cubin\|ptx` | every lowering of a GPU program (`mdir run`, `mdir.compile`, a Python simulation) | The binaries of the kernels (D[gpu-module-compile]). `auto`, the default, makes cubins for the device's architecture with the toolkit's `ptxas`, and PTX where it cannot. `cubin` makes a missing architecture or `ptxas` an error. `ptx` keeps PTX, which the driver compiles at load. See [compile-cache.md](compile-cache.md#cubins-for-the-device). |
-| `MDIR_GPU_ARCH=sm_XY` | the same | The architecture to compile the kernels for, instead of the one that NVML reports for the device (D[gpu-module-compile], [compile-cache.md](compile-cache.md#cubins-for-the-device)). |
+| `MDIR_GPU_BINARY=auto\|cubin\|ptx` | every lowering of a GPU program (`mdir run`, `mdir.compile`, a Python simulation) | The binaries of the kernels (D214). `auto`, the default, makes cubins for the device's architecture with the toolkit's `ptxas`, and PTX where it cannot. `cubin` makes a missing architecture or `ptxas` an error. `ptx` keeps PTX, which the driver compiles at load. See [compile-cache.md](compile-cache.md#cubins-for-the-device). |
+| `MDIR_GPU_ARCH=sm_XY` | the same | The architecture to compile the kernels for, instead of the one that NVML reports for the device (D214, [compile-cache.md](compile-cache.md#cubins-for-the-device)). |
 
 ## Debugging
 

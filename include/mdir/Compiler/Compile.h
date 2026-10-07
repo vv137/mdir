@@ -22,7 +22,7 @@ public:
 };
 /// The pipeline of `program`. On a GPU, `gpuOptions` (getGpuOptions) are
 /// the options of the serialization of its kernels; empty, they are PTX
-/// for the default architecture (D[gpu-module-compile]).
+/// for the default architecture (D214).
 std::string getPipeline(const driver::Control &, const driver::Program &,
                         llvm::StringRef gpuOptions = {});
 /// Points CUDA_ROOT at the toolkit whose libdevice and ptxas the kernels of
@@ -59,7 +59,7 @@ void shareThreadPool(mlir::MLIRContext &context);
 /// Parses and lowers `program` in `context`, for a front end that runs the
 /// result (D196). Errors are CompileError with diagnostics. What the
 /// serialization of the GPU modules did is added to `stats`, if given
-/// (D[gpu-module-compile]).
+/// (D214).
 llvm::Expected<mlir::OwningOpRef<mlir::ModuleOp>>
 lowerModule(mlir::MLIRContext &context, const driver::Control &,
             const driver::Program &, CompileStats *stats = nullptr,

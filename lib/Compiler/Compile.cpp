@@ -106,7 +106,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
     // The kernels become cubins for the device's architecture, which the
     // driver loads without compiling them; for a device that cannot be
     // asked, PTX for the default architecture, which it compiles at load
-    // (D[gpu-module-compile]).
+    // (D214).
     os << (gpuOptions.empty() ? StringRef("cubin-format=isa") : gpuOptions)
        << "},"
        << "reconcile-unrealized-casts";

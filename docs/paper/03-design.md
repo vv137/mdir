@@ -457,7 +457,7 @@ D197), with the fast list scheduler, whose time does not grow
 exponentially with the calls of a block as the default's can (D150), and
 links it with the runtime. Each kernel is a GPU module of its own.
 The modules are serialized in parallel on the threads of the process
-(D[gpu-module-compile]). Their architecture is that of the device that
+(D214). Their architecture is that of the device that
 will run them, which the compiler asks of NVML when it lowers the
 program, without creating any CUDA state. It is not fixed when MDIR is
 built. Each module becomes PTX

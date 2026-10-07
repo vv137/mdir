@@ -49,7 +49,7 @@ class MDRTDialect;
 
 /// Registers `mdir-gpu-lower-to-nvvm`: upstream `gpu-lower-to-nvvm-pipeline`,
 /// with the same options, whose GPU modules are serialized by
-/// `mdir-gpu-module-to-binary` (D[gpu-module-compile]).
+/// `mdir-gpu-module-to-binary` (D214).
 void registerGpuLowerToNVVMPipeline();
 
 } // namespace mdir

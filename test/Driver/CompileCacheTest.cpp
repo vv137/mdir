@@ -186,7 +186,7 @@ int main(int argc, char **argv) {
   check(!sys::fs::exists(paths[1]) && !sys::fs::exists(paths[2]),
         "a bound of zero keeps no entry");
 
-  // The entries of the GPU modules (D[gpu-module-compile]): a check of the
+  // The entries of the GPU modules (D214): a check of the
   // data rejects an entry, and one bound covers the entries of every kind.
   SmallString<256> gpu(directory);
   sys::path::append(gpu, "gpu");

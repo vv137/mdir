@@ -1,4 +1,4 @@
-# The compile cache (D212, D[gpu-module-compile])
+# The compile cache (D212, D214)
 
 Issue #142. A Python simulation compiles its program in three stages: the
 MLIR pipeline lowers it to an LLVM module (with the PTX of its kernels on a
@@ -11,7 +11,7 @@ compiled PTX. `mdir run`, which still compiles with MLIR's
 `ExecutionEngine`, takes the cache of host objects when it moves onto the
 owned engine (#99).
 
-D[gpu-module-compile] (#148) serializes the GPU modules in parallel, keeps
+D214 (#148) serializes the GPU modules in parallel, keeps
 the PTX and the cubin of each module in the same cache, and loads cubins
 compiled for the device instead of PTX; see
 [The GPU modules](#the-gpu-modules-dgpu-module-compile) below.
@@ -114,7 +114,7 @@ environment of lit) runs a suite without it. A test of the cache itself
 sets its own directory or `MDIR_COMPILE_CACHE=off` in its RUN lines. A full
 suite left 86 entries, 139 MB, before the GPU entries; with them, it
 leaves 114 MB of host objects and 684 MB of GPU entries
-(D[gpu-module-compile]).
+(D214).
 
 ## Validation
 
@@ -193,7 +193,7 @@ suite are compiled more than once, by one test or by several, so a cold
 cache hits as well. The suite's wall time is set by its slowest tests, in
 which the MLIR pipeline dominates.
 
-## The GPU modules (D[gpu-module-compile])
+## The GPU modules (D214)
 
 Issue #148. A GPU program becomes many small GPU modules, one kernel each:
 the production stage of the ala3 example has 400 under `mdir run` and 624

@@ -106,7 +106,7 @@ with a warm cache against 155 s with a cold one
 
 The GPU modules of a program, 400 for the production stage of the ala3
 example under `mdir run`, are serialized in parallel and loaded as
-cubins (D[gpu-module-compile]). The serialization was 62% of the MLIR
+cubins (D214). The serialization was 62% of the MLIR
 pipeline on a GPU, and the driver compiled every PTX serially at load.
 The same example, also deterministic at a hundredth of its steps, took
 147 s on main with the driver's cache of compiled PTX warm, and 189 s with

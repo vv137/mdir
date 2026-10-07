@@ -20,7 +20,7 @@ scenario runs in a process of its own on the cache directory WORK/cache:
   next process hits.
 - with --gpu-damaged (a GPU): a byte of the data of one PTX entry, and of
   one cubin entry if there are any, is flipped; each is rejected,
-  generated again, and stored (D[gpu-module-compile]).
+  generated again, and stored (D214).
 
 On a GPU each scenario prints a second line with what the serialization of
 the GPU modules did: modules, PTX and cubins generated and read from the
