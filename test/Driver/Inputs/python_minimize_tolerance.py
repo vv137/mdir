@@ -144,6 +144,13 @@ execution.deterministic = True
 integrator, schedule = mdir.Integrator(), mdir.Schedule()
 integrator.minimize, schedule.steps, schedule.energy_period = True, STEPS, ENERGY
 program = mdir.compile(system, state, integrator, mdir.Ensemble(), execution, schedule)
+# A fresh simulation converged at its start takes no step and has the row
+# of step 0.
+fresh = mdir.Simulation(program)
+assert fresh.minimize(tolerance=30.0 * KCAL_A) == 0 and fresh.step == 0
+assert fresh.state().minimization["converged"] is True
+assert "%.6f" % (fresh.state().minimization["max_force"] / KCAL_A) == reference[0]["max_force"] \
+    or precision != "Double"
 simulation = mdir.Simulation(program)
 expect(mdir.InputError, lambda: simulation.minimize(tolerance=-1.0), "positive, finite tolerance")
 taken = simulation.minimize(tolerance=TOLERANCE * KCAL_A)
