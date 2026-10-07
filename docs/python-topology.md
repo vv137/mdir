@@ -1,8 +1,8 @@
 # Topology views and mask selection in the Python model (D[python-topology])
 
 Issue #120, an M2a item after reporters (D207, #109).
-Status: implemented; the choices put to the maintainer on the pull request
-are marked below.
+Status: implemented; the maintainer's decisions on PR #183 are marked
+below.
 
 The Python model loads a topology (D191) and compiles it (D192), but before
 this item it exposed little of it: a Python user could not list residues or
@@ -66,8 +66,9 @@ These are the names of the read-only arrays that D213 gave `System`
 
 `residue_names` here has one entry per residue; `System.residue_names`
 (D213) has one per particle and equals
-`[top.residue_names[r] for r in top.residue_indices]`. Which of the two the
-name should keep is a choice put to the maintainer (below).
+`[top.residue_names[r] for r in top.residue_indices]`. The maintainer kept
+both in this item and moved `System`'s per-particle arrays to a follow-up
+(#184) that drops them in favor of `system.topology`.
 
 ### Bonded tuples
 
@@ -136,12 +137,28 @@ number or name, `@` atoms by number or name, `*` and `?` in names, `!`, `&`,
   the particles that `mdir.Restraint(mask, k)` restrains are
   `top.select(mask)` without the virtual sites, `masses > 0`.
 
-## Interoperability (choice put to the maintainer)
+## Interoperability: `to_openmm`
 
-The issue leaves open whether the view also iterates in the style of
-`openmm.app.Topology` (`atoms()`, `residues()`, `bonds()`) or converts to an
-OpenMM `Topology` when OpenMM is importable, without a dependency (as in
-D200). Neither is in this item until the maintainer decides.
+The maintainer chose a converter on the pull request (#183), not iteration
+in the style of `openmm.app.Topology`, which would copy OpenMM's objects
+with a part of their behavior. `top.to_openmm(cell=None)` returns an
+`openmm.app.Topology`; OpenMM is imported only by this call, as unit
+quantities are (D200), and without it the call raises `ImportError`.
+
+- Atoms keep the names of the file (OpenMM's readers rename some to the
+  PDB's, `WAT` to `HOH`); elements come from `atomic_numbers`, none for 0
+  or less.
+- Residues are those of `residue_starts`.
+- Bonds are `bonds` without the H–H "bond" of a three-site water (two
+  hydrogens bonded to one oxygen of their residue), with the O–H bonds of
+  the waters of a GROMACS `[ settles ]`, and with a bond from each virtual
+  site to the particle that places it first, as OpenMM's readers give them.
+- A chain begins at each residue that no bond joins to a residue before it:
+  one chain for each molecule where molecules are contiguous, as they are
+  in these formats. OpenMM's `AmberPrmtopFile` puts everything in one
+  chain.
+- `cell`, an `mdir.Cell` such as `state.cell`, gives the periodic box
+  vectors in nm; without it the topology has none.
 
 ## Validation
 
@@ -157,6 +174,13 @@ D200). Neither is in this item until the maintainer decides.
   `[[energy.external]]` term, and those that `couple` decouples, including
   masks that select nothing, and the diagnostic of a mask that does not
   parse;
+- `to_openmm` against OpenMM's `AmberPrmtopFile` (dipeptide, OPC water
+  with extra points, ethanol in water) and `CharmmPsfFile` (the toy system):
+  elements, names, residues, bonds, the cell, and one chain per molecule of
+  the prmtop's `ATOMS_PER_MOLECULE`; the bonds of SETTLE waters of the
+  GROMACS topology equal those of its flexible waters
+  (`python-topology-openmm.test`, which needs OpenMM), and `ImportError`
+  without OpenMM;
 - the constraints of `Program.topology` against the bonds of hydrogen and
   the water residues of the files;
 - dtypes, shapes, read-only flags, fresh copies, and views that do not change

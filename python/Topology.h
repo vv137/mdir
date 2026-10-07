@@ -5,6 +5,7 @@
 #ifndef MDIR_PYTHON_TOPOLOGY_H
 #define MDIR_PYTHON_TOPOLOGY_H
 #include "mdir/Driver/Selection.h"
+#include <set>
 namespace topology {
 /// A copy of a topology taken when the view was made, so that later changes
 /// to its owner do not reach it. Positions and velocities belong to the
@@ -32,6 +33,78 @@ py::array_t<int64_t> tuples(const std::vector<Row> &rows, py::ssize_t arity, Get
   v.reserve(rows.size() * arity);
   for (const Row &row : rows) get(row, v);
   return host::copy(v.data(), v.size(), {static_cast<py::ssize_t>(rows.size()), arity});
+}
+/// The bonds of an OpenMM topology: those of the potential without the H–H
+/// "bond" that Amber lists in a three-site water, the O–H bonds of the
+/// waters that a GROMACS topology gives to SETTLE, and a bond from each
+/// virtual site to the particle that places it first, as OpenMM's readers
+/// give them.
+inline std::vector<std::pair<unsigned, unsigned>> chemicalBonds(const driver::Topology &t) {
+  std::set<std::pair<unsigned, unsigned>> seen;
+  std::vector<std::pair<unsigned, unsigned>> result;
+  auto add = [&](unsigned i, unsigned j) {
+    if (seen.insert({std::min(i, j), std::max(i, j)}).second) result.push_back({i, j});
+  };
+  // Hydrogens bonded to an oxygen in their residue, for the water test.
+  std::vector<int> oxygenOf(t.getNumParticles(), -1);
+  for (const auto &b : t.bonds)
+    for (auto [h, o] : {std::pair{b.i, b.j}, std::pair{b.j, b.i}})
+      if (t.atomicNumbers[h] == 1 && t.atomicNumbers[o] == 8 && t.residueOf[h] == t.residueOf[o])
+        oxygenOf[h] = static_cast<int>(o);
+  for (const auto &b : t.bonds) {
+    bool water = t.atomicNumbers[b.i] == 1 && t.atomicNumbers[b.j] == 1 &&
+                 oxygenOf[b.i] >= 0 && oxygenOf[b.i] == oxygenOf[b.j];
+    if (!water) add(b.i, b.j);
+  }
+  for (const auto &s : t.settles) { add(s.oxygen, s.oxygen + 1); add(s.oxygen, s.oxygen + 2); }
+  for (const auto &v : t.virtualSites) add(v.i, v.site);
+  return result;
+}
+/// An `openmm.app.Topology` of the view, OpenMM imported only here (no
+/// dependency, as D200): names as in the file, elements from the atomic
+/// numbers (none for 0 or less), the residues, one chain for each run of
+/// residues that no bond joins to the residues around it, and the cell.
+inline py::object toOpenMM(const driver::Topology &t, std::optional<driver::Cell> cell) {
+  py::module_ app, unit, openmm;
+  try {
+    openmm = py::module_::import("openmm");
+    app = py::module_::import("openmm.app");
+    unit = py::module_::import("openmm.unit");
+  } catch (py::error_already_set &e) {
+    throw py::import_error(std::string("Topology.to_openmm needs OpenMM: ") + e.what());
+  }
+  auto bonds = chemicalBonds(t);
+  size_t residues = t.residueStarts.size();
+  // reach[r]: the last residue that a bond joins to residue r or before.
+  std::vector<unsigned> reach(residues);
+  for (size_t r = 0; r != residues; ++r) reach[r] = static_cast<unsigned>(r);
+  for (auto [i, j] : bonds) {
+    unsigned a = std::min(t.residueOf[i], t.residueOf[j]), b = std::max(t.residueOf[i], t.residueOf[j]);
+    reach[a] = std::max(reach[a], b);
+  }
+  for (size_t r = 1; r < residues; ++r) reach[r] = std::max(reach[r], reach[r - 1]);
+  py::object top = app.attr("Topology")();
+  py::object Element = app.attr("element").attr("Element");
+  py::list atoms;
+  py::object chain;
+  for (size_t r = 0; r != residues; ++r) {
+    if (r == 0 || reach[r - 1] < r) chain = top.attr("addChain")();
+    py::object residue = top.attr("addResidue")(t.residueNames[r], chain);
+    size_t end = r + 1 < residues ? t.residueStarts[r + 1] : t.getNumParticles();
+    for (size_t i = t.residueStarts[r]; i != end; ++i) {
+      py::object element = py::none();
+      if (t.atomicNumbers[i] > 0) element = Element.attr("getByAtomicNumber")(t.atomicNumbers[i]);
+      atoms.append(top.attr("addAtom")(t.atomNames[i], element, residue));
+    }
+  }
+  for (auto [i, j] : bonds) top.attr("addBond")(atoms[i], atoms[j]);
+  if (cell) {
+    auto vectors = cell->getVectors();
+    py::list rows;
+    for (const auto &row : vectors) rows.append(openmm.attr("Vec3")(row[0], row[1], row[2]));
+    top.attr("setPeriodicBoxVectors")(unit.attr("Quantity")(rows, unit.attr("nanometer")));
+  }
+  return top;
 }
 inline void bind(py::module_ &m) {
   using driver::Topology;
@@ -116,6 +189,9 @@ inline void bind(py::module_ &m) {
         if (flags[i]) chosen.push_back(static_cast<int64_t>(i));
       return host::copy(chosen.data(), chosen.size(), {static_cast<py::ssize_t>(chosen.size())});
     }, py::arg("mask"))
+    .def("to_openmm", [t](const View &v, std::optional<driver::Cell> cell) {
+      return toOpenMM(t(v), cell);
+    }, py::arg("cell") = py::none())
     .def("__repr__", [t](const View &v) {
       return "Topology(" + std::to_string(t(v).getNumParticles()) + " particles, " +
              std::to_string(t(v).residueStarts.size()) + " residues, " +

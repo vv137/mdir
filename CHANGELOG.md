@@ -53,7 +53,9 @@ format, or the outputs; every such change is listed under **Changed** or
   (`constraints`) and the waters that SETTLE holds (`rigid_waters`).
   `Topology.select(mask)` returns the particles of a mask of Amber by the
   parser of the control file, an `InputError` with its diagnostic for a mask
-  that does not parse. No control-file key changes.
+  that does not parse. `Topology.to_openmm(cell=None)` returns an
+  `openmm.app.Topology` when OpenMM is importable. No control-file key
+  changes.
 - `mdir.InitialState.from_state(state, velocities=True)` makes the initial
   state of a new stage from the `State` that a simulation reached: copies of
   its positions, cell, and velocities, or without the velocities when asked,

@@ -17,3 +17,7 @@
 # CHECK: constraints: 12 bonds of hydrogen and 382 rigid waters equal the prmtop; 2343 degrees of freedom, as the engine counts
 # CHECK: copies, dtypes, read-only views and snapshots passed
 # CHECK: topology views passed
+#
+# Without OpenMM, to_openmm raises ImportError.
+# RUN: %mdir_python %S/Inputs/python_topology_openmm.py %S/Inputs %t/charmm hidden | FileCheck %s --check-prefix=HIDDEN
+# HIDDEN: to_openmm without openmm: ImportError
