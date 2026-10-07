@@ -111,9 +111,23 @@ format, or the outputs; every such change is listed under **Changed** or
   (`sm_XY`) choose the binaries of the kernels and their architecture.
   The device's architecture is asked of NVML, which creates no CUDA state,
   so a process may still fork after `mdir.compile`.
+- The Python model's pair terms take `dispersion`, the control file's
+  `dispersion_correction` of a pair term (D[python-dispersion], #161):
+  `None` follows the system, `DispersionCorrection.None_` leaves the term
+  out of the correction for the dispersion, `EnergyPressure` asks for its
+  tail. `System.dispersion_given` says whether `System.dispersion` was set;
+  a pair term whose tail diverges is then an `InputError`, and is left out
+  with the `UserWarning` `pair_tail_left_out` otherwise.
+  `Program.plan["dispersion"]` reports which tails are in the correction.
 
 ### Changed
 
+- Setting `System.dispersion` in Python makes the correction for the
+  dispersion explicit, as giving `dispersion_correction` in the control
+  file (D[python-dispersion], #161): with a switch it is refused, and a
+  divergent tail is an error; assign `None` for the default. Without a
+  periodic cell the default is now off, as in the control file; before,
+  compiling such a system needed `System.dispersion = DispersionCorrection.None_`.
 - A typed Python restraint keeps its force constant in kJ/mol/nm² exactly
   (D216, #100). Before, it passed through the control
   file's kcal/mol/Å², and a constant not computed from a control-file value

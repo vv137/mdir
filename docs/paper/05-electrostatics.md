@@ -320,7 +320,20 @@ value within $10^{-12}$ of the size of its terms as 0, and refuses the term
 otherwise, as it refuses a term of the time, which has no constant tail.
 Such a term is left out with a warning under the default correction, and
 refused when the control file asks for the correction; `dispersion_correction
-= "NONE"` in the term leaves it out explicitly.
+= "NONE"` in the term leaves it out explicitly. Leaving a term out
+removes $E_\text{tail}(V;\xi)$ of that term from $U$: the sampled
+potential is then its energy within $r_c$ alone, and the pressure,
+$-\partial F/\partial V$, loses that term's
+$\operatorname{tr}\mathsf W_\text{tail}/3V$, while the energy, forces,
+and virial of its pairs within $r_c$ are unchanged. A term that
+decays as $r^{-3}$ or more slowly, such as $1/r$, has no such limit at a
+uniform density and needs a lattice sum instead. The Python model takes
+the same choices (D[python-dispersion]): a correction that is set on
+the system, or a term that asks for its tail, is the control file's key
+given, and a term's own `None_` its opt-out; the difference of the
+default and the opt-out of a term $-c_8/r^8 - ae^{-r/l}/r^4$ is its
+$E_\text{tail}$ and $\operatorname{tr}\mathsf W_\text{tail}$ to
+$4\times10^{-13}$ relative, against a quadrature in $\ln r$ of its own.
 The derivatives in $\xi$ and $\lambda$ are central differences of the
 integral, extrapolated to a zero step (Richardson), on the host.
 

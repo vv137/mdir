@@ -251,7 +251,12 @@ clears it and bypasses it per compile from Python. D213 (#130,
 ε, constants of pair terms, and parameters of tuple terms tunable, whose
 values a simulation takes without compiling; the quantities derived from
 them are rebuilt by the code that compiles them, so an update equals a
-compile with the new values to the bit. D214 (#148,
+compile with the new values to the bit. D[python-dispersion] (#161,
+[dispersion](python-model.md#the-correction-for-the-dispersion)) gives
+Python pair terms their own `dispersion`, so a term can leave the
+correction for the dispersion, and records whether the system's correction
+was set, so a divergent tail is refused or left out as in the control
+file. D214 (#148,
 [GPU modules](compile-cache.md#the-gpu-modules-dgpu-module-compile))
 serializes the GPU modules in parallel, caches their PTX and cubins, and
 loads cubins compiled for the device instead of PTX.
