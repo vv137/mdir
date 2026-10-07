@@ -50,17 +50,21 @@ def expect(error, call, text=""):
     raise AssertionError(f"expected {error.__name__} ({text})")
 
 
-def make(precision="Double", deterministic=True, method="VelocityVerlet"):
+def make(precision="Double", deterministic=True, method="VelocityVerlet", kind="NVT",
+         minimize=False, pressure=1.0, cutoff=0.8):
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
-    system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
+    system.cutoff, system.pairlist_distance = cutoff, cutoff + (0.1 if cutoff < 1 else 0.005)
+    system.switch_distance = cutoff - (0.1 if cutoff < 1 else 0.04)
     system.electrostatics = mdir.Electrostatics.PME
     system.tunables = [mdir.Tunable("q", "charge")]
     integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execution()
     integrator.method = getattr(mdir.IntegratorMethod, method)
     integrator.timestep = 0.001
-    ensemble.kind = mdir.EnsembleKind.NVT
+    integrator.minimize = minimize
+    ensemble.kind = getattr(mdir.EnsembleKind, "NVE" if minimize else kind)
     ensemble.temperature, ensemble.coupling_period = 300, 10
+    ensemble.pressure, ensemble.tau_p = pressure, 0.1
     execution.target, execution.precision = target, getattr(mdir.Precision, precision)
     execution.deterministic = deterministic
     return mdir.compile(system, state, integrator, ensemble, execution, mdir.Schedule())
@@ -104,7 +108,10 @@ def numpy_scenario():
         ids = np.from_dlpack(view.ids)
         for q, a in zip(QUANTITIES, arrays):
             assert a.ctypes.data == getattr(view, q).data_ptr, (label, q, "a copy")
-            assert not a.flags.writeable, (label, q, "writeable")
+            # NumPy 2 takes the versioned capsule and its read-only flag;
+            # 1.x takes the legacy one, which has no flag.
+            if np.lib.NumpyVersion(np.__version__) >= "2.0.0":
+                assert not a.flags.writeable, (label, q, "writeable")
             assert a.shape == (len(ids), 3)
         check_values(state, ids, arrays, label)
         q = np.from_dlpack(view.tunables["q"])
@@ -158,6 +165,23 @@ def numpy_scenario():
     gc.collect()
     print("capsules released once, taken or not, legacy or versioned; refusals; "
           "an array outlives its simulation")
+
+    # A minimization is refused under a lease.
+    sim = mdir.Simulation(make(minimize=True))
+    sim.minimize(3)
+    with sim.view() as view:
+        a = np.from_dlpack(view.positions)
+        expect(mdir.SimulationError, lambda: sim.minimize(1), "lease")
+        del a
+    sim.minimize(1)
+    # After a failed part the state is on the host only: a barostat at 1000
+    # bar takes the cell below twice the cutoff of 1.24 nm (as in
+    # python_resident.py).
+    sim = mdir.Simulation(make(kind="NPT", pressure=1e3, cutoff=1.24))
+    expect(mdir.SimulationError, lambda: [sim.run(10) for _ in range(1000)])
+    assert sim.failed
+    expect(mdir.SimulationError, sim.view, "failed")
+    print("a minimization refused under a lease; no view after a failure")
 
 
 # --- ctypes and the CUDA driver on a GPU -------------------------------------

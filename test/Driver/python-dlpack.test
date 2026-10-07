@@ -7,4 +7,5 @@
 # CHECK: Mixed: positions float64, forces float64, the program's buffers, rows of state() at ids, runs blocked by 6 leases and allowed after them
 # CHECK: Mixed, not deterministic: positions float64, forces float32, the program's buffers, rows of state() at ids, runs blocked by 6 leases and allowed after them
 # CHECK: capsules released once, taken or not, legacy or versioned; refusals; an array outlives its simulation
+# CHECK: a minimization refused under a lease; no view after a failure
 # CHECK: dlpack numpy passed
