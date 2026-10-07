@@ -265,7 +265,8 @@ directory:
   (CPU, mixed) and `compile-cache-controls-gpu.test` (GPU, mixed), each
   scenario a process of its own:
   - `mdir.compile(..., cache=False)` on an empty directory makes none. On
-    a warm one it generates the object and, on a GPU, every PTX and cubin,
+    a warm one its simulation, which inherits the choice (`compile` itself
+    lowers nothing, D[compile-once]), generates the object and, on a GPU, every PTX and cubin,
     hits nothing, and leaves every entry with its size and time (a read
     would have touched it). The state equals that of no cache bit for
     bit. `Simulation(program, cache=False)` after a compile that used the
