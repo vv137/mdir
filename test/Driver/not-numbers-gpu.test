@@ -11,7 +11,7 @@
 # RUN: not mdir run %t/groups.toml 2>&1 | FileCheck %s
 # RUN: not mdir run %t/matrix.toml 2>&1 | FileCheck %s
 
-# CHECK: mdir: {{(a position is not a number|[0-9]+ positions are not numbers)}} at a build of the neighbor structure; the run has failed
+# CHECK: mdir: {{(a position is not a number or is|[0-9]+ positions are not numbers or are)}} far outside the cell at a build of the neighbor structure; the run has failed
 
 #--- run.toml
 [input]

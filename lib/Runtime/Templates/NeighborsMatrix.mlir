@@ -39,7 +39,15 @@ func.func private @mdrt.cell_count(%length: f64, %width: f64) -> index {
   %padded = arith.mulf %width, %slack : f64
   %ratio = arith.divf %length, %padded : f64
   %floor = math.floor %ratio : f64
-  %wide = arith.fptosi %floor : f64 to i64
+  // At least one cell and at most 256: a cell that is not a number, or one
+  // that a run that has failed has blown up, gives a count of cells that is
+  // defined and fits memory; the cells are then wider than the reach needs,
+  // and the range of the search follows from their count (#168).
+  %one_f = arith.constant 1.0 : f64
+  %most_f = arith.constant 256.0 : f64
+  %least = arith.maxnumf %floor, %one_f : f64
+  %bounded = arith.minnumf %least, %most_f : f64
+  %wide = arith.fptosi %bounded : f64 to i64
   %count = arith.index_cast %wide : i64 to index
   %result = arith.maxsi %count, %c1 : index
   return %result : index
@@ -59,7 +67,12 @@ func.func private @mdrt.cell_range(%length: f64, %count: index, %reach: f64)
   %ratio = arith.divf %reach, %width : f64
   %padded = arith.mulf %ratio, %slack : f64
   %ceil = math.ceil %padded : f64
-  %whole = arith.fptosi %ceil : f64 to i64
+  // Defined for a cell that is not a number, as the count is (#168).
+  %one_f = arith.constant 1.0 : f64
+  %most_f = arith.constant 256.0 : f64
+  %least = arith.maxnumf %ceil, %one_f : f64
+  %bounded = arith.minnumf %least, %most_f : f64
+  %whole = arith.fptosi %bounded : f64 to i64
   %range = arith.index_cast %whole : i64 to index
   %result = arith.maxsi %range, %c1 : index
   return %result : index
