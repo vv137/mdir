@@ -798,6 +798,22 @@ void _mlir_ciface_mdrtWriteMinimization(int64_t step, double energy,
   output.lastTotal = energy;
 }
 
+void _mlir_ciface_mdrtCheckMinimization(void *state) {
+  // The criterion is the largest force of the row, that of the log
+  // (D[minimize-tolerance]): the minimization has converged once no
+  // particle feels a force above the tolerance.
+  Output &output = *current;
+  auto *flags = static_cast<StridedMemRefType<int64_t, 1> *>(state);
+  int64_t *values = flags->data + flags->offset;
+  if (values[0] != 0 || output.minimizeTolerance <= 0.0)
+    return;
+  if (output.lastMinimization.maxForce < output.minimizeTolerance) {
+    values[0] = 1;
+    values[1] = output.lastMinimizationStep;
+    output.convergedStep = output.lastMinimizationStep;
+  }
+}
+
 /// Without a periodic cell (D142), stops the run if the particles have
 /// spread so far along an axis that an image could come within the reach
 /// of the neighbor structures: farther than the cell less that reach.

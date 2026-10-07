@@ -244,6 +244,11 @@ struct Output {
   /// Whether the run minimizes the energy, whose log has the forces in
   /// place of the kinetic energy (mdrtWriteMinimization).
   bool minimizes = false;
+  /// The largest force at which a minimization ends, in kJ/mol/nm (0:
+  /// none), and the step of the first row whose largest force is below it
+  /// (-1: none yet) (D[minimize-tolerance]).
+  double minimizeTolerance = 0.0;
+  int64_t convergedStep = -1;
   /// The shortest edge of the cell that the cutoff allows, twice it; a run
   /// whose barostat takes the cell below it stops.
   double leastEdge = 0.0;
@@ -382,6 +387,11 @@ void _mlir_ciface_mdrtWritePull(int64_t step, void *coordinates,
 void _mlir_ciface_mdrtWriteMinimization(int64_t step, double energy,
                                         double size, void *forces,
                                         void *ids);
+/// Whether the minimization has converged (D[minimize-tolerance]): sets
+/// `state[0]` to 1 and `state[1]` to the step of the last row if the
+/// largest force of that row is below the tolerance. `state` is a buffer of
+/// two i64 on the host.
+void _mlir_ciface_mdrtCheckMinimization(void *state);
 /// The cell after a barostat has changed it: its edges in nm.
 void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz);
 /// The tilts b_x, c_x, c_y of a triclinic cell that a barostat has scaled,
