@@ -3,8 +3,8 @@
 Issue #131, the first part of item 6 of the M2 sequence
 ([python-m2.md](python-m2.md), Sections 3 to 5). Writable views, which
 advance the versions of the fields they change, are #136. Status:
-implemented; the questions put to the maintainer on PR #177 are listed
-under [Open questions](#open-questions).
+implemented; the questions put to the maintainer on PR #177 were decided
+as recommended ([Maintainer rulings](#maintainer-rulings)).
 
 A simulation keeps its state where its program keeps it, on the device or
 on the host, from part to part (D215,
@@ -187,11 +187,37 @@ tests are unsupported there; lit takes another interpreter with
 same Python version). They were run with a private environment of PyTorch
 2.11 over the suite's interpreter.
 
-## Open questions
+## Performance
 
-Put to the maintainer on PR #177, with the recommendation taken here:
-`view()` without an activation is refused; a tensor keeps the native
-simulation alive after `del sim`; tunables are viewed as their host
-vectors; conflicts raise `SimulationError`; writes through a read-only
-view are undefined; the context is synchronized before the first write
-after device exports.
+One RTX 3090 (GPU 0, 300 W cap, idle), mixed precision, NVE at 1 fs; ms
+per `run` call over 2,000 calls of 1 step and 300 of 10, and ms per step of
+one run of 20,000 steps; main (4c435ae) and this branch on the same build
+options, two rounds each, alternated. A view per part takes `view()`,
+`torch.from_dlpack(view.positions)`, and releases both.
+
+| System | Main | Branch | Branch, a view per part |
+|---|---|---|---|
+| Dipeptide (1,168 atoms), parts of 1 | 0.138, 0.154 | 0.135, 0.165 | 0.386, 0.236 |
+| Dipeptide, parts of 10 | 0.923, 1.005 | 0.959, 0.956 | 1.095, 0.919 |
+| Dipeptide, one run (ms/step) | 0.0950, 0.0982 | 0.0944, 0.0883 | 0.1081, 0.0835 |
+| JAC (23,558 atoms), parts of 1 | 0.262, 0.263 | 0.262, 0.263 | 0.322, 0.312 |
+| JAC, parts of 10 | 2.310, 2.316 | 2.311, 2.325 | 2.342, 2.351 |
+| JAC, one run (ms/step) | 0.2279, 0.2282 | 0.2279, 0.2282 | 0.2280, 0.2281 |
+
+Without views a part costs what it did (an atomic exchange and an
+increment more). A view per part costs about 0.05 ms on JAC: the view, the
+event that the consumer's stream waits for, and the synchronization of the
+context before the next part. The dipeptide's spread between rounds is that
+of the shared host.
+
+## Maintainer rulings
+
+The six questions put on PR #177 were decided as recommended
+([comment](https://github.com/vv137/mdir/pull/177#issuecomment-6030816084)):
+`view()` without an activation raises `SimulationError`; an exported tensor
+keeps the native simulation alive until its deleter runs; tunables are
+viewed as their host float64 vectors; conflicts raise `SimulationError`
+with the count of live leases; writes through a read-only view are
+undefined and not detected (#136 tracks writes); the CUDA context is
+synchronized before the first operation that writes or frees exported
+buffers.
