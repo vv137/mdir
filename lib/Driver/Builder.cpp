@@ -156,6 +156,9 @@ private:
   /// Ewald for the dispersion (D162).
   llvm::Error collectLJPME();
   void emitPrograms();
+  /// Collects the values of Program::startValues, which the entry takes
+  /// as arguments (D[cell-runtime-constants]).
+  void collectStartValues();
   void emitEntry();
   /// Emits `@descend`, one step of steepest descent that moves no particle
   /// farther than `%h`, and the loops of a minimization in the entry.
@@ -8227,7 +8230,46 @@ void Builder::emitTerms(StringRef x) {
      << "  call @mdrtWriteTerms(%terms_cast) : (memref<?xf64>) -> ()\n";
 }
 
+void Builder::collectStartValues() {
+  // Every value of the state at the start that the text would otherwise
+  // hold as a constant, under the conditions where emitEntry uses it, in
+  // the order of Builder.h (D[cell-runtime-constants]). Each is computed
+  // as the constant was.
+  auto add = [&](std::string name, double value) {
+    program.startValues.push_back({std::move(name), value});
+  };
+  if (isTriclinic()) {
+    add("tilt_bx", system.tilt[0]);
+    add("tilt_cx", system.tilt[1]);
+    add("tilt_cy", system.tilt[2]);
+  }
+  if (scalesReference())
+    for (int k = 0; k != 3; ++k)
+      add("rest_edge" + std::to_string(k),
+          system.inputBox[k] > 0.0 ? system.inputBox[k] : system.box[k]);
+  if (control.minimize)
+    return;
+  if (control.getCouplingPeriod() > 0 && control.thermostat &&
+      control.barostat) {
+    // The virial of the corrections times the volume, which is
+    // proportional to 1 / V, and their energies times the volume (the self
+    // term of particle mesh Ewald does not depend on it), for the exact
+    // work.
+    double volume = system.box[0] * system.box[1] * system.box[2];
+    add("baro_constant",
+        (program.dispersionVirial + program.coulombConstantVirial) * volume);
+    add("baro_energy_constant",
+        (program.dispersionEnergy + program.coulombConstantEnergy -
+         program.coulombSelfEnergy) *
+            volume);
+  }
+  if (isRestart() && scalesEveryStep() && system.barostatState.size() == 9)
+    for (int k = 0; k != 9; ++k)
+      add("bstate" + std::to_string(k), system.barostatState[k]);
+}
+
 void Builder::emitEntry() {
+  collectStartValues();
   StringRef state = getName(program.state);
   StringRef force = getName(program.force);
   StringRef mass = getName(program.mass);
@@ -8339,8 +8381,8 @@ void Builder::emitEntry() {
   // the last call left (D211).
   if (branchesStart())
     os << ", %first_call: i64";
-  if (program.takesConstants)
-    os << ", %baro_constant: f64, %baro_energy_constant: f64";
+  for (const Program::StartValue &value : program.startValues)
+    os << ", %" << value.name << ": f64";
   os << ") {\n";
 
   os << "  %c0 = arith.constant 0 : index\n"
@@ -8412,15 +8454,10 @@ void Builder::emitEntry() {
       os << "  %trotter_memory = memref.alloca() : memref<9xf64>\n";
     // A triclinic cell keeps its tilts after its diagonal (I3 of
     // docs/triclinic-m2.md: the barostat scales them with their columns).
+    // The tilts at the start are arguments of the entry
+    // (collectStartValues).
     static const char *const initial[] = {"%lx", "%ly", "%lz",
                                           "%tilt_bx", "%tilt_cx", "%tilt_cy"};
-    if (isTriclinic())
-      os << "  %tilt_bx = arith.constant " << formatReal(system.tilt[0])
-         << " : f64\n"
-         << "  %tilt_cx = arith.constant " << formatReal(system.tilt[1])
-         << " : f64\n"
-         << "  %tilt_cy = arith.constant " << formatReal(system.tilt[2])
-         << " : f64\n";
     for (int k = 0; k != getCellSize(); ++k)
       os << "  %c_edge" << k << " = arith.constant " << k << " : index\n"
          << "  memref.store " << initial[k] << ", %box_memory[%c_edge" << k
@@ -8428,27 +8465,13 @@ void Builder::emitEntry() {
   }
   if (scalesReference()) {
     // The edges of the cell of the file, which the reference positions of
-    // the restraints are for; they scale with the cell, axis by axis.
-    std::string edges[3];
-    for (int k = 0; k != 3; ++k) {
-      double edge = system.inputBox[k] > 0.0 ? system.inputBox[k]
-                                             : system.box[k];
-      edges[k] = "%rest_edge" + std::to_string(k);
-      os << "  " << edges[k] << " = arith.constant " << formatReal(edge)
-         << " : f64\n";
-    }
-    os << "  %rest_edges = vector.from_elements " << edges[0] << ", "
-       << edges[1] << ", " << edges[2] << " : vector<3xf64>\n";
+    // the restraints are for, arguments of the entry (collectStartValues);
+    // they scale with the cell, axis by axis.
+    os << "  %rest_edges = vector.from_elements %rest_edge0, %rest_edge1, "
+          "%rest_edge2 : vector<3xf64>\n";
     emitReferenceScale(os, "  ", "%rest_scale", "%lx", "%ly", "%lz");
   }
   if (isTriclinic()) {
-    if (!changesCell())
-      os << "  %tilt_bx = arith.constant " << formatReal(system.tilt[0])
-         << " : f64\n"
-         << "  %tilt_cx = arith.constant " << formatReal(system.tilt[1])
-         << " : f64\n"
-         << "  %tilt_cy = arith.constant " << formatReal(system.tilt[2])
-         << " : f64\n";
     os << "  %cell = md.triclinic_cell %lx, %ly, %lz, %tilt_bx, %tilt_cx, "
           "%tilt_cy\n";
   } else
@@ -8524,19 +8547,10 @@ void Builder::emitEntry() {
           control.timestep / control.tauT);
       if (control.barostat) {
         // The barostat, in bar: the target pressure, the compressibility,
-        // Δt_p / τ_p, k_B T of the bath, and the virial of the corrections
-        // times the volume, which is proportional to 1 / V.
+        // Δt_p / τ_p, and k_B T of the bath. The virial and the energy of
+        // the corrections times the volume are arguments of the entry
+        // (collectStartValues).
         double bar = 1.01325;
-        double volume = system.box[0] * system.box[1] * system.box[2];
-        double constant = (program.dispersionVirial +
-                           program.coulombConstantVirial) *
-                          volume;
-        // The energies of the same terms times the volume (the self term of
-        // particle mesh Ewald does not depend on it), for the exact work.
-        double energyConstant =
-            (program.dispersionEnergy + program.coulombConstantEnergy -
-             program.coulombSelfEnergy) *
-            volume;
         for (int k = 0; k != 3; ++k)
           os << "  %baro_beta_" << k << " = arith.constant "
              << formatReal(control.compressibilities[k] / bar) << " : f64\n";
@@ -8550,15 +8564,6 @@ void Builder::emitEntry() {
            << " : f64\n"
            << "  %baro_kt = arith.constant "
            << formatReal(units::boltzmann * control.temperature) << " : f64\n";
-        // With tunables they depend on the values, and the entry takes
-        // them (D213).
-        program.baroConstant = constant;
-        program.baroEnergyConstant = energyConstant;
-        if (!program.takesConstants)
-          os << "  %baro_constant = arith.constant " << formatReal(constant)
-             << " : f64\n"
-             << "  %baro_energy_constant = arith.constant "
-             << formatReal(energyConstant) << " : f64\n";
         os << "  %c_bar = arith.constant 16.6053906717 : f64\n"
            << "  %c_three = arith.constant 3.0 : f64\n"
            << "  %c_third = arith.constant "
@@ -8706,14 +8711,12 @@ void Builder::emitEntry() {
       system.barostatState.size() == 9) {
     // The state that the first scaling takes its pressure from, as the
     // checkpoint keeps it (D92).
+    // Its numbers are arguments of the entry (collectStartValues).
     std::string vectors[3];
     for (int v = 0; v != 3; ++v) {
       std::string names[3];
-      for (int k = 0; k != 3; ++k) {
+      for (int k = 0; k != 3; ++k)
         names[k] = "%bstate" + std::to_string(3 * v + k);
-        os << "  " << names[k] << " = arith.constant "
-           << formatReal(system.barostatState[3 * v + k]) << " : f64\n";
-      }
       vectors[v] = "%bstatev" + std::to_string(v);
       os << "  " << vectors[v] << " = vector.from_elements " << names[0]
          << ", " << names[1] << ", " << names[2] << " : vector<3xf64>\n";
@@ -9160,8 +9163,6 @@ llvm::Error Builder::build() {
       return makeError("tunable parameters do not take [free_energy], "
                        "observe, LJPME, or pulls yet");
     program.tunable = true;
-    program.takesConstants = control.barostat && control.thermostat &&
-                             control.getCouplingPeriod() > 0;
   }
   switch (control.precision) {
   case Precision::Single:
