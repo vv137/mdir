@@ -112,7 +112,9 @@ between simulations or processes.
 share nothing; `-Dcompile_cache=off` (or `MDIR_COMPILE_CACHE=off` in the
 environment of lit) runs a suite without it. A test of the cache itself
 sets its own directory or `MDIR_COMPILE_CACHE=off` in its RUN lines. A full
-suite leaves 86 entries, 139 MB.
+suite left 86 entries, 139 MB, before the GPU entries; with them, it
+leaves 114 MB of host objects and 684 MB of GPU entries
+(D[gpu-module-compile]).
 
 ## Validation
 
@@ -317,6 +319,104 @@ objects are not cached yet (#99).
 | `gpu_cache_saved_seconds` | Time the hits took when they were stored, summed |
 | `gpu_cache_lookup_seconds` | Time of keys and reads, summed over the modules |
 | `gpu_cache_rejected`, `gpu_cache_stored`, `gpu_cache_unstored` | GPU entries rejected, written, and that could not be written |
+
+### Validation
+
+- **Byte identity.** The dipeptide in water with PME, SHAKE, and SETTLE,
+  NPT, deterministic (253 GPU modules), was lowered through `mdir emit
+  --stage=lowered`.
+  - Before cubins, the result equals main's byte for byte at 1, 8, and 128
+    threads, with the cache off, cold, and warm. Main's timing properties
+    are stripped for the comparison.
+  - With cubins, the result is the same at 1, 8, and 128 threads.
+  - `gpu-module-compile-gpu.test` checks 1 and 8 threads, cold and warm.
+- **Bit identity.** The same system through Python, deterministic, 20
+  steps. The state equals main's bit for bit on the CPU and on a GPU, in
+  mixed and double precision. On the GPU this holds with the cache off,
+  cold, and warm, and with the driver's cache of compiled PTX disabled or
+  warm. It also holds for kernels loaded as PTX for `sm_86` and as cubins
+  for `sm_86` (`ptxas` 13.4 against a driver of CUDA 13.2).
+- **The ala3 example.** The Python example, deterministic, at a hundredth
+  of its steps, writes main's energy files, DCD, and minimized positions
+  byte for byte in every configuration below.
+- **Fallbacks and switches.** A run without `ptxas` gives the energies of
+  the run with cubins (`gpu-module-compile-gpu.test`). The same test checks
+  the errors of `MDIR_GPU_BINARY=cubin` and of values that are not known.
+- **Damaged entries and fork.** A flipped PTX and cubin entry are rejected
+  and rewritten (`compile-cache-mixed-gpu.test`). A child forked after
+  `mdir.compile` runs the program on the GPU
+  (`fork-after-compile-gpu.test`).
+
+### Cost and gain
+
+Measured on an RTX 3090 (300 W) of a shared 128-core host, with
+`MDIR_COMPILE_THREADS` unset (128).
+
+The dipeptide through Python, mixed, deterministic. Each cell is the wall
+time of `Simulation(program)` (MLIR pipeline / JIT engine). "Driver cache
+off" sets `CUDA_CACHE_DISABLE=1`.
+
+| | Driver cache warm | Driver cache off |
+|---|---|---|
+| main | 15.7 s (12.2 / 3.5) | 21.0 s (12.6 / 8.3) |
+| Parallel serialization, PTX | 8.0 s (4.6 / 3.4) | 13.5 s (4.6 / 8.8) |
+| Cubins, compile cache off | 7.6 s (4.8 / 2.8) | 7.6 s (4.8 / 2.8) |
+| Cubins, compile cache warm | | 4.7 s (4.2 / 0.5) |
+
+The serialization of the 249 modules of the simulation's program takes:
+
+- 0.7 to 0.9 s wall with cubins on 128 threads;
+- 0.13 s from a warm cache.
+
+Generating the PTX and cubins takes about 10 s of PTX and 26 s of
+`ptxas`, summed over the modules. `ptxas` alone costs about 9 s of CPU
+time serially for the 253 modules of `mdir run`'s program, where the
+driver compiled the PTX in about 5.6 s. Cubins without a warm cache
+therefore trade CPU time for wall time.
+
+The ala3 example, the whole run (four stages, each `mdir.compile` and a
+simulation):
+
+| | Wall | CPU (user + system, with children) |
+|---|---|---|
+| main, driver cache warm | 147.1 s | 216 s |
+| main, driver cache off | 188.6 s | 259 s |
+| Parallel serialization, PTX | 82.5 s | 267 s |
+| Parallel serialization, PTX cache warm | 63.7 s | 149 s |
+| Cubins, compile cache off | 81.5 s | 372 s |
+| Cubins, compile cache cold, driver cache off | 84.5 s | 350 s |
+| Cubins, compile cache warm, driver cache off | 59.7 s | 136 s |
+
+With a warm cache, the JIT part of a stage takes 0.3 to 0.5 s instead of
+1.7 to 6.2 s, whatever the driver's cache. What remains is the MLIR passes
+before the serialization: 2 to 12 s per simulation, and as much again in
+`mdir.compile` (#151). The cache of the example holds 21 MB of host
+objects and 78 MB of GPU entries.
+
+The full suite on one RTX 3090 at the default `gpu_workers` (16):
+
+- 225 s with an empty suite cache, against 250 s for D212's cold cache;
+- 150 s with a warm one, against 243 s.
+
+Both are single runs on a shared host. A full suite leaves 114 MB of host
+objects and 684 MB of GPU entries.
+
+### Why there are so many modules
+
+The production stage of ala3 under `mdir run` has 400 GPU modules of one
+kernel each. Of them, 223 are `tuple_for`, 93 `particle_for`, 33
+`pair_for`, 13 `permute`, and the rest are kernels of the runtime's
+templates. With the names of the kernels replaced, 292 of them are
+distinct.
+
+Each force evaluation that `md-inline` inlines has kernels of its own:
+
+- at the start;
+- in a step with and without energies;
+- at the trial positions of the barostat.
+
+The cache already makes a duplicate cost one read. Deduplicating or
+merging the modules, to save loads and bytes of the host object, is #167.
 
 ### Ownership
 

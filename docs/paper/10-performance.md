@@ -111,9 +111,9 @@ pipeline on a GPU, and the driver compiled every PTX serially at load.
 The same example, also deterministic at a hundredth of its steps, took
 147 s on main with the driver's cache of compiled PTX warm, and 189 s with
 it disabled. It took 82 s once the modules were serialized in parallel,
-about the same with cubins and the compile cache off, and 59 s with the
+about the same with cubins and the compile cache off, and 60 s with the
 compile cache warm, even with the driver's cache disabled. The JIT part of
-a stage then falls to 0.2 to 0.5 s; the MLIR passes before the
+a stage then falls to 0.3 to 0.5 s; the MLIR passes before the
 serialization are most of what remains.
 
 ## 10.5 Over long runs
