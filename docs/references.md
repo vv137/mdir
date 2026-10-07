@@ -1250,6 +1250,20 @@ Phys.* **102**, 5451–5459 (1995).
 Used for: the reaction field with its potential shifted to zero at the
 cutoff, `electrostatics = "REACTION_FIELD"` (D140).
 
+### Toutouni2026
+
+H. Toutouni, S. Chakraborty, Y. Tu, J. Huang, "OCTANE: Breaking the
+Neighbor-List Bottleneck in GPU Molecular Dynamics," in *Proceedings of
+the 40th ACM International Conference on Supercomputing (ICS '26)*,
+30–41 (2026).
+[doi:10.1145/3797905.3807878](https://doi.org/10.1145/3797905.3807878)
+
+Used for: forces without a neighbor structure, by a search in a region
+octree every step from the leaf of each particle, with partial updates of
+the tree; evaluated and not adopted (D[octane]), see
+[octane.md](octane.md), which proves the completeness that the paper
+does not state and corrects its analysis of the updates.
+
 ### Tuckerman1992
 
 M. Tuckerman, B. J. Berne, G. J. Martyna, "Reversible multiple time
@@ -1327,4 +1341,3 @@ method. I. Nonpolar gases," *J. Chem. Phys.* **22**(8), 1420–1426 (1954).
 [doi:10.1063/1.1740409](https://doi.org/10.1063/1.1740409)
 
 Used for: the exponential average of the energy difference between two states (D161).
-
