@@ -1,0 +1,14 @@
+# REQUIRES: python-api
+# The Lennard-Jones table tunable by pairs of types (D[python-tunable-pairs],
+# #160): an update during a run that breaks the combining rule equals, to the
+# bit, a compile with the new values; on the CPU in double precision the change
+# of the energy against a NumPy sum over the table, pair and per-type tunables
+# together, refusals, and the correction for the dispersion against its formula.
+# RUN: %mdir_python %S/Inputs/python_tunable.py %S/Inputs/dipeptide pairs CPU Double | FileCheck %s --check-prefixes=CHECK,NUMPY
+# RUN: %mdir_python %S/Inputs/python_tunable.py %S/Inputs/dipeptide pairs CPU Mixed | FileCheck %s
+# CHECK: CPU {{Double|Mixed}}: pairs: an update at step 6 off the combining rule and 10 steps equal a compile with the new values from that state to the bit
+# NUMPY: pairs: the change of the energy at fixed positions
+# NUMPY: pairs with per-type tunables: the change of the energy
+# NUMPY: pairs: refusals and the warning of a pair that keeps a value of its own
+# NUMPY: pairs: the correction for the dispersion at the new pair values
+# CHECK: pairs passed

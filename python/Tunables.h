@@ -11,8 +11,8 @@ namespace tunables {
 inline units::Unit unitOf(const std::string &parameter, const std::string &term) {
   if (!term.empty()) return units::none;
   if (parameter == "charge") return units::charge;
-  if (parameter == "sigma") return units::nm;
-  if (parameter == "epsilon") return units::energy;
+  if (parameter == "sigma" || parameter == "sigma_pair") return units::nm;
+  if (parameter == "epsilon" || parameter == "epsilon_pair") return units::energy;
   return units::none;
 }
 inline py::array_t<int64_t> indices(const std::vector<int64_t> &values) {
@@ -98,6 +98,18 @@ template <class SystemClass> void bindModelArrays(SystemClass &system) {
     return indices(v);
   });
   system.def_property_readonly("type_names", [](const Owner &o) { return o.value.topology.typeNames; });
+  // The sites of "sigma_pair" and "epsilon_pair": the unordered pairs of
+  // types (a, b), a <= b, in the order of the flat upper triangle.
+  system.def_property_readonly("type_pairs", [](const Owner &o) {
+    size_t types = o.value.topology.typeNames.size();
+    std::vector<int64_t> v;
+    for (size_t a = 0; a < types; ++a)
+      for (size_t b = a; b < types; ++b) {
+        v.push_back(static_cast<int64_t>(a));
+        v.push_back(static_cast<int64_t>(b));
+      }
+    return host::copy(v.data(), v.size(), {static_cast<py::ssize_t>(v.size() / 2), 2});
+  });
   system.def_property_readonly("atom_names", [](const Owner &o) { return o.value.topology.atomNames; });
   system.def_property_readonly("residue_indices", [](const Owner &o) {
     const auto &t = o.value.topology;

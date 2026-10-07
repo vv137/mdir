@@ -13,6 +13,11 @@ Scenarios:
   integrators   leapfrog keeps its velocities through an update; an update
                 before the first run of NPT against a compile with the new
                 values, bit for bit
+  pairs         the table tunable by pairs of types (#160): an update off
+                the combining rule against a compile with the new values,
+                bit for bit; the change of the energy, pair and per-type
+                tunables together, and the correction for the dispersion
+                against NumPy
   oracle        the energies at new values against OpenMM 8.6.1 and NumPy,
                 and central differences of the energy in a tunable constant
                 against the derivative of `observe` (D189) of `mdir run`
@@ -147,6 +152,42 @@ def gromacs_model(tunables):
     return system, state
 
 
+def gromacs_excluded(n):
+    """The pairs of particles of the GROMACS model that its topology
+    excludes: up to three bonds apart in propane (1-4 pairs included, which
+    have parameters of their own), and within a water."""
+    top = open(root + "/../gromacs/system.top").read()
+    bonds, counts = [], {}
+    section = None
+    for line in top.splitlines():
+        line = line.split(";")[0].strip()
+        if line.startswith("["):
+            section = line.strip("[] ")
+            continue
+        if section == "bonds" and line:
+            bonds.append(tuple(int(x) - 1 for x in line.split()[:2]))
+        if section == "molecules" and line:
+            counts[line.split()[0]] = int(line.split()[1])
+    n_pro = 11
+    graph = {i: set() for i in range(n_pro)}
+    for i, j in bonds:
+        graph[i].add(j); graph[j].add(i)
+    excluded = set()
+    for m in range(counts["PRO"]):
+        o = n_pro * m
+        for i in range(n_pro):
+            seen, frontier = {i}, {i}
+            for _ in range(3):
+                frontier = {k for f in frontier for k in graph[f]} - seen
+                seen |= frontier
+            excluded |= {(o + min(i, j), o + max(i, j)) for j in seen if j != i}
+    for w in range(counts["SOL"]):
+        o = n_pro * counts["PRO"] + 3 * w
+        excluded |= {(o, o + 1), (o, o + 2), (o + 1, o + 2)}
+    assert n_pro * counts["PRO"] + 3 * counts["SOL"] == n
+    return excluded
+
+
 def run_nbfix(target, precision):
     """Per-type sigma and epsilon on a table with an NBFIX: an update equals
     a compile with the rule's values for the other pairs and the NBFIX's
@@ -194,35 +235,7 @@ def run_nbfix(target, precision):
         return
     # NumPy: the Lennard-Jones of the pairs not excluded within the cutoff,
     # σ and ε of the geometric rule but for CT-OW, the NBFIX's.
-    top = open(root + "/../gromacs/system.top").read()
-    bonds, counts = [], {}
-    section = None
-    for line in top.splitlines():
-        line = line.split(";")[0].strip()
-        if line.startswith("["):
-            section = line.strip("[] ")
-            continue
-        if section == "bonds" and line:
-            bonds.append(tuple(int(x) - 1 for x in line.split()[:2]))
-        if section == "molecules" and line:
-            counts[line.split()[0]] = int(line.split()[1])
-    n_pro = 11
-    graph = {i: set() for i in range(n_pro)}
-    for i, j in bonds:
-        graph[i].add(j); graph[j].add(i)
-    excluded = set()
-    for m in range(counts["PRO"]):
-        o = n_pro * m
-        for i in range(n_pro):
-            seen, frontier = {i}, {i}
-            for _ in range(3):
-                frontier = {k for f in frontier for k in graph[f]} - seen
-                seen |= frontier
-            excluded |= {(o + min(i, j), o + max(i, j)) for j in seen if j != i}
-    for w in range(counts["SOL"]):
-        o = n_pro * counts["PRO"] + 3 * w
-        excluded |= {(o, o + 1), (o, o + 2), (o + 1, o + 2)}
-    assert n_pro * counts["PRO"] + 3 * counts["SOL"] == len(at.positions)
+    excluded = gromacs_excluded(len(at.positions))
     types = system.particle_types
     x, box = at.positions, np.diag(at.cell.vectors)
     ct, ow = names.index("CT"), names.index("OW")
@@ -255,6 +268,199 @@ def run_nbfix(target, precision):
           f"it would be {remixed:.6f})")
     assert abs(du - reference) < 1e-9 * max(1.0, abs(reference))
     assert abs(remixed - reference) > 1e-3
+
+
+def lj_table_energy(x, box, types, sig, eps, excluded, cutoff=0.8):
+    """The Lennard-Jones of the pairs not excluded within the cutoff, σ and
+    ε from the (T, T) tables of the pairs of types."""
+    total = 0.0
+    for i in range(len(x) - 1):
+        d = x[i + 1:] - x[i]
+        d -= box * np.round(d / box)
+        r = np.sqrt((d * d).sum(1))
+        js = np.arange(i + 1, len(x))
+        s_ij, e_ij = sig[types[i], types[js]], eps[types[i], types[js]]
+        ok = (r < cutoff) & np.array([(i, j) not in excluded for j in js])
+        sr6 = (s_ij[ok] / r[ok]) ** 6
+        total += (4 * e_ij[ok] * (sr6 * sr6 - sr6)).sum()
+    return total
+
+
+def table_of(pairs, values, types):
+    """The (T, T) table of the values of the sites `pairs` (System.type_pairs)."""
+    table = np.zeros((types, types))
+    table[pairs[:, 0], pairs[:, 1]] = values
+    table[pairs[:, 1], pairs[:, 0]] = values
+    return table
+
+
+def run_pairs(target, precision):
+    """The Lennard-Jones table tunable by pairs of types (#160): an update
+    that breaks the combining rule (and gives a pair without Lennard-Jones
+    some) equals a compile with the new values, to the bit; on the CPU in
+    double precision, the change of the energy against a NumPy sum over the
+    table, pair and per-type tunables declared together, and the correction
+    for the dispersion against its formula."""
+    import warnings
+    T = mdir.Tunable
+
+    def declarations(values=None):
+        values = values or {}
+        return [T("sig", "sigma_pair", values=values.get("sig")),
+                T("eps", "epsilon_pair", values=values.get("eps"))]
+
+    system, state = gromacs_model(declarations())
+    names, pairs = system.type_names, system.type_pairs
+    nt = len(names)
+    # The sites: the flat upper triangle, (a, b) with a <= b.
+    assert pairs.shape == (nt * (nt + 1) // 2, 2) and pairs.dtype == np.int64
+    assert [tuple(p) for p in pairs] == [(a, b) for a in range(nt) for b in range(a, nt)]
+    site = {(names[a], names[b]): k for k, (a, b) in enumerate(pairs)}
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # no warning: no pair keeps a value of its own
+        sim = simulation(compile_(system, state, target, precision))
+    plan = sim.program.plan["tunables"]
+    assert [(d["parameter"], d["sites"], d["unit"]) for d in plan] == \
+        [("sigma_pair", len(pairs), "nm"), ("epsilon_pair", len(pairs), "kJ/mol")]
+    sim.run(6)
+    sim.run(0, energy=True)
+    at = sim.state()
+    theta0 = dict(sim.tunables)
+    # Every σ by 0.97 and ε by 1.1; CT-HC's ε doubled, off the rule; OW-HW,
+    # without Lennard-Jones in the model, given some.
+    sig1, eps1 = theta0["sig"] * 0.97, theta0["eps"] * 1.1
+    eps1[site["CT", "HC"]] *= 2.0
+    assert theta0["eps"][site["OW", "HW"]] == 0.0
+    sig1[site["OW", "HW"]], eps1[site["OW", "HW"]] = 0.2, 0.05
+    theta1 = {"sig": sig1, "eps": eps1}
+    sim.tunables.update(theta1)
+    updated = sim.state()
+    du = updated.energies["potential"] - at.energies["potential"]
+    sim.run(10, energy=True)
+    after = sim.state()
+
+    other, _ = gromacs_model(declarations(theta1))
+    fresh = simulation(compile_(other, state_of(other, at), target, precision))
+    fresh.run(0, energy=True)
+    assert np.array_equal(fresh.state().forces, updated.forces)
+    assert fresh.state().energies == updated.energies
+    fresh.run(10, energy=True)
+    d = difference(after, fresh.state())
+    assert d == [0.0, 0.0, 0.0] and after.energies == fresh.state().energies, d
+    print(f"{target} {precision}: pairs: an update at step 6 off the combining rule and 10 steps "
+          f"equal a compile with the new values from that state to the bit")
+
+    if target != "CPU" or precision != "Double":
+        return
+    types = system.particle_types
+    x, box = at.positions, np.diag(at.cell.vectors)
+    excluded = gromacs_excluded(len(x))
+
+    def energy(theta):
+        return lj_table_energy(x, box, types, table_of(pairs, theta["sig"], nt),
+                               table_of(pairs, theta["eps"], nt), excluded)
+
+    reference = energy(theta1) - energy(theta0)
+    # The same change with CT-HC by the rule of the new values of CT-CT and
+    # HC-HC.
+    rule = dict(theta1, eps=theta1["eps"].copy())
+    ct, hc = names.index("CT"), names.index("HC")
+    rule["eps"][site["CT", "HC"]] = np.sqrt(theta1["eps"][site["CT", "CT"]] *
+                                            theta1["eps"][site["HC", "HC"]])
+    remixed = energy(rule) - energy(theta0)
+    # The 1-4 pairs of propane (CT-CT, CT-HC, HC-HC of [ pairtypes ]) keep
+    # their own parameters: the sum leaves them out with the excluded pairs.
+    print(f"pairs: the change of the energy at fixed positions {du:.9f}, NumPy over the table "
+          f"{reference:.9f} kJ/mol, difference {du - reference:.1e} (with CT-HC by the rule it "
+          f"would be {remixed:.6f})")
+    assert abs(du - reference) < 1e-9 * max(1.0, abs(reference))
+    assert abs(remixed - reference) > 1e-3
+
+    # Pair and per-type tunables together: the rule from the per-type values,
+    # then the pairs that the pair tunables take (CT-OW, the NBFIX, and
+    # CT-HC) have theirs; no pair keeps a value of its own, so no warning.
+    take = np.full(len(pairs), -1, dtype=np.int64)
+    take[site["CT", "OW"]], take[site["CT", "HC"]] = 0, 1
+
+    def together(values=None):
+        values = values or {}
+        return [T("sigma", "sigma", mixing="geometric", values=values.get("sigma")),
+                T("epsilon", "epsilon", values=values.get("epsilon")),
+                T("sig", "sigma_pair", map=take, values=values.get("sig")),
+                T("eps", "epsilon_pair", map=take, values=values.get("eps"))]
+
+    both, _ = gromacs_model(together())
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        sim = simulation(compile_(both, state_of(both, at)))
+    sim.run(0, energy=True)
+    u0 = sim.state().energies["potential"]
+    t0 = dict(sim.tunables)
+    t1 = {"sigma": t0["sigma"] * 1.03, "epsilon": t0["epsilon"] * 0.8,
+          "sig": t0["sig"] * np.array([0.95, 1.05]), "eps": t0["eps"] * np.array([1.4, 0.6])}
+    sim.tunables.update(t1)
+    u1 = sim.state().energies["potential"]
+
+    def mixed(theta):
+        sig = np.sqrt(np.outer(theta["sigma"], theta["sigma"]))
+        eps = np.sqrt(np.outer(theta["epsilon"], theta["epsilon"]))
+        for k, (a, b) in enumerate([(names.index("CT"), names.index("OW")), (ct, hc)]):
+            sig[a, b] = sig[b, a] = theta["sig"][k]
+            eps[a, b] = eps[b, a] = theta["eps"][k]
+        return lj_table_energy(x, box, types, sig, eps, excluded)
+
+    reference = mixed(t1) - mixed(t0)
+    print(f"pairs with per-type tunables: the change of the energy {u1 - u0:.9f}, NumPy "
+          f"{reference:.9f} kJ/mol, difference {u1 - u0 - reference:.1e}")
+    assert abs(u1 - u0 - reference) < 1e-9 * max(1.0, abs(reference))
+
+    # Refusals, and the warning of a pair that still keeps a value of its
+    # own: CT-OW with per-type σ and a pair tunable of ε only.
+    expect(mdir.InputError, lambda: T("x", "sigma_pair", mixing="geometric"), "for \"sigma\" only")
+    short, _ = gromacs_model([T("x", "epsilon_pair", map=np.zeros(nt, dtype=np.int64))])
+    expect(mdir.InputError, lambda: compile_(short, state_of(short, at)),
+           f"the map has {nt} entries, and the parameter has {len(pairs)} sites")
+    expect(mdir.InputError, lambda: sim.tunables.update({"eps": -t1["eps"]}), "at least 0")
+    assert sim.tunables.version == 1
+    partly, _ = gromacs_model(together()[:2] + [T("eps", "epsilon_pair", map=take)])
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        compile_(partly, state_of(partly, at))
+    messages = [str(w.message) for w in caught if "NBFIX" in str(w.message)]
+    assert len(messages) == 1 and messages[0].endswith("keep them: CT-OW"), messages
+    print("pairs: refusals and the warning of a pair that keeps a value of its own")
+
+    # The correction for the dispersion at the new pair values against
+    # ν (4π/V) Σ I_ij over the pairs not excluded, I = -C6 / (3 r_c³),
+    # ν = N² / (N (N - 1) - 2 N_excluded) (D209): -(2π/3) N² <C6> / (V r_c³)
+    # with the table's C6 of the pair that breaks the rule. The pair terms of
+    # the Python model read r and their constants, not the table, so their
+    # tails do not depend on these tunables.
+    def corrected(theta):
+        result = []
+        for correction in (mdir.DispersionCorrection.None_, mdir.DispersionCorrection.EnergyPressure):
+            other, _ = gromacs_model(declarations())
+            other.dispersion = correction
+            s = simulation(compile_(other, state_of(other, at)))
+            s.tunables.update(theta)
+            s.run(0, energy=True)
+            result.append(s.state().energies["potential"])
+        return result[1] - result[0]
+
+    n = len(types)
+    sig, eps = table_of(pairs, theta1["sig"], nt), table_of(pairs, theta1["eps"], nt)
+    c6 = 4.0 * eps * sig ** 6
+    counts = np.bincount(types, minlength=nt).astype(float)
+    total = 0.5 * sum(counts[a] * (counts[b] - (a == b)) * c6[a, b]
+                      for a in range(nt) for b in range(nt))
+    total -= sum(c6[types[i], types[j]] for i, j in excluded)
+    nu = n * n / (n * (n - 1.0) - 2.0 * len(excluded))
+    volume, rc = np.prod(box), 0.8
+    formula = nu * 4.0 * np.pi / volume * (-total / (3.0 * rc ** 3))
+    mine = corrected(theta1)
+    print(f"pairs: the correction for the dispersion at the new pair values {mine:.9f}, "
+          f"the formula {formula:.9f} kJ/mol, relative difference {abs(mine / formula - 1):.1e}")
+    assert abs(mine / formula - 1.0) < 1e-9
 
 
 def run_cache(target, precision, work):
@@ -756,6 +962,8 @@ elif scenario == "cache":
     run_cache(sys.argv[3], sys.argv[4], pathlib.Path(sys.argv[5]))
 elif scenario == "nbfix":
     run_nbfix(sys.argv[3], sys.argv[4])
+elif scenario == "pairs":
+    run_pairs(sys.argv[3], sys.argv[4])
 elif scenario == "oracle":
     run_oracle(sys.argv[3], pathlib.Path(sys.argv[4]))
 else:
