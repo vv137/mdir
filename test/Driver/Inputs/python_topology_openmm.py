@@ -1,4 +1,4 @@
-"""Topology.to_openmm (D[python-topology]): the OpenMM topology of a view
+"""Topology.to_openmm (D221): the OpenMM topology of a view
 against those of OpenMM's own readers of the same files, and the error
 without OpenMM.
 

@@ -1,4 +1,4 @@
-# Topology views and mask selection in the Python model (D[python-topology])
+# Topology views and mask selection in the Python model (D221)
 
 Issue #120, an M2a item after reporters (D207, #109).
 Status: implemented; the maintainer's decisions on PR #183 are marked

@@ -1,6 +1,6 @@
 # REQUIRES: python-api
 # Read-only topology views and mask selection in the Python model
-# (D[python-topology]), on the CPU: the views of the Amber dipeptide, the
+# (D221), on the CPU: the views of the Amber dipeptide, the
 # GROMACS propane and water, and the CHARMM toy system against parsers of
 # their files; Topology.select against the selections of the control file's
 # path (mdir-model-test --selections) for restraints, external terms, and

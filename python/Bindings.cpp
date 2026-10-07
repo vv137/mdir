@@ -249,7 +249,7 @@ PYBIND11_MODULE(mdir, m) {
                   [](driver::TupleTerm &t, py::sequence value) { host::parameters(t, value); });
   // Tunable parameters (D213).
   tunables::bindTunable(m);
-  // Read-only topology views (D[python-topology]).
+  // Read-only topology views (D221).
   topology::bind(m);
   // Restraints (D74, D124; D198).
   py::enum_<driver::ReferenceScaling>(m, "ReferenceScaling")

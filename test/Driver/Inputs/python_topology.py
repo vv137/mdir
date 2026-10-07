@@ -1,5 +1,5 @@
 """Read-only topology views and mask selection in the Python model
-(D[python-topology]): the values of the views against parsers of the files
+(D221): the values of the views against parsers of the files
 written here, `select` against the selections that the control file's path
 makes (`mdir-model-test --selections`), the constraints after preparation,
 and copies, dtypes, and snapshots.

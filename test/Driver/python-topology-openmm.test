@@ -1,5 +1,5 @@
 # REQUIRES: python-api, openmm
-# Topology.to_openmm (D[python-topology]): elements, atom and residue names,
+# Topology.to_openmm (D221): elements, atom and residue names,
 # residues, bonds, and the cell of the OpenMM topology of a view against
 # AmberPrmtopFile and CharmmPsfFile on the same files; one chain for each
 # molecule of the prmtop; the bonds of SETTLE waters in a GROMACS topology.

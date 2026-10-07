@@ -31,7 +31,7 @@ D220 (#131) exposes the buffers of a
 simulation, the particle IDs, and the values of tunables as read-only DLPack
 views with leases and stream handoff ([python-dlpack.md](python-dlpack.md));
 writable views (#136) remain.
-D[python-topology] (#120) adds read-only topology views and mask selection
+D221 (#120) adds read-only topology views and mask selection
 ([python-topology.md](python-topology.md)).
 D[python-checkpoints] (#132) writes and continues the checkpoint of
 `mdir run` from Python ([python-checkpoints.md](python-checkpoints.md)).

@@ -55,7 +55,7 @@ format, or the outputs; every such change is listed under **Changed** or
   the consumer's stream waits for the simulation's work, and the next part
   waits for the consumer's. No control-file key changes.
 
-- Read-only topology views of the Python model (D[python-topology], #120):
+- Read-only topology views of the Python model (D221, #120):
   `LoadedData.topology`, `System.topology`, and `Program.topology` return an
   `mdir.Topology`, a copy of the atoms (`atom_names`, `atomic_numbers`,
   `masses`, `charges`, `particle_types`, `type_names`, `residue_indices`),

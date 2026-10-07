@@ -69,7 +69,7 @@ the shape of their gradients, so that a framework holds it as a dict or a
 pytree (M2b). The Python model exposes what maps are built from:
 `System.charges` $(N,)$, `System.particle_types` $(N,)$ int64,
 `System.type_names`, `System.atom_names`, and `System.residue_names` (one per
-particle), all read-only; `System.topology` (D[python-topology],
+particle), all read-only; `System.topology` (D221,
 [python-topology.md](python-topology.md)) gives the same arrays with the
 residues, bonds, and `select(mask)`.
 

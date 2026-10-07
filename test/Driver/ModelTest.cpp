@@ -30,7 +30,7 @@ int main(int argc, char **argv) {
     // The particles, from 0, that the masks of this control file select as
     // `mdir run` prepares them: the restrained ones (with a mass), those of
     // each term of [[energy.external]], and those that `couple` decouples
-    // (D[python-topology], the oracle of Topology.select).
+    // (D221, the oracle of Topology.select).
     auto line = [](llvm::StringRef what, auto chosen) {
       llvm::outs() << what << ":";
       for (size_t i : chosen) llvm::outs() << " " << i;

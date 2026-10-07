@@ -1,5 +1,5 @@
 // A read-only view of a topology at the Python boundary
-// (D[python-topology], docs/python-topology.md): copies of its atoms,
+// (D221, docs/python-topology.md): copies of its atoms,
 // residues, and bonded tuples in input order, the constraints that
 // preparation resolved, and the Amber masks of the control file.
 #ifndef MDIR_PYTHON_TOPOLOGY_H
