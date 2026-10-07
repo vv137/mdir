@@ -100,8 +100,15 @@ Expected<std::unique_ptr<JITEngine>> JITEngine::create(
     // stop-handler symbols also need to be visible through DynamicLibrary.
     std::string message;
     auto library = sys::DynamicLibrary::getPermanentLibrary(path.c_str(), &message);
-    if (!library.isValid())
+    if (!library.isValid()) {
+      // cuFFT comes from NVIDIA's wheel of the extra `cuda` of the Python
+      // package, or from a CUDA toolkit (D[python-package]).
+      if (StringRef(message).contains("libcufft"))
+        message += "; the GPU runtime needs cuFFT of CUDA 13: install the "
+                   "Python package with its extra, pip install 'mdir[cuda]', "
+                   "or put the lib64 of a CUDA 13 toolkit on LD_LIBRARY_PATH";
       return createStringError(inconvertibleErrorCode(), "cannot load runtime: " + message);
+    }
     auto generator = DynamicLibrarySearchGenerator::Load(path.c_str(), layout.getGlobalPrefix());
     if (!generator)
       return ownedError(generator.takeError());

@@ -21,10 +21,13 @@ git fetch -q origin
 git checkout -q -b "release/v$version" origin/main
 sed -i -E "s/^project\(mdir VERSION [0-9]+\.[0-9]+\.[0-9]+/project(mdir VERSION $version/" CMakeLists.txt
 grep -q "project(mdir VERSION $version " CMakeLists.txt || { echo "CMakeLists.txt: version not set" >&2; exit 1; }
+# The package that the Python example declares is the release's (D[python-package]).
+sed -i -E "s/\"mdir\[cuda\]==[0-9]+\.[0-9]+\.[0-9]+\"/\"mdir[cuda]==$version\"/" examples/ala3/run.py
+grep -q "\"mdir\[cuda\]==$version\"" examples/ala3/run.py || { echo "examples/ala3/run.py: version not set" >&2; exit 1; }
 python3 scripts/release/changelog.py release "$version" "$date"
 python3 scripts/release/changelog.py check "$version"
 scripts/decision-number.sh check
-git add CMakeLists.txt CHANGELOG.md
+git add CMakeLists.txt CHANGELOG.md examples/ala3/run.py
 git commit -q -m "Release $version: the version and the changelog"
 git push -q -u origin "release/v$version"
 gh pr create --draft --base main --head "release/v$version" \

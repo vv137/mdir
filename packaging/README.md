@@ -8,7 +8,7 @@ needs only Docker or Apptainer and the NVIDIA driver.
 |---|---|
 | [Dockerfile](Dockerfile) | A Docker image, in stages: system packages, HDF5, LLVM with MLIR and the OpenMP runtime, MDIR; the final stage holds only the installed tree on CUDA's runtime image |
 | [mdir.def](mdir.def) | An Apptainer (Singularity) image made from the Docker image |
-| [Dockerfile.manylinux](Dockerfile.manylinux) | The release tarball for manylinux_2_28 (glibc 2.28 and later), built on the PyPA image of that baseline (D177) |
+| [Dockerfile.manylinux](Dockerfile.manylinux) | The release tarball (D177) and the Python wheels (D[python-package]) for manylinux_2_28 (glibc 2.28 and later), built on the PyPA image of that baseline |
 
 **Layers.** The stages go from what changes least to what changes most:
 the base image (pinned by digest) and its packages, HDF5 1.14.6, LLVM
@@ -119,3 +119,23 @@ selects another toolkit. `scripts/release/check-binary.sh` checks that no
 binary needs GLIBC newer than 2.28 or the system's libstdc++ (MDIR's own
 binaries), and that every library is bundled or one that manylinux_2_28
 allows from the system.
+
+## The Python wheels (manylinux_2_28)
+
+The target `wheels` of `Dockerfile.manylinux` builds the wheels of the
+Python package `mdir`, one for each of CPython 3.10–3.13 of the image, on
+the same toolchain as the tarball, and repairs them with auditwheel to
+`manylinux_2_28_x86_64` (D[python-package],
+[python-package.md](../docs/python-package.md)):
+
+```sh
+DOCKER_BUILDKIT=1 docker build -f packaging/Dockerfile.manylinux \
+  --build-arg MDIR_GIT_COMMIT=$(git rev-parse HEAD) \
+  --target wheels --output type=local,dest=dist .
+scripts/release/check-wheel.sh dist/*.whl
+```
+
+A wheel holds the extension, the runtime, libdevice with the CUDA EULA,
+and HDF5 (in `mdir.libs`); cuFFT and ptxas come from NVIDIA's wheels
+`nvidia-cufft` and `nvidia-cuda-nvcc` through the extra `mdir[cuda]`, and
+the driver's `libcuda` from the system. The `mdir` command is not in the wheels.

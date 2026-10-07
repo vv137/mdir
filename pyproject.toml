@@ -1,0 +1,78 @@
+# The Python package `mdir` as a wheel (D[python-package],
+# docs/python-package.md): the extension, its runtime, and libdevice, built
+# by CMake through scikit-build-core. The build needs what a build of the
+# tree needs (LLVM/MLIR 23.1.2, and for a GPU wheel HDF5 and CUDA), named
+# through CMake's variables, for example
+#
+#   pip wheel . --no-deps -w dist \
+#     -C cmake.define.LLVM_DIR=<llvm>/lib/cmake/llvm \
+#     -C cmake.define.MLIR_DIR=<llvm>/lib/cmake/mlir \
+#     -C cmake.define.HDF5_ROOT=<hdf5> -C cmake.define.CUDAToolkit_ROOT=<cuda>
+#
+# Release wheels for manylinux_2_28 come from the target `wheels` of
+# packaging/Dockerfile.manylinux. The `mdir` command is not part of the
+# wheel; it comes with the release tarball and the container.
+
+[build-system]
+# pybind11 is the version that python/CMakeLists.txt requires exactly;
+# NumPy is checked at configuration (D193), its C API is not used.
+requires = ["scikit-build-core>=0.11,<0.12", "pybind11==3.0.1", "numpy>=1.23"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "mdir"
+dynamic = ["version"]
+description = "Molecular dynamics compiled through MLIR for CPUs and NVIDIA GPUs"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Minsoo Kim" }]
+requires-python = ">=3.10,<3.14"
+dependencies = ["numpy>=1.23"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: C++",
+  "Operating System :: POSIX :: Linux",
+  "Environment :: GPU :: NVIDIA CUDA :: 13",
+  "Topic :: Scientific/Engineering :: Chemistry",
+  "Topic :: Scientific/Engineering :: Physics",
+]
+
+[project.optional-dependencies]
+# What a GPU run takes from NVIDIA's wheels of CUDA 13, in the same
+# site-packages: cuFFT (soname libcufft.so.12, nvidia/cu13/lib), which the
+# GPU runtime loads, and ptxas (nvidia/cu13/bin, from nvidia-cuda-nvcc),
+# which compiles the kernels to cubins, so that the driver does not compile
+# their PTX at the first load. Any ptxas of CUDA 13 serves: it only
+# assembles the PTX that LLVM emits, after libdevice (CUDA 13.0, carried
+# by the wheel) is linked, so its minor version need not be libdevice's;
+# 13.0.88 and 13.4.92 were run. The major is fixed because MDIR looks in
+# nvidia/cu13.
+cuda = ["nvidia-cufft>=12.0,<13", "nvidia-cuda-nvcc>=13.0,<14"]
+
+[project.urls]
+Homepage = "https://github.com/vv137/mdir"
+Changelog = "https://github.com/vv137/mdir/blob/main/CHANGELOG.md"
+
+[tool.scikit-build]
+minimum-version = "build-system.requires"
+cmake.version = ">=3.20"
+cmake.build-type = "Release"
+# The extension and the runtime only (python/CMakeLists.txt), installed as
+# the component `python`; the package comes from CMake's install, not from
+# a copy of python/mdir.
+build.targets = ["mdir_wheel"]
+install.components = ["python"]
+install.strip = true
+wheel.packages = []
+wheel.license-files = []
+sdist.exclude = ["docs/paper", "test", "examples/*/*.dcd"]
+
+[tool.scikit-build.cmake.define]
+MDIR_ENABLE_PYTHON = "ON"
+
+[tool.scikit-build.metadata.version]
+# The one version of MDIR (D174): project(mdir VERSION ...) of CMakeLists.txt.
+provider = "scikit_build_core.metadata.regex"
+input = "CMakeLists.txt"
+regex = 'project\(mdir VERSION (?P<value>[0-9]+\.[0-9]+\.[0-9]+)'

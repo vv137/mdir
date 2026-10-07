@@ -158,19 +158,22 @@ template <typename Function> Function *findRuntime(const char *name) {
       llvm::sys::DynamicLibrary::SearchForAddressOfSymbol(name));
 }
 
-/// The directory of the runtime libraries: `MDIR_RUNTIME_DIR`, or `lib` next
-/// to the directory of the module that holds this code, as a build tree and
-/// an installed prefix place them, or that of the build.
+/// The directory of the runtime libraries: `MDIR_RUNTIME_DIR`; `lib` beside
+/// the module that holds this code, as a wheel places them (site-packages/
+/// mdir/lib, D[python-package]); `lib` next to a directory above it, as a
+/// build tree and an installed prefix place them; or that of the build.
 std::string findRuntimeDirectory() {
   std::vector<std::string> candidates;
   if (const char *named = std::getenv("MDIR_RUNTIME_DIR"); named && *named)
     candidates.push_back(named);
-  Dl_info info;
-  if (dladdr(reinterpret_cast<void *>(&findRuntimeDirectory), &info) &&
-      info.dli_fname) {
-    // build/python/mdir*.so takes build/lib; <prefix>/lib/pythonX.Y/
-    // site-packages/mdir*.so takes <prefix>/lib.
-    llvm::SmallString<256> here(llvm::sys::path::parent_path(info.dli_fname));
+  std::string module = compiler::getModuleDirectory();
+  if (!module.empty()) {
+    llvm::SmallString<256> beside(module);
+    llvm::sys::path::append(beside, "lib");
+    candidates.push_back(std::string(beside));
+    // build/python/mdir/_core*.so takes build/lib; <prefix>/lib/pythonX.Y/
+    // site-packages/mdir/_core*.so takes <prefix>/lib.
+    llvm::SmallString<256> here(module);
     for (int up = 0; up != 3 && !here.empty(); ++up) {
       llvm::SmallString<256> parent(llvm::sys::path::parent_path(here));
       llvm::SmallString<256> lib(parent);

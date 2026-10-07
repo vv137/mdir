@@ -288,9 +288,11 @@ D223 (#132, [checkpoints](python-checkpoints.md)) writes
 and continues the checkpoint of `mdir run` from Python: the fingerprint of
 a Python model has the entries of the control file of the same model, so
 either front end continues the other's run, tested in both directions.
-M2 covers
-a documented classical subset and requires a manylinux_2_28 pip wheel for
-Python 3.10–3.13; conda follows later.
+D[python-package] (#133, [the package](python-package.md)) builds
+the interface as the package `mdir`, a manylinux_2_28 pip wheel for
+Python 3.10–3.13 that carries its runtime, libdevice, and HDF5 and takes
+cuFFT and ptxas from NVIDIA's wheels (`mdir[cuda]`), and runs the four-stage tutorial
+from it. M2 covers a documented classical subset; conda follows later.
 
 The design follows a reading of OpenMM's Python layer (2026-10-02,
 `openmm/openmm` at 5ee2cba): its vocabulary and its reporters fit MDIR,

@@ -145,13 +145,28 @@ bool runTool(StringRef program, ArrayRef<StringRef> arguments,
 
 /// The ptxas that compiles the PTX of the modules: that of the toolkit
 /// whose libdevice the modules link (CUDA_ROOT, CUDA_HOME, or CUDA_PATH,
-/// else the toolkit of the build), else the one on PATH; and the text of
-/// its `--version`, which is part of the key of a cubin. Empty if there is
-/// none that runs.
+/// else the toolkit of the build); else that of NVIDIA's wheel
+/// `nvidia-cuda-nvcc` in the site-packages that holds the Python package
+/// (D[python-package]); else the one on PATH; and the text of its
+/// `--version`, which is part of the key of a cubin. Empty if there is none
+/// that runs.
 struct Ptxas {
   std::string path;
   std::string version;
 };
+/// `site-packages/nvidia/cu13/bin/ptxas` beside the package `mdir` whose
+/// extension holds this code (`site-packages/mdir/_core*.so`); empty when
+/// this code is not in such a package or the wheel is not installed.
+static std::string findWheelPtxas() {
+  Dl_info info;
+  if (!dladdr(reinterpret_cast<void *>(&findWheelPtxas), &info) ||
+      !info.dli_fname)
+    return "";
+  SmallString<256> path(llvm::sys::path::parent_path(
+      llvm::sys::path::parent_path(info.dli_fname)));
+  llvm::sys::path::append(path, "nvidia", "cu13", "bin", "ptxas");
+  return llvm::sys::fs::can_execute(path) ? std::string(path) : "";
+}
 const Ptxas &getPtxas() {
   static std::mutex mutex;
   static std::map<std::string, Ptxas> found;
@@ -165,6 +180,8 @@ const Ptxas &getPtxas() {
   std::string program;
   if (!toolkit.empty() && llvm::sys::fs::can_execute(path))
     program = std::string(path);
+  else if (std::string wheel = findWheelPtxas(); !wheel.empty())
+    program = wheel;
   else if (auto onPath = llvm::sys::findProgramByName("ptxas"))
     program = *onPath;
   std::string log;

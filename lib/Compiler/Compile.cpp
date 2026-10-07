@@ -19,19 +19,50 @@
 #include "mlir/Target/LLVMIR/Dialect/All.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include "llvm/Support/ThreadPool.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Path.h"
 #include <cstdlib>
+#include <dlfcn.h>
 #include <mutex>
 #include <unistd.h>
 using namespace mdir;
 using namespace mdir::driver;
 using llvm::StringRef;
 char compiler::CompileError::ID = 0;
+std::string mdir::compiler::getModuleDirectory() {
+  Dl_info info;
+  if (!dladdr(reinterpret_cast<void *>(&getModuleDirectory), &info) ||
+      !info.dli_fname)
+    return "";
+  llvm::SmallString<256> path(info.dli_fname);
+  if (llvm::sys::fs::make_absolute(path))
+    return "";
+  return std::string(llvm::sys::path::parent_path(path));
+}
 void mdir::compiler::useCudaToolkit() {
   for (const char *name : {"CUDA_ROOT", "CUDA_HOME", "CUDA_PATH"})
     if (const char *root = std::getenv(name); root && *root) {
       setenv("CUDA_ROOT", root, /*overwrite=*/0);
       return;
     }
+  // libdevice carried with the package or the installed tree, so that a
+  // GPU run needs only the driver.
+  std::string module = getModuleDirectory();
+  if (!module.empty()) {
+    llvm::SmallString<256> wheel(module), tree(module);
+    llvm::sys::path::append(wheel, "cuda");
+    llvm::sys::path::append(tree, "..", "share", "mdir", "cuda");
+    for (llvm::SmallString<256> *root : {&wheel, &tree}) {
+      llvm::SmallString<256> libdevice(*root);
+      llvm::sys::path::append(libdevice, "nvvm", "libdevice",
+                              "libdevice.10.bc");
+      if (llvm::sys::fs::exists(libdevice)) {
+        llvm::sys::path::remove_dots(*root, /*remove_dot_dot=*/true);
+        setenv("CUDA_ROOT", root->c_str(), /*overwrite=*/0);
+        return;
+      }
+    }
+  }
   if (*MDIR_CUDA_ROOT)
     setenv("CUDA_ROOT", MDIR_CUDA_ROOT, /*overwrite=*/0);
 }

@@ -94,3 +94,45 @@ RUN --mount=type=cache,target=/build/mdir,id=mdir-manylinux-build \
 # --- The tarball alone, for --output -----------------------------------------
 FROM scratch AS tarball
 COPY --from=build /mdir-*-manylinux_2_28_x86_64.tar.gz /
+
+# --- 7. Wheels of the Python package (D[python-package]) ---------------------
+# One wheel per CPython of the image (PYTHONS), built by pyproject.toml with
+# the toolchain above, libstdc++ and libgcc linked statically as for the
+# tarball, and repaired by auditwheel to manylinux_2_28: HDF5 and zlib are
+# grafted into mdir.libs under unique names; the driver's libcuda and cuFFT,
+# which comes from NVIDIA's wheel (the extra `cuda`), are left to the
+# system. From the root of the repository:
+#
+#   DOCKER_BUILDKIT=1 docker build -f packaging/Dockerfile.manylinux \
+#     --build-arg MDIR_GIT_COMMIT=$(git rev-parse HEAD) \
+#     --target wheels --output type=local,dest=dist .
+#
+# scripts/release/check-wheel.sh checks each wheel.
+FROM eula AS wheel-build
+ARG MDIR_GIT_COMMIT=
+ARG PYTHONS="cp310-cp310 cp311-cp311 cp312-cp312 cp313-cp313"
+ENV MDIR_GIT_COMMIT=${MDIR_GIT_COMMIT}
+COPY . /src/mdir
+RUN --mount=type=cache,target=/build/wheels,id=mdir-manylinux-wheels \
+    set -e; rm -rf /build/wheels/raw /wheels; \
+    for py in ${PYTHONS}; do \
+      /opt/python/$py/bin/python -m pip wheel /src/mdir --no-deps \
+        -w /build/wheels/raw \
+        -C build-dir=/build/wheels/{wheel_tag} \
+        -C cmake.define.LLVM_DIR=/opt/llvm/23.1.2/lib/cmake/llvm \
+        -C cmake.define.MLIR_DIR=/opt/llvm/23.1.2/lib/cmake/mlir \
+        -C cmake.define.HDF5_ROOT=/opt/hdf5/1.14.6 \
+        -C cmake.define.CUDAToolkit_ROOT=/usr/local/cuda \
+        -C cmake.define.MDIR_ENABLE_CUDA=ON \
+        -C cmake.define.MDIR_ENABLE_HDF5=ON \
+        "-C" "cmake.define.CMAKE_SHARED_LINKER_FLAGS=-static-libstdc++ -static-libgcc" \
+        "-C" "cmake.define.CMAKE_MODULE_LINKER_FLAGS=-static-libstdc++ -static-libgcc"; \
+    done; \
+    LD_LIBRARY_PATH=/opt/hdf5/1.14.6/lib auditwheel repair \
+      --plat manylinux_2_28_x86_64 \
+      --exclude libcuda.so.1 --exclude libcufft.so.12 \
+      -w /wheels /build/wheels/raw/*.whl
+
+# --- The wheels alone, for --output ------------------------------------------
+FROM scratch AS wheels
+COPY --from=wheel-build /wheels/ /

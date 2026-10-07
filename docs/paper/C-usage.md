@@ -12,7 +12,12 @@ MDIR is extracted from the binary tarball of a release, which runs on
 Linux x86-64 with glibc 2.28 or later and needs, for a GPU, only the NVIDIA
 driver (D177); or built and installed as Appendix B.1 describes;
 or run from its container (`packaging/README.md`: `docker run --gpus all`
-or `apptainer run --nv`). `mdir version` prints what the build supports:
+or `apptainer run --nv`). The Python interface installs from its wheel,
+for Python 3.10–3.13 on the same systems, with `pip install
+"mdir[cuda]"` from the wheel's file or directory; the extra `cuda` brings
+NVIDIA's cuFFT and ptxas for GPU runs, which then need only the driver, and the
+wheel does not hold the `mdir` command (D[python-package],
+`docs/python-package.md`). `mdir version` prints what the build supports:
 
 ```text
 $ mdir version
