@@ -12,13 +12,34 @@ keep their temporary inputs and logs at the printed path. The doctor
 checks basic execution; a failure specific to your system needs the
 report below.
 
-The kernels are PTX, which the NVIDIA driver compiles when a run loads
-them. A driver older than the PTX ISA version that MDIR emits cannot, and
-the run, or the doctor's GPU check, ends with `mdrt: the NVIDIA driver
-supports CUDA <x.y>, which cannot compile kernels of PTX ISA <a.b>`; update
-the driver. The toolkit's version does not matter to the load: it supplies
-only libdevice. `mdir version` prints both, the toolkit's and the driver's
-(`driver API`).
+The kernels are cubins for the architecture of the device. They are
+compiled by the `ptxas` of the toolkit, which also supplies libdevice
+(D[gpu-module-compile]), and the driver loads them without compiling them.
+A cubin compiled for one architecture does not load on a device of
+another; such a run ends with `mdrt: the kernels were compiled for the
+architecture of another device`.
+
+The kernels are PTX instead in these cases:
+
+- NVML cannot tell the device's architecture, and `MDIR_GPU_ARCH` does
+  not give it;
+- LLVM does not know the device's architecture;
+- no `ptxas` is found. Without a toolkit, the compiler finds no `ptxas`.
+
+The driver then compiles the PTX when a run loads it. A driver older than
+the PTX ISA version that MDIR emits cannot do that, and the run, or the
+doctor's GPU check, ends with `mdrt: the NVIDIA driver supports CUDA
+<x.y>, which cannot compile kernels of PTX ISA <a.b>`; update the driver.
+
+`MDIR_GPU_BINARY=ptx` keeps the kernels PTX, to rule out `ptxas`, and
+`MDIR_GPU_ARCH=sm_XY` sets the architecture
+([compile-cache.md](compile-cache.md#cubins-for-the-device)).
+
+`mdir version` prints the toolkit's version and the driver's (`driver
+API`). `mdir emit --stage=pipeline` shows the architecture that was
+chosen, for example
+`mdir-gpu-lower-to-nvvm{cubin-chip=sm_86 cubin-format=bin binary=auto}`,
+or `cubin-format=isa` for PTX.
 
 ## Reporting a defect
 

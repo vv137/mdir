@@ -1,4 +1,4 @@
-# The compile cache of host objects (D212)
+# The compile cache (D212, D[gpu-module-compile])
 
 Issue #142. A Python simulation compiles its program in three stages: the
 MLIR pipeline lowers it to an LLVM module (with the PTX of its kernels on a
@@ -7,10 +7,14 @@ compiles the PTX when the module is loaded. This item caches the second
 stage, the relocatable host object, on disk, keyed by the content of the
 module it was generated from. The other two stages are not cached here:
 the pipeline runs on every compile, and the driver keeps its own cache of
-compiled PTX. A per-module cache of the PTX belongs with the parallel
-serialization of the GPU modules (#148), and `mdir run`, which still
-compiles with MLIR's `ExecutionEngine`, takes the cache when it moves onto
-the owned engine (#99).
+compiled PTX. `mdir run`, which still compiles with MLIR's
+`ExecutionEngine`, takes the cache of host objects when it moves onto the
+owned engine (#99).
+
+D[gpu-module-compile] (#148) serializes the GPU modules in parallel, keeps
+the PTX and the cubin of each module in the same cache, and loads cubins
+compiled for the device instead of PTX; see
+[The GPU modules](#the-gpu-modules-dgpu-module-compile) below.
 
 ## Use
 
@@ -19,9 +23,9 @@ environment only; no control-file key and no Python argument changes.
 
 | Variable | Effect |
 |---|---|
-| `MDIR_COMPILE_CACHE_DIR=<dir>` | Enables the cache. Entries go in `<dir>/host/`, which is made when the first entry is written. |
+| `MDIR_COMPILE_CACHE_DIR=<dir>` | Enables the cache. Host objects go in `<dir>/host/` and the PTX and cubins of GPU modules in `<dir>/gpu/`, each made when its first entry is written. |
 | `MDIR_COMPILE_CACHE=off` | Disables the cache even when a directory is set. |
-| `MDIR_COMPILE_CACHE_MAX_MB=<n>` | Bounds the directory to $n$ MiB (2048 by default). After an entry is written, the entries used least recently are removed until the directory is within the bound; 0 keeps none. |
+| `MDIR_COMPILE_CACHE_MAX_MB=<n>` | Bounds the directory, host and GPU entries together, to $n$ MiB (2048 by default). After entries are written, the entries used least recently are removed until the directory is within the bound; 0 keeps none. |
 
 A directory may be shared by processes that run at the same time, and by
 builds of MDIR (see the key below). Removing it, or any entry in it, is
@@ -186,3 +190,137 @@ the GPU lifetime tests about 163, 128, and 124 s. Many programs of a
 suite are compiled more than once, by one test or by several, so a cold
 cache hits as well. The suite's wall time is set by its slowest tests, in
 which the MLIR pipeline dominates.
+
+## The GPU modules (D[gpu-module-compile])
+
+Issue #148. A GPU program becomes many small GPU modules, one kernel each:
+the production stage of the ala3 example has 400 under `mdir run` and 624
+in the program of segments of a Python simulation. Upstream
+`gpu-module-to-binary` serialized them one after another, each through
+LLVM's NVPTX back end to PTX, and the driver compiled each PTX to machine
+code when the program was loaded.
+
+### Serialization in parallel
+
+The pipeline of a GPU program ends with `mdir-gpu-lower-to-nvvm`. This is
+upstream `gpu-lower-to-nvvm-pipeline`, pass for pass and with the same
+options, except that `mdir-gpu-module-to-binary` serializes the modules.
+That pass:
+
+- serializes the modules on the threads of the context: the process's
+  shared pool (D211), at most `MDIR_COMPILE_THREADS`;
+- translates each module to LLVM IR in an LLVM context of its own, and
+  reads the module without changing it;
+- builds the symbol table before the threads start (upstream builds it
+  lazily);
+- replaces the modules with their binaries on one thread, in the order of
+  the modules.
+
+The result does not depend on the number of threads. The objects do not
+carry upstream's `LLVMIRToISATimeInMs` and `ISAToBinaryTimeInMs`
+properties. Those differed from run to run, so the lowered module is now
+the same in every run. `mdir run` lowers on the same shared pool.
+
+### Cubins for the device
+
+The kernels are compiled for the architecture of the device that will run
+them, and the driver loads them without compiling them. `ptxas` compiles
+the PTX of each module, in parallel, with upstream's arguments,
+`-arch sm_XY --opt-level <O>` (`O` is 2). At most 32 `ptxas` run at once:
+on a 128-core host, more took the same wall time with four times the
+system time. The `ptxas` is that of the toolkit whose libdevice the
+kernels link (`CUDA_ROOT`, `CUDA_HOME`, `CUDA_PATH`, else the toolkit of
+the build), else the one on `PATH`.
+
+Two environment variables choose the binaries:
+
+| Variable | Effect |
+|---|---|
+| `MDIR_GPU_BINARY=auto` | The default. Cubins for the device's architecture. Where no `ptxas` is found, or it fails for the architecture, the kernels are PTX for that architecture, and a message says so once. Where the architecture is not known, they are PTX for `sm_75`, as before this item. |
+| `MDIR_GPU_BINARY=cubin` | Cubins. An unknown architecture, a missing `ptxas`, or a failure of `ptxas` is an error. |
+| `MDIR_GPU_BINARY=ptx` | PTX, which the driver compiles at load: for `MDIR_GPU_ARCH` if it is set, else for `sm_75`. For debugging the driver's compilation, or for programs that run on other GPUs. |
+| `MDIR_GPU_ARCH=sm_XY` | The architecture to compile for, instead of the device's. For compiling on one GPU for another. LLVM's NVPTX back end must know it. |
+
+The architecture of the device comes from NVML
+(`nvmlDeviceGetCudaComputeCapability`), not from the CUDA driver. Lowering
+a program, `mdir.compile` included, therefore creates no CUDA state, and a
+process may fork after it compiles; `fork-after-compile-gpu.test` runs the
+program in a forked child. The device is chosen as the runtime chooses it:
+
+- The device index is `Execution.device`, or `MDRT_DEVICE`, which the
+  runtime takes over it. `mdir run` takes the first visible device.
+- That index selects an entry of `CUDA_VISIBLE_DEVICES`, as CUDA does.
+- An entry `GPU-<uuid>` names its device.
+- An index entry is CUDA's index. CUDA orders the devices by their PCI
+  bus under `CUDA_DEVICE_ORDER=PCI_BUS_ID`, as NVML does, and fastest
+  first otherwise. Under the default order, the architecture is taken only
+  when every device has the same one.
+
+Where NVML is missing or cannot tell, the architecture is unknown, unless
+`MDIR_GPU_ARCH` gives it. A program compiled for one architecture and
+loaded on a device of another fails at load with a message that says so.
+
+`mdir emit --stage=pipeline` shows what was chosen, for example
+`mdir-gpu-lower-to-nvvm{cubin-chip=sm_86 cubin-format=bin binary=auto}`.
+
+### The cache of the GPU modules
+
+With `MDIR_COMPILE_CACHE_DIR` set, the pass keeps the PTX and the cubin of
+each module in `<dir>/gpu/`, as entries of the format of the host objects
+(below: full key, length, BLAKE3 hash, time of generation, data; atomic
+writes; reads that copy). `MDIR_COMPILE_CACHE_MAX_MB` bounds the host and
+GPU entries together, least recently used first.
+
+The key of the PTX of a module (`<hash>.ptx`) holds:
+
+- a BLAKE3 hash of the module's IR, printed in the generic form with
+  nothing elided and without locations, which do not reach the PTX;
+- its target attribute: the triple, `sm_XY`, the PTX features, and `O`;
+- the value of `MDIR_GPU_BINARY`;
+- a BLAKE3 hash of the libdevice it links, and of any other library its
+  target links;
+- the LLVM version and a format tag.
+
+The MDIR build is not part of the key. At this point a module holds only
+upstream ops of the LLVM and NVVM dialects, so a rebuild of MDIR that
+generates the same kernels hits. A module that refers to a
+`dense_resource` blob is not cached, since its printed IR does not hold
+the blob's contents.
+
+The key of a cubin (`<hash>.cubin`) holds:
+
+- a BLAKE3 hash of its PTX;
+- the text of `ptxas --version`;
+- the arguments of `ptxas`;
+- the value of `MDIR_GPU_BINARY`;
+- a format tag.
+
+A new toolkit therefore compiles the cached PTX again, and a new LLVM
+generates new PTX.
+
+A PTX entry must hold `.version` and `.target`, and a cubin entry must be
+an ELF file; any other entry is rejected and generated again. Identical
+modules within one program, or in the program that `mdir.compile` lowers
+before the simulation's, share one entry. `mdir run` uses these entries too
+when the directory is set, since the pass is part of its pipeline; its host
+objects are not cached yet (#99).
+
+`Simulation.compile_stats` gains these keys:
+
+| Key | Meaning |
+|---|---|
+| `gpu_modules` | GPU modules serialized |
+| `gpu_serialize_seconds` | Wall time of their serialization |
+| `gpu_ptx_compiled`, `gpu_ptx_hits` | PTX generated by LLVM, and read from the cache |
+| `gpu_cubin_compiled`, `gpu_cubin_hits` | Cubins generated by `ptxas`, and read from the cache |
+| `gpu_compile_seconds` | Time of the PTX and cubins generated, summed over the modules |
+| `gpu_cache_saved_seconds` | Time the hits took when they were stored, summed |
+| `gpu_cache_lookup_seconds` | Time of keys and reads, summed over the modules |
+| `gpu_cache_rejected`, `gpu_cache_stored`, `gpu_cache_unstored` | GPU entries rejected, written, and that could not be written |
+
+### Ownership
+
+A PTX or a cubin is data: a constant of the host module that the driver
+loads into memory of its own. The cache changes only how those bytes are
+made, before the host object is generated. The boundary of D199 is
+unchanged ([jit-invariants.md](jit-invariants.md)).
