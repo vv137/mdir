@@ -100,6 +100,7 @@ apptainer run --nv mdir-0.1.0.sif doctor
 | [docs/principles.md](docs/principles.md) | Principles of development, from the defects that taught them |
 | [docs/roadmap.md](docs/roadmap.md) | What comes next: robustness, the rest of the first milestone, the white paper |
 | [docs/debugging.md](docs/debugging.md) | Reports of defects (`mdir bug-report`), failures of passes and kernels, tiers of tests |
+| [docs/environment.md](docs/environment.md) | The environment variables that MDIR reads: devices, compilation, debugging, tests |
 | [docs/prior-art.md](docs/prior-art.md) | Earlier work and what is taken from it |
 
 ## Requirements
