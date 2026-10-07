@@ -190,7 +190,20 @@ PYBIND11_MODULE(mdir, m) {
     .def_readwrite("name", &driver::PairTerm::name)
     .def_readwrite("expression", &driver::PairTerm::expression)
     .def_readwrite("constants", &driver::PairTerm::constants)
-    .def_readwrite("groups", &driver::PairTerm::groups);
+    .def_readwrite("groups", &driver::PairTerm::groups)
+    // `dispersion_correction` of the term (D209, D[python-dispersion]):
+    // None (Python's) follows the system, DispersionCorrection.None_ leaves
+    // the term out of the correction, EnergyPressure asks for its tail.
+    .def_property("dispersion", [](const driver::PairTerm &t) -> py::object {
+      if (!t.dispersionGiven) return py::none();
+      return py::cast(t.dispersion);
+    }, [](driver::PairTerm &t, py::object value) {
+      if (!value.is_none() && !py::isinstance<driver::DispersionCorrection>(value))
+        throw py::type_error("PairTerm.dispersion takes a DispersionCorrection or None");
+      t.dispersionGiven = !value.is_none();
+      t.dispersion = t.dispersionGiven ? value.cast<driver::DispersionCorrection>()
+                                       : driver::DispersionCorrection::None;
+    });
   py::class_<driver::TupleTerm>(m, "TupleTerm").def(py::init<>())
     .def_readwrite("name", &driver::TupleTerm::name)
     .def_readwrite("expression", &driver::TupleTerm::expression)
@@ -233,7 +246,22 @@ PYBIND11_MODULE(mdir, m) {
   property(system, "truncation", &model::System::truncation);
   property(system, "electrostatics", &model::System::electrostatics);
   property(system, "coulomb_modifier", &model::System::coulombModifier);
-  property(system, "dispersion", &model::System::dispersion);
+  // Setting the correction makes it explicit, as the key of the control
+  // file; None restores the default (D[python-dispersion]).
+  system.def_property("dispersion", [](const Input<model::System> &o) {
+    return o.value.dispersion;
+  }, [](Input<model::System> &o, py::object value) {
+    if (!value.is_none() && !py::isinstance<driver::DispersionCorrection>(value))
+      throw py::type_error("System.dispersion takes a DispersionCorrection or None");
+    o.value.dispersionGiven = !value.is_none();
+    o.value.dispersion = o.value.dispersionGiven
+                             ? value.cast<driver::DispersionCorrection>()
+                             : driver::DispersionCorrection::EnergyPressure;
+    ++o.version;
+  });
+  system.def_property_readonly("dispersion_given", [](const Input<model::System> &o) {
+    return o.value.dispersionGiven;
+  });
   property(system, "pme_alpha", &model::System::pmeAlpha, units::inverseNm);
   property(system, "pme_tolerance", &model::System::pmeTolerance, units::none);
   property(system, "pme_spacing", &model::System::pmeSpacing, units::nm);
@@ -408,6 +436,19 @@ PYBIND11_MODULE(mdir, m) {
       d["pme"] = c.program.pme;
       d["pme_grid"] = std::array<int64_t, 3>{c.program.pmeGrid[0], c.program.pmeGrid[1], c.program.pmeGrid[2]};
       d["tunables"] = tunables::describe(p.prepared->tunables);
+      // The correction for the dispersion (D209): whether it is on and was
+      // given, and for each pair term whether its tail is in it
+      // (D[python-dispersion]).
+      const auto &control = p.prepared->control;
+      const auto &tails = p.prepared->system.pairTails;
+      py::dict dispersion, terms;
+      bool on = control.topologyDispersion != driver::DispersionCorrection::None;
+      dispersion["correction"] = control.topologyDispersion;
+      dispersion["given"] = control.topologyDispersionGiven;
+      for (size_t k = 0; k != control.pairs.size(); ++k)
+        terms[py::str(control.pairs[k].name)] = on && k < tails.size() && !tails[k].empty();
+      dispersion["pair_terms"] = terms;
+      d["dispersion"] = dispersion;
       return d;
     });
   m.def("compile", [](std::shared_ptr<Input<model::System>> system,
@@ -427,7 +468,8 @@ PYBIND11_MODULE(mdir, m) {
     // warns of it, and so does compile.
     for (const auto &[code, message] : prepared.system.warnings)
       if ((code == "empty_selection" && llvm::StringRef(message).starts_with("the restraint of")) ||
-          code == "tunable_fixed_pairs")
+          code == "tunable_fixed_pairs" || code == "pair_tail_left_out" ||
+          code == "dispersion_switched")
         if (PyErr_WarnEx(PyExc_UserWarning, message.c_str(), 1) != 0)
           throw py::error_already_set();
     Program result;

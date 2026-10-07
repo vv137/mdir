@@ -1,0 +1,15 @@
+# REQUIRES: python-api, cuda
+# The correction for the dispersion of the Python model on a GPU
+# (D[python-dispersion]): a pair term's own `dispersion` and an explicit
+# correction, against mdir run and the tails of check_pair_tail.py.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/pair_tail_system.py %t 60 60 32 3.7 0.5
+# RUN: %mdir_python %S/Inputs/python_dispersion.py %t GPU mdir | FileCheck %s
+# CHECK: GPU Double cutoff: potential, virial and pressure of default, explicit, term, optout, off equal to mdir run's rows
+# CHECK: GPU Double cutoff: the term's energy beyond the cutoff
+# CHECK: GPU Double shift: the term's virial beyond the cutoff
+# CHECK: GPU Mixed shift: the term's pressure beyond the cutoff
+# CHECK: diverges: refused when asked for
+# CHECK: no cell, switch: as the control file; by default a switch turns the correction off with a warning
+# CHECK: tunable exponent: taken by a term left out
+# CHECK: python dispersion passed

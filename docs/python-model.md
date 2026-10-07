@@ -81,7 +81,9 @@ contains zero-based particle/type identities. The native values are mutable;
 before the compilation service exposes reusable programs to Python.
 
 Custom pairs initially accept constants and optional two selection masks,
-without type mixing or custom dispersion correction. Tuple expressions have
+without type mixing; their tails enter the correction for the dispersion as
+in the control file (D209), and a term can leave it
+([below](#the-correction-for-the-dispersion)). Tuple expressions have
 arity two, three or four and one value of each parameter per tuple. Pair and
 bond `r` is nm, angle/dihedral `theta` is radians, energy is kJ/mol. At the
 legacy builder boundary, coordinate variables and the energy expression are
@@ -108,6 +110,64 @@ Drawn velocities and typed positional restraints extend this model
 `drawVelocities` prepares the system as `prepare` does and calls the CLI's
 `assignVelocities`, and `System::restraints` with `restraintReference`
 become the control's `[[restraints]]`.
+
+## The correction for the dispersion
+
+D[python-dispersion] (#161) gives the Python model the two parts of the
+control file's `dispersion_correction` that it lacked (D209, D210).
+
+| Python | Control file | Meaning |
+|---|---|---|
+| `System.dispersion` not set (`dispersion_given` is `False`) | no `dispersion_correction` in `[energy]` | `EnergyPressure`; a pair term whose tail diverges or that reads `t` is left out with the warning `pair_tail_left_out`; off without a periodic cell; off with a switch, with the warning `dispersion_switched` |
+| `System.dispersion = DispersionCorrection.EnergyPressure` | `dispersion_correction = "ENERGY_PRESSURE"` | on; such a term is an `InputError` naming it; refused without a periodic cell and with a switch |
+| `System.dispersion = DispersionCorrection.None_` | `"NONE"` | off |
+| `PairTerm.dispersion = None` (default) | no key in `[[energy.pair]]` | the term follows the system |
+| `PairTerm.dispersion = DispersionCorrection.None_` | `dispersion_correction = "NONE"` in the term | the term's tail is left out, silently |
+| `PairTerm.dispersion = DispersionCorrection.EnergyPressure` | `"ENERGY_PRESSURE"` in the term | the term asks for its tail: a divergent tail is an error, and so is the system's correction off |
+
+Python's `None` and `DispersionCorrection.None_` differ as an absent key
+and `"NONE"` do. Setting `System.dispersion` to `None` restores the default;
+reading it gives the value, `EnergyPressure` by default. Leaving a term out
+omits only its long-range estimate; its energy, forces, and virial within
+the cutoff are unchanged. `mdir.compile` raises `pair_tail_left_out` and
+`dispersion_switched` as `UserWarning`s, whose messages, like those of a
+refused tail, name `PairTerm.dispersion` rather than the control-file key;
+a value other than a `DispersionCorrection` or `None` is a `TypeError`; and `Program.plan["dispersion"]` is
+`{"correction", "given", "pair_terms"}`, the last a dict from each pair
+term's name to whether its tail is in the correction. A tunable
+(D213) of a term left out may take any value; for a term in the
+correction, an update that would make its tail diverge is refused, as
+before.
+
+The numbers are the builder's: the model hands it the control structure of
+the control file. With a switch (`Truncation.Switch`, `ForceSwitch`, ...),
+which takes part of the potential below the cutoff that the correction
+would leave out, the control file refuses the correction even by default.
+The Python model refuses it when it is set and, by default, turns it off
+with the warning `dispersion_switched`, so that the default `System`, whose
+truncation is `Switch`, still compiles (the maintainer's choice on PR
+#187). Before, it kept the correction under a switch.
+
+Validation (`python-dispersion.test`, `-gpu.test`, `Inputs/python_dispersion.py`),
+on the 60 A + 60 B mixture of `pair-dispersion.test` with the term
+$-c_8/r^8 - a e^{-r/l}/r^4$ over A-A and A-B, $r_c$ = 12 Å, under a plain
+cutoff and `Truncation.Shift`, CPU and GPU, double and mixed:
+
+| Check | Reference | Result | Tolerance |
+|---|---|---|---|
+| Potential, trace of the virial, and pressure at step 0, with the default, an explicit correction, the term's request, its opt-out, and the correction off | `mdir run` on the same input, its energy file (6 decimals of kcal/mol and atm) | equal to the printed digits | 1.5e-6 relative |
+| Explicit correction and term's request against the default | the default | equal to the bit | 0 |
+| Default less opt-out: the term's tail, $\nu(4\pi/V)N_\text{pairs}\int_{r_c}^\infty r^2u\,dr$ (and under the shift $+\nu(4\pi/3V)N_\text{pairs}f r_c^3u(r_c)$) | Simpson's rule in $\ln r$ of `check_pair_tail.py` | energy −0.033825540 kcal/mol (cutoff), −0.088177850 (shift), within 3.4e-13 relative | 1e-9 (double), 1e-5 (mixed) |
+| Its trace of the virial, $-\nu(4\pi/V)N_\text{pairs}\int r^3u'\,dr$, the same under the shift | the same | −0.270926137 kcal/mol, within 3.5e-13 | the same |
+| Its pressure, $\operatorname{tr}\mathsf W/3V$ | the same | −0.191478708 bar, within 2.0e-12 | the same |
+| $-c_8/(l^5r^3)$, a divergent tail | `mdir check` refuses it under `ENERGY_PRESSURE` in `[energy]` or in the term | `InputError` naming the term in both; by default one warning, energies equal to the opt-out and to `mdir run` | |
+| No cell; a switch | the control file | default off without a cell, explicit refused; explicit with a switch refused; by default with a switch off, one warning, energies equal to those with the correction set off | |
+| Messages and types | | a refused tail and the warning name `PairTerm.dispersion`; a string or an integer is a `TypeError` | |
+| Tunable exponent $p$ of $-c_8/r^p$ updated from 8 to 3 | | taken by a term left out; refused by a term in the correction | |
+
+The differences of the default and the opt-out agree in mixed precision as
+in double: the tails are host constants in double, and the two runs
+evaluate the same pairs within the cutoff.
 
 ## Python host array boundary
 

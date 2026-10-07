@@ -65,7 +65,7 @@ snake case; defaults and the supported physics subset are those of
 
 | Object | Properties |
 |---|---|
-| System | `periodic`, `cutoff`, `pairlist_distance`, `switch_distance`, `truncation`, `electrostatics`, `coulomb_modifier`, `dispersion`, `pme_alpha`, `pme_tolerance`, `pme_spacing`, `pme_grid`, `pme_order`, `rigid_hydrogen_bonds`, `rigid_water`, `flexible_water`, `water_residues`, `pair_terms`, `tuple_terms`, `restraints`, `restraint_reference`, `tunables` (D213); read-only `particle_count`, `charges`, `particle_types`, `type_names`, `atom_names`, `residue_names`, `residue_indices` |
+| System | `periodic`, `cutoff`, `pairlist_distance`, `switch_distance`, `truncation`, `electrostatics`, `coulomb_modifier`, `dispersion`, `pme_alpha`, `pme_tolerance`, `pme_spacing`, `pme_grid`, `pme_order`, `rigid_hydrogen_bonds`, `rigid_water`, `flexible_water`, `water_residues`, `pair_terms`, `tuple_terms`, `restraints`, `restraint_reference`, `tunables` (D213); read-only `dispersion_given` (D[python-dispersion]), `particle_count`, `charges`, `particle_types`, `type_names`, `atom_names`, `residue_names`, `residue_indices` |
 | InitialState | `positions`, `velocities`, `cell` |
 | Integrator | `method`, `timestep`, `minimize`, `minimize_step` |
 | Ensemble | `kind`, `temperature`, `tau_t`, `pressure`, `tau_p`, `compressibility`, `coupling_period`, `com_period`, `seed` |
@@ -89,8 +89,10 @@ read-only `vectors` has shape $(3, 3)$ in the reduced lower-triangular
 convention. Assign an edited cell back to its state to commit the change.
 Every returned numeric array is an independent read-only NumPy copy.
 
-`PairTerm` retains `name`, `expression`, `constants` (name/value pairs) and
-`groups` (selection masks). `TupleTerm` has `name`, `expression`, `arity`,
+`PairTerm` retains `name`, `expression`, `constants` (name/value pairs),
+`groups` (selection masks), and `dispersion` (`None` to follow the
+system's correction for the dispersion, `DispersionCorrection.None_` to
+leave it; D[python-dispersion]). `TupleTerm` has `name`, `expression`, `arity`,
 `particles` (shape $(n, \mathrm{arity})$, zero-based int64 IDs), and
 `parameters` (ordered name/1-D float64 array pairs). Particle inputs accept
 native int32 or int64. Expressions use nm, radians and kJ/mol as in the
@@ -103,7 +105,10 @@ CPU DLPack inputs are copied and non-CPU devices are refused. No framework
 or gradient adapter is supplied; device views and leases remain later M2 work.
 
 The plan records target, precision, logical device, threads, determinism,
-particle reordering, entry name, state/force dtypes and PME grid. It does
+particle reordering, entry name, state/force dtypes and PME grid; the
+tunables (D213); and `dispersion`, the correction for the dispersion,
+whether it was given, and whether each pair term's tail is in it
+(D[python-dispersion], [python-model.md](python-model.md#the-correction-for-the-dispersion)). It does
 not claim runtime device resolution or executable JIT ownership. The
 lowered IR embeds PTX on GPU targets; lowering needs the CUDA toolkit's
 libdevice, found through `CUDA_ROOT` when set. Python compilation ignores

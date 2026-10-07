@@ -16,6 +16,14 @@ static llvm::Error unsupported(const llvm::Twine &s) {
 static llvm::Error typed(llvm::Error e) {
   return input(llvm::toString(std::move(e)));
 }
+/// A message of the builder about the tail of a pair term, in the words of
+/// the Python model (D[python-dispersion]).
+static std::string pythonWords(std::string message) {
+  static const std::string key = "give 'dispersion_correction = \"NONE\"' in the term";
+  for (size_t at = message.find(key); at != std::string::npos; at = message.find(key, at))
+    message.replace(at, key.size(), "set PairTerm.dispersion to DispersionCorrection.None_");
+  return message;
+}
 
 System LoadedData::makeSystem() const {
   System s;
@@ -196,8 +204,19 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
       return input("the cell belongs to InitialState, not System");
   if (!s.topology.tupleTerms.empty() || !s.topology.externalTerms.empty())
     return unsupported("imported expression terms are outside the initial subset; use typed model terms");
+  // As the control file: without a periodic cell the correction is off
+  // unless it is asked for (D[python-dispersion]).
+  driver::DispersionCorrection dispersion =
+      s.periodic || s.dispersionGiven ? s.dispersion : driver::DispersionCorrection::None;
+  // With a switch the default correction is off, with a warning: the
+  // switch takes part of the potential below the cutoff, which the
+  // correction would leave out (D210, D[python-dispersion]).
+  bool switched = !s.dispersionGiven && dispersion != driver::DispersionCorrection::None &&
+                  s.truncation != driver::Truncation::None &&
+                  s.truncation != driver::Truncation::Shift;
+  if (switched) dispersion = driver::DispersionCorrection::None;
   if (!s.periodic && (s.electrostatics == Electrostatics::PME || ensemble.kind == EnsembleKind::NPT ||
-                     s.dispersion != driver::DispersionCorrection::None))
+                     dispersion != driver::DispersionCorrection::None))
     return input("PME, pressure coupling and dispersion correction require periodic boundaries");
   if (s.pmeOrder != 4 || !positive(s.pmeSpacing) || !std::isfinite(s.pmeAlpha) || s.pmeAlpha < 0 ||
       !positive(s.pmeTolerance) || s.pmeTolerance >= 1)
@@ -211,7 +230,15 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.pairlistDistance = s.pairlistDistance / driver::units::length;
   c.switchDistance = s.switchDistance / driver::units::length;
   c.truncation = s.truncation;
-  c.topologyDispersion = s.dispersion;
+  c.topologyDispersion = dispersion;
+  c.topologyDispersionGiven = s.dispersionGiven;
+  // As the control file (D210): the correction takes a plain cutoff or the
+  // shift; a switch would leave out what it removes below the cutoff.
+  if (s.dispersionGiven && dispersion != driver::DispersionCorrection::None &&
+      s.truncation != driver::Truncation::None && s.truncation != driver::Truncation::Shift)
+    return input("the correction for the dispersion needs a plain cutoff or the shift "
+                 "(Truncation.None_ or Truncation.Shift); with a switch, set "
+                 "System.dispersion to DispersionCorrection.None_");
   c.pme = s.electrostatics == Electrostatics::PME;
   c.pmeShift = s.coulombModifier == CoulombModifier::PotentialShift;
   c.pmeAlpha = s.pmeAlpha * driver::units::length;
@@ -249,8 +276,20 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   std::set<std::string> termNames;
   for (auto term : s.pairTerms) {
     if (!termNames.insert(term.name).second) return input("duplicate custom term name");
-    if (!term.mixing.empty() || term.dispersion != driver::DispersionCorrection::None)
-      return unsupported("custom pairs initially support constants and no dispersion correction");
+    if (!term.mixing.empty())
+      return unsupported("custom pairs initially support constants, not mixing");
+    // The term's own correction, as `dispersion_correction` of a pair term
+    // with a topology (D209, D[python-dispersion]): None leaves it out, and
+    // EnergyPressure follows the system's, which must be on.
+    if (term.dispersionGiven && term.dispersion != driver::DispersionCorrection::None &&
+        term.dispersion != driver::DispersionCorrection::EnergyPressure)
+      return unsupported("unsupported dispersion correction of the pair term '" + term.name + "'");
+    if (!term.dispersionGiven) term.dispersion = driver::DispersionCorrection::None;
+    if (term.dispersion != driver::DispersionCorrection::None &&
+        dispersion == driver::DispersionCorrection::None)
+      return input("the pair term '" + term.name + "' asks for the correction for the "
+                   "dispersion, which follows that of the system, which is off; a term can "
+                   "only leave it with DispersionCorrection.None_");
     if (!term.groups.empty() && term.groups.size() != 2)
       return input("custom pair groups must contain two selections");
     std::set<std::string> names;
@@ -315,9 +354,17 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
     topology.box[k] = cell.diagonal[k]; topology.tilt[k] = cell.tilt[k];
   }
   auto prepared = driver::prepareTopologySystem(c, std::move(topology), s.format != Format::Gromacs);
-  if (!prepared) return typed(prepared.takeError());
+  if (!prepared) return input(pythonWords(llvm::toString(prepared.takeError())));
+  for (auto &[code, message] : prepared->warnings)
+    if (code == "pair_tail_left_out") message = pythonWords(std::move(message));
   // The reference of the restraints, as the CLI takes the positions of its
   // coordinates file; the cell it scales from is that of the state.
+  if (switched)
+    prepared->warnings.push_back(
+        {"dispersion_switched",
+         "the switch of the truncation turns the correction for the dispersion off; it "
+         "takes a plain cutoff or the shift (Truncation.None_ or Truncation.Shift). Set "
+         "System.dispersion to DispersionCorrection.None_ to say so"});
   prepared->referencePositions =
       s.restraintReference.empty() ? prepared->positions : s.restraintReference;
   // The tunable parameters, whose initial values the prepared model takes
