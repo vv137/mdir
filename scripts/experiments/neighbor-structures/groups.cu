@@ -43,7 +43,12 @@ static std::vector<double> x;
 static std::vector<float> q, ta, tb;
 static std::vector<int> type, exoff, exl;
 
-static const float RC = 8.0f, BETA = 0.3945f;
+// -DCUTOFF=<A> sets the cutoff, and -DLJ_ONLY leaves the direct sum of PME
+// out (for a system without charges, as the argon of octree.cu).
+#ifndef CUTOFF
+#define CUTOFF 8.0f
+#endif
+static const float RC = CUTOFF, BETA = 0.3945f;
 
 static double mi(double d, double l) { return d - l * std::nearbyint(d / l); }
 static double dist2(int i, int j) {
@@ -68,7 +73,9 @@ __device__ __forceinline__ void pairForce(float3 xi, float qi, int ti, float3 xj
     float r = r2 * ri;
     float fs = (12.f * a * r6i - 6.f * b) * r6i * r2i;
     float br = BETA * r;
-#ifdef FAST_ERFC
+#if defined(LJ_ONLY)
+    (void)br; (void)qi; (void)qj; (void)r;
+#elif defined(FAST_ERFC)
     float ex = __expf(-br * br);
     float t = __frcp_rn(1.f + 0.3275911f * br);
     float poly = t * (0.254829592f + t * (-0.284496736f + t * (1.421413741f + t * (-1.453152027f + t * 1.061405429f))));
