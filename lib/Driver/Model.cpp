@@ -181,6 +181,12 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
     return input("invalid step, thread or coupling count");
   if (integrator.minimize && ensemble.kind != EnsembleKind::NVE)
     return input("minimization takes no bath");
+  // The program of a minimization loops over the intervals between its
+  // energies, as [minimize] of the control file does (emitMinimization).
+  if (integrator.minimize && schedule.energyPeriod == 0)
+    return input("a minimization writes energies: Schedule.energy_period may not be 0");
+  if (integrator.minimize && schedule.steps == 0)
+    return input("a minimization takes steps: Schedule.steps may not be 0");
   if (s.rigidWater && s.flexibleWater)
     return input("rigid and flexible water are mutually exclusive");
   if (!s.topology.positions.empty() || !s.topology.velocities.empty())

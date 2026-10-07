@@ -277,6 +277,17 @@ def cutoff_refusals():
                                             mdir.Schedule()))
     expect(mdir.InputError, lambda: dynamics.minimize(5), "dynamics")
     assert dynamics.state().minimization is None
+    # A minimization whose schedule has no energies or no steps is refused
+    # by compile, as [minimize] refuses them (issue #178).
+    integrator = mdir.Integrator()
+    integrator.minimize = True
+    for key, text in (("energy_period", "Schedule.energy_period may not be 0"),
+                      ("steps", "Schedule.steps may not be 0")):
+        schedule = mdir.Schedule()
+        setattr(schedule, key, 0)
+        expect(mdir.InputError,
+               lambda: mdir.compile(system, model()[1], integrator, mdir.Ensemble(),
+                                    execution("Double"), schedule), text)
     print("minimization refusals passed")
 
 
