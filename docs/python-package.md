@@ -51,7 +51,7 @@ the build as before.
 | libdevice | the wheel, `mdir/cuda`, 464 KB | without `CUDA_ROOT`, `CUDA_HOME`, `CUDA_PATH`: `cuda` beside the extension, else `../share/mdir/cuda` of an installed tree, else the toolkit of the build |
 | cuFFT (`libcufft.so.12`) | NVIDIA's `nvidia-cufft` wheel (extra `cuda`) | `libmdrt_cuda.so`'s RPATH, `$ORIGIN/../../nvidia/cu13/lib`, else the system's search path (a CUDA toolkit on `LD_LIBRARY_PATH` or in the loader's cache) |
 | `libcuda.so.1` | the NVIDIA driver | the loader, when a GPU program is loaded |
-| ptxas | none | a CUDA toolkit's, if `CUDA_ROOT` or `PATH` names one (D214) |
+| ptxas | optional: NVIDIA's `nvidia-cuda-nvcc` wheel, or a CUDA toolkit | the `bin` of a toolkit that `CUDA_ROOT` names, else `nvidia/cu13/bin/ptxas` beside the package, else `PATH` (D214) |
 
 libdevice is redistributable under Attachment A of the CUDA EULA, which
 the wheel carries beside it, as the tarball does (D177). The wheel carries
@@ -62,10 +62,14 @@ packages of the environment. Without it and without a toolkit's cuFFT, a
 GPU program fails to load with a `CompileError` that names the extra.
 
 Without ptxas, the kernels are loaded as PTX, which the driver compiles
-(D214). The first load of a program on a machine then takes longer: 5–17 s
-more per stage of the ala3 tutorial, 15 s more for JAC NPT; the driver's
-cache (`~/.nv/ComputeCache`) makes later loads as fast as cubins. A CUDA
-13 toolkit's `bin` on `PATH` avoids it.
+(D214): the first load of a program that the driver's cache
+(`~/.nv/ComputeCache`, or `CUDA_CACHE_PATH`) has not seen takes 3–13 s
+more per stage of the ala3 tutorial (Section 8), and later loads come from
+that cache. `pip install nvidia-cuda-nvcc` beside the package, or a CUDA 13
+toolkit's `bin` on `PATH`, gives MDIR a ptxas and removes that cost; the
+extra `cuda` does not include it (about 320 MB more of NVIDIA's files).
+On a home directory on a network file system, point `CUDA_CACHE_PATH` at
+a local disk.
 
 ## 4. A CPU-only machine
 
@@ -147,7 +151,7 @@ run.py` with a build of the tree.
 
 ## 8. Validation
 
-The four wheels of the Docker target, built at 3ebbb3a; host Ubuntu 22.04
+The four wheels of the Docker target; host Ubuntu 22.04
 (glibc 2.35), RTX 3090; CPython 3.10.19, 3.11.14, 3.12.12, 3.13.12 in clean
 virtual environments made by uv, the wheel installed with `[cuda]` (NumPy
 2.2.6 to 2.5.3, `nvidia-cufft` 12.4.0.43), run from a copy of
@@ -188,22 +192,30 @@ cell.
 The wheel runs at the rate of `mdir run` on every system measured.
 
 Compile time, from the model to a simulation ready to run (`mdir.compile`
-and `Simulation`), in s:
+and `Simulation`), with ptxas or a driver cache that holds the kernels, in
+s, taken before D224, which has since removed the lowering that
+`mdir.compile` did only to fill `Program.lowered_ir` (16.8 s of the 38.9 s
+on Cellulose):
 
-| System | Wheel, first load (PTX compiled by the driver) | Wheel, again (the driver's cache) or with ptxas | Build tree's Python | `mdir run` "compiled in" |
-|---|---|---|---|---|
-| JAC NVE | 22.3 | 14.1 | — | 5.3 |
-| JAC NPT | 39.9 | 25.4 | 29.8 | 10.6 |
-| Factor IX NVE | 24.4 | 24.1 | 24.1 | 5.3 |
-| Cellulose NVE | 42.9 | 37.9 | 36.2 | 4.5 |
-| STMV NPT 4 fs | 174.3 | 186.6 | 173.0 | 12.4 |
+| System | Wheel | Build tree's Python | `mdir run` "compiled in" |
+|---|---|---|---|
+| JAC NPT | 25.4 | 29.8 | 10.6 |
+| Factor IX NVE | 24.1 | 24.1 | 5.3 |
+| Cellulose NVE | 37.9 | 36.2 | 4.5 |
+| STMV NPT 4 fs | 186.6 | 173.0 | 12.4 |
 
-Beyond the first load of a program's PTX, the wheel compiles as the build
-tree's Python does. Python's compile is longer than `mdir run`'s "compiled
-in", which leaves out the reading and the preparation of the inputs: over
-whole processes of 200 steps, `mdir run` took 24.6 s on Cellulose and 97.8
-s on STMV, the wheel 46.9 s and 182.7 s. Most of the difference is
-`mdir.compile`, which lowers the program only to fill `Program.lowered_ir`
-(16.8 s of the 38.9 s on Cellulose);
-[PR #179](https://github.com/vv137/mdir/pull/179) defers that lowering to
-the first read of the IR. The package does not change it.
+The wheel compiles as the build tree's Python does. Python's time is
+longer than `mdir run`'s "compiled in", which leaves out the reading and
+the preparation of the inputs: over whole processes of 200 steps, `mdir
+run` took 24.6 s on Cellulose and 97.8 s on STMV, the wheel 46.9 s and
+182.7 s. The package does not change that.
+
+Without ptxas the driver compiles the PTX (Section 3). The four stages of
+the ala3 tutorial (`--steps-scale 0.01`, after D224; a wheel built at
+the head of the branch, GPU 1) compiled in:
+
+| ptxas | Driver's cache | Compile time of the stages (s) | Sum (s) |
+|---|---|---|---|
+| none | empty | 7.8, 18.1, 31.4, 29.7 | 87 |
+| none | filled by that run | 4.9, 11.4, 18.7, 17.9 | 53 |
+| `nvidia-cuda-nvcc`'s, found beside the package | empty | 5.0, 11.2, 18.9, 17.8 | 53 |

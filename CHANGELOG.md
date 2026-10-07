@@ -22,7 +22,8 @@ format, or the outputs; every such change is listed under **Changed** or
   in release form by the target `wheels` of `packaging/Dockerfile.manylinux`.
   It carries its runtime, libdevice, and HDF5; `pip install "mdir[cuda]"`
   adds NVIDIA's cuFFT wheel for GPU runs, which then need only the NVIDIA
-  driver. `import mdir` initializes no CUDA. The `mdir` command stays in the
+  driver, and MDIR uses the ptxas of `nvidia-cuda-nvcc` when that wheel is
+  installed beside it. `import mdir` initializes no CUDA. The `mdir` command stays in the
   release tarball. The ala3 Python example declares `mdir[cuda]` of its
   version and runs with `uv run --find-links <wheels>` from a copy of the
   directory.
