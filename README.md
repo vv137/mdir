@@ -158,8 +158,21 @@ runtime out.
 
 ## Python interface (preview)
 
-The Python interface of milestone M2 is optional and off by default.
-When enabled, NumPy is required and checked at configuration:
+The Python interface of milestone M2 is the package `mdir`. Its wheels,
+for CPython 3.10–3.13 on Linux x86-64 with glibc 2.28 or later
+(manylinux_2_28), install into a virtual environment and need, for a
+GPU, only the NVIDIA driver; the extra `cuda` brings cuFFT
+([docs/python-package.md](docs/python-package.md)):
+
+```sh
+python -m venv mdir-env
+mdir-env/bin/pip install "mdir-0.1.0-cp312-cp312-manylinux_2_28_x86_64.whl[cuda]"
+mdir-env/bin/python -c "import mdir; print(mdir.__version__)"
+```
+
+The `mdir` command is not part of the wheel; it comes with the release
+tarball. In a build of the tree the interface is optional and off by
+default. When enabled, NumPy is required and checked at configuration:
 
 ```sh
 pip install pybind11==3.0.1 'numpy>=1.23'
@@ -172,7 +185,7 @@ cmake --build build
 PYTHONPATH=build/python python3 -c "import mdir"
 ```
 
-The module `mdir` is built in `build/python`. It loads Amber, GROMACS, and
+The package `mdir` is built in `build/python/mdir`. It loads Amber, GROMACS, and
 CHARMM inputs, sets up a model, compiles it to the IR and plan that
 `mdir run` would use, and runs it as a simulation that persists across
 calls:

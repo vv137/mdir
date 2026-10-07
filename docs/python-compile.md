@@ -55,9 +55,11 @@ Enable `MDIR_ENABLE_PYTHON=ON` with Python 3.10–3.13, pybind11 3.0.1 and
 NumPy >=1.23 installed. Configuration checks the selected interpreter can
 import a supported NumPy; module import checks it again. CLI-only builds
 require none of these Python dependencies. CMake places the importable
-development module in `python/` under the build tree; set `PYTHONPATH` to
-that directory. Installation places it in a configurable Python destination.
-The manylinux_2_28 wheel remains the package gate of M2.
+development package, `mdir/__init__.py` and the extension `mdir._core`, in
+`python/mdir` under the build tree; set `PYTHONPATH` to `python/`.
+Installation places it in a configurable Python destination. The
+manylinux_2_28 wheels are built from `pyproject.toml`
+([python-package.md](python-package.md), D[python-package]).
 
 Validation checks file/object semantic IR and pipeline parity, CPU/GPU
 mixed/double lowering, copied nested inputs, stale detection, repeated

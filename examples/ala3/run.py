@@ -1,6 +1,6 @@
 # /// script
-# requires-python = ">=3.12,<3.13"
-# dependencies = ["numpy>=1.23"]
+# requires-python = ">=3.10,<3.14"
+# dependencies = ["mdir[cuda]==0.1.0", "numpy>=1.23"]
 # ///
 """The four stages of examples/ala3 from Python.
 
@@ -10,10 +10,15 @@ heavy atoms of the peptide restrained, 50 ps NVT from velocities drawn at
 constant pressure with an energy file, a DCD trajectory, and the density
 reported from Python. Each stage begins from the state of the one before.
 
-    PYTHONPATH=<build>/python uv run examples/ala3/run.py [options]
+    uv run --find-links <wheels> examples/ala3/run.py [options]
 
-The `mdir` module is the extension built with -DMDIR_ENABLE_PYTHON=ON; uv
-provides Python 3.12 and NumPy from the header above. Options:
+uv provides Python, the `mdir` package from the directory or release page
+<wheels> that holds its wheels (docs/python-package.md), and NumPy, from
+the header above; the extra `cuda` brings cuFFT for the GPU. In a virtual
+environment where the wheel is installed, `python run.py` does the same,
+and so does `PYTHONPATH=<build>/python python run.py` with a build of the
+tree configured with -DMDIR_ENABLE_PYTHON=ON. The inputs are read beside
+this script, so a copy of this directory runs anywhere. Options:
 
     --out DIR           where the outputs go (ala3-python)
     --cpu               run on the host instead of a GPU
