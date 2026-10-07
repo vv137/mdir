@@ -2,8 +2,9 @@
 
 Issue #131, the first part of item 6 of the M2 sequence
 ([python-m2.md](python-m2.md), Sections 3 to 5). Writable views, which
-advance the versions of the fields they change, are #136. Status: in
-progress; the questions put to the maintainer on the PR are marked below.
+advance the versions of the fields they change, are #136. Status:
+implemented; the questions put to the maintainer on PR #177 are listed
+under [Open questions](#open-questions).
 
 A simulation keeps its state where its program keeps it, on the device or
 on the host, from part to part (D215,
@@ -54,7 +55,8 @@ the parameters and derived tables, are not viewed).
 
 A view is a *lease*: while it is alive, the simulation refuses everything
 that would write or free the buffers. `View.release()`, or the end of a
-`with` block, releases the view's own lease. Each tensor that a consumer
+`with` block, releases the view's own lease; without them it lasts while
+the view or one of its `Buffer` objects is alive. Each tensor that a consumer
 takes through `__dlpack__` holds a lease of its own until the consumer
 calls its deleter, when its last alias is gone, whatever happened to the
 `View` (an exported tensor cannot be revoked). `Simulation.leases` counts
@@ -132,3 +134,62 @@ The structures are those of `dlpack.h` (DLPack 1.1,
 | `SimulationError` | `view()` before the first run or evaluation, or after a failure: the state is then on the host only, in the order of the input; another operation under way; a run, a minimization, an evaluation, or an update of tunables while leases are alive |
 | `BufferError` | `__dlpack__` of a released view; a `stream` the device does not take; `dl_device` of another device; `copy=True` |
 | `ValueError` | `stream=0` on a device, which the specification forbids |
+
+## Implementation
+
+- `compiler::Simulation::takeView` returns the addresses that the
+  activation handed the host at its last boundary (`mdrtPartBoundary`,
+  D215), their widths, the particle count, the device, and a
+  generation, and takes a lease; `acquireLease`/`releaseLease` count the
+  others. `run`, `minimize`, `evaluate`, and `updateTunables` check the
+  count after the guard against overlapping operations (`checkLeases`).
+  The generation advances in `resumeActivation` and `endActivation`, which
+  also wait for the consumers' work (`waitForConsumers`) if buffers of the
+  device were exported since the last wait.
+- `runtime/mdrt_cuda.c` adds `mdrtDeviceOrdinal` (the device of the
+  context), `mdrtDeviceHandOff` (an event recorded on the stream of the
+  kernels and waited for on the consumer's), and `mdrtDeviceWaitAll`
+  (`cuCtxSynchronize`).
+- `python/DLPack.h` holds the DLPack structures, `View`, `Buffer`, and
+  the capsules. A lease holds a `std::shared_ptr` to the native
+  simulation, which `Simulation` (Python) shares.
+
+## Validation
+
+`test/Driver/Inputs/python_dlpack.py`, on the dipeptide in water (1,168
+atoms) with PME and the default thermostat coupling every 10 steps, charges
+tunable, in double, mixed, and deterministic mixed precision. The
+consumers use none of MDIR's code.
+
+| Test | Consumer | What is checked |
+|---|---|---|
+| `python-dlpack.test` | NumPy 2.5 `from_dlpack`, CPU | the array's address is the buffer's; arrays are read-only (the versioned flag); dtypes; rows put in the input's order by `ids` equal `state()` to the bit; tunable values; 6 leases block `run`, `run(0, energy=True)`, and an update and allow `state()`; release by view and by array, slices of arrays; capsules not taken, legacy and versioned (`max_version` None, (1, 0), (1, 3)), each releasing once; refusals; an array that outlives its simulation while another runs |
+| `python-dlpack-gpu.test` | ctypes reader of the capsule and the CUDA driver API | version 1.1, the read-only flag, shape, strides, dtype, device; `cuPointerGetAttribute` gives the view's device ordinal; values copied by `cuMemcpyDtoHAsync` on the consumer's own non-blocking stream, handed off by `__dlpack__(stream=...)`, equal `state()` to the bit; the deleter called through ctypes without the GIL releases once and the renamed capsule nothing more; legacy capsules with the streams `None`, 1, 2, -1; `stream=0`; a tensor read after its simulation was deleted and another ran 20 steps |
+| `python-dlpack-torch.test`, `python-dlpack-torch-gpu.test` (`REQUIRES: torch`) | PyTorch 2.11 (CUDA 12.8 build) | `data_ptr()` is the buffer's; dtypes; values against `state()`; tensors taken on a `torch.cuda.Stream` of their own; slices keep leases; outstanding consumer work (below); a tensor that outlives its simulation, whose blocks the next simulation does not take while it lives |
+| `Sanitizer/python-dlpack-gpu.test` | ctypes and the driver, under compute-sanitizer memcheck and initcheck | views of two parts handed to a consumer stream, a tensor read after its simulation ended |
+
+**Consumer work.** A consumer kernel enqueued on a PyTorch stream spins
+for about 1e9 cycles (about 0.5 s) and then copies the positions; its tensor is deleted
+and the view released while it spins, and the simulation runs 10 steps at
+once; the test checks that the consumer's stream is still busy when the
+run begins. The copy holds the positions of the view to the bit: the part
+waited for the consumer's stream. With the wait removed (a build for this
+check only), the copy differs from them by up to 0.058 nm (6.8 nm in the
+deterministic mode, where the buffer that the consumer read was the other
+of the pair that the loop rotates), and the run returns after 1 ms while
+the consumer's stream is still busy.
+
+PyTorch is not in the interpreter that the suite uses, so the two `torch`
+tests are unsupported there; lit takes another interpreter with
+`-Dtorch_python=<python>`, which must import the module of the build (the
+same Python version). They were run with a private environment of PyTorch
+2.11 over the suite's interpreter.
+
+## Open questions
+
+Put to the maintainer on PR #177, with the recommendation taken here:
+`view()` without an activation is refused; a tensor keeps the native
+simulation alive after `del sim`; tunables are viewed as their host
+vectors; conflicts raise `SimulationError`; writes through a read-only
+view are undefined; the context is synchronized before the first write
+after device exports.

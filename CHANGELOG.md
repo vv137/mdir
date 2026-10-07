@@ -29,6 +29,19 @@ format, or the outputs; every such change is listed under **Changed** or
   kJ/mol/nm (or an OpenMM quantity) and checks every
   `Schedule.energy_period` steps; `state().minimization["converged"]`
   reports the result. Without a tolerance nothing changes.
+- Read-only DLPack views of a Python simulation (D[python-dlpack], #131,
+  `docs/python-dlpack.md`): `Simulation.view()` returns a `View` of the
+  positions, velocities, and forces where the program keeps them, on the
+  device or the host, in the order of the program and the types it stores
+  (forces in f32 in mixed precision), with the input index of each row
+  (`ids`) and the values of the tunables, each a `Buffer` with
+  `__dlpack__` and `__dlpack_device__`, so that `torch.from_dlpack(view.positions)`
+  shares the buffer. A view and every tensor taken from it hold a lease
+  (`Simulation.leases`); while one is alive, `run`, `minimize`,
+  evaluations, and updates of tunables raise `SimulationError`. On a device
+  the consumer's stream waits for the simulation's work, and the next part
+  waits for the consumer's. No control-file key changes.
+
 - `mdir.InitialState.from_state(state, velocities=True)` makes the initial
   state of a new stage from the `State` that a simulation reached: copies of
   its positions, cell, and velocities, or without the velocities when asked,

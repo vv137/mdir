@@ -193,6 +193,10 @@ program's text and values, about 10 ms on the host for JAC (23,558 atoms).
 - Checkpoint provenance (#132) records the declarations and the values;
   Python checkpoints are M2a item 5, so this item exposes them
   (`program.plan["tunables"]`, `sim.tunables`) for it.
+- `sim.view().tunables` gives the same values as read-only DLPack views of
+  the host vectors, without a copy (D[python-dlpack],
+  [python-dlpack.md](python-dlpack.md)); an update is refused while a view
+  is alive.
 
 ## The compile cache
 
