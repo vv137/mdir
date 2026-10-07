@@ -175,7 +175,7 @@ public:
   /// Writes the checkpoint of `mdir run` (H5MD format 1, D173) of the state
   /// after the last run, with `.prev` rotation and durable replacement, and
   /// the additional entries of a Python simulation
-  /// (D[python-checkpoints], docs/python-checkpoints.md). A simulation that
+  /// (D223, docs/python-checkpoints.md). A simulation that
   /// has not run evaluates its start first. `creatorVersion` names the
   /// program that writes it.
   llvm::Error saveCheckpoint(const std::string &path,
@@ -319,7 +319,7 @@ private:
   bool hasRun = false;
   bool failed = false;
   /// The run that a checkpoint continues or a stage begins from
-  /// (D[python-checkpoints]): the step it began at, its part, the part of
+  /// (D223): the step it began at, its part, the part of
   /// its outputs (0 for the names given), and for the same run whose
   /// files continue, the step through which the energy file keeps its rows
   /// and the trajectory and frames the checkpoint counts.

@@ -1,4 +1,4 @@
-"""Checkpoints of a Python simulation (D[python-checkpoints],
+"""Checkpoints of a Python simulation (D223,
 docs/python-checkpoints.md): `mdir run` -> Python and Python -> `mdir run
 --continue` against the uninterrupted run, Python -> Python with tunables,
 the same run against a changed stage, reporters across a continuation, and

@@ -963,7 +963,7 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
     }
     // 2: the forces of the state given anew, after an update of the
     // tunables (D213), or at the start of a stage of other physics
-    // (D[python-checkpoints]).
+    // (D223).
     int64_t firstCall = hasRun ? (refreshing || startRefresh ? 2 : 0) : 1;
     if (startRefresh)
       out.quietStep = step;
@@ -1062,7 +1062,7 @@ llvm::Expected<int64_t> Simulation::run(int64_t count,
   if (count == 0)
     return 0;
   // The files of the checkpoint continue in the reporters of the first run
-  // only; a reporter added later begins its file (D[python-checkpoints]).
+  // only; a reporter added later begins its file (D223).
   keepThrough.reset();
   continuedTrajectory.clear();
   continuedFrames = 0;
@@ -1491,7 +1491,7 @@ double Simulation::getTime() const {
   if (prepared.control.minimize)
     return 0.0;
   // From the time of a checkpoint that the simulation continues
-  // (D[python-checkpoints]).
+  // (D223).
   return output->getTime(step);
 }
 
@@ -1677,7 +1677,7 @@ llvm::Error Simulation::evaluate() {
 }
 
 //===----------------------------------------------------------------------===//
-// Checkpoints (D[python-checkpoints], docs/python-checkpoints.md)
+// Checkpoints (D223, docs/python-checkpoints.md)
 //===----------------------------------------------------------------------===//
 
 namespace {

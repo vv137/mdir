@@ -1,5 +1,5 @@
 # REQUIRES: python-api, hdf5, cuda
-# Checkpoints of a Python simulation (D[python-checkpoints]) on the GPU in
+# Checkpoints of a Python simulation (D223) on the GPU in
 # double precision, scenario python-to-python of Inputs/python_checkpoints.py.
 # A Python simulation with tunables updated before its checkpoint, continued
 # from the file: the state, the tunables with their version and history,

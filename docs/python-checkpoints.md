@@ -1,4 +1,4 @@
-# Checkpoints of a Python simulation (D[python-checkpoints])
+# Checkpoints of a Python simulation (D223)
 
 Issue #132, M2a item 5 ([python-m2.md](python-m2.md), Sections 3–5).
 Status: implemented (PR #186). The maintainer chose option 1 of the

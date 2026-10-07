@@ -22,7 +22,7 @@
 //
 // Entries that release 0.1.0 does not know (front_end, model_sha256,
 // plan_sha256, tunables) are additional entries of format 1 with a hash of
-// their own, extras_sha256 (D[python-checkpoints]).
+// their own, extras_sha256 (D223).
 //
 // A quantity that changes with time has one frame: the state that the
 // checkpoint holds.
@@ -159,7 +159,7 @@ std::string hashState(const Checkpoint &state) {
 }
 
 /// SHA-256 of the additional entries of a checkpoint
-/// (D[python-checkpoints]), apart from `state_sha256` so that a reader of
+/// (D223), apart from `state_sha256` so that a reader of
 /// release 0.1.0, which recomputes that and does not know these, reads the
 /// file.
 std::string hashExtras(const Checkpoint &state) {
@@ -586,7 +586,7 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
         writer.writeTextDataset(
             fingerprint, group,
             getFingerprintText(checkpoint.fingerprint, group));
-      // The additional entries (D[python-checkpoints]).
+      // The additional entries (D223).
       if (checkpoint.hasExtras()) {
         writer.writeText(mdir, "extras_sha256", hashExtras(checkpoint));
         writer.writeText(mdir, "front_end", checkpoint.frontEnd);
@@ -789,7 +789,7 @@ mdir::driver::readCheckpoint(const std::string &path) {
       checkpoint.fingerprint.push_back({group, name.str(), value.str()});
     }
   }
-  // The additional entries (D[python-checkpoints]), which are read only
+  // The additional entries (D223), which are read only
   // with their hash.
   std::string extras;
   if (reader.hasAttribute("/parameters/mdir", "extras_sha256")) {

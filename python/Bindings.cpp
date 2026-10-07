@@ -47,7 +47,7 @@ template <class T> static T unwrap(llvm::Expected<T> value) {
 struct Version {
   uint64_t version = 0;
   /// The attributes given explicitly, which the fingerprint of a checkpoint
-  /// records (D[python-checkpoints]).
+  /// records (D223).
   std::set<std::string> given;
   virtual ~Version() = default;
 };
@@ -124,7 +124,7 @@ template <class Call> static int64_t withSignals(Call call) {
   }
   return unwrap(std::move(*taken));
 }
-/// Reads a checkpoint for a simulation (D[python-checkpoints]): without
+/// Reads a checkpoint for a simulation (D223): without
 /// HDF5 an UnsupportedError, and a file that is not one, of a newer format,
 /// or whose hashes differ an InputError with the pointer to `.prev` that
 /// `mdir run` gives.
@@ -524,7 +524,7 @@ PYBIND11_MODULE(mdir, m) {
           code == "dispersion_switched")
         if (PyErr_WarnEx(PyExc_UserWarning, message.c_str(), 1) != 0)
           throw py::error_already_set();
-    // What defined the model, for its checkpoints (D[python-checkpoints]).
+    // What defined the model, for its checkpoints (D223).
     prepared.fingerprint = model::getFingerprint(
         system->value, integrator->value, ensemble->value, execution->value,
         model::GivenSettings{system->given, integrator->given, ensemble->given,
@@ -611,7 +611,7 @@ PYBIND11_MODULE(mdir, m) {
       for (int k = 0; k != 3; ++k) { cell.diagonal[k] = s.box[k]; cell.tilt[k] = s.tilt[k]; }
       return cell;
     });
-  // A read-only view of a checkpoint (D[python-checkpoints]), in MD units.
+  // A read-only view of a checkpoint (D223), in MD units.
   using driver::Checkpoint;
   py::class_<Checkpoint>(m, "Checkpoint")
     .def_property_readonly("step", [](const Checkpoint &c) { return c.step; })
@@ -712,7 +712,7 @@ PYBIND11_MODULE(mdir, m) {
     .def_readonly("file", &TrajectoryReporter::file)
     .def_readonly("period", &TrajectoryReporter::period)
     .def_readonly("format", &TrajectoryReporter::format);
-  // Checkpoints (D[python-checkpoints], docs/python-checkpoints.md).
+  // Checkpoints (D223, docs/python-checkpoints.md).
   struct CheckpointReporter { std::string file; int64_t period; };
   py::class_<CheckpointReporter>(m, "CheckpointReporter")
     .def(py::init([positive](std::string file, int64_t period) {
@@ -883,7 +883,7 @@ PYBIND11_MODULE(mdir, m) {
       PySimulation result;
       result.program = std::move(program);
       result.simulation = unwrap(std::move(*created));
-      // The same run goes on, or a stage begins (D[python-checkpoints]);
+      // The same run goes on, or a stage begins (D223);
       // what differs in execution, or is evaluated anew, is a warning.
       if (taken) {
         auto notes = unwrap(result.simulation->continueFrom(*taken, stage, append));
@@ -921,7 +921,7 @@ PYBIND11_MODULE(mdir, m) {
       // the files of the built-in reporters are written inside the parts.
       int64_t taken = 0, end = s.simulation->getStep() + steps;
       // A checkpoint reporter ends a part at its steps, as a callback does
-      // (D[python-checkpoints]).
+      // (D223).
       std::optional<CheckpointReporter> saves = s.checkpoints;
       while (taken < steps) {
         int64_t now = s.simulation->getStep(), next = end;

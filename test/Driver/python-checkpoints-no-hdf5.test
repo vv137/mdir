@@ -1,6 +1,6 @@
 # REQUIRES: python-api
 # UNSUPPORTED: hdf5
-# Without HDF5 (D[python-checkpoints]), writing, reading, and continuing a
+# Without HDF5 (D223), writing, reading, and continuing a
 # checkpoint raise UnsupportedError. Only a build without HDF5 runs it.
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %mdir_python %S/Inputs/python_checkpoints_no_hdf5.py %S/Inputs/dipeptide %t | FileCheck %s

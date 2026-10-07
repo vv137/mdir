@@ -1,5 +1,5 @@
 # REQUIRES: python-api, hdf5
-# Checkpoints of a Python simulation (D[python-checkpoints]) on the CPU in
+# Checkpoints of a Python simulation (D223) on the CPU in
 # mixed precision, scenario stages of Inputs/python_checkpoints.py.
 # The same run against a changed stage from a checkpoint of `mdir run`:
 # refusals that name the changed entries (restraints, temperature,

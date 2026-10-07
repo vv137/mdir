@@ -62,7 +62,7 @@ static llvm::Expected<LoadedData> loaded(driver::Topology t, Format f,
   }
   // The files of the topology as `mdir run` hashes them for its
   // fingerprint (D172): the topology, then the files it read, but not the
-  // coordinates (D[python-checkpoints]).
+  // coordinates (D223).
   std::vector<std::string> topologyFiles = {path.str()};
   for (const auto &file : data.topology.sourceFiles)
     if (!llvm::is_contained(topologyFiles, file))

@@ -1,5 +1,5 @@
 # REQUIRES: python-api, hdf5, cuda
-# Checkpoints of a Python simulation (D[python-checkpoints]) on the GPU in
+# Checkpoints of a Python simulation (D223) on the GPU in
 # double precision, scenario cli-to-python of Inputs/python_checkpoints.py.
 # `mdir run` stops at step 10 and a Python simulation continues its
 # checkpoint to step 20: the state, the energy file, and the trajectory

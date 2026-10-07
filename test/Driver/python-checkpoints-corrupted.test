@@ -1,5 +1,5 @@
 # REQUIRES: python-api, hdf5
-# Checkpoints of a Python simulation (D[python-checkpoints]): files whose
+# Checkpoints of a Python simulation (D223): files whose
 # state, additional entries, or bytes were changed, a truncated file, and a
 # file that is not one are refused by the bindings with the pointer to
 # `.prev`, and by `mdir checkpoint`.

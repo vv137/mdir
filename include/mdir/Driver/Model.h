@@ -192,7 +192,7 @@ struct PreparedModel {
   /// The tunables, whose values `control` and `system` hold.
   TunableSet tunables;
   /// What defined the model, which its checkpoints record
-  /// (D[python-checkpoints]); empty if the front end gave none.
+  /// (D223); empty if the front end gave none.
   driver::Fingerprint fingerprint;
   llvm::Expected<driver::Program> build() const;
 };
@@ -214,11 +214,11 @@ llvm::Error applyTunables(const TunableSet &set,
 llvm::Error checkTunableValues(const TunableSet &set,
                                const std::vector<std::vector<double>> &values);
 /// The settings of a model that its front end gave explicitly, by the
-/// names of their Python attributes (D[python-checkpoints]).
+/// names of their Python attributes (D223).
 struct GivenSettings {
   std::set<std::string> system, integrator, ensemble, execution;
 };
-/// The fingerprint of a prepared model (D172, D[python-checkpoints],
+/// The fingerprint of a prepared model (D172, D223,
 /// docs/python-checkpoints.md): the entries that the control file of the
 /// same model writes, with their names, units, and text, for the settings
 /// given explicitly and those whose value differs from what the control

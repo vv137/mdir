@@ -104,7 +104,7 @@ struct Checkpoint {
   int64_t freeEnergyState = -1;
   std::vector<double> freeEnergyLambda;
 
-  /// Additional entries of format 1 (D[python-checkpoints],
+  /// Additional entries of format 1 (D223,
   /// docs/python-checkpoints.md), which a reader of release 0.1.0 ignores.
   /// They are outside the hash of the state and have a hash of their own,
   /// `extras_sha256`, which the reader checks when the file has it.

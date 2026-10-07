@@ -1,5 +1,5 @@
 """Checkpoints of a Python simulation in a build without HDF5
-(D[python-checkpoints]): each use raises UnsupportedError.
+(D223): each use raises UnsupportedError.
 
 Usage: python_checkpoints_no_hdf5.py ROOT WORK."""
 import pathlib

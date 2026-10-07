@@ -1,5 +1,5 @@
 // The fingerprint of a model that no control file gave (D172,
-// D[python-checkpoints]): the entries that the control file of the same model
+// D223): the entries that the control file of the same model
 // writes, so that a run of either front end continues the other's.
 //
 // See docs/python-checkpoints.md.

@@ -277,7 +277,7 @@ loaded data, systems, and programs a read-only view of their topology
 (atoms, residues, bonded tuples, and, after preparation, the constraints)
 and `Topology.select(mask)`, the particles of a mask of Amber by the parser
 of the control file, with `Topology.to_openmm()` for OpenMM's tools.
-D[python-checkpoints] (#132, [checkpoints](python-checkpoints.md)) writes
+D223 (#132, [checkpoints](python-checkpoints.md)) writes
 and continues the checkpoint of `mdir run` from Python: the fingerprint of
 a Python model has the entries of the control file of the same model, so
 either front end continues the other's run, tested in both directions.

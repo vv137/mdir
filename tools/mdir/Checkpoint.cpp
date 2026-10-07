@@ -90,7 +90,7 @@ int mdir::tool::describeCheckpoints(llvm::ArrayRef<std::string> files,
                   static_cast<long long>(first->frames));
     std::printf("fingerprint:     %zu entries (--print=fingerprint)\n",
                 first->fingerprint.size());
-    // The additional entries of a Python simulation (D[python-checkpoints]).
+    // The additional entries of a Python simulation (D223).
     if (!first->frontEnd.empty())
       std::printf("front end:       %s\n", first->frontEnd.c_str());
     if (!first->modelHash.empty())

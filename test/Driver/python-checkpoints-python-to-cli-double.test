@@ -1,5 +1,5 @@
 # REQUIRES: python-api, hdf5
-# Checkpoints of a Python simulation (D[python-checkpoints]) on the CPU in
+# Checkpoints of a Python simulation (D223) on the CPU in
 # double precision, scenario python-to-cli of Inputs/python_checkpoints.py.
 # A Python simulation writes its checkpoint at step 10 and `mdir run
 # --continue` takes it to step 20: equal to a Python continuation of the

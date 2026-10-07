@@ -48,7 +48,7 @@ sim.close_reporters()          # or the simulation's end; files are complete the
   failure; the state returns to the step before the part, the files do not.
 - A minimization takes no reporters.
 
-Checkpoints (D[python-checkpoints], [python-checkpoints.md](python-checkpoints.md))
+Checkpoints (D223, [python-checkpoints.md](python-checkpoints.md))
 add `CheckpointReporter(file, period)`, and the files of these reporters
 continue across a checkpoint as those of `mdir run --continue` do. The log of `mdir run` is not a reporter: the energy file holds its
 numbers.

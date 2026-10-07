@@ -565,7 +565,7 @@ stationary distribution (at constant temperature the canonical
 $Z'^{-1}e^{-U'/k_BT'}$) with $\mathbf z_n$ as its initial condition, and
 must evaluate $-\partial U'/\partial\mathbf x$ rather than reuse the forces
 of $U$; the fingerprint identifies $U$ and $\mathcal C$ by what defined
-them. A Python simulation (D[python-checkpoints]) writes and reads the same
+them. A Python simulation (D223) writes and reads the same
 file. The fingerprint of a Python model holds the entries that the control
 file of the same model writes, for a setting given explicitly or one whose
 Python default differs from what the control file takes without its key,

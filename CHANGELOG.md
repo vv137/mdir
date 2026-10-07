@@ -12,7 +12,7 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
-- Checkpoints of Python simulations (D[python-checkpoints], #132):
+- Checkpoints of Python simulations (D223, #132):
   `Simulation.save_checkpoint(path)` and `CheckpointReporter(file,
   period)` write the H5MD checkpoint of `mdir run` (format 1, with `.prev`
   and durable replacement); `Simulation(program, checkpoint=path)`

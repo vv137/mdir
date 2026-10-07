@@ -1,5 +1,5 @@
 # REQUIRES: python-api, hdf5, cuda
-# Checkpoints of a Python simulation (D[python-checkpoints]) on the GPU in
+# Checkpoints of a Python simulation (D223) on the GPU in
 # double precision, scenario stages of Inputs/python_checkpoints.py.
 # The same run against a changed stage from a checkpoint of `mdir run`:
 # refusals that name the changed entries (restraints, temperature,

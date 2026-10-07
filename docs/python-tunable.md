@@ -192,7 +192,7 @@ program's text and values, about 10 ms on the host for JAC (23,558 atoms).
   compiled one, text for text; a value that would change the program (a
   pair term whose tail diverges at the new values, for instance) raises
   `InputError` and leaves the simulation as it was.
-- A checkpoint (D[python-checkpoints], [python-checkpoints.md](python-checkpoints.md))
+- A checkpoint (D223, [python-checkpoints.md](python-checkpoints.md))
   records the declarations, the values, their version, and their history;
   a continuation of the same run restores them.
 - `sim.view().tunables` gives the same values as read-only DLPack views of
