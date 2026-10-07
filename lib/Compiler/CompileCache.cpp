@@ -1,4 +1,4 @@
-//===- CompileCache.cpp - The cache of host objects (D212) ----===//
+//===- CompileCache.cpp - The compile cache (D212) ----------------------===//
 //
 // The object cache follows the interface that LLVM's ORC JIT offers for it
 // (llvm::ObjectCache, as in LLVM's LLJITWithObjectCache example); entries
@@ -87,6 +87,18 @@ CompileStats &CompileStats::operator+=(const CompileStats &other) {
   stored += other.stored;
   unstored += other.unstored;
   lookupSeconds += other.lookupSeconds;
+  gpuModules += other.gpuModules;
+  gpuSerializeSeconds += other.gpuSerializeSeconds;
+  gpuPtxCompiled += other.gpuPtxCompiled;
+  gpuPtxHits += other.gpuPtxHits;
+  gpuCubinCompiled += other.gpuCubinCompiled;
+  gpuCubinHits += other.gpuCubinHits;
+  gpuCompileSeconds += other.gpuCompileSeconds;
+  gpuSavedSeconds += other.gpuSavedSeconds;
+  gpuLookupSeconds += other.gpuLookupSeconds;
+  gpuRejected += other.gpuRejected;
+  gpuStored += other.gpuStored;
+  gpuUnstored += other.gpuUnstored;
   return *this;
 }
 
@@ -147,7 +159,7 @@ std::string HostObjectCache::getKey(const Module &module) const {
 }
 
 std::string HostObjectCache::getEntryName(StringRef key) {
-  return hashObject(key) + ".o";
+  return getCacheEntryName(key, ".o");
 }
 
 std::string HostObjectCache::getObjectDirectory(StringRef directory) {
@@ -157,8 +169,9 @@ std::string HostObjectCache::getObjectDirectory(StringRef directory) {
 }
 
 std::unique_ptr<MemoryBuffer>
-HostObjectCache::readEntry(StringRef path, StringRef key, double &seconds,
-                       bool &rejected) {
+mdir::compiler::readCacheEntry(StringRef path, StringRef key, double &seconds,
+                               bool &rejected,
+                               function_ref<bool(StringRef)> isValid) {
   rejected = false;
   // Read, not mapped: another process may replace the file by a rename.
   auto file = MemoryBuffer::getFile(path, /*IsText=*/false,
@@ -181,26 +194,43 @@ HostObjectCache::readEntry(StringRef path, StringRef key, double &seconds,
   in = in.drop_front(64);
   if (in.size() != objectLength || hashObject(in) != hash)
     return nullptr;
-  auto object = MemoryBuffer::getMemBufferCopy(in, path);
-  // An object LLVM cannot read is rejected here rather than at linking.
-  auto parsed = object::ObjectFile::createObjectFile(object->getMemBufferRef());
-  if (!parsed) {
-    consumeError(parsed.takeError());
+  // A copy, aligned, which a parser of objects needs.
+  auto data = MemoryBuffer::getMemBufferCopy(in, path);
+  if (isValid && !isValid(data->getBuffer()))
     return nullptr;
-  }
   rejected = false;
-  return object;
+  return data;
+}
+
+std::unique_ptr<MemoryBuffer>
+HostObjectCache::readEntry(StringRef path, StringRef key, double &seconds,
+                           bool &rejected) {
+  // An object LLVM cannot read is rejected here rather than at linking.
+  return readCacheEntry(path, key, seconds, rejected, [](StringRef data) {
+    auto parsed = object::ObjectFile::createObjectFile(
+        MemoryBufferRef(data, "cached object"));
+    if (!parsed) {
+      consumeError(parsed.takeError());
+      return false;
+    }
+    return true;
+  });
 }
 
 Error HostObjectCache::writeEntry(StringRef path, StringRef key,
                               MemoryBufferRef object, double seconds) {
+  return writeCacheEntry(path, key, object.getBuffer(), seconds);
+}
+
+Error mdir::compiler::writeCacheEntry(StringRef path, StringRef key,
+                                      StringRef object, double seconds) {
   std::string data(kMagic, sizeof(kMagic));
   append<uint64_t>(data, key.size());
   data += key;
-  append<uint64_t>(data, object.getBufferSize());
+  append<uint64_t>(data, object.size());
   append<double>(data, seconds);
-  data += hashObject(object.getBuffer());
-  data += object.getBuffer();
+  data += hashObject(object);
+  data += object;
   // A unique temporary file in the same directory, then a rename: a
   // reader sees the old entry, the new one, or none, never a part.
   SmallString<256> model(path);
@@ -227,7 +257,17 @@ Error HostObjectCache::writeEntry(StringRef path, StringRef key,
   return Error::success();
 }
 
-void HostObjectCache::evict(StringRef directory, uint64_t maxBytes) {
+std::string mdir::compiler::getCacheEntryName(StringRef key,
+                                              StringRef extension) {
+  return hashObject(key) + extension.str();
+}
+
+void mdir::compiler::touchCacheEntry(StringRef path) {
+  sys::fs::setLastAccessAndModificationTime(path,
+                                            std::chrono::system_clock::now());
+}
+
+void mdir::compiler::evictCache(StringRef directory, uint64_t maxBytes) {
   struct Entry {
     std::string path;
     uint64_t size;
@@ -236,25 +276,31 @@ void HostObjectCache::evict(StringRef directory, uint64_t maxBytes) {
   std::vector<Entry> entries;
   uint64_t total = 0;
   auto current = std::chrono::system_clock::now();
-  std::error_code error;
-  for (sys::fs::directory_iterator it(directory, error), end;
-       it != end && !error; it.increment(error)) {
-    sys::fs::file_status status;
-    // Another process may have removed it since the listing.
-    if (sys::fs::status(it->path(), status) ||
-        status.type() != sys::fs::file_type::regular_file)
-      continue;
-    StringRef name = sys::path::filename(it->path());
-    if (name.contains(".tmp-")) {
-      if (current - status.getLastModificationTime() > kStaleTemporary)
-        sys::fs::remove(it->path());
-      continue;
+  // One bound for the entries of every kind.
+  for (StringRef kind : {"host", "gpu"}) {
+    SmallString<256> subdirectory(directory);
+    sys::path::append(subdirectory, kind);
+    std::error_code error;
+    for (sys::fs::directory_iterator it(subdirectory, error), end;
+         it != end && !error; it.increment(error)) {
+      sys::fs::file_status status;
+      // Another process may have removed it since the listing.
+      if (sys::fs::status(it->path(), status) ||
+          status.type() != sys::fs::file_type::regular_file)
+        continue;
+      StringRef name = sys::path::filename(it->path());
+      if (name.contains(".tmp-")) {
+        if (current - status.getLastModificationTime() > kStaleTemporary)
+          sys::fs::remove(it->path());
+        continue;
+      }
+      if (!name.ends_with(".o") && !name.ends_with(".ptx") &&
+          !name.ends_with(".cubin"))
+        continue;
+      entries.push_back({it->path(), status.getSize(),
+                         status.getLastModificationTime()});
+      total += status.getSize();
     }
-    if (!name.ends_with(".o"))
-      continue;
-    entries.push_back({it->path(), status.getSize(),
-                       status.getLastModificationTime()});
-    total += status.getSize();
   }
   if (total <= maxBytes)
     return;
@@ -284,8 +330,7 @@ std::unique_ptr<MemoryBuffer> HostObjectCache::getObject(const Module *module) {
     bool rejected = false;
     if (auto object = readEntry(path, request.key, seconds, rejected)) {
       // Marks the entry as used, for the eviction of the least recent.
-      sys::fs::setLastAccessAndModificationTime(path,
-                                                std::chrono::system_clock::now());
+      touchCacheEntry(path);
       std::lock_guard<std::mutex> lock(mutex);
       ++stats.hits;
       stats.savedSeconds += seconds;
@@ -327,7 +372,7 @@ void HostObjectCache::notifyObjectCompiled(const Module *module,
       consumeError(std::move(error));
     } else {
       stored = true;
-      evict(directory, config->maxBytes);
+      evictCache(config->directory, config->maxBytes);
     }
   }
   std::lock_guard<std::mutex> lock(mutex);

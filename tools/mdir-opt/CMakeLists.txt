@@ -5,6 +5,7 @@ set(LIBS
   MDIRMDExecTransforms
   MDIRMDRT
   MDIRMDExecToGPU
+  MDIRGPUToBinary
   MDIRMDExecToLoops
   MDIRMDToMDExec
   MLIRMemRefDialect

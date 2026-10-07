@@ -1665,9 +1665,12 @@ kernels, or in 12 where the search is split.
 [neighbors-m0.md](neighbors-m0.md) describes the method. The matrix is the
 one that the template for the host builds, entry by entry.
 
-The result is lowered by the upstream pipeline
-`gpu-lower-to-nvvm-pipeline`. The kernels become PTX text inside the
-program, and the driver compiles them when the program starts. Math
+The result is lowered by `mdir-gpu-lower-to-nvvm`, the upstream pipeline
+`gpu-lower-to-nvvm-pipeline` with the GPU modules serialized in parallel.
+The kernels become cubins for the device's architecture, compiled by
+`ptxas`, inside the program (D[gpu-module-compile]). Where that is not
+possible, they become PTX text, which the driver compiles when the program
+starts. Math
 functions come from the device math library of the CUDA toolkit.
 
 The lowering waits after every launch. The runtime library does not: all

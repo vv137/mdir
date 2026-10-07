@@ -166,8 +166,9 @@ def ConvertMDExecToGPU
     `div.approx.f32`, scales its operands where they are subnormal or very
     large, five instructions more (D98).
 
-    The result is lowered further by the upstream pipeline
-    `gpu-lower-to-nvvm-pipeline`.
+    The result is lowered further by `mdir-gpu-lower-to-nvvm`, the
+    upstream pipeline `gpu-lower-to-nvvm-pipeline` with its serialization
+    of the GPU modules replaced by `mdir-gpu-module-to-binary`.
   }];
   let options = [
     Option<"blockSize", "block-size", "int64_t", /*default=*/"128",
@@ -215,6 +216,35 @@ def ConvertMDExecToGPU
                            "::mlir::memref::MemRefDialect",
                            "::mlir::scf::SCFDialect",
                            "::mlir::vector::VectorDialect"];
+}
+
+def GpuModuleToBinary
+    : Pass<"mdir-gpu-module-to-binary", "::mlir::ModuleOp"> {
+  let summary = "Serialize the GPU modules to binaries in parallel";
+  let description = [{
+    Replaces each `gpu.module` with a `gpu.binary` of its PTX (`format=isa`)
+    or of its cubin (`format=bin`), as upstream `gpu-module-to-binary`
+    does, but serializes the modules on the threads of the context, at
+    most `MDIR_COMPILE_THREADS` (D211), and puts the binaries in the order
+    of the modules, so that the result does not depend on the threads
+    (D[gpu-module-compile]). The time the serialization took is left out of
+    the objects' properties, which the upstream pass records, so that the
+    result is the same from run to run.
+
+    With `format=bin`, the toolkit's `ptxas` compiles the PTX of each module
+    to a cubin. With `binary=auto`, a module stays PTX when there is no
+    `ptxas` or it fails; with `binary=cubin`, that is an error. With
+    `MDIR_COMPILE_CACHE_DIR` set, the PTX and the cubin of each module are
+    read from and written to the compile cache (D212).
+  }];
+  let options = [
+    Option<"format", "format", "std::string", /*default=*/"\"isa\"",
+           "isa (PTX, which the driver compiles at load) or bin (a cubin)">,
+    Option<"binary", "binary", "std::string", /*default=*/"\"auto\"",
+           "MDIR_GPU_BINARY: auto (a cubin, or PTX when ptxas cannot make "
+           "one), cubin (a cubin, or an error), or ptx; part of the keys of "
+           "the cache">
+  ];
 }
 
 #endif // MDIR_CONVERSION_PASSES_TD

@@ -18,6 +18,13 @@ scenario runs in a process of its own on the cache directory WORK/cache:
 - with --concurrent: four processes start at once on an empty directory;
   each generates or reads the object, and one entry remains, which the
   next process hits.
+- with --gpu-damaged (a GPU): a byte of the data of one PTX entry, and of
+  one cubin entry if there are any, is flipped; each is rejected,
+  generated again, and stored (D[gpu-module-compile]).
+
+On a GPU each scenario prints a second line with what the serialization of
+the GPU modules did: modules, PTX and cubins generated and read from the
+cache, entries rejected and stored.
 
 The state after the 20 steps of every deterministic scenario must equal
 that of `off` bit for bit. Prints one line per scenario.
@@ -67,6 +74,7 @@ def main():
     damaged = "--damaged" in sys.argv[5:]
     misses = "--misses" in sys.argv[5:]
     concurrent = "--concurrent" in sys.argv[5:]
+    gpu_damaged = "--gpu-damaged" in sys.argv[5:]
     work = pathlib.Path(work)
     work.mkdir(parents=True, exist_ok=True)
     cache = work / "cache"
@@ -97,6 +105,15 @@ def main():
         if out is not None:
             line += " state " + ("same" if same(reference, out) else "DIFFERENT")
         print(line, flush=True)
+        if target == "GPU":
+            print(f"{name}: gpu modules {stats['gpu_modules']} ptx generated "
+                  f"{stats['gpu_ptx_compiled']} hits {stats['gpu_ptx_hits']} cubins "
+                  f"generated {stats['gpu_cubin_compiled']} hits {stats['gpu_cubin_hits']} "
+                  f"rejected {stats['gpu_cache_rejected']} stored "
+                  f"{stats['gpu_cache_stored']}", flush=True)
+
+    def gpu_entries(kind):
+        return sorted((cache / "gpu").glob("*." + kind)) if (cache / "gpu").exists() else []
 
     def entries():
         return sorted(host.glob("*.o")) if host.exists() else []
@@ -108,8 +125,29 @@ def main():
     report("cold", stats, out, reference)
     stored = entries()
     print(f"cold: entries {len(stored)}")
+    if target == "GPU":
+        print(f"cold: gpu entries ptx {len(gpu_entries('ptx'))} cubin "
+              f"{len(gpu_entries('cubin'))}")
     stats, out = run("warm")
     report("warm", stats, out, reference)
+    if gpu_damaged:
+        # One byte of the data of the first entry of each kind. The
+        # lowering of mdir.compile in the same process may be the one that
+        # rejects and rewrites an entry, so the entries themselves are
+        # checked.
+        flipped = {}
+        for kind in ("ptx", "cubin"):
+            for entry in gpu_entries(kind)[:1]:
+                data = bytearray(entry.read_bytes())
+                data[-10] ^= 0x01
+                entry.write_bytes(bytes(data))
+                flipped[entry] = bytes(data)
+        stats, out = run("gpu-flipped")
+        report("gpu-flipped", stats, out, reference)
+        rewritten = sum(entry.read_bytes() != data for entry, data in flipped.items())
+        print(f"gpu-flipped: rewritten {rewritten} of {len(flipped)}")
+        stats, out = run("gpu-rewarm")
+        report("gpu-rewarm", stats, out, reference)
     if damaged:
         # A truncated entry, then an object with one byte flipped.
         entry, = stored

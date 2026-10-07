@@ -556,6 +556,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   md::registerMDPasses();
   md_exec::registerMDExecPasses();
   registerMDIRConversionPasses();
+  registerGpuLowerToNVVMPipeline();
 
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);
@@ -564,7 +565,11 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   mlir::registerAllToLLVMIRTranslations(registry);
   registry.insert<dyn::DynDialect, md::MDDialect, md_exec::MDExecDialect,
                   mdrt::MDRTDialect>();
-  mlir::MLIRContext context(registry);
+  // The threads of the process's pool, at most MDIR_COMPILE_THREADS, as a
+  // Python simulation lowers (D211); the GPU modules are serialized on them
+  // (D[gpu-module-compile]).
+  mlir::MLIRContext context(registry, mlir::MLIRContext::Threading::DISABLED);
+  compiler::shareThreadPool(context);
 
   // The kernels for a GPU take their math functions from libdevice: that
   // of the toolkit the environment names, else the copy installed with
@@ -591,7 +596,12 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                             mlir::PassManager::Nesting::Implicit);
   if (!control->manifestFile.empty())
     manager.addInstrumentation(std::make_unique<ManifestNeighbors>(neighborKinds));
-  std::string pipeline = compiler::getPipeline(*control, *program);
+  // The kernels are compiled for the device that runs them: the first
+  // visible one, or the one MDRT_DEVICE names (D[gpu-module-compile]).
+  auto gpu = compiler::getGpuOptions(*control, /*device=*/0);
+  if (!gpu)
+    return fail(gpu.takeError());
+  std::string pipeline = compiler::getPipeline(*control, *program, *gpu);
   // MDIR_PIPELINE replaces the pipeline, to try another order of passes or
   // to stop part of the way.
   if (const char *replaced = std::getenv("MDIR_PIPELINE"))

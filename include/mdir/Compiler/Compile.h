@@ -1,6 +1,7 @@
 // Shared lowering service for the CLI and embedded front ends.
 #ifndef MDIR_COMPILER_COMPILE_H
 #define MDIR_COMPILER_COMPILE_H
+#include "mdir/Compiler/CompileCache.h"
 #include "mdir/Driver/Model.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -19,7 +20,21 @@ public:
   }
   std::string diagnostic;
 };
-std::string getPipeline(const driver::Control &, const driver::Program &);
+/// The pipeline of `program`. On a GPU, `gpuOptions` (getGpuOptions) are
+/// the options of the serialization of its kernels; empty, they are PTX
+/// for the default architecture (D[gpu-module-compile]).
+std::string getPipeline(const driver::Control &, const driver::Program &,
+                        llvm::StringRef gpuOptions = {});
+/// Points CUDA_ROOT at the toolkit whose libdevice and ptxas the kernels of
+/// a GPU take: the one the environment names (CUDA_ROOT, CUDA_HOME, or
+/// CUDA_PATH), else that of the build, as for `mdir run`
+/// (tools/mdir/BugReport.cpp, getCudaToolkitRoot).
+void useCudaToolkit();
+/// For a GPU program, the options of the serialization of its kernels for
+/// the visible device `device` (mdir::getGpuPipelineOptions); else empty.
+/// Errors are CompileError.
+llvm::Expected<std::string> getGpuOptions(const driver::Control &,
+                                          int64_t device);
 struct CompiledProgram {
   driver::Program program;
   model::Execution execution;
@@ -42,10 +57,13 @@ llvm::ThreadPoolInterface &getThreadPool();
 /// of getThreadPool.
 void shareThreadPool(mlir::MLIRContext &context);
 /// Parses and lowers `program` in `context`, for a front end that runs the
-/// result (D196). Errors are CompileError with diagnostics.
+/// result (D196). Errors are CompileError with diagnostics. What the
+/// serialization of the GPU modules did is added to `stats`, if given
+/// (D[gpu-module-compile]).
 llvm::Expected<mlir::OwningOpRef<mlir::ModuleOp>>
 lowerModule(mlir::MLIRContext &context, const driver::Control &,
-            const driver::Program &);
+            const driver::Program &, CompileStats *stats = nullptr,
+            llvm::StringRef gpuOptions = {});
 /// The machine that compiles the host code of a program for the JIT, at the
 /// one code-generation level of both front ends (#90).
 llvm::Expected<std::unique_ptr<llvm::TargetMachine>> createHostMachine();

@@ -1,0 +1,83 @@
+# The serialization of the GPU modules (D[gpu-module-compile]). On a device
+# whose architecture LLVM knows, the kernels become cubins for it; without a
+# visible device they stay PTX for sm_75, which the driver compiles.
+# MDIR_GPU_BINARY=ptx keeps PTX, MDIR_GPU_ARCH gives the architecture, and
+# MDIR_GPU_BINARY=cubin without a ptxas, or values that are not known, are
+# errors. The
+# lowered program, with every module serialized, is the same byte for byte
+# on 1 and 8 threads, with and without the compile cache. Without a ptxas
+# (a toolkit that holds only libdevice, and a PATH without one), the
+# kernels stay PTX for the device's architecture, and the run gives the
+# energies of the run with cubins.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t/toolkit/nvvm/libdevice
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: mdir emit %t/run.toml --stage=pipeline | FileCheck %s --check-prefix=CUBIN
+# RUN: env CUDA_VISIBLE_DEVICES= mdir emit %t/run.toml --stage=pipeline | FileCheck %s --check-prefix=PTX
+# RUN: env MDIR_GPU_BINARY=ptx mdir emit %t/run.toml --stage=pipeline | FileCheck %s --check-prefix=FORCED
+# RUN: env MDIR_GPU_ARCH=sm_80 mdir emit %t/run.toml --stage=pipeline | FileCheck %s --check-prefix=ARCH
+# RUN: not env MDIR_GPU_ARCH=sm_1 mdir emit %t/run.toml --stage=pipeline 2>&1 | FileCheck %s --check-prefix=BADARCH
+# RUN: not env MDIR_GPU_BINARY=fatbin mdir emit %t/run.toml --stage=pipeline 2>&1 | FileCheck %s --check-prefix=BADBINARY
+# RUN: not env CUDA_VISIBLE_DEVICES= MDIR_GPU_BINARY=cubin mdir emit %t/run.toml --stage=pipeline 2>&1 | FileCheck %s --check-prefix=NOARCH
+# RUN: env MDIR_COMPILE_CACHE=off MDIR_COMPILE_THREADS=1 mdir emit %t/run.toml --stage=lowered > %t/one.mlir
+# RUN: env MDIR_COMPILE_CACHE=off MDIR_COMPILE_THREADS=8 mdir emit %t/run.toml --stage=lowered > %t/eight.mlir
+# RUN: env MDIR_COMPILE_CACHE_DIR=%t/cache MDIR_COMPILE_THREADS=8 mdir emit %t/run.toml --stage=lowered > %t/cold.mlir
+# RUN: env MDIR_COMPILE_CACHE_DIR=%t/cache MDIR_COMPILE_THREADS=8 mdir emit %t/run.toml --stage=lowered > %t/warm.mlir
+# RUN: cmp %t/one.mlir %t/eight.mlir
+# RUN: cmp %t/one.mlir %t/cold.mlir
+# RUN: cmp %t/one.mlir %t/warm.mlir
+# RUN: FileCheck %s --check-prefix=LOWERED < %t/one.mlir
+# RUN: cd %t && mdir run run.toml | grep '^INFO:' > %t/cubin.txt
+# RUN: sh -c 'cp "$CUDA_ROOT/nvvm/libdevice/libdevice.10.bc" %t/toolkit/nvvm/libdevice/' 
+# RUN: cd %t && env CUDA_ROOT=%t/toolkit CUDA_HOME= CUDA_PATH= PATH=/usr/bin:/bin MDIR_COMPILE_CACHE=off mdir run run.toml 2> %t/ptx.err | grep '^INFO:' > %t/ptx.txt
+# RUN: FileCheck %s --check-prefix=FALLBACK < %t/ptx.err
+# RUN: cd %t && not env CUDA_ROOT=%t/toolkit CUDA_HOME= CUDA_PATH= PATH=/usr/bin:/bin MDIR_COMPILE_CACHE=off MDIR_GPU_BINARY=cubin mdir run run.toml 2>&1 | FileCheck %s --check-prefix=NOPTXAS
+# RUN: diff %t/cubin.txt %t/ptx.txt
+
+# CUBIN: mdir-gpu-lower-to-nvvm{cubin-chip=sm_{{[0-9]+}} cubin-format=bin binary=auto}
+# PTX: mdir-gpu-lower-to-nvvm{cubin-format=isa binary=auto}
+# FORCED: mdir-gpu-lower-to-nvvm{cubin-format=isa binary=ptx}
+# ARCH: mdir-gpu-lower-to-nvvm{cubin-chip=sm_80 cubin-format=bin binary=auto}
+# BADARCH: MDIR_GPU_ARCH='sm_1' is not an architecture that LLVM's NVPTX back end knows
+# BADBINARY: MDIR_GPU_BINARY='fatbin' is not auto, cubin, or ptx
+# NOARCH: MDIR_GPU_BINARY=cubin, but the architecture of the device is not known
+# NOPTXAS: MDIR_GPU_BINARY=cubin, but no ptxas was found
+# LOWERED: gpu.binary @
+# LOWERED-SAME: bin = "
+# FALLBACK: mdir: no ptxas was found in the CUDA toolkit or on PATH; the kernels are loaded as PTX, which the driver compiles
+
+#--- run.toml
+[input]
+topology   = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+
+[output]
+energy_interval = 10
+
+[energy]
+cutoff       = 9.0
+pairlist_distance = 10.0
+electrostatics = "PME"
+
+[dynamics]
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.001
+steps         = 20
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[constraints]
+rigid_water = true
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target = "gpu"
+deterministic = true
+#--- end

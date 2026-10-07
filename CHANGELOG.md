@@ -45,6 +45,20 @@ format, or the outputs; every such change is listed under **Changed** or
   hits. The test suite shares a cache in its build tree
   (`-Dcompile_cache=off` turns it off). `mdir run` does not use it yet
   (#99).
+- The GPU modules of a program are serialized in parallel, on the threads
+  that `MDIR_COMPILE_THREADS` bounds, and become cubins for the device that
+  runs them, which the driver loads without compiling
+  (D[gpu-module-compile], #148). The toolkit's `ptxas` compiles them. The
+  kernels stay PTX, as before, when there is no device to ask, when LLVM
+  does not know the architecture, or when there is no `ptxas`.
+- The compile cache keeps the PTX and the cubin of each GPU module in
+  `<dir>/gpu/`, for `mdir run` as well as for Python simulations.
+  `MDIR_COMPILE_CACHE_MAX_MB` bounds the host and GPU entries together.
+- `Simulation.compile_stats` gains `gpu_*` keys.
+- `MDIR_GPU_BINARY` (`auto`, `cubin`, or `ptx`) and `MDIR_GPU_ARCH`
+  (`sm_XY`) choose the binaries of the kernels and their architecture.
+  The device's architecture is asked of NVML, which creates no CUDA state,
+  so a process may still fork after `mdir.compile`.
 
 ### Changed
 

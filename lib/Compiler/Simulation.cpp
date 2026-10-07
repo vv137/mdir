@@ -258,20 +258,8 @@ compileEngine(const Control &control, const System &system,
     return program.takeError();
   engine->program = std::move(*program);
   engine->volume = system.box[0] * system.box[1] * system.box[2];
-  // The kernels of a GPU take their math functions from libdevice: that of
-  // the toolkit the environment names, else that of the build, as for
-  // `mdir run` (tools/mdir/BugReport.cpp, getCudaToolkitRoot).
-  if (control.target == Target::GPU) {
-    bool named = false;
-    for (const char *name : {"CUDA_ROOT", "CUDA_HOME", "CUDA_PATH"})
-      if (const char *root = std::getenv(name); root && *root) {
-        setenv("CUDA_ROOT", root, /*overwrite=*/0);
-        named = true;
-        break;
-      }
-    if (!named && *MDIR_CUDA_ROOT)
-      setenv("CUDA_ROOT", MDIR_CUDA_ROOT, /*overwrite=*/0);
-  }
+  if (control.target == Target::GPU)
+    compiler::useCudaToolkit();
   // The context lowers with the threads of the process, so that a
   // simulation keeps no pool of its own (D211).
   engine->context = std::make_unique<mlir::MLIRContext>(
@@ -281,8 +269,11 @@ compileEngine(const Control &control, const System &system,
     return std::chrono::duration<double>(std::chrono::steady_clock::now() -
                                          start).count();
   };
+  auto gpu = compiler::getGpuOptions(control, execution.device);
+  if (!gpu)
+    return gpu.takeError();
   auto module = compiler::lowerModule(*engine->context, control,
-                                      engine->program);
+                                      engine->program, &engine->stats, *gpu);
   if (!module)
     return module.takeError();
   engine->module = std::move(*module);

@@ -104,6 +104,18 @@ example at a hundredth of its steps, in the deterministic mode, took 137 s
 with a warm cache against 155 s with a cold one
 ([compile-cache.md](../compile-cache.md)).
 
+The GPU modules of a program, 400 for the production stage of the ala3
+example under `mdir run`, are serialized in parallel and loaded as
+cubins (D[gpu-module-compile]). The serialization was 62% of the MLIR
+pipeline on a GPU, and the driver compiled every PTX serially at load.
+The same example, also deterministic at a hundredth of its steps, took
+147 s on main with the driver's cache of compiled PTX warm, and 189 s with
+it disabled. It took 82 s once the modules were serialized in parallel,
+about the same with cubins and the compile cache off, and 60 s with the
+compile cache warm, even with the driver's cache disabled. The JIT part of
+a stage then falls to 0.3 to 0.5 s; the MLIR passes before the
+serialization are most of what remains.
+
 ## 10.5 Over long runs
 
 Over 2 ns of JAC at constant energy before the dual list (D112), the rate

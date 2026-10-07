@@ -1,4 +1,5 @@
 #include "mdir/Compiler/Compile.h"
+#include "mdir/Conversion/GPUToBinary.h"
 #include "mdir/Conversion/Passes.h"
 #include "mdir/Dialect/Dyn/DynDialect.h"
 #include "mdir/Dialect/MD/MDDialect.h"
@@ -25,8 +26,26 @@ using namespace mdir;
 using namespace mdir::driver;
 using llvm::StringRef;
 char compiler::CompileError::ID = 0;
+void mdir::compiler::useCudaToolkit() {
+  for (const char *name : {"CUDA_ROOT", "CUDA_HOME", "CUDA_PATH"})
+    if (const char *root = std::getenv(name); root && *root) {
+      setenv("CUDA_ROOT", root, /*overwrite=*/0);
+      return;
+    }
+  if (*MDIR_CUDA_ROOT)
+    setenv("CUDA_ROOT", MDIR_CUDA_ROOT, /*overwrite=*/0);
+}
+llvm::Expected<std::string>
+mdir::compiler::getGpuOptions(const Control &control, int64_t device) {
+  if (control.target != Target::GPU)
+    return std::string();
+  auto options = mdir::getGpuPipelineOptions(device);
+  if (!options)
+    return llvm::make_error<CompileError>(llvm::toString(options.takeError()));
+  return options;
+}
 std::string mdir::compiler::getPipeline(const Control &control,
-                               const Program &program) {
+                               const Program &program, StringRef gpuOptions) {
   std::string pipeline;
   llvm::raw_string_ostream os(pipeline);
   os << "md-check-exchange,md-differentiate,md-expand-truncation,md-inline,"
@@ -83,7 +102,13 @@ std::string mdir::compiler::getPipeline(const Control &control,
                                  : "")
        << (control.fastMath && !control.deterministic ? "" : "contract=false")
        << "},"
-       << "gpu-lower-to-nvvm-pipeline{cubin-format=isa},"
+       << "mdir-gpu-lower-to-nvvm{";
+    // The kernels become cubins for the device's architecture, which the
+    // driver loads without compiling them; for a device that cannot be
+    // asked, PTX for the default architecture, which it compiles at load
+    // (D[gpu-module-compile]).
+    os << (gpuOptions.empty() ? StringRef("cubin-format=isa") : gpuOptions)
+       << "},"
        << "reconcile-unrealized-casts";
     return pipeline;
   }
@@ -120,6 +145,7 @@ mlir::DialectRegistry compiler::getRegistry() {
     md::registerMDPasses();
     md_exec::registerMDExecPasses();
     registerMDIRConversionPasses();
+    registerGpuLowerToNVVMPipeline();
   });
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);
@@ -160,7 +186,8 @@ void compiler::shareThreadPool(mlir::MLIRContext &context) {
 }
 llvm::Expected<mlir::OwningOpRef<mlir::ModuleOp>>
 compiler::lowerModule(mlir::MLIRContext &context, const driver::Control &control,
-                      const driver::Program &program) {
+                      const driver::Program &program, CompileStats *stats,
+                      StringRef gpuOptions) {
   std::string diagnostics;
   llvm::raw_string_ostream diagnosticStream(diagnostics);
   mlir::ScopedDiagnosticHandler handler(&context, [&](mlir::Diagnostic &d) {
@@ -173,13 +200,18 @@ compiler::lowerModule(mlir::MLIRContext &context, const driver::Control &control
   auto module = mlir::parseSourceString<mlir::ModuleOp>(program.module, &context);
   if (!module)
     return llvm::make_error<CompileError>("cannot parse generated IR: " + diagnostics);
-  std::string pipeline = getPipeline(control, program);
+  std::string pipeline = getPipeline(control, program, gpuOptions);
   mlir::PassManager manager(&context, mlir::ModuleOp::getOperationName(),
                              mlir::PassManager::Nesting::Implicit);
   if (mlir::failed(mlir::parsePassPipeline(pipeline, manager, diagnosticStream)))
     return llvm::make_error<CompileError>("cannot set up lowering: " + diagnostics);
+  // Counts from an earlier context at the same address are not this one's.
+  (void)takeGpuModuleStats(context);
   if (mlir::failed(manager.run(*module)))
     return llvm::make_error<CompileError>("cannot lower program: " + diagnostics);
+  CompileStats gpu = takeGpuModuleStats(context);
+  if (stats)
+    *stats += gpu;
   return std::move(module);
 }
 llvm::Expected<compiler::CompiledProgram>
@@ -193,13 +225,20 @@ compiler::lower(const driver::Control &control, driver::Program program,
   mlir::MLIRContext context(getRegistry(),
                             mlir::MLIRContext::Threading::DISABLED);
   shareThreadPool(context);
-  auto module = lowerModule(context, control, program);
+  // The toolkit of the simulation's lowering, so that both find the same
+  // libdevice and ptxas.
+  if (control.target == Target::GPU)
+    useCudaToolkit();
+  auto gpu = getGpuOptions(control, execution.device);
+  if (!gpu)
+    return gpu.takeError();
+  auto module = lowerModule(context, control, program, nullptr, *gpu);
   if (!module)
     return module.takeError();
   std::string lowered;
   llvm::raw_string_ostream os(lowered);
   (*module)->print(os);
-  std::string pipeline = getPipeline(control, program);
+  std::string pipeline = getPipeline(control, program, *gpu);
   return CompiledProgram{std::move(program), execution,
                          std::move(pipeline), std::move(lowered)};
 }

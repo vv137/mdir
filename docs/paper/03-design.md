@@ -455,10 +455,17 @@ compiles the host code with LLVM at its default level of optimization
 (the most aggressive level measured no faster on the Amber suite,
 D197), with the fast list scheduler, whose time does not grow
 exponentially with the calls of a block as the default's can (D150), and
-links it with the runtime. Kernels are embedded as PTX
-and compiled by the CUDA driver for the device present when the module is
-loaded (`cuModuleLoadDataEx`), so there is no step of `ptxas` and no
-choice of architecture at build time. The log reports the time from the
+links it with the runtime. Each kernel is a GPU module of its own.
+The modules are serialized in parallel on the threads of the process
+(D[gpu-module-compile]). Their architecture is that of the device that
+will run them, which the compiler asks of NVML when it lowers the
+program, without creating any CUDA state. It is not fixed when MDIR is
+built. Each module becomes PTX
+through LLVM's NVPTX back end and then a cubin through the toolkit's
+`ptxas`, which the driver loads without compiling. Without a device to
+ask, an architecture LLVM does not know, or `ptxas`, the kernels stay
+PTX, which the driver compiles when the module is loaded
+(`cuModuleLoadDataEx`). The log reports the time from the
 parsed module to a callable entry point, which includes the passes, the
 code generation of LLVM, the creation of the CUDA context, and the
 compilation of the PTX: about 10 s at constant energy and 20 s at
@@ -476,7 +483,11 @@ generation, but not by the build of MDIR: a rebuild that generates the
 same module hits. An entry also stores its full key and a hash of its
 object, so that a collision or a damaged file is a miss, and a hit is
 linked and checked as a generated object is. The passes, which do depend
-on MDIR, run on every compile.
+on MDIR, run on every compile. The PTX and the cubin of each GPU module are
+cached in the same way. The PTX is keyed by a hash of the module's IR,
+which then holds only upstream LLVM and NVVM operations, together with its
+target, libdevice, and the LLVM version. The cubin is keyed by a hash of
+its PTX and the version and arguments of `ptxas`.
 
 The runtime is small and holds what cannot be IR: 533 lines of C for the
 host (`runtime/mdrt.c`: counters of builds and prunings, the stop on a
