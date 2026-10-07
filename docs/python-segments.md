@@ -442,8 +442,21 @@ kernels are loaded after a simulation's creation. At a hundredth of its
 steps on one RTX 3090, the example takes 146 s instead of 240 s in mixed
 precision and 162 s instead of 251 s in double, with less CPU time; the
 runs that compiled the second program take a second or so instead of 20 to
-34 s. `mdir.compile` still lowers a program of its own for
-`Program.lowered_ir` (#151).
+34 s.
+
+`mdir.compile` builds the program and its pipeline but does not lower it
+(D[compile-once], #151); `Program.lowered_ir` lowers on its first read
+([python-compile.md](python-compile.md)). Before, every stage lowered the
+program of `compile`, NVPTX code generation included, for a text that the
+simulation does not use: the simulation lowers a program of segments of
+its own, built from the same prepared model with an entry of
+`%first_call`, whose text differs, so it cannot take that lowering. At a
+hundredth of its steps on one RTX 3090 in mixed precision, `mdir.compile`
+takes 0.3 s instead of 3.5, 5.4, 9.2, and 8.4 s for the four stages, which
+compile in 5.4, 13.0, 21.2, and 20.4 s instead of 8.6, 17.5, 29.6, and
+27.5 s; the example takes 62 s instead of 85 s. The states and outputs are
+those of before to the bit in the deterministic mode, on the CPU and a
+GPU, in mixed and double precision.
 
 The host object of a simulation's program can be kept on disk across
 processes by the compile cache (D212,

@@ -309,8 +309,8 @@ simulation, and in parentheses the engine's part:
 | Whole run | 153.8 s | 150.8 s | 140.6 s | 154.7 s | 137.3 s |
 
 A hit saves 1 to 6 s per stage of host code generation; the MLIR pipeline,
-in `mdir.compile` (which lowers a program of its own, #151) and in the
-simulation, is most of what remains. Without the deterministic mode the
+in `mdir.compile` (which lowered a program of its own until
+D[compile-once], #151) and in the simulation, is most of what remains. Without the deterministic mode the
 production stage missed: it starts from the cell that the NPT stage
 reached, which differs from run to run, and its program's constants depend
 on it.
@@ -434,8 +434,8 @@ generates new PTX.
 
 A PTX entry must hold `.version` and `.target`, and a cubin entry must be
 an ELF file; any other entry is rejected and generated again. Identical
-modules within one program, or in the program that `mdir.compile` lowers
-before the simulation's, share one entry. `mdir run` uses these entries too
+modules within one program, or in the program that `Program.lowered_ir`
+lowers and the simulation's, share one entry. `mdir run` uses these entries too
 when the directory is set, since the pass is part of its pipeline; its host
 objects are not cached yet (#99).
 
@@ -522,7 +522,8 @@ simulation):
 With a warm cache, the JIT part of a stage takes 0.3 to 0.5 s instead of
 1.7 to 6.2 s, whatever the driver's cache. What remains is the MLIR passes
 before the serialization: 2 to 12 s per simulation, and as much again in
-`mdir.compile` (#151). The cache of the example holds 21 MB of host
+`mdir.compile`, which no longer lowers (D[compile-once], #151): the
+example then takes 62 s instead of 85 s without the cache. The cache of the example holds 21 MB of host
 objects and 78 MB of GPU entries.
 
 The full suite on one RTX 3090 at the default `gpu_workers` (16):
