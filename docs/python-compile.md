@@ -89,7 +89,9 @@ at first. 0, the default, estimates it from the start, and
 finds more neighbors makes room, so the capacity does not change the
 results; it is part of the compiled program, though, so stages that
 should share one entry of the [compile cache](compile-cache.md#values-of-the-start-dcell-runtime-constants)
-can be given the same value.
+can be given the same value. A capacity that is given is an entry of the
+checkpoint's fingerprint, as the control file's key is
+([python-checkpoints.md](python-checkpoints.md#fingerprint-of-a-python-model)).
 
 `Schedule.steps` and `Schedule.energy_period` are nonnegative; a
 minimization needs both positive, as `[minimize]` needs a positive

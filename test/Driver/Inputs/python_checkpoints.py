@@ -29,7 +29,7 @@ KCAL_A2 = 4.184 / (0.1 * 0.1)  # kJ/mol/nm^2 per kcal/mol/A^2
 
 def control(path, kind="NVT", steps=20, interval=10, pme=False, constraints=False,
             restraint=None, temperature=300.0, method="VELOCITY_VERLET", start=None,
-            trajectory=True):
+            trajectory=True, capacity=None):
     """A control file that writes what the Python model of `model` gives."""
     name = path.stem
     thermostat = '[thermostat]\nmethod = "V-RESCALE"\ninterval = 10' if kind != "NVE" else ""
@@ -40,6 +40,7 @@ def control(path, kind="NVT", steps=20, interval=10, pme=False, constraints=Fals
     constraint_table = ("[constraints]\nhydrogen_bonds = true\nrigid_water = true\n"
                         if constraints else "")
     checkpoint_input = f'checkpoint = "{start}"' if start else ""
+    capacity_key = f"neighbor_capacity = {capacity}" if capacity else ""
     frames = (f'trajectory = "{name}.dcd"\ntrajectory_interval = {interval}'
               if trajectory else "")
     path.write_text(f"""[input]
@@ -74,12 +75,14 @@ type = "PERIODIC"
 target = "{target_name}"
 precision = "{precision.upper()}"
 deterministic = true
+{capacity_key}
 {tables}""")
     return path
 
 
 def model(kind="NVT", pme=False, constraints=False, restraint=None, temperature=300.0,
-          method="VelocityVerlet", tunables=None, drawn=True, run_precision=None):
+          method="VelocityVerlet", tunables=None, drawn=True, run_precision=None,
+          capacity=None):
     """The Python model of `control`, setting the same options."""
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
@@ -107,6 +110,8 @@ def model(kind="NVT", pme=False, constraints=False, restraint=None, temperature=
     execution.target = target
     execution.precision = getattr(mdir.Precision, run_precision or precision)
     execution.deterministic = True
+    if capacity:
+        execution.neighbor_capacity = capacity
     return mdir.compile(system, state, integrator, ensemble, execution, mdir.Schedule())
 
 
@@ -156,11 +161,13 @@ def uninterrupted(directory, **settings):
     return path
 
 
-def cli_to_python(kind, pme=False, constraints=False):
+def cli_to_python(kind, pme=False, constraints=False, capacity=None):
     # `mdir run` stops at step 10 (the checkpoint before the last); Python
     # continues it to step 20, appending to its energy file and trajectory.
+    # A neighbor capacity given to both is an entry of both fingerprints
+    # (`[execution] neighbor_capacity`), so the continuation is as silent.
     whole = work / f"cli-{kind}"
-    uninterrupted(whole, kind=kind, pme=pme, constraints=constraints)
+    uninterrupted(whole, kind=kind, pme=pme, constraints=constraints, capacity=capacity)
     reference = mdir.read_checkpoint(str(whole / "run.h5"))
     assert reference.step == 20 and reference.front_end == "mdir run"
     part = work / f"cli-{kind}-part"
@@ -168,9 +175,17 @@ def cli_to_python(kind, pme=False, constraints=False):
     shutil.copy(whole / "run.h5.prev", part / "run.h5")
     for name in ("run.dat", "run.dcd"):
         shutil.copy(whole / name, part / name)
-    program = model(kind, pme, constraints)
+    program = model(kind, pme, constraints, capacity=capacity)
     simulation, notes = continued(program, part / "run.h5")
     assert notes == [], notes
+    if capacity:
+        assert program.plan["neighbor_capacity"] == capacity
+        assert ("execution", "[execution] neighbor_capacity", str(capacity)) in \
+            [tuple(entry) for entry in reference.fingerprint], reference.fingerprint
+        # Without the capacity it is the same run, with a warning.
+        _, notes = continued(model(kind, pme, constraints), part / "run.h5")
+        assert len(notes) == 1 and "[execution] neighbor_capacity" in notes[0], notes
+        print(f"neighbor_capacity = {capacity} in both: no warning; in one: a warning")
     assert simulation.step == 10 and abs(simulation.time - 10 * 0.0005) < 1e-15
     simulation.reporters = [mdir.EnergyReporter(str(part / "run.dat"), 10),
                             mdir.TrajectoryReporter(str(part / "run.dcd"), 10)]
@@ -194,18 +209,19 @@ def cli_to_python(kind, pme=False, constraints=False):
     print("the energy file and the trajectory equal those of mdir run byte for byte")
 
 
-def python_to_cli(kind, pme=False, constraints=False):
+def python_to_cli(kind, pme=False, constraints=False, capacity=None):
     # Python takes 10 steps and writes the checkpoint; `mdir run --continue`
     # takes the 10 that remain, appending to the files of the reporters.
     # `mdir run` from the Python checkpoint equals a Python continuation of
     # the same file and the run of `mdir run` that did not stop, to the bit.
     whole = work / f"whole-{kind}"
-    uninterrupted(whole, kind=kind, pme=pme, constraints=constraints)
+    uninterrupted(whole, kind=kind, pme=pme, constraints=constraints, capacity=capacity)
     reference = mdir.read_checkpoint(str(whole / "run.h5"))
     part = work / f"python-{kind}"
     part.mkdir()
-    path = control(part / "run.toml", kind=kind, pme=pme, constraints=constraints)
-    simulation = mdir.Simulation(model(kind, pme, constraints))
+    path = control(part / "run.toml", kind=kind, pme=pme, constraints=constraints,
+                   capacity=capacity)
+    simulation = mdir.Simulation(model(kind, pme, constraints, capacity=capacity))
     simulation.reporters = [mdir.EnergyReporter(str(part / "run.dat"), 10),
                             mdir.TrajectoryReporter(str(part / "run.dcd"), 10),
                             mdir.CheckpointReporter(str(part / "run.h5"), 10)]
@@ -215,7 +231,7 @@ def python_to_cli(kind, pme=False, constraints=False):
     assert written.step == 10 and written.part == 1 and written.frames == 1
     assert written.fingerprint == reference.fingerprint, \
         set(written.fingerprint) ^ set(reference.fingerprint)
-    python, notes = continued(model(kind, pme, constraints), part / "run.h5")
+    python, notes = continued(model(kind, pme, constraints, capacity=capacity), part / "run.h5")
     assert notes == [], notes
     python.run(10)
     log = run_cli(path, "--continue")
@@ -465,9 +481,9 @@ def corrupted():
 
 
 SCENARIOS = {
-    "cli-to-python": lambda: (cli_to_python("NVE"), cli_to_python("NVT"),
+    "cli-to-python": lambda: (cli_to_python("NVE"), cli_to_python("NVT", capacity=480),
                               cli_to_python("NPT", pme=True, constraints=True)),
-    "python-to-cli": lambda: (python_to_cli("NVE"), python_to_cli("NVT"),
+    "python-to-cli": lambda: (python_to_cli("NVE"), python_to_cli("NVT", capacity=480),
                               python_to_cli("NPT", pme=True, constraints=True)),
     "python-to-python": python_to_python,
     "stages": stages,
