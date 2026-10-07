@@ -17,5 +17,5 @@
 # CHECK-NEXT: MDIR: 0 rebuilds found a neighbor structure no longer valid
 # CHECK:      MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
 
-# LATE:       mdir: warning: 5 rebuilds at the interval of 400 steps found a neighbor structure no longer valid
+# LATE:       mdir: warning: 4 rebuilds at the interval of 400 steps found a neighbor structure no longer valid
 # LATE:       MDIR: neighbor structures were built 6 times

@@ -1,0 +1,25 @@
+# REQUIRES: python-api, hdf5
+# A Python simulation and `mdir run` of one model in the deterministic mode
+# give the same state bit for bit on the CPU: the dipeptide in water with
+# SHAKE and SETTLE, from the velocities that both draw, mixed precision,
+# PME electrostatics (scenario of Inputs/python_deterministic_run.py).
+# With PME in mixed precision they differed after one step, since the forces
+# that the steps carry took the type of the buffers of the host calls that
+# the loop of steps reached, which the two programs place differently
+# (#102, #105). They parted at the rounding of the sums of forces after about
+# 20 steps (#121): the neighbor structures of the evaluation at the start
+# carried into the steps of the simulation and of `mdir run` without
+# checkpoints, while `mdir run` with checkpoints built them anew at the first
+# step of its first segment, so the programs rebuilt at other steps. The
+# evaluation at the start is now a segment of its own in every program
+# (D[front-end-divergence]). Cases: N steps in one part against N steps with
+# a checkpoint at the end, and 3 parts of 20 steps against a checkpoint every
+# 20 steps.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: env MDIR_COMPILE_CACHE_DIR=%t/cache %mdir_python %S/Inputs/python_deterministic_run.py %S/Inputs/dipeptide CPU mdir %t Mixed PME 1 19 20 21 50 20x3 | FileCheck %s
+# CHECK: CPU Mixed PME 1: positions same velocities same forces same
+# CHECK-NEXT: CPU Mixed PME 19: positions same velocities same forces same
+# CHECK-NEXT: CPU Mixed PME 20: positions same velocities same forces same
+# CHECK-NEXT: CPU Mixed PME 21: positions same velocities same forces same
+# CHECK-NEXT: CPU Mixed PME 50: positions same velocities same forces same
+# CHECK-NEXT: CPU Mixed PME 20x3: positions same velocities same forces same

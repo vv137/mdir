@@ -2,7 +2,10 @@
 # default: the run warns at the start, on the standard error and in the
 # log, and counts the rebuilds that found a structure no longer valid. At
 # 10 steps liquid argon stays within the skin; at 400 it does not, and the
-# run warns again at the end.
+# run warns again at the end. The steps begin with a structure of their own,
+# built at step 1 after the one of the evaluation at the start
+# (D[front-end-divergence]), so the interval counts from step 1: of 2000
+# steps, the rebuilds at 401, 801, 1201, and 1601 are tested.
 #
 # RUN: sed -e 's|"argon.pdb"|"%S/../../examples/argon/argon.pdb"|' \
 # RUN:     -e 's|"argon.dcd"|"%t.dcd"|' \
@@ -22,8 +25,8 @@
 # CHECK:      MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
 
 # LATE:       mdir: warning: 'rebuild_interval = 400'
-# LATE:       mdir: warning: 5 rebuilds at the interval of 400 steps found a neighbor structure no longer valid: pairs within the cutoff may have been missed
+# LATE:       mdir: warning: 4 rebuilds at the interval of 400 steps found a neighbor structure no longer valid: pairs within the cutoff may have been missed
 # LATE:       MDIR: neighbor structures were built 6 times
-# LATE-NEXT:  MDIR: 5 rebuilds found a neighbor structure no longer valid
+# LATE-NEXT:  MDIR: 4 rebuilds found a neighbor structure no longer valid
 
 # BAD: rebuild_interval

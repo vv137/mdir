@@ -38,6 +38,12 @@ mlir::MemRefType getTableBufferType(md::TableType table);
 /// stretches between two checkpoints.
 inline llvm::StringRef getSegmentAttrName() { return "mdrt.segment"; }
 
+/// The attribute that marks a loop whose neighbor structures begin empty
+/// rather than continue those built before it: the loop of steps after the
+/// evaluation at the start of a run, which is a segment of its own
+/// (D[front-end-divergence]).
+inline llvm::StringRef getFreshAttrName() { return "mdrt.fresh"; }
+
 } // namespace mdrt
 } // namespace mdir
 

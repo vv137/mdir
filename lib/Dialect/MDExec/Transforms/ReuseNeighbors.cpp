@@ -64,9 +64,20 @@ struct Chain {
 
 /// Returns true if the iterations of `loop` are segments of a run. A
 /// neighbor structure starts empty in every segment, so that a run that is
-/// restarted from a checkpoint builds where the first run did.
+/// restarted from a checkpoint builds where the first run did. The
+/// evaluation at the start of a program of segments is one as well
+/// (D[front-end-divergence]).
 static bool isSegmentLoop(scf::ForOp loop) {
   return loop->hasAttr(mdrt::getSegmentAttrName());
+}
+
+/// Returns true if the structures that `loop` carries begin empty rather
+/// than continue those built before it: the steps after the evaluation at
+/// the start of `mdir run`, which is a segment of its own, so that every
+/// front end and every schedule of checkpoints builds at the same steps
+/// (D[front-end-divergence]).
+static bool isFreshLoop(scf::ForOp loop) {
+  return loop->hasAttr(mdrt::getFreshAttrName());
 }
 
 /// Adds to `found` the parameters of the refreshes of `structure`, which a
@@ -185,8 +196,9 @@ static SmallVector<Chain, 2> findChains(Block &block) {
   SmallVector<Chain, 2> chains;
   for (const Source &source : findSources(block)) {
     Chain *joined = nullptr;
+    bool fresh = source.loop && isFreshLoop(source.loop);
     for (Chain &chain : chains)
-      if (chain.parameters == source.parameters &&
+      if (!fresh && chain.parameters == source.parameters &&
           isDeadBefore(chain.last, source.anchor, block)) {
         joined = &chain;
         break;
