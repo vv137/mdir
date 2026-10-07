@@ -194,7 +194,7 @@ struct Execution {
   bool deterministic = false, reorder = true, fastMath = true;
   /// The neighbors that a neighbor structure holds per particle at first,
   /// `[execution] neighbor_capacity`; 0 estimates it from the start
-  /// (D[cell-runtime-constants]).
+  /// (D227).
   int64_t neighborCapacity = 0;
 };
 /// A temporary fixed schedule for shared-builder parity. No runtime ownership,

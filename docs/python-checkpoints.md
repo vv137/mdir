@@ -123,7 +123,7 @@ the same fingerprint, and either continues the other's run.
 
 `Execution.neighbor_capacity`, when given and not 0, is the entry
 `[execution] neighbor_capacity` that the control file's key writes
-(D[cell-runtime-constants]). A run that gives the same capacity to both
+(D227). A run that gives the same capacity to both
 front ends continues without a warning; a capacity in one of them only is
 a change of the execution, with the warning of one. The estimate, 0 or
 the key absent, has no entry.

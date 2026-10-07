@@ -179,7 +179,7 @@ struct Program {
 
   /// The values that depend on the state that the run begins from, its
   /// cell above all, which the entry takes as its last arguments rather
-  /// than its text holding them as constants (D[cell-runtime-constants]):
+  /// than its text holding them as constants (D227):
   /// two programs that differ only in them have the same text, and the
   /// compile cache serves the second (docs/compile-cache.md). Each is
   /// computed on the host as the constant was, so that a run gives the

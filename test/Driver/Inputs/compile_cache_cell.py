@@ -1,5 +1,5 @@
 """Programs that differ only in the cell they start from share the compile
-cache (D[cell-runtime-constants], docs/compile-cache.md).
+cache (D227, docs/compile-cache.md).
 
   compile_cache_cell.py ROOT TARGET PRECISION WORK
 

@@ -493,7 +493,7 @@ the tilts of the cell, the cell of the restraints' reference positions,
 and the constant virial of the dispersion correction and of the PME
 background times the volume (a constant, since both terms scale as $1/V$),
 are arguments of the entry rather than
-constants of the text (D[cell-runtime-constants]). A stage that continues
+constants of the text (D227). A stage that continues
 from an equilibrated cell then reuses the program of another such stage;
 only the grid of PME and the neighbor capacity, which shape loops and
 buffers, stay in the key. The capacity is estimated from the most

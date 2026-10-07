@@ -79,7 +79,7 @@ snake case; defaults and the supported physics subset are those of
 | InitialState | `positions`, `velocities`, `cell` |
 | Integrator | `method`, `timestep`, `minimize`, `minimize_step` |
 | Ensemble | `kind`, `temperature`, `tau_t`, `pressure`, `tau_p`, `compressibility`, `coupling_period`, `com_period`, `seed` |
-| Execution | `target`, `precision`, `device`, `threads`, `deterministic`, `reorder`, `fast_math`, `neighbor_capacity` (D[cell-runtime-constants]) |
+| Execution | `target`, `precision`, `device`, `threads`, `deterministic`, `reorder`, `fast_math`, `neighbor_capacity` (D227) |
 | Schedule | `steps`, `energy_period` |
 
 `Execution.neighbor_capacity` is `[execution] neighbor_capacity` of the
@@ -88,7 +88,7 @@ at first. 0, the default, estimates it from the start, and
 `Program.plan["neighbor_capacity"]` is the capacity taken. A build that
 finds more neighbors makes room, so the capacity does not change the
 results; it is part of the compiled program, though, so stages that
-should share one entry of the [compile cache](compile-cache.md#values-of-the-start-dcell-runtime-constants)
+should share one entry of the [compile cache](compile-cache.md#values-of-the-start-d227)
 can be given the same value. A capacity that is given is an entry of the
 checkpoint's fingerprint, as the control file's key is
 ([python-checkpoints.md](python-checkpoints.md#fingerprint-of-a-python-model)).

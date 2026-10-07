@@ -157,7 +157,7 @@ private:
   llvm::Error collectLJPME();
   void emitPrograms();
   /// Collects the values of Program::startValues, which the entry takes
-  /// as arguments (D[cell-runtime-constants]).
+  /// as arguments (D227).
   void collectStartValues();
   void emitEntry();
   /// Emits `@descend`, one step of steepest descent that moves no particle
@@ -8233,7 +8233,7 @@ void Builder::emitTerms(StringRef x) {
 void Builder::collectStartValues() {
   // Every value of the state at the start that the text would otherwise
   // hold as a constant, under the conditions where emitEntry uses it, in
-  // the order of Builder.h (D[cell-runtime-constants]). Each is computed
+  // the order of Builder.h (D227). Each is computed
   // as the constant was.
   auto add = [&](std::string name, double value) {
     program.startValues.push_back({std::move(name), value});
@@ -9214,7 +9214,7 @@ llvm::Error Builder::build() {
     // count moves by a few neighbors from one equilibrated state to the
     // next, and the width is part of the lowered program, so a finer
     // rounding made stages that differ only in their start compile anew
-    // (D[cell-runtime-constants]). The width only sets the room at first.
+    // (D227). The width only sets the room at first.
     int64_t step = 8;
     while (16 * step <= width)
       step *= 2;

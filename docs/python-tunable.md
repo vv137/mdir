@@ -224,7 +224,7 @@ part); a tunable constant of an expression is read from a $1\times K$ table
 instead of being an `arith.constant`; and, with a barostat, the virial and
 energy of the constant terms that the barostat adds (`%baro_constant`,
 `%baro_energy_constant`) are arguments of the entry, as they are for every
-program since D[cell-runtime-constants]. The energies that
+program since D227. The energies that
 the host adds to the log and the reports (the dispersion correction, the
 PME constants) come from the rebuilt values. Nothing changes for a program
 without tunables.

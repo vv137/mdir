@@ -1,4 +1,4 @@
-# The compile cache (D212, D214, D217, D[cell-runtime-constants])
+# The compile cache (D212, D214, D217, D227)
 
 Issue #142. A Python simulation compiles its program in three stages: the
 MLIR pipeline lowers it to an LLVM module (with the PTX of its kernels on a
@@ -17,10 +17,10 @@ compiled for the device instead of PTX; see
 [The GPU modules](#the-gpu-modules-dgpu-module-compile) below.
 D217 (#163) clears the cache and bypasses it for one
 compile from Python; see [Controls from Python](#controls-from-python).
-D[cell-runtime-constants] (#162) takes the values that depend on the
+D227 (#162) takes the values that depend on the
 starting cell out of the program's text, so that a stage that starts from
 an equilibrated cell hits the entry of another; see
-[Values of the start](#values-of-the-start-dcell-runtime-constants).
+[Values of the start](#values-of-the-start-d227).
 
 ## Use
 
@@ -171,7 +171,7 @@ The PTX of the kernels is a global of the module, so a change of device
 code changes the key too, and everything the program's constants depend on
 is in the module. The values that depend on the state the run starts from
 are not constants of the module but arguments of its entry
-([Values of the start](#values-of-the-start-dcell-runtime-constants)). A rebuild of MDIR
+([Values of the start](#values-of-the-start-d227)). A rebuild of MDIR
 that leaves the generated module unchanged therefore hits, and one that
 changes any part of the generated code misses. An object is not portable
 between machines with different CPU features: a different CPU is a
@@ -189,7 +189,7 @@ pipeline depends on MDIR's passes, so a cache of its output would need the
 build identity in its key, and would miss after every rebuild; it is not
 part of this item.
 
-## Values of the start (D[cell-runtime-constants])
+## Values of the start (D227)
 
 Issue #162. A stage that continues from an equilibrated state, such as the
 production stage of the ala3 example after its NPT stage, a resubmission,
@@ -449,7 +449,7 @@ D224, #151) and in the simulation, is most of what remains. Without the determin
 production stage missed: it starts from the cell that the NPT stage
 reached, which differs from run to run, and its program's constants
 depended on it. They no longer do
-([Values of the start](#values-of-the-start-dcell-runtime-constants)).
+([Values of the start](#values-of-the-start-d227)).
 
 The full suite on that GPU at the default `gpu_workers` (16): 262 s with
 the cache off, 250 s with a cold cache, and 243 s with a warm one, single

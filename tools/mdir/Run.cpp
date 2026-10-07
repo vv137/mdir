@@ -913,7 +913,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   arguments.push_back(&timestep);
   arguments.push_back(&firstStep);
   // The values of the state at the start that the entry takes rather than
-  // its text (D[cell-runtime-constants]).
+  // its text (D227).
   SmallVector<double> startValues;
   for (const Program::StartValue &value : program->startValues)
     startValues.push_back(value.value);

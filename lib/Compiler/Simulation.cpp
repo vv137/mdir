@@ -251,7 +251,7 @@ struct compiler::Activation {
   Arguments arguments;
   double box[3] = {0.0, 0.0, 0.0};
   double timestep = 0.0, firstSize = 0.0;
-  /// The values of Program::startValues (D[cell-runtime-constants]).
+  /// The values of Program::startValues (D227).
   std::vector<double> startValues;
   int64_t start = 0, firstCall = 0;
   /// The records of what the activation allocates: of the runtime of the

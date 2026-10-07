@@ -247,8 +247,8 @@ threads from one pool of the process. D212 (#142,
 [compile cache](compile-cache.md)) keeps the host objects of compiled
 programs on disk, keyed by their content; D217 (#163)
 clears it and bypasses it per compile from Python;
-D[cell-runtime-constants] (#162,
-[values of the start](compile-cache.md#values-of-the-start-dcell-runtime-constants))
+D227 (#162,
+[values of the start](compile-cache.md#values-of-the-start-d227))
 makes the values that depend on the starting cell arguments of the entry
 and rounds the estimate of the neighbor capacity more coarsely
 (`Execution.neighbor_capacity` gives it), so a stage from an equilibrated

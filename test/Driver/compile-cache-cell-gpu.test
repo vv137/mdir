@@ -1,6 +1,6 @@
 # REQUIRES: python-api, cuda
 # Programs that differ only in the cell they start from have one text and
-# share the compile cache (D[cell-runtime-constants]): the values of the
+# share the compile cache (D227): the values of the
 # start are arguments of the entry, and the estimate of the neighbor
 # capacity is rounded up to four significant bits. A start with another
 # estimate hits with `Execution.neighbor_capacity`, and the capacity does

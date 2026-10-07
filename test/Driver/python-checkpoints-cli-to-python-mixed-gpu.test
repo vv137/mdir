@@ -5,7 +5,7 @@
 # checkpoint to step 20: the state, the energy file, and the trajectory
 # equal those of the run that did not stop, to the bit (NVE, NVT, and NPT
 # with PME and constraints). The NVT run gives `neighbor_capacity` to both
-# front ends, an entry of both fingerprints (D[cell-runtime-constants]):
+# front ends, an entry of both fingerprints (D227):
 # no warning, and one when the Python model leaves it out.
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %mdir_python %S/Inputs/python_checkpoints.py %S/Inputs/dipeptide GPU Mixed mdir %t cli-to-python | FileCheck %s

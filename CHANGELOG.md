@@ -13,7 +13,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Added
 
 - `Execution.neighbor_capacity` in Python, the `[execution]
-  neighbor_capacity` of the control file (D[cell-runtime-constants],
+  neighbor_capacity` of the control file (D227,
   #162): 0, the default, estimates it, and
   `Program.plan["neighbor_capacity"]` is the capacity that a compile took.
 
@@ -153,7 +153,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Changed
 
 - A program no longer holds the values that depend on the state it starts
-  from as constants of its text (D[cell-runtime-constants], #162): the
+  from as constants of its text (D227, #162): the
   tilts of a triclinic cell, the cell of the restraints' reference
   positions under a barostat, the barostat's constants of the dispersion
   correction and the PME background, and the barostat state of a continued
@@ -164,7 +164,7 @@ format, or the outputs; every such change is listed under **Changed** or
 - The estimate of the neighbor capacity (`[execution] neighbor_capacity`
   absent) is rounded up to four significant bits instead of a multiple
   of 8, at most 12.5% more room at first, so that it is the same for the
-  starts of continued stages (D[cell-runtime-constants]). The capacity
+  starts of continued stages (D227). The capacity
   does not change the results; the Amber suite runs at the same rate.
 - Setting `System.dispersion` in Python makes the correction for the
   dispersion explicit, as giving `dispersion_correction` in the control
