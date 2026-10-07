@@ -153,6 +153,16 @@ format, or the outputs; every such change is listed under **Changed** or
   file's kcal/mol/Å², and a constant not computed from a control-file value
   could change by one rounding. Runs from a control file are unchanged.
 
+- `mdir.compile` no longer lowers the program (D[compile-once], #151): it
+  builds it and sets up its pipeline, so `Program.ir`, `pipeline`, and
+  `plan` are ready on return, and `Program.lowered_ir` lowers on its first
+  read, once. A `Simulation` lowers programs of its own and never used that
+  lowering. `mdir.compile` takes 0.3 s instead of 3.5 to 9.2 s a stage of
+  the Python ala3 example on a GPU, and the example at a hundredth of its
+  steps 62 s instead of 85 s; results are unchanged to the bit. An error
+  that only the MLIR pipeline finds is now raised by `Simulation(program)`
+  or by the read of `lowered_ir` instead of by `compile`.
+
 - Under a plain cutoff (`lennard_jones_modifier = "NONE"`, a Coulomb
   cutoff, or the direct sum of PME without `coulomb_modifier`), the
   free-energy file (`dHdl.<name>`, `dU.<k>`) and the observables file

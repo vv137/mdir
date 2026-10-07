@@ -9,9 +9,15 @@ not a wheel or a persistent simulation API. M2 remains incomplete.
 `mdir.load_amber`, `load_gromacs`, and `load_charmm` return owned loaded data.
 `make_system()` and `make_state()` return independent objects in MD units.
 `mdir.compile(system, state, integrator, ensemble, execution, schedule)`
-validates and lowers the shared semantic IR through the CLI's pipeline.
+validates the inputs, builds the shared semantic IR, and sets up the CLI's
+pipeline for it, without running that pipeline (D[compile-once], #151).
 The immutable returned `Program` exposes `ir`, `lowered_ir`, `pipeline`,
-and a copied `plan` dictionary. No runtime libraries are loaded, no CUDA
+and a copied `plan` dictionary. `ir`, `pipeline`, and `plan` are ready on
+return; `lowered_ir` is lowered on its first read, from the IR captured at
+compilation, and kept, so a later change of the inputs does not reach it.
+A `Simulation` lowers programs of its own
+([python-segments.md](python-segments.md#compiles)), so a program that is
+only simulated is not lowered twice. No runtime libraries are loaded, no CUDA
 execution context is initialized, and no report or reproducer is written.
 JIT ownership, runtime device selection and execution follow with segments.
 The logical device is recorded in the plan, not selected during lowering.
@@ -30,7 +36,11 @@ their owner. Imported topology is owned and read-only at this first binding
 boundary.
 
 `InputError`, `UnsupportedError`, and `CompileError` preserve native error
-messages; lowering errors retain MLIR locations and diagnostics. Existing
+messages; lowering errors retain MLIR locations and diagnostics. Errors of
+the inputs, of the build, of a GPU target in a build without CUDA, and of
+the device's GPU options are raised by `compile`; an error that only the
+MLIR pipeline finds is raised by the `Simulation`, which lowers its own
+programs, or by the read of `lowered_ir`. Existing
 CLI control-file keys, formats and overwrite behavior are unchanged.
 The temporary `Schedule` retains D191's fixed schedule; it is not `run(n)`.
 A persistent `mdir.Simulation` ([python-segments.md](python-segments.md))
@@ -114,8 +124,10 @@ lowered IR embeds PTX on GPU targets; lowering needs the CUDA toolkit's
 libdevice, found through `CUDA_ROOT` when set. Python compilation ignores
 CLI debugging environment overrides (`MDIR_PIPELINE`, `MDIR_PRINT_AFTER`,
 `MDIR_REPRODUCER`), so it neither silently changes the plan nor writes files.
-The GIL remains held during compilation to prevent input mutation racing
-with snapshot/version capture. Persistent execution will define GIL release.
+The GIL remains held while `compile` copies and builds, to prevent input
+mutation racing with snapshot/version capture. The lowering behind
+`lowered_ir` runs with the GIL released; threads that read it at once wait
+for one lowering.
 
 CMake uses the documented pybind11
 [package discovery and module helper](https://pybind11.readthedocs.io/en/stable/cmake/index.html).

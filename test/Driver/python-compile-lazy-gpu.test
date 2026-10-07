@@ -1,0 +1,6 @@
+# REQUIRES: python-api, cuda
+# python-compile-lazy.test for a GPU program: compile stores no GPU module
+# in an empty compile cache, and the read of lowered_ir does (D214).
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_compile_lazy.py %S/Inputs/dipeptide GPU %t | FileCheck %s
+# CHECK: lazy lowering passed
