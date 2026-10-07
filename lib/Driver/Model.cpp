@@ -1,4 +1,5 @@
 #include "mdir/Driver/Model.h"
+#include "mdir/Driver/Fingerprint.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include <cmath>
@@ -29,6 +30,7 @@ System LoadedData::makeSystem() const {
   System s;
   s.topology = topology;
   s.format = format;
+  s.topologyFilesHash = topologyFilesHash;
   s.topology.positions.clear();
   s.topology.velocities.clear();
   for (int k = 0; k != 3; ++k)
@@ -58,6 +60,21 @@ static llvm::Expected<LoadedData> loaded(driver::Topology t, Format f,
     if (!buffer) return input("cannot capture source '" + file + "'");
     data.sources.emplace_back(file, (*buffer)->getBuffer().str());
   }
+  // The files of the topology as `mdir run` hashes them for its
+  // fingerprint (D172): the topology, then the files it read, but not the
+  // coordinates (D[python-checkpoints]).
+  std::vector<std::string> topologyFiles = {path.str()};
+  for (const auto &file : data.topology.sourceFiles)
+    if (!llvm::is_contained(topologyFiles, file))
+      topologyFiles.push_back(file);
+  std::vector<std::string> contents;
+  for (const auto &file : topologyFiles)
+    for (const auto &[name, bytes] : data.sources)
+      if (name == file) {
+        contents.push_back(bytes);
+        break;
+      }
+  data.topologyFilesHash = driver::getTopologyFilesHash(contents);
   return data;
 }
 llvm::Expected<LoadedData> mdir::model::loadAmber(llvm::StringRef path, llvm::StringRef coords) {

@@ -111,6 +111,31 @@ std::string shown(std::string text) {
 
 } // namespace
 
+std::string mdir::driver::getFingerprintNumber(double value) {
+  return formatNumber(value);
+}
+
+std::string mdir::driver::getFingerprintString(StringRef text) {
+  return quote(text);
+}
+
+std::string mdir::driver::getFingerprintHash(StringRef data) {
+  return hashBytes(data);
+}
+
+std::string
+mdir::driver::getTopologyFilesHash(llvm::ArrayRef<std::string> contents) {
+  std::string hashes;
+  for (const std::string &content : contents)
+    hashes += hashBytes(content) + "\n";
+  return hashBytes(hashes);
+}
+
+std::string mdir::driver::getNumbersHash(const std::vector<double> &numbers) {
+  return hashBytes(StringRef(reinterpret_cast<const char *>(numbers.data()),
+                             numbers.size() * sizeof(double)));
+}
+
 llvm::Expected<Fingerprint>
 mdir::driver::getRunFingerprint(StringRef controlFile, const Control &control,
                                 const System &system) {
@@ -215,25 +240,22 @@ mdir::driver::getRunFingerprint(StringRef controlFile, const Control &control,
       if (std::find(files.begin(), files.end(), path) == files.end())
         files.push_back(path);
   if (!files.empty()) {
-    std::string contents;
+    std::vector<std::string> contents;
     for (const std::string &path : files) {
       auto buffer = llvm::MemoryBuffer::getFile(path);
       if (!buffer)
         return llvm::createStringError(buffer.getError(), "cannot read '%s'",
                                        path.c_str());
-      contents += hashBytes((*buffer)->getBuffer()) + "\n";
+      contents.push_back((*buffer)->getBuffer().str());
     }
-    add("physics", "the files of the topology", hashBytes(contents));
+    add("physics", "the files of the topology",
+        getTopologyFilesHash(contents));
   }
 
-  auto hashNumbers = [](const std::vector<double> &numbers) {
-    return hashBytes(StringRef(reinterpret_cast<const char *>(numbers.data()),
-                               numbers.size() * sizeof(double)));
-  };
-  add("physics", "the masses", hashNumbers(system.masses));
+  add("physics", "the masses", getNumbersHash(system.masses));
   if (!control.restraints.empty())
     add("physics", "the reference of the restraints",
-        hashNumbers(system.referencePositions));
+        getNumbersHash(system.referencePositions));
 
   std::stable_sort(fingerprint.begin(), fingerprint.end(),
                    [](const FingerprintEntry &a, const FingerprintEntry &b) {

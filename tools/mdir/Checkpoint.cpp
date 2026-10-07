@@ -90,6 +90,20 @@ int mdir::tool::describeCheckpoints(llvm::ArrayRef<std::string> files,
                   static_cast<long long>(first->frames));
     std::printf("fingerprint:     %zu entries (--print=fingerprint)\n",
                 first->fingerprint.size());
+    // The additional entries of a Python simulation (D[python-checkpoints]).
+    if (!first->frontEnd.empty())
+      std::printf("front end:       %s\n", first->frontEnd.c_str());
+    if (!first->modelHash.empty())
+      std::printf("model:           sha256:%s\n", first->modelHash.c_str());
+    if (!first->planHash.empty())
+      std::printf("plan:            sha256:%s\n", first->planHash.c_str());
+    if (!first->tunables.empty()) {
+      std::printf("tunables:        version %lld,",
+                  static_cast<long long>(first->tunablesVersion));
+      for (const auto &[name, values] : first->tunables)
+        std::printf(" %s (%zu)", name.c_str(), values.size());
+      std::printf("\n");
+    }
     return 0;
   }
 

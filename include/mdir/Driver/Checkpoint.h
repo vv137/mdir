@@ -103,6 +103,27 @@ struct Checkpoint {
   std::string freeEnergy;
   int64_t freeEnergyState = -1;
   std::vector<double> freeEnergyLambda;
+
+  /// Additional entries of format 1 (D[python-checkpoints],
+  /// docs/python-checkpoints.md), which a reader of release 0.1.0 ignores.
+  /// They are outside the hash of the state and have a hash of their own,
+  /// `extras_sha256`, which the reader checks when the file has it.
+  /// The front end that wrote the file: "python", or empty for `mdir run`.
+  std::string frontEnd;
+  /// SHA-256 of the model (the physics and coupling of the fingerprint and
+  /// the declarations of the tunables) and of the plan of the program.
+  std::string modelHash, planHash;
+  /// The tunable parameters (D213): their declarations as text, the
+  /// values of each by name in MD units, the version of the values, and for
+  /// each version the step after which it holds.
+  std::string tunableDeclarations;
+  std::vector<std::pair<std::string, std::vector<double>>> tunables;
+  int64_t tunablesVersion = 0;
+  std::vector<std::pair<int64_t, int64_t>> tunablesHistory;
+  bool hasExtras() const {
+    return !frontEnd.empty() || !modelHash.empty() || !planHash.empty() ||
+           !tunableDeclarations.empty() || !tunables.empty();
+  }
 };
 
 /// Returns true if the driver was built with the library that checkpoints

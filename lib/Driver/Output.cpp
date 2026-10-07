@@ -8,6 +8,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/Path.h"
 
 #include <algorithm>
@@ -138,6 +139,13 @@ void ColumnFile::close() {
   if (file)
     std::fclose(file);
   file = nullptr;
+}
+
+std::string mdir::driver::getPartPath(llvm::StringRef path, int64_t part) {
+  llvm::StringRef extension = llvm::sys::path::extension(path);
+  return (path.drop_back(extension.size()) +
+          llvm::formatv(".part{0:D4}", part) + extension)
+      .str();
 }
 
 std::string mdir::driver::getBackupPath(llvm::StringRef path) {

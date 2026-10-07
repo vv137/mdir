@@ -17,6 +17,12 @@
 //                                 (D173)
 //   /parameters/mdir/fingerprint  what defined the run
 //                                 (D172)
+//   /parameters/mdir/tunables     the tunable parameters of a Python
+//                                 simulation (D213), if it has any
+//
+// Entries that release 0.1.0 does not know (front_end, model_sha256,
+// plan_sha256, tunables) are additional entries of format 1 with a hash of
+// their own, extras_sha256 (D[python-checkpoints]).
 //
 // A quantity that changes with time has one frame: the state that the
 // checkpoint holds.
@@ -148,6 +154,45 @@ std::string hashState(const Checkpoint &state) {
   numbers(state.thermostatState);
   for (const char *group : fingerprintGroups)
     text(getFingerprintText(state.fingerprint, group));
+  std::array<uint8_t, 32> digest = hash.final();
+  return llvm::toHex(digest, /*LowerCase=*/true);
+}
+
+/// SHA-256 of the additional entries of a checkpoint
+/// (D[python-checkpoints]), apart from `state_sha256` so that a reader of
+/// release 0.1.0, which recomputes that and does not know these, reads the
+/// file.
+std::string hashExtras(const Checkpoint &state) {
+  llvm::SHA256 hash;
+  auto bytes = [&](const void *data, size_t size) {
+    hash.update(llvm::ArrayRef<uint8_t>(static_cast<const uint8_t *>(data),
+                                        size));
+  };
+  auto number = [&](const auto &value) { bytes(&value, sizeof(value)); };
+  auto text = [&](const std::string &value) {
+    uint64_t size = value.size();
+    number(size);
+    bytes(value.data(), size);
+  };
+  text(state.frontEnd);
+  text(state.modelHash);
+  text(state.planHash);
+  text(state.tunableDeclarations);
+  uint64_t count = state.tunables.size();
+  number(count);
+  for (const auto &[name, values] : state.tunables) {
+    text(name);
+    uint64_t size = values.size();
+    number(size);
+    bytes(values.data(), size * sizeof(double));
+  }
+  number(state.tunablesVersion);
+  count = state.tunablesHistory.size();
+  number(count);
+  for (const auto &[step, version] : state.tunablesHistory) {
+    number(step);
+    number(version);
+  }
   std::array<uint8_t, 32> digest = hash.final();
   return llvm::toHex(digest, /*LowerCase=*/true);
 }
@@ -541,6 +586,40 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
         writer.writeTextDataset(
             fingerprint, group,
             getFingerprintText(checkpoint.fingerprint, group));
+      // The additional entries (D[python-checkpoints]).
+      if (checkpoint.hasExtras()) {
+        writer.writeText(mdir, "extras_sha256", hashExtras(checkpoint));
+        writer.writeText(mdir, "front_end", checkpoint.frontEnd);
+        writer.writeText(mdir, "model_sha256", checkpoint.modelHash);
+        writer.writeText(mdir, "plan_sha256", checkpoint.planHash);
+        if (!checkpoint.tunables.empty() ||
+            !checkpoint.tunableDeclarations.empty()) {
+          Handle tunables = writer.createGroup(mdir, "tunables");
+          writer.writeTextDataset(tunables, "declarations",
+                                  checkpoint.tunableDeclarations);
+          std::string names;
+          for (const auto &[name, values] : checkpoint.tunables)
+            names += name + "\n";
+          writer.writeTextDataset(tunables, "names", names);
+          for (size_t k = 0; k != checkpoint.tunables.size(); ++k) {
+            const std::vector<double> &values = checkpoint.tunables[k].second;
+            writer.writeDataset(tunables,
+                                ("values" + std::to_string(k)).c_str(),
+                                H5T_NATIVE_DOUBLE, {values.size()},
+                                values.data());
+          }
+          writer.writeAttribute(tunables, "version", H5T_NATIVE_INT64,
+                                &checkpoint.tunablesVersion);
+          std::vector<int64_t> history;
+          for (const auto &[step, version] : checkpoint.tunablesHistory) {
+            history.push_back(step);
+            history.push_back(version);
+          }
+          writer.writeDataset(tunables, "history", H5T_NATIVE_INT64,
+                              {checkpoint.tunablesHistory.size(), 2},
+                              history.data());
+        }
+      }
     }
     failed = writer.hasFailed() || H5Fflush(file, H5F_SCOPE_GLOBAL) < 0;
   }
@@ -710,6 +789,40 @@ mdir::driver::readCheckpoint(const std::string &path) {
       checkpoint.fingerprint.push_back({group, name.str(), value.str()});
     }
   }
+  // The additional entries (D[python-checkpoints]), which are read only
+  // with their hash.
+  std::string extras;
+  if (reader.hasAttribute("/parameters/mdir", "extras_sha256")) {
+    reader.readText("/parameters/mdir", "extras_sha256", extras);
+    reader.readText("/parameters/mdir", "front_end", checkpoint.frontEnd);
+    reader.readText("/parameters/mdir", "model_sha256", checkpoint.modelHash);
+    reader.readText("/parameters/mdir", "plan_sha256", checkpoint.planHash);
+    if (reader.has("/parameters/mdir/tunables")) {
+      const char *group = "/parameters/mdir/tunables";
+      reader.readTextDataset("/parameters/mdir/tunables/declarations",
+                             checkpoint.tunableDeclarations);
+      std::string names;
+      reader.readTextDataset("/parameters/mdir/tunables/names", names);
+      llvm::SmallVector<llvm::StringRef, 8> lines;
+      llvm::StringRef(names).split(lines, '\n', -1, /*KeepEmpty=*/false);
+      for (size_t k = 0; k != lines.size() && !reader.hasFailed(); ++k) {
+        std::string path =
+            std::string(group) + "/values" + std::to_string(k);
+        std::vector<double> values;
+        size_t size = reader.getSize(path.c_str());
+        reader.readDataset(path.c_str(), H5T_NATIVE_DOUBLE, size, values);
+        checkpoint.tunables.emplace_back(lines[k].str(), std::move(values));
+      }
+      reader.readAttribute(group, "version", H5T_NATIVE_INT64,
+                           checkpoint.tunablesVersion);
+      std::vector<int64_t> history;
+      size_t size = reader.getSize("/parameters/mdir/tunables/history");
+      reader.readDataset("/parameters/mdir/tunables/history",
+                         H5T_NATIVE_INT64, size, history);
+      for (size_t k = 0; k + 1 < history.size(); k += 2)
+        checkpoint.tunablesHistory.push_back({history[k], history[k + 1]});
+    }
+  }
   reader.readText("/h5md/creator", "name", checkpoint.creator);
   reader.readText("/h5md/creator", "version", checkpoint.creatorVersion);
   std::string stored;
@@ -737,6 +850,13 @@ mdir::driver::readCheckpoint(const std::string &path) {
         llvm::inconvertibleErrorCode(),
         "the state in '%s' does not match the hash it was written with: the "
         "file was changed or damaged after it was written",
+        path.c_str());
+  if (!extras.empty() && hashExtras(checkpoint) != extras)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "the entries of the model, the plan, or the tunables in '%s' do not "
+        "match the hash they were written with: the file was changed or "
+        "damaged after it was written",
         path.c_str());
   return std::move(checkpoint);
 }

@@ -8,6 +8,8 @@
 #include "mdir/Compiler/Simulation.h"
 #include "mdir/Compiler/Compile.h"
 #include "mdir/Driver/Builder.h"
+#include "mdir/Driver/Checkpoint.h"
+#include "mdir/Driver/Fingerprint.h"
 #include "mdir/Driver/Output.h"
 #include "mlir/ExecutionEngine/CRunnerUtils.h"
 #include "JITEngine.h"
@@ -17,6 +19,8 @@
 #include "llvm/Support/DynamicLibrary.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
+#include "llvm/Support/SHA256.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Target/TargetMachine.h"
 #include <array>
@@ -958,8 +962,11 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
                              "is a defect of mdir");
     }
     // 2: the forces of the state given anew, after an update of the
-    // tunables (D213).
-    int64_t firstCall = hasRun ? (refreshing ? 2 : 0) : 1;
+    // tunables (D213), or at the start of a stage of other physics
+    // (D[python-checkpoints]).
+    int64_t firstCall = hasRun ? (refreshing || startRefresh ? 2 : 0) : 1;
+    if (startRefresh)
+      out.quietStep = step;
     if (llvm::Error error = startActivation(firstCall)) {
       out.fail = nullptr;
       return error;
@@ -1014,6 +1021,7 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
                            "; it keeps the state of step " + llvm::Twine(step));
   }
   takeSnapshot();
+  startRefresh = false;
   if (!x.empty()) {
     system.positions = std::move(x);
     system.velocities = std::move(v);
@@ -1302,12 +1310,40 @@ llvm::Error Simulation::setReports(const Reports &given) {
                           llvm::Twine(period));
   std::lock_guard<std::mutex> lock(getRunMutex());
   Output &out = *output;
+  // The files of a run that a checkpoint continues: the energy file keeps
+  // its rows up to the checkpoint and the trajectory that it counts the
+  // frames of is cut to them, and both are appended to, as `mdir run
+  // --continue` continues them (D129, D130, D149).
+  std::string energyFile = getReportPath(given.energyPath);
+  std::string trajectoryFile = getReportPath(given.trajectoryPath);
+  bool appendsEnergies = false, appendsFrames = false;
+  if (keepThrough && given.energyPath != reports.energyPath &&
+      !given.energyPath.empty())
+    appendsEnergies = llvm::sys::fs::exists(energyFile);
+  if (keepThrough && given.trajectoryPath != reports.trajectoryPath &&
+      !given.trajectoryPath.empty() && !continuedTrajectory.empty()) {
+    StringRef name = llvm::sys::path::filename(trajectoryFile);
+    if (name != continuedTrajectory)
+      return inputError("the checkpoint counts the frames of '" +
+                        continuedTrajectory + "', which is not the "
+                        "trajectory of the reporter, '" + name + "'; "
+                        "continue with append=False to write the frames "
+                        "that follow to a part of their own");
+    if (llvm::sys::fs::exists(trajectoryFile))
+      appendsFrames = true;
+    else if (continuedFrames > 0)
+      return inputError("'" + trajectoryFile + "' is missing, and the "
+                        "checkpoint counts " + llvm::Twine(continuedFrames) +
+                        " frames in it; continue with append=False to write "
+                        "the frames that follow to a part of their own");
+  }
   std::vector<std::string> opened;
-  if (given.energyPath != reports.energyPath && !given.energyPath.empty())
-    opened.push_back(given.energyPath);
+  if (given.energyPath != reports.energyPath && !given.energyPath.empty() &&
+      !appendsEnergies)
+    opened.push_back(energyFile);
   if (given.trajectoryPath != reports.trajectoryPath &&
-      !given.trajectoryPath.empty())
-    opened.push_back(given.trajectoryPath);
+      !given.trajectoryPath.empty() && !appendsFrames)
+    opened.push_back(trajectoryFile);
   // None is moved unless all can be, as `mdir run` backs up (D149).
   for (const std::string &file : opened)
     if (llvm::Error error = checkBackup(file))
@@ -1320,8 +1356,9 @@ llvm::Error Simulation::setReports(const Reports &given) {
   if (given.energyPath != reports.energyPath) {
     out.energies.close();
     if (!given.energyPath.empty())
-      if (llvm::Error error = out.energies.open(given.energyPath,
-                                                getEnergyColumns(out), {}))
+      if (llvm::Error error = out.energies.open(
+              energyFile, getEnergyColumns(out),
+              appendsEnergies ? keepThrough : std::nullopt))
         return inputError(llvm::toString(std::move(error)));
   }
   out.energyPeriod = given.energyPeriod;
@@ -1341,10 +1378,17 @@ llvm::Error Simulation::setReports(const Reports &given) {
       auto writer = createTrajectoryWriter(given.trajectoryFormat);
       writer->setPeriodic(prepared.control.periodic);
       int64_t firstFrame = (step / given.framePeriod + 1) * given.framePeriod;
-      if (llvm::Error error = writer->open(
-              given.trajectoryPath, system.getNumParticles(), firstFrame,
-              given.framePeriod, prepared.control.timestep, cell))
+      if (appendsFrames) {
+        auto removed = writer->append(trajectoryFile, system.getNumParticles(),
+                                      continuedFrames, given.framePeriod,
+                                      prepared.control.timestep, cell);
+        if (!removed)
+          return inputError(llvm::toString(removed.takeError()));
+      } else if (llvm::Error error = writer->open(
+                     trajectoryFile, system.getNumParticles(), firstFrame,
+                     given.framePeriod, prepared.control.timestep, cell)) {
         return inputError(llvm::toString(std::move(error)));
+      }
       writer->setTilt(tilts);
       out.trajectory = std::move(writer);
       out.hasTrajectory = true;
@@ -1441,7 +1485,9 @@ double Simulation::getTime() const {
   // A minimization has no time.
   if (prepared.control.minimize)
     return 0.0;
-  return static_cast<double>(step) * prepared.control.timestep;
+  // From the time of a checkpoint that the simulation continues
+  // (D[python-checkpoints]).
+  return output->getTime(step);
 }
 
 llvm::Expected<SimulationState> Simulation::getState() const {
@@ -1510,32 +1556,9 @@ llvm::Error Simulation::updateTunables(
       return inputError("this simulation has no tunable named '" + name + "'");
     values[k] = given;
   }
-  // The values of the program, built from the model with the new values by
-  // the code that compiled it: everything that depends on them, and the
-  // same program, or the change is structural.
-  Control control = compiled->control;
-  System system = compiledSystem;
-  if (llvm::Error error = model::applyTunables(set, values, control, system))
-    return error;
-  // The width of the neighbor structures is the compiled program's: counting
-  // the neighbors anew took 0.8 s of the 0.81 s of an update on JAC.
-  control.neighborWidth = compiled->program.neighborWidth;
-  auto program = buildProgram(control, system);
+  auto program = rebuildTunables(values);
   if (!program)
-    return inputError("the new values of the tunables: " +
-                      llvm::toString(program.takeError()));
-  if (program->module != compiled->program.module) {
-    StringRef was = compiled->program.module, now = program->module;
-    size_t at = 0;
-    while (at < was.size() && at < now.size() && was[at] == now[at])
-      ++at;
-    size_t begin = was.rfind('\n', at);
-    begin = begin == StringRef::npos ? 0 : begin + 1;
-    StringRef line = was.substr(begin).split('\n').first.trim();
-    return inputError("the new values of the tunables change the program, "
-                      "not only its values (at '" + line + "'): compile it "
-                      "with them (Tunable values=...)");
-  }
+    return program.takeError();
   // The program takes the new values from the state of the host, in an
   // activation of its own (D215).
   {
@@ -1565,6 +1588,38 @@ llvm::Error Simulation::updateTunables(
   tunablesHistory.push_back({step, tunablesVersion});
   output->tunablesVersion = tunablesVersion;
   return llvm::Error::success();
+}
+
+llvm::Expected<Program>
+Simulation::rebuildTunables(const std::vector<std::vector<double>> &values) {
+  const model::TunableSet &set = prepared.tunables;
+  // The values of the program, built from the model with the new values by
+  // the code that compiled it: everything that depends on them, and the
+  // same program, or the change is structural.
+  Control control = compiled->control;
+  System system = compiledSystem;
+  if (llvm::Error error = model::applyTunables(set, values, control, system))
+    return error;
+  // The width of the neighbor structures is the compiled program's: counting
+  // the neighbors anew took 0.8 s of the 0.81 s of an update on JAC.
+  control.neighborWidth = compiled->program.neighborWidth;
+  auto program = buildProgram(control, system);
+  if (!program)
+    return inputError("the new values of the tunables: " +
+                      llvm::toString(program.takeError()));
+  if (program->module != compiled->program.module) {
+    StringRef was = compiled->program.module, now = program->module;
+    size_t at = 0;
+    while (at < was.size() && at < now.size() && was[at] == now[at])
+      ++at;
+    size_t begin = was.rfind('\n', at);
+    begin = begin == StringRef::npos ? 0 : begin + 1;
+    StringRef line = was.substr(begin).split('\n').first.trim();
+    return inputError("the new values of the tunables change the program, "
+                      "not only its values (at '" + line + "'): compile it "
+                      "with them (Tunable values=...)");
+  }
+  return std::move(*program);
 }
 
 llvm::Error Simulation::evaluatePart() {
@@ -1614,4 +1669,307 @@ llvm::Error Simulation::evaluate() {
     return inputError("this simulation minimizes: minimize(0) evaluates "
                       "nothing; call minimize(steps)");
   return evaluatePart();
+}
+
+//===----------------------------------------------------------------------===//
+// Checkpoints (D[python-checkpoints], docs/python-checkpoints.md)
+//===----------------------------------------------------------------------===//
+
+namespace {
+const char *getIntegratorName(const Control &control) {
+  return control.minimize                             ? "MINIMIZATION"
+         : control.integrator == Integrator::Leapfrog ? "LEAPFROG"
+         : control.integrator == Integrator::Brownian ? "BROWNIAN"
+                                                      : "VELOCITY_VERLET";
+}
+
+const char *getPrecisionName(Precision precision) {
+  return precision == Precision::Single  ? "single"
+         : precision == Precision::Mixed ? "mixed"
+                                         : "double";
+}
+
+std::string hashText(StringRef text) {
+  return llvm::toHex(llvm::SHA256::hash(llvm::arrayRefFromStringRef(text)),
+                     /*LowerCase=*/true);
+}
+
+std::string describeChanges(const std::vector<FingerprintChange> &changes) {
+  std::string text;
+  for (const FingerprintChange &change : changes)
+    text += "\n  " + change.name + ": " + change.before + " -> " +
+            change.after;
+  return text;
+}
+} // namespace
+
+std::string Simulation::getReportPath(const std::string &path) const {
+  if (path.empty() || outputsPart <= 0)
+    return path;
+  return getPartPath(path, outputsPart);
+}
+
+llvm::Error Simulation::saveCheckpoint(const std::string &path,
+                                       const std::string &creatorVersion) {
+  if (!hasCheckpointSupport())
+    return unsupported("this build of MDIR has no HDF5, which checkpoints "
+                       "need");
+  if (path.empty())
+    return inputError("save_checkpoint takes the name of a file");
+  if (busy.exchange(true))
+    return simulationError("another operation is under way on this "
+                           "simulation");
+  struct Release {
+    std::atomic<bool> &flag;
+    ~Release() { flag = false; }
+  } release{busy};
+  if (failed)
+    return simulationError("the simulation failed earlier; it keeps the "
+                           "state of step " + llvm::Twine(step) +
+                           " and writes no checkpoint");
+  const Control &control = prepared.control;
+  // A step begins with forces: a simulation that has not run evaluates
+  // its start, as its first run would.
+  if (!hasRun && !control.minimize)
+    if (llvm::Error error = evaluatePart())
+      return error;
+  // The next part begins from the state written, as a simulation that
+  // continues the checkpoint begins (and as `mdir run` builds its
+  // structures anew at each checkpoint): with new neighbor structures, so
+  // that a simulation that goes on and one that continues the file take the
+  // same steps to the bit in the deterministic mode.
+  {
+    std::lock_guard<std::mutex> lock(getRunMutex());
+    downloadState();
+    endActivation();
+  }
+  Checkpoint checkpoint;
+  checkpoint.step = step;
+  checkpoint.time = getTime();
+  checkpoint.positions = system.positions;
+  checkpoint.velocities = system.velocities;
+  if (hasRun && forces.size() == system.positions.size())
+    checkpoint.forces = forces;
+  checkpoint.masses = system.masses;
+  checkpoint.species.assign(system.types.begin(), system.types.end());
+  for (int k = 0; k != 3; ++k) {
+    checkpoint.box[k] = output->box[k];
+    checkpoint.tilt[k] = system.tilt[k];
+  }
+  checkpoint.periodic = control.periodic;
+  checkpoint.integrator = getIntegratorName(control);
+  checkpoint.velocityOffset =
+      hasRun && control.integrator == Integrator::Leapfrog && !control.minimize
+          ? -0.5
+          : 0.0;
+  checkpoint.precision = getPrecisionName(control.precision);
+  checkpoint.timestep = control.timestep;
+  checkpoint.seed = control.seed;
+  checkpoint.firstStep = runFirstStep;
+  checkpoint.part = runPartNumber;
+  checkpoint.outputsPart = outputsPart;
+  if (output->hasTrajectory && output->trajectory) {
+    checkpoint.trajectory =
+        llvm::sys::path::filename(getReportPath(reports.trajectoryPath)).str();
+    checkpoint.frames = output->trajectory->getNumFrames();
+  }
+  checkpoint.bath = output->bath;
+  checkpoint.fingerprint = prepared.fingerprint;
+  checkpoint.creatorVersion = creatorVersion;
+  // The additional entries: the front end, the hashes of the model and of
+  // the plan, and the tunables.
+  checkpoint.frontEnd = "python";
+  std::string model;
+  for (const FingerprintEntry &entry : prepared.fingerprint)
+    if (entry.group != "execution")
+      model += entry.group + "\t" + entry.name + "\t" + entry.value + "\n";
+  model += model::describeTunables(prepared.tunables);
+  checkpoint.modelHash = hashText(model);
+  const Program &program = compiled->program;
+  std::string plan =
+      std::string("target=") +
+      (control.target == Target::GPU ? "gpu" : "cpu") +
+      "\nprecision=" + getPrecisionName(control.precision) +
+      "\ndeterministic=" + (control.deterministic ? "true" : "false") +
+      "\nreorders=" + (program.reorders ? "true" : "false") +
+      "\nentry=" + program.entry + "\nstate=" +
+      (program.state == Element::F64 ? "float64" : "float32") +
+      "\nforce=" + (program.force == Element::F64 ? "float64" : "float32") +
+      "\npme=" + (program.pme ? "true" : "false") + "\npme_grid=" +
+      std::to_string(program.pmeGrid[0]) + "," +
+      std::to_string(program.pmeGrid[1]) + "," +
+      std::to_string(program.pmeGrid[2]) + "\n" + program.module;
+  checkpoint.planHash = hashText(plan);
+  if (!prepared.tunables.empty()) {
+    checkpoint.tunableDeclarations = model::describeTunables(prepared.tunables);
+    for (size_t k = 0; k != prepared.tunables.tunables.size(); ++k)
+      checkpoint.tunables.emplace_back(prepared.tunables.tunables[k].name,
+                                       tunableValues[k]);
+    checkpoint.tunablesVersion = tunablesVersion;
+    checkpoint.tunablesHistory = tunablesHistory;
+  }
+  if (llvm::Error error = writeCheckpoint(path, checkpoint))
+    return simulationError(llvm::toString(std::move(error)));
+  return llvm::Error::success();
+}
+
+llvm::Expected<std::vector<std::string>>
+Simulation::continueFrom(const Checkpoint &checkpoint, bool stage,
+                         bool append) {
+  if (busy.exchange(true))
+    return simulationError("another operation is under way on this "
+                           "simulation");
+  struct Release {
+    std::atomic<bool> &flag;
+    ~Release() { flag = false; }
+  } release{busy};
+  if (hasRun || step != 0 || activation)
+    return inputError("a simulation takes a checkpoint before its first run");
+  const Control &control = prepared.control;
+  std::vector<std::string> notes;
+  size_t count = system.getNumParticles();
+  if (checkpoint.getNumParticles() != count)
+    return inputError("the checkpoint holds " +
+                      llvm::Twine(checkpoint.getNumParticles()) +
+                      " particles, and the program " + llvm::Twine(count));
+  for (size_t i = 0; i != count; ++i)
+    if (checkpoint.species[i] != static_cast<int32_t>(system.types[i]))
+      return inputError("particle " + llvm::Twine(i + 1) +
+                        " has another type in the checkpoint than in the "
+                        "program");
+  auto takeCell = [&] {
+    for (int k = 0; k != 3; ++k) {
+      system.box[k] = output->box[k] = checkpoint.box[k];
+      system.tilt[k] = checkpoint.tilt[k];
+    }
+    output->volume = output->box[0] * output->box[1] * output->box[2];
+  };
+  // A minimization takes the positions and the cell of any checkpoint, and
+  // a run of dynamics those of a minimization, and begins anew (as
+  // `mdir run` does).
+  if (control.minimize || checkpoint.integrator == "MINIMIZATION") {
+    system.positions = checkpoint.positions;
+    takeCell();
+    notes.push_back("the simulation begins at the positions and the cell of "
+                    "the checkpoint, at step 0");
+    return notes;
+  }
+  std::string integrator = getIntegratorName(control);
+  if (checkpoint.integrator != integrator)
+    return inputError("the checkpoint was written with the integrator " +
+                      checkpoint.integrator + ", and the program uses " +
+                      integrator + "; the velocities of the two are not of "
+                      "the same time");
+
+  // What defined the run (D172): the same run continues only with the same
+  // physics and coupling; a stage takes the forces only then.
+  const Fingerprint &current = prepared.fingerprint;
+  std::vector<FingerprintChange> changes =
+      compareFingerprints(checkpoint.fingerprint, current, "physics");
+  std::vector<FingerprintChange> coupling =
+      compareFingerprints(checkpoint.fingerprint, current, "coupling");
+  changes.insert(changes.end(), coupling.begin(), coupling.end());
+  std::vector<FingerprintChange> execution =
+      compareFingerprints(checkpoint.fingerprint, current, "execution");
+  std::string declarations = model::describeTunables(prepared.tunables);
+  bool sameTunables = checkpoint.tunableDeclarations == declarations;
+  if (!stage) {
+    if (!changes.empty())
+      return inputError(
+          "the checkpoint was written by a run of other physics or coupling, "
+          "which a continuation of the same run does not change; begin a "
+          "new stage from it (stage=True) instead. What differs (checkpoint "
+          "-> program):" + describeChanges(changes));
+    if (!sameTunables)
+      return inputError("the checkpoint declares other tunable parameters "
+                        "than the program; begin a new stage from it "
+                        "(stage=True) instead");
+    if (checkpoint.forces.empty())
+      return inputError("the checkpoint holds no forces, which a step "
+                        "begins with");
+  }
+  if (!execution.empty())
+    notes.push_back("the run continues with other settings of its "
+                    "execution, whose bits follow them (checkpoint -> "
+                    "program):" + describeChanges(execution));
+  bool takesForces = changes.empty() && !checkpoint.forces.empty();
+  if (stage && !takesForces) {
+    // The forces are evaluated at the first step without the half kick back
+    // of leapfrog, whose velocities the checkpoint holds half a step behind.
+    if (changes.empty())
+      notes.push_back("the checkpoint holds no forces; the simulation "
+                      "evaluates them at its first step");
+    else
+      notes.push_back("the checkpoint was written by a run of other physics "
+                      "or coupling; the simulation evaluates the forces at "
+                      "its first step (checkpoint -> program):" +
+                      describeChanges(changes));
+  }
+
+  // The values of the tunables of the checkpoint, where it declares the
+  // same; a continuation takes their version and history as well.
+  if (!prepared.tunables.empty() && sameTunables &&
+      !checkpoint.tunables.empty()) {
+    std::vector<std::vector<double>> values = tunableValues;
+    for (const auto &[name, given] : checkpoint.tunables) {
+      int k = prepared.tunables.find(name);
+      if (k < 0)
+        return inputError("the checkpoint has values of the tunable '" +
+                          name + "', which the program does not declare");
+      values[k] = given;
+    }
+    if (llvm::Error error =
+            model::checkTunableValues(prepared.tunables, values))
+      return std::move(error);
+    if (values != tunableValues) {
+      auto program = rebuildTunables(values);
+      if (!program)
+        return program.takeError();
+      std::swap(compiled->program, *program);
+      tunableValues = std::move(values);
+    }
+    if (!stage) {
+      tunablesVersion = checkpoint.tunablesVersion;
+      tunablesHistory = checkpoint.tunablesHistory;
+    } else {
+      tunablesHistory = {{checkpoint.step, 0}};
+    }
+    output->tunablesVersion = tunablesVersion;
+  }
+
+  system.positions = checkpoint.positions;
+  system.velocities = checkpoint.velocities;
+  takeCell();
+  if (takesForces)
+    forces = checkpoint.forces;
+  else
+    forces.assign(3 * count, 0.0);
+  startRefresh = !takesForces;
+  hasRun = true;
+  hostCurrent = true;
+  step = checkpoint.step;
+  // The time continues from that of the checkpoint, whose run may have
+  // had another time step.
+  output->firstStep = 0;
+  output->firstTime =
+      checkpoint.time - static_cast<double>(checkpoint.step) * control.timestep;
+  if (!stage) {
+    // The same run: its bath, the step it began at, its part, and its
+    // files (D129, D130, D149).
+    output->bath = checkpoint.bath;
+    runFirstStep = checkpoint.firstStep;
+    runPartNumber = checkpoint.part + 1;
+    outputsPart = append ? checkpoint.outputsPart : runPartNumber;
+    if (append) {
+      keepThrough = checkpoint.step;
+      continuedTrajectory = checkpoint.trajectory;
+      continuedFrames = checkpoint.frames;
+    }
+  } else {
+    output->bath = 0.0;
+    runFirstStep = checkpoint.step;
+    runPartNumber = 1;
+    outputsPart = 0;
+  }
+  return notes;
 }

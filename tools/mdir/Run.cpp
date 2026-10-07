@@ -189,15 +189,6 @@ static void requestStop(int signal) {
   (void)written;
 }
 
-/// The name of the part `part` of the trajectory `path`:
-/// `run.dcd` becomes `run.part0002.dcd` (D130).
-static std::string getPartPath(StringRef path, int64_t part) {
-  StringRef extension = llvm::sys::path::extension(path);
-  return (path.drop_back(extension.size()) +
-          llvm::formatv(".part{0:D4}", part) + extension)
-      .str();
-}
-
 /// Observe the resolved structure kinds immediately before lowering (D168).
 /// A requested GROUPS structure may stay a matrix if its loops require one.
 class ManifestNeighbors : public mlir::PassInstrumentation {
