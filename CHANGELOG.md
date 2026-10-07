@@ -12,6 +12,11 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- `Execution.neighbor_capacity` in Python, the `[execution]
+  neighbor_capacity` of the control file (D[cell-runtime-constants],
+  #162): 0, the default, estimates it, and
+  `Program.plan["neighbor_capacity"]` is the capacity that a compile took.
+
 - Checkpoints of Python simulations (D223, #132):
   `Simulation.save_checkpoint(path)` and `CheckpointReporter(file,
   period)` write the H5MD checkpoint of `mdir run` (format 1, with `.prev`
@@ -156,6 +161,11 @@ format, or the outputs; every such change is listed under **Changed** or
   starts from another equilibrated cell, such as the production stage of
   the ala3 example, therefore hits the compile cache when its PME grid and
   neighbor capacity are the same. Results are unchanged to the bit.
+- The estimate of the neighbor capacity (`[execution] neighbor_capacity`
+  absent) is rounded up to four significant bits instead of a multiple
+  of 8, at most 12.5% more room at first, so that it is the same for the
+  starts of continued stages (D[cell-runtime-constants]). The capacity
+  does not change the results; the Amber suite runs at the same rate.
 - Setting `System.dispersion` in Python makes the correction for the
   dispersion explicit, as giving `dispersion_correction` in the control
   file (D222, #161): with a switch it is refused, and a

@@ -496,7 +496,10 @@ are arguments of the entry rather than
 constants of the text (D[cell-runtime-constants]). A stage that continues
 from an equilibrated cell then reuses the program of another such stage;
 only the grid of PME and the neighbor capacity, which shape loops and
-buffers, stay in the key. From Python, a compile
+buffers, stay in the key. The capacity is estimated from the most
+neighbors of a particle at the start and rounded up to four significant
+bits, so that it too is the same for such stages; it only sets the room
+at first and does not change the results. From Python, a compile
 can bypass the cache, and the cache can be cleared while other processes
 use it (D217): entries are written whole by a rename
 and read by a copy, so a clear can cause a miss but never a partial entry.

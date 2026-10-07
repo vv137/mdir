@@ -216,7 +216,7 @@ memory.
 | Parameter | Option | Default |
 |---|---|---|
 | The skin | `skin` of `convert-md-to-md-exec`; in a control file `pairlist_distance − cutoff` | |
-| The width of a row of the matrix | `width` of `convert-md-to-md-exec`; in a control file `neighbor_capacity` | Half as many again as a uniform density gives |
+| The width of a row of the matrix | `width` of `convert-md-to-md-exec`; in a control file `neighbor_capacity`, in Python `Execution.neighbor_capacity` | Half as many again as a uniform density gives; the driver estimates it from the start: half as many again as the most neighbors of a particle, plus 16, rounded up to four significant bits (D[cell-runtime-constants]) |
 | The least width of the cells | `cells` of `convert-md-to-md-exec` | A third of the reach |
 
 ## 3. The test of validity

@@ -249,8 +249,10 @@ programs on disk, keyed by their content; D217 (#163)
 clears it and bypasses it per compile from Python;
 D[cell-runtime-constants] (#162,
 [values of the start](compile-cache.md#values-of-the-start-dcell-runtime-constants))
-makes the values that depend on the starting cell arguments of the entry,
-so a stage from an equilibrated cell hits the cache. D213 (#130,
+makes the values that depend on the starting cell arguments of the entry
+and rounds the estimate of the neighbor capacity more coarsely
+(`Execution.neighbor_capacity` gives it), so a stage from an equilibrated
+cell hits the cache. D213 (#130,
 [tunable parameters](python-tunable.md)) declares charges, per-type σ and
 ε, constants of pair terms, and parameters of tuple terms tunable, whose
 values a simulation takes without compiling; the quantities derived from
