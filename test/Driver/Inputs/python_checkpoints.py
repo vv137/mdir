@@ -30,7 +30,7 @@ KCAL_A2 = 4.184 / (0.1 * 0.1)  # kJ/mol/nm^2 per kcal/mol/A^2
 
 def control(path, kind="NVT", steps=20, interval=10, pme=False, constraints=False,
             restraint=None, temperature=300.0, method="VELOCITY_VERLET", start=None,
-            trajectory=True):
+            trajectory=True, run_precision=None):
     """A control file that writes what the Python model of `model` gives."""
     name = path.stem
     thermostat = '[thermostat]\nmethod = "V-RESCALE"\ninterval = 10' if kind != "NVE" else ""
@@ -73,7 +73,7 @@ temperature = {temperature}
 type = "PERIODIC"
 [execution]
 target = "{target_name}"
-precision = "{precision.upper()}"
+precision = "{(run_precision or precision).upper()}"
 deterministic = true
 {tables}""")
     return path
@@ -135,29 +135,37 @@ def expect(error, call, *texts):
     raise AssertionError(f"expected {error.__name__}")
 
 
-def tolerance(field, reference, bitwise):
-    """0 where the deterministic mode orders both front ends alike; else the
-    budget of python-segments.md in double (c eps max|q|, c = 2 x 20 for
-    positions and 4 (N - 1) for velocities and forces), and in mixed 1e-5
-    relative to the largest value, which bounds the measured difference of
-    a GPU run in mixed precision from one in double over 20 steps (#105)."""
+def tolerance(field, reference, bitwise, error):
+    """0 where the deterministic mode orders both front ends alike; else, in
+    double, the budget of python-segments.md (c eps max|q|, c = 2 x 20 for
+    positions and 4 (N - 1) for velocities and forces), and in mixed 3 E,
+    with E the difference of the same run of `mdir run` in mixed and in
+    double (as python_velocities_restraints.py budgets it)."""
     if bitwise:
         return 0.0
-    scale = np.abs(reference).max()
     if precision == "Double":
+        scale = np.abs(reference).max()
         c = 40 if field == "positions" else 4 * (reference.shape[0] - 1)
         return c * EPS * scale
-    return 1e-5 * scale
+    return 3 * error[field]
 
 
-def compare(label, state, reference, bitwise):
+def precision_error(mixed, double):
+    """E of `tolerance`: the largest difference of each field of two
+    checkpoints of `mdir run`, in mixed and in double precision."""
+    return {field: np.abs(getattr(mixed, field) - getattr(double, field)).max()
+            for field in FIELDS}
+
+
+def compare(label, state, reference, bitwise, error=None):
     line = [label]
     for field in FIELDS:
         mine, theirs = getattr(state, field), getattr(reference, field)
         difference = np.abs(mine - theirs).max()
-        allowed = tolerance(field, theirs, bitwise)
+        allowed = tolerance(field, theirs, bitwise, error)
         assert difference <= allowed, (label, field, difference, allowed)
-        line.append(f"{field} {difference:.3e}")
+        line.append(f"{field} {difference:.3e}" +
+                    (f" (tolerance {allowed:.3e})" if allowed else ""))
     print("; ".join(line))
 
 
@@ -243,11 +251,19 @@ def python_to_cli(kind, pme=False, constraints=False, files=True):
     assert state.step == 20 and state.part == 2
     compare(f"Python -> mdir run {kind} {target_name} {precision}, against Python", state,
             python.state(), True)
+    error = None
+    if precision == "Mixed":
+        double = work / f"double-{kind}"
+        uninterrupted(double, kind=kind, pme=pme, constraints=constraints,
+                      run_precision="Double")
+        error = precision_error(reference, mdir.read_checkpoint(str(double / "run.h5")))
     compare(f"Python -> mdir run {kind} {target_name} {precision}, against mdir run", state,
-            reference, False)
+            reference, False, error)
     rows = (part / "run.dat").read_text().splitlines()
     assert [int(r.split()[0]) for r in rows[2:]] == [0, 10, 20], rows
-    if files:
+    # The printed digits and the float32 frames hide the differences of
+    # the first 10 steps in double precision, not in mixed.
+    if files and precision == "Double":
         assert (part / "run.dat").read_bytes() == (whole / "run.dat").read_bytes()
         assert (part / "run.dcd").read_bytes() == (whole / "run.dcd").read_bytes()
         print("the energy file and the trajectory equal those of mdir run byte for byte")
@@ -396,22 +412,33 @@ def stages():
 
     # Stages of other physics against `mdir run` from `[input] checkpoint`:
     # restraints, another temperature, and the barostat.
-    for name, settings in (("restrained", dict(restraint=restraint)),
-                           ("warmer", dict(temperature=310.0)),
-                           ("npt", dict(kind="NPT"))):
-        stage_dir = directory / name
+    if precision == "Mixed":
+        uninterrupted(directory / "double", kind="NVT", run_precision="Double")
+
+    def cli_stage(stage_dir, start, **settings):
         stage_dir.mkdir()
         path = control(stage_dir / "run.toml", steps=10, start=str(start), **settings)
         log = run_cli(path)
         assert "other physics or coupling" in log, log
-        reference = mdir.read_checkpoint(str(stage_dir / "run.h5"))
+        return mdir.read_checkpoint(str(stage_dir / "run.h5"))
+
+    for name, settings in (("restrained", dict(restraint=restraint)),
+                           ("warmer", dict(temperature=310.0)),
+                           ("npt", dict(kind="NPT"))):
+        stage_dir = directory / name
+        reference = cli_stage(stage_dir, start, **settings)
+        error = None
+        if precision == "Mixed":
+            error = precision_error(reference, cli_stage(
+                directory / f"{name}-double", directory / "double" / "run.h5.prev",
+                run_precision="Double", **settings))
         simulation, notes = continued(model(**settings), start, stage=True)
         assert len(notes) == 1 and "evaluates the forces" in notes[0], notes
         simulation.run(10)
         # Not to the bit: the evaluation at the start of a stage builds its
         # neighbor structures at another step than `mdir run` does (#121).
         compare(f"a stage {name} against mdir run {target_name} {precision}",
-                simulation.state(), reference, False)
+                simulation.state(), reference, False, error)
         saved = stage_dir / "python.h5"
         simulation.save_checkpoint(str(saved))
         mine = mdir.read_checkpoint(str(saved))
@@ -423,17 +450,20 @@ def stages():
     # back), as `mdir run` does.
     leap = work / "leapfrog"
     uninterrupted(leap, method="LEAPFROG")
-    leap_stage = leap / "warmer"
-    leap_stage.mkdir()
-    path = control(leap_stage / "run.toml", steps=10, start=str(leap / "run.h5.prev"),
-                   temperature=310.0, method="LEAPFROG")
-    run_cli(path)
+    reference = cli_stage(leap / "warmer", leap / "run.h5.prev", temperature=310.0,
+                          method="LEAPFROG")
+    error = None
+    if precision == "Mixed":
+        uninterrupted(leap / "double", method="LEAPFROG", run_precision="Double")
+        error = precision_error(reference, cli_stage(
+            leap / "warmer-double", leap / "double" / "run.h5.prev", temperature=310.0,
+            method="LEAPFROG", run_precision="Double"))
     simulation, notes = continued(model(method="Leapfrog", temperature=310.0),
                                   leap / "run.h5.prev", stage=True)
     assert len(notes) == 1, notes
     simulation.run(10)
     compare(f"a leapfrog stage against mdir run {target_name} {precision}", simulation.state(),
-            mdir.read_checkpoint(str(leap_stage / "run.h5")), False)
+            reference, False, error)
     print("stages: refusals name the entries; stages equal mdir run from [input] checkpoint")
 
 
@@ -487,7 +517,7 @@ def corrupted():
 
 SCENARIOS = {
     "cli-to-python": lambda: (cli_to_python("NVE"), cli_to_python("NVT"),
-                              cli_to_python("NPT", pme=True, constraints=True, bitwise=False)),
+                              cli_to_python("NPT", pme=True, constraints=True)),
     "python-to-cli": lambda: (python_to_cli("NVE"), python_to_cli("NVT"),
                               python_to_cli("NPT", pme=True, constraints=True, files=False)),
     "python-to-python": python_to_python,
