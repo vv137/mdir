@@ -308,6 +308,29 @@ the forces at the start agree to the bit, and after one step the positions
 agree, the forces differ by 5e-13 kJ/mol/nm, and the velocities by 2e-16
 nm/ps.
 
+## A new stage from a reached state
+
+`InitialState.from_state(state, velocities=True)` makes a new initial state
+from the `State` that a simulation reached. It copies the positions, the
+cell, and the velocities. With `velocities=False`, or for a state without
+velocities, it leaves the velocities out, so that `draw_velocities` can
+follow, as after a minimization:
+
+```python
+start = mdir.InitialState.from_state(state)            # the next stage
+start = mdir.InitialState.from_state(minimized, velocities=False).draw_velocities(
+    system, 300.0, seed)
+```
+
+A program compiled from it is a new stage: its baths, its step count, and
+its random streams start anew, and the first step evaluates the forces. A
+continuation that keeps those is a checkpoint's (#132). The velocities of a
+leapfrog state are half a step behind its positions (`velocity_offset =
+-0.5`), and an initial state takes velocities at the time of its
+positions. `from_state` therefore refuses them and asks for
+`velocities=False`. A stage from the state is bit for bit one from the same
+state built field by field (`python-initial-state.test`).
+
 ## Not in this item
 
 Drawing velocities at a temperature and positional restraints, which the
