@@ -39,7 +39,10 @@ llvm::Expected<std::string> getGpuOptions(const driver::Control &,
 struct CompiledProgram {
   driver::Program program;
   model::Execution execution;
+  /// `loweredIR` is empty in the result of plan.
   std::string pipeline, loweredIR;
+  /// The options of the serialization of the GPU modules (getGpuOptions).
+  std::string gpuOptions;
 };
 /// Owns all returned data; initializes no runtime and creates no files.
 /// Lower already-built IR; used by compiler integration and diagnostic tests.
@@ -50,6 +53,18 @@ llvm::Expected<CompiledProgram> lower(const driver::Control &, driver::Program,
                                       bool cache = true);
 llvm::Expected<CompiledProgram> compile(const model::PreparedModel &,
                                         bool cache = true);
+/// Builds `prepared` and sets up its pipeline without running it, so that
+/// `loweredIR` stays empty (D[compile-once]): what `mdir.compile` does, for
+/// a simulation lowers programs of its own. The errors of the build, of a
+/// GPU program in a build without CUDA, and of the GPU options are those of
+/// compile. Without `cache`, the lowering of the result reads and writes no
+/// entry of the compile cache (D[compile-cache-controls]).
+llvm::Expected<CompiledProgram> plan(const model::PreparedModel &,
+                                     bool cache = true);
+/// The text of the lowering of `compiled`, a result of plan, in a context of
+/// its own. Errors are CompileError with diagnostics.
+llvm::Expected<std::string> lowerToText(const driver::Control &,
+                                        const CompiledProgram &compiled);
 /// The dialects, extensions and translations of a lowering; registers the
 /// passes once per process.
 mlir::DialectRegistry getRegistry();

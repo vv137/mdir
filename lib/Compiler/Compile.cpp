@@ -218,33 +218,62 @@ compiler::lowerModule(mlir::MLIRContext &context, const driver::Control &control
     *stats += gpu;
   return std::move(module);
 }
-llvm::Expected<compiler::CompiledProgram>
-compiler::lower(const driver::Control &control, driver::Program program,
-                const model::Execution &execution, bool cache) {
+/// `program` with its pipeline, not lowered.
+static llvm::Expected<compiler::CompiledProgram>
+planProgram(const driver::Control &control, driver::Program program,
+            const model::Execution &execution, bool cache) {
 #if !MDIR_HAS_CUDA
   if (execution.target == Target::GPU)
     return llvm::make_error<model::ModelError>(model::ModelError::Unsupported,
                                               "GPU compilation requires a CUDA-enabled build");
 #endif
-  mlir::MLIRContext context(getRegistry(),
-                            mlir::MLIRContext::Threading::DISABLED);
-  shareThreadPool(context);
   // The toolkit of the simulation's lowering, so that both find the same
   // libdevice and ptxas.
   if (control.target == Target::GPU)
-    useCudaToolkit();
-  auto gpu = getGpuOptions(control, execution.device, cache);
+    compiler::useCudaToolkit();
+  auto gpu = compiler::getGpuOptions(control, execution.device, cache);
   if (!gpu)
     return gpu.takeError();
-  auto module = lowerModule(context, control, program, nullptr, *gpu);
+  std::string pipeline = compiler::getPipeline(control, program, *gpu);
+  return compiler::CompiledProgram{std::move(program), execution,
+                                   std::move(pipeline), {}, std::move(*gpu)};
+}
+llvm::Expected<compiler::CompiledProgram>
+compiler::plan(const model::PreparedModel &prepared, bool cache) {
+  auto program = prepared.build();
+  if (!program)
+    return program.takeError();
+  return planProgram(prepared.control, std::move(*program),
+                     prepared.execution, cache);
+}
+llvm::Expected<std::string>
+compiler::lowerToText(const driver::Control &control,
+                      const CompiledProgram &compiled) {
+  mlir::MLIRContext context(getRegistry(),
+                            mlir::MLIRContext::Threading::DISABLED);
+  shareThreadPool(context);
+  if (control.target == Target::GPU)
+    useCudaToolkit();
+  auto module = lowerModule(context, control, compiled.program, nullptr,
+                            compiled.gpuOptions);
   if (!module)
     return module.takeError();
   std::string lowered;
   llvm::raw_string_ostream os(lowered);
   (*module)->print(os);
-  std::string pipeline = getPipeline(control, program, *gpu);
-  return CompiledProgram{std::move(program), execution,
-                         std::move(pipeline), std::move(lowered)};
+  return lowered;
+}
+llvm::Expected<compiler::CompiledProgram>
+compiler::lower(const driver::Control &control, driver::Program program,
+                const model::Execution &execution, bool cache) {
+  auto planned = planProgram(control, std::move(program), execution, cache);
+  if (!planned)
+    return planned.takeError();
+  auto lowered = lowerToText(control, *planned);
+  if (!lowered)
+    return lowered.takeError();
+  planned->loweredIR = std::move(*lowered);
+  return planned;
 }
 
 // MLIR's ExecutionEngine compiles with the machine it is given, or with one

@@ -5,6 +5,7 @@
 #include <pybind11/stl.h>
 #include <memory>
 #include <cstdlib>
+#include <mutex>
 #include <stdexcept>
 #include <optional>
 #include <set>
@@ -74,7 +75,15 @@ template <class T> static auto input(py::module_ &m, const char *name) {
   return py::class_<Input<T>, std::shared_ptr<Input<T>>>(m, name).def(py::init<>());
 }
 struct Program {
+  /// The built program and its pipeline; not lowered (D[compile-once]).
   compiler::CompiledProgram compiled;
+  /// The lowered text, made on the first read of `lowered_ir`, under the
+  /// mutex, by the thread that reads it first.
+  struct Lowering {
+    std::mutex mutex;
+    std::optional<std::string> text;
+  };
+  std::shared_ptr<Lowering> lowering = std::make_shared<Lowering>();
   /// What a simulation compiles its programs from (D196).
   std::shared_ptr<const model::PreparedModel> prepared;
   /// Whether its compilations use the compile cache, the default of its
@@ -441,7 +450,24 @@ PYBIND11_MODULE(mdir, m) {
   }, py::arg("structure"), py::arg("coordinates"), py::arg("parameters"), py::arg("cell") = driver::Cell{});
   py::class_<Program, std::shared_ptr<Program>>(m, "Program")
     .def_property_readonly("ir", [](const Program &p) { return p.compiled.program.module; })
-    .def_property_readonly("lowered_ir", [](const Program &p) { return p.compiled.loweredIR; })
+    .def_property_readonly("lowered_ir", [](const Program &p) {
+      // Lowered when first asked for, with the GIL released: a simulation
+      // lowers programs of its own (D[compile-once]).
+      std::optional<llvm::Error> failed;
+      {
+        py::gil_scoped_release release;
+        std::lock_guard<std::mutex> lock(p.lowering->mutex);
+        if (!p.lowering->text) {
+          auto lowered = compiler::lowerToText(p.prepared->control, p.compiled);
+          if (lowered)
+            p.lowering->text = std::move(*lowered);
+          else
+            failed.emplace(lowered.takeError());
+        }
+      }
+      if (failed) raise(std::move(*failed));
+      return *p.lowering->text;
+    })
     .def_property_readonly("pipeline", [](const Program &p) { return p.compiled.pipeline; })
     .def_property_readonly("stale", &Program::stale)
     // The topology as compiled, with its constraints resolved.
@@ -486,8 +512,8 @@ PYBIND11_MODULE(mdir, m) {
                         bool cache) {
     if (!system || !state || !integrator || !ensemble || !execution || !schedule)
       throw InputError("compile inputs must not be None");
-    // Keep the GIL while copying and lowering: concurrent mutation cannot race
-    // version capture. GIL release belongs to persistent execution.
+    // Keep the GIL while copying and building: concurrent mutation cannot
+    // race version capture. GIL release belongs to persistent execution.
     auto prepared = unwrap(model::prepare(system->value, state->value, integrator->value,
                                           ensemble->value, execution->value, schedule->value));
     // A restraint that selects nothing restrains nothing: the control file
@@ -505,7 +531,9 @@ PYBIND11_MODULE(mdir, m) {
                              execution->given},
         prepared);
     Program result;
-    result.compiled = unwrap(compiler::compile(prepared, cache));
+    // Built, not lowered: a simulation lowers programs of its own, and
+    // `lowered_ir` lowers on its first read (D[compile-once], #151).
+    result.compiled = unwrap(compiler::plan(prepared, cache));
     result.cache = cache;
     result.prepared = std::make_shared<const model::PreparedModel>(std::move(prepared));
     result.track(system); result.track(state); result.track(integrator);
