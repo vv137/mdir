@@ -373,7 +373,7 @@ GROMACS virial; the formats `.top`, `.itp`, and `.gro`; the update groups of
 the domain decomposition of GROMACS (Section "Domain decomposition"),
 which the disjoint union of the groups of the constraints parallels (D83);
 `emtol`, the tolerance of its minimizers on the largest force, which
-`[minimize] force_tolerance` parallels (D[minimize-tolerance]).
+`[minimize] force_tolerance` parallels (D219).
 
 ### Hairer2003
 
@@ -853,7 +853,7 @@ York, 2006).
 
 Used for: the first-order condition of a minimum under equality
 constraints, on which the force tolerance of a minimization rests
-(D[minimize-tolerance]).
+(D219).
 
 ### Onufriev2004
 

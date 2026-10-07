@@ -1,6 +1,6 @@
 # REQUIRES: python-api, hdf5, cuda
 # A force tolerance for the minimizer on a GPU in double precision
-# (D[minimize-tolerance]), Inputs/python_minimize_tolerance.py: `[minimize]
+# (D219), Inputs/python_minimize_tolerance.py: `[minimize]
 # force_tolerance` of `mdir run` against a NumPy reference of the criterion
 # on its rows, a run without the key of as many steps, and
 # `Simulation.minimize(tolerance=...)` stopping at the same step.

@@ -1494,7 +1494,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                    output.firstTotal / units::energy,
                    output.lastTotal / units::energy);
     // Whether the largest force fell below the tolerance
-    // (D[minimize-tolerance]), at a row of the energies.
+    // (D219), at a row of the energies.
     if (control->minimizeTolerance > 0.0) {
       double largest = output.lastMinimization.maxForce /
                        (units::energy / units::length);

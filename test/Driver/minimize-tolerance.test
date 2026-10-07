@@ -1,4 +1,4 @@
-# `[minimize] force_tolerance` (D[minimize-tolerance]): the minimization of
+# `[minimize] force_tolerance` (D219): the minimization of
 # the dipeptide in water stops at the first row of the log whose largest
 # force is below 15 kcal/mol/Å, step 100 (60.9 at step 90), and takes no
 # step after it; with 1 kcal/mol/Å it takes its 20 steps and says that it

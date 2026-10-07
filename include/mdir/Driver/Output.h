@@ -246,7 +246,7 @@ struct Output {
   bool minimizes = false;
   /// The largest force at which a minimization ends, in kJ/mol/nm (0:
   /// none), and the step of the first row whose largest force is below it
-  /// (-1: none yet) (D[minimize-tolerance]).
+  /// (-1: none yet) (D219).
   double minimizeTolerance = 0.0;
   int64_t convergedStep = -1;
   /// The shortest edge of the cell that the cutoff allows, twice it; a run
@@ -391,7 +391,7 @@ void _mlir_ciface_mdrtWritePull(int64_t step, void *coordinates,
 void _mlir_ciface_mdrtWriteMinimization(int64_t step, double energy,
                                         double size, void *forces,
                                         void *ids);
-/// Whether the minimization has converged (D[minimize-tolerance]): sets
+/// Whether the minimization has converged (D219): sets
 /// `state[0]` to 1 and `state[1]` to the step of the last row if the
 /// largest force of that row is below the tolerance. `state` is a buffer of
 /// two i64 on the host.

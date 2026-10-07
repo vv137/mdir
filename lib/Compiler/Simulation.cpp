@@ -520,7 +520,7 @@ Simulation::create(const model::PreparedModel &prepared, bool cache) {
   simulation->minimizationSteps = control.numSteps;
   simulation->minimizationSize = control.minimizeStep * units::length;
   // A tolerance is checked every energy period of the program, at the
-  // steps where `mdir run` writes its rows (D[minimize-tolerance]).
+  // steps where `mdir run` writes its rows (D219).
   simulation->minimizationCheckPeriod = control.energyPeriod;
   control.segments = true;
   control.energyPeriod = 0;
@@ -1218,7 +1218,7 @@ llvm::Expected<int64_t> Simulation::minimize(std::optional<int64_t> count,
     return inputError("a tolerance is checked every energy period of the "
                       "program, whose Schedule.energy_period is 0");
   stopRequested = false;
-  // With a tolerance (D[minimize-tolerance]), the row at the
+  // With a tolerance (D219), the row at the
   // end of each part is compared with it, as the host of `mdir run` compares
   // each row of its log, and the parts end at the steps of those rows.
   // An activation begins with a row at its first step, which a part of no

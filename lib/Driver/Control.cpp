@@ -2386,7 +2386,7 @@ Error Reader::readMinimize(const toml::table &table) {
     return error;
   if (Error error = readPositive(table, "initial_step", control.minimizeStep))
     return error;
-  // The largest force at which the minimization ends (D[minimize-tolerance]).
+  // The largest force at which the minimization ends (D219).
   if (Error error =
           readPositive(table, "force_tolerance", control.minimizeTolerance))
     return error;

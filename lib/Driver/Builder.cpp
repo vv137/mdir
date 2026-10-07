@@ -180,7 +180,7 @@ private:
   void emitMinimization(StringRef velocities);
   /// Whether the minimization of `mdir run` ends at the first row of the
   /// energies whose largest force is below a tolerance
-  /// (D[minimize-tolerance]). A Python simulation checks it between its
+  /// (D219). A Python simulation checks it between its
   /// parts, on the host, and its program is that without a tolerance.
   bool stopsMinimization() const {
     return control.minimize && !control.segments &&
@@ -8010,7 +8010,7 @@ void Builder::emitMinimization(StringRef velocities) {
   os << "  mdrt.host_call @mdrtWriteMinimization(%start, %u0, " << h0 << ", "
      << reported << ", %id)\n"
      << "      : (i64, f64, f64, !vec, !ids)\n";
-  // With a tolerance (D[minimize-tolerance]), the host compares the largest
+  // With a tolerance (D219), the host compares the largest
   // force of each row with it and keeps, in a buffer of its own, whether
   // one was below it and the step of that row (the last step otherwise).
   // The loops read it where an iteration begins: the steps and the rows

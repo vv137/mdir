@@ -33,7 +33,7 @@ format, or the outputs; every such change is listed under **Changed** or
   without touching the environment; a simulation takes its program's
   choice unless given one. `Simulation.compile_stats["cache_bypassed"]`
   reports it.
-- A force tolerance for minimization (D[minimize-tolerance], #106):
+- A force tolerance for minimization (D219, #106):
   `[minimize] force_tolerance` (kcal/mol/Å) ends `mdir run`'s minimization
   at the first row of the energies whose largest force (the `MAX_FORCE`
   column, without the parts along the constraints) is below it, with the

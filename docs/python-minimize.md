@@ -20,7 +20,7 @@ minimized = simulation.state()
 minimized.minimization                  # the row of the log at the last step
 ```
 
-With a tolerance (D[minimize-tolerance], see [Convergence](#convergence)):
+With a tolerance (D219, see [Convergence](#convergence)):
 
 ```python
 schedule.energy_period = 10             # [output] energy_interval: the checks
@@ -59,7 +59,7 @@ given a tolerance on the force (below).
 kJ/mol/nm (a number, or an OpenMM quantity of force, as D200 converts)
 stops at the first check whose largest force is below it, or after
 `steps`, whichever comes first, as `[minimize] force_tolerance` stops
-`mdir run` (D[minimize-tolerance]). The force is the `max_force` of the
+`mdir run` (D219). The force is the `max_force` of the
 row, the largest $\lVert m_i\mathbf g_i\rVert$ over the particles with
 mass, without the parts along the constraints, and the test is strict
 (`<`). A check is made where the call begins (with no step if the state is
@@ -182,7 +182,7 @@ that `minimize(0)` takes no step and leaves no row, and that
 loop of parts with `run(n)`, which `python-segments-errors-stops.test`
 checks.
 
-The tolerance (D[minimize-tolerance]) is checked by
+The tolerance (D219) is checked by
 `test/Driver/python-minimize-tolerance-*.test` and their `-gpu` twins
 (`Inputs/python_minimize_tolerance.py`), in double and mixed precision, on
 the dipeptide with PME, SHAKE, SETTLE, and the restraint, with rows every

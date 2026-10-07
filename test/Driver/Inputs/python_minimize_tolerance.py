@@ -1,4 +1,4 @@
-"""A force tolerance for the minimizer (D[minimize-tolerance]): `[minimize]
+"""A force tolerance for the minimizer (D219): `[minimize]
 force_tolerance` of `mdir run` and `Simulation.minimize(tolerance=...)`
 against a NumPy reference of the criterion, on the dipeptide in water.
 

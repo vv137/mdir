@@ -959,7 +959,7 @@ PYBIND11_MODULE(mdir, m) {
       s.reporters = py::list();
     })
     .def("minimize", [](PySimulation &s, std::optional<int64_t> steps, py::object given) {
-      // The largest force at which it stops, in kJ/mol/nm (D[minimize-tolerance]).
+      // The largest force at which it stops, in kJ/mol/nm (D219).
       std::optional<double> tolerance;
       if (!given.is_none())
         tolerance = units::scalar(given, "minimize: tolerance", units::force);

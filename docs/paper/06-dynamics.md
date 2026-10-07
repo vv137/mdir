@@ -928,7 +928,7 @@ velocities; a run that reads it begins anew at step 0, with drawn
 velocities. In mixed precision the forces are rounded to about $10^{-5}$ of
 their size, which bounds how far a minimization can go.
 
-**Convergence** (D[minimize-tolerance]). A minimum of $U$ on the surface of
+**Convergence** (D219). A minimum of $U$ on the surface of
 the constraints is a stationary point on it: the gradient has no part
 along the surface. With the constraints $\chi_k(\mathbf x) = 0$ and their
 Lagrange multipliers $\Lambda_k$, the first-order condition of a minimum

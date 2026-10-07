@@ -838,7 +838,7 @@ void _mlir_ciface_mdrtWriteMinimization(int64_t step, double energy,
 
 void _mlir_ciface_mdrtCheckMinimization(void *state) {
   // The criterion is the largest force of the row, that of the log
-  // (D[minimize-tolerance]): the minimization has converged once no
+  // (D219): the minimization has converged once no
   // particle feels a force above the tolerance.
   Output &output = *current;
   auto *flags = static_cast<StridedMemRefType<int64_t, 1> *>(state);

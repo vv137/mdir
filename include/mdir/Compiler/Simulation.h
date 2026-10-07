@@ -49,7 +49,7 @@ struct SimulationMinimization {
   int64_t maxForceParticle = 0;
   /// Whether `maxForce` is below the tolerance of the call of `minimize`
   /// that wrote the row; none if that call had no tolerance
-  /// (D[minimize-tolerance]).
+  /// (D219).
   std::optional<bool> converged;
 };
 
@@ -124,7 +124,7 @@ public:
   /// of a program that minimizes takes only these (D202). With a
   /// `tolerance` in kJ/mol/nm, it stops at the first row whose largest
   /// force is below it, checked every energy period of the program and at
-  /// the end, as `[minimize] force_tolerance` (D[minimize-tolerance]).
+  /// the end, as `[minimize] force_tolerance` (D219).
   llvm::Expected<int64_t> minimize(std::optional<int64_t> count = {},
                                    const std::function<bool()> &poll = {},
                                    std::optional<double> tolerance = {});
@@ -310,7 +310,7 @@ private:
   int64_t minimizationSteps = 0;
   double minimizationSize = 0.0;
   /// The steps between the checks of a tolerance: the energy period of
-  /// the program (D[minimize-tolerance]).
+  /// the program (D219).
   int64_t minimizationCheckPeriod = 0;
   /// Whether the row at `minimizationCheckedStep` is below the tolerance
   /// of the call that wrote it; none without a tolerance.
