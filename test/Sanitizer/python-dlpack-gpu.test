@@ -1,0 +1,18 @@
+# Read-only DLPack views of a simulation (D[python-dlpack]), scenario
+# sanitize of Driver/Inputs/python_dlpack.py, under compute-sanitizer:
+# views of two parts handed to a stream of a consumer, read by the CUDA
+# driver, and a tensor read after its simulation has ended, with no access
+# beyond a buffer and no read of memory that nothing has written.
+#
+# REQUIRES: cuda, compute-sanitizer, python-api
+#
+# RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 %mdir_python \
+# RUN:   %S/../Driver/Inputs/python_dlpack.py %S/../Driver/Inputs/dipeptide GPU sanitize 2>&1 \
+# RUN:   | FileCheck %s
+# RUN: %compute_sanitizer --tool initcheck --error-exitcode 1 %mdir_python \
+# RUN:   %S/../Driver/Inputs/python_dlpack.py %S/../Driver/Inputs/dipeptide GPU sanitize 2>&1 \
+# RUN:   | FileCheck %s
+
+# CHECK: views of two parts, a tensor that outlives its simulation
+# CHECK: dlpack sanitize passed
+# CHECK: ERROR SUMMARY: 0 errors

@@ -1172,3 +1172,45 @@ void mdrtDeviceCopyToHost(void *destination, const void *source,
   isPending = 1;
   finish();
 }
+
+/*===----------------------------------------------------------------------===
+ * Views of the buffers of an embedding program (D[python-dlpack])
+ *===----------------------------------------------------------------------===*/
+
+/* The ordinal of the device of the context, among the devices that
+   CUDA_VISIBLE_DEVICES leaves visible: the index under which a consumer of
+   a view (the DLPack specification's device_id) names it. */
+int32_t mdrtDeviceOrdinal(void) {
+  enter();
+  CUdevice device;
+  check(cuCtxGetDevice(&device), "cuCtxGetDevice");
+  return (int32_t)device;
+}
+
+/* Makes the stream of a consumer wait for the work issued on the stream of
+   the kernels so far, without a wait of the host, as the DLPack Python
+   specification asks of a producer (`__dlpack__(stream=...)`): 1 is the
+   legacy default stream, 2 the per-thread default stream, any other value a
+   CUstream of the context. */
+void mdrtDeviceHandOff(uint64_t consumer) {
+  static CUevent handoffEvent = NULL;
+  mgpuStreamCreate();
+  if (!handoffEvent)
+    check(cuEventCreate(&handoffEvent, CU_EVENT_DISABLE_TIMING),
+          "cuEventCreate");
+  CUstream stream = consumer == 1   ? CU_STREAM_LEGACY
+                    : consumer == 2 ? CU_STREAM_PER_THREAD
+                                    : (CUstream)(uintptr_t)consumer;
+  check(cuEventRecord(handoffEvent, sharedStream), "cuEventRecord");
+  check(cuStreamWaitEvent(stream, handoffEvent, 0), "cuStreamWaitEvent");
+}
+
+/* Waits for all the work issued in the context, on any stream: that of a
+   consumer that read the buffers of a view, before they are written or
+   freed. */
+void mdrtDeviceWaitAll(void) {
+  if (isDriverGone())
+    return;
+  check(cuCtxSynchronize(), "cuCtxSynchronize");
+  isPending = 0;
+}
