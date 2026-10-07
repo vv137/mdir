@@ -4,6 +4,7 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <memory>
+#include <cstdlib>
 #include <stdexcept>
 #include <optional>
 namespace py = pybind11;
@@ -66,6 +67,9 @@ struct Program {
   compiler::CompiledProgram compiled;
   /// What a simulation compiles its programs from (D196).
   std::shared_ptr<const model::PreparedModel> prepared;
+  /// Whether its compilations use the compile cache, the default of its
+  /// simulations (D[compile-cache-controls]).
+  bool cache = true;
   std::vector<std::pair<std::shared_ptr<Version>, uint64_t>> inputs;
   template <class T> void track(const std::shared_ptr<Input<T>> &o) {
     inputs.emplace_back(o, o->version);
@@ -397,7 +401,8 @@ PYBIND11_MODULE(mdir, m) {
                         std::shared_ptr<Input<model::Integrator>> integrator,
                         std::shared_ptr<Input<model::Ensemble>> ensemble,
                         std::shared_ptr<Input<model::Execution>> execution,
-                        std::shared_ptr<Input<model::Schedule>> schedule) {
+                        std::shared_ptr<Input<model::Schedule>> schedule,
+                        bool cache) {
     if (!system || !state || !integrator || !ensemble || !execution || !schedule)
       throw InputError("compile inputs must not be None");
     // Keep the GIL while copying and lowering: concurrent mutation cannot race
@@ -412,13 +417,35 @@ PYBIND11_MODULE(mdir, m) {
         if (PyErr_WarnEx(PyExc_UserWarning, message.c_str(), 1) != 0)
           throw py::error_already_set();
     Program result;
-    result.compiled = unwrap(compiler::compile(prepared));
+    result.compiled = unwrap(compiler::compile(prepared, cache));
+    result.cache = cache;
     result.prepared = std::make_shared<const model::PreparedModel>(std::move(prepared));
     result.track(system); result.track(state); result.track(integrator);
     result.track(ensemble); result.track(execution); result.track(schedule);
     return std::make_shared<Program>(std::move(result));
   }, py::arg("system"), py::arg("state"), py::arg("integrator"),
-     py::arg("ensemble"), py::arg("execution"), py::arg("schedule"));
+     py::arg("ensemble"), py::arg("execution"), py::arg("schedule"),
+     py::kw_only(), py::arg("cache") = true);
+
+  // Removes the entries of the compile cache (D[compile-cache-controls]):
+  // those of this format in `directory`, else in MDIR_COMPILE_CACHE_DIR,
+  // which MDIR_COMPILE_CACHE=off does not hide from it.
+  m.def("clear_compile_cache", [](std::optional<std::string> directory) {
+    if (!directory)
+      if (const char *named = std::getenv("MDIR_COMPILE_CACHE_DIR"); named && *named)
+        directory = named;
+    compiler::ClearedCache cleared;
+    if (directory && !directory->empty()) {
+      py::gil_scoped_release release;
+      cleared = compiler::clearCache(*directory);
+    }
+    py::dict d;
+    d["directory"] = directory && !directory->empty() ? py::cast(*directory) : py::none();
+    d["host_entries"] = cleared.hostEntries;
+    d["gpu_entries"] = cleared.gpuEntries;
+    d["bytes"] = cleared.bytes;
+    return d;
+  }, py::arg("directory") = py::none());
 
   // Persistent simulations (D196, docs/python-segments.md).
   py::class_<compiler::SimulationState>(m, "State")
@@ -630,21 +657,23 @@ PYBIND11_MODULE(mdir, m) {
       return text + "])";
     });
   py::class_<PySimulation>(m, "Simulation")
-    .def(py::init([](std::shared_ptr<Program> program) {
+    .def(py::init([](std::shared_ptr<Program> program, std::optional<bool> cache) {
       if (!program) throw InputError("Simulation takes a compiled program");
       program->checkCurrent();
+      // The program's choice unless one is given (D[compile-cache-controls]).
+      bool useCache = cache.value_or(program->cache);
       auto prepared = program->prepared;
       std::optional<llvm::Expected<std::unique_ptr<compiler::Simulation>>> created;
       {
         // The inputs were copied at compilation; nothing here touches Python.
         py::gil_scoped_release release;
-        created.emplace(compiler::Simulation::create(*prepared));
+        created.emplace(compiler::Simulation::create(*prepared, useCache));
       }
       PySimulation result;
       result.program = std::move(program);
       result.simulation = unwrap(std::move(*created));
       return result;
-    }), py::arg("program"))
+    }), py::arg("program"), py::kw_only(), py::arg("cache") = py::none())
     .def("run", [](py::object self, int64_t steps, bool energy) {
       auto &s = self.cast<PySimulation &>();
       if (steps < 0) throw InputError("run takes a nonnegative number of steps");
@@ -728,6 +757,8 @@ PYBIND11_MODULE(mdir, m) {
       d["gpu_cache_rejected"] = c.gpuRejected;
       d["gpu_cache_stored"] = c.gpuStored;
       d["gpu_cache_unstored"] = c.gpuUnstored;
+      // Programs compiled with cache=False (D[compile-cache-controls]).
+      d["cache_bypassed"] = c.bypassed;
       return d;
     })
     .def_property_readonly("tunables", [](py::object self) { return TunableValues{self}; })

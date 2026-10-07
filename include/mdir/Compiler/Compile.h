@@ -32,9 +32,10 @@ std::string getPipeline(const driver::Control &, const driver::Program &,
 void useCudaToolkit();
 /// For a GPU program, the options of the serialization of its kernels for
 /// the visible device `device` (mdir::getGpuPipelineOptions); else empty.
-/// Errors are CompileError.
+/// Without `cache`, the serialization bypasses the compile cache
+/// (D[compile-cache-controls]). Errors are CompileError.
 llvm::Expected<std::string> getGpuOptions(const driver::Control &,
-                                          int64_t device);
+                                          int64_t device, bool cache = true);
 struct CompiledProgram {
   driver::Program program;
   model::Execution execution;
@@ -42,9 +43,13 @@ struct CompiledProgram {
 };
 /// Owns all returned data; initializes no runtime and creates no files.
 /// Lower already-built IR; used by compiler integration and diagnostic tests.
+/// Without `cache`, the lowering reads and writes no entry of the compile
+/// cache (D[compile-cache-controls]).
 llvm::Expected<CompiledProgram> lower(const driver::Control &, driver::Program,
-                                      const model::Execution &);
-llvm::Expected<CompiledProgram> compile(const model::PreparedModel &);
+                                      const model::Execution &,
+                                      bool cache = true);
+llvm::Expected<CompiledProgram> compile(const model::PreparedModel &,
+                                        bool cache = true);
 /// The dialects, extensions and translations of a lowering; registers the
 /// passes once per process.
 mlir::DialectRegistry getRegistry();

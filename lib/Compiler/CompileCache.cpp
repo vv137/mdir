@@ -99,6 +99,7 @@ CompileStats &CompileStats::operator+=(const CompileStats &other) {
   gpuRejected += other.gpuRejected;
   gpuStored += other.gpuStored;
   gpuUnstored += other.gpuUnstored;
+  bypassed += other.bypassed;
   return *this;
 }
 
@@ -313,6 +314,47 @@ void mdir::compiler::evictCache(StringRef directory, uint64_t maxBytes) {
     sys::fs::remove(entry.path);
     total -= entry.size;
   }
+}
+
+ClearedCache mdir::compiler::clearCache(StringRef directory) {
+  ClearedCache cleared;
+  auto current = std::chrono::system_clock::now();
+  for (StringRef kind : {"host", "gpu"}) {
+    SmallString<256> subdirectory(directory);
+    sys::path::append(subdirectory, kind);
+    std::error_code error;
+    for (sys::fs::directory_iterator it(subdirectory, error), end;
+         it != end && !error; it.increment(error)) {
+      sys::fs::file_status status;
+      // Another process may have removed it since the listing.
+      if (sys::fs::status(it->path(), status) ||
+          status.type() != sys::fs::file_type::regular_file)
+        continue;
+      StringRef name = sys::path::filename(it->path());
+      // The temporary file of a writer under way is left, so that its
+      // rename succeeds; one older than an hour was left by a process
+      // that died.
+      if (name.contains(".tmp-")) {
+        if (current - status.getLastModificationTime() > kStaleTemporary)
+          sys::fs::remove(it->path());
+        continue;
+      }
+      if (!name.ends_with(".o") && !name.ends_with(".ptx") &&
+          !name.ends_with(".cubin"))
+        continue;
+      // Only entries of this format: the magic tag of the layout.
+      auto head = MemoryBuffer::getFileSlice(it->path(), sizeof(kMagic), 0,
+                                             /*IsVolatile=*/true);
+      if (!head || (*head)->getBuffer() != StringRef(kMagic, sizeof(kMagic)))
+        continue;
+      // A file another process removed first counts as left to it.
+      if (sys::fs::remove(it->path(), /*IgnoreNonExisting=*/false))
+        continue;
+      ++(kind == "host" ? cleared.hostEntries : cleared.gpuEntries);
+      cleared.bytes += status.getSize();
+    }
+  }
+  return cleared;
 }
 
 std::unique_ptr<MemoryBuffer> HostObjectCache::getObject(const Module *module) {

@@ -21,7 +21,8 @@ Error ownedError(Error error) {
 }
 Expected<std::unique_ptr<JITEngine>> JITEngine::create(
     mlir::ModuleOp input, std::unique_ptr<TargetMachine> target,
-    ArrayRef<std::string> libraries, StringRef entry, StringRef codegen) {
+    ArrayRef<std::string> libraries, StringRef entry, StringRef codegen,
+    bool cache) {
   Triple triple = target->getTargetTriple();
   // Fail closed: this validation decodes ELF .eh_frame, not COFF/Mach-O.
   if (!triple.isOSBinFormatELF() ||
@@ -64,7 +65,8 @@ Expected<std::unique_ptr<JITEngine>> JITEngine::create(
   auto layout = module->getDataLayout();
   auto engine = std::unique_ptr<JITEngine>(new JITEngine);
   engine->cache = std::make_unique<HostObjectCache>(
-      CompileCacheConfig::fromEnvironment(), describeMachine(*target, codegen),
+      cache ? CompileCacheConfig::fromEnvironment() : std::nullopt,
+      describeMachine(*target, codegen),
       module->getModuleIdentifier());
   engine->perfListener.reset(JITEventListener::createPerfJITEventListener());
   if (!engine->perfListener)

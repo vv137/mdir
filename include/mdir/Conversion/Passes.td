@@ -235,7 +235,8 @@ def GpuModuleToBinary
     to a cubin. With `binary=auto`, a module stays PTX when there is no
     `ptxas` or it fails; with `binary=cubin`, that is an error. With
     `MDIR_COMPILE_CACHE_DIR` set, the PTX and the cubin of each module are
-    read from and written to the compile cache (D212).
+    read from and written to the compile cache (D212), unless `cache` is
+    false (D[compile-cache-controls]).
   }];
   let options = [
     Option<"format", "format", "std::string", /*default=*/"\"isa\"",
@@ -243,7 +244,10 @@ def GpuModuleToBinary
     Option<"binary", "binary", "std::string", /*default=*/"\"auto\"",
            "MDIR_GPU_BINARY: auto (a cubin, or PTX when ptxas cannot make "
            "one), cubin (a cubin, or an error), or ptx; part of the keys of "
-           "the cache">
+           "the cache">,
+    Option<"cache", "cache", "bool", /*default=*/"true",
+           "use the compile cache that the environment names; false "
+           "bypasses it: no entry is read or written">
   ];
 }
 

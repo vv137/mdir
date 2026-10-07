@@ -36,12 +36,15 @@ void mdir::compiler::useCudaToolkit() {
     setenv("CUDA_ROOT", MDIR_CUDA_ROOT, /*overwrite=*/0);
 }
 llvm::Expected<std::string>
-mdir::compiler::getGpuOptions(const Control &control, int64_t device) {
+mdir::compiler::getGpuOptions(const Control &control, int64_t device,
+                              bool cache) {
   if (control.target != Target::GPU)
     return std::string();
   auto options = mdir::getGpuPipelineOptions(device);
   if (!options)
     return llvm::make_error<CompileError>(llvm::toString(options.takeError()));
+  if (!cache)
+    *options += " cache=false";
   return options;
 }
 std::string mdir::compiler::getPipeline(const Control &control,
@@ -131,11 +134,12 @@ std::string mdir::compiler::getPipeline(const Control &control,
 
 
 llvm::Expected<compiler::CompiledProgram>
-compiler::compile(const model::PreparedModel &prepared) {
+compiler::compile(const model::PreparedModel &prepared, bool cache) {
   auto program = prepared.build();
   if (!program)
     return program.takeError();
-  return lower(prepared.control, std::move(*program), prepared.execution);
+  return lower(prepared.control, std::move(*program), prepared.execution,
+               cache);
 }
 mlir::DialectRegistry compiler::getRegistry() {
   // Process-wide registries are initialized once; each lowering owns a context.
@@ -216,7 +220,7 @@ compiler::lowerModule(mlir::MLIRContext &context, const driver::Control &control
 }
 llvm::Expected<compiler::CompiledProgram>
 compiler::lower(const driver::Control &control, driver::Program program,
-                const model::Execution &execution) {
+                const model::Execution &execution, bool cache) {
 #if !MDIR_HAS_CUDA
   if (execution.target == Target::GPU)
     return llvm::make_error<model::ModelError>(model::ModelError::Unsupported,
@@ -229,7 +233,7 @@ compiler::lower(const driver::Control &control, driver::Program program,
   // libdevice and ptxas.
   if (control.target == Target::GPU)
     useCudaToolkit();
-  auto gpu = getGpuOptions(control, execution.device);
+  auto gpu = getGpuOptions(control, execution.device, cache);
   if (!gpu)
     return gpu.takeError();
   auto module = lowerModule(context, control, program, nullptr, *gpu);

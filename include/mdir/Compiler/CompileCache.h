@@ -65,6 +65,11 @@ struct CompileStats {
   unsigned gpuStored = 0;
   unsigned gpuUnstored = 0;
 
+  /// The programs compiled with the cache bypassed (`cache=False`,
+  /// D[compile-cache-controls]): no entry was read or written for them,
+  /// whatever the environment says.
+  unsigned bypassed = 0;
+
   CompileStats &operator+=(const CompileStats &other);
 };
 
@@ -78,6 +83,25 @@ struct CompileCacheConfig {
 
   static std::optional<CompileCacheConfig> fromEnvironment();
 };
+
+/// What clearCache removed (D[compile-cache-controls]).
+struct ClearedCache {
+  /// Host objects (`host/*.o`) and GPU entries (`gpu/*.ptx`,
+  /// `gpu/*.cubin`) removed, and their bytes.
+  uint64_t hostEntries = 0;
+  uint64_t gpuEntries = 0;
+  uint64_t bytes = 0;
+};
+
+/// Removes the entries of this format of the cache at `directory`: the
+/// files of the entries' names whose magic tag is this build's, and the
+/// temporary files left by processes that died, as evictCache does. Entries
+/// of another format, files of other names, and the temporary files of
+/// writers under way are left; so is the directory. Another process may
+/// write or read entries meanwhile: a writer renames a complete entry into
+/// place and a reader copies the file, so each sees a whole entry or none
+/// (D[compile-cache-controls]).
+ClearedCache clearCache(llvm::StringRef directory);
 
 /// The entries of every kind of the cache (D212, D214):
 /// a magic tag, the full key, the length of the data, a BLAKE3 hash of

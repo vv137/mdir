@@ -466,7 +466,9 @@ void GpuModuleToBinary::runOnOperation() {
       ptxas = nullptr;
     }
   }
-  GpuCache cache(CompileCacheConfig::fromEnvironment());
+  // Without `cache`, no entry is read or written (D[compile-cache-controls]).
+  GpuCache cache(this->cache ? CompileCacheConfig::fromEnvironment()
+                             : std::nullopt);
   Counters counters;
 
   // Each module is translated to LLVM IR in an LLVM context of its own and
@@ -619,12 +621,18 @@ void GpuModuleToBinary::runOnOperation() {
 }
 
 /// Upstream's buildLowerToNVVMPassPipeline, with mdir-gpu-module-to-binary.
-/// The options of upstream's pipeline, and MDIR_GPU_BINARY.
+/// The options of upstream's pipeline, MDIR_GPU_BINARY, and whether the
+/// compile cache is used.
 struct GpuLowerToNVVMOptions : public gpu::GPUToNVVMPipelineOptions {
   PassOptions::Option<std::string> binary{
       *this, "binary",
       llvm::cl::desc("auto, cubin, or ptx (MDIR_GPU_BINARY)"),
       llvm::cl::init("auto")};
+  PassOptions::Option<bool> cache{
+      *this, "cache",
+      llvm::cl::desc("use the compile cache that the environment names; "
+                     "false bypasses it (D[compile-cache-controls])"),
+      llvm::cl::init(true)};
 };
 
 void buildGpuLowerToNVVM(OpPassManager &pm,
@@ -670,6 +678,7 @@ void buildGpuLowerToNVVM(OpPassManager &pm,
   mdir::GpuModuleToBinaryOptions binary;
   binary.format = options.cubinFormat;
   binary.binary = options.binary;
+  binary.cache = options.cache;
   pm.addPass(mdir::createGpuModuleToBinary(binary));
   pm.addPass(createConvertMathToLLVMPass());
   pm.addPass(createCanonicalizerPass());
