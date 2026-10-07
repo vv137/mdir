@@ -305,6 +305,19 @@ format, or the outputs; every such change is listed under **Changed** or
   two builds on two Python threads could emit the same names. A program
   now has the same text, and therefore the same keys in the compile cache
   (D212, D214), whatever the process built before (#152).
+- In the deterministic mode a Python simulation and `mdir run` give the same
+  state to the bit for any number of steps, in one part or in several, with
+  or without a checkpoint at the end (D[front-end-divergence], #121). Before,
+  they parted at the rounding of the forces after about 20 steps on the
+  dipeptide in water (1.5e-3 kJ/mol/nm in mixed precision, 2.2e-10 in
+  double). The neighbor structures of the evaluation at the start carried
+  into the steps of a simulation and of `mdir run` without checkpoints, while
+  `mdir run` with checkpoints built them anew at step 1, so the programs
+  rebuilt at other steps. The evaluation at the start is now a segment of
+  its own in every program, and the steps build their structures at step 1.
+  No control key or file format changes. The trajectory of `mdir run`
+  without checkpoints changes at the rounding of its sums, and a fixed
+  `rebuild_interval` counts from step 1, one step later than before.
 
 - An `[[energy.pair]]` correction at or near the force field's own
   parameters, such as an NBFIX at zero offset where a fit begins, is no

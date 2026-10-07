@@ -113,6 +113,27 @@ within the rounding of the new order (in double precision, 9e-16 nm for the
 positions and 6e-10 kJ/mol/nm for the forces on the fixture below), as
 `mdir run` does across its checkpoints.
 
+The evaluation at the start of a run is a segment of its own in every
+program (D[front-end-divergence], #121). The neighbor structures that it
+builds do not carry into the steps. The steps build their own at step 1 and
+rebuild them where the test of displacement asks. Before, the structures of
+the start carried into the steps of a simulation and of `mdir run` without
+checkpoints. `mdir run` with checkpoints built anew at step 1, the first
+step of its first segment between checkpoints. The test of displacement
+then compared the positions with those of another step, so the programs
+rebuilt at other steps and summed the forces of one configuration in
+another order. On the dipeptide with cutoff electrostatics this showed from
+step 20 (forces 1.5e-3 kJ/mol/nm in mixed precision and 2.2e-10 in double).
+In the deterministic mode, a simulation of N steps, in one part or in
+several, now equals `mdir run` of N steps to the bit, with or without a
+checkpoint at step N, on the CPU and on a GPU, in mixed and double
+precision, with cutoff electrostatics and PME (N = 1 to 50, parts of 20 and
+of 7 steps; `python-deterministic-run-*.test`).
+`mdir run` with checkpoints before step N still differs at the rounding.
+Each of its segments after the first puts the particles in order and builds
+the structures anew where it begins, so that a run continued from a
+checkpoint is exact (#125).
+
 On the dipeptide in water with PME (`test/Driver/python-segments-*.test`,
 one file per scenario of `Inputs/python_segments.py`), parts of 1 + 7 + 13
 and of 1×5 + 3×2 + 10 steps against 21, with coupling every 10 steps, at

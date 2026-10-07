@@ -401,6 +401,7 @@ for each checkpoint interval           checkpoint_interval steps
 | The state stays on the device between outputs | `mdrt.write_frame` takes a buffer of the host, so the positions are copied only when a frame is written. |
 | A neighbor structure outlives a frame and an energy output | The loop over checkpoint intervals carries it. |
 | A restarted run rebuilds where the first run did | R1: the structure starts empty in every checkpoint interval. |
+| Every front end rebuilds at the same steps | The evaluation at the start is a segment of its own: the steps begin with a structure of their own, built at step 1, with or without checkpoints (`mdrt.fresh`, D[front-end-divergence]). |
 | Energies are computed only when they are written | The step of an energy interval that is written requests the energy; the others request forces only. |
 | A loop over pairs reads the neighbors of a particle from few places in memory | The particles are in the order of their positions. The loop over checkpoint intervals carries the masses, the parameters, and the numbers of the particles as well, because they change places with every new order. |
 | The files are in the order of the input | A call that writes takes the numbers of the particles with the field, and the driver writes the value of a particle at the place of its number. |

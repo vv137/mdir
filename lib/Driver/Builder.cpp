@@ -766,9 +766,13 @@ struct Coupled {
   /// `results` are the values `inside` of the chunk on the first call and the
   /// values given, `otherwise`, which it carries, on a later one. In the
   /// chunk, the values named as the results and those given are renamed.
+  /// With `segment`, the loop is a segment of the run (mdrt.segment): the
+  /// neighbor structures that the chunk builds do not carry into the steps
+  /// after it (D[front-end-divergence]).
   void emitStartBranch(std::string chunk, llvm::ArrayRef<std::string> results,
                        llvm::ArrayRef<std::string> inside,
-                       llvm::ArrayRef<std::string> otherwise);
+                       llvm::ArrayRef<std::string> otherwise,
+                       bool segment = false);
   bool emittedFirstTrips = false;
   unsigned startBranches = 0;
   /// The loop over the parts of a program of segments
@@ -992,7 +996,8 @@ static std::string renameValue(StringRef text, StringRef name, StringRef to) {
 void Builder::emitStartBranch(std::string chunk,
                               llvm::ArrayRef<std::string> results,
                               llvm::ArrayRef<std::string> inside,
-                              llvm::ArrayRef<std::string> otherwise) {
+                              llvm::ArrayRef<std::string> otherwise,
+                              bool segment) {
   if (chunk.empty() && results.empty())
     return;
   // A `call` in the loop names its dialect, which the body of a `func.func`
@@ -1040,7 +1045,7 @@ void Builder::emitStartBranch(std::string chunk,
     llvm::interleaveComma(first, os);
     os << " : " << types << "\n";
   }
-  os << "  }\n";
+  os << "  }" << (segment ? " {mdrt.segment}" : "") << "\n";
 }
 
 void Builder::emitRenumber(StringRef indent, const llvm::Twine &ids,
@@ -6801,6 +6806,12 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
   os << indent << "}";
   if (current.name == "segment")
     os << " {mdrt.segment}";
+  else if (level == 0 && !control.segments)
+    // The evaluation at the start is a segment of its own: the steps begin
+    // with neighbor structures of their own, built at the first step, as
+    // the first segment between checkpoints and the steps of a program of
+    // segments do (D[front-end-divergence]).
+    os << " {mdrt.fresh}";
   os << "\n";
 
   massName = outerMass;
@@ -8611,8 +8622,15 @@ void Builder::emitEntry() {
     os.flush();
     std::string chunk = program.module.substr(startMark);
     program.module.resize(startMark);
+    // The evaluation at the start is a segment of its own, as it is in
+    // `mdir run`, whose first segment of checkpoints (mdrt.segment) builds
+    // its neighbor structures anew at the first step after it: a structure
+    // of the start does not carry into the steps, so that both build at the
+    // same steps and sum the forces of a configuration in the same order
+    // (#121, D[front-end-divergence]).
     emitStartBranch(std::move(chunk), {"%f0", "%v0"},
-                    {"%f0", isLeapfrog() ? "%v0" : "%vg"}, {"%fg", "%vg"});
+                    {"%f0", isLeapfrog() ? "%v0" : "%vg"}, {"%fg", "%vg"},
+                    /*segment=*/true);
   }
 
   if (isRestart() && scalesEveryStep() &&

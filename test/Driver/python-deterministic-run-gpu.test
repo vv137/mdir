@@ -1,0 +1,21 @@
+# REQUIRES: python-api, hdf5, cuda
+# A Python simulation and `mdir run` of one model in the deterministic mode
+# give the same state bit for bit on a GPU, as on the CPU
+# (python-deterministic-run-*.test): the dipeptide in water with SHAKE and
+# SETTLE, from the velocities that both draw. On a device the two differed
+# from the first step (#121): the steps of one program continued the neighbor
+# structures of the evaluation at the start, those of the other built their
+# own at step 1, and a structure built at other positions orders the pairs of
+# a device otherwise. The evaluation at the start is now a segment of its own
+# in every program (D[front-end-divergence]).
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: env MDIR_COMPILE_CACHE_DIR=%t/cache %mdir_python %S/Inputs/python_deterministic_run.py %S/Inputs/dipeptide GPU mdir %t Mixed PME 1 20 50 7x5 | FileCheck %s --check-prefix=MIXED
+# RUN: env MDIR_COMPILE_CACHE_DIR=%t/cache %mdir_python %S/Inputs/python_deterministic_run.py %S/Inputs/dipeptide GPU mdir %t Double CUTOFF 1 20 50 7x5 | FileCheck %s --check-prefix=DOUBLE
+# MIXED: GPU Mixed PME 1: positions same velocities same forces same
+# MIXED-NEXT: GPU Mixed PME 20: positions same velocities same forces same
+# MIXED-NEXT: GPU Mixed PME 50: positions same velocities same forces same
+# MIXED-NEXT: GPU Mixed PME 7x5: positions same velocities same forces same
+# DOUBLE: GPU Double CUTOFF 1: positions same velocities same forces same
+# DOUBLE-NEXT: GPU Double CUTOFF 20: positions same velocities same forces same
+# DOUBLE-NEXT: GPU Double CUTOFF 50: positions same velocities same forces same
+# DOUBLE-NEXT: GPU Double CUTOFF 7x5: positions same velocities same forces same
