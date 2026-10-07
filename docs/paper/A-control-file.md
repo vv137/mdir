@@ -113,7 +113,7 @@ uses in the expression. This check does not change keys or file formats.
 | | `time_step`, `steps` | In ps, and the number of steps of the run, counted from the step it begins at: 0, or the step of the checkpoint of `[input]`. `mdir run --continue` continues the run until it has taken them (D129). |
 | | `seed` | Of the initial velocities and of the coupling. |
 | | `center_of_mass_interval` | Steps between removals of the motion of the center of mass; with a thermostat, when it acts. |
-| `[minimize]` | `method`, `steps`, `initial_step` | `STEEPEST_DESCENT`, the number of steps, and the first step (Å) (D73). Instead of `[dynamics]`. |
+| `[minimize]` | `method`, `steps`, `initial_step`, `force_tolerance` | `STEEPEST_DESCENT`, the number of steps, the first step (Å) (D73), and the largest force at which it stops, in kcal/mol/Å: at the first row of the energies whose largest force is below it, or after `steps` (D[minimize-tolerance]; none by default). Instead of `[dynamics]`. |
 | `[ensemble]` | `ensemble` | `NVE`, `NVT` (with `[thermostat]`), or `NPT` (with `[thermostat]` and `[barostat]`). |
 | | `temperature`, `pressure` | K, of the initial velocities and the bath; atm, with `NPT`. |
 | `[thermostat]` | `method`, `time_constant`, `friction`, `chain_length`, `interval` | `V-RESCALE`, stochastic velocity rescaling, with `time_constant` in ps; `NOSE-HOOVER`, a Nosé–Hoover chain of `chain_length` thermostats (3 by default) with the period `time_constant` in ps, whose energy the conserved energy holds and the checkpoints keep (D163a); a chain driven so far from equilibrium that the factorization of its action no longer follows it stops the run with an error (D206); a `time_constant` below 20 periods of `interval` is warned of (`short_thermostat_period`); or `LANGEVIN`, Langevin dynamics by the middle scheme in every step, with `friction` in 1/ps (D135), either key in the other an error; steps between its actions (10 by default), under `LANGEVIN` those of the removal of the motion of the center of mass and of the barostat (10 by default with a barostat, otherwise none). Langevin dynamics keeps no momentum, so its degrees of freedom have no three for the center of mass unless `center_of_mass_interval` removes it, and its log has no conserved energy. |
@@ -288,6 +288,8 @@ precision = "MIXED"             # SINGLE, MIXED, DOUBLE
 # method       = "STEEPEST_DESCENT"
 # steps        = 2000
 # initial_step = 0.1            # Å
+# force_tolerance = 1.0         # kcal/mol/Å: ends at the first row of the
+                                # energies whose largest force is below it
 
 # Restraints to the positions of 'coordinates', any number of them.
 # [[restraints]]

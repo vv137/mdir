@@ -370,6 +370,13 @@ equivariant representations for large-scale atomistic dynamics," *Nat.
 Commun.* **14**, 579 (2023).
 [doi:10.1038/s41467-023-36329-y](https://doi.org/10.1038/s41467-023-36329-y)
 
+### NocedalWright2006
+
+J. Nocedal, S. J. Wright, *Numerical Optimization*, 2nd ed., Springer
+Series in Operations Research and Financial Engineering (Springer, New
+York, 2006).
+[doi:10.1007/978-0-387-40065-5](https://doi.org/10.1007/978-0-387-40065-5)
+
 ### Pall2013
 
 S. Páll, B. Hess, "A flexible algorithm for calculating pair interactions

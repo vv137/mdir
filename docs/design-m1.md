@@ -946,7 +946,7 @@ output of `mdir template amber` (`scripts/paper/check-appendix.sh`).
 | `[energy]` | `cutoff`, `switch_distance`, `pairlist_distance`, `pruned_distance`, `rebuild_interval`, `lennard_jones_modifier`, `coulomb_modifier` (`"NONE"`, `"POTENTIAL_SHIFT"`), `dispersion_correction`, `electrostatics` (`"CUTOFF"`, `"PME"`, `"REACTION_FIELD"` with `reaction_field_dielectric`, D140), `[[energy.pair]]` (with a topology over its pairs, with `groups`, D137), `[[energy.function]]` (D138), `implicit_solvent`, `solvent_dielectric`, `solute_dielectric`, `surface_area_energy` (D144), `[[energy.bond]]`, `[[energy.angle]]`, `[[energy.dihedral]]` over particles or the centers of groups (D136, D139), and for a system without a topology `[[energy.type]]`, `[[energy.pair_override]]` |
 | `[pme]` | `tolerance`, `beta`, `max_spacing`, `grid`, `order` (4, 6, 8), `influence` (`"SPME"`, `"OPTIMAL"`) |
 | `[dynamics]` | `integrator`, `time_step`, `steps`, `seed`, `center_of_mass_interval` |
-| `[minimize]` | `method`, `steps`, `initial_step` |
+| `[minimize]` | `method`, `steps`, `initial_step`, `force_tolerance` |
 | `[ensemble]` | `ensemble` (`"NVE"`, `"NVT"`, `"NPT"`), `temperature`, `pressure` |
 | `[thermostat]` | `method = "V-RESCALE"`, `time_constant`, `interval` |
 | `[barostat]` | `method = "C-RESCALE"`, `time_constant`, `compressibility`, `coupling = "ISOTROPIC"`, `work`, `interval` |
@@ -1410,7 +1410,8 @@ steepest descent (D73):
 | Loops | Over the intervals between frames (one if there are none), over the intervals between energies in each, and over the steps; one `dyn.step @descend` per step, which evaluates the energy and the forces once |
 | Log | The potential energy with the constant terms, the root mean square and the largest of the forces $m\mathbf g$ without their parts along the constraints, in kcal/mol/Å, over the particles with mass, the particle of the largest, and $h$ in Å |
 | Checkpoint | At the end, with `checkpoint` of `[output]`: the positions, velocities of 0, and the integrator `MIN`. A run that reads it, a minimization or a run of dynamics, takes the positions and the cell and begins anew at step 0 with drawn velocities; a minimization takes the positions and the cell of any checkpoint |
-| Keywords | `method = "STEEPEST_DESCENT"`, `steps`, `energy_interval` (a divisor of `steps`), `trajectory_interval` (a multiple of it), `initial_step` in Å (0.1). No thermostat or barostat. A tolerance on the force is planned; in mixed precision the forces are rounded to about 10⁻⁵ of their size, which bounds how far a minimization can go |
+| Keywords | `method = "STEEPEST_DESCENT"`, `steps`, `energy_interval` (a divisor of `steps`), `trajectory_interval` (a multiple of it), `initial_step` in Å (0.1), `force_tolerance` in kcal/mol/Å (none). No thermostat or barostat. In mixed precision the forces are rounded to about 10⁻⁵ of their size, which bounds how far a minimization can go |
+| Convergence | With `force_tolerance` (D[minimize-tolerance]), the host compares the largest force of each row of the log, step 0 included, with it, where it reads the forces for the row anyway; at the first row below it the steps, rows, and frames after it are loops of no iteration, and the checkpoint is written at that step. The log says at the end whether it converged |
 
 On the target of D65 on the CPU in double precision, 500 steps take the
 energy from −5348 to −7137 kcal/mol (from the positions of the file before

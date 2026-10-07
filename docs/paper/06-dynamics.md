@@ -926,8 +926,58 @@ of the forces $m\mathbf g$ over the particles with mass, in kcal/mol/Å, and
 $\ell$. A minimization ends with a checkpoint of the positions and zero
 velocities; a run that reads it begins anew at step 0, with drawn
 velocities. In mixed precision the forces are rounded to about $10^{-5}$ of
-their size, which bounds how far a minimization can go; a tolerance on the
-force is planned.
+their size, which bounds how far a minimization can go.
+
+**Convergence** (D[minimize-tolerance]). A minimum of $U$ on the surface of
+the constraints is a stationary point on it: the gradient has no part
+along the surface. With the constraints $\chi_k(\mathbf x) = 0$ and their
+Lagrange multipliers $\Lambda_k$, the first-order condition of a minimum
+under equality constraints is $\mathbf F + \sum_k \Lambda_k\nabla\chi_k = 0$
+for some $\Lambda_k$ [[NocedalWright2006]](references.md#nocedalwright2006), that is, the force has no part
+that the constraints do not take up, $P(\mathbf F/m) = \mathbf g = 0$.
+Steepest descent approaches such a point only asymptotically, so a
+minimization with `force_tolerance` $F_\text{tol}$ stops at the first row
+of the log at which
+
+$$
+\max_i\,\lVert m_i\mathbf g_i\rVert < F_\text{tol},
+$$
+
+the largest force that the log prints, or after its steps. The largest
+force bounds the others: the root mean square over the $N'$ particles with
+mass is at most it, and the norm over all of them at most $\sqrt{N'}$
+times it. A test on the root mean square, or on the norm, can pass while
+one strained residue in a box of water is far from the minimum, or, for
+the norm, fail for a converged system only because it is large; a test on
+the maximum means the same at every size. GROMACS's `emtol` is a tolerance
+on the largest force as well [[GromacsManual2025]](references.md#gromacsmanual2025); OpenMM 8.6's minimizer
+takes the root mean square of the force components.
+
+A scale for $F_\text{tol}$ follows from the canonical distribution. Near
+the minimum, a harmonic mode $U = \tfrac12k_\text{h}x^2$ at temperature $T$
+has $p(x) \propto e^{-k_\text{h}x^2/2k_BT}$, so
+$\langle x^2\rangle = k_BT/k_\text{h}$, and its force $-k_\text{h}x$ has
+$\langle F^2\rangle = k_\text{h}^2\langle x^2\rangle = k_\text{h}k_BT$.
+Forces left by the minimization below $\sqrt{k_\text{h}k_BT}$ are smaller
+than those that thermal motion in that mode brings at once; at 300 K, a
+tolerance of 1 kcal/mol/Å is that thermal force for $k_\text{h} \approx
+1.7$ kcal/mol/Å², and below it for every stiffer mode. A tolerance near the
+rounding of the forces in mixed precision may never be met.
+
+The host checks each row, step 0 included, where it reads the forces from
+the device to write the row, so the check costs no synchronization of its
+own; it keeps whether a row was below $F_\text{tol}$ and its step in a
+buffer of the host, and every loop of steps, rows, and frames after that
+row has no iteration (a select of the trip count). The checkpoint is
+written at that step. Without the key the program is the same text as
+before. A Python simulation (D202) checks between its parts, which end at
+the same steps, and stops where `mdir run` does, since a part continues the
+last to the bit (D215). On the dipeptide in water with PME, SHAKE, SETTLE,
+and a restraint, rows every 10 steps and $F_\text{tol} = 15$ kcal/mol/Å,
+`mdir run` and the simulation stop at step 100 in double and mixed
+precision on the CPU and the GPU, the step at which the criterion applied
+in NumPy to the rows of a run without the key first holds, and the run
+writes the same files as one of 100 steps without the key.
 
 ## 6.8 Alchemical free energy
 

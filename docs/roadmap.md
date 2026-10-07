@@ -234,7 +234,9 @@ four-stage example needs. D200 (#95,
 [unit quantities](python-units.md)) lets the setters take OpenMM unit
 quantities, converted at the boundary. D202 (#91,
 [minimization](python-minimize.md)) runs the minimizer of `mdir run` in a
-Python simulation, `Simulation.minimize(steps)`. D207 (#109,
+Python simulation, `Simulation.minimize(steps)`, and
+D[minimize-tolerance] (#106) stops it, and `mdir run`'s, at a tolerance on
+the largest force. D207 (#109,
 [reporters](python-reporters.md)) writes `mdir run`'s energy file and
 trajectory inside the parts of a run and calls Python functions at their
 steps. `examples/ala3/run.py` (#82) runs the four stages of the

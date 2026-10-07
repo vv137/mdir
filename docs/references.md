@@ -1,6 +1,6 @@
 # References
 
-Last updated: 2026-10-03.
+Last updated: 2026-10-07.
 
 This document lists the literature behind the methods, algorithms,
 derivations, force fields, and formats that the MDIR documentation and
@@ -371,7 +371,9 @@ which the MDIR truncations `shift`, `switch`, and `force_switch` match
 and against which the tests check them; the sign convention of the
 GROMACS virial; the formats `.top`, `.itp`, and `.gro`; the update groups of
 the domain decomposition of GROMACS (Section "Domain decomposition"),
-which the disjoint union of the groups of the constraints parallels (D83).
+which the disjoint union of the groups of the constraints parallels (D83);
+`emtol`, the tolerance of its minimizers on the largest force, which
+`[minimize] force_tolerance` parallels (D[minimize-tolerance]).
 
 ### Hairer2003
 
@@ -841,6 +843,17 @@ ensemble," *Mol. Phys.* **52**, 255–268 (1984).
 [doi:10.1080/00268978400101201](https://doi.org/10.1080/00268978400101201)
 
 Used for: the extended system of a thermostat (D163a).
+
+### NocedalWright2006
+
+J. Nocedal, S. J. Wright, *Numerical Optimization*, 2nd ed., Springer
+Series in Operations Research and Financial Engineering (Springer, New
+York, 2006).
+[doi:10.1007/978-0-387-40065-5](https://doi.org/10.1007/978-0-387-40065-5)
+
+Used for: the first-order condition of a minimum under equality
+constraints, on which the force tolerance of a minimization rests
+(D[minimize-tolerance]).
 
 ### Onufriev2004
 

@@ -35,6 +35,7 @@ element.
 | $P,\ P_0,\ P_{aa}$ | Pressure, its target, and the pressure of axis $a$ |
 | $Z,\ F$ | Canonical partition function and Helmholtz free energy (a force is bold, $\mathbf F_i$) |
 | $\Delta t$ | Time step |
+| $F_\text{tol};\ k_\text{h};\ \chi_k,\ \Lambda_k$ | The force tolerance of a minimization, compared with the largest force $\max_i\lVert m_i\mathbf g_i\rVert$ without its parts along the constraints; the force constant of a harmonic mode; a holonomic constraint $\chi_k(\mathbf x) = 0$ and its Lagrange multiplier (Section 6.7) |
 | $\beta$ | Ewald splitting parameter; $\operatorname{erfc}(\beta r_c)$ is the tolerance of the direct sum |
 | $q_i$ | Partial charge; $f = 1/(4\pi\varepsilon_0)$ the Coulomb constant in the units of the run |
 | $c_i,\ \gamma(x)$ | Coefficient of the dispersion of particle $i$, $2\sqrt{\varepsilon}\,\sigma^3$ of its type, so that $C_{6,ij} = c_ic_j$; and $\gamma(x) = e^{-x^2}(1 + x^2 + x^4/2)$, the share of $-c_ic_j/r^6$ at $x = \beta r$ that the direct terms of the mesh of the dispersion keep (Section 5.5) |
