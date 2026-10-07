@@ -1,0 +1,12 @@
+# REQUIRES: python-api, hdf5
+# A force tolerance for the minimizer on the CPU in mixed precision
+# (D[minimize-tolerance]), Inputs/python_minimize_tolerance.py: `[minimize]
+# force_tolerance` of `mdir run` against a NumPy reference of the criterion
+# on its rows, a run without the key of as many steps, and
+# `Simulation.minimize(tolerance=...)` stopping at the same step.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_minimize_tolerance.py %S/Inputs/dipeptide CPU mdir %t Mixed | FileCheck %s
+# CHECK: CPU Mixed: mdir run stops at step 100 (NumPy reference 100)
+# CHECK: CPU Mixed: not converged after 20 steps at 1 kcal/mol/A; converged at step 0 at 30
+# CHECK: CPU Mixed: Python stops at step 100, converged
+# CHECK: minimization tolerance mixed passed
