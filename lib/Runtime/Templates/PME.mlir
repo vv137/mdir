@@ -115,7 +115,12 @@ func.func private @mdrt.pme_place(%x: f64, %length: f64, %k: index, %n: index)
   %ki = arith.index_cast %k : index to i64
   %kf = arith.sitofp %ki : i64 to f64
   %u = arith.mulf %frac, %kf : f64
-  %fu = math.floor %u : f64
+  %fu0 = math.floor %u : f64
+  // A coordinate that is not a number takes the point 0, so that the
+  // conversion to an integer is defined and every point is in the grid
+  // (#168); the fraction is in [0, 1] otherwise, and so is this.
+  %nil = arith.constant 0.0 : f64
+  %fu = arith.maxnumf %fu0, %nil : f64
   %w = arith.subf %u, %fu : f64
   %bi = arith.fptosi %fu : f64 to i64
   %b = arith.index_cast %bi : i64 to index

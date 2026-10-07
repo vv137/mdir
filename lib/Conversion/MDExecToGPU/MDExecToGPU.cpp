@@ -236,10 +236,13 @@ private:
                   function_ref<void(OpBuilder &, Value)> body);
 
   /// Launches a kernel with a group of threads for each of `count`
-  /// particles, which share its row (RowLanes).
+  /// particles, which share its row (RowLanes). With `order`, the order of
+  /// the cells of a neighbor matrix, an item is a place, and a place that
+  /// the build left empty (D107) is not valid.
   void launchRows(
       OpBuilder &builder, Location loc, Value count,
-      function_ref<void(OpBuilder &, Value, const RowLanes &)> body);
+      function_ref<void(OpBuilder &, Value, const RowLanes &)> body,
+      Value order = Value());
 
 
   /// Gives the kernel of `launch` the values from outside as it can take
@@ -1922,6 +1925,22 @@ LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &run) {
   return success();
 }
 
+/// The particle at `place` of `order`, the order of the cells of a
+/// neighbor matrix, or particle 0 at a place that the build left empty
+/// because the positions that it found there are not numbers or are beyond
+/// any cell (D107): every index stays inside the buffers of the particles.
+static Value emitPlacedParticle(OpBuilder &builder, Location loc, Value order,
+                                Value place) {
+  Value at = memref::LoadOp::create(builder, loc, order, ValueRange{place});
+  Value zero = arith::ConstantOp::create(
+      builder, loc, at.getType(), builder.getIntegerAttr(at.getType(), 0));
+  Value placed = arith::CmpIOp::create(builder, loc,
+                                       arith::CmpIPredicate::sge, at, zero);
+  Value safe = arith::SelectOp::create(builder, loc, placed, at, zero);
+  return arith::IndexCastOp::create(builder, loc, builder.getIndexType(),
+                                    safe);
+}
+
 PairLayout Lowering::gatherInOrder(OpBuilder &builder, Location loc,
                                    const Neighbors &structure,
                                    Value positions, ValueRange ins,
@@ -1938,9 +1957,9 @@ PairLayout Lowering::gatherInOrder(OpBuilder &builder, Location loc,
     targets.push_back(target);
   }
   launchOver(builder, loc, structure.size, [&](OpBuilder &body, Value place) {
-    Value particle = arith::IndexCastOp::create(
-        body, loc, body.getIndexType(),
-        memref::LoadOp::create(body, loc, structure.order, ValueRange{place}));
+    // A place left empty by the build (D107) takes the values of particle
+    // 0, which no loop reads there (launchRows).
+    Value particle = emitPlacedParticle(body, loc, structure.order, place);
     for (auto [source, target] : llvm::zip(sources, targets))
       storeElement(body, loc, loadElement(body, loc, source, particle),
                    target, place);
@@ -2074,9 +2093,7 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
     llvm::MapVector<Value, Destination> destinations;
     Value place = particle;
     if (order)
-      particle = arith::IndexCastOp::create(
-          body, loc, body.getIndexType(),
-          memref::LoadOp::create(body, loc, order, ValueRange{place}));
+      particle = emitPlacedParticle(body, loc, order, place);
     for (Loop &loop : loops) {
       IRMapping local;
       SmallVector<Value> contributions, totals;
@@ -2136,7 +2153,7 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
       }
       scf::YieldOp::create(then, loc);
     });
-  });
+  }, order);
 
   // One reduction for the global sums of all the loops.
   SmallVector<Value> contributions, partials;
@@ -2281,7 +2298,8 @@ static Value shuffleXor(OpBuilder &builder, Location loc, Value value,
 /// those beyond the last particle take the particle 0, not valid.
 void Lowering::launchRows(
     OpBuilder &builder, Location loc, Value count,
-    function_ref<void(OpBuilder &, Value, const RowLanes &)> body) {
+    function_ref<void(OpBuilder &, Value, const RowLanes &)> body,
+    Value order) {
   Value lanes = createIndex(builder, loc, rowLanes);
   Value threads = arith::MulIOp::create(builder, loc, count, lanes);
   Value one = createIndex(builder, loc, 1);
@@ -2309,6 +2327,18 @@ void Lowering::launchRows(
   };
   Value particle = arith::SelectOp::create(kernel, loc, sharing.valid, item,
                                            createIndex(kernel, loc, 0));
+  if (order) {
+    // A place left empty by a build that found positions that are not
+    // numbers or are beyond any cell holds no particle (D107): its group
+    // does nothing, so that no access goes before the buffers of the
+    // particles while the part that has failed runs to its end (#168).
+    Value at = memref::LoadOp::create(kernel, loc, order, ValueRange{particle});
+    Value placed = arith::CmpIOp::create(
+        kernel, loc, arith::CmpIPredicate::sge, at,
+        arith::ConstantOp::create(kernel, loc, at.getType(),
+                                  kernel.getIntegerAttr(at.getType(), 0)));
+    sharing.valid = arith::AndIOp::create(kernel, loc, sharing.valid, placed);
+  }
   body(kernel, particle, sharing);
   gpu::TerminatorOp::create(kernel, loc);
   bringIn(launch);
@@ -2372,7 +2402,7 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
         local, &sharing, /*outTotals=*/nullptr, &layout);
     storeContributions(body, loc, contributions, op.getScratch(), central,
                        sharing);
-  });
+  }, structure.order);
   return finishSums(op, builder, op.getReduce(), op.getScratch(), size);
 }
 
