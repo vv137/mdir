@@ -125,7 +125,7 @@ format, or the outputs; every such change is listed under **Changed** or
   The device's architecture is asked of NVML, which creates no CUDA state,
   so a process may still fork after `mdir.compile`.
 - The Python model's pair terms take `dispersion`, the control file's
-  `dispersion_correction` of a pair term (D[python-dispersion], #161):
+  `dispersion_correction` of a pair term (D222, #161):
   `None` follows the system, `DispersionCorrection.None_` leaves the term
   out of the correction for the dispersion, `EnergyPressure` asks for its
   tail. `System.dispersion_given` says whether `System.dispersion` was set;
@@ -137,13 +137,13 @@ format, or the outputs; every such change is listed under **Changed** or
 
 - Setting `System.dispersion` in Python makes the correction for the
   dispersion explicit, as giving `dispersion_correction` in the control
-  file (D[python-dispersion], #161): with a switch it is refused, and a
+  file (D222, #161): with a switch it is refused, and a
   divergent tail is an error; assign `None` for the default. Without a
   periodic cell the default is now off, as in the control file; before,
   compiling such a system needed `System.dispersion = DispersionCorrection.None_`.
 - With a switch (`Truncation.Switch`, the default, `ForceSwitch`, ...) the
   Python model's default correction for the dispersion is now off, and
-  `mdir.compile` warns `dispersion_switched` (D[python-dispersion], #161):
+  `mdir.compile` warns `dispersion_switched` (D222, #161):
   the energies and pressures of a default switched `System` lose the tail
   of the Lennard-Jones and of its pair terms, which it applied before
   though the switch takes part of the potential below the cutoff. For the

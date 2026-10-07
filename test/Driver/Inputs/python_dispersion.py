@@ -1,5 +1,5 @@
 """The correction for the dispersion of the Python model
-(D[python-dispersion]): a pair term's own `dispersion`, and an explicit
+(D222): a pair term's own `dispersion`, and an explicit
 correction against the default, against `mdir run` on the same input and
 against the tails of check_pair_tail.py.
 

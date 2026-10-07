@@ -1,6 +1,6 @@
 # REQUIRES: python-api, cuda
 # The correction for the dispersion of the Python model on a GPU
-# (D[python-dispersion]): a pair term's own `dispersion` and an explicit
+# (D222): a pair term's own `dispersion` and an explicit
 # correction, against mdir run and the tails of check_pair_tail.py.
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %python %S/Inputs/pair_tail_system.py %t 60 60 32 3.7 0.5

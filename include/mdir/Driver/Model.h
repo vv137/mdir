@@ -102,7 +102,7 @@ struct System {
   /// The correction for the dispersion beyond the cutoff, as
   /// `[energy] dispersion_correction` (D209). `dispersionGiven` says
   /// whether it was set, as whether the control file gives the key
-  /// (D[python-dispersion]): a pair term whose tail diverges is refused
+  /// (D222): a pair term whose tail diverges is refused
   /// when it was, and left out with the warning `pair_tail_left_out` when
   /// not; without a periodic cell the default is off.
   driver::DispersionCorrection dispersion = driver::DispersionCorrection::EnergyPressure;
@@ -118,7 +118,7 @@ struct System {
   /// subset accept constants only; tuple parameters have one value/tuple.
   /// A pair term's `dispersion`, when `dispersionGiven`, is that of its
   /// `dispersion_correction`: None leaves it out of the correction, and
-  /// EnergyPressure asks for its tail (D209, D[python-dispersion]).
+  /// EnergyPressure asks for its tail (D209, D222).
   std::vector<driver::PairTerm> pairTerms;
   std::vector<driver::TupleTerm> tupleTerms;
   /// One `[[restraints]]` table (D74, D124), with its constant in

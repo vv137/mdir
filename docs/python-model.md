@@ -113,7 +113,7 @@ become the control's `[[restraints]]`.
 
 ## The correction for the dispersion
 
-D[python-dispersion] (#161) gives the Python model the two parts of the
+D222 (#161) gives the Python model the two parts of the
 control file's `dispersion_correction` that it lacked (D209, D210).
 
 | Python | Control file | Meaning |

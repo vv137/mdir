@@ -226,7 +226,7 @@ PYBIND11_MODULE(mdir, m) {
     .def_readwrite("expression", &driver::PairTerm::expression)
     .def_readwrite("constants", &driver::PairTerm::constants)
     .def_readwrite("groups", &driver::PairTerm::groups)
-    // `dispersion_correction` of the term (D209, D[python-dispersion]):
+    // `dispersion_correction` of the term (D209, D222):
     // None (Python's) follows the system, DispersionCorrection.None_ leaves
     // the term out of the correction, EnergyPressure asks for its tail.
     .def_property("dispersion", [](const driver::PairTerm &t) -> py::object {
@@ -282,7 +282,7 @@ PYBIND11_MODULE(mdir, m) {
   property(system, "electrostatics", &model::System::electrostatics);
   property(system, "coulomb_modifier", &model::System::coulombModifier);
   // Setting the correction makes it explicit, as the key of the control
-  // file; None restores the default (D[python-dispersion]).
+  // file; None restores the default (D222).
   system.def_property("dispersion", [](const Input<model::System> &o) {
     return o.value.dispersion;
   }, [](Input<model::System> &o, py::object value) {
@@ -490,7 +490,7 @@ PYBIND11_MODULE(mdir, m) {
       d["tunables"] = tunables::describe(p.prepared->tunables);
       // The correction for the dispersion (D209): whether it is on and was
       // given, and for each pair term whether its tail is in it
-      // (D[python-dispersion]).
+      // (D222).
       const auto &control = p.prepared->control;
       const auto &tails = p.prepared->system.pairTails;
       py::dict dispersion, terms;

@@ -251,7 +251,7 @@ clears it and bypasses it per compile from Python. D213 (#130,
 ε, constants of pair terms, and parameters of tuple terms tunable, whose
 values a simulation takes without compiling; the quantities derived from
 them are rebuilt by the code that compiles them, so an update equals a
-compile with the new values to the bit. D[python-dispersion] (#161,
+compile with the new values to the bit. D222 (#161,
 [dispersion](python-model.md#the-correction-for-the-dispersion)) gives
 Python pair terms their own `dispersion`, so a term can leave the
 correction for the dispersion, and records whether the system's correction

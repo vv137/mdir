@@ -239,7 +239,7 @@ for an unknown name, a shape other than $(M,)$, a value that is not finite,
 negative σ or ε, charges of 100 e or more under PME, a pair term whose tail
 would enter or leave the correction for the dispersion at the new values
 (a term that leaves it with `dispersion = DispersionCorrection.None_` is
-never in it, so its constants may take any value; D[python-dispersion]),
+never in it, so its constants may take any value; D222),
 and any value that would change the program's text; a simulation whose
 program declares no tunables refuses every update.
 

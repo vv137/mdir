@@ -328,7 +328,7 @@ $\operatorname{tr}\mathsf W_\text{tail}/3V$, while the energy, forces,
 and virial of its pairs within $r_c$ are unchanged. A term that
 decays as $r^{-3}$ or more slowly, such as $1/r$, has no such limit at a
 uniform density and needs a lattice sum instead. The Python model takes
-the same choices (D[python-dispersion]): a correction that is set on
+the same choices (D222): a correction that is set on
 the system, or a term that asks for its tail, is the control file's key
 given, and a term's own `None_` its opt-out, except that under a
 switch its default correction is off with a warning rather than an error,

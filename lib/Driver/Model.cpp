@@ -18,7 +18,7 @@ static llvm::Error typed(llvm::Error e) {
   return input(llvm::toString(std::move(e)));
 }
 /// A message of the builder about the tail of a pair term, in the words of
-/// the Python model (D[python-dispersion]).
+/// the Python model (D222).
 static std::string pythonWords(std::string message) {
   static const std::string key = "give 'dispersion_correction = \"NONE\"' in the term";
   for (size_t at = message.find(key); at != std::string::npos; at = message.find(key, at))
@@ -222,12 +222,12 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   if (!s.topology.tupleTerms.empty() || !s.topology.externalTerms.empty())
     return unsupported("imported expression terms are outside the initial subset; use typed model terms");
   // As the control file: without a periodic cell the correction is off
-  // unless it is asked for (D[python-dispersion]).
+  // unless it is asked for (D222).
   driver::DispersionCorrection dispersion =
       s.periodic || s.dispersionGiven ? s.dispersion : driver::DispersionCorrection::None;
   // With a switch the default correction is off, with a warning: the
   // switch takes part of the potential below the cutoff, which the
-  // correction would leave out (D210, D[python-dispersion]).
+  // correction would leave out (D210, D222).
   bool switched = !s.dispersionGiven && dispersion != driver::DispersionCorrection::None &&
                   s.truncation != driver::Truncation::None &&
                   s.truncation != driver::Truncation::Shift;
@@ -296,7 +296,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
     if (!term.mixing.empty())
       return unsupported("custom pairs initially support constants, not mixing");
     // The term's own correction, as `dispersion_correction` of a pair term
-    // with a topology (D209, D[python-dispersion]): None leaves it out, and
+    // with a topology (D209, D222): None leaves it out, and
     // EnergyPressure follows the system's, which must be on.
     if (term.dispersionGiven && term.dispersion != driver::DispersionCorrection::None &&
         term.dispersion != driver::DispersionCorrection::EnergyPressure)
