@@ -54,8 +54,11 @@ numbers.
 
 ## Performance: reports inside a call
 
-A call of the entry is a part of D196: each part builds its buffers and
-neighbor structures anew (about 1% of a step on JAC with parts of 0.5 s).
+A call of the entry was a part of D196, which built its buffers and
+neighbor structures anew (about 1% of a step on JAC with parts of 0.5 s);
+since D[resident-buffers] a part continues the activation of the entry
+that the last one left, and a boundary costs a copy of the state on the
+device and a reduction ([python-segments.md](python-segments.md#resident-buffers)).
 Reports must not cut parts:
 
 1. **The times are arguments of the entry.** The program of segments gains

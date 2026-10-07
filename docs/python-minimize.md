@@ -79,15 +79,18 @@ minimized ones (D198). To restrain toward the coordinates file, as
 
 ## Boundaries of parts
 
-A part after the first is a segment that continues the last, as in D196:
-it builds its neighbor structures anew and evaluates the energy and the
-forces at its first positions, where a single call of `mdir run` keeps
-those of the step before. The sums are the same up to their order, so a
-row after a boundary agrees with `mdir run` within the rounding of a sum;
-a minimization, whose choice of each step depends on a comparison of two
-energies, carries such a difference on, so that two long runs with
-boundaries at different steps can drift apart where the energy surface is
-flat. Within a part the program is that of `mdir run`.
+A part after the first continues the last in the same activation of the
+entry (D[resident-buffers]): it keeps the positions, forces, energy, and
+length of the next step that the last part left, the order of the
+particles, and the neighbor structures, so a minimization in parts takes
+the steps of a minimization in one part to the bit in the deterministic
+mode (3 + 17 + 20 steps against 40 on the dipeptide, double and mixed,
+CPU and GPU). Before D[resident-buffers] a part built its neighbor
+structures anew and evaluated the energy and the forces at its first
+positions, and a minimization, whose choice of each step depends on a
+comparison of two energies, could drift from one with boundaries at other
+steps where the energy surface is flat. Within a part the program is that
+of `mdir run`.
 
 ## Validation
 

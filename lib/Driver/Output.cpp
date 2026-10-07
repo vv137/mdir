@@ -830,6 +830,12 @@ static void checkSpread(const Output &output, const std::vector<double> &x,
   }
 }
 
+void mdir::driver::checkParticleSpread(const Output &output,
+                                       const std::vector<double> &x,
+                                       int64_t step) {
+  checkSpread(output, x, step);
+}
+
 void _mlir_ciface_mdrtCheckSpread(int64_t step, void *positions, void *ids) {
   Output &output = *current;
   checkSpread(output, readVectors(positions, ids, output.state), step);
@@ -844,10 +850,6 @@ void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids) {
   checkSpread(output, readVectors(positions, ids, output.state), step);
   std::vector<float> narrow(values.begin(), values.end());
   output.trajectory->writeFrame(narrow.data(), step, output.getTime(step));
-}
-
-void _mlir_ciface_mdrtFinishForces(void *forces, void *ids) {
-  current->finalForces = readVectors(forces, ids, current->force);
 }
 
 void _mlir_ciface_mdrtFinish(void *positions, void *velocities,

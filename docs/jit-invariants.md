@@ -70,6 +70,41 @@ own. Whether they were generated, read from the cache, or compiled by
 no host code comes from them, and the checks above are unchanged. The
 lifetime tests run with the cubins and the cache of the suite.
 
+## Activations that outlive a call (D[resident-buffers])
+
+A Python simulation's entry does not return between parts
+([python-segments.md](python-segments.md#resident-buffers)). It runs on a
+stack that the simulation maps (64 MiB, committed as it is used, with a
+page below it that is not mapped) and waits at the end of each part inside
+`mdrtPartBoundary`, a function of the host that the code calls through its
+C interface, while the host goes on on its own stack (`swapcontext`). The
+frames of the activation therefore hold addresses of the engine's code and
+data between calls of `run`. The engine, its object memory, and the
+registration of its frames outlive the activation: the simulation ends its
+activation before it destroys its engine, under the process runtime mutex.
+
+An activation never returns and is never unwound. It ends at a boundary:
+the simulation frees what the activation allocated, which the records of
+the runtimes (`mdrtActivationClose`, `mdrtDeviceActivationClose`) and of
+the memory of the host that its code takes list, and unmaps its stack. The
+generated code holds no other resource on its stack (no destructors, locks,
+or registrations), and the two frames of the host on that stack, the start
+of the activation and the boundary, hold none either; no exception crosses
+the frames of the code. An activation may be resumed on a thread other
+than the one it began on: the code keeps no address of thread-local
+storage across a boundary (glibc's `swapcontext` does not switch the
+thread pointer), and the runtime of the device makes its context current in
+each of its calls. One activation runs at a time in the process, under the
+run mutex; several may wait at their boundaries, one for each live
+simulation, and their records keep their allocations apart.
+
+`python-simulation-lifetime-*.test` retain up to five simulations that have
+run more than one part, each with a live activation, and run six lifetimes
+on three threads, whose activations wait side by side.
+`python-resident-threads*.test` resume one activation on threads other than
+the one it began on, with four threads of execution on the CPU, and give the
+state of a run on one thread to the bit.
+
 ## Enforced transitions and dependency boundary
 
 Each object starts in `Linking`. RuntimeDyld allocates and relocates sections,
@@ -96,7 +131,9 @@ strings, which survive destruction of the ORC session.
 Creation, entry execution, and destruction take the
 same process mutex. Since D211 a simulation compiles
 one program, whose entry begins the run or continues it as an argument says,
-so it owns one engine. Polling Python happens between parts after releasing it.
+so it owns one engine, and since D[resident-buffers] one activation of its
+entry runs its parts (above). Polling Python happens between parts after
+releasing the mutex.
 A caller must keep a simulation alive while one of its methods runs; native
 callers cannot destroy an object concurrently with its own active method.
 The Python binding retains the object for its method call. Independent

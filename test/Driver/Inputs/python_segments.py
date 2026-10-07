@@ -67,39 +67,12 @@ def expect(error, call, text=""):
 QUANTITIES = ("positions", "velocities", "forces")
 
 
-def double_tolerance(quantity, whole):
-    # A scale-relative regression budget, not a forward-error theorem for MD.
-    # Each force gathers at most N-1 direct neighbors and p^3 PME grid values
-    # (N=1168, p=4 here). Use c=4*((N-1)+p^3)=4924 for forces and velocities:
-    # two differently ordered evaluations, times a factor-two guard for other
-    # reductions and propagation through the trajectory. For positions use
-    # c=2*21=42: one accumulated update per step in each of the two trajectories.
-    # Across the CPU/GPU double cases, max residual/(eps64*max(abs(reference)))
-    # was 1.406, 648.55, 2110.76 for positions, velocities, forces, respectively:
-    # these budgets leave margins of at least 29.8, 7.59, 2.33, rather than the
-    # old fixed force tolerance's roughly 2000-fold margin. The force term count
-    # motivates the budget; cancellation and nonlinear propagation are checked
-    # empirically by this fixed fixture, not bounded for arbitrary trajectories.
-    terms = whole.positions.shape[0] - 1 + PME_ORDER**3
-    c = 2 * sum(PARTS) if quantity == "positions" else 4 * terms
-    scale = np.abs(getattr(whole, quantity)).max()
-    return c * np.finfo(np.float64).eps * scale
-
-
-# Let E be the mixed-versus-double error of the uninterrupted reference.
-# If both mixed paths have errors of size E, their difference can be 2E by
-# the triangle inequality. Use 1.5 times that scale (3E) to allow their errors
-# to differ as the reduction order changes; this is a self-calibrated regression
-# allowance, not a universal mixed-precision bound. The observed difference/E
-# is at most 1.05 over this fixture's CPU/GPU cases, leaving at least 2.85x.
-MIXED_ERROR_FACTOR = 3.0
-
-
 def segmented_runs(cases):
-    # Segmented against uninterrupted runs, in both precisions. In double the
-    # difference is the rounding of a sum in another order, as the structures
-    # are built anew at a boundary; in mixed it is that of the forces in f32,
-    # whose size is that of the error of mixed precision itself.
+    # Segmented against uninterrupted runs, in both precisions. A part
+    # continues the activation of the entry that the last part left, with its
+    # order of the particles and its neighbor structures (D[resident-buffers]),
+    # so the deterministic mode gives the run in parts to the bit: the same
+    # state, cell, and energies.
     if cases[0][0] != "NVE":
         # The uncoupled reference of the coupling check below; the NVE case
         # itself is checked in its own scenario.
@@ -107,42 +80,32 @@ def segmented_runs(cases):
     for kind, method in cases:
         references = {}
         for precision in ("Double", "Mixed"):
-            if method == "Leapfrog" and precision == "Mixed":
-                continue
             program = compile_program(kind, precision, method)
             _, whole = run(program, [sum(PARTS)])
             _, again = run(program, [sum(PARTS)])
             # The deterministic mode repeats a run bit for bit.
             for q in QUANTITIES:
                 assert np.array_equal(getattr(whole, q), getattr(again, q)), q
-            segmented_simulation, segmented = run(program, PARTS)
-            assert segmented.step == whole.step == sum(PARTS)
-            assert abs(segmented.time - sum(PARTS) * 0.001) < 1e-15
-            assert segmented_simulation.step == sum(PARTS)
-            line = [f"{kind} {method} {precision}"]
-            for q in QUANTITIES:
-                difference = np.abs(getattr(segmented, q) - getattr(whole, q)).max()
-                if precision == "Double":
-                    tolerance = double_tolerance(q, whole)
-                else:
-                    error = np.abs(getattr(whole, q) - getattr(references["Double"], q)).max()
-                    tolerance = MIXED_ERROR_FACTOR * error
-                assert difference <= tolerance, (kind, precision, q, difference, tolerance)
-                margin = tolerance / difference if difference else float("inf")
-                line.append(f"{q} {difference:.6e} (tolerance {tolerance:.6e}; "
-                            f"margin {margin:.3f}x)")
-            cell = np.abs(segmented.cell.diagonal - whole.cell.diagonal).max()
-            assert cell <= (1e-12 if precision == "Double" else 1e-6), cell
-            line.append(f"cell {cell:.2e}")
-            print("; ".join(line))
+            for parts in (PARTS, (1,) * 5 + (3, 3, 10)):
+                segmented_simulation, segmented = run(program, parts)
+                assert segmented.step == whole.step == sum(PARTS)
+                assert abs(segmented.time - sum(PARTS) * 0.001) < 1e-15
+                assert segmented_simulation.step == sum(PARTS)
+                for q in QUANTITIES:
+                    assert np.array_equal(getattr(segmented, q), getattr(whole, q)), \
+                        (kind, method, precision, parts, q,
+                         np.abs(getattr(segmented, q) - getattr(whole, q)).max())
+                assert np.array_equal(segmented.cell.vectors, whole.cell.vectors)
+                if method == "Leapfrog":
+                    assert segmented.velocity_offset == -0.5
+            print(f"{kind} {method} {precision}: parts of {'+'.join(map(str, PARTS))} "
+                  f"and of 1x5+3x2+10 equal {sum(PARTS)} steps in one part to the bit")
             references[precision] = whole
-            if method == "Leapfrog":
-                assert segmented.velocity_offset == -0.5
         if kind != "NVE" and method == "VelocityVerlet":
-            # The coupling changes the velocities far beyond the tolerance, so a
-            # coupling at other steps would be seen.
+            # The coupling changes the velocities, so a coupling at other steps
+            # would be seen.
             coupled = np.abs(references["Double"].velocities - nve.velocities).max()
-            assert coupled > 1e4 * double_tolerance("velocities", references["Double"]), coupled
+            assert coupled > 1e-3, coupled
             print(f"{kind}: the coupling moves the velocities by {coupled:.2e} nm/ps")
         if kind == "NVE":
             nve = references["Double"]
@@ -345,22 +308,13 @@ def energy_program(kind, precision):
     return mdir.compile(system, state, integrator, ensemble, execution, mdir.Schedule())
 
 
-def compare(energies, row, relative=None):
-    """Every column at every printed digit, or, with `relative`, within the
-    rounding of the printed digits and `relative` of the value; returns the
-    largest difference relative to the value."""
-    worst = 0.0
+def compare(energies, row):
+    """Every column at every printed digit."""
     for column, written in row.items():
         if column not in COLUMNS:
             continue
         mine = energies[column] / COLUMNS[column]
-        value = float(written)
-        if relative is None:
-            assert "%.6f" % mine == written, (column, "%.6f" % mine, written)
-        else:
-            assert abs(mine - value) <= 1e-6 + relative * abs(value), (column, mine, value)
-        worst = max(worst, abs(mine - value) / max(abs(value), 1e-300))
-    return worst
+        assert "%.6f" % mine == written, (column, "%.6f" % mine, written)
 
 
 def energies(precision):
@@ -368,19 +322,19 @@ def energies(precision):
     for kind in ("NVE", "NVT", "NPT"):
         rows = cli_rows(kind, precision)
         program = energy_program(kind, precision)
-        # One part to step 20 is the run of `mdir run`, which takes no new
-        # order or structures at step 10: the rows agree to every digit.
+        # One part to step 20 is the run of `mdir run`: the rows agree to
+        # every digit.
         whole = mdir.Simulation(program)
         whole.run(20, energy=True)
         compare(whole.state().energies, rows[20])
-        # Parts to steps 10 and 20: the first is the same run; the second
-        # begins with new structures, and agrees within their rounding.
+        # Parts to steps 10 and 20: the second continues the first, with its
+        # order and its neighbor structures (D[resident-buffers]), and agrees
+        # to every digit as well.
         parts = mdir.Simulation(program)
         parts.run(10, energy=True)
         compare(parts.state().energies, rows[10])
         parts.run(10, energy=True)
-        worst = compare(parts.state().energies, rows[20],
-                        relative=1e-9 if precision == "Double" else 1e-5)
+        compare(parts.state().energies, rows[20])
         # A run that ends between the periods of coupling ends with a plain
         # step of energy; one without energy=True leaves none at its step.
         parts.run(3, energy=True)
@@ -388,7 +342,7 @@ def energies(precision):
         parts.run(2)
         assert parts.state().energies is None
         print(f"energies {kind} {precision}: the rows of mdir run at steps 10 and 20 "
-              f"to every printed digit; after a boundary within {worst:.1e} of each")
+              f"to every printed digit, in one part and in two")
 
 
 SCENARIOS = {

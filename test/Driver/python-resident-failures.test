@@ -1,0 +1,12 @@
+# REQUIRES: python-api
+# Device-resident buffers of a persistent simulation on the CPU
+# (D[resident-buffers]), scenario failures of Inputs/python_resident.py.
+# A part that fails after parts that succeeded keeps the state at the end of
+# the last of them, read between the parts or not, to the bit against a run
+# that stops there; a first part that fails keeps the state it began from.
+# RUN: %mdir_python %S/Inputs/python_resident.py %S/Inputs/dipeptide CPU failures | FileCheck %s
+# CHECK: Double: a part that fails after step {{[0-9]+}} keeps the state of that step, to the bit
+# CHECK: Double: a first part that fails keeps the state it began from
+# CHECK: Mixed: a part that fails after step {{[0-9]+}} keeps the state of that step, to the bit
+# CHECK: Mixed: a first part that fails keeps the state it began from
+# CHECK: resident failures passed

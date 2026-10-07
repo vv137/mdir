@@ -1,9 +1,13 @@
 # REQUIRES: python-api
 # Persistent simulations on the CPU (D196), scenario npt of
 # Inputs/python_segments.py.
-# NPT runs of 1 + 7 + 13 steps against uninterrupted ones, in double and
-# mixed precision, and the phase of the coupling across their boundaries.
+# NPT runs of 1 + 7 + 13 steps, and of 1 x 5 + 3 x 2 + 10, against
+# uninterrupted ones, equal to the bit in double and mixed precision, cell
+# included (D[resident-buffers]), and the phase of the coupling across their
+# boundaries.
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %mdir_python %S/Inputs/python_segments.py %S/Inputs/dipeptide CPU mdir %t npt | FileCheck %s
+# CHECK: NPT VelocityVerlet Double: parts of 1+7+13 and of 1x5+3x2+10 equal 21 steps in one part to the bit
+# CHECK: NPT VelocityVerlet Mixed: parts of 1+7+13 and of 1x5+3x2+10 equal 21 steps in one part to the bit
 # CHECK: NPT: the coupling moves the velocities
 # CHECK: segments npt passed

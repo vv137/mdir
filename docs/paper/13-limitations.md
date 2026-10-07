@@ -122,7 +122,10 @@ simulation, in parts that carry its step length (D202); reporters whose
 times are arguments of the compiled program, so that the energy file and
 the trajectory of `mdir run` are written inside a part (D207);
 tunable parameters, whose new values a simulation takes without compiling,
-an update equal to a compile with them to the bit (D213).
+an update equal to a compile with them to the bit (D213); parts that
+continue one activation of the entry, whose buffers stay on the device, so
+that a run in parts is the run in one part to the bit
+(D[resident-buffers]).
 Remaining:
 checkpoints shared with the CLI, views of device buffers through DLPack,
 NPT in a triclinic cell or with a coupling period of 1, and the manylinux_2_28 pip wheel for Python 3.10–3.13 that gates the

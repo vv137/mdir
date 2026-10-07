@@ -177,7 +177,7 @@ private:
                                        bool axes = false);
   /// Sets `levels`, the loops of the schedule of a run of dynamics.
   void setSchedule();
-  void emitMinimization();
+  void emitMinimization(StringRef velocities);
   /// A frame at `step` if a reporter's frame is due (programs of segments).
   void emitFrameIfDue(StringRef indent, StringRef step, StringRef positions,
                       StringRef tag);
@@ -767,6 +767,22 @@ struct Coupled {
                        llvm::ArrayRef<std::string> otherwise);
   bool emittedFirstTrips = false;
   unsigned startBranches = 0;
+  /// The loop over the parts of a program of segments
+  /// (D[resident-buffers]): one activation of the entry runs every part of
+  /// a simulation. Each iteration begins at the end of a part (or at the
+  /// start), where it hands the host the state `carried` (positions,
+  /// velocities, and forces first) where it is, with the number of their
+  /// components that are not numbers, and takes from the host the step that
+  /// the next part begins after and its counts; then it runs `chunk`, the
+  /// steps of the part, and yields `yielded`. In the chunk the values
+  /// carried and %start are renamed.
+  void emitPartLoop(std::string chunk, llvm::ArrayRef<std::string> carried,
+                    llvm::ArrayRef<std::string> types,
+                    llvm::ArrayRef<std::string> yielded,
+                    llvm::ArrayRef<std::string> boundary);
+  /// The counts of the loops of a part, from %part_counts.
+  void emitPartCounts();
+  static int64_t getPartCountsSize() { return 9; }
   /// Whether a run from a checkpoint evaluates the forces of its first step
   /// (D172).
   bool recomputes() const { return isRestart() && control.restartRecomputes; }
@@ -7867,7 +7883,7 @@ void Builder::emitDescend() {
   os << "  dyn.return %x1, %f1, %u1 : !vec, !vec, f64\n}\n\n";
 }
 
-void Builder::emitMinimization() {
+void Builder::emitMinimization(StringRef velocities) {
   // The positions of the file on the surface of the constraints first. A
   // step is taken from positions on it and is constrained again, so a
   // start off it would put into every trial the change that takes the
@@ -7979,6 +7995,8 @@ void Builder::emitMinimization() {
   // over the intervals between energies in each, and over the steps.
   // A segment (D202) is one interval of the steps that
   // the entry takes, with a row at its end.
+  os.flush();
+  size_t partMark = program.module.size();
   std::string state = "!vec, !vec, f64, f64";
   if (control.segments) {
     os << "  %n0 = arith.constant 1 : index\n"
@@ -8053,6 +8071,19 @@ void Builder::emitMinimization() {
           ": (i64, !vec, !ids)\n";
   os << "    scf.yield %xe1, %fe1, %ue1, %he1 : " << state << "\n"
      << "  }\n";
+  if (control.segments) {
+    // The parts of the minimization continue one another in one
+    // activation (D[resident-buffers]).
+    os.flush();
+    std::string chunk = program.module.substr(partMark);
+    program.module.resize(partMark);
+    emitPartLoop(std::move(chunk), {x0, "%f0", "%u0", h0},
+                 {"!vec", "!vec", "f64", "f64"},
+                 {"%xe0", "%fe0", "%ue0", "%he0"},
+                 {x0, velocities.str(), "%f0"});
+    os << "  return\n}\n";
+    return;
+  }
   // The checkpoint holds the positions, and velocities of 0.
   if (control.checkpointPeriod > 0)
     os << "  %c_total = arith.constant " << control.numSteps << " : i64\n"
@@ -8060,9 +8091,6 @@ void Builder::emitMinimization() {
        << "  mdrt.host_call @mdrtWriteCheckpoint(%end, %xe0, %v0, %id)\n"
        << "      : (i64, !vec, !vec, !ids)\n";
   os << "  mdrt.host_call @mdrtFinish(%xe0, %v0, %id) : (!vec, !vec, !ids)\n";
-  // The forces at the positions that the segment ends at.
-  if (control.segments)
-    os << "  mdrt.host_call @mdrtFinishForces(%fe0, %id) : (!vec, !ids)\n";
   os << "  return\n}\n";
 }
 
@@ -8142,12 +8170,20 @@ void Builder::emitEntry() {
      << ">, memref<?xi32>)\n    attributes {llvm.emit_c_interface}\n"
      << "func.func private @mdrtCheckSpread(i64, memref<?x3x" << state
      << ">, memref<?xi32>)\n    attributes {llvm.emit_c_interface}\n"
-     << "func.func private @mdrtFinish(memref<?x3x" << state
-     << ">, memref<?x3x" << state << ">, memref<?xi32>)\n"
-     << "    attributes {llvm.emit_c_interface}\n";
+     ;
+  // A program of segments hands its state to the host where it is at the
+  // end of each part, and takes the counts of the next part there
+  // (D[resident-buffers]); a run ends with its state in the buffers of the
+  // host.
   if (control.segments)
-    os << "func.func private @mdrtFinishForces(memref<?x3x" << force
-       << ">, memref<?xi32>)\n    attributes {llvm.emit_c_interface}\n";
+    os << "func.func private @mdrtPartBoundary(memref<?x3x" << state
+       << ">, memref<?x3x" << state << ">, memref<?x3x" << force
+       << ">, memref<?xi32>, f64, memref<" << getPartCountsSize()
+       << "xi64>)\n    attributes {llvm.emit_c_interface}\n";
+  else
+    os << "func.func private @mdrtFinish(memref<?x3x" << state
+       << ">, memref<?x3x" << state << ">, memref<?xi32>)\n"
+       << "    attributes {llvm.emit_c_interface}\n";
   if (control.minimize)
     os << "func.func private @mdrtWriteMinimization(i64, f64, f64, memref<?x3x"
        << force << ">, memref<?xi32>)\n"
@@ -8212,22 +8248,11 @@ void Builder::emitEntry() {
   // whether the segment ends with a plain step of energy, and whether it
   // ends with a period that closes with a step of energy, with its plain
   // steps.
-  if (control.segments)
-    os << ",\n    %count_outer: i64, %count_inner: i64, %count_tail: i64,"
-       << "\n    %count_energy_plain: i64, %count_energy_close: i64,"
-       << " %count_energy_inner: i64";
-  // A minimization in segments takes its steps in %count_outer and the
-  // length of its first step, which the last segment left
-  // (D202).
+  // The counts of the loops of each part come from the host at the end
+  // of the part before it (emitPartLoop). A minimization in segments takes
+  // the length of its first step (D202).
   if (control.segments && control.minimize)
     os << ", %first_size: f64";
-  // The reports of a program of segments (D207): the second
-  // nest is %count_energy_close intervals that end with a step of energy,
-  // of %count_energy_periods + 1 periods of coupling each (or of
-  // %count_energy_inner + 1 steps without coupling); a frame is written at a
-  // step of energy whose number is a multiple of %frame_period (0: none).
-  if (control.segments && !control.minimize)
-    os << ",\n    %count_energy_periods: i64, %frame_period: i64";
   // Whether the call begins the run, nonzero, or continues the state that
   // the last call left (D211).
   if (branchesStart())
@@ -8256,24 +8281,9 @@ void Builder::emitEntry() {
     os << "  %noise_memory = memref.alloca() : memref<1xi64>\n"
        << "  memref.store %start, %noise_memory[%c0] : memref<1xi64>\n"
        << "  %noise_one = arith.constant 1 : i64\n";
-  // A minimization has loops of its own (emitMinimization).
-  if (control.segments && !control.minimize) {
-    // The counts that the entry takes. The first nest is over the periods
-    // of coupling, with plain steps inside, or over steps; the second, if
-    // any, is one period that closes with a step of energy.
-    bool couples = levels[0].name == "couple";
-    os << "  %n0 = arith.index_cast %count_outer : i64 to index\n";
-    if (couples)
-      os << "  %n1 = arith.index_cast %count_inner : i64 to index\n"
-         << "  %n2 = arith.index_cast %count_energy_close : i64 to index\n"
-         << "  %n3 = arith.index_cast %count_energy_periods : i64 to index\n"
-         << "  %n4 = arith.index_cast %count_energy_inner : i64 to index\n";
-    else
-      os << "  %n1 = arith.index_cast %count_energy_close : i64 to index\n"
-         << "  %n2 = arith.index_cast %count_energy_inner : i64 to index\n";
-    os << "  %n_tail = arith.index_cast %count_tail : i64 to index\n"
-       << "  %n_plain = arith.index_cast %count_energy_plain : i64 to index\n";
-  } else {
+  // A minimization has loops of its own (emitMinimization), and a program
+  // of segments takes its counts in the loop over parts (emitPartCounts).
+  if (!control.segments) {
     for (auto [index, level] : llvm::enumerate(levels))
       os << "  %n" << index << " = arith.constant " << level.count
          << " : index\n";
@@ -8285,25 +8295,6 @@ void Builder::emitEntry() {
   // well (two with the barostat of Trotter type), and one over energy intervals a whole period after its loop over
   // periods.
   int64_t steps = 1;
-  if (control.minimize) {
-    // None: emitMinimization counts its steps.
-  } else if (control.segments && levels[0].name == "couple") {
-    // An iteration over a period takes its plain steps and those that close
-    // it: one, or two with the barostat of Trotter type. The period of the
-    // second nest is the whole of its one interval of energy.
-    os << "  %per1 = arith.constant 1 : index\n"
-       << "  %closing = arith.constant " << getClosingSteps() << " : index\n"
-       << "  %per0 = arith.addi %n1, %closing : index\n"
-       << "  %per4 = arith.constant 1 : index\n"
-       << "  %per3 = arith.addi %n4, %closing : index\n"
-       << "  %periods2 = arith.addi %n3, %c1 : index\n"
-       << "  %per2 = arith.muli %periods2, %per3 : index\n";
-  } else if (control.segments) {
-    // The second nest: intervals of %n2 plain steps and a step of energy.
-    os << "  %per0 = arith.constant 1 : index\n"
-       << "  %per2 = arith.constant 1 : index\n"
-       << "  %per1 = arith.addi %n2, %c1 : index\n";
-  }
   for (unsigned i = control.segments ? 0 : levels.size(); i-- != 0;) {
     os << "  %per" << i << " = arith.constant " << steps << " : index\n";
     steps *= levels[i].count;
@@ -8424,7 +8415,7 @@ void Builder::emitEntry() {
     emitReorder("  ", "_in", "0", "", givenForces, velocities,
                 branchesStart() ? "%fg" : "");
   if (control.minimize) {
-    emitMinimization();
+    emitMinimization(velocities);
     return;
   }
 
@@ -8682,6 +8673,8 @@ void Builder::emitEntry() {
 
   std::string last = "e0";
   if (control.segments) {
+    os.flush();
+    size_t partMark = program.module.size();
     nestEnd = levels[0].name == "couple" ? 2 : 1;
     emitLevel(0, "  ");
     // The plain steps of the period in which the segment ends, after the
@@ -8731,16 +8724,141 @@ void Builder::emitEntry() {
     nestStart = "%start_e";
     emitLevel(second, "  ");
     last = "e" + std::to_string(second);
-  } else {
-    emitLevel(0, "  ");
+    os.flush();
+    std::string chunk = program.module.substr(partMark);
+    program.module.resize(partMark);
+    emitPartLoop(std::move(chunk), {"%x0", "%v0", "%f0"},
+                 {"!vec", "!vec", "!vec"},
+                 {"%x" + last, "%v" + last, "%f" + last},
+                 {"%x0", "%v0", "%f0"});
+    os << "  return\n}\n";
+    return;
   }
+  emitLevel(0, "  ");
   os << "  mdrt.host_call @mdrtFinish(%x" << last << ", %v" << last << ", "
      << idName << ") : (!vec, !vec, !ids)\n";
-  // The forces that the next segment begins with.
-  if (control.segments)
-    os << "  mdrt.host_call @mdrtFinishForces(%f" << last << ", " << idName
-       << ") : (!vec, !ids)\n";
   os << "  return\n}\n";
+}
+
+void Builder::emitPartCounts() {
+  // The step that the part begins after, and the counts of its loops: the
+  // iterations of the outer loop, the plain steps in an iteration of the
+  // loop over the periods of coupling, and plain steps after the loops;
+  // then whether the part ends with a plain step of energy, and whether it
+  // ends with a period that closes with a step of energy, with its plain
+  // steps (D196). The second nest is %count_energy_close intervals that end
+  // with a step of energy, of %count_energy_periods + 1 periods of coupling
+  // each (or of %count_energy_inner + 1 steps without coupling); a frame is
+  // written at a step of energy whose number is a multiple of
+  // %frame_period (0: none) (D207). A minimization takes its steps in
+  // %count_outer (D202).
+  static const char *const names[] = {
+      "%start$part",        "%count_outer",        "%count_inner",
+      "%count_tail",        "%count_energy_plain", "%count_energy_close",
+      "%count_energy_inner", "%count_energy_periods", "%frame_period"};
+  static_assert(sizeof(names) / sizeof(names[0]) == 9, "");
+  int64_t count = control.minimize ? 2 : getPartCountsSize();
+  for (int64_t k = 0; k != count; ++k)
+    os << "    %part_at" << k << " = arith.constant " << k << " : index\n"
+       << "    " << names[k] << " = memref.load %part_counts[%part_at" << k
+       << "] : memref<" << getPartCountsSize() << "xi64>\n";
+  if (control.minimize)
+    return;
+  // The first nest is over the periods of coupling, with plain steps
+  // inside, or over steps; the second, if any, is one period that closes
+  // with a step of energy.
+  bool couples = levels[0].name == "couple";
+  os << "    %n0 = arith.index_cast %count_outer : i64 to index\n";
+  if (couples)
+    os << "    %n1 = arith.index_cast %count_inner : i64 to index\n"
+       << "    %n2 = arith.index_cast %count_energy_close : i64 to index\n"
+       << "    %n3 = arith.index_cast %count_energy_periods : i64 to index\n"
+       << "    %n4 = arith.index_cast %count_energy_inner : i64 to index\n";
+  else
+    os << "    %n1 = arith.index_cast %count_energy_close : i64 to index\n"
+       << "    %n2 = arith.index_cast %count_energy_inner : i64 to index\n";
+  os << "    %n_tail = arith.index_cast %count_tail : i64 to index\n"
+     << "    %n_plain = arith.index_cast %count_energy_plain : i64 to index\n";
+  // The steps of an iteration of each loop. An iteration over a period
+  // takes its plain steps and those that close it: one, or two with the
+  // barostat of Trotter type. The period of the second nest is the whole of
+  // its one interval of energy. Without coupling, the second nest is
+  // intervals of %n2 plain steps and a step of energy.
+  if (couples)
+    os << "    %per1 = arith.constant 1 : index\n"
+       << "    %closing = arith.constant " << getClosingSteps() << " : index\n"
+       << "    %per0 = arith.addi %n1, %closing : index\n"
+       << "    %per4 = arith.constant 1 : index\n"
+       << "    %per3 = arith.addi %n4, %closing : index\n"
+       << "    %periods2 = arith.addi %n3, %c1 : index\n"
+       << "    %per2 = arith.muli %periods2, %per3 : index\n";
+  else
+    os << "    %per0 = arith.constant 1 : index\n"
+       << "    %per2 = arith.constant 1 : index\n"
+       << "    %per1 = arith.addi %n2, %c1 : index\n";
+}
+
+void Builder::emitPartLoop(std::string chunk,
+                           llvm::ArrayRef<std::string> carried,
+                           llvm::ArrayRef<std::string> types,
+                           llvm::ArrayRef<std::string> yielded,
+                           llvm::ArrayRef<std::string> boundary) {
+  // A `call` in the loop names its dialect (emitStartBranch).
+  for (size_t at = chunk.find(" call @"); at != std::string::npos;
+       at = chunk.find(" call @", at))
+    chunk.replace(at, 7, " func.call @");
+  for (const std::string &value : carried)
+    chunk = renameValue(chunk, value, value + "$part");
+  chunk = renameValue(chunk, "%start", "%start$part");
+  std::string typeList;
+  for (size_t i = 0; i != types.size(); ++i)
+    typeList += (i ? ", " : "") + types[i];
+  std::string counts =
+      "memref<" + std::to_string(getPartCountsSize()) + "xi64>";
+  // The loop has no end of its own: the host ends the activation at a
+  // boundary (Simulation.cpp).
+  os << "  %part_counts = memref.alloca() : " << counts << "\n"
+     << "  %part_end = arith.constant 9223372036854775807 : index\n"
+     << "  ";
+  for (size_t i = 0; i != carried.size(); ++i)
+    os << (i ? ", " : "") << carried[i] << "$parts";
+  os << " = scf.for %i_part = %c0 to %part_end step %c1\n"
+     << "      iter_args(";
+  for (size_t i = 0; i != carried.size(); ++i)
+    os << (i ? ", " : "") << carried[i] << "$part = " << carried[i];
+  os << ") -> (" << typeList << ") {\n";
+  // The components of the state that are not numbers, which fail the part
+  // (D196): the positions, velocities, and forces, in whatever type they
+  // are stored. x - x is not a number for an infinity as well.
+  std::string x = boundary[0] + "$part", v = boundary[1],
+              f = boundary[2] + "$part";
+  if (llvm::is_contained(carried, boundary[1]))
+    v += "$part";
+  os << "    %nf_s = md.sum_particles gather(" << x << ", " << v << ", " << f
+     << " : !vec, !vec, !vec) {\n"
+     << "    ^bb0(%nf_x: vector<3xf64>, %nf_v: vector<3xf64>, "
+        "%nf_f: vector<3xf64>):\n"
+     << "      %nf_one = arith.constant dense<1.0> : vector<3xf64>\n"
+     << "      %nf_zero = arith.constant dense<0.0> : vector<3xf64>\n";
+  for (StringRef c : {"x", "v", "f"})
+    os << "      %nf_d" << c << " = arith.subf %nf_" << c << ", %nf_" << c
+       << " : vector<3xf64>\n"
+       << "      %nf_k" << c << " = arith.cmpf ord, %nf_d" << c << ", %nf_d"
+       << c << " : vector<3xf64>\n"
+       << "      %nf_b" << c << " = arith.select %nf_k" << c
+       << ", %nf_zero, %nf_one : vector<3xi1>, vector<3xf64>\n";
+  os << "      %nf_bxv = arith.addf %nf_bx, %nf_bv : vector<3xf64>\n"
+     << "      %nf_b = arith.addf %nf_bxv, %nf_bf : vector<3xf64>\n"
+     << "      md.yield %nf_b : vector<3xf64>\n"
+     << "    } : vector<3xf64>\n";
+  emitSum3(os, "%nf", "%nf_s", "    ");
+  os << "    mdrt.host_call @mdrtPartBoundary(" << x << ", " << v << ", " << f
+     << ", " << idName << ", %nf, %part_counts) {in_place}\n"
+     << "        : (!vec, !vec, !vec, !ids, f64, " << counts << ")\n";
+  emitPartCounts();
+  os << chunk << "    scf.yield ";
+  llvm::interleaveComma(yielded, os);
+  os << " : " << typeList << "\n  }\n";
 }
 
 void Builder::emitFrameIfDue(StringRef indent, StringRef step,

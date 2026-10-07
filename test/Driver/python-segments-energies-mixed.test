@@ -5,5 +5,5 @@
 # of `mdir run`, NVE, NVT, and NPT in mixed precision.
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %mdir_python %S/Inputs/python_segments.py %S/Inputs/dipeptide CPU mdir %t energies-mixed | FileCheck %s
-# CHECK: energies NPT Mixed: the rows of mdir run at steps 10 and 20 to every printed digit
+# CHECK: energies NPT Mixed: the rows of mdir run at steps 10 and 20 to every printed digit, in one part and in two
 # CHECK: segments energies-mixed passed

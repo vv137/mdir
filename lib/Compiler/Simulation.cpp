@@ -19,12 +19,16 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Target/TargetMachine.h"
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstring>
 #include <dlfcn.h>
 #include <mutex>
 #include <numeric>
+#include <sys/mman.h>
+#include <ucontext.h>
+#include <unistd.h>
 #include <unordered_set>
 
 using namespace mdir;
@@ -115,23 +119,21 @@ extern "C" void stopPart(const char *message) {
 }
 
 /// The memory of the host that compiled code allocates (`malloc` and `free`
-/// of its module): what a call of an entry leaves allocated is the call's
-/// own, since every buffer of a part is made anew, and is freed when the
-/// call returns (#110). A pointer that compiled code did not allocate goes to
-/// `free` as it is.
+/// of its module), by activation (D[resident-buffers]): what an activation
+/// leaves allocated is its own and is freed when it ends (#110). The code of
+/// an activation runs while its set is current. A pointer that compiled code
+/// did not allocate goes to `free` as it is.
 std::mutex &getAllocationMutex() {
   static std::mutex mutex;
   return mutex;
 }
-std::unordered_set<void *> &getAllocations() {
-  static std::unordered_set<void *> allocations;
-  return allocations;
-}
+std::unordered_set<void *> *currentAllocations = nullptr;
 extern "C" void *allocateForCode(size_t size) {
   void *pointer = std::malloc(size);
   if (pointer) {
     std::lock_guard<std::mutex> lock(getAllocationMutex());
-    getAllocations().insert(pointer);
+    if (currentAllocations)
+      currentAllocations->insert(pointer);
   }
   return pointer;
 }
@@ -140,24 +142,16 @@ extern "C" void freeForCode(void *pointer) {
     return;
   {
     std::lock_guard<std::mutex> lock(getAllocationMutex());
-    getAllocations().erase(pointer);
+    if (currentAllocations)
+      currentAllocations->erase(pointer);
   }
   std::free(pointer);
 }
-void freeAllocationsOfCall() {
-  std::lock_guard<std::mutex> lock(getAllocationMutex());
-  for (void *pointer : getAllocations())
-    std::free(pointer);
-  getAllocations().clear();
-}
 
-/// Opens or closes a call of an entry in a runtime library (`mdrtBeginCall`,
-/// `mdrtDeviceEndCall`, ...), which frees what the call made; nothing if the
-/// library is not loaded.
-void callRuntime(const char *name) {
-  if (auto function = reinterpret_cast<void (*)()>(
-          llvm::sys::DynamicLibrary::SearchForAddressOfSymbol(name)))
-    function();
+/// A function of a runtime library, or null if the library is not loaded.
+template <typename Function> Function *findRuntime(const char *name) {
+  return reinterpret_cast<Function *>(
+      llvm::sys::DynamicLibrary::SearchForAddressOfSymbol(name));
 }
 
 /// The directory of the runtime libraries: `MDIR_RUNTIME_DIR`, or `lib` next
@@ -237,6 +231,84 @@ struct Arguments {
 };
 } // namespace
 
+/// The activation of the entry of a program of segments that runs the parts
+/// of a simulation (D[resident-buffers]). The entry runs on a stack of its
+/// own; at the end of each part it hands the host its state where it is
+/// (mdrtPartBoundary) and waits there, holding its buffers, its order of the
+/// particles, and its neighbor structures, until the host gives it the
+/// next part. It never returns: the host ends it at a boundary by freeing
+/// what it allocated, which its records list, and its stack. The code holds
+/// nothing else on its stack.
+struct compiler::Activation {
+  Simulation::Engine *engine = nullptr;
+  bool onDevice = false;
+  /// What the entry was given at its start: the buffers of the host, which
+  /// the program works in on the CPU, and the scalars.
+  Arguments arguments;
+  double box[3] = {0.0, 0.0, 0.0};
+  double timestep = 0.0, firstSize = 0.0, baroConstant = 0.0,
+         baroEnergyConstant = 0.0;
+  int64_t start = 0, firstCall = 0;
+  /// The records of what the activation allocates: of the runtime of the
+  /// host, of that of the device, and of the memory of the host that its
+  /// code takes.
+  void *hostRecord = nullptr, *deviceRecord = nullptr;
+  std::unordered_set<void *> allocations;
+  /// Where the activation runs, and where the host waits for it.
+  ucontext_t context, host;
+  void *stack = nullptr;
+  size_t stackSize = 0;
+  bool atBoundary = false, returned = false;
+  /// The state at the last boundary, where it is, in the order of the
+  /// program, and the number of its components that are not numbers.
+  StridedMemRefType<char, 2> x{}, v{}, f{};
+  StridedMemRefType<int32_t, 1> id{};
+  double notNumbers = 0.0;
+  /// The step that the next part begins after, and its counts.
+  std::array<int64_t, 9> next{};
+  /// The particle at each place of the program, once read.
+  std::vector<int32_t> places;
+};
+
+namespace {
+/// The activation whose code runs, and one that is about to begin.
+compiler::Activation *runningActivation = nullptr;
+compiler::Activation *startingActivation = nullptr;
+
+/// The stack of an activation. The entry ran on the stack of the thread that
+/// called it, of 8 MiB on Linux; its pages are committed as they are used.
+constexpr size_t activationStack = size_t(64) << 20;
+
+void runActivation() {
+  compiler::Activation *a = startingActivation;
+  a->engine->function(a->arguments.pointers.data());
+  // The loop over parts has no end; the host ends an activation at a
+  // boundary.
+  a->returned = true;
+}
+
+/// The end of a part, or the end of the start of an activation: the state
+/// where it is, and the memory where the next part's step and counts go.
+extern "C" void _mlir_ciface_mdrtPartBoundary(StridedMemRefType<char, 2> *x,
+                                              StridedMemRefType<char, 2> *v,
+                                              StridedMemRefType<char, 2> *f,
+                                              StridedMemRefType<int32_t, 1> *id,
+                                              double notNumbers,
+                                              StridedMemRefType<int64_t, 1> *counts) {
+  compiler::Activation *a = runningActivation;
+  a->x = *x;
+  a->v = *v;
+  a->f = *f;
+  a->id = *id;
+  a->notNumbers = notNumbers;
+  a->atBoundary = true;
+  swapcontext(&a->context, &a->host);
+  // The next part.
+  for (size_t k = 0; k != a->next.size(); ++k)
+    counts->data[counts->offset + k * counts->strides[0]] = a->next[k];
+}
+} // namespace
+
 Simulation::~Simulation() {
   std::lock_guard<std::mutex> lock(getRunMutex());
   // The files of the reports are complete when the simulation ends.
@@ -245,6 +317,10 @@ Simulation::~Simulation() {
     if (output->trajectory)
       output->trajectory->close();
   }
+  // The activation runs the code of the engine, and is ended first
+  // (D199).
+  endActivation();
+  freeSnapshot();
   compiled.reset();
 }
 
@@ -361,7 +437,8 @@ compileEngine(const Control &control, const System &system,
     // The memory of the host that the code allocates, freed after each call.
     add("malloc", (void *)&allocateForCode);
     add("free", (void *)&freeForCode);
-    add("_mlir_ciface_mdrtFinishForces", (void *)&_mlir_ciface_mdrtFinishForces);
+    add("_mlir_ciface_mdrtPartBoundary",
+        (void *)&_mlir_ciface_mdrtPartBoundary);
     add("_mlir_ciface_mdrtWriteCheckpoint",
         writesForces ? (void *)&_mlir_ciface_mdrtWriteCheckpointWithForces
                      : (void *)&_mlir_ciface_mdrtWriteCheckpoint);
@@ -501,6 +578,320 @@ llvm::Expected<Simulation::Engine *> Simulation::getEngine() {
   return compiled.get();
 }
 
+llvm::Error Simulation::startActivation(int64_t firstCall) {
+  Engine &engine = *compiled;
+  const Program &p = engine.program;
+  auto a = std::make_unique<Activation>();
+  a->engine = &engine;
+  a->onDevice = engine.control.target == Target::GPU;
+  size_t count = system.getNumParticles();
+  // The arguments in the order of the entry (Builder.h), from the state of
+  // the host. The first call begins the run and ignores the forces that it
+  // is given (D211); a later one continues those given.
+  Arguments &args = a->arguments;
+  auto vector = [&](const std::vector<double> &values, Element element) {
+    args.vectors.push_back(
+        std::make_unique<HostBuffer<2>>(values, element, count));
+    args.vectors.back()->addTo(args.pointers);
+  };
+  vector(system.positions, p.state);
+  vector(system.velocities, p.state);
+  if (p.takesForces)
+    vector(hasRun ? forces : std::vector<double>(3 * count, 0.0), p.force);
+  args.reals.push_back(
+      std::make_unique<HostBuffer<1>>(engine.masses, p.mass, count));
+  args.reals.back()->addTo(args.pointers);
+  for (const Program::Field &field : p.fields) {
+    if (!field.isInteger) {
+      args.reals.push_back(
+          std::make_unique<HostBuffer<1>>(field.values, p.parameter, count));
+      args.reals.back()->addTo(args.pointers);
+      continue;
+    }
+    args.integers.emplace_back(field.values.begin(), field.values.end());
+    auto d = std::make_unique<StridedMemRefType<int32_t, 1>>();
+    d->basePtr = d->data = args.integers.back().data();
+    d->offset = 0;
+    d->sizes[0] = count;
+    d->strides[0] = 1;
+    addDescriptor(args.pointers, *d);
+    args.integerFields.push_back(std::move(d));
+  }
+  for (const Program::Table &table : p.tables) {
+    args.doubles.push_back(table.values);
+    auto d = std::make_unique<StridedMemRefType<double, 2>>();
+    d->basePtr = d->data = args.doubles.back().data();
+    d->offset = 0;
+    d->sizes[0] = table.count;
+    d->sizes[1] = table.getColumns();
+    d->strides[0] = table.getColumns();
+    d->strides[1] = 1;
+    addDescriptor(args.pointers, *d);
+    args.tables.push_back(std::move(d));
+  }
+  // Moving a vector keeps its storage, so the descriptors stay valid as
+  // the lists grow.
+  for (const Program::TupleSet &set : p.tupleSets) {
+    args.integers.push_back(set.members);
+    auto m = std::make_unique<StridedMemRefType<int32_t, 2>>();
+    m->basePtr = m->data = args.integers.back().data();
+    m->offset = 0;
+    m->sizes[0] = set.size();
+    m->sizes[1] = set.arity;
+    m->strides[0] = set.arity;
+    m->strides[1] = 1;
+    addDescriptor(args.pointers, *m);
+    args.members.push_back(std::move(m));
+    for (const Program::Field &field : set.fields) {
+      args.doubles.push_back(field.values);
+      auto v = std::make_unique<StridedMemRefType<double, 1>>();
+      v->basePtr = v->data = args.doubles.back().data();
+      v->offset = 0;
+      v->sizes[0] = set.size();
+      v->strides[0] = 1;
+      addDescriptor(args.pointers, *v);
+      args.tupleFields.push_back(std::move(v));
+    }
+  }
+  args.integers.emplace_back(count);
+  std::vector<int32_t> &numbers = args.integers.back();
+  for (size_t i = 0; i != count; ++i)
+    numbers[i] = static_cast<int32_t>(i);
+  args.identities.basePtr = args.identities.data = numbers.data();
+  args.identities.offset = 0;
+  args.identities.sizes[0] = count;
+  args.identities.strides[0] = 1;
+  addDescriptor(args.pointers, args.identities);
+  for (int k = 0; k != 3; ++k)
+    a->box[k] = output->box[k];
+  a->timestep = engine.control.timestep;
+  a->start = step;
+  a->firstCall = firstCall;
+  a->firstSize = minimizationSize;
+  a->baroConstant = p.baroConstant;
+  a->baroEnergyConstant = p.baroEnergyConstant;
+  for (double &edge : a->box)
+    args.pointers.push_back(&edge);
+  args.pointers.push_back(&a->timestep);
+  args.pointers.push_back(&a->start);
+  if (engine.control.minimize)
+    args.pointers.push_back(&a->firstSize);
+  args.pointers.push_back(&a->firstCall);
+  if (p.takesConstants) {
+    args.pointers.push_back(&a->baroConstant);
+    args.pointers.push_back(&a->baroEnergyConstant);
+  }
+
+  // A stack of its own, below which a page that is not mapped stops an
+  // overflow.
+  void *stack = mmap(nullptr, activationStack, PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_STACK,
+                     -1, 0);
+  if (stack == MAP_FAILED)
+    return simulationError("cannot map the stack of the program: " +
+                           llvm::Twine(std::strerror(errno)));
+  size_t page = static_cast<size_t>(sysconf(_SC_PAGESIZE));
+  mprotect(stack, page, PROT_NONE);
+  a->stack = stack;
+  a->stackSize = activationStack;
+  if (auto open = findRuntime<void *()>("mdrtActivationOpen"))
+    a->hostRecord = open();
+  if (a->onDevice)
+    if (auto open = findRuntime<void *()>("mdrtDeviceActivationOpen"))
+      a->deviceRecord = open();
+  getcontext(&a->context);
+  a->context.uc_stack.ss_sp = stack;
+  a->context.uc_stack.ss_size = activationStack;
+  a->context.uc_link = &a->host;
+  makecontext(&a->context, runActivation, 0);
+  startingActivation = a.get();
+  activation = std::move(a);
+  resumeActivation();
+  startingActivation = nullptr;
+  return llvm::Error::success();
+}
+
+void Simulation::resumeActivation() {
+  Activation &a = *activation;
+  a.atBoundary = false;
+  if (auto enter = findRuntime<void(void *)>("mdrtActivationEnter"))
+    enter(a.hostRecord);
+  if (a.onDevice)
+    if (auto enter = findRuntime<void(void *)>("mdrtDeviceActivationEnter"))
+      enter(a.deviceRecord);
+  {
+    std::lock_guard<std::mutex> lock(getAllocationMutex());
+    currentAllocations = &a.allocations;
+  }
+  runningActivation = &a;
+  swapcontext(&a.host, &a.context);
+  runningActivation = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(getAllocationMutex());
+    currentAllocations = nullptr;
+  }
+  if (auto leave = findRuntime<void()>("mdrtActivationLeave"))
+    leave();
+  if (a.onDevice)
+    if (auto leave = findRuntime<void()>("mdrtDeviceActivationLeave"))
+      leave();
+}
+
+void Simulation::endActivation() {
+  if (!activation)
+    return;
+  Activation &a = *activation;
+  // Its code waits at a boundary and never runs again. What it allocated
+  // is freed: its blocks of the device return to the pool of the runtime
+  // (#110).
+  if (a.deviceRecord)
+    if (auto close = findRuntime<void(void *)>("mdrtDeviceActivationClose"))
+      close(a.deviceRecord);
+  if (a.hostRecord)
+    if (auto close = findRuntime<void(void *)>("mdrtActivationClose"))
+      close(a.hostRecord);
+  {
+    std::lock_guard<std::mutex> lock(getAllocationMutex());
+    for (void *pointer : a.allocations)
+      std::free(pointer);
+    a.allocations.clear();
+  }
+  if (a.stack)
+    munmap(a.stack, a.stackSize);
+  activation.reset();
+}
+
+namespace {
+size_t getWidth(Element element) {
+  return element == Element::F32 ? sizeof(float) : sizeof(double);
+}
+/// The address of the first element of a buffer that the program gave.
+template <typename T, int Rank>
+const char *getStart(const StridedMemRefType<T, Rank> &buffer, size_t width) {
+  return reinterpret_cast<const char *>(buffer.data) + buffer.offset * width;
+}
+
+/// The state of the program, in its order and in the types it is stored
+/// in, as the state of the host: in the order of the input and in double
+/// precision.
+void readState(compiler::Activation &a, const Program &p, const void *x,
+               const void *v, const void *f, bool onDevice,
+               std::vector<double> &positions,
+               std::vector<double> &velocities,
+               std::vector<double> &forces) {
+  size_t count = static_cast<size_t>(a.x.sizes[0]);
+  auto copy = [&](void *to, const void *from, size_t bytes) {
+    if (!onDevice) {
+      std::memcpy(to, from, bytes);
+      return;
+    }
+    static auto toHost = findRuntime<void(void *, const void *, uint64_t)>(
+        "mdrtDeviceCopyToHost");
+    toHost(to, from, bytes);
+  };
+  if (a.places.size() != count) {
+    a.places.resize(count);
+    copy(a.places.data(), getStart(a.id, sizeof(int32_t)),
+         count * sizeof(int32_t));
+  }
+  auto read = [&](const void *source, Element element,
+                  std::vector<double> &values) {
+    size_t width = getWidth(element);
+    std::vector<char> raw(3 * count * width);
+    copy(raw.data(), source, raw.size());
+    values.assign(3 * count, 0.0);
+    for (size_t i = 0; i != count; ++i) {
+      size_t place = static_cast<size_t>(a.places[i]);
+      for (size_t c = 0; c != 3; ++c) {
+        double value;
+        if (element == Element::F32) {
+          float narrow;
+          std::memcpy(&narrow, &raw[(3 * i + c) * width], sizeof narrow);
+          value = narrow;
+        } else {
+          std::memcpy(&value, &raw[(3 * i + c) * width], sizeof value);
+        }
+        values[3 * place + c] = value;
+      }
+    }
+  };
+  read(x, p.state, positions);
+  read(v, p.state, velocities);
+  read(f, p.force, forces);
+}
+} // namespace
+
+void Simulation::downloadState() const {
+  if (hostCurrent || !activation)
+    return;
+  Activation &a = *activation;
+  const Program &p = compiled->program;
+  readState(a, p, getStart(a.x, getWidth(p.state)),
+            getStart(a.v, getWidth(p.state)), getStart(a.f, getWidth(p.force)),
+            a.onDevice, system.positions, system.velocities, forces);
+  hostCurrent = true;
+}
+
+void Simulation::takeSnapshot() {
+  Activation &a = *activation;
+  const Program &p = compiled->program;
+  size_t count = system.getNumParticles();
+  size_t stateBytes = 3 * count * getWidth(p.state);
+  size_t forceBytes = 3 * count * getWidth(p.force);
+  if (!snapshot.positions) {
+    snapshot.onDevice = a.onDevice;
+    snapshot.stateBytes = stateBytes;
+    snapshot.forceBytes = forceBytes;
+    if (a.onDevice) {
+      static auto keep =
+          findRuntime<void *(uint64_t)>("mdrtDeviceAllocateKept");
+      snapshot.positions = keep(stateBytes);
+      snapshot.velocities = keep(stateBytes);
+      snapshot.forces = keep(forceBytes);
+    } else {
+      snapshot.host.resize(2 * stateBytes + forceBytes);
+      snapshot.positions = snapshot.host.data();
+      snapshot.velocities = snapshot.host.data() + stateBytes;
+      snapshot.forces = snapshot.host.data() + 2 * stateBytes;
+    }
+  }
+  const void *sources[3] = {getStart(a.x, getWidth(p.state)),
+                            getStart(a.v, getWidth(p.state)),
+                            getStart(a.f, getWidth(p.force))};
+  void *targets[3] = {snapshot.positions, snapshot.velocities,
+                      snapshot.forces};
+  size_t bytes[3] = {stateBytes, stateBytes, forceBytes};
+  for (int k = 0; k != 3; ++k) {
+    if (a.onDevice) {
+      // On the stream of the kernels, before the work of the next part;
+      // the host does not wait.
+      static auto within = findRuntime<void(void *, const void *, uint64_t)>(
+          "mdrtDeviceCopyWithin");
+      within(targets[k], sources[k], bytes[k]);
+    } else {
+      std::memcpy(targets[k], sources[k], bytes[k]);
+    }
+  }
+  snapshot.valid = true;
+}
+
+void Simulation::restoreSnapshot() {
+  readState(*activation, compiled->program, snapshot.positions,
+            snapshot.velocities, snapshot.forces, snapshot.onDevice,
+            system.positions, system.velocities, forces);
+  hostCurrent = true;
+}
+
+void Simulation::freeSnapshot() {
+  if (snapshot.onDevice && snapshot.positions) {
+    if (auto release = findRuntime<void(void *)>("mdrtDeviceFreeKept"))
+      for (void *pointer :
+           {snapshot.positions, snapshot.velocities, snapshot.forces})
+        release(pointer);
+  }
+  snapshot = Snapshot();
+}
+
 llvm::Error Simulation::runPart(Engine &engine, Part part) {
   std::lock_guard<std::mutex> lock(getRunMutex());
   Output &out = *output;
@@ -527,160 +918,83 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
   out.endStep = step + part.outer * (p.segmentPeriod ? part.inner + closing : 1) +
                 part.tail + part.plain + part.close * interval;
 
-  // The state before the part, which a failed part leaves.
-  System before = system;
-  std::vector<double> forcesBefore = forces;
+  // What a failed part leaves besides the state (D196).
   double boxBefore[3] = {out.box[0], out.box[1], out.box[2]};
   double bathBefore = out.bath;
+  Output::MinimizationRow rowBefore = out.lastMinimization;
 
   std::string failure;
-  out.fail = [&](const std::string &message) {
+  auto fail = [&](const std::string &message) {
     if (failure.empty())
       failure = message;
   };
+  out.fail = fail;
   out.system = &system;
-  out.finalForces.clear();
   setOutput(&out);
-
-  size_t count = system.getNumParticles();
-  // The first call begins the run and ignores the forces that it is given
-  // (D211); a later call continues those that the
-  // last left.
-  if (p.takesForces && hasRun && forces.size() != 3 * count)
-    return simulationError("the segment takes forces, but has none; this "
-                           "is a defect of mdir");
-  // The arguments in the order of the entry (Builder.h).
-  Arguments a;
-  auto vector = [&](const std::vector<double> &values, Element element) {
-    a.vectors.push_back(std::make_unique<HostBuffer<2>>(values, element, count));
-    a.vectors.back()->addTo(a.pointers);
-  };
-  vector(system.positions, p.state);
-  vector(system.velocities, p.state);
-  if (p.takesForces)
-    vector(hasRun ? forces : std::vector<double>(3 * count, 0.0), p.force);
-  a.reals.push_back(std::make_unique<HostBuffer<1>>(engine.masses, p.mass, count));
-  a.reals.back()->addTo(a.pointers);
-  for (const Program::Field &field : p.fields) {
-    if (!field.isInteger) {
-      a.reals.push_back(
-          std::make_unique<HostBuffer<1>>(field.values, p.parameter, count));
-      a.reals.back()->addTo(a.pointers);
-      continue;
-    }
-    a.integers.emplace_back(field.values.begin(), field.values.end());
-    auto d = std::make_unique<StridedMemRefType<int32_t, 1>>();
-    d->basePtr = d->data = a.integers.back().data();
-    d->offset = 0;
-    d->sizes[0] = count;
-    d->strides[0] = 1;
-    addDescriptor(a.pointers, *d);
-    a.integerFields.push_back(std::move(d));
-  }
-  for (const Program::Table &table : p.tables) {
-    a.doubles.push_back(table.values);
-    auto d = std::make_unique<StridedMemRefType<double, 2>>();
-    d->basePtr = d->data = a.doubles.back().data();
-    d->offset = 0;
-    d->sizes[0] = table.count;
-    d->sizes[1] = table.getColumns();
-    d->strides[0] = table.getColumns();
-    d->strides[1] = 1;
-    addDescriptor(a.pointers, *d);
-    a.tables.push_back(std::move(d));
-  }
-  // Moving a vector keeps its storage, so the descriptors stay valid as
-  // the lists grow.
-  for (const Program::TupleSet &set : p.tupleSets) {
-    a.integers.push_back(set.members);
-    auto m = std::make_unique<StridedMemRefType<int32_t, 2>>();
-    m->basePtr = m->data = a.integers.back().data();
-    m->offset = 0;
-    m->sizes[0] = set.size();
-    m->sizes[1] = set.arity;
-    m->strides[0] = set.arity;
-    m->strides[1] = 1;
-    addDescriptor(a.pointers, *m);
-    a.members.push_back(std::move(m));
-    for (const Program::Field &field : set.fields) {
-      a.doubles.push_back(field.values);
-      auto v = std::make_unique<StridedMemRefType<double, 1>>();
-      v->basePtr = v->data = a.doubles.back().data();
-      v->offset = 0;
-      v->sizes[0] = set.size();
-      v->strides[0] = 1;
-      addDescriptor(a.pointers, *v);
-      a.tupleFields.push_back(std::move(v));
-    }
-  }
-  a.integers.emplace_back(count);
-  std::vector<int32_t> &numbers = a.integers.back();
-  for (size_t i = 0; i != count; ++i)
-    numbers[i] = static_cast<int32_t>(i);
-  a.identities.basePtr = a.identities.data = numbers.data();
-  a.identities.offset = 0;
-  a.identities.sizes[0] = count;
-  a.identities.strides[0] = 1;
-  addDescriptor(a.pointers, a.identities);
-  double box[3] = {out.box[0], out.box[1], out.box[2]};
-  double timestep = engine.control.timestep;
-  int64_t begin = step;
-  for (double &edge : box)
-    a.pointers.push_back(&edge);
-  a.pointers.push_back(&timestep);
-  a.pointers.push_back(&begin);
-  for (int64_t *count : {&part.outer, &part.inner, &part.tail, &part.plain,
-                         &part.close, &part.closeInner})
-    a.pointers.push_back(count);
-  double firstSize = minimizationSize;
-  int64_t framePeriod = reports.framePeriod;
-  if (engine.control.minimize) {
-    a.pointers.push_back(&firstSize);
-  } else {
-    a.pointers.push_back(&part.closePeriods);
-    a.pointers.push_back(&framePeriod);
-  }
-  // 2: the forces of the state given anew, after an update of the
-  // tunables (D213).
-  int64_t firstCall = hasRun ? (refreshing ? 2 : 0) : 1;
-  a.pointers.push_back(&firstCall);
-  double baroConstant = p.baroConstant, baroEnergyConstant = p.baroEnergyConstant;
-  if (p.takesConstants) {
-    a.pointers.push_back(&baroConstant);
-    a.pointers.push_back(&baroEnergyConstant);
-  }
   out.quietStep = refreshing ? step : -1;
   out.tunablesVersion = prepared.tunables.empty() ? -1 : tunablesVersion;
-  Output::MinimizationRow rowBefore = out.lastMinimization;
-
   stopMessage.clear();
-  // What the call allocates is its own and is freed when it returns (#110).
-  callRuntime("mdrtBeginCall");
-  callRuntime("mdrtDeviceBeginCall");
-  engine.function(a.pointers.data());
-  callRuntime("mdrtDeviceEndCall");
-  callRuntime("mdrtEndCall");
-  freeAllocationsOfCall();
+
+  // A part continues the activation that the last one left, with its
+  // order of the particles and its neighbor structures; the first part,
+  // and the first after the values of the program have changed, begin one
+  // from the state of the host (D[resident-buffers]). A part that begins
+  // an activation and fails leaves the state of the host as it was; a later
+  // one, the state at the end of the last part (the snapshot).
+  bool begins = !activation;
+  if (begins) {
+    size_t count = system.getNumParticles();
+    if (p.takesForces && hasRun && forces.size() != 3 * count) {
+      out.fail = nullptr;
+      return simulationError("the segment takes forces, but has none; this "
+                             "is a defect of mdir");
+    }
+    // 2: the forces of the state given anew, after an update of the
+    // tunables (D213).
+    int64_t firstCall = hasRun ? (refreshing ? 2 : 0) : 1;
+    if (llvm::Error error = startActivation(firstCall)) {
+      out.fail = nullptr;
+      return error;
+    }
+  }
+  Activation &a = *activation;
+  if (out.endStep > step && a.atBoundary) {
+    a.next = {step,       part.outer, part.inner,      part.tail,
+              part.plain, part.close, part.closeInner, part.closePeriods,
+              reports.framePeriod};
+    resumeActivation();
+  }
   out.fail = nullptr;
   if (failure.empty())
     failure = stopMessage;
-  if (failure.empty() && out.finalForces.size() != 3 * count)
-    failure = "the segment returned no forces; this is a defect of mdir";
+  size_t count = system.getNumParticles();
+  if (failure.empty() &&
+      (a.returned || !a.atBoundary ||
+       static_cast<size_t>(a.x.sizes[0]) != count || a.x.strides[0] != 3 ||
+       a.x.strides[1] != 1 || a.v.strides[0] != 3 || a.f.strides[0] != 3 ||
+       a.id.strides[0] != 1))
+    failure = "the program gave no state at the end of the part; this is a "
+              "defect of mdir";
   // On the CPU the structures do not test the positions (D107 does on a
-  // device): a state that is not numbers ends the part here, before the
-  // next part would put such particles in order.
-  if (failure.empty()) {
-    auto finite = [](const std::vector<double> &values) {
-      return llvm::all_of(values, [](double v) { return std::isfinite(v); });
-    };
-    if (!finite(system.positions) || !finite(system.velocities) ||
-        !finite(out.finalForces))
-      failure = "the state at its end is not numbers (a time step too long, "
-                "a bad contact, or a defect of mdir)";
+  // device): a state that is not numbers ends the part here.
+  if (failure.empty() && a.notNumbers > 0.0)
+    failure = "the state at its end is not numbers (a time step too long, "
+              "a bad contact, or a defect of mdir)";
+  // Without a periodic cell, whether the particles have spread too far at
+  // the end of the part (D142).
+  std::vector<double> x, v, f;
+  if (failure.empty() && !engine.control.periodic) {
+    readState(a, p, getStart(a.x, getWidth(p.state)),
+              getStart(a.v, getWidth(p.state)),
+              getStart(a.f, getWidth(p.force)), a.onDevice, x, v, f);
+    out.fail = fail;
+    checkParticleSpread(out, x, out.endStep);
+    out.fail = nullptr;
   }
   if (!failure.empty()) {
-    system = std::move(before);
-    forces = std::move(forcesBefore);
+    if (!begins)
+      restoreSnapshot();
+    endActivation();
     for (int k = 0; k != 3; ++k)
       out.box[k] = boxBefore[k];
     out.volume = out.box[0] * out.box[1] * out.box[2];
@@ -691,8 +1005,15 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
                            llvm::Twine(step) + ": " + failure +
                            "; it keeps the state of step " + llvm::Twine(step));
   }
-  forces = std::move(out.finalForces);
-  out.finalForces.clear();
+  takeSnapshot();
+  if (!x.empty()) {
+    system.positions = std::move(x);
+    system.velocities = std::move(v);
+    forces = std::move(f);
+    hostCurrent = true;
+  } else {
+    hostCurrent = false;
+  }
   step = out.endStep;
   if (engine.control.minimize)
     minimizationSize = out.lastMinimization.stepSize;
@@ -1002,6 +1323,11 @@ llvm::Expected<SimulationState> Simulation::getState() const {
     return simulationError("another operation is under way on this "
                            "simulation");
   SimulationState state;
+  {
+    // The copy of the state, from where the program keeps it.
+    std::lock_guard<std::mutex> lock(getRunMutex());
+    downloadState();
+  }
   state.step = step;
   state.time = getTime();
   state.positions = system.positions;
@@ -1079,6 +1405,13 @@ llvm::Error Simulation::updateTunables(
                       "not only its values (at '" + line + "'): compile it "
                       "with them (Tunable values=...)");
   }
+  // The program takes the new values from the state of the host, in an
+  // activation of its own (D[resident-buffers]).
+  {
+    std::lock_guard<std::mutex> lock(getRunMutex());
+    downloadState();
+    endActivation();
+  }
   std::swap(compiled->program, *program);
   std::vector<std::vector<double>> before = std::move(tunableValues);
   tunableValues = std::move(values);
@@ -1114,6 +1447,12 @@ llvm::Error Simulation::evaluatePart() {
                        "parameters: leapfrog's velocities are half a step "
                        "behind the positions");
   bool refresh = hasRun;
+  // The evaluation begins an activation from the state of the host.
+  {
+    std::lock_guard<std::mutex> lock(getRunMutex());
+    downloadState();
+    endActivation();
+  }
   refreshing = refresh;
   llvm::Error error = runPart(*compiled, Part());
   refreshing = false;

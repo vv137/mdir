@@ -116,6 +116,13 @@ compile cache warm, even with the driver's cache disabled. The JIT part of
 a stage then falls to 0.3 to 0.5 s; the MLIR passes before the
 serialization are most of what remains.
 
+A Python simulation runs its parts in one activation of its entry
+(Section 3.6, D[resident-buffers]), so a part costs its steps and a
+boundary: on JAC in mixed precision a part of 10 steps takes 2.75 ms, its
+steps 2.73 ms, where it took 10.3 ms when every part copied its buffers to
+the device and built its structures anew; a part of one step takes 0.309
+ms instead of 8.77 (`docs/python-segments.md`).
+
 ## 10.5 Over long runs
 
 Over 2 ns of JAC at constant energy before the dual list (D112), the rate

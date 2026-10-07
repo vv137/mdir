@@ -14,6 +14,9 @@
 #include <vector>
 namespace mdir { namespace driver { struct Output; } }
 namespace mdir { namespace compiler {
+/// The activation of the entry that runs the parts of a simulation
+/// (D[resident-buffers]).
+struct Activation;
 
 /// A failure while a simulation runs, or an operation that another one under
 /// way on the same simulation excludes.
@@ -117,7 +120,8 @@ public:
   /// Asks a run under way to stop after its part; from any thread.
   void requestStop() { stopRequested = true; }
 
-  /// The state after the last part that succeeded.
+  /// The state after the last part that succeeded, copied from where the
+  /// program keeps it.
   llvm::Expected<SimulationState> getState() const;
 
   /// The tunable parameters of the program (D213,
@@ -167,8 +171,25 @@ private:
     int64_t closePeriods = 0;
   };
   llvm::Error runPart(Engine &engine, Part part);
-  /// A part of no steps: the evaluation of `evaluate`.
+  /// A part of no steps: the evaluation of `evaluate`, the start of an
+  /// activation.
   llvm::Error evaluatePart();
+  /// Begins an activation of the entry from the state of the host
+  /// (`%first_call` as given) and runs it to the end of its start.
+  llvm::Error startActivation(int64_t firstCall);
+  /// Runs the activation to the end of the next part, whose step and counts
+  /// it is given.
+  void resumeActivation();
+  /// Ends the activation: what it allocated is freed (#110), and its state,
+  /// if not copied, is lost.
+  void endActivation();
+  /// Makes the state of the host that of the activation, if it is not.
+  void downloadState() const;
+  /// Copies the state of the activation, where it is, as that which a part
+  /// that fails returns to (D196), and makes the state of the host that copy.
+  void takeSnapshot();
+  void restoreSnapshot();
+  void freeSnapshot();
   /// The steps of the next part, in multiples of `unit`.
   int64_t getPartSteps(int64_t unit) const;
   /// The next step after `step` at which a built-in report is due, or -1.
@@ -180,13 +201,30 @@ private:
   /// first call and continues the last segment on the others
   /// (D211).
   std::unique_ptr<Engine> compiled;
+  /// The activation of its entry that runs the parts, waiting at the end of
+  /// the last one, with the state in its buffers (D[resident-buffers]);
+  /// none before the first part, after a failure, and while the values of
+  /// the program change.
+  std::unique_ptr<Activation> activation;
+  /// Whether `system` and `forces` hold the state of the activation, or of
+  /// the simulation if there is none.
+  mutable bool hostCurrent = true;
+  /// The state at the end of the last part that succeeded, where the
+  /// activation keeps it and in its order: on a device, memory of the
+  /// device; on the CPU, of the host.
+  struct Snapshot {
+    void *positions = nullptr, *velocities = nullptr, *forces = nullptr;
+    size_t stateBytes = 0, forceBytes = 0;
+    bool onDevice = false, valid = false;
+    std::vector<char> host;
+  } snapshot;
   /// What the compiled code reports to: the cell, the bath, the state at
   /// the end of a part.
   std::unique_ptr<driver::Output> output;
-  /// The state between parts; the program is built from it at the first
-  /// step.
-  driver::System system;
-  std::vector<double> forces;
+  /// The state between parts, when `hostCurrent`; the program is built from
+  /// it at the first step.
+  mutable driver::System system;
+  mutable std::vector<double> forces;
   int64_t step = 0;
   /// A minimization: the steps of its schedule, and the length of its next
   /// step in nm.

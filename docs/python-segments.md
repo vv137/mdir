@@ -71,10 +71,10 @@ that closes the period, with its coupling, as `mdir run` does; a run that
 ends inside a period takes a plain step of energy.
 
 These energies are those of the rows of `mdir run` at the same step, to
-every printed digit, when the simulation reaches the step in one part; after
-a boundary they agree within the rounding of the new order (Section
-"Segments and the phase of the coupling"). Reporters, which schedule steps
-of energy over several reports, frames, and files, are item 4.
+every printed digit, whether the simulation reaches the step in one part or
+in several (Section "Segments and the phase of the coupling"). Reporters,
+which schedule steps of energy over several reports, frames, and files, are
+item 4.
 
 ## Segments and the phase of the coupling
 
@@ -95,66 +95,32 @@ random numbers as an uninterrupted one. A run may not end between the two
 closing steps of a Trotter period: `run(n)` refuses such an `n` with
 `InputError` before it takes any step.
 
-A call of the entry is one part. Parts are at most about 0.5 s long: the
-length of the next part follows the measured time per step, in whole
-periods. Each part begins as a continued run does: the particles are put in
-the order of their positions again (unless `Execution.reorder` is off) and
-the neighbor structures are built anew. A segmented run therefore sums its
-forces in another order than an uninterrupted one wherever the order of
-the particles or of the pairs differs, and agrees with it within the
-rounding of that order rather than bit for bit, as `mdir run` does across
-its checkpoints. Repeated runs of one partition are identical bit for bit
-in the deterministic mode.
+A part is the steps that the host asks for at once. Parts are at most
+about 0.5 s long: the length of the next part follows the measured time
+per step, in whole periods. Every part of a simulation runs in one
+activation of the entry ([Resident buffers](#resident-buffers)), which
+keeps the order that the start of the run gave the particles, its neighbor
+structures, and its buffers: a part continues the uninterrupted run. A run
+in parts therefore equals one run to the bit in the deterministic mode,
+the cell and the energies included. The particles are put in order and the
+neighbor structures built only where an activation begins: at the first
+part, and after an update of tunables or an evaluation after the first run,
+which begin from the state of the host (D213).
+
+Before D[resident-buffers] each part began as a continued run does, with a
+new order and new structures, and a run in parts agreed with one run only
+within the rounding of the new order (in double precision, 9e-16 nm for the
+positions and 6e-10 kJ/mol/nm for the forces on the fixture below), as
+`mdir run` does across its checkpoints.
 
 On the dipeptide in water with PME (`test/Driver/python-segments-*.test`,
-one file per scenario of `Inputs/python_segments.py`),
-1 + 7 + 13 steps against 21, with coupling every 10 steps:
-
-| Precision | Positions (nm) | Velocities (nm/ps) | Forces (kJ/mol/nm) |
-|---|---|---|---|
-| double, CPU | at most 9e-16 | 7e-13 | 6e-10 |
-| double, GPU | at most 9e-16 | 6e-13 | 6e-10 |
-| mixed, CPU and GPU | 2e-7 to 6e-7 | 2e-4 to 4e-4 | 0.3 to 0.8 |
-
-The thermostat moves the velocities by 5e-2 nm/ps over these steps, so a
-coupling at other steps would show. The double comparison uses
-$T_q = c_q \epsilon_{64} \max_i \lvert q_i^{\mathrm{whole}}\rvert$,
-with $\epsilon_{64}=2^{-52}$. For the 1168-particle fixture and PME order 4,
-$M=(N-1)+4^3=1231$ counts a conservative ceiling of direct neighbors plus
-interpolation terms. Forces and velocities use $c_q=4M=4924$: two different
-summation orders and a factor-two guard for other reductions and propagation.
-Positions use $c_x=2(21)=42$, counting an accumulated update in each trajectory
-at each step. These are regression budgets for this fixture, checked against
-observed residuals; they are not forward-error bounds for arbitrary nonlinear
-trajectories or cancellation. The least observed margins are 29.8, 7.59, and
-2.33 for positions, velocities, and forces, respectively.
-
-Mixed precision uses $T_q=3E_q$, where $E_q$ is the maximum difference between
-the uninterrupted mixed and double references. Two mixed paths with errors of
-size $E_q$ can differ by $2E_q$ by the triangle inequality; the factor 3 adds a
-50% guard for variation between their error sizes when the reduction order
-changes. The observed difference divided by $E_q$ is at most 1.05, leaving
-at least a factor 2.85 of margin. This self-calibrated allowance is not a
-universal mixed-precision error bound.
-
-The table selects the least-margin case for each target, precision, and
-quantity; other cases have more margin. Margin is tolerance divided by the
-observed difference. Each test run prints all three values for every case.
-
-| Target | Precision | Quantity | Case with least margin | Observed difference | Tolerance | Margin |
-|---|---|---|---|---:|---:|---:|
-| CPU | double | positions (nm) | NVE VelocityVerlet | 8.881784e-16 | 2.655975e-14 | 29.904 |
-| CPU | double | velocities (nm/ps) | NVE VelocityVerlet | 6.522560e-13 | 4.952198e-12 | 7.592 |
-| CPU | double | forces (kJ/mol/nm) | NVE VelocityVerlet | 5.580318e-10 | 1.302357e-09 | 2.334 |
-| CPU | mixed | positions (nm) | NVT VelocityVerlet | 3.064083e-07 | 1.532936e-06 | 5.003 |
-| CPU | mixed | velocities (nm/ps) | NVE VelocityVerlet | 2.372057e-04 | 1.488703e-03 | 6.276 |
-| CPU | mixed | forces (kJ/mol/nm) | NVT VelocityVerlet | 4.191208e-01 | 1.939384e+00 | 4.627 |
-| GPU | double | positions (nm) | NPT VelocityVerlet | 8.881784e-16 | 2.654271e-14 | 29.884 |
-| GPU | double | velocities (nm/ps) | NVT Leapfrog | 6.141754e-13 | 4.937995e-12 | 8.040 |
-| GPU | double | forces (kJ/mol/nm) | NVT Leapfrog | 5.636593e-10 | 1.314916e-09 | 2.333 |
-| GPU | mixed | positions (nm) | NVT VelocityVerlet | 6.081129e-07 | 1.768247e-06 | 2.908 |
-| GPU | mixed | velocities (nm/ps) | NVT VelocityVerlet | 4.108488e-04 | 1.420102e-03 | 3.457 |
-| GPU | mixed | forces (kJ/mol/nm) | NVT VelocityVerlet | 8.018188e-01 | 2.312715e+00 | 2.884 |
+one file per scenario of `Inputs/python_segments.py`), parts of 1 + 7 + 13
+and of 1×5 + 3×2 + 10 steps against 21, with coupling every 10 steps, at
+constant energy, temperature (velocity Verlet and leapfrog), and pressure,
+in double and mixed precision, on the CPU and a GPU, give the positions,
+velocities, forces, and cell of the run in one part to the bit. The
+thermostat moves the velocities by 5e-2 nm/ps over these steps, so a
+coupling at other steps would show.
 
 ## Errors
 
@@ -166,8 +132,11 @@ observed difference. Each test run prints all three values for every case.
 | `SimulationError` | A failure during a run: positions that are not numbers at a build of the neighbor structures on a device, a state that is not numbers at the end of a part, a barostat that takes the cell below twice the cutoff; or another operation under way on the same simulation |
 
 After a `SimulationError` raised by a failure, the simulation keeps the
-state from before the failed part, `failed` is true, and `run` refuses to
-continue; `state()` still returns that state. On a device a build of the
+state from before the failed part: the state at the end of the last part
+that succeeded, which a copy made there holds
+([Resident buffers](#resident-buffers)), or for a part that began an
+activation the state it began from. `failed` is true, and `run` refuses
+to continue; `state()` still returns that state. On a device a build of the
 neighbor structures that finds positions that are not numbers (D107),
 which ends `mdir run`, reports to the simulation through a handler of the
 runtime instead; the part runs to its end, as it does on the CPU, and its
@@ -201,13 +170,19 @@ x86-64's large code model, `.text` otherwise. Its diagnostic run observed
 with all 144 registrations paired with deregistration. D199
 replaces reliance on that exercised layout with checks of every final object.
 
-Each call of an entry is a call of its own in the runtime: what the call
-allocates (the memory of the host that compiled code takes with `malloc`,
-the neighbor structures of the runtime, and the blocks of device memory) is
-freed when it returns, the device blocks into the runtime's pool, where the
-next part takes the blocks of the same sizes. The memory of a simulation
-therefore stays that of one part however many parts it runs (#110);
-`mdir run` calls its entry once and is unchanged.
+The parts of a simulation run in one activation of its entry
+(D[resident-buffers]). What the activation allocates (the memory of the
+host that compiled code takes with `malloc`, the neighbor structures of the
+runtime, and the blocks of device memory) is its own and is held between
+runs; the runtimes record it by activation, so that a simulation that
+waits between parts keeps its memory while another runs. It is freed when
+the activation ends: at the end of the simulation, at a failure, and where
+an update of tunables or an evaluation after the first run begins another;
+the device blocks return to the runtime's pool, where later activations
+take the blocks of the same sizes. The memory of a simulation therefore
+stays that of one activation however many parts it runs (#110), and a live
+simulation holds it between runs, so that live simulations hold the sum of
+theirs. `mdir run` calls its entry once and opens no activation.
 
 The device is resolved when the first GPU simulation in a process runs:
 `Execution.device` is an index among the devices that `CUDA_VISIBLE_DEVICES`
@@ -217,6 +192,180 @@ on another device is refused with `UnsupportedError`.
 The runtime libraries are found next to the module: in `lib` of the build
 tree, or of the prefix the module is installed under, or in the directory
 that `MDIR_RUNTIME_DIR` names.
+
+## Resident buffers
+
+Issue #135, `D[resident-buffers]`: the buffers of a simulation stay where
+the program keeps them, on a device or on the host, from part to part, and
+copies of the host are made where they are asked for. It is the base of
+views of device buffers through DLPack (#131) and of the frame evaluator of
+M2b (#138).
+
+### One activation runs the parts
+
+Before, every part was a call of the entry that built everything anew from
+the state of the host: it copied the state and every buffer of parameters
+to the device, put the particles in order, renumbered the tuples and built
+their incidence structures on the host, built the neighbor structures, and
+copied the state back at its end. On JAC (23,558 atoms, mixed precision,
+PME on a grid of 64³, one RTX 3090) a part of 10 steps took 10.3 ms, of
+which 2.7 ms were steps: 50 MB were copied to the device in every part,
+from memory of the host that is not pinned.
+
+Now one activation of the entry runs every part. The program of segments
+wraps its loops of steps in a loop over parts, and each iteration begins at
+the end of a part, or of the start of the run, with a call of the host:
+
+```mlir
+mdrt.host_call @mdrtPartBoundary(%x, %v, %f, %id, %not_numbers, %part_counts) {in_place}
+    : (!vec, !vec, !vec, !ids, f64, memref<9xi64>)
+```
+
+The host is given the positions, velocities, and forces where they are
+(addresses of the device on a GPU), in the order of the program, with the
+particle at each place (`%id`) and the number of their components that are
+not numbers. It keeps the activation waiting there, on a stack of its own,
+until the next part, whose step and counts it writes into `%part_counts`;
+the activation then runs the steps of that part. What the start of the run
+built stays where it is:
+
+- the state, in the buffers of the steps; the cell and the state of the
+  barostat in the memory of the host that the loops read, the bath on the
+  host as before;
+- the parameters: the fields of the particles, the tables and their f32
+  copies, the tables that `md-exec-fold-tables` derives, the fields of
+  tuples, and the values of tunables;
+- the order of the particles, the renumbered tuples and their incidence
+  structures, and the neighbor structures, whose test of validity goes on
+  from their last build.
+
+`in_place` hands a function of the host the buffers of the fields where
+they are, instead of copies in memory of the host:
+`md-exec-assign-storage` passes them through a `memref.memory_space_cast`,
+and in the deterministic mode `md-exec-assign-precision` does not give them
+copies of their own, so that the host sees the buffers of the steps
+themselves. The loops rotate their buffers through the values they carry,
+so the addresses can change from one part to the next; a view of them
+(#131) is taken again after every part.
+
+**The entry.** It takes the buffers of the host once, when an activation
+begins, and the scalars of the start: the cell, the time step, the step,
+`%first_call`, the first length of a minimization's step, and the constant
+terms of a barostat with tunables. The counts of the loops, the period of
+the frames, and the step of each part come through `%part_counts`. The
+program allocates all of its buffers, as before; the simulation borrows
+them at the boundary. An entry that takes buffers of the device that it
+does not allocate was considered and not taken: it would take out of the
+program everything the start of the run builds (the f32 and folded tables,
+the incidence structures, which the lowering to the device frees at the end
+of their block, and the neighbor structures, a dozen buffers, scalars of
+the host, and handles that the runtime grows) across
+`md-exec-assign-storage`, both lowerings, and the runtime, and the state
+would still rotate through the buffers of the loops, so that a part would
+still end with a copy.
+
+**Lifetimes.** An activation never returns. It ends at a boundary when the
+simulation ends, fails, or begins another activation: what it allocated,
+which the records of the runtimes (`mdrtActivationOpen`, `Enter`, `Leave`,
+`Close`, and `mdrtDeviceActivation...`) and of the memory of the host that
+its code takes list, is freed, and its stack is unmapped
+([JIT ownership](jit-invariants.md#activations-that-outlive-a-call-dresident-buffers)).
+`mdrtBeginCall` and `mdrtDeviceEndCall`, which freed what one call made
+when another simulation could not run between two calls, are gone.
+
+### Failures: a copy at each boundary
+
+A part that fails leaves the state from before it (D196). After each part
+that succeeds, the state at the boundary is copied into memory that the
+simulation holds: on a device, on the stream of the kernels, before the
+work of the next part and without a wait of the host. A part fails where
+the count of components that are not numbers is not 0 (a sum over the
+particles of $x - x$ unordered with itself, which an infinity fails too),
+where a build of the neighbor structures on a device finds positions that
+are not numbers (D107), where a barostat takes the cell below twice the
+cutoff, or, without a periodic cell, where the particles have spread too
+far (D142). (On a device, positions that are huge or not numbers can still
+end the process inside PME or a loop over particles before the part ends,
+as on main, #168.) The simulation then takes the copy, or, for a
+part that began an activation, the state of the host it began from, and
+ends the activation. Two sets of buffers that the parts alternate between
+were not taken: the loops already rotate the buffers of the state, and the
+copy costs microseconds (below).
+
+### Copies of the host
+
+`state()`, the callbacks of reporters (through `state()`), and the updates
+of tunables copy the state from the buffers of the activation where they
+are asked for, once per part at most; the energy file and the trajectory
+are written inside the parts as before. An update of tunables, and an
+evaluation after the first run (`run(0, energy=True)`), copy the state, end
+the activation, and begin another from the state of the host with
+`%first_call = 2`: the new values are uploaded, the particles put in order,
+and the forces evaluated at the state, as a simulation compiled with the new
+values from that state does, so that D213's comparison with such a
+simulation holds to the bit, and the value version advances with that
+upload. A future write of the state from the host (#136) does the same. An
+upload in place that kept the order would make an update cheaper, at the
+cost of that comparison; it can follow if M2b needs it.
+
+**The CPU** has the same ownership: the activation keeps its buffers of the
+host, which are those that the entry was given, and the views are their
+addresses.
+
+### Validation
+
+On the dipeptide in water with PME, in the deterministic mode, on the CPU
+and a GPU, in double and mixed precision:
+
+- runs in parts against one run, at constant energy, temperature
+  (velocity Verlet and leapfrog), and pressure, the energy file and the
+  trajectory of reporters every 10 steps over runs of 7, and a
+  minimization of 3 + 17 + 20 steps against 40 followed by 21 steps of
+  dynamics: equal to the bit (`python-segments-*.test`), and each run in
+  one part equal to main's to the bit, energy files and trajectories
+  included;
+- a part that fails after parts that succeeded keeps the state of the last
+  of them, read between the parts or not, to the bit against a simulation
+  that stops there; a first part that fails keeps the state it began from
+  (`python-resident-failures*.test`);
+- after an update of tunables and an evaluation, parts of 12, 5 + 7, and
+  1 + 1 + 10 steps give one state to the bit (`python-resident-updates*.test`);
+- an activation resumed on other Python threads, with four threads of
+  execution on the CPU, gives the state of one thread to the bit
+  (`python-resident-threads*.test`);
+- the memory of the device or of the host stays flat over 30 runs, 30
+  evaluations that each begin an activation, and 30 simulations that end
+  (`python-memory*.test`).
+
+### Performance
+
+`run(n)` repeated, in ms per run, against main (cb575dd) on the same
+build options; one RTX 3090 (GPU 0, 300 W cap, idle), the host's CPU for
+the CPU rows; NVE, velocity Verlet; JAC with PME on a grid of 64³, rigid
+bonds to hydrogens and water, 2 fs; the dipeptide with PME, 1 fs. One long
+run per cell.
+
+| System, target, precision | Parts of 1 | Parts of 10 | Parts of 100 | One run (ms/step) |
+|---|---|---|---|---|
+| JAC, GPU, mixed | 8.77 → 0.309 | 10.3 → 2.75 | 34.0 → 27.2 | 0.274 → 0.273 |
+| JAC, GPU, double | 16.0 → 8.08 | 88.2 → 80.6 | 815 → 806 | 8.12 → 8.06 |
+| dipeptide, GPU, mixed | 0.902 → 0.132 | 1.48 → 0.908 | 9.43 → 9.25 | 0.0885 → 0.0932 |
+| dipeptide, GPU, double | 1.15 → 0.393 | 4.30 → 3.59 | 37.2 → 36.0 | 0.371 → 0.362 |
+| dipeptide, CPU, mixed | 14.5 → 7.91 | 75.5 → 72.9 | 789 → 752 | 7.82 → 7.42 |
+| dipeptide, CPU, double | 21.3 → 12.4 | 138 → 137 | 1504 → 1415 | 13.4 → 14.1 |
+
+A part of JAC in mixed precision now costs 36 µs beyond its steps (0.309
+ms for a part of one step against 0.273 ms per step of a long run): the
+boundary, the count of components that are not numbers, the copy of the
+state on the device (1.4 MB), and Python. Main copied 50 MB to the device
+in each part, built the incidence structures on the host, and loaded a
+module of cuFFT. Reading the state after each part of 10 steps adds 0.39
+ms on JAC (100 runs: 3.13 ms against 2.75), the copy to the host and the
+order of the input. Long runs are unchanged: alternated with main, twice
+each, one run of 20,000 steps took 0.2754 and 0.2755 ms per step on main
+and 0.2721 and 0.2721 on this branch for JAC, and 0.0943 and 0.0955 against
+0.0899 and 0.0924 for the dipeptide (the single dipeptide cell of the table
+is within that spread).
 
 ## Compiles
 
@@ -297,16 +446,16 @@ after the first run, and leapfrog's energies stay unset, its velocities
 being half a step behind the positions. `run(0)` without `energy` does
 nothing, as before.
 
-A run cut where such an evaluation is made sums its forces in another
-order than an uninterrupted one only as the first call of a part does: an
-update of the values during a run, followed by steps, equals to the bit a
-simulation compiled with the new values from the same state that evaluates
-it first and then takes the same steps (velocity Verlet, deterministic
-mode). A first call that takes its steps at once differs from the two
-calls in the last bits: on the dipeptide in double precision on the CPU,
-the forces at the start agree to the bit, and after one step the positions
-agree, the forces differ by 5e-13 kJ/mol/nm, and the velocities by 2e-16
-nm/ps.
+An evaluation after the first run begins a new activation of the entry
+from the state ([Resident buffers](#resident-buffers)), whose order of the
+particles and neighbor structures are those of that state: an update of the
+values during a run, followed by steps, equals to the bit a simulation
+compiled with the new values from the same state that evaluates it first
+and then takes the same steps (velocity Verlet, deterministic mode).
+Before the first run, an evaluation followed by steps equals the run that
+takes its steps at once, to the bit, since the start ends at a boundary in
+both (before D[resident-buffers], the two calls differed from one in the
+last bits, the second call putting the particles in order anew).
 
 ## A new stage from a reached state
 

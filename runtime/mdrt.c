@@ -594,13 +594,16 @@ static void allocateHostMatrix(struct HostMatrix *matrix) {
   }
 }
 
-/* The matrices that a call of an entry made while an embedding program (a
-   Python simulation, D196) has a call open (mdrtBeginCall): they belong to
-   the call and are destroyed when it closes (#110). `mdir run` calls its
-   entry once and opens none. */
-static struct HostMatrix **callMatrices = NULL;
-static size_t numCallMatrices = 0, roomCallMatrices = 0;
-static int inCall = 0;
+/* An activation of an entry that an embedding program (a Python
+   simulation) keeps across its calls (D[resident-buffers]): the matrices
+   that its code makes belong to it and are destroyed when the program
+   closes it (#110). Several may be open, one for each live simulation; the
+   one whose code runs is current. `mdir run` opens none. */
+struct HostActivation {
+  struct HostMatrix **matrices;
+  size_t numMatrices, roomMatrices;
+};
+static struct HostActivation *currentActivation = NULL;
 
 int64_t mdrtHostMatrixCreate(int64_t rows, int64_t width) {
   struct HostMatrix *matrix = calloc(1, sizeof(struct HostMatrix));
@@ -611,30 +614,47 @@ int64_t mdrtHostMatrixCreate(int64_t rows, int64_t width) {
   matrix->rows = rows > 0 ? rows : 1;
   matrix->width = width > 0 ? width : 1;
   allocateHostMatrix(matrix);
-  if (inCall) {
-    if (numCallMatrices == roomCallMatrices) {
-      roomCallMatrices = roomCallMatrices ? 2 * roomCallMatrices : 8;
-      callMatrices =
-          realloc(callMatrices, roomCallMatrices * sizeof(*callMatrices));
-      if (!callMatrices) {
+  struct HostActivation *a = currentActivation;
+  if (a) {
+    if (a->numMatrices == a->roomMatrices) {
+      a->roomMatrices = a->roomMatrices ? 2 * a->roomMatrices : 8;
+      a->matrices =
+          realloc(a->matrices, a->roomMatrices * sizeof(*a->matrices));
+      if (!a->matrices) {
         fprintf(stderr, "mdrt: out of memory of the host\n");
         abort();
       }
     }
-    callMatrices[numCallMatrices++] = matrix;
+    a->matrices[a->numMatrices++] = matrix;
   }
   return (int64_t)(intptr_t)matrix;
 }
 
-void mdrtBeginCall(void) { inCall = 1; }
-
-void mdrtEndCall(void) {
-  for (size_t i = 0; i != numCallMatrices; ++i) {
-    free(callMatrices[i]->data);
-    free(callMatrices[i]);
+void *mdrtActivationOpen(void) {
+  struct HostActivation *a = calloc(1, sizeof(struct HostActivation));
+  if (!a) {
+    fprintf(stderr, "mdrt: out of memory of the host\n");
+    abort();
   }
-  numCallMatrices = 0;
-  inCall = 0;
+  return a;
+}
+
+void mdrtActivationEnter(void *activation) { currentActivation = activation; }
+
+void mdrtActivationLeave(void) { currentActivation = NULL; }
+
+void mdrtActivationClose(void *activation) {
+  struct HostActivation *a = activation;
+  if (!a)
+    return;
+  if (currentActivation == a)
+    currentActivation = NULL;
+  for (size_t i = 0; i != a->numMatrices; ++i) {
+    free(a->matrices[i]->data);
+    free(a->matrices[i]);
+  }
+  free(a->matrices);
+  free(a);
 }
 
 void _mlir_ciface_mdrtHostMatrixEntries(struct HostBuffer2 *result,

@@ -489,18 +489,32 @@ which then holds only upstream LLVM and NVVM operations, together with its
 target, libdevice, and the LLVM version. The cubin is keyed by a hash of
 its PTX and the version and arguments of `ptxas`.
 
-The runtime is small and holds what cannot be IR: 533 lines of C for the
+The parts of a Python simulation run in one activation of its entry
+(D[resident-buffers], `docs/python-segments.md`). The program wraps its loops
+of steps in a loop over parts, and at the end of each part it calls the
+host with its positions, velocities, and forces where they are, addresses
+of the device on a GPU (`mdrt.host_call` with `in_place`), and waits there,
+on a stack of its own, until the host gives it the next part. Its buffers,
+its order of the particles, and its neighbor structures therefore persist
+from part to part: a run in parts is the run in one part, to the bit in the
+deterministic mode, and a part of 10 steps of JAC no longer copies 50 MB to
+the device. The runtimes record what an activation allocates, which is
+freed when it ends; the state at the end of each part is copied on the
+device, so that a part that fails returns to it (D196).
+
+The runtime is small and holds what cannot be IR: 681 lines of C for the
 host (`runtime/mdrt.c`: counters of builds and prunings, the stop on a
 position that is not a number, the generator Philox 4×32-10
 [[Salmon2011]](references.md#salmon2011) and the factors of the thermostat and the barostat,
 isotropic or semi-isotropic, drawn from it, the means of the pressures by
 axis that the semi-isotropic barostat took, the FFT of the host
 [[Reinecke2019]](references.md#reinecke2019), and the matrix of the host)
-and 962 lines for NVIDIA devices (`runtime/mdrt_cuda.c`, on the driver
+and 1153 lines for NVIDIA devices (`runtime/mdrt_cuda.c`, on the driver
 API only: loading of modules, launches that skip empty grids, one stream
 in order plus an optional second one, words of memory of the host mapped
 for the device for flags (D118), a caching allocator whose frees do not
-wait, plans of cuFFT, and growable buffers for neighbor structures). The
+wait, plans of cuFFT, growable buffers for neighbor structures, and the
+records of what each activation of a Python simulation allocated). The
 driver registers callbacks for the log, the trajectory (DCD or XTC), and
 checkpoints (H5MD 1.1 [[deBuyl2014]](references.md#debuyl2014), all
 values in 64 bits, from which a run continues bitwise). A checkpoint

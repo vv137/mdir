@@ -324,6 +324,17 @@ run with the reciprocal sum on a second stream against the serial one
 (`pme-gpu.test`, D87). The spatial sort changes the order of sums; runs
 with and without it agree to about $10^{-10}$ (`reorder.test`).
 
+A Python simulation run in parts (Section 3.6, D[resident-buffers]) equals
+the run in one part to the bit in the deterministic mode, on the CPU and on
+a GPU, in double and mixed precision: parts of 1 + 7 + 13 steps against 21
+at constant energy, temperature, and pressure, the energy file and the
+trajectory over runs of 7 against one of 30, and a minimization of
+3 + 17 + 20 steps against 40 (`python-segments-*.test`); a part that fails
+keeps the state of the last part that succeeded, to the bit
+(`python-resident-failures*.test`). Before, each part put the particles in
+order and built its neighbor structures anew, and the two agreed within
+the rounding of that order.
+
 An update of tunable parameters (Section 3.6, D213) during a
 run of velocity Verlet at constant energy, of the charges, $\sigma$ and
 $\epsilon$ of every type, a constant of a pair term, and the force

@@ -1,6 +1,8 @@
 """The memory of a persistent simulation across many calls of run (#110):
-what a call allocates is freed or reused when it returns, so the memory of
-the device (GPU) and of the host (CPU) stays that of one call."""
+one activation of the entry runs every part (D[resident-buffers]), and what
+it allocates is freed when it ends, at an evaluation after the first run,
+an update of tunables, or the end of the simulation, so the memory of the
+device (GPU) and of the host (CPU) stays that of one activation."""
 import os
 import subprocess
 import sys
@@ -43,8 +45,8 @@ integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execu
 integrator.timestep = 0.002
 ensemble.kind = mdir.EnsembleKind.NVT
 execution.target, execution.precision = target, mdir.Precision.Mixed
-simulation = mdir.Simulation(mdir.compile(system, state, integrator, ensemble, execution,
-                                          mdir.Schedule()))
+program = mdir.compile(system, state, integrator, ensemble, execution, mdir.Schedule())
+simulation = mdir.Simulation(program)
 measure = device_mib if target_name == "GPU" else host_mib
 kind = "device" if target_name == "GPU" else "host"
 # The first calls compile the program of the later segments and fill the
@@ -56,5 +58,25 @@ for call in range(1, CALLS + 1):
 growth = measure() - first
 print(f"{target_name}: {kind} memory from call 5 to call {CALLS}: {growth:+.1f} MiB "
       f"(bound {BOUND} MiB)")
+assert growth <= BOUND, growth
+# Each evaluation ends the activation and begins another.
+for call in range(CALLS):
+    assert simulation.run(5) == 5
+    simulation.run(0, energy=True)
+growth = measure() - first
+print(f"{target_name}: {kind} memory after {CALLS} evaluations between runs: "
+      f"{growth:+.1f} MiB (bound {BOUND} MiB)")
+assert growth <= BOUND, growth
+# Simulations that end free what their activations held. The first ones
+# make what a second engine of the process keeps.
+for call in range(1, CALLS + 1):
+    other = mdir.Simulation(program)
+    assert other.run(5) == 5
+    del other
+    if call == 5:
+        ended = measure()
+growth = measure() - ended
+print(f"{target_name}: {kind} memory from simulation 5 to simulation {CALLS} that "
+      f"ended: {growth:+.1f} MiB (bound {BOUND} MiB)")
 assert growth <= BOUND, growth
 print("memory across calls passed")
