@@ -326,7 +326,7 @@ Simulation::~Simulation() {
 
 static llvm::Expected<std::unique_ptr<Simulation::Engine>>
 compileEngine(const Control &control, const System &system,
-              const model::Execution &execution) {
+              const model::Execution &execution, bool cache) {
   auto engine = std::make_unique<Simulation::Engine>();
   engine->control = control;
   auto program = buildProgram(control, system);
@@ -345,7 +345,7 @@ compileEngine(const Control &control, const System &system,
     return std::chrono::duration<double>(std::chrono::steady_clock::now() -
                                          start).count();
   };
-  auto gpu = compiler::getGpuOptions(control, execution.device);
+  auto gpu = compiler::getGpuOptions(control, execution.device, cache);
   if (!gpu)
     return gpu.takeError();
   auto module = compiler::lowerModule(*engine->context, control,
@@ -400,7 +400,7 @@ compileEngine(const Control &control, const System &system,
   double jitStart = seconds();
   auto created = compiler::JITEngine::create(
       *engine->module, std::move(*targetMachine), paths, engine->program.entry,
-      scheduler ? "pre-RA-sched=fast" : "");
+      scheduler ? "pre-RA-sched=fast" : "", cache);
   if (!created) {
     return llvm::make_error<compiler::CompileError>(
         "cannot compile the program for execution: " +
@@ -482,6 +482,7 @@ compileEngine(const Control &control, const System &system,
   engine->function = *function;
   engine->stats += engine->engine->getCompileStats();
   engine->stats.programs = 1;
+  engine->stats.bypassed = cache ? 0 : 1;
   engine->stats.engineSeconds = seconds() - jitStart;
 
   engine->masses = system.masses;
@@ -489,7 +490,7 @@ compileEngine(const Control &control, const System &system,
 }
 
 llvm::Expected<std::unique_ptr<Simulation>>
-Simulation::create(const model::PreparedModel &prepared) {
+Simulation::create(const model::PreparedModel &prepared, bool cache) {
   std::unique_lock<std::mutex> lock(getRunMutex());
   const Control &given = prepared.control;
   bool trotter = given.barostat &&
@@ -537,7 +538,7 @@ Simulation::create(const model::PreparedModel &prepared) {
   simulation->compiledSystem = system;
   simulation->tunableValues = prepared.tunables.values;
   simulation->tunablesHistory = {{0, 0}};
-  auto engine = compileEngine(control, system, prepared.execution);
+  auto engine = compileEngine(control, system, prepared.execution, cache);
   if (!engine) {
     lock.unlock();
     return engine.takeError();

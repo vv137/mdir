@@ -12,6 +12,14 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- Controls of the compile cache from Python (D[compile-cache-controls],
+  #163): `mdir.clear_compile_cache(directory=None)` removes the entries of
+  this format from the directory given or from `MDIR_COMPILE_CACHE_DIR`,
+  and returns what it removed. `mdir.compile(..., cache=False)` and
+  `Simulation(program, cache=False)` bypass the cache for one compile
+  without touching the environment; a simulation takes its program's
+  choice unless given one. `Simulation.compile_stats["cache_bypassed"]`
+  reports it.
 - `mdir.InitialState.from_state(state, velocities=True)` makes the initial
   state of a new stage from the `State` that a simulation reached: copies of
   its positions, cell, and velocities, or without the velocities when asked,

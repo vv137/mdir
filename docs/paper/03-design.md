@@ -487,7 +487,10 @@ on MDIR, run on every compile. The PTX and the cubin of each GPU module are
 cached in the same way. The PTX is keyed by a hash of the module's IR,
 which then holds only upstream LLVM and NVVM operations, together with its
 target, libdevice, and the LLVM version. The cubin is keyed by a hash of
-its PTX and the version and arguments of `ptxas`.
+its PTX and the version and arguments of `ptxas`. From Python, a compile
+can bypass the cache, and the cache can be cleared while other processes
+use it (D[compile-cache-controls]): entries are written whole by a rename
+and read by a copy, so a clear can cause a miss but never a partial entry.
 
 The parts of a Python simulation run in one activation of its entry
 (D215, `docs/python-segments.md`). The program wraps its loops

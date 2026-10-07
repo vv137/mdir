@@ -427,7 +427,10 @@ The host object of a simulation's program can be kept on disk across
 processes by the compile cache (D212,
 [compile-cache.md](compile-cache.md)), which `MDIR_COMPILE_CACHE_DIR`
 enables; `Simulation.compile_stats` reports the times of the pipeline and
-of the engine, and the hits.
+of the engine, and the hits. `Simulation(program, cache=False)` compiles
+without it, and `mdir.clear_compile_cache()` empties it
+(D[compile-cache-controls],
+[compile-cache.md](compile-cache.md#controls-from-python)).
 
 ## Evaluations without a step
 

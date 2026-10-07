@@ -14,11 +14,13 @@ namespace mdir::compiler {
 class JITEngine {
 public:
   /// `codegen` names settings outside the target machine that change the
-  /// generated code; it is part of the key of the compile cache.
+  /// generated code; it is part of the key of the compile cache. Without
+  /// `cache`, the cache is bypassed whatever the environment says
+  /// (D[compile-cache-controls]).
   static llvm::Expected<std::unique_ptr<JITEngine>>
   create(mlir::ModuleOp module, std::unique_ptr<llvm::TargetMachine> target,
          llvm::ArrayRef<std::string> libraries, llvm::StringRef entry,
-         llvm::StringRef codegen);
+         llvm::StringRef codegen, bool cache = true);
   ~JITEngine();
   llvm::Error registerSymbols(
       llvm::function_ref<llvm::orc::SymbolMap(llvm::orc::MangleAndInterner)> map);

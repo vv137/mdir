@@ -72,9 +72,10 @@ struct SimulationState {
 class Simulation {
 public:
   /// Builds the program of the segments of `prepared` and compiles it, once
-  /// (D211).
+  /// (D211). Without `cache`, the compilation reads and writes no entry of
+  /// the compile cache (D[compile-cache-controls]).
   static llvm::Expected<std::unique_ptr<Simulation>>
-  create(const model::PreparedModel &prepared);
+  create(const model::PreparedModel &prepared, bool cache = true);
   ~Simulation();
   Simulation(const Simulation &) = delete;
   Simulation &operator=(const Simulation &) = delete;

@@ -1,0 +1,35 @@
+# REQUIRES: python-api
+# The controls of the compile cache (D[compile-cache-controls]) on the CPU:
+# mdir.compile(..., cache=False) makes no directory, and on a warm cache
+# reads and writes no entry (their times unchanged) and gives the state of
+# no cache bit for bit; Simulation(program, cache=False) bypasses it after a
+# compile that uses it; compile_stats counts the bypass.
+# mdir.clear_compile_cache() removes the entries of this format and leaves
+# another format and a writer's temporary file; the next process misses and
+# stores, the one after hits; another directory, no directory, and
+# MDIR_COMPILE_CACHE=off behave as documented. A process that clears over
+# and over while another compiles four times leaves only well-formed
+# entries, which the next process reads without a rejection.
+# Each scenario is a process of its own (Inputs/compile_cache.py).
+# RUN: rm -rf %t
+# RUN: %mdir_python %S/Inputs/compile_cache.py %S/Inputs/dipeptide CPU Mixed %t --bypass --clear --clear-concurrent | FileCheck %s
+# CHECK: off: compiled 1 hits 0 rejected 0 stored 0
+# CHECK-NEXT: off: directory absent
+# CHECK-NEXT: bypass-empty: compiled 1 hits 0 rejected 0 stored 0 bypassed 1 state same
+# CHECK-NEXT: bypass-empty: directory absent
+# CHECK-NEXT: cold: compiled 1 hits 0 rejected 0 stored 1 state same
+# CHECK-NEXT: cold: entries 1
+# CHECK-NEXT: warm: compiled 0 hits 1 rejected 0 stored 0 state same
+# CHECK-NEXT: bypass: compiled 1 hits 0 rejected 0 stored 0 bypassed 1 state same
+# CHECK-NEXT: bypass: entries unchanged
+# CHECK-NEXT: bypass-simulation: compiled 1 hits 0 rejected 0 stored 0 bypassed 1 state same
+# CHECK-NEXT: bypass-simulation: host entries unchanged
+# CHECK-NEXT: clear: directory True host 1 of 1 gpu 0 of 0 bytes positive
+# CHECK-NEXT: clear: entries 0 foreign kept temporary kept
+# CHECK-NEXT: after-clear: compiled 1 hits 0 rejected 0 stored 1 state same
+# CHECK-NEXT: rewarm-after-clear: compiled 0 hits 1 rejected 0 stored 0 state same
+# CHECK-NEXT: clear-other: host 0 gpu 0, entries here kept
+# CHECK-NEXT: clear-none: directory False host 0 gpu 0, entries here kept
+# CHECK-NEXT: clear-off: host 1 entries 0
+# CHECK-NEXT: clear-concurrent: stored over 4 compiles more than 1, clears many, removed some, malformed 0, state same
+# CHECK-NEXT: after-concurrent-clear: rejected 0 gpu rejected 0 state same
