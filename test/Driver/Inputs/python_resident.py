@@ -5,9 +5,10 @@ the state stays where the program keeps it between parts.
 Usage: python_resident.py ROOT TARGET SCENARIO
 
 Scenarios:
-  failures  a part that fails after parts that succeeded leaves the state at
-            the end of the last of them (the snapshot), bit for bit against a
-            simulation that stops there; a first part that fails leaves the
+  failures  a part that fails after parts that succeeded (a barostat that
+            takes the cell below twice the cutoff) leaves the state and the
+            cell at the end of the last of them (the snapshot), bit for bit
+            against a simulation that stops there; a first part that fails leaves the
             state that the simulation was created with
   updates   updates of tunables, evaluations, and reads of the state between
             parts: any partition of the steps after them gives the same state
@@ -37,23 +38,21 @@ def expect(error, call, text=""):
 
 
 def compile_program(precision="Double", method="VelocityVerlet", timestep=0.001,
-                    kind="NVE", tunable=False, overlap=False, threads=1):
+                    kind="NVE", tunable=False, threads=1, pressure=1.0,
+                    cutoff=0.8):
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
-    system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
+    system.cutoff, system.pairlist_distance = cutoff, cutoff + (0.1 if cutoff < 1 else 0.005)
+    system.switch_distance = cutoff - (0.1 if cutoff < 1 else 0.04)
     system.electrostatics = mdir.Electrostatics.PME
     if tunable:
         system.tunables = [mdir.Tunable("q", "charge")]
-    if overlap:
-        # Two particles that are not bonded, on top of one another.
-        positions = state.positions.copy()
-        positions[1000] = positions[0]
-        state.positions = positions
     integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execution()
     integrator.method = getattr(mdir.IntegratorMethod, method)
     integrator.timestep = timestep
     ensemble.kind = getattr(mdir.EnsembleKind, kind)
     ensemble.temperature, ensemble.coupling_period = 300, 10
+    ensemble.pressure, ensemble.tau_p = pressure, 0.1
     execution.target, execution.precision = target, getattr(mdir.Precision, precision)
     execution.deterministic = True
     execution.threads = threads
@@ -72,17 +71,18 @@ def same(a, b, label):
 
 def failures():
     for precision in ("Double", "Mixed"):
-        # 4 fs without constraints: the hydrogens fly apart (after 53 steps
-        # in double and 5 in mixed precision on the CPU). Parts of one step
-        # run until one fails.
-        program, _ = compile_program(precision, timestep=0.004)
+        # A cutoff of 1.24 nm in a cell of 2.54 nm along z, and a barostat
+        # at 1000 bar, which shrinks the cell below twice the cutoff after a
+        # few periods of coupling, with the state still finite. Parts of 10
+        # steps (one period) run until one fails.
+        program, _ = compile_program(precision, kind="NPT", pressure=1e3, cutoff=1.24)
         sim = mdir.Simulation(program)
         before = None
         for _ in range(1000):
             try:
-                sim.run(1)
+                sim.run(10)
             except mdir.SimulationError as error:
-                assert "not numbers" in str(error), str(error)
+                assert "barostat" in str(error) or "not numbers" in str(error), str(error)
                 break
             before = sim.state()
         else:
@@ -98,20 +98,23 @@ def failures():
         # The same without reading the state between parts: the state comes
         # from the copy made at the end of the last part that succeeded.
         unread = mdir.Simulation(program)
-        expect(mdir.SimulationError, lambda: [unread.run(1) for _ in range(1000)],
-               "not numbers")
+        expect(mdir.SimulationError, lambda: [unread.run(10) for _ in range(1000)])
         same(unread.state(), before, "the state after the failure, not read before")
         print(f"{precision}: a part that fails after step {kept.step} keeps the state "
               f"of that step, to the bit")
 
-        # A first part that fails keeps the state of the start.
-        program, start = compile_program(precision, overlap=True)
+        # A first part that fails keeps the state of the start: with a
+        # cutoff of 1.26 nm the first coupling takes the cell below twice it.
+        # (A state that is not numbers would do on the CPU; on a device it
+        # can end the process, #168.)
+        program, start = compile_program(precision, kind="NPT", pressure=1e3, cutoff=1.26)
         blown = mdir.Simulation(program)
-        expect(mdir.SimulationError, lambda: blown.run(5), "not numbers")
+        expect(mdir.SimulationError, lambda: blown.run(10), "barostat")
         kept = blown.state()
         assert blown.failed and kept.step == 0 and kept.forces is None
         assert np.array_equal(kept.positions, start.positions)
         assert not kept.velocities.any()
+        assert np.array_equal(kept.cell.vectors, start.cell.vectors)
         print(f"{precision}: a first part that fails keeps the state it began from")
 
 
@@ -192,9 +195,9 @@ def sanitize():
     other.run(2)
     sim.run(1)
     del other
-    program, _ = compile_program("Mixed", overlap=True)
+    program, _ = compile_program("Mixed", kind="NPT", pressure=1e3, cutoff=1.24)
     blown = mdir.Simulation(program)
-    expect(mdir.SimulationError, lambda: blown.run(3), "not numbers")
+    expect(mdir.SimulationError, lambda: [blown.run(10) for _ in range(10)], "barostat")
     print(f"steps {sim.step}, a part that failed, three simulations")
 
 
