@@ -1,0 +1,6 @@
+# REQUIRES: python-api
+# mdir.compile does not lower; lowered_ir lowers on its first read, once
+# for threads that read it at once (D[compile-once], #151).
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_compile_lazy.py %S/Inputs/dipeptide CPU %t | FileCheck %s
+# CHECK: lazy lowering passed
