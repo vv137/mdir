@@ -1,0 +1,19 @@
+# REQUIRES: python-api
+# Read-only topology views and mask selection in the Python model
+# (D[python-topology]), on the CPU: the views of the Amber dipeptide, the
+# GROMACS propane and water, and the CHARMM toy system against parsers of
+# their files; Topology.select against the selections of the control file's
+# path (mdir-model-test --selections) for restraints, external terms, and
+# couple, empty selections and diagnostics included; the constraints of a
+# compiled program; copies, dtypes, and snapshots.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: split-file %S/charmm.test %t/charmm
+# RUN: %mdir_python %S/Inputs/python_topology.py %S/Inputs %t/charmm %t/work mdir-model-test | FileCheck %s
+# CHECK: amber: 1168 atoms, 385 residues, 1167 bonds, 36 angles, 67 dihedrals equal the prmtop
+# CHECK: gromacs rigid:
+# CHECK: gromacs FLEXIBLE:
+# CHECK: charmm: 9 atoms, 3 residues, 6 bonds, 7 angles, 6 dihedral quadruples in
+# CHECK: select: {{[0-9]+}} masks equal the control file's selections, empty ones and diagnostics included
+# CHECK: constraints: 12 bonds of hydrogen and 382 rigid waters equal the prmtop; 2343 degrees of freedom, as the engine counts
+# CHECK: copies, dtypes, read-only views and snapshots passed
+# CHECK: topology views passed
