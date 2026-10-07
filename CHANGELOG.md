@@ -147,6 +147,15 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- A program no longer holds the values that depend on the state it starts
+  from as constants of its text (D[cell-runtime-constants], #162): the
+  tilts of a triclinic cell, the cell of the restraints' reference
+  positions under a barostat, the barostat's constants of the dispersion
+  correction and the PME background, and the barostat state of a continued
+  run that scales every step are arguments of the entry. A stage that
+  starts from another equilibrated cell, such as the production stage of
+  the ala3 example, therefore hits the compile cache when its PME grid and
+  neighbor capacity are the same. Results are unchanged to the bit.
 - Setting `System.dispersion` in Python makes the correction for the
   dispersion explicit, as giving `dispersion_correction` in the control
   file (D222, #161): with a switch it is refused, and a

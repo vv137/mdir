@@ -1,4 +1,4 @@
-# The compile cache (D212, D214, D217)
+# The compile cache (D212, D214, D217, D[cell-runtime-constants])
 
 Issue #142. A Python simulation compiles its program in three stages: the
 MLIR pipeline lowers it to an LLVM module (with the PTX of its kernels on a
@@ -17,6 +17,10 @@ compiled for the device instead of PTX; see
 [The GPU modules](#the-gpu-modules-dgpu-module-compile) below.
 D217 (#163) clears the cache and bypasses it for one
 compile from Python; see [Controls from Python](#controls-from-python).
+D[cell-runtime-constants] (#162) takes the values that depend on the
+starting cell out of the program's text, so that a stage that starts from
+an equilibrated cell hits the entry of another; see
+[Values of the start](#values-of-the-start-dcell-runtime-constants).
 
 ## Use
 
@@ -165,7 +169,9 @@ alone, so its key holds these and nothing of the MDIR build:
 
 The PTX of the kernels is a global of the module, so a change of device
 code changes the key too, and everything the program's constants depend on
-(the cell at the start, for example) is in the module. A rebuild of MDIR
+is in the module. The values that depend on the state the run starts from
+are not constants of the module but arguments of its entry
+([Values of the start](#values-of-the-start-dcell-runtime-constants)). A rebuild of MDIR
 that leaves the generated module unchanged therefore hits, and one that
 changes any part of the generated code misses. An object is not portable
 between machines with different CPU features: a different CPU is a
@@ -182,6 +188,68 @@ This follows the design of #142 for the stages after MLIR. The MLIR
 pipeline depends on MDIR's passes, so a cache of its output would need the
 build identity in its key, and would miss after every rebuild; it is not
 part of this item.
+
+## Values of the start (D[cell-runtime-constants])
+
+Issue #162. A stage that continues from an equilibrated state, such as the
+production stage of the ala3 example after its NPT stage, a resubmission,
+or a replica with a cell of its own, starts from a cell that differs from
+run to run. A program whose text held values computed from that cell
+differed from the last one only in those numbers, and missed the cache.
+
+The entry now takes them as its last arguments (`Program::startValues`,
+`include/mdir/Driver/Builder.h`). The host computes each one exactly as the
+constant was computed, so a run gives the same numbers as before to the
+bit. This generalizes D213, under which a program with tunables already
+took the barostat's two constants as arguments.
+
+Every value that the program text or the pipeline takes from the starting
+state:
+
+| Value | Depends on | Now |
+|---|---|---|
+| `%baro_constant`, `%baro_energy_constant`: the virial and the energy of the correction for the dispersion and the PME background, times $V$ | the volume at the start, through rounding only ($V$ cancels) | arguments of the entry |
+| `%rest_edge0` to `%rest_edge2`: the cell that the reference positions of the restraints belong to, with a barostat | a Python stage: the cell of its start; `mdir run`: the cell of the coordinate file | arguments of the entry |
+| `%tilt_bx`, `%tilt_cx`, `%tilt_cy`: the tilts of a triclinic cell | the cell at the start | arguments of the entry |
+| `%bstate0` to `%bstate8`: the pressure state of a barostat that scales every step (D92) | the checkpoint that `mdir run` continues | arguments of the entry |
+| The edges `%lx`, `%ly`, `%lz` | the cell at the start | arguments of the entry already |
+| The correction for the dispersion, the PME self term and background, the shift estimate (D210), the tails of pair terms (D209), the constants of `[free_energy]` that scale as $1/V$ | the volume at the start | values of the host (`Output`), never in the text |
+| The factors of the influence function of PME and LJPME | the grid | entry buffers already |
+| The PME and LJPME grid, an attribute of `md.reciprocal` | a Python stage: the cell of its start; `mdir run`: the cell of the coordinate file | **structural**: stays in the text |
+| The neighbor capacity, `width` of `convert-md-to-md-exec` | the positions and the cell at the start | **structural**: a pipeline option, in the lowered module |
+| The edges of the coordinate file for an external term in the frame of the cell (D154) | the coordinate file, not the start | stays in the text; the Python model has no external terms |
+
+The grid and the neighbor capacity shape the program's loops and buffers,
+so they stay part of the key, and a change of either still compiles anew.
+The grid of a Python stage follows the cell it starts from, but it changes
+only when an edge crosses a size that the FFT takes, so a continued stage
+usually keeps it. `System.pme_grid` fixes it for every stage. The neighbor
+capacity is $\lceil 1.5\,n_\text{max}\rceil + 16$, rounded up to a multiple
+of 8, where $n_	ext{max}$ is the most neighbors that a particle has at the
+start. It does not change the results: `neighbor_capacity` 888, 896, and
+1024 on ala3 at constant pressure gave the same positions, velocities, and
+cell to the bit, deterministic on the CPU and a GPU. It does move from one
+equilibrated state to another, though, so a continued stage hits only
+when its estimate rounds to the same width.
+
+### Validation
+
+- **Text.** On main, the program of segments of the ala3 production stage
+  from three NPT-equilibrated states (seeds 1 to 3, edges 3.517 to
+  3.551 nm) differed in `%baro_constant` and `%baro_energy_constant`, and
+  with restraints also in `%rest_edge*`. Now the texts are the same. The
+  pipelines of seeds 1 and 3 are the same as well (width 888); seed 2 has
+  width 896.
+- **Cache.** One process per state on one directory, CPU, mixed: seed 1
+  misses and stores, seed 3 hits (main: a miss), and seed 2 misses on its
+  width. `compile-cache-cell.test` and its GPU variant check that two
+  starts of the dipeptide at constant pressure with restraints, one with
+  its cell 0.1% larger, have one text and one pipeline, that the second
+  hits the entry of the first, and that its 20 steps equal those of a
+  compile without the cache bit for bit, in mixed and double precision.
+- **Bit identity with main.** See D[cell-runtime-constants] in
+  [decisions.md](decisions.md) for the runs that compare positions,
+  velocities, the cell, and the energy files with main.
 
 ## Entries
 
@@ -315,8 +383,9 @@ A hit saves 1 to 6 s per stage of host code generation; the MLIR pipeline,
 in `mdir.compile` (which lowered a program of its own until
 D224, #151) and in the simulation, is most of what remains. Without the deterministic mode the
 production stage missed: it starts from the cell that the NPT stage
-reached, which differs from run to run, and its program's constants depend
-on it.
+reached, which differs from run to run, and its program's constants
+depended on it. They no longer do
+([Values of the start](#values-of-the-start-dcell-runtime-constants)).
 
 The full suite on that GPU at the default `gpu_workers` (16): 262 s with
 the cache off, 250 s with a cold cache, and 243 s with a warm one, single

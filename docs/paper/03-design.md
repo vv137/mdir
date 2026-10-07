@@ -487,7 +487,16 @@ on MDIR, run on every compile. The PTX and the cubin of each GPU module are
 cached in the same way. The PTX is keyed by a hash of the module's IR,
 which then holds only upstream LLVM and NVVM operations, together with its
 target, libdevice, and the LLVM version. The cubin is keyed by a hash of
-its PTX and the version and arguments of `ptxas`. From Python, a compile
+its PTX and the version and arguments of `ptxas`. A hit needs the same
+module, so the values that depend on the state a run starts from, such as
+the tilts of the cell, the cell of the restraints' reference positions,
+and the constant virial of the dispersion correction and of the PME
+background times the volume (a constant, since both terms scale as $1/V$),
+are arguments of the entry rather than
+constants of the text (D[cell-runtime-constants]). A stage that continues
+from an equilibrated cell then reuses the program of another such stage;
+only the grid of PME and the neighbor capacity, which shape loops and
+buffers, stay in the key. From Python, a compile
 can bypass the cache, and the cache can be cleared while other processes
 use it (D217): entries are written whole by a rename
 and read by a copy, so a clear can cause a miss but never a partial entry.
