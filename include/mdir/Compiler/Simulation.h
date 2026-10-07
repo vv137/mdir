@@ -73,6 +73,25 @@ struct SimulationState {
   int64_t tunablesVersion = 0;
 };
 
+/// The buffers of the state of a simulation where its program keeps them,
+/// in the order of the program and the types that it stores
+/// (D[python-dlpack], docs/python-dlpack.md).
+struct SimulationView {
+  const void *positions = nullptr, *velocities = nullptr, *forces = nullptr;
+  /// The index in the input of the particle at each place.
+  const int32_t *ids = nullptr;
+  size_t count = 0;
+  /// The width of an element of the state and of the forces, 4 or 8.
+  size_t stateWidth = 8, forceWidth = 8;
+  /// Whether the buffers are memory of the device, and its ordinal.
+  bool onDevice = false;
+  int device = 0;
+  int64_t step = 0;
+  double time = 0.0, velocityOffset = 0.0;
+  /// What `getGeneration` returned when the view was taken.
+  uint64_t generation = 0;
+};
+
 class Simulation {
 public:
   /// Builds the program of the segments of `prepared` and compiles it, once
@@ -154,6 +173,29 @@ public:
       const std::vector<std::pair<std::string, std::vector<double>>> &changes);
   int64_t getStep() const { return step; }
   double getTime() const;
+
+  /// The buffers of the state at the end of the last part, with a lease on
+  /// them (D[python-dlpack]): while a lease is alive, `run`, `minimize`,
+  /// `evaluate`, and `updateTunables` are refused, and the buffers hold the
+  /// state of the view. Refused when there is no activation: before the
+  /// first part and after a failure.
+  llvm::Expected<SimulationView> takeView();
+  /// Takes another lease, of a view that a consumer was given, and
+  /// releases one; from any thread.
+  void acquireLease() { ++leases; }
+  void releaseLease() { --leases; }
+  int64_t getLeases() const { return leases; }
+  /// Advances whenever the buffers of the state may change: a part, the
+  /// beginning or the end of an activation.
+  uint64_t getGeneration() const { return generation; }
+  /// Makes the stream `consumer` of the device (1 the legacy default
+  /// stream, 2 the per-thread default stream) wait for the work issued so
+  /// far, and records that the buffers were given to a consumer, whose work
+  /// the next part or the end of the activation waits for.
+  void handOff(uint64_t consumer);
+  /// Records that a consumer was given the buffers of the device without a
+  /// stream to wait.
+  void markExported() { exported = true; }
   bool hasFailed() const { return failed; }
   /// What compiling its programs cost, and what the compile cache saved
   /// (D212).
@@ -262,6 +304,17 @@ private:
   /// s, which sets the length of the next part; 0 until then.
   double secondsPerStep = 0.0;
   std::atomic<bool> stopRequested{false};
+  /// The live leases of views, the generation of the buffers, and whether
+  /// buffers of the device were given to a consumer since the last wait
+  /// for all the work of the device (D[python-dlpack]).
+  std::atomic<int64_t> leases{0};
+  std::atomic<uint64_t> generation{0};
+  std::atomic<bool> exported{false};
+  /// Refuses an operation that would write or free the buffers of views.
+  llvm::Error checkLeases(const char *operation) const;
+  /// Waits for the work of consumers of views before the buffers are
+  /// written or freed.
+  void waitForConsumers();
   mutable std::atomic<bool> busy{false};
 };
 

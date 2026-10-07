@@ -260,9 +260,13 @@ D215 (#135,
 a simulation in one activation of its entry, whose buffers, order of the
 particles, and neighbor structures stay where the program keeps them, on
 the device, from part to part: a run in parts equals one run to the bit,
-and the host copies the state only where it is asked for. Checkpoints and
-DLPack views remain open; the views take the buffers that the activation
-hands the host at the end of each part.
+and the host copies the state only where it is asked for.
+D[python-dlpack] (#131, [DLPack views](python-dlpack.md)) hands
+consumers such as PyTorch those buffers, the particle IDs, and the values
+of tunables as read-only DLPack views, without a copy: leases block runs
+and updates while a view or a tensor taken from it is alive, and the
+consumer's stream waits for the simulation's work. Checkpoints and
+writable views (#136) remain open.
 M2 covers
 a documented classical subset and requires a manylinux_2_28 pip wheel for
 Python 3.10–3.13; conda follows later.

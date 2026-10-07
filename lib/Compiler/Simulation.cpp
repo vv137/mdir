@@ -717,6 +717,8 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
 
 void Simulation::resumeActivation() {
   Activation &a = *activation;
+  waitForConsumers();
+  ++generation;
   a.atBoundary = false;
   if (auto enter = findRuntime<void(void *)>("mdrtActivationEnter"))
     enter(a.hostRecord);
@@ -745,6 +747,8 @@ void Simulation::endActivation() {
   if (!activation)
     return;
   Activation &a = *activation;
+  waitForConsumers();
+  ++generation;
   // Its code waits at a boundary and never runs again. What it allocated
   // is freed: its blocks of the device return to the pool of the runtime
   // (#110).
@@ -1035,6 +1039,8 @@ llvm::Expected<int64_t> Simulation::run(int64_t count,
     std::atomic<bool> &flag;
     ~Release() { flag = false; }
   } release{busy};
+  if (llvm::Error error = checkLeases("run"))
+    return std::move(error);
   if (failed)
     return simulationError("the simulation failed earlier; it keeps the "
                            "state of step " + llvm::Twine(step) +
@@ -1180,6 +1186,8 @@ llvm::Expected<int64_t> Simulation::minimize(std::optional<int64_t> count,
     std::atomic<bool> &flag;
     ~Release() { flag = false; }
   } release{busy};
+  if (llvm::Error error = checkLeases("minimize"))
+    return std::move(error);
   if (failed)
     return simulationError("the simulation failed earlier; it keeps the "
                            "state of step " + llvm::Twine(step) +
@@ -1357,6 +1365,78 @@ void Simulation::closeReports() {
   reports = Reports();
 }
 
+llvm::Error Simulation::checkLeases(const char *operation) const {
+  int64_t live = leases;
+  if (live <= 0)
+    return llvm::Error::success();
+  return simulationError(llvm::Twine(operation) + " is refused while " +
+                         llvm::Twine(live) +
+                         (live == 1 ? " lease of a view" : " leases of views") +
+                         " of this simulation " + (live == 1 ? "is" : "are") +
+                         " alive: release the view (View.release()) and "
+                         "delete the tensors taken from it first");
+}
+
+void Simulation::waitForConsumers() {
+  // Work of a consumer on any stream of the context may still read the
+  // buffers that it was given (D[python-dlpack]).
+  if (!exported.exchange(false))
+    return;
+  if (auto wait = findRuntime<void()>("mdrtDeviceWaitAll"))
+    wait();
+}
+
+llvm::Expected<compiler::SimulationView> Simulation::takeView() {
+  if (busy.exchange(true))
+    return simulationError("another operation is under way on this "
+                           "simulation");
+  struct Release {
+    std::atomic<bool> &flag;
+    ~Release() { flag = false; }
+  } release{busy};
+  if (!activation || !activation->atBoundary)
+    return simulationError(
+        failed ? llvm::Twine("the simulation failed; its state is on the "
+                             "host only, which state() copies")
+               : llvm::Twine("the simulation has no state where its program "
+                             "keeps it before its first run; run it, or "
+                             "evaluate it with run(0, energy=True), first"));
+  Activation &a = *activation;
+  const Program &p = compiled->program;
+  compiler::SimulationView view;
+  view.stateWidth = getWidth(p.state);
+  view.forceWidth = getWidth(p.force);
+  view.positions = getStart(a.x, view.stateWidth);
+  view.velocities = getStart(a.v, view.stateWidth);
+  view.forces = getStart(a.f, view.forceWidth);
+  view.ids = reinterpret_cast<const int32_t *>(getStart(a.id, sizeof(int32_t)));
+  view.count = static_cast<size_t>(a.x.sizes[0]);
+  view.onDevice = a.onDevice;
+  if (a.onDevice) {
+    std::lock_guard<std::mutex> lock(getRunMutex());
+    static auto ordinal = findRuntime<int32_t()>("mdrtDeviceOrdinal");
+    view.device = ordinal ? ordinal() : 0;
+  }
+  view.step = step;
+  view.time = getTime();
+  view.velocityOffset =
+      hasRun && prepared.control.integrator == Integrator::Leapfrog ? -0.5
+                                                                    : 0.0;
+  view.generation = generation;
+  ++leases;
+  return view;
+}
+
+void Simulation::handOff(uint64_t consumer) {
+  if (!activation || !activation->onDevice)
+    return;
+  exported = true;
+  std::lock_guard<std::mutex> lock(getRunMutex());
+  static auto handoff = findRuntime<void(uint64_t)>("mdrtDeviceHandOff");
+  if (handoff)
+    handoff(consumer);
+}
+
 double Simulation::getTime() const {
   // A minimization has no time.
   if (prepared.control.minimize)
@@ -1413,6 +1493,8 @@ llvm::Error Simulation::updateTunables(
     std::atomic<bool> &flag;
     ~Release() { flag = false; }
   } release{busy};
+  if (llvm::Error error = checkLeases("an update of the tunables"))
+    return std::move(error);
   if (failed)
     return simulationError("the simulation failed earlier; it keeps the "
                            "state of step " + llvm::Twine(step) +
@@ -1522,6 +1604,8 @@ llvm::Error Simulation::evaluate() {
     std::atomic<bool> &flag;
     ~Release() { flag = false; }
   } release{busy};
+  if (llvm::Error error = checkLeases("an evaluation"))
+    return std::move(error);
   if (failed)
     return simulationError("the simulation failed earlier; it keeps the "
                            "state of step " + llvm::Twine(step) +

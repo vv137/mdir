@@ -39,6 +39,7 @@ template <class T> static T unwrap(llvm::Expected<T> value) {
 #include "Units.h"
 #include "HostArrays.h"
 #include "Tunables.h"
+#include "DLPack.h"
 
 struct Version { uint64_t version = 0; virtual ~Version() = default; };
 template <class T> struct Input : Version { T value; std::optional<size_t> particleCount; };
@@ -539,7 +540,9 @@ PYBIND11_MODULE(mdir, m) {
     .def_readonly("period", &CallbackReporter::period);
   struct PySimulation {
     std::shared_ptr<Program> program;
-    std::unique_ptr<compiler::Simulation> simulation;
+    /// Shared with the leases of views, which keep it alive
+    /// (D[python-dlpack]).
+    std::shared_ptr<compiler::Simulation> simulation;
     py::list reporters;
     /// Gives the simulation the built-in reporters of the list; returns the
     /// callbacks.
@@ -657,6 +660,7 @@ PYBIND11_MODULE(mdir, m) {
       for (const auto &name : namesOf(t)) { text += (first ? "'" : ", '") + name + "'"; first = false; }
       return text + "])";
     });
+  views::bind(m);
   py::class_<PySimulation>(m, "Simulation")
     .def(py::init([](std::shared_ptr<Program> program, std::optional<bool> cache) {
       if (!program) throw InputError("Simulation takes a compiled program");
@@ -729,6 +733,9 @@ PYBIND11_MODULE(mdir, m) {
     }, py::arg("steps") = py::none(), py::arg("tolerance") = py::none())
     .def("request_stop", [](PySimulation &s) { s.simulation->requestStop(); })
     .def("state", [](PySimulation &s) { return unwrap(s.simulation->getState()); })
+    // Read-only DLPack views of the buffers (D[python-dlpack]).
+    .def("view", [](PySimulation &s) { return views::take(s.simulation); })
+    .def_property_readonly("leases", [](const PySimulation &s) { return s.simulation->getLeases(); })
     .def_property_readonly("step", [](const PySimulation &s) { return s.simulation->getStep(); })
     .def_property_readonly("time", [](const PySimulation &s) { return s.simulation->getTime(); })
     .def_property_readonly("failed", [](const PySimulation &s) { return s.simulation->hasFailed(); })

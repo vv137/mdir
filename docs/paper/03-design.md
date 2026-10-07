@@ -505,6 +505,19 @@ the device. The runtimes record what an activation allocates, which is
 freed when it ends; the state at the end of each part is copied on the
 device, so that a part that fails returns to it (D196).
 
+A consumer such as PyTorch takes those buffers through DLPack without a
+copy (D[python-dlpack], `docs/python-dlpack.md`): a view of
+the positions, velocities, and forces in the order of the program and the
+types it stores, the index in the input of each row, and the values of
+the tunables. The buffers change at the next part, so a view is a lease:
+while it, or any tensor taken from it, is alive, the simulation refuses
+to run or to take new values. Each exported tensor holds the native
+simulation, so its storage outlives the Python object, and its deleter may
+run on any thread. On a device the consumer's stream waits for an event
+recorded on the simulation's stream, and the first part after views were
+taken waits for all the work of the context, the consumer's included,
+before it writes the buffers.
+
 The runtime is small and holds what cannot be IR: 681 lines of C for the
 host (`runtime/mdrt.c`: counters of builds and prunings, the stop on a
 position that is not a number, the generator Philox 4×32-10
@@ -512,7 +525,7 @@ position that is not a number, the generator Philox 4×32-10
 isotropic or semi-isotropic, drawn from it, the means of the pressures by
 axis that the semi-isotropic barostat took, the FFT of the host
 [[Reinecke2019]](references.md#reinecke2019), and the matrix of the host)
-and 1153 lines for NVIDIA devices (`runtime/mdrt_cuda.c`, on the driver
+and 1216 lines for NVIDIA devices (`runtime/mdrt_cuda.c`, on the driver
 API only: loading of modules, launches that skip empty grids, one stream
 in order plus an optional second one, words of memory of the host mapped
 for the device for flags (D118), a caching allocator whose frees do not

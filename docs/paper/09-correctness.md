@@ -360,6 +360,20 @@ rule's table but for that pair to the bit, and its change of the energy a
 NumPy sum of the Lennard-Jones to $1.5\times10^{-11}$ kJ/mol of 508.5
 (`python-tunable-nbfix*.test`).
 
+The read-only DLPack views of a simulation (D[python-dlpack],
+Section 3.6) are checked by consumers that use none of MDIR's code: NumPy
+on the CPU, a reader of the capsule in ctypes with the CUDA driver API,
+and PyTorch on the CPU and a GPU. The buffers that the consumer receives
+are those of the program, not copies; their rows, put in the input's order
+by the IDs of the view, equal `state()` to the bit, in double, mixed, and
+deterministic mixed precision; every lease is released once, whether the
+consumer took the capsule or not and whether it released the tensor with or
+without the GIL; and a run is refused while a tensor is alive. A consumer
+kernel that still reads the positions when its tensor is deleted reads the
+values of the view although the simulation runs 10 steps at once, which it
+does not when the wait for the context is removed
+(`python-dlpack*.test`).
+
 ## 9.7 Neighbor structures
 
 - **Templates against all pairs.** The matrix of the host matches a

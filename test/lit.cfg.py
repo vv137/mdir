@@ -89,6 +89,14 @@ if config.mdir_python:
     if subprocess.run([config.mdir_python_executable, "-c", "import openmm.unit"],
                       capture_output=True).returncode == 0:
         config.available_features.add("openmm")
+    # PyTorch, the independent consumer of DLPack views (D[python-dlpack]):
+    # the interpreter of the tests if it imports torch, or one that lit is
+    # given with -Dtorch_python=<interpreter>, which must import the module
+    # of this build (the same Python version).
+    torch_python = lit_config.params.get("torch_python", config.mdir_python_executable)
+    if subprocess.run([torch_python, "-c", "import torch"], capture_output=True).returncode == 0:
+        config.available_features.add("torch")
+        config.substitutions.append(("%torch_python", torch_python))
 
 # Checkpoints need HDF5.
 if config.mdir_hdf5:

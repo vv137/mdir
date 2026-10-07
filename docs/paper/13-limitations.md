@@ -127,9 +127,10 @@ tunable parameters, whose new values a simulation takes without compiling,
 an update equal to a compile with them to the bit (D213); parts that
 continue one activation of the entry, whose buffers stay on the device, so
 that a run in parts is the run in one part to the bit
-(D215).
+(D215); read-only DLPack views of those buffers, whose leases
+block runs while a consumer holds them (D[python-dlpack]).
 Remaining:
-checkpoints shared with the CLI, views of device buffers through DLPack,
+checkpoints shared with the CLI, writable views of the buffers,
 NPT in a triclinic cell or with a coupling period of 1, and the manylinux_2_28 pip wheel for Python 3.10–3.13 that gates the
 milestone, with a four-stage tutorial.
 
