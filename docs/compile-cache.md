@@ -247,9 +247,36 @@ when its estimate rounds to the same width.
   its cell 0.1% larger, have one text and one pipeline, that the second
   hits the entry of the first, and that its 20 steps equal those of a
   compile without the cache bit for bit, in mixed and double precision.
-- **Bit identity with main.** See D[cell-runtime-constants] in
-  [decisions.md](decisions.md) for the runs that compare positions,
-  velocities, the cell, and the energy files with main.
+- **The ala3 example.** Three runs of `examples/ala3/run.py`
+  (`--steps-scale 0.01`, GPU, mixed, the default mode, one seed) on one
+  directory. Every stage of the second and third runs hits but the
+  production stage, which starts from the cell that the NPT stage reached,
+  different in every run. All three production stages have the grid
+  $32^3$. The first and third have neighbor width 864: the third hits the
+  first's entry, and its compile takes 21.4 s with 1.3 s in the engine,
+  against 59.8 s and 7.6 s. The second has width 872 and misses. On main,
+  of two such runs the second production stage missed whatever its width,
+  its text holding the barostat's constants of its starting volume.
+- **Bit identity with main.** Deterministic, the positions, velocities,
+  cell, and energy file (or energies) after the run equal those of main to
+  the bit, on the CPU and a GPU in mixed and double precision, for:
+  - `mdir run` on ala3 at constant pressure with restraints, 500 steps, and
+    its continuation from the checkpoint;
+  - a barostat that scales every step (`work = "TROTTER"`, `interval = 1`),
+    200 steps, and its continuation, which takes `%bstate*`;
+  - a triclinic water box (the dodecahedron of `triclinic.test`) at constant
+    volume and at constant pressure, which take `%tilt_*`;
+  - the Python program of segments of the ala3 production stage from an
+    equilibrated state, with and without restraints, 300 steps. On the CPU
+    this holds in the default mode too.
+- **Speed.** The Amber suite on GPU 0 (RTX 3090, 300 W), mixed, in the
+  settings of the suite (D114), one run per system, ms per step on main and
+  with this change: JAC NVE 0.202 and 0.202, JAC NPT 0.220 and 0.220,
+  JAC NVE 4 fs 0.217 and 0.218, JAC NPT 4 fs 0.228 and 0.229, Factor IX
+  NVE 0.589 and 0.591, Factor IX NPT 0.619 and 0.627, Cellulose NVE 2.696
+  and 2.730, Cellulose NPT 2.792 and 2.796, STMV NPT 4 fs 8.328 and
+  8.328. The NVE programs have the same text as on main, so their
+  differences, up to 1.2%, are the noise of single runs; NPT is within it.
 
 ## Entries
 
