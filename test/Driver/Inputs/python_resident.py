@@ -1,4 +1,4 @@
-"""Device-resident buffers of a persistent simulation (D[resident-buffers],
+"""Device-resident buffers of a persistent simulation (D215,
 docs/python-segments.md): one activation of the entry runs every part, and
 the state stays where the program keeps it between parts.
 

@@ -1,4 +1,4 @@
-# Device-resident buffers of a persistent simulation (D[resident-buffers]),
+# Device-resident buffers of a persistent simulation (D215),
 # scenario sanitize of Driver/Inputs/python_resident.py, under
 # compute-sanitizer: parts that continue one activation of the entry, the
 # copies of the state at their ends and to the host, an update of tunables

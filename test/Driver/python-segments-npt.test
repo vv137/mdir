@@ -3,7 +3,7 @@
 # Inputs/python_segments.py.
 # NPT runs of 1 + 7 + 13 steps, and of 1 x 5 + 3 x 2 + 10, against
 # uninterrupted ones, equal to the bit in double and mixed precision, cell
-# included (D[resident-buffers]), and the phase of the coupling across their
+# included (D215), and the phase of the coupling across their
 # boundaries.
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %mdir_python %S/Inputs/python_segments.py %S/Inputs/dipeptide CPU mdir %t npt | FileCheck %s

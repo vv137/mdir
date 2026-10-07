@@ -107,7 +107,7 @@ neighbor structures built only where an activation begins: at the first
 part, and after an update of tunables or an evaluation after the first run,
 which begin from the state of the host (D213).
 
-Before D[resident-buffers] each part began as a continued run does, with a
+Before D215 each part began as a continued run does, with a
 new order and new structures, and a run in parts agreed with one run only
 within the rounding of the new order (in double precision, 9e-16 nm for the
 positions and 6e-10 kJ/mol/nm for the forces on the fixture below), as
@@ -171,7 +171,7 @@ with all 144 registrations paired with deregistration. D199
 replaces reliance on that exercised layout with checks of every final object.
 
 The parts of a simulation run in one activation of its entry
-(D[resident-buffers]). What the activation allocates (the memory of the
+(D215). What the activation allocates (the memory of the
 host that compiled code takes with `malloc`, the neighbor structures of the
 runtime, and the blocks of device memory) is its own and is held between
 runs; the runtimes record it by activation, so that a simulation that
@@ -195,7 +195,7 @@ that `MDIR_RUNTIME_DIR` names.
 
 ## Resident buffers
 
-Issue #135, `D[resident-buffers]`: the buffers of a simulation stay where
+Issue #135, `D215`: the buffers of a simulation stay where
 the program keeps them, on a device or on the host, from part to part, and
 copies of the host are made where they are asked for. It is the base of
 views of device buffers through DLPack (#131) and of the frame evaluator of
@@ -454,7 +454,7 @@ compiled with the new values from the same state that evaluates it first
 and then takes the same steps (velocity Verlet, deterministic mode).
 Before the first run, an evaluation followed by steps equals the run that
 takes its steps at once, to the bit, since the start ends at a boundary in
-both (before D[resident-buffers], the two calls differed from one in the
+both (before D215, the two calls differed from one in the
 last bits, the second call putting the particles in order anew).
 
 ## A new stage from a reached state

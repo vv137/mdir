@@ -112,7 +112,7 @@ def MDRT_HostCallOp : MDRT_Op<"host_call", [
     where they are, on a device as well: addresses of the device, which the
     host must not read as its own memory. The work before the call may
     still be under way on the device when it is made. A Python simulation
-    takes its state this way at the end of each part (D[resident-buffers]).
+    takes its state this way at the end of each part (D215).
 
     ```mlir
     mdrt.host_call @end_part(%x) {in_place} : (!md.field<@atoms, 3 x f64>)

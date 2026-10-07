@@ -1,6 +1,6 @@
 # REQUIRES: python-api, cuda
 # Device-resident buffers of a persistent simulation on a GPU
-# (D[resident-buffers]), scenario failures of Inputs/python_resident.py.
+# (D215), scenario failures of Inputs/python_resident.py.
 # A part that fails after parts that succeeded keeps the state at the end of
 # the last of them, read between the parts or not, to the bit against a run
 # that stops there; a first part that fails keeps the state it began from.

@@ -24,7 +24,7 @@ before frame registration; an unsupported layout fails compilation with an
 ownership diagnostic. See [JIT ownership](../jit-invariants.md).
 D211 compiles one program of segments, whose entry
 does the work of the start only on its first call; it adds no control keys
-and changes no output formats or overwrite behavior. D[resident-buffers]
+and changes no output formats or overwrite behavior. D215
 runs every part of a simulation in one activation of that entry, which
 takes the step and counts of each part at the end of the one before; it
 adds no control keys and changes no output formats or overwrite behavior.

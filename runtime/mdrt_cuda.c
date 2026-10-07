@@ -562,7 +562,7 @@ void mgpuEventRecord(CUevent event, CUstream stream) {
    requests of the same size. */
 #define MAX_BLOCKS 4096
 /* An activation of an entry that an embedding program keeps across its
-   calls (a Python simulation, D[resident-buffers]): what the activation
+   calls (a Python simulation, D215): what the activation
    allocates is its own, and returns to the pool when the program closes
    it, so the memory of the device stays that of one activation however
    many parts it runs (#110). Several activations may be open at once, one
@@ -1065,7 +1065,7 @@ void mdrtMatrixGrow(int64_t handle, int64_t width) {
  *===----------------------------------------------------------------------===*/
 
 /* An embedding program opens an activation before it first calls an entry
-   (D[resident-buffers]), enters it whenever the code of the activation
+   (D215), enters it whenever the code of the activation
    runs, leaves it when the code waits between parts, and closes it when
    the activation ends: its blocks return to the pool, where later
    activations take the blocks of the same sizes. */
@@ -1130,7 +1130,7 @@ void mdrtDeviceActivationClose(void *activation) {
 /* Memory of the device that an embedding program holds outside any
    activation, and copies to and from it on the stream of the kernels: the
    state of a simulation at the end of its last part, which a part that
-   fails returns to (D196, D[resident-buffers]). */
+   fails returns to (D196, D215). */
 void *mdrtDeviceAllocateKept(uint64_t size) {
   enter();
   CUdeviceptr pointer = 0;

@@ -70,7 +70,7 @@ QUANTITIES = ("positions", "velocities", "forces")
 def segmented_runs(cases):
     # Segmented against uninterrupted runs, in both precisions. A part
     # continues the activation of the entry that the last part left, with its
-    # order of the particles and its neighbor structures (D[resident-buffers]),
+    # order of the particles and its neighbor structures (D215),
     # so the deterministic mode gives the run in parts to the bit: the same
     # state, cell, and energies.
     if cases[0][0] != "NVE":
@@ -328,7 +328,7 @@ def energies(precision):
         whole.run(20, energy=True)
         compare(whole.state().energies, rows[20])
         # Parts to steps 10 and 20: the second continues the first, with its
-        # order and its neighbor structures (D[resident-buffers]), and agrees
+        # order and its neighbor structures (D215), and agrees
         # to every digit as well.
         parts = mdir.Simulation(program)
         parts.run(10, energy=True)

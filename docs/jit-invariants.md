@@ -70,7 +70,7 @@ own. Whether they were generated, read from the cache, or compiled by
 no host code comes from them, and the checks above are unchanged. The
 lifetime tests run with the cubins and the cache of the suite.
 
-## Activations that outlive a call (D[resident-buffers])
+## Activations that outlive a call (D215)
 
 A Python simulation's entry does not return between parts
 ([python-segments.md](python-segments.md#resident-buffers)). It runs on a
@@ -131,7 +131,7 @@ strings, which survive destruction of the ORC session.
 Creation, entry execution, and destruction take the
 same process mutex. Since D211 a simulation compiles
 one program, whose entry begins the run or continues it as an argument says,
-so it owns one engine, and since D[resident-buffers] one activation of its
+so it owns one engine, and since D215 one activation of its
 entry runs its parts (above). Polling Python happens between parts after
 releasing the mutex.
 A caller must keep a simulation alive while one of its methods runs; native

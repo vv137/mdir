@@ -1405,7 +1405,7 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
       }
       if (call.getInPlace()) {
         // The host takes the buffer of the device where it is
-        // (D[resident-buffers]).
+        // (D215).
         auto device = cast<MemRefType>(buffer.getType());
         arguments.push_back(memref::MemorySpaceCastOp::create(
             builder, op->getLoc(),

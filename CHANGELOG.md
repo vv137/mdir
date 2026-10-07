@@ -184,7 +184,7 @@ format, or the outputs; every such change is listed under **Changed** or
   rounding, so its numbers change in the last bits. A part that fails still
   keeps the state of the last part that succeeded, from a copy on the
   device. A live simulation now holds its memory between runs. Short parts
-  are faster: a part of 10 steps of JAC takes 2.75 ms instead of 10.3 on a GPU in mixed precision, and of one step 0.309 ms instead of 8.77; long runs are unchanged (D[resident-buffers], #135).
+  are faster: a part of 10 steps of JAC takes 2.75 ms instead of 10.3 on a GPU in mixed precision, and of one step 0.309 ms instead of 8.77; long runs are unchanged (D215, #135).
 
 ### Added
 

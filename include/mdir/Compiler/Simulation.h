@@ -15,7 +15,7 @@
 namespace mdir { namespace driver { struct Output; } }
 namespace mdir { namespace compiler {
 /// The activation of the entry that runs the parts of a simulation
-/// (D[resident-buffers]).
+/// (D215).
 struct Activation;
 
 /// A failure while a simulation runs, or an operation that another one under
@@ -202,7 +202,7 @@ private:
   /// (D211).
   std::unique_ptr<Engine> compiled;
   /// The activation of its entry that runs the parts, waiting at the end of
-  /// the last one, with the state in its buffers (D[resident-buffers]);
+  /// the last one, with the state in its buffers (D215);
   /// none before the first part, after a failure, and while the values of
   /// the program change.
   std::unique_ptr<Activation> activation;

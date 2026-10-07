@@ -145,7 +145,7 @@ neighbor width. The new program's text must equal the compiled one's; its
 values replace the old. The activation of the entry that holds the old
 values in its buffers ends, after the state is copied from it, and the
 next part begins another from the state of the host, which uploads the new
-values (D[resident-buffers], [python-segments.md](python-segments.md#resident-buffers)).
+values (D215, [python-segments.md](python-segments.md#resident-buffers)).
 Everything else in the update is a check: the cost is that of building the
 program's text and values, about 10 ms on the host for JAC (23,558 atoms).
 
@@ -172,7 +172,7 @@ program's text and values, about 10 ms on the host for JAC (23,558 atoms).
   step behind, it is `None`. An update before the first run evaluates
   nothing: the first call does. If the evaluation fails, the update is
   undone. The evaluation begins a new activation of the entry
-  (D[resident-buffers]): the particles are put in order and the neighbor
+  (D215): the particles are put in order and the neighbor
   structures built at the state of the update, as a simulation compiled
   with the new values from that state does, and the parts after the update
   continue that activation.

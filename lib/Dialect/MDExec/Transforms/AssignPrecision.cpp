@@ -624,7 +624,7 @@ void Assigner::isolateBoundaries() {
   });
   for (Operation *op : boundaries) {
     // A call that takes the fields where they are hands the host the
-    // buffers of the steps themselves (D[resident-buffers]): their type is
+    // buffers of the steps themselves (D215): their type is
     // that of their roles, which the callee declares.
     if (auto call = dyn_cast<mdrt::HostCallOp>(op); call && call.getInPlace())
       continue;

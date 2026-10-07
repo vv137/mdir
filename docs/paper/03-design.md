@@ -490,7 +490,7 @@ target, libdevice, and the LLVM version. The cubin is keyed by a hash of
 its PTX and the version and arguments of `ptxas`.
 
 The parts of a Python simulation run in one activation of its entry
-(D[resident-buffers], `docs/python-segments.md`). The program wraps its loops
+(D215, `docs/python-segments.md`). The program wraps its loops
 of steps in a loop over parts, and at the end of each part it calls the
 host with its positions, velocities, and forces where they are, addresses
 of the device on a GPU (`mdrt.host_call` with `in_place`), and waits there,

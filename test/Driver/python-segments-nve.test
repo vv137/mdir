@@ -3,7 +3,7 @@
 # Inputs/python_segments.py.
 # NVE runs of 1 + 7 + 13 steps, and of 1 x 5 + 3 x 2 + 10, against
 # uninterrupted ones, equal to the bit in double and mixed precision
-# (D[resident-buffers]), and the repeat of a deterministic run bit for bit.
+# (D215), and the repeat of a deterministic run bit for bit.
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %mdir_python %S/Inputs/python_segments.py %S/Inputs/dipeptide CPU mdir %t nve | FileCheck %s
 # CHECK: NVE VelocityVerlet Double: parts of 1+7+13 and of 1x5+3x2+10 equal 21 steps in one part to the bit

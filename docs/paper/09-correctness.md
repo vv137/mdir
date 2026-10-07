@@ -324,7 +324,7 @@ run with the reciprocal sum on a second stream against the serial one
 (`pme-gpu.test`, D87). The spatial sort changes the order of sums; runs
 with and without it agree to about $10^{-10}$ (`reorder.test`).
 
-A Python simulation run in parts (Section 3.6, D[resident-buffers]) equals
+A Python simulation run in parts (Section 3.6, D215) equals
 the run in one part to the bit in the deterministic mode, on the CPU and on
 a GPU, in double and mixed precision: parts of 1 + 7 + 13 steps against 21
 at constant energy, temperature, and pressure, the energy file and the

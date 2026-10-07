@@ -80,12 +80,12 @@ minimized ones (D198). To restrain toward the coordinates file, as
 ## Boundaries of parts
 
 A part after the first continues the last in the same activation of the
-entry (D[resident-buffers]): it keeps the positions, forces, energy, and
+entry (D215): it keeps the positions, forces, energy, and
 length of the next step that the last part left, the order of the
 particles, and the neighbor structures, so a minimization in parts takes
 the steps of a minimization in one part to the bit in the deterministic
 mode (3 + 17 + 20 steps against 40 on the dipeptide, double and mixed,
-CPU and GPU). Before D[resident-buffers] a part built its neighbor
+CPU and GPU). Before D215 a part built its neighbor
 structures anew and evaluated the energy and the forces at its first
 positions, and a minimization, whose choice of each step depends on a
 comparison of two energies, could drift from one with boundaries at other

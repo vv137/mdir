@@ -1,5 +1,5 @@
 """The memory of a persistent simulation across many calls of run (#110):
-one activation of the entry runs every part (D[resident-buffers]), and what
+one activation of the entry runs every part (D215), and what
 it allocates is freed when it ends, at an evaluation after the first run,
 an update of tunables, or the end of the simulation, so the memory of the
 device (GPU) and of the host (CPU) stays that of one activation."""

@@ -595,7 +595,7 @@ static void allocateHostMatrix(struct HostMatrix *matrix) {
 }
 
 /* An activation of an entry that an embedding program (a Python
-   simulation) keeps across its calls (D[resident-buffers]): the matrices
+   simulation) keeps across its calls (D215): the matrices
    that its code makes belong to it and are destroyed when the program
    closes it (#110). Several may be open, one for each live simulation; the
    one whose code runs is current. `mdir run` opens none. */

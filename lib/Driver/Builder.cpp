@@ -768,7 +768,7 @@ struct Coupled {
   bool emittedFirstTrips = false;
   unsigned startBranches = 0;
   /// The loop over the parts of a program of segments
-  /// (D[resident-buffers]): one activation of the entry runs every part of
+  /// (D215): one activation of the entry runs every part of
   /// a simulation. Each iteration begins at the end of a part (or at the
   /// start), where it hands the host the state `carried` (positions,
   /// velocities, and forces first) where it is, with the number of their
@@ -8073,7 +8073,7 @@ void Builder::emitMinimization(StringRef velocities) {
      << "  }\n";
   if (control.segments) {
     // The parts of the minimization continue one another in one
-    // activation (D[resident-buffers]).
+    // activation (D215).
     os.flush();
     std::string chunk = program.module.substr(partMark);
     program.module.resize(partMark);
@@ -8173,7 +8173,7 @@ void Builder::emitEntry() {
      ;
   // A program of segments hands its state to the host where it is at the
   // end of each part, and takes the counts of the next part there
-  // (D[resident-buffers]); a run ends with its state in the buffers of the
+  // (D215); a run ends with its state in the buffers of the
   // host.
   if (control.segments)
     os << "func.func private @mdrtPartBoundary(memref<?x3x" << state

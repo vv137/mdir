@@ -252,7 +252,7 @@ compile with the new values to the bit. D214 (#148,
 [GPU modules](compile-cache.md#the-gpu-modules-dgpu-module-compile))
 serializes the GPU modules in parallel, caches their PTX and cubins, and
 loads cubins compiled for the device instead of PTX.
-D[resident-buffers] (#135,
+D215 (#135,
 [resident buffers](python-segments.md#resident-buffers)) runs every part of
 a simulation in one activation of its entry, whose buffers, order of the
 particles, and neighbor structures stay where the program keeps them, on
@@ -324,7 +324,7 @@ Learned potentials (M3) keep their parameters in the framework: MDIR
 samples, and the framework model evaluates $U_\theta$ at the frames. M2b
 depends on M2a's segments, device views, and tunable parameters (done,
 D213), and on buffers that stay on the device across parts (done,
-D[resident-buffers]).
+D215).
 
 ## 7. Learned potentials (M3) and distributed execution (M4)
 

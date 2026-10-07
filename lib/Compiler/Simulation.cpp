@@ -119,7 +119,7 @@ extern "C" void stopPart(const char *message) {
 }
 
 /// The memory of the host that compiled code allocates (`malloc` and `free`
-/// of its module), by activation (D[resident-buffers]): what an activation
+/// of its module), by activation (D215): what an activation
 /// leaves allocated is its own and is freed when it ends (#110). The code of
 /// an activation runs while its set is current. A pointer that compiled code
 /// did not allocate goes to `free` as it is.
@@ -232,7 +232,7 @@ struct Arguments {
 } // namespace
 
 /// The activation of the entry of a program of segments that runs the parts
-/// of a simulation (D[resident-buffers]). The entry runs on a stack of its
+/// of a simulation (D215). The entry runs on a stack of its
 /// own; at the end of each part it hands the host its state where it is
 /// (mdrtPartBoundary) and waits there, holding its buffers, its order of the
 /// particles, and its neighbor structures, until the host gives it the
@@ -938,7 +938,7 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
   // A part continues the activation that the last one left, with its
   // order of the particles and its neighbor structures; the first part,
   // and the first after the values of the program have changed, begin one
-  // from the state of the host (D[resident-buffers]). A part that begins
+  // from the state of the host (D215). A part that begins
   // an activation and fails leaves the state of the host as it was; a later
   // one, the state at the end of the last part (the snapshot).
   bool begins = !activation;
@@ -1406,7 +1406,7 @@ llvm::Error Simulation::updateTunables(
                       "with them (Tunable values=...)");
   }
   // The program takes the new values from the state of the host, in an
-  // activation of its own (D[resident-buffers]).
+  // activation of its own (D215).
   {
     std::lock_guard<std::mutex> lock(getRunMutex());
     downloadState();
