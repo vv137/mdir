@@ -109,6 +109,45 @@ made, and nothing is evicted.
 - On a GPU the pipeline of a bypassed program shows `cache=false` among
   the options of `mdir-gpu-lower-to-nvvm` (`Program.pipeline`).
 
+## On clusters
+
+Where the directory goes:
+
+- Point `MDIR_COMPILE_CACHE_DIR` at a scratch file system
+  (`$SCRATCH/mdir-cache`) or at storage local to the node
+  (`$TMPDIR/mdir-cache`). Do not put it in a home directory with a quota:
+  a full suite leaves about 800 MB, and the bound
+  (`MDIR_COMPILE_CACHE_MAX_MB`, 2048 MiB by default) applies to each
+  directory.
+- A purge of scratch, or a node-local directory that goes with its job,
+  only costs a compile. Removing the directory, or any entry in it, is
+  always safe.
+
+Many ranks or jobs at once:
+
+- Each lookup reads an entry, each hit touches it, and each store renames
+  a file and then lists the whole directory for the eviction. Hundreds of
+  ranks starting at once on one directory of a parallel file system
+  therefore load its metadata server, mostly with misses.
+- Prefer a directory local to each node. To share one directory across a
+  large job, warm it first with one compile of the job's program, from a
+  single process, so that the ranks only read.
+- Concurrent jobs may share a directory. An entry is written to a
+  temporary file in the same directory and renamed into place, and POSIX
+  file systems, Lustre and GPFS among them, rename within a directory
+  atomically; a reader copies the file it opened.
+
+Nodes that differ:
+
+- A GPU entry is keyed by the architecture it was compiled for: the key
+  of the PTX holds the module's target attribute, `sm_XY` included, and
+  the key of a cubin holds the arguments of `ptxas`, `-arch sm_XY`
+  included. Nodes with different GPUs may therefore share a directory;
+  each architecture keeps entries of its own.
+- A host object is keyed by the CPU and its features, and by the module,
+  which holds the binaries of its kernels. Nodes with different CPUs or
+  GPUs miss each other's host objects rather than load them.
+
 ## The key
 
 The host object is a function of the LLVM module and of the code generator
