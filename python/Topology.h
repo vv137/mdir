@@ -126,6 +126,21 @@ inline void bind(py::module_ &m) {
     })
     .def_property_readonly("particle_types", [t](const View &v) { return column(t(v).types); })
     .def_property_readonly("type_names", [t](const View &v) { return t(v).typeNames; })
+    // The sites of the tunables "sigma_pair" and "epsilon_pair" (D226): the
+    // unordered pairs of types (a, b), a <= b, in the order of the flat upper
+    // triangle.
+    .def_property_readonly("type_pairs", [t](const View &v) {
+      size_t types = t(v).typeNames.size();
+      std::vector<int64_t> pairs;
+      pairs.reserve(types * (types + 1));
+      for (size_t a = 0; a < types; ++a)
+        for (size_t b = a; b < types; ++b) {
+          pairs.push_back(static_cast<int64_t>(a));
+          pairs.push_back(static_cast<int64_t>(b));
+        }
+      return host::copy(pairs.data(), pairs.size(),
+                        {static_cast<py::ssize_t>(pairs.size() / 2), 2});
+    })
     .def_property_readonly("residue_indices", [t](const View &v) { return column(t(v).residueOf); })
     // Residues.
     .def_property_readonly("residue_names", [t](const View &v) { return t(v).residueNames; })

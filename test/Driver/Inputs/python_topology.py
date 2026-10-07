@@ -191,7 +191,7 @@ def check_common(top, n):
     """Shapes, dtypes, and read-only flags of a view of `n` particles."""
     arrays = {"atomic_numbers": (np.int64, (n,)), "masses": (np.float64, (n,)),
               "charges": (np.float64, (n,)), "particle_types": (np.int64, (n,)),
-              "residue_indices": (np.int64, (n,)),
+              "type_pairs": (np.int64, (None, 2)), "residue_indices": (np.int64, (n,)),
               "residue_starts": (np.int64, (top.residue_count,)),
               "bonds": (np.int64, (None, 2)), "angles": (np.int64, (None, 3)),
               "dihedrals": (np.int64, (None, 4)), "improper_dihedrals": (np.bool_, (None,)),
@@ -237,12 +237,16 @@ def amber():
     system = loaded.make_system()
     for name in ("masses", "charges", "atomic_numbers", "bonds", "dihedrals", "residue_starts"):
         assert np.array_equal(getattr(system.topology, name), getattr(top, name)), name
-    # The D213 arrays of System agree with the view.
-    assert system.atom_names == top.atom_names and system.type_names == top.type_names
-    assert np.array_equal(system.charges, top.charges)
-    assert np.array_equal(system.particle_types, top.particle_types)
-    assert np.array_equal(system.residue_indices, top.residue_indices)
-    assert system.residue_names == [top.residue_names[r] for r in top.residue_indices]
+    # The topology data has one place (#184): System has no arrays of its own.
+    for name in ("charges", "particle_types", "type_names", "type_pairs", "atom_names",
+                 "residue_indices", "residue_names"):
+        assert not hasattr(system, name), name
+    # The sites of the tunables by pairs of types: the flat upper triangle.
+    nt = len(top.type_names)
+    pairs = top.type_pairs
+    assert pairs.shape == (nt * (nt + 1) // 2, 2)
+    assert [tuple(p) for p in pairs] == [(a, b) for a in range(nt) for b in range(a, nt)]
+    assert np.array_equal(system.topology.type_pairs, pairs)
     print(f"amber: {n} atoms, {top.residue_count} residues, {len(top.bonds)} bonds, "
           f"{len(top.angles)} angles, {len(top.dihedrals)} dihedrals equal the prmtop")
     return o

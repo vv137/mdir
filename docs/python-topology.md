@@ -50,11 +50,17 @@ reading `system.topology.masses` in a loop.
 | `charges` | $(N,)$ float64 | e (an Amber `CHARGE` divided by 18.2223) |
 | `particle_types` | $(N,)$ int64 | The Lennard-Jones type of each particle, from 0 |
 | `type_names` | list of `str` | The name of each type |
+| `type_pairs` | $(T(T+1)/2, 2)$ int64 | The unordered pairs of types $(a, b)$, $a \le b$, in the order of the flat upper triangle: the sites of the tunables by pairs of types (D226, [python-tunable.md](python-tunable.md#the-table-by-pairs-of-types)) |
 | `residue_indices` | $(N,)$ int64 | The residue of each particle, from 0 |
 
-These are the names of the read-only arrays that D213 gave `System`
-(`System.charges`, `particle_types`, `type_names`, `atom_names`,
-`residue_indices`), with the same values.
+Maps of tunable parameters (D213, [python-tunable.md](python-tunable.md))
+are built from these arrays: the view is the one place of the topology data
+of the Python model. D213 first gave `System` read-only copies of some of
+them (`System.charges`, `particle_types`, `type_names`, `atom_names`,
+`residue_indices`, `residue_names`) and D226 `System.type_pairs`; the
+maintainer's decision on PR #183 (issue #184) removed them, before any
+release, in favor of `system.topology`; `type_pairs` moved here with
+the other data of the types.
 
 ### Residues
 
@@ -64,11 +70,8 @@ These are the names of the read-only arrays that D213 gave `System`
 | `residue_names` | list of $R$ `str` | One per residue |
 | `residue_starts` | $(R,)$ int64 | The first particle of each residue |
 
-`residue_names` here has one entry per residue; `System.residue_names`
-(D213) has one per particle and equals
-`[top.residue_names[r] for r in top.residue_indices]`. The maintainer kept
-both in this item and moved `System`'s per-particle arrays to a follow-up
-(#184) that drops them in favor of `system.topology`.
+`residue_names` has one entry per residue; the name of the residue of each
+particle is `[top.residue_names[r] for r in top.residue_indices]`.
 
 ### Bonded tuples
 

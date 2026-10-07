@@ -51,9 +51,9 @@ map from the *sites* of its parameter to its entries.
 | `parameter` | `term` | Sites | Unit |
 |---|---|---|---|
 | `"charge"` | none | the particles, $N$ | e |
-| `"sigma"` | none | the Lennard-Jones types, $T$ (`System.type_names`) | nm |
+| `"sigma"` | none | the Lennard-Jones types, $T$ (`Topology.type_names`) | nm |
 | `"epsilon"` | none | the Lennard-Jones types, $T$ | kJ/mol |
-| `"sigma_pair"` | none | the unordered pairs of types, $T(T+1)/2$ (`System.type_pairs`) | nm |
+| `"sigma_pair"` | none | the unordered pairs of types, $T(T+1)/2$ (`Topology.type_pairs`) | nm |
 | `"epsilon_pair"` | none | the unordered pairs of types, $T(T+1)/2$ | kJ/mol |
 | a constant of a pair term | the term's name | one | that of the expression |
 | a parameter of a tuple term | the term's name | its tuples, $n$ | that of the expression |
@@ -70,13 +70,22 @@ entry. Names are unique; a parameter may be declared by one tunable only.
 
 The set of tunables is a flat collection of named one-dimensional arrays,
 the shape of their gradients, so that a framework holds it as a dict or a
-pytree (M2b). The Python model exposes what maps are built from:
-`System.charges` $(N,)$, `System.particle_types` $(N,)$ int64,
-`System.type_names`, `System.type_pairs` $(T(T+1)/2, 2)$ int64,
-`System.atom_names`, and `System.residue_names` (one per particle), all
-read-only; `System.topology` (D221,
-[python-topology.md](python-topology.md)) gives the same arrays with the
-residues, bonds, and `select(mask)`.
+pytree (M2b). Maps are built from `system.topology` (D221,
+[python-topology.md](python-topology.md)), a read-only copy of the
+topology: `charges` $(N,)$, `particle_types` $(N,)$ int64, `type_names`,
+`type_pairs` $(T(T+1)/2, 2)$ int64, `atom_names`, `residue_indices`
+$(N,)$ int64, and `residue_names` (one per residue), with the bonds and
+`select(mask)`. A map by atom and residue names, one charge per atom name
+of the waters:
+
+```python
+top = system.topology                 # read once: each read copies the topology
+residues = [top.residue_names[r] for r in top.residue_indices]
+entries = {}
+charge_map = np.array([entries.setdefault((res, atom) if res == "WAT" else (res, i), len(entries))
+                       for i, (atom, res) in enumerate(zip(top.atom_names, residues))])
+system.tunables = [mdir.Tunable("q", "charge", map=charge_map)]
+```
 
 ### Per-type Lennard-Jones and the combining rule
 
@@ -120,11 +129,12 @@ $$
 
 so that each pair is one site: the gradient has the structure of the table
 and no entry twice, and a value sets both $\sigma_{ab}$ and $\sigma_{ba}$.
-`System.type_pairs` lists the pairs in this order, what maps over pairs are
-built from:
+`Topology.type_pairs` lists the pairs in this order, what maps over pairs
+are built from:
 
 ```python
-pairs, names = system.type_pairs, system.type_names
+top = system.topology
+pairs, names = top.type_pairs, top.type_names
 site = {(names[a], names[b]): k for k, (a, b) in enumerate(pairs)}
 nbfix = np.full(len(pairs), -1, dtype=np.int64)    # -1 keeps the model's value
 nbfix[site["CT", "OW"]] = 0
@@ -153,7 +163,7 @@ pairs that still keep a value of their own: an NBFIX pair that a pair
 tunable takes for every per-type parameter declared is not listed.
 
 **Maps over pairs** (maintainer's decision on PR #191, Q2) are the ordinary
-maps of every tunable, built from `System.type_pairs`; there is no map by
+maps of every tunable, built from `Topology.type_pairs`; there is no map by
 names of types.
 
 **The 1-4 pairs** (maintainer's decision on PR #191, Q3) keep their own

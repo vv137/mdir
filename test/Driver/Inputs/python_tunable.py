@@ -81,8 +81,9 @@ def declarations(system, values=None):
     """Tied charges (one entry per atom name of the waters, each atom of the
     peptide its own), σ and ε of every type, a constant of the pair term,
     and the force constants of the springs, tied in two."""
-    charges = system.charges
-    names, residues = system.atom_names, system.residue_names
+    top = system.topology
+    names = top.atom_names
+    residues = [top.residue_names[r] for r in top.residue_indices]
     entries, charge_map = {}, []
     for i, (atom, residue) in enumerate(zip(names, residues)):
         key = (residue, atom) if residue == "WAT" else (residue, i)
@@ -209,7 +210,8 @@ def run_nbfix(target, precision):
     sim.run(0, energy=True)
     at = sim.state()
     theta0 = dict(sim.tunables)
-    names = system.type_names
+    top = system.topology
+    names = top.type_names
     theta1 = {"sigma": theta0["sigma"] * np.array([1.05 if n in ("CT", "OW") else 0.98 for n in names]),
               "epsilon": theta0["epsilon"] * np.array([1.3 if n in ("CT", "OW") else 0.9 for n in names])}
     sim.tunables.update(theta1)
@@ -236,7 +238,7 @@ def run_nbfix(target, precision):
     # NumPy: the Lennard-Jones of the pairs not excluded within the cutoff,
     # σ and ε of the geometric rule but for CT-OW, the NBFIX's.
     excluded = gromacs_excluded(len(at.positions))
-    types = system.particle_types
+    types = top.particle_types
     x, box = at.positions, np.diag(at.cell.vectors)
     ct, ow = names.index("CT"), names.index("OW")
     c6, c12 = 2.60000e-03, 3.10000e-06
@@ -287,7 +289,7 @@ def lj_table_energy(x, box, types, sig, eps, excluded, cutoff=0.8):
 
 
 def table_of(pairs, values, types):
-    """The (T, T) table of the values of the sites `pairs` (System.type_pairs)."""
+    """The (T, T) table of the values of the sites `pairs` (Topology.type_pairs)."""
     table = np.zeros((types, types))
     table[pairs[:, 0], pairs[:, 1]] = values
     table[pairs[:, 1], pairs[:, 0]] = values
@@ -310,7 +312,8 @@ def run_pairs(target, precision):
                 T("eps", "epsilon_pair", values=values.get("eps"))]
 
     system, state = gromacs_model(declarations())
-    names, pairs = system.type_names, system.type_pairs
+    top = system.topology
+    names, pairs = top.type_names, top.type_pairs
     nt = len(names)
     # The sites: the flat upper triangle, (a, b) with a <= b.
     assert pairs.shape == (nt * (nt + 1) // 2, 2) and pairs.dtype == np.int64
@@ -352,7 +355,7 @@ def run_pairs(target, precision):
 
     if target != "CPU" or precision != "Double":
         return
-    types = system.particle_types
+    types = top.particle_types
     x, box = at.positions, np.diag(at.cell.vectors)
     excluded = gromacs_excluded(len(x))
 
@@ -508,12 +511,15 @@ def run_cache(target, precision, work):
 def run_declarations():
     system, state = model()
     n = system.particle_count
-    assert system.charges.shape == (n,) and system.particle_types.shape == (n,)
-    assert len(system.atom_names) == n and len(system.residue_names) == n
-    assert system.residue_indices.shape == (n,) and system.residue_indices[-1] > 0
-    assert len(system.type_names) == int(system.particle_types.max()) + 1
-    print(f"model arrays: {n} particles, {len(system.type_names)} types, "
-          f"{int(system.residue_indices[-1]) + 1} residues")
+    top = system.topology
+    assert top.charges.shape == (n,) and top.particle_types.shape == (n,)
+    assert len(top.atom_names) == n and len(top.residue_names) == top.residue_count
+    assert top.residue_indices.shape == (n,) and top.residue_indices[-1] > 0
+    assert len(top.type_names) == int(top.particle_types.max()) + 1
+    nt = len(top.type_names)
+    assert top.type_pairs.shape == (nt * (nt + 1) // 2, 2)
+    print(f"model arrays: {n} particles, {nt} types, "
+          f"{int(top.residue_indices[-1]) + 1} residues")
     good = declarations(system)
     system.tunables = good
     assert [t.name for t in system.tunables] == ["q", "sigma", "epsilon", "soft_a", "k"]
@@ -538,7 +544,7 @@ def run_declarations():
         ([T("q", "charge", map=np.r_[np.zeros(n - 1, dtype=np.int64), 2])], "no site takes the entry 1"),
         ([T("q", "charge", map=np.zeros(n, dtype=np.int64))], "differ in the model"),
         ([T("q", "charge", values=np.zeros(2))], "`values` has 2 entries"),
-        ([T("s", "sigma", values=-np.ones(len(system.type_names)))], "values of at least 0"),
+        ([T("s", "sigma", values=-np.ones(nt))], "values of at least 0"),
     ]
     for tunables, text in cases:
         refused(tunables, text)
@@ -563,8 +569,8 @@ def run_declarations():
     assert not program.stale
     plan = program.plan["tunables"]
     assert [(d["name"], d["entries"], d["unit"]) for d in plan][:3] == [
-        ("q", int(good[0].map.max()) + 1, "e"), ("sigma", len(system.type_names), "nm"),
-        ("epsilon", len(system.type_names), "kJ/mol")], plan
+        ("q", int(good[0].map.max()) + 1, "e"), ("sigma", nt, "nm"),
+        ("epsilon", nt, "kJ/mol")], plan
     assert "md.lookup %t_tunable_constants" in program.ir
     system.tunables = good[:2]
     assert program.stale
@@ -787,6 +793,7 @@ def run_oracle(cli, work):
     # 1/1.2 as the topology's), σ and ε of the types (Lorentz-Berthelot),
     # the 1-4 pairs' own σ and ε kept; the pair and tuple terms by NumPy.
     prmtop = app.AmberPrmtopFile(root + "/dipeptide.prmtop")
+    types = system.topology.particle_types
     positions = state.positions
     cell = state.cell.vectors
 
@@ -799,7 +806,6 @@ def run_oracle(cli, work):
         nb.setUseDispersionCorrection(False)
         nb.setUseSwitchingFunction(False)
         nb.setPMEParameters(alpha, grid, grid, grid)
-        types = system.particle_types
         old = [nb.getParticleParameters(i)[0].value_in_unit(unit.elementary_charge)
                for i in range(nb.getNumParticles())]
         for i in range(nb.getNumParticles()):
@@ -878,7 +884,6 @@ def run_oracle(cli, work):
             result.append(evaluated(s))
         return result[1] - result[0]
 
-    types = system.particle_types
     n = len(types)
     sig, eps = theta1["sigma"], theta1["epsilon"]
 

@@ -30,7 +30,7 @@ format, or the outputs; every such change is listed under **Changed** or
   the pairs of types, so that a pair the combining rule does not give (an
   NBFIX) or a force field without a rule can change. The sites are the
   unordered pairs $(a, b)$, $a \le b$, in the order of the flat upper
-  triangle, which the read-only `System.type_pairs` lists and maps are
+  triangle, which the read-only `Topology.type_pairs` lists and maps are
   built from. Pair and per-type tunables may be declared together: the pair
   tunables set the pairs that their maps take after the rule, and a
   diagonal pair does not redefine the per-type values; the 1-4 pairs keep
@@ -70,8 +70,9 @@ format, or the outputs; every such change is listed under **Changed** or
 - Read-only topology views of the Python model (D221, #120):
   `LoadedData.topology`, `System.topology`, and `Program.topology` return an
   `mdir.Topology`, a copy of the atoms (`atom_names`, `atomic_numbers`,
-  `masses`, `charges`, `particle_types`, `type_names`, `residue_indices`),
-  residues (`residue_names`, one per residue, and `residue_starts`), bonded
+  `masses`, `charges`, `particle_types`, `type_names`, `type_pairs`,
+  `residue_indices`), residues (`residue_names`, one per residue, and
+  `residue_starts`), bonded
   tuples (`bonds`, `angles`, `dihedrals` with `improper_dihedrals`,
   `harmonic_impropers`), and `virtual_sites`, as read-only NumPy arrays and
   lists; a compiled program's view also gives the bonds that SHAKE holds
@@ -102,10 +103,9 @@ format, or the outputs; every such change is listed under **Changed** or
   of the reaction field, the correction for the dispersion, the tails of
   pair terms) are rebuilt by the code that compiles them, and an update
   equals a compile with the new values to the bit. `run(0, energy=True)`
-  evaluates the forces and the energies of the state without a step. The
-  read-only `System.charges`, `particle_types`, `type_names`,
-  `atom_names`, `residue_names`, and `residue_indices` are what maps are
-  built from. No control-file key changes.
+  evaluates the forces and the energies of the state without a step. Maps
+  are built from `System.topology` (D221), the one place of the topology
+  data (#184). No control-file key changes.
 - `MDIR_COMPILE_THREADS` bounds the threads with which a process lowers
   its programs (D211's process-wide pool otherwise takes every core). The
   test suite sets it to the cores over `gpu_workers`, or to
