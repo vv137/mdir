@@ -491,6 +491,23 @@ def snapshots():
     # Views have no setters.
     expect(AttributeError, lambda: setattr(view, "masses", masses))
     expect(AttributeError, lambda: setattr(system, "topology", view))
+    # An update of a simulation's tunable charges reaches neither its
+    # program's view nor the system's (D213).
+    system = loaded.make_system()
+    system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
+    system.tunables = [mdir.Tunable("q", "charge")]
+    state, schedule = loaded.make_state(), mdir.Schedule()
+    schedule.steps = 0
+    program = mdir.compile(system, state, mdir.Integrator(), mdir.Ensemble(),
+                           mdir.Execution(), schedule)
+    charges = program.topology.charges
+    sim = mdir.Simulation(program)
+    sim.tunables["q"] = 0.5 * charges
+    sim.run(0, energy=True)
+    assert np.array_equal(program.topology.charges, charges)
+    assert np.array_equal(system.topology.charges, charges)
+    assert np.array_equal(sim.program.topology.charges, charges)
+    del sim, program
     # A view outlives what it came from.
     del system, loaded
     assert view.particle_count == len(masses) and repr(view).startswith("Topology(1168 particles")

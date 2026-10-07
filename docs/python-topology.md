@@ -30,10 +30,14 @@ an `mdir.Topology`. The view holds a copy of the topology taken when the
 attribute is read, without positions or velocities, which belong to the
 initial state (D191); every attribute returns a new read-only NumPy array or
 a new list of strings, following D193. A view is not affected by anything
-done later to the object it came from, and changing an array copied out of it
+done later to the object it came from (a later setting of the system, a
+recompile, an update of tunable values in a simulation), and changing an array copied out of it
 (after `np.array(...)`) changes neither the view nor the model. Imported
 topology stays immutable (D192): the view has no setters, and building or
-editing a topology from Python is outside this item.
+editing a topology from Python is outside this item. Each read of
+`.topology` copies the whole topology, its exclusions and parameter tables
+included: hold the view in a variable (`top = system.topology`) rather than
+reading `system.topology.masses` in a loop.
 
 ### Atoms
 
@@ -41,7 +45,7 @@ editing a topology from Python is outside this item.
 |---|---|---|
 | `particle_count` | `int` | $N$, the particles, virtual sites included |
 | `atom_names` | list of $N$ `str` | As in the file |
-| `atomic_numbers` | $(N,)$ int64 | 0 for a virtual site or an unknown element |
+| `atomic_numbers` | $(N,)$ int64 | As the file gives them (Amber `ATOMIC_NUMBER`, GROMACS atom types, CHARMM `MASS` lines), or inferred from the mass for an Amber file without them; 0 or −1 where the file gives none |
 | `masses` | $(N,)$ float64 | amu; 0 for a virtual site |
 | `charges` | $(N,)$ float64 | e (an Amber `CHARGE` divided by 18.2223) |
 | `particle_types` | $(N,)$ int64 | The Lennard-Jones type of each particle, from 0 |
