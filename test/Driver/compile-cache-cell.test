@@ -1,0 +1,13 @@
+# REQUIRES: python-api
+# Programs that differ only in the cell they start from have one text and
+# share the compile cache (D[cell-runtime-constants]): the values of the
+# start are arguments of the entry. On the CPU, mixed and double, at
+# constant pressure with restraints (Inputs/compile_cache_cell.py).
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/compile_cache_cell.py %S/Inputs/dipeptide CPU Mixed %t | FileCheck %s
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/compile_cache_cell.py %S/Inputs/dipeptide CPU Double %t | FileCheck %s
+# CHECK: the starting cell leaves the text and the pipeline as they are
+# CHECK-NEXT: first: compiled 1 hits 0 stored 1
+# CHECK-NEXT: second: compiled 0 hits 1 stored 0
+# CHECK-NEXT: second, 20 steps: same as without the cache
