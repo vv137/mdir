@@ -4,7 +4,6 @@
 // names to arrays.
 #ifndef MDIR_PYTHON_TUNABLES_H
 #define MDIR_PYTHON_TUNABLES_H
-#include <algorithm>
 namespace tunables {
 /// The unit of the values of a tunable of `parameter`: a constant or a
 /// parameter of an expression has those of its expression, plain numbers.
@@ -85,51 +84,6 @@ inline void bindTunable(py::module_ &m) {
       return "Tunable('" + t.name + "', '" + t.parameter + "'" +
              (t.term.empty() ? "" : ", term='" + t.term + "'") + ")";
     });
-}
-/// What maps are built from: read-only copies of the topology's values.
-template <class SystemClass> void bindModelArrays(SystemClass &system) {
-  using Owner = typename SystemClass::type;
-  system.def_property_readonly("charges", [](const Owner &o) {
-    const auto &v = o.value.topology.charges;
-    return host::copy(v.data(), v.size(), {static_cast<py::ssize_t>(v.size())});
-  });
-  system.def_property_readonly("particle_types", [](const Owner &o) {
-    std::vector<int64_t> v(o.value.topology.types.begin(), o.value.topology.types.end());
-    return indices(v);
-  });
-  system.def_property_readonly("type_names", [](const Owner &o) { return o.value.topology.typeNames; });
-  // The sites of "sigma_pair" and "epsilon_pair": the unordered pairs of
-  // types (a, b), a <= b, in the order of the flat upper triangle.
-  system.def_property_readonly("type_pairs", [](const Owner &o) {
-    size_t types = o.value.topology.typeNames.size();
-    std::vector<int64_t> v;
-    for (size_t a = 0; a < types; ++a)
-      for (size_t b = a; b < types; ++b) {
-        v.push_back(static_cast<int64_t>(a));
-        v.push_back(static_cast<int64_t>(b));
-      }
-    return host::copy(v.data(), v.size(), {static_cast<py::ssize_t>(v.size() / 2), 2});
-  });
-  system.def_property_readonly("atom_names", [](const Owner &o) { return o.value.topology.atomNames; });
-  system.def_property_readonly("residue_indices", [](const Owner &o) {
-    const auto &t = o.value.topology;
-    std::vector<int64_t> v(t.getNumParticles(), 0);
-    for (size_t i = 0; i < v.size(); ++i) {
-      auto next = std::upper_bound(t.residueStarts.begin(), t.residueStarts.end(), i);
-      v[i] = static_cast<int64_t>(next - t.residueStarts.begin()) - 1;
-    }
-    return indices(v);
-  });
-  system.def_property_readonly("residue_names", [](const Owner &o) {
-    const auto &t = o.value.topology;
-    std::vector<std::string> names(t.getNumParticles());
-    for (size_t i = 0; i < names.size(); ++i) {
-      auto next = std::upper_bound(t.residueStarts.begin(), t.residueStarts.end(), i);
-      size_t r = static_cast<size_t>(next - t.residueStarts.begin());
-      names[i] = r > 0 && r - 1 < t.residueNames.size() ? t.residueNames[r - 1] : "";
-    }
-    return names;
-  });
 }
 /// The declarations of a prepared model, for `Program.plan`.
 inline py::list describe(const model::TunableSet &set) {

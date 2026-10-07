@@ -310,7 +310,6 @@ PYBIND11_MODULE(mdir, m) {
   property(system, "tuple_terms", &model::System::tupleTerms);
   property(system, "restraints", &model::System::restraints);
   property(system, "tunables", &model::System::tunables);
-  tunables::bindModelArrays(system);
   system.def_property("restraint_reference", [](const Input<model::System> &o) {
     const auto &v = o.value.restraintReference;
     return host::copy(v.data(), v.size(), {static_cast<py::ssize_t>(v.size() / 3), 3});
