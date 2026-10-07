@@ -196,7 +196,7 @@ program's text and values, about 10 ms on the host for JAC (23,558 atoms).
   records the declarations, the values, their version, and their history;
   a continuation of the same run restores them.
 - `sim.view().tunables` gives the same values as read-only DLPack views of
-  the host vectors, without a copy (D[python-dlpack],
+  the host vectors, without a copy (D220,
   [python-dlpack.md](python-dlpack.md)); an update is refused while a view
   is alive.
 

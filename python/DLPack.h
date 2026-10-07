@@ -1,4 +1,4 @@
-// Read-only DLPack views of the buffers of a simulation (D[python-dlpack],
+// Read-only DLPack views of the buffers of a simulation (D220,
 // docs/python-dlpack.md), included by Bindings.cpp.
 //
 // The structures follow the ABI of `dlpack.h` 1.x (dmlc/dlpack,

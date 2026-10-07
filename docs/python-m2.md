@@ -27,7 +27,7 @@ trajectory written inside the parts of a run, and Python callbacks
 ([python-reporters.md](python-reporters.md)).
 D213 (#130) declares tunable parameters, whose values a
 simulation takes without compiling ([python-tunable.md](python-tunable.md)).
-D[python-dlpack] (#131) exposes the buffers of a
+D220 (#131) exposes the buffers of a
 simulation, the particle IDs, and the values of tunables as read-only DLPack
 views with leases and stream handoff ([python-dlpack.md](python-dlpack.md));
 writable views (#136) remain.
@@ -195,7 +195,7 @@ draft. Changes to Builder, Control and runtime should proceed sequentially.
 | 3a | `D198` (#92): `InitialState.draw_velocities`, typed `System.restraints` | Velocities of `mdir run` bit for bit; restrained runs against `mdir run` on CPU/GPU, mixed/double; refusals |
 | 4 | `python-reporters` (future label): scheduling, C++ writers, Python callbacks, host snapshots | Nondividing/coincident periods, final remainder, callback errors, GIL behavior, file lifecycle, input order |
 | 5 | `python-checkpoints` (future label): shared in-memory provenance and cross-front-end continuation | Both checkpoint directions, stage changes, corruption rejection, tunable restoration and output continuation |
-| 6 | `D[python-dlpack]` (#131, [python-dlpack.md](python-dlpack.md)): read-only leases, IDs and stream handoff; tracked writable borrows (#136) follow within M2 | Alias lifetime/completion, allocator reuse, dtype/order and version invalidation; read-only support alone does not close M2 |
+| 6 | `D220` (#131, [python-dlpack.md](python-dlpack.md)): read-only leases, IDs and stream handoff; tracked writable borrows (#136) follow within M2 | Alias lifetime/completion, allocator reuse, dtype/order and version invalidation; read-only support alone does not close M2 |
 | 7 | `python-package` (future label): Python 3.10–3.13 manylinux_2_28 pip wheel, reference and four-stage tutorial | Import/run outside the source/build tree, runtime discovery, CPU-only operation, suite and performance report; conda is deferred |
 
 Use an optional pybind11 extension. The enabled Python interface requires

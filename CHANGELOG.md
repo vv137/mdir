@@ -42,7 +42,7 @@ format, or the outputs; every such change is listed under **Changed** or
   kJ/mol/nm (or an OpenMM quantity) and checks every
   `Schedule.energy_period` steps; `state().minimization["converged"]`
   reports the result. Without a tolerance nothing changes.
-- Read-only DLPack views of a Python simulation (D[python-dlpack], #131,
+- Read-only DLPack views of a Python simulation (D220, #131,
   `docs/python-dlpack.md`): `Simulation.view()` returns a `View` of the
   positions, velocities, and forces where the program keeps them, on the
   device or the host, in the order of the program and the types it stores

@@ -1174,7 +1174,7 @@ void mdrtDeviceCopyToHost(void *destination, const void *source,
 }
 
 /*===----------------------------------------------------------------------===
- * Views of the buffers of an embedding program (D[python-dlpack])
+ * Views of the buffers of an embedding program (D220)
  *===----------------------------------------------------------------------===*/
 
 /* The ordinal of the device of the context, among the devices that

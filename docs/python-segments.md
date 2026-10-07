@@ -273,7 +273,7 @@ copies of their own, so that the host sees the buffers of the steps
 themselves. The loops rotate their buffers through the values they carry,
 so the addresses can change from one part to the next; a view of them
 is taken again after every part, and while it is alive no part runs
-(D[python-dlpack], [python-dlpack.md](python-dlpack.md)).
+(D220, [python-dlpack.md](python-dlpack.md)).
 
 **The entry.** It takes the buffers of the host once, when an activation
 begins, and the scalars of the start: the cell, the time step, the step,

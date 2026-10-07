@@ -76,7 +76,7 @@ struct SimulationState {
 
 /// The buffers of the state of a simulation where its program keeps them,
 /// in the order of the program and the types that it stores
-/// (D[python-dlpack], docs/python-dlpack.md).
+/// (D220, docs/python-dlpack.md).
 struct SimulationView {
   const void *positions = nullptr, *velocities = nullptr, *forces = nullptr;
   /// The index in the input of the particle at each place.
@@ -199,7 +199,7 @@ public:
   double getTime() const;
 
   /// The buffers of the state at the end of the last part, with a lease on
-  /// them (D[python-dlpack]): while a lease is alive, `run`, `minimize`,
+  /// them (D220): while a lease is alive, `run`, `minimize`,
   /// `evaluate`, and `updateTunables` are refused, and the buffers hold the
   /// state of the view. Refused when there is no activation: before the
   /// first part and after a failure.
@@ -346,7 +346,7 @@ private:
   std::atomic<bool> stopRequested{false};
   /// The live leases of views, the generation of the buffers, and whether
   /// buffers of the device were given to a consumer since the last wait
-  /// for all the work of the device (D[python-dlpack]).
+  /// for all the work of the device (D220).
   std::atomic<int64_t> leases{0};
   std::atomic<uint64_t> generation{0};
   std::atomic<bool> exported{false};

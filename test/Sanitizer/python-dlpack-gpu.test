@@ -1,4 +1,4 @@
-# Read-only DLPack views of a simulation (D[python-dlpack]), scenario
+# Read-only DLPack views of a simulation (D220), scenario
 # sanitize of Driver/Inputs/python_dlpack.py, under compute-sanitizer:
 # views of two parts handed to a stream of a consumer, read by the CUDA
 # driver, and a tensor read after its simulation has ended, with no access

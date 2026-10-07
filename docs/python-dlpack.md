@@ -1,4 +1,4 @@
-# Read-only DLPack views of a simulation (D[python-dlpack])
+# Read-only DLPack views of a simulation (D220)
 
 Issue #131, the first part of item 6 of the M2 sequence
 ([python-m2.md](python-m2.md), Sections 3 to 5). Writable views, which

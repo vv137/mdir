@@ -32,7 +32,7 @@ re-enabling its write flag, changes neither owner nor version.
 CPU DLPack import copies into native ownership after dtype/shape/contiguity
 validation; no gradients are retained. Non-CPU DLPack devices are refused.
 Device views, leases and stream handoff are the separate M2 DLPack gate
-(D[python-dlpack], [python-dlpack.md](python-dlpack.md)).
+(D220, [python-dlpack.md](python-dlpack.md)).
 
 No CLI keys, output/checkpoint formats or overwrite behavior change.
 Validation covers buffer and CPU DLPack imports, malformed arrays, copies,

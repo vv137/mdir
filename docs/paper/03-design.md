@@ -506,7 +506,7 @@ freed when it ends; the state at the end of each part is copied on the
 device, so that a part that fails returns to it (D196).
 
 A consumer such as PyTorch takes those buffers through DLPack without a
-copy (D[python-dlpack], `docs/python-dlpack.md`): a view of
+copy (D220, `docs/python-dlpack.md`): a view of
 the positions, velocities, and forces in the order of the program and the
 types it stores, the index in the input of each row, and the values of
 the tunables. The buffers change at the next part, so a view is a lease:

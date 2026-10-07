@@ -1428,7 +1428,7 @@ llvm::Error Simulation::checkLeases(const char *operation) const {
 
 void Simulation::waitForConsumers() {
   // Work of a consumer on any stream of the context may still read the
-  // buffers that it was given (D[python-dlpack]).
+  // buffers that it was given (D220).
   if (!exported.exchange(false))
     return;
   if (auto wait = findRuntime<void()>("mdrtDeviceWaitAll"))

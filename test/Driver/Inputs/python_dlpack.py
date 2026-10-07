@@ -1,4 +1,4 @@
-"""Read-only DLPack views of the buffers of a simulation (D[python-dlpack],
+"""Read-only DLPack views of the buffers of a simulation (D220,
 docs/python-dlpack.md), checked by consumers that do not use MDIR's code.
 
 Usage: python_dlpack.py ROOT TARGET SCENARIO

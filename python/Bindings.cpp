@@ -731,7 +731,7 @@ PYBIND11_MODULE(mdir, m) {
   struct PySimulation {
     std::shared_ptr<Program> program;
     /// Shared with the leases of views, which keep it alive
-    /// (D[python-dlpack]).
+    /// (D220).
     std::shared_ptr<compiler::Simulation> simulation;
     py::list reporters;
     /// The checkpoint reporter of the list, if any.
@@ -969,7 +969,7 @@ PYBIND11_MODULE(mdir, m) {
     }, py::arg("steps") = py::none(), py::arg("tolerance") = py::none())
     .def("request_stop", [](PySimulation &s) { s.simulation->requestStop(); })
     .def("state", [](PySimulation &s) { return unwrap(s.simulation->getState()); })
-    // Read-only DLPack views of the buffers (D[python-dlpack]).
+    // Read-only DLPack views of the buffers (D220).
     .def("view", [](PySimulation &s) { return views::take(s.simulation); })
     .def_property_readonly("leases", [](const PySimulation &s) { return s.simulation->getLeases(); })
     .def_property_readonly("step", [](const PySimulation &s) { return s.simulation->getStep(); })

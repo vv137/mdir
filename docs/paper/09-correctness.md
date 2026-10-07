@@ -365,7 +365,7 @@ rule's table but for that pair to the bit, and its change of the energy a
 NumPy sum of the Lennard-Jones to $1.5\times10^{-11}$ kJ/mol of 508.5
 (`python-tunable-nbfix*.test`).
 
-The read-only DLPack views of a simulation (D[python-dlpack],
+The read-only DLPack views of a simulation (D220,
 Section 3.6) are checked by consumers that use none of MDIR's code: NumPy
 on the CPU, a reader of the capsule in ctypes with the CUDA driver API,
 and PyTorch on the CPU and a GPU. The buffers that the consumer receives

@@ -1,5 +1,5 @@
 # REQUIRES: python-api
-# Read-only DLPack views of a simulation on the CPU (D[python-dlpack]),
+# Read-only DLPack views of a simulation on the CPU (D220),
 # scenario numpy of Inputs/python_dlpack.py: NumPy's from_dlpack as the
 # consumer.
 # RUN: %mdir_python %S/Inputs/python_dlpack.py %S/Inputs/dipeptide CPU numpy | FileCheck %s
