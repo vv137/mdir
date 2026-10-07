@@ -415,6 +415,11 @@ format, or the outputs; every such change is listed under **Changed** or
   as `[minimize]` of a control file does, which refuses
   `energy_interval = 0` the same way. `Simulation.minimize(steps)` still
   takes any nonnegative count.
+- `mdir run` of a control file with `[minimize] steps = 0` stops at
+  reading it with "a minimization takes steps: 'steps' may not be 0"
+  instead of dying with a floating-point exception (#180). `steps` of
+  `[minimize]` is a positive count; a minimization of no steps has no
+  energies to write.
 
 - An `[[energy.pair]]` correction at or near the force field's own
   parameters, such as an NBFIX at zero offset where a fit begins, is no
