@@ -196,8 +196,12 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
       return input("the cell belongs to InitialState, not System");
   if (!s.topology.tupleTerms.empty() || !s.topology.externalTerms.empty())
     return unsupported("imported expression terms are outside the initial subset; use typed model terms");
+  // As the control file: without a periodic cell the correction is off
+  // unless it is asked for (D[python-dispersion]).
+  driver::DispersionCorrection dispersion =
+      s.periodic || s.dispersionGiven ? s.dispersion : driver::DispersionCorrection::None;
   if (!s.periodic && (s.electrostatics == Electrostatics::PME || ensemble.kind == EnsembleKind::NPT ||
-                     s.dispersion != driver::DispersionCorrection::None))
+                     dispersion != driver::DispersionCorrection::None))
     return input("PME, pressure coupling and dispersion correction require periodic boundaries");
   if (s.pmeOrder != 4 || !positive(s.pmeSpacing) || !std::isfinite(s.pmeAlpha) || s.pmeAlpha < 0 ||
       !positive(s.pmeTolerance) || s.pmeTolerance >= 1)
@@ -211,7 +215,8 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.pairlistDistance = s.pairlistDistance / driver::units::length;
   c.switchDistance = s.switchDistance / driver::units::length;
   c.truncation = s.truncation;
-  c.topologyDispersion = s.dispersion;
+  c.topologyDispersion = dispersion;
+  c.topologyDispersionGiven = s.dispersionGiven;
   c.pme = s.electrostatics == Electrostatics::PME;
   c.pmeShift = s.coulombModifier == CoulombModifier::PotentialShift;
   c.pmeAlpha = s.pmeAlpha * driver::units::length;
@@ -249,8 +254,20 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   std::set<std::string> termNames;
   for (auto term : s.pairTerms) {
     if (!termNames.insert(term.name).second) return input("duplicate custom term name");
-    if (!term.mixing.empty() || term.dispersion != driver::DispersionCorrection::None)
-      return unsupported("custom pairs initially support constants and no dispersion correction");
+    if (!term.mixing.empty())
+      return unsupported("custom pairs initially support constants, not mixing");
+    // The term's own correction, as `dispersion_correction` of a pair term
+    // with a topology (D209, D[python-dispersion]): None leaves it out, and
+    // EnergyPressure follows the system's, which must be on.
+    if (term.dispersionGiven && term.dispersion != driver::DispersionCorrection::None &&
+        term.dispersion != driver::DispersionCorrection::EnergyPressure)
+      return unsupported("unsupported dispersion correction of the pair term '" + term.name + "'");
+    if (!term.dispersionGiven) term.dispersion = driver::DispersionCorrection::None;
+    if (term.dispersion != driver::DispersionCorrection::None &&
+        dispersion == driver::DispersionCorrection::None)
+      return input("the pair term '" + term.name + "' asks for the correction for the "
+                   "dispersion, which follows that of the system, which is off; a term can "
+                   "only leave it with DispersionCorrection.None_");
     if (!term.groups.empty() && term.groups.size() != 2)
       return input("custom pair groups must contain two selections");
     std::set<std::string> names;

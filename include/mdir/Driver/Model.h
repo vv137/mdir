@@ -97,7 +97,14 @@ struct System {
   Electrostatics electrostatics = Electrostatics::Cutoff;
   /// For PME only; as the control file, none by default.
   CoulombModifier coulombModifier = CoulombModifier::None;
+  /// The correction for the dispersion beyond the cutoff, as
+  /// `[energy] dispersion_correction` (D209). `dispersionGiven` says
+  /// whether it was set, as whether the control file gives the key
+  /// (D[python-dispersion]): a pair term whose tail diverges is refused
+  /// when it was, and left out with the warning `pair_tail_left_out` when
+  /// not; without a periodic cell the default is off.
   driver::DispersionCorrection dispersion = driver::DispersionCorrection::EnergyPressure;
+  bool dispersionGiven = false;
   double pmeAlpha = 0, pmeTolerance = 1.e-5, pmeSpacing = 0.12;
   std::array<int64_t, 3> pmeGrid = {0,0,0};
   int64_t pmeOrder = 4;
@@ -107,6 +114,9 @@ struct System {
   std::vector<std::string> waterResidues;
   /// Expressions yield kJ/mol, r is nm, theta radians. Pair terms in this
   /// subset accept constants only; tuple parameters have one value/tuple.
+  /// A pair term's `dispersion`, when `dispersionGiven`, is that of its
+  /// `dispersion_correction`: None leaves it out of the correction, and
+  /// EnergyPressure asks for its tail (D209, D[python-dispersion]).
   std::vector<driver::PairTerm> pairTerms;
   std::vector<driver::TupleTerm> tupleTerms;
   /// One `[[restraints]]` table (D74, D124), with its constant in
