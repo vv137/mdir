@@ -177,6 +177,35 @@ against 1245 to 1267 for the matrix, and the tests of candidates that
 the boxes of groups avoid had taken 5.0 of the 8.0 ms of a build of the
 matrix.
 
+**Why a list at all** (D[octane]). A list can be dropped: a region octree
+over the cell, a search every step from the leaf of each particle up to
+the first node that holds its query box and down again, and partial
+updates of the tree, with the forces computed in the search, each pair
+twice [[Toutouni2026]](references.md#toutouni2026). The exact test of
+Section 4.1 already gives what this promises, no pair left out and no
+estimate, and a search every step costs more than it saves. At a uniform
+density $\rho$ a search over leaves of width $w$ meets $\rho(w +
+2r_c)^3$ candidates, that is
+
+$$
+\kappa(w) = \frac{3}{4\pi}\Bigl(2 + \frac{w}{r_c}\Bigr)^3
+$$
+
+for each pair within the cutoff: 3.7 for $w = r_c/2$, 6.4 for $w = r_c$,
+and never less than $6/\pi$, the cube around the sphere; a list of reach
+$R$ meets $(R/r_c)^3$, 1.42 at 9 Å over 8 Å, and pays for its own search
+once in the steps between builds. A prototype on one RTX 3090, exact
+against all pairs under periodic boundaries, took 853 µs a step on JAC
+and 7404 on Cellulose, against 101 and 1486 for the groups with their
+builds, and 2774 against 266 on argon at the density of the vapor that
+the method was published for; the same search over a grid of cells
+without the tree took 266, 2062, and 405. What the method saves is
+memory, 9 MB on Cellulose where the groups hold 71, which no system of
+the suite is bound by. `docs/octane.md` has the theorems that the method
+needs and its publication does not state (completeness under periodic
+boundaries and partial updates), the laws of the levels that a search and
+an update climb, and the measurements.
+
 **Places and groups.** A build sorts the particles into a *compact
 order*: the columns of a grid in $x$–$y$, each about 64 particles wide,
 sorted by $z$; each column cut into chunks of 64, each chunk sorted by $x$

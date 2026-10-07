@@ -121,7 +121,8 @@ against pmemd.cuda (the user, 2026-10-01); the comparison on a protein
   (D99, D100), the excluded pairs in the masks and their fallback (D105,
   D106), the blocks of 64 entries and their pool, the exact test of
   validity under scaling (D80) and of the dual list with its proof
-  (tiles-m1.md, Section 6), and why the tiles of D82 were set aside; with
+  (tiles-m1.md, Section 6), and why the tiles of D82 and the search in an
+  octree every step of D[octane] were set aside; with
   the measurements behind each choice.
 - Correctness: agreement of the terms with sander and GROMACS, conservation
   of energy, the ensembles (the density of OPC water, the distributions of

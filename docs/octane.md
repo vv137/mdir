@@ -59,8 +59,10 @@ that the search is complete over it.
 **Definitions.** The *box* of a node is the region it stands for, half
 open: for the node $(l, \mathbf k)$, $B = \prod_a [k_a L_a/2^l,\ (k_a+1)L_a/2^l)$.
 A tree is *consistent* with a configuration if every particle is stored
-in exactly one leaf, the one whose box holds its position wrapped into
-the cell. The boxes of the leaves partition the cell, and the box of a
+in exactly one place: the leaf whose box holds its position wrapped into
+the cell, or a list that every search reads in full (the prototype keeps
+there the particles that find their leaf full; the theorems below hold
+with it, since a particle of the list is met by every search). The boxes of the leaves partition the cell, and the box of a
 node is the union of the boxes of the leaves below it.
 
 **Theorem 1 (descent).** Let the tree be consistent, $A$ a node, and
@@ -140,7 +142,13 @@ decide whether these theorems apply to it.
    finds its leaf full (Section 6).
 
 The prototype (Section 7) tests the boxes of the regions, handles the
-images as in Theorem 3, and counts and refuses a full leaf.
+images as in Theorem 3, and keeps the particles of a full leaf in the
+list of the definition, counted. The theorems are in exact arithmetic;
+the prototype computes in f32 and takes the query box wider by $10^{-5}$
+of its half-width, for the reason that the build of the matrix widens
+its reach ([neighbors-m0.md](neighbors-m0.md), Section 2.3): rounding
+may then add a candidate beyond the box, which the test of the cutoff
+drops, and cannot lose one within it.
 
 ## 3. How far a search climbs
 
@@ -178,9 +186,17 @@ $$
 geometric series over all $j \ge 0$ gives $3u\cdot 2 - 3u^2\cdot\tfrac43 +
 u^3\cdot\tfrac87$, which increases in $u$ on $[0, 1]$. $\blacksquare$
 
-The mean climb is below 3.15 levels whatever the number of particles:
-the paper's claim of a constant expected climb is correct. For $u = 1$,
-$\tfrac12$, $\tfrac14$ the bound is 3.14, 2.14, and 1.27 levels.
+With leaves at least $2r_c$ wide the mean climb is therefore below 3.15
+levels whatever the number of particles: the paper's claim of a constant
+expected climb is correct. For $u = 1$, $\tfrac12$, $\tfrac14$ the bound
+is 3.14, 2.14, and 1.27 levels. Narrower leaves, $u > 1$, cannot hold a
+query box: the first $\lceil\log_2 u\rceil$ levels are climbed by every
+search, and the corollary applies from the level above them, so that
+$E[c] < \lceil\log_2 u\rceil + \tfrac{22}{7}$. The leaves that timed
+best in Section 7 have $u$ from 1.3 to 4.1, where each halving of the
+leaves adds one level to the climb, as measured (2.17, 3.17, 4.17
+levels for leaves of 32.3, 16.1, and 8.07 Å in the vapor, with the faces
+of the cell left out).
 
 **The analysis of the paper** (its Eq. 2 to 7, Tables 1 and 2).
 
@@ -333,7 +349,7 @@ of the Poisson law of the same mean. $\blacksquare$
 The exponent is $0.108\,\mu$ for $b = 1.5$ and $0.0048\,\mu$ for $b =
 1.1$. For no leaf of $10^6$ particles to overflow with a probability of
 0.999, the bound asks for $\mu \ge 146$ at $b = 1.5$ and $\mu \ge 2653$
-at $b = 1.1$; the exact Poisson tail gives, for $b = 1.5$, 6.4% of the
+at $b = 1.1$. The bound is not tight; the exact Poisson tail gives, for $b = 1.5$, 6.4% of the
 leaves over capacity at $\mu = 8$, 0.31% at $\mu = 32$, and $5 \times
 10^{-8}$ at $\mu = 128$, and for $b = 1.1$ more than 10% at every $\mu$
 up to 128 (`scripts/experiments/neighbor-structures/octane_analysis.py`). Independent positions are the ideal
@@ -406,10 +422,11 @@ particles of a full leaf in a list that every search scans.
    index loaded from a block and a position loaded through it, and its
    threads diverge in the traversal, where G reads positions in runs. G
    is still 1.4 to 2.6 times a step of Gr.
-3. *The count of candidates is that of Proposition 7.* On JAC with
-   leaves of 3.89 Å the descent meets 768 candidates an atom, and
-   $\rho(w + 2r_c)^3$ gives 769; on Cellulose with leaves of 8.10 Å 1403
-   against 1394. Leaves of half the cutoff thus test 3.7 candidates for
+3. *The count of candidates is that of Proposition 7.* On JAC (a cube
+   of 62.23 Å, 0.0978 atoms/Å³) with leaves of 3.89 Å the descent meets
+   768 candidates an atom, and $\rho\prod_a(w_a + 2r_c)$ gives 769; on
+   Cellulose ($259.2 \times 124.6 \times 123.5$ Å, 0.1025 atoms/Å³) with
+   leaves of $8.10 \times 7.79 \times 7.72$ Å, 1403 against 1393. Leaves of half the cutoff thus test 3.7 candidates for
    each pair (2.5 with a test of the sphere against each node, which the
    prototype adds); a list of 9 Å tests 1.42.
 4. *The levels are those of Theorem 5.* For uniform positions in the
