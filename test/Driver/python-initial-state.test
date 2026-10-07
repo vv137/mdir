@@ -1,0 +1,7 @@
+# REQUIRES: python-api
+# InitialState.from_state on the CPU (Inputs/python_initial_state.py): a new
+# stage from a reached state, bit for bit as the same state built field by
+# field; velocities=False and the draw after it; the refusal of the
+# velocities of a leapfrog state.
+# RUN: %mdir_python %S/Inputs/python_initial_state.py %S/Inputs/dipeptide CPU | FileCheck %s
+# CHECK: initial state from state passed

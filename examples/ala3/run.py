@@ -144,13 +144,6 @@ def dynamics(name, start, kind, steps, energy_period, energy_file):
     return simulation
 
 
-def carry(state):
-    """An initial state from the state at the end of a stage."""
-    start = mdir.InitialState()
-    start.positions, start.velocities, start.cell = state.positions, state.velocities, state.cell
-    return start
-
-
 def summary(name, simulation, seconds):
     state = simulation.state()
     e = state.energies
@@ -181,9 +174,8 @@ np.save(args.out / "min-positions.npy", state.positions)
 # 2. NVT: velocities drawn at 300 K, 50 ps with the restraints at 10
 #    kcal/mol/Å² (2-nvt.toml).
 restrain(10.0)
-start = mdir.InitialState()
-start.positions, start.cell = state.positions, state.cell
-start = start.draw_velocities(system, 300.0, args.seed)
+start = mdir.InitialState.from_state(state, velocities=False).draw_velocities(
+    system, 300.0, args.seed)
 simulation = dynamics("2-nvt", start, mdir.EnsembleKind.NVT, scaled(25000), scaled(2500), "nvt.dat")
 began = time.perf_counter()
 simulation.run(scaled(25000), energy=True)
@@ -192,7 +184,7 @@ simulation.close_reporters()
 
 # 3. NPT: 100 ps at 1 atm, restraints at 1 kcal/mol/Å² (3-npt.toml).
 restrain(1.0)
-simulation = dynamics("3-npt", carry(state), mdir.EnsembleKind.NPT, scaled(50000), scaled(5000),
+simulation = dynamics("3-npt", mdir.InitialState.from_state(state), mdir.EnsembleKind.NPT, scaled(50000), scaled(5000),
                       "npt.dat")
 began = time.perf_counter()
 simulation.run(scaled(50000), energy=True)
@@ -204,7 +196,7 @@ simulation.close_reporters()
 #    (4-md.toml).
 restrain(0.0)
 period = scaled(5000)
-simulation = dynamics("4-md", carry(state), mdir.EnsembleKind.NPT, scaled(500000), period, "md.dat")
+simulation = dynamics("4-md", mdir.InitialState.from_state(state), mdir.EnsembleKind.NPT, scaled(500000), period, "md.dat")
 simulation.reporters.append(mdir.TrajectoryReporter(str(args.out / "md.dcd"), scaled(500)))
 densities = []
 

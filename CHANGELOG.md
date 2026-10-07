@@ -12,6 +12,14 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- `mdir.InitialState.from_state(state, velocities=True)` makes the initial
+  state of a new stage from the `State` that a simulation reached: copies of
+  its positions, cell, and velocities, or without the velocities when asked,
+  or when the state has none. The velocities of a leapfrog state, half a
+  step behind its positions, are refused. The ala3 example and
+  `docs/python-minimize.md` use it in place of setting the fields one by
+  one.
+
 - Tunable parameters of a Python model (D213, #130):
   `System.tunables` declares charges per particle, σ and ε per
   Lennard-Jones type (with the combining rule), constants of pair terms, and

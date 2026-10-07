@@ -68,9 +68,7 @@ A later stage starts from the minimized positions through a new initial
 state, as D196 and D198 build one:
 
 ```python
-nvt_state = mdir.InitialState()
-nvt_state.positions = minimized.positions
-nvt_state.cell = minimized.cell
+nvt_state = mdir.InitialState.from_state(minimized, velocities=False)
 nvt_state = nvt_state.draw_velocities(system, 300.0, seed)
 ```
 

@@ -294,6 +294,31 @@ PYBIND11_MODULE(mdir, m) {
       result->particleCount = o.value.positions.size() / 3;
     return result;
   }, py::arg("system"), py::arg("temperature"), py::arg("seed"));
+  // A new initial state from the state that a simulation reached: copies of
+  // its positions, its cell, and, unless velocities=False or it has none, its
+  // velocities. A new stage begins there; the baths, the step, and the
+  // random streams are not carried (a continuation is a checkpoint's, #132).
+  initialstate.def_static("from_state", [](const compiler::SimulationState &state,
+                                           bool velocities) {
+    auto result = std::make_shared<Input<model::InitialState>>();
+    result->value.positions = state.positions;
+    if (velocities && !state.velocities.empty()) {
+      if (state.velocityOffset != 0.0)
+        throw InputError("InitialState.from_state: the velocities of this state are " +
+                         std::to_string(state.velocityOffset) +
+                         " of a step from its positions (leapfrog); an initial state takes "
+                         "velocities at the time of its positions. Give velocities=False "
+                         "and draw them, or continue the simulation itself");
+      result->value.velocities = state.velocities;
+    }
+    for (int k = 0; k != 3; ++k) {
+      result->value.cell.diagonal[k] = state.box[k];
+      result->value.cell.tilt[k] = state.tilt[k];
+    }
+    if (!state.positions.empty())
+      result->particleCount = state.positions.size() / 3;
+    return result;
+  }, py::arg("state"), py::arg("velocities") = true);
   auto integrator = input<model::Integrator>(m, "Integrator");
   property(integrator, "method", &model::Integrator::method);
   property(integrator, "timestep", &model::Integrator::timestep, units::ps);
