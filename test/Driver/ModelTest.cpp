@@ -21,10 +21,33 @@ static void reject(llvm::Expected<model::PreparedModel> result,
 }
 int main(int argc, char **argv) {
   require(argc == 2 || (argc == 3 && (llvm::StringRef(argv[2]) == "--arrays" ||
-                                       llvm::StringRef(argv[2]) == "--drawn")),
-          "expected a control file and optional --arrays or --drawn");
+                                       llvm::StringRef(argv[2]) == "--drawn" ||
+                                       llvm::StringRef(argv[2]) == "--selections")),
+          "expected a control file and optional --arrays, --drawn, or --selections");
   auto c = take(driver::readControl(argv[1]));
   auto fileSystem = take(driver::readSystem(c));
+  if (argc == 3 && llvm::StringRef(argv[2]) == "--selections") {
+    // The particles, from 0, that the masks of this control file select as
+    // `mdir run` prepares them: the restrained ones (with a mass), those of
+    // each term of [[energy.external]], and those that `couple` decouples
+    // (D[python-topology], the oracle of Topology.select).
+    auto line = [](llvm::StringRef what, auto chosen) {
+      llvm::outs() << what << ":";
+      for (size_t i : chosen) llvm::outs() << " " << i;
+      llvm::outs() << "\n";
+    };
+    std::vector<size_t> restrained, coupled;
+    for (size_t i = 0; i != fileSystem.restraintConstants.size(); ++i)
+      if (fileSystem.restraintConstants[i] > 0.0) restrained.push_back(i);
+    for (size_t i = 0; i != fileSystem.alchemical.size(); ++i)
+      if (fileSystem.alchemical[i]) coupled.push_back(i);
+    line("restrained", restrained);
+    for (const auto &term : fileSystem.topology->externalTerms)
+      line("external " + term.name,
+           std::vector<size_t>(term.particles.begin(), term.particles.end()));
+    line("couple", coupled);
+    return 0;
+  }
   if (argc == 3 && llvm::StringRef(argv[2]) == "--drawn") {
     // The velocities that `mdir run` draws for this control file: its
     // readSystem, then assignVelocities (tools/mdir/Run.cpp), as raw f64.
