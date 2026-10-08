@@ -306,56 +306,77 @@ func.func private @mdrt_gpu_matrix_sort(
     gpu.terminator
   }
 
-  // The particles of each cell, sorted by index, by insertion, and their
-  // positions in that order.
-  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_cells, %gy = %c1, %gz = %c1)
+  // The particles of each cell, sorted by index, and their positions in
+  // that order. The place of a particle within its cell is the number of
+  // the particles of the cell with a smaller index, which each particle
+  // counts for itself: a thread for each particle rather than one for each
+  // cell, which sorted its cell by insertion. @mdrt_gpu_cell_width
+  // gives a small system few cells of many particles: 1,410 particles in a
+  // simulation cell of 25 Å with a reach of 10 Å have 8 cells of 176, which
+  // one thread each sorted in 0.85 ms of an RTX 3090 at every build (#231).
+  %ranked = gpu.alloc (%n) : memref<?xi32, 1>
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_n, %gy = %c1, %gz = %c1)
              threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
     %base = arith.muli %bx, %block : index
-    %c = arith.addi %base, %tx : index
-    %inside = arith.cmpi ult, %c, %cells : index
+    %p = arith.addi %base, %tx : index
+    // The places beyond the particles that have a cell hold no particle.
+    %total32 = memref.load %start[%cells] : memref<?xi32, 1>
+    %total = arith.index_cast %total32 : i32 to index
+    %inside = arith.cmpi ult, %p, %total : index
+    scf.if %inside {
+      %i1 = arith.constant 1 : index
+      %none = arith.constant 0 : i32
+      %value = memref.load %order[%p] : memref<?xi32, 1>
+      %i = arith.index_cast %value : i32 to index
+      %k32 = memref.load %key[%i] : memref<?xi32, 1>
+      %k = arith.index_cast %k32 : i32 to index
+      %next = arith.addi %k, %i1 : index
+      %begin32 = memref.load %start[%k] : memref<?xi32, 1>
+      %end32 = memref.load %start[%next] : memref<?xi32, 1>
+      %begin = arith.index_cast %begin32 : i32 to index
+      %end = arith.index_cast %end32 : i32 to index
+      %rank32 = scf.for %q = %begin to %end step %i1
+          iter_args(%before = %none) -> (i32) {
+        %other = memref.load %order[%q] : memref<?xi32, 1>
+        %smaller = arith.cmpi slt, %other, %value : i32
+        %one_more = arith.extui %smaller : i1 to i32
+        %after = arith.addi %before, %one_more : i32
+        scf.yield %after : i32
+      }
+      %rank = arith.index_cast %rank32 : i32 to index
+      %slot = arith.addi %begin, %rank : index
+      memref.store %value, %ranked[%slot] : memref<?xi32, 1>
+    }
+    gpu.terminator
+  }
+
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_n, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %block : index
+    %p = arith.addi %base, %tx : index
+    %total32 = memref.load %start[%cells] : memref<?xi32, 1>
+    %total = arith.index_cast %total32 : i32 to index
+    %inside = arith.cmpi ult, %p, %total : index
     scf.if %inside {
       %i0 = arith.constant 0 : index
       %i1 = arith.constant 1 : index
       %i2 = arith.constant 2 : index
-      %next = arith.addi %c, %i1 : index
-      %begin32 = memref.load %start[%c] : memref<?xi32, 1>
-      %end32 = memref.load %start[%next] : memref<?xi32, 1>
-      %begin = arith.index_cast %begin32 : i32 to index
-      %end = arith.index_cast %end32 : i32 to index
-      %first = arith.addi %begin, %i1 : index
-      scf.for %p = %first to %end step %i1 {
-        %value = memref.load %order[%p] : memref<?xi32, 1>
-        // Move the larger entries before p up by one.
-        %hole = scf.while (%q = %p) : (index) -> index {
-          %more = arith.cmpi ugt, %q, %begin : index
-          %before = arith.subi %q, %i1 : index
-          %safe = arith.select %more, %before, %begin : index
-          %left = memref.load %order[%safe] : memref<?xi32, 1>
-          %larger = arith.cmpi sgt, %left, %value : i32
-          %go = arith.andi %more, %larger : i1
-          scf.condition(%go) %q : index
-        } do {
-        ^bb0(%q: index):
-          %before = arith.subi %q, %i1 : index
-          %left = memref.load %order[%before] : memref<?xi32, 1>
-          memref.store %left, %order[%q] : memref<?xi32, 1>
-          scf.yield %before : index
-        }
-        memref.store %value, %order[%hole] : memref<?xi32, 1>
-      }
-      scf.for %p = %begin to %end step %i1 {
-        %j32 = memref.load %order[%p] : memref<?xi32, 1>
-        %j = arith.index_cast %j32 : i32 to index
-        %wx = memref.load %wrapped[%j, %i0] : memref<?x3xf32, 1>
-        %wy = memref.load %wrapped[%j, %i1] : memref<?x3xf32, 1>
-        %wz = memref.load %wrapped[%j, %i2] : memref<?x3xf32, 1>
-        memref.store %wx, %sorted[%p, %i0] : memref<?x3xf32, 1>
-        memref.store %wy, %sorted[%p, %i1] : memref<?x3xf32, 1>
-        memref.store %wz, %sorted[%p, %i2] : memref<?x3xf32, 1>
-      }
+      %j32 = memref.load %ranked[%p] : memref<?xi32, 1>
+      %j = arith.index_cast %j32 : i32 to index
+      memref.store %j32, %order[%p] : memref<?xi32, 1>
+      %wx = memref.load %wrapped[%j, %i0] : memref<?x3xf32, 1>
+      %wy = memref.load %wrapped[%j, %i1] : memref<?x3xf32, 1>
+      %wz = memref.load %wrapped[%j, %i2] : memref<?x3xf32, 1>
+      memref.store %wx, %sorted[%p, %i0] : memref<?x3xf32, 1>
+      memref.store %wy, %sorted[%p, %i1] : memref<?x3xf32, 1>
+      memref.store %wz, %sorted[%p, %i2] : memref<?x3xf32, 1>
     }
     gpu.terminator
   }
+  // The lowering of `gpu.dealloc` takes a buffer without a memory space.
+  %ranked0 = memref.memory_space_cast %ranked
+      : memref<?xi32, 1> to memref<?xi32>
+  gpu.dealloc %ranked0 : memref<?xi32>
   return
 }
 

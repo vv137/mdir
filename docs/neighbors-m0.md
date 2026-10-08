@@ -60,7 +60,7 @@ fractional coordinates (D123, D125).
 | 2 | For each particle: the position in the cell, in f32, and the cell | One thread per particle. The particles of a cell are counted with an atomic addition. |
 | 3 | The offsets of the cells, from the counts | Three kernels: the sums of chunks of 256 cells, the offsets of the chunks in one thread, the offsets of the cells of each chunk |
 | 4 | The particles in the order of the cells | One thread per particle takes the next slot of its cell, with an atomic addition |
-| 5 | The particles of each cell in the order of their indices, and their positions in that order | One thread per cell: a sort by insertion, and a copy of the positions |
+| 5 | The particles of each cell in the order of their indices, and their positions in that order | One thread per particle: its place within its cell is the number of the cell's particles with a smaller index, which it counts over the cell (D[matrix-sort-rank]); then a copy of the particles and of the positions in that order. A small system has few cells of many particles, which one thread per cell sorted by insertion in most of the time of a build |
 | 6 | The search: for each particle, test the particles of the cells within reach and fill the row (Sections 2.3 to 2.5) | A warp of 32 threads per particle (Section 2.5) |
 | 7 | The largest count, and the counts limited to the width of a row | In the kernel of the search: the first lane of a warp stores the limited count of its particle and raises the largest count with an atomic maximum, which does not depend on the order of the threads |
 
