@@ -568,7 +568,9 @@ bool mdir::driver::hasFiniteTail(const Expression &expression,
 /// topology excludes. A term leaves the correction with
 /// `dispersion_correction = "NONE"` of its own; one whose tail diverges or
 /// that reads the time is an error when the control file asks for the
-/// correction, and is left out with a warning under the default.
+/// correction, and is left out with a warning under the default. Every
+/// term has its entry in System::pairTails, in the order of the control
+/// file, empty for a term left out, also for the terms after one (#238).
 static llvm::Error collectPairTails(const Control &control,
                                     const Topology &topology, System &system) {
   if (control.topologyDispersion == DispersionCorrection::None)
@@ -604,8 +606,12 @@ static llvm::Error collectPairTails(const Control &control,
       tails.clear();
       return llvm::Error::success();
     };
-    if (uses("t"))
-      return refuse("its expression depends on the time t");
+    // A term left out ends its own entry, not the terms after it.
+    if (uses("t")) {
+      if (llvm::Error error = refuse("its expression depends on the time t"))
+        return error;
+      continue;
+    }
     bool charged = uses("q1") || uses("q2");
     std::vector<const std::vector<double> *> stems;
     std::vector<std::string> stemNames;
@@ -666,7 +672,8 @@ static llvm::Error collectPairTails(const Control &control,
     auto epsilon = [&](unsigned x, unsigned y) {
       return topology.epsilon[x * numTypes + y] / units::energy;
     };
-    for (unsigned a = 0; a != count; ++a)
+    bool diverges = false;
+    for (unsigned a = 0; a != count && !diverges; ++a)
       for (unsigned b = a; b != count; ++b) {
         if (pairs[a * count + b] <= 0.0)
           continue;
@@ -698,11 +705,16 @@ static llvm::Error collectPairTails(const Control &control,
         for (const auto &[name, list] : control.freeEnergy.lambdas)
           values["lambda_" + name] =
               control.freeEnergy.get(name, control.freeEnergy.state);
-        if (!hasFiniteTail(expression, values, control.cutoffDistance))
-          return refuse("its tail diverges (its energy must decay faster "
-                        "than 1/r^3)");
+        if (!hasFiniteTail(expression, values, control.cutoffDistance)) {
+          diverges = true;
+          break;
+        }
         tails.push_back(std::move(pair));
       }
+    if (diverges)
+      if (llvm::Error error = refuse("its tail diverges (its energy must "
+                                     "decay faster than 1/r^3)"))
+        return error;
   }
   return llvm::Error::success();
 }

@@ -1,0 +1,108 @@
+# A pair term that the correction for the dispersion leaves out with a
+# warning (D209) does not end the tails of the terms after it (#238): each
+# term has its tail whatever its place in the control file. The terms of
+# pair-terms.test on the dipeptide, 'copy' of the Lennard-Jones of the
+# topology, whose tail is integrated, and 'grouped', whose Coulomb-like part
+# has no finite tail, in both orders: 'grouped' first aborted in the builder,
+# for the lack of the tails of 'copy'. Both orders give the energies of
+# check_pair_terms.py, computed from the topology and the coordinates, the
+# same terms at the start, the same line of the dispersion, and the same
+# diagonal of the virial, and the forces that the terms add agree with
+# central differences of those energies.
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- copy/p' %s | sed '1d;$d' > %t/head.toml
+# RUN: sed -n '/^#--- copy/,/^#--- grouped/p' %s | sed '1d;$d' > %t/copy.term
+# RUN: sed -n '/^#--- grouped/,/^#--- timed/p' %s | sed '1d;$d' > %t/grouped.term
+# RUN: sed -n '/^#--- timed/,/^#--- end/p' %s | sed '1d;$d' > %t/timed.term
+# RUN: sed -e 's/terms.h5/plain.h5/' %t/head.toml > %t/plain.toml
+# RUN: cat %t/head.toml %t/copy.term %t/grouped.term | sed -e 's/terms.h5/last.h5/' > %t/last.toml
+# RUN: cat %t/head.toml %t/grouped.term %t/copy.term | sed -e 's/terms.h5/first.h5/' > %t/first.toml
+# RUN: mdir check %t/first.toml 2>&1 | FileCheck %s --check-prefix=LEFTOUT
+# RUN: cd %t && mdir emit first.toml --stage=module > /dev/null
+# RUN: cd %t && mdir run plain.toml > /dev/null && mdir run last.toml > last.log
+# RUN: cd %t && mdir run first.toml > first.log
+# RUN: FileCheck %s < %t/first.log
+# RUN: grep '^MDIR:   ' %t/last.log | sort > %t/last.terms
+# RUN: grep '^MDIR:   ' %t/first.log | sort > %t/first.terms
+# RUN: diff %t/last.terms %t/first.terms
+# RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
+# RUN: mdir checkpoint --print=forces %t/first.h5 > %t/first.forces
+# RUN: %python %S/Inputs/check_pair_terms.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/plain.forces %t/first.forces | FileCheck %s --check-prefix=PYTHON
+#
+# In mixed precision, the precision of the report of the issue.
+# RUN: sed -e 's/^precision = "DOUBLE"/precision = "MIXED"/' -e 's/last.h5/last-mixed.h5/' %t/last.toml > %t/last-mixed.toml
+# RUN: sed -e 's/^precision = "DOUBLE"/precision = "MIXED"/' -e 's/first.h5/first-mixed.h5/' %t/first.toml > %t/first-mixed.toml
+# RUN: cd %t && mdir run last-mixed.toml > last-mixed.log && mdir run first-mixed.toml > first-mixed.log
+# RUN: %python %S/Inputs/compare_logs.py %t/last-mixed.log %t/first-mixed.log 1e-6 | FileCheck %s --check-prefix=MIXED
+#
+# Two terms left out before the one whose tail is integrated: 'timed' reads
+# the time, and has no tail either. The line of the dispersion is that of
+# 'copy' after 'grouped' alone, and each of the two is named in a warning.
+# RUN: cat %t/head.toml %t/grouped.term %t/timed.term %t/copy.term | sed -e 's/terms.h5/three.h5/' > %t/three.toml
+# RUN: mdir check %t/three.toml 2>&1 | FileCheck %s --check-prefixes=LEFTOUT,TIMED
+# RUN: cd %t && mdir run three.toml > three.log
+# RUN: grep '^MDIR:   \(copy\|grouped\|dispersion\) ' %t/first.log > %t/first.lines
+# RUN: grep '^MDIR:   \(copy\|grouped\|dispersion\) ' %t/three.log > %t/three.lines
+# RUN: diff %t/first.lines %t/three.lines
+
+# CHECK:      MDIR:   Lennard-Jones [[LJ:[-0-9.]+]]
+# CHECK:      MDIR:   grouped -29.631865
+# CHECK-NEXT: MDIR:   copy [[LJ]]
+# CHECK-NEXT: MDIR:   dispersion -{{[0-9.]+}}
+
+# PYTHON:      copy 386.744746
+# PYTHON-NEXT: grouped -29.631865
+# PYTHON-NEXT: forces against differences of the energy: ok
+
+# MIXED: logs agree
+
+# LEFTOUT: warning: the correction for the dispersion leaves out the pair term 'grouped', since its tail diverges
+# TIMED: warning: the correction for the dispersion leaves out the pair term 'timed', since its expression depends on the time t
+
+#--- run.toml
+[input]
+topology    = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+[output]
+energy_interval = 1
+checkpoint = "terms.h5"
+checkpoint_interval = 1
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "CUTOFF"
+[constraints]
+rigid_water = false
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 1e-9
+steps      = 1
+[ensemble]
+ensemble    = "NVE"
+temperature = 0.0
+[boundary]
+type = "PERIODIC"
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- copy
+[[energy.pair]]
+name       = "copy"
+expression = "4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+#--- grouped
+[[energy.pair]]
+name       = "grouped"
+expression = "scale*coulomb*q1*q2/r + 4*e12*((s12/r)^12 - (s12/r)^6) + b*epsilon*(sigma/r)^6; s12 = 0.5*(sigma1 + sigma2); e12 = sqrt(epsilon1*epsilon2)"
+groups = [":1-3", ":1-20"]
+scale = 0.5
+b = 0.3
+#--- timed
+[[energy.pair]]
+name       = "timed"
+expression = "cc/r^8*(1 + t)"
+cc = 500.0
+#--- end

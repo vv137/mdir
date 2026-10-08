@@ -1,0 +1,31 @@
+# The orders of pair-term-order.test on a GPU (#238): a pair term that the
+# correction for the dispersion leaves out before the term whose tail it
+# integrates, in double precision with the energies of check_pair_terms.py
+# and the forces against central differences of them, and in mixed
+# precision against the other order.
+#
+# REQUIRES: hdf5, cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- copy/p' %S/pair-term-order.test | sed '1d;$d' | sed 's/^target    = "CPU"/target    = "GPU"/' > %t/head.toml
+# RUN: sed -n '/^#--- copy/,/^#--- grouped/p' %S/pair-term-order.test | sed '1d;$d' > %t/copy.term
+# RUN: sed -n '/^#--- grouped/,/^#--- timed/p' %S/pair-term-order.test | sed '1d;$d' > %t/grouped.term
+# RUN: sed -e 's/terms.h5/plain.h5/' %t/head.toml > %t/plain.toml
+# RUN: cat %t/head.toml %t/copy.term %t/grouped.term | sed -e 's/terms.h5/last.h5/' > %t/last.toml
+# RUN: cat %t/head.toml %t/grouped.term %t/copy.term | sed -e 's/terms.h5/first.h5/' > %t/first.toml
+# RUN: cd %t && mdir run plain.toml > /dev/null && mdir run last.toml > last.log
+# RUN: cd %t && mdir run first.toml > first.log
+# RUN: FileCheck %S/pair-term-order.test < %t/first.log
+# RUN: grep '^MDIR:   \(copy\|grouped\|dispersion\) ' %t/last.log | sort > %t/last.terms
+# RUN: grep '^MDIR:   \(copy\|grouped\|dispersion\) ' %t/first.log | sort > %t/first.terms
+# RUN: diff %t/last.terms %t/first.terms
+# RUN: %python %S/Inputs/compare_logs.py %t/last.log %t/first.log 1e-10 | FileCheck %S/pair-term-order.test --check-prefix=MIXED
+# RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
+# RUN: mdir checkpoint --print=forces %t/first.h5 > %t/first.forces
+# RUN: %python %S/Inputs/check_pair_terms.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/plain.forces %t/first.forces | FileCheck %S/pair-term-order.test --check-prefix=PYTHON
+#
+# RUN: sed -e 's/^precision = "DOUBLE"/precision = "MIXED"/' -e 's/last.h5/last-mixed.h5/' %t/last.toml > %t/last-mixed.toml
+# RUN: sed -e 's/^precision = "DOUBLE"/precision = "MIXED"/' -e 's/first.h5/first-mixed.h5/' %t/first.toml > %t/first-mixed.toml
+# RUN: cd %t && mdir run last-mixed.toml > last-mixed.log && mdir run first-mixed.toml > first-mixed.log
+# RUN: %python %S/Inputs/compare_logs.py %t/last-mixed.log %t/first-mixed.log 1e-6 | FileCheck %S/pair-term-order.test --check-prefix=MIXED

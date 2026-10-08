@@ -523,6 +523,19 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- A pair term that the correction for the dispersion leaves out no longer
+  aborts the build of the program when another pair term follows it (#238).
+  A term whose tail diverges or that reads `t` is left out with the warning
+  `pair_tail_left_out` under the default correction (D209); the collection
+  of the tails ended there, so the terms after it had no entry, and
+  `mdir emit`, `mdir run`, and `mdir.compile` aborted in the builder, while
+  `mdir check` passed. The order with such a term last ran. `groups` played
+  no part: a `1/r` term over all pairs, or one of `t`, before another term
+  did the same, with `[free_energy]`, `observe`, or a tunable in the later
+  term as well, on the CPU and a GPU. Every term now has its tail whatever
+  its place; the energies, the forces, the virial, and the correction of
+  the inputs that ran are unchanged, and the two orders give the same
+  (`pair-term-order.test`, `python-pair-order.test`, and their GPU twins).
 - An output no longer counts for `rebuild_interval`
   (D237, #233). The potentials of `[output]
   observables`, of the free-energy file, and of a pull file share the
