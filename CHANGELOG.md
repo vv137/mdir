@@ -546,7 +546,7 @@ format, or the outputs; every such change is listed under **Changed** or
   (#196). The cache now keeps the total of its entries in the file
   `<dir>/size`, updated under a lock, and lists the directory to evict
   only when the total exceeds `MDIR_COMPILE_CACHE_MAX_MB`, when no total
-  is known, or once a day (D[compile-cache-size-file]). The bound and the
+  is known, or once a day (D234). The bound and the
   order of eviction are unchanged; the temporary files of processes that
   died are removed within a day instead of at the next store. See
   [docs/compile-cache.md](docs/compile-cache.md#the-bound).

@@ -2,7 +2,7 @@
 # (D212) and of the entries of GPU modules (D214), and clearing
 # (D217), also while another process writes; the cache
 # across processes is in compile-cache-*.test. The total of the cache
-# (D[compile-cache-size-file], #196): of 300 stores below the bound, one
+# (D234, #196): of 300 stores below the bound, one
 # lists the directory.
 # RUN: rm -rf %t
 # RUN: mdir-compile-cache-test %t | FileCheck %s

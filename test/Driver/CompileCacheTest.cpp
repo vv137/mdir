@@ -4,7 +4,7 @@
 // clearCache (D217) removes the entries of this format
 // and nothing else, and a process that clears while another writes leaves
 // only intact entries. The total kept in the directory
-// (D[compile-cache-size-file]): stores list the directory only at the
+// (D234): stores list the directory only at the
 // bound, without a total, or once a day.
 #include "mdir/Compiler/CompileCache.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
@@ -316,7 +316,7 @@ int main(int argc, char **argv) {
   check(intactEntries == remaining && temporaries == 0,
         "every entry that remains is intact, and no temporary file is left");
 
-  // The total of the cache (D[compile-cache-size-file], issue #196): a
+  // The total of the cache (D234, issue #196): a
   // store adds its bytes to `<directory>/size` and lists the directory
   // only when the bound may be exceeded, when no total is known, or when
   // the last listing is a day old. A cache of its own, with entries of one

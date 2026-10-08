@@ -364,7 +364,7 @@ public:
 
   /// Adds what one run of the pass stored to the cache's total, once for
   /// all its modules; the directory is listed only when the bound may be
-  /// exceeded (D[compile-cache-size-file]).
+  /// exceeded (D234).
   void noteStores(uint64_t bytes) {
     if (config)
       mdir::compiler::noteCacheStores(config->directory, bytes,

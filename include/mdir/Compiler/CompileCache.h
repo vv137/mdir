@@ -131,7 +131,7 @@ std::string getCacheEntryName(llvm::StringRef key, llvm::StringRef extension);
 void evictCache(llvm::StringRef directory, uint64_t maxBytes);
 /// Tells the cache at `directory` that this process stored entries of
 /// `bytes` in all, and keeps it within `maxBytes`
-/// (D[compile-cache-size-file]). The total of the entries is kept in the
+/// (D234). The total of the entries is kept in the
 /// file `<directory>/size`, which processes update under a lock, so a
 /// store costs a fixed number of file operations whatever the directory
 /// holds. The directory is listed, and entries evicted as evictCache does,

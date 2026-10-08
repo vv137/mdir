@@ -1,4 +1,4 @@
-# The compile cache (D212, D214, D217, D227, D[compile-cache-size-file])
+# The compile cache (D212, D214, D217, D227, D234)
 
 Issue #142. A Python simulation compiles its program in three stages: the
 MLIR pipeline lowers it to an LLVM module (with the PTX of its kernels on a
@@ -21,7 +21,7 @@ D227 (#162) takes the values that depend on the
 starting cell out of the program's text, so that a stage that starts from
 an equilibrated cell hits the entry of another; see
 [Values of the start](#values-of-the-start-d227).
-D[compile-cache-size-file] (#196) keeps the total of the entries in a file, so
+D234 (#196) keeps the total of the entries in a file, so
 that a store does not list the directory; see
 [The bound](#the-bound).
 
@@ -138,7 +138,7 @@ Many ranks or jobs at once:
 - Each lookup reads an entry, each hit touches it, and each store renames
   a file. A compile that stored entries then adds their bytes to the file
   `size` under a lock; it lists the directory only when the bound may be
-  exceeded, and once a day (D[compile-cache-size-file]). Hundreds of
+  exceeded, and once a day (D234). Hundreds of
   ranks starting at once on one directory of a parallel file system
   therefore load its metadata server, mostly with misses.
 - The file system has to carry locks of files (`fcntl`), as NFS and the
@@ -346,13 +346,13 @@ leaves the run as it would be without a cache (`cache_unstored`).
 
 ### The bound
 
-D[compile-cache-size-file], issue #196. To keep the directory within `MDIR_COMPILE_CACHE_MAX_MB`, a
+D234, issue #196. To keep the directory within `MDIR_COMPILE_CACHE_MAX_MB`, a
 process has to know what the directory holds. Listing it and reading the
 status of every entry gives that, and it is how entries are evicted: the
 entries are sorted by the time of their last use and removed, the least
 recent first, until the total is within the bound. But a listing costs
 file operations in proportion to the entries of the directory, whoever
-stored them. Before D[compile-cache-size-file], every run of the GPU pass that
+stored them. Before D234, every run of the GPU pass that
 stored an entry and every stored host object listed the directory. With
 the 10,000 entries that a suite leaves in a shared directory, each compiled
 program read 10,000 to 20,000 statuses, and on a network file system, with
@@ -459,7 +459,7 @@ directory:
 - **The bound.** The entry used least recently goes first; a bound of
   0 MiB keeps no entry; a stale temporary file is removed and a recent one
   kept.
-- **The total (D[compile-cache-size-file]).** `compile-cache.test` counts the
+- **The total (D234).** `compile-cache.test` counts the
   listings of the directory: of 300 stores below the bound only the first,
   which finds no total, lists; stores up to the bound do not list, and the
   store that exceeds it lists once and removes the entry used least
