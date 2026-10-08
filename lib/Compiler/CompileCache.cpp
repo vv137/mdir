@@ -112,7 +112,45 @@ CompileStats &CompileStats::operator+=(const CompileStats &other) {
   gpuStored += other.gpuStored;
   gpuUnstored += other.gpuUnstored;
   bypassed += other.bypassed;
+  reused += other.reused;
+  reuseSavedSeconds += other.reuseSavedSeconds;
   return *this;
+}
+
+std::shared_ptr<const KeptCode> CodeStore::find(StringRef key) const {
+  std::lock_guard<std::mutex> lock(mutex);
+  for (const auto &entry : entries)
+    if (entry.first == key)
+      return entry.second;
+  return nullptr;
+}
+
+void CodeStore::insert(StringRef key, std::shared_ptr<const KeptCode> code) {
+  std::lock_guard<std::mutex> lock(mutex);
+  for (const auto &entry : entries)
+    if (entry.first == key)
+      return;
+  entries.emplace_back(key.str(), std::move(code));
+  if (entries.size() > capacity)
+    entries.erase(entries.begin());
+}
+
+size_t CodeStore::size() const {
+  std::lock_guard<std::mutex> lock(mutex);
+  return entries.size();
+}
+
+std::string mdir::compiler::getCodeKey(StringRef module, StringRef pipeline,
+                                       StringRef entry, StringRef machine) {
+  // Each part with its length, so that no two lists of parts give the same
+  // bytes.
+  BLAKE3 hasher;
+  for (StringRef part : {module, pipeline, entry, machine}) {
+    uint64_t size = part.size();
+    hasher.update(StringRef(reinterpret_cast<const char *>(&size), sizeof size));
+    hasher.update(part);
+  }
+  return toHex(hasher.final(), /*LowerCase=*/true);
 }
 
 std::optional<CompileCacheConfig> CompileCacheConfig::fromEnvironment() {
@@ -498,6 +536,10 @@ ClearedCache mdir::compiler::clearCache(StringRef directory) {
 std::unique_ptr<MemoryBuffer> HostObjectCache::getObject(const Module *module) {
   if (module->getModuleIdentifier() != this->module)
     return nullptr;
+  // The code that the program keeps: a copy of its object, which the
+  // engine links into memory of its own (D[program-reuse]).
+  if (kept)
+    return MemoryBuffer::getMemBufferCopy(kept->object, this->module);
   // The key is the bitcode of the module before code generation, which
   // changes the module; without a directory, only the generation is timed.
   Pending request;
@@ -515,6 +557,8 @@ std::unique_ptr<MemoryBuffer> HostObjectCache::getObject(const Module *module) {
       ++stats.hits;
       stats.savedSeconds += seconds;
       stats.lookupSeconds += now() - start;
+      if (keeps)
+        this->object = object->getBuffer().str();
       return object;
     }
     std::lock_guard<std::mutex> lock(mutex);
@@ -562,6 +606,17 @@ void HostObjectCache::notifyObjectCompiled(const Module *module,
   stats.compileSeconds += seconds;
   if (config)
     ++(stored ? stats.stored : stats.unstored);
+  if (keeps)
+    this->object = object.getBuffer().str();
+}
+
+void HostObjectCache::setKeptCode(std::shared_ptr<const KeptCode> code) {
+  kept = std::move(code);
+}
+
+std::string HostObjectCache::takeObject() {
+  std::lock_guard<std::mutex> lock(mutex);
+  return std::move(object);
 }
 
 CompileStats HostObjectCache::getStats() const {

@@ -16,11 +16,20 @@ public:
   /// `codegen` names settings outside the target machine that change the
   /// generated code; it is part of the key of the compile cache. Without
   /// `cache`, the cache is bypassed whatever the environment says
-  /// (D217).
+  /// (D217). With `keep`, the engine keeps the bitcode of the
+  /// module it was given and the object of that module for takeCode. With
+  /// `kept`, the engine is made from that code instead of `module`, which
+  /// is not read: nothing is translated, generated, or looked up
+  /// (D[program-reuse]).
   static llvm::Expected<std::unique_ptr<JITEngine>>
   create(mlir::ModuleOp module, std::unique_ptr<llvm::TargetMachine> target,
          llvm::ArrayRef<std::string> libraries, llvm::StringRef entry,
-         llvm::StringRef codegen, bool cache = true);
+         llvm::StringRef codegen, bool cache = true, bool keep = false,
+         std::shared_ptr<const KeptCode> kept = nullptr);
+  /// The code of an engine made with `keep`, once its object exists (after
+  /// lookupPacked); none otherwise. `seconds` is what the code took to
+  /// make.
+  std::shared_ptr<const KeptCode> takeCode(double seconds);
   ~JITEngine();
   llvm::Error registerSymbols(
       llvm::function_ref<llvm::orc::SymbolMap(llvm::orc::MangleAndInterner)> map);
@@ -38,6 +47,7 @@ private:
   std::unique_ptr<llvm::JITEventListener> perfListener;
   std::unique_ptr<llvm::orc::LLJIT> jit;
   bool initialized = false;
+  std::string identifier, bitcode;
 };
 } // namespace mdir::compiler
 #endif

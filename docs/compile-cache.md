@@ -1,4 +1,4 @@
-# The compile cache (D212, D214, D217, D227, D234)
+# The compile cache (D212, D214, D217, D227, D234, D[program-reuse])
 
 Issue #142. A Python simulation compiles its program in three stages: the
 MLIR pipeline lowers it to an LLVM module (with the PTX of its kernels on a
@@ -6,8 +6,11 @@ GPU), LLVM generates the host object of that module, and the CUDA driver
 compiles the PTX when the module is loaded. This item caches the second
 stage, the relocatable host object, on disk, keyed by the content of the
 module it was generated from. The other two stages are not cached here:
-the pipeline runs on every compile, and the driver keeps its own cache of
-compiled PTX. `mdir run`, which still compiles with MLIR's
+the pipeline runs for every program that is compiled, and the driver
+keeps its own cache of compiled PTX. Within a process, a `Program` keeps
+the code of its simulations in memory, so that only the first of them
+compiles at all
+([Reuse within a process](#reuse-within-a-process)). `mdir run`, which still compiles with MLIR's
 `ExecutionEngine`, takes the cache of host objects when it moves onto the
 owned engine (#99).
 
@@ -56,6 +59,8 @@ cost and what the cache saved, as a dict:
 | `cache_stored`, `cache_unstored` | Entries written, and entries that could not be written |
 | `cache_lookup_seconds` | The time of keys and reads, hit or miss |
 | `cache_bypassed` | Programs compiled with `cache=False`: 1 or 0 for a simulation. With it, every `cache_*` and `gpu_cache_*` count is 0. |
+| `program_reused` | 1 if the simulation took the code that an earlier simulation of its `Program` left in memory, else 0 ([Reuse within a process](#reuse-within-a-process)). With it, `pipeline_seconds`, `host_compiled`, and every `cache_*` and `gpu_*` time and count are 0: nothing was lowered, generated, or looked up. |
+| `reuse_saved_seconds` | With `program_reused`, the `pipeline_seconds` and the time of the host object (its generation, or its lookup on disk) of the simulation that left the code. |
 
 `examples/ala3/run.py` prints the compile times of each stage from them.
 
@@ -71,6 +76,10 @@ sim = mdir.Simulation(program)                # takes the program's choice
 sim = mdir.Simulation(program, cache=False)   # or overrides it
 sim.compile_stats["cache_bypassed"]           # 1
 ```
+
+`cache=False` also bypasses the code that the `Program` keeps in memory
+([Reuse within a process](#reuse-within-a-process)): the
+simulation lowers and generates everything, and leaves nothing.
 
 `mdir.clear_compile_cache(directory=None)` removes the entries of the
 cache in `directory`, else in `MDIR_COMPILE_CACHE_DIR`.
@@ -323,6 +332,127 @@ decision on PR #192:
   | STMV NPT 4 fs | 8.288 | 8.308 | −0.2% | 1016 | 1024 |
 
   The rates agree within 0.3%, with the larger capacities as without.
+
+## Reuse within a process
+
+D[program-reuse], issue #236. The cache on disk saves the host code generation and nothing
+of the MLIR pipeline, whose output is its key; and without a directory
+nothing was saved at all. Every `mdir.Simulation(program)` therefore
+lowered its program again, also the second and later simulations of one
+`Program` in a process: 5.4 s each on the dipeptide in water on the CPU
+(3.0 s of pipeline and 2.4 s of code generation) and 9.4 s on a GPU,
+and 3.1 s and 5.6 s on hits of the disk cache.
+
+A `Program` now keeps the code of its simulations in memory. The first
+simulation of a program lowers and generates code as before (or takes the
+object of the disk cache), and leaves with the `Program`, under a key:
+
+- the bitcode of the LLVM module that it gave its JIT engine, with the
+  packed wrapper of the entry;
+- the relocatable host object of that module.
+
+A later simulation of the same `Program` whose key is the same makes its
+engine from the two: it parses the bitcode, and when the engine asks for
+the object of the module it gets a copy of the kept one. That is the path
+of a hit on disk without the pipeline, the translation to LLVM IR, the key
+of the bitcode, and the read. The engine links the copy into memory of its
+own, as it does a generated object (D199), so simulations share no code
+and may end in any order.
+
+**What is kept is not `Program.lowered_ir`.** A simulation does not lower
+`Program.ir`: it builds a program of segments of its own from the model
+(D215, [python-segments.md](python-segments.md#compiles)), with another
+entry, and lowers that one. The lowered text of the `Program` is for
+reading; the kept code is that of the simulation's program.
+
+**The key** is a BLAKE3 hash of everything that the lowering and the code
+generation read, each part with its length:
+
+- the text of the module that the builder gives for the simulation. The
+  builder runs for every simulation (0.03 s on the dipeptide; it counts the
+  neighbors for the width of the neighbor structures, so it grows with the
+  system), and its text is a function of the model alone (see
+  [The key](#the-key));
+- the pipeline with its options: the width of the neighbor structures and
+  the skin, the precision, the threads, the deterministic mode, and on a
+  GPU the options of the device (its architecture, the binary format, and
+  `cache=false`), which hold what the lowering takes from
+  `CUDA_VISIBLE_DEVICES`, `MDRT_DEVICE`, `MDIR_GPU_ARCH`, and
+  `MDIR_GPU_BINARY`;
+- on a GPU, the CUDA toolkit that the environment names (`CUDA_ROOT`,
+  `CUDA_HOME`, `CUDA_PATH`), whose libdevice and ptxas the lowering uses;
+- the name of the entry;
+- the description of the machine and of the code generator that the key on
+  disk has (the LLVM version, the CPU and its features, the options of
+  code generation, the scheduler).
+
+A simulation whose key differs lowers anew and leaves code under its own
+key; a `Program` keeps at most four. Since a `Program` is immutable and a
+simulation builds from the model it captured, the keys of one `Program`
+differ only when the environment changed between two simulations. The
+values of the start (D227) and of the tunables (D213) are arguments of the
+entry and data of the program, not code: `Simulation.tunables` already
+takes the equality of the module's text as "the same program". Nothing
+else that a simulation holds comes from the store: its program's
+description, its control, its buffers, and its activation are made anew.
+
+**On a GPU** nothing more is needed. The cubins (or the PTX) of the
+kernels are constants of the host module, so they are in the kept object;
+the constructors that load them are found by the engine in the IR of the
+module, which is why the module is kept beside the object (an object
+linked without its module would load no kernels). The kernels are loaded
+onto the device again by each simulation.
+
+**`cache=False`** (D217) bypasses the store as it bypasses the directory:
+such a simulation takes no kept code and leaves none, and lowers and
+generates everything. `MDIR_COMPILE_CACHE=off` and a process without
+`MDIR_COMPILE_CACHE_DIR` do not: the store is independent of the cache on
+disk. A simulation that takes kept code does not read the directory, so it
+does not mark the entry as used either.
+
+**Memory and threads.** The store belongs to the `Program` and is freed
+with it; for the dipeptide on the CPU the object is 0.3 MiB, and the
+bitcode is of that order. `Simulation.__init__` of several threads
+run one after the other already (they share the mutex of runs); the store
+has a mutex of its own, held for a lookup or an insertion.
+
+`compile_stats` of a simulation that took kept code has `program_reused`
+1, `reuse_saved_seconds` (the pipeline and the object of the simulation
+that left the code), `engine_seconds` (the parse and the link, and on a
+GPU the loading of the kernels), and 0 for every other time and count.
+
+### Validation
+
+`python-program-reuse.test` and `python-program-reuse-gpu.test`, on the
+dipeptide in water with PME, SHAKE, and SETTLE in mixed precision and the
+deterministic mode, each without a directory and with one: the positions
+and velocities after 20 steps are the same bit for bit from the first
+simulation, from two that took its code (one while the first lives, one
+after it ended), from one with `cache=False`, from the simulations of a
+second `Program` of the same inputs (whose first does not take the code of
+the first program: it lowers, and hits the disk if there is a directory),
+and from two simulations that two threads make at once; the simulations of
+a `Program` compiled with `cache=False` never take kept code, unless they
+are given `cache=True`.
+
+Four simulations of one program in a process, the dipeptide in water
+(2,269 particles, PME, mixed precision), the time of
+`mdir.Simulation(program)` in seconds, on a shared machine:
+
+| | First, before | Later, before | First, now | Later, now |
+|---|---|---|---|---|
+| CPU, no directory | 5.5 | 5.4 | 5.8 | 0.07 |
+| CPU, directory, cold | 5.5 | 3.0 to 3.1 | 5.9 | 0.08 |
+| CPU, directory, warm | 3.5 | 3.1 to 3.3 | 3.4 | 0.07 |
+| GPU, no directory | 9.5 | 9.3 to 9.5 | 9.4 | 0.12 to 0.14 |
+| GPU, directory, cold | 9.6 | 4.9 to 5.5 | 9.7 | 0.10 |
+| GPU, directory, warm | 5.8 | 5.6 | 5.8 | 0.13 |
+
+`python-memory.test`, whose 30 simulations of one program were most of its
+time, takes 20 s instead of 181 s, and its memory stays flat: +0.00 MiB in
+use from simulation 5 to simulation 30, and the address space mapped over
+those simulations no longer grows (+576 MiB before, of engines whose
+mappings the allocator kept).
 
 ## Entries
 

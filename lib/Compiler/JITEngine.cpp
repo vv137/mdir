@@ -5,6 +5,8 @@
 #include "llvm/ExecutionEngine/Orc/CompileUtils.h"
 #include "llvm/ExecutionEngine/Orc/ExecutionUtils.h"
 #include "llvm/ExecutionEngine/Orc/RTDyldObjectLinkingLayer.h"
+#include "llvm/Bitcode/BitcodeReader.h"
+#include "llvm/Bitcode/BitcodeWriter.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/Support/DynamicLibrary.h"
 
@@ -22,7 +24,7 @@ Error ownedError(Error error) {
 Expected<std::unique_ptr<JITEngine>> JITEngine::create(
     mlir::ModuleOp input, std::unique_ptr<TargetMachine> target,
     ArrayRef<std::string> libraries, StringRef entry, StringRef codegen,
-    bool cache) {
+    bool cache, bool keep, std::shared_ptr<const KeptCode> kept) {
   Triple triple = target->getTargetTriple();
   // Fail closed: this validation decodes ELF .eh_frame, not COFF/Mach-O.
   if (!triple.isOSBinFormatELF() ||
@@ -30,44 +32,69 @@ Expected<std::unique_ptr<JITEngine>> JITEngine::create(
     return createStringError(inconvertibleErrorCode(),
                              "JIT ownership: unsupported host unwind format");
   auto context = std::make_unique<LLVMContext>();
-  auto module = mlir::translateModuleToLLVMIR(input, *context);
-  if (!module)
-    return createStringError(inconvertibleErrorCode(), "cannot translate host module");
-  module->setTargetTriple(triple);
-  module->setDataLayout(target->createDataLayout());
-  auto *function = module->getFunction(entry);
-  if (!function || !function->getReturnType()->isVoidTy())
-    return createStringError(inconvertibleErrorCode(), "invalid simulation entry");
-  // Match MLIR's packed-entry ABI, with a wrapper only for our void entry.
-  // The ABI is described by MLIR ExecutionEngine (LLVM 23.1.2).
-  IRBuilder<> builder(*context);
-  auto *packed = Function::Create(
-      FunctionType::get(builder.getVoidTy(), builder.getPtrTy(), false),
-      GlobalValue::ExternalLinkage, "_mlir_" + entry.str(), *module);
-  builder.SetInsertPoint(BasicBlock::Create(*context, "entry", packed));
-  SmallVector<Value *> arguments;
-  for (auto [index, argument] : enumerate(function->args())) {
-    auto *slot = builder.CreateGEP(builder.getPtrTy(), packed->getArg(0),
-                                   builder.getInt64(index));
-    arguments.push_back(builder.CreateLoad(
-        argument.getType(), builder.CreateLoad(builder.getPtrTy(), slot)));
+  std::unique_ptr<Module> module;
+  std::string bitcode;
+  if (kept) {
+    // The module as an earlier engine was given it, wrapper and sections
+    // included (D[program-reuse]).
+    auto parsed = parseBitcodeFile(
+        MemoryBufferRef(kept->bitcode, kept->identifier), *context);
+    if (!parsed)
+      return ownedError(parsed.takeError());
+    module = std::move(*parsed);
+    module->setModuleIdentifier(kept->identifier);
+    if (!module->getFunction("_mlir_" + entry.str()))
+      return createStringError(inconvertibleErrorCode(), "invalid simulation entry");
+  } else {
+    module = mlir::translateModuleToLLVMIR(input, *context);
+    if (!module)
+      return createStringError(inconvertibleErrorCode(), "cannot translate host module");
+    module->setTargetTriple(triple);
+    module->setDataLayout(target->createDataLayout());
+    auto *function = module->getFunction(entry);
+    if (!function || !function->getReturnType()->isVoidTy())
+      return createStringError(inconvertibleErrorCode(), "invalid simulation entry");
+    // Match MLIR's packed-entry ABI, with a wrapper only for our void entry.
+    // The ABI is described by MLIR ExecutionEngine (LLVM 23.1.2).
+    IRBuilder<> builder(*context);
+    auto *packed = Function::Create(
+        FunctionType::get(builder.getVoidTy(), builder.getPtrTy(), false),
+        GlobalValue::ExternalLinkage, "_mlir_" + entry.str(), *module);
+    builder.SetInsertPoint(BasicBlock::Create(*context, "entry", packed));
+    SmallVector<Value *> arguments;
+    for (auto [index, argument] : enumerate(function->args())) {
+      auto *slot = builder.CreateGEP(builder.getPtrTy(), packed->getArg(0),
+                                     builder.getInt64(index));
+      arguments.push_back(builder.CreateLoad(
+          argument.getType(), builder.CreateLoad(builder.getPtrTy(), slot)));
+    }
+    builder.CreateCall(function, arguments);
+    builder.CreateRetVoid();
+    // Section placement is retained for locality, but validity depends on the
+    // allocated code and relocated FDEs, including functions added later by ORC.
+    StringRef section = triple.getArch() == Triple::x86_64 &&
+                                target->getCodeModel() == CodeModel::Large
+                            ? ".ltext" : ".text";
+    for (auto &f : *module)
+      if (!f.isDeclaration())
+        f.setSection(section);
+    if (keep) {
+      raw_string_ostream os(bitcode);
+      WriteBitcodeToFile(*module, os, /*ShouldPreserveUseListOrder=*/true);
+    }
   }
-  builder.CreateCall(function, arguments);
-  builder.CreateRetVoid();
-  // Section placement is retained for locality, but validity depends on the
-  // allocated code and relocated FDEs, including functions added later by ORC.
-  StringRef section = triple.getArch() == Triple::x86_64 &&
-                              target->getCodeModel() == CodeModel::Large
-                          ? ".ltext" : ".text";
-  for (auto &f : *module)
-    if (!f.isDeclaration())
-      f.setSection(section);
   auto layout = module->getDataLayout();
   auto engine = std::unique_ptr<JITEngine>(new JITEngine);
   engine->cache = std::make_unique<HostObjectCache>(
       cache ? CompileCacheConfig::fromEnvironment() : std::nullopt,
       describeMachine(*target, codegen),
       module->getModuleIdentifier());
+  engine->identifier = module->getModuleIdentifier();
+  engine->bitcode = std::move(bitcode);
+  if (kept)
+    engine->cache->setKeptCode(std::move(kept));
+  else if (keep)
+    engine->cache->keepObject();
   engine->perfListener.reset(JITEventListener::createPerfJITEventListener());
   if (!engine->perfListener)
     engine->perfListener.reset(JITEventListener::createIntelJITEventListener());
@@ -128,6 +155,18 @@ JITEngine::~JITEngine() {
       errs() << "JIT deinitialization failed: " << toString(std::move(error)) << '\n';
   // LLJIT ends the session; object removal deregisters frames. The manager's
   // own destructor also deregisters, covering failed materialization.
+}
+std::shared_ptr<const KeptCode> JITEngine::takeCode(double seconds) {
+  std::string object = cache->takeObject();
+  if (bitcode.empty() || object.empty())
+    return nullptr;
+  auto code = std::make_shared<KeptCode>();
+  code->identifier = identifier;
+  code->bitcode = std::move(bitcode);
+  code->object = std::move(object);
+  code->seconds = seconds;
+  bitcode.clear();
+  return code;
 }
 Error JITEngine::registerSymbols(function_ref<SymbolMap(MangleAndInterner)> map) {
   return ownedError(jit->getMainJITDylib().define(absoluteSymbols(

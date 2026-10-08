@@ -12,6 +12,21 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- A `Program` keeps the code of its simulations (D[program-reuse], #236):
+  the second and later `mdir.Simulation(program)` of one `Program` in a
+  process take the LLVM module and the host object that the first left
+  with the `Program`, and neither run the MLIR pipeline nor generate host
+  code, with or without `MDIR_COMPILE_CACHE_DIR`. On the dipeptide in
+  water in mixed precision such a simulation is made in 0.07 s on the CPU
+  and 0.13 s on a GPU, instead of 5.4 s and 9.4 s (3.1 s and 5.6 s on hits
+  of the disk cache), and gives the same trajectory to the bit in the
+  deterministic mode. `Simulation.compile_stats` has two new keys,
+  `program_reused` and `reuse_saved_seconds`; with `program_reused`,
+  `pipeline_seconds` and the counts of the caches are 0, which a script
+  that reads them for every simulation now sees. `cache=False` compiles
+  everything anew, as before. See
+  [docs/compile-cache.md](docs/compile-cache.md#reuse-within-a-process).
+
 - `observe` in the Python model (D232, #188): `PairTerm`,
   `TupleTerm`, and `ExternalTerm` take `observe`, `None` or a list of
   constants of the term, as the control file's key (D189);

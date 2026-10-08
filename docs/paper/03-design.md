@@ -487,7 +487,13 @@ and the entries used least recently are evicted; its total is kept in a
 file that stores update under a lock, so that a store costs a fixed
 number of file operations and the directory is listed only to evict
 (D234). The passes, which do depend
-on MDIR, run on every compile. The PTX and the cubin of each GPU module are
+on MDIR, run for every program that is compiled. Within a process a
+`Program` keeps the LLVM module and the host object of the program of
+segments of its first simulation, under a hash of the module before the
+passes, of the pipeline, and of the machine, and its later simulations
+link a copy without the passes and without code generation
+(D[program-reuse]); the module is kept beside the object because the
+engine reads from it the constructors that load the kernels of a GPU. The PTX and the cubin of each GPU module are
 cached in the same way. The PTX is keyed by a hash of the module's IR,
 which then holds only upstream LLVM and NVVM operations, together with its
 target, libdevice, and the LLVM version. The cubin is keyed by a hash of
