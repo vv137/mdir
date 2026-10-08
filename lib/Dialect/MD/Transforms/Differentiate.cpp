@@ -1333,6 +1333,68 @@ LogicalResult DerivativeBuilder::buildFieldDerivative(int64_t argument,
     // The places of the field among the fields that the op gathers.
     SmallVector<unsigned, 2> places;
     ValueRange gathered;
+    // A reciprocal sum of the charges: the derivative of its energy in the
+    // charge of a particle is the potential of the grid at the particle,
+    // which the op yields as a fourth result when asked. The op takes the
+    // place of the one of the potential, which yields the same energy,
+    // forces, and virial.
+    if (auto reciprocal = dyn_cast<ReciprocalOp>(user)) {
+      if (reciprocal.getCharges() != parameter ||
+          reciprocal.getPositions() == parameter)
+        return user->emitError()
+               << "'" << user->getName() << "' takes " << describe()
+               << " other than as its charges, and has no rule for the "
+                  "derivative in it";
+      Value weight;
+      if (failed(getWeight(reciprocal.getEnergy(), weight)))
+        return failure();
+      if (!weight)
+        continue;
+      Value potential = reciprocal.getPotential();
+      if (!potential) {
+        OperationState state(reciprocal.getLoc(),
+                             ReciprocalOp::getOperationName());
+        state.addOperands(reciprocal->getOperands());
+        state.addAttributes(reciprocal->getAttrs());
+        state.addTypes(reciprocal->getResultTypes());
+        state.addTypes(fieldType);
+        OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPoint(reciprocal);
+        auto extended = cast<ReciprocalOp>(builder.create(state));
+        reciprocal.getEnergy().replaceAllUsesWith(extended.getEnergy());
+        reciprocal.getForces().replaceAllUsesWith(extended.getForces());
+        reciprocal.getVirial().replaceAllUsesWith(extended.getVirial());
+        if (energy == reciprocal.getEnergy())
+          energy = extended.getEnergy();
+        for (ReciprocalOp &known : reciprocals)
+          if (known == reciprocal)
+            known = extended;
+        for (Operation *&known : potentialOps)
+          if (known == reciprocal.getOperation())
+            known = extended;
+        reciprocal->erase();
+        potential = extended.getPotential();
+      }
+      if (isOne(weight)) {
+        terms.push_back(potential);
+        continue;
+      }
+      OperationState state(loc, MapParticlesOp::getOperationName());
+      state.addOperands(potential);
+      state.addRegion();
+      state.addTypes(fieldType);
+      Operation *map = builder.create(state);
+      Block *block = new Block();
+      map->getRegion(0).push_back(block);
+      block->addArgument(builder.getF64Type(), loc);
+      OpBuilder kernel = OpBuilder::atBlockEnd(block);
+      ScalarEmitter emit(kernel, loc);
+      YieldOp::create(kernel, loc,
+                      ValueRange{emit.mul(weight, block->getArgument(0))});
+      generatedOps.insert(map);
+      terms.push_back(map->getResult(0));
+      continue;
+    }
     if (auto sum = dyn_cast<SumRelationOp>(user))
       gathered = sum.getGathered();
     else if (auto sum = dyn_cast<SumTuplesOp>(user))

@@ -183,6 +183,22 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     are written to the buffer in `outs`, and `scratch` holds the grid: the
     charges in fixed point, the grid in f64, and the half-complex grid of
     its transform, then on a device the sums of the rows of the grid.
+
+    With `potential`, the field that the op yields is not the forces but
+    the derivative of the energy in the charge of each particle, one
+    number for each, the potential of the grid gathered with the weights
+    of the B-splines (the fourth result of `md.reciprocal`,
+    D[tunable-gradient-pme]); the grid is computed in the type that this
+    field is stored in.
+
+    ```mlir
+    %u, %w, %p = md_exec.reciprocal %x, %q, %cell, %moduli
+                   grid([32, 32, 32]) order(4) beta(3.12) coulomb(138.935)
+                   potential
+                   : !md.field<@atoms, 3 x f64>, !md.field<@atoms, f64>,
+                     !md.table<2, f64>
+                   -> f64, vector<9xf64>, !md.field<@atoms, f64>
+    ```
   }];
   let arguments = (ins
     MDExec_FieldOrBuffer:$positions,
@@ -195,7 +211,8 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     I64Attr:$order,
     F64Attr:$beta,
     F64Attr:$coulomb,
-    UnitAttr:$dispersion
+    UnitAttr:$dispersion,
+    UnitAttr:$potential
   );
   let results = (outs
     F64:$energy,
@@ -208,6 +225,7 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     (`scratch` `(` $scratch^ `:` type($scratch) `)`)?
     `grid` `(` $grid `)` `order` `(` $order `)` `beta` `(` $beta `)`
     `coulomb` `(` $coulomb `)` (`dispersion` $dispersion^)?
+    (`potential` $potential^)?
     attr-dict `:` qualified(type($positions)) `,` qualified(type($charges))
     `,` qualified(type($moduli)) `->` type($energy) `,` type($virial)
     (`,` qualified(type($forces))^)?

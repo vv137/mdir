@@ -463,17 +463,36 @@ LogicalResult Converter::convert(Operation *op) {
 
   if (auto reciprocal = dyn_cast<md::ReciprocalOp>(op)) {
     builder.setInsertionPoint(op);
-    auto converted = md_exec::ReciprocalOp::create(
-        builder, op->getLoc(), builder.getF64Type(),
-        reciprocal.getVirial().getType(), reciprocal.getForces().getType(),
-        reciprocal.getPositions(), reciprocal.getCharges(),
-        reciprocal.getCell(), reciprocal.getModuli(), /*out=*/Value(),
-        /*scratch=*/ValueRange(), reciprocal.getGridAttr(),
-        reciprocal.getOrderAttr(), reciprocal.getBetaAttr(),
-        reciprocal.getCoulombAttr(), reciprocal.getDispersionAttr());
-    reciprocal.getEnergy().replaceAllUsesWith(converted.getEnergy());
-    reciprocal.getVirial().replaceAllUsesWith(converted.getVirial());
-    reciprocal.getForces().replaceAllUsesWith(converted.getForces());
+    // The sum that yields the forces, and for the potential at the
+    // particles one that yields it in their place; the second gives the
+    // energy and the virial too where no forces are taken.
+    Value potential = reciprocal.getPotential();
+    bool takesForces = !potential || !reciprocal.getForces().use_empty();
+    auto create = [&](Type field, bool yieldsPotential) {
+      return md_exec::ReciprocalOp::create(
+          builder, op->getLoc(), builder.getF64Type(),
+          reciprocal.getVirial().getType(), field, reciprocal.getPositions(),
+          reciprocal.getCharges(), reciprocal.getCell(),
+          reciprocal.getModuli(), /*out=*/Value(), /*scratch=*/ValueRange(),
+          reciprocal.getGridAttr(), reciprocal.getOrderAttr(),
+          reciprocal.getBetaAttr(), reciprocal.getCoulombAttr(),
+          reciprocal.getDispersionAttr(),
+          yieldsPotential ? builder.getUnitAttr() : UnitAttr());
+    };
+    if (takesForces) {
+      auto converted = create(reciprocal.getForces().getType(), false);
+      reciprocal.getEnergy().replaceAllUsesWith(converted.getEnergy());
+      reciprocal.getVirial().replaceAllUsesWith(converted.getVirial());
+      reciprocal.getForces().replaceAllUsesWith(converted.getForces());
+    }
+    if (potential) {
+      auto converted = create(potential.getType(), true);
+      potential.replaceAllUsesWith(converted.getForces());
+      if (!takesForces) {
+        reciprocal.getEnergy().replaceAllUsesWith(converted.getEnergy());
+        reciprocal.getVirial().replaceAllUsesWith(converted.getVirial());
+      }
+    }
     this->converted.push_back(op);
     return success();
   }

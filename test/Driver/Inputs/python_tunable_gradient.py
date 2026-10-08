@@ -29,6 +29,11 @@ Scenarios:
   checkpoint  a simulation continued from a checkpoint, and a new stage from
             it, give the derivative of the simulation that wrote it, to the
             bit (needs HDF5)
+  pme       the charges with particle mesh Ewald on the dipeptide in water,
+            tied by a map, with a net charge: the derivative (the direct
+            sum, the potential of the grid at the particles, the self term,
+            the background, the excluded and the 1-4 pairs) against central
+            differences of the energy
   lj        per-type sigma and epsilon and the table by pairs of types: on
             the dipeptide against central differences; on propane and
             water under a plain cutoff with the correction for the
@@ -415,6 +420,50 @@ def run_checkpoint(target, precision, work):
         assert other.tunables.gradient().step == g.step + 4
 
 
+def charge_model(pme, net=0.0):
+    """The dipeptide in water with the charges tunable, one entry per atom
+    name of the waters and one per atom of the peptide, each entry of the
+    peptide moved by `net` / 22 so that the system has the net charge
+    `net`."""
+    loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
+    system, state = loaded.make_system(), loaded.make_state()
+    system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
+    system.electrostatics = mdir.Electrostatics.PME if pme else mdir.Electrostatics.Cutoff
+    system.dispersion = mdir.DispersionCorrection.None_
+    top = system.topology
+    residues = [top.residue_names[r] for r in top.residue_indices]
+    entries, charge_map = {}, []
+    for i, (atom, residue) in enumerate(zip(top.atom_names, residues)):
+        key = (residue, atom) if residue == "WAT" else (residue, i)
+        charge_map.append(entries.setdefault(key, len(entries)))
+    charge_map = np.array(charge_map, dtype=np.int64)
+    values = np.zeros(len(entries))
+    values[charge_map] = top.charges
+    peptide = sorted({m for m, r in zip(charge_map, residues) if r != "WAT"})
+    values[peptide] += net / len(peptide)
+    system.tunables = [mdir.Tunable("q", "charge", map=charge_map, values=values)]
+    system.tunable_gradient = True
+    return system, state, charge_map
+
+
+def run_pme(target, precision):
+    double = precision == "Double"
+    system, state, charge_map = charge_model(pme=True, net=0.5)
+    sim = simulation(compile_(system, state, target, precision))
+    sim.run(6)
+    g = sim.tunables.gradient()
+    net = float(sim.tunables["q"][charge_map].sum())
+    assert abs(net - 0.5) < 1e-9, net
+    worst = differences(sim, g, 1e-3 if double else 5e-2)
+    tolerance = 1e-7 if double else 5e-4
+    print(f"{target} {precision}: the charges with particle mesh Ewald, {len(g['q'])} entries "
+          f"for {len(charge_map)} particles, a net charge of {net:.1f} e, against central "
+          f"differences of the energy, {worst:.1e} (tolerance {tolerance:.0e})")
+    assert worst < tolerance, worst
+    again = sim.tunables.gradient()
+    assert np.array_equal(again["q"], g["q"]) or not double
+
+
 def run_lj_dipeptide(target, precision):
     double = precision == "Double"
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
@@ -707,6 +756,8 @@ elif scenario == "dynamics":
     run_dynamics(sys.argv[3], sys.argv[4])
 elif scenario == "checkpoint":
     run_checkpoint(sys.argv[3], sys.argv[4], sys.argv[5])
+elif scenario == "pme":
+    run_pme(sys.argv[3], sys.argv[4])
 elif scenario == "charges":
     run_charges(sys.argv[3], sys.argv[4])
 elif scenario == "lj":

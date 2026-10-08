@@ -380,11 +380,13 @@ LogicalResult Assigner::collect(Operation *op) {
       return op->emitOpError() << "is in the storage form; precision is "
                                   "assigned before storage";
     // The positions and the charges as they are stored; the forces are
-    // forces.
+    // forces. The potential at the particles is not: it is stored as the
+    // buffer that takes it says.
     positions.push_back(reciprocal.getPositions());
     find(reciprocal.getPositions());
     find(reciprocal.getCharges());
-    forces.push_back(reciprocal.getForces());
+    if (!reciprocal.getPotential())
+      forces.push_back(reciprocal.getForces());
     find(reciprocal.getForces());
     return success();
   }

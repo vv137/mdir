@@ -479,7 +479,10 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                  dispersion, k1, k2, k3});
   func::CallOp::create(builder, loc, backward,
                        ValueRange{complex, real, sizes[0], sizes[1], sizes[2]});
-  func::CallOp::create(builder, loc, instance("mdrt.pme_gather"),
+  // The forces, or the potential at the particles in their place.
+  func::CallOp::create(builder, loc,
+                       instance(op.getPotential() ? "mdrt.pme_potential"
+                                                  : "mdrt.pme_gather"),
                        ValueRange{positions, charges, real, box, k1, k2, k3,
                                   order, forces});
   op.getEnergy().replaceAllUsesWith(convolve.getResult(0));
