@@ -396,6 +396,17 @@ format, or the outputs; every such change is listed under **Changed** or
   keeps the state of the last part that succeeded, from a copy on the
   device. A live simulation now holds its memory between runs. Short parts
   are faster: a part of 10 steps of JAC takes 2.75 ms instead of 10.3 on a GPU in mixed precision, and of one step 0.309 ms instead of 8.77; long runs are unchanged (D215, #135).
+- Lowering a program whose pair kernels take tables in f32 (D94) is
+  faster: the table of a function of the distance is searched for once
+  for a function, a cutoff, and a tolerance in a process, instead of three
+  times in each lowering, and the function is evaluated through a list of
+  steps. On the dipeptide in water with PME (CPU, mixed precision)
+  `md-exec-expand-radial` takes 0.025 s instead of 0.38 and
+  `md-exec-simplify-distance` 0.013 s instead of 0.21, and
+  `pipeline_seconds` of a `Simulation` falls by about 40%; a pair term
+  that no table holds (the Stillinger-Weber form, D159) lowers in 0.56 s
+  instead of 10.9. The tables and the compiled programs are the same to
+  the bit (#236).
 
 ### Added
 

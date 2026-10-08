@@ -367,6 +367,16 @@ def ExpandRadial
     module (`memref.global`), which a device reads with one load of 16
     bytes.
 
+    The search for a table depends on the function (its ops and constants
+    in order), the cutoff, and the tolerance alone. Its result is kept for
+    the process under those three, behind a mutex, so that the test of
+    `md-exec-simplify-distance` (whether a table holds the function, D159),
+    this pass, and the later lowerings of the process search once; a
+    function that no table holds keeps its answer without coefficients. The
+    oldest tables leave once those kept pass 16 MiB (a table of 12 bits is
+    0.6 MiB). The kept tables change no result: a lowering gives the same
+    module with them and without.
+
     In a kernel that computes in f64 the function is inlined.
   }];
   let options = [

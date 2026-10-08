@@ -20,8 +20,13 @@
 #include "mlir/IR/SymbolTable.h"
 
 #include <cmath>
-#include <map>
 #include <cstring>
+#include <deque>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <unordered_map>
 
 using namespace mlir;
 using namespace mdir;
@@ -99,23 +104,151 @@ bool isRadialOp(Operation *op) {
 }
 
 namespace {
-/// Evaluates the function `function`, (f64) -> f64, at `s`, op by op.
-double evaluate(func::FuncOp function, double s) {
-  llvm::DenseMap<Value, double> values;
-  Block &body = function.getBody().front();
-  values[body.getArgument(0)] = s;
-  for (Operation &op : body) {
-    if (auto ret = dyn_cast<func::ReturnOp>(op))
-      return values.lookup(ret.getOperand(0));
-    SmallVector<double, 2> operands;
-    for (Value operand : op.getOperands())
-      operands.push_back(values.lookup(operand));
-    std::optional<double> result = evaluateRadialOp(&op, operands);
-    if (op.getNumResults() == 1)
-      values[op.getResult(0)] = result.value_or(NAN);
+/// The function `function`, (f64) -> f64, as a list of steps over numbered
+/// values, which gives its value at a point without a look at its ops. Each
+/// step is the one operation that evaluateRadialOp has for its op, on the
+/// same values, so the value has the same bits as an evaluation op by op.
+class Evaluator {
+public:
+  explicit Evaluator(func::FuncOp function) {
+    // Value 0 is the zero that an operand without a value reads; value 1
+    // is the argument.
+    llvm::DenseMap<Value, uint32_t> numbers;
+    Block &body = function.getBody().front();
+    numbers[body.getArgument(0)] = 1;
+    auto numberOf = [&](Value value) { return numbers.lookup(value); };
+    for (Operation &op : body) {
+      if (auto ret = dyn_cast<func::ReturnOp>(op)) {
+        result = numberOf(ret.getOperand(0));
+        returns = true;
+        break;
+      }
+      // The steps have no effects: one whose value is not kept is left out.
+      if (op.getNumResults() != 1)
+        continue;
+      Step step;
+      step.kind = getKind(&op, step.constant);
+      if (op.getNumOperands() > 0)
+        step.first = numberOf(op.getOperand(0));
+      if (op.getNumOperands() > 1)
+        step.second = numberOf(op.getOperand(1));
+      step.target = numValues++;
+      numbers[op.getResult(0)] = step.target;
+      steps.push_back(step);
+    }
   }
-  return NAN;
-}
+
+  /// The value of the function at `s`.
+  double operator()(double s) const {
+    if (!returns)
+      return NAN;
+    SmallVector<double, 64> values(numValues, 0.0);
+    values[1] = s;
+    for (const Step &step : steps) {
+      double a = values[step.first], b = values[step.second];
+      double value = NAN;
+      switch (step.kind) {
+      case Kind::Constant: value = step.constant; break;
+      case Kind::Add: value = a + b; break;
+      case Kind::Sub: value = a - b; break;
+      case Kind::Mul: value = a * b; break;
+      case Kind::Div: value = a / b; break;
+      case Kind::Neg: value = -a; break;
+      case Kind::Pow: value = std::pow(a, b); break;
+      case Kind::Atan2: value = std::atan2(a, b); break;
+      case Kind::Sqrt: value = std::sqrt(a); break;
+      case Kind::Exp: value = std::exp(a); break;
+      case Kind::Erfc: value = std::erfc(a); break;
+      case Kind::Erf: value = std::erf(a); break;
+      case Kind::Log: value = std::log(a); break;
+      case Kind::Abs: value = std::fabs(a); break;
+      case Kind::Tanh: value = std::tanh(a); break;
+      case Kind::Sin: value = std::sin(a); break;
+      case Kind::Cos: value = std::cos(a); break;
+      case Kind::Tan: value = std::tan(a); break;
+      case Kind::Asin: value = std::asin(a); break;
+      case Kind::Acos: value = std::acos(a); break;
+      case Kind::Atan: value = std::atan(a); break;
+      case Kind::Sinh: value = std::sinh(a); break;
+      case Kind::Cosh: value = std::cosh(a); break;
+      case Kind::Unknown: break;
+      }
+      values[step.target] = value;
+    }
+    return values[result];
+  }
+
+  /// The steps as bytes: functions with the same bytes have the same value
+  /// at every point.
+  void appendTo(std::string &key) const {
+    auto append = [&](const void *data, size_t size) {
+      key.append(static_cast<const char *>(data), size);
+    };
+    uint32_t header[3] = {static_cast<uint32_t>(steps.size()), result,
+                          returns ? 1u : 0u};
+    append(header, sizeof header);
+    for (const Step &step : steps) {
+      uint32_t fields[4] = {static_cast<uint32_t>(step.kind), step.first,
+                            step.second, step.target};
+      append(fields, sizeof fields);
+      append(&step.constant, sizeof step.constant);
+    }
+  }
+
+private:
+  enum class Kind : uint8_t {
+    Constant, Add, Sub, Mul, Div, Neg, Pow, Atan2, Sqrt, Exp, Erfc, Erf, Log,
+    Abs, Tanh, Sin, Cos, Tan, Asin, Acos, Atan, Sinh, Cosh, Unknown
+  };
+  struct Step {
+    Kind kind = Kind::Unknown;
+    uint32_t first = 0, second = 0, target = 0;
+    double constant = 0.0;
+  };
+
+  /// The kind of `op`, as evaluateRadialOp tells the ops apart, and the
+  /// value of a constant.
+  static Kind getKind(Operation *op, double &value) {
+    if (auto constant = dyn_cast<arith::ConstantOp>(op)) {
+      if (auto real = dyn_cast<FloatAttr>(constant.getValue())) {
+        value = real.getValueAsDouble();
+        return Kind::Constant;
+      }
+      if (auto integer = dyn_cast<IntegerAttr>(constant.getValue())) {
+        value = static_cast<double>(integer.getInt());
+        return Kind::Constant;
+      }
+      return Kind::Unknown;
+    }
+    if (isa<arith::AddFOp>(op)) return Kind::Add;
+    if (isa<arith::SubFOp>(op)) return Kind::Sub;
+    if (isa<arith::MulFOp>(op)) return Kind::Mul;
+    if (isa<arith::DivFOp>(op)) return Kind::Div;
+    if (isa<arith::NegFOp>(op)) return Kind::Neg;
+    if (isa<math::PowFOp, math::FPowIOp>(op)) return Kind::Pow;
+    if (isa<math::Atan2Op>(op)) return Kind::Atan2;
+    if (isa<math::SqrtOp>(op)) return Kind::Sqrt;
+    if (isa<math::ExpOp>(op)) return Kind::Exp;
+    if (isa<math::ErfcOp>(op)) return Kind::Erfc;
+    if (isa<math::ErfOp>(op)) return Kind::Erf;
+    if (isa<math::LogOp>(op)) return Kind::Log;
+    if (isa<math::AbsFOp>(op)) return Kind::Abs;
+    if (isa<math::TanhOp>(op)) return Kind::Tanh;
+    if (isa<math::SinOp>(op)) return Kind::Sin;
+    if (isa<math::CosOp>(op)) return Kind::Cos;
+    if (isa<math::TanOp>(op)) return Kind::Tan;
+    if (isa<math::AsinOp>(op)) return Kind::Asin;
+    if (isa<math::AcosOp>(op)) return Kind::Acos;
+    if (isa<math::AtanOp>(op)) return Kind::Atan;
+    if (isa<math::SinhOp>(op)) return Kind::Sinh;
+    if (isa<math::CoshOp>(op)) return Kind::Cosh;
+    return Kind::Unknown;
+  }
+
+  std::vector<Step> steps;
+  uint32_t numValues = 2, result = 0;
+  bool returns = false;
+};
 
 float bitsToFloat(uint32_t bits) {
   float value;
@@ -138,15 +271,21 @@ struct Table {
   /// evaluates them, relative to the largest value on each interval.
   double fitError = 0.0;
   double error = 0.0;
+  /// Whether every coefficient is finite, and whether the table holds the
+  /// function within the tolerance that it was searched with.
+  bool finite = false;
+  bool fits = false;
 };
 
-/// Fits the polynomials of `function` on [low, high] with `bits` bits.
-Table fit(func::FuncOp function, double low, double high, int bits) {
+/// Fits the polynomials of the function of `evaluate` on [low, high] with
+/// `bits` bits.
+Table fit(const Evaluator &evaluate, double low, double high, int bits) {
   Table table;
   table.bits = bits;
   int shift = 23 - bits;
   table.base = floatToBits(static_cast<float>(low)) >> shift;
   uint32_t last = floatToBits(static_cast<float>(high)) >> shift;
+  table.coefficients.reserve(4 * (size_t(last) - table.base + 1));
   for (uint32_t key = table.base; key <= last; ++key) {
     double start = bitsToFloat(key << shift);
     double end = bitsToFloat((key + 1) << shift);
@@ -157,7 +296,7 @@ Table fit(func::FuncOp function, double low, double high, int bits) {
     for (int i = 0; i != 4; ++i) {
       double t = std::cos(M_PI * (2 * i + 1) / 8.0);
       u[i] = 0.5 * width * (1.0 + t);
-      g[i] = evaluate(function, start + u[i]);
+      g[i] = evaluate(start + u[i]);
     }
     double d[4] = {g[0], g[1], g[2], g[3]};
     for (int j = 1; j != 4; ++j)
@@ -183,7 +322,7 @@ Table fit(func::FuncOp function, double low, double high, int bits) {
     double largest = 0.0, worst = 0.0, worstFit = 0.0;
     for (int i = 0; i <= 16; ++i) {
       double x = width * i / 16.0;
-      double exact = evaluate(function, start + x);
+      double exact = evaluate(start + x);
       float xf = static_cast<float>(x);
       float p = static_cast<float>(poly[3]);
       for (int k = 2; k >= 0; --k)
@@ -205,21 +344,98 @@ Table fit(func::FuncOp function, double low, double high, int bits) {
   return table;
 }
 
-} // namespace
+/// The tables that the process has searched for, by the steps of the
+/// function, the cutoff squared, and the tolerance. md-exec-simplify-distance
+/// asks whether a function fits a table, md-exec-expand-radial asks again
+/// and then takes the table, and a process that lowers a program again asks
+/// for the same tables each time; a search takes tenths of a second. A
+/// table follows from its key alone, so the lowerings of several threads
+/// share the tables under a mutex. The oldest tables leave when the
+/// coefficients that are kept pass `bound` bytes.
+class Tables {
+public:
+  std::shared_ptr<const Table> find(const std::string &key) {
+    std::lock_guard<std::mutex> lock(mutex);
+    auto found = tables.find(key);
+    return found == tables.end() ? nullptr : found->second;
+  }
 
-bool canTabulate(Operation *op, double cutoff, double tolerance) {
-  auto function = cast<func::FuncOp>(op);
+  /// Keeps `table` under `key`, or returns the table that another thread
+  /// kept under it meanwhile, which is the same.
+  std::shared_ptr<const Table> insert(const std::string &key, Table table) {
+    std::lock_guard<std::mutex> lock(mutex);
+    auto [found, inserted] = tables.try_emplace(key);
+    if (!inserted)
+      return found->second;
+    auto kept = std::make_shared<const Table>(std::move(table));
+    found->second = kept;
+    order.push_back(key);
+    bytes += getBytes(key, *kept);
+    // The table just kept stays, whatever its size.
+    while (bytes > bound && order.size() > 1) {
+      auto oldest = tables.find(order.front());
+      bytes -= getBytes(oldest->first, *oldest->second);
+      tables.erase(oldest);
+      order.pop_front();
+    }
+    return kept;
+  }
+
+private:
+  static size_t getBytes(const std::string &key, const Table &table) {
+    return 2 * key.size() + sizeof(Table) +
+           table.coefficients.size() * sizeof(float);
+  }
+
+  /// A table of 12 bits is 0.6 MiB; those of a program are a few.
+  static constexpr size_t bound = size_t(16) << 20;
+  std::mutex mutex;
+  std::unordered_map<std::string, std::shared_ptr<const Table>> tables;
+  std::deque<std::string> order;
+  size_t bytes = 0;
+};
+
+Tables &getTables() {
+  // Never destroyed: a lowering may still search while the process exits.
+  static Tables *tables = new Tables;
+  return *tables;
+}
+
+/// The table of `function` up to `cutoff`: that of the fewest bits, from 4
+/// to 12, whose polynomials are within a tenth of `tolerance` in f64, so
+/// that the rounding of f32 dominates, or else that of 12 bits. A table
+/// that does not hold the function (`fits`) keeps no coefficients.
+std::shared_ptr<const Table> search(func::FuncOp function, double cutoff,
+                                    double tolerance) {
+  Evaluator evaluate(function);
   double high = cutoff * cutoff;
   double low = high * std::ldexp(1.0, -10);
+  std::string key;
+  key.append(reinterpret_cast<const char *>(&high), sizeof high);
+  key.append(reinterpret_cast<const char *>(&tolerance), sizeof tolerance);
+  evaluate.appendTo(key);
+  if (std::shared_ptr<const Table> known = getTables().find(key))
+    return known;
   Table table;
   for (int bits = 4; bits <= 12; ++bits) {
-    table = fit(function, low, high, bits);
+    table = fit(evaluate, low, high, bits);
     if (table.fitError <= 0.1 * tolerance)
       break;
   }
-  return llvm::all_of(table.coefficients,
-                      [](float c) { return std::isfinite(c); }) &&
-         table.error <= tolerance;
+  // A value that the evaluation does not know is NaN, and would pass the
+  // test of the error unseen.
+  table.finite = llvm::all_of(table.coefficients,
+                              [](float c) { return std::isfinite(c); });
+  table.fits = table.finite && table.error <= tolerance;
+  if (!table.fits)
+    std::vector<float>().swap(table.coefficients);
+  return getTables().insert(key, std::move(table));
+}
+
+} // namespace
+
+bool canTabulate(Operation *op, double cutoff, double tolerance) {
+  return search(cast<func::FuncOp>(op), cutoff, tolerance)->fits;
 }
 
 namespace {
@@ -234,7 +450,8 @@ public:
     SmallVector<RadialOp> radials;
     module.walk([&](RadialOp op) { radials.push_back(op); });
     std::map<std::pair<std::string, double>, memref::GlobalOp> globals;
-    std::map<std::pair<std::string, double>, Table> tables;
+    std::map<std::pair<std::string, double>, std::shared_ptr<const Table>>
+        tables;
     for (RadialOp op : radials) {
       auto function = symbols.lookup<func::FuncOp>(op.getFunction());
       if (!function) {
@@ -280,24 +497,17 @@ public:
       auto key = std::make_pair(op.getFunction().str(), high);
       memref::GlobalOp global = globals[key];
       if (!global) {
-        // The fewest bits whose polynomials are within a tenth of the
-        // tolerance in f64, so that the rounding of f32 dominates.
-        Table table;
-        for (int bits = 4; bits <= 12; ++bits) {
-          table = fit(function, low, high, bits);
-          if (table.fitError <= 0.1 * tolerance)
-            break;
-        }
-        // A value that the evaluation does not know is NaN, and would
-        // pass the test of the error below unseen.
-        if (!llvm::all_of(table.coefficients,
-                          [](float c) { return std::isfinite(c); })) {
+        // The table that the test above searched for.
+        std::shared_ptr<const Table> found =
+            search(function, cutoff, tolerance);
+        const Table &table = *found;
+        if (!table.finite) {
           op.emitOpError() << "cannot tabulate " << op.getFunction()
                            << ": it is not finite on (" << low << ", "
                            << high << "]";
           return signalPassFailure();
         }
-        if (!(table.error <= tolerance)) {
+        if (!table.fits) {
           op.emitOpError() << "cannot tabulate " << op.getFunction()
                            << " within " << tolerance << ": "
                            << table.error << " with " << table.bits
@@ -306,8 +516,9 @@ public:
         }
         // A table that another function gave already serves this one.
         for (auto &[otherKey, other] : tables)
-          if (other.bits == table.bits && other.base == table.base &&
-              other.coefficients == table.coefficients) {
+          if (other == found ||
+              (other->bits == table.bits && other->base == table.base &&
+               other->coefficients == table.coefficients)) {
             global = globals[otherKey];
             break;
           }
@@ -325,9 +536,9 @@ public:
           symbols.insert(global);
         }
         globals[key] = global;
-        tables[key] = table;
+        tables[key] = found;
       }
-      const Table &table = tables[key];
+      const Table &table = *tables[key];
       int shift = 23 - table.bits;
       int64_t count = table.coefficients.size() / 4;
       Type i32 = builder.getI32Type();
