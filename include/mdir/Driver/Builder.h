@@ -137,6 +137,36 @@ struct Program {
   /// file, proportional to 1 / V: the tail of an observed pair term and its
   /// derivatives (D209); 0 for the other columns.
   std::vector<double> observableVolumeConstants;
+  /// The derivative of the energy in the tunables
+  /// (D[tunable-gradient], docs/python-gradient.md): whether the entry
+  /// evaluates it when the host asks (the start value `tunable_gradient`);
+  /// for each tunable, whether a rule gives its derivative or the program
+  /// provably does not read it; and the values that the entry hands the
+  /// host (mdrtWriteTunableGradient), each the derivative in one site of a
+  /// tunable, with what the host adds to it, in kJ/mol per unit of the
+  /// tunable at the volume of the build, proportional to 1 / V: the
+  /// derivative of the tail of a pair term and of its shift estimate
+  /// (D209, D210).
+  bool tunableGradient = false;
+  enum class GradientOutcome { Rule, Zero };
+  std::vector<GradientOutcome> gradientOutcomes;
+  struct GradientSlot {
+    unsigned tunable = 0;
+    unsigned site = 0;
+    double volumeConstant = 0.0;
+  };
+  std::vector<GradientSlot> gradientSlots;
+  /// The fields of the particles that the entry hands the host after the
+  /// numbers (mdrtWriteTunableGradientField), each the derivative of the
+  /// energy in the value of each particle of a field of zeros through
+  /// which the sites of one tunable enter their kernels: the derivative in
+  /// the site `first` is the value of the field at the particle `second`
+  /// (in the order of the input).
+  struct GradientField {
+    unsigned tunable = 0;
+    std::vector<std::pair<uint32_t, uint32_t>> sites;
+  };
+  std::vector<GradientField> gradientFields;
   /// β in nm⁻¹ and the numbers of points of the grid, for the log.
   double pmeBeta = 0.0;
   int64_t pmeGrid[3] = {0, 0, 0};

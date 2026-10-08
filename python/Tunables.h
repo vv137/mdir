@@ -86,10 +86,16 @@ inline void bindTunable(py::module_ &m) {
     });
 }
 /// The declarations of a prepared model, for `Program.plan`.
-inline py::list describe(const model::TunableSet &set) {
+inline py::list describe(const model::TunableSet &set, const driver::Program &program) {
   py::list result;
-  for (const auto &entry : set.tunables) {
+  for (size_t k = 0; k != set.tunables.size(); ++k) {
+    const auto &entry = set.tunables[k];
     py::dict d;
+    // Whether a rule gives the derivative of the energy in it or the
+    // program provably does not read it (D[tunable-gradient]).
+    if (program.tunableGradient && k < program.gradientOutcomes.size())
+      d["gradient"] = program.gradientOutcomes[k] == driver::Program::GradientOutcome::Zero
+                          ? "zero" : "rule";
     d["name"] = entry.name;
     d["parameter"] = entry.parameter;
     d["term"] = entry.term.empty() ? py::object(py::none()) : py::object(py::str(entry.term));

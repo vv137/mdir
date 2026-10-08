@@ -146,6 +146,9 @@ struct System {
   std::vector<double> restraintReference;
   /// The tunable parameters (D213).
   std::vector<Tunable> tunables;
+  /// Whether the program carries the derivative of the energy in the
+  /// tunables (D[tunable-gradient]).
+  bool tunableGradient = false;
   /// The entry of the files of the topology in the fingerprint, as
   /// `mdir run` makes it from their contents (D172); empty for a topology
   /// that no file gave.

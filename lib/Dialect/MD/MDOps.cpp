@@ -861,12 +861,19 @@ LogicalResult EvaluateOp::verify() {
                << "expected 'derivative' to name a parameter, an argument "
                   "index from 2 to "
                << getNumOperands() - 1 << ", got " << argument;
-      if (!getOperand(argument).getType().isF64())
+      // The derivative in a number is a number; that in a field of the
+      // particles with one component of f64 is a field of its type, the
+      // derivative in the value of each particle.
+      Type type = getOperand(argument).getType();
+      auto field = dyn_cast<FieldType>(type);
+      bool isField = field && field.getNumComponents() == 1 &&
+                     field.getElementType().isF64();
+      if (!type.isF64() && !isField)
         return emitOpError()
-               << "expected 'derivative' to name an argument of type f64, "
-                  "but argument "
-               << argument << " has type " << getOperand(argument).getType();
-      expected = builder.getF64Type();
+               << "expected 'derivative' to name an argument of type f64 or "
+                  "a field of f64 with one component, but argument "
+               << argument << " has type " << type;
+      expected = isField ? type : Type(builder.getF64Type());
       break;
     }
     }

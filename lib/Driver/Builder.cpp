@@ -335,6 +335,48 @@ private:
     for (const std::string &name : observedConstants)
       values[name] = "%ob_" + name;
   }
+  /// The potential `@tunable` (D[tunable-gradient]) takes the tunable
+  /// constants of the pair terms as its last arguments, `%tg_c<column>`, in
+  /// place of the values of the table `tunable_constants`, so that the
+  /// differentiation of parameters gives the derivatives in them (D161).
+  bool gradientArguments = false;
+  std::string getGradientParameters() const {
+    std::string text;
+    if (!gradientArguments)
+      return text;
+    for (size_t k = 0; k != control.tunableConstants.size(); ++k)
+      text += ", %tg_c" + std::to_string(k) + ": f64";
+    for (size_t c = 0; c != program.gradientFields.size(); ++c)
+      text += ", %tg_d" + std::to_string(c) + ": !real";
+    return text;
+  }
+  /// The tunable parameters of the terms over tuples whose derivatives
+  /// `@tunable` gives (D[tunable-gradient]). The derivative in the
+  /// parameter of each tuple leaves the program as a field of the
+  /// particles: `@tunable` takes fields of zeros, `%tg_d<c>`, and the
+  /// parameter of a tuple is its value plus the value of one of them at one
+  /// member of the tuple, the member at the place `place`, so that the
+  /// derivative of the energy in that field at that particle is the
+  /// derivative in the parameter of the tuple. Tuples that share the
+  /// member take different fields: the tuple field `tgc_<parameter>` holds
+  /// which, from 0 to `count` - 1, and the fields of the parameter are
+  /// `first` and those after it.
+  struct TupleGradient {
+    unsigned tunable = 0, term = 0;
+    std::string parameter;
+    unsigned place = 0, count = 0, first = 0;
+  };
+  std::vector<TupleGradient> tupleGradients;
+  /// For each tunable, whether the energy reads it, and the values that
+  /// the entry hands the host (Program::gradientSlots), with the column of
+  /// the tunable constant of each.
+  llvm::Error collectTunableGradient();
+  std::vector<unsigned> gradientColumns;
+  /// Emits the evaluation of the derivatives in the tunables at the
+  /// positions `x`, in a loop that runs once if the host asks and not at
+  /// all otherwise, and their call to the host.
+  void emitTunableGradientOutput(StringRef indent, StringRef x, StringRef cell,
+                                 StringRef prefix, StringRef time);
   /// The potentials `@observe<k>`, each a term of `[output] observe`: the
   /// kind of the term, its index among the terms of its kind, and the
   /// columns of the term, -1 for its energy or the place of the constant
@@ -430,11 +472,11 @@ private:
   /// the estimate of the shift: what the correction adds to the quantities
   /// of the shifted potential (D210).
   double getPairTails(const llvm::StringMap<double> &changes) const;
-  /// The derivative of the tail and the estimate of the shift of the pair
-  /// term `index` in the value `name`: exactly 0 if its expression does not
-  /// read it.
-  double getPairTailDerivative(unsigned index, StringRef name,
-                               double value) const;
+  /// The derivative of the tail of the pair term `index` in the value
+  /// `name`, with that of the estimate of the shift if `shift`: exactly 0
+  /// if its expression does not read it.
+  double getPairTailDerivative(unsigned index, StringRef name, double value,
+                               bool shift = true) const;
   /// The values of the components of λ at the state `k`.
   llvm::StringMap<double> getLambdaValues(size_t k) const {
     llvm::StringMap<double> values;
@@ -1642,6 +1684,66 @@ llvm::Error Builder::collectTopology() {
       size_t field = addField(set, name);
       set.fields[field].values = values;
     }
+    // The tunable parameters of the term whose derivatives the program
+    // carries (D[tunable-gradient]): for each, the place whose members are
+    // shared by the fewest tuples, and for each tuple its number among the
+    // tuples of its member there.
+    if (program.tunableGradient)
+      for (auto [k, declaration] :
+           llvm::enumerate(control.tunableDeclarations)) {
+        if (declaration.kind != Control::TunableKind::TupleParameter ||
+            &topology.tupleTerms[declaration.termIndex] != &term)
+          continue;
+        Expression expression = llvm::cantFail(
+            Expression::parse(term.expression, control.functions));
+        if (!llvm::is_contained(expression.getNames(), declaration.parameter))
+          continue;
+        size_t tuples = term.particles.size() / term.arity;
+        unsigned place = 0, count = 0;
+        std::vector<double> colors;
+        for (unsigned candidate = 0; candidate != term.arity; ++candidate) {
+          std::map<unsigned, unsigned> seen;
+          std::vector<double> numbers;
+          unsigned most = 0;
+          for (size_t t = 0; t != tuples; ++t) {
+            unsigned number = seen[term.particles[t * term.arity + candidate]]++;
+            numbers.push_back(number);
+            most = std::max(most, number + 1);
+          }
+          if (candidate == 0 || most < count) {
+            place = candidate;
+            count = most;
+            colors = std::move(numbers);
+          }
+        }
+        TupleGradient gradient;
+        gradient.tunable = static_cast<unsigned>(k);
+        gradient.term = declaration.termIndex;
+        gradient.parameter = declaration.parameter;
+        gradient.place = place;
+        gradient.count = count;
+        gradient.first = static_cast<unsigned>(program.gradientFields.size());
+        for (unsigned c = 0; c != count; ++c) {
+          Program::GradientField field;
+          field.tunable = gradient.tunable;
+          for (size_t t = 0; t != tuples; ++t)
+            if (colors[t] == c)
+              field.sites.push_back(
+                  {static_cast<uint32_t>(t),
+                   term.particles[t * term.arity + place]});
+          program.gradientFields.push_back(std::move(field));
+        }
+        size_t field = addField(set, "tgc_" + declaration.parameter);
+        set.fields[field].values = std::move(colors);
+        tupleGradients.push_back(std::move(gradient));
+      }
+  }
+  // The field of zeros that `@tunable` takes for each of those fields.
+  if (!program.gradientFields.empty()) {
+    Program::Field zero;
+    zero.name = "tg_zero";
+    zero.values.assign(topology.getNumParticles(), 0.0);
+    program.fields.push_back(std::move(zero));
   }
   if (!topology.pairs.empty()) {
     // The factors enter the parameters: ε s_LJ, and f q_i q_j s_C.
@@ -2062,7 +2164,7 @@ double Builder::getPairTails(const llvm::StringMap<double> &changes) const {
 }
 
 double Builder::getPairTailDerivative(unsigned index, StringRef name,
-                                      double value) const {
+                                      double value, bool shift) const {
   if (!llvm::is_contained(tailExpressions[index].getNames(), name))
     return 0.0;
   // Central differences extrapolated to h → 0 (Richardson); where a side
@@ -2076,7 +2178,7 @@ double Builder::getPairTailDerivative(unsigned index, StringRef name,
       llvm::consumeError(tail.takeError());
       return std::nan("");
     }
-    return tail->energy + tail->shift;
+    return tail->energy + (shift ? tail->shift : 0.0);
   };
   double h = 1.0e-3 * std::max(std::fabs(value), 1.0);
   auto central = [&](double step) {
@@ -2981,6 +3083,159 @@ void Builder::emitObservablesOutput(StringRef indent, StringRef x,
      << "_cast) : (i64, memref<?xf64>) -> ()\n";
 }
 
+llvm::Error Builder::collectTunableGradient() {
+  // Each tunable has a rule for its derivative, or the program provably
+  // does not read it, or the compile fails (D[tunable-gradient]): nothing
+  // is left out without a word.
+  bool dispersion = control.topologyDispersion != DispersionCorrection::None;
+  bool shifted = control.truncation == Truncation::Shift;
+  for (auto [k, declaration] : llvm::enumerate(control.tunableDeclarations)) {
+    Program::GradientOutcome outcome = Program::GradientOutcome::Zero;
+    switch (declaration.kind) {
+    case Control::TunableKind::PairConstant: {
+      // A constant that the expression of its term does not read enters
+      // no value of the program.
+      unsigned index = declaration.termIndex;
+      const PairTerm &term = control.pairs[index];
+      Expression expression =
+          llvm::cantFail(Expression::parse(term.expression, control.functions));
+      if (!llvm::is_contained(expression.getNames(), declaration.parameter))
+        break;
+      outcome = Program::GradientOutcome::Rule;
+      auto column = llvm::find(
+          control.tunableConstants,
+          std::pair<unsigned, std::string>(index, declaration.parameter));
+      double value = 0.0;
+      for (const auto &[name, v] : term.constants)
+        if (name == declaration.parameter)
+          value = v;
+      // The tail of the term and, under the shift, its estimate, which the
+      // host adds to the energy, by the quadrature that computes them
+      // (D209, D210).
+      Program::GradientSlot slot;
+      slot.tunable = static_cast<unsigned>(k);
+      if (dispersion && index < tailExpressions.size() &&
+          index < system.pairTails.size())
+        slot.volumeConstant = getPairTailDerivative(
+            index, declaration.parameter, value, shifted);
+      if (!std::isfinite(slot.volumeConstant))
+        return makeError("the derivative of the tail of the pair term '" +
+                         term.name + "' in its constant '" +
+                         declaration.parameter +
+                         "' cannot be integrated, for the tunable '" +
+                         declaration.name + "'");
+      program.gradientSlots.push_back(slot);
+      gradientColumns.push_back(
+          static_cast<unsigned>(column - control.tunableConstants.begin()));
+      break;
+    }
+    case Control::TunableKind::TupleParameter: {
+      // A parameter that the expression of its term reads has its fields
+      // (collectTopology); one that it does not read enters no value.
+      const TupleTerm &term =
+          system.topology->tupleTerms[declaration.termIndex];
+      if (term.isCentroid())
+        return makeError(
+            "System.tunable_gradient: the derivative of the energy in the "
+            "tunable '" + declaration.name + "', a parameter of the term '" +
+            term.name + "' over centers of groups, is not implemented yet");
+      if (llvm::any_of(tupleGradients, [&](const TupleGradient &gradient) {
+            return gradient.tunable == k;
+          }))
+        outcome = Program::GradientOutcome::Rule;
+      break;
+    }
+    default: {
+      static const char *const kinds[] = {
+          "charges",        "per-type sigma",    "per-type epsilon",
+          "sigma by pairs", "epsilon by pairs",  "a constant of a pair term",
+          "a parameter of a tuple term"};
+      return makeError(
+          "System.tunable_gradient: the derivative of the energy in the "
+          "tunable '" + declaration.name + "' (" +
+          kinds[static_cast<int>(declaration.kind)] +
+          ") is not implemented yet; the derivative takes constants of "
+          "pair terms and parameters of terms over tuples");
+    }
+    }
+    program.gradientOutcomes.push_back(outcome);
+  }
+  return llvm::Error::success();
+}
+
+void Builder::emitTunableGradientOutput(StringRef indent, StringRef x,
+                                        StringRef cell, StringRef prefix,
+                                        StringRef time) {
+  if (!program.tunableGradient)
+    return;
+  // A loop of one iteration if the host asks (the start value
+  // `tunable_gradient` is not 0) and none otherwise, as the branch of the
+  // start is: a run takes none of it.
+  std::string inner = (indent + "  ").str();
+  size_t count = program.gradientSlots.size();
+  std::string type = "memref<" + std::to_string(std::max<size_t>(count, 1)) +
+                     "xf64>";
+  os << indent << "%tg_none = arith.constant 0.0 : f64\n"
+     << indent << "%tg_asked = arith.cmpf one, %tunable_gradient, %tg_none"
+                  " : f64\n"
+     << indent << "%tg_trips = arith.select %tg_asked, %c1, %c0 : index\n"
+     << indent << "scf.for %tg_i = %c0 to %tg_trips step %c1 {\n"
+     << inner << "%tg_out = memref.alloca() : " << type << "\n";
+  size_t fields = program.gradientFields.size();
+  if (count + fields != 0) {
+    unsigned base = getNumPotentialArguments();
+    size_t constants = control.tunableConstants.size();
+    std::string arguments,
+        types = "(!vec, !md.cell" + getFieldTypes() + getTimeType();
+    for (size_t c = 0; c != constants; ++c) {
+      arguments += ", %tg_c" + std::to_string(c);
+      types += ", f64";
+    }
+    // The fields of zeros through which the derivatives in the parameters
+    // of tuples leave as fields of the particles: one field of the program
+    // serves all.
+    for (size_t c = 0; c != fields; ++c) {
+      arguments += (", " + prefix + "tg_zero").str();
+      types += ", !real";
+    }
+    types += ")";
+    os << inner;
+    for (size_t i = 0; i != count; ++i)
+      os << (i ? ", " : "") << "%tg_r" << i;
+    for (size_t c = 0; c != fields; ++c)
+      os << (count + c ? ", " : "") << "%tg_f" << c;
+    os << " = md.evaluate @tunable(" << x << ", " << cell
+       << getFieldValues(prefix) << getTimeValue(time) << arguments << ")\n"
+       << inner << "    request [";
+    for (size_t i = 0; i != count; ++i)
+      os << (i ? ", " : "") << "derivative(" << base + gradientColumns[i]
+         << ")";
+    for (size_t c = 0; c != fields; ++c)
+      os << (count + c ? ", " : "") << "derivative(" << base + constants + c
+         << ")";
+    os << "]\n" << inner << "    : " << types << " -> (";
+    for (size_t i = 0; i != count; ++i)
+      os << (i ? ", " : "") << "f64";
+    for (size_t c = 0; c != fields; ++c)
+      os << (count + c ? ", " : "") << "!real";
+    os << ")\n";
+    for (size_t c = 0; c != fields; ++c)
+      os << inner << "%tg_n" << c << " = arith.constant " << c << " : i64\n"
+         << inner << "mdrt.host_call @mdrtWriteTunableGradientField(%tg_n"
+         << c << ", %tg_f" << c << ", " << idName << ")\n"
+         << inner << "    : (i64, !real, !ids)\n";
+    for (size_t i = 0; i != count; ++i)
+      os << inner << "%tg_s" << i << " = arith.constant " << i << " : index\n"
+         << inner << "memref.store %tg_r" << i << ", %tg_out[%tg_s" << i
+         << "] : " << type << "\n";
+  }
+  os << inner << "%tg_cast = memref.cast %tg_out : " << type
+     << " to memref<?xf64>\n"
+     << inner << "func.call @mdrtWriteTunableGradient(%tg_cast)"
+                 " : (memref<?xf64>) -> ()\n"
+     << indent << "}\n";
+}
+
 double Builder::getDebyeKappa() const {
   // κ² = 2 N_A e² c / (ε0 ε_r k_B T) for a 1:1 salt of c mol/L, with the
   // constants of CODATA 2018 in SI units, c in mol/m³; κ in nm⁻¹.
@@ -3457,7 +3712,8 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
 
   os << "md.potential @" << name << "(%x: !vec, %cell: !md.cell"
      << getFieldParameters() << getTimeParameter() << getLambdaParameters()
-     << getObservedParameters() << ") -> f64 {\n";
+     << getObservedParameters() << getGradientParameters()
+     << ") -> f64 {\n";
   emitLambdaConstants("  ");
   // [free_energy] (D161): `@alchemical` has only what depends on λ.
   bool alchemicalOnly = terms & Alchemical;
@@ -3586,6 +3842,12 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
       auto tunable = llvm::find(control.tunableConstants,
                                 std::pair<unsigned, std::string>(
                                     static_cast<unsigned>(k), constant.first));
+      if (tunable != control.tunableConstants.end() && gradientArguments) {
+        values[constant.first] =
+            "%tg_c" +
+            std::to_string(tunable - control.tunableConstants.begin());
+        continue;
+      }
       if (tunable != control.tunableConstants.end()) {
         os << "    " << value << "_row = arith.constant 0 : i32\n"
            << "    " << value << "_column = arith.constant "
@@ -4153,12 +4415,31 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     }
     os << "  %u_" << set << " = md.sum_tuples %r_" << set
        << ", %x, %cell coordinates(" << list << ")";
+    // In `@tunable`, the tunable parameters of the term take the fields of
+    // zeros through which their derivatives leave (D[tunable-gradient]).
+    std::vector<const TupleGradient *> gradients;
+    if (gradientArguments)
+      for (const TupleGradient &gradient : tupleGradients)
+        if (gradient.term == index)
+          gradients.push_back(&gradient);
+    if (!gradients.empty()) {
+      std::string fields, types;
+      for (const TupleGradient *gradient : gradients)
+        for (unsigned c = 0; c != gradient->count; ++c) {
+          fields += (fields.empty() ? "%tg_d" : ", %tg_d") +
+                    std::to_string(gradient->first + c);
+          types += types.empty() ? "!real" : ", !real";
+        }
+      os << "\n      gather(" << fields << " : " << types << ")";
+    }
     if (!term.parameters.empty()) {
       os << "\n      tuple(";
       for (auto [k, parameter] : llvm::enumerate(term.parameters))
         os << (k ? ", " : "") << "%f_" << set << "_" << parameter.first;
+      for (const TupleGradient *gradient : gradients)
+        os << ", %f_" << set << "_tgc_" << gradient->parameter;
       os << " : ";
-      for (size_t k = 0; k != term.parameters.size(); ++k)
+      for (size_t k = 0; k != term.parameters.size() + gradients.size(); ++k)
         os << (k ? ", " : "") << "!of_" << set;
       os << ")";
     }
@@ -4170,8 +4451,14 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     } else {
       os << " {\n  ^bb0(%c: f64";
     }
+    for (const TupleGradient *gradient : gradients)
+      for (unsigned c = 0; c != gradient->count; ++c)
+        for (unsigned member = 0; member != term.arity; ++member)
+          os << ", %tgd" << gradient->first + c << "_" << member << ": f64";
     for (const auto &parameter : term.parameters)
       os << ", %cp_" << parameter.first << ": f64";
+    for (const TupleGradient *gradient : gradients)
+      os << ", %cp_tgc_" << gradient->parameter << ": f64";
     os << "):\n";
     if (term.isCompound() || term.arity == 2)
       os << "    %c_scale = arith.constant " << formatReal(1.0 / units::length)
@@ -4200,6 +4487,26 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     bindLambdas(values);
     for (const auto &parameter : term.parameters)
       values[parameter.first] = "%cp_" + parameter.first;
+    for (const TupleGradient *gradient : gradients) {
+      // p + d_c[member] for the field c of the tuple: p, since d is zero.
+      std::string stem = "%tgp_" + gradient->parameter;
+      std::string value = "%cp_" + gradient->parameter;
+      os << "    " << stem << "_zero = arith.constant 0.0 : f64\n";
+      for (unsigned c = 0; c != gradient->count; ++c) {
+        std::string at = stem + "_" + std::to_string(c);
+        os << "    " << at << "_n = arith.constant " << formatReal(c)
+           << " : f64\n"
+           << "    " << at << "_is = arith.cmpf oeq, %cp_tgc_"
+           << gradient->parameter << ", " << at << "_n : f64\n"
+           << "    " << at << "_d = arith.select " << at << "_is, %tgd"
+           << gradient->first + c << "_" << gradient->place << ", " << stem
+           << "_zero : f64\n"
+           << "    " << at << " = arith.addf " << value << ", " << at
+           << "_d : f64\n";
+        value = at;
+      }
+      values[gradient->parameter] = value;
+    }
     bindObserved(term.name, values);
     Expression expression = llvm::cantFail(Expression::parse(term.expression, control.functions));
     std::string energy = expression.emit(os, values, "%ce", "    ", term.name);
@@ -8266,6 +8573,16 @@ void Builder::collectStartValues() {
   if (isRestart() && scalesEveryStep() && system.barostatState.size() == 9)
     for (int k = 0; k != 9; ++k)
       add("bstate" + std::to_string(k), system.barostatState[k]);
+  // Whether the host asks for the derivative in the tunables, 0 unless a
+  // simulation sets it for one evaluation, and the tunable constants of the
+  // pair terms as the numbers that `@tunable` takes (D[tunable-gradient]).
+  if (program.tunableGradient) {
+    add("tunable_gradient", 0.0);
+    for (auto [k, constant] : llvm::enumerate(control.tunableConstants))
+      for (const auto &[name, value] : control.pairs[constant.first].constants)
+        if (name == constant.second)
+          add("tg_c" + std::to_string(k), value);
+  }
 }
 
 void Builder::emitEntry() {
@@ -8285,6 +8602,13 @@ void Builder::emitEntry() {
      << "    attributes {llvm.emit_c_interface}\n"
      << "func.func private @mdrtWriteTerms(memref<?xf64>)\n"
      << "    attributes {llvm.emit_c_interface}\n"
+     << (program.tunableGradient
+             ? "func.func private @mdrtWriteTunableGradient(memref<?xf64>)\n"
+               "    attributes {llvm.emit_c_interface}\n"
+               "func.func private @mdrtWriteTunableGradientField(i64, "
+               "memref<?xf64>, memref<?xi32>)\n"
+               "    attributes {llvm.emit_c_interface}\n"
+             : "")
      << "func.func private @mdrtWriteVirial(f64, f64, f64)\n"
      << "    attributes {llvm.emit_c_interface}\n"
      << "func.func private @mdrtWriteFrame(i64, memref<?x3x" << state
@@ -8656,6 +8980,7 @@ void Builder::emitEntry() {
     emitPullOutput("  ", "%x0", "%cell", "%p_", "%start", "%time0");
     emitFreeEnergyOutput("  ", "%x0", "%cell", "%p_", "%start", "%time0");
     emitObservablesOutput("  ", "%x0", "%cell", "%p_", "%start", "%time0");
+    emitTunableGradientOutput("  ", "%x0", "%cell", "%p_", "%time0");
     // The state that the first scaling takes its pressure from (D92), by
     // axes.
     if (scalesEveryStep()) {
@@ -9163,6 +9488,10 @@ llvm::Error Builder::build() {
       return makeError("tunable parameters do not take [free_energy], "
                        "observe, LJPME, or pulls yet");
     program.tunable = true;
+    // The derivative in the tunables is a branch of the start of a program
+    // that takes steps (D[tunable-gradient]).
+    program.tunableGradient =
+        control.tunableGradient && !control.minimize;
   }
   switch (control.precision) {
   case Precision::Single:
@@ -9365,6 +9694,18 @@ llvm::Error Builder::build() {
     emitTopologyPotential("alchemical", AllTerms | Alchemical);
     shiftsAtCutoff = false;
     lambdaArguments = false;
+  }
+  // The potential whose derivatives in the tunables the host asks for:
+  // that of the energy, with the tunable constants as arguments
+  // (D[tunable-gradient]).
+  if (program.tunableGradient) {
+    if (llvm::Error error = collectTunableGradient())
+      return error;
+    if (!program.gradientSlots.empty() || !program.gradientFields.empty()) {
+      gradientArguments = true;
+      emitTopologyPotential("tunable", AllTerms);
+      gradientArguments = false;
+    }
   }
   // The energies and derivatives of `observe`, of the potential that the
   // forces sample (D210).

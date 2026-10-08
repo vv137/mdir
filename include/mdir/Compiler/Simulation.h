@@ -172,6 +172,22 @@ public:
   /// changes.
   llvm::Error updateTunables(
       const std::vector<std::pair<std::string, std::vector<double>>> &changes);
+  /// The derivative of the potential energy in the tunables at the state
+  /// (D[tunable-gradient], docs/python-gradient.md): one array per
+  /// tunable, of the shape of its values, in kJ/mol per unit of the
+  /// tunable; the potential energy that it is the derivative of; the
+  /// version of the values and the step; and for each tunable whether its
+  /// derivative is zero by proof.
+  struct TunableGradient {
+    std::vector<std::vector<double>> values;
+    std::vector<bool> zero;
+    double energy = 0.0;
+    int64_t version = 0, step = 0;
+  };
+  /// Evaluates the state without a step, as `evaluate` does, with the
+  /// derivative in the tunables, which only a program compiled with it
+  /// carries.
+  llvm::Expected<TunableGradient> evaluateTunableGradient();
   /// Writes the checkpoint of `mdir run` (H5MD format 1, D173) of the state
   /// after the last run, with `.prev` rotation and durable replacement, and
   /// the additional entries of a Python simulation
@@ -380,6 +396,9 @@ private:
   std::vector<std::vector<double>> tunableValues;
   int64_t tunablesVersion = 0;
   std::vector<std::pair<int64_t, int64_t>> tunablesHistory;
+  /// Whether the activation that begins takes the derivative in the
+  /// tunables (the start value `tunable_gradient`).
+  bool gradientAsked = false;
   /// Whether the part under way evaluates the forces anew after an update:
   /// a call of the entry with `%first_call` 2 and no steps.
   bool refreshing = false;

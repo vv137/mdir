@@ -36,8 +36,13 @@ llvm::Expected<TunableSet>
 mdir::model::resolveTunables(const System &model, driver::Control &control,
                              driver::System &system) {
   TunableSet set;
-  if (model.tunables.empty())
+  if (model.tunables.empty()) {
+    if (model.tunableGradient)
+      return input("System.tunable_gradient asks for the derivative of the "
+                   "energy in the tunables, and the system declares none "
+                   "(System.tunables)");
     return set;
+  }
   const driver::Topology &topology = *system.topology;
   size_t types = topology.getNumTypes();
   for (size_t a = 0; a != types; ++a) {
@@ -191,6 +196,9 @@ mdir::model::resolveTunables(const System &model, driver::Control &control,
     }
     if (entry.kind == TunableSet::Entry::PairConstant)
       control.tunableConstants.push_back({entry.termIndex, tunable.parameter});
+    control.tunableDeclarations.push_back(
+        {entry.name, static_cast<driver::Control::TunableKind>(entry.kind),
+         entry.termIndex, entry.parameter});
     set.tunables.push_back(std::move(entry));
     set.values.push_back(std::move(values));
   }
@@ -259,6 +267,7 @@ mdir::model::resolveTunables(const System &model, driver::Control &control,
   for (const auto &tails : system.pairTails)
     set.pairTails.push_back(!tails.empty());
   control.tunables = true;
+  control.tunableGradient = model.tunableGradient;
   if (llvm::Error error = applyTunables(set, set.values, control, system))
     return std::move(error);
   return set;

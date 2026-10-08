@@ -310,6 +310,9 @@ PYBIND11_MODULE(_core, m) {
   property(system, "tuple_terms", &model::System::tupleTerms);
   property(system, "restraints", &model::System::restraints);
   property(system, "tunables", &model::System::tunables);
+  // Whether the program carries the derivative of the energy in the
+  // tunables (D[tunable-gradient]).
+  property(system, "tunable_gradient", &model::System::tunableGradient);
   system.def_property("restraint_reference", [](const Input<model::System> &o) {
     const auto &v = o.value.restraintReference;
     return host::copy(v.data(), v.size(), {static_cast<py::ssize_t>(v.size() / 3), 3});
@@ -488,7 +491,7 @@ PYBIND11_MODULE(_core, m) {
       d["force_dtype"] = c.program.force == driver::Element::F64 ? "float64" : "float32";
       d["pme"] = c.program.pme;
       d["pme_grid"] = std::array<int64_t, 3>{c.program.pmeGrid[0], c.program.pmeGrid[1], c.program.pmeGrid[2]};
-      d["tunables"] = tunables::describe(p.prepared->tunables);
+      d["tunables"] = tunables::describe(p.prepared->tunables, c.program);
       // The correction for the dispersion (D209): whether it is on and was
       // given, and for each pair term whether its tail is in it
       // (D222).
@@ -819,7 +822,59 @@ PYBIND11_MODULE(_core, m) {
     if (*error) raise(std::move(*error));
     return sim.getTunablesVersion();
   };
+  // The derivative of the energy in the tunables at a state
+  // (D[tunable-gradient]): a read-only mapping of the names to arrays of
+  // the shape of the values.
+  struct TunableGradient {
+    py::dict values;
+    py::frozenset zero;
+    double energy;
+    int64_t version, step;
+  };
+  py::class_<TunableGradient>(m, "TunableGradient")
+    .def("__getitem__", [](const TunableGradient &g, const std::string &name) -> py::object {
+      if (!g.values.contains(name)) throw py::key_error(name);
+      return g.values[py::str(name)];
+    })
+    .def("__len__", [](const TunableGradient &g) { return g.values.size(); })
+    .def("__contains__", [](const TunableGradient &g, const std::string &name) {
+      return g.values.contains(name);
+    })
+    .def("__iter__", [](const TunableGradient &g) { return py::iter(g.values); })
+    .def("keys", [](const TunableGradient &g) { return g.values.attr("keys")(); })
+    .def("values", [](const TunableGradient &g) { return g.values.attr("values")(); })
+    .def("items", [](const TunableGradient &g) { return g.values.attr("items")(); })
+    .def_property_readonly("energy", [](const TunableGradient &g) { return g.energy; })
+    .def_property_readonly("version", [](const TunableGradient &g) { return g.version; })
+    .def_property_readonly("step", [](const TunableGradient &g) { return g.step; })
+    .def_property_readonly("zero", [](const TunableGradient &g) { return g.zero; })
+    .def("__repr__", [](const TunableGradient &g) {
+      return "TunableGradient(step=" + std::to_string(g.step) + ", version=" +
+             std::to_string(g.version) + ", " + py::str(py::list(g.values)).cast<std::string>() + ")";
+    });
   py::class_<TunableValues>(m, "TunableValues")
+    .def("gradient", [](TunableValues &t) {
+      auto &sim = simulationOf(t);
+      std::optional<llvm::Expected<compiler::Simulation::TunableGradient>> result;
+      {
+        py::gil_scoped_release release;
+        result.emplace(sim.evaluateTunableGradient());
+      }
+      if (!*result) raise(result->takeError());
+      const auto &given = **result;
+      TunableGradient g{py::dict(), py::frozenset(py::set()), given.energy, given.version, given.step};
+      py::set zero;
+      const auto &set = sim.getTunables();
+      for (size_t k = 0; k != set.tunables.size(); ++k) {
+        const auto &v = given.values[k];
+        py::array a = host::copy(v.data(), v.size(), {static_cast<py::ssize_t>(v.size())});
+        a.attr("setflags")(py::arg("write") = false);
+        g.values[py::str(set.tunables[k].name)] = a;
+        if (given.zero[k]) zero.add(py::str(set.tunables[k].name));
+      }
+      g.zero = py::frozenset(zero);
+      return g;
+    })
     .def("__getitem__", [](const TunableValues &t, const std::string &name) { return valueOf(t, name); })
     .def("__setitem__", [](TunableValues &t, const std::string &name, py::object value) {
       py::dict d; d[py::str(name)] = value; updateOf(t, d);

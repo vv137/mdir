@@ -162,6 +162,27 @@ struct Control {
   /// `tunable_constants` that the program reads them from.
   bool tunables = false;
   std::vector<std::pair<unsigned, std::string>> tunableConstants;
+  /// Whether the program carries the derivative of the energy in the
+  /// tunables (D[tunable-gradient], docs/python-gradient.md), and the
+  /// declarations that it differentiates, in the order of the tunables.
+  bool tunableGradient = false;
+  enum class TunableKind {
+    Charge,
+    Sigma,
+    Epsilon,
+    SigmaPair,
+    EpsilonPair,
+    PairConstant,
+    TupleParameter
+  };
+  struct TunableDeclaration {
+    std::string name;
+    TunableKind kind = TunableKind::Charge;
+    /// The index of the term among the pair terms or the tuple terms.
+    unsigned termIndex = 0;
+    std::string parameter;
+  };
+  std::vector<TunableDeclaration> tunableDeclarations;
 
   bool hasTopology() const {
     return inMemoryTopology || !prmtopFile.empty() || !gromacsTopologyFile.empty() ||

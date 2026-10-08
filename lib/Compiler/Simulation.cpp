@@ -435,6 +435,10 @@ compileEngine(const Control &control, const System &system,
         (void *)&_mlir_ciface_mdrtWriteFreeEnergy);
     add("_mlir_ciface_mdrtWriteObservables",
         (void *)&_mlir_ciface_mdrtWriteObservables);
+    add("_mlir_ciface_mdrtWriteTunableGradient",
+        (void *)&_mlir_ciface_mdrtWriteTunableGradient);
+    add("_mlir_ciface_mdrtWriteTunableGradientField",
+        (void *)&_mlir_ciface_mdrtWriteTunableGradientField);
     add("_mlir_ciface_mdrtSetBox", (void *)&_mlir_ciface_mdrtSetBox);
     add("_mlir_ciface_mdrtSetTilt", (void *)&_mlir_ciface_mdrtSetTilt);
     add("_mlir_ciface_mdrtSetBarostatState",
@@ -681,7 +685,9 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
   a->firstCall = firstCall;
   a->firstSize = minimizationSize;
   for (const Program::StartValue &value : p.startValues)
-    a->startValues.push_back(value.value);
+    a->startValues.push_back(value.name == "tunable_gradient" && gradientAsked
+                                 ? 1.0
+                                 : value.value);
   for (double &edge : a->box)
     args.pointers.push_back(&edge);
   args.pointers.push_back(&a->timestep);
@@ -1918,6 +1924,88 @@ llvm::Error Simulation::evaluatePart(bool committed) {
   if (refresh && prepared.control.integrator == Integrator::Leapfrog)
     output->lastEnergies.step = -1;
   return llvm::Error::success();
+}
+
+llvm::Expected<Simulation::TunableGradient>
+Simulation::evaluateTunableGradient() {
+  if (busy.exchange(true))
+    return simulationError("another operation is under way on this "
+                           "simulation");
+  struct Release {
+    std::atomic<bool> &flag;
+    ~Release() { flag = false; }
+  } release{busy};
+  if (llvm::Error error = checkLeases("an evaluation"))
+    return std::move(error);
+  if (failed)
+    return simulationError("the simulation failed earlier; it keeps the "
+                           "state of step " + llvm::Twine(step) +
+                           " and runs no further");
+  const model::TunableSet &set = prepared.tunables;
+  if (set.empty())
+    return inputError("the program of this simulation declares no tunable "
+                      "parameters (System.tunables)");
+  if (!prepared.control.tunableGradient)
+    return inputError("the program of this simulation was compiled without "
+                      "the derivative in the tunables: set "
+                      "System.tunable_gradient = True and compile again");
+  if (prepared.control.minimize)
+    return inputError("this simulation minimizes: the derivative in the "
+                      "tunables is evaluated by a simulation that takes "
+                      "steps");
+  // The evaluation of the state, whose entry takes the branch of the
+  // derivative this once.
+  output->tunableGradientWritten = false;
+  output->tunableGradientFields.clear();
+  gradientAsked = true;
+  llvm::Error error = evaluatePart();
+  gradientAsked = false;
+  if (error)
+    return std::move(error);
+  const Program &p = compiled->program;
+  if (!output->tunableGradientWritten ||
+      output->tunableGradient.size() < p.gradientSlots.size() ||
+      output->tunableGradientFields.size() < p.gradientFields.size())
+    return simulationError("the evaluation did not give the derivative in "
+                           "the tunables");
+  TunableGradient result;
+  result.energy = output->lastEnergies.potential;
+  result.version = tunablesVersion;
+  result.step = step;
+  for (auto [k, entry] : llvm::enumerate(set.tunables)) {
+    result.values.emplace_back(entry.entries, 0.0);
+    result.zero.push_back(k < p.gradientOutcomes.size() &&
+                          p.gradientOutcomes[k] ==
+                              Program::GradientOutcome::Zero);
+  }
+  // The chain rule from the sites to the entries: each site adds its
+  // derivative to the entry that its map names. What the host adds to the
+  // energy (the tails of pair terms) is proportional to 1 / V.
+  double scale = compiled->volume / output->tunableGradientVolume;
+  for (auto [i, slot] : llvm::enumerate(p.gradientSlots)) {
+    const model::TunableSet::Entry &entry = set.tunables[slot.tunable];
+    int64_t at = entry.map[slot.site];
+    if (at < 0)
+      continue;
+    result.values[slot.tunable][at] +=
+        output->tunableGradient[i] + slot.volumeConstant * scale;
+  }
+  for (auto [c, field] : llvm::enumerate(p.gradientFields)) {
+    const model::TunableSet::Entry &entry = set.tunables[field.tunable];
+    const std::vector<double> &values = output->tunableGradientFields[c];
+    for (auto [site, particle] : field.sites) {
+      int64_t at = entry.map[site];
+      if (at >= 0)
+        result.values[field.tunable][at] += values[particle];
+    }
+  }
+  for (auto [k, values] : llvm::enumerate(result.values))
+    for (double value : values)
+      if (!std::isfinite(value))
+        return simulationError("the derivative of the energy in the tunable '" +
+                               set.tunables[k].name +
+                               "' is not finite at this state");
+  return result;
 }
 
 llvm::Error Simulation::evaluate() {

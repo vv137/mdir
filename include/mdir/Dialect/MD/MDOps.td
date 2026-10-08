@@ -686,6 +686,7 @@ def MD_EvaluateOp : MD_Op<"evaluate", [
     | `forces` | Type of the position field | `F_i = −∂U/∂x_i` |
     | `virial` | `vector<9xf64>` | `W = Σ d_ij ⊗ K(i, j)`, in row-major order |
     | `derivative(n)` | `f64` | `∂U/∂θ_n`, where `θ_n` is scalar argument `n` |
+    | `derivative(n)` | Type of the field | `g_i = ∂U/∂a_i`, where `a` is argument `n`, a field of the particles with one component of `f64` |
 
     The op does not survive semantic differentiation, which replaces it with
     a call to a generated `md.function`.
