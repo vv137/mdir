@@ -490,6 +490,22 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- An output no longer counts for `rebuild_interval`
+  (D[output-independence], #233). The potentials of `[output]
+  observables`, of the free-energy file, and of a pull file share the
+  neighbor structure of the steps, and each of their evaluations was a
+  refresh of it: with `rebuild_interval = 4` a run with the three files
+  built the structure 33 times in 80 steps and without them 22 times, and
+  ended in another state. A refresh that repeats the last one of its
+  structure is now removed, so the outputs read the structure of the step.
+  Runs without `rebuild_interval` do not change. This is also the cause of
+  the trajectories that depended on the free-energy file under the barostat
+  of Trotter type before the fix of #218: the refresh of the output, in the
+  cell of before the scaling, built the structure where the steps would not
+  have, and the steps summed their forces in another order. No pair within
+  the cutoff was missing from such a structure in 20,000 instrumented
+  steps; the trajectories of those runs are valid.
+  `output-independence*.test` compare runs with and without each output.
 - The estimate of the shift of the correction for the dispersion (D210)
   under a barostat (#224). It is `c1/V - c2`, and the whole of it was scaled
   with the volume as the tail is, which left `c2 (1 - V0/V)` in the energy
