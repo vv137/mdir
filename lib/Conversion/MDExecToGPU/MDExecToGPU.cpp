@@ -3049,8 +3049,11 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // (D85, D108).
   Value weights = op.getScratch().size() > 4 ? op.getScratch()[4] : Value();
   Value bricks = op.getScratch().size() > 6 ? op.getScratch()[6] : Value();
+  // The potential at the particles (the fourth result of md.reciprocal)
+  // has the kernel of its own, which takes no weights.
   bool usesWeights = weights && bricks && !deterministic &&
-                     op.getOrder() == 4 && force.isF32();
+                     op.getOrder() == 4 && force.isF32() &&
+                     !op.getPotential();
 
   // Marked, the sum runs on a second stream, beside the ops up to its join
   // (md_exec.join, D87). All the work that it issues goes there, and none
@@ -3137,7 +3140,9 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                          ValueRange{positions, charges, real, box, weights,
                                     k1, k2, k3, forces});
   else
-    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_gather"),
+    func::CallOp::create(builder, loc,
+                         instance(op.getPotential() ? "mdrt_gpu_pme_potential"
+                                                    : "mdrt_gpu_pme_gather"),
                          ValueRange{positions, charges, real, box, k1, k2, k3,
                                     order, forces});
   if (side) {
