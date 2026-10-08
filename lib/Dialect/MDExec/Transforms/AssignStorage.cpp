@@ -42,6 +42,16 @@ namespace {
 struct Scope {
   Scope(Scope *parent, MLIRContext *context)
       : parent(parent), builder(context) {}
+  Scope(const Scope &) = delete;
+  Scope &operator=(const Scope &) = delete;
+  /// A body that no loop took, because the conversion failed before its
+  /// loop was created, goes with its scope. Its ops use values of the
+  /// enclosing regions; left behind, they would outlive the ops that define
+  /// those values, which cannot be destroyed while they have uses (#208).
+  ~Scope() {
+    if (body && !body->getParent())
+      delete body;
+  }
 
   /// The scope of the body of the function.
   Scope &getRoot() { return parent ? parent->getRoot() : *this; }
@@ -67,7 +77,8 @@ struct Scope {
   Scope *parent;
   OpBuilder builder;
 
-  /// The body of the loop, for the scope of a loop.
+  /// The body of the loop, for the scope of a loop. The scope owns it until
+  /// it is the block of the loop's region.
   Block *body = nullptr;
 
   llvm::DenseSet<Value> owned;
