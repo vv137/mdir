@@ -23,7 +23,7 @@ those that the kernel takes back, change nothing. The thread cache of the
 allocator is turned off for the process: a block freed into it still counts
 as in use, and the caches of some 130 threads fill over the first hundred
 simulations (+4 KiB per simulation from simulation 5 to 40 with 8 threads
-that compile and +61 KiB from 5 to 25 with 128, against +0.4 KiB from 5 to
+that compile and +62 KiB from 5 to 25 with 128, against +0.4 KiB from 5 to
 40 without the cache)."""
 import ctypes
 import gc
