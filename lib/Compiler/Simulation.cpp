@@ -1416,8 +1416,20 @@ void Simulation::closeReports() {
   reports = Reports();
 }
 
-llvm::Error Simulation::checkLeases(const char *operation) const {
+llvm::Error Simulation::checkLeases(const char *operation) {
   int64_t live = leases;
+  if (borrowed) {
+    if (live > 0)
+      return simulationError(
+          llvm::Twine(operation) +
+          " is refused while a writable borrow of this simulation is live (" +
+          llvm::Twine(live) + (live == 1 ? " lease" : " leases") +
+          "): commit or abandon it (Borrow.commit(), Borrow.abandon()) and "
+          "delete the tensors taken from it first");
+    // Abandoned, and its last tensor is gone.
+    undoBorrow();
+    return llvm::Error::success();
+  }
   if (live <= 0)
     return llvm::Error::success();
   return simulationError(llvm::Twine(operation) + " is refused while " +
@@ -1426,6 +1438,34 @@ llvm::Error Simulation::checkLeases(const char *operation) const {
                          " of this simulation " + (live == 1 ? "is" : "are") +
                          " alive: release the view (View.release()) and "
                          "delete the tensors taken from it first");
+}
+
+void Simulation::undoBorrow() {
+  std::lock_guard<std::mutex> lock(getRunMutex());
+  unsigned written = borrowWritten.exchange(0);
+  if (activation && written && snapshot.valid) {
+    // What the consumer wrote, on any stream, comes first.
+    waitForConsumers();
+    Activation &a = *activation;
+    size_t width = getWidth(compiled->program.state);
+    auto restore = [&](const StridedMemRefType<char, 2> &buffer,
+                       const void *from) {
+      void *to = const_cast<char *>(getStart(buffer, width));
+      if (a.onDevice) {
+        static auto within = findRuntime<void(void *, const void *, uint64_t)>(
+            "mdrtDeviceCopyWithin");
+        within(to, from, snapshot.stateBytes);
+      } else {
+        std::memcpy(to, from, snapshot.stateBytes);
+      }
+    };
+    if (written & WrittenPositions)
+      restore(a.x, snapshot.positions);
+    if (written & WrittenVelocities)
+      restore(a.v, snapshot.velocities);
+    ++generation;
+  }
+  borrowed = false;
 }
 
 void Simulation::waitForConsumers() {
@@ -1445,6 +1485,9 @@ llvm::Expected<compiler::SimulationView> Simulation::takeView() {
     std::atomic<bool> &flag;
     ~Release() { flag = false; }
   } release{busy};
+  if (borrowed)
+    if (llvm::Error error = checkLeases("a view"))
+      return std::move(error);
   if (!activation || !activation->atBoundary)
     return simulationError(
         failed ? llvm::Twine("the simulation failed; its state is on the "
@@ -1452,6 +1495,12 @@ llvm::Expected<compiler::SimulationView> Simulation::takeView() {
                : llvm::Twine("the simulation has no state where its program "
                              "keeps it before its first run; run it, or "
                              "evaluate it with run(0, energy=True), first"));
+  compiler::SimulationView view = describeView();
+  ++leases;
+  return view;
+}
+
+compiler::SimulationView Simulation::describeView() const {
   Activation &a = *activation;
   const Program &p = compiled->program;
   compiler::SimulationView view;
@@ -1474,7 +1523,6 @@ llvm::Expected<compiler::SimulationView> Simulation::takeView() {
       hasRun && prepared.control.integrator == Integrator::Leapfrog ? -0.5
                                                                     : 0.0;
   view.generation = generation;
-  ++leases;
   return view;
 }
 
@@ -1486,6 +1534,212 @@ void Simulation::handOff(uint64_t consumer) {
   static auto handoff = findRuntime<void(uint64_t)>("mdrtDeviceHandOff");
   if (handoff)
     handoff(consumer);
+}
+
+llvm::Expected<compiler::SimulationView> Simulation::takeBorrow() {
+  if (busy.exchange(true))
+    return simulationError("another operation is under way on this "
+                           "simulation");
+  struct Release {
+    std::atomic<bool> &flag;
+    ~Release() { flag = false; }
+  } release{busy};
+  if (llvm::Error error = checkLeases("a writable borrow"))
+    return std::move(error);
+  if (prepared.control.minimize)
+    return unsupported("a simulation that minimizes takes no writable "
+                       "borrow");
+  if (!activation || !activation->atBoundary)
+    return simulationError(
+        failed ? llvm::Twine("the simulation failed; its state is on the "
+                             "host only, which state() copies")
+               : llvm::Twine("the simulation has no state where its program "
+                             "keeps it before its first run; run it, or "
+                             "evaluate it with run(0, energy=True), first"));
+  compiler::SimulationView view = describeView();
+  borrowWritten = 0;
+  borrowed = true;
+  ++leases;
+  return view;
+}
+
+std::array<double, 3> Simulation::getCellEdges() const {
+  return {output->box[0], output->box[1], output->box[2]};
+}
+
+bool Simulation::hasOrthorhombicCell() const {
+  return prepared.control.periodic && system.tilt[0] == 0.0 &&
+         system.tilt[1] == 0.0 && system.tilt[2] == 0.0;
+}
+
+llvm::Expected<std::vector<std::string>> Simulation::commitBorrow(
+    const std::optional<std::array<double, 3>> &cell,
+    const std::vector<std::pair<std::string, std::vector<double>>> &changes) {
+  if (busy.exchange(true))
+    return simulationError("another operation is under way on this "
+                           "simulation");
+  struct Release {
+    std::atomic<bool> &flag;
+    ~Release() { flag = false; }
+  } release{busy};
+  if (!borrowed)
+    return simulationError("this simulation has no writable borrow to "
+                           "commit");
+  // An exported tensor cannot be revoked, and what it wrote after the
+  // commit would not be tracked.
+  int64_t live = leases;
+  if (live != 1)
+    return simulationError(
+        "a commit is refused while " + llvm::Twine(live - 1) +
+        (live == 2 ? " tensor" : " tensors") + " taken from the borrow " +
+        (live == 2 ? "is" : "are") + " alive: delete " +
+        (live == 2 ? "it" : "them") + " first");
+  if (!activation || !activation->atBoundary || !snapshot.valid)
+    return simulationError("the borrow has no buffers; this is a defect of "
+                           "mdir");
+  unsigned written = borrowWritten;
+  bool changesCell = false;
+  if (cell)
+    for (int k = 0; k != 3; ++k)
+      changesCell = changesCell || std::memcmp(&(*cell)[k], &output->box[k],
+                                               sizeof(double)) != 0;
+  if (!written && !changesCell && changes.empty()) {
+    borrowed = false;
+    return std::vector<std::string>();
+  }
+  Activation &a = *activation;
+  // What the consumer wrote, where the program keeps it, and the state of
+  // before the borrow, which a commit that fails returns to.
+  std::vector<double> x, v, f, x0, v0, f0;
+  {
+    std::lock_guard<std::mutex> lock(getRunMutex());
+    const Program &p = compiled->program;
+    // The writes of the consumer, on any stream of the device, come first.
+    waitForConsumers();
+    if (written)
+      readState(a, p, getStart(a.x, getWidth(p.state)),
+                getStart(a.v, getWidth(p.state)),
+                getStart(a.f, getWidth(p.force)), a.onDevice, x, v, f);
+    readState(a, p, snapshot.positions, snapshot.velocities, snapshot.forces,
+              snapshot.onDevice, x0, v0, f0);
+  }
+  // Everything is checked before anything changes.
+  auto finite = [&](const std::vector<double> &values,
+                    const char *name) -> llvm::Error {
+    for (size_t i = 0; i != values.size(); ++i)
+      if (!std::isfinite(values[i]))
+        return inputError("the " + llvm::Twine(name) +
+                          " written for particle " + llvm::Twine(i / 3) +
+                          " of the input are not finite; nothing is "
+                          "committed");
+    return llvm::Error::success();
+  };
+  if (written & WrittenPositions)
+    if (llvm::Error error = finite(x, "positions"))
+      return std::move(error);
+  if (written & WrittenVelocities)
+    if (llvm::Error error = finite(v, "velocities"))
+      return std::move(error);
+  if (changesCell) {
+    if (!hasOrthorhombicCell())
+      return unsupported("a commit takes the edges of an orthorhombic "
+                         "cell; a triclinic cell, with its tilts, is not "
+                         "supported yet (#206)");
+    double least = 2.0 * compiled->control.cutoffDistance * units::length;
+    for (int k = 0; k != 3; ++k)
+      if (!std::isfinite((*cell)[k]) || (*cell)[k] < least)
+        return inputError("the edge " + llvm::Twine(k) +
+                          " written for the cell, " +
+                          std::to_string((*cell)[k]) +
+                          " nm, is not finite or is less than twice the "
+                          "cutoff, " + std::to_string(least) +
+                          " nm; nothing is committed");
+  }
+  std::optional<Program> program;
+  std::vector<std::vector<double>> values = tunableValues;
+  if (!changes.empty()) {
+    const model::TunableSet &set = prepared.tunables;
+    for (const auto &[name, given] : changes) {
+      int k = set.find(name);
+      if (k < 0)
+        return inputError("this simulation has no tunable named '" + name +
+                          "'");
+      values[k] = given;
+    }
+    auto built = rebuildTunables(values);
+    if (!built)
+      return built.takeError();
+    program.emplace(std::move(*built));
+  }
+
+  // The commit: the state of the host is the committed one, and the
+  // program takes it, with the new values, in an activation of its own
+  // (D215), whose order, neighbor structures, and forces are those of that
+  // state.
+  double boxBefore[3] = {output->box[0], output->box[1], output->box[2]};
+  double systemBoxBefore[3] = {system.box[0], system.box[1], system.box[2]};
+  system.positions = written & WrittenPositions ? std::move(x) : x0;
+  system.velocities = written & WrittenVelocities ? std::move(v) : v0;
+  forces = f0;
+  hostCurrent = true;
+  {
+    std::lock_guard<std::mutex> lock(getRunMutex());
+    endActivation();
+  }
+  if (changesCell) {
+    for (int k = 0; k != 3; ++k)
+      system.box[k] = output->box[k] = (*cell)[k];
+    output->volume = output->box[0] * output->box[1] * output->box[2];
+  }
+  std::vector<std::vector<double>> valuesBefore;
+  if (program) {
+    std::swap(compiled->program, *program);
+    valuesBefore = std::move(tunableValues);
+    tunableValues = std::move(values);
+  }
+  borrowWritten = 0;
+  borrowed = false;
+  if (llvm::Error error = evaluatePart(/*committed=*/true)) {
+    if (program) {
+      std::swap(compiled->program, *program);
+      tunableValues = std::move(valuesBefore);
+    }
+    for (int k = 0; k != 3; ++k) {
+      output->box[k] = boxBefore[k];
+      system.box[k] = systemBoxBefore[k];
+    }
+    output->volume = output->box[0] * output->box[1] * output->box[2];
+    system.positions = std::move(x0);
+    system.velocities = std::move(v0);
+    forces = std::move(f0);
+    hostCurrent = true;
+    failed = false;
+    output->lastEnergies.step = -1;
+    return simulationError("the committed state: " +
+                           llvm::toString(std::move(error)) +
+                           "; the commit is undone, and the borrow has ended");
+  }
+  std::vector<std::string> fields;
+  if (written & WrittenPositions) {
+    ++stateVersions.positions;
+    fields.push_back("positions");
+  }
+  if (written & WrittenVelocities) {
+    ++stateVersions.velocities;
+    fields.push_back("velocities");
+  }
+  if (changesCell) {
+    ++stateVersions.cell;
+    fields.push_back("cell");
+  }
+  if (program) {
+    ++tunablesVersion;
+    tunablesHistory.push_back({step, tunablesVersion});
+    output->tunablesVersion = tunablesVersion;
+    fields.push_back("tunables");
+  }
+  commits.push_back({step, fields});
+  return fields;
 }
 
 double Simulation::getTime() const {
@@ -1501,6 +1755,13 @@ llvm::Expected<SimulationState> Simulation::getState() const {
   if (busy.exchange(true))
     return simulationError("another operation is under way on this "
                            "simulation");
+  // Under a writable borrow the buffers hold values that are not a state.
+  if (borrowed)
+    if (llvm::Error error =
+            const_cast<Simulation *>(this)->checkLeases("state()")) {
+      busy = false;
+      return std::move(error);
+    }
   SimulationState state;
   {
     // The copy of the state, from where the program keeps it.
@@ -1629,11 +1890,12 @@ Simulation::rebuildTunables(const std::vector<std::vector<double>> &values) {
   return std::move(*program);
 }
 
-llvm::Error Simulation::evaluatePart() {
+llvm::Error Simulation::evaluatePart(bool committed) {
   // On the first call, the start of the run; on a later one, the forces of
   // the state given anew (%first_call 2), which only a program with
   // tunables takes without the half kick back of leapfrog.
-  if (hasRun && prepared.control.integrator == Integrator::Leapfrog &&
+  if (!committed && hasRun &&
+      prepared.control.integrator == Integrator::Leapfrog &&
       !compiled->program.tunable)
     return unsupported("an evaluation without a step after the first run "
                        "takes velocity Verlet, or a program with tunable "
@@ -1730,6 +1992,9 @@ llvm::Error Simulation::saveCheckpoint(const std::string &path,
     std::atomic<bool> &flag;
     ~Release() { flag = false; }
   } release{busy};
+  if (borrowed)
+    if (llvm::Error error = checkLeases("a checkpoint"))
+      return error;
   if (failed)
     return simulationError("the simulation failed earlier; it keeps the "
                            "state of step " + llvm::Twine(step) +

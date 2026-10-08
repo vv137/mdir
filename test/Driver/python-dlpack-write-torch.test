@@ -1,0 +1,20 @@
+# REQUIRES: python-api, torch
+# Tracked writable DLPack borrows of a simulation on the CPU
+# (D[python-dlpack-write]), Inputs/python_dlpack_write.py with PyTorch as
+# the consumer that writes. The feature `torch` is set when the interpreter
+# of the tests imports torch, or when lit is given -Dtorch_python=<an
+# interpreter with torch>.
+# RUN: %torch_python %S/Inputs/python_dlpack_write.py %S/Inputs/dipeptide CPU torch | FileCheck %s
+# CHECK: Double: commits of positions, velocities, the cell, and tunables equal the existing interface to the bit, and 12 steps later
+# CHECK: Double: a live borrow blocks run, evaluation, update, view, borrow, state, and checkpoint; a commit waits for the consumer's tensors
+# CHECK: Double: an abandoned borrow leaves the run that of a simulation without it, to the bit
+# CHECK: Double: refused commits (positions not finite, a structural change of a tunable, values an update refuses, a cell below twice the cutoff) change nothing
+# CHECK: Double: a tensor outlives its borrow and its simulation; commits and abandoned borrows in turn
+# CHECK: Mixed: commits of positions, velocities, the cell, and tunables equal the existing interface to the bit, and 12 steps later
+# CHECK: Mixed: a live borrow blocks run, evaluation, update, view, borrow, state, and checkpoint; a commit waits for the consumer's tensors
+# CHECK: Mixed: an abandoned borrow leaves the run that of a simulation without it, to the bit
+# CHECK: Mixed: refused commits (positions not finite, a structural change of a tunable, values an update refuses, a cell below twice the cutoff) change nothing
+# CHECK: Mixed: a tensor outlives its borrow and its simulation; commits and abandoned borrows in turn
+# CHECK: leapfrog without tunables, and the default mode: commits take what was written
+# CHECK: a commit whose evaluation fails is undone: the state and values of before the borrow
+# CHECK: dlpack write torch passed

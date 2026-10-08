@@ -79,4 +79,20 @@ growth = measure() - ended
 print(f"{target_name}: {kind} memory from simulation 5 to simulation {CALLS} that "
       f"ended: {growth:+.1f} MiB (bound {BOUND} MiB)")
 assert growth <= BOUND, growth
+# Writable borrows (D[python-dlpack-write]): a commit ends the activation
+# and begins another; an abandoned borrow keeps it.
+for call in range(1, CALLS + 1):
+    assert simulation.run(5) == 5
+    with simulation.borrow() as borrow:
+        capsules = [borrow.positions.__dlpack__(), borrow.velocities.__dlpack__()]
+        del capsules
+        if call % 2:
+            assert borrow.commit() == ("positions", "velocities")
+    if call == 5:
+        borrowed = measure()
+growth = measure() - borrowed
+assert simulation.versions["positions"] == CALLS // 2
+print(f"{target_name}: {kind} memory from borrow 5 to borrow {CALLS}, committed and "
+      f"abandoned in turn: {growth:+.1f} MiB (bound {BOUND} MiB)")
+assert growth <= BOUND, growth
 print("memory across calls passed")

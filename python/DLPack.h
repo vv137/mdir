@@ -1,4 +1,5 @@
-// Read-only DLPack views of the buffers of a simulation (D220,
+// Read-only DLPack views of the buffers of a simulation (D220) and
+// writable borrows of them with a commit (D[python-dlpack-write],
 // docs/python-dlpack.md), included by Bindings.cpp.
 //
 // The structures follow the ABI of `dlpack.h` 1.x (dmlc/dlpack,
@@ -53,10 +54,19 @@ struct Lease {
 };
 
 /// What a View and its Buffers share: the view's own lease, until release().
+/// A Borrow shares the same, with the buffers of the host that it owns:
+/// the edges of the cell and the values of the tunables, which a consumer
+/// writes and a commit takes (D[python-dlpack-write]). A managed tensor
+/// of one of them holds them as well, so that they outlive the Borrow.
+struct Staging {
+  std::array<double, 3> cell{};
+  std::vector<std::vector<double>> tunables;
+};
 struct ViewState {
   std::shared_ptr<compiler::Simulation> simulation;
   compiler::SimulationView view;
   std::unique_ptr<Lease> lease;
+  std::shared_ptr<Staging> staging;
 };
 
 /// One buffer of a view.
@@ -67,6 +77,15 @@ struct Buffer {
   dlpack::DataType dtype{dlpack::Float, 64, 1};
   dlpack::Device device{dlpack::CPU, 0};
   std::string name;
+  /// A buffer of a borrow that a consumer writes, and the field of the
+  /// state that its export marks as written
+  /// (compiler::Simulation::WrittenPositions, ...), if any.
+  bool writable = false;
+  unsigned field = 0;
+  /// The memory of the host that the buffer points into, if the borrow
+  /// owns it.
+  std::shared_ptr<Staging> staging;
+  const char *owner = "View";
 };
 
 /// The context of a managed tensor that a consumer was given: its shape,
@@ -74,6 +93,9 @@ struct Buffer {
 template <class Managed> struct Exported {
   Managed managed{};
   std::vector<int64_t> shape, strides;
+  /// The memory of the host of a borrow that the tensor points into, if
+  /// any; declared before the lease, which is released first.
+  std::shared_ptr<Staging> staging;
   std::unique_ptr<Lease> lease;
   static void destroy(Managed *self) { delete static_cast<Exported *>(self->context); }
 };
@@ -109,14 +131,17 @@ template <class Managed> static void capsuleDestructor(PyObject *capsule, const 
 static py::object exportBuffer(const Buffer &b, py::object stream, py::object maxVersion,
                                py::object dlDevice, py::object copy) {
   if (!b.state->lease)
-    throw py::buffer_error("View." + b.name + ": the view was released; take another "
-                           "with Simulation.view()");
+    throw py::buffer_error(std::string(b.owner) + "." + b.name + (b.owner[0] == 'B'
+                                ? ": the borrow has ended; take another with "
+                                  "Simulation.borrow()"
+                                : ": the view was released; take another "
+                                  "with Simulation.view()"));
   if (!copy.is_none() && py::cast<bool>(copy))
-    throw py::buffer_error("View." + b.name + ": a view does not copy (copy=True)");
+    throw py::buffer_error(std::string(b.owner) + "." + b.name + ": a view does not copy (copy=True)");
   if (!dlDevice.is_none()) {
     auto d = py::cast<std::pair<int, int>>(dlDevice);
     if (d.first != b.device.type || d.second != b.device.id)
-      throw py::buffer_error("View." + b.name + ": the buffer is on device (" +
+      throw py::buffer_error(std::string(b.owner) + "." + b.name + ": the buffer is on device (" +
                              std::to_string(b.device.type) + ", " + std::to_string(b.device.id) +
                              "); a view does not copy to another");
   }
@@ -124,10 +149,10 @@ static py::object exportBuffer(const Buffer &b, py::object stream, py::object ma
   if (b.device.type == dlpack::CUDA) {
     int64_t s = stream.is_none() ? 1 : py::cast<int64_t>(stream);
     if (s == 0)
-      throw py::value_error("View." + b.name + ": stream 0 is ambiguous for CUDA; "
+      throw py::value_error(std::string(b.owner) + "." + b.name + ": stream 0 is ambiguous for CUDA; "
                             "pass 1 for the legacy default stream or 2 for the per-thread one");
     if (s < -1)
-      throw py::buffer_error("View." + b.name + ": stream must be -1, 1, 2, or a stream handle");
+      throw py::buffer_error(std::string(b.owner) + "." + b.name + ": stream must be -1, 1, 2, or a stream handle");
     if (s == -1) {
       sim.markExported();
     } else {
@@ -135,7 +160,7 @@ static py::object exportBuffer(const Buffer &b, py::object stream, py::object ma
       sim.handOff(static_cast<uint64_t>(s));
     }
   } else if (!stream.is_none() && py::cast<int64_t>(stream) != -1) {
-    throw py::buffer_error("View." + b.name + ": a buffer of the host takes no stream");
+    throw py::buffer_error(std::string(b.owner) + "." + b.name + ": a buffer of the host takes no stream");
   }
   bool versioned = false;
   if (!maxVersion.is_none()) {
@@ -144,12 +169,15 @@ static py::object exportBuffer(const Buffer &b, py::object stream, py::object ma
   }
   sim.acquireLease();
   auto lease = std::make_unique<Lease>(b.state->simulation);
+  // A tensor handed out for writing cannot be told from one written.
+  if (b.field) sim.markWritten(b.field);
   if (versioned) {
     auto e = std::make_unique<Exported<dlpack::ManagedTensorVersioned>>();
+    e->staging = b.staging;
     e->lease = std::move(lease);
     auto &m = e->managed;
     m.version = {1, 1};
-    m.flags = dlpack::readOnly;
+    m.flags = b.writable ? 0 : dlpack::readOnly;
     fill(*e, m, m.tensor, b);
     PyObject *capsule = PyCapsule_New(&m, "dltensor_versioned", [](PyObject *c) {
       capsuleDestructor<dlpack::ManagedTensorVersioned>(c, "dltensor_versioned");
@@ -159,6 +187,7 @@ static py::object exportBuffer(const Buffer &b, py::object stream, py::object ma
     return py::reinterpret_steal<py::object>(capsule);
   }
   auto e = std::make_unique<Exported<dlpack::ManagedTensor>>();
+  e->staging = b.staging;
   e->lease = std::move(lease);
   auto &m = e->managed;
   fill(*e, m, m.tensor, b);
@@ -220,6 +249,88 @@ inline View take(std::shared_ptr<compiler::Simulation> simulation) {
   return view;
 }
 
+/// A writable borrow (D[python-dlpack-write]): the buffers of the positions
+/// and the velocities where the program keeps them, and buffers of its own
+/// with the edges of the cell and the values of the tunables.
+struct Borrow {
+  std::shared_ptr<ViewState> state;
+  Buffer positions, velocities, ids, cell;
+  bool hasCell = false, periodic = false;
+  std::vector<std::pair<std::string, Buffer>> tunables;
+};
+
+inline Borrow borrow(std::shared_ptr<compiler::Simulation> simulation) {
+  llvm::Expected<compiler::SimulationView> taken = simulation->takeBorrow();
+  if (!taken) raise(taken.takeError());
+  auto lease = std::make_unique<Lease>(simulation);
+  compiler::SimulationView v = *taken;
+  auto state = std::make_shared<ViewState>();
+  state->simulation = simulation;
+  state->view = v;
+  state->lease = std::move(lease);
+  state->staging = std::make_shared<Staging>();
+  state->staging->cell = simulation->getCellEdges();
+  state->staging->tunables = simulation->getTunableValues();
+  Staging &staging = *state->staging;
+  dlpack::Device device{v.onDevice ? dlpack::CUDA : dlpack::CPU, v.onDevice ? v.device : 0};
+  auto make = [&](const void *data, std::vector<int64_t> shape, dlpack::DataType dtype,
+                  dlpack::Device where, std::string name, bool writable, unsigned field) {
+    Buffer b;
+    b.state = state;
+    b.data = const_cast<void *>(data);
+    b.shape = std::move(shape);
+    b.dtype = dtype;
+    b.device = where;
+    b.name = std::move(name);
+    b.writable = writable;
+    b.field = field;
+    b.owner = "Borrow";
+    return b;
+  };
+  int64_t n = static_cast<int64_t>(v.count);
+  dlpack::DataType stateType{dlpack::Float, static_cast<uint8_t>(8 * v.stateWidth), 1};
+  dlpack::DataType real{dlpack::Float, 64, 1};
+  dlpack::Device host{dlpack::CPU, 0};
+  Borrow result;
+  result.state = state;
+  result.positions = make(v.positions, {n, 3}, stateType, device, "positions", true,
+                          compiler::Simulation::WrittenPositions);
+  result.velocities = make(v.velocities, {n, 3}, stateType, device, "velocities", true,
+                           compiler::Simulation::WrittenVelocities);
+  result.ids = make(v.ids, {n}, {dlpack::Int, 32, 1}, device, "ids", false, 0);
+  result.hasCell = simulation->hasOrthorhombicCell();
+  result.cell = make(staging.cell.data(), {3}, real, host, "cell", true, 0);
+  result.cell.staging = state->staging;
+  result.periodic = simulation->isPeriodic();
+  const auto &set = simulation->getTunables();
+  for (size_t k = 0; k != set.tunables.size(); ++k) {
+    result.tunables.emplace_back(set.tunables[k].name,
+        make(staging.tunables[k].data(), {static_cast<int64_t>(staging.tunables[k].size())},
+             real, host, "tunables['" + set.tunables[k].name + "']", true, 0));
+    result.tunables.back().second.staging = state->staging;
+  }
+  return result;
+}
+
+/// The edges of the cell of a borrow, if their bits are not the
+/// simulation's, and the tunables whose bits are not.
+inline std::optional<std::array<double, 3>> writtenCell(const Borrow &b) {
+  if (!b.hasCell) return std::nullopt;
+  auto now = b.state->simulation->getCellEdges();
+  if (std::memcmp(now.data(), b.state->staging->cell.data(), sizeof now) == 0) return std::nullopt;
+  return b.state->staging->cell;
+}
+inline std::vector<std::pair<std::string, std::vector<double>>> writtenTunables(const Borrow &b) {
+  std::vector<std::pair<std::string, std::vector<double>>> changes;
+  const auto &now = b.state->simulation->getTunableValues();
+  for (size_t k = 0; k != b.tunables.size(); ++k) {
+    const auto &mine = b.state->staging->tunables[k];
+    if (std::memcmp(now[k].data(), mine.data(), mine.size() * sizeof(double)) != 0)
+      changes.emplace_back(b.tunables[k].first, mine);
+  }
+  return changes;
+}
+
 inline void bind(py::module_ &m) {
   py::class_<Buffer>(m, "Buffer")
     .def_property_readonly("shape", [](const Buffer &b) {
@@ -275,6 +386,68 @@ inline void bind(py::module_ &m) {
     .def("__repr__", [](const View &v) {
       return "View(step=" + std::to_string(v.state->view.step) + ", particles=" +
              std::to_string(v.state->view.count) + (v.state->lease ? "" : ", released") + ")";
+    });
+  static auto live = [](const Borrow &b) { return static_cast<bool>(b.state->lease); };
+  py::class_<Borrow>(m, "Borrow")
+    .def_readonly("positions", &Borrow::positions)
+    .def_readonly("velocities", &Borrow::velocities)
+    .def_readonly("ids", &Borrow::ids)
+    .def_property_readonly("cell", [](const Borrow &b) {
+      if (!b.periodic)
+        throw UnsupportedError("Borrow.cell: the simulation has no periodic cell");
+      if (!b.hasCell)
+        throw UnsupportedError("Borrow.cell: a borrow takes the edges of an orthorhombic "
+                               "cell; a triclinic cell, with its tilts, is not supported "
+                               "yet (#206)");
+      return b.cell;
+    })
+    .def_property_readonly("tunables", [](const Borrow &b) {
+      py::dict d;
+      for (const auto &entry : b.tunables) d[py::str(entry.first)] = py::cast(entry.second);
+      return d;
+    })
+    .def_property_readonly("step", [](const Borrow &b) { return b.state->view.step; })
+    .def_property_readonly("time", [](const Borrow &b) { return b.state->view.time; })
+    .def_property_readonly("velocity_offset", [](const Borrow &b) { return b.state->view.velocityOffset; })
+    .def_property_readonly("device", [](const Borrow &b) {
+      return std::make_pair(b.positions.device.type, b.positions.device.id);
+    })
+    .def_property_readonly("live", [](const Borrow &b) { return live(b); })
+    .def_property_readonly("written", [](const Borrow &b) {
+      py::list names;
+      if (!live(b)) return py::tuple(names);
+      unsigned written = b.state->simulation->getWritten();
+      if (written & compiler::Simulation::WrittenPositions) names.append("positions");
+      if (written & compiler::Simulation::WrittenVelocities) names.append("velocities");
+      if (writtenCell(b)) names.append("cell");
+      if (!writtenTunables(b).empty()) names.append("tunables");
+      return py::tuple(names);
+    })
+    .def("commit", [](Borrow &b) {
+      if (!live(b))
+        throw SimulationError("Borrow.commit: the borrow has ended");
+      compiler::Simulation &sim = *b.state->simulation;
+      auto cell = writtenCell(b);
+      auto changes = writtenTunables(b);
+      std::optional<llvm::Expected<std::vector<std::string>>> fields;
+      {
+        py::gil_scoped_release release;
+        fields.emplace(sim.commitBorrow(cell, changes));
+      }
+      // Committed, or undone after an evaluation that failed: the borrow
+      // has ended either way. A refusal leaves it live.
+      if (!sim.isBorrowed()) b.state->lease.reset();
+      if (!*fields) raise(fields->takeError());
+      py::list names;
+      for (const std::string &name : **fields) names.append(name);
+      return py::tuple(names);
+    })
+    .def("abandon", [](Borrow &b) { b.state->lease.reset(); })
+    .def("__enter__", [](py::object self) { return self; })
+    .def("__exit__", [](Borrow &b, py::args) { b.state->lease.reset(); return false; })
+    .def("__repr__", [](const Borrow &b) {
+      return "Borrow(step=" + std::to_string(b.state->view.step) + ", particles=" +
+             std::to_string(b.state->view.count) + (live(b) ? "" : ", ended") + ")";
     });
 }
 } // namespace views

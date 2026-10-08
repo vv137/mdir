@@ -972,6 +972,26 @@ PYBIND11_MODULE(_core, m) {
     .def("state", [](PySimulation &s) { return unwrap(s.simulation->getState()); })
     // Read-only DLPack views of the buffers (D220).
     .def("view", [](PySimulation &s) { return views::take(s.simulation); })
+    // Writable borrows with a commit (D[python-dlpack-write]).
+    .def("borrow", [](PySimulation &s) { return views::borrow(s.simulation); })
+    .def_property_readonly("versions", [](const PySimulation &s) {
+      auto v = s.simulation->getStateVersions();
+      py::dict d;
+      d["positions"] = v.positions;
+      d["velocities"] = v.velocities;
+      d["cell"] = v.cell;
+      d["tunables"] = s.simulation->getTunablesVersion();
+      return d;
+    })
+    .def_property_readonly("commits", [](const PySimulation &s) {
+      py::list result;
+      for (const auto &[step, fields] : s.simulation->getCommits()) {
+        py::list names;
+        for (const std::string &name : fields) names.append(name);
+        result.append(py::make_tuple(step, py::tuple(names)));
+      }
+      return result;
+    })
     .def_property_readonly("leases", [](const PySimulation &s) { return s.simulation->getLeases(); })
     .def_property_readonly("step", [](const PySimulation &s) { return s.simulation->getStep(); })
     .def_property_readonly("time", [](const PySimulation &s) { return s.simulation->getTime(); })

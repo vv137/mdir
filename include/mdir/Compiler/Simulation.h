@@ -220,6 +220,47 @@ public:
   /// Records that a consumer was given the buffers of the device without a
   /// stream to wait.
   void markExported() { exported = true; }
+
+  /// A writable borrow of the buffers of the state (D[python-dlpack-write],
+  /// docs/python-dlpack.md): the view of `takeView`, with a lease, for a
+  /// consumer that writes the positions and the velocities. It excludes
+  /// every other operation on the state, views included, until it is
+  /// committed or, once no lease is left, abandoned. Refused without an
+  /// activation, under a lease, and for a minimization.
+  llvm::Expected<SimulationView> takeBorrow();
+  /// The fields of the state that a consumer was given to write.
+  enum : unsigned { WrittenPositions = 1, WrittenVelocities = 2 };
+  void markWritten(unsigned fields) { borrowWritten |= fields; }
+  unsigned getWritten() const { return borrowWritten; }
+  bool isBorrowed() const { return borrowed; }
+  /// Takes what was written through the borrow: the positions and the
+  /// velocities marked as written, from the buffers; the edges of the cell
+  /// `cell`, if given; and the values `tunables`, as `updateTunables`
+  /// takes them. Everything is checked before anything changes; a refusal
+  /// (InputError) leaves the borrow live. Then the versions of the changed
+  /// fields advance and an activation begins from the committed state,
+  /// whose forces are evaluated anew; if that fails, the commit is undone
+  /// and the borrow ends. Only the lease of the borrow itself may be alive.
+  /// Returns the names of the fields changed.
+  llvm::Expected<std::vector<std::string>> commitBorrow(
+      const std::optional<std::array<double, 3>> &cell,
+      const std::vector<std::pair<std::string, std::vector<double>>> &tunables);
+  /// The edges of the cell, in nm, and whether a borrow may write them: a
+  /// periodic cell without tilts.
+  std::array<double, 3> getCellEdges() const;
+  bool hasOrthorhombicCell() const;
+  bool isPeriodic() const { return prepared.control.periodic; }
+  /// The number of commits that changed the positions, the velocities, and
+  /// the cell from the host (P16), and for each commit that changed
+  /// anything the step and the names of its fields.
+  struct StateVersions {
+    int64_t positions = 0, velocities = 0, cell = 0;
+  };
+  StateVersions getStateVersions() const { return stateVersions; }
+  const std::vector<std::pair<int64_t, std::vector<std::string>>> &
+  getCommits() const {
+    return commits;
+  }
   bool hasFailed() const { return failed; }
   /// What compiling its programs cost, and what the compile cache saved
   /// (D212).
@@ -251,8 +292,10 @@ private:
   llvm::Expected<driver::Program>
   rebuildTunables(const std::vector<std::vector<double>> &values);
   /// A part of no steps: the evaluation of `evaluate`, the start of an
-  /// activation.
-  llvm::Error evaluatePart();
+  /// activation. With `committed`, the evaluation of a state that a borrow
+  /// committed, which every program of segments takes with leapfrog too
+  /// (its half kick back is a select on `%first_call`, D223).
+  llvm::Error evaluatePart(bool committed = false);
   /// Begins an activation of the entry from the state of the host
   /// (`%first_call` as given) and runs it to the end of its start.
   llvm::Error startActivation(int64_t firstCall);
@@ -350,8 +393,21 @@ private:
   std::atomic<int64_t> leases{0};
   std::atomic<uint64_t> generation{0};
   std::atomic<bool> exported{false};
-  /// Refuses an operation that would write or free the buffers of views.
-  llvm::Error checkLeases(const char *operation) const;
+  /// Refuses an operation that would write or free the buffers of views,
+  /// and every operation under a writable borrow; a borrow that was
+  /// abandoned and has no lease left is undone first.
+  llvm::Error checkLeases(const char *operation);
+  /// Whether a writable borrow has not been committed or undone, the
+  /// fields of the state that it gave out to write, the versions, and the
+  /// commits (D[python-dlpack-write]).
+  std::atomic<bool> borrowed{false};
+  std::atomic<unsigned> borrowWritten{0};
+  StateVersions stateVersions;
+  std::vector<std::pair<int64_t, std::vector<std::string>>> commits;
+  /// Copies the fields that an abandoned borrow gave out back from the
+  /// snapshot, so that the activation continues as if it had not been.
+  void undoBorrow();
+  SimulationView describeView() const;
   /// Waits for the work of consumers of views before the buffers are
   /// written or freed.
   void waitForConsumers();

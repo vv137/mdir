@@ -273,7 +273,9 @@ copies of their own, so that the host sees the buffers of the steps
 themselves. The loops rotate their buffers through the values they carry,
 so the addresses can change from one part to the next; a view of them
 is taken again after every part, and while it is alive no part runs
-(D220, [python-dlpack.md](python-dlpack.md)).
+(D220, [python-dlpack.md](python-dlpack.md)). A writable borrow hands a
+consumer the same buffers and takes what it wrote at a commit
+(D[python-dlpack-write]).
 
 **The entry.** It takes the buffers of the host once, when an activation
 begins, and the scalars of the start: the cell, the time step, the step,
@@ -332,7 +334,9 @@ the activation, and begin another from the state of the host with
 and the forces evaluated at the state, as a simulation compiled with the new
 values from that state does, so that D213's comparison with such a
 simulation holds to the bit, and the value version advances with that
-upload. A future write of the state from the host (#136) does the same. An
+upload. The commit of a writable borrow (D[python-dlpack-write],
+[python-dlpack.md](python-dlpack.md#writable-borrows-dpython-dlpack-write))
+does the same with the state that a consumer wrote. An
 upload in place that kept the order would make an update cheaper, at the
 cost of that comparison; it can follow if M2b needs it.
 
