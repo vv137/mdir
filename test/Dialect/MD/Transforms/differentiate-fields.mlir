@@ -5,8 +5,10 @@
 // (D230): `derivative(n)` of an argument that is a field of
 // f64 is a field, g_i = dU/da_i. A sum over a relation gives a gather over
 // it, a sum over tuples a gather over them, a sum over particles a map; a
-// field that no sum of the energy takes has the derivative zero. The
-// errors are in differentiate-fields-invalid.mlir.
+// field that no sum of the energy takes has the derivative zero; a
+// reciprocal sum of the charges yields it as a fourth result
+// (D[tunable-gradient-pme]). The errors are in
+// differentiate-fields-invalid.mlir.
 
 !vec = !md.field<@atoms, 3 x f64>
 !real = !md.field<@atoms, f64>
@@ -152,4 +154,46 @@ md.function @fourth(%x: !vec, %cell: !md.cell, %q: !real, %m: !real) -> !real {
   %g = md.evaluate @untouched(%x, %cell, %q, %m) request [derivative(2)]
       : (!vec, !md.cell, !real, !real) -> !real
   md.return %g : !real
+}
+
+// -----
+
+!vec = !md.field<@atoms, 3 x f64>
+!real = !md.field<@atoms, f64>
+!grid = !md.table<2, f64>
+md.particle_set @atoms
+
+// The reciprocal sum of the charges: the derivative of its energy in the
+// charge of a particle is the potential of the grid at the particle, the
+// fourth result of the op, which takes the place of the op of the
+// potential and yields its energy as before; here times the weight of the
+// sum in the energy, 2, and with the energy requested as well.
+//
+// CHECK-LABEL: md.function @mesh.energy_derivative2(
+// CHECK: %[[TWO:.*]] = arith.constant 2.0{{.*}} : f64
+// CHECK: %[[U:.*]], %{{.*}}, %{{.*}}, %[[P:.*]] = md.reciprocal %{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} grid([8, 8, 8]) order(4)
+// CHECK-SAME: -> f64, !md.field<@atoms, 3 x f64>, vector<9xf64>, !md.field<@atoms, f64>
+// CHECK-NOT: md.reciprocal
+// CHECK: %[[E:.*]] = arith.mulf %[[TWO]], %[[U]] : f64
+// CHECK: %[[G:.*]] = md.map_particles gather(%[[P]] :
+// CHECK: ^bb0(%[[PI:[^:]*]]: f64):
+// CHECK: %[[S:.*]] = arith.mulf %[[TWO]], %[[PI]] : f64
+// CHECK: md.yield %[[S]] : f64
+// CHECK: md.return %[[E]], %[[G]] : f64, !md.field<@atoms, f64>
+md.potential @mesh(%x: !vec, %cell: !md.cell, %q: !real, %moduli: !grid)
+    -> f64 {
+  %two = arith.constant 2.0 : f64
+  %u, %f, %w = md.reciprocal %x, %q, %cell, %moduli
+      grid([8, 8, 8]) order(4) beta(3.0) coulomb(138.9)
+      : !vec, !real, !grid -> f64, !vec, vector<9xf64>
+  %e = arith.mulf %two, %u : f64
+  md.return %e : f64
+}
+
+md.function @fifth(%x: !vec, %cell: !md.cell, %q: !real, %moduli: !grid)
+    -> (f64, !real) {
+  %e, %g = md.evaluate @mesh(%x, %cell, %q, %moduli)
+      request [energy, derivative(2)]
+      : (!vec, !md.cell, !real, !grid) -> (f64, !real)
+  md.return %e, %g : f64, !real
 }
