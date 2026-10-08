@@ -1137,7 +1137,8 @@ llvm::Expected<int64_t> Simulation::run(int64_t count,
   // greatest common divisor of their periods, if it holds whole periods of
   // coupling; otherwise each report ends a part.
   int64_t interval = 0;
-  for (int64_t p : {reports.energyPeriod, reports.framePeriod})
+  for (int64_t p : {reports.energyPeriod, reports.framePeriod,
+                    reports.observablesPeriod})
     if (p > 0)
       interval = interval ? std::gcd(interval, p) : p;
   if (interval % unit != 0)
@@ -1289,12 +1290,20 @@ llvm::Expected<int64_t> Simulation::minimize(std::optional<int64_t> count,
 
 int64_t Simulation::getNextReport(int64_t from) const {
   int64_t next = -1;
-  for (int64_t p : {reports.energyPeriod, reports.framePeriod})
+  for (int64_t p : {reports.energyPeriod, reports.framePeriod,
+                    reports.observablesPeriod})
     if (p > 0) {
       int64_t due = (from / p + 1) * p;
       next = next < 0 ? due : std::min(next, due);
     }
   return next;
+}
+
+std::vector<std::string> Simulation::getObservableNames() const {
+  std::vector<std::string> names;
+  for (const auto &[name, unit] : prepared.control.getObservableColumns())
+    names.push_back(name);
+  return names;
 }
 
 llvm::Error Simulation::setReports(const Reports &given) {
@@ -1305,18 +1314,25 @@ llvm::Error Simulation::setReports(const Reports &given) {
     std::atomic<bool> &flag;
     ~Release() { flag = false; }
   } release{busy};
-  if (prepared.control.minimize && (given.energyPeriod || given.framePeriod))
+  if (prepared.control.minimize &&
+      (given.energyPeriod || given.framePeriod || given.observablesPeriod))
     return inputError("a minimization takes no reporters");
-  if (given.energyPeriod < 0 || given.framePeriod < 0)
+  if (given.energyPeriod < 0 || given.framePeriod < 0 ||
+      given.observablesPeriod < 0)
     return inputError("a reporter's period must be positive");
   if ((given.energyPeriod > 0) == given.energyPath.empty() ||
-      (given.framePeriod > 0) == given.trajectoryPath.empty())
+      (given.framePeriod > 0) == given.trajectoryPath.empty() ||
+      (given.observablesPeriod > 0) == given.observablesPath.empty())
     return inputError("a reporter needs both a file and a period");
+  if (given.observablesPeriod > 0 && prepared.control.observables.empty())
+    return inputError("ObservablesReporter: no term of the program gives "
+                      "'observe', so there is no column to write");
   // The steps of energy of the reports must not fall between the two steps
   // that close a period of the barostat of Trotter type (D92).
   int64_t period = compiled->program.segmentPeriod;
   if (period > 0 && compiled->program.closingSteps == 2)
-    for (int64_t p : {given.energyPeriod, given.framePeriod})
+    for (int64_t p : {given.energyPeriod, given.framePeriod,
+                      given.observablesPeriod})
       if (p > 0 && p % period != 0)
         return inputError("with the barostat of Trotter type a reporter's "
                           "period must be a multiple of the coupling period, " +
@@ -1329,10 +1345,15 @@ llvm::Error Simulation::setReports(const Reports &given) {
   // --continue` continues them (D129, D130, D149).
   std::string energyFile = getReportPath(given.energyPath);
   std::string trajectoryFile = getReportPath(given.trajectoryPath);
+  std::string observablesFile = getReportPath(given.observablesPath);
   bool appendsEnergies = false, appendsFrames = false;
+  bool appendsObservables = false;
   if (keepThrough && given.energyPath != reports.energyPath &&
       !given.energyPath.empty())
     appendsEnergies = llvm::sys::fs::exists(energyFile);
+  if (keepThrough && given.observablesPath != reports.observablesPath &&
+      !given.observablesPath.empty())
+    appendsObservables = llvm::sys::fs::exists(observablesFile);
   if (keepThrough && given.trajectoryPath != reports.trajectoryPath &&
       !given.trajectoryPath.empty() && !continuedTrajectory.empty()) {
     StringRef name = llvm::sys::path::filename(trajectoryFile);
@@ -1354,6 +1375,9 @@ llvm::Error Simulation::setReports(const Reports &given) {
   if (given.energyPath != reports.energyPath && !given.energyPath.empty() &&
       !appendsEnergies)
     opened.push_back(energyFile);
+  if (given.observablesPath != reports.observablesPath &&
+      !given.observablesPath.empty() && !appendsObservables)
+    opened.push_back(observablesFile);
   if (given.trajectoryPath != reports.trajectoryPath &&
       !given.trajectoryPath.empty() && !appendsFrames)
     opened.push_back(trajectoryFile);
@@ -1375,6 +1399,24 @@ llvm::Error Simulation::setReports(const Reports &given) {
         return inputError(llvm::toString(std::move(error)));
   }
   out.energyPeriod = given.energyPeriod;
+  // The file of `[output] observables`, with the header of `mdir run`
+  // (D189, D[python-observe]).
+  if (given.observablesPath != reports.observablesPath) {
+    out.observables.close();
+    if (!given.observablesPath.empty()) {
+      std::vector<ColumnFile::Column> columns = {{"step", "-", true},
+                                                 {"time", "ps"}};
+      for (const auto &[name, unit] : prepared.control.getObservableColumns())
+        columns.push_back({name, unit});
+      if (out.tunablesVersion >= 0)
+        columns.push_back({"tunables_version", "-", true});
+      if (llvm::Error error = out.observables.open(
+              observablesFile, columns,
+              appendsObservables ? keepThrough : std::nullopt))
+        return inputError(llvm::toString(std::move(error)));
+    }
+  }
+  out.observablesPeriod = given.observablesPeriod;
   if (given.trajectoryPath != reports.trajectoryPath ||
       given.trajectoryFormat != reports.trajectoryFormat ||
       given.framePeriod != reports.framePeriod) {
@@ -1414,6 +1456,8 @@ llvm::Error Simulation::setReports(const Reports &given) {
 void Simulation::closeReports() {
   std::lock_guard<std::mutex> lock(getRunMutex());
   output->energies.close();
+  output->observables.close();
+  output->observablesPeriod = 0;
   if (output->trajectory)
     output->trajectory->close();
   output->trajectory.reset();
@@ -1800,6 +1844,14 @@ llvm::Expected<SimulationState> Simulation::getState() const {
     state.energies = SimulationEnergies{row.potential, row.kinetic, row.total,
                                         row.conserved, row.temperature,
                                         row.virial, row.pressure, row.volume};
+  // The observed terms at that step (D[python-observe]).
+  const auto &observed = output->lastObservables;
+  if (state.energies && observed.step == step && !observed.values.empty()) {
+    state.observables.emplace();
+    std::vector<std::string> names = getObservableNames();
+    for (size_t k = 0; k != names.size() && k != observed.values.size(); ++k)
+      state.observables->push_back({names[k], observed.values[k]});
+  }
   busy = false;
   return state;
 }

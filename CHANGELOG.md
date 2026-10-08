@@ -12,6 +12,25 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- `observe` in the Python model (D[python-observe], #188): `PairTerm`,
+  `TupleTerm`, and `ExternalTerm` take `observe`, `None` or a list of
+  constants of the term, as the control file's key (D189);
+  `ObservablesReporter(file, period)` writes the file of `[output]
+  observables`, equal to that of `mdir run` for the same model, with a
+  period of its own, appended across runs and continued from a checkpoint
+  like the energy file; `State.observables` gives the values of a step of
+  energy to a script, in kJ/mol, also in the state of a `CallbackReporter`;
+  `Program.plan["observables"]` lists the columns. Tunables and `observe`
+  now share a program, the file's last column is then `tunables_version`,
+  and an observed constant may be a tunable with one entry, whose column
+  equals `Simulation.tunables.gradient()` of it. A program that minimizes
+  refuses `observe`. See [docs/python-observe.md](docs/python-observe.md).
+- Terms of the absolute positions in the Python model (D[python-external],
+  #188): `mdir.ExternalTerm` and `System.external_terms`, the control
+  file's `[[energy.external]]`, with `x`, `y`, `z` in nm and the energy in
+  kJ/mol, over a mask or an array of particle indices, with constants, and
+  `ExternalScaling` under a barostat. The fingerprint of such a model has
+  the entry `[python] external_terms`.
 - The derivative of the energy in the tunable parameters of a Python
   model (D230, #203): with `System.tunable_gradient = True`
   a compiled program can evaluate it, and

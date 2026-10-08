@@ -119,14 +119,17 @@ llvm::Expected<LoadedData> mdir::model::loadCharmm(
 
 // Coordinate and energy conversion at the existing builder boundary.
 // Token replacement preserves parameter names and scientific exponents.
-static std::string convertExpression(llvm::StringRef expr, bool distance) {
+static std::string convertExpression(llvm::StringRef expr, bool distance,
+                                     bool position = false) {
   std::string out = "(";
   while (!expr.empty()) {
     if (llvm::isAlpha(expr.front()) || expr.front() == '_') {
       size_t n = 1;
       while (n < expr.size() && (llvm::isAlnum(expr[n]) || expr[n] == '_')) ++n;
       llvm::StringRef word = expr.take_front(n);
-      out += distance && word == "r" ? "(r*0.1)" : word.str();
+      bool length = (distance && word == "r") ||
+                    (position && (word == "x" || word == "y" || word == "z"));
+      out += length ? "(" + word.str() + "*0.1)" : word.str();
       expr = expr.drop_front(n);
     } else {
       out += expr.front(); expr = expr.drop_front();
@@ -143,20 +146,22 @@ static bool validParameter(llvm::StringRef name) {
 }
 static llvm::Error checkExpression(llvm::StringRef name, llvm::StringRef text,
                                    llvm::StringRef coordinate,
-                                   const std::set<std::string> &parameters) {
+                                   const std::set<std::string> &parameters,
+                                   const std::set<std::string> &variables = {}) {
   if (name.empty()) return input("a custom term needs a name");
   llvm::StringRef definitions = text.split(';').second;
   while (!definitions.empty()) {
     auto part = definitions.split(';');
     llvm::StringRef local = part.first.split('=').first.trim();
-    if (local == "r" || local == "theta" || parameters.count(local.str()))
+    if (local == "r" || local == "theta" || parameters.count(local.str()) ||
+        variables.count(local.str()))
       return input("term '" + name + "': local definition shadows supplied name '" + local + "'");
     definitions = part.second;
   }
   auto e = driver::Expression::parse(text);
   if (!e) return input("term '" + name + "': " + llvm::toString(e.takeError()));
   for (const auto &n : e->getNames())
-    if (n != coordinate && !parameters.count(n))
+    if (n != coordinate && !parameters.count(n) && !variables.count(n))
       return input("term '" + name + "': undeclared parameter '" + n + "'");
   return llvm::Error::success();
 }
@@ -294,6 +299,24 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.fastMath = execution.fastMath;
   c.neighborWidth = execution.neighborCapacity;
   std::set<std::string> termNames;
+  // `observe` of a term (D189, D[python-observe]): the columns follow the
+  // pair terms, the tuple terms, and the terms of the positions, each in
+  // its order; the control checks the constants as it does those of the
+  // control file.
+  auto observe = [&](const std::string &term, bool observed,
+                     const std::vector<std::string> &constants) -> llvm::Error {
+    if (!observed) return llvm::Error::success();
+    int64_t line = static_cast<int64_t>(c.observables.size());
+    c.observables.push_back({term, "", line});
+    std::set<std::string> seen;
+    for (const std::string &name : constants) {
+      if (name.empty()) return input("the term '" + term + "' observes a constant without a name");
+      if (!seen.insert(name).second)
+        return input("the term '" + term + "': '" + name + "' is observed twice");
+      c.observables.push_back({term, name, line});
+    }
+    return llvm::Error::success();
+  };
   for (auto term : s.pairTerms) {
     if (!termNames.insert(term.name).second) return input("duplicate custom term name");
     if (!term.mixing.empty())
@@ -318,6 +341,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
         return input("invalid custom pair parameter name or value");
     if (llvm::Error e = checkExpression(term.name, term.expression, "r", names)) return std::move(e);
     term.expression = convertExpression(term.expression, true);
+    if (llvm::Error e = observe(term.name, term.observed, term.observe)) return std::move(e);
     c.pairs.push_back(std::move(term));
   }
   for (auto term : s.tupleTerms) {
@@ -339,7 +363,37 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
           return input("invalid custom tuple particle identities");
     }
     term.expression = convertExpression(term.expression, term.arity == 2);
+    if (llvm::Error e = observe(term.name, term.observed, term.observe)) return std::move(e);
     c.tupleTerms.push_back(std::move(term));
+  }
+  // The terms of the absolute positions (D148, D[python-external]), which
+  // the system resolves as it does those of the control file.
+  for (auto term : s.externalTerms) {
+    if (!termNames.insert(term.name).second) return input("duplicate custom term name");
+    if (!term.parameters.empty())
+      return unsupported("the external term '" + term.name + "': a parameter with a value "
+                         "for each particle follows later; give constants");
+    if (term.selection.empty() == term.particles.empty())
+      return input("the external term '" + term.name + "' takes 'selection', a mask of "
+                   "particles, or 'particles', their indices, and not both");
+    std::set<unsigned> members;
+    for (unsigned particle : term.particles)
+      if (particle >= s.topology.getNumParticles() || !members.insert(particle).second)
+        return input("the external term '" + term.name + "': invalid particle identities");
+    static const std::set<std::string> variables = {"x", "y", "z", "q"};
+    std::set<std::string> names;
+    for (auto &[n,v] : term.constants)
+      if (!validParameter(n) || variables.count(n) || n == "t" || !names.insert(n).second || !std::isfinite(v))
+        return input("invalid external term parameter name or value");
+    if (llvm::Error e = checkExpression(term.name, term.expression, "", names, variables)) return std::move(e);
+    if (c.barostat && term.scaling == driver::ExternalTerm::Scaling::Unset)
+      return input("the external term '" + term.name + "' needs 'scaling' under a barostat: "
+                   "ExternalScaling.None_ keeps it fixed in space while the cell scales about "
+                   "the origin, ExternalScaling.Cell takes its positions in the frame of the "
+                   "cell, scaled to the cell of the initial state");
+    term.expression = convertExpression(term.expression, false, true);
+    if (llvm::Error e = observe(term.name, term.observed, term.observe)) return std::move(e);
+    c.externalTerms.push_back(std::move(term));
   }
   // The restraints become those of the control structure, whose constants
   // are in kJ/mol/nm^2, and are prepared by the same code (D74, D124).
@@ -356,6 +410,12 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
       (s.restraintReference.size() != 3 * s.topology.getNumParticles() ||
        llvm::any_of(s.restraintReference, [](double x) { return !std::isfinite(x); })))
     return input("the restraint reference needs finite (N, 3) positions of every particle");
+  // As `mdir run`, which refuses `observables` under [minimize]: the
+  // columns are those of the energies of a run of dynamics (D189).
+  if (c.minimize && !c.observables.empty())
+    return input("the term '" + c.observables.front().term + "' gives 'observe', which is "
+                 "evaluated at the energies of a run of dynamics; a minimization does not "
+                 "take it: set its observe to None for the program that minimizes");
   if (!c.minimize)
     if (llvm::Error e = driver::resolveControlCoupling(c, "model")) return typed(std::move(e));
   if (llvm::Error e = driver::validateControl(c, "model")) return typed(std::move(e));
@@ -391,6 +451,23 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   // (D213).
   auto tunables = resolveTunables(s, c, *prepared);
   if (!tunables) return tunables.takeError();
+  // An observed constant may be a tunable with one entry that every site
+  // takes: its value reaches the program as a value of its entry
+  // (D[python-observe]). The derivative in a tunable with several entries
+  // is that of D230.
+  for (const TunableSet::Entry &entry : tunables->tunables)
+    for (const driver::Control::Observable &observable : c.observables)
+      if (!entry.term.empty() && entry.term == observable.term &&
+          entry.parameter == observable.constant) {
+        if (entry.entries != 1 || llvm::any_of(entry.map, [](int64_t m) { return m != 0; }))
+          return input("the term '" + entry.term + "' observes '" + entry.parameter +
+                       "', which the tunable '" + entry.name + "' takes with several entries "
+                       "or leaves to some of its sites; an observed constant is one number for "
+                       "the whole term. The derivative in each entry at a state is "
+                       "Simulation.tunables.gradient()['" + entry.name +
+                       "'] (System.tunable_gradient), of the same potential");
+        c.observedTunables.push_back({entry.term, entry.parameter});
+      }
   return PreparedModel{execution, std::move(c), std::move(*prepared), std::move(*tunables)};
 }
 llvm::Expected<InitialState> mdir::model::drawVelocities(

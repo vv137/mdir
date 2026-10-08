@@ -129,8 +129,8 @@ value that is not finite at the evaluation is an error of `gradient()`
   map takes it, while another type's is not: $\sqrt{xy}$ has no derivative
   in $x$ at 0. The message says to give the type $-1$ in the map. It is an
   error of `mdir.compile`, and of an update to such values.
-- The combinations that tunables refuse (D213): `[free_energy]`, `observe`,
-  LJPME, pulls.
+- The combinations that tunables refuse (D213): `[free_energy]`, LJPME,
+  pulls.
 
 ## How it is computed
 
@@ -288,11 +288,16 @@ U_k/\partial d$ in f64, and apply the chain rule once.
 
 ## `observe` and tunables
 
-The builder refuses tunables together with `observe` (D189), which the
-Python model does not take. That stays as it is here (Q6): `observe` in
-the Python model, with its file, is #188. A tunable constant of a pair
-term has its $\partial U/\partial c$ at a state from `gradient()`, of the
-same shifted potential as the columns of `observe`.
+D230 left the builder's refusal of tunables together with `observe` (D189)
+as it was (Q6). D[python-observe] (#188,
+[python-observe.md](python-observe.md#tunables)) lifts it: the two share a
+program, and an observed constant may be a tunable with one entry that every
+site takes. Its column `d_<c>` of `observe`, written at every row of a run,
+equals `gradient()[name][0]` at the same state, since both differentiate the
+same shifted potential with the same tail and shift estimate
+(`python-observe.test`: to $1.1\times10^{-16}$ in double precision). A
+tunable with several entries on an observed parameter is refused at compile;
+its derivatives are those of `gradient()`.
 
 ## Validation
 

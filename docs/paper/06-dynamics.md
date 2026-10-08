@@ -1065,6 +1065,20 @@ bar over ten runs of 1 ns, against $181 \pm 9$ bar of the paper with the
 same Lorentz–Berthelot ions; `observe` gives the same derivative to the
 printed digits (`test/Driver/observables.test`).
 
+The Python model takes the same selection on its terms (D[python-observe]):
+a pair term, a term over tuples, or a term of the positions lists the
+constants $\xi$ to observe, the program evaluates the same potentials at its
+steps of energy, and a simulation writes the same file through a reporter
+and hands the values, $U_\text{term}$ and $\partial U/\partial\xi$, to the
+script in the state of each such step. For one model the two front ends
+write the same file byte for byte in the deterministic mode, on the CPU and
+a GPU, in mixed and double precision (`python-observe.test`). When $\xi$ is
+a tunable parameter with one entry (Section 3.6), its value is an argument
+of the program's entry and not a constant of its text, so the column follows
+an update without a compilation, and equals the derivative that the program
+evaluates on request (D230) to round-off: the mean force along a fitted
+constant is sampled at every row of the run in which it is fitted.
+
 **The potential that the forces sample** (D210). A pair
 term cut at $r_c$ without a shift has the energy $u(r)\,\Theta(r_c - r)$.
 Its force within $r_c$ is $-u'(r)$, that of

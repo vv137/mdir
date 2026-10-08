@@ -9,7 +9,7 @@ follows are in [principles.md](principles.md).
 | Milestone | Scope | Status |
 |---|---|---|
 | M1 | An all-atom protein in water with an Amber force field, on one node, CPU and GPU; at least the rate of pmemd.cuda on every system of the Amber suite | Done (D114, 2026-10-02); release in preparation |
-| M2a | The Python API (Section 6) | Under way: items 1 to 7 of [python-m2.md](python-m2.md), Section 4, are done (the last, writable borrows, D229); item 8, `observe` in the Python model (#188), remains |
+| M2a | The Python API (Section 6) | Items 1 to 8 of [python-m2.md](python-m2.md), Section 4, are done: item 8, `observe` in the Python model (#188, D[python-observe]), was the last |
 | M2b | Differentiable simulation: parameters as tunable buffers, a frame evaluator with derivative rules, PyTorch then JAX adapters, and trajectory reweighting [[ThalerZavadlav2021]](references.md#thalerzavadlav2021) (Section 6.1) | Under way beside the last item of M2a (maintainer, 2026-10-08): the derivative of the energy in the tunables is the first step (#203) |
 | M3 | Learned potentials on one GPU: ML1, then the single-GPU stage of ML4 (Section 7) | Planned |
 | M4 | Distributed execution: ML2, ML3, ML5, and distributed particle mesh Ewald (Section 7) | Planned |
@@ -263,7 +263,11 @@ adds the table of the Lennard-Jones by pairs of types. D222 (#161,
 Python pair terms their own `dispersion`, so a term can leave the
 correction for the dispersion, and records whether the system's correction
 was set, so a divergent tail is refused or left out as in the control
-file. D214 (#148,
+file. D[python-observe] (#188, [observe](python-observe.md)) gives pair, tuple,
+and external terms `observe`, writes the file of `[output] observables`
+through `ObservablesReporter`, and gives the values to a script in
+`State.observables`; D[python-external] adds the terms of the positions
+(`mdir.ExternalTerm`). D214 (#148,
 [GPU modules](compile-cache.md#the-gpu-modules-dgpu-module-compile))
 serializes the GPU modules in parallel, caches their PTX and cubins, and
 loads cubins compiled for the device instead of PTX.

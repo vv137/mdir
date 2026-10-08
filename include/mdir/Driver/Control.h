@@ -58,6 +58,11 @@ struct PairTerm {
   /// interaction groups of the custom nonbonded force of OpenMM
   /// [Eastman2017].
   std::vector<std::string> groups;
+  /// In the Python model, `observe` of the term (D189,
+  /// D[python-observe]): whether the term is observed, and the constants
+  /// whose derivatives are; the control file gives Control::observables.
+  bool observed = false;
+  std::vector<std::string> observe;
 };
 
 /// A term of the potential energy over the triplets centered on each
@@ -162,6 +167,17 @@ struct Control {
   /// `tunable_constants` that the program reads them from.
   bool tunables = false;
   std::vector<std::pair<unsigned, std::string>> tunableConstants;
+  /// The observed constants that a tunable takes, by the name of the term
+  /// and of the constant (D[python-observe]): the program takes their
+  /// values as values of its entry (Program::startValues), not as
+  /// constants of its text, so that an update does not change it.
+  std::vector<std::pair<std::string, std::string>> observedTunables;
+  bool isObservedTunable(llvm::StringRef term, llvm::StringRef constant) const {
+    for (const auto &[t, c] : observedTunables)
+      if (t == term && c == constant)
+        return true;
+    return false;
+  }
   /// Whether the program carries the derivative of the energy in the
   /// tunables (D230, docs/python-gradient.md), and the
   /// declarations that it differentiates, in the order of the tunables.
@@ -253,6 +269,19 @@ struct Control {
     int64_t line = 0;
   };
   std::vector<Observable> observables;
+  /// The columns of the file of `observables`, after the step: the energy
+  /// of each term and its derivatives, in kcal/mol and per unit of the
+  /// constant.
+  std::vector<std::pair<std::string, std::string>> getObservableColumns() const {
+    std::vector<std::pair<std::string, std::string>> columns;
+    for (const Observable &observable : observables)
+      if (observable.constant.empty())
+        columns.push_back({observable.term + ".energy", "kcal/mol"});
+      else
+        columns.push_back({observable.term + ".d_" + observable.constant,
+                           "kcal/mol/" + observable.constant});
+    return columns;
+  }
   /// The format of the trajectory, DCD or XTC (D141).
   TrajectoryFormat trajectoryFormat = TrajectoryFormat::DCD;
   std::string restartOutput;

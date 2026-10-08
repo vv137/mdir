@@ -48,6 +48,15 @@ sim.close_reporters()          # or the simulation's end; files are complete the
   failure; the state returns to the step before the part, the files do not.
 - A minimization takes no reporters.
 
+`ObservablesReporter(file, period)` (D[python-observe],
+[python-observe.md](python-observe.md)) writes the file of `[output]
+observables` (D189) for a program whose terms observe, with a period of its
+own: it is a built-in reporter like the two above (one per simulation, the
+row of step 0, backups, appending, the rule of the Trotter barostat), its
+period enters the greatest common divisor R, and the host writes its rows
+where they are due. A callback's state has the same values in
+`State.observables`.
+
 Checkpoints (D223, [python-checkpoints.md](python-checkpoints.md))
 add `CheckpointReporter(file, period)`, and the files of these reporters
 continue across a checkpoint as those of `mdir run --continue` do. The log of `mdir run` is not a reporter: the energy file holds its

@@ -118,6 +118,16 @@ struct Output {
   /// The energies of terms and their derivatives in constants of theirs
   /// (D189), or none.
   ColumnFile observables;
+  /// For a program that embeds the run (D[python-observe]): the steps
+  /// between the rows of `observables`, which the host writes where they
+  /// are due, 0 for none; and the values of the last step of energy, in
+  /// kJ/mol and per unit of each constant, with the tails at the volume of
+  /// the cell, `step` -1 before one.
+  int64_t observablesPeriod = 0;
+  struct ObservableRow {
+    int64_t step = -1;
+    std::vector<double> values;
+  } lastObservables;
   std::vector<double> stateFixedEnergies, stateVolumeEnergies;
   std::vector<double> lambdaFixedDerivatives, lambdaVolumeDerivatives;
   /// What the correction for the dispersion adds to each column of
