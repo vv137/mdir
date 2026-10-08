@@ -1,0 +1,20 @@
+# The notices that a release tarball carries for the third parties whose code
+# it distributes in binary form (issue #194, packaging/licenses/README.md):
+# scripts/release/check-binary.sh accepts a tree that holds them, complains
+# about each one that is missing, empty, or another text, and asks for
+# HDF5's and the OpenMP runtime's only beside their libraries. The trees are
+# stand-ins (Inputs/release_notices.py); the tarball itself is checked when a
+# release is built.
+# RUN: rm -rf %t
+# RUN: %python %S/Inputs/release_notices.py %S/../.. %t | FileCheck %s
+# CHECK: complete: 0 complaints about notices
+# CHECK-NEXT: without LICENSE: exit 1, 1: share/mdir/LICENSE is missing: MDIR's license
+# CHECK-NEXT: without licenses/pocketfft-LICENSE: exit 1, 1: share/mdir/licenses/pocketfft-LICENSE is missing: pocketfft is compiled into libmdrt.so
+# CHECK-NEXT: without licenses/tomlplusplus-LICENSE: exit 1, 1: share/mdir/licenses/tomlplusplus-LICENSE is missing: toml++ is compiled into mdir
+# CHECK-NEXT: without licenses/LLVM-LICENSE.TXT: exit 1, 1: share/mdir/licenses/LLVM-LICENSE.TXT is missing: LLVM is linked into mdir
+# CHECK-NEXT: without licenses/OpenMP-LICENSE.TXT: exit 1, 1: share/mdir/licenses/OpenMP-LICENSE.TXT is missing: lib/libomp.so is bundled
+# CHECK-NEXT: without licenses/HDF5-COPYING: exit 1, 1: share/mdir/licenses/HDF5-COPYING is missing: lib/libhdf5 is bundled
+# CHECK-NEXT: without cuda/EULA.txt: exit 1, 1: share/mdir/cuda/EULA.txt is missing: cuFFT or libdevice is bundled
+# CHECK-NEXT: empty HDF5-COPYING: exit 1, 1: share/mdir/licenses/HDF5-COPYING is missing: lib/libhdf5 is bundled
+# CHECK-NEXT: another text as LLVM-LICENSE.TXT: exit 1, 1
+# CHECK-NEXT: no libhdf5 and no libomp, without their notices: 0 complaints about notices
