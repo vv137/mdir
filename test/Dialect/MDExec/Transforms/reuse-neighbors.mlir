@@ -218,3 +218,92 @@ func.func @shared(%x0: !vec, %cell: !md.cell, %steps: index) -> !vec {
   }
   return %x : !vec
 }
+
+// A build at the positions and in the cell of the last refresh of its
+// structure, with its parameters, repeats that refresh and is removed: the
+// potential of an output at the state of a step reads the structure of the
+// step, in a loop over states as well, and does not act on it (#233). In
+// another cell it is a refresh.
+//
+// CHECK-LABEL: func.func @repeated(
+// CHECK-SAME:    %{{[a-z0-9]+}}: !md.field<@atoms, 3 x f64>, %[[CELL:[a-z0-9]+]]: !md.cell, %[[OTHER:[a-z0-9]+]]: !md.cell,
+func.func @repeated(%x0: !vec, %cell: !md.cell, %other: !md.cell,
+                    %steps: index, %states: index) -> (!vec, f64) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %zero = arith.constant 0.0 : f64
+  // CHECK:      scf.for {{.*}} iter_args(%[[XA:[a-z0-9]+]] = %{{[a-z0-9]+}}, %{{[a-z0-9]+}} = %{{[a-z0-9_]+}}, %[[NA:[a-z0-9]+]] = %{{[0-9]+}})
+  %x, %total = scf.for %step = %c0 to %steps step %c1
+      iter_args(%xa = %x0, %sum = %zero) -> (!vec, f64) {
+    // The step.
+    // CHECK:        %[[STEP:[0-9]+]] = md_exec.refresh_neighbors %[[NA]], %[[XA]], %[[CELL]]
+    // CHECK:        md_exec.pair_for %[[STEP]], %[[XA]], %[[CELL]]
+    %cells1 = md_exec.build_cells %xa, %cell width(1.75)
+        : !vec -> !mdrt.cells<@atoms>
+    %nl1 = md_exec.build_neighbors %cells1, %xa, %cell
+        cutoff(1.5) skin(0.25) kind(matrix) width(48)
+        : !mdrt.cells<@atoms>, !vec -> !nl
+    %none = arith.constant 0.0 : f64
+    %a = md_exec.pair_for %nl1, %xa, %cell reduce(%none : f64)
+        cutoff(1.5) weights [0.5] policy(directed, owner_only) {
+    ^bb0(%r2: f64, %d: vector<3xf64>):
+      md_exec.yield %r2 : f64
+    } : !nl, !vec -> f64
+
+    // An output at the state of the step.
+    // CHECK-NOT:    md_exec.refresh_neighbors
+    // CHECK:        md_exec.pair_for %[[STEP]], %[[XA]], %[[CELL]]
+    %cells2 = md_exec.build_cells %xa, %cell width(1.75)
+        : !vec -> !mdrt.cells<@atoms>
+    %nl2 = md_exec.build_neighbors %cells2, %xa, %cell
+        cutoff(1.5) skin(0.25) kind(matrix) width(48)
+        : !mdrt.cells<@atoms>, !vec -> !nl
+    %b = md_exec.pair_for %nl2, %xa, %cell reduce(%none : f64)
+        cutoff(1.5) weights [0.5] policy(directed, owner_only) {
+    ^bb0(%r2: f64, %d: vector<3xf64>):
+      md_exec.yield %r2 : f64
+    } : !nl, !vec -> f64
+
+    // Its loop over states.
+    // CHECK:        %[[STATES:[0-9]+]]:2 = scf.for {{.*}} iter_args(%{{[a-z0-9]+}} = %{{[0-9]+}}, %[[NI:[a-z0-9]+]] = %[[STEP]])
+    // CHECK-NOT:      md_exec.refresh_neighbors
+    // CHECK:          md_exec.pair_for %[[NI]], %[[XA]], %[[CELL]]
+    // CHECK:          scf.yield %{{[0-9]+}}, %[[NI]]
+    %c = scf.for %state = %c0 to %states step %c1
+        iter_args(%acc = %b) -> (f64) {
+      %cells3 = md_exec.build_cells %xa, %cell width(1.75)
+          : !vec -> !mdrt.cells<@atoms>
+      %nl3 = md_exec.build_neighbors %cells3, %xa, %cell
+          cutoff(1.5) skin(0.25) kind(matrix) width(48)
+          : !mdrt.cells<@atoms>, !vec -> !nl
+      %p = md_exec.pair_for %nl3, %xa, %cell reduce(%none : f64)
+          cutoff(1.5) weights [0.5] policy(directed, owner_only) {
+      ^bb0(%r2: f64, %d: vector<3xf64>):
+        md_exec.yield %r2 : f64
+      } : !nl, !vec -> f64
+      %more = arith.addf %acc, %p : f64
+      scf.yield %more : f64
+    }
+
+    // The same positions in another cell.
+    // CHECK:        %[[ELSEWHERE:[0-9]+]] = md_exec.refresh_neighbors %[[STATES]]#1, %[[XA]], %[[OTHER]]
+    // CHECK:        md_exec.pair_for %[[ELSEWHERE]], %[[XA]], %[[OTHER]]
+    %cells4 = md_exec.build_cells %xa, %other width(1.75)
+        : !vec -> !mdrt.cells<@atoms>
+    %nl4 = md_exec.build_neighbors %cells4, %xa, %other
+        cutoff(1.5) skin(0.25) kind(matrix) width(48)
+        : !mdrt.cells<@atoms>, !vec -> !nl
+    %e = md_exec.pair_for %nl4, %xa, %other reduce(%none : f64)
+        cutoff(1.5) weights [0.5] policy(directed, owner_only) {
+    ^bb0(%r2: f64, %d: vector<3xf64>):
+      md_exec.yield %r2 : f64
+    } : !nl, !vec -> f64
+
+    %ab = arith.addf %a, %c : f64
+    %abe = arith.addf %ab, %e : f64
+    %next = arith.addf %sum, %abe : f64
+    // CHECK:        scf.yield %[[XA]], %{{[0-9]+}}, %[[ELSEWHERE]]
+    scf.yield %xa, %next : !vec, f64
+  }
+  return %x, %total : !vec, f64
+}

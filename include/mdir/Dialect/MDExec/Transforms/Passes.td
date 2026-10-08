@@ -37,6 +37,12 @@ def ReuseNeighbors : Pass<"md-exec-reuse-neighbors", "::mlir::ModuleOp"> {
     The structure is empty when the loop begins, so the first iteration
     builds it.
 
+    A refresh that repeats the last refresh of its structure (the same
+    positions and cell, as values, and the same parameters) is removed,
+    also where a loop carries the structure and only repeats that refresh:
+    the potential of an output at the state of a step reads the structure
+    of the step and does not act on it (D[output-independence]).
+
     With `prune-skin` above zero, each refresh with the policy `check`
     keeps a dual list (D114): the inner list, which the loops over pairs
     take, is pruned from the outer one with the reach `cutoff +

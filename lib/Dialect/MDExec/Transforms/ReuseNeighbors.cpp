@@ -301,6 +301,151 @@ static void reuseNeighbors(scf::ForOp loop) {
   loop.erase();
 }
 
+//===----------------------------------------------------------------------===//
+// Refreshes that repeat the last one
+//===----------------------------------------------------------------------===//
+
+/// Returns true if `first` and `second` test and build a structure in the
+/// same way for the same configuration: the same positions and cell, as
+/// values, and the same parameters.
+static bool isSameRefresh(RefreshNeighborsOp first, RefreshNeighborsOp second) {
+  return first.getPositions() == second.getPositions() &&
+         first.getCell() == second.getCell() &&
+         first.getScratch().empty() && second.getScratch().empty() &&
+         !first.getMoved() && !second.getMoved() && !first.getStale() &&
+         !second.getStale() && first.getCutoffAttr() == second.getCutoffAttr() &&
+         first.getSkinAttr() == second.getSkinAttr() &&
+         first.getPruneSkinAttr() == second.getPruneSkinAttr() &&
+         first.getCellWidthAttr() == second.getCellWidthAttr() &&
+         first.getPolicy() == second.getPolicy() &&
+         first.getIntervalAttr() == second.getIntervalAttr();
+}
+
+/// The op that changes the structure `value` in its storage, a refresh of
+/// it or a loop that begins with it, if it is the only one; null otherwise,
+/// with `several` set where there are more.
+static Operation *getChange(Value value, bool &several) {
+  Operation *change = nullptr;
+  several = false;
+  for (OpOperand &use : value.getUses()) {
+    Operation *user = use.getOwner();
+    auto refresh = dyn_cast<RefreshNeighborsOp>(user);
+    bool changes = (refresh && refresh.getNeighbors() == value) ||
+                   isa<scf::ForOp>(user);
+    if (!changes)
+      continue;
+    if (change)
+      several = true;
+    change = user;
+  }
+  return change;
+}
+
+/// Returns the loop and sets `position` if `value` is the structure that
+/// the loop carries at that position among its values, as the argument of
+/// its body.
+static scf::ForOp getCarrier(Value value, unsigned &position) {
+  auto argument = dyn_cast<BlockArgument>(value);
+  if (!argument)
+    return scf::ForOp();
+  auto loop = dyn_cast<scf::ForOp>(argument.getOwner()->getParentOp());
+  if (!loop || argument.getOwner() != loop.getBody() ||
+      argument.getArgNumber() < loop.getNumInductionVars())
+    return scf::ForOp();
+  position = argument.getArgNumber() - loop.getNumInductionVars();
+  return loop;
+}
+
+/// Returns true if `value` is defined outside `loop`.
+static bool isDefinedOutside(Value value, scf::ForOp loop) {
+  Operation *owner = nullptr;
+  if (auto argument = dyn_cast<BlockArgument>(value))
+    owner = argument.getOwner()->getParentOp();
+  else
+    owner = value.getDefiningOp();
+  return !loop->isAncestor(owner);
+}
+
+/// Returns true if the body of `loop` changes the structure that it carries
+/// at `position` by refreshes like `refresh` only.
+static bool refreshesOnlyLike(scf::ForOp loop, unsigned position,
+                              RefreshNeighborsOp refresh) {
+  if (!isDefinedOutside(refresh.getPositions(), loop) ||
+      !isDefinedOutside(refresh.getCell(), loop))
+    return false;
+  Value yielded = loop.getBody()->getTerminator()->getOperand(position);
+  Value current = loop.getRegionIterArgs()[position];
+  while (true) {
+    bool several = false;
+    Operation *change = getChange(current, several);
+    if (several)
+      return false;
+    if (!change)
+      return current == yielded;
+    auto next = dyn_cast<RefreshNeighborsOp>(change);
+    if (!next || !isSameRefresh(next, refresh))
+      return false;
+    current = next.getResult();
+  }
+}
+
+/// Returns true if the structure `structure`, which `refresh` takes, is as
+/// a refresh like `refresh` left it: the test of `refresh` then finds what
+/// that one left, valid for the same positions in the same cell, and
+/// `refresh` changes nothing.
+static bool isRefreshedLike(Value structure, RefreshNeighborsOp refresh) {
+  // The last change of the storage is the op that defines the value: the
+  // structures of one storage follow one another (findChains), so nothing
+  // else may change `structure` beside the op that takes it.
+  bool several = false;
+  getChange(structure, several);
+  if (several)
+    return false;
+  if (auto last = structure.getDefiningOp<RefreshNeighborsOp>())
+    return last != refresh && isSameRefresh(last, refresh);
+  // A structure that a loop carries: as the loop took it, where the body
+  // refreshes it for this configuration only.
+  unsigned position = 0;
+  if (scf::ForOp loop = getCarrier(structure, position))
+    return refreshesOnlyLike(loop, position, refresh) &&
+           isRefreshedLike(loop.getInitArgs()[position], refresh);
+  // The structure that such a loop leaves.
+  if (auto loop = structure.getDefiningOp<scf::ForOp>()) {
+    position = cast<OpResult>(structure).getResultNumber();
+    return refreshesOnlyLike(loop, position, refresh) &&
+           isRefreshedLike(loop.getInitArgs()[position], refresh);
+  }
+  return false;
+}
+
+/// Removes the refreshes that repeat the last refresh of their structure:
+/// the same positions and cell, as values, and the same parameters. The
+/// potential of an output (`[output] observables`, the free-energy file, a
+/// pull file) is evaluated at the state that a step has just evaluated its
+/// forces at and shares the structure of the steps, so its builds become
+/// such refreshes. Their test finds the structure as the step left it, so
+/// they change nothing but what counts refreshes (the age of the policy
+/// `interval`, D88); without them the output reads the structure and
+/// cannot act on the run (#233).
+static void removeRepeatedRefreshes(Operation *root) {
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    SmallVector<RefreshNeighborsOp> refreshes;
+    root->walk([&](RefreshNeighborsOp refresh) {
+      refreshes.push_back(refresh);
+    });
+    for (RefreshNeighborsOp refresh : refreshes) {
+      if (!isRefreshedLike(refresh.getNeighbors(), refresh))
+        continue;
+      refresh.getResult().replaceAllUsesWith(refresh.getNeighbors());
+      refresh.erase();
+      changed = true;
+      break;
+    }
+  }
+}
+
 /// Returns true if the body of `loop` has a structure that the loop can
 /// carry.
 static bool hasWork(scf::ForOp loop) {
@@ -320,6 +465,7 @@ public:
 
   void runOnOperation() final {
     reuseAll();
+    removeRepeatedRefreshes(getOperation());
     // The refreshes keep dual lists where the run asks for them (D114).
     if (pruneSkin > 0.0)
       getOperation()->walk([&](RefreshNeighborsOp refresh) {

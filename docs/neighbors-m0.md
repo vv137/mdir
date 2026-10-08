@@ -268,7 +268,27 @@ $$\max_i \lVert \mathbf x_i - \mathbf m \odot \mathbf x^\text{ref}_i \rVert \le 
 
 which is $s/2$ in the cell of the build. Only the three edges of the
 diagonal enter, also for a triclinic cell. With `rebuild_interval` the
-structure is built every $n$ refreshes and not tested in between (D88).
+structure is built every $n$ refreshes of the steps and not tested in
+between (D88).
+
+The potential of an output (`[output] observables`, the free-energy file, a
+pull file) has the reach of the forces and shares the structure of the
+steps (`md-exec-reuse-neighbors`, which leaves the cell out of what two
+structures must have in common). It is evaluated at the state that the step
+has just evaluated its forces at, so its refresh would repeat that of the
+step: the same positions and cell, as values, and the same parameters. The
+pass removes such a refresh, through a loop over states as well, and the
+output reads the structure of the step (D[output-independence], #233): it
+neither tests nor builds, and does not count for `rebuild_interval`. A
+refresh at another state is not removed. Given the positions of one cell
+and another cell (the outputs at a step where the barostat of Trotter type
+scales, before the fix of #218), the test compared the positions with a
+reference scaled for the wrong cell, built the structure where the steps
+would not have, and recorded the wrong cell as $\mathbf L^\text{ref}$; the
+steps then built at other steps and summed their forces in another order.
+An output that is evaluated elsewhere than at the state of the step needs a
+structure of its own; `output-independence*.test` compare the run with each
+output against the run without it, bit for bit in the deterministic mode.
 
 | Method | State |
 |---|---|
