@@ -1,0 +1,26 @@
+# REQUIRES: python-api, cuda
+# A Program keeps the code of its simulations (D[program-reuse]), on a
+# GPU: the kernels are constants of the kept host object and the kept LLVM
+# module has the constructors that load them, so a later simulation loads
+# and runs them without the pipeline, and gives the same positions and
+# velocities bit for bit in the deterministic mode. As
+# python-program-reuse.test, without a directory of the compile cache and
+# with one.
+# RUN: rm -rf %t
+# RUN: %mdir_python %S/Inputs/python_program_reuse.py %S/Inputs/dipeptide GPU Mixed | FileCheck %s --check-prefixes=CHECK,PLAIN
+# RUN: %mdir_python %S/Inputs/python_program_reuse.py %S/Inputs/dipeptide GPU Mixed %t | FileCheck %s --check-prefixes=CHECK,DISK
+# CHECK: first: reused 0 pipeline run host compiled 1 disk hits 0 bypassed 0 state same
+# CHECK-NEXT: second: reused 1 pipeline none host compiled 0 disk hits 0 bypassed 0 state same
+# CHECK-NEXT: third: reused 1 pipeline none host compiled 0 disk hits 0 bypassed 0 state same
+# CHECK-NEXT: bypass: reused 0 pipeline run host compiled 1 disk hits 0 bypassed 1 state same
+# CHECK-NEXT: after-bypass: reused 1 pipeline none host compiled 0 disk hits 0 bypassed 0 state same
+# PLAIN-NEXT: other-program: reused 0 pipeline run host compiled 1 disk hits 0 bypassed 0 state same
+# DISK-NEXT: other-program: reused 0 pipeline run host compiled 0 disk hits 1 bypassed 0 state same
+# CHECK-NEXT: other-program-second: reused 1 pipeline none host compiled 0 disk hits 0 bypassed 0 state same
+# CHECK-NEXT: bypass-program: reused 0 pipeline run host compiled 1 disk hits 0 bypassed 1 state same
+# CHECK-NEXT: bypass-program-second: reused 0 pipeline run host compiled 1 disk hits 0 bypassed 1 state same
+# PLAIN-NEXT: bypass-program-with-cache: reused 0 pipeline run host compiled 1 disk hits 0 bypassed 0 state same
+# DISK-NEXT: bypass-program-with-cache: reused 0 pipeline run host compiled 0 disk hits 1 bypassed 0 state same
+# CHECK-NEXT: bypass-program-with-cache-second: reused 1 pipeline none host compiled 0 disk hits 0 bypassed 0 state same
+# CHECK-NEXT: threads: reused 0 and 1 state same
+# CHECK-NEXT: after-threads: reused 1 pipeline none host compiled 0 disk hits 0 bypassed 0 state same
