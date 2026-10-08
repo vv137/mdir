@@ -367,7 +367,12 @@ and a GPU, in double and mixed precision:
   (`python-resident-threads*.test`);
 - the memory of the device or of the host stays flat over 30 runs, 30
   evaluations that each begin an activation, and 30 simulations that end
-  (`python-memory*.test`).
+  (`python-memory*.test`). The memory of the host is read as the bytes in
+  use of the allocator (`mallinfo2`, with the thread cache off) and as the
+  address space mapped outside the heap, bounded by 0.5 MiB from step 5 to
+  step 30 and by a median of 16 KiB per step: the resident memory read +3
+  to +4 MiB alone and up to +8.8 MiB beside the other tests of a suite for
+  the same 25 simulations, which keep nothing (#228).
 
 ### Performance
 

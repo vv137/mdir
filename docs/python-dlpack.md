@@ -487,7 +487,7 @@ those of the tensor; six borrows committed and abandoned in turn against
 a simulation with the three commits alone, to the bit; a commit with
 leapfrog in a program without tunables, and in the default mode of mixed
 precision. `python-memory*.test` runs 30 borrows committed and abandoned
-in turn: the memory of the host and of the device stays flat (+0.0 MiB of growth from borrow 5 to borrow 30 on both, bound 8 MiB).
+in turn: the memory of the host and of the device stays flat (from borrow 5 to borrow 30, +0.0 MiB on the device, bound 8 MiB, and +0.00 MiB in use on the host, bound 0.5 MiB; the measures of the host are those of [python-segments.md](python-segments.md#resident-buffers)).
 No device code changed, so the compute-sanitizer suite was not run.
 
 ### Cost of a borrow

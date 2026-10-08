@@ -2,10 +2,12 @@
 # The host memory of a persistent simulation on the CPU stays flat across
 # many calls of run (#110), across evaluations that end its activation, and
 # across simulations that end (D215), and across writable borrows that are
-# committed and abandoned (D229).
+# committed and abandoned (D229). The memory is the bytes in use of the
+# allocator and the address space mapped outside the heap, not the resident
+# memory, so that the other tests of a suite do not change it (#228).
 # RUN: %mdir_python %S/Inputs/python_memory.py %S/Inputs/dipeptide CPU | FileCheck %s
-# CHECK: CPU: host memory from call 5 to call 30:
-# CHECK: CPU: host memory after 30 evaluations between runs:
-# CHECK: CPU: host memory from simulation 5 to simulation 30 that ended:
-# CHECK: CPU: host memory from borrow 5 to borrow 30, committed and abandoned in turn:
+# CHECK: CPU: host memory from call 5 to call 30: in use {{.*}}, mapped
+# CHECK: CPU: host memory after 30 evaluations between runs: in use {{.*}}, mapped
+# CHECK: CPU: host memory from simulation 5 to simulation 30 that ended: in use {{.*}}, mapped
+# CHECK: CPU: host memory from borrow 5 to borrow 30, committed and abandoned in turn: in use {{.*}}, mapped
 # CHECK: memory across calls passed
