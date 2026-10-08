@@ -118,7 +118,9 @@ with a stated bound, not a library flag:
    $3\times 10^{-7}$ as a kernel evaluates them in f32 with fused
    multiply–adds, checked at 17 points of every interval. On JAC
    ($r_c = 8$ Å) $b = 7$: 1281 intervals, 20 KB a table, each interval
-   read with one load of 16 bytes. In an f64 kernel the function is
+   read with one load of 16 bytes. A table follows from the function,
+   the cutoff, and the tolerance alone, so a process searches for it once
+   and keeps it for its later lowerings. In an f64 kernel the function is
    inlined with the exact `math.erfc`. A function that no table holds
    within the tolerance stays in its kernel, in the kernel's type: the
    factor $\exp(\sigma/(r - a\sigma))$ of the Stillinger–Weber form, whose
