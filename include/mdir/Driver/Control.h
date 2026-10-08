@@ -162,6 +162,52 @@ struct Control {
   /// `tunable_constants` that the program reads them from.
   bool tunables = false;
   std::vector<std::pair<unsigned, std::string>> tunableConstants;
+  /// Whether the program carries the derivative of the energy in the
+  /// tunables (D[tunable-gradient], docs/python-gradient.md), and the
+  /// declarations that it differentiates, in the order of the tunables.
+  bool tunableGradient = false;
+  enum class TunableKind {
+    Charge,
+    Sigma,
+    Epsilon,
+    SigmaPair,
+    EpsilonPair,
+    PairConstant,
+    TupleParameter
+  };
+  struct TunableDeclaration {
+    std::string name;
+    TunableKind kind = TunableKind::Charge;
+    /// The index of the term among the pair terms or the tuple terms.
+    unsigned termIndex = 0;
+    std::string parameter;
+  };
+  std::vector<TunableDeclaration> tunableDeclarations;
+  /// The seeds through which the derivatives in the tables of σ and ε
+  /// leave a program as fields of the particles (D[tunable-gradient]).
+  /// The kernel of the Lennard-Jones of `@tunable` takes, for the pair of
+  /// the particles i and j of the types a and b, the value of the table
+  /// plus d_i w[a, b] + d_j w[b, a], with d a field of zeros and w the
+  /// weights of the seed (System::tunableSeedWeights): the derivative of
+  /// the energy in d, added over the particles of the type a, is
+  /// Σ_b w[a, b] ∂U/∂(table)_ab, the pairs of two particles of one type
+  /// counted twice. A seed of a per-type tunable has the derivatives of
+  /// the combining rule as its weights, w[a, b] = ∂(table)_ab/∂θ_a, and
+  /// its row a gives the site a; a seed of a tunable of the table by pairs
+  /// has the weight 1 for one pair of types in each row, and its row gives
+  /// that pair, times `scales` (1/2 for a pair of one type), so that as
+  /// many seeds are needed as pairs share a type. `sites` holds the site of
+  /// each row, or -1.
+  struct TunableTableSeed {
+    bool sigma = true;
+    unsigned tunable = 0;
+    std::vector<int64_t> sites;
+    std::vector<double> scales;
+    /// For a seed of a table by pairs, the type of the other member of the
+    /// pair of each row.
+    std::vector<int64_t> columns;
+  };
+  std::vector<TunableTableSeed> tunableTableSeeds;
 
   bool hasTopology() const {
     return inMemoryTopology || !prmtopFile.empty() || !gromacsTopologyFile.empty() ||

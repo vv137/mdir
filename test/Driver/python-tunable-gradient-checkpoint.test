@@ -1,0 +1,12 @@
+# REQUIRES: python-api, hdf5
+# The derivative of the energy in the tunable parameters
+# (D[tunable-gradient]) in a simulation continued from a checkpoint (D223),
+# and in a new stage from it: the derivative and its energy of the
+# simulation that wrote the checkpoint, to the bit, on the CPU in double
+# and mixed precision.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide checkpoint CPU Double %t | FileCheck %s -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide checkpoint CPU Mixed %t | FileCheck %s -DMODE="CPU Mixed"
+# CHECK: [[MODE]]: continued from a checkpoint, the derivative and its energy equal those of the simulation that wrote it to the bit: True
+# CHECK: [[MODE]]: a new stage from a checkpoint, the derivative and its energy equal those of the simulation that wrote it to the bit: True
+# CHECK: checkpoint passed

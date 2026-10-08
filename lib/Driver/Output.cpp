@@ -412,6 +412,31 @@ void _mlir_ciface_mdrtWriteObservables(int64_t step, void *values) {
   output.observables.write(step, row);
 }
 
+void _mlir_ciface_mdrtWriteTunableGradient(void *values) {
+  Output &output = *current;
+  auto *v = static_cast<StridedMemRefType<double, 1> *>(values);
+  output.tunableGradient.assign(static_cast<size_t>(v->sizes[0]), 0.0);
+  for (int64_t k = 0; k != v->sizes[0]; ++k)
+    output.tunableGradient[k] = v->data[v->offset + k * v->strides[0]];
+  output.tunableGradientVolume = output.volume;
+  output.tunableGradientWritten = true;
+}
+
+void _mlir_ciface_mdrtWriteTunableGradientField(int64_t index, void *values,
+                                                void *ids) {
+  Output &output = *current;
+  auto *buffer = static_cast<StridedMemRefType<double, 1> *>(values);
+  auto *numbers = static_cast<StridedMemRefType<int32_t, 1> *>(ids);
+  if (output.tunableGradientFields.size() <= static_cast<size_t>(index))
+    output.tunableGradientFields.resize(index + 1);
+  std::vector<double> &field = output.tunableGradientFields[index];
+  int64_t count = buffer->sizes[0];
+  field.assign(static_cast<size_t>(count), 0.0);
+  for (int64_t i = 0; i != count; ++i)
+    field[numbers->data[numbers->offset + i * numbers->strides[0]]] =
+        buffer->data[buffer->offset + i * buffer->strides[0]];
+}
+
 void _mlir_ciface_mdrtAddBath(double energy) { current->bath += energy; }
 
 double Output::getChainEnergy() const {

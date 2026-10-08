@@ -137,6 +137,61 @@ struct Program {
   /// file, proportional to 1 / V: the tail of an observed pair term and its
   /// derivatives (D209); 0 for the other columns.
   std::vector<double> observableVolumeConstants;
+  /// The derivative of the energy in the tunables
+  /// (D[tunable-gradient], docs/python-gradient.md): whether the entry
+  /// evaluates it when the host asks (the start value `tunable_gradient`);
+  /// for each tunable, whether a rule gives its derivative or the program
+  /// provably does not read it; and the values that the entry hands the
+  /// host (mdrtWriteTunableGradient), each the derivative in one site of a
+  /// tunable, with what the host adds to it, in kJ/mol per unit of the
+  /// tunable at the volume of the build, proportional to 1 / V: the
+  /// derivative of the tail of a pair term and of its shift estimate
+  /// (D209, D210).
+  bool tunableGradient = false;
+  enum class GradientOutcome { Rule, Zero };
+  std::vector<GradientOutcome> gradientOutcomes;
+  struct GradientSlot {
+    unsigned tunable = 0;
+    unsigned site = 0;
+    double volumeConstant = 0.0;
+  };
+  std::vector<GradientSlot> gradientSlots;
+  /// The derivative is that of the potential that the forces sample,
+  /// shifted to 0 at the cutoff where the run cuts it (D210). After the
+  /// derivatives the entry hands over that energy less the energy that
+  /// the run reports, and the host adds the estimate of the shift that the
+  /// correction for the dispersion does not hold already, in kJ/mol at the
+  /// volume of the build, proportional to 1 / V.
+  double gradientShiftEnergy = 0.0;
+  /// The fields of the particles that the entry hands the host after the
+  /// numbers (mdrtWriteTunableGradientField), each the derivative of the
+  /// energy in the value of each particle of a field of zeros through
+  /// which the sites of one tunable enter their kernels: the derivative in
+  /// the site `first` is the value of the field at the particle `second`
+  /// (in the order of the input).
+  /// A field of a seed of a table (Control::tunableTableSeeds) gives, for
+  /// each type, the site `rows[type].site` (or none, -1) the sum of its
+  /// values over the particles of the type, times `scale`, plus what the
+  /// host adds, `volumeConstant`: the derivative of the correction for the
+  /// dispersion and of its shift estimate, in kJ/mol per unit of the
+  /// tunable at the volume of the build, proportional to 1 / V.
+  struct GradientField {
+    unsigned tunable = 0;
+    std::vector<std::pair<uint32_t, uint32_t>> sites;
+    struct Row {
+      int64_t site = -1;
+      double scale = 1.0, volumeConstant = 0.0;
+    };
+    std::vector<Row> rows;
+  };
+  std::vector<GradientField> gradientFields;
+  /// What the host adds to the derivative in the charge of each particle,
+  /// in kJ/mol/e: the derivative of the self term of the reaction field or
+  /// of particle mesh Ewald, which does not depend on the cell, and that
+  /// of the background of a net charge, at the volume of the build,
+  /// proportional to 1 / V. Empty unless the charges are a tunable whose
+  /// derivative the program carries.
+  std::vector<double> gradientChargeFixed, gradientChargeVolume;
   /// β in nm⁻¹ and the numbers of points of the grid, for the log.
   double pmeBeta = 0.0;
   int64_t pmeGrid[3] = {0, 0, 0};

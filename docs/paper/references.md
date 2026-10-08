@@ -76,14 +76,6 @@ G. E. P. Box, M. E. Muller, "A note on the generation of random normal
 deviates," *Ann. Math. Stat.* **29**, 610–611 (1958).
 [doi:10.1214/aoms/1177706645](https://doi.org/10.1214/aoms/1177706645)
 
-### Brunken2025
-
-C. Brunken, O. Peltre, H. Chomet, et al., "Machine learning interatomic
-potentials: library for efficient training, model development and
-simulation of molecular systems," arXiv:2505.22397 (2025).
-[doi:10.48550/arXiv.2505.22397](https://doi.org/10.48550/arXiv.2505.22397)
-
-
 ### Brooks1983
 
 B. R. Brooks, R. E. Bruccoleri, B. D. Olafson, D. J. States,
@@ -91,7 +83,12 @@ S. Swaminathan, M. Karplus, "CHARMM: A program for macromolecular energy,
 minimization, and dynamics," *J. Comput. Chem.* **4**, 187–217 (1983).
 [doi:10.1002/jcc.540040211](https://doi.org/10.1002/jcc.540040211)
 
-Used for: the squared-distance switching potential (VSWITCH).
+### Brunken2025
+
+C. Brunken, O. Peltre, H. Chomet, et al., "Machine learning interatomic
+potentials: library for efficient training, model development and
+simulation of molecular systems," arXiv:2505.22397 (2025).
+[doi:10.48550/arXiv.2505.22397](https://doi.org/10.48550/arXiv.2505.22397)
 
 ### Bussi2007
 
@@ -106,6 +103,12 @@ weighted histogram analysis method for the analysis of simulated and
 parallel tempering simulations," *J. Chem. Theory Comput.* **3**(1),
 26–41 (2007).
 [doi:10.1021/ct0502864](https://doi.org/10.1021/ct0502864)
+
+### CurtisPowellReid1974
+
+A. R. Curtis, M. J. D. Powell, J. K. Reid, "On the estimation of sparse
+Jacobian matrices," *IMA J. Appl. Math.* **13**, 117–119 (1974).
+[doi:10.1093/imamat/13.1.117](https://doi.org/10.1093/imamat/13.1.117)
 
 ### Darden1993
 
@@ -134,6 +137,12 @@ P. Eastman, J. Swails, J. D. Chodera, et al., "OpenMM 7: Rapid
 development of high performance algorithms for molecular dynamics,"
 *PLoS Comput. Biol.* **13**, e1005659 (2017).
 [doi:10.1371/journal.pcbi.1005659](https://doi.org/10.1371/journal.pcbi.1005659)
+
+### Ermak1978
+
+D. L. Ermak, J. A. McCammon, "Brownian dynamics with hydrodynamic
+interactions," *J. Chem. Phys.* **69**, 1352–1360 (1978).
+[doi:10.1063/1.436761](https://doi.org/10.1063/1.436761)
 
 ### Essmann1995
 
@@ -203,6 +212,12 @@ pp. 207–218.
 R. W. Hockney, J. W. Eastwood, *Computer Simulation Using Particles*
 (IOP Publishing, Bristol, 1988).
 [doi:10.1887/0852743920](https://doi.org/10.1887/0852743920)
+
+### Hoover1985
+
+W. G. Hoover, "Canonical dynamics: Equilibrium phase-space
+distributions," *Phys. Rev. A* **31**, 1695–1697 (1985).
+[doi:10.1103/PhysRevA.31.1695](https://doi.org/10.1103/PhysRevA.31.1695)
 
 ### Hub2014
 
@@ -328,6 +343,20 @@ for building initial configurations for molecular dynamics simulations,"
 *J. Comput. Chem.* **30**, 2157–2164 (2009).
 [doi:10.1002/jcc.21224](https://doi.org/10.1002/jcc.21224)
 
+### Martyna1992
+
+G. J. Martyna, M. L. Klein, M. Tuckerman, "Nosé–Hoover chains: The
+canonical ensemble via continuous dynamics," *J. Chem. Phys.* **97**,
+2635–2643 (1992).
+[doi:10.1063/1.463940](https://doi.org/10.1063/1.463940)
+
+### Martyna1996
+
+G. J. Martyna, M. E. Tuckerman, D. J. Tobias, M. L. Klein, "Explicit
+reversible integrators for extended systems dynamics," *Mol. Phys.*
+**87**, 1117–1157 (1996).
+[doi:10.1080/00268979600100761](https://doi.org/10.1080/00268979600100761)
+
 ### Merz2018
 
 P. T. Merz, M. R. Shirts, "Testing for physical validity in molecular
@@ -376,6 +405,12 @@ J. Nocedal, S. J. Wright, *Numerical Optimization*, 2nd ed., Springer
 Series in Operations Research and Financial Engineering (Springer, New
 York, 2006).
 [doi:10.1007/978-0-387-40065-5](https://doi.org/10.1007/978-0-387-40065-5)
+
+### Nose1984
+
+S. Nosé, "A molecular dynamics method for simulations in the canonical
+ensemble," *Mol. Phys.* **52**, 255–268 (1984).
+[doi:10.1080/00268978400101201](https://doi.org/10.1080/00268978400101201)
 
 ### Pall2013
 
@@ -534,6 +569,13 @@ formation of physical clusters of molecules: Application to small water
 clusters," *J. Chem. Phys.* **76**, 637–649 (1982).
 [doi:10.1063/1.442716](https://doi.org/10.1063/1.442716)
 
+### ThalerZavadlav2021
+
+S. Thaler, J. Zavadlav, "Learning neural network potentials from
+experimental data via Differentiable Trajectory Reweighting," *Nat.
+Commun.* **12**, 6884 (2021).
+[doi:10.1038/s41467-021-27241-4](https://doi.org/10.1038/s41467-021-27241-4)
+
 ### Thompson2009
 
 A. P. Thompson, S. J. Plimpton, W. Mattson, "General formulation of
@@ -566,12 +608,26 @@ values of the fundamental physical constants: 2018," *Rev. Mod. Phys.*
 **93**, 025010 (2021).
 [doi:10.1103/RevModPhys.93.025010](https://doi.org/10.1103/RevModPhys.93.025010)
 
+### Tuckerman1999
+
+M. E. Tuckerman, C. J. Mundy, G. J. Martyna, "On the classical
+statistical mechanics of non-Hamiltonian systems," *Europhys. Lett.*
+**45**, 149–155 (1999).
+[doi:10.1209/epl/i1999-00139-0](https://doi.org/10.1209/epl/i1999-00139-0)
+
 ### Verlet1967
 
 L. Verlet, "Computer 'experiments' on classical fluids. I.
 Thermodynamical properties of Lennard-Jones molecules," *Phys. Rev.*
 **159**, 98–103 (1967).
 [doi:10.1103/PhysRev.159.98](https://doi.org/10.1103/PhysRev.159.98)
+
+### Wennberg2013
+
+C. L. Wennberg, T. Murtola, B. Hess, E. Lindahl, "Lennard-Jones lattice
+summation in bilayer simulations has critical effects on surface tension
+and lipid properties," *J. Chem. Theory Comput.* **9**, 3527–3537 (2013).
+[doi:10.1021/ct400140n](https://doi.org/10.1021/ct400140n)
 
 ### Zhang2019
 
@@ -586,4 +642,3 @@ constraints via molecular dynamics," *J. Phys. Chem. A* **123**, 6056–6079
 R. W. Zwanzig, "High-temperature equation of state by a perturbation
 method. I. Nonpolar gases," *J. Chem. Phys.* **22**(8), 1420–1426 (1954).
 [doi:10.1063/1.1740409](https://doi.org/10.1063/1.1740409)
-

@@ -371,6 +371,34 @@ energy equals a NumPy sum over the table to $3.0\times10^{-12}$ kJ/mol of
 208.0, and the correction for the dispersion its formula to
 $7.4\times10^{-13}$ (`python-tunable-pairs*.test`).
 
+The derivative of the energy in the tunables (Section 3.6,
+D[tunable-gradient]) is checked on the CPU and a GPU, in double and mixed
+precision, against sums written in NumPy at the positions of the state and
+against central differences of the energy that it is the derivative of,
+after an update of each entry (`python-tunable-gradient*.test`). Springs
+over six pairs of the dipeptide that share particles, their force
+constants tied in three entries: $4\times10^{-16}$ of the largest entry in
+double precision and $3\times10^{-7}$ in mixed. A constant of a pair term
+$-c/r^8$ on propane and water under a plain cutoff with the correction for
+the dispersion: the shifted sum within the cutoff, the tail, and the
+estimate of the shift in closed form, $1.7\times10^{-16}$ and
+$1.9\times10^{-5}$, the second the kernel's table of $r^{-8}$ in f32, which
+the energy has as well (central differences of the mixed energy agree to
+$7\times10^{-8}$). Per-type $\sigma$ (geometric) and $\epsilon$ together
+with pairs of the table, one of them set apart in the model, the shifted
+Lennard-Jones with $E_\text{disp}$ and $E_\text{sh}$: $2.5\times10^{-11}$
+and $1.3\times10^{-6}$. The charges under a Coulomb cutoff, tied in 25
+entries for 1,168 particles, with the pairs three bonds apart:
+$7.7\times10^{-16}$ and $1.2\times10^{-7}$. Every entry against central
+differences: within $1.8\times10^{-9}$ in double precision and
+$1.2\times10^{-4}$ in mixed, where the energy is a sum of terms in f32.
+After 200 steps of leapfrog under the barostat, $\sigma$ and $\epsilon$ by
+pairs of types agree with central differences at the volume that the run
+has reached within $3.6\times10^{-11}$ and $7.7\times10^{-6}$. Twelve steps
+through an evaluation of the derivative equal those of a program compiled
+without it to the bit, and a simulation continued from a checkpoint gives
+the derivative of the one that wrote it to the bit.
+
 The read-only DLPack views of a simulation (D220,
 Section 3.6) are checked by consumers that use none of MDIR's code: NumPy
 on the CPU, a reader of the capsule in ctypes with the CUDA driver API,

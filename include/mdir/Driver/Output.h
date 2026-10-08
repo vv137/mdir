@@ -124,6 +124,17 @@ struct Output {
   /// `observe`, in kJ/mol at the volume `firstVolume`, proportional to 1 / V
   /// (D209); empty if nothing.
   std::vector<double> observableVolumeConstants;
+  /// The derivatives of the energy in the sites of the tunables that the
+  /// entry handed over at its last evaluation of them
+  /// (mdrtWriteTunableGradient, D[tunable-gradient]), in kJ/mol per unit
+  /// of each, and the volume of the cell then; `tunableGradientWritten` is
+  /// set by the call.
+  std::vector<double> tunableGradient;
+  /// The fields of the particles that it handed over before them
+  /// (mdrtWriteTunableGradientField), each in the order of the input.
+  std::vector<std::vector<double>> tunableGradientFields;
+  double tunableGradientVolume = 0.0;
+  bool tunableGradientWritten = false;
   std::unique_ptr<TrajectoryWriter> trajectory;
   bool hasTrajectory = false;
 
@@ -383,6 +394,13 @@ void _mlir_ciface_mdrtWriteFreeEnergy(int64_t step, void *values);
 /// The columns of `[output] observe` at the step `step` (D189), in kJ/mol
 /// and kJ/mol per unit of a constant.
 void _mlir_ciface_mdrtWriteObservables(int64_t step, void *values);
+/// Takes the derivatives of the energy in the sites of the tunables, in
+/// the order of Program::gradientSlots (D[tunable-gradient]).
+void _mlir_ciface_mdrtWriteTunableGradient(void *values);
+/// Takes the field `index` of Program::gradientFields, a value of f64 for
+/// each particle, whose numbers `ids` holds.
+void _mlir_ciface_mdrtWriteTunableGradientField(int64_t index, void *values,
+                                                void *ids);
 void _mlir_ciface_mdrtWritePull(int64_t step, void *coordinates,
                                 void *terms);
 /// A step of a minimization: the potential energy and the length of the

@@ -96,6 +96,9 @@ private:
   bool adjointsBuilt = false;
   bool activityFailed = false;
   LogicalResult buildParameterDerivative(int64_t argument, Value &result);
+  /// The derivative of the energy in the value of each particle of the
+  /// field that is argument `argument` of the potential.
+  LogicalResult buildFieldDerivative(int64_t argument, Value &result);
 
   PotentialOp potential;
   StringRef name;
@@ -115,6 +118,12 @@ private:
   SmallVector<SumParticlesOp> particleSums;
   /// Reciprocal sums, which yield their own forces and virial.
   SmallVector<ReciprocalOp> reciprocals;
+  /// The ops of the body of the potential, in order, before any derivative
+  /// added its own, and the ops that the derivatives in fields added: a
+  /// derivative in a field follows the uses of the field by the potential,
+  /// not those by the derivatives requested before it.
+  SmallVector<Operation *> potentialOps;
+  llvm::SmallPtrSet<Operation *, 16> generatedOps;
 };
 
 } // namespace
@@ -1250,6 +1259,235 @@ LogicalResult DerivativeBuilder::buildParameterDerivative(int64_t argument,
 }
 
 //===----------------------------------------------------------------------===//
+// Derivative with respect to a field of the particles
+//===----------------------------------------------------------------------===//
+
+LogicalResult DerivativeBuilder::buildFieldDerivative(int64_t argument,
+                                                      Value &result) {
+  // g_i = ∂U/∂a_i for the field a. The field enters the energy through
+  // sums whose kernels take its values: a sum over a relation gives a
+  // gather over it, whose kernel is the derivative of the pair's energy in
+  // the value of the central particle (the kernel of the sum is symmetric
+  // under exchange, so the derivative in the value of the other particle is
+  // the same kernel with the particles swapped, which the directed
+  // expansion of the gather visits); a sum over tuples gives a gather over
+  // them that yields the derivative in the value of each member; a sum over
+  // particles gives a map. As for a number (D161), the three outcomes: a
+  // field that reaches no value of the energy by any use has the
+  // derivative zero; a use of these kinds has a rule; any other use (a
+  // reciprocal sum, a map that computes another field from it) is an
+  // error that names the op.
+  Value parameter = body->getArgument(argument);
+  Type fieldType = parameter.getType();
+  auto describe = [&]() {
+    return "argument " + std::to_string(argument) + " of '" +
+           potential.getSymName().str() + "'";
+  };
+
+  // The derivative of `value`, which the kernel in `block` computes, in the
+  // argument `variable` of the kernel; everything else that the kernel
+  // takes is independent of it by a proof, or the derivative fails.
+  auto differentiate = [&](Block &block, Value value, Value variable,
+                           OpBuilder &kernel, Value &slope) -> LogicalResult {
+    ActivityAnalysis activity(variable);
+    activity.addKnownBlock(&block);
+    ScalarDerivative::LeafHandler leaf = [&](Value leafValue,
+                                             Value &tangent) -> LogicalResult {
+      tangent = Value();
+      ActivityResult verdict = activity.classify(leafValue);
+      if (verdict.dependence == Activity::Inactive)
+        return success();
+      Operation *op = leafValue.getDefiningOp();
+      Location at = verdict.unknownOperation
+                        ? verdict.unknownOperation->getLoc()
+                        : op ? op->getLoc() : leafValue.getLoc();
+      if (verdict.dependence == Activity::Unknown)
+        return emitError(at)
+               << "cannot prove that this value does not depend on "
+               << describe() << ": " << verdict.reason;
+      if (op)
+        return emitError(at) << "'" << op->getName() << "' depends on "
+                             << describe()
+                             << " and has no rule for its derivative";
+      return emitError(at) << "a block argument depends on " << describe()
+                           << " and has no rule for its derivative";
+    };
+    ScalarDerivative derivative(kernel, variable, leaf);
+    return derivative.get(value, slope);
+  };
+
+  SmallVector<Value> terms;
+  SmallVector<Operation *> users;
+  // In the order of the body, whatever the order of the uses.
+  for (Operation *op : potentialOps)
+    if (llvm::is_contained(op->getOperands(), parameter))
+      users.push_back(op);
+  for (OpOperand &use : parameter.getUses())
+    if (generatedOps.count(use.getOwner()) == 0 &&
+        !llvm::is_contained(users, use.getOwner()))
+      return use.getOwner()->emitError()
+             << "'" << use.getOwner()->getName() << "' takes " << describe()
+             << ", a field, within another op, and has no rule for the "
+                "derivative in it";
+  for (Operation *user : users) {
+    // The places of the field among the fields that the op gathers.
+    SmallVector<unsigned, 2> places;
+    ValueRange gathered;
+    if (auto sum = dyn_cast<SumRelationOp>(user))
+      gathered = sum.getGathered();
+    else if (auto sum = dyn_cast<SumTuplesOp>(user))
+      gathered = sum.getGathered();
+    else if (auto sum = dyn_cast<SumParticlesOp>(user))
+      gathered = sum.getGathered();
+    else
+      return user->emitError()
+             << "'" << user->getName() << "' takes " << describe()
+             << ", a field, and has no rule for the derivative in it";
+    for (auto [place, field] : llvm::enumerate(gathered))
+      if (field == parameter)
+        places.push_back(place);
+    unsigned uses = 0;
+    for (Value operand : user->getOperands())
+      uses += operand == parameter;
+    if (uses != places.size())
+      return user->emitError()
+             << "'" << user->getName() << "' takes " << describe()
+             << " other than as a field that its kernel gathers, and has no "
+                "rule for the derivative in it";
+    if (!user->getResult(0).getType().isF64())
+      return user->emitError()
+             << "cannot differentiate a sum whose result is not f64";
+
+    Value weight;
+    if (failed(getWeight(user->getResult(0), weight)))
+      return failure();
+    if (!weight)
+      continue;
+
+    if (auto sum = dyn_cast<SumRelationOp>(user)) {
+      Operation *gather = createPairOp(GatherRelationOp::getOperationName(),
+                                       sum, Exchange::None, fieldType);
+      Block &block = gather->getRegion(0).front();
+      Value pairEnergy = cast<YieldOp>(block.getTerminator()).getOperand(0);
+      OpBuilder kernel(block.getTerminator());
+      ScalarEmitter emit(kernel, loc);
+      Value total;
+      for (unsigned place : places) {
+        Value slope;
+        if (failed(differentiate(block, pairEnergy,
+                                 block.getArgument(2 + 2 * place), kernel,
+                                 slope)))
+          return failure();
+        total = emit.add(total, slope);
+      }
+      if (!total) {
+        gather->erase();
+        continue;
+      }
+      setYield(block, emit.mul(weight, total));
+      generatedOps.insert(gather);
+      terms.push_back(gather->getResult(0));
+      continue;
+    }
+
+    if (auto sum = dyn_cast<SumTuplesOp>(user)) {
+      unsigned arity = sum.getArity();
+      unsigned first = sum.getCoordinates().size();
+      Operation *gather =
+          createTupleOp(GatherTuplesOp::getOperationName(), sum, fieldType);
+      Block &block = gather->getRegion(0).front();
+      Value tupleEnergy = cast<YieldOp>(block.getTerminator()).getOperand(0);
+      OpBuilder kernel(block.getTerminator());
+      ScalarEmitter emit(kernel, loc);
+      SmallVector<Value, 4> members(arity);
+      bool any = false;
+      for (unsigned member = 0; member != arity; ++member) {
+        Value total;
+        for (unsigned place : places) {
+          Value slope;
+          if (failed(differentiate(
+                  block, tupleEnergy,
+                  block.getArgument(first + place * arity + member), kernel,
+                  slope)))
+            return failure();
+          total = emit.add(total, slope);
+        }
+        any |= static_cast<bool>(total);
+        members[member] = total ? emit.mul(weight, total)
+                                : emit.constant(0.0, kernel.getF64Type());
+      }
+      if (!any) {
+        gather->erase();
+        continue;
+      }
+      block.getTerminator()->setOperands(members);
+      eraseDeadOps(block);
+      generatedOps.insert(gather);
+      terms.push_back(gather->getResult(0));
+      continue;
+    }
+
+    auto sum = cast<SumParticlesOp>(user);
+    OperationState state(loc, MapParticlesOp::getOperationName());
+    state.addOperands(sum.getGathered());
+    state.addRegion();
+    state.addTypes(fieldType);
+    Operation *map = builder.create(state);
+    Block *block = new Block();
+    map->getRegion(0).push_back(block);
+    Block &source = sum.getKernel().front();
+    IRMapping mapping;
+    for (BlockArgument blockArgument : source.getArguments())
+      mapping.map(blockArgument,
+                  block->addArgument(blockArgument.getType(), loc));
+    Value value = inlineKernel(source, *block, mapping);
+    OpBuilder kernel = OpBuilder::atBlockEnd(block);
+    ScalarEmitter emit(kernel, loc);
+    Value total;
+    for (unsigned place : places) {
+      Value slope;
+      if (failed(differentiate(*block, value, block->getArgument(place),
+                               kernel, slope)))
+        return failure();
+      total = emit.add(total, slope);
+    }
+    if (!total) {
+      map->erase();
+      continue;
+    }
+    YieldOp::create(kernel, loc, ValueRange{emit.mul(weight, total)});
+    eraseDeadOps(*block);
+    generatedOps.insert(map);
+    terms.push_back(map->getResult(0));
+  }
+
+  if (!terms.empty()) {
+    result = addFields(terms);
+    return success();
+  }
+  // No use of the field reaches the energy: its derivative is zero, a
+  // field of zeros over its particles.
+  if (remarks)
+    potential.emitRemark() << "independent of " << describe()
+                           << ": its derivative is zero";
+  OperationState state(loc, MapParticlesOp::getOperationName());
+  state.addOperands(parameter);
+  state.addRegion();
+  state.addTypes(fieldType);
+  Operation *map = builder.create(state);
+  Block *block = new Block();
+  map->getRegion(0).push_back(block);
+  block->addArgument(builder.getF64Type(), loc);
+  OpBuilder kernel = OpBuilder::atBlockEnd(block);
+  ScalarEmitter emit(kernel, loc);
+  YieldOp::create(kernel, loc,
+                  ValueRange{emit.constant(0.0, kernel.getF64Type())});
+  generatedOps.insert(map);
+  result = map->getResult(0);
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // The function
 //===----------------------------------------------------------------------===//
 
@@ -1270,9 +1508,15 @@ FunctionOp DerivativeBuilder::build(ArrayRef<int32_t> kinds,
   for (int32_t kind : kinds) {
     switch (static_cast<Request>(kind)) {
     case Request::Energy:
-    case Request::Derivative:
       resultTypes.push_back(builder.getF64Type());
       break;
+    case Request::Derivative: {
+      // A number for a number, a field for a field of the particles.
+      Type type = potentialType.getInput(arguments[resultTypes.size()]);
+      resultTypes.push_back(isa<FieldType>(type) ? type
+                                                 : Type(builder.getF64Type()));
+      break;
+    }
     case Request::Forces:
       resultTypes.push_back(potentialType.getInput(0));
       break;
@@ -1316,6 +1560,7 @@ FunctionOp DerivativeBuilder::build(ArrayRef<int32_t> kinds,
   };
 
   for (Operation &op : *body) {
+    potentialOps.push_back(&op);
     if (auto tuples = dyn_cast<SumTuplesOp>(&op))
       tupleSums.push_back(tuples);
     if (auto reciprocal = dyn_cast<ReciprocalOp>(&op))
@@ -1359,7 +1604,9 @@ FunctionOp DerivativeBuilder::build(ArrayRef<int32_t> kinds,
       status = buildVirial(result);
       break;
     case Request::Derivative:
-      status = buildParameterDerivative(arguments[i], result);
+      status = isa<FieldType>(body->getArgument(arguments[i]).getType())
+                   ? buildFieldDerivative(arguments[i], result)
+                   : buildParameterDerivative(arguments[i], result);
       break;
     }
     if (failed(status))
