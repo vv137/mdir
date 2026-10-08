@@ -1,0 +1,17 @@
+# REQUIRES: python-api, hdf5
+# An output leaves the run alone (#233) with the other kinds of `work` of
+# the barostat: in the deterministic mode the run with `[output]
+# observables`, the free-energy file, the pull file, an energy file, and a
+# trajectory ends in the state of the run without them, bit for bit, with
+# the rows of its log, in mixed precision on the CPU; with `work = "EXACT"`
+# for the rows of the log at the end only as well (D204).
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/output_independence.py %S/Inputs/dipeptide CPU mdir %t Mixed NPT-TROTTER_FIRST_ORDER NPT-EXACT NPT-FIRST_ORDER | FileCheck %s
+# CHECK: CPU Mixed NPT-TROTTER_FIRST_ORDER: {{[0-9]+}} builds of the neighbor structure in 40 steps
+# CHECK-SAME: compared files
+# CHECK: CPU Mixed NPT-EXACT: {{[0-9]+}} builds
+# CHECK-SAME: compared files, rows-at-end
+# CHECK: CPU Mixed NPT-FIRST_ORDER: {{[0-9]+}} builds
+# CHECK-SAME: compared files
+# CHECK: CPU Mixed mdir run: the outputs leave the final state and the rows of the log as they are without them, in 3 ensembles
+# CHECK: output independence passed

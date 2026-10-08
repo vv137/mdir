@@ -1,0 +1,15 @@
+# REQUIRES: python-api, hdf5, cuda
+# An output leaves the run alone (#233) on a GPU at constant energy and
+# under NPT with `work = "EXACT"`: in the deterministic mode the run with
+# `[output] observables`, the free-energy file, the pull file, an energy
+# file, and a trajectory ends in the state of the run without them, bit for
+# bit, with the rows of its log, in mixed precision; for the rows of the log
+# at the end only as well (D204).
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/output_independence.py %S/Inputs/dipeptide GPU mdir %t Mixed NVE NPT-EXACT | FileCheck %s
+# CHECK: GPU Mixed NVE: {{[0-9]+}} builds of the neighbor structure in 40 steps
+# CHECK-SAME: compared files, rows-at-end
+# CHECK: GPU Mixed NPT-EXACT: {{[0-9]+}} builds
+# CHECK-SAME: compared files, rows-at-end
+# CHECK: GPU Mixed mdir run: the outputs leave the final state and the rows of the log as they are without them, in 2 ensembles
+# CHECK: output independence passed

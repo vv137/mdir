@@ -1,0 +1,16 @@
+# REQUIRES: python-api, hdf5, cuda
+# An output leaves the run alone (#233) on a GPU: in the deterministic mode
+# the run with `[output] observables`, the free-energy file, the pull file,
+# an energy file, and a trajectory ends in the state of the run without
+# them, bit for bit, with the rows of its log, under NPT with the barostat
+# of Trotter type, in mixed precision. The same with `rebuild_interval`, and
+# for the rows of the log at the end only (D204). A Python simulation whose
+# parts are read between them, or that has reporters, ends in the state of
+# one that is not read.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/output_independence.py %S/Inputs/dipeptide GPU mdir %t Mixed NPT-TROTTER | FileCheck %s
+# CHECK: GPU Mixed NPT-TROTTER: {{[0-9]+}} builds of the neighbor structure in 40 steps
+# CHECK-SAME: compared observables, free_energy, pull, files, interval-files, rows-at-end
+# CHECK: GPU Mixed mdir run: the outputs leave the final state and the rows of the log as they are without them, in 1 ensembles
+# CHECK: GPU Mixed Python: state() and view() between the parts and the reporters
+# CHECK: output independence passed
