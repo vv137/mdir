@@ -1,0 +1,27 @@
+# REQUIRES: python-api
+# The derivative of the energy in the tunable parameters
+# (D[tunable-gradient], docs/python-gradient.md) on the CPU, in double and
+# mixed precision: what is refused; constants of a pair term and parameters
+# of a term over tuples on the dipeptide in water against NumPy and against
+# central differences of the energy that the derivative is of; the steps of
+# a run that asks for it against those of one that does not, to the bit; and
+# a constant of a pair term under a plain cutoff with the correction for
+# the dispersion, the shifted potential with its tail and the estimate of
+# its shift (D209, D210), against NumPy and closed forms.
+# RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide refusals | FileCheck %s --check-prefix=REFUSED
+# RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide terms CPU Double | FileCheck %s --check-prefix=TERMS -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide terms CPU Mixed | FileCheck %s --check-prefix=TERMS -DMODE="CPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide tails CPU Double | FileCheck %s --check-prefix=TAILS -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide tails CPU Mixed | FileCheck %s --check-prefix=TAILS -DMODE="CPU Mixed"
+# REFUSED: refusals: the plan, the shapes, and a tunable that the energy does not read
+# REFUSED: refusals: 6 refusals
+# REFUSED: refusals passed
+# TERMS: [[MODE]]: the term over tuples against NumPy
+# TERMS: [[MODE]]: against central differences of the energy
+# TERMS: [[MODE]]: the energy less the reported one
+# TERMS: [[MODE]]: 12 steps through the derivative equal those without it to the bit: True
+# TERMS: terms passed
+# TAILS: [[MODE]]: dU/dc
+# TAILS: [[MODE]]: against central differences of the energy
+# TAILS: [[MODE]]: without the correction
+# TAILS: tails passed

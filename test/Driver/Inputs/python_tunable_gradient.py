@@ -1,0 +1,359 @@
+"""The derivative of the energy in the tunable parameters
+(D[tunable-gradient], docs/python-gradient.md).
+
+Usage: python_tunable_gradient.py ROOT SCENARIO [TARGET PRECISION]
+
+Scenarios:
+  refusals  what is refused and with which error, the plan, and a tunable
+            that the energy does not read (CPU)
+  terms     constants of a pair term and parameters of a term over tuples on
+            the dipeptide in water with PME: the derivative against central
+            differences of the energy that it is the derivative of, and
+            against NumPy for the term over tuples; a run with the
+            derivative asked for against one without it, bit for bit
+  tails     a constant of a pair term under a plain cutoff with the
+            correction for the dispersion, on propane and water: the
+            derivative of the shifted potential with the tail and the
+            estimate of the shift (D209, D210) against NumPy and closed
+            forms, and against central differences
+"""
+import sys
+
+import numpy as np
+import mdir
+
+root = sys.argv[1]
+scenario = sys.argv[2]
+
+
+def expect(error, call, text=""):
+    try:
+        call()
+    except error as exc:
+        assert text in str(exc), str(exc)
+        return str(exc)
+    raise AssertionError(f"expected {error.__name__} ({text})")
+
+
+def soft_term():
+    # A repulsion between all pairs, in nm and kJ/mol; `z` is a constant
+    # that the expression does not read.
+    term = mdir.PairTerm()
+    term.name, term.expression = "soft", "a*exp(-r/l)"
+    term.constants = [("a", 2.0), ("l", 0.05), ("z", 1.0)]
+    return term
+
+
+SPRINGS = np.array([[1, 4], [4, 6], [6, 8], [1, 6], [1, 8], [4, 8]], dtype=np.int64)
+
+
+def spring_term():
+    # Springs whose tuples share particles at both places, so that the
+    # derivative in the parameter of each tuple needs several fields.
+    term = mdir.TupleTerm()
+    term.name, term.expression, term.arity = "spring", "0.5*k*(r - r0)^2", 2
+    term.particles = SPRINGS
+    term.parameters = [("k", np.array([500.0, 600.0, 600.0, 300.0, 200.0, 100.0])),
+                       ("r0", np.array([0.25, 0.26, 0.27, 0.3, 0.35, 0.4]))]
+    return term
+
+
+K_MAP = np.array([0, 1, 1, 2, -1, 0])
+
+
+def dipeptide(tunables, gradient=True):
+    loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
+    system, state = loaded.make_system(), loaded.make_state()
+    system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
+    system.electrostatics = mdir.Electrostatics.PME
+    system.dispersion = mdir.DispersionCorrection.None_
+    system.pair_terms = [soft_term()]
+    system.tuple_terms = [spring_term()]
+    system.tunables = tunables
+    system.tunable_gradient = gradient
+    return system, state
+
+
+def term_tunables():
+    return [mdir.Tunable("soft_a", "a", term="soft"),
+            mdir.Tunable("soft_l", "l", term="soft"),
+            mdir.Tunable("soft_z", "z", term="soft"),
+            mdir.Tunable("k", "k", term="spring", map=K_MAP,
+                         values=np.array([450.0, 600.0, 310.0])),
+            mdir.Tunable("r0", "r0", term="spring")]
+
+
+def compile_(system, state, target="CPU", precision="Double"):
+    integrator, execution = mdir.Integrator(), mdir.Execution()
+    integrator.timestep = 0.0005
+    execution.target, execution.precision = getattr(mdir.Target, target), getattr(mdir.Precision, precision)
+    execution.deterministic = True
+    return mdir.compile(system, state, integrator, mdir.Ensemble(), execution, mdir.Schedule())
+
+
+def simulation(program):
+    sim = mdir.Simulation(program)
+    sim.part_seconds = 1e9
+    return sim
+
+
+def differences(sim, g, step):
+    """The largest difference, relative to the largest entry of each
+    tunable, between the derivative `g` and central differences of the
+    energy that it is the derivative of, extrapolated from the steps `step`
+    and `step`/2 times each value (Richardson)."""
+    worst = 0.0
+    for name in g.keys():
+        if name in g.zero:
+            continue
+        v0 = sim.tunables[name].copy()
+        scale = max(np.abs(g[name]).max(), 1e-12)
+        for m in range(len(v0)):
+            def central(h):
+                e = []
+                for sign in (1.0, -1.0):
+                    v = v0.copy()
+                    v[m] += sign * h
+                    sim.tunables[name] = v
+                    e.append(sim.tunables.gradient().energy)
+                return (e[0] - e[1]) / (2.0 * h)
+            h = step * max(abs(v0[m]), 1e-3)
+            fd = (4.0 * central(0.5 * h) - central(h)) / 3.0
+            worst = max(worst, abs(g[name][m] - fd) / scale)
+        sim.tunables[name] = v0
+    return worst
+
+
+def run_refusals():
+    system, state = dipeptide(term_tunables())
+    program = compile_(system, state)
+    plan = {d["name"]: d["gradient"] for d in program.plan["tunables"]}
+    assert plan == {"soft_a": "rule", "soft_l": "rule", "soft_z": "zero", "k": "rule",
+                    "r0": "rule"}, plan
+    sim = simulation(program)
+    # Before the first run the evaluation is the start of the run.
+    g = sim.tunables.gradient()
+    assert sorted(g.keys()) == sorted(plan) and len(g) == 5 and "k" in g
+    assert g.zero == frozenset({"soft_z"}) and np.all(g["soft_z"] == 0.0)
+    assert g["k"].shape == (3,) and g["r0"].shape == (6,) and g["soft_a"].shape == (1,)
+    assert g["k"].dtype == np.float64 and not g["k"].flags.writeable
+    assert g.step == 0 and g.version == 0
+    assert abs(g.energy - sim.state().energies["potential"]) < 0.5
+    sim.tunables["soft_a"] = np.array([2.5])
+    assert sim.tunables.gradient().version == 1
+    expect(KeyError, lambda: g["q"])
+    print("refusals: the plan, the shapes, and a tunable that the energy does not read")
+
+    # Without the compile input the program has no derivative, and says so.
+    system, state = dipeptide(term_tunables(), gradient=False)
+    program = compile_(system, state)
+    assert all("gradient" not in d for d in program.plan["tunables"])
+    assert "tunable" not in program.ir.replace("tunable_constants", "")
+    sim = simulation(program)
+    expect(mdir.InputError, sim.tunables.gradient, "System.tunable_gradient = True")
+    # Without tunables.
+    system, state = dipeptide([], gradient=False)
+    sim = simulation(compile_(system, state))
+    expect(mdir.InputError, sim.tunables.gradient, "declares no tunable")
+    system, state = dipeptide([])
+    expect(mdir.InputError, lambda: compile_(system, state), "the system declares none")
+    # Kinds whose derivative is not implemented yet are refused by name.
+    for tunable, kind in ((mdir.Tunable("q", "charge"), "charges"),
+                          (mdir.Tunable("s", "sigma"), "per-type sigma"),
+                          (mdir.Tunable("e", "epsilon_pair"), "epsilon by pairs")):
+        system, state = dipeptide([tunable])
+        text = expect(mdir.InputError, lambda: compile_(system, state), "is not implemented yet")
+        assert f"'{tunable.name}' ({kind})" in text, text
+    print("refusals: 6 refusals")
+
+
+def run_terms(target, precision):
+    double = precision == "Double"
+    system, state = dipeptide(term_tunables())
+    program = compile_(system, state, target, precision)
+    sim = simulation(program)
+    sim.run(6)
+    g = sim.tunables.gradient()
+    at = sim.state()
+
+    # NumPy: the springs at the positions of the state, in the minimum
+    # image: dU/dk = (r - r0)^2 / 2 and dU/dr0 = -k (r - r0) for each tuple,
+    # added over the tuples of each entry.
+    x, box = at.positions, np.diag(at.cell.vectors)
+    d = x[SPRINGS[:, 0]] - x[SPRINGS[:, 1]]
+    d -= box * np.round(d / box)
+    r = np.linalg.norm(d, axis=1)
+    k_sites = np.array([500.0, 600.0, 600.0, 300.0, 200.0, 100.0])
+    theta_k = sim.tunables["k"]
+    k_sites = np.where(K_MAP >= 0, theta_k[np.maximum(K_MAP, 0)], k_sites)
+    r0 = sim.tunables["r0"]
+    dk = np.zeros(3)
+    np.add.at(dk, K_MAP[K_MAP >= 0], (0.5 * (r - r0) ** 2)[K_MAP >= 0])
+    dr0 = -k_sites * (r - r0)
+    err_k = np.abs(g["k"] - dk).max() / np.abs(dk).max()
+    err_r0 = np.abs(g["r0"] - dr0).max() / np.abs(dr0).max()
+    tolerance = 1e-11 if double else 2e-6
+    print(f"{target} {precision}: the term over tuples against NumPy, k {err_k:.1e}, "
+          f"r0 {err_r0:.1e} relative (tolerance {tolerance:.0e})")
+    assert err_k < tolerance and err_r0 < tolerance, (g["k"], dk, g["r0"], dr0)
+
+    # Central differences of the energy that it is the derivative of.
+    worst = differences(sim, g, 1e-3 if double else 4e-2)
+    tolerance = 1e-8 if double else 2e-4
+    print(f"{target} {precision}: against central differences of the energy, "
+          f"{worst:.1e} of the largest entry of each tunable (tolerance {tolerance:.0e})")
+    assert worst < tolerance, worst
+
+    # The energy is that which the run reports, but for the shift of the
+    # direct sum of PME to 0 at the cutoff (D210): with erfc(beta r_c) =
+    # 1e-5 here, 1.8e-3 kJ/mol for each product of charges of 1 e^2 within
+    # the cutoff.
+    shift = g.energy - at.energies["potential"]
+    print(f"{target} {precision}: the energy less the reported one {shift:.3f} kJ/mol")
+    assert 0.0 < shift < 0.5, shift
+
+    # A run through an evaluation with the derivative equals one through an
+    # evaluation without it, to the bit: the steps take nothing of it.
+    def final(asks):
+        system, state = dipeptide(term_tunables(), gradient=asks)
+        sim = simulation(compile_(system, state, target, precision))
+        sim.run(6)
+        if asks:
+            sim.tunables.gradient()
+        else:
+            sim.run(0, energy=True)
+        sim.run(6)
+        return sim.state()
+
+    a, b = final(True), final(False)
+    same = all(np.array_equal(getattr(a, f), getattr(b, f))
+               for f in ("positions", "velocities", "forces"))
+    print(f"{target} {precision}: 12 steps through the derivative equal those without it "
+          f"to the bit: {same}")
+    assert same
+
+
+def propane(gradient=True, dispersion=True):
+    """Propane and water (Inputs/gromacs, 224 atoms), the Lennard-Jones cut
+    without a shift, a Coulomb cutoff, and a pair term -c/r^8 whose
+    constant is tunable."""
+    gromacs = root + "/../gromacs"
+    loaded = mdir.load_gromacs(gromacs + "/system.top", gromacs + "/system.gro", defines=["FLEXIBLE"])
+    system, state = loaded.make_system(), loaded.make_state()
+    system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.8
+    system.truncation = mdir.Truncation.None_
+    system.dispersion = (mdir.DispersionCorrection.EnergyPressure if dispersion
+                         else mdir.DispersionCorrection.None_)
+    term = mdir.PairTerm()
+    term.name, term.expression = "eighth", "-c/r^8"
+    term.constants = [("c", 2.0e-6)]
+    system.pair_terms = [term]
+    system.tunables = [mdir.Tunable("c", "c", term="eighth")]
+    system.tunable_gradient = gradient
+    return system, state
+
+
+def propane_excluded(n):
+    """The pairs of particles of the GROMACS model that its topology
+    excludes: up to three bonds apart in propane (1-4 pairs included, which
+    have parameters of their own), and within a water."""
+    top = open(root + "/../gromacs/system.top").read()
+    bonds, counts = [], {}
+    section = None
+    for line in top.splitlines():
+        line = line.split(";")[0].strip()
+        if line.startswith("["):
+            section = line.strip("[] ")
+            continue
+        if section == "bonds" and line:
+            bonds.append(tuple(int(x) - 1 for x in line.split()[:2]))
+        if section == "molecules" and line:
+            counts[line.split()[0]] = int(line.split()[1])
+    n_pro = 11
+    graph = {i: set() for i in range(n_pro)}
+    for i, j in bonds:
+        graph[i].add(j); graph[j].add(i)
+    excluded = set()
+    for m in range(counts["PRO"]):
+        o = n_pro * m
+        for i in range(n_pro):
+            seen, frontier = {i}, {i}
+            for _ in range(3):
+                frontier = {k for f in frontier for k in graph[f]} - seen
+                seen |= frontier
+            excluded |= {(o + min(i, j), o + max(i, j)) for j in seen if j != i}
+    for w in range(counts["SOL"]):
+        o = n_pro * counts["PRO"] + 3 * w
+        excluded |= {(o, o + 1), (o, o + 2), (o + 1, o + 2)}
+    assert n_pro * counts["PRO"] + 3 * counts["SOL"] == n
+    return excluded
+
+
+def run_tails(target, precision):
+    double = precision == "Double"
+    rc = 0.8
+    system, state = propane()
+    sim = simulation(compile_(system, state, target, precision))
+    sim.run(4)
+    g = sim.tunables.gradient()
+    at = sim.state()
+    x = at.positions
+    n = len(x)
+    box = np.diag(at.cell.vectors)
+    volume = float(np.prod(box))
+    excluded = propane_excluded(n)
+
+    # NumPy: dU/dc of the shifted pair term, -(r^-8 - rc^-8) over the pairs
+    # not excluded within the cutoff; of its tail, nu (4 pi / V) P I' with
+    # I' = -1 / (5 rc^5) for each of the P unordered pairs not excluded and
+    # nu = N^2 / (N (N - 1) - 2 N_excluded) (D209); and of the estimate of
+    # the shift, nu (4 pi rc^3 / (3 V) - 1 / N) P (-rc^-8) (D210).
+    inside = 0.0
+    for i in range(n - 1):
+        d = x[i + 1:] - x[i]
+        d -= box * np.round(d / box)
+        r = np.sqrt((d * d).sum(axis=1))
+        keep = (r < rc) & np.array([(i, j) not in excluded for j in range(i + 1, n)])
+        inside += -(r[keep] ** -8 - rc ** -8).sum()
+    pairs = 0.5 * (n * (n - 1.0) - 2.0 * len(excluded))
+    nu = n * n / (n * (n - 1.0) - 2.0 * len(excluded))
+    tail = nu * 4.0 * np.pi / volume * pairs * (-1.0 / (5.0 * rc ** 5))
+    shift = nu * (4.0 * np.pi * rc ** 3 / (3.0 * volume) - 1.0 / n) * pairs * (-rc ** -8)
+    reference = inside + tail + shift
+    error = abs(g["c"][0] - reference) / abs(reference)
+    # In mixed precision the kernel takes r^-8, steep at the closest pairs,
+    # from its table of the squared distance in f32 (D94).
+    tolerance = 1e-10 if double else 1e-4
+    print(f"{target} {precision}: dU/dc {g['c'][0]:.6e} against NumPy {reference:.6e} "
+          f"(within the cutoff {inside:.6e}, tail {tail:.6e}, shift estimate {shift:.6e}), "
+          f"relative difference {error:.1e} (tolerance {tolerance:.0e})")
+    assert error < tolerance, (g["c"][0], reference)
+
+    # The energy is linear in c: the derivative times c is the energy of the
+    # term, and a central difference of any step is exact up to rounding.
+    worst = differences(sim, g, 1e-2 if double else 0.5)
+    tolerance = 1e-9 if double else 1e-4
+    print(f"{target} {precision}: against central differences of the energy, {worst:.1e} "
+          f"(tolerance {tolerance:.0e})")
+    assert worst < tolerance, worst
+
+    # Without the correction for the dispersion only the pairs within the
+    # cutoff remain.
+    system, state = propane(dispersion=False)
+    sim = simulation(compile_(system, state, target, precision))
+    sim.run(4)
+    g = sim.tunables.gradient()
+    error = abs(g["c"][0] - inside) / abs(inside)
+    print(f"{target} {precision}: without the correction, relative difference {error:.1e}")
+    assert error < tolerance, (g["c"][0], inside)
+
+
+if scenario == "refusals":
+    run_refusals()
+elif scenario == "terms":
+    run_terms(sys.argv[3], sys.argv[4])
+elif scenario == "tails":
+    run_tails(sys.argv[3], sys.argv[4])
+else:
+    raise SystemExit(f"unknown scenario {scenario}")
+print(f"{scenario} passed")

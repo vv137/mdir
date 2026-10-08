@@ -175,9 +175,12 @@ public:
   /// The derivative of the potential energy in the tunables at the state
   /// (D[tunable-gradient], docs/python-gradient.md): one array per
   /// tunable, of the shape of its values, in kJ/mol per unit of the
-  /// tunable; the potential energy that it is the derivative of; the
-  /// version of the values and the step; and for each tunable whether its
-  /// derivative is zero by proof.
+  /// tunable; the potential energy that it is the derivative of, that of
+  /// the potential that the forces sample (D210): the energy that the run
+  /// reports, with the pair terms that the run cuts at the cutoff shifted
+  /// to 0 there and the estimate of that shift; the version of the values
+  /// and the step; and for each tunable whether its derivative is zero by
+  /// proof.
   struct TunableGradient {
     std::vector<std::vector<double>> values;
     std::vector<bool> zero;

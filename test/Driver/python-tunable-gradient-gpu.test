@@ -1,0 +1,17 @@
+# REQUIRES: python-api, cuda
+# The derivative of the energy in the tunable parameters
+# (D[tunable-gradient], docs/python-gradient.md) on the GPU, in double and
+# mixed precision: the checks of python-tunable-gradient.test.
+# RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide terms GPU Double | FileCheck %s --check-prefix=TERMS -DMODE="GPU Double"
+# RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide terms GPU Mixed | FileCheck %s --check-prefix=TERMS -DMODE="GPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide tails GPU Double | FileCheck %s --check-prefix=TAILS -DMODE="GPU Double"
+# RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide tails GPU Mixed | FileCheck %s --check-prefix=TAILS -DMODE="GPU Mixed"
+# TERMS: [[MODE]]: the term over tuples against NumPy
+# TERMS: [[MODE]]: against central differences of the energy
+# TERMS: [[MODE]]: the energy less the reported one
+# TERMS: [[MODE]]: 12 steps through the derivative equal those without it to the bit: True
+# TERMS: terms passed
+# TAILS: [[MODE]]: dU/dc
+# TAILS: [[MODE]]: against central differences of the energy
+# TAILS: [[MODE]]: without the correction
+# TAILS: tails passed

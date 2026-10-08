@@ -156,6 +156,13 @@ struct Program {
     double volumeConstant = 0.0;
   };
   std::vector<GradientSlot> gradientSlots;
+  /// The derivative is that of the potential that the forces sample,
+  /// shifted to 0 at the cutoff where the run cuts it (D210). After the
+  /// derivatives the entry hands over that energy less the energy that
+  /// the run reports, and the host adds the estimate of the shift that the
+  /// correction for the dispersion does not hold already, in kJ/mol at the
+  /// volume of the build, proportional to 1 / V.
+  double gradientShiftEnergy = 0.0;
   /// The fields of the particles that the entry hands the host after the
   /// numbers (mdrtWriteTunableGradientField), each the derivative of the
   /// energy in the value of each particle of a field of zeros through

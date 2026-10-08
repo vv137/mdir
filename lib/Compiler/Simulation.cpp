@@ -1964,12 +1964,15 @@ Simulation::evaluateTunableGradient() {
     return std::move(error);
   const Program &p = compiled->program;
   if (!output->tunableGradientWritten ||
-      output->tunableGradient.size() < p.gradientSlots.size() ||
+      output->tunableGradient.size() < p.gradientSlots.size() + 1 ||
       output->tunableGradientFields.size() < p.gradientFields.size())
     return simulationError("the evaluation did not give the derivative in "
                            "the tunables");
   TunableGradient result;
-  result.energy = output->lastEnergies.potential;
+  double scale = compiled->volume / output->tunableGradientVolume;
+  result.energy = output->lastEnergies.potential +
+                  output->tunableGradient[p.gradientSlots.size()] +
+                  p.gradientShiftEnergy * scale;
   result.version = tunablesVersion;
   result.step = step;
   for (auto [k, entry] : llvm::enumerate(set.tunables)) {
@@ -1981,7 +1984,6 @@ Simulation::evaluateTunableGradient() {
   // The chain rule from the sites to the entries: each site adds its
   // derivative to the entry that its map names. What the host adds to the
   // energy (the tails of pair terms) is proportional to 1 / V.
-  double scale = compiled->volume / output->tunableGradientVolume;
   for (auto [i, slot] : llvm::enumerate(p.gradientSlots)) {
     const model::TunableSet::Entry &entry = set.tunables[slot.tunable];
     int64_t at = entry.map[slot.site];

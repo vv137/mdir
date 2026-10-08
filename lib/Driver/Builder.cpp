@@ -3088,7 +3088,14 @@ llvm::Error Builder::collectTunableGradient() {
   // does not read it, or the compile fails (D[tunable-gradient]): nothing
   // is left out without a word.
   bool dispersion = control.topologyDispersion != DispersionCorrection::None;
-  bool shifted = control.truncation == Truncation::Shift;
+  // The estimate of what the shift takes within the cutoff, which the
+  // energy of the run holds only under the shift (D210).
+  if (dispersion && control.truncation != Truncation::Shift) {
+    program.gradientShiftEnergy = getTopologyShift(false);
+    for (unsigned index = 0, e = system.pairTails.size(); index != e; ++index)
+      program.gradientShiftEnergy +=
+          llvm::cantFail(getPairTail(index, {})).shift;
+  }
   for (auto [k, declaration] : llvm::enumerate(control.tunableDeclarations)) {
     Program::GradientOutcome outcome = Program::GradientOutcome::Zero;
     switch (declaration.kind) {
@@ -3109,15 +3116,15 @@ llvm::Error Builder::collectTunableGradient() {
       for (const auto &[name, v] : term.constants)
         if (name == declaration.parameter)
           value = v;
-      // The tail of the term and, under the shift, its estimate, which the
+      // The tail of the term and the estimate of its shift, which the
       // host adds to the energy, by the quadrature that computes them
       // (D209, D210).
       Program::GradientSlot slot;
       slot.tunable = static_cast<unsigned>(k);
       if (dispersion && index < tailExpressions.size() &&
           index < system.pairTails.size())
-        slot.volumeConstant = getPairTailDerivative(
-            index, declaration.parameter, value, shifted);
+        slot.volumeConstant =
+            getPairTailDerivative(index, declaration.parameter, value);
       if (!std::isfinite(slot.volumeConstant))
         return makeError("the derivative of the tail of the pair term '" +
                          term.name + "' in its constant '" +
@@ -3173,8 +3180,7 @@ void Builder::emitTunableGradientOutput(StringRef indent, StringRef x,
   // start is: a run takes none of it.
   std::string inner = (indent + "  ").str();
   size_t count = program.gradientSlots.size();
-  std::string type = "memref<" + std::to_string(std::max<size_t>(count, 1)) +
-                     "xf64>";
+  std::string type = "memref<" + std::to_string(count + 1) + "xf64>";
   os << indent << "%tg_none = arith.constant 0.0 : f64\n"
      << indent << "%tg_asked = arith.cmpf one, %tunable_gradient, %tg_none"
                   " : f64\n"
@@ -3182,7 +3188,7 @@ void Builder::emitTunableGradientOutput(StringRef indent, StringRef x,
      << indent << "scf.for %tg_i = %c0 to %tg_trips step %c1 {\n"
      << inner << "%tg_out = memref.alloca() : " << type << "\n";
   size_t fields = program.gradientFields.size();
-  if (count + fields != 0) {
+  {
     unsigned base = getNumPotentialArguments();
     size_t constants = control.tunableConstants.size();
     std::string arguments,
@@ -3199,26 +3205,35 @@ void Builder::emitTunableGradientOutput(StringRef indent, StringRef x,
       types += ", !real";
     }
     types += ")";
-    os << inner;
+    os << inner << "%tg_e";
     for (size_t i = 0; i != count; ++i)
-      os << (i ? ", " : "") << "%tg_r" << i;
+      os << ", %tg_r" << i;
     for (size_t c = 0; c != fields; ++c)
-      os << (count + c ? ", " : "") << "%tg_f" << c;
+      os << ", %tg_f" << c;
     os << " = md.evaluate @tunable(" << x << ", " << cell
        << getFieldValues(prefix) << getTimeValue(time) << arguments << ")\n"
-       << inner << "    request [";
+       << inner << "    request [energy";
     for (size_t i = 0; i != count; ++i)
-      os << (i ? ", " : "") << "derivative(" << base + gradientColumns[i]
-         << ")";
+      os << ", derivative(" << base + gradientColumns[i] << ")";
     for (size_t c = 0; c != fields; ++c)
-      os << (count + c ? ", " : "") << "derivative(" << base + constants + c
-         << ")";
-    os << "]\n" << inner << "    : " << types << " -> (";
+      os << ", derivative(" << base + constants + c << ")";
+    os << "]\n" << inner << "    : " << types << " -> (f64";
     for (size_t i = 0; i != count; ++i)
-      os << (i ? ", " : "") << "f64";
+      os << ", f64";
     for (size_t c = 0; c != fields; ++c)
-      os << (count + c ? ", " : "") << "!real";
+      os << ", !real";
     os << ")\n";
+    // The energy of that potential less that of the potential of the run,
+    // which the host adds to the energy that the run reports.
+    os << inner << "%tg_u = md.evaluate @energy(" << x << ", " << cell
+       << getFieldValues(prefix) << getTimeValue(time) << ")\n"
+       << inner << "    request [energy]\n"
+       << inner << "    : (!vec, !md.cell" << getFieldTypes() << getTimeType()
+       << ") -> f64\n"
+       << inner << "%tg_shift = arith.subf %tg_e, %tg_u : f64\n"
+       << inner << "%tg_last = arith.constant " << count << " : index\n"
+       << inner << "memref.store %tg_shift, %tg_out[%tg_last] : " << type
+       << "\n";
     for (size_t c = 0; c != fields; ++c)
       os << inner << "%tg_n" << c << " = arith.constant " << c << " : i64\n"
          << inner << "mdrt.host_call @mdrtWriteTunableGradientField(%tg_n"
@@ -9701,11 +9716,13 @@ llvm::Error Builder::build() {
   if (program.tunableGradient) {
     if (llvm::Error error = collectTunableGradient())
       return error;
-    if (!program.gradientSlots.empty() || !program.gradientFields.empty()) {
-      gradientArguments = true;
-      emitTopologyPotential("tunable", AllTerms);
-      gradientArguments = false;
-    }
+    // It is the potential that the forces sample: where the run cuts a
+    // pair term at the cutoff, shifted to 0 there (D210).
+    gradientArguments = true;
+    shiftsAtCutoff = true;
+    emitTopologyPotential("tunable", AllTerms);
+    shiftsAtCutoff = false;
+    gradientArguments = false;
   }
   // The energies and derivatives of `observe`, of the potential that the
   // forces sample (D210).
