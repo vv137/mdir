@@ -13,7 +13,7 @@
 # CHECK: CPU Mixed NVE: {{[0-9]+}} builds of the neighbor structure in 40 steps
 # CHECK-SAME: compared files, rows-at-end
 # CHECK: CPU Mixed NVT: {{[0-9]+}} builds
-# CHECK-SAME: compared files
+# CHECK-SAME: compared files, rows-at-end
 # CHECK: CPU Mixed NPT-TROTTER: {{[0-9]+}} builds
 # CHECK-SAME: compared observables, free_energy, pull, files, interval-files, rows-at-end
 # CHECK: CPU Mixed mdir run: the outputs leave the final state and the rows of the log as they are without them, in 3 ensembles

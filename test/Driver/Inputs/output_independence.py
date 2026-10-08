@@ -29,7 +29,9 @@ of two waters across the cell, the same in every run:
              of the final checkpoint, and the rows of the log; the same with
              `rebuild_interval`, whose count of refreshes the outputs do not
              advance; and the rows of the log at the end only against every
-             10 steps (D204), without the term over centers (#240)
+             10 steps, in every ensemble (D204; with the term over centers,
+             whose forces a step of energy and a plain step must add to
+             those of the other terms in one order, #240)
   Python     a simulation whose parts are read between them (`state()`,
              `view()`), and one with reporters of energies, frames, and
              observables and a callback, against one that runs the steps in
@@ -134,8 +136,7 @@ OUTPUTS = {
     "files": (FILES, PERIOD, True, ""),
     "interval-none": ("", PERIOD, True, INTERVAL),
     "interval-files": (FILES, PERIOD, True, INTERVAL),
-    "rows": ("", PERIOD, False, ""),
-    "rows-at-end": ("", STEPS, False, ""),
+    "rows-at-end": ("", STEPS, True, ""),
 }
 # What each run is compared with, and the ensembles of the comparison (all
 # of them where none are named).
@@ -145,7 +146,7 @@ COMPARED = {
     "pull": ("none", ("NPT-TROTTER",)),
     "files": ("none", ()),
     "interval-files": ("interval-none", ("NPT-TROTTER",)),
-    "rows-at-end": ("rows", ("NVE", "NPT-TROTTER", "NPT-EXACT")),
+    "rows-at-end": ("none", ()),
 }
 
 
