@@ -510,6 +510,15 @@ format, or the outputs; every such change is listed under **Changed** or
   nothing. The energies of the log, terms over tuples, and terms of the
   positions were right. `State.observables` of a Python simulation takes
   the same fix.
+- The release tarball carries the notices of the third parties whose code
+  it distributes in binary form, in `share/mdir/licenses`: HDF5's
+  `COPYING` beside the bundled `libhdf5` (#194), and the licenses of
+  pocketfft (in `libmdrt.so`), toml++ (in `mdir`), LLVM (in `mdir`), and
+  LLVM's OpenMP runtime (`lib/libomp.so`). The 0.1.0 tarball had only
+  MDIR's license and the CUDA EULA. `scripts/release/check-binary.sh`
+  fails on a tree without them;
+  [packaging/licenses/README.md](packaging/licenses/README.md) gives the
+  clause for each component.
 - The scripts that generate the GPU templates of particle mesh Ewald and of
   the groups of neighbors (`scripts/generate-pme-gpu-template.py`,
   `scripts/generate-groups-gpu-template.py`) emit the guards of #168 that

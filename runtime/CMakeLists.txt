@@ -57,8 +57,30 @@ endif()
 # their sonames, and libdevice of the toolkit into share/mdir/cuda, where
 # the driver finds it when CUDA_ROOT is not set. cuFFT and libdevice are
 # redistributable under Attachment A of the CUDA EULA, installed with it.
+#
+# The tree is then a distribution in binary form of what it bundles and of
+# what its binaries hold, so the notices that their licenses ask for go into
+# share/mdir/licenses (packaging/licenses/README.md says which and why).
 option(MDIR_BUNDLE_LIBRARIES
   "Install HDF5, cuFFT, and libdevice with mdir, for a relocatable release" OFF)
+# HDF5's notice, in the root or in share/ of its install tree.
+function(mdir_install_hdf5_notice destination component)
+  if(NOT MDIR_HDF5_LIBRARY)
+    return()
+  endif()
+  get_filename_component(hdf5_root "${MDIR_HDF5_INCLUDE_DIR}" DIRECTORY)
+  foreach(notice COPYING share/COPYING)
+    if(EXISTS "${hdf5_root}/${notice}")
+      install(FILES "${hdf5_root}/${notice}" DESTINATION "${destination}"
+        RENAME HDF5-COPYING COMPONENT ${component})
+      return()
+    endif()
+  endforeach()
+  if(MDIR_BUNDLE_LIBRARIES)
+    message(FATAL_ERROR "MDIR_BUNDLE_LIBRARIES bundles libhdf5, but HDF5's "
+      "COPYING is neither in ${hdf5_root} nor in ${hdf5_root}/share")
+  endif()
+endfunction()
 function(mdir_install_soname library)
   get_filename_component(real "${library}" REALPATH)
   get_filename_component(name "${real}" NAME)
@@ -72,6 +94,17 @@ if(MDIR_BUNDLE_LIBRARIES)
   if(MDIR_HDF5_LIBRARY)
     mdir_install_soname("${MDIR_HDF5_LIBRARY}")
   endif()
+  # HDF5 (bundled), pocketfft (in libmdrt), toml++ (in mdir), and LLVM with
+  # its OpenMP runtime (in mdir, and lib/libomp.so).
+  mdir_install_hdf5_notice(share/mdir/licenses mdir)
+  install(FILES ${PROJECT_SOURCE_DIR}/third_party/pocketfft/LICENSE.md
+    DESTINATION share/mdir/licenses RENAME pocketfft-LICENSE COMPONENT mdir)
+  install(FILES ${PROJECT_SOURCE_DIR}/third_party/tomlplusplus/LICENSE
+    DESTINATION share/mdir/licenses RENAME tomlplusplus-LICENSE
+    COMPONENT mdir)
+  install(FILES ${PROJECT_SOURCE_DIR}/packaging/licenses/LLVM-LICENSE.TXT
+    ${PROJECT_SOURCE_DIR}/packaging/licenses/OpenMP-LICENSE.TXT
+    DESTINATION share/mdir/licenses COMPONENT mdir)
   if(MDIR_CUDA_FOUND)
     set_target_properties(mdrt_cuda PROPERTIES INSTALL_RPATH "$ORIGIN")
     get_target_property(cufft CUDA::cufft IMPORTED_LOCATION)
@@ -125,14 +158,7 @@ if(SKBUILD)
   install(FILES ${PROJECT_SOURCE_DIR}/LICENSE DESTINATION mdir/licenses
     COMPONENT python)
   # HDF5's notice, which a binary distribution reproduces.
-  get_filename_component(hdf5_root "${MDIR_HDF5_INCLUDE_DIR}" DIRECTORY)
-  foreach(notice COPYING share/COPYING)
-    if(MDIR_HDF5_LIBRARY AND EXISTS "${hdf5_root}/${notice}")
-      install(FILES "${hdf5_root}/${notice}" DESTINATION mdir/licenses
-        RENAME HDF5-COPYING COMPONENT python)
-      break()
-    endif()
-  endforeach()
+  mdir_install_hdf5_notice(mdir/licenses python)
 endif()
 
 set(MDIR_CUDA_FOUND ${MDIR_CUDA_FOUND} PARENT_SCOPE)

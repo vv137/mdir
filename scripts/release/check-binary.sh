@@ -13,7 +13,12 @@
 #  - every needed library is bundled in lib/ or is one that manylinux_2_28
 #    lets a binary take from the system (libc, libm, libdl, libpthread,
 #    librt, ld-linux, libgcc_s, libstdc++, libz) or the driver's libcuda.
-# It also checks that share/mdir/cuda holds libdevice. Exit status 1 on any
+# It also checks that share/mdir/cuda holds libdevice, and that the tree
+# carries the notices that the licenses of what it distributes ask for
+# (packaging/licenses/README.md): MDIR's license; in share/mdir/licenses,
+# HDF5's beside a bundled libhdf5, pocketfft's (in libmdrt), toml++'s (in
+# mdir), and LLVM's and its OpenMP runtime's (in mdir, and libomp.so); and
+# the CUDA EULA beside a bundled cuFFT or libdevice. Exit status 1 on any
 # failure, with each one listed.
 set -euo pipefail
 dir=${1:?usage: $0 DIR}
@@ -48,5 +53,28 @@ for f in "${files[@]}"; do
   printf '%-28s GLIBC %-6s GLIBCXX %-8s CXXABI %s\n' "$name" "${glibc:--}" "${glibcxx:--}" "${cxxabi:--}"
 done
 [[ -f "$dir/share/mdir/cuda/nvvm/libdevice/libdevice.10.bc" ]] || complain "share/mdir/cuda has no libdevice"
+# The notices: each a file that is not empty and holds a line of its text.
+notice() {
+  local file=$dir/share/mdir/$1
+  if [[ ! -s "$file" ]]; then
+    complain "share/mdir/$1 is missing: $3"
+  elif ! grep -q -- "$2" "$file"; then
+    complain "share/mdir/$1 does not hold '$2'"
+  fi
+}
+exists() { compgen -G "$1" > /dev/null; }
+notice LICENSE 'MIT License' "MDIR's license"
+notice licenses/pocketfft-LICENSE 'Max-Planck-Society' "pocketfft is compiled into libmdrt.so"
+notice licenses/tomlplusplus-LICENSE 'Mark Gillard' "toml++ is compiled into mdir"
+notice licenses/LLVM-LICENSE.TXT 'LLVM Exceptions to the Apache 2.0 License' "LLVM is linked into mdir"
+if exists "$dir/lib/libomp.so*"; then
+  notice licenses/OpenMP-LICENSE.TXT 'Intel Corporation' "lib/libomp.so is bundled"
+fi
+if exists "$dir/lib/libhdf5*.so*"; then
+  notice licenses/HDF5-COPYING 'The HDF Group' "lib/libhdf5 is bundled"
+fi
+if exists "$dir/lib/libcufft.so*" || [[ -d "$dir/share/mdir/cuda" ]]; then
+  notice cuda/EULA.txt 'NVIDIA' "cuFFT or libdevice is bundled"
+fi
 if (( fail )); then echo "check-binary: FAILED" >&2; exit 1; fi
 echo "check-binary: ok"
