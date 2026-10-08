@@ -20,7 +20,7 @@ A `Simulation` lowers programs of its own
 only simulated is not lowered twice. The `Program` keeps the code of
 its first simulation in memory, and its later simulations in the process
 take it instead of lowering and generating code again (D[program-reuse],
-[compile-cache.md](compile-cache.md#reuse-within-a-process-dprogram-reuse)). No runtime libraries are loaded, no CUDA
+[compile-cache.md](compile-cache.md#reuse-within-a-process)). No runtime libraries are loaded, no CUDA
 execution context is initialized, and no report or reproducer is written.
 JIT ownership, runtime device selection and execution follow with segments.
 The logical device is recorded in the plan, not selected during lowering.

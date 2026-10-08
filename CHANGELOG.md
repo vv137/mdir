@@ -25,7 +25,7 @@ format, or the outputs; every such change is listed under **Changed** or
   `pipeline_seconds` and the counts of the caches are 0, which a script
   that reads them for every simulation now sees. `cache=False` compiles
   everything anew, as before. See
-  [docs/compile-cache.md](docs/compile-cache.md#reuse-within-a-process-dprogram-reuse).
+  [docs/compile-cache.md](docs/compile-cache.md#reuse-within-a-process).
 
 - `observe` in the Python model (D232, #188): `PairTerm`,
   `TupleTerm`, and `ExternalTerm` take `observe`, `None` or a list of

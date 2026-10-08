@@ -10,7 +10,7 @@ the pipeline runs for every program that is compiled, and the driver
 keeps its own cache of compiled PTX. Within a process, a `Program` keeps
 the code of its simulations in memory, so that only the first of them
 compiles at all
-([Reuse within a process](#reuse-within-a-process-dprogram-reuse)). `mdir run`, which still compiles with MLIR's
+([Reuse within a process](#reuse-within-a-process)). `mdir run`, which still compiles with MLIR's
 `ExecutionEngine`, takes the cache of host objects when it moves onto the
 owned engine (#99).
 
@@ -59,7 +59,7 @@ cost and what the cache saved, as a dict:
 | `cache_stored`, `cache_unstored` | Entries written, and entries that could not be written |
 | `cache_lookup_seconds` | The time of keys and reads, hit or miss |
 | `cache_bypassed` | Programs compiled with `cache=False`: 1 or 0 for a simulation. With it, every `cache_*` and `gpu_cache_*` count is 0. |
-| `program_reused` | 1 if the simulation took the code that an earlier simulation of its `Program` left in memory, else 0 ([Reuse within a process](#reuse-within-a-process-dprogram-reuse)). With it, `pipeline_seconds`, `host_compiled`, and every `cache_*` and `gpu_*` time and count are 0: nothing was lowered, generated, or looked up. |
+| `program_reused` | 1 if the simulation took the code that an earlier simulation of its `Program` left in memory, else 0 ([Reuse within a process](#reuse-within-a-process)). With it, `pipeline_seconds`, `host_compiled`, and every `cache_*` and `gpu_*` time and count are 0: nothing was lowered, generated, or looked up. |
 | `reuse_saved_seconds` | With `program_reused`, the `pipeline_seconds` and the time of the host object (its generation, or its lookup on disk) of the simulation that left the code. |
 
 `examples/ala3/run.py` prints the compile times of each stage from them.
@@ -78,7 +78,7 @@ sim.compile_stats["cache_bypassed"]           # 1
 ```
 
 `cache=False` also bypasses the code that the `Program` keeps in memory
-([Reuse within a process](#reuse-within-a-process-dprogram-reuse)): the
+([Reuse within a process](#reuse-within-a-process)): the
 simulation lowers and generates everything, and leaves nothing.
 
 `mdir.clear_compile_cache(directory=None)` removes the entries of the
@@ -333,9 +333,9 @@ decision on PR #192:
 
   The rates agree within 0.3%, with the larger capacities as without.
 
-## Reuse within a process (D[program-reuse])
+## Reuse within a process
 
-Issue #236. The cache on disk saves the host code generation and nothing
+D[program-reuse], issue #236. The cache on disk saves the host code generation and nothing
 of the MLIR pipeline, whose output is its key; and without a directory
 nothing was saved at all. Every `mdir.Simulation(program)` therefore
 lowered its program again, also the second and later simulations of one
