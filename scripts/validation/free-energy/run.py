@@ -4,7 +4,7 @@ control files of its stages and of its 14 states, and their runs.
 
     scripts/validation/free-energy/run.py WORK --mdir MDIR [--ps 500]
         [--energy-interval 250] [--seed 20261008] [--deterministic]
-        [--equilibrated DIR] [--write-only]
+        [--potential-shift] [--equilibrated DIR] [--write-only]
     python3 scripts/free-energy.py WORK/s*.toml
 
 WORK receives the inputs of test/Driver/Inputs/fep (ethanol with GAFF2 and
@@ -24,6 +24,11 @@ correction for the dispersion, stochastic cell rescaling with a time
 constant of 2 ps every 10 steps (the scaling of Trotter type, its default),
 mixed precision on a GPU. The state k takes the seed --seed + k, the
 stages before it --seed.
+
+--potential-shift writes `lennard_jones_modifier` and `coulomb_modifier` =
+"POTENTIAL_SHIFT": the forces and the free-energy file are those of the
+plain cutoff, whose rows are of the shifted potential (D210), and the log
+reports that potential as well.
 
 --equilibrated DIR copies npt.h5 from DIR instead of running the three
 stages, so that two sets of runs begin from one state; with --deterministic
@@ -63,7 +68,7 @@ switch_distance   = 9.0
 pairlist_distance = 10.0
 dispersion_correction = "NONE"
 electrostatics    = "PME"
-
+{modifiers}
 [pme]
 beta = 0.32
 grid = [32, 32, 32]
@@ -128,6 +133,7 @@ def main():
                         help='steps between rows of the free-energy file')
     parser.add_argument('--seed', type=int, default=20261008)
     parser.add_argument('--deterministic', action='store_true')
+    parser.add_argument('--potential-shift', action='store_true')
     parser.add_argument('--equilibrated', metavar='DIR')
     parser.add_argument('--write-only', action='store_true')
     arguments = parser.parse_args()
@@ -143,12 +149,19 @@ def main():
     tail = TAIL.format(deterministic='deterministic = true\n'
                        if arguments.deterministic else '')
 
+    # The potential that the forces of a plain cutoff sample, written out:
+    # the log then reports it too, and the free-energy file is the same
+    # (D210).
+    modifiers = ('lennard_jones_modifier = "POTENTIAL_SHIFT"\n'
+                 'coulomb_modifier       = "POTENTIAL_SHIFT"\n'
+                 if arguments.potential_shift else '')
+
     def head(name, state, checkpoint, energy_interval, steps=0, output=''):
         if steps:
             output += f'checkpoint_interval = {steps}\n'
         return HEAD.format(
             name=name, state=state, energy_interval=energy_interval,
-            output=output, coulomb=COULOMB, vdw=VDW,
+            output=output, coulomb=COULOMB, vdw=VDW, modifiers=modifiers,
             checkpoint_in=f'checkpoint  = "{checkpoint}.h5"\n'
             if checkpoint else '')
 
