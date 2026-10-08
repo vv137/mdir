@@ -152,8 +152,9 @@ stages of dynamics.
 
 As D189 has it for the control file, `observe` and the file enter neither
 the fingerprint nor the checkpoint: observing changes no physics, and a
-checkpoint written with `observe` continues without it and the reverse, in
-either front end. `model_sha256` is made of the fingerprint and does not
+checkpoint that a Python simulation wrote with `observe` on a term is
+continued by a program without it, and the reverse, without a warning
+(`python-observe.test`). `model_sha256` is made of the fingerprint and does not
 change; `plan_sha256`, which hashes the program's text, does, and is not
 compared at a continuation.
 
@@ -197,7 +198,7 @@ expression as the Python model hands it to the builder (`r` in nm as
 | The same mixture in NPT (C-rescale and V-rescale every 10 steps, 40 steps, rows every 10), whose tails follow the volume | the observables file of `mdir run` | equal byte for byte | 0 |
 | Runs of 7 and 13 steps; energies every 4 with observables every 6 over 24 steps | the file of one run; `mdir run` with rows every 6 | equal byte for byte | 0 |
 | Continued from a checkpoint at step 10 with `append=True`, after a row at step 15 that the continuation writes again | the file of one run | equal byte for byte; with `append=False`, `ck.part0002.obs` holds the rows that follow | 0 |
-| The same checkpoint continued by a program whose pair term does not observe | the uninterrupted run, `lower.d_z0` at step 20 | no warning; within $6.7\times10^{-16}$ (the sums follow the order of the particles of an activation) | $10^{-12}$ |
+| The same checkpoint continued by a program whose pair term does not observe, and a checkpoint of that program continued by the one that observes | the uninterrupted run, `lower.d_z0` and `soft.energy` at step 20 | no warning; within $6.7\times10^{-16}$ (the sums follow the order of the particles of an activation) | $10^{-12}$ |
 | Tunable `a` of the observed pair term updated from 2 to 3 | 1.5 times the columns before, tail included | within $10^{-12}$ (double), $10^{-5}$ (mixed); rows 0 and 5 of version 0, row 10 of version 1 | |
 | Observed tunable `l` at 0.05 and 0.06 nm: `soft.d_l` | `gradient()["soft_l"][0]` (D230), and a compile with the value | within $1.1\times10^{-16}$ (double), $3.5\times10^{-7}$ (mixed) | $10^{-12}$, $10^{-5}$ |
 | The same | central differences of `soft.energy` by updates, $h = 10^{-5}$ nm | within $2.3\times10^{-8}$ (double), $9.9\times10^{-5}$ (mixed) | $10^{-7}$, $10^{-3}$ |
@@ -213,10 +214,12 @@ The terms of the positions by themselves (D[python-external]), two walls of
 | Their forces, the forces with the walls less those without | NumPy, $k\max(0, z_0 - z)$ | within $1.2\times10^{-15}$ of the largest | the same |
 | 10 steps, NVE | `mdir run` with the same `[[energy.external]]` terms: its energy file, and the positions, velocities, and forces of its checkpoint | byte for byte, and to the bit | 0 |
 | Particles by index against the mask `:WAT` | | energies and observed values equal | 0 |
+| A checkpoint of the Python model with the walls | | its fingerprint has `[python] external_terms`, and `mdir run --continue` of the control file with the same terms refuses it, naming the entry | |
 
 A model without `observe`: the modules and the lowered IR of `mdir emit` on
 JAC (NVE, NPT) and Factor IX (NPT) of the Amber suite, and the module, the
 lowered IR, and the program of segments (`plan_sha256`) of five Python
 models (plain, with pair and tuple terms, with tunables and their
 derivative; NVE, NVT, NPT; CPU and GPU; mixed and double) equal those of
-`main` hash for hash, so the rates are `main`'s and none was measured.
+`main` hash for hash, so the compiled code of a program that does not observe is
+unchanged and its rate is `main`'s by construction; no timing was taken.

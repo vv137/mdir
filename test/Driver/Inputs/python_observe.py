@@ -289,6 +289,14 @@ def run_parts():
     # begins anew at a checkpoint: equal to round-off, not to the bit.
     mine, whole = plain.state().observables["lower.d_z0"], seen_at_20["lower.d_z0"]
     assert abs(mine / whole - 1) < 1e-12, (mine, whole)
+    # The reverse: a checkpoint written without `observe` on the term,
+    # continued by the program that observes it.
+    plain.save_checkpoint(str(work / "plain.h5"))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        observing = mdir.Simulation(program, checkpoint=str(work / "plain.h5"))
+    observing.run(0, energy=True)
+    assert abs(observing.state().observables["soft.energy"] / seen_at_20["soft.energy"] - 1) < 1e-12
     print(f"checkpoint: continued at step 10 with append, the file of one run; without, "
           f"{part[0]} with the rows that follow; continued without observe on a term")
 
@@ -520,6 +528,17 @@ def run_external_parity():
         assert theirs.step == 10
         for field in ("positions", "velocities", "forces"):
             assert np.array_equal(getattr(theirs, field), getattr(ours, field)), field
+        # The fingerprint of the Python model has an entry of its own for
+        # these terms, which `mdir run --continue` refuses by name (D223).
+        (work / f"{name}.h5").unlink()
+        sim.save_checkpoint(str(work / f"{name}.h5"))
+        entries = [entry[1] for entry in mdir.read_checkpoint(str(work / f"{name}.h5")).fingerprint]
+        assert "[python] external_terms" in entries, entries
+        longer = (work / f"{name}.toml").read_text().replace("steps = 10", "steps = 20")
+        (work / f"{name}.toml").write_text(longer)
+        again = subprocess.run([cli, "run", "--continue", f"{name}.toml"], cwd=work,
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        assert again.returncode != 0 and "[python] external_terms" in again.stdout, again.stdout
         print(line + "; 10 steps: the energy file byte for byte and the positions, velocities, "
               "and forces of the checkpoint of mdir run to the bit")
 
