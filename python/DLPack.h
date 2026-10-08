@@ -57,13 +57,16 @@ struct Lease {
 /// A Borrow shares the same, with the buffers of the host that it owns:
 /// the edges of the cell and the values of the tunables, which a consumer
 /// writes and a commit takes (D[python-dlpack-write]). A managed tensor
-/// holds it as well, so that those buffers outlive the Borrow.
+/// of one of them holds them as well, so that they outlive the Borrow.
+struct Staging {
+  std::array<double, 3> cell{};
+  std::vector<std::vector<double>> tunables;
+};
 struct ViewState {
   std::shared_ptr<compiler::Simulation> simulation;
   compiler::SimulationView view;
   std::unique_ptr<Lease> lease;
-  std::array<double, 3> cell{};
-  std::vector<std::vector<double>> tunables;
+  std::shared_ptr<Staging> staging;
 };
 
 /// One buffer of a view.
@@ -79,6 +82,9 @@ struct Buffer {
   /// (compiler::Simulation::WrittenPositions, ...), if any.
   bool writable = false;
   unsigned field = 0;
+  /// The memory of the host that the buffer points into, if the borrow
+  /// owns it.
+  std::shared_ptr<Staging> staging;
   const char *owner = "View";
 };
 
@@ -87,9 +93,9 @@ struct Buffer {
 template <class Managed> struct Exported {
   Managed managed{};
   std::vector<int64_t> shape, strides;
-  /// Declared before the lease: the lease is released first, and then
-  /// whatever of the view only this tensor still holds.
-  std::shared_ptr<ViewState> state;
+  /// The memory of the host of a borrow that the tensor points into, if
+  /// any; declared before the lease, which is released first.
+  std::shared_ptr<Staging> staging;
   std::unique_ptr<Lease> lease;
   static void destroy(Managed *self) { delete static_cast<Exported *>(self->context); }
 };
@@ -167,7 +173,7 @@ static py::object exportBuffer(const Buffer &b, py::object stream, py::object ma
   if (b.field) sim.markWritten(b.field);
   if (versioned) {
     auto e = std::make_unique<Exported<dlpack::ManagedTensorVersioned>>();
-    e->state = b.state;
+    e->staging = b.staging;
     e->lease = std::move(lease);
     auto &m = e->managed;
     m.version = {1, 1};
@@ -181,7 +187,7 @@ static py::object exportBuffer(const Buffer &b, py::object stream, py::object ma
     return py::reinterpret_steal<py::object>(capsule);
   }
   auto e = std::make_unique<Exported<dlpack::ManagedTensor>>();
-  e->state = b.state;
+  e->staging = b.staging;
   e->lease = std::move(lease);
   auto &m = e->managed;
   fill(*e, m, m.tensor, b);
@@ -249,7 +255,7 @@ inline View take(std::shared_ptr<compiler::Simulation> simulation) {
 struct Borrow {
   std::shared_ptr<ViewState> state;
   Buffer positions, velocities, ids, cell;
-  bool hasCell = false;
+  bool hasCell = false, periodic = false;
   std::vector<std::pair<std::string, Buffer>> tunables;
 };
 
@@ -262,8 +268,10 @@ inline Borrow borrow(std::shared_ptr<compiler::Simulation> simulation) {
   state->simulation = simulation;
   state->view = v;
   state->lease = std::move(lease);
-  state->cell = simulation->getCellEdges();
-  state->tunables = simulation->getTunableValues();
+  state->staging = std::make_shared<Staging>();
+  state->staging->cell = simulation->getCellEdges();
+  state->staging->tunables = simulation->getTunableValues();
+  Staging &staging = *state->staging;
   dlpack::Device device{v.onDevice ? dlpack::CUDA : dlpack::CPU, v.onDevice ? v.device : 0};
   auto make = [&](const void *data, std::vector<int64_t> shape, dlpack::DataType dtype,
                   dlpack::Device where, std::string name, bool writable, unsigned field) {
@@ -291,12 +299,16 @@ inline Borrow borrow(std::shared_ptr<compiler::Simulation> simulation) {
                            compiler::Simulation::WrittenVelocities);
   result.ids = make(v.ids, {n}, {dlpack::Int, 32, 1}, device, "ids", false, 0);
   result.hasCell = simulation->hasOrthorhombicCell();
-  result.cell = make(state->cell.data(), {3}, real, host, "cell", true, 0);
+  result.cell = make(staging.cell.data(), {3}, real, host, "cell", true, 0);
+  result.cell.staging = state->staging;
+  result.periodic = simulation->isPeriodic();
   const auto &set = simulation->getTunables();
-  for (size_t k = 0; k != set.tunables.size(); ++k)
+  for (size_t k = 0; k != set.tunables.size(); ++k) {
     result.tunables.emplace_back(set.tunables[k].name,
-        make(state->tunables[k].data(), {static_cast<int64_t>(state->tunables[k].size())},
+        make(staging.tunables[k].data(), {static_cast<int64_t>(staging.tunables[k].size())},
              real, host, "tunables['" + set.tunables[k].name + "']", true, 0));
+    result.tunables.back().second.staging = state->staging;
+  }
   return result;
 }
 
@@ -305,14 +317,14 @@ inline Borrow borrow(std::shared_ptr<compiler::Simulation> simulation) {
 inline std::optional<std::array<double, 3>> writtenCell(const Borrow &b) {
   if (!b.hasCell) return std::nullopt;
   auto now = b.state->simulation->getCellEdges();
-  if (std::memcmp(now.data(), b.state->cell.data(), sizeof now) == 0) return std::nullopt;
-  return b.state->cell;
+  if (std::memcmp(now.data(), b.state->staging->cell.data(), sizeof now) == 0) return std::nullopt;
+  return b.state->staging->cell;
 }
 inline std::vector<std::pair<std::string, std::vector<double>>> writtenTunables(const Borrow &b) {
   std::vector<std::pair<std::string, std::vector<double>>> changes;
   const auto &now = b.state->simulation->getTunableValues();
   for (size_t k = 0; k != b.tunables.size(); ++k) {
-    const auto &mine = b.state->tunables[k];
+    const auto &mine = b.state->staging->tunables[k];
     if (std::memcmp(now[k].data(), mine.data(), mine.size() * sizeof(double)) != 0)
       changes.emplace_back(b.tunables[k].first, mine);
   }
@@ -381,10 +393,12 @@ inline void bind(py::module_ &m) {
     .def_readonly("velocities", &Borrow::velocities)
     .def_readonly("ids", &Borrow::ids)
     .def_property_readonly("cell", [](const Borrow &b) {
+      if (!b.periodic)
+        throw UnsupportedError("Borrow.cell: the simulation has no periodic cell");
       if (!b.hasCell)
         throw UnsupportedError("Borrow.cell: a borrow takes the edges of an orthorhombic "
-                               "periodic cell; the tilts of a triclinic cell are not "
-                               "supported yet (#206)");
+                               "cell; a triclinic cell, with its tilts, is not supported "
+                               "yet (#206)");
       return b.cell;
     })
     .def_property_readonly("tunables", [](const Borrow &b) {

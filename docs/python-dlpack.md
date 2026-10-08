@@ -282,7 +282,8 @@ another: read `ids` in every borrow.
 **Types.** The buffers of the state have the type that the program
 stores, as in a view: float64 in double and in mixed precision (the
 positions and velocities are f64 in both; only the forces are f32 in the
-mixed mode, and forces cannot be borrowed), float32 in single precision.
+mixed mode, and forces cannot be borrowed); the Python model takes no
+other precision.
 The consumer writes that type and a commit converts nothing. The values of
 the tunables and the cell are float64 on the host; a commit builds the
 program's values from them as an update of D213 does (fields of the
@@ -431,10 +432,11 @@ writes until then is discarded with the rest of the borrow.
   activation with `%first_call = 2`. The evaluation of a committed state
   is taken with leapfrog by every program of segments, whose half kick
   back is a select on `%first_call` since D223.
-- `python/DLPack.h`: `Borrow` shares `ViewState` with its buffers and with
-  every managed tensor taken from it, which keeps the buffers of the host
-  (the cell, the tunables) alive after the `Borrow` is gone; a writable
-  buffer exports without the read-only flag.
+- `python/DLPack.h`: `Borrow` owns the buffers of the host (the cell, the
+  tunables) in a `Staging` that every managed tensor taken from one of
+  them shares, so that they outlive the `Borrow`; a writable buffer
+  exports without the read-only flag. The tensors of a view hold what
+  they held (D220).
 - No kernel, runtime function, pass, or program text changes, and nothing
   on the path of a step.
 

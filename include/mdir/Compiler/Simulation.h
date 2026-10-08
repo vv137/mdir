@@ -249,6 +249,7 @@ public:
   /// periodic cell without tilts.
   std::array<double, 3> getCellEdges() const;
   bool hasOrthorhombicCell() const;
+  bool isPeriodic() const { return prepared.control.periodic; }
   /// The number of commits that changed the positions, the velocities, and
   /// the cell from the host (P16), and for each commit that changed
   /// anything the step and the names of its fields.

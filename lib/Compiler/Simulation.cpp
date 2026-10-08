@@ -1643,8 +1643,8 @@ llvm::Expected<std::vector<std::string>> Simulation::commitBorrow(
   if (changesCell) {
     if (!hasOrthorhombicCell())
       return unsupported("a commit takes the edges of an orthorhombic "
-                         "periodic cell; the tilts of a triclinic cell are "
-                         "not supported yet (#206)");
+                         "cell; a triclinic cell, with its tilts, is not "
+                         "supported yet (#206)");
     double least = 2.0 * compiled->control.cutoffDistance * units::length;
     for (int k = 0; k != 3; ++k)
       if (!std::isfinite((*cell)[k]) || (*cell)[k] < least)
