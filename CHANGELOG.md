@@ -499,6 +499,17 @@ format, or the outputs; every such change is listed under **Changed** or
   `CompileError` in Python; the process aborted after it with "operation
   destroyed but still has uses" when the body of the loop used a value of
   the code before it, such as a neighbor structure (#208).
+- A row of `[output] observables`, of the free-energy file, and of the pull
+  file at a step where the barostat couples is now of the state of that
+  step (#218). With the barostat of Trotter type the step scales the
+  positions, and the potentials of these outputs took the cell of before the
+  scaling for their minimum image, so the pairs across the cell were at
+  distances off by the change of its edge: on the dipeptide in water the
+  energy of an observed pair term and `dH/dlambda` of a pair term were off
+  by 5e-6 to 1.4e-5 relative at every such row, under NVE and NVT by
+  nothing. The energies of the log, terms over tuples, and terms of the
+  positions were right. `State.observables` of a Python simulation takes
+  the same fix.
 - The scripts that generate the GPU templates of particle mesh Ewald and of
   the groups of neighbors (`scripts/generate-pme-gpu-template.py`,
   `scripts/generate-groups-gpu-template.py`) emit the guards of #168 that
