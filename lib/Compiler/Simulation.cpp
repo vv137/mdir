@@ -334,7 +334,8 @@ Simulation::~Simulation() {
 
 static llvm::Expected<std::unique_ptr<Simulation::Engine>>
 compileEngine(const Control &control, const System &system,
-              const model::Execution &execution, bool cache) {
+              const model::Execution &execution, bool cache,
+              compiler::CodeStore *store) {
   auto engine = std::make_unique<Simulation::Engine>();
   engine->control = control;
   auto program = buildProgram(control, system);
@@ -356,19 +357,41 @@ compileEngine(const Control &control, const System &system,
   auto gpu = compiler::getGpuOptions(control, execution.device, cache);
   if (!gpu)
     return gpu.takeError();
-  auto module = compiler::lowerModule(*engine->context, control,
-                                      engine->program, &engine->stats, *gpu);
-  if (!module)
-    return module.takeError();
-  engine->module = std::move(*module);
-  engine->stats.pipelineSeconds = seconds();
-
   static std::once_flag native;
   std::call_once(native, [] {
     llvm::InitializeNativeTarget();
     llvm::InitializeNativeTargetAsmPrinter();
     llvm::InitializeNativeTargetAsmParser();
   });
+  // The code that an earlier simulation of the program left, under the key
+  // of everything that the lowering and the code generation read: the
+  // module, the pipeline with its options, the entry, and the machine
+  // (D[program-reuse]). `cache=False` generates everything anew.
+  auto targetMachine = compiler::createHostMachine();
+  if (!targetMachine)
+    return targetMachine.takeError();
+  llvm::cl::Option *scheduler = getSchedulerOption();
+  llvm::StringRef codegen = scheduler ? "pre-RA-sched=fast" : "";
+  std::string key;
+  std::shared_ptr<const compiler::KeptCode> kept;
+  if (!cache)
+    store = nullptr;
+  if (store) {
+    key = compiler::getCodeKey(
+        engine->program.module,
+        compiler::getPipeline(control, engine->program, *gpu),
+        engine->program.entry,
+        compiler::describeMachine(**targetMachine, codegen));
+    kept = store->find(key);
+  }
+  if (!kept) {
+    auto module = compiler::lowerModule(*engine->context, control,
+                                        engine->program, &engine->stats, *gpu);
+    if (!module)
+      return module.takeError();
+    engine->module = std::move(*module);
+    engine->stats.pipelineSeconds = seconds();
+  }
   std::string directory = findRuntimeDirectory();
   if (directory.empty())
     return unsupported("cannot find the MDIR runtime (libmdrt.so); set "
@@ -392,10 +415,6 @@ compileEngine(const Control &control, const System &system,
     if (!llvm::sys::fs::exists(path))
       return unsupported("cannot find '" + path + "'");
 
-  auto targetMachine = compiler::createHostMachine();
-  if (!targetMachine)
-    return targetMachine.takeError();
-  llvm::cl::Option *scheduler = getSchedulerOption();
   if (scheduler)
     (void)scheduler->addOccurrence(0, "pre-RA-sched", "fast");
   struct ResetScheduler {
@@ -407,8 +426,9 @@ compileEngine(const Control &control, const System &system,
   } resetScheduler{scheduler};
   double jitStart = seconds();
   auto created = compiler::JITEngine::create(
-      *engine->module, std::move(*targetMachine), paths, engine->program.entry,
-      scheduler ? "pre-RA-sched=fast" : "", cache);
+      kept ? mlir::ModuleOp() : *engine->module, std::move(*targetMachine),
+      paths, engine->program.entry, codegen, cache, /*keep=*/store != nullptr,
+      kept);
   if (!created) {
     return llvm::make_error<compiler::CompileError>(
         "cannot compile the program for execution: " +
@@ -496,13 +516,25 @@ compileEngine(const Control &control, const System &system,
   engine->stats.programs = 1;
   engine->stats.bypassed = cache ? 0 : 1;
   engine->stats.engineSeconds = seconds() - jitStart;
+  if (kept) {
+    engine->stats.reused = 1;
+    engine->stats.reuseSavedSeconds = kept->seconds;
+  } else if (store) {
+    // What a later simulation saves: the pipeline, and the object as this
+    // simulation came by it.
+    const compiler::CompileStats &s = engine->stats;
+    if (auto code = engine->engine->takeCode(
+            s.pipelineSeconds + s.compileSeconds + s.lookupSeconds))
+      store->insert(key, std::move(code));
+  }
 
   engine->masses = system.masses;
   return std::move(engine);
 }
 
 llvm::Expected<std::unique_ptr<Simulation>>
-Simulation::create(const model::PreparedModel &prepared, bool cache) {
+Simulation::create(const model::PreparedModel &prepared, bool cache,
+                   compiler::CodeStore *store) {
   std::unique_lock<std::mutex> lock(getRunMutex());
   const Control &given = prepared.control;
   bool trotter = given.barostat &&
@@ -553,7 +585,8 @@ Simulation::create(const model::PreparedModel &prepared, bool cache) {
   simulation->compiledSystem = system;
   simulation->tunableValues = prepared.tunables.values;
   simulation->tunablesHistory = {{0, 0}};
-  auto engine = compileEngine(control, system, prepared.execution, cache);
+  auto engine =
+      compileEngine(control, system, prepared.execution, cache, store);
   if (!engine) {
     lock.unlock();
     return engine.takeError();

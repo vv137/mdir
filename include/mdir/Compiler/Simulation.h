@@ -102,9 +102,12 @@ class Simulation {
 public:
   /// Builds the program of the segments of `prepared` and compiles it, once
   /// (D211). Without `cache`, the compilation reads and writes no entry of
-  /// the compile cache (D217).
+  /// the compile cache (D217). With `store`, the simulation takes the code
+  /// that an earlier one left there under the same key, or leaves its own
+  /// (D[program-reuse]); without `cache` it does neither.
   static llvm::Expected<std::unique_ptr<Simulation>>
-  create(const model::PreparedModel &prepared, bool cache = true);
+  create(const model::PreparedModel &prepared, bool cache = true,
+         CodeStore *store = nullptr);
   ~Simulation();
   Simulation(const Simulation &) = delete;
   Simulation &operator=(const Simulation &) = delete;

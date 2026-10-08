@@ -10,6 +10,8 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace llvm {
 class TargetMachine;
@@ -70,8 +72,56 @@ struct CompileStats {
   /// whatever the environment says.
   unsigned bypassed = 0;
 
+  /// The programs that took the code that an earlier simulation of their
+  /// `Program` left in memory (D[program-reuse]): nothing was lowered,
+  /// generated, or looked up for them. And the time of the pipeline and of
+  /// the host object of the simulation that left the code.
+  unsigned reused = 0;
+  double reuseSavedSeconds = 0.0;
+
   CompileStats &operator+=(const CompileStats &other);
 };
+
+/// The code of a program of segments as a JIT engine takes it
+/// (D[program-reuse]): the bitcode of its LLVM module, which names its
+/// symbols and its constructors, and the relocatable host object that was
+/// generated from that module.
+struct KeptCode {
+  /// The identifier of the module, by which an engine knows its object.
+  std::string identifier;
+  std::string bitcode;
+  std::string object;
+  /// The time of the pipeline and of the object of the simulation that
+  /// left the code.
+  double seconds = 0.0;
+};
+
+/// The code that the simulations of one `Program` left, by key
+/// (D[program-reuse]). A key is a hash of what the lowering and the code
+/// generation read (getCodeKey). The store belongs to the `Program` and is
+/// freed with it; its mutex is held for a lookup or an insertion only.
+class CodeStore {
+public:
+  std::shared_ptr<const KeptCode> find(llvm::StringRef key) const;
+  /// Keeps `code` under `key` unless the key has code already. The oldest
+  /// entry leaves when there are more than `capacity`: the key of a
+  /// program changes only with the environment.
+  void insert(llvm::StringRef key, std::shared_ptr<const KeptCode> code);
+  size_t size() const;
+
+  static constexpr size_t capacity = 4;
+
+private:
+  mutable std::mutex mutex;
+  std::vector<std::pair<std::string, std::shared_ptr<const KeptCode>>> entries;
+};
+
+/// The key of the code of a program in a CodeStore: a hash of the text of
+/// the module that is lowered, of its pipeline with its options, of the
+/// name of its entry, and of the description of the machine and the code
+/// generator (describeMachine).
+std::string getCodeKey(llvm::StringRef module, llvm::StringRef pipeline,
+                       llvm::StringRef entry, llvm::StringRef machine);
 
 /// Where the compile cache lives, as the environment says
 /// (D212). `MDIR_COMPILE_CACHE_DIR` names the directory;
@@ -181,6 +231,14 @@ public:
                   std::string module);
   ~HostObjectCache() override;
 
+  /// The object of the module is that of `code`, and nothing is looked up
+  /// or generated for it (D[program-reuse]).
+  void setKeptCode(std::shared_ptr<const KeptCode> code);
+  /// Keeps a copy of the object of the module when it is generated or read
+  /// from the directory, for takeObject.
+  void keepObject() { keeps = true; }
+  std::string takeObject();
+
   std::unique_ptr<llvm::MemoryBuffer>
   getObject(const llvm::Module *module) override;
   void notifyObjectCompiled(const llvm::Module *module,
@@ -217,6 +275,9 @@ private:
   // generation changes the module, so its key is taken before.
   std::map<const llvm::Module *, Pending> pending;
   CompileStats stats;
+  std::shared_ptr<const KeptCode> kept;
+  bool keeps = false;
+  std::string object;
 };
 
 } // namespace mdir::compiler

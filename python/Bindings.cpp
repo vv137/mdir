@@ -86,6 +86,10 @@ struct Program {
   std::shared_ptr<Lowering> lowering = std::make_shared<Lowering>();
   /// What a simulation compiles its programs from (D196).
   std::shared_ptr<const model::PreparedModel> prepared;
+  /// The code that its simulations left, which later ones take
+  /// (D[program-reuse]); freed with the program.
+  std::shared_ptr<compiler::CodeStore> code =
+      std::make_shared<compiler::CodeStore>();
   /// Whether its compilations use the compile cache, the default of its
   /// simulations (D217).
   bool cache = true;
@@ -1034,7 +1038,8 @@ PYBIND11_MODULE(_core, m) {
       {
         // The inputs were copied at compilation; nothing here touches Python.
         py::gil_scoped_release release;
-        created.emplace(compiler::Simulation::create(*prepared, useCache));
+        created.emplace(compiler::Simulation::create(*prepared, useCache,
+                                                     program->code.get()));
       }
       PySimulation result;
       result.program = std::move(program);
@@ -1183,6 +1188,10 @@ PYBIND11_MODULE(_core, m) {
       d["gpu_cache_unstored"] = c.gpuUnstored;
       // Programs compiled with cache=False (D217).
       d["cache_bypassed"] = c.bypassed;
+      // Programs that took the code kept with their Program
+      // (D[program-reuse]).
+      d["program_reused"] = c.reused;
+      d["reuse_saved_seconds"] = c.reuseSavedSeconds;
       return d;
     })
     .def_property_readonly("tunables", [](py::object self) { return TunableValues{self}; })
