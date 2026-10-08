@@ -3,7 +3,9 @@
 // rejected, and eviction removes the entries used least recently.
 // clearCache (D217) removes the entries of this format
 // and nothing else, and a process that clears while another writes leaves
-// only intact entries.
+// only intact entries. The total kept in the directory
+// (D[compile-cache-size-file]): stores list the directory only at the
+// bound, without a total, or once a day.
 #include "mdir/Compiler/CompileCache.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include "llvm/IR/IRBuilder.h"

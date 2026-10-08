@@ -482,7 +482,11 @@ the LLVM version, the CPU and its features, and the options of code
 generation, but not by the build of MDIR: a rebuild that generates the
 same module hits. An entry also stores its full key and a hash of its
 object, so that a collision or a damaged file is a miss, and a hit is
-linked and checked as a generated object is. The passes, which do depend
+linked and checked as a generated object is. The directory is bounded,
+and the entries used least recently are evicted; its total is kept in a
+file that stores update under a lock, so that a store costs a fixed
+number of file operations and the directory is listed only to evict
+(D[compile-cache-size-file]). The passes, which do depend
 on MDIR, run on every compile. The PTX and the cubin of each GPU module are
 cached in the same way. The PTX is keyed by a hash of the module's IR,
 which then holds only upstream LLVM and NVVM operations, together with its
