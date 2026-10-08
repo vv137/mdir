@@ -335,7 +335,7 @@ private:
     for (const std::string &name : observedConstants)
       values[name] = "%ob_" + name;
   }
-  /// The potential `@tunable` (D[tunable-gradient]) takes the tunable
+  /// The potential `@tunable` (D230) takes the tunable
   /// constants of the pair terms as its last arguments, `%tg_c<column>`, in
   /// place of the values of the table `tunable_constants`, so that the
   /// differentiation of parameters gives the derivatives in them (D161).
@@ -359,7 +359,7 @@ private:
     return program.gradientFields.size() - (gradientCharges ? 1 : 0);
   }
   /// The tunable parameters of the terms over tuples whose derivatives
-  /// `@tunable` gives (D[tunable-gradient]). The derivative in the
+  /// `@tunable` gives (D230). The derivative in the
   /// parameter of each tuple leaves the program as a field of the
   /// particles: `@tunable` takes fields of zeros, `%tg_d<c>`, and the
   /// parameter of a tuple is its value plus the value of one of them at one
@@ -1573,7 +1573,7 @@ llvm::Error Builder::collectTopology() {
   program.tables.push_back({"lj_epsilon", numTypes, topology.epsilon});
   // The weights of the seeds of the derivatives in those tables, a table
   // of all ordered pairs of types each, and the field of the particles
-  // that each gives (D[tunable-gradient]).
+  // that each gives (D230).
   if (program.tunableGradient)
     for (auto [c, seed] : llvm::enumerate(control.tunableTableSeeds)) {
       Program::Table table;
@@ -1710,7 +1710,7 @@ llvm::Error Builder::collectTopology() {
       set.fields[field].values = values;
     }
     // The tunable parameters of the term whose derivatives the program
-    // carries (D[tunable-gradient]): for each, the place whose members are
+    // carries (D230): for each, the place whose members are
     // shared by the fewest tuples, and for each tuple its number among the
     // tuples of its member there.
     if (program.tunableGradient)
@@ -1771,7 +1771,7 @@ llvm::Error Builder::collectTopology() {
     program.fields.push_back(std::move(zero));
   }
   // The derivative in the charges is that of `@tunable` in its field of
-  // them, a site for each particle (D[tunable-gradient]).
+  // them, a site for each particle (D230).
   if (program.tunableGradient)
     for (auto [k, declaration] : llvm::enumerate(control.tunableDeclarations))
       if (declaration.kind == Control::TunableKind::Charge) {
@@ -3129,7 +3129,7 @@ void Builder::emitObservablesOutput(StringRef indent, StringRef x,
 
 llvm::Error Builder::collectTunableGradient() {
   // Each tunable has a rule for its derivative, or the program provably
-  // does not read it, or the compile fails (D[tunable-gradient]): nothing
+  // does not read it, or the compile fails (D230): nothing
   // is left out without a word.
   bool dispersion = control.topologyDispersion != DispersionCorrection::None;
   // The estimate of what the shift takes within the cutoff, which the
@@ -4061,7 +4061,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     bool flags = (lj && scalesVdw) || (coulomb && scalesCoulomb) ||
                  (alchemicalOnly && decouples());
     // In `@tunable`, σ and ε of a pair take the seeds of the derivatives
-    // in their tables (D[tunable-gradient], Control::TunableTableSeed).
+    // in their tables (D230, Control::TunableTableSeed).
     size_t seeds =
         gradientArguments && lj ? control.tunableTableSeeds.size() : 0;
     std::string seedFields, seedTypes, seedArguments;
@@ -4624,7 +4624,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     os << "  %u_" << set << " = md.sum_tuples %r_" << set
        << ", %x, %cell coordinates(" << list << ")";
     // In `@tunable`, the tunable parameters of the term take the fields of
-    // zeros through which their derivatives leave (D[tunable-gradient]).
+    // zeros through which their derivatives leave (D230).
     std::vector<const TupleGradient *> gradients;
     if (gradientArguments)
       for (const TupleGradient &gradient : tupleGradients)
@@ -4729,7 +4729,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
   if ((lj14 || coulomb14) && has("pairs14")) {
     // In `@tunable` with the derivative in the charges, the product of
     // the charges is formed here, f s_C q_i q_j, from the charges
-    // themselves (D[tunable-gradient]).
+    // themselves (D230).
     bool products = gradientArguments && gradientCharges && coulomb14;
     os << "  %u_pairs14 = md.sum_tuples %r_pairs14, %x, %cell coordinates("
           "distance(0, 1))\n"
@@ -8796,7 +8796,7 @@ void Builder::collectStartValues() {
       add("bstate" + std::to_string(k), system.barostatState[k]);
   // Whether the host asks for the derivative in the tunables, 0 unless a
   // simulation sets it for one evaluation, and the tunable constants of the
-  // pair terms as the numbers that `@tunable` takes (D[tunable-gradient]).
+  // pair terms as the numbers that `@tunable` takes (D230).
   if (program.tunableGradient) {
     add("tunable_gradient", 0.0);
     for (auto [k, constant] : llvm::enumerate(control.tunableConstants))
@@ -9710,7 +9710,7 @@ llvm::Error Builder::build() {
                        "observe, LJPME, or pulls yet");
     program.tunable = true;
     // The derivative in the tunables is a branch of the start of a program
-    // that takes steps (D[tunable-gradient]).
+    // that takes steps (D230).
     program.tunableGradient =
         control.tunableGradient && !control.minimize;
   }
@@ -9918,7 +9918,7 @@ llvm::Error Builder::build() {
   }
   // The potential whose derivatives in the tunables the host asks for:
   // that of the energy, with the tunable constants as arguments
-  // (D[tunable-gradient]).
+  // (D230).
   if (program.tunableGradient) {
     if (llvm::Error error = collectTunableGradient())
       return error;

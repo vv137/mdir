@@ -1,6 +1,6 @@
 # REQUIRES: python-api, hdf5, cuda
 # The derivative of the energy in the tunable parameters
-# (D[tunable-gradient]) in a simulation continued from a checkpoint, on the
+# (D230) in a simulation continued from a checkpoint, on the
 # GPU: the checks of python-tunable-gradient-checkpoint.test.
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide checkpoint GPU Double %t | FileCheck %s -DMODE="GPU Double"

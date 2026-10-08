@@ -138,7 +138,7 @@ struct Program {
   /// derivatives (D209); 0 for the other columns.
   std::vector<double> observableVolumeConstants;
   /// The derivative of the energy in the tunables
-  /// (D[tunable-gradient], docs/python-gradient.md): whether the entry
+  /// (D230, docs/python-gradient.md): whether the entry
   /// evaluates it when the host asks (the start value `tunable_gradient`);
   /// for each tunable, whether a rule gives its derivative or the program
   /// provably does not read it; and the values that the entry hands the

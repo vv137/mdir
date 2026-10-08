@@ -1,4 +1,4 @@
-# The derivative of the energy in the tunable parameters (D[tunable-gradient])
+# The derivative of the energy in the tunable parameters (D230)
 
 Issue #203, the first implementation step of M2b (#138,
 [roadmap](roadmap.md), Section 6.1). Status: implemented. The charges with

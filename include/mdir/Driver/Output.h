@@ -126,7 +126,7 @@ struct Output {
   std::vector<double> observableVolumeConstants;
   /// The derivatives of the energy in the sites of the tunables that the
   /// entry handed over at its last evaluation of them
-  /// (mdrtWriteTunableGradient, D[tunable-gradient]), in kJ/mol per unit
+  /// (mdrtWriteTunableGradient, D230), in kJ/mol per unit
   /// of each, and the volume of the cell then; `tunableGradientWritten` is
   /// set by the call.
   std::vector<double> tunableGradient;
@@ -395,7 +395,7 @@ void _mlir_ciface_mdrtWriteFreeEnergy(int64_t step, void *values);
 /// and kJ/mol per unit of a constant.
 void _mlir_ciface_mdrtWriteObservables(int64_t step, void *values);
 /// Takes the derivatives of the energy in the sites of the tunables, in
-/// the order of Program::gradientSlots (D[tunable-gradient]).
+/// the order of Program::gradientSlots (D230).
 void _mlir_ciface_mdrtWriteTunableGradient(void *values);
 /// Takes the field `index` of Program::gradientFields, a value of f64 for
 /// each particle, whose numbers `ids` holds.

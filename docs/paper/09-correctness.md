@@ -372,7 +372,7 @@ energy equals a NumPy sum over the table to $3.0\times10^{-12}$ kJ/mol of
 $7.4\times10^{-13}$ (`python-tunable-pairs*.test`).
 
 The derivative of the energy in the tunables (Section 3.6,
-D[tunable-gradient]) is checked on the CPU and a GPU, in double and mixed
+D230) is checked on the CPU and a GPU, in double and mixed
 precision, against sums written in NumPy at the positions of the state and
 against central differences of the energy that it is the derivative of,
 after an update of each entry (`python-tunable-gradient*.test`). Springs

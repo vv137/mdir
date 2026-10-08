@@ -269,7 +269,7 @@ mdir::model::resolveTunables(const System &model, driver::Control &control,
   control.tunables = true;
   control.tunableGradient = model.tunableGradient;
   // The seeds of the derivatives in the tables of σ and ε
-  // (D[tunable-gradient]): one for a per-type tunable, and for a tunable
+  // (D230): one for a per-type tunable, and for a tunable
   // of the table by pairs as many as its pairs share a type, each pair in
   // the row of the member whose rows are less taken.
   if (control.tunableGradient)
@@ -428,7 +428,7 @@ llvm::Error mdir::model::applyTunables(
           table[a * types + b] = table[b * types + a] = theta[entry.map[site]];
   }
   // The weights of the seeds of the derivatives in the tables
-  // (D[tunable-gradient]), the Jacobian of the lines above: for a per-type
+  // (D230), the Jacobian of the lines above: for a per-type
   // tunable the derivative of the combining rule in the value of the type
   // of the row, ∂σ_ab/∂σ_a = 1/2 (Lorentz) or (1/2)√(σ_b/σ_a), and
   // ∂ε_ab/∂ε_a = (1/2)√(ε_b/ε_a), 0 for a pair that the rule does not give

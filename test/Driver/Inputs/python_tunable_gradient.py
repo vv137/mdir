@@ -1,5 +1,5 @@
 """The derivative of the energy in the tunable parameters
-(D[tunable-gradient], docs/python-gradient.md).
+(D230, docs/python-gradient.md).
 
 Usage: python_tunable_gradient.py ROOT SCENARIO [TARGET PRECISION [WORK]]
 

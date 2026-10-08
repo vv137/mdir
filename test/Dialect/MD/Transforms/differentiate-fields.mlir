@@ -2,7 +2,7 @@
 // RUN: mdir-opt %s --md-differentiate="remarks=true" -split-input-file -verify-diagnostics -o /dev/null
 
 // The derivative of the energy in a field of the particles
-// (D[tunable-gradient]): `derivative(n)` of an argument that is a field of
+// (D230): `derivative(n)` of an argument that is a field of
 // f64 is a field, g_i = dU/da_i. A sum over a relation gives a gather over
 // it, a sum over tuples a gather over them, a sum over particles a map; a
 // field that no sum of the energy takes has the derivative zero. The

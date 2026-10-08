@@ -75,7 +75,7 @@ struct System {
   };
   std::vector<std::vector<TailPair>> pairTails;
   /// The weights of each seed of Control::tunableTableSeeds at the values
-  /// of the tunables, `w[a * T + b]` (D[tunable-gradient]).
+  /// of the tunables, `w[a * T + b]` (D230).
   std::vector<std::vector<double>> tunableSeedWeights;
   /// The parameters of each particle (D165): a name and a value for every
   /// particle, in the units of the control file, which the pair terms

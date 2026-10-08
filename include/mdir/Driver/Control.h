@@ -163,7 +163,7 @@ struct Control {
   bool tunables = false;
   std::vector<std::pair<unsigned, std::string>> tunableConstants;
   /// Whether the program carries the derivative of the energy in the
-  /// tunables (D[tunable-gradient], docs/python-gradient.md), and the
+  /// tunables (D230, docs/python-gradient.md), and the
   /// declarations that it differentiates, in the order of the tunables.
   bool tunableGradient = false;
   enum class TunableKind {
@@ -184,7 +184,7 @@ struct Control {
   };
   std::vector<TunableDeclaration> tunableDeclarations;
   /// The seeds through which the derivatives in the tables of σ and ε
-  /// leave a program as fields of the particles (D[tunable-gradient]).
+  /// leave a program as fields of the particles (D230).
   /// The kernel of the Lennard-Jones of `@tunable` takes, for the pair of
   /// the particles i and j of the types a and b, the value of the table
   /// plus d_i w[a, b] + d_j w[b, a], with d a field of zeros and w the

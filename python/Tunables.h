@@ -92,7 +92,7 @@ inline py::list describe(const model::TunableSet &set, const driver::Program &pr
     const auto &entry = set.tunables[k];
     py::dict d;
     // Whether a rule gives the derivative of the energy in it or the
-    // program provably does not read it (D[tunable-gradient]).
+    // program provably does not read it (D230).
     if (program.tunableGradient && k < program.gradientOutcomes.size())
       d["gradient"] = program.gradientOutcomes[k] == driver::Program::GradientOutcome::Zero
                           ? "zero" : "rule";

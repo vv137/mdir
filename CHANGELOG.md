@@ -13,7 +13,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Added
 
 - The derivative of the energy in the tunable parameters of a Python
-  model (D[tunable-gradient], #203): with `System.tunable_gradient = True`
+  model (D230, #203): with `System.tunable_gradient = True`
   a compiled program can evaluate it, and
   `Simulation.tunables.gradient()` returns, without taking a step, a
   read-only mapping of the names of the tunables to arrays of the shape of

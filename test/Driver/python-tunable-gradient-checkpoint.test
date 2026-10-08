@@ -1,6 +1,6 @@
 # REQUIRES: python-api, hdf5
 # The derivative of the energy in the tunable parameters
-# (D[tunable-gradient]) in a simulation continued from a checkpoint (D223),
+# (D230) in a simulation continued from a checkpoint (D223),
 # and in a new stage from it: the derivative and its energy of the
 # simulation that wrote the checkpoint, to the bit, on the CPU in double
 # and mixed precision.

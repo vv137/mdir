@@ -1,6 +1,6 @@
 # REQUIRES: python-api
 # The derivative of the energy in the tunable parameters
-# (D[tunable-gradient], docs/python-gradient.md) on the CPU, in double and
+# (D230, docs/python-gradient.md) on the CPU, in double and
 # mixed precision: what is refused; constants of a pair term and parameters
 # of a term over tuples on the dipeptide in water against NumPy and against
 # central differences of the energy that the derivative is of; the steps of

@@ -229,7 +229,7 @@ the host adds to the log and the reports (the dispersion correction, the
 PME constants) come from the rebuilt values. Nothing changes for a program
 without tunables.
 
-**Not differentiated here.** *Amended by D[tunable-gradient]
+**Not differentiated here.** *Amended by D230
 ([python-gradient.md](python-gradient.md)):* the derivative of the energy
 in the tunables is `sim.tunables.gradient()` of a program compiled with
 `System.tunable_gradient`; the program gives the derivative in each of its

@@ -215,7 +215,7 @@ Jacobian matrices," *IMA J. Appl. Math.* **13**, 117–119 (1974).
 
 Used for: the seeds of the derivatives in the tables of the Lennard-Jones,
 groups of pairs of types that share no row, one field of the particles for
-each group (D[tunable-gradient]).
+each group (D230).
 
 ### Darden1993
 

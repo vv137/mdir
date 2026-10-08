@@ -699,7 +699,7 @@ $$
 
 the derivative of $w_n\propto e^{-\Delta U(S_n)/k_BT}$ normalized, so the
 one quantity that MDIR must add is $\partial U/\partial\boldsymbol\theta$ at
-a configuration (D[tunable-gradient], `docs/python-gradient.md`). A
+a configuration (D230, `docs/python-gradient.md`). A
 program compiled for it evaluates it at the state of a simulation when a
 script asks, and its steps are those of a program without it.
 

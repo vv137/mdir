@@ -453,7 +453,7 @@ $$S = \sum_{i \in P} k(i), \qquad b_i = k(i).$$
 | `forces` | Position field type | $\mathbf F_i = -\partial U/\partial\mathbf x_i$ |
 | `virial` | `vector<9xf64>` | $\mathsf W$, as defined in Section 5.3, in row-major order |
 | `derivative(n)` | `f64` | $\partial U/\partial\theta_n$, where $\theta_n$ is scalar argument `n` |
-| `derivative(n)` | Type of the field | $g_i = \partial U/\partial a_i$, where $a$ is argument `n`, a field of the particles with one component of `f64` (D[tunable-gradient]) |
+| `derivative(n)` | Type of the field | $g_i = \partial U/\partial a_i$, where $a$ is argument `n`, a field of the particles with one component of `f64` (D230) |
 
 `md.evaluate` does not survive semantic differentiation. The pass replaces it
 with `md.call` to a generated `md.function`.

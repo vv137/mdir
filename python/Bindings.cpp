@@ -311,7 +311,7 @@ PYBIND11_MODULE(_core, m) {
   property(system, "restraints", &model::System::restraints);
   property(system, "tunables", &model::System::tunables);
   // Whether the program carries the derivative of the energy in the
-  // tunables (D[tunable-gradient]).
+  // tunables (D230).
   property(system, "tunable_gradient", &model::System::tunableGradient);
   system.def_property("restraint_reference", [](const Input<model::System> &o) {
     const auto &v = o.value.restraintReference;
@@ -823,7 +823,7 @@ PYBIND11_MODULE(_core, m) {
     return sim.getTunablesVersion();
   };
   // The derivative of the energy in the tunables at a state
-  // (D[tunable-gradient]): a read-only mapping of the names to arrays of
+  // (D230): a read-only mapping of the names to arrays of
   // the shape of the values.
   struct TunableGradient {
     py::dict values;

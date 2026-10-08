@@ -1,7 +1,7 @@
 // RUN: mdir-opt %s --md-differentiate -split-input-file -verify-diagnostics
 
 // The errors of a derivative in a field of the particles
-// (D[tunable-gradient]): a use of the field without a rule, named, so that
+// (D230): a use of the field without a rule, named, so that
 // a derivative that is not computed is never a zero.
 
 !vec = !md.field<@atoms, 3 x f64>
