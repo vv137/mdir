@@ -14,7 +14,7 @@
 # RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide tails CPU Double | FileCheck %s --check-prefix=TAILS -DMODE="CPU Double"
 # RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide tails CPU Mixed | FileCheck %s --check-prefix=TAILS -DMODE="CPU Mixed"
 # REFUSED: refusals: the plan, the shapes, and a tunable that the energy does not read
-# REFUSED: refusals: 6 refusals
+# REFUSED: refusals: 5 refusals
 # REFUSED: refusals passed
 # RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide lj CPU Double | FileCheck %s --check-prefix=LJ -DMODE="CPU Double"
 # RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide lj CPU Mixed | FileCheck %s --check-prefix=LJ -DMODE="CPU Mixed"

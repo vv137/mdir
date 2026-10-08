@@ -414,10 +414,11 @@ private:
   /// triclinic cell.
   LogicalResult addGroupsTemplates(bool tilted);
   func::FuncOp getOrDeclare(StringRef name, FunctionType type);
-  /// Adds the template of particle mesh Ewald for these types, and with
-  /// `tilted` the kernels of a triclinic cell as well.
+  /// Adds the template of particle mesh Ewald for these types, with
+  /// `tilted` the kernels of a triclinic cell as well, and with
+  /// `potential` the kernel of the potential at the particles.
   LogicalResult addPMETemplates(Type position, Type charge, Type force,
-                                int64_t order, bool tilted);
+                                int64_t order, bool tilted, bool potential);
   LogicalResult lowerReciprocal(md_exec::ReciprocalOp op);
 
   ModuleOp module;
@@ -2950,16 +2951,22 @@ static void unrollSmallLoops(Operation *root, int64_t limit) {
 
 LogicalResult Lowering::addPMETemplates(Type position, Type charge,
                                         Type force, int64_t order,
-                                        bool tilted) {
+                                        bool tilted, bool potential) {
   // A triclinic cell takes the kernels of its own as well, which only it
   // parses and specializes (docs/triclinic-m2.md).
   if (tilted && failed(addPMETemplates(position, charge, force, order,
-                                       /*tilted=*/false)))
+                                       /*tilted=*/false, /*potential=*/false)))
     return failure();
   if (SymbolTable::lookupSymbolIn(
           module, getPMEInstanceName(tilted ? "mdrt_gpu_pme_spread_triclinic"
                                             : "mdrt_gpu_pme_spread",
-                                     position, charge, force, order)))
+                                     position, charge, force, order)) &&
+      (!potential ||
+       SymbolTable::lookupSymbolIn(
+           module,
+           getPMEInstanceName(tilted ? "mdrt_gpu_pme_potential_triclinic"
+                                     : "mdrt_gpu_pme_potential",
+                              position, charge, force, order))))
     return success();
   ParserConfig config(context);
   OwningOpRef<ModuleOp> templates = parseSourceString<ModuleOp>(
@@ -2995,7 +3002,19 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
     return module.emitError()
            << "cannot sink the constants of particle mesh Ewald into its "
               "kernels";
+  // The functions of the potential at the particles (the fourth result of
+  // md.reciprocal) only where a sum asks for them, so that a module
+  // without one is what it was; they may come after the others, for a sum
+  // of the same types that was lowered before.
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
+    auto function = dyn_cast<func::FuncOp>(&op);
+    bool isPotential =
+        function && function.getSymName().contains("pme_potential");
+    if ((isPotential && !potential) ||
+        (function && SymbolTable::lookupSymbolIn(module, function.getSymName()))) {
+      op.erase();
+      continue;
+    }
     op.remove();
     module.push_back(&op);
   }
@@ -3019,7 +3038,8 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // A triclinic cell takes the kernels of its own where they depend on the
   // cell (docs/triclinic-m2.md).
   bool tilted = isTriclinic(op.getCellMutable().get());
-  if (failed(addPMETemplates(position, charge, force, op.getOrder(), tilted)))
+  if (failed(addPMETemplates(position, charge, force, op.getOrder(), tilted,
+                             op.getPotential())))
     return failure();
   auto instance = [&](StringRef name) {
     bool own = tilted && name != "mdrt_gpu_pme_real" &&
@@ -3049,8 +3069,11 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // (D85, D108).
   Value weights = op.getScratch().size() > 4 ? op.getScratch()[4] : Value();
   Value bricks = op.getScratch().size() > 6 ? op.getScratch()[6] : Value();
+  // The potential at the particles (the fourth result of md.reciprocal)
+  // has the kernel of its own, which takes no weights.
   bool usesWeights = weights && bricks && !deterministic &&
-                     op.getOrder() == 4 && force.isF32();
+                     op.getOrder() == 4 && force.isF32() &&
+                     !op.getPotential();
 
   // Marked, the sum runs on a second stream, beside the ops up to its join
   // (md_exec.join, D87). All the work that it issues goes there, and none
@@ -3137,7 +3160,9 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                          ValueRange{positions, charges, real, box, weights,
                                     k1, k2, k3, forces});
   else
-    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_gather"),
+    func::CallOp::create(builder, loc,
+                         instance(op.getPotential() ? "mdrt_gpu_pme_potential"
+                                                    : "mdrt_gpu_pme_gather"),
                          ValueRange{positions, charges, real, box, k1, k2, k3,
                                     order, forces});
   if (side) {

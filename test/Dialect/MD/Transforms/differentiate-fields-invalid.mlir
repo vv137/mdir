@@ -6,32 +6,6 @@
 
 !vec = !md.field<@atoms, 3 x f64>
 !real = !md.field<@atoms, f64>
-!grid = !md.table<2, f64>
-md.particle_set @atoms
-
-// The reciprocal sum takes the charges as its own operand: the derivative
-// in them is the potential of the grid at the particles, which the op does
-// not yield.
-md.potential @mesh(%x: !vec, %cell: !md.cell, %q: !real, %moduli: !grid)
-    -> f64 {
-  // expected-error@+1 {{'md.reciprocal' takes argument 2 of 'mesh', a field, and has no rule for the derivative in it}}
-  %u, %f, %w = md.reciprocal %x, %q, %cell, %moduli
-      grid([8, 8, 8]) order(4) beta(3.0) coulomb(138.9)
-      : !vec, !real, !grid -> f64, !vec, vector<9xf64>
-  md.return %u : f64
-}
-
-md.function @first(%x: !vec, %cell: !md.cell, %q: !real, %moduli: !grid)
-    -> !real {
-  %g = md.evaluate @mesh(%x, %cell, %q, %moduli) request [derivative(2)]
-      : (!vec, !md.cell, !real, !grid) -> !real
-  md.return %g : !real
-}
-
-// -----
-
-!vec = !md.field<@atoms, 3 x f64>
-!real = !md.field<@atoms, f64>
 md.particle_set @atoms
 
 // A field computed from the field: the map has no rule here.

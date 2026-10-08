@@ -519,6 +519,98 @@ func.func private @mdrt.pme_gather(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_c
   return
 }
 
+// The potential of the grid at particle `i`, Σ_k φ(k) θ_i(k): the
+// derivative of the energy of the sum in the charge of the particle, the
+// fourth result of `md.reciprocal` (D[tunable-gradient-pme]). The places
+// and the splines are those of @mdrt.pme_gather_one; the buffer holds
+// one number for each particle, in the type that the op stores it in.
+func.func private @mdrt.pme_potential_one(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
+                                       %phi: memref<?xf64>, %box: vector<3xf64>,
+                                       %k1: index, %k2: index, %k3: index, %n: index,
+                                       %f: memref<?x!pme_frc>, %i: index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %zero = arith.constant 0.0 : f64
+  %lx = vector.extract %box[0] : f64 from vector<3xf64>
+  %ly = vector.extract %box[1] : f64 from vector<3xf64>
+  %lz = vector.extract %box[2] : f64 from vector<3xf64>
+  %k1i = arith.index_cast %k1 : index to i64
+  %k2i = arith.index_cast %k2 : index to i64
+  %k3i = arith.index_cast %k3 : index to i64
+  %k1f = arith.sitofp %k1i : i64 to f64
+  %k2f = arith.sitofp %k2i : i64 to f64
+  %k3f = arith.sitofp %k3i : i64 to f64
+  %rx = arith.divf %k1f, %lx : f64
+  %ry = arith.divf %k2f, %ly : f64
+  %rz = arith.divf %k3f, %lz : f64
+  %wx = memref.alloca() : memref<8xf64>
+  %wy = memref.alloca() : memref<8xf64>
+  %wz = memref.alloca() : memref<8xf64>
+  %dx = memref.alloca() : memref<8xf64>
+  %dy = memref.alloca() : memref<8xf64>
+  %dz = memref.alloca() : memref<8xf64>
+  %xs = memref.load %x[%i, %c0] : memref<?x3x!pme_pos>
+  %ys = memref.load %x[%i, %c1] : memref<?x3x!pme_pos>
+  %zs = memref.load %x[%i, %c2] : memref<?x3x!pme_pos>
+  %xi = PME_EXTEND_POS %xs : !pme_pos to f64
+  %yi = PME_EXTEND_POS %ys : !pme_pos to f64
+  %zi = PME_EXTEND_POS %zs : !pme_pos to f64
+  %sx, %fx = func.call @mdrt.pme_place(%xi, %lx, %k1, %n) : (f64, f64, index, index) -> (index, f64)
+  %sy, %fy = func.call @mdrt.pme_place(%yi, %ly, %k2, %n) : (f64, f64, index, index) -> (index, f64)
+  %sz, %fz = func.call @mdrt.pme_place(%zi, %lz, %k3, %n) : (f64, f64, index, index) -> (index, f64)
+  func.call @mdrt.pme_bspline(%fx, %n, %wx, %dx) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
+  func.call @mdrt.pme_bspline(%fy, %n, %wy, %dy) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
+  func.call @mdrt.pme_bspline(%fz, %n, %wz, %dz) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
+  %g = scf.for %j1 = %c0 to %n step %c1 iter_args(%a = %zero) -> (f64) {
+    %g1s = arith.addi %sx, %j1 : index
+    %g1 = arith.remui %g1s, %k1 : index
+    %w1 = memref.load %wx[%j1] : memref<8xf64>
+    %b = scf.for %j2 = %c0 to %n step %c1 iter_args(%c = %a) -> (f64) {
+      %g2s = arith.addi %sy, %j2 : index
+      %g2 = arith.remui %g2s, %k2 : index
+      %w2 = memref.load %wy[%j2] : memref<8xf64>
+      %row1 = arith.muli %g1, %k2 : index
+      %row = arith.addi %row1, %g2 : index
+      %base = arith.muli %row, %k3 : index
+      %w1w2 = arith.mulf %w1, %w2 : f64
+      %e = scf.for %j3 = %c0 to %n step %c1 iter_args(%t = %c) -> (f64) {
+        %g3s = arith.addi %sz, %j3 : index
+        %g3 = arith.remui %g3s, %k3 : index
+        %w3 = memref.load %wz[%j3] : memref<8xf64>
+        %at = arith.addi %base, %g3 : index
+        %p = memref.load %phi[%at] : memref<?xf64>
+        %w = arith.mulf %w1w2, %w3 : f64
+        %v = arith.mulf %p, %w : f64
+        %next = arith.addf %t, %v : f64
+        scf.yield %next : f64
+      }
+      scf.yield %e : f64
+    }
+    scf.yield %b : f64
+  }
+  %stored = PME_NARROW_FRC %g : f64 to !pme_frc
+  memref.store %stored, %f[%i] : memref<?x!pme_frc>
+  return
+}
+
+// The potential at all particles.
+func.func private @mdrt.pme_potential(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
+                                   %phi: memref<?xf64>, %box: vector<3xf64>,
+                                   %k1: index, %k2: index, %k3: index, %n: index,
+                                   %f: memref<?x!pme_frc>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %count = memref.dim %x, %c0 : memref<?x3x!pme_pos>
+  scf.parallel (%i) = (%c0) to (%count) step (%c1) {
+    func.call @mdrt.pme_potential_one(%x, %q, %phi, %box, %k1, %k2, %k3, %n, %f, %i)
+        : (memref<?x3x!pme_pos>, memref<?x!pme_chg>, memref<?xf64>, vector<3xf64>,
+           index, index, index, index, memref<?x!pme_frc>, index) -> ()
+    scf.reduce
+  }
+  return
+}
+
 // Spreads the charges to `grid` in a triclinic cell, `box` = (a_x, b_y,
 // c_z, b_x, c_x, c_y), from the fractional coordinates s = x H⁻¹.
 func.func private @mdrt.pme_spread_triclinic(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
@@ -976,6 +1068,127 @@ func.func private @mdrt.pme_gather_triclinic(%x: memref<?x3x!pme_pos>, %q: memre
     func.call @mdrt.pme_gather_one_triclinic(%x, %q, %phi, %box, %k1, %k2, %k3, %n, %f, %i)
         : (memref<?x3x!pme_pos>, memref<?x!pme_chg>, memref<?xf64>, vector<6xf64>,
            index, index, index, index, memref<?x3x!pme_frc>, index) -> ()
+    scf.reduce
+  }
+  return
+}
+
+// The potential of the grid at particle `i` in a triclinic cell, Σ_k φ(k) θ_i(k): the
+// derivative of the energy of the sum in the charge of the particle, the
+// fourth result of `md.reciprocal` (D[tunable-gradient-pme]). The places
+// and the splines are those of @mdrt.pme_gather_one_triclinic; the buffer holds
+// one number for each particle, in the type that the op stores it in.
+func.func private @mdrt.pme_potential_one_triclinic(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
+                                       %phi: memref<?xf64>, %box: vector<6xf64>,
+                                       %k1: index, %k2: index, %k3: index, %n: index,
+                                       %f: memref<?x!pme_frc>, %i: index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %zero = arith.constant 0.0 : f64
+  %lx = vector.extract %box[0] : f64 from vector<6xf64>
+  %ly = vector.extract %box[1] : f64 from vector<6xf64>
+  %lz = vector.extract %box[2] : f64 from vector<6xf64>
+  %tbx = vector.extract %box[3] : f64 from vector<6xf64>
+  %tcx = vector.extract %box[4] : f64 from vector<6xf64>
+  %tcy = vector.extract %box[5] : f64 from vector<6xf64>
+  %unit = arith.constant 1.0 : f64
+  // The rows of H⁻¹: h00 = 1/a_x; h10 = −b_x/(a_x b_y), h11 = 1/b_y;
+  // h20 = (b_x c_y − b_y c_x)/(a_x b_y c_z), h21 = −c_y/(b_y c_z),
+  // h22 = 1/c_z.
+  %h00 = arith.divf %unit, %lx : f64
+  %h11 = arith.divf %unit, %ly : f64
+  %h22 = arith.divf %unit, %lz : f64
+  %bx_h00 = arith.mulf %tbx, %h00 : f64
+  %bx_h00_h11 = arith.mulf %bx_h00, %h11 : f64
+  %h10 = arith.negf %bx_h00_h11 : f64
+  %cy_h11 = arith.mulf %tcy, %h11 : f64
+  %cy_h11_h22 = arith.mulf %cy_h11, %h22 : f64
+  %h21 = arith.negf %cy_h11_h22 : f64
+  %bxcy = arith.mulf %tbx, %tcy : f64
+  %bycx = arith.mulf %ly, %tcx : f64
+  %h20n = arith.subf %bxcy, %bycx : f64
+  %h20a = arith.mulf %h20n, %h00 : f64
+  %h20b = arith.mulf %h20a, %h11 : f64
+  %h20 = arith.mulf %h20b, %h22 : f64
+  %k1i = arith.index_cast %k1 : index to i64
+  %k2i = arith.index_cast %k2 : index to i64
+  %k3i = arith.index_cast %k3 : index to i64
+  %k1f = arith.sitofp %k1i : i64 to f64
+  %k2f = arith.sitofp %k2i : i64 to f64
+  %k3f = arith.sitofp %k3i : i64 to f64
+  %wx = memref.alloca() : memref<8xf64>
+  %wy = memref.alloca() : memref<8xf64>
+  %wz = memref.alloca() : memref<8xf64>
+  %dx = memref.alloca() : memref<8xf64>
+  %dy = memref.alloca() : memref<8xf64>
+  %dz = memref.alloca() : memref<8xf64>
+  %xs = memref.load %x[%i, %c0] : memref<?x3x!pme_pos>
+  %ys = memref.load %x[%i, %c1] : memref<?x3x!pme_pos>
+  %zs = memref.load %x[%i, %c2] : memref<?x3x!pme_pos>
+  %xi = PME_EXTEND_POS %xs : !pme_pos to f64
+  %yi = PME_EXTEND_POS %ys : !pme_pos to f64
+  %zi = PME_EXTEND_POS %zs : !pme_pos to f64
+  // s = x H⁻¹.
+  %s3 = arith.mulf %zi, %h22 : f64
+  %s2y = arith.mulf %yi, %h11 : f64
+  %s2z = arith.mulf %zi, %h21 : f64
+  %s2 = arith.addf %s2y, %s2z : f64
+  %s1x = arith.mulf %xi, %h00 : f64
+  %s1y = arith.mulf %yi, %h10 : f64
+  %s1z = arith.mulf %zi, %h20 : f64
+  %s1xy = arith.addf %s1x, %s1y : f64
+  %s1 = arith.addf %s1xy, %s1z : f64
+  %sx, %fx = func.call @mdrt.pme_place(%s1, %unit, %k1, %n) : (f64, f64, index, index) -> (index, f64)
+  %sy, %fy = func.call @mdrt.pme_place(%s2, %unit, %k2, %n) : (f64, f64, index, index) -> (index, f64)
+  %sz, %fz = func.call @mdrt.pme_place(%s3, %unit, %k3, %n) : (f64, f64, index, index) -> (index, f64)
+  func.call @mdrt.pme_bspline(%fx, %n, %wx, %dx) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
+  func.call @mdrt.pme_bspline(%fy, %n, %wy, %dy) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
+  func.call @mdrt.pme_bspline(%fz, %n, %wz, %dz) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
+  %g = scf.for %j1 = %c0 to %n step %c1 iter_args(%a = %zero) -> (f64) {
+    %g1s = arith.addi %sx, %j1 : index
+    %g1 = arith.remui %g1s, %k1 : index
+    %w1 = memref.load %wx[%j1] : memref<8xf64>
+    %b = scf.for %j2 = %c0 to %n step %c1 iter_args(%c = %a) -> (f64) {
+      %g2s = arith.addi %sy, %j2 : index
+      %g2 = arith.remui %g2s, %k2 : index
+      %w2 = memref.load %wy[%j2] : memref<8xf64>
+      %row1 = arith.muli %g1, %k2 : index
+      %row = arith.addi %row1, %g2 : index
+      %base = arith.muli %row, %k3 : index
+      %w1w2 = arith.mulf %w1, %w2 : f64
+      %e = scf.for %j3 = %c0 to %n step %c1 iter_args(%t = %c) -> (f64) {
+        %g3s = arith.addi %sz, %j3 : index
+        %g3 = arith.remui %g3s, %k3 : index
+        %w3 = memref.load %wz[%j3] : memref<8xf64>
+        %at = arith.addi %base, %g3 : index
+        %p = memref.load %phi[%at] : memref<?xf64>
+        %w = arith.mulf %w1w2, %w3 : f64
+        %v = arith.mulf %p, %w : f64
+        %next = arith.addf %t, %v : f64
+        scf.yield %next : f64
+      }
+      scf.yield %e : f64
+    }
+    scf.yield %b : f64
+  }
+  %stored = PME_NARROW_FRC %g : f64 to !pme_frc
+  memref.store %stored, %f[%i] : memref<?x!pme_frc>
+  return
+}
+
+// The potential at all particles in a triclinic cell.
+func.func private @mdrt.pme_potential_triclinic(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
+                                   %phi: memref<?xf64>, %box: vector<6xf64>,
+                                   %k1: index, %k2: index, %k3: index, %n: index,
+                                   %f: memref<?x!pme_frc>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %count = memref.dim %x, %c0 : memref<?x3x!pme_pos>
+  scf.parallel (%i) = (%c0) to (%count) step (%c1) {
+    func.call @mdrt.pme_potential_one_triclinic(%x, %q, %phi, %box, %k1, %k2, %k3, %n, %f, %i)
+        : (memref<?x3x!pme_pos>, memref<?x!pme_chg>, memref<?xf64>, vector<6xf64>,
+           index, index, index, index, memref<?x!pme_frc>, index) -> ()
     scf.reduce
   }
   return

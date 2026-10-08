@@ -1,0 +1,15 @@
+# REQUIRES: python-api, torchpme
+# The derivative of the energy in the charges with particle mesh Ewald
+# (D[tunable-gradient-pme]) on the CPU against torch-pme, an independent
+# differentiable PME, at the same positions, cell, charges, splitting
+# parameter, cutoff, and grid: the derivative in the charge of each of the
+# 1,168 particles from torch autograd, and the change of the energy for
+# other charges; the tolerance is what the two change by when their grids
+# are refined. The feature `torchpme` is set when the interpreter of the
+# torch tests (-Dtorch_python=<interpreter>) imports torchpme.
+# RUN: %torch_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide torchpme CPU Double | FileCheck %s -DMODE="CPU Double"
+# RUN: %torch_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide torchpme CPU Mixed | FileCheck %s -DMODE="CPU Mixed"
+# CHECK: [[MODE]]: dU/dq of 1168 particles against torch-pme, grid 64
+# CHECK: [[MODE]]: the same at 128 points
+# CHECK: [[MODE]]: the change of the energy for other charges
+# CHECK: torchpme passed

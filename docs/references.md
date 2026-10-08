@@ -646,6 +646,17 @@ M. Lingenheil, R. Denschlag, R. Reichold, P. Tavan, "The
 Used for: the check that the solute and the solvent of a thermostatted
 run share one temperature (D203).
 
+### Loche2025
+
+P. Loche, K. K. Huguenin-Dumittan, M. Honarmand, Q. Xu, E. Rumiantsev,
+W. B. How, M. F. Langer, M. Ceriotti, "Fast and flexible long-range models
+for atomistic machine learning," *J. Chem. Phys.* **162**, 142501 (2025).
+[doi:10.1063/5.0251713](https://doi.org/10.1063/5.0251713)
+
+Used for: torch-pme, the independent differentiable particle mesh Ewald
+that the derivative of the energy in the charges is checked against
+(D[tunable-gradient-pme]).
+
 ### Lorentz1881
 
 H. A. Lorentz, "Ueber die Anwendung des Satzes vom Virial in der

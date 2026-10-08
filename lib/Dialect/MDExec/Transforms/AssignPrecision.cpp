@@ -384,7 +384,14 @@ LogicalResult Assigner::collect(Operation *op) {
     positions.push_back(reciprocal.getPositions());
     find(reciprocal.getPositions());
     find(reciprocal.getCharges());
-    forces.push_back(reciprocal.getForces());
+    // The potential at the particles is not a force: it is a derivative of
+    // the energy, stored in f64 in every mode, and the grid is computed
+    // in that type.
+    if (reciprocal.getPotential())
+      boundaries.push_back(
+          {reciprocal.getForces(), Float64Type::get(op->getContext()), op});
+    else
+      forces.push_back(reciprocal.getForces());
     find(reciprocal.getForces());
     return success();
   }

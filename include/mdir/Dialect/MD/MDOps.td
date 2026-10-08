@@ -364,6 +364,23 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
     sum. Differentiation takes the forces and the virial from the op; it
     does not differentiate through it.
 
+    With a fourth result, the op also yields the derivative of the energy
+    in the charge of each particle, the potential of the grid at the
+    particle, `∂E/∂q_i = Σ_k θ_i(k) φ(k)`, with θ_i the weights of the
+    B-splines of the particle and φ the grid after the product with the
+    influence function: the energy is `½ Σ_i q_i ∂E/∂q_i`. The
+    differentiation in the field of the charges asks for it
+    (D[tunable-gradient-pme]); no other op has it.
+
+    ```mlir
+    %u, %f, %w, %p = md.reciprocal %x, %q, %cell, %moduli
+                       grid([32, 32, 32]) order(4) beta(3.12) coulomb(138.935)
+                       : !md.field<@atoms, 3 x f64>, !md.field<@atoms, f64>,
+                         !md.table<2, f64>
+                       -> f64, !md.field<@atoms, 3 x f64>, vector<9xf64>,
+                          !md.field<@atoms, f64>
+    ```
+
     ```mlir
     %u, %f, %w = md.reciprocal %x, %q, %cell, %moduli
                    grid([32, 32, 32]) order(4) beta(3.12) coulomb(138.935)
@@ -386,7 +403,8 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
   let results = (outs
     F64:$energy,
     MD_ReferenceFieldType:$forces,
-    VectorOfLengthAndType<[9], [F64]>:$virial
+    VectorOfLengthAndType<[9], [F64]>:$virial,
+    Optional<MD_ReferenceFieldType>:$potential
   );
   let assemblyFormat = [{
     $positions `,` $charges `,` $cell `,` $moduli
@@ -395,6 +413,7 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
     attr-dict `:` qualified(type($positions)) `,` qualified(type($charges))
     `,` qualified(type($moduli)) `->` type($energy) `,`
     qualified(type($forces)) `,` type($virial)
+    (`,` qualified(type($potential))^)?
   }];
   let hasVerifier = 1;
 }

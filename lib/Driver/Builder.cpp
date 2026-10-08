@@ -3202,8 +3202,6 @@ llvm::Error Builder::collectTunableGradient() {
                          "energy in the tunable '" + declaration.name +
                          "' (charges) " + what + " is not implemented yet");
       };
-      if (program.pme)
-        return refuse("with particle mesh Ewald");
       if (control.implicitSolvent != Control::ImplicitSolvent::None)
         return refuse("with an implicit solvent");
       // The tail of a pair term that reads the charges follows them through
@@ -3223,10 +3221,26 @@ llvm::Error Builder::collectTunableGradient() {
       if (control.reactionField)
         return refuse("with the reaction field");
       // Nothing that the host adds to the energy follows the charges under
-      // a Coulomb cutoff.
+      // a Coulomb cutoff. With particle mesh Ewald the self term,
+      // −f β Σ q² / √π, and the background of a net charge Q,
+      // −f π Q² / (2 V β²), do (getPMEConstants): −2 f β q_i / √π, which
+      // does not depend on the cell, and −f π Q / (V β²)
+      // (D[tunable-gradient-pme]).
       const std::vector<double> &charges = system.topology->charges;
       program.gradientChargeFixed.assign(charges.size(), 0.0);
       program.gradientChargeVolume.assign(charges.size(), 0.0);
+      if (program.pme) {
+        double beta = program.pmeBeta, net = 0.0;
+        for (double q : charges)
+          net += q;
+        double volume = system.box[0] * system.box[1] * system.box[2];
+        for (size_t i = 0; i != charges.size(); ++i) {
+          program.gradientChargeFixed[i] =
+              -2.0 * coulombInternal * beta / std::sqrt(M_PI) * charges[i];
+          program.gradientChargeVolume[i] =
+              -coulombInternal * M_PI * net / (volume * beta * beta);
+        }
+      }
       outcome = Program::GradientOutcome::Rule;
       break;
     }

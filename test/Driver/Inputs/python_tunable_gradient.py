@@ -29,6 +29,19 @@ Scenarios:
   checkpoint  a simulation continued from a checkpoint, and a new stage from
             it, give the derivative of the simulation that wrote it, to the
             bit (needs HDF5)
+  pme       the charges with particle mesh Ewald on the dipeptide in water,
+            tied by a map, with a net charge: the derivative (the direct
+            sum, the potential of the grid at the particles, the self term,
+            the background, the excluded and the 1-4 pairs) against central
+            differences of the energy
+  torchpme  the charges with particle mesh Ewald, every particle an entry of
+            its own, against torch-pme, an independent differentiable PME
+            (Loche et al., J. Chem. Phys. 162, 142501 (2025)), at the same
+            positions, cell, charges, splitting parameter, cutoff, and
+            numbers of grid points: the derivative in the charges from
+            torch autograd, and the change of the energy for other charges.
+            The tolerance is what each of the two changes by when its grid
+            is refined. Needs an interpreter with torch and torchpme.
   lj        per-type sigma and epsilon and the table by pairs of types: on
             the dipeptide against central differences; on propane and
             water under a plain cutoff with the correction for the
@@ -187,11 +200,7 @@ def run_refusals():
     expect(mdir.InputError, sim.tunables.gradient, "declares no tunable")
     system, state = dipeptide([])
     expect(mdir.InputError, lambda: compile_(system, state), "the system declares none")
-    # A kind whose derivative is not implemented yet is refused by name.
-    system, state = dipeptide([mdir.Tunable("q", "charge")])
-    text = expect(mdir.InputError, lambda: compile_(system, state), "is not implemented yet")
-    assert "'q' (charges)" in text, text
-    print("refusals: 6 refusals")
+    print("refusals: 5 refusals")
 
 
 def run_terms(target, precision):
@@ -413,6 +422,201 @@ def run_checkpoint(target, precision, work):
         assert same, (dict(h.items()), dict(g.items()), h.energy, g.energy)
         other.run(4)
         assert other.tunables.gradient().step == g.step + 4
+
+
+def charge_model(pme, net=0.0):
+    """The dipeptide in water with the charges tunable, one entry per atom
+    name of the waters and one per atom of the peptide, each entry of the
+    peptide moved by `net` / 22 so that the system has the net charge
+    `net`."""
+    loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
+    system, state = loaded.make_system(), loaded.make_state()
+    system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
+    system.electrostatics = mdir.Electrostatics.PME if pme else mdir.Electrostatics.Cutoff
+    system.dispersion = mdir.DispersionCorrection.None_
+    top = system.topology
+    residues = [top.residue_names[r] for r in top.residue_indices]
+    entries, charge_map = {}, []
+    for i, (atom, residue) in enumerate(zip(top.atom_names, residues)):
+        key = (residue, atom) if residue == "WAT" else (residue, i)
+        charge_map.append(entries.setdefault(key, len(entries)))
+    charge_map = np.array(charge_map, dtype=np.int64)
+    values = np.zeros(len(entries))
+    values[charge_map] = top.charges
+    peptide = sorted({m for m, r in zip(charge_map, residues) if r != "WAT"})
+    values[peptide] += net / len(peptide)
+    system.tunables = [mdir.Tunable("q", "charge", map=charge_map, values=values)]
+    system.tunable_gradient = True
+    return system, state, charge_map
+
+
+def run_pme(target, precision):
+    double = precision == "Double"
+    system, state, charge_map = charge_model(pme=True, net=0.5)
+    sim = simulation(compile_(system, state, target, precision))
+    sim.run(6)
+    g = sim.tunables.gradient()
+    net = float(sim.tunables["q"][charge_map].sum())
+    assert abs(net - 0.5) < 1e-9, net
+    worst = differences(sim, g, 1e-3 if double else 5e-2)
+    tolerance = 1e-7 if double else 5e-4
+    print(f"{target} {precision}: the charges with particle mesh Ewald, {len(g['q'])} entries "
+          f"for {len(charge_map)} particles, a net charge of {net:.1f} e, against central "
+          f"differences of the energy, {worst:.1e} (tolerance {tolerance:.0e})")
+    assert worst < tolerance, worst
+    again = sim.tunables.gradient()
+    assert np.array_equal(again["q"], g["q"]) or not double
+
+    # A triclinic cell (a rhombic dodecahedron of 403 waters), which takes
+    # the kernels of its own: one entry for the oxygens, one for the
+    # hydrogens, and the 9 particles of three waters each their own.
+    triclinic = root + "/../triclinic"
+    loaded = mdir.load_gromacs(triclinic + "/water.top", triclinic + "/dodecahedron.gro",
+                               defines=["FLEXIBLE"])
+    system, state = loaded.make_system(), loaded.make_state()
+    system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.8
+    system.truncation = mdir.Truncation.None_
+    system.dispersion = mdir.DispersionCorrection.None_
+    system.electrostatics = mdir.Electrostatics.PME
+    system.pme_grid = [28] * 3
+    names = system.topology.atom_names
+    water_map = np.array([i if i < 9 else 9 + (name != "OW") for i, name in enumerate(names)])
+    system.tunables = [mdir.Tunable("q", "charge", map=water_map)]
+    system.tunable_gradient = True
+    sim = simulation(compile_(system, state, target, precision))
+    assert np.any(sim.state().cell.tilt != 0.0)
+    sim.run(6)
+    g = sim.tunables.gradient()
+    worst = differences(sim, g, 1e-3 if double else 5e-2)
+    print(f"{target} {precision}: in a triclinic cell, {len(g['q'])} entries for {len(names)} "
+          f"particles, against central differences of the energy, {worst:.1e} "
+          f"(tolerance {tolerance:.0e})")
+    assert worst < tolerance, worst
+
+
+def run_torchpme(target, precision):
+    import torch
+    import torchpme
+    torch.set_default_dtype(torch.float64)
+    double = precision == "Double"
+    rc, f, beta = 0.8, 138.935457644, 3.5
+
+    def simulate(points):
+        loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
+        system, state = loaded.make_system(), loaded.make_state()
+        system.cutoff, system.pairlist_distance, system.switch_distance = rc, 0.9, 0.7
+        system.electrostatics = mdir.Electrostatics.PME
+        system.pme_alpha, system.pme_grid = beta, [points, points, points]
+        system.dispersion = mdir.DispersionCorrection.None_
+        system.tunables = [mdir.Tunable("q", "charge")]
+        system.tunable_gradient = True
+        sim = simulation(compile_(system, state, target, precision))
+        return system, sim
+
+    system, sim = simulate(64)
+    top = system.topology
+    g = sim.tunables.gradient()
+    at = sim.state()
+    x, box = at.positions, np.diag(at.cell.vectors)
+    n = len(x)
+    q0 = sim.tunables["q"].copy()
+    assert g["q"].shape == (n,)
+
+    # The pairs: up to two bonds apart excluded, three bonds apart the 1-4
+    # pairs (f q_i q_j / (1.2 r), ff14SB), excluded from the others as well.
+    graph = {i: set() for i in range(n)}
+    for i, j in top.bonds:
+        graph[int(i)].add(int(j))
+        graph[int(j)].add(int(i))
+    excluded, scaled = set(), set()
+    for i in range(n):
+        seen, frontier = {i}, {i}
+        for depth in range(3):
+            frontier = {k for m in frontier for k in graph[m]} - seen
+            seen |= frontier
+            for j in frontier:
+                if j > i:
+                    (scaled if depth == 2 else excluded).add((i, j))
+    near, distances = [], []
+    for i in range(n - 1):
+        d = x[i + 1:] - x[i]
+        d -= box * np.round(d / box)
+        r = np.sqrt((d * d).sum(axis=1))
+        for j in np.nonzero(r < rc)[0]:
+            pair = (i, i + 1 + int(j))
+            if pair not in excluded and pair not in scaled:
+                near.append(pair)
+                distances.append(r[j])
+
+    def separation(pairs):
+        pairs = np.array(sorted(pairs))
+        d = x[pairs[:, 1]] - x[pairs[:, 0]]
+        d -= box * np.round(d / box)
+        return torch.tensor(pairs), torch.tensor(np.sqrt((d * d).sum(axis=1)))
+
+    near_pairs, near_r = torch.tensor(np.array(near)), torch.tensor(np.array(distances))
+    held_pairs, held_r = separation(excluded | scaled)
+    scaled_pairs, scaled_r = separation(scaled)
+    positions, cell = torch.tensor(x), torch.tensor(np.diag(box))
+
+    def reference(charges, spacing):
+        """The Coulomb energy of MDIR's model from torch-pme: its Ewald sum
+        with the pairs within the cutoff that are not excluded (the direct
+        sum, the sum of the mesh, the self term, the background), less the
+        shift of the direct sum to 0 at the cutoff (D210), less
+        f q_i q_j erf(beta r) / r of the excluded pairs, which the mesh
+        holds, plus the 1-4 pairs."""
+        potential = torchpme.CoulombPotential(smearing=1.0 / (np.sqrt(2.0) * beta), prefactor=f)
+        calculator = torchpme.PMECalculator(potential, mesh_spacing=spacing, interpolation_nodes=5)
+        column = charges.unsqueeze(1)
+        energy = (column * calculator(column, cell, positions, near_pairs, near_r)).sum()
+        product = lambda pairs: charges[pairs[:, 0]] * charges[pairs[:, 1]]
+        shift = f * torch.erfc(torch.tensor(beta * rc)) / rc * product(near_pairs).sum()
+        held = (f * product(held_pairs) * torch.erf(beta * held_r) / held_r).sum()
+        fourteen = (f * product(scaled_pairs) / (1.2 * scaled_r)).sum()
+        return energy - shift - held + fourteen
+
+    def torch_gradient(spacing):
+        charges = torch.tensor(q0, requires_grad=True)
+        energy = reference(charges, spacing)
+        energy.backward()
+        return charges.grad.numpy().copy()
+
+    # 64 points along each edge in both (torch-pme takes the power of 2 at
+    # or above 2 L / spacing + 1), then 128 in both.
+    length = float(box.max())
+    spacings = {64: 2.0 * length / 62.5, 128: 2.0 * length / 126.5}
+    for points, spacing in spacings.items():
+        mesh = torchpme.lib.get_ns_mesh(cell, spacing)
+        assert [int(k) for k in mesh] == [points] * 3, mesh
+    coarse, fine = torch_gradient(spacings[64]), torch_gradient(spacings[128])
+    _, finer = simulate(128)
+    refined = finer.tunables.gradient()["q"]
+    scale = np.abs(coarse).max()
+    own = np.abs(g["q"] - refined).max() / scale
+    theirs = np.abs(coarse - fine).max() / scale
+    difference = np.abs(g["q"] - coarse).max() / scale
+    # In mixed precision the kernels of the pairs add their own.
+    tolerance = 3.0 * (own + theirs) + (0.0 if double else 2e-6)
+    print(f"{target} {precision}: dU/dq of {n} particles against torch-pme, grid 64: "
+          f"{difference:.1e} of the largest ({scale:.1f} kJ/mol/e); with 128 points MDIR "
+          f"changes by {own:.1e} and torch-pme by {theirs:.1e}; tolerance {tolerance:.1e}")
+    assert difference < tolerance, (difference, tolerance)
+    difference = np.abs(refined - fine).max() / scale
+    print(f"{target} {precision}: the same at 128 points: {difference:.1e}")
+    assert difference < tolerance, (difference, tolerance)
+
+    # The change of the energy for other charges, at the same positions.
+    rng = np.random.default_rng(11)
+    q1 = q0 * (1.0 + 0.05 * rng.standard_normal(n))
+    sim.tunables["q"] = q1
+    change = sim.tunables.gradient().energy - g.energy
+    with torch.no_grad():
+        expected = float(reference(torch.tensor(q1), spacings[64]) -
+                         reference(torch.tensor(q0), spacings[64]))
+    print(f"{target} {precision}: the change of the energy for other charges, {change:.4f} "
+          f"against torch-pme {expected:.4f} kJ/mol, difference {abs(change - expected):.1e}")
+    assert abs(change - expected) < (2e-3 if double else 2e-2) + 3.0 * (own + theirs) * abs(expected)
 
 
 def run_lj_dipeptide(target, precision):
@@ -707,6 +911,10 @@ elif scenario == "dynamics":
     run_dynamics(sys.argv[3], sys.argv[4])
 elif scenario == "checkpoint":
     run_checkpoint(sys.argv[3], sys.argv[4], sys.argv[5])
+elif scenario == "pme":
+    run_pme(sys.argv[3], sys.argv[4])
+elif scenario == "torchpme":
+    run_torchpme(sys.argv[3], sys.argv[4])
 elif scenario == "charges":
     run_charges(sys.argv[3], sys.argv[4])
 elif scenario == "lj":

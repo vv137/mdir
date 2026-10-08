@@ -309,6 +309,13 @@ M. Lingenheil, R. Denschlag, R. Reichold, P. Tavan, "The
 **4**, 1293–1306 (2008).
 [doi:10.1021/ct8000365](https://doi.org/10.1021/ct8000365)
 
+### Loche2025
+
+P. Loche, K. K. Huguenin-Dumittan, M. Honarmand, Q. Xu, E. Rumiantsev,
+W. B. How, M. F. Langer, M. Ceriotti, "Fast and flexible long-range models
+for atomistic machine learning," *J. Chem. Phys.* **162**, 142501 (2025).
+[doi:10.1063/5.0251713](https://doi.org/10.1063/5.0251713)
+
 ### Louwerse2006
 
 M. J. Louwerse, E. J. Baerends, "Calculation of pressure in case of

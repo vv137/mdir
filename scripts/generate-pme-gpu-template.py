@@ -1323,7 +1323,12 @@ memref.store %none, %grid[%item] : memref<?x!pme_real, 1>""")
     return zero.text()
 
 
-def gather():
+def gather(potential=False):
+    """The forces; with `potential`, the potential of the grid at the
+    particles in their place (the fourth result of md.reciprocal,
+    D[tunable-gradient-pme]): the sum along x takes the weights of the
+    splines, not their slopes, and the first thread of a particle stores
+    it as one number."""
     body = Body("      ")
     # A thread for each particle and point of its splines along z, as the
     # spreading has them: the threads of a particle read neighboring points
@@ -1367,7 +1372,7 @@ def gather():
     %d1w2 = arith.mulf %d1, %w2 : !pme_real
     %w1d2 = arith.mulf %w1, %d2 : !pme_real
     %w1w2 = arith.mulf %w1, %w2 : !pme_real
-    %px = arith.mulf %d1w2, {w3} : !pme_real
+    %px = arith.mulf {'%w1w2' if potential else '%d1w2'}, {w3} : !pme_real
     %py = arith.mulf %w1d2, {w3} : !pme_real
     %pz = arith.mulf %w1w2, {d3} : !pme_real
     %vx = arith.mulf %p, %px : !pme_real
@@ -1380,7 +1385,17 @@ def gather():
   }}
   scf.yield %bx2, %by2, %bz2 : !pme_real, !pme_real, !pme_real
 }}""")
-    return f"""
+    if potential:
+        comment = f"""
+// The potential of the grid at the particles, as @mdrt.pme_potential gives
+// it (the fourth result of md.reciprocal, D[tunable-gradient-pme]): the
+// kernel of @mdrt_gpu_pme_gather{'_triclinic' if TILTED else ''} with the weights of the splines in place
+// of their slopes along x, whose sum the first thread of a particle stores
+// as one number. The sums along y and z of that kernel are computed and
+// not used.
+"""
+    else:
+        comment = """
 // The forces, as @mdrt.pme_gather gives them: for each particle, a thread
 // for each point of its splines along z (PME_LANES threads, the least power
 // of 2 not below the order; those beyond it add zeros), and the first
@@ -1388,10 +1403,14 @@ def gather():
 // and within a warp. The shuffles take every thread of the
 // block, so the threads beyond the last particle compute too, from the
 // last particle, and do not store.
-func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
+"""
+    name = "potential" if potential else "gather"
+    shape = "?" if potential else "?x3"
+    return comment + f"""\
+func.func private @mdrt_gpu_pme_{name}(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
                                        %phi: memref<?x!pme_real, 1>, %box: vector<3xf64>,
                                        %k1: index, %k2: index, %k3: index, %n: index,
-                                       %f: memref<?x3x!pme_frc, 1>) {{
+                                       %f: memref<{shape}x!pme_frc, 1>) {{
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c128 = arith.constant 128 : index
@@ -1418,7 +1437,7 @@ func.func private @mdrt_gpu_pme_gather(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
   %lanes_all = arith.constant PME_LANES : index
   %points = arith.muli %count, %lanes_all : index
   %last = arith.subi %count, %c1 : index
-{gather_launch(body.text())}  return
+{gather_launch(body.text(), potential)}  return
 }}
 """
 
@@ -1584,7 +1603,27 @@ def forces(tilted):
 """
 
 
-def gather_launch(body_text):
+def gather_store(potential):
+    """What the first thread of a particle stores: its force, or the
+    potential of the grid at it."""
+    if potential:
+        return """\
+        %pots = PME_REAL_TO_FRC %allx : !pme_real to !pme_frc
+        memref.store %pots, %f[%i] : memref<?x!pme_frc, 1>
+"""
+    return """\
+        %mq = arith.negf %qi : !pme_real
+""" + forces(TILTED) + """\
+        %fxs = PME_REAL_TO_FRC %fx64 : !pme_real to !pme_frc
+        %fys = PME_REAL_TO_FRC %fy64 : !pme_real to !pme_frc
+        %fzs = PME_REAL_TO_FRC %fz64 : !pme_real to !pme_frc
+        memref.store %fxs, %f[%i, %i0] : memref<?x3x!pme_frc, 1>
+        memref.store %fys, %f[%i, %i1] : memref<?x3x!pme_frc, 1>
+        memref.store %fzs, %f[%i, %i2] : memref<?x3x!pme_frc, 1>
+"""
+
+
+def gather_launch(body_text, potential=False):
     """The launch of the gather: every thread of a block takes part in the
     shuffles, so the threads beyond the last point compute for the last
     particle."""
@@ -1634,14 +1673,7 @@ def gather_launch(body_text):
       %first = arith.cmpi eq, %j3, %c0 : index
       %stores = arith.andi %inside, %first : i1
       scf.if %stores {{
-        %mq = arith.negf %qi : !pme_real
-{forces(TILTED)}        %fxs = PME_REAL_TO_FRC %fx64 : !pme_real to !pme_frc
-        %fys = PME_REAL_TO_FRC %fy64 : !pme_real to !pme_frc
-        %fzs = PME_REAL_TO_FRC %fz64 : !pme_real to !pme_frc
-        memref.store %fxs, %f[%i, %i0] : memref<?x3x!pme_frc, 1>
-        memref.store %fys, %f[%i, %i1] : memref<?x3x!pme_frc, 1>
-        memref.store %fzs, %f[%i, %i2] : memref<?x3x!pme_frc, 1>
-      }}
+{gather_store(potential)}      }}
     gpu.terminator
   }}
 """
@@ -1718,7 +1750,7 @@ def triclinic():
     weights = weights_kernels()
     weights = weights[:weights.index("\n// Adds the charges to `bricks`")] + "\n"
     text = (spread() + spread(fixed=False) + weights + tables() + convolve() + scale() +
-            dispersion() + gather() + gather_weights())
+            dispersion() + gather() + gather_weights() + gather(potential=True))
     TILTED = False
     text = re.sub(r"func\.func private @mdrt_gpu_pme_(\w+)\(",
                   r"func.func private @mdrt_gpu_pme_\1_triclinic(", text)
@@ -1758,7 +1790,7 @@ def main():
     with open(os.path.join(templates, "PMEGPU.mlir"), "w") as file:
         file.write(HEADER + spread() + spread(fixed=False) + weights_kernels() + real() +
                    tables() + convolve() + scale() + dispersion() + gather() +
-                   gather_weights())
+                   gather_weights() + gather(potential=True))
     with open(os.path.join(templates, "PMEGPUTriclinic.mlir"), "w") as file:
         file.write(triclinic())
 
