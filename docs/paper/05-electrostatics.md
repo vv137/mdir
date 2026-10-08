@@ -370,9 +370,18 @@ where it is $E_\text{disp}\,(1 - V/(N\tfrac{4\pi}{3}r_c^3))$, and of the
 whole $u(r_c)$ for a pair term. It changes no force, and so no virial: the
 shell of pairs that a scaling carries across $r_c$, which under a plain
 cutoff changes the truncated energy by $-3E_\text{disp}\,d\ln\mu$ above,
-changes the shifted energy by nothing, and $E_\text{sh}\propto1/V$ changes
-by $-3E_\text{sh}\,d\ln\mu$ instead, the same as the shell to the factor
-$1 - V/(N\tfrac{4\pi}{3}r_c^3)$. GROMACS counts the neighbors the same
+changes the shifted energy by nothing, and $E_\text{sh}$ changes instead.
+It has two parts, $E_\text{sh} = c_1/V - c_2$: the first, $\nu\tfrac{4\pi
+r_c^3}{3V}\sum u_{ij}(r_c)$, is $E_\text{disp}$ for the topology's
+Lennard-Jones and follows the volume as the tail does, changing by
+$-3E_\text{disp}\,d\ln\mu$, the same as the shell; the second,
+$\tfrac{\nu}{N}\sum u_{ij}(r_c)$, the particle itself taken out of its
+neighbors, does not depend on the volume. Under a barostat the first is
+scaled by $V_0/V$ from the volume $V_0$ at which the constants were
+computed, with the tail, and the second is added as it is (#224: both were
+scaled, which left $c_2(1 - V_0/V)$ in the energy, the columns of
+`observe`, the free-energy file, and the derivative of Section 3.6 once
+the cell had changed). GROMACS counts the neighbors the same
 way, with the particle left out, and gives the estimate no virial
 (`DispCorr = EnerPres` with `vdw-modifier = Potential-shift`): on 60 + 60
 Lennard-Jones particles with an NBFIX pair and on the 224 particles of

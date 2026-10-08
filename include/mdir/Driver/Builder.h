@@ -113,6 +113,13 @@ struct Program {
   /// the trace of the virial.
   double dispersionEnergy = 0.0;
   double dispersionVirial = 0.0;
+  /// The part of the estimate of the shift (D210) that does not depend on
+  /// the volume, in kJ/mol: the estimate is X (1 - V / (N (4π/3) r_c³))
+  /// with X proportional to 1 / V, so X is in `dispersionEnergy` and
+  /// -X V / (N (4π/3) r_c³), the particle itself taken out of its
+  /// neighbors, is this constant (#224). 0 unless the energy of the run
+  /// holds the estimate.
+  double dispersionFixedEnergy = 0.0;
 
   /// Particle mesh Ewald or the reaction field: whether the program has
   /// it, and the constant energy of its Coulomb terms in kJ/mol: for
@@ -137,6 +144,9 @@ struct Program {
   /// file, proportional to 1 / V: the tail of an observed pair term and its
   /// derivatives (D209); 0 for the other columns.
   std::vector<double> observableVolumeConstants;
+  /// And what it adds that does not depend on the volume: that part of the
+  /// estimate of the shift of an observed pair term, and its derivatives.
+  std::vector<double> observableFixedConstants;
   /// The derivative of the energy in the tunables
   /// (D230, docs/python-gradient.md): whether the entry
   /// evaluates it when the host asks (the start value `tunable_gradient`);
@@ -154,6 +164,9 @@ struct Program {
     unsigned tunable = 0;
     unsigned site = 0;
     double volumeConstant = 0.0;
+    /// The part that does not depend on the volume (the estimate of the
+    /// shift, #224).
+    double fixedConstant = 0.0;
   };
   std::vector<GradientSlot> gradientSlots;
   /// The derivative is that of the potential that the forces sample,
@@ -163,6 +176,8 @@ struct Program {
   /// correction for the dispersion does not hold already, in kJ/mol at the
   /// volume of the build, proportional to 1 / V.
   double gradientShiftEnergy = 0.0;
+  /// And its part that does not depend on the volume (#224).
+  double gradientShiftFixedEnergy = 0.0;
   /// The fields of the particles that the entry hands the host after the
   /// numbers (mdrtWriteTunableGradientField), each the derivative of the
   /// energy in the value of each particle of a field of zeros through
@@ -181,6 +196,8 @@ struct Program {
     struct Row {
       int64_t site = -1;
       double scale = 1.0, volumeConstant = 0.0;
+      /// The part that does not depend on the volume (#224).
+      double fixedConstant = 0.0;
     };
     std::vector<Row> rows;
   };
