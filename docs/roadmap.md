@@ -9,8 +9,8 @@ follows are in [principles.md](principles.md).
 | Milestone | Scope | Status |
 |---|---|---|
 | M1 | An all-atom protein in water with an Amber force field, on one node, CPU and GPU; at least the rate of pmemd.cuda on every system of the Amber suite | Done (D114, 2026-10-02); release in preparation |
-| M2a | The Python API (Section 6) | Under way |
-| M2b | Differentiable simulation: parameters as tunable buffers, a frame evaluator with derivative rules, PyTorch then JAX adapters, and trajectory reweighting [[ThalerZavadlav2021]](references.md#thalerzavadlav2021) (Section 6.1) | Planned, after M2a |
+| M2a | The Python API (Section 6) | Under way: items 1 to 7 of [python-m2.md](python-m2.md), Section 4, are done (the last, writable borrows, D229); item 8, `observe` in the Python model (#188), remains |
+| M2b | Differentiable simulation: parameters as tunable buffers, a frame evaluator with derivative rules, PyTorch then JAX adapters, and trajectory reweighting [[ThalerZavadlav2021]](references.md#thalerzavadlav2021) (Section 6.1) | Under way beside the last item of M2a (maintainer, 2026-10-08): the derivative of the energy in the tunables is the first step (#203) |
 | M3 | Learned potentials on one GPU: ML1, then the single-GPU stage of ML4 (Section 7) | Planned |
 | M4 | Distributed execution: ML2, ML3, ML5, and distributed particle mesh Ewald (Section 7) | Planned |
 

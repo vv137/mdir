@@ -40,7 +40,9 @@ D223 (#132) writes and continues the checkpoint of
 D228 (#133) makes the interface the package `mdir`, a pip
 wheel for Python 3.10–3.13 on manylinux_2_28 with the four-stage tutorial
 from the installed package ([python-package.md](python-package.md)).
-Later items remain prospective work.
+Items 1 to 7 of Section 4 are done. Item 8, `observe` in the Python
+model (#188), which the maintainer added to M2a on 2026-10-08, remains;
+M2a is complete with it.
 
 ## 1. Scope and acceptance
 
@@ -205,6 +207,7 @@ draft. Changes to Builder, Control and runtime should proceed sequentially.
 | 5 | `python-checkpoints` (future label): shared in-memory provenance and cross-front-end continuation | Both checkpoint directions, stage changes, corruption rejection, tunable restoration and output continuation |
 | 6 | `D220` (#131, [python-dlpack.md](python-dlpack.md)): read-only leases, IDs and stream handoff; `D229` (#136): tracked writable borrows with a commit | Alias lifetime/completion, allocator reuse, dtype/order and version invalidation; read-only support alone does not close M2 |
 | 7 | `D228` (#133): Python 3.10–3.13 manylinux_2_28 pip wheel, reference and four-stage tutorial | Import/run outside the source/build tree, runtime discovery, CPU-only operation, suite and performance report; conda is deferred |
+| 8 | `python-observe` (future label, #188): `observe` on the terms of the Python model and the observables of D189 in a Python simulation, as a reporter that writes the file of `[output] observables` and as values that a script reads; whether an observed constant may be a tunable | The columns of `mdir run` for the same model, to the bit in the deterministic mode, on the CPU and a GPU, mixed and double; the refusals |
 
 Use an optional pybind11 extension. The enabled Python interface requires
 NumPy >=1.23, checked at configuration with the selected interpreter and

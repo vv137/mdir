@@ -140,6 +140,8 @@ shared with the CLI, which either front end continues
 NVIDIA's wheel, and runs the four-stage tutorial from the installed
 package at the rate of `mdir run` (D228).
 Remaining:
+`observe` on the terms of the Python model with the observables of a
+run (Section 6.8), the last item of M2a;
 the tilts of a triclinic cell in a writable borrow, and
 NPT in a triclinic cell or with a coupling period of 1.
 
