@@ -66,9 +66,15 @@ the live ones.
 
 | Operation while a lease is alive | Result |
 |---|---|
-| `run`, `minimize`, `run(0, energy=True)`, an update of tunables, `borrow()` | `SimulationError` naming the leases; nothing changes |
+| `run`, `minimize`, `run(0, energy=True)`, an update of tunables, `borrow()`, `save_checkpoint` | `SimulationError` naming the leases; nothing changes |
 | `state()`, `view()`, reporters, `request_stop`, `step`, `time` | allowed: they only read |
 | `del sim` | the native simulation, its buffers, its compiled program, and the files of its reporters stay open until the last lease is released |
+
+`save_checkpoint` reads the state, but it also ends the activation of the
+entry ([python-checkpoints.md](python-checkpoints.md)), which frees the
+buffers; so it is refused as a run is (#207). A `CheckpointReporter`
+writes inside `run`, after a part that the lease check of `run` has let
+through.
 
 **Logical validity, storage lifetime, consumer work.** Three things are
 kept apart:
@@ -136,7 +142,7 @@ The structures are those of `dlpack.h` (DLPack 1.1,
 
 | Exception | When |
 |---|---|
-| `SimulationError` | `view()` before the first run or evaluation, or after a failure: the state is then on the host only, in the order of the input; another operation under way; a run, a minimization, an evaluation, or an update of tunables while leases are alive |
+| `SimulationError` | `view()` before the first run or evaluation, or after a failure: the state is then on the host only, in the order of the input; another operation under way; a run, a minimization, an evaluation, an update of tunables, or a checkpoint while leases are alive |
 | `BufferError` | `__dlpack__` of a released view; a `stream` the device does not take; `dl_device` of another device; `copy=True` |
 | `ValueError` | `stream=0` on a device, which the specification forbids |
 
@@ -146,8 +152,9 @@ The structures are those of `dlpack.h` (DLPack 1.1,
   activation handed the host at its last boundary (`mdrtPartBoundary`,
   D215), their widths, the particle count, the device, and a
   generation, and takes a lease; `acquireLease`/`releaseLease` count the
-  others. `run`, `minimize`, `evaluate`, and `updateTunables` check the
-  count after the guard against overlapping operations (`checkLeases`).
+  others. `run`, `minimize`, `evaluate`, `updateTunables`, and
+  `saveCheckpoint` check the count after the guard against overlapping
+  operations (`checkLeases`).
   The generation advances in `resumeActivation` and `endActivation`, which
   also wait for the consumers' work (`waitForConsumers`) if buffers of the
   device were exported since the last wait.
@@ -168,7 +175,7 @@ consumers use none of MDIR's code.
 
 | Test | Consumer | What is checked |
 |---|---|---|
-| `python-dlpack.test` | NumPy 2.5 `from_dlpack`, CPU | the array's address is the buffer's; arrays are read-only (the versioned flag); dtypes; rows put in the input's order by `ids` equal `state()` to the bit; tunable values; 6 leases block `run`, `run(0, energy=True)`, and an update and allow `state()`; release by view and by array, slices of arrays; capsules not taken, legacy and versioned (`max_version` None, (1, 0), (1, 3)), each releasing once; refusals; an array that outlives its simulation while another runs; `minimize` refused under a lease; `view()` refused after a failed part |
+| `python-dlpack.test` | NumPy 2.5 `from_dlpack`, CPU | the array's address is the buffer's; arrays are read-only (the versioned flag); dtypes; rows put in the input's order by `ids` equal `state()` to the bit; tunable values; 6 leases block `run`, `run(0, energy=True)`, an update, and `save_checkpoint` (no file written, the view valid and the arrays unchanged after it; written once the leases are released) and allow `state()`; a run with a `CheckpointReporter` refused by `run` under a lease, at the start and at the part after a callback kept an array; release by view and by array, slices of arrays; capsules not taken, legacy and versioned (`max_version` None, (1, 0), (1, 3)), each releasing once; refusals; an array that outlives its simulation while another runs; `minimize` refused under a lease; `view()` refused after a failed part |
 | `python-dlpack-gpu.test` | ctypes reader of the capsule and the CUDA driver API | version 1.1, the read-only flag, shape, strides, dtype, device; `cuPointerGetAttribute` gives the view's device ordinal; values copied by `cuMemcpyDtoHAsync` on the consumer's own non-blocking stream, handed off by `__dlpack__(stream=...)`, equal `state()` to the bit; the deleter called through ctypes without the GIL releases once and the renamed capsule nothing more; legacy capsules with the streams `None`, 1, 2, -1; `stream=0`; a tensor read after its simulation was deleted and another ran 20 steps |
 | `python-dlpack-torch.test`, `python-dlpack-torch-gpu.test` (`REQUIRES: torch`) | PyTorch 2.11 (CUDA 12.8 build) | `data_ptr()` is the buffer's; dtypes; values against `state()`; tensors taken on a `torch.cuda.Stream` of their own; slices keep leases; outstanding consumer work (below); a tensor that outlives its simulation, whose blocks the next simulation does not take while it lives |
 | `Sanitizer/python-dlpack-gpu.test` | ctypes and the driver, under compute-sanitizer memcheck and initcheck | views of two parts handed to a consumer stream, a tensor read after its simulation ended |
@@ -420,8 +427,8 @@ writes until then is discarded with the rest of the borrow.
 - `compiler::Simulation::takeBorrow` returns the addresses of `takeView`
   and sets `borrowed`; `markWritten` records the fields whose buffers were
   exported. `checkLeases`, which `run`, `minimize`, `evaluate`,
-  `updateTunables`, and now `takeView`, `getState`, and `saveCheckpoint`
-  under a borrow call, refuses while the borrow has a lease and otherwise
+  `updateTunables`, and `saveCheckpoint` call, and `takeView` and
+  `getState` under a borrow, refuses while the borrow has a lease and otherwise
   undoes it (`undoBorrow`: a copy from the snapshot of D215 into the
   buffers, `mdrtDeviceCopyWithin` on a device).
 - `commitBorrow` waits for the consumers, reads the buffers and the

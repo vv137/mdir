@@ -44,7 +44,11 @@ mdir.read_checkpoint("prod.h5")           # a read-only view of a checkpoint
   each checkpoint: a simulation that goes on after `save_checkpoint` and
   one that continues the file take the same steps to the bit in the
   deterministic mode. This ends the activation of the entry (D215), which
-  costs a part boundary and a copy of the state per checkpoint.
+  costs a part boundary and a copy of the state per checkpoint. Since it
+  frees the buffers of the activation, `save_checkpoint` raises
+  `SimulationError` while a view of the simulation or a tensor taken from
+  one is alive (a lease, [python-dlpack.md](python-dlpack.md#leases)), as a
+  run does: release the view and delete the tensors first.
 - `CheckpointReporter(file, period)` calls `save_checkpoint(file)` at every
   step that is a multiple of `period`; like a callback, its step ends a part.
   A simulation takes one.

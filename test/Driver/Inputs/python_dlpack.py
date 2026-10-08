@@ -6,7 +6,8 @@ Usage: python_dlpack.py ROOT TARGET SCENARIO
 Scenarios:
   numpy     (CPU) NumPy's from_dlpack: pointer sharing, read-only arrays,
             dtypes, IDs and values against state(), the values of
-            tunables, leases that block runs, evaluations, and updates,
+            tunables, leases that block runs, evaluations, updates, and
+            checkpoints (#207), a CheckpointReporter under a lease,
             capsules released exactly once (taken or not, versioned or
             legacy), refusals, and a tensor that outlives its simulation
   ctypes    (GPU) a reader of the capsule in ctypes and the CUDA driver API:
@@ -25,13 +26,17 @@ Scenarios:
 """
 import ctypes
 import gc
+import os
 import sys
+import tempfile
 
 import numpy as np
 import mdir
 
 root, target_name, scenario = sys.argv[1], sys.argv[2], sys.argv[3]
 target = getattr(mdir.Target, target_name)
+# Where the checkpoints of the test go, removed at the end.
+scratch = tempfile.TemporaryDirectory(prefix="mdir-dlpack-")
 QUANTITIES = ("positions", "velocities", "forces")
 # The (precision, deterministic) cases and the dtypes of the state and the
 # forces that they store (#102: the deterministic mixed mode stores forces
@@ -88,7 +93,32 @@ def check_blocked(sim):
     expect(mdir.SimulationError, lambda: sim.run(1), "lease")
     expect(mdir.SimulationError, lambda: sim.run(0, energy=True), "lease")
     expect(mdir.SimulationError, lambda: sim.tunables.update({"q": sim.tunables["q"]}), "lease")
+    # A checkpoint reads the state and then ends the activation, which frees
+    # the buffers under the views: it is refused as a run is, and writes
+    # nothing (#207).
+    path = os.path.join(scratch.name, "refused.h5")
+    step, leases = sim.step, sim.leases
+    try:
+        sim.save_checkpoint(path)
+    except mdir.UnsupportedError:
+        pass  # without HDF5 a checkpoint is unsupported before anything else
+    except mdir.SimulationError as exc:
+        assert "a checkpoint is refused while" in str(exc) and "lease" in str(exc), str(exc)
+    else:
+        raise AssertionError("save_checkpoint was accepted under a lease")
+    assert not os.path.exists(path) and (sim.step, sim.leases) == (step, leases)
     sim.state()  # reads are allowed
+
+
+def save(sim, name):
+    """Writes a checkpoint; returns its path, or None in a build without HDF5."""
+    path = os.path.join(scratch.name, name)
+    try:
+        sim.save_checkpoint(path)
+    except mdir.UnsupportedError:
+        return None
+    assert os.path.exists(path), path
+    return path
 
 
 # --- NumPy on the CPU --------------------------------------------------------
@@ -118,6 +148,9 @@ def numpy_scenario():
         assert np.array_equal(q, sim.tunables["q"]) and q.ctypes.data == view.tunables["q"].data_ptr
         assert sim.leases == 6, sim.leases
         check_blocked(sim)
+        # What was refused left the buffers as they were.
+        assert view.valid
+        check_values(state, ids, arrays, label)
         # The view's own lease ends; the arrays keep theirs.
         view.release()
         assert sim.leases == 5 and view.released
@@ -126,6 +159,9 @@ def numpy_scenario():
         del arrays, ids, q, a
         gc.collect()
         assert sim.leases == 0, sim.leases
+        # Without leases the checkpoint is written, and ends the activation.
+        if save(sim, "released.h5"):
+            assert not view.valid
         sim.run(1)
         assert not view.valid
         print(f"{label}: positions {state_type}, forces {force_type}, the program's buffers, "
@@ -165,6 +201,41 @@ def numpy_scenario():
     gc.collect()
     print("capsules released once, taken or not, legacy or versioned; refusals; "
           "an array outlives its simulation")
+
+    # A CheckpointReporter writes inside run, whose lease check comes first:
+    # at the start of the run, and at the part after a callback kept an
+    # array of a view, so no checkpoint is written under a lease.
+    sim = mdir.Simulation(make())
+    sim.run(2)
+    if save(sim, "probe.h5"):
+        sim.run(0, energy=True)  # an activation again, for the view
+        path = os.path.join(scratch.name, "reporter.h5")
+        sim.reporters = [mdir.CheckpointReporter(path, 2)]
+        with sim.view() as view:
+            a = np.from_dlpack(view.positions)
+            expect(mdir.SimulationError, lambda: sim.run(2), "run is refused")
+            assert sim.step == 2 and view.valid and not os.path.exists(path)
+            del a
+        kept = []
+
+        def keep(simulation, state):
+            array = np.from_dlpack(simulation.view().positions)
+            kept.append((array, array.copy()))
+
+        # The callback of step 3 keeps an array; the part to step 4, where
+        # the checkpoint is due, is refused.
+        sim.reporters = [mdir.CheckpointReporter(path, 2), mdir.CallbackReporter(keep, 1)]
+        expect(mdir.SimulationError, lambda: sim.run(4), "run is refused while 1 lease")
+        assert sim.step == 3 and sim.leases == 1 and len(kept) == 1
+        expect(mdir.SimulationError, lambda: sim.save_checkpoint(path), "a checkpoint is refused")
+        assert not os.path.exists(path) and np.array_equal(*kept[0])
+        kept.clear()
+        gc.collect()
+        sim.reporters = [mdir.CheckpointReporter(path, 2)]
+        sim.run(1)
+        assert mdir.read_checkpoint(path).step == 4
+        sim.close_reporters()
+    print("a run with a CheckpointReporter refused by run under a lease")
 
     # A minimization is refused under a lease.
     sim = mdir.Simulation(make(minimize=True))
@@ -307,6 +378,10 @@ def ctypes_scenario():
         assert sim.leases == 5
         check_values(state, arrays[3], arrays[:3], label)
         check_blocked(sim)
+        # What was refused left the buffers of the device as they were.
+        assert view.valid
+        for array, (capsule, pointer, managed) in zip(arrays, taken):
+            assert np.array_equal(driver.read(managed.tensor, stream), array), label
         # The consumer releases each tensor once, without the GIL; the
         # capsule it renamed releases nothing more.
         for capsule, pointer, managed in taken:
@@ -327,6 +402,9 @@ def ctypes_scenario():
         expect(BufferError, lambda: view.forces.__dlpack__(dl_device=(1, 0)), "device")
         view.release()
         assert sim.leases == 0
+        # Without leases the checkpoint is written, and ends the activation.
+        if save(sim, "released.h5"):
+            assert not view.valid
         sim.run(1)
         driver.check(driver.cuda.cuStreamDestroy_v2(stream))
         print(f"{label}: positions {state_type}, forces {force_type} on device {view.device[1]}, "
@@ -388,15 +466,20 @@ def torch_scenario():
             assert np.array_equal(q.numpy(), sim.tunables["q"]) and q.device.type == "cpu"
             assert sim.leases == 6
             check_blocked(sim)
+            # What was refused left the buffers as they were.
+            assert view.valid
+            check_values(state, ids.cpu().numpy(), [t.cpu().numpy() for t in tensors], label)
             # Retained aliases: views and slices of the tensors.
             alias = tensors[0][2:5]
         del tensors, ids, q, t
         gc.collect()
         assert sim.leases == 1, sim.leases
         expect(mdir.SimulationError, lambda: sim.run(1), "1 lease")
+        check_blocked(sim)  # by the alias alone
         del alias
         gc.collect()
         assert sim.leases == 0
+        save(sim, "released.h5")
         sim.run(1)
         print(f"{label}: torch shares the buffers ({state_type}, {force_type}) "
               f"{'on a stream of its own' if on_device else 'on the CPU'}; "

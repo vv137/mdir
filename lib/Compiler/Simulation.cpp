@@ -2156,9 +2156,11 @@ llvm::Error Simulation::saveCheckpoint(const std::string &path,
     std::atomic<bool> &flag;
     ~Release() { flag = false; }
   } release{busy};
-  if (borrowed)
-    if (llvm::Error error = checkLeases("a checkpoint"))
-      return error;
+  // A checkpoint ends the activation, which frees the buffers that a view
+  // and the tensors taken from it point to (D220, #207); under a writable
+  // borrow the buffers hold values that are not a state.
+  if (llvm::Error error = checkLeases("a checkpoint"))
+    return error;
   if (failed)
     return simulationError("the simulation failed earlier; it keeps the "
                            "state of step " + llvm::Twine(step) +
