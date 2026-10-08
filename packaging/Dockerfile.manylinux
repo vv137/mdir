@@ -11,7 +11,9 @@
 #
 # writes out/mdir-VERSION-manylinux_2_28_x86_64.tar.gz: bin/mdir, lib/ with
 # the runtime, the OpenMP runtime, HDF5, and cuFFT under their sonames, and
-# share/mdir/cuda with libdevice and the CUDA EULA. libstdc++ and libgcc are
+# share/mdir/cuda with libdevice and the CUDA EULA, and share/mdir/licenses
+# with the notices of HDF5, pocketfft, toml++, LLVM, and its OpenMP runtime
+# (packaging/licenses/README.md). libstdc++ and libgcc are
 # linked statically; the driver's libcuda comes from the system.
 # scripts/release/check-binary.sh checks the result.
 #

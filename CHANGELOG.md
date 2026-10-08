@@ -499,6 +499,15 @@ format, or the outputs; every such change is listed under **Changed** or
   `CompileError` in Python; the process aborted after it with "operation
   destroyed but still has uses" when the body of the loop used a value of
   the code before it, such as a neighbor structure (#208).
+- The release tarball carries the notices of the third parties whose code
+  it distributes in binary form, in `share/mdir/licenses`: HDF5's
+  `COPYING` beside the bundled `libhdf5` (#194), and the licenses of
+  pocketfft (in `libmdrt.so`), toml++ (in `mdir`), LLVM (in `mdir`), and
+  LLVM's OpenMP runtime (`lib/libomp.so`). The 0.1.0 tarball had only
+  MDIR's license and the CUDA EULA. `scripts/release/check-binary.sh`
+  fails on a tree without them;
+  [packaging/licenses/README.md](packaging/licenses/README.md) gives the
+  clause for each component.
 - The scripts that generate the GPU templates of particle mesh Ewald and of
   the groups of neighbors (`scripts/generate-pme-gpu-template.py`,
   `scripts/generate-groups-gpu-template.py`) emit the guards of #168 that

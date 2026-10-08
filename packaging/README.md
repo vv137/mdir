@@ -110,6 +110,7 @@ then MDIR's sources. The tarball holds:
 | `lib/libcufft.so.*` | cuFFT, for particle mesh Ewald on a GPU |
 | `share/mdir/cuda` | libdevice, the math functions the kernels link, with the CUDA EULA |
 | `share/mdir/examples`, `share/mdir/LICENSE` | The examples and MDIR's license |
+| `share/mdir/licenses` | The notices of the third parties whose code the tarball distributes in binary form: `HDF5-COPYING`, `pocketfft-LICENSE`, `tomlplusplus-LICENSE`, `LLVM-LICENSE.TXT`, `OpenMP-LICENSE.TXT` |
 
 cuFFT and libdevice are redistributable under Attachment A of the CUDA
 EULA, which the tarball carries. With them a GPU run needs only the NVIDIA
@@ -118,7 +119,15 @@ links the kernels against `share/mdir/cuda`. Setting `CUDA_ROOT` still
 selects another toolkit. `scripts/release/check-binary.sh` checks that no
 binary needs GLIBC newer than 2.28 or the system's libstdc++ (MDIR's own
 binaries), and that every library is bundled or one that manylinux_2_28
-allows from the system.
+allows from the system. It also checks the notices.
+
+**Notices.** The tarball bundles HDF5 and the OpenMP runtime, and its
+binaries hold pocketfft (`libmdrt.so`), toml++, and LLVM (`mdir`). Their
+licenses ask that a distribution in binary form carry their notices, which
+`MDIR_BUNDLE_LIBRARIES` installs into `share/mdir/licenses`.
+libstdc++ and libgcc, linked statically, need none under the GCC Runtime
+Library Exception. [licenses/README.md](licenses/README.md) gives the
+component, the clause, and the conclusion for each.
 
 ## The Python wheels (manylinux_2_28)
 
