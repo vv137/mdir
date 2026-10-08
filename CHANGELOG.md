@@ -464,6 +464,13 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- The scripts that generate the GPU templates of particle mesh Ewald and of
+  the groups of neighbors (`scripts/generate-pme-gpu-template.py`,
+  `scripts/generate-groups-gpu-template.py`) emit the guards of #168 that
+  the templates held and they did not, so a run of either no longer takes
+  them out; `test/Runtime/generated-templates.test` compares what they
+  generate with the four templates, byte for byte (#211). No template
+  changes.
 - A run whose positions blew up (to about 1e190 nm, or to positions that
   are not numbers with PME) or whose barostat blew up the cell ended the
   process on a GPU with an illegal address or an allocation that failed,

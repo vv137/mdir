@@ -13,6 +13,7 @@ template."""
 
 import os
 import re
+import sys
 
 # Whether the kernels being written are those of a triclinic cell, whose
 # fractional coordinates are s = x H⁻¹ and whose wave vectors are k = H⁻¹ m
@@ -165,7 +166,12 @@ def place(body, p, x, length, k, n):
 %{p}kf = arith.sitofp %{p}ki : i32 to !pme_real
 %{p}fracr = PME_F64_TO_REAL %{p}frac : f64 to !pme_real
 %{p}u = arith.mulf %{p}fracr, %{p}kf : !pme_real
-%{p}fu = math.floor %{p}u : !pme_real
+%{p}fu0 = math.floor %{p}u : !pme_real
+// A coordinate that is not a number takes the point 0, so that the
+// conversion to an integer is defined and every point is in the grid
+// (#168); the fraction is in [0, 1] otherwise, and so is this.
+%{p}nil = arith.constant 0.0 : !pme_real
+%{p}fu = arith.maxnumf %{p}fu0, %{p}nil : !pme_real
 %{p}w = arith.subf %{p}u, %{p}fu : !pme_real
 %{p}bi32 = arith.fptosi %{p}fu : !pme_real to i32
 %{p}bi = arith.extsi %{p}bi32 : i32 to i64
@@ -1743,8 +1749,12 @@ def dispersion():
 
 
 def main():
+    # The templates of the repository, or with a directory as the argument
+    # the same files there, which generated-templates.test compares with
+    # them.
     here = os.path.dirname(os.path.abspath(__file__))
-    templates = os.path.join(here, "..", "lib", "Runtime", "Templates")
+    templates = (sys.argv[1] if len(sys.argv) > 1 else
+                 os.path.join(here, "..", "lib", "Runtime", "Templates"))
     with open(os.path.join(templates, "PMEGPU.mlir"), "w") as file:
         file.write(HEADER + spread() + spread(fixed=False) + weights_kernels() + real() +
                    tables() + convolve() + scale() + dispersion() + gather() +
