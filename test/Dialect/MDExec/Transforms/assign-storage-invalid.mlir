@@ -122,6 +122,7 @@ func.func @f(%x: !md.field<@atoms, 3 x f64>, %y: !md.field<@atoms, 3 x f64>,
       : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
   %ye = scf.for %step = %c0 to %n step %c1 iter_args(%ya = %y)
       -> (!md.field<@atoms, 3 x f64>) {
+    %a = md_exec.rebuild_count %nl1 : !mdrt.neighbors<@atoms>
     %g0 = md_exec.zeros : !md.field<@atoms, 3 x f64>
     // expected-error@+1 {{needs a buffer of its own: the loop writes to a field that it reads from other particles}}
     %g = md_exec.pair_for %nl1, %x, %cell
