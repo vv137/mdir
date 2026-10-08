@@ -1257,19 +1257,19 @@ changes of the free-energy file came after them. Until the fix of issue
 runs is, was evaluated in the cell of before the scaling. What that did
 was measured afterwards with the protocol written out in
 `scripts/validation/free-energy` (a cutoff of 9 Å, the deterministic mode)
-and a build that writes both rows of each state: a row is off by 0.02 to
-0.04 kcal/mol (rms) in the energy to a neighboring state, 0.7 at most and
-of either sign, and over the 14 trajectories $\Delta G$ moves by
+and a build that writes both rows of each state (PR #230): a row is off
+by 0.02 to 0.04 kcal/mol (rms) in the energy to a neighboring state, 0.7
+at most and of either sign, and over the 14 trajectories $\Delta G$ moves by
 $+1.3\times10^{-3}$ kcal/mol by MBAR and $+1.9\times10^{-3}$ by TI, a
 hundredth of the statistical error. D210 changes more. Under a plain
 cutoff the files of that date held the cut potential and those of today
 hold the shifted one, which on the same trajectories gives
 $2.773 \pm 0.102$ kcal/mol where the cut one gives $3.203 \pm 0.102$:
-lower by 0.430, which is $\langle N_\text{in}u(r_c)\rangle$ of the
-pairs of the ethanol. Two further sets of 14 runs after the fix, on other
-trajectories, give $2.596 \pm 0.105$ and $2.367 \pm 0.105$ with the
-shifted potential: sets of 500 ps a state differ by more than the
-uncertainty that their statistical inefficiency assigns.
+lower by 0.430, the difference $N_\text{in}u(r_c)$ of the two potentials
+for the pairs of the ethanol. Two further sets of 14 runs after the fix,
+on other trajectories, give $2.596 \pm 0.105$ and $2.367 \pm 0.105$ with
+the shifted potential; the three sets have a standard deviation of 0.20
+kcal/mol.
 
 **Cost.** On JAC (23,558 particles, one water decoupled, RTX 3090, mixed
 precision) a step takes 0.210 ms at a state with $\lambda_\text{C} =
