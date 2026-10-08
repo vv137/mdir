@@ -60,6 +60,34 @@ s = [1.0]
 """
 
 
+def far_waters():
+    """Two waters whose separation along x is more than half the cell, so
+    that the vector between them is that to an image: the coordinate of a
+    term over their centers reads the edge of the cell."""
+    loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
+    state, topology = loaded.make_state(), loaded.topology
+    x, edge = state.positions[:, 0], state.cell.vectors[0][0]
+    first = {}
+    for particle, residue in enumerate(topology.residue_indices):
+        if topology.residue_names[residue] == "WAT":
+            first.setdefault(int(residue), particle)
+    residues = sorted(first)
+    low = min(residues, key=lambda r: x[first[r]])
+    high = max(residues, key=lambda r: x[first[r]])
+    assert x[first[high]] - x[first[low]] > 0.6 * edge
+    return low + 1, high + 1
+
+
+LOW, HIGH = far_waters()
+TERMS += f"""[[energy.bond]]
+name = "pull"
+expression = "k*(r - r0)^2"
+groups = [":{LOW}", ":{HIGH}"]
+k = 0.01
+r0 = 3.0
+"""
+
+
 def control(name, kind, precision, steps, coordinates=None):
     coupling = ('[thermostat]\nmethod = "V-RESCALE"\ninterval = 10\n'
                 '[barostat]\nmethod = "C-RESCALE"\n' if kind == "NPT" else "")
@@ -70,6 +98,7 @@ coordinates = "{coordinates or root + '/dipeptide.inpcrd'}"
 [output]
 energy_interval = {steps}
 observables = "{name}.obs"
+pull = "{name}.pull"
 free_energy = "{name}.dhdl"
 checkpoint = "{name}.h5"
 checkpoint_interval = {steps}
@@ -95,7 +124,7 @@ deterministic = true
     subprocess.run([cli, "run", f"{name}.toml"], cwd=work, check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     rows = {}
-    for suffix in ("obs", "dhdl"):
+    for suffix in ("obs", "dhdl", "pull"):
         lines = (work / f"{name}.{suffix}").read_text().splitlines()
         names = lines[0].lstrip("#").split()
         for line in lines[2:]:
@@ -129,18 +158,19 @@ def run_cli(precision):
         volume = write_inpcrd(work / f"{name}.h5", work / f"{name}.inpcrd")
         evaluation = control(name + "-point", "NVE", precision, 1,
                              str(work / f"{name}.inpcrd"))[0]
-        assert set(row) == set(evaluation) and len(row) == 7, sorted(row)
+        assert set(row) == set(evaluation) and len(row) == 16, sorted(row)
         for key, value in row.items():
             gap = abs(value - evaluation[key])
             assert gap <= 5e-6 + 5e-7 * abs(value), (name, key, value, evaluation[key])
-            if kind == "NPT" and key in ("soft.energy", "soft.d_l", "dHdl.s"):
+            if kind == "NPT" and key in ("soft.energy", "soft.d_l", "dHdl.s", "pull.dx"):
                 worst[key] = max(worst.get(key, 0.0), gap / abs(value))
         if kind == "NPT" and steps == 10:
             first = volume
-    assert len(worst) == 3, worst
+    assert len(worst) == 4, worst
     print(f"{target_name} {precision} mdir run: the rows at steps 10 and 20 under NPT (the "
           f"volume changes by {abs(volume / first - 1):.1e} between them) and at step 10 "
-          f"under NVE are those of an evaluation of their state; pair terms within "
+          f"under NVE are those of an evaluation of their state; pair terms and the vector "
+          f"between centers across the cell within "
           f"{max(worst.values()):.1e}")
 
 
