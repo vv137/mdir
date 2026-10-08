@@ -530,6 +530,22 @@ recorded on the simulation's stream, and the first part after views were
 taken waits for all the work of the context, the consumer's included,
 before it writes the buffers.
 
+A consumer that writes takes a *borrow* instead
+(D[python-dlpack-write]): the same buffers of the positions and the
+velocities without the read-only flag, and buffers of the host with the
+edges of the cell and the values of the tunables. A borrow excludes every
+other operation on the state, views included. Its commit is explicit: it
+checks what was written, refuses a change of the tunables that would
+change the program as an update does, advances the version counters of
+the changed fields (P16), and begins a new activation of the entry from
+the committed state, so that the order of the particles, the neighbor
+structures, and the forces are those of that state and nothing computed
+from the old one is carried; a run after it is, to the bit in the
+deterministic mode, that of a simulation compiled from the committed
+state. A borrow that ends without a commit is undone from the copy of the
+state that the simulation holds since the last part. A commit costs an
+evaluation, so a borrow serves changes between runs, not at every step.
+
 The runtime is small and holds what cannot be IR: 681 lines of C for the
 host (`runtime/mdrt.c`: counters of builds and prunings, the stop on a
 position that is not a number, the generator Philox 4×32-10

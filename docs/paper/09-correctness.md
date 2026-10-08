@@ -385,6 +385,23 @@ values of the view although the simulation runs 10 steps at once, which it
 does not when the wait for the context is removed
 (`python-dlpack*.test`).
 
+The writable borrows (D[python-dlpack-write], Section 3.6) are checked by
+the same consumers, which write: a commit that moves one particle, scales
+the velocities, scales the cell with the positions, or changes the
+charges and a constant of a pair term, followed by 12 steps, equals to
+the bit the same change made without a borrow (a simulation compiled from
+the changed state, or an update of the tunables), on the CPU and a GPU, in
+double and mixed precision in the deterministic mode; the move of one
+particle changes the forces by up to $5.4\times10^{3}$ kJ/mol/nm, so
+forces or neighbor structures carried through the commit would show. An
+abandoned borrow, a refused commit (values that are not numbers, a cell
+below twice the cutoff, a value of a tunable that would change the
+program), and a commit whose evaluation fails each leave the state, the
+values, and the versions of a simulation without the borrow, to the bit.
+A consumer kernel still writing when its tensor is deleted and the borrow
+committed is waited for; without the wait the committed velocities differ
+by 2.87 nm/ps (`python-dlpack-write*.test`).
+
 ## 9.7 Neighbor structures
 
 - **Templates against all pairs.** The matrix of the host matches a

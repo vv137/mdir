@@ -129,7 +129,9 @@ Lennard-Jones among them by pairs of types (D226); parts that
 continue one activation of the entry, whose buffers stay on the device, so
 that a run in parts is the run in one part to the bit
 (D215); read-only DLPack views of those buffers, whose leases
-block runs while a consumer holds them (D220); read-only views
+block runs while a consumer holds them (D220), and writable
+borrows of them with an explicit commit, which rebuilds what depends on
+the fields written (D[python-dlpack-write]); read-only views
 of the topology, with the constraints of a compiled program, and the masks
 of the control file evaluated from Python (D221); checkpoints
 shared with the CLI, which either front end continues
@@ -138,7 +140,7 @@ shared with the CLI, which either front end continues
 NVIDIA's wheel, and runs the four-stage tutorial from the installed
 package at the rate of `mdir run` (D228).
 Remaining:
-writable views of the buffers, and
+the tilts of a triclinic cell in a writable borrow, and
 NPT in a triclinic cell or with a coupling period of 1.
 
 *M2b, differentiable simulation* (D195). The parameters of a potential

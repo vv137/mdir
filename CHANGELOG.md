@@ -70,6 +70,26 @@ format, or the outputs; every such change is listed under **Changed** or
   kJ/mol/nm (or an OpenMM quantity) and checks every
   `Schedule.energy_period` steps; `state().minimization["converged"]`
   reports the result. Without a tolerance nothing changes.
+- Tracked writable DLPack borrows of a Python simulation with a commit
+  (D[python-dlpack-write], #136, `docs/python-dlpack.md`):
+  `Simulation.borrow()` returns a `Borrow` whose `positions` and
+  `velocities` are the program's buffers, writable through `__dlpack__`
+  on the device or the host, in the order of the program (`ids` gives the
+  input index of each row), with the edges of an orthorhombic cell
+  (`cell`) and the values of the tunables (`tunables`) as writable buffers
+  of the host. `Borrow.commit()` takes what was written: it checks
+  everything first (finite values, a cell of at least twice the cutoff,
+  the checks of an update of tunables with its refusal of structural
+  changes; a refusal changes nothing), advances `Simulation.versions` of
+  the changed fields, and begins an activation from the committed state,
+  whose order, neighbor structures, and forces are built anew, as an
+  update of tunables does. While a borrow or a tensor taken from it is
+  alive, `run`, `minimize`, evaluations, updates of tunables, `view()`,
+  `borrow()`, `state()`, and `save_checkpoint` raise `SimulationError`. A
+  borrow that ends without a commit (`abandon()`, the end of a `with`
+  block) is undone to the bit. Writes through a read-only `view()` stay
+  undefined. A triclinic cell is not taken yet (#206). No control-file
+  key and no file format changes.
 - Read-only DLPack views of a Python simulation (D220, #131,
   `docs/python-dlpack.md`): `Simulation.view()` returns a `View` of the
   positions, velocities, and forces where the program keeps them, on the

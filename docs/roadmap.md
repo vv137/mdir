@@ -277,8 +277,16 @@ D220 (#131, [DLPack views](python-dlpack.md)) hands
 consumers such as PyTorch those buffers, the particle IDs, and the values
 of tunables as read-only DLPack views, without a copy: leases block runs
 and updates while a view or a tensor taken from it is alive, and the
-consumer's stream waits for the simulation's work. Writable views (#136)
-remain open.
+consumer's stream waits for the simulation's work.
+D[python-dlpack-write] (#136,
+[writable borrows](python-dlpack.md#writable-borrows-dpython-dlpack-write))
+completes the item: `Simulation.borrow()` hands a consumer the buffers of
+the positions and the velocities for writing, with the edges of the cell
+and the values of the tunables, and `Borrow.commit()` takes what was
+written, advances the versions of the changed fields, and begins an
+activation from the committed state, whose order, neighbor structures, and
+forces are built anew; a borrow excludes runs, views, and other borrows,
+and one that ends without a commit is undone.
 D221 (#120, [topology views](python-topology.md)) gives
 loaded data, systems, and programs a read-only view of their topology
 (atoms, residues, bonded tuples, and, after preparation, the constraints)
@@ -306,15 +314,15 @@ and Python, must produce the same IR and share one validation.
 | Physics apart from execution | `System` (terms, cutoff, PME, constraints, custom potentials as expressions with per-particle and global parameters); the integrator and the ensemble; `Execution` (target, device, precision) as typed objects, not strings |
 | An explicit compile | `mdir.compile(...)` returns an immutable program and its plan; changing the system afterwards marks it stale rather than being ignored. Parameters declared tunable are read from a buffer, so setting them does not recompile |
 | Runs and reporters | `sim.run(n)` runs segments to the next report of any reporter (OpenMM's protocol), with the writers of the driver in C++ and the GIL released; a stop is polled between segments |
-| State | `state()`: host copies in the order of the input, in the units of MD (nm, ps, kJ/mol, bar) as plain arrays. `view()`: DLPack tensors of the device in the order of the run with the index of each row, with leases blocking conflicting runs and mutations, on a stated stream, whose type is that of the buffer (`f32` forces in the mixed mode). Writes through a view advance the version of the state (P16) |
+| State | `state()`: host copies in the order of the input, in the units of MD (nm, ps, kJ/mol, bar) as plain arrays. `view()`: DLPack tensors of the device in the order of the run with the index of each row, with leases blocking conflicting runs and mutations, on a stated stream, whose type is that of the buffer (`f32` forces in the mixed mode). A write goes through `borrow()` and its `commit()`, which advances the versions of the changed fields (P16) and rebuilds what depends on them (D[python-dlpack-write]) |
 | Errors | Typed: input (file, line, term), compile (the diagnostic with its location), unsupported (feature, target), simulation (step, particle, quantity) |
 | Checkpoints | The H5MD checkpoint of the driver, exact and portable, with the hashes of the model and the plan; one format, not two |
 
 DLPack views use execution order with input particle IDs alongside and
 the buffer's actual dtype (mixed-mode forces in `f32`, state in `f64`).
-Initial read-only leases block conflicting runs and mutations while views
-are alive; tracked writable borrows follow within M2 and are required to
-complete it. The implementation specifies stream handoff, consumer
+Read-only leases block conflicting runs and mutations while views
+are alive; tracked writable borrows with an explicit commit complete the
+item (D[python-dlpack-write]). The implementation specifies stream handoff, consumer
 completion, and allocation release. Reporters use typed MDIR requests,
 with final reports only when due; segments without reporters bound stop
 latency to about 1 s or less on the Amber suite. Python fingerprints record

@@ -303,7 +303,11 @@ program's text and values, about 10 ms on the host for JAC (23,558 atoms).
 - `sim.view().tunables` gives the same values as read-only DLPack views of
   the host vectors, without a copy (D220,
   [python-dlpack.md](python-dlpack.md)); an update is refused while a view
-  is alive.
+  is alive. A writable borrow (D[python-dlpack-write],
+  [python-dlpack.md](python-dlpack.md#writable-borrows-dpython-dlpack-write))
+  hands a consumer buffers that hold the values, and its commit is this
+  update for the entries that changed, with the same checks, version,
+  history, and refusal of structural changes.
 
 ## The compile cache
 
